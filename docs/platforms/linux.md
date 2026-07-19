@@ -14,20 +14,24 @@ behavior.
 
 Native Linux companion apps are planned. Contributions are welcome.
 
-## Beginner quick path (VPS)
+## Beginner quick paths
 
-1. `git clone https://github.com/fased-ai/fased.git fased`
-2. `cd fased`
-3. Join Tailscale on the host if this is a remote machine
-4. `./install.sh --hosting`
-5. From your laptop: `ssh -N -L 18789:127.0.0.1:18789 <user>@<host>`
-6. Open `http://localhost:18789/` and paste your token
+For a Linux laptop or desktop, run:
 
-For a local Linux laptop/dev box, use plain `./install.sh` or
-`./install.sh --local`. The installer runs onboarding unless you pass
-`--no-onboard`.
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+  | bash -s -- --local
+```
 
-Auto-install is built for the common Linux VPS families: Ubuntu, Debian, Kali,
+For an always-on VPS, SSH to the provider root shell and run the complete
+[verified Hosting bootstrap block](/install/vps#3-verify-and-run-the-hosting-bootstrap).
+
+The block authenticates the tagged installer before Bash executes it. The
+verified Hosting installer then installs/starts Tailscale, creates the non-root
+`app` runtime, and guides the private dashboard and SSH check. No source
+checkout, manual Tailscale bootstrap, or SSH tunnel is part of the normal path.
+
+Auto-install supports common Linux families: Ubuntu, Debian, Kali,
 Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux, Oracle Linux, Amazon Linux,
 openSUSE, SLES, Alpine, and Arch. It uses the system package manager, installs
 Node 24 where the platform supports it, then verifies `node:sqlite` before setup

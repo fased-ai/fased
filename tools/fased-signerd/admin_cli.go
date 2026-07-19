@@ -82,6 +82,12 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 			return runSignerAdminWalletImport(args[2:], stdin, stdout)
 		case "import-legacy":
 			return runSignerAdminWalletImportLegacy(args[2:], stdout)
+		case "recovery-export":
+			return runSignerAdminWalletRecoveryExportV1(args[2:], stdin, stdout)
+		case "recovery-import":
+			return runSignerAdminWalletRecoveryImportV1(args[2:], stdin, stdout)
+		case "export-raw":
+			return runSignerAdminWalletRawExportV2(args[2:], stdout)
 		case "reencrypt":
 			return runSignerAdminWalletReencrypt(args[2:], stdout)
 		case "rotate-successor":

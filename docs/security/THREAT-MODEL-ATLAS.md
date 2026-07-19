@@ -147,7 +147,7 @@ audits of those external systems.
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │                  WALLET ORCHESTRATION                     │   │
 │  │  • Role-separated wallets (agent/mining/vault)            │   │
-│  │  • Gateway Wallet Control Passkey and review rendering     │   │
+│  │  • Control UI account passkey and review rendering         │   │
 │  │  • Wallet > Skill Grants for reviewed skills only         │   │
 │  │  • Mining wallet reserved for SAT mining runtime          │   │
 │  └──────────────────────────────────────────────────────────┘   │

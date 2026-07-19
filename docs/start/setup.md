@@ -15,8 +15,10 @@ For wizard details, see [Onboarding Wizard](/start/wizard).
 </Note>
 
 <Note>
-Normal installs use `./install.sh`. The `pnpm` commands on this page are for
-source checkout and contributor workflows, not the beginner install path.
+Normal installs use the Local or Hosting `curl ... install.sh` command from
+[Install](/install). The `pnpm` and checkout-local `./install.sh` commands on
+this page are for source checkout and contributor workflows, not the beginner
+install path.
 </Note>
 
 Reviewed for the current Agent-centered Control UI.

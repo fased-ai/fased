@@ -329,9 +329,10 @@ If no Trigger key is installed, wallet creation, SOL/SPL transfers, SAT mining,
 and reviewed Vault operations continue to work; Trigger history/create/cancel
 fail closed with a configuration error.
 
-Every manual native reviewed Agent, Mining, or Vault operation requires a
-signer-owned WebAuthn credential. This is separate from the Wallets Access-tab
-Gateway passkey. Run the one-shot enrollment service, open the printed
+Vault operations and any separately enabled owner-review lane require a
+signer-owned approval credential. Agent and Mining automation inside narrow
+policy does not prompt for a passkey. This is separate from the optional Control
+UI account passkey. Run the one-shot enrollment service, open the printed
 `http://localhost:18791` URL on the same computer, and touch/approve your
 authenticator:
 

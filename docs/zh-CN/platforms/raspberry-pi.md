@@ -181,11 +181,11 @@ ssh -L 18789:localhost:18789 user@gateway-host
 open http://localhost:18789
 ```
 
-或使用 Tailscale 实现常驻访问：
+或使用 Tailscale 的签名 Debian 软件包仓库完成安装，然后实现常驻访问。不要把
+可变的远程安装脚本直接通过管道交给 root shell：
 
 ```bash
 # 在 Pi 上
-curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up
 
 # 更新配置

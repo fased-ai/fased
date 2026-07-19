@@ -124,6 +124,8 @@ const REQUIRED_PROTOCOL_V2_FEATURES = SIGNER_PROTOCOL_V2_REQUIRED_CLIENT_FEATURE
 const SIGNER_SOCKET_TIMEOUT_MS: Record<LocalSocketSignerRequest["op"], number> = {
   health: 2_000,
   "v2.capabilities": 2_000,
+  "v2.network.get": 15_000,
+  "v2.network.bootstrap": 30_000,
   "v2.jupiter.trigger.history": 30_000,
   "v2.policy.get": 5_000,
   "v2.policy.put": 5_000,
@@ -408,6 +410,16 @@ export class LocalSocketSignerAdapter implements WalletProviderAdapter {
         provider: this.id,
         configured: true,
         checkedAt: new Date().toISOString(),
+        ...(details.webAuthn
+          ? {
+              nativeSignerApproval: {
+                configured: details.webAuthn.configured,
+                ready: details.webAuthn.ready,
+                credentialCount: details.webAuthn.credentialCount,
+                credentialVersion: details.webAuthn.credentialVersion,
+              },
+            }
+          : {}),
         details: [
           details?.details ?? "",
           ...(!details?.details

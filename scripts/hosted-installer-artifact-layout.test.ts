@@ -21,6 +21,7 @@ describe("attested Hosting installer artifact layout", () => {
     expect(files).toContain("scripts/fased-host-updaterctl.mjs");
     expect(files).toContain("scripts/fased-signer-enroll-hosting.sh");
     expect(files).toContain("scripts/fased-signer-network-hosting.sh");
+    expect(files).toContain("scripts/fased-signer-wallet-import-hosting.sh");
     expect(files).toContain("scripts/fased-signer-policy-hosting.sh");
     expect(files).toContain("config/");
   });
@@ -92,7 +93,7 @@ describe("attested Hosting installer artifact layout", () => {
     }
   });
 
-  it("rejects streamed Hosting before any bootstrap logic can execute", () => {
+  it("rejects streamed Hosting before the privileged release bootstrap", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-hosting-stream-dispatch-"));
     try {
       const fakeBin = path.join(tempRoot, "bin");
@@ -101,16 +102,22 @@ describe("attested Hosting installer artifact layout", () => {
         mode: 0o700,
       });
 
-      const result = spawnSync("bash", ["-s", "--", "--hosting", "--no-auto-install"], {
-        encoding: "utf8",
-        env: { ...process.env, PATH: `${fakeBin}:/usr/bin:/bin` },
-        input: fs.readFileSync(path.join(root, "install.sh"), "utf8"),
-      });
+      for (const args of [
+        ["--hosting", "--no-auto-install"],
+        ["--repair-hosting", "--no-auto-install"],
+        ["--host-profile", "hosting", "--no-auto-install"],
+      ]) {
+        const result = spawnSync("bash", ["-s", "--", ...args], {
+          encoding: "utf8",
+          env: { ...process.env, PATH: `${fakeBin}:/usr/bin:/bin` },
+          input: fs.readFileSync(path.join(root, "install.sh"), "utf8"),
+        });
 
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain("Refusing streamed VPS Hosting execution");
-      expect(result.stderr).toContain("verify the exact tagged install.sh before execution");
-      expect(result.stderr).not.toContain("VPS Hosting bootstrap must start");
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain("Refusing streamed VPS Hosting execution");
+        expect(result.stderr).toContain("verify an exact tagged release installer");
+        expect(result.stderr).not.toContain("VPS Hosting bootstrap must start");
+      }
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -148,7 +155,7 @@ describe("attested Hosting installer artifact layout", () => {
     }
   });
 
-  it("never documents a mutable streamed Hosting bootstrap", () => {
+  it("does not document a mutable streamed Hosting resolver", () => {
     const docsRoot = path.join(root, "docs");
     const pending = [docsRoot];
     const streamedHostingOffenders: string[] = [];

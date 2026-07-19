@@ -86,6 +86,7 @@ function createRequest(params: {
   path: string;
   host?: string;
   authorization?: string;
+  origin?: string;
   body?: unknown;
 }): IncomingMessage {
   const req = new PassThrough() as unknown as IncomingMessage;
@@ -94,6 +95,7 @@ function createRequest(params: {
   req.headers = {
     host: params.host ?? "fasedagent7f1b9b93ccfdb.agents.fased.app",
     ...(params.authorization ? { authorization: params.authorization } : {}),
+    ...(params.origin ? { origin: params.origin } : {}),
   };
   (req as unknown as { socket: { remoteAddress: string } }).socket = {
     remoteAddress: "127.0.0.1",
@@ -114,8 +116,10 @@ function createRequest(params: {
 function createResponse(): {
   res: ServerResponse;
   getBody: () => string;
+  setHeader: ReturnType<typeof vi.fn>;
 } {
   let body = "";
+  const setHeader = vi.fn();
   const pushChunk = (chunk?: unknown) => {
     if (typeof chunk === "string") {
       body += chunk;
@@ -128,7 +132,7 @@ function createResponse(): {
   const res = {
     statusCode: 200,
     headersSent: false,
-    setHeader: vi.fn(),
+    setHeader,
     write: vi.fn((chunk?: unknown) => {
       pushChunk(chunk);
       return true;
@@ -137,7 +141,7 @@ function createResponse(): {
       pushChunk(chunk);
     }),
   } as unknown as ServerResponse;
-  return { res, getBody: () => body };
+  return { res, getBody: () => body, setHeader };
 }
 
 async function dispatch(
@@ -200,6 +204,55 @@ const signerV2Capabilities = {
   },
   policies: [],
 };
+
+test("rejects cross-origin browser mutations on the unauthenticated loopback wallet API", async () => {
+  await withTempConfig({
+    cfg: {
+      wallet: {
+        provider: { id: "wallet-standard" },
+        runtime: { enabled: true, mode: "external", runtime: "external-custom" },
+        chains: { enabled: ["solana"], primary: "solana" },
+      },
+    },
+    run: async () => {
+      const server = createGatewayHttpServer({
+        canvasHost: null,
+        clients: new Set(),
+        controlUiEnabled: false,
+        controlUiBasePath: "/ui",
+        openAiChatCompletionsEnabled: false,
+        openResponsesEnabled: false,
+        handleHooksRequest: async () => false,
+        resolvedAuth,
+      });
+      const response = createResponse();
+      await dispatch(
+        server,
+        createRequest({
+          method: "POST",
+          path: "/api/wallet/wallets",
+          origin: "https://evil.example",
+          body: {
+            providerId: "wallet-standard",
+            walletId: "csrf-vault",
+            name: "CSRF Vault",
+            role: "vault",
+            address: "11111111111111111111111111111111",
+          },
+        }),
+        response.res,
+      );
+      expect(response.res.statusCode).toBe(403);
+      expect(JSON.parse(response.getBody())).toMatchObject({
+        ok: false,
+        error: { code: "forbidden_origin" },
+      });
+      expect(readWalletProviderRegistry(process.env).wallets).not.toContainEqual(
+        expect.objectContaining({ id: "csrf-vault" }),
+      );
+    },
+  });
+});
 
 type PolicySignerPolicy = {
   walletId: string;
@@ -476,6 +529,45 @@ describe("wallet providers HTTP", () => {
         expect(payload.ok).toBe(true);
         expect(wallet?.readiness?.rpc).toBe(true);
         expect(wallet?.readiness).not.toHaveProperty("rpcUrl");
+      },
+    });
+  });
+
+  test("renders an authenticated no-store Solana receive QR for a named wallet", async () => {
+    await withTempConfig({
+      cfg: baseConfig,
+      run: async () => {
+        upsertNamedWallet({
+          walletId: "receive-wallet",
+          name: "Receive Wallet",
+          providerId: "local-socket-signer",
+          addresses: { solana: "11111111111111111111111111111111" },
+          env: process.env,
+        });
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: false,
+          controlUiBasePath: "/ui",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          resolvedAuth,
+        });
+        const response = createResponse();
+        await dispatch(
+          server,
+          createRequest({
+            method: "GET",
+            path: "/api/wallet/receive-qr?walletId=receive-wallet",
+            authorization: "Bearer root-token",
+          }),
+          response.res,
+        );
+        expect(response.res.statusCode).toBe(200);
+        expect(response.setHeader).toHaveBeenCalledWith("Content-Type", "image/png");
+        expect(response.setHeader).toHaveBeenCalledWith("Cache-Control", "private, no-store");
+        expect(response.setHeader).toHaveBeenCalledWith("X-Content-Type-Options", "nosniff");
       },
     });
   });
@@ -1532,6 +1624,242 @@ describe("wallet providers HTTP", () => {
         };
         expect(payload.ok).toBe(false);
         expect(payload.error?.code).toBe("wallet_in_use");
+      },
+    });
+  });
+
+  test("blocks creating a second singleton SAT Mining wallet", async () => {
+    await withTempConfig({
+      cfg: {
+        ...baseConfig,
+        plugins: {
+          entries: {
+            "sat-mining": {
+              enabled: true,
+              config: { walletId: "miner-wallet", network: "devnet", riskMode: "balanced" },
+            },
+          },
+        },
+      },
+      run: async () => {
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: false,
+          controlUiBasePath: "/ui",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          resolvedAuth,
+        });
+        const response = createResponse();
+        await dispatch(
+          server,
+          createRequest({
+            method: "POST",
+            path: "/api/wallet/wallets",
+            authorization: "Bearer root-token",
+            body: {
+              providerId: "local-socket-signer",
+              walletId: "second-miner",
+              name: "Second Miner",
+              role: "mining",
+              chain: "solana",
+              rpcUrl: "https://rpc.example/solana",
+            },
+          }),
+          response.res,
+        );
+        expect(response.res.statusCode).toBe(409);
+        const payload = JSON.parse(response.getBody()) as {
+          ok: boolean;
+          error?: { code?: string; message?: string };
+        };
+        expect(payload.ok).toBe(false);
+        expect(payload.error?.code).toBe("wallet_in_use");
+        expect(payload.error?.message).toContain("singleton wallet miner-wallet");
+      },
+    });
+  });
+
+  test("blocks assigning Mining role while another registry Mining wallet exists", async () => {
+    await withTempConfig({
+      cfg: baseConfig,
+      run: async () => {
+        upsertNamedWallet({
+          walletId: "miner-one",
+          name: "Miner One",
+          providerId: "local-socket-signer",
+          metadata: { role: "mining", purpose: "mining" },
+          env: process.env,
+        });
+        upsertNamedWallet({
+          walletId: "candidate",
+          name: "Candidate",
+          providerId: "wallet-standard",
+          addresses: { solana: "11111111111111111111111111111111" },
+          env: process.env,
+        });
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: false,
+          controlUiBasePath: "/ui",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          resolvedAuth,
+        });
+        const response = createResponse();
+        await dispatch(
+          server,
+          createRequest({
+            method: "PATCH",
+            path: "/api/wallet/wallets",
+            authorization: "Bearer root-token",
+            body: { walletId: "candidate", role: "mining" },
+          }),
+          response.res,
+        );
+        expect(response.res.statusCode).toBe(409);
+        expect(JSON.parse(response.getBody())).toMatchObject({
+          ok: false,
+          error: { code: "wallet_in_use" },
+        });
+      },
+    });
+  });
+
+  test("archives a drained Mining wallet only after the signer acknowledges deny-all", async () => {
+    await withTempConfig({
+      cfg: {
+        ...baseConfig,
+        env: {
+          vars: {
+            FASED_WALLET_SOLANA_RPC_URL__MINER_WALLET: "https://rpc.example/solana",
+          },
+        },
+        plugins: {
+          entries: {
+            "sat-mining": {
+              enabled: true,
+              config: { walletId: "miner-wallet", network: "devnet", riskMode: "balanced" },
+            },
+          },
+        },
+      },
+      run: async () => {
+        const current: PolicySignerPolicy = {
+          walletId: "miner_wallet",
+          role: "mining",
+          version: 4,
+          operations: ["sat.claim@11111111111111111111111111111111"],
+          programs: ["11111111111111111111111111111111"],
+          assets: [
+            {
+              asset: "sat:action",
+              destinations: ["11111111111111111111111111111111"],
+              maxPerTx: "1",
+              maxDaily: "10",
+            },
+          ],
+          hash: `sha256:${"a".repeat(64)}`,
+        };
+        const next: PolicySignerPolicy = {
+          walletId: "miner_wallet",
+          role: "mining",
+          version: 5,
+          operations: [],
+          programs: [],
+          assets: [],
+          hash: `sha256:${"b".repeat(64)}`,
+        };
+        const socketPath = path.join(String(process.env.FASED_STATE_DIR), "signer.sock");
+        process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = socketPath;
+        const signer = await createPolicySignerServer({ socketPath, current, next });
+        try {
+          upsertNamedWallet({
+            walletId: "miner-wallet",
+            name: "Miner Wallet",
+            providerId: "local-socket-signer",
+            metadata: {
+              role: "mining",
+              purpose: "mining",
+              signerWalletId: "miner_wallet",
+              policyState: "acknowledged",
+              policyVersion: 4,
+              policyHash: current.hash,
+            },
+            env: process.env,
+          });
+          const server = createGatewayHttpServer({
+            canvasHost: null,
+            clients: new Set(),
+            controlUiEnabled: false,
+            controlUiBasePath: "/ui",
+            openAiChatCompletionsEnabled: false,
+            openResponsesEnabled: false,
+            handleHooksRequest: async () => false,
+            resolvedAuth,
+          });
+          const response = createResponse();
+          await dispatch(
+            server,
+            createRequest({
+              method: "DELETE",
+              path: "/api/wallet/wallets",
+              authorization: "Bearer root-token",
+              body: {
+                walletId: "miner-wallet",
+                archive: true,
+                confirmWalletId: "miner-wallet",
+              },
+            }),
+            response.res,
+          );
+          expect(response.res.statusCode).toBe(200);
+          expect(JSON.parse(response.getBody())).toMatchObject({
+            ok: true,
+            removed: true,
+            archived: true,
+          });
+          expect(signer.requests.map((request) => request.op)).toEqual([
+            "v2.capabilities",
+            "v2.policy.get",
+            "v2.capabilities",
+            "v2.policy.tighten",
+            "v2.policy.get",
+          ]);
+          expect(
+            signer.requests.find((request) => request.op === "v2.policy.tighten"),
+          ).toMatchObject({
+            walletId: "miner_wallet",
+            request: {
+              expectedVersion: 4,
+              policy: {
+                role: "mining",
+                operations: [],
+                programs: [],
+                assets: [],
+              },
+            },
+          });
+          expect(
+            readWalletProviderRegistry(process.env).wallets.some(
+              (wallet) => wallet.id === "miner-wallet",
+            ),
+          ).toBe(false);
+          const persisted = JSON.parse(
+            await readFile(String(process.env.FASED_CONFIG_PATH), "utf8"),
+          ) as {
+            env?: { vars?: Record<string, string> };
+            plugins?: { entries?: Record<string, { config?: { walletId?: string } }> };
+          };
+          expect(persisted.env?.vars?.FASED_WALLET_SOLANA_RPC_URL__MINER_WALLET).toBeUndefined();
+          expect(persisted.plugins?.entries?.["sat-mining"]?.config?.walletId).toBeUndefined();
+        } finally {
+          await signer.close();
+        }
       },
     });
   });

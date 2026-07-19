@@ -85,7 +85,7 @@ fased update
     架构 bundle 的 GitHub attestation。
 
     需要在任何下载 shell 代码运行前验证 `install.sh` 的高级用户，可使用
-    [手动执行前验证](/install/vps#advanced-verify-the-bootstrap-first)。
+    [手动执行前验证](/install/vps#advanced-exact-release-selection)。
 
   </Accordion>
 

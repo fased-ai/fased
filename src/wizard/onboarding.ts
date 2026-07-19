@@ -32,7 +32,11 @@ import type {
   OnboardOptions,
   OnboardRepairScope,
 } from "../commands/onboard-types.js";
-import { collectWalletSignerDoctorReport, walletSetupCommand } from "../commands/wallet.js";
+import {
+  collectWalletSignerDoctorReport,
+  walletRecoveryExportCommand,
+  walletSetupCommand,
+} from "../commands/wallet.js";
 import type { FasedAgentConfig } from "../config/config.js";
 import { readConfigFileSnapshot, resolveGatewayPort, writeConfigFile } from "../config/config.js";
 import { logConfigUpdated } from "../config/logging.js";
@@ -54,7 +58,6 @@ import {
 } from "../wallet/wallet-provider-registry.js";
 import {
   ensureWalletStateDir,
-  resolveLocalSignerControlSocketPath,
   resolveLocalSignerMaterialRootDir,
   resolveLocalSignerSocketPath,
 } from "../wallet/wallet-runtime-config.js";
@@ -178,12 +181,6 @@ export async function runOnboardingWizard(
       return `FASED_WALLET_SOLANA_RPC_URL__${suffix}`;
     }
     return "FASED_WALLET_SOLANA_RPC_URL";
-  };
-  const executionFallbackRpcEnvKeyFor = (walletId?: string): string => {
-    const suffix = walletIdEnvSuffix(walletId);
-    return suffix
-      ? `FASED_WALLET_SOLANA_EXECUTION_FALLBACK_RPC_URL__${suffix}`
-      : "FASED_WALLET_SOLANA_EXECUTION_FALLBACK_RPC_URL";
   };
   const setConfigEnvVar = (
     cfg: FasedAgentConfig,
@@ -348,15 +345,6 @@ export async function runOnboardingWizard(
     nextConfig = setConfigEnvVar(nextConfig, rpcKey, effectiveRpcUrl);
     process.env[rpcKey] = effectiveRpcUrl;
     return effectiveRpcUrl;
-  };
-  const firstNonEmptyEnvValue = (...values: Array<string | undefined>): string | undefined => {
-    for (const value of values) {
-      const normalized = String(value ?? "").trim();
-      if (normalized) {
-        return normalized;
-      }
-    }
-    return undefined;
   };
   const readSatMiningConfig = (
     cfg: FasedAgentConfig,
@@ -1381,42 +1369,25 @@ export async function runOnboardingWizard(
               currentValue: configuredSolanaRpcUrl,
             });
             let signerNetworkVersion: number | undefined;
-            let signerNetworkRootCommand: string | undefined;
             if (targetWallet.providerId === "local-socket-signer") {
               const effectiveEnv = {
                 ...process.env,
                 ...nextConfig.env?.vars,
                 FASED_HOST_PROFILE: hostProfile,
               } as NodeJS.ProcessEnv;
-              const walletSuffix = walletIdEnvSuffix(walletId);
-              const legacyExecutionFallbackKey = walletSuffix
-                ? `FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL__${walletSuffix}`
-                : "FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL";
-              const network = configureSignerOwnedWalletNetwork({
+              const network = await configureSignerOwnedWalletNetwork({
                 walletId,
                 primaryRpcUrl: effectiveSolanaRpcUrl,
-                executionFallbackRpcUrl: firstNonEmptyEnvValue(
-                  effectiveEnv[executionFallbackRpcEnvKeyFor(walletId)],
-                  effectiveEnv[legacyExecutionFallbackKey],
-                ),
                 env: effectiveEnv,
-                signerBinPath:
-                  hostProfile === "hosting" ? undefined : resolveSignerdBinaryPath(effectiveEnv),
+                socketPath: resolveLocalSignerSocketPath(effectiveEnv),
               });
               signerNetworkVersion = network.version;
-              signerNetworkRootCommand = network.rootCommand;
             } else {
               await restartLocalSocketSigner(ensureWalletStateDir(process.env).rootDir);
             }
             await prompter.note(
               [
                 `Updated the app-side Solana RPC setting for ${targetWallet.name} (${walletId})${signerNetworkVersion ? `; signer network version ${signerNetworkVersion} is ready` : "."}`,
-                ...(signerNetworkRootCommand
-                  ? [
-                      "The hosted signer was not changed because the app has no root channel. Activate the RPC from a root-owned file:",
-                      signerNetworkRootCommand,
-                    ]
-                  : []),
               ].join("\n"),
               "Wallet setup",
             );
@@ -1602,18 +1573,17 @@ export async function runOnboardingWizard(
 
         attemptedSelfHostedSetupThisRun = true;
         const chain = "solana" as const;
-        const walletPurpose =
-          flow === "quickstart" && !snapshot.exists
-            ? ("agent" as const)
-            : await prompter.select<WalletOnboardingPurpose>({
-                message: "Wallet purpose",
-                options: [
-                  { value: "agent", label: "Agent" },
-                  { value: "mining", label: "Mining" },
-                  { value: "vault", label: "Vault" },
-                ],
-                initialValue: "agent",
-              });
+        const walletPurpose = await prompter.select<WalletOnboardingPurpose>({
+          message: "Wallet role (required)",
+          options: [
+            { value: "agent", label: "Agent" },
+            { value: "mining", label: "Mining" },
+            { value: "vault", label: "Vault" },
+          ],
+        });
+        if (walletPurpose !== "agent" && walletPurpose !== "mining" && walletPurpose !== "vault") {
+          throw new Error("Wallet role selection is required; Agent is never selected silently.");
+        }
         const selfHostedAction = await prompter.select<"create" | "import">({
           message: "Wallet action",
           options: [
@@ -1631,7 +1601,7 @@ export async function runOnboardingWizard(
             await prompter.note(
               [
                 `Mining wallet already exists: ${existingMiningWalletId || "mining"}.`,
-                "Delete that Mining wallet from onboarding first if you want to replace it.",
+                "Open it to continue, or use the reviewed Replace/Archive flow after mining is stopped, rewards and capital are settled, and backup/readiness checks pass.",
               ].join("\n"),
               "Mining",
             );
@@ -1642,43 +1612,30 @@ export async function runOnboardingWizard(
             continue;
           }
         }
-        const mode = "local-signer-create" as const;
+        const mode =
+          selfHostedAction === "import"
+            ? ("local-signer-import" as const)
+            : ("local-signer-create" as const);
         const walletIdentity = await resolveWalletIdentityForOnboarding({
           flow,
           purpose: walletPurpose,
         });
         const walletName = walletIdentity.walletName;
         const walletId: string | undefined = walletIdentity.walletId || undefined;
-        if (selfHostedAction === "import") {
-          const effectiveWalletId = walletId ?? walletPurpose;
-          const hosting = hostProfile === "hosting";
-          const signerBin = hosting
-            ? "/opt/fased/signer/fased-signerd"
-            : resolveSignerdBinaryPath();
-          const controlSocket = hosting
-            ? "/run/fased-signerd/control.sock"
-            : resolveLocalSignerControlSocketPath(process.env);
-          const signerImportCommand = [
-            shellQuote(signerBin),
-            "admin wallet import",
-            `--control-socket ${shellQuote(controlSocket)}`,
-            `--wallet-id ${shellQuote(effectiveWalletId)}`,
-            `--locked-role ${shellQuote(walletPurpose)}`,
-            `< ${shellQuote("/absolute/path/to/solana-keypair.json")}`,
-          ].join(" ");
-          const command = hosting
-            ? `/usr/sbin/runuser -u fased-signer -- /usr/bin/env HOME=/var/lib/fased-signerd ${signerImportCommand}`
-            : signerImportCommand;
+        if (selfHostedAction === "import" && hostProfile === "hosting") {
+          const signerWalletId = (walletId ?? walletPurpose)
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "_")
+            .replace(/^_+|_+$/g, "");
           await prompter.note(
             [
-              "The normal Gateway and Node wizard paths do not accept plaintext wallet keys. Local same-user isolation is not a hard compromise boundary; Hosting isolates the signer account.",
-              hosting
-                ? "Open the VPS provider root console and run this root-administrator command. Do not run it from the app shell and do not grant app sudo:"
-                : "Run this from an authenticated terminal on the signer host:",
-              command,
-              "Then rerun wallet setup and choose Manage wallet to register/verify the returned public address.",
+              "Hosting keeps plaintext wallet keys outside the app/Gateway OS account.",
+              "From the VPS provider root console, place the Solana keypair in /root/wallet.json with mode 600, then run:",
+              `/usr/local/sbin/fased-signer-wallet-import --wallet-id ${shellQuote(signerWalletId)} --locked-role ${shellQuote(walletPurpose)} < /root/wallet.json`,
+              "Return to the app account, rerun onboarding, and choose Create with the same role and wallet ID. The signer reuses only that exact existing deny-all wallet, then activates the one RPC and registers it.",
             ].join("\n"),
-            "Native signer import",
+            "Signer-owned Hosting import",
           );
           addAnotherWallet = await prompter.confirm({
             message: "Run another wallet setup action?",
@@ -1686,6 +1643,18 @@ export async function runOnboardingWizard(
           });
           continue;
         }
+        const importFile =
+          selfHostedAction === "import"
+            ? (
+                await prompter.text({
+                  message: "Absolute path to owner-only Solana keypair JSON",
+                  validate: (value) =>
+                    value.trim().startsWith("/")
+                      ? undefined
+                      : "Enter an absolute path and run chmod 600 on the file first",
+                })
+              ).trim()
+            : undefined;
         const rpcKey = rpcEnvKeyFor(chain, walletId);
         const currentRpcValue =
           (nextConfig.env?.vars?.[rpcKey] ?? "").trim() || String(process.env[rpcKey] ?? "").trim();
@@ -1703,8 +1672,6 @@ export async function runOnboardingWizard(
         if (!effectiveRpcUrl) {
           throw new Error(`${chain.toUpperCase()} RPC URL is required for wallets.`);
         }
-        nextConfig = setConfigEnvVar(nextConfig, rpcKey, effectiveRpcUrl);
-        process.env[rpcKey] = effectiveRpcUrl;
         try {
           if (mode === "local-signer-create") {
             try {
@@ -1714,6 +1681,7 @@ export async function runOnboardingWizard(
                 walletId,
                 walletName,
                 rpcUrl: effectiveRpcUrl,
+                role: walletPurpose,
                 // Onboarding is repairable after a signer wallet was durably created but a
                 // later network/bootstrap step failed. The signer permits reuse only when the
                 // existing wallet has the exact requested role; it never overwrites the key.
@@ -1738,6 +1706,7 @@ export async function runOnboardingWizard(
                   walletId,
                   walletName,
                   rpcUrl: effectiveRpcUrl,
+                  role: walletPurpose,
                   force: true,
                   noDoctor: true,
                   noSignerHints: true,
@@ -1747,24 +1716,25 @@ export async function runOnboardingWizard(
                 throw err;
               }
             }
-            if (hostProfile === "hosting") {
-              const nativeWalletId = (walletId ?? walletPurpose)
-                .trim()
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, "_")
-                .replace(/^_+|_+$/g, "");
-              await prompter.note(
-                [
-                  "The wallet key was created inside the root-managed signer with deny-all policy.",
-                  "The Gateway has no sudo or root control socket, so RPC activation is a separate host-administrator step.",
-                  "From a provider/root console, copy the installed network template to a root-owned mode-0600 file, set the exact RPC URLs, then run:",
-                  `/usr/local/sbin/fased-signer-network --wallet-id ${nativeWalletId} --network-file /root/fased-network.json`,
-                  "Signing stays disabled until network activation, owner enrollment, and an explicit positive-cap policy all succeed.",
-                ].join("\n"),
-                "Hosted wallet owner handoff",
-              );
-            }
+          } else {
+            await walletSetupCommand(runtime, {
+              mode,
+              chain,
+              walletId,
+              walletName,
+              role: walletPurpose,
+              rpcUrl: effectiveRpcUrl,
+              importFile,
+              noDoctor: true,
+              noSignerHints: true,
+              nonInteractive: true,
+            });
           }
+          // Commit the Gateway read endpoint only after the signer has accepted the
+          // RPC and its genesis. A later successful wallet action must never cause a
+          // rejected endpoint from an earlier action to leak into the final config.
+          nextConfig = setConfigEnvVar(nextConfig, rpcKey, effectiveRpcUrl);
+          process.env[rpcKey] = effectiveRpcUrl;
           walletCeremonyEvents.push({
             mode,
             chain,
@@ -1775,6 +1745,39 @@ export async function runOnboardingWizard(
             ok: true,
           });
           createdOrImportedSelfHostedWalletThisRun = true;
+          if (hostProfile !== "hosting") {
+            const exportRecovery = await prompter.confirm({
+              message: "Create an encrypted recovery package now?",
+              initialValue: true,
+            });
+            if (exportRecovery) {
+              const defaultRecoveryPath = path.join(
+                process.env.HOME || process.cwd(),
+                `fased-${walletId ?? walletPurpose}-recovery.json`,
+              );
+              const recoveryOutput = (
+                await prompter.text({
+                  message: "New encrypted recovery package path",
+                  initialValue: defaultRecoveryPath,
+                  validate: (value) =>
+                    path.isAbsolute(value.trim())
+                      ? undefined
+                      : "Enter an absolute path for a new file",
+                })
+              ).trim();
+              await walletRecoveryExportCommand(runtime, {
+                walletId: walletId ?? walletPurpose,
+                output: recoveryOutput,
+              });
+              await prompter.note(
+                [
+                  `Encrypted recovery package: ${recoveryOutput}`,
+                  "Keep the recovery password separately. The file contains ciphertext, wallet id, role, public address, and format metadata; it never contains plaintext key material.",
+                ].join("\n"),
+                "Wallet recovery",
+              );
+            }
+          }
           const agentDefaultBefore = readAgentDefaultWallet();
           const existingWallet = readWalletProviderRegistry(process.env).wallets.find(
             (entry) => entry.id === walletId,

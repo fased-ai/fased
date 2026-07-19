@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +11,9 @@ import {
 } from "../wallet/wallet-provider-registry.js";
 import {
   walletLegacyMigrationFinalizeCommand,
+  walletRecoveryExportCommand,
+  walletRecoveryImportCommand,
+  walletRawExportCommand,
   walletRotateKeysCommand,
   walletSetupCommand,
 } from "./wallet.js";
@@ -49,7 +53,7 @@ const signerMocks = vi.hoisted(() => ({
   install: vi.fn(),
   restart: vi.fn(async () => undefined),
   networkPut: vi.fn(
-    (): SignerNetworkSummary => ({
+    (_params?: Record<string, unknown>): SignerNetworkSummary => ({
       walletId: "agent",
       configured: true,
       version: 1,
@@ -57,8 +61,41 @@ const signerMocks = vi.hoisted(() => ({
       ready: true,
     }),
   ),
+  importProcess: vi.fn((_command: string, args: string[]) => {
+    const walletId = args[args.indexOf("--wallet-id") + 1] || "mining";
+    const role = args[args.indexOf("--locked-role") + 1] || "mining";
+    return {
+      status: 0,
+      signal: null,
+      stdout: JSON.stringify({
+        wallet: {
+          walletId,
+          publicKey: "11111111111111111111111111111111",
+          version: 1,
+          createdAt: "2026-07-19T00:00:00.000Z",
+        },
+        policy: {
+          walletId,
+          role,
+          version: 1,
+          operations: [],
+          programs: [],
+          assets: [],
+          hash: `sha256:${"d".repeat(64)}`,
+        },
+      }),
+      stderr: "",
+      pid: 1,
+      output: [],
+    };
+  }),
   socketCall: vi.fn(),
 }));
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, spawnSync: signerMocks.importProcess };
+});
 
 vi.mock("../wallet/local-socket-signer-lifecycle.js", () => ({
   createLockedSignerOwnedWallet: signerMocks.create,
@@ -117,6 +154,7 @@ describe("walletSetupCommand native signer boundary", () => {
     signerMocks.install.mockClear();
     signerMocks.restart.mockClear();
     signerMocks.networkPut.mockClear();
+    signerMocks.importProcess.mockClear();
     signerMocks.socketCall.mockReset();
     vi.unstubAllEnvs();
   });
@@ -138,6 +176,7 @@ describe("walletSetupCommand native signer boundary", () => {
         chain: "solana",
         walletId: "solana-1",
         walletName: "Solana 1",
+        role: "agent",
         rpcUrl: "https://rpc.example/solana",
         nonInteractive: true,
         noDoctor: true,
@@ -200,6 +239,44 @@ describe("walletSetupCommand native signer boundary", () => {
     }
   });
 
+  it("does not persist an RPC that signer validation rejects", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-rpc-reject-"));
+    const configPath = path.join(root, "fased.json");
+    await fs.writeFile(configPath, "{}\n", "utf8");
+    vi.stubEnv("FASED_CONFIG_PATH", configPath);
+    vi.stubEnv("FASED_DISABLE_CONFIG_CACHE", "1");
+    vi.stubEnv("FASED_STATE_DIR", path.join(root, "state"));
+    clearConfigCache();
+    signerMocks.networkPut.mockRejectedValueOnce(new Error("RPC genesis verification failed"));
+
+    try {
+      await expect(
+        walletSetupCommand({ log: vi.fn() } as never, {
+          mode: "local-signer-create",
+          chain: "solana",
+          walletId: "rejected-rpc",
+          walletName: "Rejected RPC",
+          role: "agent",
+          rpcUrl: "https://wrong-network.example/solana",
+          nonInteractive: true,
+          noDoctor: true,
+          noSignerHints: true,
+        }),
+      ).rejects.toThrow(/genesis verification failed/i);
+
+      clearConfigCache();
+      const cfg = loadConfig();
+      expect(cfg.env?.vars?.FASED_WALLET_SOLANA_RPC_URL__REJECTED_RPC).toBeUndefined();
+      expect(
+        readWalletProviderRegistry(process.env).wallets.find(
+          (wallet) => wallet.id === "rejected-rpc",
+        ),
+      ).toBeUndefined();
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("never promotes the generic read fallback into the signer execution plane", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-rpc-role-"));
     const configPath = path.join(root, "fased.json");
@@ -223,17 +300,17 @@ describe("walletSetupCommand native signer boundary", () => {
       });
 
       expect(signerMocks.networkPut).toHaveBeenCalledWith(
-        expect.objectContaining({
-          primaryRpcUrl: "https://primary.example/solana",
-          executionFallbackRpcUrl: undefined,
-        }),
+        expect.objectContaining({ primaryRpcUrl: "https://primary.example/solana" }),
+      );
+      expect(signerMocks.networkPut.mock.calls[0]?.[0]).not.toHaveProperty(
+        "executionFallbackRpcUrl",
       );
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
 
-  it("uses the first non-empty advanced execution fallback and supports the legacy write key", async () => {
+  it("keeps advanced execution fallback settings out of normal one-RPC onboarding", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-rpc-advanced-"));
     const configPath = path.join(root, "fased.json");
     await fs.writeFile(configPath, "{}\n", "utf8");
@@ -260,9 +337,10 @@ describe("walletSetupCommand native signer boundary", () => {
       });
 
       expect(signerMocks.networkPut).toHaveBeenCalledWith(
-        expect.objectContaining({
-          executionFallbackRpcUrl: "https://advanced-execution.example/solana",
-        }),
+        expect.objectContaining({ primaryRpcUrl: "https://primary.example/solana" }),
+      );
+      expect(signerMocks.networkPut.mock.calls[0]?.[0]).not.toHaveProperty(
+        "executionFallbackRpcUrl",
       );
     } finally {
       await fs.rm(root, { recursive: true, force: true });
@@ -282,12 +360,10 @@ describe("walletSetupCommand native signer boundary", () => {
     vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_SOCKET", "/run/fased-signerd/app.sock");
     signerMocks.networkPut.mockReturnValueOnce({
       walletId: "agent",
-      configured: false,
-      version: 0,
-      ready: false,
-      rootAdminRequired: true,
-      rootCommand:
-        "/usr/local/sbin/fased-signer-network --wallet-id agent --network-file /root/fased-network.json",
+      configured: true,
+      version: 1,
+      hash: `hmac-sha256:${"c".repeat(64)}`,
+      ready: true,
     });
     clearConfigCache();
     try {
@@ -296,6 +372,7 @@ describe("walletSetupCommand native signer boundary", () => {
         chain: "solana",
         walletId: "agent",
         walletName: "Agent",
+        role: "agent",
         rpcUrl: "https://hosted-rpc.example/solana?api-key=secret",
         nonInteractive: true,
         noDoctor: true,
@@ -327,7 +404,7 @@ describe("walletSetupCommand native signer boundary", () => {
       const hostedWallet = readWalletProviderRegistry(process.env).wallets.find(
         (wallet) => wallet.id === "agent",
       );
-      expect(hostedWallet?.metadata?.networkReady).toBe(false);
+      expect(hostedWallet?.metadata?.networkReady).toBe(true);
       expect(hostedWallet?.metadata?.policyState).toBe("locked");
     } finally {
       await fs.rm(root, { recursive: true, force: true });
@@ -414,10 +491,18 @@ describe("walletSetupCommand native signer boundary", () => {
     }
   });
 
-  it("routes imports exclusively to the native signer CLI without mutating config", async () => {
+  it("imports through the native signer with the keypair passed only by file descriptor", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-native-import-"));
     const configPath = path.join(root, "fased.json");
+    const importPath = path.join(root, "mining-keypair.json");
     await fs.writeFile(configPath, "{}\n", "utf8");
+    await fs.writeFile(
+      importPath,
+      `[${Array.from({ length: 64 }, (_, index) => index).join(",")}]\n`,
+      {
+        mode: 0o600,
+      },
+    );
     vi.stubEnv("FASED_CONFIG_PATH", configPath);
     vi.stubEnv("FASED_DISABLE_CONFIG_CACHE", "1");
     vi.stubEnv("FASED_STATE_DIR", path.join(root, "state"));
@@ -429,15 +514,121 @@ describe("walletSetupCommand native signer boundary", () => {
         mode: "local-signer-import",
         chain: "solana",
         walletId: "mining",
+        role: "mining",
+        walletName: "Mining",
+        importFile: importPath,
+        rpcUrl: "https://rpc.example/solana",
         nonInteractive: true,
         noDoctor: true,
       });
-      expect(log.mock.calls.flat().join("\n")).toMatch(/admin wallet import --control-socket/i);
-      expect(log.mock.calls.flat().join("\n")).toMatch(/import-legacy/iu);
-      expect(log.mock.calls.flat().join("\n")).toMatch(/--wallet-id mining --locked-role mining/iu);
-      expect(log.mock.calls.flat().join("\n")).toMatch(/finalize-legacy-migration/iu);
-      await expect(fs.readFile(configPath, "utf8")).resolves.toBe("{}\n");
+      expect(signerMocks.importProcess).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.arrayContaining([
+          "admin",
+          "wallet",
+          "import",
+          "--wallet-id",
+          "mining",
+          "--locked-role",
+          "mining",
+        ]),
+        expect.objectContaining({
+          stdio: [expect.any(Number), "pipe", "pipe"],
+        }),
+      );
+      expect(JSON.stringify(signerMocks.importProcess.mock.calls)).not.toContain(
+        await fs.readFile(importPath, "utf8"),
+      );
+      expect(log.mock.calls.flat().join("\n")).toContain("Imported mining wallet mining");
+      expect(readWalletProviderRegistry(process.env).wallets).toContainEqual(
+        expect.objectContaining({
+          id: "mining",
+          metadata: expect.objectContaining({ role: "mining" }),
+        }),
+      );
       expect(signerMocks.create).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an import file swapped after validation instead of reading the replacement", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-native-import-race-"));
+    const configPath = path.join(root, "fased.json");
+    const importPath = path.join(root, "agent-keypair.json");
+    const originalPath = path.join(root, "original.json");
+    const replacementPath = path.join(root, "replacement.json");
+    await fs.writeFile(configPath, "{}\n", "utf8");
+    await fs.writeFile(importPath, "[1]\n", { mode: 0o600 });
+    await fs.writeFile(replacementPath, "[2]\n", { mode: 0o600 });
+    vi.stubEnv("FASED_CONFIG_PATH", configPath);
+    vi.stubEnv("FASED_DISABLE_CONFIG_CACHE", "1");
+    vi.stubEnv("FASED_STATE_DIR", path.join(root, "state"));
+    clearConfigCache();
+
+    const actualOpenSync = fsSync.openSync.bind(fsSync);
+    const openSpy = vi.spyOn(fsSync, "openSync").mockImplementation((target, flags, mode) => {
+      if (target === importPath) {
+        fsSync.renameSync(importPath, originalPath);
+        fsSync.renameSync(replacementPath, importPath);
+      }
+      return actualOpenSync(target, flags, mode);
+    });
+    try {
+      await expect(
+        walletSetupCommand({ log: vi.fn() } as never, {
+          mode: "local-signer-import",
+          chain: "solana",
+          walletId: "agent",
+          role: "agent",
+          importFile: importPath,
+          rpcUrl: "https://rpc.example/solana",
+          nonInteractive: true,
+          noDoctor: true,
+        }),
+      ).rejects.toThrow(/changed or became unsafe/i);
+      expect(signerMocks.importProcess).not.toHaveBeenCalled();
+      expect(openSpy).toHaveBeenCalledWith(
+        importPath,
+        fsSync.constants.O_RDONLY | fsSync.constants.O_NOFOLLOW,
+      );
+    } finally {
+      openSpy.mockRestore();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps Hosting private-key import out of the app account", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-hosted-import-reject-"));
+    const configPath = path.join(root, "fased.json");
+    const importPath = path.join(root, "agent-keypair.json");
+    await fs.writeFile(configPath, "{}\n", "utf8");
+    await fs.writeFile(importPath, `[${Array.from({ length: 64 }, () => 1).join(",")}]\n`, {
+      mode: 0o600,
+    });
+    vi.stubEnv("FASED_CONFIG_PATH", configPath);
+    vi.stubEnv("FASED_DISABLE_CONFIG_CACHE", "1");
+    vi.stubEnv("FASED_STATE_DIR", path.join(root, "state"));
+    vi.stubEnv("FASED_HOST_PROFILE", "hosting");
+    vi.stubEnv("FASED_HOST_ROOT_PREPARED", "1");
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_SOCKET", "/run/fased-signerd/app.sock");
+    clearConfigCache();
+
+    try {
+      await expect(
+        walletSetupCommand({ log: vi.fn() } as never, {
+          mode: "local-signer-import",
+          chain: "solana",
+          walletId: "agent",
+          role: "agent",
+          walletName: "Agent",
+          importFile: importPath,
+          rpcUrl: "https://rpc.example/solana",
+          nonInteractive: true,
+          noDoctor: true,
+        }),
+      ).rejects.toThrow(/provider root console/i);
+      expect(signerMocks.importProcess).not.toHaveBeenCalled();
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
@@ -470,6 +661,145 @@ describe("walletSetupCommand native signer boundary", () => {
     await expect(walletRotateKeysCommand({ log: vi.fn() } as never)).rejects.toThrow(
       /fased-signerd admin wallet reencrypt --control-socket/i,
     );
+  });
+
+  it("exports encrypted recovery with the password read directly by the native signer", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-native-recovery-"));
+    const configPath = path.join(root, "fased.json");
+    const outputPath = path.join(root, "agent-recovery.json");
+    await fs.writeFile(configPath, "{}\n", "utf8");
+    vi.stubEnv("FASED_CONFIG_PATH", configPath);
+    vi.stubEnv("FASED_DISABLE_CONFIG_CACHE", "1");
+    vi.stubEnv("FASED_STATE_DIR", path.join(root, "state"));
+    clearConfigCache();
+    try {
+      upsertNamedWallet({
+        walletId: "agent",
+        name: "Agent",
+        providerId: "local-socket-signer",
+        addresses: { solana: "11111111111111111111111111111111" },
+        metadata: { role: "agent", signerWalletId: "agent" },
+        env: process.env,
+      });
+      await walletRecoveryExportCommand({ log: vi.fn() } as never, {
+        walletId: "agent",
+        output: outputPath,
+      });
+      expect(signerMocks.importProcess).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.arrayContaining([
+          "admin",
+          "wallet",
+          "recovery-export",
+          "--wallet-id",
+          "agent",
+          "--expected-public-key",
+          "11111111111111111111111111111111",
+          "--output",
+          outputPath,
+        ]),
+        expect.objectContaining({ stdio: "inherit" }),
+      );
+      expect(JSON.stringify(signerMocks.importProcess.mock.calls)).not.toMatch(
+        /password|passphrase|seed|private.key/i,
+      );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("restores encrypted recovery with the password read by the native signer and one RPC", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-native-recovery-import-"));
+    const configPath = path.join(root, "fased.json");
+    const recoveryPath = path.join(root, "agent-recovery.json");
+    await fs.writeFile(configPath, "{}\n", "utf8");
+    await fs.writeFile(recoveryPath, '{"encrypted":"package"}\n', { mode: 0o600 });
+    vi.stubEnv("FASED_CONFIG_PATH", configPath);
+    vi.stubEnv("FASED_DISABLE_CONFIG_CACHE", "1");
+    vi.stubEnv("FASED_STATE_DIR", path.join(root, "state"));
+    clearConfigCache();
+    try {
+      await walletRecoveryImportCommand({ log: vi.fn() } as never, {
+        walletId: "agent-restored",
+        walletName: "Restored Agent",
+        role: "agent",
+        recoveryFile: recoveryPath,
+        rpcUrl: "https://rpc.example/solana",
+      });
+      expect(signerMocks.importProcess).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.arrayContaining([
+          "admin",
+          "wallet",
+          "recovery-import",
+          "--wallet-id",
+          "agent_restored",
+          "--locked-role",
+          "agent",
+          "--recovery-file",
+          recoveryPath,
+        ]),
+        expect.objectContaining({ stdio: ["inherit", "pipe", "pipe"] }),
+      );
+      expect(signerMocks.networkPut).toHaveBeenCalledWith(
+        expect.objectContaining({
+          walletId: "agent_restored",
+          primaryRpcUrl: "https://rpc.example/solana",
+        }),
+      );
+      expect(JSON.stringify(signerMocks.importProcess.mock.calls)).not.toMatch(
+        /password|passphrase|seed|private.key/i,
+      );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps advanced raw export native, explicit, and out of argv secrets", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-native-raw-export-"));
+    const configPath = path.join(root, "fased.json");
+    const outputPath = path.join(root, "agent-keypair.json");
+    await fs.writeFile(configPath, "{}\n", "utf8");
+    vi.stubEnv("FASED_CONFIG_PATH", configPath);
+    vi.stubEnv("FASED_DISABLE_CONFIG_CACHE", "1");
+    vi.stubEnv("FASED_STATE_DIR", path.join(root, "state"));
+    clearConfigCache();
+    try {
+      upsertNamedWallet({
+        walletId: "agent",
+        name: "Agent",
+        providerId: "local-socket-signer",
+        addresses: { solana: "11111111111111111111111111111111" },
+        metadata: { role: "agent", signerWalletId: "agent" },
+        env: process.env,
+      });
+      await walletRawExportCommand({ log: vi.fn() } as never, {
+        walletId: "agent",
+        output: outputPath,
+        acknowledgeCustodyReduction: true,
+      });
+      expect(signerMocks.importProcess).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.arrayContaining([
+          "admin",
+          "wallet",
+          "export-raw",
+          "--wallet-id",
+          "agent",
+          "--expected-public-key",
+          "11111111111111111111111111111111",
+          "--output",
+          outputPath,
+          "--acknowledge-custody-reduction",
+        ]),
+        expect.objectContaining({ stdio: "inherit" }),
+      );
+      expect(JSON.stringify(signerMocks.importProcess.mock.calls)).not.toMatch(
+        /password|passphrase|seed|private.key/i,
+      );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 
   it("finalizes a native legacy import only after verifying the protocol-v2 public key", async () => {

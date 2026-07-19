@@ -150,7 +150,7 @@ sudo /usr/local/sbin/fased-signer-policy \
 Registry handles and signer ids can differ: `@wallet:agent-2` maps to canonical
 signer id `agent_2`. Use the canonical signer id in native policy/network input.
 
-## 4. Configure both RPC planes
+## 4. Enter one RPC; keep execution and read responsibilities separate
 
 Fased deliberately has two RPC planes:
 
@@ -230,16 +230,15 @@ or unknown requests are reconciled; they are not rebroadcast.
 
 ## 7. WebAuthn and hardware review
 
-Native WebAuthn is verified in Go and binds the exact review. Every manual
-native reviewed Agent, Mining, or Vault action requires it; narrowly autonomous
-Agent and generated Mining operations are the policy-controlled exceptions. It
-protects against replay and a Gateway-generated broad approval token.
+Signer-owned approval is verified in Go and binds an exact review. Vault is
+manual-only. Agent and generated Mining operations inside their narrow policies
+do not prompt for a passkey; work outside policy is rejected unless the owner
+separately enables an exact reviewed lane.
 
-The Wallets Access-tab **Wallet Control Passkey** is a separate Gateway-owned
-credential and cannot satisfy signer WebAuthn. The review UI is also served by
-the Gateway and does not independently show transaction intent. A hardware
-wallet with an on-device transaction display is stronger for high-value manual
-approval.
+The optional **Control UI account passkey** under **Account Security** is a
+separate Gateway-owned credential. It does not affect Agent or Mining readiness
+and cannot satisfy signer-owned approval. A hardware wallet with an on-device
+transaction display is stronger for high-value manual approval.
 
 Keep at least two recoverable WebAuthn credentials where supported and test the
 operator recovery procedure before funding a Vault.
@@ -315,5 +314,5 @@ Before funding or enabling automation, verify all of these:
 - [Wallet roles and policies](/plugins/crypto/wallet-roles-and-policies)
 - [Wallet signer architecture](/plugins/crypto/wallet-signer-provider-architecture)
 - [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted)
-- [Wallet Control Passkey](/plugins/crypto/wallet-control-passkey)
+- [Wallet passkeys](/plugins/crypto/wallet-control-passkey)
 - [Mining](/plugins/crypto/mining-page)

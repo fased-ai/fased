@@ -325,7 +325,7 @@ func normalizeSignerRPCURLV2(raw, field string) (string, error) {
 			return "", fmt.Errorf("%s contains an unsafe host", field)
 		}
 	} else if isUnsafeSignerRPCIPV2(ip) {
-		return "", fmt.Errorf("%s targets an unsafe metadata, link-local, multicast, or unspecified address", field)
+		return "", fmt.Errorf("%s targets an unsafe private, metadata, link-local, multicast, or unspecified address", field)
 	}
 	if scheme == "http" && !isSignerRPCLoopbackHostV2(hostname, ip) {
 		return "", fmt.Errorf("%s must use HTTPS except for loopback local development", field)
@@ -412,7 +412,7 @@ func isUnsafeSignerRPCIPV2(ip net.IP) bool {
 	if ip == nil {
 		return true
 	}
-	if ip.IsUnspecified() || ip.IsMulticast() || ip.IsInterfaceLocalMulticast() || ip.IsLinkLocalMulticast() || ip.IsLinkLocalUnicast() {
+	if ip.IsUnspecified() || ip.IsPrivate() || ip.IsMulticast() || ip.IsInterfaceLocalMulticast() || ip.IsLinkLocalMulticast() || ip.IsLinkLocalUnicast() {
 		return true
 	}
 	if ipv4 := ip.To4(); ipv4 != nil {
@@ -680,6 +680,9 @@ func (m *signerKeyManagerV2) PutNetworkV2(walletID string, request signerNetwork
 	if err != nil {
 		return signerNetworkSummaryV2{}, err
 	}
+	pinnedGenesis := ""
+	legacyConfig := signerNetworkSecretV2{}
+	hasUnpinnedLegacyConfig := false
 	if err := m.store.db.View(func(tx *bolt.Tx) error {
 		if tx.Bucket(bucketSignerWalletsV2).Get([]byte(walletID)) == nil {
 			return errors.New("signer wallet not found")
@@ -690,8 +693,14 @@ func (m *signerKeyManagerV2) PutNetworkV2(walletID string, request signerNetwork
 			if err := decodeSignerNetworkRecordV2(raw, &current); err != nil || current.WalletID != walletID {
 				return errors.New("invalid stored signer network record")
 			}
-			if _, err := m.decryptNetworkRecordV2(current); err != nil {
+			currentConfig, err := m.decryptNetworkRecordV2(current)
+			if err != nil {
 				return errors.New("stored signer network record is not ready")
+			}
+			pinnedGenesis = currentConfig.GenesisHash
+			if pinnedGenesis == "" {
+				legacyConfig = currentConfig
+				hasUnpinnedLegacyConfig = true
 			}
 			currentVersion = current.Version
 		}
@@ -705,9 +714,23 @@ func (m *signerKeyManagerV2) PutNetworkV2(walletID string, request signerNetwork
 	}); err != nil {
 		return signerNetworkSummaryV2{}, err
 	}
+	// Legacy v0.1.65 records predate the durable genesis pin. Before accepting a
+	// replacement, resolve the old endpoint and use its genesis as the immutable
+	// comparison point. If the old endpoint is unavailable, fail closed instead of
+	// letting the lower-privilege application socket choose a new cluster.
+	if hasUnpinnedLegacyConfig {
+		verifiedLegacy, err := m.verifySignerNetworkGenesisV2(legacyConfig)
+		if err != nil {
+			return signerNetworkSummaryV2{}, errors.New("stored signer network genesis could not be verified")
+		}
+		pinnedGenesis = verifiedLegacy.GenesisHash
+	}
 	config, err = m.verifySignerNetworkGenesisV2(config)
 	if err != nil {
 		return signerNetworkSummaryV2{}, err
+	}
+	if pinnedGenesis != "" && subtle.ConstantTimeCompare([]byte(pinnedGenesis), []byte(config.GenesisHash)) != 1 {
+		return signerNetworkSummaryV2{}, errors.New("replacement Solana RPC does not match the wallet's pinned genesis hash")
 	}
 	var stored signerNetworkRecordV2
 	err = m.store.db.Update(func(tx *bolt.Tx) error {
@@ -756,6 +779,38 @@ func (m *signerKeyManagerV2) PutNetworkV2(walletID string, request signerNetwork
 		Hash:       stored.Hash,
 		Ready:      true,
 	}, nil
+}
+
+// PutApplicationNetworkV2 is the fixed-purpose application-socket broker for
+// ordinary one-RPC onboarding and edits. It cannot set a fallback, witness,
+// policy, key, path, or command. Initial activation is limited to a fresh,
+// deny-all wallet. Later edits must retain the wallet's already pinned genesis.
+func (m *signerKeyManagerV2) PutApplicationNetworkV2(walletID string, request signerNetworkPutRequestV2) (signerNetworkSummaryV2, error) {
+	if request.ExpectedVersion == nil {
+		return signerNetworkSummaryV2{}, errors.New("expectedVersion is required")
+	}
+	if request.ExecutionFallbackRPCURL != "" || request.VerificationRPCURL != "" || request.LegacyFallbackRPCURL != "" {
+		return signerNetworkSummaryV2{}, errors.New("application network activation accepts exactly one primaryRpcUrl")
+	}
+	walletID = normalizeWalletID(walletID)
+	wallet, err := m.PublicRecord(walletID)
+	if err != nil {
+		return signerNetworkSummaryV2{}, err
+	}
+	if wallet.RetiredAt != "" {
+		return signerNetworkSummaryV2{}, errors.New("signer wallet is permanently retired")
+	}
+	policy, err := m.store.getPolicy(walletID)
+	if err != nil {
+		return signerNetworkSummaryV2{}, err
+	}
+	if policy.Role != "agent" && policy.Role != "mining" && policy.Role != "vault" {
+		return signerNetworkSummaryV2{}, errors.New("signer wallet role is invalid")
+	}
+	if *request.ExpectedVersion == 0 && (policy.Version != 1 || len(policy.Operations) != 0 || len(policy.Programs) != 0 || len(policy.Assets) != 0) {
+		return signerNetworkSummaryV2{}, errors.New("initial application network activation requires a fresh deny-all wallet")
+	}
+	return m.PutNetworkV2(walletID, request)
 }
 
 func (m *signerKeyManagerV2) getNetworkRecordV2(walletID string) (signerNetworkRecordV2, error) {

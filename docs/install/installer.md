@@ -283,17 +283,18 @@ Native signer note:
   promoted to read-write only after its identity, protocol, and policy state
   pass verification; a pre-commit failure restores the previous signer files
   and process state
-- importing an existing account is a separate native
-  `fased-signerd admin wallet import` control-socket operation; the Gateway,
-  dashboard, and normal setup wizard do not accept private keys
+- Local existing-account import is integrated into terminal onboarding and
+  `fased wallet setup --mode local-signer-import`; the file goes to the signer
+  by descriptor. Hosting import stays in the VPS provider root console through
+  `/usr/local/sbin/fased-signer-wallet-import`, so the `app`/Gateway account
+  never receives the plaintext key or import authority
 - Local runs the signer under the same OS account. Hosting installs an
   independent root-managed systemd service under the `fased-signer` account;
   the Gateway receives only `/run/fased-signerd/app.sock` and never receives the
   control socket, signer state path, or sudo access
 - a newly created signer-owned wallet starts locked with deny-all policy; signer
-  service readiness is not wallet send readiness. Configure both RPC planes,
-  activate an owner-reviewed role policy, verify exact hashes, and enroll signer
-  WebAuthn before manual reviewed execution or funding
+  service readiness is not wallet send readiness. Enter one primary RPC and
+  verify the exact role policy/network readiness before funding
 - supported signer platforms are Linux and macOS on `amd64` or `arm64`; Windows
   users must run Fased inside WSL2, which receives the Linux asset
 - `FASED_WALLET_LOCAL_SIGNER_BIN`, `FASED_LOCAL_SIGNER_VERSION`, and
@@ -320,11 +321,10 @@ Native signer note:
   <Tab title="Hosting profile">
     From the VPS provider root console:
 
-    Follow the
-    [verified Hosting bootstrap](/install/vps#3-verify-and-run-the-hosting-bootstrap).
-
-    See [VPS Hosting](/install/vps) for the Tailscale access check and advanced
-    release-selection options.
+    Run the complete [verified Hosting bootstrap
+    block](/install/vps#3-verify-and-run-the-hosting-bootstrap). It authenticates
+    the exact tagged `install.sh` before Bash executes downloaded Fased code,
+    then verifies the immutable Hosting bundle before privileged installation.
 
   </Tab>
   <Tab title="Repair hosting">
@@ -425,7 +425,7 @@ curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | ba
 
 This raw bootstrap is Local because it does not select the Hosting profile. For
 unattended Hosting, begin with the attested standalone release asset in the
-[manual verification procedure](/install/vps#advanced-verify-the-bootstrap-first)
+[verified Hosting procedure](/install/vps#3-verify-and-run-the-hosting-bootstrap)
 and keep the same security order:
 
 1. provision the host

@@ -4,11 +4,17 @@ import { describe, expect, it } from "vitest";
 const installer = fs.readFileSync(new URL("../install.sh", import.meta.url), "utf8");
 
 describe("managed installer release pinning", () => {
-  it("rejects streamed Hosting before selecting or downloading a release", () => {
-    expect(installer).toContain("Refusing streamed VPS Hosting execution");
-    expect(installer).not.toContain(
-      'if [[ "$install_entry_is_stream" -eq 1 && "$hosting_bootstrap" -eq 1 && "$hosting_repair_bootstrap" -eq 0 && -z "$hosting_release" ]]',
+  it("rejects streamed Hosting and retains the attested exact-release file path", () => {
+    expect(installer).toContain(
+      'if [[ "$install_entry_is_stream" -eq 1 && "$install_entry_hosting" -eq 1 ]]',
     );
+    expect(installer).toContain("Refusing streamed VPS Hosting execution");
+    expect(installer).toContain("verify an exact tagged release installer");
+    expect(installer).toContain(
+      'if [[ "$hosting_bootstrap" -eq 1 && "$hosting_repair_bootstrap" -eq 0 && -z "$hosting_release" ]]',
+    );
+    expect(installer).not.toContain("Refusing streamed VPS Hosting repair");
+    expect(installer).toContain('hosting_release="latest"');
     expect(installer).toContain("bootstrap_hosting_attested_bundle");
     expect(installer).toContain('gh attestation verify "$release_manifest"');
     expect(installer).toContain('gh attestation verify "$archive"');

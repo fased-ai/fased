@@ -58,11 +58,14 @@ authorize arbitrary SPL assets, generic sends, or serialized swaps.
 
 ## Manual native authorization
 
-Every manual native Agent, Mining, or Vault action requires a freshly prepared
-exact review. Signer WebAuthn binds the wallet, role, decoded transaction,
-policy hash, request id, nonce, and expiry. The authorization is consumed once.
-The Wallets Access-tab Wallet Control Passkey is separate Gateway
-authentication and cannot satisfy this signer challenge.
+Vault actions and any separately enabled owner-review lane require a freshly
+prepared exact review. Agent and Mining automation inside narrow typed policy
+does not prompt for a passkey; requests outside policy are otherwise rejected.
+Signer-owned approval binds wallet, role, decoded transaction, policy hash,
+request id, nonce, and expiry and is consumed once.
+The optional Control UI account passkey under Account Security is separate
+Gateway authentication. It does not affect Agent or Mining readiness and cannot
+satisfy this signer challenge.
 
 A hardware Wallet Standard Vault instead signs that immutable review in the
 browser wallet; confirm transaction intent on-device. Turnkey relies on its
@@ -102,5 +105,5 @@ fased mining readiness --wallet mining
 
 - [Autonomous wallet security](/plugins/crypto/wallet-autonomous-security)
 - [Wallet roles and policies](/plugins/crypto/wallet-roles-and-policies)
-- [Wallet Control Passkey](/plugins/crypto/wallet-control-passkey)
+- [Wallet passkeys](/plugins/crypto/wallet-control-passkey)
 - [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted)

@@ -392,6 +392,21 @@ export type LocalSocketSignerSatLookupBindingV2 = Static<
   typeof LocalSocketSignerSatLookupBindingV2Schema
 >;
 
+export const LocalSocketSignerNetworkSummaryV2Schema = Type.Object(
+  {
+    walletId: Type.String({ minLength: 1, maxLength: 64 }),
+    configured: Type.Boolean(),
+    version: Type.Integer({ minimum: 0 }),
+    hash: Type.Optional(Type.String({ pattern: "^hmac-sha256:[0-9a-f]{64}$" })),
+    ready: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+
+export type LocalSocketSignerNetworkSummaryV2 = Static<
+  typeof LocalSocketSignerNetworkSummaryV2Schema
+>;
+
 export const LocalSocketSignerRequestSchema = Type.Union(
   [
     Type.Object({ op: Type.Literal("health") }, { additionalProperties: false }),
@@ -402,6 +417,24 @@ export const LocalSocketSignerRequestSchema = Type.Union(
     ),
     Type.Object(
       { op: Type.Literal("v2.policy.get"), walletId: Type.String() },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      { op: Type.Literal("v2.network.get"), walletId: Type.String() },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.network.bootstrap"),
+        walletId: Type.String(),
+        request: Type.Object(
+          {
+            expectedVersion: Type.Integer({ minimum: 0 }),
+            primaryRpcUrl: Type.String({ minLength: 1, maxLength: 2048 }),
+          },
+          { additionalProperties: false },
+        ),
+      },
       { additionalProperties: false },
     ),
     Type.Object(
@@ -1009,6 +1042,9 @@ export function validateLocalSocketSignerResult(
       return Value.Check(LocalSocketSignerHealthResultSchema, result);
     case "v2.jupiter.trigger.history":
       return Value.Check(LocalSocketSignerJupiterTriggerHistoryV2Schema, result);
+    case "v2.network.get":
+    case "v2.network.bootstrap":
+      return Value.Check(LocalSocketSignerNetworkSummaryV2Schema, result);
     case "v2.policy.get":
     case "v2.policy.put":
     case "v2.policy.tighten":

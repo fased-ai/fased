@@ -1,522 +1,201 @@
 ---
-summary: "Native self-hosted signer setup, Local and Hosting boundaries, key lifecycle, policy, WebAuthn, RPC, files, and recovery."
+summary: "How the native Go signer protects Agent, Mining, and Vault wallets on Local and Hosting."
 read_when:
   - Creating or operating a native Fased wallet
-  - Understanding what Go, the Gateway, and the host administrator can access
+  - Comparing Local and Hosting custody boundaries
 title: "Self-hosted wallet signer"
 sidebarTitle: "Self-hosted wallet"
 ---
 
 # Self-hosted wallet signer
 
-The supported self-hosted wallet provider is `local-socket-signer`, backed by
-the native Go process `fased-signerd`.
+Fased's native wallet provider is `local-socket-signer`, backed by the Go
+process `fased-signerd`. Keys are generated or imported inside that signer.
+Gateway receives public addresses and typed results, never a generic signing
+primitive or plaintext private key.
 
-The native signer owns key lifecycle, policy, WebAuthn, RPC configuration,
-durable caps, signing, broadcast state, and reconciliation. The Gateway asks
-for typed operations and receives public state or structured results. It does
-not receive a generic signing primitive or plaintext private key.
+## Supported platforms
 
-## Platform support
+| Platform                     | Supported path                                                             |
+| ---------------------------- | -------------------------------------------------------------------------- |
+| Linux                        | Native Local signer                                                        |
+| macOS Intel or Apple silicon | Native Local signer                                                        |
+| Windows                      | WSL2 Ubuntu only; do not run Fased in PowerShell or native Windows Node.js |
+| VPS Hosting                  | Root-managed Linux signer under the dedicated `fased-signer` account       |
 
-| Platform                                   | Supported path                                                             |
-| ------------------------------------------ | -------------------------------------------------------------------------- |
-| Linux desktop/server                       | Native Local signer                                                        |
-| macOS `amd64` or `arm64`                   | Native Local signer                                                        |
-| Windows 11 or Windows 10 2004/build 19041+ | Install and run Fased inside WSL2 Ubuntu; use the Linux signer asset       |
-| VPS Hosting                                | Root-managed Linux signer service under a dedicated `fased-signer` account |
-| Local Docker                               | Separate non-root signer container; Local only, not VPS Hosting            |
+The installer downloads the version-matched signer, verifies checksum and
+artifact attestation, and installs it automatically. Users do not install Go.
 
-Native Windows PowerShell, Command Prompt, Git Bash, and Windows Node.js are not
-supported because the signer protocol uses Unix sockets. Follow [Windows
-(WSL2)](/platforms/windows) and run every Fased command inside Ubuntu.
+## Local and Hosting user experience
 
-Normal users do not install Go. The installer downloads the signer asset for
-the exact Fased version, verifies its SHA-256 checksum and GitHub artifact
-attestation, then installs it automatically. Building from source is a
-developer-only fallback.
+Both flows are the same from the user's perspective:
 
-## Local and Hosting are different boundaries
+1. Choose **Create** or **Import**.
+2. Explicitly select **Agent**, **Mining**, or **Vault**.
+3. Enter a wallet name.
+4. Enter one primary Solana RPC.
+5. Receive the public address and one readiness result.
+
+There is no default role, Solana-network prompt, second-RPC prompt, browser
+passkey prompt, or manual root network command in ordinary onboarding.
+
+The Control UI can create Agent, Mining, and Vault wallets after installation.
+Only one active Mining wallet is allowed. Existing-key import remains in the
+terminal so private material never enters Gateway JavaScript.
+
+## Local and Hosting security boundaries
 
 ### Local Linux, macOS, and WSL2
 
-Gateway and signer run as the signed-in OS user. Go still owns creation,
-import, encrypted key state, and signing, so ordinary Gateway code never sees
-plaintext key material. However, a process that compromises the same OS user
-may be able to inspect that user's files or processes.
-
-Use Local for development and intentionally limited working balances. It is
-not a hard custody boundary against a compromised Gateway process or user
-account.
+Gateway and signer run as the signed-in OS user. Go still isolates key handling
+from normal Gateway code, but a compromise of that OS account can reach the
+same user's processes and files. Use deliberately limited balances.
 
 ### VPS Hosting
 
-Hosting creates a locked `fased-signer` OS account and installs a root-managed,
-hardened systemd service. The signer owns:
+Hosting is a stronger boundary. The dedicated signer account owns encrypted
+state, master key, audit log, and `/run/fased-signerd/control.sock`. Gateway can
+reach only `/run/fased-signerd/app.sock`.
 
-- `/var/lib/fased-signerd/state.db`
-- `/var/lib/fased-signerd/master.key`
-- `/var/lib/fased-signerd/audit.jsonl`
-- `/run/fased-signerd/control.sock` (`0600`, signer only)
+The app socket permits typed wallet operations plus two fixed lifecycle actions:
 
-The Gateway account receives only `/run/fased-signerd/app.sock`, authorized by
-its group and limited to protocol-v2 application operations. It has no signer
-sudo rule, cannot connect to the control socket, and cannot install or execute
-code as `fased-signer`.
+- create a new deny-all wallet; and
+- bootstrap or replace that wallet's one primary RPC after signer validation.
 
-Root updates the fixed native binary only after exact version, checksum, and
-GitHub attestation verification. The updater gates requests, snapshots
-signer-owned state, restarts the service, verifies health, and rolls back or
-quarantines an unsafe update.
+Native keypair import uses one narrowly constrained installed helper. It can
+only create a new role-locked deny-all wallet from stdin. It cannot operate on
+an existing wallet, export keys, change policy, rotate keys, execute signing,
+accept file paths, or expose the control socket.
 
-## First wallet setup
+## Roles
 
-On a fresh Local or Hosting install:
+- **Agent:** bounded hot-wallet automation under exact policy limits.
+- **Mining:** singleton SAT-only automation wallet.
+- **Vault:** manual-only reserve role.
 
-1. Fased verifies and starts the version-matched native signer.
-2. Wallet creation runs inside Go and returns only the public address.
-3. The wallet receives its permanent `agent`, `mining`, or `vault` role.
-4. It starts with an explicit deny-all policy.
-5. The Gateway registers the operator-facing id, canonical signer id, and public
-   address.
-6. The operator configures signer execution RPC and Gateway read RPC.
-7. The operator copies/reviews the role template and activates it with the
-   owner-policy helper.
-8. Manual native Agent, Mining, and Vault reviews require separate signer
-   WebAuthn enrollment.
-9. The operator verifies policy/network hashes and only then funds a deliberately
-   small balance.
+Roles are permanent inside the signer. A role change means creating a successor
+wallet and using the guarded Archive/Replace flow. Archiving removes Fased
+registration and attachments only after explicit confirmation; the encrypted
+signer key remains deny-all for recovery/audit safety.
 
-If setup is interrupted, rerun the wallet setup. Creation and migration are
-idempotent: Fased queries signer state and refuses wallet-id/address collisions
-instead of creating a replacement key.
+## One-RPC model
 
-The Gateway can tighten an acknowledged policy, but it cannot silently expand
-authority. Initial expansion and later loosening require the signer admin/owner
-workflow.
+The entered endpoint becomes the wallet's primary execution RPC and initial
+Gateway read endpoint. The signer pins its live genesis hash and derives the
+matching official Solana endpoint as a verification-only witness.
 
-## Create versus import
+The witness may compare sensitive ALT account bytes and slots. It never
+constructs, simulates, broadcasts, reconciles, or supplies execution balances
+or blockhashes. A primary that is itself the official endpoint cannot provide
+independent ALT verification; custom clusters and Localnet also require an
+explicit independent origin.
 
-Creating a new wallet is the normal first-wallet path and happens automatically
-inside Go.
+Advanced users may configure a distinct second full execution RPC. This is not
+a normal onboarding field. See [Solana RPC setup](/plugins/crypto/wallet-rpc-setup).
 
-Import is deliberately separate. `fased-signerd admin wallet import` accepts
-exactly one Solana CLI 64-byte JSON keypair array from standard input through
-the signer-only control socket. It rejects seed phrases, command-line secrets,
-environment secrets, base58 strings, hex, base64, and arbitrary JSON.
+## Policy and authorization
 
-For Hosting, prepare the keypair in a root-only file. Start a root shell for the
-redirection, then change only the signer process to the dedicated account. This
-also works from a non-root administrator session; a plain
-`sudo -u fased-signer ... < /root/file` does not, because the calling shell tries
-to open the root-only file before `sudo` runs:
+Every new wallet starts with a role-locked deny-all baseline. It can receive,
+but it cannot send, swap, mine, bond, or execute wallet-capable skills until an
+exact signer policy is reviewed and acknowledged.
 
-```bash
-sudo /bin/sh -c 'exec sudo -u fased-signer -- \
-  /opt/fased/signer/fased-signerd admin wallet import \
-  --control-socket /run/fased-signerd/control.sock \
-  --wallet-id agent \
-  --locked-role agent \
-  < /root/offline-agent-keypair.json'
-```
+Agent and Mining automation do not require a passkey for operations already
+inside their narrow typed policies. Manual work outside that policy is rejected
+or uses a separately enabled owner-review lane.
 
-For Local Linux, macOS, or WSL2:
+The optional **Control UI account passkey** belongs under **Account Security**.
+It protects the web account and does not affect Agent or Mining readiness. An
+optional signer-owned **Vault approval device** is reported separately in that
+Vault's Security panel, but enrollment remains a native signer-owner ceremony.
+On Hosting, use `/usr/local/sbin/fased-signer-enroll` from the provider root
+console; ordinary Gateway JavaScript cannot enroll signer credentials.
+
+## Create and Local import
+
+Create:
 
 ```bash
-"$HOME/.fased/bin/fased-signerd" admin wallet import \
-  --control-socket "$HOME/.fased/wallet/local-signer-control.sock" \
-  --wallet-id agent \
-  --locked-role agent \
-  < "$HOME/private/offline-agent-keypair.json"
+fased wallet setup --mode local-signer-create \
+  --wallet-id agent --wallet-name "Agent" --role agent \
+  --rpc-url https://your-solana-rpc.example --non-interactive
 ```
 
-The native client creates a private `0600` staging file, fsyncs it, asks the
-signer to consume it atomically, and removes it. It prints only the public
-wallet record. Securely remove the source file according to your backup and
-recovery procedure after confirming the public address.
-
-<Warning>
-Do not paste a private key into the dashboard, chat, a skill, an environment
-variable, a command argument, or `fased wallet setup`. Do not use a seed or
-recovery phrase. Import only the individual Solana account's 64-byte CLI JSON
-keypair through the native admin command.
-</Warning>
-
-## Policy is signer-owned and fail closed
-
-Every wallet has a versioned policy and hash. The policy must explicitly name:
-
-- wallet id and permanent role;
-- allowed typed operations;
-- exact program ids;
-- assets or mints;
-- destinations;
-- positive per-transaction and daily caps.
-
-Missing policy, an empty operation/program/asset/destination list, a stale
-version, a mismatched hash, or an unsupported protocol capability grants no
-signing authority.
-
-Use the installed owner-policy helper rather than editing runtime JSON and
-assuming it reached the signer. The helper shows the normalized diff and exact
-hash, requires operator confirmation, writes through the control socket, then
-verifies the acknowledged version/hash.
-
-Registry handles and native ids are not always identical. For example,
-`@wallet:agent-2` maps to signer wallet id `agent_2`. Use the exact canonical id
-printed by setup in policy and native admin input.
-
-Copy the installed role template to a private absolute path, edit its wallet id
-and permissions, then activate it. Local example:
+Import an owner-only Solana CLI keypair:
 
 ```bash
-cp "$HOME/.fased/share/signer-policies/<role>.json.template" \
-  /secure/absolute/policy.json
-chmod 0600 /secure/absolute/policy.json
-"$HOME/.fased/bin/fased-signer-policy" \
-  --initial-install \
-  --policy-file /secure/absolute/policy.json
+chmod 600 /absolute/path/to/solana-keypair.json
+fased wallet setup --mode local-signer-import \
+  --wallet-id mining --wallet-name "Mining" --role mining \
+  --import-file /absolute/path/to/solana-keypair.json \
+  --rpc-url https://your-solana-rpc.example --non-interactive
 ```
 
-Hosting example:
+The keypair is passed by file descriptor. Do not paste private keys, seed
+phrases, recovery passwords, or RPC credentials into chat, browser forms,
+arguments, environment variables, or logs.
+
+On Hosting, import is a signer-owner action from the VPS provider root console:
 
 ```bash
-sudo cp /usr/local/share/fased/signer-policies/<role>.json.template \
-  /root/fased-<role>-policy.json
-sudo chmod 0600 /root/fased-<role>-policy.json
-sudoedit /root/fased-<role>-policy.json
-sudo /usr/local/sbin/fased-signer-policy \
-  --initial-install \
-  --policy-file /root/fased-<role>-policy.json
+chmod 600 /root/wallet.json
+/usr/local/sbin/fased-signer-wallet-import \
+  --wallet-id mining --locked-role mining < /root/wallet.json
 ```
 
-The helper shows the normalized diff/hash, asks for confirmation, writes
-through the control socket, and verifies the exact durable acknowledgement.
+Then return to `app`, rerun onboarding, and choose **Create** with the same role
+and wallet ID. This resumes the existing deny-all signer wallet and completes
+the one-RPC registration. The Gateway account cannot run the import helper.
 
-<Accordion title="Optional large SAT distribution policy">
-  SAT distribution pages with 16 or more miners use one signer-owned Solana
-  address lookup table only when `FASED_SAT_ENABLE_ALT_V0=1` is explicitly set.
-  Keep the default disabled until you need that scale.
+## Recovery and raw export
 
-The Mining policy must contain the exact `satLookup.create`, `extend`,
-`deactivate`, and `close` operations bound to
-`AddressLookupTab1e1111111111111111111111111`, plus that program and the
-System program. The default Mining template intentionally omits these grants.
-For a new wallet, add them to the private copy before the initial owner-policy
-install. For an active wallet, read its exact current version and replace it
-through the signer-only control socket as described in the native signer
-`ADMIN.md`; the Gateway cannot widen it. Its `sat:action` destinations must
-also include the lookup-table program. Create and extend reserve a
-signer-controlled `25000000` lamports each for fee/rent exposure; set the
-native per-transaction cap to at least that amount and size the daily cap for
-all expected chunks.
-
-Add these four exact operations:
-
-```text
-satLookup.create@AddressLookupTab1e1111111111111111111111111
-satLookup.extend@AddressLookupTab1e1111111111111111111111111
-satLookup.deactivate@AddressLookupTab1e1111111111111111111111111
-satLookup.close@AddressLookupTab1e1111111111111111111111111
-```
-
-Also add `AddressLookupTab1e1111111111111111111111111` to `programs` and to
-the `sat:action` destinations. Keep the existing System program grant. For an
-already active Local policy, replace `CURRENT_VERSION` with the version from
-the first command:
+The default backup is an Argon2id plus authenticated-encryption package:
 
 ```bash
-"$HOME/.fased/bin/fased-signerd" admin policy get \
-  --control-socket "$HOME/.fased/wallet/local-signer-control.sock" \
-  --wallet-id YOUR_MINING_WALLET_ID
-"$HOME/.fased/bin/fased-signerd" admin policy put \
-  --control-socket "$HOME/.fased/wallet/local-signer-control.sock" \
-  --wallet-id YOUR_MINING_WALLET_ID --expected-version CURRENT_VERSION \
-  --policy-file /secure/absolute/mining-policy.json
+fased wallet recovery export \
+  --wallet-id agent --output /absolute/new/agent-recovery.json
 ```
 
-On Hosting, stage the reviewed file for the isolated signer user, then use the
-same version fence:
+The signer reads the password directly from the terminal and writes a new
+owner-only file. Local restore creates a new role-locked wallet:
 
 ```bash
-sudo install -d -o fased-signer -g fased-signer -m 0700 \
-  /var/lib/fased-signerd/admin
-sudo install -o fased-signer -g fased-signer -m 0600 \
-  /root/mining-policy.json /var/lib/fased-signerd/admin/mining-policy.json
-sudo -u fased-signer -- /opt/fased/signer/fased-signerd admin policy get \
-  --control-socket /run/fased-signerd/control.sock \
-  --wallet-id YOUR_MINING_WALLET_ID
-sudo -u fased-signer -- /opt/fased/signer/fased-signerd admin policy put \
-  --control-socket /run/fased-signerd/control.sock \
-  --wallet-id YOUR_MINING_WALLET_ID \
-  --expected-version CURRENT_VERSION \
-  --policy-file /var/lib/fased-signerd/admin/mining-policy.json
+fased wallet recovery import \
+  --wallet-id agent-restored --wallet-name "Restored Agent" --role agent \
+  --file /absolute/path/agent-recovery.json \
+  --rpc-url https://your-solana-rpc.example
 ```
 
-After the signer acknowledges the new policy hash, enable the Gateway side as
-the app user:
+Hosting export/restore remains signer-owner-only from the provider console so a
+compromised Gateway cannot capture the password or export existing custody.
 
-```bash
-fased config set env.vars.FASED_SAT_ENABLE_ALT_V0 "1"
-```
+Advanced Local owners can explicitly export a raw key with
+`fased wallet recovery export-raw --acknowledge-custody-reduction`. This writes
+a new `0600` file and reduces the Go-signer custody protection.
 
-Restart Local normally. On Hosting, use the provider root console to restart
-`fased-gateway.service`; never grant the `app` user sudo access.
-
-Each mutation is a separate idempotent signer-v2 request. The signer verifies
-the table PDA, Mining authority, current on-chain state, capacity, activation
-slot, cooldown, and exact distribution accounts. Gateway durably persists the
-table address per cycle/page before the first possible table broadcast but
-cannot submit a caller-built v0 transaction. Create/extend requests carry the
-complete typed parent distribution, which the signer validates and
-policy-checks before allowing rent. The signer compares the primary execution
-RPC with a distinct same-genesis verification witness. Both must return
-identical lookup-table account bytes; one origin, duplicate origins, or any
-disagreement fails closed before numeric ALT indexes are compiled.
-</Accordion>
-
-## Two RPC planes
-
-Normal onboarding asks for only a wallet role and one primary RPC. It does not
-ask for a Solana network or a second RPC. Each native wallet uses:
-
-- a signer execution RPC, encrypted and versioned in signer state, for native
-  balance reads, construction, simulation, broadcast, and reconciliation; and
-- a Gateway read/preparation RPC for dashboard token inventory, SAT
-  inspection/watchers/readiness, federation/bond reads, Jupiter/Trigger
-  preparation, and provider/hardware lanes.
-- an automatically selected official same-genesis verification witness for
-  ALT account/slot agreement only.
-
-The simple wizard stores the chosen endpoint in both planes, so its URL/token
-is visible to Gateway code. A stronger deployment uses a separate Gateway
-read-only endpoint/credential. Gateway environment variables do not control
-protocol-v2 execution, and the Gateway has no arbitrary RPC proxy through the
-signer.
-
-The admin client reads one strict JSON document from stdin. Keep the document
-in a private `0600` file so its URL/token do not enter shell history:
-
-```json
-{
-  "expectedVersion": 0,
-  "primaryRpcUrl": "https://your-primary-provider.example/solana"
-}
-```
-
-Hosting example:
-
-```bash
-sudo /bin/sh -c 'exec sudo -u fased-signer -- \
-  /opt/fased/signer/fased-signerd admin network put \
-  --control-socket /run/fased-signerd/control.sock \
-  --wallet-id agent \
-  < /var/lib/fased-signerd/admin/agent-network.json'
-```
-
-Local example:
-
-```bash
-"$HOME/.fased/bin/fased-signerd" admin network put \
-  --control-socket "$HOME/.fased/wallet/local-signer-control.sock" \
-  --wallet-id agent \
-  < "$HOME/.fased/admin/agent-network.json"
-```
-
-HTTPS is required except for an explicit loopback development endpoint. Health
-returns readiness plus version/hash metadata, not the secret URL.
-
-Advanced users may add `executionFallbackRpcUrl` as a second full execution
-provider. The signer requires live same-genesis agreement before Ready and
-rechecks the advanced fallback before execution use. `verificationRpcUrl` is verification-only and is needed explicitly
-for a custom cluster, Localnet, or when the primary is itself the official
-public endpoint. The signer never uses an automatically selected public
-witness to construct, simulate, broadcast, or reconcile a transaction.
-
-## Signer-owned Jupiter Trigger credential
-
-<Warning>
-Jupiter swap and Trigger mutation are preview-only in this release and are not
-present in starter policies. Installing a Trigger credential does not make the
-feature executable or production-qualified: the signer rejects execution by
-default, and normal Local/Hosting installers do not set the qualification-only
-live switch. Keep it disabled for production funds until the same Fased release
-publishes an exact generated RouteV2/Trigger codec and live Jupiter
-qualification.
-</Warning>
-
-Jupiter Trigger authentication belongs to `fased-signerd`, not Gateway. The
-Trigger API key and derived JWT must never be placed in Fased config, a Gateway
-environment variable, a CLI option, or a browser form. This is distinct from
-`FASED_JUPITER_API_KEY`, which Gateway may use only to craft ordinary Jupiter
-swap transactions for signer review.
-
-Create a private input file and stream it to the native admin command. Local:
-
-```bash
-chmod 600 /absolute/path/to/jupiter-trigger.key
-"$HOME/.fased/bin/fased-signerd" admin jupiter api-key-install \
-  --output "$HOME/.fased/wallet/jupiter-trigger-api.key" \
-  < /absolute/path/to/jupiter-trigger.key
-fased gateway restart
-```
-
-Hosting must be configured only from the provider root console. The `app`
-account cannot access signer storage or use signer sudo:
-
-```bash
-chmod 600 /root/jupiter-trigger.key
-/usr/sbin/runuser -u fased-signer -- \
-  /opt/fased/signer/fased-signerd admin jupiter api-key-install \
-  --output /var/lib/fased-signerd/jupiter-trigger-api.key \
-  < /root/jupiter-trigger.key
-systemctl restart fased-signerd.service
-```
-
-The admin command accepts the secret only on stdin, validates printable
-single-line input, atomically replaces a signer-owned `0600` non-symlink file,
-and never prints the key. Health exposes only `jupiter.triggerConfigured`.
-Without this file, all other wallet and mining features remain available while
-Trigger history/create/cancel fail closed. Use `api-key-status` or
-`api-key-remove` with the same `--output` path; restart the signer after a
-change. Local Docker uses the dedicated procedure in
-[Docker](/install/docker#local-security-boundary).
-
-## WebAuthn manual approval
-
-Signer-owned WebAuthn is the authorization path for every manual native Agent,
-Mining, or Vault review. The challenge binds the exact wallet, role, decoded
-transaction, policy hash, request id, nonce, and short expiry. It is verified
-and consumed inside Go. Narrow autonomous Agent and generated Mining operations
-instead require their explicit typed policy and durable caps.
-
-Hosting installs a root operator launcher:
-
-```bash
-sudo /usr/local/sbin/fased-signer-enroll "Primary security key"
-```
-
-Local and Local Docker expose an equivalent loopback-only enrollment flow.
-Enrollment is global and requires no wallet, policy, or RPC, but it never makes
-an empty or deny-all wallet policy executable. The Wallets Access-tab Wallet
-Control Passkey is separate Gateway authentication; it cannot enroll or remove
-signer credentials.
-
-Passkey approval is not the same as hardware transaction display. The Control
-UI is served by the Gateway. For high-value Vault/reserve funds, prefer a
-hardware-backed Wallet Standard account and confirm the transaction on the
-device, or use a reviewed provider policy such as Turnkey.
-
-## Typed operations and durable limits
-
-The application socket accepts typed SOL/SPL, SAT, Jupiter, Trigger, Vault
-bond, federation, review, and reconciliation operations only. It rejects raw
-instructions, arbitrary serialized transactions, and generic signing.
-
-The signer stores request ids, immutable transaction digests, cap reservations,
-daily totals, signed bytes, and final/unknown state in bbolt. Restarting does
-not reset limits. Concurrent duplicates cannot both reserve the same allowance.
-An ambiguous broadcast consumes its reservation and is reconciled by exact
-signature; Fased never creates a replacement transaction automatically.
-
-Signer health reports record counts and hard capacities. `fased wallet signer
-doctor --json` emits failed `state.capacity.*` checks starting at 80%. A2A and
-Marketplace file-ledger thresholds emit one service-log warning per capacity
-incident and fail closed at their hard limit.
-
-Confirmed and failed operation details remain in the live signer ledger for 90
-days, then the signer atomically replaces them with permanent SHA-256
-request-ID tombstones in a separate replay archive. Reserved, broadcast, and
-unknown operations are never archived. The live operation limit is 100,000;
-the replay archive warns at 800,000 and stops at 1,000,000. Never delete that
-archive, reset the database, or reuse an archived request ID to recover space.
-
-## Local files
-
-The default Local material directory is `~/.fased/wallet`:
-
-- `local-signer.sock`: typed application socket;
-- `local-signer-control.sock`: same-user native admin socket;
-- `signerd-v2.db`: encrypted signer, policy, WebAuthn, network, cap, and request
-  state;
-- `signerd-v2.master.key`: owner-only signer master key;
-- `jupiter-trigger-api.key`: optional owner-only Trigger credential, never
-  readable by Gateway;
-- `local-signer.audit.jsonl`: signer audit stream;
-- `provider-registry.v1.json`: public provider/wallet registry used by the
-  runtime;
-- `wallet-send-approvals.json`: Gateway-side reviewed-request state;
-- `wallet-audit.jsonl`: Gateway wallet audit trail.
-
-Do not copy only `provider-registry.v1.json` and assume the wallet is backed up.
-For Local, stop Gateway and signer and archive the entire
-`$FASED_STATE_DIR/wallet` directory as part of the complete state archive. For
-Hosting, stop Gateway and signer and separately archive the root-owned
-`/var/lib/fased-signerd` directory. Database and master key are one recovery
-unit and must come from the same offline snapshot. Preserve ownership/modes,
-encrypt the archive outside the host, verify its checksum, and test recovery by
-matching every public address and policy hash. See [Migration
-Guide](/install/migrating) for the exact service order and commands.
-
-A backup becomes stale as soon as signing resumes. Restoring an older snapshot
-after newer operations could omit their replay tombstones. Restore only a
-provably latest quiesced snapshot. If that cannot be proven, keep the restored
-signer isolated, apply deny-all policies through its control socket, rotate to
-new wallet identities, and recover funds with separately reviewed owner
-transactions; do not resume autonomous signing from the stale ledger. Never
-merge two bbolt files or restore `state.db` without its matching complete
-signer directory.
-
-## Role guidance
-
-- **Agent:** keep a limited working balance and explicit SOL/SPL destinations,
-  mints, programs, and positive caps.
-- **Mining:** allow only generated SAT operations and the SOL/SAT movement
-  needed for mining, fees, claims, and reviewed sweeps.
-- **Vault:** manual-only; use signer WebAuthn for native hot/warm use and prefer
-  hardware Wallet Standard or a strong provider policy for reserve value.
-
-Keep Agent, Mining, Vault, and long-term reserve as separate accounts. A
-working balance is the amount you deliberately accept as the maximum exposure
-of that role, not an unlimited general wallet.
-
-## Archive/remove from Fased
-
-There is no native secure key-delete operation. The guarded archive action
-first tightens the exact signer policy to deny-all and verifies the durable
-acknowledgement. Only then does it detach Mining/bond assignments and remove the
-Gateway registry/read configuration. If locking fails, removal stops.
-
-The encrypted signer-owned key remains in signer storage and can be recovered
-by a host administrator who deliberately re-registers it and installs a new
-reviewed policy. Archive is not cryptographic erasure.
-
-## Health and recovery
+## Readiness before funding
 
 ```bash
 fased wallet signer doctor --json
 fased wallet status --json
-fased doctor
+fased mining readiness --wallet mining
 ```
 
-If signer state is corrupt or has an unsupported version, Fased fails closed
-and preserves the file. Do not delete it to make the error disappear. Restore
-the database and its matching master key from a verified offline backup. Never
-restore one without the other and never copy either over a running signer. Use
-the exact Fased version recorded with the backup first; validate public
-addresses, policy/network hashes, WebAuthn credentials, caps, and unresolved
-requests before updating or funding.
+Verify:
 
-On Hosting, a cold Gateway restart does not start the signer with Gateway sudo.
-Systemd owns signer lifecycle and starts it independently before the Gateway
-uses the application socket.
+- exact role and public address;
+- signer key and one-RPC network readiness;
+- acknowledged role policy version/hash;
+- recovery backup for funded wallets; and
+- Mining singleton or Primary Agent attachment as appropriate.
 
-## Related docs
+The signer stores durable request IDs, transaction digests, cap reservations,
+daily totals, broadcast state, and reconciliation state. Ambiguous broadcast is
+reconciled using the exact stored signature; Fased does not build a changed
+replacement automatically.
 
-- [Wallet signer and provider architecture](/plugins/crypto/wallet-signer-provider-architecture)
-- [Wallet operations and security](/plugins/crypto/wallet-production-flow)
-- [Self-hosted wallet VPS validation](/plugins/crypto/wallet-self-hosted-vps)
-- [Wallet Control Passkey](/plugins/crypto/wallet-control-passkey)
+Related:
+
+- [Wallets](/plugins/crypto/wallet-page)
+- [Wallet CLI](/cli/wallet)
 - [Solana RPC setup](/plugins/crypto/wallet-rpc-setup)
-- [Windows (WSL2)](/platforms/windows)
-- [Docker (Local only)](/install/docker)
+- [Wallet security](/plugins/crypto/wallet-autonomous-security)

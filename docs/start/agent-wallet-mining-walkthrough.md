@@ -29,7 +29,7 @@ flowchart TD
   install["Install Fased"] --> open["Open Control UI"]
   open --> agent["Select Agent"]
   agent --> model["Optional: Connect Model<br/>Chat / Auto Strategy / Tasks"]
-  agent --> wallets["Create Wallets In Signer<br/>Import Via Native Admin"]
+  agent --> wallets["Create Wallets In Signer<br/>Import In Terminal"]
   model --> wallets
   wallets --> fund["Fund Mining Wallet"]
   fund --> mining["Open Mining"]
@@ -126,13 +126,10 @@ Choose the setup profile first.
     ssh root@YOUR_PUBLIC_VPS_IP
     ```
 
-    Follow the
-    [verified Hosting bootstrap](/install/vps#3-verify-and-run-the-hosting-bootstrap)
-    **inside the VPS SSH session**.
-
-    It verifies the tagged Hosting release and installs/starts Tailscale on the
-    VPS automatically. See [VPS Hosting](/install/vps) for access checks and
-    advanced release-selection and attestation details.
+    Run the complete [verified Hosting bootstrap
+    block](/install/vps#3-verify-and-run-the-hosting-bootstrap) **inside the VPS
+    root SSH session**. It authenticates the tagged installer before Bash runs
+    it, verifies the Hosting bundle, and installs/starts Tailscale on the VPS.
 
     Do not paste the hosted command into local PowerShell or Terminal unless
     that shell is already connected to the VPS.
@@ -162,8 +159,6 @@ Simple command recap:
 # Local: run on this computer (inside Ubuntu WSL2 on Windows)
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
 
-# VPS Hosting: SSH into the VPS, then follow /install/vps
-
 # Continue setup if interrupted
 fased onboard --install-daemon
 
@@ -173,6 +168,10 @@ fased dashboard
 # Check health
 fased health
 ```
+
+For VPS Hosting, use the [verified bootstrap
+block](/install/vps#3-verify-and-run-the-hosting-bootstrap) instead of streaming
+a mutable branch script into the root shell.
 
 Before continuing, update and verify the Gateway:
 
@@ -287,39 +286,39 @@ Read next:
 
 ## 5. Create Wallets
 
-Create signer-owned wallets during onboarding, or run the guarded terminal
-wizard:
+Use **Control UI > Wallets** after installation, or use the same terminal
+flow during onboarding:
+
+1. Select **Agent**, **Mining**, or **Vault**. Fased never chooses Agent
+   silently.
+2. Enter a name and permanent wallet ID.
+3. Enter one primary Solana RPC. There is no network question and no normal
+   second-RPC field; the signer derives and verifies the network from genesis.
+4. Press **Create wallet**. The Go signer creates the key and returns only the
+   public address.
+5. Confirm the wallet shows RPC ready and the role-safe receive-only policy
+   baseline.
+
+Agent and Vault can have multiple wallets. Mining has one active wallet. To
+replace Mining, stop Mining, settle or move funds, verify recovery, then use
+the guarded **Archive Mining** action before creating the replacement.
+
+The browser never accepts an existing private key. On Local, import stays in
+the native terminal flow so private key material does not enter Gateway
+JavaScript:
 
 ```bash
-fased wallet setup --chain solana
+fased wallet setup --mode local-signer-import --role mining --wallet-id mining
 ```
 
-The Control UI never accepts a private key. Existing-account import is a
-separate `fased-signerd admin wallet import` operation through the signer-only
-control socket, not a wizard or browser field. After terminal setup, open
-**Wallets** to inspect addresses, balances, signer policy hashes, approvals, and
-activity.
+On Hosting, run the installed root-only signer import helper from the VPS
+provider console, then return to `app` and choose **Create** with the same role
+and wallet ID to resume one-RPC registration. The Gateway account has no import
+sudo rule.
 
-Create signer-owned wallets in this order:
-
-1. **Agent wallet**
-   Normal wallet for reviewed sends, receipts, Marketplace order actions, and
-   wallet-capable skills.
-2. **Mining wallet**
-   Dedicated Solana wallet for Satcoin mining. There is one active configured
-   mining wallet, normally `@wallet:mining`.
-3. **Vault wallet**
-   Manual-first wallet for reserve storage and Fased Network bond authority.
-   Agent and Vault can have multiple wallets; Mining is a singleton role.
-
-To reuse an existing account, export only that account as a Solana CLI 64-byte
-JSON keypair array and pass it on stdin to `fased-signerd admin wallet import`
-through the signer-only control socket. Fased does not accept seed phrases,
-base58, base64, hex, environment variables, command arguments, the dashboard,
-or chat for import. Follow [Self-hosted wallet
-signer](/plugins/crypto/wallet-self-hosted) for the exact Local and Hosting
-commands. Keep Agent, Mining, and Vault as separate accounts and import each
-under its matching permanent role.
+Use `agent` or `vault` only when that is the role you explicitly chose. Never
+put private keys, seed phrases, recovery passwords, or RPC credentials in
+chat, command arguments, or environment variables.
 
 ![Wallet cards after Agent, Mining, and Vault setup](/images/screenshots/web/wallet-1.png)
 
@@ -329,60 +328,26 @@ uses the separate native admin command.
 
 ![Wallet role summary after local setup](/images/screenshots/local/wallet-ui-2.png)
 
-Before funding, finish the signer activation sequence:
+New wallets begin receive-only. Configure only the role policy you need before
+sending or mining. Agent and Mining automation does not require an account
+passkey. **Wallets > Account Security** offers an optional Control UI account
+passkey, while a Vault approval device is a separate optional Vault security
+step completed through the native signer-owner enrollment flow, not through
+ordinary Gateway JavaScript.
 
-1. Record both ids printed by setup. A registry handle such as
-   `@wallet:agent-2` maps to canonical signer id `agent_2`.
-2. Configure and verify both the signer execution RPC and Gateway read RPC.
-3. Copy the installed `agent`, `mining`, or `vault` policy template, edit it to
-   the canonical signer id and intended permissions, and activate it with the
-   owner helper.
-4. Verify `fased wallet signer doctor --json` acknowledges the exact policy and
-   network versions/hashes.
-5. Enroll signer WebAuthn before any manual native Agent, Mining, or Vault
-   review. The Wallets **Access** passkey is separate Gateway authentication.
-
-Local Linux, macOS, or WSL2 policy activation:
-
-```bash
-cp "$HOME/.fased/share/signer-policies/<role>.json.template" \
-  /secure/absolute/policy.json
-chmod 0600 /secure/absolute/policy.json
-"$HOME/.fased/bin/fased-signer-policy" \
-  --initial-install \
-  --policy-file /secure/absolute/policy.json
-"$HOME/.fased/bin/fased-signer-enroll" "Primary security key"
-```
-
-VPS Hosting policy activation:
-
-```bash
-sudo cp /usr/local/share/fased/signer-policies/<role>.json.template \
-  /root/fased-<role>-policy.json
-sudo chmod 0600 /root/fased-<role>-policy.json
-sudoedit /root/fased-<role>-policy.json
-/usr/local/sbin/fased-signer-policy \
-  --initial-install \
-  --policy-file /root/fased-<role>-policy.json
-/usr/local/sbin/fased-signer-enroll "Primary security key"
-```
-
-Open **Access** if you also want Wallet Control Passkey protection for Gateway
-approval requests or settings changes.
-
-![Wallet Control Passkey state](/images/screenshots/web/wallet-passkey-2.png)
+![Control UI account passkey state](/images/screenshots/web/wallet-passkey-2.png)
 
 Read next:
 
 - [Wallets](/plugins/crypto/wallet-page)
 - [Wallet Roles And Policies](/plugins/crypto/wallet-roles-and-policies)
-- [Wallet Control Passkey](/plugins/crypto/wallet-control-passkey)
+- [Wallet passkeys](/plugins/crypto/wallet-control-passkey)
 
 ## 6. Fund The Mining Wallet
 
-Only after policy activation, both RPC checks, and signer WebAuthn enrollment,
-fund the Mining wallet with enough SOL for fees, reserve, and the deliberately
-small capital you plan to deposit.
+Only after the Mining wallet shows signer, RPC, and Mining-policy readiness,
+fund it with enough SOL for fees, reserve, and the deliberately small capital
+you plan to deposit.
 
 <Note>
 Large settlement pages use typed v0/address-lookup-table operations only after
@@ -460,8 +425,8 @@ starting. Fix signer, RPC, SOL, token-account, or capital warnings before
 continuing.
 
 No-wallet readiness is expected to stop here and direct you to create the
-singleton `@wallet:mining`, or use the separate native signer-admin import
-path. A configured wallet can still be blocked by a
+singleton `@wallet:mining` in onboarding, the wallet CLI, or Wallets. Terminal
+keypair import uses the same lifecycle. A configured wallet can still be blocked by a
 missing signer, RPC, SOL fee reserve, or miner capital; resolve the exact item
 reported before continuing.
 

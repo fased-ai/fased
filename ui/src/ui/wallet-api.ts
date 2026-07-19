@@ -92,6 +92,12 @@ export type WalletStatus = {
     }>;
     statePath: string;
   };
+  nativeSignerApproval?: {
+    configured: boolean;
+    ready: boolean;
+    credentialCount: number;
+    credentialVersion: number;
+  };
   addresses?: {
     solana?: string;
   };
@@ -1238,8 +1244,9 @@ export async function createWalletNamedWallet(input: {
   name: string;
   walletId?: string;
   providerId?: WalletProviderId;
-  role?: "agent" | "vault";
+  role?: "agent" | "mining" | "vault";
   chain?: "solana";
+  rpcUrl?: string;
   address?: string;
 }): Promise<{ ok: true; wallet: WalletNamedWallet }> {
   return await fetchJson<{ ok: true; wallet: WalletNamedWallet }>("/api/wallet/wallets", {
@@ -1251,8 +1258,24 @@ export async function createWalletNamedWallet(input: {
   });
 }
 
+export async function updateWalletNamedWallet(input: {
+  walletId: string;
+  role?: "agent" | "mining" | "vault";
+  rpcUrl?: string;
+}): Promise<{ ok: true; wallet: WalletNamedWallet }> {
+  return await fetchJson<{ ok: true; wallet: WalletNamedWallet }>("/api/wallet/wallets", {
+    method: "PATCH",
+    cache: "no-store",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
 export async function deleteWalletNamedWallet(input: {
   walletId: string;
+  archive?: boolean;
+  confirmWalletId?: string;
 }): Promise<{ ok: true; removed: boolean }> {
   return await fetchJson<{ ok: true; removed: boolean }>("/api/wallet/wallets", {
     method: "DELETE",

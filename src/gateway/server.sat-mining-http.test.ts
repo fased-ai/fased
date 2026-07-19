@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -18,15 +18,30 @@ vi.mock("./call.js", () => ({
 import { callGatewayScoped } from "./call.js";
 import { createGatewayHttpServer } from "./server-http.js";
 
-async function withTempConfig(params: { cfg: unknown; run: () => Promise<void> }): Promise<void> {
+async function withTempConfig(params: {
+  cfg: unknown;
+  walletRegistry?: unknown;
+  run: () => Promise<void>;
+}): Promise<void> {
   const prevConfigPath = process.env.FASED_CONFIG_PATH;
   const prevDisableCache = process.env.FASED_DISABLE_CONFIG_CACHE;
+  const prevStateDir = process.env.FASED_STATE_DIR;
   const dir = await mkdtemp(path.join(os.tmpdir(), "fased-sat-mining-http-test-"));
   const configPath = path.join(dir, "fased.json");
   process.env.FASED_CONFIG_PATH = configPath;
   process.env.FASED_DISABLE_CONFIG_CACHE = "1";
+  process.env.FASED_STATE_DIR = dir;
   try {
     await writeFile(configPath, JSON.stringify(params.cfg, null, 2), "utf-8");
+    if (params.walletRegistry) {
+      const walletDir = path.join(dir, "wallet");
+      await mkdir(walletDir, { recursive: true });
+      await writeFile(
+        path.join(walletDir, "provider-registry.v1.json"),
+        JSON.stringify(params.walletRegistry, null, 2),
+        "utf-8",
+      );
+    }
     await params.run();
   } finally {
     if (prevConfigPath === undefined) {
@@ -38,6 +53,11 @@ async function withTempConfig(params: { cfg: unknown; run: () => Promise<void> }
       delete process.env.FASED_DISABLE_CONFIG_CACHE;
     } else {
       process.env.FASED_DISABLE_CONFIG_CACHE = prevDisableCache;
+    }
+    if (prevStateDir === undefined) {
+      delete process.env.FASED_STATE_DIR;
+    } else {
+      process.env.FASED_STATE_DIR = prevStateDir;
     }
     await rm(dir, { recursive: true, force: true });
   }
@@ -294,6 +314,44 @@ describe("SAT mining HTTP routes", () => {
     });
   });
 
+  test("rejects mining start for an unregistered wallet", async () => {
+    await withTempConfig({
+      cfg: { gateway: { trustedProxies: [], port: 19009 } },
+      run: async () => {
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: false,
+          controlUiBasePath: "/ui",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          resolvedAuth,
+        });
+        const response = createResponse();
+
+        await dispatch(
+          server,
+          createRequest({
+            path: "/api/mining/start",
+            body: { walletId: "missing-mining-wallet" },
+          }),
+          response.res,
+        );
+
+        expect(response.res.statusCode).toBe(409);
+        expect(JSON.parse(response.getBody())).toMatchObject({
+          ok: false,
+          error: {
+            code: "wallet_role_conflict",
+            message: "SAT Mining requires an existing dedicated Mining wallet.",
+          },
+        });
+        expect(callGatewayScoped).not.toHaveBeenCalled();
+      },
+    });
+  });
+
   test("allows mining start to auto-create missing miner capital when wallet is funded", async () => {
     vi.mocked(callGatewayScoped)
       .mockResolvedValueOnce({
@@ -316,6 +374,28 @@ describe("SAT mining HTTP routes", () => {
 
     await withTempConfig({
       cfg: { gateway: { trustedProxies: [], port: 19009 } },
+      walletRegistry: {
+        version: 1,
+        providers: {
+          "local-socket-signer": {
+            enabled: true,
+            updatedAt: "2026-07-19T00:00:00.000Z",
+          },
+        },
+        wallets: [
+          {
+            id: "mining",
+            name: "Mining",
+            providerId: "local-socket-signer",
+            addresses: { solana: "11111111111111111111111111111111" },
+            metadata: { purpose: "mining" },
+            createdAt: "2026-07-19T00:00:00.000Z",
+            updatedAt: "2026-07-19T00:00:00.000Z",
+          },
+        ],
+        assignments: {},
+        updatedAt: "2026-07-19T00:00:00.000Z",
+      },
       run: async () => {
         const server = createGatewayHttpServer({
           canvasHost: null,

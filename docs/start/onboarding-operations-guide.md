@@ -190,20 +190,20 @@ Decide the working model first:
 
 Recommended progression:
 
-- create/import and record both registry and canonical signer ids
-- configure signer execution RPC and Gateway read RPC
+- create/import with an explicit role and record both registry and canonical signer ids
+- enter one primary RPC; the signer derives network and verification witness
 - copy/review the installed role template and activate it with
   `fased-signer-policy --initial-install`
 - verify exact signer policy/network versions and hashes
-- enroll signer WebAuthn before manual native Agent, Mining, or Vault work
+- add an optional Vault approval device through the native signer-owner ceremony
+  only when that Vault needs manual signing
 - only then fund a deliberately small balance
 - explicit `@wallet:<walletId>` handles for risky wallet actions
 - broad automation only after the signer path is proven
 
-The Wallets Access-tab Wallet Control Passkey protects Gateway approvals and
-settings. It is separate from signer WebAuthn. See [Self-hosted wallet
-signer](/plugins/crypto/wallet-self-hosted) for the exact Local and Hosting
-activation commands.
+The optional Control UI account passkey under Account Security protects the web
+account. It does not affect Agent or Mining readiness. See [Self-hosted wallet
+signer](/plugins/crypto/wallet-self-hosted).
 
 ## 7. Plugin rollout
 
@@ -251,10 +251,10 @@ Treat SAT mining as an operator workflow, not a decorative toggle.
 
 Normal sequence:
 
-1. create the signer-owned singleton `@wallet:mining` wallet, or import it
-   through the separate native signer-admin control-socket command
-2. activate the reviewed Mining policy and configure both RPC planes
-3. enroll signer WebAuthn for manual reviewed Mining actions
+1. create or import the signer-owned singleton `@wallet:mining` wallet through
+   terminal onboarding, the wallet CLI, or Wallets creation
+2. enter one primary RPC and verify the Mining policy/readiness
+3. keep automatic mining inside its exact SAT-only signer policy
 4. confirm readiness and exact policy/network hashes
 5. fund deliberately small miner capital
 6. set commit

@@ -73,12 +73,9 @@ attestation failure. The shorter raw tagged command trusts the initial
 GitHub/repository download before it can attest later assets; it is not the
 high-assurance bootstrap path.
 
-Manual hardening only: install and authenticate Tailscale yourself:
-
-```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up
-```
+Manual hardening only: install Tailscale through its signed operating-system
+package repository, then run `sudo tailscale up`. Do not pipe a mutable remote
+installer into a root shell.
 
 Admin access (SSH/UI) must use Tailscale only after bootstrap.
 

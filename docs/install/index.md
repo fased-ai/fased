@@ -41,14 +41,13 @@ runs continuously on a remote Linux server.
        ssh root@YOUR_PUBLIC_VPS_IP
        ```
 
-    3. In that VPS SSH session, follow the
-       [verified Hosting bootstrap](/install/vps#3-verify-and-run-the-hosting-bootstrap).
+    3. In that VPS root SSH session, run the complete
+       [verified Hosting bootstrap block](/install/vps#3-verify-and-run-the-hosting-bootstrap).
 
-    The procedure verifies the exact tagged bootstrap before it runs. The
-    installer then verifies the tagged Hosting
-    release artifacts and attestations, installs or starts Tailscale on the
-    VPS, creates the non-root `app` runtime, and guides private dashboard/SSH
-    access. Open the Tailscale login URL it prints on your own computer.
+    The block verifies the exact tagged `install.sh` before Bash executes it.
+    The verified installer then installs or starts Tailscale, creates the
+    non-root `app` runtime, and guides private dashboard/SSH access. Open the
+    Tailscale login URL it prints on your own computer.
 
     Continue with the [three-step VPS guide](/install/vps) for access checks,
     advanced verification, and troubleshooting.
@@ -96,8 +95,8 @@ On VPS Hosting, run updates after reconnecting as `app` through Tailscale.
 
     Users who need to verify `install.sh` **before any shell code runs** can use
     the manual release-asset procedure in
-    [Advanced: verify the bootstrap first](/install/vps#advanced-verify-the-bootstrap-first).
-    That is an additional bootstrap check, not a different Hosting product.
+    [Advanced exact release selection](/install/vps#advanced-exact-release-selection).
+    That chooses a specific verified tag instead of the latest stable tag.
 
   </Accordion>
 

@@ -26,31 +26,53 @@ ssh root@YOUR_PUBLIC_VPS_IP
 
 下面的命令只在这个远程 VPS SSH 会话中运行。
 
-### 3. 验证并运行 Hosting bootstrap
+### 3. 运行 Hosting
 
-先在 VPS 安装支持 `gh attestation verify` 的当前版
-[GitHub CLI](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)，然后运行：
+先通过云服务商已签名的操作系统软件源安装 `curl`、`jq` 和 GitHub CLI。
+然后在 VPS root shell 中运行完整代码块：
 
 ```bash
 (
 set -euo pipefail
-RELEASE=v0.1.65
+for command in curl jq gh; do
+  command -v "$command" >/dev/null 2>&1 || {
+    echo "Install $command from the operating-system package repository first." >&2
+    exit 1
+  }
+done
+
+RELEASE="$(
+  curl -fsSL --proto '=https' --tlsv1.2 \
+    -H 'Accept: application/vnd.github+json' \
+    -H 'X-GitHub-Api-Version: 2022-11-28' \
+    -H 'User-Agent: fased-installer' \
+    https://api.github.com/repos/fased-ai/fased/releases/latest \
+    | jq -er '.tag_name | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))'
+)"
 BOOTSTRAP_DIR="$(mktemp -d)"
 trap 'rm -rf "$BOOTSTRAP_DIR"' EXIT
+
 curl -fsSLo "$BOOTSTRAP_DIR/install.sh" \
   "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh"
 curl -fsSLo "$BOOTSTRAP_DIR/install.sh.attestation.json" \
   "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh.attestation.json"
+
 GH_PROMPT_DISABLED=1 gh attestation verify "$BOOTSTRAP_DIR/install.sh" \
   --repo fased-ai/fased \
   --bundle "$BOOTSTRAP_DIR/install.sh.attestation.json" \
   --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
   --source-ref "refs/tags/${RELEASE}" \
   --deny-self-hosted-runners
+
 chmod 0500 "$BOOTSTRAP_DIR/install.sh"
 bash "$BOOTSTRAP_DIR/install.sh" --hosting --release "$RELEASE"
 )
 ```
+
+此流程先选择稳定 tag，并在 Bash 执行任何下载的 Fased 代码之前，把
+`install.sh` 验证为该 tag 和指定 release workflow 的产物。验证后的安装器还会
+再次验证不可变 manifest、对应架构 bundle 和 GitHub attestation，然后才进行
+特权安装。
 
 安装器会自动：
 

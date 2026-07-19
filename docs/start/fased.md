@@ -23,6 +23,29 @@ a specific job.
 Use this page after first boot to turn a working install into a real Agent
 setup.
 
+<Tabs>
+  <Tab title="Local install">
+    Run in macOS Terminal, Linux, or Ubuntu WSL2. Do not run it in Windows
+    PowerShell or native Windows Node.js.
+
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+      | bash -s -- --local
+    ```
+
+  </Tab>
+  <Tab title="VPS Hosting install">
+    SSH to the VPS as root, then run the complete [verified Hosting bootstrap
+    block](/install/vps#3-verify-and-run-the-hosting-bootstrap) inside that VPS
+    shell.
+
+    The block authenticates the exact tagged installer before Bash runs it. The
+    installer then creates the isolated non-root runtime and verifies the
+    immutable Hosting release before privileged installation.
+
+  </Tab>
+</Tabs>
+
 <Columns>
   <Card title="Getting Started" href="/start/getting-started" icon="rocket">
     Choose Local or VPS Hosting, onboard the machine, and open the dashboard.

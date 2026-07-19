@@ -109,7 +109,7 @@ type SettingsHost = {
   pendingGatewayToken?: string | null;
   walletDetailsWalletId?: string;
   walletSecuritySetupWalletId?: string;
-  walletSecuritySetupRole?: "agent" | "vault" | null;
+  walletSecuritySetupRole?: "agent" | "mining" | "vault" | null;
   connect?: () => void;
   dreamingStatusLoading: boolean;
   dreamingStatusError: string | null;
@@ -597,5 +597,20 @@ describe("applySettingsFromUrl", () => {
     expect(host.walletSecuritySetupRole).toBe("agent");
     expect(window.location.search).toBe("");
     expect(window.location.hash).toBe("");
+  });
+
+  it("preserves the Mining role when opening a Mining wallet from onboarding", async () => {
+    setTestWindowUrl(
+      "https://control.example/wallet?wallet=wallet-mining&wallet_role=mining&wallet_security=1",
+    );
+    const host = createHost("overview");
+    host.settings.gatewayUrl = "wss://control.example/fased";
+
+    await applySettingsFromUrl(asAppSettingsHost(host));
+
+    expect(host.tab).toBe("wallet");
+    expect(host.walletSecuritySetupWalletId).toBe("wallet-mining");
+    expect(host.walletSecuritySetupRole).toBe("mining");
+    expect(window.location.search).toBe("");
   });
 });

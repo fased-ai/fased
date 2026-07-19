@@ -134,6 +134,62 @@ type signerWalletLegacyImportRequestV2 struct {
 	PassphrasePath  string         `json:"passphrasePath"`
 }
 
+type signerWalletRecoveryExportRequestV2 struct {
+	ExpectedPublicKey string `json:"expectedPublicKey"`
+	PasswordPath      string `json:"passwordPath"`
+}
+
+type signerWalletRecoveryImportRequestV2 struct {
+	WalletID        string         `json:"-"`
+	ExpectedVersion uint64         `json:"expectedPolicyVersion"`
+	Policy          signerPolicyV2 `json:"policy"`
+	RecoveryPath    string         `json:"recoveryPath"`
+	PasswordPath    string         `json:"passwordPath"`
+}
+
+type signerWalletRawExportRequestV2 struct {
+	ExpectedPublicKey string `json:"expectedPublicKey"`
+	Path              string `json:"path"`
+}
+
+type signerWalletRecoveryPackageV1 struct {
+	Kind       string                           `json:"kind"`
+	Version    uint8                            `json:"version"`
+	WalletID   string                           `json:"walletId"`
+	Role       string                           `json:"role"`
+	PublicKey  string                           `json:"publicKey"`
+	CreatedAt  string                           `json:"createdAt"`
+	KDF        signerWalletRecoveryKDFV1        `json:"kdf"`
+	Encryption signerWalletRecoveryEncryptionV1 `json:"encryption"`
+}
+
+type signerWalletRecoveryKDFV1 struct {
+	Name        string `json:"name"`
+	MemoryKiB   uint32 `json:"memoryKiB"`
+	Iterations  uint32 `json:"iterations"`
+	Parallelism uint8  `json:"parallelism"`
+	Salt        string `json:"salt"`
+}
+
+type signerWalletRecoveryEncryptionV1 struct {
+	Name       string `json:"name"`
+	Nonce      string `json:"nonce"`
+	Ciphertext string `json:"ciphertext"`
+}
+
+type signerWalletRecoveryExportResultV2 struct {
+	WalletID  string                        `json:"walletId"`
+	Role      string                        `json:"role"`
+	PublicKey string                        `json:"publicKey"`
+	Package   signerWalletRecoveryPackageV1 `json:"package"`
+}
+
+type signerWalletRawExportResultV2 struct {
+	WalletID  string `json:"walletId"`
+	PublicKey string `json:"publicKey"`
+	Written   bool   `json:"written"`
+}
+
 type signerWalletRotateRequestV2 struct {
 	WalletID string `json:"walletId"`
 }

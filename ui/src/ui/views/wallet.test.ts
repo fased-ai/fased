@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   describeAdminControlShortcut,
+  describeVaultSignerApproval,
   describeWalletAutomationPolicySummary,
   describeWalletSendFlow,
   describeAgentDefaultAction,
@@ -256,7 +257,7 @@ describe("resolveOperatorWalletRoles", () => {
       miningStatus: null,
     });
 
-    expect(roles.admin.summary).toBe("Ready");
+    expect(roles.admin.summary).toBe("Optional · enabled");
     expect(roles.agent.summary).toBe("Agent Wallet");
     expect(roles.agent.detail).toContain(
       "If no @wallet:<id> is specified, approved wallet actions use this default Agent wallet.",
@@ -405,10 +406,10 @@ describe("describeAdminControlShortcut", () => {
         passkeyBusy: false,
       }),
     ).toMatchObject({
-      summary: "Not ready",
-      detail: expect.stringContaining("policy changes"),
+      summary: "Optional",
+      detail: expect.stringContaining("Agent or Mining wallet readiness"),
       enableVisible: true,
-      enableLabel: "Enable passkey approval",
+      enableLabel: "Add account passkey",
       enrollVisible: false,
     });
   });
@@ -430,8 +431,8 @@ describe("describeAdminControlShortcut", () => {
         passkeyBusy: false,
       }),
     ).toMatchObject({
-      summary: "Not ready",
-      detail: expect.stringContaining("policy changes"),
+      summary: "Setup incomplete",
+      detail: expect.stringContaining("Mining automation"),
       enableVisible: false,
       enrollVisible: true,
       enrollLabel: "Enroll passkey",
@@ -455,10 +456,46 @@ describe("describeAdminControlShortcut", () => {
         passkeyBusy: false,
       }),
     ).toMatchObject({
-      summary: "Ready",
-      detail: expect.stringContaining("policy changes"),
+      summary: "Enabled",
+      detail: expect.stringContaining("Mining autonomous signer policies"),
       enableVisible: false,
       enrollVisible: false,
+    });
+  });
+});
+
+describe("describeVaultSignerApproval", () => {
+  it("keeps Vault optional and points enrollment to the signer-owner ceremony", () => {
+    expect(
+      describeVaultSignerApproval({
+        nativeSignerApproval: {
+          configured: true,
+          ready: false,
+          credentialCount: 0,
+          credentialVersion: 1,
+        },
+      }),
+    ).toMatchObject({
+      summary: "Not enrolled",
+      setupCommand: expect.stringContaining("/usr/local/sbin/fased-signer-enroll"),
+    });
+  });
+
+  it("reports signer-owned readiness without treating it as wallet creation readiness", () => {
+    expect(
+      describeVaultSignerApproval({
+        nativeSignerApproval: {
+          configured: true,
+          ready: true,
+          credentialCount: 2,
+          credentialVersion: 4,
+        },
+      }),
+    ).toEqual({
+      summary: "Ready · 2 devices",
+      detail:
+        "The native signer has an approval device. This Vault still needs an acknowledged manual policy for the exact operation before Send becomes available.",
+      setupCommand: null,
     });
   });
 });
@@ -1008,7 +1045,7 @@ describe("renderWallet", () => {
     expect(text).toContain("Small Agent spend");
     expect(text).toContain("Native signer policy: locked");
     expect(text).toContain(
-      "This wallet cannot send, swap, mine, bond, or execute wallet-capable skills until a host administrator installs an owner-reviewed policy and the signer acknowledges its exact hash.",
+      "The role-safe deny-all baseline is active, so the wallet can receive but cannot send, swap, mine, bond, or execute wallet-capable skills.",
     );
     expect(text).toContain("Version 3");
     expect(text).toContain(`sha256:${"e".repeat(64)}`);

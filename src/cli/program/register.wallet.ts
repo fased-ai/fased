@@ -10,6 +10,9 @@ import {
   walletPolicyProfileApplyCommand,
   walletProviderConfigureCommand,
   walletRotateKeysCommand,
+  walletRecoveryExportCommand,
+  walletRecoveryImportCommand,
+  walletRawExportCommand,
   walletRoleSetCommand,
   walletSetupCommand,
   walletSignerServeCommand,
@@ -38,14 +41,79 @@ export function registerWalletCommands(program: Command) {
       wallet.help({ error: true });
     });
 
+  const recovery = wallet.command("recovery").description("Signer-owned encrypted recovery");
+  recovery
+    .command("export")
+    .description("Create an Argon2id + authenticated-encryption recovery package")
+    .requiredOption("--wallet-id <id>", "Registered signer-owned wallet id")
+    .requiredOption("--output <absolute-path>", "New owner-only recovery package path")
+    .action(async (opts) => {
+      await runCommandWithRuntime(defaultRuntime, async () => {
+        await walletRecoveryExportCommand(defaultRuntime, {
+          walletId: String(opts.walletId),
+          output: String(opts.output),
+        });
+      });
+    });
+
+  recovery
+    .command("import")
+    .description("Restore an encrypted signer recovery package into a new Local wallet")
+    .requiredOption("--wallet-id <id>", "New registered signer-owned wallet id")
+    .requiredOption("--wallet-name <name>", "Wallet display name")
+    .requiredOption("--role <role>", "Permanent signer role: agent|mining|vault")
+    .requiredOption("--file <absolute-path>", "Owner-only encrypted recovery package")
+    .requiredOption("--rpc-url <url>", "One primary Solana RPC URL")
+    .action(async (opts) => {
+      await runCommandWithRuntime(defaultRuntime, async () => {
+        await walletRecoveryImportCommand(defaultRuntime, {
+          walletId: String(opts.walletId),
+          walletName: String(opts.walletName),
+          role: String(opts.role),
+          recoveryFile: String(opts.file),
+          rpcUrl: String(opts.rpcUrl),
+        });
+      });
+    });
+
+  recovery
+    .command("export-raw")
+    .description("Advanced: export a raw Solana keypair and reduce signer custody protection")
+    .requiredOption("--wallet-id <id>", "Registered signer-owned wallet id")
+    .requiredOption("--output <absolute-path>", "New owner-only raw keypair path")
+    .requiredOption(
+      "--acknowledge-custody-reduction",
+      "Confirm that raw export makes the wallet key portable",
+    )
+    .action(async (opts) => {
+      await runCommandWithRuntime(defaultRuntime, async () => {
+        await walletRawExportCommand(defaultRuntime, {
+          walletId: String(opts.walletId),
+          output: String(opts.output),
+          acknowledgeCustodyReduction: Boolean(opts.acknowledgeCustodyReduction),
+        });
+      });
+    });
+
   wallet
     .command("setup")
     .description("Create a signer-owned Solana wallet or configure a supported provider")
-    .option("--mode <mode>", "local-signer-create|local-signer-import|local-signer|turnkey|alchemy")
+    .option(
+      "--mode <mode>",
+      "local-signer-create|local-signer-import|local-signer-recovery-import|local-signer|turnkey|alchemy",
+    )
     .option("--chain <chain>", "solana", "solana")
     .option("--wallet-id <id>", "Named wallet id (examples: agent, mining, vault)")
     .option("--wallet-name <value>", "Friendly wallet display name (for UI/skills/plugins)")
     .option("--role <role>", "Permanent signer role: agent|mining|vault")
+    .option(
+      "--import-file <absolute-path>",
+      "Owner-only Solana keypair JSON for local-signer-import; secret is passed by file descriptor, never argv/env",
+    )
+    .option(
+      "--recovery-file <absolute-path>",
+      "Owner-only encrypted package for local-signer-recovery-import",
+    )
     .option("--api-key <value>", "Alchemy API key")
     .option("--rpc-url <url>", "Solana RPC URL")
     .option("--turnkey-api-public-key <value>", "Turnkey API public key (turnkey mode)")
@@ -73,6 +141,8 @@ export function registerWalletCommands(program: Command) {
           role: typeof opts.role === "string" ? opts.role : undefined,
           apiKey: typeof opts.apiKey === "string" ? opts.apiKey : undefined,
           rpcUrl: typeof opts.rpcUrl === "string" ? opts.rpcUrl : undefined,
+          importFile: typeof opts.importFile === "string" ? opts.importFile : undefined,
+          recoveryFile: typeof opts.recoveryFile === "string" ? opts.recoveryFile : undefined,
           turnkeyApiPublicKey:
             typeof opts.turnkeyApiPublicKey === "string" ? opts.turnkeyApiPublicKey : undefined,
           turnkeyApiPrivateKey:

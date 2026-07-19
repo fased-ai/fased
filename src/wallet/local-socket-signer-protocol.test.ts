@@ -756,6 +756,47 @@ describe("local socket signer protocol", () => {
     ).toBe(false);
   });
 
+  it("keeps application network bootstrap one-RPC and response-secret-free", () => {
+    expect(parseLocalSocketSignerRequest({ op: "v2.network.get", walletId: "agent" })).toEqual({
+      op: "v2.network.get",
+      walletId: "agent",
+    });
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "v2.network.bootstrap",
+        walletId: "agent",
+        request: { expectedVersion: 1, primaryRpcUrl: "https://rpc.example/solana" },
+      }),
+    ).toMatchObject({ op: "v2.network.bootstrap", request: { expectedVersion: 1 } });
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        op: "v2.network.bootstrap",
+        walletId: "agent",
+        request: {
+          expectedVersion: 1,
+          primaryRpcUrl: "https://rpc.example/solana",
+          verificationRpcUrl: "https://witness.example/solana",
+        },
+      }),
+    ).toThrow(/invalid signer request/i);
+
+    const summary = {
+      walletId: "agent",
+      configured: true,
+      version: 2,
+      hash: `hmac-sha256:${"a".repeat(64)}`,
+      ready: true,
+    };
+    expect(validateLocalSocketSignerResult("v2.network.get", summary)).toBe(true);
+    expect(validateLocalSocketSignerResult("v2.network.bootstrap", summary)).toBe(true);
+    expect(
+      validateLocalSocketSignerResult("v2.network.bootstrap", {
+        ...summary,
+        primaryRpcUrl: "https://secret.example/solana?token=secret",
+      }),
+    ).toBe(false);
+  });
+
   it.each([
     "prepareTx",
     "signTx",

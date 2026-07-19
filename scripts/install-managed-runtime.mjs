@@ -220,15 +220,15 @@ export async function installManagedRuntime(params, dependencyOverrides = {}) {
     ...dependencyOverrides,
   };
   const paths = resolveManagedRuntimePaths(params);
+  const profile = normalizeManagedProfile(params.profile);
   const existingManifest = readManagedInstallManifest(paths.manifestPath);
   const version = await assertManagedRuntime(params.packageRoot);
   const metadata = await readHostedRuntimeMetadata(params.packageRoot);
-  const hostedRelease = await readHostedReleaseBinding(params.packageRoot, metadata, version);
-  if (
-    normalizeManagedProfile(params.profile) === "hosting" &&
-    params.hostTransactionId &&
-    !hostedRelease
-  ) {
+  const hostedRelease =
+    profile === "hosting"
+      ? await readHostedReleaseBinding(params.packageRoot, metadata, version)
+      : null;
+  if (profile === "hosting" && params.hostTransactionId && !hostedRelease) {
     throw new Error(
       "Maintained Hosting requires an attested unified app and signer release manifest.",
     );
@@ -399,7 +399,10 @@ export async function rollbackManagedRuntime(params) {
   const previousVersion = await assertManagedRuntime(previousRoot);
   const currentVersion = await readPackageVersion(currentRoot);
   const metadata = await readHostedRuntimeMetadata(previousRoot);
-  const hostedRelease = await readHostedReleaseBinding(previousRoot, metadata, previousVersion);
+  const hostedRelease =
+    normalizeManagedProfile(manifest.profile) === "hosting"
+      ? await readHostedReleaseBinding(previousRoot, metadata, previousVersion)
+      : null;
 
   await atomicSymlink(currentRoot, paths.previousLink);
   await atomicSymlink(previousRoot, paths.currentLink);

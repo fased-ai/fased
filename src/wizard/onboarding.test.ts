@@ -10,7 +10,7 @@ import type { WizardPrompter } from "./prompts.js";
 const healthCommand = vi.hoisted(() => vi.fn(async () => {}));
 const ensureWorkspaceAndSessions = vi.hoisted(() => vi.fn(async () => {}));
 const handleOnboardingRepair = vi.hoisted(() => vi.fn(async () => {}));
-const writeConfigFile = vi.hoisted(() => vi.fn(async () => {}));
+const writeConfigFile = vi.hoisted(() => vi.fn<(config: unknown) => Promise<void>>(async () => {}));
 const readConfigFileSnapshot = vi.hoisted(() =>
   vi.fn(async () => ({ exists: false, valid: true, config: {} })),
 );
@@ -44,7 +44,7 @@ const applyHostingSecurity = vi.hoisted(() =>
   vi.fn(async ({ opts }) => ({ profile: opts.hostProfile ?? "local", checks: [] })),
 );
 const walletSetupCommand = vi.hoisted(() =>
-  vi.fn(async (_runtime: unknown, _options: unknown) => {}),
+  vi.fn<(runtime: unknown, options: Record<string, unknown>) => Promise<void>>(async () => {}),
 );
 const collectWalletSignerDoctorReport = vi.hoisted(() =>
   vi.fn(async () => ({
@@ -709,6 +709,9 @@ describe("runOnboardingWizard", () => {
       if (message === "Wallet action") {
         return "create";
       }
+      if (message === "Wallet role (required)") {
+        return "agent";
+      }
       if (message === "How do you want to hatch your bot?") {
         return "skip";
       }
@@ -781,6 +784,110 @@ describe("runOnboardingWizard", () => {
     );
   });
 
+  it("does not retain a signer-rejected RPC when another wallet succeeds", async () => {
+    walletSetupCommand.mockReset();
+    walletSetupCommand.mockResolvedValueOnce(undefined);
+    walletSetupCommand.mockRejectedValueOnce(new Error("RPC genesis verification failed"));
+    writeConfigFile.mockClear();
+    readWalletProviderRegistry.mockReturnValue({
+      version: 1,
+      providers: {
+        "embedded-keystore": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        "local-socket-signer": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        alchemy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        turnkey: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        privy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+      },
+      wallets: [],
+      assignments: {},
+      updatedAt: "2026-03-15T00:00:00.000Z",
+    });
+    let rolePromptCount = 0;
+    const select = vi.fn(async (opts: unknown) => {
+      const rawMessage = (opts as { message?: unknown })?.message;
+      const message = typeof rawMessage === "string" ? rawMessage : "";
+      if (message === "Wallet setup action") {
+        return "self-hosted";
+      }
+      if (message === "Wallet action") {
+        return "create";
+      }
+      if (message === "Wallet role (required)") {
+        rolePromptCount += 1;
+        return rolePromptCount === 1 ? "agent" : "mining";
+      }
+      if (message === "How do you want to hatch your bot?") {
+        return "skip";
+      }
+      return "quickstart";
+    }) as unknown as WizardPrompter["select"];
+    let rpcPromptCount = 0;
+    const text = vi.fn(async (opts: unknown) => {
+      const rawMessage = (opts as { message?: unknown })?.message;
+      const message = typeof rawMessage === "string" ? rawMessage : "";
+      if (message.includes("RPC URL")) {
+        rpcPromptCount += 1;
+        return rpcPromptCount === 1
+          ? "https://accepted.example/solana"
+          : "https://rejected.example/solana";
+      }
+      return "";
+    }) as unknown as WizardPrompter["text"];
+    let anotherPromptCount = 0;
+    const confirm = vi.fn(async (opts: unknown) => {
+      const rawMessage = (opts as { message?: unknown })?.message;
+      const message = typeof rawMessage === "string" ? rawMessage : "";
+      if (message === "Run another wallet setup action?") {
+        anotherPromptCount += 1;
+        return anotherPromptCount === 1;
+      }
+      return false;
+    }) as unknown as WizardPrompter["confirm"];
+    const prompter = createWizardPrompter({ select, text, confirm });
+
+    try {
+      await runOnboardingWizard(
+        {
+          acceptRisk: true,
+          flow: "quickstart",
+          authChoice: "skip",
+          installDaemon: false,
+          skipProviders: true,
+          skipSkills: true,
+          skipHealth: true,
+          skipUi: true,
+        },
+        createRuntime({ throwsOnExit: true }),
+        prompter,
+      );
+
+      expect(rolePromptCount).toBe(2);
+      expect(walletSetupCommand).toHaveBeenNthCalledWith(
+        1,
+        expect.anything(),
+        expect.objectContaining({ role: "agent", rpcUrl: "https://accepted.example/solana" }),
+      );
+      expect(walletSetupCommand).toHaveBeenNthCalledWith(
+        2,
+        expect.anything(),
+        expect.objectContaining({ role: "mining", rpcUrl: "https://rejected.example/solana" }),
+      );
+      expect(process.env.FASED_WALLET_SOLANA_RPC_URL__AGENT).toBe(
+        "https://accepted.example/solana",
+      );
+      expect(process.env.FASED_WALLET_SOLANA_RPC_URL__MINING).toBeUndefined();
+      for (const [written] of writeConfigFile.mock.calls) {
+        expect(
+          (written as { env?: { vars?: Record<string, string> } }).env?.vars
+            ?.FASED_WALLET_SOLANA_RPC_URL__MINING,
+        ).toBeUndefined();
+      }
+    } finally {
+      delete process.env.FASED_WALLET_SOLANA_RPC_URL__AGENT;
+      delete process.env.FASED_WALLET_SOLANA_RPC_URL__MINING;
+    }
+  });
+
   it("never asks Node to print signer-owned private keys", async () => {
     walletSetupCommand.mockClear();
     readWalletProviderRegistry.mockReturnValue({
@@ -809,6 +916,9 @@ describe("runOnboardingWizard", () => {
       }
       if (message === "Wallet action") {
         return "create";
+      }
+      if (message === "Wallet role (required)") {
+        return "agent";
       }
       if (message === "How do you want to hatch your bot?") {
         return "skip";
@@ -906,7 +1016,7 @@ describe("runOnboardingWizard", () => {
       if (message === "Wallet action") {
         return "create";
       }
-      if (message === "Wallet purpose") {
+      if (message === "Wallet role (required)") {
         return "agent";
       }
       if (message === "How do you want to hatch your bot?") {
@@ -1675,7 +1785,6 @@ describe("runOnboardingWizard", () => {
       expect.objectContaining({
         walletId: "wallet-1",
         primaryRpcUrl: "https://new-rpc.example",
-        executionFallbackRpcUrl: "https://advanced-execution.example/solana",
       }),
     );
     expect(prompter.note).toHaveBeenCalledWith(
@@ -2057,6 +2166,9 @@ describe("runOnboardingWizard", () => {
       if (message === "Wallet action") {
         return "create";
       }
+      if (message === "Wallet role (required)") {
+        return "agent";
+      }
       if (message === "How do you want to hatch your bot?") {
         return "skip";
       }
@@ -2113,7 +2225,7 @@ describe("runOnboardingWizard", () => {
     }
   });
 
-  it("routes hosted signer import through the provider root console without app sudo", async () => {
+  it("keeps hosted signer import in the provider-root signer ceremony", async () => {
     const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "fased-hosted-wallet-import-"));
     vi.stubEnv("USER", "app");
     vi.stubEnv("HOME", tempHome);
@@ -2126,11 +2238,25 @@ describe("runOnboardingWizard", () => {
       if (message === "Wallet action") {
         return "import";
       }
+      if (message === "Wallet role (required)") {
+        return "agent";
+      }
       if (message === "How do you want to hatch your bot?") {
         return "skip";
       }
       return "quickstart";
     }) as unknown as WizardPrompter["select"];
+    const text = vi.fn(async (opts: unknown) => {
+      const rawMessage = (opts as { message?: unknown })?.message;
+      const message = typeof rawMessage === "string" ? rawMessage : "";
+      if (message.includes("keypair JSON")) {
+        return path.join(tempHome, "wallet.json");
+      }
+      if (message.includes("RPC URL")) {
+        return "https://api.devnet.solana.com";
+      }
+      return "";
+    }) as unknown as WizardPrompter["text"];
     const confirm = vi.fn(async (opts: unknown) => {
       const rawMessage = (opts as { message?: unknown })?.message;
       const message = typeof rawMessage === "string" ? rawMessage : "";
@@ -2140,11 +2266,7 @@ describe("runOnboardingWizard", () => {
       return false;
     }) as unknown as WizardPrompter["confirm"];
     const note = vi.fn(async (_message: string, _title?: string) => {});
-    const prompter = createWizardPrompter({ select, confirm, note });
-    writeConfigFile.mockImplementationOnce(async () => {
-      throw new Error("write-reached");
-    });
-
+    const prompter = createWizardPrompter({ select, text, confirm, note });
     try {
       await expect(
         runOnboardingWizard(
@@ -2162,18 +2284,15 @@ describe("runOnboardingWizard", () => {
           createRuntime({ throwsOnExit: true }),
           prompter,
         ),
-      ).rejects.toThrow("write-reached");
-
-      const importNote = note.mock.calls.find(([, title]) => title === "Native signer import");
-      expect(importNote?.[0]).toContain("VPS provider root console");
-      expect(importNote?.[0]).toContain("Do not run it from the app shell");
-      expect(importNote?.[0]).toContain("/usr/sbin/runuser -u fased-signer --");
-      expect(importNote?.[0]).toContain("HOME=/var/lib/fased-signerd");
-      expect(importNote?.[0]).not.toContain("sudo /bin/sh");
-      expect(importNote?.[0]).toContain("/opt/fased/signer/fased-signerd");
-      expect(importNote?.[0]).toContain("<");
-      expect(importNote?.[0]).toContain("/absolute/path/to/solana-keypair.json");
-      expect(walletSetupCommand).not.toHaveBeenCalled();
+      ).rejects.toThrow(/Hosting requires the root-managed fased-gateway/);
+      expect(walletSetupCommand).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ mode: "local-signer-import" }),
+      );
+      expect(note).toHaveBeenCalledWith(
+        expect.stringMatching(/provider root console[\s\S]*fased-signer-wallet-import/),
+        "Signer-owned Hosting import",
+      );
     } finally {
       await fs.rm(tempHome, { recursive: true, force: true });
     }
@@ -2238,6 +2357,9 @@ describe("runOnboardingWizard", () => {
       }
       if (message === "Wallet action") {
         return "create";
+      }
+      if (message === "Wallet role (required)") {
+        return "agent";
       }
       if (message === "How do you want to hatch your bot?") {
         return "skip";

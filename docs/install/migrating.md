@@ -97,15 +97,8 @@ request state. Back up and restore them together.
 ### Pre-v2 encrypted Local wallets
 
 Do not copy an old encrypted keystore into Node or paste its passphrase into
-onboarding. Before a Local/WSL/macOS update, run:
-
-```bash
-fased wallet setup --mode local-signer-import --wallet-id agent --role agent
-```
-
-The command prints exact native `fased-signerd` import guidance without reading
-the key. Prepare the referenced keystore and passphrase as separate `0600`
-files, run the native `import-legacy` command, and independently compare the
+onboarding. Prepare the legacy keystore and passphrase as separate `0600` files,
+run the native `fased-signerd admin wallet import-legacy` command, and compare the
 returned address with `fased wallet status --json` captured before migration.
 After it matches:
 
@@ -118,6 +111,9 @@ Repeat for every old wallet with its permanent role. Only then run
 `fased update`. The updater fails before quiescing the old installation while
 legacy material is still active; it never guesses a passphrase or silently
 widens a deny-all policy.
+
+`local-signer-import` is for a standard Solana CLI keypair and is not a legacy
+encrypted-keystore migration command.
 
 ### Step 0 — Record identity and make an offline backup
 

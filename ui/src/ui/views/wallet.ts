@@ -61,7 +61,8 @@ export type WalletViewProps = {
   createName?: string;
   createId?: string;
   createProvider?: WalletProviderInfo["id"];
-  createRole?: "agent" | "vault";
+  createRole?: "" | "agent" | "mining" | "vault";
+  createRpcUrl?: string;
   settingsBusy: boolean;
   settingsError: string | null;
   settingsMessage: string | null;
@@ -135,8 +136,13 @@ export type WalletViewProps = {
   onCreateNameChange?: (next: string) => void;
   onCreateIdChange?: (next: string) => void;
   onCreateProviderChange?: (next: WalletProviderInfo["id"]) => void;
-  onCreateRoleChange?: (next: "agent" | "vault") => void;
+  onCreateRoleChange?: (next: "" | "agent" | "mining" | "vault") => void;
+  onCreateRpcUrlChange?: (next: string) => void;
+  rpcUrl?: string;
+  onRpcUrlChange?: (next: string) => void;
+  onSaveWalletRpc?: () => void;
   onCreateWallet?: () => void;
+  onArchiveWallet?: (walletId: string) => void;
   onApproveRequest: (requestId: string) => void;
   onRejectRequest: (requestId: string) => void;
   onSetDefaultWallet: (walletId: string | null) => void;
@@ -237,10 +243,11 @@ export function describeAdminControlShortcut(
   const passkeyCount = props.status?.approvalAuth?.passkeyCount ?? 0;
   if (approvalMode !== "webauthn") {
     return {
-      summary: "Not ready",
-      detail: "Enable Wallet Control Passkey before approving sends or policy changes.",
+      summary: "Optional",
+      detail:
+        "Optional extra approval for Control UI account actions. It is not part of Agent or Mining wallet readiness.",
       enableVisible: true,
-      enableLabel: props.settingsBusy ? "Enabling..." : "Enable passkey approval",
+      enableLabel: props.settingsBusy ? "Enabling..." : "Add account passkey",
       enableDisabled: props.settingsBusy || props.passkeyBusy,
       enrollVisible: false,
       enrollLabel: "Enroll passkey",
@@ -249,8 +256,9 @@ export function describeAdminControlShortcut(
   }
   if (!approvalReady || passkeyCount <= 0) {
     return {
-      summary: "Not ready",
-      detail: "Enroll one passkey in this browser before wallet sends or policy changes.",
+      summary: "Setup incomplete",
+      detail:
+        "Account passkey mode is enabled but no device is enrolled. Wallet creation, Agent automation, and Mining automation are unaffected.",
       enableVisible: false,
       enableLabel: "Passkey approval enabled",
       enableDisabled: true,
@@ -260,14 +268,56 @@ export function describeAdminControlShortcut(
     };
   }
   return {
-    summary: "Ready",
-    detail: "Wallet Control Passkey is ready for sends and policy changes.",
+    summary: "Enabled",
+    detail:
+      "Optional Control UI account passkey is enabled. Agent and Mining autonomous signer policies remain independent.",
     enableVisible: false,
     enableLabel: "Passkey approval ready",
     enableDisabled: true,
     enrollVisible: false,
     enrollLabel: props.passkeyBusy ? "Adding passkey..." : "Add passkey",
     enrollDisabled: props.settingsBusy || props.passkeyBusy,
+  };
+}
+
+export function describeVaultSignerApproval(
+  status: Pick<WalletStatus, "nativeSignerApproval"> | null | undefined,
+): {
+  summary: string;
+  detail: string;
+  setupCommand: string | null;
+} {
+  const approval = status?.nativeSignerApproval;
+  if (!approval) {
+    return {
+      summary: "Status unavailable",
+      detail:
+        "Signer-owned Vault approval readiness is unavailable. Vault remains manual and receive-only until signer health is restored and an exact manual policy is acknowledged.",
+      setupCommand: null,
+    };
+  }
+  if (!approval.configured) {
+    return {
+      summary: "Not configured",
+      detail:
+        "This signer has no WebAuthn origin configured. Vault creation and receiving still work, but native Vault review cannot be enabled yet.",
+      setupCommand: null,
+    };
+  }
+  if (!approval.ready || approval.credentialCount <= 0) {
+    return {
+      summary: "Not enrolled",
+      detail:
+        "No signer-owned approval device is enrolled. Run the native signer-owner ceremony from the host terminal; ordinary Gateway JavaScript cannot enroll it.",
+      setupCommand:
+        "Local: ~/.fased/bin/fased-signer-enroll · Hosting root console: /usr/local/sbin/fased-signer-enroll",
+    };
+  }
+  return {
+    summary: `Ready · ${approval.credentialCount} device${approval.credentialCount === 1 ? "" : "s"}`,
+    detail:
+      "The native signer has an approval device. This Vault still needs an acknowledged manual policy for the exact operation before Send becomes available.",
+    setupCommand: null,
   };
 }
 
@@ -282,7 +332,7 @@ export function describeWalletSendFlow(
     mode: "manual",
     submitLabel: "Create Approval Request",
     detail:
-      "Direct user Send is always reviewed/manual. Confirm creates a pending wallet approval request below, and passkey approval happens on Approve when enabled.",
+      "Direct user Send is always reviewed/manual. Confirm creates a pending wallet approval request below. The optional account passkey is requested only when the user enabled it.",
   };
 }
 
@@ -489,29 +539,29 @@ export function resolveOperatorWalletRoles(
   const admin: OperatorWalletRoleSummary = props.status
     ? approvalMode === "webauthn" && approvalReady
       ? {
-          title: "Wallet Control Passkey",
-          summary: "Ready",
-          detail: "Use this passkey for reviewed sends and policy changes.",
+          title: "Control UI account passkey",
+          summary: "Optional · enabled",
+          detail: "Adds account-level approval without changing Agent or Mining readiness.",
           tone: "success",
         }
       : approvalMode === "webauthn"
         ? {
-            title: "Wallet Control Passkey",
-            summary: "Not ready",
-            detail: "Enroll one passkey before reviewed wallet sends or policy changes.",
+            title: "Control UI account passkey",
+            summary: "Optional · setup incomplete",
+            detail: "Finish or disable account passkey mode. Wallet role readiness is separate.",
             tone: "warn",
           }
         : {
-            title: "Wallet Control Passkey",
-            summary: "Not ready",
+            title: "Control UI account passkey",
+            summary: "Optional · off",
             detail:
-              "Wallet control currently relies on the signed-in session. Add a passkey before approving reviewed sends.",
-            tone: "warn",
+              "The signed-in Control UI session is active. Add an account passkey only if you want the extra approval step.",
+            tone: "neutral",
           }
     : {
-        title: "Wallet Control Passkey",
-        summary: "Wallet approval state unavailable",
-        detail: "Refresh the wallet surface before changing operator roles.",
+        title: "Control UI account passkey",
+        summary: "Optional status unavailable",
+        detail: "Refresh Account Security before changing account-level approval.",
         tone: "neutral",
       };
 
@@ -717,11 +767,11 @@ function renderWalletRuntimeStatusIcons(params: {
 }
 
 function renderWalletPasskeyChip(summary: string, detail: string) {
-  const ready = summary.toLowerCase() === "ready";
+  const enabled = summary.toLowerCase() === "enabled";
   return html`
-    <span class="wallet-lock-chip" data-state=${ready ? "unlocked" : "locked"} title=${detail}>
+    <span class="wallet-lock-chip" data-state=${enabled ? "unlocked" : "locked"} title=${detail}>
       <span class="wallet-lock-chip__dot"></span>
-      ${ready ? "Ready" : "Not ready"}
+      ${summary}
     </span>
   `;
 }
@@ -2663,9 +2713,9 @@ function renderWalletAccessPanel(props: WalletViewProps) {
         <div class="wallet-top-card__head">
           <div>
             <div class="wallet-top-card__title-row">
-              <div class="card-title">Wallet Control Passkey</div>
+              <div class="card-title">Control UI account passkey</div>
               ${renderInfoButton(
-                "Wallet Control Passkey",
+                "Optional Control UI account passkey",
                 `${adminControlShortcut.detail} Use a device passkey such as Touch ID, Windows Hello, a phone passkey, or a supported security key.`,
               )}
               ${renderWalletPasskeyChip(adminControlShortcut.summary, adminControlShortcut.detail)}
@@ -2708,9 +2758,9 @@ function renderWalletAccessPanel(props: WalletViewProps) {
           }
         </div>
         <div class="wallet-security-note" style="margin-top: 10px;">
-          Protects Gateway policy and administration changes. Native signer
-          wallets use a separate signer-owned WebAuthn credential for each exact
-          reviewed send.
+          This is optional account security for the browser Control UI. It is not requested during
+          installation or wallet creation and does not gate Agent or Mining automation. A Vault
+          approval device is a separate signer-owned feature configured only for Vault review.
         </div>
         ${
           !adminControlShortcut.enableVisible && !adminControlShortcut.enrollVisible
@@ -2822,12 +2872,12 @@ export function renderWallet(props: WalletViewProps) {
       : "wallet";
   const expandedWalletId = String(props.expandedWalletId ?? "").trim();
   const expandedPanel = props.expandedPanel ?? "";
+  const routeHash =
+    typeof window !== "undefined" ? String(window.location?.hash ?? "").replace(/^#/, "") : "";
   const hashPanel =
-    typeof window !== "undefined" &&
-    window.location.hash.replace(/^#/, "") === "wallet-skill-grants"
+    routeHash === "wallet-skill-grants"
       ? "skill-grants"
-      : typeof window !== "undefined" &&
-          ["wallet-access", "wallet-admin-control"].includes(window.location.hash.replace(/^#/, ""))
+      : ["wallet-access", "wallet-admin-control"].includes(routeHash)
         ? "access"
         : null;
   const activeMainPanel = hashPanel ?? props.mainPanel ?? "wallets";
@@ -2843,6 +2893,17 @@ export function renderWallet(props: WalletViewProps) {
     createProvider?.enabled &&
     createProvider.health.ok &&
     (!createProvider.capabilities.requiresCredentials || createProvider.credentialsConfigured),
+  );
+  const existingMiningWallet = props.namedWallets.find(
+    (wallet) => resolveDisplayedWalletRole(wallet.id, props) === "mining" || wallet.id === "mining",
+  );
+  const miningCreationBlocked = props.createRole === "mining" && Boolean(existingMiningWallet);
+  const createInputReady = Boolean(
+    props.createRole &&
+    props.createName?.trim() &&
+    (createProviderId !== "local-socket-signer" ||
+      (props.createId?.trim() && props.createRpcUrl?.trim())) &&
+    !miningCreationBlocked,
   );
   const setMainPanel = (panel: "wallets" | "access" | "skill-grants") => {
     props.onMainPanelChange?.(panel);
@@ -4038,7 +4099,7 @@ export function renderWallet(props: WalletViewProps) {
             aria-selected=${activeMainPanel === "access" ? "true" : "false"}
             @click=${() => setMainPanel("access")}
           >
-            Access
+            Account Security
           </button>
           <button
             class="btn"
@@ -4128,38 +4189,65 @@ export function renderWallet(props: WalletViewProps) {
               <label class="field">
                 <span>Wallet role</span>
                 <select
-                  .value=${props.createRole ?? "agent"}
+                  .value=${props.createRole ?? ""}
                   @change=${(event: Event) =>
                     props.onCreateRoleChange?.(
-                      (event.target as HTMLSelectElement).value as "agent" | "vault",
+                      (event.target as HTMLSelectElement).value as
+                        | ""
+                        | "agent"
+                        | "mining"
+                        | "vault",
                     )}
                 >
+                  <option value="" disabled>Select a role</option>
                   <option value="agent">Agent — capped automation</option>
+                  <option value="mining">Mining — singleton SAT operations</option>
                   <option value="vault">Vault — reviewed operations only</option>
                 </select>
               </label>
+              ${
+                createProviderId === "local-socket-signer"
+                  ? html`
+                      <label class="field">
+                        <span>Primary Solana RPC</span>
+                        <input
+                          .value=${props.createRpcUrl ?? ""}
+                          placeholder="https://your-solana-rpc.example"
+                          autocomplete="off"
+                          spellcheck="false"
+                          @input=${(event: Event) =>
+                            props.onCreateRpcUrlChange?.((event.target as HTMLInputElement).value)}
+                        />
+                      </label>
+                    `
+                  : nothing
+              }
               <div class="wallet-create-actions">
                 <button
                   class="btn primary"
-                  ?disabled=${props.settingsBusy || !createProviderReady}
+                  ?disabled=${props.settingsBusy || !createProviderReady || !createInputReady}
                   @click=${props.onCreateWallet}
                 >
                   ${props.settingsBusy ? "Creating..." : "Create wallet"}
                 </button>
                 <span class="muted">
                   ${
-                    !createProvider
-                      ? "No production wallet-creation provider is available."
-                      : !createProvider.enabled
-                        ? "Enable this provider in Wallet Access first."
-                        : !createProvider.health.ok
-                          ? createProvider.health.details || "Provider health check failed."
-                          : createProvider.capabilities.requiresCredentials &&
-                              !createProvider.credentialsConfigured
-                            ? "Configure restricted provider credentials before creating a wallet."
-                            : createProviderId === "local-socket-signer"
-                              ? "The Go signer generates the key; Node receives only the public address."
-                              : "Turnkey creates the account under the configured restrictive policy."
+                    miningCreationBlocked
+                      ? `Mining already uses ${existingMiningWallet?.name ?? existingMiningWallet?.id}. Open, Replace, or Archive that singleton wallet.`
+                      : !props.createRole
+                        ? "Choose a wallet role; Agent is never selected silently."
+                        : !createProvider
+                          ? "No production wallet-creation provider is available."
+                          : !createProvider.enabled
+                            ? "Enable this provider in Wallet Access first."
+                            : !createProvider.health.ok
+                              ? createProvider.health.details || "Provider health check failed."
+                              : createProvider.capabilities.requiresCredentials &&
+                                  !createProvider.credentialsConfigured
+                                ? "Configure restricted provider credentials before creating a wallet."
+                                : createProviderId === "local-socket-signer"
+                                  ? "The Go signer generates the key; Node receives only the public address."
+                                  : "Turnkey creates the account under the configured restrictive policy."
                   }
                 </span>
               </div>
@@ -4196,12 +4284,20 @@ export function renderWallet(props: WalletViewProps) {
               const nativeLabel = "SOL" as const;
               const nativeValue = solBalanceDisplay;
               const cardRole = resolveDisplayedWalletRole(wallet.id, props);
+              const vaultSignerApproval = describeVaultSignerApproval(status);
               const cardAutomationEnabled =
                 cardRole === "agent" && wallet.id === props.walletDetailsWalletId && settings
                   ? settings.policy.directSigning
                   : undefined;
               const cardSignerPolicy =
                 wallet.id === props.walletDetailsWalletId ? settings?.signerPolicy : undefined;
+              const cardNetworkReady =
+                wallet.providerId !== "local-socket-signer" ||
+                wallet.metadata?.networkReady === true;
+              const cardNetworkVersion =
+                typeof wallet.metadata?.networkVersion === "number"
+                  ? wallet.metadata.networkVersion
+                  : undefined;
               const cardWalletReady =
                 wallet.providerId !== "local-socket-signer" ||
                 cardSignerPolicy?.state === "acknowledged";
@@ -4343,6 +4439,22 @@ export function renderWallet(props: WalletViewProps) {
                               : "Copy wallet handle for approved chat, skill, plugin, or scheduled wallet actions.",
                           className: "mono wallet-card__handle",
                         })}
+                        ${
+                          walletAddress
+                            ? html`
+                                <details>
+                                  <summary>Receive QR</summary>
+                                  <div class="qr-wrap">
+                                    <img
+                                      src=${`/api/wallet/receive-qr?walletId=${encodeURIComponent(wallet.id)}`}
+                                      alt=${`Solana receive QR for ${wallet.name}`}
+                                      loading="lazy"
+                                    />
+                                  </div>
+                                </details>
+                              `
+                            : nothing
+                        }
                       </div>
                     </div>
                     <div class="row" style="gap: 8px;">
@@ -4352,6 +4464,20 @@ export function renderWallet(props: WalletViewProps) {
                       >
                         Policy
                       </button>
+                      ${
+                        wallet.providerId === "local-socket-signer"
+                          ? html`
+                              <button
+                                class="btn small danger"
+                                ?disabled=${props.settingsBusy || !props.onArchiveWallet}
+                                title="The server requires Mining runtime obligations to be settled and locks the signer key deny-all. Confirm external balances and recovery before archiving."
+                                @click=${() => props.onArchiveWallet?.(wallet.id)}
+                              >
+                                ${cardRole === "mining" ? "Archive Mining" : "Archive"}
+                              </button>
+                            `
+                          : nothing
+                      }
                     </div>
                   </div>
                   <div class="wallet-card__balance-row">
@@ -4372,7 +4498,7 @@ export function renderWallet(props: WalletViewProps) {
                         title=${
                           cardWalletReady
                             ? "Send from this wallet"
-                            : "Receive-only: open Policy and complete signer activation first"
+                            : "Receive-only: the role-safe deny-all baseline is active; install an owner-reviewed spending policy before sending"
                         }
                         @click=${() => props.onSendModalOpen(wallet.id)}
                       >
@@ -4465,6 +4591,56 @@ export function renderWallet(props: WalletViewProps) {
                               )}
                             </div>
                             ${
+                              wallet.providerId === "local-socket-signer"
+                                ? html`
+                                    <div
+                                      class="callout ${cardNetworkReady ? "success" : "warn"}"
+                                      style="margin-top: 10px"
+                                      data-testid="wallet-signer-network-status"
+                                    >
+                                      <strong
+                                        >Signer RPC: ${
+                                          cardNetworkReady
+                                            ? `ready${cardNetworkVersion ? ` · version ${cardNetworkVersion}` : ""}`
+                                            : "not ready"
+                                        }</strong
+                                      >
+                                      <div>
+                                        Enter one primary RPC. The Go signer verifies its genesis;
+                                        ordinary setup never asks for a Solana network or a second
+                                        RPC.
+                                      </div>
+                                      <div class="wallet-card-security__grid" style="margin-top: 8px">
+                                        <label class="field">
+                                          <span>Replace primary Solana RPC</span>
+                                          <input
+                                            .value=${props.rpcUrl ?? ""}
+                                            placeholder="https://your-solana-rpc.example"
+                                            autocomplete="off"
+                                            spellcheck="false"
+                                            @input=${(event: Event) =>
+                                              props.onRpcUrlChange?.(
+                                                (event.target as HTMLInputElement).value,
+                                              )}
+                                          />
+                                        </label>
+                                        <button
+                                          class="btn small"
+                                          ?disabled=${
+                                            props.settingsBusy ||
+                                            !props.rpcUrl?.trim() ||
+                                            !props.onSaveWalletRpc
+                                          }
+                                          @click=${props.onSaveWalletRpc}
+                                        >
+                                          Verify and save RPC
+                                        </button>
+                                      </div>
+                                    </div>
+                                  `
+                                : nothing
+                            }
+                            ${
                               cardSignerPolicy
                                 ? html`
                                     <div
@@ -4477,8 +4653,9 @@ export function renderWallet(props: WalletViewProps) {
                                         cardSignerPolicy.state === "locked"
                                           ? html`
                                               <div>
-                                                This wallet cannot send, swap, mine, bond, or execute wallet-capable skills until a host
-                                                administrator installs an owner-reviewed policy and the signer acknowledges its exact hash.
+                                                The role-safe deny-all baseline is active, so the wallet can receive but cannot send, swap, mine,
+                                                bond, or execute wallet-capable skills. Spending authority requires a separate owner-reviewed
+                                                policy; the Gateway cannot grant it silently.
                                               </div>
                                             `
                                           : nothing
@@ -4496,6 +4673,26 @@ export function renderWallet(props: WalletViewProps) {
                                           : nothing
                                       }
                                       ${cardSignerPolicy.guidance ? html`<div>${cardSignerPolicy.guidance}</div>` : nothing}
+                                    </div>
+                                  `
+                                : nothing
+                            }
+                            ${
+                              cardRole === "vault" && wallet.providerId === "local-socket-signer"
+                                ? html`
+                                    <div class="callout" style="margin-top: 10px">
+                                      <strong>Vault approval device · ${vaultSignerApproval.summary}</strong>
+                                      <div>${vaultSignerApproval.detail}</div>
+                                      ${
+                                        vaultSignerApproval.setupCommand
+                                          ? html`<div class="mono" style="overflow-wrap: anywhere">
+                                              ${vaultSignerApproval.setupCommand}
+                                            </div>`
+                                          : nothing
+                                      }
+                                      <div>
+                                        This optional signer-owned device never changes Agent or Mining automation.
+                                      </div>
                                     </div>
                                   `
                                 : nothing
@@ -5116,7 +5313,7 @@ export function renderWallet(props: WalletViewProps) {
               <div class="card-title wallet-title-with-help">
                 <span>Wallet Approvals</span>
                 ${renderWalletHelp(
-                  "Reviewed sends, Vault actions, and federation signatures appear here. Approve triggers the signer-owned passkey ceremony and executes only the exact prepared operation.",
+                  "Reviewed sends, Vault actions, and federation signatures appear here. The signer executes only the exact prepared operation; Vault review may require its separately configured approval device.",
                 )}
               </div>
 			  <div class="card-sub">Pending and recent reviewed wallet operations.</div>
