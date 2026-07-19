@@ -105,7 +105,9 @@ but still omit `node:sqlite`; those are not suitable for full memory support.
     installer for the public Fased runtime. Install WSL2 Ubuntu, open the
     Ubuntu shell, and use the Ubuntu instructions in this page or let
     `install.sh` install Node automatically. Native Windows Node.js cannot run
-    the Unix-socket wallet signer path. See [Windows (WSL2)](/platforms/windows).
+    the Unix-socket wallet signer path, and the published npm package rejects
+    native Windows with `EBADPLATFORM`. Do not force installation with npm
+    platform overrides. See [Windows (WSL2)](/platforms/windows).
   </Tab>
 </Tabs>
 

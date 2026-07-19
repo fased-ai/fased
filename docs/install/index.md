@@ -21,6 +21,8 @@ runs continuously on a remote Linux server.
 
     On Windows, install Fased **inside WSL2 Ubuntu**. Do not run the Bash
     command in PowerShell, Command Prompt, Git Bash, or native Windows Node.js.
+    Native Windows npm installation is blocked intentionally; do not use npm
+    platform overrides to bypass it.
     Follow [Windows Local setup](/platforms/windows).
 
     Local setup does not apply VPS firewall or SSH changes. Tailscale is

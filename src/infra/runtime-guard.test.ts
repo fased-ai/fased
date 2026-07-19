@@ -36,6 +36,7 @@ describe("runtime-guard", () => {
       version: "22.14.0",
       execPath: "/usr/bin/node",
       pathEnv: "/usr/bin",
+      platform: "linux",
       sqliteAvailable: true,
     };
     const nodeOld: RuntimeDetails = { ...nodeOk, version: "22.13.0" };
@@ -56,6 +57,7 @@ describe("runtime-guard", () => {
     expect(runtimeSatisfies(nodeTooOld)).toBe(false);
     expect(runtimeSatisfies(nodeMissingSqlite)).toBe(false);
     expect(runtimeSatisfies(unknown)).toBe(false);
+    expect(runtimeSatisfies({ ...nodeOk, platform: "win32" })).toBe(false);
   });
 
   it("throws via exit when runtime is too old", () => {
@@ -92,5 +94,27 @@ describe("runtime-guard", () => {
     };
     expect(() => assertSupportedRuntime(runtime, details)).not.toThrow();
     expect(runtime.exit).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on native Windows and directs users into WSL2", () => {
+    const runtime = {
+      log: vi.fn(),
+      error: vi.fn(),
+      exit: vi.fn(),
+    };
+    const details: RuntimeDetails = {
+      kind: "node",
+      version: "24.10.0",
+      execPath: "C:\\Program Files\\nodejs\\node.exe",
+      pathEnv: "C:\\Windows\\System32",
+      platform: "win32",
+      sqliteAvailable: true,
+    };
+
+    assertSupportedRuntime(runtime, details);
+
+    expect(runtime.error).toHaveBeenCalledWith(expect.stringContaining("Native Windows is not"));
+    expect(runtime.error).toHaveBeenCalledWith(expect.stringContaining("WSL2"));
+    expect(runtime.exit).toHaveBeenCalledWith(1);
   });
 });

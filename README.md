@@ -65,6 +65,10 @@ Ubuntu shell. Do not run the Fased installer in PowerShell, Command Prompt, Git
 Bash, or native Windows Node.js. Fased wallet signing requires Unix sockets and
 therefore runs through WSL2 on Windows.
 
+The published npm package also rejects native Windows. If npm reports
+`EBADPLATFORM`, open Ubuntu in WSL2 and install or run Fased there; do not force
+the package installation with npm platform overrides.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
 ```

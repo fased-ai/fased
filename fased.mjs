@@ -2,7 +2,20 @@
 
 import module from "node:module";
 import { fileURLToPath } from "node:url";
-import { reexecWithSupportedNodeIfNeeded } from "./scripts/fased-launcher-runtime.mjs";
+
+if (process.platform === "win32") {
+  console.error(
+    [
+      "Native Windows is not a supported Fased runtime.",
+      "Install Ubuntu in WSL2, enable systemd, and run Fased inside the Ubuntu shell.",
+      "PowerShell is supported only for installing WSL2 or connecting to a remote Linux VPS.",
+      "Guide: https://docs.fased.ai/platforms/windows",
+    ].join("\n"),
+  );
+  process.exit(1);
+}
+
+const { reexecWithSupportedNodeIfNeeded } = await import("./scripts/fased-launcher-runtime.mjs");
 
 reexecWithSupportedNodeIfNeeded({ selfPath: fileURLToPath(import.meta.url) });
 
