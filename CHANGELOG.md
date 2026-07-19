@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.68
+
+- Unify signer-owned Agent, Mining, and Vault creation around one explicit role
+  and one primary Solana RPC across terminal onboarding, CLI, Control UI, Local,
+  and Hosting, with automatic signer network activation and role-safe readiness.
+- Add encrypted native recovery, advanced owner-only raw export, guarded Mining
+  archive/replacement, receive QR, RPC editing, and hardened verified Hosting
+  installation without exposing signer custody controls to Gateway.
+
 ## 0.1.67
 
 - Reject native Windows npm installs at package selection and fail closed at
