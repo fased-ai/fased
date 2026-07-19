@@ -46,6 +46,7 @@
     "scripts/fased-host-updaterctl.mjs",
     "scripts/fased-signer-enroll-hosting.sh",
     "scripts/fased-signer-network-hosting.sh",
+    "scripts/fased-signer-wallet-import-hosting.sh",
     "scripts/fased-signer-owner-policy.mjs",
     "scripts/fased-signer-policy-hosting.sh",
     "scripts/fased-signer-policy-local.sh",

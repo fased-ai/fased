@@ -6,6 +6,8 @@ export type WalletAuditAction =
   | "rotate_keys"
   | "reset_wallet"
   | "wallet_named_created"
+  | "wallet_rpc_updated"
+  | "wallet_archived"
   | "wallet_policy_updated"
   | "mining_policy_updated"
   | "passkey_enrolled"

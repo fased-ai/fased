@@ -142,5 +142,5 @@ balances remain necessary.
 - [Wallet operations and security](/plugins/crypto/wallet-production-flow)
 - [Wallet roles and policies](/plugins/crypto/wallet-roles-and-policies)
 - [Autonomous wallet sessions](/plugins/crypto/wallet-autonomous-sessions)
-- [Wallet Control Passkey](/plugins/crypto/wallet-control-passkey)
+- [Wallet passkeys](/plugins/crypto/wallet-control-passkey)
 - [Mining](/plugins/crypto/mining-page)

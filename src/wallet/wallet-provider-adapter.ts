@@ -26,6 +26,12 @@ export type WalletProviderHealth = {
   configured: boolean;
   checkedAt: string;
   details?: string;
+  nativeSignerApproval?: {
+    configured: boolean;
+    ready: boolean;
+    credentialCount: number;
+    credentialVersion: number;
+  };
 };
 
 export type WalletProviderAddressMap = {

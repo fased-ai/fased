@@ -27,6 +27,56 @@ func signerUint64PointerV2(value uint64) *uint64 {
 	return &value
 }
 
+func TestSignerApplicationNetworkBrokerIsOneRPCRoleBoundAndGenesisPinned(t *testing.T) {
+	_, keys := openTestSignerV2(t)
+	locked, err := lockedSignerAdminPolicy("mining", "mining")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := keys.CreateWithPolicy(signerWalletCreateRequestV2{WalletID: "mining", ExpectedVersion: 0, Policy: locked}); err != nil {
+		t.Fatal(err)
+	}
+	genesis := solana.NewWallet().PublicKey().String()
+	primaryA := "https://rpc-a.example/solana"
+	primaryB := "https://rpc-b.example/solana"
+	currentGenesis := genesis
+	keys.genesisHash = func(string) (string, error) { return currentGenesis, nil }
+
+	summary, err := keys.PutApplicationNetworkV2("mining", signerNetworkPutRequestV2{
+		ExpectedVersion: signerUint64PointerV2(0), PrimaryRPCURL: primaryA,
+	})
+	if err != nil || !summary.Ready || summary.Version != 1 {
+		t.Fatalf("initial one-RPC activation failed: summary=%#v err=%v", summary, err)
+	}
+	if _, err := keys.PutApplicationNetworkV2("mining", signerNetworkPutRequestV2{
+		ExpectedVersion: signerUint64PointerV2(1), PrimaryRPCURL: primaryB,
+		VerificationRPCURL: "https://witness.example/solana",
+	}); err == nil || !strings.Contains(err.Error(), "exactly one") {
+		t.Fatalf("application broker accepted witness/fallback input: %v", err)
+	}
+	currentGenesis = solana.NewWallet().PublicKey().String()
+	if _, err := keys.PutApplicationNetworkV2("mining", signerNetworkPutRequestV2{
+		ExpectedVersion: signerUint64PointerV2(1), PrimaryRPCURL: primaryB,
+	}); err == nil || !strings.Contains(err.Error(), "pinned genesis") {
+		t.Fatalf("application broker allowed a network change: %v", err)
+	}
+	ready, err := keys.NetworkSummaryV2("mining")
+	if err != nil || ready.Version != 1 {
+		t.Fatalf("rejected replacement mutated network state: summary=%#v err=%v", ready, err)
+	}
+
+	configuredPolicy := testSignerPolicyV2("configured_agent", solana.NewWallet().PublicKey().String(), 100, 1000)
+	if _, _, err := keys.CreateWithPolicy(signerWalletCreateRequestV2{WalletID: "configured_agent", ExpectedVersion: 0, Policy: configuredPolicy}); err != nil {
+		t.Fatal(err)
+	}
+	currentGenesis = genesis
+	if _, err := keys.PutApplicationNetworkV2("configured_agent", signerNetworkPutRequestV2{
+		ExpectedVersion: signerUint64PointerV2(0), PrimaryRPCURL: primaryA,
+	}); err == nil || !strings.Contains(err.Error(), "fresh deny-all") {
+		t.Fatalf("application broker activated a pre-expanded wallet: %v", err)
+	}
+}
+
 func encryptLegacySignerNetworkRecordForTestV2(t *testing.T, keys *signerKeyManagerV2, walletID string, version uint64, config signerLegacyNetworkSecretV2) signerNetworkRecordV2 {
 	t.Helper()
 	hash, err := signerNetworkPayloadHashV2(keys.masterKey, walletID, config)
@@ -95,6 +145,55 @@ func TestSignerNetworkLegacyFallbackMigratesOnlyAsExecutionFallback(t *testing.T
 		ExecutionFallbackRPCURL: config.ExecutionFallbackRPCURL,
 	}); err != nil {
 		t.Fatalf("rewrite migrated network record: %v", err)
+	}
+}
+
+func TestSignerApplicationNetworkBrokerPinsLegacyGenesisBeforeReplacement(t *testing.T) {
+	store, keys := openTestSignerV2(t)
+	createTestSignerWalletV2(t, store, keys, "legacy_agent", solana.NewWallet().PublicKey().String(), 100, 1000)
+	legacyPrimary := "https://legacy-primary.example/rpc"
+	replacementPrimary := "https://replacement.example/rpc"
+	record := encryptLegacySignerNetworkRecordForTestV2(t, keys, "legacy_agent", 1, signerLegacyNetworkSecretV2{
+		PrimaryRPCURL: legacyPrimary,
+	})
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketSignerNetworksV2).Put([]byte("legacy_agent"), encoded)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	legacyGenesis := solana.NewWallet().PublicKey().String()
+	replacementGenesis := solana.NewWallet().PublicKey().String()
+	keys.genesisHash = func(rpcURL string) (string, error) {
+		switch rpcURL {
+		case legacyPrimary:
+			return legacyGenesis, nil
+		case replacementPrimary:
+			return replacementGenesis, nil
+		default:
+			return "", errors.New("unexpected RPC")
+		}
+	}
+
+	if _, err := keys.PutApplicationNetworkV2("legacy_agent", signerNetworkPutRequestV2{
+		ExpectedVersion: signerUint64PointerV2(1), PrimaryRPCURL: replacementPrimary,
+	}); err == nil || !strings.Contains(err.Error(), "pinned genesis") {
+		t.Fatalf("application broker repinned an unmigrated legacy wallet: %v", err)
+	}
+	stored, err := keys.getNetworkRecordV2("legacy_agent")
+	if err != nil || stored.Version != 1 || stored.Hash != record.Hash {
+		t.Fatalf("rejected legacy replacement mutated state: stored=%#v err=%v", stored, err)
+	}
+
+	replacementGenesis = legacyGenesis
+	summary, err := keys.PutApplicationNetworkV2("legacy_agent", signerNetworkPutRequestV2{
+		ExpectedVersion: signerUint64PointerV2(1), PrimaryRPCURL: replacementPrimary,
+	})
+	if err != nil || !summary.Ready || summary.Version != 2 {
+		t.Fatalf("same-genesis legacy replacement failed: summary=%#v err=%v", summary, err)
 	}
 }
 
@@ -597,7 +696,6 @@ func TestSignerRPCURLValidationRejectsUnsafeTargets(t *testing.T) {
 		"http://node.localhost:8899/rpc",
 		"http://127.0.0.1:8899",
 		"http://[::1]:8899",
-		"https://10.0.0.5:443/private-rpc",
 	}
 	for _, candidate := range valid {
 		if _, err := normalizeSignerRPCURLV2(candidate, "primaryRpcUrl"); err != nil {
@@ -623,6 +721,7 @@ func TestSignerRPCURLValidationRejectsUnsafeTargets(t *testing.T) {
 		"https://[fe80::1]/rpc",
 		"https://0.0.0.0/rpc",
 		"https://[::]/rpc",
+		"https://10.0.0.5:443/private-rpc",
 		"https://metadata.google.internal/computeMetadata/v1",
 		"https://2130706433/rpc",
 		"https://127.1/rpc",
@@ -693,7 +792,7 @@ func TestSignerOwnedRPCTransportIgnoresProxyAndRedirects(t *testing.T) {
 	}
 }
 
-func TestSignerNetworkProtocolIsControlOnlyAndNeverReturnsURLs(t *testing.T) {
+func TestSignerNetworkProtocolKeepsSecretsControlOnlyAndNeverReturnsURLs(t *testing.T) {
 	store, keys := openTestSignerV2(t)
 	destination := solana.NewWallet().PublicKey().String()
 	createTestSignerWalletV2(t, store, keys, "agent", destination, 100, 1000)
@@ -709,10 +808,14 @@ func TestSignerNetworkProtocolIsControlOnlyAndNeverReturnsURLs(t *testing.T) {
 	if _, err := service.handle(request{Op: "v2.network.put", WalletID: "agent", Request: body}, signerConfig{}, false); err == nil || !strings.Contains(err.Error(), "control socket") {
 		t.Fatalf("application socket accepted network put: %v", err)
 	}
-	if _, err := service.handle(request{Op: "v2.network.get", WalletID: "agent"}, signerConfig{}, false); err == nil || !strings.Contains(err.Error(), "control socket") {
-		t.Fatalf("application socket accepted network get: %v", err)
+	response, err := service.handle(request{Op: "v2.network.get", WalletID: "agent"}, signerConfig{}, false)
+	if err != nil {
+		t.Fatalf("application network summary rejected: %v", err)
 	}
-	response, err := service.handle(request{Op: "v2.network.put", WalletID: "agent", Request: body}, signerConfig{}, true)
+	if bytes.Contains(response, []byte(secret)) || bytes.Contains(response, []byte("rpc.example.com")) {
+		t.Fatalf("application network summary exposed RPC URL: %s", response)
+	}
+	response, err = service.handle(request{Op: "v2.network.put", WalletID: "agent", Request: body}, signerConfig{}, true)
 	if err != nil {
 		t.Fatalf("control network put: %v", err)
 	}

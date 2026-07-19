@@ -37,15 +37,14 @@ fi
 
 if [[ "$install_entry_is_stream" -eq 1 && "$install_entry_hosting" -eq 1 ]]; then
   echo "Refusing streamed VPS Hosting execution." >&2
-  echo "Download and verify the exact tagged install.sh before execution:" >&2
-  echo "  https://docs.fased.ai/install/vps" >&2
+  echo "Download and verify an exact tagged release installer before running --hosting or --repair-hosting." >&2
   exit 1
 fi
 
-# A Hosting request always enters the attest-and-extract bootstrap unless it is
+# A Hosting file request enters the attest-and-extract bootstrap unless it is
 # the exact inner invocation carrying the root-owned verified bundle marker.
-# Streamed Hosting was rejected above; standalone Hosting must be downloaded
-# and verified before execution.
+# Streamed Hosting was rejected above; streamed execution reaches this block
+# only for the non-root Local bootstrap.
 if [[ "$install_entry_is_stream" -eq 1 || \
   ( "$install_entry_hosting" -eq 1 && -z "$install_entry_verified_bundle" ) ]]; then
   install_repo_url="${FASED_INSTALL_REPO:-https://github.com/fased-ai/fased.git}"
@@ -97,6 +96,10 @@ if [[ "$install_entry_is_stream" -eq 1 || \
         ;;
     esac
   done
+
+  if [[ "$hosting_bootstrap" -eq 1 && "$hosting_repair_bootstrap" -eq 0 && -z "$hosting_release" ]]; then
+    hosting_release="latest"
+  fi
 
   bootstrap_as_root() {
     if [[ "$(id -u)" -eq 0 ]]; then
@@ -175,11 +178,10 @@ if [[ "$install_entry_is_stream" -eq 1 || \
       echo "Refusing a caller-supplied verified bundle marker." >&2
       exit 1
     fi
-    if [[ -z "$hosting_release" ]]; then
-      echo "VPS Hosting requires an explicit tagged release." >&2
-      echo "Pass --release vX.Y.Z (recommended) or --release latest." >&2
+    [[ -n "$hosting_release" ]] || {
+      echo "VPS Hosting release resolution failed before verification." >&2
       exit 1
-    fi
+    }
 
     install_hosting_bootstrap_tools() {
       [[ "$auto_install" -eq 1 ]] || return 0
@@ -4241,7 +4243,8 @@ ensure_host_boundary_accounts() {
   rm -f \
     "/etc/sudoers.d/fased-install-${target_user}" \
     "/etc/sudoers.d/fased-host-maintenance-${target_user}" \
-    "/etc/sudoers.d/fased-gateway-${target_user}-maintenance"
+    "/etc/sudoers.d/fased-gateway-${target_user}-maintenance" \
+    "/etc/sudoers.d/fased-signer-wallet-import-${target_user}"
   if need_cmd sudo && runuser -u "$target_user" -- sudo -n true >/dev/null 2>&1; then
     echo "Hosting security boundary cannot use an app account with passwordless sudo: $target_user" >&2
     echo "Remove custom sudoers access for this dedicated account, then rerun the exact tagged repair from the provider root console." >&2
@@ -4289,6 +4292,7 @@ install_host_signer_and_updater_services() {
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-enroll-hosting.sh" /usr/local/sbin/fased-signer-enroll
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-policy-hosting.sh" /usr/local/sbin/fased-signer-policy
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-network-hosting.sh" /usr/local/sbin/fased-signer-network
+  install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-wallet-import-hosting.sh" /usr/local/sbin/fased-signer-wallet-import
   install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/README.md" /usr/local/share/fased/signer-policies/README.md
   install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/agent.json.template" /usr/local/share/fased/signer-policies/agent.json.template
   install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/mining.json.template" /usr/local/share/fased/signer-policies/mining.json.template
@@ -4358,6 +4362,7 @@ EOF
   sync -f /usr/local/sbin/fased-signer-enroll
   sync -f /usr/local/sbin/fased-signer-policy
   sync -f /usr/local/sbin/fased-signer-network
+  sync -f /usr/local/sbin/fased-signer-wallet-import
   sync -f /usr/local/share/fased/signer-policies/README.md
   sync -f /usr/local/share/fased/signer-policies/agent.json.template
   sync -f /usr/local/share/fased/signer-policies/mining.json.template
@@ -4631,6 +4636,7 @@ assert_verified_hosting_root_source() {
     scripts/fased-host-updaterctl.mjs \
     scripts/fased-signer-enroll-hosting.sh \
     scripts/fased-signer-network-hosting.sh \
+    scripts/fased-signer-wallet-import-hosting.sh \
     scripts/fased-signer-policy-hosting.sh; do
     local asset_path="$canonical_source/$privileged_asset"
     [[ -f "$asset_path" && ! -L "$asset_path" ]] || {

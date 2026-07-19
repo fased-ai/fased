@@ -103,6 +103,18 @@ function createFixture(version: string, options: { attested?: boolean } = {}) {
   return { root, stateDir, prefix, paths };
 }
 
+function writeSchemaV2Metadata(packageRoot: string, version: string) {
+  fs.writeFileSync(
+    path.join(packageRoot, ".fased-hosted-runtime.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      version,
+      commit: "e".repeat(40),
+      dependencyHash: "a".repeat(64),
+    })}\n`,
+  );
+}
+
 describe("managed runtime layout", () => {
   it("moves a package into a versioned release and installs stable launchers", async () => {
     const fixture = createFixture("1.2.3");
@@ -125,6 +137,42 @@ describe("managed runtime layout", () => {
     expect(fs.realpathSync(fixture.paths.prefixLauncherPath)).toBe(fixture.paths.launcherPath);
     expect(fs.readFileSync(path.join(fixture.stateDir, "wallet-state-preserved"), "utf8")).toBe(
       "unchanged\n",
+    );
+  });
+
+  it("installs a schema-v2 app artifact locally without a Hosting release manifest", async () => {
+    const fixture = createFixture("1.2.3");
+    writeSchemaV2Metadata(fixture.paths.compatibilityPackageRoot, "1.2.3");
+
+    await installManagedRuntime({
+      packageRoot: fixture.paths.compatibilityPackageRoot,
+      stateDir: fixture.stateDir,
+      prefix: fixture.prefix,
+      profile: "local",
+    });
+
+    const manifest = readManagedInstallManifest(fixture.paths.manifestPath);
+    expect(manifest?.profile).toBe("local");
+    expect(manifest?.runtime.activeVersion).toBe("1.2.3");
+    expect(manifest?.runtime.appCommit).toBeNull();
+    expect(manifest?.release).toBeNull();
+
+    fs.unlinkSync(fixture.paths.compatibilityPackageRoot);
+    writeRuntime(fixture.paths.compatibilityPackageRoot, "1.2.4");
+    writeSchemaV2Metadata(fixture.paths.compatibilityPackageRoot, "1.2.4");
+    await installManagedRuntime({
+      packageRoot: fixture.paths.compatibilityPackageRoot,
+      stateDir: fixture.stateDir,
+      prefix: fixture.prefix,
+      profile: "local",
+    });
+    expect(readManagedInstallManifest(fixture.paths.manifestPath)?.runtime.activeVersion).toBe(
+      "1.2.4",
+    );
+
+    await rollbackManagedRuntime({ stateDir: fixture.stateDir, prefix: fixture.prefix });
+    expect(readManagedInstallManifest(fixture.paths.manifestPath)?.runtime.activeVersion).toBe(
+      "1.2.3",
     );
   });
 

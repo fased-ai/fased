@@ -172,5 +172,5 @@ reviewed operation. `Stop` alone is not a custody lock.
 - [Wallet operations and security](/plugins/crypto/wallet-production-flow)
 - [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted)
 - [Autonomous wallet security](/plugins/crypto/wallet-autonomous-security)
-- [Wallet Control Passkey](/plugins/crypto/wallet-control-passkey)
+- [Wallet passkeys](/plugins/crypto/wallet-control-passkey)
 - [Skills](/tools/skills)

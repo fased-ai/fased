@@ -139,8 +139,8 @@ explicit-policy exceptions. The challenge binds:
 The signer verifies the credential and consumes the approval once. A Gateway
 token that binds only a host or operation is not a custody approval.
 
-The Wallets Access-tab Wallet Control Passkey is separate Gateway-owned
-authentication and cannot satisfy a signer review. The Control UI is also
+The optional Control UI account passkey under Account Security is separate
+Gateway-owned authentication and cannot satisfy a signer review. The Control UI is also
 served by the Gateway, so signer WebAuthn does not independently display
 transaction intent on trusted hardware. A hardware wallet that shows the
 account and transaction on-device provides a stronger manual Vault review.
@@ -206,6 +206,6 @@ arbitrary RPC proxy through the signer.
 - [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted)
 - [Wallet operations and security](/plugins/crypto/wallet-production-flow)
 - [Wallet roles and policies](/plugins/crypto/wallet-roles-and-policies)
-- [Wallet Control Passkey](/plugins/crypto/wallet-control-passkey)
+- [Wallet passkeys](/plugins/crypto/wallet-control-passkey)
 - [Docker (Local only)](/install/docker)
 - [Windows (WSL2)](/platforms/windows)

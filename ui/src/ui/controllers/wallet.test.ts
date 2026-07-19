@@ -7,6 +7,7 @@ const walletApi = vi.hoisted(() => ({
   getWalletStatus: vi.fn(),
   getWalletSettings: vi.fn(),
   getWalletApprovals: vi.fn(),
+  getWalletProviders: vi.fn(),
   getWalletNamedWallets: vi.fn(),
   getWalletSignerDoctor: vi.fn(),
   getWalletBalances: vi.fn(),
@@ -132,6 +133,11 @@ describe("loadWallet", () => {
     walletApi.getWalletApprovals.mockResolvedValue({
       ok: true,
       requests: [],
+    });
+
+    walletApi.getWalletProviders.mockResolvedValue({
+      ok: true,
+      providers: [],
     });
 
     walletApi.getWalletNamedWallets.mockResolvedValue({

@@ -105,6 +105,36 @@ describe("readWalletStatusSnapshot", () => {
     expect(status.error).toContain("missing default wallet");
   });
 
+  it("exposes only sanitized native signer approval readiness", async () => {
+    vi.mocked(createWalletProviderAdapter).mockReturnValue({
+      health: vi.fn().mockResolvedValue({
+        ok: true,
+        provider: "local-socket-signer",
+        configured: true,
+        checkedAt: "2026-07-19T00:00:00.000Z",
+        nativeSignerApproval: {
+          configured: true,
+          ready: true,
+          credentialCount: 2,
+          credentialVersion: 7,
+        },
+      }),
+      getAddresses: vi.fn().mockResolvedValue({ solana: "abc" }),
+    } as never);
+
+    const status = await readWalletStatusSnapshot();
+
+    expect(status.nativeSignerApproval).toEqual({
+      configured: true,
+      ready: true,
+      credentialCount: 2,
+      credentialVersion: 7,
+    });
+    expect(JSON.stringify(status.nativeSignerApproval)).not.toMatch(
+      /credentialId|publicKey|secret/iu,
+    );
+  });
+
   it("redacts secret-bearing provider diagnostics from status errors", async () => {
     vi.mocked(resolveWalletProviderId).mockReturnValue("embedded-keystore");
     vi.mocked(createWalletProviderAdapter).mockReturnValue({

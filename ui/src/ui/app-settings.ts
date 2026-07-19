@@ -107,7 +107,7 @@ type SettingsHost = {
   walletDetailsWalletId?: string;
   walletMainPanel?: "wallets" | "access" | "skill-grants";
   walletSecuritySetupWalletId?: string;
-  walletSecuritySetupRole?: "agent" | "vault" | null;
+  walletSecuritySetupRole?: "agent" | "mining" | "vault" | null;
   chatModelsLoading?: boolean;
   chatModelCatalog?: import("./types.ts").ModelCatalogEntry[];
   providerModelCatalog?: import("./types.ts").ModelCatalogEntry[];
@@ -401,7 +401,9 @@ export async function applySettingsFromUrl(host?: SettingsHost) {
   if (walletSecurityRaw != null || walletIdRaw != null || walletRoleRaw != null) {
     const walletId = walletIdRaw?.trim() || "";
     const walletRole =
-      walletRoleRaw === "agent" || walletRoleRaw === "vault" ? walletRoleRaw : null;
+      walletRoleRaw === "agent" || walletRoleRaw === "mining" || walletRoleRaw === "vault"
+        ? walletRoleRaw
+        : null;
     if (host && walletId) {
       host.walletDetailsWalletId = walletId;
       host.walletSecuritySetupWalletId = walletId;

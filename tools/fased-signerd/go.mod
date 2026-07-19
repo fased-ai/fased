@@ -5,6 +5,7 @@ go 1.25.7
 require (
 	golang.org/x/crypto v0.52.0
 	golang.org/x/sys v0.45.0
+	golang.org/x/term v0.43.0
 )
 
 require github.com/gagliardetto/solana-go v1.12.0
@@ -49,6 +50,5 @@ require (
 	go.uber.org/multierr v1.6.0 // indirect
 	go.uber.org/ratelimit v0.2.0 // indirect
 	go.uber.org/zap v1.21.0 // indirect
-	golang.org/x/term v0.43.0 // indirect
 	golang.org/x/time v0.9.0 // indirect
 )

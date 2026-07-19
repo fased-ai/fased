@@ -57,7 +57,7 @@ from the VPS provider root shell.
 The verified script installs the exact selected release and verifies the tagged Hosting
 artifacts before privileged Fased installation. Users who require verification
 before the first script runs can use the expandable advanced procedure in
-[VPS Hosting](/install/vps#advanced-verify-the-bootstrap-first).
+[VPS Hosting](/install/vps#advanced-exact-release-selection).
 
 Run the first Hosting install from the VPS provider's root shell. That path
 creates the non-root `app` runtime, private Tailscale access, and the hosted
@@ -282,7 +282,7 @@ run the old updater. Go directly to the exact tagged root repair below.
 The repair must restore root-owned service helpers and the system service. Open
 the VPS provider's web/recovery console as `root` (or use root SSH only when the
 provider still permits it). Follow the exact
-[manual pre-execution verification procedure](/install/vps#advanced-verify-the-bootstrap-first),
+[manual pre-execution verification procedure](/install/vps#advanced-exact-release-selection),
 but replace the final invocation of the already-verified standalone installer
 with:
 
@@ -332,18 +332,11 @@ support contract below.
 If `fased update` reports a pre-v2 Local wallet, it stops **before** stopping a
 process or replacing a file. This is intentional: the updater and Gateway must
 not read an old wallet passphrase. First make an offline backup and record the
-public address. If the old CLI does not recognize `local-signer-import`, run the
-exact tagged Local repair later on this page; that installs the new CLI while
-leaving legacy wallet material untouched. Then print the native signer-only
-commands:
-
-```bash
-fased wallet setup --mode local-signer-import --wallet-id agent --role agent
-```
-
-Use `--role mining` only for a Mining wallet and `--role vault` only for a
-Vault. Put the old passphrase in a separate owner-only file, run the printed
-`fased-signerd admin wallet import-legacy` command, and compare the returned
+public address. Run the exact tagged Local repair later on this page if the old
+CLI lacks the native signer admin path; it leaves legacy wallet material
+untouched. Put the old passphrase in a separate owner-only file, run
+`fased-signerd admin wallet import-legacy` with the wallet's permanent Agent,
+Mining, or Vault role, and compare the returned
 public address with the address recorded before migration. Then finalize the
 non-secret config/registry conversion:
 
@@ -430,7 +423,7 @@ user-managed command or rerun onboarding. On macOS the exact tagged source is
 built because no managed Linux runtime artifact is used.
 
 VPS Hosting bootstrap must run from the provider's root console. Follow the
-[manual pre-execution verification procedure](/install/vps#advanced-verify-the-bootstrap-first)
+[manual pre-execution verification procedure](/install/vps#advanced-exact-release-selection)
 for the exact release, then use `--repair-hosting` instead of `--hosting` only
 in the final invocation of that already-verified standalone installer. Never
 recover Hosting by piping a raw repository URL into a shell.

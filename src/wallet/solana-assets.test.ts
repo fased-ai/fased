@@ -294,7 +294,7 @@ describe("fetchSolanaWalletAssetsViaRpc", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const assets = await fetchSolanaWalletAssetsViaRpc({
-      rpcUrl: "https://rpc.example.test",
+      rpcUrl: "http://localhost:8899",
       ownerAddress: new PublicKey(Buffer.alloc(32, 11)).toBase58(),
       nativeLamports: "1000000000",
     });
@@ -357,11 +357,11 @@ describe("fetchSolanaWalletAssetsViaRpc", () => {
     vi.stubGlobal("fetch", fetchMock);
     const ownerAddress = new PublicKey(Buffer.alloc(32, 12)).toBase58();
     await fetchSolanaWalletAssetsViaRpc({
-      rpcUrl: "https://rpc.example.test",
+      rpcUrl: "http://localhost:8899",
       ownerAddress,
     });
     await fetchSolanaWalletAssetsViaRpc({
-      rpcUrl: "https://rpc.example.test",
+      rpcUrl: "http://localhost:8899",
       ownerAddress,
     });
     const rpcMethods = fetchMock.mock.calls

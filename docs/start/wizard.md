@@ -158,10 +158,10 @@ work, and use split tunneling if that VPN must stay on.
     sign in, and use Terminal for checks.
   </Tab>
   <Tab title="Ubuntu">
-    Use this for Ubuntu, Debian, or Kali local computers:
+    Use Tailscale's signed Debian package-repository instructions for Ubuntu,
+    Debian, or Kali. Then run:
 
     ```bash
-    curl -fsSL https://tailscale.com/install.sh | sh
     sudo systemctl enable --now tailscaled
     sudo tailscale up
     tailscale status
@@ -170,13 +170,15 @@ work, and use split tunneling if that VPN must stay on.
 
   </Tab>
   <Tab title="Fedora">
+    Install Tailscale from its signed Fedora package repository. Then run:
+
     ```bash
-    curl -fsSL https://tailscale.com/install.sh | sh
     sudo systemctl enable --now tailscaled
     sudo tailscale up
     tailscale status
     tailscale ip -4
     ```
+
   </Tab>
   <Tab title="Arch">
     ```bash

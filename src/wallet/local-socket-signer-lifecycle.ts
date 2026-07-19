@@ -1,4 +1,5 @@
 import { LOCAL_SIGNER_NATIVE_FEE_RESERVATION_LAMPORTS_V2 } from "./local-socket-signer-protocol.js";
+import type { LocalSocketSignerNetworkSummaryV2 } from "./local-socket-signer-protocol.js";
 import {
   callLocalSocketSigner,
   type LocalSocketSignerHealthProbe,
@@ -53,6 +54,7 @@ async function requireSignerOwnedProtocolV2(socketPath: string): Promise<void> {
     "failClosedPolicies",
     "policyHashes",
     "signerOwnedKeys",
+    "applicationNetworkBootstrap",
     "atomicMultiAssetCaps",
     "signerControlledNativeFeeCaps",
   ];
@@ -148,4 +150,42 @@ export async function createLockedSignerOwnedWallet(params: {
     }
     return existing;
   }
+}
+
+export async function configureSignerOwnedWalletPrimaryRpc(params: {
+  socketPath: string;
+  walletId: string;
+  primaryRpcUrl: string;
+}): Promise<LocalSocketSignerNetworkSummaryV2> {
+  const walletId = params.walletId.trim();
+  const primaryRpcUrl = params.primaryRpcUrl.trim();
+  if (!/^[a-zA-Z0-9_-]+$/.test(walletId)) {
+    throw new Error("walletId must contain only letters, numbers, hyphens, or underscores");
+  }
+  if (!primaryRpcUrl) {
+    throw new Error("signer-owned wallet network requires one primary RPC URL");
+  }
+  await requireSignerOwnedProtocolV2(params.socketPath);
+  const current = await callLocalSocketSigner<LocalSocketSignerNetworkSummaryV2>(
+    params.socketPath,
+    { op: "v2.network.get", walletId },
+  );
+  const updated = await callLocalSocketSigner<LocalSocketSignerNetworkSummaryV2>(
+    params.socketPath,
+    {
+      op: "v2.network.bootstrap",
+      walletId,
+      request: { expectedVersion: current.version, primaryRpcUrl },
+    },
+  );
+  if (
+    updated.walletId !== walletId ||
+    !updated.configured ||
+    !updated.ready ||
+    updated.version !== current.version + 1 ||
+    !updated.hash
+  ) {
+    throw new Error("signer-owned RPC activation did not return the exact next ready version");
+  }
+  return updated;
 }

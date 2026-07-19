@@ -6,6 +6,7 @@ import {
   getWalletAuditFor,
   getWalletBalances,
   getWalletNamedWallets,
+  getWalletProviders,
   getWalletSettings,
   getWalletSignerDoctor,
   getWalletStatus,
@@ -358,7 +359,7 @@ export async function loadWallet(host: FasedAgentApp) {
   host.walletApprovalsLoading = true;
   host.walletAuditLoading = true;
   host.walletBalancesLoading = true;
-  host.walletProvidersLoading = false;
+  host.walletProvidersLoading = true;
   host.walletError = null;
   host.walletSettingsError = null;
   host.walletApprovalsError = null;
@@ -374,17 +375,24 @@ export async function loadWallet(host: FasedAgentApp) {
     applyWalletAuditResult(host, auditResult);
   });
   try {
-    const [statusResult, settingsResult, approvalsResult, namedWalletsResult, signerDoctorResult] =
-      await Promise.allSettled([
-        getWalletStatus(requestedStatusWalletId),
-        getWalletSettings(requestedStatusWalletId),
-        getWalletApprovals({
-          status: host.walletApprovalsFilter,
-          limit: 100,
-        }),
-        getWalletNamedWallets(),
-        getWalletSignerDoctor(),
-      ]);
+    const [
+      statusResult,
+      settingsResult,
+      approvalsResult,
+      providersResult,
+      namedWalletsResult,
+      signerDoctorResult,
+    ] = await Promise.allSettled([
+      getWalletStatus(requestedStatusWalletId),
+      getWalletSettings(requestedStatusWalletId),
+      getWalletApprovals({
+        status: host.walletApprovalsFilter,
+        limit: 100,
+      }),
+      getWalletProviders(),
+      getWalletNamedWallets(),
+      getWalletSignerDoctor(),
+    ]);
     if (isStale()) {
       return;
     }
@@ -449,6 +457,7 @@ export async function loadWallet(host: FasedAgentApp) {
     }
 
     if (namedWalletsResult.status === "fulfilled") {
+      const previousDetailsWalletId = host.walletDetailsWalletId.trim();
       const namedWallets = namedWalletsResult.value.wallets.filter(
         (wallet) => !wallet.id.startsWith("auto_") && !wallet.id.startsWith("status_"),
       );
@@ -467,8 +476,6 @@ export async function loadWallet(host: FasedAgentApp) {
       host.walletNamedWallets = immediateWallets;
       host.walletAssignments = namedWalletsResult.value.assignments;
       host.walletDefaultWalletId = namedWalletsResult.value.defaultWalletId ?? null;
-      host.walletProviders = [];
-
       const walletIds = new Set(immediateWallets.map((wallet) => wallet.id));
       if (host.walletDetailsWalletId.trim() && !walletIds.has(host.walletDetailsWalletId.trim())) {
         host.walletDetailsWalletId = "";
@@ -488,6 +495,9 @@ export async function loadWallet(host: FasedAgentApp) {
             ? host.walletDefaultWalletId
             : (immediateWallets[0]?.id ?? "");
       }
+      if (host.walletDetailsWalletId !== previousDetailsWalletId) {
+        host.walletRpcUrl = "";
+      }
       const sendWalletId = host.walletSendCreateForm.walletId?.trim() ?? "";
       if (sendWalletId && !walletIds.has(sendWalletId)) {
         host.walletSendCreateForm = { ...host.walletSendCreateForm, walletId: "" };
@@ -506,10 +516,16 @@ export async function loadWallet(host: FasedAgentApp) {
         host.walletProviderTab = selectedWallet.providerId;
       }
     } else {
-      host.walletProviders = [];
       host.walletNamedWallets = [];
       host.walletAssignments = {};
       host.walletDefaultWalletId = null;
+    }
+
+    if (providersResult.status === "fulfilled") {
+      host.walletProviders = providersResult.value.providers;
+    } else {
+      host.walletProviders = [];
+      host.walletSettingsError ??= `Loading wallet providers failed: ${String(providersResult.reason)}`;
     }
 
     const auditWalletId =

@@ -1,4 +1,5 @@
 import { PublicKey } from "@solana/web3.js";
+import { fetchPinnedSolanaRpcRead } from "./solana-rpc-read-fetch.js";
 
 const SOLANA_NATIVE_MINT = "So11111111111111111111111111111111111111112";
 const TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
@@ -648,10 +649,11 @@ export async function fetchSolanaRpc<T>(
   method: string,
   params: unknown[],
 ): Promise<T | null> {
+  let release: (() => Promise<void>) | undefined;
   try {
-    const response = await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+    const guarded = await fetchPinnedSolanaRpcRead({
+      rpcUrl,
+      timeoutMs: 10_000,
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 1,
@@ -659,6 +661,8 @@ export async function fetchSolanaRpc<T>(
         params,
       }),
     });
+    release = guarded.release;
+    const response = guarded.response;
     if (!response.ok) {
       recordSolanaAssetRpcMethod(method, "failure");
       return null;
@@ -676,6 +680,8 @@ export async function fetchSolanaRpc<T>(
   } catch {
     recordSolanaAssetRpcMethod(method, "failure");
     return null;
+  } finally {
+    await release?.();
   }
 }
 

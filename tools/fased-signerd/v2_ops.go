@@ -271,10 +271,20 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 		}
 		return marshalSignerResultV2(result)
 	case "v2.network.get":
-		if err := requireControlSocketV2(control); err != nil {
+		summary, err := s.keys.NetworkSummaryV2(req.WalletID)
+		if err != nil {
 			return nil, err
 		}
-		summary, err := s.keys.NetworkSummaryV2(req.WalletID)
+		return marshalSignerResultV2(summary)
+	case "v2.network.bootstrap":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		var body signerNetworkPutRequestV2
+		if err := decodeSignerNetworkPutRequestV2(req.Request, &body); err != nil {
+			return nil, errors.New("invalid signer-v2 request")
+		}
+		summary, err := s.keys.PutApplicationNetworkV2(req.WalletID, body)
 		if err != nil {
 			return nil, err
 		}
@@ -392,6 +402,56 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		return marshalSignerResultV2(signerWalletPolicyResultV2{Wallet: wallet, Policy: policy})
+	case "v2.wallet.recovery.export":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		if err := requireControlSocketV2(control); err != nil {
+			return nil, err
+		}
+		var body signerWalletRecoveryExportRequestV2
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		result, err := s.keys.ExportRecoveryV1(req.WalletID, body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(result)
+	case "v2.wallet.recovery.import":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		if err := requireControlSocketV2(control); err != nil {
+			return nil, err
+		}
+		var body signerWalletRecoveryImportRequestV2
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		body.WalletID = req.WalletID
+		body.Policy.WalletID = req.WalletID
+		wallet, policy, err := s.keys.ImportRecoveryV1(body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(signerWalletPolicyResultV2{Wallet: wallet, Policy: policy})
+	case "v2.wallet.exportRaw":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		if err := requireControlSocketV2(control); err != nil {
+			return nil, err
+		}
+		var body signerWalletRawExportRequestV2
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		result, err := s.keys.ExportRawV2(req.WalletID, body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(result)
 	case "v2.wallet.reencrypt":
 		if cfg.readOnly {
 			return nil, errors.New("read-only signer mode")

@@ -20,20 +20,10 @@ Install [Tailscale](https://tailscale.com/download), sign in, and keep it
 online. This is the computer where you will open the dashboard and test private
 SSH access.
 
-<Accordion title="Linux Tailscale commands">
-  On Ubuntu, Debian, or Kali:
-
-```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo systemctl enable --now tailscaled
-sudo tailscale up
-tailscale status
-tailscale ip -4
-```
-
-Windows and macOS users normally use the native Tailscale app. Turn off
-another VPN while testing because it may override Tailscale DNS or routing.
-</Accordion>
+Use Tailscale's supported app or package for your computer. Do not paste a
+second installer into the VPS: Fased installs Tailscale on the VPS through its
+signed operating-system package repository. Turn off another VPN while testing
+because it may override Tailscale DNS or routing.
 
 ### 2. Connect to the VPS
 
@@ -47,15 +37,27 @@ The remaining commands run **inside this VPS SSH session**.
 
 ### 3. Verify and run the Hosting bootstrap
 
-Install a current [GitHub CLI](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)
-with `gh attestation verify` on the VPS, then run this block. The exact release
-bootstrap is downloaded as data, verified against the Fased release workflow,
-and only then executed:
+Install `curl`, `jq`, and GitHub CLI through your provider's signed operating-system
+package repositories. Then run this complete block in the VPS root shell:
 
 ```bash
 (
 set -euo pipefail
-RELEASE=v0.1.65
+for command in curl jq gh; do
+  command -v "$command" >/dev/null 2>&1 || {
+    echo "Install $command from the operating-system package repository first." >&2
+    exit 1
+  }
+done
+
+RELEASE="$(
+  curl -fsSL --proto '=https' --tlsv1.2 \
+    -H 'Accept: application/vnd.github+json' \
+    -H 'X-GitHub-Api-Version: 2022-11-28' \
+    -H 'User-Agent: fased-installer' \
+    https://api.github.com/repos/fased-ai/fased/releases/latest \
+    | jq -er '.tag_name | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))'
+)"
 BOOTSTRAP_DIR="$(mktemp -d)"
 trap 'rm -rf "$BOOTSTRAP_DIR"' EXIT
 
@@ -75,6 +77,11 @@ chmod 0500 "$BOOTSTRAP_DIR/install.sh"
 bash "$BOOTSTRAP_DIR/install.sh" --hosting --release "$RELEASE"
 )
 ```
+
+The release lookup selects a stable tag, but Bash does not execute downloaded
+Fased code until GitHub attestation verification binds `install.sh` to that
+exact tag and release workflow. The verified installer then attests the release
+manifest and architecture-specific Hosting bundle before privileged installation.
 
 The installer automatically:
 
@@ -121,14 +128,35 @@ fased dashboard
 Open the printed `https://...ts.net/` dashboard URL on a device signed into the
 same Tailscale account. Save the Gateway recovery token.
 
-## Advanced verification and exact release selection
+## Advanced exact release selection
 
 <Accordion title="Manual pre-execution attestation verification">
-  The normal procedure above already performs pre-execution verification.
-  Advanced operators may replace `RELEASE` with another exact stable tag,
-  inspect the downloaded script before the final `bash`, or retain the
-  attestation JSON with their installation records. Never replace the exact
-  tag with `main`, `latest`, or another moving reference.
+  The normal block above resolves the latest stable tag. To select a specific
+  version instead, replace `vX.Y.Z` with an exact stable release:
+
+```bash
+(
+set -euo pipefail
+RELEASE=vX.Y.Z
+BOOTSTRAP_DIR="$(mktemp -d)"
+trap 'rm -rf "$BOOTSTRAP_DIR"' EXIT
+
+curl -fsSLo "$BOOTSTRAP_DIR/install.sh" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh"
+curl -fsSLo "$BOOTSTRAP_DIR/install.sh.attestation.json" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh.attestation.json"
+
+GH_PROMPT_DISABLED=1 gh attestation verify "$BOOTSTRAP_DIR/install.sh" \
+  --repo fased-ai/fased \
+  --bundle "$BOOTSTRAP_DIR/install.sh.attestation.json" \
+  --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+  --source-ref "refs/tags/${RELEASE}" \
+  --deny-self-hosted-runners
+
+chmod 0500 "$BOOTSTRAP_DIR/install.sh"
+bash "$BOOTSTRAP_DIR/install.sh" --hosting --release "$RELEASE"
+)
+```
 
 For emergency repair, use the same verified block and change only the final
 invocation to `--repair-hosting --release "$RELEASE"`. A repair never accepts

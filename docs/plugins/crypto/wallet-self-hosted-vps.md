@@ -49,7 +49,7 @@ For unattended self-hosted operation, the wallet path should look like:
 
 - wallet entry exists in the runtime registry
 - `local-socket-signer` is healthy
-- signer execution RPC and Gateway read RPC are configured
+- one primary RPC is entered and signer/Gateway readiness is green
 - exact signer policy version/hash is acknowledged
 - wallet appears in the Wallets page and status outputs
 
@@ -70,10 +70,10 @@ Open the Wallets page or inspect runtime status to confirm:
 - visible balances
 - signer-ready state
 
-### 3. Confirm both RPC planes and policy acknowledgement
+### 3. Confirm one-RPC activation and policy acknowledgement
 
-The wallet path is ready only after signer execution RPC, Gateway reads, and
-the exact owner-reviewed policy are responsive and acknowledged.
+The normal user enters one primary RPC. The wallet path is ready only after the
+signer verifies it, Gateway reads pass, and the exact role policy is acknowledged.
 
 Use the runtime and wallet status surfaces to confirm:
 

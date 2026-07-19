@@ -128,6 +128,12 @@ describe("callLocalSocketSigner", () => {
       expect(JSON.stringify(health)).not.toMatch(/api.?key|jwt|secret|\.key/iu);
 
       const providerHealth = await new LocalSocketSignerAdapter(signer.socketPath).health();
+      expect(providerHealth.nativeSignerApproval).toEqual({
+        configured: true,
+        credentialCount: 2,
+        credentialVersion: 7,
+        ready: true,
+      });
       expect(providerHealth.details).toContain("jupiter-trigger=configured");
       expect(providerHealth.details).toContain("jupiter-live=preview-only");
       expect(providerHealth.details).toContain("80000/100000");

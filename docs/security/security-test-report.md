@@ -28,7 +28,7 @@ for unattended wallet, SAT mining, or Fased Network operation.
   Agent selection is fail-closed, but the complete signer role matrix and
   Mining confused-deputy tests must pass before this report calls the boundary
   covered.
-- Gateway Wallet Control Passkey: **covered at its Gateway boundary**. Mode,
+- Optional Control UI account passkey: **covered at its Gateway boundary**. Mode,
   enrollment, approval, and removal have regression coverage; this is not signer
   custody authorization.
 - Signer WebAuthn, fail-closed policy, durable caps/idempotency, and reviewed
@@ -59,7 +59,7 @@ grant an Agent persistent capability:
 - gateway and node access
 - native signer-v2 key lifecycle, sockets, policy, RPC, caps, and custody
 - wallet roles and policy boundaries
-- Gateway Wallet Control Passkey and separate signer WebAuthn
+- optional Control UI account passkey and separate signer-owned approval
 - skill installation, Agent allowlists, and wallet grants
 - task creation, task execution policy, and run history separation
 - SAT mining wallet isolation
@@ -178,7 +178,7 @@ Expected result:
 - wallet aliases such as `@wallet:agent`, `@wallet:mining`, and `@wallet:vault`
   resolve to the intended role and do not silently cross roles
 
-## Gateway Wallet Control Passkey
+## Control UI account passkey
 
 Required behavior:
 
@@ -401,7 +401,7 @@ Before a public-hosted or high-value wallet deployment, confirm:
 - gateway access is private or authenticated
 - signer doctor passes
 - wallet role separation passes
-- Gateway Wallet Control Passkey and separate signer WebAuthn are not conflated
+- Control UI account passkey and separate signer-owned approval are not conflated
 - signer policy/RPC hashes, positive caps, and role-specific typed operations
   match the intended wallets
 - fresh Local, WSL2, macOS, Hosting, prior-Hosting migration, cold reboot,

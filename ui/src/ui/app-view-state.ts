@@ -661,7 +661,8 @@ export type AppViewState = {
   walletCreateName: string;
   walletCreateId: string;
   walletCreateProvider: WalletProviderInfo["id"];
-  walletCreateRole: "agent" | "vault";
+  walletCreateRole: "" | "agent" | "mining" | "vault";
+  walletCreateRpcUrl: string;
   walletAssignAgentId: string;
   walletAssignWalletId: string;
   walletSettingsLoading: boolean;
@@ -709,7 +710,7 @@ export type AppViewState = {
   walletRecurringTransferTz: string;
   walletRecurringTransferName: string;
   walletSecuritySetupWalletId: string;
-  walletSecuritySetupRole: "agent" | "vault" | null;
+  walletSecuritySetupRole: "agent" | "mining" | "vault" | null;
   walletRpcProvider: string;
   walletRpcApiKey: string;
   walletRpcUrl: string;
@@ -1237,7 +1238,7 @@ export type AppViewState = {
     enabled: boolean,
   ) => Promise<void>;
   handleWalletCreateNamedWallet: () => Promise<void>;
-  handleWalletDeleteNamedWallet: (walletId: string) => Promise<void>;
+  handleWalletDeleteNamedWallet: (walletId: string, archive?: boolean) => Promise<void>;
   handleWalletSetDefaultWallet: (walletId: string | null) => Promise<void>;
   handleWalletAssignAgentWallet: () => Promise<void>;
   handleWalletDeleteAgentAssignment: (agentId: string) => Promise<void>;

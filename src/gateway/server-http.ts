@@ -75,6 +75,7 @@ import {
   LegacyEmbeddedKeystoreMigrationRequiredError,
   LEGACY_EMBEDDED_KEYSTORE_MIGRATION_MESSAGE,
 } from "../wallet/legacy-embedded-keystore.js";
+import { lockSignerOwnedWalletForArchive } from "../wallet/local-socket-signer-archive.js";
 import {
   buildLocalSignerPolicyTightening,
   LocalSignerPolicyAdminRequiredError,
@@ -83,6 +84,7 @@ import {
 import type { LocalSocketSignerPolicyV2 } from "../wallet/local-socket-signer-protocol.js";
 import { resolveNativeSignerWalletId } from "../wallet/native-signer-wallet-id.js";
 import { LocalSocketSignerAdapter } from "../wallet/providers/local-socket-signer-adapter.js";
+import { configureSignerOwnedWalletNetwork } from "../wallet/signer-network-admin.js";
 import { isValidSolanaAddress } from "../wallet/solana-address.js";
 import {
   fetchSolanaMintInfoViaRpc,
@@ -95,6 +97,7 @@ import {
   fetchSolanaTokenBalanceViaRpc,
 } from "../wallet/solana-assets.js";
 import { resolveFederationBondWallet } from "../wallet/solana-bond-signing.js";
+import { fetchPinnedSolanaRpcRead } from "../wallet/solana-rpc-read-fetch.js";
 import { searchSolanaTokens } from "../wallet/solana-token-resolver.js";
 import {
   beginWalletApprovalAssertion,
@@ -185,6 +188,7 @@ import {
   readWalletStandardReviewTxHash,
 } from "../wallet/wallet-standard-review.js";
 import { readWalletStatusSnapshot } from "../wallet/wallet-status.js";
+import { renderQrPngBase64 } from "../web/qr-image.js";
 import { createA2aHandler } from "./a2a-http.js";
 import type { AuthRateLimiter } from "./auth-rate-limit.js";
 import {
@@ -1726,20 +1730,20 @@ async function fetchSolanaLamportsViaRpc(params: {
   if (!rpcUrl || !address) {
     return null;
   }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Math.max(250, params.timeoutMs));
+  let release: (() => Promise<void>) | undefined;
   try {
-    const response = await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
+    const guarded = await fetchPinnedSolanaRpcRead({
+      rpcUrl,
+      timeoutMs: params.timeoutMs,
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: "wallet-balance-fallback",
         method: "getBalance",
         params: [address],
       }),
-      signal: controller.signal,
     });
+    release = guarded.release;
+    const response = guarded.response;
     if (!response.ok) {
       recordWalletGatewayRpcMethod("direct.getBalance", "failure");
       return null;
@@ -1755,7 +1759,7 @@ async function fetchSolanaLamportsViaRpc(params: {
     recordWalletGatewayRpcMethod("direct.getBalance", "failure");
     return null;
   } finally {
-    clearTimeout(timeout);
+    await release?.();
   }
 }
 
@@ -1812,11 +1816,20 @@ function resolveMiningAgentWalletConflict(walletId: string | undefined): string 
     return null;
   }
   const activeMiningWalletId = readSatMiningWalletIdFromConfig(loadConfig());
-  if (activeMiningWalletId === normalizedWalletId) {
-    return null;
+  if (activeMiningWalletId && activeMiningWalletId !== normalizedWalletId) {
+    return `SAT Mining already uses ${activeMiningWalletId}. Archive that singleton wallet before attaching a replacement.`;
   }
   const registry = readWalletProviderRegistry(process.env);
   const wallet = registry.wallets.find((entry) => entry.id === normalizedWalletId);
+  const otherMiningWallet = registry.wallets.find(
+    (entry) => entry.id !== normalizedWalletId && resolveWalletUserRole(entry) === "mining",
+  );
+  if (otherMiningWallet) {
+    return `SAT Mining already has the singleton wallet ${otherMiningWallet.id}. Archive it before attaching a replacement.`;
+  }
+  if (!wallet) {
+    return "SAT Mining requires an existing dedicated Mining wallet.";
+  }
   const purpose = resolveWalletUserRole(wallet);
   if (normalizedWalletId === registry.defaultWalletId || purpose === "agent") {
     return "SAT Mining must use a dedicated Mining wallet. Create a new Mining wallet instead of reusing an Agent wallet.";
@@ -2154,9 +2167,9 @@ async function checkSolanaAtaReadiness(address: string, env: NodeJS.ProcessEnv):
     const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
     // Construct the request to getTokenAccountsByOwner
-    const response = await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+    const guarded = await fetchPinnedSolanaRpcRead({
+      rpcUrl,
+      timeoutMs: 10_000,
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 1,
@@ -2164,17 +2177,19 @@ async function checkSolanaAtaReadiness(address: string, env: NodeJS.ProcessEnv):
         params: [address, { mint: USDC_MINT }, { encoding: "jsonParsed" }],
       }),
     });
-
-    if (!response.ok) {
-      recordWalletGatewayRpcMethod("direct.getTokenAccountsByOwner", "failure");
-      return false;
+    try {
+      if (!guarded.response.ok) {
+        recordWalletGatewayRpcMethod("direct.getTokenAccountsByOwner", "failure");
+        return false;
+      }
+      const payload = await guarded.response.json();
+      const accounts = payload?.result?.value;
+      const ok = Array.isArray(accounts);
+      recordWalletGatewayRpcMethod("direct.getTokenAccountsByOwner", ok ? "success" : "failure");
+      return ok && accounts.length > 0;
+    } finally {
+      await guarded.release();
     }
-
-    const payload = await response.json();
-    const accounts = payload?.result?.value;
-    const ok = Array.isArray(accounts);
-    recordWalletGatewayRpcMethod("direct.getTokenAccountsByOwner", ok ? "success" : "failure");
-    return ok && accounts.length > 0;
   } catch {
     recordWalletGatewayRpcMethod("direct.getTokenAccountsByOwner", "failure");
     return false;
@@ -4412,7 +4427,18 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         !tailscaleProxyConfigured && isDirectLoopbackRequest(req, trustedProxies);
       const ensureWalletApiAuthorized = async (): Promise<boolean> => {
         if (directLocalRequest) {
-          return true;
+          const requestOrigin = String(getHeader(req, "origin") ?? "").trim();
+          if (!requestOrigin || loopbackCorsApplied) {
+            return true;
+          }
+          sendLoginResponse(403, {
+            ok: false,
+            error: {
+              code: "forbidden_origin",
+              message: "cross-origin browser requests are not allowed on the loopback wallet API",
+            },
+          });
+          return false;
         }
         let authorized = false;
         const bearer = getBearerToken(req);
@@ -5861,25 +5887,30 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           const roleProvided = Object.prototype.hasOwnProperty.call(payload, "role");
           const normalizedRole = roleProvided ? normalizeWalletUserRole(payload.role) : undefined;
           const requestedRole =
-            normalizedRole === "agent" || normalizedRole === "vault" ? normalizedRole : undefined;
+            normalizedRole === "agent" || normalizedRole === "mining" || normalizedRole === "vault"
+              ? normalizedRole
+              : undefined;
           if (roleProvided && !requestedRole) {
             sendLoginResponse(400, {
               ok: false,
               error: {
                 code: "invalid_wallet_role",
-                message: "role must be agent or vault",
+                message: "role must be agent, mining, or vault",
               },
             });
             return;
           }
           const activeMiningWalletId = readSatMiningWalletIdFromConfig(loadConfig());
-          if (requestedRole && requestedWalletId && requestedWalletId === activeMiningWalletId) {
+          if (
+            requestedRole === "mining" &&
+            activeMiningWalletId &&
+            requestedWalletId !== activeMiningWalletId
+          ) {
             sendLoginResponse(409, {
               ok: false,
               error: {
                 code: "wallet_in_use",
-                message:
-                  "walletId is the singleton SAT mining wallet; delete and recreate @wallet:mining before changing this wallet role",
+                message: `Mining already uses the singleton wallet ${activeMiningWalletId}; use the reviewed Replace/Archive flow instead of creating a second Mining wallet`,
               },
             });
             return;
@@ -5961,6 +5992,16 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               });
               return;
             }
+            if (!requestedRole) {
+              sendLoginResponse(400, {
+                ok: false,
+                error: {
+                  code: "invalid_wallet_role",
+                  message: "choose agent, mining, or vault; the native signer never infers a role",
+                },
+              });
+              return;
+            }
             const chain = inferLocalSignerCreateChain({
               payloadChain: payload.chain,
               walletId: requestedWalletId,
@@ -5977,15 +6018,30 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               });
               return;
             }
+            const rpcUrl = typeof payload.rpcUrl === "string" ? payload.rpcUrl.trim() : "";
+            if (!rpcUrl) {
+              sendLoginResponse(400, {
+                ok: false,
+                error: {
+                  code: "invalid_request",
+                  message:
+                    "one primary Solana RPC URL is required for native signer wallet creation",
+                },
+              });
+              return;
+            }
             try {
-              const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
               await walletSetupCommand(silentWalletSetupRuntime, {
                 mode: "local-signer-create",
                 chain,
                 walletId: requestedWalletId,
                 walletName,
-                rpcUrl: resolveWalletRpcUrlFromEnv(effectiveEnv, chain, requestedWalletId),
+                rpcUrl,
                 role: requestedRole,
+                // Resume an exact deny-all signer wallet if a prior RPC/bootstrap
+                // attempt failed after durable key creation. The signer validates
+                // the wallet ID and role and never overwrites the existing key.
+                force: true,
                 nonInteractive: true,
                 noSignerHints: true,
                 noDoctor: true,
@@ -6108,13 +6164,17 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           const roleProvided = Object.prototype.hasOwnProperty.call(payload, "role");
           const normalizedRole = roleProvided ? normalizeWalletUserRole(payload.role) : undefined;
           const requestedRole =
-            normalizedRole === "agent" || normalizedRole === "vault" ? normalizedRole : undefined;
-          if (!walletId || (!name && !roleProvided)) {
+            normalizedRole === "agent" || normalizedRole === "mining" || normalizedRole === "vault"
+              ? normalizedRole
+              : undefined;
+          const rpcUrl = typeof payload.rpcUrl === "string" ? payload.rpcUrl.trim() : "";
+          const rpcProvided = Object.prototype.hasOwnProperty.call(payload, "rpcUrl");
+          if (!walletId || (!name && !roleProvided && !rpcProvided)) {
             sendLoginResponse(400, {
               ok: false,
               error: {
                 code: "invalid_request",
-                message: "walletId and name or role are required",
+                message: "walletId and role or rpcUrl are required",
               },
             });
             return;
@@ -6124,7 +6184,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               ok: false,
               error: {
                 code: "invalid_wallet_role",
-                message: "role must be agent or vault",
+                message: "role must be agent, mining, or vault",
               },
             });
             return;
@@ -6149,14 +6209,100 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             });
             return;
           }
+          if (rpcProvided) {
+            if (!rpcUrl) {
+              sendLoginResponse(400, {
+                ok: false,
+                error: {
+                  code: "invalid_request",
+                  message: "rpcUrl must be a non-empty primary Solana RPC URL",
+                },
+              });
+              return;
+            }
+            if (existing.providerId !== "local-socket-signer") {
+              sendLoginResponse(409, {
+                ok: false,
+                error: {
+                  code: "invalid_provider",
+                  message: "primary RPC editing is available only for native signer wallets",
+                },
+              });
+              return;
+            }
+            try {
+              const cfg = loadConfig();
+              const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
+              const signerWalletId = resolveNativeSignerWalletId(existing);
+              const network = await configureSignerOwnedWalletNetwork({
+                walletId: signerWalletId,
+                primaryRpcUrl: rpcUrl,
+                env: effectiveEnv,
+                socketPath: resolveLocalSignerSocketPath(effectiveEnv),
+              });
+              const suffix = normalizeWalletIdForEnvSuffix(walletId)?.toUpperCase();
+              const rpcKey = suffix
+                ? `FASED_WALLET_SOLANA_RPC_URL__${suffix}`
+                : "FASED_WALLET_SOLANA_RPC_URL";
+              const configUpdate = await updateWalletConfig({
+                env: effectiveEnv,
+                mutate: (next) => {
+                  next.env = { ...next.env, vars: { ...next.env?.vars, [rpcKey]: rpcUrl } };
+                },
+              });
+              if (!configUpdate.ok) {
+                throw new Error(
+                  `signer accepted network version ${network.version}, but app configuration persistence failed: ${configUpdate.message}`,
+                );
+              }
+              upsertNamedWallet({
+                walletId: existing.id,
+                name: existing.name,
+                providerId: existing.providerId,
+                addresses: existing.addresses,
+                metadata: {
+                  ...existing.metadata,
+                  networkHash: network.hash,
+                  networkVersion: network.version,
+                  networkReady: network.ready,
+                },
+                env: process.env,
+              });
+              appendWalletAuditEntry({
+                action: "wallet_rpc_updated",
+                actor: "control-ui",
+                details: { walletId, networkVersion: network.version, networkReady: network.ready },
+                env: process.env,
+              });
+            } catch (err) {
+              sendLoginResponse(502, {
+                ok: false,
+                error: {
+                  code: "wallet_rpc_update_failed",
+                  message: err instanceof Error ? err.message : String(err),
+                },
+              });
+              return;
+            }
+          }
           const activeMiningWalletId = readSatMiningWalletIdFromConfig(loadConfig());
-          if (requestedRole && walletId === activeMiningWalletId) {
+          if (requestedRole === "mining") {
+            const miningConflict = resolveMiningAgentWalletConflict(walletId);
+            if (miningConflict) {
+              sendLoginResponse(409, {
+                ok: false,
+                error: { code: "wallet_in_use", message: miningConflict },
+              });
+              return;
+            }
+          }
+          if (requestedRole && requestedRole !== "mining" && walletId === activeMiningWalletId) {
             sendLoginResponse(409, {
               ok: false,
               error: {
                 code: "wallet_in_use",
                 message:
-                  "walletId is the singleton SAT mining wallet; delete and recreate @wallet:mining before changing this wallet role",
+                  "walletId is the singleton SAT Mining wallet; use the guarded Archive/Replace flow before creating a wallet with a different role",
               },
             });
             return;
@@ -6176,7 +6322,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                       code: "signer_wallet_role_immutable",
                       message:
                         `The native signer owns this wallet as role=${signerPolicy.role}; the Gateway cannot change it to ${requestedRole}. ` +
-                        "Create a new signer-owned wallet with the required locked role through Local onboarding or an authenticated Hosting administrator session.",
+                        "Create a new signer-owned wallet with the required locked role, then use the guarded Archive/Replace flow for the old wallet.",
                     },
                   });
                   return;
@@ -6231,6 +6377,9 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           }
           const payload = (body.value ?? {}) as Record<string, unknown>;
           const walletId = typeof payload.walletId === "string" ? payload.walletId.trim() : "";
+          const archiveRequested = payload.archive === true;
+          const archiveConfirmation =
+            typeof payload.confirmWalletId === "string" ? payload.confirmWalletId.trim() : "";
           if (!walletId) {
             sendLoginResponse(400, {
               ok: false,
@@ -6238,14 +6387,24 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             });
             return;
           }
+          if (archiveRequested && archiveConfirmation !== walletId) {
+            sendLoginResponse(400, {
+              ok: false,
+              error: {
+                code: "archive_confirmation_required",
+                message: "confirmWalletId must exactly match walletId",
+              },
+            });
+            return;
+          }
           const activeMiningWalletId = readSatMiningWalletIdFromConfig(loadConfig());
-          if (activeMiningWalletId === walletId) {
+          if (activeMiningWalletId === walletId && !archiveRequested) {
             sendLoginResponse(409, {
               ok: false,
               error: {
                 code: "wallet_in_use",
                 message:
-                  "walletId is the singleton SAT mining wallet; use onboarding or CLI guarded delete for @wallet:mining instead of this API",
+                  "walletId is the singleton SAT Mining wallet; request the guarded Archive flow instead of ordinary delete",
               },
             });
             return;
@@ -6272,6 +6431,77 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                 details: deletionSafety.details,
               },
             });
+            return;
+          }
+          if (existing.providerId === "local-socket-signer" && archiveRequested) {
+            let archivedPolicy;
+            try {
+              const cfg = loadConfig();
+              const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
+              archivedPolicy = await lockSignerOwnedWalletForArchive({
+                wallet: existing,
+                socketPath: resolveLocalSignerSocketPath(effectiveEnv),
+              });
+              const federationWalletId = resolveFederationBondDefaultWalletId(cfg);
+              const suffix = normalizeWalletIdForEnvSuffix(walletId)?.toUpperCase();
+              const rpcKey = suffix
+                ? `FASED_WALLET_SOLANA_RPC_URL__${suffix}`
+                : "FASED_WALLET_SOLANA_RPC_URL";
+              const updated = await updateWalletConfig({
+                env: effectiveEnv,
+                mutate: (next) => {
+                  if (next.env?.vars) {
+                    delete next.env.vars[rpcKey];
+                  }
+                  const currentEntry = next.plugins?.entries?.["sat-mining"];
+                  const currentSatConfig =
+                    currentEntry?.config &&
+                    typeof currentEntry.config === "object" &&
+                    !Array.isArray(currentEntry.config)
+                      ? { ...currentEntry.config }
+                      : {};
+                  if ((currentSatConfig as { walletId?: unknown }).walletId === walletId) {
+                    delete (currentSatConfig as { walletId?: unknown }).walletId;
+                    next.plugins = {
+                      ...next.plugins,
+                      entries: {
+                        ...next.plugins?.entries,
+                        "sat-mining": { enabled: true, ...currentEntry, config: currentSatConfig },
+                      },
+                    };
+                  }
+                  if (federationWalletId === walletId) {
+                    applyFederationBondWalletConfig(next, null);
+                  }
+                },
+              });
+              if (!updated.ok) {
+                throw new Error(
+                  `signer locked the wallet, but attachment cleanup failed: ${updated.message}`,
+                );
+              }
+            } catch (err) {
+              sendLoginResponse(502, {
+                ok: false,
+                error: {
+                  code: "wallet_archive_failed",
+                  message: err instanceof Error ? err.message : String(err),
+                },
+              });
+              return;
+            }
+            const removed = deleteNamedWallet({ walletId, env: process.env });
+            appendWalletAuditEntry({
+              action: "wallet_archived",
+              actor: "control-ui",
+              details: {
+                walletId,
+                signerWalletId: archivedPolicy.walletId,
+                denyAllPolicyVersion: archivedPolicy.version,
+              },
+              env: process.env,
+            });
+            sendLoginResponse(200, { ok: true, removed: removed.removed, archived: true });
             return;
           }
           if (
@@ -6306,6 +6536,40 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             message: "method must be GET, POST, PATCH, or DELETE",
           },
         });
+        return;
+      }
+      if (requestPath === "/api/wallet/receive-qr") {
+        if (!(await ensureWalletApiAuthorized())) {
+          return;
+        }
+        if (req.method !== "GET") {
+          res.statusCode = 405;
+          res.setHeader("Allow", "GET");
+          sendLoginResponse(405, {
+            ok: false,
+            error: { code: "method_not_allowed", message: "method must be GET" },
+          });
+          return;
+        }
+        const walletId = parsedUrl.searchParams.get("walletId")?.trim() ?? "";
+        const wallet = readWalletProviderRegistry(process.env).wallets.find(
+          (entry) => entry.id === walletId,
+        );
+        const address = wallet?.addresses?.solana?.trim() ?? "";
+        if (!walletId || !address || !isValidSolanaAddress(address)) {
+          sendLoginResponse(404, {
+            ok: false,
+            error: { code: "wallet_address_not_found", message: "wallet address not found" },
+          });
+          return;
+        }
+        const png = Buffer.from(await renderQrPngBase64(`solana:${address}`), "base64");
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "image/png");
+        res.setHeader("Content-Length", String(png.byteLength));
+        res.setHeader("Cache-Control", "private, no-store");
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        res.end(png);
         return;
       }
       if (requestPath === "/api/wallet/assignments") {
@@ -6351,7 +6615,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                 error: {
                   code: "wallet_in_use",
                   message:
-                    "walletId is the singleton SAT mining wallet; delete and recreate @wallet:mining before making it the primary Agent wallet",
+                    "walletId is the singleton SAT Mining wallet; Archive/Replace Mining with an Agent wallet before making it the primary Agent wallet",
                 },
               });
               return;

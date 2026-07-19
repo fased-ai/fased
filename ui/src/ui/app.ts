@@ -287,6 +287,7 @@ import type { NostrProfileFormState } from "./views/channels.nostr-profile-form.
 import {
   approveWalletSend,
   createWalletNamedWallet,
+  updateWalletNamedWallet,
   createWalletSendRequest,
   deleteWalletAssignment,
   deleteWalletNamedWallet,
@@ -1693,7 +1694,8 @@ export class FasedAgentApp extends LitElement {
   @state() walletCreateName = "";
   @state() walletCreateId = "";
   @state() walletCreateProvider: WalletProviderInfo["id"] = "local-socket-signer";
-  @state() walletCreateRole: "agent" | "vault" = "agent";
+  @state() walletCreateRole: "" | "agent" | "mining" | "vault" = "";
+  @state() walletCreateRpcUrl = "";
   @state() walletAssignAgentId = "";
   @state() walletAssignWalletId = "";
   @state() walletRpcChain = "solana" as const;
@@ -1728,7 +1730,7 @@ export class FasedAgentApp extends LitElement {
   @state() walletRecurringTransferTz = "";
   @state() walletRecurringTransferName = "";
   @state() walletSecuritySetupWalletId = "";
-  @state() walletSecuritySetupRole: "agent" | "vault" | null = null;
+  @state() walletSecuritySetupRole: "agent" | "mining" | "vault" | null = null;
   @state() walletRpcProvider = "";
   @state() walletRpcApiKey = "";
   @state() walletRpcUrl = "";
@@ -4051,7 +4053,11 @@ export class FasedAgentApp extends LitElement {
   private focusWalletSecuritySetupIfNeeded() {
     const walletId = this.walletSecuritySetupWalletId.trim();
     const role = this.walletSecuritySetupRole;
-    if (this.tab !== "wallet" || !walletId || (role !== "agent" && role !== "vault")) {
+    if (
+      this.tab !== "wallet" ||
+      !walletId ||
+      (role !== "agent" && role !== "mining" && role !== "vault")
+    ) {
       return;
     }
     if (this.walletDetailsWalletId !== walletId) {
@@ -5179,8 +5185,34 @@ export class FasedAgentApp extends LitElement {
   }
 
   async handleWalletSaveRpcSecret() {
-    this.walletSettingsError =
-      "RPC settings are signer/provider-owned and are not accepted by the Gateway UI.";
+    if (this.walletSettingsBusy) {
+      return;
+    }
+    const walletId = this.walletDetailsWalletId.trim();
+    const rpcUrl = this.walletRpcUrl.trim();
+    const wallet = this.walletNamedWallets.find((entry) => entry.id === walletId);
+    if (!walletId || wallet?.providerId !== "local-socket-signer") {
+      this.walletSettingsError = "Select a native signer wallet before updating its RPC.";
+      return;
+    }
+    if (!rpcUrl) {
+      this.walletSettingsError = "Enter one primary Solana RPC URL.";
+      return;
+    }
+    this.walletSettingsBusy = true;
+    this.walletSettingsError = null;
+    this.walletSettingsMessage = null;
+    try {
+      await updateWalletNamedWallet({ walletId, rpcUrl });
+      this.walletRpcUrl = "";
+      this.walletSettingsMessage =
+        "Signer-owned primary RPC updated and verified against the wallet's pinned genesis.";
+      await this.handleWalletLoad();
+    } catch (err) {
+      this.walletSettingsError = `Updating wallet RPC failed: ${String(err)}`;
+    } finally {
+      this.walletSettingsBusy = false;
+    }
   }
 
   async handleWalletSaveProviderCredentials() {
@@ -5324,6 +5356,7 @@ export class FasedAgentApp extends LitElement {
         (wallet) => wallet.providerId === providerId,
       );
       this.walletDetailsWalletId = providerWallets[0]?.id ?? "";
+      this.walletRpcUrl = "";
       this.walletCreateProvider = providerId;
       this.walletSettingsMessage = `Default wallet provider set to ${providerId}.`;
       await this.handleWalletLoad();
@@ -5343,6 +5376,7 @@ export class FasedAgentApp extends LitElement {
     const stillValid = providerWallets.some((wallet) => wallet.id === this.walletDetailsWalletId);
     if (!stillValid) {
       this.walletDetailsWalletId = providerWallets[0]?.id ?? "";
+      this.walletRpcUrl = "";
     }
     const balanceStillValid = providerWallets.some(
       (wallet) => wallet.id === this.walletBalanceWalletId,
@@ -5361,7 +5395,11 @@ export class FasedAgentApp extends LitElement {
   }
 
   async handleWalletDetailsWalletChange(walletId: string) {
-    this.walletDetailsWalletId = walletId.trim();
+    const nextWalletId = walletId.trim();
+    if (nextWalletId !== this.walletDetailsWalletId) {
+      this.walletRpcUrl = "";
+    }
+    this.walletDetailsWalletId = nextWalletId;
     await this.handleWalletLoad();
   }
 
@@ -5419,6 +5457,11 @@ export class FasedAgentApp extends LitElement {
       this.walletSettingsError = "Wallet name is required.";
       return;
     }
+    if (!this.walletCreateRole) {
+      this.walletSettingsError =
+        "Choose Agent, Mining, or Vault. No wallet role is selected automatically.";
+      return;
+    }
     this.walletSettingsBusy = true;
     this.walletSettingsError = null;
     this.walletSettingsMessage = null;
@@ -5435,16 +5478,22 @@ export class FasedAgentApp extends LitElement {
           "Wallet ID is required for a native signer wallet (for example agent-primary or vault-reserve).",
         );
       }
+      if (providerId === "local-socket-signer" && !this.walletCreateRpcUrl.trim()) {
+        throw new Error("One primary Solana RPC URL is required for a native signer wallet.");
+      }
       const created = await createWalletNamedWallet({
         name,
         walletId,
         providerId,
         role: this.walletCreateRole,
         chain: "solana",
+        rpcUrl: providerId === "local-socket-signer" ? this.walletCreateRpcUrl.trim() : undefined,
       });
       this.walletProviderTab = providerId;
       this.walletCreateName = "";
       this.walletCreateId = "";
+      this.walletCreateRole = "";
+      this.walletCreateRpcUrl = "";
       this.walletSendCreateForm = {
         ...this.walletSendCreateForm,
         walletId: created.wallet.id,
@@ -5454,7 +5503,7 @@ export class FasedAgentApp extends LitElement {
       this.walletExpandedPanel = "security";
       this.walletSettingsMessage =
         providerId === "local-socket-signer"
-          ? `Wallet created: ${created.wallet.name}. It is receive-only until signer-owned network setup, owner enrollment, and an explicit policy are acknowledged. Open Policy for the exact status.`
+          ? `Wallet created: ${created.wallet.name}. Its signer-owned RPC is active; sending remains disabled until the exact role policy is ready.`
           : `Wallet created: ${created.wallet.name}. Verify provider policy and review readiness before funding it.`;
       await this.handleWalletLoad();
     } catch (err) {
@@ -5503,19 +5552,28 @@ export class FasedAgentApp extends LitElement {
     }
   }
 
-  async handleWalletDeleteNamedWallet(walletId: string) {
+  async handleWalletDeleteNamedWallet(walletId: string, archive = false) {
     if (this.walletSettingsBusy) {
       return;
     }
-    const ok = window.confirm("Delete this named wallet?");
-    if (!ok) {
+    const confirmation = archive
+      ? window.prompt(
+          `Archive ${walletId}? The server checks Mining runtime obligations and locks the signer key deny-all. You must confirm external balances and recovery before continuing. Type the exact wallet ID to continue.`,
+        )
+      : window.confirm("Delete this named wallet?")
+        ? walletId
+        : null;
+    if (confirmation !== walletId) {
       return;
     }
     this.walletSettingsBusy = true;
     this.walletSettingsError = null;
     this.walletSettingsMessage = null;
     try {
-      await deleteWalletNamedWallet({ walletId });
+      await deleteWalletNamedWallet({
+        walletId,
+        ...(archive ? { archive: true, confirmWalletId: walletId } : {}),
+      });
       if ((this.walletSendCreateForm.walletId ?? "") === walletId) {
         this.walletSendCreateForm = { ...this.walletSendCreateForm, walletId: "" };
       }
@@ -5529,10 +5587,12 @@ export class FasedAgentApp extends LitElement {
         this.walletExpandedPanelWalletId = "";
         this.walletExpandedPanel = "";
       }
-      this.walletSettingsMessage = "Wallet deleted.";
+      this.walletSettingsMessage = archive
+        ? "Wallet archived from Fased; the signer-owned key remains encrypted and permanently deny-all."
+        : "Wallet deleted.";
       await this.handleWalletLoad();
     } catch (err) {
-      this.walletSettingsError = `Deleting wallet failed: ${String(err)}`;
+      this.walletSettingsError = `${archive ? "Archiving" : "Deleting"} wallet failed: ${String(err)}`;
     } finally {
       this.walletSettingsBusy = false;
     }
@@ -5963,6 +6023,7 @@ export class FasedAgentApp extends LitElement {
     this.walletBalanceWalletId = "";
     if (nextWalletId !== this.walletDetailsWalletId) {
       this.walletDetailsWalletId = nextWalletId;
+      this.walletRpcUrl = "";
       await this.handleWalletLoad();
     }
     void this.updateComplete.then(() => {

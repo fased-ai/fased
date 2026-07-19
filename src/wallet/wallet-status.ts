@@ -2,6 +2,7 @@ import { loadConfig, type FasedAgentConfig } from "../config/config.js";
 import type { WalletProviderId } from "../config/types.wallet.js";
 import { readWalletApprovalAuthSnapshot } from "./wallet-approval-auth.js";
 import { resolveWalletPolicyConfig } from "./wallet-policy.js";
+import type { WalletProviderHealth } from "./wallet-provider-adapter.js";
 import { readWalletProviderRegistry } from "./wallet-provider-registry.js";
 import {
   createWalletProviderAdapter,
@@ -87,6 +88,12 @@ export type WalletStatusSnapshot = {
     }>;
     statePath: string;
   };
+  nativeSignerApproval?: {
+    configured: boolean;
+    ready: boolean;
+    credentialCount: number;
+    credentialVersion: number;
+  };
   addresses?: {
     solana?: string;
   };
@@ -131,8 +138,11 @@ export async function readWalletStatusSnapshot(params?: {
   const approvalAuth = readWalletApprovalAuthSnapshot(effectiveEnv, cfg);
   const checkedAt = new Date().toISOString();
 
-  let providerHealth: { ok: boolean; details?: string } = {
+  let providerHealth: WalletProviderHealth = {
     ok: false,
+    provider: providerId,
+    configured: false,
+    checkedAt,
     details: "provider health probe unavailable",
   };
   let addresses: { solana?: string } | undefined;
@@ -156,7 +166,13 @@ export async function readWalletStatusSnapshot(params?: {
       }
     }
   } catch (err) {
-    providerHealth = { ok: false, details: walletDiagnosticErrorString(err) };
+    providerHealth = {
+      ok: false,
+      provider: providerId,
+      configured: false,
+      checkedAt,
+      details: walletDiagnosticErrorString(err),
+    };
   }
 
   const serviceHealthy = Boolean(providerHealth.ok || localSignerSetupPending);
@@ -197,6 +213,9 @@ export async function readWalletStatusSnapshot(params?: {
       },
     },
     approvalAuth,
+    ...(providerHealth.nativeSignerApproval
+      ? { nativeSignerApproval: providerHealth.nativeSignerApproval }
+      : {}),
     addresses,
     paths: {
       rootDir: paths.rootDir,

@@ -86,12 +86,9 @@ For a manual laptop or desktop setup:
 5. Use Tailscale Serve only when you want the Control UI reachable from other
    devices in your tailnet.
 
-Linux local host example:
-
-```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up
-```
+On a Linux Local host, install Tailscale through its signed distribution
+package repository, then run `sudo tailscale up`. The verified Fased Hosting
+installer performs this package-repository setup automatically.
 
 You do **not** need a Tailscale API key for a normal manual host. Use a
 Tailscale auth key only for unattended provisioning, cloud-init, Terraform, or

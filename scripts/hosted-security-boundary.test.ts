@@ -7,6 +7,10 @@ const networkAdmin = fs.readFileSync(
   new URL("./fased-signer-network-hosting.sh", import.meta.url),
   "utf8",
 );
+const walletImport = fs.readFileSync(
+  new URL("./fased-signer-wallet-import-hosting.sh", import.meta.url),
+  "utf8",
+);
 const onboardingHostSecurity = fs.readFileSync(
   new URL("../src/wizard/onboarding.host-security.ts", import.meta.url),
   "utf8",
@@ -22,7 +26,7 @@ function sliceBetween(source: string, start: string, end: string): string {
 
 describe("hosted signer security boundary", () => {
   it("enters privileged Hosting setup only through an immutable attested release bundle", () => {
-    expect(install).toContain("VPS Hosting requires an explicit tagged release");
+    expect(install).toContain('hosting_release="latest"');
     expect(install).toContain('gh attestation verify "$archive"');
     expect(install).toContain('--source-ref "refs/tags/v${release_version}"');
     expect(install).toContain("/var/lib/fased-installer/install.lock");
@@ -44,7 +48,7 @@ describe("hosted signer security boundary", () => {
     expect(install).not.toContain('rm -rf -- "$root_store"');
   });
 
-  it("never grants the Gateway sudo or an app-visible root control socket", () => {
+  it("never grants broad Gateway sudo or an app-visible root control socket", () => {
     const rootFlow = sliceBetween(
       install,
       'if [[ "$(id -u)" -eq 0 ]]; then\n  assert_verified_hosting_root_source',
@@ -179,6 +183,23 @@ describe("hosted signer security boundary", () => {
     expect(networkAdmin).toContain("verificationRpcUrl");
     expect(networkAdmin).not.toContain("value.fallbackRpcUrl");
     expect(networkAdmin).not.toContain("FASED_HOST_BOOTSTRAP");
+  });
+
+  it("keeps hosted wallet import root-console-only and deny-all", () => {
+    expect(walletImport).toContain('if [[ "${EUID}" != "0" ]]');
+    expect(walletImport).toContain("VPS provider root console");
+    expect(walletImport).toContain('"$signer_bin" admin wallet import');
+    expect(walletImport).toContain('--wallet-id "$wallet_id"');
+    expect(walletImport).toContain('--locked-role "$locked_role"');
+    expect(walletImport).toContain("agent|mining|vault)");
+    expect(walletImport).not.toMatch(
+      /export-raw|recovery-export|policy put|network put|eval|source /,
+    );
+    expect(walletImport).not.toContain("private-key");
+    expect(install).toContain(
+      'install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-wallet-import-hosting.sh" /usr/local/sbin/fased-signer-wallet-import',
+    );
+    expect(install).toContain('"/etc/sudoers.d/fased-signer-wallet-import-${target_user}"');
   });
 
   it("moves legacy custody migration into the verified native signer binary", () => {

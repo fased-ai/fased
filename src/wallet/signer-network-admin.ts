@@ -1,9 +1,5 @@
-import { spawnSync } from "node:child_process";
-import path from "node:path";
-import { resolveLocalSignerControlSocketPath } from "./wallet-runtime-config.js";
-
-const NETWORK_ADMIN_TIMEOUT_MS = 30_000;
-const NETWORK_ADMIN_MAX_OUTPUT_BYTES = 256 * 1024;
+import { configureSignerOwnedWalletPrimaryRpc } from "./local-socket-signer-lifecycle.js";
+import { resolveLocalSignerSocketPath } from "./wallet-runtime-config.js";
 
 export type SignerNetworkSummary = {
   walletId: string;
@@ -11,8 +7,6 @@ export type SignerNetworkSummary = {
   version: number;
   hash?: string;
   ready: boolean;
-  rootAdminRequired?: boolean;
-  rootCommand?: string;
 };
 
 export type SignerPolicyInstallSummary = {
@@ -70,78 +64,14 @@ function parseSignerNetworkSummary(raw: string, expectedWalletId: string): Signe
   };
 }
 
-function redactSignerNetworkError(raw: string, secrets: string[]): string {
-  let value = raw;
-  for (const secret of secrets.filter(Boolean).toSorted((a, b) => b.length - a.length)) {
-    value = value.split(secret).join("[redacted-rpc-url]");
-  }
-  value = value.replace(/https?:\/\/[^\s"'<>]+/gi, "[redacted-rpc-url]");
-  value = value.replace(
-    /\b(api[_-]?key|access[_-]?token|token|key)=([^\s&"']+)/gi,
-    "$1=[redacted]",
-  );
-  return value.trim().slice(0, 2_000) || "signer network administration failed";
-}
-
-function signerAdminEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = {};
-  for (const key of ["HOME", "PATH", "TMPDIR", "LANG", "LC_ALL", "TZ"] as const) {
-    const value = String(env[key] ?? "").trim();
-    if (value) {
-      out[key] = value;
-    }
-  }
-  return out;
-}
-
-function runSignerAdmin(params: {
-  command: string;
-  args: string[];
-  input?: string;
-  env: NodeJS.ProcessEnv;
-  secrets: string[];
-}): string {
-  const child = spawnSync(params.command, params.args, {
-    input: params.input,
-    env: params.env,
-    encoding: "utf8",
-    timeout: NETWORK_ADMIN_TIMEOUT_MS,
-    maxBuffer: NETWORK_ADMIN_MAX_OUTPUT_BYTES,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  if (child.error || child.status !== 0) {
-    const detail = [child.stderr, child.stdout, child.error?.message]
-      .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
-      .join("\n");
-    throw new Error(redactSignerNetworkError(detail, params.secrets));
-  }
-  return child.stdout;
-}
-
-function assertReadyNetworkSummary(
-  summary: SignerNetworkSummary,
-  previousVersion: number,
-): SignerNetworkSummary {
-  if (
-    !summary.configured ||
-    !summary.ready ||
-    !summary.hash ||
-    summary.version !== previousVersion + 1
-  ) {
-    throw new Error("signer network update did not acknowledge the exact next ready version");
-  }
-  return summary;
-}
-
-export function configureSignerOwnedWalletNetwork(params: {
+export async function configureSignerOwnedWalletNetwork(params: {
   walletId: string;
   primaryRpcUrl: string;
   executionFallbackRpcUrl?: string;
   verificationRpcUrl?: string;
   env?: NodeJS.ProcessEnv;
-  signerBinPath?: string;
-  controlSocketPath?: string;
-}): SignerNetworkSummary {
+  socketPath?: string;
+}): Promise<SignerNetworkSummary> {
   const env = params.env ?? process.env;
   const walletId = canonicalSignerWalletId(params.walletId);
   const primaryRpcUrl = params.primaryRpcUrl.trim();
@@ -150,60 +80,16 @@ export function configureSignerOwnedWalletNetwork(params: {
   if (!primaryRpcUrl) {
     throw new Error("signer-owned wallet network requires a primary RPC URL");
   }
-  const secrets = [primaryRpcUrl, executionFallbackRpcUrl, verificationRpcUrl];
-  const hosting =
-    String(env.FASED_HOST_PROFILE ?? "")
-      .trim()
-      .toLowerCase() === "hosting";
-
-  if (hosting) {
-    // The app/Gateway never receives a privileged root channel. Wallet creation remains
-    // fail-closed; a host administrator activates RPC state later from a root-only file.
-    return {
-      walletId,
-      configured: false,
-      version: 0,
-      ready: false,
-      rootAdminRequired: true,
-      rootCommand:
-        `/usr/local/sbin/fased-signer-network --wallet-id ${walletId} ` +
-        "--network-file /root/fased-network.json",
-    };
+  if (executionFallbackRpcUrl || verificationRpcUrl) {
+    throw new Error(
+      "Normal wallet setup accepts one primary RPC. Configure an advanced execution fallback or explicit witness with the native signer admin network command.",
+    );
   }
-
-  const signerBinPath =
-    params.signerBinPath ??
-    (String(env.FASED_WALLET_LOCAL_SIGNER_BIN ?? "").trim() ||
-      path.join(String(env.HOME ?? ""), ".fased", "bin", "fased-signerd"));
-  const controlSocketPath = params.controlSocketPath ?? resolveLocalSignerControlSocketPath(env);
-  const adminEnv = signerAdminEnvironment(env);
-  const commonArgs = ["--control-socket", controlSocketPath, "--wallet-id", walletId];
-  const current = parseSignerNetworkSummary(
-    runSignerAdmin({
-      command: signerBinPath,
-      args: ["admin", "network", "get", ...commonArgs],
-      env: adminEnv,
-      secrets,
-    }),
+  return configureSignerOwnedWalletPrimaryRpc({
+    socketPath: params.socketPath ?? resolveLocalSignerSocketPath(env),
     walletId,
-  );
-  const input = `${JSON.stringify({
-    expectedVersion: current.version,
     primaryRpcUrl,
-    ...(executionFallbackRpcUrl ? { executionFallbackRpcUrl } : {}),
-    ...(verificationRpcUrl ? { verificationRpcUrl } : {}),
-  })}\n`;
-  const updated = parseSignerNetworkSummary(
-    runSignerAdmin({
-      command: signerBinPath,
-      args: ["admin", "network", "put", ...commonArgs],
-      input,
-      env: adminEnv,
-      secrets,
-    }),
-    walletId,
-  );
-  return assertReadyNetworkSummary(updated, current.version);
+  });
 }
 
 /**
@@ -239,6 +125,4 @@ export function applyHostedSignerOwnedWalletPolicy(params: {
 export const __testing = {
   canonicalSignerWalletId,
   parseSignerNetworkSummary,
-  redactSignerNetworkError,
-  signerAdminEnvironment,
 };

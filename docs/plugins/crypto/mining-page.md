@@ -218,17 +218,16 @@ mining. Start from the Mining wallet and readiness flow below.
 Use this flow before pressing **Start** for the first time:
 
 1. Create a dedicated signer-owned **Mining** wallet during onboarding or with
-   `fased wallet setup --chain solana`, then open **Wallets** to inspect it.
-   Existing-key import uses the separate native signer-admin control socket.
-2. Configure signer execution RPC and Gateway read RPC, activate the reviewed
-   Mining policy with the owner helper, verify exact policy/network hashes, and
-   enroll signer WebAuthn for manual Mining reviews.
+   `fased wallet setup --chain solana`, or create it in **Wallets** when none
+   exists. Local terminal import uses `--mode local-signer-import`; Hosting
+   import uses the root-only installed signer helper from the provider console.
+2. Enter one primary RPC and verify exact Mining policy/network readiness.
 3. Only then copy the Mining address and fund it with a deliberately small
    amount of SOL for fees, reserve, and intended capital.
 4. Open **Mining** and confirm the wallet shown is `@wallet:mining`.
 5. Check official mainnet status. The manifest verification public key belongs
    to the Fased release, not to your wallet; no wallet is required to check it.
-6. Run readiness. Fix signer, both RPC planes, policy, SOL, token-account, or capital warnings
+6. Run readiness. Fix signer, RPC, policy, SOL, token-account, or capital warnings
    before continuing.
 7. Deposit a small amount of SOL into miner capital. The Fund action creates
    the wallet-scoped miner account on-chain when it is missing.
@@ -409,7 +408,7 @@ The clean operator sequence is:
 
 1. create the single signer-owned Mining wallet in onboarding/wallet setup, or
    import it through the native signer-admin control socket
-2. configure both RPC planes and activate the owner-reviewed Mining policy
+2. enter one primary RPC and activate the reviewed Mining policy
 3. enroll signer WebAuthn for manual reviewed Mining actions
 4. confirm exact policy/network hashes and readiness
 5. fund the wallet deliberately small and initialize miner capital if missing

@@ -143,13 +143,11 @@ Replace `youruser` with the account you created, and the IP with your VM's IP.
 Inside the VM:
 
 ```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+  | bash -s -- --local
 ```
 
-`./install.sh` runs onboarding by default. Follow the onboarding prompts to set
-the host/runtime defaults. If you used `./install.sh --no-onboard`, run
+The installer runs onboarding by default. If it was interrupted, run
 `fased onboard --install-daemon` afterward.
 
 Then open the Control UI:

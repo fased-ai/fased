@@ -35,6 +35,7 @@ function capabilityResult() {
         "failClosedPolicies",
         "policyHashes",
         "signerOwnedKeys",
+        "applicationNetworkBootstrap",
         "atomicMultiAssetCaps",
         "signerControlledNativeFeeCaps",
       ],

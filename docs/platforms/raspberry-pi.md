@@ -63,31 +63,21 @@ ssh user@gateway-host
 ssh user@192.168.x.x
 ```
 
-## 3) System Setup
+## 3) Prepare the OS
 
 ```bash
 # Update system
 sudo apt update && sudo apt upgrade -y
 
-# Install essential packages
-sudo apt install -y git curl build-essential
+# Install the small bootstrap prerequisites
+sudo apt install -y curl ca-certificates
 
 # Set timezone (important for cron/reminders)
 sudo timedatectl set-timezone America/Chicago  # Change to your timezone
 ```
 
-## 4) Install Node.js 24 (ARM64)
-
-```bash
-# Install Node.js via NodeSource
-curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
-sudo apt install -y nodejs
-
-# Verify
-node --version  # Should show v24.x, or at least v22.14.x
-node -e 'require("node:sqlite"); console.log("node:sqlite ok")'
-npm --version
-```
+The Fased installer installs and verifies the supported Node runtime. Do not
+run a separate remote NodeSource setup script for the normal path.
 
 ## 5) Add Swap (Important for 2GB or less)
 
@@ -110,15 +100,20 @@ sudo sysctl -p
 
 ## 6) Install Fased
 
-### Option A: Standard Install (Recommended)
+For the normal always-on Pi path, enter a root shell:
 
 ```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-./install.sh --no-onboard
+sudo -i
 ```
 
-### Option B: Hackable Install (For tinkering)
+Then run the complete [verified Hosting bootstrap
+block](/install/vps#3-verify-and-run-the-hosting-bootstrap). It authenticates
+the tagged installer before execution, selects the supported ARM64 release,
+installs the runtime, starts Tailscale through signed OS packages, creates the
+non-root `app` service, and runs onboarding.
+
+<Accordion title="Advanced: hackable source checkout">
+  Contributors who intentionally need a source tree can use:
 
 ```bash
 git clone https://github.com/fased-ai/fased.git fased
@@ -128,40 +123,24 @@ pnpm build:app
 ./install.sh --no-onboard
 ```
 
-The hackable install gives you direct access to logs and code while still
-installing the normal `fased` command — useful for debugging ARM-specific
-issues.
+This is a contributor/debug path, not the normal Pi installation.
+</Accordion>
 
 ## 7) Private access before onboarding
 
-For normal server-style/headless setup, use the hosted installer and let it
-handle Tailscale login and private access checks:
-
-Run the [one-command Hosting installer](/install/vps) from the host's root
-console. It verifies the tagged Hosting release before privileged Fased
-installation. Do not run an app-owned checkout with sudo.
-
-For this hackable source path, you can still put the device on your tailnet
-manually before onboarding:
-
-```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up
-```
+The Hosting installer handles Tailscale login and private access checks. Open
+the printed login URL on your own computer and confirm the requested private
+SSH test before allowing public SSH hardening. Do not run an app-owned checkout
+with sudo.
 
 ## 8) Run Onboarding
+
+The installer runs onboarding automatically. If it was interrupted, reconnect
+as `app` and resume:
 
 ```bash
 fased onboard --install-daemon
 ```
-
-Follow the wizard:
-
-1. **Gateway mode:** Hosting
-2. **Gateway auth:** token/password as prompted
-3. **Wallet/mining:** optional; skip unless you are setting up wallet policy or SAT mining
-4. **Hosting security:** keep access private through Tailscale
-5. **Daemon:** Yes (systemd)
 
 After the Gateway is online, use the browser Control UI from the selected Agent:
 **Agent > Models** for API keys/OAuth and model roles, **Agent > Channels** for

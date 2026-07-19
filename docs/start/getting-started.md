@@ -42,7 +42,7 @@ flowchart TD
 ## Prereqs
 
 - Linux, macOS, or Windows through WSL2
-- Git access to the Fased repository
+- HTTPS access to GitHub raw content and release artifacts
 
 <Tip>
 On Debian, Ubuntu, WSL Ubuntu, Fedora, and common RHEL-family systems, the
@@ -98,13 +98,12 @@ The macOS app is a Local setup surface, not a separate hosting profile.
       </Tab>
       <Tab title="VPS Hosting">
         Install/sign into Tailscale on your own computer, SSH into the VPS as
-        root, then run this **inside the VPS SSH session**:
+        root, then run the complete [verified Hosting bootstrap
+        block](/install/vps#3-verify-and-run-the-hosting-bootstrap) **inside the
+        VPS SSH session**.
 
-        Follow the
-        [verified Hosting bootstrap](/install/vps#3-verify-and-run-the-hosting-bootstrap)
-        in that VPS SSH session.
-
-        The installer verifies the tagged Hosting release, installs or starts
+        The block verifies the tagged installer before Bash runs it. The
+        installer then verifies the Hosting bundle, installs or starts
         Tailscale on the VPS, and creates the non-root `app` runtime.
 
         During hosted setup, Fased bootstraps into `/home/app/fased` and

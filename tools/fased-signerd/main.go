@@ -264,7 +264,7 @@ func mustValidate(req request, cfg signerConfig) error {
 		if len(req.Request) > 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
-	case "v2.network.put", "v2.policy.put", "v2.policy.tighten", "v2.wallet.create", "v2.wallet.import", "v2.wallet.importLegacy", "v2.wallet.rotation.create", "v2.wallet.rotation.commit", "v2.execute", "v2.review.get", "v2.review.prepare", "v2.review.execute", "v2.operation.get", "v2.operation.reconcile", "v2.satLookup.binding.get":
+	case "v2.network.put", "v2.network.bootstrap", "v2.policy.put", "v2.policy.tighten", "v2.wallet.create", "v2.wallet.import", "v2.wallet.importLegacy", "v2.wallet.recovery.export", "v2.wallet.recovery.import", "v2.wallet.exportRaw", "v2.wallet.rotation.create", "v2.wallet.rotation.commit", "v2.execute", "v2.review.get", "v2.review.prepare", "v2.review.execute", "v2.operation.get", "v2.operation.reconcile", "v2.satLookup.binding.get":
 		if len(req.Request) == 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
@@ -398,6 +398,7 @@ func parseArgs() signerConfig {
 		"v2.capabilities":                 getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_HEALTH", 300),
 		"v2.network.get":                  getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_NETWORK", 120),
 		"v2.network.put":                  getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_NETWORK", 30),
+		"v2.network.bootstrap":            getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_NETWORK", 30),
 		"v2.policy.get":                   getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
 		"v2.policy.put":                   getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
 		"v2.policy.tighten":               getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
@@ -405,6 +406,9 @@ func parseArgs() signerConfig {
 		"v2.wallet.create":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 30),
 		"v2.wallet.import":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 30),
 		"v2.wallet.importLegacy":          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 30),
+		"v2.wallet.recovery.export":       getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_RECOVERY_ADMIN", 6),
+		"v2.wallet.recovery.import":       getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_RECOVERY_ADMIN", 6),
+		"v2.wallet.exportRaw":             getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_RECOVERY_ADMIN", 3),
 		"v2.wallet.reencrypt":             getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 30),
 		"v2.wallet.rotation.create":       getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_ROTATION_ADMIN", 10),
 		"v2.wallet.rotation.status":       getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_ROTATION_ADMIN", 60),
