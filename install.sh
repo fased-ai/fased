@@ -35,10 +35,17 @@ if [[ "$install_entry_legacy_ts_authkey" -eq 1 ]]; then
   exit 1
 fi
 
+if [[ "$install_entry_is_stream" -eq 1 && "$install_entry_hosting" -eq 1 ]]; then
+  echo "Refusing streamed VPS Hosting execution." >&2
+  echo "Download and verify the exact tagged install.sh before execution:" >&2
+  echo "  https://docs.fased.ai/install/vps" >&2
+  exit 1
+fi
+
 # A Hosting request always enters the attest-and-extract bootstrap unless it is
 # the exact inner invocation carrying the root-owned verified bundle marker.
-# This applies equally to stdin and to a standalone install.sh that the
-# operator downloaded and verified before execution.
+# Streamed Hosting was rejected above; standalone Hosting must be downloaded
+# and verified before execution.
 if [[ "$install_entry_is_stream" -eq 1 || \
   ( "$install_entry_hosting" -eq 1 && -z "$install_entry_verified_bundle" ) ]]; then
   install_repo_url="${FASED_INSTALL_REPO:-https://github.com/fased-ai/fased.git}"
@@ -90,10 +97,6 @@ if [[ "$install_entry_is_stream" -eq 1 || \
         ;;
     esac
   done
-
-  if [[ "$install_entry_is_stream" -eq 1 && "$hosting_bootstrap" -eq 1 && "$hosting_repair_bootstrap" -eq 0 && -z "$hosting_release" ]]; then
-    hosting_release="latest"
-  fi
 
   bootstrap_as_root() {
     if [[ "$(id -u)" -eq 0 ]]; then

@@ -100,10 +100,9 @@ The macOS app is a Local setup surface, not a separate hosting profile.
         Install/sign into Tailscale on your own computer, SSH into the VPS as
         root, then run this **inside the VPS SSH session**:
 
-        ```bash
-        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-          | bash -s -- --hosting
-        ```
+        Follow the
+        [verified Hosting bootstrap](/install/vps#3-verify-and-run-the-hosting-bootstrap)
+        in that VPS SSH session.
 
         The installer verifies the tagged Hosting release, installs or starts
         Tailscale on the VPS, and creates the non-root `app` runtime.

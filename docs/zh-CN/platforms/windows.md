@@ -116,12 +116,8 @@ Tailscale、SSH 和浏览器，不需要在 WSL 中安装 Fased。
 ssh root@YOUR_PUBLIC_VPS_IP
 ```
 
-3. 提示符变成远程 Linux VPS 后，在该 SSH 会话内运行：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-  | bash -s -- --hosting
-```
+3. 提示符变成远程 Linux VPS 后，在该 SSH 会话内按照
+   [verified Hosting bootstrap](/install/vps#3-验证并运行-hosting-bootstrap) 操作。
 
 完整说明见 [VPS Hosting](/install/vps)。不要把 Bash Hosting 命令直接粘贴到
 未连接 VPS 的 PowerShell 中。

@@ -20,17 +20,12 @@ For a normal Local install, run:
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
 ```
 
-For a normal fresh VPS Hosting install, run this inside the VPS provider root
-SSH session:
+For a normal fresh VPS Hosting install, follow the
+[verified Hosting bootstrap](/install/vps#3-verify-and-run-the-hosting-bootstrap)
+inside the VPS provider root SSH session.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-  | bash -s -- --hosting
-```
-
-Both commands resolve one stable tag and verify the tagged release artifacts
-after the first script starts. Hosting completes those checks before installing
-privileged Fased assets.
+Both paths use one stable tag and verify the tagged release artifacts. Hosting
+also verifies `install.sh` itself before any downloaded shell code runs.
 
 <Warning>
 On Windows 11 or Windows 10 version 2004/build 19041 or newer, open
@@ -96,10 +91,9 @@ For VPS Hosting, change only the last line to:
 bash "$BOOTSTRAP_DIR/install.sh" --hosting --release "$RELEASE"
 ```
 
-Stop if any verification fails. This checks the initial script before it runs;
-the normal one-command paths instead trust the first HTTPS download and perform
-the same tagged artifact checks immediately afterward. Neither path requires
-users to install Go.
+Stop if any verification fails. This is also the mandatory Hosting boundary;
+Local users may choose it instead of the shorter Local bootstrap. Neither path
+requires users to install Go.
 </Accordion>
 
 ## What `install.sh` does
@@ -240,12 +234,8 @@ Fresh Local path:
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
 ```
 
-Fresh VPS Hosting uses the one-command bootstrap:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-  | bash -s -- --hosting
-```
+Fresh VPS Hosting uses the
+[verified tagged bootstrap](/install/vps#3-verify-and-run-the-hosting-bootstrap).
 
 It resolves the stable release and verifies the tagged Hosting artifacts before
 privileged Fased installation. The installer installs/starts
@@ -330,18 +320,16 @@ Native signer note:
   <Tab title="Hosting profile">
     From the VPS provider root console:
 
-    ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-      | bash -s -- --hosting
-    ```
+    Follow the
+    [verified Hosting bootstrap](/install/vps#3-verify-and-run-the-hosting-bootstrap).
 
-    See [VPS Hosting](/install/vps) for the Tailscale access check and optional
-    manual pre-execution verification.
+    See [VPS Hosting](/install/vps) for the Tailscale access check and advanced
+    release-selection options.
 
   </Tab>
   <Tab title="Repair hosting">
     Follow the same
-    [manual pre-execution verification procedure](/install/vps#advanced-verify-the-bootstrap-first),
+    [verified bootstrap procedure](/install/vps#3-verify-and-run-the-hosting-bootstrap),
     but use `--repair-hosting` in the final invocation of the already-verified
     standalone installer. Never use raw `curl | bash` for this root repair.
 
@@ -379,7 +367,7 @@ These are the flags that matter for the current public repo-backed flow.
 | `--auto-install`             | Install missing macOS/Linux dependencies where supported.                       |
 | `--no-auto-install`          | Do not install missing dependencies automatically.                              |
 | `--install-dir <path>`       | Bootstrap or resolve the checkout under a specific directory.                   |
-| `--hosting`                  | Use VPS Hosting defaults; a streamed fresh install selects the stable release.  |
+| `--hosting`                  | Use VPS Hosting defaults from a standalone pre-verified tagged bootstrap.       |
 | `--repair-hosting`           | Repair hosted runtime/service state from the tagged provider-console bootstrap. |
 | `--release <vX.Y.Z\|latest>` | Select and attest the exact Hosting release before privileged setup.            |
 | `--repair-local`             | Repair Local/WSL runtime and user service without onboarding.                   |
