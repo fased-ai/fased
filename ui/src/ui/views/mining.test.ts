@@ -23,6 +23,7 @@ import {
   miningExplorerUrl,
   miningRecentActionExplorerUrl,
   summarizeCurrentCycleSnapshot,
+  buildLiveCurrentCycleMetricRows,
   describeCurrentCycleDrift,
   resolveLatestSettledCycleMetrics,
   summarizeLatestCycleMath,
@@ -590,6 +591,23 @@ describe("mining view helpers", () => {
     expect(summary).toContainEqual({
       label: "Keeper bounty owed",
       value: "0.0015",
+    });
+  });
+
+  it("surfaces unpaid keeper bounty in the live current-cycle metric rows", () => {
+    expect(
+      buildLiveCurrentCycleMetricRows({
+        cycleId: 9863001,
+        ownCommitLamports: "250000000",
+        ownCommitPresent: true,
+        totalCommittedLamports: "500000000",
+        minerCount: 2,
+        keeperBountyUnpaidLamports: "1500000",
+      }),
+    ).toContainEqual({
+      label: "Keeper bounty owed",
+      value: "0.0015 SOL",
+      title: "Keeper work completed for this cycle but not yet paid from the protocol reserve.",
     });
   });
 
