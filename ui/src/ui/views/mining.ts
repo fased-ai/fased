@@ -1302,6 +1302,47 @@ export function summarizeCurrentCycleSnapshot(
   return summary;
 }
 
+export function buildLiveCurrentCycleMetricRows(params: {
+  cycleId: number | null;
+  ownCommitLamports: string;
+  ownCommitPresent: boolean;
+  totalCommittedLamports: string | null;
+  minerCount: number | null;
+  keeperBountyUnpaidLamports?: string | null;
+}): Array<{ label: string; value: string; title?: string }> {
+  const rows = [
+    {
+      label: "Cycle",
+      value: params.cycleId != null ? String(params.cycleId) : "—",
+    },
+    {
+      label: "Your commit",
+      value: params.ownCommitPresent
+        ? `${formatMetricAmount(params.ownCommitLamports, "SOL")} SOL`
+        : "—",
+    },
+    {
+      label: "SOL in cycle",
+      value:
+        params.totalCommittedLamports != null
+          ? `${formatMetricAmount(params.totalCommittedLamports, "SOL")} SOL`
+          : "—",
+    },
+    {
+      label: "Miners now",
+      value: params.minerCount != null ? String(params.minerCount) : "pending",
+    },
+  ];
+  if (hasPositiveLamports(params.keeperBountyUnpaidLamports)) {
+    rows.push({
+      label: "Keeper bounty owed",
+      value: `${formatMetricAmount(params.keeperBountyUnpaidLamports ?? "0", "SOL")} SOL`,
+      title: "Keeper work completed for this cycle but not yet paid from the protocol reserve.",
+    });
+  }
+  return rows;
+}
+
 export function resolveLatestSettledCycleMetrics(
   status:
     | Pick<SatMiningRuntimeStatus, "latestSettledCycleId" | "settledHistory">
@@ -6549,29 +6590,16 @@ export function renderMining(props: MiningViewProps) {
               <span>Current cycle</span>
               ${renderMiningHelp("Live cycle snapshot for the currently observed cycle.")}
             </div>
-            ${renderMetricRows([
-              {
-                label: "Cycle",
-                value: topCurrentCycleId != null ? String(topCurrentCycleId) : "—",
-              },
-              {
-                label: "Your commit",
-                value: topOwnCommitPresent
-                  ? `${formatMetricAmount(topOwnCommitLamports, "SOL")} SOL`
-                  : "—",
-              },
-              {
-                label: "SOL in cycle",
-                value:
-                  topTotalCommittedLamports != null
-                    ? `${formatMetricAmount(topTotalCommittedLamports, "SOL")} SOL`
-                    : "—",
-              },
-              {
-                label: "Miners now",
-                value: topCycleMinerCount != null ? String(topCycleMinerCount) : "pending",
-              },
-            ])}
+            ${renderMetricRows(
+              buildLiveCurrentCycleMetricRows({
+                cycleId: topCurrentCycleId,
+                ownCommitLamports: topOwnCommitLamports,
+                ownCommitPresent: topOwnCommitPresent,
+                totalCommittedLamports: topTotalCommittedLamports,
+                minerCount: topCycleMinerCount,
+                keeperBountyUnpaidLamports: status?.currentKeeperBountyUnpaidLamports,
+              }),
+            )}
           </div>
           <div class="mining-metric">
             <div
