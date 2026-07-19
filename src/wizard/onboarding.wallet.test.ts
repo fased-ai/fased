@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FasedAgentConfig } from "../config/config.js";
+import { VERSION } from "../version.js";
+import { SIGNER_PROTOCOL_V2 } from "../wallet/signer-protocol-v2.generated.js";
 import {
   configureWalletForOnboarding,
   installSignerdBinary,
@@ -66,7 +68,7 @@ function createSignerReleaseFixture(root: string): {
   const arch = process.arch === "arm64" ? "arm64" : "amd64";
   const assetName = `fased-signerd-${platform}-${arch}`;
   const identity = {
-    version: "0.1.63",
+    version: VERSION,
     commit: "a".repeat(40),
     buildInputDigest: `sha256:${"b".repeat(64)}`,
     development: false,
@@ -93,19 +95,7 @@ for (const file of [statePath, masterPath, pidPath, auditPath]) fs.mkdirSync(pat
 if (!fs.existsSync(statePath)) fs.writeFileSync(statePath, "state\\n", { mode: 0o600 });
 if (!fs.existsSync(masterPath)) fs.writeFileSync(masterPath, "master\\n", { mode: 0o600 });
 fs.writeFileSync(pidPath, \`\${process.pid}\\n\`, { mode: 0o600 });
-const health = { ok: true, result: { ready: true, readOnly, keystoreType: "signer-owned-v2", release: identity, schema: { version: 3, supported: 3, ready: true }, capabilities: { protocol: { current: 2, min: 2, max: 2 }, nativeFeeReservationLamports: 5000000, features: ${JSON.stringify(
-    [
-      "failClosedPolicies",
-      "policyHashes",
-      "durableCaps",
-      "atomicIdempotency",
-      "ambiguousBroadcastReconciliation",
-      "signerOwnedKeys",
-      "typedSolanaTransactions",
-      "atomicMultiAssetCaps",
-      "signerControlledNativeFeeCaps",
-    ],
-  )} }, policies: [] } };
+const health = { ok: true, result: { ready: true, readOnly, keystoreType: "signer-owned-v2", release: identity, schema: { version: 3, supported: 3, ready: true }, capabilities: ${JSON.stringify(SIGNER_PROTOCOL_V2)}, policies: [], network: { ready: true, wallets: [] } } };
 const app = net.createServer((socket) => socket.once("data", () => socket.end(JSON.stringify(health) + "\\n")));
 const control = net.createServer((socket) => socket.destroy());
 const cleanup = () => { app.close(); control.close(); for (const file of [socketPath, controlPath, pidPath]) { try { fs.rmSync(file, { force: true }); } catch {} } process.exit(0); };

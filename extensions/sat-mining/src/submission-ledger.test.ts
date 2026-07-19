@@ -95,6 +95,56 @@ describe("SAT durable submission ledger", () => {
     expect(retry.record.signature).toBe("sig-42");
   });
 
+  it("allocates a new request only for an explicitly retryable definitive failure", async () => {
+    const first = await claimSatSubmission({
+      walletId: "mining-1",
+      workflowId: "cycle:42:lookup:extend",
+      operationKey: "extend:lookup-table",
+      intentDigest: DIGEST_A,
+      action: "extend",
+      allowFailedRetry: true,
+      env,
+      owner: "worker-a",
+    });
+    await updateSatSubmission({
+      walletId: "mining-1",
+      requestId: first.record.requestId,
+      intentDigest: DIGEST_A,
+      state: "failed",
+      signature: "definitively-failed-lookup-signature",
+      error: "pre-broadcast preparation failed",
+      owner: "worker-a",
+      releaseLease: true,
+      env,
+    });
+
+    const retry = await claimSatSubmission({
+      walletId: "mining-1",
+      workflowId: "cycle:42:lookup:extend",
+      operationKey: "extend:lookup-table",
+      intentDigest: DIGEST_A,
+      action: "extend",
+      allowFailedRetry: true,
+      env,
+      owner: "worker-b",
+    });
+    expect(retry).toMatchObject({ created: true, claimed: true });
+    expect(retry.record.requestId).not.toBe(first.record.requestId);
+    expect(retry.record.operationKey).toBe("extend:lookup-table:retry:1");
+
+    const stable = await claimSatSubmission({
+      walletId: "mining-1",
+      workflowId: "cycle:42:lookup:extend",
+      operationKey: "extend:lookup-table",
+      intentDigest: DIGEST_A,
+      action: "extend",
+      env,
+      owner: "worker-c",
+    });
+    expect(stable.record.requestId).toBe(first.record.requestId);
+    expect(stable.record.state).toBe("failed");
+  });
+
   it("does not lose distinct records created concurrently in one process", async () => {
     const claims = await Promise.all(
       Array.from(

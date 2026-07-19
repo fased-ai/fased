@@ -677,10 +677,14 @@ func runSignerAdminNetworkPut(args []string, stdin io.Reader, stdout io.Writer) 
 		return err
 	}
 	body.PrimaryRPCURL = normalized.PrimaryRPCURL
-	body.FallbackRPCURL = normalized.FallbackRPCURL
+	body.ExecutionFallbackRPCURL = normalized.ExecutionFallbackRPCURL
+	body.VerificationRPCURL = normalized.VerificationRPCURL
+	body.LegacyFallbackRPCURL = ""
 	defer func() {
 		body.PrimaryRPCURL = ""
-		body.FallbackRPCURL = ""
+		body.ExecutionFallbackRPCURL = ""
+		body.VerificationRPCURL = ""
+		body.LegacyFallbackRPCURL = ""
 	}()
 	result, err := callSignerAdminSensitiveV2(common.controlSocket, "v2.network.put", walletID, body)
 	if err != nil {

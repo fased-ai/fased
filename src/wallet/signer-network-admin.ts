@@ -136,7 +136,8 @@ function assertReadyNetworkSummary(
 export function configureSignerOwnedWalletNetwork(params: {
   walletId: string;
   primaryRpcUrl: string;
-  fallbackRpcUrl?: string;
+  executionFallbackRpcUrl?: string;
+  verificationRpcUrl?: string;
   env?: NodeJS.ProcessEnv;
   signerBinPath?: string;
   controlSocketPath?: string;
@@ -144,11 +145,12 @@ export function configureSignerOwnedWalletNetwork(params: {
   const env = params.env ?? process.env;
   const walletId = canonicalSignerWalletId(params.walletId);
   const primaryRpcUrl = params.primaryRpcUrl.trim();
-  const fallbackRpcUrl = params.fallbackRpcUrl?.trim() || "";
+  const executionFallbackRpcUrl = params.executionFallbackRpcUrl?.trim() || "";
+  const verificationRpcUrl = params.verificationRpcUrl?.trim() || "";
   if (!primaryRpcUrl) {
     throw new Error("signer-owned wallet network requires a primary RPC URL");
   }
-  const secrets = [primaryRpcUrl, fallbackRpcUrl];
+  const secrets = [primaryRpcUrl, executionFallbackRpcUrl, verificationRpcUrl];
   const hosting =
     String(env.FASED_HOST_PROFILE ?? "")
       .trim()
@@ -188,7 +190,8 @@ export function configureSignerOwnedWalletNetwork(params: {
   const input = `${JSON.stringify({
     expectedVersion: current.version,
     primaryRpcUrl,
-    ...(fallbackRpcUrl ? { fallbackRpcUrl } : {}),
+    ...(executionFallbackRpcUrl ? { executionFallbackRpcUrl } : {}),
+    ...(verificationRpcUrl ? { verificationRpcUrl } : {}),
   })}\n`;
   const updated = parseSignerNetworkSummary(
     runSignerAdmin({

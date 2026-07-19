@@ -23,8 +23,9 @@ import (
 const maxSignerImportBytesV2 = 4096
 
 type signerKeyManagerV2 struct {
-	store     *signerStoreV2
-	masterKey []byte
+	store       *signerStoreV2
+	masterKey   []byte
+	genesisHash func(string) (string, error)
 }
 
 func openSignerKeyManagerV2(store *signerStoreV2, masterKeyPath string) (*signerKeyManagerV2, error) {
@@ -35,7 +36,9 @@ func openSignerKeyManagerV2(store *signerStoreV2, masterKeyPath string) (*signer
 	if err != nil {
 		return nil, err
 	}
-	return &signerKeyManagerV2{store: store, masterKey: key}, nil
+	return &signerKeyManagerV2{
+		store: store, masterKey: key, genesisHash: signerRPCGenesisHashV2,
+	}, nil
 }
 
 func (m *signerKeyManagerV2) Close() {

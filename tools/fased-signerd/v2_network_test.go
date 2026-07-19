@@ -3,6 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -23,6 +27,290 @@ func signerUint64PointerV2(value uint64) *uint64 {
 	return &value
 }
 
+func encryptLegacySignerNetworkRecordForTestV2(t *testing.T, keys *signerKeyManagerV2, walletID string, version uint64, config signerLegacyNetworkSecretV2) signerNetworkRecordV2 {
+	t.Helper()
+	hash, err := signerNetworkPayloadHashV2(keys.masterKey, walletID, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := signerNetworkRecordV2{
+		WalletID: normalizeWalletID(walletID), Version: version, Hash: hash,
+		UpdatedAt: timestampV2(keys.store.now()),
+	}
+	plaintext, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := deriveSignerNetworkKeyV2(keys.masterKey, "encryption")
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gcm cipher.AEAD
+	gcm, err = cipher.NewGCM(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		t.Fatal(err)
+	}
+	ciphertext := gcm.Seal(nil, nonce, plaintext, signerNetworkAADV2(record))
+	record.Nonce = base64.RawURLEncoding.EncodeToString(nonce)
+	record.Secret = base64.RawURLEncoding.EncodeToString(ciphertext)
+	return record
+}
+
+func TestSignerNetworkLegacyFallbackMigratesOnlyAsExecutionFallback(t *testing.T) {
+	store, keys := openTestSignerV2(t)
+	createTestSignerWalletV2(t, store, keys, "agent", solana.NewWallet().PublicKey().String(), 100, 1000)
+	record := encryptLegacySignerNetworkRecordForTestV2(t, keys, "agent", 1, signerLegacyNetworkSecretV2{
+		PrimaryRPCURL: "https://primary.example/rpc", FallbackRPCURL: "https://backup.example/rpc",
+	})
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketSignerNetworksV2).Put([]byte("agent"), encoded)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	config, err := keys.SolanaNetworkV2("agent")
+	if err != nil {
+		t.Fatalf("read legacy network record: %v", err)
+	}
+	if config.ExecutionFallbackRPCURL != "https://backup.example/rpc" || config.VerificationRPCURL != "" || config.SchemaVersion != 2 || config.GenesisHash == "" {
+		t.Fatalf("legacy fallback was not migrated strictly as execution fallback: %#v", config)
+	}
+	migratedSummary, err := keys.NetworkSummaryV2("agent")
+	if err != nil || !migratedSummary.Ready || migratedSummary.Version != 2 {
+		t.Fatalf("legacy network genesis pin was not durably migrated: summary=%#v err=%v", migratedSummary, err)
+	}
+	if _, err := keys.PutNetworkV2("agent", signerNetworkPutRequestV2{
+		ExpectedVersion: signerUint64PointerV2(2), PrimaryRPCURL: config.PrimaryRPCURL,
+		ExecutionFallbackRPCURL: config.ExecutionFallbackRPCURL,
+	}); err != nil {
+		t.Fatalf("rewrite migrated network record: %v", err)
+	}
+}
+
+func TestSignerNetworkPutRejectsCrossGenesisExecutionFallbackBeforeReady(t *testing.T) {
+	store, keys := openTestSignerV2(t)
+	createTestSignerWalletV2(t, store, keys, "agent", solana.NewWallet().PublicKey().String(), 100, 1000)
+	primary := "https://primary.example/solana?token=primary-secret"
+	fallback := "https://fallback.example/solana?token=fallback-secret"
+	keys.genesisHash = func(rpcURL string) (string, error) {
+		switch rpcURL {
+		case primary:
+			return "11111111111111111111111111111111", nil
+		case fallback:
+			return solana.NewWallet().PublicKey().String(), nil
+		default:
+			return "", errors.New("unexpected RPC")
+		}
+	}
+
+	_, err := keys.PutNetworkV2("agent", signerNetworkPutRequestV2{
+		ExpectedVersion:         signerUint64PointerV2(0),
+		PrimaryRPCURL:           primary,
+		ExecutionFallbackRPCURL: fallback,
+	})
+	if err == nil || !strings.Contains(err.Error(), "disagree on genesis hash") {
+		t.Fatalf("cross-genesis execution fallback was not rejected: %v", err)
+	}
+	for _, secret := range []string{primary, fallback, "primary-secret", "fallback-secret"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("cross-genesis error leaked RPC material %q: %v", secret, err)
+		}
+	}
+	summary, summaryErr := keys.NetworkSummaryV2("agent")
+	if summaryErr != nil || summary.Configured || summary.Ready {
+		t.Fatalf("rejected cross-genesis network became configured: summary=%#v err=%v", summary, summaryErr)
+	}
+}
+
+func TestSignerNetworkPutPinsMatchingGenesisForExecutionAndVerificationRPCs(t *testing.T) {
+	store, keys := openTestSignerV2(t)
+	createTestSignerWalletV2(t, store, keys, "agent", solana.NewWallet().PublicKey().String(), 100, 1000)
+	genesis := solana.NewWallet().PublicKey().String()
+	keys.genesisHash = func(string) (string, error) { return genesis, nil }
+
+	summary, err := keys.PutNetworkV2("agent", signerNetworkPutRequestV2{
+		ExpectedVersion:         signerUint64PointerV2(0),
+		PrimaryRPCURL:           "https://primary.example/solana",
+		ExecutionFallbackRPCURL: "https://fallback.example/solana",
+		VerificationRPCURL:      "https://witness.example/solana",
+	})
+	if err != nil || !summary.Ready {
+		t.Fatalf("matching genesis endpoints were not accepted: summary=%#v err=%v", summary, err)
+	}
+	config, err := keys.SolanaNetworkV2("agent")
+	if err != nil || config.GenesisHash != genesis {
+		t.Fatalf("matching genesis was not pinned in encrypted state: config=%#v err=%v", config, err)
+	}
+}
+
+func TestSignerNetworkExecutionFallbackIsRecheckedAgainstPinnedGenesisBeforeUse(t *testing.T) {
+	store, keys := openTestSignerV2(t)
+	createTestSignerWalletV2(t, store, keys, "agent", solana.NewWallet().PublicKey().String(), 100, 1000)
+	primary := "https://primary.example/solana"
+	fallback := "https://fallback.example/solana"
+	genesis := solana.NewWallet().PublicKey().String()
+	fallbackGenesis := genesis
+	keys.genesisHash = func(rpcURL string) (string, error) {
+		if rpcURL == fallback {
+			return fallbackGenesis, nil
+		}
+		return genesis, nil
+	}
+	if _, err := keys.PutNetworkV2("agent", signerNetworkPutRequestV2{
+		ExpectedVersion:         signerUint64PointerV2(0),
+		PrimaryRPCURL:           primary,
+		ExecutionFallbackRPCURL: fallback,
+	}); err != nil {
+		t.Fatalf("configure matching execution fallback: %v", err)
+	}
+	fallbackGenesis = solana.NewWallet().PublicKey().String()
+	if _, err := keys.SolanaExecutionRPCURLsV2("agent"); !errors.Is(err, errSignerNetworkPendingV2) {
+		t.Fatalf("retargeted execution fallback remained usable: %v", err)
+	}
+	summary, err := keys.NetworkSummaryV2("agent")
+	if err != nil || summary.Ready {
+		t.Fatalf("retargeted execution fallback reported ready: summary=%#v err=%v", summary, err)
+	}
+}
+
+func TestSignerNetworkExecutionGenesisAllowsOnePinnedEndpointOutage(t *testing.T) {
+	store, keys := openTestSignerV2(t)
+	createTestSignerWalletV2(t, store, keys, "agent", solana.NewWallet().PublicKey().String(), 100, 1000)
+	primary := "https://primary.example/solana"
+	fallback := "https://fallback.example/solana"
+	genesis := solana.NewWallet().PublicKey().String()
+	primaryAvailable := true
+	fallbackAvailable := true
+	keys.genesisHash = func(rpcURL string) (string, error) {
+		if rpcURL == primary && !primaryAvailable {
+			return "", errors.New("primary unavailable")
+		}
+		if rpcURL == fallback && !fallbackAvailable {
+			return "", errors.New("fallback unavailable")
+		}
+		return genesis, nil
+	}
+	if _, err := keys.PutNetworkV2("agent", signerNetworkPutRequestV2{
+		ExpectedVersion:         signerUint64PointerV2(0),
+		PrimaryRPCURL:           primary,
+		ExecutionFallbackRPCURL: fallback,
+	}); err != nil {
+		t.Fatalf("configure matching execution endpoints: %v", err)
+	}
+
+	primaryAvailable = false
+	if urls, err := keys.SolanaExecutionRPCURLsV2("agent"); err != nil || len(urls) != 1 || urls[0] != fallback {
+		t.Fatalf("healthy fallback did not keep execution available: urls=%#v err=%v", urls, err)
+	}
+	primaryAvailable = true
+	fallbackAvailable = false
+	if urls, err := keys.SolanaExecutionRPCURLsV2("agent"); err != nil || len(urls) != 1 || urls[0] != primary {
+		t.Fatalf("healthy primary did not keep execution available: urls=%#v err=%v", urls, err)
+	}
+	primaryAvailable = false
+	if _, err := keys.SolanaExecutionRPCURLsV2("agent"); !errors.Is(err, errSignerNetworkPendingV2) {
+		t.Fatalf("execution remained ready with no live endpoint: %v", err)
+	}
+}
+
+func TestSignerNetworkLegacyGenesisMigrationRequiresPrimaryAnchor(t *testing.T) {
+	store, keys := openTestSignerV2(t)
+	createTestSignerWalletV2(t, store, keys, "agent", solana.NewWallet().PublicKey().String(), 100, 1000)
+	primary := "https://legacy-primary.example/rpc"
+	fallback := "https://legacy-fallback.example/rpc"
+	record := encryptLegacySignerNetworkRecordForTestV2(t, keys, "agent", 1, signerLegacyNetworkSecretV2{
+		PrimaryRPCURL: primary, FallbackRPCURL: fallback,
+	})
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketSignerNetworksV2).Put([]byte("agent"), encoded)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	keys.genesisHash = func(rpcURL string) (string, error) {
+		if rpcURL == primary {
+			return "", errors.New("primary unavailable")
+		}
+		return solana.NewWallet().PublicKey().String(), nil
+	}
+	if _, err := keys.SolanaExecutionRPCURLsV2("agent"); !errors.Is(err, errSignerNetworkPendingV2) {
+		t.Fatalf("legacy fallback established a genesis pin without the primary: %v", err)
+	}
+	stored, err := keys.getNetworkRecordV2("agent")
+	if err != nil || stored.Version != 1 || stored.Hash != record.Hash {
+		t.Fatalf("failed legacy migration mutated the authenticated record: stored=%#v err=%v", stored, err)
+	}
+}
+
+func TestSignerNetworkPrimaryOnlyIsRecheckedAgainstPinnedGenesis(t *testing.T) {
+	store, keys := openTestSignerV2(t)
+	createTestSignerWalletV2(t, store, keys, "agent", solana.NewWallet().PublicKey().String(), 100, 1000)
+	genesis := solana.NewWallet().PublicKey().String()
+	currentGenesis := genesis
+	keys.genesisHash = func(string) (string, error) { return currentGenesis, nil }
+	if _, err := keys.PutNetworkV2("agent", signerNetworkPutRequestV2{
+		ExpectedVersion: signerUint64PointerV2(0),
+		PrimaryRPCURL:   "https://primary.example/solana",
+	}); err != nil {
+		t.Fatalf("configure primary-only network: %v", err)
+	}
+	currentGenesis = solana.NewWallet().PublicKey().String()
+	if _, err := keys.SolanaExecutionRPCURLsV2("agent"); !errors.Is(err, errSignerNetworkPendingV2) {
+		t.Fatalf("retargeted primary-only endpoint remained usable: %v", err)
+	}
+	summary, err := keys.NetworkSummaryV2("agent")
+	if err != nil || summary.Ready {
+		t.Fatalf("retargeted primary-only endpoint reported ready: summary=%#v err=%v", summary, err)
+	}
+}
+
+func TestSignerNetworkLegacyFallbackVerifiesGenesisBeforeExecutionUse(t *testing.T) {
+	store, keys := openTestSignerV2(t)
+	createTestSignerWalletV2(t, store, keys, "agent", solana.NewWallet().PublicKey().String(), 100, 1000)
+	primary := "https://legacy-primary.example/rpc"
+	fallback := "https://legacy-fallback.example/rpc"
+	record := encryptLegacySignerNetworkRecordForTestV2(t, keys, "agent", 1, signerLegacyNetworkSecretV2{
+		PrimaryRPCURL: primary, FallbackRPCURL: fallback,
+	})
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketSignerNetworksV2).Put([]byte("agent"), encoded)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	keys.genesisHash = func(rpcURL string) (string, error) {
+		if rpcURL == primary {
+			return "11111111111111111111111111111111", nil
+		}
+		return solana.NewWallet().PublicKey().String(), nil
+	}
+
+	if _, err := keys.SolanaExecutionRPCURLsV2("agent"); !errors.Is(err, errSignerNetworkPendingV2) {
+		t.Fatalf("legacy cross-genesis fallback was usable for execution: %v", err)
+	}
+	summary, err := keys.NetworkSummaryV2("agent")
+	if err != nil || summary.Ready {
+		t.Fatalf("legacy cross-genesis network reported ready: summary=%#v err=%v", summary, err)
+	}
+}
+
 func TestSignerNetworkConfigurationIsEncryptedAndMetadataOnly(t *testing.T) {
 	store, keys := openTestSignerV2(t)
 	destination := solana.NewWallet().PublicKey().String()
@@ -31,9 +319,9 @@ func TestSignerNetworkConfigurationIsEncryptedAndMetadataOnly(t *testing.T) {
 	fallback := "https://fallback.example.com/rpc/fallback-secret-token"
 
 	summary, err := keys.PutNetworkV2("agent", signerNetworkPutRequestV2{
-		ExpectedVersion: signerUint64PointerV2(0),
-		PrimaryRPCURL:   primary,
-		FallbackRPCURL:  fallback,
+		ExpectedVersion:         signerUint64PointerV2(0),
+		PrimaryRPCURL:           primary,
+		ExecutionFallbackRPCURL: fallback,
 	})
 	if err != nil {
 		t.Fatalf("put encrypted signer network: %v", err)
@@ -142,6 +430,9 @@ func TestSignerNetworkHashIsWalletBoundAndSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	keys.genesisHash = func(string) (string, error) {
+		return "11111111111111111111111111111111", nil
+	}
 	destination := solana.NewWallet().PublicKey().String()
 	createTestSignerWalletV2(t, store, keys, "agent", destination, 100, 1000)
 	createTestSignerWalletV2(t, store, keys, "mining", destination, 100, 1000)
@@ -175,6 +466,9 @@ func TestSignerNetworkHashIsWalletBoundAndSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopenedKeys.Close()
+	reopenedKeys.genesisHash = func(string) (string, error) {
+		return "11111111111111111111111111111111", nil
+	}
 	urls, err := reopenedKeys.SolanaRPCURLsV2("agent")
 	if err != nil || len(urls) != 1 || !strings.Contains(urls[0], "shared-secret") {
 		t.Fatalf("encrypted signer network did not survive restart: %#v err=%v", urls, err)
@@ -344,10 +638,24 @@ func TestSignerRPCURLValidationRejectsUnsafeTargets(t *testing.T) {
 		}
 	}
 	if _, err := normalizeSignerNetworkInputV2(signerNetworkPutRequestV2{
-		PrimaryRPCURL:  "https://rpc.example.com",
-		FallbackRPCURL: "https://rpc.example.com",
-	}); err == nil || !strings.Contains(err.Error(), "must differ") {
+		PrimaryRPCURL:           "https://rpc.example.com",
+		ExecutionFallbackRPCURL: "https://rpc.example.com",
+	}); err == nil || !strings.Contains(err.Error(), "different origin") {
 		t.Fatalf("expected duplicate fallback rejection, got %v", err)
+	}
+	canonicalPort, err := normalizeSignerRPCURLV2("https://api.mainnet-beta.solana.com:0443/rpc", "primaryRpcUrl")
+	if err != nil || canonicalPort != "https://api.mainnet-beta.solana.com:443/rpc" {
+		t.Fatalf("equivalent port spelling was not canonicalized: %q err=%v", canonicalPort, err)
+	}
+	canonicalIP, err := normalizeSignerRPCURLV2("http://[0:0:0:0:0:0:0:1]:08899/rpc", "primaryRpcUrl")
+	if err != nil || canonicalIP != "http://[::1]:8899/rpc" {
+		t.Fatalf("equivalent IP/port spelling was not canonicalized: %q err=%v", canonicalIP, err)
+	}
+	if _, err := normalizeSignerNetworkInputV2(signerNetworkPutRequestV2{
+		PrimaryRPCURL:           "https://api.mainnet-beta.solana.com:0443",
+		ExecutionFallbackRPCURL: "https://api.mainnet-beta.solana.com",
+	}); err == nil || !strings.Contains(err.Error(), "different origin") {
+		t.Fatalf("equivalent default-port origins were accepted as distinct: %v", err)
 	}
 }
 

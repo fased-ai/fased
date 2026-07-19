@@ -141,6 +141,7 @@ const SIGNER_SOCKET_TIMEOUT_MS: Record<LocalSocketSignerRequest["op"], number> =
   "v2.review.authorization.finish": 30_000,
   "v2.operation.get": 5_000,
   "v2.operation.reconcile": 20_000,
+  "v2.satLookup.binding.get": 5_000,
   getAddresses: 10_000,
   getBalance: 15_000,
 };

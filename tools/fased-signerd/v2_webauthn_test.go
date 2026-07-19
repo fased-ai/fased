@@ -443,6 +443,8 @@ func TestSignerReviewedVaultTransferBuildsExactTransactionAndExecutesWithWebAuth
 		writer.Header().Set("Content-Type", "application/json")
 		response := map[string]any{"jsonrpc": "2.0", "id": body.ID}
 		switch body.Method {
+		case "getGenesisHash":
+			response["result"] = "11111111111111111111111111111111"
 		case "getLatestBlockhash":
 			response["result"] = map[string]any{
 				"context": map[string]any{"slot": 1},

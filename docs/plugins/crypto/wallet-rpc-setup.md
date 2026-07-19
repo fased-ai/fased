@@ -9,13 +9,24 @@ sidebarTitle: "RPC setup"
 
 # Solana RPC setup
 
-Fased uses two RPC planes:
+Normal onboarding asks for only the wallet role and one primary Solana RPC per
+wallet. It does **not** ask the user to select a Solana network. The native
+signer reads and pins the primary endpoint's live genesis hash before the
+wallet network can become ready. SAT Mining infers its internal network value
+by matching that live cluster to official public endpoints; the value is not a
+user-facing onboarding choice.
+
+Fased separates three endpoint roles:
 
 - **Signer execution RPC:** encrypted and versioned per native wallet. It powers
   native balance reads, construction, simulation, broadcast, and reconciliation.
 - **Gateway read/preparation RPC:** powers dashboard token inventory, SAT
   inspection/watchers/readiness, federation/bond reads, Jupiter/Trigger
   preparation, and provider/hardware custody lanes.
+- **Verification witness:** the matching official public endpoint selected by
+  live genesis-hash agreement. It is used only for sensitive ALT account-byte
+  and slot agreement; it never constructs, simulates, broadcasts, reconciles,
+  or supplies execution balances/blockhashes.
 
 Gateway wallet environment variables are not authority for protocol-v2 native
 execution, and the Gateway has no arbitrary RPC proxy through the signer. They
@@ -67,14 +78,22 @@ configuration uses version `0`:
 ```json
 {
   "expectedVersion": 0,
-  "primaryRpcUrl": "https://YOUR_PRIMARY_PROVIDER/solana",
-  "fallbackRpcUrl": "https://YOUR_FALLBACK_PROVIDER/solana"
+  "primaryRpcUrl": "https://YOUR_PRIMARY_PROVIDER/solana"
 }
 ```
 
-`fallbackRpcUrl` is optional. HTTPS is required except for an explicit
-loopback development endpoint such as `http://127.0.0.1:8899`. URLs with user
-information, fragments, unsafe metadata/link-local/multicast addresses, or
+That is the complete normal configuration. Advanced users may add an optional
+second full execution provider as `executionFallbackRpcUrl`. The signer admits
+it only after live same-genesis agreement and rechecks that agreement before
+the fallback can be returned for execution. A custom cluster, Localnet, or an official public primary needs a distinct
+`verificationRpcUrl` (or a same-cluster execution fallback) before ALT is
+enabled. These fields are not normal onboarding questions.
+
+Existing `fallbackRpcUrl` records migrate only to `executionFallbackRpcUrl`;
+they never silently become verification witnesses. HTTPS is required except
+for an explicit loopback development endpoint such as
+`http://127.0.0.1:8899`. Every secondary must use a distinct origin. URLs with
+userinfo, fragments, unsafe metadata/link-local/multicast addresses, or
 oversized content are rejected.
 
 ## Apply on VPS Hosting
@@ -145,6 +164,10 @@ For separation, enter a read-only endpoint in the wizard, then use the native
 with its private credential. Recheck both planes. Do not assume signer health
 proves the dashboard/SAT watcher endpoint works, or that a Gateway read succeeds
 through the signer.
+
+The Gateway may use the official public endpoint as a read-only fallback. That
+does not promote it into the signer execution plane. Public Solana endpoints
+are rate-limited and should not be the primary production endpoint.
 
 ## Validate
 

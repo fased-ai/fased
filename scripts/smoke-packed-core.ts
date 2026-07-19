@@ -159,6 +159,93 @@ function stopPackedSigner(stateDir: string): void {
   }
 }
 
+async function startPackedSolanaRpc(): Promise<{
+  child: ReturnType<typeof spawn>;
+  url: string;
+}> {
+  const script = String.raw`
+const { createServer } = require("node:http");
+const server = createServer((request, response) => {
+  let body = "";
+  request.setEncoding("utf8");
+  request.on("data", (chunk) => {
+    body += chunk;
+    if (body.length > 16 * 1024) {
+      request.destroy();
+    }
+  });
+  request.on("end", () => {
+    let payload;
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      response.writeHead(400).end();
+      return;
+    }
+    const reply = payload.method === "getGenesisHash"
+      ? { jsonrpc: "2.0", id: payload.id ?? null, result: "11111111111111111111111111111111" }
+      : { jsonrpc: "2.0", id: payload.id ?? null, error: { code: -32601, message: "Method not found" } };
+    const encoded = JSON.stringify(reply);
+    response.writeHead(200, {
+      "content-type": "application/json",
+      "content-length": Buffer.byteLength(encoded),
+    });
+    response.end(encoded);
+  });
+});
+server.listen(0, "127.0.0.1", () => {
+  const address = server.address();
+  process.stdout.write(String(address.port) + "\n");
+});
+process.on("SIGTERM", () => server.close(() => process.exit(0)));
+`;
+  const child = spawn(process.execPath, ["--eval", script], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.stdout?.setEncoding("utf8");
+  child.stderr?.setEncoding("utf8");
+  return await new Promise((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`packed Solana RPC did not start: ${stderr.trim()}`));
+    }, 10_000);
+    const fail = (error: Error) => {
+      clearTimeout(timeout);
+      child.kill("SIGKILL");
+      reject(error);
+    };
+    child.once("error", fail);
+    child.once("exit", (code, signal) => {
+      fail(
+        new Error(
+          `packed Solana RPC exited before readiness (code=${String(code)}, signal=${String(signal)}): ${stderr.trim()}`,
+        ),
+      );
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.stdout?.on("data", (chunk) => {
+      stdout += String(chunk);
+      const newline = stdout.indexOf("\n");
+      if (newline === -1) {
+        return;
+      }
+      const port = Number.parseInt(stdout.slice(0, newline).trim(), 10);
+      if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+        fail(new Error("packed Solana RPC returned an invalid port"));
+        return;
+      }
+      clearTimeout(timeout);
+      child.removeListener("error", fail);
+      child.removeAllListeners("exit");
+      resolve({ child, url: `http://127.0.0.1:${port}` });
+    });
+  });
+}
+
 function runCore(coreRoot: string, env: NodeJS.ProcessEnv, args: string[]): string {
   const outputRoot = env.FASED_STATE_DIR;
   if (!outputRoot) {
@@ -354,6 +441,7 @@ function importPackedMain(coreRoot: string, env: NodeJS.ProcessEnv): void {
 async function main() {
   const tempRoot = mkdtempSync(path.join(tmpdir(), "fased-packed-core-smoke-"));
   let stateDir = "";
+  let solanaRpcChild: ReturnType<typeof spawn> | undefined;
   try {
     const npmCache = path.join(tempRoot, "npm-cache");
     execFileSync("npm", ["pack", "--ignore-scripts", "--pack-destination", tempRoot], {
@@ -483,6 +571,8 @@ async function main() {
       throw new Error(`packed core wallet CLI failed:\n${walletStatusRaw}`);
     }
     await runPackedGateway(coreRoot, env);
+    const solanaRpc = await startPackedSolanaRpc();
+    solanaRpcChild = solanaRpc.child;
     const walletCreateRaw = runCore(coreRoot, env, [
       "wallet",
       "setup",
@@ -495,7 +585,7 @@ async function main() {
       "--role",
       "agent",
       "--rpc-url",
-      "http://127.0.0.1:8899",
+      solanaRpc.url,
       "--non-interactive",
       "--no-doctor",
       "--json",
@@ -561,6 +651,7 @@ async function main() {
     if (stateDir) {
       stopPackedSigner(stateDir);
     }
+    solanaRpcChild?.kill("SIGTERM");
     rmSync(tempRoot, { recursive: true, force: true });
   }
 }

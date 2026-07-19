@@ -329,7 +329,12 @@ type SatInstructionSubmitSpec = {
   data: Buffer;
   programId?: string;
   addressLookupTables?: string[];
-  manageAddressLookupTable?: { lookupTableAddress?: string };
+  manageAddressLookupTable?: {
+    lookupTableAddress?: string;
+    cycleId: number;
+    pageIndex: number;
+    onLookupTableResolved?: (lookupTableAddress: string) => Promise<void>;
+  };
   accountResolver: (
     solana: SolanaModuleLike,
     signer: import("@solana/web3.js").PublicKey,
@@ -550,13 +555,27 @@ class SatSubmissionUnresolvedError extends Error {
   }
 }
 
+class SatSubmissionDefinitiveFailureError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SatSubmissionDefinitiveFailureError";
+  }
+}
+
 async function executeTypedSatIntent(params: {
   socketPath: string;
   walletId: string;
   action: SatSignerAction | "cleanupBatch" | "create" | "extend" | "deactivate" | "close";
   instruction?: Awaited<ReturnType<typeof buildLocalSignerInstructionRequest>>;
   instructions?: Array<Awaited<ReturnType<typeof buildLocalSignerInstructionRequest>>>;
-  lookupTable?: { address: string; recentSlot?: string; addresses?: string[] };
+  lookupTable?: {
+    address: string;
+    cycleId: string;
+    pageIndex: string;
+    recentSlot?: string;
+    addresses?: string[];
+    parent?: Awaited<ReturnType<typeof buildLocalSignerInstructionRequest>>;
+  };
   cluster: "local" | "devnet" | "mainnet-beta";
   env: NodeJS.ProcessEnv;
 }) {
@@ -619,6 +638,7 @@ async function executeTypedSatIntent(params: {
     operationKey,
     intentDigest,
     action: params.action,
+    allowFailedRetry: isLookupTable,
     env: params.env,
   });
   if (!claim.claimed) {
@@ -633,6 +653,7 @@ async function executeTypedSatIntent(params: {
       operationKey,
       intentDigest,
       action: params.action,
+      allowFailedRetry: isLookupTable,
       env: params.env,
       owner: claim.owner,
     });
@@ -900,7 +921,9 @@ async function executeTypedSatIntent(params: {
     env: params.env,
   });
   if (operation.state === "failed") {
-    throw new Error(operation.error || `SAT signer operation ${requestId} failed`);
+    throw new SatSubmissionDefinitiveFailureError(
+      operation.error || `SAT signer operation ${requestId} failed`,
+    );
   }
   if (operation.state !== "confirmed" || !operation.signature) {
     throw new SatSubmissionUnresolvedError({
@@ -928,8 +951,11 @@ async function executeTypedSatLookupOperation(params: {
   cfg: FasedAgentConfig;
   action: "create" | "extend" | "deactivate" | "close";
   address: string;
+  cycleId: number;
+  pageIndex: number;
   recentSlot?: number;
   addresses?: string[];
+  parent?: Awaited<ReturnType<typeof buildLocalSignerInstructionRequest>>;
 }) {
   return await executeTypedSatIntent({
     socketPath: params.context.socketPath,
@@ -937,8 +963,11 @@ async function executeTypedSatLookupOperation(params: {
     action: params.action,
     lookupTable: {
       address: params.address,
+      cycleId: String(params.cycleId),
+      pageIndex: String(params.pageIndex),
       ...(params.recentSlot == null ? {} : { recentSlot: String(params.recentSlot) }),
       ...(params.addresses?.length ? { addresses: params.addresses } : {}),
+      ...(params.parent ? { parent: params.parent } : {}),
     },
     cluster: resolveSatCluster(params.cfg),
     env: params.context.effectiveEnv,
@@ -991,12 +1020,108 @@ async function waitForSatLookupTable(params: {
   );
 }
 
+const SAT_LOOKUP_TABLE_CREATE_SLOT_WINDOW = 128;
+
+function recoverSatLookupTableRecentSlot(params: {
+  context: SatLookupSubmitContext;
+  lookupTable: string;
+  currentSlot: number;
+}): number | undefined {
+  const oldestSlot = Math.max(0, params.currentSlot - SAT_LOOKUP_TABLE_CREATE_SLOT_WINDOW);
+  for (let recentSlot = params.currentSlot; recentSlot >= oldestSlot; recentSlot -= 1) {
+    const [, derivedAddress] = params.context.solana.AddressLookupTableProgram.createLookupTable({
+      authority: params.context.signer,
+      payer: params.context.signer,
+      recentSlot,
+    });
+    if (derivedAddress.toBase58() === params.lookupTable) {
+      return recentSlot;
+    }
+  }
+  return undefined;
+}
+
+type SatLookupBinding = {
+  cycleId: string;
+  pageIndex: string;
+  address?: string;
+  bound: boolean;
+  mutationRequestId?: string;
+  mutationState?: SatSignerOperation["state"];
+};
+
+async function readReconciledSatLookupBinding(params: {
+  context: SatLookupSubmitContext;
+  cycleId: number;
+  pageIndex: number;
+}): Promise<SatLookupBinding> {
+  const request = { cycleId: String(params.cycleId), pageIndex: String(params.pageIndex) };
+  const readBinding = async () =>
+    await callLocalSocketSigner<SatLookupBinding>(params.context.socketPath, {
+      op: "v2.satLookup.binding.get",
+      walletId: params.context.walletId,
+      request,
+    });
+  const binding = await readBinding();
+  if (
+    binding.cycleId !== request.cycleId ||
+    binding.pageIndex !== request.pageIndex ||
+    binding.bound !== Boolean(binding.address) ||
+    Boolean(binding.mutationRequestId) !== Boolean(binding.mutationState)
+  ) {
+    throw new Error("signer returned an invalid SAT lookup-table binding");
+  }
+  if (binding.mutationState === "reserved") {
+    throw new Error("SAT lookup-table mutation is already in progress");
+  }
+  if (
+    (binding.mutationState === "broadcast" || binding.mutationState === "unknown") &&
+    binding.mutationRequestId
+  ) {
+    const operation = assertSatSignerOperationIdentity(
+      await callLocalSocketSigner<SatSignerOperation>(params.context.socketPath, {
+        op: "v2.operation.reconcile",
+        walletId: params.context.walletId,
+        request: { requestId: binding.mutationRequestId },
+      }),
+      binding.mutationRequestId,
+    );
+    if (
+      operation.state === "reserved" ||
+      operation.state === "broadcast" ||
+      operation.state === "unknown"
+    ) {
+      throw new SatSubmissionUnresolvedError({
+        requestId: operation.requestId,
+        state: operation.state,
+        signature: operation.signature,
+        detail: operation.error,
+      });
+    }
+    const reconciled = await readBinding();
+    if (
+      reconciled.cycleId !== request.cycleId ||
+      reconciled.pageIndex !== request.pageIndex ||
+      reconciled.bound !== Boolean(reconciled.address) ||
+      Boolean(reconciled.mutationRequestId) !== Boolean(reconciled.mutationState)
+    ) {
+      throw new Error("signer returned an invalid reconciled SAT lookup-table binding");
+    }
+    return reconciled;
+  }
+  return binding;
+}
+
 async function ensureSatDistributionLookupTable(params: {
   context: SatLookupSubmitContext;
   cfg: FasedAgentConfig;
   config: SatMiningConfig;
   lookupTableAddress?: string;
+  cycleId: number;
+  pageIndex: number;
   addresses: string[];
+  parent: Awaited<ReturnType<typeof buildLocalSignerInstructionRequest>>;
+  onLookupTableResolved?: (lookupTableAddress: string) => Promise<void>;
 }) {
   assertSatLookupTableEnabled(params.context.effectiveEnv);
   const desiredAddresses = [...new Set(params.addresses.map((entry) => entry.trim()))].filter(
@@ -1005,7 +1130,15 @@ async function ensureSatDistributionLookupTable(params: {
   if (desiredAddresses.length === 0 || desiredAddresses.length > 256) {
     throw new Error("SAT distribution lookup table requires 1-256 exact account addresses");
   }
-  let lookupTable = params.lookupTableAddress?.trim() ?? "";
+  const signerBinding = await readReconciledSatLookupBinding({
+    context: params.context,
+    cycleId: params.cycleId,
+    pageIndex: params.pageIndex,
+  });
+  let lookupTable = signerBinding.address?.trim() || "";
+  if (signerBinding.bound && lookupTable) {
+    await params.onLookupTableResolved?.(lookupTable);
+  }
   let state = lookupTable
     ? await readValidatedSatLookupTable({
         config: params.config,
@@ -1013,55 +1146,127 @@ async function ensureSatDistributionLookupTable(params: {
         authority: params.context.signerAddress,
       })
     : null;
+
+  if (lookupTable && state) {
+    await params.onLookupTableResolved?.(lookupTable);
+  }
   let created = false;
   const transactionHashes: string[] = [];
-  if (!lookupTable) {
+  let createRecentSlot: number | undefined;
+  const attemptedCreateAddresses = new Set<string>();
+  if (lookupTable && !state) {
     const currentSlot = await inspectSatChainSlot(params.config);
-    const recentSlot = Math.max(0, currentSlot - 1);
-    const [, derivedAddress] = params.context.solana.AddressLookupTableProgram.createLookupTable({
-      authority: params.context.signer,
-      payer: params.context.signer,
-      recentSlot,
+    createRecentSlot = recoverSatLookupTableRecentSlot({
+      context: params.context,
+      lookupTable,
+      currentSlot,
     });
-    lookupTable = derivedAddress.toBase58();
-    state = await readValidatedSatLookupTable({
+    if (createRecentSlot == null) {
+      if (signerBinding.bound) {
+        throw new Error(
+          "SAT distribution lookup table identity is not recoverable within the signer freshness window",
+        );
+      }
+      // The signer clears a create binding only after two independent RPC
+      // origins prove both blockhash expiry and table absence. Discard the
+      // stale Gateway cache so the next exact workflow attempt can derive and
+      // persist a fresh signer-owned table identity.
+      lookupTable = "";
+    } else {
+      attemptedCreateAddresses.add(lookupTable);
+      await params.onLookupTableResolved?.(lookupTable);
+    }
+  }
+  while (!state) {
+    if (!lookupTable || createRecentSlot == null) {
+      const currentSlot = await inspectSatChainSlot(params.config);
+      const oldestSlot = Math.max(0, currentSlot - SAT_LOOKUP_TABLE_CREATE_SLOT_WINDOW);
+      let selected = false;
+      for (
+        let recentSlot = Math.max(0, currentSlot - 1);
+        recentSlot >= oldestSlot;
+        recentSlot -= 1
+      ) {
+        const [, derivedAddress] =
+          params.context.solana.AddressLookupTableProgram.createLookupTable({
+            authority: params.context.signer,
+            payer: params.context.signer,
+            recentSlot,
+          });
+        const candidate = derivedAddress.toBase58();
+        if (attemptedCreateAddresses.has(candidate)) {
+          continue;
+        }
+        attemptedCreateAddresses.add(candidate);
+        const existingCandidate = await readValidatedSatLookupTable({
+          config: params.config,
+          address: candidate,
+          authority: params.context.signerAddress,
+        });
+        if (existingCandidate) {
+          continue;
+        }
+        lookupTable = candidate;
+        createRecentSlot = recentSlot;
+        // Persist each deterministic candidate before its first possible
+        // broadcast. Signer reverse binding prevents two page identities from
+        // ever sharing one address; a collision advances to the next fresh slot.
+        await params.onLookupTableResolved?.(lookupTable);
+        selected = true;
+        break;
+      }
+      if (!selected) {
+        throw new Error(
+          "SAT distribution lookup table has no free signer-owned address in the freshness window",
+        );
+      }
+    }
+    try {
+      const submitted = await executeTypedSatLookupOperation({
+        context: params.context,
+        cfg: params.cfg,
+        action: "create",
+        address: lookupTable,
+        cycleId: params.cycleId,
+        pageIndex: params.pageIndex,
+        recentSlot: createRecentSlot,
+        parent: params.parent,
+      });
+      transactionHashes.push(submitted.signature);
+      created = true;
+    } catch (error) {
+      if (
+        error instanceof SatSubmissionDefinitiveFailureError &&
+        error.message.includes("address is already bound to another cycle and page")
+      ) {
+        lookupTable = "";
+        createRecentSlot = undefined;
+        continue;
+      }
+      if (
+        error instanceof SatSubmissionUnresolvedError ||
+        error instanceof SatSubmissionDefinitiveFailureError
+      ) {
+        throw error;
+      }
+      try {
+        state = await waitForSatLookupTable({
+          config: params.config,
+          address: lookupTable,
+          authority: params.context.signerAddress,
+          requireNextSlot: false,
+        });
+      } catch {
+        throw error;
+      }
+    }
+    state ??= await waitForSatLookupTable({
       config: params.config,
       address: lookupTable,
       authority: params.context.signerAddress,
+      requireNextSlot: false,
     });
-    if (!state) {
-      try {
-        const submitted = await executeTypedSatLookupOperation({
-          context: params.context,
-          cfg: params.cfg,
-          action: "create",
-          address: lookupTable,
-          recentSlot,
-        });
-        transactionHashes.push(submitted.signature);
-        created = true;
-      } catch (error) {
-        if (error instanceof SatSubmissionUnresolvedError) {
-          throw error;
-        }
-        try {
-          state = await waitForSatLookupTable({
-            config: params.config,
-            address: lookupTable,
-            authority: params.context.signerAddress,
-            requireNextSlot: false,
-          });
-        } catch {
-          throw error;
-        }
-      }
-      state ??= await waitForSatLookupTable({
-        config: params.config,
-        address: lookupTable,
-        authority: params.context.signerAddress,
-        requireNextSlot: false,
-      });
-    }
+    break;
   }
   if (!state) {
     throw new Error("SAT distribution lookup table was not found at the confirmed commitment");
@@ -1076,7 +1281,10 @@ async function ensureSatDistributionLookupTable(params: {
         cfg: params.cfg,
         action: "extend",
         address: lookupTable,
+        cycleId: params.cycleId,
+        pageIndex: params.pageIndex,
         addresses,
+        parent: params.parent,
       });
       transactionHashes.push(submitted.signature);
     } catch (error) {
@@ -1140,7 +1348,11 @@ async function submitInstructionViaLocalSigner(
       cfg: params.cfg,
       config: params.cfg as unknown as SatMiningConfig,
       lookupTableAddress: params.manageAddressLookupTable.lookupTableAddress,
+      cycleId: params.manageAddressLookupTable.cycleId,
+      pageIndex: params.manageAddressLookupTable.pageIndex,
       addresses: baseRequest.keys.filter((key) => !key.isSigner).map((key) => key.pubkey),
+      parent: baseRequest,
+      onLookupTableResolved: params.manageAddressLookupTable.onLookupTableResolved,
     });
   }
   const request = managedLookupTable
@@ -3000,6 +3212,7 @@ export async function submitSatDistributeCyclePage(
     chunkIndex: number;
     minerCycleAccounts?: string[];
     lookupTableAddress?: string;
+    onLookupTableResolved?: (lookupTableAddress: string) => Promise<void>;
   },
 ) {
   const cfg = loadConfigForSatRuntime(_config);
@@ -3013,7 +3226,12 @@ export async function submitSatDistributeCyclePage(
     ...(lookupTableAddress || requiresLookupTable
       ? {
           manageAddressLookupTable: {
+            cycleId: params.cycleId,
+            pageIndex: params.pageIndex,
             ...(lookupTableAddress ? { lookupTableAddress } : {}),
+            ...(params.onLookupTableResolved
+              ? { onLookupTableResolved: params.onLookupTableResolved }
+              : {}),
           },
         }
       : {}),
@@ -3108,7 +3326,11 @@ export async function submitSatDistributeCyclePage(
 
 export async function submitSatCleanupDistributionLookupTable(
   _config: SatMiningConfig,
-  params: { lookupTableAddress: string; action: "deactivate" | "close" },
+  params: {
+    cycleId: number;
+    pageIndex: number;
+    action: "deactivate" | "close";
+  },
 ) {
   const cfg = loadConfigForSatRuntime(_config);
   const context = await prepareLocalSignerSubmitContext(cfg, process.env);
@@ -3116,15 +3338,27 @@ export async function submitSatCleanupDistributionLookupTable(
   if (!context.walletId) {
     throw new Error("typed SAT lookup-table cleanup requires an explicit mining walletId");
   }
-  const lookupTable = params.lookupTableAddress.trim();
-  if (!lookupTable) {
-    throw new Error("SAT distribution lookup table address is required");
+  const binding = await readReconciledSatLookupBinding({
+    context: { ...context, walletId: context.walletId },
+    cycleId: params.cycleId,
+    pageIndex: params.pageIndex,
+  });
+  const lookupTable = binding.address?.trim() ?? "";
+  if (
+    binding.cycleId !== String(params.cycleId) ||
+    binding.pageIndex !== String(params.pageIndex) ||
+    !binding.bound ||
+    !lookupTable
+  ) {
+    throw new Error("SAT distribution lookup table is not bound to this wallet, cycle, and page");
   }
   const submitted = await executeTypedSatLookupOperation({
     context: { ...context, walletId: context.walletId },
     cfg,
     action: params.action,
     address: lookupTable,
+    cycleId: params.cycleId,
+    pageIndex: params.pageIndex,
   });
   return {
     lookupTable,

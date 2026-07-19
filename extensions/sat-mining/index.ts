@@ -7742,9 +7742,14 @@ const satMiningPlugin = {
         const lookupTableAddress = String(
           (params as { lookupTableAddress?: string })?.lookupTableAddress ?? "",
         ).trim();
+        if (lookupTableAddress) {
+          throw new Error(
+            "SAT distribution lookup-table addresses are signer-owned and cannot be supplied by callers",
+          );
+        }
         const lookupTableCacheKey = `${cycleId}:${pageIndex}`;
         const effectiveLookupTableAddress =
-          lookupTableAddress || state.settlementPageLookupTables.get(lookupTableCacheKey) || "";
+          state.settlementPageLookupTables.get(lookupTableCacheKey) || "";
         const request = state.client.buildDistributeCyclePageRequest({
           cycleId,
           pageIndex,
@@ -7756,6 +7761,10 @@ const satMiningPlugin = {
           ...(effectiveLookupTableAddress
             ? { lookupTableAddress: effectiveLookupTableAddress }
             : {}),
+          onLookupTableResolved: async (resolvedAddress) => {
+            state.settlementPageLookupTables.set(lookupTableCacheKey, resolvedAddress);
+            await persistRecentActions();
+          },
         });
         if (submitted.lookupTableAddress) {
           state.settlementPageLookupTables.set(lookupTableCacheKey, submitted.lookupTableAddress);
@@ -7795,21 +7804,23 @@ const satMiningPlugin = {
             throw new Error("SAT lookup-table cleanup action must be deactivate or close");
           }
           const cacheKey = `${cycleId}:${pageIndex}`;
-          const lookupTableAddress =
-            String((params as { lookupTableAddress?: string })?.lookupTableAddress ?? "").trim() ||
-            state.settlementPageLookupTables.get(cacheKey) ||
-            "";
-          if (!lookupTableAddress) {
-            throw new Error(`SAT distribution lookup table is unknown for ${cacheKey}`);
+          const callerLookupTableAddress = String(
+            (params as { lookupTableAddress?: string })?.lookupTableAddress ?? "",
+          ).trim();
+          if (callerLookupTableAddress) {
+            throw new Error(
+              "SAT lookup-table cleanup addresses are signer-owned and cannot be supplied by callers",
+            );
           }
           const submitted = await submitSatCleanupDistributionLookupTable(state.activeConfig, {
-            lookupTableAddress,
+            cycleId,
+            pageIndex,
             action,
           });
           if (action === "close") {
             state.settlementPageLookupTables.delete(cacheKey);
           } else {
-            state.settlementPageLookupTables.set(cacheKey, lookupTableAddress);
+            state.settlementPageLookupTables.set(cacheKey, submitted.lookupTable);
           }
           markActionSuccess(
             "cleanupDistributionLookupTable",
@@ -7820,7 +7831,7 @@ const satMiningPlugin = {
           respond(
             true,
             jsonOk({
-              request: { cycleId, pageIndex, action, lookupTableAddress },
+              request: { cycleId, pageIndex, action, lookupTableAddress: submitted.lookupTable },
               submitted,
             }),
           );

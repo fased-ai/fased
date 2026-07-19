@@ -41,6 +41,7 @@ import { defaultRuntime } from "../runtime.js";
 import { resolveUserPath } from "../utils.js";
 import { lockSignerOwnedWalletForArchive } from "../wallet/local-socket-signer-archive.js";
 import { configureSignerOwnedWalletNetwork } from "../wallet/signer-network-admin.js";
+import { discoverSolanaNetworkFromRpc } from "../wallet/solana-network-discovery.js";
 import type { WalletNamedWallet } from "../wallet/wallet-provider-registry.js";
 import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
 import {
@@ -178,11 +179,11 @@ export async function runOnboardingWizard(
     }
     return "FASED_WALLET_SOLANA_RPC_URL";
   };
-  const fallbackRpcEnvKeyFor = (walletId?: string): string => {
+  const executionFallbackRpcEnvKeyFor = (walletId?: string): string => {
     const suffix = walletIdEnvSuffix(walletId);
     return suffix
-      ? `FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL__${suffix}`
-      : "FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL";
+      ? `FASED_WALLET_SOLANA_EXECUTION_FALLBACK_RPC_URL__${suffix}`
+      : "FASED_WALLET_SOLANA_EXECUTION_FALLBACK_RPC_URL";
   };
   const setConfigEnvVar = (
     cfg: FasedAgentConfig,
@@ -348,20 +349,14 @@ export async function runOnboardingWizard(
     process.env[rpcKey] = effectiveRpcUrl;
     return effectiveRpcUrl;
   };
-  const inferSatMiningNetwork = (rpcUrl: string): "local" | "devnet" | "mainnet-beta" => {
-    const value = rpcUrl.trim().toLowerCase();
-    if (
-      value.includes("127.0.0.1") ||
-      value.includes("localhost") ||
-      value.includes(":8899") ||
-      value.includes("localnet")
-    ) {
-      return "local";
+  const firstNonEmptyEnvValue = (...values: Array<string | undefined>): string | undefined => {
+    for (const value of values) {
+      const normalized = String(value ?? "").trim();
+      if (normalized) {
+        return normalized;
+      }
     }
-    if (value.includes("mainnet")) {
-      return "mainnet-beta";
-    }
-    return "devnet";
+    return undefined;
   };
   const readSatMiningConfig = (
     cfg: FasedAgentConfig,
@@ -1393,11 +1388,17 @@ export async function runOnboardingWizard(
                 ...nextConfig.env?.vars,
                 FASED_HOST_PROFILE: hostProfile,
               } as NodeJS.ProcessEnv;
+              const walletSuffix = walletIdEnvSuffix(walletId);
+              const legacyExecutionFallbackKey = walletSuffix
+                ? `FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL__${walletSuffix}`
+                : "FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL";
               const network = configureSignerOwnedWalletNetwork({
                 walletId,
                 primaryRpcUrl: effectiveSolanaRpcUrl,
-                fallbackRpcUrl:
-                  String(effectiveEnv[fallbackRpcEnvKeyFor(walletId)] ?? "").trim() || undefined,
+                executionFallbackRpcUrl: firstNonEmptyEnvValue(
+                  effectiveEnv[executionFallbackRpcEnvKeyFor(walletId)],
+                  effectiveEnv[legacyExecutionFallbackKey],
+                ),
                 env: effectiveEnv,
                 signerBinPath:
                   hostProfile === "hosting" ? undefined : resolveSignerdBinaryPath(effectiveEnv),
@@ -1840,7 +1841,7 @@ export async function runOnboardingWizard(
             } else {
               const shouldAttach = walletPurpose === "mining" && currentMiningWalletId !== walletId;
               if (shouldAttach) {
-                const miningNetwork = inferSatMiningNetwork(effectiveRpcUrl);
+                const miningNetwork = await discoverSolanaNetworkFromRpc(effectiveRpcUrl);
                 satMiningAttachment = {
                   walletId,
                   network: miningNetwork,
