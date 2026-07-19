@@ -24,9 +24,12 @@ usage() {
 usage: /usr/local/sbin/fased-signer-network --wallet-id WALLET_ID --network-file /root/fased-network.json
 
 The root-owned network file must be mode 0400 or 0600 and contain exactly:
-  {"schemaVersion":1,"primaryRpcUrl":"https://...","fallbackRpcUrl":"https://..."}
+  {"schemaVersion":2,"primaryRpcUrl":"https://..."}
 
-fallbackRpcUrl is optional. RPC credentials stay in the root-only file and signer-owned database.
+Advanced optional fields are executionFallbackRpcUrl (a full execution
+provider) and verificationRpcUrl (verification-only, for custom clusters or
+when the primary is the official public endpoint). RPC credentials stay in the
+root-only file and signer-owned database.
 EOF
 }
 
@@ -114,10 +117,13 @@ if (new Set(keyTokens).size !== keyTokens.length) throw new Error("network file 
 const value = JSON.parse(raw);
 if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("network file must be an object");
 const keys = Object.keys(value).sort();
-const expected = value.fallbackRpcUrl === undefined
-  ? ["primaryRpcUrl", "schemaVersion"]
-  : ["fallbackRpcUrl", "primaryRpcUrl", "schemaVersion"];
-if (keys.join(",") !== expected.join(",") || value.schemaVersion !== 1) {
+const expected = [
+  ...(value.executionFallbackRpcUrl === undefined ? [] : ["executionFallbackRpcUrl"]),
+  "primaryRpcUrl",
+  "schemaVersion",
+  ...(value.verificationRpcUrl === undefined ? [] : ["verificationRpcUrl"]),
+].sort();
+if (keys.join(",") !== expected.join(",") || value.schemaVersion !== 2) {
   throw new Error("network file contains unsupported fields or version");
 }
 function rpc(name, input) {
@@ -135,7 +141,12 @@ if (current.walletId !== walletId || !Number.isSafeInteger(current.version) || c
 process.stdout.write(JSON.stringify({
   expectedVersion: current.version,
   primaryRpcUrl: rpc("primaryRpcUrl", value.primaryRpcUrl),
-  ...(value.fallbackRpcUrl ? { fallbackRpcUrl: rpc("fallbackRpcUrl", value.fallbackRpcUrl) } : {}),
+  ...(value.executionFallbackRpcUrl
+    ? { executionFallbackRpcUrl: rpc("executionFallbackRpcUrl", value.executionFallbackRpcUrl) }
+    : {}),
+  ...(value.verificationRpcUrl
+    ? { verificationRpcUrl: rpc("verificationRpcUrl", value.verificationRpcUrl) }
+    : {}),
 }));
 NODE
 )"

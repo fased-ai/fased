@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/gagliardetto/solana-go/rpc/jsonrpc"
 	bolt "go.etcd.io/bbolt"
@@ -40,15 +41,29 @@ var (
 	errSignerNetworkNotConfiguredV2 = errors.New("signer-owned Solana network is not configured")
 	errSignerNetworkRecordInvalidV2 = errors.New("stored signer network record is invalid")
 	errSignerNetworkPendingV2       = errors.New("network-pending: signer-owned Solana RPC configuration is required")
+	errSignerNetworkChangedV2       = errors.New("signer network configuration changed concurrently")
 )
 
 type signerNetworkPutRequestV2 struct {
-	ExpectedVersion *uint64 `json:"expectedVersion"`
-	PrimaryRPCURL   string  `json:"primaryRpcUrl"`
-	FallbackRPCURL  string  `json:"fallbackRpcUrl,omitempty"`
+	ExpectedVersion         *uint64 `json:"expectedVersion"`
+	PrimaryRPCURL           string  `json:"primaryRpcUrl"`
+	ExecutionFallbackRPCURL string  `json:"executionFallbackRpcUrl,omitempty"`
+	VerificationRPCURL      string  `json:"verificationRpcUrl,omitempty"`
+	LegacyFallbackRPCURL    string  `json:"fallbackRpcUrl,omitempty"`
 }
 
 type signerNetworkSecretV2 struct {
+	SchemaVersion           uint8  `json:"schemaVersion"`
+	PrimaryRPCURL           string `json:"primaryRpcUrl"`
+	ExecutionFallbackRPCURL string `json:"executionFallbackRpcUrl,omitempty"`
+	VerificationRPCURL      string `json:"verificationRpcUrl,omitempty"`
+	GenesisHash             string `json:"genesisHash,omitempty"`
+}
+
+// signerLegacyNetworkSecretV2 is the exact encrypted v0.1.65 payload. Keep it
+// separate so existing authenticated records can be verified without ever
+// reinterpreting their fallback as a verification-only witness.
+type signerLegacyNetworkSecretV2 struct {
 	PrimaryRPCURL  string `json:"primaryRpcUrl"`
 	FallbackRPCURL string `json:"fallbackRpcUrl,omitempty"`
 }
@@ -105,8 +120,16 @@ func decodeSignerNetworkPutRequestV2(raw []byte, request *signerNetworkPutReques
 			if err := decoder.Decode(&request.PrimaryRPCURL); err != nil {
 				return errors.New("invalid signer network primaryRpcUrl")
 			}
+		case "executionFallbackRpcUrl":
+			if err := decoder.Decode(&request.ExecutionFallbackRPCURL); err != nil {
+				return errors.New("invalid signer network executionFallbackRpcUrl")
+			}
+		case "verificationRpcUrl":
+			if err := decoder.Decode(&request.VerificationRPCURL); err != nil {
+				return errors.New("invalid signer network verificationRpcUrl")
+			}
 		case "fallbackRpcUrl":
-			if err := decoder.Decode(&request.FallbackRPCURL); err != nil {
+			if err := decoder.Decode(&request.LegacyFallbackRPCURL); err != nil {
 				return errors.New("invalid signer network fallbackRpcUrl")
 			}
 		default:
@@ -128,17 +151,144 @@ func normalizeSignerNetworkInputV2(input signerNetworkPutRequestV2) (signerNetwo
 	if err != nil {
 		return signerNetworkSecretV2{}, err
 	}
-	fallback := ""
-	if input.FallbackRPCURL != "" {
-		fallback, err = normalizeSignerRPCURLV2(input.FallbackRPCURL, "fallbackRpcUrl")
+	if input.ExecutionFallbackRPCURL != "" && input.LegacyFallbackRPCURL != "" {
+		return signerNetworkSecretV2{}, errors.New("use executionFallbackRpcUrl instead of combining it with legacy fallbackRpcUrl")
+	}
+	executionFallbackInput := input.ExecutionFallbackRPCURL
+	executionFallbackField := "executionFallbackRpcUrl"
+	if executionFallbackInput == "" && input.LegacyFallbackRPCURL != "" {
+		executionFallbackInput = input.LegacyFallbackRPCURL
+		executionFallbackField = "fallbackRpcUrl"
+	}
+	executionFallback := ""
+	if executionFallbackInput != "" {
+		executionFallback, err = normalizeSignerRPCURLV2(executionFallbackInput, executionFallbackField)
 		if err != nil {
 			return signerNetworkSecretV2{}, err
 		}
-		if subtle.ConstantTimeCompare([]byte(primary), []byte(fallback)) == 1 {
-			return signerNetworkSecretV2{}, errors.New("fallbackRpcUrl must differ from primaryRpcUrl")
+		if sameSignerRPCOriginV2(primary, executionFallback) {
+			return signerNetworkSecretV2{}, fmt.Errorf("%s must use a different origin from primaryRpcUrl", executionFallbackField)
 		}
 	}
-	return signerNetworkSecretV2{PrimaryRPCURL: primary, FallbackRPCURL: fallback}, nil
+	verification := ""
+	if input.VerificationRPCURL != "" {
+		verification, err = normalizeSignerRPCURLV2(input.VerificationRPCURL, "verificationRpcUrl")
+		if err != nil {
+			return signerNetworkSecretV2{}, err
+		}
+		if sameSignerRPCOriginV2(primary, verification) {
+			return signerNetworkSecretV2{}, errors.New("verificationRpcUrl must use a different origin from primaryRpcUrl")
+		}
+	}
+	return signerNetworkSecretV2{
+		SchemaVersion:           2,
+		PrimaryRPCURL:           primary,
+		ExecutionFallbackRPCURL: executionFallback,
+		VerificationRPCURL:      verification,
+	}, nil
+}
+
+func normalizeSignerGenesisHashV2(raw string) (string, error) {
+	if raw == "" || raw != strings.TrimSpace(raw) || len(raw) > 128 || strings.ContainsAny(raw, "\r\n\t\x00") {
+		return "", errors.New("invalid signer network genesis hash")
+	}
+	if _, err := solana.PublicKeyFromBase58(raw); err != nil {
+		return "", errors.New("invalid signer network genesis hash")
+	}
+	return raw, nil
+}
+
+func (m *signerKeyManagerV2) resolveSignerGenesisHashV2(rpcURL string) (string, error) {
+	resolver := signerRPCGenesisHashV2
+	if m != nil && m.genesisHash != nil {
+		resolver = m.genesisHash
+	}
+	hash, err := resolver(rpcURL)
+	if err != nil {
+		return "", errors.New("signer-owned Solana RPC genesis verification failed")
+	}
+	hash, err = normalizeSignerGenesisHashV2(hash)
+	if err != nil {
+		return "", errors.New("signer-owned Solana RPC returned an invalid genesis hash")
+	}
+	return hash, nil
+}
+
+func (m *signerKeyManagerV2) verifySignerNetworkGenesisV2(config signerNetworkSecretV2) (signerNetworkSecretV2, error) {
+	primaryGenesis, err := m.resolveSignerGenesisHashV2(config.PrimaryRPCURL)
+	if err != nil {
+		return signerNetworkSecretV2{}, err
+	}
+	for _, candidate := range []string{config.ExecutionFallbackRPCURL, config.VerificationRPCURL} {
+		if candidate == "" {
+			continue
+		}
+		candidateGenesis, err := m.resolveSignerGenesisHashV2(candidate)
+		if err != nil {
+			return signerNetworkSecretV2{}, err
+		}
+		if subtle.ConstantTimeCompare([]byte(primaryGenesis), []byte(candidateGenesis)) != 1 {
+			return signerNetworkSecretV2{}, errors.New("configured Solana RPC endpoints disagree on genesis hash")
+		}
+	}
+	config.GenesisHash = primaryGenesis
+	return config, nil
+}
+
+func (m *signerKeyManagerV2) ensureSignerExecutionGenesisV2(config signerNetworkSecretV2) (signerNetworkSecretV2, error) {
+	pinnedGenesis := config.GenesisHash
+	if pinnedGenesis != "" {
+		var err error
+		pinnedGenesis, err = normalizeSignerGenesisHashV2(pinnedGenesis)
+		if err != nil {
+			return signerNetworkSecretV2{}, errors.New("stored signer network genesis hash is invalid")
+		}
+	}
+	verifiedURLs := make([]string, 0, 2)
+	liveGenesis := ""
+	for index, rpcURL := range []string{config.PrimaryRPCURL, config.ExecutionFallbackRPCURL} {
+		if rpcURL == "" {
+			continue
+		}
+		genesis, err := m.resolveSignerGenesisHashV2(rpcURL)
+		if err != nil {
+			if pinnedGenesis == "" && index == 0 {
+				return signerNetworkSecretV2{}, errors.New("the primary Solana RPC must establish the initial genesis pin")
+			}
+			// A temporarily unavailable endpoint must not make its healthy,
+			// already-pinned peer unusable. Ordinary execution will use the
+			// write-RPC circuit only among endpoints that passed this operation's
+			// live same-genesis verification.
+			continue
+		}
+		if pinnedGenesis != "" && subtle.ConstantTimeCompare([]byte(pinnedGenesis), []byte(genesis)) != 1 {
+			return signerNetworkSecretV2{}, errors.New("configured Solana execution RPC no longer agrees with the pinned genesis hash")
+		}
+		if liveGenesis != "" && subtle.ConstantTimeCompare([]byte(liveGenesis), []byte(genesis)) != 1 {
+			return signerNetworkSecretV2{}, errors.New("configured Solana RPC endpoints disagree on genesis hash")
+		}
+		liveGenesis = genesis
+		verifiedURLs = append(verifiedURLs, rpcURL)
+	}
+	if len(verifiedURLs) == 0 {
+		return signerNetworkSecretV2{}, errors.New("signer-owned Solana RPC genesis verification failed")
+	}
+	if pinnedGenesis == "" {
+		pinnedGenesis = liveGenesis
+	}
+	config.GenesisHash = pinnedGenesis
+	config.PrimaryRPCURL = verifiedURLs[0]
+	config.ExecutionFallbackRPCURL = ""
+	if len(verifiedURLs) > 1 {
+		config.ExecutionFallbackRPCURL = verifiedURLs[1]
+	}
+	return config, nil
+}
+
+func sameSignerRPCOriginV2(left, right string) bool {
+	leftOrigin, leftErr := independentSATLookupRPCOriginV2(left)
+	rightOrigin, rightErr := independentSATLookupRPCOriginV2(right)
+	return leftErr == nil && rightErr == nil && subtle.ConstantTimeCompare([]byte(leftOrigin), []byte(rightOrigin)) == 1
 }
 
 func normalizeSignerRPCURLV2(raw, field string) (string, error) {
@@ -186,13 +336,21 @@ func normalizeSignerRPCURLV2(raw, field string) (string, error) {
 		if err != nil || value == 0 {
 			return "", fmt.Errorf("%s contains an invalid port", field)
 		}
+		port = strconv.FormatUint(value, 10)
 	}
 	canonicalHost := hostname
-	if ip != nil && strings.Contains(hostname, ":") {
-		canonicalHost = "[" + hostname + "]"
+	if ip != nil {
+		canonicalHost = ip.String()
+	}
+	if strings.Contains(canonicalHost, ":") {
+		canonicalHost = "[" + canonicalHost + "]"
 	}
 	if port != "" {
-		canonicalHost = net.JoinHostPort(hostname, port)
+		joinHost := hostname
+		if ip != nil {
+			joinHost = ip.String()
+		}
+		canonicalHost = net.JoinHostPort(joinHost, port)
 	}
 	parsed.Scheme = scheme
 	parsed.Host = canonicalHost
@@ -350,6 +508,10 @@ func deriveSignerNetworkKeyV2(masterKey []byte, purpose string) ([]byte, error) 
 }
 
 func signerNetworkHashV2(masterKey []byte, walletID string, config signerNetworkSecretV2) (string, error) {
+	return signerNetworkPayloadHashV2(masterKey, walletID, config)
+}
+
+func signerNetworkPayloadHashV2(masterKey []byte, walletID string, config any) (string, error) {
 	encoded, err := json.Marshal(config)
 	if err != nil {
 		return "", errors.New("encode signer network configuration")
@@ -450,24 +612,53 @@ func (m *signerKeyManagerV2) decryptNetworkRecordV2(record signerNetworkRecordV2
 		return signerNetworkSecretV2{}, errors.New("signer network encrypted state authentication failed")
 	}
 	defer zeroBytes(plaintext)
-	var config signerNetworkSecretV2
-	decoder := json.NewDecoder(bytes.NewReader(plaintext))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&config); err != nil {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(plaintext, &envelope); err != nil || envelope == nil {
 		return signerNetworkSecretV2{}, errors.New("invalid signer network encrypted payload")
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return signerNetworkSecretV2{}, errors.New("invalid signer network encrypted payload")
+	var normalized signerNetworkSecretV2
+	var hashPayload any
+	if _, legacy := envelope["fallbackRpcUrl"]; legacy || envelope["schemaVersion"] == nil {
+		var config signerLegacyNetworkSecretV2
+		decoder := json.NewDecoder(bytes.NewReader(plaintext))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&config); err != nil {
+			return signerNetworkSecretV2{}, errors.New("invalid legacy signer network encrypted payload")
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+			return signerNetworkSecretV2{}, errors.New("invalid legacy signer network encrypted payload")
+		}
+		normalized, err = normalizeSignerNetworkInputV2(signerNetworkPutRequestV2{
+			PrimaryRPCURL:        config.PrimaryRPCURL,
+			LegacyFallbackRPCURL: config.FallbackRPCURL,
+		})
+		hashPayload = config
+	} else {
+		var config signerNetworkSecretV2
+		decoder := json.NewDecoder(bytes.NewReader(plaintext))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&config); err != nil || config.SchemaVersion != 2 {
+			return signerNetworkSecretV2{}, errors.New("invalid signer network encrypted payload")
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+			return signerNetworkSecretV2{}, errors.New("invalid signer network encrypted payload")
+		}
+		normalized, err = normalizeSignerNetworkInputV2(signerNetworkPutRequestV2{
+			PrimaryRPCURL:           config.PrimaryRPCURL,
+			ExecutionFallbackRPCURL: config.ExecutionFallbackRPCURL,
+			VerificationRPCURL:      config.VerificationRPCURL,
+		})
+		if err == nil && config.GenesisHash != "" {
+			normalized.GenesisHash, err = normalizeSignerGenesisHashV2(config.GenesisHash)
+		}
+		hashPayload = normalized
 	}
-	normalized, err := normalizeSignerNetworkInputV2(signerNetworkPutRequestV2{
-		PrimaryRPCURL:  config.PrimaryRPCURL,
-		FallbackRPCURL: config.FallbackRPCURL,
-	})
 	if err != nil {
 		return signerNetworkSecretV2{}, errors.New("stored signer network configuration is invalid")
 	}
-	expectedHash, err := signerNetworkHashV2(m.masterKey, record.WalletID, normalized)
+	expectedHash, err := signerNetworkPayloadHashV2(m.masterKey, record.WalletID, hashPayload)
 	if err != nil {
 		return signerNetworkSecretV2{}, err
 	}
@@ -486,6 +677,35 @@ func (m *signerKeyManagerV2) PutNetworkV2(walletID string, request signerNetwork
 	}
 	walletID = normalizeWalletID(walletID)
 	config, err := normalizeSignerNetworkInputV2(request)
+	if err != nil {
+		return signerNetworkSummaryV2{}, err
+	}
+	if err := m.store.db.View(func(tx *bolt.Tx) error {
+		if tx.Bucket(bucketSignerWalletsV2).Get([]byte(walletID)) == nil {
+			return errors.New("signer wallet not found")
+		}
+		currentVersion := uint64(0)
+		if raw := tx.Bucket(bucketSignerNetworksV2).Get([]byte(walletID)); raw != nil {
+			var current signerNetworkRecordV2
+			if err := decodeSignerNetworkRecordV2(raw, &current); err != nil || current.WalletID != walletID {
+				return errors.New("invalid stored signer network record")
+			}
+			if _, err := m.decryptNetworkRecordV2(current); err != nil {
+				return errors.New("stored signer network record is not ready")
+			}
+			currentVersion = current.Version
+		}
+		if *request.ExpectedVersion != currentVersion {
+			return fmt.Errorf("signer network version conflict: expected %d, current %d", *request.ExpectedVersion, currentVersion)
+		}
+		if currentVersion == math.MaxUint64 {
+			return errors.New("signer network version is exhausted")
+		}
+		return nil
+	}); err != nil {
+		return signerNetworkSummaryV2{}, err
+	}
+	config, err = m.verifySignerNetworkGenesisV2(config)
 	if err != nil {
 		return signerNetworkSummaryV2{}, err
 	}
@@ -558,6 +778,42 @@ func (m *signerKeyManagerV2) getNetworkRecordV2(walletID string) (signerNetworkR
 		return nil
 	})
 	return record, err
+}
+
+func (m *signerKeyManagerV2) persistSignerNetworkGenesisV2(
+	expected signerNetworkRecordV2,
+	config signerNetworkSecretV2,
+) (signerNetworkRecordV2, error) {
+	if config.GenesisHash == "" {
+		return signerNetworkRecordV2{}, errors.New("signer network genesis hash is required for migration")
+	}
+	if expected.Version == math.MaxUint64 {
+		return signerNetworkRecordV2{}, errors.New("signer network version is exhausted")
+	}
+	updated, err := m.encryptNetworkRecordV2(expected.WalletID, expected.Version+1, config)
+	if err != nil {
+		return signerNetworkRecordV2{}, err
+	}
+	err = m.store.db.Update(func(tx *bolt.Tx) error {
+		networks := tx.Bucket(bucketSignerNetworksV2)
+		raw := networks.Get([]byte(expected.WalletID))
+		if raw == nil {
+			return errSignerNetworkChangedV2
+		}
+		var current signerNetworkRecordV2
+		if err := decodeSignerNetworkRecordV2(raw, &current); err != nil || current != expected {
+			return errSignerNetworkChangedV2
+		}
+		encoded, err := json.Marshal(updated)
+		if err != nil {
+			return errors.New("encode migrated signer network record")
+		}
+		return networks.Put([]byte(updated.WalletID), encoded)
+	})
+	if err != nil {
+		return signerNetworkRecordV2{}, err
+	}
+	return updated, nil
 }
 
 func decodeSignerNetworkRecordV2(raw []byte, record *signerNetworkRecordV2) error {
@@ -651,8 +907,35 @@ func (m *signerKeyManagerV2) NetworkSummaryV2(walletID string) (signerNetworkSum
 		Hash:       record.Hash,
 		Ready:      false,
 	}
-	if _, err := m.decryptNetworkRecordV2(record); err == nil {
-		summary.Ready = true
+	if config, err := m.decryptNetworkRecordV2(record); err == nil {
+		hadPinnedGenesis := config.GenesisHash != ""
+		if verified, err := m.ensureSignerExecutionGenesisV2(config); err == nil {
+			if !hadPinnedGenesis {
+				migrationConfig := config
+				migrationConfig.GenesisHash = verified.GenesisHash
+				if migrated, migrateErr := m.persistSignerNetworkGenesisV2(record, migrationConfig); migrateErr == nil {
+					summary.Version = migrated.Version
+					summary.Hash = migrated.Hash
+				} else if errors.Is(migrateErr, errSignerNetworkChangedV2) {
+					current, currentErr := m.getNetworkRecordV2(walletID)
+					if currentErr != nil {
+						return summary, nil
+					}
+					currentConfig, currentErr := m.decryptNetworkRecordV2(current)
+					if currentErr != nil {
+						return summary, nil
+					}
+					if _, currentErr = m.ensureSignerExecutionGenesisV2(currentConfig); currentErr != nil {
+						return summary, nil
+					}
+					summary.Version = current.Version
+					summary.Hash = current.Hash
+				} else {
+					return summary, nil
+				}
+			}
+			summary.Ready = true
+		}
 	}
 	return summary, nil
 }
@@ -688,17 +971,55 @@ func (m *signerKeyManagerV2) NetworkHealthV2() (signerNetworkHealthV2, error) {
 }
 
 func (m *signerKeyManagerV2) SolanaRPCURLsV2(walletID string) ([]string, error) {
+	return m.SolanaExecutionRPCURLsV2(walletID)
+}
+
+func (m *signerKeyManagerV2) SolanaNetworkV2(walletID string) (signerNetworkSecretV2, error) {
 	record, err := m.getNetworkRecordV2(walletID)
 	if err != nil {
-		return nil, errSignerNetworkPendingV2
+		return signerNetworkSecretV2{}, errSignerNetworkPendingV2
 	}
 	config, err := m.decryptNetworkRecordV2(record)
 	if err != nil {
-		return nil, errSignerNetworkPendingV2
+		return signerNetworkSecretV2{}, errSignerNetworkPendingV2
+	}
+	hadPinnedGenesis := config.GenesisHash != ""
+	verified, err := m.ensureSignerExecutionGenesisV2(config)
+	if err != nil {
+		return signerNetworkSecretV2{}, errSignerNetworkPendingV2
+	}
+	if !hadPinnedGenesis {
+		migrationConfig := config
+		migrationConfig.GenesisHash = verified.GenesisHash
+		if _, err := m.persistSignerNetworkGenesisV2(record, migrationConfig); err != nil {
+			if !errors.Is(err, errSignerNetworkChangedV2) {
+				return signerNetworkSecretV2{}, errSignerNetworkPendingV2
+			}
+			current, currentErr := m.getNetworkRecordV2(walletID)
+			if currentErr != nil {
+				return signerNetworkSecretV2{}, errSignerNetworkPendingV2
+			}
+			currentConfig, currentErr := m.decryptNetworkRecordV2(current)
+			if currentErr != nil {
+				return signerNetworkSecretV2{}, errSignerNetworkPendingV2
+			}
+			verified, currentErr = m.ensureSignerExecutionGenesisV2(currentConfig)
+			if currentErr != nil {
+				return signerNetworkSecretV2{}, errSignerNetworkPendingV2
+			}
+		}
+	}
+	return verified, nil
+}
+
+func (m *signerKeyManagerV2) SolanaExecutionRPCURLsV2(walletID string) ([]string, error) {
+	config, err := m.SolanaNetworkV2(walletID)
+	if err != nil {
+		return nil, err
 	}
 	urls := []string{config.PrimaryRPCURL}
-	if config.FallbackRPCURL != "" {
-		urls = append(urls, config.FallbackRPCURL)
+	if config.ExecutionFallbackRPCURL != "" {
+		urls = append(urls, config.ExecutionFallbackRPCURL)
 	}
 	return urls, nil
 }

@@ -164,8 +164,11 @@ const SignerSatInstructionV2Schema = Type.Object(
 const SignerSatLookupTableV2Schema = Type.Object(
   {
     address: Type.String(),
+    cycleId: Type.String({ pattern: "^(0|[1-9][0-9]*)$" }),
+    pageIndex: Type.String({ pattern: "^(0|[1-9][0-9]*)$" }),
     recentSlot: Type.Optional(Type.String({ pattern: "^(0|[1-9][0-9]*)$" })),
     addresses: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 20 })),
+    parent: Type.Optional(SignerSatInstructionV2Schema),
   },
   { additionalProperties: false },
 );
@@ -226,6 +229,7 @@ export const SignerIntentV2Schema = Type.Union([
       instructions: Type.Optional(
         Type.Array(SignerSatInstructionV2Schema, { minItems: 1, maxItems: 6 }),
       ),
+      addressLookupTables: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 1 })),
     },
     { additionalProperties: false },
   ),
@@ -355,6 +359,38 @@ const SignerOperationLookupV2Schema = Type.Object(
   { requestId: Type.String() },
   { additionalProperties: false },
 );
+
+const SignerSatLookupBindingRequestV2Schema = Type.Object(
+  {
+    cycleId: Type.String({ pattern: "^(0|[1-9][0-9]*)$" }),
+    pageIndex: Type.String({ pattern: "^(0|[1-9][0-9]*)$" }),
+  },
+  { additionalProperties: false },
+);
+
+export const LocalSocketSignerSatLookupBindingV2Schema = Type.Object(
+  {
+    cycleId: Type.String({ pattern: "^(0|[1-9][0-9]*)$" }),
+    pageIndex: Type.String({ pattern: "^(0|[1-9][0-9]*)$" }),
+    address: Type.Optional(Type.String({ minLength: 1 })),
+    bound: Type.Boolean(),
+    mutationRequestId: Type.Optional(Type.String({ minLength: 8, maxLength: 128 })),
+    mutationState: Type.Optional(
+      Type.Union([
+        Type.Literal("reserved"),
+        Type.Literal("broadcast"),
+        Type.Literal("confirmed"),
+        Type.Literal("failed"),
+        Type.Literal("unknown"),
+      ]),
+    ),
+  },
+  { additionalProperties: false },
+);
+
+export type LocalSocketSignerSatLookupBindingV2 = Static<
+  typeof LocalSocketSignerSatLookupBindingV2Schema
+>;
 
 export const LocalSocketSignerRequestSchema = Type.Union(
   [
@@ -521,6 +557,14 @@ export const LocalSocketSignerRequestSchema = Type.Union(
         op: Type.Union([Type.Literal("v2.operation.get"), Type.Literal("v2.operation.reconcile")]),
         walletId: Type.String(),
         request: SignerOperationLookupV2Schema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.satLookup.binding.get"),
+        walletId: Type.String(),
+        request: SignerSatLookupBindingRequestV2Schema,
       },
       { additionalProperties: false },
     ),
@@ -980,6 +1024,8 @@ export function validateLocalSocketSignerResult(
     case "v2.operation.get":
     case "v2.operation.reconcile":
       return Value.Check(LocalSocketSignerOperationV2Schema, result);
+    case "v2.satLookup.binding.get":
+      return Value.Check(LocalSocketSignerSatLookupBindingV2Schema, result);
     case "v2.review.get":
     case "v2.review.prepare":
       return Value.Check(LocalSocketSignerReviewV2Schema, result);

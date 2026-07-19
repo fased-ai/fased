@@ -220,6 +220,7 @@ type normalizedIntentV2 struct {
 	CapExempt            bool
 	RequiredRole         string
 	Message              []byte
+	ParentIntent         *normalizedIntentV2
 }
 
 func isSPLTokenProgram(programID string) bool {

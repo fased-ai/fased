@@ -405,7 +405,7 @@ func TestSignerAdminPolicyGetPutAndWalletReencrypt(t *testing.T) {
 func TestSignerAdminNetworkPutReadsStrictStdinAndReturnsMetadataOnly(t *testing.T) {
 	secret := "admin-network-secret-token"
 	hash := "hmac-sha256:" + strings.Repeat("a", 64)
-	input := []byte(`{"expectedVersion":0,"primaryRpcUrl":"https://rpc.example.com/solana?api-key=` + secret + `","fallbackRpcUrl":"https://fallback.example.com/rpc"}`)
+	input := []byte(`{"expectedVersion":0,"primaryRpcUrl":"https://rpc.example.com/solana?api-key=` + secret + `","executionFallbackRpcUrl":"https://fallback.example.com/rpc"}`)
 	server := startSignerAdminTestServer(t, signerAdminTestSuccess(t, `{"walletId":"agent","configured":true,"version":1,"hash":"`+hash+`","ready":true}`))
 	var stdout bytes.Buffer
 	err := runSignerAdminCLI([]string{
@@ -420,7 +420,7 @@ func TestSignerAdminNetworkPutReadsStrictStdinAndReturnsMetadataOnly(t *testing.
 	}
 	var body signerNetworkPutRequestV2
 	decodeSignerAdminTestBody(t, req, &body)
-	if body.ExpectedVersion == nil || *body.ExpectedVersion != 0 || !strings.Contains(body.PrimaryRPCURL, secret) || body.FallbackRPCURL == "" {
+	if body.ExpectedVersion == nil || *body.ExpectedVersion != 0 || !strings.Contains(body.PrimaryRPCURL, secret) || body.ExecutionFallbackRPCURL == "" {
 		t.Fatalf("network put did not forward strict stdin configuration: %#v", body)
 	}
 	if strings.Contains(stdout.String(), secret) || strings.Contains(stdout.String(), "rpc.example.com") || strings.Contains(stdout.String(), "fallback.example.com") {

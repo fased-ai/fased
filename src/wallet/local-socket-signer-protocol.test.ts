@@ -296,6 +296,20 @@ describe("local socket signer protocol", () => {
       },
     };
     expect(parseLocalSocketSignerRequest(request)).toEqual(request);
+    const lookupBackedDistribution = {
+      ...request,
+      request: {
+        ...request.request,
+        intent: {
+          ...request.request.intent,
+          action: "distributeCyclePage",
+          addressLookupTables: ["4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB"],
+        },
+      },
+    };
+    expect(parseLocalSocketSignerRequest(lookupBackedDistribution)).toEqual(
+      lookupBackedDistribution,
+    );
     expect(() =>
       parseLocalSocketSignerRequest({
         ...request,
@@ -319,7 +333,15 @@ describe("local socket signer protocol", () => {
           action: "extend" as const,
           lookupTable: {
             address: "4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB",
+            cycleId: "7",
+            pageIndex: "2",
             addresses: ["So11111111111111111111111111111111111111112"],
+            parent: {
+              action: "distributeCyclePage",
+              programId: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
+              dataBase64: "Qg==",
+              keys: [],
+            },
           },
         },
       },
@@ -332,6 +354,29 @@ describe("local socket signer protocol", () => {
           ...request.request,
           intent: { ...request.request.intent, rawTransactionBase64: "forbidden" },
         },
+      }),
+    ).toThrow("invalid signer request");
+
+    const bindingRequest = {
+      op: "v2.satLookup.binding.get" as const,
+      walletId: "mining",
+      request: { cycleId: "7", pageIndex: "2" },
+    };
+    expect(parseLocalSocketSignerRequest(bindingRequest)).toEqual(bindingRequest);
+    expect(
+      validateLocalSocketSignerResult("v2.satLookup.binding.get", {
+        cycleId: "7",
+        pageIndex: "2",
+        address: request.request.intent.lookupTable.address,
+        bound: true,
+        mutationRequestId: "lookup-request-001",
+        mutationState: "unknown",
+      }),
+    ).toBe(true);
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        ...bindingRequest,
+        request: { ...bindingRequest.request, address: request.request.intent.lookupTable.address },
       }),
     ).toThrow("invalid signer request");
   });

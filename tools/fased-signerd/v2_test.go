@@ -53,6 +53,9 @@ func openTestSignerV2(t *testing.T) (*signerStoreV2, *signerKeyManagerV2) {
 		_ = store.Close()
 		t.Fatalf("open signer key manager: %v", err)
 	}
+	keys.genesisHash = func(string) (string, error) {
+		return "11111111111111111111111111111111", nil
+	}
 	t.Cleanup(func() {
 		keys.Close()
 		_ = store.Close()

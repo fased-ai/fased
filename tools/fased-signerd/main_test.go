@@ -314,6 +314,76 @@ func TestSolanaWriteRPCCircuitKeepsPrimaryFailureAfterFallbackSuccess(t *testing
 	if len(active) != 1 || active[0] != fallback {
 		t.Fatalf("expected only fallback while primary cools down, got %#v", active)
 	}
+
+	solanaWriteRPCCircuits.Lock()
+	primaryState := solanaWriteRPCCircuits.Endpoints[primary]
+	primaryState.BackoffUntil = time.Now().Add(-time.Second)
+	solanaWriteRPCCircuits.Endpoints[primary] = primaryState
+	solanaWriteRPCCircuits.Unlock()
+	active, err = activeSolanaWriteRPCURLs([]string{primary, fallback})
+	if err != nil || len(active) != 2 || active[0] != primary || active[1] != fallback {
+		t.Fatalf("expected a primary probe after cooldown: active=%#v err=%v", active, err)
+	}
+	solanaWriteRPCCircuits.Lock()
+	_, primaryStillFailed := solanaWriteRPCCircuits.Endpoints[primary]
+	solanaWriteRPCCircuits.Unlock()
+	if !primaryStillFailed {
+		t.Fatal("cooldown expiry cleared the primary failure before a successful probe")
+	}
+	markSolanaWriteRPCSuccess(primary)
+	solanaWriteRPCCircuits.Lock()
+	_, primaryStillFailed = solanaWriteRPCCircuits.Endpoints[primary]
+	solanaWriteRPCCircuits.Unlock()
+	if primaryStillFailed {
+		t.Fatal("successful primary probe did not clear its circuit state")
+	}
+}
+
+func TestSignerOwnedRPCMalformedResponseDoesNotLeakCredentials(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		requests++
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte("{"))
+	}))
+	defer server.Close()
+	secret := "write-rpc-secret"
+	rpcURL := server.URL + "?api-key=" + secret
+	_, err := signerLatestBlockhashWithFallbackV2([]string{rpcURL})
+	if err == nil {
+		t.Fatal("malformed signer-owned RPC response was accepted")
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), rpcURL) {
+		t.Fatalf("malformed RPC diagnostic leaked credentials: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("expected one bounded malformed-response request, got %d", requests)
+	}
+}
+
+func TestSignerOwnedRPCConfirmationTimeoutHasBoundedPolling(t *testing.T) {
+	t.Setenv("FASED_WALLET_SOLANA_WRITE_RPC_TIMEOUT_MS", "100")
+	t.Setenv("FASED_WALLET_SOLANA_CONFIRM_TIMEOUT_MS", "25")
+	statusRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		statusRequests++
+		defer request.Body.Close()
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"jsonrpc": "2.0", "id": 1,
+			"result": map[string]any{"context": map[string]any{"slot": 1}, "value": []any{nil}},
+		})
+	}))
+	defer server.Close()
+	var signature solana.Signature
+	signature[0] = 1
+	err := confirmSignerSolanaSignatureAcrossRPCsV2([]string{server.URL}, signature)
+	if err == nil || !strings.Contains(err.Error(), "confirmation timed out") {
+		t.Fatalf("expected bounded confirmation timeout, got %v", err)
+	}
+	if statusRequests != 1 {
+		t.Fatalf("expected one confirmation poll inside the short timeout, got %d", statusRequests)
+	}
 }
 
 func TestReadRequestLineRejectsOversizedPayload(t *testing.T) {

@@ -286,22 +286,37 @@ export async function claimSatSubmission(params: {
   operationKey: string;
   intentDigest: string;
   action: string;
+  allowFailedRetry?: boolean;
   env?: NodeJS.ProcessEnv;
   owner?: string;
 }): Promise<SatSubmissionClaim> {
   const env = params.env ?? process.env;
   const filePath = resolveSatSubmissionLedgerPath({ walletId: params.walletId, env });
-  const requestId = buildSatSubmissionRequestId(params);
   const owner = params.owner ?? `${process.pid}:${randomUUID()}`;
   return await withSatSubmissionLedgerLock(filePath, async () => {
     const ledger = await readLedger(filePath);
+    let operationKey = params.operationKey;
+    let requestId = buildSatSubmissionRequestId({ ...params, operationKey });
+    if (params.allowFailedRetry) {
+      for (let retry = 1; retry <= 32; retry += 1) {
+        const prior = ledger.records[requestId];
+        if (!prior || prior.state !== "failed") {
+          break;
+        }
+        operationKey = `${params.operationKey}:retry:${retry}`;
+        requestId = buildSatSubmissionRequestId({ ...params, operationKey });
+        if (retry === 32 && ledger.records[requestId]?.state === "failed") {
+          throw new Error("SAT submission exhausted its safe pre-broadcast retry limit");
+        }
+      }
+    }
     const existing = ledger.records[requestId];
     if (existing) {
       if (
         existing.intentDigest !== params.intentDigest ||
         existing.walletId !== params.walletId ||
         existing.workflowId !== params.workflowId ||
-        existing.operationKey !== params.operationKey
+        existing.operationKey !== operationKey
       ) {
         throw new Error(
           `SAT idempotency collision for ${requestId}: the workflow key is already bound to a different immutable intent digest`,
@@ -326,7 +341,7 @@ export async function claimSatSubmission(params: {
     const record: SatSubmissionRecord = {
       requestId,
       workflowId: params.workflowId,
-      operationKey: params.operationKey,
+      operationKey,
       intentDigest: params.intentDigest,
       walletId: params.walletId,
       action: params.action,

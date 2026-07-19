@@ -47,9 +47,13 @@ describe("signer-owned network administration", () => {
       { mode: 0o700 },
     );
     const rpcUrl = "https://rpc.example/solana?api-key=local-secret";
+    const executionFallbackRpcUrl = "https://backup.example/solana?api-key=backup-secret";
+    const verificationRpcUrl = "https://witness.example/solana";
     const result = configureSignerOwnedWalletNetwork({
       walletId: "Agent-2",
       primaryRpcUrl: rpcUrl,
+      executionFallbackRpcUrl,
+      verificationRpcUrl,
       env: {
         HOME: root,
         PATH: process.env.PATH,
@@ -69,7 +73,12 @@ describe("signer-owned network administration", () => {
     expect(args).toContain("agent_2");
     expect(args).not.toContain(rpcUrl);
     expect(input).toContain(rpcUrl);
-    expect(JSON.parse(input)).toEqual({ expectedVersion: 0, primaryRpcUrl: rpcUrl });
+    expect(JSON.parse(input)).toEqual({
+      expectedVersion: 0,
+      primaryRpcUrl: rpcUrl,
+      executionFallbackRpcUrl,
+      verificationRpcUrl,
+    });
     expect(childEnv).not.toContain("FASED_WALLET_SOLANA_RPC_URL");
     expect(childEnv).not.toContain("local-secret");
   });

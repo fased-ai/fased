@@ -646,7 +646,7 @@ describe("runOnboardingWizard", () => {
     expect(applyAuthChoice).toHaveBeenCalledWith(
       expect.objectContaining({
         authChoice: "openai-codex",
-        setDefaultModel: true,
+        setDefaultModel: false,
       }),
     );
     expect(setupChannels).toHaveBeenCalledWith(
@@ -1002,10 +1002,13 @@ describe("runOnboardingWizard", () => {
     expect(applyAuthChoice).toHaveBeenCalledWith(
       expect.objectContaining({
         authChoice: "acme-cloud-oauth",
-        setDefaultModel: true,
+        setDefaultModel: false,
       }),
     );
-    expect(resolvePreferredProviderForAuthChoice).not.toHaveBeenCalled();
+    expect(resolvePreferredProviderForAuthChoice).toHaveBeenCalledWith(
+      "acme-cloud-oauth",
+      expect.objectContaining({ config: expect.any(Object) }),
+    );
     expect(promptDefaultModel).not.toHaveBeenCalled();
   });
 
@@ -1575,6 +1578,9 @@ describe("runOnboardingWizard", () => {
         env: {
           vars: {
             FASED_WALLET_SOLANA_RPC_URL__WALLET_1: "https://old-rpc.example",
+            FASED_WALLET_SOLANA_EXECUTION_FALLBACK_RPC_URL__WALLET_1: "",
+            FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL__WALLET_1:
+              "https://advanced-execution.example/solana",
           },
         },
       },
@@ -1669,10 +1675,11 @@ describe("runOnboardingWizard", () => {
       expect.objectContaining({
         walletId: "wallet-1",
         primaryRpcUrl: "https://new-rpc.example",
+        executionFallbackRpcUrl: "https://advanced-execution.example/solana",
       }),
     );
     expect(prompter.note).toHaveBeenCalledWith(
-      "Updated Solana RPC for Wallet 1 (wallet-1); signer network version 2 is ready.",
+      "Updated the app-side Solana RPC setting for Wallet 1 (wallet-1); signer network version 2 is ready",
       "Wallet setup",
     );
   });
@@ -2283,23 +2290,23 @@ describe("runOnboardingWizard", () => {
       "Operator readiness",
     );
     expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("Passkey: Passkey approval ready (1)"),
+      expect.stringContaining("PASSKEY: Passkey approval ready (1)"),
       "Operator readiness",
     );
     expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("Agent wallet: Agent Wallet"),
+      expect.stringContaining("AGENT WALLET: Agent Wallet"),
       "Operator readiness",
     );
     expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("Mining wallet:"),
+      expect.stringContaining("MINING WALLET:"),
       "Operator readiness",
     );
     expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("Network trust: Verified"),
+      expect.stringContaining("NETWORK TRUST: Verified"),
       "Operator readiness",
     );
     expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("Network reachability: Ready"),
+      expect.stringContaining("NETWORK REACHABILITY: Ready"),
       "Operator readiness",
     );
   });

@@ -153,7 +153,7 @@ vi.mock("./src/solana-submit.js", () => ({
     txHash: "tx-claim-cycle-batch",
   })),
   submitSatCleanupDistributionLookupTable: vi.fn(async (_config, params) => ({
-    lookupTable: params.lookupTableAddress,
+    lookupTable: "lookup-table-from-signer-binding",
     action: params.action,
     transactionHashes: ["tx-cleanup-distribution-lookup"],
     signerState: "confirmed",
@@ -6280,6 +6280,32 @@ describe("sat-mining cycle gateway integration", () => {
     expect(vi.mocked(solanaSubmit.runWithSatSubmissionWorkflow)).toHaveBeenCalledWith(
       "gateway:sat.openCycle:manual-open-cycle-123",
       expect.any(Function),
+    );
+
+    response = null;
+    await gatewayMethods.get("sat.cleanupDistributionLookupTable")!.handler({
+      params: { cycleId: 123, pageIndex: 4, action: "deactivate" },
+      respond: (ok, payload) => {
+        response = { ok, payload };
+      },
+    });
+    expect(response).toMatchObject({
+      ok: true,
+      payload: {
+        ok: true,
+        payload: {
+          request: {
+            cycleId: 123,
+            pageIndex: 4,
+            action: "deactivate",
+            lookupTableAddress: "lookup-table-from-signer-binding",
+          },
+        },
+      },
+    });
+    expect(vi.mocked(solanaSubmit.submitSatCleanupDistributionLookupTable)).toHaveBeenCalledWith(
+      expect.anything(),
+      { cycleId: 123, pageIndex: 4, action: "deactivate" },
     );
   });
 });

@@ -265,23 +265,28 @@ Restart Local normally. On Hosting, use the provider root console to restart
 
 Each mutation is a separate idempotent signer-v2 request. The signer verifies
 the table PDA, Mining authority, current on-chain state, capacity, activation
-slot, cooldown, and exact distribution accounts. Gateway persists the table
-address per cycle/page but cannot submit a caller-built v0 transaction. The
-signer also requires reachable primary and fallback execution RPC URLs on two
-distinct origins. Both must return identical lookup-table account bytes; one
-origin, duplicate origins, or any disagreement fails closed before numeric ALT
-indexes are compiled.
+slot, cooldown, and exact distribution accounts. Gateway durably persists the
+table address per cycle/page before the first possible table broadcast but
+cannot submit a caller-built v0 transaction. Create/extend requests carry the
+complete typed parent distribution, which the signer validates and
+policy-checks before allowing rent. The signer compares the primary execution
+RPC with a distinct same-genesis verification witness. Both must return
+identical lookup-table account bytes; one origin, duplicate origins, or any
+disagreement fails closed before numeric ALT indexes are compiled.
 </Accordion>
 
 ## Two RPC planes
 
-Each native wallet needs both:
+Normal onboarding asks for only a wallet role and one primary RPC. It does not
+ask for a Solana network or a second RPC. Each native wallet uses:
 
 - a signer execution RPC, encrypted and versioned in signer state, for native
   balance reads, construction, simulation, broadcast, and reconciliation; and
 - a Gateway read/preparation RPC for dashboard token inventory, SAT
   inspection/watchers/readiness, federation/bond reads, Jupiter/Trigger
   preparation, and provider/hardware lanes.
+- an automatically selected official same-genesis verification witness for
+  ALT account/slot agreement only.
 
 The simple wizard stores the chosen endpoint in both planes, so its URL/token
 is visible to Gateway code. A stronger deployment uses a separate Gateway
@@ -295,8 +300,7 @@ in a private `0600` file so its URL/token do not enter shell history:
 ```json
 {
   "expectedVersion": 0,
-  "primaryRpcUrl": "https://your-primary-provider.example/solana",
-  "fallbackRpcUrl": "https://your-fallback-provider.example/solana"
+  "primaryRpcUrl": "https://your-primary-provider.example/solana"
 }
 ```
 
@@ -322,9 +326,12 @@ Local example:
 HTTPS is required except for an explicit loopback development endpoint. Health
 returns readiness plus version/hash metadata, not the secret URL.
 
-The fallback is optional for ordinary signer operations, but it is mandatory
-for typed SAT lookup-table lifecycle and distribution operations. Use a second
-RPC origin rather than another path or credential on the primary origin.
+Advanced users may add `executionFallbackRpcUrl` as a second full execution
+provider. The signer requires live same-genesis agreement before Ready and
+rechecks the advanced fallback before execution use. `verificationRpcUrl` is verification-only and is needed explicitly
+for a custom cluster, Localnet, or when the primary is itself the official
+public endpoint. The signer never uses an automatically selected public
+witness to construct, simulate, broadcast, or reconcile a transaction.
 
 ## Signer-owned Jupiter Trigger credential
 

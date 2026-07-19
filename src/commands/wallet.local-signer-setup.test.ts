@@ -200,6 +200,75 @@ describe("walletSetupCommand native signer boundary", () => {
     }
   });
 
+  it("never promotes the generic read fallback into the signer execution plane", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-rpc-role-"));
+    const configPath = path.join(root, "fased.json");
+    await fs.writeFile(configPath, "{}\n", "utf8");
+    vi.stubEnv("FASED_CONFIG_PATH", configPath);
+    vi.stubEnv("FASED_DISABLE_CONFIG_CACHE", "1");
+    vi.stubEnv("FASED_STATE_DIR", path.join(root, "state"));
+    vi.stubEnv("FASED_WALLET_SOLANA_RPC_FALLBACK_URL", "https://public-read.example/solana");
+    clearConfigCache();
+
+    try {
+      await walletSetupCommand({ log: vi.fn() } as never, {
+        mode: "local-signer-create",
+        chain: "solana",
+        walletId: "agent",
+        role: "agent",
+        rpcUrl: "https://primary.example/solana",
+        nonInteractive: true,
+        noDoctor: true,
+        noSignerHints: true,
+      });
+
+      expect(signerMocks.networkPut).toHaveBeenCalledWith(
+        expect.objectContaining({
+          primaryRpcUrl: "https://primary.example/solana",
+          executionFallbackRpcUrl: undefined,
+        }),
+      );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the first non-empty advanced execution fallback and supports the legacy write key", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-rpc-advanced-"));
+    const configPath = path.join(root, "fased.json");
+    await fs.writeFile(configPath, "{}\n", "utf8");
+    vi.stubEnv("FASED_CONFIG_PATH", configPath);
+    vi.stubEnv("FASED_DISABLE_CONFIG_CACHE", "1");
+    vi.stubEnv("FASED_STATE_DIR", path.join(root, "state"));
+    vi.stubEnv("FASED_WALLET_SOLANA_EXECUTION_FALLBACK_RPC_URL__AGENT", "");
+    vi.stubEnv(
+      "FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL__AGENT",
+      "https://advanced-execution.example/solana",
+    );
+    clearConfigCache();
+
+    try {
+      await walletSetupCommand({ log: vi.fn() } as never, {
+        mode: "local-signer-create",
+        chain: "solana",
+        walletId: "agent",
+        role: "agent",
+        rpcUrl: "https://primary.example/solana",
+        nonInteractive: true,
+        noDoctor: true,
+        noSignerHints: true,
+      });
+
+      expect(signerMocks.networkPut).toHaveBeenCalledWith(
+        expect.objectContaining({
+          executionFallbackRpcUrl: "https://advanced-execution.example/solana",
+        }),
+      );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("creates a fail-closed hosted wallet without any app-visible root channel", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-hosted-signer-create-"));
     const configPath = path.join(root, "fased.json");

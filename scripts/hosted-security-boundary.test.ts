@@ -174,6 +174,10 @@ describe("hosted signer security boundary", () => {
     expect(networkAdmin).toContain('file_owner" == "0"');
     expect(networkAdmin).toContain('"$socket_mode" == "600"');
     expect(networkAdmin).toContain('printf \'%s\\n\' "$request" | "${common[@]}" put');
+    expect(networkAdmin).toContain("value.schemaVersion !== 2");
+    expect(networkAdmin).toContain("executionFallbackRpcUrl");
+    expect(networkAdmin).toContain("verificationRpcUrl");
+    expect(networkAdmin).not.toContain("value.fallbackRpcUrl");
     expect(networkAdmin).not.toContain("FASED_HOST_BOOTSTRAP");
   });
 

@@ -154,7 +154,7 @@ are approved:
 
 ```text
 FASED_WALLET_SOLANA_WRITE_RPC_URL=<primary>
-FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL=<independent fallback>
+FASED_WALLET_SOLANA_EXECUTION_FALLBACK_RPC_URL=<independent full-execution fallback>
 ```
 
 Fased signs once and may submit the exact same raw transaction bytes to the

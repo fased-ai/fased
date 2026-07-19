@@ -555,11 +555,11 @@ function rpcEnvKeyFor(chain: WalletChain, walletId?: string): string {
   return "FASED_WALLET_SOLANA_RPC_URL";
 }
 
-function fallbackRpcEnvKeyFor(walletId?: string): string {
+function executionFallbackRpcEnvKeyFor(walletId?: string): string {
   const suffix = walletIdEnvSuffix(walletId);
   return suffix
-    ? `FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL__${suffix}`
-    : "FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL";
+    ? `FASED_WALLET_SOLANA_EXECUTION_FALLBACK_RPC_URL__${suffix}`
+    : "FASED_WALLET_SOLANA_EXECUTION_FALLBACK_RPC_URL";
 }
 
 function resolveRpcUrlForChain(
@@ -789,17 +789,22 @@ async function createSignerOwnedWalletForSetup(params: {
     );
   }
 
-  const fallbackRpcUrl = hosted
+  const executionFallbackRpcUrl = hosted
     ? ""
-    : String(
-        mergedEnv[fallbackRpcEnvKeyFor(walletId)] ??
-          mergedEnv.FASED_WALLET_SOLANA_RPC_FALLBACK_URL ??
-          "",
-      ).trim();
+    : ([
+        mergedEnv[executionFallbackRpcEnvKeyFor(walletId)],
+        mergedEnv[
+          walletIdEnvSuffix(walletId)
+            ? `FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL__${walletIdEnvSuffix(walletId)}`
+            : "FASED_WALLET_SOLANA_WRITE_RPC_FALLBACK_URL"
+        ],
+      ]
+        .map((value) => String(value ?? "").trim())
+        .find(Boolean) ?? "");
   const network = configureSignerOwnedWalletNetwork({
     walletId: signerWalletId,
     primaryRpcUrl: params.rpcUrl,
-    fallbackRpcUrl: fallbackRpcUrl || undefined,
+    executionFallbackRpcUrl: executionFallbackRpcUrl || undefined,
     env: mergedEnv,
     signerBinPath: hosted ? undefined : resolveSignerdBinaryPath(mergedEnv),
     controlSocketPath: hosted ? undefined : resolveLocalSignerControlSocketPath(mergedEnv),

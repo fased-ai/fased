@@ -518,6 +518,25 @@ func (s *signerStoreV2) claimReservedOperation(requestID string) (signerOperatio
 	return operation, operation.ExecutionAttempt, claimed, err
 }
 
+// releaseReservedOperationClaim makes a transiently blocked exact request
+// claimable again without releasing its already-accounted cap reservation.
+// The execution-attempt fence prevents an older worker from clearing a newer
+// claim.
+func (s *signerStoreV2) releaseReservedOperationClaim(requestID string, attempt uint64, cause error) (signerOperationV2, error) {
+	return s.updateOperation(requestID, func(operation *signerOperationV2, now string) error {
+		if operation.State != operationReserved {
+			return fmt.Errorf("cannot release signer execution claim in state %s", operation.State)
+		}
+		if operation.ExecutionAttempt != attempt {
+			return errors.New("stale signer execution attempt cannot release the active claim")
+		}
+		operation.ExecutionLeaseUntil = ""
+		operation.Error = safeOperationErrorV2(cause)
+		operation.UpdatedAt = now
+		return nil
+	})
+}
+
 func (s *signerStoreV2) markBroadcast(requestID, signature string, signedRaw []byte) (signerOperationV2, error) {
 	if len(signedRaw) == 0 {
 		return signerOperationV2{}, errors.New("exact signed transaction bytes are required before broadcast")
@@ -533,39 +552,43 @@ func (s *signerStoreV2) markBroadcast(requestID, signature string, signedRaw []b
 }
 
 func (s *signerStoreV2) markBroadcastClaim(requestID string, attempt uint64, signature, transactionDigest string, signedTxBase64 ...string) (signerOperationV2, error) {
+	if len(signedTxBase64) != 1 {
+		return signerOperationV2{}, errors.New("exact signed transaction artifact is required before broadcast")
+	}
 	return s.updateOperation(requestID, func(operation *signerOperationV2, now string) error {
-		if operation.State != operationReserved {
-			return fmt.Errorf("cannot broadcast signer operation in state %s", operation.State)
-		}
-		if attempt != 0 && operation.ExecutionAttempt != attempt {
-			return errors.New("stale signer execution attempt cannot broadcast")
-		}
-		if strings.TrimSpace(signature) == "" {
-			return errors.New("transaction signature is required before broadcast")
-		}
-		if !strings.HasPrefix(strings.TrimSpace(transactionDigest), "sha256:") {
-			return errors.New("transaction digest is required before broadcast")
-		}
-		if len(signedTxBase64) != 1 {
-			return errors.New("exact signed transaction artifact is required before broadcast")
-		}
-		raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(signedTxBase64[0]))
-		if err != nil || len(raw) == 0 || len(raw) > 1644 {
-			return errors.New("signed transaction artifact is invalid")
-		}
-		digest := sha256.Sum256(raw)
-		if "sha256:"+hex.EncodeToString(digest[:]) != strings.TrimSpace(transactionDigest) {
-			return errors.New("signed transaction artifact digest mismatch")
-		}
-		operation.SignedTxBase64 = strings.TrimSpace(signedTxBase64[0])
-		operation.State = operationBroadcast
-		operation.Signature = strings.TrimSpace(signature)
-		operation.TransactionDigest = strings.TrimSpace(transactionDigest)
-		operation.BroadcastAt = now
-		operation.UpdatedAt = now
-		operation.ExecutionLeaseUntil = ""
-		return nil
+		return applyBroadcastClaimV2(operation, attempt, signature, transactionDigest, signedTxBase64[0], now)
 	})
+}
+
+func applyBroadcastClaimV2(operation *signerOperationV2, attempt uint64, signature, transactionDigest, signedTxBase64, now string) error {
+	if operation.State != operationReserved {
+		return fmt.Errorf("cannot broadcast signer operation in state %s", operation.State)
+	}
+	if attempt != 0 && operation.ExecutionAttempt != attempt {
+		return errors.New("stale signer execution attempt cannot broadcast")
+	}
+	if strings.TrimSpace(signature) == "" {
+		return errors.New("transaction signature is required before broadcast")
+	}
+	if !strings.HasPrefix(strings.TrimSpace(transactionDigest), "sha256:") {
+		return errors.New("transaction digest is required before broadcast")
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(signedTxBase64))
+	if err != nil || len(raw) == 0 || len(raw) > 1644 {
+		return errors.New("signed transaction artifact is invalid")
+	}
+	digest := sha256.Sum256(raw)
+	if "sha256:"+hex.EncodeToString(digest[:]) != strings.TrimSpace(transactionDigest) {
+		return errors.New("signed transaction artifact digest mismatch")
+	}
+	operation.SignedTxBase64 = strings.TrimSpace(signedTxBase64)
+	operation.State = operationBroadcast
+	operation.Signature = strings.TrimSpace(signature)
+	operation.TransactionDigest = strings.TrimSpace(transactionDigest)
+	operation.BroadcastAt = now
+	operation.UpdatedAt = now
+	operation.ExecutionLeaseUntil = ""
+	return nil
 }
 
 func (s *signerStoreV2) markConfirmed(requestID string) (signerOperationV2, error) {

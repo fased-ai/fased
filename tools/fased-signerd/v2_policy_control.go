@@ -124,11 +124,11 @@ func requireAutonomousRoleV2(policy signerPolicyV2, intent normalizedIntentV2) e
 	case "vault":
 		return errors.New("Vault execution requires signer-reviewed authorization")
 	case "mining":
-		if intent.Intent.Type != intentSolanaSATAction {
+		if intent.Intent.Type != intentSolanaSATAction && intent.Intent.Type != intentSolanaSATLookupTable {
 			return errors.New("Mining autonomous execution is restricted to typed SAT operations")
 		}
 	case "agent":
-		if intent.Intent.Type == intentSolanaSATAction {
+		if intent.Intent.Type == intentSolanaSATAction || intent.Intent.Type == intentSolanaSATLookupTable {
 			return errors.New("typed SAT mining operations require a Mining wallet")
 		}
 	default:

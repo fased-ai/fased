@@ -143,10 +143,16 @@ The initial file is:
 ```json
 {
   "expectedVersion": 0,
-  "primaryRpcUrl": "https://your-primary-provider.example/solana",
-  "fallbackRpcUrl": "https://your-fallback-provider.example/solana"
+  "primaryRpcUrl": "https://your-primary-provider.example/solana"
 }
 ```
+
+Normal onboarding needs no other field and does not ask for a cluster. For
+advanced failover, add `executionFallbackRpcUrl`; the signer requires live
+same-genesis agreement before Ready and again before fallback execution use. For custom/Localnet ALT
+verification, or when the primary is the official public RPC, add a distinct
+`verificationRpcUrl`. Legacy `fallbackRpcUrl` input is accepted only as an
+execution-fallback migration alias and is rewritten using the new schema.
 
 Apply it through the signer-only control socket. The root shell opens the
 root-only file, then the admin client runs as `fased-signer` with that inherited
