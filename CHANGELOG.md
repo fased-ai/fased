@@ -4,6 +4,12 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.67
+
+- Reject native Windows npm installs at package selection and fail closed at
+  the launcher and central runtime guard; Windows Local remains supported
+  through Ubuntu on WSL2.
+
 ## 0.1.66
 
 - Keep normal wallet onboarding to wallet role plus one primary Solana RPC,
