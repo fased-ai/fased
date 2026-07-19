@@ -40,14 +40,10 @@ x-i18n:
        ssh root@YOUR_PUBLIC_VPS_IP
        ```
 
-    3. 在该 VPS SSH 会话内运行：
+    3. 在该 VPS SSH 会话内按照
+       [verified Hosting bootstrap](/install/vps#3-验证并运行-hosting-bootstrap) 操作。
 
-       ```bash
-       curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-         | bash -s -- --hosting
-       ```
-
-    安装器自动选择最新 stable tag，在安装特权 Fased 资产前验证 tagged Hosting
+    此流程在执行前验证精确 tagged bootstrap。安装器随后在安装特权 Fased 资产前验证 tagged Hosting
     release 和 attestation，并在 VPS 上安装/启动 Tailscale、创建非 root `app`
     runtime。它显示 Tailscale 登录 URL 时，在自己的电脑浏览器中打开。
 

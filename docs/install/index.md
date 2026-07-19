@@ -39,14 +39,11 @@ runs continuously on a remote Linux server.
        ssh root@YOUR_PUBLIC_VPS_IP
        ```
 
-    3. In that VPS SSH session, run:
+    3. In that VPS SSH session, follow the
+       [verified Hosting bootstrap](/install/vps#3-verify-and-run-the-hosting-bootstrap).
 
-       ```bash
-       curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-         | bash -s -- --hosting
-       ```
-
-    The installer selects the latest stable tag, verifies the tagged Hosting
+    The procedure verifies the exact tagged bootstrap before it runs. The
+    installer then verifies the tagged Hosting
     release artifacts and attestations, installs or starts Tailscale on the
     VPS, creates the non-root `app` runtime, and guides private dashboard/SSH
     access. Open the Tailscale login URL it prints on your own computer.

@@ -92,7 +92,7 @@ describe("attested Hosting installer artifact layout", () => {
     }
   });
 
-  it("dispatches streamed fresh Hosting through the automatic attested bundle bootstrap", () => {
+  it("rejects streamed Hosting before any bootstrap logic can execute", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-hosting-stream-dispatch-"));
     try {
       const fakeBin = path.join(tempRoot, "bin");
@@ -108,11 +108,9 @@ describe("attested Hosting installer artifact layout", () => {
       });
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain(
-        "VPS Hosting bootstrap must start in the provider's root console",
-      );
-      expect(result.stderr).not.toContain("Refusing streamed VPS Hosting execution");
-      expect(result.stderr).not.toContain("VPS Hosting requires an explicit tagged release");
+      expect(result.stderr).toContain("Refusing streamed VPS Hosting execution");
+      expect(result.stderr).toContain("verify the exact tagged install.sh before execution");
+      expect(result.stderr).not.toContain("VPS Hosting bootstrap must start");
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -150,35 +148,46 @@ describe("attested Hosting installer artifact layout", () => {
     }
   });
 
-  it("documents the automatic fresh Hosting bootstrap but never streams Hosting repair", () => {
-    const activeInstallDocs = [
-      "docs/install/index.md",
-      "docs/install/installer.md",
-      "docs/install/updating.md",
-      "docs/install/vps.md",
-    ];
-    const streamedFreshHostingDocs: string[] = [];
-    const streamedRepairOffenders: string[] = [];
-    for (const relativePath of activeInstallDocs) {
-      const contents = fs.readFileSync(path.join(root, relativePath), "utf8");
-      const codeBlocks =
-        contents.match(/^[ \t]*```(?:bash|sh)[^\n]*\n[\s\S]*?^[ \t]*```[ \t]*$/gm) ?? [];
-      for (const block of codeBlocks) {
-        if (
-          block.includes("raw.githubusercontent.com/fased-ai/fased") &&
-          /--hosting\b/.test(block)
-        ) {
-          streamedFreshHostingDocs.push(relativePath);
+  it("never documents a mutable streamed Hosting bootstrap", () => {
+    const docsRoot = path.join(root, "docs");
+    const pending = [docsRoot];
+    const streamedHostingOffenders: string[] = [];
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (!current) {
+        continue;
+      }
+      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+        const absolutePath = path.join(current, entry.name);
+        if (entry.isDirectory()) {
+          pending.push(absolutePath);
+          continue;
         }
-        if (
-          block.includes("raw.githubusercontent.com/fased-ai/fased") &&
-          /--repair-hosting\b/.test(block)
-        ) {
-          streamedRepairOffenders.push(`${relativePath}: ${block}`);
+        if (!entry.isFile() || !/\.(?:md|mdx)$/.test(entry.name)) {
+          continue;
+        }
+        const relativePath = path.relative(root, absolutePath);
+        const contents = fs.readFileSync(absolutePath, "utf8");
+        const codeBlocks =
+          contents.match(/^[ \t]*```(?:bash|sh)[^\n]*\n[\s\S]*?^[ \t]*```[ \t]*$/gm) ?? [];
+        for (const block of codeBlocks) {
+          if (
+            block.includes("raw.githubusercontent.com/fased-ai/fased") &&
+            /--hosting\b/.test(block)
+          ) {
+            streamedHostingOffenders.push(`${relativePath}: ${block}`);
+          }
         }
       }
     }
-    expect(new Set(streamedFreshHostingDocs)).toEqual(new Set(activeInstallDocs));
-    expect(streamedRepairOffenders).toEqual([]);
+    expect(streamedHostingOffenders).toEqual([]);
+
+    const vpsGuide = fs.readFileSync(path.join(root, "docs/install/vps.md"), "utf8");
+    const verify = vpsGuide.indexOf('gh attestation verify "$BOOTSTRAP_DIR/install.sh"');
+    const execute = vpsGuide.indexOf(
+      'bash "$BOOTSTRAP_DIR/install.sh" --hosting --release "$RELEASE"',
+    );
+    expect(verify).toBeGreaterThanOrEqual(0);
+    expect(execute).toBeGreaterThan(verify);
   });
 });

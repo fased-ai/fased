@@ -73,10 +73,9 @@ There are two different Windows workflows:
 
     3. After the prompt changes to the remote Linux VPS, run:
 
-       ```bash
-       curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-         | bash -s -- --hosting
-       ```
+       Follow the
+       [verified Hosting bootstrap](/install/vps#3-verify-and-run-the-hosting-bootstrap)
+       in that VPS SSH session.
 
     The Bash command runs on the VPS through SSH. The installer installs or
     starts Tailscale on the VPS and prints the login URL to open in Windows.

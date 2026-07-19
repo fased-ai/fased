@@ -45,16 +45,40 @@ ssh root@YOUR_PUBLIC_VPS_IP
 
 The remaining commands run **inside this VPS SSH session**.
 
-### 3. Run one Hosting command
+### 3. Verify and run the Hosting bootstrap
+
+Install a current [GitHub CLI](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)
+with `gh attestation verify` on the VPS, then run this block. The exact release
+bootstrap is downloaded as data, verified against the Fased release workflow,
+and only then executed:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-  | bash -s -- --hosting
+(
+set -euo pipefail
+RELEASE=v0.1.65
+BOOTSTRAP_DIR="$(mktemp -d)"
+trap 'rm -rf "$BOOTSTRAP_DIR"' EXIT
+
+curl -fsSLo "$BOOTSTRAP_DIR/install.sh" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh"
+curl -fsSLo "$BOOTSTRAP_DIR/install.sh.attestation.json" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh.attestation.json"
+
+GH_PROMPT_DISABLED=1 gh attestation verify "$BOOTSTRAP_DIR/install.sh" \
+  --repo fased-ai/fased \
+  --bundle "$BOOTSTRAP_DIR/install.sh.attestation.json" \
+  --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+  --source-ref "refs/tags/${RELEASE}" \
+  --deny-self-hosted-runners
+
+chmod 0500 "$BOOTSTRAP_DIR/install.sh"
+bash "$BOOTSTRAP_DIR/install.sh" --hosting --release "$RELEASE"
+)
 ```
 
 The installer automatically:
 
-- resolves the latest stable Fased tag;
+- installs the exact stable Fased tag named in `RELEASE`;
 - verifies the tagged release manifest and architecture-specific Hosting
   bundle with GitHub attestations before privileged Fased installation;
 - installs or starts Tailscale on the VPS through signed package repositories;
@@ -97,42 +121,18 @@ fased dashboard
 Open the printed `https://...ts.net/` dashboard URL on a device signed into the
 same Tailscale account. Save the Gateway recovery token.
 
-## Advanced: verify the bootstrap first
+## Advanced verification and exact release selection
 
 <Accordion title="Manual pre-execution attestation verification">
-  The normal one-command installer verifies tagged Fased artifacts after the
-  first script starts. If your threat model also requires verification of
-  `install.sh` before any downloaded shell code runs, choose an exact release
-  tag and run this from the VPS provider root console:
+  The normal procedure above already performs pre-execution verification.
+  Advanced operators may replace `RELEASE` with another exact stable tag,
+  inspect the downloaded script before the final `bash`, or retain the
+  attestation JSON with their installation records. Never replace the exact
+  tag with `main`, `latest`, or another moving reference.
 
-```bash
-(
-set -euo pipefail
-RELEASE=vX.Y.Z
-BOOTSTRAP_DIR="$(mktemp -d)"
-trap 'rm -rf "$BOOTSTRAP_DIR"' EXIT
-chmod 0700 "$BOOTSTRAP_DIR"
-
-curl -fsSLo "$BOOTSTRAP_DIR/install.sh" \
-  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh"
-curl -fsSLo "$BOOTSTRAP_DIR/install.sh.attestation.json" \
-  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh.attestation.json"
-
-GH_PROMPT_DISABLED=1 gh attestation verify "$BOOTSTRAP_DIR/install.sh" \
-  --repo fased-ai/fased \
-  --bundle "$BOOTSTRAP_DIR/install.sh.attestation.json" \
-  --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-  --source-ref "refs/tags/${RELEASE}" \
-  --deny-self-hosted-runners
-
-chmod 0500 "$BOOTSTRAP_DIR/install.sh"
-bash "$BOOTSTRAP_DIR/install.sh" --hosting --release "$RELEASE"
-)
-```
-
-Stop if download or attestation verification fails. This advanced procedure
-adds a check on the first bootstrap script; both paths use the same verified
-tagged Hosting runtime and the same installer wizard.
+For emergency repair, use the same verified block and change only the final
+invocation to `--repair-hosting --release "$RELEASE"`. A repair never accepts
+streamed shell input.
 </Accordion>
 
 ## Updates
@@ -152,7 +152,7 @@ does not need `--repair-hosting`.
   <Accordion title="Emergency Hosting repair">
     Use repair only if the root-managed updater or service is broken. From the
     VPS provider root console, download and attest an exact tagged `install.sh`
-    with the advanced procedure above, then replace its final command with:
+    with the verified procedure above, then replace its final command with:
 
     ```bash
     bash "$BOOTSTRAP_DIR/install.sh" --repair-hosting --release "$RELEASE"

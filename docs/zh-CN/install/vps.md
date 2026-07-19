@@ -26,16 +26,35 @@ ssh root@YOUR_PUBLIC_VPS_IP
 
 下面的命令只在这个远程 VPS SSH 会话中运行。
 
-### 3. 运行一条 Hosting 命令
+### 3. 验证并运行 Hosting bootstrap
+
+先在 VPS 安装支持 `gh attestation verify` 的当前版
+[GitHub CLI](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)，然后运行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-  | bash -s -- --hosting
+(
+set -euo pipefail
+RELEASE=v0.1.65
+BOOTSTRAP_DIR="$(mktemp -d)"
+trap 'rm -rf "$BOOTSTRAP_DIR"' EXIT
+curl -fsSLo "$BOOTSTRAP_DIR/install.sh" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh"
+curl -fsSLo "$BOOTSTRAP_DIR/install.sh.attestation.json" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh.attestation.json"
+GH_PROMPT_DISABLED=1 gh attestation verify "$BOOTSTRAP_DIR/install.sh" \
+  --repo fased-ai/fased \
+  --bundle "$BOOTSTRAP_DIR/install.sh.attestation.json" \
+  --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+  --source-ref "refs/tags/${RELEASE}" \
+  --deny-self-hosted-runners
+chmod 0500 "$BOOTSTRAP_DIR/install.sh"
+bash "$BOOTSTRAP_DIR/install.sh" --hosting --release "$RELEASE"
+)
 ```
 
 安装器会自动：
 
-- 选择最新 stable tag；
+- 安装 `RELEASE` 指定的精确 stable tag；
 - 在安装特权 Fased 资产前验证 tagged release manifest、对应架构 bundle 和
   GitHub attestation；
 - 通过签名 package repository 在 VPS 安装/启动 Tailscale；
@@ -66,37 +85,15 @@ fased health
 fased dashboard
 ```
 
-## Advanced: verify the bootstrap first
+## 高级验证与精确 release 选择
 
 <Accordion title="在运行 install.sh 前手动验证 attestation">
-  普通一条命令流程会在首个脚本启动后验证 tagged Fased artifacts。如果你的
-  threat model 还要求在任何下载 shell 代码运行前验证 `install.sh`，请选择
-  精确 release tag，并从 provider root console 运行：
+  上面的普通流程已经在执行前验证 bootstrap。高级用户可以把 `RELEASE` 改为
+  另一个精确 stable tag、在最后的 `bash` 前检查脚本，或保存 attestation JSON
+  作为安装记录。不要使用 `main`、`latest` 或其他移动引用。
 
-```bash
-(
-set -euo pipefail
-RELEASE=vX.Y.Z
-BOOTSTRAP_DIR="$(mktemp -d)"
-trap 'rm -rf "$BOOTSTRAP_DIR"' EXIT
-chmod 0700 "$BOOTSTRAP_DIR"
-curl -fsSLo "$BOOTSTRAP_DIR/install.sh" \
-  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh"
-curl -fsSLo "$BOOTSTRAP_DIR/install.sh.attestation.json" \
-  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh.attestation.json"
-GH_PROMPT_DISABLED=1 gh attestation verify "$BOOTSTRAP_DIR/install.sh" \
-  --repo fased-ai/fased \
-  --bundle "$BOOTSTRAP_DIR/install.sh.attestation.json" \
-  --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-  --source-ref "refs/tags/${RELEASE}" \
-  --deny-self-hosted-runners
-chmod 0500 "$BOOTSTRAP_DIR/install.sh"
-bash "$BOOTSTRAP_DIR/install.sh" --hosting --release "$RELEASE"
-)
-```
-
-任何下载或验证失败都必须停止。此高级流程只增加首次脚本的执行前检查；两种
-流程使用同一个 verified tagged Hosting runtime 和 wizard。
+紧急修复使用同一个 verified block，只把最后一行改为
+`--repair-hosting --release "$RELEASE"`。修复流程不接受 streamed shell 输入。
 </Accordion>
 
 ## 更新和恢复

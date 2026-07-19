@@ -126,16 +126,13 @@ Choose the setup profile first.
     ssh root@YOUR_PUBLIC_VPS_IP
     ```
 
-    Run the hosted installer **inside the VPS SSH session**:
-
-    ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-      | bash -s -- --hosting
-    ```
+    Follow the
+    [verified Hosting bootstrap](/install/vps#3-verify-and-run-the-hosting-bootstrap)
+    **inside the VPS SSH session**.
 
     It verifies the tagged Hosting release and installs/starts Tailscale on the
     VPS automatically. See [VPS Hosting](/install/vps) for access checks and
-    the optional manual attestation procedure.
+    advanced release-selection and attestation details.
 
     Do not paste the hosted command into local PowerShell or Terminal unless
     that shell is already connected to the VPS.
@@ -165,8 +162,7 @@ Simple command recap:
 # Local: run on this computer (inside Ubuntu WSL2 on Windows)
 curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
 
-# VPS Hosting: run inside the VPS provider root SSH session
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting
+# VPS Hosting: SSH into the VPS, then follow /install/vps
 
 # Continue setup if interrupted
 fased onboard --install-daemon

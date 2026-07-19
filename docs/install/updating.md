@@ -50,14 +50,11 @@ fased update
 After hosted onboarding, SSH as `app` should open directly in `/home/app/fased`.
 If it does not, fix the hosted login/shell setup before updating.
 
-For a fresh hosted VPS, run this in the VPS provider root shell:
+For a fresh hosted VPS, use the
+[pre-execution verified Hosting bootstrap](/install/vps#3-verify-and-run-the-hosting-bootstrap)
+from the VPS provider root shell.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-  | bash -s -- --hosting
-```
-
-The first script resolves the stable release and verifies the tagged Hosting
+The verified script installs the exact selected release and verifies the tagged Hosting
 artifacts before privileged Fased installation. Users who require verification
 before the first script runs can use the expandable advanced procedure in
 [VPS Hosting](/install/vps#advanced-verify-the-bootstrap-first).
