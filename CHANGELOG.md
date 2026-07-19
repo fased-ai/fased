@@ -4,6 +4,23 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.66
+
+- Keep normal wallet onboarding to wallet role plus one primary Solana RPC,
+  infer the supported cluster from its genesis hash, and reserve an optional
+  second full execution RPC for advanced failover.
+- Separate signer execution RPCs from the verification-only public witness;
+  pin same-genesis configuration and confine public agreement to sensitive
+  address lookup-table account bytes and slots.
+- Complete signer-owned typed lookup-table lifecycle, durable forward/reverse
+  bindings and mutation leases, exact-byte replay, effect reconciliation,
+  collision recovery, stale-reservation fencing, and cleanup recovery.
+- Make the short Hosting installer bootstrap an exact immutable release before
+  privileged execution, preserve the root signer-control boundary, and retain
+  the advanced manually attested installation path.
+- Show unpaid keeper bounty in the live Mining current-cycle card and preserve
+  it across refresh and reconciliation.
+
 ## 0.1.65
 
 - Add rent-aware SAT settlement accounting, durable submission serialization
