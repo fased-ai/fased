@@ -322,14 +322,23 @@ function parseCookies(raw: string | undefined): Map<string, string> {
   return cookies;
 }
 
-function isLocalHostName(host: string): boolean {
+function normalizeHostName(host: string): string {
   const raw = host.trim().toLowerCase();
-  const normalized = raw.startsWith("[")
+  return raw.startsWith("[")
     ? (() => {
         const end = raw.indexOf("]");
         return end > 0 ? raw.slice(1, end) : raw;
       })()
     : raw.replace(/:\d+$/, "");
+}
+
+function isLiteralLoopbackHostName(host: string): boolean {
+  const normalized = normalizeHostName(host);
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
+}
+
+function isLocalHostName(host: string): boolean {
+  const normalized = normalizeHostName(host);
   return (
     normalized === "localhost" ||
     normalized === "127.0.0.1" ||
@@ -344,7 +353,19 @@ function isLoopbackBrowserOrigin(origin: string): boolean {
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return false;
     }
-    return isLocalHostName(parsed.host);
+    return isLiteralLoopbackHostName(parsed.host);
+  } catch {
+    return false;
+  }
+}
+
+function isSameBrowserOriginHost(origin: string, host: string): boolean {
+  try {
+    const parsed = new URL(origin);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return false;
+    }
+    return parsed.host.toLowerCase() === host.trim().toLowerCase();
   } catch {
     return false;
   }
@@ -376,7 +397,10 @@ function applyLoopbackCorsIfAllowed(
   if (!origin) {
     return false;
   }
-  if (!isLocalHostName(host) || !isLoopbackBrowserOrigin(origin)) {
+  if (
+    !isLocalHostName(host) ||
+    (!isLoopbackBrowserOrigin(origin) && !isSameBrowserOriginHost(origin, host))
+  ) {
     return false;
   }
   res.setHeader("Access-Control-Allow-Origin", origin);
@@ -4428,17 +4452,19 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
       const ensureWalletApiAuthorized = async (): Promise<boolean> => {
         if (directLocalRequest) {
           const requestOrigin = String(getHeader(req, "origin") ?? "").trim();
-          if (!requestOrigin || loopbackCorsApplied) {
+          if (!requestOrigin || isLoopbackBrowserOrigin(requestOrigin)) {
             return true;
           }
-          sendLoginResponse(403, {
-            ok: false,
-            error: {
-              code: "forbidden_origin",
-              message: "cross-origin browser requests are not allowed on the loopback wallet API",
-            },
-          });
-          return false;
+          if (!loopbackCorsApplied) {
+            sendLoginResponse(403, {
+              ok: false,
+              error: {
+                code: "forbidden_origin",
+                message: "cross-origin browser requests are not allowed on the loopback wallet API",
+              },
+            });
+            return false;
+          }
         }
         let authorized = false;
         const bearer = getBearerToken(req);
@@ -4479,6 +4505,8 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           | "wallet.settings"
           | "wallet.policy"
           | "wallet.provider-credentials"
+          | "wallet.network"
+          | "wallet.archive"
           | "mining.capital"
           | "mining.policy";
         requestId?: string;
@@ -6230,8 +6258,11 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               });
               return;
             }
+            const cfg = loadConfig();
+            if (!ensureWalletApprovalAuthorized({ operation: "wallet.network", cfg })) {
+              return;
+            }
             try {
-              const cfg = loadConfig();
               const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
               const signerWalletId = resolveNativeSignerWalletId(existing);
               const network = await configureSignerOwnedWalletNetwork({
@@ -6434,9 +6465,12 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             return;
           }
           if (existing.providerId === "local-socket-signer" && archiveRequested) {
+            const cfg = loadConfig();
+            if (!ensureWalletApprovalAuthorized({ operation: "wallet.archive", cfg })) {
+              return;
+            }
             let archivedPolicy;
             try {
-              const cfg = loadConfig();
               const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
               archivedPolicy = await lockSignerOwnedWalletForArchive({
                 wallet: existing,
@@ -8904,6 +8938,8 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           operation !== "wallet.policy" &&
           operation !== "wallet.settings" &&
           operation !== "wallet.provider-credentials" &&
+          operation !== "wallet.network" &&
+          operation !== "wallet.archive" &&
           operation !== "wallet.passkey-enroll" &&
           operation !== "wallet.passkey-remove" &&
           operation !== "wallet.reset" &&
@@ -9040,6 +9076,8 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           operation !== "wallet.policy" &&
           operation !== "wallet.settings" &&
           operation !== "wallet.provider-credentials" &&
+          operation !== "wallet.network" &&
+          operation !== "wallet.archive" &&
           operation !== "wallet.passkey-enroll" &&
           operation !== "wallet.passkey-remove" &&
           operation !== "wallet.reset" &&

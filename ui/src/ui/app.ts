@@ -5203,7 +5203,10 @@ export class FasedAgentApp extends LitElement {
     this.walletSettingsError = null;
     this.walletSettingsMessage = null;
     try {
-      await updateWalletNamedWallet({ walletId, rpcUrl });
+      const approvalToken = await this.resolveWalletApprovalToken({
+        operation: "wallet.network",
+      });
+      await updateWalletNamedWallet({ walletId, rpcUrl }, approvalToken ?? undefined);
       this.walletRpcUrl = "";
       this.walletSettingsMessage =
         "Signer-owned primary RPC updated and verified against the wallet's pinned genesis.";
@@ -5570,10 +5573,16 @@ export class FasedAgentApp extends LitElement {
     this.walletSettingsError = null;
     this.walletSettingsMessage = null;
     try {
-      await deleteWalletNamedWallet({
-        walletId,
-        ...(archive ? { archive: true, confirmWalletId: walletId } : {}),
-      });
+      const approvalToken = archive
+        ? await this.resolveWalletApprovalToken({ operation: "wallet.archive" })
+        : null;
+      await deleteWalletNamedWallet(
+        {
+          walletId,
+          ...(archive ? { archive: true, confirmWalletId: walletId } : {}),
+        },
+        approvalToken ?? undefined,
+      );
       if ((this.walletSendCreateForm.walletId ?? "") === walletId) {
         this.walletSendCreateForm = { ...this.walletSendCreateForm, walletId: "" };
       }
@@ -5688,6 +5697,8 @@ export class FasedAgentApp extends LitElement {
       | "wallet.policy"
       | "wallet.settings"
       | "wallet.provider-credentials"
+      | "wallet.network"
+      | "wallet.archive"
       | "wallet.passkey-enroll"
       | "wallet.passkey-remove"
       | "wallet.execution-mode"

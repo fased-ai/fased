@@ -119,7 +119,10 @@ function createResponse(): {
   setHeader: ReturnType<typeof vi.fn>;
 } {
   let body = "";
-  const setHeader = vi.fn();
+  const responseHeaders = new Map<string, string | number | readonly string[]>();
+  const setHeader = vi.fn((name: string, value: string | number | readonly string[]) => {
+    responseHeaders.set(name.toLowerCase(), value);
+  });
   const pushChunk = (chunk?: unknown) => {
     if (typeof chunk === "string") {
       body += chunk;
@@ -133,6 +136,7 @@ function createResponse(): {
     statusCode: 200,
     headersSent: false,
     setHeader,
+    getHeader: vi.fn((name: string) => responseHeaders.get(name.toLowerCase())),
     write: vi.fn((chunk?: unknown) => {
       pushChunk(chunk);
       return true;
@@ -231,6 +235,7 @@ test("rejects cross-origin browser mutations on the unauthenticated loopback wal
         createRequest({
           method: "POST",
           path: "/api/wallet/wallets",
+          host: "127.0.0.1:18789",
           origin: "https://evil.example",
           body: {
             providerId: "wallet-standard",
@@ -249,6 +254,57 @@ test("rejects cross-origin browser mutations on the unauthenticated loopback wal
       });
       expect(readWalletProviderRegistry(process.env).wallets).not.toContainEqual(
         expect.objectContaining({ id: "csrf-vault" }),
+      );
+
+      const dotLocalResponse = createResponse();
+      await dispatch(
+        server,
+        createRequest({
+          method: "POST",
+          path: "/api/wallet/wallets",
+          host: "127.0.0.1:18789",
+          origin: "https://attacker.local",
+          body: {
+            providerId: "wallet-standard",
+            walletId: "dot-local-vault",
+            name: "Dot Local Vault",
+            role: "vault",
+            address: "11111111111111111111111111111111",
+          },
+        }),
+        dotLocalResponse.res,
+      );
+      expect(dotLocalResponse.res.statusCode).toBe(403);
+      expect(JSON.parse(dotLocalResponse.getBody())).toMatchObject({
+        ok: false,
+        error: { code: "forbidden_origin" },
+      });
+      expect(readWalletProviderRegistry(process.env).wallets).not.toContainEqual(
+        expect.objectContaining({ id: "dot-local-vault" }),
+      );
+
+      const sameHostResponse = createResponse();
+      await dispatch(
+        server,
+        createRequest({
+          method: "POST",
+          path: "/api/wallet/wallets",
+          host: "fased.local",
+          origin: "https://fased.local",
+          authorization: "Bearer root-token",
+          body: {
+            providerId: "wallet-standard",
+            walletId: "authenticated-local-vault",
+            name: "Authenticated Local Vault",
+            role: "vault",
+            address: "11111111111111111111111111111111",
+          },
+        }),
+        sameHostResponse.res,
+      );
+      expect(sameHostResponse.res.statusCode).toBe(200);
+      expect(readWalletProviderRegistry(process.env).wallets).toContainEqual(
+        expect.objectContaining({ id: "authenticated-local-vault" }),
       );
     },
   });
@@ -1726,6 +1782,133 @@ describe("wallet providers HTTP", () => {
           ok: false,
           error: { code: "wallet_in_use" },
         });
+      },
+    });
+  });
+
+  test("requires Wallet Control approval before updating a signer-owned primary RPC", async () => {
+    await withTempConfig({
+      cfg: {
+        ...baseConfig,
+        wallet: {
+          ...baseConfig.wallet,
+          approvalAuth: { mode: "webauthn" },
+        },
+      },
+      run: async () => {
+        upsertNamedWallet({
+          walletId: "agent-wallet",
+          name: "Agent Wallet",
+          providerId: "local-socket-signer",
+          metadata: {
+            role: "agent",
+            purpose: "agent",
+            signerWalletId: "agent_wallet",
+          },
+          env: process.env,
+        });
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: false,
+          controlUiBasePath: "/ui",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          resolvedAuth,
+        });
+        const response = createResponse();
+        await dispatch(
+          server,
+          createRequest({
+            method: "PATCH",
+            path: "/api/wallet/wallets",
+            authorization: "Bearer root-token",
+            body: {
+              walletId: "agent-wallet",
+              rpcUrl: "https://rpc.example/solana",
+            },
+          }),
+          response.res,
+        );
+        expect(response.res.statusCode).toBe(401);
+        expect(JSON.parse(response.getBody())).toMatchObject({
+          ok: false,
+          error: { code: "wallet_control_passkey_not_ready" },
+        });
+      },
+    });
+  });
+
+  test("requires Wallet Control approval before archiving a signer-owned wallet", async () => {
+    await withTempConfig({
+      cfg: {
+        ...baseConfig,
+        wallet: {
+          ...baseConfig.wallet,
+          approvalAuth: { mode: "webauthn" },
+        },
+        env: {
+          vars: {
+            FASED_WALLET_SOLANA_RPC_URL__MINER_WALLET: "https://rpc.example/solana",
+          },
+        },
+        plugins: {
+          entries: {
+            "sat-mining": {
+              enabled: true,
+              config: { walletId: "miner-wallet", network: "devnet", riskMode: "balanced" },
+            },
+          },
+        },
+      },
+      run: async () => {
+        upsertNamedWallet({
+          walletId: "miner-wallet",
+          name: "Miner Wallet",
+          providerId: "local-socket-signer",
+          metadata: {
+            role: "mining",
+            purpose: "mining",
+            signerWalletId: "miner_wallet",
+          },
+          env: process.env,
+        });
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: false,
+          controlUiBasePath: "/ui",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          resolvedAuth,
+        });
+        const response = createResponse();
+        await dispatch(
+          server,
+          createRequest({
+            method: "DELETE",
+            path: "/api/wallet/wallets",
+            authorization: "Bearer root-token",
+            body: {
+              walletId: "miner-wallet",
+              archive: true,
+              confirmWalletId: "miner-wallet",
+            },
+          }),
+          response.res,
+        );
+        expect(response.res.statusCode).toBe(401);
+        expect(JSON.parse(response.getBody())).toMatchObject({
+          ok: false,
+          error: { code: "wallet_control_passkey_not_ready" },
+        });
+        expect(
+          readWalletProviderRegistry(process.env).wallets.some(
+            (wallet) => wallet.id === "miner-wallet",
+          ),
+        ).toBe(true);
       },
     });
   });
