@@ -1310,7 +1310,7 @@ export function buildLiveCurrentCycleMetricRows(params: {
   minerCount: number | null;
   keeperBountyUnpaidLamports?: string | null;
 }): Array<{ label: string; value: string; title?: string }> {
-  const rows = [
+  const rows: Array<{ label: string; value: string; title?: string }> = [
     {
       label: "Cycle",
       value: params.cycleId != null ? String(params.cycleId) : "—",
