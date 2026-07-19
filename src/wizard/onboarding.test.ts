@@ -10,7 +10,7 @@ import type { WizardPrompter } from "./prompts.js";
 const healthCommand = vi.hoisted(() => vi.fn(async () => {}));
 const ensureWorkspaceAndSessions = vi.hoisted(() => vi.fn(async () => {}));
 const handleOnboardingRepair = vi.hoisted(() => vi.fn(async () => {}));
-const writeConfigFile = vi.hoisted(() => vi.fn(async () => {}));
+const writeConfigFile = vi.hoisted(() => vi.fn<(config: unknown) => Promise<void>>(async () => {}));
 const readConfigFileSnapshot = vi.hoisted(() =>
   vi.fn(async () => ({ exists: false, valid: true, config: {} })),
 );
@@ -44,7 +44,7 @@ const applyHostingSecurity = vi.hoisted(() =>
   vi.fn(async ({ opts }) => ({ profile: opts.hostProfile ?? "local", checks: [] })),
 );
 const walletSetupCommand = vi.hoisted(() =>
-  vi.fn(async (_runtime: unknown, _options: unknown) => {}),
+  vi.fn<(runtime: unknown, options: Record<string, unknown>) => Promise<void>>(async () => {}),
 );
 const collectWalletSignerDoctorReport = vi.hoisted(() =>
   vi.fn(async () => ({

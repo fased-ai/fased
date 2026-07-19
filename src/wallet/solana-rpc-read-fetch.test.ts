@@ -1,4 +1,4 @@
-import { createServer } from "node:http";
+import { createServer, type RequestListener } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { fetchPinnedSolanaRpcRead } from "./solana-rpc-read-fetch.js";
@@ -6,7 +6,7 @@ import { fetchPinnedSolanaRpcRead } from "./solana-rpc-read-fetch.js";
 const servers: ReturnType<typeof createServer>[] = [];
 
 async function listen(
-  handler: Parameters<typeof createServer>[0],
+  handler: RequestListener,
 ): Promise<{ server: ReturnType<typeof createServer>; url: string }> {
   const server = createServer(handler);
   servers.push(server);
