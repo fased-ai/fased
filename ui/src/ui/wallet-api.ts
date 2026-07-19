@@ -1258,30 +1258,46 @@ export async function createWalletNamedWallet(input: {
   });
 }
 
-export async function updateWalletNamedWallet(input: {
-  walletId: string;
-  role?: "agent" | "mining" | "vault";
-  rpcUrl?: string;
-}): Promise<{ ok: true; wallet: WalletNamedWallet }> {
+export async function updateWalletNamedWallet(
+  input: {
+    walletId: string;
+    role?: "agent" | "mining" | "vault";
+    rpcUrl?: string;
+  },
+  approvalToken?: string,
+): Promise<{ ok: true; wallet: WalletNamedWallet }> {
   return await fetchJson<{ ok: true; wallet: WalletNamedWallet }>("/api/wallet/wallets", {
     method: "PATCH",
     cache: "no-store",
     credentials: "include",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(approvalToken && approvalToken.trim()
+        ? { "x-wallet-approval-token": approvalToken.trim() }
+        : {}),
+    },
     body: JSON.stringify(input),
   });
 }
 
-export async function deleteWalletNamedWallet(input: {
-  walletId: string;
-  archive?: boolean;
-  confirmWalletId?: string;
-}): Promise<{ ok: true; removed: boolean }> {
+export async function deleteWalletNamedWallet(
+  input: {
+    walletId: string;
+    archive?: boolean;
+    confirmWalletId?: string;
+  },
+  approvalToken?: string,
+): Promise<{ ok: true; removed: boolean }> {
   return await fetchJson<{ ok: true; removed: boolean }>("/api/wallet/wallets", {
     method: "DELETE",
     cache: "no-store",
     credentials: "include",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(approvalToken && approvalToken.trim()
+        ? { "x-wallet-approval-token": approvalToken.trim() }
+        : {}),
+    },
     body: JSON.stringify(input),
   });
 }

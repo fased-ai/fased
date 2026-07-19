@@ -461,6 +461,40 @@ describe("wallet approval-auth HTTP", () => {
     });
   });
 
+  test.each(["wallet.network", "wallet.archive"])(
+    "accepts %s as a valid passkey operation",
+    async (operation) => {
+      await withTempConfig({
+        cfg,
+        run: async () => {
+          const server = createGatewayHttpServer({
+            canvasHost: null,
+            clients: new Set(),
+            controlUiEnabled: false,
+            controlUiBasePath: "/ui",
+            openAiChatCompletionsEnabled: false,
+            openResponsesEnabled: false,
+            handleHooksRequest: async () => false,
+            resolvedAuth,
+          });
+          const response = createResponse();
+          await dispatch(
+            server,
+            createRequest({
+              path: "/api/wallet/approval-auth/assert/options",
+              authorization: "Bearer root-token",
+              body: { operation },
+            }),
+            response.res,
+          );
+          expect(response.res.statusCode).toBe(400);
+          expect(response.getBody()).toContain("webauthn_not_ready");
+          expect(response.getBody()).not.toContain("invalid_operation");
+        },
+      });
+    },
+  );
+
   test("rejects removed custody operations at the Gateway passkey boundary", async () => {
     await withTempConfig({
       cfg,
