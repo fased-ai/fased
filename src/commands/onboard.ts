@@ -68,17 +68,6 @@ export async function onboardCommand(opts: OnboardOptions, runtime: RuntimeEnv =
     await handleOnboardingRepair(repairScope, runtime);
   }
 
-  if (process.platform === "win32") {
-    runtime.log(
-      [
-        "Windows detected — FasedAgent runs great on WSL2!",
-        "Native Windows might be trickier.",
-        "Quick setup: wsl --install (one command, one reboot)",
-        "Guide: https://docs.fased.ai/windows",
-      ].join("\n"),
-    );
-  }
-
   const previousSuppressOverwrite = process.env.FASED_SUPPRESS_CONFIG_OVERWRITE_LOG;
   process.env.FASED_SUPPRESS_CONFIG_OVERWRITE_LOG = "1";
   try {

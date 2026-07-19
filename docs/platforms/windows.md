@@ -19,6 +19,9 @@ There are two different Windows workflows:
     Fased Local requires Windows 11 or Windows 10 version 2004/build 19041 or
     newer. The wallet signer uses Unix sockets, so native Windows Node.js,
     PowerShell, Command Prompt, Git Bash, and WSL1 are not supported runtimes.
+    The published npm package intentionally rejects native Windows with
+    `EBADPLATFORM`; do not override npm's platform check. WSL2 reports Linux and
+    receives the supported Linux package and signer asset.
 
     ### 1. Administrator PowerShell
 

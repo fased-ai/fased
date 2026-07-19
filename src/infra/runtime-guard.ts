@@ -18,6 +18,7 @@ export type RuntimeDetails = {
   version: string | null;
   execPath: string | null;
   pathEnv: string;
+  platform?: NodeJS.Platform;
   sqliteAvailable?: boolean;
 };
 
@@ -61,6 +62,7 @@ export function detectRuntime(): RuntimeDetails {
     version,
     execPath: process.execPath ?? null,
     pathEnv: process.env.PATH ?? "(not set)",
+    platform: process.platform,
     sqliteAvailable: kind === "node" ? detectNodeSqliteSupport() : false,
   };
 }
@@ -75,6 +77,10 @@ function detectNodeSqliteSupport(): boolean {
 }
 
 export function runtimeSatisfies(details: RuntimeDetails): boolean {
+  const platform = details.platform ?? process.platform;
+  if (platform === "win32") {
+    return false;
+  }
   const parsed = parseSemver(details.version);
   if (details.kind === "node") {
     return isAtLeast(parsed, MIN_NODE) && details.sqliteAvailable !== false;
@@ -91,6 +97,20 @@ export function assertSupportedRuntime(
   details: RuntimeDetails = detectRuntime(),
 ): void {
   if (runtimeSatisfies(details)) {
+    return;
+  }
+
+  const platform = details.platform ?? process.platform;
+  if (platform === "win32") {
+    runtime.error(
+      [
+        "Native Windows is not a supported Fased runtime.",
+        "Install Ubuntu in WSL2, enable systemd, and run Fased inside the Ubuntu shell.",
+        "PowerShell is supported only for installing WSL2 or connecting to a remote Linux VPS.",
+        "Guide: https://docs.fased.ai/platforms/windows",
+      ].join("\n"),
+    );
+    runtime.exit(1);
     return;
   }
 

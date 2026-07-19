@@ -81,6 +81,10 @@
     "!extensions/runtime-openai/",
     "!extensions/runtime-speech/"
   ],
+  "os": [
+    "linux",
+    "darwin"
+  ],
   "type": "module",
   "main": "dist/index.js",
   "exports": {
