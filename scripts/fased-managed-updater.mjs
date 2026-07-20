@@ -291,7 +291,9 @@ async function downloadToFile(url, destination, timeoutMs) {
     cache: "no-store",
   });
   if (!response.ok || !response.body) {
-    throw new Error(`Download failed (${response.status}): ${url}`);
+    const error = new Error(`Download failed (${response.status}): ${url}`);
+    error.statusCode = response.status;
+    throw error;
   }
   await fsp.mkdir(path.dirname(destination), { recursive: true });
   await pipeline(
@@ -3372,7 +3374,7 @@ async function updateManagedRuntime(options) {
     try {
       let unifiedRelease = null;
       let unifiedReleasePath = null;
-      if (existingManifest.profile === "hosting") {
+      try {
         unifiedReleasePath = path.join(temporaryRoot, "fased-hosted-release-v2.json");
         await measureStage(timings, "unified release manifest", async () => {
           await downloadToFile(
@@ -3387,6 +3389,12 @@ async function updateManagedRuntime(options) {
             await readHostedReleaseManifestV2(unifiedReleasePath, { version: targetVersion })
           ).manifest;
         });
+      } catch (error) {
+        if (existingManifest.profile === "hosting" || error?.statusCode !== 404) {
+          throw error;
+        }
+        unifiedReleasePath = null;
+        unifiedRelease = null;
       }
       const appArtifact = unifiedRelease?.application?.linux?.[arch]?.artifact;
       const assetName =
