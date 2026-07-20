@@ -73,9 +73,10 @@ func TestSignerSchemaMigrationCreatesDurablePreMigrationBackup(t *testing.T) {
 		t.Fatalf("close migrated store: %v", err)
 	}
 
-	backups, err := filepath.Glob(path + ".pre-v6-*.bak")
+	backupPattern := fmt.Sprintf("%s.pre-v%d-*.bak", path, signerStateSchemaVersionV2)
+	backups, err := filepath.Glob(backupPattern)
 	if err != nil || len(backups) != 1 {
-		t.Fatalf("expected one pre-v6 backup, backups=%#v err=%v", backups, err)
+		t.Fatalf("expected one pre-v%d backup, backups=%#v err=%v", signerStateSchemaVersionV2, backups, err)
 	}
 	backupInfo, err := os.Stat(backups[0])
 	if err != nil || backupInfo.Mode().Perm() != 0o600 || backupInfo.Size() == 0 {
@@ -122,7 +123,7 @@ func TestSignerSchemaMigrationCreatesDurablePreMigrationBackup(t *testing.T) {
 		t.Fatalf("reopen current schema: %v", err)
 	}
 	_ = reopened.Close()
-	backupsAfterReopen, _ := filepath.Glob(path + ".pre-v6-*.bak")
+	backupsAfterReopen, _ := filepath.Glob(backupPattern)
 	if len(backupsAfterReopen) != 1 {
 		t.Fatalf("current schema was migrated or backed up twice: %#v", backupsAfterReopen)
 	}
@@ -171,7 +172,7 @@ func TestSignerSchemaFourMigrationAddsRotationAndCredentialFence(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	backups, _ := filepath.Glob(path + ".pre-v6-*.bak")
+	backups, _ := filepath.Glob(fmt.Sprintf("%s.pre-v%d-*.bak", path, signerStateSchemaVersionV2))
 	if len(backups) != 1 {
 		t.Fatalf("schema 4 migration did not create exactly one durable backup: %#v", backups)
 	}

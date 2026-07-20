@@ -42,6 +42,7 @@ var signerV2Capabilities = signerCapabilitiesV2{
 		"applicationNetworkBootstrap",
 		"signerOwnedEncryptedRecovery",
 		"signerOwnedRawExport",
+		"restrictedOperatorLifecycle",
 		"typedSolanaTransactions",
 		"typedA2aPaymentMemos",
 		"typedA2aRefundMemos",

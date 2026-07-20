@@ -7,10 +7,6 @@ const networkAdmin = fs.readFileSync(
   new URL("./fased-signer-network-hosting.sh", import.meta.url),
   "utf8",
 );
-const walletImport = fs.readFileSync(
-  new URL("./fased-signer-wallet-import-hosting.sh", import.meta.url),
-  "utf8",
-);
 const onboardingHostSecurity = fs.readFileSync(
   new URL("../src/wizard/onboarding.host-security.ts", import.meta.url),
   "utf8",
@@ -68,6 +64,17 @@ describe("hosted signer security boundary", () => {
       "install_host_signer_and_updater_services()",
     );
     expect(accountBoundary).toContain('gpasswd -d "$target_user" "$admin_group"');
+    expect(accountBoundary).toContain('local gateway_user="${FASED_GATEWAY_USER:-fased-gateway}"');
+    expect(accountBoundary).toContain(
+      'local operator_group="${FASED_OPERATOR_GROUP:-fased-operator}"',
+    );
+    expect(accountBoundary).toContain('local config_group="${FASED_CONFIG_GROUP:-fased-config}"');
+    expect(accountBoundary).toContain(
+      'usermod -g "$gateway_group" -s /usr/sbin/nologin "$gateway_user"',
+    );
+    expect(accountBoundary).toContain('usermod -aG "$operator_group,$config_group" "$target_user"');
+    expect(accountBoundary).toContain('gpasswd -d "$target_user" "$gateway_group"');
+    expect(accountBoundary).toContain('gpasswd -d "$gateway_user" "$operator_group"');
     expect(accountBoundary).toContain("passwordless sudo");
     expect(accountBoundary).not.toContain("NOPASSWD");
     expect(install).not.toContain("install_host_maintenance_sudoers()");
@@ -156,7 +163,7 @@ describe("hosted signer security boundary", () => {
     expect(onboardingHostSecurity).toContain('probe("sudo", ["-n", "true"])');
   });
 
-  it("installs a hardened external signer with only the application socket group shared", () => {
+  it("installs a hardened external signer with distinct application and operator authorities", () => {
     const service = sliceBetween(
       install,
       "install_host_signer_and_updater_services()",
@@ -164,12 +171,28 @@ describe("hosted signer security boundary", () => {
     );
     expect(service).toContain("SupplementaryGroups=${gateway_group}");
     expect(service).toContain("-socket /run/fased-signerd/app.sock");
+    expect(service).toContain("-operator-socket /run/fased-signerd/operator.sock");
     expect(service).toContain("-control-socket /run/fased-signerd/control.sock");
+    expect(service).toContain("-operator-socket-group ${operator_group}");
+    expect(service).toContain("-application-uid ${gateway_uid}");
+    expect(service).toContain("-operator-uid ${operator_uid}");
+    expect(service).toContain("-control-uid ${signer_uid}");
     expect(service).toContain("-state-db /var/lib/fased-signerd/state.db");
     expect(service).toContain("-update-gate /var/lib/fased-signer-update-gate/active");
     expect(service).toContain("/var/lib/fased-signer-update-gate");
     expect(service).toContain("NoNewPrivileges=true");
     expect(service).toContain("ProtectSystem=strict");
+
+    const gatewayService = sliceBetween(
+      install,
+      "install_fixed_host_gateway_service()",
+      "run_tailscale_auth_from_private_file()",
+    );
+    expect(gatewayService).toContain("User=${gateway_user}");
+    expect(gatewayService).toContain("Group=${gateway_group}");
+    expect(gatewayService).toContain("SupplementaryGroups=${config_group}");
+    expect(gatewayService).toContain("UMask=0007");
+    expect(gatewayService).not.toContain("User=${target_user}");
   });
 
   it("keeps hosted network activation root-only and stdin-bound", () => {
@@ -185,21 +208,13 @@ describe("hosted signer security boundary", () => {
     expect(networkAdmin).not.toContain("FASED_HOST_BOOTSTRAP");
   });
 
-  it("keeps hosted wallet import root-console-only and deny-all", () => {
-    expect(walletImport).toContain('if [[ "${EUID}" != "0" ]]');
-    expect(walletImport).toContain("VPS provider root console");
-    expect(walletImport).toContain('"$signer_bin" admin wallet import');
-    expect(walletImport).toContain('--wallet-id "$wallet_id"');
-    expect(walletImport).toContain('--locked-role "$locked_role"');
-    expect(walletImport).toContain("agent|mining|vault)");
-    expect(walletImport).not.toMatch(
-      /export-raw|recovery-export|policy put|network put|eval|source /,
-    );
-    expect(walletImport).not.toContain("private-key");
-    expect(install).toContain(
+  it("retires the root-console import helper in favor of the native operator socket", () => {
+    expect(install).not.toContain(
       'install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-wallet-import-hosting.sh" /usr/local/sbin/fased-signer-wallet-import',
     );
-    expect(install).toContain('"/etc/sudoers.d/fased-signer-wallet-import-${target_user}"');
+    expect(install).toContain("rm -f /usr/local/sbin/fased-signer-wallet-import");
+    expect(install).toContain("-operator-socket /run/fased-signerd/operator.sock");
+    expect(install).toContain("-operator-uid ${operator_uid}");
   });
 
   it("moves legacy custody migration into the verified native signer binary", () => {

@@ -14,6 +14,7 @@ import {
   walletRecoveryExportCommand,
   walletRecoveryImportCommand,
   walletRawExportCommand,
+  walletRpcSetCommand,
   walletRoleSetCommand,
   walletSetupCommand,
   walletSignerServeCommand,
@@ -58,8 +59,9 @@ export function registerWalletCommands(program: Command) {
     });
 
   recovery
-    .command("import")
-    .description("Restore an encrypted signer recovery package into a new Local wallet")
+    .command("restore")
+    .alias("import")
+    .description("Restore an encrypted signer recovery package into a new signer-owned wallet")
     .requiredOption("--wallet-id <id>", "New registered signer-owned wallet id")
     .requiredOption("--wallet-name <name>", "Wallet display name")
     .requiredOption("--role <role>", "Permanent signer role: agent|mining|vault")
@@ -92,6 +94,94 @@ export function registerWalletCommands(program: Command) {
           walletId: String(opts.walletId),
           output: String(opts.output),
           acknowledgeCustodyReduction: Boolean(opts.acknowledgeCustodyReduction),
+        });
+      });
+    });
+
+  wallet
+    .command("export-raw")
+    .description("Advanced: export a raw Solana keypair and reduce signer custody protection")
+    .requiredOption("--wallet-id <id>", "Registered signer-owned wallet id")
+    .requiredOption("--output <absolute-path>", "New owner-only raw keypair path")
+    .requiredOption(
+      "--acknowledge-custody-reduction",
+      "Confirm that raw export makes the wallet key portable",
+    )
+    .action(async (opts) => {
+      await runCommandWithRuntime(defaultRuntime, async () => {
+        await walletRawExportCommand(defaultRuntime, {
+          walletId: String(opts.walletId),
+          output: String(opts.output),
+          acknowledgeCustodyReduction: Boolean(opts.acknowledgeCustodyReduction),
+        });
+      });
+    });
+
+  wallet
+    .command("create")
+    .description("Create a role-ready signer-owned Solana wallet")
+    .option("--wallet-id <id>", "Named wallet id")
+    .option("--wallet-name <name>", "Wallet display name")
+    .option("--role <role>", "Permanent signer role: agent|mining|vault")
+    .option("--rpc-url <url>", "One primary Solana RPC URL")
+    .option("--force", "Resume only the same existing signer wallet and role", false)
+    .option("--non-interactive", "Do not prompt; require all inputs", false)
+    .option("--json", "Print JSON output", false)
+    .action(async (opts) => {
+      await runCommandWithRuntime(defaultRuntime, async () => {
+        await walletSetupCommand(defaultRuntime, {
+          mode: "local-signer-create",
+          chain: "solana",
+          walletId: typeof opts.walletId === "string" ? opts.walletId : undefined,
+          walletName: typeof opts.walletName === "string" ? opts.walletName : undefined,
+          role: typeof opts.role === "string" ? opts.role : undefined,
+          rpcUrl: typeof opts.rpcUrl === "string" ? opts.rpcUrl : undefined,
+          force: Boolean(opts.force),
+          nonInteractive: Boolean(opts.nonInteractive),
+          json: Boolean(opts.json),
+        });
+      });
+    });
+
+  wallet
+    .command("import")
+    .description("Import an owner-only Solana keypair through the native signer lifecycle")
+    .option("--wallet-id <id>", "Named wallet id")
+    .option("--wallet-name <name>", "Wallet display name")
+    .option("--role <role>", "Permanent signer role: agent|mining|vault")
+    .option("--file <absolute-path>", "Owner-only Solana keypair JSON")
+    .option("--rpc-url <url>", "One primary Solana RPC URL")
+    .option("--non-interactive", "Do not prompt; require all inputs", false)
+    .option("--json", "Print JSON output", false)
+    .action(async (opts) => {
+      await runCommandWithRuntime(defaultRuntime, async () => {
+        await walletSetupCommand(defaultRuntime, {
+          mode: "local-signer-import",
+          chain: "solana",
+          walletId: typeof opts.walletId === "string" ? opts.walletId : undefined,
+          walletName: typeof opts.walletName === "string" ? opts.walletName : undefined,
+          role: typeof opts.role === "string" ? opts.role : undefined,
+          importFile: typeof opts.file === "string" ? opts.file : undefined,
+          rpcUrl: typeof opts.rpcUrl === "string" ? opts.rpcUrl : undefined,
+          nonInteractive: Boolean(opts.nonInteractive),
+          json: Boolean(opts.json),
+        });
+      });
+    });
+
+  const rpc = wallet.command("rpc").description("Signer-owned Solana RPC configuration");
+  rpc
+    .command("set")
+    .description("Verify and set one primary Solana RPC")
+    .requiredOption("--wallet-id <id>", "Registered signer-owned wallet id")
+    .requiredOption("--rpc-url <url>", "Primary Solana RPC URL")
+    .option("--json", "Print JSON output", false)
+    .action(async (opts) => {
+      await runCommandWithRuntime(defaultRuntime, async () => {
+        await walletRpcSetCommand(defaultRuntime, {
+          walletId: String(opts.walletId),
+          rpcUrl: String(opts.rpcUrl),
+          json: Boolean(opts.json),
         });
       });
     });

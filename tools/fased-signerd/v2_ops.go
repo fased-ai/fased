@@ -150,6 +150,9 @@ func decodeSignerRequestV2(raw json.RawMessage, out any) error {
 }
 
 func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([]byte, error) {
+	if req.operatorSocket {
+		return s.handleOperatorLifecycleV1(req, cfg)
+	}
 	switch req.Op {
 	case "health", "v2.capabilities":
 		health, err := s.health(cfg)

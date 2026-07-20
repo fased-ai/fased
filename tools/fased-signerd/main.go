@@ -33,33 +33,40 @@ const (
 var errRequestTooLarge = errors.New("signer request exceeds maximum size")
 
 type request struct {
-	Op       string          `json:"op"`
-	Chain    string          `json:"chain,omitempty"`
-	WalletID string          `json:"walletId,omitempty"`
-	Request  json.RawMessage `json:"request,omitempty"`
+	Op             string                   `json:"op"`
+	Chain          string                   `json:"chain,omitempty"`
+	WalletID       string                   `json:"walletId,omitempty"`
+	Request        json.RawMessage          `json:"request,omitempty"`
+	Operator       *signerOperatorContextV1 `json:"operator,omitempty"`
+	operatorSocket bool                     `json:"-"`
 }
 
 type signerConfig struct {
-	socketPath        string
-	controlSocketPath string
-	socketMode        uint32
-	socketGroup       string
-	pidFile           string
-	auditLog          string
-	stateDBPath       string
-	masterKeyPath     string
-	webauthnRPID      string
-	webauthnOrigins   string
-	jupiterAPIKeyPath string
-	jupiterLive       bool
-	updateGatePath    string
-	readOnly          bool
-	rateWindow        time.Duration
-	rateLimit         map[string]int
-	auditMax          int64
-	dropUID           int
-	dropGID           int
-	chains            []string
+	socketPath          string
+	controlSocketPath   string
+	operatorSocketPath  string
+	socketMode          uint32
+	socketGroup         string
+	operatorSocketGroup string
+	applicationUID      int
+	operatorUID         int
+	controlUID          int
+	pidFile             string
+	auditLog            string
+	stateDBPath         string
+	masterKeyPath       string
+	webauthnRPID        string
+	webauthnOrigins     string
+	jupiterAPIKeyPath   string
+	jupiterLive         bool
+	updateGatePath      string
+	readOnly            bool
+	rateWindow          time.Duration
+	rateLimit           map[string]int
+	auditMax            int64
+	dropUID             int
+	dropGID             int
+	chains              []string
 }
 
 type opBucket struct {
@@ -138,52 +145,59 @@ func (a *auditWriter) recordFailure(err error) {
 }
 
 func (a *auditWriter) write(entry map[string]any) {
+	_ = a.writeRequired(entry)
+}
+
+func (a *auditWriter) writeRequired(entry map[string]any) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.path == "" {
-		return
+		err := errors.New("signer audit log path is required")
+		a.recordFailure(err)
+		return err
 	}
 	data, err := json.Marshal(entry)
 	if err != nil {
 		a.recordFailure(err)
-		return
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(a.path), 0o700); err != nil {
 		a.recordFailure(err)
-		return
+		return err
 	}
 	if stat, err := os.Stat(a.path); err == nil && stat.Size() >= a.maxBytes && a.maxBytes > 0 {
 		rotated := a.path + ".1"
 		if err := os.Remove(rotated); err != nil && !errors.Is(err, os.ErrNotExist) {
 			a.recordFailure(err)
-			return
+			return err
 		}
 		if err := os.Rename(a.path, rotated); err != nil {
 			a.recordFailure(err)
-			return
+			return err
 		}
 	}
 	file, err := os.OpenFile(a.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		a.recordFailure(err)
-		return
+		return err
 	}
 	if _, err := file.Write(append(data, '\n')); err != nil {
 		_ = file.Close()
 		a.recordFailure(err)
-		return
+		return err
 	}
 	if err := file.Sync(); err != nil {
 		_ = file.Close()
 		a.recordFailure(err)
-		return
+		return err
 	}
 	if err := file.Close(); err != nil {
 		a.recordFailure(err)
-		return
+		return err
 	}
 	a.failed = false
 	a.lastErr = ""
+	return nil
 }
 
 func getenvInt(name string, fallback int) int {
@@ -264,7 +278,7 @@ func mustValidate(req request, cfg signerConfig) error {
 		if len(req.Request) > 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
-	case "v2.network.put", "v2.network.bootstrap", "v2.policy.put", "v2.policy.tighten", "v2.policy.activateBaseline", "v2.wallet.create", "v2.wallet.import", "v2.wallet.importLegacy", "v2.wallet.recovery.export", "v2.wallet.recovery.import", "v2.wallet.exportRaw", "v2.wallet.rotation.create", "v2.wallet.rotation.commit", "v2.execute", "v2.review.get", "v2.review.prepare", "v2.review.execute", "v2.operation.get", "v2.operation.reconcile", "v2.satLookup.binding.get":
+	case "v2.network.put", "v2.network.bootstrap", "v2.network.setPrimary", "v2.policy.put", "v2.policy.tighten", "v2.policy.activateBaseline", "v2.wallet.create", "v2.wallet.import", "v2.wallet.importLegacy", "v2.wallet.recovery.export", "v2.wallet.recovery.import", "v2.wallet.exportRaw", "v2.wallet.rotation.create", "v2.wallet.rotation.commit", "v2.execute", "v2.review.get", "v2.review.prepare", "v2.review.execute", "v2.operation.get", "v2.operation.reconcile", "v2.satLookup.binding.get":
 		if len(req.Request) == 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
@@ -341,10 +355,15 @@ func parseArgs() signerConfig {
 	stateRoot := filepath.Join(userHomeDir(), ".fased", "wallet")
 	socketModeRaw := firstNonEmpty(strings.TrimSpace(os.Getenv("FASED_WALLET_LOCAL_SIGNER_SOCKET_MODE")), "0600")
 	cfg := signerConfig{
-		socketPath:        filepath.Join(stateRoot, "local-signer.sock"),
-		controlSocketPath: filepath.Join(stateRoot, "local-signer-control.sock"),
-		socketMode:        0o600,
-		socketGroup:       strings.TrimSpace(os.Getenv("FASED_WALLET_LOCAL_SIGNER_SOCKET_GROUP")),
+		socketPath:          filepath.Join(stateRoot, "local-signer.sock"),
+		controlSocketPath:   filepath.Join(stateRoot, "local-signer-control.sock"),
+		operatorSocketPath:  strings.TrimSpace(os.Getenv("FASED_WALLET_LOCAL_SIGNER_OPERATOR_SOCKET")),
+		socketMode:          0o600,
+		socketGroup:         strings.TrimSpace(os.Getenv("FASED_WALLET_LOCAL_SIGNER_SOCKET_GROUP")),
+		operatorSocketGroup: strings.TrimSpace(os.Getenv("FASED_WALLET_LOCAL_SIGNER_OPERATOR_GROUP")),
+		applicationUID:      os.Geteuid(),
+		operatorUID:         os.Geteuid(),
+		controlUID:          os.Geteuid(),
 		stateDBPath: firstNonEmpty(
 			strings.TrimSpace(os.Getenv("FASED_WALLET_LOCAL_SIGNER_STATE_DB")),
 			filepath.Join(stateRoot, "signerd-v2.db"),
@@ -367,6 +386,7 @@ func parseArgs() signerConfig {
 	flags := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	flags.StringVar(&cfg.socketPath, "socket", cfg.socketPath, "unix socket path")
 	flags.StringVar(&cfg.controlSocketPath, "control-socket", cfg.controlSocketPath, "administrative unix socket path")
+	flags.StringVar(&cfg.operatorSocketPath, "operator-socket", cfg.operatorSocketPath, "restricted operator lifecycle unix socket path")
 	flags.StringVar(&cfg.stateDBPath, "state-db", cfg.stateDBPath, "signer-owned bbolt state database path")
 	flags.StringVar(&cfg.masterKeyPath, "master-key", cfg.masterKeyPath, "signer-owned 0600 master key file path")
 	flags.StringVar(&cfg.webauthnRPID, "webauthn-rp-id", cfg.webauthnRPID, "root-configured WebAuthn relying party ID")
@@ -375,6 +395,10 @@ func parseArgs() signerConfig {
 	flags.StringVar(&cfg.updateGatePath, "update-gate", cfg.updateGatePath, "root-owned gate that blocks application-socket mutations during paired updates")
 	flags.StringVar(&socketModeRaw, "socket-mode", socketModeRaw, "application socket mode (octal, default 0600)")
 	flags.StringVar(&cfg.socketGroup, "socket-group", cfg.socketGroup, "private group allowed to use the application socket")
+	flags.StringVar(&cfg.operatorSocketGroup, "operator-socket-group", cfg.operatorSocketGroup, "private group allowed to use the operator lifecycle socket")
+	flags.IntVar(&cfg.applicationUID, "application-uid", cfg.applicationUID, "expected application socket peer uid")
+	flags.IntVar(&cfg.operatorUID, "operator-uid", cfg.operatorUID, "expected operator socket peer uid")
+	flags.IntVar(&cfg.controlUID, "control-uid", cfg.controlUID, "expected control socket peer uid")
 	flags.StringVar(&cfg.pidFile, "pid-file", "", "pid file path (default <socket>.pid)")
 	flags.StringVar(&cfg.auditLog, "audit-log", "", "audit log path (default <socket>.audit.jsonl)")
 	flags.BoolVar(&cfg.readOnly, "read-only", cfg.readOnly, "read-only mode (health/getAddresses/getBalance only)")
@@ -399,6 +423,7 @@ func parseArgs() signerConfig {
 		"v2.network.get":                  getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_NETWORK", 120),
 		"v2.network.put":                  getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_NETWORK", 30),
 		"v2.network.bootstrap":            getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_NETWORK", 30),
+		"v2.network.setPrimary":           getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_NETWORK", 30),
 		"v2.policy.get":                   getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
 		"v2.policy.put":                   getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
 		"v2.policy.tighten":               getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
@@ -580,12 +605,30 @@ func run(cfg signerConfig) error {
 	if filepath.Clean(cfg.controlSocketPath) == filepath.Clean(cfg.socketPath) {
 		return errors.New("control socket must be separate from the application socket")
 	}
+	if cfg.operatorSocketPath != "" &&
+		(filepath.Clean(cfg.operatorSocketPath) == filepath.Clean(cfg.socketPath) ||
+			filepath.Clean(cfg.operatorSocketPath) == filepath.Clean(cfg.controlSocketPath)) {
+		return errors.New("operator socket must be separate from application and control sockets")
+	}
 	controlListener, err := listenUnixSocketV2(cfg.controlSocketPath, 0o600, "")
 	if err != nil {
 		return err
 	}
 	defer controlListener.Close()
 	defer os.Remove(cfg.controlSocketPath)
+	var operatorListener net.Listener
+	if cfg.operatorSocketPath != "" {
+		operatorListener, err = listenUnixSocketV2(
+			cfg.operatorSocketPath,
+			0o660,
+			cfg.operatorSocketGroup,
+		)
+		if err != nil {
+			return err
+		}
+		defer operatorListener.Close()
+		defer os.Remove(cfg.operatorSocketPath)
+	}
 
 	limiter := newRateLimiter(cfg.rateWindow, cfg.rateLimit)
 	signals := make(chan os.Signal, 2)
@@ -594,16 +637,25 @@ func run(cfg signerConfig) error {
 		<-signals
 		_ = applicationListener.Close()
 		_ = controlListener.Close()
+		if operatorListener != nil {
+			_ = operatorListener.Close()
+		}
 		_ = os.Remove(cfg.socketPath)
 		_ = os.Remove(cfg.controlSocketPath)
+		if cfg.operatorSocketPath != "" {
+			_ = os.Remove(cfg.operatorSocketPath)
+		}
 	}()
 
 	log.Printf("fased-signerd listening on %s", cfg.socketPath)
 	log.Printf("fased-signerd control socket listening on %s", cfg.controlSocketPath)
+	if cfg.operatorSocketPath != "" {
+		log.Printf("fased-signerd restricted operator socket listening on %s", cfg.operatorSocketPath)
+	}
 	log.Printf("mode: %s", map[bool]string{true: "read-only", false: "read-write"}[cfg.readOnly])
 
-	errCh := make(chan error, 2)
-	serve := func(listener net.Listener, control bool) {
+	errCh := make(chan error, 3)
+	serve := func(listener net.Listener, authority string, expectedUID int) {
 		for {
 			connection, acceptErr := listener.Accept()
 			if acceptErr != nil {
@@ -613,15 +665,69 @@ func run(cfg signerConfig) error {
 				}
 				continue
 			}
-			go handleConn(connection, cfg, limiter, audit, service, control)
+			credential, credentialErr := requireSignerPeerCredentialV2(connection, expectedUID)
+			if credentialErr != nil {
+				audit.write(map[string]any{
+					"ts": time.Now().UTC().Format(time.RFC3339Nano), "ok": false,
+					"authority": authority, "error": "peer_identity",
+				})
+				_, _ = connection.Write([]byte(`{"ok":false,"error":"signer socket peer is not authorized"}` + "\n"))
+				_ = connection.Close()
+				continue
+			}
+			go handleAuthorizedConn(
+				connection,
+				cfg,
+				limiter,
+				audit,
+				service,
+				authority == "control",
+				authority == "operator",
+				authority,
+				credential,
+			)
 		}
 	}
-	go serve(applicationListener, false)
-	go serve(controlListener, true)
+	go serve(applicationListener, "application", cfg.applicationUID)
+	go serve(controlListener, "control", cfg.controlUID)
+	if operatorListener != nil {
+		go serve(operatorListener, "operator", cfg.operatorUID)
+	}
 	return <-errCh
 }
 
-func handleConn(conn net.Conn, cfg signerConfig, limiter *rateLimiter, audit *auditWriter, service *signerServiceV2, control bool) {
+func handleConn(
+	conn net.Conn,
+	cfg signerConfig,
+	limiter *rateLimiter,
+	audit *auditWriter,
+	service *signerServiceV2,
+	control bool,
+) {
+	handleAuthorizedConn(
+		conn,
+		cfg,
+		limiter,
+		audit,
+		service,
+		control,
+		false,
+		map[bool]string{true: "control", false: "application"}[control],
+		signerPeerCredentialV2{UID: os.Geteuid(), GID: os.Getegid(), PID: os.Getpid(), Proven: true},
+	)
+}
+
+func handleAuthorizedConn(
+	conn net.Conn,
+	cfg signerConfig,
+	limiter *rateLimiter,
+	audit *auditWriter,
+	service *signerServiceV2,
+	control bool,
+	operator bool,
+	authority string,
+	credential signerPeerCredentialV2,
+) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
 	for {
@@ -648,33 +754,88 @@ func handleConn(conn net.Conn, cfg signerConfig, limiter *rateLimiter, audit *au
 			audit.write(map[string]any{"ts": time.Now().UTC().Format(time.RFC3339Nano), "ok": false, "error": "invalid_json"})
 			continue
 		}
+		requestAudit := map[string]any{
+			"ts":        time.Now().UTC().Format(time.RFC3339Nano),
+			"op":        req.Op,
+			"walletId":  normalizeWalletID(req.WalletID),
+			"fp":        fingerprint(raw),
+			"authority": authority,
+			"peerUid":   credential.UID,
+			"peerGid":   credential.GID,
+			"peerPid":   credential.PID,
+		}
 		if err := mustValidate(req, cfg); err != nil {
 			_, _ = conn.Write([]byte(fmt.Sprintf(`{"ok":false,"error":%q}`+"\n", err.Error())))
-			audit.write(map[string]any{"ts": time.Now().UTC().Format(time.RFC3339Nano), "op": req.Op, "ok": false, "error": err.Error(), "fp": fingerprint(raw)})
+			requestAudit["ok"] = false
+			requestAudit["error"] = err.Error()
+			audit.write(requestAudit)
 			continue
 		}
-		if err := enforceApplicationUpdateGate(cfg.updateGatePath, req.Op, control, 0); err != nil {
+		if operator {
+			if err := validateSignerOperatorContextV1(req, service.store, time.Now()); err != nil {
+				_, _ = conn.Write([]byte(fmt.Sprintf(`{"ok":false,"error":%q}`+"\n", err.Error())))
+				requestAudit["ok"] = false
+				requestAudit["error"] = "operator_context"
+				audit.write(requestAudit)
+				continue
+			}
+			req.operatorSocket = true
+		} else if req.Operator != nil {
+			_, _ = conn.Write([]byte(`{"ok":false,"error":"operator context is accepted only on the operator socket"}` + "\n"))
+			requestAudit["ok"] = false
+			requestAudit["error"] = "operator_context_wrong_socket"
+			audit.write(requestAudit)
+			continue
+		}
+		if err := enforceApplicationUpdateGate(cfg.updateGatePath, req.Op, control || operator, 0); err != nil {
 			_, _ = conn.Write([]byte(fmt.Sprintf(`{"ok":false,"error":%q}`+"\n", err.Error())))
-			audit.write(map[string]any{"ts": time.Now().UTC().Format(time.RFC3339Nano), "op": req.Op, "ok": false, "error": "update_gate", "fp": fingerprint(raw)})
+			requestAudit["ok"] = false
+			requestAudit["error"] = "update_gate"
+			audit.write(requestAudit)
 			continue
 		}
 		if !limiter.allow(req.Op) {
 			_, _ = conn.Write([]byte(`{"ok":false,"error":"rate limit exceeded"}` + "\n"))
-			audit.write(map[string]any{"ts": time.Now().UTC().Format(time.RFC3339Nano), "op": req.Op, "ok": false, "error": "rate_limit", "fp": fingerprint(raw)})
+			requestAudit["ok"] = false
+			requestAudit["error"] = "rate_limit"
+			audit.write(requestAudit)
 			continue
+		}
+		mutation := !applicationUpdateGateReadOperations[req.Op]
+		if mutation {
+			requestAudit["phase"] = "accepted"
+			requestAudit["ok"] = true
+			if err := audit.writeRequired(requestAudit); err != nil {
+				_, _ = conn.Write([]byte(`{"ok":false,"error":"signer audit is unavailable; mutation refused"}` + "\n"))
+				continue
+			}
 		}
 		response, err := service.handle(req, cfg, control)
 		if err != nil {
 			_, _ = conn.Write([]byte(fmt.Sprintf(`{"ok":false,"error":%q}`+"\n", err.Error())))
-			audit.write(map[string]any{"ts": time.Now().UTC().Format(time.RFC3339Nano), "op": req.Op, "ok": false, "error": "signer", "fp": fingerprint(raw)})
+			requestAudit["phase"] = "completed"
+			requestAudit["ok"] = false
+			requestAudit["error"] = "signer"
+			audit.write(requestAudit)
 			continue
 		}
-		_, _ = conn.Write(append(response, '\n'))
 		unknown := bytes.Contains(response, []byte(`"state":"unknown"`))
 		if unknown {
 			log.Printf("fased-signerd operation requires reconciliation: op=%s fp=%s", req.Op, fingerprint(raw))
 		}
-		audit.write(map[string]any{"ts": time.Now().UTC().Format(time.RFC3339Nano), "op": req.Op, "ok": true, "fp": fingerprint(raw), "mode": "signer-v2", "unknown": unknown})
+		requestAudit["phase"] = "completed"
+		requestAudit["ok"] = true
+		requestAudit["mode"] = "signer-v2"
+		requestAudit["unknown"] = unknown
+		if mutation {
+			if err := audit.writeRequired(requestAudit); err != nil {
+				_, _ = conn.Write([]byte(`{"ok":false,"error":"signer mutation completed but durable audit finalization failed; query authoritative state before retrying"}` + "\n"))
+				continue
+			}
+		} else {
+			audit.write(requestAudit)
+		}
+		_, _ = conn.Write(append(response, '\n'))
 	}
 }
 

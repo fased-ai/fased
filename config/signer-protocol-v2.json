@@ -32,6 +32,7 @@
     "applicationNetworkBootstrap",
     "signerOwnedEncryptedRecovery",
     "signerOwnedRawExport",
+    "restrictedOperatorLifecycle",
     "typedSolanaTransactions",
     "typedA2aPaymentMemos",
     "typedA2aRefundMemos",
