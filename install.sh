@@ -3958,14 +3958,22 @@ EOF
 
 install_fixed_host_gateway_service() {
   local target_user="${FASED_INSTALL_USER:-app}"
+  local gateway_user="${FASED_GATEWAY_USER:-fased-gateway}"
+  local gateway_group="${FASED_GATEWAY_GROUP:-fased-gateway}"
+  local config_group="${FASED_CONFIG_GROUP:-fased-config}"
   local target_home
   target_home="$(getent passwd "$target_user" | cut -d: -f6)"
   [[ -n "$target_home" ]] || target_home="/home/$target_user"
   local target_repo_dir="${1:-$target_home/fased}"
-  [[ "$target_user" != "root" && "$target_user" =~ ^[A-Za-z0-9_.@-]+$ ]] || {
-    echo "Invalid hosted Gateway app account." >&2
+  [[ "$target_user" != "root" && "$target_user" != "$gateway_user" && "$target_user" =~ ^[A-Za-z0-9_.@-]+$ && "$gateway_user" =~ ^[A-Za-z0-9_.@-]+$ ]] || {
+    echo "Invalid or overlapping hosted operator and Gateway accounts." >&2
     exit 1
   }
+
+  install -d -m 2770 -o "$target_user" -g "$config_group" "${target_home}/.fased"
+  chgrp -R "$config_group" "${target_home}/.fased"
+  chmod -R g+rwX,o-rwx "${target_home}/.fased"
+  find "${target_home}/.fased" -type d -exec chmod g+s {} +
   [[ "$target_repo_dir" == "$target_home/"* && "$target_repo_dir" =~ ^/[A-Za-z0-9_./@-]+$ ]] || {
     echo "Hosted Gateway checkout must remain below the app account home." >&2
     exit 1
@@ -3983,8 +3991,9 @@ EOF
   chown root:root /usr/local/libexec/fased-gateway-launch
   chmod 0755 /usr/local/libexec/fased-gateway-launch
 
-  # The root-owned unit has fixed inputs. It may execute app-owned application code only as
-  # the app account; no app-supplied unit text or privileged lifecycle hook is accepted.
+  # The root-owned unit has fixed inputs. The non-login Gateway identity can read the
+  # operator-installed runtime and share application configuration through fased-config,
+  # but it is not a member of the restricted signer-operator socket group.
   cat >/etc/systemd/system/fased-gateway.service <<EOF
 [Unit]
 Description=Fased Gateway (managed)
@@ -3993,19 +4002,21 @@ Wants=fased-signerd.service network-online.target
 
 [Service]
 Type=simple
-User=${target_user}
-Group=${target_user}
+User=${gateway_user}
+Group=${gateway_group}
+SupplementaryGroups=${config_group}
 WorkingDirectory=${target_repo_dir}
 Environment=HOME=${target_home}
 Environment=FASED_GATEWAY_MODE=managed
 Environment=FASED_MANAGED_INTERNAL=1
+Environment=FASED_GATEWAY_SERVICE=1
 Environment=FASED_GATEWAY_PORT=18789
 Environment=FASED_HOST_PROFILE=hosting
 Environment=FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock
 ExecStart=/usr/local/libexec/fased-gateway-launch
 Restart=always
 RestartSec=5
-UMask=0077
+UMask=0007
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
@@ -4216,8 +4227,15 @@ EOF
 
 ensure_host_boundary_accounts() {
   local target_user="${FASED_INSTALL_USER:-app}"
+  local gateway_user="${FASED_GATEWAY_USER:-fased-gateway}"
   local signer_user="${FASED_SIGNER_USER:-fased-signer}"
   local gateway_group="${FASED_GATEWAY_GROUP:-fased-gateway}"
+  local operator_group="${FASED_OPERATOR_GROUP:-fased-operator}"
+  local config_group="${FASED_CONFIG_GROUP:-fased-config}"
+  [[ "$target_user" != "$gateway_user" && "$target_user" != "$signer_user" && "$gateway_user" != "$signer_user" ]] || {
+    echo "Hosting operator, Gateway, and signer accounts must be distinct." >&2
+    exit 1
+  }
   if ! id -u "$target_user" >/dev/null 2>&1; then
     if need_cmd useradd; then
       useradd -m -s /bin/bash "$target_user"
@@ -4226,6 +4244,15 @@ ensure_host_boundary_accounts() {
     fi
   fi
   getent group "$gateway_group" >/dev/null 2>&1 || groupadd --system "$gateway_group"
+  getent group "$operator_group" >/dev/null 2>&1 || groupadd --system "$operator_group"
+  getent group "$config_group" >/dev/null 2>&1 || groupadd --system "$config_group"
+  if ! id -u "$gateway_user" >/dev/null 2>&1; then
+    if need_cmd useradd; then
+      useradd --system --gid "$gateway_group" --home-dir /var/lib/fased-gateway --shell /usr/sbin/nologin "$gateway_user"
+    else
+      adduser --system --ingroup "$gateway_group" --home /var/lib/fased-gateway --shell /usr/sbin/nologin "$gateway_user"
+    fi
+  fi
   if ! id -u "$signer_user" >/dev/null 2>&1; then
     if need_cmd useradd; then
       useradd --system --home-dir /var/lib/fased-signerd --shell /usr/sbin/nologin "$signer_user"
@@ -4233,8 +4260,13 @@ ensure_host_boundary_accounts() {
       adduser --system --home /var/lib/fased-signerd --shell /usr/sbin/nologin "$signer_user"
     fi
   fi
+  usermod -g "$gateway_group" -s /usr/sbin/nologin "$gateway_user"
+  passwd -l "$gateway_user" >/dev/null 2>&1 || true
   passwd -l "$signer_user" >/dev/null 2>&1 || true
-  usermod -aG "$gateway_group" "$target_user"
+  usermod -aG "$config_group" "$gateway_user"
+  usermod -aG "$operator_group,$config_group" "$target_user"
+  gpasswd -d "$target_user" "$gateway_group" >/dev/null 2>&1 || true
+  gpasswd -d "$gateway_user" "$operator_group" >/dev/null 2>&1 || true
   for admin_group in sudo wheel; do
     if getent group "$admin_group" >/dev/null 2>&1; then
       gpasswd -d "$target_user" "$admin_group" >/dev/null 2>&1 || true
@@ -4254,14 +4286,22 @@ ensure_host_boundary_accounts() {
 
 install_host_signer_and_updater_services() {
   local target_user="${FASED_INSTALL_USER:-app}"
+  local gateway_user="${FASED_GATEWAY_USER:-fased-gateway}"
   local signer_user="${FASED_SIGNER_USER:-fased-signer}"
   local gateway_group="${FASED_GATEWAY_GROUP:-fased-gateway}"
+  local operator_group="${FASED_OPERATOR_GROUP:-fased-operator}"
   local gateway_gid
+  local gateway_uid
+  local operator_uid
+  local signer_uid
   local version
   gateway_gid="$(getent group "$gateway_group" | cut -d: -f3)"
+  gateway_uid="$(id -u "$gateway_user")"
+  operator_uid="$(id -u "$target_user")"
+  signer_uid="$(id -u "$signer_user")"
   version="$(node -p "require(process.argv[1]).version" "$FASED_DIR/package.json" 2>/dev/null || true)"
-  [[ "$gateway_gid" =~ ^[0-9]+$ && "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
-    echo "Could not resolve hosted signer group or release version." >&2
+  [[ "$gateway_gid" =~ ^[0-9]+$ && "$gateway_uid" =~ ^[0-9]+$ && "$operator_uid" =~ ^[0-9]+$ && "$signer_uid" =~ ^[0-9]+$ && "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+    echo "Could not resolve hosted signer principals, socket group, or release version." >&2
     exit 1
   }
   if [[ -n "${FASED_HOST_SIGNER_BINARY:-}" ]]; then
@@ -4298,6 +4338,7 @@ install_host_signer_and_updater_services() {
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-host-updater.mjs" /usr/local/libexec/fased-host-updater.mjs
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-host-updaterctl.mjs" /usr/local/libexec/fased-host-updaterctl.mjs
   rm -f /usr/local/libexec/fased-host-bootstrapd.mjs /usr/local/libexec/fased-host-bootstrapctl.mjs
+  rm -f /usr/local/sbin/fased-signer-wallet-import
   rm -rf /run/fased-host-bootstrap
   rm -f /var/log/fased-host-bootstrap.log
   install -m 0755 -o root -g root "$FASED_DIR/scripts/migrate-hosted-signer-v2.mjs" /usr/local/libexec/migrate-hosted-signer-v2.mjs
@@ -4305,7 +4346,6 @@ install_host_signer_and_updater_services() {
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-enroll-hosting.sh" /usr/local/sbin/fased-signer-enroll
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-policy-hosting.sh" /usr/local/sbin/fased-signer-policy
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-network-hosting.sh" /usr/local/sbin/fased-signer-network
-  install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-wallet-import-hosting.sh" /usr/local/sbin/fased-signer-wallet-import
   install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/README.md" /usr/local/share/fased/signer-policies/README.md
   install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/agent.json.template" /usr/local/share/fased/signer-policies/agent.json.template
   install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/mining.json.template" /usr/local/share/fased/signer-policies/mining.json.template
@@ -4389,7 +4429,6 @@ EOF
   sync -f /usr/local/sbin/fased-signer-enroll
   sync -f /usr/local/sbin/fased-signer-policy
   sync -f /usr/local/sbin/fased-signer-network
-  sync -f /usr/local/sbin/fased-signer-wallet-import
   sync -f /usr/local/share/fased/signer-policies/README.md
   sync -f /usr/local/share/fased/signer-policies/agent.json.template
   sync -f /usr/local/share/fased/signer-policies/mining.json.template
@@ -4422,7 +4461,7 @@ Wants=network-online.target
 Type=simple
 User=${signer_user}
 Group=${signer_user}
-SupplementaryGroups=${gateway_group}
+SupplementaryGroups=${gateway_group} ${operator_group}
 RuntimeDirectory=fased-signerd
 RuntimeDirectoryMode=0755
 StateDirectory=fased-signerd
@@ -4431,7 +4470,7 @@ UMask=0077
 Environment=HOME=/var/lib/fased-signerd
 EnvironmentFile=-/etc/fased/signerd-webauthn.env
 EnvironmentFile=-/etc/fased/signerd-sat-runtime.env
-ExecStart=/opt/fased/signer/fased-signerd -socket /run/fased-signerd/app.sock -control-socket /run/fased-signerd/control.sock -socket-mode 0660 -socket-group ${gateway_group} -state-db /var/lib/fased-signerd/state.db -master-key /var/lib/fased-signerd/master.key -update-gate /var/lib/fased-signer-update-gate/active -pid-file /run/fased-signerd/fased-signerd.pid -audit-log /var/lib/fased-signerd/audit.jsonl
+ExecStart=/opt/fased/signer/fased-signerd -socket /run/fased-signerd/app.sock -operator-socket /run/fased-signerd/operator.sock -control-socket /run/fased-signerd/control.sock -socket-mode 0660 -socket-group ${gateway_group} -operator-socket-group ${operator_group} -application-uid ${gateway_uid} -operator-uid ${operator_uid} -control-uid ${signer_uid} -state-db /var/lib/fased-signerd/state.db -master-key /var/lib/fased-signerd/master.key -update-gate /var/lib/fased-signer-update-gate/active -pid-file /run/fased-signerd/fased-signerd.pid -audit-log /var/lib/fased-signerd/audit.jsonl
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
@@ -4652,7 +4691,6 @@ assert_verified_hosting_root_source() {
     scripts/fased-host-updaterctl.mjs \
     scripts/fased-signer-enroll-hosting.sh \
     scripts/fased-signer-network-hosting.sh \
-    scripts/fased-signer-wallet-import-hosting.sh \
     scripts/fased-signer-policy-hosting.sh; do
     local asset_path="$canonical_source/$privileged_asset"
     [[ -f "$asset_path" && ! -L "$asset_path" ]] || {

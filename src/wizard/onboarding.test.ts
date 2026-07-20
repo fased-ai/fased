@@ -2225,7 +2225,7 @@ describe("runOnboardingWizard", () => {
     }
   });
 
-  it("keeps hosted signer import in the provider-root signer ceremony", async () => {
+  it("routes hosted signer import through the normal native operator lifecycle", async () => {
     const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "fased-hosted-wallet-import-"));
     vi.stubEnv("USER", "app");
     vi.stubEnv("HOME", tempHome);
@@ -2285,13 +2285,18 @@ describe("runOnboardingWizard", () => {
           prompter,
         ),
       ).rejects.toThrow(/Hosting requires the root-managed fased-gateway/);
-      expect(walletSetupCommand).not.toHaveBeenCalledWith(
+      expect(walletSetupCommand).toHaveBeenCalledWith(
         expect.anything(),
-        expect.objectContaining({ mode: "local-signer-import" }),
+        expect.objectContaining({
+          mode: "local-signer-import",
+          importFile: path.join(tempHome, "wallet.json"),
+          role: "agent",
+          rpcUrl: "https://api.devnet.solana.com",
+        }),
       );
-      expect(note).toHaveBeenCalledWith(
-        expect.stringMatching(/provider root console[\s\S]*fased-signer-wallet-import/),
-        "Signer-owned Hosting import",
+      expect(note).not.toHaveBeenCalledWith(
+        expect.stringMatching(/provider root console/),
+        expect.anything(),
       );
     } finally {
       await fs.rm(tempHome, { recursive: true, force: true });

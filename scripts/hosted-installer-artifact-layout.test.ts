@@ -21,7 +21,10 @@ describe("attested Hosting installer artifact layout", () => {
     expect(files).toContain("scripts/fased-host-updaterctl.mjs");
     expect(files).toContain("scripts/fased-signer-enroll-hosting.sh");
     expect(files).toContain("scripts/fased-signer-network-hosting.sh");
-    expect(files).toContain("scripts/fased-signer-wallet-import-hosting.sh");
+    expect(files).not.toContain("scripts/fased-signer-wallet-import-hosting.sh");
+    expect(fs.existsSync(path.join(root, "scripts/fased-signer-wallet-import-hosting.sh"))).toBe(
+      false,
+    );
     expect(files).toContain("scripts/fased-signer-policy-hosting.sh");
     expect(files).toContain("config/");
   });

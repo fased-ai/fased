@@ -41,6 +41,7 @@ import {
   setNamedWalletRole,
   setWalletProviderEnabled,
   upsertNamedWallet,
+  writeWalletProviderRegistry,
 } from "../wallet/wallet-provider-registry.js";
 import {
   createWalletProviderAdapter,
@@ -133,6 +134,12 @@ export type WalletRawExportOptions = {
   walletId: string;
   output: string;
   acknowledgeCustodyReduction: boolean;
+};
+
+export type WalletRpcSetOptions = {
+  walletId: string;
+  rpcUrl: string;
+  json?: boolean;
 };
 
 export type WalletStatusOptions = {
@@ -789,16 +796,26 @@ async function createSignerOwnedWalletForSetup(params: {
 
   let result;
   try {
-    result = await createRoleReadySignerOwnedWallet({
-      socketPath,
-      walletId,
-      role: params.role,
-      allowExisting: Boolean(params.options.force),
-    });
+    result =
+      hosted && params.env.FASED_GATEWAY_SERVICE !== "1"
+        ? invokeNativeSignerWalletCreate({
+            signerBinPath: "/opt/fased/signer/fased-signerd",
+            operatorSocketPath: "/run/fased-signerd/operator.sock",
+            walletId: expectedSignerWalletId,
+            role: params.role,
+            allowExisting: Boolean(params.options.force),
+            env: mergedEnv,
+          })
+        : await createRoleReadySignerOwnedWallet({
+            socketPath,
+            walletId,
+            role: params.role,
+            allowExisting: Boolean(params.options.force),
+          });
   } catch (error) {
     if (hosted) {
       throw new Error(
-        `root-managed hosted signer wallet creation failed: ${error instanceof Error ? error.message : String(error)}. Repair only from the provider root console with the exact tagged, attested Hosting release; never run the app checkout with sudo.`,
+        `hosted signer wallet creation failed: ${error instanceof Error ? error.message : String(error)}. Confirm the operator socket and exact installed signer release are healthy, then retry the same wallet ID.`,
         { cause: error },
       );
     }
@@ -826,22 +843,41 @@ async function createSignerOwnedWalletForSetup(params: {
     );
   }
 
-  const network = await configureSignerOwnedWalletNetwork({
-    walletId: signerWalletId,
-    primaryRpcUrl: params.rpcUrl,
-    env: mergedEnv,
-    socketPath,
-  });
+  const operatorLifecycle = hosted && params.env.FASED_GATEWAY_SERVICE !== "1";
+  const network = operatorLifecycle
+    ? invokeNativeSignerNetworkSetPrimary({
+        signerBinPath: "/opt/fased/signer/fased-signerd",
+        socketFlag: "--operator-socket",
+        socketPath: "/run/fased-signerd/operator.sock",
+        walletId: signerWalletId,
+        primaryRpcUrl: params.rpcUrl,
+        expectedVersion: 0,
+        env: mergedEnv,
+      })
+    : await configureSignerOwnedWalletNetwork({
+        walletId: signerWalletId,
+        primaryRpcUrl: params.rpcUrl,
+        env: mergedEnv,
+        socketPath,
+      });
 
   // The signer owns RPC validation (including SSRF and genesis checks). Persist the
   // endpoint for Gateway read paths only after that boundary has accepted it.
   cfg = setConfigEnvVar(cfg, rpcEnvKeyFor(params.chain, walletId), params.rpcUrl);
   await writeConfigFile(cfg);
 
-  const readiness = await readSignerOwnedWalletReadiness({
-    socketPath,
-    walletId: signerWalletId,
-  });
+  const readiness = operatorLifecycle
+    ? invokeNativeSignerWalletReadiness({
+        signerBinPath: "/opt/fased/signer/fased-signerd",
+        socketFlag: "--operator-socket",
+        socketPath: "/run/fased-signerd/operator.sock",
+        walletId: signerWalletId,
+        env: mergedEnv,
+      })
+    : await readSignerOwnedWalletReadiness({
+        socketPath,
+        walletId: signerWalletId,
+      });
   if (
     !readiness.ready ||
     readiness.walletId !== signerWalletId ||
@@ -1023,18 +1059,13 @@ function invokeNativeSignerWalletImport(params: {
   importFile: string;
   env: NodeJS.ProcessEnv;
 }): LocalSignerWalletPolicyRecord {
-  if (params.hosted) {
-    throw new Error(
-      "Hosting private-key import is a signer-owner operation. Run /usr/local/sbin/fased-signer-wallet-import from the provider root console, then rerun wallet setup with Create and the same wallet ID to register the existing signer wallet.",
-    );
-  }
   const input = requireOwnerOnlySignerImportFile(params.importFile);
   const command = params.signerBinPath;
   const args = [
     "admin",
     "wallet",
     "import",
-    "--control-socket",
+    params.hosted ? "--operator-socket" : "--control-socket",
     params.controlSocketPath,
     "--wallet-id",
     params.walletId,
@@ -1070,6 +1101,181 @@ function invokeNativeSignerWalletImport(params: {
   }
 }
 
+function nativeSignerLifecycleEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    HOME: env.HOME,
+    LANG: env.LANG || "C.UTF-8",
+    PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+  };
+}
+
+function invokeNativeSignerWalletCreate(params: {
+  signerBinPath: string;
+  operatorSocketPath: string;
+  walletId: string;
+  role: "agent" | "mining" | "vault";
+  allowExisting?: boolean;
+  env: NodeJS.ProcessEnv;
+}): LocalSignerWalletPolicyRecord {
+  const child = spawnSync(
+    params.signerBinPath,
+    [
+      "admin",
+      "wallet",
+      "create",
+      "--operator-socket",
+      params.operatorSocketPath,
+      "--wallet-id",
+      params.walletId,
+      "--baseline-role",
+      params.role,
+      ...(params.allowExisting ? ["--allow-existing"] : []),
+    ],
+    {
+      env: nativeSignerLifecycleEnv(params.env),
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8",
+      maxBuffer: 256 * 1024,
+      timeout: 30_000,
+    },
+  );
+  if (child.error) {
+    throw child.error;
+  }
+  if (child.status !== 0) {
+    throw new Error(
+      redactWalletDiagnosticText(String(child.stderr || "native signer create failed").trim()),
+    );
+  }
+  return parseNativeSignerImportResult({
+    stdout: String(child.stdout ?? ""),
+    walletId: params.walletId,
+    role: params.role,
+  });
+}
+
+function invokeNativeSignerNetworkSetPrimary(params: {
+  signerBinPath: string;
+  socketFlag: "--control-socket" | "--operator-socket";
+  socketPath: string;
+  walletId: string;
+  primaryRpcUrl: string;
+  expectedVersion: number;
+  env: NodeJS.ProcessEnv;
+}) {
+  const input = JSON.stringify({ primaryRpcUrl: params.primaryRpcUrl });
+  const child = spawnSync(
+    params.signerBinPath,
+    [
+      "admin",
+      "network",
+      "set-primary",
+      params.socketFlag,
+      params.socketPath,
+      "--wallet-id",
+      params.walletId,
+      "--expected-version",
+      String(params.expectedVersion),
+    ],
+    {
+      env: nativeSignerLifecycleEnv(params.env),
+      input,
+      stdio: ["pipe", "pipe", "pipe"],
+      encoding: "utf8",
+      maxBuffer: 256 * 1024,
+      timeout: 60_000,
+    },
+  );
+  if (child.error) {
+    throw child.error;
+  }
+  if (child.status !== 0) {
+    throw new Error(
+      redactWalletDiagnosticText(String(child.stderr || "native signer RPC update failed").trim()),
+    );
+  }
+  let result: unknown;
+  try {
+    result = JSON.parse(String(child.stdout ?? ""));
+  } catch {
+    throw new Error("native signer RPC update returned invalid JSON");
+  }
+  const record = result as Record<string, unknown>;
+  if (
+    !record ||
+    record.walletId !== params.walletId ||
+    record.configured !== true ||
+    record.ready !== true ||
+    !Number.isSafeInteger(record.version) ||
+    typeof record.hash !== "string" ||
+    !/^hmac-sha256:[0-9a-f]{64}$/.test(record.hash)
+  ) {
+    throw new Error("native signer RPC update returned an invalid readiness summary");
+  }
+  return {
+    walletId: String(record.walletId),
+    configured: true,
+    ready: true,
+    version: Number(record.version),
+    hash: String(record.hash),
+  };
+}
+
+function invokeNativeSignerWalletReadiness(params: {
+  signerBinPath: string;
+  socketFlag: "--control-socket" | "--operator-socket";
+  socketPath: string;
+  walletId: string;
+  env: NodeJS.ProcessEnv;
+}): Awaited<ReturnType<typeof readSignerOwnedWalletReadiness>> {
+  const child = spawnSync(
+    params.signerBinPath,
+    [
+      "admin",
+      "wallet",
+      "readiness",
+      params.socketFlag,
+      params.socketPath,
+      "--wallet-id",
+      params.walletId,
+    ],
+    {
+      env: nativeSignerLifecycleEnv(params.env),
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8",
+      maxBuffer: 256 * 1024,
+      timeout: 30_000,
+    },
+  );
+  if (child.error) {
+    throw child.error;
+  }
+  if (child.status !== 0) {
+    throw new Error(
+      redactWalletDiagnosticText(String(child.stderr || "native signer readiness failed").trim()),
+    );
+  }
+  let result: unknown;
+  try {
+    result = JSON.parse(String(child.stdout ?? ""));
+  } catch {
+    throw new Error("native signer readiness returned invalid JSON");
+  }
+  const readiness = result as Awaited<ReturnType<typeof readSignerOwnedWalletReadiness>>;
+  if (
+    !readiness ||
+    readiness.walletId !== params.walletId ||
+    typeof readiness.publicKey !== "string" ||
+    typeof readiness.role !== "string" ||
+    !Number.isSafeInteger(readiness.policyVersion) ||
+    !Number.isSafeInteger(readiness.networkVersion) ||
+    typeof readiness.ready !== "boolean"
+  ) {
+    throw new Error("native signer readiness returned an invalid result");
+  }
+  return readiness;
+}
+
 function invokeNativeSignerRecoveryImport(params: {
   hosted: boolean;
   signerBinPath: string;
@@ -1079,11 +1285,6 @@ function invokeNativeSignerRecoveryImport(params: {
   recoveryFile: string;
   env: NodeJS.ProcessEnv;
 }): LocalSignerWalletPolicyRecord {
-  if (params.hosted) {
-    throw new Error(
-      "Hosting recovery import is a signer-owner operation. Run it from the provider root console; the Gateway must not receive the recovery password.",
-    );
-  }
   const input = requireOwnerOnlySignerImportFile(params.recoveryFile);
   try {
     const child = spawnSync(
@@ -1092,7 +1293,7 @@ function invokeNativeSignerRecoveryImport(params: {
         "admin",
         "wallet",
         "recovery-import",
-        "--control-socket",
+        params.hosted ? "--operator-socket" : "--control-socket",
         params.controlSocketPath,
         "--wallet-id",
         params.walletId,
@@ -1177,7 +1378,7 @@ async function importSignerOwnedWalletForSetup(params: {
     ? "/opt/fased/signer/fased-signerd"
     : resolveSignerdBinaryPath(mergedEnv);
   const controlSocketPath = hosted
-    ? "/run/fased-signerd/control.sock"
+    ? "/run/fased-signerd/operator.sock"
     : resolveLocalSignerControlSocketPath(mergedEnv);
   if (!hosted) {
     writeManagedLocalSignerEnvFile({ config: cfg, env: mergedEnv });
@@ -1206,17 +1407,35 @@ async function importSignerOwnedWalletForSetup(params: {
           importFile: params.importFile,
           env: mergedEnv,
         });
-  const network = await configureSignerOwnedWalletNetwork({
-    walletId: signerWalletId,
-    primaryRpcUrl: params.rpcUrl,
-    env: mergedEnv,
-    socketPath,
-  });
+  const network = hosted
+    ? invokeNativeSignerNetworkSetPrimary({
+        signerBinPath,
+        socketFlag: "--operator-socket",
+        socketPath: controlSocketPath,
+        walletId: signerWalletId,
+        primaryRpcUrl: params.rpcUrl,
+        expectedVersion: 0,
+        env: mergedEnv,
+      })
+    : await configureSignerOwnedWalletNetwork({
+        walletId: signerWalletId,
+        primaryRpcUrl: params.rpcUrl,
+        env: mergedEnv,
+        socketPath,
+      });
   // Do not leave a rejected endpoint in Gateway config when signer-side RPC or
   // genesis validation fails.
   cfg = setConfigEnvVar(cfg, rpcEnvKeyFor(params.chain, params.walletId), params.rpcUrl);
   await writeConfigFile(cfg);
-  const readiness = await readSignerOwnedWalletReadiness({ socketPath, walletId: signerWalletId });
+  const readiness = hosted
+    ? invokeNativeSignerWalletReadiness({
+        signerBinPath,
+        socketFlag: "--operator-socket",
+        socketPath: controlSocketPath,
+        walletId: signerWalletId,
+        env: mergedEnv,
+      })
+    : await readSignerOwnedWalletReadiness({ socketPath, walletId: signerWalletId });
   if (
     !readiness.ready ||
     readiness.publicKey !== result.wallet.publicKey ||
@@ -1680,6 +1899,87 @@ export async function walletSetupCommand(
   }
 }
 
+export async function walletRpcSetCommand(
+  runtime: RuntimeEnv = defaultRuntime,
+  options: WalletRpcSetOptions,
+) {
+  const walletId = options.walletId.trim();
+  const rpcUrl = options.rpcUrl.trim();
+  if (!walletId) {
+    throw new Error("--wallet-id is required");
+  }
+  if (!rpcUrl) {
+    throw new Error("--rpc-url is required");
+  }
+  const cfg = loadConfig();
+  const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
+  const registry = readWalletProviderRegistry(effectiveEnv);
+  const wallet = registry.wallets.find((entry) => entry.id === walletId);
+  if (!wallet || wallet.providerId !== "local-socket-signer") {
+    throw new Error(`native signer wallet not found: ${walletId}`);
+  }
+  const signerWalletId =
+    typeof wallet.metadata?.signerWalletId === "string" && wallet.metadata.signerWalletId.trim()
+      ? wallet.metadata.signerWalletId.trim()
+      : normalizeNativeSignerWalletId(wallet.id);
+  const hosted =
+    String(effectiveEnv.FASED_HOST_PROFILE ?? "")
+      .trim()
+      .toLowerCase() === "hosting";
+  const signerBinPath = hosted
+    ? "/opt/fased/signer/fased-signerd"
+    : resolveSignerdBinaryPath(effectiveEnv);
+  const socketFlag = hosted ? "--operator-socket" : "--control-socket";
+  const socketPath = hosted
+    ? "/run/fased-signerd/operator.sock"
+    : resolveLocalSignerControlSocketPath(effectiveEnv);
+  const current = hosted
+    ? invokeNativeSignerWalletReadiness({
+        signerBinPath,
+        socketFlag,
+        socketPath,
+        walletId: signerWalletId,
+        env: effectiveEnv,
+      })
+    : await readSignerOwnedWalletReadiness({
+        socketPath: resolveLocalSignerSocketPath(effectiveEnv),
+        walletId: signerWalletId,
+      });
+  const network = invokeNativeSignerNetworkSetPrimary({
+    signerBinPath,
+    socketFlag,
+    socketPath,
+    walletId: signerWalletId,
+    primaryRpcUrl: rpcUrl,
+    expectedVersion: current.networkVersion,
+    env: effectiveEnv,
+  });
+  const nextConfig = setConfigEnvVar(cfg, rpcEnvKeyFor("solana", walletId), rpcUrl);
+  await writeConfigFile(nextConfig);
+  registry.wallets = registry.wallets.map((entry) =>
+    entry.id === wallet.id
+      ? {
+          ...entry,
+          metadata: {
+            ...entry.metadata,
+            networkHash: network.hash,
+            networkVersion: network.version,
+            networkReady: network.ready,
+          },
+          updatedAt: new Date().toISOString(),
+        }
+      : entry,
+  );
+  writeWalletProviderRegistry(registry, effectiveEnv);
+  if (options.json) {
+    runtime.log(JSON.stringify({ ok: true, network }, null, 2));
+    return;
+  }
+  runtime.log(
+    `Primary Solana RPC verified for ${wallet.name} (${wallet.id}); signer network v${network.version} is ready.`,
+  );
+}
+
 export async function walletRecoveryExportCommand(
   runtime: RuntimeEnv = defaultRuntime,
   options: WalletRecoveryExportOptions,
@@ -1708,17 +2008,16 @@ export async function walletRecoveryExportCommand(
     String(effectiveEnv.FASED_HOST_PROFILE ?? "")
       .trim()
       .toLowerCase() === "hosting";
-  if (hosted) {
-    throw new Error(
-      "Hosting recovery export remains root/signer-owner only so a compromised Gateway cannot choose the encryption password and export a wallet. Use the provider root console and fased-signerd admin wallet recovery-export until a signer-owned owner-authorization ceremony is configured.",
-    );
-  }
   const signerWalletId =
     typeof wallet.metadata?.signerWalletId === "string" && wallet.metadata.signerWalletId.trim()
       ? wallet.metadata.signerWalletId.trim()
       : normalizeNativeSignerWalletId(wallet.id);
-  const signerBinPath = resolveSignerdBinaryPath(effectiveEnv);
-  const controlSocketPath = resolveLocalSignerControlSocketPath(effectiveEnv);
+  const signerBinPath = hosted
+    ? "/opt/fased/signer/fased-signerd"
+    : resolveSignerdBinaryPath(effectiveEnv);
+  const controlSocketPath = hosted
+    ? "/run/fased-signerd/operator.sock"
+    : resolveLocalSignerControlSocketPath(effectiveEnv);
   runtime.log(
     `Creating encrypted recovery package for ${wallet.id}. The signer will ask for and confirm the recovery password without echoing it.`,
   );
@@ -1728,7 +2027,7 @@ export async function walletRecoveryExportCommand(
       "admin",
       "wallet",
       "recovery-export",
-      "--control-socket",
+      hosted ? "--operator-socket" : "--control-socket",
       controlSocketPath,
       "--wallet-id",
       signerWalletId,
@@ -1804,28 +2103,25 @@ export async function walletRawExportCommand(
   if (!publicKey) {
     throw new Error(`native signer wallet ${walletId} has no verified Solana public address`);
   }
-  if (
+  const hosted =
     String(effectiveEnv.FASED_HOST_PROFILE ?? "")
       .trim()
-      .toLowerCase() === "hosting"
-  ) {
-    throw new Error(
-      "Hosting raw-key export remains signer-owner only. Run the native signer admin command from the provider root console so the Gateway cannot export custody material.",
-    );
-  }
+      .toLowerCase() === "hosting";
   const signerWalletId =
     typeof wallet.metadata?.signerWalletId === "string" && wallet.metadata.signerWalletId.trim()
       ? wallet.metadata.signerWalletId.trim()
       : normalizeNativeSignerWalletId(wallet.id);
   runtime.log("WARNING: raw private-key export reduces signer custody protection.");
   const child = spawnSync(
-    resolveSignerdBinaryPath(effectiveEnv),
+    hosted ? "/opt/fased/signer/fased-signerd" : resolveSignerdBinaryPath(effectiveEnv),
     [
       "admin",
       "wallet",
       "export-raw",
-      "--control-socket",
-      resolveLocalSignerControlSocketPath(effectiveEnv),
+      hosted ? "--operator-socket" : "--control-socket",
+      hosted
+        ? "/run/fased-signerd/operator.sock"
+        : resolveLocalSignerControlSocketPath(effectiveEnv),
       "--wallet-id",
       signerWalletId,
       "--expected-public-key",
@@ -1918,6 +2214,61 @@ export async function walletStatusCommand(
   runtime: RuntimeEnv = defaultRuntime,
   options: WalletStatusOptions = {},
 ) {
+  const config = loadConfig();
+  const effectiveEnv = { ...process.env, ...config.env?.vars } as NodeJS.ProcessEnv;
+  const hostedOperator =
+    String(effectiveEnv.FASED_HOST_PROFILE ?? "")
+      .trim()
+      .toLowerCase() === "hosting" && effectiveEnv.FASED_GATEWAY_SERVICE !== "1";
+  if (hostedOperator) {
+    const registered = readWalletProviderRegistry(effectiveEnv).wallets.filter(
+      (wallet) =>
+        wallet.providerId === "local-socket-signer" &&
+        (!options.walletId || wallet.id === options.walletId),
+    );
+    if (options.walletId && registered.length === 0) {
+      throw new Error(`native signer wallet not found: ${options.walletId}`);
+    }
+    const wallets = registered.map((wallet) => {
+      const signerWalletId =
+        typeof wallet.metadata?.signerWalletId === "string" && wallet.metadata.signerWalletId.trim()
+          ? wallet.metadata.signerWalletId.trim()
+          : normalizeNativeSignerWalletId(wallet.id);
+      return {
+        id: wallet.id,
+        name: wallet.name,
+        signer: invokeNativeSignerWalletReadiness({
+          signerBinPath: "/opt/fased/signer/fased-signerd",
+          socketFlag: "--operator-socket",
+          socketPath: "/run/fased-signerd/operator.sock",
+          walletId: signerWalletId,
+          env: effectiveEnv,
+        }),
+      };
+    });
+    if (options.json) {
+      runtime.log(
+        JSON.stringify({ ok: true, status: { mode: "hosting-operator", wallets } }, null, 2),
+      );
+      return;
+    }
+    if (wallets.length === 0) {
+      runtime.log("No signer-owned wallets are registered.");
+      return;
+    }
+    for (const wallet of wallets) {
+      runtime.log(
+        `Wallet ${wallet.name} (${wallet.id}): ${wallet.signer.ready ? "ready" : "setup incomplete"}`,
+      );
+      runtime.log(
+        `  signer=${wallet.signer.walletId} role=${wallet.signer.role} lane=${wallet.signer.operationLane} baseline=v${wallet.signer.baselineVersion}`,
+      );
+      runtime.log(
+        `  key=${String(wallet.signer.keyReady)} policy=v${wallet.signer.policyVersion} ${wallet.signer.policyHash} network=v${wallet.signer.networkVersion} ${wallet.signer.networkHash ?? "unconfigured"}`,
+      );
+    }
+    return;
+  }
   const status = await readWalletStatusSnapshot({ walletId: options.walletId });
   if (options.json) {
     runtime.log(JSON.stringify({ ok: true, status }, null, 2));

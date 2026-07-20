@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -38,6 +39,14 @@ func startSignerAdminTestServer(
 	t *testing.T,
 	respond func(request) ([]byte, error),
 ) signerAdminTestServer {
+	return startSignerAdminTestServerMode(t, 0o600, respond)
+}
+
+func startSignerAdminTestServerMode(
+	t *testing.T,
+	mode os.FileMode,
+	respond func(request) ([]byte, error),
+) signerAdminTestServer {
 	t.Helper()
 	directory := signerAdminShortTempDir(t)
 	path := filepath.Join(directory, "control.sock")
@@ -45,7 +54,7 @@ func startSignerAdminTestServer(
 	if err != nil {
 		t.Fatalf("listen on signer admin test socket: %v", err)
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
+	if err := os.Chmod(path, mode); err != nil {
 		_ = listener.Close()
 		t.Fatalf("secure signer admin test socket: %v", err)
 	}
@@ -267,6 +276,111 @@ func TestSignerAdminWalletImportStagesOnlyStdinInExclusiveSignerFile(t *testing.
 	}
 	zeroBytes(input)
 	zeroBytes(privateKey)
+}
+
+func TestSignerAdminOperatorImportTransfersTypedSecretWithoutStagingPath(t *testing.T) {
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedKey := append([]byte(nil), privateKey...)
+	defer zeroBytes(expectedKey)
+	values := make([]int, len(privateKey))
+	for index, value := range privateKey {
+		values[index] = int(value)
+	}
+	input, err := json.Marshal(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := startSignerAdminTestServerMode(t, 0o660, signerAdminTestSuccess(t,
+		`{"wallet":{"walletId":"agent","publicKey":"public"},"policy":{"walletId":"agent","role":"agent","version":1,"baselineVersion":1}}`,
+	))
+	var stdout bytes.Buffer
+	if err := runSignerAdminCLI([]string{
+		"wallet", "import", "--operator-socket", server.path, "--wallet-id", "agent", "--baseline-role", "agent",
+	}, bytes.NewReader(input), &stdout, nil); err != nil {
+		t.Fatalf("run operator wallet import: %v", err)
+	}
+	req := waitSignerAdminTestServer(t, server)
+	if req.Op != "v2.wallet.import" || req.WalletID != "agent" || req.Operator == nil || len(req.Operator.Nonce) != 64 || req.Operator.ExpiresAt == "" {
+		t.Fatalf("operator import omitted its typed authority context: %#v", req)
+	}
+	var body signerOperatorWalletImportRequestV1
+	decodeSignerAdminTestBody(t, req, &body)
+	secret, err := base64.RawStdEncoding.DecodeString(body.KeypairBase64)
+	if err != nil || !bytes.Equal(secret, expectedKey) {
+		t.Fatalf("operator import did not transfer the canonical stdin keypair: gotBytes=%d wantBytes=%d err=%v", len(secret), len(expectedKey), err)
+	}
+	defer zeroBytes(secret)
+	if body.Baseline.Role != "agent" || body.Baseline.Version != 1 || bytes.Contains(req.Request, []byte(`"path"`)) {
+		t.Fatalf("operator import escaped its fixed baseline schema: %s", req.Request)
+	}
+	if strings.Contains(stdout.String(), body.KeypairBase64) {
+		t.Fatal("operator import output exposed the keypair")
+	}
+	zeroBytes(input)
+	zeroBytes(privateKey)
+}
+
+func TestSignerAdminOperatorImportRejectsArbitraryPolicyAndAmbiguousAuthority(t *testing.T) {
+	server := startSignerAdminTestServerMode(t, 0o660, signerAdminTestSuccess(t, `{}`))
+	if err := runSignerAdminCLI([]string{
+		"wallet", "import", "--operator-socket", server.path, "--wallet-id", "agent", "--locked-role", "agent",
+	}, strings.NewReader("[]"), io.Discard, nil); err == nil || !strings.Contains(err.Error(), "requires --baseline-role") {
+		t.Fatalf("operator import accepted a caller-defined policy lane: %v", err)
+	}
+	if err := runSignerAdminCLI([]string{
+		"wallet", "import", "--operator-socket", server.path, "--control-socket", server.path,
+		"--wallet-id", "agent", "--baseline-role", "agent",
+	}, strings.NewReader("[]"), io.Discard, nil); err == nil || !strings.Contains(err.Error(), "exactly one") {
+		t.Fatalf("operator import accepted ambiguous socket authority: %v", err)
+	}
+}
+
+func TestSignerAdminOperatorCreateAndPrimaryRPCUseFixedSchemas(t *testing.T) {
+	createServer := startSignerAdminTestServerMode(t, 0o660, signerAdminTestSuccess(t,
+		`{"wallet":{"walletId":"vault","publicKey":"public"},"policy":{"walletId":"vault","role":"vault","version":1,"baselineVersion":1}}`,
+	))
+	if err := runSignerAdminCLI([]string{
+		"wallet", "create", "--operator-socket", createServer.path, "--wallet-id", "vault", "--baseline-role", "vault", "--allow-existing",
+	}, strings.NewReader(""), io.Discard, nil); err != nil {
+		t.Fatalf("operator wallet create failed: %v", err)
+	}
+	createReq := waitSignerAdminTestServer(t, createServer)
+	var createBody signerOperatorWalletCreateRequestV1
+	decodeSignerAdminTestBody(t, createReq, &createBody)
+	if createReq.Operator == nil || createReq.Op != "v2.wallet.create" || createBody.Baseline.Role != "vault" || !createBody.AllowExisting {
+		t.Fatalf("operator create escaped its fixed role-baseline schema: req=%#v body=%#v", createReq, createBody)
+	}
+
+	networkServer := startSignerAdminTestServerMode(t, 0o660, signerAdminTestSuccess(t,
+		`{"walletId":"vault","configured":true,"version":2,"hash":"hmac-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","ready":true}`,
+	))
+	primaryRPC := "https://rpc.example/solana?api-key=operator-secret"
+	if err := runSignerAdminCLI([]string{
+		"network", "set-primary", "--operator-socket", networkServer.path, "--wallet-id", "vault", "--expected-version", "1",
+	}, strings.NewReader(`{"primaryRpcUrl":"`+primaryRPC+`"}`), io.Discard, nil); err != nil {
+		t.Fatalf("operator primary RPC update failed: %v", err)
+	}
+	networkReq := waitSignerAdminTestServer(t, networkServer)
+	var networkBody signerOperatorNetworkSetPrimaryRequestV1
+	decodeSignerAdminTestBody(t, networkReq, &networkBody)
+	if networkReq.Operator == nil || networkReq.Op != "v2.network.setPrimary" || networkBody.ExpectedVersion != 1 || networkBody.PrimaryRPCURL != primaryRPC {
+		t.Fatalf("operator primary RPC escaped its fixed schema: req=%#v body=%#v", networkReq, networkBody)
+	}
+	for _, value := range []string{networkReq.Operator.Nonce, networkReq.Operator.ExpiresAt} {
+		if strings.Contains(value, "operator-secret") {
+			t.Fatal("operator RPC credential leaked into authority metadata")
+		}
+	}
+
+	rejectServer := startSignerAdminTestServerMode(t, 0o660, signerAdminTestSuccess(t, `{}`))
+	if err := runSignerAdminCLI([]string{
+		"network", "set-primary", "--operator-socket", rejectServer.path, "--wallet-id", "vault", "--expected-version", "1",
+	}, strings.NewReader(`{"primaryRpcUrl":"https://rpc.example","verificationRpcUrl":"https://other.example"}`), io.Discard, nil); err == nil || !strings.Contains(err.Error(), "exactly one primaryRpcUrl") {
+		t.Fatalf("operator RPC accepted an arbitrary network document: %v", err)
+	}
 }
 
 func TestSignerAdminWalletImportCleansStagedFileOnRejection(t *testing.T) {

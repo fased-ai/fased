@@ -131,6 +131,46 @@ const signerMocks = vi.hoisted(() => ({
   ),
   importProcess: vi.fn((_command: string, args: string[]) => {
     const walletId = args[args.indexOf("--wallet-id") + 1] || "mining";
+    if (args.includes("network") && args.includes("set-primary")) {
+      return {
+        status: 0,
+        signal: null,
+        stdout: JSON.stringify({
+          walletId,
+          configured: true,
+          version: 1,
+          hash: `hmac-sha256:${"b".repeat(64)}`,
+          ready: true,
+        }),
+        stderr: "",
+        pid: 1,
+        output: [],
+      };
+    }
+    if (args.includes("wallet") && args.includes("readiness")) {
+      return {
+        status: 0,
+        signal: null,
+        stdout: JSON.stringify({
+          walletId,
+          publicKey: "11111111111111111111111111111111",
+          role: signerMocks.roles.get(walletId) ?? "agent",
+          baselineVersion: 1,
+          policyVersion: 1,
+          policyHash: signerMocks.policyHashes.get(walletId) ?? `sha256:${"d".repeat(64)}`,
+          networkVersion: 1,
+          networkHash: `hmac-sha256:${"b".repeat(64)}`,
+          keyReady: true,
+          policyReady: true,
+          networkReady: true,
+          operationLane: "agent-reviewed-and-autonomous",
+          ready: true,
+        }),
+        stderr: "",
+        pid: 1,
+        output: [],
+      };
+    }
     const role = args[args.indexOf("--baseline-role") + 1] || "mining";
     signerMocks.roles.set(walletId, role);
     signerMocks.policyHashes.set(walletId, `sha256:${"d".repeat(64)}`);
@@ -502,7 +542,7 @@ describe("walletSetupCommand native signer boundary", () => {
     }
   });
 
-  it("creates a fail-closed hosted wallet without any app-visible root channel", async () => {
+  it("creates a hosted wallet through the restricted native operator lifecycle", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-hosted-signer-create-"));
     const configPath = path.join(root, "fased.json");
     const stateDir = path.join(root, "state");
@@ -549,13 +589,25 @@ describe("walletSetupCommand native signer boundary", () => {
       await expect(fs.stat(path.join(stateDir, "wallet", "signer.env"))).rejects.toMatchObject({
         code: "ENOENT",
       });
-      expect(signerMocks.networkPut).toHaveBeenCalledWith(
-        expect.objectContaining({
-          walletId: "agent",
-          primaryRpcUrl: "https://hosted-rpc.example/solana?api-key=secret",
-          env: expect.objectContaining({ FASED_HOST_PROFILE: "hosting" }),
-        }),
+      expect(signerMocks.networkPut).not.toHaveBeenCalled();
+      expect(signerMocks.importProcess).toHaveBeenCalledWith(
+        "/opt/fased/signer/fased-signerd",
+        expect.arrayContaining([
+          "admin",
+          "wallet",
+          "create",
+          "--operator-socket",
+          "/run/fased-signerd/operator.sock",
+          "--wallet-id",
+          "agent",
+          "--baseline-role",
+          "agent",
+        ]),
+        expect.anything(),
       );
+      expect(
+        JSON.stringify(signerMocks.importProcess.mock.calls.map((call) => call[1])),
+      ).not.toContain("api-key=secret");
       const hostedWallet = readWalletProviderRegistry(process.env).wallets.find(
         (wallet) => wallet.id === "agent",
       );
@@ -754,7 +806,7 @@ describe("walletSetupCommand native signer boundary", () => {
     }
   });
 
-  it("keeps Hosting private-key import out of the app account", async () => {
+  it("uses the restricted Hosting operator socket for native private-key import", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-hosted-import-reject-"));
     const configPath = path.join(root, "fased.json");
     const importPath = path.join(root, "agent-keypair.json");
@@ -771,20 +823,37 @@ describe("walletSetupCommand native signer boundary", () => {
     clearConfigCache();
 
     try {
-      await expect(
-        walletSetupCommand({ log: vi.fn() } as never, {
-          mode: "local-signer-import",
-          chain: "solana",
-          walletId: "agent",
-          role: "agent",
-          walletName: "Agent",
-          importFile: importPath,
-          rpcUrl: "https://rpc.example/solana",
-          nonInteractive: true,
-          noDoctor: true,
+      await walletSetupCommand({ log: vi.fn() } as never, {
+        mode: "local-signer-import",
+        chain: "solana",
+        walletId: "agent",
+        role: "agent",
+        walletName: "Agent",
+        importFile: importPath,
+        rpcUrl: "https://rpc.example/solana",
+        nonInteractive: true,
+        noDoctor: true,
+      });
+      expect(signerMocks.importProcess).toHaveBeenCalledWith(
+        "/opt/fased/signer/fased-signerd",
+        expect.arrayContaining([
+          "admin",
+          "wallet",
+          "import",
+          "--operator-socket",
+          "/run/fased-signerd/operator.sock",
+          "--wallet-id",
+          "agent",
+          "--baseline-role",
+          "agent",
+        ]),
+        expect.objectContaining({
+          env: expect.not.objectContaining({
+            FASED_WALLET_PRIVATE_KEY: expect.anything(),
+            FASED_WALLET_PASSPHRASE: expect.anything(),
+          }),
         }),
-      ).rejects.toThrow(/provider root console/i);
-      expect(signerMocks.importProcess).not.toHaveBeenCalled();
+      );
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

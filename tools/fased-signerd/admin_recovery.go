@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -118,11 +119,11 @@ func runSignerAdminWalletRecoveryExportV1(args []string, stdin io.Reader, stdout
 	if err := parseSignerAdminFlags(fs, args); err != nil {
 		return err
 	}
-	socket, err := requireSignerAdminControlSocket(common.controlSocket)
+	socket, operator, err := requireSignerAdminLifecycleSocket(common)
 	if err != nil {
 		return err
 	}
-	if socket.ownerUID >= 0 && socket.ownerUID != os.Geteuid() {
+	if !operator && socket.ownerUID >= 0 && socket.ownerUID != os.Geteuid() {
 		return errors.New("recovery export must run as the signer control socket owner")
 	}
 	if walletID, err = validateSignerAdminWalletID(walletID); err != nil {
@@ -139,6 +140,41 @@ func runSignerAdminWalletRecoveryExportV1(args []string, stdin io.Reader, stdout
 		return err
 	}
 	defer zeroBytes(password)
+	if operator {
+		body := signerOperatorRecoveryExportRequestV1{
+			ExpectedPublicKey: expectedPublicKey,
+			PasswordBase64:    base64.RawStdEncoding.EncodeToString(password),
+		}
+		resultRaw, callErr := callSignerOperatorSensitiveV1(
+			common.operatorSocket,
+			"v2.wallet.recovery.export",
+			walletID,
+			body,
+		)
+		body.PasswordBase64 = ""
+		if callErr != nil {
+			return callErr
+		}
+		var result signerWalletRecoveryExportResultV2
+		if err := decodeSignerAdminStrictJSON(resultRaw, &result); err != nil || result.WalletID != walletID || result.PublicKey != expectedPublicKey {
+			return errors.New("signer returned an invalid recovery export result")
+		}
+		if err := validateSignerRecoveryPackageV1(result.Package); err != nil {
+			return errors.New("signer returned an invalid recovery package")
+		}
+		encoded, err := json.MarshalIndent(result.Package, "", "  ")
+		if err != nil {
+			return errors.New("encode recovery package")
+		}
+		encoded = append(encoded, '\n')
+		defer zeroBytes(encoded)
+		if err := writeSignerAdminOwnerFileV1(outputPath, encoded); err != nil {
+			return err
+		}
+		return writeSignerAdminResult(mustMarshalSignerAdminPublicResultV1(map[string]any{
+			"walletId": result.WalletID, "role": result.Role, "publicKey": result.PublicKey, "output": outputPath,
+		}), stdout)
+	}
 	passwordPath, err := stageSignerAdminRecoveryInputV1(socket, password)
 	if err != nil {
 		return err
@@ -183,11 +219,11 @@ func runSignerAdminWalletRecoveryImportV1(args []string, stdin io.Reader, stdout
 	if err := parseSignerAdminFlags(fs, args); err != nil {
 		return err
 	}
-	socket, err := requireSignerAdminControlSocket(common.controlSocket)
+	socket, operator, err := requireSignerAdminLifecycleSocket(common)
 	if err != nil {
 		return err
 	}
-	if socket.ownerUID >= 0 && socket.ownerUID != os.Geteuid() {
+	if !operator && socket.ownerUID >= 0 && socket.ownerUID != os.Geteuid() {
 		return errors.New("recovery import must run as the signer control socket owner")
 	}
 	if walletID, err = validateSignerAdminWalletID(walletID); err != nil {
@@ -196,6 +232,9 @@ func runSignerAdminWalletRecoveryImportV1(args []string, stdin io.Reader, stdout
 	useBaseline := strings.TrimSpace(baselineRole) != ""
 	if useBaseline && (strings.TrimSpace(policyFile) != "" || strings.TrimSpace(lockedRole) != "") {
 		return errors.New("--baseline-role cannot be combined with --policy-file or --locked-role")
+	}
+	if operator && !useBaseline {
+		return errors.New("operator recovery import requires --baseline-role; arbitrary policies are unavailable on the operator socket")
 	}
 	var policy signerPolicyV2
 	if useBaseline {
@@ -234,6 +273,28 @@ func runSignerAdminWalletRecoveryImportV1(args []string, stdin io.Reader, stdout
 		return err
 	}
 	defer zeroBytes(password)
+	if operator {
+		body := signerOperatorRecoveryImportRequestV1{
+			ExpectedVersion: 0,
+			Baseline: signerRoleBaselineRequestV1{
+				Version: signerRoleBaselineVersionV1,
+				Role:    baselineRole,
+			},
+			Package:        pkg,
+			PasswordBase64: base64.RawStdEncoding.EncodeToString(password),
+		}
+		result, callErr := callSignerOperatorSensitiveV1(
+			common.operatorSocket,
+			"v2.wallet.recovery.import",
+			walletID,
+			body,
+		)
+		body.PasswordBase64 = ""
+		if callErr != nil {
+			return callErr
+		}
+		return writeSignerAdminResult(result, stdout)
+	}
 	recoveryPath, err := stageSignerAdminRecoveryInputV1(socket, recoveryRaw)
 	if err != nil {
 		return err
@@ -311,11 +372,11 @@ func runSignerAdminWalletRawExportV2(args []string, stdout io.Writer) error {
 	if !acknowledge {
 		return errors.New("--acknowledge-custody-reduction is required")
 	}
-	socket, err := requireSignerAdminControlSocket(common.controlSocket)
+	socket, operator, err := requireSignerAdminLifecycleSocket(common)
 	if err != nil {
 		return err
 	}
-	if socket.ownerUID >= 0 && socket.ownerUID != os.Geteuid() {
+	if !operator && socket.ownerUID >= 0 && socket.ownerUID != os.Geteuid() {
 		return errors.New("raw wallet export must run as the signer control socket owner")
 	}
 	if walletID, err = validateSignerAdminWalletID(walletID); err != nil {
@@ -326,6 +387,51 @@ func runSignerAdminWalletRawExportV2(args []string, stdout io.Writer) error {
 	}
 	if outputPath, err = validateSignerAdminOutputPathV1(outputPath); err != nil {
 		return err
+	}
+	if operator {
+		body := signerOperatorRawExportRequestV1{
+			ExpectedPublicKey:           expectedPublicKey,
+			AcknowledgeCustodyReduction: true,
+		}
+		resultRaw, callErr := callSignerOperatorSensitiveV1(
+			common.operatorSocket,
+			"v2.wallet.exportRaw",
+			walletID,
+			body,
+		)
+		if callErr != nil {
+			return callErr
+		}
+		var result signerOperatorRawExportResultV1
+		if err := decodeSignerAdminStrictJSON(resultRaw, &result); err != nil || result.WalletID != walletID || result.PublicKey != expectedPublicKey {
+			return errors.New("signer returned an invalid operator raw-export result")
+		}
+		canonical, err := decodeOperatorSecretV1(result.KeypairBase64, 64, "raw keypair")
+		result.KeypairBase64 = ""
+		if err != nil || len(canonical) != 64 || !validateSolanaCLIPrivateKeyV2(canonical) {
+			zeroBytes(canonical)
+			return errors.New("signer returned an invalid operator raw keypair")
+		}
+		defer zeroBytes(canonical)
+		encoded := make([]int, len(canonical))
+		for index, value := range canonical {
+			encoded[index] = int(value)
+		}
+		raw, err := json.Marshal(encoded)
+		for index := range encoded {
+			encoded[index] = 0
+		}
+		if err != nil {
+			return errors.New("encode operator raw keypair")
+		}
+		raw = append(raw, '\n')
+		defer zeroBytes(raw)
+		if err := writeSignerAdminOwnerFileV1(outputPath, raw); err != nil {
+			return err
+		}
+		return writeSignerAdminResult(mustMarshalSignerAdminPublicResultV1(map[string]any{
+			"walletId": result.WalletID, "publicKey": result.PublicKey, "output": outputPath, "custodyReduced": true,
+		}), stdout)
 	}
 	stagePath, err := createSignerAdminRawExportStageV2(socket)
 	if err != nil {

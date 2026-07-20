@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -46,7 +47,8 @@ func (v *signerAdminRequiredUint64) Set(raw string) error {
 }
 
 type signerAdminCommonFlags struct {
-	controlSocket string
+	controlSocket  string
+	operatorSocket string
 }
 
 type signerAdminSocketInfo struct {
@@ -88,6 +90,8 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 			return runSignerAdminWalletRecoveryImportV1(args[2:], stdin, stdout)
 		case "export-raw":
 			return runSignerAdminWalletRawExportV2(args[2:], stdout)
+		case "readiness":
+			return runSignerAdminWalletReadinessV1(args[2:], stdout)
 		case "reencrypt":
 			return runSignerAdminWalletReencrypt(args[2:], stdout)
 		case "rotate-successor":
@@ -114,6 +118,8 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 			return runSignerAdminNetworkGet(args[2:], stdout)
 		case "put":
 			return runSignerAdminNetworkPut(args[2:], stdin, stdout)
+		case "set-primary":
+			return runSignerAdminNetworkSetPrimaryV1(args[2:], stdin, stdout)
 		default:
 			return errors.New("unknown signer admin network command")
 		}
@@ -215,6 +221,7 @@ func newSignerAdminFlagSet(name string) (*flag.FlagSet, *signerAdminCommonFlags)
 	fs.SetOutput(io.Discard)
 	common := &signerAdminCommonFlags{}
 	fs.StringVar(&common.controlSocket, "control-socket", "", "absolute signer control socket path")
+	fs.StringVar(&common.operatorSocket, "operator-socket", "", "absolute restricted signer operator socket path")
 	return fs, common
 }
 
@@ -265,6 +272,49 @@ func requireSignerAdminControlSocket(raw string) (signerAdminSocketInfo, error) 
 		}
 	}
 	return signerAdminSocketInfo{path: path, ownerUID: ownerUID}, nil
+}
+
+func requireSignerAdminOperatorSocket(raw string) (signerAdminSocketInfo, error) {
+	path := strings.TrimSpace(raw)
+	if path == "" {
+		return signerAdminSocketInfo{}, errors.New("--operator-socket is required")
+	}
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return signerAdminSocketInfo{}, errors.New("signer operator socket path must be absolute and clean")
+	}
+	parentInfo, err := os.Lstat(filepath.Dir(path))
+	if err != nil || parentInfo.Mode()&os.ModeSymlink != 0 || !parentInfo.IsDir() || parentInfo.Mode().Perm()&0o002 != 0 {
+		return signerAdminSocketInfo{}, errors.New("signer operator socket directory must be a non-symlink directory not writable by others")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return signerAdminSocketInfo{}, fmt.Errorf("inspect signer operator socket: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || info.Mode()&os.ModeSocket == 0 {
+		return signerAdminSocketInfo{}, errors.New("signer operator socket must be a non-symlink Unix socket")
+	}
+	if mode := info.Mode().Perm(); mode != 0o660 && mode != 0o600 {
+		return signerAdminSocketInfo{}, errors.New("signer operator socket must have mode 0660 or 0600")
+	}
+	ownerUID := -1
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		ownerUID = int(stat.Uid)
+	}
+	return signerAdminSocketInfo{path: path, ownerUID: ownerUID}, nil
+}
+
+func requireSignerAdminLifecycleSocket(common *signerAdminCommonFlags) (signerAdminSocketInfo, bool, error) {
+	hasControl := strings.TrimSpace(common.controlSocket) != ""
+	hasOperator := strings.TrimSpace(common.operatorSocket) != ""
+	if hasControl == hasOperator {
+		return signerAdminSocketInfo{}, false, errors.New("exactly one of --control-socket or --operator-socket is required")
+	}
+	if hasOperator {
+		socket, err := requireSignerAdminOperatorSocket(common.operatorSocket)
+		return socket, true, err
+	}
+	socket, err := requireSignerAdminControlSocket(common.controlSocket)
+	return socket, false, err
 }
 
 func validateSignerAdminWalletID(raw string) (string, error) {
@@ -332,19 +382,52 @@ func resolveSignerAdminCreationPolicy(walletID, policyFile, lockedRole string) (
 
 func runSignerAdminWalletCreate(args []string, stdout io.Writer) error {
 	fs, common := newSignerAdminFlagSet("wallet create")
-	var walletID, policyFile, lockedRole string
+	var walletID, policyFile, lockedRole, baselineRole string
+	var allowExisting bool
 	fs.StringVar(&walletID, "wallet-id", "", "normalized wallet identifier")
 	fs.StringVar(&policyFile, "policy-file", "", "absolute strict policy JSON path")
 	fs.StringVar(&lockedRole, "locked-role", "", "agent, mining, or vault deny-all policy")
+	fs.StringVar(&baselineRole, "baseline-role", "", "agent, mining, or vault signer-owned role baseline")
+	fs.BoolVar(&allowExisting, "allow-existing", false, "resume only an existing wallet with the same signer-owned role baseline")
 	if err := parseSignerAdminFlags(fs, args); err != nil {
 		return err
 	}
-	if _, err := requireSignerAdminControlSocket(common.controlSocket); err != nil {
-		return err
-	}
-	walletID, err := validateSignerAdminWalletID(walletID)
+	_, operator, err := requireSignerAdminLifecycleSocket(common)
 	if err != nil {
 		return err
+	}
+	walletID, err = validateSignerAdminWalletID(walletID)
+	if err != nil {
+		return err
+	}
+	useBaseline := strings.TrimSpace(baselineRole) != ""
+	if useBaseline && (strings.TrimSpace(policyFile) != "" || strings.TrimSpace(lockedRole) != "") {
+		return errors.New("--baseline-role cannot be combined with --policy-file or --locked-role")
+	}
+	if operator && !useBaseline {
+		return errors.New("operator wallet create requires --baseline-role; arbitrary policies are unavailable on the operator socket")
+	}
+	if useBaseline {
+		baseline, baselineErr := normalizeRoleBaselineRequestV1(signerRoleBaselineRequestV1{
+			Version: signerRoleBaselineVersionV1,
+			Role:    baselineRole,
+		})
+		if baselineErr != nil {
+			return fmt.Errorf("invalid --baseline-role: %w", baselineErr)
+		}
+		if operator {
+			return callAndWriteSignerOperatorV1(
+				common.operatorSocket,
+				"v2.wallet.create",
+				walletID,
+				signerOperatorWalletCreateRequestV1{ExpectedVersion: 0, Baseline: baseline, AllowExisting: allowExisting},
+				stdout,
+			)
+		}
+		return callAndWriteSignerAdmin(common.controlSocket, "v2.wallet.create", walletID, signerWalletCreateRequestV2{
+			ExpectedVersion: 0,
+			Baseline:        &baseline,
+		}, stdout)
 	}
 	policy, err := resolveSignerAdminCreationPolicy(walletID, policyFile, lockedRole)
 	if err != nil {
@@ -352,6 +435,26 @@ func runSignerAdminWalletCreate(args []string, stdout io.Writer) error {
 	}
 	body := signerWalletCreateRequestV2{ExpectedVersion: 0, Policy: policy}
 	return callAndWriteSignerAdmin(common.controlSocket, "v2.wallet.create", walletID, body, stdout)
+}
+
+func runSignerAdminWalletReadinessV1(args []string, stdout io.Writer) error {
+	fs, common := newSignerAdminFlagSet("wallet readiness")
+	var walletID string
+	fs.StringVar(&walletID, "wallet-id", "", "normalized wallet identifier")
+	if err := parseSignerAdminFlags(fs, args); err != nil {
+		return err
+	}
+	_, operator, err := requireSignerAdminLifecycleSocket(common)
+	if err != nil {
+		return err
+	}
+	if walletID, err = validateSignerAdminWalletID(walletID); err != nil {
+		return err
+	}
+	if operator {
+		return callAndWriteSignerOperatorV1(common.operatorSocket, "v2.wallet.readiness", walletID, nil, stdout)
+	}
+	return callAndWriteSignerAdmin(common.controlSocket, "v2.wallet.readiness", walletID, nil, stdout)
 }
 
 func runSignerAdminWalletImport(args []string, stdin io.Reader, stdout io.Writer) error {
@@ -364,11 +467,11 @@ func runSignerAdminWalletImport(args []string, stdin io.Reader, stdout io.Writer
 	if err := parseSignerAdminFlags(fs, args); err != nil {
 		return err
 	}
-	socketInfo, err := requireSignerAdminControlSocket(common.controlSocket)
+	socketInfo, operator, err := requireSignerAdminLifecycleSocket(common)
 	if err != nil {
 		return err
 	}
-	if socketInfo.ownerUID >= 0 && socketInfo.ownerUID != os.Geteuid() {
+	if !operator && socketInfo.ownerUID >= 0 && socketInfo.ownerUID != os.Geteuid() {
 		return errors.New("wallet import must run as the signer control socket owner so the staged key is signer-owned")
 	}
 	walletID, err = validateSignerAdminWalletID(walletID)
@@ -378,6 +481,9 @@ func runSignerAdminWalletImport(args []string, stdin io.Reader, stdout io.Writer
 	useBaseline := strings.TrimSpace(baselineRole) != ""
 	if useBaseline && (strings.TrimSpace(policyFile) != "" || strings.TrimSpace(lockedRole) != "") {
 		return errors.New("--baseline-role cannot be combined with --policy-file or --locked-role")
+	}
+	if operator && !useBaseline {
+		return errors.New("operator wallet import requires --baseline-role; arbitrary policies are unavailable on the operator socket")
 	}
 	var policy signerPolicyV2
 	if useBaseline {
@@ -400,6 +506,32 @@ func runSignerAdminWalletImport(args []string, stdin io.Reader, stdout io.Writer
 		return err
 	}
 	defer zeroBytes(canonicalKeypair)
+	if operator {
+		keypairBytes, err := decodeSignerAdminCanonicalKeypairV1(canonicalKeypair)
+		if err != nil {
+			return err
+		}
+		defer zeroBytes(keypairBytes)
+		body := signerOperatorWalletImportRequestV1{
+			ExpectedVersion: 0,
+			Baseline: signerRoleBaselineRequestV1{
+				Version: signerRoleBaselineVersionV1,
+				Role:    baselineRole,
+			},
+			KeypairBase64: base64.RawStdEncoding.EncodeToString(keypairBytes),
+		}
+		result, err := callSignerOperatorSensitiveV1(
+			common.operatorSocket,
+			"v2.wallet.import",
+			walletID,
+			body,
+		)
+		body.KeypairBase64 = ""
+		if err != nil {
+			return err
+		}
+		return writeSignerAdminResult(result, stdout)
+	}
 	importPath, err := writeSignerAdminImportFile(socketInfo, canonicalKeypair)
 	if err != nil {
 		return err
@@ -719,6 +851,63 @@ func runSignerAdminNetworkPut(args []string, stdin io.Reader, stdout io.Writer) 
 	return writeSignerAdminNetworkSummaryV2(result, walletID, stdout)
 }
 
+func runSignerAdminNetworkSetPrimaryV1(args []string, stdin io.Reader, stdout io.Writer) error {
+	fs, common := newSignerAdminFlagSet("network set-primary")
+	var walletID string
+	var expected signerAdminRequiredUint64
+	fs.StringVar(&walletID, "wallet-id", "", "normalized wallet identifier")
+	fs.Var(&expected, "expected-version", "required current network version")
+	if err := parseSignerAdminFlags(fs, args); err != nil {
+		return err
+	}
+	if !expected.set {
+		return errors.New("--expected-version is required")
+	}
+	_, operator, err := requireSignerAdminLifecycleSocket(common)
+	if err != nil {
+		return err
+	}
+	if walletID, err = validateSignerAdminWalletID(walletID); err != nil {
+		return err
+	}
+	raw, err := io.ReadAll(io.LimitReader(stdin, maxSignerNetworkInputBytesV2+1))
+	if err != nil {
+		return errors.New("read primary signer RPC from stdin")
+	}
+	defer zeroBytes(raw)
+	if len(raw) == 0 || len(raw) > maxSignerNetworkInputBytesV2 {
+		return errors.New("stdin must contain one strict primary RPC JSON object within the size limit")
+	}
+	var input struct {
+		PrimaryRPCURL string `json:"primaryRpcUrl"`
+	}
+	if err := decodeSignerAdminStrictJSON(raw, &input); err != nil || strings.TrimSpace(input.PrimaryRPCURL) == "" {
+		return errors.New("stdin must contain exactly one primaryRpcUrl")
+	}
+	defer func() { input.PrimaryRPCURL = "" }()
+	if operator {
+		return callAndWriteSignerOperatorV1(
+			common.operatorSocket,
+			"v2.network.setPrimary",
+			walletID,
+			signerOperatorNetworkSetPrimaryRequestV1{
+				ExpectedVersion: expected.value,
+				PrimaryRPCURL:   input.PrimaryRPCURL,
+			},
+			stdout,
+		)
+	}
+	expectedVersion := expected.value
+	result, err := callSignerAdminSensitiveV2(common.controlSocket, "v2.network.put", walletID, signerNetworkPutRequestV2{
+		ExpectedVersion: &expectedVersion,
+		PrimaryRPCURL:   input.PrimaryRPCURL,
+	})
+	if err != nil {
+		return err
+	}
+	return writeSignerAdminResult(result, stdout)
+}
+
 func writeSignerAdminNetworkSummaryV2(result json.RawMessage, walletID string, stdout io.Writer) error {
 	var summary signerNetworkSummaryV2
 	if err := decodeSignerAdminStrictJSON(result, &summary); err != nil {
@@ -911,6 +1100,31 @@ func readSignerAdminSolanaKeypair(stdin io.Reader) ([]byte, error) {
 	return canonical, nil
 }
 
+func decodeSignerAdminCanonicalKeypairV1(canonical []byte) ([]byte, error) {
+	var values []int
+	if err := decodeSignerAdminStrictJSON(canonical, &values); err != nil || len(values) != ed25519.PrivateKeySize {
+		return nil, errors.New("canonical Solana keypair is invalid")
+	}
+	defer func() {
+		for index := range values {
+			values[index] = 0
+		}
+	}()
+	secret := make([]byte, ed25519.PrivateKeySize)
+	for index, value := range values {
+		if value < 0 || value > 255 {
+			zeroBytes(secret)
+			return nil, errors.New("canonical Solana keypair is invalid")
+		}
+		secret[index] = byte(value)
+	}
+	if !validateSolanaCLIPrivateKeyV2(secret) {
+		zeroBytes(secret)
+		return nil, errors.New("canonical Solana keypair is invalid")
+	}
+	return secret, nil
+}
+
 func writeSignerAdminImportFile(socket signerAdminSocketInfo, canonical []byte) (string, error) {
 	directory := filepath.Join(filepath.Dir(socket.path), ".admin-import")
 	if err := os.Mkdir(directory, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
@@ -1012,6 +1226,14 @@ func callAndWriteSignerAdmin(controlSocket, op, walletID string, body any, stdou
 	return writeSignerAdminResult(result, stdout)
 }
 
+func callAndWriteSignerOperatorV1(operatorSocket, op, walletID string, body any, stdout io.Writer) error {
+	result, err := callSignerOperatorSensitiveV1(operatorSocket, op, walletID, body)
+	if err != nil {
+		return err
+	}
+	return writeSignerAdminResult(result, stdout)
+}
+
 func writeSignerAdminResult(result json.RawMessage, stdout io.Writer) error {
 	var formatted bytes.Buffer
 	if err := json.Indent(&formatted, result, "", "  "); err != nil {
@@ -1037,7 +1259,33 @@ func callSignerAdminWithSensitivityV2(controlSocket, op, walletID string, body a
 	if err != nil {
 		return nil, err
 	}
+	return callSignerSocketWithSensitivityV1(socket, false, op, walletID, body, sensitive)
+}
+
+func callSignerOperatorSensitiveV1(operatorSocket, op, walletID string, body any) (json.RawMessage, error) {
+	socket, err := requireSignerAdminOperatorSocket(operatorSocket)
+	if err != nil {
+		return nil, err
+	}
+	return callSignerSocketWithSensitivityV1(socket, true, op, walletID, body, true)
+}
+
+func callSignerSocketWithSensitivityV1(
+	socket signerAdminSocketInfo,
+	operator bool,
+	op string,
+	walletID string,
+	body any,
+	sensitive bool,
+) (json.RawMessage, error) {
 	req := request{Op: op, WalletID: walletID}
+	if operator {
+		context, err := newSignerOperatorContextV1(time.Now())
+		if err != nil {
+			return nil, err
+		}
+		req.Operator = &context
+	}
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
@@ -1062,7 +1310,7 @@ func callSignerAdminWithSensitivityV2(controlSocket, op, walletID string, body a
 	dialer := net.Dialer{Timeout: signerAdminSocketTimeout}
 	conn, err := dialer.Dial("unix", socket.path)
 	if err != nil {
-		return nil, errors.New("connect to signer control socket")
+		return nil, errors.New("connect to signer lifecycle socket")
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(signerAdminSocketTimeout))
@@ -1071,15 +1319,15 @@ func callSignerAdminWithSensitivityV2(controlSocket, op, walletID string, body a
 		defer zeroBytes(payload)
 	}
 	if err := writeSignerAdminAll(conn, payload); err != nil {
-		return nil, errors.New("write signer control request")
+		return nil, errors.New("write signer lifecycle request")
 	}
 	line, err := readRequestLine(bufio.NewReader(conn), maxSignerAdminResponseBytes)
 	if err != nil {
-		return nil, errors.New("read signer control response; query state before retrying any mutating command")
+		return nil, errors.New("read signer lifecycle response; query state before retrying any mutating command")
 	}
 	var response signerAdminResponse
 	if err := decodeSignerAdminStrictJSON(bytesTrimNewline(line), &response); err != nil {
-		return nil, errors.New("signer control response was not a strict protocol envelope")
+		return nil, errors.New("signer lifecycle response was not a strict protocol envelope")
 	}
 	if !response.OK {
 		message := strings.TrimSpace(response.Error)
@@ -1089,7 +1337,7 @@ func callSignerAdminWithSensitivityV2(controlSocket, op, walletID string, body a
 		return nil, errors.New(message)
 	}
 	if len(response.Result) == 0 || !json.Valid(response.Result) {
-		return nil, errors.New("signer control response did not include a valid result")
+		return nil, errors.New("signer lifecycle response did not include a valid result")
 	}
 	return response.Result, nil
 }

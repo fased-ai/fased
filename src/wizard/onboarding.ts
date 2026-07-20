@@ -1621,27 +1621,6 @@ export async function runOnboardingWizard(
         });
         const walletName = walletIdentity.walletName;
         const walletId: string | undefined = walletIdentity.walletId || undefined;
-        if (selfHostedAction === "import" && hostProfile === "hosting") {
-          const signerWalletId = (walletId ?? walletPurpose)
-            .trim()
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "_")
-            .replace(/^_+|_+$/g, "");
-          await prompter.note(
-            [
-              "Hosting keeps plaintext wallet keys outside the app/Gateway OS account.",
-              "From the VPS provider root console, place the Solana keypair in /root/wallet.json with mode 600, then run:",
-              `/usr/local/sbin/fased-signer-wallet-import --wallet-id ${shellQuote(signerWalletId)} --locked-role ${shellQuote(walletPurpose)} < /root/wallet.json`,
-              "Return to the app account, rerun onboarding, and choose Create with the same role and wallet ID. The signer reuses only that exact existing deny-all wallet, then activates the one RPC and registers it.",
-            ].join("\n"),
-            "Signer-owned Hosting import",
-          );
-          addAnotherWallet = await prompter.confirm({
-            message: "Run another wallet setup action?",
-            initialValue: false,
-          });
-          continue;
-        }
         const importFile =
           selfHostedAction === "import"
             ? (
