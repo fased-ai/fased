@@ -3827,10 +3827,6 @@ export function renderApp(state: AppViewState) {
                   status: state.walletStatus,
                   namedWallets: state.walletNamedWallets,
                   defaultWalletId: state.walletDefaultWalletId,
-                  assignments: state.walletAssignments,
-                  agents: state.agentsList?.agents ?? [],
-                  assignAgentId: state.walletAssignAgentId,
-                  assignWalletId: state.walletAssignWalletId,
                 },
                 mining: {
                   attachedWalletId: state.miningAttachedWalletId,
