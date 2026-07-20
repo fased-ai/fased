@@ -4,12 +4,15 @@ import { describe, expect, it } from "vitest";
 const installer = fs.readFileSync(new URL("../install.sh", import.meta.url), "utf8");
 
 describe("managed installer release pinning", () => {
-  it("rejects streamed Hosting and retains the attested exact-release file path", () => {
+  it("permits only fresh exact streamed Hosting and retains exact-tag repair", () => {
     expect(installer).toContain(
       'if [[ "$install_entry_is_stream" -eq 1 && "$install_entry_hosting" -eq 1 ]]',
     );
-    expect(installer).toContain("Refusing streamed VPS Hosting execution");
-    expect(installer).toContain("verify an exact tagged release installer");
+    expect(installer).toContain(
+      "Streamed VPS Hosting accepts only the exact fresh-install selector: --hosting",
+    );
+    expect(installer).toContain("Streamed VPS Hosting is only for a fresh host");
+    expect(installer).toContain("Refusing Fased environment overrides during streamed VPS Hosting");
     expect(installer).toContain(
       'if [[ "$hosting_bootstrap" -eq 1 && "$hosting_repair_bootstrap" -eq 0 && -z "$hosting_release" ]]',
     );
@@ -17,7 +20,10 @@ describe("managed installer release pinning", () => {
     expect(installer).toContain('hosting_release="latest"');
     expect(installer).toContain("bootstrap_hosting_attested_bundle");
     expect(installer).toContain('gh attestation verify "$release_manifest"');
-    expect(installer).toContain('gh attestation verify "$archive"');
+    expect(installer).toContain('--bundle "$release_manifest_bundle"');
+    expect(installer).toContain('"$actual" != "$expected"');
+    expect(installer).toContain('"$dependency_actual" != "$dependency_expected"');
+    expect(installer).toContain('"$signer_actual" != "$signer_expected"');
   });
 
   it("resolves a streamed fresh Local install to one stable release before cloning source", () => {

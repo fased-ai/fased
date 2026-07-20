@@ -14,6 +14,35 @@ const releaseWorkflow = fs.readFileSync(
   "utf8",
 );
 
+function streamedHostingEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (
+      key.startsWith("FASED_") ||
+      /^(?:https?|all|no)_proxy$/iu.test(key) ||
+      [
+        "CURL_HOME",
+        "CURL_CA_BUNDLE",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "GIT_SSL_NO_VERIFY",
+        "GH_HOST",
+        "GH_REPO",
+        "GH_CONFIG_DIR",
+        "TMPDIR",
+        "LD_PRELOAD",
+        "LD_LIBRARY_PATH",
+        "BASH_ENV",
+        "ENV",
+        "CDPATH",
+      ].includes(key)
+    ) {
+      delete env[key];
+    }
+  }
+  return { ...env, ...extra };
+}
+
 describe("attested Hosting installer artifact layout", () => {
   it("ships the root bootstrap and fixed root-admin assets in the attested npm-derived app layer", () => {
     expect(files).toContain("install.sh");
@@ -26,6 +55,7 @@ describe("attested Hosting installer artifact layout", () => {
       false,
     );
     expect(files).toContain("scripts/fased-signer-policy-hosting.sh");
+    expect(files).toContain("scripts/install-runtime-profile.sh");
     expect(files).toContain("config/");
   });
 
@@ -46,8 +76,8 @@ describe("attested Hosting installer artifact layout", () => {
       path.join(root, "scripts/install-hosted-runtime.sh"),
       "utf8",
     );
-    expect(installer).toContain('x86_64|amd64) architecture="x64"');
-    expect(installer).toContain('aarch64|arm64) architecture="arm64"');
+    expect(installer).toContain('architecture="x64"\n        signer_platform="linux-amd64"');
+    expect(installer).toContain('architecture="arm64"\n        signer_platform="linux-arm64"');
     expect(builder).toContain("fased-hosted-app-linux-${arch}-v${version}.tar.gz");
     expect(builder).toContain("fased-hosted-app-v2-linux-${arch}-v${version}.tar.gz");
     expect(builder).toContain("schemaVersion: 1, dependencyHash");
@@ -105,34 +135,74 @@ describe("attested Hosting installer artifact layout", () => {
     }
   });
 
-  it("rejects streamed Hosting before the privileged release bootstrap", () => {
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-hosting-stream-dispatch-"));
-    try {
-      const fakeBin = path.join(tempRoot, "bin");
-      fs.mkdirSync(fakeBin);
-      fs.writeFileSync(path.join(fakeBin, "id"), "#!/bin/sh\nprintf '1000\\n'\n", {
-        mode: 0o700,
+  it("accepts only the literal streamed fresh Hosting selector", () => {
+    const input = fs.readFileSync(path.join(root, "install.sh"), "utf8");
+    const run = (args: string[], extraEnv: NodeJS.ProcessEnv = {}) =>
+      spawnSync("bash", ["-s", "--", ...args], {
+        encoding: "utf8",
+        env: streamedHostingEnv(extraEnv),
+        input,
+        ...(typeof process.getuid === "function" && process.getuid() === 0
+          ? { uid: 65534, gid: 65534 }
+          : {}),
       });
 
-      for (const args of [
-        ["--hosting", "--no-auto-install"],
-        ["--repair-hosting", "--no-auto-install"],
-        ["--host-profile", "hosting", "--no-auto-install"],
-      ]) {
-        const result = spawnSync("bash", ["-s", "--", ...args], {
-          encoding: "utf8",
-          env: { ...process.env, PATH: `${fakeBin}:/usr/bin:/bin` },
-          input: fs.readFileSync(path.join(root, "install.sh"), "utf8"),
-        });
+    const exact = run(["--hosting"]);
+    expect(exact.status).toBe(1);
+    expect(exact.stderr).not.toContain("accepts only the exact fresh-install selector");
+    expect(exact.stderr).toMatch(
+      /must start in the provider's root console|only for a fresh host/iu,
+    );
 
-        expect(result.status).toBe(1);
-        expect(result.stderr).toContain("Refusing streamed VPS Hosting execution");
-        expect(result.stderr).toContain("verify an exact tagged release installer");
-        expect(result.stderr).not.toContain("VPS Hosting bootstrap must start");
-      }
-    } finally {
-      fs.rmSync(tempRoot, { recursive: true, force: true });
+    for (const args of [
+      ["--repair-hosting"],
+      ["--host-profile", "hosting"],
+      ["--hosting", "--release", "v1.2.3"],
+      ["--hosting", "--source-install"],
+      ["--hosting", "--verified-hosting-bundle", "/tmp/caller"],
+    ]) {
+      const result = run(args);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "Streamed VPS Hosting accepts only the exact fresh-install selector: --hosting",
+      );
+      expect(result.stderr).not.toContain("VPS Hosting bootstrap must start");
     }
+
+    const unsafeEnvironment = run(["--hosting"], {
+      FASED_INSTALL_REPO: "https://example.invalid/override.git",
+    });
+    expect(unsafeEnvironment.status).toBe(1);
+    expect(unsafeEnvironment.stderr).toContain(
+      "Refusing Fased environment overrides during streamed VPS Hosting",
+    );
+  });
+
+  it("keeps the exact public fresh Hosting command as a literal CI contract", () => {
+    const command =
+      "curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \\\n" +
+      "  | bash -s -- --hosting";
+    expect(command).toBe(
+      "curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \\\n" +
+        "  | bash -s -- --hosting",
+    );
+    const installer = fs.readFileSync(path.join(root, "install.sh"), "utf8");
+    const manifestVerification = installer.indexOf('gh attestation verify "$release_manifest"');
+    const signerDigestVerification = installer.indexOf('"$signer_actual" != "$signer_expected"');
+    const mutation = installer.indexOf(
+      "install -d -m 0700 -o root -g root /var/lib/fased-installer",
+    );
+    expect(installer).toContain(
+      '"$asset" == "fased-hosted-app-v2-linux-${architecture}-v${release_version}.tar.gz"',
+    );
+    expect(installer).toContain('"$signer_asset" == "fased-signerd-${signer_platform}"');
+    expect(installer).toContain('--bundle "$release_manifest_bundle"');
+    expect(manifestVerification).toBeGreaterThanOrEqual(0);
+    expect(signerDigestVerification).toBeGreaterThan(manifestVerification);
+    expect(mutation).toBeGreaterThan(signerDigestVerification);
+    const codeowners = fs.readFileSync(path.join(root, ".github/CODEOWNERS"), "utf8");
+    expect(codeowners).toContain("/install.sh @fcode-ai");
+    expect(codeowners).toContain("/.github/workflows/hosted-runtime-release.yml @fcode-ai");
   });
 
   it("installs Tailscale through signature-enforcing package repositories", () => {
