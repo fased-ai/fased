@@ -2702,7 +2702,18 @@ export async function approveWalletSendRequest(params: {
           request,
         };
       }
-      if (storedReview.state === "prepared" && !params.reviewAuthorization) {
+      const controlUIAuthorization: WalletProviderSignerReviewAuthorizationV2 | undefined =
+        storedReview.state === "prepared" &&
+        !params.reviewAuthorization &&
+        (storedReview.intentType === "solana.nativeTransfer" ||
+          storedReview.intentType === "solana.splTransferChecked")
+          ? { type: "control-ui", proof: { proofId: storedReview.nonce } }
+          : undefined;
+      if (
+        storedReview.state === "prepared" &&
+        !params.reviewAuthorization &&
+        !controlUIAuthorization
+      ) {
         if (claim.recovered && request.status === "executing") {
           await withApprovalMutationLock(env, () => {
             file = loadFile(env);
@@ -2726,7 +2737,9 @@ export async function approveWalletSendRequest(params: {
         };
       }
       const executionAuthorization =
-        storedReview.state === "prepared" ? params.reviewAuthorization : undefined;
+        storedReview.state === "prepared"
+          ? (params.reviewAuthorization ?? controlUIAuthorization)
+          : undefined;
       let executed: Awaited<ReturnType<NonNullable<typeof provider.executeSignerReview>>>;
       try {
         executed = await provider.executeSignerReview({

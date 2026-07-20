@@ -8,6 +8,12 @@ export const SAT_RUNTIME_ENV_KEYS = {
   mintProgramId: "FASED_SAT_MINT_PROGRAM_ID",
 } as const;
 
+export const SAT_RUNTIME_TRUST_ENV_KEYS = {
+  manifestPath: "FASED_SAT_RUNTIME_MANIFEST_PATH",
+  manifestSha256: "FASED_SAT_RUNTIME_MANIFEST_SHA256",
+  manifestSignaturePath: "FASED_SAT_RUNTIME_MANIFEST_SIGNATURE_PATH",
+} as const;
+
 export type SatRuntimeIds = {
   programId: string;
   bondProgramId: string;

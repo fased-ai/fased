@@ -243,6 +243,9 @@ function mergeWalletReadiness(
         ? signerKeystoreReady
         : Boolean(wallet.readiness?.keystore || signerKeystoreReady),
     rpc: Boolean(wallet.readiness?.rpc || solanaDoctor?.rpcConfigured),
+    ...(wallet.readiness?.ready === undefined ? {} : { ready: wallet.readiness.ready }),
+    ...(wallet.readiness?.error === undefined ? {} : { error: wallet.readiness.error }),
+    ...(wallet.readiness?.signer === undefined ? {} : { signer: wallet.readiness.signer }),
     ...(wallet.readiness?.api === undefined ? {} : { api: wallet.readiness.api }),
     ...(wallet.readiness?.ata === undefined ? {} : { ata: wallet.readiness.ata }),
   };
@@ -383,7 +386,7 @@ export async function loadWallet(host: FasedAgentApp) {
       namedWalletsResult,
       signerDoctorResult,
     ] = await Promise.allSettled([
-      getWalletStatus(requestedStatusWalletId),
+      getWalletStatus(),
       getWalletSettings(requestedStatusWalletId),
       getWalletApprovals({
         status: host.walletApprovalsFilter,
@@ -463,12 +466,22 @@ export async function loadWallet(host: FasedAgentApp) {
       );
       const cachedBalances = getWalletBalanceCache(host);
       const chainWallets = host.walletStatus?.chainWallets;
+      const liveStatusWallets = new Map(
+        (host.walletStatus?.wallets ?? []).map((wallet) => [wallet.id, wallet]),
+      );
       const immediateWallets = namedWallets.map((wallet) => {
         const solanaDoctor = findChainWalletEntry(chainWallets?.solana, wallet.id);
+        const liveStatusWallet = liveStatusWallets.get(wallet.id);
         return mergeCachedWalletData(
           {
             ...wallet,
-            readiness: mergeWalletReadiness(wallet, solanaDoctor),
+            readiness: mergeWalletReadiness(
+              {
+                ...wallet,
+                readiness: liveStatusWallet?.readiness ?? wallet.readiness,
+              },
+              solanaDoctor,
+            ),
           } satisfies WalletNamedWallet,
           cachedBalances.get(wallet.id),
         );

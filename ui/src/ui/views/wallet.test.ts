@@ -962,7 +962,8 @@ describe("renderWallet", () => {
             operations: [],
             programs: [],
             assets: [],
-            guidance: "Install an owner-reviewed policy through the native signer control socket.",
+            guidance:
+              "Review the immutable role, then run fased wallet policy activate-role-baseline.",
           },
           toolAccess: { mode: "owner-only", allowAgents: [] },
           providerCredentials: {
@@ -1045,13 +1046,11 @@ describe("renderWallet", () => {
     expect(text).toContain("Small Agent spend");
     expect(text).toContain("Native signer policy: locked");
     expect(text).toContain(
-      "The role-safe deny-all baseline is active, so the wallet can receive but cannot send, swap, mine, bond, or execute wallet-capable skills.",
+      "This pre-role-baseline wallet remains deny-all. Review its immutable role, then select Activate role baseline with the native wallet CLI. No root policy helper is required.",
     );
     expect(text).toContain("Version 3");
     expect(text).toContain(`sha256:${"e".repeat(64)}`);
-    expect(text).toContain(
-      "Install an owner-reviewed policy through the native signer control socket.",
-    );
+    expect(text).toContain("fased wallet policy activate-role-baseline");
     expect(text).not.toContain("Selected Wallet Policy");
     expect(text).not.toContain("Advanced spend caps");
     expect(text).not.toContain("Apply recommended Agent template");

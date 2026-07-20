@@ -975,7 +975,7 @@ func reviewBindingFromStoredReviewV2(review signerReviewV2, policy signerPolicyV
 	if err != nil {
 		return signerReviewBindingV2{}, errors.New("stored signer review semantic intent is inconsistent")
 	}
-	if err := validateReviewPolicyV2(policy, normalizedIntent); err != nil {
+	if err := validateReviewPolicyV2(policy, normalizedIntent, review.Mode); err != nil {
 		return signerReviewBindingV2{}, err
 	}
 	semanticIntent, err := json.Marshal(normalizedIntent.Intent)

@@ -29,11 +29,12 @@ func signerUint64PointerV2(value uint64) *uint64 {
 
 func TestSignerApplicationNetworkBrokerIsOneRPCRoleBoundAndGenesisPinned(t *testing.T) {
 	_, keys := openTestSignerV2(t)
-	locked, err := lockedSignerAdminPolicy("mining", "mining")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := keys.CreateWithPolicy(signerWalletCreateRequestV2{WalletID: "mining", ExpectedVersion: 0, Policy: locked}); err != nil {
+	if _, _, err := keys.CreateWithRoleBaseline(
+		"agent",
+		0,
+		signerRoleBaselineRequestV1{Version: signerRoleBaselineVersionV1, Role: "agent"},
+		signerRoleBaselineRuntimeV1{},
+	); err != nil {
 		t.Fatal(err)
 	}
 	genesis := solana.NewWallet().PublicKey().String()
@@ -42,25 +43,25 @@ func TestSignerApplicationNetworkBrokerIsOneRPCRoleBoundAndGenesisPinned(t *test
 	currentGenesis := genesis
 	keys.genesisHash = func(string) (string, error) { return currentGenesis, nil }
 
-	summary, err := keys.PutApplicationNetworkV2("mining", signerNetworkPutRequestV2{
+	summary, err := keys.PutApplicationNetworkV2("agent", signerNetworkPutRequestV2{
 		ExpectedVersion: signerUint64PointerV2(0), PrimaryRPCURL: primaryA,
 	})
 	if err != nil || !summary.Ready || summary.Version != 1 {
 		t.Fatalf("initial one-RPC activation failed: summary=%#v err=%v", summary, err)
 	}
-	if _, err := keys.PutApplicationNetworkV2("mining", signerNetworkPutRequestV2{
+	if _, err := keys.PutApplicationNetworkV2("agent", signerNetworkPutRequestV2{
 		ExpectedVersion: signerUint64PointerV2(1), PrimaryRPCURL: primaryB,
 		VerificationRPCURL: "https://witness.example/solana",
 	}); err == nil || !strings.Contains(err.Error(), "exactly one") {
 		t.Fatalf("application broker accepted witness/fallback input: %v", err)
 	}
 	currentGenesis = solana.NewWallet().PublicKey().String()
-	if _, err := keys.PutApplicationNetworkV2("mining", signerNetworkPutRequestV2{
+	if _, err := keys.PutApplicationNetworkV2("agent", signerNetworkPutRequestV2{
 		ExpectedVersion: signerUint64PointerV2(1), PrimaryRPCURL: primaryB,
 	}); err == nil || !strings.Contains(err.Error(), "pinned genesis") {
 		t.Fatalf("application broker allowed a network change: %v", err)
 	}
-	ready, err := keys.NetworkSummaryV2("mining")
+	ready, err := keys.NetworkSummaryV2("agent")
 	if err != nil || ready.Version != 1 {
 		t.Fatalf("rejected replacement mutated network state: summary=%#v err=%v", ready, err)
 	}
@@ -72,7 +73,7 @@ func TestSignerApplicationNetworkBrokerIsOneRPCRoleBoundAndGenesisPinned(t *test
 	currentGenesis = genesis
 	if _, err := keys.PutApplicationNetworkV2("configured_agent", signerNetworkPutRequestV2{
 		ExpectedVersion: signerUint64PointerV2(0), PrimaryRPCURL: primaryA,
-	}); err == nil || !strings.Contains(err.Error(), "fresh deny-all") {
+	}); err == nil || !strings.Contains(err.Error(), "exact signer-owned role baseline") {
 		t.Fatalf("application broker activated a pre-expanded wallet: %v", err)
 	}
 }

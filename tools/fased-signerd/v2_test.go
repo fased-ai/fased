@@ -199,7 +199,7 @@ func TestSignerV2ApplicationSocketCreatesOnlyExplicitlyLockedWallet(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.handle(request{Op: "v2.wallet.create", WalletID: "configured", Request: configuredBody}, signerConfig{}, false); err == nil || !strings.Contains(err.Error(), "only a locked wallet") {
+	if _, err := service.handle(request{Op: "v2.wallet.create", WalletID: "configured", Request: configuredBody}, signerConfig{}, false); err == nil || !strings.Contains(err.Error(), "explicit deny-all policy") {
 		t.Fatalf("application socket must reject configured wallet creation, got %v", err)
 	}
 }

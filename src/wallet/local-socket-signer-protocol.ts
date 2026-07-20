@@ -62,6 +62,8 @@ const SignerPolicyAssetV2Schema = Type.Object(
     destinations: Type.Array(Type.String()),
     maxPerTx: Type.String(),
     maxDaily: Type.String(),
+    reviewedDestinations: Type.Optional(Type.Boolean()),
+    typedSatDestinations: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
@@ -71,8 +73,10 @@ const SignerPolicyInputV2Schema = Type.Object(
     walletId: Type.Optional(Type.String()),
     role: SignerWalletRoleSchema,
     version: Type.Optional(Type.Integer({ minimum: 0 })),
+    baselineVersion: Type.Optional(Type.Integer({ minimum: 1 })),
     operations: Type.Array(Type.String()),
     programs: Type.Array(Type.String()),
+    typedSatPrograms: Type.Optional(Type.Boolean()),
     assets: Type.Array(SignerPolicyAssetV2Schema),
     hash: Type.Optional(Type.String()),
   },
@@ -84,8 +88,10 @@ export const LocalSocketSignerPolicyV2Schema = Type.Object(
     walletId: Type.String(),
     role: SignerWalletRoleSchema,
     version: Type.Integer({ minimum: 1 }),
+    baselineVersion: Type.Optional(Type.Integer({ minimum: 1 })),
     operations: Type.Array(Type.String()),
     programs: Type.Array(Type.String()),
+    typedSatPrograms: Type.Optional(Type.Boolean()),
     assets: Type.Array(SignerPolicyAssetV2Schema),
     hash: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
   },
@@ -296,13 +302,28 @@ const SignerSolanaTransactionEnvelopeV2Schema = Type.Object(
   { additionalProperties: false },
 );
 
-const SignerReviewAuthorizationV2Schema = Type.Object(
-  {
-    type: Type.Literal("webauthn"),
-    proof: Type.Object({ proofId: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
-  },
-  { additionalProperties: false },
-);
+const SignerReviewAuthorizationV2Schema = Type.Union([
+  Type.Object(
+    {
+      type: Type.Literal("webauthn"),
+      proof: Type.Object(
+        { proofId: Type.String({ minLength: 1 }) },
+        { additionalProperties: false },
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      type: Type.Literal("control-ui"),
+      proof: Type.Object(
+        { proofId: Type.String({ pattern: "^[0-9a-f]{64}$" }) },
+        { additionalProperties: false },
+      ),
+    },
+    { additionalProperties: false },
+  ),
+]);
 
 export const LocalSocketSignerJupiterTriggerHistoryV2Schema = Type.Object(
   {
@@ -347,13 +368,27 @@ export type LocalSocketSignerJupiterTriggerHistoryV2 = Static<
   typeof LocalSocketSignerJupiterTriggerHistoryV2Schema
 >;
 
-const SignerWalletPolicyCreateV2Schema = Type.Object(
-  {
-    expectedPolicyVersion: Type.Literal(0),
-    policy: SignerPolicyInputV2Schema,
-  },
+const SignerRoleBaselineV1Schema = Type.Object(
+  { version: Type.Literal(1), role: SignerWalletRoleSchema },
   { additionalProperties: false },
 );
+
+const SignerWalletPolicyCreateV2Schema = Type.Union([
+  Type.Object(
+    {
+      expectedPolicyVersion: Type.Literal(0),
+      policy: SignerPolicyInputV2Schema,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      expectedPolicyVersion: Type.Literal(0),
+      baseline: SignerRoleBaselineV1Schema,
+    },
+    { additionalProperties: false },
+  ),
+]);
 
 const SignerOperationLookupV2Schema = Type.Object(
   { requestId: Type.String() },
@@ -470,6 +505,24 @@ export const LocalSocketSignerRequestSchema = Type.Union(
       { additionalProperties: false },
     ),
     Type.Object(
+      { op: Type.Literal("v2.wallet.readiness"), walletId: Type.String() },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.policy.activateBaseline"),
+        walletId: Type.String(),
+        request: Type.Object(
+          {
+            expectedPolicyVersion: Type.Integer({ minimum: 1 }),
+            baseline: SignerRoleBaselineV1Schema,
+          },
+          { additionalProperties: false },
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
       {
         op: Type.Literal("v2.wallet.create"),
         walletId: Type.String(),
@@ -481,14 +534,24 @@ export const LocalSocketSignerRequestSchema = Type.Union(
       {
         op: Type.Literal("v2.wallet.import"),
         walletId: Type.String(),
-        request: Type.Object(
-          {
-            expectedPolicyVersion: Type.Literal(0),
-            policy: SignerPolicyInputV2Schema,
-            path: Type.String(),
-          },
-          { additionalProperties: false },
-        ),
+        request: Type.Union([
+          Type.Object(
+            {
+              expectedPolicyVersion: Type.Literal(0),
+              policy: SignerPolicyInputV2Schema,
+              path: Type.String(),
+            },
+            { additionalProperties: false },
+          ),
+          Type.Object(
+            {
+              expectedPolicyVersion: Type.Literal(0),
+              baseline: SignerRoleBaselineV1Schema,
+              path: Type.String(),
+            },
+            { additionalProperties: false },
+          ),
+        ]),
       },
       { additionalProperties: false },
     ),
@@ -496,15 +559,26 @@ export const LocalSocketSignerRequestSchema = Type.Union(
       {
         op: Type.Literal("v2.wallet.importLegacy"),
         walletId: Type.String(),
-        request: Type.Object(
-          {
-            expectedPolicyVersion: Type.Literal(0),
-            policy: SignerPolicyInputV2Schema,
-            path: Type.String(),
-            passphrasePath: Type.String(),
-          },
-          { additionalProperties: false },
-        ),
+        request: Type.Union([
+          Type.Object(
+            {
+              expectedPolicyVersion: Type.Literal(0),
+              policy: SignerPolicyInputV2Schema,
+              path: Type.String(),
+              passphrasePath: Type.String(),
+            },
+            { additionalProperties: false },
+          ),
+          Type.Object(
+            {
+              expectedPolicyVersion: Type.Literal(0),
+              baseline: SignerRoleBaselineV1Schema,
+              path: Type.String(),
+              passphrasePath: Type.String(),
+            },
+            { additionalProperties: false },
+          ),
+        ]),
       },
       { additionalProperties: false },
     ),
@@ -947,6 +1021,34 @@ const LocalSocketSignerWalletPolicyResultV2Schema = Type.Object(
   { additionalProperties: false },
 );
 
+export const LocalSocketSignerWalletReadinessV2Schema = Type.Object(
+  {
+    walletId: Type.String({ minLength: 1 }),
+    publicKey: Type.String({ minLength: 1 }),
+    role: SignerWalletRoleSchema,
+    baselineVersion: Type.Integer({ minimum: 0 }),
+    policyVersion: Type.Integer({ minimum: 1 }),
+    policyHash: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
+    networkVersion: Type.Integer({ minimum: 0 }),
+    networkHash: Type.Optional(Type.String({ pattern: "^hmac-sha256:[0-9a-f]{64}$" })),
+    keyReady: Type.Boolean(),
+    policyReady: Type.Boolean(),
+    networkReady: Type.Boolean(),
+    operationLane: Type.Union([
+      Type.Literal("blocked"),
+      Type.Literal("agent-reviewed-and-autonomous"),
+      Type.Literal("mining-typed-sat"),
+      Type.Literal("vault-reviewed-only"),
+    ]),
+    ready: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+
+export type LocalSocketSignerWalletReadinessV2 = Static<
+  typeof LocalSocketSignerWalletReadinessV2Schema
+>;
+
 function isPositiveUnsignedInteger(value: string | undefined): boolean {
   return typeof value === "string" && /^[1-9][0-9]*$/.test(value);
 }
@@ -1048,10 +1150,13 @@ export function validateLocalSocketSignerResult(
     case "v2.policy.get":
     case "v2.policy.put":
     case "v2.policy.tighten":
+    case "v2.policy.activateBaseline":
       return Value.Check(LocalSocketSignerPolicyV2Schema, result);
     case "v2.wallet.get":
     case "v2.wallet.reencrypt":
       return Value.Check(LocalSocketSignerWalletV2Schema, result);
+    case "v2.wallet.readiness":
+      return Value.Check(LocalSocketSignerWalletReadinessV2Schema, result);
     case "v2.wallet.create":
     case "v2.wallet.import":
     case "v2.wallet.importLegacy":

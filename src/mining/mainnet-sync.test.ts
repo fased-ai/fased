@@ -205,6 +205,12 @@ describe("SAT mainnet sync", () => {
         expect(await readFile(runtimeFile, "utf8")).toContain(
           "FASED_SAT_PROGRAM_ID=sat-program-mainnet",
         );
+        expect(await readFile(runtimeFile, "utf8")).toContain(
+          `FASED_SAT_RUNTIME_MANIFEST_SHA256=${sha256(manifest)}`,
+        );
+        expect(await readFile(`${runtimeFile}.manifest.json`, "utf8")).toBe(manifest);
+        expect((await readFile(`${runtimeFile}.manifest.sig`, "utf8")).trim()).toBe(signature);
+        expect(env.FASED_SAT_RUNTIME_MANIFEST_PATH).toBe(`${runtimeFile}.manifest.json`);
         expect(env.FASED_SAT_MINT_ADDRESS).toBe("sat-mint-mainnet");
       },
     );

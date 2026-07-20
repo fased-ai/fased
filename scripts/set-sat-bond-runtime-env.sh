@@ -99,17 +99,25 @@ if [[ -z "${FASED_SAT_PROGRAM_ID:-}" || -z "${FASED_SAT_MINT_ADDRESS:-}" || -z "
   echo "Missing SAT runtime ids in $SAT_RUNTIME_ENV_FILE." >&2
   exit 1
 fi
+if [[ -z "${FASED_SAT_RUNTIME_MANIFEST_PATH:-}" || -z "${FASED_SAT_RUNTIME_MANIFEST_SHA256:-}" || -z "${FASED_SAT_RUNTIME_MANIFEST_SIGNATURE_PATH:-}" ]]; then
+  echo "Missing signed SAT runtime manifest proof in $SAT_RUNTIME_ENV_FILE." >&2
+  exit 1
+fi
 
 mkdir -p "$(dirname "$ENV_FILE")"
 upsert_env_var "$ENV_FILE" "FASED_SAT_PROGRAM_ID" "$FASED_SAT_PROGRAM_ID"
 upsert_env_var "$ENV_FILE" "FASED_SAT_BOND_PROGRAM_ID" "$PROGRAM_ID"
 upsert_env_var "$ENV_FILE" "FASED_SAT_MINT_ADDRESS" "$FASED_SAT_MINT_ADDRESS"
 upsert_env_var "$ENV_FILE" "FASED_SAT_MINT_PROGRAM_ID" "$FASED_SAT_MINT_PROGRAM_ID"
+upsert_env_var "$ENV_FILE" "FASED_SAT_RUNTIME_MANIFEST_PATH" "$FASED_SAT_RUNTIME_MANIFEST_PATH"
+upsert_env_var "$ENV_FILE" "FASED_SAT_RUNTIME_MANIFEST_SHA256" "$FASED_SAT_RUNTIME_MANIFEST_SHA256"
+upsert_env_var "$ENV_FILE" "FASED_SAT_RUNTIME_MANIFEST_SIGNATURE_PATH" "$FASED_SAT_RUNTIME_MANIFEST_SIGNATURE_PATH"
 printf 'Updated %s\n' "$ENV_FILE"
 printf 'FASED_SAT_PROGRAM_ID=%s\n' "$FASED_SAT_PROGRAM_ID"
 printf 'FASED_SAT_BOND_PROGRAM_ID=%s\n' "$PROGRAM_ID"
 printf 'FASED_SAT_MINT_ADDRESS=%s\n' "$FASED_SAT_MINT_ADDRESS"
 printf 'FASED_SAT_MINT_PROGRAM_ID=%s\n' "$FASED_SAT_MINT_PROGRAM_ID"
+printf 'FASED_SAT_RUNTIME_MANIFEST_SHA256=%s\n' "$FASED_SAT_RUNTIME_MANIFEST_SHA256"
 
 if [[ "$RESTART" -eq 1 ]]; then
   if command -v systemctl >/dev/null 2>&1 && systemctl --user cat "$SYSTEMD_UNIT" >/dev/null 2>&1; then

@@ -31,6 +31,27 @@ export type WalletStatus = {
       rpc: boolean;
       api?: boolean;
       ata?: boolean;
+      ready?: boolean;
+      error?: string;
+      signer?: {
+        walletId: string;
+        publicKey: string;
+        role: "agent" | "mining" | "vault";
+        baselineVersion: number;
+        policyVersion: number;
+        policyHash: string;
+        networkVersion: number;
+        networkHash?: string;
+        keyReady: boolean;
+        policyReady: boolean;
+        networkReady: boolean;
+        operationLane:
+          | "blocked"
+          | "agent-reviewed-and-autonomous"
+          | "mining-typed-sat"
+          | "vault-reviewed-only";
+        ready: boolean;
+      };
     };
   }>;
   providerSummary?: {
@@ -494,6 +515,9 @@ export type WalletNamedWallet = {
     rpc: boolean;
     api?: boolean;
     ata?: boolean;
+    ready?: boolean;
+    error?: string;
+    signer?: NonNullable<WalletStatus["wallets"]>[number]["readiness"]["signer"];
   };
   createdAt: string;
   updatedAt: string;

@@ -272,6 +272,7 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 		}
 	}
 	var reviewedBinding signerReviewBindingV2
+	controlUIAuthorization := false
 	if review.Mode == jupiterReviewModeAutonomousV2 {
 		if policy.Role != "agent" {
 			return signerReviewExecutionResultV2{}, errors.New("autonomous signer execution is restricted to Agent-role wallets")
@@ -280,15 +281,34 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 			return signerReviewExecutionResultV2{}, errors.New("autonomous execution cannot accept a WebAuthn authorization proof")
 		}
 	} else {
-		if review.Mode != jupiterReviewModeReviewedV2 || req.Authorization == nil || req.Authorization.Type != "webauthn" {
-			return signerReviewExecutionResultV2{}, errors.New("reviewed signing requires a signer-owned WebAuthn authorization proof")
+		if review.Mode != jupiterReviewModeReviewedV2 || req.Authorization == nil {
+			return signerReviewExecutionResultV2{}, errors.New("reviewed signing requires an exact owner confirmation")
 		}
-		if s.webauthn == nil {
-			return signerReviewExecutionResultV2{}, errors.New("signer-owned WebAuthn is unavailable")
-		}
-		reviewedBinding, err = reviewBindingFromStoredReviewV2(review, policy)
-		if err != nil {
-			return signerReviewExecutionResultV2{}, err
+		switch req.Authorization.Type {
+		case "webauthn":
+			if s.webauthn == nil {
+				return signerReviewExecutionResultV2{}, errors.New("signer-owned WebAuthn is unavailable")
+			}
+			reviewedBinding, err = reviewBindingFromStoredReviewV2(review, policy)
+			if err != nil {
+				return signerReviewExecutionResultV2{}, err
+			}
+		case "control-ui":
+			if !isTypedTransferIntentV2(intent.Intent.Type) || (policy.Role != "agent" && policy.Role != "vault") {
+				return signerReviewExecutionResultV2{}, errors.New("Control UI confirmation is restricted to exact reviewed Agent or Vault transfers")
+			}
+			if policy.Role == "vault" && s.webauthn != nil {
+				health, healthErr := s.webauthn.health()
+				if healthErr != nil {
+					return signerReviewExecutionResultV2{}, healthErr
+				}
+				if health.CredentialCount > 0 {
+					return signerReviewExecutionResultV2{}, errors.New("this Vault has a signer-owned approval device; WebAuthn authorization is required")
+				}
+			}
+			controlUIAuthorization = true
+		default:
+			return signerReviewExecutionResultV2{}, errors.New("unsupported reviewed authorization type")
 		}
 	}
 
@@ -297,6 +317,7 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 		PolicyHash:     review.PolicyHash,
 		Intent:         intent.Intent,
 		intentWalletID: walletID,
+		reviewed:       review.Mode == jupiterReviewModeReviewedV2,
 	}, intent)
 	if err != nil {
 		return signerReviewExecutionResultV2{}, err
@@ -319,7 +340,20 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 	}
 	defer zeroBytes(privateKey)
 	if review.Mode == jupiterReviewModeReviewedV2 {
-		if proofErr := s.webauthn.authorizeReviewOperationV2(reviewedBinding, &req.Authorization.Proof, operation.RequestID, attempt); proofErr != nil {
+		var proofErr error
+		if controlUIAuthorization {
+			proofErr = s.store.authorizeControlUIReviewOperationV2(
+				review,
+				policy,
+				intent,
+				req.Authorization.Proof.ProofID,
+				operation.RequestID,
+				attempt,
+			)
+		} else {
+			proofErr = s.webauthn.authorizeReviewOperationV2(reviewedBinding, &req.Authorization.Proof, operation.RequestID, attempt)
+		}
+		if proofErr != nil {
 			_, _ = s.store.markFailedClaim(operation.RequestID, attempt, proofErr)
 			return signerReviewExecutionResultV2{}, proofErr
 		}

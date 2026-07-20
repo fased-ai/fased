@@ -14,6 +14,7 @@ var applicationUpdateGateReadOperations = map[string]bool{
 	"v2.network.get":               true,
 	"v2.policy.get":                true,
 	"v2.wallet.get":                true,
+	"v2.wallet.readiness":          true,
 	"v2.wallet.rotation.status":    true,
 	"v2.operation.get":             true,
 	"v2.satLookup.binding.get":     true,

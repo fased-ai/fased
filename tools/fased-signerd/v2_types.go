@@ -85,6 +85,7 @@ type signerExecuteRequestV2 struct {
 	PolicyHash     string         `json:"policyHash"`
 	Intent         signerIntentV2 `json:"intent"`
 	intentWalletID string         `json:"-"`
+	reviewed       bool           `json:"-"`
 }
 
 type signerOperationLookupV2 struct {
@@ -92,20 +93,24 @@ type signerOperationLookupV2 struct {
 }
 
 type signerPolicyAssetV2 struct {
-	Asset        string   `json:"asset"`
-	Destinations []string `json:"destinations"`
-	MaxPerTx     string   `json:"maxPerTx"`
-	MaxDaily     string   `json:"maxDaily"`
+	Asset                string   `json:"asset"`
+	Destinations         []string `json:"destinations"`
+	MaxPerTx             string   `json:"maxPerTx"`
+	MaxDaily             string   `json:"maxDaily"`
+	ReviewedDestinations bool     `json:"reviewedDestinations,omitempty"`
+	TypedSATDestinations bool     `json:"typedSatDestinations,omitempty"`
 }
 
 type signerPolicyV2 struct {
-	WalletID   string                `json:"walletId"`
-	Role       string                `json:"role"`
-	Version    uint64                `json:"version"`
-	Operations []string              `json:"operations"`
-	Programs   []string              `json:"programs"`
-	Assets     []signerPolicyAssetV2 `json:"assets"`
-	Hash       string                `json:"hash"`
+	WalletID         string                `json:"walletId"`
+	Role             string                `json:"role"`
+	Version          uint64                `json:"version"`
+	BaselineVersion  uint64                `json:"baselineVersion,omitempty"`
+	Operations       []string              `json:"operations"`
+	Programs         []string              `json:"programs"`
+	TypedSATPrograms bool                  `json:"typedSatPrograms,omitempty"`
+	Assets           []signerPolicyAssetV2 `json:"assets"`
+	Hash             string                `json:"hash"`
 }
 
 type signerPolicyPutRequestV2 struct {
@@ -114,24 +119,27 @@ type signerPolicyPutRequestV2 struct {
 }
 
 type signerWalletCreateRequestV2 struct {
-	WalletID        string         `json:"-"`
-	ExpectedVersion uint64         `json:"expectedPolicyVersion"`
-	Policy          signerPolicyV2 `json:"policy"`
+	WalletID        string                       `json:"-"`
+	ExpectedVersion uint64                       `json:"expectedPolicyVersion"`
+	Policy          signerPolicyV2               `json:"policy"`
+	Baseline        *signerRoleBaselineRequestV1 `json:"baseline,omitempty"`
 }
 
 type signerWalletImportRequestV2 struct {
-	WalletID        string         `json:"-"`
-	ExpectedVersion uint64         `json:"expectedPolicyVersion"`
-	Policy          signerPolicyV2 `json:"policy"`
-	Path            string         `json:"path"`
+	WalletID        string                       `json:"-"`
+	ExpectedVersion uint64                       `json:"expectedPolicyVersion"`
+	Policy          signerPolicyV2               `json:"policy"`
+	Baseline        *signerRoleBaselineRequestV1 `json:"baseline,omitempty"`
+	Path            string                       `json:"path"`
 }
 
 type signerWalletLegacyImportRequestV2 struct {
-	WalletID        string         `json:"-"`
-	ExpectedVersion uint64         `json:"expectedPolicyVersion"`
-	Policy          signerPolicyV2 `json:"policy"`
-	Path            string         `json:"path"`
-	PassphrasePath  string         `json:"passphrasePath"`
+	WalletID        string                       `json:"-"`
+	ExpectedVersion uint64                       `json:"expectedPolicyVersion"`
+	Policy          signerPolicyV2               `json:"policy"`
+	Baseline        *signerRoleBaselineRequestV1 `json:"baseline,omitempty"`
+	Path            string                       `json:"path"`
+	PassphrasePath  string                       `json:"passphrasePath"`
 }
 
 type signerWalletRecoveryExportRequestV2 struct {
@@ -140,11 +148,12 @@ type signerWalletRecoveryExportRequestV2 struct {
 }
 
 type signerWalletRecoveryImportRequestV2 struct {
-	WalletID        string         `json:"-"`
-	ExpectedVersion uint64         `json:"expectedPolicyVersion"`
-	Policy          signerPolicyV2 `json:"policy"`
-	RecoveryPath    string         `json:"recoveryPath"`
-	PasswordPath    string         `json:"passwordPath"`
+	WalletID        string                       `json:"-"`
+	ExpectedVersion uint64                       `json:"expectedPolicyVersion"`
+	Policy          signerPolicyV2               `json:"policy"`
+	Baseline        *signerRoleBaselineRequestV1 `json:"baseline,omitempty"`
+	RecoveryPath    string                       `json:"recoveryPath"`
+	PasswordPath    string                       `json:"passwordPath"`
 }
 
 type signerWalletRawExportRequestV2 struct {
@@ -446,10 +455,12 @@ func normalizeSortedStringsV2(values []string, normalize func(string) (string, e
 
 func normalizeSignerPolicyV2(input signerPolicyV2) (signerPolicyV2, error) {
 	policy := signerPolicyV2{
-		WalletID: normalizeWalletID(input.WalletID),
-		Version:  input.Version,
-		Role:     strings.TrimSpace(strings.ToLower(input.Role)),
-		Assets:   make([]signerPolicyAssetV2, 0, len(input.Assets)),
+		WalletID:         normalizeWalletID(input.WalletID),
+		Version:          input.Version,
+		BaselineVersion:  input.BaselineVersion,
+		Role:             strings.TrimSpace(strings.ToLower(input.Role)),
+		TypedSATPrograms: input.TypedSATPrograms,
+		Assets:           make([]signerPolicyAssetV2, 0, len(input.Assets)),
 	}
 	if strings.TrimSpace(input.WalletID) == "" {
 		return signerPolicyV2{}, errors.New("walletId is required")
@@ -482,7 +493,11 @@ func normalizeSignerPolicyV2(input signerPolicyV2) (signerPolicyV2, error) {
 
 	seenAssets := map[string]bool{}
 	for _, rawAsset := range input.Assets {
-		asset := signerPolicyAssetV2{Asset: strings.TrimSpace(rawAsset.Asset)}
+		asset := signerPolicyAssetV2{
+			Asset:                strings.TrimSpace(rawAsset.Asset),
+			ReviewedDestinations: rawAsset.ReviewedDestinations,
+			TypedSATDestinations: rawAsset.TypedSATDestinations,
+		}
 		if asset.Asset == "solana:native" || asset.Asset == "sat:action" || asset.Asset == "sat:capital:lamports" || asset.Asset == "federation:bond-challenge" {
 			// canonical as-is
 		} else if strings.HasPrefix(asset.Asset, "solana:spl:") {
@@ -534,7 +549,16 @@ func normalizeSignerPolicyV2(input signerPolicyV2) (signerPolicyV2, error) {
 	return policy, nil
 }
 
-func policyAssetForIntentV2(policy signerPolicyV2, intent normalizedIntentV2) (signerPolicyAssetV2, error) {
+func isTypedSATIntentV2(policy signerPolicyV2, intent normalizedIntentV2) bool {
+	return policy.Role == "mining" &&
+		(intent.Intent.Type == intentSolanaSATAction || intent.Intent.Type == intentSolanaSATLookupTable)
+}
+
+func policyAssetForIntentModeV2(
+	policy signerPolicyV2,
+	intent normalizedIntentV2,
+	reviewed bool,
+) (signerPolicyAssetV2, error) {
 	if len(policy.Operations) == 0 {
 		return signerPolicyAssetV2{}, errors.New("policy operations are empty; signing is denied")
 	}
@@ -555,7 +579,7 @@ func policyAssetForIntentV2(policy signerPolicyV2, intent normalizedIntentV2) (s
 		return signerPolicyAssetV2{}, fmt.Errorf("policy denies operation %s", operation)
 	}
 	for _, program := range intent.RequiredPrograms {
-		if !containsStringV2(policy.Programs, program) {
+		if !containsStringV2(policy.Programs, program) && !(policy.TypedSATPrograms && isTypedSATIntentV2(policy, intent)) {
 			return signerPolicyAssetV2{}, fmt.Errorf("policy denies program %s", program)
 		}
 	}
@@ -563,7 +587,9 @@ func policyAssetForIntentV2(policy signerPolicyV2, intent normalizedIntentV2) (s
 		if asset.Asset != intent.Asset {
 			continue
 		}
-		if !containsStringV2(asset.Destinations, intent.Destination) {
+		allowsReviewedDestination := reviewed && asset.ReviewedDestinations
+		allowsTypedSATDestination := asset.TypedSATDestinations && isTypedSATIntentV2(policy, intent)
+		if !containsStringV2(asset.Destinations, intent.Destination) && !allowsReviewedDestination && !allowsTypedSATDestination {
 			return signerPolicyAssetV2{}, fmt.Errorf("policy denies destination %s", intent.Destination)
 		}
 		maxPerTx, _ := new(big.Int).SetString(asset.MaxPerTx, 10)
@@ -573,6 +599,10 @@ func policyAssetForIntentV2(policy signerPolicyV2, intent normalizedIntentV2) (s
 		return asset, nil
 	}
 	return signerPolicyAssetV2{}, fmt.Errorf("policy denies asset %s", intent.Asset)
+}
+
+func policyAssetForIntentV2(policy signerPolicyV2, intent normalizedIntentV2) (signerPolicyAssetV2, error) {
+	return policyAssetForIntentModeV2(policy, intent, false)
 }
 
 func policyAssetByNameV2(policy signerPolicyV2, assetName string) (signerPolicyAssetV2, error) {
@@ -618,7 +648,15 @@ func signerFeeReservationForIntentV2(intent normalizedIntentV2) (*big.Int, error
 // a native transfer consume amount+fee from one per-tx and daily SOL cap while
 // an SPL transfer atomically consumes both its mint cap and the native cap.
 func policyReservationsForIntentV2(policy signerPolicyV2, intent normalizedIntentV2) ([]signerReservationRequirementV2, error) {
-	primaryPolicy, err := policyAssetForIntentV2(policy, intent)
+	return policyReservationsForIntentModeV2(policy, intent, false)
+}
+
+func policyReservationsForIntentModeV2(
+	policy signerPolicyV2,
+	intent normalizedIntentV2,
+	reviewed bool,
+) ([]signerReservationRequirementV2, error) {
+	primaryPolicy, err := policyAssetForIntentModeV2(policy, intent, reviewed)
 	if err != nil {
 		return nil, err
 	}

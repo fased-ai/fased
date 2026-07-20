@@ -1,5 +1,8 @@
 import { loadConfig, type FasedAgentConfig } from "../config/config.js";
 import type { WalletProviderId } from "../config/types.wallet.js";
+import { readSignerOwnedWalletReadiness } from "./local-socket-signer-lifecycle.js";
+import type { LocalSocketSignerWalletReadinessV2 } from "./local-socket-signer-protocol.js";
+import { normalizeNativeSignerWalletId } from "./native-signer-wallet-id.js";
 import { readWalletApprovalAuthSnapshot } from "./wallet-approval-auth.js";
 import { resolveWalletPolicyConfig } from "./wallet-policy.js";
 import type { WalletProviderHealth } from "./wallet-provider-adapter.js";
@@ -15,6 +18,7 @@ import {
 } from "./wallet-redaction.js";
 import {
   ensureWalletStateDir,
+  resolveLocalSignerSocketPath,
   resolveWalletRuntimeConfig,
   resolveWalletStatePaths,
   type ResolvedWalletRuntimeConfig,
@@ -45,6 +49,9 @@ export type WalletStatusSnapshot = {
       rpc: boolean;
       api?: boolean;
       ata?: boolean;
+      ready?: boolean;
+      error?: string;
+      signer?: LocalSocketSignerWalletReadinessV2;
     };
   }>;
   service: {
@@ -137,6 +144,9 @@ export async function readWalletStatusSnapshot(params?: {
   const statePaths = resolveWalletStatePaths(effectiveEnv);
   const approvalAuth = readWalletApprovalAuthSnapshot(effectiveEnv, cfg);
   const checkedAt = new Date().toISOString();
+  const registeredWallets = params?.walletId
+    ? providerRegistry.wallets.filter((wallet) => wallet.id === params.walletId)
+    : providerRegistry.wallets;
 
   let providerHealth: WalletProviderHealth = {
     ok: false,
@@ -194,6 +204,68 @@ export async function readWalletStatusSnapshot(params?: {
         "Real-chain settlement depends on the configured wallet provider and RPC connectivity.",
     },
     chains: resolved.chains,
+    wallets: await Promise.all(
+      registeredWallets.map(async (wallet) => {
+        if (wallet.providerId !== "local-socket-signer") {
+          return {
+            id: wallet.id,
+            name: wallet.name,
+            providerId: wallet.providerId,
+            addresses: wallet.addresses,
+            readiness: {
+              keystore: Boolean(wallet.addresses?.solana),
+              rpc: serviceHealthy,
+              ready: serviceHealthy && Boolean(wallet.addresses?.solana),
+            },
+          };
+        }
+        const metadataSignerWalletId =
+          typeof wallet.metadata?.signerWalletId === "string"
+            ? wallet.metadata.signerWalletId.trim()
+            : "";
+        const signerWalletId = metadataSignerWalletId || normalizeNativeSignerWalletId(wallet.id);
+        try {
+          const signer = await readSignerOwnedWalletReadiness({
+            socketPath: resolveLocalSignerSocketPath(effectiveEnv),
+            walletId: signerWalletId,
+          });
+          const addressMatches =
+            typeof wallet.addresses?.solana === "string" &&
+            wallet.addresses.solana === signer.publicKey;
+          const roleMatches =
+            typeof wallet.metadata?.role === "string" && wallet.metadata.role === signer.role;
+          const ready = signer.ready && addressMatches && roleMatches;
+          return {
+            id: wallet.id,
+            name: wallet.name,
+            providerId: wallet.providerId,
+            addresses: wallet.addresses,
+            readiness: {
+              keystore: signer.keyReady,
+              rpc: signer.networkReady,
+              ready,
+              ...(!ready && signer.ready
+                ? { error: "registry address or immutable role does not match live signer state" }
+                : {}),
+              signer,
+            },
+          };
+        } catch (error) {
+          return {
+            id: wallet.id,
+            name: wallet.name,
+            providerId: wallet.providerId,
+            addresses: wallet.addresses,
+            readiness: {
+              keystore: false,
+              rpc: false,
+              ready: false,
+              error: walletDiagnosticErrorMessage(error),
+            },
+          };
+        }
+      }),
+    ),
     service: {
       host: resolved.service.host,
       port: resolved.service.port,

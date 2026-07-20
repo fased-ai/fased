@@ -486,39 +486,44 @@ describe("wallet-send-approvals", () => {
                 }
               : signedReview,
     );
-    const executeSignerReview = vi.fn(async (request: { requestId: string }) => {
-      const executedReview =
-        request.requestId === swapReview.requestId
-          ? swapReview
-          : request.requestId === unknownSwapReview.requestId
-            ? unknownSwapReview
-            : signedReview;
-      return {
-        review: executedReview,
-        signer: walletPublicKey,
-        operation: {
-          requestId: executedReview.requestId,
-          walletId,
-          intentType: executedReview.intentType,
-          intentDigest: executedReview.intentDigest,
-          transactionDigest: executedReview.transactionDigest,
-          policyHash: executedReview.policyHash,
-          asset: executedReview.asset,
-          amount: executedReview.amount,
-          state:
-            request.requestId === unknownSwapReview.requestId
-              ? ("unknown" as const)
-              : ("confirmed" as const),
-          reservationActive: false,
-          usageBucket: "2026-07-16:solana:native",
-          reservedAt: now,
-          confirmedAt: now,
-          updatedAt: now,
-          signature: executedReview.signature,
-          authorizationProof: "consumed-proof",
-        },
-      };
-    });
+    const executeSignerReview = vi.fn(
+      async (request: {
+        requestId: string;
+        authorization?: { type: "webauthn" | "control-ui"; proof: { proofId: string } };
+      }) => {
+        const executedReview =
+          request.requestId === swapReview.requestId
+            ? swapReview
+            : request.requestId === unknownSwapReview.requestId
+              ? unknownSwapReview
+              : signedReview;
+        return {
+          review: executedReview,
+          signer: walletPublicKey,
+          operation: {
+            requestId: executedReview.requestId,
+            walletId,
+            intentType: executedReview.intentType,
+            intentDigest: executedReview.intentDigest,
+            transactionDigest: executedReview.transactionDigest,
+            policyHash: executedReview.policyHash,
+            asset: executedReview.asset,
+            amount: executedReview.amount,
+            state:
+              request.requestId === unknownSwapReview.requestId
+                ? ("unknown" as const)
+                : ("confirmed" as const),
+            reservationActive: false,
+            usageBucket: "2026-07-16:solana:native",
+            reservedAt: now,
+            confirmedAt: now,
+            updatedAt: now,
+            signature: executedReview.signature,
+            authorizationProof: "consumed-proof",
+          },
+        };
+      },
+    );
     const providerSpy = vi
       .spyOn(walletProviderResolver, "createWalletProviderAdapter")
       .mockReturnValue({
@@ -952,40 +957,45 @@ describe("wallet-send-approvals", () => {
           amount: "1",
         }),
     );
-    const executeSignerReview = vi.fn(async (request: { requestId: string }) => {
-      await new Promise((resolve) => setTimeout(resolve, 25));
-      return {
-        review: {
-          ...(await prepareTypedTransferReview({
-            walletId: "wallet-agent",
+    const executeSignerReview = vi.fn(
+      async (request: {
+        requestId: string;
+        authorization?: { type: "webauthn" | "control-ui"; proof: { proofId: string } };
+      }) => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return {
+          review: {
+            ...(await prepareTypedTransferReview({
+              walletId: "wallet-agent",
+              requestId: request.requestId,
+              destination: "So11111111111111111111111111111111111111112",
+              amount: "1",
+            })),
+            state: "signed" as const,
+            signature: "0xmanual",
+          },
+          signer: signerPublicKey,
+          operation: {
             requestId: request.requestId,
-            destination: "So11111111111111111111111111111111111111112",
+            walletId: "wallet-agent",
+            intentType: "solana.nativeTransfer",
+            intentDigest: `sha256:${"a".repeat(64)}`,
+            transactionDigest: `sha256:${"d".repeat(64)}`,
+            policyHash: `sha256:${"b".repeat(64)}`,
+            asset: "solana:native",
             amount: "1",
-          })),
-          state: "signed" as const,
-          signature: "0xmanual",
-        },
-        signer: signerPublicKey,
-        operation: {
-          requestId: request.requestId,
-          walletId: "wallet-agent",
-          intentType: "solana.nativeTransfer",
-          intentDigest: `sha256:${"a".repeat(64)}`,
-          transactionDigest: `sha256:${"d".repeat(64)}`,
-          policyHash: `sha256:${"b".repeat(64)}`,
-          asset: "solana:native",
-          amount: "1",
-          state: "confirmed" as const,
-          reservationActive: false,
-          usageBucket: "2026-07-16:solana:native",
-          reservedAt: "2026-07-16T12:00:00.000Z",
-          confirmedAt: "2026-07-16T12:00:01.000Z",
-          updatedAt: "2026-07-16T12:00:01.000Z",
-          signature: "0xmanual",
-          authorizationProof: "proof-123",
-        },
-      };
-    });
+            state: "confirmed" as const,
+            reservationActive: false,
+            usageBucket: "2026-07-16:solana:native",
+            reservedAt: "2026-07-16T12:00:00.000Z",
+            confirmedAt: "2026-07-16T12:00:01.000Z",
+            updatedAt: "2026-07-16T12:00:01.000Z",
+            signature: "0xmanual",
+            authorizationProof: request.authorization?.proof.proofId,
+          },
+        };
+      },
+    );
     const sendTx = vi.fn();
     const providerSpy = vi
       .spyOn(walletProviderResolver, "createWalletProviderAdapter")
@@ -1089,7 +1099,6 @@ describe("wallet-send-approvals", () => {
         actor: "control-ui",
         config: walletCfg,
         providerIdOverride: "local-socket-signer",
-        reviewAuthorization: { type: "webauthn", proof: { proofId: "proof-123" } },
       });
     const concurrentResults = await Promise.all([executeApproval(), executeApproval()]);
     const approved = concurrentResults.find((entry) => entry.ok);
@@ -1113,7 +1122,7 @@ describe("wallet-send-approvals", () => {
     expect(executeSignerReview).toHaveBeenCalledWith({
       walletId: "wallet-agent",
       requestId: result.request.id,
-      authorization: { type: "webauthn", proof: { proofId: "proof-123" } },
+      authorization: { type: "control-ui", proof: { proofId: "c".repeat(64) } },
     });
     expect(executeSignerReview).toHaveBeenCalledTimes(1);
     expect(sendTx).not.toHaveBeenCalled();

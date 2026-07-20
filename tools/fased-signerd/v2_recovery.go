@@ -245,7 +245,11 @@ func (m *signerKeyManagerV2) ImportRecoveryV1(req signerWalletRecoveryImportRequ
 	if err != nil {
 		return signerWalletRecordV2{}, signerPolicyV2{}, err
 	}
-	if req.Policy.Role != pkg.Role {
+	requestedRole := req.Policy.Role
+	if req.Baseline != nil {
+		requestedRole = strings.ToLower(strings.TrimSpace(req.Baseline.Role))
+	}
+	if requestedRole != pkg.Role {
 		return signerWalletRecordV2{}, signerPolicyV2{}, errors.New("recovery package role does not match the requested wallet role")
 	}
 	password, err := readSignerRecoveryPasswordV1(req.PasswordPath)
@@ -258,7 +262,20 @@ func (m *signerKeyManagerV2) ImportRecoveryV1(req signerWalletRecoveryImportRequ
 		return signerWalletRecordV2{}, signerPolicyV2{}, err
 	}
 	defer zeroBytes(secret)
-	wallet, policy, err := m.storeNewKeyWithPolicy(req.WalletID, secret, req.Policy, req.ExpectedVersion)
+	policyInput := req.Policy
+	if req.Baseline != nil {
+		privateKey := solana.PrivateKey(secret)
+		policyInput, err = compileSignerRoleBaselineV1(
+			req.WalletID,
+			privateKey.PublicKey().String(),
+			*req.Baseline,
+			signerRoleBaselineRuntimeFromEnvV1(),
+		)
+		if err != nil {
+			return signerWalletRecordV2{}, signerPolicyV2{}, err
+		}
+	}
+	wallet, policy, err := m.storeNewKeyWithPolicy(req.WalletID, secret, policyInput, req.ExpectedVersion)
 	if err != nil {
 		return signerWalletRecordV2{}, signerPolicyV2{}, err
 	}

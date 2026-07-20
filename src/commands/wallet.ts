@@ -11,7 +11,10 @@ import {
   throwLegacyEmbeddedKeystoreMigrationRequired,
 } from "../wallet/legacy-embedded-keystore.js";
 import {
-  createLockedSignerOwnedWallet,
+  activateSignerOwnedRoleBaseline,
+  createRoleReadySignerOwnedWallet,
+  readSignerOwnedWallet,
+  readSignerOwnedWalletReadiness,
   type LocalSignerWalletPolicyRecord,
 } from "../wallet/local-socket-signer-lifecycle.js";
 import { normalizeNativeSignerWalletId } from "../wallet/native-signer-wallet-id.js";
@@ -133,6 +136,14 @@ export type WalletRawExportOptions = {
 };
 
 export type WalletStatusOptions = {
+  json?: boolean;
+  walletId?: string;
+};
+
+export type WalletPolicyActivateRoleBaselineOptions = {
+  walletId: string;
+  role: string;
+  confirm: boolean;
   json?: boolean;
 };
 
@@ -778,7 +789,7 @@ async function createSignerOwnedWalletForSetup(params: {
 
   let result;
   try {
-    result = await createLockedSignerOwnedWallet({
+    result = await createRoleReadySignerOwnedWallet({
       socketPath,
       walletId,
       role: params.role,
@@ -827,6 +838,26 @@ async function createSignerOwnedWalletForSetup(params: {
   cfg = setConfigEnvVar(cfg, rpcEnvKeyFor(params.chain, walletId), params.rpcUrl);
   await writeConfigFile(cfg);
 
+  const readiness = await readSignerOwnedWalletReadiness({
+    socketPath,
+    walletId: signerWalletId,
+  });
+  if (
+    !readiness.ready ||
+    readiness.walletId !== signerWalletId ||
+    readiness.publicKey !== result.wallet.publicKey ||
+    readiness.role !== params.role ||
+    readiness.baselineVersion !== 1 ||
+    readiness.policyHash !== result.policy.hash ||
+    readiness.policyVersion !== result.policy.version ||
+    readiness.networkHash !== network.hash ||
+    readiness.networkVersion !== network.version
+  ) {
+    throw new Error(
+      `Setup incomplete: signer readiness does not match the created ${params.role} wallet lifecycle`,
+    );
+  }
+
   const wallet = upsertNamedWallet({
     walletId,
     name: params.options.walletName || "Wallet",
@@ -839,16 +870,16 @@ async function createSignerOwnedWalletForSetup(params: {
       signerWalletId,
       policyHash: result.policy.hash,
       policyVersion: result.policy.version,
-      policyState: "locked",
+      baselineVersion: readiness.baselineVersion,
+      policyState: "ready",
       networkHash: network.hash,
       networkVersion: network.version,
       networkReady: network.ready,
+      operationLane: readiness.operationLane,
+      roleReady: readiness.ready,
     },
     env: params.env,
   });
-  if (params.role === "agent") {
-    setDefaultWallet({ walletId: wallet.id, env: params.env });
-  }
   if (params.role === "mining") {
     const currentEntry = cfg.plugins?.entries?.["sat-mining"];
     const currentSatConfig =
@@ -886,9 +917,12 @@ async function createSignerOwnedWalletForSetup(params: {
           address: result.wallet.publicKey,
           policyHash: result.policy.hash,
           policyVersion: result.policy.version,
-          policyState: "locked",
+          baselineVersion: readiness.baselineVersion,
+          policyState: "ready",
           networkVersion: network.version,
           networkReady: network.ready,
+          operationLane: readiness.operationLane,
+          roleReady: readiness.ready,
         },
         null,
         2,
@@ -899,7 +933,7 @@ async function createSignerOwnedWalletForSetup(params: {
     params.runtime.log(`${params.chain.toUpperCase()} address: ${result.wallet.publicKey}`);
     if (!params.options.noSignerHints) {
       params.runtime.log(
-        "Signer-owned wallet created with a deny-all policy. Configure explicit operations, destinations, assets, and positive caps before sending.",
+        `Role baseline active: ${params.role} v${readiness.baselineVersion} (${readiness.operationLane}).`,
       );
     }
   }
@@ -968,13 +1002,14 @@ function parseNativeSignerImportResult(params: {
     result.policy?.walletId !== params.walletId ||
     result.policy.role !== params.role ||
     result.policy.version !== 1 ||
-    result.policy.operations?.length !== 0 ||
-    result.policy.programs?.length !== 0 ||
-    result.policy.assets?.length !== 0 ||
+    result.policy.baselineVersion !== 1 ||
+    !result.policy.operations?.length ||
+    !result.policy.programs?.length ||
+    !result.policy.assets?.length ||
     typeof result.policy.hash !== "string" ||
     !/^sha256:[0-9a-f]{64}$/.test(result.policy.hash)
   ) {
-    throw new Error("native signer import did not return the exact deny-all wallet result");
+    throw new Error("native signer import did not return an active signer-owned role baseline");
   }
   return result as LocalSignerWalletPolicyRecord;
 }
@@ -1003,7 +1038,7 @@ function invokeNativeSignerWalletImport(params: {
     params.controlSocketPath,
     "--wallet-id",
     params.walletId,
-    "--locked-role",
+    "--baseline-role",
     params.role,
   ];
   try {
@@ -1061,7 +1096,7 @@ function invokeNativeSignerRecoveryImport(params: {
         params.controlSocketPath,
         "--wallet-id",
         params.walletId,
-        "--locked-role",
+        "--baseline-role",
         params.role,
         "--recovery-file",
         input.path,
@@ -1181,6 +1216,21 @@ async function importSignerOwnedWalletForSetup(params: {
   // genesis validation fails.
   cfg = setConfigEnvVar(cfg, rpcEnvKeyFor(params.chain, params.walletId), params.rpcUrl);
   await writeConfigFile(cfg);
+  const readiness = await readSignerOwnedWalletReadiness({ socketPath, walletId: signerWalletId });
+  if (
+    !readiness.ready ||
+    readiness.publicKey !== result.wallet.publicKey ||
+    readiness.role !== params.role ||
+    readiness.baselineVersion !== 1 ||
+    readiness.policyHash !== result.policy.hash ||
+    readiness.policyVersion !== result.policy.version ||
+    readiness.networkHash !== network.hash ||
+    readiness.networkVersion !== network.version
+  ) {
+    throw new Error(
+      `Setup incomplete: signer readiness does not match the imported ${params.role} wallet lifecycle`,
+    );
+  }
   const wallet = upsertNamedWallet({
     walletId: params.walletId,
     name: params.options.walletName || "Wallet",
@@ -1193,16 +1243,16 @@ async function importSignerOwnedWalletForSetup(params: {
       signerWalletId,
       policyHash: result.policy.hash,
       policyVersion: result.policy.version,
-      policyState: "locked",
+      baselineVersion: readiness.baselineVersion,
+      policyState: "ready",
       networkHash: network.hash,
       networkVersion: network.version,
       networkReady: network.ready,
+      operationLane: readiness.operationLane,
+      roleReady: readiness.ready,
     },
     env: params.env,
   });
-  if (params.role === "agent") {
-    setDefaultWallet({ walletId: wallet.id, env: params.env });
-  }
   if (params.role === "mining") {
     const currentEntry = cfg.plugins?.entries?.["sat-mining"];
     const currentConfig =
@@ -1238,9 +1288,12 @@ async function importSignerOwnedWalletForSetup(params: {
           signerWalletId,
           role: params.role,
           address: result.wallet.publicKey,
-          policyState: "locked",
+          baselineVersion: readiness.baselineVersion,
+          policyState: "ready",
           networkVersion: network.version,
           networkReady: network.ready,
+          operationLane: readiness.operationLane,
+          roleReady: readiness.ready,
         },
         null,
         2,
@@ -1250,7 +1303,7 @@ async function importSignerOwnedWalletForSetup(params: {
     params.runtime.log(`Imported ${params.role} wallet ${wallet.id} into fased-signerd.`);
     params.runtime.log(`SOLANA address: ${result.wallet.publicKey}`);
     params.runtime.log(
-      `Readiness: key=yes RPC=${network.ready ? "yes" : "no"} policy=receive-only`,
+      `Readiness: ${readiness.ready ? "ready" : "setup incomplete"} (${readiness.operationLane})`,
     );
   }
   return result;
@@ -1865,7 +1918,7 @@ export async function walletStatusCommand(
   runtime: RuntimeEnv = defaultRuntime,
   options: WalletStatusOptions = {},
 ) {
-  const status = await readWalletStatusSnapshot();
+  const status = await readWalletStatusSnapshot({ walletId: options.walletId });
   if (options.json) {
     runtime.log(JSON.stringify({ ok: true, status }, null, 2));
     return;
@@ -1899,9 +1952,120 @@ export async function walletStatusCommand(
   if (status.addresses?.solana) {
     runtime.log(`Address: ${status.addresses.solana}`);
   }
+  for (const wallet of status.wallets ?? []) {
+    const signer = wallet.readiness.signer;
+    runtime.log(
+      `Wallet ${wallet.name} (${wallet.id}): ${wallet.readiness.ready ? "ready" : "setup incomplete"}`,
+    );
+    if (signer) {
+      runtime.log(
+        `  signer=${signer.walletId} role=${signer.role} lane=${signer.operationLane} baseline=v${signer.baselineVersion}`,
+      );
+      runtime.log(
+        `  key=${String(signer.keyReady)} policy=v${signer.policyVersion} ${signer.policyHash} network=v${signer.networkVersion} ${signer.networkHash ?? "unconfigured"}`,
+      );
+    }
+    if (wallet.readiness.error) {
+      runtime.log(`  warning=${wallet.readiness.error}`);
+    }
+  }
   if (status.error) {
     runtime.log(`Status warning: ${status.error}`);
   }
+}
+
+export async function walletPolicyActivateRoleBaselineCommand(
+  runtime: RuntimeEnv = defaultRuntime,
+  options: WalletPolicyActivateRoleBaselineOptions,
+): Promise<void> {
+  if (!options.confirm) {
+    throw new Error("Activate role baseline requires --confirm after reviewing the selected role");
+  }
+  const role = normalizeWalletUserRole(options.role);
+  if (!role) {
+    throw new Error("role must be one of: agent, mining, vault");
+  }
+  const registry = readWalletProviderRegistry(process.env);
+  const wallet = registry.wallets.find((entry) => entry.id === options.walletId.trim());
+  if (!wallet || wallet.providerId !== "local-socket-signer") {
+    throw new Error(`registered signer-owned wallet was not found: ${options.walletId}`);
+  }
+  const registeredRole = resolveWalletUserRole(wallet);
+  if (registeredRole && registeredRole !== role) {
+    throw new Error(
+      `wallet ${wallet.id} has immutable role=${registeredRole}; refusing requested role=${role}`,
+    );
+  }
+  const signerWalletId =
+    typeof wallet.metadata?.signerWalletId === "string" && wallet.metadata.signerWalletId.trim()
+      ? wallet.metadata.signerWalletId.trim()
+      : normalizeNativeSignerWalletId(wallet.id);
+  const socketPath = requireLocalSocketSignerPath(process.env);
+  const current = await readSignerOwnedWallet({ socketPath, walletId: signerWalletId });
+  if (current.wallet.publicKey !== wallet.addresses?.solana) {
+    throw new Error("registered wallet address does not match the signer-owned wallet");
+  }
+  if (current.policy.role !== role) {
+    throw new Error(
+      `signer-owned wallet ${signerWalletId} has immutable role=${current.policy.role}, not ${role}`,
+    );
+  }
+  let policy = current.policy;
+  if (policy.baselineVersion === undefined || policy.baselineVersion === 0) {
+    policy = await activateSignerOwnedRoleBaseline({
+      socketPath,
+      walletId: signerWalletId,
+      role,
+      expectedPolicyVersion: policy.version,
+    });
+  } else if (policy.baselineVersion !== 1) {
+    throw new Error(
+      `signer-owned wallet ${signerWalletId} uses unsupported baseline version ${policy.baselineVersion}`,
+    );
+  }
+  const readiness = await readSignerOwnedWalletReadiness({ socketPath, walletId: signerWalletId });
+  if (
+    readiness.publicKey !== current.wallet.publicKey ||
+    readiness.role !== role ||
+    readiness.policyHash !== policy.hash ||
+    readiness.policyVersion !== policy.version ||
+    readiness.baselineVersion !== 1
+  ) {
+    throw new Error("Setup incomplete: activated role baseline does not match live signer state");
+  }
+  upsertNamedWallet({
+    walletId: wallet.id,
+    name: wallet.name,
+    providerId: wallet.providerId,
+    addresses: wallet.addresses,
+    metadata: {
+      ...wallet.metadata,
+      role,
+      purpose: role,
+      signerWalletId,
+      policyHash: readiness.policyHash,
+      policyVersion: readiness.policyVersion,
+      baselineVersion: readiness.baselineVersion,
+      policyState: readiness.policyReady ? "ready" : "setup-incomplete",
+      networkHash: readiness.networkHash,
+      networkVersion: readiness.networkVersion,
+      networkReady: readiness.networkReady,
+      operationLane: readiness.operationLane,
+      roleReady: readiness.ready,
+    },
+    env: process.env,
+  });
+  const payload = { ok: true, walletId: wallet.id, signerWalletId, role, readiness };
+  if (options.json) {
+    runtime.log(JSON.stringify(payload, null, 2));
+    return;
+  }
+  runtime.log(
+    `Activated ${role} role baseline v${readiness.baselineVersion} for ${wallet.name} (${wallet.id}).`,
+  );
+  runtime.log(
+    `Readiness: ${readiness.ready ? "ready" : "setup incomplete"} (${readiness.operationLane}).`,
+  );
 }
 
 export async function walletKeystoreInitCommand(

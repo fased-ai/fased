@@ -72,6 +72,9 @@ func requirePolicyTighteningV2(current, candidate signerPolicyV2) error {
 	if current.WalletID != candidate.WalletID || current.Role != candidate.Role {
 		return errors.New("application policy change cannot alter wallet identity or role")
 	}
+	if candidate.BaselineVersion != current.BaselineVersion || candidate.TypedSATPrograms != current.TypedSATPrograms {
+		return errors.New("application policy change cannot alter signer-owned baseline authority")
+	}
 	if !stringSetSubsetV2(candidate.Operations, current.Operations) {
 		return errors.New("application policy change cannot add operations")
 	}
@@ -89,6 +92,12 @@ func requirePolicyTighteningV2(current, candidate signerPolicyV2) error {
 		}
 		if !stringSetSubsetV2(candidateAsset.Destinations, currentAsset.Destinations) {
 			return fmt.Errorf("application policy change cannot add destinations for %s", candidateAsset.Asset)
+		}
+		if candidateAsset.ReviewedDestinations && !currentAsset.ReviewedDestinations {
+			return fmt.Errorf("application policy change cannot add reviewed destinations for %s", candidateAsset.Asset)
+		}
+		if candidateAsset.TypedSATDestinations && !currentAsset.TypedSATDestinations {
+			return fmt.Errorf("application policy change cannot add typed SAT destinations for %s", candidateAsset.Asset)
 		}
 		if !policyAmountAtMostV2(candidateAsset.MaxPerTx, currentAsset.MaxPerTx) {
 			return fmt.Errorf("application policy change cannot raise per-transaction cap for %s", candidateAsset.Asset)

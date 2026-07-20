@@ -11,6 +11,7 @@ import {
 } from "../wallet/wallet-provider-registry.js";
 import {
   walletLegacyMigrationFinalizeCommand,
+  walletPolicyActivateRoleBaselineCommand,
   walletRecoveryExportCommand,
   walletRecoveryImportCommand,
   walletRawExportCommand,
@@ -25,6 +26,8 @@ vi.mock("../wallet/providers/turnkey-adapter.js", () => ({
 }));
 
 const signerMocks = vi.hoisted(() => ({
+  roles: new Map<string, string>(),
+  policyHashes: new Map<string, string>(),
   create: vi.fn(async (params: { walletId: string; role: string }) => {
     const signerWalletId =
       params.walletId
@@ -32,6 +35,8 @@ const signerMocks = vi.hoisted(() => ({
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "_")
         .replace(/^_+|_+$/g, "") || "default";
+    signerMocks.roles.set(signerWalletId, params.role);
+    signerMocks.policyHashes.set(signerWalletId, `sha256:${"a".repeat(64)}`);
     return {
       wallet: {
         walletId: signerWalletId,
@@ -43,18 +48,81 @@ const signerMocks = vi.hoisted(() => ({
         walletId: signerWalletId,
         role: params.role,
         version: 1,
-        operations: [],
-        programs: [],
-        assets: [],
+        baselineVersion: 1,
+        operations: ["solana.nativeTransfer"],
+        programs: ["11111111111111111111111111111111"],
+        assets: [
+          {
+            asset: "solana:native",
+            destinations: ["11111111111111111111111111111111"],
+            maxPerTx: "1000000000",
+            maxDaily: "5000000000",
+            reviewedDestinations: true,
+          },
+        ],
         hash: `sha256:${"a".repeat(64)}`,
       },
     };
   }),
   install: vi.fn(),
   restart: vi.fn(async () => undefined),
+  readiness: vi.fn(async (params: { walletId: string }) => ({
+    walletId: params.walletId,
+    publicKey: "11111111111111111111111111111111",
+    role: signerMocks.roles.get(params.walletId) ?? "agent",
+    baselineVersion: 1,
+    policyVersion: 1,
+    policyHash: signerMocks.policyHashes.get(params.walletId) ?? `sha256:${"d".repeat(64)}`,
+    networkVersion: 1,
+    networkHash: `hmac-sha256:${"b".repeat(64)}`,
+    keyReady: true,
+    policyReady: true,
+    networkReady: true,
+    operationLane: "agent-reviewed-and-autonomous",
+    ready: true,
+  })),
+  read: vi.fn(async (params: { walletId: string }) => ({
+    wallet: {
+      walletId: params.walletId,
+      publicKey: "11111111111111111111111111111111",
+      version: 1,
+      createdAt: "2026-07-16T12:00:00.000Z",
+    },
+    policy: {
+      walletId: params.walletId,
+      role: signerMocks.roles.get(params.walletId) ?? "agent",
+      version: 1,
+      baselineVersion: 0,
+      operations: [],
+      programs: [],
+      assets: [],
+      hash: `sha256:${"e".repeat(64)}`,
+    },
+  })),
+  activate: vi.fn(async (params: { walletId: string; role: string }) => {
+    signerMocks.policyHashes.set(params.walletId, `sha256:${"f".repeat(64)}`);
+    return {
+      walletId: params.walletId,
+      role: params.role,
+      version: 2,
+      baselineVersion: 1,
+      operations: ["solana.nativeTransfer"],
+      programs: ["11111111111111111111111111111111"],
+      assets: [
+        {
+          asset: "solana:native",
+          destinations: ["11111111111111111111111111111111"],
+          maxPerTx: "1000000000",
+          maxDaily: "5000000000",
+          reviewedDestinations: true,
+        },
+      ],
+      hash: `sha256:${"f".repeat(64)}`,
+    };
+  }),
   networkPut: vi.fn(
-    (_params?: Record<string, unknown>): SignerNetworkSummary => ({
-      walletId: "agent",
+    (params?: Record<string, unknown>): SignerNetworkSummary => ({
+      walletId: typeof params?.walletId === "string" ? params.walletId : "agent",
       configured: true,
       version: 1,
       hash: `hmac-sha256:${"b".repeat(64)}`,
@@ -63,7 +131,9 @@ const signerMocks = vi.hoisted(() => ({
   ),
   importProcess: vi.fn((_command: string, args: string[]) => {
     const walletId = args[args.indexOf("--wallet-id") + 1] || "mining";
-    const role = args[args.indexOf("--locked-role") + 1] || "mining";
+    const role = args[args.indexOf("--baseline-role") + 1] || "mining";
+    signerMocks.roles.set(walletId, role);
+    signerMocks.policyHashes.set(walletId, `sha256:${"d".repeat(64)}`);
     return {
       status: 0,
       signal: null,
@@ -78,9 +148,18 @@ const signerMocks = vi.hoisted(() => ({
           walletId,
           role,
           version: 1,
-          operations: [],
-          programs: [],
-          assets: [],
+          baselineVersion: 1,
+          operations: ["solana.nativeTransfer"],
+          programs: ["11111111111111111111111111111111"],
+          assets: [
+            {
+              asset: "solana:native",
+              destinations: ["11111111111111111111111111111111"],
+              maxPerTx: "1000000000",
+              maxDaily: "5000000000",
+              reviewedDestinations: true,
+            },
+          ],
           hash: `sha256:${"d".repeat(64)}`,
         },
       }),
@@ -98,7 +177,10 @@ vi.mock("node:child_process", async (importOriginal) => {
 });
 
 vi.mock("../wallet/local-socket-signer-lifecycle.js", () => ({
-  createLockedSignerOwnedWallet: signerMocks.create,
+  activateSignerOwnedRoleBaseline: signerMocks.activate,
+  createRoleReadySignerOwnedWallet: signerMocks.create,
+  readSignerOwnedWallet: signerMocks.read,
+  readSignerOwnedWalletReadiness: signerMocks.readiness,
 }));
 
 vi.mock("../wallet/signer-network-admin.js", () => ({
@@ -153,6 +235,11 @@ describe("walletSetupCommand native signer boundary", () => {
     signerMocks.create.mockClear();
     signerMocks.install.mockClear();
     signerMocks.restart.mockClear();
+    signerMocks.readiness.mockClear();
+    signerMocks.read.mockClear();
+    signerMocks.activate.mockClear();
+    signerMocks.roles.clear();
+    signerMocks.policyHashes.clear();
     signerMocks.networkPut.mockClear();
     signerMocks.importProcess.mockClear();
     signerMocks.socketCall.mockReset();
@@ -234,6 +321,74 @@ describe("walletSetupCommand native signer boundary", () => {
       expect(logs.join("\n")).toContain("SOLANA address:");
       expect(logs.join("\n")).toContain("Signer wallet ID: solana_1");
       expect(logs.join("\n")).not.toMatch(/PRIVATE KEY|PASSPHRASE|SEED/i);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("activates an existing deny-all role baseline only after explicit confirmation", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-baseline-migration-"));
+    const configPath = path.join(root, "fased.json");
+    await fs.writeFile(configPath, "{}\n", "utf8");
+    vi.stubEnv("FASED_CONFIG_PATH", configPath);
+    vi.stubEnv("FASED_DISABLE_CONFIG_CACHE", "1");
+    vi.stubEnv("FASED_STATE_DIR", path.join(root, "state"));
+    signerMocks.roles.set("legacy_agent", "agent");
+    clearConfigCache();
+
+    try {
+      upsertNamedWallet({
+        walletId: "legacy-agent",
+        name: "Legacy Agent",
+        providerId: "local-socket-signer",
+        addresses: { solana: "11111111111111111111111111111111" },
+        metadata: { role: "agent", purpose: "agent", signerWalletId: "legacy_agent" },
+        env: process.env,
+      });
+      await expect(
+        walletPolicyActivateRoleBaselineCommand({ log: vi.fn() } as never, {
+          walletId: "legacy-agent",
+          role: "agent",
+          confirm: false,
+        }),
+      ).rejects.toThrow(/requires --confirm/i);
+
+      signerMocks.readiness.mockResolvedValueOnce({
+        walletId: "legacy_agent",
+        publicKey: "11111111111111111111111111111111",
+        role: "agent",
+        baselineVersion: 1,
+        policyVersion: 2,
+        policyHash: `sha256:${"f".repeat(64)}`,
+        networkVersion: 1,
+        networkHash: `hmac-sha256:${"b".repeat(64)}`,
+        keyReady: true,
+        policyReady: true,
+        networkReady: true,
+        operationLane: "agent-reviewed-and-autonomous",
+        ready: true,
+      });
+      await walletPolicyActivateRoleBaselineCommand({ log: vi.fn() } as never, {
+        walletId: "legacy-agent",
+        role: "agent",
+        confirm: true,
+      });
+
+      expect(signerMocks.activate).toHaveBeenCalledWith({
+        socketPath: "/tmp/fased-signerd-app-test.sock",
+        walletId: "legacy_agent",
+        role: "agent",
+        expectedPolicyVersion: 1,
+      });
+      expect(
+        readWalletProviderRegistry(process.env).wallets.find(
+          (wallet) => wallet.id === "legacy-agent",
+        )?.metadata,
+      ).toMatchObject({
+        baselineVersion: 1,
+        policyVersion: 2,
+        roleReady: true,
+      });
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
@@ -362,7 +517,7 @@ describe("walletSetupCommand native signer boundary", () => {
       walletId: "agent",
       configured: true,
       version: 1,
-      hash: `hmac-sha256:${"c".repeat(64)}`,
+      hash: `hmac-sha256:${"b".repeat(64)}`,
       ready: true,
     });
     clearConfigCache();
@@ -405,7 +560,7 @@ describe("walletSetupCommand native signer boundary", () => {
         (wallet) => wallet.id === "agent",
       );
       expect(hostedWallet?.metadata?.networkReady).toBe(true);
-      expect(hostedWallet?.metadata?.policyState).toBe("locked");
+      expect(hostedWallet?.metadata?.policyState).toBe("ready");
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
@@ -529,7 +684,7 @@ describe("walletSetupCommand native signer boundary", () => {
           "import",
           "--wallet-id",
           "mining",
-          "--locked-role",
+          "--baseline-role",
           "mining",
         ]),
         expect.objectContaining({
@@ -734,7 +889,7 @@ describe("walletSetupCommand native signer boundary", () => {
           "recovery-import",
           "--wallet-id",
           "agent_restored",
-          "--locked-role",
+          "--baseline-role",
           "agent",
           "--recovery-file",
           recoveryPath,
