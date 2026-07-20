@@ -33,15 +33,24 @@ describe("attested Hosting installer artifact layout", () => {
     expect(fs.existsSync(path.join(root, "scripts/fased-host-bootstrapctl.mjs"))).toBe(false);
   });
 
-  it("uses architecture names that match the release artifact builder", () => {
+  it("keeps the legacy Local bridge separate from the unified Hosting app artifact", () => {
     const installer = fs.readFileSync(path.join(root, "install.sh"), "utf8");
     const builder = fs.readFileSync(
       path.join(root, "scripts/build-hosted-runtime-artifact.ts"),
       "utf8",
     );
+    const runtimeInstaller = fs.readFileSync(
+      path.join(root, "scripts/install-hosted-runtime.sh"),
+      "utf8",
+    );
     expect(installer).toContain('x86_64|amd64) architecture="x64"');
     expect(installer).toContain('aarch64|arm64) architecture="arm64"');
     expect(builder).toContain("fased-hosted-app-linux-${arch}-v${version}.tar.gz");
+    expect(builder).toContain("fased-hosted-app-v2-linux-${arch}-v${version}.tar.gz");
+    expect(builder).toContain("schemaVersion: 1, dependencyHash");
+    expect(builder).toContain("app: { asset: unifiedAppAssetName, sha256: unifiedAppDigest }");
+    expect(runtimeInstaller).toContain('if [[ "$PROFILE" == "hosting" ]]');
+    expect(runtimeInstaller).toContain('APP_ASSET_NAME="${RELEASE_SELECTION[1]}"');
   });
 
   it("publishes install.sh as its own pre-execution attested release asset", () => {

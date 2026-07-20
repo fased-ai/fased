@@ -7,6 +7,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { SIGNER_PROTOCOL_V2 } from "../src/wallet/signer-protocol-v2.generated.js";
+import { capabilitiesDigest } from "./hosted-release-manifest.mjs";
 import { installManagedRuntime } from "./install-managed-runtime.mjs";
 import {
   readManagedInstallManifest,
@@ -44,6 +45,7 @@ function writeFakeRuntime(
   version: string,
   dependencyHash: string,
   modules: boolean,
+  release?: { commit: string },
 ) {
   fs.mkdirSync(path.join(packageRoot, "dist", "control-ui"), { recursive: true });
   if (modules) {
@@ -59,7 +61,11 @@ function writeFakeRuntime(
   );
   fs.writeFileSync(
     path.join(packageRoot, ".fased-hosted-runtime.json"),
-    `${JSON.stringify({ schemaVersion: 1, dependencyHash })}\n`,
+    `${JSON.stringify(
+      release
+        ? { schemaVersion: 2, version, commit: release.commit, dependencyHash }
+        : { schemaVersion: 1, dependencyHash },
+    )}\n`,
   );
   fs.writeFileSync(
     path.join(packageRoot, "fased.mjs"),
@@ -81,6 +87,57 @@ function writeChecksum(filePath: string) {
   const bytes = fs.readFileSync(filePath);
   const digest = createHash("sha256").update(bytes).digest("hex");
   fs.writeFileSync(`${filePath}.sha256`, `${digest}  ${path.basename(filePath)}\n`);
+}
+
+function sha256Path(filePath: string) {
+  return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
+
+function writeUnifiedReleaseManifest(params: {
+  releaseFiles: string;
+  version: string;
+  commit: string;
+  appAsset: string;
+  dependencyAsset: string;
+  dependencyHash: string;
+}) {
+  const application = {
+    artifact: { asset: path.basename(params.appAsset), sha256: sha256Path(params.appAsset) },
+    dependencies: {
+      asset: path.basename(params.dependencyAsset),
+      sha256: sha256Path(params.dependencyAsset),
+      dependencyHash: params.dependencyHash,
+    },
+  };
+  const signerDigest = "f".repeat(64);
+  fs.writeFileSync(
+    path.join(params.releaseFiles, "fased-hosted-release-v2.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      release: {
+        version: params.version,
+        tag: `v${params.version}`,
+        commit: params.commit,
+      },
+      application: { linux: { x64: application, arm64: application } },
+      signer: {
+        release: {
+          version: params.version,
+          commit: params.commit,
+          buildInputDigest: `sha256:${"e".repeat(64)}`,
+          development: false,
+        },
+        capabilities: SIGNER_PROTOCOL_V2,
+        capabilitiesDigest: capabilitiesDigest(SIGNER_PROTOCOL_V2),
+        platforms: {
+          "linux-amd64": { asset: "fased-signerd-linux-amd64", sha256: signerDigest },
+          "linux-arm64": { asset: "fased-signerd-linux-arm64", sha256: signerDigest },
+          "darwin-amd64": { asset: "fased-signerd-darwin-amd64", sha256: signerDigest },
+          "darwin-arm64": { asset: "fased-signerd-darwin-arm64", sha256: signerDigest },
+        },
+      },
+    })}\n`,
+  );
 }
 
 function writeFakeSignerRelease(releaseFiles: string, version: string, marker: string) {
@@ -199,12 +256,33 @@ describe("managed updater transaction", () => {
     const releaseFiles = path.join(releaseRoot, "v1.0.1");
     const appBuild = path.join(root, "app-build");
     const appRoot = path.join(appBuild, "package");
-    writeFakeRuntime(appRoot, "1.0.1", dependencyHash, false);
+    const unifiedCommit = "a".repeat(40);
+    writeFakeRuntime(appRoot, "1.0.1", dependencyHash, false, { commit: unifiedCommit });
     fs.mkdirSync(releaseFiles, { recursive: true });
     const arch = process.arch === "arm64" ? "arm64" : "x64";
-    const appAsset = path.join(releaseFiles, `fased-hosted-app-linux-${arch}-v1.0.1.tar.gz`);
+    const appAsset = path.join(releaseFiles, `fased-hosted-app-v2-linux-${arch}-v1.0.1.tar.gz`);
     execFileSync("tar", ["-czf", appAsset, "-C", appBuild, "package"]);
     writeChecksum(appAsset);
+    const legacyAppBuild = path.join(root, "legacy-app-build");
+    const legacyAppRoot = path.join(legacyAppBuild, "package");
+    writeFakeRuntime(legacyAppRoot, "1.0.1", dependencyHash, false);
+    const legacyAppAsset = path.join(releaseFiles, `fased-hosted-app-linux-${arch}-v1.0.1.tar.gz`);
+    execFileSync("tar", ["-czf", legacyAppAsset, "-C", legacyAppBuild, "package"]);
+    writeChecksum(legacyAppAsset);
+    expect(
+      JSON.parse(
+        execFileSync("tar", ["-xOf", legacyAppAsset, "package/.fased-hosted-runtime.json"], {
+          encoding: "utf8",
+        }),
+      ).schemaVersion,
+    ).toBe(1);
+    expect(
+      JSON.parse(
+        execFileSync("tar", ["-xOf", appAsset, "package/.fased-hosted-runtime.json"], {
+          encoding: "utf8",
+        }),
+      ).schemaVersion,
+    ).toBe(2);
 
     const dependencyBuild = path.join(root, "dependency-build");
     fs.mkdirSync(path.join(dependencyBuild, "node_modules"), { recursive: true });
@@ -214,9 +292,18 @@ describe("managed updater transaction", () => {
     );
     execFileSync("tar", ["-czf", dependencyAsset, "-C", dependencyBuild, "node_modules"]);
     writeChecksum(dependencyAsset);
+    writeUnifiedReleaseManifest({
+      releaseFiles,
+      version: "1.0.1",
+      commit: unifiedCommit,
+      appAsset,
+      dependencyAsset,
+      dependencyHash,
+    });
 
     const commandLog = path.join(root, "commands.log");
     let artifactRequests = 0;
+    let unifiedManifestRequests = 0;
     let registryTarget = "1.0.1";
     let rejectedHealthVersion: string | null = null;
     const server = http.createServer((request, response) => {
@@ -242,6 +329,9 @@ describe("managed updater transaction", () => {
       const marker = "/releases/download/";
       if (requestPath.startsWith(marker)) {
         artifactRequests += 1;
+        if (requestPath.endsWith("/fased-hosted-release-v2.json")) {
+          unifiedManifestRequests += 1;
+        }
         const filePath = path.join(releaseRoot, requestPath.slice(marker.length));
         if (!fs.existsSync(filePath)) {
           response.statusCode = 404;
@@ -279,6 +369,7 @@ describe("managed updater transaction", () => {
         encoding: "utf8",
       });
       expect(first.stdout).toContain("Updated Fased 1.0.0 -> 1.0.1");
+      expect(unifiedManifestRequests).toBe(1);
       expect(readManagedInstallManifest(paths.manifestPath)?.runtime).toMatchObject({
         activeVersion: "1.0.1",
         previousVersion: "1.0.0",
@@ -338,6 +429,11 @@ describe("managed updater transaction", () => {
       const pairedAppRoot = path.join(pairedBuild, "package");
       writeFakeRuntime(pairedAppRoot, "1.0.2", dependencyHash, false);
       fs.mkdirSync(pairedFiles, { recursive: true });
+      fs.copyFileSync(dependencyAsset, path.join(pairedFiles, path.basename(dependencyAsset)));
+      fs.copyFileSync(
+        `${dependencyAsset}.sha256`,
+        path.join(pairedFiles, `${path.basename(dependencyAsset)}.sha256`),
+      );
       const pairedAsset = path.join(pairedFiles, `fased-hosted-app-linux-${arch}-v1.0.2.tar.gz`);
       execFileSync("tar", ["-czf", pairedAsset, "-C", pairedBuild, "package"]);
       writeChecksum(pairedAsset);
@@ -369,6 +465,11 @@ describe("managed updater transaction", () => {
       const rejectedAppRoot = path.join(rejectedBuild, "package");
       writeFakeRuntime(rejectedAppRoot, "1.0.3", dependencyHash, false);
       fs.mkdirSync(rejectedFiles, { recursive: true });
+      fs.copyFileSync(dependencyAsset, path.join(rejectedFiles, path.basename(dependencyAsset)));
+      fs.copyFileSync(
+        `${dependencyAsset}.sha256`,
+        path.join(rejectedFiles, `${path.basename(dependencyAsset)}.sha256`),
+      );
       const rejectedAsset = path.join(
         rejectedFiles,
         `fased-hosted-app-linux-${arch}-v1.0.3.tar.gz`,

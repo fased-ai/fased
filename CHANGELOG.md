@@ -12,6 +12,9 @@ third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 - Add encrypted native recovery, advanced owner-only raw export, guarded Mining
   archive/replacement, receive QR, RPC editing, and hardened verified Hosting
   installation without exposing signer custody controls to Gateway.
+- Bridge managed Local updates from v0.1.67 with a legacy schema-v1 app layer,
+  while Hosting and current clients select the commit-bound schema-v2 app and
+  signer through the unified attested release manifest.
 
 ## 0.1.67
 
