@@ -1025,6 +1025,7 @@ export const LocalSocketSignerWalletReadinessV2Schema = Type.Object(
   {
     walletId: Type.String({ minLength: 1 }),
     publicKey: Type.String({ minLength: 1 }),
+    walletVersion: Type.Optional(Type.Integer({ minimum: 1 })),
     role: SignerWalletRoleSchema,
     baselineVersion: Type.Integer({ minimum: 0 }),
     policyVersion: Type.Integer({ minimum: 1 }),

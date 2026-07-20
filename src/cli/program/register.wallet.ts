@@ -14,6 +14,7 @@ import {
   walletRecoveryExportCommand,
   walletRecoveryImportCommand,
   walletRawExportCommand,
+  walletRetireCommand,
   walletRpcSetCommand,
   walletRoleSetCommand,
   walletSetupCommand,
@@ -23,6 +24,11 @@ import {
 } from "../../commands/wallet.js";
 import { defaultRuntime } from "../../runtime.js";
 import { runCommandWithRuntime } from "../cli-utils.js";
+import {
+  addGatewayClientOptions,
+  callGatewayFromCli,
+  type GatewayRpcOpts,
+} from "../gateway-rpc.js";
 
 function resolvePublicWalletSetupChain(raw: unknown): "solana" | undefined {
   const value = typeof raw === "string" ? raw.trim().toLowerCase() : "";
@@ -168,6 +174,49 @@ export function registerWalletCommands(program: Command) {
         });
       });
     });
+
+  addGatewayClientOptions(
+    wallet
+      .command("retire")
+      .description("Safely retire and replace the active signer-owned Mining wallet")
+      .requiredOption("--wallet-id <id>", "Active Mining wallet id")
+      .requiredOption("--successor-wallet-id <id>", "New distinct Mining wallet id")
+      .requiredOption("--successor-wallet-name <name>", "New Mining wallet display name")
+      .requiredOption(
+        "--recovery-file <absolute-path>",
+        "Encrypted recovery package for the old wallet",
+      )
+      .requiredOption("--rpc-url <url>", "One primary Solana RPC URL for the successor")
+      .option("--json", "Print JSON output", false),
+  ).action(async (opts: GatewayRpcOpts & Record<string, unknown>) => {
+    await runCommandWithRuntime(defaultRuntime, async () => {
+      let liveMiningStatus: unknown = {};
+      try {
+        await callGatewayFromCli("sat.stopMining", opts, {}, { progress: opts.json !== true });
+        liveMiningStatus = await callGatewayFromCli(
+          "sat.getMiningStatus",
+          opts,
+          {},
+          {
+            progress: opts.json !== true,
+          },
+        );
+      } catch (error) {
+        liveMiningStatus = {
+          retirementGatewayError: error instanceof Error ? error.message : String(error),
+        };
+      }
+      await walletRetireCommand(defaultRuntime, {
+        walletId: String(opts.walletId),
+        successorWalletId: String(opts.successorWalletId),
+        successorWalletName: String(opts.successorWalletName),
+        recoveryFile: String(opts.recoveryFile),
+        rpcUrl: String(opts.rpcUrl),
+        liveMiningStatus,
+        json: opts.json === true,
+      });
+    });
+  });
 
   const rpc = wallet.command("rpc").description("Signer-owned Solana RPC configuration");
   rpc

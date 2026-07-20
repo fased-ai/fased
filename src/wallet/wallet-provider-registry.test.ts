@@ -7,6 +7,7 @@ import {
   deleteNamedWallet,
   readWalletProviderRegistry,
   setAgentWalletAssignment,
+  replaceRetiredMiningWallet,
   setDefaultWallet,
   setNamedWalletRole,
   setWalletProviderEnabled,
@@ -222,7 +223,7 @@ describe("wallet-provider-registry", () => {
     }
   });
 
-  it("allows deleting a mining wallet after mining state is fully clear", async () => {
+  it("requires coordinated replacement even after Mining state is fully clear", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-registry-"));
     vi.stubEnv("FASED_STATE_DIR", stateDir);
     try {
@@ -262,10 +263,72 @@ describe("wallet-provider-registry", () => {
         )}\n`,
       );
 
-      expect(deleteNamedWallet({ walletId: "mining", env: process.env }).removed).toBe(true);
+      expect(() => deleteNamedWallet({ walletId: "mining", env: process.env })).toThrow(
+        /Retire and replace Mining wallet/u,
+      );
       expect(
         readWalletProviderRegistry(process.env).wallets.some((wallet) => wallet.id === "mining"),
-      ).toBe(false);
+      ).toBe(true);
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("replaces the retired Mining registration in one registry write", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-registry-"));
+    vi.stubEnv("FASED_STATE_DIR", stateDir);
+    try {
+      upsertNamedWallet({
+        walletId: "mining",
+        name: "Mining",
+        providerId: "local-socket-signer",
+        addresses: { solana: "source-address" },
+        metadata: { role: "mining", purpose: "mining" },
+      });
+      const runtimeDir = path.join(stateDir, "sat-mining", "wallets", "mining");
+      await fs.mkdir(runtimeDir, { recursive: true });
+      await fs.writeFile(
+        path.join(runtimeDir, "runtime-store.json"),
+        `${JSON.stringify({
+          version: 12,
+          enabledWanted: false,
+          workers: { claim: { running: false } },
+          claimBacklog: [],
+          lastKnownStatus: {
+            currentCapitalFundedLamports: "0",
+            currentCapitalLockedLamports: "0",
+            currentCapitalFreeLamports: "0",
+            currentCapitalPendingCycleCount: 0,
+          },
+        })}\n`,
+      );
+      const successor = replaceRetiredMiningWallet({
+        sourceWalletId: "mining",
+        signerAcknowledgement: {
+          rotationId: `sha256:${"a".repeat(64)}`,
+          sourceRetiredPolicyHash: `sha256:${"b".repeat(64)}`,
+          successorPublicKey: "successor-address",
+          successorPolicyHash: `sha256:${"c".repeat(64)}`,
+        },
+        successor: {
+          id: "mining-next",
+          name: "Mining Next",
+          providerId: "local-socket-signer",
+          addresses: { solana: "successor-address" },
+          metadata: {
+            role: "mining",
+            purpose: "mining",
+            rotationId: `sha256:${"a".repeat(64)}`,
+            policyHash: `sha256:${"c".repeat(64)}`,
+          },
+        },
+      });
+      expect(successor.id).toBe("mining-next");
+      const registry = readWalletProviderRegistry(process.env);
+      expect(registry.wallets.map((wallet) => wallet.id)).toEqual(["mining-next"]);
+      expect(registry.wallets.filter((wallet) => wallet.metadata?.role === "mining")).toHaveLength(
+        1,
+      );
     } finally {
       await fs.rm(stateDir, { recursive: true, force: true });
     }

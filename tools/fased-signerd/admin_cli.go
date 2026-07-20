@@ -92,6 +92,8 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 			return runSignerAdminWalletRawExportV2(args[2:], stdout)
 		case "readiness":
 			return runSignerAdminWalletReadinessV1(args[2:], stdout)
+		case "balance":
+			return runSignerAdminWalletBalanceV1(args[2:], stdout)
 		case "reencrypt":
 			return runSignerAdminWalletReencrypt(args[2:], stdout)
 		case "rotate-successor":
@@ -99,7 +101,7 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 		case "rotation-status":
 			return runSignerAdminWalletRotationStatus(args[2:], stdout)
 		case "rotation-commit":
-			return runSignerAdminWalletRotationCommit(args[2:], stdout)
+			return runSignerAdminWalletRotationCommit(args[2:], stdin, stdout)
 		default:
 			return errors.New("unknown signer admin wallet command")
 		}
@@ -457,6 +459,26 @@ func runSignerAdminWalletReadinessV1(args []string, stdout io.Writer) error {
 	return callAndWriteSignerAdmin(common.controlSocket, "v2.wallet.readiness", walletID, nil, stdout)
 }
 
+func runSignerAdminWalletBalanceV1(args []string, stdout io.Writer) error {
+	fs, common := newSignerAdminFlagSet("wallet balance")
+	var walletID string
+	fs.StringVar(&walletID, "wallet-id", "", "normalized wallet identifier")
+	if err := parseSignerAdminFlags(fs, args); err != nil {
+		return err
+	}
+	_, operator, err := requireSignerAdminLifecycleSocket(common)
+	if err != nil {
+		return err
+	}
+	if walletID, err = validateSignerAdminWalletID(walletID); err != nil {
+		return err
+	}
+	if operator {
+		return callAndWriteSignerOperatorV1(common.operatorSocket, "getBalance", walletID, nil, stdout)
+	}
+	return callAndWriteSignerAdmin(common.controlSocket, "getBalance", walletID, nil, stdout)
+}
+
 func runSignerAdminWalletImport(args []string, stdin io.Reader, stdout io.Writer) error {
 	fs, common := newSignerAdminFlagSet("wallet import")
 	var walletID, policyFile, lockedRole, baselineRole string
@@ -638,10 +660,10 @@ func runSignerAdminWalletRotateSuccessor(args []string, stdout io.Writer) error 
 	if !sourceWalletVersion.set || !sourcePolicyVersion.set {
 		return errors.New("--expected-source-wallet-version and --expected-source-policy-version are required")
 	}
-	if _, err := requireSignerAdminControlSocket(common.controlSocket); err != nil {
+	_, operator, err := requireSignerAdminLifecycleSocket(common)
+	if err != nil {
 		return err
 	}
-	var err error
 	if sourceWalletID, err = validateSignerAdminWalletID(sourceWalletID); err != nil {
 		return err
 	}
@@ -660,6 +682,9 @@ func runSignerAdminWalletRotateSuccessor(args []string, stdout io.Writer) error 
 		ExpectedSourceWalletVersion: sourceWalletVersion.value,
 		ExpectedSourcePolicyVersion: sourcePolicyVersion.value,
 	}
+	if operator {
+		return callAndWriteSignerOperatorV1(common.operatorSocket, "v2.wallet.rotation.create", sourceWalletID, body, stdout)
+	}
 	return callAndWriteSignerAdmin(common.controlSocket, "v2.wallet.rotation.create", sourceWalletID, body, stdout)
 }
 
@@ -670,21 +695,26 @@ func runSignerAdminWalletRotationStatus(args []string, stdout io.Writer) error {
 	if err := parseSignerAdminFlags(fs, args); err != nil {
 		return err
 	}
-	if _, err := requireSignerAdminControlSocket(common.controlSocket); err != nil {
+	_, operator, err := requireSignerAdminLifecycleSocket(common)
+	if err != nil {
 		return err
 	}
-	var err error
 	if sourceWalletID, err = validateSignerAdminWalletID(sourceWalletID); err != nil {
 		return err
+	}
+	if operator {
+		return callAndWriteSignerOperatorV1(common.operatorSocket, "v2.wallet.rotation.status", sourceWalletID, nil, stdout)
 	}
 	return callAndWriteSignerAdmin(common.controlSocket, "v2.wallet.rotation.status", sourceWalletID, nil, stdout)
 }
 
-func runSignerAdminWalletRotationCommit(args []string, stdout io.Writer) error {
+func runSignerAdminWalletRotationCommit(args []string, stdin io.Reader, stdout io.Writer) error {
 	fs, common := newSignerAdminFlagSet("wallet rotation-commit")
 	var sourceWalletID, successorWalletID, rotationID, sourcePublicKey, successorPublicKey string
 	var sourceWalletVersion, sourcePolicyVersion signerAdminRequiredUint64
 	var successorWalletVersion, successorPolicyVersion, rotationVersion signerAdminRequiredUint64
+	var successorNetworkVersion signerAdminRequiredUint64
+	var successorNetworkHash string
 	fs.StringVar(&sourceWalletID, "wallet-id", "", "normalized source wallet identifier")
 	fs.StringVar(&successorWalletID, "successor-wallet-id", "", "exact successor wallet identifier")
 	fs.StringVar(&rotationID, "rotation-id", "", "exact prepared rotation digest")
@@ -695,6 +725,8 @@ func runSignerAdminWalletRotationCommit(args []string, stdout io.Writer) error {
 	fs.Var(&successorWalletVersion, "expected-successor-wallet-version", "required current successor wallet version")
 	fs.Var(&successorPolicyVersion, "expected-successor-policy-version", "required current successor policy version")
 	fs.Var(&rotationVersion, "expected-rotation-version", "required current rotation version")
+	fs.Var(&successorNetworkVersion, "expected-successor-network-version", "verified successor network version (required for Mining)")
+	fs.StringVar(&successorNetworkHash, "expected-successor-network-hash", "", "verified successor network hash (required for Mining)")
 	if err := parseSignerAdminFlags(fs, args); err != nil {
 		return err
 	}
@@ -702,10 +734,10 @@ func runSignerAdminWalletRotationCommit(args []string, stdout io.Writer) error {
 		!successorPolicyVersion.set || !rotationVersion.set {
 		return errors.New("all expected source, successor, policy, and rotation version flags are required")
 	}
-	if _, err := requireSignerAdminControlSocket(common.controlSocket); err != nil {
+	_, operator, err := requireSignerAdminLifecycleSocket(common)
+	if err != nil {
 		return err
 	}
-	var err error
 	if sourceWalletID, err = validateSignerAdminWalletID(sourceWalletID); err != nil {
 		return err
 	}
@@ -721,16 +753,37 @@ func runSignerAdminWalletRotationCommit(args []string, stdout io.Writer) error {
 	if rotationID, err = normalizeSHA256DigestV2(rotationID, "--rotation-id"); err != nil {
 		return err
 	}
+	var evidenceInput struct {
+		RecoveryPackageHash string                            `json:"recoveryPackageHash"`
+		SafetyEvidence      *signerMiningRetirementEvidenceV1 `json:"safetyEvidence"`
+	}
+	raw, err := io.ReadAll(io.LimitReader(stdin, maxSignerAdminPolicyBytes+1))
+	if err != nil || len(raw) > maxSignerAdminPolicyBytes {
+		return errors.New("read Mining retirement evidence from stdin")
+	}
+	defer zeroBytes(raw)
+	if len(bytes.TrimSpace(raw)) > 0 {
+		if err := decodeSignerAdminStrictJSON(raw, &evidenceInput); err != nil {
+			return errors.New("stdin must contain one strict Mining retirement evidence object")
+		}
+	}
 	body := signerWalletRotationCommitRequestV2{
-		RotationID:                     rotationID,
-		SuccessorWalletID:              successorWalletID,
-		ExpectedSourcePublicKey:        sourcePublicKey,
-		ExpectedSuccessorPublicKey:     successorPublicKey,
-		ExpectedSourceWalletVersion:    sourceWalletVersion.value,
-		ExpectedSourcePolicyVersion:    sourcePolicyVersion.value,
-		ExpectedSuccessorWalletVersion: successorWalletVersion.value,
-		ExpectedSuccessorPolicyVersion: successorPolicyVersion.value,
-		ExpectedRotationVersion:        rotationVersion.value,
+		RotationID:                      rotationID,
+		SuccessorWalletID:               successorWalletID,
+		ExpectedSourcePublicKey:         sourcePublicKey,
+		ExpectedSuccessorPublicKey:      successorPublicKey,
+		ExpectedSourceWalletVersion:     sourceWalletVersion.value,
+		ExpectedSourcePolicyVersion:     sourcePolicyVersion.value,
+		ExpectedSuccessorWalletVersion:  successorWalletVersion.value,
+		ExpectedSuccessorPolicyVersion:  successorPolicyVersion.value,
+		ExpectedRotationVersion:         rotationVersion.value,
+		ExpectedSuccessorNetworkVersion: successorNetworkVersion.value,
+		ExpectedSuccessorNetworkHash:    strings.TrimSpace(successorNetworkHash),
+		RecoveryPackageHash:             strings.TrimSpace(evidenceInput.RecoveryPackageHash),
+		SafetyEvidence:                  evidenceInput.SafetyEvidence,
+	}
+	if operator {
+		return callAndWriteSignerOperatorV1(common.operatorSocket, "v2.wallet.rotation.commit", sourceWalletID, body, stdout)
 	}
 	return callAndWriteSignerAdmin(common.controlSocket, "v2.wallet.rotation.commit", sourceWalletID, body, stdout)
 }

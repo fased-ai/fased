@@ -6448,6 +6448,17 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             });
             return;
           }
+          if (resolveWalletUserRole(existing) === "mining") {
+            sendLoginResponse(409, {
+              ok: false,
+              error: {
+                code: "mining_retirement_required",
+                message:
+                  "Mining wallets cannot be deleted directly; use Retire and replace Mining wallet so signer acknowledgement precedes registry detachment",
+              },
+            });
+            return;
+          }
           const deletionSafety = checkNamedWalletDeletionSafety({
             walletId,
             env: process.env,

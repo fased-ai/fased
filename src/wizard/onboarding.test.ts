@@ -1236,8 +1236,9 @@ describe("runOnboardingWizard", () => {
     );
   });
 
-  it("locks the singleton Mining wallet before archiving its registration", async () => {
+  it("routes the singleton Mining wallet to coordinated retirement instead of archive", async () => {
     deleteNamedWallet.mockClear();
+    lockSignerOwnedWalletForArchive.mockClear();
     restartLocalSocketSigner.mockClear();
     resolveWalletUserRole.mockReset();
     resolveWalletUserRole.mockReturnValue("mining");
@@ -1298,7 +1299,7 @@ describe("runOnboardingWizard", () => {
         return "mining";
       }
       if (message === "Wallet action") {
-        return "archive";
+        return "retire-mining";
       }
       if (message === "How do you want to hatch your bot?") {
         return "skip";
@@ -1343,25 +1344,11 @@ describe("runOnboardingWizard", () => {
     );
 
     expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("For @wallet:mining, stop mining first"),
-      "Archive wallet",
+      expect.stringContaining("fased wallet retire --wallet-id mining"),
+      "Retire and replace Mining wallet",
     );
-    expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("balance as unknown"),
-      "Archive wallet",
-    );
-    expect(lockSignerOwnedWalletForArchive).toHaveBeenCalledWith({
-      wallet: expect.objectContaining({ id: "mining", providerId: "local-socket-signer" }),
-      socketPath: expect.any(String),
-    });
-    expect(deleteNamedWallet).toHaveBeenCalledWith(expect.objectContaining({ walletId: "mining" }));
-    expect(lockSignerOwnedWalletForArchive.mock.invocationCallOrder[0]).toBeLessThan(
-      deleteNamedWallet.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
-    );
-    expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("remains encrypted and locked by deny-all policy version 5"),
-      "Wallet setup",
-    );
+    expect(lockSignerOwnedWalletForArchive).not.toHaveBeenCalled();
+    expect(deleteNamedWallet).not.toHaveBeenCalled();
     expect(restartLocalSocketSigner).not.toHaveBeenCalled();
     resolveWalletUserRole.mockReset();
     resolveWalletUserRole.mockReturnValue(undefined);

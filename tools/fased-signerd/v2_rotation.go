@@ -30,25 +30,54 @@ type signerWalletRotationCreateRequestV2 struct {
 }
 
 type signerWalletRotationCommitRequestV2 struct {
-	RotationID                     string `json:"rotationId"`
-	SuccessorWalletID              string `json:"successorWalletId"`
-	ExpectedSourcePublicKey        string `json:"expectedSourcePublicKey"`
-	ExpectedSuccessorPublicKey     string `json:"expectedSuccessorPublicKey"`
-	ExpectedSourceWalletVersion    uint64 `json:"expectedSourceWalletVersion"`
-	ExpectedSourcePolicyVersion    uint64 `json:"expectedSourcePolicyVersion"`
-	ExpectedSuccessorWalletVersion uint64 `json:"expectedSuccessorWalletVersion"`
-	ExpectedSuccessorPolicyVersion uint64 `json:"expectedSuccessorPolicyVersion"`
-	ExpectedRotationVersion        uint64 `json:"expectedRotationVersion"`
+	RotationID                      string                            `json:"rotationId"`
+	SuccessorWalletID               string                            `json:"successorWalletId"`
+	ExpectedSourcePublicKey         string                            `json:"expectedSourcePublicKey"`
+	ExpectedSuccessorPublicKey      string                            `json:"expectedSuccessorPublicKey"`
+	ExpectedSourceWalletVersion     uint64                            `json:"expectedSourceWalletVersion"`
+	ExpectedSourcePolicyVersion     uint64                            `json:"expectedSourcePolicyVersion"`
+	ExpectedSuccessorWalletVersion  uint64                            `json:"expectedSuccessorWalletVersion"`
+	ExpectedSuccessorPolicyVersion  uint64                            `json:"expectedSuccessorPolicyVersion"`
+	ExpectedRotationVersion         uint64                            `json:"expectedRotationVersion"`
+	ExpectedSuccessorNetworkVersion uint64                            `json:"expectedSuccessorNetworkVersion,omitempty"`
+	ExpectedSuccessorNetworkHash    string                            `json:"expectedSuccessorNetworkHash,omitempty"`
+	RecoveryPackageHash             string                            `json:"recoveryPackageHash,omitempty"`
+	SafetyEvidence                  *signerMiningRetirementEvidenceV1 `json:"safetyEvidence,omitempty"`
+}
+
+type signerMiningRetirementEvidenceV1 struct {
+	Version               uint64 `json:"version"`
+	WalletID              string `json:"walletId"`
+	PublicKey             string `json:"publicKey"`
+	ObservedAt            string `json:"observedAt"`
+	NewJobsStopped        bool   `json:"newJobsStopped"`
+	WorkersDrained        bool   `json:"workersDrained"`
+	ClearingDrained       bool   `json:"clearingDrained"`
+	SubmissionsReconciled bool   `json:"submissionsReconciled"`
+	PendingCommits        uint64 `json:"pendingCommits"`
+	PendingReveals        uint64 `json:"pendingReveals"`
+	PendingSettlements    uint64 `json:"pendingSettlements"`
+	PendingClaims         uint64 `json:"pendingClaims"`
+	PendingCleanup        uint64 `json:"pendingCleanup"`
+	PendingALTMutations   uint64 `json:"pendingAltMutations"`
+	SOLBalanceLamports    string `json:"solBalanceLamports"`
+	SATBalanceRaw         string `json:"satBalanceRaw"`
+	RuntimeStateHash      string `json:"runtimeStateHash"`
+	SubmissionLedgerHash  string `json:"submissionLedgerHash"`
 }
 
 type signerWalletRotationCommitFenceV2 struct {
-	SourcePublicKey        string `json:"sourcePublicKey"`
-	SuccessorPublicKey     string `json:"successorPublicKey"`
-	SourceWalletVersion    uint64 `json:"sourceWalletVersion"`
-	SourcePolicyVersion    uint64 `json:"sourcePolicyVersion"`
-	SuccessorWalletVersion uint64 `json:"successorWalletVersion"`
-	SuccessorPolicyVersion uint64 `json:"successorPolicyVersion"`
-	RotationVersion        uint64 `json:"rotationVersion"`
+	SourcePublicKey         string `json:"sourcePublicKey"`
+	SuccessorPublicKey      string `json:"successorPublicKey"`
+	SourceWalletVersion     uint64 `json:"sourceWalletVersion"`
+	SourcePolicyVersion     uint64 `json:"sourcePolicyVersion"`
+	SuccessorWalletVersion  uint64 `json:"successorWalletVersion"`
+	SuccessorPolicyVersion  uint64 `json:"successorPolicyVersion"`
+	RotationVersion         uint64 `json:"rotationVersion"`
+	SuccessorNetworkVersion uint64 `json:"successorNetworkVersion,omitempty"`
+	SuccessorNetworkHash    string `json:"successorNetworkHash,omitempty"`
+	RecoveryPackageHash     string `json:"recoveryPackageHash,omitempty"`
+	SafetyEvidenceHash      string `json:"safetyEvidenceHash,omitempty"`
 }
 
 // signerWalletRotationV2 contains public metadata only. The successor secret is
@@ -67,6 +96,11 @@ type signerWalletRotationV2 struct {
 	PrepareExpectedSourcePolicyVersion uint64                             `json:"prepareExpectedSourcePolicyVersion"`
 	SourceRetiredPolicyVersion         uint64                             `json:"sourceRetiredPolicyVersion,omitempty"`
 	SourceRetiredPolicyHash            string                             `json:"sourceRetiredPolicyHash,omitempty"`
+	SuccessorActivatedPolicyVersion    uint64                             `json:"successorActivatedPolicyVersion,omitempty"`
+	SuccessorActivatedPolicyHash       string                             `json:"successorActivatedPolicyHash,omitempty"`
+	RecoveryPackageHash                string                             `json:"recoveryPackageHash,omitempty"`
+	SafetyEvidenceHash                 string                             `json:"safetyEvidenceHash,omitempty"`
+	SafetyEvidence                     *signerMiningRetirementEvidenceV1  `json:"safetyEvidence,omitempty"`
 	CommitFence                        *signerWalletRotationCommitFenceV2 `json:"commitFence,omitempty"`
 	CreatedAt                          string                             `json:"createdAt"`
 	CommittedAt                        string                             `json:"committedAt,omitempty"`
@@ -190,6 +224,10 @@ func validateSignerWalletRotationRecordV2(rotation signerWalletRotationV2, sourc
 			rotation.SourceRetiredPolicyVersion == 0 || rotation.SourceRetiredPolicyHash == "" {
 			return errors.New("stored committed signer wallet successor rotation is invalid")
 		}
+		legacyCommittedRotation := rotation.SuccessorActivatedPolicyVersion == 0 && rotation.SuccessorActivatedPolicyHash == ""
+		if !legacyCommittedRotation && (rotation.SuccessorActivatedPolicyVersion == 0 || rotation.SuccessorActivatedPolicyHash == "") {
+			return errors.New("stored committed signer wallet successor activation is invalid")
+		}
 		if _, err := time.Parse(time.RFC3339Nano, rotation.CommittedAt); err != nil {
 			return errors.New("stored signer wallet successor rotation commit time is invalid")
 		}
@@ -197,11 +235,36 @@ func validateSignerWalletRotationRecordV2(rotation signerWalletRotationV2, sourc
 		if fence.SourcePublicKey != sourcePublicKey || fence.SuccessorPublicKey != successorPublicKey ||
 			fence.SourceWalletVersion == 0 || fence.SourcePolicyVersion == 0 ||
 			fence.SuccessorWalletVersion == 0 || fence.SuccessorPolicyVersion == 0 || fence.RotationVersion != 1 ||
-			fence.SourcePolicyVersion == ^uint64(0) || rotation.SourceRetiredPolicyVersion != fence.SourcePolicyVersion+1 {
+			fence.SourcePolicyVersion == ^uint64(0) || fence.SuccessorPolicyVersion == ^uint64(0) ||
+			rotation.SourceRetiredPolicyVersion != fence.SourcePolicyVersion+1 ||
+			(!legacyCommittedRotation && rotation.SuccessorActivatedPolicyVersion != fence.SuccessorPolicyVersion+1) {
 			return errors.New("stored signer wallet successor rotation commit fence is invalid")
 		}
 		if _, err := normalizeSHA256DigestV2(rotation.SourceRetiredPolicyHash, "stored retired policy hash"); err != nil {
 			return errors.New("stored signer wallet successor rotation retired policy hash is invalid")
+		}
+		if !legacyCommittedRotation {
+			if _, err := normalizeSHA256DigestV2(rotation.SuccessorActivatedPolicyHash, "stored successor policy hash"); err != nil {
+				return errors.New("stored signer wallet successor rotation successor policy hash is invalid")
+			}
+		}
+		if rotation.Role == "mining" && !legacyCommittedRotation {
+			if rotation.SafetyEvidence == nil || rotation.RecoveryPackageHash == "" || rotation.SafetyEvidenceHash == "" {
+				return errors.New("stored Mining retirement evidence is incomplete")
+			}
+			if fence.SuccessorNetworkVersion == 0 || fence.SuccessorNetworkHash == "" ||
+				fence.RecoveryPackageHash != rotation.RecoveryPackageHash || fence.SafetyEvidenceHash != rotation.SafetyEvidenceHash {
+				return errors.New("stored Mining retirement fence is incomplete")
+			}
+			if _, err := normalizeSHA256DigestV2(rotation.RecoveryPackageHash, "stored recovery package hash"); err != nil {
+				return errors.New("stored Mining recovery package digest is invalid")
+			}
+			if err := validateMiningRetirementEvidenceV1(*rotation.SafetyEvidence, rotation.SourceWalletID, rotation.SourcePublicKey); err != nil {
+				return errors.New("stored Mining retirement evidence is invalid")
+			}
+			if signerMiningRetirementEvidenceHashV1(*rotation.SafetyEvidence) != rotation.SafetyEvidenceHash {
+				return errors.New("stored Mining retirement evidence digest is invalid")
+			}
 		}
 	default:
 		return errors.New("stored signer wallet successor rotation state is invalid")
@@ -245,6 +308,68 @@ func denyAllSignerPolicyV2(walletID, role string, version uint64) (signerPolicyV
 
 func signerPolicyIsDenyAllV2(policy signerPolicyV2) bool {
 	return len(policy.Operations) == 0 && len(policy.Programs) == 0 && len(policy.Assets) == 0
+}
+
+func signerMiningRetirementEvidenceHashV1(evidence signerMiningRetirementEvidenceV1) string {
+	encoded, _ := json.Marshal(evidence)
+	digest := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(digest[:])
+}
+
+func validateMiningRetirementEvidenceV1(
+	evidence signerMiningRetirementEvidenceV1,
+	walletID string,
+	publicKey string,
+) error {
+	if evidence.Version != 1 || evidence.WalletID != walletID || evidence.PublicKey != publicKey {
+		return errors.New("Mining retirement evidence does not match the source wallet")
+	}
+	observedAt, err := time.Parse(time.RFC3339Nano, evidence.ObservedAt)
+	if err != nil || observedAt.UTC().Format(time.RFC3339Nano) != evidence.ObservedAt {
+		return errors.New("Mining retirement evidence observedAt is invalid")
+	}
+	if !evidence.NewJobsStopped || !evidence.WorkersDrained || !evidence.ClearingDrained || !evidence.SubmissionsReconciled {
+		return errors.New("Mining retirement requires stopped jobs, drained workers and Clearing, and reconciled submissions")
+	}
+	if evidence.PendingCommits != 0 || evidence.PendingReveals != 0 || evidence.PendingSettlements != 0 ||
+		evidence.PendingClaims != 0 || evidence.PendingCleanup != 0 || evidence.PendingALTMutations != 0 {
+		return errors.New("Mining retirement evidence still contains pending protocol work")
+	}
+	for field, value := range map[string]string{
+		"solBalanceLamports": evidence.SOLBalanceLamports,
+		"satBalanceRaw":      evidence.SATBalanceRaw,
+	} {
+		if value == "" || len(value) > 128 {
+			return fmt.Errorf("Mining retirement %s is missing or invalid", field)
+		}
+		for _, char := range value {
+			if char < '0' || char > '9' {
+				return fmt.Errorf("Mining retirement %s is missing or invalid", field)
+			}
+		}
+	}
+	if _, err := normalizeSHA256DigestV2(evidence.RuntimeStateHash, "runtimeStateHash"); err != nil {
+		return errors.New("Mining retirement runtime state digest is invalid")
+	}
+	if _, err := normalizeSHA256DigestV2(evidence.SubmissionLedgerHash, "submissionLedgerHash"); err != nil {
+		return errors.New("Mining retirement submission ledger digest is invalid")
+	}
+	return nil
+}
+
+func sourceWalletHasPendingOperationsV2(tx *bolt.Tx, walletID string) (bool, error) {
+	cursor := tx.Bucket(bucketSignerOperationsV2).Cursor()
+	for _, raw := cursor.First(); raw != nil; _, raw = cursor.Next() {
+		var operation signerOperationV2
+		if err := json.Unmarshal(raw, &operation); err != nil {
+			return false, errors.New("invalid stored signer operation")
+		}
+		if operation.WalletID == walletID &&
+			(operation.State == operationReserved || operation.State == operationBroadcast || operation.State == operationUnknown) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func rotationCreateMatchesV2(rotation signerWalletRotationV2, req signerWalletRotationCreateRequestV2) bool {
@@ -423,18 +548,41 @@ func normalizeRotationCommitRequestV2(req signerWalletRotationCommitRequestV2) (
 		req.ExpectedRotationVersion == 0 {
 		return req, errors.New("all wallet, policy, and rotation versions must be positive")
 	}
+	if req.ExpectedSuccessorNetworkHash != "" {
+		const prefix = "hmac-sha256:"
+		digest := strings.TrimPrefix(req.ExpectedSuccessorNetworkHash, prefix)
+		if !strings.HasPrefix(req.ExpectedSuccessorNetworkHash, prefix) || len(digest) != sha256.Size*2 {
+			return req, errors.New("expectedSuccessorNetworkHash is invalid")
+		}
+		if _, err := hex.DecodeString(digest); err != nil {
+			return req, errors.New("expectedSuccessorNetworkHash is invalid")
+		}
+	}
+	if req.RecoveryPackageHash != "" {
+		if _, err := normalizeSHA256DigestV2(req.RecoveryPackageHash, "recoveryPackageHash"); err != nil {
+			return req, err
+		}
+	}
 	return req, nil
 }
 
 func rotationCommitFenceFromRequestV2(req signerWalletRotationCommitRequestV2) signerWalletRotationCommitFenceV2 {
+	safetyEvidenceHash := ""
+	if req.SafetyEvidence != nil {
+		safetyEvidenceHash = signerMiningRetirementEvidenceHashV1(*req.SafetyEvidence)
+	}
 	return signerWalletRotationCommitFenceV2{
-		SourcePublicKey:        req.ExpectedSourcePublicKey,
-		SuccessorPublicKey:     req.ExpectedSuccessorPublicKey,
-		SourceWalletVersion:    req.ExpectedSourceWalletVersion,
-		SourcePolicyVersion:    req.ExpectedSourcePolicyVersion,
-		SuccessorWalletVersion: req.ExpectedSuccessorWalletVersion,
-		SuccessorPolicyVersion: req.ExpectedSuccessorPolicyVersion,
-		RotationVersion:        req.ExpectedRotationVersion,
+		SourcePublicKey:         req.ExpectedSourcePublicKey,
+		SuccessorPublicKey:      req.ExpectedSuccessorPublicKey,
+		SourceWalletVersion:     req.ExpectedSourceWalletVersion,
+		SourcePolicyVersion:     req.ExpectedSourcePolicyVersion,
+		SuccessorWalletVersion:  req.ExpectedSuccessorWalletVersion,
+		SuccessorPolicyVersion:  req.ExpectedSuccessorPolicyVersion,
+		RotationVersion:         req.ExpectedRotationVersion,
+		SuccessorNetworkVersion: req.ExpectedSuccessorNetworkVersion,
+		SuccessorNetworkHash:    req.ExpectedSuccessorNetworkHash,
+		RecoveryPackageHash:     req.RecoveryPackageHash,
+		SafetyEvidenceHash:      safetyEvidenceHash,
 	}
 }
 
@@ -490,6 +638,7 @@ func (m *signerKeyManagerV2) CommitSuccessorRotation(
 		return signerWalletRotationV2{}, err
 	}
 	expectedFence := rotationCommitFenceFromRequestV2(req)
+	baselineRuntime := signerRoleBaselineRuntimeFromEnvV1()
 	var result signerWalletRotationV2
 	err = m.store.db.Update(func(tx *bolt.Tx) error {
 		rotation, loadErr := loadSignerWalletRotationFromTxV2(tx, sourceWalletID)
@@ -544,15 +693,64 @@ func (m *signerKeyManagerV2) CommitSuccessorRotation(
 		if sourcePolicy.Role != rotation.Role || successorPolicy.Role != rotation.Role || !signerPolicyIsDenyAllV2(successorPolicy) {
 			return errors.New("successor must retain its immutable source role and explicit deny-all policy until rotation commit")
 		}
-		if sourcePolicy.Version == ^uint64(0) {
-			return errors.New("source signer policy version is exhausted")
+		if sourcePolicy.Version == ^uint64(0) || successorPolicy.Version == ^uint64(0) {
+			return errors.New("source or successor signer policy version is exhausted")
+		}
+		pending, pendingErr := sourceWalletHasPendingOperationsV2(tx, sourceWalletID)
+		if pendingErr != nil {
+			return pendingErr
+		}
+		if pending {
+			return errors.New("source signer wallet has reserved, broadcast, or unknown operations that must be reconciled before retirement")
+		}
+		if rotation.Role == "mining" {
+			if req.SafetyEvidence == nil || req.RecoveryPackageHash == "" ||
+				req.ExpectedSuccessorNetworkVersion == 0 || req.ExpectedSuccessorNetworkHash == "" {
+				return errors.New("Mining retirement requires recovery, safety evidence, and a ready successor network")
+			}
+			if err := validateMiningRetirementEvidenceV1(*req.SafetyEvidence, sourceWalletID, source.PublicKey); err != nil {
+				return err
+			}
+			observedAt, _ := time.Parse(time.RFC3339Nano, req.SafetyEvidence.ObservedAt)
+			now := m.store.now().UTC()
+			if observedAt.Before(now.Add(-5*time.Minute)) || observedAt.After(now.Add(time.Minute)) {
+				return errors.New("Mining retirement evidence is stale or ahead of signer time")
+			}
+			networkRaw := tx.Bucket(bucketSignerNetworksV2).Get([]byte(successor.WalletID))
+			if networkRaw == nil {
+				return errors.New("Mining successor network is not configured")
+			}
+			var network signerNetworkRecordV2
+			if err := decodeSignerNetworkRecordV2(networkRaw, &network); err != nil ||
+				network.WalletID != successor.WalletID ||
+				network.Version != req.ExpectedSuccessorNetworkVersion || network.Hash != req.ExpectedSuccessorNetworkHash {
+				return errors.New("Mining successor network does not match the verified version fence")
+			}
 		}
 
 		retiredPolicy, normalizeErr := denyAllSignerPolicyV2(sourceWalletID, sourcePolicy.Role, sourcePolicy.Version+1)
 		if normalizeErr != nil {
 			return normalizeErr
 		}
+		successorActivePolicy, normalizeErr := compileSignerRoleBaselineV1(
+			successor.WalletID,
+			successor.PublicKey,
+			signerRoleBaselineRequestV1{Version: signerRoleBaselineVersionV1, Role: rotation.Role},
+			baselineRuntime,
+		)
+		if normalizeErr != nil {
+			return normalizeErr
+		}
+		successorActivePolicy.Version = successorPolicy.Version + 1
+		successorActivePolicy, normalizeErr = normalizeSignerPolicyV2(successorActivePolicy)
+		if normalizeErr != nil {
+			return normalizeErr
+		}
 		encodedRetiredPolicy, encodeErr := json.Marshal(retiredPolicy)
+		if encodeErr != nil {
+			return encodeErr
+		}
+		encodedSuccessorPolicy, encodeErr := json.Marshal(successorActivePolicy)
 		if encodeErr != nil {
 			return encodeErr
 		}
@@ -567,6 +765,9 @@ func (m *signerKeyManagerV2) CommitSuccessorRotation(
 		if err := tx.Bucket(bucketSignerPoliciesV2).Put([]byte(sourceWalletID), encodedRetiredPolicy); err != nil {
 			return err
 		}
+		if err := tx.Bucket(bucketSignerPoliciesV2).Put([]byte(successor.WalletID), encodedSuccessorPolicy); err != nil {
+			return err
+		}
 		if err := tx.Bucket(bucketSignerWalletsV2).Put([]byte(sourceWalletID), encodedSource); err != nil {
 			return err
 		}
@@ -577,6 +778,11 @@ func (m *signerKeyManagerV2) CommitSuccessorRotation(
 		rotation.Version++
 		rotation.SourceRetiredPolicyVersion = retiredPolicy.Version
 		rotation.SourceRetiredPolicyHash = retiredPolicy.Hash
+		rotation.SuccessorActivatedPolicyVersion = successorActivePolicy.Version
+		rotation.SuccessorActivatedPolicyHash = successorActivePolicy.Hash
+		rotation.RecoveryPackageHash = req.RecoveryPackageHash
+		rotation.SafetyEvidenceHash = expectedFence.SafetyEvidenceHash
+		rotation.SafetyEvidence = req.SafetyEvidence
 		rotation.CommitFence = &expectedFence
 		rotation.CommittedAt = now
 		if err := saveSignerWalletRotationToTxV2(tx, rotation); err != nil {

@@ -15,6 +15,7 @@ import {
   walletRecoveryExportCommand,
   walletRecoveryImportCommand,
   walletRawExportCommand,
+  walletRetireCommand,
   walletRotateKeysCommand,
   walletSetupCommand,
 } from "./wallet.js";
@@ -28,6 +29,11 @@ vi.mock("../wallet/providers/turnkey-adapter.js", () => ({
 const signerMocks = vi.hoisted(() => ({
   roles: new Map<string, string>(),
   policyHashes: new Map<string, string>(),
+  retirement: {
+    enabled: false,
+    networkReady: false,
+    rotation: null as Record<string, unknown> | null,
+  },
   create: vi.fn(async (params: { walletId: string; role: string }) => {
     const signerWalletId =
       params.walletId
@@ -69,6 +75,7 @@ const signerMocks = vi.hoisted(() => ({
   readiness: vi.fn(async (params: { walletId: string }) => ({
     walletId: params.walletId,
     publicKey: "11111111111111111111111111111111",
+    walletVersion: 1,
     role: signerMocks.roles.get(params.walletId) ?? "agent",
     baselineVersion: 1,
     policyVersion: 1,
@@ -129,9 +136,130 @@ const signerMocks = vi.hoisted(() => ({
       ready: true,
     }),
   ),
-  importProcess: vi.fn((_command: string, args: string[]) => {
+  importProcess: vi.fn((_command: string, args: string[], options?: { input?: string }) => {
     const walletId = args[args.indexOf("--wallet-id") + 1] || "mining";
+    if (signerMocks.retirement.enabled) {
+      const sourcePublicKey = "11111111111111111111111111111111";
+      const successorPublicKey = "So11111111111111111111111111111111111111112";
+      const successorWalletId = "mining_successor";
+      if (args.includes("rotation-status")) {
+        if (!signerMocks.retirement.rotation) {
+          return {
+            status: 1,
+            signal: null,
+            stdout: "",
+            stderr: "signer wallet successor rotation not found",
+            pid: 1,
+            output: [],
+          };
+        }
+        return {
+          status: 0,
+          signal: null,
+          stdout: JSON.stringify(signerMocks.retirement.rotation),
+          stderr: "",
+          pid: 1,
+          output: [],
+        };
+      }
+      if (args.includes("balance")) {
+        return {
+          status: 0,
+          signal: null,
+          stdout: JSON.stringify({
+            ok: true,
+            chain: "solana",
+            address: sourcePublicKey,
+            balance: "42",
+            unit: "lamports",
+          }),
+          stderr: "",
+          pid: 1,
+          output: [],
+        };
+      }
+      if (args.includes("rotate-successor")) {
+        signerMocks.retirement.rotation = {
+          rotationId: `sha256:${"9".repeat(64)}`,
+          sourceWalletId: "mining",
+          sourcePublicKey,
+          successorWalletId,
+          successorPublicKey,
+          role: "mining",
+          state: "prepared",
+          version: 1,
+          prepareExpectedSourceWalletVersion: 1,
+          prepareExpectedSourcePolicyVersion: 1,
+        };
+        return {
+          status: 0,
+          signal: null,
+          stdout: JSON.stringify(signerMocks.retirement.rotation),
+          stderr: "",
+          pid: 1,
+          output: [],
+        };
+      }
+      if (args.includes("rotation-commit")) {
+        const input = JSON.parse(String(options?.input ?? "{}")) as Record<string, unknown>;
+        signerMocks.retirement.rotation = {
+          ...signerMocks.retirement.rotation,
+          state: "committed",
+          version: 2,
+          sourceRetiredPolicyVersion: 2,
+          sourceRetiredPolicyHash: `sha256:${"e".repeat(64)}`,
+          successorActivatedPolicyVersion: 2,
+          successorActivatedPolicyHash: `sha256:${"f".repeat(64)}`,
+          recoveryPackageHash: input.recoveryPackageHash,
+          safetyEvidenceHash: `sha256:${"7".repeat(64)}`,
+          safetyEvidence: input.safetyEvidence,
+          committedAt: "2026-07-20T14:01:00.000Z",
+        };
+        return {
+          status: 0,
+          signal: null,
+          stdout: JSON.stringify(signerMocks.retirement.rotation),
+          stderr: "",
+          pid: 1,
+          output: [],
+        };
+      }
+      if (args.includes("wallet") && args.includes("readiness")) {
+        const successor = walletId === successorWalletId;
+        const committed = signerMocks.retirement.rotation?.state === "committed";
+        return {
+          status: 0,
+          signal: null,
+          stdout: JSON.stringify({
+            walletId,
+            publicKey: successor ? successorPublicKey : sourcePublicKey,
+            walletVersion: 1,
+            role: "mining",
+            baselineVersion: successor && committed ? 1 : successor ? 0 : 1,
+            policyVersion: successor && committed ? 2 : 1,
+            policyHash:
+              successor && committed ? `sha256:${"f".repeat(64)}` : `sha256:${"d".repeat(64)}`,
+            networkVersion: successor ? (signerMocks.retirement.networkReady ? 1 : 0) : 1,
+            networkHash:
+              successor && !signerMocks.retirement.networkReady
+                ? ""
+                : `hmac-sha256:${"b".repeat(64)}`,
+            keyReady: true,
+            policyReady: !successor || committed,
+            networkReady: !successor || signerMocks.retirement.networkReady,
+            operationLane: successor && committed ? "mining-typed-sat" : "blocked",
+            ready: !successor || committed,
+          }),
+          stderr: "",
+          pid: 1,
+          output: [],
+        };
+      }
+    }
     if (args.includes("network") && args.includes("set-primary")) {
+      if (signerMocks.retirement.enabled && walletId === "mining_successor") {
+        signerMocks.retirement.networkReady = true;
+      }
       return {
         status: 0,
         signal: null,
@@ -154,6 +282,7 @@ const signerMocks = vi.hoisted(() => ({
         stdout: JSON.stringify({
           walletId,
           publicKey: "11111111111111111111111111111111",
+          walletVersion: 1,
           role: signerMocks.roles.get(walletId) ?? "agent",
           baselineVersion: 1,
           policyVersion: 1,
@@ -280,6 +409,9 @@ describe("walletSetupCommand native signer boundary", () => {
     signerMocks.activate.mockClear();
     signerMocks.roles.clear();
     signerMocks.policyHashes.clear();
+    signerMocks.retirement.enabled = false;
+    signerMocks.retirement.networkReady = false;
+    signerMocks.retirement.rotation = null;
     signerMocks.networkPut.mockClear();
     signerMocks.importProcess.mockClear();
     signerMocks.socketCall.mockReset();
@@ -396,6 +528,7 @@ describe("walletSetupCommand native signer boundary", () => {
       signerMocks.readiness.mockResolvedValueOnce({
         walletId: "legacy_agent",
         publicKey: "11111111111111111111111111111111",
+        walletVersion: 1,
         role: "agent",
         baselineVersion: 1,
         policyVersion: 2,
@@ -1142,6 +1275,198 @@ describe("walletSetupCommand native signer boundary", () => {
           walletId: "agent",
         }),
       ).rejects.toThrow(/already registered as conflicting-friendly-id/i);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("retires and replaces Mining atomically after signer evidence and recovery checks", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-retire-command-"));
+    const configPath = path.join(root, "fased.json");
+    const stateDir = path.join(root, "state");
+    const sourcePublicKey = "11111111111111111111111111111111";
+    const successorPublicKey = "So11111111111111111111111111111111111111112";
+    await fs.writeFile(
+      configPath,
+      `${JSON.stringify({
+        env: {
+          vars: {
+            FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET: path.join(root, "control.sock"),
+          },
+        },
+        plugins: {
+          entries: {
+            "sat-mining": { enabled: true, config: { walletId: "mining" } },
+          },
+        },
+      })}\n`,
+      "utf8",
+    );
+    vi.stubEnv("FASED_CONFIG_PATH", configPath);
+    vi.stubEnv("FASED_DISABLE_CONFIG_CACHE", "1");
+    vi.stubEnv("FASED_STATE_DIR", stateDir);
+    clearConfigCache();
+
+    const walletStateDir = path.join(stateDir, "sat-mining", "wallets", "mining");
+    await fs.mkdir(walletStateDir, { recursive: true });
+    const workers = {
+      roundWatcher: { enabled: false, running: false },
+      epoch: { enabled: false, running: false },
+      claim: { enabled: false, running: false },
+      recovery: { enabled: false, running: false },
+    };
+    await fs.writeFile(
+      path.join(walletStateDir, "runtime-store.json"),
+      `${JSON.stringify({
+        version: 12,
+        enabledWanted: false,
+        workers,
+        pendingPlannerCycles: [],
+        claimBacklog: [],
+        lastKnownStatus: {
+          walletId: "mining",
+          currentCapitalFundedLamports: "0",
+          currentCapitalLockedLamports: "0",
+          currentCapitalFreeLamports: "0",
+          currentCapitalPendingCycleCount: 0,
+          exactPendingCycleId: null,
+          updatedAt: "2026-07-20T14:00:00.000Z",
+        },
+      })}\n`,
+      { mode: 0o600 },
+    );
+    const recoveryFile = path.join(root, "mining-recovery.json");
+    await fs.writeFile(
+      recoveryFile,
+      `${JSON.stringify({
+        kind: "fased-signer-wallet-recovery",
+        version: 1,
+        walletId: "mining",
+        role: "mining",
+        publicKey: sourcePublicKey,
+        createdAt: "2026-07-20T13:00:00.000Z",
+        kdf: {
+          name: "argon2id",
+          memoryKiB: 64 * 1024,
+          iterations: 3,
+          parallelism: 1,
+          salt: Buffer.alloc(16, 1).toString("base64url"),
+        },
+        encryption: {
+          name: "aes-256-gcm",
+          nonce: Buffer.alloc(12, 2).toString("base64url"),
+          ciphertext: Buffer.alloc(80, 3).toString("base64url"),
+        },
+      })}\n`,
+      { mode: 0o600 },
+    );
+    upsertNamedWallet({
+      walletId: "mining",
+      name: "Mining",
+      providerId: "local-socket-signer",
+      addresses: { solana: sourcePublicKey },
+      metadata: {
+        role: "mining",
+        purpose: "mining",
+        signerWalletId: "mining",
+        roleReady: true,
+      },
+      env: process.env,
+    });
+    const originalSourceRegistration = readWalletProviderRegistry(process.env).wallets[0];
+    signerMocks.retirement.enabled = true;
+
+    try {
+      const logs: string[] = [];
+      const result = await walletRetireCommand(
+        { log: (line: string) => logs.push(line) } as never,
+        {
+          walletId: "mining",
+          successorWalletId: "mining-successor",
+          successorWalletName: "Mining Successor",
+          recoveryFile,
+          rpcUrl: "https://rpc.example/secret-token",
+          liveMiningStatus: {
+            walletId: "mining",
+            running: false,
+            drainOnly: false,
+            enabledWanted: false,
+            statusFresh: true,
+            workers,
+            currentSolBalanceLamports: "42",
+            currentSatBalanceRaw: "99",
+            currentCapitalFundedLamports: "0",
+            currentCapitalLockedLamports: "0",
+            currentCapitalFreeLamports: "0",
+            currentCapitalPendingCycleCount: 0,
+            pendingCycleIds: [],
+            exactPendingCycleId: null,
+            missingCycleCount: 0,
+            claimBacklog: { total: 0 },
+            updatedAt: "2026-07-20T14:00:00.000Z",
+          },
+        },
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        retiredWalletId: "mining",
+        successorWalletId: "mining-successor",
+        successorAddress: successorPublicKey,
+      });
+      const registry = readWalletProviderRegistry(process.env);
+      expect(registry.wallets.map((wallet) => wallet.id)).toEqual(["mining-successor"]);
+      expect(registry.wallets[0]).toMatchObject({
+        addresses: { solana: successorPublicKey },
+        metadata: {
+          role: "mining",
+          signerWalletId: "mining_successor",
+          roleReady: true,
+          predecessorWalletId: "mining",
+        },
+      });
+      clearConfigCache();
+      expect(loadConfig().plugins?.entries?.["sat-mining"]?.config).toMatchObject({
+        walletId: "mining-successor",
+      });
+      const receipt = await fs.readFile(result.receiptPath, "utf8");
+      expect((await fs.stat(result.receiptPath)).mode & 0o777).toBe(0o600);
+      expect(receipt).toContain(sourcePublicKey);
+      expect(receipt).toContain(successorPublicKey);
+      expect(receipt).not.toContain("secret-token");
+      expect(receipt).not.toContain("ciphertext");
+      const commitCall = signerMocks.importProcess.mock.calls.find((call) =>
+        call[1].includes("rotation-commit"),
+      );
+      expect(String(commitCall?.[2]?.input)).toContain('"newJobsStopped":true');
+      expect(String(commitCall?.[2]?.input)).not.toContain("secret-token");
+      expect(logs.join("\n")).toContain("Active Mining successor");
+
+      const registryPath = path.join(stateDir, "wallet", "provider-registry.v1.json");
+      await fs.writeFile(
+        registryPath,
+        `${JSON.stringify({ ...registry, wallets: [originalSourceRegistration] })}\n`,
+        { mode: 0o600 },
+      );
+      clearConfigCache();
+      const commitCallsBeforeResume = signerMocks.importProcess.mock.calls.filter((call) =>
+        call[1].includes("rotation-commit"),
+      ).length;
+      await walletRetireCommand({ log: vi.fn() } as never, {
+        walletId: "mining",
+        successorWalletId: "mining-successor",
+        successorWalletName: "Mining Successor",
+        recoveryFile,
+        rpcUrl: "https://rpc.example/secret-token",
+        liveMiningStatus: { retirementGatewayError: "Gateway is restarting" },
+      });
+      expect(
+        signerMocks.importProcess.mock.calls.filter((call) => call[1].includes("rotation-commit"))
+          .length,
+      ).toBe(commitCallsBeforeResume);
+      expect(readWalletProviderRegistry(process.env).wallets.map((wallet) => wallet.id)).toEqual([
+        "mining-successor",
+      ]);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

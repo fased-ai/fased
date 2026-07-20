@@ -37,6 +37,7 @@ var signerV2Capabilities = signerCapabilitiesV2{
 		"signerOwnedRoleBaselines",
 		"liveWalletReadiness",
 		"signerOwnedSuccessorRotation",
+		"signerOwnedMiningRetirementEvidence",
 		"permanentRetiredWalletPolicies",
 		"signerOwnedRPC",
 		"applicationNetworkBootstrap",

@@ -32,6 +32,7 @@ export const SIGNER_PROTOCOL_V2 = {
     "signerOwnedRoleBaselines",
     "liveWalletReadiness",
     "signerOwnedSuccessorRotation",
+    "signerOwnedMiningRetirementEvidence",
     "permanentRetiredWalletPolicies",
     "signerOwnedRPC",
     "applicationNetworkBootstrap",
