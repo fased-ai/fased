@@ -27,12 +27,12 @@ Cannot be fully automated without prior identity:
 
 ### 1. Dedicated non-root runtime users (`required`)
 
-The Hosting installer creates the non-root Gateway account (default `app`) and
-the locked `fased-signer` account. Do not replace them with ad hoc `fased` or
-`fasedsigner` users.
+The Hosting installer creates a human `app` operator plus locked
+`fased-gateway` and `fased-signer` service accounts. Do not collapse them into
+one identity.
 
 ```bash
-getent passwd app fased-signer
+getent passwd app fased-gateway fased-signer
 sudo systemctl show fased-gateway.service -p User -p Group
 sudo systemctl show fased-signerd.service -p User -p Group -p SupplementaryGroups
 ```
@@ -43,35 +43,12 @@ binary. The Gateway has no signer sudo access.
 
 ### 2. Private admin network path via Tailscale (`required`)
 
-For normal hosted VPS setup, use the hosted installer. Verify the root
-bootstrap release asset before execution; it then starts Tailscale when needed,
-prints the login URL, and verifies private access before lock-down:
-
-```bash
-RELEASE=vX.Y.Z
-BOOTSTRAP_DIR="$(mktemp -d)"
-chmod 0700 "$BOOTSTRAP_DIR"
-curl -fsSLo "$BOOTSTRAP_DIR/install.sh" \
-  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh"
-curl -fsSLo "$BOOTSTRAP_DIR/install.sh.attestation.json" \
-  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh.attestation.json"
-GH_PROMPT_DISABLED=1 gh attestation verify "$BOOTSTRAP_DIR/install.sh" \
-  --repo fased-ai/fased \
-  --bundle "$BOOTSTRAP_DIR/install.sh.attestation.json" \
-  --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-  --source-ref "refs/tags/${RELEASE}" \
-  --deny-self-hosted-runners
-chmod 0500 "$BOOTSTRAP_DIR/install.sh"
-bash "$BOOTSTRAP_DIR/install.sh" --hosting --release "$RELEASE"
-rm -rf "$BOOTSTRAP_DIR"
-```
-
-Run this from the VPS provider's root console after replacing `vX.Y.Z` with an
-exact stable release. Install `gh` from a trusted OS package source first. Do
-not run an app-owned checkout with sudo, and do not continue after an
-attestation failure. The shorter raw tagged command trusts the initial
-GitHub/repository download before it can attest later assets; it is not the
-high-assurance bootstrap path.
+For normal hosted VPS setup, use the exact fresh command in
+[VPS Hosting](/install/vps#3-install-fased). For pre-execution verification,
+follow the one canonical
+[exact-tag procedure](/install/installer#exact-tag-pre-execution-verification)
+from the provider root console. Do not run an app-owned checkout with sudo or
+continue after an attestation failure.
 
 Manual hardening only: install Tailscale through its signed operating-system
 package repository, then run `sudo tailscale up`. Do not pipe a mutable remote
@@ -111,7 +88,7 @@ Notes:
 
 Minimum hardening directives:
 
-- `User=app` for the default Hosting account
+- `User=fased-gateway` for the isolated Gateway service account
 - `NoNewPrivileges=true`
 - `PrivateTmp=true`
 - `ProtectSystem=strict`

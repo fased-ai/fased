@@ -57,15 +57,11 @@ Hosting is a stronger boundary. The dedicated signer account owns encrypted
 state, master key, audit log, and `/run/fased-signerd/control.sock`. Gateway can
 reach only `/run/fased-signerd/app.sock`.
 
-The app socket permits typed wallet operations plus two fixed lifecycle actions:
-
-- create a new deny-all wallet; and
-- bootstrap or replace that wallet's one primary RPC after signer validation.
-
-Native keypair import uses one narrowly constrained installed helper. It can
-only create a new role-locked deny-all wallet from stdin. It cannot operate on
-an existing wallet, export keys, change policy, rotate keys, execute signing,
-accept file paths, or expose the control socket.
+The Gateway app socket permits typed application operations but no owner
+lifecycle authority. The human `app` operator uses a separate peer-credential-
+checked `/run/fased-signerd/operator.sock` for create, import, recovery, raw
+export, RPC changes, explicit legacy baseline activation, and retirement. The
+Gateway account cannot connect to that socket or access signer state.
 
 ## Roles
 
@@ -74,9 +70,9 @@ accept file paths, or expose the control socket.
 - **Vault:** manual-only reserve role.
 
 Roles are permanent inside the signer. A role change means creating a successor
-wallet and using the guarded Archive/Replace flow. Archiving removes Fased
-registration and attachments only after explicit confirmation; the encrypted
-signer key remains deny-all for recovery/audit safety.
+wallet and using the guarded Archive/Replace flow. Mining retirement writes a
+signer tombstone before registration and attachments move; normal setup cannot
+reuse the retired wallet ID.
 
 ## One-RPC model
 
@@ -95,9 +91,11 @@ a normal onboarding field. See [Solana RPC setup](/plugins/crypto/wallet-rpc-set
 
 ## Policy and authorization
 
-Every new wallet starts with a role-locked deny-all baseline. It can receive,
-but it cannot send, swap, mine, bond, or execute wallet-capable skills until an
-exact signer policy is reviewed and acknowledged.
+Every new wallet starts with signer-owned role baseline v1. Agent and Vault are
+ready for reviewed owner transfers under exact destinations and positive caps;
+Mining is ready only for release-bound typed SAT actions and reviewed owner
+movement. Broader automation still requires exact signer policy and runtime
+grants.
 
 Agent and Mining automation do not require a passkey for operations already
 inside their narrow typed policies. Manual work outside that policy is rejected
@@ -106,16 +104,15 @@ or uses a separately enabled owner-review lane.
 The optional **Control UI account passkey** belongs under **Account Security**.
 It protects the web account and does not affect Agent or Mining readiness. An
 optional signer-owned **Vault approval device** is reported separately in that
-Vault's Security panel, but enrollment remains a native signer-owner ceremony.
-On Hosting, use `/usr/local/sbin/fased-signer-enroll` from the provider root
-console; ordinary Gateway JavaScript cannot enroll signer credentials.
+Vault's Security panel, but enrollment remains a native operator ceremony;
+ordinary Gateway JavaScript cannot enroll signer credentials.
 
-## Create and Local import
+## Create and import
 
 Create:
 
 ```bash
-fased wallet setup --mode local-signer-create \
+fased wallet create \
   --wallet-id agent --wallet-name "Agent" --role agent \
   --rpc-url https://your-solana-rpc.example --non-interactive
 ```
@@ -124,9 +121,9 @@ Import an owner-only Solana CLI keypair:
 
 ```bash
 chmod 600 /absolute/path/to/solana-keypair.json
-fased wallet setup --mode local-signer-import \
+fased wallet import \
   --wallet-id mining --wallet-name "Mining" --role mining \
-  --import-file /absolute/path/to/solana-keypair.json \
+  --file /absolute/path/to/solana-keypair.json \
   --rpc-url https://your-solana-rpc.example --non-interactive
 ```
 
@@ -134,17 +131,9 @@ The keypair is passed by file descriptor. Do not paste private keys, seed
 phrases, recovery passwords, or RPC credentials into chat, browser forms,
 arguments, environment variables, or logs.
 
-On Hosting, import is a signer-owner action from the VPS provider root console:
-
-```bash
-chmod 600 /root/wallet.json
-/usr/local/sbin/fased-signer-wallet-import \
-  --wallet-id mining --locked-role mining < /root/wallet.json
-```
-
-Then return to `app`, rerun onboarding, and choose **Create** with the same role
-and wallet ID. This resumes the existing deny-all signer wallet and completes
-the one-RPC registration. The Gateway account cannot run the import helper.
+On Hosting, run the same command from the `app` operator shell. The restricted
+operator socket performs the complete role-baseline and one-RPC lifecycle. The
+`fased-gateway` account cannot run it.
 
 ## Recovery and raw export
 
@@ -165,10 +154,11 @@ fased wallet recovery import \
   --rpc-url https://your-solana-rpc.example
 ```
 
-Hosting export/restore remains signer-owner-only from the provider console so a
-compromised Gateway cannot capture the password or export existing custody.
+Hosting export/restore uses the same operator CLI while remaining unavailable
+to the Gateway service, so a compromised Gateway cannot choose or capture the
+password or export existing custody.
 
-Advanced Local owners can explicitly export a raw key with
+Advanced Local or Hosting operators can explicitly export a raw key with
 `fased wallet recovery export-raw --acknowledge-custody-reduction`. This writes
 a new `0600` file and reduces the Go-signer custody protection.
 
@@ -186,7 +176,7 @@ Verify:
 - signer key and one-RPC network readiness;
 - acknowledged role policy version/hash;
 - recovery backup for funded wallets; and
-- Mining singleton or Primary Agent attachment as appropriate.
+- Mining singleton or explicit Default Agent attachment as appropriate.
 
 The signer stores durable request IDs, transaction digests, cap reservations,
 daily totals, broadcast state, and reconciliation state. Ambiguous broadcast is

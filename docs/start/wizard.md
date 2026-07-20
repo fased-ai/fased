@@ -312,7 +312,7 @@ The wallet setup path can assign wallet purpose directly during onboarding.
 The practical split is:
 
 - `agent` purpose for user-facing Agent wallets
-- one primary Agent wallet for fallback when no handle is supplied
+- one optional Default Agent wallet for fallback when no stronger selector exists
 - `mining` purpose for SAT participation
 - `vault` purpose for manual-first storage or warm reserve
 - Fased Network bond uses a selected Vault wallet

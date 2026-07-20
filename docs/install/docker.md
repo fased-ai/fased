@@ -256,11 +256,10 @@ To create or manage wallets after initial onboarding:
 docker compose run --rm fased-cli wallet setup --chain solana
 ```
 
-New signer-owned wallets begin with a durable deny-all policy. Before funding a
-wallet, review the exact role template under `config/signer-policies/`, set its
-canonical signer wallet ID, exact programs/assets/destinations, and positive
-per-transaction and daily caps. The friendly UI name and canonical signer ID
-can differ; use the canonical ID printed by wallet setup. For example:
+New signer-owned wallets begin with role baseline v1. Before funding a wallet,
+review its exact role, live policy/network hashes, destinations, and positive
+caps. Use a private role template only when intentionally replacing the built-in
+baseline with narrower or additional authority. For example:
 
 ```bash
 cp config/signer-policies/agent.json.template "$HOME/fased-agent-policy.json"
@@ -273,12 +272,12 @@ scripts/docker-signer-policy.sh \
 ```
 
 The helper refuses placeholders, group/world-readable policy files, a policy
-owned by another user, an unhealthy signer, a digest-confirmation mismatch, or
-anything other than the first version-1 deny-all transition. It stages the
-reviewed policy over standard input only in the one-shot admin container's
-temporary filesystem; it never gives routine `fased-cli` the control socket and
-prints the signer-acknowledged policy afterward. Empty operations, programs,
-and assets still grant nothing; generic raw signing is not enabled.
+owned by another user, an unhealthy signer, or a digest-confirmation mismatch.
+It stages the reviewed policy over standard input only in the one-shot admin
+container's temporary filesystem; it never gives routine `fased-cli` the
+control socket and prints the signer-acknowledged policy afterward. Empty
+operations, programs, assets, or caps still grant nothing; generic raw signing
+is not enabled.
 
 For a native administrative command not covered by the initial-policy helper,
 use the explicit profile service. Never use `docker compose exec

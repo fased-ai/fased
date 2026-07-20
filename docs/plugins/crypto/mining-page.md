@@ -217,11 +217,11 @@ mining. Start from the Mining wallet and readiness flow below.
 
 Use this flow before pressing **Start** for the first time:
 
-1. Create a dedicated signer-owned **Mining** wallet during onboarding or with
-   `fased wallet setup --chain solana`, or create it in **Wallets** when none
-   exists. Local terminal import uses `--mode local-signer-import`; Hosting
-   import uses the root-only installed signer helper from the provider console.
-2. Enter one primary RPC and verify exact Mining policy/network readiness.
+1. Create a dedicated signer-owned **Mining** wallet in **Wallets** or with
+   `fased wallet create --role mining`; import with `fased wallet import` from
+   the native Local or Hosting operator terminal.
+2. Enter one primary RPC. The signer activates the release-bound Mining role
+   baseline and reports exact policy/network readiness.
 3. Only then copy the Mining address and fund it with a deliberately small
    amount of SOL for fees, reserve, and intended capital.
 4. Open **Mining** and confirm the wallet shown is `@wallet:mining`.
@@ -406,9 +406,9 @@ Good rule:
 
 The clean operator sequence is:
 
-1. create the single signer-owned Mining wallet in onboarding/wallet setup, or
-   import it through the native signer-admin control socket
-2. enter one primary RPC and activate the reviewed Mining policy
+1. create or import the single signer-owned Mining wallet through the native
+   operator lifecycle
+2. enter one primary RPC and verify role baseline v1
 3. enroll signer WebAuthn for manual reviewed Mining actions
 4. confirm exact policy/network hashes and readiness
 5. fund the wallet deliberately small and initialize miner capital if missing
@@ -435,6 +435,26 @@ Deposit 1 SOL into @mining capital.
 Set @mining commit to 0.75 SOL.
 Start @mining with @wallet:mining.
 ```
+
+## Retire and replace a Mining wallet
+
+Do not archive a Mining wallet and reuse its ID. Stop Mining, let clearing and
+claims finish, move recoverable funds, and create an encrypted recovery package.
+Then run the native operator command:
+
+```bash
+fased wallet retire \
+  --wallet-id mining \
+  --successor-wallet-id mining-2 \
+  --successor-wallet-name "Mining 2" \
+  --recovery-file /absolute/new/mining-recovery.json \
+  --rpc-url https://your-solana-rpc.example
+```
+
+The signer verifies no live work remains, tightens the old policy, writes an
+irreversible retirement tombstone, and creates a distinct role-ready successor
+before runtime attachment moves. Interrupted replacement resumes from signer
+evidence. Normal setup can never reactivate the retired wallet ID.
 
 ## Stop path
 

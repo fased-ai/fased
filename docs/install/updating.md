@@ -51,19 +51,19 @@ After hosted onboarding, SSH as `app` should open directly in `/home/app/fased`.
 If it does not, fix the hosted login/shell setup before updating.
 
 For a fresh hosted VPS, use the
-[pre-execution verified Hosting bootstrap](/install/vps#3-verify-and-run-the-hosting-bootstrap)
-from the VPS provider root shell.
+[exact fresh Hosting command](/install/vps#3-install-fased) from the VPS
+provider root shell.
 
 The verified script installs the exact selected release and verifies the tagged Hosting
 artifacts before privileged Fased installation. Users who require verification
 before the first script runs can use the expandable advanced procedure in
-[VPS Hosting](/install/vps#advanced-exact-release-selection).
+[Advanced installer](/install/installer#exact-tag-pre-execution-verification).
 
 Run the first Hosting install from the VPS provider's root shell. That path
-creates the non-root `app` runtime, private Tailscale access, and the hosted
-security posture. After the installer hands off to `app`, use the Tailscale
-hostname and the `app` account for normal operation and every normal update. A
-successful fresh install does not require `--repair-hosting` afterward.
+creates the human `app` operator, isolated `fased-gateway` and `fased-signer`
+services, private Tailscale access, and the hosted posture. Use the Tailscale
+hostname and `app` for normal operation and updates. A successful fresh install
+does not require `--repair-hosting` afterward.
 
 A manual global npm install is an advanced local/dev or self-managed-host path;
 it is not the normal VPS Hosting path.
@@ -282,7 +282,7 @@ run the old updater. Go directly to the exact tagged root repair below.
 The repair must restore root-owned service helpers and the system service. Open
 the VPS provider's web/recovery console as `root` (or use root SSH only when the
 provider still permits it). Follow the exact
-[manual pre-execution verification procedure](/install/vps#advanced-exact-release-selection),
+[manual pre-execution verification procedure](/install/installer#exact-tag-pre-execution-verification),
 but replace the final invocation of the already-verified standalone installer
 with:
 
@@ -383,28 +383,17 @@ The bootstrap replaces application/runtime files, not user state. Do not delete
 `~/.fased` or `/home/app/.fased`, and do not run fresh onboarding merely to fix
 an old updater.
 
-Local, WSL, or macOS exact-version repair (replace `vX.Y.Z`):
+For Local, WSL, or macOS exact-version repair, follow the canonical
+[exact-tag verification](/install/installer#exact-tag-pre-execution-verification)
+and change only its final invocation to:
 
 ```bash
-(
-set -euo pipefail
-RELEASE=vX.Y.Z
-BOOTSTRAP_DIR="$(mktemp -d)"
-trap 'rm -rf "$BOOTSTRAP_DIR"' EXIT
-chmod 0700 "$BOOTSTRAP_DIR"
-curl -fsSLo "$BOOTSTRAP_DIR/install.sh" \
-  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh"
-curl -fsSLo "$BOOTSTRAP_DIR/install.sh.attestation.json" \
-  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh.attestation.json"
-GH_PROMPT_DISABLED=1 gh attestation verify "$BOOTSTRAP_DIR/install.sh" \
-  --repo fased-ai/fased \
-  --bundle "$BOOTSTRAP_DIR/install.sh.attestation.json" \
-  --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-  --source-ref "refs/tags/${RELEASE}" \
-  --deny-self-hosted-runners
-bash -s -- --repair-local --release "$RELEASE" < "$BOOTSTRAP_DIR/install.sh"
-)
+bash "$BOOTSTRAP_DIR/install.sh" --repair-local --release "$RELEASE"
+```
 
+Then verify the repaired runtime:
+
+```bash
 hash -r
 fased update status
 fased update
@@ -423,7 +412,7 @@ user-managed command or rerun onboarding. On macOS the exact tagged source is
 built because no managed Linux runtime artifact is used.
 
 VPS Hosting bootstrap must run from the provider's root console. Follow the
-[manual pre-execution verification procedure](/install/vps#advanced-exact-release-selection)
+[manual pre-execution verification procedure](/install/installer#exact-tag-pre-execution-verification)
 for the exact release, then use `--repair-hosting` instead of `--hosting` only
 in the final invocation of that already-verified standalone installer. Never
 recover Hosting by piping a raw repository URL into a shell.

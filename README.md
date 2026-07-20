@@ -33,10 +33,10 @@ Public install is repo-backed:
 
 ### Local vs VPS Hosting
 
-| Path          | Best for                                                                               | Security posture                                                                                                                                                | Access dependency                                                            |
-| ------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Local install | Your own computer: macOS Terminal, Windows with WSL2 Ubuntu, Linux desktop, or dev box | Lowest setup risk. Gateway stays on your machine; a home router usually does not expose it to the public internet. Tailscale is optional.                       | Your local OS login.                                                         |
-| VPS Hosting   | Always-on cloud node                                                                   | Higher exposure by default because a VPS is internet-reachable. Hosted setup closes public admin ports and requires Tailscale for private dashboard/SSH access. | Your Tailscale account plus the VPS provider console for emergency recovery. |
+| Path        | Runs where                            | Private access                           | Normal operator                            |
+| ----------- | ------------------------------------- | ---------------------------------------- | ------------------------------------------ |
+| Local       | macOS, Linux, or WSL2 Ubuntu          | Your local OS; Tailscale optional        | Your OS account                            |
+| VPS Hosting | Ubuntu/Fedora/RHEL-family systemd VPS | Tailscale plus provider-console recovery | `app`; Gateway isolated as `fased-gateway` |
 
 If you lose access to the Tailscale account used for a hosted VPS, normal
 dashboard and SSH access can be lost. Recovery then depends on the VPS
@@ -151,8 +151,8 @@ curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
 
 It selects the stable release and verifies the tagged Hosting artifacts before
 privileged Fased installation. The
-[VPS Hosting guide](https://docs.fased.ai/install/vps#advanced-verify-the-bootstrap-first)
-also keeps an advanced procedure for verifying `install.sh` before it runs.
+[Advanced installer](https://docs.fased.ai/install/installer#exact-tag-pre-execution-verification)
+keeps the exact-tag procedure for verifying `install.sh` before it runs.
 
 The Fased installer bootstraps the attested hosted runtime itself. A fresh VPS
 does not need `git clone`; the installer installs the supported system tools and
@@ -161,16 +161,15 @@ exact tagged runtime instead of building an app-owned source checkout.
 If a minimal VPS image does not have `curl`, use the OS tab in the install docs
 to install only the downloader first, then rerun the same hosted command.
 
-If an earlier install stopped before creating the `app` runtime, repeat the
-same verified tagged bootstrap from the provider root console. Use the
-documented `--repair-hosting` path for an existing installation; do not repair
-Hosting from a moving `main` checkout.
+If an earlier install stopped before persistent Fased installer state was
+created, fix the reported prerequisite and repeat the same command. Use the
+documented exact-tag `--repair-hosting` path for an existing installation; do
+not repair Hosting from moving `main`.
 
-If you SSH into a fresh VPS as `root`, the installer creates a non-root `app`
-user, copies/clones the repo to `/home/app/fased`, and continues there. The
-temporary root checkout is removed after successful hosted onboarding. During
-Tailscale setup, copy the login URL printed in SSH and open it in your local
-computer's browser.
+If you SSH into a fresh VPS as `root`, the installer creates a human `app`
+operator, an isolated `fased-gateway` service account, and an isolated
+`fased-signer` service account. During Tailscale setup, copy the login URL
+printed in SSH and open it in your local computer's browser.
 
 The installer adds the VPS to the same Tailscale tailnet before onboarding can
 finish safely. When Fased prints a Tailscale login URL in the SSH terminal,
@@ -242,9 +241,9 @@ fased dashboard
 The `app` shell is a full Linux shell on the VPS and is configured to start in
 `/home/app/fased`.
 
-Hosted VPS setup uses the root-managed `fased-gateway.service`, and that
-service runs as the non-root `app` user. It should not ask for the `app`
-password to run `sudo loginctl enable-linger app`.
+Hosted VPS setup uses root-managed services. `fased-gateway.service` runs as
+the non-login `fased-gateway` account; the `app` operator uses a separate,
+restricted signer lifecycle socket and does not need broad sudo.
 
 `http://localhost:18789` is only the advanced SSH tunnel fallback. It works on
 your local computer after you start the tunnel shown by onboarding and leave
@@ -319,10 +318,9 @@ git pull --ff-only origin main
 ./install.sh
 ```
 
-On a hosted VPS, run that same development checkout flow as `app` from
-`/home/app/fased` and use `./install.sh --hosting`. Use
-`./install.sh --no-git-update` only when testing local changes that should not
-be replaced by Git.
+Privileged Hosting does not install from a mutable developer checkout. Test
+source changes as Local, or build a tagged Hosting artifact through the release
+workflow.
 
 Telegram, WhatsApp, Discord, and Slack install as official add-ons only when
 selected from **Agent > Channels**, onboarding, or `fased channels add`. Local

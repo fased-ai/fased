@@ -219,7 +219,10 @@ Required behavior:
 
 Expected result:
 
-- new wallets remain deny-all until an owner-reviewed policy hash is acknowledged
+- new wallets activate the exact signer-owned role baseline and remain denied
+  outside its typed operations, reviewed destinations, and positive caps;
+  legacy explicit deny-all wallets remain deny-all until one owner-reviewed
+  baseline activation
 - concurrent requests cannot both consume the same remaining cap
 - restarting does not reset daily accounting or create a replacement request
 - the legacy split-key/passphrase unlock and Node custody routes remain absent

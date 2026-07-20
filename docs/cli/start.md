@@ -46,8 +46,9 @@ If Fased was installed as a local Gateway service, stop the service with:
 fased gateway stop
 ```
 
-On a hosted VPS install, the root-managed service runs as the non-root `app`
-user. Normal operation should use:
+On a hosted VPS install, the root-managed Gateway service runs as the non-login
+`fased-gateway` user; `app` is the separate human operator. Normal operation
+should use:
 
 ```bash
 fased gateway status

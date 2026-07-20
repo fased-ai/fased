@@ -21,8 +21,8 @@ It is written for the public Fased wallet model:
 ## Prerequisites
 
 - Fased is already installed on the VPS
-- self-hosted wallet created inside the signer, or imported through the native
-  signer-admin control socket
+- self-hosted wallet created or imported through the native `fased wallet`
+  operator lifecycle
 - signer execution RPC and Gateway read RPC configured for the wallet role
 - owner-reviewed role policy activated and acknowledged
 - signer WebAuthn enrolled before manual native reviewed operations
@@ -35,11 +35,11 @@ sudo. QuickStart therefore probes the existing service and never installs,
 starts, or brokers a second signer.
 
 A healthy signer service is only the first readiness layer. A new wallet is
-created inside Go with a locked deny-all policy. It becomes send-ready only
-after owner-policy activation and per-wallet signer RPC configuration have been
-acknowledged. Gateway read RPC is a separate readiness plane. Import is an
-explicit signer-admin operation; do not paste a private key into the Gateway or
-dashboard.
+created inside Go with signer-owned role baseline v1 and becomes ready only
+after its one-RPC network state, exact policy/baseline hash, and runtime
+registration agree. Gateway read RPC is a separate readiness plane. Import is
+an explicit native operator operation; do not paste a private key into the
+Gateway or dashboard.
 
 For Solana RPC setup, use [Solana RPC setup](/plugins/crypto/wallet-rpc-setup).
 

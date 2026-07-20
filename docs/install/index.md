@@ -1,5 +1,5 @@
 ---
-summary: "Install Fased locally or on an always-on VPS."
+summary: "Install Fased on your computer or a fresh always-on VPS."
 read_when:
   - You want to install Fased
   - You need to choose between Local and VPS Hosting
@@ -8,8 +8,8 @@ title: "Install"
 
 # Install
 
-Choose where Fased will run. **Local** runs on your computer. **VPS Hosting**
-runs continuously on a remote Linux server.
+Choose one runtime. Local runs on your computer. VPS Hosting stays online on a
+remote Linux server.
 
 <Tabs>
   <Tab title="Local">
@@ -19,121 +19,91 @@ runs continuously on a remote Linux server.
     curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
     ```
 
-    On Windows, install Fased **inside WSL2 Ubuntu**. Do not run the Bash
-    command in PowerShell, Command Prompt, Git Bash, or native Windows Node.js.
-    Native Windows npm installation is blocked intentionally; do not use npm
-    platform overrides to bypass it.
-    Follow [Windows Local setup](/platforms/windows).
-
-    Local setup does not apply VPS firewall or SSH changes. Tailscale is
-    optional.
+    Native Windows is not a Local runtime. Install and run Fased inside
+    [WSL2 Ubuntu](/platforms/windows), not PowerShell, Command Prompt, Git Bash,
+    or native Windows Node.js. Tailscale is optional for Local.
 
   </Tab>
 
   <Tab title="VPS Hosting">
-    Use a fresh Ubuntu LTS VPS for the simplest supported path.
+    Use a fresh Ubuntu LTS VPS for the simplest path. SSH into its root shell,
+    then run exactly:
 
-    1. Install and sign into [Tailscale](https://tailscale.com/download) on
-       your own computer.
-    2. SSH into the VPS using the login supplied by your provider:
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+      | bash -s -- --hosting
+    ```
 
-       ```bash
-       ssh root@YOUR_PUBLIC_VPS_IP
-       ```
-
-    3. In that VPS root SSH session, run the complete
-       [verified Hosting bootstrap block](/install/vps#3-verify-and-run-the-hosting-bootstrap).
-
-    The block verifies the exact tagged `install.sh` before Bash executes it.
-    The verified installer then installs or starts Tailscale, creates the
-    non-root `app` runtime, and guides private dashboard/SSH access. Open the
-    Tailscale login URL it prints on your own computer.
-
-    Continue with the [three-step VPS guide](/install/vps) for access checks,
-    advanced verification, and troubleshooting.
+    The installer selects and verifies one stable tagged Hosting release before
+    it creates persistent Fased state. Follow the [three-step VPS guide](/install/vps)
+    for the Tailscale and SSH steps.
 
   </Tab>
 </Tabs>
 
 <Note>
-The VPS command runs **inside the VPS**, not in a local PowerShell window.
-Windows users can manage a VPS with native Windows Tailscale and SSH; WSL2 is
-required only when Fased itself runs locally on Windows.
+The VPS command runs inside the VPS provider's root shell. Windows users may
+manage a VPS from PowerShell; WSL2 is required only when Fased itself runs
+locally on Windows.
 </Note>
 
 ## After installation
 
-The wizard opens or prints the Control UI address. Then:
-
 1. Connect a model under **Agent > Models**.
 2. Send a test message in **Chat**.
-3. Add channels, services, wallets, or mining only when needed.
-
-If setup was interrupted:
+3. Add channels, wallets, skills, or Mining only when needed.
 
 ```bash
-fased onboard --install-daemon
 fased health
 fased dashboard
 ```
 
-## Updating
+Normal updates use:
 
 ```bash
-fased update status
 fased update
 ```
 
-On VPS Hosting, run updates after reconnecting as `app` through Tailscale.
-
 <AccordionGroup>
-  <Accordion title="What the first curl command trusts">
-    The first script is downloaded from the protected `fased-ai/fased` GitHub
-    repository over HTTPS. After it starts, it resolves one stable tag and
-    verifies the release manifest and architecture-specific bundle with GitHub
-    attestations before privileged Fased installation.
+  <Accordion title="Local or Hosting?">
+    | Path | Runs where | Private access | Normal operator |
+    | --- | --- | --- | --- |
+    | Local | macOS, Linux, or WSL2 Ubuntu | Local OS; Tailscale optional | Your OS account |
+    | VPS Hosting | Ubuntu/Fedora/RHEL-family systemd VPS | Tailscale plus provider-console recovery | `app`; Gateway is isolated as `fased-gateway` |
+  </Accordion>
 
-    Users who need to verify `install.sh` **before any shell code runs** can use
-    the manual release-asset procedure in
-    [Advanced exact release selection](/install/vps#advanced-exact-release-selection).
-    That chooses a specific verified tag instead of the latest stable tag.
+  <Accordion title="What the streamed installer trusts">
+    The mutable `main/install.sh` bootstrap begins running over HTTPS before it
+    can authenticate itself. Its fresh Hosting path is deliberately small: it
+    rejects overrides and verifies the release workflow, tag, signed manifest,
+    app layer, dependency layer, signer, architecture, commit, digests, and
+    archive layout before persistent Fased changes.
+
+    To verify `install.sh` before Bash runs it, use
+    [Advanced exact-tag verification](/install/installer#exact-tag-pre-execution-verification).
 
   </Accordion>
 
-  <Accordion title="Supported systems">
-    - Local: macOS, WSL2 Ubuntu, and common Linux distributions.
-    - VPS Hosting hardening: Ubuntu, Fedora, and RHEL-family Linux with systemd.
-    - Docker: Local only. There is no `--hosting-docker` mode.
-    - Native Windows: not supported; use WSL2 Ubuntu for Local.
-  </Accordion>
-
-  <Accordion title="Security and recovery boundary">
-    VPS Hosting keeps the Gateway private through Tailscale and runs the app as
-    the non-root `app` user. Keep both your Tailscale account recovery and VPS
-    provider console access working. Do not expose the raw Gateway port to the
-    public internet.
+  <Accordion title="Interrupted setup or repair">
+    A streamed `--hosting` command is fresh-install-only. Use the installed
+    updater for normal Hosting updates. Existing-host repair is exact-tag-only;
+    follow [Hosting recovery](/install/installer#hosting-repair-and-recovery).
   </Accordion>
 </AccordionGroup>
 
-## More install guides
+## More guides
 
 <CardGroup cols={2}>
   <Card title="VPS Hosting" href="/install/vps" icon="server">
-    Full access checks, advanced verification, and recovery.
+    Three normal steps, access checks, and collapsed troubleshooting.
   </Card>
   <Card title="Windows (WSL2)" href="/platforms/windows" icon="windows">
-    Separate PowerShell and Ubuntu WSL2 steps.
+    Keep PowerShell and Ubuntu commands separate.
   </Card>
-  <Card title="Installer reference" href="/install/installer" icon="terminal">
-    Flags, automation, and installer behavior.
-  </Card>
-  <Card title="Docker Local" href="/install/docker" icon="container">
-    Containerized Local Gateway; not VPS Hosting.
+  <Card title="Advanced installer" href="/install/installer" icon="terminal">
+    Exact-tag verification, flags, restrictions, repair, and recovery.
   </Card>
   <Card title="Updating" href="/install/updating" icon="refresh-cw">
-    Stable updates and repair procedures.
-  </Card>
-  <Card title="Uninstall" href="/install/uninstall" icon="trash-2">
-    Remove services, CLI, and state.
+    Stable updates and rollback behavior.
   </Card>
 </CardGroup>

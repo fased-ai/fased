@@ -77,7 +77,7 @@ There are two different Windows workflows:
     3. After the prompt changes to the remote Linux VPS, run:
 
        Follow the
-       [verified Hosting bootstrap](/install/vps#3-verify-and-run-the-hosting-bootstrap)
+       [exact fresh Hosting command](/install/vps#3-install-fased)
        in that VPS SSH session.
 
     The Bash command runs on the VPS through SSH. The installer installs or

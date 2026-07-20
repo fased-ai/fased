@@ -35,13 +35,13 @@ setup.
 
   </Tab>
   <Tab title="VPS Hosting install">
-    SSH to the VPS as root, then run the complete [verified Hosting bootstrap
-    block](/install/vps#3-verify-and-run-the-hosting-bootstrap) inside that VPS
+    SSH to the VPS as root, then run the [exact fresh Hosting
+    command](/install/vps#3-install-fased) inside that VPS
     shell.
 
-    The block authenticates the exact tagged installer before Bash runs it. The
-    installer then creates the isolated non-root runtime and verifies the
-    immutable Hosting release before privileged installation.
+    The streamed bootstrap verifies the immutable tagged Hosting payload before
+    persistent Fased setup, then creates the separated operator, Gateway, and
+    signer runtime identities.
 
   </Tab>
 </Tabs>

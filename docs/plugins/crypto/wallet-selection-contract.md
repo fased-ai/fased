@@ -32,30 +32,33 @@ For the public self-hosted path, `local-socket-signer` is the main signer-backed
 
 ## 2. Selection precedence
 
-Read-only wallet routing resolves in this order:
+Read-only lookup may use:
 
 1. exact `walletId`
 2. `walletName` plus `providerId` when needed to disambiguate
-3. explicit agent assignment
-4. primary Agent wallet
+3. explicit Agent assignment
+4. Default Agent wallet
 
 If `walletName` is ambiguous and the request does not supply a stronger
 selector, the runtime should fail.
 
-Risky chat, skill, plugin, and automation actions are stricter:
+Risky chat, skill, plugin, and automation actions are stricter and resolve in
+this order:
 
-1. explicit `walletHandle` such as `@wallet:agent`
-2. structured `walletId`
-3. primary Agent wallet
+1. explicit `walletHandle` such as `@wallet:agent`, or structured `walletId`
+2. one exact wallet ID in the calling skill's approved wallet grant
+3. the calling Agent's explicit wallet assignment
+4. the optional Default Agent wallet
 
 For those actions, `walletName` is display-only and cannot authorize execution.
 Agent wallets are the execution path for generic chat, skill, plugin, scheduled
 send, and route actions. Vault wallets stay reviewed/manual through the Wallets
 page. Mining wallets stay on the SAT mining and SAT sweep path.
 
-Multiple Agent wallets are allowed. The primary Agent wallet is only the
-fallback. Exact handles such as `@wallet:agent` or `@wallet:agent-2` select a
-specific Agent wallet.
+Multiple Agent wallets are allowed. The Default Agent wallet is only the final
+fallback and is never selected automatically during create/import. Exact
+handles such as `@wallet:agent` or `@wallet:agent-2` select a specific Agent
+wallet.
 
 Onboarding and CLI creation mark the wallet purpose. Existing wallet purpose
 should be treated as permanent for normal operator use.
@@ -75,11 +78,13 @@ Acceptable when necessary:
 Optional:
 
 - `chain`
+- `agentId` so the runtime can honor the calling Agent's assignment
 
 The strongest production rule is:
 
 - use `@wallet:<walletId>` in prompts and skill instructions
 - use structured `walletId` in API/tool payloads
+- pass the real calling `agentId`; never substitute the default Agent identity
 - use `walletName` for display only
 
 ## 4. Examples

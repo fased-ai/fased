@@ -1,72 +1,58 @@
 ---
+summary: "在自己的电脑或全新常在线 VPS 上安装 Fased。"
 read_when:
-  - 安装 Fased
-  - 选择 Local 或 VPS Hosting
-summary: 在本地电脑或常驻 VPS 上安装 Fased。
-title: 安装
-x-i18n:
-  generated_at: "2026-07-18T00:00:00Z"
-  model: manual
-  provider: codex
-  source_path: install/index.md
+  - 你要安装 Fased
+  - 你需要在 Local 与 VPS Hosting 之间选择
+title: "安装"
 ---
 
 # 安装
 
-**Local** 在自己的电脑上运行。**VPS Hosting** 在远程 Linux 服务器上常驻。
+只选择一种运行方式。Local 在你的电脑上运行；VPS Hosting 在远程 Linux
+服务器上持续在线。
 
 <Tabs>
   <Tab title="Local">
-    在 macOS Terminal、Linux terminal 或 Ubuntu WSL2 shell 中运行：
+    在 macOS Terminal、Linux 终端或 Ubuntu WSL2 shell 中运行：
 
     ```bash
     curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
     ```
 
-    Windows 必须在 WSL2 Ubuntu 内运行 Fased；不要在 PowerShell、命令提示符、
-    Git Bash 或原生 Windows Node.js 中运行。参见
-    [Windows (WSL2)](/platforms/windows)。Local 不会应用 VPS 的 SSH/防火墙加固，
-    Tailscale 可选。
+    原生 Windows 不是 Local 运行环境。请在
+    [WSL2 Ubuntu](/platforms/windows) 内运行 Fased，不要在 PowerShell、
+    Command Prompt、Git Bash 或原生 Windows Node.js 中运行。Local 可选用
+    Tailscale。
 
   </Tab>
 
   <Tab title="VPS Hosting">
-    首次部署推荐全新的 Ubuntu LTS VPS：
+    最简单的路径是全新 Ubuntu LTS VPS。SSH 进入 VPS 的 root shell 后，
+    原样运行：
 
-    1. 在自己的电脑安装并登录 [Tailscale](https://tailscale.com/download)。
-    2. 使用 provider 提供的账户进入 VPS：
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+      | bash -s -- --hosting
+    ```
 
-       ```bash
-       ssh root@YOUR_PUBLIC_VPS_IP
-       ```
-
-    3. 在该 VPS SSH 会话内按照
-       [verified Hosting bootstrap](/install/vps#3-验证并运行-hosting-bootstrap) 操作。
-
-    此流程在执行前验证精确 tagged bootstrap。安装器随后在安装特权 Fased 资产前验证 tagged Hosting
-    release 和 attestation，并在 VPS 上安装/启动 Tailscale、创建非 root `app`
-    runtime。它显示 Tailscale 登录 URL 时，在自己的电脑浏览器中打开。
-
-    完整步骤、访问检查和高级手动验证见 [VPS Hosting](/install/vps)。
+    安装器会先选择并验证一个稳定 tag 的 Hosting release，再创建持久化
+    Fased 状态。Tailscale 与 SSH 步骤见 [VPS 三步安装](/install/vps)。
 
   </Tab>
 </Tabs>
 
 <Note>
-VPS Bash 命令在远程 VPS 内运行，不是在本地 PowerShell 中运行。Windows 管理
-VPS 可以使用原生 Tailscale 和 SSH；只有 Fased 本地运行时才需要 WSL2。
+VPS 命令在 VPS provider 的 root shell 中运行。Windows 用户可以在
+PowerShell 中管理 VPS；只有在 Windows 本机运行 Fased Local 时才需要 WSL2。
 </Note>
 
 ## 安装后
 
 1. 在 **Agent > Models** 连接模型。
 2. 在 **Chat** 发送测试消息。
-3. 只有需要时才添加 channels、services、wallets 或 Mining。
-
-中断后继续：
+3. 需要时再添加 channel、wallet、skill 或 Mining。
 
 ```bash
-fased onboard --install-daemon
 fased health
 fased dashboard
 ```
@@ -74,34 +60,31 @@ fased dashboard
 正常更新：
 
 ```bash
-fased update status
 fased update
 ```
 
 <AccordionGroup>
-  <Accordion title="首次 curl 命令信任什么">
-    首个脚本通过 HTTPS 从受保护的 `fased-ai/fased` GitHub 仓库下载。启动后，
-    它固定一个 stable tag，并在特权 Fased 安装前验证 release manifest 和对应
-    架构 bundle 的 GitHub attestation。
+  <Accordion title="Local 与 Hosting 的区别">
+    | 路径 | 运行位置 | 私有访问 | 正常操作身份 |
+    | --- | --- | --- | --- |
+    | Local | macOS、Linux 或 WSL2 Ubuntu | 本机 OS；Tailscale 可选 | 你的 OS 账号 |
+    | VPS Hosting | Ubuntu/Fedora/RHEL-family systemd VPS | Tailscale，加 provider console 恢复 | `app`；Gateway 隔离为 `fased-gateway` |
+  </Accordion>
 
-    需要在任何下载 shell 代码运行前验证 `install.sh` 的高级用户，可使用
-    [手动执行前验证](/install/vps#advanced-exact-release-selection)。
+  <Accordion title="streamed 安装器信任什么">
+    `main/install.sh` 通过 HTTPS 下载后会先开始执行，因此仍有 mutable
+    bootstrap 信任。Fresh Hosting 路径只负责拒绝 override，并在持久化修改前
+    验证 release workflow、tag、signed manifest、app、dependency、signer、
+    architecture、commit、digest 与 archive layout。
+
+    如需在 Bash 执行前验证 `install.sh`，使用
+    [Advanced Installer](/install/installer) 中的 exact-tag 流程。
 
   </Accordion>
 
-  <Accordion title="支持边界">
-    - Local：macOS、WSL2 Ubuntu 和常见 Linux。
-    - VPS Hosting：带 systemd 的 Ubuntu、Fedora 和 RHEL-family Linux。
-    - Docker：只支持 Local；不存在 `--hosting-docker`。
-    - 原生 Windows：不支持；Local 使用 WSL2 Ubuntu。
+  <Accordion title="中断或修复">
+    streamed `--hosting` 只用于全新安装。正常更新使用已安装 updater；已有
+    Hosting 的修复必须使用 exact-tag 流程，见
+    [Hosting 修复与恢复](/install/installer)。
   </Accordion>
 </AccordionGroup>
-
-## 更多指南
-
-- [VPS Hosting](/install/vps)
-- [Windows (WSL2)](/platforms/windows)
-- [Installer Reference](/install/installer)
-- [Docker Local](/install/docker)
-- [更新](/install/updating)
-- [卸载](/install/uninstall)

@@ -1,304 +1,131 @@
 ---
-summary: "Get Fased installed and run your first chat in minutes."
+summary: "Install Fased and send your first browser chat."
 read_when:
-  - First time setup from zero
-  - You want the fastest path to a working chat
+  - You are setting up Fased for the first time
+  - You want the shortest path to a working chat
 title: "Getting Started"
 ---
 
 # Getting Started
 
-Goal: go from zero to a first working chat with minimal setup.
+The shortest path is install, connect one model, and send one browser message.
+Wallets, channels, skills, and Mining can wait.
 
-<Warning>
-If you plan to use wallet, mining, Fased Network, Marketplace, or other
-wallet-connected features, read the repo risk boundary before moving funds or
-enabling public participation:
-[`docs/legal/disclaimer.md`](https://github.com/fased-ai/fased/blob/main/docs/legal/disclaimer.md).
-</Warning>
+## 1. Install
 
-<Info>
-Fastest chat: open the Control UI (no channel setup needed). Run `fased dashboard`
-and chat in the browser, or open `http://localhost:18789/` on the
-<Tooltip headline="Gateway host" tip="The machine running the Fased gateway service.">gateway host</Tooltip>.
-Docs: [Dashboard](/web/dashboard) and [Control UI](/web/control-ui).
-</Info>
+<Tabs>
+  <Tab title="Local">
+    Run in macOS Terminal, a Linux terminal, or Ubuntu WSL2:
 
-```mermaid
-flowchart TD
-  install["Install"] --> onboard["Onboard"]
-  onboard --> dashboard["Dashboard"]
-  dashboard --> model["Model"]
-  model --> chat["First chat"]
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
+    ```
 
-  classDef setup fill:#120605,stroke:#ff5a36,color:#ffffff;
-  classDef ui fill:#071018,stroke:#12cfff,color:#ffffff;
-  classDef done fill:#20120a,stroke:#ffb020,color:#ffffff;
-  class install,onboard setup;
-  class dashboard,model ui;
-  class chat done;
+    Native Windows uses [WSL2 Ubuntu](/platforms/windows). Do not run this Bash
+    command in PowerShell or native Windows Node.js.
+
+  </Tab>
+
+  <Tab title="VPS Hosting">
+    First sign in to Tailscale on your own computer. SSH into a fresh VPS as
+    root, then run:
+
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+      | bash -s -- --hosting
+    ```
+
+    Continue with the [VPS Hosting guide](/install/vps) for its private SSH
+    check and recovery boundary.
+
+  </Tab>
+</Tabs>
+
+The installer runs onboarding. If onboarding was skipped or interrupted:
+
+```bash
+fased onboard --install-daemon
 ```
 
-## Prereqs
+## 2. Open Fased
 
-- Linux, macOS, or Windows through WSL2
-- HTTPS access to GitHub raw content and release artifacts
+```bash
+fased health
+fased dashboard
+```
 
-<Tip>
-On Debian, Ubuntu, WSL Ubuntu, Fedora, and common RHEL-family systems, the
-installer can install the needed command-line tools and Node runtime when they
-are missing. On macOS, it can use Homebrew when Homebrew is already installed.
-If you manage Node yourself, use Node 24, or Node 22.14+ with the built-in
-`node:sqlite` module.
-</Tip>
+On Hosting, reconnect as the `app` operator through Tailscale before running
+those commands. The Gateway itself runs under the isolated `fased-gateway`
+account.
 
-<Note>
-Windows Local installs run inside WSL2 Ubuntu. Administrator PowerShell is used
-only to create WSL2; Fased commands run in the Ubuntu shell. See
-[Windows (WSL2)](/platforms/windows).
-</Note>
+## 3. Connect a model
 
-## Which install do I need?
+In the Control UI:
 
-<CardGroup cols={2}>
-  <Card title="This computer" icon="monitor" href="#quick-setup-cli">
-    Choose Local. Best for macOS Terminal, Windows with WSL2 Ubuntu, Linux
-    desktops, dev boxes, and first chat.
-  </Card>
-  <Card title="VPS / always-on server" icon="server" href="#quick-setup-cli">
-    Choose Hosting for an always-on Linux VPS. Ubuntu LTS is the recommended
-    first VPS target. Create/sign into Tailscale first, then run the hosted
-    installer on the VPS.
-  </Card>
-</CardGroup>
+1. Open **Agent > Models**.
+2. Sign in or add one provider API key.
+3. Choose the Agent's primary model.
 
-For the full decision table, read [Setup Matrix](/start/setup-matrix).
-The macOS app is a Local setup surface, not a separate hosting profile.
+## 4. Send the first chat
 
-## Quick setup (CLI)
+Open **Chat**, choose the same Agent, and send:
 
-<Steps>
-  <Step title="Install Fased (recommended)">
-    <Tabs>
-      <Tab title="Local">
-        ```bash
-        curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
-        ```
+```text
+Reply with one sentence: Fased is ready.
+```
 
-        Use this on your own computer. On macOS, use Terminal. On Windows,
-        install WSL2 first, open the Ubuntu application, then run this inside
-        the Ubuntu shell. On Linux, use your distro terminal.
-
-        After local setup:
-
-        1. Keep the dashboard tab that opens, or run `fased dashboard`.
-        2. Go to **Agent > Models** and connect a model provider.
-        3. Open **Chat** and send a test message.
-
-      </Tab>
-      <Tab title="VPS Hosting">
-        Install/sign into Tailscale on your own computer, SSH into the VPS as
-        root, then run the complete [verified Hosting bootstrap
-        block](/install/vps#3-verify-and-run-the-hosting-bootstrap) **inside the
-        VPS SSH session**.
-
-        The block verifies the tagged installer before Bash runs it. The
-        installer then verifies the Hosting bundle, installs or starts
-        Tailscale on the VPS, and creates the non-root `app` runtime.
-
-        During hosted setup, Fased bootstraps into `/home/app/fased` and
-        continues as the `app` user when you start as `root`. Before
-        SSH/firewall lock-down, setup asks you to test this from your own
-        computer:
-
-        ```bash
-        ssh app@YOUR_VPS_TAILSCALE_NAME
-        ```
-
-        Confirm only after it connects through Tailscale and opens
-        `/home/app/fased`. At the end, open the printed Tailscale dashboard URL
-        in your local browser and save the gateway token in case the browser
-        asks for it.
-
-        The `app` shell starts in `/home/app/fased`. See
-        [VPS Hosting](/install/vps) for the full three-step guide and optional
-        manual pre-execution attestation verification.
-      </Tab>
-    </Tabs>
-
-    <Note>
-    Other install methods and requirements: [Install](/install).
-    </Note>
-
-  </Step>
-  <Step title="Run or continue onboarding">
-    ```bash
-    fased onboard --install-daemon
-    ```
-
-    `./install.sh` runs onboarding by default. Run this command only if you
-    skipped onboarding, got interrupted, or want to reconfigure the daemon.
-
-    The wizard configures workspace, Gateway, dashboard access, and optional
-    wallet/mining setup. If you are setting up a VPS, use the Hosting install
-    path above; a normal local `fased onboard` session cannot safely apply VPS
-    SSH/firewall hardening.
-
-    See [Onboarding Wizard](/start/wizard) for details.
-
-  </Step>
-  <Step title="Check the Gateway">
-    If you installed the service, it should already be running:
-
-    ```bash
-    fased gateway status
-    ```
-
-  </Step>
-  <Step title="Open the Control UI">
-    ```bash
-    fased dashboard
-    ```
-
-    The dashboard command opens an auth-ready local link such as
-    `http://localhost:18789/#token=...`. The browser exchanges that fragment for
-    a Control UI session and strips it from the address bar. If the browser asks
-    for a token later, use the Gateway recovery token printed by onboarding.
-
-    Continue setup in the browser from **Agents**:
-
-    - `Agent > Models`: add a provider API key or sign in, then choose the Agent's primary and fallback models.
-    - `Agent > Skills`: create, review, install, configure, edit, and allow skills for that Agent.
-    - `Agent > Services`: connect Gmail, Calendar, GitHub, web/search, browser/media, or custom APIs.
-    - `Agent > Channels`: install the Telegram, Discord, WhatsApp, Slack, Feishu, or Google Chat add-on you use, then connect its account. Other chat apps follow their channel page.
-    - `Agent > Memory`: enable saved session context and review this Agent's archive state.
-    - `Agent > Tasks`: schedule recurring work for this Agent when needed.
-
-    See [Control UI Setup Model](/start/control-ui-setup) for what belongs in
-    onboarding, the browser UI, Advanced Config, and CLI.
-
-    See [Core And Optional Components](/install/components) for what ships in
-    core and what Fased downloads only when selected.
-
-  </Step>
-  <Step title="Send the first browser chat">
-    After `Agent > Models` shows a ready provider/model for the selected Agent,
-    open **Chat**, choose the same Agent, and send a small test:
-
-    ```text
-    Reply with one sentence: Fased is ready.
-    ```
-
-    If it fails, fix the first visible blocker in this order:
-
-    1. `Agent > Models`: provider auth or model selection
-    2. `Logs`: provider/runtime error detail
-    3. `Advanced > Debug`: raw diagnostics and repair tools
-
-  </Step>
-  <Step title="Update later">
-    Normal updates use the stable release channel:
-
-    ```bash
-    cd ~/fased
-    fased update status
-    fased update
-    ```
-
-    On a hosted VPS, run that as `app`:
-
-    ```bash
-    ssh app@YOUR_VPS_TAILSCALE_NAME
-    fased update status
-    fased update
-    ```
-
-    After hosted onboarding, SSH as `app` should open directly in `/home/app/fased`.
-    If it does not, fix the hosted login/shell setup before updating.
-
-    Stable follows release tags. It does not pull every new `main` commit. Use
-    `fased update --channel dev` only when intentionally tracking latest
-    development commits.
-
-  </Step>
-</Steps>
+If it fails, check **Agent > Models**, then **Logs**.
 
 <Check>
-If the Control UI loads, your Gateway is ready for use.
+If the browser receives the reply, the first-run path is complete.
 </Check>
 
-## Choose your next path
+## Add only what you need
 
-Once the dashboard is up, pick the path that matches your goal:
-
-<CardGroup cols={3}>
-  <Card title="Fased Agent first" href="/start/fased" icon="cpu">
-    Use Fased Agent for browser chat, tools, saved context, and chat apps.
+<CardGroup cols={2}>
+  <Card title="Channels" href="/channels" icon="message-circle">
+    Connect Telegram, Discord, WhatsApp, Slack, or another supported chat app.
   </Card>
-  <Card title="Wallet + Fased Network" href="/start/federation" icon="shield">
-    Continue into wallet use, public routes, offers, and later bond setup.
+  <Card title="Wallets" href="/plugins/crypto/wallet-page" icon="wallet">
+    Create a role-ready Agent, Mining, or Vault wallet.
   </Card>
-  <Card title="SAT operator path" href="/plugins/crypto/mining-page" icon="coins">
-    Create signer-owned `@wallet:mining` (or import through the separate native
-    signer-admin command), fund mining capital, and run Satcoin mining.
+  <Card title="Mining" href="/plugins/crypto/mining-page" icon="coins">
+    Verify SAT runtime readiness, fund the Mining wallet, and start Mining.
+  </Card>
+  <Card title="Skills" href="/tools/skills" icon="blocks">
+    Install a skill, then grant wallet authority separately if it needs any.
   </Card>
 </CardGroup>
 
-## Optional checks and extras
-
 <AccordionGroup>
-  <Accordion title="Run the Gateway in the foreground">
-    Useful for quick tests or troubleshooting.
+  <Accordion title="What installs where">
+    Local runs under your OS account. Hosting separates the human `app`
+    operator, `fased-gateway` service, and `fased-signer` service. Root is only
+    for first bootstrap and exact-tag emergency repair.
+  </Accordion>
 
+  <Accordion title="Update later">
     ```bash
-    fased gateway run --port 18789 --bind loopback
+    fased update status
+    fased update
     ```
+
+    Stable release tags are the default. The development channel is an explicit
+    opt-in.
 
   </Accordion>
-  <Accordion title="Send a test message">
-    Requires a configured channel.
 
-    ```bash
-    fased message send --target +15555550123 --message "Hello from Fased"
-    ```
-
+  <Accordion title="Wallet and Mining risk boundary">
+    Choose wallet roles explicitly and keep only working value in hot roles.
+    Never paste private keys or recovery passwords into chat or the ordinary
+    browser UI. Read the [wallet roles](/plugins/crypto/wallet-roles-and-policies)
+    and [risk disclaimer](/legal/disclaimer) before moving funds.
   </Accordion>
 </AccordionGroup>
 
-## Useful environment variables
+## Next
 
-If you run Fased as a service account or want custom config/state locations:
-
-- `FASED_HOME` sets the home directory used for internal path resolution.
-- `FASED_STATE_DIR` overrides the state directory.
-- `FASED_CONFIG_PATH` overrides the config file path.
-
-Full environment variable reference: [Environment vars](/help/environment).
-
-## Go deeper
-
-<Columns>
-  <Card title="Onboarding Wizard (details)" href="/start/wizard">
-    Full CLI wizard reference and advanced options.
-  </Card>
-  <Card title="macOS local app" href="/start/onboarding">
-    Apple-first Local setup surface for the same Local profile.
-  </Card>
-</Columns>
-
-## What you will have
-
-- A running Gateway
-- A workspace and Fased identity
-- Gateway token auth configured, with an auth-ready dashboard link for local setup
-- A browser setup path for Agent model/provider auth
-- Control UI access or a connected chat app
-
-## Next steps
-
-- Run it as a real Agent setup: [Fased Agent Setup](/start/fased)
-- Learn where setup belongs: [Control UI Setup Model](/start/control-ui-setup)
-- DM safety and approvals: [Pairing](/channels/pairing)
-- Connect more chat apps: open `Agent > Channels`
-- Wallet, Fased Network, and SAT path: [Mining](/plugins/crypto/mining-page)
-- Advanced workflows and from source: [Setup](/start/setup)
+- [Install choices and recovery](/install)
+- [Onboarding details](/start/wizard)
+- [Control UI](/web/control-ui)
+- [Agent, wallet, and Mining walkthrough](/start/agent-wallet-mining-walkthrough)

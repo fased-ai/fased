@@ -79,10 +79,10 @@ New native wallets are created inside Go and return only a public address. The
 first wallet wizard installs/starts the version-matched signer automatically;
 normal users do not install Go.
 
-Import is not a dashboard, chat, or normal wizard field. Use
-`fased-signerd admin wallet import` through the signer-only control socket. It
-accepts one Solana CLI 64-byte JSON keypair array from stdin. It does not accept
-seed phrases, base58, hex, base64, command arguments, or environment secrets.
+Import is not a dashboard or chat field. Use `fased wallet import` from the
+native Local or Hosting operator terminal. It accepts one owner-only Solana CLI
+64-byte JSON keypair file by descriptor. It does not accept seed phrases,
+base58, hex, base64, command arguments, environment secrets, or browser input.
 
 See [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted) for Local
 and Hosting commands.
@@ -97,10 +97,12 @@ fased wallet status --json
 Do not fund the address until the id, role, address, policy hash, and RPC
 readiness match what you intended.
 
-## 3. Install explicit signer policy
+## 3. Review the signer-owned role baseline
 
-A new native wallet starts deny-all. It cannot sign merely because a wallet
-exists or RPC is configured.
+A new native wallet starts with signer-owned role baseline v1. The baseline is
+useful but bounded: Agent/Vault owner transfers require exact review,
+destination, and positive caps; Mining accepts only release-bound typed SAT
+actions plus reviewed owner movement.
 
 Every executable policy must explicitly name:
 
@@ -122,9 +124,17 @@ in health. A UI change stays pending until the signer acknowledges that exact
 hash. The Gateway can request a tighter policy; initial authority and later
 loosening use the native owner/admin workflow.
 
-Copy the role template to a private absolute path, replace its wallet id with
-the canonical signer id reported by setup, review every permission, and perform
-the initial installation:
+Existing legacy explicit deny-all wallets are not migrated automatically.
+Review their immutable role and activate signer-owned baseline v1 once:
+
+```bash
+fased wallet policy activate-role-baseline \
+  --wallet-id <wallet-id> --role <agent|mining|vault> --confirm
+```
+
+For authority beyond the built-in role baseline, copy the role template to a
+private absolute path, replace its wallet ID with the canonical signer ID,
+review every permission, and apply it through the advanced native owner path:
 
 ```bash
 # Local Linux, macOS, or WSL2

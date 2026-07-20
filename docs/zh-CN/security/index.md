@@ -39,6 +39,12 @@ Fased 是自托管智能体运行时。请把它当作一个能访问聊天、�
 
 不要在没有 auth 的情况下把 Gateway 绑定到公网接口。浏览器远程访问优先使用 Tailscale/private networking。
 
+VPS Hosting 分离权限：`app` 是 human operator；`fased-gateway` 是只能使用
+application signer 操作的 non-login service；`fased-signer` 拥有 key、policy、
+network state 与 signer audit；root 只用于首次 bootstrap 与 exact-tag emergency
+repair。正常 streamed Hosting 只用于 fresh install，并在创建持久化 Fased
+状态、账号或 service 前验证 tagged manifest 与 app/dependency/signer layer。
+
 ## Skills 和插件发现
 
 Skill 是 `SKILL.md` 指令包，加可选配置和依赖。安装 skill 只表示 Fased 在 library 或工作区里有这个文件；不代表依赖、API key、钱包访问或 Agent access 已经 ready。
@@ -64,6 +70,12 @@ Skill 是 `SKILL.md` 指令包，加可选配置和依赖。安装 skill 只表�
 - 安装 skill、审查插件或允许 Agent 使用 skill 都不会自动授予钱包访问。
 
 对 wallet-capable skills，请在 **Wallets > Skill Grants** 中授予最窄的 actions、wallet ids、chains、caps 和 automation level。
+
+新 signer wallet 使用 versioned role-ready baseline，而不是 unlimited default。
+Legacy deny-all wallet 需要一次明确 review 后 activation。创建 Agent wallet 不会
+自动设为 Default Agent；risky routing 顺序是 explicit wallet、skill grant、Agent
+assignment、最后才是 optional Default Agent fallback。Mining retirement 在移动
+runtime assignment 前写入永久 signer tombstone。
 
 ## 发布前检查
 
