@@ -32,6 +32,7 @@ export const SIGNER_PROTOCOL_V2 = Object.freeze({
     "signerOwnedRoleBaselines",
     "liveWalletReadiness",
     "signerOwnedSuccessorRotation",
+    "signerOwnedMiningRetirementEvidence",
     "permanentRetiredWalletPolicies",
     "signerOwnedRPC",
     "applicationNetworkBootstrap",

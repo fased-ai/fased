@@ -670,6 +670,12 @@ export function deleteNamedWallet(params: {
     throw new Error("walletId is protected from deletion");
   }
   assertNamedWalletDeletionSafe({ walletId, env });
+  const targetWallet = registry.wallets.find((wallet) => wallet.id === walletId);
+  if (resolveWalletUserRole(targetWallet) === "mining") {
+    throw new Error(
+      "Mining wallets cannot be deleted directly; use Retire and replace Mining wallet so signer acknowledgement precedes registry detachment",
+    );
+  }
   const before = registry.wallets.length;
   registry.wallets = registry.wallets.filter((entry) => entry.id !== walletId);
   for (const [agentId, assignedWalletId] of Object.entries(registry.assignments)) {
@@ -683,6 +689,72 @@ export function deleteNamedWallet(params: {
   const removed = registry.wallets.length !== before;
   writeWalletProviderRegistry(registry, env);
   return { removed, registry };
+}
+
+export function replaceRetiredMiningWallet(params: {
+  sourceWalletId: string;
+  successor: Omit<WalletNamedWallet, "createdAt" | "updatedAt">;
+  signerAcknowledgement: {
+    rotationId: string;
+    sourceRetiredPolicyHash: string;
+    successorPublicKey: string;
+    successorPolicyHash: string;
+  };
+  env?: NodeJS.ProcessEnv;
+}): WalletNamedWallet {
+  const env = params.env ?? process.env;
+  const registry = readWalletProviderRegistry(env);
+  const sourceWalletId = params.sourceWalletId.trim();
+  if (
+    !/^sha256:[0-9a-f]{64}$/u.test(params.signerAcknowledgement.rotationId) ||
+    !/^sha256:[0-9a-f]{64}$/u.test(params.signerAcknowledgement.sourceRetiredPolicyHash) ||
+    !/^sha256:[0-9a-f]{64}$/u.test(params.signerAcknowledgement.successorPolicyHash) ||
+    params.signerAcknowledgement.successorPublicKey !== params.successor.addresses?.solana ||
+    params.successor.metadata?.rotationId !== params.signerAcknowledgement.rotationId ||
+    params.successor.metadata?.policyHash !== params.signerAcknowledgement.successorPolicyHash
+  ) {
+    throw new Error("signer retirement acknowledgement is missing or does not match the successor");
+  }
+  const sourceIndex = registry.wallets.findIndex((wallet) => wallet.id === sourceWalletId);
+  if (sourceIndex < 0) {
+    const existing = registry.wallets.find((wallet) => wallet.id === params.successor.id);
+    if (
+      existing?.providerId === "local-socket-signer" &&
+      existing.addresses?.solana === params.successor.addresses?.solana &&
+      resolveWalletUserRole(existing) === "mining"
+    ) {
+      return existing;
+    }
+    throw new Error("retired Mining source registration is missing");
+  }
+  const source = registry.wallets[sourceIndex];
+  if (resolveWalletUserRole(source) !== "mining") {
+    throw new Error("source registration is not the active Mining wallet");
+  }
+  if (
+    params.successor.id === sourceWalletId ||
+    registry.wallets.some((wallet) => wallet.id === params.successor.id)
+  ) {
+    throw new Error("Mining successor registration must use a new wallet id");
+  }
+  assertNamedWalletDeletionSafe({ walletId: sourceWalletId, env });
+  const now = nowIso();
+  const successor: WalletNamedWallet = {
+    ...params.successor,
+    createdAt: now,
+    updatedAt: now,
+  };
+  registry.wallets.splice(sourceIndex, 1, successor);
+  for (const [agentId, assignedWalletId] of Object.entries(registry.assignments)) {
+    if (assignedWalletId === sourceWalletId) {
+      delete registry.assignments[agentId];
+    }
+  }
+  if (registry.defaultWalletId === sourceWalletId) {
+    registry.defaultWalletId = undefined;
+  }
+  writeWalletProviderRegistry(registry, env);
+  return successor;
 }
 
 export function setAgentWalletAssignment(params: {

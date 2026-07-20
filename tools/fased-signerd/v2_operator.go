@@ -66,6 +66,7 @@ var signerOperatorAllowedOperationsV1 = map[string]bool{
 	"health":                    true,
 	"v2.capabilities":           true,
 	"v2.wallet.get":             true,
+	"getBalance":                true,
 	"v2.wallet.readiness":       true,
 	"v2.network.get":            true,
 	"v2.network.setPrimary":     true,
@@ -74,6 +75,9 @@ var signerOperatorAllowedOperationsV1 = map[string]bool{
 	"v2.wallet.recovery.export": true,
 	"v2.wallet.recovery.import": true,
 	"v2.wallet.exportRaw":       true,
+	"v2.wallet.rotation.create": true,
+	"v2.wallet.rotation.status": true,
+	"v2.wallet.rotation.commit": true,
 }
 
 func newSignerOperatorContextV1(now time.Time) (signerOperatorContextV1, error) {
@@ -274,7 +278,9 @@ func (m *signerKeyManagerV2) exportOperatorRawV1(
 }
 
 func (s *signerServiceV2) handleOperatorLifecycleV1(req request, cfg signerConfig) ([]byte, error) {
-	if cfg.readOnly && req.Op != "health" && req.Op != "v2.capabilities" {
+	if cfg.readOnly && req.Op != "health" && req.Op != "v2.capabilities" &&
+		req.Op != "v2.wallet.get" && req.Op != "v2.wallet.readiness" && req.Op != "v2.network.get" &&
+		req.Op != "getBalance" && req.Op != "v2.wallet.rotation.status" {
 		return nil, errors.New("read-only signer mode")
 	}
 	switch req.Op {
@@ -294,6 +300,27 @@ func (s *signerServiceV2) handleOperatorLifecycleV1(req request, cfg signerConfi
 			return nil, err
 		}
 		return marshalSignerResultV2(signerWalletPolicyResultV2{Wallet: wallet, Policy: policy})
+	case "getBalance":
+		wallet, err := s.keys.PublicRecord(req.WalletID)
+		if err != nil {
+			return nil, err
+		}
+		address, err := solana.PublicKeyFromBase58(wallet.PublicKey)
+		if err != nil {
+			return nil, errors.New("signer-owned wallet record has an invalid public key")
+		}
+		rpcURLs, err := s.keys.SolanaRPCURLsV2(req.WalletID)
+		if err != nil {
+			return nil, errSignerNetworkPendingV2
+		}
+		lamports, err := signerOwnedSolanaBalanceV2(rpcURLs, address)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(map[string]any{
+			"ok": true, "chain": "solana", "address": wallet.PublicKey,
+			"balance": fmt.Sprintf("%d", lamports), "unit": "lamports",
+		})
 	case "v2.wallet.readiness":
 		result, err := s.walletReadinessV2(req.WalletID)
 		if err != nil {
@@ -386,6 +413,32 @@ func (s *signerServiceV2) handleOperatorLifecycleV1(req request, cfg signerConfi
 		}
 		encoded, err := json.Marshal(map[string]any{"ok": true, "result": result})
 		return encoded, err
+	case "v2.wallet.rotation.create":
+		var body signerWalletRotationCreateRequestV2
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		rotation, err := s.keys.CreateSuccessorRotation(req.WalletID, body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(rotation)
+	case "v2.wallet.rotation.status":
+		rotation, err := s.keys.SuccessorRotationStatus(req.WalletID)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(rotation)
+	case "v2.wallet.rotation.commit":
+		var body signerWalletRotationCommitRequestV2
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		rotation, err := s.keys.CommitSuccessorRotation(req.WalletID, body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(rotation)
 	default:
 		return nil, errors.New("operation is not available on the signer operator socket")
 	}

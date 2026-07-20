@@ -9,7 +9,7 @@ describe("native wallet CLI contract", () => {
     const wallet = program.commands.find((command) => command.name() === "wallet");
     expect(wallet).toBeDefined();
     const commands = new Map(wallet?.commands.map((command) => [command.name(), command]));
-    for (const name of ["create", "import", "rpc", "recovery", "export-raw", "status"]) {
+    for (const name of ["create", "import", "retire", "rpc", "recovery", "export-raw", "status"]) {
       expect(commands.has(name), `missing fased wallet ${name}`).toBe(true);
     }
     expect(commands.get("rpc")?.commands.map((command) => command.name())).toContain("set");

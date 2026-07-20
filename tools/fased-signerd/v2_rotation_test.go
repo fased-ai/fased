@@ -2,15 +2,69 @@ package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	solana "github.com/gagliardetto/solana-go"
 	bolt "go.etcd.io/bbolt"
 )
+
+func configureTestSignerMiningRuntimeV1(t *testing.T) {
+	t.Helper()
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := json.Marshal(map[string]any{
+		"schema": "sat-mainnet-addresses.v1", "network": "mainnet-beta", "status": "live",
+		"sat": map[string]string{
+			"programId":     solana.NewWallet().PublicKey().String(),
+			"bondProgramId": solana.NewWallet().PublicKey().String(),
+			"mint":          solana.NewWallet().PublicKey().String(),
+			"mintProgramId": solana.TokenProgramID.String(),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		SAT struct {
+			ProgramID, BondProgramID, Mint, MintProgramID string
+		} `json:"sat"`
+	}
+	if err := json.Unmarshal(manifest, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(manifest)
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "sat-runtime.json")
+	signaturePath := filepath.Join(dir, "sat-runtime.sig")
+	if err := os.WriteFile(manifestPath, manifest, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(signaturePath, []byte(base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, manifest))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FASED_SAT_PROGRAM_ID", decoded.SAT.ProgramID)
+	t.Setenv("FASED_SAT_BOND_PROGRAM_ID", decoded.SAT.BondProgramID)
+	t.Setenv("FASED_SAT_MINT_ADDRESS", decoded.SAT.Mint)
+	t.Setenv("FASED_SAT_MINT_PROGRAM_ID", decoded.SAT.MintProgramID)
+	t.Setenv("FASED_SAT_RUNTIME_MANIFEST_PATH", manifestPath)
+	t.Setenv("FASED_SAT_RUNTIME_MANIFEST_SHA256", hex.EncodeToString(digest[:]))
+	t.Setenv("FASED_SAT_RUNTIME_MANIFEST_SIGNATURE_PATH", signaturePath)
+	t.Setenv("FASED_SAT_MAINNET_MANIFEST_PUBLIC_KEY", base64.RawURLEncoding.EncodeToString(publicKey))
+}
 
 func rotationCommitRequestForTestV2(rotation signerWalletRotationV2, sourcePolicyVersion uint64) signerWalletRotationCommitRequestV2 {
 	return signerWalletRotationCommitRequestV2{
@@ -151,13 +205,18 @@ func TestSignerSuccessorRotationIsDistinctAtomicIdempotentAndPermanentlyRetiresS
 		t.Fatalf("historical source operation was not preserved for reconciliation: %#v err=%v", sourceHistory, err)
 	}
 	if successorKey, _, err := keys.privateKey(rotation.SuccessorWalletID); err != nil {
-		t.Fatalf("successor key is not signer-owned and usable after explicit policy installation: %v", err)
+		t.Fatalf("successor key is not signer-owned and usable after atomic baseline activation: %v", err)
 	} else {
 		zeroBytes(successorKey)
 	}
+	activeSuccessor, err := store.getPolicy(rotation.SuccessorWalletID)
+	if err != nil || activeSuccessor.Role != sourcePolicy.Role || activeSuccessor.BaselineVersion != signerRoleBaselineVersionV1 ||
+		activeSuccessor.Version != successorPolicy.Version+1 || activeSuccessor.Hash != committed.SuccessorActivatedPolicyHash {
+		t.Fatalf("successor role baseline was not activated atomically: %#v err=%v", activeSuccessor, err)
+	}
 	expandedSuccessor := testSignerPolicyV2(rotation.SuccessorWalletID, destination, 100, 1_000)
-	if installed, err := store.putPolicy(expandedSuccessor, successorPolicy.Version); err != nil || installed.Role != sourcePolicy.Role {
-		t.Fatalf("owner could not explicitly install successor policy after commit: %#v err=%v", installed, err)
+	if _, err := store.putPolicy(expandedSuccessor, successorPolicy.Version); err == nil || !strings.Contains(err.Error(), "version conflict") {
+		t.Fatalf("stale successor policy expansion was accepted after commit: %v", err)
 	}
 
 	if err := store.db.View(func(tx *bolt.Tx) error {
@@ -288,6 +347,114 @@ func TestSignerSuccessorRotationConcurrentExactRequestsConverge(t *testing.T) {
 	}
 	if count != workers {
 		t.Fatalf("concurrent commit results = %d, want %d", count, workers)
+	}
+}
+
+func TestMiningRetirementRequiresEvidenceRecoveryNetworkAndReconciliation(t *testing.T) {
+	configureTestSignerMiningRuntimeV1(t)
+	store, keys := openTestSignerV2(t)
+	source, sourcePolicy, err := keys.CreateWithRoleBaseline(
+		"mining",
+		0,
+		signerRoleBaselineRequestV1{Version: 1, Role: "mining"},
+		signerRoleBaselineRuntimeFromEnvV1(),
+	)
+	if err != nil {
+		t.Fatalf("create role-ready Mining source: %v", err)
+	}
+	rotation, err := keys.CreateSuccessorRotation(source.WalletID, signerWalletRotationCreateRequestV2{
+		SuccessorWalletID:           "mining_successor",
+		ExpectedSourcePublicKey:     source.PublicKey,
+		ExpectedSourceWalletVersion: source.Version,
+		ExpectedSourcePolicyVersion: sourcePolicy.Version,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedNetworkVersion := uint64(0)
+	network, err := keys.PutNetworkV2(rotation.SuccessorWalletID, signerNetworkPutRequestV2{
+		ExpectedVersion: &expectedNetworkVersion,
+		PrimaryRPCURL:   "https://api.devnet.solana.com",
+	})
+	if err != nil {
+		t.Fatalf("configure Mining successor network: %v", err)
+	}
+	evidence := signerMiningRetirementEvidenceV1{
+		Version: 1, WalletID: source.WalletID, PublicKey: source.PublicKey,
+		ObservedAt:     timestampV2(store.now()),
+		NewJobsStopped: true, WorkersDrained: true, ClearingDrained: true, SubmissionsReconciled: true,
+		SOLBalanceLamports: "42", SATBalanceRaw: "99",
+		RuntimeStateHash:     "sha256:" + strings.Repeat("a", 64),
+		SubmissionLedgerHash: "sha256:" + strings.Repeat("b", 64),
+	}
+	commit := rotationCommitRequestForTestV2(rotation, sourcePolicy.Version)
+	if _, err := keys.CommitSuccessorRotation(source.WalletID, commit); err == nil || !strings.Contains(err.Error(), "requires recovery") {
+		t.Fatalf("Mining retirement accepted missing recovery and safety evidence: %v", err)
+	}
+	commit.ExpectedSuccessorNetworkVersion = network.Version
+	commit.ExpectedSuccessorNetworkHash = network.Hash
+	commit.RecoveryPackageHash = "sha256:" + strings.Repeat("c", 64)
+	commit.SafetyEvidence = &evidence
+	staleEvidence := evidence
+	staleEvidence.ObservedAt = timestampV2(store.now().Add(-6 * time.Minute))
+	staleCommit := commit
+	staleCommit.SafetyEvidence = &staleEvidence
+	if _, err := keys.CommitSuccessorRotation(source.WalletID, staleCommit); err == nil || !strings.Contains(err.Error(), "stale") {
+		t.Fatalf("Mining retirement accepted stale safety evidence: %v", err)
+	}
+	pending := signerOperationV2{
+		RequestID: "mining-pending-before-retirement", WalletID: source.WalletID,
+		IntentType: intentSolanaNativeTransfer, IntentDigest: "sha256:" + strings.Repeat("d", 64),
+		PolicyHash: sourcePolicy.Hash, Asset: "solana:native", Amount: "1", State: operationUnknown,
+		ReservedAt: timestampV2(store.now()), UpdatedAt: timestampV2(store.now()),
+	}
+	if err := store.db.Update(func(tx *bolt.Tx) error {
+		raw, encodeErr := json.Marshal(pending)
+		if encodeErr != nil {
+			return encodeErr
+		}
+		return tx.Bucket(bucketSignerOperationsV2).Put([]byte(pending.RequestID), raw)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := keys.CommitSuccessorRotation(source.WalletID, commit); err == nil || !strings.Contains(err.Error(), "must be reconciled") {
+		t.Fatalf("Mining retirement accepted an unknown signer operation: %v", err)
+	}
+	pending.State = operationFailed
+	if err := store.db.Update(func(tx *bolt.Tx) error {
+		raw, encodeErr := json.Marshal(pending)
+		if encodeErr != nil {
+			return encodeErr
+		}
+		return tx.Bucket(bucketSignerOperationsV2).Put([]byte(pending.RequestID), raw)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	commitBody, err := json.Marshal(commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedCommitted, err := (&signerServiceV2{store: store, keys: keys}).handle(request{
+		Op: "v2.wallet.rotation.commit", WalletID: source.WalletID, Request: commitBody, operatorSocket: true,
+	}, signerConfig{}, false)
+	if err != nil {
+		t.Fatalf("commit safe Mining retirement through restricted operator authority: %v", err)
+	}
+	var envelope signerAdminResponse
+	if err := json.Unmarshal(encodedCommitted, &envelope); err != nil || !envelope.OK {
+		t.Fatalf("decode Mining retirement response envelope: %s err=%v", encodedCommitted, err)
+	}
+	var committed signerWalletRotationV2
+	if err := json.Unmarshal(envelope.Result, &committed); err != nil {
+		t.Fatal(err)
+	}
+	if committed.State != signerWalletRotationCommittedV2 || committed.SafetyEvidenceHash == "" ||
+		committed.RecoveryPackageHash != commit.RecoveryPackageHash || committed.SafetyEvidence == nil {
+		t.Fatalf("Mining retirement receipt evidence is incomplete: %#v", committed)
+	}
+	readiness, err := (&signerServiceV2{store: store, keys: keys}).walletReadinessV2(rotation.SuccessorWalletID)
+	if err != nil || !readiness.Ready || readiness.Role != "mining" || readiness.OperationLane != "mining-typed-sat" {
+		t.Fatalf("Mining successor is not ready after atomic retirement: %#v err=%v", readiness, err)
 	}
 }
 

@@ -1298,6 +1298,7 @@ export async function runOnboardingWizard(
             | "attach-federation-bond"
             | "detach-federation-bond"
             | "configure-solana-rpc"
+            | "retire-mining"
             | "archive"
             | "cancel"
           >({
@@ -1337,11 +1338,17 @@ export async function runOnboardingWizard(
                       },
                     ]
                   : []),
-              {
-                value: "archive",
-                label: "Archive/remove from Fased",
-                hint: "Disable signer use first, then remove this wallet registration.",
-              },
+              targetWalletPurpose === "mining"
+                ? {
+                    value: "retire-mining",
+                    label: "Retire and replace Mining wallet",
+                    hint: "Stop and drain Mining, verify recovery and balances, tombstone the old signer wallet, then attach a ready successor.",
+                  }
+                : {
+                    value: "archive",
+                    label: "Archive/remove from Fased",
+                    hint: "Disable signer use first, then remove this wallet registration.",
+                  },
               {
                 value: "cancel",
                 label: "Back",
@@ -1403,6 +1410,22 @@ export async function runOnboardingWizard(
             });
             continue;
           }
+          if (manageAction === "retire-mining") {
+            await prompter.note(
+              [
+                "Mining retirement is a coordinated replacement, never a registry-only delete.",
+                `Run: fased wallet recovery export --wallet-id ${targetWallet.id} --output <absolute-recovery-path>`,
+                `Then run: fased wallet retire --wallet-id ${targetWallet.id} --successor-wallet-id <new-id> --successor-wallet-name <name> --recovery-file <absolute-recovery-path> --rpc-url <url>`,
+                "The command stops new jobs, waits for Clearing and reconciliation, records balances, commits the signer tombstone, and attaches the ready successor.",
+              ].join("\n"),
+              "Retire and replace Mining wallet",
+            );
+            addAnotherWallet = await prompter.confirm({
+              message: "Run another wallet setup action?",
+              initialValue: false,
+            });
+            continue;
+          }
           if (manageAction === "attach-federation-bond") {
             const agentDefaultWallet = readAgentDefaultWallet();
             if (targetWalletPurpose !== "vault") {
@@ -1452,6 +1475,17 @@ export async function runOnboardingWizard(
             await prompter.note(
               `Cleared ${targetWallet.name} (${walletId}) as the Fased Network bond Vault.`,
               "Fased Network bond",
+            );
+            addAnotherWallet = await prompter.confirm({
+              message: "Run another wallet setup action?",
+              initialValue: false,
+            });
+            continue;
+          }
+          if (targetWalletPurpose === "mining") {
+            await prompter.note(
+              "Mining wallets cannot be archived or deleted directly. Use Retire and replace Mining wallet so the signer tombstone is committed before registry detachment.",
+              "Mining retirement required",
             );
             addAnotherWallet = await prompter.confirm({
               message: "Run another wallet setup action?",

@@ -724,6 +724,7 @@ func TestSignerAdminWalletSuccessorRotationTypedCommands(t *testing.T) {
 		args  func(string) []string
 		op    string
 		body  bool
+		stdin string
 		check func(*testing.T, request)
 	}{
 		{
@@ -763,16 +764,20 @@ func TestSignerAdminWalletSuccessorRotationTypedCommands(t *testing.T) {
 					"--expected-source-wallet-version", "3", "--expected-source-policy-version", "8",
 					"--expected-successor-wallet-version", "1", "--expected-successor-policy-version", "1",
 					"--expected-rotation-version", "1",
+					"--expected-successor-network-version", "2",
+					"--expected-successor-network-hash", "hmac-sha256:" + strings.Repeat("b", 64),
 				}
 			},
 			op: "v2.wallet.rotation.commit", body: true,
+			stdin: `{"recoveryPackageHash":"sha256:` + strings.Repeat("c", 64) + `","safetyEvidence":{"version":1,"walletId":"agent","publicKey":"` + sourcePublicKey + `","observedAt":"2026-07-20T12:00:00Z","newJobsStopped":true,"workersDrained":true,"clearingDrained":true,"submissionsReconciled":true,"pendingCommits":0,"pendingReveals":0,"pendingSettlements":0,"pendingClaims":0,"pendingCleanup":0,"pendingAltMutations":0,"solBalanceLamports":"1","satBalanceRaw":"2","runtimeStateHash":"sha256:` + strings.Repeat("d", 64) + `","submissionLedgerHash":"sha256:` + strings.Repeat("e", 64) + `"}}`,
 			check: func(t *testing.T, req request) {
 				var body signerWalletRotationCommitRequestV2
 				decodeSignerAdminTestBody(t, req, &body)
 				if body.RotationID != rotationID || body.SuccessorWalletID != "agent_2026" ||
 					body.ExpectedSourcePublicKey != sourcePublicKey || body.ExpectedSuccessorPublicKey != successorPublicKey ||
 					body.ExpectedSourceWalletVersion != 3 || body.ExpectedSourcePolicyVersion != 8 ||
-					body.ExpectedSuccessorWalletVersion != 1 || body.ExpectedSuccessorPolicyVersion != 1 || body.ExpectedRotationVersion != 1 {
+					body.ExpectedSuccessorWalletVersion != 1 || body.ExpectedSuccessorPolicyVersion != 1 || body.ExpectedRotationVersion != 1 ||
+					body.ExpectedSuccessorNetworkVersion != 2 || body.RecoveryPackageHash == "" || body.SafetyEvidence == nil {
 					t.Fatalf("unexpected rotation commit body: %#v", body)
 				}
 			},
@@ -781,7 +786,7 @@ func TestSignerAdminWalletSuccessorRotationTypedCommands(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			server := startSignerAdminTestServer(t, signerAdminTestSuccess(t, `{"state":"typed"}`))
-			if err := runSignerAdminCLI(test.args(server.path), strings.NewReader(""), io.Discard, nil); err != nil {
+			if err := runSignerAdminCLI(test.args(server.path), strings.NewReader(test.stdin), io.Discard, nil); err != nil {
 				t.Fatalf("run rotation admin command: %v", err)
 			}
 			req := waitSignerAdminTestServer(t, server)

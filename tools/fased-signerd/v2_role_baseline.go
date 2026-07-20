@@ -147,6 +147,7 @@ func verifySignerRoleBaselineRuntimeV1(runtime signerRoleBaselineRuntimeV1) erro
 type signerWalletReadinessV2 struct {
 	WalletID        string `json:"walletId"`
 	PublicKey       string `json:"publicKey"`
+	WalletVersion   uint64 `json:"walletVersion"`
 	Role            string `json:"role"`
 	BaselineVersion uint64 `json:"baselineVersion"`
 	PolicyVersion   uint64 `json:"policyVersion"`
@@ -450,6 +451,7 @@ func (s *signerServiceV2) walletReadinessV2(walletID string) (signerWalletReadin
 	result := signerWalletReadinessV2{
 		WalletID:        wallet.WalletID,
 		PublicKey:       wallet.PublicKey,
+		WalletVersion:   wallet.Version,
 		Role:            policy.Role,
 		BaselineVersion: policy.BaselineVersion,
 		PolicyVersion:   policy.Version,

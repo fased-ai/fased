@@ -27,6 +27,7 @@
     "signerOwnedRoleBaselines",
     "liveWalletReadiness",
     "signerOwnedSuccessorRotation",
+    "signerOwnedMiningRetirementEvidence",
     "permanentRetiredWalletPolicies",
     "signerOwnedRPC",
     "applicationNetworkBootstrap",
