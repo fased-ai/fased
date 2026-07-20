@@ -4,6 +4,21 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## Unreleased
+
+- Make new signer-owned Agent, Mining, and Vault wallets role-ready with one
+  verified RPC; preserve legacy deny-all wallets until explicit activation.
+- Make Agent wallet routing explicit, then skill-specific, Agent-specific, and
+  finally optional Default Agent fallback; creation never selects a fallback.
+- Separate the Hosting operator, Gateway, and signer identities; provide the
+  same native wallet lifecycle on Local and Hosting without ordinary root
+  helper commands.
+- Add signer-tombstoned, resumable Mining retirement and a distinct role-ready
+  successor.
+- Restore the exact fresh streamed Hosting command with verified tagged
+  handoff, retain exact-tag-only repair, and reset English/Chinese install and
+  wallet documentation around the tested behavior.
+
 ## 0.1.68
 
 - Unify signer-owned Agent, Mining, and Vault creation around one explicit role

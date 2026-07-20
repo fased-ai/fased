@@ -50,7 +50,7 @@ to mining, bonded SAT, public mining history, and future trust roles.
   <Accordion title="Agent wallet">
     The wallet used for ordinary sends, Marketplace payment flows, and reviewed
     skill/plugin wallet actions. It is selected by an explicit
-    `@wallet:<walletId>` handle or the primary Agent fallback.
+    `@wallet:<walletId>` handle or the optional Default Agent fallback.
   </Accordion>
   <Accordion title="Mining wallet">
     The singleton `@wallet:mining` Solana wallet reserved for SAT mining. It

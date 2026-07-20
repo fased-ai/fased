@@ -106,11 +106,10 @@ For the normal always-on Pi path, enter a root shell:
 sudo -i
 ```
 
-Then run the complete [verified Hosting bootstrap
-block](/install/vps#3-verify-and-run-the-hosting-bootstrap). It authenticates
-the tagged installer before execution, selects the supported ARM64 release,
-installs the runtime, starts Tailscale through signed OS packages, creates the
-non-root `app` service, and runs onboarding.
+Then run the exact [fresh Hosting command](/install/vps#3-install-fased). Its
+small streamed bootstrap verifies the tagged ARM64 runtime before persistent
+Fased setup, starts Tailscale through signed OS packages, separates the `app`
+operator from the Gateway service account, and runs onboarding.
 
 <Accordion title="Advanced: hackable source checkout">
   Contributors who intentionally need a source tree can use:

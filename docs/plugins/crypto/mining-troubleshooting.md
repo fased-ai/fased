@@ -177,6 +177,18 @@ and net SOL cost.
 7. Restart the gateway only after reading current status.
 8. Let recovery/claim finish before changing wallets or deleting local state.
 
+## Interrupted Mining replacement
+
+Retry the exact same `fased wallet retire` command. The lifecycle reads the
+signer's retirement receipt and resumes only the incomplete step. Do not choose
+a new successor ID during a retry, delete the receipt, reactivate the retired
+wallet, or manually edit registry assignment.
+
+If retirement reports live work, stale evidence, a recoverable balance, a
+wrong role/genesis, or an unready successor, fix that exact blocker first. The
+old Mining assignment stays authoritative until signer tombstone and successor
+readiness are both proven.
+
 ## Read next
 
 <Columns>

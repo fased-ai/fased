@@ -126,8 +126,8 @@ Choose the setup profile first.
     ssh root@YOUR_PUBLIC_VPS_IP
     ```
 
-    Run the complete [verified Hosting bootstrap
-    block](/install/vps#3-verify-and-run-the-hosting-bootstrap) **inside the VPS
+    Run the [exact fresh Hosting
+    command](/install/vps#3-install-fased) **inside the VPS
     root SSH session**. It authenticates the tagged installer before Bash runs
     it, verifies the Hosting bundle, and installs/starts Tailscale on the VPS.
 
@@ -169,9 +169,9 @@ fased dashboard
 fased health
 ```
 
-For VPS Hosting, use the [verified bootstrap
-block](/install/vps#3-verify-and-run-the-hosting-bootstrap) instead of streaming
-a mutable branch script into the root shell.
+For existing VPS Hosting repair, use
+[exact-tag repair](/install/installer#hosting-repair-and-recovery). Never stream
+a repair selector from a mutable branch into the root shell.
 
 Before continuing, update and verify the Gateway:
 
@@ -296,25 +296,27 @@ flow during onboarding:
    second-RPC field; the signer derives and verifies the network from genesis.
 4. Press **Create wallet**. The Go signer creates the key and returns only the
    public address.
-5. Confirm the wallet shows RPC ready and the role-safe receive-only policy
-   baseline.
+5. Confirm the wallet shows RPC ready, signer-owned role baseline v1, and the
+   exact live policy/network hashes.
 
 Agent and Vault can have multiple wallets. Mining has one active wallet. To
 replace Mining, stop Mining, settle or move funds, verify recovery, then use
 the guarded **Archive Mining** action before creating the replacement.
 
-The browser never accepts an existing private key. On Local, import stays in
-the native terminal flow so private key material does not enter Gateway
+The browser never accepts an existing private key. Local and Hosting use the
+native operator terminal so private key material does not enter Gateway
 JavaScript:
 
 ```bash
-fased wallet setup --mode local-signer-import --role mining --wallet-id mining
+fased wallet import \
+  --wallet-id mining --wallet-name "Mining" --role mining \
+  --file /absolute/path/to/solana-keypair.json \
+  --rpc-url https://your-solana-rpc.example
 ```
 
-On Hosting, run the installed root-only signer import helper from the VPS
-provider console, then return to `app` and choose **Create** with the same role
-and wallet ID to resume one-RPC registration. The Gateway account has no import
-sudo rule.
+On Hosting, run that same command from the `app` operator shell. The restricted
+operator socket performs import and one-RPC activation; `fased-gateway` cannot
+use it.
 
 Use `agent` or `vault` only when that is the role you explicitly chose. Never
 put private keys, seed phrases, recovery passwords, or RPC credentials in
@@ -328,12 +330,11 @@ uses the separate native admin command.
 
 ![Wallet role summary after local setup](/images/screenshots/local/wallet-ui-2.png)
 
-New wallets begin receive-only. Configure only the role policy you need before
-sending or mining. Agent and Mining automation does not require an account
-passkey. **Wallets > Account Security** offers an optional Control UI account
-passkey, while a Vault approval device is a separate optional Vault security
-step completed through the native signer-owner enrollment flow, not through
-ordinary Gateway JavaScript.
+New wallets begin role-ready under a bounded signer-owned baseline. Broader
+automation still needs explicit authority. Agent and Mining automation does
+not require an account passkey. **Wallets > Account Security** offers an
+optional Control UI account passkey, while a Vault approval device is a
+separate optional native signer-owner step, not ordinary Gateway JavaScript.
 
 ![Control UI account passkey state](/images/screenshots/web/wallet-passkey-2.png)
 

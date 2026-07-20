@@ -97,11 +97,14 @@ describe("attested Hosting installer artifact layout", () => {
     expect(releaseWorkflow).toContain(
       'gh release upload "$GITHUB_REF_NAME" .artifacts/hosted-runtime/*',
     );
-    const vpsGuide = fs.readFileSync(path.join(root, "docs/install/vps.md"), "utf8");
-    expect(vpsGuide).toContain("install.sh.attestation.json");
-    expect(vpsGuide).toContain('--bundle "$BOOTSTRAP_DIR/install.sh.attestation.json"');
-    expect(vpsGuide).toContain('--source-ref "refs/tags/${RELEASE}"');
-    expect(vpsGuide).toContain("--deny-self-hosted-runners");
+    const installerReference = fs.readFileSync(
+      path.join(root, "docs/install/installer.md"),
+      "utf8",
+    );
+    expect(installerReference).toContain("install.sh.attestation.json");
+    expect(installerReference).toContain('--bundle "$BOOTSTRAP_DIR/install.sh.attestation.json"');
+    expect(installerReference).toContain('--source-ref "refs/tags/${RELEASE}"');
+    expect(installerReference).toContain("--deny-self-hosted-runners");
   });
 
   it("dispatches standalone Hosting execution through the attested bundle bootstrap", () => {
@@ -237,46 +240,14 @@ describe("attested Hosting installer artifact layout", () => {
     }
   });
 
-  it("does not document a mutable streamed Hosting resolver", () => {
-    const docsRoot = path.join(root, "docs");
-    const pending = [docsRoot];
-    const streamedHostingOffenders: string[] = [];
-    while (pending.length > 0) {
-      const current = pending.pop();
-      if (!current) {
-        continue;
-      }
-      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-        const absolutePath = path.join(current, entry.name);
-        if (entry.isDirectory()) {
-          pending.push(absolutePath);
-          continue;
-        }
-        if (!entry.isFile() || !/\.(?:md|mdx)$/.test(entry.name)) {
-          continue;
-        }
-        const relativePath = path.relative(root, absolutePath);
-        const contents = fs.readFileSync(absolutePath, "utf8");
-        const codeBlocks =
-          contents.match(/^[ \t]*```(?:bash|sh)[^\n]*\n[\s\S]*?^[ \t]*```[ \t]*$/gm) ?? [];
-        for (const block of codeBlocks) {
-          if (
-            block.includes("raw.githubusercontent.com/fased-ai/fased") &&
-            /--hosting\b/.test(block)
-          ) {
-            streamedHostingOffenders.push(`${relativePath}: ${block}`);
-          }
-        }
-      }
-    }
-    expect(streamedHostingOffenders).toEqual([]);
-
+  it("documents the literal fresh Hosting command before Advanced verification", () => {
     const vpsGuide = fs.readFileSync(path.join(root, "docs/install/vps.md"), "utf8");
-    const verify = vpsGuide.indexOf('gh attestation verify "$BOOTSTRAP_DIR/install.sh"');
-    const execute = vpsGuide.indexOf(
-      'bash "$BOOTSTRAP_DIR/install.sh" --hosting --release "$RELEASE"',
+    const command = vpsGuide.indexOf(
+      "curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \\",
     );
-    expect(verify).toBeGreaterThanOrEqual(0);
-    expect(execute).toBeGreaterThan(verify);
+    const advanced = vpsGuide.indexOf("<AccordionGroup>");
+    expect(command).toBeGreaterThanOrEqual(0);
+    expect(vpsGuide).toContain("| bash -s -- --hosting");
+    expect(advanced).toBeGreaterThan(command);
   });
 });

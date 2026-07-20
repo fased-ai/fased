@@ -66,14 +66,17 @@ For the native lane, `fased-signerd` owns:
 - durable request ids, transaction digests, signed bytes, cap reservations,
   daily totals, broadcast state, and reconciliation.
 
-New wallets start with an explicit deny-all policy. Empty operations, programs,
-assets, mints, or destinations grant nothing. Policy health exposes its exact
-version and hash. A UI policy change remains pending until the signer
-acknowledges that exact hash.
+New wallets start with signer-owned role baseline v1. Agent/Vault reviewed
+transfers and Mining's release-bound typed SAT actions are useful but bounded;
+empty operations, programs, assets, mints, destinations, or non-positive caps
+still grant nothing. Policy health exposes the exact baseline, version, and
+hash. A UI policy change remains pending until the signer acknowledges that
+exact hash.
 
 The Gateway never creates a new key, accepts a key through an HTTP route, or
-receives plaintext key material during normal creation/import. Import is an
-explicit native admin command over the signer-only control socket.
+receives plaintext key material during creation/import. Local and Hosting use
+the native `fased wallet` operator lifecycle; Hosting routes it through the
+peer-credential-checked operator socket that the Gateway account cannot open.
 
 <Warning>
 Go is not itself a security boundary. On a Local same-user install, malicious

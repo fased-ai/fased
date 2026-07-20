@@ -24,7 +24,7 @@ curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
 ```
 
 For an always-on VPS, SSH to the provider root shell and run the complete
-[verified Hosting bootstrap block](/install/vps#3-verify-and-run-the-hosting-bootstrap).
+[exact fresh Hosting command](/install/vps#3-install-fased).
 
 The block authenticates the tagged installer before Bash executes it. The
 verified Hosting installer then installs/starts Tailscale, creates the non-root

@@ -1,105 +1,46 @@
 ---
-summary: "通过 Tailscale 私有访问，在常驻 VPS 上安装 Fased。"
+summary: "用三步在全新 VPS 安装 Fased，并通过 Tailscale 私有访问。"
 read_when:
-  - 你想在云端运行 Fased
-  - 你需要 VPS Hosting 安装或恢复说明
+  - 你要让 Fased 在 VPS 持续运行
+  - 你需要 Hosting 访问或恢复说明
 title: "VPS Hosting"
 ---
 
 # VPS Hosting
 
-VPS Hosting 适合需要常驻在线的 Fased。首次安装推荐 Ubuntu LTS。受维护的
-流程是主机管理的 `install.sh --hosting`；完整 Docker Gateway 只支持 Local。
+最简单的支持路径是全新 Ubuntu LTS VPS。Fased 会从操作系统的签名软件源
+安装 VPS 端 Tailscale；不要运行 Tailscale 的远程 `curl | sh` 安装器。
 
 ## 三步安装
 
 ### 1. 准备自己的电脑
 
-安装并登录 [Tailscale](https://tailscale.com/download)，保持在线。这台电脑
-用于打开 dashboard 和测试私有 SSH。
+在你将使用 Fased 的电脑安装并登录
+[Tailscale app](https://tailscale.com/download)。保留 VPS provider console
+作为恢复通道。
 
-### 2. 进入 VPS
+### 2. 连接全新 VPS
 
 ```bash
 ssh root@YOUR_PUBLIC_VPS_IP
 ```
 
-下面的命令只在这个远程 VPS SSH 会话中运行。
+下一条命令在 VPS root shell 中运行，不是在本机未连接 SSH 的 PowerShell 中。
 
-### 3. 运行 Hosting
-
-先通过云服务商已签名的操作系统软件源安装 `curl`、`jq` 和 GitHub CLI。
-然后在 VPS root shell 中运行完整代码块：
+### 3. 安装 Fased
 
 ```bash
-(
-set -euo pipefail
-for command in curl jq gh; do
-  command -v "$command" >/dev/null 2>&1 || {
-    echo "Install $command from the operating-system package repository first." >&2
-    exit 1
-  }
-done
-
-RELEASE="$(
-  curl -fsSL --proto '=https' --tlsv1.2 \
-    -H 'Accept: application/vnd.github+json' \
-    -H 'X-GitHub-Api-Version: 2022-11-28' \
-    -H 'User-Agent: fased-installer' \
-    https://api.github.com/repos/fased-ai/fased/releases/latest \
-    | jq -er '.tag_name | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))'
-)"
-BOOTSTRAP_DIR="$(mktemp -d)"
-trap 'rm -rf "$BOOTSTRAP_DIR"' EXIT
-
-curl -fsSLo "$BOOTSTRAP_DIR/install.sh" \
-  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh"
-curl -fsSLo "$BOOTSTRAP_DIR/install.sh.attestation.json" \
-  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh.attestation.json"
-
-GH_PROMPT_DISABLED=1 gh attestation verify "$BOOTSTRAP_DIR/install.sh" \
-  --repo fased-ai/fased \
-  --bundle "$BOOTSTRAP_DIR/install.sh.attestation.json" \
-  --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-  --source-ref "refs/tags/${RELEASE}" \
-  --deny-self-hosted-runners
-
-chmod 0500 "$BOOTSTRAP_DIR/install.sh"
-bash "$BOOTSTRAP_DIR/install.sh" --hosting --release "$RELEASE"
-)
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+  | bash -s -- --hosting
 ```
 
-此流程先选择稳定 tag，并在 Bash 执行任何下载的 Fased 代码之前，把
-`install.sh` 验证为该 tag 和指定 release workflow 的产物。验证后的安装器还会
-再次验证不可变 manifest、对应架构 bundle 和 GitHub attestation，然后才进行
-特权安装。
+在自己的电脑打开安装器打印的 Tailscale 登录 URL。提示确认前，先验证私有
+SSH 连接。
 
-安装器会自动：
+## 安装后
 
-- 安装 `RELEASE` 指定的精确 stable tag；
-- 在安装特权 Fased 资产前验证 tagged release manifest、对应架构 bundle 和
-  GitHub attestation；
-- 通过签名 package repository 在 VPS 安装/启动 Tailscale；
-- 创建非 root `app` runtime 和 root-managed service；
-- 引导 Tailscale SSH、防火墙和私有 dashboard 检查。
-
-它显示 Tailscale 登录 URL 时，在自己的电脑浏览器中打开。无需先在 VPS 手动
-安装 Tailscale。
-
-<Warning>
-不要在本地电脑或未连接 VPS 的 PowerShell 中运行 Hosting 命令。保留 provider
-console，直到 Tailscale SSH 和 dashboard 都正常。
-</Warning>
-
-## 验证私有访问
-
-从自己的电脑测试：
-
-```bash
-ssh app@YOUR_VPS_TAILSCALE_NAME
-```
-
-只有成功进入 `/home/app/fased` 后才确认安装器的锁定步骤。安装完成后使用：
+以 human operator 身份重新连接，不要继续使用 root，也不要使用 Gateway
+service account：
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
@@ -107,56 +48,82 @@ fased health
 fased dashboard
 ```
 
-## 高级验证与精确 release 选择
-
-<Accordion title="在运行 install.sh 前手动验证 attestation">
-  上面的普通流程已经在执行前验证 bootstrap。高级用户可以把 `RELEASE` 改为
-  另一个精确 stable tag、在最后的 `bash` 前检查脚本，或保存 attestation JSON
-  作为安装记录。不要使用 `main`、`latest` 或其他移动引用。
-
-紧急修复使用同一个 verified block，只把最后一行改为
-`--repair-hosting --release "$RELEASE"`。修复流程不接受 streamed shell 输入。
-</Accordion>
-
-## 更新和恢复
-
-正常更新以 `app` 通过 Tailscale 运行：
+`app` operator 只能使用受限 signer lifecycle socket；`fased-gateway` 运行
+Gateway，不能使用 operator 权限。正常更新同样由 operator 执行：
 
 ```bash
 fased update status
 fased update
 ```
 
-不要对 `/home/app/fased/install.sh` 使用 sudo。只有 root-managed updater 或
-service 损坏时，才从 provider root console 使用上面的 exact-tag 手动验证流程，
-并把最后一行改为：
+<AccordionGroup>
+  <Accordion title="这条命令验证什么">
+    streamed script 只接受全新 `--hosting`。它拒绝 repair、release/source
+    override、调用方 verification marker、不安全的 proxy/shell override 和
+    已存在的 Fased 状态。
 
-```bash
-bash "$BOOTSTRAP_DIR/install.sh" --repair-hosting --release "$RELEASE"
-```
+    持久化修改之前，它验证 release manifest 的离线 GitHub attestation
+    bundle。manifest 绑定 workflow、tag、source commit、architecture、app、
+    dependency 与 signer digest；同时检查 archive path、link、owner、可写
+    mode、package version 和 build identity。
 
-不要把 `--repair-hosting` 从 moving `main` pipe 到 root shell。
+    首次 mutable `main/install.sh` 下载仍是 bootstrap 信任。如需在任何 shell
+    执行前验证，使用下面的 exact-tag Advanced 流程。
 
-<Accordion title="Tailscale 或 VPN 故障排查">
-  在自己的电脑确认 Tailscale 在线，并在设置期间关闭其他 VPN：
+  </Accordion>
 
-```bash
-tailscale status
-tailscale ping YOUR_VPS_TAILSCALE_NAME
-ssh app@YOUR_VPS_TAILSCALE_NAME
-ssh app@100.x.x.x
-```
+  <Accordion title="Advanced：执行前验证 install.sh">
+    使用操作系统签名软件源安装 GitHub CLI，然后遵循
+    [Advanced Installer exact-tag 流程](/install/installer)。这是唯一支持
+    Hosting release override 的文档路径。
+  </Accordion>
 
-`no matching peer` 通常表示电脑和 VPS 不在同一 tailnet；只有 hostname 失败
-通常表示其他 VPN 或 DNS 覆盖 MagicDNS。
-</Accordion>
+  <Accordion title="Hosting 修复与恢复">
+    不要从 `main` pipe `--repair-hosting`。在 provider root console 中先完成
+    Advanced Installer 的 exact-tag 验证，再运行：
 
-## 建议规格
+    ```bash
+    bash "$BOOTSTRAP_DIR/install.sh" --repair-hosting --release "$RELEASE"
+    ```
 
-- 1 vCPU / 1 GB RAM：测试下限，安装可能很慢。
-- 2 GB RAM：小型常驻 Agent 的实用最低配置。
-- 2 vCPU / 4 GB RAM：多个 tools/services 更舒适。
-- 磁盘至少 25 GB。
+    如果 fresh streamed 安装在 `/var/lib/fased-installer` 出现前停止，修复
+    报错后重跑正常命令。若已存在持久化 installer 状态，则使用 exact-tag
+    repair。
 
-Hosting hardening 维护 Ubuntu、Fedora 和 RHEL-family systemd Linux。提供商
-页面使用同一个 `install.sh --hosting` 流程。
+  </Accordion>
+
+  <Accordion title="Tailscale、VPN 与 MagicDNS 排查">
+    测试时先关闭其他 VPN。在自己的电脑运行：
+
+    ```bash
+    tailscale status
+    tailscale ping YOUR_VPS_TAILSCALE_NAME
+    ssh app@YOUR_VPS_TAILSCALE_NAME
+    ssh app@100.x.x.x
+    ```
+
+    `no matching peer` 通常表示设备不在同一 tailnet。只有 hostname 失败通常
+    是其他 VPN 或 DNS 覆盖 MagicDNS。普通 SSH key 不可用时，可尝试
+    `tailscale ssh app@YOUR_VPS_TAILSCALE_NAME`。
+
+  </Accordion>
+
+  <Accordion title="最小镜像与支持范围">
+    Ubuntu 或 Debian：
+
+    ```bash
+    apt-get update
+    apt-get install -y curl ca-certificates
+    ```
+
+    Fedora 或 RHEL family：
+
+    ```bash
+    dnf install -y curl ca-certificates
+    ```
+
+    Hosting hardening 支持带 systemd 的 Ubuntu、Fedora 与 RHEL-family Linux。
+    至少使用 25 GB 磁盘；2 GB RAM 是较实用的小型节点配置。
+
+  </Accordion>
+</AccordionGroup>

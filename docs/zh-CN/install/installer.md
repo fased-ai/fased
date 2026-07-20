@@ -1,231 +1,128 @@
 ---
+summary: "Advanced 安装器验证、flag、限制、修复与恢复。"
 read_when:
-  - 你想了解 `install.sh`
-  - 你要在自动化环境中安装
-  - 你想确认仓库安装的真实流程
-summary: 仓库安装脚本 `install.sh` 的行为、常用参数和自动化方式
-title: 安装器内部机制
-x-i18n:
-  generated_at: "2026-04-21T00:00:00Z"
-  model: manual
-  provider: codex
-  source_path: install/installer.md
+  - 你需要 exact-tag 预执行验证
+  - 你要修复或自动化安装
+title: "Advanced Installer Reference"
+sidebarTitle: "Advanced Installer"
 ---
 
-# 安装器内部机制
+# Advanced Installer Reference
 
-本页记录仓库中真实存在的安装器：
+本页用于 exact release 选择、repair、automation 与失败恢复。正常用户应从
+[安装](/install) 或 [VPS Hosting](/install/vps) 开始。
 
-- [`install.sh`](https://github.com/fased-ai/fased/blob/main/install.sh)
+## Exact-tag 预执行验证
 
-自己的电脑从零开始时，使用 Local 安装：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
-```
-
-VPS 从零开始时，在 provider root SSH 会话中按照
-[verified Hosting bootstrap](/install/vps#3-验证并运行-hosting-bootstrap) 操作。
-
-安装器自动固定 stable tag，并在特权 Fased 安装前验证 tagged Hosting artifacts。
-Hosting 会在首个下载脚本运行前验证它；高级 release 选择见 [VPS Hosting](/install/vps)。
-
-<Warning>
-Windows 只支持 WSL2 Ubuntu。需要 Windows 11，或 Windows 10 版本
-2004/build 19041 及以上版本。在管理员 PowerShell 中运行
-`wsl --install -d Ubuntu`，按提示重启，然后运行 `wsl --update`、
-`wsl --version` 和 `wsl --list --verbose`。WSL 必须为 0.67.6 或更新版本，
-Ubuntu 必须显示版本 2。打开 Ubuntu 应用，在 Ubuntu shell 中运行 bootstrap
-和所有 `fased` 命令。不要在 PowerShell、命令提示符、Git Bash、WSL1 或
-原生 Windows Node.js 中运行 Fased。完整步骤见 [Windows
-(WSL2)](/platforms/windows)。
-</Warning>
-
-## `install.sh` 会做什么
-
-<Steps>
-  <Step title="检测主机环境">
-    支持 macOS、Linux 和 WSL2。Local 和 Hosting 使用不同的主机安全配置。
-  </Step>
-  <Step title="确保兼容的工具和 Node.js">
-    Fased 推荐 Node 24，并要求 Node 22.14 或更新版本且带内置
-    `node:sqlite`。启用自动安装后，安装器可在常见 Linux、WSL2 Ubuntu 和
-    已安装 Homebrew 的 macOS 上安装缺失依赖。普通用户不需要安装 Go。
-  </Step>
-  <Step title="准备 runtime">
-    支持的 Linux Local 和 VPS Hosting 通常使用经过 checksum 和 release
-    attestation 验证的预构建 runtime。macOS 和明确的 `--source-install`
-    使用源码 checkout。checkout 仍是 Local 设置/修复锚点；特权 Hosting
-    不会执行 app-owned checkout。
-  </Step>
-  <Step title="安装稳定 launcher 和 updater">
-    CLI launcher 和 updater 位于版本化应用目录之外。候选 runtime 经过
-    smoke test 后原子切换；设置、凭证、会话、钱包、Mining 和 signer 数据
-    不属于应用 release swap。
-  </Step>
-  <Step title="按需运行 onboarding">
-    未跳过时，安装器运行 `fased onboard --install-daemon`。Local 安装配置
-    user service；Hosting 安装 root 管理的 Gateway service，但 Gateway
-    仍以非 root `app` 用户运行。
-  </Step>
-  <Step title="安装 native signer">
-    Local 在首次选择 local signer wallet 时自动下载精确版本的 signer asset；
-    Hosting 在选择钱包前安装版本匹配、root 管理且使用独立
-    `fased-signer` 账户的 signer service。两条路径都验证 SHA-256、release
-    manifest 和 GitHub/Sigstore attestation，不会自动回退到 Go 源码构建。
-  </Step>
-  <Step title="通过 Sync 写入 SAT runtime ids">
-    预发布安装保持 `config/sat-runtime.env` 为空。Satcoin mainnet proof
-    发布后，在 Mining 页面使用 **Sync** 验证签名 manifest 并写入官方 ids。
-  </Step>
-</Steps>
-
-## 常见模式
-
-<Tabs>
-  <Tab title="Local">
-    ```bash
-    ./install.sh --local
-    ```
-  </Tab>
-  <Tab title="跳过 onboarding">
-    ```bash
-    ./install.sh --local --no-onboard
-    ```
-  </Tab>
-  <Tab title="修复 Local / WSL2">
-    ```bash
-    ./install.sh --repair-local
-    ```
-
-    修复 managed Local/WSL runtime 和 user Gateway service，不重新运行
-    onboarding，也不重置用户状态。
-
-  </Tab>
-  <Tab title="VPS Hosting">
-    从 VPS provider root console 运行上面的一条 Hosting 命令。安装器选择并
-    验证 stable tagged release。高级用户可在 [VPS Hosting](/install/vps) 中
-    手动验证初始 installer。
-  </Tab>
-  <Tab title="修复 Hosting">
-    使用同一个执行前验证流程，只在最后执行已经验证的独立 installer 时改用
-    `--repair-hosting`。不要使用 raw `curl | bash`，也不要对
-    `/home/app/fased/install.sh` 使用 sudo。
-  </Tab>
-  <Tab title="详细日志">
-    ```bash
-    ./install.sh --verbose
-    ```
-  </Tab>
-</Tabs>
-
-<Warning>
-不存在 `--hosting-docker`。完整 Docker Gateway 只支持 Local。VPS Hosting
-必须使用主机管理、非 Docker 的独立 Gateway/signer/updater 架构。
-</Warning>
-
-## 主要公开参数
-
-| 参数                         | 说明                                                               |
-| ---------------------------- | ------------------------------------------------------------------ |
-| `--auto-install`             | 在支持的 macOS/Linux 主机上安装缺失依赖                            |
-| `--no-auto-install`          | 不自动安装缺失依赖                                                 |
-| `--install-dir <path>`       | 指定 bootstrap/checkout 目录                                       |
-| `--local`                    | 使用本地电脑 onboarding 默认值                                     |
-| `--repair-local`             | 修复 Local/WSL runtime 和 user service，不运行 onboarding          |
-| `--hosting`                  | 从 standalone、预先验证的 tagged bootstrap 使用 VPS Hosting 默认值 |
-| `--repair-hosting`           | 从已验证的 tagged provider-console bootstrap 修复 Hosting          |
-| `--release <vX.Y.Z\|latest>` | 为特权 Hosting 选择并验证精确 release                              |
-| `--source-install`           | Local 从源码构建；特权 VPS Hosting 拒绝此选项                      |
-| `--swap-gb <n>`              | 覆盖小内存 Linux 主机的安装时 swap 大小                            |
-| `--no-onboard`               | 安装后跳过 onboarding                                              |
-| `--verbose`                  | 显示安装命令输出                                                   |
-| `--help`                     | 显示当前完整参数                                                   |
-
-`--` 后面的额外参数会转发给 `fased onboard --install-daemon`。
-
-## Native signer 安全边界
-
-- Local signer 与 Gateway 使用同一个 OS 账户，但使用独立 Unix socket 和
-  fail-closed wallet policy。
-- Hosting signer 是 root 安装、`fased-signer` 账户运行的独立 systemd
-  service；Gateway 只能访问 `/run/fased-signerd/app.sock`。
-- Hosting 的 `app` 用户不能访问 control socket、signer state 或 sudo，也
-  不会运行 app-owned Node broker。
-- 新建 wallet 在 signer 内部生成 key，只返回 public address；Gateway 和
-  dashboard 不接受 private key import。
-- 导入已有账户必须使用独立 native signer admin/control-socket 流程。
-- 新 wallet 初始为 locked + deny-all。只有 RPC、owner-reviewed policy、精确
-  policy hash 和 signer WebAuthn enrollment 都完成后，才能执行 reviewed send。
-- Linux/macOS 支持 `amd64` 和 `arm64`；Windows 在 WSL2 中使用 Linux asset。
-
-Local 首次 wallet setup 会先以 read-only 模式 staging 精确 signer
-candidate。只有 identity、protocol 和 policy state 验证成功后才切换为
-read-write；提交前失败会恢复旧 signer 文件和进程状态。
-
-## 环境变量
-
-- `FASED_INSTALL_REPO=<url>`：Local bootstrap 使用的仓库 URL。
-- `FASED_INSTALL_DIR=<path>`：checkout/安装目录。
-- `FASED_STATE_DIR=<path>`：config、sessions、credentials、wallets 和 logs
-  的 state directory。
-- `FASED_CONFIG_PATH=<path>`：显式 config 文件；默认
-  `$FASED_STATE_DIR/fased.json`。
-- `FASED_CLI_BIN_DIR=<path>`：安装 `fased` launcher 的目录。
-- `FASED_INSTALL_VERBOSE=1`：显示安装命令输出。
-- `FASED_EXISTING_DATA_ACTION=<mode>`：Local 高级状态选择：`keep`、
-  `reset-config` 或 `separate-state`。正常安装默认保留状态。
-- `FASED_WALLET_LOCAL_SIGNER_BIN`、`FASED_LOCAL_SIGNER_VERSION`、
-  `FASED_LOCAL_SIGNER_BASE_URL`：高级 signer asset override。
-
-运行 `./install.sh --help` 查看当前完整参数和内部兼容选项。
-
-## 自动化
-
-Local 无头安装：
+下面的流程会在 Bash 执行前验证 tagged `install.sh`。从操作系统签名软件源
+安装 GitHub CLI，选择 stable release，并替换 `vX.Y.Z`：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-  | bash -s -- --local --no-onboard
+(
+set -euo pipefail
+RELEASE=vX.Y.Z
+BOOTSTRAP_DIR="$(mktemp -d)"
+trap 'rm -rf "$BOOTSTRAP_DIR"' EXIT
+chmod 0700 "$BOOTSTRAP_DIR"
+curl -fsSLo "$BOOTSTRAP_DIR/install.sh" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh"
+curl -fsSLo "$BOOTSTRAP_DIR/install.sh.attestation.json" \
+  "https://github.com/fased-ai/fased/releases/download/${RELEASE}/install.sh.attestation.json"
+GH_PROMPT_DISABLED=1 gh attestation verify "$BOOTSTRAP_DIR/install.sh" \
+  --repo fased-ai/fased \
+  --bundle "$BOOTSTRAP_DIR/install.sh.attestation.json" \
+  --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+  --source-ref "refs/tags/${RELEASE}" \
+  --deny-self-hosted-runners
+chmod 0500 "$BOOTSTRAP_DIR/install.sh"
+bash "$BOOTSTRAP_DIR/install.sh" --hosting --release "$RELEASE"
+)
 ```
 
-指定 Local 安装目录：
+Local 安装只替换最后一行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
-  | bash -s -- --local --install-dir "$HOME/agent" --no-onboard
+bash "$BOOTSTRAP_DIR/install.sh" --local --release "$RELEASE"
 ```
 
-这些 raw bootstrap 只用于 Local。自动化 Hosting 仍必须先下载并验证精确
-release 的独立 installer 和 attestation，再执行已经验证的文件。只有在带外
-检查确认 `app` 的 Tailscale SSH 路径可用后，自动化才可以确认 SSH/firewall
-lock-down。
+任何下载或验证失败都必须停止。
 
-## npm 和容器
+## Hosting 修复与恢复
 
-`npm install -g @fased/fased` 是受支持的高级 Local/dev 或自行管理主机路径，
-但不会替代 installer 完成 Hosting 的 service、Tailscale、signer 和主机加固。
-它不是推荐的 VPS Hosting 安装方式。Bun 全局安装不是公开路径。
-
-Docker 只用于 Local container Gateway/sandbox，详情见
-[Docker](/install/docker)。
-
-## 更新
-
-正常用户使用：
+streamed Hosting 只用于全新安装。已有 host 的 repair 必须复用上面的 exact-tag
+流程，并只替换最后一行：
 
 ```bash
-fased update status
-fased update
+bash "$BOOTSTRAP_DIR/install.sh" --repair-hosting --release "$RELEASE"
 ```
 
-不要把 `git pull` 加重新运行通用 installer 当成稳定版本升级流程。stable
-解析最新稳定 release tag；`fased update --channel dev` 只适合主动跟踪
-`main` 的开发者。事务更新和旧 updater 修复见 [更新](/install/updating)。
+只有已安装 updater 或 root-managed service 无法正常恢复时才使用 repair。
+不要从 mutable `main` pipe `--repair-hosting`，不要传入调用方创建的 verified
+marker，也不要给 operator broad sudo。
 
-## 相关页面
+## Public mode
 
-- [安装](/install)
-- [更新](/install/updating)
-- [Docker](/install/docker)
-- [CLI onboarding](/cli/onboard)
+| Mode                 | 用途                                          | 可从 `main` streamed 执行？      |
+| -------------------- | --------------------------------------------- | -------------------------------- |
+| `--local`            | macOS、Linux 或 WSL2 Ubuntu 的全新 Local 安装 | 可以                             |
+| `--hosting`          | 支持的 systemd VPS 全新 Hosting 安装          | 可以，但必须是唯一参数           |
+| `--repair-local`     | 保留状态并修复 Local runtime/service          | 正常不需要 root                  |
+| `--repair-hosting`   | 保留状态并修复 Hosting runtime/service        | 不可以；仅 exact tagged file     |
+| `--release <vX.Y.Z>` | 选择 immutable stable release                 | Hosting 仅 exact tagged file     |
+| `--source-install`   | Local developer source build                  | privileged Hosting 拒绝          |
+| `--no-onboard`       | 安装 runtime 但跳过 onboarding                | 仅允许的 Local 或 exact-tag 流程 |
+
+从可信 checkout 运行 `./install.sh --help` 查看当前完整参数。
+
+## Streamed Hosting 限制
+
+正常 Hosting 命令只接受 `--hosting`。在验证 tagged payload 前会拒绝：
+
+- repair、source、development channel、release 和 host-profile selector；
+- 调用方提供的 `--verified-hosting-bundle`；
+- exported `FASED_*`；
+- proxy、自定义 CA、GitHub CLI config、dynamic loader、shell startup 与 temp
+  directory override；以及
+- 已存在 Fased state、service、helper 或 installer root 的 host。
+
+持久化修改前，bootstrap 验证 offline-attested release manifest、workflow、tag、
+commit、architecture、app/dependency/signer digest、archive path、link、owner、
+可写 mode、package version 与 build identity。
+
+## Runtime 与账号边界
+
+| Identity        | 用途                                          | Signer 权限                              |
+| --------------- | --------------------------------------------- | ---------------------------------------- |
+| `root`          | 首次 bootstrap 与 exact-tag emergency repair  | 安装隔离 service；不是正常 wallet UX     |
+| `app`           | Human operator SSH 与 native wallet lifecycle | 受限 `operator.sock`                     |
+| `fased-gateway` | Gateway service                               | 只能使用 application `app.sock`          |
+| `fased-signer`  | Native signer service                         | 拥有 key、policy、network state 与 audit |
+
+Local 与 Hosting 使用相同 `fased wallet` 命令。Hosting 通过受限 operator socket
+执行 create、import、recovery、raw export、RPC 修改与 Mining retirement，不需要
+未文档化 root helper。
+
+## Wallet setup contract
+
+- Operator 明确选择永久 `agent`、`mining` 或 `vault` role。
+- Create/import/recovery 以可恢复 lifecycle 安装 signer-owned role baseline v1
+  与一个已验证 primary RPC。
+- 新 Agent/Vault 可立即执行 owner-reviewed action；automation 仍需明确 cap、
+  destination、program 与 grant。
+- 新 Mining 只有在 release-bound SAT manifest 验证后才 SAT-ready，且仍需资金。
+- Legacy deny-all wallet 不会自动扩权；review role 后明确运行
+  `fased wallet policy activate-role-baseline ... --confirm`。
+- 创建 Agent wallet 不会自动把它设为 Default Agent wallet。
+
+详见 [Wallet CLI](/cli/wallet)、
+[role 与 policy](/plugins/crypto/wallet-roles-and-policies) 和
+[wallet selection](/plugins/crypto/wallet-selection-contract)。
+
+## 失败与恢复行为
+
+prerequisite、attestation、digest、archive、identity、service health 或 updater
+check 失败时，安装器停止。Hosting 使用 staging 与 lock；失败清理 temporary
+extract，并明确告诉你应重新运行 fresh 命令还是 exact-tag repair。
+
+正常更新是 transactional：updater stage immutable release，检查 runtime identity
+与 health；新 Gateway 不健康时回滚 activation。

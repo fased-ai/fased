@@ -48,6 +48,19 @@ Avoid binding the gateway to a public interface without auth. If you need remote
 browser access, keep Token or Password auth enabled and use Tailscale/private
 networking where possible.
 
+VPS Hosting separates authority:
+
+- `app` is the human operator and can use the restricted signer lifecycle;
+- `fased-gateway` is a non-login service account with only application signing
+  operations;
+- `fased-signer` owns keys, policy, network state, and signer audit; and
+- root is for first bootstrap and exact-tag emergency repair only.
+
+The normal streamed Hosting command is fresh-install-only. It verifies the
+tagged manifest and app/dependency/signer layers before persistent Fased state,
+accounts, or services. See [VPS Hosting](/install/vps) and the
+[Advanced installer](/install/installer).
+
 Related docs:
 
 - [Security Test Report](/security/security-test-report)
@@ -131,6 +144,13 @@ Fased's default custody path is a role-separated self-hosted signer:
   own audit state. It cannot widen signer policy or satisfy signer WebAuthn.
 - skills and plugins request wallet work through wallet-control tools instead
   of receiving raw keys, seed phrases, keystores, or signer master credentials.
+
+New signer wallets use a versioned role-ready baseline, not an unbounded
+default. Legacy deny-all wallets require one explicit reviewed baseline
+activation. Agent creation never silently selects the Default Agent wallet;
+risky routing is explicit wallet, skill grant, Agent assignment, then optional
+Default Agent fallback. Mining retirement writes a permanent signer tombstone
+before runtime assignment moves.
 
 This is different from a generic hosted wallet provider. Hosted or MPC providers
 can be useful optional adapters, especially for managed recovery, but they move
