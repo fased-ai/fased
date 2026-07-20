@@ -17,7 +17,11 @@ import type {
   WalletProviderJupiterIntentV2,
   WalletProviderSignerTransactionEnvelopeV2,
 } from "../../wallet/wallet-provider-adapter.js";
-import { setDefaultWallet, upsertNamedWallet } from "../../wallet/wallet-provider-registry.js";
+import {
+  setAgentWalletAssignment,
+  setDefaultWallet,
+  upsertNamedWallet,
+} from "../../wallet/wallet-provider-registry.js";
 import { listWalletSendApprovalRequests } from "../../wallet/wallet-send-approvals.js";
 import { createWalletActionTool } from "./wallet-action-tool.js";
 
@@ -755,6 +759,51 @@ describe("wallet-action-tool", () => {
           amount: "100000000",
         }),
       ).rejects.toThrow("wallet_role_not_allowed");
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("honors the requester Agent wallet assignment before the global fallback", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-agent-route-"));
+    vi.stubEnv("FASED_STATE_DIR", tempDir);
+    try {
+      setupWallets();
+      upsertNamedWallet({
+        walletId: "research",
+        name: "Research",
+        providerId: "local-socket-signer",
+        metadata: { purpose: "agent", role: "agent" },
+        env: process.env,
+      });
+      setAgentWalletAssignment({
+        agentId: "owner",
+        walletId: "research",
+        env: process.env,
+      });
+      const tool = createWalletActionTool({
+        config: walletActionConfig(),
+        requesterAgentIdOverride: "owner",
+        agentSessionKey: "agent:owner:main",
+      });
+      if (!tool) {
+        throw new Error("missing wallet_action tool");
+      }
+
+      const result = await tool.execute("call-agent-assignment-plan", {
+        action: "plan",
+        outputMint: USDC_MINT,
+        amount: "100000000",
+      });
+
+      expect(result.details).toEqual(
+        expect.objectContaining({
+          plan: expect.objectContaining({
+            walletId: "research",
+            walletHandle: "@wallet:research",
+          }),
+        }),
+      );
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }

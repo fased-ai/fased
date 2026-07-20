@@ -648,12 +648,6 @@ export function upsertNamedWallet(params: {
   registry.wallets = [...registry.wallets.filter((entry) => entry.id !== next.id), next].toSorted(
     (a, b) => a.createdAt.localeCompare(b.createdAt),
   );
-  if (
-    !registry.defaultWalletId ||
-    !registry.wallets.some((wallet) => wallet.id === registry.defaultWalletId)
-  ) {
-    registry.defaultWalletId = resolveWalletUserRole(next) === "agent" ? next.id : undefined;
-  }
   writeWalletProviderRegistry(registry, env);
   return next;
 }
@@ -708,8 +702,12 @@ export function setAgentWalletAssignment(params: {
     writeWalletProviderRegistry(registry, env);
     return registry;
   }
-  if (!registry.wallets.some((wallet) => wallet.id === walletId)) {
+  const wallet = registry.wallets.find((entry) => entry.id === walletId);
+  if (!wallet) {
     throw new Error("walletId does not exist");
+  }
+  if (resolveWalletUserRole(wallet) !== "agent") {
+    throw new Error("only Agent wallets can be assigned to an Agent");
   }
   registry.assignments[agentId] = walletId;
   writeWalletProviderRegistry(registry, env);
@@ -733,23 +731,9 @@ export function setDefaultWallet(params: {
     throw new Error("walletId does not exist");
   }
   const purpose = resolveWalletUserRole(targetWallet);
-  if (purpose && purpose !== "agent") {
-    throw new Error("only Agent wallets can become the primary Agent fallback");
+  if (purpose !== "agent") {
+    throw new Error("only an explicit Agent wallet can become the Default Agent wallet fallback");
   }
-  registry.wallets = registry.wallets.map((wallet) => {
-    if (wallet.id !== walletId) {
-      return wallet;
-    }
-    return {
-      ...wallet,
-      metadata: {
-        ...wallet.metadata,
-        role: "agent",
-        purpose: "agent",
-      },
-      updatedAt: nowIso(),
-    };
-  });
   registry.defaultWalletId = walletId;
   writeWalletProviderRegistry(registry, env);
   return registry;
@@ -782,14 +766,15 @@ export function setNamedWalletRole(params: {
         }
       : wallet,
   );
-  if (params.role === "agent" && !registry.defaultWalletId) {
-    registry.defaultWalletId = walletId;
+  if (params.role !== "agent" && registry.defaultWalletId === walletId) {
+    registry.defaultWalletId = undefined;
   }
-  if (params.role === "vault" && registry.defaultWalletId === walletId) {
-    const nextDefault = registry.wallets.find(
-      (wallet) => wallet.id !== walletId && resolveWalletUserRole(wallet) === "agent",
-    );
-    registry.defaultWalletId = nextDefault?.id;
+  if (params.role !== "agent") {
+    for (const [agentId, assignedWalletId] of Object.entries(registry.assignments)) {
+      if (assignedWalletId === walletId) {
+        delete registry.assignments[agentId];
+      }
+    }
   }
   writeWalletProviderRegistry(registry, env);
   return registry;
@@ -797,13 +782,20 @@ export function setNamedWalletRole(params: {
 
 export function resolveWalletSelectionForAgent(params: {
   agentId?: string;
+  skillWalletId?: string;
   env?: NodeJS.ProcessEnv;
-}): { walletId?: string; providerId?: WalletProviderId; walletName?: string } {
+}): {
+  walletId?: string;
+  providerId?: WalletProviderId;
+  walletName?: string;
+  source?: "skill" | "agent" | "default";
+} {
   const env = params.env ?? process.env;
   const registry = readWalletProviderRegistry(env);
   const directAgent = params.agentId?.trim();
   const directWalletId = directAgent ? registry.assignments[directAgent] : undefined;
-  const walletId = directWalletId ?? registry.defaultWalletId;
+  const skillWalletId = params.skillWalletId?.trim();
+  const walletId = skillWalletId ?? directWalletId ?? registry.defaultWalletId;
   if (!walletId) {
     return {};
   }
@@ -815,6 +807,7 @@ export function resolveWalletSelectionForAgent(params: {
     walletId: wallet.id,
     walletName: wallet.name,
     providerId: wallet.providerId,
+    source: skillWalletId ? "skill" : directWalletId ? "agent" : "default",
   };
 }
 
@@ -822,7 +815,7 @@ export type WalletResolvedSelection = {
   walletId?: string;
   walletName?: string;
   providerId?: WalletProviderId;
-  source: "explicit" | "fallback" | "none";
+  source: "explicit" | "skill" | "agent" | "default" | "fallback" | "none";
 };
 
 export function resolveWalletSelection(params: {
@@ -830,6 +823,7 @@ export function resolveWalletSelection(params: {
   walletName?: string;
   providerId?: WalletProviderId;
   agentId?: string;
+  skillWalletId?: string;
   env?: NodeJS.ProcessEnv;
 }): WalletResolvedSelection {
   const env = params.env ?? process.env;
@@ -903,12 +897,13 @@ export function resolveWalletSelection(params: {
 
   const fallback = resolveWalletSelectionForAgent({
     agentId: params.agentId,
+    skillWalletId: params.skillWalletId,
     env,
   });
   if (fallback.walletId || fallback.providerId) {
     return {
       ...fallback,
-      source: "fallback",
+      source: fallback.source ?? "fallback",
     };
   }
   return { source: "none" };

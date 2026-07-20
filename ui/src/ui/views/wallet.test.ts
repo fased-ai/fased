@@ -260,7 +260,7 @@ describe("resolveOperatorWalletRoles", () => {
     expect(roles.admin.summary).toBe("Optional · enabled");
     expect(roles.agent.summary).toBe("Agent Wallet");
     expect(roles.agent.detail).toContain(
-      "If no @wallet:<id> is specified, approved wallet actions use this default Agent wallet.",
+      "If no explicit, skill, or Agent assignment exists, approved wallet actions use this optional fallback.",
     );
     expect(roles.agent.walletId).toBe("wallet-agent");
     expect(roles.mining.summary).toBe("Mining Wallet");
@@ -310,7 +310,7 @@ describe("resolveOperatorWalletRoles", () => {
       miningStatus: null,
     });
 
-    expect(roles.agent.summary).toBe("1 set · no primary");
+    expect(roles.agent.summary).toBe("1 set · no fallback");
     expect(roles.agent.tone).toBe("warn");
     expect(roles.mining.summary).toBe("Not configured");
     expect(roles.mining.detail).toContain("Create or import @wallet:mining");
@@ -368,7 +368,7 @@ describe("describeWalletRoleBadges", () => {
         miningStatus: null,
       }),
     ).toMatchObject({
-      label: "Primary",
+      label: "Set fallback",
       disabled: true,
     });
 
@@ -382,7 +382,7 @@ describe("describeWalletRoleBadges", () => {
         miningStatus: null,
       }),
     ).toMatchObject({
-      label: "Clear",
+      label: "Clear fallback",
       disabled: false,
     });
   });
@@ -573,6 +573,30 @@ describe("orderWalletsForDisplay", () => {
 });
 
 describe("renderWallet", () => {
+  it("shows Agent assignments, skill precedence, global fallback, and effective routing", () => {
+    const text = flattenTemplateText(
+      renderWalletForTest({
+        mainPanel: "access",
+        agents: [
+          { id: "owner", name: "Owner" },
+          { id: "research", name: "Research" },
+        ],
+        assignments: { research: "wallet-agent" },
+        assignAgentId: "research",
+        assignWalletId: "wallet-agent",
+      }),
+    );
+
+    expect(text).toContain("Agent wallet routing");
+    expect(text).toContain(
+      "Explicit action → one-wallet skill override → Agent assignment → optional Default Agent wallet fallback",
+    );
+    expect(text).toContain("Owner");
+    expect(text).toContain("Research");
+    expect(text).toContain("Assigned: wallet-agent");
+    expect(text).toContain("Effective fallback: wallet-agent");
+  });
+
   it("renders approval and activity amounts in human chain units", () => {
     const text = flattenTemplateText(
       renderWalletForTest({

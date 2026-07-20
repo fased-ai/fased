@@ -276,7 +276,7 @@ export function describeMiningWalletRoleConflict(params: {
   return {
     title: "Agent and Mining wallets must stay separate",
     detail:
-      "This singleton mining wallet is also the primary Agent wallet. Use Wallet to clear the Agent default, then select a dedicated Agent wallet before wallet work.",
+      "This singleton mining wallet is also the Default Agent wallet fallback. Use Wallet to clear the fallback, then select a dedicated Agent wallet before wallet work.",
   };
 }
 

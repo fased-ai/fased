@@ -232,9 +232,9 @@ export function registerWalletCommands(program: Command) {
   wallet
     .command("role set <wallet-id> <role>")
     .description(
-      "Set primary Agent fallback or initialize a missing Agent/Vault purpose. Existing purpose stays permanent.",
+      "Set Default Agent wallet fallback or initialize a missing Agent/Vault purpose. Existing purpose stays permanent.",
     )
-    .option("--primary", "Make this Agent wallet the primary fallback", false)
+    .option("--primary", "Make this the Default Agent wallet fallback", false)
     .option("--json", "Print JSON output", false)
     .action(async (walletId, role, opts) => {
       await runCommandWithRuntime(defaultRuntime, async () => {

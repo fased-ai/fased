@@ -601,6 +601,7 @@ describe("walletSetupCommand native signer boundary", () => {
           (wallet) => wallet.id === "Agent-Primary",
         )?.metadata?.signerWalletId,
       ).toBe("agent_primary");
+      expect(readWalletProviderRegistry(process.env).defaultWalletId).toBeUndefined();
       expect(signerMocks.networkPut).toHaveBeenCalledWith(
         expect.objectContaining({ walletId: "agent_primary" }),
       );

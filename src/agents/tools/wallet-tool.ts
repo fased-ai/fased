@@ -497,7 +497,7 @@ export function createWalletTool(opts?: {
     label: "Wallet",
     name: "wallet",
     description:
-      'Query wallet status/list/balance/assets/address and prepare/send policy-limited Solana transactions via configured wallet provider. If the user asks for one exact @wallet handle or one external Solana address, call only that exact read action; do not also call balances/list. Use action="list" to list local wallets with handles and action="balances" only when the user asks for every/all local wallet balances. Use walletHandle="@wallet:<walletId>" to select exact local wallets for read-only balance/assets/status/address and risky actions. Use action="assets" for all visible Solana native and SPL balances, or address="<solana-address>" for read-only external Solana balance/assets. For address/balance reads, omit chain when the user does not specify it; the tool returns the available Solana address or balance set. Risky prepare/send actions require an Agent wallet via walletHandle, structured walletId, or default Agent wallet. For normal SOL amounts such as 0.1, pass amountFormat="human"; decimal amounts without amountFormat are treated as human units. Destination wallet handles like @wallet:vault are resolved to receive addresses.',
+      'Query wallet status/list/balance/assets/address and prepare/send policy-limited Solana transactions via configured wallet provider. If the user asks for one exact @wallet handle or one external Solana address, call only that exact read action; do not also call balances/list. Use action="list" to list local wallets with handles and action="balances" only when the user asks for every/all local wallet balances. Use walletHandle="@wallet:<walletId>" to select exact local wallets for read-only balance/assets/status/address and risky actions. Use action="assets" for all visible Solana native and SPL balances, or address="<solana-address>" for read-only external Solana balance/assets. For address/balance reads, omit chain when the user does not specify it; the tool returns the available Solana address or balance set. Risky prepare/send actions use explicit wallet, skill override, Agent assignment, then the optional Default Agent wallet fallback. For normal SOL amounts such as 0.1, pass amountFormat="human"; decimal amounts without amountFormat are treated as human units. Destination wallet handles like @wallet:vault are resolved to receive addresses.',
     parameters: WalletToolSchema,
     execute: async (_toolCallId, args) => {
       if (!access.ok) {
@@ -528,6 +528,10 @@ export function createWalletTool(opts?: {
         : undefined;
       const selectedWalletId = walletIdFromHandle ?? explicitWalletId;
       const explicitWalletName = readStringParam(params, "walletName");
+      const requesterSkillId = opts?.requesterSkillId?.trim() || null;
+      const permissions = readSkillWalletActionPermissions(cfg, requesterSkillId);
+      const skillWalletId =
+        permissions?.walletIds?.length === 1 ? permissions.walletIds[0] : undefined;
       const walletSelection = riskyWalletAction
         ? resolveAgentWalletSelection({
             config: cfg,
@@ -536,6 +540,7 @@ export function createWalletTool(opts?: {
             walletId: explicitWalletId,
             walletName: explicitWalletName,
             agentId: requesterAgentId ?? ownerAgentId ?? undefined,
+            skillWalletId,
             env: process.env,
           })
         : resolveWalletSelection({
@@ -798,8 +803,6 @@ export function createWalletTool(opts?: {
       if (chain === "solana" && payload.program) {
         assertValidSolanaAddress(payload.program, "SPL mint address");
       }
-      const requesterSkillId = opts?.requesterSkillId?.trim() || null;
-      const permissions = readSkillWalletActionPermissions(cfg, requesterSkillId);
       await enforceWalletSkillPolicy({
         cfg,
         permissions,

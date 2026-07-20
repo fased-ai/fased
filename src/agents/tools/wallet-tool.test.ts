@@ -66,20 +66,32 @@ function setupNamedWallets(params?: { defaultWalletId?: string }) {
     walletId: "agent",
     name: "Agent",
     providerId: "local-socket-signer",
+    metadata: { purpose: "agent", role: "agent" },
     env: process.env,
   });
   upsertNamedWallet({
     walletId: "mining",
     name: "Mining",
     providerId: "local-socket-signer",
+    metadata: { purpose: "mining", role: "mining" },
     env: process.env,
   });
   upsertNamedWallet({
     walletId: "vault",
     name: "Vault",
     providerId: "local-socket-signer",
+    metadata: { purpose: "vault", role: "vault" },
     env: process.env,
   });
+  if (params?.defaultWalletId === "agent-alt") {
+    upsertNamedWallet({
+      walletId: "agent-alt",
+      name: "Alternate Agent",
+      providerId: "local-socket-signer",
+      metadata: { purpose: "agent", role: "agent" },
+      env: process.env,
+    });
+  }
   setDefaultWallet({ walletId: params?.defaultWalletId ?? "agent", env: process.env });
 }
 
@@ -488,7 +500,7 @@ describe("wallet-tool", () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-tool-read-handle-"));
     vi.stubEnv("FASED_STATE_DIR", tempDir);
     try {
-      setupNamedWallets({ defaultWalletId: "mining" });
+      setupNamedWallets({ defaultWalletId: "agent-alt" });
       mocks.provider.getBalance.mockResolvedValueOnce({
         chain: "solana",
         balance: "7",
@@ -846,7 +858,7 @@ describe("wallet-tool", () => {
       }),
     );
     try {
-      setupNamedWallets({ defaultWalletId: "mining" });
+      setupNamedWallets({ defaultWalletId: "agent-alt" });
       const cfg = walletEnabledConfig();
       cfg.wallet = {
         ...cfg.wallet,
@@ -951,7 +963,7 @@ describe("wallet-tool", () => {
       }),
     );
     try {
-      setupNamedWallets({ defaultWalletId: "mining" });
+      setupNamedWallets({ defaultWalletId: "agent-alt" });
       const cfg = walletEnabledConfig();
       cfg.wallet = {
         ...cfg.wallet,
@@ -1209,7 +1221,7 @@ describe("wallet-tool", () => {
       }),
     );
     try {
-      setupNamedWallets({ defaultWalletId: "mining" });
+      setupNamedWallets({ defaultWalletId: "agent-alt" });
       const cfg = walletEnabledConfig();
       cfg.wallet = {
         ...cfg.wallet,

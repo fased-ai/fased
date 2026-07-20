@@ -1910,7 +1910,7 @@ export async function walletRoleSetCommand(
     return;
   }
   runtime.log(
-    `${wallet?.name ?? walletId} (${walletId}) set to ${role === "agent" ? "Agent wallet" : "Vault wallet"}${primary ? " and primary Agent fallback" : ""}.`,
+    `${wallet?.name ?? walletId} (${walletId}) set to ${role === "agent" ? "Agent wallet" : "Vault wallet"}${primary ? " and Default Agent wallet fallback" : ""}.`,
   );
 }
 

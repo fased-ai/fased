@@ -60,6 +60,10 @@ export type WalletViewProps = {
   balancesError: string | null;
   balances: WalletBalancesResponse | null;
   defaultWalletId: string | null;
+  assignments?: Record<string, string>;
+  agents?: Array<{ id: string; name?: string }>;
+  assignAgentId?: string;
+  assignWalletId?: string;
   providers?: WalletProviderInfo[];
   createName?: string;
   createId?: string;
@@ -149,6 +153,10 @@ export type WalletViewProps = {
   onApproveRequest: (requestId: string) => void;
   onRejectRequest: (requestId: string) => void;
   onSetDefaultWallet: (walletId: string | null) => void;
+  onAssignAgentIdChange?: (agentId: string) => void;
+  onAssignWalletIdChange?: (walletId: string) => void;
+  onAssignAgentWallet?: () => void;
+  onDeleteAgentAssignment?: (agentId: string) => void;
   onPasskeyLabelChange: (next: string) => void;
   onEnablePasskeyApproval: () => void;
   onEnrollPasskey: () => void;
@@ -448,7 +456,11 @@ function formatSkillGrantSummary(grant: Record<string, unknown> | null): string 
     .join(", ");
   return [
     actions.length > 0 ? actions.join(", ") : "actions unspecified",
-    walletIds.length > 0 ? `wallets ${walletIds.join(", ")}` : "wallet unspecified",
+    walletIds.length === 1
+      ? `skill override ${walletIds[0]}`
+      : walletIds.length > 1
+        ? `wallet allowlist ${walletIds.join(", ")}`
+        : "wallet unspecified",
     chains.length > 0 ? chains.join(", ") : "chain unspecified",
     flags,
   ]
@@ -526,7 +538,7 @@ export function resolveOperatorWalletRoles(
   const agentWallets = props.namedWallets.filter((wallet) =>
     isAgentWallet(wallet, defaultWalletId),
   );
-  const primaryAgentWallet =
+  const defaultAgentWallet =
     defaultWallet && isAgentWallet(defaultWallet, defaultWalletId) ? defaultWallet : undefined;
   const miningWalletId =
     String(
@@ -568,24 +580,24 @@ export function resolveOperatorWalletRoles(
         tone: "neutral",
       };
 
-  const agent: OperatorWalletRoleSummary = primaryAgentWallet
+  const agent: OperatorWalletRoleSummary = defaultAgentWallet
     ? {
         title: "Agent wallets",
         summary:
           agentWallets.length > 1
-            ? `${primaryAgentWallet.name} + ${agentWallets.length - 1}`
-            : primaryAgentWallet.name,
+            ? `${defaultAgentWallet.name} + ${agentWallets.length - 1}`
+            : defaultAgentWallet.name,
         detail:
           agentWallets.length > 1
-            ? "Multiple Agent wallets can be selected by explicit @wallet:<id> handles. If no @wallet:<id> is specified, approved wallet actions use the primary Agent wallet fallback."
-            : "If no @wallet:<id> is specified, approved wallet actions use this default Agent wallet.",
+            ? "Multiple Agent wallets can be selected explicitly. Otherwise routing checks a skill override, then the Agent assignment, then this optional Default Agent wallet fallback."
+            : "If no explicit, skill, or Agent assignment exists, approved wallet actions use this optional fallback.",
         tone: "success",
-        walletId: primaryAgentWallet.id,
+        walletId: defaultAgentWallet.id,
       }
     : agentWallets.length > 0
       ? {
           title: "Agent wallets",
-          summary: `${agentWallets.length} set · no primary`,
+          summary: `${agentWallets.length} set · no fallback`,
           detail:
             "Agent wallets can be selected by explicit @wallet:<id> handles. Set one default Agent wallet if approved actions should have a fallback.",
           tone: "warn",
@@ -863,15 +875,15 @@ export function describeAgentDefaultAction(
   const metadataRole = resolveWalletMetadataRole(wallet);
   const purposeLocked = Boolean(metadataRole && metadataRole !== "agent");
   return {
-    label: isDefaultWallet ? "Clear" : "Primary",
+    label: isDefaultWallet ? "Clear fallback" : "Set fallback",
     disabled: props.settingsBusy || conflictsWithMining || purposeLocked,
     title: conflictsWithMining
       ? "Agent and Mining wallets must stay separate. Create a dedicated Agent wallet instead."
       : purposeLocked
         ? "Wallet purpose is permanent. Create a new Agent wallet instead of changing this wallet."
         : isDefaultWallet
-          ? "Clear this wallet as the primary Agent wallet. Existing Agent roles stay unchanged."
-          : "Make this wallet the primary Agent fallback. Other Agent wallets can still be selected by @wallet handle.",
+          ? "Clear this optional Default Agent wallet fallback. Existing Agent roles and assignments stay unchanged."
+          : "Use this as the optional Default Agent wallet fallback after explicit, skill, and Agent assignments.",
   };
 }
 
@@ -2492,7 +2504,10 @@ function renderWalletSkillGrantsPanel(props: WalletViewProps) {
       <div class="wallet-panel__head">
         <div>
           <div class="card-title">Skill Grants</div>
-          <div class="card-sub">Per-skill caps for Agent wallets that have Skills enabled.</div>
+          <div class="card-sub">
+            Per-skill caps for Agent wallets. One wallet id is the explicit skill override;
+            multiple ids are an allowlist and normal Agent routing continues.
+          </div>
         </div>
         <button class="btn" ?disabled=${props.skillGrantsLoading} @click=${props.onRefresh}>
           ${props.skillGrantsLoading ? "Refreshing..." : "Refresh"}
@@ -2709,6 +2724,15 @@ function renderWalletSkillGrantsPanel(props: WalletViewProps) {
 function renderWalletAccessPanel(props: WalletViewProps) {
   const status = props.status;
   const adminControlShortcut = describeAdminControlShortcut(props);
+  const agentWallets = props.namedWallets.filter((wallet) =>
+    isAgentWallet(wallet, props.defaultWalletId),
+  );
+  const agentIds = [
+    ...new Set([
+      ...(props.agents ?? []).map((agent) => agent.id.trim()).filter(Boolean),
+      ...Object.keys(props.assignments ?? {}),
+    ]),
+  ].toSorted();
 
   return html`
     <div class="wallet-top-grid">
@@ -2807,6 +2831,83 @@ function renderWalletAccessPanel(props: WalletViewProps) {
             ? html`<div class="callout danger">${props.passkeyError}</div>`
             : nothing
         }
+      </div>
+      <div id="wallet-agent-routing" class="card wallet-top-card">
+        <div class="wallet-top-card__head">
+          <div>
+            <div class="card-title">Agent wallet routing</div>
+            <div class="card-sub">
+              Explicit action → one-wallet skill override → Agent assignment → optional Default
+              Agent wallet fallback. If none exists, the action stops with Select an Agent wallet.
+            </div>
+          </div>
+        </div>
+        <div class="wallet-security-device-list" style="margin-top: 12px">
+          ${
+            agentIds.length > 0
+              ? agentIds.map((agentId) => {
+                  const assignedWalletId = props.assignments?.[agentId];
+                  const effectiveWalletId = assignedWalletId || props.defaultWalletId || null;
+                  const agentName =
+                    props.agents?.find((agent) => agent.id === agentId)?.name?.trim() || agentId;
+                  return html`
+                    <div class="wallet-security-device-row">
+                      <div>
+                        <strong>${agentName}</strong>
+                        <div class="wallet-security-note mono">${agentId}</div>
+                        <div class="wallet-security-note">
+                          Assigned: ${assignedWalletId || "none"} · Effective fallback:
+                          ${effectiveWalletId || "Select an Agent wallet"}
+                        </div>
+                      </div>
+                      <button
+                        class="btn small"
+                        ?disabled=${props.settingsBusy || !assignedWalletId}
+                        @click=${() => props.onDeleteAgentAssignment?.(agentId)}
+                      >
+                        Clear assignment
+                      </button>
+                    </div>
+                  `;
+                })
+              : html`
+                  <div class="wallet-security-note">No Agents are available yet.</div>
+                `
+          }
+        </div>
+        <div class="wallet-card-security__grid" style="margin-top: 12px">
+          <label class="field">
+            <span>Agent</span>
+            <select
+              .value=${props.assignAgentId ?? ""}
+              @change=${(event: Event) =>
+                props.onAssignAgentIdChange?.((event.target as HTMLSelectElement).value)}
+            >
+              <option value="">Select Agent</option>
+              ${agentIds.map((agentId) => html`<option value=${agentId}>${agentId}</option>`)}
+            </select>
+          </label>
+          <label class="field">
+            <span>Assigned Agent wallet</span>
+            <select
+              .value=${props.assignWalletId ?? ""}
+              @change=${(event: Event) =>
+                props.onAssignWalletIdChange?.((event.target as HTMLSelectElement).value)}
+            >
+              <option value="">No assignment</option>
+              ${agentWallets.map(
+                (wallet) => html`<option value=${wallet.id}>${wallet.name} (${wallet.id})</option>`,
+              )}
+            </select>
+          </label>
+          <button
+            class="btn primary"
+            ?disabled=${props.settingsBusy || !props.assignAgentId?.trim()}
+            @click=${props.onAssignAgentWallet}
+          >
+            Save assignment
+          </button>
+        </div>
       </div>
     </div>
   `;
@@ -4148,7 +4249,7 @@ export function renderWallet(props: WalletViewProps) {
                 <span>Name</span>
                 <input
                   .value=${props.createName ?? ""}
-                  placeholder="Primary Agent wallet"
+                  placeholder="Agent wallet"
                   autocomplete="off"
                   @input=${(event: Event) =>
                     props.onCreateNameChange?.((event.target as HTMLInputElement).value)}
@@ -4160,7 +4261,7 @@ export function renderWallet(props: WalletViewProps) {
                   .value=${props.createId ?? ""}
                   placeholder=${
                     createProviderId === "local-socket-signer"
-                      ? "agent-primary (required)"
+                      ? "agent-operations (required)"
                       : "optional local label"
                   }
                   autocomplete="off"
