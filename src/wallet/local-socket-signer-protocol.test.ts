@@ -220,6 +220,46 @@ describe("local socket signer protocol", () => {
     ).toBe("v2.wallet.create");
     expect(
       parseLocalSocketSignerRequest({
+        op: "v2.wallet.create",
+        walletId: "agent",
+        request: {
+          expectedPolicyVersion: 0,
+          baseline: { version: 1, role: "agent" },
+        },
+      }).op,
+    ).toBe("v2.wallet.create");
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "v2.policy.activateBaseline",
+        walletId: "agent",
+        request: {
+          expectedPolicyVersion: 1,
+          baseline: { version: 1, role: "agent" },
+        },
+      }).op,
+    ).toBe("v2.policy.activateBaseline");
+    expect(parseLocalSocketSignerRequest({ op: "v2.wallet.readiness", walletId: "agent" }).op).toBe(
+      "v2.wallet.readiness",
+    );
+    expect(
+      validateLocalSocketSignerResult("v2.wallet.readiness", {
+        walletId: "agent",
+        publicKey: "11111111111111111111111111111111",
+        role: "agent",
+        baselineVersion: 1,
+        policyVersion: 1,
+        policyHash: `sha256:${"a".repeat(64)}`,
+        networkVersion: 1,
+        networkHash: `hmac-sha256:${"b".repeat(64)}`,
+        keyReady: true,
+        policyReady: true,
+        networkReady: true,
+        operationLane: "agent-reviewed-and-autonomous",
+        ready: true,
+      }),
+    ).toBe(true);
+    expect(
+      parseLocalSocketSignerRequest({
         op: "v2.execute",
         walletId: "agent",
         request: {
@@ -617,6 +657,19 @@ describe("local socket signer protocol", () => {
         request: {
           requestId: "review-123",
           authorization: { type: "webauthn", proof: { proofId: "proof-123" } },
+        },
+      }).op,
+    ).toBe("v2.review.execute");
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "v2.review.execute",
+        walletId: "agent",
+        request: {
+          requestId: "review-123",
+          authorization: {
+            type: "control-ui",
+            proof: { proofId: "a".repeat(64) },
+          },
         },
       }).op,
     ).toBe("v2.review.execute");

@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FasedAgentConfig } from "../config/config.js";
 import { loadConfig, resolveGatewayPort } from "../config/config.js";
+import { SAT_RUNTIME_ENV_KEYS, SAT_RUNTIME_TRUST_ENV_KEYS } from "../config/sat-runtime-ids.js";
 import type {
   WalletChain,
   WalletRuntimeConfig,
@@ -488,7 +489,11 @@ function resolveSignerChildEnv(
       key.startsWith("FASED_WALLET_LOCAL_SIGNER_RATE_") ||
       key === "FASED_WALLET_LOCAL_SIGNER_AUDIT_MAX_BYTES" ||
       key === "FASED_WALLET_SOLANA_CONFIRM_TIMEOUT_MS" ||
-      key === "FASED_WALLET_SOLANA_WRITE_RPC_TIMEOUT_MS";
+      key === "FASED_WALLET_SOLANA_WRITE_RPC_TIMEOUT_MS" ||
+      [
+        ...Object.values(SAT_RUNTIME_ENV_KEYS),
+        ...Object.values(SAT_RUNTIME_TRUST_ENV_KEYS),
+      ].includes(key as (typeof SAT_RUNTIME_ENV_KEYS)[keyof typeof SAT_RUNTIME_ENV_KEYS]);
     if (value && isSignerRuntimeConfig) {
       childEnv[key] = value;
     }
@@ -616,6 +621,14 @@ export function renderLocalSignerEnvFile(params?: {
           `export FASED_WALLET_WEBAUTHN_ORIGINS=${quoteSignerEnvValue(webAuthn.origins)}`,
         ]
       : []),
+    ...Object.values(SAT_RUNTIME_ENV_KEYS).flatMap((key) => {
+      const value = String(childEnv[key] ?? "").trim();
+      return value ? [`export ${key}=${quoteSignerEnvValue(value)}`] : [];
+    }),
+    ...Object.values(SAT_RUNTIME_TRUST_ENV_KEYS).flatMap((key) => {
+      const value = String(childEnv[key] ?? "").trim();
+      return value ? [`export ${key}=${quoteSignerEnvValue(value)}`] : [];
+    }),
     "",
     `${quoteSignerEnvValue(signerBinPath)} --socket "$FASED_WALLET_LOCAL_SIGNER_SOCKET" --control-socket "$FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET" --state-db "$FASED_WALLET_LOCAL_SIGNER_STATE_DB" --master-key "$FASED_WALLET_LOCAL_SIGNER_MASTER_KEY"`,
   ];

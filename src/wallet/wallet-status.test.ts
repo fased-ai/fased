@@ -11,8 +11,17 @@ vi.mock("./wallet-provider-resolver.js", () => ({
 
 vi.mock("./wallet-runtime-config.js", () => ({
   ensureWalletStateDir: vi.fn(),
+  resolveLocalSignerSocketPath: vi.fn(),
   resolveWalletRuntimeConfig: vi.fn(),
   resolveWalletStatePaths: vi.fn(),
+}));
+
+vi.mock("./wallet-provider-registry.js", () => ({
+  readWalletProviderRegistry: vi.fn(),
+}));
+
+vi.mock("./local-socket-signer-lifecycle.js", () => ({
+  readSignerOwnedWalletReadiness: vi.fn(),
 }));
 
 vi.mock("./wallet-approval-auth.js", () => ({
@@ -24,14 +33,17 @@ vi.mock("./wallet-policy.js", () => ({
 }));
 
 import { loadConfig } from "../config/config.js";
+import { readSignerOwnedWalletReadiness } from "./local-socket-signer-lifecycle.js";
 import { readWalletApprovalAuthSnapshot } from "./wallet-approval-auth.js";
 import { resolveWalletPolicyConfig } from "./wallet-policy.js";
+import { readWalletProviderRegistry } from "./wallet-provider-registry.js";
 import {
   createWalletProviderAdapter,
   resolveWalletProviderId,
 } from "./wallet-provider-resolver.js";
 import {
   ensureWalletStateDir,
+  resolveLocalSignerSocketPath,
   resolveWalletRuntimeConfig,
   resolveWalletStatePaths,
 } from "./wallet-runtime-config.js";
@@ -48,6 +60,13 @@ describe("readWalletStatusSnapshot", () => {
     } as never);
 
     vi.mocked(resolveWalletProviderId).mockReturnValue("local-socket-signer");
+    vi.mocked(readWalletProviderRegistry).mockReturnValue({
+      version: 1,
+      providers: {},
+      wallets: [],
+      assignments: {},
+      updatedAt: "2026-07-20T00:00:00.000Z",
+    } as never);
     vi.mocked(resolveWalletRuntimeConfig).mockReturnValue({
       enabled: true,
       mode: "managed",
@@ -77,6 +96,7 @@ describe("readWalletStatusSnapshot", () => {
     vi.mocked(ensureWalletStateDir).mockReturnValue({
       rootDir: "/tmp/fased-wallet",
     } as never);
+    vi.mocked(resolveLocalSignerSocketPath).mockReturnValue("/tmp/fased-signerd.sock");
     vi.mocked(resolveWalletStatePaths).mockReturnValue({
       keysPath: "/tmp/fased-wallet/keys.json",
       sidecarPidPath: "/tmp/fased-wallet/wallet-service.pid",
@@ -206,5 +226,63 @@ describe("readWalletStatusSnapshot", () => {
       walletId: "solana-2",
     });
     expect(status).not.toHaveProperty("custody");
+  });
+
+  it("returns exact live signer readiness for every registered signer wallet", async () => {
+    vi.mocked(readWalletProviderRegistry).mockReturnValue({
+      version: 1,
+      providers: {},
+      wallets: [
+        {
+          id: "Agent-1",
+          name: "Agent 1",
+          providerId: "local-socket-signer",
+          addresses: { solana: "11111111111111111111111111111111" },
+          metadata: { role: "agent", signerWalletId: "agent_1" },
+          createdAt: "2026-07-20T00:00:00.000Z",
+          updatedAt: "2026-07-20T00:00:00.000Z",
+        },
+      ],
+      assignments: {},
+      updatedAt: "2026-07-20T00:00:00.000Z",
+    } as never);
+    vi.mocked(readSignerOwnedWalletReadiness).mockResolvedValue({
+      walletId: "agent_1",
+      publicKey: "11111111111111111111111111111111",
+      role: "agent",
+      baselineVersion: 1,
+      policyVersion: 3,
+      policyHash: `sha256:${"a".repeat(64)}`,
+      networkVersion: 2,
+      networkHash: `hmac-sha256:${"b".repeat(64)}`,
+      keyReady: true,
+      policyReady: true,
+      networkReady: true,
+      operationLane: "agent-reviewed-and-autonomous",
+      ready: true,
+    });
+    vi.mocked(createWalletProviderAdapter).mockReturnValue({
+      health: vi.fn().mockResolvedValue({ ok: true, details: "socket healthy" }),
+      getAddresses: vi.fn().mockResolvedValue({ solana: "11111111111111111111111111111111" }),
+    } as never);
+
+    const status = await readWalletStatusSnapshot({ walletId: "Agent-1" });
+
+    expect(readSignerOwnedWalletReadiness).toHaveBeenCalledWith({
+      socketPath: "/tmp/fased-signerd.sock",
+      walletId: "agent_1",
+    });
+    expect(status.wallets).toHaveLength(1);
+    expect(status.wallets?.[0]?.readiness).toMatchObject({
+      keystore: true,
+      rpc: true,
+      ready: true,
+      signer: {
+        baselineVersion: 1,
+        policyVersion: 3,
+        networkVersion: 2,
+        operationLane: "agent-reviewed-and-autonomous",
+      },
+    });
   });
 });

@@ -1387,8 +1387,7 @@ async function readWalletSettingsSignerPolicy(params: {
       assets: policy.assets.map((asset) => ({ ...asset, destinations: [...asset.destinations] })),
       ...(state === "locked"
         ? {
-            guidance:
-              "Signer policy is deny-all. Install an owner-reviewed policy through the native signer control socket; the Gateway can only tighten it.",
+            guidance: `This existing wallet is deny-all. Review its immutable role, then run: fased wallet policy activate-role-baseline --wallet-id ${walletId} --role ${policy.role} --confirm`,
           }
         : {}),
     };
@@ -7276,10 +7275,12 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           },
         };
         statusPayload.wallets = registry.wallets.map((wallet) => {
+          const liveWallet = snapshot.wallets?.find((entry) => entry.id === wallet.id);
           const solana = findWalletChainEntry(snapshotAny.chainWallets?.solana, wallet.id);
-          const readiness = {
+          const readiness = liveWallet?.readiness ?? {
             keystore: Boolean(solana?.decryptReady ?? false),
             rpc: Boolean(solana?.rpcConfigured),
+            ready: false,
           };
           return {
             id: wallet.id,
@@ -7291,7 +7292,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             readiness,
             chains: wallet.addresses?.solana ? ["solana"] : [],
             rpcConfigured: readiness.rpc,
-            health: readiness.keystore ? "ok" : "degraded",
+            health: readiness.ready ? "ok" : "degraded",
           };
         });
         if (configuredProviderId === "local-socket-signer") {

@@ -25,7 +25,7 @@ type signerReviewArtifactInputV2 struct {
 	StateSlot       uint64
 }
 
-func validateReviewPolicyV2(policy signerPolicyV2, intent normalizedIntentV2) error {
+func validateReviewPolicyV2(policy signerPolicyV2, intent normalizedIntentV2, mode string) error {
 	if len(policy.Operations) == 0 {
 		return errors.New("policy operations are empty; signing is denied")
 	}
@@ -43,14 +43,14 @@ func validateReviewPolicyV2(policy signerPolicyV2, intent normalizedIntentV2) er
 		return fmt.Errorf("policy denies operation %s", operation)
 	}
 	for _, program := range intent.RequiredPrograms {
-		if !containsStringV2(policy.Programs, program) {
+		if !containsStringV2(policy.Programs, program) && !(policy.TypedSATPrograms && isTypedSATIntentV2(policy, intent)) {
 			return fmt.Errorf("policy denies program %s", program)
 		}
 	}
 	if intent.CapExempt {
 		return nil
 	}
-	_, err := policyReservationsForIntentV2(policy, intent)
+	_, err := policyReservationsForIntentModeV2(policy, intent, mode == jupiterReviewModeReviewedV2)
 	return err
 }
 
@@ -205,7 +205,7 @@ func (s *signerStoreV2) prepareArtifactReviewV2(
 		if mode == jupiterReviewModeAutonomousV2 && policy.Role != "agent" {
 			return errors.New("autonomous signer review is restricted to Agent-role wallets")
 		}
-		if err := validateReviewPolicyV2(policy, intent); err != nil {
+		if err := validateReviewPolicyV2(policy, intent, mode); err != nil {
 			return err
 		}
 		now := s.now()
@@ -457,7 +457,7 @@ func (s *signerStoreV2) requireReviewForExecutionV2(walletID, requestID string, 
 		if _, err := normalizeStoredReviewArtifactV2(review); err != nil {
 			return err
 		}
-		return validateReviewPolicyV2(policy, intent)
+		return validateReviewPolicyV2(policy, intent, review.Mode)
 	})
 	return review, intent, policy, err
 }

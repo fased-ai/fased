@@ -342,12 +342,41 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		return marshalSignerResultV2(policy)
+	case "v2.policy.activateBaseline":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		var body signerRoleBaselineActivationRequestV1
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		wallet, err := s.keys.PublicRecord(req.WalletID)
+		if err != nil {
+			return nil, err
+		}
+		policy, err := s.store.activateRoleBaselineV1(
+			req.WalletID,
+			body.ExpectedVersion,
+			body.Baseline,
+			wallet.PublicKey,
+			signerRoleBaselineRuntimeFromEnvV1(),
+		)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(policy)
 	case "v2.wallet.get":
 		wallet, err := s.keys.PublicRecord(req.WalletID)
 		if err != nil {
 			return nil, err
 		}
 		return marshalSignerResultV2(wallet)
+	case "v2.wallet.readiness":
+		readiness, err := s.walletReadinessV2(req.WalletID)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(readiness)
 	case "v2.wallet.create":
 		if cfg.readOnly {
 			return nil, errors.New("read-only signer mode")
@@ -357,9 +386,25 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		body.WalletID = req.WalletID
+		if body.Baseline != nil {
+			if body.Policy.Role != "" || body.Policy.Version != 0 || body.Policy.BaselineVersion != 0 ||
+				len(body.Policy.Operations) != 0 || len(body.Policy.Programs) != 0 || len(body.Policy.Assets) != 0 {
+				return nil, errors.New("wallet creation must select exactly one policy or signer-owned role baseline")
+			}
+			wallet, policy, err := s.keys.CreateWithRoleBaseline(
+				req.WalletID,
+				body.ExpectedVersion,
+				*body.Baseline,
+				signerRoleBaselineRuntimeFromEnvV1(),
+			)
+			if err != nil {
+				return nil, err
+			}
+			return marshalSignerResultV2(signerWalletPolicyResultV2{Wallet: wallet, Policy: policy})
+		}
 		body.Policy.WalletID = req.WalletID
 		if !control && (len(body.Policy.Operations) != 0 || len(body.Policy.Programs) != 0 || len(body.Policy.Assets) != 0) {
-			return nil, errors.New("application socket may create only a locked wallet with an explicit deny-all policy")
+			return nil, errors.New("application socket may create only a signer-owned role baseline or an explicit deny-all policy")
 		}
 		wallet, policy, err := s.keys.CreateWithPolicy(body)
 		if err != nil {
@@ -378,6 +423,16 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		body.WalletID = req.WalletID
+		if body.Baseline != nil {
+			if body.Policy.Role != "" || len(body.Policy.Operations) != 0 || len(body.Policy.Programs) != 0 || len(body.Policy.Assets) != 0 {
+				return nil, errors.New("wallet import must select exactly one policy or signer-owned role baseline")
+			}
+			wallet, policy, err := s.keys.ImportFromFileWithRoleBaseline(body, signerRoleBaselineRuntimeFromEnvV1())
+			if err != nil {
+				return nil, err
+			}
+			return marshalSignerResultV2(signerWalletPolicyResultV2{Wallet: wallet, Policy: policy})
+		}
 		body.Policy.WalletID = req.WalletID
 		wallet, policy, err := s.keys.ImportFromFileWithPolicy(body)
 		if err != nil {
@@ -396,6 +451,16 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		body.WalletID = req.WalletID
+		if body.Baseline != nil {
+			if body.Policy.Role != "" || len(body.Policy.Operations) != 0 || len(body.Policy.Programs) != 0 || len(body.Policy.Assets) != 0 {
+				return nil, errors.New("legacy wallet import must select exactly one policy or signer-owned role baseline")
+			}
+			wallet, policy, err := s.keys.ImportLegacyWithRoleBaseline(body, signerRoleBaselineRuntimeFromEnvV1())
+			if err != nil {
+				return nil, err
+			}
+			return marshalSignerResultV2(signerWalletPolicyResultV2{Wallet: wallet, Policy: policy})
+		}
 		body.Policy.WalletID = req.WalletID
 		wallet, policy, err := s.keys.ImportLegacyWithPolicy(body)
 		if err != nil {

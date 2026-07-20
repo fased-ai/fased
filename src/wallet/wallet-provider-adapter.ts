@@ -246,7 +246,7 @@ export type WalletProviderSignerTransactionEnvelopeV2 = {
 };
 
 export type WalletProviderSignerReviewAuthorizationV2 = {
-  type: "webauthn";
+  type: "webauthn" | "control-ui";
   proof: { proofId: string };
 };
 

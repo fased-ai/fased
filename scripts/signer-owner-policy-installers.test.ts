@@ -44,9 +44,9 @@ describe("signer owner-policy package and installers", () => {
     expect(installer).toContain('install -m 0700 "$POLICY_LAUNCHER_SOURCE"');
     expect(installer).toContain("for template in README.md agent.json.template");
     expect(updater).toContain("await fsp.link(paths.binaryPath, enrollTemporary)");
-    expect(installer).toContain("Fresh signer-owned wallets remain deny-all");
-    expect(installer).toContain("Enrollment never enables signing");
-    expect(installer.match(/--initial-install/gu)).toHaveLength(1);
+    expect(installer).toContain("Fresh signer-owned wallets receive their versioned Agent");
+    expect(installer).toContain("copying a template never applies it");
+    expect(installer.match(/--initial-install/gu) ?? []).toHaveLength(0);
   });
 
   it("installs Hosting owner tools at root-owned fixed paths without Gateway delegation", () => {
@@ -62,10 +62,10 @@ describe("signer owner-policy package and installers", () => {
       "install -d -m 0755 -o root -g root /usr/local/share/fased/signer-policies",
     );
     expect(installer).toContain("sync -f /usr/local/sbin/fased-signer-policy");
-    expect(installer).toContain("neither the Gateway nor the app account can run them");
-    expect(installer).toContain("Set walletId to the canonical native signer ID");
+    expect(installer).toContain("Normal setup does not require a");
+    expect(installer).toContain("root policy or network helper");
     expect(installer).not.toMatch(/sudoers[^\n]*fased-signer-policy/u);
-    expect(installer.match(/--initial-install/gu)).toHaveLength(1);
+    expect(installer.match(/--initial-install/gu) ?? []).toHaveLength(0);
   });
 
   it("pins each installed wrapper to one profile and rejects caller-selected profiles", () => {

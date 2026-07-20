@@ -51,6 +51,9 @@ export type WalletViewProps = {
       rpc: boolean;
       api?: boolean;
       ata?: boolean;
+      ready?: boolean;
+      error?: string;
+      signer?: NonNullable<NonNullable<WalletStatus["wallets"]>[number]["readiness"]["signer"]>;
     };
   }>;
   balancesLoading: boolean;
@@ -4291,16 +4294,17 @@ export function renderWallet(props: WalletViewProps) {
                   : undefined;
               const cardSignerPolicy =
                 wallet.id === props.walletDetailsWalletId ? settings?.signerPolicy : undefined;
+              const cardSignerReadiness = wallet.readiness?.signer;
               const cardNetworkReady =
                 wallet.providerId !== "local-socket-signer" ||
-                wallet.metadata?.networkReady === true;
+                cardSignerReadiness?.networkReady === true;
               const cardNetworkVersion =
-                typeof wallet.metadata?.networkVersion === "number"
+                cardSignerReadiness?.networkVersion ??
+                (typeof wallet.metadata?.networkVersion === "number"
                   ? wallet.metadata.networkVersion
-                  : undefined;
+                  : undefined);
               const cardWalletReady =
-                wallet.providerId !== "local-socket-signer" ||
-                cardSignerPolicy?.state === "acknowledged";
+                wallet.providerId !== "local-socket-signer" || wallet.readiness?.ready === true;
               const cardWalletChains = allowedWalletSendChains(wallet);
               const cardWalletCanSpendSolana = cardWalletChains.includes("solana");
               const policyTabs: Array<{ id: WalletPolicyPanel; label: string; title: string }> =
@@ -4498,7 +4502,7 @@ export function renderWallet(props: WalletViewProps) {
                         title=${
                           cardWalletReady
                             ? "Send from this wallet"
-                            : "Receive-only: the role-safe deny-all baseline is active; install an owner-reviewed spending policy before sending"
+                            : "Setup incomplete: live signer key, role baseline, or network readiness is not confirmed"
                         }
                         @click=${() => props.onSendModalOpen(wallet.id)}
                       >
@@ -4653,9 +4657,8 @@ export function renderWallet(props: WalletViewProps) {
                                         cardSignerPolicy.state === "locked"
                                           ? html`
                                               <div>
-                                                The role-safe deny-all baseline is active, so the wallet can receive but cannot send, swap, mine,
-                                                bond, or execute wallet-capable skills. Spending authority requires a separate owner-reviewed
-                                                policy; the Gateway cannot grant it silently.
+                                                This pre-role-baseline wallet remains deny-all. Review its immutable role, then select Activate
+                                                role baseline with the native wallet CLI. No root policy helper is required.
                                               </div>
                                             `
                                           : nothing
@@ -4673,6 +4676,32 @@ export function renderWallet(props: WalletViewProps) {
                                           : nothing
                                       }
                                       ${cardSignerPolicy.guidance ? html`<div>${cardSignerPolicy.guidance}</div>` : nothing}
+                                    </div>
+                                  `
+                                : nothing
+                            }
+                            ${
+                              cardSignerReadiness
+                                ? html`
+                                    <div
+                                      class="callout ${cardSignerReadiness.ready ? "success" : "warn"}"
+                                      style="margin-top: 10px"
+                                      data-testid="wallet-live-readiness"
+                                    >
+                                      <strong
+                                        >Role readiness:
+                                        ${
+                                          cardSignerReadiness.ready ? "ready" : "setup incomplete"
+                                        }</strong
+                                      >
+                                      <div>
+                                        ${cardSignerReadiness.role} baseline v${cardSignerReadiness.baselineVersion}
+                                        · ${cardSignerReadiness.operationLane}
+                                      </div>
+                                      <div>
+                                        Policy v${cardSignerReadiness.policyVersion} · Network
+                                        v${cardSignerReadiness.networkVersion}
+                                      </div>
                                     </div>
                                   `
                                 : nothing

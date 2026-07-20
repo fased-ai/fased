@@ -371,7 +371,7 @@ func (s *signerStoreV2) reserveOperation(req signerExecuteRequestV2, intent norm
 		if strings.TrimSpace(req.PolicyHash) == "" || req.PolicyHash != policy.Hash {
 			return errors.New("signer policy hash mismatch")
 		}
-		reservationRequirements, err := policyReservationsForIntentV2(policy, intent)
+		reservationRequirements, err := policyReservationsForIntentModeV2(policy, intent, req.reviewed)
 		if err != nil {
 			return err
 		}
@@ -516,6 +516,64 @@ func (s *signerStoreV2) claimReservedOperation(requestID string) (signerOperatio
 		return nil
 	})
 	return operation, operation.ExecutionAttempt, claimed, err
+}
+
+// authorizeControlUIReviewOperationV2 records the authenticated Control UI's
+// explicit confirmation of one exact reviewed Agent/Vault transfer. The fresh
+// signer nonce is single-operation state; a configured Vault approval device
+// is enforced by the service before this transaction is reached.
+func (s *signerStoreV2) authorizeControlUIReviewOperationV2(
+	review signerReviewV2,
+	policy signerPolicyV2,
+	intent normalizedIntentV2,
+	confirmation string,
+	requestID string,
+	attempt uint64,
+) error {
+	confirmation = strings.TrimSpace(confirmation)
+	if confirmation == "" || confirmation != review.Nonce {
+		return errors.New("Control UI confirmation does not match the fresh signer review nonce")
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		var storedReview signerReviewV2
+		rawReview := tx.Bucket(bucketSignerReviewsV2).Get([]byte(requestID))
+		if rawReview == nil || json.Unmarshal(rawReview, &storedReview) != nil {
+			return errors.New("signer review not found")
+		}
+		if storedReview.State != jupiterReviewPreparedV2 || storedReview.Mode != jupiterReviewModeReviewedV2 ||
+			storedReview.WalletID != review.WalletID || storedReview.IntentDigest != intent.Digest ||
+			storedReview.PolicyHash != policy.Hash || storedReview.Nonce != confirmation {
+			return errors.New("Control UI confirmation no longer matches the exact prepared signer review")
+		}
+		var currentPolicy signerPolicyV2
+		rawPolicy := tx.Bucket(bucketSignerPoliciesV2).Get([]byte(policy.WalletID))
+		if rawPolicy == nil || json.Unmarshal(rawPolicy, &currentPolicy) != nil || currentPolicy.Hash != policy.Hash {
+			return errors.New("review authorization policy is no longer current")
+		}
+		operations := tx.Bucket(bucketSignerOperationsV2)
+		var operation signerOperationV2
+		rawOperation := operations.Get([]byte(requestID))
+		if rawOperation == nil || json.Unmarshal(rawOperation, &operation) != nil {
+			return errors.New("signer operation not found")
+		}
+		if operation.State != operationReserved || operation.ExecutionAttempt != attempt ||
+			operation.WalletID != review.WalletID || operation.IntentDigest != intent.Digest ||
+			operation.PolicyHash != policy.Hash {
+			return errors.New("reserved signer operation does not match the Control UI confirmation")
+		}
+		if operation.AuthorizationProof != "" && operation.AuthorizedAt != "" {
+			return nil
+		}
+		now := timestampV2(s.now())
+		operation.AuthorizationProof = confirmation
+		operation.AuthorizedAt = now
+		operation.UpdatedAt = now
+		encoded, err := json.Marshal(operation)
+		if err != nil {
+			return err
+		}
+		return operations.Put([]byte(operation.RequestID), encoded)
+	})
 }
 
 // releaseReservedOperationClaim makes a transiently blocked exact request

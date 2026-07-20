@@ -34,6 +34,8 @@ var signerV2Capabilities = signerCapabilitiesV2{
 		"atomicIdempotency",
 		"ambiguousBroadcastReconciliation",
 		"signerOwnedKeys",
+		"signerOwnedRoleBaselines",
+		"liveWalletReadiness",
 		"signerOwnedSuccessorRotation",
 		"permanentRetiredWalletPolicies",
 		"signerOwnedRPC",

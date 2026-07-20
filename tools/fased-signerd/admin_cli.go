@@ -356,10 +356,11 @@ func runSignerAdminWalletCreate(args []string, stdout io.Writer) error {
 
 func runSignerAdminWalletImport(args []string, stdin io.Reader, stdout io.Writer) error {
 	fs, common := newSignerAdminFlagSet("wallet import")
-	var walletID, policyFile, lockedRole string
+	var walletID, policyFile, lockedRole, baselineRole string
 	fs.StringVar(&walletID, "wallet-id", "", "normalized wallet identifier")
 	fs.StringVar(&policyFile, "policy-file", "", "absolute strict policy JSON path")
 	fs.StringVar(&lockedRole, "locked-role", "", "agent, mining, or vault deny-all policy")
+	fs.StringVar(&baselineRole, "baseline-role", "", "agent, mining, or vault signer-owned role baseline")
 	if err := parseSignerAdminFlags(fs, args); err != nil {
 		return err
 	}
@@ -374,9 +375,25 @@ func runSignerAdminWalletImport(args []string, stdin io.Reader, stdout io.Writer
 	if err != nil {
 		return err
 	}
-	policy, err := resolveSignerAdminCreationPolicy(walletID, policyFile, lockedRole)
-	if err != nil {
-		return err
+	useBaseline := strings.TrimSpace(baselineRole) != ""
+	if useBaseline && (strings.TrimSpace(policyFile) != "" || strings.TrimSpace(lockedRole) != "") {
+		return errors.New("--baseline-role cannot be combined with --policy-file or --locked-role")
+	}
+	var policy signerPolicyV2
+	if useBaseline {
+		baseline, baselineErr := normalizeRoleBaselineRequestV1(signerRoleBaselineRequestV1{
+			Version: signerRoleBaselineVersionV1,
+			Role:    baselineRole,
+		})
+		if baselineErr != nil {
+			return fmt.Errorf("invalid --baseline-role: %w", baselineErr)
+		}
+		baselineRole = baseline.Role
+	} else {
+		policy, err = resolveSignerAdminCreationPolicy(walletID, policyFile, lockedRole)
+		if err != nil {
+			return err
+		}
 	}
 	canonicalKeypair, err := readSignerAdminSolanaKeypair(stdin)
 	if err != nil {
@@ -388,6 +405,9 @@ func runSignerAdminWalletImport(args []string, stdin io.Reader, stdout io.Writer
 		return err
 	}
 	body := signerWalletImportRequestV2{ExpectedVersion: 0, Policy: policy, Path: importPath}
+	if useBaseline {
+		body.Baseline = &signerRoleBaselineRequestV1{Version: signerRoleBaselineVersionV1, Role: baselineRole}
+	}
 	result, callErr := callSignerAdmin(common.controlSocket, "v2.wallet.import", walletID, body)
 	cleanupErr := cleanupSignerAdminImportFile(importPath)
 	if cleanupErr != nil {

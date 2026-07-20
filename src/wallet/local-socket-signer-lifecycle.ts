@@ -1,5 +1,8 @@
 import { LOCAL_SIGNER_NATIVE_FEE_RESERVATION_LAMPORTS_V2 } from "./local-socket-signer-protocol.js";
-import type { LocalSocketSignerNetworkSummaryV2 } from "./local-socket-signer-protocol.js";
+import type {
+  LocalSocketSignerNetworkSummaryV2,
+  LocalSocketSignerWalletReadinessV2,
+} from "./local-socket-signer-protocol.js";
 import {
   callLocalSocketSigner,
   type LocalSocketSignerHealthProbe,
@@ -19,13 +22,17 @@ export type LocalSignerPolicyRecord = {
   walletId: string;
   role: LocalSignerWalletRole;
   version: number;
+  baselineVersion?: number;
   operations: string[];
   programs: string[];
+  typedSatPrograms?: boolean;
   assets: Array<{
     asset: string;
     destinations: string[];
     maxPerTx: string;
     maxDaily: string;
+    reviewedDestinations?: boolean;
+    typedSatDestinations?: boolean;
   }>;
   hash: string;
 };
@@ -44,7 +51,10 @@ export function lockedLocalSignerPolicy(role: LocalSignerWalletRole) {
   };
 }
 
-async function requireSignerOwnedProtocolV2(socketPath: string): Promise<void> {
+async function requireSignerOwnedProtocolV2(
+  socketPath: string,
+  requiredFeatures: string[] = [],
+): Promise<void> {
   const result = await callLocalSocketSigner<{
     ready?: boolean;
     capabilities?: LocalSocketSignerHealthProbe["capabilities"];
@@ -57,6 +67,7 @@ async function requireSignerOwnedProtocolV2(socketPath: string): Promise<void> {
     "applicationNetworkBootstrap",
     "atomicMultiAssetCaps",
     "signerControlledNativeFeeCaps",
+    ...requiredFeatures,
   ];
   const missing = required.filter((feature) => !capabilities?.features.includes(feature));
   if (
@@ -71,6 +82,99 @@ async function requireSignerOwnedProtocolV2(socketPath: string): Promise<void> {
       `fased-signerd does not provide the required signer-owned protocol-v2 capabilities${missing.length > 0 ? `: ${missing.join(", ")}` : ""}`,
     );
   }
+}
+
+function assertRoleBaselineRecord(
+  record: LocalSignerWalletPolicyRecord,
+  role: LocalSignerWalletRole,
+): LocalSignerWalletPolicyRecord {
+  if (record.policy.role !== role) {
+    throw new Error(
+      `signer-owned wallet ${record.wallet.walletId} has role=${record.policy.role}, not ${role}`,
+    );
+  }
+  if (
+    record.policy.baselineVersion !== 1 ||
+    record.policy.operations.length === 0 ||
+    record.policy.programs.length === 0 ||
+    record.policy.assets.length === 0
+  ) {
+    throw new Error(
+      `signer-owned wallet ${record.wallet.walletId} is not role-ready; select Activate role baseline before using it`,
+    );
+  }
+  return record;
+}
+
+export async function createRoleReadySignerOwnedWallet(params: {
+  socketPath: string;
+  walletId: string;
+  role: LocalSignerWalletRole;
+  allowExisting?: boolean;
+}): Promise<LocalSignerWalletPolicyRecord> {
+  const walletId = params.walletId.trim();
+  if (!/^[a-zA-Z0-9_-]+$/.test(walletId)) {
+    throw new Error("walletId must contain only letters, numbers, hyphens, or underscores");
+  }
+  await requireSignerOwnedProtocolV2(params.socketPath, ["signerOwnedRoleBaselines"]);
+  try {
+    const existing = await readSignerOwnedWallet({ socketPath: params.socketPath, walletId });
+    if (!params.allowExisting) {
+      throw new Error(`signer-owned wallet already exists: ${walletId}`);
+    }
+    return assertRoleBaselineRecord(existing, params.role);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.startsWith("signer-owned wallet")) {
+      throw error;
+    }
+  }
+
+  try {
+    const created = await callLocalSocketSigner<LocalSignerWalletPolicyRecord>(params.socketPath, {
+      op: "v2.wallet.create",
+      walletId,
+      request: {
+        expectedPolicyVersion: 0,
+        baseline: { version: 1, role: params.role },
+      },
+    });
+    return assertRoleBaselineRecord(created, params.role);
+  } catch (error) {
+    if (!params.allowExisting) {
+      throw error;
+    }
+    const existing = await readSignerOwnedWallet({ socketPath: params.socketPath, walletId });
+    return assertRoleBaselineRecord(existing, params.role);
+  }
+}
+
+export async function activateSignerOwnedRoleBaseline(params: {
+  socketPath: string;
+  walletId: string;
+  role: LocalSignerWalletRole;
+  expectedPolicyVersion: number;
+}): Promise<LocalSignerPolicyRecord> {
+  await requireSignerOwnedProtocolV2(params.socketPath, ["signerOwnedRoleBaselines"]);
+  return await callLocalSocketSigner<LocalSignerPolicyRecord>(params.socketPath, {
+    op: "v2.policy.activateBaseline",
+    walletId: params.walletId,
+    request: {
+      expectedPolicyVersion: params.expectedPolicyVersion,
+      baseline: { version: 1, role: params.role },
+    },
+  });
+}
+
+export async function readSignerOwnedWalletReadiness(params: {
+  socketPath: string;
+  walletId: string;
+}): Promise<LocalSocketSignerWalletReadinessV2> {
+  await requireSignerOwnedProtocolV2(params.socketPath, ["liveWalletReadiness"]);
+  return await callLocalSocketSigner<LocalSocketSignerWalletReadinessV2>(params.socketPath, {
+    op: "v2.wallet.readiness",
+    walletId: params.walletId,
+  });
 }
 
 export async function readSignerOwnedWallet(params: {

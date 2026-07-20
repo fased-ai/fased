@@ -5,6 +5,7 @@ import {
   resolveSatRuntimeIds,
   resolveWritableSatRuntimeDefaultsFile,
   SAT_RUNTIME_ENV_KEYS,
+  SAT_RUNTIME_TRUST_ENV_KEYS,
   type SatRuntimeIds,
 } from "../config/sat-runtime-ids.js";
 
@@ -276,25 +277,55 @@ function idsEqual(left: SatRuntimeIds | null, right: SatRuntimeIds | null): bool
   );
 }
 
-function buildEnvFile(ids: SatRuntimeIds): string {
+function buildEnvFile(
+  ids: SatRuntimeIds,
+  trust: { manifestPath: string; manifestSha256: string; manifestSignaturePath: string },
+): string {
   return [
     "# Managed by Fased Agent official SAT mainnet sync.",
     `${SAT_RUNTIME_ENV_KEYS.programId}=${ids.programId}`,
     `${SAT_RUNTIME_ENV_KEYS.bondProgramId}=${ids.bondProgramId}`,
     `${SAT_RUNTIME_ENV_KEYS.mintAddress}=${ids.mintAddress}`,
     `${SAT_RUNTIME_ENV_KEYS.mintProgramId}=${ids.mintProgramId}`,
+    `${SAT_RUNTIME_TRUST_ENV_KEYS.manifestPath}=${trust.manifestPath}`,
+    `${SAT_RUNTIME_TRUST_ENV_KEYS.manifestSha256}=${trust.manifestSha256}`,
+    `${SAT_RUNTIME_TRUST_ENV_KEYS.manifestSignaturePath}=${trust.manifestSignaturePath}`,
     "",
   ].join("\n");
 }
 
-async function writeRuntimeIds(ids: SatRuntimeIds, env: NodeJS.ProcessEnv): Promise<string> {
+async function writeRuntimeIds(
+  ids: SatRuntimeIds,
+  env: NodeJS.ProcessEnv,
+  trust: { rawManifest: string; manifestSha256: string; signature: string },
+): Promise<string> {
   const runtimeFile = resolveWritableSatRuntimeDefaultsFile(env);
+  const manifestPath = `${runtimeFile}.manifest.json`;
+  const manifestSignaturePath = `${runtimeFile}.manifest.sig`;
   await fs.mkdir(path.dirname(runtimeFile), { recursive: true });
-  await fs.writeFile(runtimeFile, buildEnvFile(ids), { mode: 0o600 });
+  await fs.writeFile(manifestPath, trust.rawManifest, { mode: 0o600 });
+  await fs.writeFile(manifestSignaturePath, `${trust.signature.trim()}\n`, { mode: 0o600 });
+  await fs.writeFile(
+    runtimeFile,
+    buildEnvFile(ids, {
+      manifestPath,
+      manifestSha256: trust.manifestSha256,
+      manifestSignaturePath,
+    }),
+    { mode: 0o600 },
+  );
+  await Promise.all([
+    fs.chmod(manifestPath, 0o600),
+    fs.chmod(manifestSignaturePath, 0o600),
+    fs.chmod(runtimeFile, 0o600),
+  ]);
   env[SAT_RUNTIME_ENV_KEYS.programId] = ids.programId;
   env[SAT_RUNTIME_ENV_KEYS.bondProgramId] = ids.bondProgramId;
   env[SAT_RUNTIME_ENV_KEYS.mintAddress] = ids.mintAddress;
   env[SAT_RUNTIME_ENV_KEYS.mintProgramId] = ids.mintProgramId;
+  env[SAT_RUNTIME_TRUST_ENV_KEYS.manifestPath] = manifestPath;
+  env[SAT_RUNTIME_TRUST_ENV_KEYS.manifestSha256] = trust.manifestSha256;
+  env[SAT_RUNTIME_TRUST_ENV_KEYS.manifestSignaturePath] = manifestSignaturePath;
   return runtimeFile;
 }
 
@@ -414,7 +445,50 @@ export async function syncSatMainnetRuntimeIds(opts?: {
               : before.message || "SAT mainnet manifest is not ready to apply.",
         };
   }
-  const runtimeFile = await writeRuntimeIds(before.officialIds, env);
+  const manifestUrl = opts?.manifestUrl?.trim() || resolveManifestUrl(env);
+  const rawManifest = await fetchText(manifestUrl, { required: true });
+  const manifestSha256 = parseSha256(await fetchText(`${manifestUrl}.sha256`, { required: true }));
+  const signature = await fetchText(`${manifestUrl}.sig`, { required: true });
+  if (!rawManifest || !manifestSha256 || !signature?.trim()) {
+    return {
+      ...before,
+      ok: false,
+      state: "failed",
+      message: "Verified SAT manifest artifacts could not be persisted for the native signer.",
+      error: "signed SAT runtime manifest, hash, or detached signature is missing",
+    };
+  }
+  const finalVerification = await verifyLiveManifest({ manifestUrl, raw: rawManifest, env });
+  if (
+    finalVerification.verification.hash !== "valid" ||
+    finalVerification.verification.signature !== "valid" ||
+    sha256Hex(rawManifest) !== manifestSha256
+  ) {
+    return {
+      ...before,
+      ok: false,
+      state: "failed",
+      message: "SAT manifest changed before signer runtime persistence.",
+      verification: finalVerification.verification,
+      trustKeySource: finalVerification.trustKeySource,
+      error: "signed SAT runtime manifest verification raced or failed",
+    };
+  }
+  const persistedManifest = JSON.parse(rawManifest) as RawManifest;
+  if (!idsEqual(readOfficialIds(persistedManifest), before.officialIds)) {
+    return {
+      ...before,
+      ok: false,
+      state: "failed",
+      message: "SAT manifest IDs changed before signer runtime persistence.",
+      error: "signed SAT runtime ID tuple changed during sync",
+    };
+  }
+  const runtimeFile = await writeRuntimeIds(before.officialIds, env, {
+    rawManifest,
+    manifestSha256,
+    signature,
+  });
   const after = await getSatMainnetSyncStatus({ env, manifestUrl: opts?.manifestUrl });
   return {
     ...after,

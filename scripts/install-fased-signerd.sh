@@ -206,12 +206,8 @@ echo "Installed signer enrollment launcher: $INSTALL_DIR/fased-signer-enroll"
 echo "Installed signer policy launcher: $POLICY_LAUNCHER_PATH"
 echo "Installed fail-closed policy templates: $POLICY_TEMPLATE_DIR"
 cat <<EOF
-Fresh signer-owned wallets remain deny-all. After wallet setup creates a wallet,
-enroll the owner authenticator and apply an explicit reviewed policy as this user:
-  1. $INSTALL_DIR/fased-signer-enroll [authenticator-label]
-  2. Copy the matching owner-only template from $POLICY_TEMPLATE_DIR and replace
-     every REPLACE_WITH_ value.
-  3. $POLICY_LAUNCHER_PATH --initial-install --policy-file /absolute/path/to/policy.json
-
-Enrollment never enables signing, and copying a template never applies it.
+Fresh signer-owned wallets receive their versioned Agent, Mining, or Vault
+baseline during normal wallet setup after the primary RPC is verified. Optional
+authenticator enrollment and $POLICY_LAUNCHER_PATH remain available for advanced
+owner-reviewed customization; copying a template never applies it.
 EOF

@@ -174,10 +174,11 @@ func runSignerAdminWalletRecoveryExportV1(args []string, stdin io.Reader, stdout
 
 func runSignerAdminWalletRecoveryImportV1(args []string, stdin io.Reader, stdout io.Writer) error {
 	fs, common := newSignerAdminFlagSet("wallet recovery-import")
-	var walletID, policyFile, lockedRole, recoveryFile string
+	var walletID, policyFile, lockedRole, baselineRole, recoveryFile string
 	fs.StringVar(&walletID, "wallet-id", "", "new normalized wallet identifier")
 	fs.StringVar(&policyFile, "policy-file", "", "absolute strict policy JSON path")
 	fs.StringVar(&lockedRole, "locked-role", "", "agent, mining, or vault deny-all policy")
+	fs.StringVar(&baselineRole, "baseline-role", "", "agent, mining, or vault signer-owned role baseline")
 	fs.StringVar(&recoveryFile, "recovery-file", "", "absolute owner-only recovery package path")
 	if err := parseSignerAdminFlags(fs, args); err != nil {
 		return err
@@ -192,9 +193,25 @@ func runSignerAdminWalletRecoveryImportV1(args []string, stdin io.Reader, stdout
 	if walletID, err = validateSignerAdminWalletID(walletID); err != nil {
 		return err
 	}
-	policy, err := resolveSignerAdminCreationPolicy(walletID, policyFile, lockedRole)
-	if err != nil {
-		return err
+	useBaseline := strings.TrimSpace(baselineRole) != ""
+	if useBaseline && (strings.TrimSpace(policyFile) != "" || strings.TrimSpace(lockedRole) != "") {
+		return errors.New("--baseline-role cannot be combined with --policy-file or --locked-role")
+	}
+	var policy signerPolicyV2
+	if useBaseline {
+		baseline, baselineErr := normalizeRoleBaselineRequestV1(signerRoleBaselineRequestV1{
+			Version: signerRoleBaselineVersionV1,
+			Role:    baselineRole,
+		})
+		if baselineErr != nil {
+			return fmt.Errorf("invalid --baseline-role: %w", baselineErr)
+		}
+		baselineRole = baseline.Role
+	} else {
+		policy, err = resolveSignerAdminCreationPolicy(walletID, policyFile, lockedRole)
+		if err != nil {
+			return err
+		}
 	}
 	recoveryRaw, err := readSignerAdminJSONFile(recoveryFile, maxSignerRecoveryPackageBytes)
 	if err != nil {
@@ -205,8 +222,12 @@ func runSignerAdminWalletRecoveryImportV1(args []string, stdin io.Reader, stdout
 	if err := decodeSignerAdminStrictJSON(recoveryRaw, &pkg); err != nil || validateSignerRecoveryPackageV1(pkg) != nil {
 		return errors.New("recovery file must contain one supported strict recovery package")
 	}
-	if pkg.Role != policy.Role {
-		return errors.New("recovery package role does not match --locked-role or policy role")
+	requestedRole := policy.Role
+	if useBaseline {
+		requestedRole = baselineRole
+	}
+	if pkg.Role != requestedRole {
+		return errors.New("recovery package role does not match the requested baseline or policy role")
 	}
 	password, err := readSignerAdminRecoveryPasswordV1(stdin, false)
 	if err != nil {
@@ -224,6 +245,9 @@ func runSignerAdminWalletRecoveryImportV1(args []string, stdin io.Reader, stdout
 	}
 	body := signerWalletRecoveryImportRequestV2{
 		ExpectedVersion: 0, Policy: policy, RecoveryPath: recoveryPath, PasswordPath: passwordPath,
+	}
+	if useBaseline {
+		body.Baseline = &signerRoleBaselineRequestV1{Version: signerRoleBaselineVersionV1, Role: baselineRole}
 	}
 	result, callErr := callSignerAdminSensitiveV2(common.controlSocket, "v2.wallet.recovery.import", walletID, body)
 	cleanupRecoveryErr := cleanupSignerAdminImportFile(recoveryPath)

@@ -538,6 +538,12 @@ load_wallet_signer_env_from_config() {
       || [[ "$key" == "FASED_WALLET_SIGNER_STATE_DIR" ]] \
       || [[ "$key" == "FASED_WALLET_LOCAL_SIGNER_BIN" ]] \
       || [[ "$key" == "FASED_SAT_PROGRAM_ID" ]] \
+      || [[ "$key" == "FASED_SAT_BOND_PROGRAM_ID" ]] \
+      || [[ "$key" == "FASED_SAT_MINT_ADDRESS" ]] \
+      || [[ "$key" == "FASED_SAT_MINT_PROGRAM_ID" ]] \
+      || [[ "$key" == "FASED_SAT_RUNTIME_MANIFEST_PATH" ]] \
+      || [[ "$key" == "FASED_SAT_RUNTIME_MANIFEST_SHA256" ]] \
+      || [[ "$key" == "FASED_SAT_RUNTIME_MANIFEST_SIGNATURE_PATH" ]] \
       || [[ "$key" == "FASED_SAT_ENABLE_ALT_V0" ]] \
       || [[ "$key" =~ ^FASED_WALLET_LOCAL_SIGNER_(ROLE|DIRECT_SIGNING|CAPS_ENABLED|SOLANA_MAX_PER_TX|SOLANA_MAX_DAILY|SOLANA_ALLOW_PROGRAMS)(__[A-Za-z0-9_-]+)?$ ]]; then
       export "$key=$value"
@@ -557,6 +563,12 @@ load_wallet_signer_env_from_config() {
             or . == "FASED_WALLET_SIGNER_STATE_DIR"
             or . == "FASED_WALLET_LOCAL_SIGNER_BIN"
             or . == "FASED_SAT_PROGRAM_ID"
+            or . == "FASED_SAT_BOND_PROGRAM_ID"
+            or . == "FASED_SAT_MINT_ADDRESS"
+            or . == "FASED_SAT_MINT_PROGRAM_ID"
+            or . == "FASED_SAT_RUNTIME_MANIFEST_PATH"
+            or . == "FASED_SAT_RUNTIME_MANIFEST_SHA256"
+            or . == "FASED_SAT_RUNTIME_MANIFEST_SIGNATURE_PATH"
             or . == "FASED_SAT_ENABLE_ALT_V0"
             or test("^FASED_WALLET_LOCAL_SIGNER_(ROLE|DIRECT_SIGNING|CAPS_ENABLED|SOLANA_MAX_PER_TX|SOLANA_MAX_DAILY|SOLANA_ALLOW_PROGRAMS)(__[A-Za-z0-9_-]+)?$")
         )
@@ -574,7 +586,7 @@ load_wallet_signer_env_file() {
   # Older signer.env files may contain Node-era key/passphrase variables. Import only
   # the non-custody settings required by the native signer, never every wallet variable.
   source <(
-    grep -E '^export FASED_WALLET_(SOLANA_RPC_URL(__[A-Za-z0-9_-]+)?|CHAINS|SIGNER_STATE_DIR|WEBAUTHN_(RP_ID|ORIGINS)|LOCAL_SIGNER_(SOCKET|CONTROL_SOCKET|STATE_DB|MASTER_KEY|BIN|ROLE|DIRECT_SIGNING|CAPS_ENABLED|SOLANA_MAX_PER_TX|SOLANA_MAX_DAILY|SOLANA_ALLOW_PROGRAMS)(__[A-Za-z0-9_-]+)?)=' "$SIGNERD_ENV_FILE" || true
+    grep -E '^export (FASED_WALLET_(SOLANA_RPC_URL(__[A-Za-z0-9_-]+)?|CHAINS|SIGNER_STATE_DIR|WEBAUTHN_(RP_ID|ORIGINS)|LOCAL_SIGNER_(SOCKET|CONTROL_SOCKET|STATE_DB|MASTER_KEY|BIN|ROLE|DIRECT_SIGNING|CAPS_ENABLED|SOLANA_MAX_PER_TX|SOLANA_MAX_DAILY|SOLANA_ALLOW_PROGRAMS)(__[A-Za-z0-9_-]+)?)|FASED_SAT_(PROGRAM_ID|BOND_PROGRAM_ID|MINT_ADDRESS|MINT_PROGRAM_ID|RUNTIME_MANIFEST_(PATH|SHA256|SIGNATURE_PATH)))=' "$SIGNERD_ENV_FILE" || true
   )
   set +a
 }

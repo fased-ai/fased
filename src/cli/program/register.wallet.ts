@@ -8,6 +8,7 @@ import {
   walletLimitOrdersConfigureCommand,
   walletMigrateCommand,
   walletPolicyProfileApplyCommand,
+  walletPolicyActivateRoleBaselineCommand,
   walletProviderConfigureCommand,
   walletRotateKeysCommand,
   walletRecoveryExportCommand,
@@ -187,11 +188,13 @@ export function registerWalletCommands(program: Command) {
   wallet
     .command("status")
     .description("Show wallet service and policy status")
+    .option("--wallet-id <id>", "Show one registered wallet")
     .option("--json", "Print JSON output", false)
     .action(async (opts) => {
       await runCommandWithRuntime(defaultRuntime, async () => {
         await walletStatusCommand(defaultRuntime, {
           json: Boolean(opts.json),
+          walletId: typeof opts.walletId === "string" ? opts.walletId : undefined,
         });
       });
     });
@@ -276,6 +279,24 @@ export function registerWalletCommands(program: Command) {
     });
 
   const policy = wallet.command("policy").description("Wallet policy presets and controls");
+
+  policy
+    .command("activate-role-baseline")
+    .description("Explicitly migrate one existing deny-all signer wallet to its role baseline")
+    .requiredOption("--wallet-id <id>", "Registered signer-owned wallet id")
+    .requiredOption("--role <role>", "Immutable signer role: agent|mining|vault")
+    .requiredOption("--confirm", "Confirm activation after reviewing the selected role")
+    .option("--json", "Print JSON output", false)
+    .action(async (opts) => {
+      await runCommandWithRuntime(defaultRuntime, async () => {
+        await walletPolicyActivateRoleBaselineCommand(defaultRuntime, {
+          walletId: String(opts.walletId),
+          role: String(opts.role),
+          confirm: Boolean(opts.confirm),
+          json: Boolean(opts.json),
+        });
+      });
+    });
 
   policy
     .command("profile <name>")

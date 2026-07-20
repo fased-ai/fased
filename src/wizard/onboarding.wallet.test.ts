@@ -473,6 +473,13 @@ describe("local signer env file helpers", () => {
         HOME: root,
         FASED_STATE_DIR: root,
         FASED_WALLET_PASSPHRASE: "test-passphrase",
+        FASED_SAT_PROGRAM_ID: "11111111111111111111111111111111",
+        FASED_SAT_BOND_PROGRAM_ID: "ComputeBudget111111111111111111111111111111",
+        FASED_SAT_MINT_ADDRESS: "So11111111111111111111111111111111111111112",
+        FASED_SAT_MINT_PROGRAM_ID: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        FASED_SAT_RUNTIME_MANIFEST_PATH: "/tmp/sat-runtime.manifest.json",
+        FASED_SAT_RUNTIME_MANIFEST_SHA256: "a".repeat(64),
+        FASED_SAT_RUNTIME_MANIFEST_SIGNATURE_PATH: "/tmp/sat-runtime.manifest.sig",
       } as NodeJS.ProcessEnv,
     });
 
@@ -484,6 +491,23 @@ describe("local signer env file helpers", () => {
     expect(content).not.toMatch(/FASED_WALLET_SOLANA_KEYSTORE_PATH/);
     expect(content).not.toContain("https://rpc.example/solana");
     expect(content).not.toContain("https://rpc-backup.example/solana");
+    expect(content).toContain('export FASED_SAT_PROGRAM_ID="11111111111111111111111111111111"');
+    expect(content).toContain(
+      'export FASED_SAT_BOND_PROGRAM_ID="ComputeBudget111111111111111111111111111111"',
+    );
+    expect(content).toContain(
+      'export FASED_SAT_MINT_ADDRESS="So11111111111111111111111111111111111111112"',
+    );
+    expect(content).toContain(
+      'export FASED_SAT_MINT_PROGRAM_ID="TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"',
+    );
+    expect(content).toContain(
+      'export FASED_SAT_RUNTIME_MANIFEST_PATH="/tmp/sat-runtime.manifest.json"',
+    );
+    expect(content).toContain(`export FASED_SAT_RUNTIME_MANIFEST_SHA256="${"a".repeat(64)}"`);
+    expect(content).toContain(
+      'export FASED_SAT_RUNTIME_MANIFEST_SIGNATURE_PATH="/tmp/sat-runtime.manifest.sig"',
+    );
     expect(content).toContain('export FASED_WALLET_WEBAUTHN_RP_ID="localhost"');
     expect(content).toContain(
       'export FASED_WALLET_WEBAUTHN_ORIGINS="http://localhost:18789,http://localhost:18791"',

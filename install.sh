@@ -4269,6 +4269,19 @@ install_host_signer_and_updater_services() {
     echo "The root updater must fetch and attest the exact tagged signer artifact." >&2
     exit 1
   fi
+  local sat_runtime_value=""
+  if [[ -n "${FASED_SAT_PROGRAM_ID:-}${FASED_SAT_BOND_PROGRAM_ID:-}${FASED_SAT_MINT_ADDRESS:-}${FASED_SAT_MINT_PROGRAM_ID:-}" ]]; then
+    for sat_runtime_value in \
+      "${FASED_SAT_PROGRAM_ID:-}" \
+      "${FASED_SAT_BOND_PROGRAM_ID:-}" \
+      "${FASED_SAT_MINT_ADDRESS:-}" \
+      "${FASED_SAT_MINT_PROGRAM_ID:-}"; do
+      [[ "$sat_runtime_value" =~ ^[1-9A-HJ-NP-Za-km-z]{32,44}$ ]] || {
+        echo "Hosted signer SAT runtime requires one complete valid signed-manifest ID tuple." >&2
+        exit 1
+      }
+    done
+  fi
   local existing_signer_dropins
   existing_signer_dropins="$(systemctl show fased-signerd.service --property=DropInPaths --value 2>/dev/null || true)"
   if [[ -n "$existing_signer_dropins" ]]; then
@@ -4304,6 +4317,20 @@ install_host_signer_and_updater_services() {
   install -d -m 0755 -o root -g root /etc/fased
   if [[ ! -f /etc/fased/signerd-webauthn.env ]]; then
     install -m 0644 -o root -g root /dev/null /etc/fased/signerd-webauthn.env
+  fi
+  install -m 0644 -o root -g root /dev/null /etc/fased/signerd-sat-runtime.env
+  if [[ -n "${FASED_SAT_PROGRAM_ID:-}" ]]; then
+    cat >/etc/fased/signerd-sat-runtime.env <<EOF
+FASED_SAT_PROGRAM_ID=${FASED_SAT_PROGRAM_ID}
+FASED_SAT_BOND_PROGRAM_ID=${FASED_SAT_BOND_PROGRAM_ID}
+FASED_SAT_MINT_ADDRESS=${FASED_SAT_MINT_ADDRESS}
+FASED_SAT_MINT_PROGRAM_ID=${FASED_SAT_MINT_PROGRAM_ID}
+FASED_SAT_RUNTIME_MANIFEST_PATH=${FASED_SAT_RUNTIME_MANIFEST_PATH:-}
+FASED_SAT_RUNTIME_MANIFEST_SHA256=${FASED_SAT_RUNTIME_MANIFEST_SHA256:-}
+FASED_SAT_RUNTIME_MANIFEST_SIGNATURE_PATH=${FASED_SAT_RUNTIME_MANIFEST_SIGNATURE_PATH:-}
+EOF
+    chown root:root /etc/fased/signerd-sat-runtime.env
+    chmod 0644 /etc/fased/signerd-sat-runtime.env
   fi
   install -d -m 0755 -o root -g root /etc/systemd/system/fased-gateway.service.d
   cat >/etc/systemd/system/fased-gateway.service.d/20-fased-update-gate.conf <<'EOF'
@@ -4403,6 +4430,7 @@ StateDirectoryMode=0700
 UMask=0077
 Environment=HOME=/var/lib/fased-signerd
 EnvironmentFile=-/etc/fased/signerd-webauthn.env
+EnvironmentFile=-/etc/fased/signerd-sat-runtime.env
 ExecStart=/opt/fased/signer/fased-signerd -socket /run/fased-signerd/app.sock -control-socket /run/fased-signerd/control.sock -socket-mode 0660 -socket-group ${gateway_group} -state-db /var/lib/fased-signerd/state.db -master-key /var/lib/fased-signerd/master.key -update-gate /var/lib/fased-signer-update-gate/active -pid-file /run/fased-signerd/fased-signerd.pid -audit-log /var/lib/fased-signerd/audit.jsonl
 Restart=always
 RestartSec=3
@@ -4448,22 +4476,10 @@ EOF
   cat <<'EOF'
 Hosted signer owner handoff
 ---------------------------
-Fresh signer-owned wallets remain deny-all. Enrollment and policy activation are
-separate host-administrator actions; neither the Gateway nor the app account can run them.
-
-After onboarding creates a signer-owned wallet, use a root SSH/provider-console session:
-  1. Copy /usr/local/share/fased/signer-policies/network.json.template to a
-     root-owned mode-0600 file, set the exact RPC endpoints, then run:
-       /usr/local/sbin/fased-signer-network --wallet-id <native-id> --network-file /root/fased-network.json
-  2. /usr/local/sbin/fased-signer-enroll [authenticator-label]
-  3. cp /usr/local/share/fased/signer-policies/<role>.json.template /root/fased-<role>-policy.json
-  4. Set walletId to the canonical native signer ID (lowercase, separators become
-     underscores; do not use a different friendly registry ID), replace every
-     REPLACE_WITH_ value, review the exact destinations/caps, then run:
-       chmod 0600 /root/fased-<role>-policy.json
-       /usr/local/sbin/fased-signer-policy --initial-install --policy-file /root/fased-<role>-policy.json
-
-Copying a template or enrolling a passkey does not enable signing.
+Fresh wallets receive their versioned Agent, Mining, or Vault baseline from the
+native signer after the primary RPC is verified. Normal setup does not require a
+root policy or network helper. Optional approval-device enrollment and advanced
+custom policy changes remain separate owner operations.
 EOF
 }
 
@@ -4800,6 +4816,11 @@ if [[ -n "${FASED_SAT_PROGRAM_ID:-}" && -n "${FASED_SAT_BOND_PROGRAM_ID:-}" && -
   persist_managed_env_var "FASED_SAT_BOND_PROGRAM_ID" "$FASED_SAT_BOND_PROGRAM_ID"
   persist_managed_env_var "FASED_SAT_MINT_ADDRESS" "$FASED_SAT_MINT_ADDRESS"
   persist_managed_env_var "FASED_SAT_MINT_PROGRAM_ID" "$FASED_SAT_MINT_PROGRAM_ID"
+  if [[ -n "${FASED_SAT_RUNTIME_MANIFEST_PATH:-}" && -n "${FASED_SAT_RUNTIME_MANIFEST_SHA256:-}" && -n "${FASED_SAT_RUNTIME_MANIFEST_SIGNATURE_PATH:-}" ]]; then
+    persist_managed_env_var "FASED_SAT_RUNTIME_MANIFEST_PATH" "$FASED_SAT_RUNTIME_MANIFEST_PATH"
+    persist_managed_env_var "FASED_SAT_RUNTIME_MANIFEST_SHA256" "$FASED_SAT_RUNTIME_MANIFEST_SHA256"
+    persist_managed_env_var "FASED_SAT_RUNTIME_MANIFEST_SIGNATURE_PATH" "$FASED_SAT_RUNTIME_MANIFEST_SIGNATURE_PATH"
+  fi
 else
   :
 fi
