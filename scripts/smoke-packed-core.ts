@@ -645,7 +645,7 @@ async function main() {
     }
 
     console.log(
-      `packed-core-smoke: ${version} imports, starts its Gateway, and creates a locked native-signer wallet without optional channels; capabilities, wallet, SAT, Fased Network, and plugin checks passed.`,
+      `packed-core-smoke: ${version} imports, starts its Gateway, and creates a role-ready native-signer wallet without optional channels; capabilities, wallet, SAT, Fased Network, and plugin checks passed.`,
     );
   } finally {
     if (stateDir) {
