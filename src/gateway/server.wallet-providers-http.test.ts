@@ -1096,7 +1096,7 @@ describe("wallet providers HTTP", () => {
     });
   });
 
-  test("keeps a fresh deny-all signer wallet locked until native administration", async () => {
+  test("keeps an existing deny-all signer wallet locked until explicit baseline activation", async () => {
     await withTempConfig({
       cfg: baseConfig,
       run: async () => {
@@ -1154,7 +1154,7 @@ describe("wallet providers HTTP", () => {
           };
           expect(settingsPayload.settings?.signerPolicy?.state).toBe("locked");
           expect(settingsPayload.settings?.signerPolicy?.guidance).toContain(
-            "native signer control socket",
+            "wallet policy activate-role-baseline",
           );
 
           const patchResponse = createResponse();

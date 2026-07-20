@@ -603,7 +603,7 @@ async function main() {
       walletCreate.walletId !== "packed-smoke-agent" ||
       typeof walletCreate.address !== "string" ||
       walletCreate.address.length === 0 ||
-      walletCreate.policyState !== "locked"
+      walletCreate.policyState !== "ready"
     ) {
       throw new Error(`packed core signer-owned wallet creation failed:\n${walletCreateRaw}`);
     }
