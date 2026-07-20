@@ -4,7 +4,7 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
-## Unreleased
+## 0.1.69
 
 - Make new signer-owned Agent, Mining, and Vault wallets role-ready with one
   verified RPC; preserve legacy deny-all wallets until explicit activation.
