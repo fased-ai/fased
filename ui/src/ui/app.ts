@@ -5635,8 +5635,8 @@ export class FasedAgentApp extends LitElement {
     try {
       await upsertWalletAssignment({ defaultWalletId: nextWalletId });
       this.walletSettingsMessage = nextWalletId
-        ? "Primary Agent wallet set."
-        : "Primary Agent wallet cleared. Agent role stays on wallet handles.";
+        ? "Default Agent wallet fallback set."
+        : "Default Agent wallet fallback cleared. Agent roles and assignments are unchanged.";
       await this.handleWalletLoad();
     } catch (err) {
       this.walletSettingsError = `Updating default wallet failed: ${String(err)}`;

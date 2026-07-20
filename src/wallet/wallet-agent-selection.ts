@@ -68,6 +68,7 @@ export function resolveWalletActionSelection(params: {
   walletName?: string;
   providerId?: WalletProviderId;
   agentId?: string;
+  skillWalletId?: string;
   allowedRoles?: WalletActionSelectionRole[];
 }): WalletActionSelection {
   const env = params.env ?? process.env;
@@ -92,18 +93,12 @@ export function resolveWalletActionSelection(params: {
         providerId: params.providerId,
         env,
       });
-    } else if (registry.defaultWalletId) {
-      const fallback = registry.wallets.find((entry) => entry.id === registry.defaultWalletId);
-      selection = fallback
-        ? {
-            walletId: fallback.id,
-            walletName: fallback.name,
-            providerId: fallback.providerId,
-            source: "fallback",
-          }
-        : { source: "none" };
     } else {
-      selection = { source: "none" };
+      selection = resolveWalletSelection({
+        agentId: params.agentId,
+        skillWalletId: params.skillWalletId,
+        env,
+      });
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "wallet selection failed";
@@ -116,7 +111,7 @@ export function resolveWalletActionSelection(params: {
   if (!selection.walletId) {
     throw new WalletActionSelectionError(
       "wallet_handle_required",
-      "Agent wallet handle, walletId, or default Agent wallet required",
+      "Select an Agent wallet: use an explicit wallet, skill override, Agent assignment, or Default Agent wallet fallback",
     );
   }
 
@@ -164,6 +159,7 @@ export function resolveAgentWalletSelection(params: {
   walletName?: string;
   providerId?: WalletProviderId;
   agentId?: string;
+  skillWalletId?: string;
 }): AgentWalletSelection {
   const selection = resolveWalletActionSelection({
     ...params,

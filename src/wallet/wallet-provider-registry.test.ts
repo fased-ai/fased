@@ -6,6 +6,7 @@ import {
   WALLET_PROVIDER_IDS,
   deleteNamedWallet,
   readWalletProviderRegistry,
+  setAgentWalletAssignment,
   setDefaultWallet,
   setNamedWalletRole,
   setWalletProviderEnabled,
@@ -38,7 +39,7 @@ describe("wallet-provider-registry", () => {
     }
   });
 
-  it("supports multiple Agent wallets while keeping one primary fallback", async () => {
+  it("keeps the Default Agent wallet optional and never selects a replacement silently", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-registry-"));
     vi.stubEnv("FASED_STATE_DIR", stateDir);
     try {
@@ -55,6 +56,7 @@ describe("wallet-provider-registry", () => {
       });
       setNamedWalletRole({ walletId: "trading", role: "agent" });
       setDefaultWallet({ walletId: "agent" });
+      setAgentWalletAssignment({ agentId: "research", walletId: "agent" });
 
       let registry = readWalletProviderRegistry(process.env);
       expect(registry.defaultWalletId).toBe("agent");
@@ -67,7 +69,8 @@ describe("wallet-provider-registry", () => {
 
       setNamedWalletRole({ walletId: "agent", role: "vault" });
       registry = readWalletProviderRegistry(process.env);
-      expect(registry.defaultWalletId).toBe("trading");
+      expect(registry.defaultWalletId).toBeUndefined();
+      expect(registry.assignments.research).toBeUndefined();
     } finally {
       await fs.rm(stateDir, { recursive: true, force: true });
     }

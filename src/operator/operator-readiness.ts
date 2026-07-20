@@ -137,8 +137,8 @@ export function describeOperatorReadinessChecklist(
               ? `${defaultWallet.name} · ${firstAgentWallet.name}`
               : agentWallet.name,
           detail: defaultWallet
-            ? "This primary Agent wallet handles paid A2A sends, payment evidence publication, skill/plugin wallet actions, and routine transfers when no explicit @wallet handle is supplied."
-            : "This Agent wallet can be selected by explicit @wallet handle. Set it as primary if it should be the fallback when no handle is supplied.",
+            ? "This Default Agent wallet is the final fallback for paid A2A sends, payment evidence publication, skill/plugin wallet actions, and routine transfers after explicit, skill, and Agent assignment routing."
+            : "This Agent wallet can be selected explicitly or assigned to an Agent or skill. Set it as the optional fallback only when global fallback behavior is wanted.",
           tone: "success" as const,
         }
       : defaultWalletId

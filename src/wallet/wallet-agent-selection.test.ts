@@ -6,6 +6,7 @@ import type { FasedAgentConfig } from "../config/config.js";
 import { parseWalletHandle, resolveAgentWalletSelection } from "./wallet-agent-selection.js";
 import {
   setDefaultWallet,
+  setAgentWalletAssignment,
   setNamedWalletRole,
   upsertNamedWallet,
 } from "./wallet-provider-registry.js";
@@ -34,6 +35,7 @@ describe("wallet-agent-selection", () => {
       providerId: "local-socket-signer",
       env: process.env,
     });
+    setNamedWalletRole({ walletId: "agent", role: "agent", env: process.env });
     upsertNamedWallet({
       walletId: "mining",
       name: "Mining",
@@ -83,7 +85,7 @@ describe("wallet-agent-selection", () => {
     });
   });
 
-  it("falls back only to the default Agent wallet", () => {
+  it("falls back only to the optional Default Agent wallet", () => {
     const selection = resolveAgentWalletSelection({
       config: cfg,
       env: process.env,
@@ -91,6 +93,63 @@ describe("wallet-agent-selection", () => {
 
     expect(selection.walletId).toBe("agent");
     expect(selection.role).toBe("agent");
+    expect(selection.source).toBe("default");
+  });
+
+  it("uses explicit action, skill, Agent, and default precedence in that order", () => {
+    setAgentWalletAssignment({
+      agentId: "research",
+      walletId: "trading",
+      env: process.env,
+    });
+
+    expect(
+      resolveAgentWalletSelection({
+        config: cfg,
+        walletId: "agent",
+        skillWalletId: "trading",
+        agentId: "research",
+        env: process.env,
+      }),
+    ).toMatchObject({ walletId: "agent", source: "explicit" });
+    expect(
+      resolveAgentWalletSelection({
+        config: cfg,
+        skillWalletId: "agent",
+        agentId: "research",
+        env: process.env,
+      }),
+    ).toMatchObject({ walletId: "agent", source: "skill" });
+    expect(
+      resolveAgentWalletSelection({
+        config: cfg,
+        agentId: "research",
+        env: process.env,
+      }),
+    ).toMatchObject({ walletId: "trading", source: "agent" });
+    expect(
+      resolveAgentWalletSelection({
+        config: cfg,
+        agentId: "unassigned",
+        env: process.env,
+      }),
+    ).toMatchObject({ walletId: "agent", source: "default" });
+  });
+
+  it("fails with Select an Agent wallet when no route is configured", () => {
+    setDefaultWallet({ walletId: undefined, env: process.env });
+    expect(() =>
+      resolveAgentWalletSelection({ config: cfg, agentId: "unassigned", env: process.env }),
+    ).toThrow("Select an Agent wallet");
+  });
+
+  it("rejects Mining and Vault Agent assignments", () => {
+    expect(() =>
+      setAgentWalletAssignment({ agentId: "research", walletId: "mining", env: process.env }),
+    ).toThrow("only Agent wallets");
+    expect(() =>
+      setAgentWalletAssignment({ agentId: "research", walletId: "vault", env: process.env }),
+    ).toThrow("only Agent wallets");
   });
 
   it("resolves a second Agent wallet by explicit handle", () => {

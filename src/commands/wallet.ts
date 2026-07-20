@@ -846,9 +846,6 @@ async function createSignerOwnedWalletForSetup(params: {
     },
     env: params.env,
   });
-  if (params.role === "agent") {
-    setDefaultWallet({ walletId: wallet.id, env: params.env });
-  }
   if (params.role === "mining") {
     const currentEntry = cfg.plugins?.entries?.["sat-mining"];
     const currentSatConfig =
@@ -1200,9 +1197,6 @@ async function importSignerOwnedWalletForSetup(params: {
     },
     env: params.env,
   });
-  if (params.role === "agent") {
-    setDefaultWallet({ walletId: wallet.id, env: params.env });
-  }
   if (params.role === "mining") {
     const currentEntry = cfg.plugins?.entries?.["sat-mining"];
     const currentConfig =
@@ -1857,7 +1851,7 @@ export async function walletRoleSetCommand(
     return;
   }
   runtime.log(
-    `${wallet?.name ?? walletId} (${walletId}) set to ${role === "agent" ? "Agent wallet" : "Vault wallet"}${primary ? " and primary Agent fallback" : ""}.`,
+    `${wallet?.name ?? walletId} (${walletId}) set to ${role === "agent" ? "Agent wallet" : "Vault wallet"}${primary ? " and Default Agent wallet fallback" : ""}.`,
   );
 }
 

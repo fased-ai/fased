@@ -52,7 +52,6 @@ import {
   checkNamedWalletDeletionSafety,
   deleteNamedWallet,
   resolveWalletUserRole,
-  setDefaultWallet,
   setNamedWalletRole,
   upsertNamedWallet,
 } from "../wallet/wallet-provider-registry.js";
@@ -1796,23 +1795,14 @@ export async function runOnboardingWizard(
           await restartLocalSocketSigner(ensureWalletStateDir(process.env).rootDir);
           const isAgentWallet = walletPurpose === "agent";
           if (walletPurpose === "agent") {
-            const currentPrimary = String(agentDefaultBefore.walletId ?? "").trim();
-            if (!currentPrimary || currentPrimary === walletId) {
-              setDefaultWallet({ walletId: walletId ?? "default", env: process.env });
-              await prompter.note(
-                `Primary Agent wallet set to ${walletName} (${walletId ?? "default"}).`,
-                "Wallet",
-              );
-            } else {
-              await prompter.note(
-                [
-                  `Agent wallet created as ${walletName} (${walletId ?? "default"}).`,
-                  `Primary Agent wallet remains ${describeWalletRef(agentDefaultBefore)}.`,
-                  `Use @wallet:${walletId ?? "default"} when you want this wallet explicitly.`,
-                ].join("\n"),
-                "Wallet",
-              );
-            }
+            await prompter.note(
+              [
+                `Agent wallet created as ${walletName} (${walletId ?? "default"}).`,
+                `Default Agent wallet fallback remains ${describeWalletRef(agentDefaultBefore)}.`,
+                `Use @wallet:${walletId ?? "default"} explicitly, assign it to an Agent or skill, or set it as the optional fallback in Wallet.`,
+              ].join("\n"),
+              "Wallet",
+            );
           }
           if (walletId) {
             setNamedWalletRole({

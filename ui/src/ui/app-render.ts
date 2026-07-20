@@ -3827,6 +3827,10 @@ export function renderApp(state: AppViewState) {
                   status: state.walletStatus,
                   namedWallets: state.walletNamedWallets,
                   defaultWalletId: state.walletDefaultWalletId,
+                  assignments: state.walletAssignments,
+                  agents: state.agentsList?.agents ?? [],
+                  assignAgentId: state.walletAssignAgentId,
+                  assignWalletId: state.walletAssignWalletId,
                 },
                 mining: {
                   attachedWalletId: state.miningAttachedWalletId,
@@ -5734,6 +5738,16 @@ export function renderApp(state: AppViewState) {
                   onApproveRequest: (requestId) => state.handleWalletApproveRequest(requestId),
                   onRejectRequest: (requestId) => state.handleWalletRejectRequest(requestId),
                   onSetDefaultWallet: (walletId) => state.handleWalletSetDefaultWallet(walletId),
+                  onAssignAgentIdChange: (agentId) => {
+                    state.walletAssignAgentId = agentId;
+                    state.walletAssignWalletId = state.walletAssignments[agentId] ?? "";
+                  },
+                  onAssignWalletIdChange: (walletId) => {
+                    state.walletAssignWalletId = walletId;
+                  },
+                  onAssignAgentWallet: () => void state.handleWalletAssignAgentWallet(),
+                  onDeleteAgentAssignment: (agentId) =>
+                    void state.handleWalletDeleteAgentAssignment(agentId),
                   onPasskeyLabelChange: (next) => (state.walletPasskeyLabel = next),
                   onEnablePasskeyApproval: () => state.handleWalletEnablePasskeyApproval(),
                   onEnrollPasskey: () => state.handleWalletEnrollPasskey(),

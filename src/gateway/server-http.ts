@@ -6649,7 +6649,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                 error: {
                   code: "wallet_in_use",
                   message:
-                    "walletId is the singleton SAT Mining wallet; Archive/Replace Mining with an Agent wallet before making it the primary Agent wallet",
+                    "walletId is the singleton SAT Mining wallet; Archive/Replace Mining with an Agent wallet before making it the Default Agent wallet fallback",
                 },
               });
               return;
@@ -6660,13 +6660,13 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               const role =
                 resolveWalletUserRole(wallet) ??
                 (registry.defaultWalletId === nextDefaultWalletId ? "agent" : undefined);
-              if (role && role !== "agent") {
+              if (role !== "agent") {
                 sendLoginResponse(409, {
                   ok: false,
                   error: {
                     code: "wallet_purpose_locked",
                     message:
-                      "only Agent wallets can become the primary Agent fallback; create a new Agent wallet instead",
+                      "only an explicit Agent wallet can become the Default Agent wallet fallback; create or select an Agent wallet instead",
                   },
                 });
                 return;
@@ -6679,9 +6679,32 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           }
           const agentId = typeof payload.agentId === "string" ? payload.agentId.trim() : "";
           if (agentId) {
+            const assignedWalletId =
+              typeof payload.walletId === "string" ? payload.walletId.trim() : "";
+            if (assignedWalletId) {
+              const registry = readWalletProviderRegistry(process.env);
+              const wallet = registry.wallets.find((entry) => entry.id === assignedWalletId);
+              if (!wallet) {
+                sendLoginResponse(404, {
+                  ok: false,
+                  error: { code: "wallet_not_found", message: "walletId does not exist" },
+                });
+                return;
+              }
+              if (resolveWalletUserRole(wallet) !== "agent") {
+                sendLoginResponse(409, {
+                  ok: false,
+                  error: {
+                    code: "wallet_purpose_locked",
+                    message: "only an explicit Agent wallet can be assigned to an Agent",
+                  },
+                });
+                return;
+              }
+            }
             setAgentWalletAssignment({
               agentId,
-              walletId: typeof payload.walletId === "string" ? payload.walletId.trim() : undefined,
+              walletId: assignedWalletId || undefined,
               env: process.env,
             });
           }

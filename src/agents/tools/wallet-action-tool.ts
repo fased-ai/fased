@@ -317,11 +317,14 @@ export function createWalletActionTool(opts?: {
       const scheduled = action === "schedule_plan";
       const requesterSkillId = opts?.requesterSkillId?.trim() || null;
       const permissions = readSkillWalletActionPermissions(cfg, requesterSkillId);
+      const skillWalletId =
+        permissions?.walletIds?.length === 1 ? permissions.walletIds[0] : undefined;
       const selection = resolveAgentWalletSelection({
         config: cfg,
         walletHandle,
         walletId,
         agentId: requesterAgentId ?? ownerAgentId ?? undefined,
+        skillWalletId,
         env: process.env,
       });
       const rpcUrl = resolveScopedRpcUrlForWallet({
