@@ -1850,27 +1850,19 @@ describe("wallet providers HTTP", () => {
         },
         env: {
           vars: {
-            FASED_WALLET_SOLANA_RPC_URL__MINER_WALLET: "https://rpc.example/solana",
-          },
-        },
-        plugins: {
-          entries: {
-            "sat-mining": {
-              enabled: true,
-              config: { walletId: "miner-wallet", network: "devnet", riskMode: "balanced" },
-            },
+            FASED_WALLET_SOLANA_RPC_URL__AGENT_WALLET: "https://rpc.example/solana",
           },
         },
       },
       run: async () => {
         upsertNamedWallet({
-          walletId: "miner-wallet",
-          name: "Miner Wallet",
+          walletId: "agent-wallet",
+          name: "Agent Wallet",
           providerId: "local-socket-signer",
           metadata: {
-            role: "mining",
-            purpose: "mining",
-            signerWalletId: "miner_wallet",
+            role: "agent",
+            purpose: "agent",
+            signerWalletId: "agent_wallet",
           },
           env: process.env,
         });
@@ -1892,9 +1884,9 @@ describe("wallet providers HTTP", () => {
             path: "/api/wallet/wallets",
             authorization: "Bearer root-token",
             body: {
-              walletId: "miner-wallet",
+              walletId: "agent-wallet",
               archive: true,
-              confirmWalletId: "miner-wallet",
+              confirmWalletId: "agent-wallet",
             },
           }),
           response.res,
@@ -1906,14 +1898,14 @@ describe("wallet providers HTTP", () => {
         });
         expect(
           readWalletProviderRegistry(process.env).wallets.some(
-            (wallet) => wallet.id === "miner-wallet",
+            (wallet) => wallet.id === "agent-wallet",
           ),
         ).toBe(true);
       },
     });
   });
 
-  test("archives a drained Mining wallet only after the signer acknowledges deny-all", async () => {
+  test("rejects direct Mining archive before signer or attachment mutation", async () => {
     await withTempConfig({
       cfg: {
         ...baseConfig,
@@ -2000,46 +1992,27 @@ describe("wallet providers HTTP", () => {
             }),
             response.res,
           );
-          expect(response.res.statusCode).toBe(200);
+          expect(response.res.statusCode).toBe(409);
           expect(JSON.parse(response.getBody())).toMatchObject({
-            ok: true,
-            removed: true,
-            archived: true,
+            ok: false,
+            error: { code: "mining_retirement_required" },
           });
-          expect(signer.requests.map((request) => request.op)).toEqual([
-            "v2.capabilities",
-            "v2.policy.get",
-            "v2.capabilities",
-            "v2.policy.tighten",
-            "v2.policy.get",
-          ]);
-          expect(
-            signer.requests.find((request) => request.op === "v2.policy.tighten"),
-          ).toMatchObject({
-            walletId: "miner_wallet",
-            request: {
-              expectedVersion: 4,
-              policy: {
-                role: "mining",
-                operations: [],
-                programs: [],
-                assets: [],
-              },
-            },
-          });
+          expect(signer.requests).toEqual([]);
           expect(
             readWalletProviderRegistry(process.env).wallets.some(
               (wallet) => wallet.id === "miner-wallet",
             ),
-          ).toBe(false);
+          ).toBe(true);
           const persisted = JSON.parse(
             await readFile(String(process.env.FASED_CONFIG_PATH), "utf8"),
           ) as {
             env?: { vars?: Record<string, string> };
             plugins?: { entries?: Record<string, { config?: { walletId?: string } }> };
           };
-          expect(persisted.env?.vars?.FASED_WALLET_SOLANA_RPC_URL__MINER_WALLET).toBeUndefined();
-          expect(persisted.plugins?.entries?.["sat-mining"]?.config?.walletId).toBeUndefined();
+          expect(persisted.env?.vars?.FASED_WALLET_SOLANA_RPC_URL__MINER_WALLET).toBe(
+            "https://rpc.example/solana",
+          );
+          expect(persisted.plugins?.entries?.["sat-mining"]?.config?.walletId).toBe("miner-wallet");
         } finally {
           await signer.close();
         }
