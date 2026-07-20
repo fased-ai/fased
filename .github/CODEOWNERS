@@ -1,0 +1,4 @@
+# The mutable public bootstrap begins executing before it can authenticate the
+# tagged payload. Changes therefore require explicit repository-owner review.
+/install.sh @fcode-ai
+/.github/workflows/hosted-runtime-release.yml @fcode-ai

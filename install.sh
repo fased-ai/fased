@@ -36,15 +36,61 @@ if [[ "$install_entry_legacy_ts_authkey" -eq 1 ]]; then
 fi
 
 if [[ "$install_entry_is_stream" -eq 1 && "$install_entry_hosting" -eq 1 ]]; then
-  echo "Refusing streamed VPS Hosting execution." >&2
-  echo "Download and verify an exact tagged release installer before running --hosting or --repair-hosting." >&2
-  exit 1
+  if [[ "${#install_entry_args[@]}" -ne 1 || "${install_entry_args[0]:-}" != "--hosting" ]]; then
+    echo "Streamed VPS Hosting accepts only the exact fresh-install selector: --hosting" >&2
+    echo "Use an exact tagged, attested installer for repair, release overrides, or advanced selectors." >&2
+    exit 1
+  fi
+  install_entry_exported_env=()
+  mapfile -t install_entry_exported_env < <(compgen -e)
+  for install_entry_env_name in "${install_entry_exported_env[@]}"; do
+    if [[ "$install_entry_env_name" == FASED_* ]]; then
+      echo "Refusing Fased environment overrides during streamed VPS Hosting: ${install_entry_env_name}" >&2
+      exit 1
+    fi
+  done
+  install_entry_unsafe_env=(
+    HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy
+    CURL_HOME CURL_CA_BUNDLE SSL_CERT_FILE SSL_CERT_DIR GIT_SSL_NO_VERIFY
+    GH_HOST GH_REPO GH_CONFIG_DIR TMPDIR LD_PRELOAD LD_LIBRARY_PATH BASH_ENV ENV CDPATH
+  )
+  for install_entry_env_name in "${install_entry_unsafe_env[@]}"; do
+    if [[ -n "${!install_entry_env_name+x}" ]]; then
+      echo "Refusing unsafe environment override during streamed VPS Hosting: ${install_entry_env_name}" >&2
+      exit 1
+    fi
+  done
+  install_entry_existing_hosting_paths=(
+    /etc/fased
+    /opt/fased
+    /var/lib/fased-installer
+    /var/lib/fased-gateway
+    /var/lib/fased-signerd
+    /etc/systemd/system/fased-gateway.service
+    /etc/systemd/system/fased-signerd.service
+    /usr/local/libexec/fased-gateway-launch
+    /usr/local/libexec/fased-host-updater
+  )
+  for install_entry_existing_path in "${install_entry_existing_hosting_paths[@]}"; do
+    if [[ -e "$install_entry_existing_path" || -L "$install_entry_existing_path" ]]; then
+      echo "Streamed VPS Hosting is only for a fresh host; existing Fased state was found." >&2
+      echo "Use the exact tagged repair or the installed updater instead of the mutable main bootstrap." >&2
+      exit 1
+    fi
+  done
+  PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  LANG="C.UTF-8"
+  LC_ALL="C.UTF-8"
+  export PATH LANG LC_ALL
+  unset -f curl gh jq tar sha256sum awk stat find grep flock install mv cp chown chmod sync 2>/dev/null || true
+  hash -r 2>/dev/null || true
 fi
 
 # A Hosting file request enters the attest-and-extract bootstrap unless it is
 # the exact inner invocation carrying the root-owned verified bundle marker.
-# Streamed Hosting was rejected above; streamed execution reaches this block
-# only for the non-root Local bootstrap.
+# Streamed Hosting reaches this block only for the exact fresh --hosting
+# selector validated above. Repair and advanced Hosting selectors remain
+# exact-tag-only.
 if [[ "$install_entry_is_stream" -eq 1 || \
   ( "$install_entry_hosting" -eq 1 && -z "$install_entry_verified_bundle" ) ]]; then
   install_repo_url="${FASED_INSTALL_REPO:-https://github.com/fased-ai/fased.git}"
@@ -126,7 +172,7 @@ if [[ "$install_entry_is_stream" -eq 1 || \
       local source_tmp=""
       keyring_tmp="$(mktemp)"
       source_tmp="$(mktemp)"
-      curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o "$keyring_tmp"
+      curl -q -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o "$keyring_tmp"
       printf 'deb [arch=%s signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\n' "$(dpkg --print-architecture)" >"$source_tmp"
       bootstrap_as_root install -d -m 0755 /etc/apt/keyrings
       bootstrap_as_root install -m 0644 "$keyring_tmp" /etc/apt/keyrings/githubcli-archive-keyring.gpg
@@ -160,7 +206,7 @@ if [[ "$install_entry_is_stream" -eq 1 || \
   }
 
   resolve_public_latest_release_tag() {
-    curl -fsSL --proto '=https' --tlsv1.2 \
+    curl -q -fsSL --proto '=https' --tlsv1.2 \
       -H 'Accept: application/vnd.github+json' \
       -H 'X-GitHub-Api-Version: 2022-11-28' \
       -H 'User-Agent: fased-installer' \
@@ -227,22 +273,37 @@ if [[ "$install_entry_is_stream" -eq 1 || \
     fi
 
     local architecture=""
+    local signer_platform=""
     case "$(uname -m)" in
-      x86_64|amd64) architecture="x64" ;;
-      aarch64|arm64) architecture="arm64" ;;
+      x86_64|amd64)
+        architecture="x64"
+        signer_platform="linux-amd64"
+        ;;
+      aarch64|arm64)
+        architecture="arm64"
+        signer_platform="linux-arm64"
+        ;;
       *)
         echo "Unsupported Hosting architecture: $(uname -m)" >&2
         exit 1
         ;;
     esac
-    local asset="fased-hosted-app-linux-${architecture}-v${release_version}.tar.gz"
+    local asset="fased-hosted-app-v2-linux-${architecture}-v${release_version}.tar.gz"
     local release_url="https://github.com/fased-ai/fased/releases/download/v${release_version}"
     local release_parent="/var/lib/fased-installer/releases/v${release_version}"
     local staging="${release_parent}/.staging.$$"
     local preflight=""
     preflight="$(mktemp -d "${TMPDIR:-/tmp}/fased-hosting-bootstrap.XXXXXX")"
     local archive="${preflight}/${asset}"
+    local dependency_archive=""
+    local dependency_asset=""
+    local dependency_expected=""
+    local dependency_hash=""
+    local signer_binary=""
+    local signer_asset=""
+    local signer_expected=""
     local release_manifest="${preflight}/fased-hosted-release-v2.json"
+    local release_manifest_bundle="${preflight}/fased-hosted-release-v2.json.attestation.json"
     local expected=""
     local actual=""
     local manifest_digest=""
@@ -250,16 +311,43 @@ if [[ "$install_entry_is_stream" -eq 1 || \
     local manifest_signer_commit=""
 
     umask 077
-    trap 'rm -rf -- "${preflight:-}" "${staging:-}"' EXIT
-    curl -fL --proto '=https' --tlsv1.2 "$release_url/fased-hosted-release-v2.json" -o "$release_manifest"
+    hosting_bootstrap_cleanup() {
+      local status="$?"
+      rm -rf -- "${preflight:-}" "${staging:-}"
+      if [[ "$status" -ne 0 ]]; then
+        if [[ -e /var/lib/fased-installer || -L /var/lib/fased-installer ]]; then
+          echo "Hosting bootstrap stopped without activating Fased services." >&2
+          echo "Persistent installer state exists; retry only with the exact tagged, attested repair procedure." >&2
+        else
+          echo "Hosting bootstrap stopped before persistent Fased state was created; fix the reported problem and rerun the exact --hosting command." >&2
+        fi
+      fi
+      return "$status"
+    }
+    trap hosting_bootstrap_cleanup EXIT
+    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-hosted-release-v2.json" -o "$release_manifest"
+    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-hosted-release-v2.json.attestation.json" -o "$release_manifest_bundle"
     GH_PROMPT_DISABLED=1 gh attestation verify "$release_manifest" \
       --repo fased-ai/fased \
+      --bundle "$release_manifest_bundle" \
       --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
       --source-ref "refs/tags/v${release_version}" \
       --deny-self-hosted-runners >/dev/null
     local manifest_selection=""
-    manifest_selection="$(jq -er --arg version "$release_version" --arg architecture "$architecture" '
-      if .schemaVersion == 2 and
+    manifest_selection="$(jq -er --arg version "$release_version" --arg architecture "$architecture" --arg signer_platform "$signer_platform" '
+      if (keys == ["application", "release", "schemaVersion", "signer"]) and
+        .schemaVersion == 2 and
+        (.release | keys == ["commit", "tag", "version"]) and
+        (.application | keys == ["linux"]) and
+        (.application.linux | keys == ["arm64", "x64"]) and
+        (.application.linux[$architecture] | keys == ["artifact", "dependencies"]) and
+        (.application.linux[$architecture].artifact | keys == ["asset", "sha256"]) and
+        (.application.linux[$architecture].dependencies | keys == ["asset", "dependencyHash", "sha256"]) and
+        (.signer | keys == ["capabilities", "capabilitiesDigest", "platforms", "release"]) and
+        (.signer.release | keys == ["buildInputDigest", "commit", "development", "version"]) and
+        (.signer.platforms | keys == ["darwin-amd64", "darwin-arm64", "linux-amd64", "linux-arm64"]) and
+        (.signer.platforms[$signer_platform] | keys == ["asset", "sha256"]) and
+        (.signer.capabilitiesDigest | test("^sha256:[a-f0-9]{64}$")) and
         (.release.version == $version) and (.release.tag == ("v" + $version)) and
         (.release.commit | test("^[a-f0-9]{40}$")) and
         (.signer.release.version == $version) and
@@ -267,38 +355,107 @@ if [[ "$install_entry_is_stream" -eq 1 || \
         (.signer.release.development == false) and
         (.signer.release.buildInputDigest | test("^sha256:[a-f0-9]{64}$")) and
         (.application.linux[$architecture].artifact.asset | test("^[A-Za-z0-9][A-Za-z0-9._-]+$")) and
-        (.application.linux[$architecture].artifact.sha256 | test("^[a-f0-9]{64}$"))
+        (.application.linux[$architecture].artifact.sha256 | test("^[a-f0-9]{64}$")) and
+        (.application.linux[$architecture].dependencies.asset | test("^[A-Za-z0-9][A-Za-z0-9._-]+$")) and
+        (.application.linux[$architecture].dependencies.sha256 | test("^[a-f0-9]{64}$")) and
+        (.application.linux[$architecture].dependencies.dependencyHash | test("^[a-f0-9]{64}$")) and
+        (.signer.platforms[$signer_platform].asset | test("^[A-Za-z0-9][A-Za-z0-9._-]+$")) and
+        (.signer.platforms[$signer_platform].sha256 | test("^[a-f0-9]{64}$"))
       then [
         .release.commit,
         .signer.release.commit,
         .application.linux[$architecture].artifact.asset,
-        .application.linux[$architecture].artifact.sha256
+        .application.linux[$architecture].artifact.sha256,
+        .application.linux[$architecture].dependencies.asset,
+        .application.linux[$architecture].dependencies.sha256,
+        .application.linux[$architecture].dependencies.dependencyHash,
+        .signer.platforms[$signer_platform].asset,
+        .signer.platforms[$signer_platform].sha256
       ] | @tsv
       else error("invalid hosted release manifest") end
     ' "$release_manifest")" || {
       echo "Hosted release manifest does not bind this exact app and signer release." >&2
       exit 1
     }
-    IFS=$'\t' read -r manifest_commit manifest_signer_commit asset expected <<<"$manifest_selection"
-    [[ "$manifest_commit" == "$manifest_signer_commit" && "$asset" == "fased-hosted-app-linux-${architecture}-v${release_version}.tar.gz" ]] || {
+    IFS=$'\t' read -r manifest_commit manifest_signer_commit asset expected dependency_asset dependency_expected dependency_hash signer_asset signer_expected <<<"$manifest_selection"
+    [[ "$manifest_commit" == "$manifest_signer_commit" && \
+      "$asset" == "fased-hosted-app-v2-linux-${architecture}-v${release_version}.tar.gz" && \
+      "$dependency_asset" == "fased-hosted-deps-linux-${architecture}-${dependency_hash}.tar.gz" && \
+      "$signer_asset" == "fased-signerd-${signer_platform}" ]] || {
       echo "Hosted release manifest selects a mixed commit or unexpected app artifact." >&2
       exit 1
     }
     archive="${preflight}/${asset}"
-    curl -fL --proto '=https' --tlsv1.2 "$release_url/$asset" -o "$archive"
+    dependency_archive="${preflight}/${dependency_asset}"
+    signer_binary="${preflight}/${signer_asset}"
+    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/$asset" -o "$archive"
+    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/$dependency_asset" -o "$dependency_archive"
+    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/$signer_asset" -o "$signer_binary"
     actual="$(sha256sum "$archive" | awk '{print tolower($1)}')"
+    local dependency_actual=""
+    local signer_actual=""
+    dependency_actual="$(sha256sum "$dependency_archive" | awk '{print tolower($1)}')"
+    signer_actual="$(sha256sum "$signer_binary" | awk '{print tolower($1)}')"
     manifest_digest="$(sha256sum "$release_manifest" | awk '{print tolower($1)}')"
-    if [[ ! "$expected" =~ ^[a-f0-9]{64}$ || "$actual" != "$expected" ]]; then
-      echo "Hosted release checksum verification failed." >&2
+    if [[ ! "$expected" =~ ^[a-f0-9]{64}$ || "$actual" != "$expected" || \
+      ! "$dependency_expected" =~ ^[a-f0-9]{64}$ || "$dependency_actual" != "$dependency_expected" || \
+      ! "$signer_expected" =~ ^[a-f0-9]{64}$ || "$signer_actual" != "$signer_expected" ]]; then
+      echo "Hosted app, dependency, or signer release checksum verification failed." >&2
       exit 1
     fi
-    GH_PROMPT_DISABLED=1 gh attestation verify "$archive" \
-      --repo fased-ai/fased \
-      --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-      --source-ref "refs/tags/v${release_version}" \
-      --deny-self-hosted-runners >/dev/null
-    # Only after the exact unified manifest and selected app artifact are both
-    # attested and digest-bound may the bootstrap create persistent root state.
+    local entry=""
+    while IFS= read -r entry; do
+      entry="${entry%/}"
+      if [[ -z "$entry" || "$entry" == /* || "$entry" == *\\* || \
+        ( "$entry" != "package" && "$entry" != package/* ) || \
+        "$entry" == *"/../"* || "$entry" == ../* || "$entry" == */.. || \
+        "$entry" == *"/./"* || "$entry" == ./* || "$entry" == */. ]]; then
+        echo "Hosted app archive contains an unsafe path: $entry" >&2
+        exit 1
+      fi
+    done < <(tar -tzf "$archive")
+    while IFS= read -r entry; do
+      entry="${entry%/}"
+      if [[ -z "$entry" || "$entry" == /* || "$entry" == *\\* || \
+        ( "$entry" != "node_modules" && "$entry" != node_modules/* ) || \
+        "$entry" == *"/../"* || "$entry" == ../* || "$entry" == */.. || \
+        "$entry" == *"/./"* || "$entry" == ./* || "$entry" == */. ]]; then
+        echo "Hosted dependency archive contains an unsafe path: $entry" >&2
+        exit 1
+      fi
+    done < <(tar -tzf "$dependency_archive")
+
+    local verified_extract="$preflight/verified-app"
+    install -d -m 0700 "$verified_extract"
+    tar -xzf "$archive" -C "$verified_extract" --no-same-owner --no-same-permissions
+    local verified_package_root="$verified_extract/package"
+    [[ -f "$verified_package_root/install.sh" && -f "$verified_package_root/package.json" && \
+      ! -L "$verified_package_root/install.sh" && -f "$verified_package_root/dist/build-info.json" && \
+      ! -L "$verified_package_root/dist/build-info.json" ]] || {
+      echo "Attested Hosting bundle is incomplete or has an invalid entrypoint." >&2
+      exit 1
+    }
+    local packaged_version=""
+    local packaged_commit=""
+    local build_info_version=""
+    packaged_version="$(awk -F'"' '/^[[:space:]]*"version"[[:space:]]*:/ { print $4; exit }' "$verified_package_root/package.json")"
+    packaged_commit="$(awk -F'"' '/^[[:space:]]*"commit"[[:space:]]*:/ { print $4; exit }' "$verified_package_root/dist/build-info.json")"
+    build_info_version="$(awk -F'"' '/^[[:space:]]*"version"[[:space:]]*:/ { print $4; exit }' "$verified_package_root/dist/build-info.json")"
+    [[ "$packaged_version" == "$release_version" && "$build_info_version" == "$release_version" && \
+      "$packaged_commit" =~ ^[a-f0-9]{40}$ && "$packaged_commit" == "$manifest_commit" ]] || {
+      echo "Attested Hosting application identity does not match the unified release manifest." >&2
+      exit 1
+    }
+    if find "$verified_package_root" -xdev ! -type f ! -type d -print -quit | grep -q . || \
+      find "$verified_package_root" -xdev -type f -links +1 -print -quit | grep -q . || \
+      find "$verified_package_root" -xdev \( ! -user root -o -perm /022 \) -print -quit | grep -q .; then
+      echo "Attested Hosting bundle violates the file, link, ownership, or writable-mode policy." >&2
+      exit 1
+    fi
+
+    # Only after the exact unified manifest, app/dependency layers, signer
+    # binary, archive layout, and build identity are verified may the
+    # bootstrap create persistent Fased root state.
     install -d -m 0700 -o root -g root /var/lib/fased-installer /var/lib/fased-installer/releases "$release_parent"
     exec 9>/var/lib/fased-installer/install.lock
     chmod 0600 /var/lib/fased-installer/install.lock
@@ -337,52 +494,9 @@ if [[ "$install_entry_is_stream" -eq 1 || \
       exit 1
     fi
 
-    local entry=""
-    while IFS= read -r entry; do
-      entry="${entry%/}"
-      if [[ -z "$entry" || "$entry" == /* || "$entry" == *\\* || \
-        ( "$entry" != "package" && "$entry" != package/* ) || \
-        "$entry" == *"/../"* || "$entry" == ../* || "$entry" == */.. || \
-        "$entry" == *"/./"* || "$entry" == ./* || "$entry" == */. ]]; then
-        echo "Hosted release archive contains an unsafe path: $entry" >&2
-        exit 1
-      fi
-    done < <(tar -tzf "$archive")
-
     install -d -m 0700 -o root -g root "$staging/extract"
-    tar -xzf "$archive" -C "$staging/extract" --no-same-owner --no-same-permissions
+    cp -a "$verified_package_root" "$staging/extract/package"
     local package_root="$staging/extract/package"
-    [[ -f "$package_root/install.sh" && -f "$package_root/package.json" && ! -L "$package_root/install.sh" ]] || {
-      echo "Attested Hosting bundle is incomplete." >&2
-      exit 1
-    }
-    local packaged_version=""
-    packaged_version="$(awk -F'"' '/^[[:space:]]*"version"[[:space:]]*:/ { print $4; exit }' "$package_root/package.json")"
-    [[ "$packaged_version" == "$release_version" ]] || {
-      echo "Attested Hosting bundle version does not match v${release_version}." >&2
-      exit 1
-    }
-    [[ -f "$package_root/dist/build-info.json" && ! -L "$package_root/dist/build-info.json" ]] || {
-      echo "Attested Hosting bundle is missing immutable build identity." >&2
-      exit 1
-    }
-    local packaged_commit=""
-    local build_info_version=""
-    packaged_commit="$(awk -F'"' '/^[[:space:]]*"commit"[[:space:]]*:/ { print $4; exit }' "$package_root/dist/build-info.json")"
-    build_info_version="$(awk -F'"' '/^[[:space:]]*"version"[[:space:]]*:/ { print $4; exit }' "$package_root/dist/build-info.json")"
-    [[ "$packaged_commit" =~ ^[a-f0-9]{40}$ && "$build_info_version" == "$release_version" ]] || {
-      echo "Attested Hosting bundle build identity is invalid or does not match v${release_version}." >&2
-      exit 1
-    }
-    [[ "$packaged_commit" == "$manifest_commit" ]] || {
-      echo "Attested Hosting application commit does not match the unified release manifest." >&2
-      exit 1
-    }
-    if find "$package_root" -xdev ! -type f ! -type d -print -quit | grep -q . || \
-      find "$package_root" -xdev -type f -links +1 -print -quit | grep -q .; then
-      echo "Attested Hosting bundle contains a symlink, special file, or hardlinked regular file." >&2
-      exit 1
-    fi
     chown -R root:root "$staging"
     chmod -R go-w "$staging"
     if find "$staging" -xdev \( ! -user root -o -perm /022 \) -print -quit | grep -q .; then
