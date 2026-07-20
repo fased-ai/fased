@@ -140,7 +140,14 @@ func TestSignerPeerCredentialRequiresExpectedUnixPeerUID(t *testing.T) {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("Unix peer credentials are intentionally fail-closed on this platform")
 	}
-	socketPath := filepath.Join(t.TempDir(), "peer.sock")
+	// macOS limits Unix-domain socket paths to roughly 104 bytes. t.TempDir()
+	// includes the full test name and can exceed that limit on hosted runners.
+	socketDir, err := os.MkdirTemp("", "fsp-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socketPath := filepath.Join(socketDir, "peer.sock")
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatal(err)
