@@ -1482,7 +1482,7 @@ export async function runOnboardingWizard(
             });
             continue;
           }
-          if (targetWalletPurpose === "mining") {
+          if (resolveWalletUserRole(targetWallet) === "mining") {
             await prompter.note(
               "Mining wallets cannot be archived or deleted directly. Use Retire and replace Mining wallet so the signer tombstone is committed before registry detachment.",
               "Mining retirement required",

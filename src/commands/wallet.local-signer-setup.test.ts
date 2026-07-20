@@ -528,6 +528,7 @@ describe("walletSetupCommand native signer boundary", () => {
       signerMocks.readiness.mockResolvedValueOnce({
         walletId: "legacy_agent",
         publicKey: "11111111111111111111111111111111",
+        walletVersion: 1,
         role: "agent",
         baselineVersion: 1,
         policyVersion: 2,
