@@ -27,7 +27,7 @@ active. Display names are labels; risky requests use wallet IDs or
 ## New wallets are role-ready
 
 Create, import, and recovery activate signer-owned role baseline v1 together
-with one verified primary RPC. Readiness is authoritative only when the live
+with one verified RPC. Readiness is authoritative only when the live
 wallet role, public address, policy version/hash, baseline version, network
 version/hash, and registry record agree.
 
@@ -40,9 +40,11 @@ Role-ready does not mean unlimited:
 - Any missing operation, program, asset, destination, or positive cap remains
   denied.
 
-Legacy wallets created under the former explicit deny-all policy stay deny-all
-until the owner reviews the immutable role and selects **Activate role
-baseline** once. Fased never expands them during migration, restart, or update.
+`fased update` transactionally migrates registered legacy native wallets to the
+current signer. It preserves each wallet ID, address, role, and RPC, activates
+the matching built-in role baseline, verifies the candidate signer state, and
+rolls back on failure. Successful temporary migration snapshots are removed.
+No per-wallet **Activate role baseline** repair is part of the normal update.
 
 ## Default Agent is optional
 

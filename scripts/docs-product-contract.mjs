@@ -12,11 +12,21 @@ const expectedHostingPages = new Set([
   "README.md",
   "docs/install/index.md",
   "docs/install/vps.md",
+  "docs/start/agent-wallet-mining-walkthrough.md",
+  "docs/start/fased.md",
   "docs/start/getting-started.md",
   "docs/zh-CN/install/index.md",
   "docs/zh-CN/install/vps.md",
   "docs/zh-CN/start/getting-started.md",
 ]);
+const compactWalletDocsRoots = ["docs/start/", "docs/plugins/crypto/"];
+const retiredWalletPhrases = [
+  "Enter a name and wallet ID",
+  "Enter a name and permanent wallet ID",
+  "Primary Solana RPC",
+  "Verify and save RPC",
+  "wallet Security",
+];
 
 function fail(message) {
   throw new Error(`docs product contract: ${message}`);
@@ -101,6 +111,16 @@ for (const absolute of markdownFiles) {
   }
   if (source.includes("fased-signer-wallet-import")) {
     fail(`${relative} documents the retired Hosting root import helper`);
+  }
+  if (compactWalletDocsRoots.some((rootPrefix) => relative.startsWith(rootPrefix))) {
+    for (const phrase of retiredWalletPhrases) {
+      if (source.includes(phrase)) {
+        fail(`${relative} uses retired Wallet setup wording: ${phrase}`);
+      }
+    }
+    if (source.includes("fased wallet policy activate-role-baseline")) {
+      fail(`${relative} documents manual baseline activation as a user workflow`);
+    }
   }
 }
 

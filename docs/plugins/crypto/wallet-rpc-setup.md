@@ -1,5 +1,5 @@
 ---
-summary: "Set one primary Solana RPC per wallet and understand the execution, read, and verification boundaries."
+summary: "Set one Solana RPC per wallet and understand the execution, read, and verification boundaries."
 read_when:
   - Preparing an Agent, Mining, or Vault wallet
   - Fixing signer RPC readiness
@@ -12,7 +12,7 @@ sidebarTitle: "RPC setup"
 Normal onboarding is deliberately simple:
 
 1. Select Agent, Mining, or Vault.
-2. Enter one primary RPC for that wallet.
+2. Enter one RPC for that wallet.
 
 There is no Solana-network question and no second-RPC question. The Go signer
 reads the live genesis hash, pins the wallet to that cluster, and selects the
@@ -44,16 +44,16 @@ fased wallet setup --mode local-signer-create \
   --rpc-url https://your-solana-rpc.example --non-interactive
 ```
 
-After installation, open **Control UI → Wallets → wallet Security**, enter the
-replacement primary RPC, and choose **Verify and save RPC**. The terminal
-**Manage wallet** flow provides the same operation.
+After installation, open **Control UI → Wallets → Settings**, select the RPC
+edit icon, enter the replacement, and choose **Save**. The terminal **Manage
+wallet** flow provides the same operation.
 
 The signer accepts the replacement only when it:
 
 - is a canonical HTTPS URL, except loopback Local development;
 - avoids credentials in URL userinfo, fragments, private/metadata/link-local,
   multicast, and unspecified targets;
-- returns the wallet's pinned genesis hash; and
+- stays on the wallet's current Solana network; and
 - produces the exact next signer network version.
 
 The UI receives readiness, version, and keyed hash—not the stored signer URL.

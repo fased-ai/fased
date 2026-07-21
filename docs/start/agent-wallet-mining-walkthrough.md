@@ -126,10 +126,16 @@ Choose the setup profile first.
     ssh root@YOUR_PUBLIC_VPS_IP
     ```
 
-    Run the [exact fresh Hosting
-    command](/install/vps#3-install-fased) **inside the VPS
-    root SSH session**. It authenticates the tagged installer before Bash runs
-    it, verifies the Hosting bundle, and installs/starts Tailscale on the VPS.
+    Run this **inside the VPS root SSH session**:
+
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+      | bash -s -- --hosting
+    ```
+
+    The bootstrap verifies the tagged Hosting payload, installs Fased, and
+    starts Tailscale. Continue with the [VPS Hosting guide](/install/vps) for
+    the private-access check and recovery boundary.
 
     Do not paste the hosted command into local PowerShell or Terminal unless
     that shell is already connected to the VPS.
@@ -155,10 +161,22 @@ Choose the setup profile first.
 
 Simple command recap:
 
-```bash
-# Local: run on this computer (inside Ubuntu WSL2 on Windows)
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
+Local, run on this computer (inside Ubuntu WSL2 on Windows):
 
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
+```
+
+VPS Hosting, run as root inside the fresh VPS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+  | bash -s -- --hosting
+```
+
+After installation:
+
+```bash
 # Continue setup if interrupted
 fased onboard --install-daemon
 
@@ -291,13 +309,14 @@ flow during onboarding:
 
 1. Select **Agent**, **Mining**, or **Vault**. Fased never chooses Agent
    silently.
-2. Enter a name and permanent wallet ID.
-3. Enter one primary Solana RPC. There is no network question and no normal
+2. Optionally enter a display name. Fased generates the permanent wallet ID and
+   shows its `@wallet:<id>` handle after creation.
+3. Enter one Solana RPC. There is no network question and no normal
    second-RPC field; the signer derives and verifies the network from genesis.
 4. Press **Create wallet**. The Go signer creates the key and returns only the
    public address.
-5. Confirm the wallet shows RPC ready, signer-owned role baseline v1, and the
-   exact live policy/network hashes.
+5. Confirm the wallet shows RPC and role readiness, the expected handle, and
+   the correct public address.
 
 Agent and Vault can have multiple wallets. Mining has one active wallet. To
 replace Mining, stop Mining, settle or move funds, verify recovery, then use

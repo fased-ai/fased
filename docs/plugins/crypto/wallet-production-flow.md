@@ -124,13 +124,11 @@ in health. A UI change stays pending until the signer acknowledges that exact
 hash. The Gateway can request a tighter policy; initial authority and later
 loosening use the native owner/admin workflow.
 
-Existing legacy explicit deny-all wallets are not migrated automatically.
-Review their immutable role and activate signer-owned baseline v1 once:
-
-```bash
-fased wallet policy activate-role-baseline \
-  --wallet-id <wallet-id> --role <agent|mining|vault> --confirm
-```
+Registered legacy wallets are migrated automatically by `fased update`. The
+transaction preserves the wallet ID, public address, role, and RPC; imports the
+key into the current signer; activates the matching built-in role baseline;
+and verifies the candidate before commit. Failure restores the prior runtime
+and wallet state. A successful commit removes its temporary rollback snapshot.
 
 For authority beyond the built-in role baseline, copy the role template to a
 private absolute path, replace its wallet ID with the canonical signer ID,
