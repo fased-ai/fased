@@ -270,11 +270,19 @@ jobs:
             profile: serial
             command: pnpm canvas:a2ui:bundle && pnpm test
           - runtime: node
-            task: extensions
+            task: extensions-1of2
             test_lane: true
             groups: extensions
-            shard_index: 0
-            shard_count: 1
+            shard_index: 1
+            shard_count: 2
+            profile: serial
+            command: pnpm canvas:a2ui:bundle && pnpm test
+          - runtime: node
+            task: extensions-2of2
+            test_lane: true
+            groups: extensions
+            shard_index: 2
+            shard_count: 2
             profile: serial
             command: pnpm canvas:a2ui:bundle && pnpm test
           - runtime: node
@@ -326,8 +334,8 @@ jobs:
         if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.test_lane == true
         run: |
           # Split each measured long-running group onto its own runner. Gateway
-          # is file-sharded across two runners; isolated and extension suites
-          # remain serial internally for deterministic process/global state.
+          # and extensions are file-sharded across two runners; isolated and
+          # extension suites remain serial internally for deterministic state.
           echo "FASED_TEST_GROUPS=${{ matrix.groups }}" >> "$GITHUB_ENV"
           echo "FASED_TEST_PROFILE=${{ matrix.profile }}" >> "$GITHUB_ENV"
           echo "FASED_TEST_WORKERS=2" >> "$GITHUB_ENV"
