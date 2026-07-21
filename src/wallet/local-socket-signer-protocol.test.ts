@@ -259,6 +259,23 @@ describe("local socket signer protocol", () => {
       }),
     ).toBe(true);
     expect(
+      validateLocalSocketSignerResult("v2.wallet.readiness", {
+        walletId: "mining",
+        publicKey: "11111111111111111111111111111111",
+        role: "mining",
+        baselineVersion: 1,
+        policyVersion: 1,
+        policyHash: `sha256:${"c".repeat(64)}`,
+        networkVersion: 1,
+        networkHash: `hmac-sha256:${"d".repeat(64)}`,
+        keyReady: true,
+        policyReady: true,
+        networkReady: true,
+        operationLane: "mining-reviewed-only",
+        ready: true,
+      }),
+    ).toBe(true);
+    expect(
       parseLocalSocketSignerRequest({
         op: "v2.execute",
         walletId: "agent",

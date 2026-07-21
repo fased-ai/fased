@@ -7,6 +7,7 @@ import {
   activateLocalSourceSigner,
   assertLocalSourcePairedGatewayStartAllowed,
   commitLocalSourcePairedUpdate,
+  isLocalSourceSignerConfigured,
   markLocalSourceAppActive,
   markLocalSourceGatewayVerified,
   prepareLocalSourcePairedUpdate,
@@ -93,6 +94,16 @@ function createTarget(sourceRoot: string): string {
 }
 
 describe("Local source app/signer paired transaction", () => {
+  it("includes registered pre-v2 wallet material in the paired update boundary", async () => {
+    const fixture = createFixture();
+    const walletDir = path.join(fixture.stateDir, "wallet");
+    fs.mkdirSync(walletDir, { recursive: true });
+    fs.writeFileSync(path.join(walletDir, "keystore-solana-agent.v1.enc"), "fixture", {
+      mode: 0o600,
+    });
+    await expect(isLocalSourceSignerConfigured(fixture.env)).resolves.toBe(true);
+  });
+
   it("blocks an unpaired Gateway and restores the exact source and signer controller", async () => {
     const fixture = createFixture();
     let journal = await prepareLocalSourcePairedUpdate({

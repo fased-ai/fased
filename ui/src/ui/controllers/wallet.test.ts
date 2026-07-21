@@ -295,6 +295,44 @@ describe("loadWallet", () => {
     expect(host.walletBalancesError).toBeNull();
   });
 
+  it("clears cached numeric balances when the RPC returns an unavailable result", async () => {
+    walletApi.getWalletNamedWallets.mockResolvedValueOnce({
+      ...(await walletApi.getWalletNamedWallets()),
+      wallets: [
+        {
+          id: "wallet-payment",
+          name: "Solana 2",
+          providerId: "embedded-keystore",
+          addresses: { solana: "So11111111111111111111111111111111111111112" },
+          balances: { solana: "2500000000" },
+          readiness: { keystore: true, rpc: true },
+          createdAt: "2026-04-08T00:00:00.000Z",
+          updatedAt: "2026-04-08T00:00:00.000Z",
+        },
+      ],
+    });
+    walletApi.getWalletBalances.mockResolvedValue({
+      ok: true,
+      chain: "all",
+      provider: "embedded-keystore",
+      walletId: "wallet-payment",
+      balances: {
+        solana: {
+          ok: false,
+          chain: "solana",
+          error: "RPC quota reached",
+        },
+      },
+      addresses: { solana: "So11111111111111111111111111111111111111112" },
+      checkedAt: "2026-04-08T00:00:00.000Z",
+    });
+
+    const host = createHost();
+    await loadWallet(host);
+
+    expect(host.walletNamedWallets[0]?.balances?.solana).toBeUndefined();
+  });
+
   it("clears transient local signer socket errors when signer doctor is healthy", async () => {
     const statusResponse = await walletApi.getWalletStatus();
     walletApi.getWalletStatus.mockClear();

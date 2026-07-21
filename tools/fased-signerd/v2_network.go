@@ -52,6 +52,14 @@ type signerNetworkPutRequestV2 struct {
 	LegacyFallbackRPCURL    string  `json:"fallbackRpcUrl,omitempty"`
 }
 
+type signerMigratedNetworkRepairRequestV1 struct {
+	ExpectedVersion   uint64 `json:"expectedVersion"`
+	ExpectedHash      string `json:"expectedHash"`
+	ExpectedPublicKey string `json:"expectedPublicKey"`
+	MigrationSource   string `json:"migrationSource"`
+	PrimaryRPCURL     string `json:"primaryRpcUrl"`
+}
+
 type signerNetworkSecretV2 struct {
 	SchemaVersion           uint8  `json:"schemaVersion"`
 	PrimaryRPCURL           string `json:"primaryRpcUrl"`
@@ -781,6 +789,83 @@ func (m *signerKeyManagerV2) PutNetworkV2(walletID string, request signerNetwork
 	}, nil
 }
 
+// RepairMigratedPrimaryNetworkV1 is an explicit control-socket-only recovery for
+// wallets imported from the legacy embedded keystore whose first network pin was
+// recorded incorrectly by an older migration. Ordinary application RPC edits
+// continue to reject cross-genesis changes. Exact wallet, network version, and
+// authenticated network-hash fences make retries deterministic and auditable.
+func (m *signerKeyManagerV2) RepairMigratedPrimaryNetworkV1(walletID string, request signerMigratedNetworkRepairRequestV1) (signerNetworkSummaryV2, error) {
+	if m == nil || m.store == nil || m.store.db == nil {
+		return signerNetworkSummaryV2{}, errors.New("signer state database is unavailable")
+	}
+	walletID = normalizeWalletID(walletID)
+	if request.MigrationSource != "embedded-keystore" {
+		return signerNetworkSummaryV2{}, errors.New("migrated network repair requires the embedded-keystore source marker")
+	}
+	if !isValidSignerNetworkHashV2(request.ExpectedHash) {
+		return signerNetworkSummaryV2{}, errors.New("migrated network repair requires the exact current network hash")
+	}
+	expectedPublicKey, err := normalizeSignerGenesisHashV2(request.ExpectedPublicKey)
+	if err != nil {
+		return signerNetworkSummaryV2{}, errors.New("migrated network repair requires the exact wallet public key")
+	}
+	config, err := normalizeSignerNetworkInputV2(signerNetworkPutRequestV2{PrimaryRPCURL: request.PrimaryRPCURL})
+	if err != nil {
+		return signerNetworkSummaryV2{}, err
+	}
+	config, err = m.verifySignerNetworkGenesisV2(config)
+	if err != nil {
+		return signerNetworkSummaryV2{}, err
+	}
+	var stored signerNetworkRecordV2
+	err = m.store.db.Update(func(tx *bolt.Tx) error {
+		wallet, err := loadSignerWalletRecordFromTxV2(tx, walletID)
+		if err != nil {
+			return err
+		}
+		if subtle.ConstantTimeCompare([]byte(wallet.PublicKey), []byte(expectedPublicKey)) != 1 {
+			return errors.New("migrated network repair wallet public key mismatch")
+		}
+		networks := tx.Bucket(bucketSignerNetworksV2)
+		raw := networks.Get([]byte(walletID))
+		if raw == nil {
+			return errSignerNetworkNotConfiguredV2
+		}
+		var current signerNetworkRecordV2
+		if err := decodeSignerNetworkRecordV2(raw, &current); err != nil || current.WalletID != walletID {
+			return errors.New("invalid stored signer network record")
+		}
+		if current.Version != request.ExpectedVersion || subtle.ConstantTimeCompare([]byte(current.Hash), []byte(request.ExpectedHash)) != 1 {
+			return errors.New("migrated network repair state changed; read the current signer network summary and retry")
+		}
+		if current.Version == math.MaxUint64 {
+			return errors.New("signer network version is exhausted")
+		}
+		if _, err := m.decryptNetworkRecordV2(current); err != nil {
+			return errors.New("stored signer network record is not ready")
+		}
+		next, err := m.encryptNetworkRecordV2(walletID, current.Version+1, config)
+		if err != nil {
+			return err
+		}
+		encoded, err := json.Marshal(next)
+		if err != nil {
+			return errors.New("encode repaired signer network record")
+		}
+		if err := networks.Put([]byte(walletID), encoded); err != nil {
+			return err
+		}
+		stored = next
+		return nil
+	})
+	if err != nil {
+		return signerNetworkSummaryV2{}, err
+	}
+	return signerNetworkSummaryV2{
+		WalletID: walletID, Configured: true, Version: stored.Version, Hash: stored.Hash, Ready: true,
+	}, nil
+}
+
 // PutApplicationNetworkV2 is the fixed-purpose application-socket broker for
 // ordinary one-RPC onboarding and edits. It cannot set a fallback, witness,
 // policy, key, path, or command. Initial activation is limited to a fresh
@@ -1011,6 +1096,61 @@ func (m *signerKeyManagerV2) NetworkSummaryV2(walletID string) (signerNetworkSum
 		}
 	}
 	return summary, nil
+}
+
+// NetworkStoredSummaryV2 reports the last signer-verified network binding without
+// making an external RPC call. Live readiness remains a per-wallet operation.
+func (m *signerKeyManagerV2) NetworkStoredSummaryV2(walletID string) (signerNetworkSummaryV2, error) {
+	walletID = normalizeWalletID(walletID)
+	record, err := m.getNetworkRecordV2(walletID)
+	if errors.Is(err, errSignerNetworkNotConfiguredV2) {
+		return signerNetworkSummaryV2{WalletID: walletID, Configured: false, Ready: false}, nil
+	}
+	if errors.Is(err, errSignerNetworkRecordInvalidV2) {
+		return signerNetworkSummaryV2{WalletID: walletID, Configured: true, Ready: false}, nil
+	}
+	if err != nil {
+		return signerNetworkSummaryV2{}, err
+	}
+	summary := signerNetworkSummaryV2{
+		WalletID:   walletID,
+		Configured: true,
+		Version:    record.Version,
+		Hash:       record.Hash,
+	}
+	config, decryptErr := m.decryptNetworkRecordV2(record)
+	summary.Ready = decryptErr == nil && strings.TrimSpace(config.GenesisHash) != ""
+	return summary, nil
+}
+
+func (m *signerKeyManagerV2) NetworkStoredHealthV2() (signerNetworkHealthV2, error) {
+	if m == nil || m.store == nil || m.store.db == nil {
+		return signerNetworkHealthV2{}, errors.New("signer state database is unavailable")
+	}
+	walletIDs := []string{}
+	if err := m.store.db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketSignerWalletsV2).ForEach(func(walletID, value []byte) error {
+			if value != nil {
+				walletIDs = append(walletIDs, string(walletID))
+			}
+			return nil
+		})
+	}); err != nil {
+		return signerNetworkHealthV2{}, err
+	}
+	sort.Strings(walletIDs)
+	health := signerNetworkHealthV2{Ready: true, Wallets: make([]signerNetworkSummaryV2, 0, len(walletIDs))}
+	for _, walletID := range walletIDs {
+		summary, err := m.NetworkStoredSummaryV2(walletID)
+		if err != nil {
+			return signerNetworkHealthV2{}, err
+		}
+		if !summary.Ready {
+			health.Ready = false
+		}
+		health.Wallets = append(health.Wallets, summary)
+	}
+	return health, nil
 }
 
 func (m *signerKeyManagerV2) NetworkHealthV2() (signerNetworkHealthV2, error) {

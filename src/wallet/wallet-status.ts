@@ -167,9 +167,19 @@ export async function readWalletStatusSnapshot(params?: {
     providerHealth = await provider.health();
     if (providerHealth.ok) {
       try {
-        const got = await provider.getAddresses();
-        if (got.solana) {
-          addresses = got;
+        const localSignerWallets = registeredWallets.filter(
+          (wallet) => wallet.providerId === "local-socket-signer",
+        );
+        const probeWalletId =
+          providerId === "local-socket-signer"
+            ? params?.walletId ||
+              (localSignerWallets.length === 1 ? localSignerWallets[0]?.id : undefined)
+            : undefined;
+        if (providerId !== "local-socket-signer" || probeWalletId) {
+          const got = await provider.getAddresses({ walletId: probeWalletId });
+          if (got.solana) {
+            addresses = got;
+          }
         }
       } catch (err) {
         addressProbeError = walletDiagnosticErrorMessage(err);

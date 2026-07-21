@@ -24,6 +24,33 @@ const WALLET_PROVIDER_REGISTRY_IDS: WalletProviderId[] = [
 
 export type WalletUserRole = "agent" | "vault" | "mining";
 
+export function nextRoleWalletIdentity(
+  role: WalletUserRole,
+  wallets: ReadonlyArray<Pick<WalletNamedWallet, "id">>,
+): { walletName: string; walletId: string } {
+  const base =
+    role === "agent"
+      ? { walletName: "Agent", walletId: "agent" }
+      : role === "mining"
+        ? { walletName: "Mining", walletId: "mining" }
+        : { walletName: "Vault", walletId: "vault" };
+  if (role === "mining") {
+    return base;
+  }
+  const existingIds = new Set(wallets.map((wallet) => wallet.id));
+  if (!existingIds.has(base.walletId)) {
+    return base;
+  }
+  for (let index = 2; index < 1000; index += 1) {
+    const walletId = `${base.walletId}-${index}`;
+    if (!existingIds.has(walletId)) {
+      return { walletName: `${base.walletName} ${index}`, walletId };
+    }
+  }
+  const suffix = Date.now();
+  return { walletName: `${base.walletName} ${suffix}`, walletId: `${base.walletId}-${suffix}` };
+}
+
 export type WalletNamedWallet = {
   id: string;
   name: string;

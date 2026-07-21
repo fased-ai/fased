@@ -1038,6 +1038,7 @@ export const LocalSocketSignerWalletReadinessV2Schema = Type.Object(
     operationLane: Type.Union([
       Type.Literal("blocked"),
       Type.Literal("agent-reviewed-and-autonomous"),
+      Type.Literal("mining-reviewed-only"),
       Type.Literal("mining-typed-sat"),
       Type.Literal("vault-reviewed-only"),
     ]),

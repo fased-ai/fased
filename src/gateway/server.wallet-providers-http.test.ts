@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, test, vi } from "vitest";
+import { clearRuntimeConfigSnapshot } from "../config/config.js";
 import {
   SIGNER_PROTOCOL_V2,
   SIGNER_PROTOCOL_V2_REQUIRED_CLIENT_FEATURES,
@@ -48,6 +49,7 @@ async function withTempConfig(params: {
     await writeFile(configPath, JSON.stringify(params.cfg, null, 2), "utf-8");
     await params.run();
   } finally {
+    clearRuntimeConfigSnapshot();
     if (prevConfigPath === undefined) {
       delete process.env.FASED_CONFIG_PATH;
     } else {
@@ -533,7 +535,7 @@ describe("wallet providers HTTP", () => {
     });
   });
 
-  test("lists wallet RPC URLs from config-scoped env vars", async () => {
+  test("masks configured wallet RPC URLs and reveals one only through the authenticated endpoint", async () => {
     await withTempConfig({
       cfg: {
         ...baseConfig,
@@ -576,6 +578,7 @@ describe("wallet providers HTTP", () => {
           ok: boolean;
           wallets?: Array<{
             id: string;
+            rpc?: { configured?: boolean; maskedUrl?: string };
             readiness?: {
               rpc?: boolean;
             };
@@ -584,7 +587,30 @@ describe("wallet providers HTTP", () => {
         const wallet = payload.wallets?.find((entry) => entry.id === "solana-1");
         expect(payload.ok).toBe(true);
         expect(wallet?.readiness?.rpc).toBe(true);
+        expect(wallet?.rpc).toEqual({
+          configured: true,
+          maskedUrl: "****",
+        });
         expect(wallet?.readiness).not.toHaveProperty("rpcUrl");
+        expect(response.getBody()).not.toContain("/solana-1");
+
+        const revealResponse = createResponse();
+        await dispatch(
+          server,
+          createRequest({
+            method: "GET",
+            path: "/api/wallet/rpc?walletId=solana-1",
+            authorization: "Bearer root-token",
+          }),
+          revealResponse.res,
+        );
+        expect(revealResponse.res.statusCode).toBe(200);
+        expect(JSON.parse(revealResponse.getBody())).toMatchObject({
+          ok: true,
+          walletId: "solana-1",
+          rpcUrl: "https://rpc.example/solana-1",
+          maskedUrl: "****",
+        });
       },
     });
   });

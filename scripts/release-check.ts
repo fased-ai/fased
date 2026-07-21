@@ -41,6 +41,7 @@ const requiredPathGroups = [
   "scripts/fased-signer-network-hosting.sh",
   "scripts/fased-host-updater.mjs",
   "scripts/fased-host-updaterctl.mjs",
+  "scripts/hosted-legacy-wallet-migration.mjs",
   "scripts/fased-signer-enroll-hosting.sh",
   "scripts/fased-signer-owner-policy.mjs",
   "scripts/fased-signer-policy-hosting.sh",

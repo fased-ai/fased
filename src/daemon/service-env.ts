@@ -269,6 +269,8 @@ export function buildServiceEnvironment(params: {
     FASED_PROFILE: profile,
     FASED_STATE_DIR: stateDir,
     FASED_CONFIG_PATH: configPath,
+    FASED_MANAGED_RUNTIME_ROOT: env.FASED_MANAGED_RUNTIME_ROOT,
+    FASED_RUNTIME_SOURCE: env.FASED_RUNTIME_SOURCE,
     FASED_GATEWAY_PORT: String(port),
     FASED_GATEWAY_TOKEN: token,
     FASED_LAUNCHD_LABEL: resolvedLaunchdLabel,

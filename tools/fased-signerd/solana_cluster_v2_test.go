@@ -3,7 +3,20 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/gagliardetto/solana-go"
 )
+
+func TestSignerV2CanonicalClusterGenesisHashesAreComplete(t *testing.T) {
+	for name, value := range map[string]string{
+		"mainnet-beta": solanaMainnetGenesisHashV2,
+		"devnet":       solanaDevnetGenesisHashV2,
+	} {
+		if _, err := solana.HashFromBase58(value); err != nil {
+			t.Fatalf("%s genesis hash is not a complete Solana hash: %v", name, err)
+		}
+	}
+}
 
 func TestSignerV2VaultBondClusterGenesisFailsClosed(t *testing.T) {
 	tests := []struct {

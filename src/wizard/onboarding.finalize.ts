@@ -1186,9 +1186,7 @@ function formatOperatorReadinessSummary(
   };
   const summaryLines = items.map((item) => `${noteLabel(titleLabel(item.title))}: ${tone(item)}`);
   const nextActionLines: string[] = [];
-  if (
-    items.some((item) => item.title === "Wallet Control Passkey ready" && item.tone !== "success")
-  ) {
+  if (items.some((item) => item.summary === "Passkey setup incomplete")) {
     nextActionLines.push(noteBullet("Wallet: finish passkey before higher-risk automation."));
   }
   if (items.some((item) => item.title === "Agent wallet set" && item.tone !== "success")) {
@@ -2873,6 +2871,17 @@ export async function finalizeOnboardingWizard(
       : "disabled",
     publicUrl: federation.enabled ? (persistedFederationToken?.publicUrl ?? null) : null,
   });
+  await prompter.note(
+    walletRegistry.wallets.length > 0
+      ? [
+          noteHeading("Registered wallets"),
+          ...walletRegistry.wallets.map((wallet) =>
+            noteBullet(`${wallet.name} · @wallet:${wallet.id}`),
+          ),
+        ].join("\n")
+      : "No wallets are registered.",
+    "Wallets",
+  );
   await prompter.note(formatOperatorReadinessSummary(operatorReadiness), "Operator readiness");
   const capabilityReadiness = buildCapabilityReadinessReport({
     config: nextConfig,

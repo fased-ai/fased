@@ -55,6 +55,7 @@ import {
   runGatewayUpdate,
   type UpdateRunResult,
 } from "../../infra/update-runner.js";
+import { recordUpdateSuccess } from "../../infra/update-success-marker.js";
 import { syncPluginsForUpdateChannel, updateNpmInstalledPlugins } from "../../plugins/update.js";
 import { runCommandWithTimeout } from "../../process/exec.js";
 import { defaultRuntime } from "../../runtime.js";
@@ -1027,6 +1028,8 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
         }
         if (result.code !== 0) {
           defaultRuntime.exit(result.code ?? 1);
+        } else {
+          await recordUpdateSuccess({ mode: "managed" });
         }
         return;
       }
@@ -1791,5 +1794,11 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
 
   if (!opts.json && !restartResult.partial) {
     defaultRuntime.log(theme.muted(pickUpdateQuip()));
+  }
+  if (!restartResult.partial) {
+    await recordUpdateSuccess({
+      mode: result.mode,
+      version: result.after?.version ?? targetVersion,
+    });
   }
 }

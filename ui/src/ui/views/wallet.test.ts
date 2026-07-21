@@ -88,6 +88,30 @@ function flattenTemplateText(value: unknown): string {
   return "";
 }
 
+function flattenTemplateSource(value: unknown): string {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => flattenTemplateSource(entry)).join(" ");
+  }
+  if (value && typeof value === "object") {
+    const template = value as LitTemplateLike;
+    if (template.strings && Array.isArray(template.values)) {
+      const strings = Array.from(template.strings);
+      return strings
+        .map(
+          (part, index) =>
+            `${part}${
+              index < template.values!.length ? flattenTemplateSource(template.values![index]) : ""
+            }`,
+        )
+        .join("");
+    }
+  }
+  return "";
+}
+
 function renderWalletForTest(overrides: Partial<WalletViewProps>) {
   return renderWallet({
     loading: false,
@@ -217,17 +241,134 @@ describe("wallet creation", () => {
           },
         } as never,
       ],
-      createProvider: "local-socket-signer",
       createRole: "vault",
+      createName: "Reserve",
+      createRpcUrl: "https://rpc.example/solana",
     });
     const text = flattenTemplateText(rendered);
-    expect(text).toContain("Create a signer-owned wallet");
-    expect(text).toContain("Native Go signer");
-    expect(text).toContain(
-      "The Go signer generates the key; Node receives only the public address.",
-    );
+    expect(text).toContain("Create wallet");
+    expect(text).toContain("Name (optional)");
+    expect(text).toContain("Select a role Agent Mining Vault RPC");
+    expect(text).not.toContain("capped automation");
+    expect(text).not.toContain("singleton SAT operations");
+    expect(text).not.toContain("reviewed operations only");
+    expect(text).not.toContain("Custody provider");
+    expect(text).not.toContain("Permanent wallet ID");
+    expect(text).not.toContain("Choose a wallet role; Agent is never selected silently.");
+    expect(text).toContain("Connect browser wallet as Vault");
+    expect(text).not.toContain("Connect hardware Vault");
+    expect(text).toContain("Any Solana RPC provider works");
     expect(text).not.toContain("Embedded keystore");
     expect(text).not.toContain("Privy");
+    expect(text).toContain("Wallet Activity");
+    expect(text).toContain("No recent wallet activity.");
+    expect(text).toContain("@wallet:wallet-agent");
+    expect(text).toContain("So..12");
+  });
+});
+
+describe("wallet management", () => {
+  const localWallets = [
+    {
+      id: "mining",
+      name: "Mining",
+      providerId: "local-socket-signer" as const,
+      addresses: { solana: "So11111111111111111111111111111111111111113" },
+      metadata: { role: "mining" },
+      readiness: { keystore: true, rpc: true, ready: true },
+    },
+    {
+      id: "vault",
+      name: "Vault",
+      providerId: "local-socket-signer" as const,
+      addresses: { solana: "So11111111111111111111111111111111111111114" },
+      metadata: { role: "vault" },
+      readiness: { keystore: true, rpc: true, ready: true },
+    },
+  ];
+
+  it("routes Mining to retirement and offers archive for other local wallets", () => {
+    const miningText = flattenTemplateText(
+      renderWalletForTest({
+        namedWallets: localWallets,
+        expandedWalletId: "mining",
+        expandedPanel: "security",
+        walletDetailsWalletId: "mining",
+        miningProfile: { walletId: "mining" } as never,
+      }),
+    );
+    expect(miningText).toContain("Retire and replace Mining wallet");
+    expect(miningText).not.toContain("Archive wallet");
+
+    const vaultText = flattenTemplateText(
+      renderWalletForTest({
+        namedWallets: localWallets,
+        expandedWalletId: "vault",
+        expandedPanel: "security",
+        walletDetailsWalletId: "vault",
+        miningProfile: { walletId: "mining" } as never,
+      }),
+    );
+    expect(vaultText).toContain("Archive wallet");
+    expect(vaultText).toContain("It does not move funds");
+  });
+
+  it("offers safe Fased-only removal for an attached browser wallet", () => {
+    const browserText = flattenTemplateText(
+      renderWalletForTest({
+        namedWallets: [
+          {
+            id: "browser-vault",
+            name: "Browser Vault",
+            providerId: "wallet-standard",
+            addresses: { solana: "So11111111111111111111111111111111111111114" },
+            metadata: { role: "vault" },
+            readiness: { keystore: true, rpc: true },
+          },
+        ],
+        expandedWalletId: "browser-vault",
+        expandedPanel: "security",
+        walletDetailsWalletId: "browser-vault",
+      }),
+    );
+
+    expect(browserText).toContain("Remove wallet");
+    expect(browserText).toContain("browser wallet and its funds are unchanged");
+    expect(browserText).not.toContain("Archive wallet");
+  });
+
+  it("renders a compact masked RPC row before wallet policy controls", () => {
+    const rendered = renderWalletForTest({
+      namedWallets: [
+        {
+          ...localWallets[1],
+          rpc: { configured: true, maskedUrl: "****" },
+          readiness: {
+            keystore: true,
+            rpc: true,
+            ready: true,
+            signer: { networkReady: true, ready: true },
+          },
+        } as never,
+      ],
+      expandedWalletId: "vault",
+      expandedPanel: "security",
+      walletDetailsWalletId: "vault",
+      onCopyWalletRpc: () => undefined,
+      onToggleWalletRpcEditor: () => undefined,
+    });
+    const text = flattenTemplateText(rendered);
+    const source = flattenTemplateSource(rendered);
+
+    expect(text).toContain("RPC **** Send limits");
+    expect(text).not.toContain("Solana RPC: connected");
+    expect(text).not.toContain("Change RPC");
+    expect(source).toContain('aria-label="Copy RPC"');
+    expect(source).toContain('aria-label="Edit RPC"');
+    expect(source).not.toContain('aria-label="Show RPC"');
+    expect(source.indexOf("wallet-rpc-settings")).toBeLessThan(
+      source.indexOf("wallet-policy-tabs"),
+    );
   });
 });
 
@@ -573,7 +714,17 @@ describe("orderWalletsForDisplay", () => {
 });
 
 describe("renderWallet", () => {
-  it("shows Agent assignments, skill precedence, global fallback, and effective routing", () => {
+  it("shows an unavailable balance instead of a false zero after an RPC read failure", () => {
+    const text = flattenTemplateText(
+      renderWalletForTest({
+        namedWallets: namedWallets.map((wallet) => ({ ...wallet, balances: undefined })),
+      }),
+    );
+
+    expect(text).toContain("Unavailable");
+  });
+
+  it("shows a compact Agent-to-wallet assignment control with skill precedence", () => {
     const text = flattenTemplateText(
       renderWalletForTest({
         mainPanel: "access",
@@ -588,13 +739,12 @@ describe("renderWallet", () => {
     );
 
     expect(text).toContain("Agent wallet routing");
-    expect(text).toContain(
-      "Explicit action → one-wallet skill override → Agent assignment → optional Default Agent wallet fallback",
-    );
+    expect(text).toContain("Explicit handles and one-wallet skill grants take precedence");
     expect(text).toContain("Owner");
     expect(text).toContain("Research");
-    expect(text).toContain("Assigned: wallet-agent");
-    expect(text).toContain("Effective fallback: wallet-agent");
+    expect(text).toContain("Current: wallet-agent");
+    expect(text).toContain("Save");
+    expect(text).toContain("Clear");
   });
 
   it("renders approval and activity amounts in human chain units", () => {
@@ -871,7 +1021,7 @@ describe("renderWallet", () => {
 
     expect(text).toContain("Agent");
     expect(text).toContain("Mining");
-    expect(text).toContain("Policy");
+    expect(text).toContain("Settings");
     expect(text).toContain("SAT");
     expect(text).toContain("Mining Wallet");
     expect(text).toContain("Sweep");
@@ -1056,7 +1206,7 @@ describe("renderWallet", () => {
       }),
     );
 
-    expect(text).toContain("Caps");
+    expect(text).toContain("Limits");
     expect(text).toContain("Off");
     expect(text).toContain("SOL");
     expect(text).toContain("Preset");
@@ -1068,13 +1218,11 @@ describe("renderWallet", () => {
     expect(text).not.toContain("Enable security");
     expect(text).toContain("Tx");
     expect(text).toContain("Small Agent spend");
-    expect(text).toContain("Native signer policy: locked");
-    expect(text).toContain(
-      "This pre-role-baseline wallet remains deny-all. Review its immutable role, then select Activate role baseline with the native wallet CLI. No root policy helper is required.",
-    );
-    expect(text).toContain("Version 3");
-    expect(text).toContain(`sha256:${"e".repeat(64)}`);
-    expect(text).toContain("fased wallet policy activate-role-baseline");
+    expect(text).toContain("Wallet setup incomplete");
+    expect(text).toContain("Run Fased Update to finish this wallet automatically.");
+    expect(text).not.toContain("Version 3");
+    expect(text).not.toContain(`sha256:${"e".repeat(64)}`);
+    expect(text).not.toContain("fased wallet policy activate-role-baseline");
     expect(text).not.toContain("Selected Wallet Policy");
     expect(text).not.toContain("Advanced spend caps");
     expect(text).not.toContain("Apply recommended Agent template");
@@ -1199,7 +1347,7 @@ describe("renderWallet", () => {
     expect(text).toContain("1");
     expect(text).toContain("SAT Token");
     expect(text).toContain("From");
-    expect(text).toContain("So111111...111113");
+    expect(text).toContain("So..13");
     expect(text).toContain("To");
     expect(text).toContain("Spend 1 SAT");
     expect(text).toContain("triggered by control-ui");
@@ -1351,7 +1499,7 @@ describe("renderWallet", () => {
     expect(text).toContain("1");
     expect(text).toContain("SAT Token");
     expect(text).toContain("From");
-    expect(text).toContain("So111111...111113");
+    expect(text).toContain("So..13");
     expect(text).toContain("To");
     expect(text).not.toContain("100 SOL");
   });

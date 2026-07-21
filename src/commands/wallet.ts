@@ -40,6 +40,7 @@ import {
 import { buildWalletProviderCapabilityMatrix } from "../wallet/wallet-provider-capabilities.js";
 import {
   normalizeWalletUserRole,
+  nextRoleWalletIdentity,
   readWalletProviderRegistry,
   replaceRetiredMiningWallet,
   resolveWalletUserRole,
@@ -770,7 +771,12 @@ async function createSignerOwnedWalletForSetup(params: {
   if (params.chain !== "solana") {
     throw new Error("fased-signerd protocol v2 currently supports Solana wallet creation only");
   }
-  const walletId = params.walletId?.trim() || params.role;
+  const registeredWallets = readWalletProviderRegistry(params.env).wallets;
+  const generatedIdentity = nextRoleWalletIdentity(params.role, registeredWallets);
+  const walletId = params.walletId?.trim() || generatedIdentity.walletId;
+  const walletName =
+    params.options.walletName?.trim() ||
+    (walletId === generatedIdentity.walletId ? generatedIdentity.walletName : walletId);
   const hosted =
     String(params.env.FASED_HOST_PROFILE ?? "")
       .trim()
@@ -779,7 +785,6 @@ async function createSignerOwnedWalletForSetup(params: {
   const mergedEnv = { ...params.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
   const socketPath = resolveLocalSignerSocketPath(mergedEnv);
   const expectedSignerWalletId = normalizeNativeSignerWalletId(walletId);
-  const registeredWallets = readWalletProviderRegistry(params.env).wallets;
   if (params.role === "mining") {
     const activeMiningWallet = registeredWallets.find((entry) => {
       const role = normalizeWalletUserRole(entry.metadata?.role ?? entry.metadata?.purpose);
@@ -807,7 +812,12 @@ async function createSignerOwnedWalletForSetup(params: {
     if (!fs.existsSync(signerBinPath)) {
       installSignerdBinary(signerBinPath);
     }
-    await restartLocalSocketSigner(undefined, mergedEnv);
+    const signerHealth = await probeLocalSocketSignerHealth(socketPath).catch(() => ({
+      ok: false,
+    }));
+    if (!signerHealth.ok) {
+      await restartLocalSocketSigner(undefined, mergedEnv);
+    }
   }
 
   let result;
@@ -912,7 +922,7 @@ async function createSignerOwnedWalletForSetup(params: {
 
   const wallet = upsertNamedWallet({
     walletId,
-    name: params.options.walletName || "Wallet",
+    name: walletName,
     providerId: "local-socket-signer",
     addresses: { solana: result.wallet.publicKey },
     metadata: {
@@ -981,7 +991,8 @@ async function createSignerOwnedWalletForSetup(params: {
       ),
     );
   } else {
-    params.runtime.log(`Signer wallet ID: ${signerWalletId}`);
+    params.runtime.log(`Wallet handle: @wallet:${wallet.id}`);
+    params.runtime.log(`Internal wallet ID: ${wallet.id}`);
     params.runtime.log(`${params.chain.toUpperCase()} address: ${result.wallet.publicKey}`);
     if (!params.options.noSignerHints) {
       params.runtime.log(
@@ -1923,7 +1934,8 @@ export async function walletSetupCommand(
         "--role is required for non-interactive wallet creation and must be agent, mining, or vault",
       );
     }
-    const walletId = options.walletId ?? ((await prompt("Wallet id", role)).trim() || role);
+    const generatedIdentity = nextRoleWalletIdentity(role, readWalletProviderRegistry(env).wallets);
+    const walletId = options.walletId?.trim() || generatedIdentity.walletId;
     const rpcUrlFallback = resolveRpcUrlForChain(env, chain, walletId, options.rpcUrl);
     const rpcUrl = (
       await prompt(
@@ -3377,10 +3389,10 @@ export async function collectWalletSignerDoctorReport(
     );
   };
   const signerNetworks = localSignerHealth?.network?.wallets ?? [];
-  const networkForWallet = (walletId: string) =>
-    signerNetworks.find(
-      (entry) => entry.walletId.trim().toLowerCase() === walletId.trim().toLowerCase(),
-    );
+  const networkForWallet = (walletId: string) => {
+    const signerWalletId = normalizeNativeSignerWalletId(walletId);
+    return signerNetworks.find((entry) => entry.walletId.trim().toLowerCase() === signerWalletId);
+  };
   if (isLocalSigner && registrySolanaWalletIds.length > 0) {
     const signerNetworkReady =
       localSignerHealth?.network?.ready === true &&

@@ -242,11 +242,10 @@ func compileSignerRoleBaselineV1(
 
 	if request.Role == "mining" {
 		if !runtime.Verified {
-			detail := strings.TrimSpace(runtime.VerificationErr)
-			if detail == "" {
-				detail = "signed manifest proof is missing"
-			}
-			return signerPolicyV2{}, fmt.Errorf("Mining role baseline requires a verified release-bound SAT runtime manifest: %s", detail)
+			// A pre-launch Mining wallet must still be a usable, migrated wallet. Its
+			// baseline permits only ordinary reviewed transfers until a verified SAT
+			// runtime is available; it never guesses or accepts unsigned SAT IDs.
+			return normalizeSignerPolicyV2(policy)
 		}
 		programID, programErr := normalizePublicKeyV2(runtime.SATProgramID, "signed SAT runtime program ID")
 		mint, mintErr := normalizePublicKeyV2(runtime.SATMintAddress, "signed SAT runtime mint")
@@ -443,7 +442,11 @@ func (s *signerServiceV2) walletReadinessV2(walletID string) (signerWalletReadin
 		case "agent":
 			operationLane = "agent-reviewed-and-autonomous"
 		case "mining":
-			operationLane = "mining-typed-sat"
+			if policy.TypedSATPrograms {
+				operationLane = "mining-typed-sat"
+			} else {
+				operationLane = "mining-reviewed-only"
+			}
 		case "vault":
 			operationLane = "vault-reviewed-only"
 		}

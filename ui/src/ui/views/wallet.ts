@@ -45,6 +45,7 @@ export type WalletViewProps = {
       | "privy";
     addresses?: { solana?: string };
     balances?: { solana?: string };
+    rpc?: { configured: boolean; maskedUrl?: string };
     metadata?: Record<string, unknown>;
     readiness?: {
       keystore: boolean;
@@ -66,10 +67,9 @@ export type WalletViewProps = {
   assignWalletId?: string;
   providers?: WalletProviderInfo[];
   createName?: string;
-  createId?: string;
-  createProvider?: WalletProviderInfo["id"];
   createRole?: "" | "agent" | "mining" | "vault";
   createRpcUrl?: string;
+  createBusy?: boolean;
   settingsBusy: boolean;
   settingsError: string | null;
   settingsMessage: string | null;
@@ -141,15 +141,19 @@ export type WalletViewProps = {
   onApprovalsFilterChange: (filter: WalletApprovalFilter) => void;
   onAttachWalletStandardVault?: () => void;
   onCreateNameChange?: (next: string) => void;
-  onCreateIdChange?: (next: string) => void;
-  onCreateProviderChange?: (next: WalletProviderInfo["id"]) => void;
   onCreateRoleChange?: (next: "" | "agent" | "mining" | "vault") => void;
   onCreateRpcUrlChange?: (next: string) => void;
   rpcUrl?: string;
+  rpcEditorWalletId?: string;
+  revealedAddressWalletId?: string;
   onRpcUrlChange?: (next: string) => void;
+  onToggleWalletRpcEditor?: (walletId: string) => void;
+  onCopyWalletRpc?: (walletId: string) => void;
+  onToggleWalletAddress?: (walletId: string) => void;
   onSaveWalletRpc?: () => void;
   onCreateWallet?: () => void;
   onArchiveWallet?: (walletId: string) => void;
+  onRemoveWallet?: (walletId: string) => void;
   onApproveRequest: (requestId: string) => void;
   onRejectRequest: (requestId: string) => void;
   onSetDefaultWallet: (walletId: string | null) => void;
@@ -1449,6 +1453,19 @@ function renderWalletSignerSemanticIntent(request: WalletSendApprovalRequest) {
   `;
 }
 
+function formatWalletApprovalTime(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return "—";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function trimTrailingZeros(value: string): string {
   return value.replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
 }
@@ -1527,7 +1544,7 @@ function resolveWalletSolBalanceDisplay(
     }
   }
   if (wallet.addresses?.solana) {
-    return props.balancesLoading ? "Loading" : "0";
+    return props.balancesLoading ? "Loading" : "Unavailable";
   }
   return props.balancesLoading ? "Loading" : "—";
 }
@@ -2150,16 +2167,18 @@ function renderWalletAssetLogo(
     return html`<span style=${style}>${fallback}</span>`;
   }
   return html`<span style=${style}
-    ><img
+    ><span class="wallet-asset-logo-fallback" style="display:none;">${fallback}</span><img
       src=${asset.logoUri}
       alt=${`${asset.symbol} logo`}
       style=${`width:${sizePx}px;height:${sizePx}px;object-fit:cover;display:block;`}
       @error=${(event: Event) => {
         const img = event.currentTarget as HTMLImageElement | null;
-        const parent = img?.parentElement;
-        if (img && parent) {
+        const fallbackElement = img?.previousElementSibling as HTMLElement | null;
+        if (img) {
           img.style.display = "none";
-          parent.textContent = fallback;
+          if (fallbackElement) {
+            fallbackElement.style.display = "inline";
+          }
         }
       }}
     /></span
@@ -2320,23 +2339,6 @@ async function copyToClipboard(value: string): Promise<void> {
   }
 }
 
-function walletSecretId(value: string): string {
-  return value.replace(/[^a-zA-Z0-9_-]/g, "-") || "wallet";
-}
-
-function toggleWalletSecretText(id: string, hidden: string, visible: string) {
-  if (typeof document === "undefined") {
-    return;
-  }
-  const element = document.getElementById(id);
-  if (!element) {
-    return;
-  }
-  const revealed = element.dataset.revealed === "true";
-  element.textContent = revealed ? hidden : visible;
-  element.dataset.revealed = revealed ? "false" : "true";
-}
-
 function renderCopyButton(value: string, label: string) {
   const text = value.trim();
   if (!text) {
@@ -2371,25 +2373,7 @@ function renderCopyTextButton(params: {
     data-copied="false"
     title=${params.title ?? `Copy ${params.label}`}
     aria-label=${`Copy ${params.label}`}
-    @click=${(event: Event) => {
-      void copyToClipboard(text).then(() => {
-        const button = event.currentTarget as HTMLButtonElement | null;
-        if (!button) {
-          return;
-        }
-        const popover = button.querySelector<HTMLElement>(".wallet-copy-popover");
-        button.dataset.copied = "true";
-        if (popover) {
-          popover.textContent = "Copied";
-        }
-        window.setTimeout(() => {
-          if (popover) {
-            popover.textContent = "Copy";
-          }
-          button.dataset.copied = "false";
-        }, 1200);
-      });
-    }}
+    @click=${() => void copyToClipboard(text)}
   >
     <span class="wallet-copy-text__label">${display}</span>
     <span class="wallet-copy-popover" aria-hidden="true">Copy</span>
@@ -2733,6 +2717,10 @@ function renderWalletAccessPanel(props: WalletViewProps) {
       ...Object.keys(props.assignments ?? {}),
     ]),
   ].toSorted();
+  const selectedAgentId = props.assignAgentId?.trim() ?? "";
+  const selectedAgentAssignment = selectedAgentId
+    ? (props.assignments?.[selectedAgentId] ?? "")
+    : "";
 
   return html`
     <div class="wallet-top-grid">
@@ -2837,43 +2825,10 @@ function renderWalletAccessPanel(props: WalletViewProps) {
           <div>
             <div class="card-title">Agent wallet routing</div>
             <div class="card-sub">
-              Explicit action → one-wallet skill override → Agent assignment → optional Default
-              Agent wallet fallback. If none exists, the action stops with Select an Agent wallet.
+              Select an Agent and its Agent wallet. Explicit handles and one-wallet skill grants take
+              precedence over this assignment.
             </div>
           </div>
-        </div>
-        <div class="wallet-security-device-list" style="margin-top: 12px">
-          ${
-            agentIds.length > 0
-              ? agentIds.map((agentId) => {
-                  const assignedWalletId = props.assignments?.[agentId];
-                  const effectiveWalletId = assignedWalletId || props.defaultWalletId || null;
-                  const agentName =
-                    props.agents?.find((agent) => agent.id === agentId)?.name?.trim() || agentId;
-                  return html`
-                    <div class="wallet-security-device-row">
-                      <div>
-                        <strong>${agentName}</strong>
-                        <div class="wallet-security-note mono">${agentId}</div>
-                        <div class="wallet-security-note">
-                          Assigned: ${assignedWalletId || "none"} · Effective fallback:
-                          ${effectiveWalletId || "Select an Agent wallet"}
-                        </div>
-                      </div>
-                      <button
-                        class="btn small"
-                        ?disabled=${props.settingsBusy || !assignedWalletId}
-                        @click=${() => props.onDeleteAgentAssignment?.(agentId)}
-                      >
-                        Clear assignment
-                      </button>
-                    </div>
-                  `;
-                })
-              : html`
-                  <div class="wallet-security-note">No Agents are available yet.</div>
-                `
-          }
         </div>
         <div class="wallet-card-security__grid" style="margin-top: 12px">
           <label class="field">
@@ -2884,7 +2839,10 @@ function renderWalletAccessPanel(props: WalletViewProps) {
                 props.onAssignAgentIdChange?.((event.target as HTMLSelectElement).value)}
             >
               <option value="">Select Agent</option>
-              ${agentIds.map((agentId) => html`<option value=${agentId}>${agentId}</option>`)}
+              ${agentIds.map((agentId) => {
+                const name = props.agents?.find((agent) => agent.id === agentId)?.name?.trim();
+                return html`<option value=${agentId}>${name ? `${name} (${agentId})` : agentId}</option>`;
+              })}
             </select>
           </label>
           <label class="field">
@@ -2902,11 +2860,27 @@ function renderWalletAccessPanel(props: WalletViewProps) {
           </label>
           <button
             class="btn primary"
-            ?disabled=${props.settingsBusy || !props.assignAgentId?.trim()}
+            ?disabled=${props.settingsBusy || !selectedAgentId}
             @click=${props.onAssignAgentWallet}
           >
-            Save assignment
+            Save
           </button>
+          <button
+            class="btn"
+            ?disabled=${props.settingsBusy || !selectedAgentAssignment}
+            @click=${() => props.onDeleteAgentAssignment?.(selectedAgentId)}
+          >
+            Clear
+          </button>
+        </div>
+        <div class="wallet-security-note" style="margin-top: 8px;">
+          ${
+            agentIds.length === 0
+              ? "No Agents are available yet."
+              : selectedAgentId
+                ? `Current: ${selectedAgentAssignment || props.defaultWalletId || "no wallet selected"}`
+                : `${agentIds.length} Agent${agentIds.length === 1 ? "" : "s"} available`
+          }
         </div>
       </div>
     </div>
@@ -2985,29 +2959,15 @@ export function renderWallet(props: WalletViewProps) {
         ? "access"
         : null;
   const activeMainPanel = hashPanel ?? props.mainPanel ?? "wallets";
-  const createProviders = (props.providers ?? []).filter(
-    (provider) =>
-      (provider.id === "local-socket-signer" || provider.id === "turnkey") &&
-      provider.operationsImplemented &&
-      provider.capabilities.operations.createWallet,
-  );
-  const createProviderId = props.createProvider ?? createProviders[0]?.id ?? "local-socket-signer";
-  const createProvider = createProviders.find((provider) => provider.id === createProviderId);
-  const createProviderReady = Boolean(
-    createProvider?.enabled &&
-    createProvider.health.ok &&
-    (!createProvider.capabilities.requiresCredentials || createProvider.credentialsConfigured),
+  const createProvider = (props.providers ?? []).find(
+    (provider) => provider.id === "local-socket-signer",
   );
   const existingMiningWallet = props.namedWallets.find(
     (wallet) => resolveDisplayedWalletRole(wallet.id, props) === "mining" || wallet.id === "mining",
   );
   const miningCreationBlocked = props.createRole === "mining" && Boolean(existingMiningWallet);
   const createInputReady = Boolean(
-    props.createRole &&
-    props.createName?.trim() &&
-    (createProviderId !== "local-socket-signer" ||
-      (props.createId?.trim() && props.createRpcUrl?.trim())) &&
-    !miningCreationBlocked,
+    props.createRole && props.createRpcUrl?.trim() && !miningCreationBlocked,
   );
   const setMainPanel = (panel: "wallets" | "access" | "skill-grants") => {
     props.onMainPanelChange?.(panel);
@@ -3468,6 +3428,7 @@ export function renderWallet(props: WalletViewProps) {
       }
       .wallet-card__title-row,
       .wallet-card__address-row,
+      .wallet-card__handle-row,
       .wallet-card__balance-main {
         display: flex;
         align-items: center;
@@ -3578,17 +3539,26 @@ export function renderWallet(props: WalletViewProps) {
         font-size: 13px;
         justify-content: flex-start;
         flex-wrap: nowrap;
-        overflow: hidden;
         width: 100%;
+      }
+      .wallet-card__handle-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
       }
       .wallet-card__address {
         min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none;
         white-space: nowrap;
         color: var(--muted);
-        flex: 0 1 auto;
-        max-width: min(170px, 34vw);
+        flex: 1 1 auto;
+        max-width: 100%;
+      }
+      .wallet-card__address::-webkit-scrollbar {
+        display: none;
       }
       .wallet-card__address-actions {
         display: inline-flex;
@@ -3600,6 +3570,22 @@ export function renderWallet(props: WalletViewProps) {
         color: var(--muted);
         flex: 0 1 132px;
         max-width: none;
+      }
+      .wallet-qr-details {
+        position: relative;
+      }
+      .wallet-qr-details > summary {
+        list-style: none;
+      }
+      .wallet-qr-details > summary::-webkit-details-marker {
+        display: none;
+      }
+      .wallet-qr-details > summary svg {
+        width: 16px;
+        height: 16px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.8;
       }
       .wallet-card__balance-row {
         display: grid;
@@ -3830,6 +3816,58 @@ export function renderWallet(props: WalletViewProps) {
         padding-top: 12px;
         display: grid;
         gap: 12px;
+      }
+      .wallet-rpc-settings {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: var(--secondary);
+        padding: 10px 12px;
+        display: grid;
+        gap: 10px;
+      }
+      .wallet-rpc-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+      .wallet-rpc-row__label {
+        color: var(--text-strong);
+        font-size: 12px;
+        font-weight: 650;
+      }
+      .wallet-rpc-row__value {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .wallet-rpc-row__actions {
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        flex: 0 0 auto;
+      }
+      .wallet-rpc-status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--danger);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 14%, transparent);
+        flex: 0 0 auto;
+      }
+      .wallet-rpc-status-dot[data-ready="true"] {
+        background: var(--ok);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 14%, transparent);
+      }
+      .wallet-rpc-editor {
+        display: grid;
+        gap: 8px;
+      }
+      .wallet-rpc-editor__form {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: end;
+        gap: 8px;
       }
       .wallet-policy-tabs {
         display: flex;
@@ -4065,18 +4103,21 @@ export function renderWallet(props: WalletViewProps) {
       .wallet-approvals-grid .table-row {
         display: grid;
         grid-template-columns:
-          minmax(0, 1.65fr)
-          minmax(0, 0.7fr)
-          minmax(0, 0.38fr)
-          minmax(0, 1.25fr)
-          minmax(0, 0.85fr)
-          minmax(0, 0.85fr)
-          minmax(0, 0.95fr)
-          auto;
+          minmax(72px, 0.65fr)
+          minmax(64px, 0.5fr)
+          minmax(90px, 0.8fr)
+          minmax(54px, 0.42fr)
+          minmax(54px, 0.42fr)
+          minmax(100px, 0.75fr)
+          minmax(176px, auto);
         gap: 10px;
         align-items: center;
         justify-items: start;
         text-align: left;
+      }
+      .wallet-approvals-grid .table-head {
+        font-size: 0.82em;
+        white-space: nowrap;
       }
       .wallet-approvals-grid .table-head > div,
       .wallet-approvals-grid .table-row > div {
@@ -4086,6 +4127,40 @@ export function renderWallet(props: WalletViewProps) {
       }
       .wallet-approvals-grid .table-row > div:last-child {
         justify-self: end;
+      }
+      .wallet-approval-actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 6px;
+        flex-wrap: nowrap;
+      }
+      .wallet-approval-details {
+        position: relative;
+      }
+      .wallet-approval-details > summary {
+        cursor: pointer;
+        color: var(--muted);
+        font-size: 0.78em;
+        list-style: none;
+        white-space: nowrap;
+      }
+      .wallet-approval-details > summary::-webkit-details-marker {
+        display: none;
+      }
+      .wallet-approval-details[open] > summary {
+        color: var(--text-strong);
+      }
+      .wallet-approval-details__content {
+        margin-top: 8px;
+        min-width: min(360px, 70vw);
+        max-width: min(520px, 80vw);
+        padding: 10px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--card);
+        box-shadow: var(--shadow-md);
+        font-size: 0.84em;
       }
       .wallet-approval-diff {
         margin-top: 6px;
@@ -4219,11 +4294,11 @@ export function renderWallet(props: WalletViewProps) {
                   <span class="wallet-main-tabs__spacer"></span>
                   <button
                     class="btn small"
-                    ?disabled=${props.settingsBusy}
+                    ?disabled=${props.settingsBusy || !props.onAttachWalletStandardVault}
                     @click=${props.onAttachWalletStandardVault}
-                    title="Attach a Solana Wallet Standard account. Wallet discovery cannot prove hardware backing; verify a reserve account on its device."
+                    title="Connect a compatible Solana browser wallet and register its selected account as a manual Vault."
                   >
-                    Attach Wallet Standard Vault
+                    Connect browser wallet as Vault
                   </button>
                   <button
                     class="btn small"
@@ -4243,52 +4318,17 @@ export function renderWallet(props: WalletViewProps) {
               ? renderWalletAccessPanel(props)
               : html`<div id="wallet-wallets" class="wallet-wallets-section">
           <details class="wallet-create-panel">
-            <summary>Create a signer-owned wallet</summary>
+            <summary>Create wallet</summary>
             <div class="wallet-create-grid">
               <label class="field">
-                <span>Name</span>
+                <span>Name (optional)</span>
                 <input
                   .value=${props.createName ?? ""}
-                  placeholder="Agent wallet"
+                  placeholder="Uses Agent, Agent 2, Vault, or Mining"
                   autocomplete="off"
                   @input=${(event: Event) =>
                     props.onCreateNameChange?.((event.target as HTMLInputElement).value)}
                 />
-              </label>
-              <label class="field">
-                <span>Permanent wallet ID</span>
-                <input
-                  .value=${props.createId ?? ""}
-                  placeholder=${
-                    createProviderId === "local-socket-signer"
-                      ? "agent-operations (required)"
-                      : "optional local label"
-                  }
-                  autocomplete="off"
-                  @input=${(event: Event) =>
-                    props.onCreateIdChange?.((event.target as HTMLInputElement).value)}
-                />
-              </label>
-              <label class="field">
-                <span>Custody provider</span>
-                <select
-                  .value=${createProviderId}
-                  @change=${(event: Event) =>
-                    props.onCreateProviderChange?.(
-                      (event.target as HTMLSelectElement).value as WalletProviderInfo["id"],
-                    )}
-                >
-                  ${createProviders.map(
-                    (provider) => html`
-                      <option value=${provider.id}>
-                        ${
-                          provider.label ||
-                          (provider.id === "local-socket-signer" ? "Native Go signer" : "Turnkey")
-                        }
-                      </option>
-                    `,
-                  )}
-                </select>
               </label>
               <label class="field">
                 <span>Wallet role</span>
@@ -4304,56 +4344,59 @@ export function renderWallet(props: WalletViewProps) {
                     )}
                 >
                   <option value="" disabled>Select a role</option>
-                  <option value="agent">Agent — capped automation</option>
-                  <option value="mining">Mining — singleton SAT operations</option>
-                  <option value="vault">Vault — reviewed operations only</option>
+                  <option value="agent">Agent</option>
+                  <option value="mining">Mining</option>
+                  <option value="vault">Vault</option>
                 </select>
               </label>
-              ${
-                createProviderId === "local-socket-signer"
-                  ? html`
-                      <label class="field">
-                        <span>Primary Solana RPC</span>
-                        <input
-                          .value=${props.createRpcUrl ?? ""}
-                          placeholder="https://your-solana-rpc.example"
-                          autocomplete="off"
-                          spellcheck="false"
-                          @input=${(event: Event) =>
-                            props.onCreateRpcUrlChange?.((event.target as HTMLInputElement).value)}
-                        />
-                      </label>
-                    `
-                  : nothing
-              }
+              <label class="field">
+                <span class="row" style="gap: 6px;">RPC ${renderInfoButton(
+                  "Solana RPC",
+                  "Any Solana RPC provider works. Fased checks that the URL answers as Solana and uses its network for this new wallet.",
+                )}</span>
+                <input
+                  .value=${props.createRpcUrl ?? ""}
+                  placeholder="https://your-solana-rpc.example"
+                  autocomplete="off"
+                  spellcheck="false"
+                  @input=${(event: Event) =>
+                    props.onCreateRpcUrlChange?.((event.target as HTMLInputElement).value)}
+                />
+                <span class="muted" style="font-size: 0.78em;">
+                  Any Solana RPC provider works. Fased checks that it responds before creating the
+                  wallet.
+                </span>
+              </label>
               <div class="wallet-create-actions">
                 <button
                   class="btn primary"
-                  ?disabled=${props.settingsBusy || !createProviderReady || !createInputReady}
+                  ?disabled=${props.createBusy || !createInputReady}
                   @click=${props.onCreateWallet}
                 >
-                  ${props.settingsBusy ? "Creating..." : "Create wallet"}
+                  ${props.createBusy ? "Creating..." : "Create wallet"}
                 </button>
-                <span class="muted">
+                ${
+                  props.createBusy ||
+                  miningCreationBlocked ||
+                  !props.createRole ||
+                  !props.createRpcUrl?.trim()
+                    ? html`<span class="muted">
                   ${
-                    miningCreationBlocked
-                      ? `Mining already uses ${existingMiningWallet?.name ?? existingMiningWallet?.id}. Open, Replace, or Archive that singleton wallet.`
-                      : !props.createRole
-                        ? "Choose a wallet role; Agent is never selected silently."
-                        : !createProvider
-                          ? "No production wallet-creation provider is available."
-                          : !createProvider.enabled
-                            ? "Enable this provider in Wallet Access first."
-                            : !createProvider.health.ok
-                              ? createProvider.health.details || "Provider health check failed."
-                              : createProvider.capabilities.requiresCredentials &&
-                                  !createProvider.credentialsConfigured
-                                ? "Configure restricted provider credentials before creating a wallet."
-                                : createProviderId === "local-socket-signer"
-                                  ? "The Go signer generates the key; Node receives only the public address."
-                                  : "Turnkey creates the account under the configured restrictive policy."
+                    props.createBusy
+                      ? "Creating wallet..."
+                      : miningCreationBlocked
+                        ? `Mining already uses ${existingMiningWallet?.name ?? existingMiningWallet?.id}. Only one Mining wallet is allowed.`
+                        : !props.createRole
+                          ? "Select a wallet role."
+                          : "Enter an RPC."
                   }
-                </span>
+                    </span>`
+                    : !createProvider?.enabled || !createProvider.health.ok
+                      ? html`
+                          <span class="muted">Signer unavailable. Create wallet will show the exact error.</span>
+                        `
+                      : nothing
+                }
               </div>
             </div>
           </details>
@@ -4384,7 +4427,8 @@ export function renderWallet(props: WalletViewProps) {
               const selectedWalletTokens = selectedWalletAssets.filter((asset) => !asset.isNative);
               const addressChain = "solana" as const;
               const walletAddress = wallet.addresses?.solana || "";
-              const walletAddressDisplayId = `wallet-address-${walletSecretId(wallet.id)}`;
+              const walletAddressShort = shortenMiddle(walletAddress, 2, 2).replace("...", "..");
+              const walletAddressRevealed = props.revealedAddressWalletId === wallet.id;
               const nativeLabel = "SOL" as const;
               const nativeValue = solBalanceDisplay;
               const cardRole = resolveDisplayedWalletRole(wallet.id, props);
@@ -4399,11 +4443,7 @@ export function renderWallet(props: WalletViewProps) {
               const cardNetworkReady =
                 wallet.providerId !== "local-socket-signer" ||
                 cardSignerReadiness?.networkReady === true;
-              const cardNetworkVersion =
-                cardSignerReadiness?.networkVersion ??
-                (typeof wallet.metadata?.networkVersion === "number"
-                  ? wallet.metadata.networkVersion
-                  : undefined);
+              const cardRpcEditorOpen = props.rpcEditorWalletId === wallet.id;
               const cardWalletReady =
                 wallet.providerId !== "local-socket-signer" || wallet.readiness?.ready === true;
               const cardWalletChains = allowedWalletSendChains(wallet);
@@ -4421,19 +4461,19 @@ export function renderWallet(props: WalletViewProps) {
                     ? [
                         {
                           id: "caps",
-                          label: "Caps",
+                          label: "Limits",
                           title:
                             "Limits used by chat, scheduled sends, swaps, and approved automation.",
                         },
                         {
                           id: "schedule",
-                          label: "Send",
+                          label: "Scheduled send",
                           title:
                             "One Agent-wallet recurring send policy shared by chat and Wallet UI.",
                         },
                         {
                           id: "automation",
-                          label: "Auto",
+                          label: "Automation",
                           title:
                             "Stop or resume background wallet execution for this Agent wallet.",
                         },
@@ -4447,7 +4487,7 @@ export function renderWallet(props: WalletViewProps) {
                     : [
                         {
                           id: "caps",
-                          label: "Caps",
+                          label: "Send limits",
                           title: "Vault guardrails for reviewed Wallet UI sends only.",
                         },
                       ];
@@ -4502,24 +4542,23 @@ export function renderWallet(props: WalletViewProps) {
                                   ${icons.wallet}
                                 </span>
                                 <span
-                                  id=${walletAddressDisplayId}
                                   class="mono wallet-card__address"
-                                  data-revealed="false"
-                                >
-                                  ******
-                                </span>
+                                >${walletAddressRevealed ? walletAddress : walletAddressShort}</span>
                                 <span class="wallet-card__address-actions">
                                   <button
                                     type="button"
                                     class="wallet-icon-btn"
-                                    title="Show wallet address"
-                                    aria-label="Show wallet address"
-                                    @click=${() =>
-                                      toggleWalletSecretText(
-                                        walletAddressDisplayId,
-                                        "******",
-                                        walletAddress,
-                                      )}
+                                    title=${
+                                      walletAddressRevealed
+                                        ? "Hide wallet address"
+                                        : "Show wallet address"
+                                    }
+                                    aria-label=${
+                                      walletAddressRevealed
+                                        ? "Hide wallet address"
+                                        : "Show wallet address"
+                                    }
+                                    @click=${() => props.onToggleWalletAddress?.(wallet.id)}
                                   >
                                     <span class="wallet-copy-btn__icon">${icons.eye}</span>
                                   </button>
@@ -4534,21 +4573,31 @@ export function renderWallet(props: WalletViewProps) {
                                 <span class="muted">No wallet address</span>
                               `
                         }
+                      </div>
+                      <div class="wallet-card__handle-row">
                         ${renderCopyTextButton({
                           value: `@wallet:${wallet.id}`,
                           display: `@wallet:${wallet.id}`,
                           label: "wallet handle",
-                          title:
-                            cardRole === "mining"
-                              ? "Copy wallet handle. Mining wallets are reserved for SAT mining and SAT sweep."
-                              : "Copy wallet handle for approved chat, skill, plugin, or scheduled wallet actions.",
+                          title: "Copy this wallet handle for skills, tasks, chat, and Send.",
                           className: "mono wallet-card__handle",
                         })}
                         ${
                           walletAddress
                             ? html`
-                                <details>
-                                  <summary>Receive QR</summary>
+                                <details class="wallet-qr-details">
+                                  <summary
+                                    class="wallet-icon-btn"
+                                    title="Show receive QR"
+                                    aria-label="Show receive QR"
+                                  >
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                      <rect x="3" y="3" width="7" height="7" />
+                                      <rect x="14" y="3" width="7" height="7" />
+                                      <rect x="3" y="14" width="7" height="7" />
+                                      <path d="M14 14h3v3h-3zM18 18h3v3h-3zM18 14h3M14 20h2" />
+                                    </svg>
+                                  </summary>
                                   <div class="qr-wrap">
                                     <img
                                       src=${`/api/wallet/receive-qr?walletId=${encodeURIComponent(wallet.id)}`}
@@ -4567,22 +4616,8 @@ export function renderWallet(props: WalletViewProps) {
                         class="btn small ${securitySelected ? "primary" : ""}"
                         @click=${() => props.onWalletDetailsWalletChange(wallet.id)}
                       >
-                        Policy
+                        Settings
                       </button>
-                      ${
-                        wallet.providerId === "local-socket-signer"
-                          ? html`
-                              <button
-                                class="btn small danger"
-                                ?disabled=${props.settingsBusy || !props.onArchiveWallet}
-                                title="The server requires Mining runtime obligations to be settled and locks the signer key deny-all. Confirm external balances and recovery before archiving."
-                                @click=${() => props.onArchiveWallet?.(wallet.id)}
-                              >
-                                ${cardRole === "mining" ? "Archive Mining" : "Archive"}
-                              </button>
-                            `
-                          : nothing
-                      }
                     </div>
                   </div>
                   <div class="wallet-card__balance-row">
@@ -4678,6 +4713,102 @@ export function renderWallet(props: WalletViewProps) {
                     securitySelected
                       ? html`
                           <div id="wallet-security-card" class="wallet-card-security">
+                            ${
+                              wallet.providerId === "local-socket-signer"
+                                ? html`
+                                    <div
+                                      class="wallet-rpc-settings"
+                                      data-testid="wallet-signer-network-status"
+                                    >
+                                      <div class="wallet-rpc-row">
+                                        <span
+                                          class="wallet-rpc-status-dot"
+                                          data-ready=${cardNetworkReady ? "true" : "false"}
+                                          title=${cardNetworkReady ? "RPC connected" : "RPC not connected"}
+                                          aria-label=${cardNetworkReady ? "RPC connected" : "RPC not connected"}
+                                        ></span>
+                                        <span class="wallet-rpc-row__label">RPC</span>
+                                        <span class="mono wallet-rpc-row__value"
+                                          >${wallet.rpc?.configured ? "****" : "Not configured"}</span
+                                        >
+                                        <span class="wallet-rpc-row__actions">
+                                          ${
+                                            wallet.rpc?.configured
+                                              ? html`
+                                                  <button
+                                                    type="button"
+                                                    class="wallet-icon-btn"
+                                                    title="Copy RPC"
+                                                    aria-label="Copy RPC"
+                                                    ?disabled=${props.settingsBusy || !props.onCopyWalletRpc}
+                                                    @click=${() => props.onCopyWalletRpc?.(wallet.id)}
+                                                  >
+                                                    <span class="wallet-copy-btn__icon">${icons.copy}</span>
+                                                  </button>
+                                                `
+                                              : nothing
+                                          }
+                                          <button
+                                            type="button"
+                                            class="wallet-icon-btn"
+                                            title="Edit RPC"
+                                            aria-label="Edit RPC"
+                                            ?disabled=${props.settingsBusy || !props.onToggleWalletRpcEditor}
+                                            @click=${() => props.onToggleWalletRpcEditor?.(wallet.id)}
+                                          >
+                                            <span class="wallet-copy-btn__icon">${icons.edit}</span>
+                                          </button>
+                                        </span>
+                                      </div>
+                                      ${
+                                        cardRpcEditorOpen
+                                          ? html`
+                                              <div class="wallet-rpc-editor">
+                                                <div class="muted" style="font-size: 0.82em;">
+                                          Any HTTPS Solana RPC provider works. Before saving, Fased checks that
+                                          it responds as Solana and stays on this wallet's current network.
+                                                </div>
+                                                ${
+                                                  props.settingsError && props.rpcUrl?.trim()
+                                                    ? html`<div class="callout danger">
+                                                        ${props.settingsError}
+                                                      </div>`
+                                                    : nothing
+                                                }
+                                                <div class="wallet-rpc-editor__form">
+                                                  <label class="field">
+                                                    <span>RPC</span>
+                                                    <input
+                                                      .value=${props.rpcUrl ?? ""}
+                                                      placeholder="https://your-solana-rpc.example"
+                                                      autocomplete="off"
+                                                      spellcheck="false"
+                                                      @input=${(event: Event) =>
+                                                        props.onRpcUrlChange?.(
+                                                          (event.target as HTMLInputElement).value,
+                                                        )}
+                                                    />
+                                                  </label>
+                                                  <button
+                                                    class="btn small"
+                                                    ?disabled=${
+                                                      props.settingsBusy ||
+                                                      !props.rpcUrl?.trim() ||
+                                                      !props.onSaveWalletRpc
+                                                    }
+                                                    @click=${props.onSaveWalletRpc}
+                                                  >
+                                                    Save
+                                                  </button>
+                                                </div>
+                                              </div>
+                                            `
+                                          : nothing
+                                      }
+                                    </div>
+                                  `
+                                : nothing
+                            }
                             <div class="wallet-policy-tabs" role="tablist" aria-label="Wallet policy sections">
                               ${policyTabs.map(
                                 (tab) => html`
@@ -4696,113 +4827,36 @@ export function renderWallet(props: WalletViewProps) {
                               )}
                             </div>
                             ${
-                              wallet.providerId === "local-socket-signer"
+                              cardSignerPolicy?.state === "locked" ||
+                              (cardSignerReadiness && !cardSignerReadiness.ready)
                                 ? html`
                                     <div
-                                      class="callout ${cardNetworkReady ? "success" : "warn"}"
-                                      style="margin-top: 10px"
-                                      data-testid="wallet-signer-network-status"
-                                    >
-                                      <strong
-                                        >Signer RPC: ${
-                                          cardNetworkReady
-                                            ? `ready${cardNetworkVersion ? ` · version ${cardNetworkVersion}` : ""}`
-                                            : "not ready"
-                                        }</strong
-                                      >
-                                      <div>
-                                        Enter one primary RPC. The Go signer verifies its genesis;
-                                        ordinary setup never asks for a Solana network or a second
-                                        RPC.
-                                      </div>
-                                      <div class="wallet-card-security__grid" style="margin-top: 8px">
-                                        <label class="field">
-                                          <span>Replace primary Solana RPC</span>
-                                          <input
-                                            .value=${props.rpcUrl ?? ""}
-                                            placeholder="https://your-solana-rpc.example"
-                                            autocomplete="off"
-                                            spellcheck="false"
-                                            @input=${(event: Event) =>
-                                              props.onRpcUrlChange?.(
-                                                (event.target as HTMLInputElement).value,
-                                              )}
-                                          />
-                                        </label>
-                                        <button
-                                          class="btn small"
-                                          ?disabled=${
-                                            props.settingsBusy ||
-                                            !props.rpcUrl?.trim() ||
-                                            !props.onSaveWalletRpc
-                                          }
-                                          @click=${props.onSaveWalletRpc}
-                                        >
-                                          Verify and save RPC
-                                        </button>
-                                      </div>
-                                    </div>
-                                  `
-                                : nothing
-                            }
-                            ${
-                              cardSignerPolicy
-                                ? html`
-                                    <div
-                                      class="callout ${cardSignerPolicy.state === "acknowledged" ? "success" : "warn"}"
-                                      style="margin-top: 10px"
-                                      data-testid="wallet-signer-policy-status"
-                                    >
-                                      <strong>Native signer policy: ${cardSignerPolicy.state}</strong>
-                                      ${
-                                        cardSignerPolicy.state === "locked"
-                                          ? html`
-                                              <div>
-                                                This pre-role-baseline wallet remains deny-all. Review its immutable role, then select Activate
-                                                role baseline with the native wallet CLI. No root policy helper is required.
-                                              </div>
-                                            `
-                                          : nothing
-                                      }
-                                      ${
-                                        cardSignerPolicy.version && cardSignerPolicy.hash
-                                          ? html`
-                                              <div>
-                                                Version ${cardSignerPolicy.version} ·
-                                                <span class="mono" style="overflow-wrap: anywhere"
-                                                  >${cardSignerPolicy.hash}</span
-                                                >
-                                              </div>
-                                            `
-                                          : nothing
-                                      }
-                                      ${cardSignerPolicy.guidance ? html`<div>${cardSignerPolicy.guidance}</div>` : nothing}
-                                    </div>
-                                  `
-                                : nothing
-                            }
-                            ${
-                              cardSignerReadiness
-                                ? html`
-                                    <div
-                                      class="callout ${cardSignerReadiness.ready ? "success" : "warn"}"
+                                      class="callout warn"
                                       style="margin-top: 10px"
                                       data-testid="wallet-live-readiness"
                                     >
-                                      <strong
-                                        >Role readiness:
-                                        ${
-                                          cardSignerReadiness.ready ? "ready" : "setup incomplete"
-                                        }</strong
-                                      >
-                                      <div>
-                                        ${cardSignerReadiness.role} baseline v${cardSignerReadiness.baselineVersion}
-                                        · ${cardSignerReadiness.operationLane}
-                                      </div>
-                                      <div>
-                                        Policy v${cardSignerReadiness.policyVersion} · Network
-                                        v${cardSignerReadiness.networkVersion}
-                                      </div>
+                                      <strong>Wallet setup incomplete</strong>
+                                      ${
+                                        cardSignerPolicy?.state === "locked" ||
+                                        cardSignerReadiness?.policyReady === false
+                                          ? html`
+                                              <div>
+                                                ${
+                                                  cardRole === "mining"
+                                                    ? "Mining activates automatically when the signed SAT runtime manifest is live."
+                                                    : "Run Fased Update to finish this wallet automatically."
+                                                }
+                                              </div>
+                                            `
+                                          : nothing
+                                      }
+                                      ${
+                                        cardSignerReadiness?.networkReady === false
+                                          ? html`
+                                              <div>Enter a working primary RPC above.</div>
+                                            `
+                                          : nothing
+                                      }
                                     </div>
                                   `
                                 : nothing
@@ -4810,22 +4864,32 @@ export function renderWallet(props: WalletViewProps) {
                             ${
                               cardRole === "vault" && wallet.providerId === "local-socket-signer"
                                 ? html`
-                                    <div class="callout" style="margin-top: 10px">
-                                      <strong>Vault approval device · ${vaultSignerApproval.summary}</strong>
+                                    <details class="wallet-advanced-box">
+                                      <summary>Optional Vault approval device · ${vaultSignerApproval.summary}</summary>
                                       <div>${vaultSignerApproval.detail}</div>
-                                      ${
-                                        vaultSignerApproval.setupCommand
-                                          ? html`<div class="mono" style="overflow-wrap: anywhere">
-                                              ${vaultSignerApproval.setupCommand}
-                                            </div>`
-                                          : nothing
-                                      }
-                                      <div>
-                                        This optional signer-owned device never changes Agent or Mining automation.
-                                      </div>
-                                    </div>
+                                      <div>This optional device adds a signer-owned approval step for Vault sends.</div>
+                                    </details>
                                   `
-                                : nothing
+                                : wallet.providerId === "wallet-standard"
+                                  ? html`
+                                      <details style="margin-top: 12px;">
+                                        <summary>Advanced</summary>
+                                        <div class="wallet-security-note" style="margin-top: 10px;">
+                                          Removing this wallet deletes only its Fased registration.
+                                          The browser wallet and its funds are unchanged.
+                                        </div>
+                                        <div class="row" style="margin-top: 10px;">
+                                          <button
+                                            class="btn small danger"
+                                            ?disabled=${props.settingsBusy || !props.onRemoveWallet}
+                                            @click=${() => props.onRemoveWallet?.(wallet.id)}
+                                          >
+                                            Remove wallet
+                                          </button>
+                                        </div>
+                                      </details>
+                                    `
+                                  : nothing
                             }
                             ${
                               cardRole === "mining"
@@ -5420,6 +5484,38 @@ export function renderWallet(props: WalletViewProps) {
                                     }
                                   `
                             }
+                            ${
+                              wallet.providerId === "local-socket-signer"
+                                ? html`
+                                    <details style="margin-top: 12px;">
+                                      <summary>Advanced</summary>
+                                      ${
+                                        cardRole === "mining"
+                                          ? html`
+                                              <div class="wallet-security-note" style="margin-top: 10px">
+                                                Mining cannot be deleted or archived while attached. Use <code>fased onboard</code> → Manage
+                                                wallet → Retire and replace Mining wallet.
+                                              </div>
+                                            `
+                                          : html`
+                                            <div class="wallet-security-note" style="margin-top: 10px;">
+                                              Archiving disables signer use and removes this wallet from Fased. It does not move funds.
+                                            </div>
+                                            <div class="row" style="margin-top: 10px;">
+                                              <button
+                                                class="btn small danger"
+                                                ?disabled=${props.settingsBusy || !props.onArchiveWallet}
+                                                @click=${() => props.onArchiveWallet?.(wallet.id)}
+                                              >
+                                                Archive wallet
+                                              </button>
+                                            </div>
+                                          `
+                                      }
+                                    </details>
+                                  `
+                                : nothing
+                            }
                           </div>
                         `
                       : nothing
@@ -5446,7 +5542,7 @@ export function renderWallet(props: WalletViewProps) {
                   "Reviewed sends, Vault actions, and federation signatures appear here. The signer executes only the exact prepared operation; Vault review may require its separately configured approval device.",
                 )}
               </div>
-			  <div class="card-sub">Pending and recent reviewed wallet operations.</div>
+              <div class="card-sub">Pending and recent reviewed wallet operations.</div>
             </div>
             <div class="row" style="gap: 8px; flex-wrap: wrap;">
               ${(
@@ -5477,7 +5573,6 @@ export function renderWallet(props: WalletViewProps) {
                       class="table-head"
                       style="align-items: start;"
                     >
-                      <div>Request</div>
                       <div>Status</div>
                       <div>Amount</div>
                       <div>Asset</div>
@@ -5501,23 +5596,11 @@ export function renderWallet(props: WalletViewProps) {
                             .filter(Boolean)
                         : [];
                       return html`
-                      <div
-                        id=${taskLedgerAnchorId("wallet-approval", request.id)}
-                        class="table-row"
-                        style="align-items: center;"
-                      >
-                        <div>
-                          <div class="mono" style="font-size: 0.85em;">${request.id}</div>
-                          <div class="muted" style="font-size: 0.8em; margin-top: 4px;">
-                            expires ${new Date(request.expiresAt).toLocaleString()}
-                          </div>
-                          ${renderWalletApprovalDiffSummary({
-                            request,
-                            display: approvalDisplay,
-                            endpoints: approvalEndpoints,
-                          })}
-                          ${renderWalletSignerSemanticIntent(request)}
-                        </div>
+                        <div
+                          id=${taskLedgerAnchorId("wallet-approval", request.id)}
+                          class="table-row"
+                          style="align-items: center;"
+                        >
                         <div>
                           <div class="row" style="gap: 8px; align-items: center;">
                             <span
@@ -5584,24 +5667,13 @@ export function renderWallet(props: WalletViewProps) {
                                 `
                               : nothing
                           }
-                          ${
-                            routeProgramIds.length > 0
-                              ? html`
-                                  <div class="muted" style="font-size: 0.76em; margin-top: 4px;">
-                                    route ${routeProgramIds
-                                      .map((programId) => shortenMiddle(programId, 4, 4))
-                                      .join(", ")}
-                                  </div>
-                                `
-                              : nothing
-                          }
                         </div>
                         <div style="min-width: 0;">
                           ${
                             approvalEndpoints.fromAddress
                               ? html`
                                   <div class="mono" style="font-size: 0.82em;">
-                                    ${shortenMiddle(approvalEndpoints.fromAddress)}
+                                    ${shortenMiddle(approvalEndpoints.fromAddress, 2, 2).replace("...", "..")}
                                   </div>
                                 `
                               : html`
@@ -5614,7 +5686,7 @@ export function renderWallet(props: WalletViewProps) {
                             approvalEndpoints.toAddress
                               ? html`
                                   <div class="mono" style="font-size: 0.82em;">
-                                    ${shortenMiddle(approvalEndpoints.toAddress)}
+                                    ${shortenMiddle(approvalEndpoints.toAddress, 2, 2).replace("...", "..")}
                                   </div>
                                 `
                               : html`
@@ -5622,10 +5694,10 @@ export function renderWallet(props: WalletViewProps) {
                                 `
                           }
                         </div>
-                        <div style="white-space: nowrap;">
-                          <span style="font-size: 0.85em;">${new Date(request.createdAt).toLocaleString()}</span>
+                        <div style="white-space: nowrap;" title=${new Date(request.createdAt).toLocaleString()}>
+                          <span style="font-size: 0.85em;">${formatWalletApprovalTime(request.createdAt)}</span>
                         </div>
-                        <div>
+                        <div class="wallet-approval-actions">
                           ${
                             request.status === "pending"
                               ? html`
@@ -5658,9 +5730,35 @@ export function renderWallet(props: WalletViewProps) {
                                     <span class="muted">—</span>
                                   `
                           }
+                          <details class="wallet-approval-details">
+                            <summary title="Show request details">Details</summary>
+                            <div class="wallet-approval-details__content">
+                              <div class="mono">${request.id}</div>
+                              <div class="muted" style="margin-top: 4px;">
+                                Expires ${new Date(request.expiresAt).toLocaleString()}
+                              </div>
+                              ${renderWalletApprovalDiffSummary({
+                                request,
+                                display: approvalDisplay,
+                                endpoints: approvalEndpoints,
+                              })}
+                              ${renderWalletSignerSemanticIntent(request)}
+                              ${
+                                routeProgramIds.length > 0
+                                  ? html`
+                                      <div class="muted" style="margin-top: 6px;">
+                                        Route ${routeProgramIds
+                                          .map((programId) => shortenMiddle(programId, 4, 4))
+                                          .join(", ")}
+                                      </div>
+                                    `
+                                  : nothing
+                              }
+                            </div>
+                          </details>
                         </div>
-                      </div>
-                    `;
+                        </div>
+                      `;
                     })}
                   </div>
                 `
@@ -5846,7 +5944,7 @@ export function renderWallet(props: WalletViewProps) {
             `
       }
     </div>
-        `
+            `
         : nothing
     }
     </section>

@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	solanaMainnetGenesisHashV2 = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
-	solanaDevnetGenesisHashV2  = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
+	solanaMainnetGenesisHashV2 = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
+	solanaDevnetGenesisHashV2  = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
 )
 
 func normalizeSolanaClusterV2(raw string) (string, error) {

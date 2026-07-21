@@ -118,6 +118,26 @@ describe("buildGatewayReloadPlan", () => {
     setActivePluginRegistry(emptyRegistry);
   });
 
+  it("does not restart the gateway for a per-wallet RPC update", () => {
+    const plan = buildGatewayReloadPlan(["env.vars.FASED_WALLET_SOLANA_RPC_URL__AGENT_2"]);
+
+    expect(plan.restartGateway).toBe(false);
+    expect(plan.noopPaths).toEqual(["env.vars.FASED_WALLET_SOLANA_RPC_URL__AGENT_2"]);
+  });
+
+  it("does not restart the gateway when wallet creation materializes signer paths", () => {
+    const changedPaths = [
+      "env.vars.FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET",
+      "env.vars.FASED_WALLET_LOCAL_SIGNER_STATE_DB",
+      "env.vars.FASED_WALLET_LOCAL_SIGNER_MASTER_KEY",
+      "env.vars.FASED_WALLET_SOLANA_RPC_URL__AGENT_4",
+    ];
+    const plan = buildGatewayReloadPlan(changedPaths);
+
+    expect(plan.restartGateway).toBe(false);
+    expect(plan.noopPaths).toEqual(changedPaths);
+  });
+
   it("marks gateway changes as restart required", () => {
     const plan = buildGatewayReloadPlan(["gateway.port"]);
     expect(plan.restartGateway).toBe(true);

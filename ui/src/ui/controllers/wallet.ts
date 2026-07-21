@@ -138,13 +138,12 @@ function buildWalletBalanceCacheEntry(
   fallback?: WalletNamedWallet,
 ) {
   const solBalance = readSuccessfulBalance(result.balances.solana);
-  const balances =
-    solBalance !== undefined ? compactWalletBalances({ solana: solBalance }) : fallback?.balances;
+  const balances = compactWalletBalances({ solana: solBalance });
   return {
     addresses: compactWalletAddresses({
       solana: result.addresses?.solana ?? fallback?.addresses?.solana,
     }),
-    ...(balances ? { balances } : {}),
+    balances,
     rpcReady: Boolean(fallback?.readiness?.rpc || result.balances.solana?.ok),
   };
 }
@@ -191,11 +190,17 @@ function mergeWalletBalanceRefreshResults(
   const cache = getWalletBalanceCache(host);
   let updated = false;
   for (const entry of results) {
-    if (!entry.result) {
-      continue;
-    }
     const fallback = host.walletNamedWallets.find((wallet) => wallet.id === entry.walletId);
-    cache.set(entry.walletId, buildWalletBalanceCacheEntry(entry.result, fallback));
+    cache.set(
+      entry.walletId,
+      entry.result
+        ? buildWalletBalanceCacheEntry(entry.result, fallback)
+        : {
+            addresses: fallback?.addresses,
+            balances: {},
+            rpcReady: Boolean(fallback?.readiness?.rpc),
+          },
+    );
     updated = true;
   }
   if (!updated) {
@@ -586,6 +591,20 @@ export async function loadWallet(host: FasedAgentApp) {
     } else {
       host.walletBalances = null;
       host.walletBalancesError = String(balancesResult.reason);
+      if (selectedWalletId) {
+        const fallback = host.walletNamedWallets.find((wallet) => wallet.id === selectedWalletId);
+        const cache = getWalletBalanceCache(host);
+        cache.set(selectedWalletId, {
+          addresses: fallback?.addresses,
+          balances: {},
+          rpcReady: Boolean(fallback?.readiness?.rpc),
+        });
+        host.walletNamedWallets = host.walletNamedWallets.map((wallet) =>
+          wallet.id === selectedWalletId
+            ? mergeCachedWalletData(wallet, cache.get(selectedWalletId))
+            : wallet,
+        );
+      }
     }
     host.walletBalancesLoading = false;
     notifyWalletRpcHealth(host);

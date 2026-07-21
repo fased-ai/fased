@@ -663,6 +663,7 @@ export type AppViewState = {
   walletCreateProvider: WalletProviderInfo["id"];
   walletCreateRole: "" | "agent" | "mining" | "vault";
   walletCreateRpcUrl: string;
+  walletCreateBusy: boolean;
   walletAssignAgentId: string;
   walletAssignWalletId: string;
   walletSettingsLoading: boolean;
@@ -714,6 +715,8 @@ export type AppViewState = {
   walletRpcProvider: string;
   walletRpcApiKey: string;
   walletRpcUrl: string;
+  walletRpcEditorWalletId: string;
+  walletRevealedAddressWalletId: string;
   walletProviderApiKey: string;
   walletProviderServerSignerAccessKey: string;
   walletProviderServerSignerAccountId: string;
@@ -1223,6 +1226,9 @@ export type AppViewState = {
   handleWalletSavePolicy: () => Promise<void>;
   handleWalletValidateSettings: () => Promise<void>;
   handleWalletSaveRpcSecret: () => Promise<void>;
+  handleWalletToggleRpcEditor: (walletId: string) => void;
+  handleWalletCopyRpc: (walletId: string) => Promise<void>;
+  handleWalletToggleAddress: (walletId: string) => void;
   handleWalletSaveProviderCredentials: () => Promise<void>;
   handleWalletDeleteProviderCredentials: () => Promise<void>;
   handleWalletDeleteRpcSecret: () => Promise<void>;

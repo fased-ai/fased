@@ -122,6 +122,8 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 			return runSignerAdminNetworkPut(args[2:], stdin, stdout)
 		case "set-primary":
 			return runSignerAdminNetworkSetPrimaryV1(args[2:], stdin, stdout)
+		case "repair-migrated-primary":
+			return runSignerAdminNetworkRepairMigratedPrimaryV1(args[2:], stdin, stdout)
 		default:
 			return errors.New("unknown signer admin network command")
 		}
@@ -575,10 +577,11 @@ func runSignerAdminWalletImport(args []string, stdin io.Reader, stdout io.Writer
 
 func runSignerAdminWalletImportLegacy(args []string, stdout io.Writer) error {
 	fs, common := newSignerAdminFlagSet("wallet import-legacy")
-	var walletID, policyFile, lockedRole, keystorePath, passphrasePath string
+	var walletID, policyFile, lockedRole, baselineRole, keystorePath, passphrasePath string
 	fs.StringVar(&walletID, "wallet-id", "", "normalized wallet identifier")
 	fs.StringVar(&policyFile, "policy-file", "", "absolute strict policy JSON path")
 	fs.StringVar(&lockedRole, "locked-role", "", "agent, mining, or vault deny-all policy")
+	fs.StringVar(&baselineRole, "baseline-role", "", "agent, mining, or vault signer-owned role baseline")
 	fs.StringVar(&keystorePath, "keystore-path", "", "absolute owner-only legacy encrypted keystore path")
 	fs.StringVar(&passphrasePath, "passphrase-path", "", "absolute owner-only passphrase file path")
 	if err := parseSignerAdminFlags(fs, args); err != nil {
@@ -595,9 +598,25 @@ func runSignerAdminWalletImportLegacy(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	policy, err := resolveSignerAdminCreationPolicy(walletID, policyFile, lockedRole)
-	if err != nil {
-		return err
+	useBaseline := strings.TrimSpace(baselineRole) != ""
+	if useBaseline && (strings.TrimSpace(policyFile) != "" || strings.TrimSpace(lockedRole) != "") {
+		return errors.New("--baseline-role cannot be combined with --policy-file or --locked-role")
+	}
+	var policy signerPolicyV2
+	if useBaseline {
+		baseline, baselineErr := normalizeRoleBaselineRequestV1(signerRoleBaselineRequestV1{
+			Version: signerRoleBaselineVersionV1,
+			Role:    baselineRole,
+		})
+		if baselineErr != nil {
+			return fmt.Errorf("invalid --baseline-role: %w", baselineErr)
+		}
+		baselineRole = baseline.Role
+	} else {
+		policy, err = resolveSignerAdminCreationPolicy(walletID, policyFile, lockedRole)
+		if err != nil {
+			return err
+		}
 	}
 	keystorePath = strings.TrimSpace(keystorePath)
 	passphrasePath = strings.TrimSpace(passphrasePath)
@@ -612,6 +631,9 @@ func runSignerAdminWalletImportLegacy(args []string, stdout io.Writer) error {
 		Policy:          policy,
 		Path:            keystorePath,
 		PassphrasePath:  passphrasePath,
+	}
+	if useBaseline {
+		body.Baseline = &signerRoleBaselineRequestV1{Version: signerRoleBaselineVersionV1, Role: baselineRole}
 	}
 	result, err := callSignerAdminSensitiveV2(common.controlSocket, "v2.wallet.importLegacy", walletID, body)
 	if err != nil {
@@ -959,6 +981,53 @@ func runSignerAdminNetworkSetPrimaryV1(args []string, stdin io.Reader, stdout io
 		return err
 	}
 	return writeSignerAdminResult(result, stdout)
+}
+
+func runSignerAdminNetworkRepairMigratedPrimaryV1(args []string, stdin io.Reader, stdout io.Writer) error {
+	fs, common := newSignerAdminFlagSet("network repair-migrated-primary")
+	var walletID, expectedHash, expectedPublicKey, migrationSource string
+	var expected signerAdminRequiredUint64
+	fs.StringVar(&walletID, "wallet-id", "", "normalized wallet identifier")
+	fs.Var(&expected, "expected-version", "required current network version")
+	fs.StringVar(&expectedHash, "expected-hash", "", "required current authenticated network hash")
+	fs.StringVar(&expectedPublicKey, "expected-public-key", "", "required exact signer wallet public key")
+	fs.StringVar(&migrationSource, "migration-source", "", "required legacy source marker")
+	if err := parseSignerAdminFlags(fs, args); err != nil {
+		return err
+	}
+	if !expected.set {
+		return errors.New("--expected-version is required")
+	}
+	if _, err := requireSignerAdminControlSocket(common.controlSocket); err != nil {
+		return err
+	}
+	var err error
+	if walletID, err = validateSignerAdminWalletID(walletID); err != nil {
+		return err
+	}
+	raw, err := io.ReadAll(io.LimitReader(stdin, maxSignerNetworkInputBytesV2+1))
+	if err != nil {
+		return errors.New("read migrated primary signer RPC from stdin")
+	}
+	defer zeroBytes(raw)
+	if len(raw) == 0 || len(raw) > maxSignerNetworkInputBytesV2 {
+		return errors.New("stdin must contain one strict primary RPC JSON object within the size limit")
+	}
+	var input struct {
+		PrimaryRPCURL string `json:"primaryRpcUrl"`
+	}
+	if err := decodeSignerAdminStrictJSON(raw, &input); err != nil || strings.TrimSpace(input.PrimaryRPCURL) == "" {
+		return errors.New("stdin must contain exactly one primaryRpcUrl")
+	}
+	defer func() { input.PrimaryRPCURL = "" }()
+	result, err := callSignerAdminSensitiveV2(common.controlSocket, "v2.network.repairMigratedPrimary", walletID, signerMigratedNetworkRepairRequestV1{
+		ExpectedVersion: expected.value, ExpectedHash: expectedHash, ExpectedPublicKey: expectedPublicKey,
+		MigrationSource: migrationSource, PrimaryRPCURL: input.PrimaryRPCURL,
+	})
+	if err != nil {
+		return err
+	}
+	return writeSignerAdminNetworkSummaryV2(result, walletID, stdout)
 }
 
 func writeSignerAdminNetworkSummaryV2(result json.RawMessage, walletID string, stdout io.Writer) error {

@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FasedAgentConfig } from "../../config/config.js";
 import { setDefaultWallet, upsertNamedWallet } from "../../wallet/wallet-provider-registry.js";
+import { computeSkillContentSha256Sync } from "../skills/trust.js";
 import { createWalletTool } from "./wallet-tool.js";
 
 const mocks = vi.hoisted(() => ({
@@ -102,6 +103,12 @@ async function writeClawHubSkillOrigin(params: {
 }) {
   const originDir = path.join(params.workspaceDir, "skills", params.slug, ".clawhub");
   await fs.mkdir(originDir, { recursive: true });
+  const skillDir = path.dirname(originDir);
+  await fs.writeFile(path.join(skillDir, "SKILL.md"), `# ${params.slug}\n`, "utf8");
+  const contentSha256 = computeSkillContentSha256Sync(skillDir);
+  if (!contentSha256) {
+    throw new Error("test skill content digest was unavailable");
+  }
   await fs.writeFile(
     path.join(originDir, "origin.json"),
     `${JSON.stringify(
@@ -111,6 +118,9 @@ async function writeClawHubSkillOrigin(params: {
         slug: params.slug,
         installedVersion: "1.0.0",
         installedAt: Date.now(),
+        archiveSha256: "a".repeat(64),
+        archiveIntegrityVerified: true,
+        contentSha256,
       },
       null,
       2,
@@ -568,7 +578,7 @@ describe("wallet-tool", () => {
   it("does not report Solana balance errors for Solana-only wallet balance checks", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-tool-sol-only-bal-"));
     vi.stubEnv("FASED_STATE_DIR", tempDir);
-    vi.stubEnv("FASED_WALLET_SOLANA_RPC_URL", "https://rpc.sol-only.test");
+    vi.stubEnv("FASED_WALLET_SOLANA_RPC_URL", "http://127.0.0.1:19001");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_input, init) => {
@@ -668,7 +678,7 @@ describe("wallet-tool", () => {
   it("returns all local wallet Solana assets for all-wallet balance questions", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-tool-balances-"));
     vi.stubEnv("FASED_STATE_DIR", tempDir);
-    vi.stubEnv("FASED_WALLET_SOLANA_RPC_URL", "https://rpc.wallet-balances.test");
+    vi.stubEnv("FASED_WALLET_SOLANA_RPC_URL", "http://127.0.0.1:19002");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_input, init) => {
@@ -742,7 +752,7 @@ describe("wallet-tool", () => {
   it("returns SPL token balance for percentage transfer planning", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-tool-sol-token-bal-"));
     vi.stubEnv("FASED_STATE_DIR", tempDir);
-    vi.stubEnv("FASED_WALLET_SOLANA_RPC_URL", "https://rpc.sol-token-bal.test");
+    vi.stubEnv("FASED_WALLET_SOLANA_RPC_URL", "http://127.0.0.1:19003");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_input, init) => {
@@ -836,7 +846,7 @@ describe("wallet-tool", () => {
   it("returns native SOL balance for an external Solana address", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-tool-sol-external-bal-"));
     vi.stubEnv("FASED_STATE_DIR", tempDir);
-    vi.stubEnv("FASED_WALLET_SOLANA_RPC_URL", "https://rpc.sol-external-bal.test");
+    vi.stubEnv("FASED_WALLET_SOLANA_RPC_URL", "http://127.0.0.1:19004");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_input, init) => {
@@ -902,7 +912,7 @@ describe("wallet-tool", () => {
       path.join(os.tmpdir(), "fased-wallet-tool-sol-ext-balance-no-chain-"),
     );
     vi.stubEnv("FASED_STATE_DIR", tempDir);
-    vi.stubEnv("FASED_WALLET_SOLANA_RPC_URL", "https://rpc.sol-ext-balance-no-chain.test");
+    vi.stubEnv("FASED_WALLET_SOLANA_RPC_URL", "http://127.0.0.1:19005");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_input, init) => {
@@ -1049,7 +1059,7 @@ describe("wallet-tool", () => {
   it("returns all visible Solana assets for wallet balance questions", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-tool-sol-assets-"));
     vi.stubEnv("FASED_STATE_DIR", tempDir);
-    vi.stubEnv("FASED_WALLET_SOLANA_RPC_URL", "https://rpc.sol-wallet-assets.test");
+    vi.stubEnv("FASED_WALLET_SOLANA_RPC_URL", "http://127.0.0.1:19006");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_input, init) => {
@@ -1160,7 +1170,7 @@ describe("wallet-tool", () => {
   it("returns visible Solana assets for an external Solana address", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-tool-sol-ext-assets-"));
     vi.stubEnv("FASED_STATE_DIR", tempDir);
-    vi.stubEnv("FASED_WALLET_SOLANA_RPC_URL", "https://rpc.sol-ext-assets.test");
+    vi.stubEnv("FASED_WALLET_SOLANA_RPC_URL", "http://127.0.0.1:19007");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_input, init) => {

@@ -302,10 +302,18 @@ async function downloadToFile(url, destination, timeoutMs) {
   );
 }
 
-async function verifyOfficialAsset(assetPath, version, timeoutMs) {
-  const gh = ["/usr/bin/gh", "/usr/local/bin/gh", "/opt/homebrew/bin/gh"].find((candidate) =>
-    fs.existsSync(candidate),
-  );
+async function verifyOfficialAsset(
+  assetPath,
+  version,
+  timeoutMs,
+  bundlePath = null,
+  ghOverride = null,
+) {
+  const gh =
+    ghOverride ||
+    ["/usr/bin/gh", "/usr/local/bin/gh", "/opt/homebrew/bin/gh"].find((candidate) =>
+      fs.existsSync(candidate),
+    );
   if (!gh) {
     throw new Error(
       "GitHub CLI with `gh attestation verify` is required for exact tagged Fased release assets.",
@@ -324,9 +332,11 @@ async function verifyOfficialAsset(assetPath, version, timeoutMs) {
       "--source-ref",
       `refs/tags/v${version}`,
       "--deny-self-hosted-runners",
+      ...(bundlePath ? ["--bundle", bundlePath] : []),
     ],
     {
       env: {
+        ...process.env,
         HOME: process.env.HOME,
         PATH: "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
         GH_PROMPT_DISABLED: "1",
@@ -377,9 +387,8 @@ async function downloadManifestBoundAsset({
   const destination = path.join(destinationDir, artifact.asset);
   await downloadToFile(`${releaseUrl}/${artifact.asset}`, destination, timeoutMs);
   await verifyManifestArtifact(destination, artifact);
-  if (officialVersion) {
-    await verifyOfficialAsset(destination, officialVersion, timeoutMs);
-  }
+  // The artifact digest is bound by the separately attested unified manifest.
+  void officialVersion;
   return destination;
 }
 
@@ -400,6 +409,93 @@ async function runFile(command, args, options = {}) {
       stderr: error?.stderr || error?.message || String(error),
     };
   }
+}
+
+async function runFileWithInput(command, args, input, options = {}) {
+  return await new Promise((resolve) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+    }, options.timeoutMs || DEFAULT_TIMEOUT_MS);
+    const finish = (ok, error = null) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      resolve({ ok, stdout, stderr: stderr || error?.message || "" });
+    };
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+      if (Buffer.byteLength(stdout) > 64 * 1024 * 1024) {
+        child.kill("SIGKILL");
+      }
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+      if (Buffer.byteLength(stderr) > 64 * 1024 * 1024) {
+        child.kill("SIGKILL");
+      }
+    });
+    child.once("error", (error) => finish(false, error));
+    child.once("close", (code) => finish(code === 0));
+    child.stdin.end(input);
+  });
+}
+
+async function promptHiddenValue(message) {
+  if (!process.stdin.isTTY || typeof process.stdin.setRawMode !== "function") {
+    throw new Error(
+      "Legacy wallet migration needs its passphrase. Re-run fased update from an interactive terminal so the updater can ask once without displaying it.",
+    );
+  }
+  process.stdout.write(`${message}: `);
+  const input = process.stdin;
+  const wasRaw = input.isRaw;
+  input.setRawMode(true);
+  input.resume();
+  return await new Promise((resolve, reject) => {
+    let value = "";
+    const restore = () => {
+      input.off("data", onData);
+      input.setRawMode(Boolean(wasRaw));
+      input.pause();
+      process.stdout.write("\n");
+    };
+    const onData = (chunk) => {
+      for (const byte of Buffer.from(chunk)) {
+        if (byte === 3) {
+          restore();
+          reject(new Error("Legacy wallet migration was cancelled"));
+          return;
+        }
+        if (byte === 10 || byte === 13) {
+          restore();
+          if (!value) {
+            reject(new Error("Legacy wallet passphrase cannot be empty"));
+          } else {
+            resolve(value);
+          }
+          return;
+        }
+        if (byte === 8 || byte === 127) {
+          value = value.slice(0, -1);
+          continue;
+        }
+        if (byte >= 32 && byte <= 126) {
+          value += String.fromCharCode(byte);
+        }
+      }
+    };
+    input.on("data", onData);
+  });
 }
 
 function archiveEntryIsSafe(entry, allowedRoot) {
@@ -1365,7 +1461,9 @@ function hostedTransactionOperations(paths, timeoutMs, options = {}) {
     activateApplication: async (journal) => await activateHostedApplication(paths, journal),
     restoreApplication: async (journal) => {
       await restoreHostedApplication(paths, journal);
-      await updateStableComponents(paths, journal.previousRoot, true);
+      // Keep the newest verified control plane while selecting the previous
+      // application runtime. Older releases can lack helpers required by this
+      // updater, and downgrading the stable files would break recovery.
     },
     quiesceGateway: async () => await quiesceHostedGateway(timeoutMs),
     signerRequest: async (operation, journal) => {
@@ -1722,6 +1820,14 @@ async function cleanupReleases(paths, keepRoots) {
   }
 }
 
+async function recordManagedUpdateSuccess(paths, details = {}) {
+  await atomicWriteJson(
+    path.join(paths.stateDir, "last-update-success.json"),
+    { schemaVersion: 1, completedAt: new Date().toISOString(), mode: "managed", ...details },
+    0o600,
+  );
+}
+
 function resolveLocalSignerPaths(overrides = {}) {
   const managed = resolveManagedRuntimePaths({ stateDir: overrides.stateDir });
   const stateDir = managed.stateDir;
@@ -1817,6 +1923,182 @@ function resolveLocalSignerPaths(overrides = {}) {
     throw new Error("Local signer state directory is too broad for transactional snapshot/restore");
   }
   return resolved;
+}
+
+function localConfigPath(paths) {
+  return path.resolve(process.env.FASED_CONFIG_PATH || path.join(paths.stateDir, "fased.json"));
+}
+
+function localWalletEnvSuffix(walletID) {
+  return String(walletID || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function normalizeLocalSignerWalletID(walletID) {
+  return (
+    String(walletID || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "") || "default"
+  );
+}
+
+function normalizeMigrationRole(value) {
+  const role = String(value || "")
+    .trim()
+    .toLowerCase();
+  return new Set(["agent", "mining", "vault"]).has(role) ? role : null;
+}
+
+function inferLegacyWalletRole(wallet, registry, config) {
+  const recorded =
+    normalizeMigrationRole(wallet?.metadata?.purpose) ||
+    normalizeMigrationRole(wallet?.metadata?.role);
+  if (recorded) {
+    return recorded;
+  }
+  const walletID = String(wallet?.id || "").trim();
+  const normalizedID = walletID.toLowerCase();
+  const label = String(wallet?.name || "")
+    .trim()
+    .toLowerCase();
+  const miningWalletID = String(
+    config?.plugins?.entries?.["sat-mining"]?.config?.walletId || "",
+  ).trim();
+  if (
+    walletID === miningWalletID ||
+    normalizedID.startsWith("mining") ||
+    /\bmin(?:er|ing)\b/u.test(label)
+  ) {
+    return "mining";
+  }
+  if (normalizedID.startsWith("vault") || /\bvault\b/u.test(label)) {
+    return "vault";
+  }
+  if (
+    walletID === registry?.defaultWalletId ||
+    normalizedID.startsWith("agent") ||
+    /\bagent\b/u.test(label)
+  ) {
+    return "agent";
+  }
+  throw new Error(
+    `Legacy wallet ${walletID || "(missing ID)"} has no recorded Agent, Mining, or Vault role; update cannot guess a spending role.`,
+  );
+}
+
+async function regularFileExists(filePath) {
+  return await fsp
+    .lstat(filePath)
+    .then((stat) => stat.isFile() && !stat.isSymbolicLink())
+    .catch(() => false);
+}
+
+async function resolveFirstRegularFile(candidates) {
+  for (const candidate of candidates) {
+    const resolved = String(candidate || "").trim();
+    if (resolved && path.isAbsolute(resolved) && (await regularFileExists(resolved))) {
+      return resolved;
+    }
+  }
+  return null;
+}
+
+async function buildLegacyLocalWalletMigrationPlan(paths, transactionDir) {
+  if (!(await hasLegacyLocalSignerMaterial(paths))) {
+    return null;
+  }
+  const configPath = localConfigPath(paths);
+  const registryPath = path.join(paths.materialDir, "provider-registry.v1.json");
+  const [config, registry] = await Promise.all([
+    fsp
+      .readFile(configPath, "utf8")
+      .then(JSON.parse)
+      .catch(() => ({})),
+    fsp
+      .readFile(registryPath, "utf8")
+      .then(JSON.parse)
+      .catch(() => null),
+  ]);
+  const wallets = Array.isArray(registry?.wallets)
+    ? registry.wallets.filter((wallet) => wallet?.providerId === "embedded-keystore")
+    : [];
+  if (wallets.length === 0) {
+    throw new Error(
+      "Legacy encrypted wallet files were found, but no registered legacy wallets describe their IDs and roles. The installed files were not changed.",
+    );
+  }
+  const vars = { ...process.env, ...config?.env?.vars };
+  const sharedPassphraseCandidates = [
+    vars.FASED_WALLET_PASSPHRASE_FILE,
+    config?.wallet?.keystore?.passphraseFile,
+  ];
+  const sharedInlinePassphrase = String(vars.FASED_WALLET_PASSPHRASE || "");
+  let promptedPassphrase = "";
+  const planned = [];
+  for (const wallet of wallets) {
+    const walletID = String(wallet.id || "").trim();
+    if (!walletID) {
+      throw new Error("Legacy wallet registry contains an empty wallet ID");
+    }
+    const signerWalletID = normalizeLocalSignerWalletID(walletID);
+    const suffix = localWalletEnvSuffix(walletID);
+    const role = inferLegacyWalletRole(wallet, registry, config);
+    const keystorePath = await resolveFirstRegularFile([
+      vars[`FASED_WALLET_SOLANA_KEYSTORE_PATH__${suffix}`],
+      wallets.length === 1 ? vars.FASED_WALLET_SOLANA_KEYSTORE_PATH : null,
+      path.join(paths.materialDir, `keystore-solana-${walletID}.v1.enc`),
+      path.join(paths.materialDir, `keystore-solana-${signerWalletID}.v1.enc`),
+      wallets.length === 1 ? path.join(paths.materialDir, "keystore-solana.v1.enc") : null,
+    ]);
+    if (!keystorePath) {
+      throw new Error(`Legacy encrypted keystore for wallet ${walletID} is missing`);
+    }
+    const sourcePassphrasePath = await resolveFirstRegularFile([
+      vars[`FASED_WALLET_PASSPHRASE_FILE__${suffix}`],
+      ...sharedPassphraseCandidates,
+    ]);
+    const inlinePassphrase = String(
+      vars[`FASED_WALLET_PASSPHRASE__${suffix}`] || sharedInlinePassphrase,
+    );
+    if (!sourcePassphrasePath && !inlinePassphrase && !promptedPassphrase) {
+      promptedPassphrase = await promptHiddenValue(
+        "Legacy wallet passphrase (used only for this update)",
+      );
+    }
+    const passphrasePath = path.join(transactionDir, `legacy-passphrase-${signerWalletID}`);
+    if (sourcePassphrasePath) {
+      await fsp.copyFile(sourcePassphrasePath, passphrasePath);
+    } else {
+      await fsp.writeFile(passphrasePath, `${inlinePassphrase || promptedPassphrase}\n`, {
+        mode: 0o600,
+      });
+    }
+    await fsp.chmod(passphrasePath, 0o600);
+    const rpcURL = String(
+      vars[`FASED_WALLET_SOLANA_RPC_URL__${suffix}`] ||
+        vars.FASED_WALLET_SOLANA_RPC_URL ||
+        vars.FASED_WALLET_RPC_URL ||
+        "",
+    ).trim();
+    planned.push({
+      walletID,
+      signerWalletID,
+      name: String(wallet.name || "Wallet").trim() || "Wallet",
+      role,
+      keystorePath,
+      sourcePassphrasePath,
+      passphrasePath,
+      rpcURL,
+      expectedPublicKey: String(wallet?.addresses?.solana || "").trim(),
+    });
+  }
+  promptedPassphrase = null;
+  return { configPath, registryPath, config, registry, wallets: planned };
 }
 
 function parseSignerVersionOutput(raw, expectedVersion) {
@@ -1950,9 +2232,56 @@ async function downloadVerifiedLocalSignerRelease({ targetVersion, timeoutMs, tr
       throw new Error(`Checksum mismatch for ${name}`);
     }
   }
+  let unifiedSignerIdentity = null;
   if (official) {
-    await verifyOfficialAsset(candidatePath, targetVersion, timeoutMs);
-    await verifyOfficialAsset(manifestPath, targetVersion, timeoutMs);
+    const bundlePath = path.join(transactionDir, "fased-signerd-release.attestation.json");
+    try {
+      await copyDownloadSource(
+        `${releaseUrl}/fased-signerd-release.attestation.json`,
+        bundlePath,
+        timeoutMs,
+      );
+      await verifyOfficialAsset(candidatePath, targetVersion, timeoutMs, bundlePath);
+      await verifyOfficialAsset(manifestPath, targetVersion, timeoutMs, bundlePath);
+    } catch (error) {
+      if (error?.statusCode !== 404) {
+        throw error;
+      }
+      // Releases produced before the dedicated signer bundle was staged still
+      // have an attested unified release manifest. That manifest binds the
+      // exact signer release identity and every platform asset digest, so it
+      // provides the same offline, anonymous verification boundary without
+      // falling back to GitHub API authentication.
+      const unifiedPath = path.join(transactionDir, "fased-hosted-release-v2.json");
+      const unifiedBundlePath = `${unifiedPath}.attestation.json`;
+      await Promise.all([
+        copyDownloadSource(`${releaseUrl}/fased-hosted-release-v2.json`, unifiedPath, timeoutMs),
+        copyDownloadSource(
+          `${releaseUrl}/fased-hosted-release-v2.json.attestation.json`,
+          unifiedBundlePath,
+          timeoutMs,
+        ),
+      ]);
+      await verifyOfficialAsset(unifiedPath, targetVersion, timeoutMs, unifiedBundlePath);
+      const unified = (await readHostedReleaseManifestV2(unifiedPath, { version: targetVersion }))
+        .manifest;
+      const platformKey = assetName.slice("fased-signerd-".length);
+      const platform = unified.signer?.platforms?.[platformKey];
+      const candidateDigest = await sha256File(candidatePath);
+      if (
+        platform?.asset !== assetName ||
+        platform?.sha256 !== candidateDigest ||
+        !unified.signer?.release
+      ) {
+        throw new Error("Attested unified release does not bind the exact Local signer asset", {
+          cause: error,
+        });
+      }
+      unifiedSignerIdentity = parseSignerReleaseManifest(
+        { schemaVersion: 1, ...unified.signer.release },
+        targetVersion,
+      );
+    }
   }
   const manifestIdentity = parseSignerReleaseManifest(
     JSON.parse(await fsp.readFile(manifestPath, "utf8")),
@@ -1962,6 +2291,9 @@ async function downloadVerifiedLocalSignerRelease({ targetVersion, timeoutMs, tr
   const binaryIdentity = await readSignerBinaryIdentity(candidatePath, targetVersion);
   if (!signerIdentitiesEqual(binaryIdentity, manifestIdentity)) {
     throw new Error("candidate signer binary and release manifest identities do not match");
+  }
+  if (unifiedSignerIdentity && !signerIdentitiesEqual(binaryIdentity, unifiedSignerIdentity)) {
+    throw new Error("candidate signer identity does not match the attested unified release");
   }
   return { candidatePath, manifestPath, identity: binaryIdentity, official, assetName };
 }
@@ -2275,14 +2607,35 @@ async function loadSignerEnvironment(paths) {
     }
     const value = decodeValue(assignment.slice(separator + 1));
     if (
+      key === "FASED_WALLET_PASSPHRASE_FILE" ||
+      key === "FASED_WALLET_SOLANA_KEYSTORE_PATH" ||
+      key.startsWith("FASED_WALLET_SOLANA_KEYSTORE_PATH__") ||
+      key.startsWith("FASED_WALLET_PASSPHRASE_FILE__")
+    ) {
+      continue;
+    }
+    if (
       key === "FASED_WALLET_CHAINS" ||
       key === "FASED_WALLET_WEBAUTHN_RP_ID" ||
       key === "FASED_WALLET_WEBAUTHN_ORIGINS" ||
       key.startsWith("FASED_WALLET_LOCAL_SIGNER_RATE_") ||
       key === "FASED_WALLET_LOCAL_SIGNER_AUDIT_MAX_BYTES" ||
       key === "FASED_WALLET_SOLANA_CONFIRM_TIMEOUT_MS" ||
-      key === "FASED_WALLET_SOLANA_WRITE_RPC_TIMEOUT_MS"
+      key === "FASED_WALLET_SOLANA_WRITE_RPC_TIMEOUT_MS" ||
+      key === "FASED_SAT_PROGRAM_ID" ||
+      key === "FASED_SAT_BOND_PROGRAM_ID" ||
+      key === "FASED_SAT_MINT_ADDRESS" ||
+      key === "FASED_SAT_MINT_PROGRAM_ID" ||
+      key === "FASED_SAT_RUNTIME_MANIFEST_SHA256"
     ) {
+      env[key] = value;
+    } else if (
+      key === "FASED_SAT_RUNTIME_MANIFEST_PATH" ||
+      key === "FASED_SAT_RUNTIME_MANIFEST_SIGNATURE_PATH"
+    ) {
+      if (!path.isAbsolute(value)) {
+        throw new Error(`Local signer environment path ${key} must be absolute`);
+      }
       env[key] = value;
     } else if (locationKeys.has(key)) {
       if (!path.isAbsolute(value)) {
@@ -2375,7 +2728,7 @@ async function probeLocalSignerHealth(
             Number.isSafeInteger(network.version) &&
             network.version >= 0 &&
             typeof network.ready === "boolean" &&
-            (!network.configured || /^sha256:[a-f0-9]{64}$/.test(network.hash || "")),
+            (!network.configured || /^hmac-sha256:[a-f0-9]{64}$/.test(network.hash || "")),
         );
       if (
         response?.ok !== true ||
@@ -2584,6 +2937,260 @@ async function hasLegacyLocalSignerMaterial(paths) {
   );
 }
 
+function isLegacyWalletConfigKey(key) {
+  return (
+    key === "FASED_WALLET_KEYSTORE_PATH" ||
+    key.startsWith("FASED_WALLET_KEYSTORE_PATH__") ||
+    key === "FASED_WALLET_PASSPHRASE" ||
+    key.startsWith("FASED_WALLET_PASSPHRASE__") ||
+    key === "FASED_WALLET_PASSPHRASE_FILE" ||
+    key === "FASED_WALLET_PRIVATE_KEY" ||
+    key === "FASED_WALLET_SOLANA_KEYSTORE_PATH" ||
+    key.startsWith("FASED_WALLET_SOLANA_KEYSTORE_PATH__") ||
+    key.startsWith("FASED_WALLET_PASSPHRASE_FILE__") ||
+    key === "FASED_WALLET_SOLANA_PRIVATE_KEY" ||
+    key.startsWith("FASED_WALLET_SOLANA_PRIVATE_KEY__") ||
+    key === "FASED_WALLET_RPC_URL" ||
+    key.startsWith("FASED_WALLET_RPC_URL__") ||
+    key === "FASED_WALLET_SOLANA_RPC_URL" ||
+    key.startsWith("FASED_WALLET_SOLANA_RPC_URL__")
+  );
+}
+
+function localManagedServiceDefinitionPaths() {
+  const home = String(process.env.HOME || os.homedir()).trim();
+  if (!home || !path.isAbsolute(home)) {
+    return [];
+  }
+  const systemdUnit = String(process.env.FASED_SYSTEMD_UNIT || "fased-gateway.service").trim();
+  const launchdLabel = String(process.env.FASED_LAUNCHD_LABEL || "ai.fased.gateway").trim();
+  const paths = [];
+  if (/^[A-Za-z0-9_.@-]+\.service$/u.test(systemdUnit)) {
+    paths.push(path.join(home, ".config", "systemd", "user", systemdUnit));
+  }
+  if (/^[A-Za-z0-9_.-]+$/u.test(launchdLabel)) {
+    paths.push(path.join(home, "Library", "LaunchAgents", `${launchdLabel}.plist`));
+  }
+  return [...new Set(paths.map((entry) => path.resolve(entry)))];
+}
+
+async function atomicRewriteTextFile(filePath, transform) {
+  let stat;
+  let previous;
+  try {
+    [stat, previous] = await Promise.all([fsp.lstat(filePath), fsp.readFile(filePath, "utf8")]);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error(`Managed service definition is not a regular file: ${filePath}`);
+  }
+  const next = transform(previous);
+  if (next === previous) {
+    return false;
+  }
+  const temporary = `${filePath}.wallet-migration-${process.pid}-${Date.now()}`;
+  await fsp.writeFile(temporary, next, { mode: stat.mode & 0o777 });
+  await fsp.chmod(temporary, stat.mode & 0o777);
+  await fsp.rename(temporary, filePath);
+  await fsyncManagedPath(filePath);
+  await fsyncManagedPath(path.dirname(filePath));
+  return true;
+}
+
+async function sanitizeLegacyWalletServiceDefinitions() {
+  for (const servicePath of localManagedServiceDefinitionPaths()) {
+    if (servicePath.endsWith(".service")) {
+      await atomicRewriteTextFile(servicePath, (content) =>
+        content
+          .split(/(?<=\n)/u)
+          .filter((line) => {
+            const match = /^\s*Environment=(?:")?([A-Z][A-Z0-9_]*)=/u.exec(line);
+            return !match || !isLegacyWalletConfigKey(match[1]);
+          })
+          .join(""),
+      );
+      continue;
+    }
+    await atomicRewriteTextFile(servicePath, (content) =>
+      content.replace(
+        /\s*<key>([A-Z][A-Z0-9_]*)<\/key>\s*<string>[^<]*<\/string>/gu,
+        (entry, key) => (isLegacyWalletConfigKey(key) ? "" : entry),
+      ),
+    );
+  }
+}
+
+async function finalizeLegacyLocalWalletMigration(paths, plan, imported) {
+  const now = new Date().toISOString();
+  const importedByID = new Map(imported.map((entry) => [entry.walletID, entry]));
+  const registry = {
+    ...plan.registry,
+    providers: {
+      ...plan.registry.providers,
+      "embedded-keystore": {
+        ...plan.registry.providers?.["embedded-keystore"],
+        enabled: false,
+        updatedAt: now,
+      },
+      "local-socket-signer": {
+        ...plan.registry.providers?.["local-socket-signer"],
+        enabled: true,
+        updatedAt: now,
+      },
+    },
+    wallets: plan.registry.wallets.map((wallet) => {
+      const migrated = importedByID.get(wallet.id);
+      if (!migrated) {
+        return wallet;
+      }
+      return {
+        ...wallet,
+        providerId: "local-socket-signer",
+        addresses: { ...wallet.addresses, solana: migrated.publicKey },
+        metadata: {
+          ...wallet.metadata,
+          role: migrated.role,
+          purpose: migrated.role,
+          keyAuthority: "signer-owned-v2",
+          signerWalletId: migrated.signerWalletID,
+          migratedFromProviderId: "embedded-keystore",
+          migratedAt: now,
+          ...(migrated.roleBaselinePending ? { roleBaselinePending: true } : {}),
+        },
+        updatedAt: now,
+      };
+    }),
+    updatedAt: now,
+  };
+  await atomicWriteJson(plan.registryPath, registry, 0o600);
+  const vars = { ...plan.config?.env?.vars };
+  for (const key of Object.keys(vars)) {
+    if (isLegacyWalletConfigKey(key)) {
+      delete vars[key];
+    }
+  }
+  for (const wallet of plan.wallets) {
+    if (!wallet.rpcURL) {
+      continue;
+    }
+    const suffix = localWalletEnvSuffix(wallet.walletID);
+    vars[`FASED_WALLET_SOLANA_RPC_URL__${suffix}`] = wallet.rpcURL;
+  }
+  const config = {
+    ...plan.config,
+    env: { ...plan.config?.env, vars },
+    wallet: {
+      ...plan.config?.wallet,
+      provider: { ...plan.config?.wallet?.provider, id: "local-socket-signer" },
+      runtime: {
+        ...plan.config?.wallet?.runtime,
+        enabled: true,
+        mode: "external",
+        runtime: "external-custom",
+      },
+    },
+  };
+  delete config.wallet.keystore;
+  await atomicWriteJson(plan.configPath, config, 0o600);
+  const signerEnv = await fsp.readFile(paths.signerEnvPath, "utf8").catch(() => "");
+  if (signerEnv) {
+    const filtered = signerEnv
+      .split(/\r?\n/u)
+      .filter((line) => {
+        const match = /^export ([A-Z][A-Z0-9_]*)=/u.exec(line.trim());
+        return !match || !isLegacyWalletConfigKey(match[1]);
+      })
+      .join("\n");
+    await fsp.writeFile(paths.signerEnvPath, `${filtered.replace(/\n+$/u, "")}\n`, { mode: 0o600 });
+  }
+  for (const wallet of plan.wallets) {
+    if (isPathInside(paths.materialDir, wallet.keystorePath)) {
+      await fsp.rm(wallet.keystorePath, { force: true });
+    }
+  }
+  for (const sourcePassphrasePath of new Set(
+    plan.wallets.map((wallet) => wallet.sourcePassphrasePath).filter(Boolean),
+  )) {
+    if (isPathInside(paths.materialDir, sourcePassphrasePath)) {
+      await fsp.rm(sourcePassphrasePath, { force: true });
+    }
+  }
+  await sanitizeLegacyWalletServiceDefinitions();
+  await fsyncManagedPath(paths.materialDir);
+}
+
+async function migrateLegacyLocalWallets(paths, plan, timeoutMs) {
+  const imported = [];
+  for (const wallet of plan.wallets) {
+    const baseArgs = [
+      "admin",
+      "wallet",
+      "import-legacy",
+      "--control-socket",
+      paths.controlSocketPath,
+      "--wallet-id",
+      wallet.signerWalletID,
+      "--keystore-path",
+      wallet.keystorePath,
+      "--passphrase-path",
+      wallet.passphrasePath,
+    ];
+    const roleBaselinePending = false;
+    const result = await runFile(paths.binaryPath, [...baseArgs, "--baseline-role", wallet.role], {
+      timeoutMs,
+    });
+    if (!result.ok) {
+      throw new Error(`Legacy wallet ${wallet.walletID} import failed: ${result.stderr.trim()}`);
+    }
+    const payload = JSON.parse(result.stdout);
+    const publicKey = String(
+      payload?.wallet?.publicKey || payload?.result?.wallet?.publicKey || "",
+    ).trim();
+    if (!publicKey || (wallet.expectedPublicKey && wallet.expectedPublicKey !== publicKey)) {
+      throw new Error(`Legacy wallet ${wallet.walletID} public address did not match after import`);
+    }
+    let networkConfigured = false;
+    if (wallet.rpcURL) {
+      const network = await runFileWithInput(
+        paths.binaryPath,
+        [
+          "admin",
+          "network",
+          "set-primary",
+          "--control-socket",
+          paths.controlSocketPath,
+          "--wallet-id",
+          wallet.signerWalletID,
+          "--expected-version",
+          "0",
+        ],
+        `${JSON.stringify({ primaryRpcUrl: wallet.rpcURL })}\n`,
+        { timeoutMs },
+      );
+      if (!network.ok) {
+        throw new Error(
+          `Legacy wallet ${wallet.walletID} RPC could not be verified by the native signer: ${network.stderr.trim()}`,
+        );
+      }
+      networkConfigured = true;
+    }
+    imported.push({ ...wallet, publicKey, roleBaselinePending, networkConfigured });
+  }
+  await finalizeLegacyLocalWalletMigration(paths, plan, imported);
+  return imported.map((wallet) => ({
+    walletID: wallet.walletID,
+    signerWalletID: wallet.signerWalletID,
+    role: wallet.role,
+    publicKey: wallet.publicKey,
+    roleBaselinePending: wallet.roleBaselinePending,
+    networkConfigured: wallet.networkConfigured,
+  }));
+}
+
 async function prepareLocalSignerTransaction({
   targetVersion,
   expectedCommit,
@@ -2599,19 +3206,16 @@ async function prepareLocalSignerTransaction({
     );
   }
   await fsp.mkdir(paths.transactionsDir, { recursive: true, mode: 0o700 });
-  if (await hasLegacyLocalSignerMaterial(paths)) {
-    throw new Error(
-      [
-        "A pre-v2 Local wallet must complete the one-time native signer migration before Fased can update.",
-        "No process was stopped and no installed file or wallet state was changed.",
-        "Run `fased wallet setup --mode local-signer-import` for the signer-only import command, then `fased wallet finalize-legacy-migration --wallet-id <wallet-id>` after verifying the exact public address.",
-        "The passphrase must remain in an owner-only file read by fased-signerd; never put it in the Gateway, UI, argv, or an environment variable.",
-      ].join(" "),
-    );
-  }
   const transactionId = randomUUID();
   const transactionDir = path.join(paths.transactionsDir, transactionId);
   await fsp.mkdir(transactionDir, { recursive: true, mode: 0o700 });
+  let legacyMigration;
+  try {
+    legacyMigration = await buildLegacyLocalWalletMigrationPlan(paths, transactionDir);
+  } catch (error) {
+    await fsp.rm(transactionDir, { recursive: true, force: true });
+    throw error;
+  }
   const release = await downloadVerifiedLocalSignerRelease({
     targetVersion,
     timeoutMs,
@@ -2655,7 +3259,8 @@ async function prepareLocalSignerTransaction({
     previousHealthPolicies: previousHealth?.policies || null,
     previousHealthInvariant: previousHealth ? localSignerStateInvariant(previousHealth) : null,
     previousWasRunning: runningPid !== null,
-    legacyMigrationRequired: false,
+    legacyMigrationRequired: Boolean(legacyMigration),
+    legacyMigration,
     deferCommit: deferCommit,
     phase: "staging",
     createdAt: new Date().toISOString(),
@@ -2686,6 +3291,11 @@ async function prepareLocalSignerTransaction({
   );
   const auxiliarySnapshots = [];
   const auxiliaryDestinations = [
+    { destination: localConfigPath(paths), executable: false },
+    ...localManagedServiceDefinitionPaths().map((destination) => ({
+      destination,
+      executable: false,
+    })),
     { destination: paths.policyHelperPath, executable: true },
     { destination: paths.policyLauncherPath, executable: true },
     ...paths.policyTemplatePaths.map((destination) => ({ destination, executable: false })),
@@ -2736,25 +3346,30 @@ async function prepareLocalSignerTransaction({
     logPath: path.join(preflightMaterial, "preflight.log"),
     signerEnvPath: translate(paths.signerEnvPath),
   };
-  const preflightPid = await startSignerProcess(preflightPaths, release.candidatePath, true);
-  try {
-    const candidateHealth = await probeLocalSignerHealth(
-      preflightPaths.socketPath,
-      release.identity,
-      10_000,
-      true,
-    );
-    if (
-      journal.previousHealthInvariant &&
-      localSignerStateInvariant(candidateHealth) !== journal.previousHealthInvariant
-    ) {
-      throw new Error(
-        "Candidate signer preflight did not preserve exact wallet, policy, and network hashes",
-      );
-    }
-  } finally {
-    await stopExactSigner(preflightPaths, preflightPid).catch(() => undefined);
+  if (legacyMigration) {
+    await readSignerBinaryIdentity(release.candidatePath, targetVersion);
     await fsp.rm(preflightRuntime, { recursive: true, force: true });
+  } else {
+    const preflightPid = await startSignerProcess(preflightPaths, release.candidatePath, true);
+    try {
+      const candidateHealth = await probeLocalSignerHealth(
+        preflightPaths.socketPath,
+        release.identity,
+        10_000,
+        true,
+      );
+      if (
+        journal.previousHealthInvariant &&
+        localSignerStateInvariant(candidateHealth) !== journal.previousHealthInvariant
+      ) {
+        throw new Error(
+          "Candidate signer preflight did not preserve exact wallet, policy, and network hashes",
+        );
+      }
+    } finally {
+      await stopExactSigner(preflightPaths, preflightPid).catch(() => undefined);
+      await fsp.rm(preflightRuntime, { recursive: true, force: true });
+    }
   }
   journal = await writeLocalSignerJournal(paths, journal, "prepared");
   return journal;
@@ -2768,13 +3383,29 @@ async function activateLocalSignerTransaction(paths = resolveLocalSignerPaths())
   journal = await writeLocalSignerJournal(paths, journal, "activating");
   await stopExactSigner(paths);
   await atomicInstallSignerBinary(paths, journal.candidatePath, journal.candidateManifestPath);
+  if (journal.legacyMigrationRequired) {
+    const migrationPID = await startSignerProcess(paths, paths.binaryPath, false);
+    try {
+      await probeLocalSignerHealth(paths.socketPath, journal.targetIdentity, 15_000, false);
+      const migratedWallets = await migrateLegacyLocalWallets(
+        paths,
+        journal.legacyMigration,
+        DEFAULT_TIMEOUT_MS,
+      );
+      journal = await writeLocalSignerJournal(paths, { ...journal, migratedWallets }, "activating");
+    } finally {
+      await stopExactSigner(paths, migrationPID).catch(() => undefined);
+    }
+  }
   const stateExists = await fsp
     .lstat(paths.stateDbPath)
     .then((stat) => stat.isFile())
     .catch(() => false);
   const shouldStart =
-    !journal.legacyMigrationRequired &&
-    (journal.previousWasRunning || stateExists || process.env.FASED_LOCAL_SIGNER_START === "1");
+    journal.legacyMigrationRequired ||
+    journal.previousWasRunning ||
+    stateExists ||
+    process.env.FASED_LOCAL_SIGNER_START === "1";
   if (shouldStart) {
     const pid = await startSignerProcess(paths, paths.binaryPath, true);
     try {
@@ -2842,9 +3473,10 @@ async function commitLocalSignerTransaction(paths = resolveLocalSignerPaths()) {
   await fsyncManagedPath(committedMarker);
   await fsyncManagedPath(journal.transactionDir);
   await removeLocalSignerJournal(paths);
+  await fsp.rm(journal.transactionDir, { recursive: true, force: true });
   const transactions = await fsp.readdir(paths.transactionsDir, { withFileTypes: true });
   for (const entry of transactions) {
-    if (entry.isDirectory() && entry.name !== journal.transactionId) {
+    if (entry.isDirectory()) {
       await fsp.rm(path.join(paths.transactionsDir, entry.name), {
         recursive: true,
         force: true,
@@ -2856,6 +3488,7 @@ async function commitLocalSignerTransaction(paths = resolveLocalSignerPaths()) {
     action: "committed",
     identity: exact,
     legacyMigrationRequired: journal.legacyMigrationRequired === true,
+    migratedWallets: journal.migratedWallets || [],
   };
 }
 
@@ -2931,6 +3564,71 @@ async function recoverLocalSignerTransaction(paths = resolveLocalSignerPaths()) 
   return await rollbackLocalSignerTransaction(paths);
 }
 
+async function migrateActiveLegacyLocalSigner(paths, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  let journal = await readLocalSignerJournal(paths);
+  if (!journal || journal.phase !== "candidate-active") {
+    throw new Error("Active legacy migration requires a prepared candidate signer transaction");
+  }
+  const plan = await buildLegacyLocalWalletMigrationPlan(paths, journal.transactionDir);
+  if (!plan) {
+    return { action: "none", identity: journal.targetIdentity };
+  }
+  const auxiliary = [...(journal.snapshot?.auxiliary || [])];
+  const snapshotted = new Set(auxiliary.map((entry) => path.resolve(entry.destination)));
+  for (const destination of [plan.configPath, ...localManagedServiceDefinitionPaths()]) {
+    if (snapshotted.has(path.resolve(destination))) {
+      continue;
+    }
+    const snapshotPath = path.join(
+      journal.snapshot.materialDir,
+      `legacy-auxiliary-${auxiliary.length}.previous`,
+    );
+    auxiliary.push({
+      destination,
+      ...(await snapshotStandaloneFile(destination, snapshotPath)),
+      path: snapshotPath,
+      executable: false,
+    });
+  }
+  journal = await writeLocalSignerJournal(
+    paths,
+    {
+      ...journal,
+      legacyMigrationRequired: true,
+      legacyMigration: plan,
+      snapshot: { ...journal.snapshot, auxiliary },
+    },
+    "candidate-active",
+  );
+  await stopExactSigner(paths);
+  const migrationPID = await startSignerProcess(paths, paths.binaryPath, false);
+  let migratedWallets;
+  try {
+    await probeLocalSignerHealth(paths.socketPath, journal.targetIdentity, 15_000, false);
+    migratedWallets = await migrateLegacyLocalWallets(paths, plan, timeoutMs);
+  } finally {
+    await stopExactSigner(paths, migrationPID).catch(() => undefined);
+  }
+  await startSignerProcess(paths, paths.binaryPath, true);
+  const health = await probeLocalSignerHealth(
+    paths.socketPath,
+    journal.targetIdentity,
+    15_000,
+    true,
+  );
+  journal = await writeLocalSignerJournal(
+    paths,
+    {
+      ...journal,
+      migratedWallets,
+      candidateShouldRun: true,
+      previousHealthInvariant: localSignerStateInvariant(health),
+    },
+    "candidate-active",
+  );
+  return { action: "migrated-active", identity: journal.targetIdentity, migratedWallets };
+}
+
 async function runLocalSignerTransaction(options, pathOverrides = {}) {
   const paths = resolveLocalSignerPaths(pathOverrides);
   await fsp.mkdir(paths.updateRoot, { recursive: true, mode: 0o700 });
@@ -2960,6 +3658,9 @@ async function runLocalSignerTransaction(options, pathOverrides = {}) {
     }
     if (options.action === "recover") {
       return await recoverLocalSignerTransaction(paths);
+    }
+    if (options.action === "migrate-active") {
+      return await migrateActiveLegacyLocalSigner(paths, options.timeoutMs);
     }
     if (options.action === "rollback") {
       return await rollbackLocalSignerTransaction(paths);
@@ -3006,11 +3707,12 @@ function parseLocalSignerTransactionArgs(argv) {
       "commit",
       "rollback",
       "recover",
+      "migrate-active",
       "status",
     ]).has(action)
   ) {
     throw new Error(
-      "local-signer requires install, prepare, activate, verify, commit, rollback, recover, or status",
+      "local-signer requires install, prepare, activate, verify, commit, rollback, recover, migrate-active, or status",
     );
   }
   const options = {
@@ -3145,7 +3847,8 @@ async function restoreLocalPairedApplication(paths, journal) {
   await replaceCompatibilityLink(paths);
   await atomicWriteJson(paths.manifestPath, journal.previousManifest, 0o600);
   await syncManagedActivation(paths);
-  await updateStableComponents(paths, journal.previousRoot, true);
+  // Stable launchers and updater deliberately remain on the newest verified
+  // controller so a historical application can be re-updated safely.
 }
 
 async function rollbackLocalPairedUpdate(paths, journal, timeoutMs, originalError = null) {
@@ -3343,6 +4046,7 @@ async function updateManagedRuntime(options) {
         } else {
           console.log(`Already current: ${currentVersion}`);
         }
+        await recordManagedUpdateSuccess(paths, { version: currentVersion, alreadyCurrent: true });
         return;
       }
     }
@@ -3377,13 +4081,30 @@ async function updateManagedRuntime(options) {
       try {
         unifiedReleasePath = path.join(temporaryRoot, "fased-hosted-release-v2.json");
         await measureStage(timings, "unified release manifest", async () => {
-          await downloadToFile(
-            `${releaseUrl}/fased-hosted-release-v2.json`,
-            unifiedReleasePath,
-            options.timeoutMs,
-          );
+          const unifiedReleaseBundlePath = `${unifiedReleasePath}.attestation.json`;
+          await Promise.all([
+            downloadToFile(
+              `${releaseUrl}/fased-hosted-release-v2.json`,
+              unifiedReleasePath,
+              options.timeoutMs,
+            ),
+            ...(officialVersion
+              ? [
+                  downloadToFile(
+                    `${releaseUrl}/fased-hosted-release-v2.json.attestation.json`,
+                    unifiedReleaseBundlePath,
+                    options.timeoutMs,
+                  ),
+                ]
+              : []),
+          ]);
           if (officialVersion) {
-            await verifyOfficialAsset(unifiedReleasePath, officialVersion, options.timeoutMs);
+            await verifyOfficialAsset(
+              unifiedReleasePath,
+              officialVersion,
+              options.timeoutMs,
+              unifiedReleaseBundlePath,
+            );
           }
           unifiedRelease = (
             await readHostedReleaseManifestV2(unifiedReleasePath, { version: targetVersion })
@@ -3666,6 +4387,7 @@ async function updateManagedRuntime(options) {
         }
       }
       timings.push({ name: "total", durationMs: Date.now() - commandStartedAt });
+      await recordManagedUpdateSuccess(paths, { version: targetVersion, alreadyCurrent: false });
       if (options.json) {
         console.log(
           JSON.stringify({
@@ -3763,6 +4485,7 @@ export const __testing = {
   assertArchiveSafe,
   authorizePreactivatedHostedGateway,
   beginPreactivatedHostedTransaction,
+  buildLegacyLocalWalletMigrationPlan,
   coordinateHostedReleaseTransaction,
   hostedUpdaterError,
   probeGatewayIdentity,
@@ -3792,5 +4515,7 @@ export const __testing = {
   rollbackLocalSignerTransaction,
   runLocalSignerTransaction,
   runHostedTransactionControl,
+  sanitizeLegacyWalletServiceDefinitions,
   validateHostedTransactionJournal,
+  verifyOfficialAsset,
 };

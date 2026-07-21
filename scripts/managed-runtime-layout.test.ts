@@ -214,6 +214,42 @@ describe("managed runtime layout", () => {
     );
   });
 
+  it("keeps the newest stable updater when rolling back to a historical runtime", async () => {
+    const fixture = createFixture("1.2.3");
+    await installManagedRuntime({
+      packageRoot: fixture.paths.compatibilityPackageRoot,
+      stateDir: fixture.stateDir,
+      prefix: fixture.prefix,
+      profile: "local",
+    });
+    const historicalRoot = fs.realpathSync(fixture.paths.currentLink);
+    fs.unlinkSync(path.join(historicalRoot, "scripts", "hosted-release-manifest.mjs"));
+
+    fs.unlinkSync(fixture.paths.compatibilityPackageRoot);
+    writeRuntime(fixture.paths.compatibilityPackageRoot, "1.2.4");
+    fs.appendFileSync(
+      path.join(fixture.paths.compatibilityPackageRoot, "scripts", "fased-managed-updater.mjs"),
+      "\n// newest-stable-controller\n",
+    );
+    await installManagedRuntime({
+      packageRoot: fixture.paths.compatibilityPackageRoot,
+      stateDir: fixture.stateDir,
+      prefix: fixture.prefix,
+      profile: "local",
+    });
+    const stableUpdater = fs.readFileSync(fixture.paths.updaterPath, "utf8");
+
+    await rollbackManagedRuntime({ stateDir: fixture.stateDir, prefix: fixture.prefix });
+
+    expect(readManagedInstallManifest(fixture.paths.manifestPath)?.runtime.activeVersion).toBe(
+      "1.2.3",
+    );
+    expect(fs.readFileSync(fixture.paths.updaterPath, "utf8")).toBe(stableUpdater);
+    expect(fs.readFileSync(fixture.paths.updaterPath, "utf8")).toContain(
+      "newest-stable-controller",
+    );
+  });
+
   it("hands an existing hosting runtime to the prepared cross-user transaction", async () => {
     const fixture = createFixture("1.2.3", { attested: true });
     await installManagedRuntime({

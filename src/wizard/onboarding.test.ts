@@ -434,7 +434,7 @@ describe("runOnboardingWizard", () => {
     expect(resolvePreferredProviderForAuthChoice).not.toHaveBeenCalled();
   });
 
-  it("explains setup profiles and moves product setup to Control UI", async () => {
+  it("offers setup profiles without a redundant setup-map note", async () => {
     const select = vi.fn(async (opts: unknown) => {
       const message =
         typeof (opts as { message?: unknown })?.message === "string"
@@ -471,14 +471,7 @@ describe("runOnboardingWizard", () => {
       prompter,
     );
 
-    expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("no VPS SSH/firewall hardening."),
-      "Setup map",
-    );
-    expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("private Tailscale access and hosted SSH/firewall hardening"),
-      "Setup map",
-    );
+    expect(prompter.note).not.toHaveBeenCalledWith(expect.anything(), "Setup map");
     expect(prompter.note).not.toHaveBeenCalledWith(
       expect.stringContaining("Remote Gateway is a later connection mode"),
       expect.anything(),
@@ -1163,6 +1156,13 @@ describe("runOnboardingWizard", () => {
           addresses: { solana: "miner-sol-1" },
           metadata: { selfHosted: true },
         },
+        {
+          id: "agent-2",
+          name: "Agent 2",
+          providerId: "local-socket-signer",
+          addresses: { solana: "agent-two-solana-address" },
+          metadata: { selfHosted: true, role: "agent", purpose: "agent" },
+        },
       ],
       assignments: {},
       updatedAt: "2026-03-15T00:00:00.000Z",
@@ -1176,6 +1176,20 @@ describe("runOnboardingWizard", () => {
         return "manage-self-hosted";
       }
       if (message === "Select wallet to manage") {
+        expect((opts as { options?: unknown }).options).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              value: "wallet-1",
+              label: "Wallet 1 · @wallet:wallet-1",
+              hint: "mi..-1",
+            }),
+            expect.objectContaining({
+              value: "agent-2",
+              label: "Agent 2 · @wallet:agent-2",
+              hint: "ag..ss",
+            }),
+          ]),
+        );
         return "wallet-1";
       }
       if (message === "Wallet action") {
@@ -1726,7 +1740,7 @@ describe("runOnboardingWizard", () => {
         typeof (opts as { message?: unknown })?.message === "string"
           ? String((opts as { message?: unknown }).message)
           : "";
-      if (message.includes("SOLANA RPC URL for Wallet 1 (wallet-1)")) {
+      if (message.includes("SOLANA RPC URL for Wallet 1 · @wallet:wallet-1")) {
         return "https://new-rpc.example";
       }
       return "";
@@ -1775,8 +1789,105 @@ describe("runOnboardingWizard", () => {
       }),
     );
     expect(prompter.note).toHaveBeenCalledWith(
-      "Updated the app-side Solana RPC setting for Wallet 1 (wallet-1); signer network version 2 is ready",
+      "Saved RPC for Wallet 1 · @wallet:wallet-1; wallet network version 2 is ready",
       "Wallet setup",
+    );
+  });
+
+  it("keeps the current RPC and stays in onboarding when a replacement cannot be verified", async () => {
+    configureSignerOwnedWalletNetwork.mockRejectedValueOnce(
+      new Error("signer-owned Solana RPC genesis verification failed"),
+    );
+    readConfigFileSnapshot.mockResolvedValueOnce({
+      exists: true,
+      valid: true,
+      config: {
+        env: {
+          vars: {
+            FASED_WALLET_SOLANA_RPC_URL__WALLET_1: "https://old-rpc.example",
+          },
+        },
+      },
+    });
+    readWalletProviderRegistry.mockReturnValue({
+      providers: {
+        "embedded-keystore": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        "local-socket-signer": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
+        alchemy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        turnkey: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+        privy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
+      },
+      wallets: [
+        {
+          id: "wallet-1",
+          name: "Wallet 1",
+          providerId: "local-socket-signer",
+          addresses: { solana: "miner-sol-1" },
+          metadata: { selfHosted: true },
+        },
+      ],
+      assignments: {},
+      updatedAt: "2026-03-15T00:00:00.000Z",
+    });
+    const select = vi.fn(async (opts: unknown) => {
+      const rawMessage = (opts as { message?: unknown }).message;
+      const message = typeof rawMessage === "string" ? rawMessage : "";
+      if (message === "Wallet setup action") {
+        return "manage-self-hosted";
+      }
+      if (message === "Select wallet to manage") {
+        return "wallet-1";
+      }
+      if (message === "Wallet action") {
+        return "configure-solana-rpc";
+      }
+      if (message === "How do you want to hatch your bot?") {
+        return "skip";
+      }
+      return "quickstart";
+    }) as unknown as WizardPrompter["select"];
+    const text = vi.fn(async (opts: unknown) => {
+      const rawMessage = (opts as { message?: unknown }).message;
+      const message = typeof rawMessage === "string" ? rawMessage : "";
+      return message.includes("RPC URL") ? "https://not-an-rpc.example" : "";
+    }) as unknown as WizardPrompter["text"];
+    const confirm = vi.fn(async () => false) as unknown as WizardPrompter["confirm"];
+    const prompter = createWizardPrompter({ select, text, confirm });
+
+    await runOnboardingWizard(
+      {
+        acceptRisk: true,
+        flow: "quickstart",
+        authChoice: "skip",
+        installDaemon: false,
+        skipProviders: true,
+        skipSkills: true,
+        skipHealth: true,
+        skipUi: true,
+      },
+      createRuntime({ throwsOnExit: true }),
+      prompter,
+    );
+
+    expect(prompter.note).toHaveBeenCalledWith(
+      expect.stringContaining("RPC was not changed."),
+      "RPC not saved",
+    );
+    expect(prompter.note).toHaveBeenCalledWith(
+      expect.stringContaining("Any HTTPS Solana RPC provider is supported"),
+      "RPC not saved",
+    );
+    expect(writeConfigFile).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        env: expect.objectContaining({
+          vars: expect.objectContaining({
+            FASED_WALLET_SOLANA_RPC_URL__WALLET_1: "https://old-rpc.example",
+          }),
+        }),
+      }),
+    );
+    expect(process.env.FASED_WALLET_SOLANA_RPC_URL__WALLET_1).not.toBe(
+      "https://not-an-rpc.example",
     );
   });
 

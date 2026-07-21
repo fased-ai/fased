@@ -67,6 +67,62 @@ function transactionOperations(events: string[], overrides: Record<string, unkno
 }
 
 describe("stable managed updater", () => {
+  it("verifies a bundled release attestation without GitHub authentication", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-attestation-test-"));
+    const gh = path.join(root, "gh");
+    const asset = path.join(root, "fased-signerd-linux-amd64");
+    const bundle = path.join(root, "fased-signerd-release.attestation.json");
+    const log = path.join(root, "gh-call.json");
+    await fsp.writeFile(asset, "release asset\n", { mode: 0o600 });
+    await fsp.writeFile(bundle, "{}\n", { mode: 0o600 });
+    await fsp.writeFile(
+      gh,
+      `#!/usr/bin/env node
+const fs = require("node:fs");
+if (process.env.GH_TOKEN || process.env.GITHUB_TOKEN || process.env.GH_CONFIG_DIR) process.exit(71);
+if (process.env.GH_PROMPT_DISABLED !== "1") process.exit(72);
+if (!process.argv.includes("--bundle")) process.exit(73);
+fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slice(2)));
+`,
+      { mode: 0o700 },
+    );
+    const prior = {
+      GH_TOKEN: process.env.GH_TOKEN,
+      GITHUB_TOKEN: process.env.GITHUB_TOKEN,
+      GH_CONFIG_DIR: process.env.GH_CONFIG_DIR,
+      FASED_TEST_GH_LOG: process.env.FASED_TEST_GH_LOG,
+    };
+    delete process.env.GH_TOKEN;
+    delete process.env.GITHUB_TOKEN;
+    delete process.env.GH_CONFIG_DIR;
+    process.env.FASED_TEST_GH_LOG = log;
+    try {
+      await expect(
+        __testing.verifyOfficialAsset(asset, "0.1.70", 5_000, bundle, gh),
+      ).resolves.toBeUndefined();
+      expect(JSON.parse(await fsp.readFile(log, "utf8"))).toEqual(
+        expect.arrayContaining([
+          "attestation",
+          "verify",
+          asset,
+          "--bundle",
+          bundle,
+          "--source-ref",
+          "refs/tags/v0.1.70",
+        ]),
+      );
+    } finally {
+      for (const [key, value] of Object.entries(prior)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("handles status and ordinary managed update commands", () => {
     expect(__testing.parseArgs(["update", "status", "--json"])).toMatchObject({
       delegate: false,
@@ -120,6 +176,10 @@ describe("stable managed updater", () => {
         'export FASED_WALLET_CHAINS="solana"',
         'export FASED_WALLET_WEBAUTHN_RP_ID="localhost"',
         'export FASED_WALLET_WEBAUTHN_ORIGINS="http://localhost:18789,http://localhost:18791"',
+        'export FASED_SAT_PROGRAM_ID="11111111111111111111111111111111"',
+        `export FASED_SAT_RUNTIME_MANIFEST_PATH="${path.join(root, "sat-runtime.json")}"`,
+        'export FASED_SAT_RUNTIME_MANIFEST_SHA256="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"',
+        `export FASED_SAT_RUNTIME_MANIFEST_SIGNATURE_PATH="${path.join(root, "sat-runtime.sig")}"`,
         '"/verified/fased-signerd" --socket "$FASED_WALLET_LOCAL_SIGNER_SOCKET" --control-socket "$FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET" --state-db "$FASED_WALLET_LOCAL_SIGNER_STATE_DB" --master-key "$FASED_WALLET_LOCAL_SIGNER_MASTER_KEY"',
         "",
       ].join("\n"),
@@ -130,6 +190,11 @@ describe("stable managed updater", () => {
         FASED_WALLET_CHAINS: "solana",
         FASED_WALLET_WEBAUTHN_RP_ID: "localhost",
         FASED_WALLET_WEBAUTHN_ORIGINS: "http://localhost:18789,http://localhost:18791",
+        FASED_SAT_PROGRAM_ID: "11111111111111111111111111111111",
+        FASED_SAT_RUNTIME_MANIFEST_PATH: path.join(root, "sat-runtime.json"),
+        FASED_SAT_RUNTIME_MANIFEST_SHA256:
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        FASED_SAT_RUNTIME_MANIFEST_SIGNATURE_PATH: path.join(root, "sat-runtime.sig"),
       });
       await fsp.appendFile(signerEnvPath, 'export FASED_WALLET_PRIVATE_KEY="forbidden"\n');
       await expect(__testing.loadSignerEnvironment({ signerEnvPath })).rejects.toThrow(

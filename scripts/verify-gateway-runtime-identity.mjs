@@ -5,13 +5,16 @@ import https from "node:https";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-export function assertGatewayRuntimeIdentity(payload, expectedVersion) {
+export function assertGatewayRuntimeIdentity(payload, expectedVersion, options = {}) {
   if (payload?.version !== expectedVersion) {
     throw new Error(
       `Gateway runtime version ${payload?.version ?? "unknown"} does not match installed CLI ${expectedVersion}.`,
     );
   }
   const acceptedRuntimeSources = new Set(["managed-package", "packaged-runtime"]);
+  if (options.allowSourceCheckout === true) {
+    acceptedRuntimeSources.add("source-checkout");
+  }
   if (!acceptedRuntimeSources.has(payload.runtimeSource)) {
     throw new Error(
       `Gateway runtime source ${payload?.runtimeSource ?? "unknown"} is not a managed packaged runtime.`,
@@ -31,7 +34,11 @@ function readGatewayEndpoint(configPath) {
   }
 }
 
-export async function verifyGatewayRuntimeIdentity({ expectedVersion, configPath }) {
+export async function verifyGatewayRuntimeIdentity({
+  expectedVersion,
+  configPath,
+  allowSourceCheckout = false,
+}) {
   const endpoint = readGatewayEndpoint(configPath);
   const client = endpoint.tls ? https : http;
   const payload = await new Promise((resolve, reject) => {
@@ -61,7 +68,7 @@ export async function verifyGatewayRuntimeIdentity({ expectedVersion, configPath
     request.on("timeout", () => request.destroy(new Error("Gateway identity request timed out")));
     request.on("error", reject);
   });
-  assertGatewayRuntimeIdentity(payload, expectedVersion);
+  assertGatewayRuntimeIdentity(payload, expectedVersion, { allowSourceCheckout });
 }
 
 function parseArgs(argv) {
@@ -80,12 +87,14 @@ function parseArgs(argv) {
   if (!expectedVersion || !configPath) {
     throw new Error("--expected-version and --config are required");
   }
-  return { expectedVersion, configPath };
+  const allowSourceCheckout = values.get("--allow-source-checkout") === "true";
+  return { expectedVersion, configPath, allowSourceCheckout };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
-    await verifyGatewayRuntimeIdentity(parseArgs(process.argv.slice(2)));
+    const { expectedVersion, configPath, allowSourceCheckout } = parseArgs(process.argv.slice(2));
+    await verifyGatewayRuntimeIdentity({ expectedVersion, configPath, allowSourceCheckout });
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exit(1);

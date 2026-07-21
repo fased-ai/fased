@@ -407,7 +407,13 @@ export async function rollbackManagedRuntime(params) {
   await atomicSymlink(currentRoot, paths.previousLink);
   await atomicSymlink(previousRoot, paths.currentLink);
   await replaceWithSymlink(paths.currentLink, paths.compatibilityPackageRoot);
-  await installStableFiles(paths, previousRoot);
+  // Keep the newest verified stable launchers and updater when activating an
+  // older application runtime. Historical releases do not necessarily carry
+  // control-plane helpers introduced later (for example the unified hosted
+  // release parser), and downgrading these files can make re-update or even
+  // rollback itself impossible. The stable launchers resolve the active app
+  // through install.json/current, so they remain compatible with the selected
+  // historical runtime.
   const previousManifest = buildManagedInstallManifest({
     paths,
     profile: manifest.profile,

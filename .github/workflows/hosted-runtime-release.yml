@@ -122,10 +122,20 @@ jobs:
         run: sha256sum --check fased-signerd-checksums.txt
 
       - name: Attest native signer release assets
+        id: attest-native-signer
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/attest@v4
         with:
           subject-path: dist-native/release/fased-signerd-*
+
+      - name: Stage native signer attestation bundle
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 0644 \
+            "${{ steps.attest-native-signer.outputs.bundle-path }}" \
+            dist-native/release/fased-signerd-release.attestation.json
 
       - name: Attest root Hosting bootstrap
         id: attest-hosting-bootstrap

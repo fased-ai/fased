@@ -46,6 +46,15 @@ const DEFAULT_RELOAD_SETTINGS: GatewayReloadSettings = {
 };
 const MISSING_CONFIG_RETRY_DELAY_MS = 150;
 const MISSING_CONFIG_MAX_RETRIES = 2;
+const WALLET_RPC_ENV_PATH_PREFIXES = [
+  "env.vars.FASED_WALLET_SOLANA_RPC_URL",
+  "env.vars.FASED_WALLET_RPC_URL",
+] as const;
+const LOCAL_SIGNER_CONFIG_ENV_PATHS = new Set([
+  "env.vars.FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET",
+  "env.vars.FASED_WALLET_LOCAL_SIGNER_STATE_DB",
+  "env.vars.FASED_WALLET_LOCAL_SIGNER_MASTER_KEY",
+]);
 
 const BASE_RELOAD_RULES: ReloadRule[] = [
   { prefix: "gateway.remote", kind: "none" },
@@ -126,6 +135,19 @@ function listReloadRules(): ReloadRule[] {
 }
 
 function matchRule(path: string): ReloadRule | null {
+  // These values configure the separately managed signer process and are also
+  // materialized when Wallet Create writes signer.env. The Gateway does not
+  // need to restart when they are added; doing so disconnects the very request
+  // that created the wallet.
+  if (LOCAL_SIGNER_CONFIG_ENV_PATHS.has(path)) {
+    return { prefix: path, kind: "none" };
+  }
+  const walletRpcPrefix = WALLET_RPC_ENV_PATH_PREFIXES.find(
+    (prefix) => path === prefix || path.startsWith(`${prefix}__`),
+  );
+  if (walletRpcPrefix) {
+    return { prefix: walletRpcPrefix, kind: "none" };
+  }
   for (const rule of listReloadRules()) {
     if (path === rule.prefix || path.startsWith(`${rule.prefix}.`)) {
       return rule;

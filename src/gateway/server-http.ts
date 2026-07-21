@@ -42,6 +42,7 @@ import {
   loadConfig,
   readConfigFileSnapshotForWrite,
   resolveGatewayPort,
+  setRuntimeConfigSnapshot,
   validateConfigObjectWithPlugins,
   writeConfigFile,
 } from "../config/config.js";
@@ -97,6 +98,7 @@ import {
   fetchSolanaTokenBalanceViaRpc,
 } from "../wallet/solana-assets.js";
 import { resolveFederationBondWallet } from "../wallet/solana-bond-signing.js";
+import { fetchSolanaGenesisHashFromRpc } from "../wallet/solana-network-discovery.js";
 import { fetchPinnedSolanaRpcRead } from "../wallet/solana-rpc-read-fetch.js";
 import { searchSolanaTokens } from "../wallet/solana-token-resolver.js";
 import {
@@ -143,6 +145,7 @@ import {
   WALLET_PROVIDER_IDS,
   checkNamedWalletDeletionSafety,
   deleteNamedWallet,
+  nextRoleWalletIdentity,
   readWalletProviderRegistry,
   resolveWalletSelection,
   resolveWalletUserRole,
@@ -741,17 +744,21 @@ function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body));
 }
 
-function resolveSolanaWalletHandleDestination(params: {
+async function resolveSolanaWalletHandleDestination(params: {
   to?: string;
+  sourceWalletId?: string;
   env: NodeJS.ProcessEnv;
-}): { ok: true; to?: string } | { ok: false; message: string } {
+}): Promise<
+  | { ok: true; to?: string; destinationWalletId?: string }
+  | { ok: false; code: "invalid_wallet_handle" | "wallet_network_mismatch"; message: string }
+> {
   const raw = params.to?.trim();
   if (!raw || !raw.toLowerCase().startsWith("@wallet:")) {
     return { ok: true, to: raw || undefined };
   }
   const handle = raw.slice("@wallet:".length).trim().toLowerCase();
   if (!handle) {
-    return { ok: false, message: "wallet handle is empty" };
+    return { ok: false, code: "invalid_wallet_handle", message: "wallet handle is empty" };
   }
   const registry = readWalletProviderRegistry(params.env);
   const byId = registry.wallets.find((wallet) => wallet.id.toLowerCase() === handle);
@@ -765,16 +772,53 @@ function resolveSolanaWalletHandleDestination(params: {
     if (byName.length > 1 || byRole.length > 1) {
       return {
         ok: false,
+        code: "invalid_wallet_handle",
         message: `wallet handle ${raw} is ambiguous; use a specific @wallet:id`,
       };
     }
-    return { ok: false, message: `wallet handle not found: ${raw}` };
+    return {
+      ok: false,
+      code: "invalid_wallet_handle",
+      message: `wallet handle not found: ${raw}`,
+    };
   }
   const solana = wallet.addresses?.solana?.trim();
   if (!solana) {
-    return { ok: false, message: `wallet handle ${raw} has no Solana address` };
+    return {
+      ok: false,
+      code: "invalid_wallet_handle",
+      message: `wallet handle ${raw} has no Solana address`,
+    };
   }
-  return { ok: true, to: solana };
+  const sourceWalletId = params.sourceWalletId?.trim();
+  if (sourceWalletId && sourceWalletId !== wallet.id) {
+    const sourceRpc = resolveWalletRpcUrlFromEnv(params.env, "solana", sourceWalletId);
+    const destinationRpc = resolveWalletRpcUrlFromEnv(params.env, "solana", wallet.id);
+    if (sourceRpc && destinationRpc && sourceRpc !== destinationRpc) {
+      let sourceGenesis: string;
+      let destinationGenesis: string;
+      try {
+        [sourceGenesis, destinationGenesis] = await Promise.all([
+          fetchSolanaGenesisHashFromRpc(sourceRpc),
+          fetchSolanaGenesisHashFromRpc(destinationRpc),
+        ]);
+      } catch {
+        return {
+          ok: false,
+          code: "wallet_network_mismatch",
+          message: `Unable to verify that @wallet:${sourceWalletId} and @wallet:${wallet.id} use the same Solana network. Check both RPC connections and try again.`,
+        };
+      }
+      if (sourceGenesis !== destinationGenesis) {
+        return {
+          ok: false,
+          code: "wallet_network_mismatch",
+          message: `@wallet:${sourceWalletId} and @wallet:${wallet.id} use different Solana networks. Choose wallets on the same network before sending.`,
+        };
+      }
+    }
+  }
+  return { ok: true, to: solana, destinationWalletId: wallet.id };
 }
 
 type FederationStatusToken = {
@@ -1662,6 +1706,14 @@ function resolveWalletRpcUrlFromEnv(
   return scopedOrChain || String(env.FASED_WALLET_RPC_URL ?? "").trim();
 }
 
+function maskWalletRpcUrl(raw: string): string | undefined {
+  const value = raw.trim();
+  if (!value) {
+    return undefined;
+  }
+  return "****";
+}
+
 function inferLocalSignerCreateChain(params: {
   payloadChain: unknown;
   walletId: string;
@@ -2240,7 +2292,17 @@ async function updateWalletConfig(params: {
     return { ok: false, message: detail || "invalid wallet config patch" };
   }
   await writeConfigFile(validated.config, writeSnapshot.writeOptions);
-  return { ok: true, cfg: validated.config };
+  const activated = await activateLatestWalletRuntimeConfig();
+  return { ok: true, cfg: activated };
+}
+
+async function activateLatestWalletRuntimeConfig(): Promise<ReturnType<typeof loadConfig>> {
+  const latest = await readConfigFileSnapshotForWrite();
+  if (!latest.snapshot.valid) {
+    throw new Error("wallet config write produced an invalid runtime snapshot");
+  }
+  setRuntimeConfigSnapshot(latest.snapshot.config, latest.snapshot.resolved);
+  return latest.snapshot.config;
 }
 
 type FederationBondWalletInput = {
@@ -5848,6 +5910,10 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             const solanaRpc = resolveWalletRpcUrlFromEnv(effectiveEnv, "solana", wallet.id);
             return {
               ...wallet,
+              rpc: {
+                configured: Boolean(solanaRpc),
+                ...(maskWalletRpcUrl(solanaRpc) ? { maskedUrl: maskWalletRpcUrl(solanaRpc) } : {}),
+              },
               readiness: {
                 keystore:
                   wallet.providerId !== "embedded-keystore" && wallet.providerId !== "privy",
@@ -5908,7 +5974,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           const walletCfg = resolveWalletRuntimeConfig(cfg, process.env);
           const providerId =
             parseWalletProviderId(payload.providerId) ?? resolveWalletProviderId(cfg, process.env);
-          const walletName = typeof payload.name === "string" ? payload.name.trim() : "";
+          const requestedWalletName = typeof payload.name === "string" ? payload.name.trim() : "";
           const requestedWalletId =
             typeof payload.walletId === "string" ? payload.walletId.trim() : "";
           const roleProvided = Object.prototype.hasOwnProperty.call(payload, "role");
@@ -5927,11 +5993,23 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             });
             return;
           }
+          const generatedLocalSignerIdentity =
+            providerId === "local-socket-signer" && requestedRole
+              ? nextRoleWalletIdentity(
+                  requestedRole,
+                  readWalletProviderRegistry(process.env).wallets,
+                )
+              : undefined;
+          const localSignerWalletId =
+            providerId === "local-socket-signer" && requestedRole
+              ? requestedWalletId || generatedLocalSignerIdentity?.walletId || ""
+              : requestedWalletId;
+          const walletName = requestedWalletName || generatedLocalSignerIdentity?.walletName || "";
           const activeMiningWalletId = readSatMiningWalletIdFromConfig(loadConfig());
           if (
             requestedRole === "mining" &&
             activeMiningWalletId &&
-            requestedWalletId !== activeMiningWalletId
+            localSignerWalletId !== activeMiningWalletId
           ) {
             sendLoginResponse(409, {
               ok: false,
@@ -6009,16 +6087,6 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             return;
           }
           if (providerId === "local-socket-signer") {
-            if (!requestedWalletId) {
-              sendLoginResponse(400, {
-                ok: false,
-                error: {
-                  code: "invalid_request",
-                  message: "walletId is required when creating a local signer wallet",
-                },
-              });
-              return;
-            }
             if (!requestedRole) {
               sendLoginResponse(400, {
                 ok: false,
@@ -6031,7 +6099,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             }
             const chain = inferLocalSignerCreateChain({
               payloadChain: payload.chain,
-              walletId: requestedWalletId,
+              walletId: localSignerWalletId,
               walletName,
               runtimeChains: walletCfg.chains,
             });
@@ -6058,10 +6126,14 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               return;
             }
             try {
+              // Wallet setup writes through the CLI lifecycle. Refresh the Gateway's
+              // runtime snapshot before and after it so repeated UI creations cannot
+              // overwrite a prior wallet RPC and the new wallet is usable immediately.
+              await activateLatestWalletRuntimeConfig();
               await walletSetupCommand(silentWalletSetupRuntime, {
                 mode: "local-signer-create",
                 chain,
-                walletId: requestedWalletId,
+                walletId: localSignerWalletId,
                 walletName,
                 rpcUrl,
                 role: requestedRole,
@@ -6073,8 +6145,9 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                 noSignerHints: true,
                 noDoctor: true,
               });
+              await activateLatestWalletRuntimeConfig();
               const registry = readWalletProviderRegistry(process.env);
-              const wallet = registry.wallets.find((entry) => entry.id === requestedWalletId);
+              const wallet = registry.wallets.find((entry) => entry.id === localSignerWalletId);
               if (!wallet) {
                 throw new Error("local signer wallet was created but not registered");
               }
@@ -6242,7 +6315,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                 ok: false,
                 error: {
                   code: "invalid_request",
-                  message: "rpcUrl must be a non-empty primary Solana RPC URL",
+                  message: "RPC is required",
                 },
               });
               return;
@@ -6252,7 +6325,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                 ok: false,
                 error: {
                   code: "invalid_provider",
-                  message: "primary RPC editing is available only for native signer wallets",
+                  message: "RPC editing is available only for local wallets",
                 },
               });
               return;
@@ -6305,11 +6378,17 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                 env: process.env,
               });
             } catch (err) {
+              const rawMessage = err instanceof Error ? err.message : String(err);
+              const message = /does not match|no longer agrees|disagree/iu.test(rawMessage)
+                ? "This RPC is on a different Solana network. Use a provider URL for this wallet's current network."
+                : /genesis verification failed|returned an invalid genesis hash/iu.test(rawMessage)
+                  ? "This URL did not answer as a Solana RPC. Check the provider URL and API key, then try again."
+                  : rawMessage;
               sendLoginResponse(502, {
                 ok: false,
                 error: {
                   code: "wallet_rpc_update_failed",
-                  message: err instanceof Error ? err.message : String(err),
+                  message,
                 },
               });
               return;
@@ -7412,6 +7491,62 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           chainWallets: {
             solana: buildChainEntries("solana", parseWalletIds("solana")),
           },
+        });
+        return;
+      }
+      if (requestPath === "/api/wallet/rpc") {
+        if (req.method !== "GET") {
+          res.statusCode = 405;
+          res.setHeader("Allow", "GET");
+          sendLoginResponse(405, {
+            ok: false,
+            error: { code: "method_not_allowed", message: "method must be GET" },
+          });
+          return;
+        }
+        if (!(await ensureWalletApiAuthorized())) {
+          return;
+        }
+        const cfg = loadConfig();
+        if (!ensureWalletApprovalAuthorized({ operation: "wallet.network", cfg })) {
+          return;
+        }
+        const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
+        const parsedUrl = new URL(req.url || "/", "http://localhost");
+        const walletId = parsedUrl.searchParams.get("walletId")?.trim() ?? "";
+        const wallet = readWalletProviderRegistry(effectiveEnv).wallets.find(
+          (entry) => entry.id === walletId,
+        );
+        if (!wallet) {
+          sendLoginResponse(404, {
+            ok: false,
+            error: { code: "wallet_not_found", message: "walletId not found" },
+          });
+          return;
+        }
+        if (wallet.providerId !== "local-socket-signer") {
+          sendLoginResponse(409, {
+            ok: false,
+            error: {
+              code: "invalid_provider",
+              message: "saved RPC display is available only for native signer wallets",
+            },
+          });
+          return;
+        }
+        const rpcUrl = resolveWalletRpcUrlFromEnv(effectiveEnv, "solana", wallet.id);
+        if (!rpcUrl) {
+          sendLoginResponse(404, {
+            ok: false,
+            error: { code: "wallet_rpc_not_found", message: "wallet RPC is not configured" },
+          });
+          return;
+        }
+        sendLoginResponse(200, {
+          ok: true,
+          walletId: wallet.id,
+          rpcUrl,
+          maskedUrl: maskWalletRpcUrl(rpcUrl),
         });
         return;
       }
@@ -9259,15 +9394,16 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               : undefined,
           amount: undefined as string | undefined,
         };
-        const resolvedDestination = resolveSolanaWalletHandleDestination({
+        const resolvedDestination = await resolveSolanaWalletHandleDestination({
           to: payload.to,
+          sourceWalletId: payload.walletId,
           env: effectiveEnv,
         });
         if (!resolvedDestination.ok) {
           sendLoginResponse(400, {
             ok: false,
             error: {
-              code: "invalid_wallet_handle",
+              code: resolvedDestination.code,
               message: resolvedDestination.message,
             },
           });
@@ -9424,15 +9560,16 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         const cfg = loadConfig();
         const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
         const walletCfg = resolveWalletRuntimeConfig(cfg, effectiveEnv);
-        const resolvedDestination = resolveSolanaWalletHandleDestination({
+        const resolvedDestination = await resolveSolanaWalletHandleDestination({
           to: payload.to,
+          sourceWalletId: payload.walletId,
           env: effectiveEnv,
         });
         if (!resolvedDestination.ok) {
           sendLoginResponse(400, {
             ok: false,
             error: {
-              code: "invalid_wallet_handle",
+              code: resolvedDestination.code,
               message: resolvedDestination.message,
             },
           });
@@ -9818,7 +9955,12 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           Boolean(signerWalletId) &&
           Boolean(applicationWalletId);
         if (isSignerOwnedReview) {
-          if (pendingRequest.status !== "pending" && pendingRequest.status !== "expired") {
+          if (
+            pendingRequest.status !== "pending" &&
+            pendingRequest.status !== "expired" &&
+            pendingRequest.status !== "executing" &&
+            pendingRequest.status !== "unknown"
+          ) {
             sendLoginResponse(409, {
               ok: false,
               error: {
@@ -9859,6 +10001,30 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               });
               return;
             }
+            const approveFromControlUi = async () => {
+              const approved = await approveWalletSendRequest({
+                requestId,
+                actor: "control-ui",
+                config: walletCfg,
+                env: process.env,
+              });
+              if (!approved.ok) {
+                sendLoginResponse(approved.code === "wallet_provider_ambiguous" ? 409 : 400, {
+                  ok: false,
+                  error: { code: approved.code, message: approved.message },
+                  request:
+                    "request" in approved && approved.request
+                      ? sanitizeWalletSendApprovalRequest(approved.request)
+                      : undefined,
+                });
+                return;
+              }
+              sendLoginResponse(200, {
+                ok: true,
+                request: sanitizeWalletSendApprovalRequest(approved.request),
+                tx: approved.tx,
+              });
+            };
             try {
               const storedReview = await provider.getSignerReview({
                 walletId: signerWalletId,
@@ -9868,28 +10034,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                 throw new Error("stored signer review does not match the persisted approval");
               }
               if (storedReview.state === "signed") {
-                const recovered = await approveWalletSendRequest({
-                  requestId,
-                  actor: "control-ui",
-                  config: walletCfg,
-                  env: process.env,
-                });
-                if (!recovered.ok) {
-                  sendLoginResponse(recovered.code === "wallet_provider_ambiguous" ? 409 : 400, {
-                    ok: false,
-                    error: { code: recovered.code, message: recovered.message },
-                    request:
-                      "request" in recovered && recovered.request
-                        ? sanitizeWalletSendApprovalRequest(recovered.request)
-                        : undefined,
-                  });
-                  return;
-                }
-                sendLoginResponse(200, {
-                  ok: true,
-                  request: sanitizeWalletSendApprovalRequest(recovered.request),
-                  tx: recovered.tx,
-                });
+                await approveFromControlUi();
                 return;
               }
               if (
@@ -9932,12 +10077,17 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               });
             } catch (error) {
               const message = walletDiagnosticErrorMessage(error);
+              if (
+                message.includes("no signer-owned WebAuthn credential is enrolled") ||
+                message.includes("signer WebAuthn is not configured by the host administrator")
+              ) {
+                await approveFromControlUi();
+                return;
+              }
               sendLoginResponse(400, {
                 ok: false,
                 error: {
-                  code: message.includes("no signer-owned WebAuthn credential is enrolled")
-                    ? "wallet_signer_webauthn_not_enrolled"
-                    : "wallet_signer_webauthn_failed",
+                  code: "wallet_signer_webauthn_failed",
                   message,
                 },
               });

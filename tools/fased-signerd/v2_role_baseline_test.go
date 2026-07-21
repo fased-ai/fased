@@ -80,13 +80,36 @@ func TestSignerMiningRoleBaselineV1UsesReleaseRuntimeAndAllTypedActions(t *testi
 			t.Fatalf("Mining baseline omitted %s", operation)
 		}
 	}
-	if _, err := compileSignerRoleBaselineV1(
+	prelaunch, err := compileSignerRoleBaselineV1(
 		"mining",
 		wallet,
 		signerRoleBaselineRequestV1{Version: 1, Role: "mining"},
 		signerRoleBaselineRuntimeV1{},
-	); err == nil || !strings.Contains(err.Error(), "release-bound SAT runtime manifest") {
-		t.Fatalf("Mining baseline did not fail closed without its release runtime: %v", err)
+	)
+	if err != nil || prelaunch.BaselineVersion != 1 || prelaunch.Role != "mining" ||
+		prelaunch.TypedSATPrograms || !containsStringV2(prelaunch.Operations, intentSolanaNativeTransfer) {
+		t.Fatalf("Mining pre-launch baseline was not restricted to reviewed transfers: policy=%#v err=%v", prelaunch, err)
+	}
+}
+
+func TestSignerMiningPrelaunchBaselineIsWalletReadyWithoutSATAuthority(t *testing.T) {
+	store, keys := openTestSignerV2(t)
+	wallet, policy, err := keys.CreateWithRoleBaseline(
+		"prelaunch-mining",
+		0,
+		signerRoleBaselineRequestV1{Version: 1, Role: "mining"},
+		signerRoleBaselineRuntimeV1{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.TypedSATPrograms {
+		t.Fatalf("pre-launch policy unexpectedly granted typed SAT authority: %#v", policy)
+	}
+	readiness, err := (&signerServiceV2{store: store, keys: keys}).walletReadinessV2(wallet.WalletID)
+	if err != nil || !readiness.PolicyReady || readiness.NetworkReady || readiness.Ready ||
+		readiness.OperationLane != "mining-reviewed-only" {
+		t.Fatalf("pre-launch Mining wallet did not expose its reviewed-use lane: %#v err=%v", readiness, err)
 	}
 }
 

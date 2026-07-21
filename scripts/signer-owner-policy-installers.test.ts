@@ -36,8 +36,12 @@ describe("signer owner-policy package and installers", () => {
 
     expect(updater).toContain("downloadVerifiedLocalSignerRelease");
     expect(updater).toContain("atomicInstallSignerBinary");
-    expect(updater).toContain("await verifyOfficialAsset(candidatePath, targetVersion, timeoutMs)");
-    expect(updater).toContain("await verifyOfficialAsset(manifestPath, targetVersion, timeoutMs)");
+    expect(updater).toContain(
+      "await verifyOfficialAsset(candidatePath, targetVersion, timeoutMs, bundlePath)",
+    );
+    expect(updater).toContain(
+      "await verifyOfficialAsset(manifestPath, targetVersion, timeoutMs, bundlePath)",
+    );
     expect(signerInstall).toBeGreaterThan(0);
     expect(policyInstall).toBeGreaterThan(signerInstall);
     expect(installer).toContain('POLICY_LAUNCHER_PATH="${INSTALL_DIR}/fased-signer-policy"');

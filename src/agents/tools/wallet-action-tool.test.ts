@@ -23,6 +23,7 @@ import {
   upsertNamedWallet,
 } from "../../wallet/wallet-provider-registry.js";
 import { listWalletSendApprovalRequests } from "../../wallet/wallet-send-approvals.js";
+import { computeSkillContentSha256Sync } from "../skills/trust.js";
 import { createWalletActionTool } from "./wallet-action-tool.js";
 
 const mocks = vi.hoisted(() => ({
@@ -195,6 +196,12 @@ async function writeClawHubSkillOrigin(params: {
 }) {
   const originDir = path.join(params.workspaceDir, "skills", params.slug, ".clawhub");
   await fs.mkdir(originDir, { recursive: true });
+  const skillDir = path.dirname(originDir);
+  await fs.writeFile(path.join(skillDir, "SKILL.md"), `# ${params.slug}\n`, "utf8");
+  const contentSha256 = computeSkillContentSha256Sync(skillDir);
+  if (!contentSha256) {
+    throw new Error("test skill content digest was unavailable");
+  }
   await fs.writeFile(
     path.join(originDir, "origin.json"),
     `${JSON.stringify(
@@ -204,6 +211,9 @@ async function writeClawHubSkillOrigin(params: {
         slug: params.slug,
         installedVersion: "1.0.0",
         installedAt: Date.now(),
+        archiveSha256: "a".repeat(64),
+        archiveIntegrityVerified: true,
+        contentSha256,
       },
       null,
       2,
@@ -217,7 +227,7 @@ function stubJupiterOrder(opts?: {
   failOnceWhen?: (url: string, method: string) => boolean;
 }) {
   let failedRequestedCall = false;
-  vi.stubEnv("FASED_WALLET_SOLANA_RPC_URL", "https://rpc.example.test");
+  vi.stubEnv("FASED_WALLET_SOLANA_RPC_URL", "http://127.0.0.1:19010");
   vi.stubEnv("FASED_JUPITER_API_KEY", "test-jupiter-key");
   vi.stubGlobal(
     "fetch",
