@@ -58,7 +58,10 @@ jobs:
           if [ "${{ github.event_name }}" = "push" ]; then
             BASE="${{ github.event.before }}"
           else
-            BASE="${{ github.event.pull_request.base.sha }}"
+            BASE="$(git merge-base "origin/${{ github.event.pull_request.base.ref }}" HEAD 2>/dev/null || true)"
+            if [ -z "$BASE" ]; then
+              BASE="${{ github.event.pull_request.base.sha }}"
+            fi
           fi
 
           CHANGED="$(git diff --name-only "$BASE" HEAD 2>/dev/null || echo "UNKNOWN")"

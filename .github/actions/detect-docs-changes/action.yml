@@ -23,9 +23,13 @@ runs:
         if [ "${{ github.event_name }}" = "push" ]; then
           BASE="${{ github.event.before }}"
         else
-          # Use the exact base SHA from the event payload — stable regardless
-          # of base branch movement (avoids origin/<ref> drift).
-          BASE="${{ github.event.pull_request.base.sha }}"
+          # Compare with the current merge base. Stacked PR base branches can
+          # advance after the event payload is created; using the stale base
+          # SHA would incorrectly count those base-branch files as PR changes.
+          BASE="$(git merge-base "origin/${{ github.event.pull_request.base.ref }}" HEAD 2>/dev/null || true)"
+          if [ -z "$BASE" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          fi
         fi
 
         # Fail-safe: if we can't diff, assume non-docs (run everything)
