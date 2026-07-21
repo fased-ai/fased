@@ -72,6 +72,7 @@ const signerMocks = vi.hoisted(() => ({
   }),
   install: vi.fn(),
   restart: vi.fn(async () => undefined),
+  health: vi.fn(async () => ({ ok: false, details: "signer unavailable" })),
   readiness: vi.fn(async (params: { walletId: string }) => ({
     walletId: params.walletId,
     publicKey: "11111111111111111111111111111111",
@@ -362,6 +363,7 @@ vi.mock("../wallet/providers/local-socket-signer-adapter.js", async (importOrigi
   return {
     ...actual,
     callLocalSocketSigner: signerMocks.socketCall,
+    probeLocalSocketSignerHealth: signerMocks.health,
     requireLocalSocketSignerPath: () => "/tmp/fased-signerd-app-test.sock",
   };
 });
@@ -404,6 +406,8 @@ describe("walletSetupCommand native signer boundary", () => {
     signerMocks.create.mockClear();
     signerMocks.install.mockClear();
     signerMocks.restart.mockClear();
+    signerMocks.health.mockReset();
+    signerMocks.health.mockResolvedValue({ ok: false, details: "signer unavailable" });
     signerMocks.readiness.mockClear();
     signerMocks.read.mockClear();
     signerMocks.activate.mockClear();
@@ -491,8 +495,78 @@ describe("walletSetupCommand native signer boundary", () => {
           ?.metadata?.signerWalletId,
       ).toBe("solana_1");
       expect(logs.join("\n")).toContain("SOLANA address:");
-      expect(logs.join("\n")).toContain("Signer wallet ID: solana_1");
+      expect(logs.join("\n")).toContain("Wallet handle: @wallet:solana-1");
+      expect(logs.join("\n")).toContain("Internal wallet ID: solana-1");
       expect(logs.join("\n")).not.toMatch(/PRIVATE KEY|PASSPHRASE|SEED/i);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("generates internal IDs, handles, and default names when CLI callers omit them", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-native-auto-id-"));
+    const configPath = path.join(root, "fased.json");
+    await fs.writeFile(configPath, "{}\n", "utf8");
+    vi.stubEnv("FASED_CONFIG_PATH", configPath);
+    vi.stubEnv("FASED_DISABLE_CONFIG_CACHE", "1");
+    vi.stubEnv("FASED_STATE_DIR", path.join(root, "state"));
+    clearConfigCache();
+
+    try {
+      const logs: string[] = [];
+      for (let index = 0; index < 2; index += 1) {
+        await walletSetupCommand({ log: (line: string) => logs.push(line) } as never, {
+          mode: "local-signer-create",
+          chain: "solana",
+          role: "agent",
+          rpcUrl: "https://rpc.example/solana",
+          nonInteractive: true,
+          noDoctor: true,
+          force: true,
+        });
+      }
+
+      expect(
+        readWalletProviderRegistry(process.env).wallets.map((wallet) => ({
+          id: wallet.id,
+          name: wallet.name,
+        })),
+      ).toEqual([
+        { id: "agent", name: "Agent" },
+        { id: "agent-2", name: "Agent 2" },
+      ]);
+      expect(logs.join("\n")).toContain("Wallet handle: @wallet:agent");
+      expect(logs.join("\n")).toContain("Wallet handle: @wallet:agent-2");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not restart an already healthy Local signer when creating another wallet", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-no-signer-restart-"));
+    const configPath = path.join(root, "fased.json");
+    await fs.writeFile(configPath, "{}\n", "utf8");
+    vi.stubEnv("FASED_CONFIG_PATH", configPath);
+    vi.stubEnv("FASED_DISABLE_CONFIG_CACHE", "1");
+    vi.stubEnv("FASED_STATE_DIR", path.join(root, "state"));
+    signerMocks.health.mockResolvedValue({ ok: true, details: "signer ready" });
+    clearConfigCache();
+
+    try {
+      await walletSetupCommand({ log: vi.fn() } as never, {
+        mode: "local-signer-create",
+        chain: "solana",
+        role: "agent",
+        rpcUrl: "https://rpc.example/solana",
+        nonInteractive: true,
+        noDoctor: true,
+        noSignerHints: true,
+        force: true,
+      });
+
+      expect(signerMocks.health).toHaveBeenCalledOnce();
+      expect(signerMocks.restart).not.toHaveBeenCalled();
+      expect(signerMocks.create).toHaveBeenCalledOnce();
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

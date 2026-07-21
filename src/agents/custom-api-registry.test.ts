@@ -1,18 +1,16 @@
 import {
-  clearApiProviders,
   createAssistantMessageEventStream,
   getApiProvider,
-  registerBuiltInApiProviders,
+  resetApiProviders,
   unregisterApiProviders,
-} from "@mariozechner/pi-ai";
+} from "@mariozechner/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ensureCustomApiRegistered, getCustomApiRegistrySourceId } from "./custom-api-registry.js";
 
 describe("ensureCustomApiRegistered", () => {
   afterEach(() => {
     unregisterApiProviders(getCustomApiRegistrySourceId("test-custom-api"));
-    clearApiProviders();
-    registerBuiltInApiProviders();
+    resetApiProviders();
   });
 
   it("registers a custom api provider once", () => {

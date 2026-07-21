@@ -493,6 +493,37 @@ if [[ "${FASED_MANAGED_INTERNAL:-0}" != "1" ]]; then
 fi
 force_stop_local_gateway
 
+legacy_registered_local_wallets_exist() {
+  [[ "${FASED_HOST_PROFILE:-}" != "hosting" ]] || return 1
+  local wallet_dir="$FASED_CONFIG_DIR/wallet"
+  local registry="$wallet_dir/provider-registry.v1.json"
+  [[ -f "$registry" ]] || return 1
+  find "$wallet_dir" -maxdepth 1 -type f -name 'keystore-solana*.v1.enc' -print -quit 2>/dev/null | grep -q . || return 1
+  "$NODE_BIN" -e '
+    const fs = require("node:fs");
+    const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    process.exit((value.wallets || []).some((wallet) => wallet?.providerId === "embedded-keystore") ? 0 : 1);
+  ' "$registry" >/dev/null 2>&1
+}
+
+migrate_registered_local_wallets_before_gateway_start() {
+  legacy_registered_local_wallets_exist || return 0
+  local updater="$FASED_RUNTIME_ROOT/scripts/fased-managed-updater.mjs"
+  [[ -f "$updater" && -n "$RUNTIME_VERSION" ]] || {
+    echo "[signerd] ERROR: updated runtime cannot run the automatic legacy-wallet migration."
+    return 1
+  }
+  echo "==> Migrating registered Local wallets into the native signer..."
+  if [[ -f "$FASED_CONFIG_DIR/signer-update/transaction.json" ]]; then
+    "$NODE_BIN" "$updater" local-signer migrate-active
+  else
+    "$NODE_BIN" "$updater" local-signer install --version "$RUNTIME_VERSION"
+  fi
+  echo "==> Registered Local wallets migrated; temporary rollback state was removed."
+}
+
+migrate_registered_local_wallets_before_gateway_start
+
 # Start the dashboard backend before slower hosted setup. Signer, wallet,
 # federation, and tunnel work must not prevent the owner from opening the UI.
 start_gateway_if_needed
@@ -1183,13 +1214,14 @@ WALLET_AUTH_MODE="unknown"
 WALLET_AUTH_SOURCE="unknown"
 WALLET_ERROR=""
 
-echo "==> Enforcing wallet baseline (wallet service)..."
+echo "==> Checking wallet readiness..."
 if [[ "${WALLET_BASELINE_MODE,,}" == "skip" ]]; then
   WALLET_STARTUP_MODE="degraded"
   WALLET_ERROR="Wallet baseline skipped (FASED_WALLET_BASELINE_MODE=skip)."
   echo "[wallet] WARNING: Wallet baseline skipped; continuing startup immediately."
 else
-  # Keep stderr visible to avoid hidden sudo/docker prompts while also logging.
+  # Startup is a readiness check. Wallet creation, import, and migration are
+  # explicit transactional flows and must never be prompted from service boot.
   WALLET_SETUP_CMD=(
     env
     FASED_SKIP_BUILD=1
@@ -1197,7 +1229,7 @@ else
     "$NODE_BIN"
     "$RUN_NODE_SCRIPT"
     wallet
-    setup
+    status
     --json
   )
   USE_TIMEOUT=0
@@ -1225,7 +1257,7 @@ else
     WALLET_JSON=$(printf '%s\n' "$WALLET_OUTPUT" | sed -n '/^{/,$p')
     if [[ -z "$WALLET_JSON" ]]; then
       WALLET_STARTUP_MODE="degraded"
-      WALLET_ERROR="Wallet setup returned no JSON payload."
+      WALLET_ERROR="Wallet status returned no JSON payload."
     else
       WALLET_HEALTHY=$(printf '%s\n' "$WALLET_JSON" | jq -r '.status.service.healthy // false' 2>/dev/null || echo "false")
       WALLET_PID=$(printf '%s\n' "$WALLET_JSON" | jq -r '.status.service.pid // "N/A"' 2>/dev/null || echo "N/A")

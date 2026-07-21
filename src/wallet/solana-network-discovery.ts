@@ -85,6 +85,19 @@ async function fetchGenesisHash(params: {
   }
 }
 
+export async function fetchSolanaGenesisHashFromRpc(
+  rpcUrl: string,
+  options: SolanaNetworkDiscoveryOptions = {},
+): Promise<string> {
+  parseRpcUrl(rpcUrl);
+  const timeoutMs = Math.max(250, Math.min(options.timeoutMs ?? 4_000, 30_000));
+  return fetchGenesisHash({
+    rpcUrl: rpcUrl.trim(),
+    fetchImpl: options.fetchImpl ?? fetch,
+    timeoutMs,
+  });
+}
+
 /**
  * Infers the cluster without adding a network question to normal onboarding.
  * Opaque provider URLs are matched to live official cluster witnesses by genesis

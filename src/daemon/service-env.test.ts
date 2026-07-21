@@ -263,7 +263,11 @@ describe("buildMinimalServicePath", () => {
 describe("buildServiceEnvironment", () => {
   it("sets minimal PATH and gateway vars", () => {
     const env = buildServiceEnvironment({
-      env: { HOME: "/home/user" },
+      env: {
+        HOME: "/home/user",
+        FASED_MANAGED_RUNTIME_ROOT: "/home/user/.fased/runtime/releases/0.1.69",
+        FASED_RUNTIME_SOURCE: "managed-package",
+      },
       port: 18789,
       token: "secret",
     });
@@ -278,6 +282,8 @@ describe("buildServiceEnvironment", () => {
     expect(env.FASED_SERVICE_MARKER).toBe("fased");
     expect(env.FASED_SERVICE_KIND).toBe("gateway");
     expect(typeof env.FASED_SERVICE_VERSION).toBe("string");
+    expect(env.FASED_MANAGED_RUNTIME_ROOT).toBe("/home/user/.fased/runtime/releases/0.1.69");
+    expect(env.FASED_RUNTIME_SOURCE).toBe("managed-package");
     expect(env.FASED_SYSTEMD_UNIT).toBe("fased-gateway.service");
     if (process.platform === "darwin") {
       expect(env.FASED_LAUNCHD_LABEL).toBe("ai.fased.gateway");

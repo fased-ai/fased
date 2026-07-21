@@ -51,6 +51,7 @@ import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.j
 import {
   checkNamedWalletDeletionSafety,
   deleteNamedWallet,
+  nextRoleWalletIdentity,
   resolveWalletUserRole,
   setNamedWalletRole,
   upsertNamedWallet,
@@ -167,13 +168,6 @@ export async function runOnboardingWizard(
       .replace(/^_+|_+$/g, "");
     return normalized ? normalized.toUpperCase() : undefined;
   };
-  const normalizeWalletId = (value: string): string =>
-    value
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 48);
   const rpcEnvKeyFor = (_chain: "solana", walletId?: string): string => {
     const suffix = walletIdEnvSuffix(walletId);
     if (suffix) {
@@ -314,7 +308,7 @@ export async function runOnboardingWizard(
     );
     return true;
   };
-  const promptAndStoreWalletRpcUrl = async (params: {
+  const promptWalletRpcUrl = async (params: {
     chain: "solana";
     walletId: string;
     walletName: string;
@@ -327,8 +321,9 @@ export async function runOnboardingWizard(
       String(process.env[rpcKey] ?? "").trim();
     const rpcUrlInput = (
       await prompter.text({
-        message: `${params.chain.toUpperCase()} RPC URL for ${params.walletName} (${params.walletId})`,
+        message: `${params.chain.toUpperCase()} RPC URL for ${params.walletName} · @wallet:${params.walletId}`,
         initialValue,
+        placeholder: "https://your-solana-rpc-provider.example",
         validate: (value) =>
           value.trim() || initialValue
             ? undefined
@@ -341,8 +336,6 @@ export async function runOnboardingWizard(
         `${params.chain.toUpperCase()} RPC URL is required for ${params.walletName}.`,
       );
     }
-    nextConfig = setConfigEnvVar(nextConfig, rpcKey, effectiveRpcUrl);
-    process.env[rpcKey] = effectiveRpcUrl;
     return effectiveRpcUrl;
   };
   const readSatMiningConfig = (
@@ -483,49 +476,9 @@ export async function runOnboardingWizard(
     return probe.status === 0;
   };
   type WalletOnboardingPurpose = "agent" | "mining" | "vault";
-  const walletPurposeBase = (
-    purpose: WalletOnboardingPurpose,
-  ): { walletName: string; walletId: string } => {
-    switch (purpose) {
-      case "agent":
-        return { walletName: "Agent", walletId: "agent" };
-      case "mining":
-        return { walletName: "Mining", walletId: "mining" };
-      case "vault":
-        return { walletName: "Vault", walletId: "vault" };
-    }
-  };
-  const uniqueWalletId = (baseWalletId: string) => {
-    const registry = readWalletProviderRegistry(process.env);
-    const baseId = normalizeWalletId(baseWalletId) || "wallet";
-    const hasId = (candidate: string) => registry.wallets.some((wallet) => wallet.id === candidate);
-    if (!hasId(baseId)) {
-      return baseId;
-    }
-    for (let index = 2; index < 1000; index += 1) {
-      const candidateId = `${baseId}-${index}`;
-      if (!hasId(candidateId)) {
-        return candidateId;
-      }
-    }
-    return `${baseId}-${Date.now()}`;
-  };
   const nextWalletIdentity = (purpose: WalletOnboardingPurpose) => {
-    const base = walletPurposeBase(purpose);
-    if (purpose === "mining") {
-      return base;
-    }
-    const walletId = uniqueWalletId(base.walletId);
-    if (walletId === base.walletId) {
-      return base;
-    }
-    const suffix = walletId.startsWith(`${base.walletId}-`)
-      ? walletId.slice(base.walletId.length + 1)
-      : "";
-    return {
-      walletName: suffix ? `${base.walletName} ${suffix}` : base.walletName,
-      walletId,
-    };
+    const registry = readWalletProviderRegistry(process.env);
+    return nextRoleWalletIdentity(purpose, registry.wallets);
   };
   const resolveWalletIdentityForOnboarding = async (params: {
     flow: WizardFlow;
@@ -548,9 +501,9 @@ export async function runOnboardingWizard(
     const walletId = String(params.walletId ?? "").trim();
     const walletName = String(params.walletName ?? "").trim();
     if (walletName && walletId) {
-      return `${walletName} (${walletId})`;
+      return `${walletName} · @wallet:${walletId}`;
     }
-    return walletName || walletId || "not set";
+    return walletName || (walletId ? `@wallet:${walletId}` : "not set");
   };
   const readRoleWallet = (
     role: WalletOnboardingPurpose,
@@ -724,25 +677,13 @@ export async function runOnboardingWizard(
   let satMiningAttachment = readSatMiningConfig(baseConfig);
   let federationBondWalletId = readFederationBondWalletId(baseConfig);
   const displayWalletName = (wallet: WalletNamedWallet): string => {
-    const rawName = wallet.name.trim();
-    const generatedLegacyName = /^solana\s+\d+$/i.test(rawName);
-    const purpose = resolveWalletUserRole(wallet);
-    if (purpose === "agent") {
-      return "Agent wallet";
-    }
-    if (purpose === "mining" || wallet.id === satMiningAttachment.walletId) {
-      return "Mining wallet";
-    }
-    if (purpose === "vault" || wallet.id === federationBondWalletId) {
-      return "Vault wallet";
-    }
-    if (readAgentDefaultWallet().walletId === wallet.id) {
-      return "Agent wallet";
-    }
-    if (!generatedLegacyName) {
-      return rawName;
-    }
-    return "Unassigned wallet";
+    return wallet.name.trim() || "Wallet";
+  };
+  const compactWalletAddress = (value: string | undefined): string | undefined => {
+    const address = value?.trim() ?? "";
+    return address.length > 6
+      ? `${address.slice(0, 2)}..${address.slice(-2)}`
+      : address || undefined;
   };
   const applySatMiningAttachment = (cfg: FasedAgentConfig): FasedAgentConfig => {
     if (!satMiningAttachment.walletId) {
@@ -825,15 +766,6 @@ export async function runOnboardingWizard(
     "Start from the provider root console with the exact tagged, attested Hosting command and --release vX.Y.Z.",
     "Never run the app-owned checkout with sudo or as root.",
   ].join("\n");
-  if (opts.mode !== "remote" && !requestedHostProfile) {
-    await prompter.note(
-      [
-        "Local runs under your current OS account and does no VPS SSH/firewall hardening.",
-        "Hosting uses the verified root bootstrap for an independent signer service, private Tailscale access and hosted SSH/firewall hardening.",
-      ].join("\n"),
-      "Setup map",
-    );
-  }
   const hostProfile: HostSetupProfile =
     opts.mode === "remote"
       ? "local"
@@ -1251,9 +1183,7 @@ export async function runOnboardingWizard(
         if (setupMode === "manage-self-hosted") {
           const registry = readWalletProviderRegistry(process.env);
           const managedWallets = registry.wallets.filter(
-            (wallet) =>
-              wallet.providerId === "local-socket-signer" ||
-              (wallet.metadata?.selfHosted === true && wallet.providerId !== "embedded-keystore"),
+            (wallet) => wallet.providerId !== "embedded-keystore",
           );
           if (managedWallets.length === 0) {
             await prompter.note(
@@ -1270,8 +1200,8 @@ export async function runOnboardingWizard(
             message: "Select wallet to manage",
             options: managedWallets.map((wallet) => ({
               value: wallet.id,
-              label: displayWalletName(wallet),
-              hint: [wallet.id, wallet.addresses?.solana ?? wallet.providerId]
+              label: `${displayWalletName(wallet)} · @wallet:${wallet.id}`,
+              hint: [resolveWalletUserRole(wallet), compactWalletAddress(wallet.addresses?.solana)]
                 .filter(Boolean)
                 .join(" · "),
             })),
@@ -1368,32 +1298,57 @@ export async function runOnboardingWizard(
             })(),
           });
           if (manageAction === "configure-solana-rpc") {
-            const effectiveSolanaRpcUrl = await promptAndStoreWalletRpcUrl({
+            const effectiveSolanaRpcUrl = await promptWalletRpcUrl({
               chain: "solana",
               walletId,
               walletName: targetWallet.name,
               currentValue: configuredSolanaRpcUrl,
             });
             let signerNetworkVersion: number | undefined;
-            if (targetWallet.providerId === "local-socket-signer") {
-              const effectiveEnv = {
-                ...process.env,
-                ...nextConfig.env?.vars,
-                FASED_HOST_PROFILE: hostProfile,
-              } as NodeJS.ProcessEnv;
-              const network = await configureSignerOwnedWalletNetwork({
-                walletId,
-                primaryRpcUrl: effectiveSolanaRpcUrl,
-                env: effectiveEnv,
-                socketPath: resolveLocalSignerSocketPath(effectiveEnv),
+            try {
+              if (targetWallet.providerId === "local-socket-signer") {
+                const effectiveEnv = {
+                  ...process.env,
+                  ...nextConfig.env?.vars,
+                  FASED_HOST_PROFILE: hostProfile,
+                } as NodeJS.ProcessEnv;
+                const network = await configureSignerOwnedWalletNetwork({
+                  walletId,
+                  primaryRpcUrl: effectiveSolanaRpcUrl,
+                  env: effectiveEnv,
+                  socketPath: resolveLocalSignerSocketPath(effectiveEnv),
+                });
+                signerNetworkVersion = network.version;
+              } else {
+                await restartLocalSocketSigner(ensureWalletStateDir(process.env).rootDir);
+              }
+            } catch (err) {
+              const detail = err instanceof Error ? err.message : String(err);
+              const explanation = /does not match|no longer agrees|disagree/iu.test(detail)
+                ? "That RPC is on a different Solana network. Use another provider for this wallet's current network."
+                : /genesis|verification|invalid.*rpc|absolute HTTPS/iu.test(detail)
+                  ? "That URL did not answer as a Solana RPC. Check the provider URL and API key, then try again."
+                  : detail;
+              await prompter.note(
+                [
+                  "RPC was not changed.",
+                  explanation,
+                  "Any HTTPS Solana RPC provider is supported when it responds to standard Solana JSON-RPC and matches this wallet's network.",
+                ].join("\n"),
+                "RPC not saved",
+              );
+              addAnotherWallet = await prompter.confirm({
+                message: "Run another wallet setup action?",
+                initialValue: true,
               });
-              signerNetworkVersion = network.version;
-            } else {
-              await restartLocalSocketSigner(ensureWalletStateDir(process.env).rootDir);
+              continue;
             }
+            const rpcKey = rpcEnvKeyFor("solana", walletId);
+            nextConfig = setConfigEnvVar(nextConfig, rpcKey, effectiveSolanaRpcUrl);
+            process.env[rpcKey] = effectiveSolanaRpcUrl;
             await prompter.note(
               [
-                `Updated the app-side Solana RPC setting for ${targetWallet.name} (${walletId})${signerNetworkVersion ? `; signer network version ${signerNetworkVersion} is ready` : "."}`,
+                `Saved RPC for ${targetWallet.name} · @wallet:${walletId}${signerNetworkVersion ? `; wallet network version ${signerNetworkVersion} is ready` : "."}`,
               ].join("\n"),
               "Wallet setup",
             );
@@ -1431,7 +1386,7 @@ export async function runOnboardingWizard(
             if (targetWalletPurpose !== "vault") {
               await prompter.note(
                 [
-                  `${targetWallet.name} (${walletId}) is a ${targetWalletPurpose} wallet.`,
+                  `${targetWallet.name} · @wallet:${walletId} is a ${targetWalletPurpose} wallet.`,
                   "Fased Network bond requires a Vault wallet. Create a Vault wallet first, then assign it to bond.",
                 ].join("\n"),
                 "Fased Network bond",
@@ -1445,7 +1400,7 @@ export async function runOnboardingWizard(
             if (agentDefaultWallet.walletId === walletId || currentMiningWalletId === walletId) {
               await prompter.note(
                 [
-                  `${targetWallet.name} (${walletId}) is already used by ${agentDefaultWallet.walletId === walletId ? "Agent" : "Mining"}.`,
+                  `${targetWallet.name} · @wallet:${walletId} is already used by ${agentDefaultWallet.walletId === walletId ? "Agent" : "Mining"}.`,
                   "Create or select a Vault wallet instead of reusing this wallet.",
                 ].join("\n"),
                 "Fased Network bond",
@@ -1460,7 +1415,7 @@ export async function runOnboardingWizard(
             nextConfig = assignFederationBondWallet(nextConfig, { walletId });
             const advisories: string[] = [
               noteHeading("Network bond"),
-              noteBullet(`Vault wallet: ${targetWallet.name} (${walletId})`),
+              noteBullet(`Vault wallet: ${targetWallet.name} · @wallet:${walletId}`),
             ];
             await prompter.note(advisories.join("\n"), "Fased Network bond");
             addAnotherWallet = await prompter.confirm({
@@ -1473,7 +1428,7 @@ export async function runOnboardingWizard(
             federationBondWalletId = undefined;
             nextConfig = clearFederationBondWallet(nextConfig);
             await prompter.note(
-              `Cleared ${targetWallet.name} (${walletId}) as the Fased Network bond Vault.`,
+              `Cleared ${targetWallet.name} · @wallet:${walletId} as the Fased Network bond Vault.`,
               "Fased Network bond",
             );
             addAnotherWallet = await prompter.confirm({
@@ -1576,8 +1531,8 @@ export async function runOnboardingWizard(
             delete process.env[rpcEnvKeyFor("solana", walletId)];
             await prompter.note(
               archivedSignerPolicy
-                ? `Archived ${targetWallet.name} (${walletId}) from Fased. Native signer wallet ${archivedSignerPolicy.walletId} remains encrypted and locked by deny-all policy version ${archivedSignerPolicy.version}.`
-                : `Removed ${targetWallet.name} (${walletId}) from Fased. Its external custody was not erased.`,
+                ? `Archived ${targetWallet.name} · @wallet:${walletId} from Fased. Native signer wallet ${archivedSignerPolicy.walletId} remains encrypted and locked by deny-all policy version ${archivedSignerPolicy.version}.`
+                : `Removed ${targetWallet.name} · @wallet:${walletId} from Fased. Its external custody was not erased.`,
               "Wallet setup",
             );
           } else {
@@ -1810,7 +1765,7 @@ export async function runOnboardingWizard(
           if (walletPurpose === "agent") {
             await prompter.note(
               [
-                `Agent wallet created as ${walletName} (${walletId ?? "default"}).`,
+                `Agent wallet created as ${walletName} · @wallet:${walletId ?? "default"}.`,
                 `Default Agent wallet fallback remains ${describeWalletRef(agentDefaultBefore)}.`,
                 `Use @wallet:${walletId ?? "default"} explicitly, assign it to an Agent or skill, or set it as the optional fallback in Wallet.`,
               ].join("\n"),
@@ -1836,7 +1791,7 @@ export async function runOnboardingWizard(
               await prompter.note(
                 [
                   noteHeading("Agent wallet"),
-                  noteBullet(`${walletName} (${walletId})`),
+                  noteBullet(`${walletName} · @wallet:${walletId}`),
                   "",
                   noteHeading("Mining optional"),
                   noteBullet("Mining uses a separate wallet."),
@@ -1859,7 +1814,7 @@ export async function runOnboardingWizard(
                 await prompter.note(
                   [
                     noteHeading("Mining wallet"),
-                    noteBullet(`${walletName} (${walletId})`),
+                    noteBullet(`${walletName} · @wallet:${walletId}`),
                     noteBullet(
                       "Receive-only until the signer network and an owner-reviewed Mining policy are acknowledged.",
                     ),

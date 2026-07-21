@@ -29,6 +29,16 @@ describe("Gateway runtime identity verification", () => {
     ).toThrow("is not a managed packaged runtime");
   });
 
+  it("accepts a matching source checkout only when explicitly allowed", () => {
+    expect(() =>
+      assertGatewayRuntimeIdentity(
+        { version: "0.1.60", runtimeSource: "source-checkout" },
+        "0.1.60",
+        { allowSourceCheckout: true },
+      ),
+    ).not.toThrow();
+  });
+
   it("rejects a matching version with no managed runtime identity", () => {
     expect(() => assertGatewayRuntimeIdentity({ version: "0.1.60" }, "0.1.60")).toThrow(
       "runtime source unknown",

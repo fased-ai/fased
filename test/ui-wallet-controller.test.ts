@@ -6,6 +6,7 @@ vi.mock("../ui/src/ui/wallet-api.js", () => ({
   getWalletSettings: vi.fn(),
   getWalletApprovals: vi.fn(),
   getWalletNamedWallets: vi.fn(),
+  getWalletProviders: vi.fn(),
   getWalletSignerDoctor: vi.fn(),
   getWalletAuditFor: vi.fn(),
   getWalletBalances: vi.fn(),
@@ -124,6 +125,7 @@ describe("loadWallet", () => {
         assignments: {},
         defaultWalletId: "wallet-b",
       } as never);
+    vi.mocked(walletApi.getWalletProviders).mockResolvedValue({ providers: [] } as never);
     vi.mocked(walletApi.getWalletSignerDoctor).mockResolvedValue({
       report: { checks: [] },
       chainWallets: { solana: [] },
@@ -150,7 +152,7 @@ describe("loadWallet", () => {
     expect(host.walletNamedWallets[0]?.id).toBe("wallet-b");
   });
 
-  it("only probes live balances for the selected wallet instead of every wallet row", async () => {
+  it("loads the selected wallet with assets and refreshes other wallet rows in parallel", async () => {
     const walletApi = await import("../ui/src/ui/wallet-api.js");
     vi.clearAllMocks();
 
@@ -166,6 +168,7 @@ describe("loadWallet", () => {
       assignments: {},
       defaultWalletId: "wallet-a",
     } as never);
+    vi.mocked(walletApi.getWalletProviders).mockResolvedValue({ providers: [] } as never);
     vi.mocked(walletApi.getWalletSignerDoctor).mockResolvedValue({
       report: { checks: [] },
       chainWallets: { solana: [] },
@@ -181,10 +184,14 @@ describe("loadWallet", () => {
     const host = buildHost() as never;
     await loadWallet(host);
 
-    expect(walletApi.getWalletBalances).toHaveBeenCalledTimes(1);
-    expect(walletApi.getWalletBalances).toHaveBeenCalledWith("all", { walletId: "wallet-a" });
+    expect(walletApi.getWalletBalances).toHaveBeenCalledTimes(2);
+    expect(walletApi.getWalletBalances).toHaveBeenCalledWith("all", {
+      walletId: "wallet-a",
+      includeAssets: true,
+    });
+    expect(walletApi.getWalletBalances).toHaveBeenCalledWith("all", { walletId: "wallet-b" });
     expect(host.walletNamedWallets[0]?.balances?.solana).toBe("1000000000");
-    expect(host.walletNamedWallets[1]?.balances?.solana).toBeUndefined();
+    expect(host.walletNamedWallets[1]?.balances?.solana).toBe("1000000000");
   });
 
   it("keeps zero balances visible for the selected wallet row", async () => {
@@ -203,6 +210,7 @@ describe("loadWallet", () => {
       assignments: {},
       defaultWalletId: "solana-1",
     } as never);
+    vi.mocked(walletApi.getWalletProviders).mockResolvedValue({ providers: [] } as never);
     vi.mocked(walletApi.getWalletSignerDoctor).mockResolvedValue({
       report: { checks: [] },
       chainWallets: { solana: [] },

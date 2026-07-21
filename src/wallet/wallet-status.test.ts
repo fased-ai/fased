@@ -112,6 +112,7 @@ describe("readWalletStatusSnapshot", () => {
   });
 
   it("keeps service healthy when address lookup fails after provider health passes", async () => {
+    vi.mocked(resolveWalletProviderId).mockReturnValue("alchemy");
     vi.mocked(createWalletProviderAdapter).mockReturnValue({
       health: vi.fn().mockResolvedValue({ ok: true, details: "socket healthy" }),
       getAddresses: vi.fn().mockRejectedValue(new Error("missing default wallet")),
@@ -123,6 +124,46 @@ describe("readWalletStatusSnapshot", () => {
     expect(status.startupState).toBe("healthy");
     expect(status.error).toContain("address probe warning:");
     expect(status.error).toContain("missing default wallet");
+  });
+
+  it("does not issue an ambiguous address probe for multiple local signer wallets", async () => {
+    vi.mocked(readWalletProviderRegistry).mockReturnValue({
+      version: 1,
+      providers: {},
+      wallets: [
+        {
+          id: "agent",
+          name: "Agent",
+          providerId: "local-socket-signer",
+          addresses: { solana: "11111111111111111111111111111111" },
+          metadata: { role: "agent" },
+          createdAt: "2026-07-20T00:00:00.000Z",
+          updatedAt: "2026-07-20T00:00:00.000Z",
+        },
+        {
+          id: "vault",
+          name: "Vault",
+          providerId: "local-socket-signer",
+          addresses: { solana: "So11111111111111111111111111111111111111112" },
+          metadata: { role: "vault" },
+          createdAt: "2026-07-20T00:00:00.000Z",
+          updatedAt: "2026-07-20T00:00:00.000Z",
+        },
+      ],
+      assignments: {},
+      updatedAt: "2026-07-20T00:00:00.000Z",
+    } as never);
+    vi.mocked(readSignerOwnedWalletReadiness).mockRejectedValue(new Error("fixture signer absent"));
+    const getAddresses = vi.fn();
+    vi.mocked(createWalletProviderAdapter).mockReturnValue({
+      health: vi.fn().mockResolvedValue({ ok: true, details: "socket healthy" }),
+      getAddresses,
+    } as never);
+
+    const status = await readWalletStatusSnapshot();
+
+    expect(getAddresses).not.toHaveBeenCalled();
+    expect(status.error).toBeUndefined();
   });
 
   it("exposes only sanitized native signer approval readiness", async () => {

@@ -30,7 +30,7 @@ export function createGoogleThinkingPayloadWrapper(
             }
           }
         }
-        return options?.onPayload?.(payload);
+        return options?.onPayload?.(payload, model);
       },
     });
 }

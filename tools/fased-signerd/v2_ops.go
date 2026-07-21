@@ -105,7 +105,7 @@ func (s *signerServiceV2) health(cfg signerConfig) (signerHealthResultV2, error)
 	if err != nil {
 		return signerHealthResultV2{}, err
 	}
-	networkHealth, err := s.keys.NetworkHealthV2()
+	networkHealth, err := s.keys.NetworkStoredHealthV2()
 	if err != nil {
 		return signerHealthResultV2{}, err
 	}
@@ -304,6 +304,22 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, errors.New("invalid signer-v2 request")
 		}
 		summary, err := s.keys.PutNetworkV2(req.WalletID, body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(summary)
+	case "v2.network.repairMigratedPrimary":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		if err := requireControlSocketV2(control); err != nil {
+			return nil, err
+		}
+		var body signerMigratedNetworkRepairRequestV1
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, errors.New("invalid signer-v2 request")
+		}
+		summary, err := s.keys.RepairMigratedPrimaryNetworkV1(req.WalletID, body)
 		if err != nil {
 			return nil, err
 		}

@@ -1,5 +1,5 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
-import type { SimpleStreamOptions } from "@mariozechner/pi-ai";
+import type { ProviderHeaders, SimpleStreamOptions } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai/compat";
 import WebSocket from "ws";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
@@ -12,6 +12,7 @@ import {
 } from "../auth-profiles.js";
 import { createOpenAICodexAppServerStreamFn } from "../openai-codex-app-server.js";
 import { ensureOpenAICodexRuntimeComponent } from "../openai-codex-runtime-component.js";
+import { mergeTransportHeaders } from "../transport-stream-shared.js";
 import { log } from "./logger.js";
 import {
   createMoonshotThinkingWrapper,
@@ -384,7 +385,7 @@ function createParallelToolCallsWrapper(
         if (payload && typeof payload === "object") {
           (payload as Record<string, unknown>).parallel_tool_calls = value;
         }
-        return originalOnPayload?.(payload);
+        return originalOnPayload?.(payload, model);
       },
     });
   };
@@ -570,7 +571,7 @@ function createOpenAIReasoningEffortWrapper(
             effort: reasoningEffort === "off" ? "none" : reasoningEffort,
           };
         }
-        originalOnPayload?.(payload);
+        originalOnPayload?.(payload, model);
       },
     });
   };
@@ -687,10 +688,10 @@ function resolveAnthropicBetas(
 }
 
 function mergeAnthropicBetaHeader(
-  headers: Record<string, string> | undefined,
+  headers: ProviderHeaders | undefined,
   betas: string[],
 ): Record<string, string> {
-  const merged = { ...headers };
+  const merged = mergeTransportHeaders(headers) ?? {};
   const existingKey = Object.keys(merged).find((key) => key.toLowerCase() === "anthropic-beta");
   const existing = existingKey ? parseHeaderList(merged[existingKey]) : [];
   const values = Array.from(new Set([...existing, ...betas]));
@@ -883,7 +884,7 @@ function createOpenRouterSystemCacheWrapper(baseStreamFn: StreamFn | undefined):
             );
           }
         }
-        originalOnPayload?.(payload);
+        originalOnPayload?.(payload, model);
       },
     });
   };
@@ -932,7 +933,7 @@ function createSiliconFlowThinkingWrapper(baseStreamFn: StreamFn | undefined): S
             payloadObj.thinking = null;
           }
         }
-        originalOnPayload?.(payload);
+        originalOnPayload?.(payload, model);
       },
     });
   };
@@ -1024,7 +1025,7 @@ function createOpenRouterWrapper(
           const payloadObj = payload as Record<string, unknown>;
           if (shouldPatchOpenRouterDeepSeekV4Payload(model)) {
             patchOpenRouterDeepSeekV4Payload(payloadObj, thinkingLevel);
-            onPayload?.(payload);
+            onPayload?.(payload, model);
             return;
           }
 
@@ -1061,7 +1062,7 @@ function createOpenRouterWrapper(
             }
           }
         }
-        onPayload?.(payload);
+        onPayload?.(payload, model);
       },
     });
   };
@@ -1153,7 +1154,7 @@ function createGoogleThinkingPayloadWrapper(
             thinkingLevel,
           });
         }
-        onPayload?.(payload);
+        onPayload?.(payload, model);
       },
     });
   };
@@ -1186,7 +1187,7 @@ function createZaiToolStreamWrapper(
           // Inject tool_stream: true for Z.AI API
           (payload as Record<string, unknown>).tool_stream = true;
         }
-        originalOnPayload?.(payload);
+        originalOnPayload?.(payload, model);
       },
     });
   };

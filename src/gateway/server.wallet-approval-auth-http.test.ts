@@ -4,8 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { WalletProviderAdapter } from "../wallet/wallet-provider-adapter.js";
+import type {
+  WalletProviderAdapter,
+  WalletProviderJupiterReviewV2,
+} from "../wallet/wallet-provider-adapter.js";
 import * as walletProviderResolver from "../wallet/wallet-provider-resolver.js";
+import { markWalletSendRequestBroadcastUnknown } from "../wallet/wallet-send-approvals.js";
 import type { ResolvedGatewayAuth } from "./auth.js";
 import { createGatewayHttpServer } from "./server-http.js";
 
@@ -161,13 +165,18 @@ function signerReviewAdapter() {
   );
   const preparedInputFor = (requestId: string) =>
     prepareTypedTransferReview.mock.calls.find(([input]) => input.requestId === requestId)?.[0];
-  const getSignerReview = vi.fn(async (request: { walletId: string; requestId: string }) => {
-    const preparedInput = preparedInputFor(request.requestId);
-    if (!preparedInput || preparedInput.walletId !== request.walletId) {
-      throw new Error("signer review not found; review.prepare is required");
-    }
-    return await prepareTypedTransferReview(preparedInput);
-  });
+  const getSignerReview = vi.fn(
+    async (request: {
+      walletId: string;
+      requestId: string;
+    }): Promise<WalletProviderJupiterReviewV2> => {
+      const preparedInput = preparedInputFor(request.requestId);
+      if (!preparedInput || preparedInput.walletId !== request.walletId) {
+        throw new Error("signer review not found; review.prepare is required");
+      }
+      return await prepareTypedTransferReview(preparedInput);
+    },
+  );
   const bindingFor = (requestId: string, walletId: string) => {
     const preparedInput = preparedInputFor(requestId) ?? {
       walletId,
@@ -236,37 +245,43 @@ function signerReviewAdapter() {
       expiresAt: "2099-07-16T12:02:00.000Z",
     }),
   );
-  const executeSignerReview = vi.fn(async (request: { walletId: string; requestId: string }) => ({
-    review: {
-      ...(await prepareTypedTransferReview({
-        walletId: request.walletId,
+  const executeSignerReview = vi.fn(
+    async (request: {
+      walletId: string;
+      requestId: string;
+      authorization?: { proof: { proofId: string } };
+    }) => ({
+      review: {
+        ...(await prepareTypedTransferReview({
+          walletId: request.walletId,
+          requestId: request.requestId,
+          destination: "So11111111111111111111111111111111111111112",
+          amount: "500000000",
+        })),
+        state: "signed" as const,
+        signature: "review-signature",
+      },
+      signer: "So11111111111111111111111111111111111111112",
+      operation: {
         requestId: request.requestId,
-        destination: "So11111111111111111111111111111111111111112",
+        walletId: request.walletId,
+        intentType: "solana.nativeTransfer",
+        intentDigest: `sha256:${"a".repeat(64)}`,
+        transactionDigest: `sha256:${"e".repeat(64)}`,
+        policyHash: `sha256:${"b".repeat(64)}`,
+        asset: "solana:native",
         amount: "500000000",
-      })),
-      state: "signed" as const,
-      signature: "review-signature",
-    },
-    signer: "So11111111111111111111111111111111111111112",
-    operation: {
-      requestId: request.requestId,
-      walletId: request.walletId,
-      intentType: "solana.nativeTransfer",
-      intentDigest: `sha256:${"a".repeat(64)}`,
-      transactionDigest: `sha256:${"d".repeat(64)}`,
-      policyHash: `sha256:${"b".repeat(64)}`,
-      asset: "solana:native",
-      amount: "500000000",
-      state: "confirmed" as const,
-      reservationActive: false,
-      usageBucket: "2026-07-16:solana:native",
-      reservedAt: "2026-07-16T12:00:00.000Z",
-      confirmedAt: "2026-07-16T12:00:01.000Z",
-      updatedAt: "2026-07-16T12:00:01.000Z",
-      signature: "review-signature",
-      authorizationProof: "proof-123",
-    },
-  }));
+        state: "confirmed" as const,
+        reservationActive: false,
+        usageBucket: "2026-07-16:solana:native",
+        reservedAt: "2026-07-16T12:00:00.000Z",
+        confirmedAt: "2026-07-16T12:00:01.000Z",
+        updatedAt: "2026-07-16T12:00:01.000Z",
+        signature: "review-signature",
+        authorizationProof: request.authorization?.proof.proofId ?? "proof-123",
+      },
+    }),
+  );
   const sendTx = vi.fn();
   const adapter = {
     id: "local-socket-signer",
@@ -632,6 +647,169 @@ describe("wallet approval-auth HTTP", () => {
     });
   });
 
+  test.each([
+    "no signer-owned WebAuthn credential is enrolled; Gateway enrollment is intentionally unavailable",
+    "signer WebAuthn is not configured by the host administrator",
+  ])(
+    "approves from Control UI when the optional signer passkey is unavailable: %s",
+    async (error) => {
+      await withDefaultSignerWallet(async () => {
+        const signer = signerReviewAdapter();
+        signer.beginSignerReviewAuthorization.mockRejectedValueOnce(new Error(error));
+        vi.spyOn(walletProviderResolver, "createWalletProviderAdapter").mockReturnValue(
+          signer.adapter,
+        );
+        await withTempConfig({
+          cfg: manualSocketSignerCfg,
+          run: async () => {
+            const server = createGatewayHttpServer({
+              canvasHost: null,
+              clients: new Set(),
+              controlUiEnabled: false,
+              controlUiBasePath: "/ui",
+              openAiChatCompletionsEnabled: false,
+              openResponsesEnabled: false,
+              handleHooksRequest: async () => false,
+              resolvedAuth,
+            });
+            const createdResponse = createResponse();
+            await dispatch(
+              server,
+              createRequest({
+                path: "/api/wallet/approvals/create",
+                authorization: "Bearer root-token",
+                body: {
+                  chain: "solana",
+                  to: "So11111111111111111111111111111111111111112",
+                  amount: "0.5",
+                  amountFormat: "human",
+                },
+              }),
+              createdResponse.res,
+            );
+            const createdBody = parseBody(createdResponse.getBody());
+            const approval = (createdBody.request ?? {}) as Record<string, unknown>;
+            const approvalId = typeof approval.id === "string" ? approval.id : "";
+
+            const approveResponse = createResponse();
+            await dispatch(
+              server,
+              createRequest({
+                path: `/api/wallet/approvals/${approvalId}/approve`,
+                authorization: "Bearer root-token",
+                body: {},
+              }),
+              approveResponse.res,
+            );
+
+            expect(approveResponse.res.statusCode, approveResponse.getBody()).toBe(200);
+            expect(parseBody(approveResponse.getBody())).toMatchObject({
+              ok: true,
+              request: { status: "executed" },
+              tx: { txHash: "review-signature" },
+            });
+            expect(signer.executeSignerReview).toHaveBeenCalledWith(
+              expect.objectContaining({
+                walletId: "vault-1",
+                requestId: approvalId,
+                authorization: {
+                  type: "control-ui",
+                  proof: { proofId: "c".repeat(64) },
+                },
+              }),
+            );
+            expect(signer.finishSignerReviewAuthorization).not.toHaveBeenCalled();
+            expect(signer.sendTx).not.toHaveBeenCalled();
+          },
+        });
+      });
+    },
+  );
+
+  test("reconciles an already-confirmed signer review without broadcasting again", async () => {
+    await withDefaultSignerWallet(async () => {
+      const signer = signerReviewAdapter();
+      signer.getSignerReview.mockImplementation(async (request) => ({
+        ...(await signer.prepareTypedTransferReview({
+          walletId: request.walletId,
+          requestId: request.requestId,
+          destination: "So11111111111111111111111111111111111111112",
+          amount: "500000000",
+        })),
+        state: "signed" as const,
+        signature: "review-signature",
+      }));
+      vi.spyOn(walletProviderResolver, "createWalletProviderAdapter").mockReturnValue(
+        signer.adapter,
+      );
+      await withTempConfig({
+        cfg: manualSocketSignerCfg,
+        run: async () => {
+          const server = createGatewayHttpServer({
+            canvasHost: null,
+            clients: new Set(),
+            controlUiEnabled: false,
+            controlUiBasePath: "/ui",
+            openAiChatCompletionsEnabled: false,
+            openResponsesEnabled: false,
+            handleHooksRequest: async () => false,
+            resolvedAuth,
+          });
+          const createdResponse = createResponse();
+          await dispatch(
+            server,
+            createRequest({
+              path: "/api/wallet/approvals/create",
+              authorization: "Bearer root-token",
+              body: {
+                chain: "solana",
+                to: "So11111111111111111111111111111111111111112",
+                amount: "0.5",
+                amountFormat: "human",
+              },
+            }),
+            createdResponse.res,
+          );
+          const approval = (parseBody(createdResponse.getBody()).request ?? {}) as Record<
+            string,
+            unknown
+          >;
+          const approvalId = typeof approval.id === "string" ? approval.id : "";
+          await markWalletSendRequestBroadcastUnknown({
+            requestId: approvalId,
+            txHash: "review-signature",
+            reason: "previous response validation was inconclusive",
+            actor: "control-ui",
+          });
+
+          const approveResponse = createResponse();
+          await dispatch(
+            server,
+            createRequest({
+              path: `/api/wallet/approvals/${approvalId}/approve`,
+              authorization: "Bearer root-token",
+              body: {},
+            }),
+            approveResponse.res,
+          );
+
+          expect(approveResponse.res.statusCode, approveResponse.getBody()).toBe(200);
+          expect(parseBody(approveResponse.getBody())).toMatchObject({
+            ok: true,
+            request: { status: "executed" },
+            tx: { txHash: "review-signature" },
+          });
+          expect(signer.executeSignerReview).toHaveBeenCalledWith({
+            walletId: "vault-1",
+            requestId: approvalId,
+            authorization: undefined,
+          });
+          expect(signer.sendTx).not.toHaveBeenCalled();
+        },
+      });
+    });
+  });
+
   test("completes signer-owned WebAuthn review without Gateway token or custody fallback", async () => {
     await withDefaultSignerWallet(async () => {
       const signer = signerReviewAdapter();
@@ -698,30 +876,6 @@ describe("wallet approval-auth HTTP", () => {
           );
           expect(injectedResponse.res.statusCode).toBe(400);
           expect(injectedResponse.getBody()).toContain("accepts only signerAuthorization");
-
-          signer.beginSignerReviewAuthorization.mockRejectedValueOnce(
-            new Error(
-              "no signer-owned WebAuthn credential is enrolled; from host administration, run 'fased-signerd admin webauthn registration begin --control-socket <signer-control.sock> --label <label>' and complete 'webauthn registration finish' through the same control socket; Gateway enrollment is intentionally unavailable",
-            ),
-          );
-          const unenrolledResponse = createResponse();
-          await dispatch(
-            server,
-            createRequest({
-              path: `/api/wallet/approvals/${approvalId}/approve`,
-              authorization: "Bearer root-token",
-              body: {},
-            }),
-            unenrolledResponse.res,
-          );
-          expect(unenrolledResponse.res.statusCode).toBe(400);
-          expect(unenrolledResponse.getBody()).toContain("wallet_signer_webauthn_not_enrolled");
-          expect(unenrolledResponse.getBody()).toContain(
-            "fased-signerd admin webauthn registration begin",
-          );
-          expect(unenrolledResponse.getBody()).toContain(
-            "Gateway enrollment is intentionally unavailable",
-          );
 
           const beginResponse = createResponse();
           await dispatch(
@@ -821,6 +975,15 @@ describe("wallet approval-auth HTTP", () => {
             },
             wallets: [
               {
+                id: "agent",
+                name: "Agent",
+                providerId: "local-socket-signer",
+                addresses: { solana: "11111111111111111111111111111111" },
+                metadata: { role: "agent" },
+                createdAt: "2026-05-26T00:00:00.000Z",
+                updatedAt: "2026-05-26T00:00:00.000Z",
+              },
+              {
                 id: "vault-1",
                 name: "Vault",
                 providerId: "local-socket-signer",
@@ -875,6 +1038,92 @@ describe("wallet approval-auth HTTP", () => {
           const request = (parsed.request ?? {}) as Record<string, unknown>;
           const payload = (request.payload ?? {}) as Record<string, unknown>;
           expect(payload.to).toBe("So11111111111111111111111111111111111111112");
+        },
+      });
+
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: url.includes("source") ? "devnet-genesis" : "mainnet-genesis",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      });
+      await withTempConfig({
+        cfg: {
+          ...manualSocketSignerCfg,
+          env: {
+            vars: {
+              FASED_WALLET_SOLANA_RPC_URL__AGENT: "https://source.rpc.example",
+              FASED_WALLET_SOLANA_RPC_URL__VAULT_1: "https://destination.rpc.example",
+            },
+          },
+        },
+        run: async () => {
+          const server = createGatewayHttpServer({
+            canvasHost: null,
+            clients: new Set(),
+            controlUiEnabled: false,
+            controlUiBasePath: "/ui",
+            openAiChatCompletionsEnabled: false,
+            openResponsesEnabled: false,
+            handleHooksRequest: async () => false,
+            resolvedAuth,
+          });
+          const response = createResponse();
+          await dispatch(
+            server,
+            createRequest({
+              path: "/api/wallet/approvals/create",
+              authorization: "Bearer root-token",
+              body: {
+                chain: "solana",
+                walletId: "agent",
+                to: "@wallet:vault-1",
+                amount: "1",
+              },
+            }),
+            response.res,
+          );
+          expect(response.res.statusCode, response.getBody()).toBe(400);
+          expect(parseBody(response.getBody())).toMatchObject({
+            ok: false,
+            error: {
+              code: "wallet_network_mismatch",
+              message:
+                "@wallet:agent and @wallet:vault-1 use different Solana networks. Choose wallets on the same network before sending.",
+            },
+          });
+
+          fetchSpy.mockImplementation(
+            async () =>
+              new Response(
+                JSON.stringify({ jsonrpc: "2.0", id: 1, result: "shared-devnet-genesis" }),
+                { status: 200, headers: { "content-type": "application/json" } },
+              ),
+          );
+          const sameNetworkResponse = createResponse();
+          await dispatch(
+            server,
+            createRequest({
+              path: "/api/wallet/approvals/create",
+              authorization: "Bearer root-token",
+              body: {
+                chain: "solana",
+                walletId: "agent",
+                to: "@wallet:vault-1",
+                amount: "1",
+              },
+            }),
+            sameNetworkResponse.res,
+          );
+          expect(parseBody(sameNetworkResponse.getBody())).not.toMatchObject({
+            error: { code: "wallet_network_mismatch" },
+          });
         },
       });
     } finally {

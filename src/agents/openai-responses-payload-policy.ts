@@ -6,7 +6,7 @@ type OpenAIResponsesPayloadModel = {
   id?: unknown;
   provider?: unknown;
   contextWindow?: unknown;
-  compat?: { supportsStore?: boolean };
+  compat?: object;
 };
 
 type OpenAIResponsesPayloadPolicyOptions = {
@@ -90,11 +90,15 @@ export function resolveOpenAIResponsesPayloadPolicy(
   model: OpenAIResponsesPayloadModel,
   options: OpenAIResponsesPayloadPolicyOptions = {},
 ): OpenAIResponsesPayloadPolicy {
+  const compat =
+    model.compat && "supportsStore" in model.compat
+      ? (model.compat as { supportsStore?: boolean })
+      : undefined;
   const capabilities = resolveProviderRequestPolicyConfig({
     provider: typeof model.provider === "string" ? model.provider : undefined,
     api: typeof model.api === "string" ? model.api : undefined,
     baseUrl: typeof model.baseUrl === "string" ? model.baseUrl : undefined,
-    compat: model.compat,
+    compat,
     capability: "llm",
     transport: "stream",
   }).capabilities;
@@ -121,8 +125,7 @@ export function resolveOpenAIResponsesPayloadPolicy(
     shouldStripReasoningPayload: false,
     shouldStripPromptCache:
       options.enablePromptCacheStripping === true && capabilities.shouldStripResponsesPromptCache,
-    shouldStripStore:
-      explicitStore !== true && model.compat?.supportsStore === false && isResponsesApi,
+    shouldStripStore: explicitStore !== true && compat?.supportsStore === false && isResponsesApi,
     useServerCompaction:
       options.enableServerCompaction === true &&
       shouldEnableOpenAIResponsesServerCompaction(

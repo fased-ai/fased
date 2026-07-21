@@ -980,7 +980,7 @@ describe("wallet-send-approvals", () => {
             walletId: "wallet-agent",
             intentType: "solana.nativeTransfer",
             intentDigest: `sha256:${"a".repeat(64)}`,
-            transactionDigest: `sha256:${"d".repeat(64)}`,
+            transactionDigest: `sha256:${"e".repeat(64)}`,
             policyHash: `sha256:${"b".repeat(64)}`,
             asset: "solana:native",
             amount: "1",

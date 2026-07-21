@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   WALLET_PROVIDER_IDS,
   deleteNamedWallet,
+  nextRoleWalletIdentity,
   readWalletProviderRegistry,
   setAgentWalletAssignment,
   replaceRetiredMiningWallet,
@@ -18,6 +19,25 @@ import {
 describe("wallet-provider-registry", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it("allocates stable role wallet identities without asking users for internal IDs", () => {
+    expect(nextRoleWalletIdentity("agent", [])).toEqual({
+      walletName: "Agent",
+      walletId: "agent",
+    });
+    expect(nextRoleWalletIdentity("agent", [{ id: "agent" }, { id: "agent-2" }])).toEqual({
+      walletName: "Agent 3",
+      walletId: "agent-3",
+    });
+    expect(nextRoleWalletIdentity("vault", [{ id: "vault" }])).toEqual({
+      walletName: "Vault 2",
+      walletId: "vault-2",
+    });
+    expect(nextRoleWalletIdentity("mining", [{ id: "mining" }])).toEqual({
+      walletName: "Mining",
+      walletId: "mining",
+    });
   });
 
   it("preserves caller-supplied walletId without making it Agent by default", async () => {

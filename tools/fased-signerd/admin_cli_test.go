@@ -451,6 +451,33 @@ func TestSignerAdminWalletImportLegacySendsOnlyOwnerFilePaths(t *testing.T) {
 	}
 }
 
+func TestSignerAdminWalletImportLegacySupportsRoleBaseline(t *testing.T) {
+	root := t.TempDir()
+	keystorePath := filepath.Join(root, "legacy-wallet.enc")
+	passphrasePath := filepath.Join(root, "legacy-passphrase")
+	server := startSignerAdminTestServer(t, signerAdminTestSuccess(t, `{"wallet":{"walletId":"agent","publicKey":"public"},"policy":{"walletId":"agent","role":"agent","baselineVersion":1}}`))
+	err := runSignerAdminCLI([]string{
+		"wallet", "import-legacy",
+		"--control-socket", server.path,
+		"--wallet-id", "agent",
+		"--baseline-role", "agent",
+		"--keystore-path", keystorePath,
+		"--passphrase-path", passphrasePath,
+	}, strings.NewReader("stdin-must-not-be-read"), io.Discard, nil)
+	if err != nil {
+		t.Fatalf("run signer admin legacy baseline import: %v", err)
+	}
+	req := waitSignerAdminTestServer(t, server)
+	var body signerWalletLegacyImportRequestV2
+	decodeSignerAdminTestBody(t, req, &body)
+	if body.Baseline == nil || body.Baseline.Version != 1 || body.Baseline.Role != "agent" {
+		t.Fatalf("legacy baseline import omitted exact role baseline: %#v", body)
+	}
+	if body.Policy.Role != "" || len(body.Policy.Operations) != 0 {
+		t.Fatalf("legacy baseline import also sent an arbitrary policy: %#v", body.Policy)
+	}
+}
+
 func TestSignerAdminPolicyGetPutAndWalletReencrypt(t *testing.T) {
 	policyPath := writeSignerAdminTestJSON(t, "policy.json", signerPolicyV2{
 		WalletID:   "agent",

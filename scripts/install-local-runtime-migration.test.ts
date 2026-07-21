@@ -41,6 +41,11 @@ describe("Local and WSL managed runtime migration", () => {
     expect(installer).toContain("--rollback");
   });
 
+  it("allows source-checkout identity only for an explicit source install", () => {
+    expect(installer).toContain("if ! use_prebuilt_release_runtime; then");
+    expect(installer).toContain("verify_args+=(--allow-source-checkout true)");
+  });
+
   it("installs the repaired CLI without touching a pre-v2 wallet so native migration can run", () => {
     expect(installer).toContain("local_legacy_signer_material_detected");
     expect(installer).toContain("Pre-v2 Local wallet detected");

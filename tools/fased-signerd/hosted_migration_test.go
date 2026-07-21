@@ -29,7 +29,7 @@ func validHostedMigrationPolicyV1(t *testing.T) []byte {
 				ExpectedPublicKey: "11111111111111111111111111111111",
 				KeystorePath:      "/home/app/.fased/wallet/keystore-agent.v1.enc",
 				PassphrasePath:    "/home/app/.fased/wallet/passphrase",
-				Policy: hostedMigrationPolicyInputV1{
+				Policy: &hostedMigrationPolicyInputV1{
 					Role:       "agent",
 					Operations: []string{"agentSendNativeSol"},
 					Programs:   []string{"11111111111111111111111111111111"},
@@ -96,6 +96,45 @@ func TestParseHostedMigrationPolicyV1RequiresExactExplicitPolicy(t *testing.T) {
 	raw, _ = json.Marshal(input)
 	if _, err := parseHostedMigrationPolicyV1(raw); err == nil || !strings.Contains(err.Error(), "duplicates") {
 		t.Fatalf("expected duplicate destination rejection, got %v", err)
+	}
+}
+
+func TestParseHostedMigrationPolicyV1CompilesAutomaticRoleBaselines(t *testing.T) {
+	input := hostedMigrationPolicyFileV1{
+		SchemaVersion: hostedMigrationSchemaVersionV1,
+		Wallets: []hostedMigrationWalletInputV1{
+			{
+				WalletID:          "agent_2",
+				ExpectedPublicKey: "11111111111111111111111111111111",
+				KeystorePath:      "/home/app/.fased/wallet/keystore-solana-agent-2.v1.enc",
+				PassphrasePath:    "/home/app/.fased/wallet/.migration-passphrase-agent_2",
+				BaselineRole:      "agent",
+				PrimaryRPCURL:     "https://rpc.example.test",
+			},
+		},
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallets, err := parseHostedMigrationPolicyV1(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wallets) != 1 || wallets[0].Baseline == nil || wallets[0].Policy.BaselineVersion != 1 || wallets[0].Policy.Role != "agent" || wallets[0].PrimaryRPCURL != "https://rpc.example.test" {
+		t.Fatalf("automatic role baseline was not compiled exactly: %#v", wallets)
+	}
+
+	input.Wallets[0].WalletID = "mining"
+	input.Wallets[0].BaselineRole = "mining"
+	raw, _ = json.Marshal(input)
+	wallets, err = parseHostedMigrationPolicyV1(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wallets[0].Baseline == nil || wallets[0].Policy.Role != "mining" || wallets[0].Policy.BaselineVersion != 1 ||
+		wallets[0].Policy.TypedSATPrograms || len(wallets[0].Policy.Operations) == 0 {
+		t.Fatalf("pre-launch Mining migration must receive its reviewed-use baseline: %#v", wallets[0])
 	}
 }
 
@@ -295,7 +334,7 @@ func TestEnsureHostedMigrationImportDirectoryV1RejectsSymlinkBeforeMutation(t *t
 	}
 }
 
-func TestQuarantineHostedMigrationFileV1IsLockedDurableAndResumable(t *testing.T) {
+func TestQuarantineHostedMigrationFileV1ConsumesCommittedLegacyMaterialIdempotently(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("descriptor-based hosted migration quarantine is Linux-only")
 	}
@@ -315,13 +354,8 @@ func TestQuarantineHostedMigrationFileV1IsLockedDurableAndResumable(t *testing.T
 	if _, err := os.Lstat(source); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("legacy source still exists: %v", err)
 	}
-	info, err := os.Lstat(destination)
-	if err != nil {
-		t.Fatal(err)
-	}
-	links, _ := hostedMigrationLinkCountV1(info)
-	if info.Mode().Perm() != 0 || links != 1 || info.Size() != int64(len("encrypted-secret")) {
-		t.Fatalf("unexpected quarantine metadata: mode=%04o links=%d size=%d", info.Mode().Perm(), links, info.Size())
+	if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("committed transaction copy still exists: %v", err)
 	}
 	if resumed, err := quarantineHostedMigrationFileV1(source, []string{root}, map[uint32]bool{owner.UID: true}, owner, 64<<10); err != nil || resumed != destination {
 		t.Fatalf("resume completed quarantine: destination=%q err=%v", resumed, err)
@@ -351,13 +385,8 @@ func TestQuarantineHostedMigrationFileV1CompletesInterruptedTwoLinkState(t *test
 	if _, err := os.Lstat(source); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("source link was not removed: %v", err)
 	}
-	info, err := os.Lstat(destination)
-	if err != nil {
-		t.Fatal(err)
-	}
-	links, _ := hostedMigrationLinkCountV1(info)
-	if links != 1 {
-		t.Fatalf("quarantine should have one link after resume, got %d", links)
+	if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("interrupted transaction copy still exists after resume: %v", err)
 	}
 }
 

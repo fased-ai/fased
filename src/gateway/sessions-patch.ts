@@ -347,6 +347,15 @@ export async function applySessionsPatchToStore(params: {
   }
 
   if (next.thinkingLevel) {
+    const normalizedThinkingLevel = normalizeThinkLevel(next.thinkingLevel);
+    if (!normalizedThinkingLevel) {
+      delete next.thinkingLevel;
+    } else {
+      next.thinkingLevel = normalizedThinkingLevel;
+    }
+  }
+
+  if (next.thinkingLevel) {
     const effectiveProvider = next.providerOverride ?? resolvedDefault.provider;
     const effectiveModel = next.modelOverride ?? resolvedDefault.model;
     const catalog = params.loadGatewayModelCatalog ? await loadGatewayModelCatalog() : [];
@@ -368,7 +377,7 @@ export async function applySessionsPatchToStore(params: {
         return invalid(`thinkingLevel is not supported for ${effectiveProvider}/${effectiveModel}`);
       }
       delete next.thinkingLevel;
-    } else if (!capability.thinkingLevels.includes(next.thinkingLevel)) {
+    } else if (!capability.thinkingLevels.some((level) => level === next.thinkingLevel)) {
       if ("thinkingLevel" in patch) {
         return invalid(
           `invalid thinkingLevel for ${effectiveProvider}/${effectiveModel} (use ${capability.thinkingLevels.join("|")})`,

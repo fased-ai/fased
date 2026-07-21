@@ -118,10 +118,10 @@ export function describeOperatorReadinessChecklist(
             }
           : {
               title: "Wallet Control Passkey ready",
-              summary: "Session-based control path",
+              summary: "Optional, not enrolled",
               detail:
-                "Control operations currently rely on the signed-in session. Add Wallet Control Passkey before enabling wallet security.",
-              tone: "warn" as const,
+                "Wallet approvals work from the signed-in Control UI. Enroll a passkey only if you want an additional approval step.",
+              tone: "neutral" as const,
             }
       : {
           title: "Wallet Control Passkey ready",

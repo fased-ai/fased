@@ -61,7 +61,7 @@ export function createMoonshotThinkingWrapper(
             }
           }
         }
-        return options?.onPayload?.(payload);
+        return options?.onPayload?.(payload, model);
       },
     });
 }

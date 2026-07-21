@@ -193,8 +193,8 @@ describe("collectWalletSignerDoctorReport", () => {
         },
         wallets: [
           {
-            id: "mining",
-            name: "Mining",
+            id: "agent-2",
+            name: "Agent 2",
             providerId: "local-socket-signer",
             addresses: { solana: "So11111111111111111111111111111111111111112" },
             createdAt: "2026-07-16T00:00:00.000Z",
@@ -202,7 +202,7 @@ describe("collectWalletSignerDoctorReport", () => {
           },
         ],
         assignments: {},
-        defaultWalletId: "mining",
+        defaultWalletId: "agent-2",
         updatedAt: "2026-07-16T00:00:00.000Z",
       }),
       "utf8",
@@ -230,7 +230,7 @@ describe("collectWalletSignerDoctorReport", () => {
                 ready: true,
                 wallets: [
                   {
-                    walletId: "mining",
+                    walletId: "agent_2",
                     configured: true,
                     version: 7,
                     hash: `hmac-sha256:${"a".repeat(64)}`,
@@ -289,7 +289,7 @@ describe("collectWalletSignerDoctorReport", () => {
           FASED_STATE_DIR: stateDir,
           FASED_WALLET_LOCAL_SIGNER_LIFECYCLE: "external",
           FASED_WALLET_LOCAL_SIGNER_SOCKET: socketPath,
-          FASED_WALLET_SOLANA_RPC_URL__MINING:
+          FASED_WALLET_SOLANA_RPC_URL__AGENT_2:
             "https://gateway-rpc-must-not-control-readiness.invalid",
         } as NodeJS.ProcessEnv,
         {
@@ -308,7 +308,7 @@ describe("collectWalletSignerDoctorReport", () => {
         detail: "signer-owned network ready",
       });
       expect(
-        report.checks.find((check) => check.check === "rpc.configured.solana.mining"),
+        report.checks.find((check) => check.check === "rpc.configured.solana.agent-2"),
       ).toMatchObject({
         ok: true,
         detail: "signer-owned network ready (version=7)",

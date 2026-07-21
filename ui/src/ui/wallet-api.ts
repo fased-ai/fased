@@ -48,6 +48,7 @@ export type WalletStatus = {
         operationLane:
           | "blocked"
           | "agent-reviewed-and-autonomous"
+          | "mining-reviewed-only"
           | "mining-typed-sat"
           | "vault-reviewed-only";
         ready: boolean;
@@ -510,6 +511,7 @@ export type WalletNamedWallet = {
   addresses?: { solana?: string };
   metadata?: Record<string, unknown>;
   balances?: { solana?: string };
+  rpc?: { configured: boolean; maskedUrl?: string };
   readiness?: {
     keystore: boolean;
     rpc: boolean;
@@ -1264,8 +1266,27 @@ export async function getWalletNamedWallets(): Promise<WalletNamedWalletsRespons
   });
 }
 
+export async function getWalletRpc(
+  walletId: string,
+  approvalToken?: string,
+): Promise<{ ok: true; walletId: string; rpcUrl: string; maskedUrl?: string }> {
+  const search = new URLSearchParams({ walletId: walletId.trim() });
+  return await fetchJson<{ ok: true; walletId: string; rpcUrl: string; maskedUrl?: string }>(
+    `/api/wallet/rpc?${search.toString()}`,
+    {
+      method: "GET",
+      cache: "no-store",
+      credentials: "include",
+      headers:
+        approvalToken && approvalToken.trim()
+          ? { "x-wallet-approval-token": approvalToken.trim() }
+          : undefined,
+    },
+  );
+}
+
 export async function createWalletNamedWallet(input: {
-  name: string;
+  name?: string;
   walletId?: string;
   providerId?: WalletProviderId;
   role?: "agent" | "mining" | "vault";

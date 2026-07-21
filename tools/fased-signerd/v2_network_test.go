@@ -78,6 +78,58 @@ func TestSignerApplicationNetworkBrokerIsOneRPCRoleBoundAndGenesisPinned(t *test
 	}
 }
 
+func TestSignerMigratedNetworkRepairRequiresExactFencesAndRepinsOnceRequested(t *testing.T) {
+	_, keys := openTestSignerV2(t)
+	wallet, _, err := keys.CreateWithRoleBaseline(
+		"legacy_agent",
+		0,
+		signerRoleBaselineRequestV1{Version: signerRoleBaselineVersionV1, Role: "agent"},
+		signerRoleBaselineRuntimeV1{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldGenesis := solana.NewWallet().PublicKey().String()
+	newGenesis := solana.NewWallet().PublicKey().String()
+	keys.genesisHash = func(endpoint string) (string, error) {
+		if strings.Contains(endpoint, "new.example") {
+			return newGenesis, nil
+		}
+		return oldGenesis, nil
+	}
+	initial, err := keys.PutApplicationNetworkV2("legacy_agent", signerNetworkPutRequestV2{
+		ExpectedVersion: signerUint64PointerV2(0), PrimaryRPCURL: "https://old.example/rpc",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := signerMigratedNetworkRepairRequestV1{
+		ExpectedVersion: initial.Version, ExpectedHash: initial.Hash, ExpectedPublicKey: wallet.PublicKey,
+		MigrationSource: "embedded-keystore", PrimaryRPCURL: "https://new.example/rpc",
+	}
+	bad := request
+	bad.ExpectedPublicKey = solana.NewWallet().PublicKey().String()
+	if _, err := keys.RepairMigratedPrimaryNetworkV1("legacy_agent", bad); err == nil || !strings.Contains(err.Error(), "public key mismatch") {
+		t.Fatalf("repair accepted the wrong wallet fence: %v", err)
+	}
+	unchanged, err := keys.NetworkStoredSummaryV2("legacy_agent")
+	if err != nil || unchanged.Version != initial.Version || unchanged.Hash != initial.Hash {
+		t.Fatalf("rejected repair mutated network state: summary=%#v err=%v", unchanged, err)
+	}
+	repaired, err := keys.RepairMigratedPrimaryNetworkV1("legacy_agent", request)
+	if err != nil || !repaired.Ready || repaired.Version != initial.Version+1 || repaired.Hash == initial.Hash {
+		t.Fatalf("exact migrated repair failed: summary=%#v err=%v", repaired, err)
+	}
+	if _, err := keys.RepairMigratedPrimaryNetworkV1("legacy_agent", request); err == nil || !strings.Contains(err.Error(), "state changed") {
+		t.Fatalf("stale migrated repair was accepted: %v", err)
+	}
+	if _, err := keys.PutApplicationNetworkV2("legacy_agent", signerNetworkPutRequestV2{
+		ExpectedVersion: signerUint64PointerV2(repaired.Version), PrimaryRPCURL: "https://old.example/rpc",
+	}); err == nil || !strings.Contains(err.Error(), "pinned genesis") {
+		t.Fatalf("ordinary application edit changed the repaired genesis: %v", err)
+	}
+}
+
 func encryptLegacySignerNetworkRecordForTestV2(t *testing.T, keys *signerKeyManagerV2, walletID string, version uint64, config signerLegacyNetworkSecretV2) signerNetworkRecordV2 {
 	t.Helper()
 	hash, err := signerNetworkPayloadHashV2(keys.masterKey, walletID, config)

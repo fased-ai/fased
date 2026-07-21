@@ -95,7 +95,7 @@ describe("applyExtraParamsToAgent", () => {
   it("forces store=true for direct OpenAI Responses payloads", () => {
     const payload = { store: false };
     const baseStreamFn: StreamFn = (_model, _context, options) => {
-      options?.onPayload?.(payload);
+      options?.onPayload?.(payload, model);
       return createAssistantMessageEventStream();
     };
     const agent = { streamFn: baseStreamFn };
@@ -118,7 +118,7 @@ describe("applyExtraParamsToAgent", () => {
   it("does not force store for OpenAI Responses routed through non-OpenAI base URLs", () => {
     const payload = { store: false };
     const baseStreamFn: StreamFn = (_model, _context, options) => {
-      options?.onPayload?.(payload);
+      options?.onPayload?.(payload, model);
       return createAssistantMessageEventStream();
     };
     const agent = { streamFn: baseStreamFn };
@@ -141,7 +141,7 @@ describe("applyExtraParamsToAgent", () => {
   it("does not force store=true for Codex responses (Codex requires store=false)", () => {
     const payload = { store: false };
     const baseStreamFn: StreamFn = (_model, _context, options) => {
-      options?.onPayload?.(payload);
+      options?.onPayload?.(payload, model);
       return createAssistantMessageEventStream();
     };
     const agent = { streamFn: baseStreamFn };

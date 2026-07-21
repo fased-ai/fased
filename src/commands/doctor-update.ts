@@ -2,6 +2,7 @@ import { formatCliCommand } from "../cli/command-format.js";
 import type { FasedAgentConfig } from "../config/config.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import { runGatewayUpdate } from "../infra/update-runner.js";
+import { updateCompletedRecently } from "../infra/update-success-marker.js";
 import { repairUpdateOwnedPluginInstallState } from "../plugins/installs.js";
 import { runCommandWithTimeout } from "../process/exec.js";
 import type { RuntimeEnv } from "../runtime.js";
@@ -78,8 +79,10 @@ export async function maybeOfferUpdateBeforeDoctor(params: {
   outro: (message: string) => void;
 }) {
   const updateInProgress = isTruthyEnvValue(process.env.FASED_UPDATE_IN_PROGRESS);
+  const updateJustCompleted = updateCompletedRecently(process.env);
   const canOfferUpdate =
     !updateInProgress &&
+    !updateJustCompleted &&
     params.options.nonInteractive !== true &&
     params.options.yes !== true &&
     params.options.repair !== true &&

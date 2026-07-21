@@ -279,6 +279,21 @@ export async function isLocalSourceSignerConfigured(
       return true;
     }
   }
+  const walletDir = path.join(stateDir, "wallet");
+  const legacyMaterial = await fs
+    .readdir(walletDir, { withFileTypes: true })
+    .then((entries) =>
+      entries.some(
+        (entry) =>
+          entry.isFile() &&
+          (entry.name === "wallet-keys.json" ||
+            /^keystore-(?:solana|evm)(?:-[A-Za-z0-9_-]+)?\.v1\.enc$/u.test(entry.name)),
+      ),
+    )
+    .catch(() => false);
+  if (legacyMaterial) {
+    return true;
+  }
   try {
     const registry = JSON.parse(
       await fs.readFile(path.join(stateDir, "wallet", "provider-registry.v1.json"), "utf8"),

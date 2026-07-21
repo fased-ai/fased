@@ -231,13 +231,14 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       return { cancel: true };
     }
 
-    const apiKey = await ctx.modelRegistry.getApiKey(model);
-    if (!apiKey) {
+    const requestAuth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+    if (!requestAuth.ok || !requestAuth.apiKey) {
       console.warn(
         "Compaction safeguard: no API key available; cancelling compaction to preserve history.",
       );
       return { cancel: true };
     }
+    const apiKey = requestAuth.apiKey;
 
     try {
       const modelContextWindow = resolveContextWindowTokens(model);

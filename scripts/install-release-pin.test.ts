@@ -35,6 +35,29 @@ describe("managed installer release pinning", () => {
     expect(installer).toContain('hosting_release="$latest_local_tag"');
   });
 
+  it("defaults a normal checkout install to the Local managed runtime profile", () => {
+    const start = installer.indexOf("resolved_host_profile() {");
+    const end = installer.indexOf("\n}\n", start);
+    const resolver = installer.slice(start, end);
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    expect(resolver).toContain('if [[ -z "$profile" ]]');
+    expect(resolver).toContain('profile="local"');
+  });
+
+  it("installs a dirty local checkout from source instead of replacing it with the published runtime", () => {
+    expect(installer).toContain(
+      'git -C "$FASED_DIR" status --porcelain=v1 --untracked-files=normal',
+    );
+    expect(installer).toContain(
+      "local checkout has changes; building and installing this checkout",
+    );
+    expect(installer).toContain("DIRTY_CHECKOUT_SOURCE_AUTO_SELECTED=1");
+    expect(installer).toContain('if [[ "$DIRTY_CHECKOUT_SOURCE_AUTO_SELECTED" -ne 1 ]]');
+    expect(installer).toContain("SOURCE_INSTALL_REQUESTED=1");
+  });
+
   it("binds an exact Local repair checkout to the attested unified manifest commit", () => {
     expect(installer).toContain('local_bootstrap_release="${hosting_release#v}"');
     expect(installer).toContain("fased-hosted-release-v2.json.attestation.json");
@@ -46,6 +69,8 @@ describe("managed installer release pinning", () => {
     expect(installer).toContain(
       'git -C "$install_base_dir" checkout --detach "$local_bootstrap_commit"',
     );
+    expect(installer).toContain('fetched_release_commit=""');
+    expect(installer).not.toContain('local fetched_release_commit=""');
   });
 
   it("installs GitHub CLI attestation support before a macOS signer transaction", () => {

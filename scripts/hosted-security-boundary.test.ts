@@ -238,7 +238,10 @@ describe("hosted signer security boundary", () => {
       expect(phase).not.toContain("FASED_DEFER_LEGACY_QUARANTINE");
     }
     expect(prepare).toContain("--phase prepare");
+    expect(prepare).toContain("hosted-legacy-wallet-migration.mjs prepare");
+    expect(prepare).toContain("hosted-legacy-wallet-migration.mjs activate");
     expect(commit).toContain("--phase commit");
+    expect(commit).toContain("hosted-legacy-wallet-migration.mjs commit");
     expect(commit).toContain('[[ "${#legacy_keystores[@]}" -gt 0 || -f "$marker_file" ]]');
   });
 });

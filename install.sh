@@ -692,7 +692,7 @@ if [[ "$install_entry_is_stream" -eq 1 || \
   if [[ -n "$local_bootstrap_release" ]]; then
     git -C "$install_base_dir" fetch --force origin \
       "refs/tags/v${local_bootstrap_release}:refs/fased-installer/v${local_bootstrap_release}"
-    local fetched_release_commit=""
+    fetched_release_commit=""
     fetched_release_commit="$(git -C "$install_base_dir" rev-parse "refs/fased-installer/v${local_bootstrap_release}^{commit}")"
     if [[ "$fetched_release_commit" != "$local_bootstrap_commit" ]]; then
       echo "Release tag commit does not match the attested unified release manifest." >&2
@@ -768,6 +768,7 @@ HOSTING_REQUESTED=0
 HOSTING_REPAIR_REQUESTED=0
 LOCAL_REPAIR_REQUESTED=0
 SOURCE_INSTALL_REQUESTED=0
+DIRTY_CHECKOUT_SOURCE_AUTO_SELECTED=0
 HOSTING_RELEASE=""
 VERIFIED_HOSTING_BUNDLE=""
 TAILSCALE_AUTHKEY_FILE=""
@@ -794,7 +795,12 @@ rollback_pending_host_signer_transaction_on_exit() {
       echo "Hosted health passed; completing the durable signer commit decision..." >&2
       if node /usr/local/libexec/fased-host-updaterctl.mjs \
         "$HOST_SIGNER_TRANSACTION_VERSION" --commit-only >/dev/null; then
-        HOST_SIGNER_TRANSACTION_ACTIVE=0
+        if finalize_legacy_hosted_signer_migration; then
+          HOST_SIGNER_TRANSACTION_ACTIVE=0
+        else
+          echo "Hosted signer committed, but legacy-wallet commit cleanup remains pending." >&2
+          status=1
+        fi
       else
         echo "Signer commit cleanup remains pending. Rerun the exact tagged repair from the provider root console; never run an app-owned checkout as root." >&2
         status=1
@@ -806,6 +812,7 @@ rollback_pending_host_signer_transaction_on_exit() {
         echo "Signer rollback remains pending. Rerun the exact tagged repair from the provider root console; never run an app-owned checkout as root." >&2
         status=1
       fi
+      node /usr/local/libexec/hosted-legacy-wallet-migration.mjs rollback >/dev/null 2>&1 || status=1
       local target_user="${FASED_INSTALL_USER:-app}"
       local target_home
       target_home="$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6)"
@@ -994,7 +1001,8 @@ Options:
   --local         Laptop/desktop profile. Tailscale is optional; on a VPS this does
                   not apply hosting SSH/firewall hardening.
   --source-install  Build from the checkout instead of using the verified Linux
-                  release runtime. Intended for contributors and source testing.
+                  release runtime. Intended for contributors and source testing;
+                  a checkout with local changes selects this automatically.
   --swap-gb <n>   Override automatic install-time swap size on small Linux hosts
   --no-git-update  Do not fast-forward the checkout from origin before install
   --no-onboard     Skip running onboard (install deps only)
@@ -1121,6 +1129,15 @@ for ((i = 0; i < ${#pass_args[@]}; i++)); do
     break
   fi
 done
+
+if [[ "$SOURCE_INSTALL_REQUESTED" -eq 0 && "$HOSTING_REQUESTED" -eq 0 && \
+  -z "$HOSTING_RELEASE" && "$install_entry_is_stream" -eq 0 && \
+  -d "$FASED_DIR/.git" ]] && \
+  [[ -n "$(git -C "$FASED_DIR" status --porcelain=v1 --untracked-files=normal 2>/dev/null || true)" ]]; then
+  SOURCE_INSTALL_REQUESTED=1
+  DIRTY_CHECKOUT_SOURCE_AUTO_SELECTED=1
+  echo "== Installer: local checkout has changes; building and installing this checkout =="
+fi
 
 is_windows_posix_shell() {
   case "$(uname -s 2>/dev/null || true)" in
@@ -1871,7 +1888,9 @@ refresh_checkout_from_origin() {
   fi
 
   if ! git -C "$repo_dir" diff --quiet --ignore-submodules -- || ! git -C "$repo_dir" diff --cached --quiet --ignore-submodules --; then
-    echo "== $label: local checkout has changes, skipping git update =="
+    if [[ "$DIRTY_CHECKOUT_SOURCE_AUTO_SELECTED" -ne 1 ]]; then
+      echo "== $label: local checkout has changes, skipping git update =="
+    fi
     return 0
   fi
 
@@ -2140,6 +2159,9 @@ resolved_host_profile() {
 
   local profile
   profile="$(pass_args_value_after "--host-profile" || true)"
+  if [[ -z "$profile" ]]; then
+    profile="local"
+  fi
   printf '%s\n' "$profile"
 }
 
@@ -2390,15 +2412,20 @@ refresh_existing_local_gateway_service_after_install() {
 
 verify_gateway_runtime_identity_after_install() {
   local expected_version=""
+  local -a verify_args=()
   expected_version="$("$FASED_CLI_PATH" --version 2>/dev/null | head -n 1 | tr -d '\r')"
   if [[ -z "$expected_version" ]]; then
     echo "Could not read the installed Fased CLI version." >&2
     return 1
   fi
 
+  if ! use_prebuilt_release_runtime; then
+    verify_args+=(--allow-source-checkout true)
+  fi
   node "$FASED_DIR/scripts/verify-gateway-runtime-identity.mjs" \
     --expected-version "$expected_version" \
-    --config "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}"
+    --config "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}" \
+    "${verify_args[@]}"
 }
 
 local_signer_transaction_script() {
@@ -3197,8 +3224,9 @@ reexec_as_app_user() {
     if [[ "$child_status" -eq 0 ]]; then
       if node /usr/local/libexec/fased-host-updaterctl.mjs \
         "$HOST_SIGNER_TRANSACTION_VERSION" --commit-only >/dev/null; then
-        HOST_SIGNER_TRANSACTION_ACTIVE=0
-        if ! finalize_legacy_hosted_signer_migration; then
+        if finalize_legacy_hosted_signer_migration; then
+          HOST_SIGNER_TRANSACTION_ACTIVE=0
+        else
           echo "Hosted release committed, but legacy custody cleanup is incomplete; rerun the exact tagged repair from the provider root console." >&2
           child_status=1
         fi
@@ -3220,6 +3248,7 @@ reexec_as_app_user() {
         "$HOST_SIGNER_TRANSACTION_VERSION" --rollback-only >/dev/null; then
         HOST_SIGNER_TRANSACTION_ACTIVE=0
       fi
+      node /usr/local/libexec/hosted-legacy-wallet-migration.mjs rollback >/dev/null 2>&1 || true
     else
       echo "Hosted health passed; leaving the target app and signer active for forward recovery." >&2
     fi
@@ -4451,6 +4480,7 @@ install_host_signer_and_updater_services() {
   install -d -m 0755 -o root -g root /opt/fased/signer
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-host-updater.mjs" /usr/local/libexec/fased-host-updater.mjs
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-host-updaterctl.mjs" /usr/local/libexec/fased-host-updaterctl.mjs
+  install -m 0755 -o root -g root "$FASED_DIR/scripts/hosted-legacy-wallet-migration.mjs" /usr/local/libexec/hosted-legacy-wallet-migration.mjs
   rm -f /usr/local/libexec/fased-host-bootstrapd.mjs /usr/local/libexec/fased-host-bootstrapctl.mjs
   rm -f /usr/local/sbin/fased-signer-wallet-import
   rm -rf /run/fased-host-bootstrap
@@ -4652,15 +4682,10 @@ migrate_legacy_hosted_signer_if_needed() {
   legacy_keystores+=("${signer_home}/.fased/wallet"/keystore-*.enc)
   shopt -u nullglob
   if [[ "${#legacy_keystores[@]}" -gt 0 || -f "$marker_file" ]]; then
-    if [[ ! -f "$policy_file" ]]; then
-      echo "A previous hosted wallet requires a fail-closed signer-v2 migration." >&2
-      echo "Create root-owned ${policy_file} (mode 0600) with each expected wallet address and explicit policy, then rerun:" >&2
-      echo "Use the verified release-asset repair procedure at:" >&2
-      echo "  https://docs.fased.ai/install/vps#advanced-verify-the-bootstrap-first" >&2
-      echo "After verifying the tagged install.sh attestation, run the verified file with --repair-hosting --release v${HOSTING_RELEASE}." >&2
-      echo "Legacy key files were not changed." >&2
-      exit 1
-    fi
+    node /usr/local/libexec/hosted-legacy-wallet-migration.mjs prepare \
+      --app-home "$target_home" \
+      --legacy-signer-home "$signer_home" \
+      --policy-file "$policy_file" >/dev/null
     /opt/fased/signer/fased-signerd admin migration hosted-v1 \
       --phase prepare \
       --control-socket /run/fased-signerd/control.sock \
@@ -4669,6 +4694,7 @@ migrate_legacy_hosted_signer_if_needed() {
       --legacy-signer-home "$signer_home" \
       --state-dir /var/lib/fased-signerd \
       --marker-file "$marker_file"
+    node /usr/local/libexec/hosted-legacy-wallet-migration.mjs activate >/dev/null
   fi
 }
 
@@ -4688,10 +4714,7 @@ finalize_legacy_hosted_signer_migration() {
   legacy_keystores+=("${signer_home}/.fased/wallet"/keystore-*.enc)
   shopt -u nullglob
   if [[ "${#legacy_keystores[@]}" -gt 0 || -f "$marker_file" ]]; then
-    [[ -f "$policy_file" ]] || {
-      echo "Signer migration policy disappeared before commit; refusing cleanup." >&2
-      return 1
-    }
+    [[ -f "$policy_file" ]] || return 1
     /opt/fased/signer/fased-signerd admin migration hosted-v1 \
       --phase commit \
       --control-socket /run/fased-signerd/control.sock \
@@ -4701,6 +4724,7 @@ finalize_legacy_hosted_signer_migration() {
       --state-dir /var/lib/fased-signerd \
       --marker-file "$marker_file"
   fi
+  node /usr/local/libexec/hosted-legacy-wallet-migration.mjs commit >/dev/null
 
   if need_cmd pkill; then
     pkill -u "$signer_user" -f "${signer_home}/.fased/bin/fased-signerd" >/dev/null 2>&1 || true
@@ -4803,6 +4827,7 @@ assert_verified_hosting_root_source() {
     install.sh \
     scripts/fased-host-updater.mjs \
     scripts/fased-host-updaterctl.mjs \
+    scripts/hosted-legacy-wallet-migration.mjs \
     scripts/fased-signer-enroll-hosting.sh \
     scripts/fased-signer-network-hosting.sh \
     scripts/fased-signer-policy-hosting.sh; do

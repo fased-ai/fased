@@ -199,6 +199,10 @@ function sameOptionalSignerValue(left: string | undefined, right: string | undef
   return (left?.trim() || undefined) === (right?.trim() || undefined);
 }
 
+function isSha256Digest(value: string | undefined): boolean {
+  return /^sha256:[a-f0-9]{64}$/u.test(value?.trim() ?? "");
+}
+
 function sameSignerSemanticIntent(
   left: WalletProviderSignerIntentV2 | undefined,
   right: WalletProviderSignerIntentV2,
@@ -2771,11 +2775,11 @@ export async function approveWalletSendRequest(params: {
         executed.operation.policyHash !== request.payload.signerPolicyHash?.trim() ||
         executed.operation.asset !== request.payload.signerAsset?.trim() ||
         executed.operation.amount !== request.payload.signerAmount?.trim() ||
-        !sameOptionalSignerValue(
-          executed.operation.transactionDigest,
-          request.payload.signerTransactionDigest,
-        ) ||
         !sameOptionalSignerValue(executed.signer, request.payload.signerWalletPublicKey) ||
+        (executed.review.artifactKind === "solana-transaction" &&
+          (!executed.review.signature?.trim() ||
+            executed.review.signature !== executed.operation.signature ||
+            !isSha256Digest(executed.operation.transactionDigest))) ||
         (executed.review.artifactKind === "domain-separated-message" &&
           executed.signatureBase64 !== executed.operation.signature) ||
         (executionAuthorization &&

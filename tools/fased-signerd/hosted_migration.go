@@ -41,11 +41,13 @@ type hostedMigrationPolicyAssetV1 struct {
 }
 
 type hostedMigrationWalletInputV1 struct {
-	WalletID          string                       `json:"walletId"`
-	ExpectedPublicKey string                       `json:"expectedPublicKey"`
-	KeystorePath      string                       `json:"keystorePath"`
-	PassphrasePath    string                       `json:"passphrasePath"`
-	Policy            hostedMigrationPolicyInputV1 `json:"policy"`
+	WalletID          string                        `json:"walletId"`
+	ExpectedPublicKey string                        `json:"expectedPublicKey"`
+	KeystorePath      string                        `json:"keystorePath"`
+	PassphrasePath    string                        `json:"passphrasePath"`
+	Policy            *hostedMigrationPolicyInputV1 `json:"policy,omitempty"`
+	BaselineRole      string                        `json:"baselineRole,omitempty"`
+	PrimaryRPCURL     string                        `json:"primaryRpcUrl,omitempty"`
 }
 
 type hostedMigrationPolicyFileV1 struct {
@@ -59,6 +61,8 @@ type hostedMigrationWalletV1 struct {
 	KeystorePath      string
 	PassphrasePath    string
 	Policy            signerPolicyV2
+	Baseline          *signerRoleBaselineRequestV1
+	PrimaryRPCURL     string
 }
 
 type hostedMigrationMarkerV1 struct {
@@ -210,6 +214,7 @@ func runHostedSignerMigrationV1(cfg hostedMigrationConfigV1, stdout io.Writer) e
 	}
 
 	verified := make([]signerWalletPolicyResultV2, 0, len(wallets))
+	networkConfigured := make([]bool, 0, len(wallets))
 	for _, wallet := range wallets {
 		result, exists, err := readAndVerifyHostedMigrationWalletV1(cfg.ControlSocket, wallet)
 		if err != nil {
@@ -231,6 +236,11 @@ func runHostedSignerMigrationV1(cfg hostedMigrationConfigV1, stdout io.Writer) e
 			}
 		}
 		verified = append(verified, result)
+		configured, err := configureHostedMigrationNetworkV1(cfg.ControlSocket, wallet)
+		if err != nil {
+			return err
+		}
+		networkConfigured = append(networkConfigured, configured)
 	}
 	if err := verifyHostedMigrationHealthV1(cfg.ControlSocket, verified); err != nil {
 		return err
@@ -248,10 +258,11 @@ func runHostedSignerMigrationV1(cfg hostedMigrationConfigV1, stdout io.Writer) e
 		for index, wallet := range wallets {
 			if _, err := fmt.Fprintf(
 				stdout,
-				"%s: %s policy=%s legacy=verified-pending-commit\n",
+				"%s: %s policy=%s network=%s legacy=verified-pending-commit\n",
 				wallet.WalletID,
 				wallet.ExpectedPublicKey,
 				verified[index].Policy.Hash,
+				map[bool]string{true: "preserved", false: "setup-pending"}[networkConfigured[index]],
 			); err != nil {
 				return errors.New("write hosted signer migration result")
 			}
@@ -295,10 +306,11 @@ func runHostedSignerMigrationV1(cfg hostedMigrationConfigV1, stdout io.Writer) e
 	for index, wallet := range wallets {
 		if _, err := fmt.Fprintf(
 			stdout,
-			"%s: %s policy=%s legacy=quarantined\n",
+			"%s: %s policy=%s network=%s legacy=consumed\n",
 			wallet.WalletID,
 			wallet.ExpectedPublicKey,
 			verified[index].Policy.Hash,
+			map[bool]string{true: "preserved", false: "setup-pending"}[networkConfigured[index]],
 		); err != nil {
 			return errors.New("write hosted signer migration result")
 		}
@@ -339,40 +351,68 @@ func parseHostedMigrationPolicyV1(raw []byte) ([]hostedMigrationWalletV1, error)
 		if candidate.KeystorePath == candidate.PassphrasePath {
 			return nil, fmt.Errorf("migration wallet %s must use distinct keystore and passphrase files", walletID)
 		}
-		if err := requireHostedMigrationUniqueStringsV1(candidate.Policy.Operations, "policy operations", walletID); err != nil {
-			return nil, err
+		baselineRole := strings.TrimSpace(candidate.BaselineRole)
+		if (candidate.Policy == nil) == (baselineRole == "") {
+			return nil, fmt.Errorf("migration wallet %s must select exactly one explicit policy or signer-owned role baseline", walletID)
 		}
-		if err := requireHostedMigrationUniqueStringsV1(candidate.Policy.Programs, "policy programs", walletID); err != nil {
-			return nil, err
-		}
-		if len(candidate.Policy.Assets) == 0 {
-			return nil, fmt.Errorf("policy assets and positive caps must be explicit for %s", walletID)
-		}
-		assets := make([]signerPolicyAssetV2, 0, len(candidate.Policy.Assets))
-		for _, asset := range candidate.Policy.Assets {
-			if err := requireHostedMigrationUniqueStringsV1(asset.Destinations, "policy destinations", walletID); err != nil {
+		var policy signerPolicyV2
+		var baseline *signerRoleBaselineRequestV1
+		if baselineRole != "" {
+			request, baselineErr := normalizeRoleBaselineRequestV1(signerRoleBaselineRequestV1{
+				Version: signerRoleBaselineVersionV1,
+				Role:    baselineRole,
+			})
+			if baselineErr != nil {
+				return nil, fmt.Errorf("invalid migration role baseline for %s: %w", walletID, baselineErr)
+			}
+			policy, baselineErr = compileSignerRoleBaselineV1(
+				walletID,
+				publicKey,
+				request,
+				signerRoleBaselineRuntimeFromEnvV1(),
+			)
+			if baselineErr == nil {
+				baseline = &request
+			}
+			if baselineErr != nil {
+				return nil, fmt.Errorf("compile migration role baseline for %s: %w", walletID, baselineErr)
+			}
+		} else {
+			if err := requireHostedMigrationUniqueStringsV1(candidate.Policy.Operations, "policy operations", walletID); err != nil {
 				return nil, err
 			}
-			assets = append(assets, signerPolicyAssetV2{
-				Asset:        asset.Asset,
-				Destinations: append([]string(nil), asset.Destinations...),
-				MaxPerTx:     asset.MaxPerTx,
-				MaxDaily:     asset.MaxDaily,
+			if err := requireHostedMigrationUniqueStringsV1(candidate.Policy.Programs, "policy programs", walletID); err != nil {
+				return nil, err
+			}
+			if len(candidate.Policy.Assets) == 0 {
+				return nil, fmt.Errorf("policy assets and positive caps must be explicit for %s", walletID)
+			}
+			assets := make([]signerPolicyAssetV2, 0, len(candidate.Policy.Assets))
+			for _, asset := range candidate.Policy.Assets {
+				if err := requireHostedMigrationUniqueStringsV1(asset.Destinations, "policy destinations", walletID); err != nil {
+					return nil, err
+				}
+				assets = append(assets, signerPolicyAssetV2{
+					Asset:        asset.Asset,
+					Destinations: append([]string(nil), asset.Destinations...),
+					MaxPerTx:     asset.MaxPerTx,
+					MaxDaily:     asset.MaxDaily,
+				})
+			}
+			policy, err = normalizeSignerPolicyV2(signerPolicyV2{
+				WalletID:   walletID,
+				Role:       candidate.Policy.Role,
+				Version:    1,
+				Operations: append([]string(nil), candidate.Policy.Operations...),
+				Programs:   append([]string(nil), candidate.Policy.Programs...),
+				Assets:     assets,
 			})
-		}
-		policy, err := normalizeSignerPolicyV2(signerPolicyV2{
-			WalletID:   walletID,
-			Role:       candidate.Policy.Role,
-			Version:    1,
-			Operations: append([]string(nil), candidate.Policy.Operations...),
-			Programs:   append([]string(nil), candidate.Policy.Programs...),
-			Assets:     assets,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("invalid signer policy for %s: %w", walletID, err)
-		}
-		if len(policy.Operations) != len(candidate.Policy.Operations) || len(policy.Programs) != len(candidate.Policy.Programs) || len(policy.Assets) != len(candidate.Policy.Assets) {
-			return nil, fmt.Errorf("signer policy for %s contains duplicate normalized entries", walletID)
+			if err != nil {
+				return nil, fmt.Errorf("invalid signer policy for %s: %w", walletID, err)
+			}
+			if len(policy.Operations) != len(candidate.Policy.Operations) || len(policy.Programs) != len(candidate.Policy.Programs) || len(policy.Assets) != len(candidate.Policy.Assets) {
+				return nil, fmt.Errorf("signer policy for %s contains duplicate normalized entries", walletID)
+			}
 		}
 		wallets = append(wallets, hostedMigrationWalletV1{
 			WalletID:          walletID,
@@ -380,9 +420,36 @@ func parseHostedMigrationPolicyV1(raw []byte) ([]hostedMigrationWalletV1, error)
 			KeystorePath:      candidate.KeystorePath,
 			PassphrasePath:    candidate.PassphrasePath,
 			Policy:            policy,
+			Baseline:          baseline,
+			PrimaryRPCURL:     strings.TrimSpace(candidate.PrimaryRPCURL),
 		})
 	}
 	return wallets, nil
+}
+
+func configureHostedMigrationNetworkV1(controlSocket string, wallet hostedMigrationWalletV1) (bool, error) {
+	if wallet.PrimaryRPCURL == "" {
+		return false, nil
+	}
+	if _, err := callSignerAdmin(controlSocket, "v2.network.get", wallet.WalletID, nil); err == nil {
+		return true, nil
+	}
+	expectedVersion := uint64(0)
+	result, err := callSignerAdminSensitiveV2(controlSocket, "v2.network.put", wallet.WalletID, signerNetworkPutRequestV2{
+		ExpectedVersion: &expectedVersion,
+		PrimaryRPCURL:   wallet.PrimaryRPCURL,
+	})
+	if err != nil {
+		return false, fmt.Errorf("verify preserved signer RPC for %s: %w", wallet.WalletID, err)
+	}
+	var summary signerNetworkSummaryV2
+	if err := decodeSignerAdminStrictJSON(result, &summary); err != nil {
+		return false, fmt.Errorf("verify preserved signer RPC metadata for %s", wallet.WalletID)
+	}
+	if err := validateSignerNetworkSummaryV2(summary, wallet.WalletID); err != nil {
+		return false, fmt.Errorf("verify preserved signer RPC metadata for %s", wallet.WalletID)
+	}
+	return true, nil
 }
 
 func requireHostedMigrationUniqueStringsV1(values []string, label, walletID string) error {
@@ -503,6 +570,7 @@ func importHostedMigrationWalletV1(
 	body := signerWalletLegacyImportRequestV2{
 		ExpectedVersion: 0,
 		Policy:          wallet.Policy,
+		Baseline:        wallet.Baseline,
 		Path:            stagedKeystore,
 		PassphrasePath:  stagedPassphrase,
 	}
@@ -981,11 +1049,18 @@ func quarantineHostedMigrationFileV1(path string, allowedRoots []string, allowed
 	}
 	if errors.Is(sourceErr, os.ErrNotExist) {
 		if !destinationExists {
-			return "", errors.New("legacy wallet material disappeared before quarantine")
+			// Commit is idempotent after a previously verified source was consumed.
+			return destination, nil
 		}
 		links, _ := hostedMigrationLinkCountV1(destinationInfo)
 		if links != 1 {
 			return "", errors.New("legacy wallet quarantine has an incomplete link state")
+		}
+		if err := os.Remove(destination); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", errors.New("remove committed legacy wallet transaction copy")
+		}
+		if err := syncHostedMigrationDirectoryV1(filepath.Dir(path)); err != nil {
+			return "", errors.New("sync committed legacy wallet cleanup")
 		}
 		return destination, nil
 	}
@@ -1001,8 +1076,11 @@ func quarantineHostedMigrationFileV1(path string, allowedRoots []string, allowed
 		if err := syncHostedMigrationDirectoryV1(filepath.Dir(path)); err != nil {
 			return "", errors.New("sync legacy wallet quarantine directory")
 		}
-		if _, _, err := verifiedHostedMigrationQuarantineV1(destination, quarantineOwner, false, maxBytes); err != nil {
-			return "", err
+		if err := os.Remove(destination); err != nil {
+			return "", errors.New("remove committed legacy wallet transaction copy")
+		}
+		if err := syncHostedMigrationDirectoryV1(filepath.Dir(path)); err != nil {
+			return "", errors.New("sync committed legacy wallet cleanup")
 		}
 		return destination, nil
 	}
@@ -1051,8 +1129,11 @@ func quarantineHostedMigrationFileV1(path string, allowedRoots []string, allowed
 	if err := syncHostedMigrationDirectoryV1(filepath.Dir(path)); err != nil {
 		return "", errors.New("sync legacy wallet quarantine directory")
 	}
-	if _, _, err := verifiedHostedMigrationQuarantineV1(destination, quarantineOwner, false, maxBytes); err != nil {
-		return "", err
+	if err := os.Remove(destination); err != nil {
+		return "", errors.New("remove committed legacy wallet transaction copy")
+	}
+	if err := syncHostedMigrationDirectoryV1(filepath.Dir(path)); err != nil {
+		return "", errors.New("sync committed legacy wallet cleanup")
 	}
 	return destination, nil
 }

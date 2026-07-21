@@ -1,8 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_CRON_FORM } from "../app-defaults.ts";
-import { addCronJob, loadCronModelSuggestions, type CronState } from "./cron.ts";
+import {
+  addCronJob,
+  loadCronModelSuggestions,
+  type CronModelSuggestionsState,
+  type CronState,
+} from "./cron.ts";
 
-function createState(overrides: Partial<CronState> = {}): CronState {
+type TestCronState = CronState & CronModelSuggestionsState;
+
+function createState(overrides: Partial<TestCronState> = {}): TestCronState {
   return {
     client: null,
     connected: true,
@@ -42,6 +49,7 @@ function createState(overrides: Partial<CronState> = {}): CronState {
     cronRunDetailLoading: false,
     cronRunDetailError: null,
     cronBusy: false,
+    cronModelSuggestions: [],
     ...overrides,
   };
 }

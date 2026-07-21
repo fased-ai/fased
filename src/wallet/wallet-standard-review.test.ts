@@ -33,7 +33,7 @@ function installRpcMock(params: {
     if (body.method === "getLatestBlockhash") {
       result = { value: { blockhash: params.blockhash, lastValidBlockHeight: 456 } };
     } else if (body.method === "getGenesisHash") {
-      result = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
+      result = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
     } else if (body.method === "simulateTransaction") {
       result = { value: { err: null, unitsConsumed: 111 } };
     } else if (body.method === "sendTransaction") {
@@ -122,14 +122,14 @@ describe("Wallet Standard reviewed execution", () => {
       requestId: "request-1",
       payload,
       signerAddress: signer.publicKey.toBase58(),
-      rpcUrl: "https://rpc.invalid",
+      rpcUrl: "http://127.0.0.1:8899",
       env,
     });
     const repeated = await prepareWalletStandardReview({
       requestId: "request-1",
       payload,
       signerAddress: signer.publicKey.toBase58(),
-      rpcUrl: "https://rpc.invalid",
+      rpcUrl: "http://127.0.0.1:8899",
       env,
     });
     expect(repeated).toEqual(review);
@@ -139,7 +139,7 @@ describe("Wallet Standard reviewed execution", () => {
       preparedId: review.preparedId,
       intentDigest: review.intentDigest,
       signedTxBase64,
-      rpcUrl: "https://rpc.invalid",
+      rpcUrl: "http://127.0.0.1:8899",
       env,
     };
 
@@ -156,7 +156,7 @@ describe("Wallet Standard reviewed execution", () => {
         requestId: "request-1",
         payload,
         signerAddress: signer.publicKey.toBase58(),
-        rpcUrl: "https://rpc.invalid",
+        rpcUrl: "http://127.0.0.1:8899",
         env,
       }),
     ).rejects.toThrow("immutable Wallet Standard review");
@@ -178,7 +178,7 @@ describe("Wallet Standard reviewed execution", () => {
       requestId: "immutable-request",
       payload,
       signerAddress: signer.publicKey.toBase58(),
-      rpcUrl: "https://rpc.invalid",
+      rpcUrl: "http://127.0.0.1:8899",
       env,
     });
 
@@ -187,7 +187,7 @@ describe("Wallet Standard reviewed execution", () => {
         requestId: "immutable-request",
         payload: { ...payload, amount: "2" },
         signerAddress: signer.publicKey.toBase58(),
-        rpcUrl: "https://rpc.invalid",
+        rpcUrl: "http://127.0.0.1:8899",
         env,
       }),
     ).rejects.toThrow("create a new approval request");
@@ -197,7 +197,7 @@ describe("Wallet Standard reviewed execution", () => {
         requestId: "immutable-request",
         payload,
         signerAddress: signer.publicKey.toBase58(),
-        rpcUrl: "https://rpc.invalid",
+        rpcUrl: "http://127.0.0.1:8899",
         env,
       }),
     ).rejects.toThrow("create a new approval request");
@@ -216,7 +216,7 @@ describe("Wallet Standard reviewed execution", () => {
         providerId: "wallet-standard",
       },
       signerAddress: signer.publicKey.toBase58(),
-      rpcUrl: "https://rpc.invalid",
+      rpcUrl: "http://127.0.0.1:8899",
       env,
     });
     const changed = Transaction.from(Buffer.from(review.unsignedTxBase64, "base64"));
@@ -229,7 +229,7 @@ describe("Wallet Standard reviewed execution", () => {
         preparedId: review.preparedId,
         intentDigest: review.intentDigest,
         signedTxBase64: changed.serialize().toString("base64"),
-        rpcUrl: "https://rpc.invalid",
+        rpcUrl: "http://127.0.0.1:8899",
         env,
       }),
     ).rejects.toMatchObject({ code: "wallet_provider_invalid_config" });
@@ -252,7 +252,7 @@ describe("Wallet Standard reviewed execution", () => {
         providerId: "wallet-standard",
       },
       signerAddress: signer.publicKey.toBase58(),
-      rpcUrl: "https://rpc.invalid",
+      rpcUrl: "http://127.0.0.1:8899",
       env,
     });
     const input = {
@@ -260,7 +260,7 @@ describe("Wallet Standard reviewed execution", () => {
       preparedId: review.preparedId,
       intentDigest: review.intentDigest,
       signedTxBase64: sign(review.unsignedTxBase64, signer),
-      rpcUrl: "https://rpc.invalid",
+      rpcUrl: "http://127.0.0.1:8899",
       env,
     };
 
@@ -301,7 +301,7 @@ describe("Wallet Standard reviewed execution", () => {
         providerId: "wallet-standard",
       },
       signerAddress: signer.publicKey.toBase58(),
-      rpcUrl: "https://rpc.invalid",
+      rpcUrl: "http://127.0.0.1:8899",
       env,
     });
     const input = {
@@ -309,7 +309,7 @@ describe("Wallet Standard reviewed execution", () => {
       preparedId: review.preparedId,
       intentDigest: review.intentDigest,
       signedTxBase64: sign(review.unsignedTxBase64, signer),
-      rpcUrl: "https://rpc.invalid",
+      rpcUrl: "http://127.0.0.1:8899",
       env,
     };
 
@@ -342,7 +342,7 @@ describe("Wallet Standard reviewed execution", () => {
         providerId: "wallet-standard",
       },
       signerAddress: signer.publicKey.toBase58(),
-      rpcUrl: "https://rpc.invalid",
+      rpcUrl: "http://127.0.0.1:8899",
       env,
     });
     const input = {
@@ -350,7 +350,7 @@ describe("Wallet Standard reviewed execution", () => {
       preparedId: review.preparedId,
       intentDigest: review.intentDigest,
       signedTxBase64: sign(review.unsignedTxBase64, signer),
-      rpcUrl: "https://rpc.invalid",
+      rpcUrl: "http://127.0.0.1:8899",
       env,
     };
 

@@ -24,6 +24,7 @@ vi.mock("../ui/src/ui/wallet-api.js", () => ({
     assignments: {},
     defaultWalletId: "solana-1",
   })),
+  getWalletProviders: vi.fn(async () => ({ providers: [] })),
   getWalletSignerDoctor: vi.fn(async () => ({
     report: { checks: [] },
     chainWallets: {},

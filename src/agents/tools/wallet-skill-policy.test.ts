@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { FasedAgentConfig } from "../../config/config.js";
+import { computeSkillContentSha256Sync } from "../skills/trust.js";
 import {
   enforceWalletSkillAccessEnabled,
   enforceWalletSkillPolicy,
@@ -14,8 +15,14 @@ async function writeClawHubOrigin(params: {
   skillId: string;
   registry: string;
 }) {
-  const dir = path.join(params.workspaceDir, "skills", params.skillId, ".clawhub");
+  const skillDir = path.join(params.workspaceDir, "skills", params.skillId);
+  const dir = path.join(skillDir, ".clawhub");
   await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(skillDir, "SKILL.md"), `# ${params.skillId}\n`, "utf8");
+  const contentSha256 = computeSkillContentSha256Sync(skillDir);
+  if (!contentSha256) {
+    throw new Error("test skill content digest was unavailable");
+  }
   await fs.writeFile(
     path.join(dir, "origin.json"),
     `${JSON.stringify(
@@ -25,6 +32,9 @@ async function writeClawHubOrigin(params: {
         slug: params.skillId,
         installedVersion: "1.0.0",
         installedAt: Date.now(),
+        archiveSha256: "a".repeat(64),
+        archiveIntegrityVerified: true,
+        contentSha256,
       },
       null,
       2,

@@ -303,6 +303,7 @@ import {
   putWalletProviderCredentials,
   getWalletSignerDoctor,
   getWalletBalances,
+  getWalletRpc,
   upsertWalletAssignment,
   validateWalletSettings,
   type WalletNamedWallet,
@@ -1696,6 +1697,7 @@ export class FasedAgentApp extends LitElement {
   @state() walletCreateProvider: WalletProviderInfo["id"] = "local-socket-signer";
   @state() walletCreateRole: "" | "agent" | "mining" | "vault" = "";
   @state() walletCreateRpcUrl = "";
+  @state() walletCreateBusy = false;
   @state() walletAssignAgentId = "";
   @state() walletAssignWalletId = "";
   @state() walletRpcChain = "solana" as const;
@@ -1734,6 +1736,8 @@ export class FasedAgentApp extends LitElement {
   @state() walletRpcProvider = "";
   @state() walletRpcApiKey = "";
   @state() walletRpcUrl = "";
+  @state() walletRpcEditorWalletId = "";
+  @state() walletRevealedAddressWalletId = "";
   @state() walletProviderApiKey = "";
   @state() walletProviderServerSignerAccessKey = "";
   @state() walletProviderServerSignerAccountId = "";
@@ -5192,11 +5196,11 @@ export class FasedAgentApp extends LitElement {
     const rpcUrl = this.walletRpcUrl.trim();
     const wallet = this.walletNamedWallets.find((entry) => entry.id === walletId);
     if (!walletId || wallet?.providerId !== "local-socket-signer") {
-      this.walletSettingsError = "Select a native signer wallet before updating its RPC.";
+      this.walletSettingsError = "Select a local wallet before updating its RPC.";
       return;
     }
     if (!rpcUrl) {
-      this.walletSettingsError = "Enter one primary Solana RPC URL.";
+      this.walletSettingsError = "Enter an RPC.";
       return;
     }
     this.walletSettingsBusy = true;
@@ -5208,11 +5212,47 @@ export class FasedAgentApp extends LitElement {
       });
       await updateWalletNamedWallet({ walletId, rpcUrl }, approvalToken ?? undefined);
       this.walletRpcUrl = "";
-      this.walletSettingsMessage =
-        "Signer-owned primary RPC updated and verified against the wallet's pinned genesis.";
+      this.walletRpcEditorWalletId = "";
+      this.walletSettingsMessage = "Saved";
       await this.handleWalletLoad();
     } catch (err) {
-      this.walletSettingsError = `Updating wallet RPC failed: ${String(err)}`;
+      const detail = err instanceof Error ? err.message : String(err);
+      this.walletSettingsError = `RPC not saved. ${detail} Your existing RPC is unchanged.`;
+    } finally {
+      this.walletSettingsBusy = false;
+    }
+  }
+
+  handleWalletToggleRpcEditor(walletId: string) {
+    const selectedWalletId = walletId.trim();
+    this.walletRpcEditorWalletId =
+      selectedWalletId && this.walletRpcEditorWalletId !== selectedWalletId ? selectedWalletId : "";
+    this.walletRpcUrl = "";
+    this.walletSettingsError = null;
+  }
+
+  handleWalletToggleAddress(walletId: string) {
+    const selectedWalletId = walletId.trim();
+    this.walletRevealedAddressWalletId =
+      selectedWalletId && this.walletRevealedAddressWalletId !== selectedWalletId
+        ? selectedWalletId
+        : "";
+  }
+
+  async handleWalletCopyRpc(walletId: string) {
+    const selectedWalletId = walletId.trim();
+    if (!selectedWalletId || this.walletSettingsBusy) {
+      return;
+    }
+    this.walletSettingsBusy = true;
+    this.walletSettingsError = null;
+    try {
+      const approvalToken = await this.resolveWalletApprovalToken({ operation: "wallet.network" });
+      const result = await getWalletRpc(selectedWalletId, approvalToken ?? undefined);
+      await navigator.clipboard.writeText(result.rpcUrl);
+      this.walletSettingsMessage = "Wallet RPC copied.";
+    } catch (err) {
+      this.walletSettingsError = `Copying wallet RPC failed: ${String(err)}`;
     } finally {
       this.walletSettingsBusy = false;
     }
@@ -5401,6 +5441,7 @@ export class FasedAgentApp extends LitElement {
     const nextWalletId = walletId.trim();
     if (nextWalletId !== this.walletDetailsWalletId) {
       this.walletRpcUrl = "";
+      this.walletRpcEditorWalletId = "";
     }
     this.walletDetailsWalletId = nextWalletId;
     await this.handleWalletLoad();
@@ -5452,49 +5493,33 @@ export class FasedAgentApp extends LitElement {
   }
 
   async handleWalletCreateNamedWallet() {
-    if (this.walletSettingsBusy) {
+    if (this.walletCreateBusy) {
       return;
     }
     const name = this.walletCreateName.trim();
-    if (!name) {
-      this.walletSettingsError = "Wallet name is required.";
-      return;
-    }
     if (!this.walletCreateRole) {
       this.walletSettingsError =
         "Choose Agent, Mining, or Vault. No wallet role is selected automatically.";
       return;
     }
-    this.walletSettingsBusy = true;
+    if (!this.walletCreateRpcUrl.trim()) {
+      this.walletSettingsError = "Enter an RPC.";
+      return;
+    }
+    this.walletCreateBusy = true;
     this.walletSettingsError = null;
     this.walletSettingsMessage = null;
     try {
-      const providerId = this.walletCreateProvider || this.walletProviderTab;
-      if (providerId === "wallet-standard") {
-        throw new Error(
-          "Use Attach Wallet Standard Vault so the browser wallet supplies and confirms the public account.",
-        );
-      }
-      const walletId = this.walletCreateId.trim() || undefined;
-      if (providerId === "local-socket-signer" && !walletId) {
-        throw new Error(
-          "Wallet ID is required for a native signer wallet (for example agent-primary or vault-reserve).",
-        );
-      }
-      if (providerId === "local-socket-signer" && !this.walletCreateRpcUrl.trim()) {
-        throw new Error("One primary Solana RPC URL is required for a native signer wallet.");
-      }
+      const providerId = "local-socket-signer" as const;
       const created = await createWalletNamedWallet({
-        name,
-        walletId,
+        ...(name ? { name } : {}),
         providerId,
         role: this.walletCreateRole,
         chain: "solana",
-        rpcUrl: providerId === "local-socket-signer" ? this.walletCreateRpcUrl.trim() : undefined,
+        rpcUrl: this.walletCreateRpcUrl.trim(),
       });
       this.walletProviderTab = providerId;
       this.walletCreateName = "";
-      this.walletCreateId = "";
       this.walletCreateRole = "";
       this.walletCreateRpcUrl = "";
       this.walletSendCreateForm = {
@@ -5504,15 +5529,12 @@ export class FasedAgentApp extends LitElement {
       this.walletDetailsWalletId = created.wallet.id;
       this.walletExpandedPanelWalletId = created.wallet.id;
       this.walletExpandedPanel = "security";
-      this.walletSettingsMessage =
-        providerId === "local-socket-signer"
-          ? `Wallet created: ${created.wallet.name}. Its signer-owned RPC is active; sending remains disabled until the exact role policy is ready.`
-          : `Wallet created: ${created.wallet.name}. Verify provider policy and review readiness before funding it.`;
+      this.walletSettingsMessage = `Wallet created: ${created.wallet.name}.`;
       await this.handleWalletLoad();
     } catch (err) {
       this.walletSettingsError = `Creating wallet failed: ${String(err)}`;
     } finally {
-      this.walletSettingsBusy = false;
+      this.walletCreateBusy = false;
     }
   }
 
@@ -5528,9 +5550,9 @@ export class FasedAgentApp extends LitElement {
         chooser: chooseWalletStandardOption,
       });
       const suggestedName = `${selection.wallet.name} Vault`;
-      const name = window.prompt("Name this Wallet Standard Vault", suggestedName)?.trim();
+      const name = window.prompt("Name this browser-wallet Vault", suggestedName)?.trim();
       if (!name) {
-        throw new Error("Wallet Standard Vault attachment was cancelled");
+        throw new Error("Browser-wallet connection was cancelled");
       }
       const created = await createWalletNamedWallet({
         name,
@@ -5549,7 +5571,7 @@ export class FasedAgentApp extends LitElement {
         "For reserve custody, verify on the device that this account is hardware-backed.";
       await this.handleWalletLoad();
     } catch (err) {
-      this.walletSettingsError = `Attaching Wallet Standard Vault failed: ${String(err)}`;
+      this.walletSettingsError = `Connecting browser wallet failed: ${String(err)}`;
     } finally {
       this.walletSettingsBusy = false;
     }
@@ -5561,9 +5583,11 @@ export class FasedAgentApp extends LitElement {
     }
     const confirmation = archive
       ? window.prompt(
-          `Archive ${walletId}? The server checks Mining runtime obligations and locks the signer key deny-all. You must confirm external balances and recovery before continuing. Type the exact wallet ID to continue.`,
+          `Archive ${walletId}? Fased will disable this wallet and remove it from the Wallet page. Confirm balances and recovery first, then type the exact wallet ID to continue.`,
         )
-      : window.confirm("Delete this named wallet?")
+      : window.confirm(
+            `Remove ${walletId} from Fased? Its external wallet, custody, and funds will not be changed.`,
+          )
         ? walletId
         : null;
     if (confirmation !== walletId) {
@@ -5597,11 +5621,11 @@ export class FasedAgentApp extends LitElement {
         this.walletExpandedPanel = "";
       }
       this.walletSettingsMessage = archive
-        ? "Wallet archived from Fased; the signer-owned key remains encrypted and permanently deny-all."
-        : "Wallet deleted.";
+        ? "Wallet archived from Fased."
+        : "Wallet removed from Fased.";
       await this.handleWalletLoad();
     } catch (err) {
-      this.walletSettingsError = `${archive ? "Archiving" : "Deleting"} wallet failed: ${String(err)}`;
+      this.walletSettingsError = `${archive ? "Archiving" : "Removing"} wallet failed: ${String(err)}`;
     } finally {
       this.walletSettingsBusy = false;
     }
@@ -6027,10 +6051,12 @@ export class FasedAgentApp extends LitElement {
     ) {
       this.walletExpandedPanelWalletId = "";
       this.walletExpandedPanel = "";
+      this.walletRpcEditorWalletId = "";
       return;
     }
     this.walletExpandedPanelWalletId = nextWalletId;
     this.walletExpandedPanel = "security";
+    this.walletRpcEditorWalletId = "";
     this.walletBalanceWalletId = "";
     if (nextWalletId !== this.walletDetailsWalletId) {
       this.walletDetailsWalletId = nextWalletId;

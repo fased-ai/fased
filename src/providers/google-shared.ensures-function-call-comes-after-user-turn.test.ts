@@ -1,5 +1,5 @@
-import { convertMessages } from "@mariozechner/pi-ai/dist/providers/google-shared.js";
-import type { Context } from "@mariozechner/pi-ai/dist/types.js";
+import type { Context } from "@mariozechner/pi-ai";
+import { convertMessages } from "@mariozechner/pi-ai/api/google-shared";
 import { describe, expect, it } from "vitest";
 import {
   asRecord,
@@ -10,7 +10,7 @@ import {
 } from "./google-shared.test-helpers.js";
 
 describe("google-shared convertTools", () => {
-  it("ensures function call comes after user turn, not after model turn", () => {
+  it("preserves consecutive model turns and synthesizes a missing tool response", () => {
     const model = makeModel("gemini-1.5-pro");
     const context = {
       messages: [
@@ -30,16 +30,24 @@ describe("google-shared convertTools", () => {
       ],
     } as unknown as Context;
 
-    const contents = convertMessages(model, context);
-    expect(contents).toHaveLength(3);
+    const contents = convertMessages(
+      model as unknown as Parameters<typeof convertMessages>[0],
+      context,
+    );
+    expect(contents).toHaveLength(4);
     expect(contents[0].role).toBe("user");
     expect(contents[1].role).toBe("model");
     expect(contents[2].role).toBe("model");
+    expect(contents[3].role).toBe("user");
     const toolCallPart = contents[2].parts?.find(
       (part) => typeof part === "object" && part !== null && "functionCall" in part,
     );
     const toolCall = asRecord(toolCallPart);
     expect(toolCall.functionCall).toBeTruthy();
+    const toolResultPart = contents[3].parts?.find(
+      (part) => typeof part === "object" && part !== null && "functionResponse" in part,
+    );
+    expect(asRecord(toolResultPart).functionResponse).toBeTruthy();
   });
 
   it("strips tool call and response ids for google-gemini-cli", () => {
@@ -70,7 +78,10 @@ describe("google-shared convertTools", () => {
       ],
     } as unknown as Context;
 
-    const contents = convertMessages(model, context);
+    const contents = convertMessages(
+      model as unknown as Parameters<typeof convertMessages>[0],
+      context,
+    );
     const parts = contents.flatMap((content) => content.parts ?? []);
     const toolCallPart = parts.find(
       (part) => typeof part === "object" && part !== null && "functionCall" in part,

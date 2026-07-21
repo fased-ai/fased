@@ -98,6 +98,8 @@ vendor/
 !apps/shared/FasedAgentKit/Tools/CanvasA2UI/
 !apps/shared/FasedAgentKit/Tools/CanvasA2UI/**
 !vendor/a2ui/
+vendor/a2ui/**
 !vendor/a2ui/renderers/
+vendor/a2ui/renderers/*
 !vendor/a2ui/renderers/lit/
 !vendor/a2ui/renderers/lit/**
