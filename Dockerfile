@@ -28,7 +28,15 @@ RUN signer_version="$FASED_SIGNER_BUILD_VERSION" \
 
 FROM node:22-bookworm@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37
 
-RUN corepack enable
+# The pinned Node image currently ships npm with a vulnerable node-tar release.
+# Keep npm available for runtime/plugin operations while replacing its bundled
+# copy with the fixed release before any application layers are added.
+RUN npm install --global npm@11.6.2 tar@7.5.19 \
+ && rm -rf /usr/local/lib/node_modules/npm/node_modules/tar \
+ && cp -a /usr/local/lib/node_modules/tar /usr/local/lib/node_modules/npm/node_modules/tar \
+ && rm -rf /usr/local/lib/node_modules/tar \
+ && test "$(node -p 'require("/usr/local/lib/node_modules/npm/node_modules/tar/package.json").version')" = "7.5.19" \
+ && corepack enable
 
 WORKDIR /app
 RUN chown node:node /app
