@@ -2101,7 +2101,7 @@ async function buildLegacyLocalWalletMigrationPlan(paths, transactionDir) {
   return { configPath, registryPath, config, registry, wallets: planned };
 }
 
-function parseSignerVersionOutput(raw, expectedVersion) {
+function parseSignerReportedVersionOutput(raw) {
   const match =
     /^fased-signerd ([^\s]+) commit=([^\s]+) buildInputDigest=([^\s]+) development=(true|false)\s*$/.exec(
       String(raw || ""),
@@ -2115,6 +2115,20 @@ function parseSignerVersionOutput(raw, expectedVersion) {
     buildInputDigest: match[3],
     development: match[4] === "true",
   };
+  return Object.freeze(identity);
+}
+
+function isCanonicalDevelopmentSignerIdentity(identity) {
+  return (
+    identity?.version === "dev" &&
+    identity?.commit === "unknown" &&
+    identity?.buildInputDigest === "unknown" &&
+    identity?.development === true
+  );
+}
+
+function parseSignerVersionOutput(raw, expectedVersion) {
+  const identity = parseSignerReportedVersionOutput(raw);
   if (expectedVersion !== undefined && identity.version !== expectedVersion) {
     throw new Error(
       `signer binary version ${identity.version} does not match target ${expectedVersion}`,
@@ -2131,6 +2145,14 @@ function parseSignerVersionOutput(raw, expectedVersion) {
     throw new Error("fased-signerd release identity is not an exact production identity");
   }
   return Object.freeze(identity);
+}
+
+function parseInstalledSignerVersionOutput(raw) {
+  const identity = parseSignerReportedVersionOutput(raw);
+  if (isCanonicalDevelopmentSignerIdentity(identity)) {
+    return identity;
+  }
+  return parseSignerVersionOutput(raw);
 }
 
 function parseSignerReleaseManifest(value, expectedVersion) {
@@ -2160,12 +2182,29 @@ function signerIdentitiesEqual(left, right) {
   );
 }
 
+function installedSignerIdentitiesEqual(left, right) {
+  if (isCanonicalDevelopmentSignerIdentity(left) || isCanonicalDevelopmentSignerIdentity(right)) {
+    return (
+      isCanonicalDevelopmentSignerIdentity(left) && isCanonicalDevelopmentSignerIdentity(right)
+    );
+  }
+  return signerIdentitiesEqual(left, right);
+}
+
 async function readSignerBinaryIdentity(binaryPath, expectedVersion) {
   const result = await runFile(binaryPath, ["--version"], { timeoutMs: 10_000 });
   if (!result.ok) {
     throw new Error(`could not execute candidate fased-signerd: ${result.stderr.trim()}`);
   }
   return parseSignerVersionOutput(result.stdout, expectedVersion);
+}
+
+async function readInstalledSignerBinaryIdentity(binaryPath) {
+  const result = await runFile(binaryPath, ["--version"], { timeoutMs: 10_000 });
+  if (!result.ok) {
+    throw new Error(`could not execute installed fased-signerd: ${result.stderr.trim()}`);
+  }
+  return parseInstalledSignerVersionOutput(result.stdout);
 }
 
 async function copyDownloadSource(source, destination, timeoutMs) {
@@ -2699,10 +2738,14 @@ async function probeLocalSignerHealth(
         socket.once("error", fail);
       });
       const result = response?.result;
-      const release = parseSignerReleaseManifest(
-        { schemaVersion: 1, ...result?.release },
-        expectedIdentity.version,
-      );
+      const release = isCanonicalDevelopmentSignerIdentity(expectedIdentity)
+        ? parseInstalledSignerVersionOutput(
+            `fased-signerd ${result?.release?.version} commit=${result?.release?.commit} buildInputDigest=${result?.release?.buildInputDigest} development=${String(result?.release?.development)}`,
+          )
+        : parseSignerReleaseManifest(
+            { schemaVersion: 1, ...result?.release },
+            expectedIdentity.version,
+          );
       const features = new Set(result?.capabilities?.features || []);
       const missing = LOCAL_SIGNER_REQUIRED_FEATURES.filter((feature) => !features.has(feature));
       const policies = result?.policies;
@@ -2743,7 +2786,7 @@ async function probeLocalSignerHealth(
         missing.length > 0 ||
         !policiesValid ||
         !networkValid ||
-        !signerIdentitiesEqual(release, expectedIdentity)
+        !installedSignerIdentitiesEqual(release, expectedIdentity)
       ) {
         throw new Error(
           `Local signer failed protocol-v2 compatibility${missing.length ? `; missing ${missing.join(",")}` : ""}${expectedReadOnly !== undefined && result?.readOnly !== expectedReadOnly ? `; expected readOnly=${String(expectedReadOnly)}` : ""}`,
@@ -3228,13 +3271,17 @@ async function prepareLocalSignerTransaction({
   }
   let previousIdentity = null;
   try {
-    previousIdentity = await readSignerBinaryIdentity(paths.binaryPath);
+    previousIdentity = await readInstalledSignerBinaryIdentity(paths.binaryPath);
   } catch (error) {
     if (error?.code !== "ENOENT" && !String(error.message).includes("could not execute")) {
       throw error;
     }
   }
-  if (previousIdentity && compareVersions(previousIdentity.version, targetVersion) === 1) {
+  if (
+    previousIdentity &&
+    !isCanonicalDevelopmentSignerIdentity(previousIdentity) &&
+    compareVersions(previousIdentity.version, targetVersion) === 1
+  ) {
     if (confirmDowngrade !== targetVersion) {
       throw new Error(
         `Refusing signer downgrade ${previousIdentity.version} -> ${targetVersion}. Re-run only with --confirm-downgrade ${targetVersion} after reviewing the rollback boundary.`,
@@ -3522,10 +3569,10 @@ async function rollbackLocalSignerTransaction(paths = resolveLocalSignerPaths(),
     }
     await fsyncManagedPath(paths.binDir);
     if (journal.previousWasRunning && journal.snapshot.binary.existed) {
-      const previousIdentity = await readSignerBinaryIdentity(paths.binaryPath);
+      const previousIdentity = await readInstalledSignerBinaryIdentity(paths.binaryPath);
       if (
         journal.previousIdentity &&
-        !signerIdentitiesEqual(previousIdentity, journal.previousIdentity)
+        !installedSignerIdentitiesEqual(previousIdentity, journal.previousIdentity)
       ) {
         throw new Error("Rollback restored a different Local signer binary identity");
       }

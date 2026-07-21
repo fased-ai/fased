@@ -1,7 +1,6 @@
 import { formatCliCommand } from "../cli/command-format.js";
 import type { FasedAgentConfig } from "../config/config.js";
 import { isTruthyEnvValue } from "../infra/env.js";
-import { runGatewayUpdate } from "../infra/update-runner.js";
 import { updateCompletedRecently } from "../infra/update-success-marker.js";
 import { repairUpdateOwnedPluginInstallState } from "../plugins/installs.js";
 import { runCommandWithTimeout } from "../process/exec.js";
@@ -101,22 +100,35 @@ export async function maybeOfferUpdateBeforeDoctor(params: {
       return { updated: false };
     }
     note("Running update (fetch/rebase/build/ui:build/doctor)…", "Update");
-    const result = await runGatewayUpdate({
+    const cliPath = process.argv[1];
+    if (!cliPath) {
+      note("Status: error\nReason: current CLI entrypoint is unavailable", "Update result");
+      return { updated: true, handled: false };
+    }
+    const result = await runCommandWithTimeout([process.execPath, cliPath, "update", "--yes"], {
       cwd: params.root,
-      argv1: process.argv[1],
+      timeoutMs: 20 * 60_000,
+      env: process.env,
     });
+    if (result.stdout.trim()) {
+      params.runtime.log(result.stdout.trimEnd());
+    }
+    if (result.stderr.trim()) {
+      params.runtime.error(result.stderr.trimEnd());
+    }
+    const status = result.code === 0 ? "ok" : "error";
     note(
       [
-        `Status: ${result.status}`,
-        `Mode: ${result.mode}`,
-        result.root ? `Root: ${result.root}` : null,
-        result.reason ? `Reason: ${result.reason}` : null,
+        `Status: ${status}`,
+        "Mode: full update command",
+        `Root: ${params.root}`,
+        result.code === 0 ? null : `Reason: update exited with code ${String(result.code)}`,
       ]
         .filter(Boolean)
         .join("\n"),
       "Update result",
     );
-    if (result.status === "ok") {
+    if (result.code === 0) {
       params.outro("Update completed (doctor already ran as part of the update).");
       return { updated: true, handled: true };
     }

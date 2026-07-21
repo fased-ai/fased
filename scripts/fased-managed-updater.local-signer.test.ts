@@ -127,6 +127,34 @@ setTimeout(() => {
   return { binary, manifest, releaseIdentity };
 }
 
+function rewriteAsCanonicalDevelopmentSigner(binaryPath: string) {
+  const source = fs.readFileSync(binaryPath, "utf8");
+  const developmentIdentity = {
+    version: "dev",
+    commit: "unknown",
+    buildInputDigest: "unknown",
+    development: true,
+  };
+  fs.writeFileSync(
+    binaryPath,
+    source
+      .replace(
+        /^const identity = .*;$/mu,
+        `const identity = ${JSON.stringify(developmentIdentity)};`,
+      )
+      .replace(
+        /if \(process\.argv\.length === 3 && process\.argv\[2\] === "--version"\) \{[\s\S]*?\n\}/u,
+        [
+          'if (process.argv.length === 3 && process.argv[2] === "--version") {',
+          '  fs.writeSync(1, "fased-signerd dev commit=unknown buildInputDigest=unknown development=true\\n");',
+          "  process.exit(0);",
+          "}",
+        ].join("\n"),
+      ),
+    { mode: 0o700 },
+  );
+}
+
 async function writeRealSignerRelease(releaseRoot: string) {
   const packageVersion = String(
     JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8")).version,
@@ -341,6 +369,87 @@ describe.sequential("transactional Local native signer updater", () => {
       await expect(
         __testing.probeLocalSignerHealth(fixture.paths.socketPath, identity("1.0.1", "b"), 3_000),
       ).resolves.toMatchObject({ ready: true });
+    });
+  }, 30_000);
+
+  it("replaces the canonical development signer without weakening candidate identity", async () => {
+    const fixture = makeFixture();
+    writeFakeRelease(fixture.releaseRoot, "1.0.0", "a");
+    writeFakeRelease(fixture.releaseRoot, "1.0.1", "b");
+    await withEnv(fixture.env, async () => {
+      await __testing.runLocalSignerTransaction(
+        { action: "install", targetVersion: "1.0.0", timeoutMs: 10_000 },
+        { stateDir: fixture.stateDir },
+      );
+      fs.mkdirSync(fixture.paths.materialDir, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(fixture.paths.stateDbPath, "durable-state\n", { mode: 0o600 });
+      fs.writeFileSync(fixture.paths.masterKeyPath, "durable-master\n", { mode: 0o600 });
+      rewriteAsCanonicalDevelopmentSigner(fixture.paths.binaryPath);
+      await startInstalledSigner(fixture.paths);
+
+      await expect(
+        __testing.runLocalSignerTransaction(
+          { action: "install", targetVersion: "1.0.1", timeoutMs: 10_000 },
+          { stateDir: fixture.stateDir },
+        ),
+      ).resolves.toMatchObject({ action: "committed", identity: { version: "1.0.1" } });
+
+      expect(fs.readFileSync(fixture.paths.stateDbPath, "utf8")).toBe("durable-state\n");
+      expect(fs.readFileSync(fixture.paths.masterKeyPath, "utf8")).toBe("durable-master\n");
+      await expect(
+        __testing.probeLocalSignerHealth(fixture.paths.socketPath, identity("1.0.1", "b"), 3_000),
+      ).resolves.toMatchObject({ ready: true });
+    });
+  }, 30_000);
+
+  it("restores a canonical development signer byte-for-byte when candidate health fails", async () => {
+    const fixture = makeFixture();
+    writeFakeRelease(fixture.releaseRoot, "1.0.0", "a");
+    writeFakeRelease(fixture.releaseRoot, "1.0.1", "b", { healthy: false });
+    await withEnv(fixture.env, async () => {
+      await __testing.runLocalSignerTransaction(
+        { action: "install", targetVersion: "1.0.0", timeoutMs: 10_000 },
+        { stateDir: fixture.stateDir },
+      );
+      fs.mkdirSync(fixture.paths.materialDir, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(fixture.paths.stateDbPath, "durable-state\n", { mode: 0o600 });
+      fs.writeFileSync(fixture.paths.masterKeyPath, "durable-master\n", { mode: 0o600 });
+      rewriteAsCanonicalDevelopmentSigner(fixture.paths.binaryPath);
+      const developmentDigest = digest(fixture.paths.binaryPath);
+      await startInstalledSigner(fixture.paths);
+
+      await expect(
+        __testing.runLocalSignerTransaction(
+          { action: "install", targetVersion: "1.0.1", timeoutMs: 3_000 },
+          { stateDir: fixture.stateDir },
+        ),
+      ).rejects.toMatchObject({ code: "LOCAL_SIGNER_UPDATE_ROLLED_BACK" });
+
+      expect(digest(fixture.paths.binaryPath)).toBe(developmentDigest);
+      expect(fs.readFileSync(fixture.paths.stateDbPath, "utf8")).toBe("durable-state\n");
+      expect(fs.readFileSync(fixture.paths.masterKeyPath, "utf8")).toBe("durable-master\n");
+      await expect(
+        __testing.probeLocalSignerHealth(
+          fixture.paths.socketPath,
+          {
+            version: "dev",
+            commit: "unknown",
+            buildInputDigest: "unknown",
+            development: true,
+          },
+          3_000,
+        ),
+      ).resolves.toMatchObject({ ready: true });
+
+      writeFakeRelease(fixture.releaseRoot, "1.0.1", "b");
+      await expect(
+        __testing.runLocalSignerTransaction(
+          { action: "install", targetVersion: "1.0.1", timeoutMs: 10_000 },
+          { stateDir: fixture.stateDir },
+        ),
+      ).resolves.toMatchObject({ action: "committed", identity: { version: "1.0.1" } });
+      expect(fs.readFileSync(fixture.paths.stateDbPath, "utf8")).toBe("durable-state\n");
+      expect(fs.readFileSync(fixture.paths.masterKeyPath, "utf8")).toBe("durable-master\n");
     });
   }, 30_000);
 
