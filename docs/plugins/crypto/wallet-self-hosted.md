@@ -32,8 +32,8 @@ Both flows are the same from the user's perspective:
 
 1. Choose **Create** or **Import**.
 2. Explicitly select **Agent**, **Mining**, or **Vault**.
-3. Enter a wallet name.
-4. Enter one primary Solana RPC.
+3. Optionally enter a display name; Fased generates the wallet ID.
+4. Enter one Solana RPC.
 5. Receive the public address and one readiness result.
 
 There is no default role, Solana-network prompt, second-RPC prompt, browser
@@ -76,13 +76,13 @@ reuse the retired wallet ID.
 
 ## One-RPC model
 
-The entered endpoint becomes the wallet's primary execution RPC and initial
+The entered endpoint becomes the wallet's execution RPC and initial
 Gateway read endpoint. The signer pins its live genesis hash and derives the
 matching official Solana endpoint as a verification-only witness.
 
 The witness may compare sensitive ALT account bytes and slots. It never
 constructs, simulates, broadcasts, reconciles, or supplies execution balances
-or blockhashes. A primary that is itself the official endpoint cannot provide
+or blockhashes. An RPC that is itself the official endpoint cannot provide
 independent ALT verification; custom clusters and Localnet also require an
 explicit independent origin.
 

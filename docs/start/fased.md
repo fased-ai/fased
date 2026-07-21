@@ -35,13 +35,17 @@ setup.
 
   </Tab>
   <Tab title="VPS Hosting install">
-    SSH to the VPS as root, then run the [exact fresh Hosting
-    command](/install/vps#3-install-fased) inside that VPS
-    shell.
+    SSH to the VPS as root, then run this inside that VPS shell:
+
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+      | bash -s -- --hosting
+    ```
 
     The streamed bootstrap verifies the immutable tagged Hosting payload before
     persistent Fased setup, then creates the separated operator, Gateway, and
-    signer runtime identities.
+    signer runtime identities. Continue with the [VPS Hosting
+    guide](/install/vps) for its private-access check and recovery boundary.
 
   </Tab>
 </Tabs>

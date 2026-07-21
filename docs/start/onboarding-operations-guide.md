@@ -191,10 +191,8 @@ Decide the working model first:
 Recommended progression:
 
 - create/import with an explicit role and record both registry and canonical signer ids
-- enter one primary RPC; the signer derives network and verification witness
-- copy/review the installed role template and activate it with
-  `fased-signer-policy --initial-install`
-- verify exact signer policy/network versions and hashes
+- enter one RPC; the signer derives its network and verification witness
+- verify the built-in role baseline and signer/network readiness
 - add an optional Vault approval device through the native signer-owner ceremony
   only when that Vault needs manual signing
 - only then fund a deliberately small balance
@@ -253,7 +251,7 @@ Normal sequence:
 
 1. create or import the signer-owned singleton `@wallet:mining` wallet through
    terminal onboarding, the wallet CLI, or Wallets creation
-2. enter one primary RPC and verify the Mining policy/readiness
+2. enter one RPC and verify the Mining policy/readiness
 3. keep automatic mining inside its exact SAT-only signer policy
 4. confirm readiness and exact policy/network hashes
 5. fund deliberately small miner capital

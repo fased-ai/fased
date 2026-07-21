@@ -220,7 +220,7 @@ Use this flow before pressing **Start** for the first time:
 1. Create a dedicated signer-owned **Mining** wallet in **Wallets** or with
    `fased wallet create --role mining`; import with `fased wallet import` from
    the native Local or Hosting operator terminal.
-2. Enter one primary RPC. The signer activates the release-bound Mining role
+2. Enter one RPC. The signer activates the release-bound Mining role
    baseline and reports exact policy/network readiness.
 3. Only then copy the Mining address and fund it with a deliberately small
    amount of SOL for fees, reserve, and intended capital.
@@ -408,15 +408,14 @@ The clean operator sequence is:
 
 1. create or import the single signer-owned Mining wallet through the native
    operator lifecycle
-2. enter one primary RPC and verify role baseline v1
-3. enroll signer WebAuthn for manual reviewed Mining actions
-4. confirm exact policy/network hashes and readiness
-5. fund the wallet deliberately small and initialize miner capital if missing
-6. deposit SOL into miner capital
-7. set a target commit
-8. click `Update` when you are ready to update the active commit PDA
-9. confirm wallet reserve and fee buffer
-10. click `Start`
+2. enter one RPC and verify role baseline v1
+3. confirm exact policy/network hashes and readiness
+4. fund the wallet deliberately small and initialize miner capital if missing
+5. deposit SOL into miner capital
+6. set a target commit
+7. click `Update` when you are ready to update the active commit PDA
+8. confirm wallet reserve and fee buffer
+9. click `Start`
 
 CLI equivalent:
 

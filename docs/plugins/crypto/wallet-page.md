@@ -15,8 +15,9 @@ and Hosting.
 Use it to:
 
 - create Agent, Mining, or Vault wallets;
-- enter or replace one primary RPC;
-- see public address, role, network, policy, backup, and signer readiness;
+- enter or replace one RPC;
+- copy the wallet handle or public address and open the address explorer;
+- see role, balance, policy, and signer readiness;
 - choose the optional Default Agent wallet;
 - attach the singleton Mining wallet;
 - Receive, copy the address, or show a QR code;
@@ -26,16 +27,21 @@ Use it to:
 ## Create a wallet
 
 1. Choose **Create wallet**.
-2. Enter a name and wallet ID.
-3. Explicitly choose **Agent**, **Mining**, or **Vault**. No role is selected
-   automatically.
-4. Enter one primary Solana RPC.
+2. Optionally enter a display name. Blank names become **Agent**, **Agent 2**,
+   **Vault**, **Vault 2**, or the singleton **Mining**.
+3. Choose **Agent**, **Mining**, or **Vault**.
+4. Enter one Solana RPC.
 5. Choose **Create wallet**.
 
+Fased generates the permanent internal wallet ID. The resulting user-facing
+handle is `@wallet:<id>`, such as `@wallet:agent-2`; use that handle in Send,
+chat, tasks, skills, and Agent routing. Do not enter or invent a wallet ID in
+the browser form.
+
 The Go signer creates the key and returns only the public address. It verifies
-the endpoint's live genesis hash, derives the official verification-only
-witness, activates signer-owned role baseline v1, and returns the exact live
-policy/network hashes and readiness.
+that the endpoint is a Solana RPC, records its network, activates the built-in
+role baseline, and returns readiness. A failed lifecycle creates no partial
+wallet.
 
 The UI can create Mining when no active Mining wallet exists. Fased permits one
 active Mining wallet. To replace it, stop Mining, settle claims/capital/funds,
@@ -47,20 +53,19 @@ in [Wallet CLI](/cli/wallet); Local and Hosting return the same result.
 
 ## Wallet cards
 
-Each card shows the information needed before funding or sending:
+Each card shows:
 
-- permanent role and public Solana address;
-- balance and Receive controls;
-- signer key readiness;
-- primary RPC/network readiness and version;
-- signer policy state and acknowledged hash;
-- Default Agent or Mining attachment; and
-- backup guidance.
+- display name and permanent role;
+- shortened public address with reveal, copy, and explorer controls;
+- copyable `@wallet:<id>` handle and real receive QR;
+- balance and Send;
+- optional Agent/Mining routing; and
+- Settings for RPC, policy, and advanced archive controls.
 
-For a native wallet, open **Security** to replace the primary RPC. A draft is
-cleared when you change wallets so an endpoint typed for one wallet cannot be
-saved to another. The signer accepts a replacement only after pinned-genesis
-verification.
+Open **Settings** to see RPC status. The stored URL is masked; use copy when you
+need the exact value or edit to enter another provider. Fased verifies that the
+replacement responds as Solana and remains on the wallet's current network.
+Saving it updates the wallet without restarting the Gateway.
 
 ## Roles
 
@@ -100,12 +105,11 @@ The optional **Control UI account passkey** appears under **Account Security**.
 It protects the web account. It does not create, unlock, or make Agent/Mining
 wallets ready.
 
-An optional **Vault approval device** is shown only as separate guidance in
-that Vault's Security panel. Enrollment is a native signer-owner ceremony, not
-an ordinary Control UI operation. Local and Hosting operators use the native
-wallet lifecycle from their terminal; the ordinary Gateway/browser route
-cannot enroll signer credentials. Once enrolled, the signer can authorize exact
-manual Vault reviews; it never changes Agent or Mining automation.
+Vault sends always require an explicit review. They work with the authenticated
+Control UI session when no optional signer approval device is enrolled. If an
+operator enrolls a signer-owned approval device through the native terminal
+ceremony, the signer also requires that device for the exact reviewed action.
+This never changes Agent or Mining automation.
 
 ## Recovery
 

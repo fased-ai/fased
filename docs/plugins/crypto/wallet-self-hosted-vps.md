@@ -24,8 +24,8 @@ It is written for the public Fased wallet model:
 - self-hosted wallet created or imported through the native `fased wallet`
   operator lifecycle
 - signer execution RPC and Gateway read RPC configured for the wallet role
-- owner-reviewed role policy activated and acknowledged
-- signer WebAuthn enrolled before manual native reviewed operations
+- built-in role baseline activated and acknowledged
+- optional signer-owned approval device enrolled only when the operator wants it
 
 Fased installs the version-matched native signer during Hosting bootstrap and
 verifies both its checksum and GitHub release attestation. Hosting runs it as an
@@ -49,7 +49,7 @@ For unattended self-hosted operation, the wallet path should look like:
 
 - wallet entry exists in the runtime registry
 - `local-socket-signer` is healthy
-- one primary RPC is entered and signer/Gateway readiness is green
+- one RPC is entered and signer/Gateway readiness is green
 - exact signer policy version/hash is acknowledged
 - wallet appears in the Wallets page and status outputs
 
@@ -72,7 +72,7 @@ Open the Wallets page or inspect runtime status to confirm:
 
 ### 3. Confirm one-RPC activation and policy acknowledgement
 
-The normal user enters one primary RPC. The wallet path is ready only after the
+The normal user enters one RPC. The wallet path is ready only after the
 signer verifies it, Gateway reads pass, and the exact role policy is acknowledged.
 
 Use the runtime and wallet status surfaces to confirm:
