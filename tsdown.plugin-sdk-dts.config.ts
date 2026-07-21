@@ -14,6 +14,7 @@ export default defineConfig({
     telegram: "src/plugin-sdk/telegram.ts",
     whatsapp: "src/plugin-sdk/whatsapp.ts",
   },
+  tsconfig: "tsconfig.plugin-sdk.dts.json",
   outDir: "dist/plugin-sdk",
   clean: false,
   platform: "node",
@@ -24,6 +25,6 @@ export default defineConfig({
   dts: {
     emitDtsOnly: true,
     resolver: "tsc",
-    incremental: false,
+    incremental: true,
   },
 });
