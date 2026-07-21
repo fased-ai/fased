@@ -20,17 +20,9 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  linux:
-    name: Linux ${{ matrix.arch }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
+  validate:
+    name: Validate release contents
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -56,8 +48,41 @@ jobs:
       - name: Install build dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build, check, and package hosted runtime artifact
-        run: pnpm hosted:artifact --output .artifacts/hosted-runtime
+      - name: Validate release contents once
+        run: pnpm release:check
+
+  linux:
+    name: Linux ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+          check-latest: true
+
+      - name: Setup pnpm + cache store
+        uses: ./.github/actions/setup-pnpm-store-cache
+        with:
+          pnpm-version: "10.23.0"
+          cache-key-suffix: "hosted-runtime-node24"
+
+      - name: Install build dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and package hosted runtime artifact
+        run: pnpm hosted:artifact:build --output .artifacts/hosted-runtime
 
       - name: Verify tag matches package version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -163,7 +188,7 @@ jobs:
   publish:
     name: Publish verified runtime assets
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, signer]
+    needs: [validate, linux, signer]
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout exact tagged source

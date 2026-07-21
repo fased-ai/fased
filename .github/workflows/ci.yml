@@ -262,19 +262,35 @@ jobs:
             profile: normal
             command: pnpm canvas:a2ui:bundle && pnpm test
           - runtime: node
-            task: support
+            task: support-isolated
             test_lane: true
-            groups: unit-isolated,extensions
+            groups: unit-isolated
             shard_index: 0
             shard_count: 1
             profile: serial
             command: pnpm canvas:a2ui:bundle && pnpm test
           - runtime: node
-            task: gateway
+            task: extensions
             test_lane: true
-            groups: gateway
+            groups: extensions
             shard_index: 0
             shard_count: 1
+            profile: serial
+            command: pnpm canvas:a2ui:bundle && pnpm test
+          - runtime: node
+            task: gateway-1of2
+            test_lane: true
+            groups: gateway
+            shard_index: 1
+            shard_count: 2
+            profile: normal
+            command: pnpm canvas:a2ui:bundle && pnpm test
+          - runtime: node
+            task: gateway-2of2
+            test_lane: true
+            groups: gateway
+            shard_index: 2
+            shard_count: 2
             profile: normal
             command: pnpm canvas:a2ui:bundle && pnpm test
           - runtime: node
@@ -309,9 +325,9 @@ jobs:
       - name: Configure Node test resources
         if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.test_lane == true
         run: |
-          # Slow-test reports showed unit-fast as the critical path. Split it in
-          # two and isolate the setup-heavy/support and Gateway groups so every
-          # lane has its own bounded runner resources.
+          # Split each measured long-running group onto its own runner. Gateway
+          # is file-sharded across two runners; isolated and extension suites
+          # remain serial internally for deterministic process/global state.
           echo "FASED_TEST_GROUPS=${{ matrix.groups }}" >> "$GITHUB_ENV"
           echo "FASED_TEST_PROFILE=${{ matrix.profile }}" >> "$GITHUB_ENV"
           echo "FASED_TEST_WORKERS=2" >> "$GITHUB_ENV"

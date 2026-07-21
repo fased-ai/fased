@@ -443,11 +443,13 @@ describe("docker-setup.sh", () => {
     expect(dockerfile).toMatch(
       /^FROM golang:1\.25\.7-bookworm@sha256:[a-f0-9]{64} AS signer-builder$/m,
     );
-    expect(dockerfile).toContain("ARG TARGETOS=linux");
-    expect(dockerfile).toContain("ARG TARGETARCH=amd64");
+    expect(dockerfile).toMatch(/^ARG TARGETOS$/m);
+    expect(dockerfile).toMatch(/^ARG TARGETARCH$/m);
+    expect(dockerfile).not.toMatch(/^ARG TARGET(?:OS|ARCH)=/m);
     expect(dockerfile).toContain('CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH"');
     expect(dockerfile).toContain("-buildvcs=false -trimpath");
     expect(dockerfile).toContain("COPY --from=signer-builder");
+    expect(dockerfile).toContain("FROM scratch AS signer-artifact");
     expect(dockerfile).toContain("/usr/local/bin/fased-signerd");
     expect(dockerfile).toContain(
       "ln /usr/local/bin/fased-signerd /usr/local/bin/fased-signer-enroll",

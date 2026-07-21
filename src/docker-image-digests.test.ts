@@ -66,6 +66,19 @@ describe("docker base image pinning", () => {
     expect(workflow).not.toContain("sha256sum /tmp/fased-image-manifest.json");
   });
 
+  it("executes the container-built ARM64 signer before a release tag", async () => {
+    const workflow = await readFile(
+      resolve(repoRoot, ".github/workflows/docker-release.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain("validate-arm64-signer-image:");
+    expect(workflow).toContain("runs-on: ubuntu-24.04-arm");
+    expect(workflow).toContain("target: signer-artifact");
+    expect(workflow).toContain("platforms: linux/arm64");
+    expect(workflow).toContain('actual="$("$signer" --version)"');
+  });
+
   it("pins selected Dockerfile FROM lines to immutable sha256 digests", async () => {
     for (const dockerfilePath of DIGEST_PINNED_DOCKERFILES) {
       const dockerfile = await readFile(resolve(repoRoot, dockerfilePath), "utf8");
@@ -74,6 +87,9 @@ describe("docker base image pinning", () => {
         .filter((line) => line.trimStart().startsWith("FROM "));
       expect(fromLines.length, `${dockerfilePath} should define a FROM line`).toBeGreaterThan(0);
       for (const fromLine of fromLines) {
+        if (fromLine === "FROM scratch AS signer-artifact") {
+          continue;
+        }
         expect(fromLine, `${dockerfilePath} FROM must be digest-pinned`).toMatch(
           /^FROM\s+\S+@sha256:[a-f0-9]{64}(?:\s+AS\s+[A-Za-z0-9._-]+)?$/,
         );

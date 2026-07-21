@@ -1,7 +1,11 @@
+# syntax=docker/dockerfile:1
+
 FROM golang:1.25.7-bookworm@sha256:564e366a28ad1d70f460a2b97d1d299a562f08707eb0ecb24b659e5bd6c108e1 AS signer-builder
 
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+# BuildKit defines these automatically from the requested --platform. Redeclare
+# them without defaults so an arm64 build cannot silently compile an amd64 signer.
+ARG TARGETOS
+ARG TARGETARCH
 ARG FASED_SIGNER_BUILD_VERSION=""
 ARG FASED_SIGNER_BUILD_COMMIT=unknown
 ARG FASED_SIGNER_BUILD_INPUT_DIGEST=unknown
@@ -25,6 +29,11 @@ RUN signer_version="$FASED_SIGNER_BUILD_VERSION" \
       -X main.signerBuildInputDigest=${FASED_SIGNER_BUILD_INPUT_DIGEST} \
       -X main.signerBuildDevelopment=${FASED_SIGNER_BUILD_DEVELOPMENT}" \
     -o /out/fased-signerd .
+
+# A small export target lets pull requests execute the container-built signer
+# natively on an ARM64 runner without building or loading the full application.
+FROM scratch AS signer-artifact
+COPY --from=signer-builder /out/fased-signerd /fased-signerd
 
 FROM node:22-bookworm@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37
 

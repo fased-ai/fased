@@ -107,6 +107,13 @@ describe("attested Hosting installer artifact layout", () => {
     expect(installerReference).toContain("--deny-self-hosted-runners");
   });
 
+  it("validates once while packaging native hosted artifacts in parallel", () => {
+    expect(releaseWorkflow.match(/run: pnpm release:check/g)).toHaveLength(1);
+    expect(releaseWorkflow).toContain("run: pnpm hosted:artifact:build --output");
+    expect(releaseWorkflow).not.toContain("run: pnpm hosted:artifact --output");
+    expect(releaseWorkflow).toContain("needs: [validate, linux, signer]");
+  });
+
   it("dispatches standalone Hosting execution through the attested bundle bootstrap", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-hosting-bootstrap-dispatch-"));
     try {

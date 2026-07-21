@@ -90,6 +90,38 @@ jobs:
           IMAGE: fased-local-ci:${{ github.sha }}
         run: scripts/scan-docker-image.sh "$IMAGE" linux/amd64
 
+  validate-arm64-signer-image:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build native ARM64 signer export
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: signer-artifact
+          platforms: linux/arm64
+          outputs: type=local,dest=${{ runner.temp }}/fased-signer-arm64
+          cache-from: type=gha,scope=fased-pr-signer-arm64
+          cache-to: type=gha,scope=fased-pr-signer-arm64,mode=max
+
+      - name: Execute container-built ARM64 signer
+        shell: bash
+        run: |
+          set -euo pipefail
+          signer="${RUNNER_TEMP}/fased-signer-arm64/fased-signerd"
+          chmod 0555 "$signer"
+          expected="$(node -p "require('./package.json').version")"
+          actual="$("$signer" --version)"
+          test "$actual" = "fased-signerd ${expected} commit=unknown buildInputDigest=unknown development=true"
+
   # Build amd64 image
   build-amd64:
     if: github.event_name == 'push'

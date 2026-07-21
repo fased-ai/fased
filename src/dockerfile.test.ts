@@ -8,6 +8,16 @@ const dockerfilePath = join(repoRoot, "Dockerfile");
 const dockerignorePath = join(repoRoot, ".dockerignore");
 
 describe("Dockerfile", () => {
+  it("inherits the requested BuildKit platform for the native signer", async () => {
+    const dockerfile = await readFile(dockerfilePath, "utf8");
+
+    expect(dockerfile).toMatch(/^ARG TARGETOS$/m);
+    expect(dockerfile).toMatch(/^ARG TARGETARCH$/m);
+    expect(dockerfile).not.toMatch(/^ARG TARGET(?:OS|ARCH)=/m);
+    expect(dockerfile).toContain('CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH"');
+    expect(dockerfile).toContain("FROM scratch AS signer-artifact");
+  });
+
   it("does not execute remote installer scripts during the image build", async () => {
     const dockerfile = await readFile(dockerfilePath, "utf8");
 
