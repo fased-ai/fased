@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { RuntimeEnv } from "../runtime.js";
 import {
   walletKeystoreExportCommand,
   walletKeystoreImportCommand,
@@ -24,7 +25,8 @@ describe("retired Node keystore CLI boundary", () => {
   it("fails every legacy command with native one-way migration guidance before material access", async () => {
     const readFileSync = vi.spyOn(fs, "readFileSync");
     const writeFileSync = vi.spyOn(fs, "writeFileSync");
-    const runtime = { log: vi.fn() } as never;
+    const log = vi.fn();
+    const runtime = { log } as unknown as RuntimeEnv;
     const commands = [
       () => walletKeystoreInitCommand(runtime, { chain: "solana", walletId: "legacy" }),
       () => walletKeystoreImportCommand(runtime, { chain: "solana", walletId: "legacy" }),
@@ -42,6 +44,6 @@ describe("retired Node keystore CLI boundary", () => {
 
     expect(readFileSync).not.toHaveBeenCalled();
     expect(writeFileSync).not.toHaveBeenCalled();
-    expect(runtime.log).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
   });
 });

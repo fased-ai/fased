@@ -1,5 +1,5 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
-import type { Context, Model } from "@mariozechner/pi-ai";
+import type { Context, Model, ProviderHeaders } from "@mariozechner/pi-ai";
 import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 import { describe, expect, it } from "vitest";
 import { applyExtraParamsToAgent } from "./extra-params.js";
@@ -13,7 +13,7 @@ type StreamPayload = {
 
 function runOpenRouterPayload(payload: StreamPayload, modelId: string) {
   const baseStreamFn: StreamFn = (_model, _context, options) => {
-    options?.onPayload?.(payload);
+    options?.onPayload?.(payload, model);
     return createAssistantMessageEventStream();
   };
   const agent = { streamFn: baseStreamFn };
@@ -32,7 +32,7 @@ function runOpenRouterPayload(payload: StreamPayload, modelId: string) {
 
 describe("extra-params: OpenRouter Anthropic cache_control", () => {
   it("forwards opt-in response cache params as OpenRouter headers", () => {
-    const calls: Array<{ headers?: Record<string, string> }> = [];
+    const calls: Array<{ headers?: ProviderHeaders }> = [];
     const baseStreamFn: StreamFn = (_model, _context, options) => {
       calls.push({ headers: options?.headers });
       return createAssistantMessageEventStream();
@@ -73,7 +73,7 @@ describe("extra-params: OpenRouter Anthropic cache_control", () => {
   });
 
   it("honors narrower camelCase response cache params over wider snake_case aliases", () => {
-    const calls: Array<{ headers?: Record<string, string> }> = [];
+    const calls: Array<{ headers?: ProviderHeaders }> = [];
     const baseStreamFn: StreamFn = (_model, _context, options) => {
       calls.push({ headers: options?.headers });
       return createAssistantMessageEventStream();
@@ -117,7 +117,7 @@ describe("extra-params: OpenRouter Anthropic cache_control", () => {
   });
 
   it("does not forward response cache headers to custom proxy base URLs", () => {
-    const calls: Array<{ headers?: Record<string, string> }> = [];
+    const calls: Array<{ headers?: ProviderHeaders }> = [];
     const baseStreamFn: StreamFn = (_model, _context, options) => {
       calls.push({ headers: options?.headers });
       return createAssistantMessageEventStream();

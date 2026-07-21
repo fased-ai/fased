@@ -3,8 +3,8 @@ import type {
   ChannelGatewayContext,
   FasedAgentConfig,
   PluginRuntime,
-  ResolvedTelegramAccount,
 } from "fased/plugin-sdk";
+import type { ResolvedTelegramAccount } from "fased/plugin-sdk/telegram";
 import { describe, expect, it, vi } from "vitest";
 import { createRuntimeEnv } from "../../test-utils/runtime-env.js";
 import { telegramPlugin } from "./channel.js";

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { StreamFn } from "@mariozechner/pi-agent-core";
-import type { Api, Context, Model } from "@mariozechner/pi-ai";
+import type { Api, Context, Model, ProviderHeaders } from "@mariozechner/pi-ai";
 import { convertMessages } from "@mariozechner/pi-ai/api/openai-completions";
 import {
   calculateCost,
@@ -23,7 +23,11 @@ import {
 import { buildGuardedModelFetch } from "./provider-transport-fetch.js";
 import { stripSystemPromptCacheBoundary } from "./system-prompt-cache-boundary.js";
 import { transformTransportMessages } from "./transport-message-transform.js";
-import { mergeTransportMetadata, sanitizeTransportPayloadText } from "./transport-stream-shared.js";
+import {
+  mergeTransportHeaders,
+  mergeTransportMetadata,
+  sanitizeTransportPayloadText,
+} from "./transport-stream-shared.js";
 
 type OpenAIServiceTier = "auto" | "default" | "flex" | "priority";
 type OpenAIReasoningEffort = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -74,7 +78,7 @@ type BaseStreamOptions = {
   cacheRetention?: "none" | "short" | "long";
   sessionId?: string;
   onPayload?: (payload: unknown, model: Model<Api>) => unknown;
-  headers?: Record<string, string>;
+  headers?: ProviderHeaders;
 };
 
 type OpenAIResponsesOptions = BaseStreamOptions & {
@@ -715,26 +719,17 @@ function mapResponsesStopReason(status: string | undefined): string {
 function buildOpenAIClientHeaders(
   model: Model<Api>,
   context: Context,
-  optionHeaders?: Record<string, string>,
+  optionHeaders?: ProviderHeaders,
   turnHeaders?: Record<string, string>,
 ): Record<string, string> {
-  const headers = { ...model.headers };
-  if (model.provider === "github-copilot") {
-    Object.assign(
-      headers,
-      buildCopilotDynamicHeaders({
-        messages: context.messages,
-        hasImages: hasCopilotVisionInput(context.messages),
-      }),
-    );
-  }
-  if (optionHeaders) {
-    Object.assign(headers, optionHeaders);
-  }
-  if (turnHeaders) {
-    Object.assign(headers, turnHeaders);
-  }
-  return headers;
+  const dynamicHeaders =
+    model.provider === "github-copilot"
+      ? buildCopilotDynamicHeaders({
+          messages: context.messages,
+          hasImages: hasCopilotVisionInput(context.messages),
+        })
+      : undefined;
+  return mergeTransportHeaders(model.headers, dynamicHeaders, optionHeaders, turnHeaders) ?? {};
 }
 
 function resolveProviderTransportTurnState(
@@ -764,7 +759,7 @@ function createOpenAIResponsesClient(
   model: Model<Api>,
   context: Context,
   apiKey: string,
-  optionHeaders?: Record<string, string>,
+  optionHeaders?: ProviderHeaders,
   turnHeaders?: Record<string, string>,
 ) {
   return createOpenAIStreamClient({
@@ -943,7 +938,7 @@ function createOpenAICompletionsClient(
   model: Model<Api>,
   context: Context,
   apiKey: string,
-  optionHeaders?: Record<string, string>,
+  optionHeaders?: ProviderHeaders,
 ) {
   return createOpenAIStreamClient({
     apiKey,

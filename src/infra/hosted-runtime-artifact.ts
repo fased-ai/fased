@@ -129,7 +129,9 @@ async function writeResponseBody(response: Response, destination: string): Promi
   if (!response.body) {
     throw new Error("hosted runtime response had no body");
   }
-  const source = Readable.fromWeb(response.body as ReadableStream<Uint8Array>);
+  const source = Readable.fromWeb(
+    response.body as unknown as Parameters<typeof Readable.fromWeb>[0],
+  );
   await pipeline(source, createWriteStream(destination, { mode: 0o600 }));
 }
 

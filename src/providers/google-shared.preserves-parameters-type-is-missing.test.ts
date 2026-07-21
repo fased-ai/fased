@@ -1,5 +1,5 @@
-import { convertMessages, convertTools } from "@mariozechner/pi-ai/dist/providers/google-shared.js";
-import type { Context, Tool } from "@mariozechner/pi-ai/dist/types.js";
+import type { Context, Tool } from "@mariozechner/pi-ai";
+import { convertMessages, convertTools } from "@mariozechner/pi-ai/api/google-shared";
 import { describe, expect, it } from "vitest";
 import {
   asRecord,

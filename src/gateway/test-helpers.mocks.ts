@@ -235,14 +235,40 @@ vi.mock("../agents/pi-model-discovery.js", async () => {
     "../agents/pi-model-discovery.js",
   );
 
-  class MockModelRegistry extends actual.ModelRegistry {
-    override getAll(): ReturnType<typeof actual.ModelRegistry.prototype.getAll> {
-      if (!piSdkMock.enabled) {
-        return super.getAll();
-      }
-      piSdkMock.discoverCalls += 1;
-      // Cast to expected type for testing purposes
-      return piSdkMock.models as ReturnType<typeof actual.ModelRegistry.prototype.getAll>;
+  const withMockedCatalog = (registry: ReturnType<typeof actual.ModelRegistry.create>) =>
+    new Proxy(registry, {
+      get(target, property, receiver) {
+        if (property === "getAll") {
+          return () => {
+            if (!piSdkMock.enabled) {
+              return target.getAll();
+            }
+            piSdkMock.discoverCalls += 1;
+            return piSdkMock.models as ReturnType<typeof actual.ModelRegistry.prototype.getAll>;
+          };
+        }
+        const value = Reflect.get(target, property, receiver) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+
+  class MockModelRegistry {
+    constructor(
+      authStorage: Parameters<typeof actual.ModelRegistry.create>[0],
+      modelsJsonPath?: string,
+    ) {
+      return withMockedCatalog(actual.ModelRegistry.create(authStorage, modelsJsonPath));
+    }
+
+    static create(
+      authStorage: Parameters<typeof actual.ModelRegistry.create>[0],
+      modelsJsonPath?: string,
+    ) {
+      return withMockedCatalog(actual.ModelRegistry.create(authStorage, modelsJsonPath));
+    }
+
+    static inMemory(authStorage: Parameters<typeof actual.ModelRegistry.inMemory>[0]) {
+      return withMockedCatalog(actual.ModelRegistry.inMemory(authStorage));
     }
   }
 

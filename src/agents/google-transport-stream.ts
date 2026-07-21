@@ -1,5 +1,11 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
-import type { Context, Model, SimpleStreamOptions, ThinkingLevel } from "@mariozechner/pi-ai";
+import type {
+  Context,
+  Model,
+  ProviderHeaders,
+  SimpleStreamOptions,
+  ThinkingLevel,
+} from "@mariozechner/pi-ai";
 import { calculateCost, getEnvApiKey } from "@mariozechner/pi-ai/compat";
 import { parseGeminiAuth } from "../infra/gemini-auth.js";
 import { normalizeGoogleApiBaseUrl } from "../infra/google-api-base-url.js";
@@ -467,7 +473,7 @@ export function buildGoogleGenerativeAiParams(
 function buildGoogleHeaders(
   model: GoogleTransportModel,
   apiKey: string | undefined,
-  optionHeaders: Record<string, string> | undefined,
+  optionHeaders: ProviderHeaders | undefined,
 ): Record<string, string> {
   const authHeaders = apiKey ? parseGeminiAuth(apiKey).headers : undefined;
   return (
@@ -599,7 +605,7 @@ export function createGoogleGenerativeAiTransportStreamFn(): StreamFn {
         const apiKey = options?.apiKey ?? getEnvApiKey(model.provider) ?? undefined;
         const fetch = buildGuardedModelFetch(model);
         const params = buildGoogleGenerativeAiParams(model, context, options);
-        await Promise.resolve(options?.onPayload?.(params));
+        await Promise.resolve(options?.onPayload?.(params, model));
         const response = await fetch(buildGoogleRequestUrl(model), {
           method: "POST",
           headers: buildGoogleHeaders(model, apiKey, options?.headers),

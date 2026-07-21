@@ -358,7 +358,7 @@ const voiceCallPlugin = {
         try {
           const rt = await ensureRuntime();
 
-          if (typeof params?.action === "string") {
+          if ("action" in params && typeof params.action === "string") {
             switch (params.action) {
               case "initiate_call": {
                 const message = String(params.message || "").trim();

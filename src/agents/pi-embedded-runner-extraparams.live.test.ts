@@ -1,5 +1,5 @@
-import type { Model } from "@mariozechner/pi-ai";
-import { getModel, streamSimple } from "@mariozechner/pi-ai";
+import type { Model } from "@mariozechner/pi-ai/compat";
+import { getModel, streamSimple } from "@mariozechner/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import type { FasedAgentConfig } from "../config/config.js";
 import { isLiveTestEnabled } from "./live-test-helpers.js";

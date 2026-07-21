@@ -15,8 +15,8 @@ function runOpenRouterPayload(params: {
   baseUrl?: string;
   thinkingLevel?: Parameters<typeof applyExtraParamsToAgent>[5];
 }) {
-  const baseStreamFn: StreamFn = (_model, _context, options) => {
-    options?.onPayload?.(params.payload);
+  const baseStreamFn: StreamFn = (model, _context, options) => {
+    options?.onPayload?.(params.payload, model);
     return createAssistantMessageEventStream();
   };
   const agent = { streamFn: baseStreamFn };

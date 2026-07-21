@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage, AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { Static, TSchema } from "@sinclair/typebox";
 import type { Command } from "commander";
 import type { AuthProfileCredential, OAuthCredential } from "../agents/auth-profiles/types.js";
 import type { AnyAgentTool } from "../agents/tools/common.js";
@@ -84,6 +85,28 @@ export type FasedAgentPluginToolContext = {
   messageChannel?: string;
   agentAccountId?: string;
   sandboxed?: boolean;
+};
+
+/**
+ * Plugin-facing tool contract.
+ *
+ * Core Pi uses TypeBox 1.x internally, while the public plugin SDK continues
+ * to accept the @sinclair/typebox schemas used by existing Fased plugins. Keep
+ * that compatibility boundary explicit so plugin execute parameters retain
+ * their inferred shape instead of degrading to `unknown`.
+ */
+export type FasedAgentPluginTool<TParameters extends TSchema = TSchema> = Omit<
+  AgentTool<never, unknown>,
+  "parameters" | "prepareArguments" | "execute"
+> & {
+  parameters: TParameters;
+  prepareArguments?: (args: unknown) => Static<TParameters>;
+  execute: (
+    toolCallId: string,
+    params: Static<TParameters>,
+    signal?: AbortSignal,
+    onUpdate?: (partialResult: AgentToolResult<unknown>) => void,
+  ) => Promise<AgentToolResult<unknown>>;
 };
 
 export type FasedAgentPluginToolFactory = (
@@ -420,8 +443,8 @@ export type FasedAgentPluginApi = {
   pluginConfig?: Record<string, unknown>;
   runtime: PluginRuntime;
   logger: PluginLogger;
-  registerTool: (
-    tool: AnyAgentTool | FasedAgentPluginToolFactory,
+  registerTool: <TParameters extends TSchema = TSchema>(
+    tool: FasedAgentPluginTool<TParameters> | FasedAgentPluginToolFactory,
     opts?: FasedAgentPluginToolOptions,
   ) => void;
   registerHook: (

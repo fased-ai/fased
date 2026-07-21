@@ -319,14 +319,15 @@ export async function gatherDaemonStatus(
 }
 
 export function renderPortDiagnosticsForCli(status: DaemonStatus, rpcOk?: boolean): string[] {
-  if (!shouldReportPortUsage(status.port, rpcOk, status.service.runtime)) {
+  const port = status.port;
+  if (!port || !shouldReportPortUsage(port, rpcOk, status.service.runtime)) {
     return [];
   }
   return formatPortDiagnostics({
-    port: status.port.port,
-    status: status.port.status,
-    listeners: status.port.listeners,
-    hints: status.port.hints,
+    port: port.port,
+    status: port.status,
+    listeners: port.listeners,
+    hints: port.hints,
   });
 }
 

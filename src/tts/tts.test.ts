@@ -1,4 +1,4 @@
-import { completeSimple, type AssistantMessage } from "@mariozechner/pi-ai";
+import { completeSimple, type AssistantMessage } from "@mariozechner/pi-ai/compat";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { getApiKeyForModel } from "../agents/model-auth.js";
 import { resolveModel } from "../agents/pi-embedded-runner/model.js";

@@ -1,3 +1,4 @@
+import type { ProviderHeaders } from "@mariozechner/pi-ai";
 import { createAssistantMessageEventStream } from "@mariozechner/pi-ai/compat";
 
 export type TransportUsage = {
@@ -27,12 +28,18 @@ export function sanitizeTransportPayloadText(text: string): string {
 }
 
 export function mergeTransportHeaders(
-  ...headerSources: Array<Record<string, string> | undefined>
+  ...headerSources: Array<ProviderHeaders | undefined>
 ): Record<string, string> | undefined {
   const merged: Record<string, string> = {};
   for (const headers of headerSources) {
     if (headers) {
-      Object.assign(merged, headers);
+      for (const [key, value] of Object.entries(headers)) {
+        if (value === null) {
+          delete merged[key];
+        } else {
+          merged[key] = value;
+        }
+      }
     }
   }
   return Object.keys(merged).length > 0 ? merged : undefined;

@@ -1,6 +1,8 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
-import { streamSimple } from "@mariozechner/pi-ai";
+import type { ProviderHeaders } from "@mariozechner/pi-ai";
+import { streamSimple } from "@mariozechner/pi-ai/compat";
 import { log } from "../../../src/agents/pi-embedded-runner/logger.js";
+import { mergeTransportHeaders } from "../../../src/agents/transport-stream-shared.js";
 
 const ANTHROPIC_CONTEXT_1M_BETA = "context-1m-2025-08-07";
 const PI_AI_DEFAULT_ANTHROPIC_BETAS = [
@@ -30,10 +32,10 @@ function parseHeaderList(value: unknown): string[] {
 }
 
 function mergeAnthropicBetaHeader(
-  headers: Record<string, string> | undefined,
+  headers: ProviderHeaders | undefined,
   betas: string[],
 ): Record<string, string> {
-  const merged = { ...headers };
+  const merged = mergeTransportHeaders(headers) ?? {};
   const existingKey = Object.keys(merged).find((key) => key.toLowerCase() === "anthropic-beta");
   const existing = existingKey ? parseHeaderList(merged[existingKey]) : [];
   const key = existingKey ?? "anthropic-beta";
@@ -159,7 +161,7 @@ export function createAnthropicServiceTierWrapper(
         ) {
           (payload as Record<string, unknown>).service_tier = serviceTier;
         }
-        return options?.onPayload?.(payload);
+        return options?.onPayload?.(payload, model);
       },
     });
 }

@@ -57,9 +57,10 @@ export function createMemorySearchTool(options: {
       "Mandatory recall step: semantically search MEMORY.md + memory/*.md (and optional session transcripts) before answering questions about prior work, decisions, dates, people, preferences, or todos; returns top snippets with path + lines. If response has disabled=true, memory retrieval is unavailable and should be surfaced to the user.",
     parameters: MemorySearchSchema,
     execute: async (_toolCallId, params) => {
-      const query = readStringParam(params, "query", { required: true });
-      const maxResults = readNumberParam(params, "maxResults");
-      const minScore = readNumberParam(params, "minScore");
+      const input = params as Record<string, unknown>;
+      const query = readStringParam(input, "query", { required: true });
+      const maxResults = readNumberParam(input, "maxResults");
+      const minScore = readNumberParam(input, "minScore");
       const scopeDenial = resolveMemoryToolScopeDenial({
         cfg,
         agentId,
@@ -126,9 +127,10 @@ export function createMemoryGetTool(options: {
       "Safe snippet read from MEMORY.md or memory/*.md with optional from/lines; use after memory_search to pull only the needed lines and keep context small.",
     parameters: MemoryGetSchema,
     execute: async (_toolCallId, params) => {
-      const relPath = readStringParam(params, "path", { required: true });
-      const from = readNumberParam(params, "from", { integer: true });
-      const lines = readNumberParam(params, "lines", { integer: true });
+      const input = params as Record<string, unknown>;
+      const relPath = readStringParam(input, "path", { required: true });
+      const from = readNumberParam(input, "from", { integer: true });
+      const lines = readNumberParam(input, "lines", { integer: true });
       const scopeDenial = resolveMemoryToolScopeDenial({
         cfg,
         agentId,

@@ -369,7 +369,11 @@ function renderTaskRoleModelOptions(options: AgentModelOption[], selectedModel =
     );
 }
 
-function agentModelOptionLabel(options: AgentModelOption[], value: string, emptyLabel: string) {
+function agentModelOptionLabel(
+  options: AgentModelOption[],
+  value: string | null | undefined,
+  emptyLabel: string,
+) {
   if (!value) {
     return emptyLabel;
   }

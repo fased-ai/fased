@@ -7,7 +7,7 @@ const classifyPortListener = vi.hoisted(() =>
   vi.fn<(_listener: unknown, _port: number) => PortListenerKind>(() => "gateway"),
 );
 const probeGatewayStatus = vi.hoisted(() =>
-  vi.fn(async (_opts: unknown) => ({ ok: true as const })),
+  vi.fn<(_opts: unknown) => Promise<{ ok: boolean; error?: string }>>(async () => ({ ok: true })),
 );
 
 vi.mock("../../infra/ports.js", () => ({

@@ -40,18 +40,18 @@ export async function loginAnthropicOAuth(params: {
     });
 
     let authUrlHandled = Promise.resolve();
-    const creds = await loginAnthropic(
-      (url) => {
+    const creds = await loginAnthropic({
+      onAuth: ({ url }) => {
         authUrlHandled = onAuth({ url });
       },
-      async () => {
+      onPrompt: async () => {
         await authUrlHandled;
         return await onPrompt({
           message: "Paste the Anthropic authorization code",
           placeholder: "code#state",
         });
       },
-    );
+    });
     await authUrlHandled;
     spin.stop("Anthropic OAuth complete");
     return creds ?? null;

@@ -1,5 +1,4 @@
-import { resolvePluginLifecycleEntry } from "../plugins/lifecycle.js";
-import { buildPluginManifestStatusReport } from "../plugins/status-manifest.js";
+import { buildPluginLifecycleReport, resolvePluginLifecycleEntry } from "../plugins/lifecycle.js";
 import { defaultRuntime } from "../runtime.js";
 import { theme } from "../terminal/theme.js";
 import { shortenHomeInString } from "../utils.js";
@@ -7,7 +6,7 @@ import { shortenHomeInString } from "../utils.js";
 export type PluginStatusCliOptions = { json?: boolean };
 
 export function pluginInfoCommand(id: string, opts: PluginStatusCliOptions = {}): void {
-  const report = buildPluginManifestStatusReport();
+  const report = buildPluginLifecycleReport();
   const plugin = resolvePluginLifecycleEntry({ idOrName: id, report });
   if (!plugin) {
     defaultRuntime.error(`Plugin not found: ${id}`);

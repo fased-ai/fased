@@ -843,6 +843,7 @@ describe("secondary read rpc fallback", () => {
     process.env.FASED_SAT_RPC_REQUEST_TIMEOUT_MS = "50";
     const connection = createReadConnection({ Connection: FetchBackedConnection } as never, {
       primaryUrl: rpcUrl,
+      secondaryUrl: null,
     });
 
     const error = await connection.getMinimumBalanceForRentExemption(0).catch((caught) => caught);

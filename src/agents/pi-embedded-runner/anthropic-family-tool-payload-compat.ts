@@ -40,7 +40,7 @@ export function createAnthropicToolPayloadCompatibilityWrapper(
             payloadObj.tool_choice = "required";
           }
         }
-        return options?.onPayload?.(payload);
+        return options?.onPayload?.(payload, model);
       },
     });
 }

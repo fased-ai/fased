@@ -7550,6 +7550,9 @@ const satMiningPlugin = {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
         const cycle = await inspectSatCycle(state.activeConfig, { cycleId });
+        if (!cycle) {
+          throw new Error(`cycle ${cycleId} was not found`);
+        }
         if (cycle.unlockIntervalStartCycleId == null) {
           throw new Error(`cycle ${cycleId} does not expose its unlock interval start`);
         }
@@ -7575,6 +7578,9 @@ const satMiningPlugin = {
           ? ((params as { allocationFp?: number[] }).allocationFp ?? [])
           : [];
         const cycle = await inspectSatCycle(state.activeConfig, { cycleId });
+        if (!cycle) {
+          throw new Error(`cycle ${cycleId} was not found`);
+        }
         if (cycle.unlockIntervalStartCycleId == null) {
           throw new Error(`cycle ${cycleId} does not expose its unlock interval start`);
         }

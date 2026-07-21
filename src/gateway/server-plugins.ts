@@ -21,10 +21,10 @@ export async function loadGatewayPlugins(params: {
     config: params.cfg,
     workspaceDir: params.workspaceDir,
     logger: {
-      info: (msg) => params.log.info(msg),
-      warn: (msg) => params.log.warn(msg),
-      error: (msg) => params.log.error(msg),
-      debug: (msg) => params.log.debug(msg),
+      info: (msg: string) => params.log.info(msg),
+      warn: (msg: string) => params.log.warn(msg),
+      error: (msg: string) => params.log.error(msg),
+      debug: (msg: string) => params.log.debug(msg),
     },
     coreGatewayHandlers: params.coreGatewayHandlers,
   };

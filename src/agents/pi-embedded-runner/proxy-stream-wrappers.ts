@@ -14,7 +14,7 @@ function withPayloadPatch(
         if (payload && typeof payload === "object") {
           patch(payload as Record<string, unknown>, model);
         }
-        return options?.onPayload?.(payload);
+        return options?.onPayload?.(payload, model);
       },
     });
 }

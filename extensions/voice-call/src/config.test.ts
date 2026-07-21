@@ -13,6 +13,7 @@ function createBaseConfig(provider: "telnyx" | "twilio" | "plivo" | "mock"): Voi
     silenceTimeoutMs: 800,
     transcriptTimeoutMs: 180000,
     ringTimeoutMs: 30000,
+    staleCallReaperSeconds: 0,
     maxConcurrentCalls: 1,
     serve: { port: 3334, bind: "127.0.0.1", path: "/voice/webhook" },
     tailscale: { mode: "off", path: "/voice/webhook" },

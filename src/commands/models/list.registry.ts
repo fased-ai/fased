@@ -32,6 +32,7 @@ export type ModelListSource = {
   contextWindow?: number;
   maxTokens?: number;
   reasoning?: boolean;
+  catalogSource?: ModelCatalogEntry["catalogSource"];
   metadata?: ModelMetadata;
 };
 

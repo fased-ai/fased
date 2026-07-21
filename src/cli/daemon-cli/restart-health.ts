@@ -124,17 +124,19 @@ export async function inspectGatewayRestart(params: {
       ? portUsage.listeners.some((_listener, index) => listenerOwnership.get(index) === true)
       : gatewayListeners.length > 0 ||
         (portUsage.status === "busy" && portUsage.listeners.length === 0);
-  const shouldProbeRpc = running && ownsPort && params.rpc;
-  const rpc = shouldProbeRpc
-    ? await probeGatewayStatus({
-        url: params.rpc.url,
-        token: params.rpc.token,
-        password: params.rpc.password,
-        tlsFingerprint: params.rpc.tlsFingerprint,
-        timeoutMs: params.rpc.timeoutMs,
-        json: true,
-      })
-    : undefined;
+  const rpcOptions = params.rpc;
+  const shouldProbeRpc = running && ownsPort && rpcOptions !== undefined;
+  const rpc =
+    shouldProbeRpc && rpcOptions
+      ? await probeGatewayStatus({
+          url: rpcOptions.url,
+          token: rpcOptions.token,
+          password: rpcOptions.password,
+          tlsFingerprint: rpcOptions.tlsFingerprint,
+          timeoutMs: rpcOptions.timeoutMs,
+          json: true,
+        })
+      : undefined;
   const healthy = running && ownsPort && (rpc ? rpc.ok : true);
   const staleGatewayPids = Array.from(
     new Set(
