@@ -138,7 +138,7 @@ jobs:
 
   # Build dist once for Node-relevant changes and share it with downstream jobs.
   build-artifacts:
-    needs: [docs-scope, changed-scope, check]
+    needs: [docs-scope, changed-scope]
     if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
     runs-on: ubuntu-latest
     steps:
@@ -191,11 +191,11 @@ jobs:
           path: dist/
 
       - name: Check release contents
-        run: pnpm release:check
+        run: pnpm release:validate-dist
 
   signer-platform:
     name: Native signer (${{ matrix.name }})
-    needs: [docs-scope, changed-scope, check]
+    needs: [docs-scope, changed-scope]
     if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_signer == 'true')
     strategy:
       fail-fast: false
@@ -230,7 +230,7 @@ jobs:
 
   checks:
     name: "test (${{ matrix.runtime }}, ${{ matrix.task }})"
-    needs: [docs-scope, changed-scope, check]
+    needs: [docs-scope, changed-scope]
     if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
     runs-on: ubuntu-latest
     strategy:
@@ -238,13 +238,44 @@ jobs:
       matrix:
         include:
           - runtime: node
-            task: test
+            task: unit-1of2
+            test_lane: true
+            groups: unit-fast
+            shard_index: 1
+            shard_count: 2
+            profile: normal
+            command: pnpm canvas:a2ui:bundle && pnpm test
+          - runtime: node
+            task: unit-2of2
+            test_lane: true
+            groups: unit-fast
+            shard_index: 2
+            shard_count: 2
+            profile: normal
+            command: pnpm canvas:a2ui:bundle && pnpm test
+          - runtime: node
+            task: support
+            test_lane: true
+            groups: unit-isolated,extensions
+            shard_index: 0
+            shard_count: 1
+            profile: serial
+            command: pnpm canvas:a2ui:bundle && pnpm test
+          - runtime: node
+            task: gateway
+            test_lane: true
+            groups: gateway
+            shard_index: 0
+            shard_count: 1
+            profile: normal
             command: pnpm canvas:a2ui:bundle && pnpm test
           - runtime: node
             task: protocol
+            test_lane: false
             command: pnpm protocol:check
           - runtime: bun
             task: test
+            test_lane: false
             command: pnpm canvas:a2ui:bundle && bunx vitest run --config vitest.unit.config.ts
     steps:
       - name: Skip bun lane on push
@@ -264,39 +295,40 @@ jobs:
           install-bun: "${{ matrix.runtime == 'bun' }}"
 
       - name: Configure vitest JSON reports
-        if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.task == 'test' && matrix.runtime == 'node'
+        if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.test_lane == true
         run: echo "FASED_VITEST_REPORT_DIR=$RUNNER_TEMP/vitest-reports" >> "$GITHUB_ENV"
 
       - name: Configure Node test resources
-        if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.task == 'test' && matrix.runtime == 'node'
+        if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.test_lane == true
         run: |
-          # `pnpm test` runs `scripts/test-parallel.mjs`, which spawns multiple Node processes.
-          # Default heap limits have been too low on Linux CI (V8 OOM near 4GB),
-          # while concurrent 6GB suite groups can overcommit the hosted runner.
-          # Serialize suite groups and retain two workers for unit/Gateway
-          # isolation. Use one extensions worker so the runner script selects
-          # process forks instead of vmForks and heap state/background timers
-          # cannot accumulate across files.
-          echo "FASED_TEST_PROFILE=serial" >> "$GITHUB_ENV"
+          # Slow-test reports showed unit-fast as the critical path. Split it in
+          # two and isolate the setup-heavy/support and Gateway groups so every
+          # lane has its own bounded runner resources.
+          echo "FASED_TEST_GROUPS=${{ matrix.groups }}" >> "$GITHUB_ENV"
+          echo "FASED_TEST_PROFILE=${{ matrix.profile }}" >> "$GITHUB_ENV"
           echo "FASED_TEST_WORKERS=2" >> "$GITHUB_ENV"
           echo "FASED_TEST_EXTENSIONS_WORKERS=1" >> "$GITHUB_ENV"
-          echo "FASED_TEST_MAX_OLD_SPACE_SIZE_MB=6144" >> "$GITHUB_ENV"
+          echo "FASED_TEST_MAX_OLD_SPACE_SIZE_MB=4096" >> "$GITHUB_ENV"
+          if [ "${{ matrix.shard_count }}" -gt 1 ]; then
+            echo "FASED_TEST_SHARDS=${{ matrix.shard_count }}" >> "$GITHUB_ENV"
+            echo "FASED_TEST_SHARD_INDEX=${{ matrix.shard_index }}" >> "$GITHUB_ENV"
+          fi
 
       - name: Run ${{ matrix.task }} (${{ matrix.runtime }})
         if: matrix.runtime != 'bun' || github.event_name != 'push'
         run: ${{ matrix.command }}
 
       - name: Summarize slowest tests
-        if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.task == 'test' && matrix.runtime == 'node'
+        if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.test_lane == true
         run: |
           node scripts/vitest-slowest.mjs --dir "$FASED_VITEST_REPORT_DIR" --top 50 --out "$RUNNER_TEMP/vitest-slowest.md" > /dev/null
           echo "Slowest test summary written to $RUNNER_TEMP/vitest-slowest.md"
 
       - name: Upload vitest reports
-        if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.task == 'test' && matrix.runtime == 'node'
+        if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.test_lane == true
         uses: actions/upload-artifact@v4
         with:
-          name: vitest-reports-${{ runner.os }}-${{ matrix.runtime }}
+          name: vitest-reports-${{ runner.os }}-${{ matrix.runtime }}-${{ matrix.task }}
           path: |
             ${{ env.FASED_VITEST_REPORT_DIR }}
             ${{ runner.temp }}/vitest-slowest.md
@@ -550,7 +582,7 @@ jobs:
         run: pre-commit run --all-files pnpm-audit-prod
 
   checks-windows:
-    needs: [docs-scope, changed-scope, build-artifacts, check]
+    needs: [docs-scope, changed-scope, build-artifacts]
     if: vars.FASED_FULL_CI_ENABLED == '1' && needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
     runs-on: windows-latest
     timeout-minutes: 45
@@ -689,7 +721,7 @@ jobs:
   # running 4 separate jobs per PR (as before) starved the queue. One job
   # per PR allows 5 PRs to run macOS checks simultaneously.
   macos:
-    needs: [docs-scope, changed-scope, check]
+    needs: [docs-scope, changed-scope]
     if: vars.FASED_FULL_CI_ENABLED == '1' && github.event_name == 'pull_request' && needs.docs-scope.outputs.docs_only != 'true' && needs.changed-scope.outputs.run_macos == 'true'
     runs-on: macos-latest
     steps:
@@ -922,7 +954,7 @@ jobs:
           PY
 
   android:
-    needs: [docs-scope, changed-scope, check]
+    needs: [docs-scope, changed-scope]
     if: vars.FASED_FULL_CI_ENABLED == '1' && needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_android == 'true')
     runs-on: ubuntu-latest
     strategy:

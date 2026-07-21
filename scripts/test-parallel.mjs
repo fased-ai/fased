@@ -103,7 +103,7 @@ const useVmForks =
   process.env.FASED_TEST_VM_FORKS === "1" ||
   (process.env.FASED_TEST_VM_FORKS !== "0" && !isWindows && supportsVmForks && !lowMemLocalHost);
 const disableIsolation = process.env.FASED_TEST_NO_ISOLATE === "1";
-const runs = [
+const allRuns = [
   ...(useVmForks
     ? [
         {
@@ -159,6 +159,24 @@ const runs = [
     ],
   },
 ];
+const selectedGroups = new Set(
+  (process.env.FASED_TEST_GROUPS ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean),
+);
+const knownGroups = new Set(allRuns.map((entry) => entry.name));
+const unknownGroups = [...selectedGroups].filter((entry) => !knownGroups.has(entry));
+if (unknownGroups.length > 0) {
+  console.error(
+    `[test-parallel] unknown FASED_TEST_GROUPS: ${unknownGroups.join(", ")}; expected ${[
+      ...knownGroups,
+    ].join(", ")}.`,
+  );
+  process.exit(2);
+}
+const runs =
+  selectedGroups.size > 0 ? allRuns.filter((entry) => selectedGroups.has(entry.name)) : allRuns;
 const shardOverride = Number.parseInt(process.env.FASED_TEST_SHARDS ?? "", 10);
 const configuredShardCount =
   Number.isFinite(shardOverride) && shardOverride > 1 ? shardOverride : null;

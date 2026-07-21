@@ -1,7 +1,7 @@
 name: Setup Node environment
 description: >
-  Initialize submodules with retry, install Node 22, pnpm, optionally Bun,
-  and run pnpm install. Requires actions/checkout to run first.
+  Install Node 22, pnpm, optionally Bun and submodules, then run pnpm install.
+  Requires actions/checkout to run first.
 inputs:
   node-version:
     description: Node.js version to install.
@@ -15,6 +15,10 @@ inputs:
     description: Whether to install Bun alongside Node.
     required: false
     default: "true"
+  initialize-submodules:
+    description: Whether to initialize Git submodules before dependency installation.
+    required: false
+    default: "false"
   frozen-lockfile:
     description: Whether to use --frozen-lockfile for install.
     required: false
@@ -23,6 +27,7 @@ runs:
   using: composite
   steps:
     - name: Checkout submodules (retry)
+      if: inputs.initialize-submodules == 'true'
       shell: bash
       run: |
         set -euo pipefail
