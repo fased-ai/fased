@@ -4,6 +4,16 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.71
+
+- Restore the final pull-request dependency audit and make the A2A HTTP timing
+  coverage deterministic under concurrent CI load.
+- Run Docker vulnerability scanning with a scanner binary matching each native
+  AMD64 or ARM64 release runner so multi-architecture publication remains
+  portable and fully validated.
+- Update DOMPurify to the audited patch release so the production dependency
+  graph contains no known vulnerabilities at release time.
+
 ## 0.1.70
 
 - Make Local wallet and Go signer migration transactional and automatic during
