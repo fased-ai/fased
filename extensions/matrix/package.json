@@ -1,6 +1,6 @@
 {
   "name": "@fased/matrix",
-  "version": "0.1.69",
+  "version": "0.1.70",
   "description": "FasedAgent Matrix channel plugin",
   "type": "module",
   "dependencies": {

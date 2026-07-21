@@ -4,6 +4,21 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.70
+
+- Make Local wallet and Go signer migration transactional and automatic during
+  normal updates while preserving wallet identities, RPC state, role baselines,
+  and rollback state.
+- Align Control UI and onboarding wallet names, generated IDs, handles, RPC
+  editing, balances, routing, reviewed approvals, optional passkeys, activity,
+  archive controls, and restart persistence.
+- Repair anonymous native-signer installation, managed runtime profiles, and
+  the verified streamed Hosting bootstrap used by fresh and updating installs.
+- Reconcile Pi 0.80 APIs across core and plugin boundaries so the full strict
+  TypeScript check passes without a dependency downgrade.
+- Parallelize CI validation, reuse build artifacts, use native ARM64 Docker
+  runners and caches, and publish concise Local/Hosting wallet documentation.
+
 ## 0.1.69
 
 - Make new signer-owned Agent, Mining, and Vault wallets role-ready with one
