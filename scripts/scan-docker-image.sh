@@ -9,10 +9,22 @@ fi
 IMAGE_REFERENCE="$1"
 PLATFORM="${2:-linux/amd64}"
 TRIVY_VERSION="0.70.0"
-TRIVY_ARCHIVE="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
-# Pin the official release archive by digest; do not replace this with a mutable
-# installer action or floating release URL.
-TRIVY_SHA256="8b4376d5d6befe5c24d503f10ff136d9e0c49f9127a4279fd110b727929a5aa9"
+case "$(uname -m)" in
+  x86_64 | amd64)
+    TRIVY_ARCHIVE="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+    TRIVY_SHA256="8b4376d5d6befe5c24d503f10ff136d9e0c49f9127a4279fd110b727929a5aa9"
+    ;;
+  aarch64 | arm64)
+    TRIVY_ARCHIVE="trivy_${TRIVY_VERSION}_Linux-ARM64.tar.gz"
+    TRIVY_SHA256="2f6bb988b553a1bbac6bdd1ce890f5e412439564e17522b88a4541b4f364fc8d"
+    ;;
+  *)
+    echo "Unsupported Trivy host architecture: $(uname -m)" >&2
+    exit 2
+    ;;
+esac
+# Pin each official release archive by digest; do not replace these with a
+# mutable installer action or floating release URL.
 TRIVY_URL="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${TRIVY_ARCHIVE}"
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
