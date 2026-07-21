@@ -19,16 +19,21 @@ runs:
     - name: Detect docs-only changes
       id: check
       shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        PUSH_BEFORE: ${{ github.event.before }}
+        PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       run: |
-        if [ "${{ github.event_name }}" = "push" ]; then
-          BASE="${{ github.event.before }}"
+        if [ "$EVENT_NAME" = "push" ]; then
+          BASE="$PUSH_BEFORE"
         else
           # Compare with the current merge base. Stacked PR base branches can
           # advance after the event payload is created; using the stale base
           # SHA would incorrectly count those base-branch files as PR changes.
-          BASE="$(git merge-base "origin/${{ github.event.pull_request.base.ref }}" HEAD 2>/dev/null || true)"
+          BASE="$(git merge-base "origin/$PR_BASE_REF" HEAD 2>/dev/null || true)"
           if [ -z "$BASE" ]; then
-            BASE="${{ github.event.pull_request.base.sha }}"
+            BASE="$PR_BASE_SHA"
           fi
         fi
 
