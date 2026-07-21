@@ -1,6 +1,6 @@
 {
   "name": "@fased/twitch",
-  "version": "0.1.71",
+  "version": "0.1.72",
   "description": "FasedAgent Twitch channel plugin",
   "type": "module",
   "dependencies": {

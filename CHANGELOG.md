@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.72
+
+- Fix the ARM64 Docker release image so it contains and executes the native
+  ARM64 signer instead of an AMD64 binary.
+- Add a native ARM64 pre-release signer gate and shorten release CI by
+  sharding the long Gateway and extension test lanes.
+- Avoid repeated Hosted release validation in each architecture build while
+  preserving the canonical self-validating artifact command.
+
 ## 0.1.71
 
 - Restore the final pull-request dependency audit and make the A2A HTTP timing
