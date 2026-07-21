@@ -285,6 +285,32 @@ async function startInstalledSigner(paths: ReturnType<typeof __testing.resolveLo
   return child;
 }
 
+async function stopInstalledSigner(paths: ReturnType<typeof __testing.resolveLocalSignerPaths>) {
+  const pid = Number.parseInt(await fsp.readFile(paths.pidPath, "utf8"), 10);
+  if (Number.isSafeInteger(pid) && pid > 1) {
+    process.kill(pid, "SIGTERM");
+  }
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const running =
+      Number.isSafeInteger(pid) &&
+      pid > 1 &&
+      (() => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+    if (!running) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`signer did not stop: ${pid}`);
+}
+
 afterEach(async () => {
   for (const child of children) {
     try {
@@ -317,6 +343,37 @@ describe.sequential("transactional Local native signer updater", () => {
       assetName: "fased-signerd-darwin-arm64",
     });
     expect(() => __testing.resolveLocalSignerAsset("win32", "x64")).toThrow(/WSL2/);
+  });
+
+  it("requires an explicit boolean when the paired updater verifies runtime mode", () => {
+    expect(
+      __testing.parseLocalSignerTransactionArgs([
+        "local-signer",
+        "verify",
+        "--version",
+        "0.1.73",
+        "--expected-read-only",
+        "false",
+      ]),
+    ).toMatchObject({ action: "verify", expectedReadOnly: false });
+    expect(() =>
+      __testing.parseLocalSignerTransactionArgs([
+        "local-signer",
+        "verify",
+        "--version",
+        "0.1.73",
+        "--expected-read-only",
+        "sometimes",
+      ]),
+    ).toThrow(/must be true or false/);
+    expect(() =>
+      __testing.parseLocalSignerTransactionArgs([
+        "local-signer",
+        "rollback",
+        "--expected-read-only",
+        "false",
+      ]),
+    ).toThrow(/supported only by local-signer verify/);
   });
 
   it("requires an exact production release tuple and strict manifest", () => {
@@ -399,6 +456,62 @@ describe.sequential("transactional Local native signer updater", () => {
       await expect(
         __testing.probeLocalSignerHealth(fixture.paths.socketPath, identity("1.0.1", "b"), 3_000),
       ).resolves.toMatchObject({ ready: true });
+    });
+  }, 30_000);
+
+  it("verifies the read-write candidate after a v0.1.72 Gateway restart", async () => {
+    const fixture = makeFixture();
+    writeFakeRelease(fixture.releaseRoot, "0.1.72", "a");
+    const candidate = writeFakeRelease(fixture.releaseRoot, "0.1.73", "b");
+    await withEnv(fixture.env, async () => {
+      await __testing.runLocalSignerTransaction(
+        { action: "install", targetVersion: "0.1.72", timeoutMs: 10_000 },
+        { stateDir: fixture.stateDir },
+      );
+      await startInstalledSigner(fixture.paths);
+      fs.writeFileSync(path.join(fixture.paths.materialDir, "owner-policy-proof"), "preserve\n", {
+        mode: 0o600,
+      });
+
+      await expect(
+        __testing.runLocalSignerTransaction(
+          {
+            action: "install",
+            targetVersion: "0.1.73",
+            timeoutMs: 10_000,
+            deferCommit: true,
+          },
+          { stateDir: fixture.stateDir },
+        ),
+      ).resolves.toMatchObject({ action: "candidate-active" });
+
+      await stopInstalledSigner(fixture.paths);
+      await startInstalledSigner(fixture.paths);
+
+      await expect(
+        __testing.runLocalSignerTransaction(
+          {
+            action: "verify",
+            targetVersion: "0.1.73",
+            expectedCommit: candidate.releaseIdentity.commit,
+            expectedReadOnly: false,
+            timeoutMs: 10_000,
+          },
+          { stateDir: fixture.stateDir },
+        ),
+      ).resolves.toMatchObject({ action: "verified", identity: { version: "0.1.73" } });
+
+      await expect(
+        __testing.runLocalSignerTransaction(
+          { action: "commit", timeoutMs: 10_000 },
+          { stateDir: fixture.stateDir },
+        ),
+      ).resolves.toMatchObject({ action: "committed", identity: { version: "0.1.73" } });
+      expect(
+        fs.readFileSync(path.join(fixture.paths.materialDir, "owner-policy-proof"), "utf8"),
+      ).toBe("preserve\n");
+      expect(fs.readFileSync(fixture.paths.stateDbPath, "utf8")).toBe("durable-state\n");
+      expect(fs.readFileSync(fixture.paths.masterKeyPath, "utf8")).toBe("durable-master\n");
     });
   }, 30_000);
 

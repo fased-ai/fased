@@ -469,6 +469,8 @@ async function runSignerController(params: {
       params.journal.target.version,
       "--expected-commit",
       params.journal.target.sha,
+      "--expected-read-only",
+      "false",
       "--timeout",
       String(Math.ceil(params.timeoutMs / 1000)),
     );

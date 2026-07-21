@@ -156,7 +156,7 @@ describe("Local source app/signer paired transaction", () => {
       `installer --version 1.0.1 --expected-commit ${targetSha} --defer-commit`,
     );
     expect(fs.readFileSync(fixture.signerLog, "utf8")).toContain(
-      `controller local-signer verify --version 1.0.1 --expected-commit ${targetSha}`,
+      `controller local-signer verify --version 1.0.1 --expected-commit ${targetSha} --expected-read-only false`,
     );
     expect(fs.readFileSync(fixture.signerLog, "utf8")).toContain(
       "controller local-signer rollback",

@@ -3699,7 +3699,7 @@ async function runLocalSignerTransaction(options, pathOverrides = {}) {
         paths.socketPath,
         identity,
         Math.min(options.timeoutMs, 15_000),
-        journal?.phase === "candidate-active",
+        options.expectedReadOnly ?? journal?.phase === "candidate-active",
       );
       return { action: "verified", identity };
     }
@@ -3769,6 +3769,7 @@ function parseLocalSignerTransactionArgs(argv) {
     timeoutMs: DEFAULT_TIMEOUT_MS,
     deferCommit: false,
     confirmDowngrade: null,
+    expectedReadOnly: null,
   };
   for (let index = 2; index < argv.length; index += 1) {
     const token = argv[index];
@@ -3784,6 +3785,12 @@ function parseLocalSignerTransactionArgs(argv) {
       options.deferCommit = true;
     } else if (token === "--confirm-downgrade") {
       options.confirmDowngrade = String(argv[++index] || "").replace(/^v/, "");
+    } else if (token === "--expected-read-only") {
+      const value = String(argv[++index] || "");
+      if (value !== "true" && value !== "false") {
+        throw new Error("--expected-read-only must be true or false");
+      }
+      options.expectedReadOnly = value === "true";
     } else {
       throw new Error(`Unsupported Local signer transaction option: ${token}`);
     }
@@ -3799,6 +3806,9 @@ function parseLocalSignerTransactionArgs(argv) {
   }
   if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0) {
     throw new Error("--timeout must be a positive integer (seconds)");
+  }
+  if (options.expectedReadOnly !== null && options.action !== "verify") {
+    throw new Error("--expected-read-only is supported only by local-signer verify");
   }
   return options;
 }
