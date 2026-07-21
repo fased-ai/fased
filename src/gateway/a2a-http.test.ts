@@ -947,15 +947,21 @@ describe("gateway A2A adapter", () => {
       },
       signed: { identity: peerIdentity, senderHandle: "@verified@agent.fased.test" },
     });
-    await new Promise((resolve) => setTimeout(resolve, 90));
-    const completed = await rpcCall({
-      handler,
-      method: "tasks.get",
-      rpcParams: {
-        taskId: "paid-settlement-once-1",
-        taskAccessToken: accessToken,
+    let completed: Awaited<ReturnType<typeof rpcCall>> | undefined;
+    await vi.waitFor(
+      async () => {
+        completed = await rpcCall({
+          handler,
+          method: "tasks.get",
+          rpcParams: {
+            taskId: "paid-settlement-once-1",
+            taskAccessToken: accessToken,
+          },
+        });
+        expect((completed.result as Record<string, unknown>).status).toBe("succeeded");
       },
-    });
+      { timeout: 1_000, interval: 20 },
+    );
     expect(response.error).toBeUndefined();
     expect(duplicate.error).toBeUndefined();
     const result = response.result as Record<string, unknown>;
@@ -966,7 +972,8 @@ describe("gateway A2A adapter", () => {
       status: "executed",
       txHash: "settlement-signature",
     });
-    expect((completed.result as Record<string, unknown>).status).toBe("succeeded");
+    expect(completed).toBeDefined();
+    expect((completed?.result as Record<string, unknown> | undefined)?.status).toBe("succeeded");
   });
 
   it("durably marks a paid task for refund recovery when it is canceled after payment", async () => {
