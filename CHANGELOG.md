@@ -4,6 +4,16 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.74
+
+- Repair interrupted and mixed-state Local updates so one normal
+  `fased update` can retain the verified forward controller, restore the
+  previous application/signer pair on failure, and retry safely.
+- Make update status report the active application, signer, and last-success
+  identities truthfully instead of treating a matching source tag as complete.
+- Add an on-demand pre-release Docker gate that executes native AMD64 and ARM64
+  signer images before a stable tag without publishing candidate images.
+
 ## 0.1.73
 
 - Repair normal Local source updates from v0.1.72 by validating the candidate
