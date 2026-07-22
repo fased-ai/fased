@@ -99,6 +99,7 @@ if [[ "$install_entry_is_stream" -eq 1 || \
   hosting_bootstrap=0
   hosting_repair_bootstrap=0
   hosting_release=""
+  hosting_update_channel="stable"
   verified_hosting_bundle=""
   args=("$@")
 
@@ -132,6 +133,13 @@ if [[ "$install_entry_is_stream" -eq 1 || \
           exit 1
         fi
         hosting_release="${args[$((i + 1))]}"
+        ;;
+      --update-channel)
+        if (( i + 1 >= ${#args[@]} )); then
+          echo "Missing value for --update-channel" >&2
+          exit 1
+        fi
+        hosting_update_channel="${args[$((i + 1))]}"
         ;;
       --verified-hosting-bundle)
         if (( i + 1 >= ${#args[@]} )); then
@@ -282,8 +290,16 @@ if [[ "$install_entry_is_stream" -eq 1 || \
       latest_tag="$(resolve_public_latest_release_tag 2>/dev/null || true)"
       release_version="${latest_tag#v}"
     fi
-    if [[ ! "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      echo "Hosting release must resolve to a stable vX.Y.Z GitHub release." >&2
+    if [[ ! "$hosting_update_channel" =~ ^(stable|beta)$ ]]; then
+      echo "Hosting update channel must be stable or beta." >&2
+      exit 1
+    fi
+    if [[ ! "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+      echo "Hosting release must resolve to an exact vX.Y.Z or vX.Y.Z-prerelease GitHub release." >&2
+      exit 1
+    fi
+    if [[ "$release_version" == *-* && "$hosting_update_channel" != "beta" ]]; then
+      echo "Hosting prerelease installation requires --update-channel beta." >&2
       exit 1
     fi
 
@@ -682,8 +698,12 @@ if [[ "$install_entry_is_stream" -eq 1 || \
   fi
   if [[ "$hosting_bootstrap" -eq 0 && -n "$hosting_release" ]]; then
     local_bootstrap_release="${hosting_release#v}"
-    if [[ ! "$local_bootstrap_release" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      echo "Local --release requires one exact stable vX.Y.Z version." >&2
+    if [[ ! "$local_bootstrap_release" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+      echo "Local --release requires one exact vX.Y.Z or vX.Y.Z-prerelease version." >&2
+      exit 1
+    fi
+    if [[ "$local_bootstrap_release" == *-* && "$hosting_update_channel" != "beta" ]]; then
+      echo "Local prerelease installation requires --update-channel beta." >&2
       exit 1
     fi
     local_bootstrap_commit="$(resolve_attested_local_release_commit "$local_bootstrap_release")"
@@ -736,6 +756,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FASED_DIR="$SCRIPT_DIR"
 EARLY_HOSTING_REQUESTED=0
 EARLY_HOSTING_RELEASE=""
+EARLY_UPDATE_CHANNEL="stable"
 EARLY_VERIFIED_HOSTING_BUNDLE=""
 EARLY_ARGS=("$@")
 for ((early_index = 0; early_index < ${#EARLY_ARGS[@]}; early_index++)); do
@@ -745,6 +766,7 @@ for ((early_index = 0; early_index < ${#EARLY_ARGS[@]}; early_index++)); do
       [[ "${EARLY_ARGS[$((early_index + 1))]:-}" == "hosting" ]] && EARLY_HOSTING_REQUESTED=1
       ;;
     --release) EARLY_HOSTING_RELEASE="${EARLY_ARGS[$((early_index + 1))]:-}" ;;
+    --update-channel) EARLY_UPDATE_CHANNEL="${EARLY_ARGS[$((early_index + 1))]:-}" ;;
     --verified-hosting-bundle)
       EARLY_VERIFIED_HOSTING_BUNDLE="${EARLY_ARGS[$((early_index + 1))]:-}"
       ;;
@@ -754,7 +776,9 @@ if [[ "$(id -u)" -eq 0 && "$EARLY_HOSTING_REQUESTED" -eq 1 ]]; then
   EARLY_HOSTING_RELEASE="${EARLY_HOSTING_RELEASE#v}"
   early_source="$(readlink -f "$FASED_DIR" 2>/dev/null || true)"
   early_bundle="$(readlink -f "$EARLY_VERIFIED_HOSTING_BUNDLE" 2>/dev/null || true)"
-  if [[ ! "$EARLY_HOSTING_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || \
+  if [[ ! "$EARLY_UPDATE_CHANNEL" =~ ^(stable|beta)$ || \
+    ! "$EARLY_HOSTING_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ || \
+    ( "$EARLY_HOSTING_RELEASE" == *-* && "$EARLY_UPDATE_CHANNEL" != "beta" ) || \
     -z "$early_source" || "$early_source" != "$early_bundle" || \
     ! "$early_source" =~ ^/var/lib/fased-installer/releases/v${EARLY_HOSTING_RELEASE}/[a-f0-9]{64}/extract/package$ || \
     -e "$early_source/.git" || ! -f "$early_source/.fased-hosting-bundle-verified" || \
@@ -791,6 +815,8 @@ LOCAL_REPAIR_REQUESTED=0
 SOURCE_INSTALL_REQUESTED=0
 DIRTY_CHECKOUT_SOURCE_AUTO_SELECTED=0
 HOSTING_RELEASE=""
+UPDATE_CHANNEL="stable"
+UPDATE_CHANNEL_EXPLICIT=0
 VERIFIED_HOSTING_BUNDLE=""
 TAILSCALE_AUTHKEY_FILE=""
 REQUESTED_SWAP_GB=""
@@ -1013,8 +1039,11 @@ Options:
                   onboarding defaults and may change SSH/firewall behavior.
   --repair-hosting  Repair an existing VPS runtime and root-managed gateway service
                   without rerunning onboarding or changing persistent user state.
-  --release <vX.Y.Z|latest>  Pin a Local repair to vX.Y.Z. Required for VPS Hosting;
-                  its root phase runs only from the exact attested tagged bundle.
+  --release <vX.Y.Z|vX.Y.Z-prerelease|latest>  Pin a Local repair to an exact
+                  release. Required for VPS Hosting; its root phase runs only
+                  from the exact attested tagged bundle.
+  --update-channel <stable|beta>  Persist the runtime update channel. A Hosting
+                  prerelease is accepted only with the explicit beta channel.
   --ts-authkey-file <path>  Read a Tailscale auth key from a root-owned mode-0600
                   file. The secret is copied to a one-use /run file, never argv.
   --repair-local  Repair an existing Linux Local or WSL runtime and user Gateway
@@ -1083,6 +1112,15 @@ while [[ $# -gt 0 ]]; do
       fi
       HOSTING_RELEASE="${1#v}"
       ;;
+    --update-channel)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "Missing value for --update-channel" >&2
+        exit 1
+      fi
+      UPDATE_CHANNEL="$1"
+      UPDATE_CHANNEL_EXPLICIT=1
+      ;;
     --verified-hosting-bundle)
       shift
       if [[ $# -eq 0 ]]; then
@@ -1143,6 +1181,15 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+if [[ ! "$UPDATE_CHANNEL" =~ ^(stable|beta)$ ]]; then
+  echo "--update-channel must be stable or beta." >&2
+  exit 1
+fi
+if [[ "$HOSTING_RELEASE" == *-* && "$UPDATE_CHANNEL" != "beta" ]]; then
+  echo "A prerelease --release requires --update-channel beta." >&2
+  exit 1
+fi
 
 for ((i = 0; i < ${#pass_args[@]}; i++)); do
   if [[ "${pass_args[$i]}" == "--host-profile" && "${pass_args[$((i + 1))]:-}" == "hosting" ]]; then
@@ -2060,8 +2107,8 @@ install_prebuilt_release_runtime() {
   runtime_profile="$(resolved_host_profile)"
   local package_spec="${RELEASE_NPM_PACKAGE:-@fased/fased@latest}"
   if [[ -n "$HOSTING_RELEASE" ]]; then
-    if [[ ! "$HOSTING_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      echo "Managed release installation requires one exact stable --release vX.Y.Z." >&2
+    if [[ ! "$HOSTING_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+      echo "Managed release installation requires one exact --release identity." >&2
       return 1
     fi
     package_spec="@fased/fased@${HOSTING_RELEASE}"
@@ -2276,6 +2323,37 @@ write_install_marker() {
 }
 EOF
   chmod 600 "$INSTALL_MARKER_PATH" 2>/dev/null || true
+}
+
+persist_runtime_update_channel() {
+  if [[ "$UPDATE_CHANNEL_EXPLICIT" -ne 1 && "$HOSTING_REQUESTED" -ne 1 ]]; then
+    return 0
+  fi
+  local config_path="${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}"
+  [[ -f "$config_path" && ! -L "$config_path" ]] || return 0
+  CONFIG_PATH="$config_path" UPDATE_CHANNEL="$UPDATE_CHANNEL" node <<'NODE'
+const fs = require("node:fs");
+
+const configPath = process.env.CONFIG_PATH;
+const channel = process.env.UPDATE_CHANNEL;
+if (!configPath || !new Set(["stable", "beta"]).has(channel)) {
+  process.exit(1);
+}
+const stat = fs.lstatSync(configPath);
+if (!stat.isFile() || stat.isSymbolicLink()) {
+  throw new Error("Fased config must be a regular non-symlink file");
+}
+const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+config.update = config.update && typeof config.update === "object" ? config.update : {};
+config.update.channel = channel;
+const temporary = `${configPath}.update-channel-${process.pid}`;
+fs.writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, {
+  mode: 0o600,
+  flag: "wx",
+});
+fs.renameSync(temporary, configPath);
+fs.chmodSync(configPath, 0o600);
+NODE
 }
 
 repair_tailscale_serve_gateway_config() {
@@ -3161,6 +3239,7 @@ reexec_as_app_user() {
   cmd+=" --host-security-capable"
   if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
     cmd+=" --release $(shell_quote "$HOSTING_RELEASE")"
+    cmd+=" --update-channel $(shell_quote "$UPDATE_CHANNEL")"
   fi
   local pass_index=0
   while ((pass_index < ${#pass_args[@]})); do
@@ -4622,10 +4701,12 @@ EOF
   chmod 0644 /etc/systemd/system/fased-gateway.service.d/20-fased-update-gate.conf
   sync -f /etc/systemd/system/fased-gateway.service.d/20-fased-update-gate.conf
   sync -f /etc/systemd/system/fased-gateway.service.d
-  if [[ ! -f /etc/fased/host-updater-channel ]]; then
-    printf 'stable\n' >/etc/fased/host-updater-channel
-    chmod 0644 /etc/fased/host-updater-channel
-  fi
+  local host_updater_channel_tmp="/etc/fased/.host-updater-channel.$$"
+  printf '%s\n' "$UPDATE_CHANNEL" >"$host_updater_channel_tmp"
+  chown root:root "$host_updater_channel_tmp"
+  chmod 0644 "$host_updater_channel_tmp"
+  mv -f "$host_updater_channel_tmp" /etc/fased/host-updater-channel
+  sync -f /etc/fased/host-updater-channel /etc/fased 2>/dev/null || true
 
   cat >/etc/systemd/system/fased-host-updater.service <<EOF
 [Unit]
@@ -4843,11 +4924,15 @@ assert_verified_hosting_root_source() {
     echo "Use the exact tagged, attested release bootstrap from the provider root console." >&2
     exit 1
   fi
-  [[ "$HOSTING_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-    echo "VPS Hosting root setup requires an exact stable release identity." >&2
-    echo "Start again with --release vX.Y.Z or --release latest from the provider root console." >&2
+  [[ "$HOSTING_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]] || {
+    echo "VPS Hosting root setup requires an exact release identity." >&2
+    echo "Start again with an exact --release from the provider root console." >&2
     exit 1
   }
+  if [[ "$HOSTING_RELEASE" == *-* && "$UPDATE_CHANNEL" != "beta" ]]; then
+    echo "VPS Hosting prerelease setup requires --update-channel beta." >&2
+    exit 1
+  fi
   local canonical_source=""
   local canonical_marker=""
   canonical_source="$(readlink -f "$FASED_DIR" 2>/dev/null || true)"
@@ -5178,6 +5263,7 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
     write_install_marker "$REPO_ROOT" "false"
   fi
   repair_tailscale_serve_gateway_config
+  persist_runtime_update_channel
   if restart_existing_gateway_service_after_install; then
     step_done "Gateway restart requested"
     if wait_for_gateway_health_after_restart; then
@@ -5255,4 +5341,5 @@ if [[ ! -f "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}" ]]; then
   echo "Rerun ./install.sh from an interactive terminal, or pass non-interactive onboarding flags after --." >&2
   exit 1
 fi
+persist_runtime_update_channel
 write_install_marker "$REPO_ROOT" "true"
