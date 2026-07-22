@@ -39,6 +39,31 @@ describe("Dockerfile", () => {
     expect(dockerfile).toContain("apt-get install -y --no-install-recommends xvfb");
   });
 
+  it("keeps dependency caches independent from ordinary source changes", async () => {
+    const dockerfile = await readFile(dockerfilePath, "utf8");
+    const dependencyInstall = dockerfile.indexOf("pnpm install --frozen-lockfile");
+    const sourceCopy = dockerfile.indexOf("COPY --chown=node:node . .");
+
+    expect(dependencyInstall).toBeGreaterThan(-1);
+    expect(sourceCopy).toBeGreaterThan(dependencyInstall);
+    expect(dockerfile.slice(0, dependencyInstall)).not.toContain(
+      "COPY --chown=node:node scripts ./scripts",
+    );
+    expect(dockerfile).toContain("target=/home/node/.local/share/pnpm/store");
+    expect(dockerfile).toContain("target=/go/pkg/mod");
+    expect(dockerfile).toContain("target=/root/.cache/go-build");
+  });
+
+  it("builds the application and UI once", async () => {
+    const dockerfile = await readFile(dockerfilePath, "utf8");
+
+    expect(dockerfile.match(/RUN pnpm build$/gmu)).toHaveLength(1);
+    expect(dockerfile).not.toContain("RUN pnpm ui:build");
+    expect(dockerfile.indexOf("ENV FASED_PREFER_PNPM=1")).toBeLessThan(
+      dockerfile.indexOf("RUN pnpm build"),
+    );
+  });
+
   it("runs the final image as the non-root node user", async () => {
     const dockerfile = await readFile(dockerfilePath, "utf8");
     const userInstructions = dockerfile

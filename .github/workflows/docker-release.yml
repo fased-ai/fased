@@ -14,6 +14,7 @@ on:
       - "scripts/docker-signer-update.backup.test.ts"
       - "scripts/fased-signerd-build-identity.mjs"
       - "scripts/scan-docker-image.sh"
+      - ".github/actions/setup-trivy-cache/**"
       - "src/docker-image-digests.test.ts"
       - "src/docker-signer-enroll.test.ts"
       - "src/docker-signer-health.test.ts"
@@ -84,6 +85,9 @@ jobs:
           expected="$(node -p "require('./package.json').version")"
           actual="$(docker run --rm --entrypoint /usr/local/bin/fased-signerd "$IMAGE" --version)"
           test "$actual" = "fased-signerd ${expected} commit=unknown buildInputDigest=unknown development=true"
+
+      - name: Setup Trivy cache
+        uses: ./.github/actions/setup-trivy-cache
 
       - name: Scan local validation image
         env:
@@ -179,6 +183,9 @@ jobs:
           sbom: true
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
 
+      - name: Setup Trivy cache
+        uses: ./.github/actions/setup-trivy-cache
+
       - name: Scan pushed amd64 image
         env:
           IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
@@ -250,6 +257,9 @@ jobs:
           provenance: mode=max
           sbom: true
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Setup Trivy cache
+        uses: ./.github/actions/setup-trivy-cache
 
       - name: Scan pushed arm64 image
         env:

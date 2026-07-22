@@ -1,0 +1,23 @@
+name: Setup Trivy cache
+description: Restore the pinned Trivy archive and a daily vulnerability database cache.
+runs:
+  using: composite
+  steps:
+    - name: Resolve daily cache key
+      id: cache-key
+      shell: bash
+      run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore Trivy archive and database
+      uses: actions/cache@v5
+      with:
+        path: ${{ runner.temp }}/fased-trivy-cache
+        key: ${{ runner.os }}-${{ runner.arch }}-trivy-0.70.0-${{ steps.cache-key.outputs.date }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-trivy-0.70.0-
+
+    - name: Export Trivy cache paths
+      shell: bash
+      run: |
+        echo "TRIVY_CACHE_DIR=${RUNNER_TEMP}/fased-trivy-cache/db" >> "$GITHUB_ENV"
+        echo "TRIVY_DOWNLOAD_CACHE_DIR=${RUNNER_TEMP}/fased-trivy-cache/downloads" >> "$GITHUB_ENV"

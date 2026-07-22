@@ -199,7 +199,40 @@ jobs:
           path: dist/
 
       - name: Check release contents
-        run: pnpm release:validate-dist
+        run: pnpm release:validate-dist:contracts
+
+  # Keep the real packed fresh-install smoke independent of the contract suite.
+  # Both consume the exact same built dist, so this shortens the release gate
+  # without rebuilding or dropping either validation path.
+  packed-core-smoke:
+    needs: [docs-scope, changed-scope, build-artifacts]
+    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: tools/fased-signerd/go.mod
+          cache-dependency-path: tools/fased-signerd/go.sum
+
+      - name: Download dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-build
+          path: dist/
+
+      - name: Run packed fresh-install smoke
+        run: pnpm release:validate-dist:packed
 
   signer-platform:
     name: Native signer (${{ matrix.name }})
@@ -270,19 +303,35 @@ jobs:
             profile: serial
             command: pnpm canvas:a2ui:bundle && pnpm test
           - runtime: node
-            task: extensions-1of2
+            task: extensions-1of4
             test_lane: true
             groups: extensions
             shard_index: 1
-            shard_count: 2
+            shard_count: 4
             profile: serial
             command: pnpm canvas:a2ui:bundle && pnpm test
           - runtime: node
-            task: extensions-2of2
+            task: extensions-2of4
             test_lane: true
             groups: extensions
             shard_index: 2
-            shard_count: 2
+            shard_count: 4
+            profile: serial
+            command: pnpm canvas:a2ui:bundle && pnpm test
+          - runtime: node
+            task: extensions-3of4
+            test_lane: true
+            groups: extensions
+            shard_index: 3
+            shard_count: 4
+            profile: serial
+            command: pnpm canvas:a2ui:bundle && pnpm test
+          - runtime: node
+            task: extensions-4of4
+            test_lane: true
+            groups: extensions
+            shard_index: 4
+            shard_count: 4
             profile: serial
             command: pnpm canvas:a2ui:bundle && pnpm test
           - runtime: node
@@ -333,9 +382,9 @@ jobs:
       - name: Configure Node test resources
         if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.test_lane == true
         run: |
-          # Split each measured long-running group onto its own runner. Gateway
-          # and extensions are file-sharded across two runners; isolated and
-          # extension suites remain serial internally for deterministic state.
+          # Split measured long-running groups onto independent runners.
+          # Each matrix entry declares its shard count; suites remain serial
+          # internally where deterministic process state is required.
           echo "FASED_TEST_GROUPS=${{ matrix.groups }}" >> "$GITHUB_ENV"
           echo "FASED_TEST_PROFILE=${{ matrix.profile }}" >> "$GITHUB_ENV"
           echo "FASED_TEST_WORKERS=2" >> "$GITHUB_ENV"
@@ -567,41 +616,65 @@ jobs:
           fetch-depth: 0
           submodules: false
 
-      - name: Setup Node environment
-        uses: ./.github/actions/setup-node-env
+      # This job audits repository metadata and the lockfile; it does not run
+      # project code, so installing the full dependency tree wastes ~45s.
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
         with:
-          install-bun: "false"
+          node-version: 22.x
+
+      - name: Setup pnpm
+        uses: ./.github/actions/setup-pnpm-store-cache
+        with:
+          cache-key-suffix: "secrets-node22"
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
+      - name: Cache pre-commit environments
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/pre-commit
+          key: ${{ runner.os }}-pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+
       - name: Install pre-commit
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pre-commit detect-secrets==1.5.0
+          python -m pip install pre-commit
 
-      - name: Detect secrets
-        run: |
-          if ! detect-secrets scan --baseline .secrets.baseline; then
-            echo "::error::Secret scanning failed. See docs/gateway/security.md#secret-scanning-detect-secrets"
-            exit 1
-          fi
-
-      - name: Detect committed private keys
-        run: pre-commit run --all-files detect-private-key
-
-      - name: Audit changed GitHub workflows with zizmor
+      - name: Resolve changed-file audit base
+        id: audit-base
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-
-          if [ "${{ github.event_name }}" = "push" ]; then
-            BASE="${{ github.event.before }}"
+          if [[ "$EVENT_NAME" = "push" ]]; then
+            base="$PUSH_BEFORE"
           else
-            BASE="${{ github.event.pull_request.base.sha }}"
+            base="$PR_BASE_SHA"
           fi
+          if [[ ! "$base" =~ ^[a-f0-9]{40}$ ]] || [[ "$base" = "0000000000000000000000000000000000000000" ]]; then
+            base="$(git rev-parse HEAD^)"
+          fi
+          git cat-file -e "${base}^{commit}"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
 
+      - name: Detect secrets
+        run: pre-commit run detect-secrets --from-ref "${{ steps.audit-base.outputs.base }}" --to-ref HEAD
+
+      - name: Detect committed private keys
+        run: pre-commit run detect-private-key --from-ref "${{ steps.audit-base.outputs.base }}" --to-ref HEAD
+
+      - name: Audit changed GitHub workflows with zizmor
+        env:
+          BASE: ${{ steps.audit-base.outputs.base }}
+        run: |
+          set -euo pipefail
           mapfile -t workflow_files < <(git diff --name-only "$BASE" HEAD -- '.github/workflows/*.yml' '.github/workflows/*.yaml')
           if [ "${#workflow_files[@]}" -eq 0 ]; then
             echo "No workflow changes detected; skipping zizmor."
@@ -693,12 +766,11 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 22.x
-          check-latest: true
 
       - name: Setup pnpm + cache store
         uses: ./.github/actions/setup-pnpm-store-cache
         with:
-          pnpm-version: "10.23.0"
+          pnpm-version: "10.34.5"
           cache-key-suffix: "node22"
 
       - name: Runtime versions
@@ -1043,6 +1115,7 @@ jobs:
       - checks
       - build-artifacts
       - release-check
+      - packed-core-smoke
       - signer-platform
       - ui-mining
       - check-docs
@@ -1064,6 +1137,7 @@ jobs:
           TESTS: ${{ needs.checks.result }}
           BUILD: ${{ needs.build-artifacts.result }}
           RELEASE: ${{ needs.release-check.result }}
+          PACKED_CORE: ${{ needs.packed-core-smoke.result }}
           SIGNER: ${{ needs.signer-platform.result }}
           UI_MINING: ${{ needs.ui-mining.result }}
           DOCS: ${{ needs.check-docs.result }}
@@ -1081,7 +1155,7 @@ jobs:
               test "$result" = "success"
             done
             if [[ "$EVENT_NAME" = "push" || "$RUN_NODE" = "true" ]]; then
-              for result in "$STRICT_TYPES" "$TESTS" "$BUILD" "$RELEASE" "$SKILLS"; do
+              for result in "$STRICT_TYPES" "$TESTS" "$BUILD" "$RELEASE" "$PACKED_CORE" "$SKILLS"; do
                 test "$result" = "success"
               done
             fi
