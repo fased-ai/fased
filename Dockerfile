@@ -14,9 +14,12 @@ ARG FASED_SIGNER_BUILD_DEVELOPMENT=true
 WORKDIR /src/tools/fased-signerd
 COPY package.json /src/package.json
 COPY tools/fased-signerd/go.mod tools/fased-signerd/go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 COPY tools/fased-signerd ./
-RUN signer_version="$FASED_SIGNER_BUILD_VERSION" \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    signer_version="$FASED_SIGNER_BUILD_VERSION" \
  && if [ -z "$signer_version" ]; then \
       signer_version="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' /src/package.json)"; \
     fi \
@@ -45,6 +48,7 @@ RUN npm install --global npm@11.6.2 tar@7.5.19 \
  && cp -a /usr/local/lib/node_modules/tar /usr/local/lib/node_modules/npm/node_modules/tar \
  && rm -rf /usr/local/lib/node_modules/tar \
  && test "$(node -p 'require("/usr/local/lib/node_modules/npm/node_modules/tar/package.json").version')" = "7.5.19" \
+ && rm -rf /root/.npm \
  && corepack enable
 
 WORKDIR /app
@@ -61,12 +65,13 @@ RUN if [ -n "$FASED_DOCKER_APT_PACKAGES" ]; then \
 COPY --chown=node:node package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY --chown=node:node ui/package.json ./ui/package.json
 COPY --chown=node:node patches ./patches
-COPY --chown=node:node scripts ./scripts
 
 USER node
 # Reduce OOM risk on low-memory hosts during dependency installation.
 # Docker builds on small VMs may otherwise fail with "Killed" (exit 137).
-RUN NODE_OPTIONS=--max-old-space-size=2048 pnpm install --frozen-lockfile
+RUN --mount=type=cache,target=/home/node/.local/share/pnpm/store,uid=1000,gid=1000,sharing=locked \
+    NODE_OPTIONS=--max-old-space-size=2048 pnpm install --frozen-lockfile \
+      --store-dir /home/node/.local/share/pnpm/store
 
 # Optionally install Chromium and Xvfb for browser automation.
 # Build with: docker build --build-arg FASED_INSTALL_BROWSER=1 ...
@@ -87,10 +92,10 @@ RUN if [ -n "$FASED_INSTALL_BROWSER" ]; then \
 
 USER node
 COPY --chown=node:node . .
-RUN pnpm build
 # Force pnpm for UI build (Bun may fail on ARM/Synology architectures)
 ENV FASED_PREFER_PNPM=1
-RUN pnpm ui:build
+RUN pnpm build
+RUN test ! -e /app/.pnpm-store
 
 # Expose the CLI binary without requiring npm global writes as non-root.
 USER root

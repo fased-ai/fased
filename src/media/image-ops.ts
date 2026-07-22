@@ -4,7 +4,7 @@ import path from "node:path";
 import { importOptionalRuntimeDependency } from "../infra/optional-runtime-dependency.js";
 import { runExec } from "../process/exec.js";
 
-type Sharp = typeof import("sharp");
+type Sharp = typeof import("sharp").default;
 
 export type ImageMetadata = {
   width: number;
@@ -38,7 +38,7 @@ async function loadSharp(): Promise<(buffer: Buffer) => ReturnType<Sharp>> {
     dependency: "sharp",
   });
   const sharp = mod.default ?? (mod as unknown as Sharp);
-  return (buffer) => sharp(buffer, { failOnError: false });
+  return (buffer) => sharp(buffer, { failOn: "none" });
 }
 
 /**

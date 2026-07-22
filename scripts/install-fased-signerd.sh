@@ -155,6 +155,18 @@ rollback_failed_install() {
 }
 trap rollback_failed_install EXIT
 
+# A source install begins in the previously published JavaScript process. Once
+# that process has checked out and built the exact target commit, replace its
+# rollback controller with the target's complete, Git-verified dependency
+# closure. Dependencies are installed before the controller entry point, so an
+# interrupted handoff still leaves the previous controller able to roll back.
+if [[ "$ACTION" == "install" && -n "$EXPECTED_COMMIT" ]]; then
+  node "$UPDATER" local-source-controller refresh \
+    --source-root "$ROOT" \
+    --version "$VERSION" \
+    --expected-commit "$EXPECTED_COMMIT" >/dev/null
+fi
+
 node "$UPDATER" "${args[@]}"
 
 if [[ "$ACTION" != "install" ]]; then

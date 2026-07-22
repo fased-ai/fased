@@ -1,11 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   findLegacyGatewayServices,
-  note,
   readConfigFileSnapshot,
   resolveFasedAgentPackageRoot,
   runCommandWithTimeout,
-  runGatewayUpdate,
   serviceInstall,
   serviceIsLoaded,
   uninstallLegacyGatewayServices,
@@ -98,20 +96,21 @@ describe("doctor command", () => {
 
     const root = "/tmp/fased";
     resolveFasedAgentPackageRoot.mockResolvedValueOnce(root);
-    runCommandWithTimeout.mockResolvedValueOnce({
-      stdout: `${root}\n`,
-      stderr: "",
-      code: 0,
-      signal: null,
-      killed: false,
-    });
-    runGatewayUpdate.mockResolvedValueOnce({
-      status: "ok",
-      mode: "git",
-      root,
-      steps: [],
-      durationMs: 1,
-    });
+    runCommandWithTimeout
+      .mockResolvedValueOnce({
+        stdout: `${root}\n`,
+        stderr: "",
+        code: 0,
+        signal: null,
+        killed: false,
+      })
+      .mockResolvedValueOnce({
+        stdout: "Update complete\n",
+        stderr: "",
+        code: 0,
+        signal: null,
+        killed: false,
+      });
 
     readConfigFileSnapshot.mockResolvedValue({
       path: "/tmp/fased.json",
@@ -133,10 +132,11 @@ describe("doctor command", () => {
 
     await doctorCommand(runtime);
 
-    expect(runGatewayUpdate).toHaveBeenCalledWith(expect.objectContaining({ cwd: root }));
+    expect(runCommandWithTimeout).toHaveBeenLastCalledWith(
+      [process.execPath, process.argv[1], "update", "--yes"],
+      expect.objectContaining({ cwd: root }),
+    );
     expect(readConfigFileSnapshot).not.toHaveBeenCalled();
-    expect(
-      note.mock.calls.some(([, title]) => typeof title === "string" && title === "Update result"),
-    ).toBe(true);
+    expect(runtime.log).toHaveBeenCalledWith("Update complete");
   });
 });

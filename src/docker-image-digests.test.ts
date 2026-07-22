@@ -34,6 +34,24 @@ type DependabotConfig = {
 };
 
 describe("docker base image pinning", () => {
+  it("reuses Trivy downloads without bypassing the pinned archive digest", async () => {
+    const [workflow, cacheAction, scanner] = await Promise.all([
+      readFile(resolve(repoRoot, ".github/workflows/docker-release.yml"), "utf8"),
+      readFile(resolve(repoRoot, ".github/actions/setup-trivy-cache/action.yml"), "utf8"),
+      readFile(resolve(repoRoot, "scripts/scan-docker-image.sh"), "utf8"),
+    ]);
+
+    expect(workflow.match(/uses: \.\/\.github\/actions\/setup-trivy-cache/g)).toHaveLength(3);
+    expect(cacheAction).toContain("trivy-0.70.0-${{ steps.cache-key.outputs.date }}");
+    expect(cacheAction).toContain("TRIVY_DOWNLOAD_CACHE_DIR=");
+    expect(scanner).toContain('TRIVY_CACHE_DIR="${TRIVY_CACHE_DIR:-$TEMP_DIR/cache}"');
+    expect(scanner).toContain(
+      'TRIVY_DOWNLOAD_CACHE_DIR="${TRIVY_DOWNLOAD_CACHE_DIR:-$TEMP_DIR/downloads}"',
+    );
+    expect(scanner.match(/sha256sum --check --status/g)).toHaveLength(2);
+    expect(scanner).toContain('rm -f "$TRIVY_ARCHIVE_PATH"');
+  });
+
   it("publishes a registry-qualified multi-arch manifest and verifies anonymous access", async () => {
     const workflow = await readFile(
       resolve(repoRoot, ".github/workflows/docker-release.yml"),

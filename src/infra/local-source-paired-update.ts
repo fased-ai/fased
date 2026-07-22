@@ -17,6 +17,11 @@ const PHASES = new Set([
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
+const CONTROLLER_FILES = [
+  "fased-managed-updater.mjs",
+  "hosted-release-manifest.mjs",
+  "managed-runtime-layout.mjs",
+] as const;
 
 type LocalSourcePhase =
   | "prepared"
@@ -248,7 +253,7 @@ async function readPackageVersion(sourceRoot: string): Promise<string> {
 async function copyController(sourceRoot: string, transactionDir: string): Promise<string> {
   const controllerDir = path.join(transactionDir, "controller");
   await fs.mkdir(controllerDir, { recursive: true, mode: 0o700 });
-  for (const name of ["fased-managed-updater.mjs", "managed-runtime-layout.mjs"]) {
+  for (const name of CONTROLLER_FILES) {
     const source = path.join(sourceRoot, "scripts", name);
     const stat = await fs.lstat(source);
     if (!stat.isFile() || stat.isSymbolicLink()) {
@@ -261,6 +266,64 @@ async function copyController(sourceRoot: string, transactionDir: string): Promi
   }
   await fsyncPath(controllerDir);
   return path.join(controllerDir, "fased-managed-updater.mjs");
+}
+
+async function ensureControllerDependencyClosure(params: {
+  journal: LocalSourcePairedUpdateJournal;
+  timeoutMs: number;
+  env: NodeJS.ProcessEnv;
+}): Promise<void> {
+  const controllerDir = path.dirname(params.journal.controllerPath);
+  const releaseSha = params.journal.target?.sha ?? params.journal.previous.sha;
+  for (const name of CONTROLLER_FILES) {
+    const destination = path.join(controllerDir, name);
+    const destinationStat = await fs.lstat(destination).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") {
+        return null;
+      }
+      throw error;
+    });
+    if (destinationStat) {
+      if (!destinationStat.isFile() || destinationStat.isSymbolicLink()) {
+        throw new Error(`Local signer rollback controller dependency is unsafe: ${destination}`);
+      }
+      continue;
+    }
+
+    // v0.1.72 snapshots omitted hosted-release-manifest.mjs. Repair only from
+    // bytes that are still exactly tracked by the transaction's release commit.
+    const source = path.join(params.journal.sourceRoot, "scripts", name);
+    const [trackedBlob, workingBlob] = await Promise.all([
+      runExact(
+        ["git", "-C", params.journal.sourceRoot, "rev-parse", `${releaseSha}:scripts/${name}`],
+        {
+          cwd: params.journal.sourceRoot,
+          timeoutMs: params.timeoutMs,
+          env: params.env,
+          label: `trusted rollback controller ${name}`,
+        },
+      ),
+      runExact(["git", "-C", params.journal.sourceRoot, "hash-object", source], {
+        cwd: params.journal.sourceRoot,
+        timeoutMs: params.timeoutMs,
+        env: params.env,
+        label: `working rollback controller ${name}`,
+      }),
+    ]);
+    if (!/^[a-f0-9]{40}$/.test(trackedBlob) || workingBlob !== trackedBlob) {
+      throw new Error(
+        `Cannot safely repair Local signer rollback controller dependency ${name}: source bytes do not match ${releaseSha}`,
+      );
+    }
+    const sourceStat = await fs.lstat(source);
+    if (!sourceStat.isFile() || sourceStat.isSymbolicLink()) {
+      throw new Error(`Local signer rollback controller dependency is unsafe: ${source}`);
+    }
+    await fs.copyFile(source, destination);
+    await fs.chmod(destination, name === "fased-managed-updater.mjs" ? 0o700 : 0o600);
+    await fsyncPath(destination);
+  }
+  await fsyncPath(controllerDir);
 }
 
 export async function isLocalSourceSignerConfigured(
@@ -395,6 +458,7 @@ async function runSignerController(params: {
   timeoutMs: number;
   env: NodeJS.ProcessEnv;
 }): Promise<void> {
+  await ensureControllerDependencyClosure(params);
   const args = [params.journal.controllerPath, "local-signer", params.action];
   if (params.action === "verify") {
     if (!params.journal.target) {
@@ -405,6 +469,8 @@ async function runSignerController(params: {
       params.journal.target.version,
       "--expected-commit",
       params.journal.target.sha,
+      "--expected-read-only",
+      "false",
       "--timeout",
       String(Math.ceil(params.timeoutMs / 1000)),
     );

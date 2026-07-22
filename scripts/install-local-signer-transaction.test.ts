@@ -35,6 +35,18 @@ describe("Local app/signer installer transaction", () => {
     expect(signerInstaller).not.toMatch(/\bgo build\b/);
   });
 
+  it("lets the exact target repair the controller started by an older source updater", () => {
+    const refresh = signerInstaller.indexOf("local-source-controller refresh");
+    const signerActivation = signerInstaller.indexOf('node "$UPDATER" "${args[@]}"');
+
+    expect(refresh).toBeGreaterThan(0);
+    expect(refresh).toBeLessThan(signerActivation);
+    expect(signerInstaller).toContain('--source-root "$ROOT"');
+    expect(signerInstaller).toContain('--expected-commit "$EXPECTED_COMMIT"');
+    expect(updater).toContain("Local source controller refresh target identity is not exact");
+    expect(updater).toContain("workingBlob !== trackedBlob");
+  });
+
   it("keeps every pre-commit candidate read-only and promotes only after a durable commit", () => {
     expect(updater).toContain("startSignerProcess(preflightPaths, release.candidatePath, true)");
     expect(updater).toContain("startSignerProcess(paths, paths.binaryPath, true)");

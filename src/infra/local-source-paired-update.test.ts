@@ -52,12 +52,18 @@ function createFixture() {
   fs.writeFileSync(
     path.join(sourceRoot, "scripts", "fased-managed-updater.mjs"),
     [
+      'import { controllerReady } from "./hosted-release-manifest.mjs";',
       'import fs from "node:fs";',
+      "if (!controllerReady) process.exit(2);",
       'fs.appendFileSync(process.env.FASED_TEST_SIGNER_LOG, `controller ${process.argv.slice(2).join(" ")}\\n`);',
       'process.stdout.write("{\\"ok\\":true}\\n");',
       "",
     ].join("\n"),
     { mode: 0o700 },
+  );
+  fs.writeFileSync(
+    path.join(sourceRoot, "scripts", "hosted-release-manifest.mjs"),
+    "export const controllerReady = true;\n",
   );
   fs.writeFileSync(path.join(sourceRoot, "scripts", "managed-runtime-layout.mjs"), "export {};\n");
   fs.writeFileSync(
@@ -150,13 +156,43 @@ describe("Local source app/signer paired transaction", () => {
       `installer --version 1.0.1 --expected-commit ${targetSha} --defer-commit`,
     );
     expect(fs.readFileSync(fixture.signerLog, "utf8")).toContain(
-      `controller local-signer verify --version 1.0.1 --expected-commit ${targetSha}`,
+      `controller local-signer verify --version 1.0.1 --expected-commit ${targetSha} --expected-read-only false`,
     );
     expect(fs.readFileSync(fixture.signerLog, "utf8")).toContain(
       "controller local-signer rollback",
     );
     expect(fs.readFileSync(fixture.signerLog, "utf8")).toContain(
       "pnpm install --offline --frozen-lockfile",
+    );
+  });
+
+  it("repairs the missing v0.1.72 controller dependency from exact tracked bytes", async () => {
+    const fixture = createFixture();
+    let journal = await prepareLocalSourcePairedUpdate({
+      sourceRoot: fixture.sourceRoot,
+      timeoutMs: 10_000,
+      env: fixture.env,
+    });
+    const missingDependency = path.join(
+      journal.transactionDir,
+      "controller",
+      "hosted-release-manifest.mjs",
+    );
+    fs.rmSync(missingDependency);
+    const targetSha = createTarget(fixture.sourceRoot);
+    journal = await markLocalSourceAppActive({
+      journal,
+      targetSha,
+      targetVersion: "1.0.1",
+      env: fixture.env,
+    });
+
+    await rollbackLocalSourcePairedUpdate({ journal, timeoutMs: 10_000, env: fixture.env });
+
+    expect(git(fixture.sourceRoot, "rev-parse", "HEAD")).toBe(fixture.previousSha);
+    expect(await readLocalSourcePairedUpdateJournal(fixture.env)).toBeNull();
+    expect(fs.readFileSync(fixture.signerLog, "utf8")).toContain(
+      "controller local-signer rollback",
     );
   });
 

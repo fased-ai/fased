@@ -127,6 +127,34 @@ setTimeout(() => {
   return { binary, manifest, releaseIdentity };
 }
 
+function rewriteAsCanonicalDevelopmentSigner(binaryPath: string) {
+  const source = fs.readFileSync(binaryPath, "utf8");
+  const developmentIdentity = {
+    version: "dev",
+    commit: "unknown",
+    buildInputDigest: "unknown",
+    development: true,
+  };
+  fs.writeFileSync(
+    binaryPath,
+    source
+      .replace(
+        /^const identity = .*;$/mu,
+        `const identity = ${JSON.stringify(developmentIdentity)};`,
+      )
+      .replace(
+        /if \(process\.argv\.length === 3 && process\.argv\[2\] === "--version"\) \{[\s\S]*?\n\}/u,
+        [
+          'if (process.argv.length === 3 && process.argv[2] === "--version") {',
+          '  fs.writeSync(1, "fased-signerd dev commit=unknown buildInputDigest=unknown development=true\\n");',
+          "  process.exit(0);",
+          "}",
+        ].join("\n"),
+      ),
+    { mode: 0o700 },
+  );
+}
+
 async function writeRealSignerRelease(releaseRoot: string) {
   const packageVersion = String(
     JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8")).version,
@@ -257,6 +285,32 @@ async function startInstalledSigner(paths: ReturnType<typeof __testing.resolveLo
   return child;
 }
 
+async function stopInstalledSigner(paths: ReturnType<typeof __testing.resolveLocalSignerPaths>) {
+  const pid = Number.parseInt(await fsp.readFile(paths.pidPath, "utf8"), 10);
+  if (Number.isSafeInteger(pid) && pid > 1) {
+    process.kill(pid, "SIGTERM");
+  }
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const running =
+      Number.isSafeInteger(pid) &&
+      pid > 1 &&
+      (() => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+    if (!running) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`signer did not stop: ${pid}`);
+}
+
 afterEach(async () => {
   for (const child of children) {
     try {
@@ -289,6 +343,123 @@ describe.sequential("transactional Local native signer updater", () => {
       assetName: "fased-signerd-darwin-arm64",
     });
     expect(() => __testing.resolveLocalSignerAsset("win32", "x64")).toThrow(/WSL2/);
+  });
+
+  it("requires an explicit boolean when the paired updater verifies runtime mode", () => {
+    expect(
+      __testing.parseLocalSignerTransactionArgs([
+        "local-signer",
+        "verify",
+        "--version",
+        "0.1.73",
+        "--expected-read-only",
+        "false",
+      ]),
+    ).toMatchObject({ action: "verify", expectedReadOnly: false });
+    expect(() =>
+      __testing.parseLocalSignerTransactionArgs([
+        "local-signer",
+        "verify",
+        "--version",
+        "0.1.73",
+        "--expected-read-only",
+        "sometimes",
+      ]),
+    ).toThrow(/must be true or false/);
+    expect(() =>
+      __testing.parseLocalSignerTransactionArgs([
+        "local-signer",
+        "rollback",
+        "--expected-read-only",
+        "false",
+      ]),
+    ).toThrow(/supported only by local-signer verify/);
+  });
+
+  it("refreshes a v0.1.72 source transaction with exact target controller bytes", async () => {
+    const fixture = makeFixture();
+    const sourceRoot = path.join(fixture.root, "source");
+    const transactionId = "12345678-1234-4123-8123-123456789abc";
+    const transactionDir = path.join(
+      fixture.stateDir,
+      "source-paired-update",
+      "transactions",
+      transactionId,
+    );
+    const controllerDir = path.join(transactionDir, "controller");
+    await fsp.mkdir(path.join(sourceRoot, "scripts"), { recursive: true });
+    await fsp.mkdir(path.join(sourceRoot, "dist"), { recursive: true });
+    await fsp.mkdir(controllerDir, { recursive: true });
+    for (const name of [
+      "fased-managed-updater.mjs",
+      "hosted-release-manifest.mjs",
+      "managed-runtime-layout.mjs",
+    ]) {
+      await fsp.copyFile(
+        path.join(repoRoot, "scripts", name),
+        path.join(sourceRoot, "scripts", name),
+      );
+    }
+    await fsp.writeFile(
+      path.join(sourceRoot, "package.json"),
+      `${JSON.stringify({ name: "@fased/fased", version: "0.1.73" })}\n`,
+    );
+    await execFileAsync("git", ["init", "-q"], { cwd: sourceRoot });
+    await execFileAsync("git", ["config", "user.email", "fixture@fased.test"], {
+      cwd: sourceRoot,
+    });
+    await execFileAsync("git", ["config", "user.name", "Fixture"], { cwd: sourceRoot });
+    await execFileAsync("git", ["add", "."], { cwd: sourceRoot });
+    await execFileAsync("git", ["commit", "-qm", "candidate"], { cwd: sourceRoot });
+    const targetCommit = (
+      await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: sourceRoot, encoding: "utf8" })
+    ).stdout.trim();
+    await fsp.writeFile(
+      path.join(sourceRoot, "dist", "build-info.json"),
+      `${JSON.stringify({ version: "0.1.73", commit: targetCommit })}\n`,
+    );
+    await fsp.writeFile(path.join(controllerDir, "fased-managed-updater.mjs"), "old-controller\n");
+    const journalPath = path.join(fixture.stateDir, "source-paired-update", "transaction.json");
+    await fsp.writeFile(
+      journalPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        kind: "source-checkout",
+        transactionId,
+        transactionDir,
+        sourceRoot,
+        controllerPath: path.join(controllerDir, "fased-managed-updater.mjs"),
+        phase: "app-active",
+        previous: { sha: "a".repeat(40), version: "0.1.72", branch: null },
+        target: { sha: targetCommit, version: "0.1.73" },
+      })}\n`,
+    );
+
+    await expect(
+      __testing.refreshLocalSourceController(
+        { sourceRoot, targetVersion: "0.1.73", expectedCommit: targetCommit },
+        { stateDir: fixture.stateDir },
+      ),
+    ).resolves.toEqual({ action: "refreshed", targetVersion: "0.1.73" });
+    for (const name of [
+      "fased-managed-updater.mjs",
+      "hosted-release-manifest.mjs",
+      "managed-runtime-layout.mjs",
+    ]) {
+      expect(digest(path.join(controllerDir, name))).toBe(
+        digest(path.join(sourceRoot, "scripts", name)),
+      );
+    }
+    await fsp.appendFile(
+      path.join(sourceRoot, "scripts", "fased-managed-updater.mjs"),
+      "\n// untrusted working-tree change\n",
+    );
+    await expect(
+      __testing.refreshLocalSourceController(
+        { sourceRoot, targetVersion: "0.1.73", expectedCommit: targetCommit },
+        { stateDir: fixture.stateDir },
+      ),
+    ).rejects.toThrow(/not exact target Git content/);
   });
 
   it("requires an exact production release tuple and strict manifest", () => {
@@ -341,6 +512,142 @@ describe.sequential("transactional Local native signer updater", () => {
       await expect(
         __testing.probeLocalSignerHealth(fixture.paths.socketPath, identity("1.0.1", "b"), 3_000),
       ).resolves.toMatchObject({ ready: true });
+    });
+  }, 30_000);
+
+  it("replaces the canonical development signer without weakening candidate identity", async () => {
+    const fixture = makeFixture();
+    writeFakeRelease(fixture.releaseRoot, "1.0.0", "a");
+    writeFakeRelease(fixture.releaseRoot, "1.0.1", "b");
+    await withEnv(fixture.env, async () => {
+      await __testing.runLocalSignerTransaction(
+        { action: "install", targetVersion: "1.0.0", timeoutMs: 10_000 },
+        { stateDir: fixture.stateDir },
+      );
+      fs.mkdirSync(fixture.paths.materialDir, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(fixture.paths.stateDbPath, "durable-state\n", { mode: 0o600 });
+      fs.writeFileSync(fixture.paths.masterKeyPath, "durable-master\n", { mode: 0o600 });
+      rewriteAsCanonicalDevelopmentSigner(fixture.paths.binaryPath);
+      await startInstalledSigner(fixture.paths);
+
+      await expect(
+        __testing.runLocalSignerTransaction(
+          { action: "install", targetVersion: "1.0.1", timeoutMs: 10_000 },
+          { stateDir: fixture.stateDir },
+        ),
+      ).resolves.toMatchObject({ action: "committed", identity: { version: "1.0.1" } });
+
+      expect(fs.readFileSync(fixture.paths.stateDbPath, "utf8")).toBe("durable-state\n");
+      expect(fs.readFileSync(fixture.paths.masterKeyPath, "utf8")).toBe("durable-master\n");
+      await expect(
+        __testing.probeLocalSignerHealth(fixture.paths.socketPath, identity("1.0.1", "b"), 3_000),
+      ).resolves.toMatchObject({ ready: true });
+    });
+  }, 30_000);
+
+  it("verifies the read-write candidate after a v0.1.72 Gateway restart", async () => {
+    const fixture = makeFixture();
+    writeFakeRelease(fixture.releaseRoot, "0.1.72", "a");
+    const candidate = writeFakeRelease(fixture.releaseRoot, "0.1.73", "b");
+    await withEnv(fixture.env, async () => {
+      await __testing.runLocalSignerTransaction(
+        { action: "install", targetVersion: "0.1.72", timeoutMs: 10_000 },
+        { stateDir: fixture.stateDir },
+      );
+      await startInstalledSigner(fixture.paths);
+      fs.writeFileSync(path.join(fixture.paths.materialDir, "owner-policy-proof"), "preserve\n", {
+        mode: 0o600,
+      });
+
+      await expect(
+        __testing.runLocalSignerTransaction(
+          {
+            action: "install",
+            targetVersion: "0.1.73",
+            timeoutMs: 10_000,
+            deferCommit: true,
+          },
+          { stateDir: fixture.stateDir },
+        ),
+      ).resolves.toMatchObject({ action: "candidate-active" });
+
+      await stopInstalledSigner(fixture.paths);
+      await startInstalledSigner(fixture.paths);
+
+      await expect(
+        __testing.runLocalSignerTransaction(
+          {
+            action: "verify",
+            targetVersion: "0.1.73",
+            expectedCommit: candidate.releaseIdentity.commit,
+            timeoutMs: 10_000,
+          },
+          { stateDir: fixture.stateDir },
+        ),
+      ).resolves.toMatchObject({ action: "verified", identity: { version: "0.1.73" } });
+
+      await expect(
+        __testing.runLocalSignerTransaction(
+          { action: "commit", timeoutMs: 10_000 },
+          { stateDir: fixture.stateDir },
+        ),
+      ).resolves.toMatchObject({ action: "committed", identity: { version: "0.1.73" } });
+      expect(
+        fs.readFileSync(path.join(fixture.paths.materialDir, "owner-policy-proof"), "utf8"),
+      ).toBe("preserve\n");
+      expect(fs.readFileSync(fixture.paths.stateDbPath, "utf8")).toBe("durable-state\n");
+      expect(fs.readFileSync(fixture.paths.masterKeyPath, "utf8")).toBe("durable-master\n");
+    });
+  }, 30_000);
+
+  it("restores a canonical development signer byte-for-byte when candidate health fails", async () => {
+    const fixture = makeFixture();
+    writeFakeRelease(fixture.releaseRoot, "1.0.0", "a");
+    writeFakeRelease(fixture.releaseRoot, "1.0.1", "b", { healthy: false });
+    await withEnv(fixture.env, async () => {
+      await __testing.runLocalSignerTransaction(
+        { action: "install", targetVersion: "1.0.0", timeoutMs: 10_000 },
+        { stateDir: fixture.stateDir },
+      );
+      fs.mkdirSync(fixture.paths.materialDir, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(fixture.paths.stateDbPath, "durable-state\n", { mode: 0o600 });
+      fs.writeFileSync(fixture.paths.masterKeyPath, "durable-master\n", { mode: 0o600 });
+      rewriteAsCanonicalDevelopmentSigner(fixture.paths.binaryPath);
+      const developmentDigest = digest(fixture.paths.binaryPath);
+      await startInstalledSigner(fixture.paths);
+
+      await expect(
+        __testing.runLocalSignerTransaction(
+          { action: "install", targetVersion: "1.0.1", timeoutMs: 3_000 },
+          { stateDir: fixture.stateDir },
+        ),
+      ).rejects.toMatchObject({ code: "LOCAL_SIGNER_UPDATE_ROLLED_BACK" });
+
+      expect(digest(fixture.paths.binaryPath)).toBe(developmentDigest);
+      expect(fs.readFileSync(fixture.paths.stateDbPath, "utf8")).toBe("durable-state\n");
+      expect(fs.readFileSync(fixture.paths.masterKeyPath, "utf8")).toBe("durable-master\n");
+      await expect(
+        __testing.probeLocalSignerHealth(
+          fixture.paths.socketPath,
+          {
+            version: "dev",
+            commit: "unknown",
+            buildInputDigest: "unknown",
+            development: true,
+          },
+          3_000,
+        ),
+      ).resolves.toMatchObject({ ready: true });
+
+      writeFakeRelease(fixture.releaseRoot, "1.0.1", "b");
+      await expect(
+        __testing.runLocalSignerTransaction(
+          { action: "install", targetVersion: "1.0.1", timeoutMs: 10_000 },
+          { stateDir: fixture.stateDir },
+        ),
+      ).resolves.toMatchObject({ action: "committed", identity: { version: "1.0.1" } });
+      expect(fs.readFileSync(fixture.paths.stateDbPath, "utf8")).toBe("durable-state\n");
+      expect(fs.readFileSync(fixture.paths.masterKeyPath, "utf8")).toBe("durable-master\n");
     });
   }, 30_000);
 
@@ -724,7 +1031,7 @@ describe.sequential("transactional Local native signer updater", () => {
       path.join(fixture.root, ".config", "systemd", "user", "fased-gateway.service"),
       "utf8",
     );
-    expect(service).toContain("Environment=FASED_GATEWAY_PORT=18789");
+    expect(service).toContain("Environment=FASED_GATEWAY_PORT=18789"); // pragma: allowlist secret
     expect(service).not.toContain("PASSPHRASE");
     expect(service).not.toContain("SOLANA_RPC_URL");
 
