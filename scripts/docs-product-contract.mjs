@@ -8,6 +8,10 @@ const exactHostingCommand = [
   "curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \\",
   "| bash -s -- --hosting",
 ].join("\n");
+const exactHostingPrereleaseCommand = [
+  "curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \\",
+  "| bash -s -- --hosting --release vX.Y.Z-rc.N --update-channel beta",
+].join("\n");
 const expectedHostingPages = new Set([
   "README.md",
   "docs/install/index.md",
@@ -85,7 +89,11 @@ for (const absolute of markdownFiles) {
       /--hosting\b/u.test(block)
     ) {
       hostingPages.add(relative);
-      if (normalizeCodeBlock(block) !== exactHostingCommand) {
+      const command = normalizeCodeBlock(block);
+      const isNormalCommand = command === exactHostingCommand;
+      const isVpsPrereleaseCommand =
+        relative === "docs/install/vps.md" && command === exactHostingPrereleaseCommand;
+      if (!isNormalCommand && !isVpsPrereleaseCommand) {
         fail(`${relative} changes or adds arguments to the exact Hosting command`);
       }
     }

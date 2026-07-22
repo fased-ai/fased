@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   PRE_V2_HOSTING_MIGRATION_MESSAGE,
   __testing,
+  isMainModule,
   parseReleaseVersion,
   parseUpdateRequest,
 } from "./fased-host-updater.mjs";
@@ -134,6 +135,20 @@ function managedTransaction(phase = "signer-preactivated") {
 }
 
 describe("root-owned hosted updater protocol", () => {
+  it("recognizes the systemd entrypoint through the immutable current symlink", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-controller-entrypoint-"));
+    cleanupRoots.push(root);
+    const generationRoot = path.join(root, "releases", "v1.2.3");
+    const serverPath = path.join(generationRoot, "fased-host-updater.mjs");
+    const currentLink = path.join(root, "current");
+    await fsp.mkdir(generationRoot, { recursive: true });
+    await fsp.writeFile(serverPath, "export {};\n");
+    await fsp.symlink(generationRoot, currentLink, "dir");
+
+    expect(isMainModule(path.join(currentLink, "fased-host-updater.mjs"), serverPath)).toBe(true);
+    expect(isMainModule(path.join(currentLink, "missing.mjs"), serverPath)).toBe(false);
+  });
+
   it("promotes an offline-attested controller generation atomically for future updates", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-controller-stage-"));
     cleanupRoots.push(root);

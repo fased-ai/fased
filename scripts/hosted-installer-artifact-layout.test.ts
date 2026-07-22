@@ -260,7 +260,7 @@ describe("attested Hosting installer artifact layout", () => {
     }
   });
 
-  it("accepts only the literal streamed fresh Hosting selector", () => {
+  it("accepts the stable and exact-release streamed fresh Hosting selectors", () => {
     const input = fs.readFileSync(path.join(root, "install.sh"), "utf8");
     const run = (args: string[], extraEnv: NodeJS.ProcessEnv = {}) =>
       spawnSync("bash", ["-s", "--", ...args], {
@@ -279,17 +279,32 @@ describe("attested Hosting installer artifact layout", () => {
       /must start in the provider's root console|only for a fresh host/iu,
     );
 
+    const exactPrerelease = run([
+      "--hosting",
+      "--release",
+      "v1.2.3-rc.1",
+      "--update-channel",
+      "beta",
+    ]);
+    expect(exactPrerelease.status).toBe(1);
+    expect(exactPrerelease.stderr).not.toContain("accepts only one fresh-install selector");
+    expect(exactPrerelease.stderr).toMatch(
+      /must start in the provider's root console|only for a fresh host/iu,
+    );
+
     for (const args of [
       ["--repair-hosting"],
       ["--host-profile", "hosting"],
       ["--hosting", "--release", "v1.2.3"],
+      ["--hosting", "--release", "v1.2.3-rc.1", "--update-channel", "stable"],
+      ["--hosting", "--release", "not-a-release", "--update-channel", "beta"],
       ["--hosting", "--source-install"],
       ["--hosting", "--verified-hosting-bundle", "/tmp/caller"],
     ]) {
       const result = run(args);
       expect(result.status).toBe(1);
       expect(result.stderr).toContain(
-        "Streamed VPS Hosting accepts only the exact fresh-install selector: --hosting",
+        "Streamed VPS Hosting accepts only one fresh-install selector:",
       );
       expect(result.stderr).not.toContain("VPS Hosting bootstrap must start");
     }

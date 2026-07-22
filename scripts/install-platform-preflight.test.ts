@@ -37,4 +37,12 @@ describe("installer platform preflight", () => {
     expect(installer).toContain("--hosting must run as root");
     expect(installer).toContain("--hosting requires systemd as PID 1");
   });
+
+  it("keeps Debian-family dependency setup noninteractive and activates Corepack with permission", () => {
+    expect(installer).toContain("DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a");
+    expect(installer).toContain('corepack_dir="$(dirname "$corepack_bin")"');
+    expect(installer).toContain('if [[ -w "$corepack_dir" ]]');
+    expect(installer).toContain("elif run_as_root corepack enable");
+    expect(installer).not.toContain("corepack enable || run_as_root corepack enable");
+  });
 });
