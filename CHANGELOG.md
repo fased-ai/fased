@@ -4,7 +4,7 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
-## 0.1.75-rc.1
+## 0.1.75
 
 - Make the Hosting root controller update itself transactionally so existing
   installations receive future controller fixes without manual repair.
