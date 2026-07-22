@@ -376,6 +376,92 @@ describe.sequential("transactional Local native signer updater", () => {
     ).toThrow(/supported only by local-signer verify/);
   });
 
+  it("refreshes a v0.1.72 source transaction with exact target controller bytes", async () => {
+    const fixture = makeFixture();
+    const sourceRoot = path.join(fixture.root, "source");
+    const transactionId = "12345678-1234-4123-8123-123456789abc";
+    const transactionDir = path.join(
+      fixture.stateDir,
+      "source-paired-update",
+      "transactions",
+      transactionId,
+    );
+    const controllerDir = path.join(transactionDir, "controller");
+    await fsp.mkdir(path.join(sourceRoot, "scripts"), { recursive: true });
+    await fsp.mkdir(path.join(sourceRoot, "dist"), { recursive: true });
+    await fsp.mkdir(controllerDir, { recursive: true });
+    for (const name of [
+      "fased-managed-updater.mjs",
+      "hosted-release-manifest.mjs",
+      "managed-runtime-layout.mjs",
+    ]) {
+      await fsp.copyFile(
+        path.join(repoRoot, "scripts", name),
+        path.join(sourceRoot, "scripts", name),
+      );
+    }
+    await fsp.writeFile(
+      path.join(sourceRoot, "package.json"),
+      `${JSON.stringify({ name: "@fased/fased", version: "0.1.73" })}\n`,
+    );
+    await execFileAsync("git", ["init", "-q"], { cwd: sourceRoot });
+    await execFileAsync("git", ["config", "user.email", "fixture@fased.test"], {
+      cwd: sourceRoot,
+    });
+    await execFileAsync("git", ["config", "user.name", "Fixture"], { cwd: sourceRoot });
+    await execFileAsync("git", ["add", "."], { cwd: sourceRoot });
+    await execFileAsync("git", ["commit", "-qm", "candidate"], { cwd: sourceRoot });
+    const targetCommit = (
+      await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: sourceRoot, encoding: "utf8" })
+    ).stdout.trim();
+    await fsp.writeFile(
+      path.join(sourceRoot, "dist", "build-info.json"),
+      `${JSON.stringify({ version: "0.1.73", commit: targetCommit })}\n`,
+    );
+    await fsp.writeFile(path.join(controllerDir, "fased-managed-updater.mjs"), "old-controller\n");
+    const journalPath = path.join(fixture.stateDir, "source-paired-update", "transaction.json");
+    await fsp.writeFile(
+      journalPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        kind: "source-checkout",
+        transactionId,
+        transactionDir,
+        sourceRoot,
+        controllerPath: path.join(controllerDir, "fased-managed-updater.mjs"),
+        phase: "app-active",
+        previous: { sha: "a".repeat(40), version: "0.1.72", branch: null },
+        target: { sha: targetCommit, version: "0.1.73" },
+      })}\n`,
+    );
+
+    await expect(
+      __testing.refreshLocalSourceController(
+        { sourceRoot, targetVersion: "0.1.73", expectedCommit: targetCommit },
+        { stateDir: fixture.stateDir },
+      ),
+    ).resolves.toEqual({ action: "refreshed", targetVersion: "0.1.73" });
+    for (const name of [
+      "fased-managed-updater.mjs",
+      "hosted-release-manifest.mjs",
+      "managed-runtime-layout.mjs",
+    ]) {
+      expect(digest(path.join(controllerDir, name))).toBe(
+        digest(path.join(sourceRoot, "scripts", name)),
+      );
+    }
+    await fsp.appendFile(
+      path.join(sourceRoot, "scripts", "fased-managed-updater.mjs"),
+      "\n// untrusted working-tree change\n",
+    );
+    await expect(
+      __testing.refreshLocalSourceController(
+        { sourceRoot, targetVersion: "0.1.73", expectedCommit: targetCommit },
+        { stateDir: fixture.stateDir },
+      ),
+    ).rejects.toThrow(/not exact target Git content/);
+  });
+
   it("requires an exact production release tuple and strict manifest", () => {
     const release = identity("1.2.3", "a");
     expect(
@@ -494,7 +580,6 @@ describe.sequential("transactional Local native signer updater", () => {
             action: "verify",
             targetVersion: "0.1.73",
             expectedCommit: candidate.releaseIdentity.commit,
-            expectedReadOnly: false,
             timeoutMs: 10_000,
           },
           { stateDir: fixture.stateDir },

@@ -70,6 +70,11 @@ const LOCAL_SIGNER_REQUIRED_FEATURES = [
   "atomicMultiAssetCaps",
   "signerControlledNativeFeeCaps",
 ];
+const LOCAL_SOURCE_CONTROLLER_FILES = [
+  "hosted-release-manifest.mjs",
+  "managed-runtime-layout.mjs",
+  "fased-managed-updater.mjs",
+];
 
 export const PRE_V2_HOSTING_MIGRATION_MESSAGE = [
   "This hosted installation needs the one-time signer-v2 security migration before it can update.",
@@ -1925,6 +1930,133 @@ function resolveLocalSignerPaths(overrides = {}) {
   return resolved;
 }
 
+function parseLocalSourceControllerArgs(argv) {
+  if (argv[1] !== "refresh") {
+    throw new Error("local-source-controller requires refresh");
+  }
+  const values = new Map();
+  for (let index = 2; index < argv.length; index += 2) {
+    const key = argv[index];
+    const value = argv[index + 1];
+    if (!key?.startsWith("--") || !value || value.startsWith("--")) {
+      throw new Error(`Invalid local-source-controller argument: ${key || ""}`);
+    }
+    values.set(key, value);
+  }
+  const sourceRoot = path.resolve(values.get("--source-root") || "");
+  const targetVersion = String(values.get("--version") || "").replace(/^v/u, "");
+  const expectedCommit = String(values.get("--expected-commit") || "")
+    .trim()
+    .toLowerCase();
+  if (!values.get("--source-root") || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(targetVersion)) {
+    throw new Error("local-source-controller refresh requires --source-root and --version");
+  }
+  if (!/^[a-f0-9]{40}$/u.test(expectedCommit)) {
+    throw new Error("local-source-controller refresh requires one exact --expected-commit");
+  }
+  if (values.size !== 3) {
+    throw new Error("local-source-controller refresh received unsupported arguments");
+  }
+  return { sourceRoot, targetVersion, expectedCommit };
+}
+
+async function refreshLocalSourceController(options, pathOverrides = {}) {
+  const signerPaths = resolveLocalSignerPaths(pathOverrides);
+  const updateRoot = path.join(signerPaths.stateDir, "source-paired-update");
+  const transactionsDir = path.join(updateRoot, "transactions");
+  const journalPath = path.join(updateRoot, "transaction.json");
+  let journal;
+  try {
+    journal = JSON.parse(await fsp.readFile(journalPath, "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return { action: "none" };
+    }
+    throw error;
+  }
+
+  const transactionId = String(journal?.transactionId || "");
+  const transactionDir = path.join(transactionsDir, transactionId);
+  const controllerDir = path.join(transactionDir, "controller");
+  const controllerPath = path.join(controllerDir, "fased-managed-updater.mjs");
+  if (
+    journal?.schemaVersion !== 1 ||
+    journal?.kind !== "source-checkout" ||
+    journal?.phase !== "app-active" ||
+    !TRANSACTION_ID_PATTERN.test(transactionId) ||
+    path.resolve(journal.sourceRoot || "") !== options.sourceRoot ||
+    path.resolve(journal.transactionDir || "") !== transactionDir ||
+    path.resolve(journal.controllerPath || "") !== controllerPath ||
+    journal?.target?.sha !== options.expectedCommit ||
+    journal?.target?.version !== options.targetVersion
+  ) {
+    throw new Error("Local source controller refresh does not match the active target transaction");
+  }
+
+  const [head, packageMetadata, buildInfo] = await Promise.all([
+    execFileAsync("git", ["-C", options.sourceRoot, "rev-parse", "HEAD"], {
+      encoding: "utf8",
+    }).then((result) => result.stdout.trim()),
+    fsp
+      .readFile(path.join(options.sourceRoot, "package.json"), "utf8")
+      .then((bytes) => JSON.parse(bytes)),
+    fsp
+      .readFile(path.join(options.sourceRoot, "dist", "build-info.json"), "utf8")
+      .then((bytes) => JSON.parse(bytes)),
+  ]);
+  if (
+    head !== options.expectedCommit ||
+    packageMetadata?.version !== options.targetVersion ||
+    buildInfo?.version !== options.targetVersion ||
+    buildInfo?.commit !== options.expectedCommit
+  ) {
+    throw new Error("Local source controller refresh target identity is not exact");
+  }
+
+  const controllerStat = await fsp.lstat(controllerDir);
+  if (!controllerStat.isDirectory() || controllerStat.isSymbolicLink()) {
+    throw new Error("Local source controller directory is unsafe");
+  }
+  for (const name of LOCAL_SOURCE_CONTROLLER_FILES) {
+    const source = path.join(options.sourceRoot, "scripts", name);
+    const destination = path.join(controllerDir, name);
+    const sourceStat = await fsp.lstat(source);
+    if (!sourceStat.isFile() || sourceStat.isSymbolicLink()) {
+      throw new Error(`Local source controller input is unsafe: ${source}`);
+    }
+    const destinationStat = await fsp.lstat(destination).catch((error) => {
+      if (error?.code === "ENOENT") {
+        return null;
+      }
+      throw error;
+    });
+    if (destinationStat && (!destinationStat.isFile() || destinationStat.isSymbolicLink())) {
+      throw new Error(`Local source controller destination is unsafe: ${destination}`);
+    }
+    const [trackedBlob, workingBlob] = await Promise.all([
+      execFileAsync(
+        "git",
+        ["-C", options.sourceRoot, "rev-parse", `${options.expectedCommit}:scripts/${name}`],
+        { encoding: "utf8" },
+      ).then((result) => result.stdout.trim()),
+      execFileAsync("git", ["-C", options.sourceRoot, "hash-object", source], {
+        encoding: "utf8",
+      }).then((result) => result.stdout.trim()),
+    ]);
+    if (!/^[a-f0-9]{40}$/u.test(trackedBlob) || workingBlob !== trackedBlob) {
+      throw new Error(`Local source controller ${name} is not exact target Git content`);
+    }
+    const temporary = `${destination}.tmp-${process.pid}-${Date.now()}`;
+    await fsp.copyFile(source, temporary, fs.constants.COPYFILE_EXCL);
+    await fsp.chmod(temporary, name === "fased-managed-updater.mjs" ? 0o700 : 0o600);
+    await fsyncManagedPath(temporary);
+    await fsp.rename(temporary, destination);
+    await fsyncManagedPath(destination);
+  }
+  await fsyncManagedPath(controllerDir);
+  return { action: "refreshed", targetVersion: options.targetVersion };
+}
+
 function localConfigPath(paths) {
   return path.resolve(process.env.FASED_CONFIG_PATH || path.join(paths.stateDir, "fased.json"));
 }
@@ -3685,7 +3817,6 @@ async function runLocalSignerTransaction(options, pathOverrides = {}) {
       return { action: "status", journal: await readLocalSignerJournal(paths) };
     }
     if (options.action === "verify") {
-      const journal = await readLocalSignerJournal(paths);
       const identity = await readSignerBinaryIdentity(
         paths.binaryPath,
         options.targetVersion || undefined,
@@ -3699,7 +3830,7 @@ async function runLocalSignerTransaction(options, pathOverrides = {}) {
         paths.socketPath,
         identity,
         Math.min(options.timeoutMs, 15_000),
-        options.expectedReadOnly ?? journal?.phase === "candidate-active",
+        options.expectedReadOnly ?? false,
       );
       return { action: "verified", identity };
     }
@@ -4489,6 +4620,11 @@ async function updateManagedRuntime(options) {
 }
 
 export async function run(argv = process.argv.slice(2)) {
+  if (argv[0] === "local-source-controller") {
+    const result = await refreshLocalSourceController(parseLocalSourceControllerArgs(argv));
+    process.stdout.write(`${JSON.stringify({ ok: true, ...result })}\n`);
+    return;
+  }
   if (argv[0] === "local-signer") {
     const result = await runLocalSignerTransaction(parseLocalSignerTransactionArgs(argv));
     process.stdout.write(`${JSON.stringify({ ok: true, ...result })}\n`);
@@ -4559,6 +4695,7 @@ export const __testing = {
   downloadVerifiedLocalSignerRelease,
   loadSignerEnvironment,
   parseLocalSignerTransactionArgs,
+  parseLocalSourceControllerArgs,
   parseHostedTransactionArgs,
   parseSignerReleaseManifest,
   parseSignerVersionOutput,
@@ -4566,6 +4703,7 @@ export const __testing = {
   probeLocalSignerHealth,
   readLocalSignerJournal,
   recoverLocalSignerTransaction,
+  refreshLocalSourceController,
   resolveLocalSignerAsset,
   resolveLocalSignerPaths,
   restoreOwnerOnlySnapshot,
