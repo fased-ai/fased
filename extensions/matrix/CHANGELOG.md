@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.75-rc.1
+## 0.1.75
 
 ### Changes
 
