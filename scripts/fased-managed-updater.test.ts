@@ -445,6 +445,76 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     }
   });
 
+  it("requires an exact process identity from controller-update responses", async () => {
+    const server = await withUnixServer((socket) => {
+      socket.once("data", () => {
+        socket.end(
+          `${JSON.stringify({
+            ok: true,
+            transactionId: TRANSACTION_ID,
+            version: "1.2.3",
+            controllerChanged: false,
+            controllerInstanceId: "22222222-2222-4222-8222-222222222222",
+          })}\n`,
+        );
+      });
+    });
+    try {
+      await expect(
+        __testing.requestHostedSignerTransaction(
+          "updateController",
+          TRANSACTION_ID,
+          "1.2.3",
+          1000,
+          server.socketPath,
+        ),
+      ).resolves.toMatchObject({
+        controllerChanged: false,
+        controllerInstanceId: "22222222-2222-4222-8222-222222222222",
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("waits for a different verified controller process before signer work", async () => {
+    const instances = [
+      {
+        controllerChanged: true,
+        controllerInstanceId: "22222222-2222-4222-8222-222222222222",
+      },
+      new Error("service restarting"),
+      {
+        controllerChanged: false,
+        controllerInstanceId: "22222222-2222-4222-8222-222222222222",
+      },
+      {
+        controllerChanged: false,
+        controllerInstanceId: "33333333-3333-4333-8333-333333333333",
+      },
+    ];
+    let waits = 0;
+    await expect(
+      __testing.ensureHostedControllerRelease(TRANSACTION_ID, "1.2.3", 1000, undefined, {
+        request: async () => {
+          const next = instances.shift();
+          if (next instanceof Error) {
+            throw next;
+          }
+          return next;
+        },
+        wait: async () => {
+          waits += 1;
+        },
+      }),
+    ).resolves.toMatchObject({
+      controllerChanged: false,
+      controllerInstanceId: "33333333-3333-4333-8333-333333333333",
+    });
+    expect(waits).toBe(3);
+    expect(instances).toHaveLength(0);
+  });
+
   it("requires app-account protocol-v2 features and valid signer policy hashes", async () => {
     const features = [
       "failClosedPolicies",

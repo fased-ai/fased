@@ -139,6 +139,8 @@ jobs:
           set -euo pipefail
           bash -n install.sh
           install -m 0755 install.sh dist-native/release/install.sh
+          install -m 0755 scripts/fased-host-updater.mjs dist-native/release/fased-host-updater.mjs
+          install -m 0755 scripts/fased-host-updaterctl.mjs dist-native/release/fased-host-updaterctl.mjs
 
       - name: Verify native signer checksums
         working-directory: dist-native/release
@@ -175,6 +177,38 @@ jobs:
           install -m 0644 \
             "${{ steps.attest-hosting-bootstrap.outputs.bundle-path }}" \
             dist-native/release/install.sh.attestation.json
+
+      - name: Attest root Hosting updater controller
+        id: attest-hosting-updater
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@v4
+        with:
+          subject-path: dist-native/release/fased-host-updater.mjs
+
+      - name: Stage root Hosting updater attestation bundle
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 0644 \
+            "${{ steps.attest-hosting-updater.outputs.bundle-path }}" \
+            dist-native/release/fased-host-updater.mjs.attestation.json
+
+      - name: Attest root Hosting updater client
+        id: attest-hosting-updater-client
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@v4
+        with:
+          subject-path: dist-native/release/fased-host-updaterctl.mjs
+
+      - name: Stage root Hosting updater client attestation bundle
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 0644 \
+            "${{ steps.attest-hosting-updater-client.outputs.bundle-path }}" \
+            dist-native/release/fased-host-updaterctl.mjs.attestation.json
 
       - name: Upload verified signer assets
         uses: actions/upload-artifact@v4

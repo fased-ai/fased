@@ -92,6 +92,81 @@ describe("attested Hosting installer artifact layout", () => {
     expect(manifestBoundAsset).not.toContain("gh attestation verify");
   });
 
+  it("keeps root updater verification anonymous through published offline bundles", () => {
+    const updater = fs.readFileSync(path.join(root, "scripts/fased-host-updater.mjs"), "utf8");
+    expect(updater).toContain(
+      "const RELEASE_MANIFEST_BUNDLE_NAME = `${RELEASE_MANIFEST_NAME}.attestation.json`",
+    );
+    expect(updater).toContain(
+      'const SIGNER_ATTESTATION_BUNDLE_NAME = "fased-signerd-release.attestation.json"',
+    );
+    expect(updater).toContain('"--bundle",\n    bundlePath');
+    expect(updater).toContain("`${releaseUrl}/${RELEASE_MANIFEST_BUNDLE_NAME}`");
+    expect(updater).toContain("`${releaseUrl}/${SIGNER_ATTESTATION_BUNDLE_NAME}`");
+  });
+
+  it("publishes and installs an atomically selected root-controller generation", () => {
+    const installer = fs.readFileSync(path.join(root, "install.sh"), "utf8");
+    const updater = fs.readFileSync(path.join(root, "scripts/fased-host-updater.mjs"), "utf8");
+    expect(installer).toContain("/opt/fased/host-controller/releases/v${version}");
+    expect(installer).toContain(".controller-generation-${version}-$$");
+    expect(installer).toContain(
+      "Existing host controller generation v${version} is not the exact immutable release.",
+    );
+    expect(installer).toContain("Refusing to replace non-symlink host controller current path.");
+    expect(installer).toContain(
+      "ExecStart=$(command -v node) /opt/fased/host-controller/current/fased-host-updater.mjs",
+    );
+    expect(installer).toContain("ReadWritePaths=/opt/fased/host-controller");
+    expect(installer).toContain("RestartSec=1");
+    expect(installer).toContain("/var/lib/fased-host-updater/controller-version.json");
+    expect(installer).toContain('node "$FASED_DIR/scripts/fased-host-updater.mjs" --self-check');
+    expect(installer).toContain('node "$FASED_DIR/scripts/fased-host-updaterctl.mjs" --self-check');
+    expect(updater).toContain(
+      "const CONTROLLER_SERVER_BUNDLE_NAME = `${CONTROLLER_SERVER_NAME}.attestation.json`",
+    );
+    expect(updater).toContain(
+      "const CONTROLLER_CLIENT_BUNDLE_NAME = `${CONTROLLER_CLIENT_NAME}.attestation.json`",
+    );
+    expect(updater).toContain("context.stageControllerRelease(request.version, context)");
+    expect(releaseWorkflow).toContain(
+      "install -m 0755 scripts/fased-host-updater.mjs dist-native/release/fased-host-updater.mjs",
+    );
+    expect(releaseWorkflow).toContain(
+      "install -m 0755 scripts/fased-host-updaterctl.mjs dist-native/release/fased-host-updaterctl.mjs",
+    );
+    expect(releaseWorkflow).toContain(
+      "dist-native/release/fased-host-updater.mjs.attestation.json",
+    );
+    expect(releaseWorkflow).toContain(
+      "dist-native/release/fased-host-updaterctl.mjs.attestation.json",
+    );
+    expect(updater).toContain('process.argv[2] === "--self-check"');
+    expect(fs.readFileSync(path.join(root, "scripts/fased-host-updaterctl.mjs"), "utf8")).toContain(
+      'process.argv[2] === "--self-check"',
+    );
+  });
+
+  it("uses the correct GitHub CLI repository setup for DNF4 and DNF5", () => {
+    const installer = fs.readFileSync(path.join(root, "install.sh"), "utf8");
+    expect(installer.match(/dnf5 install -y dnf5-plugins/g)).toHaveLength(2);
+    expect(installer.match(/dnf5 config-manager addrepo/g)).toHaveLength(2);
+    expect(
+      installer.match(/--from-repofile=https:\/\/cli\.github\.com\/packages\/rpm\/gh-cli\.repo/g),
+    ).toHaveLength(2);
+    expect(installer.match(/dnf install -y 'dnf-command\(config-manager\)'/g)).toHaveLength(2);
+    expect(installer.match(/dnf config-manager --add-repo/g)).toHaveLength(2);
+  });
+
+  it("does not replace minimal RHEL command packages during bootstrap", () => {
+    const installer = fs.readFileSync(path.join(root, "install.sh"), "utf8");
+    expect(installer).toContain("command -v curl >/dev/null 2>&1 || packages+=(curl)");
+    expect(installer).toContain("command -v tar >/dev/null 2>&1 || packages+=(tar)");
+    expect(installer).toContain('run_as_root "$dnf_cmd" install -y "${rpm_packages[@]}"');
+    expect(installer).not.toMatch(/dnf5? install -y curl ca-certificates/u);
+    expect(installer).not.toContain("dnf install -y curl ca-certificates tar coreutils");
+  });
+
   it("publishes install.sh as its own pre-execution attested release asset", () => {
     expect(releaseWorkflow).toContain("install -m 0755 install.sh dist-native/release/install.sh");
     expect(releaseWorkflow).toContain("name: Attest root Hosting bootstrap");
