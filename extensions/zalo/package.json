@@ -1,6 +1,6 @@
 {
   "name": "@fased/zalo",
-  "version": "0.1.73",
+  "version": "0.1.74",
   "description": "FasedAgent Zalo channel plugin",
   "type": "module",
   "dependencies": {
