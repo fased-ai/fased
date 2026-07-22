@@ -50,6 +50,9 @@ describe("Dockerfile", () => {
       "COPY --chown=node:node scripts ./scripts",
     );
     expect(dockerfile).toContain("target=/home/node/.local/share/pnpm/store");
+    expect(dockerfile).toContain("--store-dir /home/node/.local/share/pnpm/store");
+    expect(dockerfile).toContain("test ! -e /app/.pnpm-store");
+    expect(dockerfile).toContain("rm -rf /root/.npm");
     expect(dockerfile).toContain("target=/go/pkg/mod");
     expect(dockerfile).toContain("target=/root/.cache/go-build");
   });

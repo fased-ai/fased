@@ -1031,7 +1031,7 @@ describe.sequential("transactional Local native signer updater", () => {
       path.join(fixture.root, ".config", "systemd", "user", "fased-gateway.service"),
       "utf8",
     );
-    expect(service).toContain("Environment=FASED_GATEWAY_PORT=18789");
+    expect(service).toContain("Environment=FASED_GATEWAY_PORT=18789"); // pragma: allowlist secret
     expect(service).not.toContain("PASSPHRASE");
     expect(service).not.toContain("SOLANA_RPC_URL");
 

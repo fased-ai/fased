@@ -12,11 +12,11 @@ TRIVY_VERSION="0.70.0"
 case "$(uname -m)" in
   x86_64 | amd64)
     TRIVY_ARCHIVE="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
-    TRIVY_SHA256="8b4376d5d6befe5c24d503f10ff136d9e0c49f9127a4279fd110b727929a5aa9"
+    TRIVY_SHA256="8b4376d5d6befe5c24d503f10ff136d9e0c49f9127a4279fd110b727929a5aa9" # pragma: allowlist secret
     ;;
   aarch64 | arm64)
     TRIVY_ARCHIVE="trivy_${TRIVY_VERSION}_Linux-ARM64.tar.gz"
-    TRIVY_SHA256="2f6bb988b553a1bbac6bdd1ce890f5e412439564e17522b88a4541b4f364fc8d"
+    TRIVY_SHA256="2f6bb988b553a1bbac6bdd1ce890f5e412439564e17522b88a4541b4f364fc8d" # pragma: allowlist secret
     ;;
   *)
     echo "Unsupported Trivy host architecture: $(uname -m)" >&2

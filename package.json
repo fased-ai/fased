@@ -337,7 +337,7 @@
     "@types/qrcode-terminal": "^0.12.2",
     "@types/ws": "^8.18.1",
     "@typescript/native-preview": "7.0.0-dev.20260225.1",
-    "@vitest/coverage-v8": "^4.1.9",
+    "@vitest/coverage-v8": "^4.1.10",
     "@whiskeysockets/baileys": "7.0.0-rc12",
     "discord-api-types": "^0.38.40",
     "file-type": "21.3.2",
@@ -359,7 +359,7 @@
     "tsdown": "^0.20.3",
     "tsx": "^4.22.4",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.10"
   },
   "peerDependencies": {
     "@napi-rs/canvas": "^0.1.89",
@@ -421,7 +421,7 @@
       "undici@7": "7.28.0",
       "uuid": "11.1.1",
       "vite": "8.1.2",
-      "vitest": "4.1.9",
+      "vitest": "4.1.10",
       "ws": "8.21.0",
       "yaml": "2.8.3"
     },
