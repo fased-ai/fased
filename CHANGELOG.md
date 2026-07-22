@@ -4,6 +4,16 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.73
+
+- Repair normal Local source updates from v0.1.72 by validating the candidate
+  signer in its writable release location and preserving the rollback
+  controller needed to restore paired application and signer state.
+- Keep Docker runtime images free of pnpm and npm caches, and patch audited
+  production dependencies without changing tolerant image-decoding behavior.
+- Preserve the faster native-architecture Docker and sharded release checks
+  while enforcing clean-image and updater-compatibility release gates.
+
 ## 0.1.72
 
 - Fix the ARM64 Docker release image so it contains and executes the native
