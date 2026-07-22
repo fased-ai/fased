@@ -89,6 +89,9 @@ export function installTestEnv(): { cleanup: () => void; tempHome: string } {
     { key: "GH_TOKEN", value: process.env.GH_TOKEN },
     { key: "GITHUB_TOKEN", value: process.env.GITHUB_TOKEN },
     { key: "NODE_OPTIONS", value: process.env.NODE_OPTIONS },
+    { key: "GOCACHE", value: process.env.GOCACHE },
+    { key: "GOMODCACHE", value: process.env.GOMODCACHE },
+    { key: "GOTMPDIR", value: process.env.GOTMPDIR },
   ];
 
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "fased-test-home-"));
@@ -129,6 +132,12 @@ export function installTestEnv(): { cleanup: () => void; tempHome: string } {
   process.env.XDG_DATA_HOME = path.join(tempHome, ".local", "share");
   process.env.XDG_STATE_HOME = path.join(tempHome, ".local", "state");
   process.env.XDG_CACHE_HOME = path.join(tempHome, ".cache");
+  process.env.GOCACHE ??= path.join(os.tmpdir(), "fased-go-build-cache");
+  process.env.GOMODCACHE ??= path.join(os.tmpdir(), "fased-go-mod-cache");
+  process.env.GOTMPDIR ??= path.join(os.tmpdir(), "fased-go-tmp");
+  fs.mkdirSync(process.env.GOCACHE, { recursive: true });
+  fs.mkdirSync(process.env.GOMODCACHE, { recursive: true });
+  fs.mkdirSync(process.env.GOTMPDIR, { recursive: true });
 
   const cleanup = () => {
     restoreEnv(restore);

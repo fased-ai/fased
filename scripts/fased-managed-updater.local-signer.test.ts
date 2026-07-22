@@ -44,6 +44,43 @@ function identity(version: string, marker: string) {
   };
 }
 
+function healthyLocalSignerResponse(version = "1.2.3", marker = "a") {
+  return {
+    ok: true,
+    result: {
+      ready: true,
+      readOnly: true,
+      keystoreType: "signer-owned-v2",
+      release: identity(version, marker),
+      schema: { version: 3, supported: 3, ready: true },
+      capabilities: {
+        protocol: { current: 2, min: 2, max: 2 },
+        nativeFeeReservationLamports: 5_000_000,
+        features: [...REQUIRED_FEATURES],
+      },
+      policies: [
+        {
+          walletId: "agent",
+          version: 1,
+          hash: `sha256:${"a".repeat(64)}`,
+        },
+      ],
+      network: {
+        ready: true,
+        wallets: [
+          {
+            walletId: "agent",
+            configured: true,
+            version: 1,
+            ready: true,
+            hash: `hmac-sha256:${"b".repeat(64)}`,
+          },
+        ],
+      },
+    },
+  };
+}
+
 function writeFakeRelease(
   releaseRoot: string,
   version: string,
@@ -480,6 +517,113 @@ describe.sequential("transactional Local native signer updater", () => {
     ).toThrow(/unsupported fields/);
   });
 
+  it("reports every Local signer health predicate with a stable reason code", () => {
+    const expected = identity("1.2.3", "a");
+    const healthy = healthyLocalSignerResponse();
+    expect(__testing.evaluateLocalSignerHealth(healthy, expected, true)).toMatchObject({
+      ok: true,
+      reasons: [],
+    });
+
+    const cases = [
+      {
+        code: "response_not_ok",
+        mutate: (response: ReturnType<typeof healthyLocalSignerResponse>) => {
+          response.ok = false;
+        },
+      },
+      {
+        code: "signer_not_ready",
+        mutate: (response: ReturnType<typeof healthyLocalSignerResponse>) => {
+          response.result.ready = false;
+        },
+      },
+      {
+        code: "custody_type_mismatch",
+        mutate: (response: ReturnType<typeof healthyLocalSignerResponse>) => {
+          response.result.keystoreType = "legacy";
+        },
+      },
+      {
+        code: "protocol_range_mismatch",
+        mutate: (response: ReturnType<typeof healthyLocalSignerResponse>) => {
+          response.result.capabilities.protocol.current = 1;
+        },
+      },
+      {
+        code: "fee_reservation_mismatch",
+        mutate: (response: ReturnType<typeof healthyLocalSignerResponse>) => {
+          response.result.capabilities.nativeFeeReservationLamports = 4_999_999;
+        },
+      },
+      {
+        code: "schema_not_ready",
+        mutate: (response: ReturnType<typeof healthyLocalSignerResponse>) => {
+          response.result.schema.ready = false;
+        },
+      },
+      {
+        code: "mode_mismatch",
+        mutate: (response: ReturnType<typeof healthyLocalSignerResponse>) => {
+          response.result.readOnly = false;
+        },
+      },
+      {
+        code: "missing_capability",
+        mutate: (response: ReturnType<typeof healthyLocalSignerResponse>) => {
+          response.result.capabilities.features.shift();
+        },
+      },
+      {
+        code: "policy_record_invalid",
+        mutate: (response: ReturnType<typeof healthyLocalSignerResponse>) => {
+          response.result.policies[0].hash = "invalid";
+        },
+      },
+      {
+        code: "network_record_invalid",
+        mutate: (response: ReturnType<typeof healthyLocalSignerResponse>) => {
+          response.result.network.wallets[0].hash = "invalid";
+        },
+      },
+      {
+        code: "release_identity_invalid",
+        mutate: (response: ReturnType<typeof healthyLocalSignerResponse>) => {
+          response.result.release.commit = "invalid";
+        },
+      },
+      {
+        code: "release_identity_mismatch",
+        mutate: (response: ReturnType<typeof healthyLocalSignerResponse>) => {
+          response.result.release.commit = "b".repeat(40);
+        },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const response = structuredClone(healthy);
+      testCase.mutate(response);
+      const evaluation = __testing.evaluateLocalSignerHealth(response, expected, true);
+      expect(evaluation.ok, testCase.code).toBe(false);
+      expect(
+        evaluation.reasons.map((reason: { code: string }) => reason.code),
+        testCase.code,
+      ).toContain(testCase.code);
+    }
+  });
+
+  it("formats signer health reasons without raw response or secret values", () => {
+    const formatted = __testing.formatLocalSignerHealthReasons([
+      { code: "mode_mismatch", detail: "expected=read-only observed=read-write" },
+      { code: "missing_capability", detail: "failClosedPolicies" },
+    ]);
+    expect(formatted).toBe(
+      "mode_mismatch (expected=read-only observed=read-write); missing_capability (failClosedPolicies)",
+    );
+    expect(formatted).not.toContain("socket");
+    expect(formatted).not.toContain("rpc");
+  });
+
   it("installs fresh without Go and updates an active signer while preserving state", async () => {
     const fixture = makeFixture();
     writeFakeRelease(fixture.releaseRoot, "1.0.0", "a");
@@ -616,12 +760,18 @@ describe.sequential("transactional Local native signer updater", () => {
       const developmentDigest = digest(fixture.paths.binaryPath);
       await startInstalledSigner(fixture.paths);
 
-      await expect(
-        __testing.runLocalSignerTransaction(
+      try {
+        await __testing.runLocalSignerTransaction(
           { action: "install", targetVersion: "1.0.1", timeoutMs: 3_000 },
           { stateDir: fixture.stateDir },
-        ),
-      ).rejects.toMatchObject({ code: "LOCAL_SIGNER_UPDATE_ROLLED_BACK" });
+        );
+        throw new Error("expected unhealthy candidate rollback");
+      } catch (error) {
+        expect(error).toMatchObject({ code: "LOCAL_SIGNER_UPDATE_ROLLED_BACK" });
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain("candidate preflight");
+        expect((error as Error).message).toContain("missing_capability");
+      }
 
       expect(digest(fixture.paths.binaryPath)).toBe(developmentDigest);
       expect(fs.readFileSync(fixture.paths.stateDbPath, "utf8")).toBe("durable-state\n");

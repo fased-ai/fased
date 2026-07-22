@@ -82,8 +82,14 @@ describe("attested Hosting installer artifact layout", () => {
     expect(builder).toContain("fased-hosted-app-v2-linux-${arch}-v${version}.tar.gz");
     expect(builder).toContain("schemaVersion: 1, dependencyHash");
     expect(builder).toContain("app: { asset: unifiedAppAssetName, sha256: unifiedAppDigest }");
-    expect(runtimeInstaller).toContain('if [[ "$PROFILE" == "hosting" ]]');
+    expect(runtimeInstaller).toContain('"$RELEASE_URL/${RELEASE_MANIFEST_NAME}.attestation.json"');
+    expect(runtimeInstaller).toContain('--bundle "$RELEASE_MANIFEST_BUNDLE_PATH"');
     expect(runtimeInstaller).toContain('APP_ASSET_NAME="${RELEASE_SELECTION[1]}"');
+    const manifestBoundAsset = runtimeInstaller.slice(
+      runtimeInstaller.indexOf("download_manifest_bound_asset()"),
+      runtimeInstaller.indexOf("archive_entry_is_safe()"),
+    );
+    expect(manifestBoundAsset).not.toContain("gh attestation verify");
   });
 
   it("publishes install.sh as its own pre-execution attested release asset", () => {

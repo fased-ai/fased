@@ -121,6 +121,31 @@ async function measureUpdateStage<T>(
   }
 }
 
+async function runVisibleUpdateStage<T>(params: {
+  name: string;
+  jsonMode: boolean;
+  run: () => Promise<T>;
+}): Promise<T> {
+  const startedAt = Date.now();
+  if (!params.jsonMode) {
+    defaultRuntime.log(theme.muted(`[fased update] ${params.name}...`));
+  }
+  let succeeded = false;
+  try {
+    const result = await params.run();
+    succeeded = true;
+    return result;
+  } finally {
+    if (!params.jsonMode) {
+      defaultRuntime.log(
+        theme.muted(
+          `[fased update] ${succeeded ? "ok" : "failed"}: ${params.name} (${formatDuration(Date.now() - startedAt)})`,
+        ),
+      );
+    }
+  }
+}
+
 function printUpdateLifecycleTimings(timings: UpdateLifecycleTiming[], jsonMode: boolean): void {
   if (jsonMode || timings.length === 0) {
     return;
@@ -986,10 +1011,20 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
   }
 
   const installKind = updateStatus.installKind;
-  if (installKind === "package" && !opts.dryRun && requestedChannel !== "dev") {
+  const managedRuntimeSource = new Set(["managed-package", "packaged-runtime"]).has(
+    process.env.FASED_RUNTIME_SOURCE ?? "",
+  );
+  if (
+    (installKind === "package" || managedRuntimeSource) &&
+    !opts.dryRun &&
+    requestedChannel !== "dev"
+  ) {
     try {
       const managed = await ensureManagedRuntimeBootstrap({
-        packageRoot: root,
+        packageRoot:
+          managedRuntimeSource && process.env.FASED_MANAGED_RUNTIME_ROOT
+            ? process.env.FASED_MANAGED_RUNTIME_ROOT
+            : root,
         env: process.env,
       });
       if (managed.updaterPath) {
@@ -1472,9 +1507,14 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
   }
   if (interruptedSourcePair) {
     try {
-      const recovery = await recoverLocalSourcePairedUpdate({
-        timeoutMs: timeoutMs ?? 20 * 60_000,
-        env: process.env,
+      const recovery = await runVisibleUpdateStage({
+        name: "interrupted Local app/signer recovery",
+        jsonMode: Boolean(opts.json),
+        run: () =>
+          recoverLocalSourcePairedUpdate({
+            timeoutMs: timeoutMs ?? 20 * 60_000,
+            env: process.env,
+          }),
       });
       if (recovery === "rolled-back" && serviceLoaded) {
         const restored = await maybeRestartService({
@@ -1523,10 +1563,15 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
   let sourcePair: LocalSourcePairedUpdateJournal | null = null;
   if (sourceSignerConfigured) {
     try {
-      sourcePair = await prepareLocalSourcePairedUpdate({
-        sourceRoot: root,
-        timeoutMs: timeoutMs ?? 20 * 60_000,
-        env: process.env,
+      sourcePair = await runVisibleUpdateStage({
+        name: "Local app/signer rollback snapshot",
+        jsonMode: Boolean(opts.json),
+        run: () =>
+          prepareLocalSourcePairedUpdate({
+            sourceRoot: root,
+            timeoutMs: timeoutMs ?? 20 * 60_000,
+            env: process.env,
+          }),
       });
     } catch (error) {
       stop();
@@ -1570,10 +1615,15 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
         targetVersion: result.after.version,
         env: process.env,
       });
-      sourcePair = await activateLocalSourceSigner({
-        journal: sourcePair,
-        timeoutMs: timeoutMs ?? 20 * 60_000,
-        env: process.env,
+      sourcePair = await runVisibleUpdateStage({
+        name: "Local signer candidate preflight and activation",
+        jsonMode: Boolean(opts.json),
+        run: () =>
+          activateLocalSourceSigner({
+            journal: sourcePair as LocalSourcePairedUpdateJournal,
+            timeoutMs: timeoutMs ?? 20 * 60_000,
+            env: process.env,
+          }),
       });
     } catch (error) {
       try {
@@ -1702,10 +1752,15 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
 
   if (sourcePair) {
     try {
-      await verifyLocalSourceSigner({
-        journal: sourcePair,
-        timeoutMs: timeoutMs ?? 20 * 60_000,
-        env: process.env,
+      await runVisibleUpdateStage({
+        name: "post-Gateway signer verification",
+        jsonMode: Boolean(opts.json),
+        run: () =>
+          verifyLocalSourceSigner({
+            journal: sourcePair as LocalSourcePairedUpdateJournal,
+            timeoutMs: timeoutMs ?? 20 * 60_000,
+            env: process.env,
+          }),
       });
     } catch (error) {
       try {
@@ -1743,10 +1798,15 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
       return;
     }
     try {
-      await commitLocalSourcePairedUpdate({
-        journal: sourcePair,
-        timeoutMs: timeoutMs ?? 20 * 60_000,
-        env: process.env,
+      await runVisibleUpdateStage({
+        name: "Local app/signer writable commit",
+        jsonMode: Boolean(opts.json),
+        run: () =>
+          commitLocalSourcePairedUpdate({
+            journal: sourcePair as LocalSourcePairedUpdateJournal,
+            timeoutMs: timeoutMs ?? 20 * 60_000,
+            env: process.env,
+          }),
       });
     } catch (error) {
       defaultRuntime.error(
