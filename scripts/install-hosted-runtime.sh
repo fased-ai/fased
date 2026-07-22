@@ -143,13 +143,6 @@ download_manifest_bound_asset() {
   local actual
   actual="$(sha256_file "$archive" || true)"
   [[ "$actual" == "$expected" ]] || return 20
-  if [[ "$BASE_URL" == "$DEFAULT_BASE_URL" ]]; then
-    GH_PROMPT_DISABLED=1 gh attestation verify "$archive" \
-      --repo fased-ai/fased \
-      --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-      --source-ref "refs/tags/v${VERSION}" \
-      --deny-self-hosted-runners >/dev/null || return 20
-  fi
   printf '%s\n' "$archive"
 }
 
@@ -242,26 +235,31 @@ APP_ASSET_NAME="fased-hosted-app-linux-${ARCH}-v${VERSION}.tar.gz"
 APP_ARCHIVE=""
 APP_DOWNLOAD_STATUS=1
 RELEASE_MANIFEST_PATH=""
+RELEASE_MANIFEST_BUNDLE_PATH=""
 RELEASE_COMMIT=""
 EXPECTED_APP_DIGEST=""
 EXPECTED_DEPENDENCY_DIGEST=""
 DEPENDENCY_ASSET_NAME=""
 DEPENDENCY_HASH=""
-if [[ "$PROFILE" == "hosting" ]]; then
-  RELEASE_MANIFEST_NAME="fased-hosted-release-v2.json"
-  RELEASE_MANIFEST_PATH="$TEMP_ROOT/$RELEASE_MANIFEST_NAME"
-  phase_started_ms="$(now_ms)"
-  curl -fsSL "$RELEASE_URL/$RELEASE_MANIFEST_NAME" -o "$RELEASE_MANIFEST_PATH" 2>/dev/null || {
-    echo "The exact attested Hosting release manifest is unavailable; the installed runtime was not changed." >&2
-    exit 20
-  }
+RELEASE_MANIFEST_NAME="fased-hosted-release-v2.json"
+RELEASE_MANIFEST_PATH="$TEMP_ROOT/$RELEASE_MANIFEST_NAME"
+phase_started_ms="$(now_ms)"
+if curl -fsSL "$RELEASE_URL/$RELEASE_MANIFEST_NAME" -o "$RELEASE_MANIFEST_PATH" 2>/dev/null; then
   if [[ "$BASE_URL" == "$DEFAULT_BASE_URL" ]]; then
+    RELEASE_MANIFEST_BUNDLE_PATH="${RELEASE_MANIFEST_PATH}.attestation.json"
+    curl -fsSL \
+      "$RELEASE_URL/${RELEASE_MANIFEST_NAME}.attestation.json" \
+      -o "$RELEASE_MANIFEST_BUNDLE_PATH" 2>/dev/null || {
+        echo "The offline release-manifest attestation bundle is unavailable; the installed runtime was not changed." >&2
+        exit 20
+      }
     GH_PROMPT_DISABLED=1 gh attestation verify "$RELEASE_MANIFEST_PATH" \
       --repo fased-ai/fased \
       --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
       --source-ref "refs/tags/v${VERSION}" \
-      --deny-self-hosted-runners >/dev/null || {
-        echo "Hosted release manifest attestation verification failed." >&2
+      --deny-self-hosted-runners \
+      --bundle "$RELEASE_MANIFEST_BUNDLE_PATH" >/dev/null || {
+        echo "Release manifest attestation verification failed." >&2
         exit 20
       }
   fi
@@ -285,7 +283,7 @@ for (const value of [
 EOF_RELEASE_SELECTION
   )
   [[ "${#RELEASE_SELECTION[@]}" -eq 8 ]] || {
-    echo "Hosted release manifest is malformed or missing this architecture." >&2
+    echo "Release manifest is malformed or missing this architecture." >&2
     exit 20
   }
   RELEASE_COMMIT="${RELEASE_SELECTION[0]}"
@@ -295,18 +293,22 @@ EOF_RELEASE_SELECTION
   EXPECTED_DEPENDENCY_DIGEST="${RELEASE_SELECTION[4]}"
   DEPENDENCY_HASH="${RELEASE_SELECTION[5]}"
   [[ "${RELEASE_SELECTION[6]}" == "$RELEASE_COMMIT" ]] || {
-    echo "Hosted app and signer commits are mixed; activation was refused." >&2
+    echo "Application and signer commits are mixed; activation was refused." >&2
     exit 20
   }
   APP_ARCHIVE="$(download_manifest_bound_asset "$APP_ASSET_NAME" "$EXPECTED_APP_DIGEST")" || {
-    echo "Hosted app layer is unavailable or does not match the attested release manifest." >&2
+    echo "Application layer is unavailable or does not match the attested release manifest." >&2
     exit 20
   }
   APP_DOWNLOAD_STATUS=0
-  record_timing "release manifest, app attestation, and digest verification" "$phase_started_ms"
+  record_timing "release manifest attestation and app digest verification" "$phase_started_ms"
 else
+  RELEASE_MANIFEST_PATH=""
+  if [[ "$PROFILE" == "hosting" ]]; then
+    echo "The exact attested Hosting release manifest is unavailable; the installed runtime was not changed." >&2
+    exit 20
+  fi
   set +e
-  phase_started_ms="$(now_ms)"
   APP_ARCHIVE="$(download_verified_asset "$APP_ASSET_NAME" no)"
   APP_DOWNLOAD_STATUS=$?
   set -e
@@ -338,9 +340,9 @@ if [[ -n "$APP_ARCHIVE" ]]; then
   EMBEDDED_VERSION="${EMBEDDED_RELEASE_FIELDS[0]:-}"
   EMBEDDED_COMMIT="${EMBEDDED_RELEASE_FIELDS[1]:-}"
   EMBEDDED_DEPENDENCY_HASH="${EMBEDDED_RELEASE_FIELDS[2]:-}"
-  if [[ "$PROFILE" == "hosting" ]]; then
+  if [[ -n "$RELEASE_MANIFEST_PATH" ]]; then
     [[ "$EMBEDDED_VERSION" == "$VERSION" && "$EMBEDDED_COMMIT" == "$RELEASE_COMMIT" && "$EMBEDDED_DEPENDENCY_HASH" == "$DEPENDENCY_HASH" ]] || {
-      echo "Hosted application build identity does not match the attested release manifest." >&2
+      echo "Application build identity does not match the attested release manifest." >&2
       exit 20
     }
     cp "$RELEASE_MANIFEST_PATH" "$PACKAGE_ROOT/.fased-hosted-release-v2.json"
@@ -350,11 +352,11 @@ if [[ -n "$APP_ARCHIVE" ]]; then
   [[ "$DEPENDENCY_HASH" =~ ^[a-f0-9]{64}$ ]] || exit 20
   DEPENDENCY_ROOT="$CACHE_DIR/hosted-dependencies/$DEPENDENCY_HASH"
   if [[ ! -d "$DEPENDENCY_ROOT/node_modules" ]]; then
-    if [[ "$PROFILE" != "hosting" ]]; then
+    if [[ -z "$RELEASE_MANIFEST_PATH" ]]; then
       DEPENDENCY_ASSET_NAME="fased-hosted-deps-linux-${ARCH}-${DEPENDENCY_HASH}.tar.gz"
     fi
     phase_started_ms="$(now_ms)"
-    if [[ "$PROFILE" == "hosting" ]]; then
+    if [[ -n "$RELEASE_MANIFEST_PATH" ]]; then
       DEPENDENCY_ARCHIVE="$(download_manifest_bound_asset "$DEPENDENCY_ASSET_NAME" "$EXPECTED_DEPENDENCY_DIGEST")" || exit $?
     else
       DEPENDENCY_ARCHIVE="$(download_verified_asset "$DEPENDENCY_ASSET_NAME" yes)" || exit $?

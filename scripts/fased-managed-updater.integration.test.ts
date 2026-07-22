@@ -240,6 +240,13 @@ describe("managed updater transaction", () => {
       profile: "local",
     });
     fs.writeFileSync(path.join(stateDir, "wallet-state-preserved"), "yes\n");
+    const staleUpdateCache = path.join(
+      stateDir,
+      "install-cache",
+      "managed-update-0.1.73-abandoned",
+    );
+    fs.mkdirSync(staleUpdateCache, { recursive: true });
+    fs.writeFileSync(path.join(staleUpdateCache, "partial-archive"), "incomplete\n");
     const initialVersion = await execFileAsync(paths.prefixLauncherPath, ["--version"], {
       cwd: root,
       env: {
@@ -369,6 +376,7 @@ describe("managed updater transaction", () => {
         encoding: "utf8",
       });
       expect(first.stdout).toContain("Updated Fased 1.0.0 -> 1.0.1");
+      expect(fs.existsSync(staleUpdateCache)).toBe(false);
       expect(unifiedManifestRequests).toBe(1);
       expect(readManagedInstallManifest(paths.manifestPath)?.runtime).toMatchObject({
         activeVersion: "1.0.1",
@@ -460,10 +468,60 @@ describe("managed updater transaction", () => {
         "paired-master\n",
       );
 
+      await stopFakeSigner(path.join(walletDir, "local-signer.pid"));
+      const staleSignerFiles = path.join(root, "stale-signer");
+      fs.mkdirSync(staleSignerFiles, { recursive: true });
+      writeFakeSignerRelease(staleSignerFiles, "1.0.1", "b");
+      const signerAssetName = `fased-signerd-linux-${process.arch === "arm64" ? "arm64" : "amd64"}`;
+      fs.copyFileSync(
+        path.join(staleSignerFiles, signerAssetName),
+        path.join(stateDir, "bin", "fased-signerd"),
+      );
+      fs.chmodSync(path.join(stateDir, "bin", "fased-signerd"), 0o700);
+      fs.copyFileSync(
+        path.join(staleSignerFiles, "fased-signerd-release.json"),
+        path.join(stateDir, "bin", "fased-signerd-release.json"),
+      );
+
+      const repairStatus = await execFileAsync(paths.prefixLauncherPath, ["update", "status"], {
+        cwd: root,
+        env,
+        timeout: 30_000,
+        encoding: "utf8",
+      });
+      expect(repairStatus.stdout).toContain("Repair required: signer_version_mismatch");
+      const pairedRepair = await execFileAsync(
+        paths.prefixLauncherPath,
+        ["update", "--timeout", "30"],
+        {
+          cwd: root,
+          env,
+          timeout: 60_000,
+          encoding: "utf8",
+        },
+      );
+      expect(pairedRepair.stdout).toContain("Repaired Fased runtime 1.0.2");
+      const repairedSignerVersion = await execFileAsync(
+        path.join(stateDir, "bin", "fased-signerd"),
+        ["--version"],
+        { env, encoding: "utf8" },
+      );
+      expect(repairedSignerVersion.stdout).toContain("fased-signerd 1.0.2");
+      const repairedCurrentRoot = fs.realpathSync(paths.currentLink);
+      expect(repairedCurrentRoot).toMatch(/1\.0\.2\.repair-/);
+      expect(fs.existsSync(path.join(stateDir, "local-paired-update-transaction.json"))).toBe(
+        false,
+      );
+      expect(fs.existsSync(path.join(stateDir, "signer-update", "transaction.json"))).toBe(false);
+
       const rejectedFiles = path.join(releaseRoot, "v1.0.3");
       const rejectedBuild = path.join(root, "rejected-app-build");
       const rejectedAppRoot = path.join(rejectedBuild, "package");
       writeFakeRuntime(rejectedAppRoot, "1.0.3", dependencyHash, false);
+      fs.appendFileSync(
+        path.join(rejectedAppRoot, "scripts", "fased-managed-updater.mjs"),
+        "\n// verified-recovery-controller-1.0.3\n",
+      );
       fs.mkdirSync(rejectedFiles, { recursive: true });
       fs.copyFileSync(dependencyAsset, path.join(rejectedFiles, path.basename(dependencyAsset)));
       fs.copyFileSync(
@@ -492,9 +550,7 @@ describe("managed updater transaction", () => {
         runtime: { activeVersion: "1.0.2" },
         signer: { release: pairedSigner },
       });
-      expect(await fs.promises.realpath(paths.currentLink)).toBe(
-        path.join(paths.releasesDir, "1.0.2"),
-      );
+      expect(await fs.promises.realpath(paths.currentLink)).toBe(repairedCurrentRoot);
       const restoredSignerVersion = await execFileAsync(
         path.join(stateDir, "bin", "fased-signerd"),
         ["--version"],
@@ -510,6 +566,26 @@ describe("managed updater transaction", () => {
       );
       expect(fs.existsSync(path.join(stateDir, "signer-update", "transaction.json"))).toBe(false);
       expect(fs.readFileSync(path.join(stateDir, "wallet-state-preserved"), "utf8")).toBe("yes\n");
+      expect(fs.readFileSync(paths.updaterPath, "utf8")).toContain(
+        "verified-recovery-controller-1.0.3",
+      );
+
+      rejectedHealthVersion = null;
+      const retried = await execFileAsync(paths.prefixLauncherPath, ["update", "--timeout", "30"], {
+        cwd: root,
+        env,
+        timeout: 60_000,
+        encoding: "utf8",
+      });
+      expect(retried.stdout).toContain("Updated Fased 1.0.2 -> 1.0.3");
+      expect(readManagedInstallManifest(paths.manifestPath)).toMatchObject({
+        runtime: { activeVersion: "1.0.3" },
+        updater: { version: "1.0.3" },
+      });
+      expect(fs.existsSync(path.join(stateDir, "local-paired-update-transaction.json"))).toBe(
+        false,
+      );
+      expect(fs.existsSync(path.join(stateDir, "signer-update", "transaction.json"))).toBe(false);
     } finally {
       await stopFakeSigner(path.join(stateDir, "wallet", "local-signer.pid"));
       await new Promise<void>((resolve) => server.close(() => resolve()));

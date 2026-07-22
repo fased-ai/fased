@@ -45,7 +45,7 @@ export async function ensureManagedRuntimeBootstrap(params: {
     const parsed = JSON.parse(await fs.readFile(manifestPath, "utf8")) as {
       schemaVersion?: unknown;
     };
-    if (parsed.schemaVersion === 1) {
+    if (parsed.schemaVersion === 1 || parsed.schemaVersion === 2) {
       try {
         await fs.access(updaterPath);
         await fs.access(path.join(stateDir, "bin", "fased"));

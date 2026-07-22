@@ -152,6 +152,63 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     expect(__testing.compareVersions("1.0.0", "1.0.0-beta.10")).toBe(1);
   });
 
+  it("classifies a same-version Local signer mismatch as repair-required", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-managed-consistency-"));
+    const binaryPath = path.join(root, "bin", "fased-signerd");
+    await fsp.mkdir(path.dirname(binaryPath), { recursive: true });
+    await fsp.writeFile(
+      binaryPath,
+      `#!/bin/sh\nprintf '%s\\n' 'fased-signerd 1.2.2 commit=${"c".repeat(40)} buildInputDigest=sha256:${"d".repeat(64)} development=false'\n`,
+      { mode: 0o700 },
+    );
+    const manifest = {
+      profile: "local",
+      runtime: { activeVersion: "1.2.3" },
+      updater: { version: "1.2.3" },
+      signer: { release: signerRelease("1.2.2") },
+    };
+    try {
+      await expect(
+        __testing.inspectLocalManagedConsistency({ stateDir: root }, manifest, "1.2.3"),
+      ).resolves.toMatchObject({
+        consistent: false,
+        reasons: expect.arrayContaining(["signer_version_mismatch", "signer_manifest_mismatch"]),
+      });
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts one exact Local application, updater, signer, and success identity", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-managed-consistency-"));
+    const binaryPath = path.join(root, "bin", "fased-signerd");
+    const release = signerRelease();
+    await fsp.mkdir(path.dirname(binaryPath), { recursive: true });
+    await fsp.writeFile(
+      binaryPath,
+      `#!/bin/sh\nprintf '%s\\n' 'fased-signerd ${release.version} commit=${release.commit} buildInputDigest=${release.buildInputDigest} development=false'\n`,
+      { mode: 0o700 },
+    );
+    await fsp.writeFile(
+      path.join(root, "last-update-success.json"),
+      `${JSON.stringify({ mode: "managed", version: release.version })}\n`,
+      { mode: 0o600 },
+    );
+    const manifest = {
+      profile: "local",
+      runtime: { activeVersion: release.version },
+      updater: { version: release.version },
+      signer: { release },
+    };
+    try {
+      await expect(
+        __testing.inspectLocalManagedConsistency({ stateDir: root }, manifest, release.version),
+      ).resolves.toEqual({ consistent: true, reasons: [] });
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects release archive paths that can escape the approved root", () => {
     expect(__testing.archiveEntryIsSafe("package/", "package")).toBe(true);
     expect(__testing.archiveEntryIsSafe("package/dist/entry.js", "package")).toBe(true);
@@ -196,7 +253,10 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
           "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         FASED_SAT_RUNTIME_MANIFEST_SIGNATURE_PATH: path.join(root, "sat-runtime.sig"),
       });
-      await fsp.appendFile(signerEnvPath, 'export FASED_WALLET_PRIVATE_KEY="forbidden"\n');
+      await fsp.appendFile(
+        signerEnvPath,
+        'export FASED_WALLET_PRIVATE_KEY="forbidden"\n', // pragma: allowlist secret
+      );
       await expect(__testing.loadSignerEnvironment({ signerEnvPath })).rejects.toThrow(
         "unsupported key FASED_WALLET_PRIVATE_KEY",
       );

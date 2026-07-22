@@ -84,12 +84,26 @@ export const PRE_V2_HOSTING_MIGRATION_MESSAGE = [
   "The current Gateway, signer, wallets, and persistent state were left unchanged.",
 ].join(" ");
 
-async function measureStage(timings, name, operation) {
+async function measureStage(timings, name, operation, progress = true) {
   const startedAt = Date.now();
+  const reportProgress =
+    progress && process.env.FASED_UPDATE_PROGRESS !== "0" && process.env.VITEST !== "true";
+  if (reportProgress) {
+    process.stderr.write(`[fased update] ${name}...\n`);
+  }
+  let succeeded = false;
   try {
-    return await operation();
+    const result = await operation();
+    succeeded = true;
+    return result;
   } finally {
-    timings.push({ name, durationMs: Date.now() - startedAt });
+    const durationMs = Date.now() - startedAt;
+    timings.push({ name, durationMs });
+    if (reportProgress) {
+      process.stderr.write(
+        `[fased update] ${succeeded ? "ok" : "failed"}: ${name} (${formatDuration(durationMs)})\n`,
+      );
+    }
   }
 }
 
@@ -1825,6 +1839,39 @@ async function cleanupReleases(paths, keepRoots) {
   }
 }
 
+async function cleanupManagedUpdateCache(paths) {
+  const updateCacheRoot = path.join(paths.stateDir, "install-cache");
+  let entries;
+  try {
+    entries = await fsp.readdir(updateCacheRoot, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return { removed: 0, failed: Object.freeze([]) };
+    }
+    throw error;
+  }
+
+  const failed = [];
+  let removed = 0;
+  for (const entry of entries) {
+    if (
+      !entry.isDirectory() ||
+      !/^managed-update-\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?-[0-9A-Za-z]+$/u.test(
+        entry.name,
+      )
+    ) {
+      continue;
+    }
+    try {
+      await fsp.rm(path.join(updateCacheRoot, entry.name), { recursive: true, force: true });
+      removed += 1;
+    } catch {
+      failed.push(entry.name);
+    }
+  }
+  return { removed, failed: Object.freeze(failed) };
+}
+
 async function recordManagedUpdateSuccess(paths, details = {}) {
   await atomicWriteJson(
     path.join(paths.stateDir, "last-update-success.json"),
@@ -2823,11 +2870,122 @@ async function loadSignerEnvironment(paths) {
   return env;
 }
 
+function localSignerHealthReason(code, detail) {
+  return Object.freeze(detail ? { code, detail } : { code });
+}
+
+function evaluateLocalSignerHealth(response, expectedIdentity, expectedReadOnly) {
+  const result = response?.result;
+  const reasons = [];
+  let release = null;
+  try {
+    release = isCanonicalDevelopmentSignerIdentity(expectedIdentity)
+      ? parseInstalledSignerVersionOutput(
+          `fased-signerd ${result?.release?.version} commit=${result?.release?.commit} buildInputDigest=${result?.release?.buildInputDigest} development=${String(result?.release?.development)}`,
+        )
+      : parseSignerReleaseManifest(
+          { schemaVersion: 1, ...result?.release },
+          expectedIdentity.version,
+        );
+  } catch {
+    reasons.push(localSignerHealthReason("release_identity_invalid"));
+  }
+  const features = new Set(
+    Array.isArray(result?.capabilities?.features) ? result.capabilities.features : [],
+  );
+  const missing = LOCAL_SIGNER_REQUIRED_FEATURES.filter((feature) => !features.has(feature));
+  const policies = result?.policies;
+  const policiesValid =
+    Array.isArray(policies) &&
+    policies.every(
+      (policy) =>
+        typeof policy?.walletId === "string" &&
+        policy.walletId.length > 0 &&
+        Number.isSafeInteger(policy.version) &&
+        policy.version > 0 &&
+        /^sha256:[a-f0-9]{64}$/.test(policy.hash || ""),
+    );
+  const networks = result?.network?.wallets;
+  const networkValid =
+    typeof result?.network?.ready === "boolean" &&
+    Array.isArray(networks) &&
+    networks.every(
+      (network) =>
+        typeof network?.walletId === "string" &&
+        network.walletId.length > 0 &&
+        typeof network.configured === "boolean" &&
+        Number.isSafeInteger(network.version) &&
+        network.version >= 0 &&
+        typeof network.ready === "boolean" &&
+        (!network.configured || /^hmac-sha256:[a-f0-9]{64}$/.test(network.hash || "")),
+    );
+  if (response?.ok !== true) {
+    reasons.push(localSignerHealthReason("response_not_ok"));
+  }
+  if (result?.ready !== true) {
+    reasons.push(localSignerHealthReason("signer_not_ready"));
+  }
+  if (result?.keystoreType !== "signer-owned-v2") {
+    reasons.push(localSignerHealthReason("custody_type_mismatch"));
+  }
+  if (
+    result?.capabilities?.protocol?.current !== 2 ||
+    result?.capabilities?.protocol?.min > 2 ||
+    result?.capabilities?.protocol?.max < 2
+  ) {
+    reasons.push(localSignerHealthReason("protocol_range_mismatch"));
+  }
+  if (result?.capabilities?.nativeFeeReservationLamports !== 5_000_000) {
+    reasons.push(localSignerHealthReason("fee_reservation_mismatch"));
+  }
+  if (result?.schema?.ready !== true) {
+    reasons.push(localSignerHealthReason("schema_not_ready"));
+  }
+  if (expectedReadOnly !== undefined && result?.readOnly !== expectedReadOnly) {
+    reasons.push(
+      localSignerHealthReason(
+        "mode_mismatch",
+        `expected=${expectedReadOnly ? "read-only" : "read-write"} observed=${result?.readOnly === true ? "read-only" : result?.readOnly === false ? "read-write" : "unknown"}`,
+      ),
+    );
+  }
+  if (missing.length > 0) {
+    reasons.push(localSignerHealthReason("missing_capability", missing.join(",")));
+  }
+  if (!policiesValid) {
+    reasons.push(localSignerHealthReason("policy_record_invalid"));
+  }
+  if (!networkValid) {
+    reasons.push(localSignerHealthReason("network_record_invalid"));
+  }
+  if (release && !installedSignerIdentitiesEqual(release, expectedIdentity)) {
+    reasons.push(
+      localSignerHealthReason(
+        "release_identity_mismatch",
+        `expected=${expectedIdentity.version} observed=${release.version}`,
+      ),
+    );
+  }
+  return Object.freeze({
+    ok: reasons.length === 0,
+    result,
+    release,
+    reasons: Object.freeze(reasons),
+  });
+}
+
+function formatLocalSignerHealthReasons(reasons) {
+  return reasons
+    .map((reason) => `${reason.code}${reason.detail ? ` (${reason.detail})` : ""}`)
+    .join("; ");
+}
+
 async function probeLocalSignerHealth(
   socketPath,
   expectedIdentity,
   timeoutMs = 8_000,
   expectedReadOnly,
+  phase = "signer health",
 ) {
   const deadline = Date.now() + timeoutMs;
   let lastError = null;
@@ -2869,69 +3027,21 @@ async function probeLocalSignerHealth(
         socket.once("timeout", () => fail(new Error("Local signer health timed out")));
         socket.once("error", fail);
       });
-      const result = response?.result;
-      const release = isCanonicalDevelopmentSignerIdentity(expectedIdentity)
-        ? parseInstalledSignerVersionOutput(
-            `fased-signerd ${result?.release?.version} commit=${result?.release?.commit} buildInputDigest=${result?.release?.buildInputDigest} development=${String(result?.release?.development)}`,
-          )
-        : parseSignerReleaseManifest(
-            { schemaVersion: 1, ...result?.release },
-            expectedIdentity.version,
-          );
-      const features = new Set(result?.capabilities?.features || []);
-      const missing = LOCAL_SIGNER_REQUIRED_FEATURES.filter((feature) => !features.has(feature));
-      const policies = result?.policies;
-      const policiesValid =
-        Array.isArray(policies) &&
-        policies.every(
-          (policy) =>
-            typeof policy?.walletId === "string" &&
-            policy.walletId.length > 0 &&
-            Number.isSafeInteger(policy.version) &&
-            policy.version > 0 &&
-            /^sha256:[a-f0-9]{64}$/.test(policy.hash || ""),
-        );
-      const networks = result?.network?.wallets;
-      const networkValid =
-        typeof result?.network?.ready === "boolean" &&
-        Array.isArray(networks) &&
-        networks.every(
-          (network) =>
-            typeof network?.walletId === "string" &&
-            network.walletId.length > 0 &&
-            typeof network.configured === "boolean" &&
-            Number.isSafeInteger(network.version) &&
-            network.version >= 0 &&
-            typeof network.ready === "boolean" &&
-            (!network.configured || /^hmac-sha256:[a-f0-9]{64}$/.test(network.hash || "")),
-        );
-      if (
-        response?.ok !== true ||
-        result?.ready !== true ||
-        result?.keystoreType !== "signer-owned-v2" ||
-        result?.capabilities?.protocol?.current !== 2 ||
-        result?.capabilities?.protocol?.min > 2 ||
-        result?.capabilities?.protocol?.max < 2 ||
-        result?.capabilities?.nativeFeeReservationLamports !== 5_000_000 ||
-        result?.schema?.ready !== true ||
-        (expectedReadOnly !== undefined && result?.readOnly !== expectedReadOnly) ||
-        missing.length > 0 ||
-        !policiesValid ||
-        !networkValid ||
-        !installedSignerIdentitiesEqual(release, expectedIdentity)
-      ) {
-        throw new Error(
-          `Local signer failed protocol-v2 compatibility${missing.length ? `; missing ${missing.join(",")}` : ""}${expectedReadOnly !== undefined && result?.readOnly !== expectedReadOnly ? `; expected readOnly=${String(expectedReadOnly)}` : ""}`,
-        );
+      const evaluation = evaluateLocalSignerHealth(response, expectedIdentity, expectedReadOnly);
+      if (!evaluation.ok) {
+        const error = new Error(formatLocalSignerHealthReasons(evaluation.reasons));
+        error.code = "LOCAL_SIGNER_HEALTH_INCOMPATIBLE";
+        error.reasons = evaluation.reasons;
+        throw error;
       }
-      return result;
+      return evaluation.result;
     } catch (error) {
       lastError = error;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
   throw new Error(
-    `Local signer did not become exactly healthy: ${lastError?.message || "timeout"}`,
+    `Local signer did not become exactly healthy during ${phase}: ${lastError?.message || "timeout"}`,
   );
 }
 
@@ -3426,7 +3536,13 @@ async function prepareLocalSignerTransaction({
     if (!previousIdentity) {
       throw new Error("The active Local signer has no verifiable production release identity");
     }
-    previousHealth = await probeLocalSignerHealth(paths.socketPath, previousIdentity, 5_000);
+    previousHealth = await probeLocalSignerHealth(
+      paths.socketPath,
+      previousIdentity,
+      5_000,
+      undefined,
+      "previous signer baseline",
+    );
   }
   let journal = {
     schemaVersion: LOCAL_SIGNER_TRANSACTION_SCHEMA_VERSION,
@@ -3536,6 +3652,7 @@ async function prepareLocalSignerTransaction({
         release.identity,
         10_000,
         true,
+        "candidate preflight",
       );
       if (
         journal.previousHealthInvariant &&
@@ -3565,7 +3682,13 @@ async function activateLocalSignerTransaction(paths = resolveLocalSignerPaths())
   if (journal.legacyMigrationRequired) {
     const migrationPID = await startSignerProcess(paths, paths.binaryPath, false);
     try {
-      await probeLocalSignerHealth(paths.socketPath, journal.targetIdentity, 15_000, false);
+      await probeLocalSignerHealth(
+        paths.socketPath,
+        journal.targetIdentity,
+        15_000,
+        false,
+        "legacy migration activation",
+      );
       const migratedWallets = await migrateLegacyLocalWallets(
         paths,
         journal.legacyMigration,
@@ -3593,6 +3716,7 @@ async function activateLocalSignerTransaction(paths = resolveLocalSignerPaths())
         journal.targetIdentity,
         15_000,
         true,
+        "candidate activation",
       );
       if (
         journal.previousHealthInvariant &&
@@ -3635,7 +3759,13 @@ async function commitLocalSignerTransaction(paths = resolveLocalSignerPaths()) {
   if (journal.candidateShouldRun) {
     await stopExactSigner(paths);
     await startSignerProcess(paths);
-    const health = await probeLocalSignerHealth(paths.socketPath, exact, 15_000, false);
+    const health = await probeLocalSignerHealth(
+      paths.socketPath,
+      exact,
+      15_000,
+      false,
+      "writable signer commit",
+    );
     if (
       journal.previousHealthInvariant &&
       localSignerStateInvariant(health) !== journal.previousHealthInvariant
@@ -3710,7 +3840,13 @@ async function rollbackLocalSignerTransaction(paths = resolveLocalSignerPaths(),
       }
       await startSignerProcess(paths);
       if (journal.previousIdentity) {
-        await probeLocalSignerHealth(paths.socketPath, journal.previousIdentity, 15_000);
+        await probeLocalSignerHealth(
+          paths.socketPath,
+          journal.previousIdentity,
+          15_000,
+          undefined,
+          "rollback predecessor restart",
+        );
       }
     }
   } else if (journal.previousWasRunning) {
@@ -3783,7 +3919,13 @@ async function migrateActiveLegacyLocalSigner(paths, timeoutMs = DEFAULT_TIMEOUT
   const migrationPID = await startSignerProcess(paths, paths.binaryPath, false);
   let migratedWallets;
   try {
-    await probeLocalSignerHealth(paths.socketPath, journal.targetIdentity, 15_000, false);
+    await probeLocalSignerHealth(
+      paths.socketPath,
+      journal.targetIdentity,
+      15_000,
+      false,
+      "active legacy migration",
+    );
     migratedWallets = await migrateLegacyLocalWallets(paths, plan, timeoutMs);
   } finally {
     await stopExactSigner(paths, migrationPID).catch(() => undefined);
@@ -3794,6 +3936,7 @@ async function migrateActiveLegacyLocalSigner(paths, timeoutMs = DEFAULT_TIMEOUT
     journal.targetIdentity,
     15_000,
     true,
+    "post-migration candidate activation",
   );
   journal = await writeLocalSignerJournal(
     paths,
@@ -3831,6 +3974,7 @@ async function runLocalSignerTransaction(options, pathOverrides = {}) {
         identity,
         Math.min(options.timeoutMs, 15_000),
         options.expectedReadOnly ?? false,
+        "explicit signer verification",
       );
       return { action: "verified", identity };
     }
@@ -4030,6 +4174,67 @@ async function localSignerIsInstalledOrConfigured(signerPaths) {
   }
 }
 
+async function inspectLocalManagedConsistency(paths, manifest, currentVersion) {
+  if (manifest?.profile === "hosting") {
+    return Object.freeze({ consistent: true, reasons: Object.freeze([]) });
+  }
+  const reasons = [];
+  if (manifest?.runtime?.activeVersion !== currentVersion) {
+    reasons.push("runtime_manifest_mismatch");
+  }
+  if (manifest?.updater?.version !== currentVersion) {
+    reasons.push("stable_updater_mismatch");
+  }
+
+  const signerPaths = resolveLocalSignerPaths({ stateDir: paths.stateDir });
+  if (await localSignerIsInstalledOrConfigured(signerPaths)) {
+    let installedIdentity = null;
+    try {
+      installedIdentity = await readInstalledSignerBinaryIdentity(signerPaths.binaryPath);
+    } catch {
+      reasons.push("signer_identity_unreadable");
+    }
+    if (
+      installedIdentity &&
+      (isCanonicalDevelopmentSignerIdentity(installedIdentity) ||
+        installedIdentity.version !== currentVersion)
+    ) {
+      reasons.push("signer_version_mismatch");
+    }
+    const recordedIdentity = manifest?.signer?.release;
+    if (!recordedIdentity) {
+      reasons.push("signer_manifest_missing");
+    } else if (
+      installedIdentity &&
+      !installedSignerIdentitiesEqual(installedIdentity, recordedIdentity)
+    ) {
+      reasons.push("signer_manifest_mismatch");
+    }
+  }
+
+  try {
+    const marker = JSON.parse(
+      await fsp.readFile(path.join(paths.stateDir, "last-update-success.json"), "utf8"),
+    );
+    if (
+      marker?.mode === "managed" &&
+      typeof marker.version === "string" &&
+      marker.version !== currentVersion
+    ) {
+      reasons.push("last_success_mismatch");
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      reasons.push("last_success_unreadable");
+    }
+  }
+
+  return Object.freeze({
+    consistent: reasons.length === 0,
+    reasons: Object.freeze([...new Set(reasons)]),
+  });
+}
+
 async function restoreLocalPairedApplication(paths, journal) {
   await atomicSymlink(journal.previousRoot, paths.currentLink);
   await replaceCompatibilityLink(paths);
@@ -4108,7 +4313,13 @@ async function recoverLocalPairedUpdate(paths, timeoutMs) {
           cause: error,
         });
       }
-      await probeLocalSignerHealth(signerPaths.socketPath, identity, Math.min(timeoutMs, 15_000));
+      await probeLocalSignerHealth(
+        signerPaths.socketPath,
+        identity,
+        Math.min(timeoutMs, 15_000),
+        undefined,
+        "paired commit recovery",
+      );
       signer = { identity };
     }
     const nextManifest = {
@@ -4144,15 +4355,25 @@ async function updateManagedRuntime(options) {
   let targetVersion;
 
   if (options.status || options.dryRun) {
-    targetVersion = await measureStage(timings, "release resolution", () =>
-      resolveTargetVersion(options),
+    targetVersion = await measureStage(
+      timings,
+      "release resolution",
+      () => resolveTargetVersion(options),
+      false,
     );
     const available = compareVersions(currentVersion, targetVersion) === -1;
+    const consistency = await inspectLocalManagedConsistency(
+      paths,
+      existingManifest,
+      currentVersion,
+    );
     const result = {
       install: `managed ${existingManifest.profile}`,
       currentVersion,
       targetVersion,
       available,
+      repairRequired: !consistency.consistent,
+      consistencyReasons: consistency.reasons,
       dryRun: options.dryRun,
       updaterVersion: existingManifest.updater?.version || "unknown",
     };
@@ -4163,9 +4384,17 @@ async function updateManagedRuntime(options) {
       console.log(`Install: managed ${existingManifest.profile}`);
       console.log(`Current: ${currentVersion}`);
       console.log(`Target: ${targetVersion}`);
-      console.log(available ? `Update available: ${targetVersion}` : "Update: current");
+      console.log(
+        available
+          ? `Update available: ${targetVersion}`
+          : consistency.consistent
+            ? "Update: current"
+            : `Repair required: ${consistency.reasons.join(", ")}`,
+      );
       if (options.dryRun && available) {
         console.log("Action: verified artifact transaction with Gateway health rollback");
+      } else if (options.dryRun && !consistency.consistent) {
+        console.log("Action: same-version paired application/signer repair");
       }
     }
     return;
@@ -4173,6 +4402,14 @@ async function updateManagedRuntime(options) {
 
   const releaseLock = await acquireUpdateLock(paths.stateDir);
   try {
+    const staleCache = await measureStage(timings, "stale update-cache cleanup", () =>
+      cleanupManagedUpdateCache(paths),
+    );
+    if (staleCache.failed.length > 0) {
+      console.warn(
+        `Warning: could not remove ${staleCache.failed.length} stale managed update cache director${staleCache.failed.length === 1 ? "y" : "ies"}.`,
+      );
+    }
     if (existingManifest.profile === "hosting") {
       await measureStage(timings, "interrupted hosted transaction recovery", () =>
         recoverHostedReleaseTransaction(paths, options.timeoutMs),
@@ -4204,6 +4441,12 @@ async function updateManagedRuntime(options) {
     const comparison = compareVersions(currentVersion, targetVersion);
     let repairCurrentFiles = false;
     if (comparison === 0) {
+      const consistency = await inspectLocalManagedConsistency(
+        paths,
+        existingManifest,
+        currentVersion,
+      );
+      repairCurrentFiles = !consistency.consistent;
       try {
         if (!currentRoot) {
           throw new Error("current runtime link is missing");
@@ -4394,6 +4637,17 @@ async function updateManagedRuntime(options) {
         });
       }
 
+      // Promote the controller only after the target runtime has passed archive
+      // verification, extraction, and its staged smoke test.  This deliberately
+      // happens before the paired app/signer transaction: if a later health gate
+      // rolls the application back, the verified forward controller remains in
+      // place so the next plain `fased update` can retry or recover.  Restoring an
+      // older controller here can permanently strand installations whose old
+      // updater cannot understand the current signer health schema.
+      await measureStage(timings, "verified recovery controller promotion", () =>
+        updateStableComponents(paths, releaseRoot, true),
+      );
+
       const nextManifest = buildManagedInstallManifest({
         paths,
         profile: existingManifest.profile,
@@ -4503,6 +4757,8 @@ async function updateManagedRuntime(options) {
                 signerPaths.socketPath,
                 pairedJournal.nextManifest.signer.release,
                 Math.min(options.timeoutMs, 15_000),
+                undefined,
+                "post-Gateway signer verification",
               );
             });
             pairedJournal = await writeLocalPairedUpdateJournal(
@@ -4693,6 +4949,9 @@ export const __testing = {
   commitLocalSignerTransaction,
   createOwnerOnlySnapshot,
   downloadVerifiedLocalSignerRelease,
+  evaluateLocalSignerHealth,
+  formatLocalSignerHealthReasons,
+  inspectLocalManagedConsistency,
   loadSignerEnvironment,
   parseLocalSignerTransactionArgs,
   parseLocalSourceControllerArgs,
