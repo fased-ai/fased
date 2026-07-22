@@ -784,6 +784,7 @@ async function requestHostedSignerTransaction(
 ) {
   if (
     !new Set([
+      "updateController",
       "prepareRelease",
       "activateRelease",
       "authorizeGatewayRelease",
@@ -855,6 +856,14 @@ async function requestHostedSignerTransaction(
           fail(new Error(`host updater ${operation} response omitted signer release identity`));
           return;
         }
+        if (
+          operation === "updateController" &&
+          (typeof response.controllerChanged !== "boolean" ||
+            !TRANSACTION_ID_PATTERN.test(response.controllerInstanceId || ""))
+        ) {
+          fail(new Error("host updater returned an invalid controller identity"));
+          return;
+        }
         settled = true;
         socket.destroy();
         resolve(response);
@@ -888,10 +897,11 @@ async function requestHostedSignerTransactionWithRetry(
   version,
   timeoutMs,
   socketPath,
+  attempts = 3,
 ) {
   let lastError;
   let sawAmbiguousFailure = false;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       return await requestHostedSignerTransaction(
         operation,
@@ -903,7 +913,7 @@ async function requestHostedSignerTransactionWithRetry(
     } catch (error) {
       lastError = error;
       sawAmbiguousFailure ||= error?.hostUpdaterAmbiguous === true;
-      if (attempt < 2) {
+      if (attempt + 1 < attempts) {
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
     }
@@ -912,6 +922,51 @@ async function requestHostedSignerTransactionWithRetry(
     lastError.hostUpdaterAmbiguous = sawAmbiguousFailure;
   }
   throw lastError;
+}
+
+async function ensureHostedControllerRelease(
+  transactionId,
+  version,
+  timeoutMs,
+  socketPath,
+  overrides = {},
+) {
+  const send =
+    overrides.request ??
+    (async () =>
+      await requestHostedSignerTransactionWithRetry(
+        "updateController",
+        transactionId,
+        version,
+        timeoutMs,
+        socketPath,
+      ));
+  const wait =
+    overrides.wait ?? (async () => await new Promise((resolve) => setTimeout(resolve, 500)));
+  const first = await send();
+  if (first.controllerChanged !== true) {
+    return first;
+  }
+  const priorInstance = first.controllerInstanceId;
+  if (!TRANSACTION_ID_PATTERN.test(priorInstance || "")) {
+    throw new Error("root updater omitted its controller process identity");
+  }
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    await wait();
+    try {
+      const current = await send();
+      if (
+        current.controllerChanged !== true &&
+        TRANSACTION_ID_PATTERN.test(current.controllerInstanceId || "") &&
+        current.controllerInstanceId !== priorInstance
+      ) {
+        return current;
+      }
+    } catch {
+      // systemd is replacing the verified root-controller process.
+    }
+  }
+  throw new Error("verified root updater controller did not restart into the target release");
 }
 
 export async function authorizePreactivatedHostedGateway({
@@ -1486,6 +1541,13 @@ function hostedTransactionOperations(paths, timeoutMs, options = {}) {
     },
     quiesceGateway: async () => await quiesceHostedGateway(timeoutMs),
     signerRequest: async (operation, journal) => {
+      if (operation === "prepareRelease") {
+        await ensureHostedControllerRelease(
+          journal.transactionId,
+          journal.targetVersion,
+          timeoutMs,
+        );
+      }
       const response = await requestHostedSignerTransactionWithRetry(
         operation,
         journal.transactionId,
@@ -4937,6 +4999,7 @@ export const __testing = {
   buildLegacyLocalWalletMigrationPlan,
   coordinateHostedReleaseTransaction,
   hostedUpdaterError,
+  ensureHostedControllerRelease,
   probeGatewayIdentity,
   probeHostedSignerCompatibility,
   readHostedTransactionJournal,

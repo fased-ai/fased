@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import net from "node:net";
@@ -15,8 +15,19 @@ const execFileAsync = promisify(execFile);
 const RELEASE_BASE = "https://github.com/fased-ai/fased/releases/download";
 const RELEASE_REPOSITORY = "fased-ai/fased";
 const RELEASE_WORKFLOW = "fased-ai/fased/.github/workflows/hosted-runtime-release.yml";
+const RELEASE_MANIFEST_NAME = "fased-hosted-release-v2.json";
+const RELEASE_MANIFEST_BUNDLE_NAME = `${RELEASE_MANIFEST_NAME}.attestation.json`;
+const SIGNER_ATTESTATION_BUNDLE_NAME = "fased-signerd-release.attestation.json";
+const CONTROLLER_SERVER_NAME = "fased-host-updater.mjs";
+const CONTROLLER_CLIENT_NAME = "fased-host-updaterctl.mjs";
+const CONTROLLER_SERVER_BUNDLE_NAME = `${CONTROLLER_SERVER_NAME}.attestation.json`;
+const CONTROLLER_CLIENT_BUNDLE_NAME = `${CONTROLLER_CLIENT_NAME}.attestation.json`;
+const CONTROLLER_SELF_CHECK_SCHEMA_VERSION = 1;
+const CONTROLLER_PROTOCOL_VERSION = 2;
 const SOCKET_PATH = "/run/fased-host-updater/request.sock";
 const STATE_DIR = "/var/lib/fased-host-updater";
+const CONTROLLER_RELEASES_DIR = "/opt/fased/host-controller/releases";
+const CONTROLLER_CURRENT_LINK = "/opt/fased/host-controller/current";
 const SIGNER_PATH = "/opt/fased/signer/fased-signerd";
 const SIGNER_STATE_DB_PATH = "/var/lib/fased-signerd/state.db";
 const SIGNER_UNIT_PATH = "/etc/systemd/system/fased-signerd.service";
@@ -34,6 +45,7 @@ const PROTOCOL_SCHEMA_VERSION = 2;
 const TRANSACTION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TRANSACTION_OPERATIONS = new Set([
+  "updateController",
   "prepareRelease",
   "activateRelease",
   "authorizeGatewayRelease",
@@ -63,6 +75,9 @@ export const PRE_V2_HOSTING_MIGRATION_MESSAGE = [
 const DEFAULT_PATHS = Object.freeze({
   socketPath: SOCKET_PATH,
   stateDir: STATE_DIR,
+  controllerReleasesDir: CONTROLLER_RELEASES_DIR,
+  controllerCurrentLink: CONTROLLER_CURRENT_LINK,
+  controllerVersionPath: path.join(STATE_DIR, "controller-version.json"),
   signerPath: SIGNER_PATH,
   signerStateDBPath: SIGNER_STATE_DB_PATH,
   signerUnitPath: SIGNER_UNIT_PATH,
@@ -249,32 +264,301 @@ async function sha256(filePath) {
   return hash.digest("hex");
 }
 
-async function verifyReleaseAsset(assetPath, version, stateDir) {
+function releaseAttestationVerifyArgs(assetPath, version, bundlePath) {
+  if (!bundlePath) {
+    throw new Error("offline release attestation bundle is required");
+  }
+  return [
+    "attestation",
+    "verify",
+    assetPath,
+    "--repo",
+    RELEASE_REPOSITORY,
+    "--bundle",
+    bundlePath,
+    "--signer-workflow",
+    RELEASE_WORKFLOW,
+    "--source-ref",
+    `refs/tags/v${version}`,
+    "--deny-self-hosted-runners",
+  ];
+}
+
+async function verifyReleaseAsset(assetPath, version, stateDir, bundlePath) {
   const gh = await fixedExecutable(["/usr/bin/gh", "/usr/local/bin/gh"], "GitHub CLI");
-  await execFileAsync(
-    gh,
-    [
-      "attestation",
-      "verify",
-      assetPath,
-      "--repo",
-      RELEASE_REPOSITORY,
-      "--signer-workflow",
-      RELEASE_WORKFLOW,
-      "--source-ref",
-      `refs/tags/v${version}`,
-      "--deny-self-hosted-runners",
-    ],
-    {
-      env: {
-        HOME: stateDir,
-        PATH: "/usr/local/bin:/usr/bin:/bin",
-        GH_PROMPT_DISABLED: "1",
-      },
-      timeout: REQUEST_TIMEOUT_MS,
-      maxBuffer: 4 * 1024 * 1024,
+  await execFileAsync(gh, releaseAttestationVerifyArgs(assetPath, version, bundlePath), {
+    env: {
+      HOME: stateDir,
+      PATH: "/usr/local/bin:/usr/bin:/bin",
+      GH_PROMPT_DISABLED: "1",
     },
+    timeout: REQUEST_TIMEOUT_MS,
+    maxBuffer: 4 * 1024 * 1024,
+  });
+}
+
+function parseControllerIdentity(value, expectedVersion) {
+  const version = parseReleaseVersion(value?.version);
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).toSorted().join(",") !== "clientSha256,schemaVersion,serverSha256,version" ||
+    value.schemaVersion !== CONTROLLER_SELF_CHECK_SCHEMA_VERSION ||
+    (expectedVersion && version !== expectedVersion) ||
+    !/^[a-f0-9]{64}$/.test(value.serverSha256 || "") ||
+    !/^[a-f0-9]{64}$/.test(value.clientSha256 || "")
+  ) {
+    throw new Error("host updater controller identity is malformed or mismatched");
+  }
+  return Object.freeze({
+    schemaVersion: CONTROLLER_SELF_CHECK_SCHEMA_VERSION,
+    version,
+    serverSha256: value.serverSha256,
+    clientSha256: value.clientSha256,
+  });
+}
+
+async function readControllerIdentity(paths) {
+  try {
+    return parseControllerIdentity(
+      JSON.parse(await fsp.readFile(paths.controllerVersionPath, "utf8")),
+    );
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function readControllerGenerationDigests(generationRoot) {
+  const generationStat = await fsp.lstat(generationRoot);
+  if (!generationStat.isDirectory() || generationStat.isSymbolicLink()) {
+    throw new Error("host updater controller generation must be a real directory");
+  }
+  const serverPath = path.join(generationRoot, CONTROLLER_SERVER_NAME);
+  const clientPath = path.join(generationRoot, CONTROLLER_CLIENT_NAME);
+  const [serverStat, clientStat] = await Promise.all([
+    fsp.lstat(serverPath),
+    fsp.lstat(clientPath),
+  ]);
+  if (
+    !serverStat.isFile() ||
+    serverStat.isSymbolicLink() ||
+    !clientStat.isFile() ||
+    clientStat.isSymbolicLink()
+  ) {
+    throw new Error("host updater controller generation must contain regular controller files");
+  }
+  const [serverSha256, clientSha256] = await Promise.all([sha256(serverPath), sha256(clientPath)]);
+  return { serverSha256, clientSha256 };
+}
+
+async function currentControllerMatches(paths, identity) {
+  try {
+    const currentStat = await fsp.lstat(paths.controllerCurrentLink);
+    if (!currentStat.isSymbolicLink()) {
+      throw new Error("host updater controller current path must be a root-managed symlink");
+    }
+    const expectedRoot = path.resolve(paths.controllerReleasesDir, `v${identity.version}`);
+    const actualRoot = await fsp.realpath(paths.controllerCurrentLink);
+    if (actualRoot !== expectedRoot) {
+      return false;
+    }
+    const digests = await readControllerGenerationDigests(actualRoot);
+    return (
+      digests.serverSha256 === identity.serverSha256 &&
+      digests.clientSha256 === identity.clientSha256
+    );
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function selfCheckControllerAsset(assetPath, role, stateDir) {
+  const { stdout } = await execFileAsync(process.execPath, [assetPath, "--self-check"], {
+    env: {
+      HOME: stateDir,
+      PATH: "/usr/local/bin:/usr/bin:/bin",
+    },
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+  });
+  const value = JSON.parse(stdout);
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).toSorted().join(",") !== "protocolVersion,role,schemaVersion" ||
+    value.schemaVersion !== CONTROLLER_SELF_CHECK_SCHEMA_VERSION ||
+    value.protocolVersion !== CONTROLLER_PROTOCOL_VERSION ||
+    value.role !== role
+  ) {
+    throw new Error(`host updater ${role} controller self-check is incompatible`);
+  }
+}
+
+async function atomicSymlinkDurable(target, linkPath) {
+  await fsp.mkdir(path.dirname(linkPath), { recursive: true, mode: 0o755 });
+  try {
+    const existing = await fsp.lstat(linkPath);
+    if (!existing.isSymbolicLink()) {
+      throw new Error(`refusing to replace non-symlink controller path: ${linkPath}`);
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  const temporaryPath = `${linkPath}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    await fsp.symlink(target, temporaryPath, "dir");
+    await fsp.rename(temporaryPath, linkPath);
+    await fsyncDirectory(path.dirname(linkPath));
+  } finally {
+    await fsp.rm(temporaryPath, { force: true });
+  }
+}
+
+async function stageOfficialControllerRelease(version, context) {
+  const existingIdentity = await readControllerIdentity(context.paths);
+  if (existingIdentity && compareVersions(existingIdentity.version, version) === 1) {
+    throw new Error(
+      `refusing host updater controller downgrade from ${existingIdentity.version} to ${version}`,
+    );
+  }
+  if (
+    existingIdentity?.version === version &&
+    (await currentControllerMatches(context.paths, existingIdentity))
+  ) {
+    return { changed: false, identity: existingIdentity };
+  }
+
+  const releaseUrl = `${RELEASE_BASE}/v${version}`;
+  await Promise.all([
+    fsp.mkdir(context.paths.stateDir, { recursive: true, mode: 0o700 }),
+    fsp.mkdir(context.paths.controllerReleasesDir, { recursive: true, mode: 0o755 }),
+  ]);
+  const downloadRoot = await fsp.mkdtemp(
+    path.join(context.paths.stateDir, `.controller-download-${version}-`),
   );
+  const generationRoot = path.join(context.paths.controllerReleasesDir, `v${version}`);
+  let stagingGeneration = null;
+  const serverPath = path.join(downloadRoot, CONTROLLER_SERVER_NAME);
+  const clientPath = path.join(downloadRoot, CONTROLLER_CLIENT_NAME);
+  const serverBundlePath = path.join(downloadRoot, CONTROLLER_SERVER_BUNDLE_NAME);
+  const clientBundlePath = path.join(downloadRoot, CONTROLLER_CLIENT_BUNDLE_NAME);
+  try {
+    await Promise.all([
+      context.downloadReleaseAsset(`${releaseUrl}/${CONTROLLER_SERVER_NAME}`, serverPath),
+      context.downloadReleaseAsset(`${releaseUrl}/${CONTROLLER_CLIENT_NAME}`, clientPath),
+      context.downloadReleaseAsset(
+        `${releaseUrl}/${CONTROLLER_SERVER_BUNDLE_NAME}`,
+        serverBundlePath,
+      ),
+      context.downloadReleaseAsset(
+        `${releaseUrl}/${CONTROLLER_CLIENT_BUNDLE_NAME}`,
+        clientBundlePath,
+      ),
+    ]);
+    await Promise.all([
+      context.verifyReleaseAsset(serverPath, version, context.paths.stateDir, serverBundlePath),
+      context.verifyReleaseAsset(clientPath, version, context.paths.stateDir, clientBundlePath),
+    ]);
+    await Promise.all([
+      context.selfCheckControllerAsset(serverPath, "server", context.paths.stateDir),
+      context.selfCheckControllerAsset(clientPath, "client", context.paths.stateDir),
+    ]);
+    const identity = Object.freeze({
+      schemaVersion: CONTROLLER_SELF_CHECK_SCHEMA_VERSION,
+      version,
+      serverSha256: await sha256(serverPath),
+      clientSha256: await sha256(clientPath),
+    });
+    stagingGeneration = await fsp.mkdtemp(
+      path.join(context.paths.controllerReleasesDir, `.controller-generation-${version}-`),
+    );
+
+    let previousGeneration = null;
+    try {
+      const currentStat = await fsp.lstat(context.paths.controllerCurrentLink);
+      if (!currentStat.isSymbolicLink()) {
+        throw new Error("host updater controller current path must be a root-managed symlink");
+      }
+      previousGeneration = await fsp.realpath(context.paths.controllerCurrentLink);
+      const releasesRoot = path.resolve(context.paths.controllerReleasesDir);
+      if (
+        path.dirname(previousGeneration) !== releasesRoot ||
+        !/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(path.basename(previousGeneration))
+      ) {
+        throw new Error("host updater controller current symlink escapes the releases directory");
+      }
+      await readControllerGenerationDigests(previousGeneration);
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    }
+
+    try {
+      const generationIdentity = await readControllerGenerationDigests(generationRoot);
+      if (
+        generationIdentity.serverSha256 !== identity.serverSha256 ||
+        generationIdentity.clientSha256 !== identity.clientSha256
+      ) {
+        throw new Error(`host updater controller generation v${version} is not immutable`);
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+      await Promise.all([
+        atomicCopyFileDurable(serverPath, path.join(stagingGeneration, CONTROLLER_SERVER_NAME), {
+          mode: 0o755,
+        }),
+        atomicCopyFileDurable(clientPath, path.join(stagingGeneration, CONTROLLER_CLIENT_NAME), {
+          mode: 0o755,
+        }),
+      ]);
+      await fsp.chmod(stagingGeneration, 0o755);
+      await fsyncDirectory(stagingGeneration);
+      await fsp.rename(stagingGeneration, generationRoot);
+      await fsyncDirectory(context.paths.controllerReleasesDir);
+    }
+
+    await atomicSymlinkDurable(generationRoot, context.paths.controllerCurrentLink);
+    await atomicWriteFileDurable(
+      context.paths.controllerVersionPath,
+      `${JSON.stringify(identity, null, 2)}\n`,
+      0o600,
+    );
+    context.controllerRestartRequired = previousGeneration !== generationRoot;
+
+    const keep = new Set([generationRoot, previousGeneration].filter(Boolean));
+    for (const entry of await fsp.readdir(context.paths.controllerReleasesDir, {
+      withFileTypes: true,
+    })) {
+      const candidate = path.join(context.paths.controllerReleasesDir, entry.name);
+      if (entry.isDirectory() && /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(entry.name)) {
+        if (!keep.has(candidate)) {
+          await fsp.rm(candidate, { recursive: true, force: true });
+        }
+      }
+    }
+    await fsyncDirectory(context.paths.controllerReleasesDir);
+    return { changed: context.controllerRestartRequired, identity };
+  } finally {
+    await Promise.all([
+      fsp.rm(downloadRoot, { recursive: true, force: true }),
+      stagingGeneration
+        ? fsp.rm(stagingGeneration, { recursive: true, force: true })
+        : Promise.resolve(),
+    ]);
+  }
 }
 
 async function readVersionFile(filePath) {
@@ -673,11 +957,23 @@ async function stageOfficialCandidate(version, candidatePath, context) {
   const releaseUrl = `${RELEASE_BASE}/v${version}`;
   await fsp.mkdir(context.paths.stateDir, { recursive: true, mode: 0o700 });
   const staging = await fsp.mkdtemp(path.join(context.paths.stateDir, `.download-${version}-`));
-  const releaseManifestName = "fased-hosted-release-v2.json";
-  const releaseManifestPath = path.join(staging, releaseManifestName);
+  const releaseManifestPath = path.join(staging, RELEASE_MANIFEST_NAME);
+  const releaseManifestBundlePath = path.join(staging, RELEASE_MANIFEST_BUNDLE_NAME);
+  const signerAttestationBundlePath = path.join(staging, SIGNER_ATTESTATION_BUNDLE_NAME);
   try {
-    await download(`${releaseUrl}/${releaseManifestName}`, releaseManifestPath);
-    await verifyReleaseAsset(releaseManifestPath, version, context.paths.stateDir);
+    await Promise.all([
+      context.downloadReleaseAsset(`${releaseUrl}/${RELEASE_MANIFEST_NAME}`, releaseManifestPath),
+      context.downloadReleaseAsset(
+        `${releaseUrl}/${RELEASE_MANIFEST_BUNDLE_NAME}`,
+        releaseManifestBundlePath,
+      ),
+    ]);
+    await context.verifyReleaseAsset(
+      releaseManifestPath,
+      version,
+      context.paths.stateDir,
+      releaseManifestBundlePath,
+    );
     const manifestBytes = await fsp.readFile(releaseManifestPath);
     const selected = parseUnifiedHostedSignerRelease(
       JSON.parse(manifestBytes.toString("utf8")),
@@ -685,11 +981,22 @@ async function stageOfficialCandidate(version, candidatePath, context) {
       platform,
     );
     const assetPath = path.join(staging, selected.artifact.asset);
-    await download(`${releaseUrl}/${selected.artifact.asset}`, assetPath);
+    await Promise.all([
+      context.downloadReleaseAsset(`${releaseUrl}/${selected.artifact.asset}`, assetPath),
+      context.downloadReleaseAsset(
+        `${releaseUrl}/${SIGNER_ATTESTATION_BUNDLE_NAME}`,
+        signerAttestationBundlePath,
+      ),
+    ]);
     if ((await sha256(assetPath)) !== selected.artifact.sha256) {
       throw new Error("native signer does not match the attested unified release manifest");
     }
-    await verifyReleaseAsset(assetPath, version, context.paths.stateDir);
+    await context.verifyReleaseAsset(
+      assetPath,
+      version,
+      context.paths.stateDir,
+      signerAttestationBundlePath,
+    );
     await fsp.rm(candidatePath, { force: true });
     await atomicCopyFileDurable(assetPath, candidatePath, { mode: 0o755 });
     return {
@@ -707,11 +1014,20 @@ async function stageOfficialCandidate(version, candidatePath, context) {
 
 function createTransactionContext(overrides = {}) {
   const paths = { ...DEFAULT_PATHS, ...overrides.paths };
-  return {
+  const context = {
     paths,
+    controllerInstanceId: overrides.controllerInstanceId ?? randomUUID(),
+    controllerRestartRequired: false,
     assertReleaseAllowed:
       overrides.assertReleaseAllowed ??
       (async (version) => await assertReleaseChannelAllowed(version, paths.channelPath)),
+    downloadReleaseAsset: overrides.downloadReleaseAsset ?? download,
+    verifyReleaseAsset: overrides.verifyReleaseAsset ?? verifyReleaseAsset,
+    selfCheckControllerAsset: overrides.selfCheckControllerAsset ?? selfCheckControllerAsset,
+    stageControllerRelease:
+      overrides.stageControllerRelease ??
+      (async (version, transactionContext) =>
+        await stageOfficialControllerRelease(version, transactionContext)),
     stageCandidate:
       overrides.stageCandidate ??
       (async (version, candidatePath, context) =>
@@ -733,6 +1049,23 @@ function createTransactionContext(overrides = {}) {
       (overrides.probeSigner
         ? async () => ({ release: await overrides.probeSigner(), invariant: null })
         : probeSignerStateV2),
+  };
+  return context;
+}
+
+async function updateControllerRelease(request, context) {
+  await context.assertReleaseAllowed(request.version);
+  await assertRollbackFloor(context, request.version);
+  const active = await readJournal(context);
+  if (active) {
+    assertMatchingTransaction(active, request);
+  }
+  const controller = await context.stageControllerRelease(request.version, context);
+  return {
+    transactionId: request.transactionId,
+    version: request.version,
+    controllerChanged: controller.changed === true,
+    controllerInstanceId: context.controllerInstanceId,
   };
 }
 
@@ -872,6 +1205,8 @@ async function prepareSignerRelease(request, context) {
     throw new Error(`refusing signer downgrade from ${currentVersion} to ${request.version}`);
   }
 
+  const controller = await context.stageControllerRelease(request.version, context);
+
   let changed = true;
   let release = null;
   let releaseBinding = null;
@@ -920,6 +1255,7 @@ async function prepareSignerRelease(request, context) {
       previousVersion: currentVersion,
       release,
       releaseBinding,
+      controllerChanged: controller.changed === true,
       previousSignerInvariant,
       phase: "prepared",
       changed,
@@ -943,6 +1279,7 @@ async function prepareSignerRelease(request, context) {
     version: journal.version,
     phase: journal.phase,
     changed: journal.changed,
+    controllerChanged: journal.controllerChanged === true,
     release: journal.release,
   };
 }
@@ -1300,6 +1637,8 @@ async function recoverInterruptedTransaction(context) {
 
 async function dispatchUpdateRequest(request, context) {
   switch (request.op) {
+    case "updateController":
+      return await updateControllerRelease(request, context);
     case "prepareRelease":
       return await prepareSignerRelease(request, context);
     case "activateRelease":
@@ -1317,8 +1656,8 @@ async function dispatchUpdateRequest(request, context) {
   }
 }
 
-function writeResponse(socket, payload) {
-  socket.end(`${JSON.stringify(payload)}\n`);
+function writeResponse(socket, payload, onFlushed) {
+  socket.end(`${JSON.stringify(payload)}\n`, onFlushed);
 }
 
 export async function startServer() {
@@ -1372,9 +1711,25 @@ export async function startServer() {
       }
       const operation = queue.then(() => dispatchUpdateRequest(request, context));
       queue = operation.catch(() => undefined);
+      const restartController = () => {
+        if (!context.controllerRestartRequired) {
+          return;
+        }
+        context.controllerRestartRequired = false;
+        server.close(() => {
+          process.exitCode = 75;
+        });
+      };
       void operation.then(
-        (result) => writeResponse(socket, { ok: true, ...result }),
-        (error) => writeResponse(socket, { ok: false, error: error.message }),
+        (result) =>
+          writeResponse(
+            socket,
+            { ok: true, ...result },
+            new Set(["updateController", "commitRelease", "rollbackRelease"]).has(request.op)
+              ? restartController
+              : undefined,
+          ),
+        (error) => writeResponse(socket, { ok: false, error: error.message }, restartController),
       );
     });
   });
@@ -1398,7 +1753,17 @@ const isMain = process.argv[1]
     pathToFileURL(fileURLToPath(import.meta.url)).href
   : false;
 if (isMain) {
-  await startServer();
+  if (process.argv[2] === "--self-check") {
+    process.stdout.write(
+      `${JSON.stringify({
+        schemaVersion: CONTROLLER_SELF_CHECK_SCHEMA_VERSION,
+        protocolVersion: CONTROLLER_PROTOCOL_VERSION,
+        role: "server",
+      })}\n`,
+    );
+  } else {
+    await startServer();
+  }
 }
 
 export const __testing = {
@@ -1413,9 +1778,13 @@ export const __testing = {
   prepareSignerRelease,
   readJournal,
   recoverInterruptedTransaction,
+  releaseAttestationVerifyArgs,
   releaseAllowedForChannel,
   releaseArchitecture,
   rollbackSignerRelease,
+  stageOfficialControllerRelease,
+  stageOfficialCandidate,
   transactionPaths,
+  updateControllerRelease,
   writeJournal,
 };

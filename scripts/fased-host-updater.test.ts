@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
@@ -10,6 +11,7 @@ import {
   parseUpdateRequest,
 } from "./fased-host-updater.mjs";
 import { __testing as managedUpdaterTesting } from "./fased-managed-updater.mjs";
+import { capabilitiesDigest } from "./hosted-release-manifest.mjs";
 
 const cleanupRoots: string[] = [];
 const TRANSACTION_ONE = "11111111-1111-4111-8111-111111111111";
@@ -39,6 +41,9 @@ async function createFixture() {
   const signerUnitPath = path.join(root, "systemd", "fased-signerd.service");
   const paths = {
     stateDir,
+    controllerReleasesDir: path.join(root, "controller", "releases"),
+    controllerCurrentLink: path.join(root, "controller", "current"),
+    controllerVersionPath: path.join(stateDir, "controller-version.json"),
     signerPath,
     signerStateDBPath,
     signerUnitPath,
@@ -65,6 +70,7 @@ async function createFixture() {
   const context = __testing.createTransactionContext({
     paths,
     assertReleaseAllowed: async () => undefined,
+    stageControllerRelease: async () => ({ changed: false }),
     stageCandidate: async (version: string, candidatePath: string) => {
       events.push(`stage:${version}`);
       await fsp.writeFile(candidatePath, `signer-${version}\n`, { mode: 0o755 });
@@ -128,6 +134,254 @@ function managedTransaction(phase = "signer-preactivated") {
 }
 
 describe("root-owned hosted updater protocol", () => {
+  it("promotes an offline-attested controller generation atomically for future updates", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-controller-stage-"));
+    cleanupRoots.push(root);
+    const stateDir = path.join(root, "state");
+    const controllerReleasesDir = path.join(root, "controller", "releases");
+    const controllerCurrentLink = path.join(root, "controller", "current");
+    const controllerVersionPath = path.join(stateDir, "controller-version.json");
+    const serverBytes = await fsp.readFile(
+      path.join(import.meta.dirname, "fased-host-updater.mjs"),
+    );
+    const clientBytes = await fsp.readFile(
+      path.join(import.meta.dirname, "fased-host-updaterctl.mjs"),
+    );
+    const downloads: string[] = [];
+    const verifications: Array<{ asset: string; bundle: string }> = [];
+    const selfChecks: Array<{ asset: string; role: string }> = [];
+    const context = __testing.createTransactionContext({
+      paths: {
+        stateDir,
+        controllerReleasesDir,
+        controllerCurrentLink,
+        controllerVersionPath,
+      },
+      downloadReleaseAsset: async (url: string, destination: string) => {
+        const name = path.basename(url);
+        downloads.push(name);
+        const contents =
+          name === "fased-host-updater.mjs"
+            ? serverBytes
+            : name === "fased-host-updaterctl.mjs"
+              ? clientBytes
+              : Buffer.from("offline attestation bundle\n");
+        await fsp.writeFile(destination, contents, { mode: 0o600 });
+      },
+      verifyReleaseAsset: async (
+        assetPath: string,
+        version: string,
+        verificationStateDir: string,
+        bundlePath: string,
+      ) => {
+        expect(new Set(["1.2.3", "1.2.4"]).has(version)).toBe(true);
+        expect(verificationStateDir).toBe(stateDir);
+        verifications.push({ asset: path.basename(assetPath), bundle: path.basename(bundlePath) });
+      },
+      selfCheckControllerAsset: async (assetPath: string, role: string) => {
+        selfChecks.push({ asset: path.basename(assetPath), role });
+      },
+    });
+
+    const first = await __testing.stageOfficialControllerRelease("1.2.3", context);
+
+    expect(first.changed).toBe(true);
+    expect(downloads).toEqual(
+      expect.arrayContaining([
+        "fased-host-updater.mjs",
+        "fased-host-updater.mjs.attestation.json",
+        "fased-host-updaterctl.mjs",
+        "fased-host-updaterctl.mjs.attestation.json",
+      ]),
+    );
+    expect(verifications).toEqual([
+      {
+        asset: "fased-host-updater.mjs",
+        bundle: "fased-host-updater.mjs.attestation.json",
+      },
+      {
+        asset: "fased-host-updaterctl.mjs",
+        bundle: "fased-host-updaterctl.mjs.attestation.json",
+      },
+    ]);
+    expect(selfChecks).toEqual([
+      { asset: "fased-host-updater.mjs", role: "server" },
+      { asset: "fased-host-updaterctl.mjs", role: "client" },
+    ]);
+    expect(await fsp.realpath(controllerCurrentLink)).toBe(
+      path.join(controllerReleasesDir, "v1.2.3"),
+    );
+    expect(await fsp.readFile(path.join(controllerCurrentLink, "fased-host-updater.mjs"))).toEqual(
+      serverBytes,
+    );
+    expect(
+      await fsp.readFile(path.join(controllerCurrentLink, "fased-host-updaterctl.mjs")),
+    ).toEqual(clientBytes);
+    expect(JSON.parse(await fsp.readFile(controllerVersionPath, "utf8"))).toMatchObject({
+      schemaVersion: 1,
+      version: "1.2.3",
+      serverSha256: createHash("sha256").update(serverBytes).digest("hex"),
+      clientSha256: createHash("sha256").update(clientBytes).digest("hex"),
+    });
+
+    const second = await __testing.stageOfficialControllerRelease("1.2.3", context);
+    expect(second.changed).toBe(false);
+    expect(downloads).toHaveLength(4);
+
+    const upgraded = await __testing.stageOfficialControllerRelease("1.2.4", context);
+    expect(upgraded.changed).toBe(true);
+    expect(await fsp.realpath(controllerCurrentLink)).toBe(
+      path.join(controllerReleasesDir, "v1.2.4"),
+    );
+    expect(fs.existsSync(path.join(controllerReleasesDir, "v1.2.3"))).toBe(true);
+    expect(downloads).toHaveLength(8);
+    expect(selfChecks).toHaveLength(4);
+
+    const current = await __testing.stageOfficialControllerRelease("1.2.4", context);
+    expect(current.changed).toBe(false);
+    expect(downloads).toHaveLength(8);
+    await expect(__testing.stageOfficialControllerRelease("1.2.3", context)).rejects.toThrow(
+      "refusing host updater controller downgrade",
+    );
+    expect(downloads).toHaveLength(8);
+  });
+
+  it("leaves the active controller untouched when a replacement is not verified", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-controller-reject-"));
+    cleanupRoots.push(root);
+    const stateDir = path.join(root, "state");
+    const controllerReleasesDir = path.join(root, "controller", "releases");
+    const controllerCurrentLink = path.join(root, "controller", "current");
+    const controllerVersionPath = path.join(stateDir, "controller-version.json");
+    const previousRoot = path.join(controllerReleasesDir, "v1.2.2");
+    await fsp.mkdir(previousRoot, { recursive: true });
+    await Promise.all([
+      fsp.writeFile(path.join(previousRoot, "fased-host-updater.mjs"), "old-server\n"),
+      fsp.writeFile(path.join(previousRoot, "fased-host-updaterctl.mjs"), "old-client\n"),
+      fsp.mkdir(stateDir, { recursive: true }),
+    ]);
+    await fsp.symlink(previousRoot, controllerCurrentLink, "dir");
+    await fsp.writeFile(
+      controllerVersionPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        version: "1.2.2",
+        serverSha256: createHash("sha256").update("old-server\n").digest("hex"),
+        clientSha256: createHash("sha256").update("old-client\n").digest("hex"),
+      })}\n`,
+    );
+    const context = __testing.createTransactionContext({
+      paths: {
+        stateDir,
+        controllerReleasesDir,
+        controllerCurrentLink,
+        controllerVersionPath,
+      },
+      downloadReleaseAsset: async (_url: string, destination: string) => {
+        await fsp.writeFile(destination, "untrusted replacement\n");
+      },
+      verifyReleaseAsset: async () => {
+        throw new Error("attestation rejected");
+      },
+      selfCheckControllerAsset: async () => undefined,
+    });
+
+    await expect(__testing.stageOfficialControllerRelease("1.2.3", context)).rejects.toThrow(
+      "attestation rejected",
+    );
+    expect(await fsp.realpath(controllerCurrentLink)).toBe(previousRoot);
+    expect(JSON.parse(await fsp.readFile(controllerVersionPath, "utf8"))).toMatchObject({
+      version: "1.2.2",
+    });
+    expect(fs.existsSync(path.join(controllerReleasesDir, "v1.2.3"))).toBe(false);
+    expect(
+      (await fsp.readdir(stateDir)).some((entry) => entry.startsWith(".controller-download-")),
+    ).toBe(false);
+  });
+
+  it("stages official signer releases through published offline attestation bundles", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-stage-"));
+    cleanupRoots.push(root);
+    const stateDir = path.join(root, "state");
+    const candidatePath = path.join(root, "candidate", "fased-signerd");
+    const platform = `linux-${__testing.releaseArchitecture()}`;
+    const assetName = `fased-signerd-${platform}`;
+    const signerBytes = Buffer.from("verified signer fixture\n");
+    const capabilities = { protocol: { current: 2, min: 2, max: 2 } };
+    const manifest = {
+      schemaVersion: 2,
+      release: { version: "1.2.3", tag: "v1.2.3", commit: "a".repeat(40) },
+      application: {},
+      signer: {
+        release: signerRelease("1.2.3"),
+        capabilities,
+        capabilitiesDigest: capabilitiesDigest(capabilities),
+        platforms: {
+          [platform]: {
+            asset: assetName,
+            sha256: createHash("sha256").update(signerBytes).digest("hex"),
+          },
+        },
+      },
+    };
+    const downloads: string[] = [];
+    const verifications: Array<{ asset: string; bundle: string }> = [];
+    const context = __testing.createTransactionContext({
+      paths: { stateDir },
+      downloadReleaseAsset: async (url: string, destination: string) => {
+        downloads.push(path.basename(url));
+        let contents: string | Buffer = "offline attestation bundle\n";
+        if (url.endsWith("/fased-hosted-release-v2.json")) {
+          contents = `${JSON.stringify(manifest)}\n`;
+        } else if (url.endsWith(`/${assetName}`)) {
+          contents = signerBytes;
+        }
+        await fsp.writeFile(destination, contents, { mode: 0o600 });
+      },
+      verifyReleaseAsset: async (
+        assetPath: string,
+        version: string,
+        verificationStateDir: string,
+        bundlePath: string,
+      ) => {
+        expect(version).toBe("1.2.3");
+        expect(verificationStateDir).toBe(stateDir);
+        expect(await fsp.readFile(bundlePath, "utf8")).toBe("offline attestation bundle\n");
+        verifications.push({ asset: path.basename(assetPath), bundle: path.basename(bundlePath) });
+      },
+    });
+
+    const staged = await __testing.stageOfficialCandidate("1.2.3", candidatePath, context);
+
+    expect(downloads).toEqual(
+      expect.arrayContaining([
+        "fased-hosted-release-v2.json",
+        "fased-hosted-release-v2.json.attestation.json",
+        assetName,
+        "fased-signerd-release.attestation.json",
+      ]),
+    );
+    expect(verifications).toEqual([
+      {
+        asset: "fased-hosted-release-v2.json",
+        bundle: "fased-hosted-release-v2.json.attestation.json",
+      },
+      { asset: assetName, bundle: "fased-signerd-release.attestation.json" },
+    ]);
+    expect(await fsp.readFile(candidatePath)).toEqual(signerBytes);
+    expect(staged.release).toEqual(signerRelease("1.2.3"));
+  });
+
+  it("always passes an offline bundle to GitHub attestation verification", () => {
+    const args = __testing.releaseAttestationVerifyArgs("/tmp/asset", "1.2.3", "/tmp/bundle.json");
+    expect(args).toContain("--bundle");
+    expect(args[args.indexOf("--bundle") + 1]).toBe("/tmp/bundle.json");
+    expect(args).toContain("refs/tags/v1.2.3");
+    expect(() => __testing.releaseAttestationVerifyArgs("/tmp/asset", "1.2.3", "")).toThrow(
+      "offline release attestation bundle is required",
+    );
+  });
+
   it("wires repair-hosting prepare, activation, app verification, and commit in order", () => {
     const installer = fs.readFileSync(path.join(import.meta.dirname, "..", "install.sh"), "utf8");
     const prepare = installer.indexOf('"$version" --prepare-only');
@@ -176,6 +430,7 @@ describe("root-owned hosted updater protocol", () => {
 
   it("accepts only exact protocol-v2 transaction requests", () => {
     for (const op of [
+      "updateController",
       "prepareRelease",
       "activateRelease",
       "authorizeGatewayRelease",
@@ -214,6 +469,46 @@ describe("root-owned hosted updater protocol", () => {
         version: "1.2.3",
       }),
     ).toThrow("UUIDv4");
+  });
+
+  it("keeps a verified forward controller after the signer transaction rolls back", async () => {
+    const { context } = await createFixture();
+    context.stageControllerRelease = async () => {
+      context.controllerRestartRequired = true;
+      return { changed: true };
+    };
+    await expect(
+      __testing.prepareSignerRelease(request("prepareRelease", TRANSACTION_ONE, "1.2.3"), context),
+    ).resolves.toMatchObject({ phase: "prepared", controllerChanged: true });
+
+    await __testing.rollbackSignerRelease(
+      request("rollbackRelease", TRANSACTION_ONE, "1.2.3"),
+      context,
+    );
+    expect(context.controllerRestartRequired).toBe(true);
+    expect(fs.existsSync(context.paths.journalPath)).toBe(false);
+  });
+
+  it("reports the exact controller process that must restart before signer preparation", async () => {
+    const { context } = await createFixture();
+    context.controllerInstanceId = TRANSACTION_TWO;
+    context.stageControllerRelease = async () => {
+      context.controllerRestartRequired = true;
+      return { changed: true };
+    };
+
+    await expect(
+      __testing.updateControllerRelease(
+        request("updateController", TRANSACTION_ONE, "1.2.3"),
+        context,
+      ),
+    ).resolves.toEqual({
+      transactionId: TRANSACTION_ONE,
+      version: "1.2.3",
+      controllerChanged: true,
+      controllerInstanceId: TRANSACTION_TWO,
+    });
+    expect(context.controllerRestartRequired).toBe(true);
   });
 
   it("prepares without live mutation, restores binary and database on rollback, and commits durably", async () => {

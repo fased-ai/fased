@@ -180,12 +180,16 @@ if [[ "$install_entry_is_stream" -eq 1 || \
       rm -f -- "$keyring_tmp" "$source_tmp"
       bootstrap_as_root apt-get update
       bootstrap_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y gh
-    elif command -v dnf >/dev/null 2>&1 || command -v dnf5 >/dev/null 2>&1; then
-      local dnf_cmd="dnf"
-      command -v dnf >/dev/null 2>&1 || dnf_cmd="dnf5"
-      bootstrap_as_root "$dnf_cmd" install -y 'dnf-command(config-manager)' >/dev/null 2>&1 || true
-      bootstrap_as_root "$dnf_cmd" config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo >/dev/null 2>&1 || true
-      bootstrap_as_root "$dnf_cmd" install -y gh
+    elif command -v dnf5 >/dev/null 2>&1; then
+      bootstrap_as_root dnf5 install -y dnf5-plugins
+      bootstrap_as_root dnf5 config-manager addrepo \
+        --from-repofile=https://cli.github.com/packages/rpm/gh-cli.repo
+      bootstrap_as_root dnf5 install -y gh
+    elif command -v dnf >/dev/null 2>&1; then
+      bootstrap_as_root dnf install -y 'dnf-command(config-manager)'
+      bootstrap_as_root dnf config-manager --add-repo \
+        https://cli.github.com/packages/rpm/gh-cli.repo
+      bootstrap_as_root dnf install -y gh
     elif command -v yum >/dev/null 2>&1; then
       bootstrap_as_root yum install -y yum-utils >/dev/null 2>&1 || true
       bootstrap_as_root yum-config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo >/dev/null 2>&1 || true
@@ -231,17 +235,28 @@ if [[ "$install_entry_is_stream" -eq 1 || \
 
     install_hosting_bootstrap_tools() {
       [[ "$auto_install" -eq 1 ]] || return 0
+      local -a packages=(ca-certificates)
+      command -v curl >/dev/null 2>&1 || packages+=(curl)
+      command -v tar >/dev/null 2>&1 || packages+=(tar)
+      if ! command -v sha256sum >/dev/null 2>&1 || ! command -v stat >/dev/null 2>&1; then
+        packages+=(coreutils)
+      fi
+      command -v find >/dev/null 2>&1 || packages+=(findutils)
+      command -v awk >/dev/null 2>&1 || packages+=(gawk)
+      command -v jq >/dev/null 2>&1 || packages+=(jq)
+      command -v grep >/dev/null 2>&1 || packages+=(grep)
+      command -v flock >/dev/null 2>&1 || packages+=(util-linux)
       if command -v apt-get >/dev/null 2>&1; then
         apt-get update
-        env DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates tar coreutils findutils gawk jq util-linux
+        env DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
       elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y curl ca-certificates tar coreutils findutils gawk jq util-linux
+        dnf install -y "${packages[@]}"
       elif command -v dnf5 >/dev/null 2>&1; then
-        dnf5 install -y curl ca-certificates tar coreutils findutils gawk jq util-linux
+        dnf5 install -y "${packages[@]}"
       elif command -v yum >/dev/null 2>&1; then
-        yum install -y curl ca-certificates tar coreutils findutils gawk jq util-linux
+        yum install -y "${packages[@]}"
       elif command -v zypper >/dev/null 2>&1; then
-        zypper --non-interactive install curl ca-certificates tar coreutils findutils gawk jq util-linux
+        zypper --non-interactive install "${packages[@]}"
       fi
     }
     if ! command -v gh >/dev/null 2>&1 || ! gh attestation verify --help >/dev/null 2>&1; then
@@ -540,15 +555,18 @@ if [[ "$install_entry_is_stream" -eq 1 || \
     if [[ "$auto_install" -ne 1 ]]; then
       return 1
     fi
+    local -a packages=(ca-certificates)
+    command -v git >/dev/null 2>&1 || packages+=(git)
+    command -v curl >/dev/null 2>&1 || packages+=(curl)
     if command -v apt-get >/dev/null 2>&1; then
       run_as_root apt-get update
-      run_as_root apt-get install -y git curl ca-certificates
+      run_as_root apt-get install -y "${packages[@]}"
     elif command -v dnf >/dev/null 2>&1; then
-      run_as_root dnf install -y git curl ca-certificates
+      run_as_root dnf install -y "${packages[@]}"
     elif command -v yum >/dev/null 2>&1; then
-      run_as_root yum install -y git curl ca-certificates
+      run_as_root yum install -y "${packages[@]}"
     elif command -v zypper >/dev/null 2>&1; then
-      run_as_root zypper --non-interactive install git curl ca-certificates
+      run_as_root zypper --non-interactive install "${packages[@]}"
     elif command -v apk >/dev/null 2>&1; then
       run_as_root apk add --no-cache bash git curl ca-certificates
     elif command -v pacman >/dev/null 2>&1; then
@@ -569,17 +587,20 @@ if [[ "$install_entry_is_stream" -eq 1 || \
     if [[ "$auto_install" -ne 1 ]]; then
       return 1
     fi
+    local -a packages=(ca-certificates)
+    command -v jq >/dev/null 2>&1 || packages+=(jq)
+    command -v curl >/dev/null 2>&1 || packages+=(curl)
     if command -v apt-get >/dev/null 2>&1; then
       bootstrap_as_root apt-get update
-      bootstrap_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y jq curl ca-certificates
+      bootstrap_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
     elif command -v dnf >/dev/null 2>&1; then
-      bootstrap_as_root dnf install -y jq curl ca-certificates
+      bootstrap_as_root dnf install -y "${packages[@]}"
     elif command -v dnf5 >/dev/null 2>&1; then
-      bootstrap_as_root dnf5 install -y jq curl ca-certificates
+      bootstrap_as_root dnf5 install -y "${packages[@]}"
     elif command -v yum >/dev/null 2>&1; then
-      bootstrap_as_root yum install -y jq curl ca-certificates
+      bootstrap_as_root yum install -y "${packages[@]}"
     elif command -v zypper >/dev/null 2>&1; then
-      bootstrap_as_root zypper --non-interactive install jq curl ca-certificates
+      bootstrap_as_root zypper --non-interactive install "${packages[@]}"
     elif command -v apk >/dev/null 2>&1; then
       bootstrap_as_root apk add --no-cache jq curl ca-certificates
     elif command -v pacman >/dev/null 2>&1; then
@@ -1574,7 +1595,11 @@ install_linux_system_dependencies() {
     if ! need_cmd dnf && need_cmd dnf5; then
       dnf_cmd="dnf5"
     fi
-    run_as_root "$dnf_cmd" install -y git curl ca-certificates jq
+    local -a rpm_packages=(ca-certificates)
+    need_cmd git || rpm_packages+=(git)
+    need_cmd curl || rpm_packages+=(curl)
+    need_cmd jq || rpm_packages+=(jq)
+    run_as_root "$dnf_cmd" install -y "${rpm_packages[@]}"
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
       run_as_root "$dnf_cmd" install -y nodejs24-bin nodejs24-npm-bin || \
@@ -1586,7 +1611,11 @@ install_linux_system_dependencies() {
       prefer_compatible_system_node_if_available || true
     fi
   elif need_cmd yum; then
-    run_as_root yum install -y git curl ca-certificates jq
+    local -a rpm_packages=(ca-certificates)
+    need_cmd git || rpm_packages+=(git)
+    need_cmd curl || rpm_packages+=(curl)
+    need_cmd jq || rpm_packages+=(jq)
+    run_as_root yum install -y "${rpm_packages[@]}"
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
       install_nodesource_node_rpm yum || \
@@ -1665,12 +1694,16 @@ install_github_cli_for_attestations() {
       | run_as_root tee /etc/apt/sources.list.d/github-cli.list >/dev/null
     run_as_root apt-get update
     run_as_root apt-get install -y gh
-  elif need_cmd dnf || need_cmd dnf5; then
-    local dnf_cmd="dnf"
-    need_cmd dnf || dnf_cmd="dnf5"
-    run_as_root "$dnf_cmd" install -y 'dnf-command(config-manager)' >/dev/null 2>&1 || true
-    run_as_root "$dnf_cmd" config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo >/dev/null 2>&1 || true
-    run_as_root "$dnf_cmd" install -y gh
+  elif need_cmd dnf5; then
+    run_as_root dnf5 install -y dnf5-plugins
+    run_as_root dnf5 config-manager addrepo \
+      --from-repofile=https://cli.github.com/packages/rpm/gh-cli.repo
+    run_as_root dnf5 install -y gh
+  elif need_cmd dnf; then
+    run_as_root dnf install -y 'dnf-command(config-manager)'
+    run_as_root dnf config-manager --add-repo \
+      https://cli.github.com/packages/rpm/gh-cli.repo
+    run_as_root dnf install -y gh
   elif need_cmd yum; then
     run_as_root yum install -y yum-utils >/dev/null 2>&1 || true
     run_as_root yum-config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo >/dev/null 2>&1 || true
@@ -4158,7 +4191,7 @@ Environment=FASED_HOST_PROFILE=hosting
 Environment=FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock
 ExecStart=/usr/local/libexec/fased-gateway-launch
 Restart=always
-RestartSec=5
+RestartSec=1
 UMask=0007
 NoNewPrivileges=true
 PrivateTmp=true
@@ -4452,6 +4485,15 @@ install_host_signer_and_updater_services() {
     echo "The root updater must fetch and attest the exact tagged signer artifact." >&2
     exit 1
   fi
+  local controller_server_identity
+  local controller_client_identity
+  controller_server_identity="$(node "$FASED_DIR/scripts/fased-host-updater.mjs" --self-check)"
+  controller_client_identity="$(node "$FASED_DIR/scripts/fased-host-updaterctl.mjs" --self-check)"
+  [[ "$controller_server_identity" == '{"schemaVersion":1,"protocolVersion":2,"role":"server"}' && \
+    "$controller_client_identity" == '{"schemaVersion":1,"protocolVersion":2,"role":"client"}' ]] || {
+    echo "Hosted controller assets are incompatible with this installer." >&2
+    exit 1
+  }
   local sat_runtime_value=""
   if [[ -n "${FASED_SAT_PROGRAM_ID:-}${FASED_SAT_BOND_PROGRAM_ID:-}${FASED_SAT_MINT_ADDRESS:-}${FASED_SAT_MINT_PROGRAM_ID:-}" ]]; then
     for sat_runtime_value in \
@@ -4478,8 +4520,63 @@ install_host_signer_and_updater_services() {
   install -d -m 0755 -o root -g root /usr/local/sbin
   install -d -m 0755 -o root -g root /usr/local/share/fased/signer-policies
   install -d -m 0755 -o root -g root /opt/fased/signer
-  install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-host-updater.mjs" /usr/local/libexec/fased-host-updater.mjs
-  install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-host-updaterctl.mjs" /usr/local/libexec/fased-host-updaterctl.mjs
+  install -d -m 0755 -o root -g root /opt/fased/host-controller/releases
+  install -d -m 0700 -o root -g root /var/lib/fased-host-updater
+  local controller_release_dir="/opt/fased/host-controller/releases/v${version}"
+  local controller_staging_dir="/opt/fased/host-controller/releases/.controller-generation-${version}-$$"
+  local controller_current_tmp="/opt/fased/host-controller/.current-${version}-$$"
+  local controller_marker_tmp="/var/lib/fased-host-updater/.controller-version-${version}-$$"
+  local controller_server_sha
+  local controller_client_sha
+  rm -rf "$controller_staging_dir"
+  install -d -m 0755 -o root -g root "$controller_staging_dir"
+  install -m 0755 -o root -g root \
+    "$FASED_DIR/scripts/fased-host-updater.mjs" \
+    "$controller_staging_dir/fased-host-updater.mjs"
+  install -m 0755 -o root -g root \
+    "$FASED_DIR/scripts/fased-host-updaterctl.mjs" \
+    "$controller_staging_dir/fased-host-updaterctl.mjs"
+  controller_server_sha="$(sha256sum "$controller_staging_dir/fased-host-updater.mjs" | awk '{print $1}')"
+  controller_client_sha="$(sha256sum "$controller_staging_dir/fased-host-updaterctl.mjs" | awk '{print $1}')"
+  sync -f \
+    "$controller_staging_dir/fased-host-updater.mjs" \
+    "$controller_staging_dir/fased-host-updaterctl.mjs" \
+    "$controller_staging_dir"
+  if [[ -e "$controller_release_dir" || -L "$controller_release_dir" ]]; then
+    if [[ ! -d "$controller_release_dir" || -L "$controller_release_dir" || \
+      ! -f "$controller_release_dir/fased-host-updater.mjs" || \
+      -L "$controller_release_dir/fased-host-updater.mjs" || \
+      ! -f "$controller_release_dir/fased-host-updaterctl.mjs" || \
+      -L "$controller_release_dir/fased-host-updaterctl.mjs" || \
+      "$(find "$controller_release_dir" -mindepth 1 -maxdepth 1 -printf '.' | wc -c)" -ne 2 || \
+      "$(sha256sum "$controller_release_dir/fased-host-updater.mjs" | awk '{print $1}')" != "$controller_server_sha" || \
+      "$(sha256sum "$controller_release_dir/fased-host-updaterctl.mjs" | awk '{print $1}')" != "$controller_client_sha" ]]; then
+      rm -rf "$controller_staging_dir"
+      echo "Existing host controller generation v${version} is not the exact immutable release." >&2
+      exit 1
+    fi
+    rm -rf "$controller_staging_dir"
+  else
+    mv -T "$controller_staging_dir" "$controller_release_dir"
+    sync -f /opt/fased/host-controller/releases
+  fi
+  if [[ -e /opt/fased/host-controller/current && ! -L /opt/fased/host-controller/current ]]; then
+    echo "Refusing to replace non-symlink host controller current path." >&2
+    exit 1
+  fi
+  rm -f "$controller_current_tmp"
+  ln -s "$controller_release_dir" "$controller_current_tmp"
+  mv -Tf "$controller_current_tmp" /opt/fased/host-controller/current
+  rm -f /usr/local/libexec/fased-host-updater.mjs /usr/local/libexec/fased-host-updaterctl.mjs
+  ln -s /opt/fased/host-controller/current/fased-host-updater.mjs \
+    /usr/local/libexec/fased-host-updater.mjs
+  ln -s /opt/fased/host-controller/current/fased-host-updaterctl.mjs \
+    /usr/local/libexec/fased-host-updaterctl.mjs
+  printf '{"schemaVersion":1,"version":"%s","serverSha256":"%s","clientSha256":"%s"}\n' \
+    "$version" "$controller_server_sha" "$controller_client_sha" >"$controller_marker_tmp"
+  chown root:root "$controller_marker_tmp"
+  chmod 0600 "$controller_marker_tmp"
+  mv -f "$controller_marker_tmp" /var/lib/fased-host-updater/controller-version.json
   install -m 0755 -o root -g root "$FASED_DIR/scripts/hosted-legacy-wallet-migration.mjs" /usr/local/libexec/hosted-legacy-wallet-migration.mjs
   rm -f /usr/local/libexec/fased-host-bootstrapd.mjs /usr/local/libexec/fased-host-bootstrapctl.mjs
   rm -f /usr/local/sbin/fased-signer-wallet-import
@@ -4495,7 +4592,6 @@ install_host_signer_and_updater_services() {
   install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/mining.json.template" /usr/local/share/fased/signer-policies/mining.json.template
   install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/vault.json.template" /usr/local/share/fased/signer-policies/vault.json.template
   install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/network.json.template" /usr/local/share/fased/signer-policies/network.json.template
-  install -d -m 0700 -o root -g root /var/lib/fased-host-updater
   install -d -m 0755 -o root -g root /var/lib/fased-signer-update-gate
   install -d -m 0700 -o "$signer_user" -g "$signer_user" /var/lib/fased-signerd
   install -d -m 0755 -o root -g root /etc/fased
@@ -4547,14 +4643,14 @@ StateDirectory=fased-host-updater
 StateDirectoryMode=0700
 UMask=0117
 Environment=HOME=/var/lib/fased-host-updater
-ExecStart=$(command -v node) /usr/local/libexec/fased-host-updater.mjs --socket-gid ${gateway_gid}
+ExecStart=$(command -v node) /opt/fased/host-controller/current/fased-host-updater.mjs --socket-gid ${gateway_gid}
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-updater /etc/systemd/system
+ReadWritePaths=/opt/fased/host-controller /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-updater /etc/systemd/system
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
@@ -4567,6 +4663,10 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 WantedBy=multi-user.target
 EOF
   chmod 0644 /etc/systemd/system/fased-host-updater.service
+  sync -f "$controller_release_dir/fased-host-updater.mjs"
+  sync -f "$controller_release_dir/fased-host-updaterctl.mjs"
+  sync -f /var/lib/fased-host-updater/controller-version.json
+  sync -f /opt/fased/host-controller/releases /opt/fased/host-controller
   sync -f /usr/local/libexec/fased-host-updater.mjs
   sync -f /usr/local/libexec/fased-host-updaterctl.mjs
   sync -f /usr/local/libexec/fased-signer-owner-policy.mjs

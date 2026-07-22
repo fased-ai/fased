@@ -9,6 +9,12 @@ const socketPath = process.env.FASED_HOST_UPDATER_SOCKET || "/run/fased-host-upd
 const statePath =
   process.env.FASED_HOST_UPDATERCTL_STATE || "/var/lib/fased-host-updater/ctl-transaction.json";
 const transactionPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+if (process.argv[2] === "--self-check") {
+  process.stdout.write(
+    `${JSON.stringify({ schemaVersion: 1, protocolVersion: 2, role: "client" })}\n`,
+  );
+  process.exit(0);
+}
 const version = String(process.argv[2] ?? "")
   .trim()
   .replace(/^v/, "");
@@ -146,6 +152,33 @@ async function requestWithRetry(op, attempts = 3) {
   throw lastError;
 }
 
+async function ensureTargetController() {
+  const first = await requestWithRetry("updateController", 120);
+  if (first.controllerChanged !== true) {
+    return;
+  }
+  const previousInstance = first.controllerInstanceId;
+  if (!transactionPattern.test(previousInstance || "")) {
+    throw new Error("root updater omitted its controller process identity");
+  }
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    try {
+      const current = await requestWithRetry("updateController");
+      if (
+        current.controllerChanged !== true &&
+        transactionPattern.test(current.controllerInstanceId || "") &&
+        current.controllerInstanceId !== previousInstance
+      ) {
+        return;
+      }
+    } catch {
+      // systemd is replacing the verified root-controller process.
+    }
+  }
+  throw new Error("verified root updater controller did not restart into the target release");
+}
+
 let activated = false;
 try {
   if (mode === "--rollback-only") {
@@ -158,6 +191,7 @@ try {
     await clearTransactionId();
     process.stdout.write(`${JSON.stringify(committed)}\n`);
   } else {
+    await ensureTargetController();
     const prepared = await requestWithRetry("prepareRelease", 120);
     if (mode === "--prepare-only") {
       process.stdout.write(`${JSON.stringify(prepared)}\n`);
