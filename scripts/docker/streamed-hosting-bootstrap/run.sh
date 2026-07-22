@@ -88,6 +88,42 @@ cp "/tmp/fased-release-fixture/${url##*/}" "$output"
 EOF_CURL
 chmod 0755 /usr/local/bin/curl
 
+cat >/usr/local/bin/jq <<'EOF_JQ'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == *".tag_name"* ]]; then
+  input="$(cat)"
+  [[ "$input" == *'"tag_name":"v9.8.7"'* ]]
+  printf 'v9.8.7\n'
+  exit 0
+fi
+[[ "$*" == *"--arg version 9.8.7"* ]]
+[[ "$*" == *"--arg architecture x64"* ]]
+[[ "$*" == *"--arg signer_platform linux-amd64"* ]]
+manifest="${!#}"
+[[ "$manifest" == */fased-hosted-release-v2.json && -f "$manifest" ]]
+fixture=/tmp/fased-release-fixture
+version=9.8.7
+commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+dependency_hash=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+app_asset="fased-hosted-app-v2-linux-x64-v${version}.tar.gz"
+dependency_asset="fased-hosted-deps-linux-x64-${dependency_hash}.tar.gz"
+signer_asset=fased-signerd-linux-amd64
+grep -Fq "\"version\":\"${version}\"" "$manifest"
+grep -Fq "\"commit\":\"${commit}\"" "$manifest"
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$commit" \
+  "$commit" \
+  "$app_asset" \
+  "$(sha256sum "$fixture/$app_asset" | awk '{print $1}')" \
+  "$dependency_asset" \
+  "$(sha256sum "$fixture/$dependency_asset" | awk '{print $1}')" \
+  "$dependency_hash" \
+  "$signer_asset" \
+  "$(sha256sum "$fixture/$signer_asset" | awk '{print $1}')"
+EOF_JQ
+chmod 0755 /usr/local/bin/jq
+
 cat >/usr/local/bin/gh <<'EOF_GH'
 #!/usr/bin/env bash
 set -euo pipefail

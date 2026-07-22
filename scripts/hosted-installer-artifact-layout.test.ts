@@ -195,6 +195,33 @@ describe("attested Hosting installer artifact layout", () => {
     expect(releaseWorkflow).toContain("needs: [validate, linux, signer]");
   });
 
+  it("assembles offline-attested workflow-dispatch candidates without publishing them", () => {
+    expect(releaseWorkflow).toContain("name: Assemble offline-attested candidate");
+    expect(releaseWorkflow).toContain("if: github.event_name == 'workflow_dispatch'");
+    expect(releaseWorkflow).toContain("fased-hosting-candidate-${{ github.sha }}");
+    expect(releaseWorkflow).toContain("fased-hosted-release-v2.json.attestation.json");
+    expect(releaseWorkflow).toContain("stablePublication: false");
+    expect(releaseWorkflow).toContain("name: Verify every staged candidate attestation offline");
+    expect(releaseWorkflow).toContain('--source-ref "$GITHUB_REF"');
+    expect(releaseWorkflow).toContain("--deny-self-hosted-runners");
+    expect(releaseWorkflow).toContain(
+      "if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'",
+    );
+    expect(releaseWorkflow).toContain(
+      "name: Publish verified runtime assets\n    if: startsWith(github.ref, 'refs/tags/v')",
+    );
+  });
+
+  it("runs the streamed bootstrap fixture without an external package mirror layer", () => {
+    const dockerfile = fs.readFileSync(
+      path.join(root, "scripts/docker/streamed-hosting-bootstrap/Dockerfile"),
+      "utf8",
+    );
+    expect(dockerfile).not.toContain("apt-get");
+    expect(dockerfile).not.toContain("install -y");
+    expect(dockerfile).toContain("COPY run.sh");
+  });
+
   it("dispatches standalone Hosting execution through the attested bundle bootstrap", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-hosting-bootstrap-dispatch-"));
     try {
