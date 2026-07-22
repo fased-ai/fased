@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.75-rc.1
+
+- Make the Hosting root controller update itself transactionally so existing
+  installations receive future controller fixes without manual repair.
+- Verify anonymous Hosting installer, signer, controller, and manifest assets
+  from published offline attestation bundles without requiring GitHub login.
+- Add a non-latest beta channel and prerelease classification checks so Local
+  and Hosting release-candidate updates can be exercised before a stable tag.
+
 ## 0.1.74
 
 - Repair interrupted and mixed-state Local updates so one normal
