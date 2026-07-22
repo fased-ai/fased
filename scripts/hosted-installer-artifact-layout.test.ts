@@ -212,6 +212,13 @@ describe("attested Hosting installer artifact layout", () => {
     );
   });
 
+  it("publishes tagged prereleases as non-latest GitHub prereleases", () => {
+    expect(releaseWorkflow).toContain('if [[ "$package_version" == *-* ]]');
+    expect(releaseWorkflow).toContain("release_args+=(--prerelease --latest=false)");
+    expect(releaseWorkflow).toContain("--json isPrerelease --jq .isPrerelease");
+    expect(releaseWorkflow).toContain('test "$is_prerelease" = "true"');
+  });
+
   it("runs the streamed bootstrap fixture without an external package mirror layer", () => {
     const dockerfile = fs.readFileSync(
       path.join(root, "scripts/docker/streamed-hosting-bootstrap/Dockerfile"),

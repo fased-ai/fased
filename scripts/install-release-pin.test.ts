@@ -84,4 +84,29 @@ describe("managed installer release pinning", () => {
     expect(installer).toContain('if [[ -n "$HOSTING_RELEASE" ]]; then');
     expect(installer).toContain('package_spec="@fased/fased@${HOSTING_RELEASE}"');
   });
+
+  it("permits prerelease Hosting only through an explicit beta update channel", () => {
+    expect(installer).toContain("Hosting prerelease installation requires --update-channel beta.");
+    expect(installer).toContain("Local prerelease installation requires --update-channel beta.");
+    expect(installer).toContain(
+      'if [[ "$HOSTING_RELEASE" == *-* && "$UPDATE_CHANNEL" != "beta" ]]',
+    );
+    expect(installer).toContain("VPS Hosting prerelease setup requires --update-channel beta.");
+    expect(installer).toContain("printf '%s\\n' \"$UPDATE_CHANNEL\"");
+    expect(installer).toContain("/etc/fased/host-updater-channel");
+    expect(installer).toContain(
+      'if [[ "$UPDATE_CHANNEL_EXPLICIT" -ne 1 && "$HOSTING_REQUESTED" -ne 1 ]]',
+    );
+  });
+
+  it("keeps update-channel persistence outside the install marker JSON", () => {
+    const markerStart = installer.indexOf("write_install_marker() {");
+    const markerEnd = installer.indexOf("\nEOF\n  chmod 600", markerStart);
+    const channelFunction = installer.indexOf("persist_runtime_update_channel() {");
+
+    expect(markerStart).toBeGreaterThanOrEqual(0);
+    expect(markerEnd).toBeGreaterThan(markerStart);
+    expect(channelFunction).toBeGreaterThan(markerEnd);
+    expect(installer.slice(markerStart, markerEnd)).not.toContain("persist_runtime_update_channel");
+  });
 });

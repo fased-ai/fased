@@ -355,7 +355,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          package_version="$(node -p "require('./package.json').version")"
           if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "Fased Agent $GITHUB_REF_NAME" --generate-notes
+            release_args=(
+              "$GITHUB_REF_NAME"
+              --repo "$GITHUB_REPOSITORY"
+              --title "Fased Agent $GITHUB_REF_NAME"
+              --generate-notes
+            )
+            if [[ "$package_version" == *-* ]]; then
+              release_args+=(--prerelease --latest=false)
+            fi
+            gh release create "${release_args[@]}"
+          fi
+          is_prerelease="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)"
+          if [[ "$package_version" == *-* ]]; then
+            test "$is_prerelease" = "true"
+          else
+            test "$is_prerelease" = "false"
           fi
           gh release upload "$GITHUB_REF_NAME" .artifacts/hosted-runtime/* --repo "$GITHUB_REPOSITORY" --clobber
