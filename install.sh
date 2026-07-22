@@ -36,9 +36,26 @@ if [[ "$install_entry_legacy_ts_authkey" -eq 1 ]]; then
 fi
 
 if [[ "$install_entry_is_stream" -eq 1 && "$install_entry_hosting" -eq 1 ]]; then
-  if [[ "${#install_entry_args[@]}" -ne 1 || "${install_entry_args[0]:-}" != "--hosting" ]]; then
-    echo "Streamed VPS Hosting accepts only the exact fresh-install selector: --hosting" >&2
-    echo "Use an exact tagged, attested installer for repair, release overrides, or advanced selectors." >&2
+  install_entry_streamed_hosting_selector=""
+  if [[ "${#install_entry_args[@]}" -eq 1 && "${install_entry_args[0]:-}" == "--hosting" ]]; then
+    install_entry_streamed_hosting_selector="stable"
+  elif [[ "${#install_entry_args[@]}" -eq 5 && \
+    "${install_entry_args[0]:-}" == "--hosting" && \
+    "${install_entry_args[1]:-}" == "--release" && \
+    "${install_entry_args[3]:-}" == "--update-channel" ]]; then
+    install_entry_streamed_release="${install_entry_args[2]#v}"
+    install_entry_streamed_channel="${install_entry_args[4]}"
+    if [[ "$install_entry_streamed_release" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ && \
+      "$install_entry_streamed_channel" =~ ^(stable|beta)$ && \
+      ( "$install_entry_streamed_release" != *-* || "$install_entry_streamed_channel" == "beta" ) ]]; then
+      install_entry_streamed_hosting_selector="exact-release"
+    fi
+  fi
+  if [[ -z "$install_entry_streamed_hosting_selector" ]]; then
+    echo "Streamed VPS Hosting accepts only one fresh-install selector:" >&2
+    echo "  --hosting" >&2
+    echo "  --hosting --release vX.Y.Z[-prerelease] --update-channel stable|beta" >&2
+    echo "Repair and other advanced selectors require an exact tagged, attested installer file." >&2
     exit 1
   fi
   install_entry_exported_env=()
@@ -88,9 +105,9 @@ fi
 
 # A Hosting file request enters the attest-and-extract bootstrap unless it is
 # the exact inner invocation carrying the root-owned verified bundle marker.
-# Streamed Hosting reaches this block only for the exact fresh --hosting
-# selector validated above. Repair and advanced Hosting selectors remain
-# exact-tag-only.
+# Streamed Hosting reaches this block only for the fresh stable selector or
+# the exact release/channel selector validated above. Repair and other advanced
+# Hosting selectors remain exact-tag-only.
 if [[ "$install_entry_is_stream" -eq 1 || \
   ( "$install_entry_hosting" -eq 1 && -z "$install_entry_verified_bundle" ) ]]; then
   install_repo_url="${FASED_INSTALL_REPO:-https://github.com/fased-ai/fased.git}"
@@ -576,7 +593,8 @@ if [[ "$install_entry_is_stream" -eq 1 || \
     command -v curl >/dev/null 2>&1 || packages+=(curl)
     if command -v apt-get >/dev/null 2>&1; then
       run_as_root apt-get update
-      run_as_root apt-get install -y "${packages[@]}"
+      run_as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+        apt-get install -y "${packages[@]}"
     elif command -v dnf >/dev/null 2>&1; then
       run_as_root dnf install -y "${packages[@]}"
     elif command -v yum >/dev/null 2>&1; then
@@ -1561,8 +1579,22 @@ install_pnpm_for_active_node() {
   local pnpm_version
   pnpm_version="$(desired_pnpm_version)"
   if need_cmd corepack; then
-    corepack enable || run_as_root corepack enable || true
-    corepack prepare "pnpm@${pnpm_version}" --activate || true
+    local corepack_bin
+    local corepack_dir
+    local corepack_enabled=0
+    corepack_bin="$(command -v corepack)"
+    corepack_dir="$(dirname "$corepack_bin")"
+    if [[ -w "$corepack_dir" ]]; then
+      if corepack enable >/dev/null 2>&1; then
+        corepack_enabled=1
+      fi
+    elif run_as_root corepack enable >/dev/null 2>&1; then
+      corepack_enabled=1
+    fi
+    if [[ "$corepack_enabled" -eq 1 ]]; then
+      corepack prepare "pnpm@${pnpm_version}" --activate >/dev/null 2>&1 || true
+      hash -r 2>/dev/null || true
+    fi
   fi
   if ! need_cmd pnpm && need_cmd npm; then
     mkdir -p "$npm_prefix"
@@ -1581,15 +1613,15 @@ install_nodesource_node_apt() {
   local setup_script
   setup_script="$(mktemp)"
   if curl -fsSL https://deb.nodesource.com/setup_24.x -o "$setup_script" && \
-    run_as_root bash "$setup_script" && \
-    run_as_root apt-get install -y nodejs; then
+    run_as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a bash "$setup_script" && \
+    run_as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y nodejs; then
     rm -f "$setup_script"
     return 0
   fi
   rm -f "$setup_script"
   echo "NodeSource Node 24 install failed; trying distro nodejs/npm packages as fallback." >&2
   run_as_root apt-get update
-  run_as_root apt-get install -y nodejs npm
+  run_as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y nodejs npm
 }
 
 install_nodesource_node_rpm() {
@@ -1630,7 +1662,8 @@ install_linux_system_dependencies() {
 
   if need_cmd apt-get; then
     run_as_root apt-get update
-    run_as_root apt-get install -y git curl ca-certificates jq
+    run_as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+      apt-get install -y git curl ca-certificates jq
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
       install_nodesource_node_apt
@@ -1740,7 +1773,7 @@ install_github_cli_for_attestations() {
     printf 'deb [arch=%s signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\n' "$(dpkg --print-architecture)" \
       | run_as_root tee /etc/apt/sources.list.d/github-cli.list >/dev/null
     run_as_root apt-get update
-    run_as_root apt-get install -y gh
+    run_as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y gh
   elif need_cmd dnf5; then
     run_as_root dnf5 install -y dnf5-plugins
     run_as_root dnf5 config-manager addrepo \

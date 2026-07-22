@@ -2,7 +2,7 @@
 set -euo pipefail
 
 fixture=/tmp/fased-release-fixture
-version=9.8.7
+version=9.8.7-rc.2
 commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 dependency_hash=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 app_asset="fased-hosted-app-v2-linux-x64-v${version}.tar.gz"
@@ -13,21 +13,24 @@ mkdir -p "$fixture/app/package/dist" "$fixture/dependencies/node_modules"
 cat >"$fixture/app/package/install.sh" <<'EOF_INNER'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$#" -eq 5 && "$1" == "--hosting" && "$2" == "--release" && "$3" == "9.8.7" && "$4" == "--verified-hosting-bundle" ]]
-[[ "$5" =~ ^/var/lib/fased-installer/releases/v9\.8\.7/[a-f0-9]{64}/extract/package$ ]]
-[[ -f "$5/.fased-hosting-bundle-verified" ]]
+[[ "$#" -eq 9 ]]
+[[ "$1" == "--hosting" && "$2" == "--release" && "$3" == "v9.8.7-rc.2" ]]
+[[ "$4" == "--update-channel" && "$5" == "beta" ]]
+[[ "$6" == "--release" && "$7" == "9.8.7-rc.2" && "$8" == "--verified-hosting-bundle" ]]
+[[ "$9" =~ ^/var/lib/fased-installer/releases/v9\.8\.7-rc\.2/[a-f0-9]{64}/extract/package$ ]]
+[[ -f "$9/.fased-hosting-bundle-verified" ]]
 printf 'verified handoff\n' >/tmp/fased-bootstrap-success
 EOF_INNER
 chmod 0755 "$fixture/app/package/install.sh"
 cat >"$fixture/app/package/package.json" <<'EOF_PACKAGE'
 {
   "name": "@fased/fased",
-  "version": "9.8.7"
+  "version": "9.8.7-rc.2"
 }
 EOF_PACKAGE
 cat >"$fixture/app/package/dist/build-info.json" <<EOF_BUILD
 {
-  "version": "9.8.7",
+  "version": "9.8.7-rc.2",
   "commit": "$commit"
 }
 EOF_BUILD
@@ -80,7 +83,7 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 if [[ "$url" == "https://api.github.com/repos/fased-ai/fased/releases/latest" ]]; then
-  printf '{"tag_name":"v9.8.7"}\n'
+  printf '{"tag_name":"v9.8.7-rc.2"}\n'
   exit 0
 fi
 [[ -n "$output" && -f "/tmp/fased-release-fixture/${url##*/}" ]]
@@ -93,17 +96,17 @@ cat >/usr/local/bin/jq <<'EOF_JQ'
 set -euo pipefail
 if [[ "$*" == *".tag_name"* ]]; then
   input="$(cat)"
-  [[ "$input" == *'"tag_name":"v9.8.7"'* ]]
-  printf 'v9.8.7\n'
+  [[ "$input" == *'"tag_name":"v9.8.7-rc.2"'* ]]
+  printf 'v9.8.7-rc.2\n'
   exit 0
 fi
-[[ "$*" == *"--arg version 9.8.7"* ]]
+[[ "$*" == *"--arg version 9.8.7-rc.2"* ]]
 [[ "$*" == *"--arg architecture x64"* ]]
 [[ "$*" == *"--arg signer_platform linux-amd64"* ]]
 manifest="${!#}"
 [[ "$manifest" == */fased-hosted-release-v2.json && -f "$manifest" ]]
 fixture=/tmp/fased-release-fixture
-version=9.8.7
+version=9.8.7-rc.2
 commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 dependency_hash=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 app_asset="fased-hosted-app-v2-linux-x64-v${version}.tar.gz"
@@ -128,24 +131,24 @@ cat >/usr/local/bin/gh <<'EOF_GH'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "$*" != *"--help"* ]] || exit 0
-[[ "$*" == *"attestation verify"* && "$*" == *"--bundle"* && "$*" == *"--source-ref refs/tags/v9.8.7"* ]]
+[[ "$*" == *"attestation verify"* && "$*" == *"--bundle"* && "$*" == *"--source-ref refs/tags/v9.8.7-rc.2"* ]]
 printf '%s\n' "$*" >>/tmp/fased-gh-verification.log
 EOF_GH
 chmod 0755 /usr/local/bin/gh
 
 if bash -s -- --repair-hosting </repo/install.sh 2>/tmp/repair-error; then exit 1; fi
-grep -Fq 'accepts only the exact fresh-install selector' /tmp/repair-error
+grep -Fq 'accepts only one fresh-install selector' /tmp/repair-error
 [[ ! -e /var/lib/fased-installer ]]
 if FASED_INSTALL_REPO=https://example.invalid bash -s -- --hosting </repo/install.sh 2>/tmp/env-error; then exit 1; fi
 grep -Fq 'Refusing Fased environment overrides' /tmp/env-error
 [[ ! -e /var/lib/fased-installer ]]
 
-bash -s -- --hosting </repo/install.sh
+bash -s -- --hosting --release v9.8.7-rc.2 --update-channel beta </repo/install.sh
 [[ "$(cat /tmp/fased-bootstrap-success)" == "verified handoff" ]]
 [[ "$(wc -l </tmp/fased-gh-verification.log)" -eq 1 ]]
-marker="$(find /var/lib/fased-installer/releases/v9.8.7 -name .fased-hosting-bundle-verified -type f -print -quit)"
+marker="$(find /var/lib/fased-installer/releases/v9.8.7-rc.2 -name .fased-hosting-bundle-verified -type f -print -quit)"
 [[ -n "$marker" ]]
-grep -Fq 'version=9.8.7' "$marker"
+grep -Fq 'version=9.8.7-rc.2' "$marker"
 grep -Fq "commit=$commit" "$marker"
 if bash -s -- --hosting </repo/install.sh 2>/tmp/repeat-error; then exit 1; fi
 grep -Fq 'only for a fresh host' /tmp/repeat-error

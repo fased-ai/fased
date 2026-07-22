@@ -4,12 +4,13 @@ import { describe, expect, it } from "vitest";
 const installer = fs.readFileSync(new URL("../install.sh", import.meta.url), "utf8");
 
 describe("managed installer release pinning", () => {
-  it("permits only fresh exact streamed Hosting and retains exact-tag repair", () => {
+  it("permits fresh stable or exact-release streamed Hosting and retains exact-tag repair", () => {
     expect(installer).toContain(
       'if [[ "$install_entry_is_stream" -eq 1 && "$install_entry_hosting" -eq 1 ]]',
     );
+    expect(installer).toContain("Streamed VPS Hosting accepts only one fresh-install selector:");
     expect(installer).toContain(
-      "Streamed VPS Hosting accepts only the exact fresh-install selector: --hosting",
+      "--hosting --release vX.Y.Z[-prerelease] --update-channel stable|beta",
     );
     expect(installer).toContain("Streamed VPS Hosting is only for a fresh host");
     expect(installer).toContain("Refusing Fased environment overrides during streamed VPS Hosting");
@@ -27,11 +28,19 @@ describe("managed installer release pinning", () => {
   });
 
   it("resolves a streamed fresh Local install to one stable release before cloning source", () => {
+    const localReleaseStart = installer.indexOf(
+      'if [[ "$hosting_bootstrap" -eq 0 && -z "$hosting_release" ]]',
+    );
+    const localReleaseEnd = installer.indexOf("\n  fi\n", localReleaseStart);
+    const localReleaseResolver = installer.slice(localReleaseStart, localReleaseEnd);
+
     expect(installer).toContain('if [[ "$hosting_bootstrap" -eq 0 && -z "$hosting_release" ]]');
     expect(installer).toContain("resolve_public_latest_release_tag");
     expect(installer).not.toContain("gh release view --repo fased-ai/fased");
     expect(installer).toContain("install_current_github_cli_bootstrap");
-    expect(installer).not.toContain("run_as_root apt-get update\n      run_as_root env");
+    expect(localReleaseStart).toBeGreaterThanOrEqual(0);
+    expect(localReleaseEnd).toBeGreaterThan(localReleaseStart);
+    expect(localReleaseResolver).not.toContain("apt-get");
     expect(installer).toContain('hosting_release="$latest_local_tag"');
   });
 

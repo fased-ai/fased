@@ -244,6 +244,13 @@ export async function forceFreePortAndWait(
     if (!isRecoverableLsofError(err)) {
       throw err;
     }
+    // Minimal supported hosts may have neither lsof nor fuser. A free port
+    // needs no force action, so prove that directly before requiring a
+    // process-discovery tool. A busy port still fails closed unless fuser can
+    // identify and terminate its listener.
+    if (!(await isPortBusy(port))) {
+      return { killed: [], waitedMs: 0, escalatedToSigkill: false };
+    }
     useFuserFallback = true;
     killed = killPortWithFuser(port, "SIGTERM");
   }

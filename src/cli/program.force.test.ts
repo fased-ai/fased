@@ -159,7 +159,8 @@ describe("gateway --force helpers", () => {
       }
       return "18789/tcp: 4242\n";
     });
-    tryListenOnPortMock.mockResolvedValue(undefined);
+    const busyErr = Object.assign(new Error("in use"), { code: "EADDRINUSE" });
+    tryListenOnPortMock.mockRejectedValueOnce(busyErr).mockResolvedValue(undefined);
 
     const result = await forceFreePortAndWait(18789, { timeoutMs: 500, intervalMs: 100 });
 
@@ -194,6 +195,7 @@ describe("gateway --force helpers", () => {
       .mockRejectedValueOnce(busyErr)
       .mockRejectedValueOnce(busyErr)
       .mockRejectedValueOnce(busyErr)
+      .mockRejectedValueOnce(busyErr)
       .mockResolvedValueOnce(undefined);
 
     const promise = forceFreePortAndWait(18789, {
@@ -214,12 +216,29 @@ describe("gateway --force helpers", () => {
     vi.useRealTimers();
   });
 
-  it("throws when lsof is unavailable and fuser is missing", async () => {
+  it("starts when the port is free even if lsof and fuser are missing", async () => {
     (execFileSync as unknown as Mock).mockImplementation((cmd: string) => {
       const err = new Error(`spawnSync ${cmd} ENOENT`) as NodeJS.ErrnoException;
       err.code = "ENOENT";
       throw err;
     });
+    tryListenOnPortMock.mockResolvedValue(undefined);
+
+    await expect(forceFreePortAndWait(18789, { timeoutMs: 200, intervalMs: 100 })).resolves.toEqual(
+      { killed: [], waitedMs: 0, escalatedToSigkill: false },
+    );
+    expect(execFileSync).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed on a busy port when lsof and fuser are missing", async () => {
+    (execFileSync as unknown as Mock).mockImplementation((cmd: string) => {
+      const err = new Error(`spawnSync ${cmd} ENOENT`) as NodeJS.ErrnoException;
+      err.code = "ENOENT";
+      throw err;
+    });
+    tryListenOnPortMock.mockRejectedValue(
+      Object.assign(new Error("in use"), { code: "EADDRINUSE" }),
+    );
 
     await expect(forceFreePortAndWait(18789, { timeoutMs: 200, intervalMs: 100 })).rejects.toThrow(
       /fuser not found/i,

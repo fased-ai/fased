@@ -7,7 +7,7 @@ import fsp from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -1748,10 +1748,18 @@ export async function startServer() {
   return { server, close };
 }
 
-const isMain = process.argv[1]
-  ? pathToFileURL(path.resolve(process.argv[1])).href ===
-    pathToFileURL(fileURLToPath(import.meta.url)).href
-  : false;
+export function isMainModule(entryPath, modulePath = fileURLToPath(import.meta.url)) {
+  if (!entryPath) {
+    return false;
+  }
+  try {
+    return fs.realpathSync(entryPath) === fs.realpathSync(modulePath);
+  } catch {
+    return false;
+  }
+}
+
+const isMain = isMainModule(process.argv[1]);
 if (isMain) {
   if (process.argv[2] === "--self-check") {
     process.stdout.write(

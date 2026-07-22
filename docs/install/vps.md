@@ -35,6 +35,14 @@ curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
   | bash -s -- --hosting
 ```
 
+For an explicitly selected prerelease, keep the same one-command flow and add
+the exact release and beta channel:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+  | bash -s -- --hosting --release vX.Y.Z-rc.N --update-channel beta
+```
+
 Open the Tailscale login URL printed by the installer on your own computer.
 When prompted, verify private SSH access before confirming it.
 
@@ -61,9 +69,11 @@ fased update
 
 <AccordionGroup>
   <Accordion title="What the exact command verifies">
-    The streamed script accepts only a fresh `--hosting` selector. It rejects
-    repair, release and source overrides, caller-supplied verification markers,
-    unsafe proxy or shell overrides, and existing Fased state.
+    The streamed script accepts either the normal fresh `--hosting` selector or
+    the exact fresh `--hosting --release ... --update-channel ...` selector. It
+    rejects repair and source selectors, caller-supplied verification markers,
+    unsafe proxy or shell overrides, invalid release/channel pairs, and existing
+    Fased state.
 
     Before persistent Fased mutation, it resolves a stable tag and verifies the
     offline GitHub attestation bundle for the release manifest. That manifest
@@ -81,8 +91,9 @@ fased update
   <Accordion title="Advanced: verify install.sh before it runs">
     Follow the canonical
     [exact-tag pre-execution verification](/install/installer#exact-tag-pre-execution-verification).
-    It authenticates the tagged `install.sh` before Bash runs it and is the only
-    documented route for choosing a Hosting release override.
+    It authenticates the tagged `install.sh` before Bash runs it. Normal fresh
+    release selection can use the one-command streamed selector above; repair
+    still requires the verified-file procedure.
   </Accordion>
 
   <Accordion title="Hosting repair and recovery">

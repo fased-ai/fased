@@ -79,6 +79,58 @@ describe("inspectGatewayRestart", () => {
     expect(snapshot.staleGatewayPids).toEqual([]);
   });
 
+  it("accepts an authenticated RPC probe when lsof cannot identify the busy listener", async () => {
+    const service = {
+      readRuntime: vi.fn(async () => ({ status: "running", pid: 7000 })),
+    } as unknown as GatewayService;
+
+    inspectPortUsage.mockResolvedValue({
+      port: 18789,
+      status: "busy",
+      listeners: [],
+      hints: ["Port is in use but process details are unavailable."],
+      errors: ["Error: spawn lsof ENOENT"],
+    });
+
+    const { inspectGatewayRestart } = await import("./restart-health.js");
+    const snapshot = await inspectGatewayRestart({
+      service,
+      port: 18789,
+      rpc: { url: "ws://127.0.0.1:18789", token: "expected-token", timeoutMs: 1500 },
+    });
+
+    expect(probeGatewayStatus).toHaveBeenCalledTimes(1);
+    expect(snapshot.healthy).toBe(true);
+    expect(snapshot.rpc).toEqual({ ok: true });
+    expect(snapshot.staleGatewayPids).toEqual([]);
+  });
+
+  it("rejects an unidentified busy listener when the authenticated RPC probe fails", async () => {
+    const service = {
+      readRuntime: vi.fn(async () => ({ status: "running", pid: 7000 })),
+    } as unknown as GatewayService;
+
+    inspectPortUsage.mockResolvedValue({
+      port: 18789,
+      status: "busy",
+      listeners: [],
+      hints: ["Port is in use but process details are unavailable."],
+      errors: ["Error: spawn lsof ENOENT"],
+    });
+    probeGatewayStatus.mockResolvedValue({ ok: false, error: "unauthorized" });
+
+    const { inspectGatewayRestart } = await import("./restart-health.js");
+    const snapshot = await inspectGatewayRestart({
+      service,
+      port: 18789,
+      rpc: { url: "ws://127.0.0.1:18789", token: "expected-token", timeoutMs: 1500 },
+    });
+
+    expect(snapshot.healthy).toBe(false);
+    expect(snapshot.rpc).toEqual({ ok: false, error: "unauthorized" });
+    expect(snapshot.staleGatewayPids).toEqual([]);
+  });
+
   it("marks non-owned gateway listener pids as stale while runtime is running", async () => {
     const service = {
       readRuntime: vi.fn(async () => ({ status: "running", pid: 8000 })),
