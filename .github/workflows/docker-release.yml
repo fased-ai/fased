@@ -1,6 +1,7 @@
 name: Docker Release
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - ".dockerignore"
@@ -42,7 +43,7 @@ env:
 
 jobs:
   validate-local-image:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -95,7 +96,7 @@ jobs:
         run: scripts/scan-docker-image.sh "$IMAGE" linux/amd64
 
   validate-arm64-signer-image:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
