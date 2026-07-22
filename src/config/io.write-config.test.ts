@@ -574,4 +574,23 @@ describe("config io write", () => {
       expect(last.watchCommand).toBe("gateway --force");
     });
   });
+
+  it("writes group-shared state only for the Hosting runtime profile", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    await withTempHome("fased-config-io-hosting-", async (home) => {
+      const io = createConfigIO({
+        env: { FASED_HOST_PROFILE: "hosting" },
+        homedir: () => home,
+        logger: silentLogger,
+      });
+      await io.writeConfigFile({ gateway: { mode: "local" } });
+
+      const stateDir = path.join(home, ".fased");
+      const configPath = path.join(stateDir, "fased.json");
+      expect((await fs.stat(stateDir)).mode & 0o7777).toBe(0o2770);
+      expect((await fs.stat(configPath)).mode & 0o777).toBe(0o660);
+    });
+  });
 });

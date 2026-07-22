@@ -281,17 +281,24 @@ export async function noteStateIntegrity(
       const stat = isDirSymlink ? fs.statSync(stateDir) : dirLstat;
       const resolvedDir = isDirSymlink ? fs.realpathSync(stateDir) : stateDir;
       const isImmutableStore = resolvedDir.startsWith("/nix/store/");
-      if (!isImmutableStore && (stat.mode & 0o077) !== 0) {
+      const sharedHostingState = process.env.FASED_HOST_PROFILE?.trim() === "hosting";
+      const stateModeInvalid = sharedHostingState
+        ? (stat.mode & 0o0777) !== 0o770
+        : (stat.mode & 0o077) !== 0;
+      const expectedStateMode = sharedHostingState ? 0o2770 : 0o700;
+      if (!isImmutableStore && stateModeInvalid) {
         warnings.push(
-          `- State directory permissions are too open (${displayStateDir}). Recommend chmod 700.`,
+          `- State directory permissions are incorrect (${displayStateDir}). Recommend chmod ${expectedStateMode.toString(8)}.`,
         );
         const tighten = await prompter.confirmSkipInNonInteractive({
-          message: `Tighten permissions on ${displayStateDir} to 700?`,
+          message: `Repair permissions on ${displayStateDir} to ${expectedStateMode.toString(8)}?`,
           initialValue: true,
         });
         if (tighten) {
-          fs.chmodSync(stateDir, 0o700);
-          changes.push(`- Tightened permissions on ${displayStateDir} to 700`);
+          fs.chmodSync(stateDir, expectedStateMode);
+          changes.push(
+            `- Repaired permissions on ${displayStateDir} to ${expectedStateMode.toString(8)}`,
+          );
         }
       }
     } catch (err) {
@@ -308,17 +315,24 @@ export async function noteStateIntegrity(
       const stat = isSymlink ? fs.statSync(configPath) : configLstat;
       const resolvedConfig = isSymlink ? fs.realpathSync(configPath) : configPath;
       const isImmutableConfig = resolvedConfig.startsWith("/nix/store/");
-      if (!isImmutableConfig && (stat.mode & 0o077) !== 0) {
+      const sharedHostingState = process.env.FASED_HOST_PROFILE?.trim() === "hosting";
+      const configModeInvalid = sharedHostingState
+        ? (stat.mode & 0o0777) !== 0o660
+        : (stat.mode & 0o077) !== 0;
+      const expectedConfigMode = sharedHostingState ? 0o660 : 0o600;
+      if (!isImmutableConfig && configModeInvalid) {
         warnings.push(
-          `- Config file is group/world readable (${displayConfigPath ?? configPath}). Recommend chmod 600.`,
+          `- Config file permissions are incorrect (${displayConfigPath ?? configPath}). Recommend chmod ${expectedConfigMode.toString(8)}.`,
         );
         const tighten = await prompter.confirmSkipInNonInteractive({
-          message: `Tighten permissions on ${displayConfigPath ?? configPath} to 600?`,
+          message: `Repair permissions on ${displayConfigPath ?? configPath} to ${expectedConfigMode.toString(8)}?`,
           initialValue: true,
         });
         if (tighten) {
-          fs.chmodSync(configPath, 0o600);
-          changes.push(`- Tightened permissions on ${displayConfigPath ?? configPath} to 600`);
+          fs.chmodSync(configPath, expectedConfigMode);
+          changes.push(
+            `- Repaired permissions on ${displayConfigPath ?? configPath} to ${expectedConfigMode.toString(8)}`,
+          );
         }
       }
     } catch (err) {

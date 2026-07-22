@@ -171,11 +171,11 @@ describe("waitForGatewayHttpListener", () => {
 describe("formatHostedRootServiceRequiredFailure", () => {
   it("explains that hosting does not fall back to an app-managed user service", () => {
     const text = formatHostedRootServiceRequiredFailure({
-      runAsUser: "app",
+      runAsUser: "fased-gateway",
       detail: "sudo denied",
     });
 
-    expect(text).toContain("root-managed fased-gateway.service running as User=app");
+    expect(text).toContain("root-managed fased-gateway.service running as User=fased-gateway");
     expect(text).toContain("will not fall back to an app-managed user service");
     expect(text).toContain("Root service repair failed: sudo denied");
     expect(text).toContain("exact tagged, attested Hosting release");

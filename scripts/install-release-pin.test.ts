@@ -8,11 +8,15 @@ describe("managed installer release pinning", () => {
     expect(installer).toContain(
       'if [[ "$install_entry_is_stream" -eq 1 && "$install_entry_hosting" -eq 1 ]]',
     );
-    expect(installer).toContain("Streamed VPS Hosting accepts only one fresh-install selector:");
+    expect(installer).toContain(
+      "Streamed VPS Hosting accepts only the public one-command selector:",
+    );
     expect(installer).toContain(
       "--hosting --release vX.Y.Z[-prerelease] --update-channel stable|beta",
     );
-    expect(installer).toContain("Streamed VPS Hosting is only for a fresh host");
+    expect(installer).toContain(
+      "The same selector installs fresh or repairs an interrupted/completed installation",
+    );
     expect(installer).toContain("Refusing Fased environment overrides during streamed VPS Hosting");
     expect(installer).toContain(
       'if [[ "$hosting_bootstrap" -eq 1 && "$hosting_repair_bootstrap" -eq 0 && -z "$hosting_release" ]]',

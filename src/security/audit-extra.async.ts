@@ -726,6 +726,7 @@ export async function collectIncludeFilePermFindings(params: {
   execIcacls?: ExecFn;
 }): Promise<SecurityAuditFinding[]> {
   const findings: SecurityAuditFinding[] = [];
+  const sharedHostingState = params.env?.FASED_HOST_PROFILE?.trim() === "hosting";
   if (!params.configSnapshot.exists) {
     return findings;
   }
@@ -749,7 +750,7 @@ export async function collectIncludeFilePermFindings(params: {
     if (!perms.ok) {
       continue;
     }
-    if (perms.worldWritable || perms.groupWritable) {
+    if (perms.worldWritable || (perms.groupWritable && !sharedHostingState)) {
       findings.push({
         checkId: "fs.config_include.perms_writable",
         severity: "critical",
@@ -777,7 +778,7 @@ export async function collectIncludeFilePermFindings(params: {
           env: params.env,
         }),
       });
-    } else if (perms.groupReadable) {
+    } else if (perms.groupReadable && !sharedHostingState) {
       findings.push({
         checkId: "fs.config_include.perms_group_readable",
         severity: "warn",
@@ -805,6 +806,7 @@ export async function collectStateDeepFilesystemFindings(params: {
   execIcacls?: ExecFn;
 }): Promise<SecurityAuditFinding[]> {
   const findings: SecurityAuditFinding[] = [];
+  const sharedHostingState = params.env.FASED_HOST_PROFILE?.trim() === "hosting";
   const oauthDir = resolveOAuthDir(params.env, params.stateDir);
 
   const oauthPerms = await inspectPathPermissions(oauthDir, {
@@ -813,7 +815,7 @@ export async function collectStateDeepFilesystemFindings(params: {
     exec: params.execIcacls,
   });
   if (oauthPerms.ok && oauthPerms.isDir) {
-    if (oauthPerms.worldWritable || oauthPerms.groupWritable) {
+    if (oauthPerms.worldWritable || (oauthPerms.groupWritable && !sharedHostingState)) {
       findings.push({
         checkId: "fs.credentials_dir.perms_writable",
         severity: "critical",
@@ -827,7 +829,7 @@ export async function collectStateDeepFilesystemFindings(params: {
           env: params.env,
         }),
       });
-    } else if (oauthPerms.groupReadable || oauthPerms.worldReadable) {
+    } else if (oauthPerms.worldReadable || (oauthPerms.groupReadable && !sharedHostingState)) {
       findings.push({
         checkId: "fs.credentials_dir.perms_readable",
         severity: "warn",
@@ -862,7 +864,7 @@ export async function collectStateDeepFilesystemFindings(params: {
       exec: params.execIcacls,
     });
     if (authPerms.ok) {
-      if (authPerms.worldWritable || authPerms.groupWritable) {
+      if (authPerms.worldWritable || (authPerms.groupWritable && !sharedHostingState)) {
         findings.push({
           checkId: "fs.auth_profiles.perms_writable",
           severity: "critical",
@@ -876,7 +878,7 @@ export async function collectStateDeepFilesystemFindings(params: {
             env: params.env,
           }),
         });
-      } else if (authPerms.worldReadable || authPerms.groupReadable) {
+      } else if (authPerms.worldReadable || (authPerms.groupReadable && !sharedHostingState)) {
         findings.push({
           checkId: "fs.auth_profiles.perms_readable",
           severity: "warn",
@@ -901,7 +903,7 @@ export async function collectStateDeepFilesystemFindings(params: {
       exec: params.execIcacls,
     });
     if (storePerms.ok) {
-      if (storePerms.worldReadable || storePerms.groupReadable) {
+      if (storePerms.worldReadable || (storePerms.groupReadable && !sharedHostingState)) {
         findings.push({
           checkId: "fs.sessions_store.perms_readable",
           severity: "warn",
@@ -931,7 +933,7 @@ export async function collectStateDeepFilesystemFindings(params: {
         exec: params.execIcacls,
       });
       if (logPerms.ok) {
-        if (logPerms.worldReadable || logPerms.groupReadable) {
+        if (logPerms.worldReadable || (logPerms.groupReadable && !sharedHostingState)) {
           findings.push({
             checkId: "fs.log_file.perms_readable",
             severity: "warn",

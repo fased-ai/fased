@@ -27,6 +27,10 @@ import {
   resolveManagedRuntimePaths,
 } from "./managed-runtime-layout.mjs";
 
+function managedManifestMode(manifest) {
+  return manifest?.profile === "hosting" ? 0o660 : 0o600;
+}
+
 const execFileAsync = promisify(execFile);
 const DEFAULT_RELEASE_BASE_URL = "https://github.com/fased-ai/fased/releases/download";
 const DEFAULT_REGISTRY = "https://registry.npmjs.org";
@@ -789,6 +793,7 @@ async function requestHostedSignerTransaction(
       "activateRelease",
       "authorizeGatewayRelease",
       "gateGatewayRelease",
+      "restartGateway",
       "commitRelease",
       "rollbackRelease",
     ]).has(operation)
@@ -982,68 +987,22 @@ export async function authorizePreactivatedHostedGateway({
   );
 }
 
-async function restartHostedGateway() {
-  const systemctl = fs.existsSync("/usr/bin/systemctl") ? "/usr/bin/systemctl" : "/bin/systemctl";
-  const shown = await runFile(systemctl, [
-    "show",
-    "fased-gateway.service",
-    "--property",
-    "MainPID",
-    "--value",
-  ]);
-  const pid = Number.parseInt(shown.stdout.trim(), 10);
-  if (!shown.ok || !Number.isSafeInteger(pid) || pid <= 1) {
-    throw new Error(`Hosted Gateway MainPID unavailable: ${shown.stderr.trim()}`);
-  }
-  const status = await fsp.readFile(`/proc/${pid}/status`, "utf8");
-  const ownerUid = Number.parseInt(status.match(/^Uid:\s+(\d+)/m)?.[1] ?? "", 10);
-  const currentUid = typeof process.getuid === "function" ? process.getuid() : -1;
-  if (!Number.isSafeInteger(ownerUid) || ownerUid !== currentUid) {
-    throw new Error("Hosted Gateway process is not owned by the Fased app account.");
-  }
-  process.kill(pid, "SIGTERM");
+async function restartHostedGateway(version, timeoutMs = 30_000) {
+  return await requestHostedSignerTransactionWithRetry(
+    "restartGateway",
+    randomUUID(),
+    version,
+    timeoutMs,
+  );
 }
 
-async function quiesceHostedGateway(timeoutMs = 30_000) {
-  const systemctl = fs.existsSync("/usr/bin/systemctl") ? "/usr/bin/systemctl" : "/bin/systemctl";
-  const deadline = Date.now() + Math.min(timeoutMs, 30_000);
-  let signaledPid = null;
-  while (Date.now() < deadline) {
-    const shown = await runFile(systemctl, [
-      "show",
-      "fased-gateway.service",
-      "--property",
-      "MainPID",
-      "--value",
-    ]);
-    if (!shown.ok) {
-      throw new Error(`Hosted Gateway state is unavailable: ${shown.stderr.trim()}`);
-    }
-    const pid = Number.parseInt(shown.stdout.trim(), 10);
-    if (!Number.isSafeInteger(pid) || pid <= 1) {
-      return;
-    }
-    if (pid !== signaledPid) {
-      let status;
-      try {
-        status = await fsp.readFile(`/proc/${pid}/status`, "utf8");
-      } catch (error) {
-        if (error?.code === "ENOENT") {
-          continue;
-        }
-        throw error;
-      }
-      const ownerUid = Number.parseInt(status.match(/^Uid:\s+(\d+)/m)?.[1] ?? "", 10);
-      const currentUid = typeof process.getuid === "function" ? process.getuid() : -1;
-      if (!Number.isSafeInteger(ownerUid) || ownerUid !== currentUid) {
-        throw new Error("Hosted Gateway process is not owned by the Fased app account.");
-      }
-      process.kill(pid, "SIGTERM");
-      signaledPid = pid;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error("Hosted Gateway did not quiesce before the app/signer switch.");
+async function quiesceHostedGateway(transactionId, version, timeoutMs = 30_000) {
+  return await requestHostedSignerTransactionWithRetry(
+    "gateGatewayRelease",
+    transactionId,
+    version,
+    timeoutMs,
+  );
 }
 
 async function refreshGateway(
@@ -1065,7 +1024,7 @@ async function refreshGateway(
   };
   if (manifest.profile === "hosting" && !hostedServiceAlreadyRestarted) {
     try {
-      await restartHostedGateway();
+      await restartHostedGateway(manifest.runtime.activeVersion, timeoutMs);
     } catch (error) {
       if (!allowInactiveHosted || !error.message.includes("MainPID unavailable")) {
         throw error;
@@ -1405,14 +1364,22 @@ async function activateHostedApplication(paths, journal) {
   }
   await atomicSymlink(journal.targetRoot, paths.currentLink);
   await replaceCompatibilityLink(paths);
-  await atomicWriteJson(paths.manifestPath, journal.nextManifest, 0o600);
+  await atomicWriteJson(
+    paths.manifestPath,
+    journal.nextManifest,
+    managedManifestMode(journal.nextManifest),
+  );
   await syncManagedActivation(paths);
 }
 
 async function restoreHostedApplication(paths, journal) {
   await atomicSymlink(journal.previousRoot, paths.currentLink);
   await replaceCompatibilityLink(paths);
-  await atomicWriteJson(paths.manifestPath, journal.previousManifest, 0o600);
+  await atomicWriteJson(
+    paths.manifestPath,
+    journal.previousManifest,
+    managedManifestMode(journal.previousManifest),
+  );
   await syncManagedActivation(paths);
 }
 
@@ -1539,7 +1506,8 @@ function hostedTransactionOperations(paths, timeoutMs, options = {}) {
       // application runtime. Older releases can lack helpers required by this
       // updater, and downgrading the stable files would break recovery.
     },
-    quiesceGateway: async () => await quiesceHostedGateway(timeoutMs),
+    quiesceGateway: async (journal) =>
+      await quiesceHostedGateway(journal.transactionId, journal.targetVersion, timeoutMs),
     signerRequest: async (operation, journal) => {
       if (operation === "prepareRelease") {
         await ensureHostedControllerRelease(
@@ -1601,7 +1569,11 @@ function hostedTransactionOperations(paths, timeoutMs, options = {}) {
         ...journal.nextManifest,
         signer: { release: journal.signerRelease },
       };
-      await atomicWriteJson(paths.manifestPath, journal.nextManifest, 0o600);
+      await atomicWriteJson(
+        paths.manifestPath,
+        journal.nextManifest,
+        managedManifestMode(journal.nextManifest),
+      );
       await syncManagedActivation(paths);
       await updateStableComponents(paths, journal.targetRoot, true);
       await cleanupReleases(paths, [journal.targetRoot, journal.previousRoot]);
@@ -4300,7 +4272,11 @@ async function inspectLocalManagedConsistency(paths, manifest, currentVersion) {
 async function restoreLocalPairedApplication(paths, journal) {
   await atomicSymlink(journal.previousRoot, paths.currentLink);
   await replaceCompatibilityLink(paths);
-  await atomicWriteJson(paths.manifestPath, journal.previousManifest, 0o600);
+  await atomicWriteJson(
+    paths.manifestPath,
+    journal.previousManifest,
+    managedManifestMode(journal.previousManifest),
+  );
   await syncManagedActivation(paths);
   // Stable launchers and updater deliberately remain on the newest verified
   // controller so a historical application can be re-updated safely.
@@ -4388,7 +4364,7 @@ async function recoverLocalPairedUpdate(paths, timeoutMs) {
       ...journal.nextManifest,
       signer: { release: signer.identity },
     };
-    await atomicWriteJson(paths.manifestPath, nextManifest, 0o600);
+    await atomicWriteJson(paths.manifestPath, nextManifest, managedManifestMode(nextManifest));
     await syncManagedActivation(paths);
     await updateStableComponents(paths, journal.targetRoot, true);
     await removeLocalPairedUpdateJournal(paths);
@@ -4808,7 +4784,11 @@ async function updateManagedRuntime(options) {
               }
               await atomicSymlink(releaseRoot, paths.currentLink);
               await replaceCompatibilityLink(paths);
-              await atomicWriteJson(paths.manifestPath, pairedJournal.nextManifest, 0o600);
+              await atomicWriteJson(
+                paths.manifestPath,
+                pairedJournal.nextManifest,
+                managedManifestMode(pairedJournal.nextManifest),
+              );
               await syncManagedActivation(paths);
             });
             activated = true;
@@ -4838,7 +4818,11 @@ async function updateManagedRuntime(options) {
               throw new Error("Committed signer identity changed after paired health verification");
             }
             await measureStage(timings, "paired updater commit cleanup", async () => {
-              await atomicWriteJson(paths.manifestPath, pairedJournal.nextManifest, 0o600);
+              await atomicWriteJson(
+                paths.manifestPath,
+                pairedJournal.nextManifest,
+                managedManifestMode(pairedJournal.nextManifest),
+              );
               await syncManagedActivation(paths);
               await updateStableComponents(paths, releaseRoot, true);
               await cleanupReleases(paths, [releaseRoot, previousRoot]);
@@ -4863,7 +4847,11 @@ async function updateManagedRuntime(options) {
             }
             await atomicSymlink(releaseRoot, paths.currentLink);
             await replaceCompatibilityLink(paths);
-            await atomicWriteJson(paths.manifestPath, nextManifest, 0o600);
+            await atomicWriteJson(
+              paths.manifestPath,
+              nextManifest,
+              managedManifestMode(nextManifest),
+            );
           });
           activated = true;
 
@@ -4875,7 +4863,11 @@ async function updateManagedRuntime(options) {
             if (previousRoot) {
               await atomicSymlink(previousRoot, paths.currentLink);
               await replaceCompatibilityLink(paths);
-              await atomicWriteJson(paths.manifestPath, previousManifest, 0o600);
+              await atomicWriteJson(
+                paths.manifestPath,
+                previousManifest,
+                managedManifestMode(previousManifest),
+              );
               await refreshGateway(previousRoot, previousManifest, options.timeoutMs).catch(
                 () => undefined,
               );
@@ -4928,7 +4920,11 @@ async function updateManagedRuntime(options) {
         if (active?.runtime?.activeVersion !== currentVersion && previousRoot) {
           await atomicSymlink(previousRoot, paths.currentLink).catch(() => undefined);
           await replaceCompatibilityLink(paths).catch(() => undefined);
-          await atomicWriteJson(paths.manifestPath, previousManifest, 0o600).catch(() => undefined);
+          await atomicWriteJson(
+            paths.manifestPath,
+            previousManifest,
+            managedManifestMode(previousManifest),
+          ).catch(() => undefined);
         }
       }
     }

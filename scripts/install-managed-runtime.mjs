@@ -221,6 +221,8 @@ export async function installManagedRuntime(params, dependencyOverrides = {}) {
   };
   const paths = resolveManagedRuntimePaths(params);
   const profile = normalizeManagedProfile(params.profile);
+  const stateDirMode = profile === "hosting" ? 0o2770 : 0o700;
+  const sharedManifestMode = profile === "hosting" ? 0o660 : 0o600;
   const existingManifest = readManagedInstallManifest(paths.manifestPath);
   const version = await assertManagedRuntime(params.packageRoot);
   const metadata = await readHostedRuntimeMetadata(params.packageRoot);
@@ -338,7 +340,7 @@ export async function installManagedRuntime(params, dependencyOverrides = {}) {
       previousManifest,
       timeoutMs: params.timeoutMs || DEFAULT_HOST_TRANSACTION_TIMEOUT_MS,
     });
-    await fsp.chmod(paths.stateDir, 0o700).catch(() => undefined);
+    await fsp.chmod(paths.stateDir, stateDirMode).catch(() => undefined);
     return { manifest, paths, releaseRoot, hostTransaction: true };
   }
 
@@ -348,7 +350,7 @@ export async function installManagedRuntime(params, dependencyOverrides = {}) {
     paths.compatibilityPackageRoot,
   );
   await installStableFiles(paths, releaseRoot, Boolean(params.hostTransactionId));
-  await atomicWriteJson(paths.manifestPath, manifest, 0o600);
+  await atomicWriteJson(paths.manifestPath, manifest, sharedManifestMode);
   if (params.hostTransactionId) {
     const identityManifestHandle = await fsp.open(paths.manifestPath, "r");
     await identityManifestHandle.sync().finally(() => identityManifestHandle.close());
@@ -374,11 +376,11 @@ export async function installManagedRuntime(params, dependencyOverrides = {}) {
       );
     }
     manifest.signer = { release: authorization.release };
-    await atomicWriteJson(paths.manifestPath, manifest, 0o600);
+    await atomicWriteJson(paths.manifestPath, manifest, sharedManifestMode);
     const manifestHandle = await fsp.open(paths.manifestPath, "r");
     await manifestHandle.sync().finally(() => manifestHandle.close());
   }
-  await fsp.chmod(paths.stateDir, 0o700).catch(() => undefined);
+  await fsp.chmod(paths.stateDir, stateDirMode).catch(() => undefined);
   if (compatibilityBackup) {
     await fsp.rm(compatibilityBackup, { recursive: true, force: true });
   }
@@ -422,7 +424,11 @@ export async function rollbackManagedRuntime(params) {
     hostedRelease,
     previousVersion: currentVersion,
   });
-  await atomicWriteJson(paths.manifestPath, previousManifest, 0o600);
+  await atomicWriteJson(
+    paths.manifestPath,
+    previousManifest,
+    normalizeManagedProfile(manifest.profile) === "hosting" ? 0o660 : 0o600,
+  );
   return { manifest: previousManifest, paths, releaseRoot: previousRoot };
 }
 

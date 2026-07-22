@@ -107,6 +107,8 @@ async function createFixture() {
     startGateway: async () => {
       events.push("start-gateway");
     },
+    stopGateway: async () => undefined,
+    restartGateway: async () => undefined,
     probeSigner: async () => signerRelease("1.2.2"),
     probeSignerState: async () => ({
       release: signerRelease("1.2.2"),
@@ -450,6 +452,7 @@ describe("root-owned hosted updater protocol", () => {
       "activateRelease",
       "authorizeGatewayRelease",
       "gateGatewayRelease",
+      "restartGateway",
       "commitRelease",
       "rollbackRelease",
     ]) {
@@ -484,6 +487,38 @@ describe("root-owned hosted updater protocol", () => {
         version: "1.2.3",
       }),
     ).toThrow("UUIDv4");
+  });
+
+  it("keeps hosted Gateway process control inside the root controller", async () => {
+    const { context } = await createFixture();
+    let stopped = 0;
+    let restarted = 0;
+    context.stopGateway = async () => {
+      stopped += 1;
+    };
+    context.restartGateway = async () => {
+      restarted += 1;
+    };
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      context,
+    );
+    await __testing.gateGatewayRelease(
+      request("gateGatewayRelease", TRANSACTION_ONE, "1.2.3"),
+      context,
+    );
+    expect(stopped).toBe(1);
+    await __testing.rollbackSignerRelease(
+      request("rollbackRelease", TRANSACTION_ONE, "1.2.3"),
+      context,
+    );
+    await expect(
+      __testing.restartGatewayService(request("restartGateway", TRANSACTION_TWO, "1.2.2"), context),
+    ).resolves.toMatchObject({ phase: "restarted" });
+    expect(restarted).toBe(1);
+    await expect(
+      __testing.restartGatewayService(request("restartGateway", TRANSACTION_TWO, "1.2.3"), context),
+    ).rejects.toThrow("does not match installed signer");
   });
 
   it("keeps a verified forward controller after the signer transaction rolls back", async () => {

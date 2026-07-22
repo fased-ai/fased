@@ -287,7 +287,7 @@ describe("attested Hosting installer artifact layout", () => {
       "beta",
     ]);
     expect(exactPrerelease.status).toBe(1);
-    expect(exactPrerelease.stderr).not.toContain("accepts only one fresh-install selector");
+    expect(exactPrerelease.stderr).not.toContain("accepts only the public one-command selector");
     expect(exactPrerelease.stderr).toMatch(
       /must start in the provider's root console|only for a fresh host/iu,
     );
@@ -304,7 +304,7 @@ describe("attested Hosting installer artifact layout", () => {
       const result = run(args);
       expect(result.status).toBe(1);
       expect(result.stderr).toContain(
-        "Streamed VPS Hosting accepts only one fresh-install selector:",
+        "Streamed VPS Hosting accepts only the public one-command selector:",
       );
       expect(result.stderr).not.toContain("VPS Hosting bootstrap must start");
     }
@@ -315,6 +315,19 @@ describe("attested Hosting installer artifact layout", () => {
     expect(unsafeEnvironment.status).toBe(1);
     expect(unsafeEnvironment.stderr).toContain(
       "Refusing Fased environment overrides during streamed VPS Hosting",
+    );
+  });
+
+  it("reuses the one-command Hosting bootstrap for interrupted or completed repairs", () => {
+    const installer = fs.readFileSync(path.join(root, "install.sh"), "utf8");
+    expect(installer).toContain("install_entry_existing_hosting_state=0");
+    expect(installer).toContain("install_entry_completed_hosting_repair=1");
+    expect(installer).toContain('verified_inner_args[$inner_arg_index]="--repair-hosting"');
+    expect(installer).toContain(
+      "Interrupted VPS Hosting setup detected; resuming through a newly verified release bundle.",
+    );
+    expect(installer).not.toContain(
+      "Streamed VPS Hosting is only for a fresh host; existing Fased state was found.",
     );
   });
 
