@@ -12,19 +12,25 @@ import { resolveWalletRuntimeConfig } from "../wallet/wallet-runtime-config.js";
 import { collectChannelSecurityFindings } from "./audit-channel.js";
 import {
   collectAttackSurfaceSummaryFindings,
+  collectExecRuntimeFindings,
   collectExposureMatrixFindings,
+  collectGatewayHttpNoAuthFindings,
   collectGatewayHttpSessionKeyOverrideFindings,
   collectHooksHardeningFindings,
   collectIncludeFilePermFindings,
   collectInstalledSkillsCodeSafetyFindings,
+  collectLikelyMultiUserSetupFindings,
   collectMinimalProfileOverrideFindings,
   collectModelHygieneFindings,
+  collectNodeDangerousAllowCommandFindings,
   collectNodeDenyCommandPatternFindings,
-  collectSmallModelRiskFindings,
-  collectSandboxDockerNoopFindings,
-  collectPluginsTrustFindings,
-  collectSecretsInConfigFindings,
   collectPluginsCodeSafetyFindings,
+  collectPluginsTrustFindings,
+  collectSandboxBrowserHashLabelFindings,
+  collectSandboxDangerousConfigFindings,
+  collectSandboxDockerNoopFindings,
+  collectSecretsInConfigFindings,
+  collectSmallModelRiskFindings,
   collectStateDeepFilesystemFindings,
   collectSyncedFolderFindings,
   readConfigSnapshotForAudit,
@@ -34,8 +40,11 @@ import {
   formatPermissionRemediation,
   inspectPathPermissions,
 } from "./audit-fs.js";
+import { collectEnabledInsecureOrDangerousFlags } from "./dangerous-config-flags.js";
 import { DEFAULT_GATEWAY_HTTP_TOOL_DENY } from "./dangerous-tools.js";
 import type { ExecFn } from "./windows-acl.js";
+
+type ExecDockerRawFn = typeof import("../agents/sandbox/docker.js").execDockerRaw;
 
 export type SecurityAuditSeverity = "info" | "warn" | "critical";
 
@@ -87,8 +96,8 @@ export type SecurityAuditOptions = {
   probeGatewayFn?: typeof probeGateway;
   /** Dependency injection for tests (Windows ACL checks). */
   execIcacls?: ExecFn;
-  /** @deprecated Docker sandbox raw probe injection is no longer used by the audit path. */
-  execDockerRawFn?: ExecFn;
+  /** Dependency injection for Docker-backed sandbox browser checks. */
+  execDockerRawFn?: ExecDockerRawFn;
 };
 
 function countBySeverity(findings: SecurityAuditFinding[]): SecurityAuditSummary {
@@ -192,6 +201,7 @@ async function collectFilesystemFindings(params: {
     exec: params.execIcacls,
   });
   if (configPerms.ok) {
+    const skipReadablePermWarnings = configPerms.isSymlink;
     if (configPerms.isSymlink) {
       findings.push({
         checkId: "fs.config.symlink",
@@ -214,7 +224,7 @@ async function collectFilesystemFindings(params: {
           env: params.env,
         }),
       });
-    } else if (configPerms.worldReadable) {
+    } else if (!skipReadablePermWarnings && configPerms.worldReadable) {
       findings.push({
         checkId: "fs.config.perms_world_readable",
         severity: "critical",
@@ -228,7 +238,7 @@ async function collectFilesystemFindings(params: {
           env: params.env,
         }),
       });
-    } else if (configPerms.groupReadable && !sharedHostingState) {
+    } else if (!skipReadablePermWarnings && configPerms.groupReadable && !sharedHostingState) {
       findings.push({
         checkId: "fs.config.perms_group_readable",
         severity: "warn",
@@ -267,6 +277,64 @@ function collectGatewayConfigFindings(
     (auth.mode === "token" && hasToken) || (auth.mode === "password" && hasPassword);
   const hasTailscaleAuth = auth.allowTailscale && tailscaleMode === "serve";
   const hasGatewayAuth = hasSharedSecret || hasTailscaleAuth;
+  const dangerousHostHeaderFallback =
+    cfg.gateway?.controlUi?.dangerouslyAllowHostHeaderOriginFallback === true;
+  const allowedOrigins = Array.isArray(cfg.gateway?.controlUi?.allowedOrigins)
+    ? cfg.gateway.controlUi.allowedOrigins.map((entry) => entry.trim()).filter(Boolean)
+    : [];
+
+  if (
+    controlUiEnabled &&
+    bind !== "loopback" &&
+    allowedOrigins.length === 0 &&
+    !dangerousHostHeaderFallback
+  ) {
+    findings.push({
+      checkId: "gateway.control_ui.allowed_origins_required",
+      severity: "critical",
+      title: "Control UI allowed origins are required for non-loopback binding",
+      detail: `gateway.bind="${bind}" exposes the Control UI beyond loopback without explicit allowedOrigins.`,
+      remediation: "Configure gateway.controlUi.allowedOrigins with exact trusted origins.",
+    });
+  }
+
+  if (dangerousHostHeaderFallback) {
+    findings.push({
+      checkId: "gateway.control_ui.host_header_origin_fallback",
+      severity: "critical",
+      title: "Control UI Host-header origin fallback is enabled",
+      detail:
+        "gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback=true weakens origin validation.",
+      remediation:
+        "Disable Host-header fallback and configure explicit gateway.controlUi.allowedOrigins.",
+    });
+  }
+
+  if (cfg.gateway?.allowRealIpFallback === true) {
+    const hasNonLocalProxy = trustedProxies.some(
+      (entry) => !["127.0.0.1", "::1", "localhost"].includes(entry.trim().toLowerCase()),
+    );
+    const remotelyExposed = bind !== "loopback" || hasNonLocalProxy;
+    findings.push({
+      checkId: "gateway.real_ip_fallback_enabled",
+      severity: remotelyExposed ? "critical" : "warn",
+      title: "X-Real-IP fallback is enabled",
+      detail:
+        "gateway.allowRealIpFallback=true accepts X-Real-IP when X-Forwarded-For is missing, increasing proxy-header spoofing risk.",
+      remediation: "Disable the fallback or restrict trusted proxies to the exact local proxy.",
+    });
+  }
+
+  if (cfg.discovery?.mdns?.mode === "full") {
+    findings.push({
+      checkId: "discovery.mdns_full_mode",
+      severity: bind === "loopback" ? "warn" : "critical",
+      title: "Full mDNS discovery publishes runtime metadata",
+      detail:
+        'discovery.mdns.mode="full" publishes additional Gateway metadata on the local network.',
+      remediation: 'Prefer discovery.mdns.mode="minimal" or "off".',
+    });
+  }
 
   // HTTP /tools/invoke is intended for narrow automation, not session orchestration/admin operations.
   // If operators opt-in to re-enabling these tools over HTTP, warn loudly so the choice is explicit.
@@ -368,6 +436,17 @@ function collectGatewayConfigFindings(
       detail:
         "gateway.controlUi.dangerouslyDisableDeviceAuth=true disables device identity checks for the Control UI.",
       remediation: "Disable it unless you are in a short-lived break-glass scenario.",
+    });
+  }
+
+  const dangerousFlags = collectEnabledInsecureOrDangerousFlags(cfg);
+  if (dangerousFlags.length > 0) {
+    findings.push({
+      checkId: "config.insecure_or_dangerous_flags",
+      severity: "warn",
+      title: "Insecure or dangerous config flag enabled",
+      detail: dangerousFlags.map((flag) => `- ${flag}`).join("\n"),
+      remediation: "Disable these break-glass settings when they are no longer required.",
     });
   }
 
@@ -612,6 +691,7 @@ function collectElevatedFindings(cfg: FasedAgentConfig): SecurityAuditFinding[] 
 
 async function maybeProbeGateway(params: {
   cfg: FasedAgentConfig;
+  env: NodeJS.ProcessEnv;
   timeoutMs: number;
   probe: typeof probeGateway;
 }): Promise<SecurityAuditReport["deep"]> {
@@ -624,8 +704,8 @@ async function maybeProbeGateway(params: {
 
   const auth =
     !isRemoteMode || remoteUrlMissing
-      ? resolveGatewayProbeAuth({ cfg: params.cfg, mode: "local" })
-      : resolveGatewayProbeAuth({ cfg: params.cfg, mode: "remote" });
+      ? resolveGatewayProbeAuth({ cfg: params.cfg, mode: "local", env: params.env })
+      : resolveGatewayProbeAuth({ cfg: params.cfg, mode: "remote", env: params.env });
   const res = await params.probe({ url, auth, timeoutMs: params.timeoutMs }).catch((err) => ({
     ok: false,
     url,
@@ -666,14 +746,19 @@ export async function runSecurityAudit(opts: SecurityAuditOptions): Promise<Secu
   findings.push(...collectLoggingFindings(cfg));
   findings.push(...collectElevatedFindings(cfg));
   findings.push(...collectHooksHardeningFindings(cfg, env));
+  findings.push(...collectGatewayHttpNoAuthFindings(cfg, env));
   findings.push(...collectGatewayHttpSessionKeyOverrideFindings(cfg));
+  findings.push(...collectExecRuntimeFindings(cfg));
+  findings.push(...collectSandboxDangerousConfigFindings(cfg));
   findings.push(...collectSandboxDockerNoopFindings(cfg));
+  findings.push(...collectNodeDangerousAllowCommandFindings(cfg));
   findings.push(...collectNodeDenyCommandPatternFindings(cfg));
   findings.push(...collectMinimalProfileOverrideFindings(cfg));
   findings.push(...collectSecretsInConfigFindings(cfg));
   findings.push(...collectModelHygieneFindings(cfg));
   findings.push(...collectSmallModelRiskFindings({ cfg, env }));
   findings.push(...collectExposureMatrixFindings(cfg));
+  findings.push(...collectLikelyMultiUserSetupFindings(cfg));
 
   const configSnapshot =
     opts.includeFilesystem !== false
@@ -698,6 +783,11 @@ export async function runSecurityAudit(opts: SecurityAuditOptions): Promise<Secu
     findings.push(
       ...(await collectStateDeepFilesystemFindings({ cfg, env, stateDir, platform, execIcacls })),
     );
+    findings.push(
+      ...(await collectSandboxBrowserHashLabelFindings({
+        execDockerRawFn: opts.execDockerRawFn,
+      })),
+    );
     findings.push(...(await collectPluginsTrustFindings({ cfg, stateDir })));
     if (opts.deep === true) {
       findings.push(...(await collectPluginsCodeSafetyFindings({ stateDir })));
@@ -714,6 +804,7 @@ export async function runSecurityAudit(opts: SecurityAuditOptions): Promise<Secu
     opts.deep === true
       ? await maybeProbeGateway({
           cfg,
+          env,
           timeoutMs: Math.max(250, opts.deepTimeoutMs ?? 5000),
           probe: opts.probeGatewayFn ?? probeGateway,
         })

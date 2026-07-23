@@ -1,21 +1,31 @@
+import path from "node:path";
 import { isToolAllowedByPolicies } from "../agents/pi-tools.policy.js";
 import {
   resolveSandboxConfigForAgent,
   resolveSandboxToolPolicyForAgent,
 } from "../agents/sandbox.js";
+import { isDangerousNetworkMode, normalizeNetworkMode } from "../agents/sandbox/network-mode.js";
 /**
  * Synchronous security audit collector functions.
  *
  * These functions analyze config-based security properties without I/O.
  */
 import type { SandboxToolPolicy } from "../agents/sandbox/types.js";
+import { getBlockedBindReason } from "../agents/sandbox/validate-sandbox-security.js";
 import { resolveToolProfilePolicy } from "../agents/tool-policy.js";
 import { resolveBrowserConfig } from "../browser/config.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import type { FasedAgentConfig } from "../config/config.js";
 import type { AgentToolsConfig } from "../config/types.tools.js";
 import { resolveGatewayAuth } from "../gateway/auth.js";
-import { resolveNodeCommandAllowlist } from "../gateway/node-command-policy.js";
+import {
+  DEFAULT_DANGEROUS_NODE_COMMANDS,
+  resolveNodeCommandAllowlist,
+} from "../gateway/node-command-policy.js";
+import {
+  listInterpreterLikeSafeBins,
+  resolveMergedSafeBinProfileFixtures,
+} from "../infra/exec-safe-bin-runtime-policy.js";
 import { inferParamBFromIdOrName } from "../shared/model-param-b.js";
 import { pickSandboxToolPolicy } from "./audit-tool-policy.js";
 
@@ -334,6 +344,154 @@ function listGroupPolicyOpen(cfg: FasedAgentConfig): string[] {
   return out;
 }
 
+function isWildcardEntry(value: unknown): boolean {
+  return typeof value === "string" && value.trim() === "*";
+}
+
+function hasConfiguredGroupTargets(section: Record<string, unknown>): boolean {
+  return ["groups", "guilds", "channels", "rooms"].some((key) => {
+    const value = section[key];
+    return Boolean(value && typeof value === "object" && Object.keys(value).length > 0);
+  });
+}
+
+function listPotentialMultiUserSignals(cfg: FasedAgentConfig): string[] {
+  const out = new Set<string>();
+  const channels = cfg.channels as Record<string, unknown> | undefined;
+  if (!channels || typeof channels !== "object") {
+    return [];
+  }
+
+  const inspectSection = (section: Record<string, unknown>, basePath: string) => {
+    const groupPolicy = typeof section.groupPolicy === "string" ? section.groupPolicy : null;
+    if (groupPolicy === "open") {
+      out.add(`${basePath}.groupPolicy="open"`);
+    } else if (groupPolicy === "allowlist" && hasConfiguredGroupTargets(section)) {
+      out.add(`${basePath}.groupPolicy="allowlist" with configured group targets`);
+    }
+
+    const dmPolicy = typeof section.dmPolicy === "string" ? section.dmPolicy : null;
+    if (dmPolicy === "open") {
+      out.add(`${basePath}.dmPolicy="open"`);
+    }
+    if (Array.isArray(section.allowFrom) && section.allowFrom.some(isWildcardEntry)) {
+      out.add(`${basePath}.allowFrom includes "*"`);
+    }
+    if (Array.isArray(section.groupAllowFrom) && section.groupAllowFrom.some(isWildcardEntry)) {
+      out.add(`${basePath}.groupAllowFrom includes "*"`);
+    }
+  };
+
+  for (const [channelId, value] of Object.entries(channels)) {
+    if (!value || typeof value !== "object") {
+      continue;
+    }
+    const section = value as Record<string, unknown>;
+    inspectSection(section, `channels.${channelId}`);
+    const accounts = section.accounts;
+    if (!accounts || typeof accounts !== "object") {
+      continue;
+    }
+    for (const [accountId, accountValue] of Object.entries(accounts)) {
+      if (accountValue && typeof accountValue === "object") {
+        inspectSection(
+          accountValue as Record<string, unknown>,
+          `channels.${channelId}.accounts.${accountId}`,
+        );
+      }
+    }
+  }
+  return [...out];
+}
+
+type AuditAgentToolContext = {
+  label: string;
+  agentId?: string;
+  tools?: AgentToolsConfig;
+};
+
+function listAuditAgentToolContexts(cfg: FasedAgentConfig): AuditAgentToolContext[] {
+  const contexts: AuditAgentToolContext[] = [{ label: "agents.defaults" }];
+  for (const agent of cfg.agents?.list ?? []) {
+    if (!agent || typeof agent !== "object" || typeof agent.id !== "string") {
+      continue;
+    }
+    contexts.push({
+      label: `agents.list.${agent.id}`,
+      agentId: agent.id,
+      tools: agent.tools,
+    });
+  }
+  return contexts;
+}
+
+function collectRiskyToolExposureContexts(cfg: FasedAgentConfig): {
+  riskyContexts: string[];
+  hasRuntimeRisk: boolean;
+} {
+  const riskyContexts: string[] = [];
+  let hasRuntimeRisk = false;
+  for (const context of listAuditAgentToolContexts(cfg)) {
+    const sandboxMode = resolveSandboxConfigForAgent(cfg, context.agentId).mode;
+    const policies = resolveToolPolicies({
+      cfg,
+      agentTools: context.tools,
+      sandboxMode,
+      agentId: context.agentId,
+    });
+    const runtimeTools = ["exec", "process"].filter((tool) =>
+      isToolAllowedByPolicies(tool, policies),
+    );
+    const fsTools = ["read", "write", "edit", "apply_patch"].filter((tool) =>
+      isToolAllowedByPolicies(tool, policies),
+    );
+    const fsWorkspaceOnly = context.tools?.fs?.workspaceOnly ?? cfg.tools?.fs?.workspaceOnly;
+    const runtimeUnguarded = runtimeTools.length > 0 && sandboxMode !== "all";
+    const fsUnguarded = fsTools.length > 0 && sandboxMode !== "all" && fsWorkspaceOnly !== true;
+    if (!runtimeUnguarded && !fsUnguarded) {
+      continue;
+    }
+    if (runtimeUnguarded) {
+      hasRuntimeRisk = true;
+    }
+    riskyContexts.push(
+      `${context.label} (sandbox=${sandboxMode}; runtime=[${runtimeTools.join(", ") || "off"}]; fs=[${fsTools.join(", ") || "off"}]; fs.workspaceOnly=${fsWorkspaceOnly === true ? "true" : "false"})`,
+    );
+  }
+  return { riskyContexts, hasRuntimeRisk };
+}
+
+function classifyRiskySafeBinTrustedDir(entry: string): string | null {
+  const raw = entry.trim();
+  if (!raw) {
+    return null;
+  }
+  const absolute = path.isAbsolute(raw) || path.win32.isAbsolute(raw);
+  if (!absolute) {
+    return "relative path (trust boundary depends on process cwd)";
+  }
+  const normalized = raw.replaceAll("\\", "/").toLowerCase();
+  if (
+    normalized === "/tmp" ||
+    normalized.startsWith("/tmp/") ||
+    normalized === "/var/tmp" ||
+    normalized.startsWith("/var/tmp/")
+  ) {
+    return "temporary directory is mutable and easy to poison";
+  }
+  if (
+    normalized === "/usr/local/bin" ||
+    normalized === "/opt/homebrew/bin" ||
+    normalized.includes("/.local/bin") ||
+    normalized.startsWith("/home/") ||
+    normalized.startsWith("/users/") ||
+    /^[a-z]:\/users\//.test(normalized)
+  ) {
+    return "user or package-manager bin directory may be writable";
+  }
+  return null;
+}
+
 // --------------------------------------------------------------------------
 // Exported collectors
 // --------------------------------------------------------------------------
@@ -354,7 +512,9 @@ export function collectAttackSurfaceSummaryFindings(cfg: FasedAgentConfig): Secu
     `\n` +
     `hooks.internal: ${internalHooksEnabled ? "enabled" : "disabled"}` +
     `\n` +
-    `browser control: ${browserEnabled ? "enabled" : "disabled"}`;
+    `browser control: ${browserEnabled ? "enabled" : "disabled"}` +
+    `\n` +
+    "trust model: personal assistant (one trusted operator boundary), not hostile multi-tenant on one shared gateway.";
 
   return [
     {
@@ -364,6 +524,102 @@ export function collectAttackSurfaceSummaryFindings(cfg: FasedAgentConfig): Secu
       detail,
     },
   ];
+}
+
+export function collectExecRuntimeFindings(cfg: FasedAgentConfig): SecurityAuditFinding[] {
+  const findings: SecurityAuditFinding[] = [];
+  const agents = Array.isArray(cfg.agents?.list) ? cfg.agents.list : [];
+  const globalExec = cfg.tools?.exec;
+
+  if (globalExec?.host === "sandbox" && resolveSandboxConfigForAgent(cfg).mode === "off") {
+    findings.push({
+      checkId: "tools.exec.host_sandbox_no_sandbox_defaults",
+      severity: "warn",
+      title: "Exec host is sandbox but sandbox mode is off",
+      detail:
+        "tools.exec.host is explicitly set to sandbox while agents.defaults.sandbox.mode=off. Exec fails closed because no sandbox runtime is available.",
+      remediation:
+        'Enable sandbox mode or set tools.exec.host="gateway" with appropriate approvals.',
+    });
+  }
+
+  const sandboxHostAgents = agents
+    .filter(
+      (entry) =>
+        entry &&
+        typeof entry === "object" &&
+        typeof entry.id === "string" &&
+        entry.tools?.exec?.host === "sandbox" &&
+        resolveSandboxConfigForAgent(cfg, entry.id).mode === "off",
+    )
+    .map((entry) => entry.id);
+  if (sandboxHostAgents.length > 0) {
+    findings.push({
+      checkId: "tools.exec.host_sandbox_no_sandbox_agents",
+      severity: "warn",
+      title: "Agent exec host uses sandbox while sandbox mode is off",
+      detail: `Sandbox exec is configured without an active sandbox for: ${sandboxHostAgents.join(", ")}.`,
+      remediation: "Enable sandbox mode for these agents or use the Gateway exec host.",
+    });
+  }
+
+  const interpreterHits: string[] = [];
+  const collectInterpreterHits = (
+    scope: string,
+    localExec: AgentToolsConfig["exec"] | undefined,
+  ) => {
+    const safeBins = localExec?.safeBins ?? [];
+    const profiles = resolveMergedSafeBinProfileFixtures({ global: globalExec, local: localExec });
+    const unprofiled = listInterpreterLikeSafeBins(safeBins).filter((bin) => !profiles?.[bin]);
+    if (unprofiled.length > 0) {
+      interpreterHits.push(`- ${scope}.safeBins: ${unprofiled.join(", ")}`);
+    }
+  };
+  collectInterpreterHits("tools.exec", globalExec);
+  for (const entry of agents) {
+    if (entry && typeof entry === "object" && typeof entry.id === "string") {
+      collectInterpreterHits(`agents.list.${entry.id}.tools.exec`, entry.tools?.exec);
+    }
+  }
+  if (interpreterHits.length > 0) {
+    findings.push({
+      checkId: "tools.exec.safe_bins_interpreter_unprofiled",
+      severity: "warn",
+      title: "safeBins includes interpreter binaries without explicit profiles",
+      detail: `Interpreter-like safeBins entries need hardened profiles:\n${interpreterHits.join("\n")}`,
+      remediation: "Remove the interpreter entries or define explicit safeBinProfiles.",
+    });
+  }
+
+  const trustedDirHits: string[] = [];
+  const collectTrustedDirHits = (scope: string, entries: string[] | undefined) => {
+    for (const entry of entries ?? []) {
+      const reason = classifyRiskySafeBinTrustedDir(entry);
+      if (reason) {
+        trustedDirHits.push(`- ${scope}.safeBinTrustedDirs: ${entry} (${reason})`);
+      }
+    }
+  };
+  collectTrustedDirHits("tools.exec", globalExec?.safeBinTrustedDirs);
+  for (const entry of agents) {
+    if (entry && typeof entry === "object" && typeof entry.id === "string") {
+      collectTrustedDirHits(
+        `agents.list.${entry.id}.tools.exec`,
+        entry.tools?.exec?.safeBinTrustedDirs,
+      );
+    }
+  }
+  if (trustedDirHits.length > 0) {
+    findings.push({
+      checkId: "tools.exec.safe_bin_trusted_dirs_risky",
+      severity: "warn",
+      title: "safeBinTrustedDirs contains risky trust roots",
+      detail: trustedDirHits.join("\n"),
+      remediation: "Trust only absolute, administrator-controlled executable directories.",
+    });
+  }
+
+  return findings;
 }
 
 export function collectSyncedFolderFindings(params: {
@@ -452,7 +708,7 @@ export function collectHooksHardeningFindings(
   if (token && gatewayToken && token === gatewayToken) {
     findings.push({
       checkId: "hooks.token_reuse_gateway_token",
-      severity: "warn",
+      severity: "critical",
       title: "Hooks token reuses the Gateway token",
       detail:
         "hooks.token matches gateway.auth token; compromise of hooks expands blast radius to the Gateway API.",
@@ -546,6 +802,42 @@ export function collectGatewayHttpSessionKeyOverrideFindings(
   return findings;
 }
 
+export function collectGatewayHttpNoAuthFindings(
+  cfg: FasedAgentConfig,
+  env: NodeJS.ProcessEnv,
+): SecurityAuditFinding[] {
+  const auth = resolveGatewayAuth({
+    authConfig: cfg.gateway?.auth,
+    tailscaleMode: cfg.gateway?.tailscale?.mode ?? "off",
+    env,
+  });
+  const authenticated =
+    (auth.mode === "token" && Boolean(auth.token?.trim())) ||
+    (auth.mode === "password" && Boolean(auth.password?.trim())) ||
+    auth.mode === "trusted-proxy";
+  if (authenticated) {
+    return [];
+  }
+
+  const enabledEndpoints = [
+    "/tools/invoke",
+    cfg.gateway?.http?.endpoints?.chatCompletions?.enabled === true ? "/v1/chat/completions" : null,
+    cfg.gateway?.http?.endpoints?.responses?.enabled === true ? "/v1/responses" : null,
+  ].filter((entry): entry is string => Boolean(entry));
+
+  return [
+    {
+      checkId: "gateway.http.no_auth",
+      severity: isGatewayRemotelyExposed(cfg) ? "critical" : "warn",
+      title: "Gateway HTTP APIs are reachable without auth",
+      detail:
+        `gateway.auth.mode="none" leaves ${enabledEndpoints.join(", ")} callable without a shared secret. ` +
+        "Treat this as trusted-local only and avoid exposing the Gateway beyond loopback.",
+      remediation: "Configure token/password auth or keep the Gateway strictly loopback-only.",
+    },
+  ];
+}
+
 export function collectSandboxDockerNoopFindings(cfg: FasedAgentConfig): SecurityAuditFinding[] {
   const findings: SecurityAuditFinding[] = [];
   const configuredPaths: string[] = [];
@@ -592,6 +884,129 @@ export function collectSandboxDockerNoopFindings(cfg: FasedAgentConfig): Securit
     remediation:
       'Enable sandbox mode (`agents.defaults.sandbox.mode="non-main"` or `"all"`) where needed, or remove unused docker settings.',
   });
+
+  return findings;
+}
+
+export function collectSandboxDangerousConfigFindings(
+  cfg: FasedAgentConfig,
+): SecurityAuditFinding[] {
+  const findings: SecurityAuditFinding[] = [];
+  const configs: Array<{ source: string; docker: Record<string, unknown> }> = [];
+  const browserConfigs: Array<{ source: string; browser: Record<string, unknown> }> = [];
+
+  const defaultDocker = cfg.agents?.defaults?.sandbox?.docker;
+  if (defaultDocker && typeof defaultDocker === "object") {
+    configs.push({
+      source: "agents.defaults.sandbox.docker",
+      docker: defaultDocker as Record<string, unknown>,
+    });
+  }
+  const defaultBrowser = cfg.agents?.defaults?.sandbox?.browser;
+  if (defaultBrowser && typeof defaultBrowser === "object") {
+    browserConfigs.push({
+      source: "agents.defaults.sandbox.browser",
+      browser: defaultBrowser as Record<string, unknown>,
+    });
+  }
+
+  for (const entry of cfg.agents?.list ?? []) {
+    if (!entry || typeof entry !== "object" || typeof entry.id !== "string") {
+      continue;
+    }
+    if (entry.sandbox?.docker && typeof entry.sandbox.docker === "object") {
+      configs.push({
+        source: `agents.list.${entry.id}.sandbox.docker`,
+        docker: entry.sandbox.docker as Record<string, unknown>,
+      });
+    }
+    if (entry.sandbox?.browser && typeof entry.sandbox.browser === "object") {
+      browserConfigs.push({
+        source: `agents.list.${entry.id}.sandbox.browser`,
+        browser: entry.sandbox.browser as Record<string, unknown>,
+      });
+    }
+  }
+
+  for (const { source, docker } of configs) {
+    for (const bind of Array.isArray(docker.binds) ? docker.binds : []) {
+      if (typeof bind !== "string") {
+        continue;
+      }
+      const blocked = getBlockedBindReason(bind);
+      if (!blocked) {
+        continue;
+      }
+      if (blocked.kind === "non_absolute") {
+        findings.push({
+          checkId: "sandbox.bind_mount_non_absolute",
+          severity: "warn",
+          title: "Sandbox bind mount uses a non-absolute source path",
+          detail: `${source}.binds contains "${bind}" with non-absolute source "${blocked.sourcePath}".`,
+          remediation: "Use an absolute, explicitly trusted host path.",
+        });
+      } else if (blocked.kind === "covers" || blocked.kind === "targets") {
+        findings.push({
+          checkId: "sandbox.dangerous_bind_mount",
+          severity: "critical",
+          title: "Dangerous bind mount in sandbox config",
+          detail: `${source}.binds contains "${bind}" which exposes blocked path "${blocked.blockedPath}".`,
+          remediation: `Remove "${bind}" from ${source}.binds.`,
+        });
+      }
+    }
+
+    const network = typeof docker.network === "string" ? docker.network : undefined;
+    if (isDangerousNetworkMode(network)) {
+      findings.push({
+        checkId: "sandbox.dangerous_network_mode",
+        severity: "critical",
+        title: "Dangerous network mode in sandbox config",
+        detail: `${source}.network is "${network}" and bypasses normal sandbox network isolation.`,
+        remediation: `Set ${source}.network to "bridge", "none", or a dedicated bridge network.`,
+      });
+    }
+    if (
+      typeof docker.seccompProfile === "string" &&
+      docker.seccompProfile.trim().toLowerCase() === "unconfined"
+    ) {
+      findings.push({
+        checkId: "sandbox.dangerous_seccomp_profile",
+        severity: "critical",
+        title: "Seccomp unconfined in sandbox config",
+        detail: `${source}.seccompProfile disables syscall filtering.`,
+        remediation: `Remove ${source}.seccompProfile or use a constrained profile.`,
+      });
+    }
+    if (
+      typeof docker.apparmorProfile === "string" &&
+      docker.apparmorProfile.trim().toLowerCase() === "unconfined"
+    ) {
+      findings.push({
+        checkId: "sandbox.dangerous_apparmor_profile",
+        severity: "critical",
+        title: "AppArmor unconfined in sandbox config",
+        detail: `${source}.apparmorProfile disables AppArmor enforcement.`,
+        remediation: `Remove ${source}.apparmorProfile or use a constrained profile.`,
+      });
+    }
+  }
+
+  for (const { source, browser } of browserConfigs) {
+    const enabled = browser.enabled === true;
+    const network = typeof browser.network === "string" ? browser.network : undefined;
+    const cdpSourceRange =
+      typeof browser.cdpSourceRange === "string" ? browser.cdpSourceRange.trim() : "";
+    if (enabled && normalizeNetworkMode(network) === "bridge" && !cdpSourceRange) {
+      findings.push({
+        checkId: "sandbox.browser_cdp_bridge_unrestricted",
+        severity: "warn",
+        title: "Sandbox browser bridge network lacks a CDP source range",
+        detail: `${source} uses bridge networking without cdpSourceRange.`,
+        remediation: `Set ${source}.cdpSourceRange to the expected bridge gateway range.`,
+      });
+    }
+  }
 
   return findings;
 }
@@ -645,6 +1060,32 @@ export function collectNodeDenyCommandPatternFindings(
   });
 
   return findings;
+}
+
+export function collectNodeDangerousAllowCommandFindings(
+  cfg: FasedAgentConfig,
+): SecurityAuditFinding[] {
+  const allow = new Set(
+    (cfg.gateway?.nodes?.allowCommands ?? []).map(normalizeNodeCommand).filter(Boolean),
+  );
+  const deny = new Set(
+    (cfg.gateway?.nodes?.denyCommands ?? []).map(normalizeNodeCommand).filter(Boolean),
+  );
+  const dangerousAllowed = DEFAULT_DANGEROUS_NODE_COMMANDS.filter(
+    (command) => allow.has(command) && !deny.has(command),
+  );
+  if (dangerousAllowed.length === 0) {
+    return [];
+  }
+  return [
+    {
+      checkId: "gateway.nodes.allow_commands_dangerous",
+      severity: isGatewayRemotelyExposed(cfg) ? "critical" : "warn",
+      title: "Dangerous node commands explicitly enabled",
+      detail: `gateway.nodes.allowCommands includes: ${dangerousAllowed.join(", ")}.`,
+      remediation: "Remove these commands or keep Gateway access tightly restricted.",
+    },
+  ];
 }
 
 export function collectMinimalProfileOverrideFindings(
@@ -885,5 +1326,47 @@ export function collectExposureMatrixFindings(cfg: FasedAgentConfig): SecurityAu
     });
   }
 
+  const { riskyContexts, hasRuntimeRisk } = collectRiskyToolExposureContexts(cfg);
+  if (riskyContexts.length > 0) {
+    findings.push({
+      checkId: "security.exposure.open_groups_with_runtime_or_fs",
+      severity: hasRuntimeRisk ? "critical" : "warn",
+      title: "Open groupPolicy with runtime/filesystem tools exposed",
+      detail:
+        `Found groupPolicy="open" at:\n${openGroups.map((entry) => `- ${entry}`).join("\n")}\n` +
+        `Risky tool exposure contexts:\n${riskyContexts.map((entry) => `- ${entry}`).join("\n")}`,
+      remediation:
+        'Deny runtime/filesystem tools, require workspace-only filesystem access, or enable sandbox mode "all".',
+    });
+  }
+
   return findings;
+}
+
+export function collectLikelyMultiUserSetupFindings(cfg: FasedAgentConfig): SecurityAuditFinding[] {
+  const signals = listPotentialMultiUserSignals(cfg);
+  if (signals.length === 0) {
+    return [];
+  }
+  const { riskyContexts, hasRuntimeRisk } = collectRiskyToolExposureContexts(cfg);
+  const impactLine = hasRuntimeRisk
+    ? "Runtime/process tools are exposed without full sandboxing in at least one context."
+    : "No unguarded runtime/process tools were detected by this heuristic.";
+  const contextDetail =
+    riskyContexts.length > 0
+      ? `Potential high-impact tool exposure contexts:\n${riskyContexts.map((entry) => `- ${entry}`).join("\n")}`
+      : "No unguarded runtime/filesystem contexts detected.";
+  return [
+    {
+      checkId: "security.trust_model.multi_user_heuristic",
+      severity: "warn",
+      title: "Potential multi-user setup detected",
+      detail:
+        `Heuristic signals indicate this Gateway may be reachable by multiple users:\n${signals.map((signal) => `- ${signal}`).join("\n")}\n` +
+        `${impactLine}\n${contextDetail}\n` +
+        "Fased's default security model is personal-assistant (one trusted operator boundary), not hostile multi-tenant isolation.",
+      remediation:
+        'Separate trust boundaries or set agents.defaults.sandbox.mode="all", use workspace-only filesystem access, and restrict runtime tools.',
+    },
+  ];
 }
