@@ -4563,6 +4563,32 @@ EOF
   sync -f "$marker" /etc/fased 2>/dev/null || true
 }
 
+tailscale_serve_route_ready() {
+  local port="$1"
+  local status=""
+  [[ "$port" =~ ^[0-9]+$ ]] || return 1
+  status="$(tailscale serve status 2>/dev/null)" || return 1
+  [[ "$status" =~ 127\.0\.0\.1:${port}([^0-9]|$) ]]
+}
+
+wait_for_tailscale_serve_route() {
+  local port="$1"
+  local max_attempts="${2:-15}"
+  local retry_delay="${3:-1}"
+  local attempt=0
+
+  [[ "$port" =~ ^[0-9]+$ && "$max_attempts" =~ ^[1-9][0-9]*$ ]] || return 1
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    if tailscale_serve_route_ready "$port"; then
+      return 0
+    fi
+    if ((attempt < max_attempts)); then
+      sleep "$retry_delay"
+    fi
+  done
+  return 1
+}
+
 prepare_hosting_root_prerequisites() {
   local target_user="$1"
   local target_repo_dir="$2"
@@ -4616,7 +4642,7 @@ prepare_hosting_root_prerequisites() {
   }
 
   printf '18789\n' | "$helper" tailscale-serve
-  tailscale serve status 2>/dev/null | grep -Fq '127.0.0.1:18789' || {
+  wait_for_tailscale_serve_route 18789 || {
     echo "Tailscale Serve did not acknowledge the fixed loopback Gateway route." >&2
     exit 1
   }

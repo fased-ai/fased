@@ -1297,6 +1297,14 @@ else
   fi
 fi
 
+tailscale_serve_route_ready() {
+  local port="$1"
+  local status=""
+  [[ "$port" =~ ^[0-9]+$ ]] || return 1
+  status="$(tailscale serve status 2>/dev/null)" || return 1
+  [[ "$status" =~ 127\.0\.0\.1:${port}([^0-9]|$) ]]
+}
+
 TAILSCALE_DNS_NAME=""
 TAILSCALE_ADMIN_URL="N/A"
 TAILSCALE_SSH_CMD="N/A"
@@ -1306,7 +1314,7 @@ if command -v tailscale >/dev/null 2>&1; then
     tailscale serve --bg "http://127.0.0.1:${FASED_GATEWAY_PORT}" >/dev/null 2>&1 || \
       tailscale serve https / "http://127.0.0.1:${FASED_GATEWAY_PORT}" >/dev/null 2>&1 || true
   fi
-  if tailscale serve status 2>/dev/null | grep -q "127.0.0.1:${FASED_GATEWAY_PORT}"; then
+  if tailscale_serve_route_ready "$FASED_GATEWAY_PORT"; then
     TAILSCALE_SERVE_READY=1
   fi
   if command -v jq >/dev/null 2>&1; then
