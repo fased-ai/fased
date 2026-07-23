@@ -3,7 +3,7 @@ import { assertApplicableGates } from "./ci-required-gates.mjs";
 
 const alwaysGreen = {
   "change scope": "success",
-  secrets: "success",
+  secrets: "success", // pragma: allowlist secret
 };
 
 describe("required CI gate aggregation", () => {
