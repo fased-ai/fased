@@ -75,6 +75,12 @@ const checkNamedWalletDeletionSafety = vi.hoisted(() => vi.fn(() => ({ ok: true,
 const setDefaultWallet = vi.hoisted(() => vi.fn());
 const setNamedWalletRole = vi.hoisted(() => vi.fn());
 const resolveWalletUserRole = vi.hoisted(() => vi.fn<() => unknown>(() => undefined));
+const nextRoleWalletIdentity = vi.hoisted(() =>
+  vi.fn((role: "agent" | "mining" | "vault") => ({
+    walletName: role === "agent" ? "Agent" : role === "mining" ? "Mining" : "Vault",
+    walletId: role,
+  })),
+);
 const lockSignerOwnedWalletForArchive = vi.hoisted(() =>
   vi.fn(async () => ({
     walletId: "mining",
@@ -171,6 +177,7 @@ vi.mock("../wallet/wallet-provider-registry.js", () => ({
   setDefaultWallet,
   setNamedWalletRole,
   resolveWalletUserRole,
+  nextRoleWalletIdentity,
 }));
 
 vi.mock("../wallet/signer-network-admin.js", () => ({
@@ -2235,26 +2242,49 @@ describe("runOnboardingWizard", () => {
     }
   });
 
-  it("enables wallet runtime only after hosted quickstart user chooses wallet creation", async () => {
+  it("keeps the root-provided operator socket through hosted onboarding and persists the app socket afterward", async () => {
     const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "fased-hosted-wallet-create-"));
+    const operatorSocket = "/run/fased-signerd/operator.sock";
+    const appSocket = "/run/fased-signerd/app.sock";
+    const observedSignerSockets: string[] = [];
     vi.stubEnv("USER", "app");
     vi.stubEnv("HOME", tempHome);
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_SOCKET", operatorSocket);
     configureWalletForOnboarding
-      .mockImplementationOnce(async ({ nextConfig }) => ({
-        ...nextConfig,
-        wallet: {
-          ...nextConfig.wallet,
-          runtime: { ...nextConfig.wallet?.runtime, enabled: false },
-        },
-      }))
-      .mockImplementationOnce(async ({ nextConfig }) => ({
-        ...nextConfig,
-        wallet: {
-          ...nextConfig.wallet,
-          provider: { ...nextConfig.wallet?.provider, id: "local-socket-signer" },
-          runtime: { ...nextConfig.wallet?.runtime, enabled: true },
-        },
-      }));
+      .mockImplementationOnce(async ({ nextConfig }) => {
+        observedSignerSockets.push(String(process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? ""));
+        delete process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET;
+        return {
+          ...nextConfig,
+          wallet: {
+            ...nextConfig.wallet,
+            runtime: { ...nextConfig.wallet?.runtime, enabled: false },
+          },
+        };
+      })
+      .mockImplementationOnce(async ({ nextConfig }) => {
+        observedSignerSockets.push(String(process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? ""));
+        return {
+          ...nextConfig,
+          wallet: {
+            ...nextConfig.wallet,
+            provider: { ...nextConfig.wallet?.provider, id: "local-socket-signer" },
+            runtime: { ...nextConfig.wallet?.runtime, enabled: true },
+          },
+        };
+      });
+    walletSetupCommand.mockImplementationOnce(async () => {
+      observedSignerSockets.push(String(process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? ""));
+    });
+    collectWalletSignerDoctorReport.mockImplementationOnce(async () => {
+      observedSignerSockets.push(String(process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? ""));
+      return {
+        checks: [
+          { check: "socket.exists", ok: true },
+          { check: "socket.health", ok: true },
+        ],
+      };
+    });
     const select = vi.fn(async (opts: unknown) => {
       const rawMessage = (opts as { message?: unknown })?.message;
       const message = typeof rawMessage === "string" ? rawMessage : "";
@@ -2281,7 +2311,11 @@ describe("runOnboardingWizard", () => {
       return "";
     }) as unknown as WizardPrompter["text"];
     const prompter = createWizardPrompter({ select, text });
-    writeConfigFile.mockImplementationOnce(async () => {
+    writeConfigFile.mockImplementationOnce(async (config) => {
+      expect(
+        (config as { env?: { vars?: Record<string, string> } }).env?.vars
+          ?.FASED_WALLET_LOCAL_SIGNER_SOCKET,
+      ).toBe(appSocket);
       throw new Error("write-reached");
     });
 
@@ -2318,6 +2352,12 @@ describe("runOnboardingWizard", () => {
           rpcUrl: "https://api.devnet.solana.com",
         }),
       );
+      expect(observedSignerSockets).toEqual([
+        operatorSocket,
+        operatorSocket,
+        operatorSocket,
+        operatorSocket,
+      ]);
     } finally {
       await fs.rm(tempHome, { recursive: true, force: true });
     }
