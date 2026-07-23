@@ -4,6 +4,14 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.3
+
+- Accept complete multiline Tailscale Serve status output, including trailing
+  informational lines, while still requiring the exact loopback Gateway route.
+- Scope GitHub validation and release workflows to the affected product
+  surfaces so Hosting-only corrections avoid unrelated Docker and product
+  matrices.
+
 ## 0.1.76-rc.2
 
 - Keep the root-authorized signer operator socket active through the complete
