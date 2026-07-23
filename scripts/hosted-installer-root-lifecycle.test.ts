@@ -100,6 +100,123 @@ describe("root-coordinated Hosting lifecycle", () => {
     );
   });
 
+  it("accepts delayed multiline Tailscale Serve output without closing the producer pipe", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-tailscale-serve-"));
+    try {
+      const calls = path.join(tempRoot, "calls");
+      const routeHelpers = sliceBetween(
+        installer,
+        "tailscale_serve_route_ready()",
+        "prepare_hosting_root_prerequisites()",
+      );
+      const prepare = sliceBetween(
+        installer,
+        "prepare_hosting_root_prerequisites()",
+        "finalize_hosting_root_prerequisites()",
+      );
+      expect(prepare).toContain("wait_for_tailscale_serve_route 18789");
+      expect(prepare).not.toMatch(/tailscale serve status[^\n]*\|[^\n]*grep -Fq/);
+      const script = `
+set -euo pipefail
+CALLS=${JSON.stringify(calls)}
+printf '0\\n' >"$CALLS"
+tailscale() {
+  local count
+  count="$(<"$CALLS")"
+  count=$((count + 1))
+  printf '%s\\n' "$count" >"$CALLS"
+  if ((count < 3)); then
+    printf 'No serve config\\n'
+    return 0
+  fi
+  printf '%s\\n' \
+    'Success.' \
+    'Available within your tailnet:' \
+    '' \
+    'https://ubuntu-utah-2gb-2.tail7bbde2.ts.net/' \
+    '|-- proxy http://127.0.0.1:18789' \
+    '' \
+    'Serve started and running in the background.'
+  for _ in {1..5000}; do
+    printf 'trailing output after the matched route\\n'
+  done
+}
+sleep() { return 0; }
+${routeHelpers}
+wait_for_tailscale_serve_route 18789 4 0
+printf 'attempts=%s\\n' "$(<"$CALLS")"
+`;
+      const result = spawnSync("bash", ["-c", script], { encoding: "utf8" });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("attempts=3");
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("bounds Tailscale Serve acknowledgment retries and rejects a missing route", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-tailscale-timeout-"));
+    try {
+      const calls = path.join(tempRoot, "calls");
+      const routeHelpers = sliceBetween(
+        installer,
+        "tailscale_serve_route_ready()",
+        "prepare_hosting_root_prerequisites()",
+      );
+      const script = `
+set -euo pipefail
+CALLS=${JSON.stringify(calls)}
+printf '0\\n' >"$CALLS"
+tailscale() {
+  local count
+  count="$(<"$CALLS")"
+  printf '%s\\n' "$((count + 1))" >"$CALLS"
+  printf 'https://wrong.tailnet.ts.net/\\n|-- proxy http://127.0.0.1:9999\\n'
+}
+sleep() { return 0; }
+${routeHelpers}
+if wait_for_tailscale_serve_route 18789 3 0; then
+  exit 91
+fi
+printf 'attempts=%s\\n' "$(<"$CALLS")"
+`;
+      const result = spawnSync("bash", ["-c", script], { encoding: "utf8" });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("attempts=3");
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("uses complete Tailscale Serve output in the managed startup summary", () => {
+    const routeHelper = sliceBetween(
+      managed,
+      "tailscale_serve_route_ready()",
+      'TAILSCALE_DNS_NAME=""',
+    );
+    expect(routeHelper).toContain('status="$(tailscale serve status 2>/dev/null)"');
+    expect(routeHelper).toContain('[[ "$status" =~ 127\\.0\\.0\\.1:${port}([^0-9]|$) ]]');
+    expect(managed).toContain('if tailscale_serve_route_ready "$FASED_GATEWAY_PORT"; then');
+    expect(managed).not.toMatch(/tailscale serve status[^\n]*\|[^\n]*grep -q/);
+
+    const script = `
+set -euo pipefail
+tailscale() {
+  printf '%s\\n' \
+    'Available within your tailnet:' \
+    'https://fased.tailnet.ts.net/' \
+    '|-- proxy http://127.0.0.1:18789'
+  for _ in {1..5000}; do
+    printf 'trailing managed-status output\\n'
+  done
+}
+${routeHelper}
+tailscale_serve_route_ready 18789
+`;
+    const result = spawnSync("bash", ["-c", script], { encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it("stages an app-side repair without requiring a helper, system unit mutation, or sudo", () => {
     const noOnboardStart = installer.lastIndexOf('if [[ "$RUN_ONBOARD" -eq 0 ]]');
     const noOnboardEnd = installer.indexOf('section "Interactive setup"', noOnboardStart);
