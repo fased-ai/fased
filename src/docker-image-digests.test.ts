@@ -97,6 +97,18 @@ describe("docker base image pinning", () => {
     expect(workflow).toContain('actual="$("$signer" --version)"');
   });
 
+  it("publishes Docker only for stable tags without QEMU", async () => {
+    const workflow = await readFile(
+      resolve(repoRoot, ".github/workflows/docker-release.yml"),
+      "utf8",
+    );
+
+    expect(
+      workflow.match(/if: github\.event_name == 'push' && !contains\(github\.ref_name, '-'\)/g),
+    ).toHaveLength(3);
+    expect(workflow).not.toContain("docker/setup-qemu-action");
+  });
+
   it("pins selected Dockerfile FROM lines to immutable sha256 digests", async () => {
     for (const dockerfilePath of DIGEST_PINNED_DOCKERFILES) {
       const dockerfile = await readFile(resolve(repoRoot, dockerfilePath), "utf8");

@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      full_matrix:
+        description: Run every supported CI lane regardless of changed paths
+        required: true
+        default: true
+        type: boolean
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -13,35 +20,21 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  # Detect docs-only changes to skip heavy jobs (test, build, Windows, macOS, Android).
-  # Lint and format always run. Fail-safe: if detection fails, run everything.
-  docs-scope:
+  # Resolve one authoritative changed-surface plan for PRs and main pushes.
+  # Manual runs and failed/empty diffs fail safe to the complete supported matrix.
+  change-scope:
     runs-on: ubuntu-latest
     outputs:
-      docs_only: ${{ steps.check.outputs.docs_only }}
-      docs_changed: ${{ steps.check.outputs.docs_changed }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          submodules: false
-
-      - name: Detect docs-only changes
-        id: check
-        uses: ./.github/actions/detect-docs-changes
-
-  # Detect which heavy areas are touched so PRs can skip unrelated expensive jobs.
-  # Push to main keeps broad coverage.
-  changed-scope:
-    needs: [docs-scope]
-    if: needs.docs-scope.outputs.docs_only != 'true'
-    runs-on: ubuntu-latest
-    outputs:
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+      docs_changed: ${{ steps.scope.outputs.docs_changed }}
+      version_only: ${{ steps.scope.outputs.version_only }}
       run_node: ${{ steps.scope.outputs.run_node }}
       run_macos: ${{ steps.scope.outputs.run_macos }}
-      run_android: ${{ steps.scope.outputs.run_android }}
       run_signer: ${{ steps.scope.outputs.run_signer }}
+      run_hosting: ${{ steps.scope.outputs.run_hosting }}
+      run_ui_mining: ${{ steps.scope.outputs.run_ui_mining }}
+      run_skills: ${{ steps.scope.outputs.run_skills }}
+      full_matrix: ${{ steps.scope.outputs.full_matrix }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -51,103 +44,17 @@ jobs:
 
       - name: Detect changed scopes
         id: scope
-        shell: bash
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          PUSH_BEFORE: ${{ github.event.before }}
-          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -euo pipefail
-
-          if [ "$EVENT_NAME" = "push" ]; then
-            BASE="$PUSH_BEFORE"
-          else
-            BASE="$(git merge-base "origin/$PR_BASE_REF" HEAD 2>/dev/null || true)"
-            if [ -z "$BASE" ]; then
-              BASE="$PR_BASE_SHA"
-            fi
-          fi
-
-          CHANGED="$(git diff --name-only "$BASE" HEAD 2>/dev/null || echo "UNKNOWN")"
-          if [ "$CHANGED" = "UNKNOWN" ] || [ -z "$CHANGED" ]; then
-            # Fail-safe: run broad checks if detection fails.
-            echo "run_node=true" >> "$GITHUB_OUTPUT"
-            echo "run_macos=true" >> "$GITHUB_OUTPUT"
-            echo "run_android=true" >> "$GITHUB_OUTPUT"
-            echo "run_signer=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          run_node=false
-          run_macos=false
-          run_android=false
-          run_signer=false
-          has_non_docs=false
-          has_non_native_non_docs=false
-
-          while IFS= read -r path; do
-            [ -z "$path" ] && continue
-            case "$path" in
-              docs/*|*.md|*.mdx)
-                continue
-                ;;
-              *)
-                has_non_docs=true
-                ;;
-            esac
-
-            case "$path" in
-              # Generated protocol models are already covered by protocol:check and
-              # should not force the full native macOS lane.
-              apps/macos/Sources/FasedAgentProtocol/*|apps/shared/FasedAgentKit/Sources/FasedAgentProtocol/*)
-                ;;
-              apps/macos/*|apps/ios/*|apps/shared/*|Swabble/*)
-                run_macos=true
-                ;;
-            esac
-
-            case "$path" in
-              apps/android/*|apps/shared/*)
-                run_android=true
-                ;;
-            esac
-
-            case "$path" in
-              tools/fased-signerd/*|config/signer-protocol-v2.json|scripts/release-fased-signerd.sh|scripts/install-fased-signerd.sh|scripts/generate-signer-protocol-v2.mjs|scripts/signer-protocol-v2.generated.mjs|src/wallet/signer-protocol-v2.generated.ts)
-                run_signer=true
-                ;;
-            esac
-
-            case "$path" in
-              src/*|test/*|extensions/*|packages/*|scripts/*|ui/*|.github/*|fased.mjs|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|tsconfig*.json|vitest*.ts|tsdown.config.ts|.oxlintrc.json|.oxfmtrc.jsonc)
-                run_node=true
-                ;;
-            esac
-
-            case "$path" in
-              apps/android/*|apps/ios/*|apps/macos/*|apps/shared/*|Swabble/*|appcast.xml)
-                ;;
-              *)
-                has_non_native_non_docs=true
-                ;;
-            esac
-          done <<< "$CHANGED"
-
-          # If there are non-doc files outside native app trees, keep Node checks enabled.
-          if [ "$run_node" = false ] && [ "$has_non_docs" = true ] && [ "$has_non_native_non_docs" = true ]; then
-            run_node=true
-          fi
-
-          echo "run_node=${run_node}" >> "$GITHUB_OUTPUT"
-          echo "run_macos=${run_macos}" >> "$GITHUB_OUTPUT"
-          echo "run_android=${run_android}" >> "$GITHUB_OUTPUT"
-          echo "run_signer=${run_signer}" >> "$GITHUB_OUTPUT"
+          FULL_MATRIX: ${{ github.event_name == 'workflow_dispatch' && inputs.full_matrix && 'true' || 'false' }}
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+          GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/ci-change-scope.mjs
 
   # Build dist once for Node-relevant changes and share it with downstream jobs.
   build-artifacts:
-    needs: [docs-scope, changed-scope]
-    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
+    needs: [change-scope]
+    if: needs.change-scope.outputs.run_node == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -172,8 +79,8 @@ jobs:
 
   # Validate npm pack contents after build before merge and again on main.
   release-check:
-    needs: [docs-scope, changed-scope, build-artifacts]
-    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
+    needs: [change-scope, build-artifacts]
+    if: needs.change-scope.outputs.run_node == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -205,8 +112,8 @@ jobs:
   # Both consume the exact same built dist, so this shortens the release gate
   # without rebuilding or dropping either validation path.
   packed-core-smoke:
-    needs: [docs-scope, changed-scope, build-artifacts]
-    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
+    needs: [change-scope, build-artifacts]
+    if: needs.change-scope.outputs.run_node == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -236,8 +143,8 @@ jobs:
 
   signer-platform:
     name: Native signer (${{ matrix.name }})
-    needs: [docs-scope, changed-scope]
-    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_signer == 'true')
+    needs: [change-scope]
+    if: needs.change-scope.outputs.run_signer == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -271,8 +178,8 @@ jobs:
 
   checks:
     name: "test (${{ matrix.runtime }}, ${{ matrix.task }})"
-    needs: [docs-scope, changed-scope]
-    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
+    needs: [change-scope]
+    if: needs.change-scope.outputs.run_node == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -359,28 +266,28 @@ jobs:
             test_lane: false
             command: pnpm canvas:a2ui:bundle && bunx vitest run --config vitest.unit.config.ts
     steps:
-      - name: Skip bun lane on push
-        if: github.event_name == 'push' && matrix.runtime == 'bun'
-        run: echo "Skipping bun test lane on push events."
+      - name: Skip Bun outside the manual full matrix
+        if: matrix.runtime == 'bun' && needs.change-scope.outputs.full_matrix != 'true'
+        run: echo "Skipping the optional Bun compatibility lane."
 
       - name: Checkout
-        if: github.event_name != 'push' || matrix.runtime != 'bun'
+        if: matrix.runtime != 'bun' || needs.change-scope.outputs.full_matrix == 'true'
         uses: actions/checkout@v6
         with:
           submodules: false
 
       - name: Setup Node environment
-        if: matrix.runtime != 'bun' || github.event_name != 'push'
+        if: matrix.runtime != 'bun' || needs.change-scope.outputs.full_matrix == 'true'
         uses: ./.github/actions/setup-node-env
         with:
           install-bun: "${{ matrix.runtime == 'bun' }}"
 
       - name: Configure vitest JSON reports
-        if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.test_lane == true
+        if: (matrix.runtime != 'bun' || needs.change-scope.outputs.full_matrix == 'true') && matrix.test_lane == true
         run: echo "FASED_VITEST_REPORT_DIR=$RUNNER_TEMP/vitest-reports" >> "$GITHUB_ENV"
 
       - name: Configure Node test resources
-        if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.test_lane == true
+        if: (matrix.runtime != 'bun' || needs.change-scope.outputs.full_matrix == 'true') && matrix.test_lane == true
         run: |
           # Split measured long-running groups onto independent runners.
           # Each matrix entry declares its shard count; suites remain serial
@@ -396,17 +303,17 @@ jobs:
           fi
 
       - name: Run ${{ matrix.task }} (${{ matrix.runtime }})
-        if: matrix.runtime != 'bun' || github.event_name != 'push'
+        if: matrix.runtime != 'bun' || needs.change-scope.outputs.full_matrix == 'true'
         run: ${{ matrix.command }}
 
       - name: Summarize slowest tests
-        if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.test_lane == true
+        if: (matrix.runtime != 'bun' || needs.change-scope.outputs.full_matrix == 'true') && matrix.test_lane == true
         run: |
           node scripts/vitest-slowest.mjs --dir "$FASED_VITEST_REPORT_DIR" --top 50 --out "$RUNNER_TEMP/vitest-slowest.md" > /dev/null
           echo "Slowest test summary written to $RUNNER_TEMP/vitest-slowest.md"
 
       - name: Upload vitest reports
-        if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.test_lane == true
+        if: (matrix.runtime != 'bun' || needs.change-scope.outputs.full_matrix == 'true') && matrix.test_lane == true
         uses: actions/upload-artifact@v4
         with:
           name: vitest-reports-${{ runner.os }}-${{ matrix.runtime }}-${{ matrix.task }}
@@ -418,8 +325,8 @@ jobs:
   # is enforced separately as a blocking no-new-errors baseline.
   check:
     name: "check"
-    needs: [docs-scope]
-    if: needs.docs-scope.outputs.docs_only != 'true'
+    needs: [change-scope]
+    if: needs.change-scope.outputs.run_node == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -435,19 +342,54 @@ jobs:
       - name: Check format and lint
         run: pnpm check:ci
 
+      - name: Enforce safe external URL opening policy
+        run: pnpm lint:ui:no-raw-window-open
+
+  hosting-lifecycle:
+    name: "hosting lifecycle"
+    needs: [change-scope]
+    if: needs.change-scope.outputs.run_hosting == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
       - name: Check hosted runtime installer
         run: bash scripts/test-hosted-runtime-install.sh
 
       - name: Check exact streamed Hosting bootstrap
         run: bash scripts/test-streamed-hosting-bootstrap-container.sh
 
-      - name: Enforce safe external URL opening policy
-        run: pnpm lint:ui:no-raw-window-open
+  version-identity:
+    name: "version identity"
+    needs: [change-scope]
+    if: needs.change-scope.outputs.version_only == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Validate exact version-only diff
+        env:
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+          GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/ci-version-identity.mjs
 
   strict-types-baseline:
     name: "strict types baseline"
-    needs: [docs-scope, changed-scope]
-    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
+    needs: [change-scope]
+    if: needs.change-scope.outputs.run_node == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -465,8 +407,8 @@ jobs:
 
   ui-mining:
     name: "ui-mining"
-    needs: [docs-scope]
-    if: needs.docs-scope.outputs.docs_only != 'true'
+    needs: [change-scope]
+    if: needs.change-scope.outputs.run_ui_mining == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -495,8 +437,8 @@ jobs:
 
   ui:
     name: "ui"
-    needs: [docs-scope]
-    if: vars.FASED_FULL_CI_ENABLED == '1' && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [change-scope]
+    if: needs.change-scope.outputs.full_matrix == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -528,8 +470,7 @@ jobs:
   # Temporarily disabled in CI while we process initial findings.
   deadcode:
     name: dead-code report
-    needs: [docs-scope, changed-scope]
-    # if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
+    needs: [change-scope]
     if: false
     runs-on: ubuntu-latest
     strategy:
@@ -564,8 +505,8 @@ jobs:
 
   # Validate docs (format, lint, broken links) only when docs files changed.
   check-docs:
-    needs: [docs-scope]
-    if: needs.docs-scope.outputs.docs_changed == 'true'
+    needs: [change-scope]
+    if: needs.change-scope.outputs.docs_changed == 'true' && needs.change-scope.outputs.version_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -582,8 +523,8 @@ jobs:
         run: pnpm check:docs
 
   skills-python:
-    needs: [docs-scope, changed-scope]
-    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
+    needs: [change-scope]
+    if: needs.change-scope.outputs.run_skills == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -687,8 +628,8 @@ jobs:
         run: pre-commit run --all-files pnpm-audit-prod
 
   checks-windows:
-    needs: [docs-scope, changed-scope, build-artifacts]
-    if: vars.FASED_FULL_CI_ENABLED == '1' && needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
+    needs: [change-scope, build-artifacts]
+    if: needs.change-scope.outputs.full_matrix == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -825,8 +766,8 @@ jobs:
   # running 4 separate jobs per PR (as before) starved the queue. One job
   # per PR allows 5 PRs to run macOS checks simultaneously.
   macos:
-    needs: [docs-scope, changed-scope]
-    if: vars.FASED_FULL_CI_ENABLED == '1' && github.event_name == 'pull_request' && needs.docs-scope.outputs.docs_only != 'true' && needs.changed-scope.outputs.run_macos == 'true'
+    needs: [change-scope]
+    if: needs.change-scope.outputs.run_macos == 'true'
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -1057,60 +998,14 @@ jobs:
             sys.exit(1)
           PY
 
-  android:
-    needs: [docs-scope, changed-scope]
-    if: vars.FASED_FULL_CI_ENABLED == '1' && needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_android == 'true')
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - task: test
-            command: ./gradlew --no-daemon :app:testDebugUnitTest
-          - task: build
-            command: ./gradlew --no-daemon :app:assembleDebug
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          submodules: false
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          # setup-android's sdkmanager currently crashes on JDK 21 in CI.
-          java-version: 17
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          accept-android-sdk-licenses: false
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: 8.11.1
-
-      - name: Install Android SDK packages
-        run: |
-          yes | sdkmanager --licenses >/dev/null
-          sdkmanager --install \
-            "platform-tools" \
-            "platforms;android-36" \
-            "build-tools;36.0.0"
-
-      - name: Run Android ${{ matrix.task }}
-        working-directory: apps/android
-        run: ${{ matrix.command }}
-
   required-checks:
     name: "checks"
     if: always()
     needs:
-      - docs-scope
-      - changed-scope
+      - change-scope
       - check
+      - hosting-lifecycle
+      - version-identity
       - strict-types-baseline
       - checks
       - build-artifacts
@@ -1118,21 +1013,34 @@ jobs:
       - packed-core-smoke
       - signer-platform
       - ui-mining
+      - ui
+      - checks-windows
+      - macos
       - check-docs
       - skills-python
       - secrets
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout gate evaluator
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
       - name: Require every applicable release gate
         env:
-          DOCS_ONLY: ${{ needs.docs-scope.outputs.docs_only }}
-          DOCS_CHANGED: ${{ needs.docs-scope.outputs.docs_changed }}
-          EVENT_NAME: ${{ github.event_name }}
-          RUN_NODE: ${{ needs.changed-scope.outputs.run_node }}
-          RUN_SIGNER: ${{ needs.changed-scope.outputs.run_signer }}
-          DOCS_SCOPE: ${{ needs.docs-scope.result }}
-          CHANGED_SCOPE: ${{ needs.changed-scope.result }}
+          DOCS_CHANGED: ${{ needs.change-scope.outputs.docs_changed }}
+          VERSION_ONLY: ${{ needs.change-scope.outputs.version_only }}
+          RUN_NODE: ${{ needs.change-scope.outputs.run_node }}
+          RUN_SIGNER: ${{ needs.change-scope.outputs.run_signer }}
+          RUN_HOSTING: ${{ needs.change-scope.outputs.run_hosting }}
+          RUN_UI_MINING: ${{ needs.change-scope.outputs.run_ui_mining }}
+          RUN_SKILLS: ${{ needs.change-scope.outputs.run_skills }}
+          RUN_MACOS: ${{ needs.change-scope.outputs.run_macos }}
+          FULL_MATRIX: ${{ needs.change-scope.outputs.full_matrix }}
+          CHANGE_SCOPE: ${{ needs.change-scope.result }}
           CHECK: ${{ needs.check.result }}
+          HOSTING: ${{ needs.hosting-lifecycle.result }}
+          VERSION_IDENTITY: ${{ needs.version-identity.result }}
           STRICT_TYPES: ${{ needs.strict-types-baseline.result }}
           TESTS: ${{ needs.checks.result }}
           BUILD: ${{ needs.build-artifacts.result }}
@@ -1140,26 +1048,10 @@ jobs:
           PACKED_CORE: ${{ needs.packed-core-smoke.result }}
           SIGNER: ${{ needs.signer-platform.result }}
           UI_MINING: ${{ needs.ui-mining.result }}
+          UI: ${{ needs.ui.result }}
+          WINDOWS: ${{ needs.checks-windows.result }}
+          MACOS: ${{ needs.macos.result }}
           DOCS: ${{ needs.check-docs.result }}
           SKILLS: ${{ needs.skills-python.result }}
           SECRETS: ${{ needs.secrets.result }}
-        run: |
-          set -euo pipefail
-          test "$DOCS_SCOPE" = "success"
-          test "$SECRETS" = "success"
-          if [[ "$DOCS_CHANGED" = "true" ]]; then
-            test "$DOCS" = "success"
-          fi
-          if [[ "$DOCS_ONLY" != "true" ]]; then
-            for result in "$CHANGED_SCOPE" "$CHECK" "$UI_MINING"; do
-              test "$result" = "success"
-            done
-            if [[ "$EVENT_NAME" = "push" || "$RUN_NODE" = "true" ]]; then
-              for result in "$STRICT_TYPES" "$TESTS" "$BUILD" "$RELEASE" "$PACKED_CORE" "$SKILLS"; do
-                test "$result" = "success"
-              done
-            fi
-            if [[ "$EVENT_NAME" = "push" || "$RUN_SIGNER" = "true" ]]; then
-              test "$SIGNER" = "success"
-            fi
-          fi
+        run: node scripts/ci-required-gates.mjs
