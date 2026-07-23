@@ -58,6 +58,7 @@ const fastGateSuites = [
   "src/plugins/web-search-providers.runtime.test.ts",
   "src/providers/refresh.test.ts",
   "src/providers/registry.test.ts",
+  "src/security/audit.test.ts",
   "src/tasks/*.test.ts",
   "src/web-search/runtime.test.ts",
   "src/wallet/chat-command.test.ts",

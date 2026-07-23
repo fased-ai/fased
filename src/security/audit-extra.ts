@@ -10,12 +10,17 @@
 // Sync collectors
 export {
   collectAttackSurfaceSummaryFindings,
+  collectExecRuntimeFindings,
   collectExposureMatrixFindings,
+  collectGatewayHttpNoAuthFindings,
   collectGatewayHttpSessionKeyOverrideFindings,
   collectHooksHardeningFindings,
+  collectLikelyMultiUserSetupFindings,
   collectMinimalProfileOverrideFindings,
   collectModelHygieneFindings,
+  collectNodeDangerousAllowCommandFindings,
   collectNodeDenyCommandPatternFindings,
+  collectSandboxDangerousConfigFindings,
   collectSandboxDockerNoopFindings,
   collectSecretsInConfigFindings,
   collectSmallModelRiskFindings,
