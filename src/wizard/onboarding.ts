@@ -194,28 +194,43 @@ export async function runOnboardingWizard(
       },
     };
   };
-  const applyHostedLocalSignerDefaults = (cfg: FasedAgentConfig): FasedAgentConfig => {
-    const appSocket = "/run/fased-signerd/app.sock";
-    const signerOwnedKeys = [
-      "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET",
-      "FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET",
-      "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER",
-      "FASED_WALLET_LOCAL_SIGNER_BIN",
-      "FASED_WALLET_SIGNER_STATE_DIR",
-      "FASED_WALLET_LOCAL_SIGNER_STATE_DB",
-      "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY",
-      "FASED_WALLET_PASSPHRASE_FILE",
-      "FASED_WALLET_WEBAUTHN_RP_ID",
-      "FASED_WALLET_WEBAUTHN_ORIGINS",
-    ] as const;
+  const hostedSignerOperatorSocket = "/run/fased-signerd/operator.sock";
+  const hostedSignerAppSocket = "/run/fased-signerd/app.sock";
+  const hostedSignerOwnedKeys = [
+    "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET",
+    "FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET",
+    "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER",
+    "FASED_WALLET_LOCAL_SIGNER_BIN",
+    "FASED_WALLET_SIGNER_STATE_DIR",
+    "FASED_WALLET_LOCAL_SIGNER_STATE_DB",
+    "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY",
+    "FASED_WALLET_PASSPHRASE_FILE",
+    "FASED_WALLET_WEBAUTHN_RP_ID",
+    "FASED_WALLET_WEBAUTHN_ORIGINS",
+  ] as const;
+  const clearHostedLocalSignerConfig = (cfg: FasedAgentConfig): FasedAgentConfig => {
     let next = cfg;
-    for (const key of signerOwnedKeys) {
-      delete process.env[key];
+    for (const key of hostedSignerOwnedKeys) {
       next = setConfigEnvVar(next, key, undefined);
     }
-    process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = appSocket;
-    next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_SOCKET", appSocket);
-    return next;
+    return setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_SOCKET", undefined);
+  };
+  const prepareHostedLocalSignerOnboarding = (cfg: FasedAgentConfig): FasedAgentConfig => {
+    for (const key of hostedSignerOwnedKeys) {
+      delete process.env[key];
+    }
+    process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = hostedSignerOperatorSocket;
+    return clearHostedLocalSignerConfig(cfg);
+  };
+  const persistHostedLocalSignerRuntime = (cfg: FasedAgentConfig): FasedAgentConfig => {
+    const next = clearHostedLocalSignerConfig(cfg);
+    return setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_SOCKET", hostedSignerAppSocket);
+  };
+  const activateHostedLocalSignerRuntimeEnv = (): void => {
+    for (const key of hostedSignerOwnedKeys) {
+      delete process.env[key];
+    }
+    process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = hostedSignerAppSocket;
   };
   const syncLocalSignerRuntimeEnvIntoConfig = (cfg: FasedAgentConfig): FasedAgentConfig => {
     if (
@@ -1065,7 +1080,7 @@ export async function runOnboardingWizard(
 
   const hostingMode = hostProfile === "hosting";
   if (hostingMode) {
-    nextConfig = applyHostedLocalSignerDefaults(nextConfig);
+    nextConfig = prepareHostedLocalSignerOnboarding(nextConfig);
   } else if (
     !String(process.env.FASED_WALLET_WEBAUTHN_RP_ID ?? "").trim() &&
     !String(process.env.FASED_WALLET_WEBAUTHN_ORIGINS ?? "").trim()
@@ -1116,9 +1131,9 @@ export async function runOnboardingWizard(
     nextConfig,
     prompter,
   });
-  nextConfig = hostingMode
-    ? applyHostedLocalSignerDefaults(nextConfig)
-    : syncLocalSignerRuntimeEnvIntoConfig(nextConfig);
+  if (!hostingMode) {
+    nextConfig = syncLocalSignerRuntimeEnvIntoConfig(nextConfig);
+  }
 
   let onboardingWalletSecurityFocus: {
     walletId: string;
@@ -1547,7 +1562,7 @@ export async function runOnboardingWizard(
 
         if (nextConfig.wallet?.runtime?.enabled !== true) {
           if (hostingMode) {
-            nextConfig = applyHostedLocalSignerDefaults(nextConfig);
+            nextConfig = prepareHostedLocalSignerOnboarding(nextConfig);
           }
           nextConfig = await configureWalletForOnboarding({
             flow,
@@ -1556,7 +1571,9 @@ export async function runOnboardingWizard(
             nextConfig,
             prompter,
           });
-          nextConfig = syncLocalSignerRuntimeEnvIntoConfig(nextConfig);
+          if (!hostingMode) {
+            nextConfig = syncLocalSignerRuntimeEnvIntoConfig(nextConfig);
+          }
         }
 
         attemptedSelfHostedSetupThisRun = true;
@@ -2073,6 +2090,9 @@ export async function runOnboardingWizard(
   const previousSuppressOverwrite = process.env.FASED_SUPPRESS_CONFIG_OVERWRITE_LOG;
   process.env.FASED_SUPPRESS_CONFIG_OVERWRITE_LOG = "1";
   try {
+    if (hostingMode) {
+      nextConfig = persistHostedLocalSignerRuntime(nextConfig);
+    }
     nextConfig = applySatMiningAttachment(nextConfig);
     await writeConfigFile(nextConfig);
     if (flow !== "quickstart") {
@@ -2129,6 +2149,9 @@ export async function runOnboardingWizard(
   nextConfig = applyWizardMetadata(nextConfig, { command: "onboard", mode });
   nextConfig = applySatMiningAttachment(nextConfig);
   await writeConfigFile(nextConfig);
+  if (hostingMode) {
+    activateHostedLocalSignerRuntimeEnv();
+  }
   if (launchedTui) {
     return;
   }
