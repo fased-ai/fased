@@ -18,6 +18,88 @@ function sliceBetween(source: string, start: string, end: string): string {
 }
 
 describe("root-coordinated Hosting lifecycle", () => {
+  it("authenticates the root-to-app installer phase instead of re-entering public bootstrap", () => {
+    const rootCoordinator = sliceBetween(installer, "reexec_as_app_user()", "go_modern_enough()");
+    const validator = sliceBetween(
+      installer,
+      "validate_verified_hosting_app_handoff()",
+      "validate_install_platform()",
+    );
+    expect(rootCoordinator).toContain("create_verified_hosting_app_handoff");
+    expect(rootCoordinator).toContain("--verified-hosting-app-handoff");
+    expect(rootCoordinator).toContain("FASED_HOST_UPDATE_TRANSACTION_ID");
+    expect(validator).toContain("/run/fased-installer/app-phase-");
+    expect(validator).toContain('"$file_owner" == "0"');
+    expect(validator).toContain('"$file_mode" == "440"');
+    expect(validator).toContain('"$handoff_uid" == "$(id -u)"');
+    expect(validator).toContain('"$handoff_repo" == "$canonical_repo"');
+    expect(validator).toContain(
+      '"$handoff_transaction" == "${FASED_HOST_UPDATE_TRANSACTION_ID:-}"',
+    );
+    expect(installer).toContain(
+      '-z "$install_entry_verified_bundle" && -z "$install_entry_app_handoff"',
+    );
+  });
+
+  it("uses operator sockets for app administration and app sockets only for the Gateway", () => {
+    const coordinator = sliceBetween(installer, "reexec_as_app_user()", "go_modern_enough()");
+    const services = sliceBetween(
+      installer,
+      "install_host_signer_and_updater_services()",
+      "migrate_legacy_hosted_signer_if_needed()",
+    );
+    expect(coordinator).toContain(
+      "FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/operator.sock",
+    );
+    expect(services).toContain("--socket-gid ${operator_gid}");
+    expect(services).toContain("-socket /run/fased-signerd/app.sock");
+    expect(services).toContain("-operator-socket /run/fased-signerd/operator.sock");
+    expect(services).toContain("updater_socket_attempt < 150");
+  });
+
+  it("makes private Ubuntu and RHEL app homes traversable only by the runtime group", () => {
+    const accounts = sliceBetween(
+      installer,
+      "ensure_host_boundary_accounts()",
+      "install_host_signer_and_updater_services()",
+    );
+    const gateway = sliceBetween(
+      installer,
+      "install_fixed_host_gateway_service()",
+      "reconcile_hosting_shared_state()",
+    );
+    expect(accounts).toContain('chgrp "$config_group" "$target_home"');
+    expect(accounts).toContain('chmod 0710 "$target_home"');
+    expect(gateway).toContain('chgrp "$config_group" "$target_home"');
+    expect(gateway).toContain('chmod 0710 "$target_home"');
+    expect(gateway).toContain('chgrp -R "$config_group" "$target_repo_dir"');
+    expect(gateway).toContain('chmod -R g+rX,o-rwx "$target_repo_dir"');
+    expect(gateway).toContain('find "$target_repo_dir" -type d -exec chmod g+s {} +');
+    expect(gateway).toContain('chmod 2770 "$target_repo_dir"');
+  });
+
+  it("delays SSH and firewall hardening until runtime health and never asks for DNS retyping", () => {
+    const prepare = sliceBetween(
+      installer,
+      "prepare_hosting_root_prerequisites()",
+      "finalize_hosting_root_prerequisites()",
+    );
+    const finalize = sliceBetween(
+      installer,
+      "finalize_hosting_root_prerequisites()",
+      "ensure_host_boundary_accounts()",
+    );
+    const coordinator = sliceBetween(installer, "reexec_as_app_user()", "go_modern_enough()");
+    expect(prepare).not.toContain('"$helper" harden-ssh');
+    expect(prepare).toContain('write_hosting_prerequisites_marker "$tailscale_dns" "pending"');
+    expect(finalize).toContain('"$helper" firewall-baseline');
+    expect(finalize).toContain('"$helper" harden-ssh');
+    expect(installer).not.toContain("Type the Tailscale DNS name");
+    expect(coordinator.indexOf("verify_root_coordinated_hosted_gateway")).toBeLessThan(
+      coordinator.indexOf("finalize_hosting_root_prerequisites"),
+    );
+  });
+
   it("stages an app-side repair without requiring a helper, system unit mutation, or sudo", () => {
     const noOnboardStart = installer.lastIndexOf('if [[ "$RUN_ONBOARD" -eq 0 ]]');
     const noOnboardEnd = installer.indexOf('section "Interactive setup"', noOnboardStart);

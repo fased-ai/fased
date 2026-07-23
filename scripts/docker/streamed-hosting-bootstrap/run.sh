@@ -14,12 +14,15 @@ cat >"$fixture/app/package/install.sh" <<'EOF_INNER'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "$#" -eq 9 ]]
-[[ "$1" == "--hosting" && "$2" == "--release" && "$3" == "v9.8.7-rc.2" ]]
+[[ ( "$1" == "--hosting" || "$1" == "--repair-hosting" ) && "$2" == "--release" && "$3" == "v9.8.7-rc.2" ]]
 [[ "$4" == "--update-channel" && "$5" == "beta" ]]
 [[ "$6" == "--release" && "$7" == "9.8.7-rc.2" && "$8" == "--verified-hosting-bundle" ]]
 [[ "$9" =~ ^/var/lib/fased-installer/releases/v9\.8\.7-rc\.2/[a-f0-9]{64}/extract/package$ ]]
 [[ -f "$9/.fased-hosting-bundle-verified" ]]
 printf 'verified handoff\n' >/tmp/fased-bootstrap-success
+printf '%s\n' "$1" >>/tmp/fased-bootstrap-modes
+mkdir -p /home/app/.fased
+printf '{"onboardingCompleted":true}\n' >/home/app/.fased/install-complete.json
 EOF_INNER
 chmod 0755 "$fixture/app/package/install.sh"
 cat >"$fixture/app/package/package.json" <<'EOF_PACKAGE'
@@ -137,7 +140,7 @@ EOF_GH
 chmod 0755 /usr/local/bin/gh
 
 if bash -s -- --repair-hosting </repo/install.sh 2>/tmp/repair-error; then exit 1; fi
-grep -Fq 'accepts only one fresh-install selector' /tmp/repair-error
+grep -Fq 'accepts only the public one-command selector' /tmp/repair-error
 [[ ! -e /var/lib/fased-installer ]]
 if FASED_INSTALL_REPO=https://example.invalid bash -s -- --hosting </repo/install.sh 2>/tmp/env-error; then exit 1; fi
 grep -Fq 'Refusing Fased environment overrides' /tmp/env-error
@@ -150,6 +153,7 @@ marker="$(find /var/lib/fased-installer/releases/v9.8.7-rc.2 -name .fased-hostin
 [[ -n "$marker" ]]
 grep -Fq 'version=9.8.7-rc.2' "$marker"
 grep -Fq "commit=$commit" "$marker"
-if bash -s -- --hosting </repo/install.sh 2>/tmp/repeat-error; then exit 1; fi
-grep -Fq 'only for a fresh host' /tmp/repeat-error
+bash -s -- --hosting --release v9.8.7-rc.2 --update-channel beta </repo/install.sh
+[[ "$(sed -n '1p' /tmp/fased-bootstrap-modes)" == "--hosting" ]]
+[[ "$(sed -n '2p' /tmp/fased-bootstrap-modes)" == "--repair-hosting" ]]
 printf 'streamed Hosting bootstrap container validation passed\n'

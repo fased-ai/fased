@@ -27,7 +27,7 @@ type ReadOnlyProbe = (
 ) => { ok: boolean; stdout?: string; detail?: string };
 
 const HOSTING_PREREQUISITES_MARKER = "/etc/fased/hosting-prerequisites";
-const EXPECTED_MARKER_KEYS = new Set([
+const LEGACY_MARKER_KEYS = new Set([
   "schemaVersion",
   "release",
   "gatewayPort",
@@ -42,6 +42,23 @@ const EXPECTED_MARKER_KEYS = new Set([
   "appSudoDisabled",
   "preparedBy",
 ]);
+const CURRENT_MARKER_KEYS = new Set([
+  "schemaVersion",
+  "release",
+  "updateChannel",
+  "transactionId",
+  "gatewayPort",
+  "tailscaleDns",
+  "tailscaleServeReady",
+  "firewallReady",
+  "sshHardened",
+  "fail2banReady",
+  "automaticUpdatesReady",
+  "signerReady",
+  "appSudoDisabled",
+  "preparedBy",
+]);
+const KNOWN_MARKER_KEYS = new Set([...LEGACY_MARKER_KEYS, ...CURRENT_MARKER_KEYS]);
 
 function resolveHostSecurityLogPath(): string {
   const home = process.env.HOME?.trim() || os.homedir();
@@ -85,7 +102,7 @@ function readRootPreparedMarker(markerPath: string, requiredUid = 0): Map<string
     }
     const key = line.slice(0, separator);
     const value = line.slice(separator + 1);
-    if (!EXPECTED_MARKER_KEYS.has(key) || values.has(key)) {
+    if (!KNOWN_MARKER_KEYS.has(key) || values.has(key)) {
       throw new Error("marker contains an unknown or duplicate field");
     }
     values.set(key, value);
@@ -94,8 +111,8 @@ function readRootPreparedMarker(markerPath: string, requiredUid = 0): Map<string
 }
 
 function markerHasExpectedRootState(values: Map<string, string>): boolean {
-  return (
-    values.size === EXPECTED_MARKER_KEYS.size &&
+  const legacyReady =
+    values.size === LEGACY_MARKER_KEYS.size &&
     values.get("schemaVersion") === "2" &&
     /^\d+\.\d+\.\d+$/.test(values.get("release") || "") &&
     values.get("gatewayPort") === "18789" &&
@@ -106,6 +123,38 @@ function markerHasExpectedRootState(values: Map<string, string>): boolean {
     values.get("sshHardened") === "true" &&
     values.get("fail2banReady") === "true" &&
     values.get("automaticUpdatesReady") === "true" &&
+    values.get("signerReady") === "true" &&
+    values.get("appSudoDisabled") === "true" &&
+    values.get("preparedBy") === "root";
+  if (legacyReady) {
+    return true;
+  }
+  const release = values.get("release") || "";
+  const channel = values.get("updateChannel") || "";
+  const expectedRelease = process.env.FASED_HOSTING_RELEASE?.trim();
+  const expectedChannel = process.env.FASED_UPDATE_CHANNEL?.trim();
+  const lifecycleStates = [
+    values.get("firewallReady"),
+    values.get("sshHardened"),
+    values.get("fail2banReady"),
+    values.get("automaticUpdatesReady"),
+  ];
+  return (
+    values.size === CURRENT_MARKER_KEYS.size &&
+    values.get("schemaVersion") === "3" &&
+    /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(release) &&
+    /^(stable|beta)$/.test(channel) &&
+    (!release.includes("-") || channel === "beta") &&
+    (!expectedRelease || release === expectedRelease) &&
+    (!expectedChannel || channel === expectedChannel) &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      values.get("transactionId") || "",
+    ) &&
+    values.get("gatewayPort") === "18789" &&
+    /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(values.get("tailscaleDns") || "") &&
+    values.get("tailscaleServeReady") === "true" &&
+    lifecycleStates.every((value) => value === "pending" || value === "true") &&
+    new Set(lifecycleStates).size === 1 &&
     values.get("signerReady") === "true" &&
     values.get("appSudoDisabled") === "true" &&
     values.get("preparedBy") === "root"
@@ -120,10 +169,10 @@ function verifyRootPreparedHostingPrerequisites(params?: {
   const markerPath = params?.markerPath ?? HOSTING_PREREQUISITES_MARKER;
   const probe = params?.probe ?? runReadOnlyProbe;
   let markerReady = false;
+  let markerValues: Map<string, string> | null = null;
   try {
-    markerReady = markerHasExpectedRootState(
-      readRootPreparedMarker(markerPath, params?.requiredMarkerUid ?? 0),
-    );
+    markerValues = readRootPreparedMarker(markerPath, params?.requiredMarkerUid ?? 0);
+    markerReady = markerHasExpectedRootState(markerValues);
   } catch {
     markerReady = false;
   }
@@ -138,6 +187,7 @@ function verifyRootPreparedHostingPrerequisites(params?: {
   const groups = probe("id", ["-nG"]);
   const adminGroupPresent = /(?:^|\s)(?:sudo|wheel)(?:\s|$)/.test(groups.stdout || "");
   const appCanElevate = probe("sudo", ["-n", "true"]).ok;
+  const hardeningPending = markerValues?.get("firewallReady") === "pending";
 
   return [
     {
@@ -145,7 +195,7 @@ function verifyRootPreparedHostingPrerequisites(params?: {
       ok: markerReady && tailnetReady && serveReady,
       detail:
         markerReady && tailnetReady && serveReady
-          ? "root-prepared tailnet identity, private Serve route, and SSH confirmation verified"
+          ? "root-prepared tailnet identity and private Serve route verified"
           : "root-prepared Tailscale identity or private Serve route is unavailable",
     },
     {
@@ -153,22 +203,28 @@ function verifyRootPreparedHostingPrerequisites(params?: {
       ok: markerReady && groups.ok && !adminGroupPresent && !appCanElevate,
       detail:
         markerReady && groups.ok && !adminGroupPresent && !appCanElevate
-          ? "root prepared host lock-down; app account has no sudo or admin-group access"
+          ? hardeningPending
+            ? "app account has no elevation; root will finalize the host firewall after runtime health"
+            : "root prepared host lock-down; app account has no sudo or admin-group access"
           : "root preparation is invalid or the app account can elevate",
     },
     {
       name: "ssh",
       ok: markerReady,
       detail: markerReady
-        ? "tailnet SSH was confirmed before root applied SSH hardening"
+        ? hardeningPending
+          ? "root will apply SSH hardening after runtime health; no DNS-name confirmation is required"
+          : "root applied SSH hardening after runtime health"
         : "root SSH hardening marker is invalid",
     },
     {
       name: "fail2ban",
-      ok: markerReady && fail2banReady,
+      ok: markerReady && (hardeningPending || fail2banReady),
       detail:
-        markerReady && fail2banReady
-          ? "root-managed fail2ban service is active"
+        markerReady && (hardeningPending || fail2banReady)
+          ? hardeningPending
+            ? "root will enable fail2ban after runtime health"
+            : "root-managed fail2ban service is active"
           : "root-managed fail2ban service is inactive",
     },
     {

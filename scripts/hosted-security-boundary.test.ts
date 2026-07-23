@@ -154,7 +154,9 @@ describe("hosted signer security boundary", () => {
       '[[ "${FASED_TAILSCALE_AUTO_SERVE:-1}" == "1" && "${FASED_HOST_PROFILE:-}" != "hosting" ]]',
     );
     expect(install).toContain("prepare_hosting_root_prerequisites");
-    expect(install).toContain("tailnetSshConfirmed=true");
+    expect(install).toContain("finalize_hosting_root_prerequisites");
+    expect(install).toContain("firewallReady=${pending}");
+    expect(install).not.toContain("Type the Tailscale DNS name");
     expect(onboardingHostSecurity).not.toContain("fased-host-maintenance");
     expect(onboardingHostSecurity).not.toContain("tailscale up");
     expect(onboardingHostSecurity).not.toContain("tailscale set");

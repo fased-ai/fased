@@ -105,7 +105,11 @@ if [[ "${FASED_MANAGED_INTERNAL:-0}" != "1" ]]; then
 fi
 
 set -euo pipefail
-umask 077
+if [[ "${FASED_HOST_PROFILE:-}" == "hosting" ]]; then
+  umask 0007
+else
+  umask 077
+fi
 
 NODE_BIN="$(resolve_node_bin || true)"
 if [[ -z "$NODE_BIN" ]]; then

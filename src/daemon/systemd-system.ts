@@ -1,8 +1,11 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { VERSION } from "../version.js";
 import { execFileUtf8 } from "./exec-file.js";
 import type { GatewayService } from "./service.js";
 import { buildSystemdUnit } from "./systemd-unit.js";
@@ -30,29 +33,61 @@ function buildHostedSystemctlControlArgs(action: "stop" | "restart"): string[] {
 }
 
 async function restartHostedServiceWithoutPrivilege() {
-  const shown = await execFileUtf8("systemctl", [
-    "show",
-    `${SERVICE_NAME}.service`,
-    "--property",
-    "MainPID",
-    "--value",
-  ]);
-  const pid = Number.parseInt(shown.stdout.trim(), 10);
-  if (shown.code !== 0 || !Number.isSafeInteger(pid) || pid <= 1) {
-    return { code: 1, stdout: shown.stdout, stderr: shown.stderr || "Gateway MainPID unavailable" };
-  }
-  try {
-    const status = await fs.readFile(`/proc/${pid}/status`, "utf8");
-    const ownerUid = Number.parseInt(status.match(/^Uid:\s+(\d+)/m)?.[1] ?? "", 10);
-    const currentUid = typeof process.getuid === "function" ? process.getuid() : -1;
-    if (!Number.isSafeInteger(ownerUid) || ownerUid !== currentUid) {
-      throw new Error("Gateway service process is not owned by the current app account");
-    }
-    process.kill(pid, "SIGTERM");
-    return { code: 0, stdout: "", stderr: "" };
-  } catch (error) {
-    return { code: 1, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
-  }
+  const transactionId = randomUUID();
+  const socketPath =
+    process.env.FASED_HOST_UPDATER_SOCKET || "/run/fased-host-updater/request.sock";
+  return await new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+    const socket = net.createConnection({ path: socketPath });
+    socket.setEncoding("utf8");
+    socket.setTimeout(30_000);
+    let body = "";
+    let settled = false;
+    const finish = (code: number, stderr = "") => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      socket.destroy();
+      resolve({ code, stdout: "", stderr });
+    };
+    socket.once("connect", () => {
+      socket.write(
+        `${JSON.stringify({
+          schemaVersion: 2,
+          op: "restartGateway",
+          transactionId,
+          version: VERSION,
+        })}\n`,
+      );
+    });
+    socket.on("data", (chunk) => {
+      body += chunk;
+      const newline = body.indexOf("\n");
+      if (newline < 0) {
+        return;
+      }
+      try {
+        const response = JSON.parse(body.slice(0, newline));
+        if (
+          response?.ok === true &&
+          response.transactionId === transactionId &&
+          response.version === VERSION &&
+          response.phase === "restarted"
+        ) {
+          finish(0);
+          return;
+        }
+        finish(1, response?.error || "Root controller rejected the Gateway restart");
+      } catch (error) {
+        finish(1, `Root controller returned an invalid response: ${String(error)}`);
+      }
+    });
+    socket.once("timeout", () => finish(1, "Root controller timed out during Gateway restart"));
+    socket.once("error", (error) =>
+      finish(1, `Root controller is unavailable for Gateway restart: ${error.message}`),
+    );
+    socket.once("close", () => finish(1, "Root controller closed before restart confirmation"));
+  });
 }
 
 async function readHostedSystemdCommand(unitPath: string) {

@@ -615,6 +615,35 @@ describe("security audit", () => {
     ).toBe(true);
   });
 
+  it("accepts trusted group-shared filesystem state only for Hosting", async () => {
+    if (isWindows) {
+      return;
+    }
+    const tmp = await makeTmpDir("hosting-shared-state");
+    const stateDir = path.join(tmp, "state");
+    await fs.mkdir(stateDir, { recursive: true, mode: 0o770 });
+    await fs.chmod(stateDir, 0o2770);
+    const configPath = path.join(stateDir, "fased.json");
+    await fs.writeFile(configPath, "{}\n", { encoding: "utf8", mode: 0o660 });
+    await fs.chmod(configPath, 0o660);
+
+    const result = await runSecurityAudit({
+      config: {},
+      includeFilesystem: true,
+      includeChannelSecurity: false,
+      stateDir,
+      configPath,
+      env: { FASED_HOST_PROFILE: "hosting" },
+    });
+    const forbidden = new Set([
+      "fs.state_dir.perms_group_writable",
+      "fs.state_dir.perms_readable",
+      "fs.config.perms_writable",
+      "fs.config.perms_group_readable",
+    ]);
+    expect(result.findings.filter((finding) => forbidden.has(finding.checkId))).toEqual([]);
+  });
+
   it("warns when sandbox browser containers have missing or stale hash labels", async () => {
     const tmp = await makeTmpDir("browser-hash-labels");
     const stateDir = path.join(tmp, "state");

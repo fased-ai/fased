@@ -1261,7 +1261,16 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
     }
 
     const dir = path.dirname(configPath);
-    await deps.fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+    const sharedHostingConfig = deps.env.FASED_HOST_PROFILE?.trim() === "hosting";
+    const stateDirMode = sharedHostingConfig ? 0o2770 : 0o700;
+    const configMode = sharedHostingConfig ? 0o660 : 0o600;
+    await deps.fs.promises.mkdir(dir, { recursive: true, mode: stateDirMode });
+    if (sharedHostingConfig) {
+      const currentMode = (await deps.fs.promises.stat(dir)).mode & 0o7777;
+      if (currentMode !== stateDirMode) {
+        await deps.fs.promises.chmod(dir, stateDirMode);
+      }
+    }
     const outputConfigBase =
       envRefMap && changedPaths
         ? (restoreEnvRefsFromMap(cfgToWrite, "", envRefMap, changedPaths) as FasedAgentConfig)
@@ -1393,8 +1402,9 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
     try {
       await deps.fs.promises.writeFile(tmp, json, {
         encoding: "utf-8",
-        mode: 0o600,
+        mode: configMode,
       });
+      await deps.fs.promises.chmod(tmp, configMode);
 
       if (deps.fs.existsSync(configPath)) {
         await rotateConfigBackups(configPath, deps.fs.promises);
@@ -1410,7 +1420,7 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
         // Windows doesn't reliably support atomic replace via rename when dest exists.
         if (code === "EPERM" || code === "EEXIST") {
           await deps.fs.promises.copyFile(tmp, configPath);
-          await deps.fs.promises.chmod(configPath, 0o600).catch(() => {
+          await deps.fs.promises.chmod(configPath, configMode).catch(() => {
             // best-effort
           });
           await deps.fs.promises.unlink(tmp).catch(() => {

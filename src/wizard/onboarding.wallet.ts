@@ -1025,10 +1025,10 @@ export async function configureWalletForOnboarding(params: {
     const hostedSigner = params.hostProfile === "hosting";
     const externallyManagedSigner = !hostedSigner && isLocalSignerExternallyManaged(process.env);
     if (hostedSigner) {
-      const expectedSocket = "/run/fased-signerd/app.sock";
+      const expectedSocket = "/run/fased-signerd/operator.sock";
       if (socketPath !== expectedSocket) {
         throw new Error(
-          "Hosting wallet setup must use only the root-managed signer app socket at /run/fased-signerd/app.sock.",
+          "Hosting wallet setup must use only the root-managed signer operator socket at /run/fased-signerd/operator.sock.",
         );
       }
       let result: {

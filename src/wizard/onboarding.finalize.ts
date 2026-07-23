@@ -440,6 +440,11 @@ export function resolveGatewayServiceRunAsUser(): string | undefined {
   }
 }
 
+export function resolveHostedGatewayServiceUser(): string {
+  const configured = process.env.FASED_GATEWAY_USER?.trim();
+  return configured && /^[A-Za-z0-9_.@-]+$/.test(configured) ? configured : "fased-gateway";
+}
+
 export function resolveVerifiedRootServiceReady(params: {
   restartQueued: boolean;
   activeAfterRestart: boolean;
@@ -533,8 +538,7 @@ async function verifyStrictRootGatewayExecStart(
             `systemctl cat ${serviceName}.service 2>/dev/null | grep -F 'User=${safeRunAsUser}' >/dev/null`,
           ]
         : []),
-      "true",
-    ].join(" ; "),
+    ].join(" && "),
   );
 }
 
@@ -548,6 +552,17 @@ async function isSystemdServiceActive(params: {
       : `systemctl --user is-active ${params.name} 2>/dev/null`;
   const result = await runShell(command, { timeoutMs: 5_000 });
   return result;
+}
+
+async function isSystemdServiceEnabled(params: {
+  name: string;
+  scope: "root" | "user";
+}): Promise<{ ok: boolean; detail?: string }> {
+  const command =
+    params.scope === "root"
+      ? `systemctl is-enabled ${params.name} 2>/dev/null`
+      : `systemctl --user is-enabled ${params.name} 2>/dev/null`;
+  return await runShell(command, { timeoutMs: 5_000 });
 }
 
 function shellQuote(value: string): string {
@@ -1559,32 +1574,26 @@ export async function finalizeOnboardingWizard(
     if (strictVps && !rootPrepared) {
       throw new Error(
         formatHostedRootServiceRequiredFailure({
-          runAsUser: resolveGatewayServiceRunAsUser(),
+          runAsUser: resolveHostedGatewayServiceUser(),
           detail:
             "the provider-console root phase did not install the fixed root-owned service; the app has no sudo or root control socket",
         }),
       );
     }
     if (rootPrepared) {
-      const runAsUser = resolveGatewayServiceRunAsUser();
-      if (!runAsUser) {
-        throw new Error(
-          formatHostedRootServiceRequiredFailure({
-            detail: "runtime user could not be resolved",
-          }),
-        );
-      }
-      const [strictExec, rootActive] = await Promise.all([
+      const runAsUser = resolveHostedGatewayServiceUser();
+      const [strictExec, rootEnabled] = await Promise.all([
         verifyStrictRootGatewayExecStart("fased-gateway", expectedGatewayStartupMode, runAsUser),
-        isSystemdServiceRunningOrStarting({ name: "fased-gateway", scope: "root" }),
+        isSystemdServiceEnabled({ name: "fased-gateway", scope: "root" }),
       ]);
-      if (!strictExec.ok || !rootActive) {
+      if (!strictExec.ok || !rootEnabled.ok) {
         throw new Error(
           formatHostedRootServiceRequiredFailure({
             runAsUser,
             detail:
               strictExec.detail ||
-              "fixed root-owned Gateway unit is missing, inactive, or has an unexpected command",
+              rootEnabled.detail ||
+              "fixed root-owned Gateway unit is missing, disabled, or has an unexpected command",
           }),
         );
       }
@@ -1593,7 +1602,7 @@ export async function finalizeOnboardingWizard(
     if (strictVps && !rootServiceActiveSuccessfully) {
       throw new Error(
         formatHostedRootServiceRequiredFailure({
-          runAsUser: resolveGatewayServiceRunAsUser(),
+          runAsUser: resolveHostedGatewayServiceUser(),
           detail: "root-managed gateway service was not verified after restart/repair",
         }),
       );

@@ -50,6 +50,7 @@ const TRANSACTION_OPERATIONS = new Set([
   "activateRelease",
   "authorizeGatewayRelease",
   "gateGatewayRelease",
+  "restartGateway",
   "commitRelease",
   "rollbackRelease",
 ]);
@@ -1043,6 +1044,10 @@ function createTransactionContext(overrides = {}) {
     reloadUnits: overrides.reloadUnits ?? (async () => await systemctl("daemon-reload")),
     startGateway:
       overrides.startGateway ?? (async () => await systemctl("start", "fased-gateway.service")),
+    stopGateway:
+      overrides.stopGateway ?? (async () => await systemctl("stop", "fased-gateway.service")),
+    restartGateway:
+      overrides.restartGateway ?? (async () => await systemctl("restart", "fased-gateway.service")),
     probeSigner: overrides.probeSigner ?? probeSignerV2,
     probeSignerState:
       overrides.probeSignerState ??
@@ -1360,6 +1365,13 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
     await removeJournal(context);
     if (!preserveGatewayGate) {
       await removeUpdateGates(context);
+      try {
+        await context.startGateway();
+      } catch (error) {
+        if (!/not found|not loaded|no such file/i.test(error?.message || "")) {
+          throw error;
+        }
+      }
     }
     return {
       transactionId: journal.transactionId,
@@ -1405,6 +1417,13 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
   await removeJournal(context);
   if (!preserveGatewayGate) {
     await removeUpdateGates(context);
+    try {
+      await context.startGateway();
+    } catch (error) {
+      if (!/not found|not loaded|no such file/i.test(error?.message || "")) {
+        throw error;
+      }
+    }
   }
   return {
     transactionId: journal.transactionId,
@@ -1465,12 +1484,39 @@ async function gateGatewayRelease(request, context) {
     throw new Error("cannot gate a Gateway after the signer commit decision");
   }
   await writeUpdateGates(context, journal);
+  try {
+    await context.stopGateway();
+  } catch (error) {
+    if (!/not found|not loaded|no such file/i.test(error?.message || "")) {
+      throw error;
+    }
+  }
   return {
     transactionId: journal.transactionId,
     version: journal.version,
     phase: journal.phase,
     changed: journal.changed,
     release: journal.release,
+  };
+}
+
+async function restartGatewayService(request, context) {
+  const journal = await readJournal(context);
+  if (journal) {
+    throw new Error("cannot restart the Gateway while a hosted release transaction is active");
+  }
+  const installedVersion = await readVersionFile(context.paths.versionPath);
+  if (installedVersion !== request.version) {
+    throw new Error(
+      `Gateway restart version ${request.version} does not match installed signer ${installedVersion || "unknown"}`,
+    );
+  }
+  await context.restartGateway();
+  return {
+    transactionId: request.transactionId,
+    version: request.version,
+    phase: "restarted",
+    changed: false,
   };
 }
 
@@ -1629,8 +1675,10 @@ async function recoverInterruptedTransaction(context) {
   if (journal.phase === "gateway-authorized") {
     await writeSignerGate(context, journal);
     await removeGatewayGate(context);
+    await context.startGateway();
   } else {
     await writeUpdateGates(context, journal);
+    await context.stopGateway();
   }
   return { recovered: true, action: "pending", phase: journal.phase };
 }
@@ -1647,6 +1695,8 @@ async function dispatchUpdateRequest(request, context) {
       return await authorizeGatewayRelease(request, context);
     case "gateGatewayRelease":
       return await gateGatewayRelease(request, context);
+    case "restartGateway":
+      return await restartGatewayService(request, context);
     case "commitRelease":
       return await commitSignerRelease(request, context);
     case "rollbackRelease":
@@ -1789,6 +1839,7 @@ export const __testing = {
   releaseAttestationVerifyArgs,
   releaseAllowedForChannel,
   releaseArchitecture,
+  restartGatewayService,
   rollbackSignerRelease,
   stageOfficialControllerRelease,
   stageOfficialCandidate,

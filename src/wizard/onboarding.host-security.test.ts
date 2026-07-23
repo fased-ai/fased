@@ -42,6 +42,23 @@ function markerPath(contents = marker()): string {
   return file;
 }
 
+function currentMarker(state: "pending" | "true" = "pending"): string {
+  return marker({
+    schemaVersion: "3",
+    release: "1.2.4-rc.1",
+    updateChannel: "beta",
+    transactionId: "11111111-1111-4111-8111-111111111111",
+    firewallReady: state,
+    sshHardened: state,
+    fail2banReady: state,
+    automaticUpdatesReady: state,
+    tailnetSshConfirmed: undefined as unknown as string,
+  })
+    .split("\n")
+    .filter((line) => !line.startsWith("tailnetSshConfirmed=") && !line.endsWith("=undefined"))
+    .join("\n");
+}
+
 function healthyProbe(command: string, args: string[]) {
   const invocation = [command, ...args].join(" ");
   if (invocation === "tailscale ip -4") {
@@ -69,6 +86,26 @@ describe("onboarding Hosting security verification", () => {
       process.getuid?.() ?? 0,
     );
     expect(__testing.markerHasExpectedRootState(stale)).toBe(false);
+  });
+
+  it("accepts an exact prerelease marker while root hardening is pending health", () => {
+    const values = __testing.readRootPreparedMarker(
+      markerPath(currentMarker("pending")),
+      process.getuid?.() ?? 0,
+    );
+    expect(__testing.markerHasExpectedRootState(values)).toBe(true);
+    const checks = __testing.verifyRootPreparedHostingPrerequisites({
+      markerPath: markerPath(currentMarker("pending")),
+      requiredMarkerUid: process.getuid?.() ?? 0,
+      probe: (command, args) => {
+        if ([command, ...args].join(" ").includes("fail2ban.service")) {
+          return { ok: false };
+        }
+        return healthyProbe(command, args);
+      },
+    });
+    expect(checks.every((check) => check.ok)).toBe(true);
+    expect(checks.find((check) => check.name === "ssh")?.detail).toContain("no DNS-name");
   });
 
   it("rejects unknown and duplicate marker fields", () => {

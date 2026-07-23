@@ -8,6 +8,7 @@ case "$install_entry_source" in
 esac
 install_entry_hosting=0
 install_entry_verified_bundle=""
+install_entry_app_handoff=""
 install_entry_legacy_ts_authkey=0
 install_entry_args=("$@")
 for ((install_entry_index = 0; install_entry_index < ${#install_entry_args[@]}; install_entry_index++)); do
@@ -23,6 +24,9 @@ for ((install_entry_index = 0; install_entry_index < ${#install_entry_args[@]}; 
     --verified-hosting-bundle)
       install_entry_verified_bundle="${install_entry_args[$((install_entry_index + 1))]:-}"
       ;;
+    --verified-hosting-app-handoff)
+      install_entry_app_handoff="${install_entry_args[$((install_entry_index + 1))]:-}"
+      ;;
     --ts-authkey)
       install_entry_legacy_ts_authkey=1
       ;;
@@ -36,6 +40,7 @@ if [[ "$install_entry_legacy_ts_authkey" -eq 1 ]]; then
 fi
 
 if [[ "$install_entry_is_stream" -eq 1 && "$install_entry_hosting" -eq 1 ]]; then
+  install_entry_completed_hosting_repair=0
   install_entry_streamed_hosting_selector=""
   if [[ "${#install_entry_args[@]}" -eq 1 && "${install_entry_args[0]:-}" == "--hosting" ]]; then
     install_entry_streamed_hosting_selector="stable"
@@ -52,10 +57,10 @@ if [[ "$install_entry_is_stream" -eq 1 && "$install_entry_hosting" -eq 1 ]]; the
     fi
   fi
   if [[ -z "$install_entry_streamed_hosting_selector" ]]; then
-    echo "Streamed VPS Hosting accepts only one fresh-install selector:" >&2
+    echo "Streamed VPS Hosting accepts only the public one-command selector:" >&2
     echo "  --hosting" >&2
     echo "  --hosting --release vX.Y.Z[-prerelease] --update-channel stable|beta" >&2
-    echo "Repair and other advanced selectors require an exact tagged, attested installer file." >&2
+    echo "The same selector installs fresh or repairs an interrupted/completed installation; other advanced selectors require an exact tagged, attested installer file." >&2
     exit 1
   fi
   install_entry_exported_env=()
@@ -88,13 +93,26 @@ if [[ "$install_entry_is_stream" -eq 1 && "$install_entry_hosting" -eq 1 ]]; the
     /usr/local/libexec/fased-gateway-launch
     /usr/local/libexec/fased-host-updater
   )
+  install_entry_existing_hosting_state=0
   for install_entry_existing_path in "${install_entry_existing_hosting_paths[@]}"; do
     if [[ -e "$install_entry_existing_path" || -L "$install_entry_existing_path" ]]; then
-      echo "Streamed VPS Hosting is only for a fresh host; existing Fased state was found." >&2
-      echo "Use the exact tagged repair or the installed updater instead of the mutable main bootstrap." >&2
-      exit 1
+      install_entry_existing_hosting_state=1
+      break
     fi
   done
+  if [[ "$install_entry_existing_hosting_state" -eq 1 ]]; then
+    install_entry_completion_marker="/home/${FASED_INSTALL_USER:-app}/.fased/install-complete.json"
+    install_entry_config="/home/${FASED_INSTALL_USER:-app}/.fased/fased.json"
+    if { [[ -f "$install_entry_completion_marker" ]] && \
+      grep -Eq '"onboardingCompleted"[[:space:]]*:[[:space:]]*true' "$install_entry_completion_marker"; } || \
+      { [[ -s "$install_entry_config" ]] && command -v systemctl >/dev/null 2>&1 && \
+        systemctl is-active --quiet fased-gateway.service; }; then
+      install_entry_completed_hosting_repair=1
+      echo "Existing VPS Hosting installation detected; the verified one-command bootstrap will repair/update it without rerunning onboarding." >&2
+    else
+      echo "Interrupted VPS Hosting setup detected; resuming through a newly verified release bundle." >&2
+    fi
+  fi
   PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
   LANG="C.UTF-8"
   LC_ALL="C.UTF-8"
@@ -109,7 +127,7 @@ fi
 # the exact release/channel selector validated above. Repair and other advanced
 # Hosting selectors remain exact-tag-only.
 if [[ "$install_entry_is_stream" -eq 1 || \
-  ( "$install_entry_hosting" -eq 1 && -z "$install_entry_verified_bundle" ) ]]; then
+  ( "$install_entry_hosting" -eq 1 && -z "$install_entry_verified_bundle" && -z "$install_entry_app_handoff" ) ]]; then
   install_repo_url="${FASED_INSTALL_REPO:-https://github.com/fased-ai/fased.git}"
   install_base_dir="${FASED_INSTALL_DIR:-$HOME/fased}"
   auto_install=1
@@ -257,6 +275,16 @@ if [[ "$install_entry_is_stream" -eq 1 || \
       echo "VPS Hosting release resolution failed before verification." >&2
       exit 1
     }
+    local -a verified_inner_args=("$@")
+    if [[ "${install_entry_completed_hosting_repair:-0}" -eq 1 ]]; then
+      local inner_arg_index=0
+      for ((inner_arg_index = 0; inner_arg_index < ${#verified_inner_args[@]}; inner_arg_index++)); do
+        if [[ "${verified_inner_args[$inner_arg_index]}" == "--hosting" ]]; then
+          verified_inner_args[$inner_arg_index]="--repair-hosting"
+          break
+        fi
+      done
+    fi
 
     install_hosting_bootstrap_tools() {
       [[ "$auto_install" -eq 1 ]] || return 0
@@ -532,7 +560,7 @@ if [[ "$install_entry_is_stream" -eq 1 || \
       flock -u 9
       exec 9>&-
       echo "Reusing verified tagged Hosting bundle v${release_version} (${actual})."
-      exec bash "$existing_root/install.sh" "$@" \
+      exec bash "$existing_root/install.sh" "${verified_inner_args[@]}" \
         --release "$release_version" \
         --verified-hosting-bundle "$existing_root"
     fi
@@ -563,7 +591,7 @@ if [[ "$install_entry_is_stream" -eq 1 || \
 
     local final_root="$root_store/extract/package"
     echo "Verified tagged Hosting bundle v${release_version}; entering the root-owned installer."
-    exec bash "$final_root/install.sh" "$@" \
+    exec bash "$final_root/install.sh" "${verified_inner_args[@]}" \
       --release "$release_version" \
       --verified-hosting-bundle "$final_root"
   }
@@ -836,6 +864,8 @@ HOSTING_RELEASE=""
 UPDATE_CHANNEL="stable"
 UPDATE_CHANNEL_EXPLICIT=0
 VERIFIED_HOSTING_BUNDLE=""
+VERIFIED_HOSTING_APP_HANDOFF=""
+HOSTING_APP_HANDOFF_VERIFIED=0
 TAILSCALE_AUTHKEY_FILE=""
 REQUESTED_SWAP_GB=""
 FASED_CLI_PATH=""
@@ -1147,6 +1177,14 @@ while [[ $# -gt 0 ]]; do
       fi
       VERIFIED_HOSTING_BUNDLE="$1"
       ;;
+    --verified-hosting-app-handoff)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "Missing value for --verified-hosting-app-handoff" >&2
+        exit 1
+      fi
+      VERIFIED_HOSTING_APP_HANDOFF="$1"
+      ;;
     --ts-authkey)
       echo "Refusing a Tailscale auth key in process arguments." >&2
       echo "Store the key in a root-owned mode-0600 file and pass --ts-authkey-file /root/path." >&2
@@ -1247,6 +1285,53 @@ systemd_is_pid_one() {
     command -v systemctl >/dev/null 2>&1
 }
 
+validate_verified_hosting_app_handoff() {
+  [[ -n "$VERIFIED_HOSTING_APP_HANDOFF" ]] || return 0
+  [[ "$HOSTING_REQUESTED" -eq 1 && "$(id -u)" -ne 0 ]] || {
+    echo "The internal Hosting app handoff is valid only for the non-root app phase." >&2
+    exit 1
+  }
+  local handoff=""
+  local handoff_parent=""
+  handoff="$(readlink -f -- "$VERIFIED_HOSTING_APP_HANDOFF" 2>/dev/null || true)"
+  handoff_parent="$(dirname "$handoff")"
+  [[ "$handoff" =~ ^/run/fased-installer/app-phase-[0-9a-fA-F-]{36}$ && \
+    -f "$handoff" && ! -L "$handoff" && "$handoff_parent" == "/run/fased-installer" ]] || {
+    echo "The root-to-app Hosting handoff path is invalid." >&2
+    exit 1
+  }
+  local file_owner="" file_mode="" file_links=""
+  local parent_owner="" parent_mode=""
+  read -r file_owner file_mode file_links <<<"$(stat -c '%u %a %h' "$handoff" 2>/dev/null || true)"
+  read -r parent_owner parent_mode <<<"$(stat -c '%u %a' "$handoff_parent" 2>/dev/null || true)"
+  [[ "$file_owner" == "0" && "$file_mode" == "440" && "$file_links" == "1" && \
+    "$parent_owner" == "0" && "$parent_mode" == "750" ]] || {
+    echo "The root-to-app Hosting handoff ownership or mode is invalid." >&2
+    exit 1
+  }
+  local handoff_uid="" handoff_user="" handoff_release="" handoff_channel=""
+  local handoff_repo="" handoff_transaction="" handoff_schema=""
+  handoff_schema="$(sed -n 's/^schemaVersion=//p' "$handoff")"
+  handoff_uid="$(sed -n 's/^appUid=//p' "$handoff")"
+  handoff_user="$(sed -n 's/^appUser=//p' "$handoff")"
+  handoff_release="$(sed -n 's/^release=//p' "$handoff")"
+  handoff_channel="$(sed -n 's/^updateChannel=//p' "$handoff")"
+  handoff_repo="$(sed -n 's/^repoPath=//p' "$handoff")"
+  handoff_transaction="$(sed -n 's/^transactionId=//p' "$handoff")"
+  local canonical_repo=""
+  canonical_repo="$(readlink -f -- "$FASED_DIR" 2>/dev/null || true)"
+  [[ "$handoff_schema" == "1" && "$handoff_uid" == "$(id -u)" && \
+    "$handoff_user" == "$(id -un)" && "$handoff_release" == "$HOSTING_RELEASE" && \
+    "$handoff_channel" == "$UPDATE_CHANNEL" && "$handoff_repo" == "$canonical_repo" && \
+    "$handoff_transaction" == "${FASED_HOST_UPDATE_TRANSACTION_ID:-}" && \
+    "$handoff_transaction" =~ ^[0-9a-fA-F-]{36}$ && \
+    "${FASED_HOST_ROOT_PREPARED:-}" == "1" ]] || {
+    echo "The root-to-app Hosting handoff does not match this user, release, checkout, or transaction." >&2
+    exit 1
+  }
+  HOSTING_APP_HANDOFF_VERIFIED=1
+}
+
 validate_install_platform() {
   if is_windows_posix_shell; then
     cat >&2 <<'EOF_NATIVE_WINDOWS'
@@ -1267,7 +1352,7 @@ EOF_NATIVE_WINDOWS
       echo "--hosting is for a Linux VPS, not WSL. Use --local inside WSL2." >&2
       exit 1
     fi
-    if [[ "$(id -u)" -ne 0 ]]; then
+    if [[ "$(id -u)" -ne 0 && "$HOSTING_APP_HANDOFF_VERIFIED" -ne 1 ]]; then
       echo "--hosting must run as root so the isolated signer and Gateway services can be installed." >&2
       echo "Open the VPS provider's root console and follow the one-command Hosting guide:" >&2
       echo "  https://docs.fased.ai/install/vps" >&2
@@ -1299,6 +1384,7 @@ EOF_WSL_SYSTEMD
   fi
 }
 
+validate_verified_hosting_app_handoff
 validate_install_platform
 
 set_installer_state_dir() {
@@ -3201,7 +3287,7 @@ verify_root_coordinated_hosted_gateway() {
         HOME="$target_home" \
         FASED_STATE_DIR="$app_state_dir" \
         FASED_CONFIG_PATH="$app_state_dir/fased.json" \
-        FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock \
+        FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/operator.sock \
         "$app_cli" health --json --timeout 3000 >/dev/null 2>&1; then
       return 0
     fi
@@ -3210,6 +3296,42 @@ verify_root_coordinated_hosted_gateway() {
   echo "The root-managed hosted Gateway did not pass its post-restart health check." >&2
   journalctl -u fased-gateway.service -n 40 --no-pager >&2 || true
   return 1
+}
+
+create_verified_hosting_app_handoff() {
+  local target_user="$1"
+  local target_repo_dir="$2"
+  local operator_group="${FASED_OPERATOR_GROUP:-fased-operator}"
+  local handoff_dir="/run/fased-installer"
+  local handoff_path="${handoff_dir}/app-phase-${HOST_SIGNER_TRANSACTION_ID}"
+  local target_uid=""
+  local canonical_repo=""
+  target_uid="$(id -u "$target_user")"
+  canonical_repo="$(readlink -f -- "$target_repo_dir" 2>/dev/null || true)"
+  [[ "$target_uid" =~ ^[0-9]+$ && -n "$canonical_repo" && \
+    "$HOST_SIGNER_TRANSACTION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || {
+    echo "Cannot create the verified Hosting root-to-app handoff." >&2
+    return 1
+  }
+  install -d -m 0750 -o root -g "$operator_group" "$handoff_dir"
+  local temporary_path="${handoff_path}.tmp.$$"
+  local previous_umask=""
+  previous_umask="$(umask)"
+  umask 077
+  printf '%s\n' \
+    "schemaVersion=1" \
+    "appUid=${target_uid}" \
+    "appUser=${target_user}" \
+    "release=${HOSTING_RELEASE}" \
+    "updateChannel=${UPDATE_CHANNEL}" \
+    "repoPath=${canonical_repo}" \
+    "transactionId=${HOST_SIGNER_TRANSACTION_ID}" >"$temporary_path"
+  chown root:"$operator_group" "$temporary_path"
+  chmod 0440 "$temporary_path"
+  mv -f "$temporary_path" "$handoff_path"
+  sync -f "$handoff_path" "$handoff_dir" 2>/dev/null || true
+  umask "$previous_umask"
+  printf '%s\n' "$handoff_path"
 }
 
 runtime_assets_ready() {
@@ -3244,6 +3366,7 @@ reexec_as_app_user() {
     target_install_dir="$target_home/fased"
   fi
   local target_repo_dir=""
+  local app_handoff=""
 
   echo "== Root bootstrap: preparing repo for '$target_user' at $target_install_dir =="
   bootstrap_repo_for_target_user "$target_user" "$target_install_dir"
@@ -3259,11 +3382,12 @@ reexec_as_app_user() {
   if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
     prepare_hosting_root_prerequisites "$target_user" "$target_repo_dir"
     install_fixed_host_gateway_service "$target_repo_dir"
+    app_handoff="$(create_verified_hosting_app_handoff "$target_user" "$target_repo_dir")"
   fi
 
-  local cmd="cd $(shell_quote "$target_repo_dir") && "
+  local cmd="cd $(shell_quote "$target_repo_dir") && umask 0007 && "
   if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
-    cmd+="env FASED_HOST_PROFILE=hosting FASED_HOST_ROOT_PREPARED=1 FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock "
+    cmd+="env FASED_HOST_PROFILE=hosting FASED_HOST_ROOT_PREPARED=1 FASED_HOSTING_RELEASE=$(shell_quote "$HOSTING_RELEASE") FASED_UPDATE_CHANNEL=$(shell_quote "$UPDATE_CHANNEL") FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/operator.sock "
     if [[ -n "$HOST_SIGNER_TRANSACTION_ID" ]]; then
       cmd+="FASED_HOST_UPDATE_TRANSACTION_ID=$(shell_quote "$HOST_SIGNER_TRANSACTION_ID") FASED_HOST_UPDATE_TRANSACTION_VERSION=$(shell_quote "$HOST_SIGNER_TRANSACTION_VERSION") "
     fi
@@ -3273,6 +3397,7 @@ reexec_as_app_user() {
   if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
     cmd+=" --release $(shell_quote "$HOSTING_RELEASE")"
     cmd+=" --update-channel $(shell_quote "$UPDATE_CHANNEL")"
+    cmd+=" --verified-hosting-app-handoff $(shell_quote "$app_handoff")"
   fi
   local pass_index=0
   while ((pass_index < ${#pass_args[@]})); do
@@ -3292,6 +3417,7 @@ reexec_as_app_user() {
 
   cleanup_root_transaction() {
     local status=$?
+    [[ -z "$app_handoff" ]] || rm -f -- "$app_handoff"
     rollback_pending_host_signer_transaction_on_exit "$status"
   }
   trap cleanup_root_transaction EXIT
@@ -3311,6 +3437,7 @@ reexec_as_app_user() {
       child_status=$?
     fi
   fi
+  [[ -z "$app_handoff" ]] || rm -f -- "$app_handoff"
 
   if [[ "$HOSTING_REQUESTED" -eq 1 && "$HOST_SIGNER_TRANSACTION_ACTIVE" -eq 1 ]]; then
     local app_state_dir="$target_home/.fased"
@@ -3321,6 +3448,7 @@ reexec_as_app_user() {
     fi
     if [[ "$child_status" -eq 0 ]]; then
       echo "Root coordinator: restarting the fixed hosted Gateway service..."
+      reconcile_hosting_shared_state "$target_home"
       if ! restart_root_managed_hosted_gateway; then
         child_status=1
       fi
@@ -3332,7 +3460,7 @@ reexec_as_app_user() {
         FASED_STATE_DIR="$app_state_dir" \
         FASED_CONFIG_PATH="$app_state_dir/fased.json" \
         FASED_HOST_UPDATER_SOCKET=/run/fased-host-updater/request.sock \
-        FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock \
+        FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/operator.sock \
         node "$app_transaction_updater" hosted-transaction finalize --root-restarted; then
         HOST_SIGNER_DURABLE_COMMIT_DECISION=1
       else
@@ -3360,7 +3488,7 @@ reexec_as_app_user() {
           FASED_STATE_DIR="$app_state_dir" \
           FASED_CONFIG_PATH="$app_state_dir/fased.json" \
           FASED_HOST_UPDATER_SOCKET=/run/fased-host-updater/request.sock \
-          FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock \
+          FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/operator.sock \
           node "$app_transaction_updater" hosted-transaction finalize --root-restarted; then
           child_status=0
         fi
@@ -3386,7 +3514,7 @@ reexec_as_app_user() {
           FASED_STATE_DIR="$app_state_dir" \
           FASED_CONFIG_PATH="$app_state_dir/fased.json" \
           FASED_HOST_UPDATER_SOCKET=/run/fased-host-updater/request.sock \
-          FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock \
+          FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/operator.sock \
           node "$app_transaction_updater" hosted-transaction rollback >/dev/null 2>&1 || true
       fi
       if node /usr/local/libexec/fased-host-updaterctl.mjs \
@@ -3400,6 +3528,7 @@ reexec_as_app_user() {
   fi
 
   if [[ "$child_status" -eq 0 && "$HOSTING_REQUESTED" -eq 1 ]]; then
+    finalize_hosting_root_prerequisites || child_status=1
     systemctl is-active --quiet fased-signerd.service || child_status=1
     systemctl is-active --quiet fased-host-updater.service || child_status=1
     systemctl is-active --quiet fased-gateway.service || child_status=1
@@ -4258,6 +4387,11 @@ install_fixed_host_gateway_service() {
     exit 1
   }
 
+  # bootstrap_repo_for_target_user owns the checkout parent as the app account.
+  # Reapply restricted group traversal afterward so private-home distro defaults
+  # cannot block the dedicated Gateway.
+  chgrp "$config_group" "$target_home"
+  chmod 0710 "$target_home"
   install -d -m 2770 -o "$target_user" -g "$config_group" "${target_home}/.fased"
   chgrp -R "$config_group" "${target_home}/.fased"
   chmod -R g+rwX,o-rwx "${target_home}/.fased"
@@ -4266,6 +4400,10 @@ install_fixed_host_gateway_service() {
     echo "Hosted Gateway checkout must remain below the app account home." >&2
     exit 1
   }
+  chgrp -R "$config_group" "$target_repo_dir"
+  chmod -R g+rX,o-rwx "$target_repo_dir"
+  find "$target_repo_dir" -type d -exec chmod g+s {} +
+  chmod 2770 "$target_repo_dir"
 
   install -d -m 0755 -o root -g root /usr/local/libexec
   cat >/usr/local/libexec/fased-gateway-launch <<EOF
@@ -4334,7 +4472,20 @@ EOF
   sync -f /usr/local/libexec/fased-gateway-launch /usr/local/libexec /etc/systemd/system/fased-gateway.service /etc/systemd/system 2>/dev/null || true
   systemctl daemon-reload
   systemctl enable fased-gateway.service >/dev/null
-  systemctl restart fased-gateway.service
+  systemctl stop fased-gateway.service >/dev/null 2>&1 || true
+}
+
+reconcile_hosting_shared_state() {
+  local target_home="$1"
+  local target_user="${FASED_INSTALL_USER:-app}"
+  local config_group="${FASED_CONFIG_GROUP:-fased-config}"
+  local state_dir="${target_home}/.fased"
+  install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir"
+  chgrp -R "$config_group" "$state_dir"
+  chmod -R g+rwX,o-rwx "$state_dir"
+  find "$state_dir" -type d -exec chmod g+s {} +
+  [[ ! -f "$state_dir/fased.json" ]] || chmod 0660 "$state_dir/fased.json"
+  [[ ! -f "$state_dir/install.json" ]] || chmod 0660 "$state_dir/install.json"
 }
 
 run_tailscale_auth_from_private_file() (
@@ -4383,21 +4534,42 @@ run_tailscale_auth_from_private_file() (
   printf '%s\n' "$ephemeral_file" | "$helper" "$helper_command"
 )
 
-hosting_tailnet_confirmation_is_explicit() {
-  case "${FASED_HOSTING_TAILNET_SSH_CONFIRMED:-}" in
-    1|true|TRUE|yes|YES) return 0 ;;
-    *) return 1 ;;
-  esac
+write_hosting_prerequisites_marker() {
+  local tailscale_dns="$1"
+  local completion_state="$2"
+  local marker="/etc/fased/hosting-prerequisites"
+  local pending="pending"
+  if [[ "$completion_state" == "ready" ]]; then
+    pending="true"
+  fi
+  cat >"$marker" <<EOF
+schemaVersion=3
+release=${HOSTING_RELEASE}
+updateChannel=${UPDATE_CHANNEL}
+transactionId=${HOST_SIGNER_TRANSACTION_ID}
+gatewayPort=18789
+tailscaleDns=${tailscale_dns}
+tailscaleServeReady=true
+firewallReady=${pending}
+sshHardened=${pending}
+fail2banReady=${pending}
+automaticUpdatesReady=${pending}
+signerReady=true
+appSudoDisabled=true
+preparedBy=root
+EOF
+  chown root:root "$marker"
+  chmod 0644 "$marker"
+  sync -f "$marker" /etc/fased 2>/dev/null || true
 }
 
 prepare_hosting_root_prerequisites() {
   local target_user="$1"
   local target_repo_dir="$2"
   local helper="/usr/local/sbin/fased-host-maintenance"
-  local marker="/etc/fased/hosting-prerequisites"
   local tailscale_dns=""
   local tailscale_ip=""
-  local previously_confirmed=0
+  : "$target_user" "$target_repo_dir"
 
   [[ "$(id -u)" -eq 0 ]] || {
     echo "Hosted prerequisites must run in the provider root console." >&2
@@ -4443,43 +4615,11 @@ prepare_hosting_root_prerequisites() {
     exit 1
   }
 
-  if [[ -f "$marker" && ! -L "$marker" ]] && \
-    grep -Fxq "tailnetSshConfirmed=true" "$marker" 2>/dev/null; then
-    previously_confirmed=1
-  fi
-  if [[ "$previously_confirmed" -ne 1 ]] && ! hosting_tailnet_confirmation_is_explicit; then
-    cat <<EOF
-
-Before public SSH is disabled, verify access from your own Tailscale-connected computer:
-  tailscale ping ${tailscale_dns}
-  tailscale ssh ${target_user}@${tailscale_dns}
-
-The login must open ${target_repo_dir}. Keep this provider root console open.
-EOF
-    if [[ -r /dev/tty ]]; then
-      local confirmation=""
-      read -r -p "Type the Tailscale DNS name to confirm the test succeeded: " confirmation </dev/tty
-      [[ "$confirmation" == "$tailscale_dns" ]] || {
-        echo "Tailnet SSH confirmation did not match; host lock-down was not applied." >&2
-        exit 1
-      }
-    else
-      echo "Set FASED_HOSTING_TAILNET_SSH_CONFIRMED=1 only after an out-of-band SSH test." >&2
-      exit 1
-    fi
-  fi
-
   printf '18789\n' | "$helper" tailscale-serve
   tailscale serve status 2>/dev/null | grep -Fq '127.0.0.1:18789' || {
     echo "Tailscale Serve did not acknowledge the fixed loopback Gateway route." >&2
     exit 1
   }
-  "$helper" tailnet-ssh-ingress
-  "$helper" firewall-baseline
-  "$helper" harden-ssh
-  "$helper" fail2ban-enable
-  "$helper" automatic-updates
-
   install -d -m 0755 -o root -g root /etc/fased
   cat >/etc/fased/signerd-webauthn.env <<EOF
 FASED_WALLET_WEBAUTHN_RP_ID=${tailscale_dns}
@@ -4493,24 +4633,27 @@ EOF
     exit 1
   }
 
-  cat >"$marker" <<EOF
-schemaVersion=2
-release=${HOSTING_RELEASE}
-gatewayPort=18789
-tailscaleDns=${tailscale_dns}
-tailnetSshConfirmed=true
-tailscaleServeReady=true
-firewallReady=true
-sshHardened=true
-fail2banReady=true
-automaticUpdatesReady=true
-signerReady=true
-appSudoDisabled=true
-preparedBy=root
+  write_hosting_prerequisites_marker "$tailscale_dns" "pending"
+}
+
+finalize_hosting_root_prerequisites() {
+  local helper="/usr/local/sbin/fased-host-maintenance"
+  local marker="/etc/fased/hosting-prerequisites"
+  local tailscale_dns=""
+  tailscale_dns="$(sed -n 's/^tailscaleDns=//p' "$marker" 2>/dev/null || true)"
+  [[ "$tailscale_dns" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || {
+    echo "Cannot finalize Hosting hardening because the Tailscale identity marker is invalid." >&2
+    return 1
+  }
+  "$helper" tailnet-ssh-ingress
+  "$helper" firewall-baseline
+  "$helper" harden-ssh
+  "$helper" fail2ban-enable
+  "$helper" automatic-updates
+  write_hosting_prerequisites_marker "$tailscale_dns" "ready"
+  cat <<EOF
+Tailscale access is ready at ${tailscale_dns}. Public SSH hardening was applied only after the Gateway, signer, and updater passed health checks.
 EOF
-  chown root:root "$marker"
-  chmod 0644 "$marker"
-  sync -f "$marker" /etc/fased 2>/dev/null || true
 }
 
 ensure_host_boundary_accounts() {
@@ -4553,6 +4696,15 @@ ensure_host_boundary_accounts() {
   passwd -l "$signer_user" >/dev/null 2>&1 || true
   usermod -aG "$config_group" "$gateway_user"
   usermod -aG "$operator_group,$config_group" "$target_user"
+  local target_home=""
+  target_home="$(getent passwd "$target_user" | cut -d: -f6)"
+  [[ -n "$target_home" && -d "$target_home" && ! -L "$target_home" && \
+    "$(stat -c '%U' "$target_home" 2>/dev/null || true)" == "$target_user" ]] || {
+    echo "Hosting app home is missing, linked, or not owned by $target_user." >&2
+    exit 1
+  }
+  chgrp "$config_group" "$target_home"
+  chmod 0710 "$target_home"
   gpasswd -d "$target_user" "$gateway_group" >/dev/null 2>&1 || true
   gpasswd -d "$gateway_user" "$operator_group" >/dev/null 2>&1 || true
   for admin_group in sudo wheel; do
@@ -4579,16 +4731,18 @@ install_host_signer_and_updater_services() {
   local gateway_group="${FASED_GATEWAY_GROUP:-fased-gateway}"
   local operator_group="${FASED_OPERATOR_GROUP:-fased-operator}"
   local gateway_gid
+  local operator_gid
   local gateway_uid
   local operator_uid
   local signer_uid
   local version
   gateway_gid="$(getent group "$gateway_group" | cut -d: -f3)"
+  operator_gid="$(getent group "$operator_group" | cut -d: -f3)"
   gateway_uid="$(id -u "$gateway_user")"
   operator_uid="$(id -u "$target_user")"
   signer_uid="$(id -u "$signer_user")"
   version="$(node -p "require(process.argv[1]).version" "$FASED_DIR/package.json" 2>/dev/null || true)"
-  [[ "$gateway_gid" =~ ^[0-9]+$ && "$gateway_uid" =~ ^[0-9]+$ && "$operator_uid" =~ ^[0-9]+$ && "$signer_uid" =~ ^[0-9]+$ && "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+  [[ "$gateway_gid" =~ ^[0-9]+$ && "$operator_gid" =~ ^[0-9]+$ && "$gateway_uid" =~ ^[0-9]+$ && "$operator_uid" =~ ^[0-9]+$ && "$signer_uid" =~ ^[0-9]+$ && "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
     echo "Could not resolve hosted signer principals, socket group, or release version." >&2
     exit 1
   }
@@ -4757,7 +4911,7 @@ StateDirectory=fased-host-updater
 StateDirectoryMode=0700
 UMask=0117
 Environment=HOME=/var/lib/fased-host-updater
-ExecStart=$(command -v node) /opt/fased/host-controller/current/fased-host-updater.mjs --socket-gid ${gateway_gid}
+ExecStart=$(command -v node) /opt/fased/host-controller/current/fased-host-updater.mjs --socket-gid ${operator_gid}
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
@@ -4797,6 +4951,24 @@ EOF
   systemctl daemon-reload
   systemctl enable fased-host-updater.service >/dev/null
   systemctl restart fased-host-updater.service
+
+  local updater_socket_ready=0
+  local updater_socket_attempt=0
+  for ((updater_socket_attempt = 0; updater_socket_attempt < 150; updater_socket_attempt++)); do
+    if [[ -S /run/fased-host-updater/request.sock ]]; then
+      updater_socket_ready=1
+      break
+    fi
+    if ! systemctl is-active --quiet fased-host-updater.service; then
+      break
+    fi
+    sleep 0.1
+  done
+  if [[ "$updater_socket_ready" -ne 1 ]]; then
+    echo "Root Hosting updater did not create its operator socket." >&2
+    journalctl -u fased-host-updater.service -n 40 --no-pager >&2 || true
+    exit 1
+  fi
 
   local prepare_result
   prepare_result="$(node /usr/local/libexec/fased-host-updaterctl.mjs "$version" --prepare-only)"

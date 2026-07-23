@@ -313,8 +313,11 @@ async function chmodCredentialsAndAgentState(params: {
     require: "dir" | "file";
   }) => Promise<SecurityFixAction>;
 }): Promise<void> {
+  const sharedHostingState = params.env.FASED_HOST_PROFILE?.trim() === "hosting";
+  const directoryMode = sharedHostingState ? 0o2770 : 0o700;
+  const fileMode = sharedHostingState ? 0o660 : 0o600;
   const credsDir = resolveOAuthDir(params.env, params.stateDir);
-  params.actions.push(await safeChmod({ path: credsDir, mode: 0o700, require: "dir" }));
+  params.actions.push(await safeChmod({ path: credsDir, mode: directoryMode, require: "dir" }));
 
   const credsEntries = await fs.readdir(credsDir, { withFileTypes: true }).catch(() => []);
   for (const entry of credsEntries) {
@@ -326,7 +329,7 @@ async function chmodCredentialsAndAgentState(params: {
     }
     const p = path.join(credsDir, entry.name);
     // eslint-disable-next-line no-await-in-loop
-    params.actions.push(await safeChmod({ path: p, mode: 0o600, require: "file" }));
+    params.actions.push(await safeChmod({ path: p, mode: fileMode, require: "file" }));
   }
 
   const ids = new Set<string>();
@@ -350,22 +353,28 @@ async function chmodCredentialsAndAgentState(params: {
     const sessionsDir = path.join(agentRoot, "sessions");
 
     // eslint-disable-next-line no-await-in-loop
-    params.actions.push(await safeChmod({ path: agentRoot, mode: 0o700, require: "dir" }));
+    params.actions.push(await safeChmod({ path: agentRoot, mode: directoryMode, require: "dir" }));
     // eslint-disable-next-line no-await-in-loop
-    params.actions.push(await params.applyPerms({ path: agentDir, mode: 0o700, require: "dir" }));
+    params.actions.push(
+      await params.applyPerms({ path: agentDir, mode: directoryMode, require: "dir" }),
+    );
 
     const authPath = path.join(agentDir, "auth-profiles.json");
     // eslint-disable-next-line no-await-in-loop
-    params.actions.push(await params.applyPerms({ path: authPath, mode: 0o600, require: "file" }));
+    params.actions.push(
+      await params.applyPerms({ path: authPath, mode: fileMode, require: "file" }),
+    );
 
     // eslint-disable-next-line no-await-in-loop
     params.actions.push(
-      await params.applyPerms({ path: sessionsDir, mode: 0o700, require: "dir" }),
+      await params.applyPerms({ path: sessionsDir, mode: directoryMode, require: "dir" }),
     );
 
     const storePath = path.join(sessionsDir, "sessions.json");
     // eslint-disable-next-line no-await-in-loop
-    params.actions.push(await params.applyPerms({ path: storePath, mode: 0o600, require: "file" }));
+    params.actions.push(
+      await params.applyPerms({ path: storePath, mode: fileMode, require: "file" }),
+    );
 
     // Fix permissions on session transcript files (*.jsonl)
     // eslint-disable-next-line no-await-in-loop
@@ -379,7 +388,7 @@ async function chmodCredentialsAndAgentState(params: {
       }
       const p = path.join(sessionsDir, entry.name);
       // eslint-disable-next-line no-await-in-loop
-      params.actions.push(await params.applyPerms({ path: p, mode: 0o600, require: "file" }));
+      params.actions.push(await params.applyPerms({ path: p, mode: fileMode, require: "file" }));
     }
   }
 }
@@ -397,6 +406,7 @@ export async function fixSecurityFootguns(opts?: {
   const isWindows = platform === "win32";
   const stateDir = opts?.stateDir ?? resolveStateDir(env);
   const configPath = opts?.configPath ?? resolveConfigPath(env, stateDir);
+  const sharedHostingState = env.FASED_HOST_PROFILE?.trim() === "hosting";
   const actions: SecurityFixAction[] = [];
   const errors: string[] = [];
 
@@ -441,8 +451,20 @@ export async function fixSecurityFootguns(opts?: {
       ? safeAclReset({ path: params.path, require: params.require, env, exec })
       : safeChmod({ path: params.path, mode: params.mode, require: params.require });
 
-  actions.push(await applyPerms({ path: stateDir, mode: 0o700, require: "dir" }));
-  actions.push(await applyPerms({ path: configPath, mode: 0o600, require: "file" }));
+  actions.push(
+    await applyPerms({
+      path: stateDir,
+      mode: sharedHostingState ? 0o2770 : 0o700,
+      require: "dir",
+    }),
+  );
+  actions.push(
+    await applyPerms({
+      path: configPath,
+      mode: sharedHostingState ? 0o660 : 0o600,
+      require: "file",
+    }),
+  );
 
   if (snap.exists) {
     const includePaths = await collectIncludePathsRecursive({
@@ -451,7 +473,9 @@ export async function fixSecurityFootguns(opts?: {
     }).catch(() => []);
     for (const p of includePaths) {
       // eslint-disable-next-line no-await-in-loop
-      actions.push(await applyPerms({ path: p, mode: 0o600, require: "file" }));
+      actions.push(
+        await applyPerms({ path: p, mode: sharedHostingState ? 0o660 : 0o600, require: "file" }),
+      );
     }
   }
 

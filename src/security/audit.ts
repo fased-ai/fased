@@ -122,6 +122,7 @@ async function collectFilesystemFindings(params: {
   execIcacls?: ExecFn;
 }): Promise<SecurityAuditFinding[]> {
   const findings: SecurityAuditFinding[] = [];
+  const sharedHostingState = params.env?.FASED_HOST_PROFILE?.trim() === "hosting";
 
   const stateDirPerms = await inspectPathPermissions(params.stateDir, {
     env: params.env,
@@ -151,7 +152,7 @@ async function collectFilesystemFindings(params: {
           env: params.env,
         }),
       });
-    } else if (stateDirPerms.groupWritable) {
+    } else if (stateDirPerms.groupWritable && !sharedHostingState) {
       findings.push({
         checkId: "fs.state_dir.perms_group_writable",
         severity: "warn",
@@ -165,7 +166,10 @@ async function collectFilesystemFindings(params: {
           env: params.env,
         }),
       });
-    } else if (stateDirPerms.groupReadable || stateDirPerms.worldReadable) {
+    } else if (
+      stateDirPerms.worldReadable ||
+      (stateDirPerms.groupReadable && !sharedHostingState)
+    ) {
       findings.push({
         checkId: "fs.state_dir.perms_readable",
         severity: "warn",
@@ -196,7 +200,7 @@ async function collectFilesystemFindings(params: {
         detail: `${params.configPath} is a symlink; make sure you trust its target.`,
       });
     }
-    if (configPerms.worldWritable || configPerms.groupWritable) {
+    if (configPerms.worldWritable || (configPerms.groupWritable && !sharedHostingState)) {
       findings.push({
         checkId: "fs.config.perms_writable",
         severity: "critical",
@@ -224,7 +228,7 @@ async function collectFilesystemFindings(params: {
           env: params.env,
         }),
       });
-    } else if (configPerms.groupReadable) {
+    } else if (configPerms.groupReadable && !sharedHostingState) {
       findings.push({
         checkId: "fs.config.perms_group_readable",
         severity: "warn",

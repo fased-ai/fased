@@ -397,8 +397,8 @@ describe("local signer env file helpers", () => {
   });
 
   it("never installs or brokers a signer from Hosting QuickStart", async () => {
-    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_SOCKET", "/run/fased-signerd/app.sock");
-    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET", "/run/fased-signerd/app.sock");
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_SOCKET", "/run/fased-signerd/operator.sock");
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET", "/run/fased-signerd/operator.sock");
     const prepareLocalSigner = vi.fn();
     const signerProgressStop = vi.fn();
     const prompter = createPrompterStub();
