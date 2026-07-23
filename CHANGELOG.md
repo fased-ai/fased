@@ -4,6 +4,16 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.1
+
+- Complete the authenticated Hosting lifecycle handoff between the root
+  controller and application runtime while preserving updater, signer, state,
+  restart, readiness, and rollback coordination.
+- Restore the complete security-audit implementation and route its full
+  80-case contract through canonical local and GitHub test execution.
+- Correct deep Gateway probe credentials and browser-container audit wiring so
+  release validation exercises the deployed behavior instead of silent gaps.
+
 ## 0.1.75
 
 - Make the Hosting root controller update itself transactionally so existing
