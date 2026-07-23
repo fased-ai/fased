@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.2
+
+- Keep the root-authorized signer operator socket active through the complete
+  Hosting wallet onboarding and signer readiness flow, then persist the
+  restricted application socket for normal Gateway runtime.
+- Add integrated coverage for the Hosting root-to-app signer socket handoff.
+
 ## 0.1.76-rc.1
 
 - Complete the authenticated Hosting lifecycle handoff between the root
