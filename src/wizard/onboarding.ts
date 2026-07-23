@@ -263,7 +263,7 @@ export async function runOnboardingWizard(
     }
     return next;
   };
-  const jupiterApiKeyEnvKey = "FASED_JUPITER_API_KEY";
+  const jupiterApiKeyEnvKey = "FASED_JUPITER_API_KEY"; // pragma: allowlist secret
   const legacyJupiterTriggerApiBaseUrlEnvKey = "FASED_JUPITER_TRIGGER_API_BASE_URL";
   const readJupiterSwapApiKey = (): string =>
     String(
@@ -294,7 +294,7 @@ export async function runOnboardingWizard(
       ? "Jupiter Swap API key (blank keeps current)"
       : "Jupiter Swap API key";
     const keyInput = (
-      typeof prompter.secret === "function"
+      typeof prompter.secret === "function" // pragma: allowlist secret
         ? await prompter.secret({
             message: keyPrompt,
             validate: (value) =>
