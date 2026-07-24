@@ -3590,7 +3590,7 @@ async function atomicInstallSignerBinary(paths, candidatePath, manifestPath) {
   await fsp.rename(releaseTemporary, paths.releaseManifestPath);
   const enrollTemporary = `${paths.enrollmentPath}.candidate-${process.pid}-${Date.now()}`;
   await fsp.rm(enrollTemporary, { force: true });
-  await fsp.link(paths.binaryPath, enrollTemporary);
+  await copyStandaloneFile(paths.binaryPath, enrollTemporary, 0o700);
   await fsp.rename(enrollTemporary, paths.enrollmentPath);
   await fsyncManagedPath(paths.binDir);
 }

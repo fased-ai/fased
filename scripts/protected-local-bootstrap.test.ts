@@ -183,6 +183,38 @@ describe("protected Local bootstrap contract", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("accepts only the exact published signer enrollment hardlink during migration", async () => {
+    const root = temporaryRoot();
+    const stateDir = path.join(root, ".fased");
+    const binDir = path.join(stateDir, "bin");
+    const binaryPath = path.join(binDir, "fased-signerd");
+    const enrollmentPath = path.join(binDir, "fased-signer-enroll");
+    const unexpectedPath = path.join(binDir, "unexpected-hardlink");
+    fs.mkdirSync(binDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(binaryPath, "verified signer bytes", { mode: 0o700 });
+    fs.linkSync(binaryPath, enrollmentPath);
+    const identity = fs.statSync(binaryPath);
+    const spec = {
+      stateDir,
+      operatorUid: identity.uid,
+      operatorGid: identity.gid,
+    };
+
+    const trusted = await __testing.resolveTrustedLegacyRuntimeHardlinks(spec);
+    expect(trusted).toEqual(
+      new Set([fs.realpathSync(binaryPath), fs.realpathSync(enrollmentPath)]),
+    );
+    await expect(
+      __testing.hardenOperatorRuntime(binDir, spec, new Set(), trusted),
+    ).resolves.toBeUndefined();
+
+    fs.linkSync(binaryPath, unexpectedPath);
+    await expect(__testing.resolveTrustedLegacyRuntimeHardlinks(spec)).resolves.toEqual(new Set());
+    await expect(
+      __testing.hardenOperatorRuntime(binDir, spec, new Set(), new Set()),
+    ).rejects.toThrow(/unsafe entry/u);
+  });
+
   it("packages the root bootstrap and invokes it before Local completion", () => {
     const installer = fs.readFileSync(path.join(process.cwd(), "install.sh"), "utf8");
     const packageMetadata = JSON.parse(
