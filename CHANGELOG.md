@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.6
+
+- Bound Protected Local Gateway health checks within the update transaction so
+  rollback and retry remain available, and add portable Linux/macOS signer and
+  Local lifecycle coverage.
+- Update the production PostCSS override to patched `8.5.18`.
+
 ## 0.1.76-rc.5
 
 - Repair Protected Local migration for the exact legacy signer/enrollment
