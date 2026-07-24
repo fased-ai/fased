@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.4
+
+- Unify Local and Hosting on the protected Go signer lifecycle, including
+  published-updater handoff, root-controlled activation, and exact
+  application/signer release identity.
+- Add real-systemd Ubuntu and Rocky fixtures for fresh install, legacy Local
+  migration, wallet and Gateway operation, injected failure, rollback, retry,
+  restart, and reboot persistence.
+
 ## 0.1.76-rc.3
 
 - Accept complete multiline Tailscale Serve status output, including trailing
