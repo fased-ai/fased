@@ -454,6 +454,7 @@ function buildProtectedLocalMigrationInvocation({
   operator,
   gatewayPort,
   profile,
+  timeoutMs,
   sudoPath,
   bashPath,
   nodePath,
@@ -485,6 +486,9 @@ function buildProtectedLocalMigrationInvocation({
   ) {
     throw new Error("Protected Local migration found an invalid operator or Gateway identity.");
   }
+  const transactionTimeoutMs =
+    Number.isSafeInteger(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS;
+  const gatewayHealthTimeoutMs = Math.min(120_000, Math.max(1_000, transactionTimeoutMs - 30_000));
   for (const [value, label] of [
     [installerPath, "verified installer"],
     [currentRoot, "runtime root"],
@@ -529,6 +533,8 @@ function buildProtectedLocalMigrationInvocation({
       String(gatewayPort),
       "--protected-local-gateway-mode",
       "activate",
+      "--protected-local-gateway-health-timeout-ms",
+      String(gatewayHealthTimeoutMs),
     ]),
   });
 }
@@ -701,6 +707,7 @@ async function migrateManagedLocalToProtected(params, dependencyOverrides = {}) 
       operator,
       gatewayPort: endpoint.port,
       profile: process.env.FASED_PROFILE || "default",
+      timeoutMs,
       sudoPath,
       bashPath,
       nodePath,

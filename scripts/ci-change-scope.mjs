@@ -9,7 +9,7 @@ const VERSION_PATH_RE =
 const NODE_PATH_RE =
   /^(?:src\/|test\/|extensions\/|packages\/|scripts\/|ui\/|\.github\/|fased\.mjs$|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|tsconfig[^/]*\.json$|vitest[^/]*\.ts$|tsdown\.config\.ts$|\.oxlintrc\.json$|\.oxfmtrc\.jsonc$)/;
 const SIGNER_PATH_RE =
-  /^(?:tools\/fased-signerd\/|config\/signer-protocol-v2\.json$|scripts\/release-fased-signerd\.sh$|scripts\/install-fased-signerd\.sh$|scripts\/generate-signer-protocol-v2\.mjs$|scripts\/signer-protocol-v2\.generated\.mjs$|src\/wallet\/signer-protocol-v2\.generated\.ts$)/;
+  /^(?:install\.sh$|tools\/fased-signerd\/|config\/signer-protocol-v2\.json$|scripts\/(?:fased-managed-updater|install-fased-signerd|install-managed-runtime|managed-runtime-layout|protected-local-|release-fased-signerd|test-fased-signerd-portable-builds|generate-signer-protocol-v2|signer-protocol-v2\.generated)[^/]*|src\/wallet\/(?:native-signer-|providers\/local-socket-signer-adapter|signer-protocol-v2\.generated)[^/]*|src\/wizard\/onboarding\.wallet[^/]*)/;
 const MACOS_PATH_RE = /^(?:apps\/(?:macos|ios|shared)\/|Swabble\/)/;
 const GENERATED_NATIVE_PROTOCOL_RE =
   /^(?:apps\/macos\/Sources\/FasedAgentProtocol\/|apps\/shared\/FasedAgentKit\/Sources\/FasedAgentProtocol\/)/;

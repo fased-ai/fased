@@ -224,6 +224,8 @@ describe("protected Local bootstrap contract", () => {
     expect(installer).toContain("--protected-local-root-bootstrap");
     expect(installer).toContain("bootstrap_protected_local_topology");
     expect(installer).toContain("--protected-local-gateway-mode");
+    expect(installer).toContain("--protected-local-gateway-health-timeout-ms");
+    expect(installer).toContain("--gateway-health-timeout-ms");
     expect(installer).toContain("bootstrap_protected_local_topology rollback");
     expect(installer).toContain(
       "Onboarding did not complete; the prior Local signer and Gateway topology was restored.",

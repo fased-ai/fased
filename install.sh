@@ -151,6 +151,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_protected_local_root" 
   protected_local_profile=""
   protected_local_gateway_port=""
   protected_local_gateway_mode=""
+  protected_local_gateway_health_timeout_ms=""
   args=("$@")
 
   for ((i = 0; i < ${#args[@]}; i++)); do
@@ -208,6 +209,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_protected_local_root" 
       --protected-local-profile) protected_local_profile="${args[$((i + 1))]:-}" ;;
       --protected-local-gateway-port) protected_local_gateway_port="${args[$((i + 1))]:-}" ;;
       --protected-local-gateway-mode) protected_local_gateway_mode="${args[$((i + 1))]:-}" ;;
+      --protected-local-gateway-health-timeout-ms) protected_local_gateway_health_timeout_ms="${args[$((i + 1))]:-}" ;;
     esac
   done
 
@@ -235,6 +237,14 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_protected_local_root" 
         exit 1
       fi
     done
+    if [[ -n "$protected_local_gateway_health_timeout_ms" ]] && {
+      [[ ! "$protected_local_gateway_health_timeout_ms" =~ ^[0-9]+$ ]] ||
+        (( protected_local_gateway_health_timeout_ms < 1000 ||
+          protected_local_gateway_health_timeout_ms > 120000 ));
+    }; then
+      echo "Protected Local Gateway health timeout must be between 1000 and 120000 milliseconds." >&2
+      exit 1
+    fi
   fi
 
   if [[ "$hosting_bootstrap" -eq 1 && "$hosting_repair_bootstrap" -eq 0 && -z "$hosting_release" ]]; then
@@ -441,6 +451,13 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_protected_local_root" 
       local selected_root_store="$1"
       local selected_package_root="$2"
       local selected_commit="$3"
+      local gateway_health_args=()
+      if [[ -n "$protected_local_gateway_health_timeout_ms" ]]; then
+        gateway_health_args=(
+          --gateway-health-timeout-ms
+          "$protected_local_gateway_health_timeout_ms"
+        )
+      fi
       exec "$protected_local_node_binary" \
         "$selected_package_root/scripts/protected-local-bootstrap.mjs" install \
         --source-root "$selected_package_root" \
@@ -457,7 +474,8 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_protected_local_root" 
         --update-channel "$hosting_update_channel" \
         --profile "$protected_local_profile" \
         --gateway-port "$protected_local_gateway_port" \
-        --gateway-mode "$protected_local_gateway_mode"
+        --gateway-mode "$protected_local_gateway_mode" \
+        "${gateway_health_args[@]}"
     }
 
     umask 077

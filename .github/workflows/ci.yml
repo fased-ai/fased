@@ -176,6 +176,36 @@ jobs:
         working-directory: tools/fased-signerd
         run: go build -buildvcs=false -trimpath -o "${RUNNER_TEMP}/fased-signerd" .
 
+      - name: Cross-compile every supported signer target
+        if: runner.os == 'Linux'
+        run: bash scripts/test-fased-signerd-portable-builds.sh
+
+      # The Go tests above prove the daemon on each native runner. These
+      # focused integration tests additionally prove that the packaged
+      # JavaScript updater, installer, onboarding, and socket adapter select
+      # and operate the native Darwin signer. Keep this separate from the
+      # unrelated Swift/macOS application lane.
+      - name: Setup Node environment for Local signer integration
+        if: runner.os == 'macOS'
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Test Local signer lifecycle integration
+        if: runner.os == 'macOS'
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: >-
+          pnpm vitest run
+          scripts/fased-managed-updater.local-signer.test.ts
+          scripts/install-local-signer-transaction.test.ts
+          scripts/install-platform-preflight.test.ts
+          scripts/install-release-pin.test.ts
+          src/wallet/providers/local-socket-signer-adapter.integration.test.ts
+          src/wizard/onboarding.wallet.test.ts
+          --pool=forks
+          --maxWorkers=1
+
   checks:
     name: "test (${{ matrix.runtime }}, ${{ matrix.task }})"
     needs: [change-scope]

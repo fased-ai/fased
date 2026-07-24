@@ -4,6 +4,7 @@ ENV container=podman
 
 RUN dnf install -y \
     ca-certificates \
+    'dnf-command(config-manager)' \
     iproute \
     jq \
     openssl \
@@ -14,6 +15,9 @@ RUN dnf install -y \
     tar \
     util-linux \
     xz \
+  && dnf config-manager --add-repo \
+    https://cli.github.com/packages/rpm/gh-cli.repo \
+  && dnf install -y gh \
   && dnf clean all \
   && curl -fsSL https://nodejs.org/dist/v24.18.0/node-v24.18.0-linux-x64.tar.xz \
     | tar -xJ --strip-components=1 -C /usr/local \
