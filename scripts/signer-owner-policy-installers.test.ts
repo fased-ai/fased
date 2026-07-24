@@ -47,7 +47,8 @@ describe("signer owner-policy package and installers", () => {
     expect(installer).toContain('POLICY_LAUNCHER_PATH="${INSTALL_DIR}/fased-signer-policy"');
     expect(installer).toContain('install -m 0700 "$POLICY_LAUNCHER_SOURCE"');
     expect(installer).toContain("for template in README.md agent.json.template");
-    expect(updater).toContain("await fsp.link(paths.binaryPath, enrollTemporary)");
+    expect(updater).toContain("await copyStandaloneFile(paths.binaryPath, enrollTemporary, 0o700)");
+    expect(updater).not.toContain("await fsp.link(paths.binaryPath, enrollTemporary)");
     expect(installer).toContain("Fresh signer-owned wallets receive their versioned Agent");
     expect(installer).toContain("copying a template never applies it");
     expect(installer.match(/--initial-install/gu) ?? []).toHaveLength(0);

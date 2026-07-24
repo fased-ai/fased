@@ -8,6 +8,7 @@ import { __testing } from "./fased-managed-updater.mjs";
 const root = path.resolve(import.meta.dirname, "..");
 const installer = fs.readFileSync(path.join(root, "install.sh"), "utf8");
 const managed = fs.readFileSync(path.join(root, "scripts/start-managed.sh"), "utf8");
+const socatAvailable = spawnSync("socat", ["-V"], { encoding: "utf8" }).status === 0;
 
 function sliceBetween(source: string, start: string, end: string): string {
   const startIndex = source.indexOf(start);
@@ -40,6 +41,86 @@ describe("root-coordinated Hosting lifecycle", () => {
       '-z "$install_entry_verified_bundle" && -z "$install_entry_app_handoff"',
     );
   });
+
+  it("binds only interactive root-to-app onboarding to the controlling terminal", () => {
+    const appPhase = sliceBetween(installer, "run_hosting_app_phase()", "reexec_as_app_user()");
+    const rootCoordinator = sliceBetween(installer, "reexec_as_app_user()", "go_modern_enough()");
+    expect(appPhase).toContain('local app_phase_stdin="/dev/null"');
+    expect(appPhase).toContain('if [[ "$interactive" -eq 1 ]]');
+    expect(appPhase).toContain("( : < /dev/tty )");
+    expect(appPhase).toContain('app_phase_stdin="/dev/tty"');
+    expect(appPhase).toContain('<"$app_phase_stdin"');
+    expect(appPhase).toContain("VPS Hosting onboarding requires an interactive terminal.");
+    expect(rootCoordinator).toContain(
+      'run_hosting_app_phase "$target_user" "$cmd" "$app_phase_interactive"',
+    );
+    expect(rootCoordinator).toContain('if pass_args_contains "--non-interactive"');
+    expect(rootCoordinator).not.toContain('sudo -u "$target_user" -H bash -lc "$cmd"');
+    expect(rootCoordinator).not.toContain('runuser -u "$target_user" -- bash -lc "$cmd"');
+  });
+
+  it("fails before the app phase when streamed Hosting has no controlling terminal", () => {
+    const appPhase = sliceBetween(installer, "run_hosting_app_phase()", "reexec_as_app_user()");
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `set -euo pipefail
+${appPhase}
+need_cmd() { return 1; }
+run_hosting_app_phase app 'exit 91' 1
+`,
+      ],
+      { encoding: "utf8", input: "" },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("VPS Hosting onboarding requires an interactive terminal.");
+  });
+
+  it.runIf(socatAvailable)(
+    "preserves interactive onboarding input after a streamed bootstrap pipe is exhausted",
+    () => {
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-host-app-tty-"));
+      try {
+        const harness = path.join(tempRoot, "harness.sh");
+        const streamedBootstrap = path.join(tempRoot, "streamed-bootstrap.sh");
+        const appPhase = sliceBetween(installer, "run_hosting_app_phase()", "reexec_as_app_user()");
+        fs.writeFileSync(
+          harness,
+          `#!/usr/bin/env bash
+set -euo pipefail
+${appPhase}
+need_cmd() { return 1; }
+runuser() {
+  local command="\${!#}"
+  bash -lc "$command"
+}
+IFS= read -r bootstrap
+printf 'bootstrap=%s\\n' "$bootstrap"
+run_hosting_app_phase app 'IFS= read -r answer; printf "answer=%s\\n" "$answer"' 1
+`,
+          { mode: 0o700 },
+        );
+        fs.writeFileSync(
+          streamedBootstrap,
+          `#!/usr/bin/env bash
+set -euo pipefail
+printf 'streamed-bootstrap\\n' | bash ${JSON.stringify(harness)}
+`,
+          { mode: 0o700 },
+        );
+        const result = spawnSync("socat", [`EXEC:${streamedBootstrap},pty,setsid,ctty`, "STDIO"], {
+          encoding: "utf8",
+          input: "operator-answer\n",
+        });
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toContain("bootstrap=streamed-bootstrap");
+        expect(result.stdout).toContain("answer=operator-answer");
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("persists app.sock while typed native administration derives operator.sock", () => {
     const coordinator = sliceBetween(installer, "reexec_as_app_user()", "go_modern_enough()");

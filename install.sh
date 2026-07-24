@@ -3540,6 +3540,26 @@ runtime_assets_ready() {
   [[ -f "$FASED_DIR/dist/cli/daemon-cli.js" ]] || return 1
 }
 
+run_hosting_app_phase() {
+  local target_user="$1"
+  local cmd="$2"
+  local interactive="$3"
+  local app_phase_stdin="/dev/null"
+  if [[ "$interactive" -eq 1 ]]; then
+    if ! ( : < /dev/tty ) 2>/dev/null; then
+      echo "VPS Hosting onboarding requires an interactive terminal." >&2
+      echo "Rerun the same one-curl command from the provider root console." >&2
+      return 1
+    fi
+    app_phase_stdin="/dev/tty"
+  fi
+  if need_cmd sudo; then
+    sudo -u "$target_user" -H bash -lc "$cmd" <"$app_phase_stdin"
+  else
+    runuser -u "$target_user" -- bash -lc "$cmd" <"$app_phase_stdin"
+  fi
+}
+
 reexec_as_app_user() {
   local target_user="${FASED_INSTALL_USER:-app}"
   local target_home
@@ -3620,18 +3640,14 @@ reexec_as_app_user() {
 
   echo "== Root bootstrap: re-executing installer as '$target_user' =="
   local child_status=0
-  if need_cmd sudo; then
-    if sudo -u "$target_user" -H bash -lc "$cmd"; then
-      child_status=0
-    else
-      child_status=$?
-    fi
+  local app_phase_interactive="$RUN_ONBOARD"
+  if pass_args_contains "--non-interactive"; then
+    app_phase_interactive=0
+  fi
+  if run_hosting_app_phase "$target_user" "$cmd" "$app_phase_interactive"; then
+    child_status=0
   else
-    if runuser -u "$target_user" -- bash -lc "$cmd"; then
-      child_status=0
-    else
-      child_status=$?
-    fi
+    child_status=$?
   fi
   [[ -z "$app_handoff" ]] || rm -f -- "$app_handoff"
 

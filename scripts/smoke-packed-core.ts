@@ -614,8 +614,11 @@ async function main() {
     const signerBinary = path.join(home, ".fased", "bin", "fased-signerd");
     const signerStats = statSync(signerBinary);
     const enrollmentStats = statSync(enrollmentLauncher);
-    if (signerStats.dev !== enrollmentStats.dev || signerStats.ino !== enrollmentStats.ino) {
-      throw new Error("packed signer enrollment launcher is not the attested signer hardlink");
+    if (signerStats.dev === enrollmentStats.dev && signerStats.ino === enrollmentStats.ino) {
+      throw new Error("packed signer enrollment launcher must be a standalone executable");
+    }
+    if (!readFileSync(signerBinary).equals(readFileSync(enrollmentLauncher))) {
+      throw new Error("packed signer enrollment launcher does not match the attested signer bytes");
     }
     const policyLauncher = path.join(home, ".fased", "bin", "fased-signer-policy");
     const policyHelper = path.join(home, ".fased", "bin", "fased-signer-owner-policy.mjs");

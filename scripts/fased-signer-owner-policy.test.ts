@@ -481,7 +481,7 @@ describe("Local and Hosting execution identity", () => {
     );
   });
 
-  it("accepts only the exact attested Local enrollment hardlink", async () => {
+  it("accepts standalone Local signer launchers and only the exact legacy enrollment hardlink", async () => {
     const root = await fixtureRoot();
     const binDir = path.join(root, "bin");
     const binary = path.join(binDir, "fased-signerd");
@@ -491,6 +491,14 @@ describe("Local and Hosting execution identity", () => {
     const allowedUIDs = new Set([0, uid, filesystemUID]);
     await fsp.mkdir(binDir, { mode: 0o700 });
     await fsp.writeFile(binary, "native signer", { mode: 0o700 });
+    await fsp.copyFile(binary, launcher);
+    await fsp.chmod(launcher, 0o700);
+
+    await expect(
+      __testing.assertSafeExecutable(binary, uid, allowedUIDs, launcher),
+    ).resolves.toBeUndefined();
+
+    await fsp.rm(launcher);
     await fsp.link(binary, launcher);
 
     await expect(

@@ -655,7 +655,57 @@ async function installControllerGeneration(sourceRoot, layout, spec) {
   );
 }
 
-async function hardenOperatorRuntime(candidate, spec, visited = new Set()) {
+async function resolveTrustedLegacyRuntimeHardlinks(spec) {
+  const binaryPath = path.join(spec.stateDir, "bin", "fased-signerd");
+  const enrollmentPath = path.join(spec.stateDir, "bin", "fased-signer-enroll");
+  let binaryInfo;
+  let enrollmentInfo;
+  try {
+    [binaryInfo, enrollmentInfo] = await Promise.all([
+      fsp.lstat(binaryPath),
+      fsp.lstat(enrollmentPath),
+    ]);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return new Set();
+    }
+    throw error;
+  }
+  if (binaryInfo.nlink === 1 && enrollmentInfo.nlink === 1) {
+    return new Set();
+  }
+  if (
+    !binaryInfo.isFile() ||
+    binaryInfo.isSymbolicLink() ||
+    !enrollmentInfo.isFile() ||
+    enrollmentInfo.isSymbolicLink() ||
+    binaryInfo.nlink !== 2 ||
+    enrollmentInfo.nlink !== 2 ||
+    binaryInfo.dev !== enrollmentInfo.dev ||
+    binaryInfo.ino !== enrollmentInfo.ino ||
+    binaryInfo.uid !== spec.operatorUid ||
+    enrollmentInfo.uid !== spec.operatorUid ||
+    (binaryInfo.mode & 0o022) !== 0 ||
+    (binaryInfo.mode & 0o111) === 0
+  ) {
+    return new Set();
+  }
+  const canonicalPaths = await Promise.all([
+    fsp.realpath(binaryPath),
+    fsp.realpath(enrollmentPath),
+  ]);
+  for (const canonical of canonicalPaths) {
+    assertPathBelow(spec.stateDir, canonical, "trusted legacy Local signer launcher");
+  }
+  return new Set(canonicalPaths);
+}
+
+async function hardenOperatorRuntime(
+  candidate,
+  spec,
+  visited = new Set(),
+  trustedHardlinks = new Set(),
+) {
   if (!fs.existsSync(candidate)) {
     return;
   }
@@ -678,14 +728,14 @@ async function hardenOperatorRuntime(candidate, spec, visited = new Set()) {
         const target = await fsp.realpath(entryPath);
         assertPathBelow(spec.stateDir, target, "protected Local runtime symlink target");
         await fsp.lchown(entryPath, spec.operatorUid, spec.operatorGid);
-        await hardenOperatorRuntime(target, spec, visited);
+        await hardenOperatorRuntime(target, spec, visited, trustedHardlinks);
         continue;
       }
-      await hardenOperatorRuntime(entryPath, spec, visited);
+      await hardenOperatorRuntime(entryPath, spec, visited, trustedHardlinks);
     }
     return;
   }
-  if (!info.isFile() || info.nlink !== 1) {
+  if (!info.isFile() || (info.nlink !== 1 && !trustedHardlinks.has(canonical))) {
     fail(`protected Local application runtime contains an unsafe entry: ${canonical}`);
   }
   await fsp.chown(canonical, spec.operatorUid, spec.operatorGid);
@@ -707,6 +757,7 @@ async function protectLegacyMaterial(legacy, spec) {
 }
 
 async function shareApplicationState(spec, configGroup, legacy) {
+  const trustedHardlinks = await resolveTrustedLegacyRuntimeHardlinks(spec);
   await fsp.mkdir(spec.stateDir, { recursive: true, mode: 0o2770 });
   const chown = systemBinary(["/usr/bin/chown", "/bin/chown"], "chown");
   const chmod = systemBinary(["/usr/bin/chmod", "/bin/chmod"], "chmod");
@@ -718,7 +769,7 @@ async function shareApplicationState(spec, configGroup, legacy) {
     path.join(spec.stateDir, "updater"),
     path.join(spec.stateDir, "bin"),
   ]) {
-    await hardenOperatorRuntime(protectedRuntimePath, spec);
+    await hardenOperatorRuntime(protectedRuntimePath, spec, new Set(), trustedHardlinks);
   }
   await protectLegacyMaterial(legacy, spec);
 }
@@ -1874,10 +1925,12 @@ if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
 
 export const __testing = Object.freeze({
   buildProtectedLocalBootstrapSpec,
+  hardenOperatorRuntime,
   renderProtectedLocalOperatorEnvironment,
   renderProtectedLocalOwnerWrapper,
   registeredSignerWallets,
   removeLegacySignerMaterial,
+  resolveTrustedLegacyRuntimeHardlinks,
   resolveLegacySignerPaths,
   verifySignerReleaseIdentity,
   buildControllerIdentity,

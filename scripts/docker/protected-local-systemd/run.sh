@@ -52,6 +52,28 @@ wait_for_service() {
   return 1
 }
 
+wait_for_rpc() {
+  local endpoint="$1"
+  local expected_genesis="$2"
+  local response=""
+  for _ in {1..200}; do
+    if response="$(
+      curl -fsS --max-time 1 \
+        -H "content-type: application/json" \
+        --data '{"jsonrpc":"2.0","id":1,"method":"getGenesisHash"}' \
+        "$endpoint" 2>/dev/null
+    )" &&
+      jq -e --arg expected "$expected_genesis" '.result == $expected' \
+        <<<"$response" >/dev/null; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  journalctl -u fased-fixture-solana-rpc.service -n 80 --no-pager >&2 || true
+  echo "fixture Solana RPC did not become ready: $endpoint" >&2
+  return 1
+}
+
 bootstrap() {
   local mode="$1"
   /usr/local/bin/node /repo/scripts/protected-local-bootstrap.mjs install \
@@ -188,6 +210,9 @@ EOF_RPC_UNIT
 systemctl daemon-reload
 systemctl enable --now fased-fixture-solana-rpc.service
 wait_for_service fased-fixture-solana-rpc.service
+wait_for_rpc \
+  "http://127.0.0.1:$rpc_port" \
+  "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG" # pragma: allowlist secret
 
 wallet_dir="$state/wallet"
 legacy_binary="$state/bin/fased-signerd"
@@ -195,6 +220,7 @@ legacy_socket="$wallet_dir/local-signer.sock"
 legacy_control="$wallet_dir/local-signer-control.sock"
 install -d -m 0700 -o testop -g testop "$wallet_dir" "$(dirname "$legacy_binary")"
 install -m 0700 -o testop -g testop "$root_store/verified-assets/fased-signerd" "$legacy_binary"
+ln "$legacy_binary" "$state/bin/fased-signer-enroll"
 start_legacy_signer() {
   runuser -u testop -- "$legacy_binary" \
     -socket "$legacy_socket" \
@@ -351,6 +377,9 @@ test ! -e "/opt/fased/local/$instance"
 test "$(sha256sum "$state/install.json" | awk '{print $1}')" = "$original_manifest_sha"
 test "$(sha256sum "$wallet_dir/signerd-v2.master.key" | awk '{print $1}')" = "$original_key_sha"
 verify_legacy_wallet /tmp/rollback-agent.json
+test "$(stat -c '%d:%i:%h' "$legacy_binary")" = \
+  "$(stat -c '%d:%i:%h' "$state/bin/fased-signer-enroll")"
+test "$(stat -c '%h' "$legacy_binary")" = "2"
 
 bootstrap prepare >/tmp/protected-failure-prepare.json
 failure_instance="$(jq -er .instanceId /tmp/protected-failure-prepare.json)"

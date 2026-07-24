@@ -635,6 +635,12 @@ describe.sequential("transactional Local native signer updater", () => {
           { stateDir: fixture.stateDir },
         ),
       ).resolves.toMatchObject({ action: "committed", identity: { version: "1.0.0" } });
+      const signerInfo = await fsp.stat(fixture.paths.binaryPath);
+      const enrollmentInfo = await fsp.stat(fixture.paths.enrollmentPath);
+      expect(signerInfo.ino).not.toBe(enrollmentInfo.ino);
+      expect(await fsp.readFile(fixture.paths.enrollmentPath)).toEqual(
+        await fsp.readFile(fixture.paths.binaryPath),
+      );
       await startInstalledSigner(fixture.paths);
       fs.writeFileSync(path.join(fixture.paths.materialDir, "owner-policy-proof"), "preserve\n", {
         mode: 0o600,

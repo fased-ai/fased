@@ -20,7 +20,8 @@ describe("signer-owned WebAuthn enrollment launchers", () => {
     expect(native).toContain('"webauthn-enrollment.lock"');
 
     expect(installer).toContain('node "$UPDATER" "${args[@]}"');
-    expect(updater).toContain("await fsp.link(paths.binaryPath, enrollTemporary)");
+    expect(updater).toContain("await copyStandaloneFile(paths.binaryPath, enrollTemporary, 0o700)");
+    expect(updater).not.toContain("await fsp.link(paths.binaryPath, enrollTemporary)");
     expect(updater).toContain("await fsp.rename(enrollTemporary, paths.enrollmentPath)");
     expect(updater.indexOf("downloadVerifiedLocalSignerRelease")).toBeLessThan(
       updater.indexOf("atomicInstallSignerBinary"),
