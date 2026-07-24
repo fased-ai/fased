@@ -16,6 +16,7 @@ import { readHostedReleaseManifestV2, verifyManifestArtifact } from "./hosted-re
 import {
   assertManagedRuntime,
   atomicSymlink,
+  atomicWriteFile,
   atomicWriteJson,
   buildManagedInstallManifest,
   copyExecutable,
@@ -392,8 +393,6 @@ function protectedLocalMigrationRequirement({
   currentRoot,
   platform = process.platform,
   systemdActive = fs.existsSync("/run/systemd/system"),
-  bridgeAssetsAvailable = Boolean(currentRoot) &&
-    fs.existsSync(path.join(currentRoot, "scripts", "protected-local-bootstrap.mjs")),
 } = {}) {
   if (manifest?.profile !== "local") {
     return Object.freeze({ required: false, supported: false, reason: "profile_not_local" });
@@ -407,14 +406,11 @@ function protectedLocalMigrationRequirement({
   if (!currentRoot) {
     return Object.freeze({ required: true, supported: false, reason: "runtime_missing" });
   }
-  if (!bridgeAssetsAvailable) {
-    return Object.freeze({
-      required: false,
-      supported: false,
-      reason: "bridge_assets_missing",
-    });
-  }
-  return Object.freeze({ required: true, supported: true, reason: "migration_required" });
+  return Object.freeze({
+    required: true,
+    supported: true,
+    reason: "target_controller_required",
+  });
 }
 
 function rootControlledExecutable(candidates, label) {
@@ -447,8 +443,8 @@ function cleanProtectedLocalScalar(value, label, pattern) {
 
 function buildProtectedLocalMigrationInvocation({
   installerPath,
-  currentRoot,
-  currentVersion,
+  targetRoot,
+  targetVersion,
   channel,
   paths,
   operator,
@@ -460,7 +456,7 @@ function buildProtectedLocalMigrationInvocation({
   nodePath,
 }) {
   const releaseVersion = cleanProtectedLocalScalar(
-    currentVersion,
+    targetVersion,
     "release version",
     /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u,
   );
@@ -491,7 +487,7 @@ function buildProtectedLocalMigrationInvocation({
   const gatewayHealthTimeoutMs = Math.min(120_000, Math.max(1_000, transactionTimeoutMs - 30_000));
   for (const [value, label] of [
     [installerPath, "verified installer"],
-    [currentRoot, "runtime root"],
+    [targetRoot, "runtime root"],
     [paths.stateDir, "state directory"],
     [operator.homedir, "operator home"],
     [sudoPath, "sudo"],
@@ -524,7 +520,7 @@ function buildProtectedLocalMigrationInvocation({
       "--protected-local-state-dir",
       paths.stateDir,
       "--protected-local-runtime-dir",
-      currentRoot,
+      targetRoot,
       "--protected-local-node-binary",
       nodePath,
       "--protected-local-profile",
@@ -619,20 +615,167 @@ async function runInteractiveAdministrator(command, args, options = {}) {
 }
 
 async function prepareVerifiedProtectedLocalInstaller({
-  currentVersion,
+  releaseVersion,
   destinationDir,
   timeoutMs,
 }) {
-  const releaseUrl = `${DEFAULT_RELEASE_BASE_URL}/v${currentVersion}`;
+  const baseUrl = (process.env.FASED_HOSTED_ARTIFACT_BASE_URL || DEFAULT_RELEASE_BASE_URL).replace(
+    /\/$/,
+    "",
+  );
+  const officialVersion = baseUrl === DEFAULT_RELEASE_BASE_URL ? releaseVersion : null;
+  if (!officialVersion) {
+    const authorizationPath = "/etc/fased/testing/protected-local-artifact-source.json";
+    const authorizationInfo = fs.lstatSync(authorizationPath);
+    if (
+      !authorizationInfo.isFile() ||
+      authorizationInfo.isSymbolicLink() ||
+      authorizationInfo.uid !== 0 ||
+      (authorizationInfo.mode & 0o022) !== 0
+    ) {
+      throw new Error(
+        "A custom Protected Local artifact source requires a root-owned test authorization.",
+      );
+    }
+    const authorization = JSON.parse(fs.readFileSync(authorizationPath, "utf8"));
+    if (
+      authorization?.schemaVersion !== 1 ||
+      authorization?.baseUrl !== baseUrl ||
+      authorization?.releaseVersion !== releaseVersion ||
+      !/^http:\/\/127\.0\.0\.1:\d+$/u.test(baseUrl)
+    ) {
+      throw new Error("The root-owned Protected Local artifact authorization is invalid.");
+    }
+  }
+  const releaseUrl = `${baseUrl}/v${releaseVersion}`;
   const installerPath = path.join(destinationDir, "install.sh");
   const bundlePath = path.join(destinationDir, "install.sh.attestation.json");
   await Promise.all([
     downloadToFile(`${releaseUrl}/install.sh`, installerPath, timeoutMs),
-    downloadToFile(`${releaseUrl}/install.sh.attestation.json`, bundlePath, timeoutMs),
+    ...(officialVersion
+      ? [downloadToFile(`${releaseUrl}/install.sh.attestation.json`, bundlePath, timeoutMs)]
+      : []),
   ]);
-  await verifyOfficialAsset(installerPath, currentVersion, timeoutMs, bundlePath);
+  if (officialVersion) {
+    await verifyOfficialAsset(installerPath, officialVersion, timeoutMs, bundlePath);
+  }
   await fsp.chmod(installerPath, 0o500);
   return installerPath;
+}
+
+function protectedLocalMigrationJournalPath(paths) {
+  return path.join(paths.stateDir, "protected-local-migration-transaction.json");
+}
+
+async function readProtectedLocalMigrationJournal(paths) {
+  try {
+    const journal = JSON.parse(
+      await fsp.readFile(protectedLocalMigrationJournalPath(paths), "utf8"),
+    );
+    if (
+      journal?.schemaVersion !== 1 ||
+      !["prepared", "target-active"].includes(journal.phase) ||
+      typeof journal.currentVersion !== "string" ||
+      typeof journal.targetVersion !== "string" ||
+      typeof journal.currentRoot !== "string" ||
+      typeof journal.targetRoot !== "string" ||
+      typeof journal.previousManifestBase64 !== "string" ||
+      !Number.isSafeInteger(journal.previousManifestMode) ||
+      typeof journal.nextManifest !== "object" ||
+      journal.nextManifest?.runtime?.activeVersion !== journal.targetVersion
+    ) {
+      throw new Error("Protected Local migration journal is invalid.");
+    }
+    for (const candidate of [
+      journal.currentRoot,
+      journal.targetRoot,
+      ...(journal.previousLinkRoot ? [journal.previousLinkRoot] : []),
+    ]) {
+      if (
+        !path.isAbsolute(candidate) ||
+        !path.resolve(candidate).startsWith(`${path.resolve(paths.stateDir)}${path.sep}`)
+      ) {
+        throw new Error("Protected Local migration journal contains an unsafe runtime path.");
+      }
+    }
+    return journal;
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function writeProtectedLocalMigrationJournal(paths, journal, phase) {
+  const next = {
+    ...journal,
+    schemaVersion: 1,
+    phase,
+    updatedAt: new Date().toISOString(),
+  };
+  const journalPath = protectedLocalMigrationJournalPath(paths);
+  await atomicWriteJson(journalPath, next, 0o600);
+  await fsyncManagedPath(journalPath);
+  await fsyncManagedPath(paths.stateDir);
+  return next;
+}
+
+async function removeProtectedLocalMigrationJournal(paths) {
+  await fsp.rm(protectedLocalMigrationJournalPath(paths), { force: true });
+  await fsyncManagedPath(paths.stateDir);
+}
+
+async function restoreManagedRuntimeLink(linkPath, target) {
+  if (target) {
+    await atomicSymlink(target, linkPath);
+  } else {
+    await fsp.rm(linkPath, { recursive: true, force: true });
+  }
+}
+
+async function activateProtectedLocalTarget(paths, journal) {
+  if (path.resolve(journal.currentRoot) !== path.resolve(journal.targetRoot)) {
+    await atomicSymlink(journal.currentRoot, paths.previousLink);
+  }
+  await atomicSymlink(journal.targetRoot, paths.currentLink);
+  await replaceCompatibilityLink(paths);
+  await atomicWriteJson(
+    paths.manifestPath,
+    journal.nextManifest,
+    managedManifestMode(journal.nextManifest),
+  );
+  await syncManagedActivation(paths);
+  return await writeProtectedLocalMigrationJournal(paths, journal, "target-active");
+}
+
+async function restoreProtectedLocalTarget(paths, journal) {
+  const failures = [];
+  const attempt = async (label, action) => {
+    try {
+      await action();
+    } catch (error) {
+      failures.push(`${label}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  await attempt("current runtime restore", () =>
+    restoreManagedRuntimeLink(paths.currentLink, journal.currentRoot),
+  );
+  await attempt("previous runtime restore", () =>
+    restoreManagedRuntimeLink(paths.previousLink, journal.previousLinkRoot),
+  );
+  await attempt("manifest restore", () =>
+    atomicWriteFile(
+      paths.manifestPath,
+      Buffer.from(journal.previousManifestBase64, "base64"),
+      journal.previousManifestMode,
+    ),
+  );
+  await attempt("managed activation restore", () => syncManagedActivation(paths));
+  if (failures.length > 0) {
+    throw new Error(`Protected Local migration rollback is incomplete: ${failures.join("; ")}`);
+  }
+  await removeProtectedLocalMigrationJournal(paths);
 }
 
 async function migrateManagedLocalToProtected(params, dependencyOverrides = {}) {
@@ -645,7 +788,17 @@ async function migrateManagedLocalToProtected(params, dependencyOverrides = {}) 
     rootExecutable: rootControlledExecutable,
     ...dependencyOverrides,
   };
-  const { paths, existingManifest, currentRoot, currentVersion, channel, timeoutMs } = params;
+  const {
+    paths,
+    existingManifest,
+    currentRoot,
+    currentVersion,
+    targetRoot,
+    targetVersion,
+    nextManifest,
+    channel,
+    timeoutMs,
+  } = params;
   const requirement = protectedLocalMigrationRequirement({
     manifest: existingManifest,
     currentRoot,
@@ -672,24 +825,55 @@ async function migrateManagedLocalToProtected(params, dependencyOverrides = {}) 
     throw new Error("Protected Local migration configuration path does not match install.json.");
   }
   await assertManagedRuntime(currentRoot, currentVersion);
-  const installerInput = path.join(currentRoot, "scripts", "protected-local-bootstrap.mjs");
+  await assertManagedRuntime(targetRoot, targetVersion);
+  const installerInput = path.join(targetRoot, "scripts", "protected-local-bootstrap.mjs");
   const installerInputStat = await fsp.lstat(installerInput);
   if (!installerInputStat.isFile() || installerInputStat.isSymbolicLink()) {
-    throw new Error("The current release cannot perform Protected Local migration.");
+    throw new Error("The verified target release cannot perform Protected Local migration.");
   }
 
   const migrationCache = path.join(paths.stateDir, "install-cache");
   await fsp.mkdir(migrationCache, { recursive: true, mode: 0o700 });
   const migrationRoot = await fsp.mkdtemp(
-    path.join(migrationCache, `protected-local-migration-${currentVersion}-`),
+    path.join(migrationCache, `protected-local-migration-${targetVersion}-`),
   );
-  const previousManifestBytes = await fsp.readFile(paths.manifestPath);
+  let journal = await readProtectedLocalMigrationJournal(paths);
   try {
     const installerPath = await dependencies.prepareInstaller({
-      currentVersion,
+      releaseVersion: targetVersion,
       destinationDir: migrationRoot,
       timeoutMs,
     });
+    if (journal) {
+      if (
+        journal.targetVersion !== targetVersion ||
+        path.resolve(journal.targetRoot) !== path.resolve(targetRoot)
+      ) {
+        throw new Error(
+          "Protected Local migration has an interrupted transaction for another target release.",
+        );
+      }
+    } else {
+      const previousManifestBytes = await fsp.readFile(paths.manifestPath);
+      const previousManifestInfo = await fsp.lstat(paths.manifestPath);
+      journal = await writeProtectedLocalMigrationJournal(
+        paths,
+        {
+          currentVersion,
+          targetVersion,
+          currentRoot,
+          targetRoot,
+          previousLinkRoot: await resolveLinkTarget(paths.previousLink),
+          previousManifestBase64: previousManifestBytes.toString("base64"),
+          previousManifestMode: previousManifestInfo.mode & 0o777,
+          nextManifest,
+        },
+        "prepared",
+      );
+    }
+    if (journal.phase === "prepared") {
+      journal = await activateProtectedLocalTarget(paths, journal);
+    }
     const operator = dependencies.userInfo();
     const sudoPath = dependencies.rootExecutable(["/usr/bin/sudo", "/bin/sudo"], "sudo");
     const bashPath = dependencies.rootExecutable(["/bin/bash", "/usr/bin/bash"], "bash");
@@ -700,8 +884,8 @@ async function migrateManagedLocalToProtected(params, dependencyOverrides = {}) 
     const endpoint = readGatewayEndpoint(path.join(paths.stateDir, "fased.json"));
     const invocation = buildProtectedLocalMigrationInvocation({
       installerPath,
-      currentRoot,
-      currentVersion,
+      targetRoot,
+      targetVersion,
       channel,
       paths,
       operator,
@@ -726,12 +910,12 @@ async function migrateManagedLocalToProtected(params, dependencyOverrides = {}) 
       },
     });
     if (!result.ok) {
-      const currentBytes = await fsp.readFile(paths.manifestPath).catch(() => Buffer.alloc(0));
-      if (!currentBytes.equals(previousManifestBytes)) {
-        throw new Error(
-          `Protected Local migration failed and did not restore install.json exactly: ${result.stderr.trim()}`,
-        );
-      }
+      // The privileged bootstrap owns service rollback. A failed bootstrap either
+      // proves that it restored the prior service topology or reports its own
+      // incomplete rollback. Re-entering the legacy user-systemd path here would
+      // turn a successful root rollback into a false failure when the caller has
+      // no usable user bus.
+      await restoreProtectedLocalTarget(paths, journal);
       throw new Error(
         `Protected Local migration failed and restored the prior Local installation: ${result.stderr.trim()}`,
       );
@@ -739,7 +923,7 @@ async function migrateManagedLocalToProtected(params, dependencyOverrides = {}) 
     const manifest = dependencies.readManifest(paths.manifestPath);
     if (
       manifest?.profile !== "protected-local" ||
-      manifest?.runtime?.activeVersion !== currentVersion ||
+      manifest?.runtime?.activeVersion !== targetVersion ||
       manifest?.service?.scope !== "system"
     ) {
       throw new Error("Protected Local migration returned an invalid managed install manifest.");
@@ -752,6 +936,7 @@ async function migrateManagedLocalToProtected(params, dependencyOverrides = {}) 
     for (const [key, value] of Object.entries(environment.variables)) {
       process.env[key] = value;
     }
+    await removeProtectedLocalMigrationJournal(paths);
     return { migrated: true, manifest, environment };
   } finally {
     await fsp.rm(migrationRoot, { recursive: true, force: true });
@@ -4827,6 +5012,166 @@ async function recoverLocalPairedUpdate(paths, timeoutMs) {
   };
 }
 
+async function stageManagedReleaseCandidate({
+  paths,
+  existingManifest,
+  targetVersion,
+  timeoutMs,
+  repairCurrentFiles,
+  timings,
+}) {
+  const arch = resolveArchitecture();
+  const baseUrl = (process.env.FASED_HOSTED_ARTIFACT_BASE_URL || DEFAULT_RELEASE_BASE_URL).replace(
+    /\/$/,
+    "",
+  );
+  const officialVersion = baseUrl === DEFAULT_RELEASE_BASE_URL ? targetVersion : null;
+  const releaseUrl = `${baseUrl}/v${targetVersion}`;
+  const updateCacheRoot = path.join(paths.stateDir, "install-cache");
+  await fsp.mkdir(updateCacheRoot, { recursive: true });
+  const temporaryRoot = await fsp.mkdtemp(
+    path.join(updateCacheRoot, `managed-update-${targetVersion}-`),
+  );
+  try {
+    let unifiedRelease = null;
+    let unifiedReleasePath = null;
+    try {
+      unifiedReleasePath = path.join(temporaryRoot, "fased-hosted-release-v2.json");
+      await measureStage(timings, "unified release manifest", async () => {
+        const unifiedReleaseBundlePath = `${unifiedReleasePath}.attestation.json`;
+        await Promise.all([
+          downloadToFile(
+            `${releaseUrl}/fased-hosted-release-v2.json`,
+            unifiedReleasePath,
+            timeoutMs,
+          ),
+          ...(officialVersion
+            ? [
+                downloadToFile(
+                  `${releaseUrl}/fased-hosted-release-v2.json.attestation.json`,
+                  unifiedReleaseBundlePath,
+                  timeoutMs,
+                ),
+              ]
+            : []),
+        ]);
+        if (officialVersion) {
+          await verifyOfficialAsset(
+            unifiedReleasePath,
+            officialVersion,
+            timeoutMs,
+            unifiedReleaseBundlePath,
+          );
+        }
+        unifiedRelease = (
+          await readHostedReleaseManifestV2(unifiedReleasePath, { version: targetVersion })
+        ).manifest;
+      });
+    } catch (error) {
+      if (isRootManagedProfile(existingManifest.profile) || error?.statusCode !== 404) {
+        throw error;
+      }
+      unifiedReleasePath = null;
+      unifiedRelease = null;
+    }
+    const appArtifact = unifiedRelease?.application?.linux?.[arch]?.artifact;
+    const assetName =
+      appArtifact?.asset || `fased-hosted-app-linux-${arch}-v${targetVersion}.tar.gz`;
+    const archive = await measureStage(timings, "application download and checksum", () =>
+      appArtifact
+        ? downloadManifestBoundAsset({
+            releaseUrl,
+            artifact: appArtifact,
+            destinationDir: temporaryRoot,
+            timeoutMs,
+            officialVersion,
+          })
+        : downloadVerifiedAsset({
+            releaseUrl,
+            assetName,
+            destinationDir: temporaryRoot,
+            timeoutMs,
+            officialVersion,
+          }),
+    );
+    await measureStage(timings, "application archive verification", () =>
+      assertArchiveSafe(archive, "package"),
+    );
+    const extracted = path.join(temporaryRoot, "extract");
+    await measureStage(timings, "application extraction", () =>
+      extractArchive(archive, extracted, timeoutMs),
+    );
+    const stagedRoot = path.join(extracted, "package");
+    if (unifiedReleasePath) {
+      await fsp.copyFile(
+        unifiedReleasePath,
+        path.join(stagedRoot, ".fased-hosted-release-v2.json"),
+      );
+    }
+    const metadata = await readHostedRuntimeMetadata(stagedRoot);
+    if (!metadata) {
+      throw new Error("Hosted app metadata is missing or invalid.");
+    }
+    const nodeModules = await measureStage(timings, "dependency layer", () =>
+      ensureDependencyLayer({
+        dependencyHash: metadata.dependencyHash,
+        releaseUrl,
+        arch,
+        paths,
+        temporaryRoot,
+        timeoutMs,
+        officialVersion,
+        manifestArtifact: unifiedRelease?.application?.linux?.[arch]?.dependencies,
+      }),
+    );
+    await fsp.symlink(nodeModules, path.join(stagedRoot, "node_modules"), "dir");
+    await assertManagedRuntime(stagedRoot, targetVersion);
+    const hostedRelease = await readHostedReleaseBinding(stagedRoot, metadata, targetVersion);
+    if (isRootManagedProfile(existingManifest.profile) && !hostedRelease) {
+      throw new Error("Maintained Hosting update omitted its attested unified release binding.");
+    }
+    await measureStage(timings, "staged runtime smoke", () => smokeRuntime(stagedRoot, timeoutMs));
+
+    let releaseRoot = path.join(paths.releasesDir, targetVersion);
+    if (repairCurrentFiles) {
+      releaseRoot = path.join(
+        paths.releasesDir,
+        `${targetVersion}.repair-${Date.now()}-${process.pid}`,
+      );
+    }
+    const releaseExists = await fsp
+      .lstat(releaseRoot)
+      .then(() => true)
+      .catch(() => false);
+    if (releaseExists) {
+      try {
+        await assertManagedRuntime(releaseRoot, targetVersion);
+      } catch {
+        await fsp.rm(releaseRoot, { recursive: true, force: true });
+        await fsp.rename(stagedRoot, releaseRoot);
+      }
+    } else {
+      await fsp.mkdir(paths.releasesDir, { recursive: true });
+      await fsp.rename(stagedRoot, releaseRoot);
+    }
+    if (isRootManagedProfile(existingManifest.profile)) {
+      await measureStage(timings, "release durability", async () => {
+        await fsyncManagedReleaseTree(releaseRoot);
+        await fsyncManagedPath(paths.releasesDir);
+      });
+    }
+    return Object.freeze({
+      temporaryRoot,
+      releaseRoot,
+      metadata,
+      hostedRelease,
+    });
+  } catch (error) {
+    await fsp.rm(temporaryRoot, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 async function updateManagedRuntime(options) {
   const commandStartedAt = Date.now();
   const timings = [];
@@ -4938,35 +5283,13 @@ async function updateManagedRuntime(options) {
         ? (await readPackageVersion(currentRoot)) || existingManifest.runtime.activeVersion
         : existingManifest.runtime.activeVersion;
     }
+    targetVersion = await measureStage(timings, "release resolution", () =>
+      resolveTargetVersion(options),
+    );
     const protectedLocalMigration = protectedLocalMigrationRequirement({
       manifest: existingManifest,
       currentRoot,
     });
-    if (protectedLocalMigration.required) {
-      if (!options.restart) {
-        throw new Error(
-          "Protected Local migration requires coordinated service restart and health verification.",
-        );
-      }
-      const migration = await measureStage(timings, "Protected Local migration", () =>
-        migrateManagedLocalToProtected({
-          paths,
-          existingManifest,
-          currentRoot,
-          currentVersion,
-          channel: options.channel,
-          timeoutMs: options.timeoutMs,
-        }),
-      );
-      existingManifest = migration.manifest;
-      currentRoot = await resolveLinkTarget(paths.currentLink);
-      currentVersion = currentRoot
-        ? (await readPackageVersion(currentRoot)) || existingManifest.runtime.activeVersion
-        : existingManifest.runtime.activeVersion;
-    }
-    targetVersion = await measureStage(timings, "release resolution", () =>
-      resolveTargetVersion(options),
-    );
     const comparison = compareVersions(currentVersion, targetVersion);
     let repairCurrentFiles = false;
     if (comparison === 0) {
@@ -4984,7 +5307,7 @@ async function updateManagedRuntime(options) {
       } catch {
         repairCurrentFiles = true;
       }
-      if (!repairCurrentFiles) {
+      if (!repairCurrentFiles && !protectedLocalMigration.required) {
         const identity = await probeGatewayIdentity(
           existingManifest.configPath,
           currentVersion,
@@ -5021,151 +5344,102 @@ async function updateManagedRuntime(options) {
       );
     }
 
-    const arch = resolveArchitecture();
-    const baseUrl = (
-      process.env.FASED_HOSTED_ARTIFACT_BASE_URL || DEFAULT_RELEASE_BASE_URL
-    ).replace(/\/$/, "");
-    const officialVersion = baseUrl === DEFAULT_RELEASE_BASE_URL ? targetVersion : null;
-    const releaseUrl = `${baseUrl}/v${targetVersion}`;
-    const updateCacheRoot = path.join(paths.stateDir, "install-cache");
-    await fsp.mkdir(updateCacheRoot, { recursive: true });
-    const temporaryRoot = await fsp.mkdtemp(
-      path.join(updateCacheRoot, `managed-update-${targetVersion}-`),
-    );
+    if (protectedLocalMigration.required) {
+      const candidate = await stageManagedReleaseCandidate({
+        paths,
+        existingManifest,
+        targetVersion,
+        timeoutMs: options.timeoutMs,
+        repairCurrentFiles,
+        timings,
+      });
+      const previousRoot = currentRoot;
+      try {
+        await measureStage(timings, "verified target controller promotion", () =>
+          updateStableComponents(paths, candidate.releaseRoot, true),
+        );
+        const nextManifest = buildManagedInstallManifest({
+          paths,
+          profile: existingManifest.profile,
+          version: targetVersion,
+          dependencyHash: candidate.metadata.dependencyHash,
+          hostedRelease: candidate.hostedRelease,
+          previousVersion: currentVersion,
+          service: existingManifest.service,
+        });
+        const migration = await measureStage(
+          timings,
+          "target-owned Protected Local migration",
+          () =>
+            migrateManagedLocalToProtected({
+              paths,
+              existingManifest,
+              currentRoot,
+              currentVersion,
+              targetRoot: candidate.releaseRoot,
+              targetVersion,
+              nextManifest,
+              channel: options.channel,
+              timeoutMs: options.timeoutMs,
+            }),
+        );
+        existingManifest = migration.manifest;
+        currentRoot = await resolveLinkTarget(paths.currentLink);
+        currentVersion = currentRoot
+          ? (await readPackageVersion(currentRoot)) || existingManifest.runtime.activeVersion
+          : existingManifest.runtime.activeVersion;
+        if (
+          currentVersion !== targetVersion ||
+          existingManifest.runtime.activeVersion !== targetVersion
+        ) {
+          throw new Error("Protected Local migration did not converge on the target release.");
+        }
+        await measureStage(timings, "migration commit cleanup", async () => {
+          await updateStableComponents(paths, candidate.releaseRoot, true);
+          await cleanupReleases(paths, [candidate.releaseRoot, previousRoot]);
+        });
+        timings.push({ name: "total", durationMs: Date.now() - commandStartedAt });
+        await recordManagedUpdateSuccess(paths, { version: targetVersion, alreadyCurrent: false });
+        if (options.json) {
+          console.log(
+            JSON.stringify({
+              ok: true,
+              before: nextManifest.runtime.previousVersion,
+              after: targetVersion,
+              mode: "protected-local-target-first-migration",
+              timings,
+            }),
+          );
+        } else {
+          console.log(
+            `Updated and migrated Fased ${nextManifest.runtime.previousVersion} -> ${targetVersion}`,
+          );
+          console.log("Update mode: verified target-owned Protected Local transaction");
+          console.log("Gateway: verified");
+          console.log("Timing:");
+          for (const timing of timings) {
+            console.log(`  ${timing.name}: ${formatDuration(timing.durationMs)}`);
+          }
+        }
+        return;
+      } finally {
+        await fsp.rm(candidate.temporaryRoot, { recursive: true, force: true });
+      }
+    }
+
+    const candidate = await stageManagedReleaseCandidate({
+      paths,
+      existingManifest,
+      targetVersion,
+      timeoutMs: options.timeoutMs,
+      repairCurrentFiles,
+      timings,
+    });
+    const { hostedRelease, metadata, releaseRoot, temporaryRoot } = candidate;
     let activated = false;
     let previousRoot = currentRoot;
     let previousManifest = existingManifest;
     try {
-      let unifiedRelease = null;
-      let unifiedReleasePath = null;
-      try {
-        unifiedReleasePath = path.join(temporaryRoot, "fased-hosted-release-v2.json");
-        await measureStage(timings, "unified release manifest", async () => {
-          const unifiedReleaseBundlePath = `${unifiedReleasePath}.attestation.json`;
-          await Promise.all([
-            downloadToFile(
-              `${releaseUrl}/fased-hosted-release-v2.json`,
-              unifiedReleasePath,
-              options.timeoutMs,
-            ),
-            ...(officialVersion
-              ? [
-                  downloadToFile(
-                    `${releaseUrl}/fased-hosted-release-v2.json.attestation.json`,
-                    unifiedReleaseBundlePath,
-                    options.timeoutMs,
-                  ),
-                ]
-              : []),
-          ]);
-          if (officialVersion) {
-            await verifyOfficialAsset(
-              unifiedReleasePath,
-              officialVersion,
-              options.timeoutMs,
-              unifiedReleaseBundlePath,
-            );
-          }
-          unifiedRelease = (
-            await readHostedReleaseManifestV2(unifiedReleasePath, { version: targetVersion })
-          ).manifest;
-        });
-      } catch (error) {
-        if (isRootManagedProfile(existingManifest.profile) || error?.statusCode !== 404) {
-          throw error;
-        }
-        unifiedReleasePath = null;
-        unifiedRelease = null;
-      }
-      const appArtifact = unifiedRelease?.application?.linux?.[arch]?.artifact;
-      const assetName =
-        appArtifact?.asset || `fased-hosted-app-linux-${arch}-v${targetVersion}.tar.gz`;
-      const archive = await measureStage(timings, "application download and checksum", () =>
-        appArtifact
-          ? downloadManifestBoundAsset({
-              releaseUrl,
-              artifact: appArtifact,
-              destinationDir: temporaryRoot,
-              timeoutMs: options.timeoutMs,
-              officialVersion,
-            })
-          : downloadVerifiedAsset({
-              releaseUrl,
-              assetName,
-              destinationDir: temporaryRoot,
-              timeoutMs: options.timeoutMs,
-              officialVersion,
-            }),
-      );
-      await measureStage(timings, "application archive verification", () =>
-        assertArchiveSafe(archive, "package"),
-      );
-      const extracted = path.join(temporaryRoot, "extract");
-      await measureStage(timings, "application extraction", () =>
-        extractArchive(archive, extracted, options.timeoutMs),
-      );
-      const stagedRoot = path.join(extracted, "package");
-      if (unifiedReleasePath) {
-        await fsp.copyFile(
-          unifiedReleasePath,
-          path.join(stagedRoot, ".fased-hosted-release-v2.json"),
-        );
-      }
-      const metadata = await readHostedRuntimeMetadata(stagedRoot);
-      if (!metadata) {
-        throw new Error("Hosted app metadata is missing or invalid.");
-      }
-      const nodeModules = await measureStage(timings, "dependency layer", () =>
-        ensureDependencyLayer({
-          dependencyHash: metadata.dependencyHash,
-          releaseUrl,
-          arch,
-          paths,
-          temporaryRoot,
-          timeoutMs: options.timeoutMs,
-          officialVersion,
-          manifestArtifact: unifiedRelease?.application?.linux?.[arch]?.dependencies,
-        }),
-      );
-      await fsp.symlink(nodeModules, path.join(stagedRoot, "node_modules"), "dir");
-      await assertManagedRuntime(stagedRoot, targetVersion);
-      const hostedRelease = await readHostedReleaseBinding(stagedRoot, metadata, targetVersion);
-      if (isRootManagedProfile(existingManifest.profile) && !hostedRelease) {
-        throw new Error("Maintained Hosting update omitted its attested unified release binding.");
-      }
-      await measureStage(timings, "staged runtime smoke", () =>
-        smokeRuntime(stagedRoot, options.timeoutMs),
-      );
-
-      let releaseRoot = path.join(paths.releasesDir, targetVersion);
-      if (repairCurrentFiles) {
-        releaseRoot = path.join(
-          paths.releasesDir,
-          `${targetVersion}.repair-${Date.now()}-${process.pid}`,
-        );
-      }
-      const releaseExists = await fsp
-        .lstat(releaseRoot)
-        .then(() => true)
-        .catch(() => false);
-      if (releaseExists) {
-        try {
-          await assertManagedRuntime(releaseRoot, targetVersion);
-        } catch {
-          await fsp.rm(releaseRoot, { recursive: true, force: true });
-          await fsp.rename(stagedRoot, releaseRoot);
-        }
-      } else {
-        await fsp.mkdir(paths.releasesDir, { recursive: true });
-        await fsp.rename(stagedRoot, releaseRoot);
-      }
-      if (isRootManagedProfile(existingManifest.profile)) {
-        await measureStage(timings, "release durability", async () => {
-          await fsyncManagedReleaseTree(releaseRoot);
-          await fsyncManagedPath(paths.releasesDir);
-        });
-      }
-
       // Promote the controller only after the target runtime has passed archive
       // verification, extraction, and its staged smoke test.  This deliberately
       // happens before the paired app/signer transaction: if a later health gate

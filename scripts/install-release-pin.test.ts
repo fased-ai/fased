@@ -1,4 +1,7 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const installer = fs.readFileSync(new URL("../install.sh", import.meta.url), "utf8");
@@ -46,6 +49,67 @@ describe("managed installer release pinning", () => {
     expect(localReleaseEnd).toBeGreaterThan(localReleaseStart);
     expect(localReleaseResolver).not.toContain("apt-get");
     expect(installer).toContain('hosting_release="$latest_local_tag"');
+  });
+
+  it("bootstraps a downloaded Local installer that has no packaged companion files", () => {
+    expect(installer).toContain("install_entry_local_file_bootstrap=0");
+    expect(installer).toContain(
+      'if [[ "$install_entry_is_stream" -eq 0 && "$install_entry_hosting" -eq 0',
+    );
+    expect(installer).toContain(
+      'if [[ ! -f "$install_entry_source_dir/scripts/install-runtime-profile.sh" ]]',
+    );
+    expect(installer).toContain("install_entry_local_file_bootstrap=1");
+    expect(installer).toContain(
+      'if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" -eq 1',
+    );
+  });
+
+  it("drains a streamed installer before replacing its pipe reader", () => {
+    const functionStart = installer.indexOf("  exec_bootstrapped_installer() {");
+    const functionEnd = installer.indexOf("\n\n  exec_bootstrapped_installer ", functionStart);
+    expect(functionStart).toBeGreaterThanOrEqual(0);
+    expect(functionEnd).toBeGreaterThan(functionStart);
+    const handoffFunction = installer.slice(functionStart, functionEnd);
+    expect(handoffFunction).toContain("cat >/dev/null");
+    expect(handoffFunction).toContain('exec bash "$installer_path" "$@" < /dev/null');
+
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-local-stream-handoff-"));
+    try {
+      const inner = path.join(tempRoot, "inner.sh");
+      const harness = path.join(tempRoot, "harness.sh");
+      fs.writeFileSync(
+        inner,
+        "#!/usr/bin/env bash\nset -euo pipefail\nprintf 'handoff=%s\\n' \"$1\"\n",
+        { mode: 0o700 },
+      );
+      fs.writeFileSync(
+        harness,
+        `#!/usr/bin/env bash
+set -euo pipefail
+install_entry_is_stream=1
+${handoffFunction}
+exec_bootstrapped_installer ${JSON.stringify(inner)} marker
+`,
+        { mode: 0o700 },
+      );
+
+      const result = spawnSync(
+        "bash",
+        [
+          "-o",
+          "pipefail",
+          "-c",
+          `dd if=/dev/zero bs=1048576 count=4 2>/dev/null | bash ${JSON.stringify(harness)}`,
+        ],
+        { encoding: "utf8" },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("handoff=marker");
+      expect(result.stderr).not.toContain("Broken pipe");
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("defaults a normal checkout install to the Local managed runtime profile", () => {

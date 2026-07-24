@@ -237,7 +237,11 @@ describe("managed updater transaction", () => {
       packageRoot: initialRoot,
       stateDir,
       prefix,
-      profile: "local",
+      // This fixture exercises the portable same-user artifact transaction.
+      // Linux `local` is covered by the real-systemd Protected Local fixtures
+      // and must not be mislabeled here because that profile requires the
+      // privileged service-boundary migration.
+      profile: "source",
     });
     fs.writeFileSync(path.join(stateDir, "wallet-state-preserved"), "yes\n");
     const staleUpdateCache = path.join(

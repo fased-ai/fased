@@ -109,6 +109,10 @@ describe("attested Hosting installer artifact layout", () => {
   it("publishes and installs an atomically selected root-controller generation", () => {
     const installer = fs.readFileSync(path.join(root, "install.sh"), "utf8");
     const updater = fs.readFileSync(path.join(root, "scripts/fased-host-updater.mjs"), "utf8");
+    expect(installer).toContain(
+      "install -d -m 0755 -o root -g root /opt/fased\n" +
+        "  install -d -m 0755 -o root -g root /opt/fased/signer",
+    );
     expect(installer).toContain("/opt/fased/host-controller/releases/v${version}");
     expect(installer).toContain(".controller-generation-${version}-$$");
     expect(installer).toContain(

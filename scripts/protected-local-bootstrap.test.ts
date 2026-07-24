@@ -168,6 +168,32 @@ describe("protected Local bootstrap contract", () => {
     });
   });
 
+  it("accepts both managed application runtime identities for exact-version health", () => {
+    for (const runtimeSource of ["managed-package", "packaged-runtime"]) {
+      expect(
+        __testing.protectedLocalGatewayHealthMatches(
+          { version: "0.1.80", runtimeSource },
+          200,
+          "0.1.80",
+        ),
+      ).toBe(true);
+    }
+    expect(
+      __testing.protectedLocalGatewayHealthMatches(
+        { version: "0.1.79", runtimeSource: "managed-package" },
+        200,
+        "0.1.80",
+      ),
+    ).toBe(false);
+    expect(
+      __testing.protectedLocalGatewayHealthMatches(
+        { version: "0.1.80", runtimeSource: "source-checkout" },
+        200,
+        "0.1.80",
+      ),
+    ).toBe(false);
+  });
+
   it("treats missing legacy signer material as a clean fresh install", async () => {
     const root = temporaryRoot();
     const materialDir = path.join(root, "missing-wallet");
@@ -217,10 +243,15 @@ describe("protected Local bootstrap contract", () => {
 
   it("packages the root bootstrap and invokes it before Local completion", () => {
     const installer = fs.readFileSync(path.join(process.cwd(), "install.sh"), "utf8");
+    const bootstrap = fs.readFileSync(
+      path.join(process.cwd(), "scripts", "protected-local-bootstrap.mjs"),
+      "utf8",
+    );
     const packageMetadata = JSON.parse(
       fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
     ) as { files: string[] };
     expect(packageMetadata.files).toContain("scripts/protected-local-bootstrap.mjs");
+    expect(bootstrap).toContain('"/opt/fased",\n    "/opt/fased/local"');
     expect(installer).toContain("--protected-local-root-bootstrap");
     expect(installer).toContain("bootstrap_protected_local_topology");
     expect(installer).toContain("--protected-local-gateway-mode");

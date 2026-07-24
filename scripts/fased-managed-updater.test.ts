@@ -16,6 +16,27 @@ function signerRelease(version = "1.2.3") {
   };
 }
 
+async function writeManagedRuntime(root: string, version: string) {
+  await Promise.all([
+    fsp.mkdir(path.join(root, "node_modules"), { recursive: true }),
+    fsp.mkdir(path.join(root, "scripts"), { recursive: true }),
+    fsp.mkdir(path.join(root, "dist", "control-ui"), { recursive: true }),
+  ]);
+  await Promise.all([
+    fsp.writeFile(path.join(root, "package.json"), `${JSON.stringify({ version })}\n`),
+    fsp.writeFile(path.join(root, "fased.mjs"), "#!/usr/bin/env node\n"),
+    fsp.writeFile(path.join(root, "scripts", "start-managed.sh"), "#!/bin/sh\n"),
+    fsp.writeFile(
+      path.join(root, "scripts", "protected-local-bootstrap.mjs"),
+      "#!/usr/bin/env node\n",
+    ),
+    fsp.writeFile(
+      path.join(root, "dist", "control-ui", "version.json"),
+      `${JSON.stringify({ version })}\n`,
+    ),
+  ]);
+}
+
 async function withUnixServer(handler: (socket: net.Socket) => void) {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-managed-updater-test-"));
   const socketPath = path.join(root, "request.sock");
@@ -79,7 +100,7 @@ describe("stable managed updater", () => {
     ).toEqual({
       required: true,
       supported: true,
-      reason: "migration_required",
+      reason: "target_controller_required",
     });
     expect(
       __testing.protectedLocalMigrationRequirement({
@@ -112,8 +133,8 @@ describe("stable managed updater", () => {
   it("builds one fixed verified root migration invocation without shell evaluation", () => {
     const invocation = __testing.buildProtectedLocalMigrationInvocation({
       installerPath: "/tmp/verified/install.sh",
-      currentRoot: "/home/operator/.fased/runtime/releases/1.2.3",
-      currentVersion: "1.2.3",
+      targetRoot: "/home/operator/.fased/runtime/releases/1.2.3",
+      targetVersion: "1.2.3",
       channel: "stable",
       paths: { stateDir: "/home/operator/.fased" },
       operator: {
@@ -165,8 +186,8 @@ describe("stable managed updater", () => {
     expect(() =>
       __testing.buildProtectedLocalMigrationInvocation({
         installerPath: "/tmp/verified/install.sh",
-        currentRoot: "/home/operator/.fased/runtime/releases/1.2.3",
-        currentVersion: "1.2.3\n--unsafe",
+        targetRoot: "/home/operator/.fased/runtime/releases/1.2.3",
+        targetVersion: "1.2.3\n--unsafe",
         channel: "stable",
         paths: { stateDir: "/home/operator/.fased" },
         operator: {
@@ -182,6 +203,175 @@ describe("stable managed updater", () => {
         nodePath: "/usr/bin/node",
       }),
     ).toThrow("invalid release version");
+  });
+
+  it("hands a previous Local runtime to the exact target controller and target runtime", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-target-first-migration-"));
+    const stateDir = path.join(root, "home", ".fased");
+    const currentRoot = path.join(stateDir, "runtime", "releases", "1.2.2");
+    const targetRoot = path.join(stateDir, "runtime", "releases", "1.2.3");
+    const manifestPath = path.join(stateDir, "install.json");
+    const configPath = path.join(stateDir, "fased.json");
+    const currentLink = path.join(stateDir, "runtime", "current");
+    const previousLink = path.join(stateDir, "runtime", "previous");
+    const compatibilityPackageRoot = path.join(
+      stateDir,
+      "install-cache",
+      "npm-global",
+      "lib",
+      "node_modules",
+      "@fased",
+      "fased",
+    );
+    const instanceId = "0123456789abcdef";
+    const protectedEnvKeys = [
+      "FASED_HOST_PROFILE",
+      "FASED_PROTECTED_LOCAL",
+      "FASED_PROTECTED_LOCAL_INSTANCE",
+      "FASED_WALLET_LOCAL_SIGNER_LIFECYCLE",
+      "FASED_WALLET_LOCAL_SIGNER_BIN",
+      "FASED_WALLET_LOCAL_SIGNER_SOCKET",
+      "FASED_HOST_UPDATER_SOCKET",
+      "FASED_HOST_UPDATERCTL_STATE",
+    ];
+    const priorEnv = new Map(protectedEnvKeys.map((key) => [key, process.env[key]]));
+    await Promise.all([
+      writeManagedRuntime(currentRoot, "1.2.2"),
+      writeManagedRuntime(targetRoot, "1.2.3"),
+    ]);
+    await fsp.symlink(currentRoot, currentLink, "dir");
+    const existingManifest = {
+      schemaVersion: 2,
+      profile: "local",
+      stateDir,
+      configPath,
+      runtime: { activeVersion: "1.2.2" },
+      service: { name: "fased-gateway.service", scope: "user" },
+      updater: { version: "1.2.2" },
+    };
+    const nextManifest = {
+      ...existingManifest,
+      runtime: { activeVersion: "1.2.3", previousVersion: "1.2.2" },
+      updater: { version: "1.2.3" },
+    };
+    await fsp.writeFile(manifestPath, `${JSON.stringify(existingManifest, null, 2)}\n`, {
+      mode: 0o600,
+    });
+    await fsp.writeFile(
+      configPath,
+      `${JSON.stringify({ gateway: { port: 18789 }, env: { vars: {} } })}\n`,
+      { mode: 0o600 },
+    );
+    let preparedVersion = "";
+    let invocation: { command: string; args: string[] } | null = null;
+    try {
+      await expect(
+        __testing.migrateManagedLocalToProtected(
+          {
+            paths: {
+              stateDir,
+              manifestPath,
+              runtimeDir: path.join(stateDir, "runtime"),
+              currentLink,
+              previousLink,
+              compatibilityPackageRoot,
+            },
+            existingManifest,
+            currentRoot,
+            currentVersion: "1.2.2",
+            targetRoot,
+            targetVersion: "1.2.3",
+            nextManifest,
+            channel: "stable",
+            timeoutMs: 5_000,
+          },
+          {
+            prepareInstaller: async ({
+              releaseVersion,
+              destinationDir,
+            }: {
+              releaseVersion: string;
+              destinationDir: string;
+            }) => {
+              preparedVersion = releaseVersion;
+              const installerPath = path.join(destinationDir, "install.sh");
+              await fsp.writeFile(installerPath, "#!/bin/bash\n", { mode: 0o500 });
+              return installerPath;
+            },
+            rootExecutable: (candidates: string[]) => candidates[0],
+            userInfo: () => ({
+              username: "operator",
+              uid: 1000,
+              gid: 1000,
+              homedir: path.join(root, "home"),
+              shell: "/bin/bash",
+            }),
+            runAdministrator: async (command: string, args: string[]) => {
+              invocation = { command, args };
+              expect(await fsp.realpath(currentLink)).toBe(targetRoot);
+              expect(JSON.parse(await fsp.readFile(manifestPath, "utf8"))).toMatchObject({
+                runtime: { activeVersion: "1.2.3" },
+                updater: { version: "1.2.3" },
+              });
+              const protectedVariables = {
+                FASED_HOST_PROFILE: "local",
+                FASED_PROTECTED_LOCAL: "1",
+                FASED_PROTECTED_LOCAL_INSTANCE: instanceId,
+                FASED_WALLET_LOCAL_SIGNER_LIFECYCLE: "external",
+                FASED_WALLET_LOCAL_SIGNER_BIN: `/opt/fased/local/${instanceId}/signer/fased-signerd`,
+                FASED_WALLET_LOCAL_SIGNER_SOCKET: `/run/fased-local/${instanceId}/application/app.sock`,
+                FASED_HOST_UPDATER_SOCKET: `/run/fased-local-controller/${instanceId}/request.sock`,
+                FASED_HOST_UPDATERCTL_STATE: path.join(
+                  stateDir,
+                  "protected-local-controller-transaction.json",
+                ),
+              };
+              await fsp.writeFile(
+                configPath,
+                `${JSON.stringify({ gateway: { port: 18789 }, env: { vars: protectedVariables } })}\n`,
+                { mode: 0o660 },
+              );
+              await fsp.writeFile(
+                manifestPath,
+                `${JSON.stringify({
+                  ...nextManifest,
+                  profile: "protected-local",
+                  service: {
+                    name: `fased-gateway-${instanceId}.service`,
+                    scope: "system",
+                  },
+                })}\n`,
+                { mode: 0o660 },
+              );
+              return { ok: true, stdout: '{"profile":"protected-local"}\n', stderr: "" };
+            },
+          },
+        ),
+      ).resolves.toMatchObject({
+        migrated: true,
+        manifest: {
+          profile: "protected-local",
+          runtime: { activeVersion: "1.2.3" },
+        },
+      });
+      expect(preparedVersion).toBe("1.2.3");
+      expect(invocation?.args).toEqual(
+        expect.arrayContaining(["--release", "1.2.3", "--protected-local-runtime-dir", targetRoot]),
+      );
+      expect(await fsp.realpath(previousLink)).toBe(currentRoot);
+      await expect(
+        fsp.access(path.join(stateDir, "protected-local-migration-transaction.json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      for (const [key, value] of priorEnv) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+      await fsp.rm(root, { recursive: true, force: true });
+    }
   });
 
   it("migrates an existing managed Local install and reloads its exact protected identity", async () => {
@@ -244,10 +434,28 @@ describe("stable managed updater", () => {
     try {
       const result = await __testing.migrateManagedLocalToProtected(
         {
-          paths: { stateDir, manifestPath },
+          paths: {
+            stateDir,
+            manifestPath,
+            runtimeDir: path.join(stateDir, "runtime"),
+            currentLink: path.join(stateDir, "runtime", "current"),
+            previousLink: path.join(stateDir, "runtime", "previous"),
+            compatibilityPackageRoot: path.join(
+              stateDir,
+              "install-cache",
+              "npm-global",
+              "lib",
+              "node_modules",
+              "@fased",
+              "fased",
+            ),
+          },
           existingManifest,
           currentRoot,
           currentVersion: "1.2.3",
+          targetRoot: currentRoot,
+          targetVersion: "1.2.3",
+          nextManifest: existingManifest,
           channel: "stable",
           timeoutMs: 5_000,
         },
@@ -328,28 +536,12 @@ describe("stable managed updater", () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-protected-migration-"));
     const stateDir = path.join(root, "home", ".fased");
     const currentRoot = path.join(stateDir, "runtime", "releases", "1.2.3");
+    const targetRoot = path.join(stateDir, "runtime", "releases", "1.2.4");
     const manifestPath = path.join(stateDir, "install.json");
     const configPath = path.join(stateDir, "fased.json");
     await Promise.all([
-      fsp.mkdir(path.join(currentRoot, "node_modules"), { recursive: true }),
-      fsp.mkdir(path.join(currentRoot, "scripts"), { recursive: true }),
-      fsp.mkdir(path.join(currentRoot, "dist", "control-ui"), { recursive: true }),
-    ]);
-    await Promise.all([
-      fsp.writeFile(
-        path.join(currentRoot, "package.json"),
-        `${JSON.stringify({ version: "1.2.3" })}\n`,
-      ),
-      fsp.writeFile(path.join(currentRoot, "fased.mjs"), "#!/usr/bin/env node\n"),
-      fsp.writeFile(path.join(currentRoot, "scripts", "start-managed.sh"), "#!/bin/sh\n"),
-      fsp.writeFile(
-        path.join(currentRoot, "scripts", "protected-local-bootstrap.mjs"),
-        "#!/usr/bin/env node\n",
-      ),
-      fsp.writeFile(
-        path.join(currentRoot, "dist", "control-ui", "version.json"),
-        `${JSON.stringify({ version: "1.2.3" })}\n`,
-      ),
+      writeManagedRuntime(currentRoot, "1.2.3"),
+      writeManagedRuntime(targetRoot, "1.2.4"),
     ]);
     const existingManifest = {
       schemaVersion: 2,
@@ -361,17 +553,41 @@ describe("stable managed updater", () => {
       updater: { version: "1.2.3" },
     };
     const manifestBytes = `${JSON.stringify(existingManifest, null, 2)}\n`;
+    const nextManifest = {
+      ...existingManifest,
+      runtime: { activeVersion: "1.2.4", previousVersion: "1.2.3" },
+      updater: { version: "1.2.4" },
+    };
     await fsp.mkdir(stateDir, { recursive: true });
     await fsp.writeFile(manifestPath, manifestBytes, { mode: 0o600 });
     await fsp.writeFile(configPath, `${JSON.stringify({ gateway: { port: 18789 } })}\n`);
+    await fsp.symlink(currentRoot, path.join(stateDir, "runtime", "current"), "dir");
     try {
       await expect(
         __testing.migrateManagedLocalToProtected(
           {
-            paths: { stateDir, manifestPath },
+            paths: {
+              stateDir,
+              manifestPath,
+              runtimeDir: path.join(stateDir, "runtime"),
+              currentLink: path.join(stateDir, "runtime", "current"),
+              previousLink: path.join(stateDir, "runtime", "previous"),
+              compatibilityPackageRoot: path.join(
+                stateDir,
+                "install-cache",
+                "npm-global",
+                "lib",
+                "node_modules",
+                "@fased",
+                "fased",
+              ),
+            },
             existingManifest,
             currentRoot,
             currentVersion: "1.2.3",
+            targetRoot,
+            targetVersion: "1.2.4",
+            nextManifest,
             channel: "stable",
             timeoutMs: 5_000,
           },
@@ -400,6 +616,10 @@ describe("stable managed updater", () => {
         "Protected Local migration failed and restored the prior Local installation",
       );
       expect(await fsp.readFile(manifestPath, "utf8")).toBe(manifestBytes);
+      expect(await fsp.realpath(path.join(stateDir, "runtime", "current"))).toBe(currentRoot);
+      await expect(
+        fsp.access(path.join(stateDir, "protected-local-migration-transaction.json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await fsp.rm(root, { recursive: true, force: true });
     }
