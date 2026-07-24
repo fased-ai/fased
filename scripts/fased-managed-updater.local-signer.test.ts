@@ -250,7 +250,11 @@ function legacySolanaEnvelope(keypair: Keypair, passphrase: string) {
 }
 
 function makeFixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-local-signer-update-"));
+  // macOS exposes os.tmpdir() through a long /var/folders/... path. Keep the
+  // disposable root short enough for sockaddr_un.sun_path after signer socket
+  // suffixes are appended.
+  const tmpRoot = process.platform === "darwin" ? "/tmp" : os.tmpdir();
+  const root = fs.mkdtempSync(path.join(tmpRoot, "fased-lsu-"));
   roots.push(root);
   const stateDir = path.join(root, ".fased");
   const releaseRoot = path.join(root, "releases");
