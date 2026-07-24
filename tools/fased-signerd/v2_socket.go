@@ -34,7 +34,7 @@ func prepareSocketDirectoryV2(socketPath string, gid int) error {
 	if errors.Is(err, os.ErrNotExist) {
 		mode := os.FileMode(0o700)
 		if gid >= 0 {
-			mode = 0o750
+			mode = 0o711
 		}
 		if err := os.MkdirAll(directory, mode); err != nil {
 			return fmt.Errorf("create signer socket directory: %w", err)
@@ -51,10 +51,11 @@ func prepareSocketDirectoryV2(socketPath string, gid int) error {
 		return fmt.Errorf("signer socket directory must be owned by uid %d", os.Geteuid())
 	}
 	if gid >= 0 {
-		if err := os.Chown(directory, -1, gid); err != nil {
-			return fmt.Errorf("set signer socket directory group: %w", err)
-		}
-		if err := os.Chmod(directory, 0o750); err != nil {
+		// Application, operator, and control sockets may share one runtime
+		// directory while intentionally using different groups. Keep the
+		// directory search-only for non-owners; each socket's mode, group, and
+		// peer-credential check remain the authorization boundary.
+		if err := os.Chmod(directory, 0o711); err != nil {
 			return fmt.Errorf("set signer socket directory mode: %w", err)
 		}
 	}

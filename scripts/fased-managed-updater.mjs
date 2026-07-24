@@ -27,8 +27,12 @@ import {
   resolveManagedRuntimePaths,
 } from "./managed-runtime-layout.mjs";
 
+function isRootManagedProfile(profile) {
+  return profile === "hosting" || profile === "protected-local";
+}
+
 function managedManifestMode(manifest) {
-  return manifest?.profile === "hosting" ? 0o660 : 0o600;
+  return isRootManagedProfile(manifest?.profile) ? 0o660 : 0o600;
 }
 
 const execFileAsync = promisify(execFile);
@@ -369,6 +373,381 @@ async function verifyOfficialAsset(
   );
   if (!result.ok) {
     throw new Error(`Release attestation verification failed: ${result.stderr.trim()}`);
+  }
+}
+
+const PROTECTED_LOCAL_ENV_KEYS = Object.freeze([
+  "FASED_HOST_PROFILE",
+  "FASED_PROTECTED_LOCAL",
+  "FASED_PROTECTED_LOCAL_INSTANCE",
+  "FASED_WALLET_LOCAL_SIGNER_LIFECYCLE",
+  "FASED_WALLET_LOCAL_SIGNER_BIN",
+  "FASED_WALLET_LOCAL_SIGNER_SOCKET",
+  "FASED_HOST_UPDATER_SOCKET",
+  "FASED_HOST_UPDATERCTL_STATE",
+]);
+
+function protectedLocalMigrationRequirement({
+  manifest,
+  currentRoot,
+  platform = process.platform,
+  systemdActive = fs.existsSync("/run/systemd/system"),
+  bridgeAssetsAvailable = Boolean(currentRoot) &&
+    fs.existsSync(path.join(currentRoot, "scripts", "protected-local-bootstrap.mjs")),
+} = {}) {
+  if (manifest?.profile !== "local") {
+    return Object.freeze({ required: false, supported: false, reason: "profile_not_local" });
+  }
+  if (platform !== "linux") {
+    return Object.freeze({ required: false, supported: false, reason: "not_linux" });
+  }
+  if (!systemdActive) {
+    return Object.freeze({ required: false, supported: false, reason: "systemd_unavailable" });
+  }
+  if (!currentRoot) {
+    return Object.freeze({ required: true, supported: false, reason: "runtime_missing" });
+  }
+  if (!bridgeAssetsAvailable) {
+    return Object.freeze({
+      required: false,
+      supported: false,
+      reason: "bridge_assets_missing",
+    });
+  }
+  return Object.freeze({ required: true, supported: true, reason: "migration_required" });
+}
+
+function rootControlledExecutable(candidates, label) {
+  for (const candidate of candidates) {
+    try {
+      const resolved = fs.realpathSync(candidate);
+      const stat = fs.statSync(resolved);
+      if (
+        stat.isFile() &&
+        stat.uid === 0 &&
+        (stat.mode & 0o022) === 0 &&
+        (stat.mode & 0o111) !== 0
+      ) {
+        return resolved;
+      }
+    } catch {
+      // Try the next fixed system path.
+    }
+  }
+  throw new Error(`Protected Local migration requires ${label} in a root-controlled system path.`);
+}
+
+function cleanProtectedLocalScalar(value, label, pattern) {
+  const text = String(value ?? "").trim();
+  if (!pattern.test(text) || text.includes("\r") || text.includes("\n") || text.includes("\0")) {
+    throw new Error(`Protected Local migration found an invalid ${label}.`);
+  }
+  return text;
+}
+
+function buildProtectedLocalMigrationInvocation({
+  installerPath,
+  currentRoot,
+  currentVersion,
+  channel,
+  paths,
+  operator,
+  gatewayPort,
+  profile,
+  sudoPath,
+  bashPath,
+  nodePath,
+}) {
+  const releaseVersion = cleanProtectedLocalScalar(
+    currentVersion,
+    "release version",
+    /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u,
+  );
+  const updateChannel = cleanProtectedLocalScalar(channel, "update channel", /^(stable|beta)$/u);
+  const operatorUser = cleanProtectedLocalScalar(
+    operator.username,
+    "operator account",
+    /^[A-Za-z_][A-Za-z0-9_.-]{0,30}$/u,
+  );
+  const operatorProfile = cleanProtectedLocalScalar(
+    profile || "default",
+    "profile",
+    /^[A-Za-z0-9_.-]{1,64}$/u,
+  );
+  if (
+    !Number.isSafeInteger(operator.uid) ||
+    operator.uid <= 0 ||
+    !Number.isSafeInteger(operator.gid) ||
+    operator.gid <= 0 ||
+    !Number.isSafeInteger(gatewayPort) ||
+    gatewayPort <= 0 ||
+    gatewayPort > 65535
+  ) {
+    throw new Error("Protected Local migration found an invalid operator or Gateway identity.");
+  }
+  for (const [value, label] of [
+    [installerPath, "verified installer"],
+    [currentRoot, "runtime root"],
+    [paths.stateDir, "state directory"],
+    [operator.homedir, "operator home"],
+    [sudoPath, "sudo"],
+    [bashPath, "bash"],
+    [nodePath, "Node.js"],
+  ]) {
+    if (!path.isAbsolute(value) || path.resolve(value) !== value) {
+      throw new Error(`Protected Local migration ${label} must be an exact absolute path.`);
+    }
+  }
+  return Object.freeze({
+    command: sudoPath,
+    args: Object.freeze([
+      "--",
+      bashPath,
+      installerPath,
+      "--protected-local-root-bootstrap",
+      "--release",
+      releaseVersion,
+      "--update-channel",
+      updateChannel,
+      "--protected-local-operator-user",
+      operatorUser,
+      "--protected-local-operator-uid",
+      String(operator.uid),
+      "--protected-local-operator-gid",
+      String(operator.gid),
+      "--protected-local-operator-home",
+      operator.homedir,
+      "--protected-local-state-dir",
+      paths.stateDir,
+      "--protected-local-runtime-dir",
+      currentRoot,
+      "--protected-local-node-binary",
+      nodePath,
+      "--protected-local-profile",
+      operatorProfile,
+      "--protected-local-gateway-port",
+      String(gatewayPort),
+      "--protected-local-gateway-mode",
+      "activate",
+    ]),
+  });
+}
+
+function parseProtectedLocalEnvironment(configPath) {
+  const configStat = fs.lstatSync(configPath);
+  if (!configStat.isFile() || configStat.isSymbolicLink()) {
+    throw new Error("Protected Local migration returned an unsafe configuration file.");
+  }
+  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const variables = config?.env?.vars;
+  const instanceId = String(variables?.FASED_PROTECTED_LOCAL_INSTANCE ?? "").trim();
+  if (
+    variables?.FASED_HOST_PROFILE !== "local" ||
+    variables?.FASED_PROTECTED_LOCAL !== "1" ||
+    !/^[a-f0-9]{16}$/u.test(instanceId) ||
+    variables?.FASED_WALLET_LOCAL_SIGNER_LIFECYCLE !== "external"
+  ) {
+    throw new Error("Protected Local migration returned an invalid operator environment.");
+  }
+  const expected = {
+    FASED_HOST_PROFILE: "local",
+    FASED_PROTECTED_LOCAL: "1",
+    FASED_PROTECTED_LOCAL_INSTANCE: instanceId,
+    FASED_WALLET_LOCAL_SIGNER_LIFECYCLE: "external",
+    FASED_WALLET_LOCAL_SIGNER_BIN: `/opt/fased/local/${instanceId}/signer/fased-signerd`,
+    FASED_WALLET_LOCAL_SIGNER_SOCKET: `/run/fased-local/${instanceId}/application/app.sock`,
+    FASED_HOST_UPDATER_SOCKET: `/run/fased-local-controller/${instanceId}/request.sock`,
+    FASED_HOST_UPDATERCTL_STATE: path.join(
+      path.dirname(configPath),
+      "protected-local-controller-transaction.json",
+    ),
+  };
+  for (const key of PROTECTED_LOCAL_ENV_KEYS) {
+    if (variables?.[key] !== expected[key]) {
+      throw new Error(`Protected Local migration returned a mismatched ${key}.`);
+    }
+  }
+  return Object.freeze({ config, variables: Object.freeze(expected), instanceId });
+}
+
+async function runInteractiveAdministrator(command, args, options = {}) {
+  return await new Promise((resolve) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ["inherit", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const maxBytes = 2 * 1024 * 1024;
+    const timeout = setTimeout(
+      () => child.kill("SIGKILL"),
+      options.timeoutMs || DEFAULT_TIMEOUT_MS,
+    );
+    const finish = (ok, error = null) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      resolve({ ok, stdout, stderr: stderr || error?.message || "" });
+    };
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+      if (Buffer.byteLength(stdout) > maxBytes) {
+        child.kill("SIGKILL");
+      }
+    });
+    child.stderr.on("data", (chunk) => {
+      const text = String(chunk);
+      stderr += text;
+      process.stderr.write(text);
+      if (Buffer.byteLength(stderr) > maxBytes) {
+        child.kill("SIGKILL");
+      }
+    });
+    child.once("error", (error) => finish(false, error));
+    child.once("close", (code) => finish(code === 0));
+  });
+}
+
+async function prepareVerifiedProtectedLocalInstaller({
+  currentVersion,
+  destinationDir,
+  timeoutMs,
+}) {
+  const releaseUrl = `${DEFAULT_RELEASE_BASE_URL}/v${currentVersion}`;
+  const installerPath = path.join(destinationDir, "install.sh");
+  const bundlePath = path.join(destinationDir, "install.sh.attestation.json");
+  await Promise.all([
+    downloadToFile(`${releaseUrl}/install.sh`, installerPath, timeoutMs),
+    downloadToFile(`${releaseUrl}/install.sh.attestation.json`, bundlePath, timeoutMs),
+  ]);
+  await verifyOfficialAsset(installerPath, currentVersion, timeoutMs, bundlePath);
+  await fsp.chmod(installerPath, 0o500);
+  return installerPath;
+}
+
+async function migrateManagedLocalToProtected(params, dependencyOverrides = {}) {
+  const dependencies = {
+    prepareInstaller: prepareVerifiedProtectedLocalInstaller,
+    runAdministrator: runInteractiveAdministrator,
+    readManifest: readManagedInstallManifest,
+    readEnvironment: parseProtectedLocalEnvironment,
+    userInfo: () => os.userInfo(),
+    rootExecutable: rootControlledExecutable,
+    ...dependencyOverrides,
+  };
+  const { paths, existingManifest, currentRoot, currentVersion, channel, timeoutMs } = params;
+  const requirement = protectedLocalMigrationRequirement({
+    manifest: existingManifest,
+    currentRoot,
+  });
+  if (!requirement.required) {
+    return { migrated: false, manifest: existingManifest, environment: null };
+  }
+  if (!requirement.supported) {
+    throw new Error(
+      "This managed Local installation requires Protected Local migration, but its exact runtime is unavailable.",
+    );
+  }
+  if (
+    existingManifest.stateDir &&
+    path.resolve(existingManifest.stateDir) !== path.resolve(paths.stateDir)
+  ) {
+    throw new Error("Protected Local migration state directory does not match install.json.");
+  }
+  if (
+    existingManifest.configPath &&
+    path.resolve(existingManifest.configPath) !==
+      path.resolve(path.join(paths.stateDir, "fased.json"))
+  ) {
+    throw new Error("Protected Local migration configuration path does not match install.json.");
+  }
+  await assertManagedRuntime(currentRoot, currentVersion);
+  const installerInput = path.join(currentRoot, "scripts", "protected-local-bootstrap.mjs");
+  const installerInputStat = await fsp.lstat(installerInput);
+  if (!installerInputStat.isFile() || installerInputStat.isSymbolicLink()) {
+    throw new Error("The current release cannot perform Protected Local migration.");
+  }
+
+  const migrationCache = path.join(paths.stateDir, "install-cache");
+  await fsp.mkdir(migrationCache, { recursive: true, mode: 0o700 });
+  const migrationRoot = await fsp.mkdtemp(
+    path.join(migrationCache, `protected-local-migration-${currentVersion}-`),
+  );
+  const previousManifestBytes = await fsp.readFile(paths.manifestPath);
+  try {
+    const installerPath = await dependencies.prepareInstaller({
+      currentVersion,
+      destinationDir: migrationRoot,
+      timeoutMs,
+    });
+    const operator = dependencies.userInfo();
+    const sudoPath = dependencies.rootExecutable(["/usr/bin/sudo", "/bin/sudo"], "sudo");
+    const bashPath = dependencies.rootExecutable(["/bin/bash", "/usr/bin/bash"], "bash");
+    const nodePath = dependencies.rootExecutable(
+      ["/usr/bin/node", "/usr/local/bin/node"],
+      "Node.js",
+    );
+    const endpoint = readGatewayEndpoint(path.join(paths.stateDir, "fased.json"));
+    const invocation = buildProtectedLocalMigrationInvocation({
+      installerPath,
+      currentRoot,
+      currentVersion,
+      channel,
+      paths,
+      operator,
+      gatewayPort: endpoint.port,
+      profile: process.env.FASED_PROFILE || "default",
+      sudoPath,
+      bashPath,
+      nodePath,
+    });
+    const result = await dependencies.runAdministrator(invocation.command, invocation.args, {
+      cwd: operator.homedir,
+      timeoutMs,
+      env: {
+        HOME: operator.homedir,
+        USER: operator.username,
+        LOGNAME: operator.username,
+        LANG: process.env.LANG || "C.UTF-8",
+        LC_ALL: process.env.LC_ALL || "C.UTF-8",
+        PATH: "/usr/local/bin:/usr/bin:/bin",
+        ...(process.env.TERM ? { TERM: process.env.TERM } : {}),
+      },
+    });
+    if (!result.ok) {
+      const currentBytes = await fsp.readFile(paths.manifestPath).catch(() => Buffer.alloc(0));
+      if (!currentBytes.equals(previousManifestBytes)) {
+        throw new Error(
+          `Protected Local migration failed and did not restore install.json exactly: ${result.stderr.trim()}`,
+        );
+      }
+      throw new Error(
+        `Protected Local migration failed and restored the prior Local installation: ${result.stderr.trim()}`,
+      );
+    }
+    const manifest = dependencies.readManifest(paths.manifestPath);
+    if (
+      manifest?.profile !== "protected-local" ||
+      manifest?.runtime?.activeVersion !== currentVersion ||
+      manifest?.service?.scope !== "system"
+    ) {
+      throw new Error("Protected Local migration returned an invalid managed install manifest.");
+    }
+    const environment = dependencies.readEnvironment(path.join(paths.stateDir, "fased.json"));
+    const expectedUnit = `fased-gateway-${environment.instanceId}.service`;
+    if (manifest.service?.name !== expectedUnit) {
+      throw new Error("Protected Local migration returned a mismatched Gateway service identity.");
+    }
+    for (const [key, value] of Object.entries(environment.variables)) {
+      process.env[key] = value;
+    }
+    return { migrated: true, manifest, environment };
+  } finally {
+    await fsp.rm(migrationRoot, { recursive: true, force: true });
   }
 }
 
@@ -1022,12 +1401,14 @@ async function refreshGateway(
     FASED_MANAGED_RUNTIME_ROOT: runtimeRoot,
     FASED_RUNTIME_SOURCE: "managed-package",
   };
-  if (manifest.profile === "hosting" && !hostedServiceAlreadyRestarted) {
-    try {
-      await restartHostedGateway(manifest.runtime.activeVersion, timeoutMs);
-    } catch (error) {
-      if (!allowInactiveHosted || !error.message.includes("MainPID unavailable")) {
-        throw error;
+  if (isRootManagedProfile(manifest.profile)) {
+    if (!hostedServiceAlreadyRestarted) {
+      try {
+        await restartHostedGateway(manifest.runtime.activeVersion, timeoutMs);
+      } catch (error) {
+        if (!allowInactiveHosted || !error.message.includes("MainPID unavailable")) {
+          throw error;
+        }
       }
     }
   } else {
@@ -1060,14 +1441,14 @@ async function refreshGateway(
       if (!plugins.ok) {
         throw new Error(`Plugin verification failed: ${(plugins.stderr || plugins.stdout).trim()}`);
       }
-      if (manifest.profile === "hosting") {
-        await probeHostedSignerCompatibility(
-          process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET || "/run/fased-signerd/app.sock",
-          Math.min(timeoutMs, 5000),
-          expectedSignerRelease,
-          manifest.runtime.activeVersion,
-          manifest.release?.signer?.capabilities,
-        );
+      if (isRootManagedProfile(manifest.profile)) {
+        await probeRootManagedSignerCompatibility({
+          profile: manifest.profile,
+          timeoutMs: Math.min(timeoutMs, 5000),
+          expectedRelease: expectedSignerRelease,
+          expectedVersion: manifest.runtime.activeVersion,
+          expectedCapabilities: manifest.release?.signer?.capabilities,
+        });
       }
       return;
     }
@@ -1085,17 +1466,6 @@ async function probeHostedSignerCompatibility(
   expectedVersion = expectedRelease?.version,
   expectedCapabilities,
 ) {
-  const requiredFeatures = [
-    "failClosedPolicies",
-    "policyHashes",
-    "durableCaps",
-    "atomicIdempotency",
-    "ambiguousBroadcastReconciliation",
-    "signerOwnedKeys",
-    "typedSolanaTransactions",
-    "atomicMultiAssetCaps",
-    "signerControlledNativeFeeCaps",
-  ];
   const socketStat = await fsp.lstat(socketPath).catch((error) => {
     throw new Error(`hosted signer socket is unavailable to the app account: ${error.message}`, {
       cause: error,
@@ -1153,7 +1523,32 @@ async function probeHostedSignerCompatibility(
       fail(new Error(`hosted signer socket is unavailable to the app account: ${error.message}`)),
     );
   });
+  return assertRootManagedSignerCompatibility(
+    response,
+    expectedRelease,
+    expectedVersion,
+    expectedCapabilities,
+  );
+}
+
+function assertRootManagedSignerCompatibility(
+  response,
+  expectedRelease,
+  expectedVersion,
+  expectedCapabilities,
+) {
   const result = response?.result;
+  const requiredFeatures = [
+    "failClosedPolicies",
+    "policyHashes",
+    "durableCaps",
+    "atomicIdempotency",
+    "ambiguousBroadcastReconciliation",
+    "signerOwnedKeys",
+    "typedSolanaTransactions",
+    "atomicMultiAssetCaps",
+    "signerControlledNativeFeeCaps",
+  ];
   const protocol = result?.capabilities?.protocol;
   const features = new Set(result?.capabilities?.features || []);
   const missing = requiredFeatures.filter((feature) => !features.has(feature));
@@ -1198,10 +1593,59 @@ async function probeHostedSignerCompatibility(
     !capabilitiesMatch
   ) {
     throw new Error(
-      `hosted Gateway-to-signer compatibility check failed${missing.length ? `; missing ${missing.join(",")}` : ""}${result?.capabilities?.nativeFeeReservationLamports !== 5_000_000 ? "; invalid native fee reservation" : ""}${!releaseMatches ? "; signer release identity mismatch" : ""}${!capabilitiesMatch ? "; signer capability contract mismatch" : ""}`,
+      `root-managed signer compatibility check failed${missing.length ? `; missing ${missing.join(",")}` : ""}${result?.capabilities?.nativeFeeReservationLamports !== 5_000_000 ? "; invalid native fee reservation" : ""}${!releaseMatches ? "; signer release identity mismatch" : ""}${!capabilitiesMatch ? "; signer capability contract mismatch" : ""}`,
     );
   }
   return response;
+}
+
+async function probeRootManagedSignerCompatibility({
+  profile,
+  timeoutMs,
+  expectedRelease,
+  expectedVersion,
+  expectedCapabilities,
+}) {
+  const instanceId = String(process.env.FASED_PROTECTED_LOCAL_INSTANCE ?? "").trim();
+  const protectedLocal = profile === "protected-local";
+  if (protectedLocal && !/^[a-f0-9]{16}$/.test(instanceId)) {
+    throw new Error("Protected Local signer instance identity is unavailable during update");
+  }
+  const signerBinary = protectedLocal
+    ? `/opt/fased/local/${instanceId}/signer/fased-signerd`
+    : "/opt/fased/signer/fased-signerd";
+  const operatorSocket = protectedLocal
+    ? `/run/fased-local/${instanceId}/operator/operator.sock`
+    : "/run/fased-signerd/operator.sock";
+  const child = await runFile(
+    signerBinary,
+    ["admin", "service", "health", "--operator-socket", operatorSocket],
+    {
+      env: {
+        HOME: process.env.HOME,
+        LANG: process.env.LANG || "C.UTF-8",
+        PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      },
+      timeoutMs,
+    },
+  );
+  if (!child.ok) {
+    throw new Error(
+      `root-managed native signer health failed: ${(child.stderr || child.stdout).trim()}`,
+    );
+  }
+  let result;
+  try {
+    result = JSON.parse(child.stdout);
+  } catch (error) {
+    throw new Error("root-managed native signer health returned invalid JSON", { cause: error });
+  }
+  return assertRootManagedSignerCompatibility(
+    { ok: true, result },
+    expectedRelease,
+    expectedVersion,
+    expectedCapabilities,
+  );
 }
 
 async function replaceCompatibilityLink(paths) {
@@ -1264,8 +1708,8 @@ function validateHostedTransactionJournal(paths, value) {
   const targetRoot = managedReleaseRoot(paths, value.targetRoot, "targetRoot");
   const previousRoot = managedReleaseRoot(paths, value.previousRoot, "previousRoot");
   if (
-    value.nextManifest?.profile !== "hosting" ||
-    value.previousManifest?.profile !== "hosting" ||
+    !isRootManagedProfile(value.nextManifest?.profile) ||
+    value.previousManifest?.profile !== value.nextManifest?.profile ||
     value.nextManifest?.runtime?.activeVersion !== targetVersion ||
     value.previousManifest?.runtime?.activeVersion !== previousVersion
   ) {
@@ -1706,8 +2150,8 @@ async function runHostedTransactionControl(action, timeoutMs = DEFAULT_TIMEOUT_M
       if (action === "finalize") {
         const manifest = readManagedInstallManifest(paths.manifestPath);
         const currentRoot = await resolveLinkTarget(paths.currentLink);
-        if (!manifest || manifest.profile !== "hosting" || !currentRoot) {
-          throw new Error("hosted managed runtime is unavailable for final verification");
+        if (!manifest || !isRootManagedProfile(manifest.profile) || !currentRoot) {
+          throw new Error("root-managed runtime is unavailable for final verification");
         }
         await refreshGateway(
           currentRoot,
@@ -4137,8 +4581,8 @@ function validateLocalPairedUpdateJournal(paths, value) {
     !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(value.previousVersion || "") ||
     value.nextManifest?.runtime?.activeVersion !== value.targetVersion ||
     value.previousManifest?.runtime?.activeVersion !== value.previousVersion ||
-    value.nextManifest?.profile === "hosting" ||
-    value.previousManifest?.profile === "hosting"
+    isRootManagedProfile(value.nextManifest?.profile) ||
+    isRootManagedProfile(value.previousManifest?.profile)
   ) {
     throw new Error("Local paired app/signer update journal is invalid");
   }
@@ -4209,7 +4653,7 @@ async function localSignerIsInstalledOrConfigured(signerPaths) {
 }
 
 async function inspectLocalManagedConsistency(paths, manifest, currentVersion) {
-  if (manifest?.profile === "hosting") {
+  if (isRootManagedProfile(manifest?.profile)) {
     return Object.freeze({ consistent: true, reasons: Object.freeze([]) });
   }
   const reasons = [];
@@ -4405,13 +4849,19 @@ async function updateManagedRuntime(options) {
       existingManifest,
       currentVersion,
     );
+    const protectedLocalMigration = protectedLocalMigrationRequirement({
+      manifest: existingManifest,
+      currentRoot,
+    });
     const result = {
       install: `managed ${existingManifest.profile}`,
       currentVersion,
       targetVersion,
       available,
-      repairRequired: !consistency.consistent,
+      repairRequired: protectedLocalMigration.required || !consistency.consistent,
       consistencyReasons: consistency.reasons,
+      protectedLocalMigrationRequired: protectedLocalMigration.required,
+      protectedLocalMigrationSupported: protectedLocalMigration.supported,
       dryRun: options.dryRun,
       updaterVersion: existingManifest.updater?.version || "unknown",
     };
@@ -4423,13 +4873,21 @@ async function updateManagedRuntime(options) {
       console.log(`Current: ${currentVersion}`);
       console.log(`Target: ${targetVersion}`);
       console.log(
-        available
-          ? `Update available: ${targetVersion}`
-          : consistency.consistent
-            ? "Update: current"
-            : `Repair required: ${consistency.reasons.join(", ")}`,
+        protectedLocalMigration.required
+          ? protectedLocalMigration.supported
+            ? "Migration required: Protected Local service boundary"
+            : `Migration unavailable: ${protectedLocalMigration.reason}`
+          : available
+            ? `Update available: ${targetVersion}`
+            : consistency.consistent
+              ? "Update: current"
+              : `Repair required: ${consistency.reasons.join(", ")}`,
       );
-      if (options.dryRun && available) {
+      if (options.dryRun && protectedLocalMigration.required) {
+        console.log(
+          "Action: one-time verified Protected Local migration with automatic rollback on failure",
+        );
+      } else if (options.dryRun && available) {
         console.log("Action: verified artifact transaction with Gateway health rollback");
       } else if (options.dryRun && !consistency.consistent) {
         console.log("Action: same-version paired application/signer repair");
@@ -4448,7 +4906,7 @@ async function updateManagedRuntime(options) {
         `Warning: could not remove ${staleCache.failed.length} stale managed update cache director${staleCache.failed.length === 1 ? "y" : "ies"}.`,
       );
     }
-    if (existingManifest.profile === "hosting") {
+    if (isRootManagedProfile(existingManifest.profile)) {
       await measureStage(timings, "interrupted hosted transaction recovery", () =>
         recoverHostedReleaseTransaction(paths, options.timeoutMs),
       );
@@ -4468,6 +4926,32 @@ async function updateManagedRuntime(options) {
       if (!existingManifest) {
         throw new Error("Managed installation manifest is invalid after Local update recovery.");
       }
+      currentRoot = await resolveLinkTarget(paths.currentLink);
+      currentVersion = currentRoot
+        ? (await readPackageVersion(currentRoot)) || existingManifest.runtime.activeVersion
+        : existingManifest.runtime.activeVersion;
+    }
+    const protectedLocalMigration = protectedLocalMigrationRequirement({
+      manifest: existingManifest,
+      currentRoot,
+    });
+    if (protectedLocalMigration.required) {
+      if (!options.restart) {
+        throw new Error(
+          "Protected Local migration requires coordinated service restart and health verification.",
+        );
+      }
+      const migration = await measureStage(timings, "Protected Local migration", () =>
+        migrateManagedLocalToProtected({
+          paths,
+          existingManifest,
+          currentRoot,
+          currentVersion,
+          channel: options.channel,
+          timeoutMs: options.timeoutMs,
+        }),
+      );
+      existingManifest = migration.manifest;
       currentRoot = await resolveLinkTarget(paths.currentLink);
       currentVersion = currentRoot
         ? (await readPackageVersion(currentRoot)) || existingManifest.runtime.activeVersion
@@ -4580,7 +5064,7 @@ async function updateManagedRuntime(options) {
           ).manifest;
         });
       } catch (error) {
-        if (existingManifest.profile === "hosting" || error?.statusCode !== 404) {
+        if (isRootManagedProfile(existingManifest.profile) || error?.statusCode !== 404) {
           throw error;
         }
         unifiedReleasePath = null;
@@ -4639,7 +5123,7 @@ async function updateManagedRuntime(options) {
       await fsp.symlink(nodeModules, path.join(stagedRoot, "node_modules"), "dir");
       await assertManagedRuntime(stagedRoot, targetVersion);
       const hostedRelease = await readHostedReleaseBinding(stagedRoot, metadata, targetVersion);
-      if (existingManifest.profile === "hosting" && !hostedRelease) {
+      if (isRootManagedProfile(existingManifest.profile) && !hostedRelease) {
         throw new Error("Maintained Hosting update omitted its attested unified release binding.");
       }
       await measureStage(timings, "staged runtime smoke", () =>
@@ -4668,7 +5152,7 @@ async function updateManagedRuntime(options) {
         await fsp.mkdir(paths.releasesDir, { recursive: true });
         await fsp.rename(stagedRoot, releaseRoot);
       }
-      if (existingManifest.profile === "hosting") {
+      if (isRootManagedProfile(existingManifest.profile)) {
         await measureStage(timings, "release durability", async () => {
           await fsyncManagedReleaseTree(releaseRoot);
           await fsyncManagedPath(paths.releasesDir);
@@ -4693,8 +5177,9 @@ async function updateManagedRuntime(options) {
         dependencyHash: metadata.dependencyHash,
         hostedRelease,
         previousVersion: currentVersion,
+        service: existingManifest.service,
       });
-      if (existingManifest.profile === "hosting") {
+      if (isRootManagedProfile(existingManifest.profile)) {
         if (!previousRoot) {
           throw new Error("Hosted transactional update requires an active previous runtime.");
         }
@@ -5011,6 +5496,10 @@ export const __testing = {
   evaluateLocalSignerHealth,
   formatLocalSignerHealthReasons,
   inspectLocalManagedConsistency,
+  buildProtectedLocalMigrationInvocation,
+  migrateManagedLocalToProtected,
+  parseProtectedLocalEnvironment,
+  protectedLocalMigrationRequirement,
   loadSignerEnvironment,
   parseLocalSignerTransactionArgs,
   parseLocalSourceControllerArgs,

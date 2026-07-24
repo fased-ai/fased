@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import { capabilitiesDigest } from "./hosted-release-manifest.mjs";
 import { installManagedRuntime, rollbackManagedRuntime } from "./install-managed-runtime.mjs";
 import {
+  buildManagedInstallManifest,
+  normalizeManagedProfile,
   readManagedInstallManifest,
   resolveManagedRuntimePaths,
 } from "./managed-runtime-layout.mjs";
@@ -116,6 +118,29 @@ function writeSchemaV2Metadata(packageRoot: string, version: string) {
 }
 
 describe("managed runtime layout", () => {
+  it("preserves the exact protected Local system service identity", () => {
+    const fixture = createFixture("1.2.3");
+    const service = {
+      name: "fased-gateway-0123456789abcdef.service",
+      scope: "system",
+      launcher: "/opt/fased/local/0123456789abcdef/gateway-launch",
+    };
+    expect(normalizeManagedProfile("protected-local")).toBe("protected-local");
+    expect(
+      buildManagedInstallManifest({
+        paths: fixture.paths,
+        profile: "protected-local",
+        version: "1.2.3",
+        dependencyHash: "a".repeat(64),
+        previousVersion: null,
+        service,
+      }),
+    ).toMatchObject({
+      profile: "protected-local",
+      service,
+    });
+  });
+
   it("moves a package into a versioned release and installs stable launchers", async () => {
     const fixture = createFixture("1.2.3");
     await installManagedRuntime({

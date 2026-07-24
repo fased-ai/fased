@@ -194,7 +194,6 @@ export async function runOnboardingWizard(
       },
     };
   };
-  const hostedSignerOperatorSocket = "/run/fased-signerd/operator.sock";
   const hostedSignerAppSocket = "/run/fased-signerd/app.sock";
   const hostedSignerOwnedKeys = [
     "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET",
@@ -219,7 +218,7 @@ export async function runOnboardingWizard(
     for (const key of hostedSignerOwnedKeys) {
       delete process.env[key];
     }
-    process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = hostedSignerOperatorSocket;
+    process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = hostedSignerAppSocket;
     return clearHostedLocalSignerConfig(cfg);
   };
   const persistHostedLocalSignerRuntime = (cfg: FasedAgentConfig): FasedAgentConfig => {

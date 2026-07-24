@@ -898,6 +898,60 @@ describe("root-owned hosted updater protocol", () => {
           ...health,
           result: {
             ...health.result,
+            policies: [
+              {
+                walletId: "agent",
+                role: "agent",
+                version: 1,
+                hash: `sha256:${"a".repeat(64)}`,
+              },
+            ],
+            network: {
+              ready: true,
+              wallets: [
+                {
+                  walletId: "agent",
+                  configured: true,
+                  version: 1,
+                  hash: `hmac-sha256:${"b".repeat(64)}`,
+                  ready: true,
+                },
+              ],
+            },
+          },
+        },
+        signerRelease("1.2.3"),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      __testing.assertSignerV2Health(
+        {
+          ...health,
+          result: {
+            ...health.result,
+            network: {
+              ready: true,
+              wallets: [
+                {
+                  walletId: "agent",
+                  configured: true,
+                  version: 1,
+                  hash: `sha256:${"b".repeat(64)}`,
+                  ready: true,
+                },
+              ],
+            },
+          },
+        },
+        signerRelease("1.2.3"),
+      ),
+    ).toThrow("state invariants");
+    expect(() =>
+      __testing.assertSignerV2Health(
+        {
+          ...health,
+          result: {
+            ...health.result,
             release: { ...signerRelease("1.2.3"), development: true },
           },
         },

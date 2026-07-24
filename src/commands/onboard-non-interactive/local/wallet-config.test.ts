@@ -145,6 +145,8 @@ describe("applyNonInteractiveWalletConfig", () => {
 
     expect(next.wallet?.runtime?.enabled).toBe(true);
     expect(next.wallet?.provider?.id).toBe("local-socket-signer");
+    expect(next.env?.vars?.FASED_HOST_PROFILE).toBe("hosting");
+    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_LIFECYCLE).toBe("external");
     expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_SOCKET).toBe("/run/fased-signerd/app.sock");
     expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER).toBeUndefined();
     expect(next.env?.vars?.FASED_WALLET_SIGNER_STATE_DIR).toBeUndefined();
@@ -153,6 +155,7 @@ describe("applyNonInteractiveWalletConfig", () => {
     expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_BIN).toBeUndefined();
     expect(process.env.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER).toBeUndefined();
     expect(process.env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET).toBeUndefined();
+    expect(process.env.FASED_WALLET_LOCAL_SIGNER_LIFECYCLE).toBe("external");
   });
 
   it("rejects invalid chain values", () => {

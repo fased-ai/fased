@@ -25,6 +25,23 @@ function ensureDir(filePath: string) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
 }
 
+function identityFileMode(): number {
+  const protectedLocal = String(process.env.FASED_PROTECTED_LOCAL ?? "").trim() === "1";
+  const hosting =
+    String(process.env.FASED_HOST_PROFILE ?? "")
+      .trim()
+      .toLowerCase() === "hosting";
+  return protectedLocal || hosting ? 0o660 : 0o600;
+}
+
+function enforceIdentityFileMode(filePath: string) {
+  try {
+    fs.chmodSync(filePath, identityFileMode());
+  } catch {
+    // Best-effort for read-only callers; a write path will still fail closed.
+  }
+}
+
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 
 function base64UrlEncode(buf: Buffer): string {
@@ -85,18 +102,17 @@ export function loadOrCreateDeviceIdentity(
             ...parsed,
             deviceId: derivedId,
           };
-          fs.writeFileSync(filePath, `${JSON.stringify(updated, null, 2)}\n`, { mode: 0o600 });
-          try {
-            fs.chmodSync(filePath, 0o600);
-          } catch {
-            // best-effort
-          }
+          fs.writeFileSync(filePath, `${JSON.stringify(updated, null, 2)}\n`, {
+            mode: identityFileMode(),
+          });
+          enforceIdentityFileMode(filePath);
           return {
             deviceId: derivedId,
             publicKeyPem: parsed.publicKeyPem,
             privateKeyPem: parsed.privateKeyPem,
           };
         }
+        enforceIdentityFileMode(filePath);
         return {
           deviceId: parsed.deviceId,
           publicKeyPem: parsed.publicKeyPem,
@@ -117,12 +133,10 @@ export function loadOrCreateDeviceIdentity(
     privateKeyPem: identity.privateKeyPem,
     createdAtMs: Date.now(),
   };
-  fs.writeFileSync(filePath, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 });
-  try {
-    fs.chmodSync(filePath, 0o600);
-  } catch {
-    // best-effort
-  }
+  fs.writeFileSync(filePath, `${JSON.stringify(stored, null, 2)}\n`, {
+    mode: identityFileMode(),
+  });
+  enforceIdentityFileMode(filePath);
   return identity;
 }
 

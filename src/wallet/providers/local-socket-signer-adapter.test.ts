@@ -89,6 +89,22 @@ async function createSignerServer(params: {
 }
 
 describe("callLocalSocketSigner", () => {
+  it.each(["operator.sock", "control.sock", "local-signer-control.sock"])(
+    "refuses the privileged signer socket %s",
+    async (socketName) => {
+      await expect(
+        callLocalSocketSigner(path.join("/run/fased-signerd", socketName), { op: "health" }),
+      ).rejects.toThrow(/typed native signer client/);
+    },
+  );
+
+  it("refuses a custom lifecycle socket named through protected configuration", async () => {
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_OPERATOR_SOCKET", "/tmp/fased/custom-admin.sock");
+    await expect(
+      callLocalSocketSigner("/tmp/fased/custom-admin.sock", { op: "health" }),
+    ).rejects.toThrow(/typed native signer client/);
+  });
+
   it("preserves only sanitized signer credential readiness in health", async () => {
     const signer = await createSignerServer({
       prefix: "fased-signer-sanitized-health-",

@@ -12,10 +12,12 @@ Update an installed Fased runtime and optionally switch channels.
 
 On supported packaged Linux installs, a stable updater outside the versioned
 application verifies and activates the exact release artifact. It then restarts
-the correct Gateway service and checks health. VPS Hosting uses the
-root-managed system service; Local Linux uses the user service. If the new
-packaged runtime does not become healthy, Fased restores the previous runtime
-automatically.
+the correct Gateway service and checks health. VPS Hosting and protected Local
+Linux use root-managed system services and paired signer controllers. macOS,
+source installs, and a Local installation that has not crossed the protected
+migration boundary use their documented lower-assurance service path. If the
+new packaged runtime does not become healthy, Fased restores the previous
+runtime automatically.
 
 For managed Linux Local and WSL installs, it works from any directory:
 
@@ -91,12 +93,12 @@ path. It can refresh more than the app version:
 Use `install.sh --hosting` for first VPS setup or hosted repair. Use
 `fased update` for normal stable app releases.
 
-An already-installed legacy updater that cannot replace itself requires the
-one-time Local/WSL or Hosting bootstrap documented in
-[Updating](/install/updating#update-support-contract). Local and WSL use
-`--repair-local`; VPS Hosting uses `--repair-hosting` from the provider's
-root recovery console. After that bootstrap, normal updates use `fased update`
-alone.
+An updater that predates a required privileged migration cannot retroactively
+execute new preflight code inside its already-running process. Follow the exact
+compatibility boundary documented in
+[Updating](/install/updating#update-support-contract); do not improvise a
+nested signer migration or copy signer state manually. After the declared
+transition, normal paired updates use `fased update` alone.
 
 ## Options
 

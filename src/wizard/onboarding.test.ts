@@ -76,10 +76,23 @@ const setDefaultWallet = vi.hoisted(() => vi.fn());
 const setNamedWalletRole = vi.hoisted(() => vi.fn());
 const resolveWalletUserRole = vi.hoisted(() => vi.fn<() => unknown>(() => undefined));
 const nextRoleWalletIdentity = vi.hoisted(() =>
-  vi.fn((role: "agent" | "mining" | "vault") => ({
-    walletName: role === "agent" ? "Agent" : role === "mining" ? "Mining" : "Vault",
-    walletId: role,
-  })),
+  vi.fn((role: "agent" | "mining" | "vault", wallets: Array<{ id: string }> = []) => {
+    const walletName = role === "agent" ? "Agent" : role === "mining" ? "Mining" : "Vault";
+    if (role === "mining") {
+      return { walletName, walletId: role };
+    }
+    const existing = new Set(wallets.map((wallet) => wallet.id));
+    if (!existing.has(role)) {
+      return { walletName, walletId: role };
+    }
+    for (let index = 2; index < 1000; index += 1) {
+      const walletId = `${role}-${index}`;
+      if (!existing.has(walletId)) {
+        return { walletName: `${walletName} ${index}`, walletId };
+      }
+    }
+    throw new Error("test wallet allocator exhausted");
+  }),
 );
 const lockSignerOwnedWalletForArchive = vi.hoisted(() =>
   vi.fn(async () => ({
@@ -2242,14 +2255,13 @@ describe("runOnboardingWizard", () => {
     }
   });
 
-  it("keeps the root-provided operator socket through hosted onboarding and persists the app socket afterward", async () => {
+  it("keeps the Gateway on app.sock while native Hosting lifecycle calls derive operator.sock", async () => {
     const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "fased-hosted-wallet-create-"));
-    const operatorSocket = "/run/fased-signerd/operator.sock";
     const appSocket = "/run/fased-signerd/app.sock";
     const observedSignerSockets: string[] = [];
     vi.stubEnv("USER", "app");
     vi.stubEnv("HOME", tempHome);
-    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_SOCKET", operatorSocket);
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_SOCKET", appSocket);
     configureWalletForOnboarding
       .mockImplementationOnce(async ({ nextConfig }) => {
         observedSignerSockets.push(String(process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? ""));
@@ -2352,12 +2364,7 @@ describe("runOnboardingWizard", () => {
           rpcUrl: "https://api.devnet.solana.com",
         }),
       );
-      expect(observedSignerSockets).toEqual([
-        operatorSocket,
-        operatorSocket,
-        operatorSocket,
-        operatorSocket,
-      ]);
+      expect(observedSignerSockets).toEqual([appSocket, appSocket, appSocket, appSocket]);
     } finally {
       await fs.rm(tempHome, { recursive: true, force: true });
     }

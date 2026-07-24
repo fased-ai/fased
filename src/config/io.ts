@@ -1261,11 +1261,13 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
     }
 
     const dir = path.dirname(configPath);
-    const sharedHostingConfig = deps.env.FASED_HOST_PROFILE?.trim() === "hosting";
-    const stateDirMode = sharedHostingConfig ? 0o2770 : 0o700;
-    const configMode = sharedHostingConfig ? 0o660 : 0o600;
+    const sharedServiceConfig =
+      deps.env.FASED_HOST_PROFILE?.trim() === "hosting" ||
+      deps.env.FASED_PROTECTED_LOCAL?.trim() === "1";
+    const stateDirMode = sharedServiceConfig ? 0o2770 : 0o700;
+    const configMode = sharedServiceConfig ? 0o660 : 0o600;
     await deps.fs.promises.mkdir(dir, { recursive: true, mode: stateDirMode });
-    if (sharedHostingConfig) {
+    if (sharedServiceConfig) {
       const currentMode = (await deps.fs.promises.stat(dir)).mode & 0o7777;
       if (currentMode !== stateDirMode) {
         await deps.fs.promises.chmod(dir, stateDirMode);

@@ -136,6 +136,7 @@ function hasConfiguredWalletMaterial(registry: ReturnType<typeof readWalletProvi
 }
 
 const LOCAL_SIGNER_ENV_KEYS = [
+  "FASED_WALLET_LOCAL_SIGNER_LIFECYCLE",
   "FASED_WALLET_LOCAL_SIGNER_SOCKET",
   "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET",
   "FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET",
@@ -191,6 +192,10 @@ function applyHostedLocalSignerDefaults(base: FasedAgentConfig): FasedAgentConfi
     delete process.env[key];
     next = setConfigEnvVar(next, key, undefined);
   }
+  process.env.FASED_WALLET_LOCAL_SIGNER_LIFECYCLE = "external";
+  next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_LIFECYCLE", "external");
+  process.env.FASED_HOST_PROFILE = "hosting";
+  next = setConfigEnvVar(next, "FASED_HOST_PROFILE", "hosting");
   process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = appSocket;
   next = setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_SOCKET", appSocket);
   return next;

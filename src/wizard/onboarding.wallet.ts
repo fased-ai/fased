@@ -18,6 +18,8 @@ import {
   hasLegacyEmbeddedKeystoreMaterialHint,
   throwLegacyEmbeddedKeystoreMigrationRequired,
 } from "../wallet/legacy-embedded-keystore.js";
+import { resolveNativeSignerOperatorLifecycle } from "../wallet/native-signer-lifecycle-context.js";
+import { invokeNativeSignerOperatorCapabilities } from "../wallet/native-signer-operator-client.js";
 import { callLocalSocketSigner } from "../wallet/providers/local-socket-signer-adapter.js";
 import {
   WALLET_PROVIDER_IDS,
@@ -278,15 +280,31 @@ function runScriptOrThrow(params: {
   const child = spawnSync("bash", [params.script, ...(params.args ?? [])], {
     env: params.env,
     encoding: "utf8",
-    stdio: params.verbose ? "inherit" : ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  if (params.verbose) {
+    if (typeof child.stdout === "string" && child.stdout.length > 0) {
+      process.stdout.write(child.stdout);
+    }
+    if (typeof child.stderr === "string" && child.stderr.length > 0) {
+      process.stderr.write(child.stderr);
+    }
+  }
   if (child.status === 0) {
     return;
   }
   const stderr = typeof child.stderr === "string" ? child.stderr.trim() : "";
   const stdout = typeof child.stdout === "string" ? child.stdout.trim() : "";
   const detail = (stderr || stdout).split("\n").slice(-12).join("\n");
-  throw new Error(detail || params.fallbackError);
+  const spawnDetail =
+    child.error instanceof Error
+      ? child.error.message
+      : child.signal
+        ? `terminated by ${child.signal}`
+        : typeof child.status === "number"
+          ? `${params.fallbackError} (exit ${child.status})`
+          : "";
+  throw new Error(detail || spawnDetail || params.fallbackError);
 }
 
 function copySignerdBinaryToTarget(params: { sourcePath: string; targetPath: string }): void {
@@ -785,6 +803,35 @@ export async function syncLocalSocketSignerFromConfig(params?: {
   const signerEnvPath = writeLocalSignerEnvFile({ config: cfg, env: mergedEnv });
   const binPath = resolveSignerdBinaryPath(mergedEnv);
   const externallyManaged = isLocalSignerExternallyManaged(mergedEnv);
+  const operatorLifecycle = externallyManaged
+    ? resolveNativeSignerOperatorLifecycle(mergedEnv)
+    : undefined;
+  if (operatorLifecycle) {
+    const socketPath = resolveLocalSignerSocketPath(mergedEnv);
+    if (socketPath !== operatorLifecycle.applicationSocketPath) {
+      throw new Error(
+        `${operatorLifecycle.profile === "hosting" ? "Hosting" : "Protected Local"} Gateway signer socket must remain on its root-managed application socket at ${operatorLifecycle.applicationSocketPath}.`,
+      );
+    }
+    const result = invokeNativeSignerOperatorCapabilities({
+      signerBinPath: operatorLifecycle.signerBinPath,
+      operatorSocketPath: operatorLifecycle.operatorSocketPath,
+      env: mergedEnv,
+    });
+    const protocol = result.capabilities.protocol;
+    const features = new Set(result.capabilities.features);
+    const missingFeatures = ["failClosedPolicies", "signerOwnedKeys", "atomicIdempotency"].filter(
+      (feature) => !features.has(feature),
+    );
+    if (protocol.min > 2 || protocol.max < 2 || missingFeatures.length > 0) {
+      throw new Error(
+        `The root-managed ${operatorLifecycle.profile === "hosting" ? "hosted" : "Protected Local"} signer did not acknowledge the required signer-v2 boundary${
+          missingFeatures.length > 0 ? ` (missing: ${missingFeatures.join(", ")})` : ""
+        }.`,
+      );
+    }
+    return { performed: true, restarted: false, signerEnvPath };
+  }
   if (!externallyManaged && !fs.existsSync(binPath)) {
     installSignerdBinary(binPath);
   }
@@ -1018,17 +1065,23 @@ export async function configureWalletForOnboarding(params: {
   const port = current?.service?.port ?? DEFAULT_WALLET_RUNTIME_PORT;
 
   if (defaultProvider === "local-socket-signer") {
+    const signerLifecycleEnv = {
+      ...process.env,
+      ...params.nextConfig.env?.vars,
+      ...(params.hostProfile ? { FASED_HOST_PROFILE: params.hostProfile } : {}),
+    } as NodeJS.ProcessEnv;
     const quietSignerNotes = flow === "quickstart";
-    const socketPath = resolveLocalSignerSocketPath(process.env);
-    const materialDir = resolveLocalSignerMaterialRootDir(process.env);
-    const binPath = resolveSignerdBinaryPath(process.env);
-    const hostedSigner = params.hostProfile === "hosting";
-    const externallyManagedSigner = !hostedSigner && isLocalSignerExternallyManaged(process.env);
-    if (hostedSigner) {
-      const expectedSocket = "/run/fased-signerd/operator.sock";
-      if (socketPath !== expectedSocket) {
+    const socketPath = resolveLocalSignerSocketPath(signerLifecycleEnv);
+    const materialDir = resolveLocalSignerMaterialRootDir(signerLifecycleEnv);
+    const binPath = resolveSignerdBinaryPath(signerLifecycleEnv);
+    const operatorLifecycle = resolveNativeSignerOperatorLifecycle(signerLifecycleEnv);
+    const externallyManagedSigner =
+      !operatorLifecycle && isLocalSignerExternallyManaged(signerLifecycleEnv);
+    if (operatorLifecycle) {
+      const expectedSocket = operatorLifecycle.operatorSocketPath;
+      if (socketPath !== operatorLifecycle.applicationSocketPath) {
         throw new Error(
-          "Hosting wallet setup must use only the root-managed signer operator socket at /run/fased-signerd/operator.sock.",
+          `${operatorLifecycle.profile === "hosting" ? "Hosting" : "Protected Local"} Gateway signer socket must remain on its root-managed application socket at ${operatorLifecycle.applicationSocketPath}.`,
         );
       }
       let result: {
@@ -1039,13 +1092,19 @@ export async function configureWalletForOnboarding(params: {
         };
       };
       try {
-        result = await callLocalSocketSigner(expectedSocket, { op: "v2.capabilities" });
+        result = invokeNativeSignerOperatorCapabilities({
+          signerBinPath: operatorLifecycle.signerBinPath,
+          operatorSocketPath: expectedSocket,
+          env: signerLifecycleEnv,
+        });
       } catch (error) {
         throw new Error(
           [
-            "The root-managed hosted wallet signer is unavailable or incompatible.",
-            `Signer socket: ${expectedSocket}`,
-            "Repair only from the provider root console with the exact tagged, attested Hosting release; never run the app checkout with sudo.",
+            `${operatorLifecycle.profile === "hosting" ? "Hosted" : "Protected Local"} signer lifecycle verification failed.`,
+            `The typed native operator client could not verify ${expectedSocket}.`,
+            operatorLifecycle.profile === "hosting"
+              ? "Retry the same onboarding step. If it still fails, repair from the provider root console with the exact tagged, attested Hosting release; never run the app checkout with sudo."
+              : "Retry the same onboarding step. If it still fails, run fased update as the Local operator and approve the normal OS administrator prompt; do not start a same-user signer.",
             `Detail: ${error instanceof Error ? error.message : String(error)}`,
           ].join("\n"),
           { cause: error },
@@ -1064,21 +1123,23 @@ export async function configureWalletForOnboarding(params: {
         missingFeatures.length > 0
       ) {
         throw new Error(
-          `The root-managed hosted signer did not acknowledge the required signer-v2 boundary${
+          `The root-managed ${operatorLifecycle.profile === "hosting" ? "hosted" : "Protected Local"} signer did not acknowledge the required signer-v2 boundary${
             missingFeatures.length > 0 ? ` (missing: ${missingFeatures.join(", ")})` : ""
-          }. Repair from the provider root console with the exact tagged, attested Hosting release; never run the app checkout with sudo.`,
+          }.`,
         );
       }
-      process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = expectedSocket;
+      process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = operatorLifecycle.applicationSocketPath;
       delete process.env.FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET;
       delete process.env.FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER;
       if (!quietSignerNotes) {
         await prompter.note(
           [
             `Root-managed fased-signerd is ready at: ${expectedSocket}`,
-            "Wallets start locked with deny-all policy until owner enrollment is completed.",
+            "Wallet keys remain inside the isolated signer service; ordinary setup uses only the typed operator lifecycle.",
           ].join("\n"),
-          "Hosted wallet signer",
+          operatorLifecycle.profile === "hosting"
+            ? "Hosted wallet signer"
+            : "Protected Local wallet signer",
         );
       }
     } else if (!externallyManagedSigner && !fs.existsSync(binPath)) {
@@ -1109,13 +1170,13 @@ export async function configureWalletForOnboarding(params: {
       }
     }
 
-    if (!hostedSigner) {
+    if (!operatorLifecycle) {
       const socketExists = isSignerdRunning(socketPath);
       const socketHealthy = socketExists ? await isSignerdHealthy(socketPath) : false;
       const desiredSignerChains = normalizeSignerChains(
-        String(resolveSignerChildEnv(materialDir, process.env).FASED_WALLET_CHAINS ?? "").split(
-          ",",
-        ),
+        String(
+          resolveSignerChildEnv(materialDir, signerLifecycleEnv).FASED_WALLET_CHAINS ?? "",
+        ).split(","),
       );
       const healthDetails =
         socketExists && socketHealthy

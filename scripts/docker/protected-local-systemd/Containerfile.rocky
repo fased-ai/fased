@@ -1,0 +1,30 @@
+FROM docker.io/rockylinux/rockylinux:9
+
+ENV container=podman
+
+RUN dnf install -y \
+    ca-certificates \
+    iproute \
+    jq \
+    openssl \
+    procps-ng \
+    shadow-utils \
+    sudo \
+    systemd \
+    tar \
+    util-linux \
+    xz \
+  && dnf clean all \
+  && curl -fsSL https://nodejs.org/dist/v24.18.0/node-v24.18.0-linux-x64.tar.xz \
+    | tar -xJ --strip-components=1 -C /usr/local \
+  && chown root:root /usr/local/bin/node \
+  && systemctl mask \
+    dev-hugepages.mount \
+    sys-fs-fuse-connections.mount \
+    systemd-remount-fs.service
+
+COPY run.sh /usr/local/bin/fased-protected-local-systemd-fixture
+RUN chmod 0755 /usr/local/bin/fased-protected-local-systemd-fixture
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/usr/lib/systemd/systemd"]

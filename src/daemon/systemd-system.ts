@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -18,6 +18,104 @@ const SYSTEM_UNIT_CANDIDATES = [
   `/usr/lib/systemd/system/${SERVICE_NAME}.service`,
   `/lib/systemd/system/${SERVICE_NAME}.service`,
 ];
+const PROTECTED_LOCAL_GATEWAY_UNIT_PATTERN = /^fased-gateway-([a-f0-9]{16})\.service$/u;
+
+export type RootManagedSystemdTarget = {
+  profile: "hosting" | "protected-local";
+  serviceName: string;
+  unitPath: string;
+  updaterSocketPath: string;
+};
+
+function resolveDefaultManagedManifestPath(env: NodeJS.ProcessEnv): string | null {
+  const explicit = env.FASED_MANAGED_INSTALL_MANIFEST?.trim();
+  if (explicit) {
+    return path.isAbsolute(explicit) ? path.resolve(explicit) : null;
+  }
+  const stateDir = env.FASED_STATE_DIR?.trim();
+  if (stateDir) {
+    return path.isAbsolute(stateDir) ? path.join(path.resolve(stateDir), "install.json") : null;
+  }
+  const home = env.HOME?.trim() || os.homedir();
+  return home && path.isAbsolute(home)
+    ? path.join(path.resolve(home), ".fased", "install.json")
+    : null;
+}
+
+export function parseProtectedLocalSystemdTarget(
+  manifest: unknown,
+  unitRoot = "/etc/systemd/system",
+): RootManagedSystemdTarget | null {
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    return null;
+  }
+  const candidate = manifest as {
+    schemaVersion?: unknown;
+    profile?: unknown;
+    service?: { name?: unknown; scope?: unknown };
+  };
+  if (
+    (candidate.schemaVersion !== 1 && candidate.schemaVersion !== 2) ||
+    candidate.profile !== "protected-local" ||
+    candidate.service?.scope !== "system" ||
+    typeof candidate.service.name !== "string"
+  ) {
+    return null;
+  }
+  const serviceName = candidate.service.name.trim();
+  const match = PROTECTED_LOCAL_GATEWAY_UNIT_PATTERN.exec(serviceName);
+  if (!match) {
+    return null;
+  }
+  const instanceId = match[1];
+  return {
+    profile: "protected-local",
+    serviceName,
+    unitPath: path.join(unitRoot, serviceName),
+    updaterSocketPath: `/run/fased-local-controller/${instanceId}/request.sock`,
+  };
+}
+
+export function resolveRootManagedSystemdTarget(
+  options: {
+    env?: NodeJS.ProcessEnv;
+    manifestPath?: string | null;
+    unitRoot?: string;
+    hostedCandidates?: readonly string[];
+  } = {},
+): RootManagedSystemdTarget | null {
+  if (process.platform !== "linux") {
+    return null;
+  }
+  const env = options.env ?? process.env;
+  const manifestPath =
+    options.manifestPath === undefined
+      ? resolveDefaultManagedManifestPath(env)
+      : options.manifestPath;
+  if (manifestPath) {
+    try {
+      const raw = readFileSync(manifestPath, "utf8");
+      if (Buffer.byteLength(raw) <= 1024 * 1024) {
+        const protectedLocal = parseProtectedLocalSystemdTarget(JSON.parse(raw), options.unitRoot);
+        if (protectedLocal) {
+          return protectedLocal;
+        }
+      }
+    } catch {
+      // Legacy and incomplete installs fall through to the fixed Hosting unit check.
+    }
+  }
+  const unitPath = findHostedSystemdUnitPath(options.hostedCandidates);
+  return unitPath
+    ? {
+        profile: "hosting",
+        serviceName: `${SERVICE_NAME}.service`,
+        unitPath,
+        updaterSocketPath:
+          env.FASED_HOST_UPDATER_SOCKET?.trim() || "/run/fased-host-updater/request.sock",
+      }
+    : null;
+}
 
 export function findHostedSystemdUnitPath(
   candidates: readonly string[] = SYSTEM_UNIT_CANDIDATES,
@@ -28,14 +126,15 @@ export function findHostedSystemdUnitPath(
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
-function buildHostedSystemctlControlArgs(action: "stop" | "restart"): string[] {
-  return [action, `${SERVICE_NAME}.service`];
+function buildRootManagedSystemctlControlArgs(
+  action: "stop" | "restart",
+  serviceName = `${SERVICE_NAME}.service`,
+): string[] {
+  return [action, serviceName];
 }
 
-async function restartHostedServiceWithoutPrivilege() {
+async function restartRootManagedServiceWithoutPrivilege(socketPath: string) {
   const transactionId = randomUUID();
-  const socketPath =
-    process.env.FASED_HOST_UPDATER_SOCKET || "/run/fased-host-updater/request.sock";
   return await new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
     const socket = net.createConnection({ path: socketPath });
     socket.setEncoding("utf8");
@@ -90,7 +189,7 @@ async function restartHostedServiceWithoutPrivilege() {
   });
 }
 
-async function readHostedSystemdCommand(unitPath: string) {
+async function readRootManagedSystemdCommand(unitPath: string) {
   try {
     const content = await fs.readFile(unitPath, "utf8");
     let workingDirectory = "";
@@ -124,23 +223,23 @@ async function readHostedSystemdCommand(unitPath: string) {
 }
 
 export function resolveHostedSystemdService(): GatewayService | null {
-  const unitPath = findHostedSystemdUnitPath();
-  if (!unitPath) {
+  const target = resolveRootManagedSystemdTarget();
+  if (!target) {
     return null;
   }
   const runSystemctl = async (args: string[]) => await execFileUtf8("systemctl", args);
   const control = async (action: "stop" | "restart", stdout: NodeJS.WritableStream) => {
     if (action === "stop") {
       throw new Error(
-        "Stopping the root-managed hosted Gateway requires host administration; the app has no sudo access.",
+        "Stopping the root-managed Gateway requires host administration; the operator has no persistent root service authority.",
       );
     }
-    const result = await restartHostedServiceWithoutPrivilege();
+    const result = await restartRootManagedServiceWithoutPrivilege(target.updaterSocketPath);
     if (result.code !== 0) {
       throw new Error(result.stderr || result.stdout || `system service ${action} failed`);
     }
     stdout.write(
-      `${action === "restart" ? "Restarted" : "Stopped"} system service: ${SERVICE_NAME}.service\n`,
+      `${action === "restart" ? "Restarted" : "Stopped"} system service: ${target.serviceName}\n`,
     );
   };
   return {
@@ -148,20 +247,26 @@ export function resolveHostedSystemdService(): GatewayService | null {
     loadedText: "enabled",
     notLoadedText: "disabled",
     install: async ({ programArguments, workingDirectory, environment }) => {
+      if (target.profile === "protected-local") {
+        throw new Error(
+          "Protected Local system services are installed transactionally by the verified Local bootstrap.",
+        );
+      }
       await installHostedSystemdService({ programArguments, workingDirectory, environment });
     },
     uninstall: async () => {
-      throw new Error("Hosted system service removal requires the VPS Hosting installer.");
+      throw new Error(
+        `${target.profile === "hosting" ? "Hosting" : "Protected Local"} system service removal requires its verified installer.`,
+      );
     },
     stop: async ({ stdout }) => await control("stop", stdout),
     restart: async ({ stdout }) => await control("restart", stdout),
-    isLoaded: async () =>
-      (await runSystemctl(["is-enabled", `${SERVICE_NAME}.service`])).code === 0,
-    readCommand: async () => await readHostedSystemdCommand(unitPath),
+    isLoaded: async () => (await runSystemctl(["is-enabled", target.serviceName])).code === 0,
+    readCommand: async () => await readRootManagedSystemdCommand(target.unitPath),
     readRuntime: async () => {
       const result = await runSystemctl([
         "show",
-        `${SERVICE_NAME}.service`,
+        target.serviceName,
         "--no-page",
         "--property",
         "ActiveState,SubState,MainPID,ExecMainStatus,ExecMainCode",
@@ -204,6 +309,7 @@ export function buildHostedSystemdUnit(params: {
     environment: {
       ...params.environment,
       FASED_HOST_PROFILE: "hosting",
+      FASED_WALLET_LOCAL_SIGNER_LIFECYCLE: "external",
       FASED_WALLET_LOCAL_SIGNER_SOCKET: "/run/fased-signerd/app.sock",
     },
   });
@@ -301,8 +407,8 @@ async function spawnCommand(command: string, args: string[]): Promise<void> {
 }
 
 export const __testing = {
-  buildHostedSystemctlControlArgs,
-  readHostedSystemdCommand,
-  restartHostedServiceWithoutPrivilege,
+  buildRootManagedSystemctlControlArgs,
+  readRootManagedSystemdCommand,
+  restartRootManagedServiceWithoutPrivilege,
   resolveRunAsUser,
 };

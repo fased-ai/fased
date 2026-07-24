@@ -91,6 +91,44 @@ const DEFAULT_PATHS = Object.freeze({
   transactionsDir: TRANSACTIONS_DIR,
 });
 
+export function protectedLocalControllerConfiguration(instanceId) {
+  const normalized = String(instanceId ?? "").trim();
+  if (!/^[a-f0-9]{16}$/u.test(normalized)) {
+    throw new Error("Protected Local controller instance ID must be 16 lowercase hex characters");
+  }
+  const runtimeDir = `/run/fased-local/${normalized}`;
+  const controllerRuntimeDir = `/run/fased-local-controller/${normalized}`;
+  const instanceStateDir = `/var/lib/fased-local/${normalized}`;
+  const signerStateDir = `${instanceStateDir}/signer`;
+  const controllerStateDir = `${instanceStateDir}/controller`;
+  const instanceInstallDir = `/opt/fased/local/${normalized}`;
+  const controllerInstallDir = `${instanceInstallDir}/controller`;
+  return Object.freeze({
+    profile: "protected-local",
+    instanceId: normalized,
+    signerServiceName: `fased-signerd-${normalized}.service`,
+    gatewayServiceName: `fased-gateway-${normalized}.service`,
+    signerApplicationSocketPath: `${runtimeDir}/application/app.sock`,
+    paths: Object.freeze({
+      socketPath: `${controllerRuntimeDir}/request.sock`,
+      stateDir: controllerStateDir,
+      controllerReleasesDir: `${controllerInstallDir}/releases`,
+      controllerCurrentLink: `${controllerInstallDir}/current`,
+      controllerVersionPath: `${controllerStateDir}/controller-version.json`,
+      signerPath: `${instanceInstallDir}/signer/fased-signerd`,
+      signerStateDBPath: `${signerStateDir}/state.db`,
+      signerUnitPath: `/etc/systemd/system/fased-signerd-${normalized}.service`,
+      versionPath: `${controllerStateDir}/signer-version`,
+      channelPath: `/etc/fased/local/${normalized}/update-channel`,
+      journalPath: `${controllerStateDir}/active-signer-transaction.json`,
+      rollbackFloorPath: `${controllerStateDir}/rollback-floor`,
+      gatewayGatePath: `${controllerStateDir}/gateway-update-gate`,
+      signerGatePath: `${controllerStateDir}/signer-update-gate`,
+      transactionsDir: `${controllerStateDir}/transactions`,
+    }),
+  });
+}
+
 export function parseReleaseVersion(value) {
   const version = String(value ?? "")
     .trim()
@@ -702,7 +740,7 @@ function signerStateInvariantFromHealth(result) {
         Number.isSafeInteger(network?.version) &&
         network.version >= 0 &&
         typeof network?.ready === "boolean" &&
-        (!network.configured || /^sha256:[a-f0-9]{64}$/.test(network?.hash || "")),
+        (!network.configured || /^hmac-sha256:[a-f0-9]{64}$/.test(network?.hash || "")),
     ) ||
     typeof webAuthn?.configured !== "boolean" ||
     !Number.isSafeInteger(webAuthn?.credentialCount) ||
@@ -775,9 +813,9 @@ function assertSignerV2Health(response, expectedRelease) {
   return release;
 }
 
-async function readSignerV2Health() {
+async function readSignerV2Health(socketPath = "/run/fased-signerd/app.sock") {
   return await new Promise((resolve, reject) => {
-    const socket = net.createConnection({ path: "/run/fased-signerd/app.sock" });
+    const socket = net.createConnection({ path: socketPath });
     socket.setEncoding("utf8");
     socket.setTimeout(3000);
     let body = "";
@@ -800,13 +838,13 @@ async function readSignerV2Health() {
   });
 }
 
-export async function probeSignerV2(expectedRelease) {
-  const response = await readSignerV2Health();
+export async function probeSignerV2(expectedRelease, socketPath) {
+  const response = await readSignerV2Health(socketPath);
   return assertSignerV2Health(response, expectedRelease);
 }
 
-async function probeSignerStateV2(expectedRelease) {
-  const response = await readSignerV2Health();
+async function probeSignerStateV2(expectedRelease, socketPath) {
+  const response = await readSignerV2Health(socketPath);
   const release = assertSignerV2Health(response, expectedRelease);
   return { release, invariant: signerStateInvariantFromHealth(response.result) };
 }
@@ -819,20 +857,25 @@ async function systemctl(...args) {
   });
 }
 
-async function stopSignerService() {
-  await systemctl("stop", "fased-signerd.service");
+async function stopSignerService(serviceName = "fased-signerd.service") {
+  await systemctl("stop", serviceName);
 }
 
-async function startSignerService({ requireV2, expectedRelease }) {
-  await systemctl("start", "fased-signerd.service");
-  await systemctl("is-active", "--quiet", "fased-signerd.service");
+async function startSignerService({
+  requireV2,
+  expectedRelease,
+  serviceName = "fased-signerd.service",
+  socketPath = "/run/fased-signerd/app.sock",
+}) {
+  await systemctl("start", serviceName);
+  await systemctl("is-active", "--quiet", serviceName);
   if (!requireV2) {
     return;
   }
   let lastError;
   for (let attempt = 0; attempt < 30; attempt += 1) {
     try {
-      return await probeSignerStateV2(expectedRelease);
+      return await probeSignerStateV2(expectedRelease, socketPath);
     } catch (error) {
       lastError = error;
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -1015,6 +1058,10 @@ async function stageOfficialCandidate(version, candidatePath, context) {
 
 function createTransactionContext(overrides = {}) {
   const paths = { ...DEFAULT_PATHS, ...overrides.paths };
+  const signerServiceName = overrides.signerServiceName ?? "fased-signerd.service";
+  const gatewayServiceName = overrides.gatewayServiceName ?? "fased-gateway.service";
+  const signerApplicationSocketPath =
+    overrides.signerApplicationSocketPath ?? "/run/fased-signerd/app.sock";
   const context = {
     paths,
     controllerInstanceId: overrides.controllerInstanceId ?? randomUUID(),
@@ -1033,27 +1080,40 @@ function createTransactionContext(overrides = {}) {
       overrides.stageCandidate ??
       (async (version, candidatePath, context) =>
         await stageOfficialCandidate(version, candidatePath, context)),
-    stopSigner: overrides.stopSigner ?? stopSignerService,
+    stopSigner: overrides.stopSigner ?? (async () => await stopSignerService(signerServiceName)),
     startSignerV2:
       overrides.startSignerV2 ??
       (async ({ expectedRelease } = {}) =>
-        await startSignerService({ requireV2: true, expectedRelease })),
+        await startSignerService({
+          requireV2: true,
+          expectedRelease,
+          serviceName: signerServiceName,
+          socketPath: signerApplicationSocketPath,
+        })),
     startPreviousSigner:
       overrides.startPreviousSigner ??
-      (async ({ requireV2 = false } = {}) => await startSignerService({ requireV2 })),
+      (async ({ requireV2 = false } = {}) =>
+        await startSignerService({
+          requireV2,
+          serviceName: signerServiceName,
+          socketPath: signerApplicationSocketPath,
+        })),
     reloadUnits: overrides.reloadUnits ?? (async () => await systemctl("daemon-reload")),
     startGateway:
-      overrides.startGateway ?? (async () => await systemctl("start", "fased-gateway.service")),
-    stopGateway:
-      overrides.stopGateway ?? (async () => await systemctl("stop", "fased-gateway.service")),
+      overrides.startGateway ?? (async () => await systemctl("start", gatewayServiceName)),
+    stopGateway: overrides.stopGateway ?? (async () => await systemctl("stop", gatewayServiceName)),
     restartGateway:
-      overrides.restartGateway ?? (async () => await systemctl("restart", "fased-gateway.service")),
-    probeSigner: overrides.probeSigner ?? probeSignerV2,
+      overrides.restartGateway ?? (async () => await systemctl("restart", gatewayServiceName)),
+    probeSigner:
+      overrides.probeSigner ??
+      (async (expectedRelease) =>
+        await probeSignerV2(expectedRelease, signerApplicationSocketPath)),
     probeSignerState:
       overrides.probeSignerState ??
       (overrides.probeSigner
         ? async () => ({ release: await overrides.probeSigner(), invariant: null })
-        : probeSignerStateV2),
+        : async (expectedRelease) =>
+            await probeSignerStateV2(expectedRelease, signerApplicationSocketPath)),
   };
   return context;
 }
@@ -1710,16 +1770,63 @@ function writeResponse(socket, payload, onFlushed) {
   socket.end(`${JSON.stringify(payload)}\n`, onFlushed);
 }
 
-export async function startServer() {
-  if (typeof process.getuid !== "function" || process.getuid() !== 0) {
-    throw new Error("hosted signer updater must run as root");
+function parseServerConfiguration(argv = process.argv.slice(2)) {
+  let protectedLocalInstance = null;
+  let socketUid = 0;
+  let socketGid = Number.NaN;
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--socket-gid") {
+      socketGid = Number(argv[++index]);
+      continue;
+    }
+    if (argument === "--socket-uid") {
+      socketUid = Number(argv[++index]);
+      continue;
+    }
+    if (argument === "--protected-local-instance") {
+      protectedLocalInstance = String(argv[++index] ?? "").trim();
+      continue;
+    }
+    throw new Error(`unsupported root updater argument: ${argument}`);
   }
-  const gidIndex = process.argv.indexOf("--socket-gid");
-  const socketGid = gidIndex >= 0 ? Number(process.argv[gidIndex + 1]) : Number.NaN;
   if (!Number.isSafeInteger(socketGid) || socketGid <= 0) {
     throw new Error("--socket-gid must be a positive numeric group id");
   }
-  const context = createTransactionContext();
+  if (!Number.isSafeInteger(socketUid) || socketUid < 0) {
+    throw new Error("--socket-uid must be a non-negative numeric user id");
+  }
+  if (!protectedLocalInstance && socketUid !== 0) {
+    throw new Error("Hosting root updater socket must remain root-owned");
+  }
+  if (protectedLocalInstance && socketUid === 0) {
+    throw new Error("Protected Local root updater socket requires its exact operator user id");
+  }
+  const selected = protectedLocalInstance
+    ? protectedLocalControllerConfiguration(protectedLocalInstance)
+    : {
+        profile: "hosting",
+        paths: DEFAULT_PATHS,
+        signerServiceName: "fased-signerd.service",
+        gatewayServiceName: "fased-gateway.service",
+        signerApplicationSocketPath: "/run/fased-signerd/app.sock",
+      };
+  return Object.freeze({ ...selected, socketUid, socketGid });
+}
+
+export async function startServer(options = {}) {
+  if (typeof process.getuid !== "function" || process.getuid() !== 0) {
+    throw new Error("hosted signer updater must run as root");
+  }
+  const configuration = options.configuration ?? parseServerConfiguration();
+  const context =
+    options.context ??
+    createTransactionContext({
+      paths: configuration.paths,
+      signerServiceName: configuration.signerServiceName,
+      gatewayServiceName: configuration.gatewayServiceName,
+      signerApplicationSocketPath: configuration.signerApplicationSocketPath,
+    });
   await recoverInterruptedTransaction(context);
   await fsp.mkdir(path.dirname(context.paths.socketPath), { recursive: true, mode: 0o750 });
   await fsp.rm(context.paths.socketPath, { force: true });
@@ -1787,8 +1894,8 @@ export async function startServer() {
     server.once("error", reject);
     server.listen(context.paths.socketPath, resolve);
   });
-  await fsp.chmod(context.paths.socketPath, 0o660);
-  await fsp.chown(context.paths.socketPath, 0, socketGid);
+  await fsp.chown(context.paths.socketPath, configuration.socketUid, configuration.socketGid);
+  await fsp.chmod(context.paths.socketPath, configuration.socketUid === 0 ? 0o660 : 0o600);
   const close = async () => {
     await new Promise((resolve) => server.close(resolve));
     await fsp.rm(context.paths.socketPath, { force: true });
@@ -1833,7 +1940,9 @@ export const __testing = {
   createTransactionContext,
   dispatchUpdateRequest,
   gateGatewayRelease,
+  parseServerConfiguration,
   prepareSignerRelease,
+  protectedLocalControllerConfiguration,
   readJournal,
   recoverInterruptedTransaction,
   releaseAttestationVerifyArgs,

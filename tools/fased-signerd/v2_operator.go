@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -72,12 +71,7 @@ var signerOperatorAllowedOperationsV1 = map[string]bool{
 	"v2.network.setPrimary":     true,
 	"v2.wallet.create":          true,
 	"v2.wallet.import":          true,
-	"v2.wallet.recovery.export": true,
-	"v2.wallet.recovery.import": true,
-	"v2.wallet.exportRaw":       true,
-	"v2.wallet.rotation.create": true,
 	"v2.wallet.rotation.status": true,
-	"v2.wallet.rotation.commit": true,
 }
 
 func newSignerOperatorContextV1(now time.Time) (signerOperatorContextV1, error) {
@@ -382,59 +376,8 @@ func (s *signerServiceV2) handleOperatorLifecycleV1(req request, cfg signerConfi
 			return nil, err
 		}
 		return marshalSignerResultV2(signerWalletPolicyResultV2{Wallet: wallet, Policy: policy})
-	case "v2.wallet.recovery.export":
-		var body signerOperatorRecoveryExportRequestV1
-		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
-			return nil, err
-		}
-		result, err := s.keys.exportOperatorRecoveryV1(req.WalletID, body)
-		if err != nil {
-			return nil, err
-		}
-		return marshalSignerResultV2(result)
-	case "v2.wallet.recovery.import":
-		var body signerOperatorRecoveryImportRequestV1
-		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
-			return nil, err
-		}
-		wallet, policy, err := s.keys.importOperatorRecoveryV1(req.WalletID, body)
-		if err != nil {
-			return nil, err
-		}
-		return marshalSignerResultV2(signerWalletPolicyResultV2{Wallet: wallet, Policy: policy})
-	case "v2.wallet.exportRaw":
-		var body signerOperatorRawExportRequestV1
-		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
-			return nil, err
-		}
-		result, err := s.keys.exportOperatorRawV1(req.WalletID, body)
-		if err != nil {
-			return nil, err
-		}
-		encoded, err := json.Marshal(map[string]any{"ok": true, "result": result})
-		return encoded, err
-	case "v2.wallet.rotation.create":
-		var body signerWalletRotationCreateRequestV2
-		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
-			return nil, err
-		}
-		rotation, err := s.keys.CreateSuccessorRotation(req.WalletID, body)
-		if err != nil {
-			return nil, err
-		}
-		return marshalSignerResultV2(rotation)
 	case "v2.wallet.rotation.status":
 		rotation, err := s.keys.SuccessorRotationStatus(req.WalletID)
-		if err != nil {
-			return nil, err
-		}
-		return marshalSignerResultV2(rotation)
-	case "v2.wallet.rotation.commit":
-		var body signerWalletRotationCommitRequestV2
-		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
-			return nil, err
-		}
-		rotation, err := s.keys.CommitSuccessorRotation(req.WalletID, body)
 		if err != nil {
 			return nil, err
 		}

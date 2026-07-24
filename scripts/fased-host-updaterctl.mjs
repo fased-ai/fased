@@ -21,12 +21,8 @@ const version = String(process.argv[2] ?? "")
 if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(version)) {
   throw new Error("an exact signer release version is required");
 }
-const mode = process.argv[3] || "--full";
-if (
-  !new Set(["--full", "--prepare-only", "--activate-only", "--commit-only", "--rollback-only"]).has(
-    mode,
-  )
-) {
+const mode = process.argv[3];
+if (!new Set(["--prepare-only", "--activate-only", "--commit-only", "--rollback-only"]).has(mode)) {
   throw new Error(`unsupported signer updater control mode: ${mode}`);
 }
 
@@ -190,22 +186,14 @@ try {
     const committed = await requestWithRetry("commitRelease", 120);
     await clearTransactionId();
     process.stdout.write(`${JSON.stringify(committed)}\n`);
-  } else {
+  } else if (mode === "--prepare-only") {
     await ensureTargetController();
     const prepared = await requestWithRetry("prepareRelease", 120);
-    if (mode === "--prepare-only") {
-      process.stdout.write(`${JSON.stringify(prepared)}\n`);
-    } else {
-      const active = await requestWithRetry("activateRelease");
-      activated = true;
-      if (mode === "--activate-only") {
-        process.stdout.write(`${JSON.stringify(active)}\n`);
-      } else {
-        const committed = await requestWithRetry("commitRelease");
-        await clearTransactionId();
-        process.stdout.write(`${JSON.stringify(committed)}\n`);
-      }
-    }
+    process.stdout.write(`${JSON.stringify(prepared)}\n`);
+  } else {
+    const active = await requestWithRetry("activateRelease");
+    activated = true;
+    process.stdout.write(`${JSON.stringify(active)}\n`);
   }
 } catch (error) {
   if (!activated) {

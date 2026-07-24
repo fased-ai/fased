@@ -1,26 +1,42 @@
 # Native signer administration
 
-`fased-signerd admin` performs wallet lifecycle, policy and network management,
-and WebAuthn enrollment through the signer-only `0600` control socket. Every
-command requires the absolute control-socket path. The client rejects unknown
-flags, positional data, secret flags and secret-bearing Fased environment
-variables.
+`fased-signerd admin` is the typed native administration client. It has two
+explicit authority lanes:
 
-On a hosted installation, run these commands only from an authenticated host
-administrator session as the dedicated signer user:
+- `--operator-socket` permits ordinary human/operator lifecycle work such as
+  service health/capabilities, wallet create/import/readiness, policy and RPC
+  management, and read-only rotation status;
+- `--control-socket` is signer-owner authority for WebAuthn enrollment,
+  recovery export/import, raw export, re-encryption, and mutating rotation.
+
+Recovery, raw export, and mutating rotation are rejected on the operator
+socket. The client rejects unknown flags, positional data, secret flags, and
+secret-bearing Fased environment variables.
+
+On VPS Hosting and protected Local Linux, use normal `fased wallet` commands
+for operator work. They invoke this native client and the exact protected
+operator socket. The Gateway receives only `app.sock`; JavaScript never creates
+the operator nonce/release envelope.
+
+For signer-owner work, use the installed bounded root helper from an
+authenticated administrator session:
 
 ```bash
-sudo -u fased-signer -- /opt/fased/signer/fased-signerd admin \
-  policy get \
-  --control-socket /run/fased-signerd/control.sock \
-  --wallet-id agent
+sudo fased-local-signer-owner-INSTANCE wallet recovery-export ...
+# VPS Hosting:
+sudo /usr/local/sbin/fased-signer-owner wallet recovery-export ...
 ```
 
-The Gateway user must not own, read, or connect to the control socket. Do not
-add an HTTP, Gateway, Node.js, MCP, or generic socket relay for these commands.
+The helper fixes the signer identity and control socket, performs one
+allowlisted native command as the signer owner, safely hands off an explicitly
+requested output file, and exits. It does not add the human operator to the
+signer group or grant persistent control-socket access.
 
-For a Local install on Linux, native macOS, or inside WSL2, run the same native
-client as the signed-in user that owns the signer process and socket:
+The Gateway user must not own, read, or connect to the operator/control sockets.
+Do not add an HTTP, Gateway, Node.js, MCP, or generic socket relay.
+
+Native macOS and an explicitly unprotected same-user Local environment use the
+user-owned control socket and are lower assurance:
 
 ```bash
 "$HOME/.fased/bin/fased-signerd" admin wallet create \
@@ -31,7 +47,8 @@ client as the signed-in user that owns the signer process and socket:
 
 Native Windows PowerShell is not a supported signer environment because the
 protocol uses Unix sockets; run the Local command inside WSL2. Do not use
-`sudo` for a same-user Local signer.
+`sudo` for a same-user signer. Supported WSL2 with systemd uses the protected
+Linux topology instead.
 
 ## Create a signer-owned wallet
 

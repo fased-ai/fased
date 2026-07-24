@@ -75,6 +75,10 @@ export function resolvePluginStatusCachePath(
   env: NodeJS.ProcessEnv = process.env,
   homeDir: string = os.homedir(),
 ): string {
+  const explicitPath = env.FASED_PLUGIN_STATUS_CACHE_PATH?.trim();
+  if (explicitPath) {
+    return explicitPath;
+  }
   const stateDir = env.FASED_STATE_DIR?.trim() || path.join(homeDir, ".fased");
   return path.join(stateDir, "runtime", "plugin-status.json");
 }

@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createEmptyPluginRegistry } from "./registry.js";
-import { readValidPluginStatusCache, writePluginStatusCache } from "./status-cache.js";
+import {
+  readValidPluginStatusCache,
+  resolvePluginStatusCachePath,
+  writePluginStatusCache,
+} from "./status-cache.js";
 
 const roots: string[] = [];
 
@@ -14,6 +18,18 @@ afterEach(() => {
 });
 
 describe("plugin status cache", () => {
+  it("uses an explicit protected-runtime cache path", () => {
+    expect(
+      resolvePluginStatusCachePath(
+        {
+          FASED_STATE_DIR: "/home/alice/.fased",
+          FASED_PLUGIN_STATUS_CACHE_PATH: "/home/alice/.fased/cache/plugin-status.json",
+        },
+        "/home/alice",
+      ),
+    ).toBe("/home/alice/.fased/cache/plugin-status.json");
+  });
+
   it("accepts matching config, version, and source mtimes", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-plugin-status-"));
     roots.push(root);

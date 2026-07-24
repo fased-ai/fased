@@ -105,7 +105,7 @@ if [[ "${FASED_MANAGED_INTERNAL:-0}" != "1" ]]; then
 fi
 
 set -euo pipefail
-if [[ "${FASED_HOST_PROFILE:-}" == "hosting" ]]; then
+if [[ "${FASED_HOST_PROFILE:-}" == "hosting" || "${FASED_PROTECTED_LOCAL:-0}" == "1" ]]; then
   umask 0007
 else
   umask 077
@@ -477,7 +477,21 @@ mkdir -p "$FASED_CONFIG_DIR"
 mkdir -p "$LOG_DIR"
 : > "$ZROK_RUNTIME_LOG"
 : > "$WALLET_SETUP_LOG"
-chmod 0600 "$ZROK_RUNTIME_LOG" "$WALLET_SETUP_LOG"
+MANAGED_LOG_MODE=0600
+if [[ "${FASED_HOST_PROFILE:-}" == "hosting" || "${FASED_PROTECTED_LOCAL:-0}" == "1" ]]; then
+  MANAGED_LOG_MODE=0660
+fi
+chmod "$MANAGED_LOG_MODE" "$ZROK_RUNTIME_LOG" "$WALLET_SETUP_LOG" 2>/dev/null || true
+for managed_log in "$ZROK_RUNTIME_LOG" "$WALLET_SETUP_LOG"; do
+  [[ -f "$managed_log" && ! -L "$managed_log" ]] || {
+    echo "[managed] ERROR: managed runtime log is not a safe regular file: $managed_log"
+    exit 1
+  }
+  [[ "$(stat -c '%a' "$managed_log")" == "${MANAGED_LOG_MODE#0}" ]] || {
+    echo "[managed] ERROR: managed runtime log has an unsafe mode: $managed_log"
+    exit 1
+  }
+done
 SERVICE_GATEWAY_TOKEN="${FASED_GATEWAY_TOKEN:-}"
 if [ ! -f "$GW_TOKEN_PATH" ]; then
   if [[ -n "$SERVICE_GATEWAY_TOKEN" ]]; then
@@ -499,6 +513,7 @@ force_stop_local_gateway
 
 legacy_registered_local_wallets_exist() {
   [[ "${FASED_HOST_PROFILE:-}" != "hosting" ]] || return 1
+  [[ "${FASED_PROTECTED_LOCAL:-0}" != "1" ]] || return 1
   local wallet_dir="$FASED_CONFIG_DIR/wallet"
   local registry="$wallet_dir/provider-registry.v1.json"
   [[ -f "$registry" ]] || return 1
@@ -783,9 +798,13 @@ SIGNERD_CONTROL_SOCKET="${FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET:-$SIGNERD_MAT
 SIGNERD_STATE_DB="${FASED_WALLET_LOCAL_SIGNER_STATE_DB:-$SIGNERD_MATERIAL_DIR/signerd-v2.db}"
 SIGNERD_MASTER_KEY="${FASED_WALLET_LOCAL_SIGNER_MASTER_KEY:-$SIGNERD_MATERIAL_DIR/signerd-v2.master.key}"
 HOSTED_ROOT_SIGNER=0
-if [[ "${FASED_HOST_PROFILE:-}" == "hosting" ]]; then
+if [[ "${FASED_HOST_PROFILE:-}" == "hosting" || "${FASED_PROTECTED_LOCAL:-0}" == "1" ]]; then
   HOSTED_ROOT_SIGNER=1
-  SIGNERD_SOCKET="/run/fased-signerd/app.sock"
+  if [[ "${FASED_PROTECTED_LOCAL:-0}" == "1" ]]; then
+    SIGNERD_SOCKET="${FASED_WALLET_LOCAL_SIGNER_SOCKET:?Protected Local requires its root-managed application socket}"
+  else
+    SIGNERD_SOCKET="/run/fased-signerd/app.sock"
+  fi
   export FASED_WALLET_LOCAL_SIGNER_SOCKET="$SIGNERD_SOCKET"
   unset FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET
   unset FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER
@@ -793,7 +812,11 @@ if [[ "${FASED_HOST_PROFILE:-}" == "hosting" ]]; then
     SIGNERD_STARTUP_MODE="external"
     echo "==> Using root-managed fased-signerd service (socket: $SIGNERD_SOCKET)"
   else
-    mark_signerd_degraded "root-managed fased-signerd socket is unavailable. Repair only from the provider root console using the exact tagged, attested Hosting release; never run the app checkout with sudo."
+    if [[ "${FASED_PROTECTED_LOCAL:-0}" == "1" ]]; then
+      mark_signerd_degraded "Protected Local fased-signerd socket is unavailable. Run fased update as the Local operator and approve the normal OS administrator prompt; do not start a same-user signer."
+    else
+      mark_signerd_degraded "root-managed fased-signerd socket is unavailable. Repair only from the provider root console using the exact tagged, attested Hosting release; never run the app checkout with sudo."
+    fi
   fi
 elif should_start_signerd; then
   SIGNERD_STARTUP_MODE="healthy"
@@ -916,46 +939,57 @@ disable_managed_tunnel() {
   echo "[tunnel] WARNING: $1"
   echo "[tunnel]          Dashboard gateway stays online; Fased Network tunnel remains degraded until repaired."
 }
+if [[ "${FASED_HOST_PROFILE:-}" == "hosting" ]]; then
+  disable_managed_tunnel \
+    "Hosting uses its root-verified private Tailscale Serve route; no zrok tunnel is started."
+elif [[ "${FASED_PROTECTED_LOCAL:-0}" == "1" ]]; then
+  disable_managed_tunnel \
+    "Protected Local keeps the dashboard loopback-only; no managed public zrok tunnel is started."
+fi
 
 # 1. Wait for the agent to enroll/refresh access token.
 # We do not treat a stale pre-existing token as ready if it has no zrok metadata.
 echo "==> Waiting for agent enrollment/token refresh (max 60s)..."
 MAX_RETRIES=60
 COUNT=0
-while true; do
-  if [[ -f "$TOKEN_PATH" ]]; then
-    CURRENT_ZROK=$(jq -r '.zrokToken // empty' "$TOKEN_PATH" 2>/dev/null || true)
-    if [[ -n "$CURRENT_ZROK" ]]; then
-      break
-    fi
-
-    CURRENT_SIG=$(sha256sum "$TOKEN_PATH" | awk '{print $1}')
-    # If token changed after startup, proceed even if zrok is still missing.
-    # Recovery logic below will decide strict-mode outcome.
-    if [[ -n "$INITIAL_TOKEN_SIG" && "$CURRENT_SIG" != "$INITIAL_TOKEN_SIG" ]]; then
-      break
-    fi
-
-    # No initial token: once we have a token file, give it a short chance to gain zrok fields.
-    if [[ -z "$INITIAL_TOKEN_SIG" && $COUNT -ge 3 ]]; then
-      break
-    fi
-  fi
-  sleep 1
-  COUNT=$((COUNT + 1))
-  if [[ $COUNT -ge $MAX_RETRIES ]]; then
+if [[ "$MANAGED_TUNNEL_DISABLED" != "1" ]]; then
+  while true; do
     if [[ -f "$TOKEN_PATH" ]]; then
-      echo "[tunnel] WARNING: Token refresh did not complete in time; continuing with current token."
+      CURRENT_ZROK=$(jq -r '.zrokToken // empty' "$TOKEN_PATH" 2>/dev/null || true)
+      if [[ -n "$CURRENT_ZROK" ]]; then
+        break
+      fi
+
+      CURRENT_SIG=$(sha256sum "$TOKEN_PATH" | awk '{print $1}')
+      # If token changed after startup, proceed even if zrok is still missing.
+      # Recovery logic below will decide strict-mode outcome.
+      if [[ -n "$INITIAL_TOKEN_SIG" && "$CURRENT_SIG" != "$INITIAL_TOKEN_SIG" ]]; then
+        break
+      fi
+
+      # No initial token: once we have a token file, give it a short chance to gain zrok fields.
+      if [[ -z "$INITIAL_TOKEN_SIG" && $COUNT -ge 3 ]]; then
+        break
+      fi
+    fi
+    sleep 1
+    COUNT=$((COUNT + 1))
+    if [[ $COUNT -ge $MAX_RETRIES ]]; then
+      if [[ -f "$TOKEN_PATH" ]]; then
+        echo "[tunnel] WARNING: Token refresh did not complete in time; continuing with current token."
+        break
+      fi
+      disable_managed_tunnel "Agent enrollment/token refresh did not complete in time and no token is available."
+      if [[ "$VERBOSE_STARTUP" != "1" ]]; then
+        echo "[debug] Last gateway startup logs:"
+        tail -n 40 "$GATEWAY_BOOT_LOG" || true
+      fi
       break
     fi
-    disable_managed_tunnel "Agent enrollment/token refresh did not complete in time and no token is available."
-    if [[ "$VERBOSE_STARTUP" != "1" ]]; then
-      echo "[debug] Last gateway startup logs:"
-      tail -n 40 "$GATEWAY_BOOT_LOG" || true
-    fi
-    break
-  fi
-done
+  done
+else
+  echo "==> Managed public tunnel disabled; skipping enrollment-token wait."
+fi
 
 # === Tunneling (zrok) ===
 

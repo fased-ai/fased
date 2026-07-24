@@ -54,6 +54,7 @@ import type { RuntimeEnv } from "../runtime.js";
 import { restoreTerminalState } from "../terminal/restore.js";
 import { runTui } from "../tui/tui.js";
 import { resolveUserPath } from "../utils.js";
+import { resolveNativeSignerOperatorLifecycle } from "../wallet/native-signer-lifecycle-context.js";
 import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
 import { readWalletStatusSnapshot } from "../wallet/wallet-status.js";
 import {
@@ -738,6 +739,27 @@ export function buildGatewayServiceRestartAttempts(
     ...(profile === "hosting" ? rootAttempts : userAttempts),
     ...(profile === "hosting" ? [] : rootAttempts),
   ];
+}
+
+async function verifyProtectedLocalGatewayService(params: {
+  unitName: string;
+  expectedUser: string;
+}): Promise<{ ok: boolean; detail?: string }> {
+  if (!/^fased-gateway-[a-f0-9]{16}\.service$/u.test(params.unitName)) {
+    return { ok: false, detail: "Protected Local Gateway unit name is invalid" };
+  }
+  if (!/^fsgw-[a-f0-9]{16}$/u.test(params.expectedUser)) {
+    return { ok: false, detail: "Protected Local Gateway identity is invalid" };
+  }
+  const result = await runShell(
+    `test "$(systemctl is-enabled ${params.unitName} 2>/dev/null)" = enabled && ` +
+      `test "$(systemctl is-active ${params.unitName} 2>/dev/null)" = active && ` +
+      `test "$(systemctl show ${params.unitName} --property User --value 2>/dev/null)" = ${params.expectedUser}`,
+    { timeoutMs: 5_000 },
+  );
+  return result.ok
+    ? { ok: true }
+    : { ok: false, detail: result.detail ?? "Protected Local Gateway service is not active" };
 }
 
 async function restartGatewayServiceOnce(
@@ -1455,6 +1477,18 @@ export async function finalizeOnboardingWizard(
 ): Promise<{ launchedTui: boolean }> {
   const { flow, opts, baseConfig, nextConfig, settings, federation, prompter, runtime } = options;
   const strictVps = opts.hostProfile === "hosting";
+  const signerLifecycle = resolveNativeSignerOperatorLifecycle({
+    ...process.env,
+    ...nextConfig.env?.vars,
+  });
+  const protectedLocal = signerLifecycle?.profile === "protected-local";
+  const protectedLocalInstance = protectedLocal ? signerLifecycle.instanceId : undefined;
+  const protectedLocalGatewayUnit = protectedLocalInstance
+    ? `fased-gateway-${protectedLocalInstance}.service`
+    : undefined;
+  const protectedLocalGatewayUser = protectedLocalInstance
+    ? `fsgw-${protectedLocalInstance}`
+    : undefined;
   const recommendedGatewayMaxOldSpaceMb = resolveGatewayMaxOldSpaceMb({
     env: process.env,
     fallbackMb: 1024,
@@ -1509,14 +1543,20 @@ export async function finalizeOnboardingWizard(
 
   const systemdAvailable =
     process.platform === "linux" ? await isSystemdUserServiceAvailable() : true;
-  if (process.platform === "linux" && !systemdAvailable && !strictVps && flow !== "quickstart") {
+  if (
+    process.platform === "linux" &&
+    !systemdAvailable &&
+    !strictVps &&
+    !protectedLocal &&
+    flow !== "quickstart"
+  ) {
     await prompter.note(
       "Systemd user services are unavailable. Skipping lingering checks and user-service install.",
       "Systemd",
     );
   }
 
-  if (process.platform === "linux" && systemdAvailable && strictVps) {
+  if (process.platform === "linux" && systemdAvailable && (strictVps || protectedLocal)) {
     // Hosted setup intentionally uses a root-managed service running as the non-root app user.
   } else if (process.platform === "linux" && systemdAvailable) {
     const { ensureSystemdUserLingerInteractive } = await import("../commands/systemd-linger.js");
@@ -1546,7 +1586,7 @@ export async function finalizeOnboardingWizard(
           config: nextConfig,
         });
   let installDaemon: boolean;
-  if (strictVps) {
+  if (strictVps || protectedLocal) {
     // The provider-console root phase already installed the fixed system unit.
     // Hosted onboarding verifies it; the app may not opt out or replace it.
     installDaemon = true;
@@ -1563,12 +1603,22 @@ export async function finalizeOnboardingWizard(
     });
   }
 
-  if (process.platform === "linux" && !systemdAvailable && installDaemon && !strictVps) {
+  if (
+    process.platform === "linux" &&
+    !systemdAvailable &&
+    installDaemon &&
+    !strictVps &&
+    !protectedLocal
+  ) {
     installDaemon = false;
   }
 
   if (installDaemon) {
     const rootPrepared = strictVps && process.env.FASED_HOST_ROOT_PREPARED?.trim() === "1";
+    const protectedLocalPrepared =
+      protectedLocal &&
+      process.env.FASED_PROTECTED_LOCAL?.trim() === "1" &&
+      Boolean(protectedLocalGatewayUnit && protectedLocalGatewayUser);
 
     let rootServiceActiveSuccessfully = false;
     if (strictVps && !rootPrepared) {
@@ -1595,6 +1645,18 @@ export async function finalizeOnboardingWizard(
               rootEnabled.detail ||
               "fixed root-owned Gateway unit is missing, disabled, or has an unexpected command",
           }),
+        );
+      }
+      rootServiceActiveSuccessfully = true;
+    }
+    if (protectedLocalPrepared && protectedLocalGatewayUnit && protectedLocalGatewayUser) {
+      const service = await verifyProtectedLocalGatewayService({
+        unitName: protectedLocalGatewayUnit,
+        expectedUser: protectedLocalGatewayUser,
+      });
+      if (!service.ok) {
+        throw new Error(
+          `Protected Local requires its root-managed ${protectedLocalGatewayUnit}; ${service.detail ?? "service verification failed"}. Retry the same installer command.`,
         );
       }
       rootServiceActiveSuccessfully = true;

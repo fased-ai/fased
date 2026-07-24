@@ -43,6 +43,28 @@ import {
 import { ensureWalletStateDir } from "../wallet-runtime-config.js";
 
 const SOLANA_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const RESTRICTED_SIGNER_SOCKET_NAMES = new Set([
+  "operator.sock",
+  "control.sock",
+  "local-signer-control.sock",
+]);
+
+function isRestrictedSignerSocketPath(
+  socketPath: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (RESTRICTED_SIGNER_SOCKET_NAMES.has(path.basename(socketPath))) {
+    return true;
+  }
+  const resolved = path.resolve(socketPath);
+  return [
+    env.FASED_WALLET_LOCAL_SIGNER_OPERATOR_SOCKET,
+    env.FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET,
+  ].some((candidate) => {
+    const value = String(candidate ?? "").trim();
+    return path.isAbsolute(value) && path.resolve(value) === value && value === resolved;
+  });
+}
 
 export type LocalSocketSignerHealthProbe = {
   ok: boolean;
@@ -210,6 +232,13 @@ async function callSocket<T>(
   payload: LocalSocketSignerRequest,
   options?: LocalSocketSignerCallOptions,
 ): Promise<T> {
+  if (isRestrictedSignerSocketPath(socketPath)) {
+    throw new WalletProviderError({
+      code: "wallet_provider_invalid_config",
+      message:
+        "the JavaScript wallet adapter cannot use signer operator or control sockets; use the typed native signer client",
+    });
+  }
   const checkedPayload = parseLocalSocketSignerRequest(payload);
   return await new Promise<T>((resolve, reject) => {
     const socket = net.createConnection(socketPath);

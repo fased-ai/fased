@@ -323,6 +323,125 @@ func TestSignerAdminOperatorImportTransfersTypedSecretWithoutStagingPath(t *test
 	zeroBytes(privateKey)
 }
 
+func TestSignerAdminServiceCapabilitiesUsesTypedOperatorContext(t *testing.T) {
+	server := startSignerAdminTestServerMode(t, 0o660, signerAdminTestSuccess(t,
+		`{"ready":true,"capabilities":{"protocol":{"current":2,"min":2,"max":2},"features":["failClosedPolicies","signerOwnedKeys","atomicIdempotency"]}}`,
+	))
+	var stdout bytes.Buffer
+	if err := runSignerAdminCLI([]string{
+		"service", "capabilities", "--operator-socket", server.path,
+	}, strings.NewReader(""), &stdout, nil); err != nil {
+		t.Fatalf("operator capabilities failed: %v", err)
+	}
+	req := waitSignerAdminTestServer(t, server)
+	if req.Op != "v2.capabilities" || req.WalletID != "" || len(req.Request) != 0 ||
+		req.Operator == nil || len(req.Operator.Nonce) != 64 || req.Operator.ExpiresAt == "" {
+		t.Fatalf("operator capabilities omitted its typed authority context: %#v", req)
+	}
+	if !strings.Contains(stdout.String(), `"ready": true`) ||
+		!strings.Contains(stdout.String(), `"current": 2`) {
+		t.Fatalf("operator capabilities output changed: %q", stdout.String())
+	}
+}
+
+func TestSignerAdminWalletBalanceIncludesSolanaChain(t *testing.T) {
+	for _, socketFlag := range []string{"--control-socket", "--operator-socket"} {
+		t.Run(socketFlag, func(t *testing.T) {
+			mode := os.FileMode(0o600)
+			if socketFlag == "--operator-socket" {
+				mode = 0o660
+			}
+			server := startSignerAdminTestServerMode(
+				t,
+				mode,
+				signerAdminTestSuccess(t, `{"ok":true,"chain":"solana","address":"11111111111111111111111111111111","lamports":2000000000}`),
+			)
+			var stdout bytes.Buffer
+			err := runSignerAdminCLI(
+				[]string{"wallet", "balance", socketFlag, server.path, "--wallet-id", "agent"},
+				strings.NewReader(""),
+				&stdout,
+				nil,
+			)
+			if err != nil {
+				t.Fatalf("run signer admin wallet balance: %v", err)
+			}
+			req := waitSignerAdminTestServer(t, server)
+			if req.Op != "getBalance" || req.Chain != "solana" || req.WalletID != "agent" {
+				t.Fatalf("unexpected wallet balance envelope: %#v", req)
+			}
+			if len(req.Request) != 0 {
+				t.Fatalf("wallet balance envelope included an unexpected request body: %#v", req)
+			}
+			if socketFlag == "--operator-socket" && req.Operator == nil {
+				t.Fatal("operator wallet balance omitted the signed operator context")
+			}
+			if socketFlag == "--control-socket" && req.Operator != nil {
+				t.Fatal("control wallet balance unexpectedly included an operator context")
+			}
+		})
+	}
+}
+
+func TestSignerAdminServiceProbeRequiresExactlyOneLifecycleSocket(t *testing.T) {
+	server := startSignerAdminTestServerMode(t, 0o660, signerAdminTestSuccess(t, `{}`))
+	if err := runSignerAdminCLI([]string{
+		"service", "health",
+		"--operator-socket", server.path,
+		"--control-socket", server.path,
+	}, strings.NewReader(""), io.Discard, nil); err == nil || !strings.Contains(err.Error(), "exactly one") {
+		t.Fatalf("service probe accepted ambiguous socket authority: %v", err)
+	}
+}
+
+func TestSignerAdminOperatorRejectsSignerOwnerCeremonies(t *testing.T) {
+	server := startSignerAdminTestServerMode(t, 0o660, signerAdminTestSuccess(t, `{}`))
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "recovery export",
+			args: []string{"wallet", "recovery-export", "--operator-socket", server.path},
+		},
+		{
+			name: "recovery import",
+			args: []string{"wallet", "recovery-import", "--operator-socket", server.path},
+		},
+		{
+			name: "raw export",
+			args: []string{
+				"wallet", "export-raw", "--operator-socket", server.path,
+				"--acknowledge-custody-reduction",
+			},
+		},
+		{
+			name: "rotation prepare",
+			args: []string{
+				"wallet", "rotate-successor", "--operator-socket", server.path,
+				"--expected-source-wallet-version", "1", "--expected-source-policy-version", "1",
+			},
+		},
+		{
+			name: "rotation commit",
+			args: []string{
+				"wallet", "rotation-commit", "--operator-socket", server.path,
+				"--expected-source-wallet-version", "1", "--expected-source-policy-version", "1",
+				"--expected-successor-wallet-version", "1", "--expected-successor-policy-version", "1",
+				"--expected-rotation-version", "1",
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := runSignerAdminCLI(test.args, strings.NewReader(""), io.Discard, nil)
+			if err == nil || !strings.Contains(err.Error(), "signer-owner ceremony") {
+				t.Fatalf("operator command did not require signer-owner authority: %v", err)
+			}
+		})
+	}
+}
+
 func TestSignerAdminOperatorImportRejectsArbitraryPolicyAndAmbiguousAuthority(t *testing.T) {
 	server := startSignerAdminTestServerMode(t, 0o660, signerAdminTestSuccess(t, `{}`))
 	if err := runSignerAdminCLI([]string{
@@ -348,6 +467,13 @@ func TestSignerAdminOperatorCreateAndPrimaryRPCUseFixedSchemas(t *testing.T) {
 		t.Fatalf("operator wallet create failed: %v", err)
 	}
 	createReq := waitSignerAdminTestServer(t, createServer)
+	createEnvelope, err := json.Marshal(createReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := decodeSignerEnvelopeV2(createEnvelope); err != nil {
+		t.Fatalf("operator create envelope did not survive strict signer decoding: %v", err)
+	}
 	var createBody signerOperatorWalletCreateRequestV1
 	decodeSignerAdminTestBody(t, createReq, &createBody)
 	if createReq.Operator == nil || createReq.Op != "v2.wallet.create" || createBody.Baseline.Role != "vault" || !createBody.AllowExisting {

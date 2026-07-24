@@ -76,6 +76,15 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 	}
 
 	switch args[0] {
+	case "service":
+		switch args[1] {
+		case "health":
+			return runSignerAdminServiceProbeV1(args[2:], "health", stdout)
+		case "capabilities":
+			return runSignerAdminServiceProbeV1(args[2:], "v2.capabilities", stdout)
+		default:
+			return errors.New("unknown signer admin service command")
+		}
 	case "wallet":
 		switch args[1] {
 		case "create":
@@ -167,7 +176,7 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 }
 
 func signerAdminUsageError() error {
-	return errors.New("usage: fased-signerd admin {wallet|policy|network|jupiter|webauthn|migration} <command> [flags]")
+	return errors.New("usage: fased-signerd admin {service|wallet|policy|network|jupiter|webauthn|migration} <command> [flags]")
 }
 
 func rejectSignerAdminNetworkEnvironmentV2(environ []string) error {
@@ -319,6 +328,25 @@ func requireSignerAdminLifecycleSocket(common *signerAdminCommonFlags) (signerAd
 	}
 	socket, err := requireSignerAdminControlSocket(common.controlSocket)
 	return socket, false, err
+}
+
+func runSignerAdminServiceProbeV1(args []string, op string, stdout io.Writer) error {
+	name := "service health"
+	if op == "v2.capabilities" {
+		name = "service capabilities"
+	}
+	fs, common := newSignerAdminFlagSet(name)
+	if err := parseSignerAdminFlags(fs, args); err != nil {
+		return err
+	}
+	_, operator, err := requireSignerAdminLifecycleSocket(common)
+	if err != nil {
+		return err
+	}
+	if operator {
+		return callAndWriteSignerOperatorV1(common.operatorSocket, op, "", nil, stdout)
+	}
+	return callAndWriteSignerAdmin(common.controlSocket, op, "", nil, stdout)
 }
 
 func validateSignerAdminWalletID(raw string) (string, error) {
@@ -476,9 +504,9 @@ func runSignerAdminWalletBalanceV1(args []string, stdout io.Writer) error {
 		return err
 	}
 	if operator {
-		return callAndWriteSignerOperatorV1(common.operatorSocket, "getBalance", walletID, nil, stdout)
+		return callAndWriteSignerBalanceV1(common.operatorSocket, true, walletID, stdout)
 	}
-	return callAndWriteSignerAdmin(common.controlSocket, "getBalance", walletID, nil, stdout)
+	return callAndWriteSignerBalanceV1(common.controlSocket, false, walletID, stdout)
 }
 
 func runSignerAdminWalletImport(args []string, stdin io.Reader, stdout io.Writer) error {
@@ -686,6 +714,9 @@ func runSignerAdminWalletRotateSuccessor(args []string, stdout io.Writer) error 
 	if err != nil {
 		return err
 	}
+	if operator {
+		return errors.New("wallet rotation preparation is unavailable on the operator socket; use a root-authorized signer-owner ceremony")
+	}
 	if sourceWalletID, err = validateSignerAdminWalletID(sourceWalletID); err != nil {
 		return err
 	}
@@ -703,9 +734,6 @@ func runSignerAdminWalletRotateSuccessor(args []string, stdout io.Writer) error 
 		ExpectedSourcePublicKey:     sourcePublicKey,
 		ExpectedSourceWalletVersion: sourceWalletVersion.value,
 		ExpectedSourcePolicyVersion: sourcePolicyVersion.value,
-	}
-	if operator {
-		return callAndWriteSignerOperatorV1(common.operatorSocket, "v2.wallet.rotation.create", sourceWalletID, body, stdout)
 	}
 	return callAndWriteSignerAdmin(common.controlSocket, "v2.wallet.rotation.create", sourceWalletID, body, stdout)
 }
@@ -760,6 +788,9 @@ func runSignerAdminWalletRotationCommit(args []string, stdin io.Reader, stdout i
 	if err != nil {
 		return err
 	}
+	if operator {
+		return errors.New("wallet rotation commit is unavailable on the operator socket; use a root-authorized signer-owner ceremony")
+	}
 	if sourceWalletID, err = validateSignerAdminWalletID(sourceWalletID); err != nil {
 		return err
 	}
@@ -803,9 +834,6 @@ func runSignerAdminWalletRotationCommit(args []string, stdin io.Reader, stdout i
 		ExpectedSuccessorNetworkHash:    strings.TrimSpace(successorNetworkHash),
 		RecoveryPackageHash:             strings.TrimSpace(evidenceInput.RecoveryPackageHash),
 		SafetyEvidence:                  evidenceInput.SafetyEvidence,
-	}
-	if operator {
-		return callAndWriteSignerOperatorV1(common.operatorSocket, "v2.wallet.rotation.commit", sourceWalletID, body, stdout)
 	}
 	return callAndWriteSignerAdmin(common.controlSocket, "v2.wallet.rotation.commit", sourceWalletID, body, stdout)
 }
@@ -1356,6 +1384,34 @@ func callAndWriteSignerOperatorV1(operatorSocket, op, walletID string, body any,
 	return writeSignerAdminResult(result, stdout)
 }
 
+func callAndWriteSignerBalanceV1(socketPath string, operator bool, walletID string, stdout io.Writer) error {
+	var (
+		socket signerAdminSocketInfo
+		err    error
+	)
+	if operator {
+		socket, err = requireSignerAdminOperatorSocket(socketPath)
+	} else {
+		socket, err = requireSignerAdminControlSocket(socketPath)
+	}
+	if err != nil {
+		return err
+	}
+	result, err := callSignerSocketWithSensitivityV1(
+		socket,
+		operator,
+		"getBalance",
+		"solana",
+		walletID,
+		nil,
+		operator,
+	)
+	if err != nil {
+		return err
+	}
+	return writeSignerAdminResult(result, stdout)
+}
+
 func writeSignerAdminResult(result json.RawMessage, stdout io.Writer) error {
 	var formatted bytes.Buffer
 	if err := json.Indent(&formatted, result, "", "  "); err != nil {
@@ -1381,7 +1437,7 @@ func callSignerAdminWithSensitivityV2(controlSocket, op, walletID string, body a
 	if err != nil {
 		return nil, err
 	}
-	return callSignerSocketWithSensitivityV1(socket, false, op, walletID, body, sensitive)
+	return callSignerSocketWithSensitivityV1(socket, false, op, "", walletID, body, sensitive)
 }
 
 func callSignerOperatorSensitiveV1(operatorSocket, op, walletID string, body any) (json.RawMessage, error) {
@@ -1389,18 +1445,19 @@ func callSignerOperatorSensitiveV1(operatorSocket, op, walletID string, body any
 	if err != nil {
 		return nil, err
 	}
-	return callSignerSocketWithSensitivityV1(socket, true, op, walletID, body, true)
+	return callSignerSocketWithSensitivityV1(socket, true, op, "", walletID, body, true)
 }
 
 func callSignerSocketWithSensitivityV1(
 	socket signerAdminSocketInfo,
 	operator bool,
 	op string,
+	chain string,
 	walletID string,
 	body any,
 	sensitive bool,
 ) (json.RawMessage, error) {
-	req := request{Op: op, WalletID: walletID}
+	req := request{Op: op, Chain: chain, WalletID: walletID}
 	if operator {
 		context, err := newSignerOperatorContextV1(time.Now())
 		if err != nil {

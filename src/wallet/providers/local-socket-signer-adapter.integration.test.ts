@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
+import { invokeNativeSignerOperatorCapabilities } from "../native-signer-operator-client.js";
 import { SIGNER_PROTOCOL_V2 } from "../signer-protocol-v2.generated.js";
 import {
   callLocalSocketSigner,
@@ -63,6 +64,8 @@ describe("compiled fased-signerd protocol-v2 compatibility", () => {
     });
 
     const socketPath = path.join(tempDir, "application.sock");
+    const operatorSocketPath = path.join(tempDir, "operator.sock");
+    const operatorGroup = (await execFileAsync("id", ["-gn"])).stdout.trim();
     let stderr = "";
     const child = spawn(
       binary,
@@ -71,6 +74,10 @@ describe("compiled fased-signerd protocol-v2 compatibility", () => {
         socketPath,
         "--control-socket",
         path.join(tempDir, "control.sock"),
+        "--operator-socket",
+        operatorSocketPath,
+        "--operator-socket-group",
+        operatorGroup,
         "--state-db",
         path.join(tempDir, "state.db"),
         "--master-key",
@@ -88,6 +95,7 @@ describe("compiled fased-signerd protocol-v2 compatibility", () => {
       stderr = `${stderr}${chunk}`.slice(-8_192);
     });
     await waitForSocket(socketPath, child, () => stderr);
+    await waitForSocket(operatorSocketPath, child, () => stderr);
 
     await expect(
       requireLocalSocketSignerProtocolV2(socketPath, "solana.jupiter.swap"),
@@ -98,5 +106,14 @@ describe("compiled fased-signerd protocol-v2 compatibility", () => {
     }>(socketPath, { op: "v2.capabilities" });
     expect(result.ready).toBe(true);
     expect(result.capabilities).toEqual(SIGNER_PROTOCOL_V2);
+
+    const operatorResult = invokeNativeSignerOperatorCapabilities({
+      signerBinPath: binary,
+      operatorSocketPath,
+      env: { HOME: tempDir },
+    });
+    expect(operatorResult.ready).toBe(true);
+    expect(operatorResult.capabilities.protocol).toEqual(SIGNER_PROTOCOL_V2.protocol);
+    expect(operatorResult.capabilities.features).toEqual(SIGNER_PROTOCOL_V2.features);
   }, 150_000);
 });
