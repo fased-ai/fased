@@ -11,6 +11,7 @@ install_entry_protected_local_root=0
 install_entry_verified_bundle=""
 install_entry_app_handoff=""
 install_entry_legacy_ts_authkey=0
+install_entry_local_file_bootstrap=0
 install_entry_args=("$@")
 for ((install_entry_index = 0; install_entry_index < ${#install_entry_args[@]}; install_entry_index++)); do
   case "${install_entry_args[$install_entry_index]}" in
@@ -36,6 +37,14 @@ for ((install_entry_index = 0; install_entry_index < ${#install_entry_args[@]}; 
       ;;
   esac
 done
+
+if [[ "$install_entry_is_stream" -eq 0 && "$install_entry_hosting" -eq 0 && \
+  "$install_entry_protected_local_root" -eq 0 ]]; then
+  install_entry_source_dir="$(cd "$(dirname "$install_entry_source")" && pwd -P)"
+  if [[ ! -f "$install_entry_source_dir/scripts/install-runtime-profile.sh" ]]; then
+    install_entry_local_file_bootstrap=1
+  fi
+fi
 
 if [[ "$install_entry_legacy_ts_authkey" -eq 1 ]]; then
   echo "Refusing --ts-authkey because command arguments can expose the Tailscale secret." >&2
@@ -130,7 +139,8 @@ fi
 # Streamed Hosting reaches this block only for the fresh stable selector or
 # the exact release/channel selector validated above. Repair and other advanced
 # Hosting selectors remain exact-tag-only.
-if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_protected_local_root" -eq 1 || \
+if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" -eq 1 || \
+  "$install_entry_protected_local_root" -eq 1 || \
   ( "$install_entry_hosting" -eq 1 && -z "$install_entry_verified_bundle" && -z "$install_entry_app_handoff" ) ]]; then
   install_repo_url="${FASED_INSTALL_REPO:-https://github.com/fased-ai/fased.git}"
   install_base_dir="${FASED_INSTALL_DIR:-$HOME/fased}"
@@ -896,10 +906,26 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_protected_local_root" 
     fi
   fi
 
-  if ( : < /dev/tty ) 2>/dev/null; then
-    exec bash "$install_base_dir/install.sh" "$@" < /dev/tty
-  fi
-  exec bash "$install_base_dir/install.sh" "$@"
+  exec_bootstrapped_installer() {
+    local installer_path="$1"
+    shift
+
+    # A streamed shell may start executing before curl has written the entire
+    # installer. Consume the remaining bytes before replacing this reader so
+    # the public curl | bash command finishes without a misleading EPIPE.
+    if [[ "$install_entry_is_stream" -eq 1 ]]; then
+      cat >/dev/null
+    fi
+    if ( : < /dev/tty ) 2>/dev/null; then
+      exec bash "$installer_path" "$@" < /dev/tty
+    fi
+    if [[ "$install_entry_is_stream" -eq 1 ]]; then
+      exec bash "$installer_path" "$@" < /dev/null
+    fi
+    exec bash "$installer_path" "$@"
+  }
+
+  exec_bootstrapped_installer "$install_base_dir/install.sh" "$@"
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -5045,6 +5071,7 @@ install_host_signer_and_updater_services() {
   install -d -m 0755 -o root -g root /usr/local/libexec
   install -d -m 0755 -o root -g root /usr/local/sbin
   install -d -m 0755 -o root -g root /usr/local/share/fased/signer-policies
+  install -d -m 0755 -o root -g root /opt/fased
   install -d -m 0755 -o root -g root /opt/fased/signer
   install -d -m 0755 -o root -g root /opt/fased/host-controller/releases
   install -d -m 0700 -o root -g root /var/lib/fased-host-updater

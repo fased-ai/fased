@@ -827,6 +827,7 @@ async function prepareProtectedLocalRootDirectories(layout) {
   for (const directory of [
     "/var/lib/fased-local",
     layout.stateDir,
+    "/opt/fased",
     "/opt/fased/local",
     layout.installDir,
     "/etc/fased",
@@ -949,6 +950,14 @@ function verifyLogicalWalletState(spec, layout) {
   );
 }
 
+function protectedLocalGatewayHealthMatches(payload, statusCode, expectedVersion) {
+  return (
+    statusCode === 200 &&
+    payload?.version === expectedVersion &&
+    new Set(["managed-package", "packaged-runtime"]).has(payload?.runtimeSource)
+  );
+}
+
 async function probeGatewayHealth(spec, timeoutMs = 2_000) {
   return await new Promise((resolve) => {
     const request = http.get(
@@ -968,10 +977,11 @@ async function probeGatewayHealth(spec, timeoutMs = 2_000) {
           try {
             const payload = JSON.parse(body);
             resolve({
-              ok:
-                response.statusCode === 200 &&
-                payload?.version === spec.releaseVersion &&
-                payload?.runtimeSource === "packaged-runtime",
+              ok: protectedLocalGatewayHealthMatches(
+                payload,
+                response.statusCode,
+                spec.releaseVersion,
+              ),
               detail: `status=${response.statusCode ?? "unknown"} version=${payload?.version ?? "unknown"} runtimeSource=${payload?.runtimeSource ?? "unknown"}`,
             });
           } catch (error) {
@@ -1932,6 +1942,7 @@ export const __testing = Object.freeze({
   removeLegacySignerMaterial,
   resolveTrustedLegacyRuntimeHardlinks,
   resolveLegacySignerPaths,
+  protectedLocalGatewayHealthMatches,
   verifySignerReleaseIdentity,
   buildControllerIdentity,
 });

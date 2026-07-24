@@ -143,6 +143,10 @@ fi
 useradd --uid 2000 --user-group --create-home --shell /bin/bash testop
 install -d -m 0700 -o testop -g testop "$state"
 install -d -m 0755 -o testop -g testop "$(dirname "$runtime")"
+# Reproduce a previous root bootstrap that created only its final child with a
+# restrictive umask, leaving the shared executable ancestor non-traversable to
+# the isolated signer account.
+install -d -m 0700 -o root -g root /opt/fased
 install -d -m 0755 -o root -g root "$release_root/scripts" "$release_root/dist"
 install -d -m 0755 -o root -g root "$root_store/verified-assets"
 
@@ -169,7 +173,9 @@ chmod -R go-w "$release_root" "$root_store/verified-assets"
 
 install -d -m 0755 /usr/local/libexec
 cat >/usr/local/libexec/fased-fixture-solana-rpc.mjs <<'EOF_RPC'
+import fs from "node:fs";
 import http from "node:http";
+import path from "node:path";
 const port = Number(process.env.FASED_FIXTURE_RPC_PORT);
 const version = process.env.FASED_FIXTURE_VERSION;
 const genesis = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"; // pragma: allowlist secret
@@ -177,6 +183,26 @@ http.createServer((request, response) => {
   if (request.method === "GET" && request.url?.startsWith("/@fased%2ffased")) {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ "dist-tags": { latest: version, beta: version } }));
+    return;
+  }
+  if (request.method === "GET" && request.url?.startsWith(`/v${version}/`)) {
+    const asset = decodeURIComponent(request.url.slice(`/v${version}/`.length));
+    if (!/^[A-Za-z0-9._-]+$/.test(asset)) {
+      response.writeHead(400).end();
+      return;
+    }
+    const selected =
+      asset === "install.sh"
+        ? "/usr/local/libexec/fased-fixture-protected-installer.sh"
+        : path.join("/artifacts", asset);
+    try {
+      const stat = fs.statSync(selected);
+      if (!stat.isFile()) throw new Error("not a file");
+      response.writeHead(200, { "content-length": stat.size });
+      fs.createReadStream(selected).pipe(response);
+    } catch {
+      response.writeHead(404).end();
+    }
     return;
   }
   let raw = "";
@@ -200,6 +226,37 @@ http.createServer((request, response) => {
   });
 }).listen(port, "127.0.0.1");
 EOF_RPC
+cat >/usr/local/libexec/fased-fixture-protected-installer.sh <<EOF_PROTECTED_INSTALLER
+#!/usr/bin/env bash
+set -euo pipefail
+declare -A values=()
+while [[ "\$#" -gt 0 ]]; do
+  case "\$1" in
+    --protected-local-root-bootstrap) shift ;;
+    --*) values["\$1"]="\${2:-}"; shift 2 ;;
+    *) echo "unexpected fixture installer argument: \$1" >&2; exit 64 ;;
+  esac
+done
+exec "\${values[--protected-local-node-binary]}" \
+  /repo/scripts/protected-local-bootstrap.mjs install \
+  --source-root "$release_root" \
+  --signer-binary "$root_store/verified-assets/fased-signerd" \
+  --operator-user "\${values[--protected-local-operator-user]}" \
+  --operator-uid "\${values[--protected-local-operator-uid]}" \
+  --operator-gid "\${values[--protected-local-operator-gid]}" \
+  --operator-home "\${values[--protected-local-operator-home]}" \
+  --state-dir "\${values[--protected-local-state-dir]}" \
+  --runtime-dir "\${values[--protected-local-runtime-dir]}" \
+  --node-binary "\${values[--protected-local-node-binary]}" \
+  --release-version "\${values[--release]}" \
+  --release-commit "$commit" \
+  --update-channel "\${values[--update-channel]}" \
+  --profile "\${values[--protected-local-profile]}" \
+  --gateway-port "\${values[--protected-local-gateway-port]}" \
+  --gateway-mode "\${values[--protected-local-gateway-mode]}" \
+  --gateway-health-timeout-ms "\${values[--protected-local-gateway-health-timeout-ms]}"
+EOF_PROTECTED_INSTALLER
+chmod 0755 /usr/local/libexec/fased-fixture-protected-installer.sh
 cat >/etc/systemd/system/fased-fixture-solana-rpc.service <<EOF_RPC_UNIT
 [Unit]
 Description=Fased fixture Solana RPC
@@ -363,6 +420,7 @@ original_key_sha="$(sha256sum "$wallet_dir/signerd-v2.master.key" | awk '{print 
 
 bootstrap prepare >/tmp/protected-prepare.json
 instance="$(jq -er .instanceId /tmp/protected-prepare.json)"
+test "$(stat -c '%U:%G:%a' /opt/fased)" = "root:root:755"
 test -S "/run/fased-local/$instance/application/app.sock"
 test -S "/run/fased-local/$instance/operator/operator.sock"
 test -S "/run/fased-local/$instance/control/control.sock"
@@ -418,8 +476,19 @@ managed_update_env=(
   FASED_CONFIG_PATH="$state/fased.json" \
   FASED_GATEWAY_PORT="$gateway_port" \
   FASED_GATEWAY_TOKEN="$gateway_token" \
+  FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
   npm_config_registry="http://127.0.0.1:$rpc_port"
 )
+
+install -d -m 0755 -o root -g root /etc/fased/testing
+cat >/etc/fased/testing/protected-local-artifact-source.json <<EOF_ARTIFACT_SOURCE
+{
+  "schemaVersion": 1,
+  "baseUrl": "http://127.0.0.1:$rpc_port",
+  "releaseVersion": "$version"
+}
+EOF_ARTIFACT_SOURCE
+chmod 0444 /etc/fased/testing/protected-local-artifact-source.json
 
 cp "$runtime/scripts/start-managed.sh" /tmp/start-managed.real
 printf '#!/usr/bin/env bash\nexit 91\n' >"$runtime/scripts/start-managed.sh"
@@ -442,7 +511,8 @@ runuser -u testop -- env "${managed_update_env[@]}" \
   "$state/install-cache/npm-global/bin/fased" update --timeout 60 \
   >/tmp/protected-update.out 2>/tmp/protected-update.err
 grep -F "Protected Local migration" /tmp/protected-update.err >/dev/null
-grep -F "Already current: $version" /tmp/protected-update.out >/dev/null
+grep -F "Update mode: verified target-owned Protected Local transaction" \
+  /tmp/protected-update.out >/dev/null
 
 instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
 wait_for_service "fased-signerd-$instance.service"
