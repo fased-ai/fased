@@ -50,6 +50,7 @@ describe("attested Hosting installer artifact layout", () => {
     expect(files).toContain("scripts/fased-host-updaterctl.mjs");
     expect(files).toContain("scripts/fased-signer-enroll-hosting.sh");
     expect(files).toContain("scripts/fased-signer-network-hosting.sh");
+    expect(files).toContain("scripts/fased-signer-owner-hosting.sh");
     expect(files).not.toContain("scripts/fased-signer-wallet-import-hosting.sh");
     expect(fs.existsSync(path.join(root, "scripts/fased-signer-wallet-import-hosting.sh"))).toBe(
       false,
@@ -145,6 +146,18 @@ describe("attested Hosting installer artifact layout", () => {
     expect(fs.readFileSync(path.join(root, "scripts/fased-host-updaterctl.mjs"), "utf8")).toContain(
       'process.argv[2] === "--self-check"',
     );
+  });
+
+  it("requires every root updater client invocation to name an explicit transaction phase", () => {
+    const client = path.join(root, "scripts", "fased-host-updaterctl.mjs");
+    for (const args of [["1.2.3"], ["1.2.3", "--full"]]) {
+      const result = spawnSync(process.execPath, [client, ...args], {
+        encoding: "utf8",
+        env: streamedHostingEnv(),
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("unsupported signer updater control mode");
+    }
   });
 
   it("uses the correct GitHub CLI repository setup for DNF4 and DNF5", () => {

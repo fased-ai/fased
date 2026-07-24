@@ -38,13 +38,14 @@ Only then can one exact transaction be signed and broadcast.
 
 ## Supported custody lanes
 
-| Lane                                  | Current use                                            | Security boundary                                                                                                                                                                                                                                                                                                                          |
-| ------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Native signer, Local Linux/macOS/WSL2 | Agent, Mining, and reviewed Vault wallets              | Keys are created/imported and used only by Go, but Gateway and signer run as the same OS user. This is process and code-path isolation, not a hard boundary against a compromised same-user process or host account.                                                                                                                       |
-| Native signer, VPS Hosting            | Agent, Mining, and reviewed Vault wallets              | Root installs a verified fixed binary. `fased-signer` owns key state and the control socket. The Gateway account receives only the typed application socket and has no signer sudo access.                                                                                                                                                 |
-| Native signer, Local Docker           | Local development and self-hosting on Linux/macOS/WSL2 | Signer has a separate non-root container and signer-only volume; Gateway receives only the socket volume. It is not VPS Hosting and is not a boundary against the Docker daemon or host administrator.                                                                                                                                     |
-| Turnkey                               | Manual reviewed Agent or Vault SOL/SPL transfers       | Turnkey holds the signing authority. Its organization policy must independently restrict the dedicated API user. Fased requires the configured policy to be the exclusive `OUTCOME_ALLOW` for the completed activity before broadcast; the Gateway-held API key means the Turnkey policy, not this post-check, is the compromise boundary. |
-| Solana Wallet Standard                | Manual hardware-backed Vault transfers                 | Fased stores only the public address. The browser wallet signs one immutable review. Wallet Standard discovery alone cannot prove hardware backing; confirm the account and transaction on the hardware device.                                                                                                                            |
+| Lane                                      | Current use                                            | Security boundary                                                                                                                                                                                                                                                                                                                          |
+| ----------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Native signer, protected Local Linux      | Agent, Mining, and reviewed Vault wallets              | A verified prebuilt install creates per-profile Gateway and signer service users, a root controller, and separate application/operator/control sockets. The Gateway cannot open operator/control sockets or signer state.                                                                                                                  |
+| Native signer, macOS or unprotected Local | Agent, Mining, and reviewed Vault wallets              | Keys are created/imported and used only by Go, but Gateway and signer run as the same OS user. This is process and code-path isolation, not a hard boundary against a compromised same-user process or host account.                                                                                                                       |
+| Native signer, VPS Hosting                | Agent, Mining, and reviewed Vault wallets              | Root installs a verified fixed binary. `fased-signer` owns key state and the control socket. The Gateway account receives only the typed application socket and has no signer sudo access.                                                                                                                                                 |
+| Native signer, Local Docker               | Local development and self-hosting on Linux/macOS/WSL2 | Signer has a separate non-root container and signer-only volume; Gateway receives only the socket volume. It is not VPS Hosting and is not a boundary against the Docker daemon or host administrator.                                                                                                                                     |
+| Turnkey                                   | Manual reviewed Agent or Vault SOL/SPL transfers       | Turnkey holds the signing authority. Its organization policy must independently restrict the dedicated API user. Fased requires the configured policy to be the exclusive `OUTCOME_ALLOW` for the completed activity before broadcast; the Gateway-held API key means the Turnkey policy, not this post-check, is the compromise boundary. |
+| Solana Wallet Standard                    | Manual hardware-backed Vault transfers                 | Fased stores only the public address. The browser wallet signs one immutable review. Wallet Standard discovery alone cannot prove hardware backing; confirm the account and transaction on the hardware device.                                                                                                                            |
 
 Privy is not a supported signing lane. Its adapter is an unavailable placeholder
 and Fased refuses to save credentials as if creation or signing worked.
@@ -74,15 +75,17 @@ hash. A UI policy change remains pending until the signer acknowledges that
 exact hash.
 
 The Gateway never creates a new key, accepts a key through an HTTP route, or
-receives plaintext key material during creation/import. Local and Hosting use
-the native `fased wallet` operator lifecycle; Hosting routes it through the
+receives plaintext key material during creation/import. Protected Local and
+Hosting use the native `fased wallet` operator lifecycle through the
 peer-credential-checked operator socket that the Gateway account cannot open.
+The generic JavaScript adapter refuses operator and control sockets.
 
 <Warning>
-Go is not itself a security boundary. On a Local same-user install, malicious
-code running as that user may be able to inspect or alter the user's files and
-processes. Use VPS Hosting's separate signer account, a hardware wallet, or a
-properly configured provider policy when compromise isolation matters.
+Go is not itself an operating-system boundary. Protected Local Linux and VPS
+Hosting add separate service identities around it. macOS and any explicitly
+unprotected same-user Local environment remain lower assurance: malicious code
+running as that user may be able to inspect or alter user-owned files and
+processes.
 </Warning>
 
 ## Protocol v2 and typed operations
@@ -193,7 +196,9 @@ arbitrary RPC proxy through the signer.
 
 ## Choosing a lane
 
-- Use Local native signing for development and low-value same-user operation.
+- Use protected Local Linux for signer isolation on a supported systemd
+  desktop/WSL2 environment.
+- Treat macOS and unprotected same-user Local signing as lower assurance.
 - Use Local Docker when you want reproducible local containers, not VPS
   Hosting.
 - Use VPS Hosting when you want an always-on self-hosted signer separated from

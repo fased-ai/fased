@@ -68,7 +68,7 @@ fased update
   <Accordion title="Local or Hosting?">
     | Path | Runs where | Private access | Normal operator |
     | --- | --- | --- | --- |
-    | Local | macOS, Linux, or WSL2 Ubuntu | Local OS; Tailscale optional | Your OS account |
+    | Local | macOS, Linux, or WSL2 Ubuntu | Local OS; Tailscale optional | Your OS account; protected Linux uses isolated Gateway/signer services |
     | VPS Hosting | Ubuntu/Fedora/RHEL-family systemd VPS | Tailscale plus provider-console recovery | `app`; Gateway is isolated as `fased-gateway` |
   </Accordion>
 

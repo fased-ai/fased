@@ -99,9 +99,12 @@ If the browser receives the reply, the first-run path is complete.
 
 <AccordionGroup>
   <Accordion title="What installs where">
-    Local runs under your OS account. Hosting separates the human `app`
-    operator, `fased-gateway` service, and `fased-signer` service. Root is only
-    for first bootstrap and exact-tag emergency repair.
+    Local commands run under your OS account. On supported Linux/systemd,
+    protected Local separates the Gateway and signer into per-profile service
+    identities and uses normal administrator authorization only for the
+    bounded bootstrap/owner boundary. macOS remains same-user. Hosting
+    separates the human `app` operator, `fased-gateway` service, and
+    `fased-signer` service; root is only for bootstrap and exact-tag recovery.
   </Accordion>
 
   <Accordion title="Update later">

@@ -41,16 +41,16 @@ describe("root-coordinated Hosting lifecycle", () => {
     );
   });
 
-  it("uses operator sockets for app administration and app sockets only for the Gateway", () => {
+  it("persists app.sock while typed native administration derives operator.sock", () => {
     const coordinator = sliceBetween(installer, "reexec_as_app_user()", "go_modern_enough()");
     const services = sliceBetween(
       installer,
       "install_host_signer_and_updater_services()",
       "migrate_legacy_hosted_signer_if_needed()",
     );
-    expect(coordinator).toContain(
-      "FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/operator.sock",
-    );
+    expect(coordinator).toContain("FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock");
+    expect(coordinator).toContain("FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external");
+    expect(installer).toContain("Environment=FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external");
     expect(services).toContain("--socket-gid ${operator_gid}");
     expect(services).toContain("-socket /run/fased-signerd/app.sock");
     expect(services).toContain("-operator-socket /run/fased-signerd/operator.sock");
@@ -338,7 +338,9 @@ verify_root_coordinated_hosted_gateway app ${JSON.stringify(path.join(tempRoot, 
       "async function refreshGateway(",
       "async function updateStableComponents(",
     );
-    expect(refresh).toContain('manifest.profile === "hosting" && !hostedServiceAlreadyRestarted');
+    expect(refresh).toContain("if (isRootManagedProfile(manifest.profile))");
+    expect(refresh).toContain("if (!hostedServiceAlreadyRestarted)");
+    expect(refresh).toContain("} else {\n    const installed = await runFile");
     expect(refresh).toContain("targetServiceAlreadyRestarted");
     expect(refresh).toContain("refreshPrevious");
   });

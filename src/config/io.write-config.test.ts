@@ -575,13 +575,16 @@ describe("config io write", () => {
     });
   });
 
-  it("writes group-shared state only for the Hosting runtime profile", async () => {
+  it.each([
+    ["Hosting", { FASED_HOST_PROFILE: "hosting" }],
+    ["Protected Local", { FASED_HOST_PROFILE: "local", FASED_PROTECTED_LOCAL: "1" }],
+  ])("writes group-shared state for the %s service profile", async (_label, env) => {
     if (process.platform === "win32") {
       return;
     }
     await withTempHome("fased-config-io-hosting-", async (home) => {
       const io = createConfigIO({
-        env: { FASED_HOST_PROFILE: "hosting" },
+        env,
         homedir: () => home,
         logger: silentLogger,
       });

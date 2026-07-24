@@ -81,8 +81,9 @@ function resolveHostTransaction(params, { previousManifest, previousRoot, versio
   if (!HOST_TRANSACTION_ID_PATTERN.test(transactionId)) {
     throw new Error("--host-transaction-id must be a UUID v4");
   }
-  if (normalizeManagedProfile(params.profile) !== "hosting") {
-    throw new Error("A host update transaction can only activate a hosting runtime.");
+  const profile = normalizeManagedProfile(params.profile);
+  if (profile !== "hosting" && profile !== "protected-local") {
+    throw new Error("A root-controller update transaction requires a root-managed runtime.");
   }
   if (transactionVersion !== version) {
     throw new Error(
@@ -93,7 +94,7 @@ function resolveHostTransaction(params, { previousManifest, previousRoot, versio
   // A fresh hosting install has no application release to roll back. Its root
   // installer owns the signer transaction and commits it after the first
   // Gateway health check. Existing hosting installs coordinate both sides here.
-  if (!previousRoot || previousManifest?.profile !== "hosting") {
+  if (!previousRoot || previousManifest?.profile !== profile) {
     return null;
   }
   if (previousManifest.runtime?.activeVersion !== params.previousVersion) {
@@ -221,18 +222,18 @@ export async function installManagedRuntime(params, dependencyOverrides = {}) {
   };
   const paths = resolveManagedRuntimePaths(params);
   const profile = normalizeManagedProfile(params.profile);
-  const stateDirMode = profile === "hosting" ? 0o2770 : 0o700;
-  const sharedManifestMode = profile === "hosting" ? 0o660 : 0o600;
+  const rootManaged = profile === "hosting" || profile === "protected-local";
+  const stateDirMode = rootManaged ? 0o2770 : 0o700;
+  const sharedManifestMode = rootManaged ? 0o660 : 0o600;
   const existingManifest = readManagedInstallManifest(paths.manifestPath);
   const version = await assertManagedRuntime(params.packageRoot);
   const metadata = await readHostedRuntimeMetadata(params.packageRoot);
-  const hostedRelease =
-    profile === "hosting"
-      ? await readHostedReleaseBinding(params.packageRoot, metadata, version)
-      : null;
-  if (profile === "hosting" && params.hostTransactionId && !hostedRelease) {
+  const hostedRelease = rootManaged
+    ? await readHostedReleaseBinding(params.packageRoot, metadata, version)
+    : null;
+  if (rootManaged && params.hostTransactionId && !hostedRelease) {
     throw new Error(
-      "Maintained Hosting requires an attested unified app and signer release manifest.",
+      "A root-managed runtime requires an attested unified app and signer release manifest.",
     );
   }
   let previousRoot = await resolveLinkTarget(paths.currentLink);
@@ -288,6 +289,7 @@ export async function installManagedRuntime(params, dependencyOverrides = {}) {
           profile: params.profile,
           version: previousVersion,
           previousVersion: null,
+          service: existingManifest?.service,
         })
       : null);
   const hostTransaction = resolveHostTransaction(
@@ -327,6 +329,7 @@ export async function installManagedRuntime(params, dependencyOverrides = {}) {
     dependencyHash: metadata?.dependencyHash,
     hostedRelease,
     previousVersion: previousVersion || null,
+    service: existingManifest?.service,
   });
   if (hostTransaction) {
     await dependencies.beginPreactivatedHostedTransaction({
@@ -401,8 +404,9 @@ export async function rollbackManagedRuntime(params) {
   const previousVersion = await assertManagedRuntime(previousRoot);
   const currentVersion = await readPackageVersion(currentRoot);
   const metadata = await readHostedRuntimeMetadata(previousRoot);
+  const rollbackProfile = normalizeManagedProfile(manifest.profile);
   const hostedRelease =
-    normalizeManagedProfile(manifest.profile) === "hosting"
+    rollbackProfile === "hosting" || rollbackProfile === "protected-local"
       ? await readHostedReleaseBinding(previousRoot, metadata, previousVersion)
       : null;
 
@@ -423,11 +427,12 @@ export async function rollbackManagedRuntime(params) {
     dependencyHash: metadata?.dependencyHash,
     hostedRelease,
     previousVersion: currentVersion,
+    service: manifest.service,
   });
   await atomicWriteJson(
     paths.manifestPath,
     previousManifest,
-    normalizeManagedProfile(manifest.profile) === "hosting" ? 0o660 : 0o600,
+    rollbackProfile === "hosting" || rollbackProfile === "protected-local" ? 0o660 : 0o600,
   );
   return { manifest: previousManifest, paths, releaseRoot: previousRoot };
 }

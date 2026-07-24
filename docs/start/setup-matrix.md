@@ -41,9 +41,11 @@ PowerShell or Windows Node.js. On Linux, use your distro terminal. See [Windows
 (WSL2)](/platforms/windows) for the supported Windows versions and exact shell
 boundary.
 
-It creates local config, workspace, gateway settings, local signer/wallet state
-if selected, and local service startup. Tailscale is not part of the basic Local
-path.
+It creates local config, workspace, gateway settings, signer/wallet state if
+selected, and local service startup. A verified prebuilt install on supported
+Linux/systemd creates per-profile protected Gateway, signer, and controller
+services after normal OS administrator authorization. macOS and explicit
+source installs remain same-user Local. Tailscale is not part of the Local path.
 
 Risk: Local on a VPS means no SSH/firewall hardening. It can still run, but it
 does not apply the hosting security baseline.

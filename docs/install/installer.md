@@ -113,10 +113,16 @@ writable modes, package version, and build identity.
 | `fased-gateway` | Gateway service                                         | Application operations only through `app.sock`     |
 | `fased-signer`  | Native signer service                                   | Owns keys, policy, network state, and audit        |
 
-Local uses the same `fased wallet` commands under the local OS account. Hosting
-routes those commands through the restricted operator socket, so create,
-import, recovery, raw export, RPC changes, and Mining retirement do not require
-undocumented root helpers.
+Protected Local Linux uses the same authority model with random per-profile
+service identities and socket paths. Normal `fased wallet` commands route
+create, import, readiness, policy, RPC, and Mining retirement through the typed
+native operator client. Recovery, raw export, re-encryption, WebAuthn
+enrollment, and mutating rotation are intentionally unavailable on the
+operator socket; use the installed bounded signer-owner helper after normal OS
+administrator authorization.
+
+macOS and explicitly unprotected same-user Local installs do not provide the
+same operating-system isolation.
 
 ## Wallet setup contract
 

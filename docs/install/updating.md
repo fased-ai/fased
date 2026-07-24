@@ -16,6 +16,8 @@ active runtime depends on the install profile:
   prebuilt release artifact.
 - Their CLI and Gateway service resolve the active version through a stable
   launcher outside the versioned application directory.
+- Protected Local Linux and VPS Hosting coordinate the application and signer
+  through a root-owned paired release controller.
 - macOS and explicit `--source-install` installs run from the source checkout.
 - `fased update` is the normal update command for both profiles.
 - The Control UI currently reports update status; it does not start the update.
@@ -141,13 +143,20 @@ asset; the Unix-socket signer is not supported by a native Windows Node.js
 install. Verification failure stops the install instead of falling back to an
 implicit source build.
 
-When a Local install already has a native signer, `fased update` treats the
-Gateway and signer as one transaction. It snapshots the current application
-and signer state, stages the exact version-matched signer read-only, activates
-the application, and requires exact Gateway and signer health before committing
-the signer read-write. Before that durable health decision, a failure restores
-both sides. After the decision, recovery completes forward so a signer database
-that may have recorded a request is never replaced by an older snapshot.
+Protected Local Linux treats the Gateway, signer, and controller as one
+root-coordinated transaction. It stages the exact version-matched signer,
+activates the application, and requires exact Gateway and signer health before
+commit. Before that durable decision, failure restores the previous runtime and
+signer state. After the decision, recovery completes forward so a signer
+database that may have recorded a request is never replaced by an older
+snapshot.
+
+An older same-user Local installation uses its existing paired transaction
+until it reaches the explicitly tested protected-migration boundary. An
+already-published updater cannot acquire new privileged migration behavior
+inside the same running process. Release notes must name the oldest updater
+that can perform the one-command transition; do not claim arbitrary historical
+versions migrate automatically.
 
 This pairing also applies to tagged macOS and explicit source installs. A
 source checkout with a configured signer must be clean, resolve to a production
@@ -229,7 +238,8 @@ Use `./install.sh --no-git-update` only when testing local changes.
 - uses the same verified artifact for supported Linux Local installs
 - refreshes dependencies and rebuilds for macOS or explicit source installs
 - checks tracked npm plugins after the core update
-- detects the local user service or root-managed VPS Hosting service
+- detects the exact protected Local per-instance system service, legacy Local
+  user service, or root-managed VPS Hosting service
 - restarts the correct service and verifies Gateway health
 - restores the previous packaged runtime automatically if post-update health fails
 

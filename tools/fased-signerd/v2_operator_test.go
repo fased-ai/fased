@@ -46,14 +46,24 @@ func TestSignerOperatorContextBindsReleaseExpiryAndOneTimeNonce(t *testing.T) {
 	if err := validateSignerOperatorContextV1(request{Op: "health", Operator: &expired}, store, now); err == nil || !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("expired operator request was accepted: %v", err)
 	}
-	forbidden := context
-	forbidden.Nonce = strings.Repeat("d", 64)
-	if err := validateSignerOperatorContextV1(request{Op: "v2.policy.put", Operator: &forbidden}, store, now); err == nil || !strings.Contains(err.Error(), "not available") {
-		t.Fatalf("arbitrary policy operation was accepted on operator authority: %v", err)
+	nonces := []string{"d", "e", "f", "a", "b", "c"}
+	for index, op := range []string{
+		"v2.policy.put",
+		"v2.wallet.recovery.export",
+		"v2.wallet.recovery.import",
+		"v2.wallet.exportRaw",
+		"v2.wallet.rotation.create",
+		"v2.wallet.rotation.commit",
+	} {
+		forbidden := context
+		forbidden.Nonce = strings.Repeat(nonces[index], 64)
+		if err := validateSignerOperatorContextV1(request{Op: op, Operator: &forbidden}, store, now); err == nil || !strings.Contains(err.Error(), "not available") {
+			t.Fatalf("%s was accepted on operator authority: %v", op, err)
+		}
 	}
 }
 
-func TestSignerOperatorLifecycleTransfersSecretsWithoutSignerPaths(t *testing.T) {
+func TestSignerOperatorLifecycleAllowsTypedSetupButDeniesCustodyExport(t *testing.T) {
 	store, keys := openTestSignerV2(t)
 	service := &signerServiceV2{store: store, keys: keys}
 	createBody, err := json.Marshal(signerOperatorWalletCreateRequestV1{
@@ -112,20 +122,13 @@ func TestSignerOperatorLifecycleTransfersSecretsWithoutSignerPaths(t *testing.T)
 	rawBody, _ := json.Marshal(signerOperatorRawExportRequestV1{
 		ExpectedPublicKey: wallet.PublicKey, AcknowledgeCustodyReduction: true,
 	})
-	response, err := service.handle(request{
+	if _, err := service.handle(request{
 		Op: "v2.wallet.exportRaw", WalletID: wallet.WalletID, Request: rawBody, operatorSocket: true,
-	}, signerConfig{}, false)
-	if err != nil {
-		t.Fatalf("operator raw export failed: %v", err)
+	}, signerConfig{}, false); err == nil || !strings.Contains(err.Error(), "not available") {
+		t.Fatalf("operator raw export was not denied: %v", err)
 	}
-	var decoded struct {
-		Result signerOperatorRawExportResultV1 `json:"result"`
-	}
-	if err := json.Unmarshal(response, &decoded); err != nil || decoded.Result.KeypairBase64 != base64.RawStdEncoding.EncodeToString(privateKey) {
-		t.Fatalf("operator raw export returned an invalid typed result: result=%#v err=%v", decoded.Result, err)
-	}
-	if strings.Contains(string(response), "path") || strings.Contains(string(importBody), "path") {
-		t.Fatalf("operator lifecycle exposed a caller-chosen signer path: import=%s export=%s", importBody, response)
+	if strings.Contains(string(importBody), "path") {
+		t.Fatalf("operator import exposed a caller-chosen signer path: %s", importBody)
 	}
 
 	policyBody, _ := json.Marshal(signerPolicyV2{Role: "agent"})

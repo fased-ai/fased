@@ -89,6 +89,22 @@ async function createSignerServer(params: {
 }
 
 describe("callLocalSocketSigner", () => {
+  it.each(["operator.sock", "control.sock", "local-signer-control.sock"])(
+    "refuses the privileged signer socket %s",
+    async (socketName) => {
+      await expect(
+        callLocalSocketSigner(path.join("/run/fased-signerd", socketName), { op: "health" }),
+      ).rejects.toThrow(/typed native signer client/);
+    },
+  );
+
+  it("refuses a custom lifecycle socket named through protected configuration", async () => {
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_OPERATOR_SOCKET", "/tmp/fased/custom-admin.sock");
+    await expect(
+      callLocalSocketSigner("/tmp/fased/custom-admin.sock", { op: "health" }),
+    ).rejects.toThrow(/typed native signer client/);
+  });
+
   it("preserves only sanitized signer credential readiness in health", async () => {
     const signer = await createSignerServer({
       prefix: "fased-signer-sanitized-health-",
@@ -605,7 +621,7 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
         maxFeeLamports: "5000",
         sourceTokenAccount: "Stake11111111111111111111111111111111111111",
         destinationTokenAccount: "Config1111111111111111111111111111111111111",
-        programs: ["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"],
+        programs: ["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"], // pragma: allowlist secret
       },
     };
     const binding = {
@@ -623,7 +639,7 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
       amount: "100",
       destination: "Config1111111111111111111111111111111111111",
       policyOperation: intent.type,
-      requiredPrograms: ["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"],
+      requiredPrograms: ["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"], // pragma: allowlist secret
       policyHash,
       nonce: "d".repeat(64),
       issuedAt: "2026-07-16T12:00:00.000Z",

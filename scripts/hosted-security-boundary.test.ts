@@ -37,7 +37,7 @@ describe("hosted signer security boundary", () => {
     expect(install).toContain("! -type f ! -type d");
     expect(install).toContain("-type f -links +1");
     expect(install).toContain(
-      "printf 'version=%s\\nsha256=%s\\nrelease_manifest_sha256=%s\\ncommit=%s\\n'",
+      "printf 'version=%s\\nsha256=%s\\nsigner_sha256=%s\\nrelease_manifest_sha256=%s\\ncommit=%s\\n'",
     );
     expect(install).toContain('tagged_head" == "$attested_commit');
     expect(install).toContain('tagged_package_version" == "$HOSTING_RELEASE');
@@ -104,7 +104,7 @@ describe("hosted signer security boundary", () => {
     );
     const hostedBranch = sliceBetween(
       startup,
-      'if [[ "${FASED_HOST_PROFILE:-}" == "hosting" ]]',
+      'if [[ "${FASED_HOST_PROFILE:-}" == "hosting" || "${FASED_PROTECTED_LOCAL:-0}" == "1" ]]',
       "elif should_start_signerd",
     );
     expect(hostedBranch).not.toContain("start_signerd_process");
@@ -116,6 +116,13 @@ describe("hosted signer security boundary", () => {
       "trap cleanup_managed_runtime EXIT",
     );
     expect(cleanup).toContain('if [[ "${HOSTED_ROOT_SIGNER:-0}" != "1" ]]');
+  });
+
+  it("uses the root-verified Tailscale route without installing a zrok tunnel", () => {
+    expect(managed).toContain('if [[ "${FASED_HOST_PROFILE:-}" == "hosting" ]]');
+    expect(managed).toContain(
+      "Hosting uses its root-verified private Tailscale Serve route; no zrok tunnel is started.",
+    );
   });
 
   it("never imports legacy wallet key material from signer.env into managed startup", () => {

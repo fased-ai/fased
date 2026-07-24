@@ -43,7 +43,12 @@ export function normalizeManagedProfile(value) {
   const profile = String(value || "")
     .trim()
     .toLowerCase();
-  if (profile === "hosting" || profile === "local" || profile === "source") {
+  if (
+    profile === "hosting" ||
+    profile === "protected-local" ||
+    profile === "local" ||
+    profile === "source"
+  ) {
     return profile;
   }
   return "local";
@@ -200,6 +205,7 @@ export function buildManagedInstallManifest({
   dependencyHash,
   hostedRelease,
   previousVersion,
+  service,
   source = "managed-artifact",
 }) {
   const normalizedProfile = normalizeManagedProfile(profile);
@@ -226,9 +232,13 @@ export function buildManagedInstallManifest({
       compatibilityRoot: paths.compatibilityPackageRoot,
     },
     service: {
-      name: "fased-gateway.service",
-      scope: normalizedProfile === "hosting" ? "system" : "user",
-      launcher: paths.serviceLauncherPath,
+      name: service?.name || "fased-gateway.service",
+      scope:
+        service?.scope ||
+        (normalizedProfile === "hosting" || normalizedProfile === "protected-local"
+          ? "system"
+          : "user"),
+      launcher: service?.launcher || paths.serviceLauncherPath,
     },
     updater: {
       version,

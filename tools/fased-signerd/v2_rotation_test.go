@@ -435,10 +435,10 @@ func TestMiningRetirementRequiresEvidenceRecoveryNetworkAndReconciliation(t *tes
 		t.Fatal(err)
 	}
 	encodedCommitted, err := (&signerServiceV2{store: store, keys: keys}).handle(request{
-		Op: "v2.wallet.rotation.commit", WalletID: source.WalletID, Request: commitBody, operatorSocket: true,
-	}, signerConfig{}, false)
+		Op: "v2.wallet.rotation.commit", WalletID: source.WalletID, Request: commitBody,
+	}, signerConfig{}, true)
 	if err != nil {
-		t.Fatalf("commit safe Mining retirement through restricted operator authority: %v", err)
+		t.Fatalf("commit safe Mining retirement through signer-owner authority: %v", err)
 	}
 	var envelope signerAdminResponse
 	if err := json.Unmarshal(encodedCommitted, &envelope); err != nil || !envelope.OK {

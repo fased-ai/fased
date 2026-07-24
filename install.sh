@@ -7,6 +7,7 @@ case "$install_entry_source" in
   ""|bash|-|/dev/stdin) install_entry_is_stream=1 ;;
 esac
 install_entry_hosting=0
+install_entry_protected_local_root=0
 install_entry_verified_bundle=""
 install_entry_app_handoff=""
 install_entry_legacy_ts_authkey=0
@@ -15,6 +16,9 @@ for ((install_entry_index = 0; install_entry_index < ${#install_entry_args[@]}; 
   case "${install_entry_args[$install_entry_index]}" in
     --hosting|--repair-hosting)
       install_entry_hosting=1
+      ;;
+    --protected-local-root-bootstrap)
+      install_entry_protected_local_root=1
       ;;
     --host-profile)
       if [[ "${install_entry_args[$((install_entry_index + 1))]:-}" == "hosting" ]]; then
@@ -126,7 +130,7 @@ fi
 # Streamed Hosting reaches this block only for the fresh stable selector or
 # the exact release/channel selector validated above. Repair and other advanced
 # Hosting selectors remain exact-tag-only.
-if [[ "$install_entry_is_stream" -eq 1 || \
+if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_protected_local_root" -eq 1 || \
   ( "$install_entry_hosting" -eq 1 && -z "$install_entry_verified_bundle" && -z "$install_entry_app_handoff" ) ]]; then
   install_repo_url="${FASED_INSTALL_REPO:-https://github.com/fased-ai/fased.git}"
   install_base_dir="${FASED_INSTALL_DIR:-$HOME/fased}"
@@ -136,6 +140,17 @@ if [[ "$install_entry_is_stream" -eq 1 || \
   hosting_release=""
   hosting_update_channel="stable"
   verified_hosting_bundle=""
+  protected_local_bootstrap="$install_entry_protected_local_root"
+  protected_local_operator_user=""
+  protected_local_operator_uid=""
+  protected_local_operator_gid=""
+  protected_local_operator_home=""
+  protected_local_state_dir=""
+  protected_local_runtime_dir=""
+  protected_local_node_binary=""
+  protected_local_profile=""
+  protected_local_gateway_port=""
+  protected_local_gateway_mode=""
   args=("$@")
 
   for ((i = 0; i < ${#args[@]}; i++)); do
@@ -183,8 +198,44 @@ if [[ "$install_entry_is_stream" -eq 1 || \
         fi
         verified_hosting_bundle="${args[$((i + 1))]}"
         ;;
+      --protected-local-operator-user) protected_local_operator_user="${args[$((i + 1))]:-}" ;;
+      --protected-local-operator-uid) protected_local_operator_uid="${args[$((i + 1))]:-}" ;;
+      --protected-local-operator-gid) protected_local_operator_gid="${args[$((i + 1))]:-}" ;;
+      --protected-local-operator-home) protected_local_operator_home="${args[$((i + 1))]:-}" ;;
+      --protected-local-state-dir) protected_local_state_dir="${args[$((i + 1))]:-}" ;;
+      --protected-local-runtime-dir) protected_local_runtime_dir="${args[$((i + 1))]:-}" ;;
+      --protected-local-node-binary) protected_local_node_binary="${args[$((i + 1))]:-}" ;;
+      --protected-local-profile) protected_local_profile="${args[$((i + 1))]:-}" ;;
+      --protected-local-gateway-port) protected_local_gateway_port="${args[$((i + 1))]:-}" ;;
+      --protected-local-gateway-mode) protected_local_gateway_mode="${args[$((i + 1))]:-}" ;;
     esac
   done
+
+  if [[ "$protected_local_bootstrap" -eq 1 ]]; then
+    if [[ "$(id -u)" -ne 0 || "$install_entry_is_stream" -eq 1 || "$hosting_bootstrap" -eq 1 ]]; then
+      echo "Protected Local root bootstrap requires the exact local installer file through normal OS administrator authorization." >&2
+      exit 1
+    fi
+    protected_local_required=(
+      "$protected_local_operator_user"
+      "$protected_local_operator_uid"
+      "$protected_local_operator_gid"
+      "$protected_local_operator_home"
+      "$protected_local_state_dir"
+      "$protected_local_runtime_dir"
+      "$protected_local_node_binary"
+      "$protected_local_profile"
+      "$protected_local_gateway_port"
+      "$protected_local_gateway_mode"
+      "$hosting_release"
+    )
+    for protected_local_value in "${protected_local_required[@]}"; do
+      if [[ -z "$protected_local_value" ]]; then
+        echo "Protected Local root bootstrap is missing a fixed installer input." >&2
+        exit 1
+      fi
+    done
+  fi
 
   if [[ "$hosting_bootstrap" -eq 1 && "$hosting_repair_bootstrap" -eq 0 && -z "$hosting_release" ]]; then
     hosting_release="latest"
@@ -386,6 +437,29 @@ if [[ "$install_entry_is_stream" -eq 1 || \
     local manifest_commit=""
     local manifest_signer_commit=""
 
+    enter_protected_local_bundle() {
+      local selected_root_store="$1"
+      local selected_package_root="$2"
+      local selected_commit="$3"
+      exec "$protected_local_node_binary" \
+        "$selected_package_root/scripts/protected-local-bootstrap.mjs" install \
+        --source-root "$selected_package_root" \
+        --signer-binary "$selected_root_store/verified-assets/fased-signerd" \
+        --operator-user "$protected_local_operator_user" \
+        --operator-uid "$protected_local_operator_uid" \
+        --operator-gid "$protected_local_operator_gid" \
+        --operator-home "$protected_local_operator_home" \
+        --state-dir "$protected_local_state_dir" \
+        --runtime-dir "$protected_local_runtime_dir" \
+        --node-binary "$protected_local_node_binary" \
+        --release-version "$release_version" \
+        --release-commit "$selected_commit" \
+        --update-channel "$hosting_update_channel" \
+        --profile "$protected_local_profile" \
+        --gateway-port "$protected_local_gateway_port" \
+        --gateway-mode "$protected_local_gateway_mode"
+    }
+
     umask 077
     hosting_bootstrap_cleanup() {
       local status="$?"
@@ -548,7 +622,11 @@ if [[ "$install_entry_is_stream" -eq 1 || \
       ! -L "$existing_root/.fased-hosting-bundle-verified" ]] && \
       grep -Fxq "version=${release_version}" "$existing_root/.fased-hosting-bundle-verified" && \
       grep -Fxq "sha256=${actual}" "$existing_root/.fased-hosting-bundle-verified" && \
+      grep -Fxq "signer_sha256=${signer_actual}" "$existing_root/.fased-hosting-bundle-verified" && \
       grep -Fxq "release_manifest_sha256=${manifest_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
+      [[ -f "$root_store/verified-assets/fased-signerd" && \
+        ! -L "$root_store/verified-assets/fased-signerd" && \
+        "$(sha256sum "$root_store/verified-assets/fased-signerd" | awk '{print tolower($1)}')" == "$signer_actual" ]] && \
       [[ "$existing_commit" =~ ^[a-f0-9]{40}$ ]] && \
       grep -Fxq "commit=${existing_commit}" "$existing_root/.fased-hosting-bundle-verified" && \
       ! find "$root_store" -xdev \( ! -user root -o -perm /022 \) -print -quit | grep -q . && \
@@ -560,6 +638,9 @@ if [[ "$install_entry_is_stream" -eq 1 || \
       flock -u 9
       exec 9>&-
       echo "Reusing verified tagged Hosting bundle v${release_version} (${actual})."
+      if [[ "$protected_local_bootstrap" -eq 1 ]]; then
+        enter_protected_local_bundle "$root_store" "$existing_root" "$existing_commit"
+      fi
       exec bash "$existing_root/install.sh" "${verified_inner_args[@]}" \
         --release "$release_version" \
         --verified-hosting-bundle "$existing_root"
@@ -572,6 +653,8 @@ if [[ "$install_entry_is_stream" -eq 1 || \
 
     install -d -m 0700 -o root -g root "$staging/extract"
     cp -a "$verified_package_root" "$staging/extract/package"
+    install -d -m 0755 -o root -g root "$staging/verified-assets"
+    install -m 0755 -o root -g root "$signer_binary" "$staging/verified-assets/fased-signerd"
     local package_root="$staging/extract/package"
     chown -R root:root "$staging"
     chmod -R go-w "$staging"
@@ -579,8 +662,8 @@ if [[ "$install_entry_is_stream" -eq 1 || \
       echo "Could not secure the verified Hosting bundle as root-owned and non-writable." >&2
       exit 1
     fi
-    printf 'version=%s\nsha256=%s\nrelease_manifest_sha256=%s\ncommit=%s\n' \
-      "$release_version" "$actual" "$manifest_digest" "$packaged_commit" >"$package_root/.fased-hosting-bundle-verified"
+    printf 'version=%s\nsha256=%s\nsigner_sha256=%s\nrelease_manifest_sha256=%s\ncommit=%s\n' \
+      "$release_version" "$actual" "$signer_actual" "$manifest_digest" "$packaged_commit" >"$package_root/.fased-hosting-bundle-verified"
     chmod 0600 "$package_root/.fased-hosting-bundle-verified"
     sync -f "$package_root/.fased-hosting-bundle-verified" "$package_root" "$staging/extract" 2>/dev/null || true
     mv "$staging" "$root_store"
@@ -591,12 +674,15 @@ if [[ "$install_entry_is_stream" -eq 1 || \
 
     local final_root="$root_store/extract/package"
     echo "Verified tagged Hosting bundle v${release_version}; entering the root-owned installer."
+    if [[ "$protected_local_bootstrap" -eq 1 ]]; then
+      enter_protected_local_bundle "$root_store" "$final_root" "$packaged_commit"
+    fi
     exec bash "$final_root/install.sh" "${verified_inner_args[@]}" \
       --release "$release_version" \
       --verified-hosting-bundle "$final_root"
   }
 
-  if [[ "$hosting_bootstrap" -eq 1 ]]; then
+  if [[ "$hosting_bootstrap" -eq 1 || "$protected_local_bootstrap" -eq 1 ]]; then
     bootstrap_hosting_attested_bundle "$@"
   fi
 
@@ -873,6 +959,8 @@ PREBUILT_RUNTIME_INSTALLED=0
 GATEWAY_SERVICE_REFRESHED=0
 GATEWAY_RUNTIME_HEALTH_VERIFIED=0
 LOCAL_SIGNER_INSTALL_TRANSACTION_OPEN=0
+PROTECTED_LOCAL_BOOTSTRAPPED=0
+PROTECTED_LOCAL_INSTANCE=""
 HOST_SIGNER_TRANSACTION_ACTIVE=0
 HOST_SIGNER_DURABLE_COMMIT_DECISION=0
 HOST_SIGNER_TRANSACTION_ID=""
@@ -2355,6 +2443,11 @@ resolved_host_profile() {
     printf 'hosting\n'
     return 0
   fi
+  if [[ -f "$FASED_CONFIG_DIR/install.json" ]] && \
+    grep -Eq '"profile"[[:space:]]*:[[:space:]]*"protected-local"' "$FASED_CONFIG_DIR/install.json"; then
+    printf 'protected-local\n'
+    return 0
+  fi
 
   local profile
   profile="$(pass_args_value_after "--host-profile" || true)"
@@ -2362,6 +2455,108 @@ resolved_host_profile() {
     profile="local"
   fi
   printf '%s\n' "$profile"
+}
+
+protected_local_target_platform() {
+  [[ "$(uname -s 2>/dev/null || true)" == "Linux" ]] || return 1
+  systemd_is_pid_one || return 1
+  [[ "$(resolved_host_profile)" != "hosting" ]] || return 1
+  [[ "$PREBUILT_RUNTIME_INSTALLED" -eq 1 ]] || return 1
+  [[ "$SOURCE_INSTALL_REQUESTED" -eq 0 ]] || return 1
+  [[ "$(id -u)" -ne 0 ]] || return 1
+}
+
+protected_local_supported() {
+  protected_local_target_platform || return 1
+  command -v sudo >/dev/null 2>&1
+}
+
+read_protected_local_env() {
+  local config="${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}"
+  [[ -f "$config" ]] || return 1
+  protected_local_value() {
+    node -e '
+      const fs = require("node:fs");
+      const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const result = value?.env?.vars?.[process.argv[2]];
+      if (typeof result === "string") process.stdout.write(result);
+    ' "$config" "$1"
+  }
+  FASED_PROTECTED_LOCAL="$(protected_local_value FASED_PROTECTED_LOCAL)"
+  FASED_PROTECTED_LOCAL_INSTANCE="$(protected_local_value FASED_PROTECTED_LOCAL_INSTANCE)"
+  FASED_WALLET_LOCAL_SIGNER_LIFECYCLE="$(protected_local_value FASED_WALLET_LOCAL_SIGNER_LIFECYCLE)"
+  FASED_WALLET_LOCAL_SIGNER_BIN="$(protected_local_value FASED_WALLET_LOCAL_SIGNER_BIN)"
+  FASED_WALLET_LOCAL_SIGNER_SOCKET="$(protected_local_value FASED_WALLET_LOCAL_SIGNER_SOCKET)"
+  FASED_HOST_UPDATER_SOCKET="$(protected_local_value FASED_HOST_UPDATER_SOCKET)"
+  FASED_HOST_UPDATERCTL_STATE="$(protected_local_value FASED_HOST_UPDATERCTL_STATE)"
+  if [[ "$FASED_PROTECTED_LOCAL" != "1" || \
+    ! "$FASED_PROTECTED_LOCAL_INSTANCE" =~ ^[a-f0-9]{16}$ || \
+    "$FASED_WALLET_LOCAL_SIGNER_LIFECYCLE" != "external" ]]; then
+    return 1
+  fi
+  PROTECTED_LOCAL_INSTANCE="$FASED_PROTECTED_LOCAL_INSTANCE"
+  export \
+    FASED_PROTECTED_LOCAL \
+    FASED_PROTECTED_LOCAL_INSTANCE \
+    FASED_WALLET_LOCAL_SIGNER_LIFECYCLE \
+    FASED_WALLET_LOCAL_SIGNER_BIN \
+    FASED_WALLET_LOCAL_SIGNER_SOCKET \
+    FASED_HOST_UPDATER_SOCKET \
+    FASED_HOST_UPDATERCTL_STATE
+}
+
+bootstrap_protected_local_topology() {
+  local gateway_mode="$1"
+  protected_local_supported || return 2
+  local runtime_root=""
+  runtime_root="$(readlink -f "$FASED_CONFIG_DIR/runtime/current" 2>/dev/null || true)"
+  if [[ -z "$runtime_root" || ! -f "$runtime_root/dist/build-info.json" || \
+    ! -f "$runtime_root/scripts/protected-local-bootstrap.mjs" ]]; then
+    echo "The exact managed Local runtime is missing its protected service bootstrap." >&2
+    return 1
+  fi
+  local release_version=""
+  local release_commit=""
+  release_version="$(node -e 'const v=require(process.argv[1]);process.stdout.write(String(v.version||""))' "$runtime_root/package.json")"
+  release_commit="$(node -e 'const v=require(process.argv[1]);process.stdout.write(String(v.commit||""))' "$runtime_root/dist/build-info.json")"
+  if [[ ! "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ || \
+    ! "$release_commit" =~ ^[a-f0-9]{40}$ ]]; then
+    echo "The managed Local runtime does not have one exact release identity." >&2
+    return 1
+  fi
+  local gateway_port=""
+  gateway_port="$(pass_args_value_after "--gateway-port" || true)"
+  gateway_port="${gateway_port:-${FASED_GATEWAY_PORT:-18789}}"
+  local system_node=""
+  system_node="$(readlink -f "$(command -v node)" 2>/dev/null || true)"
+  if [[ -z "$system_node" || "$system_node" != /usr/bin/* && "$system_node" != /usr/local/bin/* ]]; then
+    echo "Protected Local requires a root-controlled system Node.js runtime." >&2
+    return 1
+  fi
+  echo "Authorizing the protected Local signer and Gateway service boundary..."
+  sudo -- /bin/bash "$FASED_DIR/install.sh" \
+    --protected-local-root-bootstrap \
+    --release "$release_version" \
+    --update-channel "$UPDATE_CHANNEL" \
+    --protected-local-operator-user "$(id -un)" \
+    --protected-local-operator-uid "$(id -u)" \
+    --protected-local-operator-gid "$(id -g)" \
+    --protected-local-operator-home "$HOME" \
+    --protected-local-state-dir "$FASED_CONFIG_DIR" \
+    --protected-local-runtime-dir "$runtime_root" \
+    --protected-local-node-binary "$system_node" \
+    --protected-local-profile "${FASED_PROFILE:-default}" \
+    --protected-local-gateway-port "$gateway_port" \
+    --protected-local-gateway-mode "$gateway_mode"
+  if [[ "$gateway_mode" == "rollback" ]]; then
+    PROTECTED_LOCAL_BOOTSTRAPPED=0
+    return 0
+  fi
+  read_protected_local_env || {
+    echo "Protected Local bootstrap returned without its exact operator environment." >&2
+    return 1
+  }
+  PROTECTED_LOCAL_BOOTSTRAPPED=1
 }
 
 is_app_service_session() {
@@ -3287,7 +3482,8 @@ verify_root_coordinated_hosted_gateway() {
         HOME="$target_home" \
         FASED_STATE_DIR="$app_state_dir" \
         FASED_CONFIG_PATH="$app_state_dir/fased.json" \
-        FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/operator.sock \
+        FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external \
+        FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock \
         "$app_cli" health --json --timeout 3000 >/dev/null 2>&1; then
       return 0
     fi
@@ -3387,7 +3583,7 @@ reexec_as_app_user() {
 
   local cmd="cd $(shell_quote "$target_repo_dir") && umask 0007 && "
   if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
-    cmd+="env FASED_HOST_PROFILE=hosting FASED_HOST_ROOT_PREPARED=1 FASED_HOSTING_RELEASE=$(shell_quote "$HOSTING_RELEASE") FASED_UPDATE_CHANNEL=$(shell_quote "$UPDATE_CHANNEL") FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/operator.sock "
+    cmd+="env FASED_HOST_PROFILE=hosting FASED_HOST_ROOT_PREPARED=1 FASED_HOSTING_RELEASE=$(shell_quote "$HOSTING_RELEASE") FASED_UPDATE_CHANNEL=$(shell_quote "$UPDATE_CHANNEL") FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock "
     if [[ -n "$HOST_SIGNER_TRANSACTION_ID" ]]; then
       cmd+="FASED_HOST_UPDATE_TRANSACTION_ID=$(shell_quote "$HOST_SIGNER_TRANSACTION_ID") FASED_HOST_UPDATE_TRANSACTION_VERSION=$(shell_quote "$HOST_SIGNER_TRANSACTION_VERSION") "
     fi
@@ -3460,7 +3656,8 @@ reexec_as_app_user() {
         FASED_STATE_DIR="$app_state_dir" \
         FASED_CONFIG_PATH="$app_state_dir/fased.json" \
         FASED_HOST_UPDATER_SOCKET=/run/fased-host-updater/request.sock \
-        FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/operator.sock \
+        FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external \
+        FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock \
         node "$app_transaction_updater" hosted-transaction finalize --root-restarted; then
         HOST_SIGNER_DURABLE_COMMIT_DECISION=1
       else
@@ -3488,7 +3685,8 @@ reexec_as_app_user() {
           FASED_STATE_DIR="$app_state_dir" \
           FASED_CONFIG_PATH="$app_state_dir/fased.json" \
           FASED_HOST_UPDATER_SOCKET=/run/fased-host-updater/request.sock \
-          FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/operator.sock \
+          FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external \
+          FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock \
           node "$app_transaction_updater" hosted-transaction finalize --root-restarted; then
           child_status=0
         fi
@@ -3514,7 +3712,8 @@ reexec_as_app_user() {
           FASED_STATE_DIR="$app_state_dir" \
           FASED_CONFIG_PATH="$app_state_dir/fased.json" \
           FASED_HOST_UPDATER_SOCKET=/run/fased-host-updater/request.sock \
-          FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/operator.sock \
+          FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external \
+          FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock \
           node "$app_transaction_updater" hosted-transaction rollback >/dev/null 2>&1 || true
       fi
       if node /usr/local/libexec/fased-host-updaterctl.mjs \
@@ -4438,6 +4637,7 @@ Environment=FASED_MANAGED_INTERNAL=1
 Environment=FASED_GATEWAY_SERVICE=1
 Environment=FASED_GATEWAY_PORT=18789
 Environment=FASED_HOST_PROFILE=hosting
+Environment=FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external
 Environment=FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock
 ExecStart=/usr/local/libexec/fased-gateway-launch
 Restart=always
@@ -4879,6 +5079,7 @@ install_host_signer_and_updater_services() {
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-enroll-hosting.sh" /usr/local/sbin/fased-signer-enroll
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-policy-hosting.sh" /usr/local/sbin/fased-signer-policy
   install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-network-hosting.sh" /usr/local/sbin/fased-signer-network
+  install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-owner-hosting.sh" /usr/local/sbin/fased-signer-owner
   install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/README.md" /usr/local/share/fased/signer-policies/README.md
   install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/agent.json.template" /usr/local/share/fased/signer-policies/agent.json.template
   install -m 0644 -o root -g root "$FASED_DIR/config/signer-policies/mining.json.template" /usr/local/share/fased/signer-policies/mining.json.template
@@ -4967,6 +5168,7 @@ EOF
   sync -f /usr/local/sbin/fased-signer-enroll
   sync -f /usr/local/sbin/fased-signer-policy
   sync -f /usr/local/sbin/fased-signer-network
+  sync -f /usr/local/sbin/fased-signer-owner
   sync -f /usr/local/share/fased/signer-policies/README.md
   sync -f /usr/local/share/fased/signer-policies/agent.json.template
   sync -f /usr/local/share/fased/signer-policies/mining.json.template
@@ -5246,6 +5448,7 @@ assert_verified_hosting_root_source() {
     scripts/hosted-legacy-wallet-migration.mjs \
     scripts/fased-signer-enroll-hosting.sh \
     scripts/fased-signer-network-hosting.sh \
+    scripts/fased-signer-owner-hosting.sh \
     scripts/fased-signer-policy-hosting.sh; do
     local asset_path="$canonical_source/$privileged_asset"
     [[ -f "$asset_path" && ! -L "$asset_path" ]] || {
@@ -5464,6 +5667,24 @@ else
   install_fased_cli_launcher
 fi
 
+if protected_local_target_platform; then
+  if ! protected_local_supported; then
+    status_frame_end
+    echo "Protected Local Linux requires normal OS administrator authorization, but sudo is unavailable." >&2
+    echo "Install sudo or run from an administrator-capable desktop account; do not run Fased itself as root." >&2
+    exit 1
+  fi
+  protected_gateway_mode="activate"
+  if [[ "$RUN_ONBOARD" -eq 1 ]]; then
+    protected_gateway_mode="prepare"
+  fi
+  if ! bootstrap_protected_local_topology "$protected_gateway_mode"; then
+    status_frame_end
+    echo "Protected Local service bootstrap failed; the prior Local topology was restored when migration had started." >&2
+    exit 1
+  fi
+fi
+
 if [[ "$RUN_ONBOARD" -eq 0 ]]; then
   status_frame_end
   if [[ "$HOSTING_REPAIR_REQUESTED" -eq 1 ]]; then
@@ -5476,6 +5697,23 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
       write_install_marker "$REPO_ROOT" "false"
     fi
     echo "Hosted application runtime repair staged. The root installer coordinator will restart and verify the fixed systemd service."
+    exit 0
+  fi
+  if [[ "$PROTECTED_LOCAL_BOOTSTRAPPED" -eq 1 ]]; then
+    marker_onboarding_completed="$(read_marker_onboarding_completed || true)"
+    if [[ "$marker_onboarding_completed" == "true" || -s "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}" ]]; then
+      write_install_marker "$REPO_ROOT" "true"
+    else
+      write_install_marker "$REPO_ROOT" "false"
+    fi
+    persist_runtime_update_channel
+    step_done "Protected Local signer, Gateway, and controller online"
+    if [[ "$LOCAL_REPAIR_REQUESTED" -eq 1 ]]; then
+      echo "Protected Local runtime and service repair complete. Onboarding was not rerun."
+    else
+      echo "Onboarding skipped (--no-onboard)."
+    fi
+    echo "Open: fased dashboard --no-open"
     exit 0
   fi
   if ! prepare_existing_local_signer_after_runtime_install; then
@@ -5565,12 +5803,28 @@ onboard_color_env=()
 if supports_color && [[ -z "${NO_COLOR:-}" && -z "${FORCE_COLOR:-}" ]]; then
   onboard_color_env=(FORCE_COLOR=1)
 fi
-(cd "$FASED_DIR" && env NODE_OPTIONS="$onboard_node_options" "${onboard_color_env[@]}" FASED_INSTALLER_ONBOARD=1 "$FASED_CLI_PATH" onboard --install-daemon "${pass_args[@]}")
+if ! (cd "$FASED_DIR" && env NODE_OPTIONS="$onboard_node_options" "${onboard_color_env[@]}" FASED_INSTALLER_ONBOARD=1 "$FASED_CLI_PATH" onboard --install-daemon "${pass_args[@]}"); then
+  if [[ "$PROTECTED_LOCAL_BOOTSTRAPPED" -eq 1 ]]; then
+    if ! bootstrap_protected_local_topology rollback; then
+      echo "Onboarding failed and the protected Local rollback did not complete. Retry the exact installer command; do not remove signer state manually." >&2
+      exit 1
+    fi
+    echo "Onboarding did not complete; the prior Local signer and Gateway topology was restored." >&2
+  fi
+  exit 1
+fi
 if [[ ! -f "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}" ]]; then
   write_install_marker "$REPO_ROOT" "false"
   echo "Onboarding did not create ${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}." >&2
   echo "Rerun ./install.sh from an interactive terminal, or pass non-interactive onboarding flags after --." >&2
   exit 1
+fi
+if [[ "$PROTECTED_LOCAL_BOOTSTRAPPED" -eq 1 ]]; then
+  if ! bootstrap_protected_local_topology activate; then
+    write_install_marker "$REPO_ROOT" "false"
+    echo "Onboarding completed, but Protected Local Gateway activation failed and was not committed." >&2
+    exit 1
+  fi
 fi
 persist_runtime_update_channel
 write_install_marker "$REPO_ROOT" "true"

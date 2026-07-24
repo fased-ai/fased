@@ -22,6 +22,7 @@ import {
   verifyMiningRecoveryPackage,
   writeMiningRetirementReceipt,
 } from "../wallet/mining-wallet-retirement.js";
+import { resolveNativeSignerOperatorLifecycle } from "../wallet/native-signer-lifecycle-context.js";
 import { normalizeNativeSignerWalletId } from "../wallet/native-signer-wallet-id.js";
 import {
   callLocalSocketSigner,
@@ -416,7 +417,7 @@ function setConfigEnvVar(
   };
 }
 
-const JUPITER_API_KEY_ENV = "FASED_JUPITER_API_KEY";
+const JUPITER_API_KEY_ENV = "FASED_JUPITER_API_KEY"; // pragma: allowlist secret
 const LEGACY_JUPITER_TRIGGER_API_BASE_URL_ENV = "FASED_JUPITER_TRIGGER_API_BASE_URL";
 
 function resolveConfiguredJupiterApiKey(cfg: FasedAgentConfig, env: NodeJS.ProcessEnv): string {
@@ -643,29 +644,28 @@ function ensureLocalSignerProviderConfig(
 ): FasedAgentConfig {
   const effectiveSocketPath = socketPath?.trim() || resolveLocalSignerSocketPath(env);
   let nextCfg = setConfigEnvVar(cfg, "FASED_WALLET_LOCAL_SIGNER_SOCKET", effectiveSocketPath);
-  const hosted =
-    String(env.FASED_HOST_PROFILE ?? "")
-      .trim()
-      .toLowerCase() === "hosting";
-  if (hosted) {
+  const operatorLifecycle = resolveNativeSignerOperatorLifecycle(env);
+  if (operatorLifecycle) {
     for (const key of [
       "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET",
       "FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET",
       "FASED_WALLET_LOCAL_SIGNER_STATE_DB",
       "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY",
       "FASED_WALLET_LOCAL_SIGNER_RUN_AS_USER",
-      "FASED_WALLET_LOCAL_SIGNER_BIN",
       "FASED_WALLET_SIGNER_STATE_DIR",
       "FASED_WALLET_PASSPHRASE_FILE",
     ]) {
       nextCfg = setConfigEnvVar(nextCfg, key, undefined);
+    }
+    if (operatorLifecycle.profile === "hosting") {
+      nextCfg = setConfigEnvVar(nextCfg, "FASED_WALLET_LOCAL_SIGNER_BIN", undefined);
     }
   }
   const controlSocketPath = resolveLocalSignerControlSocketPath(env);
   const stateDbPath = resolveLocalSignerStateDbPath(env);
   const masterKeyPath = resolveLocalSignerMasterKeyPath(env);
   nextCfg = setConfigEnvVar(nextCfg, "FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET", undefined);
-  if (!hosted) {
+  if (!operatorLifecycle) {
     nextCfg = setConfigEnvVar(
       nextCfg,
       "FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET",
@@ -714,16 +714,15 @@ async function configureLocalSignerMode(
   runtime.log("Signer mode: local native signer");
   runtime.log(`Signer socket: ${socketPath}`);
   const effectiveEnv = { ...env, ...nextCfg.env?.vars };
-  const hosted =
-    String(env.FASED_HOST_PROFILE ?? "")
-      .trim()
-      .toLowerCase() === "hosting";
-  if (!hosted) {
+  const operatorLifecycle = resolveNativeSignerOperatorLifecycle(env);
+  if (!operatorLifecycle) {
     const signerEnvPath = writeManagedLocalSignerEnvFile({ config: nextCfg, env: effectiveEnv });
     runtime.log(`Signer environment written: ${signerEnvPath} (mode 600)`);
     runtime.log(`Start signer with the generated same-user signer environment.`);
   } else {
-    runtime.log("Signer lifecycle is owned by the root-managed fased-signerd service.");
+    runtime.log(
+      `Signer lifecycle is owned by the root-managed ${operatorLifecycle.profile === "hosting" ? "Hosting" : "Protected Local"} fased-signerd service.`,
+    );
   }
   runtime.log("");
   runtime.log("Then verify:");
@@ -777,12 +776,11 @@ async function createSignerOwnedWalletForSetup(params: {
   const walletName =
     params.options.walletName?.trim() ||
     (walletId === generatedIdentity.walletId ? generatedIdentity.walletName : walletId);
-  const hosted =
-    String(params.env.FASED_HOST_PROFILE ?? "")
-      .trim()
-      .toLowerCase() === "hosting";
   let cfg = ensureLocalSignerProviderConfig(loadConfig(), params.env);
   const mergedEnv = { ...params.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
+  const managedLifecycle = resolveNativeSignerOperatorLifecycle(mergedEnv);
+  const operatorLifecycle =
+    managedLifecycle && params.env.FASED_GATEWAY_SERVICE !== "1" ? managedLifecycle : undefined;
   const socketPath = resolveLocalSignerSocketPath(mergedEnv);
   const expectedSignerWalletId = normalizeNativeSignerWalletId(walletId);
   if (params.role === "mining") {
@@ -806,7 +804,7 @@ async function createSignerOwnedWalletForSetup(params: {
       `native signer wallet ID ${expectedSignerWalletId} is already registered as ${existingSignerIdCollision.id}; choose a distinct wallet ID`,
     );
   }
-  if (!hosted) {
+  if (!managedLifecycle) {
     writeManagedLocalSignerEnvFile({ config: cfg, env: mergedEnv });
     const signerBinPath = resolveSignerdBinaryPath(mergedEnv);
     if (!fs.existsSync(signerBinPath)) {
@@ -822,26 +820,25 @@ async function createSignerOwnedWalletForSetup(params: {
 
   let result;
   try {
-    result =
-      hosted && params.env.FASED_GATEWAY_SERVICE !== "1"
-        ? invokeNativeSignerWalletCreate({
-            signerBinPath: "/opt/fased/signer/fased-signerd",
-            operatorSocketPath: "/run/fased-signerd/operator.sock",
-            walletId: expectedSignerWalletId,
-            role: params.role,
-            allowExisting: Boolean(params.options.force),
-            env: mergedEnv,
-          })
-        : await createRoleReadySignerOwnedWallet({
-            socketPath,
-            walletId,
-            role: params.role,
-            allowExisting: Boolean(params.options.force),
-          });
+    result = operatorLifecycle
+      ? invokeNativeSignerWalletCreate({
+          signerBinPath: operatorLifecycle.signerBinPath,
+          operatorSocketPath: operatorLifecycle.operatorSocketPath,
+          walletId: expectedSignerWalletId,
+          role: params.role,
+          allowExisting: Boolean(params.options.force),
+          env: mergedEnv,
+        })
+      : await createRoleReadySignerOwnedWallet({
+          socketPath,
+          walletId,
+          role: params.role,
+          allowExisting: Boolean(params.options.force),
+        });
   } catch (error) {
-    if (hosted) {
+    if (operatorLifecycle) {
       throw new Error(
-        `hosted signer wallet creation failed: ${error instanceof Error ? error.message : String(error)}. Confirm the operator socket and exact installed signer release are healthy, then retry the same wallet ID.`,
+        `${operatorLifecycle.profile === "hosting" ? "Hosted" : "Protected Local"} signer wallet creation failed: ${error instanceof Error ? error.message : String(error)}. Confirm the typed operator lifecycle and exact installed signer release are healthy, then retry the same wallet ID.`,
         { cause: error },
       );
     }
@@ -869,12 +866,11 @@ async function createSignerOwnedWalletForSetup(params: {
     );
   }
 
-  const operatorLifecycle = hosted && params.env.FASED_GATEWAY_SERVICE !== "1";
   const network = operatorLifecycle
     ? invokeNativeSignerNetworkSetPrimary({
-        signerBinPath: "/opt/fased/signer/fased-signerd",
+        signerBinPath: operatorLifecycle.signerBinPath,
         socketFlag: "--operator-socket",
-        socketPath: "/run/fased-signerd/operator.sock",
+        socketPath: operatorLifecycle.operatorSocketPath,
         walletId: signerWalletId,
         primaryRpcUrl: params.rpcUrl,
         expectedVersion: 0,
@@ -894,9 +890,9 @@ async function createSignerOwnedWalletForSetup(params: {
 
   const readiness = operatorLifecycle
     ? invokeNativeSignerWalletReadiness({
-        signerBinPath: "/opt/fased/signer/fased-signerd",
+        signerBinPath: operatorLifecycle.signerBinPath,
         socketFlag: "--operator-socket",
-        socketPath: "/run/fased-signerd/operator.sock",
+        socketPath: operatorLifecycle.operatorSocketPath,
         walletId: signerWalletId,
         env: mergedEnv,
       })
@@ -1078,7 +1074,7 @@ function parseNativeSignerImportResult(params: {
 }
 
 function invokeNativeSignerWalletImport(params: {
-  hosted: boolean;
+  operatorLifecycle: boolean;
   signerBinPath: string;
   controlSocketPath: string;
   walletId: string;
@@ -1092,7 +1088,7 @@ function invokeNativeSignerWalletImport(params: {
     "admin",
     "wallet",
     "import",
-    params.hosted ? "--operator-socket" : "--control-socket",
+    params.operatorLifecycle ? "--operator-socket" : "--control-socket",
     params.controlSocketPath,
     "--wallet-id",
     params.walletId,
@@ -1134,6 +1130,14 @@ function nativeSignerLifecycleEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     LANG: env.LANG || "C.UTF-8",
     PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
   };
+}
+
+function signerOwnerCeremonyPrefix(
+  lifecycle: NonNullable<ReturnType<typeof resolveNativeSignerOperatorLifecycle>>,
+): string {
+  return lifecycle.profile === "hosting"
+    ? lifecycle.ownerHelperPath
+    : `sudo ${lifecycle.ownerHelperPath}`;
 }
 
 function invokeNativeSignerWalletCreate(params: {
@@ -1537,7 +1541,7 @@ function invokeNativeSignerRotationCommit(params: {
 }
 
 function invokeNativeSignerRecoveryImport(params: {
-  hosted: boolean;
+  operatorLifecycle: boolean;
   signerBinPath: string;
   controlSocketPath: string;
   walletId: string;
@@ -1553,7 +1557,7 @@ function invokeNativeSignerRecoveryImport(params: {
         "admin",
         "wallet",
         "recovery-import",
-        params.hosted ? "--operator-socket" : "--control-socket",
+        params.operatorLifecycle ? "--operator-socket" : "--control-socket",
         params.controlSocketPath,
         "--wallet-id",
         params.walletId,
@@ -1604,14 +1608,20 @@ async function importSignerOwnedWalletForSetup(params: {
   if (params.chain !== "solana") {
     throw new Error("fased-signerd protocol v2 currently supports Solana wallet import only");
   }
-  const hosted =
-    String(params.env.FASED_HOST_PROFILE ?? "")
-      .trim()
-      .toLowerCase() === "hosting";
   let cfg = ensureLocalSignerProviderConfig(loadConfig(), params.env);
   const mergedEnv = { ...params.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
+  const operatorLifecycle = resolveNativeSignerOperatorLifecycle(mergedEnv);
   const socketPath = resolveLocalSignerSocketPath(mergedEnv);
   const signerWalletId = normalizeNativeSignerWalletId(params.walletId);
+  if (operatorLifecycle && params.options.mode === "local-signer-recovery-import") {
+    throw new Error(
+      [
+        `${operatorLifecycle.profile === "hosting" ? "Hosting" : "Protected Local"} recovery import requires a one-shot signer-owner ceremony.`,
+        `First run: ${signerOwnerCeremonyPrefix(operatorLifecycle)} wallet recovery-import --wallet-id ${signerWalletId} --baseline-role ${params.role} --recovery-file ${params.importFile}`,
+        `Then register and configure the restored wallet with: fased wallet create --wallet-id ${params.walletId} --wallet-name <NAME> --role ${params.role} --rpc-url <RPC_URL> --force --non-interactive`,
+      ].join("\n"),
+    );
+  }
   const registeredWallets = readWalletProviderRegistry(params.env).wallets;
   if (
     params.role === "mining" &&
@@ -1634,13 +1644,10 @@ async function importSignerOwnedWalletForSetup(params: {
       `native signer wallet ID ${signerWalletId} is already registered as ${collision.id}; choose a distinct wallet ID`,
     );
   }
-  const signerBinPath = hosted
-    ? "/opt/fased/signer/fased-signerd"
-    : resolveSignerdBinaryPath(mergedEnv);
-  const controlSocketPath = hosted
-    ? "/run/fased-signerd/operator.sock"
-    : resolveLocalSignerControlSocketPath(mergedEnv);
-  if (!hosted) {
+  const signerBinPath = operatorLifecycle?.signerBinPath ?? resolveSignerdBinaryPath(mergedEnv);
+  const controlSocketPath =
+    operatorLifecycle?.operatorSocketPath ?? resolveLocalSignerControlSocketPath(mergedEnv);
+  if (!operatorLifecycle) {
     writeManagedLocalSignerEnvFile({ config: cfg, env: mergedEnv });
     if (!fs.existsSync(signerBinPath)) {
       installSignerdBinary(signerBinPath);
@@ -1650,7 +1657,7 @@ async function importSignerOwnedWalletForSetup(params: {
   const result =
     params.options.mode === "local-signer-recovery-import"
       ? invokeNativeSignerRecoveryImport({
-          hosted,
+          operatorLifecycle: Boolean(operatorLifecycle),
           signerBinPath,
           controlSocketPath,
           walletId: signerWalletId,
@@ -1659,7 +1666,7 @@ async function importSignerOwnedWalletForSetup(params: {
           env: mergedEnv,
         })
       : invokeNativeSignerWalletImport({
-          hosted,
+          operatorLifecycle: Boolean(operatorLifecycle),
           signerBinPath,
           controlSocketPath,
           walletId: signerWalletId,
@@ -1667,7 +1674,7 @@ async function importSignerOwnedWalletForSetup(params: {
           importFile: params.importFile,
           env: mergedEnv,
         });
-  const network = hosted
+  const network = operatorLifecycle
     ? invokeNativeSignerNetworkSetPrimary({
         signerBinPath,
         socketFlag: "--operator-socket",
@@ -1687,7 +1694,7 @@ async function importSignerOwnedWalletForSetup(params: {
   // genesis validation fails.
   cfg = setConfigEnvVar(cfg, rpcEnvKeyFor(params.chain, params.walletId), params.rpcUrl);
   await writeConfigFile(cfg);
-  const readiness = hosted
+  const readiness = operatorLifecycle
     ? invokeNativeSignerWalletReadiness({
         signerBinPath,
         socketFlag: "--operator-socket",
@@ -2183,18 +2190,12 @@ export async function walletRpcSetCommand(
     typeof wallet.metadata?.signerWalletId === "string" && wallet.metadata.signerWalletId.trim()
       ? wallet.metadata.signerWalletId.trim()
       : normalizeNativeSignerWalletId(wallet.id);
-  const hosted =
-    String(effectiveEnv.FASED_HOST_PROFILE ?? "")
-      .trim()
-      .toLowerCase() === "hosting";
-  const signerBinPath = hosted
-    ? "/opt/fased/signer/fased-signerd"
-    : resolveSignerdBinaryPath(effectiveEnv);
-  const socketFlag = hosted ? "--operator-socket" : "--control-socket";
-  const socketPath = hosted
-    ? "/run/fased-signerd/operator.sock"
-    : resolveLocalSignerControlSocketPath(effectiveEnv);
-  const current = hosted
+  const operatorLifecycle = resolveNativeSignerOperatorLifecycle(effectiveEnv);
+  const signerBinPath = operatorLifecycle?.signerBinPath ?? resolveSignerdBinaryPath(effectiveEnv);
+  const socketFlag = operatorLifecycle ? "--operator-socket" : "--control-socket";
+  const socketPath =
+    operatorLifecycle?.operatorSocketPath ?? resolveLocalSignerControlSocketPath(effectiveEnv);
+  const current = operatorLifecycle
     ? invokeNativeSignerWalletReadiness({
         signerBinPath,
         socketFlag,
@@ -2265,20 +2266,24 @@ export async function walletRecoveryExportCommand(
   if (!publicKey) {
     throw new Error(`native signer wallet ${walletId} has no verified Solana public address`);
   }
-  const hosted =
-    String(effectiveEnv.FASED_HOST_PROFILE ?? "")
-      .trim()
-      .toLowerCase() === "hosting";
+  const operatorLifecycle = resolveNativeSignerOperatorLifecycle(effectiveEnv);
   const signerWalletId =
     typeof wallet.metadata?.signerWalletId === "string" && wallet.metadata.signerWalletId.trim()
       ? wallet.metadata.signerWalletId.trim()
       : normalizeNativeSignerWalletId(wallet.id);
-  const signerBinPath = hosted
-    ? "/opt/fased/signer/fased-signerd"
-    : resolveSignerdBinaryPath(effectiveEnv);
-  const controlSocketPath = hosted
-    ? "/run/fased-signerd/operator.sock"
-    : resolveLocalSignerControlSocketPath(effectiveEnv);
+  const signerBinPath = operatorLifecycle?.signerBinPath ?? resolveSignerdBinaryPath(effectiveEnv);
+  const controlSocketPath =
+    operatorLifecycle?.operatorSocketPath ?? resolveLocalSignerControlSocketPath(effectiveEnv);
+  if (operatorLifecycle) {
+    const ownerCommand = signerOwnerCeremonyPrefix(operatorLifecycle);
+    throw new Error(
+      [
+        `${operatorLifecycle.profile === "hosting" ? "Hosting" : "Protected Local"} recovery export requires a one-shot signer-owner ceremony.`,
+        `Run: ${ownerCommand} wallet recovery-export --wallet-id ${signerWalletId} --expected-public-key ${publicKey} --output ${output}`,
+        "The ordinary app operator and Gateway are intentionally not authorized to export recovery custody material.",
+      ].join("\n"),
+    );
+  }
   runtime.log(
     `Creating encrypted recovery package for ${wallet.id}. The signer will ask for and confirm the recovery password without echoing it.`,
   );
@@ -2288,7 +2293,7 @@ export async function walletRecoveryExportCommand(
       "admin",
       "wallet",
       "recovery-export",
-      hosted ? "--operator-socket" : "--control-socket",
+      "--control-socket",
       controlSocketPath,
       "--wallet-id",
       signerWalletId,
@@ -2323,6 +2328,20 @@ export async function walletRecoveryImportCommand(
   runtime: RuntimeEnv = defaultRuntime,
   options: WalletRecoveryImportOptions,
 ) {
+  const cfg = loadConfig();
+  const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
+  const operatorLifecycle = resolveNativeSignerOperatorLifecycle(effectiveEnv);
+  if (operatorLifecycle) {
+    const signerWalletId = normalizeNativeSignerWalletId(options.walletId);
+    const ownerCommand = signerOwnerCeremonyPrefix(operatorLifecycle);
+    throw new Error(
+      [
+        `${operatorLifecycle.profile === "hosting" ? "Hosting" : "Protected Local"} recovery import requires a one-shot signer-owner ceremony.`,
+        `First run: ${ownerCommand} wallet recovery-import --wallet-id ${signerWalletId} --baseline-role ${options.role} --recovery-file ${options.recoveryFile}`,
+        `Then return to the app account and run: fased wallet create --wallet-id ${options.walletId} --wallet-name <NAME> --role ${options.role} --rpc-url <RPC_URL> --force --non-interactive`,
+      ].join("\n"),
+    );
+  }
   await walletSetupCommand(runtime, {
     mode: "local-signer-recovery-import",
     chain: "solana",
@@ -2394,17 +2413,11 @@ export async function walletRetireCommand(
     walletId: sourceSignerWalletId,
     publicKey: sourcePublicKey,
   });
-  const hosted =
-    String(effectiveEnv.FASED_HOST_PROFILE ?? "")
-      .trim()
-      .toLowerCase() === "hosting";
-  const signerBinPath = hosted
-    ? "/opt/fased/signer/fased-signerd"
-    : resolveSignerdBinaryPath(effectiveEnv);
-  const socketFlag = hosted ? "--operator-socket" : "--control-socket";
-  const socketPath = hosted
-    ? "/run/fased-signerd/operator.sock"
-    : resolveLocalSignerControlSocketPath(effectiveEnv);
+  const operatorLifecycle = resolveNativeSignerOperatorLifecycle(effectiveEnv);
+  const signerBinPath = operatorLifecycle?.signerBinPath ?? resolveSignerdBinaryPath(effectiveEnv);
+  const socketFlag = operatorLifecycle ? "--operator-socket" : "--control-socket";
+  const socketPath =
+    operatorLifecycle?.operatorSocketPath ?? resolveLocalSignerControlSocketPath(effectiveEnv);
 
   let rotation = invokeNativeSignerRotationStatus({
     signerBinPath,
@@ -2424,6 +2437,15 @@ export async function walletRetireCommand(
 
   let evidence: ReturnType<typeof buildMiningRetirementEvidence> | undefined;
   if (!rotation || rotation.state !== "committed") {
+    if (operatorLifecycle) {
+      throw new Error(
+        [
+          `${operatorLifecycle.profile === "hosting" ? "Hosting" : "Protected Local"} Mining retirement requires a signer-owner rotation ceremony before registry finalization.`,
+          `Use ${signerOwnerCeremonyPrefix(operatorLifecycle)} for rotate-successor and rotation-commit, then rerun this command to verify and finalize the committed successor.`,
+          "The ordinary operator may inspect rotation status but cannot mutate signer rotation state.",
+        ].join("\n"),
+      );
+    }
     const sourceReadiness = invokeNativeSignerWalletReadiness({
       signerBinPath,
       socketFlag,
@@ -2689,25 +2711,30 @@ export async function walletRawExportCommand(
   if (!publicKey) {
     throw new Error(`native signer wallet ${walletId} has no verified Solana public address`);
   }
-  const hosted =
-    String(effectiveEnv.FASED_HOST_PROFILE ?? "")
-      .trim()
-      .toLowerCase() === "hosting";
+  const operatorLifecycle = resolveNativeSignerOperatorLifecycle(effectiveEnv);
   const signerWalletId =
     typeof wallet.metadata?.signerWalletId === "string" && wallet.metadata.signerWalletId.trim()
       ? wallet.metadata.signerWalletId.trim()
       : normalizeNativeSignerWalletId(wallet.id);
+  if (operatorLifecycle) {
+    const ownerCommand = signerOwnerCeremonyPrefix(operatorLifecycle);
+    throw new Error(
+      [
+        `${operatorLifecycle.profile === "hosting" ? "Hosting" : "Protected Local"} raw private-key export requires a one-shot signer-owner ceremony.`,
+        `Run: ${ownerCommand} wallet export-raw --wallet-id ${signerWalletId} --expected-public-key ${publicKey} --output ${output} --acknowledge-custody-reduction`,
+        "The ordinary app operator and Gateway are intentionally not authorized to export raw custody material.",
+      ].join("\n"),
+    );
+  }
   runtime.log("WARNING: raw private-key export reduces signer custody protection.");
   const child = spawnSync(
-    hosted ? "/opt/fased/signer/fased-signerd" : resolveSignerdBinaryPath(effectiveEnv),
+    resolveSignerdBinaryPath(effectiveEnv),
     [
       "admin",
       "wallet",
       "export-raw",
-      hosted ? "--operator-socket" : "--control-socket",
-      hosted
-        ? "/run/fased-signerd/operator.sock"
-        : resolveLocalSignerControlSocketPath(effectiveEnv),
+      "--control-socket",
+      resolveLocalSignerControlSocketPath(effectiveEnv),
       "--wallet-id",
       signerWalletId,
       "--expected-public-key",
@@ -2802,11 +2829,11 @@ export async function walletStatusCommand(
 ) {
   const config = loadConfig();
   const effectiveEnv = { ...process.env, ...config.env?.vars } as NodeJS.ProcessEnv;
-  const hostedOperator =
-    String(effectiveEnv.FASED_HOST_PROFILE ?? "")
-      .trim()
-      .toLowerCase() === "hosting" && effectiveEnv.FASED_GATEWAY_SERVICE !== "1";
-  if (hostedOperator) {
+  const operatorLifecycle =
+    effectiveEnv.FASED_GATEWAY_SERVICE !== "1"
+      ? resolveNativeSignerOperatorLifecycle(effectiveEnv)
+      : undefined;
+  if (operatorLifecycle) {
     const registered = readWalletProviderRegistry(effectiveEnv).wallets.filter(
       (wallet) =>
         wallet.providerId === "local-socket-signer" &&
@@ -2824,9 +2851,9 @@ export async function walletStatusCommand(
         id: wallet.id,
         name: wallet.name,
         signer: invokeNativeSignerWalletReadiness({
-          signerBinPath: "/opt/fased/signer/fased-signerd",
+          signerBinPath: operatorLifecycle.signerBinPath,
           socketFlag: "--operator-socket",
-          socketPath: "/run/fased-signerd/operator.sock",
+          socketPath: operatorLifecycle.operatorSocketPath,
           walletId: signerWalletId,
           env: effectiveEnv,
         }),
@@ -2834,7 +2861,20 @@ export async function walletStatusCommand(
     });
     if (options.json) {
       runtime.log(
-        JSON.stringify({ ok: true, status: { mode: "hosting-operator", wallets } }, null, 2),
+        JSON.stringify(
+          {
+            ok: true,
+            status: {
+              mode:
+                operatorLifecycle.profile === "hosting"
+                  ? "hosting-operator"
+                  : "protected-local-operator",
+              wallets,
+            },
+          },
+          null,
+          2,
+        ),
       );
       return;
     }
@@ -3548,30 +3588,45 @@ export async function walletLegacyMigrationFinalizeCommand(
   }
   const cfg = loadConfig();
   const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
-  const socketPath = requireLocalSocketSignerPath(effectiveEnv);
-  const capabilities = await callLocalSocketSigner<{
-    ready?: boolean;
-    capabilities?: {
-      protocol?: { current?: number };
-      features?: string[];
-    };
-  }>(socketPath, { op: "v2.capabilities" });
-  if (
-    capabilities.ready !== true ||
-    capabilities.capabilities?.protocol?.current !== 2 ||
-    !capabilities.capabilities?.features?.includes("signerOwnedKeys")
-  ) {
-    throw new Error(
-      "legacy migration finalization requires a ready protocol-v2 signer-owned wallet",
-    );
-  }
-  const nativeWallet = await callLocalSocketSigner<{ walletId?: string; publicKey?: string }>(
-    socketPath,
-    { op: "v2.wallet.get", walletId },
-  );
   const expectedSignerWalletId = normalizeNativeSignerWalletId(walletId);
-  const signerWalletId = String(nativeWallet.walletId ?? "").trim();
-  const publicKey = String(nativeWallet.publicKey ?? "").trim();
+  const operatorLifecycle = resolveNativeSignerOperatorLifecycle(effectiveEnv);
+  let signerWalletId = "";
+  let publicKey = "";
+  if (operatorLifecycle) {
+    const readiness = invokeNativeSignerWalletReadiness({
+      signerBinPath: operatorLifecycle.signerBinPath,
+      socketFlag: "--operator-socket",
+      socketPath: operatorLifecycle.operatorSocketPath,
+      walletId: expectedSignerWalletId,
+      env: effectiveEnv,
+    });
+    signerWalletId = readiness.walletId;
+    publicKey = readiness.publicKey;
+  } else {
+    const socketPath = requireLocalSocketSignerPath(effectiveEnv);
+    const capabilities = await callLocalSocketSigner<{
+      ready?: boolean;
+      capabilities?: {
+        protocol?: { current?: number };
+        features?: string[];
+      };
+    }>(socketPath, { op: "v2.capabilities" });
+    if (
+      capabilities.ready !== true ||
+      capabilities.capabilities?.protocol?.current !== 2 ||
+      !capabilities.capabilities?.features?.includes("signerOwnedKeys")
+    ) {
+      throw new Error(
+        "legacy migration finalization requires a ready protocol-v2 signer-owned wallet",
+      );
+    }
+    const nativeWallet = await callLocalSocketSigner<{ walletId?: string; publicKey?: string }>(
+      socketPath,
+      { op: "v2.wallet.get", walletId },
+    );
+    signerWalletId = String(nativeWallet.walletId ?? "").trim();
+    publicKey = String(nativeWallet.publicKey ?? "").trim();
+  }
   if (!publicKey || signerWalletId !== expectedSignerWalletId) {
     throw new Error("protocol-v2 signer did not return the requested signer-owned wallet");
   }
