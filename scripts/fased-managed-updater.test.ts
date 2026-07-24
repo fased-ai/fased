@@ -124,6 +124,7 @@ describe("stable managed updater", () => {
       },
       gatewayPort: 18789,
       profile: "default",
+      timeoutMs: 60_000,
       sudoPath: "/usr/bin/sudo",
       bashPath: "/bin/bash",
       nodePath: "/usr/bin/node",
@@ -158,6 +159,8 @@ describe("stable managed updater", () => {
       "18789",
       "--protected-local-gateway-mode",
       "activate",
+      "--protected-local-gateway-health-timeout-ms",
+      "30000",
     ]);
     expect(() =>
       __testing.buildProtectedLocalMigrationInvocation({

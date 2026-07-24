@@ -271,6 +271,7 @@
     "test:protected-local:systemd": "bash scripts/test-protected-local-systemd-container.sh",
     "test:sectriage": "pnpm exec vitest run --config vitest.gateway.config.ts && vitest run --config vitest.unit.config.ts --exclude src/daemon/launchd.integration.test.ts --exclude src/process/exec.test.ts",
     "test:signer:compat": "vitest run src/wallet/providers/local-socket-signer-adapter.integration.test.ts --pool=forks --maxWorkers=1",
+    "test:signer:portable": "bash scripts/test-fased-signerd-portable-builds.sh",
     "test:smoke:agent-flow": "vitest run --config vitest.unit.config.ts src/auto-reply/reply/channel-command-control-flow.test.ts -t \"Provider -> Agent -> Skill -> Chat -> Task -> Memory -> Channel delivery\"",
     "test:ui": "pnpm lint:ui:no-raw-window-open && pnpm --dir ui test",
     "test:ui:mining": "pnpm --dir ui exec vitest run --config vitest.config.ts src/ui/app.mining-start-stop.browser.test.ts src/ui/app.mining-reconnect.browser.test.ts",

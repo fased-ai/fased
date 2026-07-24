@@ -14,6 +14,10 @@ command -v "$RUNTIME" >/dev/null 2>&1 || {
   echo "Podman is required for the protected Local systemd fixtures." >&2
   exit 1
 }
+command -v gh >/dev/null 2>&1 || {
+  echo "GitHub CLI is required for the literal Protected Local update fixture." >&2
+  exit 1
+}
 [[ "$RUNTIME" == "podman" ]] || {
   echo "The protected Local systemd fixtures currently require Podman." >&2
   exit 1
@@ -82,6 +86,9 @@ for distro in "${distro_list[@]}"; do
     -v "$ROOT_DIR:/repo:ro,Z" \
     -v "$ARTIFACT_DIR:/artifacts:ro,Z" \
     "$image" >/dev/null
+  if [[ "$distro" == "ubuntu" ]]; then
+    "$RUNTIME" cp "$(command -v gh)" "$name:/usr/bin/gh"
+  fi
   ready=0
   for _ in {1..200}; do
     state="$("$RUNTIME" exec "$name" systemctl is-system-running 2>/dev/null || true)"

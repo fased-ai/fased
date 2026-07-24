@@ -171,8 +171,14 @@ install -d -m 0755 /usr/local/libexec
 cat >/usr/local/libexec/fased-fixture-solana-rpc.mjs <<'EOF_RPC'
 import http from "node:http";
 const port = Number(process.env.FASED_FIXTURE_RPC_PORT);
+const version = process.env.FASED_FIXTURE_VERSION;
 const genesis = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"; // pragma: allowlist secret
 http.createServer((request, response) => {
+  if (request.method === "GET" && request.url?.startsWith("/@fased%2ffased")) {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ "dist-tags": { latest: version, beta: version } }));
+    return;
+  }
   let raw = "";
   request.setEncoding("utf8");
   request.on("data", (chunk) => { raw += chunk; });
@@ -201,6 +207,7 @@ Description=Fased fixture Solana RPC
 [Service]
 Type=simple
 Environment=FASED_FIXTURE_RPC_PORT=$rpc_port
+Environment=FASED_FIXTURE_VERSION=$version
 ExecStart=/usr/local/bin/node /usr/local/libexec/fased-fixture-solana-rpc.mjs
 Restart=always
 
@@ -309,6 +316,7 @@ cat >"$state/fased.json" <<EOF_CONFIG
       "token": "$gateway_token"
     }
   },
+  "update": { "channel": "$([[ "$version" == *-* ]] && printf beta || printf stable)" },
   "discovery": { "mdns": { "mode": "off" } },
   "wallet": { "runtime": { "enabled": true } },
   "env": {
@@ -381,12 +389,44 @@ test "$(stat -c '%d:%i:%h' "$legacy_binary")" = \
   "$(stat -c '%d:%i:%h' "$state/bin/fased-signer-enroll")"
 test "$(stat -c '%h' "$legacy_binary")" = "2"
 
-bootstrap prepare >/tmp/protected-failure-prepare.json
-failure_instance="$(jq -er .instanceId /tmp/protected-failure-prepare.json)"
+install -d -m 0700 -o testop -g testop "$state/bin" "$state/updater"
+for script in \
+  fased-managed-updater.mjs \
+  hosted-release-manifest.mjs \
+  managed-runtime-layout.mjs; do
+  install -m 0700 -o testop -g testop "$runtime/scripts/$script" "$state/updater/$script"
+done
+install -m 0700 -o testop -g testop \
+  "$runtime/scripts/fased-managed-launcher.sh" "$state/bin/fased"
+install -m 0700 -o testop -g testop \
+  "$runtime/scripts/fased-managed-service.sh" "$state/bin/fased-service"
+for directory in \
+  "$state/install-cache" \
+  "$state/install-cache/npm-global" \
+  "$state/install-cache/npm-global/bin"; do
+  install -d -m 0700 -o testop -g testop "$directory"
+done
+ln -s "$state/bin/fased" "$state/install-cache/npm-global/bin/fased"
+cat >/etc/sudoers.d/fased-protected-local-fixture <<'EOF_SUDOERS'
+testop ALL=(root) NOPASSWD: ALL
+EOF_SUDOERS
+chmod 0440 /etc/sudoers.d/fased-protected-local-fixture
+
+managed_update_env=(
+  HOME=/home/testop \
+  FASED_STATE_DIR="$state" \
+  FASED_CONFIG_PATH="$state/fased.json" \
+  FASED_GATEWAY_PORT="$gateway_port" \
+  FASED_GATEWAY_TOKEN="$gateway_token" \
+  npm_config_registry="http://127.0.0.1:$rpc_port"
+)
+
 cp "$runtime/scripts/start-managed.sh" /tmp/start-managed.real
 printf '#!/usr/bin/env bash\nexit 91\n' >"$runtime/scripts/start-managed.sh"
 chmod 0755 "$runtime/scripts/start-managed.sh"
 chown testop:testop "$runtime/scripts/start-managed.sh"
+bootstrap prepare >/tmp/protected-failure-prepare.json
+failure_instance="$(jq -er .instanceId /tmp/protected-failure-prepare.json)"
 set +e
 bootstrap activate >/tmp/protected-failure.out 2>/tmp/protected-failure.err
 failure_status=$?
@@ -398,11 +438,30 @@ test "$(sha256sum "$wallet_dir/signerd-v2.master.key" | awk '{print $1}')" = "$o
 test ! -e "/etc/systemd/system/fased-gateway-$failure_instance.service"
 verify_legacy_wallet /tmp/failure-rollback-agent.json
 
-bootstrap activate >/tmp/protected-active.json
-instance="$(jq -er .instanceId /tmp/protected-active.json)"
+runuser -u testop -- env "${managed_update_env[@]}" \
+  "$state/install-cache/npm-global/bin/fased" update --timeout 60 \
+  >/tmp/protected-update.out 2>/tmp/protected-update.err
+grep -F "Protected Local migration" /tmp/protected-update.err >/dev/null
+grep -F "Already current: $version" /tmp/protected-update.out >/dev/null
+
+instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
 wait_for_service "fased-signerd-$instance.service"
 wait_for_service "fased-local-controller-$instance.service"
 wait_for_service "fased-gateway-$instance.service"
+signer_pid_before="$(systemctl show -p MainPID --value "fased-signerd-$instance.service")"
+gateway_pid_before="$(systemctl show -p MainPID --value "fased-gateway-$instance.service")"
+runuser -u testop -- env "${managed_update_env[@]}" \
+  "$state/install-cache/npm-global/bin/fased" update --timeout 30 \
+  >/tmp/protected-noop-update.out 2>/tmp/protected-noop-update.err
+grep -F "Already current: $version" /tmp/protected-noop-update.out >/dev/null
+if grep -F "Protected Local migration" /tmp/protected-noop-update.err >/dev/null; then
+  echo "idempotent update repeated Protected Local migration" >&2
+  exit 1
+fi
+test "$(systemctl show -p MainPID --value "fased-signerd-$instance.service")" = \
+  "$signer_pid_before"
+test "$(systemctl show -p MainPID --value "fased-gateway-$instance.service")" = \
+  "$gateway_pid_before"
 runuser -u "fsgw-$instance" -- test -S \
   "/run/fased-local/$instance/application/app.sock"
 test "$(jq -r .profile "$state/install.json")" = "protected-local"

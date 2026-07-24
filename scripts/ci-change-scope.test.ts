@@ -99,6 +99,21 @@ describe("CI changed-surface classification", () => {
     });
   });
 
+  it.each([
+    "install.sh",
+    "scripts/fased-managed-updater.mjs",
+    "scripts/protected-local-bootstrap.mjs",
+    "scripts/install-managed-runtime.mjs",
+    "src/wallet/native-signer-operator-client.ts",
+    "src/wallet/providers/local-socket-signer-adapter.ts",
+    "src/wizard/onboarding.wallet.ts",
+  ])("runs native signer platforms for Local lifecycle change %s", (changedPath) => {
+    const scope = classifyChangedPaths([changedPath]);
+
+    expect(scope.runSigner).toBe(true);
+    expect(scope.runMacos).toBe(false);
+  });
+
   it("enables every supported lane for a manual full matrix or failed diff", () => {
     for (const scope of [
       classifyChangedPaths([], { fullMatrix: true }),
