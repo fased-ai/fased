@@ -4,6 +4,14 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.5
+
+- Repair Protected Local migration for the exact legacy signer/enrollment
+  hard-link pair while keeping unexpected additional hard links fail-closed.
+- Keep interactive streamed Hosting onboarding attached to the provider
+  console and fail early when a fresh interactive install has no controlling
+  terminal.
+
 ## 0.1.76-rc.4
 
 - Unify Local and Hosting on the protected Go signer lifecycle, including
