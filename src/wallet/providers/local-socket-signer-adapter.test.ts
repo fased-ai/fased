@@ -621,7 +621,7 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
         maxFeeLamports: "5000",
         sourceTokenAccount: "Stake11111111111111111111111111111111111111",
         destinationTokenAccount: "Config1111111111111111111111111111111111111",
-        programs: ["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"],
+        programs: ["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"], // pragma: allowlist secret
       },
     };
     const binding = {
@@ -639,7 +639,7 @@ describe("LocalSocketSignerAdapter protocol-v2 sends", () => {
       amount: "100",
       destination: "Config1111111111111111111111111111111111111",
       policyOperation: intent.type,
-      requiredPrograms: ["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"],
+      requiredPrograms: ["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"], // pragma: allowlist secret
       policyHash,
       nonce: "d".repeat(64),
       issuedAt: "2026-07-16T12:00:00.000Z",

@@ -123,7 +123,7 @@ describe("managed runtime layout", () => {
     const service = {
       name: "fased-gateway-0123456789abcdef.service",
       scope: "system",
-      launcher: "/opt/fased/local/0123456789abcdef/gateway-launch",
+      launcher: "/opt/fased/local/0123456789abcdef/gateway-launch", // pragma: allowlist secret
     };
     expect(normalizeManagedProfile("protected-local")).toBe("protected-local");
     expect(

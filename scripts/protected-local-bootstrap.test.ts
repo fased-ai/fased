@@ -111,7 +111,7 @@ describe("protected Local bootstrap contract", () => {
       operatorGid: 1000,
       operatorUser: "operator",
     });
-    expect(wrapper).toContain("FASED_SIGNER_USER=fssg-0123456789abcdef");
+    expect(wrapper).toContain("FASED_SIGNER_USER=fssg-0123456789abcdef"); // pragma: allowlist secret
     expect(wrapper).toContain(
       "FASED_SIGNER_CONTROL_SOCKET=/run/fased-local/0123456789abcdef/control/control.sock",
     );

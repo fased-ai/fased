@@ -258,7 +258,7 @@ func runSignerAdminWalletRecoveryImportV1(args []string, stdin io.Reader, stdout
 	result, callErr := callSignerAdminSensitiveV2(common.controlSocket, "v2.wallet.recovery.import", walletID, body)
 	cleanupRecoveryErr := cleanupSignerAdminImportFile(recoveryPath)
 	cleanupPasswordErr := cleanupSignerAdminImportFile(passwordPath)
-	if cleanupRecoveryErr != nil || cleanupPasswordErr != nil {
+	if cleanupRecoveryErr != nil || cleanupPasswordErr != nil { // pragma: allowlist secret
 		return errors.New("recovery import staging cleanup failed; inspect the signer-only import directory")
 	}
 	if callErr != nil {

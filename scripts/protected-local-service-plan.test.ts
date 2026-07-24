@@ -27,7 +27,7 @@ describe("Protected Local service plan", () => {
     const signer = result.files.signerUnit.content;
     const controller = result.files.controllerUnit.content;
     expect(gateway).toContain("User=fsgw-0123456789abcdef");
-    expect(gateway).toContain("SupplementaryGroups=fscf-0123456789abcdef");
+    expect(gateway).toContain("SupplementaryGroups=fscf-0123456789abcdef"); // pragma: allowlist secret
     expect(gateway).not.toContain("fsop-0123456789abcdef");
     expect(gateway).toContain(
       "FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-local/0123456789abcdef/application/app.sock",
@@ -42,12 +42,12 @@ describe("Protected Local service plan", () => {
     expect(signer).toContain("-operator-uid 1000");
     expect(signer).toContain("-control-uid 61002");
     expect(signer).toContain(
-      "ExecStartPost=+/opt/fased/local/0123456789abcdef/operator-socket-finalize",
+      "ExecStartPost=+/opt/fased/local/0123456789abcdef/operator-socket-finalize", // pragma: allowlist secret
     );
     expect(signer).toContain("-state-db /var/lib/fased-local/0123456789abcdef/signer/state.db");
     expect(signer).toContain("-master-key /var/lib/fased-local/0123456789abcdef/signer/master.key");
     expect(controller).toContain("User=root");
-    expect(controller).toContain("StateDirectory=fased-local/0123456789abcdef/controller");
+    expect(controller).toContain("StateDirectory=fased-local/0123456789abcdef/controller"); // pragma: allowlist secret
     expect(controller).toContain("--socket-uid 1000 --socket-gid 62002");
     expect(controller).toContain("RuntimeDirectoryMode=0711");
     expect(controller).toContain("StateDirectoryMode=0711");

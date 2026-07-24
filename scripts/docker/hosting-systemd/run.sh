@@ -259,7 +259,7 @@ install_fixture_rpc() {
   cat >/usr/local/libexec/fased-fixture-solana-rpc.mjs <<'EOF_RPC'
 import http from "node:http";
 const port = Number(process.env.FASED_FIXTURE_RPC_PORT);
-const genesis = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
+const genesis = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"; // pragma: allowlist secret
 http.createServer((request, response) => {
   let raw = "";
   request.setEncoding("utf8");

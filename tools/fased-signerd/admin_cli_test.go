@@ -670,7 +670,7 @@ func TestSignerAdminPolicyGetPutAndWalletReencrypt(t *testing.T) {
 }
 
 func TestSignerAdminNetworkPutReadsStrictStdinAndReturnsMetadataOnly(t *testing.T) {
-	secret := "admin-network-secret-token"
+	secret := "admin-network-secret-token" // pragma: allowlist secret
 	hash := "hmac-sha256:" + strings.Repeat("a", 64)
 	input := []byte(`{"expectedVersion":0,"primaryRpcUrl":"https://rpc.example.com/solana?api-key=` + secret + `","executionFallbackRpcUrl":"https://fallback.example.com/rpc"}`)
 	server := startSignerAdminTestServer(t, signerAdminTestSuccess(t, `{"walletId":"agent","configured":true,"version":1,"hash":"`+hash+`","ready":true}`))

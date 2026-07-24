@@ -417,7 +417,7 @@ function setConfigEnvVar(
   };
 }
 
-const JUPITER_API_KEY_ENV = "FASED_JUPITER_API_KEY";
+const JUPITER_API_KEY_ENV = "FASED_JUPITER_API_KEY"; // pragma: allowlist secret
 const LEGACY_JUPITER_TRIGGER_API_BASE_URL_ENV = "FASED_JUPITER_TRIGGER_API_BASE_URL";
 
 function resolveConfiguredJupiterApiKey(cfg: FasedAgentConfig, env: NodeJS.ProcessEnv): string {

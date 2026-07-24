@@ -69,7 +69,7 @@ describe("hosted systemd unit", () => {
         "[Service]",
         "ExecStart=/bin/bash /home/app/.fased/install-cache/npm-global/lib/node_modules/@fased/fased/scripts/start-managed.sh",
         "WorkingDirectory=/home/app/.fased/install-cache/npm-global/lib/node_modules/@fased/fased",
-        "Environment=FASED_GATEWAY_PORT=18789",
+        "Environment=FASED_GATEWAY_PORT=18789", // pragma: allowlist secret
         "",
       ].join("\n"),
       "utf8",
