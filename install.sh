@@ -332,6 +332,37 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       | jq -er '.tag_name | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))'
   }
 
+  root_owned_bundle_tree_is_secure() {
+    local tree="$1"
+    local canonical_tree=""
+    local link=""
+    local target=""
+    local resolved=""
+    local invalid_link=0
+
+    canonical_tree="$(readlink -f -- "$tree" 2>/dev/null || true)"
+    [[ -n "$canonical_tree" && -d "$canonical_tree" ]] || return 1
+    if find "$canonical_tree" -xdev ! -user root -print -quit | grep -q . || \
+      find "$canonical_tree" -xdev \( -type f -o -type d \) -perm /022 -print -quit | grep -q . || \
+      find "$canonical_tree" -xdev ! -type f ! -type d ! -type l -print -quit | grep -q .; then
+      return 1
+    fi
+    while IFS= read -r -d '' link; do
+      target="$(readlink -- "$link" 2>/dev/null || true)"
+      if [[ -z "$target" || "$target" == /* || "$target" == *\\* ]]; then
+        invalid_link=1
+        break
+      fi
+      resolved="$(readlink -f -- "$link" 2>/dev/null || true)"
+      if [[ -z "$resolved" || \
+        ( "$resolved" != "$canonical_tree" && "$resolved" != "$canonical_tree/"* ) ]]; then
+        invalid_link=1
+        break
+      fi
+    done < <(find "$canonical_tree" -xdev -type l -print0)
+    [[ "$invalid_link" -eq 0 ]]
+  }
+
   bootstrap_hosting_attested_bundle() {
     if [[ "$(id -u)" -ne 0 ]]; then
       echo "VPS Hosting bootstrap must start in the provider's root console." >&2
@@ -661,7 +692,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
         "$(sha256sum "$root_store/verified-assets/fased-signerd" | awk '{print tolower($1)}')" == "$signer_actual" ]] && \
       [[ "$existing_commit" =~ ^[a-f0-9]{40}$ ]] && \
       grep -Fxq "commit=${existing_commit}" "$existing_root/.fased-hosting-bundle-verified" && \
-      ! find "$root_store" -xdev \( ! -user root -o -perm /022 \) -print -quit | grep -q . && \
+      root_owned_bundle_tree_is_secure "$root_store" && \
       ! find "$existing_root" -xdev ! -type f ! -type d -print -quit | grep -q . && \
       ! find "$existing_root" -xdev -type f -links +1 -print -quit | grep -q .; then
       rm -rf -- "$staging"
@@ -694,7 +725,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     chown -R root:root "$staging"
     chmod -R a+rX "$staging"
     chmod -R go-w "$staging"
-    if find "$staging" -xdev \( ! -user root -o -perm /022 \) -print -quit | grep -q .; then
+    if ! root_owned_bundle_tree_is_secure "$staging"; then
       echo "Could not secure the verified Hosting bundle as root-owned and non-writable." >&2
       exit 1
     fi

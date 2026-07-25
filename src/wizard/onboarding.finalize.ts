@@ -744,6 +744,7 @@ export function buildGatewayServiceRestartAttempts(
 async function verifyProtectedLocalGatewayService(params: {
   unitName: string;
   expectedUser: string;
+  requireActive?: boolean;
 }): Promise<{ ok: boolean; detail?: string }> {
   if (!/^fased-gateway-[a-f0-9]{16}\.service$/u.test(params.unitName)) {
     return { ok: false, detail: "Protected Local Gateway unit name is invalid" };
@@ -751,9 +752,14 @@ async function verifyProtectedLocalGatewayService(params: {
   if (!/^fsgw-[a-f0-9]{16}$/u.test(params.expectedUser)) {
     return { ok: false, detail: "Protected Local Gateway identity is invalid" };
   }
+  const activeChecks =
+    params.requireActive === false
+      ? ""
+      : `test "$(systemctl is-enabled ${params.unitName} 2>/dev/null)" = enabled && ` +
+        `test "$(systemctl is-active ${params.unitName} 2>/dev/null)" = active && `;
   const result = await runShell(
-    `test "$(systemctl is-enabled ${params.unitName} 2>/dev/null)" = enabled && ` +
-      `test "$(systemctl is-active ${params.unitName} 2>/dev/null)" = active && ` +
+    `test "$(systemctl show ${params.unitName} --property LoadState --value 2>/dev/null)" = loaded && ` +
+      activeChecks +
       `test "$(systemctl show ${params.unitName} --property User --value 2>/dev/null)" = ${params.expectedUser}`,
     { timeoutMs: 5_000 },
   );
@@ -1482,6 +1488,8 @@ export async function finalizeOnboardingWizard(
     ...nextConfig.env?.vars,
   });
   const protectedLocal = signerLifecycle?.profile === "protected-local";
+  const deferProtectedLocalGatewayActivation =
+    protectedLocal && process.env.FASED_INSTALLER_ONBOARD?.trim() === "1";
   const protectedLocalInstance = protectedLocal ? signerLifecycle.instanceId : undefined;
   const protectedLocalGatewayUnit = protectedLocalInstance
     ? `fased-gateway-${protectedLocalInstance}.service`
@@ -1653,6 +1661,7 @@ export async function finalizeOnboardingWizard(
       const service = await verifyProtectedLocalGatewayService({
         unitName: protectedLocalGatewayUnit,
         expectedUser: protectedLocalGatewayUser,
+        requireActive: !deferProtectedLocalGatewayActivation,
       });
       if (!service.ok) {
         throw new Error(
@@ -1947,7 +1956,7 @@ export async function finalizeOnboardingWizard(
     }
   }
 
-  if (process.platform === "linux") {
+  if (process.platform === "linux" && !deferProtectedLocalGatewayActivation) {
     const localSignerSync = resolveLocalSignerSyncForFinalize({ strictVps });
     if (localSignerSync.sync) {
       try {
@@ -2078,7 +2087,7 @@ export async function finalizeOnboardingWizard(
     );
   }
 
-  if (!opts.skipHealth) {
+  if (!opts.skipHealth && !deferProtectedLocalGatewayActivation) {
     const probeLinks = resolveControlUiLinks({
       bind: nextConfig.gateway?.bind ?? "loopback",
       port: settings.port,
@@ -2542,12 +2551,23 @@ export async function finalizeOnboardingWizard(
     token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
     walletSecurityFocus: options.walletSecurityFocus ?? null,
   });
-  let gatewayProbe = await probeGatewayReachable({
-    url: links.wsUrl,
-    token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
-    password: settings.authMode === "password" ? nextConfig.gateway?.auth?.password : "",
-  });
-  if (!strictVps && opts.mode !== "remote" && !opts.skipUi && !gatewayProbe.ok) {
+  let gatewayProbe = deferProtectedLocalGatewayActivation
+    ? {
+        ok: false,
+        detail: "Gateway activation is deferred until protected Local setup commits",
+      }
+    : await probeGatewayReachable({
+        url: links.wsUrl,
+        token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
+        password: settings.authMode === "password" ? nextConfig.gateway?.auth?.password : "",
+      });
+  if (
+    !deferProtectedLocalGatewayActivation &&
+    !strictVps &&
+    opts.mode !== "remote" &&
+    !opts.skipUi &&
+    !gatewayProbe.ok
+  ) {
     const warmup = await waitForGatewayReachable({
       url: links.wsUrl,
       token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
@@ -2560,7 +2580,13 @@ export async function finalizeOnboardingWizard(
       gatewayProbe = warmup;
     }
   }
-  if (!strictVps && opts.mode !== "remote" && !opts.skipUi && !gatewayProbe.ok) {
+  if (
+    !deferProtectedLocalGatewayActivation &&
+    !strictVps &&
+    opts.mode !== "remote" &&
+    !opts.skipUi &&
+    !gatewayProbe.ok
+  ) {
     await prompter.note(
       "Gateway is not reachable yet; restarting the service once before showing the dashboard link.",
       "Gateway startup",
@@ -2589,7 +2615,12 @@ export async function finalizeOnboardingWizard(
     }
     gatewayProbe = { ok: true };
   }
-  if (!strictVps && opts.mode !== "remote" && !opts.skipUi) {
+  if (
+    !deferProtectedLocalGatewayActivation &&
+    !strictVps &&
+    opts.mode !== "remote" &&
+    !opts.skipUi
+  ) {
     let localDashboardReady = await waitForLocalDashboardReady({
       links,
       token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
@@ -2631,7 +2662,11 @@ export async function finalizeOnboardingWizard(
     ? "Gateway: reachable"
     : `Gateway: not detected${gatewayProbe.detail ? ` (${gatewayProbe.detail})` : ""}`;
   const localHealthCheck =
-    !strictVps && opts.mode !== "remote" && !opts.skipHealth && !opts.skipUi
+    !deferProtectedLocalGatewayActivation &&
+    !strictVps &&
+    opts.mode !== "remote" &&
+    !opts.skipHealth &&
+    !opts.skipUi
       ? await collectLocalGatewayHealthCheck({
           links,
           token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
@@ -3022,7 +3057,7 @@ export async function finalizeOnboardingWizard(
   let hatchChoice: "tui" | "web" | "later" | null = null;
   let launchedTui = false;
 
-  if (!opts.skipUi) {
+  if (!opts.skipUi && !deferProtectedLocalGatewayActivation) {
     if (!gatewayProbe.ok) {
       await prompter.note(
         strictVps

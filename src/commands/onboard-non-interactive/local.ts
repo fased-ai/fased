@@ -27,6 +27,7 @@ import { applyNonInteractiveAuthChoice } from "./local/auth-choice.js";
 import { installGatewayDaemonNonInteractive } from "./local/daemon-install.js";
 import { applyNonInteractiveGatewayConfig } from "./local/gateway-config.js";
 import { logNonInteractiveOnboardingJson } from "./local/output.js";
+import { shouldDeferRootManagedGatewayActivation } from "./local/root-managed-gateway.js";
 import { applyNonInteractiveSkillsConfig } from "./local/skills-config.js";
 import { applyNonInteractiveWalletConfig } from "./local/wallet-config.js";
 import { resolveNonInteractiveWorkspaceDir } from "./local/workspace.js";
@@ -221,16 +222,22 @@ export async function runNonInteractiveOnboardingLocal(params: {
     return;
   }
 
-  await installGatewayDaemonNonInteractive({
-    nextConfig,
-    opts,
-    runtime,
-    port: gatewayResult.port,
-    gatewayToken: gatewayResult.gatewayToken,
+  const deferRootManagedGatewayActivation = shouldDeferRootManagedGatewayActivation({
+    env: process.env,
+    hostProfile,
   });
+  if (!deferRootManagedGatewayActivation) {
+    await installGatewayDaemonNonInteractive({
+      nextConfig,
+      opts,
+      runtime,
+      port: gatewayResult.port,
+      gatewayToken: gatewayResult.gatewayToken,
+    });
+  }
 
   const daemonRuntimeRaw = opts.daemonRuntime ?? DEFAULT_GATEWAY_DAEMON_RUNTIME;
-  if (!opts.skipHealth) {
+  if (!opts.skipHealth && !deferRootManagedGatewayActivation) {
     const links = resolveControlUiLinks({
       bind: gatewayResult.bind as "auto" | "lan" | "loopback" | "custom" | "tailnet",
       port: gatewayResult.port,

@@ -1,3 +1,4 @@
+import os from "node:os";
 import { logDebug, logWarn } from "../logger.js";
 import { getLogger } from "../logging.js";
 import { ignoreCiaoCancellationRejection } from "./bonjour-ciao.js";
@@ -85,6 +86,13 @@ export async function startGatewayBonjourAdvertiser(
   opts: GatewayBonjourAdvertiseOpts,
 ): Promise<GatewayBonjourAdvertiser> {
   if (isDisabledByEnv()) {
+    return { stop: async () => {} };
+  }
+
+  try {
+    os.networkInterfaces();
+  } catch (error) {
+    logWarn(`bonjour: network interface discovery unavailable: ${formatBonjourError(error)}`);
     return { stop: async () => {} };
   }
 

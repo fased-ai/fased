@@ -92,6 +92,7 @@ Description=Fased Protected Local Gateway (${layout.instanceId})
 After=${layout.signerUnit} ${layout.controllerUnit} network-online.target
 Wants=${layout.signerUnit} ${layout.controllerUnit} network-online.target
 ConditionPathExists=!${layout.controllerStateDir}/gateway-update-gate
+ConditionPathExists=${layout.controllerStateDir}/gateway-activation-ready
 
 [Service]
 Type=simple
@@ -225,6 +226,9 @@ WantedBy=multi-user.target
 `;
   const gatewayLauncher = `#!/usr/bin/env bash
 set -euo pipefail
+while [[ ! -s "${layout.controllerStateDir}/gateway-activation-ready" ]]; do
+  sleep 1
+done
 while [[ ! -s "${appStateDir}/fased.json" ]]; do
   sleep 1
 done

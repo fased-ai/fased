@@ -135,18 +135,12 @@ if [[ "$phase" == "verify-reboot" ]]; then
   exit 0
 fi
 
-[[ "$phase" == "install" ]] || {
-  echo "usage: fased-protected-local-systemd-fixture install|verify-reboot" >&2
+[[ "$phase" == "install" || "$phase" == "fresh-install" ]] || {
+  echo "usage: fased-protected-local-systemd-fixture fresh-install|install|verify-reboot" >&2
   exit 64
 }
 
 useradd --uid 2000 --user-group --create-home --shell /bin/bash testop
-install -d -m 0700 -o testop -g testop "$state"
-install -d -m 0755 -o testop -g testop "$(dirname "$runtime")"
-# Reproduce a previous root bootstrap that created only its final child with a
-# restrictive umask, leaving the shared executable ancestor non-traversable to
-# the isolated signer account.
-install -d -m 0700 -o root -g root /opt/fased
 install -d -m 0755 -o root -g root "$release_root/scripts" "$release_root/dist"
 install -d -m 0755 -o root -g root \
   "$root_store/verified-assets" \
@@ -154,11 +148,11 @@ install -d -m 0755 -o root -g root \
 
 runtime_asset="/artifacts/fased-hosted-linux-x64-v${version}.tar.gz"
 [[ -f "$runtime_asset" ]]
-install -d -m 0755 "$runtime"
-tar -xzf "$runtime_asset" -C "$runtime" --strip-components=1
-chown -R testop:testop "$runtime"
-cp -a "$runtime/." "$release_root/"
-cp -a "$runtime/node_modules" "$root_store/verified-dependencies/node_modules"
+artifact_extract="/var/lib/fased-protected-local-artifact/package"
+install -d -m 0755 -o root -g root "$artifact_extract"
+tar -xzf "$runtime_asset" -C "$artifact_extract" --strip-components=1
+cp -a "$artifact_extract/." "$release_root/"
+cp -a "$artifact_extract/node_modules" "$root_store/verified-dependencies/node_modules"
 rm -rf "$release_root/node_modules"
 
 for script in fased-host-updater.mjs fased-host-updaterctl.mjs fased-signer-owner-hosting.sh; do
@@ -246,6 +240,13 @@ while [[ "\$#" -gt 0 ]]; do
     *) echo "unexpected fixture installer argument: \$1" >&2; exit 64 ;;
   esac
 done
+health_args=()
+if [[ -n "\${values[--protected-local-gateway-health-timeout-ms]:-}" ]]; then
+  health_args=(
+    --gateway-health-timeout-ms
+    "\${values[--protected-local-gateway-health-timeout-ms]}"
+  )
+fi
 exec "\${values[--protected-local-node-binary]}" \
   /repo/scripts/protected-local-bootstrap.mjs install \
   --source-root "$release_root" \
@@ -263,9 +264,22 @@ exec "\${values[--protected-local-node-binary]}" \
   --profile "\${values[--protected-local-profile]}" \
   --gateway-port "\${values[--protected-local-gateway-port]}" \
   --gateway-mode "\${values[--protected-local-gateway-mode]}" \
-  --gateway-health-timeout-ms "\${values[--protected-local-gateway-health-timeout-ms]}"
+  "\${health_args[@]}"
 EOF_PROTECTED_INSTALLER
 chmod 0755 /usr/local/libexec/fased-fixture-protected-installer.sh
+cat >/usr/local/bin/sudo <<'EOF_SUDO_SHIM'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "--" &&
+  "${2:-}" == "/bin/bash" &&
+  "${3:-}" == "/repo/install.sh" &&
+  "${4:-}" == "--protected-local-root-bootstrap" ]]; then
+  exec /usr/bin/sudo -- \
+    /bin/bash /usr/local/libexec/fased-fixture-protected-installer.sh "${@:4}"
+fi
+exec /usr/bin/sudo "$@"
+EOF_SUDO_SHIM
+chmod 0755 /usr/local/bin/sudo
 cat >/etc/systemd/system/fased-fixture-solana-rpc.service <<EOF_RPC_UNIT
 [Unit]
 Description=Fased fixture Solana RPC
@@ -287,6 +301,135 @@ wait_for_rpc \
   "http://127.0.0.1:$rpc_port" \
   "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG" # pragma: allowlist secret
 
+cat >/etc/sudoers.d/fased-protected-local-fixture <<'EOF_SUDOERS'
+testop ALL=(root) NOPASSWD: ALL
+EOF_SUDOERS
+chmod 0440 /etc/sudoers.d/fased-protected-local-fixture
+install -d -m 0755 -o root -g root /etc/fased/testing
+cat >/etc/fased/testing/protected-local-artifact-source.json <<EOF_ARTIFACT_SOURCE
+{
+  "schemaVersion": 1,
+  "baseUrl": "http://127.0.0.1:$rpc_port",
+  "releaseVersion": "$version"
+}
+EOF_ARTIFACT_SOURCE
+chmod 0444 /etc/fased/testing/protected-local-artifact-source.json
+
+if [[ "$phase" == "fresh-install" ]]; then
+  fresh_env=(
+    HOME=/home/testop
+    USER=testop
+    LOGNAME=testop
+    FASED_STATE_DIR="$state"
+    FASED_CONFIG_PATH="$state/fased.json"
+    FASED_GATEWAY_PORT="$gateway_port"
+    FASED_GATEWAY_TOKEN="$gateway_token"
+    FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port"
+    npm_config_registry="http://127.0.0.1:$rpc_port"
+  )
+  fresh_channel="$([[ "$version" == *-* ]] && printf beta || printf stable)"
+  runuser -u testop -- env "${fresh_env[@]}" \
+    /bin/bash /repo/install.sh \
+      --release "v$version" \
+      --update-channel "$fresh_channel" \
+      --local \
+      --no-git-update \
+      -- \
+      --non-interactive \
+      --accept-risk \
+      --auth-choice skip \
+      --workspace /home/testop/.fased/workspace \
+      --gateway-auth token \
+      --gateway-token "$gateway_token" \
+      --gateway-port "$gateway_port" \
+      --gateway-bind loopback \
+      --skip-skills \
+      --skip-health \
+    >/tmp/fresh-install.out 2>/tmp/fresh-install.err
+
+  test -s "$state/fased.json"
+  test -s "$state/install.json"
+  test "$(jq -r .profile "$state/install.json")" = "protected-local"
+  instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
+  wait_for_service "fased-local-controller-$instance.service"
+  wait_for_service "fased-signerd-$instance.service"
+  wait_for_service "fased-gateway-$instance.service"
+  wait_for_socket "/run/fased-local/$instance/operator/operator.sock"
+  test "$(stat -c '%U:%G:%a' /opt/fased)" = "root:root:755"
+
+  mapfile -t env_args < <(operator_env "$instance")
+  for wallet_spec in "agent:Agent:agent" "vault:Vault:vault"; do
+    IFS=: read -r wallet_id wallet_name wallet_role <<<"$wallet_spec"
+    runuser -u testop -- env "${env_args[@]}" \
+      /usr/local/bin/node "$runtime/fased.mjs" wallet setup \
+      --mode local-signer-create \
+      --wallet-id "$wallet_id" \
+      --wallet-name "$wallet_name" \
+      --role "$wallet_role" \
+      --rpc-url "http://127.0.0.1:$rpc_port" \
+      --non-interactive \
+      --json \
+      >"/tmp/fresh-${wallet_id}-create.json"
+  done
+  verify_wallet "$instance" agent >/tmp/fresh-agent.json
+  verify_wallet "$instance" vault >/tmp/fresh-vault.json
+  jq -e '.ready == true and .role == "agent"' /tmp/fresh-agent.json >/dev/null
+  jq -e '.ready == true and .role == "vault"' /tmp/fresh-vault.json >/dev/null
+  runuser -u testop -- env "${env_args[@]}" \
+    /usr/local/bin/node "$runtime/fased.mjs" health --json --timeout 5000 \
+    >/tmp/fresh-health.json
+  jq -e '.ok == true' /tmp/fresh-health.json >/dev/null
+
+  runuser -u testop -- env "${fresh_env[@]}" \
+    "$state/install-cache/npm-global/bin/fased" update --timeout 30 \
+    >/tmp/fresh-noop-update.out 2>/tmp/fresh-noop-update.err
+  grep -F "Already current: $version" /tmp/fresh-noop-update.out >/dev/null
+  if grep -F "Protected Local migration" /tmp/fresh-noop-update.err >/dev/null; then
+    echo "fresh idempotent update repeated Protected Local migration" >&2
+    exit 1
+  fi
+
+  systemctl restart "fased-local-controller-$instance.service" \
+    "fased-signerd-$instance.service" "fased-gateway-$instance.service"
+  wait_for_service "fased-gateway-$instance.service"
+  runuser -u testop -- env "${env_args[@]}" \
+    /usr/local/bin/node "$runtime/fased.mjs" health --json --timeout 5000 \
+    >/tmp/fresh-restart-health.json
+  jq -e '.ok == true' /tmp/fresh-restart-health.json >/dev/null
+  ss -ltn | grep -Eq "127\\.0\\.0\\.1:${gateway_port}[[:space:]]"
+  if ss -ltn | grep -Eq "(0\\.0\\.0\\.0|\\[::\\]):${gateway_port}[[:space:]]"; then
+    echo "Fresh Protected Local Gateway is publicly bound." >&2
+    exit 1
+  fi
+
+  agent_readiness_sha="$(jq -S -c . /tmp/fresh-agent.json | sha256sum | awk '{print $1}')"
+  vault_readiness_sha="$(jq -S -c . /tmp/fresh-vault.json | sha256sum | awk '{print $1}')"
+  key_sha="$(sha256sum "/var/lib/fased-local/$instance/signer/master.key" | awk '{print $1}')"
+  jq -n \
+    --arg instanceId "$instance" \
+    --arg agentReadinessSha256 "$agent_readiness_sha" \
+    --arg vaultReadinessSha256 "$vault_readiness_sha" \
+    --arg masterKeySha256 "$key_sha" \
+    '{
+      instanceId: $instanceId,
+      agentReadinessSha256: $agentReadinessSha256,
+      vaultReadinessSha256: $vaultReadinessSha256,
+      masterKeySha256: $masterKeySha256
+    }' >"$snapshot"
+  chmod 0600 "$snapshot"
+  printf 'fresh Protected Local install, Gateway, and wallet fixture passed: %s\n' "$instance"
+  exit 0
+fi
+
+# Reproduce a previous root bootstrap that created only its final child with a
+# restrictive umask, leaving the shared executable ancestor non-traversable to
+# the isolated signer account.
+install -d -m 0700 -o testop -g testop "$state"
+install -d -m 0755 -o testop -g testop "$state/runtime" "$(dirname "$runtime")"
+install -d -m 0755 -o testop -g testop "$runtime"
+cp -a "$artifact_extract/." "$runtime/"
+chown -R testop:testop "$runtime"
+install -d -m 0700 -o root -g root /opt/fased
 wallet_dir="$state/wallet"
 legacy_binary="$state/bin/fased-signerd"
 legacy_socket="$wallet_dir/local-signer.sock"
@@ -474,11 +617,6 @@ for directory in \
   install -d -m 0700 -o testop -g testop "$directory"
 done
 ln -s "$state/bin/fased" "$state/install-cache/npm-global/bin/fased"
-cat >/etc/sudoers.d/fased-protected-local-fixture <<'EOF_SUDOERS'
-testop ALL=(root) NOPASSWD: ALL
-EOF_SUDOERS
-chmod 0440 /etc/sudoers.d/fased-protected-local-fixture
-
 managed_update_env=(
   HOME=/home/testop \
   FASED_STATE_DIR="$state" \
@@ -488,16 +626,6 @@ managed_update_env=(
   FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
   npm_config_registry="http://127.0.0.1:$rpc_port"
 )
-
-install -d -m 0755 -o root -g root /etc/fased/testing
-cat >/etc/fased/testing/protected-local-artifact-source.json <<EOF_ARTIFACT_SOURCE
-{
-  "schemaVersion": 1,
-  "baseUrl": "http://127.0.0.1:$rpc_port",
-  "releaseVersion": "$version"
-}
-EOF_ARTIFACT_SOURCE
-chmod 0444 /etc/fased/testing/protected-local-artifact-source.json
 
 bootstrap prepare >/tmp/protected-failure-prepare.json
 failure_instance="$(jq -er .instanceId /tmp/protected-failure-prepare.json)"

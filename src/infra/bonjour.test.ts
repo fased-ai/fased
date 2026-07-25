@@ -20,6 +20,18 @@ function enableAdvertiserUnitMode(hostname = "test-host") {
   delete process.env.VITEST;
   process.env.NODE_ENV = "development";
   vi.spyOn(os, "hostname").mockReturnValue(hostname);
+  vi.spyOn(os, "networkInterfaces").mockReturnValue({
+    lo: [
+      {
+        address: "127.0.0.1",
+        netmask: "255.0.0.0",
+        family: "IPv4",
+        mac: "00:00:00:00:00:00",
+        internal: true,
+        cidr: "127.0.0.1/8",
+      },
+    ],
+  });
   process.env.FASED_MDNS_HOSTNAME = hostname;
 }
 
@@ -158,6 +170,23 @@ describe("gateway bonjour advertiser", () => {
     expect(shutdown).toHaveBeenCalledTimes(1);
   });
 
+  it("stays disabled when the host cannot enumerate network interfaces", async () => {
+    enableAdvertiserUnitMode();
+    vi.spyOn(os, "networkInterfaces").mockImplementation(() => {
+      throw new Error("network interfaces unavailable");
+    });
+
+    const started = await startGatewayBonjourAdvertiser({
+      gatewayPort: 18789,
+    });
+
+    expect(createService).not.toHaveBeenCalled();
+    expect(logWarn).toHaveBeenCalledWith(
+      expect.stringContaining("network interface discovery unavailable"),
+    );
+    await started.stop();
+  });
+
   it("omits cliPath and sshPort in minimal mode", async () => {
     enableAdvertiserUnitMode();
 
@@ -289,6 +318,7 @@ describe("gateway bonjour advertiser", () => {
     process.env.NODE_ENV = "development";
 
     vi.spyOn(os, "hostname").mockReturnValue("Mac.localdomain");
+    vi.spyOn(os, "networkInterfaces").mockReturnValue({});
 
     const destroy = vi.fn().mockResolvedValue(undefined);
     const advertise = vi.fn().mockResolvedValue(undefined);
