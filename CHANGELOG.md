@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.11
+
+- Prevent legacy Local Gateway services and their reverse-dependent timers from
+  reclaiming the Gateway port during protected service migration.
+- Preserve and restore the exact legacy user-service topology transactionally
+  across target activation failure, rollback, and normal update retry.
+
 ## 0.1.76-rc.10
 
 - Preserve root-established Protected Local shared-state ownership and modes

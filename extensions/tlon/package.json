@@ -1,6 +1,6 @@
 {
   "name": "@fased/tlon",
-  "version": "0.1.76-rc.10",
+  "version": "0.1.76-rc.11",
   "description": "FasedAgent Tlon/Urbit channel plugin",
   "type": "module",
   "dependencies": {
