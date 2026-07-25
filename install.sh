@@ -2604,6 +2604,48 @@ read_protected_local_env() {
     FASED_HOST_UPDATERCTL_STATE
 }
 
+resolve_shared_managed_state_group() {
+  if [[ "$(resolved_host_profile)" == "hosting" ]]; then
+    printf '%s\n' "${FASED_CONFIG_GROUP:-fased-config}"
+    return 0
+  fi
+  if read_protected_local_env; then
+    printf 'fscf-%s\n' "$PROTECTED_LOCAL_INSTANCE"
+    return 0
+  fi
+  return 1
+}
+
+ensure_fased_config_dir_permissions() {
+  mkdir -p "$FASED_CONFIG_DIR"
+  local shared_group=""
+  shared_group="$(resolve_shared_managed_state_group || true)"
+  if [[ -z "$shared_group" ]]; then
+    chmod 0700 "$FASED_CONFIG_DIR"
+    return 0
+  fi
+  local actual_group=""
+  actual_group="$(stat -c '%G' "$FASED_CONFIG_DIR" 2>/dev/null || true)"
+  if [[ "$actual_group" != "$shared_group" ]]; then
+    echo "Fased shared state group mismatch: expected $shared_group, found ${actual_group:-unknown}." >&2
+    return 1
+  fi
+  local actual_mode=""
+  actual_mode="$(stat -c '%a' "$FASED_CONFIG_DIR" 2>/dev/null || true)"
+  if [[ "$actual_mode" != "2770" ]]; then
+    echo "Fased shared state mode mismatch: expected 2770, found ${actual_mode:-unknown}." >&2
+    return 1
+  fi
+}
+
+managed_state_file_mode() {
+  if resolve_shared_managed_state_group >/dev/null 2>&1; then
+    printf '0660\n'
+  else
+    printf '0600\n'
+  fi
+}
+
 bootstrap_protected_local_topology() {
   local gateway_mode="$1"
   protected_local_supported || return 2
@@ -2737,8 +2779,7 @@ write_install_marker() {
   local onboarding_completed="$2"
   local escaped_repo
   escaped_repo="$(json_escape "$repo_root")"
-  mkdir -p "$FASED_CONFIG_DIR"
-  chmod 700 "$FASED_CONFIG_DIR" 2>/dev/null || true
+  ensure_fased_config_dir_permissions
   cat >"$INSTALL_MARKER_PATH" <<EOF
 {
   "repoPath": "$escaped_repo",
@@ -2751,17 +2792,40 @@ EOF
 }
 
 persist_runtime_update_channel() {
+  local transaction_phase="${1:-active}"
   if [[ "$UPDATE_CHANNEL_EXPLICIT" -ne 1 && "$HOSTING_REQUESTED" -ne 1 ]]; then
     return 0
   fi
   local config_path="${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}"
   [[ -f "$config_path" && ! -L "$config_path" ]] || return 0
-  CONFIG_PATH="$config_path" UPDATE_CHANNEL="$UPDATE_CHANNEL" node <<'NODE'
+  local config_mode=""
+  if [[ "$transaction_phase" == "protected-local-pre-activation" ]]; then
+    local config_uid=""
+    config_uid="$(stat -c '%u' "$config_path" 2>/dev/null || true)"
+    if [[ "$config_uid" != "$(id -u)" ]]; then
+      echo "Prepared Protected Local config is not owned by the operator." >&2
+      return 1
+    fi
+    config_mode="0600"
+  elif [[ "$transaction_phase" == "active" ]]; then
+    ensure_fased_config_dir_permissions
+    config_mode="$(managed_state_file_mode)"
+  else
+    echo "Unknown update-channel persistence phase: $transaction_phase" >&2
+    return 1
+  fi
+  CONFIG_PATH="$config_path" CONFIG_MODE="$config_mode" UPDATE_CHANNEL="$UPDATE_CHANNEL" node <<'NODE'
 const fs = require("node:fs");
 
 const configPath = process.env.CONFIG_PATH;
+const configMode = Number.parseInt(process.env.CONFIG_MODE || "", 8);
 const channel = process.env.UPDATE_CHANNEL;
-if (!configPath || !new Set(["stable", "beta"]).has(channel)) {
+if (
+  !configPath ||
+  !Number.isSafeInteger(configMode) ||
+  !new Set([0o600, 0o660]).has(configMode) ||
+  !new Set(["stable", "beta"]).has(channel)
+) {
   process.exit(1);
 }
 const stat = fs.lstatSync(configPath);
@@ -2773,11 +2837,11 @@ config.update = config.update && typeof config.update === "object" ? config.upda
 config.update.channel = channel;
 const temporary = `${configPath}.update-channel-${process.pid}`;
 fs.writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, {
-  mode: 0o600,
+  mode: configMode,
   flag: "wx",
 });
 fs.renameSync(temporary, configPath);
-fs.chmodSync(configPath, 0o600);
+fs.chmodSync(configPath, configMode);
 NODE
 }
 
@@ -3125,6 +3189,7 @@ upsert_env_var() {
   local file="$1"
   local key="$2"
   local value="$3"
+  local mode="${4:-0600}"
   local tmp
   tmp="$(mktemp)"
   if [[ -f "$file" ]]; then
@@ -3138,16 +3203,17 @@ upsert_env_var() {
     printf '%s=%s\n' "$key" "$value" >"$tmp"
   fi
   mv "$tmp" "$file"
-  chmod 600 "$file" 2>/dev/null || true
+  chmod "$mode" "$file"
 }
 
 persist_managed_env_var() {
   local key="$1"
   local value="$2"
   local env_file="$FASED_CONFIG_DIR/.env"
-  mkdir -p "$FASED_CONFIG_DIR"
-  chmod 700 "$FASED_CONFIG_DIR" 2>/dev/null || true
-  upsert_env_var "$env_file" "$key" "$value"
+  ensure_fased_config_dir_permissions
+  local env_mode=""
+  env_mode="$(managed_state_file_mode)"
+  upsert_env_var "$env_file" "$key" "$value" "$env_mode"
 }
 
 install_log_path() {
@@ -5953,11 +6019,13 @@ if [[ ! -f "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}" ]]; then
   exit 1
 fi
 if [[ "$PROTECTED_LOCAL_BOOTSTRAPPED" -eq 1 ]]; then
+  persist_runtime_update_channel protected-local-pre-activation
   if ! bootstrap_protected_local_topology activate; then
     write_install_marker "$REPO_ROOT" "false"
     echo "Onboarding completed, but Protected Local Gateway activation failed and was not committed." >&2
     exit 1
   fi
+else
+  persist_runtime_update_channel
 fi
-persist_runtime_update_channel
 write_install_marker "$REPO_ROOT" "true"

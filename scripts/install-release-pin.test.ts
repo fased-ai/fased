@@ -186,4 +186,51 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
     expect(channelFunction).toBeGreaterThan(markerEnd);
     expect(installer.slice(markerStart, markerEnd)).not.toContain("persist_runtime_update_channel");
   });
+
+  it("does not downgrade shared Protected Local state after activation", () => {
+    const permissionsStart = installer.indexOf("ensure_fased_config_dir_permissions() {");
+    const permissionsEnd = installer.indexOf("\n}\n", permissionsStart);
+    const markerStart = installer.indexOf("write_install_marker() {");
+    const markerEnd = installer.indexOf("\n}\n", markerStart);
+    const channelStart = installer.indexOf("persist_runtime_update_channel() {");
+    const channelEnd = installer.indexOf("\n}\n", channelStart);
+    const envStart = installer.indexOf("persist_managed_env_var() {");
+    const envEnd = installer.indexOf("\n}\n", envStart);
+
+    expect(permissionsStart).toBeGreaterThanOrEqual(0);
+    expect(permissionsEnd).toBeGreaterThan(permissionsStart);
+    const permissions = installer.slice(permissionsStart, permissionsEnd);
+    expect(permissions).toContain("Fased shared state group mismatch");
+    expect(permissions).toContain("Fased shared state mode mismatch");
+    expect(permissions).toContain('if [[ "$actual_mode" != "2770" ]]');
+    expect(permissions).not.toContain('chmod 2770 "$FASED_CONFIG_DIR"');
+
+    const marker = installer.slice(markerStart, markerEnd);
+    expect(marker).toContain("ensure_fased_config_dir_permissions");
+    expect(marker).not.toContain('chmod 700 "$FASED_CONFIG_DIR"');
+
+    const channel = installer.slice(channelStart, channelEnd);
+    expect(channel).toContain("ensure_fased_config_dir_permissions");
+    expect(channel).toContain('config_mode="$(managed_state_file_mode)"');
+    expect(channel).toContain('CONFIG_MODE="$config_mode"');
+    expect(channel).toContain('transaction_phase="${1:-active}"');
+    expect(channel).toContain('transaction_phase" == "protected-local-pre-activation');
+
+    const managedEnv = installer.slice(envStart, envEnd);
+    expect(managedEnv).toContain("ensure_fased_config_dir_permissions");
+    expect(managedEnv).toContain('env_mode="$(managed_state_file_mode)"');
+
+    const protectedActivation = installer.indexOf("bootstrap_protected_local_topology activate");
+    const preparedChannel = installer.lastIndexOf(
+      "persist_runtime_update_channel protected-local-pre-activation",
+      protectedActivation,
+    );
+    const finalMarker = installer.indexOf(
+      'write_install_marker "$REPO_ROOT" "true"',
+      protectedActivation,
+    );
+    expect(preparedChannel).toBeGreaterThanOrEqual(0);
+    expect(preparedChannel).toBeLessThan(protectedActivation);
+    expect(finalMarker).toBeGreaterThan(protectedActivation);
+  });
 });
