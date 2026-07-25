@@ -18,10 +18,12 @@ command -v "$RUNTIME" >/dev/null 2>&1 || {
   echo "Podman is required for the protected Local systemd fixtures." >&2
   exit 1
 }
-command -v gh >/dev/null 2>&1 || {
-  echo "GitHub CLI is required for the literal Protected Local update fixture." >&2
-  exit 1
-}
+if [[ ",$SCENARIOS," == *,install,* ]]; then
+  command -v gh >/dev/null 2>&1 || {
+    echo "GitHub CLI is required for the literal Protected Local update fixture." >&2
+    exit 1
+  }
+fi
 [[ "$RUNTIME" == "podman" ]] || {
   echo "The protected Local systemd fixtures currently require Podman." >&2
   exit 1
@@ -128,9 +130,6 @@ run_fixture_scenario() {
     -v "$ARTIFACT_DIR:/artifacts:ro,Z" \
     -v "$LEGACY_ARTIFACT_DIR:/legacy-artifacts:ro,Z" \
     "$image" >/dev/null
-  if [[ "$distro" == "ubuntu" ]]; then
-    "$RUNTIME" cp "$(command -v gh)" "$name:/usr/bin/gh"
-  fi
   for _ in {1..200}; do
     state="$("$RUNTIME" exec "$name" systemctl is-system-running 2>/dev/null || true)"
     if [[ "$state" == "running" || "$state" == "degraded" ]]; then

@@ -391,11 +391,25 @@ jobs:
         with:
           install-bun: "false"
 
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: tools/fased-signerd/go.mod
+          cache-dependency-path: tools/fased-signerd/go.sum
+
       - name: Check hosted runtime installer
         run: bash scripts/test-hosted-runtime-install.sh
 
       - name: Check exact streamed Hosting bootstrap
         run: bash scripts/test-streamed-hosting-bootstrap-container.sh
+
+      - name: Build exact Protected Local candidate
+        run: pnpm build
+
+      - name: Check clean Protected Local bootstrap on Ubuntu and Rocky
+        env:
+          FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install
+        run: pnpm test:protected-local:systemd
 
   version-identity:
     name: "version identity"

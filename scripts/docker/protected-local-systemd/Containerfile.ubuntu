@@ -10,6 +10,8 @@ RUN apt-get update \
     dbus \
     dbus-user-session \
     curl \
+    diffutils \
+    git \
     iproute2 \
     jq \
     libpam-systemd \

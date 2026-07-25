@@ -8,6 +8,8 @@ legacy_version="${FASED_FIXTURE_LEGACY_VERSION:-0.1.76-rc.7}"
 digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 release_root="/var/lib/fased-installer/releases/v${version}/${digest}/extract/package"
 root_store="$(dirname "$(dirname "$release_root")")"
+candidate_repo=/var/lib/fased-protected-local-candidate
+candidate_installer=/var/lib/fased-protected-local-install.sh
 state=/home/testop/.fased
 runtime="$state/runtime/releases/$version"
 legacy_runtime="$state/runtime/releases/$legacy_version"
@@ -246,7 +248,7 @@ cp -a "$artifact_extract/node_modules" "$root_store/verified-dependencies/node_m
 rm -rf "$release_root/node_modules"
 
 for script in fased-host-updater.mjs fased-host-updaterctl.mjs fased-signer-owner-hosting.sh; do
-  install -m 0755 -o root -g root "/repo/scripts/$script" "$release_root/scripts/$script"
+  cmp "/repo/scripts/$script" "$release_root/scripts/$script"
 done
 install -m 0755 -o root -g root /repo/dist-native/release/fased-signerd-linux-amd64 \
   "$root_store/verified-assets/fased-signerd"
@@ -257,9 +259,139 @@ printf 'version=%s\ncommit=%s\nsigner_sha256=%s\ndependency_sha256=%s\ndependenc
   "$version" "$commit" "$signer_sha" "$(printf fixture | sha256sum | awk '{print $1}')" "$dependency_hash" \
   >"$release_root/.fased-hosting-bundle-verified"
 chmod 0600 "$release_root/.fased-hosting-bundle-verified"
-printf '{"name":"@fased/fased","version":"%s"}\n' "$version" >"$release_root/package.json"
-printf '{"version":"%s","commit":"%s"}\n' "$version" "$commit" \
-  >"$release_root/dist/build-info.json"
+test "$(jq -er .version "$release_root/package.json")" = "$version"
+
+rm -rf "$candidate_repo"
+git clone --quiet --no-hardlinks /repo "$candidate_repo"
+git -C "$candidate_repo" checkout --quiet --detach "$commit"
+git -C "$candidate_repo" tag --force "v$version" "$commit"
+chown -R testop:testop "$candidate_repo"
+install -m 0700 -o testop -g testop "$candidate_repo/install.sh" "$candidate_installer"
+
+install -d -m 0700 -o root -g root /opt/fased-fixture-bootstrap-tools
+install -m 0755 -o root -g root "$(command -v jq)" \
+  /opt/fased-fixture-bootstrap-tools/jq
+cat >/opt/fased-fixture-bootstrap-tools/gh <<'EOF_FIXTURE_GH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "attestation" && "${2:-}" == "verify" ]]; then
+  exit 0
+fi
+exit 1
+EOF_FIXTURE_GH
+chmod 0755 /opt/fased-fixture-bootstrap-tools/gh
+
+install -d -m 0755 -o root -g root /etc/fased/testing
+app_asset="fased-hosted-app-v2-linux-x64-v${version}.tar.gz"
+dependency_asset="$(basename "$(find /artifacts -maxdepth 1 -type f \
+  -name 'fased-hosted-deps-linux-x64-*.tar.gz' -print -quit)")"
+app_sha="$(sha256sum "/artifacts/$app_asset" | awk '{print $1}')"
+dependency_sha="$(sha256sum "/artifacts/$dependency_asset" | awk '{print $1}')"
+signer_build_input_digest="$(
+  jq -er .buildInputDigest /repo/dist-native/release/fased-signerd-release.json
+)"
+env \
+  FASED_FIXTURE_APP_ASSET="$app_asset" \
+  FASED_FIXTURE_APP_SHA="$app_sha" \
+  FASED_FIXTURE_COMMIT="$commit" \
+  FASED_FIXTURE_DEPENDENCY_ASSET="$dependency_asset" \
+  FASED_FIXTURE_DEPENDENCY_HASH="$dependency_hash" \
+  FASED_FIXTURE_DEPENDENCY_SHA="$dependency_sha" \
+  FASED_FIXTURE_SIGNER_BUILD_INPUT_DIGEST="$signer_build_input_digest" \
+  FASED_FIXTURE_SIGNER_SHA="$signer_sha" \
+  FASED_FIXTURE_VERSION="$version" \
+  /usr/local/bin/node --input-type=module <<'EOF_LOCAL_MANIFEST'
+import fs from "node:fs";
+import {
+  digestJSON,
+  HOSTED_SIGNER_CAPABILITIES_V2,
+} from "/repo/scripts/build-hosted-release-manifest.mjs";
+
+const env = process.env;
+const artifact = {
+  asset: env.FASED_FIXTURE_APP_ASSET,
+  sha256: env.FASED_FIXTURE_APP_SHA,
+};
+const dependencies = {
+  asset: env.FASED_FIXTURE_DEPENDENCY_ASSET,
+  sha256: env.FASED_FIXTURE_DEPENDENCY_SHA,
+  dependencyHash: env.FASED_FIXTURE_DEPENDENCY_HASH,
+};
+const signerArtifact = {
+  asset: "fased-signerd-linux-amd64",
+  sha256: env.FASED_FIXTURE_SIGNER_SHA,
+};
+const manifest = {
+  schemaVersion: 2,
+  release: {
+    version: env.FASED_FIXTURE_VERSION,
+    tag: `v${env.FASED_FIXTURE_VERSION}`,
+    commit: env.FASED_FIXTURE_COMMIT,
+  },
+  application: {
+    linux: {
+      x64: { artifact, dependencies },
+      arm64: {
+        artifact: { ...artifact, asset: "unused-arm64-app.tar.gz" },
+        dependencies: { ...dependencies, asset: "unused-arm64-dependencies.tar.gz" },
+      },
+    },
+  },
+  signer: {
+    release: {
+      version: env.FASED_FIXTURE_VERSION,
+      commit: env.FASED_FIXTURE_COMMIT,
+      buildInputDigest: env.FASED_FIXTURE_SIGNER_BUILD_INPUT_DIGEST,
+      development: false,
+    },
+    capabilities: HOSTED_SIGNER_CAPABILITIES_V2,
+    capabilitiesDigest: digestJSON(HOSTED_SIGNER_CAPABILITIES_V2),
+    platforms: {
+      "linux-amd64": signerArtifact,
+      "linux-arm64": { ...signerArtifact, asset: "fased-signerd-linux-arm64" },
+      "darwin-amd64": { ...signerArtifact, asset: "fased-signerd-darwin-amd64" },
+      "darwin-arm64": { ...signerArtifact, asset: "fased-signerd-darwin-arm64" },
+    },
+  },
+};
+fs.writeFileSync(
+  "/etc/fased/testing/local-release-manifest.json",
+  `${JSON.stringify(manifest, null, 2)}\n`,
+);
+EOF_LOCAL_MANIFEST
+printf '{}\n' >/etc/fased/testing/local-release-manifest.json.attestation.json
+chmod 0444 \
+  /etc/fased/testing/local-release-manifest.json \
+  /etc/fased/testing/local-release-manifest.json.attestation.json
+
+cat >/usr/local/bin/curl <<'EOF_FIXTURE_CURL'
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+url=""
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+  case "${args[$i]}" in
+    -o)
+      output="${args[$((i + 1))]:-}"
+      i=$((i + 1))
+      ;;
+    http://*|https://*) url="${args[$i]}" ;;
+  esac
+done
+case "$url" in
+  */fased-hosted-release-v2.json)
+    install -m 0600 /etc/fased/testing/local-release-manifest.json "$output"
+    ;;
+  */fased-hosted-release-v2.json.attestation.json)
+    install -m 0600 /etc/fased/testing/local-release-manifest.json.attestation.json "$output"
+    ;;
+  *) exec /usr/bin/curl "$@" ;;
+esac
+EOF_FIXTURE_CURL
+chmod 0755 /usr/local/bin/curl
+test "$(jq -er .version "$release_root/dist/build-info.json")" = "$version"
+test "$(jq -er .commit "$release_root/dist/build-info.json")" = "$commit"
 chown -R root:root "$release_root" "$root_store/verified-assets" "$root_store/verified-dependencies"
 chmod -R a+rX,go-w "$release_root" "$root_store/verified-assets" "$root_store/verified-dependencies"
 chmod 0600 "$release_root/.fased-hosting-bundle-verified"
@@ -377,9 +509,17 @@ chmod 0755 /usr/local/libexec/fased-fixture-protected-installer.sh
 cat >/usr/local/bin/sudo <<'EOF_SUDO_SHIM'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ " $* " == *" apt-get "* || " $* " == *" dnf "* || " $* " == *" dnf5 "* ]]; then
+  printf 'fixture package-manager progress before verified commit\n'
+  printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
+  /usr/bin/sudo /usr/bin/install -m 0755 \
+    /opt/fased-fixture-bootstrap-tools/jq /usr/local/bin/jq
+  /usr/bin/sudo /usr/bin/install -m 0755 \
+    /opt/fased-fixture-bootstrap-tools/gh /usr/local/bin/gh
+  exit 0
+fi
 if [[ "${1:-}" == "--" &&
   "${2:-}" == "/bin/bash" &&
-  "${3:-}" == "/repo/install.sh" &&
   "${4:-}" == "--protected-local-root-bootstrap" ]]; then
   exec /usr/bin/sudo -- \
     /bin/bash /usr/local/libexec/fased-fixture-protected-installer.sh "${@:4}"
@@ -423,6 +563,12 @@ EOF_ARTIFACT_SOURCE
 chmod 0444 /etc/fased/testing/protected-local-artifact-source.json
 
 if [[ "$phase" == "fresh-install" ]]; then
+  rm -f /usr/local/bin/gh /usr/local/bin/jq /usr/bin/gh /usr/bin/jq
+  if runuser -u testop -- env PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    /bin/bash -lc 'command -v gh || command -v jq'; then
+    echo "fresh Local fixture did not start without gh and jq" >&2
+    exit 1
+  fi
   fresh_env=(
     HOME=/home/testop
     USER=testop
@@ -432,15 +578,16 @@ if [[ "$phase" == "fresh-install" ]]; then
     FASED_GATEWAY_PORT="$gateway_port"
     FASED_GATEWAY_TOKEN="$gateway_token"
     FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port"
+    FASED_INSTALL_REPO="$candidate_repo"
     npm_config_registry="http://127.0.0.1:$rpc_port"
   )
   fresh_channel="$([[ "$version" == *-* ]] && printf beta || printf stable)"
   runuser -u testop -- env "${fresh_env[@]}" \
-    /bin/bash /repo/install.sh \
+    /bin/bash "$candidate_installer" \
       --release "v$version" \
       --update-channel "$fresh_channel" \
       --local \
-      --no-git-update \
+      --install-dir /home/testop/fased \
       -- \
       --non-interactive \
       --accept-risk \
@@ -454,6 +601,7 @@ if [[ "$phase" == "fresh-install" ]]; then
       --skip-health \
     >/tmp/fresh-install.out 2>/tmp/fresh-install.err
 
+  hash -r
   test -s "$state/fased.json"
   test -s "$state/install.json"
   test "$(jq -r .profile "$state/install.json")" = "protected-local"
