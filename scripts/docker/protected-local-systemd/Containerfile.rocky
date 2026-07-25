@@ -4,6 +4,7 @@ ENV container=podman
 
 RUN dnf install -y \
     ca-certificates \
+    dbus-daemon \
     'dnf-command(config-manager)' \
     iproute \
     jq \
@@ -12,6 +13,7 @@ RUN dnf install -y \
     shadow-utils \
     sudo \
     systemd \
+    systemd-pam \
     tar \
     util-linux \
     xz \

@@ -4,11 +4,13 @@ set -euo pipefail
 phase="${1:-install}"
 version="${FASED_FIXTURE_VERSION:?missing fixture version}"
 commit="${FASED_FIXTURE_COMMIT:?missing fixture commit}"
+legacy_version="${FASED_FIXTURE_LEGACY_VERSION:-0.1.76-rc.7}"
 digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 release_root="/var/lib/fased-installer/releases/v${version}/${digest}/extract/package"
 root_store="$(dirname "$(dirname "$release_root")")"
 state=/home/testop/.fased
 runtime="$state/runtime/releases/$version"
+legacy_runtime="$state/runtime/releases/$legacy_version"
 gateway_port=19456
 rpc_port=19457
 gateway_token=fased-protected-local-fixture-token
@@ -74,6 +76,45 @@ wait_for_rpc() {
   return 1
 }
 
+user_systemctl() {
+  runuser -u testop -- env \
+    XDG_RUNTIME_DIR=/run/user/2000 \
+    DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/2000/bus \
+    systemctl --user "$@"
+}
+
+wait_for_user_manager() {
+  local state=""
+  for _ in {1..200}; do
+    if [[ -S /run/user/2000/bus ]]; then
+      state="$(user_systemctl is-system-running 2>/dev/null || true)"
+      [[ "$state" == "running" || "$state" == "degraded" ]] && return 0
+    fi
+    sleep 0.1
+  done
+  echo "fixture user systemd manager did not become ready" >&2
+  systemctl status user@2000.service --no-pager >&2 || true
+  journalctl -u user@2000.service -n 80 --no-pager >&2 || true
+  ls -la /run/user/2000 /run/user/2000/bus >&2 2>/dev/null || true
+  return 1
+}
+
+wait_for_gateway_version() {
+  local expected="$1"
+  local response=""
+  for _ in {1..300}; do
+    if response="$(curl -fsS --max-time 1 "http://127.0.0.1:$gateway_port/healthz" 2>/dev/null)" &&
+      jq -e --arg expected "$expected" \
+        '.version == $expected and (.runtimeSource == "managed-package" or .runtimeSource == "packaged-runtime")' \
+        <<<"$response" >/dev/null; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "Gateway did not report expected version: $expected" >&2
+  return 1
+}
+
 bootstrap() {
   local mode="$1"
   /usr/local/bin/node /repo/scripts/protected-local-bootstrap.mjs install \
@@ -107,9 +148,11 @@ verify_wallet() {
 if [[ "$phase" == "verify-reboot" ]]; then
   [[ -f "$snapshot" ]]
   instance="$(jq -er .instanceId "$snapshot")"
+  wait_for_user_manager
   wait_for_service "fased-local-controller-$instance.service"
   wait_for_service "fased-signerd-$instance.service"
   wait_for_service "fased-gateway-$instance.service"
+  wait_for_gateway_version "$version"
   wait_for_socket "/run/fased-local/$instance/operator/operator.sock"
   mapfile -t env_args < <(operator_env "$instance")
   runuser -u testop -- env "${env_args[@]}" \
@@ -131,6 +174,10 @@ if [[ "$phase" == "verify-reboot" ]]; then
     echo "Protected Local Gateway became publicly bound after reboot." >&2
     exit 1
   fi
+  if user_systemctl is-active --quiet fased-gateway.service; then
+    echo "legacy user Gateway restarted after protected Local reboot" >&2
+    exit 1
+  fi
   printf 'protected Local reboot fixture passed: %s\n' "$instance"
   exit 0
 fi
@@ -141,6 +188,9 @@ fi
 }
 
 useradd --uid 2000 --user-group --create-home --shell /bin/bash testop
+loginctl enable-linger testop
+systemctl start user@2000.service
+wait_for_user_manager
 install -d -m 0755 -o root -g root "$release_root/scripts" "$release_root/dist"
 install -d -m 0755 -o root -g root \
   "$root_store/verified-assets" \
@@ -229,6 +279,22 @@ http.createServer((request, response) => {
   });
 }).listen(port, "127.0.0.1");
 EOF_RPC
+cat >/usr/local/libexec/fased-fixture-legacy-gateway.mjs <<'EOF_LEGACY_GATEWAY'
+import http from "node:http";
+
+const port = Number(process.env.FASED_FIXTURE_GATEWAY_PORT);
+const version = process.env.FASED_FIXTURE_LEGACY_VERSION;
+http
+  .createServer((request, response) => {
+    if (request.url === "/healthz") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ version, runtimeSource: "managed-package" }));
+      return;
+    }
+    response.writeHead(404).end();
+  })
+  .listen(port, "127.0.0.1");
+EOF_LEGACY_GATEWAY
 cat >/usr/local/libexec/fased-fixture-protected-installer.sh <<EOF_PROTECTED_INSTALLER
 #!/usr/bin/env bash
 set -euo pipefail
@@ -435,9 +501,14 @@ fi
 # the isolated signer account.
 install -d -m 0700 -o testop -g testop "$state"
 install -d -m 0755 -o testop -g testop "$state/runtime" "$(dirname "$runtime")"
-install -d -m 0755 -o testop -g testop "$runtime"
-cp -a "$artifact_extract/." "$runtime/"
-chown -R testop:testop "$runtime"
+install -d -m 0755 -o testop -g testop "$legacy_runtime"
+legacy_runtime_asset="/legacy-artifacts/fased-hosted-linux-x64-v${legacy_version}.tar.gz"
+[[ -f "$legacy_runtime_asset" ]]
+tar -xzf "$legacy_runtime_asset" -C "$legacy_runtime" --strip-components=1
+test "$(jq -r .version "$legacy_runtime/package.json")" = "$legacy_version"
+test "$(jq -r .version "$legacy_runtime/dist/build-info.json")" = "$legacy_version"
+test "$(jq -r .version "$legacy_runtime/dist/control-ui/version.json")" = "$legacy_version"
+chown -R testop:testop "$legacy_runtime"
 install -d -m 0700 -o root -g root /opt/fased
 wallet_dir="$state/wallet"
 legacy_binary="$state/bin/fased-signerd"
@@ -557,27 +628,97 @@ cat >"$state/install.json" <<EOF_MANIFEST
   "stateDir": "$state",
   "configPath": "$state/fased.json",
   "runtime": {
-    "activeVersion": "$version",
+    "activeVersion": "$legacy_version",
     "currentLink": "$state/runtime/current",
     "releasesDir": "$state/runtime/releases"
   },
   "service": {
     "name": "fased-gateway.service",
     "scope": "user",
-    "launcher": "$runtime/scripts/start-managed.sh"
+    "launcher": "$legacy_runtime/scripts/start-managed.sh"
   },
   "updater": {
-    "version": "$version",
+    "version": "$legacy_version",
     "path": "$state/updater/fased-managed-updater.mjs"
   }
 }
 EOF_MANIFEST
-ln -s "$runtime" "$state/runtime/current"
+ln -s "$legacy_runtime" "$state/runtime/current"
 chown -R testop:testop "$state"
 chmod 0700 /home/testop
 
+legacy_gateway_version="$legacy_version"
+user_unit_dir=/home/testop/.config/systemd/user
+install -d -m 0700 -o testop -g testop "$user_unit_dir"
+cat >"$user_unit_dir/fased-gateway.service" <<EOF_LEGACY_GATEWAY_UNIT
+[Unit]
+Description=Fased fixture legacy user Gateway
+
+[Service]
+Type=simple
+Environment=FASED_FIXTURE_GATEWAY_PORT=$gateway_port
+Environment=FASED_FIXTURE_LEGACY_VERSION=$legacy_gateway_version
+ExecStart=/usr/local/bin/node /usr/local/libexec/fased-fixture-legacy-gateway.mjs
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=default.target
+EOF_LEGACY_GATEWAY_UNIT
+cat >"$user_unit_dir/fased-fixture-gateway-reactivator.service" <<'EOF_REACTIVATOR_SERVICE'
+[Unit]
+Description=Fased fixture legacy Gateway reverse dependency
+After=fased-gateway.service
+Wants=fased-gateway.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/true
+EOF_REACTIVATOR_SERVICE
+cat >"$user_unit_dir/fased-fixture-gateway-reactivator.timer" <<'EOF_REACTIVATOR_TIMER'
+[Unit]
+Description=Repeatedly exercise the legacy Gateway reverse dependency
+
+[Timer]
+OnBootSec=1
+OnUnitActiveSec=1
+Unit=fased-fixture-gateway-reactivator.service
+
+[Install]
+WantedBy=timers.target
+EOF_REACTIVATOR_TIMER
+chown -R testop:testop /home/testop/.config
+chmod 0600 "$user_unit_dir"/*.service "$user_unit_dir"/*.timer
+user_systemctl daemon-reload
+user_systemctl enable --now fased-gateway.service
+user_systemctl enable --now fased-fixture-gateway-reactivator.timer
+wait_for_gateway_version "$legacy_gateway_version"
+
 original_manifest_sha="$(sha256sum "$state/install.json" | awk '{print $1}')"
 original_key_sha="$(sha256sum "$wallet_dir/signerd-v2.master.key" | awk '{print $1}')"
+
+user_systemctl is-enabled --quiet fased-gateway.service
+user_systemctl is-active --quiet fased-gateway.service
+systemctl stop user@2000.service
+for _ in {1..200}; do
+  [[ ! -S /run/user/2000/bus ]] && break
+  sleep 0.1
+done
+test ! -S /run/user/2000/bus
+set +e
+bootstrap prepare >/tmp/protected-no-user-manager.out 2>/tmp/protected-no-user-manager.err
+no_user_manager_status=$?
+set -e
+test "$no_user_manager_status" -ne 0
+grep -F "legacy Local Gateway exists but its user systemd manager is unavailable" \
+  /tmp/protected-no-user-manager.err >/dev/null
+test -z "$(find /var/lib/fased-local -mindepth 1 -maxdepth 1 -type d -print -quit)"
+test -z "$(find /opt/fased/local -mindepth 1 -maxdepth 1 -type d -print -quit)"
+systemctl start user@2000.service
+wait_for_user_manager
+wait_for_gateway_version "$legacy_gateway_version"
+user_systemctl is-enabled --quiet fased-gateway.service
+user_systemctl is-active --quiet fased-gateway.service
 
 bootstrap prepare >/tmp/protected-prepare.json
 instance="$(jq -er .instanceId /tmp/protected-prepare.json)"
@@ -596,7 +737,24 @@ jq -e --arg publicKey "$legacy_public_key" \
   '.ready == true and .role == "agent" and .publicKey == $publicKey' \
   /tmp/prepared-agent.json >/dev/null
 
+interrupted_instance="$instance"
+bootstrap prepare >/tmp/protected-recovered-prepare.json
+instance="$(jq -er .instanceId /tmp/protected-recovered-prepare.json)"
+if [[ "$instance" != "$interrupted_instance" ]]; then
+  test ! -e "/var/lib/fased-local/$interrupted_instance"
+  test ! -e "/opt/fased/local/$interrupted_instance"
+fi
+test -S "/run/fased-local/$instance/operator/operator.sock"
+verify_wallet "$instance" agent >/tmp/recovered-prepared-agent.json
+jq -e --arg publicKey "$legacy_public_key" \
+  '.ready == true and .role == "agent" and .publicKey == $publicKey' \
+  /tmp/recovered-prepared-agent.json >/dev/null
+
 bootstrap rollback >/tmp/protected-rollback.json
+wait_for_gateway_version "$legacy_gateway_version"
+test ! -e "$user_unit_dir/fased-gateway.service.d/90-fased-protected-local.conf"
+user_systemctl is-enabled --quiet fased-gateway.service
+user_systemctl is-active --quiet fased-gateway.service
 test ! -e "/etc/systemd/system/fased-gateway-$instance.service"
 test ! -e "/etc/fased/local/$instance"
 test ! -e "/var/lib/fased-local/$instance"
@@ -613,12 +771,12 @@ for script in \
   fased-managed-updater.mjs \
   hosted-release-manifest.mjs \
   managed-runtime-layout.mjs; do
-  install -m 0700 -o testop -g testop "$runtime/scripts/$script" "$state/updater/$script"
+  install -m 0700 -o testop -g testop "$legacy_runtime/scripts/$script" "$state/updater/$script"
 done
 install -m 0700 -o testop -g testop \
-  "$runtime/scripts/fased-managed-launcher.sh" "$state/bin/fased"
+  "$legacy_runtime/scripts/fased-managed-launcher.sh" "$state/bin/fased"
 install -m 0700 -o testop -g testop \
-  "$runtime/scripts/fased-managed-service.sh" "$state/bin/fased-service"
+  "$legacy_runtime/scripts/fased-managed-service.sh" "$state/bin/fased-service"
 for directory in \
   "$state/install-cache" \
   "$state/install-cache/npm-global" \
@@ -636,19 +794,53 @@ managed_update_env=(
   npm_config_registry="http://127.0.0.1:$rpc_port"
 )
 
-bootstrap prepare >/tmp/protected-failure-prepare.json
-failure_instance="$(jq -er .instanceId /tmp/protected-failure-prepare.json)"
-printf '#!/usr/bin/env bash\nexit 91\n' \
-  >"/opt/fased/local/$failure_instance/application/current/scripts/start-managed.sh"
-chmod 0755 "/opt/fased/local/$failure_instance/application/current/scripts/start-managed.sh"
+inject_failed_target_gateway() {
+  local candidate=""
+  local candidate_relative=""
+  local instance_id=""
+  for _ in {1..30000}; do
+    for candidate in /opt/fased/local/*/application/current/scripts/start-managed.sh; do
+      [[ -f "$candidate" ]] || continue
+      candidate_relative="${candidate#/opt/fased/local/}"
+      instance_id="${candidate_relative%%/*}"
+      [[ -n "$instance_id" && "$instance_id" != "$candidate_relative" ]] || continue
+      printf '%s\n' "$instance_id" >/tmp/injected-failure-instance
+      cat >"$candidate" <<EOF_FAILED_GATEWAY
+#!/usr/bin/env bash
+export FASED_FIXTURE_GATEWAY_PORT=$gateway_port
+export FASED_FIXTURE_LEGACY_VERSION=$legacy_gateway_version
+exec /usr/local/bin/node /usr/local/libexec/fased-fixture-legacy-gateway.mjs
+EOF_FAILED_GATEWAY
+      chmod 0755 "$candidate"
+      return 0
+    done
+    sleep 0.01
+  done
+  echo "failed to inject the target Gateway activation fault" >&2
+  return 1
+}
+
+inject_failed_target_gateway &
+injector_pid=$!
 set +e
-bootstrap activate >/tmp/protected-failure.out 2>/tmp/protected-failure.err
-failure_status=$?
+runuser -u testop -- env "${managed_update_env[@]}" \
+  "$state/install-cache/npm-global/bin/fased" update --timeout 60 \
+  >/tmp/protected-update-failure.out 2>/tmp/protected-update-failure.err
+update_failure_status=$?
 set -e
-test "$failure_status" -ne 0
+wait "$injector_pid"
+test "$update_failure_status" -ne 0
+grep -F "non-target service" /tmp/protected-update-failure.err >/dev/null
+failure_instance="$(cat /tmp/injected-failure-instance)"
+wait_for_gateway_version "$legacy_gateway_version"
+test ! -e "$user_unit_dir/fased-gateway.service.d/90-fased-protected-local.conf"
+test ! -e "/var/lib/fased-local/$failure_instance/controller/protected-local-active"
+test ! -e "/var/lib/fased-local/$failure_instance"
+test ! -e "/opt/fased/local/$failure_instance"
+user_systemctl is-enabled --quiet fased-gateway.service
+user_systemctl is-active --quiet fased-gateway.service
 test "$(sha256sum "$state/install.json" | awk '{print $1}')" = "$original_manifest_sha"
 test "$(sha256sum "$wallet_dir/signerd-v2.master.key" | awk '{print $1}')" = "$original_key_sha"
-test ! -e "/etc/systemd/system/fased-gateway-$failure_instance.service"
 verify_legacy_wallet /tmp/failure-rollback-agent.json
 
 runuser -u testop -- env "${managed_update_env[@]}" \
@@ -659,6 +851,7 @@ grep -F "Update mode: verified target-owned Protected Local transaction" \
   /tmp/protected-update.out >/dev/null
 
 instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
+wait_for_gateway_version "$version"
 wait_for_service "fased-signerd-$instance.service"
 wait_for_service "fased-local-controller-$instance.service"
 wait_for_service "fased-gateway-$instance.service"
@@ -679,10 +872,26 @@ test "$(systemctl show -p MainPID --value "fased-gateway-$instance.service")" = 
 runuser -u "fsgw-$instance" -- test -S \
   "/run/fased-local/$instance/application/app.sock"
 test "$(jq -r .profile "$state/install.json")" = "protected-local"
+test "$(jq -r .runtime.activeVersion "$state/install.json")" = "$version"
+test "$(jq -r .runtime.previousVersion "$state/install.json")" = "$legacy_version"
 test "$(jq -r .service.name "$state/install.json")" = "fased-gateway-$instance.service"
 test "$(cat "/var/lib/fased-local/$instance/controller/signer-version")" = "$version"
 test "$(jq -r .version "/var/lib/fased-local/$instance/controller/controller-version.json")" = \
   "$version"
+test -s "/var/lib/fased-local/$instance/controller/protected-local-active"
+test -s \
+  "$user_unit_dir/fased-gateway.service.d/90-fased-protected-local.conf"
+if user_systemctl is-active --quiet fased-gateway.service; then
+  echo "legacy user Gateway remained active after protected Local migration" >&2
+  exit 1
+fi
+user_systemctl start fased-fixture-gateway-reactivator.service
+sleep 1
+if user_systemctl is-active --quiet fased-gateway.service; then
+  echo "legacy user Gateway was resurrected by a reverse dependency" >&2
+  exit 1
+fi
+wait_for_gateway_version "$version"
 verify_wallet "$instance" agent >/tmp/active-agent.json
 jq -e --arg publicKey "$legacy_public_key" \
   '.ready == true and .role == "agent" and .publicKey == $publicKey' \
@@ -714,6 +923,7 @@ jq -e '.balance == "2000000000" and .unit == "lamports"' \
 systemctl restart "fased-local-controller-$instance.service" \
   "fased-signerd-$instance.service" "fased-gateway-$instance.service"
 wait_for_service "fased-gateway-$instance.service"
+wait_for_gateway_version "$version"
 runuser -u testop -- env "${env_args[@]}" \
   /usr/local/bin/node "$runtime/fased.mjs" health --json --timeout 5000 \
   >/tmp/restart-health.json

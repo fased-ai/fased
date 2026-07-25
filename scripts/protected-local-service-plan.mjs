@@ -116,6 +116,8 @@ Environment=FASED_PROTECTED_LOCAL_INSTANCE=${layout.instanceId}
 Environment=FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external
 Environment=FASED_WALLET_LOCAL_SIGNER_SOCKET=${layout.applicationSocket}
 Environment=FASED_PLUGIN_STATUS_CACHE_PATH=${escaped.appStateDir}/cache/plugin-status.json
+ExecStartPre=/usr/bin/test -s ${layout.controllerStateDir}/gateway-activation-ready
+ExecStartPre=/usr/bin/test -s ${escaped.appStateDir}/fased.json
 ExecStart=${unitPath(gatewayLaunch)}
 Restart=always
 RestartSec=1
@@ -226,12 +228,14 @@ WantedBy=multi-user.target
 `;
   const gatewayLauncher = `#!/usr/bin/env bash
 set -euo pipefail
-while [[ ! -s "${layout.controllerStateDir}/gateway-activation-ready" ]]; do
-  sleep 1
-done
-while [[ ! -s "${appStateDir}/fased.json" ]]; do
-  sleep 1
-done
+[[ -s "${layout.controllerStateDir}/gateway-activation-ready" ]] || {
+  echo "protected Local Gateway activation marker is unavailable" >&2
+  exit 78
+}
+[[ -s "${appStateDir}/fased.json" ]] || {
+  echo "protected Local Gateway configuration is unavailable" >&2
+  exit 78
+}
 exec /bin/bash "${repoDir}/scripts/start-managed.sh"
 `;
   const operatorSocketFinalizer = `#!/usr/bin/env bash

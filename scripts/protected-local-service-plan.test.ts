@@ -43,6 +43,17 @@ describe("Protected Local service plan", () => {
       "FASED_MANAGED_RUNTIME_ROOT=/opt/fased/local/0123456789abcdef/application/current", // pragma: allowlist secret
     );
     expect(gateway).toContain("FASED_NODE_BIN=/usr/bin/node");
+    expect(gateway).toContain(
+      "ExecStartPre=/usr/bin/test -s /var/lib/fased-local/0123456789abcdef/controller/gateway-activation-ready",
+    );
+    expect(gateway).toContain("ExecStartPre=/usr/bin/test -s /home/alice/.fased/fased.json");
+    expect(result.files.gatewayLauncher.content).not.toContain("while [[");
+    expect(result.files.gatewayLauncher.content).toContain(
+      "protected Local Gateway activation marker is unavailable",
+    );
+    expect(result.files.gatewayLauncher.content).toContain(
+      "protected Local Gateway configuration is unavailable",
+    );
     expect(signer).toContain("User=fssg-0123456789abcdef");
     expect(signer).toContain("SupplementaryGroups=fsgw-0123456789abcdef fsop-0123456789abcdef");
     expect(signer).toContain("-application-uid 61001");
