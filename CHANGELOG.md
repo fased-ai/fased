@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.12
+
+- Preserve the operator home owner, group, mode, and existing POSIX ACL while
+  granting only the dedicated Protected Local Gateway UID traversal access.
+- Restore the exact prior ACL on rollback and wait for the legacy user Gateway
+  to become inactive before protected service migration continues.
+
 ## 0.1.76-rc.11
 
 - Prevent legacy Local Gateway services and their reverse-dependent timers from
