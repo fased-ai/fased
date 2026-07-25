@@ -177,6 +177,7 @@ export function buildProtectedLocalLayout(instanceId, roots = {}) {
   const instanceRuntime = path.join(runtimeRoot, instanceId);
   const instanceState = path.join(stateRoot, instanceId);
   const instanceInstall = path.join(installRoot, instanceId);
+  const applicationInstallDir = path.join(instanceInstall, "application");
   return {
     instanceId,
     gatewayUser: `fsgw-${instanceId}`,
@@ -196,6 +197,9 @@ export function buildProtectedLocalLayout(instanceId, roots = {}) {
     signerStateDir: path.join(instanceState, "signer"),
     controllerStateDir: path.join(instanceState, "controller"),
     installDir: instanceInstall,
+    applicationInstallDir,
+    applicationReleasesDir: path.join(applicationInstallDir, "releases"),
+    applicationCurrentLink: path.join(applicationInstallDir, "current"),
     signerBinary: path.join(instanceInstall, "signer", "fased-signerd"),
     auditLog: path.join(instanceState, "signer", "audit.jsonl"),
     controllerTransaction: path.join(instanceState, "controller", "transaction.json"),

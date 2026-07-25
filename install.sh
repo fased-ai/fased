@@ -651,7 +651,11 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       grep -Fxq "version=${release_version}" "$existing_root/.fased-hosting-bundle-verified" && \
       grep -Fxq "sha256=${actual}" "$existing_root/.fased-hosting-bundle-verified" && \
       grep -Fxq "signer_sha256=${signer_actual}" "$existing_root/.fased-hosting-bundle-verified" && \
+      grep -Fxq "dependency_sha256=${dependency_actual}" "$existing_root/.fased-hosting-bundle-verified" && \
+      grep -Fxq "dependency_hash=${dependency_hash}" "$existing_root/.fased-hosting-bundle-verified" && \
       grep -Fxq "release_manifest_sha256=${manifest_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
+      [[ -d "$root_store/verified-dependencies/node_modules" && \
+        ! -L "$root_store/verified-dependencies/node_modules" ]] && \
       [[ -f "$root_store/verified-assets/fased-signerd" && \
         ! -L "$root_store/verified-assets/fased-signerd" && \
         "$(sha256sum "$root_store/verified-assets/fased-signerd" | awk '{print tolower($1)}')" == "$signer_actual" ]] && \
@@ -681,17 +685,21 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
 
     install -d -m 0700 -o root -g root "$staging/extract"
     cp -a "$verified_package_root" "$staging/extract/package"
+    install -d -m 0755 -o root -g root "$staging/verified-dependencies"
+    tar -xzf "$dependency_archive" -C "$staging/verified-dependencies" \
+      --no-same-owner --no-same-permissions
     install -d -m 0755 -o root -g root "$staging/verified-assets"
     install -m 0755 -o root -g root "$signer_binary" "$staging/verified-assets/fased-signerd"
     local package_root="$staging/extract/package"
     chown -R root:root "$staging"
+    chmod -R a+rX "$staging"
     chmod -R go-w "$staging"
     if find "$staging" -xdev \( ! -user root -o -perm /022 \) -print -quit | grep -q .; then
       echo "Could not secure the verified Hosting bundle as root-owned and non-writable." >&2
       exit 1
     fi
-    printf 'version=%s\nsha256=%s\nsigner_sha256=%s\nrelease_manifest_sha256=%s\ncommit=%s\n' \
-      "$release_version" "$actual" "$signer_actual" "$manifest_digest" "$packaged_commit" >"$package_root/.fased-hosting-bundle-verified"
+    printf 'version=%s\nsha256=%s\nsigner_sha256=%s\ndependency_sha256=%s\ndependency_hash=%s\nrelease_manifest_sha256=%s\ncommit=%s\n' \
+      "$release_version" "$actual" "$signer_actual" "$dependency_actual" "$dependency_hash" "$manifest_digest" "$packaged_commit" >"$package_root/.fased-hosting-bundle-verified"
     chmod 0600 "$package_root/.fased-hosting-bundle-verified"
     sync -f "$package_root/.fased-hosting-bundle-verified" "$package_root" "$staging/extract" 2>/dev/null || true
     mv "$staging" "$root_store"
@@ -2515,6 +2523,22 @@ protected_local_supported() {
   command -v sudo >/dev/null 2>&1
 }
 
+resolve_protected_local_system_node() {
+  local candidate=""
+  local resolved=""
+  for candidate in /usr/bin/node /usr/local/bin/node; do
+    node_runtime_ok_for "$candidate" || continue
+    resolved="$(readlink -f -- "$candidate" 2>/dev/null || true)"
+    case "$resolved" in
+      /usr/bin/*|/usr/local/bin/*)
+        printf '%s\n' "$resolved"
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
 read_protected_local_env() {
   local config="${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}"
   [[ -f "$config" ]] || return 1
@@ -2572,8 +2596,20 @@ bootstrap_protected_local_topology() {
   gateway_port="$(pass_args_value_after "--gateway-port" || true)"
   gateway_port="${gateway_port:-${FASED_GATEWAY_PORT:-18789}}"
   local system_node=""
-  system_node="$(readlink -f "$(command -v node)" 2>/dev/null || true)"
-  if [[ -z "$system_node" || "$system_node" != /usr/bin/* && "$system_node" != /usr/local/bin/* ]]; then
+  system_node="$(resolve_protected_local_system_node || true)"
+  if [[ -z "$system_node" && "$AUTO_INSTALL" -eq 1 ]]; then
+    echo "Installing a protected system Node.js runtime for Local services..."
+    if ! (
+      export PATH="/usr/sbin:/usr/bin:/sbin:/bin"
+      install_linux_system_dependencies 0
+    ); then
+      echo "Protected Local could not install a compatible system Node.js runtime." >&2
+      return 1
+    fi
+    hash -r 2>/dev/null || true
+    system_node="$(resolve_protected_local_system_node || true)"
+  fi
+  if [[ -z "$system_node" ]]; then
     echo "Protected Local requires a root-controlled system Node.js runtime." >&2
     return 1
   fi
@@ -5741,7 +5777,12 @@ if protected_local_target_platform; then
   fi
   if ! bootstrap_protected_local_topology "$protected_gateway_mode"; then
     status_frame_end
-    echo "Protected Local service bootstrap failed; the prior Local topology was restored when migration had started." >&2
+    if rollback_managed_runtime_after_failed_install; then
+      echo "Protected Local service bootstrap failed; the prior Local runtime and service topology were restored." >&2
+    else
+      echo "Protected Local service bootstrap failed and automatic Local runtime rollback was incomplete." >&2
+      echo "Retry the exact installer command; do not replace signer or wallet state manually." >&2
+    fi
     exit 1
   fi
 fi

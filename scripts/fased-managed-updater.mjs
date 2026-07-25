@@ -4844,9 +4844,64 @@ async function localSignerIsInstalledOrConfigured(signerPaths) {
   }
 }
 
-async function inspectLocalManagedConsistency(paths, manifest, currentVersion) {
-  if (isRootManagedProfile(manifest?.profile)) {
+async function inspectProtectedLocalRuntimeBoundary(
+  manifest,
+  roots = { installRoot: "/opt/fased/local", systemdRoot: "/etc/systemd/system" },
+) {
+  const reasons = [];
+  try {
+    const config = JSON.parse(await fsp.readFile(manifest.configPath, "utf8"));
+    const instanceId = String(config?.env?.vars?.FASED_PROTECTED_LOCAL_INSTANCE ?? "").trim();
+    if (config?.env?.vars?.FASED_PROTECTED_LOCAL !== "1" || !/^[a-f0-9]{16}$/u.test(instanceId)) {
+      return Object.freeze(["protected_local_identity_invalid"]);
+    }
+    const installDir = path.join(roots.installRoot, instanceId);
+    const applicationReleasesDir = path.join(installDir, "application", "releases");
+    const applicationCurrentLink = path.join(installDir, "application", "current");
+    const currentInfo = await fsp.lstat(applicationCurrentLink);
+    if (!currentInfo.isSymbolicLink()) {
+      reasons.push("protected_application_current_invalid");
+    } else {
+      const selected = await fsp.realpath(applicationCurrentLink);
+      if (path.dirname(selected) !== applicationReleasesDir) {
+        reasons.push("protected_application_current_escaped");
+      }
+    }
+    const gatewayUnit = await fsp.readFile(
+      path.join(roots.systemdRoot, `fased-gateway-${instanceId}.service`),
+      "utf8",
+    );
+    const gatewayLauncher = await fsp.readFile(path.join(installDir, "gateway-launch"), "utf8");
+    for (const expected of [
+      `WorkingDirectory=${applicationCurrentLink}`,
+      `Environment=FASED_CONFIG_DIR=${path.dirname(manifest.configPath)}`,
+      `Environment=FASED_MANAGED_RUNTIME_ROOT=${applicationCurrentLink}`,
+      "Environment=FASED_NODE_BIN=",
+    ]) {
+      if (!gatewayUnit.includes(expected)) {
+        reasons.push("protected_gateway_service_boundary_outdated");
+        break;
+      }
+    }
+    if (!gatewayLauncher.includes(`"${applicationCurrentLink}/scripts/start-managed.sh"`)) {
+      reasons.push("protected_gateway_launcher_boundary_outdated");
+    }
+  } catch {
+    reasons.push("protected_application_boundary_missing");
+  }
+  return Object.freeze([...new Set(reasons)]);
+}
+
+async function inspectLocalManagedConsistency(paths, manifest, currentVersion, protectedRoots) {
+  if (manifest?.profile === "hosting") {
     return Object.freeze({ consistent: true, reasons: Object.freeze([]) });
+  }
+  if (manifest?.profile === "protected-local") {
+    const reasons = await inspectProtectedLocalRuntimeBoundary(manifest, protectedRoots);
+    return Object.freeze({
+      consistent: reasons.length === 0,
+      reasons,
+    });
   }
   const reasons = [];
   if (manifest?.runtime?.activeVersion !== currentVersion) {

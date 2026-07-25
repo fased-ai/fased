@@ -148,13 +148,18 @@ install -d -m 0755 -o testop -g testop "$(dirname "$runtime")"
 # the isolated signer account.
 install -d -m 0700 -o root -g root /opt/fased
 install -d -m 0755 -o root -g root "$release_root/scripts" "$release_root/dist"
-install -d -m 0755 -o root -g root "$root_store/verified-assets"
+install -d -m 0755 -o root -g root \
+  "$root_store/verified-assets" \
+  "$root_store/verified-dependencies"
 
 runtime_asset="/artifacts/fased-hosted-linux-x64-v${version}.tar.gz"
 [[ -f "$runtime_asset" ]]
 install -d -m 0755 "$runtime"
 tar -xzf "$runtime_asset" -C "$runtime" --strip-components=1
 chown -R testop:testop "$runtime"
+cp -a "$runtime/." "$release_root/"
+cp -a "$runtime/node_modules" "$root_store/verified-dependencies/node_modules"
+rm -rf "$release_root/node_modules"
 
 for script in fased-host-updater.mjs fased-host-updaterctl.mjs fased-signer-owner-hosting.sh; do
   install -m 0755 -o root -g root "/repo/scripts/$script" "$release_root/scripts/$script"
@@ -163,13 +168,17 @@ install -m 0755 -o root -g root /repo/dist-native/release/fased-signerd-linux-am
   "$root_store/verified-assets/fased-signerd"
 
 signer_sha="$(sha256sum "$root_store/verified-assets/fased-signerd" | awk '{print $1}')"
-printf 'version=%s\ncommit=%s\nsigner_sha256=%s\n' "$version" "$commit" "$signer_sha" \
+dependency_hash="$(jq -er '.dependencyHash' "$release_root/.fased-hosted-runtime.json")"
+printf 'version=%s\ncommit=%s\nsigner_sha256=%s\ndependency_sha256=%s\ndependency_hash=%s\n' \
+  "$version" "$commit" "$signer_sha" "$(printf fixture | sha256sum | awk '{print $1}')" "$dependency_hash" \
   >"$release_root/.fased-hosting-bundle-verified"
 chmod 0600 "$release_root/.fased-hosting-bundle-verified"
 printf '{"name":"@fased/fased","version":"%s"}\n' "$version" >"$release_root/package.json"
 printf '{"version":"%s","commit":"%s"}\n' "$version" "$commit" \
   >"$release_root/dist/build-info.json"
-chmod -R go-w "$release_root" "$root_store/verified-assets"
+chown -R root:root "$release_root" "$root_store/verified-assets" "$root_store/verified-dependencies"
+chmod -R a+rX,go-w "$release_root" "$root_store/verified-assets" "$root_store/verified-dependencies"
+chmod 0600 "$release_root/.fased-hosting-bundle-verified"
 
 install -d -m 0755 /usr/local/libexec
 cat >/usr/local/libexec/fased-fixture-solana-rpc.mjs <<'EOF_RPC'
@@ -490,18 +499,16 @@ cat >/etc/fased/testing/protected-local-artifact-source.json <<EOF_ARTIFACT_SOUR
 EOF_ARTIFACT_SOURCE
 chmod 0444 /etc/fased/testing/protected-local-artifact-source.json
 
-cp "$runtime/scripts/start-managed.sh" /tmp/start-managed.real
-printf '#!/usr/bin/env bash\nexit 91\n' >"$runtime/scripts/start-managed.sh"
-chmod 0755 "$runtime/scripts/start-managed.sh"
-chown testop:testop "$runtime/scripts/start-managed.sh"
 bootstrap prepare >/tmp/protected-failure-prepare.json
 failure_instance="$(jq -er .instanceId /tmp/protected-failure-prepare.json)"
+printf '#!/usr/bin/env bash\nexit 91\n' \
+  >"/opt/fased/local/$failure_instance/application/current/scripts/start-managed.sh"
+chmod 0755 "/opt/fased/local/$failure_instance/application/current/scripts/start-managed.sh"
 set +e
 bootstrap activate >/tmp/protected-failure.out 2>/tmp/protected-failure.err
 failure_status=$?
 set -e
 test "$failure_status" -ne 0
-install -m 0755 -o testop -g testop /tmp/start-managed.real "$runtime/scripts/start-managed.sh"
 test "$(sha256sum "$state/install.json" | awk '{print $1}')" = "$original_manifest_sha"
 test "$(sha256sum "$wallet_dir/signerd-v2.master.key" | awk '{print $1}')" = "$original_key_sha"
 test ! -e "/etc/systemd/system/fased-gateway-$failure_instance.service"

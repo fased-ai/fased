@@ -11,7 +11,7 @@ function plan() {
     operatorUser: "alice",
     operatorHome: "/home/alice",
     appStateDir: "/home/alice/.fased",
-    repoDir: "/home/alice/fased",
+    repoDir: "/opt/fased/local/0123456789abcdef/application/current",
     gatewayUid: 61001,
     signerUid: 61002,
     gatewayGid: 62001,
@@ -36,6 +36,13 @@ describe("Protected Local service plan", () => {
     expect(gateway).toContain(
       "FASED_PLUGIN_STATUS_CACHE_PATH=/home/alice/.fased/cache/plugin-status.json",
     );
+    expect(gateway).toContain(
+      "WorkingDirectory=/opt/fased/local/0123456789abcdef/application/current", // pragma: allowlist secret
+    );
+    expect(gateway).toContain(
+      "FASED_MANAGED_RUNTIME_ROOT=/opt/fased/local/0123456789abcdef/application/current", // pragma: allowlist secret
+    );
+    expect(gateway).toContain("FASED_NODE_BIN=/usr/bin/node");
     expect(signer).toContain("User=fssg-0123456789abcdef");
     expect(signer).toContain("SupplementaryGroups=fsgw-0123456789abcdef fsop-0123456789abcdef");
     expect(signer).toContain("-application-uid 61001");
@@ -98,6 +105,6 @@ describe("Protected Local service plan", () => {
         operatorGid: 62002,
         nodeBinary: "/usr/bin/node",
       }),
-    ).toThrow(/runtime directory must remain below|must be distinct/);
+    ).toThrow(/root-controlled current release|must be distinct/);
   });
 });

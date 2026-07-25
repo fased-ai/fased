@@ -103,6 +103,7 @@ export function protectedLocalControllerConfiguration(instanceId) {
   const controllerStateDir = `${instanceStateDir}/controller`;
   const instanceInstallDir = `/opt/fased/local/${normalized}`;
   const controllerInstallDir = `${instanceInstallDir}/controller`;
+  const applicationInstallDir = `${instanceInstallDir}/application`;
   return Object.freeze({
     profile: "protected-local",
     instanceId: normalized,
@@ -115,6 +116,10 @@ export function protectedLocalControllerConfiguration(instanceId) {
       controllerReleasesDir: `${controllerInstallDir}/releases`,
       controllerCurrentLink: `${controllerInstallDir}/current`,
       controllerVersionPath: `${controllerStateDir}/controller-version.json`,
+      applicationReleasesDir: `${applicationInstallDir}/releases`,
+      applicationCurrentLink: `${applicationInstallDir}/current`,
+      gatewayUnitPath: `/etc/systemd/system/fased-gateway-${normalized}.service`,
+      gatewayLauncherPath: `${instanceInstallDir}/gateway-launch`,
       signerPath: `${instanceInstallDir}/signer/fased-signerd`,
       signerStateDBPath: `${signerStateDir}/state.db`,
       signerUnitPath: `/etc/systemd/system/fased-signerd-${normalized}.service`,
@@ -697,9 +702,37 @@ function parseUnifiedHostedSignerRelease(value, expectedVersion, platform) {
   ) {
     throw new Error(`attested unified signer release has no valid ${platform} artifact`);
   }
+  const applicationArchitecture = platform === "linux-amd64" ? "x64" : "arm64";
+  const application = value.application;
+  const applicationEntry = application?.linux?.[applicationArchitecture];
+  if (
+    !application ||
+    Object.keys(application).toSorted().join(",") !== "linux" ||
+    Object.keys(application.linux ?? {})
+      .toSorted()
+      .join(",") !== "arm64,x64" ||
+    !applicationEntry ||
+    Object.keys(applicationEntry).toSorted().join(",") !== "artifact,dependencies" ||
+    Object.keys(applicationEntry.artifact ?? {})
+      .toSorted()
+      .join(",") !== "asset,sha256" ||
+    Object.keys(applicationEntry.dependencies ?? {})
+      .toSorted()
+      .join(",") !== "asset,dependencyHash,sha256" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]+$/.test(applicationEntry.artifact.asset || "") ||
+    !/^[a-f0-9]{64}$/.test(applicationEntry.artifact.sha256 || "") ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]+$/.test(applicationEntry.dependencies.asset || "") ||
+    !/^[a-f0-9]{64}$/.test(applicationEntry.dependencies.sha256 || "") ||
+    !/^[a-f0-9]{64}$/.test(applicationEntry.dependencies.dependencyHash || "")
+  ) {
+    throw new Error(
+      `attested unified application release has no valid ${applicationArchitecture} artifact`,
+    );
+  }
   return {
     release: signerRelease,
     artifact,
+    application: applicationEntry,
     binding: {
       releaseCommit: release.commit,
       capabilitiesDigest: signer.capabilitiesDigest,
@@ -898,7 +931,283 @@ function transactionPaths(paths, transactionId) {
   };
 }
 
-function validateJournal(value) {
+const PROTECTED_SERVICE_FILE_MAX_BYTES = 512 * 1024;
+
+function validateProtectedServiceFileCapture(value, label, expectedRootUid) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).toSorted().join(",") !== "contentBase64,gid,mode,sha256,uid" ||
+    typeof value.contentBase64 !== "string" ||
+    value.contentBase64.length > PROTECTED_SERVICE_FILE_MAX_BYTES * 2 ||
+    !Number.isSafeInteger(value.uid) ||
+    value.uid !== expectedRootUid ||
+    !Number.isSafeInteger(value.gid) ||
+    value.gid < 0 ||
+    !Number.isSafeInteger(value.mode) ||
+    (value.mode & 0o022) !== 0 ||
+    (value.mode & ~0o777) !== 0 ||
+    !/^[a-f0-9]{64}$/u.test(value.sha256 || "")
+  ) {
+    throw new Error(`host updater ${label} snapshot is invalid`);
+  }
+  const content = Buffer.from(value.contentBase64, "base64");
+  if (
+    content.length === 0 ||
+    content.length > PROTECTED_SERVICE_FILE_MAX_BYTES ||
+    createHash("sha256").update(content).digest("hex") !== value.sha256
+  ) {
+    throw new Error(`host updater ${label} snapshot content is invalid`);
+  }
+  return Object.freeze({ ...value });
+}
+
+function validateProtectedServiceBoundary(value, context) {
+  if (!context.paths.gatewayUnitPath && !context.paths.gatewayLauncherPath) {
+    if (value != null) {
+      throw new Error("host updater received a protected service transaction in Hosting mode");
+    }
+    return null;
+  }
+  if (
+    !context.paths.gatewayUnitPath ||
+    !context.paths.gatewayLauncherPath ||
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).toSorted().join(",") !== "changed,gatewayLauncher,gatewayUnit" ||
+    typeof value.changed !== "boolean"
+  ) {
+    throw new Error("host updater protected service transaction is invalid");
+  }
+  if (!value.changed) {
+    if (value.gatewayUnit !== null || value.gatewayLauncher !== null) {
+      throw new Error("host updater unchanged protected service transaction has snapshots");
+    }
+    return Object.freeze({
+      changed: false,
+      gatewayUnit: null,
+      gatewayLauncher: null,
+    });
+  }
+  return Object.freeze({
+    changed: true,
+    gatewayUnit: validateProtectedServiceFileCapture(
+      value.gatewayUnit,
+      "Gateway unit",
+      context.rootUid,
+    ),
+    gatewayLauncher: validateProtectedServiceFileCapture(
+      value.gatewayLauncher,
+      "Gateway launcher",
+      context.rootUid,
+    ),
+  });
+}
+
+async function captureProtectedServiceFile(filePath, label, expectedRootUid) {
+  const info = await fsp.lstat(filePath);
+  if (
+    !info.isFile() ||
+    info.isSymbolicLink() ||
+    info.nlink !== 1 ||
+    info.uid !== expectedRootUid ||
+    (info.mode & 0o022) !== 0 ||
+    info.size <= 0 ||
+    info.size > PROTECTED_SERVICE_FILE_MAX_BYTES
+  ) {
+    throw new Error(`${label} must be a bounded root-owned non-writable regular file`);
+  }
+  const content = await fsp.readFile(filePath);
+  return Object.freeze({
+    contentBase64: content.toString("base64"),
+    uid: info.uid,
+    gid: info.gid,
+    mode: info.mode & 0o777,
+    sha256: createHash("sha256").update(content).digest("hex"),
+  });
+}
+
+function replaceExactlyOneLine(content, pattern, replacement, label) {
+  const matches = content.match(pattern);
+  if (!matches || matches.length !== 1) {
+    throw new Error(`protected Local ${label} is missing or ambiguous`);
+  }
+  return content.replace(pattern, replacement);
+}
+
+function upsertSystemdEnvironment(content, key, value) {
+  const pattern = new RegExp(`^Environment=${key}=.*$`, "gmu");
+  const matches = content.match(pattern) || [];
+  if (matches.length > 1) {
+    throw new Error(`protected Local Gateway unit has duplicate ${key} entries`);
+  }
+  if (matches.length === 1) {
+    return content.replace(pattern, `Environment=${key}=${value}`);
+  }
+  const anchor = /^Environment=FASED_STATE_DIR=.*$/mu;
+  if (!anchor.test(content)) {
+    throw new Error("protected Local Gateway unit has no FASED_STATE_DIR");
+  }
+  return content.replace(anchor, (line) => `${line}\nEnvironment=${key}=${value}`);
+}
+
+function protectedServiceDesiredContent(context, boundary) {
+  const applicationRoot = context.paths.applicationCurrentLink;
+  const nodeBinary = fs.realpathSync(context.protectedNodeBinary);
+  const nodeInfo = fs.lstatSync(nodeBinary);
+  if (
+    !nodeInfo.isFile() ||
+    nodeInfo.isSymbolicLink() ||
+    nodeInfo.uid !== context.rootUid ||
+    (nodeInfo.mode & 0o022) !== 0 ||
+    (nodeInfo.mode & 0o111) === 0
+  ) {
+    throw new Error("protected Local controller Node.js runtime is not root-controlled");
+  }
+  let gatewayUnit = Buffer.from(boundary.gatewayUnit.contentBase64, "base64").toString("utf8");
+  if (
+    !gatewayUnit.includes(`Environment=FASED_PROTECTED_LOCAL_INSTANCE=${context.instanceId}`) ||
+    !gatewayUnit.includes(`User=fsgw-${context.instanceId}`) ||
+    !gatewayUnit.includes("ProtectSystem=strict")
+  ) {
+    throw new Error("protected Local Gateway unit identity or hardening is invalid");
+  }
+  gatewayUnit = replaceExactlyOneLine(
+    gatewayUnit,
+    /^WorkingDirectory=.*$/gmu,
+    `WorkingDirectory=${applicationRoot}`,
+    "Gateway working directory",
+  );
+  gatewayUnit = upsertSystemdEnvironment(
+    gatewayUnit,
+    "FASED_CONFIG_DIR",
+    gatewayUnit.match(/^Environment=FASED_STATE_DIR=(.*)$/mu)?.[1] || "",
+  );
+  gatewayUnit = upsertSystemdEnvironment(
+    gatewayUnit,
+    "FASED_MANAGED_RUNTIME_ROOT",
+    applicationRoot,
+  );
+  gatewayUnit = upsertSystemdEnvironment(gatewayUnit, "FASED_NODE_BIN", nodeBinary);
+
+  let gatewayLauncher = Buffer.from(boundary.gatewayLauncher.contentBase64, "base64").toString(
+    "utf8",
+  );
+  if (!gatewayLauncher.startsWith("#!/usr/bin/env bash\nset -euo pipefail\n")) {
+    throw new Error("protected Local Gateway launcher is invalid");
+  }
+  gatewayLauncher = replaceExactlyOneLine(
+    gatewayLauncher,
+    /^exec \/bin\/bash .*\/scripts\/start-managed\.sh"?$/gmu,
+    `exec /bin/bash "${applicationRoot}/scripts/start-managed.sh"`,
+    "Gateway launcher runtime",
+  );
+  return Object.freeze({ gatewayUnit, gatewayLauncher });
+}
+
+async function stageProtectedServiceBoundary(context) {
+  if (!context.paths.gatewayUnitPath && !context.paths.gatewayLauncherPath) {
+    return null;
+  }
+  const gatewayUnit = await captureProtectedServiceFile(
+    context.paths.gatewayUnitPath,
+    "protected Local Gateway unit",
+    context.rootUid,
+  );
+  const gatewayLauncher = await captureProtectedServiceFile(
+    context.paths.gatewayLauncherPath,
+    "protected Local Gateway launcher",
+    context.rootUid,
+  );
+  const snapshots = { changed: true, gatewayUnit, gatewayLauncher };
+  const desired = protectedServiceDesiredContent(context, snapshots);
+  const changed =
+    desired.gatewayUnit !== Buffer.from(gatewayUnit.contentBase64, "base64").toString("utf8") ||
+    desired.gatewayLauncher !==
+      Buffer.from(gatewayLauncher.contentBase64, "base64").toString("utf8");
+  return changed
+    ? snapshots
+    : Object.freeze({ changed: false, gatewayUnit: null, gatewayLauncher: null });
+}
+
+async function writeProtectedServiceFile(filePath, content, captured) {
+  await atomicWriteFileDurable(filePath, content, captured.mode);
+  await fsp.chown(filePath, captured.uid, captured.gid);
+}
+
+async function applyProtectedServiceBoundary(context, boundary) {
+  if (!boundary?.changed) {
+    return;
+  }
+  const desired = protectedServiceDesiredContent(context, boundary);
+  const pairs = [
+    [
+      context.paths.gatewayUnitPath,
+      boundary.gatewayUnit,
+      Buffer.from(desired.gatewayUnit),
+      "protected Local Gateway unit",
+    ],
+    [
+      context.paths.gatewayLauncherPath,
+      boundary.gatewayLauncher,
+      Buffer.from(desired.gatewayLauncher),
+      "protected Local Gateway launcher",
+    ],
+  ];
+  for (const [filePath, captured, nextContent, label] of pairs) {
+    const current = await captureProtectedServiceFile(filePath, label, context.rootUid);
+    const desiredDigest = createHash("sha256").update(nextContent).digest("hex");
+    if (current.sha256 === desiredDigest) {
+      continue;
+    }
+    if (current.sha256 !== captured.sha256) {
+      throw new Error(`${label} changed during the protected release transaction`);
+    }
+    await writeProtectedServiceFile(filePath, nextContent, captured);
+  }
+  await context.reloadUnits();
+}
+
+async function restoreProtectedServiceBoundary(context, boundary) {
+  if (!boundary?.changed) {
+    return;
+  }
+  const desired = protectedServiceDesiredContent(context, boundary);
+  const pairs = [
+    [
+      context.paths.gatewayUnitPath,
+      boundary.gatewayUnit,
+      Buffer.from(desired.gatewayUnit),
+      "protected Local Gateway unit",
+    ],
+    [
+      context.paths.gatewayLauncherPath,
+      boundary.gatewayLauncher,
+      Buffer.from(desired.gatewayLauncher),
+      "protected Local Gateway launcher",
+    ],
+  ];
+  for (const [filePath, captured, desiredContent, label] of pairs) {
+    const current = await captureProtectedServiceFile(filePath, label, context.rootUid);
+    if (current.sha256 === captured.sha256) {
+      continue;
+    }
+    const desiredDigest = createHash("sha256").update(desiredContent).digest("hex");
+    if (current.sha256 !== desiredDigest) {
+      throw new Error(`${label} changed while restoring the protected release transaction`);
+    }
+    await writeProtectedServiceFile(
+      filePath,
+      Buffer.from(captured.contentBase64, "base64"),
+      captured,
+    );
+  }
+  await context.reloadUnits();
+}
+
+function validateJournal(value, context) {
   if (
     !value ||
     typeof value !== "object" ||
@@ -916,6 +1225,38 @@ function validateJournal(value) {
     throw new Error("host updater previous signer-state invariant is invalid");
   }
   const version = parseReleaseVersion(value.version);
+  let application = null;
+  if (value.application != null) {
+    if (
+      !value.application ||
+      typeof value.application !== "object" ||
+      Array.isArray(value.application) ||
+      Object.keys(value.application).toSorted().join(",") !== "changed,previousRoot,targetRoot" ||
+      typeof value.application.changed !== "boolean"
+    ) {
+      throw new Error("host updater protected application transaction is invalid");
+    }
+    const targetRoot = protectedApplicationReleaseRoot(context.paths, version);
+    const previousRoot =
+      value.application.previousRoot == null
+        ? null
+        : path.resolve(String(value.application.previousRoot));
+    const releasesRoot = path.resolve(context.paths.applicationReleasesDir ?? "/nonexistent");
+    if (
+      path.resolve(String(value.application.targetRoot ?? "")) !== targetRoot ||
+      (previousRoot !== null && path.dirname(previousRoot) !== releasesRoot)
+    ) {
+      throw new Error("host updater protected application transaction escaped its release root");
+    }
+    application = {
+      changed: value.application.changed,
+      targetRoot,
+      previousRoot,
+    };
+  } else if (context.paths.applicationReleasesDir) {
+    throw new Error("host updater protected application transaction is missing");
+  }
+  const serviceBoundary = validateProtectedServiceBoundary(value.serviceBoundary, context);
   const releaseBinding = value.releaseBinding == null ? null : value.releaseBinding;
   if (
     releaseBinding &&
@@ -934,13 +1275,18 @@ function validateJournal(value) {
       value.previousVersion == null ? null : parseReleaseVersion(value.previousVersion),
     release: parseSignerReleaseIdentity(value.release, version),
     releaseBinding,
+    application,
+    serviceBoundary,
     changed: value.changed === true,
   };
 }
 
 async function readJournal(context) {
   try {
-    return validateJournal(JSON.parse(await fsp.readFile(context.paths.journalPath, "utf8")));
+    return validateJournal(
+      JSON.parse(await fsp.readFile(context.paths.journalPath, "utf8")),
+      context,
+    );
   } catch (error) {
     if (error?.code === "ENOENT") {
       return null;
@@ -950,11 +1296,14 @@ async function readJournal(context) {
 }
 
 async function writeJournal(context, journal) {
-  const next = validateJournal({
-    ...journal,
-    schemaVersion: JOURNAL_SCHEMA_VERSION,
-    updatedAt: new Date().toISOString(),
-  });
+  const next = validateJournal(
+    {
+      ...journal,
+      schemaVersion: JOURNAL_SCHEMA_VERSION,
+      updatedAt: new Date().toISOString(),
+    },
+    context,
+  );
   await atomicWriteFileDurable(
     context.paths.journalPath,
     `${JSON.stringify(next, null, 2)}\n`,
@@ -993,6 +1342,260 @@ async function cleanupTransactionFiles(context, transactionId) {
       throw error;
     }
   });
+}
+
+function protectedApplicationReleaseRoot(paths, version) {
+  if (!paths.applicationReleasesDir || !paths.applicationCurrentLink) {
+    throw new Error("protected application runtime paths are unavailable");
+  }
+  const releases = path.resolve(paths.applicationReleasesDir);
+  const releaseRoot = path.resolve(releases, `v${parseReleaseVersion(version)}`);
+  if (path.dirname(releaseRoot) !== releases) {
+    throw new Error("protected application release path escaped its root");
+  }
+  return releaseRoot;
+}
+
+async function copyProtectedApplicationTree(source, destination) {
+  const cp = await fixedExecutable(["/usr/bin/cp", "/bin/cp"], "cp");
+  await fsp.mkdir(path.dirname(destination), { recursive: true, mode: 0o755 });
+  await execFileAsync(cp, ["-a", "--no-preserve=links", source, destination], {
+    env: { PATH: "/usr/bin:/bin" },
+    timeout: REQUEST_TIMEOUT_MS,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+}
+
+async function hardenProtectedApplicationTree(root) {
+  const ownerUid = process.geteuid();
+  const ownerGid = process.getegid();
+  const [find, chown, chmod] = await Promise.all([
+    fixedExecutable(["/usr/bin/find", "/bin/find"], "find"),
+    fixedExecutable(["/usr/bin/chown", "/bin/chown"], "chown"),
+    fixedExecutable(["/usr/bin/chmod", "/bin/chmod"], "chmod"),
+  ]);
+  const common = {
+    env: { PATH: "/usr/bin:/bin" },
+    timeout: REQUEST_TIMEOUT_MS,
+    maxBuffer: 64 * 1024 * 1024,
+  };
+  const unsupported = await execFileAsync(
+    find,
+    [root, "-xdev", "!", "-type", "f", "!", "-type", "d", "!", "-type", "l", "-print", "-quit"],
+    common,
+  );
+  if (unsupported.stdout.trim()) {
+    throw new Error(
+      `protected application contains an unsupported entry: ${unsupported.stdout.trim()}`,
+    );
+  }
+  const links = await execFileAsync(find, [root, "-xdev", "-type", "l", "-print0"], common);
+  for (const candidate of links.stdout.split("\0").filter(Boolean)) {
+    const target = await fsp.realpath(candidate);
+    const relative = path.relative(root, target);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+      throw new Error(`protected application contains an escaping symlink: ${candidate}`);
+    }
+  }
+  await execFileAsync(chown, ["-R", `${ownerUid}:${ownerGid}`, root], common);
+  await execFileAsync(chmod, ["-R", "a+rX,go-w", root], common);
+}
+
+async function verifyProtectedApplicationRuntime(root, version, commit, dependencyHash = null) {
+  const canonical = await fsp.realpath(root);
+  const [packageValue, buildValue, metadataValue] = await Promise.all([
+    fsp.readFile(path.join(canonical, "package.json"), "utf8").then(JSON.parse),
+    fsp.readFile(path.join(canonical, "dist", "build-info.json"), "utf8").then(JSON.parse),
+    fsp.readFile(path.join(canonical, ".fased-hosted-runtime.json"), "utf8").then(JSON.parse),
+  ]);
+  if (
+    packageValue?.version !== version ||
+    buildValue?.version !== version ||
+    buildValue?.commit !== commit ||
+    metadataValue?.version !== version ||
+    metadataValue?.commit !== commit ||
+    (dependencyHash && metadataValue?.dependencyHash !== dependencyHash)
+  ) {
+    throw new Error("protected application runtime identity is mismatched");
+  }
+  const required = [
+    path.join(canonical, "fased.mjs"),
+    path.join(canonical, "scripts", "start-managed.sh"),
+    path.join(canonical, "node_modules"),
+  ];
+  const [cli, launcher, dependencies] = await Promise.all(
+    required.map((entry) => fsp.lstat(entry)),
+  );
+  if (
+    !cli.isFile() ||
+    cli.isSymbolicLink() ||
+    !launcher.isFile() ||
+    launcher.isSymbolicLink() ||
+    !dependencies.isDirectory() ||
+    dependencies.isSymbolicLink()
+  ) {
+    throw new Error("protected application runtime is incomplete");
+  }
+  return canonical;
+}
+
+export async function installProtectedLocalApplicationRuntime(params) {
+  const version = parseReleaseVersion(params.version);
+  const commit = String(params.commit ?? "").trim();
+  if (!/^[a-f0-9]{40}$/.test(commit)) {
+    throw new Error("protected application release commit is invalid");
+  }
+  const releaseRoot = protectedApplicationReleaseRoot(params.paths, version);
+  await fsp.mkdir(params.paths.applicationReleasesDir, { recursive: true, mode: 0o755 });
+  let ready = false;
+  try {
+    await verifyProtectedApplicationRuntime(releaseRoot, version, commit);
+    ready = true;
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  if (!ready) {
+    const staging = `${releaseRoot}.staging-${process.pid}-${Date.now()}`;
+    await fsp.rm(staging, { recursive: true, force: true });
+    try {
+      await copyProtectedApplicationTree(params.sourceRoot, staging);
+      if (params.dependencyRoot) {
+        await copyProtectedApplicationTree(
+          params.dependencyRoot,
+          path.join(staging, "node_modules"),
+        );
+      }
+      await hardenProtectedApplicationTree(staging);
+      await verifyProtectedApplicationRuntime(staging, version, commit);
+      await fsp.rename(staging, releaseRoot);
+      await fsyncDirectory(params.paths.applicationReleasesDir);
+    } finally {
+      await fsp.rm(staging, { recursive: true, force: true });
+    }
+  }
+  await atomicSymlinkDurable(releaseRoot, params.paths.applicationCurrentLink);
+  return { releaseRoot, previousRoot: null };
+}
+
+async function listArchiveEntries(archivePath, allowedRoot) {
+  const tar = await fixedExecutable(["/usr/bin/tar", "/bin/tar"], "tar");
+  const { stdout } = await execFileAsync(tar, ["-tzf", archivePath], {
+    env: { PATH: "/usr/bin:/bin" },
+    timeout: REQUEST_TIMEOUT_MS,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  for (const raw of stdout.split(/\r?\n/u).filter(Boolean)) {
+    const entry = raw.replace(/\/+$/u, "");
+    const parts = entry.split("/");
+    if (
+      !entry ||
+      entry.startsWith("/") ||
+      entry.includes("\\") ||
+      parts[0] !== allowedRoot ||
+      parts.some((part) => !part || part === "." || part === "..")
+    ) {
+      throw new Error(`protected application archive contains an unsafe path: ${raw}`);
+    }
+  }
+  return tar;
+}
+
+async function extractProtectedArchive(archivePath, destination, allowedRoot) {
+  const tar = await listArchiveEntries(archivePath, allowedRoot);
+  await fsp.mkdir(destination, { recursive: true, mode: 0o700 });
+  await execFileAsync(
+    tar,
+    ["-xzf", archivePath, "-C", destination, "--no-same-owner", "--no-same-permissions"],
+    {
+      env: { PATH: "/usr/bin:/bin" },
+      timeout: REQUEST_TIMEOUT_MS,
+      maxBuffer: 16 * 1024 * 1024,
+    },
+  );
+}
+
+async function stageProtectedApplicationRelease({
+  version,
+  selected,
+  releaseUrl,
+  manifestBytes,
+  staging,
+  context,
+}) {
+  const releaseRoot = protectedApplicationReleaseRoot(context.paths, version);
+  let previousRoot = null;
+  try {
+    previousRoot = await fsp.realpath(context.paths.applicationCurrentLink);
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  try {
+    await verifyProtectedApplicationRuntime(
+      releaseRoot,
+      version,
+      selected.release.commit,
+      selected.application.dependencies.dependencyHash,
+    );
+    return { targetRoot: releaseRoot, previousRoot, changed: previousRoot !== releaseRoot };
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  const appArchive = path.join(staging, selected.application.artifact.asset);
+  const dependencyArchive = path.join(staging, selected.application.dependencies.asset);
+  await Promise.all([
+    context.downloadReleaseAsset(
+      `${releaseUrl}/${selected.application.artifact.asset}`,
+      appArchive,
+    ),
+    context.downloadReleaseAsset(
+      `${releaseUrl}/${selected.application.dependencies.asset}`,
+      dependencyArchive,
+    ),
+  ]);
+  const [appDigest, dependencyDigest] = await Promise.all([
+    sha256(appArchive),
+    sha256(dependencyArchive),
+  ]);
+  if (
+    appDigest !== selected.application.artifact.sha256 ||
+    dependencyDigest !== selected.application.dependencies.sha256
+  ) {
+    throw new Error("protected application layers do not match the attested release manifest");
+  }
+
+  const candidateParent = `${releaseRoot}.staging-${process.pid}-${Date.now()}`;
+  await fsp.rm(candidateParent, { recursive: true, force: true });
+  try {
+    await extractProtectedArchive(appArchive, candidateParent, "package");
+    const candidateRoot = path.join(candidateParent, "package");
+    await extractProtectedArchive(dependencyArchive, candidateRoot, "node_modules");
+    await fsp.writeFile(path.join(candidateRoot, ".fased-hosted-release-v2.json"), manifestBytes, {
+      mode: 0o644,
+    });
+    await hardenProtectedApplicationTree(candidateRoot);
+    await verifyProtectedApplicationRuntime(
+      candidateRoot,
+      version,
+      selected.release.commit,
+      selected.application.dependencies.dependencyHash,
+    );
+    await fsp.mkdir(context.paths.applicationReleasesDir, {
+      recursive: true,
+      mode: 0o755,
+    });
+    await fsp.rename(candidateRoot, releaseRoot);
+    await fsyncDirectory(context.paths.applicationReleasesDir);
+  } finally {
+    await fsp.rm(candidateParent, { recursive: true, force: true });
+  }
+  return { targetRoot: releaseRoot, previousRoot, changed: previousRoot !== releaseRoot };
 }
 
 async function stageOfficialCandidate(version, candidatePath, context) {
@@ -1043,8 +1646,19 @@ async function stageOfficialCandidate(version, candidatePath, context) {
     );
     await fsp.rm(candidatePath, { force: true });
     await atomicCopyFileDurable(assetPath, candidatePath, { mode: 0o755 });
+    const application = context.paths.applicationReleasesDir
+      ? await stageProtectedApplicationRelease({
+          version,
+          selected,
+          releaseUrl,
+          manifestBytes,
+          staging,
+          context,
+        })
+      : null;
     return {
       release: selected.release,
+      application,
       binding: {
         ...selected.binding,
         manifestDigest: `sha256:${createHash("sha256").update(manifestBytes).digest("hex")}`,
@@ -1064,6 +1678,9 @@ function createTransactionContext(overrides = {}) {
     overrides.signerApplicationSocketPath ?? "/run/fased-signerd/app.sock";
   const context = {
     paths,
+    instanceId: overrides.protectedLocalInstanceId ?? null,
+    rootUid: overrides.rootUid ?? (typeof process.geteuid === "function" ? process.geteuid() : 0),
+    protectedNodeBinary: overrides.protectedNodeBinary ?? process.execPath,
     controllerInstanceId: overrides.controllerInstanceId ?? randomUUID(),
     controllerRestartRequired: false,
     assertReleaseAllowed:
@@ -1099,6 +1716,12 @@ function createTransactionContext(overrides = {}) {
           socketPath: signerApplicationSocketPath,
         })),
     reloadUnits: overrides.reloadUnits ?? (async () => await systemctl("daemon-reload")),
+    applyServiceBoundary:
+      overrides.applyServiceBoundary ??
+      (async (boundary) => await applyProtectedServiceBoundary(context, boundary)),
+    restoreServiceBoundary:
+      overrides.restoreServiceBoundary ??
+      (async (boundary) => await restoreProtectedServiceBoundary(context, boundary)),
     startGateway:
       overrides.startGateway ?? (async () => await systemctl("start", gatewayServiceName)),
     stopGateway: overrides.stopGateway ?? (async () => await systemctl("stop", gatewayServiceName)),
@@ -1297,6 +1920,8 @@ async function prepareSignerRelease(request, context) {
 
   const txPaths = transactionPaths(context.paths, request.transactionId);
   let journal;
+  let application = null;
+  let serviceBoundary = null;
   try {
     await fsp.mkdir(txPaths.transactionDir, { recursive: true, mode: 0o700 });
     const signerUnit = await fileMetadata(context.paths.signerUnitPath);
@@ -1305,14 +1930,23 @@ async function prepareSignerRelease(request, context) {
         mode: signerUnit.mode,
       });
     }
-    if (changed) {
+    if (changed || context.paths.applicationReleasesDir) {
       const staged = await context.stageCandidate(request.version, txPaths.candidatePath, context);
-      release = parseSignerReleaseIdentity(staged?.release || staged, request.version);
+      const stagedRelease = parseSignerReleaseIdentity(staged?.release || staged, request.version);
+      if (release && !signerReleaseIdentitiesEqual(release, stagedRelease)) {
+        throw new Error("installed signer and attested application target identities differ");
+      }
+      release = stagedRelease;
       releaseBinding = staged?.binding || null;
       if (!releaseBinding) {
         throw new Error("signer candidate omitted its attested unified release binding");
       }
+      if (context.paths.applicationReleasesDir && !staged?.application) {
+        throw new Error("protected Local release omitted its root-controlled application runtime");
+      }
+      application = staged?.application ?? null;
     }
+    serviceBoundary = await stageProtectedServiceBoundary(context);
     journal = await writeJournal(context, {
       schemaVersion: JOURNAL_SCHEMA_VERSION,
       transactionId: request.transactionId,
@@ -1322,6 +1956,8 @@ async function prepareSignerRelease(request, context) {
       releaseBinding,
       controllerChanged: controller.changed === true,
       previousSignerInvariant,
+      application,
+      serviceBoundary,
       phase: "prepared",
       changed,
       createdAt: new Date().toISOString(),
@@ -1405,6 +2041,44 @@ async function restorePreviousBinary(context, journal, txPaths) {
   return false;
 }
 
+async function selectProtectedApplication(context, releaseRoot) {
+  if (!context.paths.applicationCurrentLink) {
+    return;
+  }
+  const expectedParent = path.resolve(context.paths.applicationReleasesDir);
+  const selected = path.resolve(releaseRoot);
+  if (path.dirname(selected) !== expectedParent) {
+    throw new Error("protected application activation escaped its release root");
+  }
+  const stat = await fsp.lstat(selected);
+  if (
+    !stat.isDirectory() ||
+    stat.isSymbolicLink() ||
+    stat.uid !== process.geteuid() ||
+    (stat.mode & 0o022) !== 0
+  ) {
+    throw new Error("protected application activation target is unsafe");
+  }
+  await atomicSymlinkDurable(selected, context.paths.applicationCurrentLink);
+}
+
+async function activateProtectedApplication(context, journal) {
+  if (journal.application) {
+    await selectProtectedApplication(context, journal.application.targetRoot);
+  }
+}
+
+async function restoreProtectedApplication(context, journal) {
+  if (journal.application) {
+    if (journal.application.previousRoot === null) {
+      await fsp.rm(context.paths.applicationCurrentLink, { force: true });
+      await fsyncDirectory(path.dirname(context.paths.applicationCurrentLink));
+    } else {
+      await selectProtectedApplication(context, journal.application.previousRoot);
+    }
+  }
+}
+
 async function rollbackSignerRelease(request, context, { preserveGatewayGate = false } = {}) {
   let journal = await readJournal(context);
   if (!journal) {
@@ -1421,6 +2095,8 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
   assertMatchingTransaction(journal, request);
   await writeUpdateGates(context, journal);
   if (journal.phase === "restored") {
+    await restoreProtectedApplication(context, journal);
+    await context.restoreServiceBoundary(journal.serviceBoundary);
     await cleanupTransactionFiles(context, journal.transactionId);
     await removeJournal(context);
     if (!preserveGatewayGate) {
@@ -1453,6 +2129,8 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
   // updater itself does not mutate the live signer during prepare.
   const signerMayNeedRestart = true;
   await context.stopSigner();
+  await restoreProtectedApplication(context, journal);
+  await context.restoreServiceBoundary(journal.serviceBoundary);
   await restoreSignerUnit(context, journal, txPaths);
   if (journal.changed && rollbackFromPhase !== "prepared") {
     const candidateMayHaveRun = new Set([
@@ -1504,6 +2182,8 @@ async function authorizeGatewayRelease(request, context) {
   }
   try {
     await writeSignerGate(context, journal);
+    await context.applyServiceBoundary(journal.serviceBoundary);
+    await activateProtectedApplication(context, journal);
     await removeGatewayGate(context);
     try {
       await context.startGateway();
@@ -1513,6 +2193,8 @@ async function authorizeGatewayRelease(request, context) {
       }
     }
   } catch (error) {
+    await restoreProtectedApplication(context, journal).catch(() => undefined);
+    await context.restoreServiceBoundary(journal.serviceBoundary).catch(() => undefined);
     await writeUpdateGates(context, journal).catch(() => undefined);
     throw error;
   }
@@ -1734,6 +2416,8 @@ async function recoverInterruptedTransaction(context) {
   // decision; only a Gateway-authorized transaction may run the health probe.
   if (journal.phase === "gateway-authorized") {
     await writeSignerGate(context, journal);
+    await context.applyServiceBoundary(journal.serviceBoundary);
+    await activateProtectedApplication(context, journal);
     await removeGatewayGate(context);
     await context.startGateway();
   } else {
@@ -1823,6 +2507,7 @@ export async function startServer(options = {}) {
     options.context ??
     createTransactionContext({
       paths: configuration.paths,
+      protectedLocalInstanceId: configuration.instanceId,
       signerServiceName: configuration.signerServiceName,
       gatewayServiceName: configuration.gatewayServiceName,
       signerApplicationSocketPath: configuration.signerApplicationSocketPath,
