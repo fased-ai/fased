@@ -357,8 +357,16 @@ if [[ "$phase" == "fresh-install" ]]; then
   wait_for_service "fased-gateway-$instance.service"
   wait_for_socket "/run/fased-local/$instance/operator/operator.sock"
   test "$(stat -c '%U:%G:%a' /opt/fased)" = "root:root:755"
+  test "$(stat -c '%U:%G:%a' "$state")" = \
+    "testop:fscf-$instance:2770"
+  test "$(stat -c '%U:%G:%a' "$state/fased.json")" = \
+    "testop:fscf-$instance:660"
 
   mapfile -t env_args < <(operator_env "$instance")
+  runuser -u testop -- env "${env_args[@]}" \
+    /usr/local/bin/node "$runtime/fased.mjs" health --json --timeout 5000 \
+    >/tmp/fresh-pre-wallet-health.json
+  jq -e '.ok == true' /tmp/fresh-pre-wallet-health.json >/dev/null
   for wallet_spec in "agent:Agent:agent" "vault:Vault:vault"; do
     IFS=: read -r wallet_id wallet_name wallet_role <<<"$wallet_spec"
     runuser -u testop -- env "${env_args[@]}" \
