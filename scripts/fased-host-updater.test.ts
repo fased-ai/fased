@@ -231,7 +231,9 @@ describe("root-owned hosted updater protocol", () => {
       fsp.mkdir(path.join(sourceRoot, "dist"), { recursive: true }),
       fsp.mkdir(path.join(sourceRoot, "scripts"), { recursive: true }),
       fsp.mkdir(path.join(dependencyRoot, "fixture"), { recursive: true }),
+      fsp.mkdir(path.dirname(applicationRoot), { recursive: true }),
     ]);
+    await fsp.mkdir(applicationRoot, { mode: 0o640 });
     await Promise.all([
       fsp.writeFile(
         path.join(sourceRoot, "package.json"),
@@ -254,21 +256,29 @@ describe("root-owned hosted updater protocol", () => {
       fsp.writeFile(path.join(dependencyRoot, "fixture", "index.js"), "export {};\n"),
     ]);
 
-    const result = await installProtectedLocalApplicationRuntime({
-      sourceRoot,
-      dependencyRoot,
-      version: "1.2.3",
-      commit: "a".repeat(40),
-      paths: {
-        applicationReleasesDir: path.join(applicationRoot, "releases"),
-        applicationCurrentLink: path.join(applicationRoot, "current"),
-      },
-    });
+    const previousUmask = process.umask(0o117);
+    let result: Awaited<ReturnType<typeof installProtectedLocalApplicationRuntime>>;
+    try {
+      result = await installProtectedLocalApplicationRuntime({
+        sourceRoot,
+        dependencyRoot,
+        version: "1.2.3",
+        commit: "a".repeat(40),
+        paths: {
+          applicationReleasesDir: path.join(applicationRoot, "releases"),
+          applicationCurrentLink: path.join(applicationRoot, "current"),
+        },
+      });
+    } finally {
+      process.umask(previousUmask);
+    }
 
     expect(result.releaseRoot).toBe(path.join(applicationRoot, "releases", "v1.2.3"));
     expect(await fsp.realpath(path.join(applicationRoot, "current"))).toBe(result.releaseRoot);
     expect(result.releaseRoot.startsWith(path.join(root, "root-controlled"))).toBe(true);
-    expect((await fsp.lstat(result.releaseRoot)).mode & 0o022).toBe(0);
+    expect((await fsp.lstat(result.releaseRoot)).mode & 0o777).toBe(0o755);
+    expect((await fsp.lstat(applicationRoot)).mode & 0o777).toBe(0o755);
+    expect((await fsp.lstat(path.join(applicationRoot, "releases"))).mode & 0o777).toBe(0o755);
   });
 
   it("switches the protected application with the signer and restores it when Gateway start fails", async () => {

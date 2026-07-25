@@ -232,6 +232,7 @@ EOF_RPC
 cat >/usr/local/libexec/fased-fixture-protected-installer.sh <<EOF_PROTECTED_INSTALLER
 #!/usr/bin/env bash
 set -euo pipefail
+umask 0117
 declare -A values=()
 while [[ "\$#" -gt 0 ]]; do
   case "\$1" in
