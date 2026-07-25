@@ -851,6 +851,26 @@ async function installRootFiles(params) {
   );
 }
 
+function verifyGatewayRuntimeAccess(layout) {
+  const runuser = systemBinary(["/usr/sbin/runuser", "/sbin/runuser"], "runuser");
+  const test = systemBinary(["/usr/bin/test", "/bin/test"], "test");
+  const checks = [
+    ["-x", layout.applicationCurrentLink],
+    ["-r", path.join(layout.applicationCurrentLink, "package.json")],
+    ["-x", path.join(layout.applicationCurrentLink, "scripts", "start-managed.sh")],
+    ["-x", path.join(layout.installDir, "gateway-launch")],
+  ];
+  try {
+    for (const [operator, target] of checks) {
+      runSystem(runuser, ["-u", layout.gatewayUser, "--", test, operator, target], {
+        timeout: 10_000,
+      });
+    }
+  } catch {
+    fail("protected Local Gateway cannot traverse its root-controlled application runtime");
+  }
+}
+
 async function prepareProtectedLocalRootDirectories(layout) {
   for (const directory of [
     "/var/lib/fased-local",
@@ -1862,6 +1882,7 @@ async function installProtectedLocal(params) {
       servicePlan,
       signerIdentity: transaction.users.signer,
     });
+    verifyGatewayRuntimeAccess(layout);
     const migrated = await copyLegacyMaterial(legacy, layout, transaction.users.signer);
     transaction.migrated = migrated.migrated;
     if (spec.gatewayMode === "prepare") {

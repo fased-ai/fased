@@ -1356,6 +1356,38 @@ function protectedApplicationReleaseRoot(paths, version) {
   return releaseRoot;
 }
 
+async function prepareProtectedApplicationDirectories(paths) {
+  if (!paths.applicationReleasesDir || !paths.applicationCurrentLink) {
+    throw new Error("protected application runtime paths are unavailable");
+  }
+  const releasesDir = path.resolve(paths.applicationReleasesDir);
+  const applicationDir = path.dirname(releasesDir);
+  const currentLink = path.resolve(paths.applicationCurrentLink);
+  if (
+    path.basename(releasesDir) !== "releases" ||
+    currentLink !== path.join(applicationDir, "current")
+  ) {
+    throw new Error("protected application runtime layout is invalid");
+  }
+  const ownerUid = process.geteuid();
+  const ownerGid = process.getegid();
+  for (const directory of [applicationDir, releasesDir]) {
+    try {
+      await fsp.mkdir(directory, { mode: 0o755 });
+    } catch (error) {
+      if (error?.code !== "EEXIST") {
+        throw error;
+      }
+    }
+    const info = await fsp.lstat(directory);
+    if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== ownerUid) {
+      throw new Error(`protected application runtime directory is unsafe: ${directory}`);
+    }
+    await fsp.chown(directory, ownerUid, ownerGid);
+    await fsp.chmod(directory, 0o755);
+  }
+}
+
 async function copyProtectedApplicationTree(source, destination) {
   const cp = await fixedExecutable(["/usr/bin/cp", "/bin/cp"], "cp");
   await fsp.mkdir(path.dirname(destination), { recursive: true, mode: 0o755 });
@@ -1446,7 +1478,7 @@ export async function installProtectedLocalApplicationRuntime(params) {
     throw new Error("protected application release commit is invalid");
   }
   const releaseRoot = protectedApplicationReleaseRoot(params.paths, version);
-  await fsp.mkdir(params.paths.applicationReleasesDir, { recursive: true, mode: 0o755 });
+  await prepareProtectedApplicationDirectories(params.paths);
   let ready = false;
   try {
     await verifyProtectedApplicationRuntime(releaseRoot, version, commit);
@@ -1524,6 +1556,7 @@ async function stageProtectedApplicationRelease({
   staging,
   context,
 }) {
+  await prepareProtectedApplicationDirectories(context.paths);
   const releaseRoot = protectedApplicationReleaseRoot(context.paths, version);
   let previousRoot = null;
   try {
@@ -1586,10 +1619,6 @@ async function stageProtectedApplicationRelease({
       selected.release.commit,
       selected.application.dependencies.dependencyHash,
     );
-    await fsp.mkdir(context.paths.applicationReleasesDir, {
-      recursive: true,
-      mode: 0o755,
-    });
     await fsp.rename(candidateRoot, releaseRoot);
     await fsyncDirectory(context.paths.applicationReleasesDir);
   } finally {
@@ -2045,6 +2074,7 @@ async function selectProtectedApplication(context, releaseRoot) {
   if (!context.paths.applicationCurrentLink) {
     return;
   }
+  await prepareProtectedApplicationDirectories(context.paths);
   const expectedParent = path.resolve(context.paths.applicationReleasesDir);
   const selected = path.resolve(releaseRoot);
   if (path.dirname(selected) !== expectedParent) {
