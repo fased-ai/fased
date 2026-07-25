@@ -15,6 +15,43 @@ gateway_port=19456
 rpc_port=19457
 gateway_token=fased-protected-local-fixture-token
 snapshot=/var/lib/fased-protected-local-fixture.json
+fixture_acl_user=fased-fixture-acl
+fixture_acl_uid=2001
+
+prepare_restrictive_home_acl() {
+  if ! id "$fixture_acl_user" >/dev/null 2>&1; then
+    useradd --uid "$fixture_acl_uid" --user-group --no-create-home --shell /usr/sbin/nologin \
+      "$fixture_acl_user"
+  fi
+  chown testop:testop /home/testop
+  chmod 0700 /home/testop
+  setfacl --modify \
+    group::---,user:"$fixture_acl_uid":--x,mask::--x,other::--- \
+    /home/testop
+}
+
+capture_home_acl() {
+  getfacl --omit-header --absolute-names --numeric -- /home/testop
+}
+
+verify_original_home_acl() {
+  test "$(capture_home_acl)" = "$original_home_acl"
+  test "$(stat -c '%U:%G' /home/testop)" = "testop:testop"
+}
+
+verify_protected_home_acl() {
+  local instance="$1"
+  local gateway_uid=""
+  local acl=""
+  gateway_uid="$(id -u "fsgw-$instance")"
+  acl="$(capture_home_acl)"
+  grep -Fx "user:$fixture_acl_uid:--x" <<<"$acl" >/dev/null
+  grep -Fx "user:$gateway_uid:--x" <<<"$acl" >/dev/null
+  grep -Fx "group::---" <<<"$acl" >/dev/null
+  grep -Fx "mask::--x" <<<"$acl" >/dev/null
+  grep -Fx "other::---" <<<"$acl" >/dev/null
+  test "$(stat -c '%U:%G' /home/testop)" = "testop:testop"
+}
 
 operator_env() {
   local instance="$1"
@@ -154,6 +191,7 @@ if [[ "$phase" == "verify-reboot" ]]; then
   wait_for_service "fased-gateway-$instance.service"
   wait_for_gateway_version "$version"
   wait_for_socket "/run/fased-local/$instance/operator/operator.sock"
+  verify_protected_home_acl "$instance"
   mapfile -t env_args < <(operator_env "$instance")
   runuser -u testop -- env "${env_args[@]}" \
     /usr/local/bin/node "$runtime/fased.mjs" health --json --timeout 5000 \
@@ -188,6 +226,8 @@ fi
 }
 
 useradd --uid 2000 --user-group --create-home --shell /bin/bash testop
+prepare_restrictive_home_acl
+original_home_acl="$(capture_home_acl)"
 loginctl enable-linger testop
 systemctl start user@2000.service
 wait_for_user_manager
@@ -418,6 +458,7 @@ if [[ "$phase" == "fresh-install" ]]; then
   test -s "$state/install.json"
   test "$(jq -r .profile "$state/install.json")" = "protected-local"
   instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
+  verify_protected_home_acl "$instance"
   wait_for_service "fased-local-controller-$instance.service"
   wait_for_service "fased-signerd-$instance.service"
   wait_for_service "fased-gateway-$instance.service"
@@ -645,7 +686,8 @@ cat >"$state/install.json" <<EOF_MANIFEST
 EOF_MANIFEST
 ln -s "$legacy_runtime" "$state/runtime/current"
 chown -R testop:testop "$state"
-chmod 0700 /home/testop
+prepare_restrictive_home_acl
+original_home_acl="$(capture_home_acl)"
 
 legacy_gateway_version="$legacy_version"
 user_unit_dir=/home/testop/.config/systemd/user
@@ -722,6 +764,7 @@ user_systemctl is-active --quiet fased-gateway.service
 
 bootstrap prepare >/tmp/protected-prepare.json
 instance="$(jq -er .instanceId /tmp/protected-prepare.json)"
+verify_original_home_acl
 test "$(stat -c '%U:%G:%a' /opt/fased)" = "root:root:755"
 test -S "/run/fased-local/$instance/application/app.sock"
 test -S "/run/fased-local/$instance/operator/operator.sock"
@@ -752,6 +795,7 @@ jq -e --arg publicKey "$legacy_public_key" \
 
 bootstrap rollback >/tmp/protected-rollback.json
 wait_for_gateway_version "$legacy_gateway_version"
+verify_original_home_acl
 test ! -e "$user_unit_dir/fased-gateway.service.d/90-fased-protected-local.conf"
 user_systemctl is-enabled --quiet fased-gateway.service
 user_systemctl is-active --quiet fased-gateway.service
@@ -833,6 +877,7 @@ test "$update_failure_status" -ne 0
 grep -F "non-target service" /tmp/protected-update-failure.err >/dev/null
 failure_instance="$(cat /tmp/injected-failure-instance)"
 wait_for_gateway_version "$legacy_gateway_version"
+verify_original_home_acl
 test ! -e "$user_unit_dir/fased-gateway.service.d/90-fased-protected-local.conf"
 test ! -e "/var/lib/fased-local/$failure_instance/controller/protected-local-active"
 test ! -e "/var/lib/fased-local/$failure_instance"
@@ -851,6 +896,7 @@ grep -F "Update mode: verified target-owned Protected Local transaction" \
   /tmp/protected-update.out >/dev/null
 
 instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
+verify_protected_home_acl "$instance"
 wait_for_gateway_version "$version"
 wait_for_service "fased-signerd-$instance.service"
 wait_for_service "fased-local-controller-$instance.service"

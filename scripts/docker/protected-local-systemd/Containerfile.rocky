@@ -3,6 +3,7 @@ FROM docker.io/rockylinux/rockylinux:9
 ENV container=podman
 
 RUN dnf install -y \
+    acl \
     ca-certificates \
     dbus-daemon \
     'dnf-command(config-manager)' \

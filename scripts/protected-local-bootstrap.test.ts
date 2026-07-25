@@ -194,6 +194,69 @@ describe("protected Local bootstrap contract", () => {
     ).toBe(false);
   });
 
+  it("parses restrictive extended ACLs without discarding existing principals", () => {
+    const original = __testing.parseDirectoryAcl(`
+user::rwx
+user:2001:rwx #effective:--x
+group::---
+mask::--x
+other::---
+default:user::rwx
+default:group::---
+default:other::---
+`);
+    expect(original).toEqual({
+      entries: [
+        "user::rwx",
+        "user:2001:rwx",
+        "group::---",
+        "mask::--x",
+        "other::---",
+        "default:user::rwx",
+        "default:group::---",
+        "default:other::---",
+      ],
+    });
+    expect(
+      __testing.gatewayAclGrantState(
+        original,
+        __testing.parseDirectoryAcl(`
+other::---
+user:2002:--x
+mask::--x
+group::---
+user:2001:rwx #effective:--x
+user::rwx
+default:user::rwx
+default:group::---
+default:other::---
+`),
+        2002,
+      ),
+    ).toBe("granted");
+    expect(__testing.gatewayAclGrantState(original, original, 2002)).toBe("missing");
+    expect(() =>
+      __testing.gatewayAclGrantState(
+        original,
+        __testing.parseDirectoryAcl(`
+user::rwx
+user:2001:rwx
+user:2002:--x
+group::---
+mask::r-x
+other::---
+default:user::rwx
+default:group::---
+default:other::---
+`),
+        2002,
+      ),
+    ).toThrow(/changed an existing entry/u);
+    expect(() =>
+      __testing.parseDirectoryAcl("user::rwx\nuser:operator:r-x\ngroup::---\nother::---\n"),
+    ).toThrow(/unsupported access ACL/u);
+  });
+
   it("requires an exact restorable legacy user-unit state", () => {
     for (const state of ["enabled", "disabled", "static", "indirect", "masked"]) {
       expect(__testing.isRestorableLegacyGatewayUnitFileState(state)).toBe(true);
@@ -318,6 +381,9 @@ describe("protected Local bootstrap contract", () => {
       "Onboarding did not complete; the prior Local signer and Gateway topology was restored.",
     );
     expect(installer).toContain("signer_sha256=");
+    expect(installer).toContain("apt-get install -y git curl ca-certificates jq acl");
+    expect(installer).toContain('missing+=("acl")');
+    expect(installer).toContain("pacman -Sy --needed --noconfirm git curl ca-certificates jq acl");
   });
 
   it("selects a fixed system Node instead of the operator's active version-manager Node", () => {

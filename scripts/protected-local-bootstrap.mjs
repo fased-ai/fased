@@ -148,6 +148,7 @@ function runSystem(command, args, options = {}) {
       PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     },
     encoding: "utf8",
+    input: options.input,
     stdio: options.stdio ?? ["ignore", "pipe", "pipe"],
     timeout: options.timeout ?? 120_000,
   });
@@ -1148,12 +1149,12 @@ async function authorizeGatewayActivation(layout) {
 function verifyGatewayLaunchInputs(spec, layout) {
   const runuser = systemBinary(["/usr/sbin/runuser", "/sbin/runuser"], "runuser");
   const test = systemBinary(["/usr/bin/test", "/bin/test"], "test");
-  for (const [label, candidate] of [
-    ["activation marker", path.join(layout.controllerStateDir, "gateway-activation-ready")],
-    ["configuration", path.join(spec.stateDir, "fased.json")],
+  for (const [label, predicate, candidate] of [
+    ["activation marker", "-s", path.join(layout.controllerStateDir, "gateway-activation-ready")],
+    ["configuration", "-r", path.join(spec.stateDir, "fased.json")],
   ]) {
     try {
-      runSystem(runuser, ["-u", layout.gatewayUser, "--", test, "-s", candidate], {
+      runSystem(runuser, ["-u", layout.gatewayUser, "--", test, predicate, candidate], {
         timeout: 10_000,
       });
     } catch {
@@ -1279,9 +1280,202 @@ function captureDirectoryMetadata(directory, expectedUID) {
   });
 }
 
-async function allowGatewayHomeTraversal(spec, configGroup) {
-  await fsp.chown(spec.operatorHome, spec.operatorUid, configGroup.gid);
-  await fsp.chmod(spec.operatorHome, 0o710);
+function parseDirectoryAcl(output) {
+  const entries = [];
+  const seen = new Set();
+  for (const rawLine of String(output).split("\n")) {
+    const trimmed = rawLine.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+    const entry = trimmed.replace(/\s+#effective:[rwx-]{3}$/u, "");
+    if (
+      !/^(?:default:)?(?:user|group|mask|other):(?:[0-9]+)?:[rwx-]{3}$/u.test(entry) ||
+      seen.has(entry)
+    ) {
+      fail("protected Local operator home has an unsupported access ACL");
+    }
+    seen.add(entry);
+    entries.push(entry);
+  }
+  for (const required of ["user::", "group::", "other::"]) {
+    if (!entries.some((entry) => entry.startsWith(required))) {
+      fail("protected Local operator home access ACL is incomplete");
+    }
+  }
+  if (entries.length > 512) {
+    fail("protected Local operator home access ACL is unexpectedly large");
+  }
+  return Object.freeze({ entries: Object.freeze(entries) });
+}
+
+function deserializeDirectoryAcl(value) {
+  if (
+    !value ||
+    !Array.isArray(value.entries) ||
+    value.entries.length === 0 ||
+    value.entries.length > 512 ||
+    value.entries.some(
+      (entry) =>
+        typeof entry !== "string" ||
+        !/^(?:default:)?(?:user|group|mask|other):(?:[0-9]+)?:[rwx-]{3}$/u.test(entry),
+    ) ||
+    new Set(value.entries).size !== value.entries.length
+  ) {
+    fail("protected Local bootstrap journal has an invalid operator home ACL snapshot");
+  }
+  return Object.freeze({ entries: Object.freeze([...value.entries]) });
+}
+
+function aclEntryMap(snapshot) {
+  return new Map(
+    snapshot.entries.map((entry) => {
+      const separator = entry.lastIndexOf(":");
+      return [entry.slice(0, separator + 1), entry.slice(separator + 1)];
+    }),
+  );
+}
+
+function captureDirectoryAcl(directory) {
+  const getfacl = systemBinary(["/usr/bin/getfacl", "/bin/getfacl"], "getfacl");
+  return parseDirectoryAcl(
+    runSystem(getfacl, ["--omit-header", "--absolute-names", "--numeric", "--", directory], {
+      timeout: 10_000,
+    }),
+  );
+}
+
+function directoryAclSnapshotsEqual(actual, expected) {
+  const actualMap = aclEntryMap(actual);
+  const expectedMap = aclEntryMap(expected);
+  return (
+    actualMap.size === expectedMap.size &&
+    [...expectedMap].every(([key, permissions]) => actualMap.get(key) === permissions)
+  );
+}
+
+function assertDirectoryAclEquals(actual, expected, label) {
+  if (!directoryAclSnapshotsEqual(actual, expected)) {
+    fail(`protected Local operator home ACL ${label}`);
+  }
+}
+
+function assertGatewayAclGrant(original, updated, gatewayUid) {
+  const originalMap = aclEntryMap(original);
+  const updatedMap = aclEntryMap(updated);
+  const gatewayKey = `user:${gatewayUid}:`;
+  if (updatedMap.get(gatewayKey) !== "--x") {
+    fail("protected Local Gateway did not receive exact operator-home traversal");
+  }
+  for (const [key, permissions] of originalMap) {
+    if (updatedMap.get(key) !== permissions) {
+      fail("protected Local operator home ACL changed an existing entry");
+    }
+  }
+  const allowedNewKeys = new Set([gatewayKey]);
+  if (!originalMap.has("mask::")) {
+    allowedNewKeys.add("mask::");
+  }
+  for (const key of updatedMap.keys()) {
+    if (!originalMap.has(key) && !allowedNewKeys.has(key)) {
+      fail("protected Local operator home ACL gained an unexpected entry");
+    }
+  }
+}
+
+function gatewayAclGrantState(original, current, gatewayUid) {
+  if (directoryAclSnapshotsEqual(current, original)) {
+    return "missing";
+  }
+  assertGatewayAclGrant(original, current, gatewayUid);
+  return "granted";
+}
+
+function grantGatewayHomeTraversal(transaction) {
+  const { spec, layout } = transaction;
+  const gatewayUid = transaction.users.gateway?.uid;
+  if (!Number.isSafeInteger(gatewayUid) || gatewayUid <= 0) {
+    fail("protected Local Gateway identity is missing before ACL authorization");
+  }
+  const original = transaction.homeAclSnapshot;
+  const current = captureDirectoryAcl(spec.operatorHome);
+  const originalMap = aclEntryMap(original);
+  const gatewayKey = `user:${gatewayUid}:`;
+  if (originalMap.has(gatewayKey)) {
+    fail("protected Local Gateway UID collides with an existing operator-home ACL entry");
+  }
+  const mask = originalMap.get("mask::");
+  if (mask !== undefined && !mask.endsWith("x")) {
+    fail("protected Local operator home ACL mask blocks isolated Gateway traversal");
+  }
+  if (
+    mask === undefined &&
+    [...originalMap.keys()].some(
+      (key) =>
+        !key.startsWith("default:") &&
+        ((key.startsWith("user:") && key !== "user::") ||
+          (key.startsWith("group:") && key !== "group::")),
+    )
+  ) {
+    fail("protected Local operator home ACL has named entries without an access mask");
+  }
+  if (gatewayAclGrantState(original, current, gatewayUid) === "missing") {
+    const setfacl = systemBinary(["/usr/bin/setfacl", "/bin/setfacl"], "setfacl");
+    const args = [];
+    if (mask !== undefined) {
+      args.push("--no-mask");
+    }
+    args.push("--modify", `user:${gatewayUid}:--x`, "--", spec.operatorHome);
+    runSystem(setfacl, args, { timeout: 10_000 });
+    assertGatewayAclGrant(original, captureDirectoryAcl(spec.operatorHome), gatewayUid);
+  }
+
+  const runuser = systemBinary(["/usr/sbin/runuser", "/sbin/runuser"], "runuser");
+  const test = systemBinary(["/usr/bin/test", "/bin/test"], "test");
+  try {
+    runSystem(runuser, ["-u", layout.gatewayUser, "--", test, "-x", spec.operatorHome], {
+      timeout: 10_000,
+    });
+  } catch {
+    fail("protected Local Gateway cannot traverse the operator home");
+  }
+}
+
+async function restoreGatewayHomeTraversal(transaction) {
+  const { spec } = transaction;
+  const original = transaction.homeAclSnapshot;
+  const gatewayUid = transaction.users.gateway?.uid;
+  const setfacl = systemBinary(["/usr/bin/setfacl", "/bin/setfacl"], "setfacl");
+  if (Number.isSafeInteger(gatewayUid) && gatewayUid > 0) {
+    const currentMap = aclEntryMap(captureDirectoryAcl(spec.operatorHome));
+    if (currentMap.has(`user:${gatewayUid}:`)) {
+      runSystem(setfacl, ["--no-mask", "--remove", `user:${gatewayUid}`, "--", spec.operatorHome], {
+        timeout: 10_000,
+      });
+    }
+  }
+  const originalMap = aclEntryMap(original);
+  const currentMap = aclEntryMap(captureDirectoryAcl(spec.operatorHome));
+  if (!originalMap.has("mask::") && currentMap.has("mask::")) {
+    runSystem(setfacl, ["--remove", "mask", "--", spec.operatorHome], {
+      timeout: 10_000,
+    });
+  }
+  await fsp.chown(spec.operatorHome, transaction.homeSnapshot.uid, transaction.homeSnapshot.gid);
+  await fsp.chmod(spec.operatorHome, transaction.homeSnapshot.mode);
+  const originalMask = originalMap.get("mask::");
+  if (typeof originalMask === "string") {
+    runSystem(
+      setfacl,
+      ["--no-mask", "--modify", `mask::${originalMask}`, "--", spec.operatorHome],
+      { timeout: 10_000 },
+    );
+  }
+  assertDirectoryAclEquals(
+    captureDirectoryAcl(spec.operatorHome),
+    original,
+    "was not restored exactly",
+  );
 }
 
 function deserializeCapture(captured) {
@@ -1323,6 +1517,7 @@ async function persistBootstrapTransaction(transaction, phase) {
         configSnapshot: serializeCapture(transaction.configSnapshot),
         manifestSnapshot: serializeCapture(transaction.manifestSnapshot),
         homeSnapshot: transaction.homeSnapshot,
+        homeAclSnapshot: transaction.homeAclSnapshot,
         groups: transaction.groups,
         users: transaction.users,
         legacyGatewayWasActive: transaction.legacyGatewayWasActive,
@@ -1373,7 +1568,8 @@ function readBootstrapTransaction(layout, spec, registryPath) {
     value.spec?.profile !== spec.profile ||
     value.homeSnapshot?.uid !== spec.operatorUid ||
     !Number.isSafeInteger(value.homeSnapshot?.gid) ||
-    !Number.isSafeInteger(value.homeSnapshot?.mode)
+    !Number.isSafeInteger(value.homeSnapshot?.mode) ||
+    !value.homeAclSnapshot
   ) {
     fail("protected Local bootstrap journal does not match this operator instance");
   }
@@ -1390,6 +1586,7 @@ function readBootstrapTransaction(layout, spec, registryPath) {
     configSnapshot,
     manifestSnapshot: deserializeCapture(value.manifestSnapshot),
     homeSnapshot: value.homeSnapshot,
+    homeAclSnapshot: deserializeDirectoryAcl(value.homeAclSnapshot),
     groups: value.groups && typeof value.groups === "object" ? value.groups : {},
     users: value.users && typeof value.users === "object" ? value.users : {},
     legacyGatewayWasActive: value.legacyGatewayWasActive === true,
@@ -1556,16 +1753,27 @@ async function installLegacyGatewaySuppression(spec, layout) {
   userSystemctl(spec, ["daemon-reload"]);
 }
 
+async function waitForLegacyGatewayInactive(spec, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  let activeState = "unknown";
+  while (Date.now() < deadline) {
+    const properties = parseSystemdProperties(
+      userSystemctl(spec, ["show", "fased-gateway.service", "--property=ActiveState"]),
+    );
+    activeState = properties.ActiveState || "unknown";
+    if (new Set(["inactive", "failed"]).has(activeState)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  fail(`legacy Local Gateway remained ${activeState} after fencing`);
+}
+
 async function fenceLegacyGateway(spec, layout, state) {
   if (state.busAvailable && state.exists) {
     await installLegacyGatewaySuppression(spec, layout);
     userSystemctl(spec, ["mask", "--runtime", "--now", "--force", "fased-gateway.service"]);
-    const properties = parseSystemdProperties(
-      userSystemctl(spec, ["show", "fased-gateway.service", "--property=ActiveState"]),
-    );
-    if (!new Set(["inactive", "failed"]).has(properties.ActiveState)) {
-      fail(`legacy Local Gateway remained ${properties.ActiveState || "unknown"} after fencing`);
-    }
+    await waitForLegacyGatewayInactive(spec);
   }
   await waitForGatewayPortFree(spec);
 }
@@ -1786,10 +1994,7 @@ async function rollbackBootstrapTransaction(transaction, originalError, options 
   await attempt("managed manifest restore", async () =>
     restoreCapturedFile(path.join(spec.stateDir, "install.json"), transaction.manifestSnapshot),
   );
-  await attempt("operator home metadata restore", async () => {
-    await fsp.chown(spec.operatorHome, transaction.homeSnapshot.uid, transaction.homeSnapshot.gid);
-    await fsp.chmod(spec.operatorHome, transaction.homeSnapshot.mode);
-  });
+  await attempt("operator home ACL restore", async () => restoreGatewayHomeTraversal(transaction));
   await attempt("candidate unit removal", async () => {
     for (const unitPath of [
       `/etc/systemd/system/${layout.gatewayUnit}`,
@@ -1881,7 +2086,7 @@ async function activatePreparedBootstrapTransaction(transaction) {
     if (!configGroup) {
       fail("protected Local configuration group is missing during activation");
     }
-    await allowGatewayHomeTraversal(spec, configGroup);
+    grantGatewayHomeTraversal(transaction);
     await shareApplicationState(spec, configGroup, transaction.legacy);
     await updateOperatorConfig(spec, layout, configGroup);
     await waitForSocket(layout.operatorSocket);
@@ -2076,6 +2281,15 @@ async function installProtectedLocal(params) {
       if (!configGroup) {
         fail("protected Local configuration group is missing");
       }
+      const runuser = systemBinary(["/usr/sbin/runuser", "/sbin/runuser"], "runuser");
+      const test = systemBinary(["/usr/bin/test", "/bin/test"], "test");
+      try {
+        runSystem(runuser, ["-u", layout.gatewayUser, "--", test, "-x", spec.operatorHome], {
+          timeout: 10_000,
+        });
+      } catch {
+        fail("protected Local Gateway cannot traverse the operator home");
+      }
       await shareApplicationState(spec, configGroup, resolveLegacySignerPaths(spec, {}));
       await updateOperatorConfig(spec, layout, configGroup);
       await waitForSocket(layout.operatorSocket);
@@ -2122,6 +2336,7 @@ async function installProtectedLocal(params) {
     configSnapshot: await captureFile(path.join(spec.stateDir, "fased.json")),
     manifestSnapshot: await captureFile(path.join(spec.stateDir, "install.json")),
     homeSnapshot: captureDirectoryMetadata(spec.operatorHome, spec.operatorUid),
+    homeAclSnapshot: captureDirectoryAcl(spec.operatorHome),
     groups: {},
     users: {},
     legacyGatewayWasActive: false,
@@ -2151,7 +2366,7 @@ async function installProtectedLocal(params) {
     addGroups(layout.gatewayUser, [layout.configGroup]);
     addGroups(layout.signerUser, [layout.gatewayGroup, layout.operatorGroup]);
     if (spec.gatewayMode === "activate") {
-      await allowGatewayHomeTraversal(spec, transaction.groups.config);
+      grantGatewayHomeTraversal(transaction);
     }
     assertPrincipalSeparation(spec, layout);
     const servicePlan = buildProtectedLocalServicePlan({
@@ -2337,7 +2552,9 @@ export const __testing = Object.freeze({
   buildProtectedLocalBootstrapSpec,
   hardenOperatorRuntime,
   isRestorableLegacyGatewayUnitFileState,
+  gatewayAclGrantState,
   legacyInstallReferencesUserGateway,
+  parseDirectoryAcl,
   renderProtectedLocalOperatorEnvironment,
   renderProtectedLocalOwnerWrapper,
   registeredSignerWallets,
