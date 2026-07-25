@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNTIME="${FASED_CONTAINER_RUNTIME:-podman}"
 DISTROS="${FASED_SYSTEMD_FIXTURE_DISTROS:-ubuntu,rocky}"
+SCENARIOS="${FASED_SYSTEMD_FIXTURE_SCENARIOS:-fresh-install,install}"
 FIXTURE_DIR="$ROOT_DIR/scripts/docker/protected-local-systemd"
 VERSION="$(node -p 'require(process.argv[1]).version' "$ROOT_DIR/package.json")"
 COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
@@ -44,6 +45,10 @@ dump_fixture_failure() {
   echo "Protected Local fixture diagnostics: $name" >&2
   "$RUNTIME" exec "$name" /bin/bash -lc '
     systemctl --failed --no-pager >&2 || true
+    systemctl cat "fased-gateway-*" >&2 || true
+    find /var/lib/fased-local -maxdepth 4 -printf "%M %u:%g %p\n" >&2 2>/dev/null || true
+    find /home/testop/.fased/wallet /home/testop/.fased/identity /home/testop/.fased \
+      -maxdepth 1 -printf "%M %u:%g %p\n" >&2 2>/dev/null || true
     journalctl -u "fased-gateway-*" -u "fased-signerd-*" -u "fased-local-controller-*" -n 160 --no-pager >&2 || true
     for log in /var/lib/fased-local/*/signer/audit.jsonl /home/testop/.fased/logs/*.log /tmp/*.err /tmp/*.out /tmp/*.json; do
       [[ -f "$log" ]] || continue
@@ -65,16 +70,16 @@ cleanup() {
 trap cleanup EXIT INT TERM HUP
 
 IFS=',' read -r -a distro_list <<<"$DISTROS"
-for distro in "${distro_list[@]}"; do
-  containerfile="$FIXTURE_DIR/Containerfile.$distro"
-  [[ -f "$containerfile" ]] || {
-    echo "Unsupported protected Local fixture distro: $distro" >&2
-    exit 1
-  }
-  image="fased-protected-local-systemd-${distro}:local"
-  name="fased-protected-local-${distro}-$$"
+IFS=',' read -r -a scenario_list <<<"$SCENARIOS"
+run_fixture_scenario() {
+  local distro="$1"
+  local image="$2"
+  local scenario="$3"
+  local name="fased-protected-local-${distro}-${scenario}-$$"
+  local ready=0
+  local state=""
+
   cleanup_names+=("$name")
-  "$RUNTIME" build -f "$containerfile" -t "$image" "$FIXTURE_DIR"
   "$RUNTIME" run -d \
     --name "$name" \
     --privileged \
@@ -89,7 +94,6 @@ for distro in "${distro_list[@]}"; do
   if [[ "$distro" == "ubuntu" ]]; then
     "$RUNTIME" cp "$(command -v gh)" "$name:/usr/bin/gh"
   fi
-  ready=0
   for _ in {1..200}; do
     state="$("$RUNTIME" exec "$name" systemctl is-system-running 2>/dev/null || true)"
     if [[ "$state" == "running" || "$state" == "degraded" ]]; then
@@ -102,7 +106,8 @@ for distro in "${distro_list[@]}"; do
     echo "$distro systemd fixture did not become ready." >&2
     exit 1
   }
-  if ! "$RUNTIME" exec "$name" /usr/local/bin/fased-protected-local-systemd-fixture install; then
+  if ! "$RUNTIME" exec "$name" \
+    /usr/local/bin/fased-protected-local-systemd-fixture "$scenario"; then
     dump_fixture_failure "$name"
     exit 1
   fi
@@ -126,7 +131,26 @@ for distro in "${distro_list[@]}"; do
     exit 1
   fi
   "$RUNTIME" rm -f "$name" >/dev/null
-  cleanup_names=("${cleanup_names[@]/$name}")
+}
+
+for distro in "${distro_list[@]}"; do
+  containerfile="$FIXTURE_DIR/Containerfile.$distro"
+  [[ -f "$containerfile" ]] || {
+    echo "Unsupported protected Local fixture distro: $distro" >&2
+    exit 1
+  }
+  image="fased-protected-local-systemd-${distro}:local"
+  "$RUNTIME" build -f "$containerfile" -t "$image" "$FIXTURE_DIR"
+  for scenario in "${scenario_list[@]}"; do
+    case "$scenario" in
+      fresh-install|install) ;;
+      *)
+        echo "Unsupported protected Local fixture scenario: $scenario" >&2
+        exit 1
+        ;;
+    esac
+    run_fixture_scenario "$distro" "$image" "$scenario"
+  done
 done
 
-echo "Protected Local systemd fixtures passed: $DISTROS"
+echo "Protected Local systemd fixtures passed: distros=$DISTROS scenarios=$SCENARIOS"

@@ -1060,6 +1060,34 @@ async function removeLegacySignerMaterial(legacy) {
   });
 }
 
+async function authorizeGatewayActivation(layout) {
+  await atomicWrite(
+    path.join(layout.controllerStateDir, "gateway-activation-ready"),
+    `${new Date().toISOString()}\n`,
+    0o600,
+    { uid: 0, gid: 0 },
+  );
+}
+
+async function stageGatewayActivation(layout, systemctl) {
+  await fsp.rm(path.join(layout.controllerStateDir, "gateway-activation-ready"), {
+    force: true,
+  });
+  runSystem(systemctl, ["disable", "--now", layout.gatewayUnit]);
+  const activeState = runSystem(systemctl, [
+    "show",
+    layout.gatewayUnit,
+    "--property=ActiveState",
+    "--value",
+  ]).trim();
+  if (activeState !== "inactive") {
+    fail(`protected Local staged Gateway remained ${activeState || "unknown"}`);
+  }
+  if (fs.existsSync(path.join(layout.controllerStateDir, "gateway-activation-ready"))) {
+    fail("protected Local staged Gateway retained its activation marker");
+  }
+}
+
 async function restoreLegacySignerMaterial(transaction) {
   if (!transaction.migrated) {
     return;
@@ -1535,12 +1563,15 @@ async function activatePreparedBootstrapTransaction(transaction) {
     if (!configGroup) {
       fail("protected Local configuration group is missing during activation");
     }
+    await allowGatewayHomeTraversal(spec, configGroup);
     await shareApplicationState(spec, configGroup, transaction.legacy);
     await updateOperatorConfig(spec, layout, configGroup);
     await waitForSocket(layout.operatorSocket);
     await verifyOperatorCapabilities(spec, layout);
     const wallets = verifyLogicalWalletState(spec, layout);
     const systemctl = systemBinary(["/usr/bin/systemctl", "/bin/systemctl"], "systemctl");
+    await authorizeGatewayActivation(layout);
+    runSystem(systemctl, ["enable", layout.gatewayUnit]);
     runSystem(systemctl, ["restart", layout.gatewayUnit]);
     runSystem(systemctl, ["is-active", "--quiet", layout.gatewayUnit]);
     await verifyGatewayHealth(spec, spec.gatewayHealthTimeoutMs);
@@ -1733,6 +1764,8 @@ async function installProtectedLocal(params) {
       const wallets = verifyLogicalWalletState(spec, layout);
       if (spec.gatewayMode === "activate") {
         const systemctl = systemBinary(["/usr/bin/systemctl", "/bin/systemctl"], "systemctl");
+        await authorizeGatewayActivation(layout);
+        runSystem(systemctl, ["enable", layout.gatewayUnit]);
         runSystem(systemctl, ["restart", layout.gatewayUnit]);
         runSystem(systemctl, ["is-active", "--quiet", layout.gatewayUnit]);
         await verifyGatewayHealth(spec, spec.gatewayHealthTimeoutMs);
@@ -1796,7 +1829,9 @@ async function installProtectedLocal(params) {
     addGroups(spec.operatorUser, [layout.operatorGroup, layout.configGroup]);
     addGroups(layout.gatewayUser, [layout.configGroup]);
     addGroups(layout.signerUser, [layout.gatewayGroup, layout.operatorGroup]);
-    await allowGatewayHomeTraversal(spec, transaction.groups.config);
+    if (spec.gatewayMode === "activate") {
+      await allowGatewayHomeTraversal(spec, transaction.groups.config);
+    }
     assertPrincipalSeparation(spec, layout);
     const servicePlan = buildProtectedLocalServicePlan({
       instanceId: layout.instanceId,
@@ -1829,20 +1864,32 @@ async function installProtectedLocal(params) {
     });
     const migrated = await copyLegacyMaterial(legacy, layout, transaction.users.signer);
     transaction.migrated = migrated.migrated;
-    await shareApplicationState(spec, transaction.groups.config, legacy);
+    if (spec.gatewayMode === "prepare") {
+      await restoreLegacyLocalStateBoundary(transaction);
+    } else {
+      await shareApplicationState(spec, transaction.groups.config, legacy);
+    }
     await persistBootstrapTransaction(transaction, "candidate-installed");
     await updateOperatorConfig(spec, layout, transaction.groups.config);
     await persistBootstrapTransaction(transaction, "application-configured");
     const systemctl = systemBinary(["/usr/bin/systemctl", "/bin/systemctl"], "systemctl");
     runSystem(systemctl, ["daemon-reload"]);
-    runSystem(systemctl, ["enable", layout.controllerUnit, layout.signerUnit, layout.gatewayUnit]);
+    if (spec.gatewayMode === "prepare") {
+      await stageGatewayActivation(layout, systemctl);
+    }
+    runSystem(systemctl, ["enable", layout.controllerUnit, layout.signerUnit]);
     runSystem(systemctl, ["restart", layout.controllerUnit]);
     runSystem(systemctl, ["restart", layout.signerUnit]);
+    if (spec.gatewayMode === "prepare") {
+      await stageGatewayActivation(layout, systemctl);
+    }
     await waitForSocket(layout.operatorSocket);
     await verifyOperatorCapabilities(spec, layout);
     const wallets = verifyLogicalWalletState(spec, layout);
-    runSystem(systemctl, ["restart", layout.gatewayUnit]);
     if (spec.gatewayMode === "activate") {
+      await authorizeGatewayActivation(layout);
+      runSystem(systemctl, ["enable", layout.gatewayUnit]);
+      runSystem(systemctl, ["restart", layout.gatewayUnit]);
       runSystem(systemctl, ["is-active", "--quiet", layout.gatewayUnit]);
       await verifyGatewayHealth(spec, spec.gatewayHealthTimeoutMs);
       await removeLegacySignerMaterial(legacy);
