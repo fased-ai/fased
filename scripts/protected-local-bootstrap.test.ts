@@ -263,4 +263,36 @@ describe("protected Local bootstrap contract", () => {
     );
     expect(installer).toContain("signer_sha256=");
   });
+
+  it("selects a fixed system Node instead of the operator's active version-manager Node", () => {
+    const installer = fs.readFileSync(path.join(process.cwd(), "install.sh"), "utf8");
+    const resolverStart = installer.indexOf("resolve_protected_local_system_node() {");
+    const resolverEnd = installer.indexOf("\n}\n", resolverStart);
+    const resolver = installer.slice(resolverStart, resolverEnd);
+    const bootstrapStart = installer.indexOf("bootstrap_protected_local_topology() {");
+    const bootstrapEnd = installer.indexOf("\n}\n", bootstrapStart);
+    const bootstrap = installer.slice(bootstrapStart, bootstrapEnd);
+
+    expect(resolver).toContain("for candidate in /usr/bin/node /usr/local/bin/node");
+    expect(resolver).toContain('node_runtime_ok_for "$candidate"');
+    expect(resolver).toContain('readlink -f -- "$candidate"');
+    expect(resolver).not.toContain("command -v node");
+    expect(bootstrap).toContain("resolve_protected_local_system_node");
+    expect(bootstrap).not.toContain('readlink -f "$(command -v node)"');
+    expect(bootstrap).toContain('PATH="/usr/sbin:/usr/bin:/sbin:/bin"');
+    expect(bootstrap).toContain("install_linux_system_dependencies 0");
+  });
+
+  it("restores the managed runtime when protected bootstrap preflight fails", () => {
+    const installer = fs.readFileSync(path.join(process.cwd(), "install.sh"), "utf8");
+    const bootstrapCall = installer.lastIndexOf(
+      'if ! bootstrap_protected_local_topology "$protected_gateway_mode"',
+    );
+    const failureEnd = installer.indexOf("\n  fi", bootstrapCall);
+    const failureBranch = installer.slice(bootstrapCall, failureEnd);
+
+    expect(failureBranch).toContain("rollback_managed_runtime_after_failed_install");
+    expect(failureBranch).toContain("the prior Local runtime and service topology were restored");
+    expect(failureBranch).toContain("automatic Local runtime rollback was incomplete");
+  });
 });

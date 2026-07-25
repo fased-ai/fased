@@ -767,6 +767,87 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     }
   });
 
+  it("requires same-version repair when an earlier Protected Local service still uses operator files", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-protected-consistency-"));
+    const instanceId = "0123456789abcdef";
+    const stateDir = path.join(root, "home", "operator", ".fased");
+    const installRoot = path.join(root, "opt", "fased", "local");
+    const systemdRoot = path.join(root, "etc", "systemd", "system");
+    const installDir = path.join(installRoot, instanceId);
+    const applicationCurrent = path.join(installDir, "application", "current");
+    const applicationRelease = path.join(installDir, "application", "releases", "v1.2.3");
+    const configPath = path.join(stateDir, "fased.json");
+    const manifest = {
+      profile: "protected-local",
+      configPath,
+      runtime: { activeVersion: "1.2.3" },
+    };
+    try {
+      await Promise.all([
+        fsp.mkdir(stateDir, { recursive: true }),
+        fsp.mkdir(applicationRelease, { recursive: true }),
+        fsp.mkdir(systemdRoot, { recursive: true }),
+        fsp.mkdir(installDir, { recursive: true }),
+      ]);
+      await fsp.writeFile(
+        configPath,
+        `${JSON.stringify({
+          env: {
+            vars: {
+              FASED_PROTECTED_LOCAL: "1",
+              FASED_PROTECTED_LOCAL_INSTANCE: instanceId,
+            },
+          },
+        })}\n`,
+      );
+      await Promise.all([
+        fsp.writeFile(
+          path.join(systemdRoot, `fased-gateway-${instanceId}.service`),
+          `WorkingDirectory=${stateDir}/runtime/releases/1.2.3\n`,
+        ),
+        fsp.writeFile(
+          path.join(installDir, "gateway-launch"),
+          `exec /bin/bash "${stateDir}/runtime/releases/1.2.3/scripts/start-managed.sh"\n`,
+        ),
+      ]);
+      await expect(
+        __testing.inspectLocalManagedConsistency({ stateDir }, manifest, "1.2.3", {
+          installRoot,
+          systemdRoot,
+        }),
+      ).resolves.toMatchObject({
+        consistent: false,
+        reasons: expect.arrayContaining(["protected_application_boundary_missing"]),
+      });
+
+      await fsp.symlink(applicationRelease, applicationCurrent);
+      await Promise.all([
+        fsp.writeFile(
+          path.join(systemdRoot, `fased-gateway-${instanceId}.service`),
+          [
+            `WorkingDirectory=${applicationCurrent}`,
+            `Environment=FASED_CONFIG_DIR=${stateDir}`,
+            `Environment=FASED_MANAGED_RUNTIME_ROOT=${applicationCurrent}`,
+            "Environment=FASED_NODE_BIN=/usr/bin/node",
+            "",
+          ].join("\n"),
+        ),
+        fsp.writeFile(
+          path.join(installDir, "gateway-launch"),
+          `exec /bin/bash "${applicationCurrent}/scripts/start-managed.sh"\n`,
+        ),
+      ]);
+      await expect(
+        __testing.inspectLocalManagedConsistency({ stateDir }, manifest, "1.2.3", {
+          installRoot,
+          systemdRoot,
+        }),
+      ).resolves.toEqual({ consistent: true, reasons: [] });
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects release archive paths that can escape the approved root", () => {
     expect(__testing.archiveEntryIsSafe("package/", "package")).toBe(true);
     expect(__testing.archiveEntryIsSafe("package/dist/entry.js", "package")).toBe(true);

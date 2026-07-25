@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   PRE_V2_HOSTING_MIGRATION_MESSAGE,
   __testing,
+  installProtectedLocalApplicationRuntime,
   isMainModule,
   parseReleaseVersion,
   parseUpdateRequest,
@@ -33,7 +34,13 @@ afterEach(async () => {
   }
 });
 
-async function createFixture() {
+async function createFixture(
+  options: {
+    protectedApplication?: boolean;
+    protectedService?: boolean;
+    missingPreviousApplication?: boolean;
+  } = {},
+) {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-updater-"));
   cleanupRoots.push(root);
   const stateDir = path.join(root, "updater-state");
@@ -56,6 +63,18 @@ async function createFixture() {
     signerGatePath: path.join(root, "signer-update-gate", "active"),
     transactionsDir: path.join(stateDir, "transactions"),
     socketPath: path.join(root, "request.sock"),
+    ...(options.protectedApplication
+      ? {
+          applicationReleasesDir: path.join(root, "application", "releases"),
+          applicationCurrentLink: path.join(root, "application", "current"),
+        }
+      : {}),
+    ...(options.protectedService
+      ? {
+          gatewayUnitPath: path.join(root, "systemd", "fased-gateway.service"),
+          gatewayLauncherPath: path.join(root, "opt", "fased", "gateway-launch"),
+        }
+      : {}),
   };
   await Promise.all([
     fsp.mkdir(path.dirname(signerPath), { recursive: true }),
@@ -67,9 +86,63 @@ async function createFixture() {
   await fsp.writeFile(signerStateDBPath, "old-db\n", { mode: 0o600 });
   await fsp.writeFile(signerUnitPath, "ExecStart=old-signer\n", { mode: 0o644 });
   await fsp.writeFile(paths.versionPath, "1.2.2\n", { mode: 0o600 });
+  if (options.protectedApplication) {
+    await Promise.all([
+      fsp.mkdir(path.join(paths.applicationReleasesDir!, "v1.2.2"), {
+        recursive: true,
+        mode: 0o755,
+      }),
+      fsp.mkdir(path.join(paths.applicationReleasesDir!, "v1.2.3"), {
+        recursive: true,
+        mode: 0o755,
+      }),
+    ]);
+    if (!options.missingPreviousApplication) {
+      await fsp.symlink(
+        path.join(paths.applicationReleasesDir!, "v1.2.2"),
+        paths.applicationCurrentLink!,
+      );
+    }
+  }
+  if (options.protectedService) {
+    const instanceId = "0123456789abcdef";
+    const protectedNodeBinary = path.join(root, "bin", "node");
+    await Promise.all([
+      fsp.mkdir(path.dirname(paths.gatewayUnitPath!), { recursive: true }),
+      fsp.mkdir(path.dirname(paths.gatewayLauncherPath!), { recursive: true }),
+      fsp.mkdir(path.dirname(protectedNodeBinary), { recursive: true }),
+    ]);
+    await Promise.all([
+      fsp.writeFile(protectedNodeBinary, "#!/bin/sh\nexit 0\n", { mode: 0o755 }),
+      fsp.writeFile(
+        paths.gatewayUnitPath!,
+        `[Service]
+User=fsgw-${instanceId}
+WorkingDirectory=/home/operator/.fased/runtime/releases/1.2.2
+Environment=FASED_STATE_DIR=/home/operator/.fased
+Environment=FASED_PROTECTED_LOCAL_INSTANCE=${instanceId}
+ProtectSystem=strict
+`,
+        { mode: 0o644 },
+      ),
+      fsp.writeFile(
+        paths.gatewayLauncherPath!,
+        `#!/usr/bin/env bash
+set -euo pipefail
+while [[ ! -s "/home/operator/.fased/fased.json" ]]; do
+  sleep 1
+done
+exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-managed.sh"
+`,
+        { mode: 0o755 },
+      ),
+    ]);
+  }
   const events: string[] = [];
   const context = __testing.createTransactionContext({
     paths,
+    ...(options.protectedService ? { protectedLocalInstanceId: "0123456789abcdef" } : {}),
+    ...(options.protectedService ? { protectedNodeBinary: path.join(root, "bin", "node") } : {}),
     assertReleaseAllowed: async () => undefined,
     stageControllerRelease: async () => ({ changed: false }),
     stageCandidate: async (version: string, candidatePath: string) => {
@@ -83,6 +156,17 @@ async function createFixture() {
           capabilitiesDigest: `sha256:${"3".repeat(64)}`,
           releaseCommit: signerRelease(version).commit,
         },
+        ...(options.protectedApplication
+          ? {
+              application: {
+                targetRoot: path.join(paths.applicationReleasesDir!, `v${version}`),
+                previousRoot: options.missingPreviousApplication
+                  ? null
+                  : path.join(paths.applicationReleasesDir!, "v1.2.2"),
+                changed: version !== "1.2.2",
+              },
+            }
+          : {}),
       };
     },
     stopSigner: async () => {
@@ -137,6 +221,179 @@ function managedTransaction(phase = "signer-preactivated") {
 }
 
 describe("root-owned hosted updater protocol", () => {
+  it("installs a protected application outside the operator home and selects it atomically", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-protected-app-"));
+    cleanupRoots.push(root);
+    const sourceRoot = path.join(root, "verified-source");
+    const dependencyRoot = path.join(root, "verified-dependencies", "node_modules");
+    const applicationRoot = path.join(root, "root-controlled", "application");
+    await Promise.all([
+      fsp.mkdir(path.join(sourceRoot, "dist"), { recursive: true }),
+      fsp.mkdir(path.join(sourceRoot, "scripts"), { recursive: true }),
+      fsp.mkdir(path.join(dependencyRoot, "fixture"), { recursive: true }),
+    ]);
+    await Promise.all([
+      fsp.writeFile(
+        path.join(sourceRoot, "package.json"),
+        `${JSON.stringify({ version: "1.2.3" })}\n`,
+      ),
+      fsp.writeFile(
+        path.join(sourceRoot, "dist", "build-info.json"),
+        `${JSON.stringify({ version: "1.2.3", commit: "a".repeat(40) })}\n`,
+      ),
+      fsp.writeFile(
+        path.join(sourceRoot, ".fased-hosted-runtime.json"),
+        `${JSON.stringify({
+          version: "1.2.3",
+          commit: "a".repeat(40),
+          dependencyHash: "b".repeat(64),
+        })}\n`,
+      ),
+      fsp.writeFile(path.join(sourceRoot, "fased.mjs"), "#!/usr/bin/env node\n"),
+      fsp.writeFile(path.join(sourceRoot, "scripts", "start-managed.sh"), "#!/bin/bash\n"),
+      fsp.writeFile(path.join(dependencyRoot, "fixture", "index.js"), "export {};\n"),
+    ]);
+
+    const result = await installProtectedLocalApplicationRuntime({
+      sourceRoot,
+      dependencyRoot,
+      version: "1.2.3",
+      commit: "a".repeat(40),
+      paths: {
+        applicationReleasesDir: path.join(applicationRoot, "releases"),
+        applicationCurrentLink: path.join(applicationRoot, "current"),
+      },
+    });
+
+    expect(result.releaseRoot).toBe(path.join(applicationRoot, "releases", "v1.2.3"));
+    expect(await fsp.realpath(path.join(applicationRoot, "current"))).toBe(result.releaseRoot);
+    expect(result.releaseRoot.startsWith(path.join(root, "root-controlled"))).toBe(true);
+    expect((await fsp.lstat(result.releaseRoot)).mode & 0o022).toBe(0);
+  });
+
+  it("switches the protected application with the signer and restores it when Gateway start fails", async () => {
+    const prepared = await createFixture({ protectedApplication: true });
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      prepared.context,
+    );
+    await __testing.activateSignerRelease(
+      request("activateRelease", TRANSACTION_ONE, "1.2.3"),
+      prepared.context,
+    );
+    await __testing.authorizeGatewayRelease(
+      request("authorizeGatewayRelease", TRANSACTION_ONE, "1.2.3"),
+      prepared.context,
+    );
+    expect(await fsp.realpath(prepared.paths.applicationCurrentLink!)).toBe(
+      path.join(prepared.paths.applicationReleasesDir!, "v1.2.3"),
+    );
+
+    const failing = await createFixture({ protectedApplication: true });
+    failing.context.startGateway = async () => {
+      throw new Error("injected Gateway start failure");
+    };
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_TWO, "1.2.3"),
+      failing.context,
+    );
+    await __testing.activateSignerRelease(
+      request("activateRelease", TRANSACTION_TWO, "1.2.3"),
+      failing.context,
+    );
+    await expect(
+      __testing.authorizeGatewayRelease(
+        request("authorizeGatewayRelease", TRANSACTION_TWO, "1.2.3"),
+        failing.context,
+      ),
+    ).rejects.toThrow("injected Gateway start failure");
+    expect(await fsp.realpath(failing.paths.applicationCurrentLink!)).toBe(
+      path.join(failing.paths.applicationReleasesDir!, "v1.2.2"),
+    );
+  });
+
+  it("upgrades an earlier protected service boundary and restores it with a missing prior root", async () => {
+    const prepared = await createFixture({
+      protectedApplication: true,
+      protectedService: true,
+      missingPreviousApplication: true,
+    });
+    const previousUnit = await fsp.readFile(prepared.paths.gatewayUnitPath!, "utf8");
+    const previousLauncher = await fsp.readFile(prepared.paths.gatewayLauncherPath!, "utf8");
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      prepared.context,
+    );
+    expect(await __testing.readJournal(prepared.context)).toMatchObject({
+      application: { previousRoot: null },
+      serviceBoundary: { changed: true },
+    });
+    await __testing.activateSignerRelease(
+      request("activateRelease", TRANSACTION_ONE, "1.2.3"),
+      prepared.context,
+    );
+    await __testing.authorizeGatewayRelease(
+      request("authorizeGatewayRelease", TRANSACTION_ONE, "1.2.3"),
+      prepared.context,
+    );
+    const nextUnit = await fsp.readFile(prepared.paths.gatewayUnitPath!, "utf8");
+    const nextLauncher = await fsp.readFile(prepared.paths.gatewayLauncherPath!, "utf8");
+    expect(nextUnit).toContain(`WorkingDirectory=${prepared.paths.applicationCurrentLink!}`);
+    expect(nextUnit).toContain(
+      `Environment=FASED_MANAGED_RUNTIME_ROOT=${prepared.paths.applicationCurrentLink!}`,
+    );
+    expect(nextUnit).toContain("Environment=FASED_CONFIG_DIR=/home/operator/.fased");
+    expect(nextLauncher).toContain(
+      `"${prepared.paths.applicationCurrentLink!}/scripts/start-managed.sh"`,
+    );
+    expect(await fsp.realpath(prepared.paths.applicationCurrentLink!)).toBe(
+      path.join(prepared.paths.applicationReleasesDir!, "v1.2.3"),
+    );
+    await __testing.commitSignerRelease(
+      request("commitRelease", TRANSACTION_ONE, "1.2.3"),
+      prepared.context,
+    );
+
+    const failing = await createFixture({
+      protectedApplication: true,
+      protectedService: true,
+      missingPreviousApplication: true,
+    });
+    let gatewayStarts = 0;
+    failing.context.startGateway = async () => {
+      gatewayStarts += 1;
+      if (gatewayStarts === 1) {
+        throw new Error("injected migrated Gateway start failure");
+      }
+    };
+    const failingUnit = await fsp.readFile(failing.paths.gatewayUnitPath!, "utf8");
+    const failingLauncher = await fsp.readFile(failing.paths.gatewayLauncherPath!, "utf8");
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_TWO, "1.2.3"),
+      failing.context,
+    );
+    await __testing.activateSignerRelease(
+      request("activateRelease", TRANSACTION_TWO, "1.2.3"),
+      failing.context,
+    );
+    await expect(
+      __testing.authorizeGatewayRelease(
+        request("authorizeGatewayRelease", TRANSACTION_TWO, "1.2.3"),
+        failing.context,
+      ),
+    ).rejects.toThrow("injected migrated Gateway start failure");
+    expect(fs.existsSync(failing.paths.applicationCurrentLink!)).toBe(false);
+    expect(await fsp.readFile(failing.paths.gatewayUnitPath!, "utf8")).toBe(failingUnit);
+    expect(await fsp.readFile(failing.paths.gatewayLauncherPath!, "utf8")).toBe(failingLauncher);
+    await __testing.rollbackSignerRelease(
+      request("rollbackRelease", TRANSACTION_TWO, "1.2.3"),
+      failing.context,
+    );
+
+    expect(previousUnit).toBe(failingUnit);
+    expect(previousLauncher).toBe(failingLauncher);
+  });
+
   it("recognizes the systemd entrypoint through the immutable current symlink", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-controller-entrypoint-"));
     cleanupRoots.push(root);
@@ -328,7 +585,24 @@ describe("root-owned hosted updater protocol", () => {
     const manifest = {
       schemaVersion: 2,
       release: { version: "1.2.3", tag: "v1.2.3", commit: "a".repeat(40) },
-      application: {},
+      application: {
+        linux: Object.fromEntries(
+          ["x64", "arm64"].map((architecture) => [
+            architecture,
+            {
+              artifact: {
+                asset: `fased-hosted-app-v2-linux-${architecture}-v1.2.3.tar.gz`,
+                sha256: "b".repeat(64),
+              },
+              dependencies: {
+                asset: `fased-hosted-deps-linux-${architecture}-${"c".repeat(64)}.tar.gz`,
+                sha256: "d".repeat(64),
+                dependencyHash: "c".repeat(64),
+              },
+            },
+          ]),
+        ),
+      },
       signer: {
         release: signerRelease("1.2.3"),
         capabilities,

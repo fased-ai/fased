@@ -61,8 +61,8 @@ export function buildProtectedLocalServicePlan(params) {
   if (!appStateDir.startsWith(`${operatorHome}${path.sep}`)) {
     fail("application state directory must remain below the operator home");
   }
-  if (!repoDir.startsWith(`${operatorHome}${path.sep}`)) {
-    fail("application runtime directory must remain below the operator home");
+  if (repoDir !== layout.applicationCurrentLink) {
+    fail("application runtime directory must be the root-controlled current release");
   }
   if (new Set([operatorUid, gatewayUid, signerUid]).size !== 3) {
     fail("operator, Gateway, and signer UIDs must be distinct");
@@ -101,7 +101,10 @@ SupplementaryGroups=${layout.configGroup}
 WorkingDirectory=${escaped.repoDir}
 Environment=HOME=${escaped.operatorHome}
 Environment=FASED_STATE_DIR=${escaped.appStateDir}
+Environment=FASED_CONFIG_DIR=${escaped.appStateDir}
 Environment=FASED_CONFIG_PATH=${escaped.appStateDir}/fased.json
+Environment=FASED_MANAGED_RUNTIME_ROOT=${escaped.repoDir}
+Environment=FASED_NODE_BIN=${escaped.nodeBinary}
 Environment=FASED_GATEWAY_MODE=managed
 Environment=FASED_MANAGED_INTERNAL=1
 Environment=FASED_GATEWAY_SERVICE=1

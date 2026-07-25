@@ -7,6 +7,7 @@ import fsp from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { installProtectedLocalApplicationRuntime } from "./fased-host-updater.mjs";
 import {
   loadOrAllocateProtectedLocalInstance,
   removeProtectedLocalInstance,
@@ -368,15 +369,28 @@ async function validateVerifiedReleaseRoot(sourceRoot, spec) {
   const buildInfo = JSON.parse(
     await fsp.readFile(path.join(canonical, "dist", "build-info.json"), "utf8"),
   );
+  const rootStore = path.dirname(path.dirname(canonical));
+  const dependencies = await fsp.lstat(
+    path.join(rootStore, "verified-dependencies", "node_modules"),
+  );
+  if (!dependencies.isDirectory() || dependencies.isSymbolicLink()) {
+    fail("verified release root does not contain its attested dependency layer");
+  }
   const packageMetadata = JSON.parse(
     await fsp.readFile(path.join(canonical, "package.json"), "utf8"),
+  );
+  const runtimeMetadata = JSON.parse(
+    await fsp.readFile(path.join(canonical, ".fased-hosted-runtime.json"), "utf8"),
   );
   if (
     marker.version !== spec.releaseVersion ||
     marker.commit !== spec.releaseCommit ||
     buildInfo.version !== spec.releaseVersion ||
     buildInfo.commit !== spec.releaseCommit ||
-    packageMetadata.version !== spec.releaseVersion
+    packageMetadata.version !== spec.releaseVersion ||
+    !/^[a-f0-9]{64}$/u.test(marker.dependency_sha256 ?? "") ||
+    !/^[a-f0-9]{64}$/u.test(marker.dependency_hash ?? "") ||
+    runtimeMetadata.dependencyHash !== marker.dependency_hash
   ) {
     fail("verified release root does not match the requested protected Local identity");
   }
@@ -782,6 +796,20 @@ async function installRootFiles(params) {
     await fsp.chmod(directory, 0o755);
   }
   await atomicCopy(params.signerBinary, layout.signerBinary, 0o755, { uid: 0, gid: 0 });
+  await installProtectedLocalApplicationRuntime({
+    sourceRoot,
+    dependencyRoot: path.join(
+      path.dirname(path.dirname(sourceRoot)),
+      "verified-dependencies",
+      "node_modules",
+    ),
+    version: spec.releaseVersion,
+    commit: spec.releaseCommit,
+    paths: {
+      applicationReleasesDir: layout.applicationReleasesDir,
+      applicationCurrentLink: layout.applicationCurrentLink,
+    },
+  });
   await installControllerGeneration(sourceRoot, layout, spec);
   await atomicCopy(
     path.join(sourceRoot, "scripts", "fased-signer-owner-hosting.sh"),
@@ -1776,7 +1804,7 @@ async function installProtectedLocal(params) {
       operatorUser: spec.operatorUser,
       operatorHome: spec.operatorHome,
       appStateDir: spec.stateDir,
-      repoDir: spec.runtimeDir,
+      repoDir: layout.applicationCurrentLink,
       gatewayUid: transaction.users.gateway.uid,
       signerUid: transaction.users.signer.uid,
       gatewayGid: transaction.groups.gateway.gid,
