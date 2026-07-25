@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import http from "node:http";
+import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { installProtectedLocalApplicationRuntime } from "./fased-host-updater.mjs";
@@ -1024,23 +1025,73 @@ async function probeGatewayHealth(spec, timeoutMs = 2_000) {
         response.on("end", () => {
           try {
             const payload = JSON.parse(body);
+            const matches = protectedLocalGatewayHealthMatches(
+              payload,
+              response.statusCode,
+              spec.releaseVersion,
+            );
             resolve({
-              ok: protectedLocalGatewayHealthMatches(
-                payload,
-                response.statusCode,
-                spec.releaseVersion,
-              ),
+              ok: matches,
+              conflict: !matches,
               detail: `status=${response.statusCode ?? "unknown"} version=${payload?.version ?? "unknown"} runtimeSource=${payload?.runtimeSource ?? "unknown"}`,
             });
           } catch (error) {
-            resolve({ ok: false, detail: `invalid health payload: ${error.message}` });
+            resolve({
+              ok: false,
+              conflict: true,
+              detail: `invalid health payload: ${error.message}`,
+            });
           }
         });
       },
     );
     request.on("timeout", () => request.destroy(new Error("Gateway health probe timed out")));
-    request.on("error", (error) => resolve({ ok: false, detail: error.message }));
+    request.on("error", (error) =>
+      resolve({
+        ok: false,
+        conflict: !new Set(["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT"]).has(error?.code),
+        detail: error.message,
+      }),
+    );
   });
+}
+
+async function gatewayPortIsFree(spec) {
+  return await new Promise((resolve) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", (error) => {
+      resolve({ free: false, detail: error?.code ?? error.message });
+    });
+    server.listen(
+      {
+        host: "127.0.0.1",
+        port: spec.gatewayPort,
+        exclusive: true,
+      },
+      () => {
+        server.close((error) => {
+          resolve({ free: !error, detail: error?.code ?? error?.message ?? "free" });
+        });
+      },
+    );
+  });
+}
+
+async function waitForGatewayPortFree(spec, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastDetail = "occupied";
+  while (Date.now() < deadline) {
+    const result = await gatewayPortIsFree(spec);
+    if (result.free) {
+      return;
+    }
+    lastDetail = result.detail;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  fail(
+    `legacy Local Gateway port 127.0.0.1:${spec.gatewayPort} remained occupied after fencing (${lastDetail})`,
+  );
 }
 
 async function verifyGatewayHealth(spec, timeoutMs = 120_000) {
@@ -1056,6 +1107,11 @@ async function verifyGatewayHealth(spec, timeoutMs = 120_000) {
       return;
     }
     lastDetail = result.detail;
+    if (result.conflict) {
+      fail(
+        `protected Local Gateway port 127.0.0.1:${spec.gatewayPort} is owned by a non-target service (${lastDetail})`,
+      );
+    }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   fail(
@@ -1087,6 +1143,23 @@ async function authorizeGatewayActivation(layout) {
     0o600,
     { uid: 0, gid: 0 },
   );
+}
+
+function verifyGatewayLaunchInputs(spec, layout) {
+  const runuser = systemBinary(["/usr/sbin/runuser", "/sbin/runuser"], "runuser");
+  const test = systemBinary(["/usr/bin/test", "/bin/test"], "test");
+  for (const [label, candidate] of [
+    ["activation marker", path.join(layout.controllerStateDir, "gateway-activation-ready")],
+    ["configuration", path.join(spec.stateDir, "fased.json")],
+  ]) {
+    try {
+      runSystem(runuser, ["-u", layout.gatewayUser, "--", test, "-s", candidate], {
+        timeout: 10_000,
+      });
+    } catch {
+      fail(`protected Local Gateway cannot read its ${label}`);
+    }
+  }
 }
 
 async function stageGatewayActivation(layout, systemctl) {
@@ -1253,6 +1326,12 @@ async function persistBootstrapTransaction(transaction, phase) {
         groups: transaction.groups,
         users: transaction.users,
         legacyGatewayWasActive: transaction.legacyGatewayWasActive,
+        legacyGatewayState: transaction.legacyGatewayState
+          ? {
+              ...transaction.legacyGatewayState,
+              dropInSnapshot: serializeCapture(transaction.legacyGatewayState.dropInSnapshot),
+            }
+          : null,
         migrated: transaction.migrated === true,
         updatedAt: new Date().toISOString(),
       },
@@ -1314,6 +1393,19 @@ function readBootstrapTransaction(layout, spec, registryPath) {
     groups: value.groups && typeof value.groups === "object" ? value.groups : {},
     users: value.users && typeof value.users === "object" ? value.users : {},
     legacyGatewayWasActive: value.legacyGatewayWasActive === true,
+    legacyGatewayState:
+      value.legacyGatewayState && typeof value.legacyGatewayState === "object"
+        ? {
+            busAvailable: value.legacyGatewayState.busAvailable === true,
+            exists: value.legacyGatewayState.exists === true,
+            active: value.legacyGatewayState.active === true,
+            unitFileState:
+              typeof value.legacyGatewayState.unitFileState === "string"
+                ? value.legacyGatewayState.unitFileState
+                : "disabled",
+            dropInSnapshot: deserializeCapture(value.legacyGatewayState.dropInSnapshot),
+          }
+        : null,
     migrated: value.migrated === true,
     legacy: resolveLegacySignerPaths(spec, originalConfig),
   };
@@ -1345,12 +1437,217 @@ function userSystemctl(spec, args, options = {}) {
   }
 }
 
-function userServiceActive(spec, unit) {
+function parseSystemdProperties(output) {
+  return Object.fromEntries(
+    String(output)
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const separator = line.indexOf("=");
+        return separator < 1 ? [line, ""] : [line.slice(0, separator), line.slice(separator + 1)];
+      }),
+  );
+}
+
+function legacyGatewayUnitCandidates(spec) {
+  return [
+    path.join(spec.operatorHome, ".config", "systemd", "user", "fased-gateway.service"),
+    "/etc/systemd/user/fased-gateway.service",
+    "/usr/lib/systemd/user/fased-gateway.service",
+    "/lib/systemd/user/fased-gateway.service",
+  ];
+}
+
+function legacyInstallReferencesUserGateway(spec) {
+  const manifest = parseConfig(path.join(spec.stateDir, "install.json"));
+  return (
+    manifest.service?.name === "fased-gateway.service" ||
+    manifest.service?.scope === "user" ||
+    manifest.profile === "local"
+  );
+}
+
+function isRestorableLegacyGatewayUnitFileState(value) {
+  return new Set(["enabled", "disabled", "static", "indirect", "masked"]).has(value);
+}
+
+function legacyGatewaySuppressionPaths(spec, layout) {
+  const directory = path.join(
+    spec.operatorHome,
+    ".config",
+    "systemd",
+    "user",
+    "fased-gateway.service.d",
+  );
+  return Object.freeze({
+    directory,
+    dropIn: path.join(directory, "90-fased-protected-local.conf"),
+    activeMarker: path.join(layout.controllerStateDir, "protected-local-active"),
+  });
+}
+
+async function captureLegacyGatewayState(spec, layout) {
+  const paths = legacyGatewaySuppressionPaths(spec, layout);
+  const dropInSnapshot = await captureFile(paths.dropIn);
   try {
-    userSystemctl(spec, ["is-active", "--quiet", unit]);
-    return true;
+    userSystemctl(spec, ["show-environment"]);
   } catch {
-    return false;
+    if (
+      legacyInstallReferencesUserGateway(spec) ||
+      legacyGatewayUnitCandidates(spec).some((candidate) => fs.existsSync(candidate))
+    ) {
+      fail("legacy Local Gateway exists but its user systemd manager is unavailable");
+    }
+    return {
+      busAvailable: false,
+      exists: false,
+      active: false,
+      unitFileState: "not-found",
+      dropInSnapshot,
+    };
+  }
+  let properties;
+  try {
+    properties = parseSystemdProperties(
+      userSystemctl(spec, [
+        "show",
+        "fased-gateway.service",
+        "--property=LoadState",
+        "--property=ActiveState",
+        "--property=UnitFileState",
+      ]),
+    );
+  } catch {
+    return {
+      busAvailable: true,
+      exists: false,
+      active: false,
+      unitFileState: "not-found",
+      dropInSnapshot,
+    };
+  }
+  const state = {
+    busAvailable: true,
+    exists: properties.LoadState !== "not-found",
+    active: properties.ActiveState === "active",
+    unitFileState: properties.UnitFileState || "disabled",
+    dropInSnapshot,
+  };
+  if (state.exists && !isRestorableLegacyGatewayUnitFileState(state.unitFileState)) {
+    fail(
+      `legacy Local Gateway has unsupported systemd unit-file state: ${state.unitFileState || "unknown"}`,
+    );
+  }
+  return state;
+}
+
+async function installLegacyGatewaySuppression(spec, layout) {
+  const paths = legacyGatewaySuppressionPaths(spec, layout);
+  await ensureOperatorOwnedDirectory(paths.directory, spec);
+  await atomicWrite(paths.dropIn, `[Unit]\nConditionPathExists=!${paths.activeMarker}\n`, 0o644, {
+    uid: spec.operatorUid,
+    gid: spec.operatorGid,
+  });
+  await atomicWrite(paths.activeMarker, `${new Date().toISOString()}\n`, 0o644, {
+    uid: 0,
+    gid: 0,
+  });
+  userSystemctl(spec, ["daemon-reload"]);
+}
+
+async function fenceLegacyGateway(spec, layout, state) {
+  if (state.busAvailable && state.exists) {
+    await installLegacyGatewaySuppression(spec, layout);
+    userSystemctl(spec, ["mask", "--runtime", "--now", "--force", "fased-gateway.service"]);
+    const properties = parseSystemdProperties(
+      userSystemctl(spec, ["show", "fased-gateway.service", "--property=ActiveState"]),
+    );
+    if (!new Set(["inactive", "failed"]).has(properties.ActiveState)) {
+      fail(`legacy Local Gateway remained ${properties.ActiveState || "unknown"} after fencing`);
+    }
+  }
+  await waitForGatewayPortFree(spec);
+}
+
+async function ensureOperatorOwnedDirectory(directory, spec) {
+  assertPathBelow(spec.operatorHome, directory, "legacy Gateway suppression directory");
+  const relative = path.relative(spec.operatorHome, directory);
+  let current = spec.operatorHome;
+  for (const segment of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment);
+    try {
+      const info = await fsp.lstat(current);
+      if (
+        !info.isDirectory() ||
+        info.isSymbolicLink() ||
+        info.uid !== spec.operatorUid ||
+        (info.mode & 0o022) !== 0
+      ) {
+        fail(`legacy Gateway suppression path is unsafe: ${current}`);
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+      await fsp.mkdir(current, { mode: 0o700 });
+      await fsp.chown(current, spec.operatorUid, spec.operatorGid);
+      await fsp.chmod(current, 0o700);
+    }
+  }
+}
+
+async function retireLegacyGateway(transaction) {
+  const { spec, layout, legacyGatewayState } = transaction;
+  if (!legacyGatewayState.busAvailable || !legacyGatewayState.exists) {
+    return;
+  }
+  await installLegacyGatewaySuppression(spec, layout);
+  userSystemctl(spec, ["unmask", "--runtime", "fased-gateway.service"]);
+  userSystemctl(spec, ["daemon-reload"]);
+  userSystemctl(spec, ["disable", "--now", "fased-gateway.service"]);
+  const properties = parseSystemdProperties(
+    userSystemctl(spec, ["show", "fased-gateway.service", "--property=ActiveState"]),
+  );
+  if (properties.ActiveState === "active") {
+    fail("legacy Local Gateway restarted after protected service activation");
+  }
+}
+
+async function restoreLegacyGateway(transaction) {
+  const { spec, layout, legacyGatewayState } = transaction;
+  if (!legacyGatewayState) {
+    if (transaction.legacyGatewayWasActive) {
+      userSystemctl(spec, ["enable", "--now", "fased-gateway.service"], {
+        allowUnavailable: false,
+      });
+    }
+    return;
+  }
+  if (!legacyGatewayState.busAvailable) {
+    return;
+  }
+  const paths = legacyGatewaySuppressionPaths(spec, layout);
+  await fsp.rm(paths.activeMarker, { force: true });
+  await restoreCapturedFile(paths.dropIn, legacyGatewayState.dropInSnapshot);
+  if (!legacyGatewayState.dropInSnapshot.existed) {
+    await fsp.rmdir(paths.directory).catch((error) => {
+      if (!new Set(["ENOENT", "ENOTEMPTY"]).has(error?.code)) {
+        throw error;
+      }
+    });
+  }
+  userSystemctl(spec, ["daemon-reload"]);
+  userSystemctl(spec, ["unmask", "--runtime", "fased-gateway.service"]);
+  if (legacyGatewayState.unitFileState.startsWith("enabled")) {
+    userSystemctl(spec, ["enable", "fased-gateway.service"]);
+  } else if (legacyGatewayState.unitFileState === "disabled") {
+    userSystemctl(spec, ["disable", "fased-gateway.service"]);
+  }
+  if (legacyGatewayState.active) {
+    userSystemctl(spec, ["start", "fased-gateway.service"]);
+  } else {
+    userSystemctl(spec, ["stop", "fased-gateway.service"]);
   }
 }
 
@@ -1547,13 +1844,7 @@ async function rollbackBootstrapTransaction(transaction, originalError, options 
       }
     }
   });
-  if (transaction.legacyGatewayWasActive) {
-    await attempt("legacy Gateway restart", async () => {
-      userSystemctl(spec, ["enable", "--now", "fased-gateway.service"], {
-        allowUnavailable: false,
-      });
-    });
-  }
+  await attempt("legacy Gateway state restore", async () => restoreLegacyGateway(transaction));
   if (failures.length > 0) {
     throw new Error(
       `Protected Local bootstrap failed (${originalError.message}) and rollback is incomplete: ${failures.join("; ")}`,
@@ -1579,6 +1870,13 @@ async function rollbackBootstrapTransaction(transaction, originalError, options 
 async function activatePreparedBootstrapTransaction(transaction) {
   const { spec, layout } = transaction;
   try {
+    if (!transaction.legacyGatewayState) {
+      transaction.legacyGatewayState = await captureLegacyGatewayState(spec, layout);
+      transaction.legacyGatewayState.active = transaction.legacyGatewayWasActive;
+    }
+    await persistBootstrapTransaction(transaction, "legacy-gateway-captured");
+    await fenceLegacyGateway(spec, layout, transaction.legacyGatewayState);
+    await persistBootstrapTransaction(transaction, "prepared-awaiting-onboarding");
     const configGroup = groupRecord(layout.configGroup);
     if (!configGroup) {
       fail("protected Local configuration group is missing during activation");
@@ -1591,12 +1889,13 @@ async function activatePreparedBootstrapTransaction(transaction) {
     const wallets = verifyLogicalWalletState(spec, layout);
     const systemctl = systemBinary(["/usr/bin/systemctl", "/bin/systemctl"], "systemctl");
     await authorizeGatewayActivation(layout);
+    verifyGatewayLaunchInputs(spec, layout);
     runSystem(systemctl, ["enable", layout.gatewayUnit]);
     runSystem(systemctl, ["restart", layout.gatewayUnit]);
     runSystem(systemctl, ["is-active", "--quiet", layout.gatewayUnit]);
     await verifyGatewayHealth(spec, spec.gatewayHealthTimeoutMs);
+    await retireLegacyGateway(transaction);
     await removeLegacySignerMaterial(transaction.legacy);
-    userSystemctl(spec, ["disable", "fased-gateway.service"], { allowUnavailable: true });
     await fsp.rm(path.join(layout.stateDir, "bootstrap-transaction.json"), { force: true });
     await fsyncDirectory(layout.stateDir);
     return {
@@ -1785,6 +2084,7 @@ async function installProtectedLocal(params) {
       if (spec.gatewayMode === "activate") {
         const systemctl = systemBinary(["/usr/bin/systemctl", "/bin/systemctl"], "systemctl");
         await authorizeGatewayActivation(layout);
+        verifyGatewayLaunchInputs(spec, layout);
         runSystem(systemctl, ["enable", layout.gatewayUnit]);
         runSystem(systemctl, ["restart", layout.gatewayUnit]);
         runSystem(systemctl, ["is-active", "--quiet", layout.gatewayUnit]);
@@ -1825,6 +2125,7 @@ async function installProtectedLocal(params) {
     groups: {},
     users: {},
     legacyGatewayWasActive: false,
+    legacyGatewayState: null,
     migrated: false,
     legacy: null,
   };
@@ -1870,8 +2171,10 @@ async function installProtectedLocal(params) {
     const config = parseConfig(path.join(spec.stateDir, "fased.json"));
     const legacy = resolveLegacySignerPaths(spec, config);
     transaction.legacy = legacy;
-    transaction.legacyGatewayWasActive = userServiceActive(spec, "fased-gateway.service");
-    userSystemctl(spec, ["stop", "fased-gateway.service"], { allowUnavailable: true });
+    transaction.legacyGatewayState = await captureLegacyGatewayState(spec, layout);
+    transaction.legacyGatewayWasActive = transaction.legacyGatewayState.active;
+    await persistBootstrapTransaction(transaction, "legacy-gateway-captured");
+    await fenceLegacyGateway(spec, layout, transaction.legacyGatewayState);
     await stopLegacySameUserSigner(spec, legacy);
     await persistBootstrapTransaction(transaction, "legacy-quiesced");
     await installRootFiles({
@@ -1909,12 +2212,13 @@ async function installProtectedLocal(params) {
     const wallets = verifyLogicalWalletState(spec, layout);
     if (spec.gatewayMode === "activate") {
       await authorizeGatewayActivation(layout);
+      verifyGatewayLaunchInputs(spec, layout);
       runSystem(systemctl, ["enable", layout.gatewayUnit]);
       runSystem(systemctl, ["restart", layout.gatewayUnit]);
       runSystem(systemctl, ["is-active", "--quiet", layout.gatewayUnit]);
       await verifyGatewayHealth(spec, spec.gatewayHealthTimeoutMs);
+      await retireLegacyGateway(transaction);
       await removeLegacySignerMaterial(legacy);
-      userSystemctl(spec, ["disable", "fased-gateway.service"], { allowUnavailable: true });
       await fsp.rm(path.join(layout.stateDir, "bootstrap-transaction.json"), { force: true });
       await fsyncDirectory(layout.stateDir);
     } else {
@@ -2032,6 +2336,8 @@ if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
 export const __testing = Object.freeze({
   buildProtectedLocalBootstrapSpec,
   hardenOperatorRuntime,
+  isRestorableLegacyGatewayUnitFileState,
+  legacyInstallReferencesUserGateway,
   renderProtectedLocalOperatorEnvironment,
   renderProtectedLocalOwnerWrapper,
   registeredSignerWallets,

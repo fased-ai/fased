@@ -194,6 +194,62 @@ describe("protected Local bootstrap contract", () => {
     ).toBe(false);
   });
 
+  it("requires an exact restorable legacy user-unit state", () => {
+    for (const state of ["enabled", "disabled", "static", "indirect", "masked"]) {
+      expect(__testing.isRestorableLegacyGatewayUnitFileState(state)).toBe(true);
+    }
+    for (const state of [
+      "enabled-runtime",
+      "linked",
+      "linked-runtime",
+      "masked-runtime",
+      "generated",
+      "transient",
+      "alias",
+      "",
+    ]) {
+      expect(__testing.isRestorableLegacyGatewayUnitFileState(state)).toBe(false);
+    }
+  });
+
+  it("recognizes a prior Local user Gateway from managed install metadata", () => {
+    const root = temporaryRoot();
+    const stateDir = path.join(root, ".fased");
+    fs.mkdirSync(stateDir, { recursive: true });
+    expect(__testing.legacyInstallReferencesUserGateway({ stateDir })).toBe(false);
+    fs.writeFileSync(
+      path.join(stateDir, "install.json"),
+      `${JSON.stringify({
+        schemaVersion: 2,
+        profile: "local",
+        service: { name: "fased-gateway.service", scope: "user" },
+      })}\n`,
+    );
+    expect(__testing.legacyInstallReferencesUserGateway({ stateDir })).toBe(true);
+  });
+
+  it("journals legacy Gateway state before every live fencing mutation", () => {
+    const bootstrap = fs.readFileSync(
+      path.join(process.cwd(), "scripts", "protected-local-bootstrap.mjs"),
+      "utf8",
+    );
+    const prepared = bootstrap.slice(
+      bootstrap.indexOf("async function activatePreparedBootstrapTransaction"),
+      bootstrap.indexOf("async function installProtectedLocal"),
+    );
+    const install = bootstrap.slice(bootstrap.indexOf("async function installProtectedLocal"));
+    for (const flow of [prepared, install]) {
+      expect(
+        flow.indexOf('persistBootstrapTransaction(transaction, "legacy-gateway-captured")'),
+      ).toBeGreaterThan(flow.indexOf("captureLegacyGatewayState(spec, layout)"));
+      expect(
+        flow.indexOf("fenceLegacyGateway(spec, layout, transaction.legacyGatewayState)"),
+      ).toBeGreaterThan(
+        flow.indexOf('persistBootstrapTransaction(transaction, "legacy-gateway-captured")'),
+      );
+    }
+  });
+
   it("treats missing legacy signer material as a clean fresh install", async () => {
     const root = temporaryRoot();
     const materialDir = path.join(root, "missing-wallet");

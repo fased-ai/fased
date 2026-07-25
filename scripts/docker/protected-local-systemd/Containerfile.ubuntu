@@ -7,9 +7,11 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
     dbus \
+    dbus-user-session \
     curl \
     iproute2 \
     jq \
+    libpam-systemd \
     openssl \
     passwd \
     procps \
