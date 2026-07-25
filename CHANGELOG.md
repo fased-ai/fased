@@ -4,6 +4,14 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.8
+
+- Complete Protected Local fresh-install and legacy-update acceptance with
+  transactional root-service migration, rollback, retry, restart, and reboot
+  coverage.
+- Preserve user-owned Local configuration while converging the application,
+  updater, signer, and Gateway on one exact immutable release identity.
+
 ## 0.1.76-rc.7
 
 - Stage and verify the selected target application and recovery controller
