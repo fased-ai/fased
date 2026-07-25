@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.10
+
+- Preserve root-established Protected Local shared-state ownership and modes
+  after activation so the dedicated Gateway retains required state access.
+- Persist the selected update channel before Protected Local Gateway activation
+  to avoid a post-activation configuration-watcher restart.
+
 ## 0.1.76-rc.9
 
 - Normalize root-controlled Protected Local runtime and release-directory
