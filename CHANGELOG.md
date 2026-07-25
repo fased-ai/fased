@@ -4,6 +4,14 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.9
+
+- Normalize root-controlled Protected Local runtime and release-directory
+  traversal before service activation, including under the controller's
+  restrictive umask.
+- Verify the selected application runtime as the dedicated Gateway user before
+  state migration or service activation.
+
 ## 0.1.76-rc.8
 
 - Complete Protected Local fresh-install and legacy-update acceptance with
