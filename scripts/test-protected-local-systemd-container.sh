@@ -178,14 +178,18 @@ for distro in "${distro_list[@]}"; do
   }
   image="fased-protected-local-systemd-${distro}:local"
   "$RUNTIME" build -f "$containerfile" -t "$image" "$FIXTURE_DIR"
-  for scenario in "${scenario_list[@]}"; do
-    case "$scenario" in
-      fresh-install|install) ;;
-      *)
-        echo "Unsupported protected Local fixture scenario: $scenario" >&2
-        exit 1
-        ;;
-    esac
+done
+
+for scenario in "${scenario_list[@]}"; do
+  case "$scenario" in
+    fresh-install|install) ;;
+    *)
+      echo "Unsupported protected Local fixture scenario: $scenario" >&2
+      exit 1
+      ;;
+  esac
+  for distro in "${distro_list[@]}"; do
+    image="fased-protected-local-systemd-${distro}:local"
     run_fixture_scenario "$distro" "$image" "$scenario"
   done
 done

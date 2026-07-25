@@ -1920,7 +1920,7 @@ install_linux_system_dependencies() {
   if need_cmd apt-get; then
     run_as_root apt-get update
     run_as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
-      apt-get install -y git curl ca-certificates jq
+      apt-get install -y git curl ca-certificates jq acl
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
       install_nodesource_node_apt
@@ -1936,6 +1936,7 @@ install_linux_system_dependencies() {
     need_cmd git || rpm_packages+=(git)
     need_cmd curl || rpm_packages+=(curl)
     need_cmd jq || rpm_packages+=(jq)
+    { need_cmd getfacl && need_cmd setfacl; } || rpm_packages+=(acl)
     run_as_root "$dnf_cmd" install -y "${rpm_packages[@]}"
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
@@ -1952,6 +1953,7 @@ install_linux_system_dependencies() {
     need_cmd git || rpm_packages+=(git)
     need_cmd curl || rpm_packages+=(curl)
     need_cmd jq || rpm_packages+=(jq)
+    { need_cmd getfacl && need_cmd setfacl; } || rpm_packages+=(acl)
     run_as_root yum install -y "${rpm_packages[@]}"
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
@@ -1961,14 +1963,14 @@ install_linux_system_dependencies() {
       prefer_compatible_system_node_if_available || true
     fi
   elif need_cmd apk; then
-    run_as_root apk add --no-cache git curl ca-certificates jq nodejs npm
+    run_as_root apk add --no-cache git curl ca-certificates jq acl nodejs npm
     hash -r 2>/dev/null || true
   elif need_cmd pacman; then
-    run_as_root pacman -Sy --needed --noconfirm git curl ca-certificates jq nodejs npm
+    run_as_root pacman -Sy --needed --noconfirm git curl ca-certificates jq acl nodejs npm
     hash -r 2>/dev/null || true
   elif need_cmd zypper; then
     run_as_root zypper --non-interactive refresh || true
-    run_as_root zypper --non-interactive install --no-recommends git curl ca-certificates jq
+    run_as_root zypper --non-interactive install --no-recommends git curl ca-certificates jq acl
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
       run_as_root zypper --non-interactive install --no-recommends nodejs24 npm24 || \
@@ -4239,6 +4241,9 @@ install_missing_deps_as_root_if_needed() {
   for cmd in git curl jq; do
     need_cmd "$cmd" || missing+=("$cmd")
   done
+  if ! need_cmd getfacl || ! need_cmd setfacl; then
+    missing+=("acl")
+  fi
   if ! need_cmd node; then
     missing+=("node")
   fi
