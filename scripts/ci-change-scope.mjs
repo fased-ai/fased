@@ -6,6 +6,8 @@ import { appendFileSync } from "node:fs";
 const DOC_PATH_RE = /^(?:docs\/|.*\.(?:md|mdx)$|scripts\/docs-product-contract\.mjs$)/;
 const VERSION_PATH_RE =
   /^(?:package\.json|CHANGELOG\.md|src\/brand\.ts|extensions\/[^/]+\/(?:package\.json|CHANGELOG\.md))$/;
+const CI_INFRASTRUCTURE_PATH_RE =
+  /^(?:\.github\/workflows\/ci\.yml|scripts\/ci-(?:change-scope|required-gates|merged-main-reuse)(?:\.mjs|\.test\.ts)|scripts\/test-protected-local-systemd-container\.sh|scripts\/docker\/protected-local-systemd\/)/;
 const NODE_PATH_RE =
   /^(?:src\/|test\/|extensions\/|packages\/|scripts\/|ui\/|\.github\/|fased\.mjs$|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|tsconfig[^/]*\.json$|vitest[^/]*\.ts$|tsdown\.config\.ts$|\.oxlintrc\.json$|\.oxfmtrc\.jsonc$)/;
 const SIGNER_PATH_RE =
@@ -31,13 +33,33 @@ function trueString(value) {
 export function classifyChangedPaths(inputPaths, options = {}) {
   const paths = normalizePaths(inputPaths);
   const fullMatrix = options.fullMatrix === true;
+  const reusePrChecks = options.reusePrChecks === true;
   const unknown = options.unknown === true || paths.length === 0;
+
+  if (reusePrChecks && !fullMatrix) {
+    return {
+      docsOnly: false,
+      docsChanged: false,
+      versionOnly: false,
+      ciInfrastructureOnly: false,
+      reusePrChecks: true,
+      runNode: false,
+      runMacos: false,
+      runSigner: false,
+      runHosting: false,
+      runUiMining: false,
+      runSkills: false,
+      fullMatrix: false,
+    };
+  }
 
   if (fullMatrix || unknown) {
     return {
       docsOnly: false,
       docsChanged: false,
       versionOnly: false,
+      ciInfrastructureOnly: false,
+      reusePrChecks: false,
       runNode: true,
       runMacos: true,
       runSigner: true,
@@ -54,6 +76,8 @@ export function classifyChangedPaths(inputPaths, options = {}) {
     paths.includes("package.json") &&
     paths.includes("src/brand.ts") &&
     paths.every((path) => VERSION_PATH_RE.test(path));
+  const ciInfrastructureOnly =
+    !versionOnly && paths.every((path) => CI_INFRASTRUCTURE_PATH_RE.test(path));
 
   let runMacos = false;
   let hasNonNativeNonDocs = false;
@@ -66,8 +90,12 @@ export function classifyChangedPaths(inputPaths, options = {}) {
     }
   }
 
-  let runNode = !versionOnly && !docsOnly && paths.some((path) => NODE_PATH_RE.test(path));
-  if (!versionOnly && !runNode && !docsOnly && hasNonNativeNonDocs) {
+  let runNode =
+    !versionOnly &&
+    !docsOnly &&
+    !ciInfrastructureOnly &&
+    paths.some((path) => NODE_PATH_RE.test(path));
+  if (!versionOnly && !runNode && !docsOnly && !ciInfrastructureOnly && hasNonNativeNonDocs) {
     runNode = true;
   }
 
@@ -75,10 +103,13 @@ export function classifyChangedPaths(inputPaths, options = {}) {
     docsOnly,
     docsChanged,
     versionOnly,
+    ciInfrastructureOnly,
+    reusePrChecks: false,
     runNode,
     runMacos,
     runSigner: !versionOnly && paths.some((path) => SIGNER_PATH_RE.test(path)),
-    runHosting: !versionOnly && paths.some((path) => HOSTING_PATH_RE.test(path)),
+    runHosting:
+      !versionOnly && (ciInfrastructureOnly || paths.some((path) => HOSTING_PATH_RE.test(path))),
     runUiMining: !versionOnly && paths.some((path) => MINING_PATH_RE.test(path)),
     runSkills: !versionOnly && paths.some((path) => SKILLS_PATH_RE.test(path)),
     fullMatrix,
@@ -90,6 +121,8 @@ function outputEntries(scope) {
     docs_only: trueString(scope.docsOnly),
     docs_changed: trueString(scope.docsChanged),
     version_only: trueString(scope.versionOnly),
+    ci_infrastructure_only: trueString(scope.ciInfrastructureOnly),
+    reuse_pr_checks: trueString(scope.reusePrChecks),
     run_node: trueString(scope.runNode),
     run_macos: trueString(scope.runMacos),
     run_signer: trueString(scope.runSigner),
@@ -141,10 +174,11 @@ export function changedPathsFromGit(env = process.env) {
 
 function main() {
   const fullMatrix = process.env.FULL_MATRIX === "true";
+  const reusePrChecks = process.env.REUSE_PR_CHECKS === "true";
   let paths = [];
   let unknown = false;
 
-  if (!fullMatrix) {
+  if (!fullMatrix && !reusePrChecks) {
     try {
       paths = changedPathsFromGit();
       unknown = paths.length === 0;
@@ -155,7 +189,7 @@ function main() {
     }
   }
 
-  const scope = classifyChangedPaths(paths, { fullMatrix, unknown });
+  const scope = classifyChangedPaths(paths, { fullMatrix, reusePrChecks, unknown });
   const entries = outputEntries(scope);
   const outputPath = process.env.GITHUB_OUTPUT;
   if (!outputPath) {

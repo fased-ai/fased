@@ -31,8 +31,5 @@ RUN apt-get update \
     sys-fs-fuse-connections.mount \
     systemd-remount-fs.service
 
-COPY run.sh /usr/local/bin/fased-protected-local-systemd-fixture
-RUN chmod 0755 /usr/local/bin/fased-protected-local-systemd-fixture
-
 STOPSIGNAL SIGRTMIN+3
 CMD ["/usr/lib/systemd/systemd"]

@@ -28,6 +28,8 @@ jobs:
       docs_only: ${{ steps.scope.outputs.docs_only }}
       docs_changed: ${{ steps.scope.outputs.docs_changed }}
       version_only: ${{ steps.scope.outputs.version_only }}
+      ci_infrastructure_only: ${{ steps.scope.outputs.ci_infrastructure_only }}
+      reuse_pr_checks: ${{ steps.scope.outputs.reuse_pr_checks }}
       run_node: ${{ steps.scope.outputs.run_node }}
       run_macos: ${{ steps.scope.outputs.run_macos }}
       run_signer: ${{ steps.scope.outputs.run_signer }}
@@ -42,10 +44,18 @@ jobs:
           fetch-depth: 0
           submodules: false
 
+      - name: Prove tested PR tree for merged main
+        id: reuse
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-merged-main-reuse.mjs
+
       - name: Detect changed scopes
         id: scope
         env:
           FULL_MATRIX: ${{ github.event_name == 'workflow_dispatch' && inputs.full_matrix && 'true' || 'false' }}
+          REUSE_PR_CHECKS: ${{ steps.reuse.outputs.reuse_pr_checks }}
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
           GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
           GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -54,7 +64,7 @@ jobs:
   # Build dist once for Node-relevant changes and share it with downstream jobs.
   build-artifacts:
     needs: [change-scope]
-    if: needs.change-scope.outputs.run_node == 'true'
+    if: needs.change-scope.outputs.run_node == 'true' || needs.change-scope.outputs.run_hosting == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -377,7 +387,7 @@ jobs:
 
   hosting-lifecycle:
     name: "hosting lifecycle"
-    needs: [change-scope]
+    needs: [change-scope, build-artifacts]
     if: needs.change-scope.outputs.run_hosting == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -397,19 +407,78 @@ jobs:
           go-version-file: tools/fased-signerd/go.mod
           cache-dependency-path: tools/fased-signerd/go.sum
 
+      - name: Download exact dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-build
+          path: dist/
+
       - name: Check hosted runtime installer
         run: bash scripts/test-hosted-runtime-install.sh
 
       - name: Check exact streamed Hosting bootstrap
         run: bash scripts/test-streamed-hosting-bootstrap-container.sh
 
-      - name: Build exact Protected Local candidate
-        run: pnpm build
-
-      - name: Check clean Protected Local bootstrap on Ubuntu and Rocky
+      - name: Build one exact Protected Local fixture artifact
         env:
+          FASED_SIGNER_BUILD_COMMIT: ${{ github.sha }}
+          FASED_SIGNER_TARGETS: linux/amd64
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/protected-local-artifact"
+          bash scripts/release-fased-signerd.sh
+          pnpm hosted:artifact:from-dist --output "$artifact_dir"
+          cp -a dist-native/release/. "$artifact_dir/"
+
+      - name: Upload exact Protected Local fixture artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: protected-local-fixture-artifact
+          path: ${{ runner.temp }}/protected-local-artifact/
+          retention-days: 1
+
+  protected-local-lifecycle:
+    name: "protected Local lifecycle (${{ matrix.distro }})"
+    needs: [change-scope, hosting-lifecycle]
+    if: needs.change-scope.outputs.run_hosting == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [ubuntu, rocky]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.x
+
+      - name: Download exact Protected Local fixture artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: protected-local-fixture-artifact
+          path: ${{ runner.temp }}/protected-local-artifact/
+
+      - name: Restore cached systemd fixture base image
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/protected-local-image-cache/
+          key: >-
+            protected-local-systemd-${{ runner.os }}-${{ matrix.distro }}-v1-
+            ${{ hashFiles('scripts/docker/protected-local-systemd/Containerfile.*',
+            'scripts/docker/protected-local-systemd/*.conf') }}
+
+      - name: Check clean Protected Local bootstrap
+        env:
+          FASED_SYSTEMD_FIXTURE_DISTROS: ${{ matrix.distro }}
           FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install
-        run: pnpm test:protected-local:systemd
+          FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/protected-local-artifact
+          FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
+        run: bash scripts/test-protected-local-systemd-container.sh
 
   version-identity:
     name: "version identity"
@@ -1049,6 +1118,7 @@ jobs:
       - change-scope
       - check
       - hosting-lifecycle
+      - protected-local-lifecycle
       - version-identity
       - strict-types-baseline
       - checks
@@ -1084,6 +1154,7 @@ jobs:
           CHANGE_SCOPE: ${{ needs.change-scope.result }}
           CHECK: ${{ needs.check.result }}
           HOSTING: ${{ needs.hosting-lifecycle.result }}
+          PROTECTED_LOCAL: ${{ needs.protected-local-lifecycle.result }}
           VERSION_IDENTITY: ${{ needs.version-identity.result }}
           STRICT_TYPES: ${{ needs.strict-types-baseline.result }}
           TESTS: ${{ needs.checks.result }}

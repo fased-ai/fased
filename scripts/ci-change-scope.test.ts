@@ -34,6 +34,44 @@ describe("CI changed-surface classification", () => {
     });
   });
 
+  it("keeps CI and Hosting fixture infrastructure off broad product lanes", () => {
+    expect(
+      classifyChangedPaths([
+        ".github/workflows/ci.yml",
+        "scripts/ci-change-scope.mjs",
+        "scripts/ci-change-scope.test.ts",
+        "scripts/ci-merged-main-reuse.mjs",
+        "scripts/ci-merged-main-reuse.test.ts",
+        "scripts/ci-required-gates.mjs",
+        "scripts/ci-required-gates.test.ts",
+        "scripts/test-protected-local-systemd-container.sh",
+        "scripts/docker/protected-local-systemd/Containerfile.ubuntu",
+        "scripts/docker/protected-local-systemd/Containerfile.rocky",
+        "scripts/docker/protected-local-systemd/run.sh",
+      ]),
+    ).toMatchObject({
+      ciInfrastructureOnly: true,
+      runNode: false,
+      runSigner: false,
+      runHosting: true,
+      runUiMining: false,
+    });
+  });
+
+  it("reuses green PR checks only for a separately proven merged-main tree", () => {
+    expect(
+      classifyChangedPaths(["src/gateway/server.ts"], {
+        reusePrChecks: true,
+      }),
+    ).toMatchObject({
+      reusePrChecks: true,
+      runNode: false,
+      runSigner: false,
+      runHosting: false,
+      fullMatrix: false,
+    });
+  });
+
   it("rejects a version-only classification when source code is mixed in", () => {
     expect(
       classifyChangedPaths(["package.json", "src/brand.ts", "src/gateway/server.ts"]),
@@ -49,10 +87,8 @@ describe("CI changed-surface classification", () => {
       "scripts/fased-managed-updater.mjs",
       "scripts/docker/streamed-hosting-bootstrap/run.sh",
       "scripts/docker/hosting-systemd/run.sh",
-      "scripts/docker/protected-local-systemd/run.sh",
       "scripts/protected-local-bootstrap.mjs",
       "scripts/test-hosting-systemd-container.sh",
-      "scripts/test-protected-local-systemd-container.sh",
       "src/wizard/onboarding.ts",
       "src/daemon/systemd-system.ts",
       "src/config/io.ts",

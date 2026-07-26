@@ -35,6 +35,7 @@ describe("required CI gate aggregation", () => {
       "release contracts": "success",
       "packed Local install": "success",
       "Hosting lifecycle": "success",
+      "Protected Local lifecycle": "success",
     };
     expect(() =>
       assertApplicableGates({

@@ -14,6 +14,7 @@ COMMIT="${FASED_SYSTEMD_FIXTURE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD)}"
 }
 ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR:-}"
 OWN_ARTIFACT_DIR=0
+IMAGE_CACHE_DIR="${FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR:-}"
 LEGACY_VERSION="${FASED_SYSTEMD_FIXTURE_LEGACY_VERSION:-0.1.75}"
 LEGACY_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_LEGACY_ARTIFACT_DIR:-}"
 OWN_LEGACY_ARTIFACT_DIR=0
@@ -36,19 +37,24 @@ fi
   exit 1
 }
 
-GOTMPDIR="${GOTMPDIR:-${TMPDIR:-/tmp}/fased-go-tmp}" \
-GOCACHE="${GOCACHE:-${TMPDIR:-/tmp}/fased-go-cache}" \
-FASED_SIGNER_BUILD_COMMIT="$COMMIT" \
-FASED_SIGNER_TARGETS=linux/amd64 \
-  bash "$ROOT_DIR/scripts/release-fased-signerd.sh"
-
 if [[ -z "$ARTIFACT_DIR" ]]; then
+  GOTMPDIR="${GOTMPDIR:-${TMPDIR:-/tmp}/fased-go-tmp}" \
+  GOCACHE="${GOCACHE:-${TMPDIR:-/tmp}/fased-go-cache}" \
+  FASED_SIGNER_BUILD_COMMIT="$COMMIT" \
+  FASED_SIGNER_TARGETS=linux/amd64 \
+    bash "$ROOT_DIR/scripts/release-fased-signerd.sh"
   ARTIFACT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-artifact.XXXXXX")"
   OWN_ARTIFACT_DIR=1
   pnpm --dir "$ROOT_DIR" hosted:artifact:from-dist --output "$ARTIFACT_DIR"
+  cp -a "$ROOT_DIR/dist-native/release/." "$ARTIFACT_DIR/"
 fi
 [[ -f "$ARTIFACT_DIR/fased-hosted-linux-x64-v${VERSION}.tar.gz" ]] || {
   echo "The protected Local fixture requires the exact x64 packaged runtime artifact." >&2
+  exit 1
+}
+[[ -f "$ARTIFACT_DIR/fased-signerd-linux-amd64" &&
+  -f "$ARTIFACT_DIR/fased-signerd-release.json" ]] || {
+  echo "The protected Local fixture requires the exact signer artifact and identity." >&2
   exit 1
 }
 if [[ ",$SCENARIOS," == *,install,* ]]; then
@@ -195,6 +201,7 @@ run_fixture_scenario() {
     -e "FASED_FIXTURE_LEGACY_VERSION=$LEGACY_VERSION" \
     -e "FASED_FIXTURE_BRIDGE_VERSION=$BRIDGE_VERSION" \
     -v "$ROOT_DIR:/repo:ro,Z" \
+    -v "$FIXTURE_DIR/run.sh:/usr/local/bin/fased-protected-local-systemd-fixture:ro,Z" \
     -v "$ARTIFACT_DIR:/artifacts:ro,Z" \
     -v "$LEGACY_ARTIFACT_DIR:/legacy-artifacts:ro,Z" \
     -v "$BRIDGE_ARTIFACT_DIR:/bridge-artifacts:ro,Z" \
@@ -211,7 +218,7 @@ run_fixture_scenario() {
     echo "$distro systemd fixture did not become ready." >&2
     exit 1
   }
-  if ! "$RUNTIME" exec "$name" \
+  if ! "$RUNTIME" exec "$name" /bin/bash \
     /usr/local/bin/fased-protected-local-systemd-fixture "$scenario"; then
     dump_fixture_failure "$name"
     exit 1
@@ -231,7 +238,8 @@ run_fixture_scenario() {
     echo "$distro systemd fixture did not recover after container reboot." >&2
     exit 1
   }
-  if ! "$RUNTIME" exec "$name" /usr/local/bin/fased-protected-local-systemd-fixture verify-reboot; then
+  if ! "$RUNTIME" exec "$name" /bin/bash \
+    /usr/local/bin/fased-protected-local-systemd-fixture verify-reboot; then
     dump_fixture_failure "$name"
     exit 1
   fi
@@ -245,7 +253,25 @@ for distro in "${distro_list[@]}"; do
     exit 1
   }
   image="fased-protected-local-systemd-${distro}:local"
-  "$RUNTIME" build -f "$containerfile" -t "$image" "$FIXTURE_DIR"
+  image_started="$SECONDS"
+  archive=""
+  if [[ -n "$IMAGE_CACHE_DIR" ]]; then
+    mkdir -p "$IMAGE_CACHE_DIR"
+    archive="$IMAGE_CACHE_DIR/${distro}.oci.tar"
+  fi
+  if [[ -n "$archive" && -s "$archive" ]]; then
+    "$RUNTIME" load --input "$archive" >/dev/null
+    "$RUNTIME" image exists "$image"
+    printf 'fixture timing: distro=%s stage=image-cache-load elapsed=%ss\n' \
+      "$distro" "$((SECONDS - image_started))"
+  else
+    "$RUNTIME" build -f "$containerfile" -t "$image" "$FIXTURE_DIR"
+    if [[ -n "$archive" ]]; then
+      "$RUNTIME" save --format oci-archive --output "$archive" "$image"
+    fi
+    printf 'fixture timing: distro=%s stage=image-build elapsed=%ss\n' \
+      "$distro" "$((SECONDS - image_started))"
+  fi
 done
 
 for scenario in "${scenario_list[@]}"; do
@@ -258,7 +284,10 @@ for scenario in "${scenario_list[@]}"; do
   esac
   for distro in "${distro_list[@]}"; do
     image="fased-protected-local-systemd-${distro}:local"
+    fixture_started="$SECONDS"
     run_fixture_scenario "$distro" "$image" "$scenario"
+    printf 'fixture timing: distro=%s scenario=%s stage=complete elapsed=%ss\n' \
+      "$distro" "$scenario" "$((SECONDS - fixture_started))"
   done
 done
 
