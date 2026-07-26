@@ -66,6 +66,7 @@ if [[ ",$SCENARIOS," == *,install,* ]]; then
       --pattern "fased-hosted-app-v2-linux-x64-v${LEGACY_VERSION}.tar.gz" \
       --pattern "fased-hosted-deps-linux-x64-*.tar.gz" \
       --pattern "fased-signerd-linux-amd64"
+    chmod 0755 "$LEGACY_ARTIFACT_DIR"
   fi
   legacy_manifest="$LEGACY_ARTIFACT_DIR/fased-hosted-release-v2.json"
   legacy_app="$LEGACY_ARTIFACT_DIR/fased-hosted-app-v2-linux-x64-v${LEGACY_VERSION}.tar.gz"
@@ -101,6 +102,7 @@ if [[ ",$SCENARIOS," == *,install,* ]]; then
       --pattern "fased-hosted-app-v2-linux-x64-v${BRIDGE_VERSION}.tar.gz" \
       --pattern "fased-hosted-deps-linux-x64-*.tar.gz" \
       --pattern "fased-signerd-linux-amd64"
+    chmod 0755 "$BRIDGE_ARTIFACT_DIR"
   fi
   bridge_manifest="$BRIDGE_ARTIFACT_DIR/fased-hosted-release-v2.json"
   bridge_dependency="$(

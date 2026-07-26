@@ -17,6 +17,7 @@ export default defineConfig({
       "src/ui/provider-model-catalog.test.ts",
       "src/ui/views/providers.test.ts",
       "src/ui/views/memory.test.ts",
+      "src/ui/views/overview.test.ts",
       "src/ui/views/wallet.test.ts",
     ],
     environment: "node",

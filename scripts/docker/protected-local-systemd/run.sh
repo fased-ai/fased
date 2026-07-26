@@ -1020,12 +1020,13 @@ EOF_FAILED_GATEWAY
 
 inject_failed_target_gateway &
 injector_pid=$!
-set +e
-runuser -u testop -- env "${managed_update_env[@]}" \
+if runuser -u testop -- env "${managed_update_env[@]}" \
   "$state/install-cache/npm-global/bin/fased" update --timeout 60 \
-  >/tmp/protected-update-failure.out 2>/tmp/protected-update-failure.err
-update_failure_status=$?
-set -e
+  >/tmp/protected-update-failure.out 2>/tmp/protected-update-failure.err; then
+  update_failure_status=0
+else
+  update_failure_status=$?
+fi
 wait "$injector_pid"
 test "$update_failure_status" -ne 0
 grep -F "non-target service" /tmp/protected-update-failure.err >/dev/null

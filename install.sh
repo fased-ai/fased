@@ -237,6 +237,14 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     exit 1
   fi
 
+  if [[ "$hosting_bootstrap" -eq 0 && "$protected_local_bootstrap" -eq 0 && \
+    -e "$install_base_dir" && ! -d "$install_base_dir/.git" ]]; then
+    echo "Refusing to overwrite existing path: $install_base_dir" >&2
+    echo "Set --install-dir to a new directory or clean the existing one, then rerun." >&2
+    drain_streamed_install_input
+    exit 1
+  fi
+
   if [[ "$protected_local_bootstrap" -eq 1 ]]; then
     if [[ "$(id -u)" -ne 0 || "$install_entry_is_stream" -eq 1 || "$hosting_bootstrap" -eq 1 ]]; then
       echo "Protected Local root bootstrap requires the exact local installer file through normal OS administrator authorization." >&2
@@ -715,6 +723,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       flock -u 9
       exec 9>&-
       echo "Reusing verified tagged Hosting bundle v${release_version} (${actual})."
+      drain_streamed_install_input
       if [[ "$protected_local_bootstrap" -eq 1 ]]; then
         enter_protected_local_bundle "$root_store" "$existing_root" "$existing_commit"
       fi
@@ -755,6 +764,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
 
     local final_root="$root_store/extract/package"
     echo "Verified tagged Hosting bundle v${release_version}; entering the root-owned installer."
+    drain_streamed_install_input
     if [[ "$protected_local_bootstrap" -eq 1 ]]; then
       enter_protected_local_bundle "$root_store" "$final_root" "$packaged_commit"
     fi
@@ -974,6 +984,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
   else
     echo "Refusing to overwrite existing path: $install_base_dir" >&2
     echo "Set --install-dir to a new directory or clean the existing one, then rerun." >&2
+    drain_streamed_install_input
     exit 1
   fi
 
@@ -4885,6 +4896,7 @@ Environment=FASED_MANAGED_INTERNAL=1
 Environment=FASED_GATEWAY_SERVICE=1
 Environment=FASED_GATEWAY_PORT=18789
 Environment=FASED_HOST_PROFILE=hosting
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external
 Environment=FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock
 ExecStart=/usr/local/libexec/fased-gateway-launch

@@ -222,7 +222,8 @@ export async function runOnboardingWizard(
     return clearHostedLocalSignerConfig(cfg);
   };
   const persistHostedLocalSignerRuntime = (cfg: FasedAgentConfig): FasedAgentConfig => {
-    const next = clearHostedLocalSignerConfig(cfg);
+    let next = clearHostedLocalSignerConfig(cfg);
+    next = setConfigEnvVar(next, "FASED_HOST_PROFILE", "hosting");
     return setConfigEnvVar(next, "FASED_WALLET_LOCAL_SIGNER_SOCKET", hostedSignerAppSocket);
   };
   const activateHostedLocalSignerRuntimeEnv = (): void => {

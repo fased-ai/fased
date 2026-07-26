@@ -85,6 +85,15 @@ function addUserRwx(mode: number): number {
   return perms | 0o700;
 }
 
+function usesSharedHostingState(cfg: FasedAgentConfig, env: NodeJS.ProcessEnv): boolean {
+  const configuredVars = cfg.env?.vars;
+  return (
+    env.FASED_HOST_PROFILE?.trim() === "hosting" ||
+    configuredVars?.FASED_HOST_PROFILE?.trim() === "hosting" ||
+    configuredVars?.FASED_WALLET_LOCAL_SIGNER_SOCKET?.trim() === "/run/fased-signerd/app.sock"
+  );
+}
+
 function countJsonlLines(filePath: string): number {
   try {
     const raw = fs.readFileSync(filePath, "utf-8");
@@ -224,6 +233,7 @@ export async function noteStateIntegrity(
   const displayStoreDir = shortenHomePath(storeDir);
   const displayConfigPath = configPath ? shortenHomePath(configPath) : undefined;
   const requireOAuthDir = shouldRequireOAuthDir(cfg, env);
+  const sharedHostingState = usesSharedHostingState(cfg, env);
 
   let stateDirExists = existsDir(stateDir);
   if (!stateDirExists) {
@@ -281,7 +291,6 @@ export async function noteStateIntegrity(
       const stat = isDirSymlink ? fs.statSync(stateDir) : dirLstat;
       const resolvedDir = isDirSymlink ? fs.realpathSync(stateDir) : stateDir;
       const isImmutableStore = resolvedDir.startsWith("/nix/store/");
-      const sharedHostingState = process.env.FASED_HOST_PROFILE?.trim() === "hosting";
       const stateModeInvalid = sharedHostingState
         ? (stat.mode & 0o0777) !== 0o770
         : (stat.mode & 0o077) !== 0;
@@ -315,7 +324,6 @@ export async function noteStateIntegrity(
       const stat = isSymlink ? fs.statSync(configPath) : configLstat;
       const resolvedConfig = isSymlink ? fs.realpathSync(configPath) : configPath;
       const isImmutableConfig = resolvedConfig.startsWith("/nix/store/");
-      const sharedHostingState = process.env.FASED_HOST_PROFILE?.trim() === "hosting";
       const configModeInvalid = sharedHostingState
         ? (stat.mode & 0o0777) !== 0o660
         : (stat.mode & 0o077) !== 0;

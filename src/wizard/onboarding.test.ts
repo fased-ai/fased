@@ -2328,6 +2328,9 @@ describe("runOnboardingWizard", () => {
         (config as { env?: { vars?: Record<string, string> } }).env?.vars
           ?.FASED_WALLET_LOCAL_SIGNER_SOCKET,
       ).toBe(appSocket);
+      expect(
+        (config as { env?: { vars?: Record<string, string> } }).env?.vars?.FASED_HOST_PROFILE,
+      ).toBe("hosting");
       throw new Error("write-reached");
     });
 

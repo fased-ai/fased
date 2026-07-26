@@ -346,6 +346,43 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
     }
   });
 
+  it("rejects a colliding fresh Local path before installing verification tools", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-local-path-collision-"));
+    try {
+      const harness = createExactLocalBootstrapHarness(tempRoot, { uid: 1000 });
+      fs.mkdirSync(harness.installDir, { recursive: true });
+      const result = runExactLocalBootstrap(harness, tempRoot, [
+        "--local",
+        "--release",
+        "v9.9.9-test.1",
+        "--update-channel",
+        "beta",
+        "--install-dir",
+        harness.installDir,
+      ]);
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(`Refusing to overwrite existing path: ${harness.installDir}`);
+      expect(result.stdout).not.toContain("package-manager progress before verified commit");
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("drains the public stream before entering a verified Hosting bundle", () => {
+    const reuseStart = installer.indexOf(
+      'echo "Reusing verified tagged Hosting bundle v${release_version} (${actual})."',
+    );
+    const reuseExec = installer.indexOf('exec bash "$existing_root/install.sh"', reuseStart);
+    const freshStart = installer.indexOf(
+      'echo "Verified tagged Hosting bundle v${release_version}; entering the root-owned installer."',
+    );
+    const freshExec = installer.indexOf('exec bash "$final_root/install.sh"', freshStart);
+
+    expect(installer.slice(reuseStart, reuseExec)).toContain("drain_streamed_install_input");
+    expect(installer.slice(freshStart, freshExec)).toContain("drain_streamed_install_input");
+  });
+
   it("defaults a normal checkout install to the Local managed runtime profile", () => {
     const start = installer.indexOf("resolved_host_profile() {");
     const end = installer.indexOf("\n}\n", start);
