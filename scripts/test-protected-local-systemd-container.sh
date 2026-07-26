@@ -7,7 +7,11 @@ DISTROS="${FASED_SYSTEMD_FIXTURE_DISTROS:-ubuntu,rocky}"
 SCENARIOS="${FASED_SYSTEMD_FIXTURE_SCENARIOS:-fresh-install,install}"
 FIXTURE_DIR="$ROOT_DIR/scripts/docker/protected-local-systemd"
 VERSION="$(node -p 'require(process.argv[1]).version' "$ROOT_DIR/package.json")"
-COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+COMMIT="${FASED_SYSTEMD_FIXTURE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD)}"
+[[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "The protected Local fixture requires an exact 40-character commit." >&2
+  exit 1
+}
 ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR:-}"
 OWN_ARTIFACT_DIR=0
 LEGACY_VERSION="${FASED_SYSTEMD_FIXTURE_LEGACY_VERSION:-0.1.75}"
@@ -34,6 +38,7 @@ fi
 
 GOTMPDIR="${GOTMPDIR:-${TMPDIR:-/tmp}/fased-go-tmp}" \
 GOCACHE="${GOCACHE:-${TMPDIR:-/tmp}/fased-go-cache}" \
+FASED_SIGNER_BUILD_COMMIT="$COMMIT" \
 FASED_SIGNER_TARGETS=linux/amd64 \
   bash "$ROOT_DIR/scripts/release-fased-signerd.sh"
 
@@ -224,21 +229,11 @@ run_fixture_scenario() {
     echo "$distro systemd fixture did not recover after container reboot." >&2
     exit 1
   }
-  local reboot_output=""
-  local reboot_status=0
-  reboot_output="$(
-    "$RUNTIME" exec "$name" \
-      /usr/local/bin/fased-protected-local-systemd-fixture verify-reboot 2>&1
-  )" || reboot_status=$?
-  printf '%s\n' "$reboot_output"
-  if ! grep -Fq "protected Local reboot fixture passed:" <<<"$reboot_output"; then
+  if ! "$RUNTIME" exec "$name" /usr/local/bin/fased-protected-local-systemd-fixture verify-reboot; then
     dump_fixture_failure "$name"
     exit 1
   fi
-  if [[ "$reboot_status" -ne 0 ]]; then
-    echo "Ignoring container teardown status after verified Protected Local reboot." >&2
-  fi
-  "$RUNTIME" rm -f "$name" >/dev/null 2>&1 || true
+  "$RUNTIME" rm -f "$name" >/dev/null
 }
 
 for distro in "${distro_list[@]}"; do

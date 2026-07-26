@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'status=$?; printf "fixture command failed at line %s: %s\n" "$LINENO" "$BASH_COMMAND" >&2; exit "$status"' ERR
 
 phase="${1:-install}"
 version="${FASED_FIXTURE_VERSION:?missing fixture version}"
@@ -142,6 +143,20 @@ wait_for_user_manager() {
   return 1
 }
 
+start_user_manager() {
+  local attempt=0
+  for attempt in 1 2 3; do
+    if systemctl start user@2000.service; then
+      wait_for_user_manager
+      return
+    fi
+    systemctl reset-failed user@2000.service user-runtime-dir@2000.service \
+      >/dev/null 2>&1 || true
+    sleep 0.25
+  done
+  wait_for_user_manager
+}
+
 wait_for_gateway_version() {
   local expected="$1"
   local response=""
@@ -235,8 +250,7 @@ useradd --uid 2000 --user-group --create-home --shell /bin/bash testop
 prepare_restrictive_home_acl
 original_home_acl="$(capture_home_acl)"
 loginctl enable-linger testop
-systemctl start user@2000.service
-wait_for_user_manager
+start_user_manager
 install -d -m 0755 -o root -g root "$release_root/scripts" "$release_root/dist"
 install -d -m 0755 -o root -g root \
   "$root_store/verified-assets" \
