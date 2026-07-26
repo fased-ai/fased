@@ -834,7 +834,7 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
             `Environment=FASED_MANAGED_RUNTIME_ROOT=${applicationCurrent}`,
             "Environment=FASED_NODE_BIN=/usr/bin/node",
             "Environment=PATH=/usr/local/bin:/usr/bin:/bin",
-            "Environment=FASED_RUNTIME_SOURCE=managed-package",
+            "Environment=FASED_RUNTIME_SOURCE=managed-package", // pragma: allowlist secret
             "",
           ].join("\n"),
         ),

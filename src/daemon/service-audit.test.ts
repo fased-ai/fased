@@ -133,7 +133,9 @@ describe("auditGatewayServiceConfig", () => {
       platform: "linux",
       expectedGatewayToken: "config-owned-token",
       command: {
-        programArguments: ["/opt/fased/local/0123456789abcdef/gateway-launch"],
+        programArguments: [
+          "/opt/fased/local/0123456789abcdef/gateway-launch", // pragma: allowlist secret
+        ],
         environment: {
           PATH: "/usr/local/bin:/usr/bin:/bin",
           FASED_HOST_PROFILE: "local",

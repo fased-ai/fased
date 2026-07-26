@@ -4894,7 +4894,7 @@ async function inspectProtectedLocalRuntimeBoundary(
       `Environment=FASED_MANAGED_RUNTIME_ROOT=${applicationCurrentLink}`,
       "Environment=FASED_NODE_BIN=",
       "Environment=PATH=/usr/local/bin:/usr/bin:/bin",
-      "Environment=FASED_RUNTIME_SOURCE=managed-package",
+      "Environment=FASED_RUNTIME_SOURCE=managed-package", // pragma: allowlist secret
     ]) {
       if (!gatewayUnit.includes(expected)) {
         reasons.push("protected_gateway_service_boundary_outdated");

@@ -44,7 +44,9 @@ describe("Protected Local service plan", () => {
     );
     expect(gateway).toContain("FASED_NODE_BIN=/usr/bin/node");
     expect(gateway).toContain("Environment=PATH=/usr/local/bin:/usr/bin:/bin");
-    expect(gateway).toContain("Environment=FASED_RUNTIME_SOURCE=managed-package");
+    expect(gateway).toContain(
+      "Environment=FASED_RUNTIME_SOURCE=managed-package", // pragma: allowlist secret
+    );
     expect(gateway).toContain(
       "ExecStartPre=/usr/bin/test -s /var/lib/fased-local/0123456789abcdef/controller/gateway-activation-ready",
     );
