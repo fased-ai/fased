@@ -1764,6 +1764,12 @@ async function waitForLegacyGatewayInactive(spec, timeoutMs = 10_000) {
     if (new Set(["inactive", "failed"]).has(activeState)) {
       return;
     }
+    // A reverse dependency can already have queued a start job when the
+    // runtime mask is installed. The mask prevents subsequent starts, while
+    // this second stop drains that pre-existing job before activation.
+    if (new Set(["active", "activating", "reloading"]).has(activeState)) {
+      userSystemctl(spec, ["stop", "fased-gateway.service"]);
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   fail(`legacy Local Gateway remained ${activeState} after fencing`);

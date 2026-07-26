@@ -4,12 +4,15 @@ set -euo pipefail
 phase="${1:-install}"
 version="${FASED_FIXTURE_VERSION:?missing fixture version}"
 commit="${FASED_FIXTURE_COMMIT:?missing fixture commit}"
-legacy_version="${FASED_FIXTURE_LEGACY_VERSION:-0.1.76-rc.7}"
+legacy_version="${FASED_FIXTURE_LEGACY_VERSION:-0.1.75}"
+bridge_version="${FASED_FIXTURE_BRIDGE_VERSION:-0.1.76-rc.7}"
 digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 release_root="/var/lib/fased-installer/releases/v${version}/${digest}/extract/package"
 root_store="$(dirname "$(dirname "$release_root")")"
 candidate_repo=/var/lib/fased-protected-local-candidate
 candidate_installer=/var/lib/fased-protected-local-install.sh
+legacy_repo=/var/lib/fased-protected-local-predecessor
+legacy_installer=/var/lib/fased-protected-local-predecessor-install.sh
 state=/home/testop/.fased
 runtime="$state/runtime/releases/$version"
 legacy_runtime="$state/runtime/releases/$legacy_version"
@@ -17,6 +20,7 @@ gateway_port=19456
 rpc_port=19457
 gateway_token=fased-protected-local-fixture-token
 snapshot=/var/lib/fased-protected-local-fixture.json
+selected_target=/etc/fased/testing/selected-target-version
 fixture_acl_user=fased-fixture-acl
 fixture_acl_uid=2001
 
@@ -267,6 +271,17 @@ git -C "$candidate_repo" checkout --quiet --detach "$commit"
 git -C "$candidate_repo" tag --force "v$version" "$commit"
 chown -R testop:testop "$candidate_repo"
 install -m 0700 -o testop -g testop "$candidate_repo/install.sh" "$candidate_installer"
+if [[ "$phase" == "install" ]]; then
+  legacy_commit="$(jq -er .release.commit /legacy-artifacts/fased-hosted-release-v2.json)"
+  rm -rf "$legacy_repo"
+  git clone --quiet --no-hardlinks /repo "$legacy_repo"
+  git -C "$legacy_repo" checkout --quiet --detach "$legacy_commit"
+  test "$(git -C "$legacy_repo" rev-parse "v${legacy_version}^{commit}")" = "$legacy_commit"
+  cmp "$legacy_repo/install.sh" /legacy-artifacts/install.sh
+  chown -R testop:testop "$legacy_repo"
+  install -m 0700 -o testop -g testop \
+    /legacy-artifacts/install.sh "$legacy_installer"
+fi
 
 install -d -m 0700 -o root -g root /opt/fased-fixture-bootstrap-tools
 install -m 0755 -o root -g root "$(command -v jq)" \
@@ -369,6 +384,7 @@ cat >/usr/local/bin/curl <<'EOF_FIXTURE_CURL'
 set -euo pipefail
 output=""
 url=""
+legacy_version="${FASED_FIXTURE_LEGACY_VERSION:-}"
 args=("$@")
 for ((i = 0; i < ${#args[@]}; i++)); do
   case "${args[$i]}" in
@@ -380,6 +396,13 @@ for ((i = 0; i < ${#args[@]}; i++)); do
   esac
 done
 case "$url" in
+  */v"$legacy_version"/fased-hosted-release-v2.json)
+    install -m 0600 /legacy-artifacts/fased-hosted-release-v2.json "$output"
+    ;;
+  */v"$legacy_version"/fased-hosted-release-v2.json.attestation.json)
+    install -m 0600 \
+      /legacy-artifacts/fased-hosted-release-v2.json.attestation.json "$output"
+    ;;
   */fased-hosted-release-v2.json)
     install -m 0600 /etc/fased/testing/local-release-manifest.json "$output"
     ;;
@@ -403,11 +426,40 @@ import http from "node:http";
 import path from "node:path";
 const port = Number(process.env.FASED_FIXTURE_RPC_PORT);
 const version = process.env.FASED_FIXTURE_VERSION;
+const legacyVersion = process.env.FASED_FIXTURE_LEGACY_VERSION;
+const bridgeVersion = process.env.FASED_FIXTURE_BRIDGE_VERSION;
 const genesis = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"; // pragma: allowlist secret
 http.createServer((request, response) => {
   if (request.method === "GET" && request.url?.startsWith("/@fased%2ffased")) {
+    const selectedVersion = fs.readFileSync(
+      "/etc/fased/testing/selected-target-version",
+      "utf8",
+    ).trim();
     response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({ "dist-tags": { latest: version, beta: version } }));
+    response.end(
+      JSON.stringify({ "dist-tags": { latest: selectedVersion, beta: selectedVersion } }),
+    );
+    return;
+  }
+  if (
+    request.method === "GET" &&
+    bridgeVersion &&
+    request.url?.startsWith(`/v${bridgeVersion}/`)
+  ) {
+    const asset = decodeURIComponent(request.url.slice(`/v${bridgeVersion}/`.length));
+    if (!/^[A-Za-z0-9._-]+$/.test(asset)) {
+      response.writeHead(400).end();
+      return;
+    }
+    const selected = path.join("/bridge-artifacts", asset);
+    try {
+      const stat = fs.statSync(selected);
+      if (!stat.isFile()) throw new Error("not a file");
+      response.writeHead(200, { "content-length": stat.size });
+      fs.createReadStream(selected).pipe(response);
+    } catch {
+      response.writeHead(404).end();
+    }
     return;
   }
   if (request.method === "GET" && request.url?.startsWith(`/v${version}/`)) {
@@ -419,7 +471,32 @@ http.createServer((request, response) => {
     const selected =
       asset === "install.sh"
         ? "/usr/local/libexec/fased-fixture-protected-installer.sh"
-        : path.join("/artifacts", asset);
+        : asset === "fased-hosted-release-v2.json"
+          ? "/etc/fased/testing/local-release-manifest.json"
+          : asset === "fased-hosted-release-v2.json.attestation.json"
+            ? "/etc/fased/testing/local-release-manifest.json.attestation.json"
+            : path.join("/artifacts", asset);
+    try {
+      const stat = fs.statSync(selected);
+      if (!stat.isFile()) throw new Error("not a file");
+      response.writeHead(200, { "content-length": stat.size });
+      fs.createReadStream(selected).pipe(response);
+    } catch {
+      response.writeHead(404).end();
+    }
+    return;
+  }
+  if (
+    request.method === "GET" &&
+    legacyVersion &&
+    request.url?.startsWith(`/v${legacyVersion}/`)
+  ) {
+    const asset = decodeURIComponent(request.url.slice(`/v${legacyVersion}/`.length));
+    if (!/^[A-Za-z0-9._-]+$/.test(asset)) {
+      response.writeHead(400).end();
+      return;
+    }
+    const selected = path.join("/legacy-artifacts", asset);
     try {
       const stat = fs.statSync(selected);
       if (!stat.isFile()) throw new Error("not a file");
@@ -535,6 +612,8 @@ Description=Fased fixture Solana RPC
 Type=simple
 Environment=FASED_FIXTURE_RPC_PORT=$rpc_port
 Environment=FASED_FIXTURE_VERSION=$version
+Environment=FASED_FIXTURE_LEGACY_VERSION=$legacy_version
+Environment=FASED_FIXTURE_BRIDGE_VERSION=$bridge_version
 ExecStart=/usr/local/bin/node /usr/local/libexec/fased-fixture-solana-rpc.mjs
 Restart=always
 
@@ -561,6 +640,12 @@ cat >/etc/fased/testing/protected-local-artifact-source.json <<EOF_ARTIFACT_SOUR
 }
 EOF_ARTIFACT_SOURCE
 chmod 0444 /etc/fased/testing/protected-local-artifact-source.json
+if [[ "$phase" == "install" ]]; then
+  printf '%s\n' "$bridge_version" >"$selected_target"
+else
+  printf '%s\n' "$version" >"$selected_target"
+fi
+chmod 0644 "$selected_target"
 
 if [[ "$phase" == "fresh-install" ]]; then
   rm -f /usr/local/bin/gh /usr/local/bin/jq /usr/bin/gh /usr/bin/jq
@@ -685,64 +770,107 @@ if [[ "$phase" == "fresh-install" ]]; then
   exit 0
 fi
 
-# Reproduce a previous root bootstrap that created only its final child with a
-# restrictive umask, leaving the shared executable ancestor non-traversable to
-# the isolated signer account.
-install -d -m 0700 -o testop -g testop "$state"
-install -d -m 0755 -o testop -g testop "$state/runtime" "$(dirname "$runtime")"
-install -d -m 0755 -o testop -g testop "$legacy_runtime"
-legacy_runtime_asset="/legacy-artifacts/fased-hosted-linux-x64-v${legacy_version}.tar.gz"
-[[ -f "$legacy_runtime_asset" ]]
-tar -xzf "$legacy_runtime_asset" -C "$legacy_runtime" --strip-components=1
-test "$(jq -r .version "$legacy_runtime/package.json")" = "$legacy_version"
-test "$(jq -r .version "$legacy_runtime/dist/build-info.json")" = "$legacy_version"
-test "$(jq -r .version "$legacy_runtime/dist/control-ui/version.json")" = "$legacy_version"
-chown -R testop:testop "$legacy_runtime"
-install -d -m 0700 -o root -g root /opt/fased
-wallet_dir="$state/wallet"
-legacy_binary="$state/bin/fased-signerd"
-legacy_socket="$wallet_dir/local-signer.sock"
-legacy_control="$wallet_dir/local-signer-control.sock"
-install -d -m 0700 -o testop -g testop "$wallet_dir" "$(dirname "$legacy_binary")"
-install -m 0700 -o testop -g testop "$root_store/verified-assets/fased-signerd" "$legacy_binary"
-ln "$legacy_binary" "$state/bin/fased-signer-enroll"
-start_legacy_signer() {
-  runuser -u testop -- "$legacy_binary" \
-    -socket "$legacy_socket" \
-    -control-socket "$legacy_control" \
-    -socket-mode 0600 \
-    -application-uid 2000 \
-    -operator-uid 2000 \
-    -control-uid 2000 \
-    -state-db "$wallet_dir/signerd-v2.db" \
-    -master-key "$wallet_dir/signerd-v2.master.key" \
-    -pid-file "$wallet_dir/local-signer.pid" \
-    -audit-log "$wallet_dir/local-signer.audit.jsonl" \
-    >/tmp/legacy-signer.log 2>&1 &
-  if ! wait_for_socket "$legacy_control"; then
-    cat /tmp/legacy-signer.log >&2 || true
-    return 1
-  fi
-}
+# Install the complete immutable predecessor through its own released installer,
+# application, dependency layer, signer, updater, and service setup. L1 must
+# never manufacture a previous topology from current components.
+# v0.1.75 requires gh to pre-exist because its immutable outer resolver installs
+# verification tools inside command substitution. That historical fresh-install
+# limitation is not repaired retroactively by the target candidate.
+/usr/bin/install -m 0755 \
+  /opt/fased-fixture-bootstrap-tools/gh /usr/local/bin/gh
+legacy_channel="$([[ "$legacy_version" == *-* ]] && printf beta || printf stable)"
+legacy_install_env=(
+  HOME=/home/testop
+  USER=testop
+  LOGNAME=testop
+  XDG_RUNTIME_DIR=/run/user/2000
+  DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/2000/bus
+  FASED_STATE_DIR="$state"
+  FASED_CONFIG_PATH="$state/fased.json"
+  FASED_GATEWAY_PORT="$gateway_port"
+  FASED_GATEWAY_TOKEN="$gateway_token"
+  FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port"
+  FASED_INSTALL_REPO="$legacy_repo"
+  FASED_FIXTURE_LEGACY_VERSION="$legacy_version"
+  npm_config_registry="http://127.0.0.1:$rpc_port"
+)
+set +e
+runuser -u testop -- env "${legacy_install_env[@]}" \
+  /bin/bash -s -- \
+    --release "v$legacy_version" \
+    --update-channel "$legacy_channel" \
+    --local \
+    --install-dir /home/testop/fased \
+    -- \
+    --non-interactive \
+    --accept-risk \
+    --auth-choice skip \
+    --workspace /home/testop/.fased/workspace \
+    --gateway-auth token \
+    --gateway-token "$gateway_token" \
+    --gateway-port "$gateway_port" \
+    --gateway-bind loopback \
+    --wallet-enabled \
+    --wallet-mode managed \
+    --wallet-providers local-socket-signer \
+    --wallet-default-provider local-socket-signer \
+    --wallet-chains solana \
+    --wallet-install-enabled \
+    --skip-skills \
+    --skip-health \
+  <"$legacy_installer" \
+  >/tmp/legacy-install.out 2>/tmp/legacy-install.err
+legacy_install_status=$?
+set -e
+if [[ "$legacy_install_status" -ne 0 ]]; then
+  test "$legacy_install_status" -eq 1
+  grep -F "Installed stable Fased updater and activated managed runtime v${legacy_version}." \
+    /tmp/legacy-install.out >/dev/null
+  grep -F "Installed systemd service:" /tmp/legacy-install.out >/dev/null
+fi
 
-stop_legacy_signer() {
-  local pid=""
-  pid="$(cat "$wallet_dir/local-signer.pid")"
-  kill "$pid"
-  for _ in {1..200}; do
-    if ! kill -0 "$pid" 2>/dev/null; then
-      rm -f "$legacy_socket" "$legacy_control" "$wallet_dir/local-signer.pid"
-      return 0
-    fi
-    sleep 0.1
-  done
-  echo "legacy Local signer did not stop cleanly" >&2
-  return 1
+test "$(jq -er .profile "$state/install.json")" = "local"
+test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$legacy_version"
+legacy_runtime="$(readlink -f "$state/runtime/current")"
+test "$(jq -er .version "$legacy_runtime/package.json")" = "$legacy_version"
+test "$(jq -er .version "$legacy_runtime/dist/build-info.json")" = "$legacy_version"
+test "$(jq -er .commit "$legacy_runtime/dist/build-info.json")" = "$legacy_commit"
+legacy_signer_env="$state/wallet/signer.env"
+read_legacy_signer_env() {
+  local key="$1"
+  sed -n "s/^export ${key}=\"\\(.*\\)\"$/\\1/p" "$legacy_signer_env"
 }
+legacy_binary="$state/bin/fased-signerd"
+legacy_socket="$(read_legacy_signer_env FASED_WALLET_LOCAL_SIGNER_SOCKET)"
+legacy_control="$(read_legacy_signer_env FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET)"
+legacy_db="$(read_legacy_signer_env FASED_WALLET_LOCAL_SIGNER_STATE_DB)"
+legacy_master_key="$(read_legacy_signer_env FASED_WALLET_LOCAL_SIGNER_MASTER_KEY)"
+test -n "$legacy_socket"
+test -n "$legacy_control"
+test -n "$legacy_db"
+test -n "$legacy_master_key"
+wallet_dir="$(dirname "$legacy_db")"
+test "$(sha256sum "$legacy_binary" | awk '{print $1}')" = \
+  "$(jq -er '.signer.platforms["linux-amd64"].sha256' \
+    /legacy-artifacts/fased-hosted-release-v2.json)"
+wait_for_socket "$legacy_control"
+wait_for_gateway_version "$legacy_version"
+
+legacy_cli="$state/install-cache/npm-global/bin/fased"
+runuser -u testop -- env "${legacy_install_env[@]}" \
+  "$legacy_cli" wallet setup \
+    --mode local-signer-create \
+    --wallet-id agent \
+    --wallet-name Agent \
+    --role agent \
+    --rpc-url "http://127.0.0.1:$rpc_port" \
+    --non-interactive \
+    --json \
+  >/tmp/legacy-wallet.json
+legacy_public_key="$(jq -er '.address // .wallet.publicKey' /tmp/legacy-wallet.json)"
 
 verify_legacy_wallet() {
   local output="$1"
-  start_legacy_signer
   runuser -u testop -- "$legacy_binary" admin wallet readiness \
     --control-socket "$legacy_control" \
     --wallet-id agent \
@@ -750,111 +878,14 @@ verify_legacy_wallet() {
   jq -e --arg publicKey "$legacy_public_key" \
     '.ready == true and .role == "agent" and .publicKey == $publicKey' \
     "$output" >/dev/null
-  stop_legacy_signer
 }
+verify_legacy_wallet /tmp/legacy-readiness.json
 
-start_legacy_signer
-runuser -u testop -- "$legacy_binary" admin wallet create \
-  --control-socket "$legacy_control" \
-  --wallet-id agent \
-  --baseline-role agent \
-  >/tmp/legacy-wallet.json
-printf '{"primaryRpcUrl":"http://127.0.0.1:%s"}\n' "$rpc_port" |
-  runuser -u testop -- "$legacy_binary" admin network set-primary \
-    --control-socket "$legacy_control" \
-    --wallet-id agent \
-    --expected-version 0 \
-    >/tmp/legacy-network.json
-stop_legacy_signer
-legacy_public_key="$(jq -er '.wallet.publicKey' /tmp/legacy-wallet.json)"
-cat >"$wallet_dir/provider-registry.v1.json" <<EOF_REGISTRY
-{
-  "version": 1,
-  "wallets": [
-    {
-      "id": "agent",
-      "name": "Agent",
-      "providerId": "local-socket-signer",
-      "addresses": { "solana": "$legacy_public_key" },
-      "metadata": {
-        "role": "agent",
-        "purpose": "agent",
-        "signerWalletId": "agent"
-      }
-    }
-  ]
-}
-EOF_REGISTRY
-cat >"$state/fased.json" <<EOF_CONFIG
-{
-  "gateway": {
-    "port": $gateway_port,
-    "auth": {
-      "mode": "token",
-      "token": "$gateway_token"
-    }
-  },
-  "update": { "channel": "$([[ "$version" == *-* ]] && printf beta || printf stable)" },
-  "discovery": { "mdns": { "mode": "off" } },
-  "wallet": { "runtime": { "enabled": true } },
-  "env": {
-    "vars": {
-      "FASED_WALLET_LOCAL_SIGNER_BIN": "$legacy_binary",
-      "FASED_WALLET_LOCAL_SIGNER_SOCKET": "$legacy_socket",
-      "FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET": "$legacy_control",
-      "FASED_WALLET_LOCAL_SIGNER_STATE_DB": "$wallet_dir/signerd-v2.db",
-      "FASED_WALLET_LOCAL_SIGNER_MASTER_KEY": "$wallet_dir/signerd-v2.master.key",
-      "FASED_WALLET_SIGNER_STATE_DIR": "$wallet_dir",
-      "FASED_WALLET_SOLANA_RPC_URL_AGENT": "http://127.0.0.1:$rpc_port"
-    }
-  }
-}
-EOF_CONFIG
-cat >"$state/install.json" <<EOF_MANIFEST
-{
-  "schemaVersion": 2,
-  "profile": "local",
-  "stateDir": "$state",
-  "configPath": "$state/fased.json",
-  "runtime": {
-    "activeVersion": "$legacy_version",
-    "currentLink": "$state/runtime/current",
-    "releasesDir": "$state/runtime/releases"
-  },
-  "service": {
-    "name": "fased-gateway.service",
-    "scope": "user",
-    "launcher": "$legacy_runtime/scripts/start-managed.sh"
-  },
-  "updater": {
-    "version": "$legacy_version",
-    "path": "$state/updater/fased-managed-updater.mjs"
-  }
-}
-EOF_MANIFEST
-ln -s "$legacy_runtime" "$state/runtime/current"
-chown -R testop:testop "$state"
 prepare_restrictive_home_acl
 original_home_acl="$(capture_home_acl)"
-
 legacy_gateway_version="$legacy_version"
 user_unit_dir=/home/testop/.config/systemd/user
-install -d -m 0700 -o testop -g testop "$user_unit_dir"
-cat >"$user_unit_dir/fased-gateway.service" <<EOF_LEGACY_GATEWAY_UNIT
-[Unit]
-Description=Fased fixture legacy user Gateway
-
-[Service]
-Type=simple
-Environment=FASED_FIXTURE_GATEWAY_PORT=$gateway_port
-Environment=FASED_FIXTURE_LEGACY_VERSION=$legacy_gateway_version
-ExecStart=/usr/local/bin/node /usr/local/libexec/fased-fixture-legacy-gateway.mjs
-Restart=always
-RestartSec=1
-
-[Install]
-WantedBy=default.target
-EOF_LEGACY_GATEWAY_UNIT
+test -s "$user_unit_dir/fased-gateway.service"
 cat >"$user_unit_dir/fased-fixture-gateway-reactivator.service" <<'EOF_REACTIVATOR_SERVICE'
 [Unit]
 Description=Fased fixture legacy Gateway reverse dependency
@@ -877,120 +908,64 @@ Unit=fased-fixture-gateway-reactivator.service
 [Install]
 WantedBy=timers.target
 EOF_REACTIVATOR_TIMER
-chown -R testop:testop /home/testop/.config
+chown testop:testop \
+  "$user_unit_dir/fased-fixture-gateway-reactivator.service" \
+  "$user_unit_dir/fased-fixture-gateway-reactivator.timer"
 chmod 0600 "$user_unit_dir"/*.service "$user_unit_dir"/*.timer
 user_systemctl daemon-reload
-user_systemctl enable --now fased-gateway.service
 user_systemctl enable --now fased-fixture-gateway-reactivator.timer
 wait_for_gateway_version "$legacy_gateway_version"
 
 original_manifest_sha="$(sha256sum "$state/install.json" | awk '{print $1}')"
-original_key_sha="$(sha256sum "$wallet_dir/signerd-v2.master.key" | awk '{print $1}')"
-
-user_systemctl is-enabled --quiet fased-gateway.service
-user_systemctl is-active --quiet fased-gateway.service
-systemctl stop user@2000.service
-for _ in {1..200}; do
-  [[ ! -S /run/user/2000/bus ]] && break
-  sleep 0.1
-done
-test ! -S /run/user/2000/bus
-set +e
-bootstrap prepare >/tmp/protected-no-user-manager.out 2>/tmp/protected-no-user-manager.err
-no_user_manager_status=$?
-set -e
-test "$no_user_manager_status" -ne 0
-grep -F "legacy Local Gateway exists but its user systemd manager is unavailable" \
-  /tmp/protected-no-user-manager.err >/dev/null
-test -z "$(find /var/lib/fased-local -mindepth 1 -maxdepth 1 -type d -print -quit)"
-test -z "$(find /opt/fased/local -mindepth 1 -maxdepth 1 -type d -print -quit)"
-systemctl start user@2000.service
-wait_for_user_manager
-wait_for_gateway_version "$legacy_gateway_version"
-user_systemctl is-enabled --quiet fased-gateway.service
-user_systemctl is-active --quiet fased-gateway.service
-
-bootstrap prepare >/tmp/protected-prepare.json
-instance="$(jq -er .instanceId /tmp/protected-prepare.json)"
-verify_original_home_acl
-test "$(stat -c '%U:%G:%a' /opt/fased)" = "root:root:755"
-test -S "/run/fased-local/$instance/application/app.sock"
-test -S "/run/fased-local/$instance/operator/operator.sock"
-test -S "/run/fased-local/$instance/control/control.sock"
-test "$(stat -c '%U:%G:%a' "/run/fased-local/$instance/operator/operator.sock")" = \
-  "testop:fsop-$instance:600"
-test "$(stat -c '%U:%G:%a' "/run/fased-local/$instance/control/control.sock")" = \
-  "fssg-$instance:fssg-$instance:600"
-test "$(stat -c '%U:%G:%a' "/run/fased-local/$instance/application/app.sock")" = \
-  "fssg-$instance:fsgw-$instance:660"
-verify_wallet "$instance" agent >/tmp/prepared-agent.json
-jq -e --arg publicKey "$legacy_public_key" \
-  '.ready == true and .role == "agent" and .publicKey == $publicKey' \
-  /tmp/prepared-agent.json >/dev/null
-
-interrupted_instance="$instance"
-bootstrap prepare >/tmp/protected-recovered-prepare.json
-instance="$(jq -er .instanceId /tmp/protected-recovered-prepare.json)"
-if [[ "$instance" != "$interrupted_instance" ]]; then
-  test ! -e "/var/lib/fased-local/$interrupted_instance"
-  test ! -e "/opt/fased/local/$interrupted_instance"
-fi
-test -S "/run/fased-local/$instance/operator/operator.sock"
-verify_wallet "$instance" agent >/tmp/recovered-prepared-agent.json
-jq -e --arg publicKey "$legacy_public_key" \
-  '.ready == true and .role == "agent" and .publicKey == $publicKey' \
-  /tmp/recovered-prepared-agent.json >/dev/null
-
-bootstrap rollback >/tmp/protected-rollback.json
-wait_for_gateway_version "$legacy_gateway_version"
-verify_original_home_acl
-test ! -e "$user_unit_dir/fased-gateway.service.d/90-fased-protected-local.conf"
-user_systemctl is-enabled --quiet fased-gateway.service
-user_systemctl is-active --quiet fased-gateway.service
-test ! -e "/etc/systemd/system/fased-gateway-$instance.service"
-test ! -e "/etc/fased/local/$instance"
-test ! -e "/var/lib/fased-local/$instance"
-test ! -e "/opt/fased/local/$instance"
-test "$(sha256sum "$state/install.json" | awk '{print $1}')" = "$original_manifest_sha"
-test "$(sha256sum "$wallet_dir/signerd-v2.master.key" | awk '{print $1}')" = "$original_key_sha"
-verify_legacy_wallet /tmp/rollback-agent.json
-test "$(stat -c '%d:%i:%h' "$legacy_binary")" = \
-  "$(stat -c '%d:%i:%h' "$state/bin/fased-signer-enroll")"
-test "$(stat -c '%h' "$legacy_binary")" = "2"
-
-install -d -m 0700 -o testop -g testop "$state/bin" "$state/updater"
-for script in \
-  fased-managed-updater.mjs \
-  hosted-release-manifest.mjs \
-  managed-runtime-layout.mjs; do
-  install -m 0700 -o testop -g testop "$legacy_runtime/scripts/$script" "$state/updater/$script"
-done
-install -m 0700 -o testop -g testop \
-  "$legacy_runtime/scripts/fased-managed-launcher.sh" "$state/bin/fased"
-install -m 0700 -o testop -g testop \
-  "$legacy_runtime/scripts/fased-managed-service.sh" "$state/bin/fased-service"
-for directory in \
-  "$state/install-cache" \
-  "$state/install-cache/npm-global" \
-  "$state/install-cache/npm-global/bin"; do
-  install -d -m 0700 -o testop -g testop "$directory"
-done
-ln -s "$state/bin/fased" "$state/install-cache/npm-global/bin/fased"
+original_key_sha="$(sha256sum "$legacy_master_key" | awk '{print $1}')"
+original_registry_sha="$(sha256sum "$wallet_dir/provider-registry.v1.json" | awk '{print $1}')"
 managed_update_env=(
   HOME=/home/testop \
+  USER=testop \
+  LOGNAME=testop \
+  XDG_RUNTIME_DIR=/run/user/2000 \
+  DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/2000/bus \
   FASED_STATE_DIR="$state" \
   FASED_CONFIG_PATH="$state/fased.json" \
   FASED_GATEWAY_PORT="$gateway_port" \
   FASED_GATEWAY_TOKEN="$gateway_token" \
   FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
+  FASED_FIXTURE_LEGACY_VERSION="$legacy_version" \
   npm_config_registry="http://127.0.0.1:$rpc_port"
 )
+
+# Reproduce the owner-relevant support-floor topology without mixing releases:
+# the immutable v0.1.75 updater installs immutable RC7 in the same-user layout.
+# RC7's promoted updater then owns the one-command Protected Local migration.
+runuser -u testop -- env "${managed_update_env[@]}" \
+  "$state/install-cache/npm-global/bin/fased" update --channel beta --timeout 120 \
+  >/tmp/bridge-update.out 2>/tmp/bridge-update.err
+grep -F "Updated Fased ${legacy_version} -> ${bridge_version}" \
+  /tmp/bridge-update.out >/dev/null
+test "$(jq -er .profile "$state/install.json")" = "local"
+test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$bridge_version"
+test "$(jq -er .updater.version "$state/install.json")" = "$bridge_version"
+if jq -e '.env.vars.FASED_PROTECTED_LOCAL == "1"' "$state/fased.json" >/dev/null; then
+  echo "The immutable pre-support-floor updater unexpectedly entered Protected Local." >&2
+  exit 1
+fi
+wait_for_gateway_version "$bridge_version"
+test "$(sha256sum "$legacy_binary" | awk '{print $1}')" = \
+  "$(jq -er '.signer.platforms["linux-amd64"].sha256' \
+    /bridge-artifacts/fased-hosted-release-v2.json)"
+test "$(sha256sum "$legacy_master_key" | awk '{print $1}')" = "$original_key_sha"
+test "$(sha256sum "$wallet_dir/provider-registry.v1.json" | awk '{print $1}')" = \
+  "$original_registry_sha"
+verify_legacy_wallet /tmp/bridge-agent.json
+legacy_gateway_version="$bridge_version"
+original_manifest_sha="$(sha256sum "$state/install.json" | awk '{print $1}')"
+printf '%s\n' "$version" >"$selected_target"
 
 inject_failed_target_gateway() {
   local candidate=""
   local candidate_relative=""
   local instance_id=""
-  for _ in {1..30000}; do
+  for _ in {1..12000}; do
     for candidate in /opt/fased/local/*/application/current/scripts/start-managed.sh; do
       [[ -f "$candidate" ]] || continue
       candidate_relative="${candidate#/opt/fased/local/}"
@@ -1033,7 +1008,9 @@ test ! -e "/opt/fased/local/$failure_instance"
 user_systemctl is-enabled --quiet fased-gateway.service
 user_systemctl is-active --quiet fased-gateway.service
 test "$(sha256sum "$state/install.json" | awk '{print $1}')" = "$original_manifest_sha"
-test "$(sha256sum "$wallet_dir/signerd-v2.master.key" | awk '{print $1}')" = "$original_key_sha"
+test "$(sha256sum "$legacy_master_key" | awk '{print $1}')" = "$original_key_sha"
+test "$(sha256sum "$wallet_dir/provider-registry.v1.json" | awk '{print $1}')" = \
+  "$original_registry_sha"
 verify_legacy_wallet /tmp/failure-rollback-agent.json
 
 runuser -u testop -- env "${managed_update_env[@]}" \
@@ -1067,7 +1044,7 @@ runuser -u "fsgw-$instance" -- test -S \
   "/run/fased-local/$instance/application/app.sock"
 test "$(jq -r .profile "$state/install.json")" = "protected-local"
 test "$(jq -r .runtime.activeVersion "$state/install.json")" = "$version"
-test "$(jq -r .runtime.previousVersion "$state/install.json")" = "$legacy_version"
+test "$(jq -r .runtime.previousVersion "$state/install.json")" = "$bridge_version"
 test "$(jq -r .service.name "$state/install.json")" = "fased-gateway-$instance.service"
 test "$(cat "/var/lib/fased-local/$instance/controller/signer-version")" = "$version"
 test "$(jq -r .version "/var/lib/fased-local/$instance/controller/controller-version.json")" = \
@@ -1090,8 +1067,10 @@ verify_wallet "$instance" agent >/tmp/active-agent.json
 jq -e --arg publicKey "$legacy_public_key" \
   '.ready == true and .role == "agent" and .publicKey == $publicKey' \
   /tmp/active-agent.json >/dev/null
-test ! -e "$wallet_dir/signerd-v2.db"
-test ! -e "$wallet_dir/signerd-v2.master.key"
+test ! -e "$legacy_db"
+test ! -e "$legacy_master_key"
+test "$(sha256sum "$wallet_dir/provider-registry.v1.json" | awk '{print $1}')" = \
+  "$original_registry_sha"
 
 mapfile -t env_args < <(operator_env "$instance")
 runuser -u testop -- env "${env_args[@]}" \
