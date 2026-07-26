@@ -228,7 +228,7 @@ run_fixture_scenario() {
     dump_fixture_failure "$name"
     exit 1
   fi
-  "$RUNTIME" rm -f "$name" >/dev/null
+  "$RUNTIME" rm -f "$name" >/dev/null 2>&1 || true
 }
 
 for distro in "${distro_list[@]}"; do
