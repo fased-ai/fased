@@ -3,10 +3,12 @@ set -euo pipefail
 trap 'status=$?; printf "fixture command failed at line %s: %s\n" "$LINENO" "$BASH_COMMAND" >&2; exit "$status"' ERR
 
 phase="${1:-install}"
+fixture_started="$SECONDS"
 version="${FASED_FIXTURE_VERSION:?missing fixture version}"
 commit="${FASED_FIXTURE_COMMIT:?missing fixture commit}"
 legacy_version="${FASED_FIXTURE_LEGACY_VERSION:-0.1.75}"
 bridge_version="${FASED_FIXTURE_BRIDGE_VERSION:-0.1.76-rc.7}"
+preinstalled_tools="${FASED_FIXTURE_PREINSTALLED_TOOLS:-0}"
 digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 release_root="/var/lib/fased-installer/releases/v${version}/${digest}/extract/package"
 root_store="$(dirname "$(dirname "$release_root")")"
@@ -255,7 +257,7 @@ rm -rf "$release_root/node_modules"
 for script in fased-host-updater.mjs fased-host-updaterctl.mjs fased-signer-owner-hosting.sh; do
   cmp "/repo/scripts/$script" "$release_root/scripts/$script"
 done
-install -m 0755 -o root -g root /repo/dist-native/release/fased-signerd-linux-amd64 \
+install -m 0755 -o root -g root /artifacts/fased-signerd-linux-amd64 \
   "$root_store/verified-assets/fased-signerd"
 
 signer_sha="$(sha256sum "$root_store/verified-assets/fased-signerd" | awk '{print $1}')"
@@ -303,9 +305,7 @@ dependency_asset="$(basename "$(find /artifacts -maxdepth 1 -type f \
   -name 'fased-hosted-deps-linux-x64-*.tar.gz' -print -quit)")"
 app_sha="$(sha256sum "/artifacts/$app_asset" | awk '{print $1}')"
 dependency_sha="$(sha256sum "/artifacts/$dependency_asset" | awk '{print $1}')"
-signer_build_input_digest="$(
-  jq -er .buildInputDigest /repo/dist-native/release/fased-signerd-release.json
-)"
+signer_build_input_digest="$(jq -er .buildInputDigest /artifacts/fased-signerd-release.json)"
 env \
   FASED_FIXTURE_APP_ASSET="$app_asset" \
   FASED_FIXTURE_APP_SHA="$app_sha" \
@@ -649,11 +649,20 @@ fi
 chmod 0644 "$selected_target"
 
 if [[ "$phase" == "fresh-install" ]]; then
-  rm -f /usr/local/bin/gh /usr/local/bin/jq /usr/bin/gh /usr/bin/jq
-  if runuser -u testop -- env PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    /bin/bash -lc 'command -v gh || command -v jq'; then
-    echo "fresh Local fixture did not start without gh and jq" >&2
-    exit 1
+  fresh_prepare_elapsed="$((SECONDS - fixture_started))"
+  if [[ "$preinstalled_tools" == "1" ]]; then
+    install -m 0755 /opt/fased-fixture-bootstrap-tools/gh /usr/local/bin/gh
+    install -m 0755 /opt/fased-fixture-bootstrap-tools/jq /usr/local/bin/jq
+    command -v gh >/dev/null
+    command -v jq >/dev/null
+    gh attestation verify --help >/dev/null
+  else
+    rm -f /usr/local/bin/gh /usr/local/bin/jq /usr/bin/gh /usr/bin/jq
+    if runuser -u testop -- env PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+      /bin/bash -lc 'command -v gh || command -v jq'; then
+      echo "fresh Local fixture did not start without gh and jq" >&2
+      exit 1
+    fi
   fi
   fresh_env=(
     HOME=/home/testop
@@ -668,6 +677,7 @@ if [[ "$phase" == "fresh-install" ]]; then
     npm_config_registry="http://127.0.0.1:$rpc_port"
   )
   fresh_channel="$([[ "$version" == *-* ]] && printf beta || printf stable)"
+  install_started="$SECONDS"
   runuser -u testop -- env "${fresh_env[@]}" \
     /bin/bash "$candidate_installer" \
       --release "v$version" \
@@ -686,8 +696,10 @@ if [[ "$phase" == "fresh-install" ]]; then
       --skip-skills \
       --skip-health \
     >/tmp/fresh-install.out 2>/tmp/fresh-install.err
+  install_elapsed="$((SECONDS - install_started))"
 
   hash -r
+  service_started="$SECONDS"
   test -s "$state/fased.json"
   test -s "$state/install.json"
   test "$(jq -r .profile "$state/install.json")" = "protected-local"
@@ -696,6 +708,7 @@ if [[ "$phase" == "fresh-install" ]]; then
   wait_for_service "fased-local-controller-$instance.service"
   wait_for_service "fased-signerd-$instance.service"
   wait_for_service "fased-gateway-$instance.service"
+  wait_for_gateway_version "$version"
   wait_for_socket "/run/fased-local/$instance/operator/operator.sock"
   test "$(stat -c '%U:%G:%a' /opt/fased)" = "root:root:755"
   test "$(stat -c '%U:%G:%a' "$state")" = \
@@ -708,6 +721,8 @@ if [[ "$phase" == "fresh-install" ]]; then
     /usr/local/bin/node "$runtime/fased.mjs" health --json --timeout 5000 \
     >/tmp/fresh-pre-wallet-health.json
   jq -e '.ok == true' /tmp/fresh-pre-wallet-health.json >/dev/null
+  service_elapsed="$((SECONDS - service_started))"
+  wallet_started="$SECONDS"
   for wallet_spec in "agent:Agent:agent" "vault:Vault:vault"; do
     IFS=: read -r wallet_id wallet_name wallet_role <<<"$wallet_spec"
     runuser -u testop -- env "${env_args[@]}" \
@@ -725,11 +740,14 @@ if [[ "$phase" == "fresh-install" ]]; then
   verify_wallet "$instance" vault >/tmp/fresh-vault.json
   jq -e '.ready == true and .role == "agent"' /tmp/fresh-agent.json >/dev/null
   jq -e '.ready == true and .role == "vault"' /tmp/fresh-vault.json >/dev/null
+  wait_for_gateway_version "$version"
   runuser -u testop -- env "${env_args[@]}" \
     /usr/local/bin/node "$runtime/fased.mjs" health --json --timeout 5000 \
     >/tmp/fresh-health.json
   jq -e '.ok == true' /tmp/fresh-health.json >/dev/null
+  wallet_elapsed="$((SECONDS - wallet_started))"
 
+  noop_started="$SECONDS"
   runuser -u testop -- env "${fresh_env[@]}" \
     "$state/install-cache/npm-global/bin/fased" update --timeout 30 \
     >/tmp/fresh-noop-update.out 2>/tmp/fresh-noop-update.err
@@ -738,10 +756,13 @@ if [[ "$phase" == "fresh-install" ]]; then
     echo "fresh idempotent update repeated Protected Local migration" >&2
     exit 1
   fi
+  noop_elapsed="$((SECONDS - noop_started))"
 
+  restart_started="$SECONDS"
   systemctl restart "fased-local-controller-$instance.service" \
     "fased-signerd-$instance.service" "fased-gateway-$instance.service"
   wait_for_service "fased-gateway-$instance.service"
+  wait_for_gateway_version "$version"
   runuser -u testop -- env "${env_args[@]}" \
     /usr/local/bin/node "$runtime/fased.mjs" health --json --timeout 5000 \
     >/tmp/fresh-restart-health.json
@@ -751,6 +772,7 @@ if [[ "$phase" == "fresh-install" ]]; then
     echo "Fresh Protected Local Gateway is publicly bound." >&2
     exit 1
   fi
+  restart_elapsed="$((SECONDS - restart_started))"
 
   agent_readiness_sha="$(jq -S -c . /tmp/fresh-agent.json | sha256sum | awk '{print $1}')"
   vault_readiness_sha="$(jq -S -c . /tmp/fresh-vault.json | sha256sum | awk '{print $1}')"
@@ -767,6 +789,15 @@ if [[ "$phase" == "fresh-install" ]]; then
       masterKeySha256: $masterKeySha256
     }' >"$snapshot"
   chmod 0600 "$snapshot"
+  sed -n '/Fresh runtime timing:/,/  total:/p' /tmp/fresh-install.out || true
+  printf 'fixture timing: phase=fresh-install prepare=%ss install=%ss services=%ss wallets=%ss noop=%ss restart=%ss total=%ss\n' \
+    "$fresh_prepare_elapsed" \
+    "$install_elapsed" \
+    "$service_elapsed" \
+    "$wallet_elapsed" \
+    "$noop_elapsed" \
+    "$restart_elapsed" \
+    "$((SECONDS - fixture_started))"
   printf 'fresh Protected Local install, Gateway, and wallet fixture passed: %s\n' "$instance"
   exit 0
 fi
