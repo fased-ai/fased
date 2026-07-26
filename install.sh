@@ -223,6 +223,20 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     esac
   done
 
+  drain_streamed_install_input() {
+    if [[ "$install_entry_is_stream" -eq 1 ]]; then
+      cat >/dev/null || true
+    fi
+  }
+
+  if [[ "$hosting_bootstrap" -eq 0 && "$protected_local_bootstrap" -eq 0 && \
+    "$(id -u)" -eq 0 ]]; then
+    echo "Local installation must run from the intended non-root operator account." >&2
+    echo "Log in as that user and rerun the same Local command; the installer will request bounded sudo authorization when required." >&2
+    drain_streamed_install_input
+    exit 1
+  fi
+
   if [[ "$protected_local_bootstrap" -eq 1 ]]; then
     if [[ "$(id -u)" -ne 0 || "$install_entry_is_stream" -eq 1 || "$hosting_bootstrap" -eq 1 ]]; then
       echo "Protected Local root bootstrap requires the exact local installer file through normal OS administrator authorization." >&2
@@ -832,25 +846,48 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
 
   resolve_attested_local_release_commit() {
     local release_version="$1"
-    install_local_release_verification_tools || {
+    if ! command -v gh >/dev/null 2>&1 || \
+      ! gh attestation verify --help >/dev/null 2>&1 || \
+      ! command -v jq >/dev/null 2>&1; then
       echo "Exact Local repair requires GitHub CLI with attestation support and jq." >&2
       echo "Install current gh and jq, then rerun the exact release command." >&2
       return 1
-    }
+    fi
     local release_url="https://github.com/fased-ai/fased/releases/download/v${release_version}"
     local verification_dir=""
-    verification_dir="$(mktemp -d "${TMPDIR:-/tmp}/fased-local-release.XXXXXX")"
-    chmod 0700 "$verification_dir"
+    verification_dir="$(mktemp -d "${TMPDIR:-/tmp}/fased-local-release.XXXXXX")" || {
+      echo "Could not create a private Local release verification directory." >&2
+      return 1
+    }
+    chmod 0700 "$verification_dir" || {
+      rm -rf -- "$verification_dir"
+      echo "Could not secure the Local release verification directory." >&2
+      return 1
+    }
     local manifest="$verification_dir/fased-hosted-release-v2.json"
     local bundle="$verification_dir/fased-hosted-release-v2.json.attestation.json"
-    curl -fL --proto '=https' --tlsv1.2 "$release_url/fased-hosted-release-v2.json" -o "$manifest"
-    curl -fL --proto '=https' --tlsv1.2 "$release_url/fased-hosted-release-v2.json.attestation.json" -o "$bundle"
-    GH_PROMPT_DISABLED=1 gh attestation verify "$manifest" \
+    if ! curl -fL --proto '=https' --tlsv1.2 \
+      "$release_url/fased-hosted-release-v2.json" -o "$manifest"; then
+      rm -rf -- "$verification_dir"
+      echo "Could not download the Local release manifest." >&2
+      return 1
+    fi
+    if ! curl -fL --proto '=https' --tlsv1.2 \
+      "$release_url/fased-hosted-release-v2.json.attestation.json" -o "$bundle"; then
+      rm -rf -- "$verification_dir"
+      echo "Could not download the Local release attestation bundle." >&2
+      return 1
+    fi
+    if ! GH_PROMPT_DISABLED=1 gh attestation verify "$manifest" \
       --repo fased-ai/fased \
       --bundle "$bundle" \
       --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
       --source-ref "refs/tags/v${release_version}" \
-      --deny-self-hosted-runners >/dev/null
+      --deny-self-hosted-runners >/dev/null; then
+      rm -rf -- "$verification_dir"
+      echo "Local release attestation verification failed." >&2
+      return 1
+    fi
     local release_commit=""
     release_commit="$(jq -er --arg version "$release_version" '
       if .schemaVersion == 2 and
@@ -882,15 +919,19 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
 
   local_bootstrap_release=""
   local_bootstrap_commit=""
-  if [[ "$hosting_bootstrap" -eq 0 && -z "$hosting_release" ]]; then
+  if [[ "$hosting_bootstrap" -eq 0 ]]; then
     install_local_release_verification_tools || {
       echo "Local install requires GitHub CLI with attestation support and jq." >&2
       echo "Install current gh and jq, then rerun the installer." >&2
+      drain_streamed_install_input
       exit 1
     }
+  fi
+  if [[ "$hosting_bootstrap" -eq 0 && -z "$hosting_release" ]]; then
     latest_local_tag="$(resolve_public_latest_release_tag 2>/dev/null || true)"
     if [[ ! "$latest_local_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
       echo "Could not resolve one stable tagged Local release." >&2
+      drain_streamed_install_input
       exit 1
     fi
     hosting_release="$latest_local_tag"
@@ -899,15 +940,22 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     local_bootstrap_release="${hosting_release#v}"
     if [[ ! "$local_bootstrap_release" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
       echo "Local --release requires one exact vX.Y.Z or vX.Y.Z-prerelease version." >&2
+      drain_streamed_install_input
       exit 1
     fi
     if [[ "$local_bootstrap_release" == *-* && "$hosting_update_channel" != "beta" ]]; then
       echo "Local prerelease installation requires --update-channel beta." >&2
+      drain_streamed_install_input
       exit 1
     fi
-    local_bootstrap_commit="$(resolve_attested_local_release_commit "$local_bootstrap_release")"
+    if ! local_bootstrap_commit="$(resolve_attested_local_release_commit "$local_bootstrap_release")"; then
+      echo "Could not verify the attested Local release commit." >&2
+      drain_streamed_install_input
+      exit 1
+    fi
     if [[ ! "$local_bootstrap_commit" =~ ^[a-f0-9]{40}$ ]]; then
       echo "Could not resolve the attested Local release commit." >&2
+      drain_streamed_install_input
       exit 1
     fi
   fi
@@ -936,11 +984,13 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     fetched_release_commit="$(git -C "$install_base_dir" rev-parse "refs/fased-installer/v${local_bootstrap_release}^{commit}")"
     if [[ "$fetched_release_commit" != "$local_bootstrap_commit" ]]; then
       echo "Release tag commit does not match the attested unified release manifest." >&2
+      drain_streamed_install_input
       exit 1
     fi
     git -C "$install_base_dir" checkout --detach "$local_bootstrap_commit"
     if [[ "$(git -C "$install_base_dir" rev-parse HEAD)" != "$local_bootstrap_commit" ]]; then
       echo "Local release checkout did not land on the attested commit." >&2
+      drain_streamed_install_input
       exit 1
     fi
   fi

@@ -1756,13 +1756,34 @@ async function installLegacyGatewaySuppression(spec, layout) {
 async function waitForLegacyGatewayInactive(spec, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs;
   let activeState = "unknown";
+  let inactiveSince = null;
   while (Date.now() < deadline) {
     const properties = parseSystemdProperties(
       userSystemctl(spec, ["show", "fased-gateway.service", "--property=ActiveState"]),
     );
     activeState = properties.ActiveState || "unknown";
     if (new Set(["inactive", "failed"]).has(activeState)) {
-      return;
+      const pendingJobs = userSystemctl(spec, [
+        "list-jobs",
+        "fased-gateway.service",
+        "--no-legend",
+        "--plain",
+      ]).trim();
+      if (!pendingJobs) {
+        inactiveSince ??= Date.now();
+        if (Date.now() - inactiveSince >= 500) {
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        continue;
+      }
+    }
+    // A reverse dependency can already have queued a start job when the
+    // runtime mask is installed. The mask prevents subsequent starts, while
+    // this second stop drains that pre-existing job before activation.
+    inactiveSince = null;
+    if (new Set(["active", "activating", "reloading", "inactive", "failed"]).has(activeState)) {
+      userSystemctl(spec, ["stop", "fased-gateway.service"]);
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }

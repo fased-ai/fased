@@ -7,21 +7,30 @@ DISTROS="${FASED_SYSTEMD_FIXTURE_DISTROS:-ubuntu,rocky}"
 SCENARIOS="${FASED_SYSTEMD_FIXTURE_SCENARIOS:-fresh-install,install}"
 FIXTURE_DIR="$ROOT_DIR/scripts/docker/protected-local-systemd"
 VERSION="$(node -p 'require(process.argv[1]).version' "$ROOT_DIR/package.json")"
-COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+COMMIT="${FASED_SYSTEMD_FIXTURE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD)}"
+[[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "The protected Local fixture requires an exact 40-character commit." >&2
+  exit 1
+}
 ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR:-}"
 OWN_ARTIFACT_DIR=0
-LEGACY_VERSION="${FASED_SYSTEMD_FIXTURE_LEGACY_VERSION:-0.1.76-rc.7}"
+LEGACY_VERSION="${FASED_SYSTEMD_FIXTURE_LEGACY_VERSION:-0.1.75}"
 LEGACY_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_LEGACY_ARTIFACT_DIR:-}"
 OWN_LEGACY_ARTIFACT_DIR=0
+BRIDGE_VERSION="${FASED_SYSTEMD_FIXTURE_BRIDGE_VERSION:-0.1.76-rc.7}"
+BRIDGE_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_BRIDGE_ARTIFACT_DIR:-}"
+OWN_BRIDGE_ARTIFACT_DIR=0
 
 command -v "$RUNTIME" >/dev/null 2>&1 || {
   echo "Podman is required for the protected Local systemd fixtures." >&2
   exit 1
 }
-command -v gh >/dev/null 2>&1 || {
-  echo "GitHub CLI is required for the literal Protected Local update fixture." >&2
-  exit 1
-}
+if [[ ",$SCENARIOS," == *,install,* ]]; then
+  command -v gh >/dev/null 2>&1 || {
+    echo "GitHub CLI is required for the literal Protected Local update fixture." >&2
+    exit 1
+  }
+fi
 [[ "$RUNTIME" == "podman" ]] || {
   echo "The protected Local systemd fixtures currently require Podman." >&2
   exit 1
@@ -29,6 +38,7 @@ command -v gh >/dev/null 2>&1 || {
 
 GOTMPDIR="${GOTMPDIR:-${TMPDIR:-/tmp}/fased-go-tmp}" \
 GOCACHE="${GOCACHE:-${TMPDIR:-/tmp}/fased-go-cache}" \
+FASED_SIGNER_BUILD_COMMIT="$COMMIT" \
 FASED_SIGNER_TARGETS=linux/amd64 \
   bash "$ROOT_DIR/scripts/release-fased-signerd.sh"
 
@@ -50,25 +60,79 @@ if [[ ",$SCENARIOS," == *,install,* ]]; then
     gh release download "v$LEGACY_VERSION" \
       --repo fased-ai/fased \
       --dir "$LEGACY_ARTIFACT_DIR" \
-      --pattern "fased-hosted-linux-x64-v${LEGACY_VERSION}.tar.gz" \
-      --pattern "fased-hosted-linux-x64-v${LEGACY_VERSION}.tar.gz.sha256"
+      --pattern "install.sh" \
+      --pattern "fased-hosted-release-v2.json" \
+      --pattern "fased-hosted-release-v2.json.attestation.json" \
+      --pattern "fased-hosted-app-v2-linux-x64-v${LEGACY_VERSION}.tar.gz" \
+      --pattern "fased-hosted-deps-linux-x64-*.tar.gz" \
+      --pattern "fased-signerd-linux-amd64"
   fi
-  legacy_asset="$LEGACY_ARTIFACT_DIR/fased-hosted-linux-x64-v${LEGACY_VERSION}.tar.gz"
-  legacy_checksum="$legacy_asset.sha256"
-  [[ -f "$legacy_asset" && -f "$legacy_checksum" ]] || {
-    echo "The protected Local update fixture requires the exact published legacy runtime." >&2
+  legacy_manifest="$LEGACY_ARTIFACT_DIR/fased-hosted-release-v2.json"
+  legacy_app="$LEGACY_ARTIFACT_DIR/fased-hosted-app-v2-linux-x64-v${LEGACY_VERSION}.tar.gz"
+  legacy_dependency="$(
+    find "$LEGACY_ARTIFACT_DIR" -maxdepth 1 -type f \
+      -name 'fased-hosted-deps-linux-x64-*.tar.gz' -print -quit
+  )"
+  [[ -f "$LEGACY_ARTIFACT_DIR/install.sh" &&
+    -f "$legacy_manifest" &&
+    -f "$LEGACY_ARTIFACT_DIR/fased-hosted-release-v2.json.attestation.json" &&
+    -f "$legacy_app" &&
+    -n "$legacy_dependency" &&
+    -f "$legacy_dependency" &&
+    -f "$LEGACY_ARTIFACT_DIR/fased-signerd-linux-amd64" ]] || {
+    echo "The protected Local update fixture requires the complete immutable predecessor release." >&2
     exit 1
   }
-  (
-    cd "$LEGACY_ARTIFACT_DIR"
-    sha256sum -c "$(basename "$legacy_checksum")"
-  )
+  jq -e --arg version "$LEGACY_VERSION" \
+    '.release.version == $version and
+      .release.tag == ("v" + $version) and
+      .signer.release.version == $version and
+      .signer.release.commit == .release.commit' \
+    "$legacy_manifest" >/dev/null
+  if [[ -z "$BRIDGE_ARTIFACT_DIR" ]]; then
+    BRIDGE_ARTIFACT_DIR="$(
+      mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-bridge-artifact.XXXXXX"
+    )"
+    OWN_BRIDGE_ARTIFACT_DIR=1
+    gh release download "v$BRIDGE_VERSION" \
+      --repo fased-ai/fased \
+      --dir "$BRIDGE_ARTIFACT_DIR" \
+      --pattern "fased-hosted-release-v2.json" \
+      --pattern "fased-hosted-app-v2-linux-x64-v${BRIDGE_VERSION}.tar.gz" \
+      --pattern "fased-hosted-deps-linux-x64-*.tar.gz" \
+      --pattern "fased-signerd-linux-amd64"
+  fi
+  bridge_manifest="$BRIDGE_ARTIFACT_DIR/fased-hosted-release-v2.json"
+  bridge_dependency="$(
+    find "$BRIDGE_ARTIFACT_DIR" -maxdepth 1 -type f \
+      -name 'fased-hosted-deps-linux-x64-*.tar.gz' -print -quit
+  )"
+  [[ -f "$bridge_manifest" &&
+    -f "$BRIDGE_ARTIFACT_DIR/fased-hosted-app-v2-linux-x64-v${BRIDGE_VERSION}.tar.gz" &&
+    -n "$bridge_dependency" &&
+    -f "$bridge_dependency" &&
+    -f "$BRIDGE_ARTIFACT_DIR/fased-signerd-linux-amd64" ]] || {
+    echo "The protected Local update fixture requires the complete immutable bridge release." >&2
+    exit 1
+  }
+  jq -e --arg version "$BRIDGE_VERSION" \
+    '.release.version == $version and
+      .release.tag == ("v" + $version) and
+      .signer.release.version == $version and
+      .signer.release.commit == .release.commit' \
+    "$bridge_manifest" >/dev/null
 fi
 if [[ -z "$LEGACY_ARTIFACT_DIR" ]]; then
   LEGACY_ARTIFACT_DIR="$(
     mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-legacy-artifact.XXXXXX"
   )"
   OWN_LEGACY_ARTIFACT_DIR=1
+fi
+if [[ -z "$BRIDGE_ARTIFACT_DIR" ]]; then
+  BRIDGE_ARTIFACT_DIR="$(
+    mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-bridge-artifact.XXXXXX"
+  )"
+  OWN_BRIDGE_ARTIFACT_DIR=1
 fi
 
 cleanup_names=()
@@ -101,6 +165,9 @@ cleanup() {
   if [[ "$OWN_LEGACY_ARTIFACT_DIR" -eq 1 ]]; then
     rm -rf -- "$LEGACY_ARTIFACT_DIR"
   fi
+  if [[ "$OWN_BRIDGE_ARTIFACT_DIR" -eq 1 ]]; then
+    rm -rf -- "$BRIDGE_ARTIFACT_DIR"
+  fi
 }
 trap cleanup EXIT INT TERM HUP
 
@@ -124,13 +191,12 @@ run_fixture_scenario() {
     -e "FASED_FIXTURE_VERSION=$VERSION" \
     -e "FASED_FIXTURE_COMMIT=$COMMIT" \
     -e "FASED_FIXTURE_LEGACY_VERSION=$LEGACY_VERSION" \
+    -e "FASED_FIXTURE_BRIDGE_VERSION=$BRIDGE_VERSION" \
     -v "$ROOT_DIR:/repo:ro,Z" \
     -v "$ARTIFACT_DIR:/artifacts:ro,Z" \
     -v "$LEGACY_ARTIFACT_DIR:/legacy-artifacts:ro,Z" \
+    -v "$BRIDGE_ARTIFACT_DIR:/bridge-artifacts:ro,Z" \
     "$image" >/dev/null
-  if [[ "$distro" == "ubuntu" ]]; then
-    "$RUNTIME" cp "$(command -v gh)" "$name:/usr/bin/gh"
-  fi
   for _ in {1..200}; do
     state="$("$RUNTIME" exec "$name" systemctl is-system-running 2>/dev/null || true)"
     if [[ "$state" == "running" || "$state" == "degraded" ]]; then

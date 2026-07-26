@@ -55,7 +55,8 @@ jobs:
           docker build -t fased-dockerfile-smoke:local -f Dockerfile .
           docker run --rm --entrypoint sh fased-dockerfile-smoke:local -lc 'which fased && fased --version'
 
-      - name: Run installer docker tests
+      - name: Monitor the deployed stable installer
+        if: github.event_name != 'pull_request'
         env:
           FASED_INSTALL_URL: https://fased.ai/install.sh
           FASED_INSTALL_CLI_URL: https://fased.ai/install-cli.sh

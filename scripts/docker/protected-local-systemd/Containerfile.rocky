@@ -6,7 +6,8 @@ RUN dnf install -y \
     acl \
     ca-certificates \
     dbus-daemon \
-    'dnf-command(config-manager)' \
+    diffutils \
+    git \
     iproute \
     jq \
     openssl \
@@ -18,9 +19,6 @@ RUN dnf install -y \
     tar \
     util-linux \
     xz \
-  && dnf config-manager --add-repo \
-    https://cli.github.com/packages/rpm/gh-cli.repo \
-  && dnf install -y gh \
   && dnf clean all \
   && curl -fsSL https://nodejs.org/dist/v24.18.0/node-v24.18.0-linux-x64.tar.xz \
     | tar -xJ --strip-components=1 -C /usr/local \
@@ -28,8 +26,11 @@ RUN dnf install -y \
   && systemctl mask \
     dev-hugepages.mount \
     sys-fs-fuse-connections.mount \
-    systemd-remount-fs.service
+    systemd-remount-fs.service \
+  && install -d -m 0755 /etc/systemd/system/user@.service.d
 
+COPY user-at-no-pam.conf /etc/systemd/system/user@.service.d/90-fased-container-no-pam.conf
+COPY sudo-no-pam.conf /etc/pam.d/sudo
 COPY run.sh /usr/local/bin/fased-protected-local-systemd-fixture
 RUN chmod 0755 /usr/local/bin/fased-protected-local-systemd-fixture
 

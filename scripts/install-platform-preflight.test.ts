@@ -38,6 +38,27 @@ describe("installer platform preflight", () => {
     expect(installer).toContain("--hosting requires systemd as PID 1");
   });
 
+  it("rejects root Local before dependency installation or repository mutation", () => {
+    const rejection = installer.indexOf(
+      "Local installation must run from the intended non-root operator account.",
+    );
+    const dependencyMutation = installer.indexOf(
+      "if ! command -v git >/dev/null 2>&1; then",
+      rejection,
+    );
+    const repositoryMutation = installer.indexOf(
+      'if [[ ! -e "$install_base_dir" ]]; then',
+      rejection,
+    );
+
+    expect(rejection).toBeGreaterThanOrEqual(0);
+    expect(dependencyMutation).toBeGreaterThan(rejection);
+    expect(repositoryMutation).toBeGreaterThan(dependencyMutation);
+    expect(installer).toContain(
+      "the installer will request bounded sudo authorization when required.",
+    );
+  });
+
   it("keeps Debian-family dependency setup noninteractive and activates Corepack with permission", () => {
     expect(installer).toContain("DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a");
     expect(installer).toContain('corepack_dir="$(dirname "$corepack_bin")"');
