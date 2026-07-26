@@ -30,6 +30,7 @@ RUN dnf install -y \
   && install -d -m 0755 /etc/systemd/system/user@.service.d
 
 COPY user-at-no-pam.conf /etc/systemd/system/user@.service.d/90-fased-container-no-pam.conf
+COPY sudo-no-pam.conf /etc/pam.d/sudo
 COPY run.sh /usr/local/bin/fased-protected-local-systemd-fixture
 RUN chmod 0755 /usr/local/bin/fased-protected-local-systemd-fixture
 
