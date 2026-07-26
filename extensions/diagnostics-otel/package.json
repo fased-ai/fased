@@ -1,6 +1,6 @@
 {
   "name": "@fased/diagnostics-otel",
-  "version": "0.1.76-rc.12",
+  "version": "0.1.76-rc.13",
   "description": "FasedAgent diagnostics OpenTelemetry exporter",
   "type": "module",
   "dependencies": {
