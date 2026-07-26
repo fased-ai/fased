@@ -320,11 +320,14 @@ tailscale_serve_route_ready 18789
 
   it("orders fresh, repair, and pre-v2 completion through the same root restart and health gate", () => {
     const rootCoordinator = sliceBetween(installer, "reexec_as_app_user()", "go_modern_enough()");
+    const firstSharedState = rootCoordinator.indexOf("reconcile_hosting_shared_state");
     const childLaunch = rootCoordinator.indexOf("re-executing installer as");
     const rootRestart = rootCoordinator.indexOf("restart_root_managed_hosted_gateway");
     const pairedFinalize = rootCoordinator.indexOf("hosted-transaction finalize");
     const rootHealth = rootCoordinator.indexOf("verify_root_coordinated_hosted_gateway");
 
+    expect(firstSharedState).toBeGreaterThanOrEqual(0);
+    expect(firstSharedState).toBeLessThan(childLaunch);
     expect(childLaunch).toBeGreaterThanOrEqual(0);
     expect(rootRestart).toBeGreaterThan(childLaunch);
     expect(pairedFinalize).toBeGreaterThan(rootRestart);

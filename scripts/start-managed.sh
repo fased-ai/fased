@@ -493,12 +493,38 @@ for managed_log in "$ZROK_RUNTIME_LOG" "$WALLET_SETUP_LOG"; do
   }
 done
 SERVICE_GATEWAY_TOKEN="${FASED_GATEWAY_TOKEN:-}"
-if [ ! -f "$GW_TOKEN_PATH" ]; then
-  if [[ -n "$SERVICE_GATEWAY_TOKEN" ]]; then
-    printf '%s\n' "$SERVICE_GATEWAY_TOKEN" > "$GW_TOKEN_PATH"
-  else
-    openssl rand -hex 32 > "$GW_TOKEN_PATH"
-  fi
+if [[ ( -e "$GW_TOKEN_PATH" || -L "$GW_TOKEN_PATH" ) && \
+  ( ! -f "$GW_TOKEN_PATH" || -L "$GW_TOKEN_PATH" ) ]]; then
+  echo "[managed] ERROR: Gateway token path is not a safe regular file: $GW_TOKEN_PATH"
+  exit 1
+fi
+CONFIG_GATEWAY_TOKEN="$(
+  "$NODE_BIN" -e '
+    const fs = require("node:fs");
+    const configPath = process.argv[1];
+    try {
+      const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      const token = config?.gateway?.auth?.token;
+      if (
+        typeof token === "string" &&
+        /^[\x21-\x7e]{16,512}$/.test(token.trim())
+      ) process.stdout.write(token.trim());
+    } catch {}
+  ' "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}" 2>/dev/null || true
+)"
+DESIRED_GATEWAY_TOKEN="${CONFIG_GATEWAY_TOKEN:-$SERVICE_GATEWAY_TOKEN}"
+CURRENT_GATEWAY_TOKEN=""
+if [[ -f "$GW_TOKEN_PATH" && ! -L "$GW_TOKEN_PATH" ]]; then
+  CURRENT_GATEWAY_TOKEN="$(tr -d '\n' < "$GW_TOKEN_PATH")"
+fi
+if [[ -n "$DESIRED_GATEWAY_TOKEN" && "$CURRENT_GATEWAY_TOKEN" != "$DESIRED_GATEWAY_TOKEN" ]]; then
+  gateway_token_tmp="$(mktemp "${GW_TOKEN_PATH}.tmp.XXXXXXXX")"
+  printf '%s\n' "$DESIRED_GATEWAY_TOKEN" > "$gateway_token_tmp"
+  chmod "$MANAGED_LOG_MODE" "$gateway_token_tmp"
+  mv -f "$gateway_token_tmp" "$GW_TOKEN_PATH"
+elif [[ -z "$CURRENT_GATEWAY_TOKEN" ]]; then
+  openssl rand -hex 32 > "$GW_TOKEN_PATH"
+  chmod "$MANAGED_LOG_MODE" "$GW_TOKEN_PATH"
 fi
 export FASED_GATEWAY_TOKEN="$(tr -d '\n' < "$GW_TOKEN_PATH")"
 

@@ -92,6 +92,11 @@ export const PRE_V2_HOSTING_MIGRATION_MESSAGE = [
   "Never run /home/app/fased/install.sh with sudo or as root.",
   "The current Gateway, signer, wallets, and persistent state were left unchanged.",
 ].join(" ");
+export const PROTECTED_LOCAL_CONTROLLER_UNAVAILABLE_MESSAGE = [
+  "The Protected Local root controller is unavailable, so this update was not started.",
+  "The current Gateway, signer, wallets, and persistent state were left unchanged.",
+  "Run fased doctor --non-interactive and inspect the Protected Local controller service before retrying fased update.",
+].join(" ");
 
 async function measureStage(timings, name, operation, progress = true) {
   const startedAt = Date.now();
@@ -1287,7 +1292,11 @@ async function probeGatewayIdentity(configPath, expectedVersion, timeoutMs = 500
   });
 }
 
-function hostedUpdaterError(error, ambiguous = Boolean(error?.hostUpdaterAmbiguous)) {
+function hostedUpdaterError(
+  error,
+  ambiguous = Boolean(error?.hostUpdaterAmbiguous),
+  protectedLocal = false,
+) {
   const message = error instanceof Error ? error.message : String(error);
   let normalized;
   if (
@@ -1295,7 +1304,12 @@ function hostedUpdaterError(error, ambiguous = Boolean(error?.hostUpdaterAmbiguo
       message,
     )
   ) {
-    normalized = new Error(PRE_V2_HOSTING_MIGRATION_MESSAGE, { cause: error });
+    normalized = new Error(
+      protectedLocal
+        ? PROTECTED_LOCAL_CONTROLLER_UNAVAILABLE_MESSAGE
+        : PRE_V2_HOSTING_MIGRATION_MESSAGE,
+      { cause: error },
+    );
   } else {
     normalized = error instanceof Error ? error : new Error(message);
   }
@@ -1387,7 +1401,9 @@ async function requestHostedSignerTransaction(
       }
       settled = true;
       socket.destroy();
-      reject(hostedUpdaterError(error, ambiguous));
+      reject(
+        hostedUpdaterError(error, ambiguous, socketPath.startsWith("/run/fased-local-controller/")),
+      );
     };
     socket.once("connect", () => {
       requestSent = true;
@@ -4877,13 +4893,20 @@ async function inspectProtectedLocalRuntimeBoundary(
       `Environment=FASED_CONFIG_DIR=${path.dirname(manifest.configPath)}`,
       `Environment=FASED_MANAGED_RUNTIME_ROOT=${applicationCurrentLink}`,
       "Environment=FASED_NODE_BIN=",
+      "Environment=PATH=/usr/local/bin:/usr/bin:/bin",
+      "Environment=FASED_RUNTIME_SOURCE=managed-package", // pragma: allowlist secret
     ]) {
       if (!gatewayUnit.includes(expected)) {
         reasons.push("protected_gateway_service_boundary_outdated");
         break;
       }
     }
-    if (!gatewayLauncher.includes(`"${applicationCurrentLink}/scripts/start-managed.sh"`)) {
+    if (
+      !gatewayLauncher.includes(applicationCurrentLink) ||
+      !gatewayLauncher.includes("/dist/entry.js") ||
+      !gatewayLauncher.includes("gateway --allow-unconfigured --force --bind loopback --port") ||
+      gatewayLauncher.includes("scripts/start-managed.sh")
+    ) {
       reasons.push("protected_gateway_launcher_boundary_outdated");
     }
   } catch {
@@ -5314,8 +5337,12 @@ async function updateManagedRuntime(options) {
       );
     }
     if (isRootManagedProfile(existingManifest.profile)) {
-      await measureStage(timings, "interrupted hosted transaction recovery", () =>
-        recoverHostedReleaseTransaction(paths, options.timeoutMs),
+      await measureStage(
+        timings,
+        existingManifest.profile === "protected-local"
+          ? "interrupted Protected Local transaction recovery"
+          : "interrupted Hosting transaction recovery",
+        () => recoverHostedReleaseTransaction(paths, options.timeoutMs),
       );
       existingManifest = readManagedInstallManifest(paths.manifestPath);
       if (!existingManifest) {

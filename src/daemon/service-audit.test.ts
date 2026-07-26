@@ -127,6 +127,35 @@ describe("auditGatewayServiceConfig", () => {
     ).toEqual([]);
   });
 
+  it("accepts the per-instance Protected Local root launcher", async () => {
+    const audit = await auditGatewayServiceConfig({
+      env: { HOME: "/home/alice" },
+      platform: "linux",
+      expectedGatewayToken: "config-owned-token",
+      command: {
+        programArguments: [
+          "/opt/fased/local/0123456789abcdef/gateway-launch", // pragma: allowlist secret
+        ],
+        environment: {
+          PATH: "/usr/local/bin:/usr/bin:/bin",
+          FASED_HOST_PROFILE: "local",
+          FASED_PROTECTED_LOCAL: "1",
+        },
+        sourcePath: "/etc/systemd/system/fased-gateway-0123456789abcdef.service",
+      },
+    });
+    expect(
+      audit.issues.filter((issue) =>
+        [
+          SERVICE_AUDIT_CODES.gatewayCommandMissing,
+          SERVICE_AUDIT_CODES.gatewayTokenMismatch,
+          SERVICE_AUDIT_CODES.gatewayPathMissing,
+          SERVICE_AUDIT_CODES.gatewayPathMissingDirs,
+        ].includes(issue.code as never),
+      ),
+    ).toEqual([]);
+  });
+
   it("reads gateway service ports from split and equals-form arguments", () => {
     expect(
       readGatewayServiceCommandPort(["/usr/bin/node", "entry.js", "gateway", "--port", "18888"]),

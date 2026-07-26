@@ -772,6 +772,96 @@ async function protectLegacyMaterial(legacy, spec) {
   }
 }
 
+async function inspectInstalledPluginTree(pluginRoot, spec) {
+  const canonicalRoot = await fsp.realpath(pluginRoot);
+  const extensionsRoot = path.join(spec.stateDir, "extensions");
+  assertPathBelow(extensionsRoot, canonicalRoot, "protected Local plugin");
+  const rootInfo = await fsp.lstat(canonicalRoot);
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
+    fail(`protected Local plugin root is unsafe: ${pluginRoot}`);
+  }
+  const pending = [canonicalRoot];
+  const entries = [];
+  let totalBytes = 0;
+  while (pending.length > 0) {
+    const candidate = pending.pop();
+    const info = await fsp.lstat(candidate);
+    entries.push({ candidate, info });
+    if (entries.length > 200_000) {
+      fail(`protected Local plugin tree is too large: ${pluginRoot}`);
+    }
+    if (info.isSymbolicLink()) {
+      const target = await fsp.realpath(candidate);
+      const relative = path.relative(canonicalRoot, target);
+      if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+        fail(`protected Local plugin symlink escapes its root: ${candidate}`);
+      }
+      continue;
+    }
+    if (info.isDirectory()) {
+      for (const child of await fsp.readdir(candidate)) {
+        pending.push(path.join(candidate, child));
+      }
+      continue;
+    }
+    if (!info.isFile() || info.nlink !== 1) {
+      fail(`protected Local plugin contains an unsafe entry: ${candidate}`);
+    }
+    totalBytes += info.size;
+    if (totalBytes > 2 * 1024 * 1024 * 1024) {
+      fail(`protected Local plugin tree exceeds the size limit: ${pluginRoot}`);
+    }
+  }
+  return { canonicalRoot, entries };
+}
+
+async function hardenInstalledPlugins(spec) {
+  const config = parseConfig(path.join(spec.stateDir, "fased.json"));
+  const installs = config.plugins?.installs ?? {};
+  const extensionsRoot = path.join(spec.stateDir, "extensions");
+  const trees = [];
+  for (const [pluginId, install] of Object.entries(installs).toSorted(([left], [right]) =>
+    left.localeCompare(right),
+  )) {
+    if (!/^[a-z0-9][a-z0-9._-]*$/u.test(pluginId)) {
+      fail(`configured plugin ID is unsafe: ${pluginId}`);
+    }
+    const installPath = String(install?.installPath ?? "").trim();
+    if (!installPath || !fs.existsSync(installPath)) {
+      fail(`configured plugin ${pluginId} has no installed runtime to migrate`);
+    }
+    if (install?.source !== "npm" || !String(install?.integrity ?? "").trim()) {
+      fail(
+        `configured plugin ${pluginId} is not a pinned npm installation and cannot enter Protected Local`,
+      );
+    }
+    const expectedPath = path.join(extensionsRoot, pluginId);
+    if (path.resolve(installPath) !== expectedPath) {
+      fail(`configured plugin ${pluginId} is outside the managed extensions directory`);
+    }
+    const packageManifest = parseConfig(path.join(installPath, "package.json"));
+    if (!String(packageManifest.name ?? "").trim() || packageManifest.version !== install.version) {
+      fail(`configured plugin ${pluginId} does not match its recorded package identity`);
+    }
+    trees.push(await inspectInstalledPluginTree(installPath, spec));
+  }
+  if (trees.length === 0) {
+    return;
+  }
+  for (const tree of trees) {
+    for (const { candidate, info } of tree.entries.toReversed()) {
+      if (info.isSymbolicLink()) {
+        await fsp.lchown(candidate, 0, 0);
+      } else {
+        await fsp.chown(candidate, 0, 0);
+        await fsp.chmod(candidate, info.isDirectory() ? 0o755 : info.mode & 0o111 ? 0o755 : 0o644);
+      }
+    }
+  }
+  await fsp.chown(extensionsRoot, 0, 0);
+  await fsp.chmod(extensionsRoot, 0o755);
+}
+
 async function shareApplicationState(spec, configGroup, legacy) {
   const trustedHardlinks = await resolveTrustedLegacyRuntimeHardlinks(spec);
   await fsp.mkdir(spec.stateDir, { recursive: true, mode: 0o2770 });
@@ -787,6 +877,7 @@ async function shareApplicationState(spec, configGroup, legacy) {
   ]) {
     await hardenOperatorRuntime(protectedRuntimePath, spec, new Set(), trustedHardlinks);
   }
+  await hardenInstalledPlugins(spec);
   await protectLegacyMaterial(legacy, spec);
 }
 
@@ -1000,15 +1091,21 @@ function verifyLogicalWalletState(spec, layout) {
   );
 }
 
-function protectedLocalGatewayHealthMatches(payload, statusCode, expectedVersion) {
+function protectedLocalGatewayHealthMatches(payload, statusCode, expectedVersion, expectedPid) {
   return (
     statusCode === 200 &&
     payload?.version === expectedVersion &&
-    new Set(["managed-package", "packaged-runtime"]).has(payload?.runtimeSource)
+    new Set(["managed-package", "packaged-runtime"]).has(payload?.runtimeSource) &&
+    (!expectedPid || payload?.pid === expectedPid)
   );
 }
 
-async function probeGatewayHealth(spec, timeoutMs = 2_000) {
+async function probeGatewayHealth(
+  spec,
+  expectedPid,
+  timeoutMs = 2_000,
+  expectedVersion = spec.releaseVersion,
+) {
   return await new Promise((resolve) => {
     const request = http.get(
       {
@@ -1029,12 +1126,13 @@ async function probeGatewayHealth(spec, timeoutMs = 2_000) {
             const matches = protectedLocalGatewayHealthMatches(
               payload,
               response.statusCode,
-              spec.releaseVersion,
+              expectedVersion,
+              expectedPid,
             );
             resolve({
               ok: matches,
               conflict: !matches,
-              detail: `status=${response.statusCode ?? "unknown"} version=${payload?.version ?? "unknown"} runtimeSource=${payload?.runtimeSource ?? "unknown"}`,
+              detail: `status=${response.statusCode ?? "unknown"} version=${payload?.version ?? "unknown"} runtimeSource=${payload?.runtimeSource ?? "unknown"} pid=${payload?.pid ?? "unknown"}`,
             });
           } catch (error) {
             resolve({
@@ -1095,28 +1193,116 @@ async function waitForGatewayPortFree(spec, timeoutMs = 10_000) {
   );
 }
 
-async function verifyGatewayHealth(spec, timeoutMs = 120_000) {
+function readGatewayServiceState(layout) {
+  const systemctl = systemBinary(["/usr/bin/systemctl", "/bin/systemctl"], "systemctl");
+  const properties = parseSystemdProperties(
+    runSystem(systemctl, [
+      "show",
+      layout.gatewayUnit,
+      "--property=ActiveState",
+      "--property=SubState",
+      "--property=MainPID",
+      "--property=NRestarts",
+      "--property=ExecMainStatus",
+      "--property=Result",
+      "--no-pager",
+    ]),
+  );
+  return {
+    activeState: properties.ActiveState || "unknown",
+    subState: properties.SubState || "unknown",
+    mainPid: Number.parseInt(properties.MainPID || "0", 10),
+    restarts: Number.parseInt(properties.NRestarts || "0", 10),
+    execMainStatus: Number.parseInt(properties.ExecMainStatus || "0", 10),
+    result: properties.Result || "unknown",
+  };
+}
+
+function readProcessUid(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 1) {
+    return null;
+  }
+  try {
+    const match = fs.readFileSync(`/proc/${pid}/status`, "utf8").match(/^Uid:\s+(\d+)/mu);
+    return match ? Number.parseInt(match[1], 10) : null;
+  } catch {
+    return null;
+  }
+}
+
+function gatewayFailureJournal(layout) {
+  try {
+    const journalctl = systemBinary(["/usr/bin/journalctl", "/bin/journalctl"], "journalctl");
+    return runSystem(journalctl, [
+      "-u",
+      layout.gatewayUnit,
+      "-n",
+      "30",
+      "--no-pager",
+      "--output=short",
+    ]).trim();
+  } catch {
+    return "";
+  }
+}
+
+async function verifyGatewayHealth(spec, layout, timeoutMs = 120_000) {
   const cliEntrypoint = path.join(spec.runtimeDir, "fased.mjs");
   if (!fs.existsSync(cliEntrypoint)) {
     fail("protected Local application runtime has no CLI entrypoint");
   }
+  const gatewayIdentity =
+    passwdRecord(layout.gatewayUser) ??
+    fail("protected Local Gateway service identity is unavailable");
   const deadline = Date.now() + timeoutMs;
   let lastDetail = "Gateway health endpoint was unavailable";
+  let observedPid = 0;
+  let baselineRestarts;
   while (Date.now() < deadline) {
-    const result = await probeGatewayHealth(spec);
+    const service = readGatewayServiceState(layout);
+    baselineRestarts ??= service.restarts;
+    if (
+      service.activeState === "failed" ||
+      service.result === "exit-code" ||
+      (service.activeState === "inactive" && service.execMainStatus !== 0) ||
+      service.restarts > baselineRestarts
+    ) {
+      const journal = gatewayFailureJournal(layout);
+      fail(
+        `protected Local Gateway service failed before health verification (active=${service.activeState} sub=${service.subState} status=${service.execMainStatus} restarts=${service.restarts})${journal ? `\n${journal}` : ""}`,
+      );
+    }
+    if (Number.isSafeInteger(service.mainPid) && service.mainPid > 1) {
+      observedPid = service.mainPid;
+    }
+    const processUid = readProcessUid(observedPid);
+    const result = await probeGatewayHealth(spec, observedPid || undefined);
     if (result.ok) {
+      if (service.activeState !== "active" || observedPid <= 1) {
+        fail(
+          `protected Local Gateway health was served outside the active target unit (active=${service.activeState} pid=${observedPid})`,
+        );
+      }
+      if (processUid !== gatewayIdentity.uid) {
+        fail(
+          `protected Local Gateway health-serving PID ${observedPid} has UID ${processUid ?? "unknown"}, expected ${gatewayIdentity.uid}`,
+        );
+      }
       return;
     }
-    lastDetail = result.detail;
+    lastDetail =
+      processUid === null || processUid === gatewayIdentity.uid
+        ? result.detail
+        : `${result.detail}; service PID ${observedPid} is still transitioning from UID ${processUid}`;
     if (result.conflict) {
       fail(
         `protected Local Gateway port 127.0.0.1:${spec.gatewayPort} is owned by a non-target service (${lastDetail})`,
       );
     }
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
   fail(
-    `protected Local Gateway health did not match ${spec.releaseVersion} on 127.0.0.1:${spec.gatewayPort} within ${timeoutMs}ms (${lastDetail})`,
+    `protected Local Gateway service health did not match ${spec.releaseVersion} on 127.0.0.1:${spec.gatewayPort} within ${timeoutMs}ms (${lastDetail})`,
   );
 }
 
@@ -1843,6 +2029,65 @@ async function retireLegacyGateway(transaction) {
   }
 }
 
+function previousLegacyGatewayVersion(transaction) {
+  if (!transaction.manifestSnapshot?.existed) {
+    fail("legacy Local Gateway restore has no previous managed manifest");
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(transaction.manifestSnapshot.content.toString("utf8"));
+  } catch {
+    fail("legacy Local Gateway restore has an unreadable previous managed manifest");
+  }
+  const version = String(manifest?.runtime?.activeVersion ?? "").trim();
+  if (!RELEASE_PATTERN.test(version)) {
+    fail("legacy Local Gateway restore has no exact previous release version");
+  }
+  return version;
+}
+
+async function waitForLegacyGatewayRestored(transaction, timeoutMs = 30_000) {
+  const { spec } = transaction;
+  const expectedVersion = previousLegacyGatewayVersion(transaction);
+  const deadline = Date.now() + timeoutMs;
+  let lastDetail = "legacy Gateway did not start";
+  while (Date.now() < deadline) {
+    let properties = {};
+    try {
+      properties = parseSystemdProperties(
+        userSystemctl(spec, [
+          "show",
+          "fased-gateway.service",
+          "--property=ActiveState",
+          "--property=SubState",
+          "--property=Result",
+        ]),
+      );
+    } catch (error) {
+      lastDetail = error.message;
+    }
+    const health = await probeGatewayHealth(spec, undefined, 1_500, expectedVersion);
+    if (properties.ActiveState === "active" && health.ok) {
+      return;
+    }
+    lastDetail = `active=${properties.ActiveState || "unknown"} sub=${properties.SubState || "unknown"} result=${properties.Result || "unknown"}; ${health.detail}`;
+    try {
+      userSystemctl(spec, ["reset-failed", "fased-gateway.service"]);
+    } catch {
+      // A concurrent reverse dependency may already be replacing the failed job.
+    }
+    try {
+      userSystemctl(spec, ["start", "--no-block", "fased-gateway.service"]);
+    } catch {
+      // Poll the unit and exact health below; a concurrent start can supersede this request.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  fail(
+    `legacy Local Gateway did not restore exact release ${expectedVersion} within ${timeoutMs}ms (${lastDetail})`,
+  );
+}
+
 async function restoreLegacyGateway(transaction) {
   const { spec, layout, legacyGatewayState } = transaction;
   if (!legacyGatewayState) {
@@ -1857,7 +2102,7 @@ async function restoreLegacyGateway(transaction) {
     return;
   }
   const paths = legacyGatewaySuppressionPaths(spec, layout);
-  await fsp.rm(paths.activeMarker, { force: true });
+  await waitForGatewayPortFree(spec);
   await restoreCapturedFile(paths.dropIn, legacyGatewayState.dropInSnapshot);
   if (!legacyGatewayState.dropInSnapshot.existed) {
     await fsp.rmdir(paths.directory).catch((error) => {
@@ -1866,7 +2111,11 @@ async function restoreLegacyGateway(transaction) {
       }
     });
   }
+  await fsp.rm(paths.activeMarker, { force: true });
   userSystemctl(spec, ["daemon-reload"]);
+  if (!legacyGatewayState.exists) {
+    return;
+  }
   userSystemctl(spec, ["unmask", "--runtime", "fased-gateway.service"]);
   if (legacyGatewayState.unitFileState.startsWith("enabled")) {
     userSystemctl(spec, ["enable", "fased-gateway.service"]);
@@ -1874,7 +2123,12 @@ async function restoreLegacyGateway(transaction) {
     userSystemctl(spec, ["disable", "fased-gateway.service"]);
   }
   if (legacyGatewayState.active) {
-    userSystemctl(spec, ["start", "fased-gateway.service"]);
+    try {
+      userSystemctl(spec, ["start", "--no-block", "fased-gateway.service"]);
+    } catch {
+      // The bounded exact-health loop handles a concurrent reverse-dependency start.
+    }
+    await waitForLegacyGatewayRestored(transaction);
   } else {
     userSystemctl(spec, ["stop", "fased-gateway.service"]);
   }
@@ -2118,8 +2372,7 @@ async function activatePreparedBootstrapTransaction(transaction) {
     verifyGatewayLaunchInputs(spec, layout);
     runSystem(systemctl, ["enable", layout.gatewayUnit]);
     runSystem(systemctl, ["restart", layout.gatewayUnit]);
-    runSystem(systemctl, ["is-active", "--quiet", layout.gatewayUnit]);
-    await verifyGatewayHealth(spec, spec.gatewayHealthTimeoutMs);
+    await verifyGatewayHealth(spec, layout, spec.gatewayHealthTimeoutMs);
     await retireLegacyGateway(transaction);
     await removeLegacySignerMaterial(transaction.legacy);
     await fsp.rm(path.join(layout.stateDir, "bootstrap-transaction.json"), { force: true });
@@ -2322,8 +2575,7 @@ async function installProtectedLocal(params) {
         verifyGatewayLaunchInputs(spec, layout);
         runSystem(systemctl, ["enable", layout.gatewayUnit]);
         runSystem(systemctl, ["restart", layout.gatewayUnit]);
-        runSystem(systemctl, ["is-active", "--quiet", layout.gatewayUnit]);
-        await verifyGatewayHealth(spec, spec.gatewayHealthTimeoutMs);
+        await verifyGatewayHealth(spec, layout, spec.gatewayHealthTimeoutMs);
       }
       const result = {
         schemaVersion: 1,
@@ -2451,8 +2703,7 @@ async function installProtectedLocal(params) {
       verifyGatewayLaunchInputs(spec, layout);
       runSystem(systemctl, ["enable", layout.gatewayUnit]);
       runSystem(systemctl, ["restart", layout.gatewayUnit]);
-      runSystem(systemctl, ["is-active", "--quiet", layout.gatewayUnit]);
-      await verifyGatewayHealth(spec, spec.gatewayHealthTimeoutMs);
+      await verifyGatewayHealth(spec, layout, spec.gatewayHealthTimeoutMs);
       await retireLegacyGateway(transaction);
       await removeLegacySignerMaterial(legacy);
       await fsp.rm(path.join(layout.stateDir, "bootstrap-transaction.json"), { force: true });
@@ -2572,6 +2823,8 @@ if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
 export const __testing = Object.freeze({
   buildProtectedLocalBootstrapSpec,
   hardenOperatorRuntime,
+  hardenInstalledPlugins,
+  inspectInstalledPluginTree,
   isRestorableLegacyGatewayUnitFileState,
   gatewayAclGrantState,
   legacyInstallReferencesUserGateway,
@@ -2583,6 +2836,7 @@ export const __testing = Object.freeze({
   resolveTrustedLegacyRuntimeHardlinks,
   resolveLegacySignerPaths,
   protectedLocalGatewayHealthMatches,
+  previousLegacyGatewayVersion,
   verifySignerReleaseIdentity,
   buildControllerIdentity,
 });

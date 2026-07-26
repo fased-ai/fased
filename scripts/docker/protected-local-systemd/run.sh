@@ -923,7 +923,8 @@ for bridge_attempt in 1 2 3; do
   bridge_status=$?
   set -e
   [[ "$bridge_status" -eq 0 ]] && break
-  if ! grep -F "Detected unsettled top-level await" /tmp/bridge-update.err >/dev/null; then
+  if ! grep -F "Detected unsettled top-level await" /tmp/bridge-update.err >/dev/null &&
+    ! grep -F "commit cleanup is pending" /tmp/bridge-update.err >/dev/null; then
     exit "$bridge_status"
   fi
   sleep 1
@@ -997,7 +998,7 @@ inject_failed_target_gateway() {
   local candidate_relative=""
   local instance_id=""
   for _ in {1..12000}; do
-    for candidate in /opt/fased/local/*/application/current/scripts/start-managed.sh; do
+    for candidate in /opt/fased/local/*/gateway-launch; do
       [[ -f "$candidate" ]] || continue
       candidate_relative="${candidate#/opt/fased/local/}"
       instance_id="${candidate_relative%%/*}"

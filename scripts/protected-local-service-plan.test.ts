@@ -43,6 +43,10 @@ describe("Protected Local service plan", () => {
       "FASED_MANAGED_RUNTIME_ROOT=/opt/fased/local/0123456789abcdef/application/current", // pragma: allowlist secret
     );
     expect(gateway).toContain("FASED_NODE_BIN=/usr/bin/node");
+    expect(gateway).toContain("Environment=PATH=/usr/local/bin:/usr/bin:/bin");
+    expect(gateway).toContain(
+      "Environment=FASED_RUNTIME_SOURCE=managed-package", // pragma: allowlist secret
+    );
     expect(gateway).toContain(
       "ExecStartPre=/usr/bin/test -s /var/lib/fased-local/0123456789abcdef/controller/gateway-activation-ready",
     );
@@ -54,6 +58,17 @@ describe("Protected Local service plan", () => {
     expect(result.files.gatewayLauncher.content).toContain(
       "protected Local Gateway configuration is unavailable",
     );
+    expect(result.files.gatewayLauncher.content).toContain('exec "/usr/bin/node"');
+    expect(result.files.gatewayLauncher.content).toContain(
+      'gateway --allow-unconfigured --force --bind loopback --port "18789"',
+    );
+    expect(result.files.gatewayLauncher.content).toContain(
+      'export FASED_VERSION="$runtime_version"',
+    );
+    expect(result.files.gatewayLauncher.content).toContain(
+      "protected Local Gateway release identity is unavailable or inconsistent",
+    );
+    expect(result.files.gatewayLauncher.content).not.toContain("scripts/start-managed.sh");
     expect(signer).toContain("User=fssg-0123456789abcdef");
     expect(signer).toContain("SupplementaryGroups=fsgw-0123456789abcdef fsop-0123456789abcdef");
     expect(signer).toContain("-application-uid 61001");

@@ -106,7 +106,9 @@ Environment=FASED_CONFIG_DIR=${escaped.appStateDir}
 Environment=FASED_CONFIG_PATH=${escaped.appStateDir}/fased.json
 Environment=FASED_MANAGED_RUNTIME_ROOT=${escaped.repoDir}
 Environment=FASED_NODE_BIN=${escaped.nodeBinary}
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Environment=FASED_GATEWAY_MODE=managed
+Environment=FASED_RUNTIME_SOURCE=managed-package
 Environment=FASED_MANAGED_INTERNAL=1
 Environment=FASED_GATEWAY_SERVICE=1
 Environment=FASED_GATEWAY_PORT=${gatewayPort}
@@ -236,7 +238,40 @@ set -euo pipefail
   echo "protected Local Gateway configuration is unavailable" >&2
   exit 78
 }
-exec /bin/bash "${repoDir}/scripts/start-managed.sh"
+gateway_entry=""
+for candidate in \
+  "${repoDir}/dist/entry.js" \
+  "${repoDir}/dist/entry.mjs" \
+  "${repoDir}/dist/index.js" \
+  "${repoDir}/dist/index.mjs"; do
+  if [[ -f "$candidate" && ! -L "$candidate" ]]; then
+    gateway_entry="$candidate"
+    break
+  fi
+done
+[[ -n "$gateway_entry" ]] || {
+  echo "protected Local Gateway entrypoint is unavailable" >&2
+  exit 78
+}
+runtime_version="$("${nodeBinary}" -e '
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const root = process.argv[1];
+  const packageVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+  const buildVersion = JSON.parse(fs.readFileSync(path.join(root, "dist", "build-info.json"), "utf8")).version;
+  if (typeof packageVersion !== "string" || !packageVersion.trim() || packageVersion !== buildVersion) {
+    process.exit(1);
+  }
+  process.stdout.write(packageVersion.trim());
+' "${repoDir}")" || {
+  echo "protected Local Gateway release identity is unavailable or inconsistent" >&2
+  exit 78
+}
+export FASED_VERSION="$runtime_version"
+exec "${nodeBinary}" \
+  --disable-warning=ExperimentalWarning \
+  --disable-warning=DEP0040 \
+  "$gateway_entry" gateway --allow-unconfigured --force --bind loopback --port "${gatewayPort}"
 `;
   const operatorSocketFinalizer = `#!/usr/bin/env bash
 set -euo pipefail
