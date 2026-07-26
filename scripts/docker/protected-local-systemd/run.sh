@@ -911,11 +911,29 @@ managed_update_env=(
 # Reproduce the owner-relevant support-floor topology without mixing releases:
 # the immutable v0.1.75 updater installs immutable RC7 in the same-user layout.
 # RC7's promoted updater then owns the one-command Protected Local migration.
-runuser -u testop -- env "${managed_update_env[@]}" \
-  "$state/install-cache/npm-global/bin/fased" update --channel beta --timeout 120 \
-  >/tmp/bridge-update.out 2>/tmp/bridge-update.err
-grep -F "Updated Fased ${legacy_version} -> ${bridge_version}" \
-  /tmp/bridge-update.out >/dev/null
+: >/tmp/bridge-update.out
+: >/tmp/bridge-update.err
+bridge_status=1
+for bridge_attempt in 1 2 3; do
+  set +e
+  runuser -u testop -- env "${managed_update_env[@]}" \
+    "$state/install-cache/npm-global/bin/fased" update --channel beta --timeout 120 \
+    >>/tmp/bridge-update.out 2>>/tmp/bridge-update.err
+  bridge_status=$?
+  set -e
+  [[ "$bridge_status" -eq 0 ]] && break
+  if ! grep -F "Detected unsettled top-level await" /tmp/bridge-update.err >/dev/null; then
+    exit "$bridge_status"
+  fi
+  sleep 1
+done
+[[ "$bridge_status" -eq 0 ]]
+if ! grep -F "Updated Fased ${legacy_version} -> ${bridge_version}" \
+  /tmp/bridge-update.out >/dev/null &&
+  ! grep -F "Already current: ${bridge_version}" /tmp/bridge-update.out >/dev/null; then
+  echo "The immutable bridge updater did not converge to ${bridge_version}." >&2
+  exit 1
+fi
 test "$(jq -er .profile "$state/install.json")" = "local"
 test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$bridge_version"
 test "$(jq -er .updater.version "$state/install.json")" = "$bridge_version"
