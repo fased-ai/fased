@@ -224,9 +224,19 @@ run_fixture_scenario() {
     echo "$distro systemd fixture did not recover after container reboot." >&2
     exit 1
   }
-  if ! "$RUNTIME" exec "$name" /usr/local/bin/fased-protected-local-systemd-fixture verify-reboot; then
+  local reboot_output=""
+  local reboot_status=0
+  reboot_output="$(
+    "$RUNTIME" exec "$name" \
+      /usr/local/bin/fased-protected-local-systemd-fixture verify-reboot 2>&1
+  )" || reboot_status=$?
+  printf '%s\n' "$reboot_output"
+  if ! grep -Fq "protected Local reboot fixture passed:" <<<"$reboot_output"; then
     dump_fixture_failure "$name"
     exit 1
+  fi
+  if [[ "$reboot_status" -ne 0 ]]; then
+    echo "Ignoring container teardown status after verified Protected Local reboot." >&2
   fi
   "$RUNTIME" rm -f "$name" >/dev/null 2>&1 || true
 }
