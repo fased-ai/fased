@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.15
+
+- Reuse green pull-request checks when merged main has the exact tested tree,
+  avoiding a duplicate full release matrix after squash merge.
+- Build one exact Protected Local fixture artifact and reuse it across parallel
+  Ubuntu and Rocky lifecycle checks.
+- Keep version-only release work limited to lightweight version and release
+  identity validation.
+
 ## 0.1.76-rc.14
 
 - Complete Protected Local fresh-install and migration acceptance on Ubuntu and
