@@ -8,6 +8,7 @@ version="${FASED_FIXTURE_VERSION:?missing fixture version}"
 commit="${FASED_FIXTURE_COMMIT:?missing fixture commit}"
 legacy_version="${FASED_FIXTURE_LEGACY_VERSION:-0.1.75}"
 bridge_version="${FASED_FIXTURE_BRIDGE_VERSION:-0.1.76-rc.7}"
+preinstalled_tools="${FASED_FIXTURE_PREINSTALLED_TOOLS:-0}"
 digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 release_root="/var/lib/fased-installer/releases/v${version}/${digest}/extract/package"
 root_store="$(dirname "$(dirname "$release_root")")"
@@ -649,11 +650,19 @@ chmod 0644 "$selected_target"
 
 if [[ "$phase" == "fresh-install" ]]; then
   fresh_prepare_elapsed="$((SECONDS - fixture_started))"
-  rm -f /usr/local/bin/gh /usr/local/bin/jq /usr/bin/gh /usr/bin/jq
-  if runuser -u testop -- env PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    /bin/bash -lc 'command -v gh || command -v jq'; then
-    echo "fresh Local fixture did not start without gh and jq" >&2
-    exit 1
+  if [[ "$preinstalled_tools" == "1" ]]; then
+    install -m 0755 /opt/fased-fixture-bootstrap-tools/gh /usr/local/bin/gh
+    install -m 0755 /opt/fased-fixture-bootstrap-tools/jq /usr/local/bin/jq
+    command -v gh >/dev/null
+    command -v jq >/dev/null
+    gh attestation verify --help >/dev/null
+  else
+    rm -f /usr/local/bin/gh /usr/local/bin/jq /usr/bin/gh /usr/bin/jq
+    if runuser -u testop -- env PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+      /bin/bash -lc 'command -v gh || command -v jq'; then
+      echo "fresh Local fixture did not start without gh and jq" >&2
+      exit 1
+    fi
   fi
   fresh_env=(
     HOME=/home/testop

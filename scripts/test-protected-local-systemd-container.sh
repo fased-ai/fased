@@ -15,6 +15,7 @@ COMMIT="${FASED_SYSTEMD_FIXTURE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD)}"
 ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR:-}"
 OWN_ARTIFACT_DIR=0
 IMAGE_CACHE_DIR="${FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR:-}"
+PREINSTALLED_TOOLS="${FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS:-0}"
 LEGACY_VERSION="${FASED_SYSTEMD_FIXTURE_LEGACY_VERSION:-0.1.75}"
 LEGACY_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_LEGACY_ARTIFACT_DIR:-}"
 OWN_LEGACY_ARTIFACT_DIR=0
@@ -34,6 +35,10 @@ if [[ ",$SCENARIOS," == *,install,* ]]; then
 fi
 [[ "$RUNTIME" == "podman" ]] || {
   echo "The protected Local systemd fixtures currently require Podman." >&2
+  exit 1
+}
+[[ "$PREINSTALLED_TOOLS" == "0" || "$PREINSTALLED_TOOLS" == "1" ]] || {
+  echo "FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS must be 0 or 1." >&2
   exit 1
 }
 
@@ -200,6 +205,7 @@ run_fixture_scenario() {
     -e "FASED_FIXTURE_COMMIT=$COMMIT" \
     -e "FASED_FIXTURE_LEGACY_VERSION=$LEGACY_VERSION" \
     -e "FASED_FIXTURE_BRIDGE_VERSION=$BRIDGE_VERSION" \
+    -e "FASED_FIXTURE_PREINSTALLED_TOOLS=$PREINSTALLED_TOOLS" \
     -v "$ROOT_DIR:/repo:ro,Z" \
     -v "$FIXTURE_DIR/run.sh:/usr/local/bin/fased-protected-local-systemd-fixture:ro,Z" \
     -v "$ARTIFACT_DIR:/artifacts:ro,Z" \

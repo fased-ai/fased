@@ -478,6 +478,7 @@ jobs:
           FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install
           FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/protected-local-artifact
           FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
+          FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: ${{ matrix.distro == 'rocky' && '1' || '0' }}
         run: bash scripts/test-protected-local-systemd-container.sh
 
   version-identity:
