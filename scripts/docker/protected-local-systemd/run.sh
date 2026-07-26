@@ -871,52 +871,26 @@ legacy_public_key="$(jq -er '.address // .wallet.publicKey' /tmp/legacy-wallet.j
 
 verify_legacy_wallet() {
   local output="$1"
-  runuser -u testop -- "$legacy_binary" admin wallet readiness \
-    --control-socket "$legacy_control" \
-    --wallet-id agent \
-    >"$output"
-  jq -e --arg publicKey "$legacy_public_key" \
-    '.ready == true and .role == "agent" and .publicKey == $publicKey' \
-    "$output" >/dev/null
+  local error_output="${output}.err"
+  for _ in {1..200}; do
+    if [[ -S "$legacy_control" ]] &&
+      runuser -u testop -- "$legacy_binary" admin wallet readiness \
+        --control-socket "$legacy_control" \
+        --wallet-id agent \
+        >"$output" 2>"$error_output" &&
+      jq -e --arg publicKey "$legacy_public_key" \
+        '.ready == true and .role == "agent" and .publicKey == $publicKey' \
+        "$output" >/dev/null; then
+      rm -f -- "$error_output"
+      return 0
+    fi
+    sleep 0.1
+  done
+  cat "$error_output" >&2 || true
+  return 1
 }
 verify_legacy_wallet /tmp/legacy-readiness.json
 
-prepare_restrictive_home_acl
-original_home_acl="$(capture_home_acl)"
-legacy_gateway_version="$legacy_version"
-user_unit_dir=/home/testop/.config/systemd/user
-test -s "$user_unit_dir/fased-gateway.service"
-cat >"$user_unit_dir/fased-fixture-gateway-reactivator.service" <<'EOF_REACTIVATOR_SERVICE'
-[Unit]
-Description=Fased fixture legacy Gateway reverse dependency
-After=fased-gateway.service
-Wants=fased-gateway.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/true
-EOF_REACTIVATOR_SERVICE
-cat >"$user_unit_dir/fased-fixture-gateway-reactivator.timer" <<'EOF_REACTIVATOR_TIMER'
-[Unit]
-Description=Repeatedly exercise the legacy Gateway reverse dependency
-
-[Timer]
-OnBootSec=1
-OnUnitActiveSec=1
-Unit=fased-fixture-gateway-reactivator.service
-
-[Install]
-WantedBy=timers.target
-EOF_REACTIVATOR_TIMER
-chown testop:testop \
-  "$user_unit_dir/fased-fixture-gateway-reactivator.service" \
-  "$user_unit_dir/fased-fixture-gateway-reactivator.timer"
-chmod 0600 "$user_unit_dir"/*.service "$user_unit_dir"/*.timer
-user_systemctl daemon-reload
-user_systemctl enable --now fased-fixture-gateway-reactivator.timer
-wait_for_gateway_version "$legacy_gateway_version"
-
-original_manifest_sha="$(sha256sum "$state/install.json" | awk '{print $1}')"
 original_key_sha="$(sha256sum "$legacy_master_key" | awk '{print $1}')"
 original_registry_sha="$(sha256sum "$wallet_dir/provider-registry.v1.json" | awk '{print $1}')"
 managed_update_env=(
@@ -957,7 +931,45 @@ test "$(sha256sum "$legacy_master_key" | awk '{print $1}')" = "$original_key_sha
 test "$(sha256sum "$wallet_dir/provider-registry.v1.json" | awk '{print $1}')" = \
   "$original_registry_sha"
 verify_legacy_wallet /tmp/bridge-agent.json
+
+# Reproduce the restrictive owner home and a continuously queued reverse
+# dependency only after the immutable bridge update has established the exact
+# owner-relevant RC7 topology. These conditions exercise the target fence; they
+# must not interfere with constructing the predecessor boundary itself.
+prepare_restrictive_home_acl
+original_home_acl="$(capture_home_acl)"
 legacy_gateway_version="$bridge_version"
+user_unit_dir=/home/testop/.config/systemd/user
+test -s "$user_unit_dir/fased-gateway.service"
+cat >"$user_unit_dir/fased-fixture-gateway-reactivator.service" <<'EOF_REACTIVATOR_SERVICE'
+[Unit]
+Description=Fased fixture legacy Gateway reverse dependency
+After=fased-gateway.service
+Wants=fased-gateway.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/true
+EOF_REACTIVATOR_SERVICE
+cat >"$user_unit_dir/fased-fixture-gateway-reactivator.timer" <<'EOF_REACTIVATOR_TIMER'
+[Unit]
+Description=Repeatedly exercise the legacy Gateway reverse dependency
+
+[Timer]
+OnBootSec=1
+OnUnitActiveSec=1
+Unit=fased-fixture-gateway-reactivator.service
+
+[Install]
+WantedBy=timers.target
+EOF_REACTIVATOR_TIMER
+chown testop:testop \
+  "$user_unit_dir/fased-fixture-gateway-reactivator.service" \
+  "$user_unit_dir/fased-fixture-gateway-reactivator.timer"
+chmod 0600 "$user_unit_dir"/*.service "$user_unit_dir"/*.timer
+user_systemctl daemon-reload
+user_systemctl enable --now fased-fixture-gateway-reactivator.timer
+wait_for_gateway_version "$legacy_gateway_version"
 original_manifest_sha="$(sha256sum "$state/install.json" | awk '{print $1}')"
 printf '%s\n' "$version" >"$selected_target"
 
