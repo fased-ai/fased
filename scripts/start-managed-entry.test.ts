@@ -72,4 +72,23 @@ describe("managed gateway entry selection", () => {
     expect(command).toContain("wallet\n    status\n    --json");
     expect(command).not.toContain("wallet\n    setup");
   });
+
+  it("uses the configured Gateway token as the managed service token", () => {
+    const script = fs.readFileSync(path.resolve(import.meta.dirname, "start-managed.sh"), "utf8");
+    const configToken = script.indexOf('CONFIG_GATEWAY_TOKEN="$(');
+    const desiredToken = script.indexOf(
+      'DESIRED_GATEWAY_TOKEN="${CONFIG_GATEWAY_TOKEN:-$SERVICE_GATEWAY_TOKEN}"',
+    );
+    const tokenExport = script.indexOf(
+      'export FASED_GATEWAY_TOKEN="$(tr -d \'\\n\' < "$GW_TOKEN_PATH")"',
+    );
+
+    expect(configToken).toBeGreaterThanOrEqual(0);
+    expect(desiredToken).toBeGreaterThan(configToken);
+    expect(tokenExport).toBeGreaterThan(desiredToken);
+    expect(script).toContain("config?.gateway?.auth?.token");
+    expect(script).toContain(
+      'echo "[managed] ERROR: Gateway token path is not a safe regular file: $GW_TOKEN_PATH"',
+    );
+  });
 });

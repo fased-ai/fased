@@ -157,6 +157,26 @@ describe("protected Local bootstrap contract", () => {
     ]);
   });
 
+  it("accepts only bounded plugin trees whose links stay inside the plugin root", async () => {
+    const root = temporaryRoot();
+    const stateDir = path.join(root, ".fased");
+    const pluginRoot = path.join(stateDir, "extensions", "openai-runtime");
+    fs.mkdirSync(pluginRoot, { recursive: true });
+    fs.writeFileSync(path.join(pluginRoot, "index.js"), "export {};\n");
+    fs.symlinkSync("index.js", path.join(pluginRoot, "entry.js"));
+
+    await expect(
+      __testing.inspectInstalledPluginTree(pluginRoot, { stateDir }),
+    ).resolves.toMatchObject({ canonicalRoot: pluginRoot });
+
+    fs.unlinkSync(path.join(pluginRoot, "entry.js"));
+    fs.writeFileSync(path.join(stateDir, "outside.js"), "export {};\n");
+    fs.symlinkSync("../../outside.js", path.join(pluginRoot, "entry.js"));
+    await expect(__testing.inspectInstalledPluginTree(pluginRoot, { stateDir })).rejects.toThrow(
+      /symlink escapes its root/u,
+    );
+  });
+
   it("records the exact installed controller generation identity", () => {
     const server = Buffer.from("controller-server");
     const client = Buffer.from("controller-client");
@@ -175,6 +195,7 @@ describe("protected Local bootstrap contract", () => {
           { version: "0.1.80", runtimeSource },
           200,
           "0.1.80",
+          undefined,
         ),
       ).toBe(true);
     }
@@ -183,6 +204,7 @@ describe("protected Local bootstrap contract", () => {
         { version: "0.1.79", runtimeSource: "managed-package" },
         200,
         "0.1.80",
+        undefined,
       ),
     ).toBe(false);
     expect(
@@ -190,8 +212,44 @@ describe("protected Local bootstrap contract", () => {
         { version: "0.1.80", runtimeSource: "source-checkout" },
         200,
         "0.1.80",
+        undefined,
       ),
     ).toBe(false);
+    expect(
+      __testing.protectedLocalGatewayHealthMatches(
+        { version: "0.1.80", runtimeSource: "managed-package", pid: 4321 },
+        200,
+        "0.1.80",
+        4321,
+      ),
+    ).toBe(true);
+    expect(
+      __testing.protectedLocalGatewayHealthMatches(
+        { version: "0.1.80", runtimeSource: "managed-package", pid: 4322 },
+        200,
+        "0.1.80",
+        4321,
+      ),
+    ).toBe(false);
+  });
+
+  it("binds rollback health to the exact previous managed release", () => {
+    expect(
+      __testing.previousLegacyGatewayVersion({
+        manifestSnapshot: {
+          existed: true,
+          content: Buffer.from(JSON.stringify({ runtime: { activeVersion: "0.1.76-rc.7" } })),
+        },
+      }),
+    ).toBe("0.1.76-rc.7");
+    expect(() =>
+      __testing.previousLegacyGatewayVersion({
+        manifestSnapshot: {
+          existed: true,
+          content: Buffer.from(JSON.stringify({ runtime: { activeVersion: "latest" } })),
+        },
+      }),
+    ).toThrow(/no exact previous release version/u);
   });
 
   it("parses restrictive extended ACLs without discarding existing principals", () => {

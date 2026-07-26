@@ -3,7 +3,11 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { PRE_V2_HOSTING_MIGRATION_MESSAGE, __testing } from "./fased-managed-updater.mjs";
+import {
+  PRE_V2_HOSTING_MIGRATION_MESSAGE,
+  PROTECTED_LOCAL_CONTROLLER_UNAVAILABLE_MESSAGE,
+  __testing,
+} from "./fased-managed-updater.mjs";
 
 const TRANSACTION_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -829,12 +833,20 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
             `Environment=FASED_CONFIG_DIR=${stateDir}`,
             `Environment=FASED_MANAGED_RUNTIME_ROOT=${applicationCurrent}`,
             "Environment=FASED_NODE_BIN=/usr/bin/node",
+            "Environment=PATH=/usr/local/bin:/usr/bin:/bin",
+            "Environment=FASED_RUNTIME_SOURCE=managed-package",
             "",
           ].join("\n"),
         ),
         fsp.writeFile(
           path.join(installDir, "gateway-launch"),
-          `exec /bin/bash "${applicationCurrent}/scripts/start-managed.sh"\n`,
+          [
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            `gateway_entry="${applicationCurrent}/dist/entry.js"`,
+            'exec /usr/bin/node "$gateway_entry" gateway --allow-unconfigured --force --bind loopback --port 18789',
+            "",
+          ].join("\n"),
         ),
       ]);
       await expect(
@@ -1016,6 +1028,13 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
       __testing.hostedUpdaterError(new Error("request contains unsupported fields"), false)
         .hostUpdaterAmbiguous,
     ).toBe(false);
+    expect(
+      __testing.hostedUpdaterError(
+        new Error("connect ENOENT /run/fased-local-controller/example/request.sock"),
+        false,
+        true,
+      ).message,
+    ).toBe(PROTECTED_LOCAL_CONTROLLER_UNAVAILABLE_MESSAGE);
   });
 
   it("distinguishes a definitive pre-v2 rejection from an ambiguous post-send disconnect", async () => {

@@ -6,5 +6,6 @@ export function buildGatewayProbePayload(status: "live" | "ready") {
     status,
     version: resolveRuntimeServiceVersion(process.env, "dev"),
     runtimeSource: resolveRuntimeSource(process.env),
+    pid: process.pid,
   } as const;
 }

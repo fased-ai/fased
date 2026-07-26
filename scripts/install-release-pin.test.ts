@@ -43,7 +43,17 @@ function createExactLocalBootstrapHarness(
   fs.copyFileSync(new URL("../install.sh", import.meta.url), standaloneInstaller);
   fs.chmodSync(standaloneInstaller, 0o700);
 
-  for (const command of ["bash", "cat", "chmod", "dirname", "mkdir", "mktemp", "rm"]) {
+  for (const command of [
+    "bash",
+    "cat",
+    "chmod",
+    "dirname",
+    "find",
+    "mkdir",
+    "mktemp",
+    "rm",
+    "stat",
+  ]) {
     const resolved = resolveSystemCommand(command);
     fs.symlinkSync(resolved, path.join(binDir, command));
   }
@@ -128,12 +138,12 @@ printf '{}\\n' >"$output"
     `#!/bin/bash
 set -euo pipefail
 if [[ "\${1:-}" == "clone" ]]; then
-  destination="$4"
+  destination="\${!#}"
   mkdir -p "$destination"
   cat >"$destination/install.sh" <<'INNER'
 #!/bin/bash
 set -euo pipefail
-printf 'exact-local-inner-handoff\\n'
+printf 'exact-local-inner-handoff %s\\n' "$*"
 INNER
   chmod 0700 "$destination/install.sh"
   exit 0
@@ -301,7 +311,10 @@ describe("managed installer release pinning", () => {
 
   it("drains a streamed installer before replacing its pipe reader", () => {
     const functionStart = installer.indexOf("  exec_bootstrapped_installer() {");
-    const functionEnd = installer.indexOf("\n\n  exec_bootstrapped_installer ", functionStart);
+    const functionEnd = installer.indexOf(
+      '\n\n  if [[ "$existing_local_state" -eq 1 ]]',
+      functionStart,
+    );
     expect(functionStart).toBeGreaterThanOrEqual(0);
     expect(functionEnd).toBeGreaterThan(functionStart);
     const handoffFunction = installer.slice(functionStart, functionEnd);
@@ -363,6 +376,81 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
 
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain(`Refusing to overwrite existing path: ${harness.installDir}`);
+      expect(result.stdout).not.toContain("package-manager progress before verified commit");
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("treats FASED_INSTALL_DIR as an explicit collision boundary", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-local-env-path-collision-"));
+    try {
+      const harness = createExactLocalBootstrapHarness(tempRoot, { uid: 1000 });
+      fs.mkdirSync(harness.installDir, { recursive: true });
+      const result = runExactLocalBootstrap(
+        harness,
+        tempRoot,
+        ["--local", "--release", "v9.9.9-test.1", "--update-channel", "beta"],
+        { FASED_INSTALL_DIR: harness.installDir },
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(`Refusing to overwrite existing path: ${harness.installDir}`);
+      expect(result.stdout).not.toContain("package-manager progress before verified commit");
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("routes recognized existing Local state through repair without reusing ~/fased", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-existing-local-state-"));
+    try {
+      const harness = createExactLocalBootstrapHarness(tempRoot, {
+        uid: process.getuid?.() ?? 1000,
+      });
+      const home = path.join(tempRoot, "home");
+      const stateDir = path.join(home, ".fased");
+      fs.mkdirSync(path.join(home, "fased"), { recursive: true });
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(path.join(stateDir, "fased.json"), "{}\n", { mode: 0o600 });
+
+      const result = runExactLocalBootstrap(harness, tempRoot, [
+        "--local",
+        "--release",
+        "v9.9.9-test.1",
+        "--update-channel",
+        "beta",
+      ]);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("exact-local-inner-handoff");
+      expect(result.stdout).toContain("--repair-local");
+      expect(result.stderr).not.toContain(`Refusing to overwrite existing path: ${home}/fased`);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects unknown Local remnants before dependency or release work", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-unknown-local-state-"));
+    try {
+      const harness = createExactLocalBootstrapHarness(tempRoot, {
+        uid: process.getuid?.() ?? 1000,
+      });
+      const stateDir = path.join(tempRoot, "home", ".fased");
+      fs.mkdirSync(path.join(stateDir, "unknown"), { recursive: true });
+
+      const result = runExactLocalBootstrap(harness, tempRoot, [
+        "--local",
+        "--release",
+        "v9.9.9-test.1",
+        "--update-channel",
+        "beta",
+      ]);
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("not a recognized recoverable Fased installation");
+      expect(result.stderr).toContain("No files were changed");
       expect(result.stdout).not.toContain("package-manager progress before verified commit");
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });

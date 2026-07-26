@@ -1,7 +1,7 @@
 import type { Writable } from "node:stream";
 import { loadConfig } from "../../config/config.js";
 import { resolveIsNixMode } from "../../config/paths.js";
-import { checkTokenDrift } from "../../daemon/service-audit.js";
+import { checkTokenDrift, usesRootManagedGatewayLauncher } from "../../daemon/service-audit.js";
 import type { GatewayService } from "../../daemon/service.js";
 import { renderSystemdUnavailableHints } from "../../daemon/systemd-hints.js";
 import { isSystemdUserServiceAvailable } from "../../daemon/systemd.js";
@@ -279,23 +279,25 @@ export async function runServiceRestart(params: {
     // Check for token drift before restart (service token vs config token)
     try {
       const command = await params.service.readCommand(process.env);
-      const serviceToken = command?.environment?.FASED_GATEWAY_TOKEN;
-      const cfg = loadConfig();
-      const configToken = resolveGatewayCredentialsFromConfig({
-        cfg,
-        env: process.env,
-        modeOverride: "local",
-      }).token;
-      const driftIssue = checkTokenDrift({ serviceToken, configToken });
-      if (driftIssue) {
-        const warning = driftIssue.detail
-          ? `${driftIssue.message} ${driftIssue.detail}`
-          : driftIssue.message;
-        warnings.push(warning);
-        if (!json) {
-          defaultRuntime.log(`\n⚠️  ${driftIssue.message}`);
-          if (driftIssue.detail) {
-            defaultRuntime.log(`   ${driftIssue.detail}\n`);
+      if (!usesRootManagedGatewayLauncher(command?.programArguments)) {
+        const serviceToken = command?.environment?.FASED_GATEWAY_TOKEN;
+        const cfg = loadConfig();
+        const configToken = resolveGatewayCredentialsFromConfig({
+          cfg,
+          env: process.env,
+          modeOverride: "local",
+        }).token;
+        const driftIssue = checkTokenDrift({ serviceToken, configToken });
+        if (driftIssue) {
+          const warning = driftIssue.detail
+            ? `${driftIssue.message} ${driftIssue.detail}`
+            : driftIssue.message;
+          warnings.push(warning);
+          if (!json) {
+            defaultRuntime.log(`\n⚠️  ${driftIssue.message}`);
+            if (driftIssue.detail) {
+              defaultRuntime.log(`   ${driftIssue.detail}\n`);
+            }
           }
         }
       }

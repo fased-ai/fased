@@ -1053,6 +1053,58 @@ function upsertSystemdEnvironment(content, key, value) {
   return content.replace(anchor, (line) => `${line}\nEnvironment=${key}=${value}`);
 }
 
+function shellSingleQuote(value) {
+  return `'${String(value).replaceAll("'", "'\"'\"'")}'`;
+}
+
+function renderProtectedGatewayLauncher({ applicationRoot, nodeBinary, stateDir, gatewayPort }) {
+  const application = shellSingleQuote(applicationRoot);
+  const node = shellSingleQuote(nodeBinary);
+  const config = shellSingleQuote(path.join(stateDir, "fased.json"));
+  const port = String(gatewayPort);
+  return `#!/usr/bin/env bash
+set -euo pipefail
+[[ -s ${config} ]] || {
+  echo "protected Local Gateway configuration is unavailable" >&2
+  exit 78
+}
+gateway_entry=""
+for candidate in \\
+  ${application}/dist/entry.js \\
+  ${application}/dist/entry.mjs \\
+  ${application}/dist/index.js \\
+  ${application}/dist/index.mjs; do
+  if [[ -f "$candidate" && ! -L "$candidate" ]]; then
+    gateway_entry="$candidate"
+    break
+  fi
+done
+[[ -n "$gateway_entry" ]] || {
+  echo "protected Local Gateway entrypoint is unavailable" >&2
+  exit 78
+}
+runtime_version="$(${node} -e '
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const root = process.argv[1];
+  const packageVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+  const buildVersion = JSON.parse(fs.readFileSync(path.join(root, "dist", "build-info.json"), "utf8")).version;
+  if (typeof packageVersion !== "string" || !packageVersion.trim() || packageVersion !== buildVersion) {
+    process.exit(1);
+  }
+  process.stdout.write(packageVersion.trim());
+' ${application})" || {
+  echo "protected Local Gateway release identity is unavailable or inconsistent" >&2
+  exit 78
+}
+export FASED_VERSION="$runtime_version"
+exec ${node} \\
+  --disable-warning=ExperimentalWarning \\
+  --disable-warning=DEP0040 \\
+  "$gateway_entry" gateway --allow-unconfigured --force --bind loopback --port ${shellSingleQuote(port)}
+`;
+}
+
 function protectedServiceDesiredContent(context, boundary) {
   const applicationRoot = context.paths.applicationCurrentLink;
   const nodeBinary = fs.realpathSync(context.protectedNodeBinary);
@@ -1091,20 +1143,30 @@ function protectedServiceDesiredContent(context, boundary) {
     applicationRoot,
   );
   gatewayUnit = upsertSystemdEnvironment(gatewayUnit, "FASED_NODE_BIN", nodeBinary);
+  gatewayUnit = upsertSystemdEnvironment(gatewayUnit, "PATH", "/usr/local/bin:/usr/bin:/bin");
+  gatewayUnit = upsertSystemdEnvironment(gatewayUnit, "FASED_RUNTIME_SOURCE", "managed-package");
 
-  let gatewayLauncher = Buffer.from(boundary.gatewayLauncher.contentBase64, "base64").toString(
+  const gatewayLauncher = Buffer.from(boundary.gatewayLauncher.contentBase64, "base64").toString(
     "utf8",
   );
   if (!gatewayLauncher.startsWith("#!/usr/bin/env bash\nset -euo pipefail\n")) {
     throw new Error("protected Local Gateway launcher is invalid");
   }
-  gatewayLauncher = replaceExactlyOneLine(
-    gatewayLauncher,
-    /^exec \/bin\/bash .*\/scripts\/start-managed\.sh"?$/gmu,
-    `exec /bin/bash "${applicationRoot}/scripts/start-managed.sh"`,
-    "Gateway launcher runtime",
-  );
-  return Object.freeze({ gatewayUnit, gatewayLauncher });
+  const stateDir = gatewayUnit.match(/^Environment=FASED_STATE_DIR=(.*)$/mu)?.[1] || "";
+  const gatewayPort = gatewayUnit.match(/^Environment=FASED_GATEWAY_PORT=(\d+)$/mu)?.[1] || "";
+  if (!path.isAbsolute(stateDir) || !/^\d{1,5}$/u.test(gatewayPort)) {
+    throw new Error("protected Local Gateway unit is missing its state directory or port");
+  }
+  const renderedLauncher = renderProtectedGatewayLauncher({
+    applicationRoot,
+    nodeBinary,
+    stateDir,
+    gatewayPort,
+  });
+  return Object.freeze({
+    gatewayUnit,
+    gatewayLauncher: renderedLauncher,
+  });
 }
 
 async function stageProtectedServiceBoundary(context) {

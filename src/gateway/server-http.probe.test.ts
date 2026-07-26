@@ -131,6 +131,7 @@ describe("gateway probe endpoints", () => {
           status: "live",
           version: expect.any(String),
           runtimeSource: expect.any(String),
+          pid: process.pid,
         });
       },
     });

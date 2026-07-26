@@ -144,6 +144,10 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
   ( "$install_entry_hosting" -eq 1 && -z "$install_entry_verified_bundle" && -z "$install_entry_app_handoff" ) ]]; then
   install_repo_url="${FASED_INSTALL_REPO:-https://github.com/fased-ai/fased.git}"
   install_base_dir="${FASED_INSTALL_DIR:-$HOME/fased}"
+  install_dir_explicit=0
+  if [[ -n "${FASED_INSTALL_DIR:-}" ]]; then
+    install_dir_explicit=1
+  fi
   auto_install=1
   hosting_bootstrap=0
   hosting_repair_bootstrap=0
@@ -172,6 +176,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
           exit 1
         fi
         install_base_dir="${args[$((i + 1))]}"
+        install_dir_explicit=1
         ;;
       --no-auto-install)
         auto_install=0
@@ -238,7 +243,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
   fi
 
   if [[ "$hosting_bootstrap" -eq 0 && "$protected_local_bootstrap" -eq 0 && \
-    -e "$install_base_dir" && ! -d "$install_base_dir/.git" ]]; then
+    "$install_dir_explicit" -eq 1 && -e "$install_base_dir" && ! -d "$install_base_dir/.git" ]]; then
     echo "Refusing to overwrite existing path: $install_base_dir" >&2
     echo "Set --install-dir to a new directory or clean the existing one, then rerun." >&2
     drain_streamed_install_input
@@ -556,6 +561,47 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       return "$status"
     }
     trap hosting_bootstrap_cleanup EXIT
+
+    if [[ "$protected_local_bootstrap" -eq 1 && -d "$release_parent" ]]; then
+      local cached_root_store=""
+      local cached_package_root=""
+      local cached_commit=""
+      local cached_digest=""
+      local cached_signer_digest=""
+      local cached_candidate=""
+      for cached_candidate in "$release_parent"/*; do
+        [[ -d "$cached_candidate" && "$(basename "$cached_candidate")" =~ ^[a-f0-9]{64}$ ]] || continue
+        if [[ -n "$cached_root_store" ]]; then
+          cached_root_store=""
+          break
+        fi
+        cached_root_store="$cached_candidate"
+      done
+      if [[ -n "$cached_root_store" ]]; then
+        cached_package_root="$cached_root_store/extract/package"
+        cached_digest="$(basename "$cached_root_store")"
+        if [[ -f "$cached_package_root/.fased-hosting-bundle-verified" && \
+          ! -L "$cached_package_root/.fased-hosting-bundle-verified" ]]; then
+          cached_commit="$(awk -F= '$1 == "commit" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
+          cached_signer_digest="$(awk -F= '$1 == "signer_sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
+        fi
+        if [[ "$cached_commit" =~ ^[a-f0-9]{40}$ && \
+          "$cached_signer_digest" =~ ^[a-f0-9]{64}$ && \
+          "$(awk -F= '$1 == "version" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified" 2>/dev/null || true)" == "$release_version" && \
+          "$(awk -F= '$1 == "sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified" 2>/dev/null || true)" == "$cached_digest" && \
+          -d "$cached_root_store/verified-dependencies/node_modules" && \
+          -f "$cached_root_store/verified-assets/fased-signerd" && \
+          "$(sha256sum "$cached_root_store/verified-assets/fased-signerd" | awk '{print tolower($1)}')" == "$cached_signer_digest" ]] && \
+          root_owned_bundle_tree_is_secure "$cached_root_store"; then
+          rm -rf -- "$preflight"
+          trap - EXIT
+          echo "Reusing verified tagged Hosting bundle v${release_version} (${cached_digest})."
+          drain_streamed_install_input
+          enter_protected_local_bundle "$cached_root_store" "$cached_package_root" "$cached_commit"
+        fi
+      fi
+    fi
+
     curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-hosted-release-v2.json" -o "$release_manifest"
     curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-hosted-release-v2.json.attestation.json" -o "$release_manifest_bundle"
     GH_PROMPT_DISABLED=1 gh attestation verify "$release_manifest" \
@@ -918,6 +964,67 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     printf '%s\n' "$release_commit"
   }
 
+  local_path_uid() {
+    local target_path="$1"
+    if stat -c '%u' "$target_path" >/dev/null 2>&1; then
+      stat -c '%u' "$target_path"
+      return
+    fi
+    stat -f '%u' "$target_path" 2>/dev/null
+  }
+
+  local_path_links() {
+    local target_path="$1"
+    if stat -c '%h' "$target_path" >/dev/null 2>&1; then
+      stat -c '%h' "$target_path"
+      return
+    fi
+    stat -f '%l' "$target_path" 2>/dev/null
+  }
+
+  local_path_size() {
+    local target_path="$1"
+    if stat -c '%s' "$target_path" >/dev/null 2>&1; then
+      stat -c '%s' "$target_path"
+      return
+    fi
+    stat -f '%z' "$target_path" 2>/dev/null
+  }
+
+  existing_local_state=0
+  local_state_dir="${FASED_STATE_DIR:-$HOME/.fased}"
+  if [[ "$hosting_bootstrap" -eq 0 && "$protected_local_bootstrap" -eq 0 && \
+    ( -e "$local_state_dir" || -L "$local_state_dir" ) ]]; then
+    if [[ ! -d "$local_state_dir" || -L "$local_state_dir" || \
+      "$(local_path_uid "$local_state_dir" || true)" != "$(id -u)" ]]; then
+      echo "Existing Local state directory is not a safe operator-owned directory: $local_state_dir" >&2
+      echo "No files were changed." >&2
+      drain_streamed_install_input
+      exit 1
+    fi
+    if [[ -n "$(find "$local_state_dir" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null || true)" ]]; then
+      local_state_recognized=0
+      for local_state_marker in "$local_state_dir/fased.json" "$local_state_dir/install.json"; do
+        local_state_marker_size="$(local_path_size "$local_state_marker" || true)"
+        if [[ -f "$local_state_marker" && ! -L "$local_state_marker" && \
+          "$(local_path_uid "$local_state_marker" || true)" == "$(id -u)" && \
+          "$(local_path_links "$local_state_marker" || true)" == "1" && \
+          "$local_state_marker_size" =~ ^[0-9]+$ && \
+          "$local_state_marker_size" -le 16777216 ]]; then
+          local_state_recognized=1
+          break
+        fi
+      done
+      if [[ "$local_state_recognized" -ne 1 ]]; then
+        echo "Existing Local state is not a recognized recoverable Fased installation: $local_state_dir" >&2
+        echo "No files were changed. Move unrelated or incomplete remnants aside, or use an explicit isolated FASED_STATE_DIR." >&2
+        drain_streamed_install_input
+        exit 1
+      fi
+      existing_local_state=1
+    fi
+  fi
+
   if ! command -v git >/dev/null 2>&1; then
     echo "git is missing; installing bootstrap dependencies first."
     install_bootstrap_git || {
@@ -970,10 +1077,15 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     fi
   fi
 
+  if [[ "$hosting_bootstrap" -eq 0 && -n "$local_bootstrap_release" && \
+    "$install_dir_explicit" -eq 0 ]]; then
+    install_base_dir="${XDG_CACHE_HOME:-$HOME/.cache}/fased/installers/v${local_bootstrap_release}-${local_bootstrap_commit:0:12}"
+  fi
+
   if [[ ! -e "$install_base_dir" ]]; then
     mkdir -p "$(dirname "$install_base_dir")"
     if [[ -n "$local_bootstrap_release" ]]; then
-      git clone --no-checkout "$install_repo_url" "$install_base_dir"
+      git clone --filter=blob:none --no-checkout "$install_repo_url" "$install_base_dir"
     else
       git clone "$install_repo_url" "$install_base_dir"
     fi
@@ -989,7 +1101,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
   fi
 
   if [[ -n "$local_bootstrap_release" ]]; then
-    git -C "$install_base_dir" fetch --force origin \
+    git -C "$install_base_dir" fetch --force --depth=1 origin \
       "refs/tags/v${local_bootstrap_release}:refs/fased-installer/v${local_bootstrap_release}"
     fetched_release_commit=""
     fetched_release_commit="$(git -C "$install_base_dir" rev-parse "refs/fased-installer/v${local_bootstrap_release}^{commit}")"
@@ -1025,6 +1137,9 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     exec bash "$installer_path" "$@"
   }
 
+  if [[ "$existing_local_state" -eq 1 ]]; then
+    exec_bootstrapped_installer "$install_base_dir/install.sh" "$@" --repair-local
+  fi
   exec_bootstrapped_installer "$install_base_dir/install.sh" "$@"
 fi
 
@@ -1314,7 +1429,8 @@ Usage: ./install.sh [options] [-- <extra onboard args>]
 Options:
   --auto-install   install missing deps with apt/dnf/yum/zypper/apk/pacman/pkg or Homebrew (default)
   --no-auto-install  Disable automatic dependency installation
-  --install-dir <path>  Checkout/install directory (default: $HOME/fased)
+  --install-dir <path>  Contributor checkout directory. Tagged Local installs use
+                  a release-scoped bootstrap cache and do not overwrite ~/fased.
   --hosting       VPS/always-on server profile. Requires Tailscale; applies hosted
                   onboarding defaults and may change SSH/firewall behavior.
   --repair-hosting  Repair an existing VPS runtime and root-managed gateway service
@@ -3838,6 +3954,10 @@ reexec_as_app_user() {
   if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
     prepare_hosting_root_prerequisites "$target_user" "$target_repo_dir"
     install_fixed_host_gateway_service "$target_repo_dir"
+    # Establish the shared root/app/Gateway state boundary before onboarding writes
+    # configuration, wallet, plugin, or network state. Reconcile it again before the
+    # coordinated restart because onboarding may create additional descendants.
+    reconcile_hosting_shared_state "$target_home"
     app_handoff="$(create_verified_hosting_app_handoff "$target_user" "$target_repo_dir")"
   fi
 
@@ -6096,3 +6216,7 @@ else
   persist_runtime_update_channel
 fi
 write_install_marker "$REPO_ROOT" "true"
+if [[ "$PROTECTED_LOCAL_BOOTSTRAPPED" -eq 1 ]]; then
+  echo "Setup complete."
+  "$FASED_CLI_PATH" dashboard --no-open
+fi

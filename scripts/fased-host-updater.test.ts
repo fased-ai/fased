@@ -120,6 +120,7 @@ async function createFixture(
 User=fsgw-${instanceId}
 WorkingDirectory=/home/operator/.fased/runtime/releases/1.2.2
 Environment=FASED_STATE_DIR=/home/operator/.fased
+Environment=FASED_GATEWAY_PORT=18789
 Environment=FASED_PROTECTED_LOCAL_INSTANCE=${instanceId}
 ProtectSystem=strict
 `,
@@ -353,9 +354,18 @@ describe("root-owned hosted updater protocol", () => {
       `Environment=FASED_MANAGED_RUNTIME_ROOT=${prepared.paths.applicationCurrentLink!}`,
     );
     expect(nextUnit).toContain("Environment=FASED_CONFIG_DIR=/home/operator/.fased");
+    expect(nextLauncher).toContain(`${prepared.paths.applicationCurrentLink!}'/dist/entry.js`);
     expect(nextLauncher).toContain(
-      `"${prepared.paths.applicationCurrentLink!}/scripts/start-managed.sh"`,
+      `'${path.join(path.dirname(prepared.paths.stateDir), "bin", "node")}'`,
     );
+    expect(nextLauncher).toContain(
+      "\"$gateway_entry\" gateway --allow-unconfigured --force --bind loopback --port '18789'",
+    );
+    expect(nextLauncher).toContain('export FASED_VERSION="$runtime_version"');
+    expect(nextLauncher).toContain(
+      "protected Local Gateway release identity is unavailable or inconsistent",
+    );
+    expect(nextLauncher).not.toContain("scripts/start-managed.sh");
     expect(await fsp.realpath(prepared.paths.applicationCurrentLink!)).toBe(
       path.join(prepared.paths.applicationReleasesDir!, "v1.2.3"),
     );

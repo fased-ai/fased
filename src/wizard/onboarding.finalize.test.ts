@@ -13,6 +13,7 @@ import {
   formatStrictRemoteAccessDetails,
   gatewayServiceMatchesCurrentInstall,
   isRootPreparedHostingFinalization,
+  shouldDeferInstallerAccessHandoff,
   validateLocalDashboardBootCheck,
   waitForGatewayHttpListener,
 } from "./onboarding.finalize.js";
@@ -35,6 +36,32 @@ describe("isRootPreparedHostingFinalization", () => {
       isRootPreparedHostingFinalization({
         strictVps: false,
         env: { FASED_HOST_ROOT_PREPARED: "1" },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldDeferInstallerAccessHandoff", () => {
+  it("prints installer access only after protected Local or root Hosting commits", () => {
+    expect(
+      shouldDeferInstallerAccessHandoff({
+        installerOnboard: true,
+        deferProtectedLocalGatewayActivation: true,
+        rootPreparedHosting: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldDeferInstallerAccessHandoff({
+        installerOnboard: true,
+        deferProtectedLocalGatewayActivation: false,
+        rootPreparedHosting: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldDeferInstallerAccessHandoff({
+        installerOnboard: false,
+        deferProtectedLocalGatewayActivation: true,
+        rootPreparedHosting: true,
       }),
     ).toBe(false);
   });

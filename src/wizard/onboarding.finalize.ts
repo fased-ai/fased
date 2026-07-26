@@ -1485,6 +1485,17 @@ export function isRootPreparedHostingFinalization(params: {
   return params.strictVps && (params.env ?? process.env).FASED_HOST_ROOT_PREPARED?.trim() === "1";
 }
 
+export function shouldDeferInstallerAccessHandoff(params: {
+  installerOnboard: boolean;
+  deferProtectedLocalGatewayActivation: boolean;
+  rootPreparedHosting: boolean;
+}): boolean {
+  return (
+    params.installerOnboard &&
+    (params.deferProtectedLocalGatewayActivation || params.rootPreparedHosting)
+  );
+}
+
 export async function finalizeOnboardingWizard(
   options: FinalizeOnboardingOptions,
 ): Promise<{ launchedTui: boolean }> {
@@ -1498,6 +1509,11 @@ export async function finalizeOnboardingWizard(
   const protectedLocal = signerLifecycle?.profile === "protected-local";
   const deferProtectedLocalGatewayActivation =
     protectedLocal && process.env.FASED_INSTALLER_ONBOARD?.trim() === "1";
+  const deferInstallerAccessHandoff = shouldDeferInstallerAccessHandoff({
+    installerOnboard: process.env.FASED_INSTALLER_ONBOARD?.trim() === "1",
+    deferProtectedLocalGatewayActivation,
+    rootPreparedHosting,
+  });
   const protectedLocalInstance = protectedLocal ? signerLifecycle.instanceId : undefined;
   const protectedLocalGatewayUnit = protectedLocalInstance
     ? `fased-gateway-${protectedLocalInstance}.service`
@@ -2824,7 +2840,7 @@ export async function finalizeOnboardingWizard(
     }
   }
   const isStrict = strictVps || (opts.hostProfile === "local" && settings.tailscaleMode !== "off");
-  if (isStrict) {
+  if (isStrict && !deferInstallerAccessHandoff) {
     const strictDashboardUrl = tailscaleAdminUrl
       ? buildOnboardingDashboardUrl({
           baseUrl: tailscaleAdminUrl,
@@ -2851,7 +2867,7 @@ export async function finalizeOnboardingWizard(
       }),
       "Hosted access",
     );
-  } else if (flow !== "quickstart") {
+  } else if (!deferInstallerAccessHandoff && flow !== "quickstart") {
     await prompter.note(
       formatLocalDashboardReady({
         dashboardUrl: authedUrl,
@@ -3242,7 +3258,7 @@ export async function finalizeOnboardingWizard(
     );
   }
 
-  if (!strictVps) {
+  if (!strictVps && !deferInstallerAccessHandoff) {
     await prompter.outro(
       controlUiOpened
         ? "Setup complete. Next: Agent > Models, then Chat."

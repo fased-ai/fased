@@ -77,13 +77,15 @@ function hasCanonicalGatewayStartup(programArguments?: string[]): boolean {
   return programArguments[managedIndex + 1] === "up";
 }
 
-function usesRootManagedGatewayLauncher(programArguments?: string[]): boolean {
+export function usesRootManagedGatewayLauncher(programArguments?: string[]): boolean {
   return Boolean(
-    programArguments?.some(
-      (arg) =>
-        path.posix.normalize(arg.replaceAll("\\", "/")) ===
-        "/usr/local/libexec/fased-gateway-launch",
-    ),
+    programArguments?.some((arg) => {
+      const normalized = path.posix.normalize(arg.replaceAll("\\", "/"));
+      return (
+        normalized === "/usr/local/libexec/fased-gateway-launch" ||
+        /^\/opt\/fased\/local\/[a-f0-9]{16}\/gateway-launch$/u.test(normalized)
+      );
+    }),
   );
 }
 

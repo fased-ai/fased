@@ -90,6 +90,8 @@ function usesSharedHostingState(cfg: FasedAgentConfig, env: NodeJS.ProcessEnv): 
   return (
     env.FASED_HOST_PROFILE?.trim() === "hosting" ||
     configuredVars?.FASED_HOST_PROFILE?.trim() === "hosting" ||
+    env.FASED_PROTECTED_LOCAL?.trim() === "1" ||
+    configuredVars?.FASED_PROTECTED_LOCAL?.trim() === "1" ||
     configuredVars?.FASED_WALLET_LOCAL_SIGNER_SOCKET?.trim() === "/run/fased-signerd/app.sock"
   );
 }
