@@ -235,7 +235,7 @@ describe("renderOverview dashboard", () => {
     expect(text).not.toContain("Plugin runtime detail");
   });
 
-  it("shows the gateway version and sanitized runtime source", async () => {
+  it("does not place gateway runtime identity above dashboard cards", async () => {
     const { renderOverview } = await import("./overview.ts");
     const text = flattenTemplateText(
       renderOverview(
@@ -247,9 +247,8 @@ describe("renderOverview dashboard", () => {
       ),
     );
 
-    expect(text).toContain("Gateway");
-    expect(text).toContain("0.1.48");
-    expect(text).toContain("source checkout");
+    expect(text).not.toContain("Gateway 0.1.48");
+    expect(text).not.toContain("source checkout");
   });
 
   it("renders dashboard usage from 7 day daily ledger data", async () => {

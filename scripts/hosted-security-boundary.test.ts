@@ -202,6 +202,9 @@ describe("hosted signer security boundary", () => {
     expect(gatewayService).toContain("Group=${gateway_group}");
     expect(gatewayService).toContain("SupplementaryGroups=${config_group}");
     expect(gatewayService).toContain("UMask=0007");
+    expect(gatewayService).toContain(
+      "Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    );
     expect(gatewayService).not.toContain("User=${target_user}");
   });
 

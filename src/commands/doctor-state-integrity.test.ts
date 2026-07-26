@@ -16,6 +16,7 @@ type EnvSnapshot = {
   FASED_HOME?: string;
   FASED_STATE_DIR?: string;
   FASED_OAUTH_DIR?: string;
+  FASED_HOST_PROFILE?: string;
 };
 
 function captureEnv(): EnvSnapshot {
@@ -24,6 +25,7 @@ function captureEnv(): EnvSnapshot {
     FASED_HOME: process.env.FASED_HOME,
     FASED_STATE_DIR: process.env.FASED_STATE_DIR,
     FASED_OAUTH_DIR: process.env.FASED_OAUTH_DIR,
+    FASED_HOST_PROFILE: process.env.FASED_HOST_PROFILE,
   };
 }
 
@@ -76,6 +78,7 @@ describe("doctor state integrity oauth dir checks", () => {
     process.env.FASED_HOME = tempHome;
     process.env.FASED_STATE_DIR = path.join(tempHome, ".fased");
     delete process.env.FASED_OAUTH_DIR;
+    delete process.env.FASED_HOST_PROFILE;
     fs.mkdirSync(process.env.FASED_STATE_DIR, { recursive: true, mode: 0o700 });
     vi.mocked(note).mockClear();
   });
@@ -123,6 +126,31 @@ describe("doctor state integrity oauth dir checks", () => {
     const confirmSkipInNonInteractive = await runStateIntegrity(cfg);
     expect(confirmSkipInNonInteractive).toHaveBeenCalledWith(OAUTH_PROMPT_MATCHER);
     expect(stateIntegrityText()).toContain("CRITICAL: OAuth dir missing");
+  });
+
+  it("accepts shared Hosting permissions from the persisted Hosting runtime", async () => {
+    const configPath = path.join(process.env.FASED_STATE_DIR ?? "", "fased.json");
+    fs.chmodSync(process.env.FASED_STATE_DIR ?? "", 0o2770);
+    fs.writeFileSync(configPath, "{}\n", { mode: 0o660 });
+    fs.chmodSync(configPath, 0o660);
+    const cfg: FasedAgentConfig = {
+      env: {
+        vars: {
+          FASED_WALLET_LOCAL_SIGNER_SOCKET: "/run/fased-signerd/app.sock",
+        },
+      },
+    };
+
+    setupSessionState(cfg, process.env, tempHome);
+    await noteStateIntegrity(
+      cfg,
+      { confirmSkipInNonInteractive: vi.fn(async () => false) },
+      configPath,
+    );
+
+    const text = stateIntegrityText();
+    expect(text).not.toContain("State directory permissions are incorrect");
+    expect(text).not.toContain("Config file permissions are incorrect");
   });
 
   it("detects orphan transcripts and offers archival remediation", async () => {

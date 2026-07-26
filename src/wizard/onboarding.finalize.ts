@@ -1478,11 +1478,19 @@ async function waitForTailscaleIdentity(params: {
   return { ok: false, state: last, detail: last.detail ?? "tailscale identity not ready" };
 }
 
+export function isRootPreparedHostingFinalization(params: {
+  strictVps: boolean;
+  env?: NodeJS.ProcessEnv;
+}): boolean {
+  return params.strictVps && (params.env ?? process.env).FASED_HOST_ROOT_PREPARED?.trim() === "1";
+}
+
 export async function finalizeOnboardingWizard(
   options: FinalizeOnboardingOptions,
 ): Promise<{ launchedTui: boolean }> {
   const { flow, opts, baseConfig, nextConfig, settings, federation, prompter, runtime } = options;
   const strictVps = opts.hostProfile === "hosting";
+  const rootPreparedHosting = isRootPreparedHostingFinalization({ strictVps });
   const signerLifecycle = resolveNativeSignerOperatorLifecycle({
     ...process.env,
     ...nextConfig.env?.vars,
@@ -2062,7 +2070,7 @@ export async function finalizeOnboardingWizard(
     }
   }
 
-  if (settings.tailscaleMode !== "off") {
+  if (settings.tailscaleMode !== "off" && !rootPreparedHosting) {
     await withWizardProgress(
       `Tailscale ${settings.tailscaleMode}`,
       { doneMessage: undefined },
@@ -2889,7 +2897,11 @@ export async function finalizeOnboardingWizard(
     let hostedFederationAutoConnectAttempted = false;
     let hostedFederationAutoConnectReason = "";
     const hostedFederationAutoConnectMessages: string[] = [];
-    if (strictVps && !readManagedFederationTokenSummary(onboardingEnv).exists) {
+    if (
+      strictVps &&
+      !rootPreparedHosting &&
+      !readManagedFederationTokenSummary(onboardingEnv).exists
+    ) {
       hostedFederationAutoConnectAttempted = true;
       const autoConnect = await runFederationAutoConnectOnce({
         env: onboardingEnv,
@@ -2907,16 +2919,23 @@ export async function finalizeOnboardingWizard(
       });
       hostedFederationAutoConnectReason = autoConnect.reason ?? hostedFederationAutoConnectReason;
     }
-    const { fedToken, reservations } = strictVps
-      ? await waitForManagedFederationSummary({
-          env: onboardingEnv,
-          deadlineMs: 20_000,
-          requireToken: true,
-        })
-      : {
-          fedToken: readManagedFederationTokenSummary(onboardingEnv),
-          reservations: readManagedReservationSummaries(onboardingEnv),
-        };
+    const { fedToken, reservations } =
+      strictVps && !rootPreparedHosting
+        ? await waitForManagedFederationSummary({
+            env: onboardingEnv,
+            deadlineMs: 20_000,
+            requireToken: true,
+          })
+        : {
+            fedToken: readManagedFederationTokenSummary(onboardingEnv),
+            reservations: readManagedReservationSummaries(onboardingEnv),
+          };
+    if (strictVps && rootPreparedHosting && !fedToken.exists) {
+      await prompter.note(
+        "Fased Network will connect after the root installer commits service permissions and starts the Gateway.",
+        "Fased Network",
+      );
+    }
     if (fedToken.exists && !persistedFederationToken) {
       persistedFederationToken = await loadPersistedFederationToken(onboardingEnv).catch(
         () => null,

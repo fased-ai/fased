@@ -100,6 +100,33 @@ describe("auditGatewayServiceConfig", () => {
     ).toBe(false);
   });
 
+  it("accepts the root-managed Hosting launcher and its runtime-loaded token", async () => {
+    const audit = await auditGatewayServiceConfig({
+      env: { HOME: "/home/app" },
+      platform: "linux",
+      expectedGatewayToken: "config-owned-token",
+      command: {
+        programArguments: ["/usr/local/libexec/fased-gateway-launch"],
+        environment: {
+          PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          FASED_HOST_PROFILE: "hosting",
+        },
+        sourcePath: "/etc/systemd/system/fased-gateway.service",
+      },
+    });
+
+    expect(
+      audit.issues.filter((issue) =>
+        [
+          SERVICE_AUDIT_CODES.gatewayCommandMissing,
+          SERVICE_AUDIT_CODES.gatewayTokenMismatch,
+          SERVICE_AUDIT_CODES.gatewayPathMissing,
+          SERVICE_AUDIT_CODES.gatewayPathMissingDirs,
+        ].includes(issue.code as never),
+      ),
+    ).toEqual([]);
+  });
+
   it("reads gateway service ports from split and equals-form arguments", () => {
     expect(
       readGatewayServiceCommandPort(["/usr/bin/node", "entry.js", "gateway", "--port", "18888"]),

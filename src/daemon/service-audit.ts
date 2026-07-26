@@ -60,6 +60,9 @@ function hasCanonicalGatewayStartup(programArguments?: string[]): boolean {
   if (!programArguments || programArguments.length === 0) {
     return false;
   }
+  if (usesRootManagedGatewayLauncher(programArguments)) {
+    return true;
+  }
   if (programArguments.some((arg) => /(^|[\\/])start-(managed|vps)\.sh$/i.test(arg))) {
     return true;
   }
@@ -72,6 +75,16 @@ function hasCanonicalGatewayStartup(programArguments?: string[]): boolean {
     return false;
   }
   return programArguments[managedIndex + 1] === "up";
+}
+
+function usesRootManagedGatewayLauncher(programArguments?: string[]): boolean {
+  return Boolean(
+    programArguments?.some(
+      (arg) =>
+        path.posix.normalize(arg.replaceAll("\\", "/")) ===
+        "/usr/local/libexec/fased-gateway-launch",
+    ),
+  );
 }
 
 function parseSystemdUnit(content: string): {
@@ -270,7 +283,7 @@ function auditGatewayToken(
   expectedGatewayToken?: string,
 ) {
   const expectedToken = expectedGatewayToken?.trim();
-  if (!expectedToken) {
+  if (!expectedToken || usesRootManagedGatewayLauncher(command?.programArguments)) {
     return;
   }
   const serviceToken = command?.environment?.FASED_GATEWAY_TOKEN?.trim();
@@ -317,7 +330,9 @@ function auditGatewayServicePath(
     return;
   }
 
-  const expected = getMinimalServicePathPartsFromEnv({ platform, env });
+  const expected = usesRootManagedGatewayLauncher(command?.programArguments)
+    ? ["/usr/local/bin", "/usr/bin", "/bin"]
+    : getMinimalServicePathPartsFromEnv({ platform, env });
   const parts = servicePath
     .split(getPathModule(platform).delimiter)
     .map((entry) => entry.trim())

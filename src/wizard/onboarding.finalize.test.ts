@@ -12,9 +12,33 @@ import {
   formatLocalDashboardReady,
   formatStrictRemoteAccessDetails,
   gatewayServiceMatchesCurrentInstall,
+  isRootPreparedHostingFinalization,
   validateLocalDashboardBootCheck,
   waitForGatewayHttpListener,
 } from "./onboarding.finalize.js";
+
+describe("isRootPreparedHostingFinalization", () => {
+  it("defers app-owned network setup only for the verified root-prepared Hosting handoff", () => {
+    expect(
+      isRootPreparedHostingFinalization({
+        strictVps: true,
+        env: { FASED_HOST_ROOT_PREPARED: "1" },
+      }),
+    ).toBe(true);
+    expect(
+      isRootPreparedHostingFinalization({
+        strictVps: true,
+        env: {},
+      }),
+    ).toBe(false);
+    expect(
+      isRootPreparedHostingFinalization({
+        strictVps: false,
+        env: { FASED_HOST_ROOT_PREPARED: "1" },
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("buildOnboardingDashboardUrl", () => {
   it("builds an auth-ready dashboard URL with fragment-only token and wallet focus", () => {
