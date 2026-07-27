@@ -84,6 +84,9 @@ describe("Protected Local service plan", () => {
     expect(controller).toContain("--socket-uid 1000 --socket-gid 62002");
     expect(controller).toContain("RuntimeDirectoryMode=0711");
     expect(controller).toContain("StateDirectoryMode=0711");
+    expect(gateway).toContain("RestrictSUIDSGID=true");
+    expect(signer).toContain("RestrictSUIDSGID=true");
+    expect(controller).not.toContain("RestrictSUIDSGID=");
     expect(result.files.operatorSocketFinalizer.content).toContain("/usr/bin/chown 1000:62002");
     expect(result.files.operatorSocketFinalizer.content).toContain("/usr/bin/chmod 0600");
   });

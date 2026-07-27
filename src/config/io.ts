@@ -243,6 +243,13 @@ function formatConfigValidationFailure(pathLabel: string, issueMessage: string):
   ].join("\n");
 }
 
+function configUsesSharedServiceState(config: FasedAgentConfig): boolean {
+  const vars = config.env?.vars;
+  return (
+    vars?.FASED_HOST_PROFILE?.trim() === "hosting" || vars?.FASED_PROTECTED_LOCAL?.trim() === "1"
+  );
+}
+
 function isNumericPathSegment(raw: string): boolean {
   return /^[0-9]+$/.test(raw);
 }
@@ -1263,7 +1270,9 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
     const dir = path.dirname(configPath);
     const sharedServiceConfig =
       deps.env.FASED_HOST_PROFILE?.trim() === "hosting" ||
-      deps.env.FASED_PROTECTED_LOCAL?.trim() === "1";
+      deps.env.FASED_PROTECTED_LOCAL?.trim() === "1" ||
+      configUsesSharedServiceState(snapshot.config) ||
+      configUsesSharedServiceState(cfgToWrite);
     const stateDirMode = sharedServiceConfig ? 0o2770 : 0o700;
     const configMode = sharedServiceConfig ? 0o660 : 0o600;
     await deps.fs.promises.mkdir(dir, { recursive: true, mode: stateDirMode });

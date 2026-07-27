@@ -106,6 +106,20 @@ verify_mining_history() {
   jq -e 'type == "object"' /tmp/mining-history.json >/dev/null
 }
 
+verify_profileless_config_write() {
+  runuser -u app -- env -i \
+    HOME="$app_home" \
+    USER=app \
+    LOGNAME=app \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    FASED_NODE=/usr/local/bin/node \
+    "$cli" config set gateway.mode local \
+    >/tmp/profileless-config-write.out
+  test "$(stat -c '%U:%G:%a' "$state/fased.json")" = "app:fased-config:660"
+  systemctl restart fased-gateway.service
+  verify_runtime >/tmp/profileless-config-health.json
+}
+
 verify_shared_federation_state() {
   local module_url="file://$state/runtime/current/dist/federation/access-token.js"
   local token_file="$state/federation/access-token.json"
@@ -502,6 +516,7 @@ verify_runtime >/tmp/fresh-health.json
 verify_shared_device_auth
 verify_mining_history
 verify_shared_federation_state
+verify_profileless_config_write
 
 run_app_cli wallet setup \
   --mode local-signer-create \

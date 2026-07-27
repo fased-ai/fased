@@ -943,6 +943,34 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     ]);
   });
 
+  it("verifies the target Gateway without restarting it inside the active root transaction", async () => {
+    const calls: unknown[][] = [];
+    const operations = __testing.hostedTransactionOperations(
+      {
+        stateDir: "/state",
+        configPath: "/state/fased.json",
+      },
+      30_000,
+      {
+        controllerSocketPath: "/run/controller.sock",
+        refreshGateway: async (...args: unknown[]) => {
+          calls.push(args);
+        },
+      },
+    );
+    await operations.verifyGateway({
+      targetRoot: "/runtime/target",
+      nextManifest: {
+        profile: "protected-local",
+        runtime: { activeVersion: "1.2.3" },
+      },
+      signerRelease: signerRelease("1.2.3"),
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.[5]).toBe(true);
+  });
+
   it("restores the app, then signer, then previous Gateway when target health fails", async () => {
     const events: string[] = [];
     const operations = transactionOperations(events, {

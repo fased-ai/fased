@@ -389,6 +389,9 @@ default:other::---
     expect(bootstrap).not.toContain(
       'userSystemctl(spec, ["mask", "--runtime", "--now", "--force", "fased-gateway.service"])',
     );
+    expect(bootstrap).toContain(
+      'userSystemctl(spec, ["stop", "--no-block", "fased-gateway.service"])',
+    );
   });
 
   it("treats missing legacy signer material as a clean fresh install", async () => {

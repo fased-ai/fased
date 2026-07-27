@@ -2002,7 +2002,11 @@ async function waitForLegacyGatewayInactive(spec, timeoutMs = 10_000) {
     // this second stop drains that pre-existing job before activation.
     inactiveSince = null;
     if (new Set(["active", "activating", "reloading", "inactive", "failed"]).has(activeState)) {
-      userSystemctl(spec, ["stop", "fased-gateway.service"]);
+      // Do not wait on this individual stop job: systemd can report it as
+      // canceled when it replaces an already queued reverse-dependency start.
+      // The bounded state/job loop below is the authoritative completion
+      // check, and the runtime mask prevents a new start from winning.
+      userSystemctl(spec, ["stop", "--no-block", "fased-gateway.service"]);
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }

@@ -220,7 +220,6 @@ ProtectControlGroups=true
 ProtectClock=true
 ProtectHostname=true
 LockPersonality=true
-RestrictSUIDSGID=true
 RestrictRealtime=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
