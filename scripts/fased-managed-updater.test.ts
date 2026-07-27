@@ -1041,6 +1041,51 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     ).toBe(PROTECTED_LOCAL_CONTROLLER_UNAVAILABLE_MESSAGE);
   });
 
+  it("derives the Protected Local controller socket from managed config without ambient env", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-protected-controller-socket-"));
+    const stateDir = path.join(root, ".fased");
+    const configPath = path.join(stateDir, "fased.json");
+    const manifestPath = path.join(stateDir, "install.json");
+    const instanceId = "0123456789abcdef";
+    await fsp.mkdir(stateDir, { recursive: true });
+    await fsp.writeFile(
+      configPath,
+      `${JSON.stringify({
+        env: {
+          vars: {
+            FASED_HOST_PROFILE: "local",
+            FASED_PROTECTED_LOCAL: "1",
+            FASED_PROTECTED_LOCAL_INSTANCE: instanceId,
+            FASED_HOST_UPDATER_SOCKET: `/run/fased-local-controller/${instanceId}/request.sock`,
+          },
+        },
+      })}\n`,
+      { mode: 0o600 },
+    );
+    await fsp.writeFile(
+      manifestPath,
+      `${JSON.stringify({ profile: "protected-local", configPath })}\n`,
+      { mode: 0o600 },
+    );
+    const previous = process.env.FASED_HOST_UPDATER_SOCKET;
+    delete process.env.FASED_HOST_UPDATER_SOCKET;
+    try {
+      expect(
+        __testing.resolveRootManagedControllerSocket(
+          { manifestPath },
+          { profile: "protected-local", configPath },
+        ),
+      ).toBe(`/run/fased-local-controller/${instanceId}/request.sock`);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.FASED_HOST_UPDATER_SOCKET;
+      } else {
+        process.env.FASED_HOST_UPDATER_SOCKET = previous;
+      }
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("distinguishes a definitive pre-v2 rejection from an ambiguous post-send disconnect", async () => {
     const rejected = await withUnixServer((socket) => {
       socket.once("data", () => {

@@ -313,9 +313,11 @@ async function chmodCredentialsAndAgentState(params: {
     require: "dir" | "file";
   }) => Promise<SecurityFixAction>;
 }): Promise<void> {
-  const sharedHostingState = params.env.FASED_HOST_PROFILE?.trim() === "hosting";
-  const directoryMode = sharedHostingState ? 0o2770 : 0o700;
-  const fileMode = sharedHostingState ? 0o660 : 0o600;
+  const sharedServiceState =
+    params.env.FASED_HOST_PROFILE?.trim() === "hosting" ||
+    params.env.FASED_PROTECTED_LOCAL?.trim() === "1";
+  const directoryMode = sharedServiceState ? 0o2770 : 0o700;
+  const fileMode = sharedServiceState ? 0o660 : 0o600;
   const credsDir = resolveOAuthDir(params.env, params.stateDir);
   params.actions.push(await safeChmod({ path: credsDir, mode: directoryMode, require: "dir" }));
 
@@ -406,7 +408,8 @@ export async function fixSecurityFootguns(opts?: {
   const isWindows = platform === "win32";
   const stateDir = opts?.stateDir ?? resolveStateDir(env);
   const configPath = opts?.configPath ?? resolveConfigPath(env, stateDir);
-  const sharedHostingState = env.FASED_HOST_PROFILE?.trim() === "hosting";
+  const sharedServiceState =
+    env.FASED_HOST_PROFILE?.trim() === "hosting" || env.FASED_PROTECTED_LOCAL?.trim() === "1";
   const actions: SecurityFixAction[] = [];
   const errors: string[] = [];
 
@@ -454,14 +457,14 @@ export async function fixSecurityFootguns(opts?: {
   actions.push(
     await applyPerms({
       path: stateDir,
-      mode: sharedHostingState ? 0o2770 : 0o700,
+      mode: sharedServiceState ? 0o2770 : 0o700,
       require: "dir",
     }),
   );
   actions.push(
     await applyPerms({
       path: configPath,
-      mode: sharedHostingState ? 0o660 : 0o600,
+      mode: sharedServiceState ? 0o660 : 0o600,
       require: "file",
     }),
   );
@@ -474,7 +477,7 @@ export async function fixSecurityFootguns(opts?: {
     for (const p of includePaths) {
       // eslint-disable-next-line no-await-in-loop
       actions.push(
-        await applyPerms({ path: p, mode: sharedHostingState ? 0o660 : 0o600, require: "file" }),
+        await applyPerms({ path: p, mode: sharedServiceState ? 0o660 : 0o600, require: "file" }),
       );
     }
   }

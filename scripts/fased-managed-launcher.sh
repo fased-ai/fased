@@ -45,6 +45,48 @@ if [[ -z "$NODE_BIN" ]]; then
   exit 1
 fi
 
+CONFIG_PATH="${FASED_CONFIG_PATH:-$STATE_DIR/fased.json}"
+export FASED_STATE_DIR="$STATE_DIR"
+export FASED_CONFIG_DIR="$STATE_DIR"
+export FASED_CONFIG_PATH="$CONFIG_PATH"
+
+load_managed_profile_environment() {
+  [[ -f "$CONFIG_PATH" && ! -L "$CONFIG_PATH" ]] || return 0
+  local assignments=""
+  assignments="$("$NODE_BIN" -e '
+    const fs = require("node:fs");
+    const config = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    const vars = config?.env?.vars;
+    if (!vars || typeof vars !== "object" || Array.isArray(vars)) process.exit(0);
+    const keys = [
+      "FASED_HOST_PROFILE",
+      "FASED_PROTECTED_LOCAL",
+      "FASED_PROTECTED_LOCAL_INSTANCE",
+      "FASED_WALLET_LOCAL_SIGNER_LIFECYCLE",
+      "FASED_WALLET_LOCAL_SIGNER_BIN",
+      "FASED_WALLET_LOCAL_SIGNER_SOCKET",
+      "FASED_HOST_UPDATER_SOCKET",
+      "FASED_HOST_UPDATERCTL_STATE",
+    ];
+    for (const key of keys) {
+      const value = vars[key];
+      if (typeof value !== "string") continue;
+      if (value.includes("\n") || value.includes("\r") || value.includes("\0")) process.exit(78);
+      process.stdout.write(`${key}=${value}\n`);
+    }
+  ' "$CONFIG_PATH")" || {
+    echo "Fased managed profile configuration is invalid. Run fased doctor --non-interactive." >&2
+    exit 1
+  }
+  local assignment=""
+  while IFS= read -r assignment; do
+    [[ -n "$assignment" ]] || continue
+    export "$assignment"
+  done <<<"$assignments"
+}
+
+load_managed_profile_environment
+
 if [[ "${1:-}" == "update" && -f "$UPDATER" ]]; then
   exec "$NODE_BIN" "$UPDATER" "$@"
 fi

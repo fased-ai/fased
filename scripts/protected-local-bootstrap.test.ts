@@ -333,6 +333,20 @@ default:other::---
     }
   });
 
+  it("restores the exact captured legacy Gateway release before target metadata", () => {
+    expect(
+      __testing.previousLegacyGatewayVersion({
+        legacyGatewayState: { releaseVersion: "0.1.75" },
+        manifestSnapshot: {
+          existed: true,
+          content: Buffer.from(
+            `${JSON.stringify({ runtime: { activeVersion: "0.1.76-rc.16" } })}\n`,
+          ),
+        },
+      }),
+    ).toBe("0.1.75");
+  });
+
   it("recognizes a prior Local user Gateway from managed install metadata", () => {
     const root = temporaryRoot();
     const stateDir = path.join(root, ".fased");
@@ -369,6 +383,12 @@ default:other::---
         flow.indexOf('persistBootstrapTransaction(transaction, "legacy-gateway-captured")'),
       );
     }
+    expect(bootstrap).toContain(
+      'userSystemctl(spec, ["mask", "--runtime", "--force", "fased-gateway.service"])',
+    );
+    expect(bootstrap).not.toContain(
+      'userSystemctl(spec, ["mask", "--runtime", "--now", "--force", "fased-gateway.service"])',
+    );
   });
 
   it("treats missing legacy signer material as a clean fresh install", async () => {

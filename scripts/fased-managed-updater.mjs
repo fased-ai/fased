@@ -55,6 +55,45 @@ const HOSTED_TRANSACTION_PHASES = new Set([
   "rolling-back",
   "rollback-ready",
 ]);
+
+function resolveRootManagedControllerSocket(paths, manifest = null) {
+  const selectedManifest = manifest ?? readManagedInstallManifest(paths.manifestPath);
+  if (selectedManifest?.profile === "hosting") {
+    return HOST_UPDATER_SOCKET;
+  }
+  if (selectedManifest?.profile !== "protected-local") {
+    return process.env.FASED_HOST_UPDATER_SOCKET || HOST_UPDATER_SOCKET;
+  }
+  const configPath = selectedManifest.configPath;
+  if (!configPath || !path.isAbsolute(configPath)) {
+    throw new Error("Protected Local controller configuration path is invalid.");
+  }
+  let config;
+  try {
+    const configStat = fs.lstatSync(configPath);
+    if (!configStat.isFile() || configStat.isSymbolicLink()) {
+      throw new Error("configuration is not a regular file");
+    }
+    config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  } catch (error) {
+    throw new Error(`Protected Local controller configuration is unavailable: ${error.message}`, {
+      cause: error,
+    });
+  }
+  const variables = config?.env?.vars;
+  const instanceId = String(variables?.FASED_PROTECTED_LOCAL_INSTANCE ?? "").trim();
+  const socketPath = String(variables?.FASED_HOST_UPDATER_SOCKET ?? "").trim();
+  const expectedSocket = `/run/fased-local-controller/${instanceId}/request.sock`;
+  if (
+    variables?.FASED_HOST_PROFILE !== "local" ||
+    variables?.FASED_PROTECTED_LOCAL !== "1" ||
+    !/^[a-f0-9]{16}$/u.test(instanceId) ||
+    socketPath !== expectedSocket
+  ) {
+    throw new Error("Protected Local controller identity or socket is invalid.");
+  }
+  return socketPath;
+}
 const TRANSACTION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const LOCAL_SIGNER_TRANSACTION_SCHEMA_VERSION = 1;
@@ -2153,6 +2192,8 @@ async function coordinateHostedReleaseTransaction(journal, operations) {
 
 function hostedTransactionOperations(paths, timeoutMs, options = {}) {
   const targetServiceAlreadyRestarted = options.targetServiceAlreadyRestarted === true;
+  const controllerSocketPath =
+    options.controllerSocketPath ?? resolveRootManagedControllerSocket(paths);
   return {
     activateApplication: async (journal) => await activateHostedApplication(paths, journal),
     restoreApplication: async (journal) => {
@@ -2169,6 +2210,7 @@ function hostedTransactionOperations(paths, timeoutMs, options = {}) {
           journal.transactionId,
           journal.targetVersion,
           timeoutMs,
+          controllerSocketPath,
         );
       }
       const response = await requestHostedSignerTransactionWithRetry(
@@ -2176,6 +2218,7 @@ function hostedTransactionOperations(paths, timeoutMs, options = {}) {
         journal.transactionId,
         journal.targetVersion,
         timeoutMs,
+        controllerSocketPath,
       );
       if (response.release) {
         const manifestSignerRelease = journal.nextManifest?.release?.signer?.release;
@@ -5857,6 +5900,7 @@ export const __testing = {
   recoverHostedReleaseTransaction,
   requestHostedSignerTransaction,
   requestHostedSignerTransactionWithRetry,
+  resolveRootManagedControllerSocket,
   rollbackHostedReleaseTransaction,
   restartHostedGateway,
   activateLocalSignerTransaction,

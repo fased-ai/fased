@@ -170,6 +170,7 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
           : {}),
       };
     },
+    reconcileApplicationState: async () => ({ changed: false }),
     stopSigner: async () => {
       events.push("stop");
     },
@@ -222,6 +223,19 @@ function managedTransaction(phase = "signer-preactivated") {
 }
 
 describe("root-owned hosted updater protocol", () => {
+  it("reconciles shared application state before preparing a protected signer release", async () => {
+    const { context, events } = await createFixture();
+    context.reconcileApplicationState = async () => {
+      events.push("reconcile-application-state");
+      return { changed: true };
+    };
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      context,
+    );
+    expect(events).toEqual(["reconcile-application-state", "stage:1.2.3"]);
+  });
+
   it("installs a protected application outside the operator home and selects it atomically", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-protected-app-"));
     cleanupRoots.push(root);

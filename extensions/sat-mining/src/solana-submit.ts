@@ -766,9 +766,27 @@ async function executeTypedSatIntent(params: {
           request: { requestId },
         });
       } catch (lookupError) {
-        const detail = `${executeError instanceof Error ? executeError.message : String(executeError)}; ${
-          lookupError instanceof Error ? lookupError.message : String(lookupError)
-        }`;
+        const executeDetail =
+          executeError instanceof Error ? executeError.message : String(executeError);
+        const lookupDetail =
+          lookupError instanceof Error ? lookupError.message : String(lookupError);
+        const detail = `${executeDetail}; ${lookupDetail}`;
+        if (
+          /^policy denies operation /u.test(executeDetail) &&
+          /signer operation not found/iu.test(lookupDetail)
+        ) {
+          await updateSatSubmission({
+            walletId: params.walletId,
+            requestId,
+            intentDigest,
+            state: "failed",
+            error: executeDetail,
+            owner: claim.owner,
+            releaseLease: true,
+            env: params.env,
+          });
+          throw new SatSubmissionDefinitiveFailureError(executeDetail);
+        }
         await updateSatSubmission({
           walletId: params.walletId,
           requestId,

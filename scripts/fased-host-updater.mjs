@@ -1761,6 +1761,134 @@ async function stageOfficialCandidate(version, candidatePath, context) {
   }
 }
 
+const PROTECTED_LOCAL_OPERATOR_ONLY_STATE = new Set([
+  "backups",
+  "bin",
+  "extensions",
+  "install-cache",
+  "runtime",
+  "signer-update",
+  "source-paired-update",
+  "updater",
+]);
+
+async function systemAccountRecord(database, name) {
+  const getent = await fixedExecutable(["/usr/bin/getent", "/bin/getent"], "getent");
+  const { stdout } = await execFileAsync(getent, [database, name], {
+    env: { PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" },
+    timeout: 10_000,
+    maxBuffer: 64 * 1024,
+  });
+  const line = stdout.trim();
+  const fields = line.split(":");
+  const identityMatches =
+    fields[0] === name || (database === "passwd" && /^\d+$/u.test(name) && fields[2] === name);
+  if (
+    (database === "passwd" && fields.length < 7) ||
+    (database === "group" && fields.length < 4) ||
+    !identityMatches
+  ) {
+    throw new Error(`protected Local ${database} identity is malformed`);
+  }
+  return fields;
+}
+
+function exactUnitValue(content, key) {
+  const pattern = new RegExp(`^${key}=(.*)$`, "gmu");
+  const matches = [...content.matchAll(pattern)];
+  if (matches.length !== 1 || !matches[0][1]) {
+    throw new Error(`protected Local Gateway unit has an invalid ${key}`);
+  }
+  return matches[0][1];
+}
+
+async function shareProtectedApplicationEntry(entryPath, configGid) {
+  const stat = await fsp.lstat(entryPath);
+  if (stat.isSymbolicLink()) {
+    await fsp.lchown(entryPath, stat.uid, configGid);
+    return;
+  }
+  if (stat.isDirectory()) {
+    const entries = await fsp.readdir(entryPath);
+    for (const entry of entries) {
+      await shareProtectedApplicationEntry(path.join(entryPath, entry), configGid);
+    }
+    await fsp.chown(entryPath, stat.uid, configGid);
+    await fsp.chmod(entryPath, 0o2770);
+    return;
+  }
+  if (!stat.isFile()) {
+    throw new Error(
+      `protected Local application state contains an unsupported entry: ${entryPath}`,
+    );
+  }
+  if (stat.nlink !== 1) {
+    throw new Error(`protected Local application state contains a hard-linked file: ${entryPath}`);
+  }
+  await fsp.chown(entryPath, stat.uid, configGid);
+  await fsp.chmod(entryPath, 0o660 | (stat.mode & 0o110));
+}
+
+async function reconcileProtectedApplicationState(context) {
+  if (!context.instanceId) {
+    return { changed: false };
+  }
+  const gatewayUnit = await fileMetadata(context.paths.gatewayUnitPath);
+  if (
+    !gatewayUnit.existed ||
+    gatewayUnit.uid !== context.rootUid ||
+    (gatewayUnit.mode & 0o022) !== 0
+  ) {
+    throw new Error("protected Local Gateway unit is not root-controlled");
+  }
+  const unit = await fsp.readFile(context.paths.gatewayUnitPath, "utf8");
+  const gatewayUser = exactUnitValue(unit, "User");
+  const stateDir = exactUnitValue(unit, "Environment=FASED_STATE_DIR");
+  const configGroup = `fscf-${context.instanceId}`;
+  const supplementaryGroups = exactUnitValue(unit, "SupplementaryGroups").split(/\s+/u);
+  if (
+    gatewayUser !== `fsgw-${context.instanceId}` ||
+    !supplementaryGroups.includes(configGroup) ||
+    !path.isAbsolute(stateDir) ||
+    path.basename(stateDir) !== ".fased"
+  ) {
+    throw new Error("protected Local Gateway application-state identity is invalid");
+  }
+  const stateStat = await fsp.lstat(stateDir);
+  if (!stateStat.isDirectory() || stateStat.isSymbolicLink() || stateStat.uid === context.rootUid) {
+    throw new Error("protected Local application state directory is invalid");
+  }
+  const operatorFields = await systemAccountRecord("passwd", String(stateStat.uid));
+  const gatewayFields = await systemAccountRecord("passwd", gatewayUser);
+  const groupFields = await systemAccountRecord("group", configGroup);
+  const configGid = Number(groupFields[2]);
+  const members = new Set(
+    String(groupFields[3] || "")
+      .split(",")
+      .filter(Boolean),
+  );
+  if (
+    !Number.isSafeInteger(configGid) ||
+    configGid <= 0 ||
+    Number(operatorFields[2]) !== stateStat.uid ||
+    !members.has(operatorFields[0]) ||
+    !members.has(gatewayFields[0])
+  ) {
+    throw new Error("protected Local application-state group membership is invalid");
+  }
+  const entries = await fsp.readdir(stateDir);
+  for (const entry of entries) {
+    if (PROTECTED_LOCAL_OPERATOR_ONLY_STATE.has(entry)) {
+      continue;
+    }
+    await shareProtectedApplicationEntry(path.join(stateDir, entry), configGid);
+  }
+  await fsp.chown(stateDir, stateStat.uid, configGid);
+  await fsp.chmod(stateDir, 0o2770);
+  await fsyncDirectory(stateDir);
+  return { changed: true, stateDir, configGid };
+}
+
 function createTransactionContext(overrides = {}) {
   const paths = { ...DEFAULT_PATHS, ...overrides.paths };
   const signerServiceName = overrides.signerServiceName ?? "fased-signerd.service";
@@ -1788,6 +1916,9 @@ function createTransactionContext(overrides = {}) {
       overrides.stageCandidate ??
       (async (version, candidatePath, context) =>
         await stageOfficialCandidate(version, candidatePath, context)),
+    reconcileApplicationState:
+      overrides.reconcileApplicationState ??
+      (async () => await reconcileProtectedApplicationState(context)),
     stopSigner: overrides.stopSigner ?? (async () => await stopSignerService(signerServiceName)),
     startSignerV2:
       overrides.startSignerV2 ??
@@ -1962,6 +2093,7 @@ async function writeInitialRollbackFloor(context, version) {
 async function prepareSignerRelease(request, context) {
   await context.assertReleaseAllowed(request.version);
   await assertRollbackFloor(context, request.version);
+  await context.reconcileApplicationState();
   const active = await readJournal(context);
   if (active) {
     assertMatchingTransaction(active, request);
@@ -2720,6 +2852,7 @@ export const __testing = {
   parseServerConfiguration,
   prepareSignerRelease,
   protectedLocalControllerConfiguration,
+  reconcileProtectedApplicationState,
   readJournal,
   recoverInterruptedTransaction,
   releaseAttestationVerifyArgs,

@@ -446,6 +446,37 @@ describe("SAT cycle transaction builders", () => {
     ).toHaveLength(1);
   });
 
+  it("records a policy denial with no signer operation as a definitive failure", async () => {
+    const healthySignerCall = callLocalSocketSigner.getMockImplementation();
+    callLocalSocketSigner.mockImplementation(
+      async (socketPath: string, payload: { op?: string }) => {
+        if (payload.op === "v2.execute") {
+          throw new Error(
+            "policy denies operation sat.claimProtocolTreasury@EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
+          );
+        }
+        if (payload.op === "v2.operation.get") {
+          throw new Error("signer operation not found");
+        }
+        if (!healthySignerCall) {
+          throw new Error("healthy signer mock is unavailable");
+        }
+        return await healthySignerCall(socketPath, payload);
+      },
+    );
+
+    const submit = async () =>
+      await runWithSatSubmissionWorkflow(
+        "test:definitive-policy-denial",
+        async () => await submitSatDepositMinerCapital({} as never, { lamports: 250_000_000 }),
+      );
+    await expect(submit()).rejects.toThrow(/^policy denies operation /u);
+    await expect(submit()).rejects.toThrow(/^policy denies operation /u);
+    expect(
+      callLocalSocketSigner.mock.calls.filter((call) => call[1]?.op === "v2.execute"),
+    ).toHaveLength(1);
+  });
+
   it("never re-executes when an unknown caller record regresses to signer reserved", async () => {
     const healthySignerCall = callLocalSocketSigner.getMockImplementation();
     let durableRequestId = "";
