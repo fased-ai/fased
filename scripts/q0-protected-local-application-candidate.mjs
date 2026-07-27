@@ -600,6 +600,9 @@ async function restoreFromBackup(paths) {
 }
 
 async function runCandidate(paths, sourceRoot) {
+  if (fs.existsSync(paths.backupPath)) {
+    await restoreFromBackup(paths);
+  }
   let activated = false;
   let testError;
   try {
