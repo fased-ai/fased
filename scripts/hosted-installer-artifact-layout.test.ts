@@ -133,6 +133,11 @@ describe("attested Hosting installer artifact layout", () => {
     expect(installer.indexOf(sharedStateCreation)).toBeLessThan(
       installer.indexOf("cat >/etc/systemd/system/fased-host-updater.service"),
     );
+    const updaterUnit = installer.slice(
+      installer.indexOf("cat >/etc/systemd/system/fased-host-updater.service"),
+      installer.indexOf("cat >/etc/systemd/system/fased-signerd.service"),
+    );
+    expect(updaterUnit).not.toContain("RestrictSUIDSGID=true");
     expect(installer).toContain("ReadWritePaths=/opt/fased/host-controller");
     expect(installer).toContain("RestartSec=1");
     expect(installer).toContain("/var/lib/fased-host-updater/controller-version.json");
