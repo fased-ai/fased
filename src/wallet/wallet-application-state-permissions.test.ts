@@ -19,7 +19,7 @@ async function modes(stateDir: string): Promise<{ directory: number; registry: n
 describe("wallet application state permissions", () => {
   it("keeps ordinary Local wallet application state owner-only", async () => {
     await withStateDirEnv("fased-wallet-state-local-", async ({ stateDir }) => {
-      const env = { ...process.env, FASED_STATE_DIR: stateDir };
+      const env: NodeJS.ProcessEnv = { ...process.env, FASED_STATE_DIR: stateDir };
       delete env.FASED_HOST_PROFILE;
       delete env.FASED_PROTECTED_LOCAL;
       ensureWalletStateDir(env);

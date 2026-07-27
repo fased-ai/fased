@@ -25,7 +25,7 @@ async function modes(stateDir: string): Promise<{ directory: number; token: numb
 describe("federation application state permissions", () => {
   it("keeps ordinary Local federation credentials owner-only", async () => {
     await withStateDirEnv("fased-federation-state-local-", async ({ stateDir }) => {
-      const env = { ...process.env, FASED_STATE_DIR: stateDir };
+      const env: NodeJS.ProcessEnv = { ...process.env, FASED_STATE_DIR: stateDir };
       delete env.FASED_HOST_PROFILE;
       delete env.FASED_PROTECTED_LOCAL;
       await persistFederationAccessToken(token, env);
