@@ -1865,6 +1865,7 @@ async function callSatMiningGateway<T>(
     method,
     params,
     scopes: ["operator.admin"],
+    deviceAuth: "disabled",
     timeoutMs: typeof opts?.timeoutMs === "number" ? opts.timeoutMs : 15_000,
   });
 }

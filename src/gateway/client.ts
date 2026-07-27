@@ -61,7 +61,7 @@ export type GatewayClientOptions = {
   commands?: string[];
   permissions?: Record<string, boolean>;
   pathEnv?: string;
-  deviceIdentity?: DeviceIdentity;
+  deviceIdentity?: DeviceIdentity | null;
   minProtocol?: number;
   maxProtocol?: number;
   tlsFingerprint?: string;
@@ -101,7 +101,10 @@ export class GatewayClient {
   constructor(opts: GatewayClientOptions) {
     this.opts = {
       ...opts,
-      deviceIdentity: opts.deviceIdentity ?? loadOrCreateDeviceIdentity(),
+      deviceIdentity:
+        opts.deviceIdentity === null
+          ? undefined
+          : (opts.deviceIdentity ?? loadOrCreateDeviceIdentity()),
     };
   }
 
@@ -247,21 +250,17 @@ export class GatewayClient {
     const role = this.opts.role ?? "operator";
     const explicitGatewayToken = this.opts.token?.trim() || undefined;
     const explicitDeviceToken = this.opts.deviceToken?.trim() || undefined;
-    const authPassword = this.opts.password?.trim() || undefined;
-    const usesSharedAuth = Boolean(explicitGatewayToken || authPassword);
-    const storedToken =
-      !usesSharedAuth && this.opts.deviceIdentity
-        ? loadDeviceAuthToken({ deviceId: this.opts.deviceIdentity.deviceId, role })?.token
-        : null;
-    // Keep shared Gateway credentials independent from the operator's persisted
-    // device-token store. This is required when a protected Gateway calls its own
-    // RPC surface under a dedicated service identity: it can authenticate with
-    // the configured shared credential without mutating operator-owned state.
+    const storedToken = this.opts.deviceIdentity
+      ? loadDeviceAuthToken({ deviceId: this.opts.deviceIdentity.deviceId, role })?.token
+      : null;
+    // Keep shared gateway credentials explicit. Persisted per-device tokens only
+    // participate when no explicit shared token is provided.
     const resolvedDeviceToken =
-      explicitDeviceToken ?? (!usesSharedAuth ? (storedToken ?? undefined) : undefined);
+      explicitDeviceToken ?? (!explicitGatewayToken ? (storedToken ?? undefined) : undefined);
     // Legacy compatibility: keep `auth.token` populated for device-token auth when
     // no explicit shared token is present.
     const authToken = explicitGatewayToken ?? resolvedDeviceToken;
+    const authPassword = this.opts.password?.trim() || undefined;
     const auth =
       authToken || authPassword || resolvedDeviceToken
         ? {
@@ -326,7 +325,7 @@ export class GatewayClient {
     void this.request<HelloOk>("connect", params)
       .then((helloOk) => {
         const authInfo = helloOk?.auth;
-        if (authInfo?.deviceToken && this.opts.deviceIdentity && !usesSharedAuth) {
+        if (authInfo?.deviceToken && this.opts.deviceIdentity) {
           storeDeviceAuthToken({
             deviceId: this.opts.deviceIdentity.deviceId,
             role: authInfo.role ?? role,

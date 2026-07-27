@@ -423,6 +423,7 @@ describe("SAT mining HTTP routes", () => {
           expect.objectContaining({
             method: "sat.getMiningReadiness",
             params: { walletId: "mining" },
+            deviceAuth: "disabled",
           }),
         );
         expect(callGatewayScoped).toHaveBeenNthCalledWith(

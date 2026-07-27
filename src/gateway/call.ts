@@ -43,6 +43,11 @@ type CallGatewayBaseOptions = {
   minProtocol?: number;
   maxProtocol?: number;
   /**
+   * Disables operator device-identity storage for an internal service-to-Gateway
+   * call that already uses an explicit shared credential.
+   */
+  deviceAuth?: "disabled";
+  /**
    * Overrides the config path shown in connection error details.
    * Does not affect config loading; callers still control auth via opts.token/password/env/config.
    */
@@ -415,7 +420,7 @@ async function executeGatewayRequestWithScopes<T>(params: {
       mode: opts.mode ?? GATEWAY_CLIENT_MODES.CLI,
       role: "operator",
       scopes,
-      deviceIdentity: loadOrCreateDeviceIdentity(),
+      deviceIdentity: opts.deviceAuth === "disabled" ? null : loadOrCreateDeviceIdentity(),
       minProtocol: opts.minProtocol ?? PROTOCOL_VERSION,
       maxProtocol: opts.maxProtocol ?? PROTOCOL_VERSION,
       onHelloOk: async () => {

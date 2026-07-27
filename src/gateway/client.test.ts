@@ -373,11 +373,10 @@ describe("GatewayClient connect auth payload", () => {
       token: "shared-token",
     });
     expect(connectFrameFrom(ws).deviceToken).toBeUndefined();
-    expect(loadDeviceAuthTokenMock).not.toHaveBeenCalled();
     client.stop();
   });
 
-  it("does not read or persist operator device auth when shared token auth succeeds", async () => {
+  it("persists issued device auth after shared token authentication", async () => {
     const identity = createEphemeralDeviceIdentity();
     const client = new GatewayClient({
       url: "ws://127.0.0.1:18789",
@@ -406,14 +405,19 @@ describe("GatewayClient connect auth payload", () => {
         },
       }),
     );
-    await Promise.resolve();
+    await vi.waitFor(() => expect(storeDeviceAuthTokenMock).toHaveBeenCalledOnce());
 
-    expect(loadDeviceAuthTokenMock).not.toHaveBeenCalled();
-    expect(storeDeviceAuthTokenMock).not.toHaveBeenCalled();
+    expect(loadDeviceAuthTokenMock).toHaveBeenCalledOnce();
+    expect(storeDeviceAuthTokenMock).toHaveBeenCalledWith({
+      deviceId: identity.deviceId,
+      role: "operator",
+      token: "issued-device-token",
+      scopes: ["operator.admin"],
+    });
     client.stop();
   });
 
-  it("does not read or persist operator device auth when shared password auth succeeds", async () => {
+  it("persists issued device auth after shared password authentication", async () => {
     const identity = createEphemeralDeviceIdentity();
     const client = new GatewayClient({
       url: "ws://127.0.0.1:18789",
@@ -442,9 +446,51 @@ describe("GatewayClient connect auth payload", () => {
         },
       }),
     );
-    await Promise.resolve();
+    await vi.waitFor(() => expect(storeDeviceAuthTokenMock).toHaveBeenCalledOnce());
 
     expect(connectFrameFrom(ws)).toMatchObject({ password: "shared-password" });
+    expect(connectFrameFrom(ws).deviceToken).toBeUndefined();
+    expect(loadDeviceAuthTokenMock).toHaveBeenCalledOnce();
+    expect(storeDeviceAuthTokenMock).toHaveBeenCalledWith({
+      deviceId: identity.deviceId,
+      role: "operator",
+      token: "issued-device-token",
+      scopes: ["operator.admin"],
+    });
+    client.stop();
+  });
+
+  it("does not read or persist device auth when the caller disables device identity", async () => {
+    const client = new GatewayClient({
+      url: "ws://127.0.0.1:18789",
+      token: "shared-token",
+      deviceIdentity: null,
+    });
+
+    client.start();
+    const ws = getLatestWs();
+    ws.emitOpen();
+    emitConnectChallenge(ws);
+    const connectRequest = connectRequestFrom(ws);
+    ws.emitMessage(
+      JSON.stringify({
+        type: "res",
+        id: connectRequest.id,
+        ok: true,
+        payload: {
+          type: "hello-ok",
+          auth: {
+            deviceToken: "issued-device-token",
+            role: "operator",
+            scopes: ["operator.admin"],
+          },
+          policy: { tickIntervalMs: 30_000 },
+        },
+      }),
+    );
+    await Promise.resolve();
+
+    expect(connectFrameFrom(ws)).toMatchObject({ token: "shared-token" });
     expect(connectFrameFrom(ws).deviceToken).toBeUndefined();
     expect(loadDeviceAuthTokenMock).not.toHaveBeenCalled();
     expect(storeDeviceAuthTokenMock).not.toHaveBeenCalled();
