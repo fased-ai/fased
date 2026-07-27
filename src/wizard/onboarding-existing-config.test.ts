@@ -53,7 +53,7 @@ describe("isProtectedLocalInstallerScaffold", () => {
           env: {
             vars: {
               FASED_PROTECTED_LOCAL: "1",
-              OPENAI_API_KEY: "configured",
+              USER_DEFINED_SETTING: "configured",
             },
           },
           gateway: { port: 18789 },
