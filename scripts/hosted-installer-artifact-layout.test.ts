@@ -122,6 +122,11 @@ describe("attested Hosting installer artifact layout", () => {
     expect(installer).toContain(
       "ExecStart=$(command -v node) /opt/fased/host-controller/current/fased-host-updater.mjs",
     );
+    expect(installer).toContain(
+      "ProtectHome=read-only\n" +
+        "ProtectSystem=strict\n" +
+        "ReadWritePaths=/opt/fased/host-controller /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-updater /etc/systemd/system ${target_home}/.fased",
+    );
     expect(installer).toContain("ReadWritePaths=/opt/fased/host-controller");
     expect(installer).toContain("RestartSec=1");
     expect(installer).toContain("/var/lib/fased-host-updater/controller-version.json");

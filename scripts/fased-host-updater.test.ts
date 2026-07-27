@@ -283,6 +283,34 @@ describe("root-owned hosted updater protocol", () => {
     expect(events).toEqual(["reconcile-application-state", "stage:1.2.3"]);
   });
 
+  it("defers shared-state reconciliation while an interrupted bootstrap recreates state", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-state-retry-"));
+    cleanupRoots.push(root);
+    const instanceId = "0123456789abcdef";
+    const stateDir = path.join(root, "operator", ".fased");
+    const gatewayUnitPath = path.join(root, "systemd", "fased-gateway.service");
+    await fsp.mkdir(path.dirname(gatewayUnitPath), { recursive: true });
+    await fsp.writeFile(
+      gatewayUnitPath,
+      [
+        "[Service]",
+        `User=fsgw-${instanceId}`,
+        `SupplementaryGroups=fscf-${instanceId}`,
+        `Environment=FASED_STATE_DIR=${stateDir}`,
+        "",
+      ].join("\n"),
+      { mode: 0o644 },
+    );
+
+    const result = await __testing.reconcileProtectedApplicationState({
+      instanceId,
+      rootUid: process.geteuid(),
+      paths: { gatewayUnitPath },
+    });
+
+    expect(result).toEqual({ changed: false, pendingStateDir: true, stateDir });
+  });
+
   it("installs a protected application outside the operator home and selects it atomically", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-protected-app-"));
     cleanupRoots.push(root);

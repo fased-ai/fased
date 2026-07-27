@@ -1872,7 +1872,19 @@ async function reconcileProtectedApplicationState(context) {
   const unit = await fsp.readFile(gatewayUnitPath, "utf8");
   const identity = rootManagedApplicationIdentity(context, unit);
   const { configGroup, gatewayUser, stateDir } = identity;
-  const stateStat = await fsp.lstat(stateDir);
+  let stateStat;
+  try {
+    stateStat = await fsp.lstat(stateDir);
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+    // A fresh or interrupted Hosting bootstrap can leave the root-controlled
+    // Gateway unit in place before the app-owned state directory is recreated.
+    // The installer establishes and reconciles that directory before starting
+    // the Gateway, so signer preparation must remain non-mutating here.
+    return { changed: false, pendingStateDir: true, stateDir };
+  }
   if (!stateStat.isDirectory() || stateStat.isSymbolicLink() || stateStat.uid === context.rootUid) {
     throw new Error("root-managed application state directory is invalid");
   }
@@ -2111,7 +2123,12 @@ async function writeInitialRollbackFloor(context, version) {
 async function prepareSignerRelease(request, context) {
   await context.assertReleaseAllowed(request.version);
   await assertRollbackFloor(context, request.version);
-  await context.reconcileApplicationState();
+  const applicationState = (await context.reconcileApplicationState()) ?? {};
+  const applicationStateResult = {
+    applicationStateReconciled: applicationState.changed === true,
+    applicationStatePending:
+      applicationState.pendingGatewayUnit === true || applicationState.pendingStateDir === true,
+  };
   const active = await readJournal(context);
   if (active) {
     assertMatchingTransaction(active, request);
@@ -2126,6 +2143,7 @@ async function prepareSignerRelease(request, context) {
       phase: active.phase,
       changed: active.changed,
       release: active.release,
+      ...applicationStateResult,
     };
   }
 
@@ -2223,6 +2241,7 @@ async function prepareSignerRelease(request, context) {
     changed: journal.changed,
     controllerChanged: journal.controllerChanged === true,
     release: journal.release,
+    ...applicationStateResult,
   };
 }
 
