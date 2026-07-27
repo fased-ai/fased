@@ -122,7 +122,7 @@ function createClientWithIdentity(
 ) {
   const identity: DeviceIdentity = {
     deviceId,
-    privateKeyPem: "private-key",
+    privateKeyPem: "private-key", // pragma: allowlist secret
     publicKeyPem: "public-key",
   };
   return new GatewayClient({
@@ -421,7 +421,7 @@ describe("GatewayClient connect auth payload", () => {
     const identity = createEphemeralDeviceIdentity();
     const client = new GatewayClient({
       url: "ws://127.0.0.1:18789",
-      password: "shared-password",
+      password: "shared-password", // pragma: allowlist secret
       deviceIdentity: identity,
     });
 

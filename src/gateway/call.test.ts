@@ -503,7 +503,7 @@ describe("callGateway password resolution", () => {
   const explicitAuthCases = [
     {
       label: "password",
-      authKey: "password",
+      authKey: "password", // pragma: allowlist secret
       envKey: "FASED_GATEWAY_PASSWORD",
       envValue: "from-env",
       configValue: "from-config",
@@ -511,7 +511,7 @@ describe("callGateway password resolution", () => {
     },
     {
       label: "token",
-      authKey: "token",
+      authKey: "token", // pragma: allowlist secret
       envKey: "FASED_GATEWAY_TOKEN",
       envValue: "env-token",
       configValue: "local-token",
@@ -586,7 +586,7 @@ describe("callGateway password resolution", () => {
       gateway: {
         mode: "local",
         bind: "loopback",
-        auth: { token: "config-token", password: "config-password" },
+        auth: { token: "config-token", password: "config-password" }, // pragma: allowlist secret
       },
     });
 

@@ -308,7 +308,7 @@ function resolveGatewayCredentials(
     urlOverride: context.urlOverride,
     localTokenPrecedence: options.preferLocalConfigAuth ? "config-first" : "env-first",
     localPasswordPrecedence: options.preferLocalConfigAuth ? "config-first" : "env-first",
-    remotePasswordPrecedence: "env-first",
+    remotePasswordPrecedence: "env-first", // pragma: allowlist secret
   });
 }
 
