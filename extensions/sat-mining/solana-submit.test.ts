@@ -1475,7 +1475,7 @@ describe("SAT cycle transaction builders", () => {
 
   it("submits cleanup close instructions as one sat-cleanup batch", async () => {
     const cycleId = 9_859_162;
-    const authority = "4wxmFJm7xBkqLk7K3qn2gGw8v6SnM8j4rJz7s2p9dJQY";
+    const authority = "4wxmFJm7xBkqLk7K3qn2gGw8v6SnM8j4rJz7s2p9dJQY"; // pragma: allowlist secret
 
     await submitSatCloseResolvedCleanupBatch({} as never, [
       { kind: "minerCycleState", cycleId, authority },
