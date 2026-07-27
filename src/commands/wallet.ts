@@ -23,6 +23,7 @@ import {
   writeMiningRetirementReceipt,
 } from "../wallet/mining-wallet-retirement.js";
 import { resolveNativeSignerOperatorLifecycle } from "../wallet/native-signer-lifecycle-context.js";
+import { invokeNativeSignerOperatorHealth } from "../wallet/native-signer-operator-client.js";
 import { normalizeNativeSignerWalletId } from "../wallet/native-signer-wallet-id.js";
 import {
   callLocalSocketSigner,
@@ -3306,15 +3307,22 @@ export async function collectWalletSignerDoctorReport(
   const cfg = options.config ?? loadConfig();
   const effectiveEnv = { ...env, ...cfg.env?.vars };
 
-  const socketPath =
+  const configuredSocketPath =
     options.socketPath?.trim() ||
     String(effectiveEnv.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? "").trim() ||
     path.join(ensureWalletStateDir(effectiveEnv).rootDir, "local-signer.sock");
+  const operatorLifecycle = options.socketPath
+    ? undefined
+    : resolveNativeSignerOperatorLifecycle(effectiveEnv);
+  const socketPath = operatorLifecycle?.operatorSocketPath ?? configuredSocketPath;
   const hostingSigner =
+    operatorLifecycle?.profile === "hosting" ||
     String(effectiveEnv.FASED_HOST_PROFILE ?? "")
       .trim()
-      .toLowerCase() === "hosting" || socketPath === "/run/fased-signerd/app.sock";
-  const expectedSocketMode = hostingSigner ? 0o660 : 0o600;
+      .toLowerCase() === "hosting" ||
+    socketPath === "/run/fased-signerd/app.sock";
+  const expectedSocketMode =
+    operatorLifecycle?.profile === "protected-local" ? 0o600 : hostingSigner ? 0o660 : 0o600;
   const { pidPath, auditPath } = resolveLocalSignerSidecarPaths(socketPath);
   const checks: Array<{ check: string; ok: boolean; detail?: string }> = [];
 
@@ -3401,7 +3409,13 @@ export async function collectWalletSignerDoctorReport(
       push("socket.health", true, "Configure");
     } else {
       try {
-        localSignerHealth = await probeLocalSocketSignerHealth(socketPath);
+        localSignerHealth = operatorLifecycle
+          ? invokeNativeSignerOperatorHealth({
+              signerBinPath: operatorLifecycle.signerBinPath,
+              operatorSocketPath: operatorLifecycle.operatorSocketPath,
+              env: effectiveEnv,
+            })
+          : await probeLocalSocketSignerHealth(socketPath);
         push("socket.health", localSignerHealth.ok, localSignerHealth.details);
       } catch (err) {
         push("socket.health", false, String(err));

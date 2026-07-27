@@ -2,7 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { invokeNativeSignerOperatorCapabilities } from "./native-signer-operator-client.js";
+import {
+  invokeNativeSignerOperatorCapabilities,
+  invokeNativeSignerOperatorHealth,
+} from "./native-signer-operator-client.js";
 
 const tempDirs: string[] = [];
 
@@ -68,5 +71,59 @@ describe("native signer operator client", () => {
         operatorSocketPath: fixture.socketPath,
       }),
     ).toThrow(/protocol v2 readiness/);
+  });
+
+  it("uses the typed Go administrative health command", () => {
+    const fixture = createNativeSignerFixture(
+      JSON.stringify({
+        details: "fased-signerd protocol-v2 ready",
+        ready: true,
+        release: {
+          version: "dev",
+          commit: "unknown",
+          buildInputDigest: "unknown",
+          development: true,
+        },
+        network: {
+          ready: true,
+          wallets: [
+            {
+              walletId: "agent",
+              configured: true,
+              version: 3,
+              ready: true,
+            },
+          ],
+        },
+      }),
+    );
+    const result = invokeNativeSignerOperatorHealth({
+      signerBinPath: fixture.binaryPath,
+      operatorSocketPath: fixture.socketPath,
+      env: { HOME: path.dirname(fixture.binaryPath) },
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      details: "fased-signerd protocol-v2 ready",
+      ready: true,
+      network: { ready: true },
+    });
+    expect(fs.readFileSync(fixture.argsPath, "utf8").trim().split("\n")).toEqual([
+      "admin",
+      "service",
+      "health",
+      "--operator-socket",
+      fixture.socketPath,
+    ]);
+  });
+
+  it("fails closed on malformed health output", () => {
+    const fixture = createNativeSignerFixture(JSON.stringify({ ready: true }));
+    expect(() =>
+      invokeNativeSignerOperatorHealth({
+        signerBinPath: fixture.binaryPath,
+        operatorSocketPath: fixture.socketPath,
+      }),
+    ).toThrow(/invalid protocol v2 result/);
   });
 });

@@ -1,5 +1,7 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
+import { validateLocalSocketSignerResult } from "./local-socket-signer-protocol.js";
+import type { LocalSocketSignerHealthProbe } from "./providers/local-socket-signer-adapter.js";
 import { redactWalletDiagnosticText } from "./wallet-redaction.js";
 
 export type NativeSignerOperatorCapabilities = {
@@ -118,5 +120,26 @@ export function invokeNativeSignerOperatorCapabilities(params: {
       },
       features,
     },
+  };
+}
+
+export function invokeNativeSignerOperatorHealth(params: {
+  signerBinPath: string;
+  operatorSocketPath: string;
+  env?: NodeJS.ProcessEnv;
+}): LocalSocketSignerHealthProbe {
+  const result = invokeNativeSignerOperatorJSON({
+    signerBinPath: params.signerBinPath,
+    operatorSocketPath: params.operatorSocketPath,
+    args: ["service", "health"],
+    env: params.env ?? process.env,
+    label: "native signer health",
+  });
+  if (!validateLocalSocketSignerResult("health", result)) {
+    throw new Error("native signer health returned an invalid protocol v2 result");
+  }
+  return {
+    ok: true,
+    ...(result as Omit<LocalSocketSignerHealthProbe, "ok">),
   };
 }

@@ -2,10 +2,29 @@ import fs from "node:fs";
 import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { collectWalletSignerDoctorReport } from "./wallet.js";
 
+const resolveNativeSignerOperatorLifecycleMock = vi.hoisted(() => vi.fn());
+const invokeNativeSignerOperatorHealthMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../wallet/native-signer-lifecycle-context.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../wallet/native-signer-lifecycle-context.js")>()),
+  resolveNativeSignerOperatorLifecycle: resolveNativeSignerOperatorLifecycleMock,
+}));
+
+vi.mock("../wallet/native-signer-operator-client.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../wallet/native-signer-operator-client.js")>()),
+  invokeNativeSignerOperatorHealth: invokeNativeSignerOperatorHealthMock,
+}));
+
 const tempDirs: string[] = [];
+
+beforeEach(() => {
+  resolveNativeSignerOperatorLifecycleMock.mockReset();
+  resolveNativeSignerOperatorLifecycleMock.mockReturnValue(undefined);
+  invokeNativeSignerOperatorHealthMock.mockReset();
+});
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
@@ -14,6 +33,112 @@ afterEach(() => {
 });
 
 describe("collectWalletSignerDoctorReport", () => {
+  it.each([
+    { label: "protected Local signer", profile: "protected-local" as const, mode: 0o600 },
+    { label: "Hosting signer", profile: "hosting" as const, mode: 0o660 },
+  ])("uses the restricted operator socket for the $label", async ({ profile, mode }) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-wallet-doctor-operator-"));
+    tempDirs.push(root);
+    const stateDir = path.join(root, "state");
+    const walletDir = path.join(stateDir, "wallet");
+    const applicationSocketPath = path.join(root, "application", "app.sock");
+    const operatorSocketPath = path.join(root, "operator", "operator.sock");
+    const signerBinPath = path.join(root, "signer", "fased-signerd");
+    fs.mkdirSync(walletDir, { recursive: true });
+    fs.mkdirSync(path.dirname(operatorSocketPath), { recursive: true });
+    fs.writeFileSync(
+      path.join(walletDir, "provider-registry.v1.json"),
+      JSON.stringify({
+        version: 1,
+        providers: {
+          "embedded-keystore": { enabled: false, updatedAt: "2026-07-27T00:00:00.000Z" },
+          "local-socket-signer": { enabled: true, updatedAt: "2026-07-27T00:00:00.000Z" },
+          alchemy: { enabled: false, updatedAt: "2026-07-27T00:00:00.000Z" },
+          turnkey: { enabled: false, updatedAt: "2026-07-27T00:00:00.000Z" },
+          privy: { enabled: false, updatedAt: "2026-07-27T00:00:00.000Z" },
+        },
+        wallets: [
+          {
+            id: "agent",
+            name: "Agent",
+            providerId: "local-socket-signer",
+            addresses: { solana: "So11111111111111111111111111111111111111112" },
+            createdAt: "2026-07-27T00:00:00.000Z",
+            updatedAt: "2026-07-27T00:00:00.000Z",
+          },
+        ],
+        assignments: {},
+        updatedAt: "2026-07-27T00:00:00.000Z",
+      }),
+      "utf8",
+    );
+    const server = createServer();
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(operatorSocketPath, resolve);
+    });
+    fs.chmodSync(operatorSocketPath, mode);
+    resolveNativeSignerOperatorLifecycleMock.mockReturnValue({
+      profile,
+      ...(profile === "protected-local" ? { instanceId: "0123456789abcdef" } : {}),
+      signerBinPath,
+      applicationSocketPath,
+      operatorSocketPath,
+      controlSocketPath: path.join(root, "control", "control.sock"),
+      ownerHelperPath: path.join(root, "fased-local-signer-owner"),
+    });
+    invokeNativeSignerOperatorHealthMock.mockReturnValue({
+      ok: true,
+      details: "fased-signerd protocol-v2 ready",
+      ready: true,
+      network: {
+        ready: true,
+        wallets: [
+          {
+            walletId: "agent",
+            configured: true,
+            version: 1,
+            ready: true,
+          },
+        ],
+      },
+    });
+
+    try {
+      const env = {
+        HOME: root,
+        FASED_STATE_DIR: stateDir,
+        ...(profile === "protected-local"
+          ? {
+              FASED_HOST_PROFILE: "local",
+              FASED_PROTECTED_LOCAL: "1",
+              FASED_PROTECTED_LOCAL_INSTANCE: "0123456789abcdef",
+            }
+          : { FASED_HOST_PROFILE: "hosting" }),
+        FASED_WALLET_LOCAL_SIGNER_LIFECYCLE: "external",
+        FASED_WALLET_LOCAL_SIGNER_BIN: signerBinPath,
+        FASED_WALLET_LOCAL_SIGNER_SOCKET: applicationSocketPath,
+      } as NodeJS.ProcessEnv;
+      const report = await collectWalletSignerDoctorReport(env, {
+        config: { wallet: { provider: { id: "local-socket-signer" } } },
+      });
+
+      expect(report.ok).toBe(true);
+      expect(report.socketPath).toBe(operatorSocketPath);
+      expect(report.checks.find((check) => check.check === "socket.mode")).toMatchObject({
+        ok: true,
+        detail: `mode=${mode.toString(8)} expected=${mode.toString(8)}`,
+      });
+      expect(invokeNativeSignerOperatorHealthMock).toHaveBeenCalledWith({
+        signerBinPath,
+        operatorSocketPath,
+        env,
+      });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it.each([
     { label: "single-user signer", mode: 0o600, hosted: false },
     { label: "separate-user hosted signer", mode: 0o660, hosted: true },
@@ -40,6 +165,7 @@ describe("collectWalletSignerDoctorReport", () => {
           ...(hosted ? { FASED_HOST_PROFILE: "hosting" } : {}),
         } as NodeJS.ProcessEnv,
         {
+          socketPath,
           config: {
             wallet: {
               provider: { id: "local-socket-signer" },
