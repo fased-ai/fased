@@ -83,6 +83,36 @@ function enforceDeviceAuthFileMode(filePath: string, env: NodeJS.ProcessEnv = pr
   }
 }
 
+function enforceDeviceAuthFileGroup(
+  filePath: string,
+  directory: string,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (!sharedDeviceAuthState(env)) {
+    return;
+  }
+  try {
+    const directoryStat = fs.lstatSync(directory);
+    const fileStat = fs.lstatSync(filePath);
+    if (
+      !directoryStat.isDirectory() ||
+      directoryStat.isSymbolicLink() ||
+      !fileStat.isFile() ||
+      fileStat.isSymbolicLink() ||
+      fileStat.gid === directoryStat.gid
+    ) {
+      return;
+    }
+    fs.chownSync(filePath, fileStat.uid, directoryStat.gid);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EACCES" && code !== "EPERM") {
+      throw error;
+    }
+    // A peer service may own the shared file. The root controller reconciles legacy ownership.
+  }
+}
+
 function enforceDeviceAuthDirectoryMode(
   directory: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -129,6 +159,7 @@ function writeStore(
   fs.writeFileSync(filePath, `${JSON.stringify(store, null, 2)}\n`, {
     mode: deviceAuthFileMode(env),
   });
+  enforceDeviceAuthFileGroup(filePath, directory, env);
   enforceDeviceAuthFileMode(filePath, env);
 }
 
