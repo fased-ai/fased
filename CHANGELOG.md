@@ -4,6 +4,14 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.17
+
+- Add one verified root bootstrap path that detects and transactionally
+  migrates legacy Hosting controller, signer, Gateway, wallet, and persistent
+  state before returning later updates to the ordinary `fased update` flow.
+- Keep failed legacy Hosting recovery on the prior working installation with
+  automatic rollback and actionable operator guidance.
+
 ## 0.1.76-rc.16
 
 - Converge fresh and existing Local and Hosting installation lifecycles on the
