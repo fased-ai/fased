@@ -7,6 +7,8 @@ import {
   PRE_V2_HOSTING_MIGRATION_MESSAGE,
   PROTECTED_LOCAL_CONTROLLER_UNAVAILABLE_MESSAGE,
   __testing,
+  hostingBootstrapCommand,
+  legacyHostingBootstrapMessage,
 } from "./fased-managed-updater.mjs";
 
 const TRANSACTION_ID = "11111111-1111-4111-8111-111111111111";
@@ -1025,6 +1027,32 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
       __testing.hostedUpdaterError(new Error("request contains unsupported fields"), false).message,
     ).toBe(PRE_V2_HOSTING_MIGRATION_MESSAGE);
     expect(
+      __testing.hostedUpdaterError(
+        new Error("request contains unsupported fields"),
+        false,
+        false,
+        "1.2.3-rc.4",
+      ).message,
+    ).toBe(legacyHostingBootstrapMessage("1.2.3-rc.4"));
+    expect(hostingBootstrapCommand()).toBe(
+      "curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting",
+    );
+    expect(hostingBootstrapCommand("1.2.3")).toContain(
+      "--hosting --release v1.2.3 --update-channel stable",
+    );
+    expect(hostingBootstrapCommand("v1.2.3-rc.4")).toContain(
+      "--hosting --release v1.2.3-rc.4 --update-channel beta",
+    );
+    expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).not.toContain("--repair-hosting");
+    expect(
+      __testing.hostedUpdaterError(
+        new Error("connect ENOENT /run/fased-host-updater/request.sock"),
+        false,
+        false,
+        "1.2.3",
+      ).message,
+    ).toContain("--hosting --release v1.2.3 --update-channel stable");
+    expect(
       __testing.hostedUpdaterError(new Error("refusing signer release below rollback floor"), false)
         .message,
     ).toContain("rollback floor");
@@ -1101,7 +1129,10 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
           1000,
           rejected.socketPath,
         ),
-      ).rejects.toMatchObject({ hostUpdaterAmbiguous: false });
+      ).rejects.toMatchObject({
+        hostUpdaterAmbiguous: false,
+        message: expect.stringContaining("--hosting --release v1.2.3 --update-channel stable"),
+      });
     } finally {
       await rejected.close();
     }
@@ -1121,6 +1152,27 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
       ).rejects.toMatchObject({ hostUpdaterAmbiguous: true });
     } finally {
       await disconnected.close();
+    }
+  });
+
+  it("routes a missing Hosting root controller to the same verified one-command bridge", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-missing-root-controller-"));
+    const socketPath = path.join(root, "missing", "request.sock");
+    try {
+      await expect(
+        __testing.requestHostedSignerTransaction(
+          "prepareRelease",
+          TRANSACTION_ID,
+          "1.2.3-rc.4",
+          1000,
+          socketPath,
+        ),
+      ).rejects.toMatchObject({
+        hostUpdaterAmbiguous: false,
+        message: expect.stringContaining("--hosting --release v1.2.3-rc.4 --update-channel beta"),
+      });
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
     }
   });
 

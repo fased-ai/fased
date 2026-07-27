@@ -312,6 +312,13 @@ describe("attested Hosting installer artifact layout", () => {
       /must start in the provider's root console|only for a fresh host/iu,
     );
 
+    const exactStable = run(["--hosting", "--release", "v1.2.3", "--update-channel", "stable"]);
+    expect(exactStable.status).toBe(1);
+    expect(exactStable.stderr).not.toContain("accepts only the public one-command selector");
+    expect(exactStable.stderr).toMatch(
+      /must start in the provider's root console|only for a fresh host/iu,
+    );
+
     const exactPrerelease = run([
       "--hosting",
       "--release",
@@ -358,6 +365,12 @@ describe("attested Hosting installer artifact layout", () => {
     expect(installer).toContain('verified_inner_args[$inner_arg_index]="--repair-hosting"');
     expect(installer).toContain(
       "Interrupted VPS Hosting setup detected; resuming through a newly verified release bundle.",
+    );
+    expect(installer).toContain(
+      "Persistent installer state exists; fix the reported problem and rerun the same public --hosting command from the provider root console.",
+    );
+    expect(installer).not.toContain(
+      "Persistent installer state exists; retry only with the exact tagged, attested repair procedure.",
     );
     expect(installer).not.toContain(
       "Streamed VPS Hosting is only for a fresh host; existing Fased state was found.",

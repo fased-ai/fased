@@ -553,7 +553,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       if [[ "$status" -ne 0 ]]; then
         if [[ -e /var/lib/fased-installer || -L /var/lib/fased-installer ]]; then
           echo "Hosting bootstrap stopped without activating Fased services." >&2
-          echo "Persistent installer state exists; retry only with the exact tagged, attested repair procedure." >&2
+          echo "Persistent installer state exists; fix the reported problem and rerun the same public --hosting command from the provider root console." >&2
         else
           echo "Hosting bootstrap stopped before persistent Fased state was created; fix the reported problem and rerun the exact --hosting command." >&2
         fi
@@ -1179,7 +1179,7 @@ if [[ "$(id -u)" -eq 0 && "$EARLY_HOSTING_REQUESTED" -eq 1 ]]; then
     find "$early_source" -xdev ! -type f ! -type d -print -quit | grep -q . || \
     find "$early_source" -xdev -type f -links +1 -print -quit | grep -q .; then
     echo "Refusing to load privileged Hosting assets from an app-owned, Git, dirty, writable, or unverified source tree." >&2
-    echo "Start from the provider root console with the exact tagged, attested Hosting bootstrap." >&2
+    echo "Start from the provider root console with the public one-command --hosting bootstrap." >&2
     exit 1
   fi
 fi
@@ -1244,14 +1244,14 @@ rollback_pending_host_signer_transaction_on_exit() {
           status=1
         fi
       else
-        echo "Signer commit cleanup remains pending. Rerun the exact tagged repair from the provider root console; never run an app-owned checkout as root." >&2
+        echo "Signer commit cleanup remains pending. Rerun the same public --hosting bootstrap from the provider root console; never run an app-owned checkout as root." >&2
         status=1
       fi
     else
       echo "Hosted install did not commit; restoring the previous signer transaction..." >&2
       if ! node /usr/local/libexec/fased-host-updaterctl.mjs \
         "$HOST_SIGNER_TRANSACTION_VERSION" --rollback-only >/dev/null; then
-        echo "Signer rollback remains pending. Rerun the exact tagged repair from the provider root console; never run an app-owned checkout as root." >&2
+        echo "Signer rollback remains pending. Rerun the same public --hosting bootstrap from the provider root console; never run an app-owned checkout as root." >&2
         status=1
       fi
       node /usr/local/libexec/hosted-legacy-wallet-migration.mjs rollback >/dev/null 2>&1 || status=1
@@ -4135,11 +4135,11 @@ reexec_as_app_user() {
         if finalize_legacy_hosted_signer_migration; then
           HOST_SIGNER_TRANSACTION_ACTIVE=0
         else
-          echo "Hosted release committed, but legacy custody cleanup is incomplete; rerun the exact tagged repair from the provider root console." >&2
+          echo "Hosted release committed, but legacy custody cleanup is incomplete; rerun the same public --hosting bootstrap from the provider root console." >&2
           child_status=1
         fi
       else
-        echo "Hosted health passed, but the root signer commit is pending; rerun the exact tagged repair from the provider root console." >&2
+        echo "Hosted health passed, but the root signer commit is pending; rerun the same public --hosting bootstrap from the provider root console." >&2
         child_status=1
       fi
     elif [[ "$HOST_SIGNER_DURABLE_COMMIT_DECISION" -eq 0 ]]; then
@@ -5419,7 +5419,7 @@ ensure_host_boundary_accounts() {
     "/etc/sudoers.d/fased-signer-wallet-import-${target_user}"
   if need_cmd sudo && runuser -u "$target_user" -- sudo -n true >/dev/null 2>&1; then
     echo "Hosting security boundary cannot use an app account with passwordless sudo: $target_user" >&2
-    echo "Remove custom sudoers access for this dedicated account, then rerun the exact tagged repair from the provider root console." >&2
+    echo "Remove custom sudoers access for this dedicated account, then rerun the same public --hosting bootstrap from the provider root console." >&2
     exit 1
   fi
 }
@@ -5485,7 +5485,7 @@ install_host_signer_and_updater_services() {
   if [[ -n "$existing_signer_dropins" ]]; then
     echo "Custom fased-signerd systemd drop-ins prevent an exact transactional rollback:" >&2
     echo "  $existing_signer_dropins" >&2
-    echo "Consolidate the prior signer launch policy into its main unit, then rerun the exact tagged repair from the provider root console." >&2
+    echo "Consolidate the prior signer launch policy into its main unit, then rerun the same public --hosting bootstrap from the provider root console." >&2
     exit 1
   fi
 
@@ -5839,7 +5839,7 @@ assert_verified_hosting_root_source() {
   [[ "$HOSTING_REQUESTED" -eq 1 && "$(id -u)" -eq 0 ]] || return 0
   if [[ "$SOURCE_INSTALL_REQUESTED" -eq 1 || "${FASED_SOURCE_INSTALL:-0}" == "1" || "${FASED_HOSTING_SOURCE_INSTALL:-0}" == "1" ]]; then
     echo "VPS Hosting root setup cannot install privileged assets from a source checkout." >&2
-    echo "Use the exact tagged, attested release bootstrap from the provider root console." >&2
+    echo "Use the public one-command --hosting bootstrap from the provider root console." >&2
     exit 1
   fi
   [[ "$HOSTING_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]] || {
@@ -5860,7 +5860,7 @@ assert_verified_hosting_root_source() {
     ! "$canonical_source" =~ ^${expected_prefix}[a-f0-9]{64}/extract/package$ ]]; then
     echo "Refusing privileged Hosting setup from an unverified or caller-owned source tree:" >&2
     echo "  ${canonical_source:-unknown}" >&2
-    echo "Start at the provider root console with the exact tagged release bootstrap." >&2
+    echo "Start at the provider root console with the public one-command --hosting bootstrap." >&2
     exit 1
   fi
   [[ ! -e "$canonical_source/.git" ]] || {

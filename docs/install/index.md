@@ -85,9 +85,12 @@ fased update
   </Accordion>
 
   <Accordion title="Interrupted setup or repair">
-    A streamed `--hosting` command is fresh-install-only. Use the installed
-    updater for normal Hosting updates. Existing-host repair is exact-tag-only;
-    follow [Hosting recovery](/install/installer#hosting-repair-and-recovery).
+    Use the installed updater for normal Hosting updates. If a legacy root
+    controller cannot replace itself or setup was interrupted, rerun the same
+    streamed `--hosting` command from the provider root console. It verifies
+    immutable release assets, detects existing state, selects the internal
+    repair path, and skips onboarding. See
+    [Hosting recovery](/install/installer#hosting-repair-and-recovery).
   </Accordion>
 </AccordionGroup>
 

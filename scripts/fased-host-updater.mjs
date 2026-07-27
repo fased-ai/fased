@@ -65,13 +65,32 @@ const TRANSACTION_PHASES = new Set([
   "restored",
 ]);
 
-export const PRE_V2_HOSTING_MIGRATION_MESSAGE = [
-  "This hosted installation needs the one-time signer-v2 security migration before it can update.",
-  "From a VPS provider console or a root SSH session, follow the pre-execution verified tagged repair procedure at https://docs.fased.ai/install/vps.",
-  "After gh attestation verify succeeds, execute that verified install.sh asset with --repair-hosting --release vX.Y.Z.",
-  "Never run /home/app/fased/install.sh with sudo or as root.",
-  "The current Gateway, signer, wallets, and persistent state were left unchanged.",
-].join(" ");
+const PUBLIC_HOSTING_INSTALLER_URL =
+  "https://raw.githubusercontent.com/fased-ai/fased/main/install.sh";
+
+export function hostingBootstrapCommand(version) {
+  const normalized = String(version ?? "")
+    .trim()
+    .replace(/^v/, "");
+  const selector = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(normalized)
+    ? ` --release v${normalized} --update-channel ${normalized.includes("-") ? "beta" : "stable"}`
+    : "";
+  return `curl -fsSL ${PUBLIC_HOSTING_INSTALLER_URL} | bash -s -- --hosting${selector}`;
+}
+
+export function legacyHostingBootstrapMessage(version) {
+  return [
+    "This Hosting installation has a legacy root controller that cannot replace itself.",
+    "From the VPS provider root console, run this one verified Hosting bootstrap command:",
+    hostingBootstrapCommand(version),
+    "It detects the existing installation, preserves persistent state, performs the one-time controller and signer migration transactionally, and skips onboarding.",
+    "After it succeeds, return to the app account and use only fased update.",
+    "Never run /home/app/fased/install.sh with sudo or as root.",
+    "The current Gateway, signer, wallets, and persistent state were left unchanged.",
+  ].join(" ");
+}
+
+export const PRE_V2_HOSTING_MIGRATION_MESSAGE = legacyHostingBootstrapMessage();
 
 const DEFAULT_PATHS = Object.freeze({
   socketPath: SOCKET_PATH,
@@ -156,10 +175,14 @@ export function parseUpdateRequest(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("request must be an object");
   }
-  if (value.schemaVersion === 1) {
-    throw new Error(PRE_V2_HOSTING_MIGRATION_MESSAGE);
-  }
   const keys = Object.keys(value).toSorted();
+  if (value.schemaVersion === 1) {
+    if (keys.join(",") !== "op,schemaVersion,version" || value.op !== "prepareRelease") {
+      throw new Error("unsupported updater request");
+    }
+    const version = parseReleaseVersion(value.version);
+    throw new Error(legacyHostingBootstrapMessage(version));
+  }
   if (keys.join(",") !== "op,schemaVersion,transactionId,version") {
     throw new Error("request contains unsupported fields");
   }

@@ -54,11 +54,12 @@ VPS Hosting separates authority:
 - `fased-gateway` is a non-login service account with only application signing
   operations;
 - `fased-signer` owns keys, policy, network state, and signer audit; and
-- root is for first bootstrap and exact-tag emergency repair only.
+- root is for first bootstrap and one-time controller recovery only.
 
-The normal streamed Hosting command is fresh-install-only. It verifies the
-tagged manifest and app/dependency/signer layers before persistent Fased state,
-accounts, or services. See [VPS Hosting](/install/vps) and the
+The normal streamed Hosting command supports fresh setup and recovery. It
+verifies the tagged manifest and app/dependency/signer layers before persistent
+mutation, detects existing state, and invokes the internal transactional repair
+path when required. See [VPS Hosting](/install/vps) and the
 [Advanced installer](/install/installer).
 
 Related docs:

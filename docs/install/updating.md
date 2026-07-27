@@ -217,8 +217,10 @@ cd ~/fased
 
 Do not rerun `/home/app/fased/install.sh` on Hosting, with or without `sudo`.
 Use `fased update` from the `app` shell for normal Hosting updates. Use the
-exact tagged, attested `--repair-hosting` procedure from the VPS provider root
-console only when the managed updater or root-owned service is broken.
+same public one-command Hosting bootstrap from the VPS provider root console
+only when a legacy root controller cannot replace itself or the root-owned
+service is broken. The bootstrap detects the existing installation and selects
+the internal verified repair path automatically.
 
 Use `./install.sh --no-git-update` only when testing local changes.
 
@@ -279,35 +281,28 @@ are never part of the release swap.
 
 ## Legacy hosted updater repair
 
-Very old hosted releases may contain an updater that cannot install its own
-replacement. A typical symptom is an update that reports success while
-`fased --version` remains unchanged. Code added in a newer release cannot run
-inside that already-installed old binary.
+Older hosted releases may have no root controller or a root controller that
+cannot replace itself. A typical symptom is `fased update` stopping with the
+one-time Hosting bootstrap instruction while leaving the running Gateway,
+signer, wallets, and state unchanged. New unprivileged application code cannot
+safely replace that old root component by itself.
 
 This is not a normal update and is not a follow-up step after a successful fresh
 install. If the install is known to predate the external managed updater, or
 `fased update` already failed or left the version unchanged, do not repeatedly
-run the old updater. Go directly to the exact tagged root repair below.
+run the old updater.
 
-The repair must restore root-owned service helpers and the system service. Open
-the VPS provider's web/recovery console as `root` (or use root SSH only when the
-provider still permits it). Follow the exact
-[manual pre-execution verification procedure](/install/installer#exact-tag-pre-execution-verification),
-but replace the final invocation of the already-verified standalone installer
-with:
-
-```bash
-bash "$BOOTSTRAP_DIR/install.sh" --repair-hosting --release "$RELEASE"
-```
-
-Do not run this command unless the preceding `gh attestation verify` step
-completed successfully for the same exact release. Remove `BOOTSTRAP_DIR` only
-after the repair succeeds.
+Open the VPS provider's web/recovery console as `root` (or use root SSH only
+when the provider still permits it) and rerun the
+[one-command Hosting bootstrap](/install/vps#3-install-fased).
 
 Do not run this command from the normal `app` Tailscale shell, and never run
 `/home/app/fased/install.sh` with sudo. The restricted `app` account has no
-sudo and no root bootstrap socket. The provider-console bootstrap verifies the
-exact tagged app bundle attestation before loading any privileged assets.
+sudo and no root bootstrap socket. The provider-console bootstrap detects the
+existing installation, verifies the immutable release manifest, offline
+attestation bundles, application, dependency, and signer digests, then selects
+the internal repair path. It performs controller, signer, application, service,
+and state convergence transactionally and skips onboarding.
 
 The repair keeps the existing `/home/app/fased` checkout and persistent
 `/home/app/.fased` state. It refreshes the managed runtime, replaces a legacy
@@ -320,7 +315,16 @@ loopback proxy ranges, and removes the obsolete `allowInsecureAuth`
 compatibility flag. Tailscale HTTPS, shared Gateway auth, and device/session
 identity remain active.
 
-After this one repair, return to the normal command:
+For an exact beta candidate, use the immutable beta selector documented on the
+[VPS Hosting page](/install/vps).
+
+The
+[exact-tag pre-execution verification procedure](/install/installer#exact-tag-pre-execution-verification)
+remains available as an optional stronger control for operators who want to
+authenticate `install.sh` before its first shell executes. It is not required
+for ordinary recovery.
+
+After the one-time bootstrap succeeds, return to the normal command:
 
 ```bash
 ssh app@YOUR_VPS_TAILSCALE_NAME
@@ -332,8 +336,8 @@ fased gateway status
 fased plugins doctor
 ```
 
-This repair is only for VPS Hosting installs with the root-managed service.
-Local users must not run `--repair-hosting`. If their historical Local/WSL
+This bootstrap recovery is only for VPS Hosting installs. Local users must not
+run `--repair-hosting`. If their historical Local/WSL
 binary cannot complete `fased update`, use the Local repair command in the
 support contract below.
 
@@ -421,11 +425,13 @@ Gateway reports the same version. It does not overwrite an unrelated
 user-managed command or rerun onboarding. On macOS the exact tagged source is
 built because no managed Linux runtime artifact is used.
 
-VPS Hosting bootstrap must run from the provider's root console. Follow the
+VPS Hosting bootstrap must run from the provider's root console. Rerun the
+public one-command `--hosting` installer; it detects the existing installation,
+verifies the immutable release bundle, and selects the internal repair path.
+Use the
 [manual pre-execution verification procedure](/install/installer#exact-tag-pre-execution-verification)
-for the exact release, then use `--repair-hosting` instead of `--hosting` only
-in the final invocation of that already-verified standalone installer. Never
-recover Hosting by piping a raw repository URL into a shell.
+only when policy requires authenticating `install.sh` before its first shell
+executes.
 
 An immutable old binary cannot execute updater logic that was introduced in a
 newer release. That one-time bootstrap is therefore unavoidable for a small set

@@ -124,13 +124,33 @@ const LOCAL_SOURCE_CONTROLLER_FILES = [
   "fased-managed-updater.mjs",
 ];
 
-export const PRE_V2_HOSTING_MIGRATION_MESSAGE = [
-  "This hosted installation needs the one-time signer-v2 security migration before it can update.",
-  "From a VPS provider console or a root SSH session, run:",
-  "Follow the manual release-asset and GitHub attestation procedure at https://docs.fased.ai/install/vps#advanced-verify-the-bootstrap-first, then run the verified tagged install.sh with --repair-hosting --release vX.Y.Z.",
-  "Never run /home/app/fased/install.sh with sudo or as root.",
-  "The current Gateway, signer, wallets, and persistent state were left unchanged.",
-].join(" ");
+const PUBLIC_HOSTING_INSTALLER_URL =
+  "https://raw.githubusercontent.com/fased-ai/fased/main/install.sh";
+const EXACT_RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
+
+export function hostingBootstrapCommand(version) {
+  const normalized = String(version ?? "")
+    .trim()
+    .replace(/^v/, "");
+  const selector = EXACT_RELEASE_VERSION_PATTERN.test(normalized)
+    ? ` --release v${normalized} --update-channel ${normalized.includes("-") ? "beta" : "stable"}`
+    : "";
+  return `curl -fsSL ${PUBLIC_HOSTING_INSTALLER_URL} | bash -s -- --hosting${selector}`;
+}
+
+export function legacyHostingBootstrapMessage(version) {
+  return [
+    "This Hosting installation has a legacy root controller that cannot replace itself.",
+    "From the VPS provider root console, run this one verified Hosting bootstrap command:",
+    hostingBootstrapCommand(version),
+    "It detects the existing installation, preserves persistent state, performs the one-time controller and signer migration transactionally, and skips onboarding.",
+    "After it succeeds, return to the app account and use only fased update.",
+    "Never run /home/app/fased/install.sh with sudo or as root.",
+    "The current Gateway, signer, wallets, and persistent state were left unchanged.",
+  ].join(" ");
+}
+
+export const PRE_V2_HOSTING_MIGRATION_MESSAGE = legacyHostingBootstrapMessage();
 export const PROTECTED_LOCAL_CONTROLLER_UNAVAILABLE_MESSAGE = [
   "The Protected Local root controller is unavailable, so this update was not started.",
   "The current Gateway, signer, wallets, and persistent state were left unchanged.",
@@ -1338,6 +1358,7 @@ function hostedUpdaterError(
   error,
   ambiguous = Boolean(error?.hostUpdaterAmbiguous),
   protectedLocal = false,
+  version,
 ) {
   const message = error instanceof Error ? error.message : String(error);
   let normalized;
@@ -1349,7 +1370,7 @@ function hostedUpdaterError(
     normalized = new Error(
       protectedLocal
         ? PROTECTED_LOCAL_CONTROLLER_UNAVAILABLE_MESSAGE
-        : PRE_V2_HOSTING_MIGRATION_MESSAGE,
+        : legacyHostingBootstrapMessage(version),
       { cause: error },
     );
   } else {
@@ -1444,7 +1465,12 @@ async function requestHostedSignerTransaction(
       settled = true;
       socket.destroy();
       reject(
-        hostedUpdaterError(error, ambiguous, socketPath.startsWith("/run/fased-local-controller/")),
+        hostedUpdaterError(
+          error,
+          ambiguous,
+          socketPath.startsWith("/run/fased-local-controller/"),
+          version,
+        ),
       );
     };
     socket.once("connect", () => {

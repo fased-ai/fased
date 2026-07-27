@@ -7,8 +7,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   PRE_V2_HOSTING_MIGRATION_MESSAGE,
   __testing,
+  hostingBootstrapCommand,
   installProtectedLocalApplicationRuntime,
   isMainModule,
+  legacyHostingBootstrapMessage,
   parseReleaseVersion,
   parseUpdateRequest,
 } from "./fased-host-updater.mjs";
@@ -820,12 +822,31 @@ describe("root-owned hosted updater protocol", () => {
   it("rejects pre-v2 clients before any release action with the one-time migration command", () => {
     expect(() =>
       parseUpdateRequest({ schemaVersion: 1, op: "prepareRelease", version: "1.2.3" }),
-    ).toThrow(PRE_V2_HOSTING_MIGRATION_MESSAGE);
-    expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).toContain("gh attestation verify");
-    expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).toContain("--repair-hosting --release vX.Y.Z");
-    expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).not.toContain("curl -fsSL");
+    ).toThrow(legacyHostingBootstrapMessage("1.2.3"));
+    expect(() =>
+      parseUpdateRequest({ schemaVersion: 1, op: "prepareRelease", version: "1.2.3-rc.4" }),
+    ).toThrow(legacyHostingBootstrapMessage("1.2.3-rc.4"));
+    expect(hostingBootstrapCommand("1.2.3")).toContain(
+      "--hosting --release v1.2.3 --update-channel stable",
+    );
+    expect(hostingBootstrapCommand("v1.2.3-rc.4")).toContain(
+      "--hosting --release v1.2.3-rc.4 --update-channel beta",
+    );
+    expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).toContain("curl -fsSL");
+    expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).not.toContain("--repair-hosting");
     expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).toContain("Never run /home/app/fased/install.sh");
     expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).toContain("left unchanged");
+    expect(() =>
+      parseUpdateRequest({
+        schemaVersion: 1,
+        op: "prepareRelease",
+        version: "1.2.3",
+        url: "https://evil.invalid",
+      }),
+    ).toThrow("unsupported updater request");
+    expect(() =>
+      parseUpdateRequest({ schemaVersion: 1, op: "rollbackRelease", version: "1.2.3" }),
+    ).toThrow("unsupported updater request");
   });
 
   it("accepts only exact protocol-v2 transaction requests", () => {
