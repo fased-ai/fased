@@ -125,7 +125,7 @@ const SAT_MINT_ADDRESS_TEXT = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa"; //
 const SAT_MINT_PROGRAM_ID_TEXT = "8fb3Mpowe4pD6ed89gwm6gLuh8csPSrLi3hypcesqs5C";
 const SAT_PROGRAM_ID = new PublicKey("EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75");
 const SAT_BOND_PROGRAM_ID = new PublicKey("D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq");
-const SIGNER = new PublicKey("8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW");
+const SIGNER = new PublicKey("8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW"); // pragma: allowlist secret
 const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 const TEST_POLICY_HASH = `sha256:${"ab".repeat(32)}`;
@@ -1394,7 +1394,7 @@ describe("SAT cycle transaction builders", () => {
 
   it("closes resolved miner-cycle state for the target authority instead of assuming the executor", async () => {
     const cycleId = 9_859_160;
-    const authority = "4wxmFJm7xBkqLk7K3qn2gGw8v6SnM8j4rJz7s2p9dJQY";
+    const authority = "4wxmFJm7xBkqLk7K3qn2gGw8v6SnM8j4rJz7s2p9dJQY"; // pragma: allowlist secret
     await submitSatCloseResolvedMinerCycleState({} as never, {
       cycleId,
       authority,
@@ -1497,7 +1497,7 @@ describe("SAT cycle transaction builders", () => {
 
   it("uses the upgraded score/distribute progress PDA", async () => {
     const cycleId = 9_859_149;
-    const minerAuthority = new PublicKey("Wmesty4ZT9XfG2BK5NfaTLyVvHyeG1DW2gZnwZQntuk");
+    const minerAuthority = new PublicKey("Wmesty4ZT9XfG2BK5NfaTLyVvHyeG1DW2gZnwZQntuk"); // pragma: allowlist secret
     const minerCycleAccounts = [
       findPda(Buffer.from("sat_miner_cycle_state"), minerAuthority.toBuffer(), encodeU64(cycleId)),
     ];
