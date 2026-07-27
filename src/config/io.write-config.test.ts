@@ -576,9 +576,26 @@ describe("config io write", () => {
   });
 
   it.each([
-    ["Hosting", { FASED_HOST_PROFILE: "hosting" }],
-    ["Protected Local", { FASED_HOST_PROFILE: "local", FASED_PROTECTED_LOCAL: "1" }],
-  ])("writes group-shared state for the %s service profile", async (_label, env) => {
+    ["Hosting process environment", { FASED_HOST_PROFILE: "hosting" }, {}],
+    [
+      "Protected Local process environment",
+      { FASED_HOST_PROFILE: "local", FASED_PROTECTED_LOCAL: "1" },
+      {},
+    ],
+    ["persisted Hosting profile", {}, { env: { vars: { FASED_HOST_PROFILE: "hosting" } } }],
+    [
+      "persisted Protected Local profile",
+      {},
+      {
+        env: {
+          vars: {
+            FASED_HOST_PROFILE: "local",
+            FASED_PROTECTED_LOCAL: "1",
+          },
+        },
+      },
+    ],
+  ])("writes group-shared state for the %s", async (_label, env, config) => {
     if (process.platform === "win32") {
       return;
     }
@@ -588,7 +605,7 @@ describe("config io write", () => {
         homedir: () => home,
         logger: silentLogger,
       });
-      await io.writeConfigFile({ gateway: { mode: "local" } });
+      await io.writeConfigFile({ ...config, gateway: { mode: "local" } });
 
       const stateDir = path.join(home, ".fased");
       const configPath = path.join(stateDir, "fased.json");

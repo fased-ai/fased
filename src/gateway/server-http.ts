@@ -1865,6 +1865,7 @@ async function callSatMiningGateway<T>(
     method,
     params,
     scopes: ["operator.admin"],
+    deviceAuth: "disabled",
     timeoutMs: typeof opts?.timeoutMs === "number" ? opts.timeoutMs : 15_000,
   });
 }
@@ -2239,7 +2240,7 @@ async function checkSolanaAtaReadiness(address: string, env: NodeJS.ProcessEnv):
 
   try {
     // USDC mint on Solana Mainnet
-    const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+    const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"; // pragma: allowlist secret
 
     // Construct the request to getTokenAccountsByOwner
     const guarded = await fetchPinnedSolanaRpcRead({
@@ -7086,7 +7087,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               }
               if (
                 typeof credentials.apiPublicKey !== "string" ||
-                typeof credentials.apiPrivateKey !== "string" ||
+                typeof credentials.apiPrivateKey !== "string" || // pragma: allowlist secret
                 typeof credentials.organizationId !== "string" ||
                 typeof credentials.policyId !== "string" ||
                 typeof credentials.rpcUrl !== "string"

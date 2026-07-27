@@ -2217,7 +2217,7 @@ async function coordinateHostedReleaseTransaction(journal, operations) {
 }
 
 function hostedTransactionOperations(paths, timeoutMs, options = {}) {
-  const targetServiceAlreadyRestarted = options.targetServiceAlreadyRestarted === true;
+  const refresh = options.refreshGateway ?? refreshGateway;
   const controllerSocketPath =
     options.controllerSocketPath ?? resolveRootManagedControllerSocket(paths);
   return {
@@ -2269,16 +2269,19 @@ function hostedTransactionOperations(paths, timeoutMs, options = {}) {
       return response;
     },
     verifyGateway: async (journal) =>
-      await refreshGateway(
+      await refresh(
         journal.targetRoot,
         journal.nextManifest,
         timeoutMs,
         true,
         journal.signerRelease,
-        targetServiceAlreadyRestarted,
+        // authorizeGatewayRelease starts the exact target service inside the
+        // active root transaction. Restarting it here is both redundant and
+        // forbidden until the transaction commits.
+        true,
       ),
     refreshPrevious: async (journal) =>
-      await refreshGateway(
+      await refresh(
         journal.previousRoot,
         journal.previousManifest,
         timeoutMs,
@@ -5919,6 +5922,7 @@ export const __testing = {
   buildLegacyLocalWalletMigrationPlan,
   coordinateHostedReleaseTransaction,
   hostedUpdaterError,
+  hostedTransactionOperations,
   ensureHostedControllerRelease,
   probeGatewayIdentity,
   probeHostedSignerCompatibility,

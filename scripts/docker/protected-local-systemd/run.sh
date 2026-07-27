@@ -130,6 +130,24 @@ verify_mining_history() {
   jq -e 'type == "object"' /tmp/mining-history.json >/dev/null
 }
 
+verify_profileless_config_write() {
+  local instance="$1"
+  local runtime_root="$2"
+  runuser -u testop -- env -i \
+    HOME=/home/testop \
+    USER=testop \
+    LOGNAME=testop \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    FASED_NODE=/usr/local/bin/node \
+    /usr/local/bin/node "$runtime_root/fased.mjs" config set gateway.mode local \
+    >/tmp/profileless-config-write.out
+  test "$(stat -c '%U:%G:%a' "$state/fased.json")" = \
+    "testop:fscf-$instance:660"
+  systemctl restart "fased-gateway-$instance.service"
+  wait_for_service "fased-gateway-$instance.service"
+  wait_for_gateway_version "$version"
+}
+
 verify_shared_federation_state() {
   local instance="$1"
   local runtime_root="$2"
@@ -829,6 +847,7 @@ if [[ "$phase" == "fresh-install" ]]; then
     /usr/local/bin/node "$runtime/fased.mjs" health --json --timeout 5000 \
     >/tmp/fresh-pre-wallet-health.json
   jq -e '.ok == true' /tmp/fresh-pre-wallet-health.json >/dev/null
+  verify_profileless_config_write "$instance" "$runtime"
   service_elapsed="$((SECONDS - service_started))"
   wallet_started="$SECONDS"
   for wallet_spec in "agent:Agent:agent" "vault:Vault:vault"; do
@@ -1067,7 +1086,11 @@ for bridge_attempt in 1 2 3; do
     ! grep -F "commit cleanup is pending" /tmp/bridge-update.err >/dev/null; then
     exit "$bridge_status"
   fi
-  sleep 1
+  # The immutable bridge can return while its same-user Gateway is still
+  # completing the signer restart it requested. Retrying immediately races
+  # that recovery and can manufacture repeated ENOENT failures before the
+  # current candidate is reached.
+  sleep 10
 done
 [[ "$bridge_status" -eq 0 ]]
 if ! grep -F "Updated Fased ${legacy_version} -> ${bridge_version}" \
@@ -1221,6 +1244,7 @@ test "$(stat -c '%U:%G:%a' "$state/identity/device-auth.json")" = \
 verify_shared_device_auth "$instance" "$runtime"
 verify_mining_history
 verify_shared_federation_state "$instance" "$runtime"
+verify_profileless_config_write "$instance" "$runtime"
 signer_pid_before="$(systemctl show -p MainPID --value "fased-signerd-$instance.service")"
 gateway_pid_before="$(systemctl show -p MainPID --value "fased-gateway-$instance.service")"
 runuser -u testop -- env "${managed_update_env[@]}" \

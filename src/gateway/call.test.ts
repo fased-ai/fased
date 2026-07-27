@@ -12,6 +12,7 @@ let lastClientOptions: {
   token?: string;
   password?: string;
   scopes?: string[];
+  deviceIdentity?: unknown;
   onHelloOk?: () => void | Promise<void>;
   onConnectError?: (error: Error) => void;
   onClose?: (code: number, reason: string) => void;
@@ -38,6 +39,7 @@ vi.mock("./client.js", () => ({
       token?: string;
       password?: string;
       scopes?: string[];
+      deviceIdentity?: unknown;
       onHelloOk?: () => void | Promise<void>;
       onConnectError?: (error: Error) => void;
       onClose?: (code: number, reason: string) => void;
@@ -220,6 +222,20 @@ describe("callGateway url resolution", () => {
 
     await callGatewayScoped({ method: "health", scopes: [] });
     expect(lastClientOptions?.scopes).toEqual([]);
+  });
+
+  it("can disable device identity for a shared-auth internal call", async () => {
+    setLocalLoopbackGatewayConfig();
+
+    await callGatewayScoped({
+      method: "health",
+      scopes: ["operator.read"],
+      token: "shared-token",
+      deviceAuth: "disabled",
+    });
+
+    expect(lastClientOptions?.token).toBe("shared-token");
+    expect(lastClientOptions?.deviceIdentity).toBeNull();
   });
 });
 
@@ -487,7 +503,7 @@ describe("callGateway password resolution", () => {
   const explicitAuthCases = [
     {
       label: "password",
-      authKey: "password",
+      authKey: "password", // pragma: allowlist secret
       envKey: "FASED_GATEWAY_PASSWORD",
       envValue: "from-env",
       configValue: "from-config",
@@ -495,7 +511,7 @@ describe("callGateway password resolution", () => {
     },
     {
       label: "token",
-      authKey: "token",
+      authKey: "token", // pragma: allowlist secret
       envKey: "FASED_GATEWAY_TOKEN",
       envValue: "env-token",
       configValue: "local-token",
@@ -570,7 +586,7 @@ describe("callGateway password resolution", () => {
       gateway: {
         mode: "local",
         bind: "loopback",
-        auth: { token: "config-token", password: "config-password" },
+        auth: { token: "config-token", password: "config-password" }, // pragma: allowlist secret
       },
     });
 

@@ -519,6 +519,61 @@ describe("root-owned hosted updater protocol", () => {
     expect(isMainModule(path.join(currentLink, "missing.mjs"), serverPath)).toBe(false);
   });
 
+  it("removes the legacy set-ID restriction before a protected controller accepts requests", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-controller-policy-"));
+    cleanupRoots.push(root);
+    const instanceId = "0123456789abcdef";
+    const controllerCurrentLink = path.join(root, "controller", "current");
+    const controllerUnitPath = path.join(root, `fased-local-controller-${instanceId}.service`);
+    await fsp.writeFile(
+      controllerUnitPath,
+      [
+        "[Service]",
+        "User=root",
+        "Group=root",
+        `ExecStart=/usr/bin/node ${controllerCurrentLink}/fased-host-updater.mjs --protected-local-instance ${instanceId} --socket-uid 1000 --socket-gid 1000`,
+        "NoNewPrivileges=true",
+        "ProtectSystem=strict",
+        `ReadWritePaths=${root} /etc/systemd/system`,
+        "RestrictSUIDSGID=true",
+        "",
+      ].join("\n"),
+      { mode: 0o644 },
+    );
+    let reloads = 0;
+    const context = __testing.createTransactionContext({
+      paths: { controllerCurrentLink, controllerUnitPath },
+      protectedLocalInstanceId: instanceId,
+      rootUid: process.geteuid(),
+      reloadUnits: async () => {
+        reloads += 1;
+      },
+    });
+
+    await expect(__testing.ensureProtectedLocalControllerServicePolicy(context)).resolves.toBe(
+      true,
+    );
+    expect(await fsp.readFile(controllerUnitPath, "utf8")).not.toContain("RestrictSUIDSGID=");
+    expect(reloads).toBe(1);
+    await expect(__testing.ensureProtectedLocalControllerServicePolicy(context)).resolves.toBe(
+      false,
+    );
+    expect(reloads).toBe(1);
+  });
+
+  it("restarts a corrected protected controller before opening its request socket", async () => {
+    let recovered = false;
+    const result = await __testing.prepareControllerServerContext({
+      ensureControllerServicePolicy: async () => true,
+      recoverInterruptedTransaction: async () => {
+        recovered = true;
+      },
+    });
+
+    expect(result).toEqual({ restartRequired: true });
+    expect(recovered).toBe(false);
+  });
+
   it("promotes an offline-attested controller generation atomically for future updates", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-controller-stage-"));
     cleanupRoots.push(root);

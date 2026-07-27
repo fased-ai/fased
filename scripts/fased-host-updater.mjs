@@ -135,6 +135,7 @@ export function protectedLocalControllerConfiguration(instanceId) {
       controllerReleasesDir: `${controllerInstallDir}/releases`,
       controllerCurrentLink: `${controllerInstallDir}/current`,
       controllerVersionPath: `${controllerStateDir}/controller-version.json`,
+      controllerUnitPath: `/etc/systemd/system/fased-local-controller-${normalized}.service`,
       applicationReleasesDir: `${applicationInstallDir}/releases`,
       applicationCurrentLink: `${applicationInstallDir}/current`,
       gatewayUnitPath: `/etc/systemd/system/fased-gateway-${normalized}.service`,
@@ -1825,19 +1826,17 @@ function exactUnitValue(content, key) {
   return matches[0][1];
 }
 
-async function shareRootManagedApplicationEntry(entryPath, configGid) {
+async function inspectRootManagedApplicationEntry(entryPath, entries) {
   const stat = await fsp.lstat(entryPath);
   if (stat.isSymbolicLink()) {
-    await fsp.lchown(entryPath, stat.uid, configGid);
+    entries.push({ entryPath, kind: "symlink", stat });
     return;
   }
   if (stat.isDirectory()) {
-    const entries = await fsp.readdir(entryPath);
-    for (const entry of entries) {
-      await shareRootManagedApplicationEntry(path.join(entryPath, entry), configGid);
+    for (const entry of await fsp.readdir(entryPath)) {
+      await inspectRootManagedApplicationEntry(path.join(entryPath, entry), entries);
     }
-    await fsp.chown(entryPath, stat.uid, configGid);
-    await fsp.chmod(entryPath, 0o2770);
+    entries.push({ entryPath, kind: "directory", stat });
     return;
   }
   if (!stat.isFile()) {
@@ -1846,8 +1845,87 @@ async function shareRootManagedApplicationEntry(entryPath, configGid) {
   if (stat.nlink !== 1) {
     throw new Error(`root-managed application state contains a hard-linked file: ${entryPath}`);
   }
-  await fsp.chown(entryPath, stat.uid, configGid);
-  await fsp.chmod(entryPath, 0o660 | (stat.mode & 0o110));
+  entries.push({ entryPath, kind: "file", stat });
+}
+
+async function assertSharedDirectoryModesAvailable(stateDir, operatorUid, configGid) {
+  const probe = await fsp.mkdtemp(path.join(stateDir, ".fased-permission-probe-"));
+  try {
+    const handle = await fsp.open(
+      probe,
+      fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
+    );
+    try {
+      await handle.chown(operatorUid, configGid);
+      await handle.chmod(0o2770);
+      const stat = await handle.stat();
+      if (stat.uid !== operatorUid || stat.gid !== configGid || (stat.mode & 0o2777) !== 0o2770) {
+        throw new Error("root controller cannot establish shared application directory modes");
+      }
+    } finally {
+      await handle.close();
+    }
+  } finally {
+    await fsp.rm(probe, { recursive: true, force: true });
+  }
+}
+
+async function withInspectedApplicationEntry(entry, operation) {
+  if (entry.kind === "symlink") {
+    const current = await fsp.lstat(entry.entryPath);
+    if (
+      !current.isSymbolicLink() ||
+      current.dev !== entry.stat.dev ||
+      current.ino !== entry.stat.ino
+    ) {
+      throw new Error(`root-managed application state changed during update: ${entry.entryPath}`);
+    }
+    await operation(null);
+    return;
+  }
+  const flags =
+    fs.constants.O_RDONLY |
+    fs.constants.O_NOFOLLOW |
+    (entry.kind === "directory" ? fs.constants.O_DIRECTORY : 0);
+  const handle = await fsp.open(entry.entryPath, flags);
+  try {
+    const current = await handle.stat();
+    if (
+      current.dev !== entry.stat.dev ||
+      current.ino !== entry.stat.ino ||
+      (entry.kind === "directory" ? !current.isDirectory() : !current.isFile()) ||
+      (entry.kind === "file" && current.nlink !== 1)
+    ) {
+      throw new Error(`root-managed application state changed during update: ${entry.entryPath}`);
+    }
+    await operation(handle);
+  } finally {
+    await handle.close();
+  }
+}
+
+async function shareInspectedApplicationEntry(entry, configGid) {
+  await withInspectedApplicationEntry(entry, async (handle) => {
+    if (!handle) {
+      await fsp.lchown(entry.entryPath, entry.stat.uid, configGid);
+      return;
+    }
+    await handle.chown(entry.stat.uid, configGid);
+    await handle.chmod(entry.kind === "directory" ? 0o2770 : 0o660 | (entry.stat.mode & 0o110));
+    await handle.sync();
+  });
+}
+
+async function restoreInspectedApplicationEntry(entry) {
+  await withInspectedApplicationEntry(entry, async (handle) => {
+    if (!handle) {
+      await fsp.lchown(entry.entryPath, entry.stat.uid, entry.stat.gid);
+      return;
+    }
+    await handle.chown(entry.stat.uid, entry.stat.gid);
+    await handle.chmod(entry.stat.mode & 0o7777);
+    await handle.sync();
+  });
 }
 
 function rootManagedApplicationIdentity(context, unit) {
@@ -1929,17 +2007,94 @@ async function reconcileProtectedApplicationState(context) {
   ) {
     throw new Error("root-managed application-state group membership is invalid");
   }
+  await assertSharedDirectoryModesAvailable(stateDir, stateStat.uid, configGid);
+  const inspectedEntries = [];
   const entries = await fsp.readdir(stateDir);
   for (const entry of entries) {
     if (ROOT_MANAGED_OPERATOR_ONLY_STATE.has(entry)) {
       continue;
     }
-    await shareRootManagedApplicationEntry(path.join(stateDir, entry), configGid);
+    await inspectRootManagedApplicationEntry(path.join(stateDir, entry), inspectedEntries);
   }
-  await fsp.chown(stateDir, stateStat.uid, configGid);
-  await fsp.chmod(stateDir, 0o2770);
+  const rootEntry = { entryPath: stateDir, kind: "directory", stat: stateStat };
+  const applied = [];
+  try {
+    for (const entry of [...inspectedEntries, rootEntry]) {
+      applied.push(entry);
+      await shareInspectedApplicationEntry(entry, configGid);
+    }
+  } catch (error) {
+    const rollbackErrors = [];
+    for (const entry of applied.toReversed()) {
+      try {
+        await restoreInspectedApplicationEntry(entry);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (rollbackErrors.length > 0) {
+      const failure = new Error(
+        "root-managed application-state reconciliation failed and permission rollback is incomplete",
+        { cause: error },
+      );
+      failure.rollbackErrors = rollbackErrors;
+      throw failure;
+    }
+    throw error;
+  }
   await fsyncDirectory(stateDir);
   return { changed: true, stateDir, configGid };
+}
+
+async function ensureProtectedLocalControllerServicePolicy(context) {
+  if (!context.instanceId || !context.paths.controllerUnitPath) {
+    return false;
+  }
+  const unitPath = context.paths.controllerUnitPath;
+  const captured = await captureProtectedServiceFile(
+    unitPath,
+    "protected Local controller unit",
+    context.rootUid,
+  );
+  const content = Buffer.from(captured.contentBase64, "base64").toString("utf8");
+  const restrictionPattern = /^RestrictSUIDSGID=(.*)$/gmu;
+  const restrictions = [...content.matchAll(restrictionPattern)];
+  if (restrictions.length === 0) {
+    return false;
+  }
+  if (restrictions.length !== 1 || restrictions[0][1] !== "true") {
+    throw new Error("protected Local controller unit has an ambiguous set-ID restriction");
+  }
+  const expectedController = `${context.paths.controllerCurrentLink}/${CONTROLLER_SERVER_NAME}`;
+  const entrypoints = content.split("\n").filter((line) => line.startsWith("ExecStart="));
+  if (
+    entrypoints.length !== 1 ||
+    !entrypoints[0].includes(
+      ` ${expectedController} --protected-local-instance ${context.instanceId} `,
+    )
+  ) {
+    throw new Error("protected Local controller unit has an invalid instance-bound entrypoint");
+  }
+  const required = [
+    ["root user", /^User=root$/mu],
+    ["root group", /^Group=root$/mu],
+    ["strict filesystem protection", /^ProtectSystem=strict$/mu],
+    ["non-escalating process policy", /^NoNewPrivileges=true$/mu],
+    ["system unit write boundary", /^ReadWritePaths=.* \/etc\/systemd\/system$/mu],
+  ];
+  for (const [label, pattern] of required) {
+    if (!pattern.test(content)) {
+      throw new Error(`protected Local controller unit has an invalid ${label}`);
+    }
+  }
+  const next = content.replace(/^RestrictSUIDSGID=true\n/gmu, "");
+  await writeProtectedServiceFile(unitPath, next, captured);
+  await context.reloadUnits();
+  const installed = await fsp.readFile(unitPath, "utf8");
+  if (/^RestrictSUIDSGID=/mu.test(installed) || installed !== next) {
+    throw new Error("protected Local controller service policy did not converge");
+  }
+  return true;
 }
 
 function createTransactionContext(overrides = {}) {
@@ -1991,6 +2146,12 @@ function createTransactionContext(overrides = {}) {
           socketPath: signerApplicationSocketPath,
         })),
     reloadUnits: overrides.reloadUnits ?? (async () => await systemctl("daemon-reload")),
+    ensureControllerServicePolicy:
+      overrides.ensureControllerServicePolicy ??
+      (async () => await ensureProtectedLocalControllerServicePolicy(context)),
+    recoverInterruptedTransaction:
+      overrides.recoverInterruptedTransaction ??
+      (async () => await recoverInterruptedTransaction(context)),
     applyServiceBoundary:
       overrides.applyServiceBoundary ??
       (async (boundary) => await applyProtectedServiceBoundary(context, boundary)),
@@ -2796,7 +2957,14 @@ export async function startServer(options = {}) {
       gatewayServiceName: configuration.gatewayServiceName,
       signerApplicationSocketPath: configuration.signerApplicationSocketPath,
     });
-  await recoverInterruptedTransaction(context);
+  const preparation = await prepareControllerServerContext(context);
+  if (preparation.restartRequired) {
+    return {
+      server: null,
+      close: async () => undefined,
+      restartRequired: true,
+    };
+  }
   await fsp.mkdir(path.dirname(context.paths.socketPath), { recursive: true, mode: 0o750 });
   await fsp.rm(context.paths.socketPath, { force: true });
   process.umask(0o117);
@@ -2874,6 +3042,18 @@ export async function startServer(options = {}) {
   return { server, close };
 }
 
+async function prepareControllerServerContext(context) {
+  if (await context.ensureControllerServicePolicy?.()) {
+    return { restartRequired: true };
+  }
+  if (context.recoverInterruptedTransaction) {
+    await context.recoverInterruptedTransaction();
+  } else {
+    await recoverInterruptedTransaction(context);
+  }
+  return { restartRequired: false };
+}
+
 export function isMainModule(entryPath, modulePath = fileURLToPath(import.meta.url)) {
   if (!entryPath) {
     return false;
@@ -2896,7 +3076,10 @@ if (isMain) {
       })}\n`,
     );
   } else {
-    await startServer();
+    const result = await startServer();
+    if (result.restartRequired) {
+      process.exitCode = 75;
+    }
   }
 }
 
@@ -2910,8 +3093,10 @@ export const __testing = {
   dispatchUpdateRequest,
   gateGatewayRelease,
   parseServerConfiguration,
+  prepareControllerServerContext,
   prepareSignerRelease,
   protectedLocalControllerConfiguration,
+  ensureProtectedLocalControllerServicePolicy,
   reconcileProtectedApplicationState,
   rootManagedApplicationIdentity,
   readJournal,
