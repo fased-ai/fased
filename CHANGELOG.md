@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.16
+
+- Converge fresh and existing Local and Hosting installation lifecycles on the
+  exact target-owned controller, signer, Gateway, and rollback transaction.
+- Preserve wallet, device-auth, and federation state permissions across the
+  protected operator and Gateway service identities.
+- Keep installer output operator-focused with one final dashboard URL and no
+  internal transaction or duplicate readiness output.
+
 ## 0.1.76-rc.15
 
 - Reuse green pull-request checks when merged main has the exact tested tree,
