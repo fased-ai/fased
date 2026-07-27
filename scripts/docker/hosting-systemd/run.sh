@@ -53,6 +53,53 @@ run_app_cli() {
   runuser -u app -- env "${environment[@]}" "$cli" "$@"
 }
 
+verify_shared_device_auth() {
+  local module_url="file://$state/runtime/current/dist/infra/device-auth-store.js"
+  local auth_file="$state/identity/device-auth.json"
+  local -a environment=()
+  mapfile -t environment < <(app_env)
+  runuser -u app -- env "${environment[@]}" FASED_FIXTURE_MODULE_URL="$module_url" \
+    /usr/local/bin/node --input-type=module --eval '
+      const store = await import(process.env.FASED_FIXTURE_MODULE_URL);
+      store.storeDeviceAuthToken({
+        deviceId: "fixture-shared-device",
+        role: "operator",
+        token: "fixture-operator-token",
+      });
+    '
+  test "$(stat -c '%U:%G:%a' "$auth_file")" = "app:fased-config:660"
+  runuser -u fased-gateway -- env "${environment[@]}" FASED_FIXTURE_MODULE_URL="$module_url" \
+    /usr/local/bin/node --input-type=module --eval '
+      const store = await import(process.env.FASED_FIXTURE_MODULE_URL);
+      const existing = store.loadDeviceAuthToken({
+        deviceId: "fixture-shared-device",
+        role: "operator",
+      });
+      if (existing?.token !== "fixture-operator-token") process.exit(91);
+      store.storeDeviceAuthToken({
+        deviceId: "fixture-shared-device",
+        role: "node",
+        token: "fixture-node-token",
+      });
+    '
+  test "$(stat -c '%U:%G:%a' "$auth_file")" = "app:fased-config:660"
+}
+
+verify_shared_wallet_registry() {
+  local module_url="file://$state/runtime/current/dist/wallet/wallet-provider-registry.js"
+  local registry="$state/wallet/provider-registry.v1.json"
+  local -a environment=()
+  mapfile -t environment < <(app_env)
+  test "$(stat -c '%U:%G:%a' "$state/wallet")" = "app:fased-config:2770"
+  test "$(stat -c '%U:%G:%a' "$registry")" = "app:fased-config:660"
+  runuser -u fased-gateway -- env "${environment[@]}" FASED_FIXTURE_MODULE_URL="$module_url" \
+    /usr/local/bin/node --input-type=module --eval '
+      const registry = await import(process.env.FASED_FIXTURE_MODULE_URL);
+      const wallets = registry.readWalletProviderRegistry().wallets;
+      if (!wallets.some((wallet) => wallet.id === "agent")) process.exit(92);
+    '
+}
+
 verify_wallet() {
   local wallet_id="$1"
   runuser -u app -- /opt/fased/signer/fased-signerd \
@@ -229,6 +276,9 @@ Description=Fased fixture no-op service
 Type=oneshot
 ExecStart=/bin/true
 RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
 EOF_NOOP
   for service in tailscaled ssh sshd fail2ban unattended-upgrades firewalld; do
     ln -sfn fased-fixture-noop.service "/etc/systemd/system/${service}.service"
@@ -390,6 +440,7 @@ prepare_verified_bundle
 
 run_hosting_installer --hosting
 verify_runtime >/tmp/fresh-health.json
+verify_shared_device_auth
 
 run_app_cli wallet setup \
   --mode local-signer-create \
@@ -409,6 +460,7 @@ run_app_cli wallet setup \
   --non-interactive \
   --json \
   >/tmp/vault-create.json
+verify_shared_wallet_registry
 verify_wallet agent >/tmp/fresh-agent.json
 verify_wallet vault >/tmp/fresh-vault.json
 jq -e '.ready == true and .role == "agent"' /tmp/fresh-agent.json >/dev/null
@@ -420,8 +472,11 @@ runuser -u app -- /opt/fased/signer/fased-signerd \
   >/tmp/agent-balance.json
 jq -e '.balance == "3000000000" and .unit == "lamports"' /tmp/agent-balance.json >/dev/null
 
+chmod 0600 "$state/identity/device-auth.json"
 run_hosting_installer --repair-hosting
 verify_runtime >/tmp/repair-health.json
+test "$(stat -c '%U:%G:%a' "$state/identity/device-auth.json")" = "app:fased-config:660"
+verify_shared_device_auth
 verify_wallet agent >/tmp/repair-agent.json
 verify_wallet vault >/tmp/repair-vault.json
 jq -e '.ready == true and .role == "agent"' /tmp/repair-agent.json >/dev/null

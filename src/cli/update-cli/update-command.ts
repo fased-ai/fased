@@ -146,8 +146,12 @@ async function runVisibleUpdateStage<T>(params: {
   }
 }
 
-function printUpdateLifecycleTimings(timings: UpdateLifecycleTiming[], jsonMode: boolean): void {
-  if (jsonMode || timings.length === 0) {
+function printUpdateLifecycleTimings(
+  timings: UpdateLifecycleTiming[],
+  jsonMode: boolean,
+  verbose: boolean,
+): void {
+  if (jsonMode || !verbose || timings.length === 0) {
     return;
   }
   defaultRuntime.log(theme.heading("Post-update timing"));
@@ -1850,7 +1854,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
     durationMs: Date.now() - commandStartedAt,
   });
 
-  printUpdateLifecycleTimings(lifecycleTimings, Boolean(opts.json));
+  printUpdateLifecycleTimings(lifecycleTimings, Boolean(opts.json), Boolean(opts.verbose));
 
   if (!opts.json && !restartResult.partial) {
     defaultRuntime.log(theme.muted(pickUpdateQuip()));

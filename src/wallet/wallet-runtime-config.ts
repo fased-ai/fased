@@ -180,13 +180,27 @@ export function resolveWalletStatePaths(env: NodeJS.ProcessEnv = process.env): W
   };
 }
 
+export function isSharedWalletApplicationState(env: NodeJS.ProcessEnv = process.env): boolean {
+  const protectedLocal = String(env.FASED_PROTECTED_LOCAL ?? "").trim() === "1";
+  const hosting =
+    String(env.FASED_HOST_PROFILE ?? "")
+      .trim()
+      .toLowerCase() === "hosting";
+  return protectedLocal || hosting;
+}
+
+export function walletApplicationStateFileMode(env: NodeJS.ProcessEnv = process.env): number {
+  return isSharedWalletApplicationState(env) ? 0o660 : 0o600;
+}
+
 export function ensureWalletStateDir(env: NodeJS.ProcessEnv = process.env): WalletStatePaths {
   const paths = resolveWalletStatePaths(env);
-  fs.mkdirSync(paths.rootDir, { recursive: true, mode: 0o700 });
-  try {
+  const shared = isSharedWalletApplicationState(env);
+  if (!fs.existsSync(paths.rootDir)) {
+    fs.mkdirSync(paths.rootDir, { recursive: true, mode: shared ? 0o2770 : 0o700 });
+  }
+  if (!shared) {
     fs.chmodSync(paths.rootDir, 0o700);
-  } catch {
-    // best effort; Windows and some filesystems may ignore chmod.
   }
   return paths;
 }

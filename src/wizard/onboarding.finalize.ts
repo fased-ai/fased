@@ -1496,6 +1496,17 @@ export function shouldDeferInstallerAccessHandoff(params: {
   );
 }
 
+export function shouldDeferInstallerGatewayActivation(params: {
+  installerOnboard: boolean;
+  deferProtectedLocalGatewayActivation: boolean;
+  rootPreparedHosting: boolean;
+}): boolean {
+  return (
+    params.installerOnboard &&
+    (params.deferProtectedLocalGatewayActivation || params.rootPreparedHosting)
+  );
+}
+
 export async function finalizeOnboardingWizard(
   options: FinalizeOnboardingOptions,
 ): Promise<{ launchedTui: boolean }> {
@@ -1509,8 +1520,14 @@ export async function finalizeOnboardingWizard(
   const protectedLocal = signerLifecycle?.profile === "protected-local";
   const deferProtectedLocalGatewayActivation =
     protectedLocal && process.env.FASED_INSTALLER_ONBOARD?.trim() === "1";
+  const installerOnboard = process.env.FASED_INSTALLER_ONBOARD?.trim() === "1";
+  const deferInstallerGatewayActivation = shouldDeferInstallerGatewayActivation({
+    installerOnboard,
+    deferProtectedLocalGatewayActivation,
+    rootPreparedHosting,
+  });
   const deferInstallerAccessHandoff = shouldDeferInstallerAccessHandoff({
-    installerOnboard: process.env.FASED_INSTALLER_ONBOARD?.trim() === "1",
+    installerOnboard,
     deferProtectedLocalGatewayActivation,
     rootPreparedHosting,
   });
@@ -1980,7 +1997,7 @@ export async function finalizeOnboardingWizard(
     }
   }
 
-  if (process.platform === "linux" && !deferProtectedLocalGatewayActivation) {
+  if (process.platform === "linux" && !deferInstallerGatewayActivation) {
     const localSignerSync = resolveLocalSignerSyncForFinalize({ strictVps });
     if (localSignerSync.sync) {
       try {
@@ -2111,7 +2128,7 @@ export async function finalizeOnboardingWizard(
     );
   }
 
-  if (!opts.skipHealth && !deferProtectedLocalGatewayActivation) {
+  if (!opts.skipHealth && !deferInstallerGatewayActivation) {
     const probeLinks = resolveControlUiLinks({
       bind: nextConfig.gateway?.bind ?? "loopback",
       port: settings.port,
@@ -2575,10 +2592,10 @@ export async function finalizeOnboardingWizard(
     token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
     walletSecurityFocus: options.walletSecurityFocus ?? null,
   });
-  let gatewayProbe = deferProtectedLocalGatewayActivation
+  let gatewayProbe = deferInstallerGatewayActivation
     ? {
         ok: false,
-        detail: "Gateway activation is deferred until protected Local setup commits",
+        detail: "Gateway activation is deferred until installer setup commits",
       }
     : await probeGatewayReachable({
         url: links.wsUrl,
@@ -2586,7 +2603,7 @@ export async function finalizeOnboardingWizard(
         password: settings.authMode === "password" ? nextConfig.gateway?.auth?.password : "",
       });
   if (
-    !deferProtectedLocalGatewayActivation &&
+    !deferInstallerGatewayActivation &&
     !strictVps &&
     opts.mode !== "remote" &&
     !opts.skipUi &&
@@ -2605,7 +2622,7 @@ export async function finalizeOnboardingWizard(
     }
   }
   if (
-    !deferProtectedLocalGatewayActivation &&
+    !deferInstallerGatewayActivation &&
     !strictVps &&
     opts.mode !== "remote" &&
     !opts.skipUi &&
@@ -2639,12 +2656,7 @@ export async function finalizeOnboardingWizard(
     }
     gatewayProbe = { ok: true };
   }
-  if (
-    !deferProtectedLocalGatewayActivation &&
-    !strictVps &&
-    opts.mode !== "remote" &&
-    !opts.skipUi
-  ) {
+  if (!deferInstallerGatewayActivation && !strictVps && opts.mode !== "remote" && !opts.skipUi) {
     let localDashboardReady = await waitForLocalDashboardReady({
       links,
       token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
@@ -2686,7 +2698,7 @@ export async function finalizeOnboardingWizard(
     ? "Gateway: reachable"
     : `Gateway: not detected${gatewayProbe.detail ? ` (${gatewayProbe.detail})` : ""}`;
   const localHealthCheck =
-    !deferProtectedLocalGatewayActivation &&
+    !deferInstallerGatewayActivation &&
     !strictVps &&
     opts.mode !== "remote" &&
     !opts.skipHealth &&
@@ -2703,7 +2715,7 @@ export async function finalizeOnboardingWizard(
   let tailscaleAdminUrl: string | undefined;
   let tailscaleNodeName = "";
   let tailscaleIpv4 = "";
-  if (settings.tailscaleMode !== "off") {
+  if (settings.tailscaleMode !== "off" && !deferInstallerGatewayActivation) {
     const identity = strictVps
       ? await waitForTailscaleIdentity({
           basePath: controlUiBasePath,
@@ -2725,7 +2737,7 @@ export async function finalizeOnboardingWizard(
       runtime.error(`Tailscale identity still warming: ${detail}`);
     }
   }
-  if (strictVps && settings.tailscaleMode === "serve") {
+  if (strictVps && settings.tailscaleMode === "serve" && !deferInstallerGatewayActivation) {
     await withWizardProgress(
       "Tailscale serve warmup",
       { doneMessage: undefined },
@@ -2756,7 +2768,7 @@ export async function finalizeOnboardingWizard(
     await configureHostedSignerWebAuthnForTailscale();
   }
   let hostedDashboardBrowserVerified = false;
-  if (strictVps && settings.tailscaleMode !== "off") {
+  if (strictVps && settings.tailscaleMode !== "off" && !deferInstallerGatewayActivation) {
     if (!tailscaleAdminUrl && !opts.allowInsecure) {
       throw new Error("Hosting requires a Tailscale HTTPS dashboard URL before completion.");
     }
@@ -2880,7 +2892,7 @@ export async function finalizeOnboardingWizard(
     );
   }
 
-  if (strictVps) {
+  if (strictVps && !deferInstallerGatewayActivation) {
     const maintenanceUser = resolveGatewayServiceRunAsUser() || "app";
     await verifyStrictVpsMaintenanceReadiness({
       repoRoot: process.cwd(),
@@ -3092,7 +3104,7 @@ export async function finalizeOnboardingWizard(
   let hatchChoice: "tui" | "web" | "later" | null = null;
   let launchedTui = false;
 
-  if (!opts.skipUi && !deferProtectedLocalGatewayActivation) {
+  if (!opts.skipUi && !deferInstallerGatewayActivation) {
     if (!gatewayProbe.ok) {
       await prompter.note(
         strictVps
@@ -3212,6 +3224,7 @@ export async function finalizeOnboardingWizard(
 
   const shouldOpenControlUi =
     !opts.skipUi &&
+    !deferInstallerGatewayActivation &&
     settings.authMode === "token" &&
     Boolean(gatewayTokenForUi) &&
     hatchChoice === null;

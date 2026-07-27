@@ -698,6 +698,10 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
       delegate: false,
       options: { dryRun: true },
     });
+    expect(__testing.parseArgs(["update", "--verbose"])).toMatchObject({
+      delegate: false,
+      options: { verbose: true },
+    });
   });
 
   it("delegates dev and non-transactional update subcommands to the active runtime", () => {

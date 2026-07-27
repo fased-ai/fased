@@ -14,6 +14,35 @@ function resolveDeviceAuthPath(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(resolveStateDir(env), "identity", DEVICE_AUTH_FILE);
 }
 
+function sharedDeviceAuthState(env: NodeJS.ProcessEnv = process.env): boolean {
+  const protectedLocal = String(env.FASED_PROTECTED_LOCAL ?? "").trim() === "1";
+  const hosting =
+    String(env.FASED_HOST_PROFILE ?? "")
+      .trim()
+      .toLowerCase() === "hosting";
+  return protectedLocal || hosting;
+}
+
+function deviceAuthDirectoryMode(env: NodeJS.ProcessEnv = process.env): number {
+  return sharedDeviceAuthState(env) ? 0o2770 : 0o700;
+}
+
+function deviceAuthFileMode(env: NodeJS.ProcessEnv = process.env): number {
+  return sharedDeviceAuthState(env) ? 0o660 : 0o600;
+}
+
+function enforceDeviceAuthFileMode(filePath: string, env: NodeJS.ProcessEnv = process.env): void {
+  try {
+    fs.chmodSync(filePath, deviceAuthFileMode(env));
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EACCES" && code !== "EPERM") {
+      throw error;
+    }
+    // A peer service may own the group-shared file. Its existing mode remains authoritative.
+  }
+}
+
 function readStore(filePath: string): DeviceAuthStore | null {
   try {
     if (!fs.existsSync(filePath)) {
@@ -33,14 +62,21 @@ function readStore(filePath: string): DeviceAuthStore | null {
   }
 }
 
-function writeStore(filePath: string, store: DeviceAuthStore): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
-  try {
-    fs.chmodSync(filePath, 0o600);
-  } catch {
-    // best-effort
+function writeStore(
+  filePath: string,
+  store: DeviceAuthStore,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const directory = path.dirname(filePath);
+  const directoryMode = deviceAuthDirectoryMode(env);
+  fs.mkdirSync(directory, { recursive: true, mode: directoryMode });
+  if (!sharedDeviceAuthState(env)) {
+    fs.chmodSync(directory, directoryMode);
   }
+  fs.writeFileSync(filePath, `${JSON.stringify(store, null, 2)}\n`, {
+    mode: deviceAuthFileMode(env),
+  });
+  enforceDeviceAuthFileMode(filePath, env);
 }
 
 export function loadDeviceAuthToken(params: {
@@ -89,7 +125,7 @@ export function storeDeviceAuthToken(params: {
     updatedAtMs: Date.now(),
   };
   next.tokens[role] = entry;
-  writeStore(filePath, next);
+  writeStore(filePath, next, params.env);
   return entry;
 }
 
@@ -113,7 +149,7 @@ export function clearDeviceAuthToken(params: {
     tokens: { ...store.tokens },
   };
   delete next.tokens[role];
-  writeStore(filePath, next);
+  writeStore(filePath, next, params.env);
 }
 
 export function clearDeviceAuthStore(env: NodeJS.ProcessEnv = process.env): boolean {

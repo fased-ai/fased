@@ -138,6 +138,7 @@ function parseArgs(argv) {
     status,
     dryRun: false,
     json: false,
+    verbose: false,
     restart: true,
     timeoutMs: DEFAULT_TIMEOUT_MS,
     channel: null,
@@ -148,6 +149,8 @@ function parseArgs(argv) {
     const token = tokens[index];
     if (token === "--json") {
       options.json = true;
+    } else if (token === "--verbose") {
+      options.verbose = true;
     } else if (token === "--dry-run") {
       options.dryRun = true;
     } else if (token === "--no-restart") {
@@ -5498,9 +5501,11 @@ async function updateManagedRuntime(options) {
           );
           console.log("Update mode: verified target-owned Protected Local transaction");
           console.log("Gateway: verified");
-          console.log("Timing:");
-          for (const timing of timings) {
-            console.log(`  ${timing.name}: ${formatDuration(timing.durationMs)}`);
+          if (options.verbose) {
+            console.log("Timing:");
+            for (const timing of timings) {
+              console.log(`  ${timing.name}: ${formatDuration(timing.durationMs)}`);
+            }
           }
         }
         return;
@@ -5756,9 +5761,11 @@ async function updateManagedRuntime(options) {
             : "Update mode: managed artifact transaction",
         );
         console.log("Gateway: verified");
-        console.log("Timing:");
-        for (const timing of timings) {
-          console.log(`  ${timing.name}: ${formatDuration(timing.durationMs)}`);
+        if (options.verbose) {
+          console.log("Timing:");
+          for (const timing of timings) {
+            console.log(`  ${timing.name}: ${formatDuration(timing.durationMs)}`);
+          }
         }
       }
     } finally {

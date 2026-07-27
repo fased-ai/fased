@@ -14,6 +14,7 @@ import {
   gatewayServiceMatchesCurrentInstall,
   isRootPreparedHostingFinalization,
   shouldDeferInstallerAccessHandoff,
+  shouldDeferInstallerGatewayActivation,
   validateLocalDashboardBootCheck,
   waitForGatewayHttpListener,
 } from "./onboarding.finalize.js";
@@ -61,6 +62,32 @@ describe("shouldDeferInstallerAccessHandoff", () => {
       shouldDeferInstallerAccessHandoff({
         installerOnboard: false,
         deferProtectedLocalGatewayActivation: true,
+        rootPreparedHosting: true,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldDeferInstallerGatewayActivation", () => {
+  it("defers service-dependent work until either installer-owned root phase commits", () => {
+    expect(
+      shouldDeferInstallerGatewayActivation({
+        installerOnboard: true,
+        deferProtectedLocalGatewayActivation: false,
+        rootPreparedHosting: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldDeferInstallerGatewayActivation({
+        installerOnboard: true,
+        deferProtectedLocalGatewayActivation: true,
+        rootPreparedHosting: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldDeferInstallerGatewayActivation({
+        installerOnboard: false,
+        deferProtectedLocalGatewayActivation: false,
         rootPreparedHosting: true,
       }),
     ).toBe(false);

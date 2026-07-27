@@ -26,8 +26,8 @@ export async function probeGatewayStatus(opts: {
           tlsFingerprint: opts.tlsFingerprint,
           method: "health",
           timeoutMs: opts.timeoutMs,
-          clientName: GATEWAY_CLIENT_NAMES.CLI,
-          mode: GATEWAY_CLIENT_MODES.CLI,
+          clientName: GATEWAY_CLIENT_NAMES.PROBE,
+          mode: GATEWAY_CLIENT_MODES.PROBE,
           ...(opts.configPath ? { configPath: opts.configPath } : {}),
         }),
     );

@@ -173,8 +173,12 @@ printf 'streamed-bootstrap\\n' | bash ${JSON.stringify(harness)}
     const coordinator = sliceBetween(installer, "reexec_as_app_user()", "go_modern_enough()");
     expect(prepare).not.toContain('"$helper" harden-ssh');
     expect(prepare).toContain('write_hosting_prerequisites_marker "$tailscale_dns" "pending"');
-    expect(finalize).toContain('"$helper" firewall-baseline');
-    expect(finalize).toContain('"$helper" harden-ssh');
+    expect(finalize).toContain(
+      'run_hosting_prerequisite firewall-baseline "host firewall" || return 1',
+    );
+    expect(finalize).toContain('run_hosting_prerequisite harden-ssh "SSH hardening" || return 1');
+    expect(finalize).toContain("Hosting security and update services are ready.");
+    expect(finalize).not.toContain("Tailscale access is ready at");
     expect(installer).not.toContain("Type the Tailscale DNS name");
     expect(coordinator.indexOf("verify_root_coordinated_hosted_gateway")).toBeLessThan(
       coordinator.indexOf("finalize_hosting_root_prerequisites"),
@@ -333,6 +337,9 @@ tailscale_serve_route_ready 18789
     expect(pairedFinalize).toBeGreaterThan(rootRestart);
     expect(rootHealth).toBeGreaterThan(pairedFinalize);
     expect(rootCoordinator).toContain("hosted-transaction finalize --root-restarted");
+    expect(
+      rootCoordinator.match(/hosted-transaction finalize --root-restarted >\/dev\/null/g),
+    ).toHaveLength(2);
     expect(rootCoordinator).not.toContain("fased-install-gateway-service");
     expect(rootCoordinator).not.toContain("gateway install --force --system");
 
@@ -398,6 +405,59 @@ verify_root_coordinated_hosted_gateway app ${JSON.stringify(path.join(tempRoot, 
       }
     },
   );
+
+  it("keeps Tailscale and transaction internals out of the successful Hosting handoff", () => {
+    const prepare = sliceBetween(
+      installer,
+      "prepare_hosting_root_prerequisites()",
+      "finalize_hosting_root_prerequisites()",
+    );
+    const maintenance = sliceBetween(
+      installer,
+      "install_host_maintenance_helper()",
+      "install_fixed_host_gateway_service()",
+    );
+    expect(prepare).toContain('"$helper" tailscale-serve >/dev/null');
+    expect(maintenance).toContain("enable_systemd_service()");
+    expect(maintenance).toContain("enable_systemd_service firewalld");
+    expect(maintenance).toContain("enable_systemd_service fail2ban");
+  });
+
+  it("starts and verifies the canonical systemd service behind a distro alias", () => {
+    const maintenance = sliceBetween(
+      installer,
+      "install_host_maintenance_helper()",
+      "install_fixed_host_gateway_service()",
+    );
+    const enableService = sliceBetween(
+      maintenance,
+      "enable_systemd_service()",
+      "firewall_baseline()",
+    );
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `set -euo pipefail
+calls=""
+systemctl() {
+  calls+="systemctl $*"$'\\n'
+  if [[ "\${1:-}" == "show" ]]; then
+    printf 'canonical-firewall.service\\n'
+  fi
+  return 0
+}
+${enableService}
+enable_systemd_service firewalld
+printf '%s' "$calls"
+`,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("systemctl enable --now canonical-firewall.service");
+    expect(result.stdout).toContain("systemctl is-active --quiet firewalld.service");
+  });
 
   it("lets only root-coordinated finalization skip an app-side hosted restart", () => {
     expect(
