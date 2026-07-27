@@ -114,6 +114,44 @@ verify_shared_device_auth() {
   test "$(stat -c '%U:%G:%a' "$auth_file")" = "testop:fscf-$instance:660"
 }
 
+verify_shared_federation_state() {
+  local instance="$1"
+  local runtime_root="$2"
+  local module_url="file://$runtime_root/dist/federation/access-token.js"
+  local token_file="$state/federation/access-token.json"
+  local -a environment=()
+  mapfile -t environment < <(operator_env "$instance")
+  runuser -u testop -- env "${environment[@]}" FASED_FIXTURE_MODULE_URL="$module_url" \
+    /usr/local/bin/node --input-type=module --eval '
+      const federation = await import(process.env.FASED_FIXTURE_MODULE_URL);
+      await federation.persistFederationAccessToken({
+        tokenId: "fixture-federation-token",
+        nodeId: "fixture-node",
+        handle: "@fixture@fased.test",
+        issuedAt: "2026-07-26T00:00:00.000Z",
+        expiresAt: "2027-07-26T00:00:00.000Z",
+        scopes: ["federation.read"],
+        signature: "fixture-signature",
+      });
+    '
+  test "$(stat -c '%U:%G:%a' "$state/federation")" = "testop:fscf-$instance:2770"
+  test "$(stat -c '%U:%G:%a' "$token_file")" = "testop:fscf-$instance:660"
+  runuser -u "fsgw-$instance" -- env "${environment[@]}" FASED_FIXTURE_MODULE_URL="$module_url" \
+    /usr/local/bin/node --input-type=module --eval '
+      const federation = await import(process.env.FASED_FIXTURE_MODULE_URL);
+      const existing = await federation.loadPersistedFederationToken();
+      if (existing?.tokenId !== "fixture-federation-token") process.exit(93);
+      await federation.persistFederationAccessToken({ ...existing, hostedState: "ready" });
+    '
+  test "$(stat -c '%U:%G:%a' "$token_file")" = "fsgw-$instance:fscf-$instance:660"
+  runuser -u testop -- env "${environment[@]}" FASED_FIXTURE_MODULE_URL="$module_url" \
+    /usr/local/bin/node --input-type=module --eval '
+      const federation = await import(process.env.FASED_FIXTURE_MODULE_URL);
+      const existing = await federation.loadPersistedFederationToken();
+      if (existing?.hostedState !== "ready") process.exit(94);
+    '
+}
+
 verify_shared_wallet_registry() {
   local instance="$1"
   local runtime_root="$2"
@@ -254,6 +292,7 @@ if [[ "$phase" == "verify-reboot" ]]; then
   verify_protected_home_acl "$instance"
   mapfile -t env_args < <(operator_env "$instance")
   verify_shared_device_auth "$instance" "$runtime"
+  verify_shared_federation_state "$instance" "$runtime"
   runuser -u testop -- env "${env_args[@]}" \
     /usr/local/bin/node "$runtime/fased.mjs" health --json --timeout 5000 \
     >/tmp/reboot-health.json
@@ -1163,6 +1202,7 @@ wait_for_service "fased-gateway-$instance.service"
 test "$(stat -c '%U:%G:%a' "$state/identity/device-auth.json")" = \
   "testop:fscf-$instance:660"
 verify_shared_device_auth "$instance" "$runtime"
+verify_shared_federation_state "$instance" "$runtime"
 signer_pid_before="$(systemctl show -p MainPID --value "fased-signerd-$instance.service")"
 gateway_pid_before="$(systemctl show -p MainPID --value "fased-gateway-$instance.service")"
 runuser -u testop -- env "${managed_update_env[@]}" \
@@ -1211,6 +1251,7 @@ test "$(sha256sum "$wallet_dir/provider-registry.v1.json" | awk '{print $1}')" =
 
 mapfile -t env_args < <(operator_env "$instance")
 verify_shared_device_auth "$instance" "$runtime"
+verify_shared_federation_state "$instance" "$runtime"
 runuser -u testop -- env "${env_args[@]}" \
   /usr/local/bin/node "$runtime/fased.mjs" wallet setup \
   --mode local-signer-create \

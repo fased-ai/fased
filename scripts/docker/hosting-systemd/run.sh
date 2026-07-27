@@ -85,6 +85,42 @@ verify_shared_device_auth() {
   test "$(stat -c '%U:%G:%a' "$auth_file")" = "app:fased-config:660"
 }
 
+verify_shared_federation_state() {
+  local module_url="file://$state/runtime/current/dist/federation/access-token.js"
+  local token_file="$state/federation/access-token.json"
+  local -a environment=()
+  mapfile -t environment < <(app_env)
+  runuser -u app -- env "${environment[@]}" FASED_FIXTURE_MODULE_URL="$module_url" \
+    /usr/local/bin/node --input-type=module --eval '
+      const federation = await import(process.env.FASED_FIXTURE_MODULE_URL);
+      await federation.persistFederationAccessToken({
+        tokenId: "fixture-federation-token",
+        nodeId: "fixture-node",
+        handle: "@fixture@fased.test",
+        issuedAt: "2026-07-26T00:00:00.000Z",
+        expiresAt: "2027-07-26T00:00:00.000Z",
+        scopes: ["federation.read"],
+        signature: "fixture-signature",
+      });
+    '
+  test "$(stat -c '%U:%G:%a' "$state/federation")" = "app:fased-config:2770"
+  test "$(stat -c '%U:%G:%a' "$token_file")" = "app:fased-config:660"
+  runuser -u fased-gateway -- env "${environment[@]}" FASED_FIXTURE_MODULE_URL="$module_url" \
+    /usr/local/bin/node --input-type=module --eval '
+      const federation = await import(process.env.FASED_FIXTURE_MODULE_URL);
+      const existing = await federation.loadPersistedFederationToken();
+      if (existing?.tokenId !== "fixture-federation-token") process.exit(93);
+      await federation.persistFederationAccessToken({ ...existing, hostedState: "ready" });
+    '
+  test "$(stat -c '%U:%G:%a' "$token_file")" = "fased-gateway:fased-config:660"
+  runuser -u app -- env "${environment[@]}" FASED_FIXTURE_MODULE_URL="$module_url" \
+    /usr/local/bin/node --input-type=module --eval '
+      const federation = await import(process.env.FASED_FIXTURE_MODULE_URL);
+      const existing = await federation.loadPersistedFederationToken();
+      if (existing?.hostedState !== "ready") process.exit(94);
+    '
+}
+
 verify_shared_wallet_registry() {
   local module_url="file://$state/runtime/current/dist/wallet/wallet-provider-registry.js"
   local registry="$state/wallet/provider-registry.v1.json"
@@ -441,6 +477,7 @@ prepare_verified_bundle
 run_hosting_installer --hosting
 verify_runtime >/tmp/fresh-health.json
 verify_shared_device_auth
+verify_shared_federation_state
 
 run_app_cli wallet setup \
   --mode local-signer-create \
@@ -477,6 +514,7 @@ run_hosting_installer --repair-hosting
 verify_runtime >/tmp/repair-health.json
 test "$(stat -c '%U:%G:%a' "$state/identity/device-auth.json")" = "app:fased-config:660"
 verify_shared_device_auth
+verify_shared_federation_state
 verify_wallet agent >/tmp/repair-agent.json
 verify_wallet vault >/tmp/repair-vault.json
 jq -e '.ready == true and .role == "agent"' /tmp/repair-agent.json >/dev/null

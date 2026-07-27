@@ -879,6 +879,10 @@ async function shareApplicationState(spec, configGroup, legacy) {
   await fsp.mkdir(walletDir, { recursive: true, mode: 0o2770 });
   await fsp.chown(walletDir, spec.operatorUid, configGroup.gid);
   await fsp.chmod(walletDir, 0o2770);
+  const federationDir = path.join(spec.stateDir, "federation");
+  await fsp.mkdir(federationDir, { recursive: true, mode: 0o2770 });
+  await fsp.chown(federationDir, spec.operatorUid, configGroup.gid);
+  await fsp.chmod(federationDir, 0o2770);
   for (const protectedRuntimePath of [
     path.join(spec.stateDir, "runtime"),
     path.join(spec.stateDir, "updater"),

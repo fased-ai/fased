@@ -5045,6 +5045,7 @@ install_fixed_host_gateway_service() {
   install -d -m 2770 -o "$target_user" -g "$config_group" "${target_home}/.fased"
   install -d -m 2770 -o "$target_user" -g "$config_group" "${target_home}/.fased/identity"
   install -d -m 2770 -o "$target_user" -g "$config_group" "${target_home}/.fased/wallet"
+  install -d -m 2770 -o "$target_user" -g "$config_group" "${target_home}/.fased/federation"
   chgrp -R "$config_group" "${target_home}/.fased"
   chmod -R g+rwX,o-rwx "${target_home}/.fased"
   find "${target_home}/.fased" -type d -exec chmod g+s {} +
@@ -5137,6 +5138,7 @@ reconcile_hosting_shared_state() {
   install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir"
   install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/identity"
   install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/wallet"
+  install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/federation"
   chgrp -R "$config_group" "$state_dir"
   chmod -R g+rwX,o-rwx "$state_dir"
   find "$state_dir" -type d -exec chmod g+s {} +
