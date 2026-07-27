@@ -16,6 +16,21 @@ function fail(message) {
   throw new Error(message);
 }
 
+function parseJsonEnvelope(output, label) {
+  const candidates = [...output.matchAll(/^\s*\{/gmu)]
+    .map((match) => match.index)
+    .filter((index) => index !== undefined)
+    .toReversed();
+  for (const index of candidates) {
+    try {
+      return JSON.parse(output.slice(index).trim());
+    } catch {
+      // Plugin preload diagnostics may precede the JSON envelope.
+    }
+  }
+  fail(`${label} did not return a valid JSON envelope`);
+}
+
 function parseArguments(argv) {
   const operation = argv[0];
   if (!new Set(["activate", "restore", "run"]).has(operation)) {
@@ -397,7 +412,7 @@ async function runSignerDoctor({ candidateRoot, serviceName }) {
       maxBuffer: 8 * 1024 * 1024,
     },
   );
-  const result = JSON.parse(stdout);
+  const result = parseJsonEnvelope(stdout, "Signer Doctor");
   if (result?.ok !== true) {
     fail("Signer Doctor failed through the installed candidate");
   }
@@ -429,7 +444,7 @@ async function runPluginDoctor({ candidateRoot, serviceName }) {
       maxBuffer: 8 * 1024 * 1024,
     },
   );
-  const result = JSON.parse(stdout);
+  const result = parseJsonEnvelope(stdout, "Plugin Doctor");
   if (result?.ok !== true) {
     fail("Plugin Doctor failed through the installed candidate");
   }
