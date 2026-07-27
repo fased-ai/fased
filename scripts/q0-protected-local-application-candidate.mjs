@@ -404,6 +404,38 @@ async function runSignerDoctor({ candidateRoot, serviceName }) {
   return result;
 }
 
+async function runPluginDoctor({ candidateRoot, serviceName }) {
+  const operator = await resolveOperator(serviceName);
+  const { stdout } = await execFileAsync(
+    "/usr/bin/runuser",
+    [
+      "-u",
+      operator.username,
+      "--",
+      "/usr/bin/env",
+      `HOME=${operator.home}`,
+      `FASED_STATE_DIR=${path.join(operator.home, ".fased")}`,
+      `FASED_CONFIG_PATH=${path.join(operator.home, ".fased", "fased.json")}`,
+      "PATH=/usr/local/bin:/usr/bin:/bin",
+      "/usr/bin/node-22",
+      path.join(candidateRoot, "fased.mjs"),
+      "plugins",
+      "doctor",
+      "--json",
+    ],
+    {
+      env: { HOME: "/root", PATH: "/usr/bin:/bin" },
+      timeout: 60_000,
+      maxBuffer: 8 * 1024 * 1024,
+    },
+  );
+  const result = JSON.parse(stdout);
+  if (result?.ok !== true) {
+    fail("Plugin Doctor failed through the installed candidate");
+  }
+  return result;
+}
+
 async function restoreCandidate(paths, backup, { removeBackup = true } = {}) {
   await runSystemctl("stop", paths.serviceName).catch(() => undefined);
   await atomicSymlink(backup.originalRoot, paths.currentLink, backup.linkOwner);
@@ -579,6 +611,10 @@ async function runCandidate(paths, sourceRoot) {
         candidateRoot: backup.candidateRoot,
         serviceName: paths.serviceName,
       }),
+      runPluginDoctor({
+        candidateRoot: backup.candidateRoot,
+        serviceName: paths.serviceName,
+      }),
     ]);
   } catch (error) {
     testError = error;
@@ -598,7 +634,7 @@ async function runCandidate(paths, sourceRoot) {
     throw testError;
   }
   process.stdout.write(
-    "Q0 PASS: protected Mining history and signer diagnostics passed; official application restored.\n",
+    "Q0 PASS: protected Mining history, signer diagnostics, and plugin diagnostics passed; official application restored.\n",
   );
 }
 
