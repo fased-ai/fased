@@ -295,7 +295,7 @@ describe("GatewayClient close handling", () => {
     const onClose = vi.fn();
     const identity: DeviceIdentity = {
       deviceId: "dev-5",
-      privateKeyPem: "private-key",
+      privateKeyPem: "private-key", // pragma: allowlist secret
       publicKeyPem: "public-key",
     };
     const client = new GatewayClient({
@@ -448,7 +448,9 @@ describe("GatewayClient connect auth payload", () => {
     );
     await vi.waitFor(() => expect(storeDeviceAuthTokenMock).toHaveBeenCalledOnce());
 
-    expect(connectFrameFrom(ws)).toMatchObject({ password: "shared-password" });
+    expect(connectFrameFrom(ws)).toMatchObject({
+      password: "shared-password", // pragma: allowlist secret
+    });
     expect(connectFrameFrom(ws).deviceToken).toBeUndefined();
     expect(loadDeviceAuthTokenMock).toHaveBeenCalledOnce();
     expect(storeDeviceAuthTokenMock).toHaveBeenCalledWith({
