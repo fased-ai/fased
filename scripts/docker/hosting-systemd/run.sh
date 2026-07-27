@@ -85,6 +85,21 @@ verify_shared_device_auth() {
   test "$(stat -c '%U:%G:%a' "$auth_file")" = "app:fased-config:660"
 }
 
+verify_mining_history() {
+  runuser -u app -- env \
+    HOME="$app_home" \
+    USER=app \
+    LOGNAME=app \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    FASED_NODE=/usr/local/bin/node \
+    "$cli" mining history \
+    --url "ws://127.0.0.1:$gateway_port" \
+    --timeout 5000 \
+    --json \
+    >/tmp/mining-history.json
+  jq -e 'type == "object"' /tmp/mining-history.json >/dev/null
+}
+
 verify_shared_federation_state() {
   local module_url="file://$state/runtime/current/dist/federation/access-token.js"
   local token_file="$state/federation/access-token.json"
@@ -477,6 +492,7 @@ prepare_verified_bundle
 run_hosting_installer --hosting
 verify_runtime >/tmp/fresh-health.json
 verify_shared_device_auth
+verify_mining_history
 verify_shared_federation_state
 
 run_app_cli wallet setup \
@@ -520,10 +536,13 @@ verify_wallet vault >/tmp/repair-vault.json
 jq -e '.ready == true and .role == "agent"' /tmp/repair-agent.json >/dev/null
 jq -e '.ready == true and .role == "vault"' /tmp/repair-vault.json >/dev/null
 
+chmod 0600 "$state/identity/device-auth.json"
 chmod 0644 /opt/fased/signer/fased-signerd
 /usr/local/bin/node /usr/local/libexec/fased-host-updaterctl.mjs "$version" --prepare-only \
   >/tmp/failure-prepare.json
 jq -e '.changed == true and .phase == "prepared"' /tmp/failure-prepare.json >/dev/null
+test "$(stat -c '%U:%G:%a' "$state/identity/device-auth.json")" = "app:fased-config:660"
+verify_mining_history
 chmod 0755 /opt/fased/signer/fased-signerd
 transaction_id="$(jq -er .transactionId /var/lib/fased-host-updater/ctl-transaction.json)"
 printf '#!/usr/bin/env bash\nexit 91\n' \

@@ -223,6 +223,53 @@ function managedTransaction(phase = "signer-preactivated") {
 }
 
 describe("root-owned hosted updater protocol", () => {
+  it("derives exact shared-state identities for Protected Local and Hosting", () => {
+    const protectedLocalInstanceId = "0123456789abcdef";
+    expect(
+      __testing.rootManagedApplicationIdentity(
+        {
+          instanceId: protectedLocalInstanceId,
+          paths: {
+            gatewayUnitPath: `/etc/systemd/system/fased-gateway-${protectedLocalInstanceId}.service`,
+          },
+        },
+        [
+          `[Service]`,
+          `User=fsgw-${protectedLocalInstanceId}`,
+          `SupplementaryGroups=fscf-${protectedLocalInstanceId}`,
+          `Environment=FASED_STATE_DIR=/home/operator/.fased`,
+          "",
+        ].join("\n"),
+      ),
+    ).toEqual({
+      configGroup: `fscf-${protectedLocalInstanceId}`,
+      gatewayUnitPath: `/etc/systemd/system/fased-gateway-${protectedLocalInstanceId}.service`,
+      gatewayUser: `fsgw-${protectedLocalInstanceId}`,
+      protectedLocal: true,
+      stateDir: "/home/operator/.fased",
+    });
+
+    expect(
+      __testing.rootManagedApplicationIdentity(
+        { instanceId: null, paths: {} },
+        [
+          `[Service]`,
+          `User=fased-gateway`,
+          `SupplementaryGroups=fased-config`,
+          `Environment=HOME=/home/app`,
+          `Environment=FASED_HOST_PROFILE=hosting`,
+          "",
+        ].join("\n"),
+      ),
+    ).toEqual({
+      configGroup: "fased-config",
+      gatewayUnitPath: "/etc/systemd/system/fased-gateway.service",
+      gatewayUser: "fased-gateway",
+      protectedLocal: false,
+      stateDir: "/home/app/.fased",
+    });
+  });
+
   it("reconciles shared application state before preparing a protected signer release", async () => {
     const { context, events } = await createFixture();
     context.reconcileApplicationState = async () => {

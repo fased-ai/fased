@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { resolveStateDir } from "../config/paths.js";
+import { resolveConfigPath, resolveStateDir } from "../config/paths.js";
 import {
   type DeviceAuthEntry,
   type DeviceAuthStore,
@@ -10,8 +10,48 @@ import {
 
 const DEVICE_AUTH_FILE = "device-auth.json";
 
+function managedConfigString(vars: Record<string, unknown>, key: string): string | undefined {
+  const value = vars[key];
+  return typeof value === "string" ? value.trim() : undefined;
+}
+
 function resolveDeviceAuthPath(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(resolveStateDir(env), "identity", DEVICE_AUTH_FILE);
+}
+
+function configDeclaresSharedDeviceAuthState(env: NodeJS.ProcessEnv): boolean {
+  const stateDir = resolveStateDir(env);
+  const configPath = resolveConfigPath(env, stateDir);
+  try {
+    const stat = fs.lstatSync(configPath);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      return false;
+    }
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+      env?: { vars?: Record<string, unknown> };
+    };
+    const vars = config?.env?.vars;
+    if (!vars || typeof vars !== "object" || Array.isArray(vars)) {
+      return false;
+    }
+    const profile = managedConfigString(vars, "FASED_HOST_PROFILE")?.toLowerCase();
+    if (profile === "hosting") {
+      return (
+        managedConfigString(vars, "FASED_HOST_UPDATER_SOCKET") ===
+        "/run/fased-host-updater/request.sock"
+      );
+    }
+    const instanceId = managedConfigString(vars, "FASED_PROTECTED_LOCAL_INSTANCE") ?? "";
+    return (
+      profile === "local" &&
+      managedConfigString(vars, "FASED_PROTECTED_LOCAL") === "1" &&
+      /^[a-f0-9]{16}$/u.test(instanceId) &&
+      managedConfigString(vars, "FASED_HOST_UPDATER_SOCKET") ===
+        `/run/fased-local-controller/${instanceId}/request.sock`
+    );
+  } catch {
+    return false;
+  }
 }
 
 function sharedDeviceAuthState(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -20,7 +60,7 @@ function sharedDeviceAuthState(env: NodeJS.ProcessEnv = process.env): boolean {
     String(env.FASED_HOST_PROFILE ?? "")
       .trim()
       .toLowerCase() === "hosting";
-  return protectedLocal || hosting;
+  return protectedLocal || hosting || configDeclaresSharedDeviceAuthState(env);
 }
 
 function deviceAuthDirectoryMode(env: NodeJS.ProcessEnv = process.env): number {
@@ -40,6 +80,21 @@ function enforceDeviceAuthFileMode(filePath: string, env: NodeJS.ProcessEnv = pr
       throw error;
     }
     // A peer service may own the group-shared file. Its existing mode remains authoritative.
+  }
+}
+
+function enforceDeviceAuthDirectoryMode(
+  directory: string,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  try {
+    fs.chmodSync(directory, deviceAuthDirectoryMode(env));
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (!sharedDeviceAuthState(env) || (code !== "EACCES" && code !== "EPERM")) {
+      throw error;
+    }
+    // A peer service may own the group-shared directory. Its existing mode remains authoritative.
   }
 }
 
@@ -70,9 +125,7 @@ function writeStore(
   const directory = path.dirname(filePath);
   const directoryMode = deviceAuthDirectoryMode(env);
   fs.mkdirSync(directory, { recursive: true, mode: directoryMode });
-  if (!sharedDeviceAuthState(env)) {
-    fs.chmodSync(directory, directoryMode);
-  }
+  enforceDeviceAuthDirectoryMode(directory, env);
   fs.writeFileSync(filePath, `${JSON.stringify(store, null, 2)}\n`, {
     mode: deviceAuthFileMode(env),
   });

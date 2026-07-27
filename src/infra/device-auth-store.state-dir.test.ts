@@ -82,4 +82,76 @@ describe("device auth state permissions", () => {
       });
     });
   });
+
+  it.each([
+    [
+      "Protected Local",
+      {
+        FASED_HOST_PROFILE: "local",
+        FASED_PROTECTED_LOCAL: "1",
+        FASED_PROTECTED_LOCAL_INSTANCE: "0123456789abcdef",
+        FASED_HOST_UPDATER_SOCKET: "/run/fased-local-controller/0123456789abcdef/request.sock",
+      },
+    ],
+    [
+      "Hosting",
+      {
+        FASED_HOST_PROFILE: "hosting",
+        FASED_HOST_UPDATER_SOCKET: "/run/fased-host-updater/request.sock",
+      },
+    ],
+  ])(
+    "derives %s shared permissions from the managed config when launcher variables are absent",
+    async (_name, vars) => {
+      await withEnvironment(
+        { FASED_HOST_PROFILE: undefined, FASED_PROTECTED_LOCAL: undefined },
+        async () => {
+          await withStateDirEnv("fased-device-auth-config-", async ({ stateDir }) => {
+            await fs.writeFile(
+              path.join(stateDir, "fased.json"),
+              `${JSON.stringify({ env: { vars } })}\n`,
+              { mode: 0o600 },
+            );
+            storeDeviceAuthToken({
+              deviceId: "managed-device",
+              role: "operator",
+              token: "managed-token",
+            });
+            expect(await storedMode(stateDir)).toBe(0o660);
+            expect(await identityDirectoryMode(stateDir)).toBe(0o2770);
+          });
+        },
+      );
+    },
+  );
+
+  it("does not broaden permissions for an incomplete managed profile", async () => {
+    await withEnvironment(
+      { FASED_HOST_PROFILE: undefined, FASED_PROTECTED_LOCAL: undefined },
+      async () => {
+        await withStateDirEnv("fased-device-auth-incomplete-", async ({ stateDir }) => {
+          await fs.writeFile(
+            path.join(stateDir, "fased.json"),
+            `${JSON.stringify({
+              env: {
+                vars: {
+                  FASED_HOST_PROFILE: "local",
+                  FASED_PROTECTED_LOCAL: "1",
+                  FASED_PROTECTED_LOCAL_INSTANCE: "0123456789abcdef",
+                },
+              },
+            })}\n`,
+            { mode: 0o600 },
+          );
+          storeDeviceAuthToken({
+            deviceId: "incomplete-device",
+            role: "operator",
+            token: "incomplete-token",
+          });
+          expect(await storedMode(stateDir)).toBe(0o600);
+          expect(await identityDirectoryMode(stateDir)).toBe(0o700);
+        });
+      },
+    );
+  });
 });

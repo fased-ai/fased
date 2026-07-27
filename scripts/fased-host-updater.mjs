@@ -1761,7 +1761,7 @@ async function stageOfficialCandidate(version, candidatePath, context) {
   }
 }
 
-const PROTECTED_LOCAL_OPERATOR_ONLY_STATE = new Set([
+const ROOT_MANAGED_OPERATOR_ONLY_STATE = new Set([
   "backups",
   "bin",
   "extensions",
@@ -1788,7 +1788,7 @@ async function systemAccountRecord(database, name) {
     (database === "group" && fields.length < 4) ||
     !identityMatches
   ) {
-    throw new Error(`protected Local ${database} identity is malformed`);
+    throw new Error(`root-managed ${database} identity is malformed`);
   }
   return fields;
 }
@@ -1797,12 +1797,12 @@ function exactUnitValue(content, key) {
   const pattern = new RegExp(`^${key}=(.*)$`, "gmu");
   const matches = [...content.matchAll(pattern)];
   if (matches.length !== 1 || !matches[0][1]) {
-    throw new Error(`protected Local Gateway unit has an invalid ${key}`);
+    throw new Error(`root-managed Gateway unit has an invalid ${key}`);
   }
   return matches[0][1];
 }
 
-async function shareProtectedApplicationEntry(entryPath, configGid) {
+async function shareRootManagedApplicationEntry(entryPath, configGid) {
   const stat = await fsp.lstat(entryPath);
   if (stat.isSymbolicLink()) {
     await fsp.lchown(entryPath, stat.uid, configGid);
@@ -1811,52 +1811,65 @@ async function shareProtectedApplicationEntry(entryPath, configGid) {
   if (stat.isDirectory()) {
     const entries = await fsp.readdir(entryPath);
     for (const entry of entries) {
-      await shareProtectedApplicationEntry(path.join(entryPath, entry), configGid);
+      await shareRootManagedApplicationEntry(path.join(entryPath, entry), configGid);
     }
     await fsp.chown(entryPath, stat.uid, configGid);
     await fsp.chmod(entryPath, 0o2770);
     return;
   }
   if (!stat.isFile()) {
-    throw new Error(
-      `protected Local application state contains an unsupported entry: ${entryPath}`,
-    );
+    throw new Error(`root-managed application state contains an unsupported entry: ${entryPath}`);
   }
   if (stat.nlink !== 1) {
-    throw new Error(`protected Local application state contains a hard-linked file: ${entryPath}`);
+    throw new Error(`root-managed application state contains a hard-linked file: ${entryPath}`);
   }
   await fsp.chown(entryPath, stat.uid, configGid);
   await fsp.chmod(entryPath, 0o660 | (stat.mode & 0o110));
 }
 
-async function reconcileProtectedApplicationState(context) {
-  if (!context.instanceId) {
-    return { changed: false };
+function rootManagedApplicationIdentity(context, unit) {
+  const protectedLocal = Boolean(context.instanceId);
+  const gatewayUnitPath = protectedLocal
+    ? context.paths.gatewayUnitPath
+    : "/etc/systemd/system/fased-gateway.service";
+  const gatewayUser = exactUnitValue(unit, "User");
+  const stateDir = protectedLocal
+    ? exactUnitValue(unit, "Environment=FASED_STATE_DIR")
+    : path.join(exactUnitValue(unit, "Environment=HOME"), ".fased");
+  const configGroup = protectedLocal ? `fscf-${context.instanceId}` : "fased-config";
+  const expectedGatewayUser = protectedLocal ? `fsgw-${context.instanceId}` : "fased-gateway";
+  const supplementaryGroups = exactUnitValue(unit, "SupplementaryGroups").split(/\s+/u);
+  if (
+    gatewayUser !== expectedGatewayUser ||
+    !supplementaryGroups.includes(configGroup) ||
+    !path.isAbsolute(stateDir) ||
+    path.basename(stateDir) !== ".fased" ||
+    (!protectedLocal && exactUnitValue(unit, "Environment=FASED_HOST_PROFILE") !== "hosting")
+  ) {
+    throw new Error("root-managed Gateway application-state identity is invalid");
   }
-  const gatewayUnit = await fileMetadata(context.paths.gatewayUnitPath);
+  return { configGroup, gatewayUnitPath, gatewayUser, protectedLocal, stateDir };
+}
+
+async function reconcileProtectedApplicationState(context) {
+  const protectedLocal = Boolean(context.instanceId);
+  const gatewayUnitPath = protectedLocal
+    ? context.paths.gatewayUnitPath
+    : "/etc/systemd/system/fased-gateway.service";
+  const gatewayUnit = await fileMetadata(gatewayUnitPath);
   if (
     !gatewayUnit.existed ||
     gatewayUnit.uid !== context.rootUid ||
     (gatewayUnit.mode & 0o022) !== 0
   ) {
-    throw new Error("protected Local Gateway unit is not root-controlled");
+    throw new Error("root-managed Gateway unit is not root-controlled");
   }
-  const unit = await fsp.readFile(context.paths.gatewayUnitPath, "utf8");
-  const gatewayUser = exactUnitValue(unit, "User");
-  const stateDir = exactUnitValue(unit, "Environment=FASED_STATE_DIR");
-  const configGroup = `fscf-${context.instanceId}`;
-  const supplementaryGroups = exactUnitValue(unit, "SupplementaryGroups").split(/\s+/u);
-  if (
-    gatewayUser !== `fsgw-${context.instanceId}` ||
-    !supplementaryGroups.includes(configGroup) ||
-    !path.isAbsolute(stateDir) ||
-    path.basename(stateDir) !== ".fased"
-  ) {
-    throw new Error("protected Local Gateway application-state identity is invalid");
-  }
+  const unit = await fsp.readFile(gatewayUnitPath, "utf8");
+  const identity = rootManagedApplicationIdentity(context, unit);
+  const { configGroup, gatewayUser, stateDir } = identity;
   const stateStat = await fsp.lstat(stateDir);
   if (!stateStat.isDirectory() || stateStat.isSymbolicLink() || stateStat.uid === context.rootUid) {
-    throw new Error("protected Local application state directory is invalid");
+    throw new Error("root-managed application state directory is invalid");
   }
   const operatorFields = await systemAccountRecord("passwd", String(stateStat.uid));
   const gatewayFields = await systemAccountRecord("passwd", gatewayUser);
@@ -1874,14 +1887,14 @@ async function reconcileProtectedApplicationState(context) {
     !members.has(operatorFields[0]) ||
     !members.has(gatewayFields[0])
   ) {
-    throw new Error("protected Local application-state group membership is invalid");
+    throw new Error("root-managed application-state group membership is invalid");
   }
   const entries = await fsp.readdir(stateDir);
   for (const entry of entries) {
-    if (PROTECTED_LOCAL_OPERATOR_ONLY_STATE.has(entry)) {
+    if (ROOT_MANAGED_OPERATOR_ONLY_STATE.has(entry)) {
       continue;
     }
-    await shareProtectedApplicationEntry(path.join(stateDir, entry), configGid);
+    await shareRootManagedApplicationEntry(path.join(stateDir, entry), configGid);
   }
   await fsp.chown(stateDir, stateStat.uid, configGid);
   await fsp.chmod(stateDir, 0o2770);
@@ -2853,6 +2866,7 @@ export const __testing = {
   prepareSignerRelease,
   protectedLocalControllerConfiguration,
   reconcileProtectedApplicationState,
+  rootManagedApplicationIdentity,
   readJournal,
   recoverInterruptedTransaction,
   releaseAttestationVerifyArgs,
