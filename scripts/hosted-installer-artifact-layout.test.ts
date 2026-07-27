@@ -127,6 +127,12 @@ describe("attested Hosting installer artifact layout", () => {
         "ProtectSystem=strict\n" +
         "ReadWritePaths=/opt/fased/host-controller /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-updater /etc/systemd/system ${target_home}/.fased",
     );
+    const sharedStateCreation =
+      'install -d -m 2770 -o "$target_user" -g "$config_group" "${target_home}/.fased"';
+    expect(installer).toContain(sharedStateCreation);
+    expect(installer.indexOf(sharedStateCreation)).toBeLessThan(
+      installer.indexOf("cat >/etc/systemd/system/fased-host-updater.service"),
+    );
     expect(installer).toContain("ReadWritePaths=/opt/fased/host-controller");
     expect(installer).toContain("RestartSec=1");
     expect(installer).toContain("/var/lib/fased-host-updater/controller-version.json");

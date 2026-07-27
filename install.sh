@@ -5430,6 +5430,7 @@ install_host_signer_and_updater_services() {
   local gateway_user="${FASED_GATEWAY_USER:-fased-gateway}"
   local signer_user="${FASED_SIGNER_USER:-fased-signer}"
   local gateway_group="${FASED_GATEWAY_GROUP:-fased-gateway}"
+  local config_group="${FASED_CONFIG_GROUP:-fased-config}"
   local operator_group="${FASED_OPERATOR_GROUP:-fased-operator}"
   local gateway_gid
   local operator_gid
@@ -5446,6 +5447,10 @@ install_host_signer_and_updater_services() {
   version="$(node -p "require(process.argv[1]).version" "$FASED_DIR/package.json" 2>/dev/null || true)"
   [[ -n "$target_home" && "$target_home" == /* && "$gateway_gid" =~ ^[0-9]+$ && "$operator_gid" =~ ^[0-9]+$ && "$gateway_uid" =~ ^[0-9]+$ && "$operator_uid" =~ ^[0-9]+$ && "$signer_uid" =~ ^[0-9]+$ && "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
     echo "Could not resolve hosted signer principals, socket group, or release version." >&2
+    exit 1
+  }
+  getent group "$config_group" >/dev/null 2>&1 || {
+    echo "Could not resolve hosted application state group: $config_group" >&2
     exit 1
   }
   if [[ -n "${FASED_HOST_SIGNER_BINARY:-}" ]]; then
@@ -5565,6 +5570,10 @@ install_host_signer_and_updater_services() {
   install -d -m 0755 -o root -g root /var/lib/fased-signer-update-gate
   install -d -m 0700 -o "$signer_user" -g "$signer_user" /var/lib/fased-signerd
   install -d -m 0755 -o root -g root /etc/fased
+  # systemd resolves ReadWritePaths before starting the service. Create the
+  # shared application-state root before installing/restarting the updater so
+  # a first Hosting install cannot fail with status 226/NAMESPACE.
+  install -d -m 2770 -o "$target_user" -g "$config_group" "${target_home}/.fased"
   if [[ ! -f /etc/fased/signerd-webauthn.env ]]; then
     install -m 0644 -o root -g root /dev/null /etc/fased/signerd-webauthn.env
   fi
