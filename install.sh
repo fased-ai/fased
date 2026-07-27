@@ -5426,6 +5426,7 @@ ensure_host_boundary_accounts() {
 
 install_host_signer_and_updater_services() {
   local target_user="${FASED_INSTALL_USER:-app}"
+  local target_home=""
   local gateway_user="${FASED_GATEWAY_USER:-fased-gateway}"
   local signer_user="${FASED_SIGNER_USER:-fased-signer}"
   local gateway_group="${FASED_GATEWAY_GROUP:-fased-gateway}"
@@ -5436,13 +5437,14 @@ install_host_signer_and_updater_services() {
   local operator_uid
   local signer_uid
   local version
+  target_home="$(getent passwd "$target_user" | cut -d: -f6)"
   gateway_gid="$(getent group "$gateway_group" | cut -d: -f3)"
   operator_gid="$(getent group "$operator_group" | cut -d: -f3)"
   gateway_uid="$(id -u "$gateway_user")"
   operator_uid="$(id -u "$target_user")"
   signer_uid="$(id -u "$signer_user")"
   version="$(node -p "require(process.argv[1]).version" "$FASED_DIR/package.json" 2>/dev/null || true)"
-  [[ "$gateway_gid" =~ ^[0-9]+$ && "$operator_gid" =~ ^[0-9]+$ && "$gateway_uid" =~ ^[0-9]+$ && "$operator_uid" =~ ^[0-9]+$ && "$signer_uid" =~ ^[0-9]+$ && "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+  [[ -n "$target_home" && "$target_home" == /* && "$gateway_gid" =~ ^[0-9]+$ && "$operator_gid" =~ ^[0-9]+$ && "$gateway_uid" =~ ^[0-9]+$ && "$operator_uid" =~ ^[0-9]+$ && "$signer_uid" =~ ^[0-9]+$ && "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
     echo "Could not resolve hosted signer principals, socket group, or release version." >&2
     exit 1
   }
