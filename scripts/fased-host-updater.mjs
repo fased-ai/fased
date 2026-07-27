@@ -65,13 +65,32 @@ const TRANSACTION_PHASES = new Set([
   "restored",
 ]);
 
-export const PRE_V2_HOSTING_MIGRATION_MESSAGE = [
-  "This hosted installation needs the one-time signer-v2 security migration before it can update.",
-  "From a VPS provider console or a root SSH session, follow the pre-execution verified tagged repair procedure at https://docs.fased.ai/install/vps.",
-  "After gh attestation verify succeeds, execute that verified install.sh asset with --repair-hosting --release vX.Y.Z.",
-  "Never run /home/app/fased/install.sh with sudo or as root.",
-  "The current Gateway, signer, wallets, and persistent state were left unchanged.",
-].join(" ");
+const PUBLIC_HOSTING_INSTALLER_URL =
+  "https://raw.githubusercontent.com/fased-ai/fased/main/install.sh";
+
+export function hostingBootstrapCommand(version) {
+  const normalized = String(version ?? "")
+    .trim()
+    .replace(/^v/, "");
+  const selector = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(normalized)
+    ? ` --release v${normalized} --update-channel ${normalized.includes("-") ? "beta" : "stable"}`
+    : "";
+  return `curl -fsSL ${PUBLIC_HOSTING_INSTALLER_URL} | bash -s -- --hosting${selector}`;
+}
+
+export function legacyHostingBootstrapMessage(version) {
+  return [
+    "This Hosting installation has a legacy root controller that cannot replace itself.",
+    "From the VPS provider root console, run this one verified Hosting bootstrap command:",
+    hostingBootstrapCommand(version),
+    "It detects the existing installation, preserves persistent state, performs the one-time controller and signer migration transactionally, and skips onboarding.",
+    "After it succeeds, return to the app account and use only fased update.",
+    "Never run /home/app/fased/install.sh with sudo or as root.",
+    "The current Gateway, signer, wallets, and persistent state were left unchanged.",
+  ].join(" ");
+}
+
+export const PRE_V2_HOSTING_MIGRATION_MESSAGE = legacyHostingBootstrapMessage();
 
 const DEFAULT_PATHS = Object.freeze({
   socketPath: SOCKET_PATH,
@@ -156,10 +175,14 @@ export function parseUpdateRequest(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("request must be an object");
   }
-  if (value.schemaVersion === 1) {
-    throw new Error(PRE_V2_HOSTING_MIGRATION_MESSAGE);
-  }
   const keys = Object.keys(value).toSorted();
+  if (value.schemaVersion === 1) {
+    if (keys.join(",") !== "op,schemaVersion,version" || value.op !== "prepareRelease") {
+      throw new Error("unsupported updater request");
+    }
+    const version = parseReleaseVersion(value.version);
+    throw new Error(legacyHostingBootstrapMessage(version));
+  }
   if (keys.join(",") !== "op,schemaVersion,transactionId,version") {
     throw new Error("request contains unsupported fields");
   }
@@ -1761,6 +1784,164 @@ async function stageOfficialCandidate(version, candidatePath, context) {
   }
 }
 
+const ROOT_MANAGED_OPERATOR_ONLY_STATE = new Set([
+  "backups",
+  "bin",
+  "extensions",
+  "install-cache",
+  "runtime",
+  "signer-update",
+  "source-paired-update",
+  "updater",
+]);
+
+async function systemAccountRecord(database, name) {
+  const getent = await fixedExecutable(["/usr/bin/getent", "/bin/getent"], "getent");
+  const { stdout } = await execFileAsync(getent, [database, name], {
+    env: { PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" },
+    timeout: 10_000,
+    maxBuffer: 64 * 1024,
+  });
+  const line = stdout.trim();
+  const fields = line.split(":");
+  const identityMatches =
+    fields[0] === name || (database === "passwd" && /^\d+$/u.test(name) && fields[2] === name);
+  if (
+    (database === "passwd" && fields.length < 7) ||
+    (database === "group" && fields.length < 4) ||
+    !identityMatches
+  ) {
+    throw new Error(`root-managed ${database} identity is malformed`);
+  }
+  return fields;
+}
+
+function exactUnitValue(content, key) {
+  const pattern = new RegExp(`^${key}=(.*)$`, "gmu");
+  const matches = [...content.matchAll(pattern)];
+  if (matches.length !== 1 || !matches[0][1]) {
+    throw new Error(`root-managed Gateway unit has an invalid ${key}`);
+  }
+  return matches[0][1];
+}
+
+async function shareRootManagedApplicationEntry(entryPath, configGid) {
+  const stat = await fsp.lstat(entryPath);
+  if (stat.isSymbolicLink()) {
+    await fsp.lchown(entryPath, stat.uid, configGid);
+    return;
+  }
+  if (stat.isDirectory()) {
+    const entries = await fsp.readdir(entryPath);
+    for (const entry of entries) {
+      await shareRootManagedApplicationEntry(path.join(entryPath, entry), configGid);
+    }
+    await fsp.chown(entryPath, stat.uid, configGid);
+    await fsp.chmod(entryPath, 0o2770);
+    return;
+  }
+  if (!stat.isFile()) {
+    throw new Error(`root-managed application state contains an unsupported entry: ${entryPath}`);
+  }
+  if (stat.nlink !== 1) {
+    throw new Error(`root-managed application state contains a hard-linked file: ${entryPath}`);
+  }
+  await fsp.chown(entryPath, stat.uid, configGid);
+  await fsp.chmod(entryPath, 0o660 | (stat.mode & 0o110));
+}
+
+function rootManagedApplicationIdentity(context, unit) {
+  const protectedLocal = Boolean(context.instanceId);
+  const gatewayUnitPath = protectedLocal
+    ? context.paths.gatewayUnitPath
+    : "/etc/systemd/system/fased-gateway.service";
+  const gatewayUser = exactUnitValue(unit, "User");
+  const stateDir = protectedLocal
+    ? exactUnitValue(unit, "Environment=FASED_STATE_DIR")
+    : path.join(exactUnitValue(unit, "Environment=HOME"), ".fased");
+  const configGroup = protectedLocal ? `fscf-${context.instanceId}` : "fased-config";
+  const expectedGatewayUser = protectedLocal ? `fsgw-${context.instanceId}` : "fased-gateway";
+  const supplementaryGroups = exactUnitValue(unit, "SupplementaryGroups").split(/\s+/u);
+  if (
+    gatewayUser !== expectedGatewayUser ||
+    !supplementaryGroups.includes(configGroup) ||
+    !path.isAbsolute(stateDir) ||
+    path.basename(stateDir) !== ".fased" ||
+    (!protectedLocal && exactUnitValue(unit, "Environment=FASED_HOST_PROFILE") !== "hosting")
+  ) {
+    throw new Error("root-managed Gateway application-state identity is invalid");
+  }
+  return { configGroup, gatewayUnitPath, gatewayUser, protectedLocal, stateDir };
+}
+
+async function reconcileProtectedApplicationState(context) {
+  const protectedLocal = Boolean(context.instanceId);
+  const gatewayUnitPath = protectedLocal
+    ? context.paths.gatewayUnitPath
+    : "/etc/systemd/system/fased-gateway.service";
+  const gatewayUnit = await fileMetadata(gatewayUnitPath);
+  if (!gatewayUnit.existed && !protectedLocal) {
+    // Fresh Hosting prepares the signer before the root Gateway unit exists.
+    // The installer reconciles the state immediately after it creates that unit.
+    return { changed: false, pendingGatewayUnit: true };
+  }
+  if (
+    !gatewayUnit.existed ||
+    gatewayUnit.uid !== context.rootUid ||
+    (gatewayUnit.mode & 0o022) !== 0
+  ) {
+    throw new Error("root-managed Gateway unit is not root-controlled");
+  }
+  const unit = await fsp.readFile(gatewayUnitPath, "utf8");
+  const identity = rootManagedApplicationIdentity(context, unit);
+  const { configGroup, gatewayUser, stateDir } = identity;
+  let stateStat;
+  try {
+    stateStat = await fsp.lstat(stateDir);
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+    // A fresh or interrupted Hosting bootstrap can leave the root-controlled
+    // Gateway unit in place before the app-owned state directory is recreated.
+    // The installer establishes and reconciles that directory before starting
+    // the Gateway, so signer preparation must remain non-mutating here.
+    return { changed: false, pendingStateDir: true, stateDir };
+  }
+  if (!stateStat.isDirectory() || stateStat.isSymbolicLink() || stateStat.uid === context.rootUid) {
+    throw new Error("root-managed application state directory is invalid");
+  }
+  const operatorFields = await systemAccountRecord("passwd", String(stateStat.uid));
+  const gatewayFields = await systemAccountRecord("passwd", gatewayUser);
+  const groupFields = await systemAccountRecord("group", configGroup);
+  const configGid = Number(groupFields[2]);
+  const members = new Set(
+    String(groupFields[3] || "")
+      .split(",")
+      .filter(Boolean),
+  );
+  if (
+    !Number.isSafeInteger(configGid) ||
+    configGid <= 0 ||
+    Number(operatorFields[2]) !== stateStat.uid ||
+    !members.has(operatorFields[0]) ||
+    !members.has(gatewayFields[0])
+  ) {
+    throw new Error("root-managed application-state group membership is invalid");
+  }
+  const entries = await fsp.readdir(stateDir);
+  for (const entry of entries) {
+    if (ROOT_MANAGED_OPERATOR_ONLY_STATE.has(entry)) {
+      continue;
+    }
+    await shareRootManagedApplicationEntry(path.join(stateDir, entry), configGid);
+  }
+  await fsp.chown(stateDir, stateStat.uid, configGid);
+  await fsp.chmod(stateDir, 0o2770);
+  await fsyncDirectory(stateDir);
+  return { changed: true, stateDir, configGid };
+}
+
 function createTransactionContext(overrides = {}) {
   const paths = { ...DEFAULT_PATHS, ...overrides.paths };
   const signerServiceName = overrides.signerServiceName ?? "fased-signerd.service";
@@ -1788,6 +1969,9 @@ function createTransactionContext(overrides = {}) {
       overrides.stageCandidate ??
       (async (version, candidatePath, context) =>
         await stageOfficialCandidate(version, candidatePath, context)),
+    reconcileApplicationState:
+      overrides.reconcileApplicationState ??
+      (async () => await reconcileProtectedApplicationState(context)),
     stopSigner: overrides.stopSigner ?? (async () => await stopSignerService(signerServiceName)),
     startSignerV2:
       overrides.startSignerV2 ??
@@ -1962,6 +2146,12 @@ async function writeInitialRollbackFloor(context, version) {
 async function prepareSignerRelease(request, context) {
   await context.assertReleaseAllowed(request.version);
   await assertRollbackFloor(context, request.version);
+  const applicationState = (await context.reconcileApplicationState()) ?? {};
+  const applicationStateResult = {
+    applicationStateReconciled: applicationState.changed === true,
+    applicationStatePending:
+      applicationState.pendingGatewayUnit === true || applicationState.pendingStateDir === true,
+  };
   const active = await readJournal(context);
   if (active) {
     assertMatchingTransaction(active, request);
@@ -1976,6 +2166,7 @@ async function prepareSignerRelease(request, context) {
       phase: active.phase,
       changed: active.changed,
       release: active.release,
+      ...applicationStateResult,
     };
   }
 
@@ -2073,6 +2264,7 @@ async function prepareSignerRelease(request, context) {
     changed: journal.changed,
     controllerChanged: journal.controllerChanged === true,
     release: journal.release,
+    ...applicationStateResult,
   };
 }
 
@@ -2720,6 +2912,8 @@ export const __testing = {
   parseServerConfiguration,
   prepareSignerRelease,
   protectedLocalControllerConfiguration,
+  reconcileProtectedApplicationState,
+  rootManagedApplicationIdentity,
   readJournal,
   recoverInterruptedTransaction,
   releaseAttestationVerifyArgs,

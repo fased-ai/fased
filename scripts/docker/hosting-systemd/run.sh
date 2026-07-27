@@ -5,6 +5,7 @@ phase="${1:-install}"
 version="${FASED_FIXTURE_VERSION:?missing fixture version}"
 commit="${FASED_FIXTURE_COMMIT:?missing fixture commit}"
 gateway_port=18789
+gateway_token=fased-hosting-fixture-token
 rpc_port=19557
 app_home=/home/app
 state="$app_home/.fased"
@@ -14,6 +15,10 @@ asset="/artifacts/fased-hosted-app-v2-linux-x64-v${version}.tar.gz"
 asset_digest="$(sha256sum "$asset" | awk '{print $1}')"
 verified_root="/var/lib/fased-installer/releases/v${version}/${asset_digest}/extract/package"
 root_store="$(dirname "$(dirname "$verified_root")")"
+
+mark_stage() {
+  printf 'Hosting fixture stage: %s\n' "$1" | tee /tmp/fased-fixture-stage.out
+}
 
 wait_for_service() {
   local unit="$1"
@@ -83,6 +88,22 @@ verify_shared_device_auth() {
       });
     '
   test "$(stat -c '%U:%G:%a' "$auth_file")" = "app:fased-config:660"
+}
+
+verify_mining_history() {
+  runuser -u app -- env \
+    HOME="$app_home" \
+    USER=app \
+    LOGNAME=app \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    FASED_NODE=/usr/local/bin/node \
+    "$cli" mining history \
+    --url "ws://127.0.0.1:$gateway_port" \
+    --token "$gateway_token" \
+    --timeout 5000 \
+    --json \
+    >/tmp/mining-history.json
+  jq -e 'type == "object"' /tmp/mining-history.json >/dev/null
 }
 
 verify_shared_federation_state() {
@@ -417,7 +438,7 @@ run_hosting_installer() {
       --non-interactive \
       --accept-risk \
       --auth-choice skip \
-      --gateway-token fased-hosting-fixture-token \
+      --gateway-token "$gateway_token" \
       --wallet-enabled \
       --wallet-providers local-socket-signer \
       --wallet-default-provider local-socket-signer \
@@ -474,9 +495,12 @@ install_fixture_system_services
 install_fixture_rpc
 prepare_verified_bundle
 
+mark_stage fresh-install
 run_hosting_installer --hosting
+mark_stage fresh-runtime-verification
 verify_runtime >/tmp/fresh-health.json
 verify_shared_device_auth
+verify_mining_history
 verify_shared_federation_state
 
 run_app_cli wallet setup \
@@ -509,6 +533,7 @@ runuser -u app -- /opt/fased/signer/fased-signerd \
   >/tmp/agent-balance.json
 jq -e '.balance == "3000000000" and .unit == "lamports"' /tmp/agent-balance.json >/dev/null
 
+mark_stage repair
 chmod 0600 "$state/identity/device-auth.json"
 run_hosting_installer --repair-hosting
 verify_runtime >/tmp/repair-health.json
@@ -520,10 +545,22 @@ verify_wallet vault >/tmp/repair-vault.json
 jq -e '.ready == true and .role == "agent"' /tmp/repair-agent.json >/dev/null
 jq -e '.ready == true and .role == "vault"' /tmp/repair-vault.json >/dev/null
 
+mark_stage injected-activation-failure
+chmod 0600 "$state/identity/device-auth.json"
 chmod 0644 /opt/fased/signer/fased-signerd
 /usr/local/bin/node /usr/local/libexec/fased-host-updaterctl.mjs "$version" --prepare-only \
   >/tmp/failure-prepare.json
 jq -e '.changed == true and .phase == "prepared"' /tmp/failure-prepare.json >/dev/null
+printf 'Prepare reconciliation result: '
+cat /tmp/failure-prepare.json
+mark_stage injected-activation-permission-check
+device_auth_metadata="$(stat -c '%U:%G:%a' "$state/identity/device-auth.json" 2>&1 || true)"
+printf 'Device auth metadata after prepare: %s\n' "$device_auth_metadata" |
+  tee /tmp/device-auth-metadata.out
+test "${device_auth_metadata#*:}" = "fased-config:660"
+mark_stage injected-activation-mining-check
+verify_mining_history
+mark_stage injected-activation-execution
 chmod 0755 /opt/fased/signer/fased-signerd
 transaction_id="$(jq -er .transactionId /var/lib/fased-host-updater/ctl-transaction.json)"
 printf '#!/usr/bin/env bash\nexit 91\n' \
@@ -542,6 +579,7 @@ verify_wallet vault >/tmp/rollback-vault.json
 jq -e '.ready == true and .role == "agent"' /tmp/rollback-agent.json >/dev/null
 jq -e '.ready == true and .role == "vault"' /tmp/rollback-vault.json >/dev/null
 
+mark_stage retry
 chmod 0644 /opt/fased/signer/fased-signerd
 /usr/local/bin/node /usr/local/libexec/fased-host-updaterctl.mjs "$version" --prepare-only \
   >/tmp/retry-prepare.json
@@ -559,6 +597,7 @@ verify_runtime >/tmp/retry-health.json
   >/tmp/retry-commit.json
 jq -e '.phase == "committed"' /tmp/retry-commit.json >/dev/null
 
+mark_stage service-restart
 systemctl restart fased-host-updater.service
 wait_for_service fased-host-updater.service
 systemctl restart fased-signerd.service
@@ -568,6 +607,7 @@ verify_runtime >/tmp/restart-health.json
 
 verify_wallet agent >/tmp/pre-reboot-agent.json
 verify_wallet vault >/tmp/pre-reboot-vault.json
+mark_stage reboot-snapshot
 agent_readiness_sha="$(jq -S -c . /tmp/pre-reboot-agent.json | sha256sum | awk '{print $1}')"
 vault_readiness_sha="$(jq -S -c . /tmp/pre-reboot-vault.json | sha256sum | awk '{print $1}')"
 master_key_sha="$(sha256sum /var/lib/fased-signerd/master.key | awk '{print $1}')"

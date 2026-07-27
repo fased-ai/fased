@@ -243,28 +243,34 @@ describe("security fix", () => {
     expectPerms((await fs.stat(includePath)).mode & 0o777, 0o600);
   });
 
-  it("preserves the trusted Hosting application group on shared runtime state", async () => {
-    if (isWindows) {
-      return;
-    }
+  it.each([
+    ["Hosting", { FASED_HOST_PROFILE: "hosting" }],
+    ["Protected Local", { FASED_HOST_PROFILE: "local", FASED_PROTECTED_LOCAL: "1" }],
+  ])(
+    "preserves the trusted %s application group on shared runtime state",
+    async (_label, profileEnv) => {
+      if (isWindows) {
+        return;
+      }
 
-    const stateDir = await createStateDir("hosting-shared-state");
-    const configPath = path.join(stateDir, "fased.json");
-    await writeJsonConfig(configPath, {});
-    const credentialsDir = path.join(stateDir, "credentials");
-    await fs.mkdir(credentialsDir, { recursive: true });
-    const credentialPath = path.join(credentialsDir, "provider.json");
-    await writeJsonConfig(credentialPath, {});
+      const stateDir = await createStateDir("hosting-shared-state");
+      const configPath = path.join(stateDir, "fased.json");
+      await writeJsonConfig(configPath, {});
+      const credentialsDir = path.join(stateDir, "credentials");
+      await fs.mkdir(credentialsDir, { recursive: true });
+      const credentialPath = path.join(credentialsDir, "provider.json");
+      await writeJsonConfig(credentialPath, {});
 
-    const env = {
-      ...createFixEnv(stateDir, configPath),
-      FASED_HOST_PROFILE: "hosting",
-    };
-    const result = await fixSecurityFootguns({ env, stateDir, configPath });
-    expect(result.ok).toBe(true);
-    expect((await fs.stat(stateDir)).mode & 0o7777).toBe(0o2770);
-    expect((await fs.stat(configPath)).mode & 0o777).toBe(0o660);
-    expect((await fs.stat(credentialsDir)).mode & 0o7777).toBe(0o2770);
-    expect((await fs.stat(credentialPath)).mode & 0o777).toBe(0o660);
-  });
+      const env = {
+        ...createFixEnv(stateDir, configPath),
+        ...profileEnv,
+      };
+      const result = await fixSecurityFootguns({ env, stateDir, configPath });
+      expect(result.ok).toBe(true);
+      expect((await fs.stat(stateDir)).mode & 0o7777).toBe(0o2770);
+      expect((await fs.stat(configPath)).mode & 0o777).toBe(0o660);
+      expect((await fs.stat(credentialsDir)).mode & 0o7777).toBe(0o2770);
+      expect((await fs.stat(credentialPath)).mode & 0o777).toBe(0o660);
+    },
+  );
 });

@@ -1145,12 +1145,17 @@ async function probeGatewayHealth(
             resolve({
               ok: matches,
               conflict: !matches,
+              version: typeof payload?.version === "string" ? payload.version : "",
+              runtimeSource:
+                typeof payload?.runtimeSource === "string" ? payload.runtimeSource : "",
               detail: `status=${response.statusCode ?? "unknown"} version=${payload?.version ?? "unknown"} runtimeSource=${payload?.runtimeSource ?? "unknown"} pid=${payload?.pid ?? "unknown"}`,
             });
           } catch (error) {
             resolve({
               ok: false,
               conflict: true,
+              version: "",
+              runtimeSource: "",
               detail: `invalid health payload: ${error.message}`,
             });
           }
@@ -1162,6 +1167,8 @@ async function probeGatewayHealth(
       resolve({
         ok: false,
         conflict: !new Set(["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT"]).has(error?.code),
+        version: "",
+        runtimeSource: "",
         detail: error.message,
       }),
     );
@@ -1799,6 +1806,10 @@ function readBootstrapTransaction(layout, spec, registryPath) {
               typeof value.legacyGatewayState.unitFileState === "string"
                 ? value.legacyGatewayState.unitFileState
                 : "disabled",
+            releaseVersion:
+              typeof value.legacyGatewayState.releaseVersion === "string"
+                ? value.legacyGatewayState.releaseVersion
+                : "",
             dropInSnapshot: deserializeCapture(value.legacyGatewayState.dropInSnapshot),
           }
         : null,
@@ -1923,11 +1934,20 @@ async function captureLegacyGatewayState(spec, layout) {
       dropInSnapshot,
     };
   }
+  const health = properties.ActiveState === "active" ? await probeGatewayHealth(spec) : null;
+  if (
+    health &&
+    (!RELEASE_PATTERN.test(health.version) ||
+      !new Set(["managed-package", "packaged-runtime"]).has(health.runtimeSource))
+  ) {
+    fail(`legacy Local Gateway has no exact healthy release identity (${health.detail})`);
+  }
   const state = {
     busAvailable: true,
     exists: properties.LoadState !== "not-found",
     active: properties.ActiveState === "active",
     unitFileState: properties.UnitFileState || "disabled",
+    releaseVersion: health?.version || "",
     dropInSnapshot,
   };
   if (state.exists && !isRestorableLegacyGatewayUnitFileState(state.unitFileState)) {
@@ -1992,7 +2012,11 @@ async function waitForLegacyGatewayInactive(spec, timeoutMs = 10_000) {
 async function fenceLegacyGateway(spec, layout, state) {
   if (state.busAvailable && state.exists) {
     await installLegacyGatewaySuppression(spec, layout);
-    userSystemctl(spec, ["mask", "--runtime", "--now", "--force", "fased-gateway.service"]);
+    // Install the mask before stopping. Combining mask and stop in one
+    // systemctl transaction can return "job canceled" when an existing
+    // reverse dependency races the stop, even though the mask was installed.
+    // The bounded drain below owns the stop and proves the unit stays inactive.
+    userSystemctl(spec, ["mask", "--runtime", "--force", "fased-gateway.service"]);
     await waitForLegacyGatewayInactive(spec);
   }
   await waitForGatewayPortFree(spec);
@@ -2043,6 +2067,10 @@ async function retireLegacyGateway(transaction) {
 }
 
 function previousLegacyGatewayVersion(transaction) {
+  const capturedVersion = String(transaction.legacyGatewayState?.releaseVersion ?? "").trim();
+  if (RELEASE_PATTERN.test(capturedVersion)) {
+    return capturedVersion;
+  }
   if (!transaction.manifestSnapshot?.existed) {
     fail("legacy Local Gateway restore has no previous managed manifest");
   }

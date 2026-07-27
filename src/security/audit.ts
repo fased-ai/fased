@@ -131,7 +131,9 @@ async function collectFilesystemFindings(params: {
   execIcacls?: ExecFn;
 }): Promise<SecurityAuditFinding[]> {
   const findings: SecurityAuditFinding[] = [];
-  const sharedHostingState = params.env?.FASED_HOST_PROFILE?.trim() === "hosting";
+  const sharedServiceState =
+    params.env?.FASED_HOST_PROFILE?.trim() === "hosting" ||
+    params.env?.FASED_PROTECTED_LOCAL?.trim() === "1";
 
   const stateDirPerms = await inspectPathPermissions(params.stateDir, {
     env: params.env,
@@ -161,7 +163,7 @@ async function collectFilesystemFindings(params: {
           env: params.env,
         }),
       });
-    } else if (stateDirPerms.groupWritable && !sharedHostingState) {
+    } else if (stateDirPerms.groupWritable && !sharedServiceState) {
       findings.push({
         checkId: "fs.state_dir.perms_group_writable",
         severity: "warn",
@@ -177,7 +179,7 @@ async function collectFilesystemFindings(params: {
       });
     } else if (
       stateDirPerms.worldReadable ||
-      (stateDirPerms.groupReadable && !sharedHostingState)
+      (stateDirPerms.groupReadable && !sharedServiceState)
     ) {
       findings.push({
         checkId: "fs.state_dir.perms_readable",
@@ -210,7 +212,7 @@ async function collectFilesystemFindings(params: {
         detail: `${params.configPath} is a symlink; make sure you trust its target.`,
       });
     }
-    if (configPerms.worldWritable || (configPerms.groupWritable && !sharedHostingState)) {
+    if (configPerms.worldWritable || (configPerms.groupWritable && !sharedServiceState)) {
       findings.push({
         checkId: "fs.config.perms_writable",
         severity: "critical",
@@ -238,7 +240,7 @@ async function collectFilesystemFindings(params: {
           env: params.env,
         }),
       });
-    } else if (!skipReadablePermWarnings && configPerms.groupReadable && !sharedHostingState) {
+    } else if (!skipReadablePermWarnings && configPerms.groupReadable && !sharedServiceState) {
       findings.push({
         checkId: "fs.config.perms_group_readable",
         severity: "warn",

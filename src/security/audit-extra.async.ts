@@ -726,7 +726,9 @@ export async function collectIncludeFilePermFindings(params: {
   execIcacls?: ExecFn;
 }): Promise<SecurityAuditFinding[]> {
   const findings: SecurityAuditFinding[] = [];
-  const sharedHostingState = params.env?.FASED_HOST_PROFILE?.trim() === "hosting";
+  const sharedServiceState =
+    params.env?.FASED_HOST_PROFILE?.trim() === "hosting" ||
+    params.env?.FASED_PROTECTED_LOCAL?.trim() === "1";
   if (!params.configSnapshot.exists) {
     return findings;
   }
@@ -750,7 +752,7 @@ export async function collectIncludeFilePermFindings(params: {
     if (!perms.ok) {
       continue;
     }
-    if (perms.worldWritable || (perms.groupWritable && !sharedHostingState)) {
+    if (perms.worldWritable || (perms.groupWritable && !sharedServiceState)) {
       findings.push({
         checkId: "fs.config_include.perms_writable",
         severity: "critical",
@@ -778,7 +780,7 @@ export async function collectIncludeFilePermFindings(params: {
           env: params.env,
         }),
       });
-    } else if (perms.groupReadable && !sharedHostingState) {
+    } else if (perms.groupReadable && !sharedServiceState) {
       findings.push({
         checkId: "fs.config_include.perms_group_readable",
         severity: "warn",
@@ -806,7 +808,9 @@ export async function collectStateDeepFilesystemFindings(params: {
   execIcacls?: ExecFn;
 }): Promise<SecurityAuditFinding[]> {
   const findings: SecurityAuditFinding[] = [];
-  const sharedHostingState = params.env.FASED_HOST_PROFILE?.trim() === "hosting";
+  const sharedServiceState =
+    params.env.FASED_HOST_PROFILE?.trim() === "hosting" ||
+    params.env.FASED_PROTECTED_LOCAL?.trim() === "1";
   const oauthDir = resolveOAuthDir(params.env, params.stateDir);
 
   const oauthPerms = await inspectPathPermissions(oauthDir, {
@@ -815,7 +819,7 @@ export async function collectStateDeepFilesystemFindings(params: {
     exec: params.execIcacls,
   });
   if (oauthPerms.ok && oauthPerms.isDir) {
-    if (oauthPerms.worldWritable || (oauthPerms.groupWritable && !sharedHostingState)) {
+    if (oauthPerms.worldWritable || (oauthPerms.groupWritable && !sharedServiceState)) {
       findings.push({
         checkId: "fs.credentials_dir.perms_writable",
         severity: "critical",
@@ -829,7 +833,7 @@ export async function collectStateDeepFilesystemFindings(params: {
           env: params.env,
         }),
       });
-    } else if (oauthPerms.worldReadable || (oauthPerms.groupReadable && !sharedHostingState)) {
+    } else if (oauthPerms.worldReadable || (oauthPerms.groupReadable && !sharedServiceState)) {
       findings.push({
         checkId: "fs.credentials_dir.perms_readable",
         severity: "warn",
@@ -864,7 +868,7 @@ export async function collectStateDeepFilesystemFindings(params: {
       exec: params.execIcacls,
     });
     if (authPerms.ok) {
-      if (authPerms.worldWritable || (authPerms.groupWritable && !sharedHostingState)) {
+      if (authPerms.worldWritable || (authPerms.groupWritable && !sharedServiceState)) {
         findings.push({
           checkId: "fs.auth_profiles.perms_writable",
           severity: "critical",
@@ -878,7 +882,7 @@ export async function collectStateDeepFilesystemFindings(params: {
             env: params.env,
           }),
         });
-      } else if (authPerms.worldReadable || (authPerms.groupReadable && !sharedHostingState)) {
+      } else if (authPerms.worldReadable || (authPerms.groupReadable && !sharedServiceState)) {
         findings.push({
           checkId: "fs.auth_profiles.perms_readable",
           severity: "warn",
@@ -903,7 +907,7 @@ export async function collectStateDeepFilesystemFindings(params: {
       exec: params.execIcacls,
     });
     if (storePerms.ok) {
-      if (storePerms.worldReadable || (storePerms.groupReadable && !sharedHostingState)) {
+      if (storePerms.worldReadable || (storePerms.groupReadable && !sharedServiceState)) {
         findings.push({
           checkId: "fs.sessions_store.perms_readable",
           severity: "warn",
@@ -933,7 +937,7 @@ export async function collectStateDeepFilesystemFindings(params: {
         exec: params.execIcacls,
       });
       if (logPerms.ok) {
-        if (logPerms.worldReadable || (logPerms.groupReadable && !sharedHostingState)) {
+        if (logPerms.worldReadable || (logPerms.groupReadable && !sharedServiceState)) {
           findings.push({
             checkId: "fs.log_file.perms_readable",
             severity: "warn",

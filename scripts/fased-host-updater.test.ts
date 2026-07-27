@@ -7,8 +7,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   PRE_V2_HOSTING_MIGRATION_MESSAGE,
   __testing,
+  hostingBootstrapCommand,
   installProtectedLocalApplicationRuntime,
   isMainModule,
+  legacyHostingBootstrapMessage,
   parseReleaseVersion,
   parseUpdateRequest,
 } from "./fased-host-updater.mjs";
@@ -170,6 +172,7 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
           : {}),
       };
     },
+    reconcileApplicationState: async () => ({ changed: false }),
     stopSigner: async () => {
       events.push("stop");
     },
@@ -222,6 +225,94 @@ function managedTransaction(phase = "signer-preactivated") {
 }
 
 describe("root-owned hosted updater protocol", () => {
+  it("derives exact shared-state identities for Protected Local and Hosting", () => {
+    const protectedLocalInstanceId = "0123456789abcdef";
+    expect(
+      __testing.rootManagedApplicationIdentity(
+        {
+          instanceId: protectedLocalInstanceId,
+          paths: {
+            gatewayUnitPath: `/etc/systemd/system/fased-gateway-${protectedLocalInstanceId}.service`,
+          },
+        },
+        [
+          `[Service]`,
+          `User=fsgw-${protectedLocalInstanceId}`,
+          `SupplementaryGroups=fscf-${protectedLocalInstanceId}`,
+          `Environment=FASED_STATE_DIR=/home/operator/.fased`,
+          "",
+        ].join("\n"),
+      ),
+    ).toEqual({
+      configGroup: `fscf-${protectedLocalInstanceId}`,
+      gatewayUnitPath: `/etc/systemd/system/fased-gateway-${protectedLocalInstanceId}.service`,
+      gatewayUser: `fsgw-${protectedLocalInstanceId}`,
+      protectedLocal: true,
+      stateDir: "/home/operator/.fased",
+    });
+
+    expect(
+      __testing.rootManagedApplicationIdentity(
+        { instanceId: null, paths: {} },
+        [
+          `[Service]`,
+          `User=fased-gateway`,
+          `SupplementaryGroups=fased-config`,
+          `Environment=HOME=/home/app`,
+          `Environment=FASED_HOST_PROFILE=hosting`,
+          "",
+        ].join("\n"),
+      ),
+    ).toEqual({
+      configGroup: "fased-config",
+      gatewayUnitPath: "/etc/systemd/system/fased-gateway.service",
+      gatewayUser: "fased-gateway",
+      protectedLocal: false,
+      stateDir: "/home/app/.fased",
+    });
+  });
+
+  it("reconciles shared application state before preparing a protected signer release", async () => {
+    const { context, events } = await createFixture();
+    context.reconcileApplicationState = async () => {
+      events.push("reconcile-application-state");
+      return { changed: true };
+    };
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      context,
+    );
+    expect(events).toEqual(["reconcile-application-state", "stage:1.2.3"]);
+  });
+
+  it("defers shared-state reconciliation while an interrupted bootstrap recreates state", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-state-retry-"));
+    cleanupRoots.push(root);
+    const instanceId = "0123456789abcdef";
+    const stateDir = path.join(root, "operator", ".fased");
+    const gatewayUnitPath = path.join(root, "systemd", "fased-gateway.service");
+    await fsp.mkdir(path.dirname(gatewayUnitPath), { recursive: true });
+    await fsp.writeFile(
+      gatewayUnitPath,
+      [
+        "[Service]",
+        `User=fsgw-${instanceId}`,
+        `SupplementaryGroups=fscf-${instanceId}`,
+        `Environment=FASED_STATE_DIR=${stateDir}`,
+        "",
+      ].join("\n"),
+      { mode: 0o644 },
+    );
+
+    const result = await __testing.reconcileProtectedApplicationState({
+      instanceId,
+      rootUid: process.geteuid(),
+      paths: { gatewayUnitPath },
+    });
+
+    expect(result).toEqual({ changed: false, pendingStateDir: true, stateDir });
+  });
+
   it("installs a protected application outside the operator home and selects it atomically", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-protected-app-"));
     cleanupRoots.push(root);
@@ -731,12 +822,31 @@ describe("root-owned hosted updater protocol", () => {
   it("rejects pre-v2 clients before any release action with the one-time migration command", () => {
     expect(() =>
       parseUpdateRequest({ schemaVersion: 1, op: "prepareRelease", version: "1.2.3" }),
-    ).toThrow(PRE_V2_HOSTING_MIGRATION_MESSAGE);
-    expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).toContain("gh attestation verify");
-    expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).toContain("--repair-hosting --release vX.Y.Z");
-    expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).not.toContain("curl -fsSL");
+    ).toThrow(legacyHostingBootstrapMessage("1.2.3"));
+    expect(() =>
+      parseUpdateRequest({ schemaVersion: 1, op: "prepareRelease", version: "1.2.3-rc.4" }),
+    ).toThrow(legacyHostingBootstrapMessage("1.2.3-rc.4"));
+    expect(hostingBootstrapCommand("1.2.3")).toContain(
+      "--hosting --release v1.2.3 --update-channel stable",
+    );
+    expect(hostingBootstrapCommand("v1.2.3-rc.4")).toContain(
+      "--hosting --release v1.2.3-rc.4 --update-channel beta",
+    );
+    expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).toContain("curl -fsSL");
+    expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).not.toContain("--repair-hosting");
     expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).toContain("Never run /home/app/fased/install.sh");
     expect(PRE_V2_HOSTING_MIGRATION_MESSAGE).toContain("left unchanged");
+    expect(() =>
+      parseUpdateRequest({
+        schemaVersion: 1,
+        op: "prepareRelease",
+        version: "1.2.3",
+        url: "https://evil.invalid",
+      }),
+    ).toThrow("unsupported updater request");
+    expect(() =>
+      parseUpdateRequest({ schemaVersion: 1, op: "rollbackRelease", version: "1.2.3" }),
+    ).toThrow("unsupported updater request");
   });
 
   it("accepts only exact protocol-v2 transaction requests", () => {

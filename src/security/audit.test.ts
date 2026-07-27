@@ -615,7 +615,10 @@ describe("security audit", () => {
     ).toBe(true);
   });
 
-  it("accepts trusted group-shared filesystem state only for Hosting", async () => {
+  it.each([
+    ["Hosting", { FASED_HOST_PROFILE: "hosting" }],
+    ["Protected Local", { FASED_HOST_PROFILE: "local", FASED_PROTECTED_LOCAL: "1" }],
+  ])("accepts trusted group-shared filesystem state for %s", async (_label, profileEnv) => {
     if (isWindows) {
       return;
     }
@@ -633,7 +636,7 @@ describe("security audit", () => {
       includeChannelSecurity: false,
       stateDir,
       configPath,
-      env: { FASED_HOST_PROFILE: "hosting" },
+      env: profileEnv,
     });
     const forbidden = new Set([
       "fs.state_dir.perms_group_writable",

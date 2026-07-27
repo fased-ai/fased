@@ -114,6 +114,22 @@ verify_shared_device_auth() {
   test "$(stat -c '%U:%G:%a' "$auth_file")" = "testop:fscf-$instance:660"
 }
 
+verify_mining_history() {
+  runuser -u testop -- env \
+    HOME=/home/testop \
+    USER=testop \
+    LOGNAME=testop \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    FASED_NODE=/usr/local/bin/node \
+    "$state/bin/fased" mining history \
+    --url "ws://127.0.0.1:$gateway_port" \
+    --token "$gateway_token" \
+    --timeout 5000 \
+    --json \
+    >/tmp/mining-history.json
+  jq -e 'type == "object"' /tmp/mining-history.json >/dev/null
+}
+
 verify_shared_federation_state() {
   local instance="$1"
   local runtime_root="$2"
@@ -292,6 +308,7 @@ if [[ "$phase" == "verify-reboot" ]]; then
   verify_protected_home_acl "$instance"
   mapfile -t env_args < <(operator_env "$instance")
   verify_shared_device_auth "$instance" "$runtime"
+  verify_mining_history
   verify_shared_federation_state "$instance" "$runtime"
   runuser -u testop -- env "${env_args[@]}" \
     /usr/local/bin/node "$runtime/fased.mjs" health --json --timeout 5000 \
@@ -1202,6 +1219,7 @@ wait_for_service "fased-gateway-$instance.service"
 test "$(stat -c '%U:%G:%a' "$state/identity/device-auth.json")" = \
   "testop:fscf-$instance:660"
 verify_shared_device_auth "$instance" "$runtime"
+verify_mining_history
 verify_shared_federation_state "$instance" "$runtime"
 signer_pid_before="$(systemctl show -p MainPID --value "fased-signerd-$instance.service")"
 gateway_pid_before="$(systemctl show -p MainPID --value "fased-gateway-$instance.service")"
@@ -1251,6 +1269,7 @@ test "$(sha256sum "$wallet_dir/provider-registry.v1.json" | awk '{print $1}')" =
 
 mapfile -t env_args < <(operator_env "$instance")
 verify_shared_device_auth "$instance" "$runtime"
+verify_mining_history
 verify_shared_federation_state "$instance" "$runtime"
 runuser -u testop -- env "${env_args[@]}" \
   /usr/local/bin/node "$runtime/fased.mjs" wallet setup \

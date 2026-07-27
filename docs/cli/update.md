@@ -70,8 +70,10 @@ For normal VPS hosting, install with the hosted installer, not a direct global
 npm install:
 
 Use the [one-command Hosting installer](/install/vps) from the provider root
-console. For an existing broken installation, use the exact-tag manual
-attestation procedure and run the verified local asset with `--repair-hosting`.
+console. For an existing broken installation or legacy root controller, rerun
+that same public `--hosting` command from the provider root console. It detects
+the existing state, verifies immutable release assets, selects the internal
+repair path, preserves persistent state, and skips onboarding.
 
 Manual `npm install -g @fased/fased` is an advanced local/dev or self-managed
 host path for users who already know how to secure the service user, firewall,

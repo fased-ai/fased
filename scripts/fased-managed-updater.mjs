@@ -55,6 +55,45 @@ const HOSTED_TRANSACTION_PHASES = new Set([
   "rolling-back",
   "rollback-ready",
 ]);
+
+function resolveRootManagedControllerSocket(paths, manifest = null) {
+  const selectedManifest = manifest ?? readManagedInstallManifest(paths.manifestPath);
+  if (selectedManifest?.profile === "hosting") {
+    return HOST_UPDATER_SOCKET;
+  }
+  if (selectedManifest?.profile !== "protected-local") {
+    return process.env.FASED_HOST_UPDATER_SOCKET || HOST_UPDATER_SOCKET;
+  }
+  const configPath = selectedManifest.configPath;
+  if (!configPath || !path.isAbsolute(configPath)) {
+    throw new Error("Protected Local controller configuration path is invalid.");
+  }
+  let config;
+  try {
+    const configStat = fs.lstatSync(configPath);
+    if (!configStat.isFile() || configStat.isSymbolicLink()) {
+      throw new Error("configuration is not a regular file");
+    }
+    config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  } catch (error) {
+    throw new Error(`Protected Local controller configuration is unavailable: ${error.message}`, {
+      cause: error,
+    });
+  }
+  const variables = config?.env?.vars;
+  const instanceId = String(variables?.FASED_PROTECTED_LOCAL_INSTANCE ?? "").trim();
+  const socketPath = String(variables?.FASED_HOST_UPDATER_SOCKET ?? "").trim();
+  const expectedSocket = `/run/fased-local-controller/${instanceId}/request.sock`;
+  if (
+    variables?.FASED_HOST_PROFILE !== "local" ||
+    variables?.FASED_PROTECTED_LOCAL !== "1" ||
+    !/^[a-f0-9]{16}$/u.test(instanceId) ||
+    socketPath !== expectedSocket
+  ) {
+    throw new Error("Protected Local controller identity or socket is invalid.");
+  }
+  return socketPath;
+}
 const TRANSACTION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const LOCAL_SIGNER_TRANSACTION_SCHEMA_VERSION = 1;
@@ -85,13 +124,33 @@ const LOCAL_SOURCE_CONTROLLER_FILES = [
   "fased-managed-updater.mjs",
 ];
 
-export const PRE_V2_HOSTING_MIGRATION_MESSAGE = [
-  "This hosted installation needs the one-time signer-v2 security migration before it can update.",
-  "From a VPS provider console or a root SSH session, run:",
-  "Follow the manual release-asset and GitHub attestation procedure at https://docs.fased.ai/install/vps#advanced-verify-the-bootstrap-first, then run the verified tagged install.sh with --repair-hosting --release vX.Y.Z.",
-  "Never run /home/app/fased/install.sh with sudo or as root.",
-  "The current Gateway, signer, wallets, and persistent state were left unchanged.",
-].join(" ");
+const PUBLIC_HOSTING_INSTALLER_URL =
+  "https://raw.githubusercontent.com/fased-ai/fased/main/install.sh";
+const EXACT_RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
+
+export function hostingBootstrapCommand(version) {
+  const normalized = String(version ?? "")
+    .trim()
+    .replace(/^v/, "");
+  const selector = EXACT_RELEASE_VERSION_PATTERN.test(normalized)
+    ? ` --release v${normalized} --update-channel ${normalized.includes("-") ? "beta" : "stable"}`
+    : "";
+  return `curl -fsSL ${PUBLIC_HOSTING_INSTALLER_URL} | bash -s -- --hosting${selector}`;
+}
+
+export function legacyHostingBootstrapMessage(version) {
+  return [
+    "This Hosting installation has a legacy root controller that cannot replace itself.",
+    "From the VPS provider root console, run this one verified Hosting bootstrap command:",
+    hostingBootstrapCommand(version),
+    "It detects the existing installation, preserves persistent state, performs the one-time controller and signer migration transactionally, and skips onboarding.",
+    "After it succeeds, return to the app account and use only fased update.",
+    "Never run /home/app/fased/install.sh with sudo or as root.",
+    "The current Gateway, signer, wallets, and persistent state were left unchanged.",
+  ].join(" ");
+}
+
+export const PRE_V2_HOSTING_MIGRATION_MESSAGE = legacyHostingBootstrapMessage();
 export const PROTECTED_LOCAL_CONTROLLER_UNAVAILABLE_MESSAGE = [
   "The Protected Local root controller is unavailable, so this update was not started.",
   "The current Gateway, signer, wallets, and persistent state were left unchanged.",
@@ -1299,6 +1358,7 @@ function hostedUpdaterError(
   error,
   ambiguous = Boolean(error?.hostUpdaterAmbiguous),
   protectedLocal = false,
+  version,
 ) {
   const message = error instanceof Error ? error.message : String(error);
   let normalized;
@@ -1310,7 +1370,7 @@ function hostedUpdaterError(
     normalized = new Error(
       protectedLocal
         ? PROTECTED_LOCAL_CONTROLLER_UNAVAILABLE_MESSAGE
-        : PRE_V2_HOSTING_MIGRATION_MESSAGE,
+        : legacyHostingBootstrapMessage(version),
       { cause: error },
     );
   } else {
@@ -1405,7 +1465,12 @@ async function requestHostedSignerTransaction(
       settled = true;
       socket.destroy();
       reject(
-        hostedUpdaterError(error, ambiguous, socketPath.startsWith("/run/fased-local-controller/")),
+        hostedUpdaterError(
+          error,
+          ambiguous,
+          socketPath.startsWith("/run/fased-local-controller/"),
+          version,
+        ),
       );
     };
     socket.once("connect", () => {
@@ -2153,6 +2218,8 @@ async function coordinateHostedReleaseTransaction(journal, operations) {
 
 function hostedTransactionOperations(paths, timeoutMs, options = {}) {
   const targetServiceAlreadyRestarted = options.targetServiceAlreadyRestarted === true;
+  const controllerSocketPath =
+    options.controllerSocketPath ?? resolveRootManagedControllerSocket(paths);
   return {
     activateApplication: async (journal) => await activateHostedApplication(paths, journal),
     restoreApplication: async (journal) => {
@@ -2169,6 +2236,7 @@ function hostedTransactionOperations(paths, timeoutMs, options = {}) {
           journal.transactionId,
           journal.targetVersion,
           timeoutMs,
+          controllerSocketPath,
         );
       }
       const response = await requestHostedSignerTransactionWithRetry(
@@ -2176,6 +2244,7 @@ function hostedTransactionOperations(paths, timeoutMs, options = {}) {
         journal.transactionId,
         journal.targetVersion,
         timeoutMs,
+        controllerSocketPath,
       );
       if (response.release) {
         const manifestSignerRelease = journal.nextManifest?.release?.signer?.release;
@@ -5857,6 +5926,7 @@ export const __testing = {
   recoverHostedReleaseTransaction,
   requestHostedSignerTransaction,
   requestHostedSignerTransactionWithRetry,
+  resolveRootManagedControllerSocket,
   rollbackHostedReleaseTransaction,
   restartHostedGateway,
   activateLocalSignerTransaction,

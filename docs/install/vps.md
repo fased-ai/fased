@@ -72,8 +72,9 @@ fased update
     The streamed script accepts either the normal fresh `--hosting` selector or
     the exact fresh `--hosting --release ... --update-channel ...` selector. It
     rejects repair and source selectors, caller-supplied verification markers,
-    unsafe proxy or shell overrides, invalid release/channel pairs, and existing
-    Fased state.
+    unsafe proxy or shell overrides, and invalid release/channel pairs. Existing
+    Fased state is detected before privileged handoff: a completed or interrupted
+    installation is repaired transactionally and onboarding is skipped.
 
     Before persistent Fased mutation, it resolves a stable tag and verifies the
     offline GitHub attestation bundle for the release manifest. That manifest
@@ -92,22 +93,24 @@ fased update
     Follow the canonical
     [exact-tag pre-execution verification](/install/installer#exact-tag-pre-execution-verification).
     It authenticates the tagged `install.sh` before Bash runs it. Normal fresh
-    release selection can use the one-command streamed selector above; repair
-    still requires the verified-file procedure.
+    installation and repair can use the one-command streamed selector above.
+    The exact-tag procedure is an optional stronger control for operators who
+    require verification before the first shell executes.
   </Accordion>
 
   <Accordion title="Hosting repair and recovery">
-    Do not pipe `--repair-hosting` from `main`. From the provider root console,
-    use the exact-tag verification block in the Advanced installer reference
-    and change only its final line:
+    From the provider root console, rerun the same public command:
 
     ```bash
-    bash "$BOOTSTRAP_DIR/install.sh" --repair-hosting --release "$RELEASE"
+    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+      | bash -s -- --hosting
     ```
 
-    If the streamed fresh install stops before `/var/lib/fased-installer`
-    exists, fix the reported problem and rerun the exact normal command. If
-    persistent installer state exists, use exact-tag repair instead.
+    The bootstrap detects existing or interrupted Hosting state, verifies the
+    immutable release bundle and attestations, selects the internal repair path,
+    preserves persistent state, and skips onboarding. Do not pipe
+    `--repair-hosting` directly. For an immutable beta candidate, use the exact
+    `--hosting --release vX.Y.Z-rc.N --update-channel beta` selector shown above.
 
   </Accordion>
 

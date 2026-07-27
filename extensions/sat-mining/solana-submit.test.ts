@@ -29,7 +29,7 @@ const {
       {
         id: "solana-1",
         providerId: "local-socket-signer",
-        addresses: { solana: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW" },
+        addresses: { solana: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW" }, // pragma: allowlist secret
       },
     ],
   })),
@@ -121,11 +121,11 @@ import {
 
 const SAT_PROGRAM_ID_TEXT = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
 const SAT_BOND_PROGRAM_ID_TEXT = "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq";
-const SAT_MINT_ADDRESS_TEXT = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa";
+const SAT_MINT_ADDRESS_TEXT = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa"; // pragma: allowlist secret
 const SAT_MINT_PROGRAM_ID_TEXT = "8fb3Mpowe4pD6ed89gwm6gLuh8csPSrLi3hypcesqs5C";
 const SAT_PROGRAM_ID = new PublicKey("EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75");
 const SAT_BOND_PROGRAM_ID = new PublicKey("D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq");
-const SIGNER = new PublicKey("8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW");
+const SIGNER = new PublicKey("8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW"); // pragma: allowlist secret
 const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 const TEST_POLICY_HASH = `sha256:${"ab".repeat(32)}`;
@@ -441,6 +441,37 @@ describe("SAT cycle transaction builders", () => {
       "v2.policy.get",
       "v2.operation.get",
     ]);
+    expect(
+      callLocalSocketSigner.mock.calls.filter((call) => call[1]?.op === "v2.execute"),
+    ).toHaveLength(1);
+  });
+
+  it("records a policy denial with no signer operation as a definitive failure", async () => {
+    const healthySignerCall = callLocalSocketSigner.getMockImplementation();
+    callLocalSocketSigner.mockImplementation(
+      async (socketPath: string, payload: { op?: string }) => {
+        if (payload.op === "v2.execute") {
+          throw new Error(
+            "policy denies operation sat.claimProtocolTreasury@EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
+          );
+        }
+        if (payload.op === "v2.operation.get") {
+          throw new Error("signer operation not found");
+        }
+        if (!healthySignerCall) {
+          throw new Error("healthy signer mock is unavailable");
+        }
+        return await healthySignerCall(socketPath, payload);
+      },
+    );
+
+    const submit = async () =>
+      await runWithSatSubmissionWorkflow(
+        "test:definitive-policy-denial",
+        async () => await submitSatDepositMinerCapital({} as never, { lamports: 250_000_000 }),
+      );
+    await expect(submit()).rejects.toThrow(/^policy denies operation /u);
+    await expect(submit()).rejects.toThrow(/^policy denies operation /u);
     expect(
       callLocalSocketSigner.mock.calls.filter((call) => call[1]?.op === "v2.execute"),
     ).toHaveLength(1);
@@ -813,7 +844,7 @@ describe("SAT cycle transaction builders", () => {
       "claim unallocated rewards",
       () =>
         submitSatClaimUnallocatedStakingRewards({} as never, {
-          recipientOwner: "AzXW61LgzhJTXN1so7rBR5auU2oCSzRyNEqFxPkZct3G",
+          recipientOwner: "AzXW61LgzhJTXN1so7rBR5auU2oCSzRyNEqFxPkZct3G", // pragma: allowlist secret
         }),
     ],
   ] as const)(
@@ -1201,8 +1232,8 @@ describe("SAT cycle transaction builders", () => {
   it("uses the upgraded settleCyclePage progress PDA", async () => {
     const cycleId = 9_859_142;
     const minerAuthorities = [
-      new PublicKey("Wmesty4ZT9XfG2BK5NfaTLyVvHyeG1DW2gZnwZQntuk"),
-      new PublicKey("4wxmFJm7xBkqLk7K3qn2gGw8v6SnM8j4rJz7s2p9dJQY"),
+      new PublicKey("Wmesty4ZT9XfG2BK5NfaTLyVvHyeG1DW2gZnwZQntuk"), // pragma: allowlist secret
+      new PublicKey("4wxmFJm7xBkqLk7K3qn2gGw8v6SnM8j4rJz7s2p9dJQY"), // pragma: allowlist secret
     ];
     const minerCycleAccounts = minerAuthorities.map((authority) =>
       findPda(Buffer.from("sat_miner_cycle_state"), authority.toBuffer(), encodeU64(cycleId)),
@@ -1363,7 +1394,7 @@ describe("SAT cycle transaction builders", () => {
 
   it("closes resolved miner-cycle state for the target authority instead of assuming the executor", async () => {
     const cycleId = 9_859_160;
-    const authority = "4wxmFJm7xBkqLk7K3qn2gGw8v6SnM8j4rJz7s2p9dJQY";
+    const authority = "4wxmFJm7xBkqLk7K3qn2gGw8v6SnM8j4rJz7s2p9dJQY"; // pragma: allowlist secret
     await submitSatCloseResolvedMinerCycleState({} as never, {
       cycleId,
       authority,
@@ -1444,7 +1475,7 @@ describe("SAT cycle transaction builders", () => {
 
   it("submits cleanup close instructions as one sat-cleanup batch", async () => {
     const cycleId = 9_859_162;
-    const authority = "4wxmFJm7xBkqLk7K3qn2gGw8v6SnM8j4rJz7s2p9dJQY";
+    const authority = "4wxmFJm7xBkqLk7K3qn2gGw8v6SnM8j4rJz7s2p9dJQY"; // pragma: allowlist secret
 
     await submitSatCloseResolvedCleanupBatch({} as never, [
       { kind: "minerCycleState", cycleId, authority },
@@ -1466,7 +1497,7 @@ describe("SAT cycle transaction builders", () => {
 
   it("uses the upgraded score/distribute progress PDA", async () => {
     const cycleId = 9_859_149;
-    const minerAuthority = new PublicKey("Wmesty4ZT9XfG2BK5NfaTLyVvHyeG1DW2gZnwZQntuk");
+    const minerAuthority = new PublicKey("Wmesty4ZT9XfG2BK5NfaTLyVvHyeG1DW2gZnwZQntuk"); // pragma: allowlist secret
     const minerCycleAccounts = [
       findPda(Buffer.from("sat_miner_cycle_state"), minerAuthority.toBuffer(), encodeU64(cycleId)),
     ];

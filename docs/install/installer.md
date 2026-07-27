@@ -51,22 +51,22 @@ Stop if any download or verification step fails.
 
 ## Hosting repair and recovery
 
-Streamed Hosting is fresh-install-only. Existing-host repair must reuse the
-exact-tag block above and change only its final line:
+The public streamed `--hosting` entry supports both fresh installation and
+existing-host recovery. From the provider root console, rerun the
+[one-command Hosting bootstrap](/install/vps#3-install-fased).
 
-```bash
-bash "$BOOTSTRAP_DIR/install.sh" --repair-hosting --release "$RELEASE"
-```
-
-Use repair only when the installed updater or root-managed services cannot
-recover normally. Never pipe `--repair-hosting` from mutable `main`, pass a
-caller-created verified marker, or grant the operator broad sudo access.
+It detects completed or interrupted state, verifies the immutable release
+bundle and offline attestations, then invokes the internal repair selector.
+Never pipe `--repair-hosting` from mutable `main`, pass a caller-created
+verified marker, or grant the operator broad sudo access. The exact-tag block
+above remains an optional pre-execution verification path.
 
 The streamed bootstrap reports which recovery path applies:
 
 - no persistent Fased installer state: fix the prerequisite and rerun the
   exact fresh Hosting command;
-- persistent installer state: use exact-tag repair;
+- interrupted or persistent installer state: fix the reported problem and
+  rerun the same public `--hosting` command;
 - working installation: reconnect as `app` and use `fased update`.
 
 ## Public modes
@@ -74,7 +74,7 @@ The streamed bootstrap reports which recovery path applies:
 | Mode                 | Intended use                                        | Streamed from `main`?               |
 | -------------------- | --------------------------------------------------- | ----------------------------------- |
 | `--local`            | Fresh Local install on macOS, Linux, or WSL2 Ubuntu | Yes                                 |
-| `--hosting`          | Fresh Hosting install on a supported systemd VPS    | Yes                                 |
+| `--hosting`          | Fresh or recovering Hosting on a supported VPS      | Yes                                 |
 | `--repair-local`     | Preserve state and repair Local runtime/service     | No normal need for root             |
 | `--repair-hosting`   | Preserve state and repair Hosting runtime/services  | No; exact tagged file only          |
 | `--release <vX.Y.Z>` | Select an immutable release                         | Yes, with fresh Hosting and channel |
@@ -88,7 +88,7 @@ surface.
 ## Streamed Hosting restrictions
 
 The streamed Hosting command accepts either `--hosting` by itself or the exact
-fresh selector `--hosting --release vX.Y.Z[-prerelease] --update-channel
+selector `--hosting --release vX.Y.Z[-prerelease] --update-channel
 stable|beta`. A prerelease requires `beta`. Before tagged payload verification
 it rejects:
 
@@ -96,19 +96,19 @@ it rejects:
 - caller-supplied `--verified-hosting-bundle` markers;
 - exported `FASED_*` values;
 - proxy, custom CA, GitHub CLI config, dynamic-loader, shell-startup, and temp
-  directory overrides; and
-- hosts with existing Fased state, services, helpers, or installer roots.
+  directory overrides.
 
 It uses a fixed command path and locale. Before persistent Fased mutation it
 verifies the offline-attested release manifest, workflow, exact tag, commit,
 architecture, app/dependency/signer digests, archive paths, links, ownership,
-writable modes, package version, and build identity.
+writable modes, package version, and build identity. Existing completed or
+interrupted state selects the internal repair path and skips onboarding.
 
 ## Runtime and account layout
 
 | Identity        | Purpose                                                 | Signer access                                      |
 | --------------- | ------------------------------------------------------- | -------------------------------------------------- |
-| `root`          | First bootstrap and exact-tag emergency repair          | Installs isolated services; not a normal wallet UX |
+| `root`          | First bootstrap and one-time controller recovery        | Installs isolated services; not a normal wallet UX |
 | `app`           | Human operator SSH and native wallet lifecycle commands | Restricted `/run/fased-signerd/operator.sock`      |
 | `fased-gateway` | Gateway service                                         | Application operations only through `app.sock`     |
 | `fased-signer`  | Native signer service                                   | Owns keys, policy, network state, and audit        |
@@ -165,7 +165,8 @@ requests.
 The installer stops on failed prerequisite, attestation, digest, archive,
 identity, service-health, or updater checks. Hosting activation is staged and
 locked; failure cleanup removes temporary extraction and leaves either no
-persistent Fased state or a specific exact-tag repair instruction.
+persistent Fased state or an instruction to rerun the same public `--hosting`
+command from the provider root console.
 
 Normal updates are transactional: the updater stages an immutable release,
 checks runtime identity and health, and rolls back activation if the new
