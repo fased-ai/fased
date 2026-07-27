@@ -435,6 +435,9 @@ default:other::---
     expect(installer).toContain("--protected-local-gateway-health-timeout-ms");
     expect(installer).toContain("--gateway-health-timeout-ms");
     expect(installer).toContain("bootstrap_protected_local_topology rollback");
+    expect(installer).toContain('>"$bootstrap_log" 2>&1');
+    expect(installer).toContain("print_local_handoff_block");
+    expect(installer).not.toContain('"$FASED_CLI_PATH" dashboard --no-open');
     expect(installer).toContain(
       "Onboarding did not complete; the prior Local signer and Gateway topology was restored.",
     );

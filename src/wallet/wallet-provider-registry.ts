@@ -4,9 +4,8 @@ import path from "node:path";
 import { resolveStateDir } from "../config/paths.js";
 import type { WalletProviderId } from "../config/types.wallet.js";
 import { throwLegacyEmbeddedKeystoreMigrationRequired } from "./legacy-embedded-keystore.js";
-import { ensureWalletStateDir } from "./wallet-runtime-config.js";
+import { ensureWalletStateDir, walletApplicationStateFileMode } from "./wallet-runtime-config.js";
 
-const REGISTRY_FILE_MODE = 0o600;
 const PROVIDER_REGISTRY_FILENAME = "provider-registry.v1.json";
 
 export const WALLET_PROVIDER_IDS: WalletProviderId[] = [
@@ -561,12 +560,13 @@ export function writeWalletProviderRegistry(
     version: 1,
     updatedAt: nowIso(),
   };
+  const fileMode = walletApplicationStateFileMode(env);
   fs.writeFileSync(file, `${JSON.stringify(payload, null, 2)}\n`, {
     encoding: "utf8",
-    mode: REGISTRY_FILE_MODE,
+    mode: fileMode,
   });
   try {
-    fs.chmodSync(file, REGISTRY_FILE_MODE);
+    fs.chmodSync(file, fileMode);
   } catch {
     // best effort
   }

@@ -12,6 +12,11 @@ import {
 import type { WalletProviderJupiterReviewV2 } from "../wallet/wallet-provider-adapter.js";
 import { buildAttestation } from "./attestation.js";
 import {
+  enforceFederationStateFileMode,
+  ensureFederationStateDirectory,
+  federationStateFileMode,
+} from "./federation-state-permissions.js";
+import {
   resolveAgentPublicOrigin,
   resolveFederationBaseUrl,
   resolveFederationBondWalletId,
@@ -390,11 +395,12 @@ async function persistFederationToken(
   const tokenPath = resolveFederationTokenPath(env);
   const dir = path.dirname(tokenPath);
   const tmpPath = `${tokenPath}.tmp`;
-  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  await ensureFederationStateDirectory(dir, env);
   await fs.writeFile(tmpPath, `${JSON.stringify(tokenToPersist, null, 2)}\n`, {
-    mode: 0o600,
+    mode: federationStateFileMode(env),
   });
   await fs.rename(tmpPath, tokenPath);
+  await enforceFederationStateFileMode(tokenPath, env);
   return tokenToPersist;
 }
 
@@ -405,9 +411,12 @@ async function persistFederationBondProof(
   const proofPath = resolveFederationBondProofPath(env);
   const dir = path.dirname(proofPath);
   const tmpPath = `${proofPath}.tmp`;
-  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-  await fs.writeFile(tmpPath, `${JSON.stringify(proof, null, 2)}\n`, { mode: 0o600 });
+  await ensureFederationStateDirectory(dir, env);
+  await fs.writeFile(tmpPath, `${JSON.stringify(proof, null, 2)}\n`, {
+    mode: federationStateFileMode(env),
+  });
   await fs.rename(tmpPath, proofPath);
+  await enforceFederationStateFileMode(proofPath, env);
   return proof;
 }
 

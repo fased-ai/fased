@@ -1,6 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { resolveStateDir } from "../config/paths.js";
+import {
+  enforceFederationStateFileMode,
+  ensureFederationStateDirectory,
+  federationStateFileMode,
+} from "./federation-state-permissions.js";
 
 export type FederationTrustState = "pending" | "verified" | "revoked" | "blocked";
 export type FederationHostedState = "disabled" | "pending" | "ready" | "missing";
@@ -162,10 +167,13 @@ export async function persistFederationAccessToken(
   const tokenPath = resolveFederationTokenPath(env);
   const previous = await loadPersistedFederationToken(env);
   const next = mergePersistedFederationTokenMetadata({ next: token, previous });
-  await fs.mkdir(path.dirname(tokenPath), { recursive: true, mode: 0o700 });
+  await ensureFederationStateDirectory(path.dirname(tokenPath), env);
   const tmpPath = `${tokenPath}.tmp`;
-  await fs.writeFile(tmpPath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+  await fs.writeFile(tmpPath, `${JSON.stringify(next, null, 2)}\n`, {
+    mode: federationStateFileMode(env),
+  });
   await fs.rename(tmpPath, tokenPath);
+  await enforceFederationStateFileMode(tokenPath, env);
   return next;
 }
 

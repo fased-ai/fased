@@ -62,6 +62,7 @@ import {
   resolveLocalSignerSocketPath,
 } from "../wallet/wallet-runtime-config.js";
 import { isHostedSecurityCapableSession } from "./host-security-capability.js";
+import { isProtectedLocalInstallerScaffold } from "./onboarding-existing-config.js";
 import {
   noteBullet,
   noteCommand,
@@ -687,6 +688,7 @@ export async function runOnboardingWizard(
   await requireRiskAcknowledgement({ opts, prompter });
 
   const snapshot = await readConfigFileSnapshot();
+  const protectedLocalInstallerScaffold = isProtectedLocalInstallerScaffold(snapshot);
   let baseConfig: FasedAgentConfig = snapshot.valid ? snapshot.config : {};
   baseConfig = normalizeHostedWalletPaths(baseConfig, process.env);
   let satMiningAttachment = readSatMiningConfig(baseConfig);
@@ -710,7 +712,7 @@ export async function runOnboardingWizard(
     });
   };
 
-  if (snapshot.exists && !snapshot.valid) {
+  if (snapshot.exists && !protectedLocalInstallerScaffold && !snapshot.valid) {
     await prompter.note(summarizeExistingConfig(baseConfig), "Invalid config");
     if (snapshot.issues.length > 0) {
       await prompter.note(
@@ -825,7 +827,7 @@ export async function runOnboardingWizard(
     return;
   }
 
-  if (snapshot.exists) {
+  if (snapshot.exists && !protectedLocalInstallerScaffold) {
     await prompter.note(summarizeExistingConfig(baseConfig), "Existing config detected");
 
     const action = await prompter.select<"modify" | "repair">({

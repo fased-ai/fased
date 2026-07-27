@@ -922,13 +922,13 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     }
     local manifest="$verification_dir/fased-hosted-release-v2.json"
     local bundle="$verification_dir/fased-hosted-release-v2.json.attestation.json"
-    if ! curl -fL --proto '=https' --tlsv1.2 \
+    if ! curl -fsSL --proto '=https' --tlsv1.2 \
       "$release_url/fased-hosted-release-v2.json" -o "$manifest"; then
       rm -rf -- "$verification_dir"
       echo "Could not download the Local release manifest." >&2
       return 1
     fi
-    if ! curl -fL --proto '=https' --tlsv1.2 \
+    if ! curl -fsSL --proto '=https' --tlsv1.2 \
       "$release_url/fased-hosted-release-v2.json.attestation.json" -o "$bundle"; then
       rm -rf -- "$verification_dir"
       echo "Could not download the Local release attestation bundle." >&2
@@ -2594,14 +2594,22 @@ install_prebuilt_release_runtime() {
   mkdir -p "$npm_prefix" "$npm_config_cache"
   spinner_start "Install prebuilt runtime"
   local artifact_result=0
-  bash "$FASED_DIR/scripts/install-hosted-runtime.sh" \
-    --package "$package_spec" \
-    --prefix "$npm_prefix" \
-    --cache "$INSTALL_CACHE_DIR" \
-    --state-dir "$FASED_CONFIG_DIR" \
-    --profile "$runtime_profile" || artifact_result=$?
+  local -a runtime_install_args=(
+    bash "$FASED_DIR/scripts/install-hosted-runtime.sh"
+    --package "$package_spec"
+    --prefix "$npm_prefix"
+    --cache "$INSTALL_CACHE_DIR"
+    --state-dir "$FASED_CONFIG_DIR"
+    --profile "$runtime_profile"
+  )
+  if [[ "$INSTALL_VERBOSE" == "1" ]]; then
+    "${runtime_install_args[@]}" || artifact_result=$?
+  else
+    "${runtime_install_args[@]}" >"$install_log" 2>&1 || artifact_result=$?
+  fi
   if [[ "$artifact_result" -eq 20 ]]; then
     spinner_failed "Install prebuilt runtime"
+    [[ "$INSTALL_VERBOSE" == "1" ]] || tail -n 80 "$install_log" >&2 || true
     return 1
   fi
   if [[ "$artifact_result" -ne 0 ]]; then
@@ -2609,6 +2617,7 @@ install_prebuilt_release_runtime() {
       spinner_failed "Install prebuilt runtime"
       echo "Exact attested Hosting app/dependency assets for ${package_spec} are unavailable; the current installation was not changed." >&2
       echo "Maintained Hosting never falls back to npm." >&2
+      [[ "$INSTALL_VERBOSE" == "1" ]] || tail -n 80 "$install_log" >&2 || true
       return 1
     fi
     if [[ "$INSTALL_VERBOSE" == "1" ]]; then
@@ -2865,21 +2874,37 @@ bootstrap_protected_local_topology() {
     echo "Protected Local requires a root-controlled system Node.js runtime." >&2
     return 1
   fi
-  echo "Authorizing the protected Local signer and Gateway service boundary..."
-  sudo -- /bin/bash "$FASED_DIR/install.sh" \
-    --protected-local-root-bootstrap \
-    --release "$release_version" \
-    --update-channel "$UPDATE_CHANNEL" \
-    --protected-local-operator-user "$(id -un)" \
-    --protected-local-operator-uid "$(id -u)" \
-    --protected-local-operator-gid "$(id -g)" \
-    --protected-local-operator-home "$HOME" \
-    --protected-local-state-dir "$FASED_CONFIG_DIR" \
-    --protected-local-runtime-dir "$runtime_root" \
-    --protected-local-node-binary "$system_node" \
-    --protected-local-profile "${FASED_PROFILE:-default}" \
-    --protected-local-gateway-port "$gateway_port" \
+  spinner_start "Secure signer and Gateway services"
+  local bootstrap_log
+  bootstrap_log="$(install_log_path "protected local ${gateway_mode}")"
+  local -a bootstrap_args=(
+    sudo -- /bin/bash "$FASED_DIR/install.sh"
+    --protected-local-root-bootstrap
+    --release "$release_version"
+    --update-channel "$UPDATE_CHANNEL"
+    --protected-local-operator-user "$(id -un)"
+    --protected-local-operator-uid "$(id -u)"
+    --protected-local-operator-gid "$(id -g)"
+    --protected-local-operator-home "$HOME"
+    --protected-local-state-dir "$FASED_CONFIG_DIR"
+    --protected-local-runtime-dir "$runtime_root"
+    --protected-local-node-binary "$system_node"
+    --protected-local-profile "${FASED_PROFILE:-default}"
+    --protected-local-gateway-port "$gateway_port"
     --protected-local-gateway-mode "$gateway_mode"
+  )
+  local bootstrap_result=0
+  if [[ "$INSTALL_VERBOSE" == "1" ]]; then
+    "${bootstrap_args[@]}" || bootstrap_result=$?
+  else
+    "${bootstrap_args[@]}" >"$bootstrap_log" 2>&1 || bootstrap_result=$?
+  fi
+  if [[ "$bootstrap_result" -ne 0 ]]; then
+    spinner_failed "Secure signer and Gateway services"
+    [[ "$INSTALL_VERBOSE" == "1" ]] || tail -n 80 "$bootstrap_log" >&2 || true
+    return "$bootstrap_result"
+  fi
+  spinner_done "Signer and Gateway services ready"
   if [[ "$gateway_mode" == "rollback" ]]; then
     PROTECTED_LOCAL_BOOTSTRAPPED=0
     return 0
@@ -3706,15 +3731,17 @@ try {
 ' 2>/dev/null || true
 }
 
-build_hosted_dashboard_url() {
-  local web_host="$1"
-  local token="$2"
-  local base_path="$3"
-  WEB_HOST="$web_host" GATEWAY_TOKEN="$token" CONTROL_BASE_PATH="$base_path" node -e '
+build_dashboard_url() {
+  local scheme="$1"
+  local web_host="$2"
+  local token="$3"
+  local base_path="$4"
+  WEB_SCHEME="$scheme" WEB_HOST="$web_host" GATEWAY_TOKEN="$token" CONTROL_BASE_PATH="$base_path" node -e '
+const scheme = String(process.env.WEB_SCHEME || "https").trim();
 const host = String(process.env.WEB_HOST || "YOUR_VPS_TAILSCALE_NAME").trim();
 const token = String(process.env.GATEWAY_TOKEN || "").trim();
 const rawBasePath = String(process.env.CONTROL_BASE_PATH || "").trim();
-const url = new URL(`https://${host}/`);
+const url = new URL(`${scheme}://${host}/`);
 if (rawBasePath && rawBasePath !== "/") {
   const clean = rawBasePath.replace(/^\/+|\/+$/g, "");
   url.pathname = clean ? `/${clean}/` : "/";
@@ -3725,7 +3752,41 @@ if (token) {
   url.hash = `#${hash.toString()}`;
 }
 process.stdout.write(url.toString());
-' 2>/dev/null || printf 'https://%s/' "$web_host"
+' 2>/dev/null || printf '%s://%s/' "$scheme" "$web_host"
+}
+
+build_hosted_dashboard_url() {
+  build_dashboard_url "https" "$1" "$2" "$3"
+}
+
+print_local_handoff_block() {
+  local config_path="${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}"
+  local gateway_token=""
+  local gateway_port="18789"
+  local control_base_path=""
+  if [[ -f "$config_path" ]]; then
+    gateway_token="$(node -e 'try{const c=require(process.argv[1]);process.stdout.write(String(c?.gateway?.auth?.token||""))}catch{}' "$config_path" 2>/dev/null || true)"
+    gateway_port="$(node -e 'try{const c=require(process.argv[1]);const p=Number(c?.gateway?.port||18789);process.stdout.write(String(Number.isInteger(p)?p:18789))}catch{process.stdout.write("18789")}' "$config_path" 2>/dev/null || printf '18789')"
+    control_base_path="$(node -e 'try{const c=require(process.argv[1]);process.stdout.write(String(c?.gateway?.controlUi?.basePath||""))}catch{}' "$config_path" 2>/dev/null || true)"
+  fi
+  local dashboard_url
+  dashboard_url="$(build_dashboard_url "http" "localhost:${gateway_port}" "$gateway_token" "$control_base_path")"
+
+  block_top "DASHBOARD READY"
+  block_line "Setup complete."
+  block_line
+  block_line "$(color_yellow "${C_BOLD}WEB UI${C_RESET}")"
+  block_line "  $dashboard_url"
+  if [[ -n "$gateway_token" ]]; then
+    block_line
+    block_line "$(color_yellow "${C_BOLD}TOKEN BACKUP${C_RESET}")"
+    block_line "  $gateway_token"
+  fi
+  block_line
+  block_line "$(color_yellow "${C_BOLD}NEXT${C_RESET}")"
+  block_line "  - In the dashboard, go to Agent > Models and connect a model provider."
+  block_line "  - Open Chat and send a test message."
+  block_bottom
 }
 
 print_hosted_handoff_block() {
@@ -4034,7 +4095,7 @@ reexec_as_app_user() {
         FASED_HOST_UPDATER_SOCKET=/run/fased-host-updater/request.sock \
         FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external \
         FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock \
-        node "$app_transaction_updater" hosted-transaction finalize --root-restarted; then
+        node "$app_transaction_updater" hosted-transaction finalize --root-restarted >/dev/null; then
         HOST_SIGNER_DURABLE_COMMIT_DECISION=1
       else
         child_status=1
@@ -4063,7 +4124,7 @@ reexec_as_app_user() {
           FASED_HOST_UPDATER_SOCKET=/run/fased-host-updater/request.sock \
           FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external \
           FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock \
-          node "$app_transaction_updater" hosted-transaction finalize --root-restarted; then
+          node "$app_transaction_updater" hosted-transaction finalize --root-restarted >/dev/null; then
           child_status=0
         fi
       fi
@@ -4818,6 +4879,17 @@ install_package_for_hosting() {
   fi
 }
 
+enable_systemd_service() {
+  local requested_unit="${1%.service}.service"
+  local canonical_unit=""
+  canonical_unit="$(systemctl show "$requested_unit" --property=Id --value 2>/dev/null || true)"
+  if [[ ! "$canonical_unit" =~ ^[A-Za-z0-9_.@:-]+\.service$ ]]; then
+    canonical_unit="$requested_unit"
+  fi
+  systemctl enable --now "$canonical_unit"
+  systemctl is-active --quiet "$requested_unit"
+}
+
 firewall_baseline() {
   if command -v ufw >/dev/null 2>&1 || command -v apt-get >/dev/null 2>&1; then
     command -v ufw >/dev/null 2>&1 || install_package_for_hosting ufw
@@ -4829,7 +4901,7 @@ firewall_baseline() {
     ufw --force enable
   elif command -v firewall-cmd >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1 || command -v dnf5 >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
     command -v firewall-cmd >/dev/null 2>&1 || install_package_for_hosting firewalld
-    systemctl enable --now firewalld
+    enable_systemd_service firewalld
     firewall-cmd --permanent --zone=trusted --add-interface=tailscale0 >/dev/null 2>&1 || true
     firewall-cmd --permanent --zone=public --remove-service=ssh >/dev/null 2>&1 || true
     firewall-cmd --permanent --zone=public --remove-port=22/tcp >/dev/null 2>&1 || true
@@ -4937,7 +5009,7 @@ SSHD_CONF
     ;;
   fail2ban-enable)
     install_package_for_hosting fail2ban
-    systemctl enable --now fail2ban
+    enable_systemd_service fail2ban
     ;;
   automatic-updates)
     enable_automatic_updates
@@ -4971,6 +5043,9 @@ install_fixed_host_gateway_service() {
   chgrp "$config_group" "$target_home"
   chmod 0710 "$target_home"
   install -d -m 2770 -o "$target_user" -g "$config_group" "${target_home}/.fased"
+  install -d -m 2770 -o "$target_user" -g "$config_group" "${target_home}/.fased/identity"
+  install -d -m 2770 -o "$target_user" -g "$config_group" "${target_home}/.fased/wallet"
+  install -d -m 2770 -o "$target_user" -g "$config_group" "${target_home}/.fased/federation"
   chgrp -R "$config_group" "${target_home}/.fased"
   chmod -R g+rwX,o-rwx "${target_home}/.fased"
   find "${target_home}/.fased" -type d -exec chmod g+s {} +
@@ -5061,6 +5136,9 @@ reconcile_hosting_shared_state() {
   local config_group="${FASED_CONFIG_GROUP:-fased-config}"
   local state_dir="${target_home}/.fased"
   install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir"
+  install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/identity"
+  install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/wallet"
+  install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/federation"
   chgrp -R "$config_group" "$state_dir"
   chmod -R g+rwX,o-rwx "$state_dir"
   find "$state_dir" -type d -exec chmod g+s {} +
@@ -5221,7 +5299,7 @@ prepare_hosting_root_prerequisites() {
     exit 1
   }
 
-  printf '18789\n' | "$helper" tailscale-serve
+  printf '18789\n' | "$helper" tailscale-serve >/dev/null
   wait_for_tailscale_serve_route 18789 || {
     echo "Tailscale Serve did not acknowledge the fixed loopback Gateway route." >&2
     exit 1
@@ -5246,20 +5324,36 @@ finalize_hosting_root_prerequisites() {
   local helper="/usr/local/sbin/fased-host-maintenance"
   local marker="/etc/fased/hosting-prerequisites"
   local tailscale_dns=""
+  local prerequisite_log=""
   tailscale_dns="$(sed -n 's/^tailscaleDns=//p' "$marker" 2>/dev/null || true)"
   [[ "$tailscale_dns" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || {
     echo "Cannot finalize Hosting hardening because the Tailscale identity marker is invalid." >&2
     return 1
   }
-  "$helper" tailnet-ssh-ingress
-  "$helper" firewall-baseline
-  "$helper" harden-ssh
-  "$helper" fail2ban-enable
-  "$helper" automatic-updates
+
+  prerequisite_log="$(mktemp /tmp/fased-hosting-prerequisites.XXXXXXXX)"
+  run_hosting_prerequisite() {
+    local operation="$1"
+    local description="$2"
+    if "$helper" "$operation" >"$prerequisite_log" 2>&1; then
+      : >"$prerequisite_log"
+      return 0
+    fi
+    echo "Hosting prerequisite failed: ${description}." >&2
+    tail -n 80 "$prerequisite_log" >&2 || true
+    rm -f -- "$prerequisite_log"
+    return 1
+  }
+
+  echo "Finalizing Hosting security and update services..."
+  run_hosting_prerequisite tailnet-ssh-ingress "Tailscale SSH ingress" || return 1
+  run_hosting_prerequisite firewall-baseline "host firewall" || return 1
+  run_hosting_prerequisite harden-ssh "SSH hardening" || return 1
+  run_hosting_prerequisite fail2ban-enable "fail2ban" || return 1
+  run_hosting_prerequisite automatic-updates "automatic operating-system updates" || return 1
+  rm -f -- "$prerequisite_log"
   write_hosting_prerequisites_marker "$tailscale_dns" "ready"
-  cat <<EOF
-Tailscale access is ready at ${tailscale_dns}. Public SSH hardening was applied only after the Gateway, signer, and updater passed health checks.
-EOF
+  echo "Hosting security and update services are ready."
 }
 
 ensure_host_boundary_accounts() {
@@ -6217,6 +6311,6 @@ else
 fi
 write_install_marker "$REPO_ROOT" "true"
 if [[ "$PROTECTED_LOCAL_BOOTSTRAPPED" -eq 1 ]]; then
-  echo "Setup complete."
-  "$FASED_CLI_PATH" dashboard --no-open
+  "$FASED_CLI_PATH" dashboard >/dev/null 2>&1 || true
+  print_local_handoff_block
 fi

@@ -80,6 +80,95 @@ operator_env() {
     "FASED_HOST_UPDATERCTL_STATE=$state/protected-local-controller-transaction.json"
 }
 
+verify_shared_device_auth() {
+  local instance="$1"
+  local runtime_root="$2"
+  local module_url="file://$runtime_root/dist/infra/device-auth-store.js"
+  local auth_file="$state/identity/device-auth.json"
+  local -a environment=()
+  mapfile -t environment < <(operator_env "$instance")
+  runuser -u testop -- env "${environment[@]}" FASED_FIXTURE_MODULE_URL="$module_url" \
+    /usr/local/bin/node --input-type=module --eval '
+      const store = await import(process.env.FASED_FIXTURE_MODULE_URL);
+      store.storeDeviceAuthToken({
+        deviceId: "fixture-shared-device",
+        role: "operator",
+        token: "fixture-operator-token",
+      });
+    '
+  test "$(stat -c '%U:%G:%a' "$auth_file")" = "testop:fscf-$instance:660"
+  runuser -u "fsgw-$instance" -- env "${environment[@]}" FASED_FIXTURE_MODULE_URL="$module_url" \
+    /usr/local/bin/node --input-type=module --eval '
+      const store = await import(process.env.FASED_FIXTURE_MODULE_URL);
+      const existing = store.loadDeviceAuthToken({
+        deviceId: "fixture-shared-device",
+        role: "operator",
+      });
+      if (existing?.token !== "fixture-operator-token") process.exit(91);
+      store.storeDeviceAuthToken({
+        deviceId: "fixture-shared-device",
+        role: "node",
+        token: "fixture-node-token",
+      });
+    '
+  test "$(stat -c '%U:%G:%a' "$auth_file")" = "testop:fscf-$instance:660"
+}
+
+verify_shared_federation_state() {
+  local instance="$1"
+  local runtime_root="$2"
+  local module_url="file://$runtime_root/dist/federation/access-token.js"
+  local token_file="$state/federation/access-token.json"
+  local -a environment=()
+  mapfile -t environment < <(operator_env "$instance")
+  runuser -u testop -- env "${environment[@]}" FASED_FIXTURE_MODULE_URL="$module_url" \
+    /usr/local/bin/node --input-type=module --eval '
+      const federation = await import(process.env.FASED_FIXTURE_MODULE_URL);
+      await federation.persistFederationAccessToken({
+        tokenId: "fixture-federation-token",
+        nodeId: "fixture-node",
+        handle: "@fixture@fased.test",
+        issuedAt: "2026-07-26T00:00:00.000Z",
+        expiresAt: "2027-07-26T00:00:00.000Z",
+        scopes: ["federation.read"],
+        signature: "fixture-signature",
+      });
+    '
+  test "$(stat -c '%U:%G:%a' "$state/federation")" = "testop:fscf-$instance:2770"
+  test "$(stat -c '%U:%G:%a' "$token_file")" = "testop:fscf-$instance:660"
+  runuser -u "fsgw-$instance" -- env "${environment[@]}" FASED_FIXTURE_MODULE_URL="$module_url" \
+    /usr/local/bin/node --input-type=module --eval '
+      const federation = await import(process.env.FASED_FIXTURE_MODULE_URL);
+      const existing = await federation.loadPersistedFederationToken();
+      if (existing?.tokenId !== "fixture-federation-token") process.exit(93);
+      await federation.persistFederationAccessToken({ ...existing, hostedState: "ready" });
+    '
+  test "$(stat -c '%U:%G:%a' "$token_file")" = "fsgw-$instance:fscf-$instance:660"
+  runuser -u testop -- env "${environment[@]}" FASED_FIXTURE_MODULE_URL="$module_url" \
+    /usr/local/bin/node --input-type=module --eval '
+      const federation = await import(process.env.FASED_FIXTURE_MODULE_URL);
+      const existing = await federation.loadPersistedFederationToken();
+      if (existing?.hostedState !== "ready") process.exit(94);
+    '
+}
+
+verify_shared_wallet_registry() {
+  local instance="$1"
+  local runtime_root="$2"
+  local module_url="file://$runtime_root/dist/wallet/wallet-provider-registry.js"
+  local registry="$state/wallet/provider-registry.v1.json"
+  local -a environment=()
+  mapfile -t environment < <(operator_env "$instance")
+  test "$(stat -c '%U:%G:%a' "$state/wallet")" = "testop:fscf-$instance:2770"
+  test "$(stat -c '%U:%G:%a' "$registry")" = "testop:fscf-$instance:660"
+  runuser -u "fsgw-$instance" -- env "${environment[@]}" FASED_FIXTURE_MODULE_URL="$module_url" \
+    /usr/local/bin/node --input-type=module --eval '
+      const registry = await import(process.env.FASED_FIXTURE_MODULE_URL);
+      const wallets = registry.readWalletProviderRegistry().wallets;
+      if (!wallets.some((wallet) => wallet.id === "agent")) process.exit(92);
+    '
+}
+
 wait_for_socket() {
   local socket="$1"
   for _ in {1..200}; do
@@ -202,6 +291,8 @@ if [[ "$phase" == "verify-reboot" ]]; then
   wait_for_socket "/run/fased-local/$instance/operator/operator.sock"
   verify_protected_home_acl "$instance"
   mapfile -t env_args < <(operator_env "$instance")
+  verify_shared_device_auth "$instance" "$runtime"
+  verify_shared_federation_state "$instance" "$runtime"
   runuser -u testop -- env "${env_args[@]}" \
     /usr/local/bin/node "$runtime/fased.mjs" health --json --timeout 5000 \
     >/tmp/reboot-health.json
@@ -947,12 +1038,13 @@ managed_update_env=(
 : >/tmp/bridge-update.err
 bridge_status=1
 for bridge_attempt in 1 2 3; do
-  set +e
-  runuser -u testop -- env "${managed_update_env[@]}" \
+  if runuser -u testop -- env "${managed_update_env[@]}" \
     "$state/install-cache/npm-global/bin/fased" update --channel beta --timeout 120 \
-    >>/tmp/bridge-update.out 2>>/tmp/bridge-update.err
-  bridge_status=$?
-  set -e
+    >>/tmp/bridge-update.out 2>>/tmp/bridge-update.err; then
+    bridge_status=0
+  else
+    bridge_status=$?
+  fi
   [[ "$bridge_status" -eq 0 ]] && break
   if ! grep -F "Detected unsettled top-level await" /tmp/bridge-update.err >/dev/null &&
     ! grep -F "commit cleanup is pending" /tmp/bridge-update.err >/dev/null; then
@@ -1022,6 +1114,23 @@ user_systemctl daemon-reload
 user_systemctl enable --now fased-fixture-gateway-reactivator.timer
 wait_for_gateway_version "$legacy_gateway_version"
 original_manifest_sha="$(sha256sum "$state/install.json" | awk '{print $1}')"
+install -d -m 0700 -o testop -g testop "$state/identity"
+cat >"$state/identity/device-auth.json" <<'EOF_LEGACY_DEVICE_AUTH'
+{
+  "version": 1,
+  "deviceId": "fixture-shared-device",
+  "tokens": {
+    "operator": {
+      "token": "fixture-operator-token",
+      "role": "operator",
+      "scopes": [],
+      "updatedAtMs": 1
+    }
+  }
+}
+EOF_LEGACY_DEVICE_AUTH
+chown testop:testop "$state/identity/device-auth.json"
+chmod 0600 "$state/identity/device-auth.json"
 printf '%s\n' "$version" >"$selected_target"
 
 inject_failed_target_gateway() {
@@ -1090,6 +1199,10 @@ wait_for_gateway_version "$version"
 wait_for_service "fased-signerd-$instance.service"
 wait_for_service "fased-local-controller-$instance.service"
 wait_for_service "fased-gateway-$instance.service"
+test "$(stat -c '%U:%G:%a' "$state/identity/device-auth.json")" = \
+  "testop:fscf-$instance:660"
+verify_shared_device_auth "$instance" "$runtime"
+verify_shared_federation_state "$instance" "$runtime"
 signer_pid_before="$(systemctl show -p MainPID --value "fased-signerd-$instance.service")"
 gateway_pid_before="$(systemctl show -p MainPID --value "fased-gateway-$instance.service")"
 runuser -u testop -- env "${managed_update_env[@]}" \
@@ -1137,6 +1250,8 @@ test "$(sha256sum "$wallet_dir/provider-registry.v1.json" | awk '{print $1}')" =
   "$original_registry_sha"
 
 mapfile -t env_args < <(operator_env "$instance")
+verify_shared_device_auth "$instance" "$runtime"
+verify_shared_federation_state "$instance" "$runtime"
 runuser -u testop -- env "${env_args[@]}" \
   /usr/local/bin/node "$runtime/fased.mjs" wallet setup \
   --mode local-signer-create \
@@ -1147,6 +1262,7 @@ runuser -u testop -- env "${env_args[@]}" \
   --non-interactive \
   --json \
   >/tmp/protected-vault-create.json
+verify_shared_wallet_registry "$instance" "$runtime"
 verify_wallet "$instance" vault >/tmp/active-vault.json
 jq -e '.ready == true and .role == "vault"' /tmp/active-vault.json >/dev/null
 runuser -u testop -- "/opt/fased/local/$instance/signer/fased-signerd" \

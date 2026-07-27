@@ -867,9 +867,22 @@ async function shareApplicationState(spec, configGroup, legacy) {
   await fsp.mkdir(spec.stateDir, { recursive: true, mode: 0o2770 });
   const chown = systemBinary(["/usr/bin/chown", "/bin/chown"], "chown");
   const chmod = systemBinary(["/usr/bin/chmod", "/bin/chmod"], "chmod");
+  const find = systemBinary(["/usr/bin/find", "/bin/find"], "find");
   runSystem(chown, ["-R", `${spec.operatorUid}:${configGroup.gid}`, spec.stateDir]);
   runSystem(chmod, ["-R", "g+rwX,o-rwx", spec.stateDir]);
-  runSystem(chmod, ["g+s", spec.stateDir]);
+  runSystem(find, [spec.stateDir, "-type", "d", "-exec", chmod, "g+s", "{}", "+"]);
+  const identityDir = path.join(spec.stateDir, "identity");
+  await fsp.mkdir(identityDir, { recursive: true, mode: 0o2770 });
+  await fsp.chown(identityDir, spec.operatorUid, configGroup.gid);
+  await fsp.chmod(identityDir, 0o2770);
+  const walletDir = path.join(spec.stateDir, "wallet");
+  await fsp.mkdir(walletDir, { recursive: true, mode: 0o2770 });
+  await fsp.chown(walletDir, spec.operatorUid, configGroup.gid);
+  await fsp.chmod(walletDir, 0o2770);
+  const federationDir = path.join(spec.stateDir, "federation");
+  await fsp.mkdir(federationDir, { recursive: true, mode: 0o2770 });
+  await fsp.chown(federationDir, spec.operatorUid, configGroup.gid);
+  await fsp.chmod(federationDir, 0o2770);
   for (const protectedRuntimePath of [
     path.join(spec.stateDir, "runtime"),
     path.join(spec.stateDir, "updater"),

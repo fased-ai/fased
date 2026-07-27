@@ -36,6 +36,7 @@ export function registerUpdateCli(program: Command) {
     .command("update")
     .description("Update FasedAgent and inspect update channel status")
     .option("--json", "Output result as JSON", false)
+    .option("--verbose", "Show detailed update timing", false)
     .option("--no-restart", "Skip restarting the gateway service after a successful update")
     .option("--dry-run", "Preview update actions without making changes", false)
     .option("--channel <stable|beta|dev>", "Persist update channel (git + npm)")
