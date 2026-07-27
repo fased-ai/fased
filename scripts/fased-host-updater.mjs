@@ -1857,6 +1857,11 @@ async function reconcileProtectedApplicationState(context) {
     ? context.paths.gatewayUnitPath
     : "/etc/systemd/system/fased-gateway.service";
   const gatewayUnit = await fileMetadata(gatewayUnitPath);
+  if (!gatewayUnit.existed && !protectedLocal) {
+    // Fresh Hosting prepares the signer before the root Gateway unit exists.
+    // The installer reconciles the state immediately after it creates that unit.
+    return { changed: false, pendingGatewayUnit: true };
+  }
   if (
     !gatewayUnit.existed ||
     gatewayUnit.uid !== context.rootUid ||
