@@ -9,7 +9,12 @@ const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 type WorkflowJob = {
   if?: string;
   needs?: string[];
-  steps?: Array<{ env?: Record<string, string>; run?: string }>;
+  steps?: Array<{
+    env?: Record<string, string>;
+    run?: string;
+    uses?: string;
+    with?: Record<string, boolean | number | string>;
+  }>;
 };
 
 type Workflow = {
@@ -38,6 +43,11 @@ describe("CI workflow routing", () => {
       expect.arrayContaining(["change-scope", "hosting-lifecycle"]),
     );
     expect(protectedLocalUpdate?.if).toBe("needs.change-scope.outputs.run_hosting == 'true'");
+    expect(
+      protectedLocalUpdate?.steps?.find((step) => step.uses === "actions/checkout@v6")?.with?.[
+        "fetch-depth"
+      ],
+    ).toBe(0);
     expect(
       protectedLocalUpdate?.steps?.find(
         (step) => step.env?.FASED_SYSTEMD_FIXTURE_SCENARIOS === "install",

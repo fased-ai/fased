@@ -490,6 +490,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           submodules: false
 
       - name: Setup Node.js
