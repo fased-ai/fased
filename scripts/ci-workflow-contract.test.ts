@@ -85,4 +85,15 @@ describe("CI workflow routing", () => {
     expect(jobs["macos"]?.if).toBe("needs.change-scope.outputs.run_macos == 'true'");
     expect(jobs["ui-mining"]?.if).toBe("needs.change-scope.outputs.run_ui_mining == 'true'");
   });
+
+  it("selects beta for every prerelease target in the Protected Local fixture", async () => {
+    const fixture = await readFile(
+      resolve(repoRoot, "scripts/docker/protected-local-systemd/run.sh"),
+      "utf8",
+    );
+
+    expect(fixture).toContain('if [[ "$version" == *-* ]]');
+    expect(fixture.match(/update "\$\{target_update_args\[@\]\}" --timeout/gu)).toHaveLength(5);
+    expect(fixture).toContain("update --channel beta --timeout 120");
+  });
 });
