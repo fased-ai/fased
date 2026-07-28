@@ -31,6 +31,18 @@ describe("CI workflow routing", () => {
     expect(jobs["android"]).toBeUndefined();
     expect(jobs["version-identity"]).toBeDefined();
     expect(jobs["hosting-lifecycle"]).toBeDefined();
+    expect(jobs["protected-local-update-lifecycle"]).toBeDefined();
+
+    const protectedLocalUpdate = jobs["protected-local-update-lifecycle"];
+    expect(protectedLocalUpdate?.needs).toEqual(
+      expect.arrayContaining(["change-scope", "hosting-lifecycle"]),
+    );
+    expect(protectedLocalUpdate?.if).toBe("needs.change-scope.outputs.run_hosting == 'true'");
+    expect(
+      protectedLocalUpdate?.steps?.find(
+        (step) => step.env?.FASED_SYSTEMD_FIXTURE_SCENARIOS === "install",
+      )?.run,
+    ).toBe("bash scripts/test-protected-local-systemd-container.sh");
 
     const required = jobs["required-checks"];
     expect(required?.needs).toEqual(
@@ -38,6 +50,7 @@ describe("CI workflow routing", () => {
         "change-scope",
         "version-identity",
         "hosting-lifecycle",
+        "protected-local-update-lifecycle",
         "ui-mining",
         "checks-windows",
         "macos",
@@ -49,6 +62,7 @@ describe("CI workflow routing", () => {
       VERSION_ONLY: "${{ needs.change-scope.outputs.version_only }}",
       RUN_HOSTING: "${{ needs.change-scope.outputs.run_hosting }}",
       RUN_UI_MINING: "${{ needs.change-scope.outputs.run_ui_mining }}",
+      PROTECTED_LOCAL_UPDATE: "${{ needs.protected-local-update-lifecycle.result }}",
     });
   });
 

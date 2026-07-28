@@ -42,6 +42,7 @@ export function assertApplicableGates(input) {
   if (enabled(input.runHosting)) {
     requireSuccess(results, "Hosting lifecycle");
     requireSuccess(results, "Protected Local lifecycle");
+    requireSuccess(results, "Protected Local update lifecycle");
   }
   if (enabled(input.runUiMining)) {
     requireSuccess(results, "Mining browser");
@@ -83,6 +84,7 @@ export function gateInputFromEnv(env = process.env) {
       "native signer": env.SIGNER,
       "Hosting lifecycle": env.HOSTING,
       "Protected Local lifecycle": env.PROTECTED_LOCAL,
+      "Protected Local update lifecycle": env.PROTECTED_LOCAL_UPDATE,
       "Mining browser": env.UI_MINING,
       skills: env.SKILLS,
       macOS: env.MACOS,
