@@ -1139,6 +1139,23 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     expect(events).toEqual(["refresh-previous", "remove-journal"]);
   });
 
+  it("resumes rolling-back recovery through the idempotent root rollback operation", async () => {
+    const events: string[] = [];
+    await expect(
+      __testing.rollbackHostedReleaseTransaction(
+        transaction("rolling-back"),
+        transactionOperations(events),
+      ),
+    ).resolves.toMatchObject({ action: "rolled-back" });
+    expect(events).toEqual([
+      "signer:rollbackRelease",
+      "restore-app",
+      "write:rollback-ready",
+      "refresh-previous",
+      "remove-journal",
+    ]);
+  });
+
   it("never rolls back after the durable health commit decision", async () => {
     const events: string[] = [];
     const operations = transactionOperations(events, {
