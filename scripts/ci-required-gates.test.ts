@@ -36,6 +36,7 @@ describe("required CI gate aggregation", () => {
       "packed Local install": "success",
       "Hosting lifecycle": "success",
       "Protected Local lifecycle": "success",
+      "Protected Local update lifecycle": "success",
     };
     expect(() =>
       assertApplicableGates({
@@ -55,6 +56,17 @@ describe("required CI gate aggregation", () => {
         },
       }),
     ).toThrow(/required Hosting lifecycle result was skipped/);
+    expect(() =>
+      assertApplicableGates({
+        runNode: true,
+        runHosting: true,
+        results: {
+          ...alwaysGreen,
+          ...nodeAndHosting,
+          "Protected Local update lifecycle": "failure",
+        },
+      }),
+    ).toThrow(/required Protected Local update lifecycle result was failure/);
   });
 
   it("requires all selected full-matrix lanes", () => {

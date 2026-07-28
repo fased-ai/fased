@@ -206,6 +206,7 @@ export function buildManagedInstallManifest({
   hostedRelease,
   previousVersion,
   service,
+  updateChannel,
   source = "managed-artifact",
 }) {
   const normalizedProfile = normalizeManagedProfile(profile);
@@ -243,6 +244,9 @@ export function buildManagedInstallManifest({
     updater: {
       version,
       path: paths.updaterPath,
+    },
+    update: {
+      channel: new Set(["stable", "beta", "dev"]).has(updateChannel) ? updateChannel : "stable",
     },
     release: hostedRelease
       ? {

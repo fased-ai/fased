@@ -622,6 +622,7 @@ async function updateOperatorConfig(spec, layout, configGroup) {
       gid: configGroup.gid,
     });
   }
+  grantOperatorApplicationStateAccess(spec);
 }
 
 async function installControllerGeneration(sourceRoot, layout, spec) {
@@ -892,6 +893,102 @@ async function shareApplicationState(spec, configGroup, legacy) {
   }
   await hardenInstalledPlugins(spec);
   await protectLegacyMaterial(legacy, spec);
+}
+
+const PROTECTED_LOCAL_OPERATOR_ONLY_STATE = new Set([
+  "backups",
+  "bin",
+  "extensions",
+  "install-cache",
+  "runtime",
+  "signer-update",
+  "source-paired-update",
+  "updater",
+]);
+
+function grantOperatorApplicationStateAccess(spec) {
+  const setfacl = systemBinary(["/usr/bin/setfacl", "/bin/setfacl"], "setfacl");
+  const find = systemBinary(["/usr/bin/find", "/bin/find"], "find");
+  const operatorEntry = `user:${spec.operatorUid}`;
+  runSystem(setfacl, ["--modify", `${operatorEntry}:rwx,group::rwx`, "--", spec.stateDir]);
+  runSystem(setfacl, [
+    "--modify",
+    `default:${operatorEntry}:rwx,default:group::rwx`,
+    "--",
+    spec.stateDir,
+  ]);
+  for (const name of fs
+    .readdirSync(spec.stateDir)
+    .filter((entry) => !PROTECTED_LOCAL_OPERATOR_ONLY_STATE.has(entry))) {
+    const sharedRoot = path.join(spec.stateDir, name);
+    runSystem(find, [
+      "-P",
+      sharedRoot,
+      "-xdev",
+      "-type",
+      "d",
+      "-exec",
+      setfacl,
+      "--modify",
+      `${operatorEntry}:rwx,group::rwx,default:${operatorEntry}:rwx,default:group::rwx`,
+      "--",
+      "{}",
+      "+",
+    ]);
+    runSystem(find, [
+      "-P",
+      sharedRoot,
+      "-xdev",
+      "-type",
+      "f",
+      "-exec",
+      setfacl,
+      "--modify",
+      `${operatorEntry}:rw-,group::rw-`,
+      "--",
+      "{}",
+      "+",
+    ]);
+  }
+  for (const directory of sharedApplicationStateDirectoriesForAclVerification(spec)) {
+    const entries = aclEntryMap(captureDirectoryAcl(directory));
+    if (
+      entries.get(`user:${spec.operatorUid}:`) !== "rwx" ||
+      entries.get(`default:user:${spec.operatorUid}:`) !== "rwx" ||
+      entries.get("group::") !== "rwx" ||
+      entries.get("default:group::") !== "rwx"
+    ) {
+      fail(`protected Local operator ACL did not converge: ${directory}`);
+    }
+  }
+  const configEntries = aclEntryMap(captureDirectoryAcl(path.join(spec.stateDir, "fased.json")));
+  if (
+    !new Set(["rw-", "rwx"]).has(configEntries.get(`user:${spec.operatorUid}:`)) ||
+    !new Set(["rw-", "rwx"]).has(configEntries.get("group::"))
+  ) {
+    fail("protected Local operator cannot read and update application configuration");
+  }
+}
+
+function sharedApplicationStateDirectoriesForAclVerification(spec) {
+  const directories = [spec.stateDir];
+  for (const name of ["identity", "wallet", "federation"]) {
+    const directory = path.join(spec.stateDir, name);
+    let stat;
+    try {
+      stat = fs.lstatSync(directory);
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        continue;
+      }
+      throw error;
+    }
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      fail(`protected Local shared application state is not a directory: ${directory}`);
+    }
+    directories.push(directory);
+  }
+  return directories;
 }
 
 async function installRootFiles(params) {
@@ -2880,6 +2977,7 @@ export const __testing = Object.freeze({
   removeLegacySignerMaterial,
   resolveTrustedLegacyRuntimeHardlinks,
   resolveLegacySignerPaths,
+  sharedApplicationStateDirectoriesForAclVerification,
   protectedLocalGatewayHealthMatches,
   previousLegacyGatewayVersion,
   verifySignerReleaseIdentity,

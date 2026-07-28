@@ -9,7 +9,12 @@ const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 type WorkflowJob = {
   if?: string;
   needs?: string[];
-  steps?: Array<{ env?: Record<string, string>; run?: string }>;
+  steps?: Array<{
+    env?: Record<string, string>;
+    run?: string;
+    uses?: string;
+    with?: Record<string, boolean | number | string>;
+  }>;
 };
 
 type Workflow = {
@@ -31,6 +36,23 @@ describe("CI workflow routing", () => {
     expect(jobs["android"]).toBeUndefined();
     expect(jobs["version-identity"]).toBeDefined();
     expect(jobs["hosting-lifecycle"]).toBeDefined();
+    expect(jobs["protected-local-update-lifecycle"]).toBeDefined();
+
+    const protectedLocalUpdate = jobs["protected-local-update-lifecycle"];
+    expect(protectedLocalUpdate?.needs).toEqual(
+      expect.arrayContaining(["change-scope", "hosting-lifecycle"]),
+    );
+    expect(protectedLocalUpdate?.if).toBe("needs.change-scope.outputs.run_hosting == 'true'");
+    expect(
+      protectedLocalUpdate?.steps?.find((step) => step.uses === "actions/checkout@v6")?.with?.[
+        "fetch-depth"
+      ],
+    ).toBe(0);
+    expect(
+      protectedLocalUpdate?.steps?.find(
+        (step) => step.env?.FASED_SYSTEMD_FIXTURE_SCENARIOS === "install",
+      )?.run,
+    ).toBe("bash scripts/test-protected-local-systemd-container.sh");
 
     const required = jobs["required-checks"];
     expect(required?.needs).toEqual(
@@ -38,6 +60,7 @@ describe("CI workflow routing", () => {
         "change-scope",
         "version-identity",
         "hosting-lifecycle",
+        "protected-local-update-lifecycle",
         "ui-mining",
         "checks-windows",
         "macos",
@@ -49,6 +72,7 @@ describe("CI workflow routing", () => {
       VERSION_ONLY: "${{ needs.change-scope.outputs.version_only }}",
       RUN_HOSTING: "${{ needs.change-scope.outputs.run_hosting }}",
       RUN_UI_MINING: "${{ needs.change-scope.outputs.run_ui_mining }}",
+      PROTECTED_LOCAL_UPDATE: "${{ needs.protected-local-update-lifecycle.result }}",
     });
   });
 
@@ -60,5 +84,16 @@ describe("CI workflow routing", () => {
     expect(jobs["ui"]?.if).toBe("needs.change-scope.outputs.full_matrix == 'true'");
     expect(jobs["macos"]?.if).toBe("needs.change-scope.outputs.run_macos == 'true'");
     expect(jobs["ui-mining"]?.if).toBe("needs.change-scope.outputs.run_ui_mining == 'true'");
+  });
+
+  it("selects beta for every prerelease target in the Protected Local fixture", async () => {
+    const fixture = await readFile(
+      resolve(repoRoot, "scripts/docker/protected-local-systemd/run.sh"),
+      "utf8",
+    );
+
+    expect(fixture).toContain('if [[ "$version" == *-* ]]');
+    expect(fixture.match(/update "\$\{target_update_args\[@\]\}" --timeout/gu)).toHaveLength(5);
+    expect(fixture).toContain("update --channel beta --timeout 120");
   });
 });

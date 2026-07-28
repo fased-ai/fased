@@ -9,6 +9,10 @@ commit="${FASED_FIXTURE_COMMIT:?missing fixture commit}"
 legacy_version="${FASED_FIXTURE_LEGACY_VERSION:-0.1.75}"
 bridge_version="${FASED_FIXTURE_BRIDGE_VERSION:-0.1.76-rc.7}"
 preinstalled_tools="${FASED_FIXTURE_PREINSTALLED_TOOLS:-0}"
+target_update_args=()
+if [[ "$version" == *-* ]]; then
+  target_update_args=(--channel beta)
+fi
 digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 release_root="/var/lib/fased-installer/releases/v${version}/${digest}/extract/package"
 root_store="$(dirname "$(dirname "$release_root")")"
@@ -128,6 +132,21 @@ verify_mining_history() {
     --json \
     >/tmp/mining-history.json
   jq -e 'type == "object"' /tmp/mining-history.json >/dev/null
+}
+
+run_as_stale_operator() {
+  /usr/bin/setpriv \
+    --reuid "$(id -u testop)" \
+    --regid "$(id -g testop)" \
+    --clear-groups \
+    -- \
+    env \
+      HOME=/home/testop \
+      USER=testop \
+      LOGNAME=testop \
+      PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+      FASED_NODE=/usr/local/bin/node \
+      "$@"
 }
 
 verify_profileless_config_write() {
@@ -882,7 +901,7 @@ if [[ "$phase" == "fresh-install" ]]; then
 
   noop_started="$SECONDS"
   runuser -u testop -- env "${fresh_env[@]}" \
-    "$state/install-cache/npm-global/bin/fased" update --timeout 30 \
+    "$state/install-cache/npm-global/bin/fased" update "${target_update_args[@]}" --timeout 30 \
     >/tmp/fresh-noop-update.out 2>/tmp/fresh-noop-update.err
   grep -F "Already current: $version" /tmp/fresh-noop-update.out >/dev/null
   if grep -F "Protected Local migration" /tmp/fresh-noop-update.err >/dev/null; then
@@ -1208,7 +1227,7 @@ EOF_FAILED_GATEWAY
 inject_failed_target_gateway &
 injector_pid=$!
 if runuser -u testop -- env "${managed_update_env[@]}" \
-  "$state/install-cache/npm-global/bin/fased" update --timeout 60 \
+  "$state/install-cache/npm-global/bin/fased" update "${target_update_args[@]}" --timeout 60 \
   >/tmp/protected-update-failure.out 2>/tmp/protected-update-failure.err; then
   update_failure_status=0
 else
@@ -1233,7 +1252,7 @@ test "$(sha256sum "$wallet_dir/provider-registry.v1.json" | awk '{print $1}')" =
 verify_legacy_wallet /tmp/failure-rollback-agent.json
 
 runuser -u testop -- env "${managed_update_env[@]}" \
-  "$state/install-cache/npm-global/bin/fased" update --timeout 60 \
+  "$state/install-cache/npm-global/bin/fased" update "${target_update_args[@]}" --timeout 60 \
   >/tmp/protected-update.out 2>/tmp/protected-update.err
 grep -F "Protected Local migration" /tmp/protected-update.err >/dev/null
 grep -F "Update mode: verified target-owned Protected Local transaction" \
@@ -1254,8 +1273,20 @@ verify_shared_federation_state "$instance" "$runtime"
 verify_profileless_config_write "$instance" "$runtime"
 signer_pid_before="$(systemctl show -p MainPID --value "fased-signerd-$instance.service")"
 gateway_pid_before="$(systemctl show -p MainPID --value "fased-gateway-$instance.service")"
+test "$(run_as_stale_operator id -G)" = "$(id -g testop)"
+run_as_stale_operator test -r "$state/fased.json"
+run_as_stale_operator "$state/bin/fased" update "${target_update_args[@]}" --timeout 30 \
+  >/tmp/protected-stale-session-update.out 2>/tmp/protected-stale-session-update.err
+grep -F "Already current: $version" /tmp/protected-stale-session-update.out >/dev/null
+run_as_stale_operator "$state/bin/fased" mining history \
+  --url "ws://127.0.0.1:$gateway_port" \
+  --token "$gateway_token" \
+  --timeout 5000 \
+  --json \
+  >/tmp/protected-stale-session-mining.json
+jq -e 'type == "object"' /tmp/protected-stale-session-mining.json >/dev/null
 runuser -u testop -- env "${managed_update_env[@]}" \
-  "$state/install-cache/npm-global/bin/fased" update --timeout 30 \
+  "$state/install-cache/npm-global/bin/fased" update "${target_update_args[@]}" --timeout 30 \
   >/tmp/protected-noop-update.out 2>/tmp/protected-noop-update.err
 grep -F "Already current: $version" /tmp/protected-noop-update.out >/dev/null
 if grep -F "Protected Local migration" /tmp/protected-noop-update.err >/dev/null; then

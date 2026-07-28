@@ -149,6 +149,11 @@ printf 'streamed-bootstrap\\n' | bash ${JSON.stringify(harness)}
       "install_fixed_host_gateway_service()",
       "reconcile_hosting_shared_state()",
     );
+    const sharedState = sliceBetween(
+      installer,
+      "reconcile_hosting_shared_state()",
+      "run_tailscale_auth_from_private_file()",
+    );
     expect(accounts).toContain('chgrp "$config_group" "$target_home"');
     expect(accounts).toContain('chmod 0710 "$target_home"');
     expect(gateway).toContain('chgrp "$config_group" "$target_home"');
@@ -157,6 +162,13 @@ printf 'streamed-bootstrap\\n' | bash ${JSON.stringify(harness)}
     expect(gateway).toContain('chmod -R g+rX,o-rwx "$target_repo_dir"');
     expect(gateway).toContain('find "$target_repo_dir" -type d -exec chmod g+s {} +');
     expect(gateway).toContain('chmod 2770 "$target_repo_dir"');
+    expect(sharedState).toContain('setfacl --modify "user:${target_user}:rwx" "$state_dir"');
+    expect(sharedState).toContain(
+      'setfacl --modify "default:user:${target_user}:rwx" "$state_dir"',
+    );
+    expect(sharedState).toContain(
+      'setfacl --recursive --physical --modify "user:${target_user}:rwX" "$shared_entry"',
+    );
   });
 
   it("delays SSH and firewall hardening until runtime health and never asks for DNS retyping", () => {

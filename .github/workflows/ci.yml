@@ -481,6 +481,47 @@ jobs:
           FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: ${{ matrix.distro == 'rocky' && '1' || '0' }}
         run: bash scripts/test-protected-local-systemd-container.sh
 
+  protected-local-update-lifecycle:
+    name: "protected Local update lifecycle (ubuntu)"
+    needs: [change-scope, hosting-lifecycle]
+    if: needs.change-scope.outputs.run_hosting == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.x
+
+      - name: Download exact Protected Local fixture artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: protected-local-fixture-artifact
+          path: ${{ runner.temp }}/protected-local-artifact/
+
+      - name: Restore cached systemd fixture base image
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/protected-local-image-cache/
+          key: >-
+            protected-local-systemd-${{ runner.os }}-ubuntu-v1-
+            ${{ hashFiles('scripts/docker/protected-local-systemd/Containerfile.*',
+            'scripts/docker/protected-local-systemd/*.conf') }}
+
+      - name: Check Protected Local update, rollback, retry, and idempotence
+        env:
+          FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
+          FASED_SYSTEMD_FIXTURE_SCENARIOS: install
+          FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/protected-local-artifact
+          FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
+          FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "0"
+        run: bash scripts/test-protected-local-systemd-container.sh
+
   version-identity:
     name: "version identity"
     needs: [change-scope]
@@ -1120,6 +1161,7 @@ jobs:
       - check
       - hosting-lifecycle
       - protected-local-lifecycle
+      - protected-local-update-lifecycle
       - version-identity
       - strict-types-baseline
       - checks
@@ -1156,6 +1198,7 @@ jobs:
           CHECK: ${{ needs.check.result }}
           HOSTING: ${{ needs.hosting-lifecycle.result }}
           PROTECTED_LOCAL: ${{ needs.protected-local-lifecycle.result }}
+          PROTECTED_LOCAL_UPDATE: ${{ needs.protected-local-update-lifecycle.result }}
           VERSION_IDENTITY: ${{ needs.version-identity.result }}
           STRICT_TYPES: ${{ needs.strict-types-baseline.result }}
           TESTS: ${{ needs.checks.result }}

@@ -58,43 +58,56 @@ const HOSTED_TRANSACTION_PHASES = new Set([
   "rollback-ready",
 ]);
 
-function resolveRootManagedControllerSocket(paths, manifest = null) {
+function resolveManagedControllerDescriptor(paths, manifest = null) {
   const selectedManifest = manifest ?? readManagedInstallManifest(paths.manifestPath);
-  if (selectedManifest?.profile === "hosting") {
-    return HOST_UPDATER_SOCKET;
-  }
-  if (selectedManifest?.profile !== "protected-local") {
-    return process.env.FASED_HOST_UPDATER_SOCKET || HOST_UPDATER_SOCKET;
-  }
-  const configPath = selectedManifest.configPath;
-  if (!configPath || !path.isAbsolute(configPath)) {
-    throw new Error("Protected Local controller configuration path is invalid.");
-  }
-  let config;
-  try {
-    const configStat = fs.lstatSync(configPath);
-    if (!configStat.isFile() || configStat.isSymbolicLink()) {
-      throw new Error("configuration is not a regular file");
-    }
-    config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  } catch (error) {
-    throw new Error(`Protected Local controller configuration is unavailable: ${error.message}`, {
-      cause: error,
+  const profile = selectedManifest?.profile;
+  if (!isRootManagedProfile(profile)) {
+    return Object.freeze({
+      profile: "unmanaged",
+      socketPath: process.env.FASED_HOST_UPDATER_SOCKET || HOST_UPDATER_SOCKET,
+      instanceId: null,
     });
   }
-  const variables = config?.env?.vars;
-  const instanceId = String(variables?.FASED_PROTECTED_LOCAL_INSTANCE ?? "").trim();
-  const socketPath = String(variables?.FASED_HOST_UPDATER_SOCKET ?? "").trim();
-  const expectedSocket = `/run/fased-local-controller/${instanceId}/request.sock`;
+  const stateDir = path.resolve(paths.stateDir || "");
   if (
-    variables?.FASED_HOST_PROFILE !== "local" ||
-    variables?.FASED_PROTECTED_LOCAL !== "1" ||
-    !/^[a-f0-9]{16}$/u.test(instanceId) ||
-    socketPath !== expectedSocket
+    !path.isAbsolute(stateDir) ||
+    path.resolve(selectedManifest.stateDir || "") !== stateDir ||
+    path.resolve(selectedManifest.configPath || "") !== path.join(stateDir, "fased.json") ||
+    selectedManifest.service?.scope !== "system"
   ) {
-    throw new Error("Protected Local controller identity or socket is invalid.");
+    throw new Error(`${profile} controller identity in install.json is invalid.`);
   }
-  return socketPath;
+  if (profile === "hosting") {
+    if (selectedManifest.service?.name !== "fased-gateway.service") {
+      throw new Error("Hosting controller identity in install.json is invalid.");
+    }
+    return Object.freeze({
+      profile,
+      socketPath: HOST_UPDATER_SOCKET,
+      instanceId: null,
+    });
+  }
+  const serviceMatch = /^fased-gateway-([a-f0-9]{16})\.service$/u.exec(
+    String(selectedManifest.service?.name || "").trim(),
+  );
+  const instanceId = serviceMatch?.[1] || "";
+  const expectedSocket = `/run/fased-local-controller/${instanceId}/request.sock`;
+  const expectedLauncher = `/opt/fased/local/${instanceId}/gateway-launch`;
+  if (
+    !/^[a-f0-9]{16}$/u.test(instanceId) ||
+    selectedManifest.service?.launcher !== expectedLauncher
+  ) {
+    throw new Error("Protected Local controller identity in install.json is invalid.");
+  }
+  return Object.freeze({
+    profile,
+    socketPath: expectedSocket,
+    instanceId,
+  });
+}
+
+function resolveRootManagedControllerSocket(paths, manifest = null) {
+  return resolveManagedControllerDescriptor(paths, manifest).socketPath;
 }
 const TRANSACTION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -338,29 +351,12 @@ async function resolveTargetVersion(options) {
   return version.trim();
 }
 
-async function resolveConfiguredChannel(options, configPath) {
+function resolveConfiguredChannel(options, manifest) {
   if (options.channelExplicit) {
-    try {
-      const config = JSON.parse(await fsp.readFile(configPath, "utf8"));
-      config.update = { ...config.update, channel: options.channel };
-      await atomicWriteJson(configPath, config, 0o600);
-    } catch (error) {
-      if (error?.code !== "ENOENT") {
-        throw new Error(`Could not persist update channel: ${error.message}`, { cause: error });
-      }
-    }
     return options.channel;
   }
-  try {
-    const config = JSON.parse(await fsp.readFile(configPath, "utf8"));
-    const stored = String(config?.update?.channel || "").trim();
-    if (new Set(["stable", "beta", "dev"]).has(stored)) {
-      return stored;
-    }
-  } catch {
-    // Missing or invalid config uses the stable channel.
-  }
-  return "stable";
+  const stored = String(manifest?.update?.channel || "").trim();
+  return new Set(["stable", "beta", "dev"]).has(stored) ? stored : "stable";
 }
 
 async function sha256File(filePath) {
@@ -1474,6 +1470,18 @@ function canonicalReleaseJSON(value) {
   return JSON.stringify(value);
 }
 
+function managedRuntimeReleaseIdentitiesEqual(
+  existingMetadata,
+  targetMetadata,
+  existingRelease,
+  targetRelease,
+) {
+  return (
+    canonicalReleaseJSON(existingMetadata) === canonicalReleaseJSON(targetMetadata) &&
+    canonicalReleaseJSON(existingRelease) === canonicalReleaseJSON(targetRelease)
+  );
+}
+
 async function requestHostedSignerTransaction(
   operation,
   transactionId,
@@ -1689,21 +1697,32 @@ export async function authorizePreactivatedHostedGateway({
   );
 }
 
-async function restartHostedGateway(version, timeoutMs = 30_000) {
+async function restartHostedGateway(
+  version,
+  timeoutMs = 30_000,
+  socketPath = process.env.FASED_HOST_UPDATER_SOCKET || HOST_UPDATER_SOCKET,
+) {
   return await requestHostedSignerTransactionWithRetry(
     "restartGateway",
     randomUUID(),
     version,
     timeoutMs,
+    socketPath,
   );
 }
 
-async function quiesceHostedGateway(transactionId, version, timeoutMs = 30_000) {
+async function quiesceHostedGateway(
+  transactionId,
+  version,
+  timeoutMs = 30_000,
+  socketPath = process.env.FASED_HOST_UPDATER_SOCKET || HOST_UPDATER_SOCKET,
+) {
   return await requestHostedSignerTransactionWithRetry(
     "gateGatewayRelease",
     transactionId,
     version,
     timeoutMs,
+    socketPath,
   );
 }
 
@@ -1714,7 +1733,18 @@ async function refreshGateway(
   allowInactiveHosted = false,
   expectedSignerRelease,
   hostedServiceAlreadyRestarted = false,
+  controllerSocketPath,
 ) {
+  const controllerDescriptor = isRootManagedProfile(manifest.profile)
+    ? resolveManagedControllerDescriptor(
+        {
+          stateDir: manifest.stateDir,
+          manifestPath: path.join(manifest.stateDir, "install.json"),
+        },
+        manifest,
+      )
+    : null;
+  const selectedControllerSocketPath = controllerSocketPath ?? controllerDescriptor?.socketPath;
   const cli = path.join(runtimeRoot, "fased.mjs");
   const env = {
     ...process.env,
@@ -1727,7 +1757,11 @@ async function refreshGateway(
   if (isRootManagedProfile(manifest.profile)) {
     if (!hostedServiceAlreadyRestarted) {
       try {
-        await restartHostedGateway(manifest.runtime.activeVersion, timeoutMs);
+        await restartHostedGateway(
+          manifest.runtime.activeVersion,
+          timeoutMs,
+          selectedControllerSocketPath,
+        );
       } catch (error) {
         if (!allowInactiveHosted || !error.message.includes("MainPID unavailable")) {
           throw error;
@@ -1767,6 +1801,7 @@ async function refreshGateway(
       if (isRootManagedProfile(manifest.profile)) {
         await probeRootManagedSignerCompatibility({
           profile: manifest.profile,
+          instanceId: controllerDescriptor?.instanceId,
           timeoutMs: Math.min(timeoutMs, 5000),
           expectedRelease: expectedSignerRelease,
           expectedVersion: manifest.runtime.activeVersion,
@@ -1924,25 +1959,16 @@ function assertRootManagedSignerCompatibility(
 
 async function probeRootManagedSignerCompatibility({
   profile,
+  instanceId,
   timeoutMs,
   expectedRelease,
   expectedVersion,
   expectedCapabilities,
 }) {
-  const instanceId = String(process.env.FASED_PROTECTED_LOCAL_INSTANCE ?? "").trim();
-  const protectedLocal = profile === "protected-local";
-  if (protectedLocal && !/^[a-f0-9]{16}$/.test(instanceId)) {
-    throw new Error("Protected Local signer instance identity is unavailable during update");
-  }
-  const signerBinary = protectedLocal
-    ? `/opt/fased/local/${instanceId}/signer/fased-signerd`
-    : "/opt/fased/signer/fased-signerd";
-  const operatorSocket = protectedLocal
-    ? `/run/fased-local/${instanceId}/operator/operator.sock`
-    : "/run/fased-signerd/operator.sock";
+  const endpoint = rootManagedSignerEndpoint(profile, instanceId);
   const child = await runFile(
-    signerBinary,
-    ["admin", "service", "health", "--operator-socket", operatorSocket],
+    endpoint.signerBinary,
+    ["admin", "service", "health", "--operator-socket", endpoint.operatorSocket],
     {
       env: {
         HOME: process.env.HOME,
@@ -1969,6 +1995,23 @@ async function probeRootManagedSignerCompatibility({
     expectedVersion,
     expectedCapabilities,
   );
+}
+
+function rootManagedSignerEndpoint(profile, instanceId) {
+  const normalizedInstanceId = String(instanceId ?? "").trim();
+  const protectedLocal = profile === "protected-local";
+  if (protectedLocal && !/^[a-f0-9]{16}$/.test(normalizedInstanceId)) {
+    throw new Error("Protected Local signer instance identity is unavailable during update");
+  }
+  return protectedLocal
+    ? Object.freeze({
+        signerBinary: `/opt/fased/local/${normalizedInstanceId}/signer/fased-signerd`,
+        operatorSocket: `/run/fased-local/${normalizedInstanceId}/operator/operator.sock`,
+      })
+    : Object.freeze({
+        signerBinary: "/opt/fased/signer/fased-signerd",
+        operatorSocket: "/run/fased-signerd/operator.sock",
+      });
 }
 
 async function replaceCompatibilityLink(paths) {
@@ -2151,6 +2194,53 @@ async function restoreHostedApplication(paths, journal) {
 }
 
 async function rollbackHostedReleaseTransaction(journal, operations, originalError = null) {
+  if (journal.phase === "rolling-back") {
+    try {
+      await operations.signerRequest("rollbackRelease", journal);
+      await operations.restoreApplication(journal);
+      journal = await operations.writePhase(journal, "rollback-ready");
+      await operations.refreshPrevious(journal);
+      await operations.removeJournal();
+    } catch (error) {
+      const incomplete = new Error(
+        `Hosted update recovery is incomplete (rollback retry: ${error.message}). Re-run fased update after correcting the reported failure.`,
+        { cause: originalError || error },
+      );
+      incomplete.code = "HOSTED_ROLLBACK_INCOMPLETE";
+      throw incomplete;
+    }
+    if (originalError) {
+      const rolledBack = new Error(
+        `Update rolled back after coordinated health verification failed: ${originalError.message}`,
+        { cause: originalError },
+      );
+      rolledBack.code = "HOSTED_UPDATE_ROLLED_BACK";
+      throw rolledBack;
+    }
+    return { action: "rolled-back", journal };
+  }
+  if (journal.phase === "rollback-ready") {
+    try {
+      await operations.refreshPrevious(journal);
+    } catch (error) {
+      const incomplete = new Error(
+        `Hosted update recovery is incomplete (previous Gateway refresh: ${error.message}). Re-run fased update after correcting the reported failure.`,
+        { cause: originalError || error },
+      );
+      incomplete.code = "HOSTED_ROLLBACK_INCOMPLETE";
+      throw incomplete;
+    }
+    await operations.removeJournal();
+    if (originalError) {
+      const rolledBack = new Error(
+        `Update rolled back after coordinated health verification failed: ${originalError.message}`,
+        { cause: originalError },
+      );
+      rolledBack.code = "HOSTED_UPDATE_ROLLED_BACK";
+      throw rolledBack;
+    }
+    return { action: "rolled-back", journal };
+  }
   const failures = [];
   let gatewayQuiesced = false;
   let applicationRestored = false;
@@ -2291,7 +2381,12 @@ function hostedTransactionOperations(paths, timeoutMs, options = {}) {
       // updater, and downgrading the stable files would break recovery.
     },
     quiesceGateway: async (journal) =>
-      await quiesceHostedGateway(journal.transactionId, journal.targetVersion, timeoutMs),
+      await quiesceHostedGateway(
+        journal.transactionId,
+        journal.targetVersion,
+        timeoutMs,
+        controllerSocketPath,
+      ),
     signerRequest: async (operation, journal) => {
       if (operation === "prepareRelease") {
         await ensureHostedControllerRelease(
@@ -2356,6 +2451,8 @@ function hostedTransactionOperations(paths, timeoutMs, options = {}) {
         timeoutMs,
         true,
         journal.previousManifest?.signer?.release,
+        false,
+        controllerSocketPath,
       ),
     finalizeApplication: async (journal) => {
       if (!journal.signerRelease) {
@@ -5365,6 +5462,27 @@ async function stageManagedReleaseCandidate({
     if (releaseExists) {
       try {
         await assertManagedRuntime(releaseRoot, targetVersion);
+        const existingMetadata = await readHostedRuntimeMetadata(releaseRoot);
+        if (!existingMetadata) {
+          throw new Error("Existing managed runtime metadata is missing or invalid.");
+        }
+        const existingHostedRelease = await readHostedReleaseBinding(
+          releaseRoot,
+          existingMetadata,
+          targetVersion,
+        );
+        if (
+          !managedRuntimeReleaseIdentitiesEqual(
+            existingMetadata,
+            metadata,
+            existingHostedRelease,
+            hostedRelease,
+          )
+        ) {
+          throw new Error(
+            "Existing managed runtime does not match the exact target release identity.",
+          );
+        }
       } catch {
         await fsp.rm(releaseRoot, { recursive: true, force: true });
         await fsp.rename(stagedRoot, releaseRoot);
@@ -5516,7 +5634,7 @@ async function updateManagedRuntime(options) {
       existingManifest.profile === "protected-local" && artifactBaseUrl !== DEFAULT_RELEASE_BASE_URL
         ? readProtectedLocalTestArtifactAuthorization({
             baseUrl: artifactBaseUrl,
-            protectedLocalInstance: parseProtectedLocalEnvironment(existingManifest.configPath)
+            protectedLocalInstance: resolveManagedControllerDescriptor(paths, existingManifest)
               .instanceId,
             releaseVersion: targetVersion,
           })
@@ -5605,6 +5723,7 @@ async function updateManagedRuntime(options) {
           hostedRelease: candidate.hostedRelease,
           previousVersion: currentVersion,
           service: existingManifest.service,
+          updateChannel: options.channel,
         });
         const migration = await measureStage(
           timings,
@@ -5701,6 +5820,7 @@ async function updateManagedRuntime(options) {
         hostedRelease,
         previousVersion: currentVersion,
         service: existingManifest.service,
+        updateChannel: options.channel,
       });
       if (isRootManagedProfile(existingManifest.profile)) {
         if (!previousRoot) {
@@ -5965,7 +6085,7 @@ export async function run(argv = process.argv.slice(2)) {
       "Managed installation manifest is missing; run the official repair installer once.",
     );
   }
-  parsed.options.channel = await resolveConfiguredChannel(parsed.options, manifest.configPath);
+  parsed.options.channel = resolveConfiguredChannel(parsed.options, manifest);
   if (parsed.options.channel === "dev") {
     await delegateToRuntime(
       parsed.options.status ? argv : ["update", "--channel", "dev", ...argv.slice(1)],
@@ -6005,7 +6125,11 @@ export const __testing = {
   recoverHostedReleaseTransaction,
   requestHostedSignerTransaction,
   requestHostedSignerTransactionWithRetry,
+  quiesceHostedGateway,
+  resolveConfiguredChannel,
+  resolveManagedControllerDescriptor,
   resolveRootManagedControllerSocket,
+  rootManagedSignerEndpoint,
   rollbackHostedReleaseTransaction,
   restartHostedGateway,
   activateLocalSignerTransaction,
@@ -6020,6 +6144,7 @@ export const __testing = {
   parseProtectedLocalEnvironment,
   protectedLocalMigrationRequirement,
   loadSignerEnvironment,
+  managedRuntimeReleaseIdentitiesEqual,
   parseLocalSignerTransactionArgs,
   parseLocalSourceControllerArgs,
   parseHostedTransactionArgs,

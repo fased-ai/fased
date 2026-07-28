@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -20,10 +21,13 @@ function fail(message) {
 function parseArguments(argv) {
   const operation = argv[0];
   if (!new Set(["activate", "restore"]).has(operation)) {
-    fail("usage: q0-protected-local-controller-candidate.mjs activate|restore --instance <id>");
+    fail(
+      "usage: q0-protected-local-controller-candidate.mjs activate --instance <id> --target-version X.Y.Z --source-root <path> | restore --instance <id>",
+    );
   }
   let instanceId = "";
   let sourceRoot = "";
+  let targetVersion = "";
   for (let index = 1; index < argv.length; index += 1) {
     const key = argv[index];
     const value = argv[index + 1];
@@ -33,6 +37,9 @@ function parseArguments(argv) {
     } else if (key === "--source-root" && value) {
       sourceRoot = path.resolve(value);
       index += 1;
+    } else if (key === "--target-version" && value) {
+      targetVersion = value.replace(/^v/u, "");
+      index += 1;
     } else {
       fail(`unsupported Q0 controller candidate argument: ${key}`);
     }
@@ -40,10 +47,10 @@ function parseArguments(argv) {
   if (!INSTANCE_PATTERN.test(instanceId)) {
     fail("--instance must be 16 lowercase hexadecimal characters");
   }
-  if (operation === "activate" && !sourceRoot) {
-    fail("activate requires --source-root");
+  if (operation === "activate" && (!sourceRoot || !VERSION_PATTERN.test(targetVersion))) {
+    fail("activate requires --source-root and --target-version");
   }
-  return { operation, instanceId, sourceRoot };
+  return { operation, instanceId, sourceRoot, targetVersion };
 }
 
 async function sha256(filePath) {
@@ -145,6 +152,13 @@ function layout(instanceId) {
   };
 }
 
+function q0ControllerGenerationRoot(releasesDir, targetVersion, serverSha256) {
+  if (!VERSION_PATTERN.test(targetVersion) || !/^[a-f0-9]{64}$/u.test(serverSha256)) {
+    fail("Q0 controller target identity is invalid");
+  }
+  return path.join(releasesDir, `v${targetVersion}.q0.${serverSha256.slice(0, 12)}`);
+}
+
 async function readIdentity(identityPath) {
   await exactRegularFile(identityPath);
   const bytes = await fsp.readFile(identityPath);
@@ -196,7 +210,7 @@ async function restoreCandidate(paths, backup, { removeBackup = true } = {}) {
   }
 }
 
-async function activateCandidate(paths, sourceRoot) {
+async function activateCandidate(paths, sourceRoot, targetVersion) {
   if (fs.existsSync(paths.backupPath)) {
     fail("a Q0 controller candidate is already active; restore it before retrying");
   }
@@ -231,10 +245,7 @@ async function activateCandidate(paths, sourceRoot) {
     sha256(sourceServer),
     sha256(sourceClient),
   ]);
-  const candidateRoot = path.join(
-    paths.releasesDir,
-    `v${identity.version}.q0.${serverSha256.slice(0, 12)}`,
-  );
+  const candidateRoot = q0ControllerGenerationRoot(paths.releasesDir, targetVersion, serverSha256);
   const stagingRoot = `${candidateRoot}.tmp-${process.pid}`;
   await fsp.rm(stagingRoot, { recursive: true, force: true });
   await fsp.mkdir(stagingRoot, { mode: 0o755 });
@@ -270,7 +281,7 @@ async function activateCandidate(paths, sourceRoot) {
       `${JSON.stringify(
         {
           schemaVersion: 1,
-          version: identity.version,
+          version: targetVersion,
           serverSha256,
           clientSha256,
         },
@@ -318,13 +329,24 @@ async function restoreFromBackup(paths) {
   process.stdout.write(`Official controller restored for ${paths.serviceName}.\n`);
 }
 
-if (typeof process.getuid !== "function" || process.getuid() !== 0) {
-  fail("Q0 protected Local controller candidate harness must run as root");
+async function main() {
+  if (typeof process.getuid !== "function" || process.getuid() !== 0) {
+    fail("Q0 protected Local controller candidate harness must run as root");
+  }
+  const options = parseArguments(process.argv.slice(2));
+  const paths = layout(options.instanceId);
+  if (options.operation === "activate") {
+    await activateCandidate(paths, options.sourceRoot, options.targetVersion);
+  } else {
+    await restoreFromBackup(paths);
+  }
 }
-const options = parseArguments(process.argv.slice(2));
-const paths = layout(options.instanceId);
-if (options.operation === "activate") {
-  await activateCandidate(paths, options.sourceRoot);
-} else {
-  await restoreFromBackup(paths);
+
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  await main();
 }
+
+export const __testing = Object.freeze({
+  parseArguments,
+  q0ControllerGenerationRoot,
+});

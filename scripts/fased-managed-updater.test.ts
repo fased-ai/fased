@@ -1128,6 +1128,34 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     ]);
   });
 
+  it("resumes rollback-ready recovery without replaying the closed root transaction", async () => {
+    const events: string[] = [];
+    await expect(
+      __testing.rollbackHostedReleaseTransaction(
+        transaction("rollback-ready"),
+        transactionOperations(events),
+      ),
+    ).resolves.toMatchObject({ action: "rolled-back" });
+    expect(events).toEqual(["refresh-previous", "remove-journal"]);
+  });
+
+  it("resumes rolling-back recovery through the idempotent root rollback operation", async () => {
+    const events: string[] = [];
+    await expect(
+      __testing.rollbackHostedReleaseTransaction(
+        transaction("rolling-back"),
+        transactionOperations(events),
+      ),
+    ).resolves.toMatchObject({ action: "rolled-back" });
+    expect(events).toEqual([
+      "signer:rollbackRelease",
+      "restore-app",
+      "write:rollback-ready",
+      "refresh-previous",
+      "remove-journal",
+    ]);
+  });
+
   it("never rolls back after the durable health commit decision", async () => {
     const events: string[] = [];
     const operations = transactionOperations(events, {
@@ -1223,41 +1251,35 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     ).toBe(PROTECTED_LOCAL_CONTROLLER_UNAVAILABLE_MESSAGE);
   });
 
-  it("derives the Protected Local controller socket from managed config without ambient env", async () => {
+  it("derives the Protected Local controller socket from install.json without app config", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-protected-controller-socket-"));
     const stateDir = path.join(root, ".fased");
-    const configPath = path.join(stateDir, "fased.json");
     const manifestPath = path.join(stateDir, "install.json");
     const instanceId = "0123456789abcdef";
     await fsp.mkdir(stateDir, { recursive: true });
-    await fsp.writeFile(
+    const configPath = path.join(stateDir, "fased.json");
+    await fsp.writeFile(configPath, "{not-json\n", { mode: 0o000 });
+    const manifest = {
+      profile: "protected-local",
+      stateDir,
       configPath,
-      `${JSON.stringify({
-        env: {
-          vars: {
-            FASED_HOST_PROFILE: "local",
-            FASED_PROTECTED_LOCAL: "1",
-            FASED_PROTECTED_LOCAL_INSTANCE: instanceId,
-            FASED_HOST_UPDATER_SOCKET: `/run/fased-local-controller/${instanceId}/request.sock`,
-          },
-        },
-      })}\n`,
-      { mode: 0o600 },
-    );
-    await fsp.writeFile(
-      manifestPath,
-      `${JSON.stringify({ profile: "protected-local", configPath })}\n`,
-      { mode: 0o600 },
-    );
+      service: {
+        name: `fased-gateway-${instanceId}.service`,
+        scope: "system",
+        launcher: `/opt/fased/local/${instanceId}/gateway-launch`,
+      },
+    };
+    await fsp.writeFile(manifestPath, `${JSON.stringify(manifest)}\n`, { mode: 0o600 });
     const previous = process.env.FASED_HOST_UPDATER_SOCKET;
     delete process.env.FASED_HOST_UPDATER_SOCKET;
     try {
       expect(
-        __testing.resolveRootManagedControllerSocket(
-          { manifestPath },
-          { profile: "protected-local", configPath },
-        ),
-      ).toBe(`/run/fased-local-controller/${instanceId}/request.sock`);
+        __testing.resolveManagedControllerDescriptor({ manifestPath, stateDir }, manifest),
+      ).toEqual({
+        profile: "protected-local",
+        socketPath: `/run/fased-local-controller/${instanceId}/request.sock`,
+        instanceId,
+      });
     } finally {
       if (previous === undefined) {
         delete process.env.FASED_HOST_UPDATER_SOCKET;
@@ -1266,6 +1288,82 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
       }
       await fsp.rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("normalizes Hosting through the same managed controller contract", () => {
+    const stateDir = "/home/app/.fased";
+    expect(
+      __testing.resolveManagedControllerDescriptor(
+        { stateDir, manifestPath: path.join(stateDir, "install.json") },
+        {
+          profile: "hosting",
+          stateDir,
+          configPath: path.join(stateDir, "fased.json"),
+          service: {
+            name: "fased-gateway.service",
+            scope: "system",
+            launcher: "/usr/local/libexec/fased-gateway-launch",
+          },
+        },
+      ),
+    ).toEqual({
+      profile: "hosting",
+      socketPath: "/run/fased-host-updater/request.sock",
+      instanceId: null,
+    });
+  });
+
+  it("derives signer health endpoints from the normalized controller identity", () => {
+    expect(__testing.rootManagedSignerEndpoint("protected-local", "0123456789abcdef")).toEqual({
+      signerBinary: "/opt/fased/local/0123456789abcdef/signer/fased-signerd",
+      operatorSocket: "/run/fased-local/0123456789abcdef/operator/operator.sock",
+    });
+    expect(__testing.rootManagedSignerEndpoint("hosting", null)).toEqual({
+      signerBinary: "/opt/fased/signer/fased-signerd",
+      operatorSocket: "/run/fased-signerd/operator.sock",
+    });
+    expect(() => __testing.rootManagedSignerEndpoint("protected-local", null)).toThrow(
+      "Protected Local signer instance identity is unavailable",
+    );
+  });
+
+  it("rejects manifest-controlled controller socket redirection", () => {
+    const stateDir = "/home/operator/.fased";
+    const instanceId = "0123456789abcdef";
+    const manifest = {
+      profile: "protected-local",
+      stateDir,
+      configPath: path.join(stateDir, "fased.json"),
+      service: {
+        name: `fased-gateway-${instanceId}.service`,
+        scope: "system",
+        launcher: "/tmp/attacker-controlled-launcher",
+      },
+    };
+    expect(() =>
+      __testing.resolveManagedControllerDescriptor(
+        { stateDir, manifestPath: path.join(stateDir, "install.json") },
+        manifest,
+      ),
+    ).toThrow(/controller identity/u);
+  });
+
+  it("resolves update channels without application configuration", () => {
+    expect(
+      __testing.resolveConfiguredChannel(
+        { channelExplicit: true, channel: "beta" },
+        { update: { channel: "stable" } },
+      ),
+    ).toBe("beta");
+    expect(
+      __testing.resolveConfiguredChannel(
+        { channelExplicit: false, channel: "stable" },
+        { update: { channel: "beta" } },
+      ),
+    ).toBe("beta");
+    expect(
+      __testing.resolveConfiguredChannel({ channelExplicit: false, channel: "stable" }, {}),
+    ).toBe("stable");
   });
 
   it("distinguishes a definitive pre-v2 rejection from an ambiguous post-send disconnect", async () => {
@@ -1328,6 +1426,72 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     } finally {
       await fsp.rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("routes Gateway transaction operations through the selected root controller socket", async () => {
+    const operations: string[] = [];
+    const server = await withUnixServer((socket) => {
+      socket.once("data", (chunk) => {
+        const request = JSON.parse(String(chunk).trim()) as {
+          op: string;
+          transactionId: string;
+          version: string;
+        };
+        operations.push(request.op);
+        socket.end(
+          `${JSON.stringify({
+            ok: true,
+            transactionId: request.transactionId,
+            version: request.version,
+          })}\n`,
+        );
+      });
+    });
+    try {
+      await expect(
+        __testing.quiesceHostedGateway(TRANSACTION_ID, "1.2.3", 1000, server.socketPath),
+      ).resolves.toMatchObject({ ok: true });
+      await expect(
+        __testing.restartHostedGateway("1.2.3", 1000, server.socketPath),
+      ).resolves.toMatchObject({ ok: true });
+      expect(operations).toEqual(["gateGatewayRelease", "restartGateway"]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("never reuses a same-version runtime with a different release identity", () => {
+    const metadata = {
+      schemaVersion: 2,
+      version: "1.2.3",
+      commit: "a".repeat(40),
+      dependencyHash: "b".repeat(64),
+    };
+    const release = {
+      manifestDigest: `sha256:${"c".repeat(64)}`,
+      version: "1.2.3",
+      commit: "a".repeat(40),
+      appArtifactDigest: `sha256:${"d".repeat(64)}`,
+    };
+    expect(
+      __testing.managedRuntimeReleaseIdentitiesEqual(metadata, { ...metadata }, release, {
+        ...release,
+      }),
+    ).toBe(true);
+    expect(
+      __testing.managedRuntimeReleaseIdentitiesEqual(
+        metadata,
+        { ...metadata, commit: "e".repeat(40) },
+        release,
+        { ...release, commit: "e".repeat(40) },
+      ),
+    ).toBe(false);
+    expect(
+      __testing.managedRuntimeReleaseIdentitiesEqual(metadata, { ...metadata }, release, {
+        ...release,
+        appArtifactDigest: `sha256:${"f".repeat(64)}`,
+      }),
+    ).toBe(false);
   });
 
   it("requires the root updater to return an exact production signer identity", async () => {
