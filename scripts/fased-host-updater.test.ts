@@ -285,6 +285,46 @@ describe("root-owned hosted updater protocol", () => {
     expect(events).toEqual(["reconcile-application-state", "stage:1.2.3"]);
   });
 
+  it("creates every canonical shared application directory under root control", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const stateDir = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-shared-state-"));
+    cleanupRoots.push(stateDir);
+    const uid = process.getuid();
+    const gid = process.getgid();
+
+    await __testing.ensureRootManagedSharedApplicationDirectories(stateDir, uid, gid);
+    await __testing.ensureRootManagedSharedApplicationDirectories(stateDir, uid, gid);
+
+    for (const name of ["identity", "wallet", "federation"]) {
+      const info = await fsp.lstat(path.join(stateDir, name));
+      expect(info.isDirectory()).toBe(true);
+      expect(info.isSymbolicLink()).toBe(false);
+      expect(info.uid).toBe(uid);
+      expect(info.gid).toBe(gid);
+      expect(info.mode & 0o2777).toBe(0o2770);
+    }
+  });
+
+  it("rejects a symlink in a canonical shared application directory", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const stateDir = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-shared-state-link-"));
+    cleanupRoots.push(stateDir);
+    await fsp.mkdir(path.join(stateDir, "outside"));
+    await fsp.symlink(path.join(stateDir, "outside"), path.join(stateDir, "identity"));
+
+    await expect(
+      __testing.ensureRootManagedSharedApplicationDirectories(
+        stateDir,
+        process.getuid(),
+        process.getgid(),
+      ),
+    ).rejects.toThrow();
+  });
+
   it("defers shared-state reconciliation while an interrupted bootstrap recreates state", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-state-retry-"));
     cleanupRoots.push(root);

@@ -1796,6 +1796,12 @@ const ROOT_MANAGED_OPERATOR_ONLY_STATE = new Set([
   "updater",
 ]);
 
+const ROOT_MANAGED_SHARED_APPLICATION_DIRECTORIES = Object.freeze([
+  "identity",
+  "wallet",
+  "federation",
+]);
+
 async function systemAccountRecord(database, name) {
   const getent = await fixedExecutable(["/usr/bin/getent", "/bin/getent"], "getent");
   const { stdout } = await execFileAsync(getent, [database, name], {
@@ -1867,6 +1873,54 @@ async function assertSharedDirectoryModesAvailable(stateDir, operatorUid, config
     }
   } finally {
     await fsp.rm(probe, { recursive: true, force: true });
+  }
+}
+
+async function ensureRootManagedSharedApplicationDirectory(stateDir, name, operatorUid, configGid) {
+  if (!ROOT_MANAGED_SHARED_APPLICATION_DIRECTORIES.includes(name)) {
+    throw new Error("root-managed shared application directory name is invalid");
+  }
+  const directory = path.join(stateDir, name);
+  try {
+    await fsp.mkdir(directory, { mode: 0o2770 });
+  } catch (error) {
+    if (error?.code !== "EEXIST") {
+      throw error;
+    }
+  }
+  const handle = await fsp.open(
+    directory,
+    fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
+  );
+  try {
+    const initial = await handle.stat();
+    if (!initial.isDirectory()) {
+      throw new Error(`root-managed application state path is not a directory: ${directory}`);
+    }
+    await handle.chown(operatorUid, configGid);
+    await handle.chmod(0o2770);
+    await handle.sync();
+    const current = await handle.stat();
+    const named = await fsp.lstat(directory);
+    if (
+      !named.isDirectory() ||
+      named.isSymbolicLink() ||
+      named.dev !== current.dev ||
+      named.ino !== current.ino ||
+      current.uid !== operatorUid ||
+      current.gid !== configGid ||
+      (current.mode & 0o2777) !== 0o2770
+    ) {
+      throw new Error(`root-managed shared application directory is invalid: ${directory}`);
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
+async function ensureRootManagedSharedApplicationDirectories(stateDir, operatorUid, configGid) {
+  for (const name of ROOT_MANAGED_SHARED_APPLICATION_DIRECTORIES) {
+    await ensureRootManagedSharedApplicationDirectory(stateDir, name, operatorUid, configGid);
   }
 }
 
@@ -2008,6 +2062,10 @@ async function reconcileProtectedApplicationState(context) {
     throw new Error("root-managed application-state group membership is invalid");
   }
   await assertSharedDirectoryModesAvailable(stateDir, stateStat.uid, configGid);
+  // The root controller owns the complete shared-state topology. Gateway runs
+  // with RestrictSUIDSGID and must never be responsible for creating SGID
+  // directories during startup or an update.
+  await ensureRootManagedSharedApplicationDirectories(stateDir, stateStat.uid, configGid);
   const inspectedEntries = [];
   const entries = await fsp.readdir(stateDir);
   for (const entry of entries) {
@@ -3114,6 +3172,7 @@ export const __testing = {
   prepareSignerRelease,
   protectedLocalControllerConfiguration,
   ensureProtectedLocalControllerServicePolicy,
+  ensureRootManagedSharedApplicationDirectories,
   reconcileProtectedApplicationState,
   rootManagedApplicationIdentity,
   readJournal,
