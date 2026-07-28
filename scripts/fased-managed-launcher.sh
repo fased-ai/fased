@@ -50,6 +50,14 @@ export FASED_STATE_DIR="$STATE_DIR"
 export FASED_CONFIG_DIR="$STATE_DIR"
 export FASED_CONFIG_PATH="$CONFIG_PATH"
 
+# The updater is the recovery boundary for a managed installation.  Dispatch it
+# before reading application-owned configuration so a stale login session can
+# still update after a protected Local migration creates supplementary groups
+# or after the Gateway atomically replaces fased.json.
+if [[ "${1:-}" == "update" && -f "$UPDATER" ]]; then
+  exec "$NODE_BIN" "$UPDATER" "$@"
+fi
+
 load_managed_profile_environment() {
   [[ -f "$CONFIG_PATH" && ! -L "$CONFIG_PATH" ]] || return 0
   local assignments=""
@@ -86,10 +94,6 @@ load_managed_profile_environment() {
 }
 
 load_managed_profile_environment
-
-if [[ "${1:-}" == "update" && -f "$UPDATER" ]]; then
-  exec "$NODE_BIN" "$UPDATER" "$@"
-fi
 
 RUNTIME_ROOT="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
 if [[ -z "$RUNTIME_ROOT" || ! -f "$RUNTIME_ROOT/fased.mjs" ]]; then

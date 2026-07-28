@@ -622,6 +622,7 @@ async function updateOperatorConfig(spec, layout, configGroup) {
       gid: configGroup.gid,
     });
   }
+  grantOperatorApplicationStateAccess(spec);
 }
 
 async function installControllerGeneration(sourceRoot, layout, spec) {
@@ -892,6 +893,70 @@ async function shareApplicationState(spec, configGroup, legacy) {
   }
   await hardenInstalledPlugins(spec);
   await protectLegacyMaterial(legacy, spec);
+}
+
+const PROTECTED_LOCAL_OPERATOR_ONLY_STATE = new Set([
+  "backups",
+  "bin",
+  "extensions",
+  "install-cache",
+  "runtime",
+  "signer-update",
+  "source-paired-update",
+  "updater",
+]);
+
+function grantOperatorApplicationStateAccess(spec) {
+  const setfacl = systemBinary(["/usr/bin/setfacl", "/bin/setfacl"], "setfacl");
+  const find = systemBinary(["/usr/bin/find", "/bin/find"], "find");
+  const operatorEntry = `user:${spec.operatorUid}`;
+  runSystem(setfacl, ["--modify", `${operatorEntry}:rwx`, "--", spec.stateDir]);
+  runSystem(setfacl, ["--modify", `default:${operatorEntry}:rwx`, "--", spec.stateDir]);
+  for (const name of fs
+    .readdirSync(spec.stateDir)
+    .filter((entry) => !PROTECTED_LOCAL_OPERATOR_ONLY_STATE.has(entry))) {
+    const sharedRoot = path.join(spec.stateDir, name);
+    runSystem(setfacl, [
+      "--recursive",
+      "--physical",
+      "--modify",
+      `${operatorEntry}:rwX`,
+      "--",
+      sharedRoot,
+    ]);
+    runSystem(find, [
+      "-P",
+      sharedRoot,
+      "-xdev",
+      "-type",
+      "d",
+      "-exec",
+      setfacl,
+      "--modify",
+      `default:${operatorEntry}:rwx`,
+      "--",
+      "{}",
+      "+",
+    ]);
+  }
+  for (const directory of [
+    spec.stateDir,
+    path.join(spec.stateDir, "identity"),
+    path.join(spec.stateDir, "wallet"),
+    path.join(spec.stateDir, "federation"),
+  ]) {
+    const entries = aclEntryMap(captureDirectoryAcl(directory));
+    if (
+      entries.get(`user:${spec.operatorUid}:`) !== "rwx" ||
+      entries.get(`default:user:${spec.operatorUid}:`) !== "rwx"
+    ) {
+      fail(`protected Local operator ACL did not converge: ${directory}`);
+    }
+  }
+  const configEntries = aclEntryMap(captureDirectoryAcl(path.join(spec.stateDir, "fased.json")));
+  if (!new Set(["rw-", "rwx"]).has(configEntries.get(`user:${spec.operatorUid}:`))) {
+    fail("protected Local operator cannot read and update application configuration");
+  }
 }
 
 async function installRootFiles(params) {

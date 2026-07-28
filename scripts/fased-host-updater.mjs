@@ -2064,6 +2064,104 @@ async function ensureRootManagedSharedApplicationDirectories(stateDir, operatorU
   }
 }
 
+async function grantOperatorApplicationStateAccess(stateDir, operatorUid) {
+  if (!Number.isSafeInteger(operatorUid) || operatorUid <= 0) {
+    throw new Error("root-managed application operator UID is invalid");
+  }
+  const [setfacl, find, getfacl] = await Promise.all([
+    fixedExecutable(["/usr/bin/setfacl", "/bin/setfacl"], "setfacl"),
+    fixedExecutable(["/usr/bin/find", "/bin/find"], "find"),
+    fixedExecutable(["/usr/bin/getfacl", "/bin/getfacl"], "getfacl"),
+  ]);
+  const common = {
+    env: { PATH: "/usr/bin:/bin" },
+    timeout: REQUEST_TIMEOUT_MS,
+    maxBuffer: 64 * 1024 * 1024,
+  };
+  // Supplementary groups added during a migration are not visible to the
+  // already-running login shell.  A named operator ACL keeps that same shell
+  // usable immediately, and inherited defaults preserve access when the
+  // isolated Gateway atomically replaces application-owned files.
+  await execFileAsync(setfacl, ["--modify", `user:${operatorUid}:rwx`, "--", stateDir], common);
+  await execFileAsync(
+    setfacl,
+    ["--modify", `default:user:${operatorUid}:rwx`, "--", stateDir],
+    common,
+  );
+  const sharedRoots = (await fsp.readdir(stateDir))
+    .filter((name) => !ROOT_MANAGED_OPERATOR_ONLY_STATE.has(name))
+    .map((name) => path.join(stateDir, name));
+  for (const sharedRoot of sharedRoots) {
+    await execFileAsync(
+      setfacl,
+      ["--recursive", "--physical", "--modify", `user:${operatorUid}:rwX`, "--", sharedRoot],
+      common,
+    );
+    await execFileAsync(
+      find,
+      [
+        "-P",
+        sharedRoot,
+        "-xdev",
+        "-type",
+        "d",
+        "-exec",
+        setfacl,
+        "--modify",
+        `default:user:${operatorUid}:rwx`,
+        "--",
+        "{}",
+        "+",
+      ],
+      common,
+    );
+  }
+  const requiredDirectories = [
+    stateDir,
+    ...ROOT_MANAGED_SHARED_APPLICATION_DIRECTORIES.map((name) => path.join(stateDir, name)),
+  ];
+  for (const directory of requiredDirectories) {
+    const { stdout } = await execFileAsync(
+      getfacl,
+      ["--omit-header", "--absolute-names", "--numeric", "--", directory],
+      common,
+    );
+    const entries = new Set(
+      stdout
+        .split(/\r?\n/u)
+        .map((line) => line.trim().replace(/\s+#effective:.*$/u, ""))
+        .filter(Boolean),
+    );
+    if (
+      !entries.has(`user:${operatorUid}:rwx`) ||
+      !entries.has(`default:user:${operatorUid}:rwx`)
+    ) {
+      throw new Error(`root-managed operator ACL did not converge: ${directory}`);
+    }
+  }
+  const configPath = path.join(stateDir, "fased.json");
+  const configExists = await fsp
+    .lstat(configPath)
+    .then((stat) => stat.isFile() && !stat.isSymbolicLink())
+    .catch(() => false);
+  if (configExists) {
+    const { stdout } = await execFileAsync(
+      getfacl,
+      ["--omit-header", "--absolute-names", "--numeric", "--", configPath],
+      common,
+    );
+    const entries = new Set(
+      stdout
+        .split(/\r?\n/u)
+        .map((line) => line.trim().replace(/\s+#effective:.*$/u, ""))
+        .filter(Boolean),
+    );
+    if (!entries.has(`user:${operatorUid}:rw-`) && !entries.has(`user:${operatorUid}:rwx`)) {
+      throw new Error("root-managed operator cannot read and update application configuration");
+    }
+  }
+}
+
 async function withInspectedApplicationEntry(entry, operation) {
   if (entry.kind === "symlink") {
     const current = await fsp.lstat(entry.entryPath);
@@ -2221,6 +2319,7 @@ async function reconcileProtectedApplicationState(context) {
       applied.push(entry);
       await shareInspectedApplicationEntry(entry, configGid);
     }
+    await grantOperatorApplicationStateAccess(stateDir, stateStat.uid);
   } catch (error) {
     const rollbackErrors = [];
     for (const entry of applied.toReversed()) {
@@ -3319,6 +3418,7 @@ export const __testing = {
   protectedLocalControllerConfiguration,
   ensureProtectedLocalControllerServicePolicy,
   ensureRootManagedSharedApplicationDirectories,
+  grantOperatorApplicationStateAccess,
   reconcileProtectedApplicationState,
   rootManagedApplicationIdentity,
   readJournal,

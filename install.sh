@@ -2644,6 +2644,7 @@ install_prebuilt_release_runtime() {
       --state-dir "$FASED_CONFIG_DIR"
       --prefix "$npm_prefix"
       --profile "$(resolved_host_profile)"
+      --update-channel "$UPDATE_CHANNEL"
     )
     if [[ -n "${FASED_HOST_UPDATE_TRANSACTION_ID:-}" ]]; then
       managed_install_args+=(
@@ -5142,6 +5143,25 @@ reconcile_hosting_shared_state() {
   chgrp -R "$config_group" "$state_dir"
   chmod -R g+rwX,o-rwx "$state_dir"
   find "$state_dir" -type d -exec chmod g+s {} +
+  setfacl --modify "user:${target_user}:rwx" "$state_dir"
+  setfacl --modify "default:user:${target_user}:rwx" "$state_dir"
+  local shared_entry=""
+  while IFS= read -r -d '' shared_entry; do
+    setfacl --recursive --physical --modify "user:${target_user}:rwX" "$shared_entry"
+    find -P "$shared_entry" -xdev -type d \
+      -exec setfacl --modify "default:user:${target_user}:rwx" {} +
+  done < <(
+    find -P "$state_dir" -mindepth 1 -maxdepth 1 \
+      ! -name backups \
+      ! -name bin \
+      ! -name extensions \
+      ! -name install-cache \
+      ! -name runtime \
+      ! -name signer-update \
+      ! -name source-paired-update \
+      ! -name updater \
+      -print0
+  )
   [[ ! -f "$state_dir/fased.json" ]] || chmod 0660 "$state_dir/fased.json"
   [[ ! -f "$state_dir/install.json" ]] || chmod 0660 "$state_dir/install.json"
 }

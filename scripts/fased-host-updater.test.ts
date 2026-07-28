@@ -1,8 +1,10 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   PRE_V2_HOSTING_MIGRATION_MESSAGE,
@@ -18,6 +20,7 @@ import { __testing as managedUpdaterTesting } from "./fased-managed-updater.mjs"
 import { capabilitiesDigest } from "./hosted-release-manifest.mjs";
 
 const cleanupRoots: string[] = [];
+const execFileAsync = promisify(execFile);
 const TRANSACTION_ONE = "11111111-1111-4111-8111-111111111111";
 const TRANSACTION_TWO = "22222222-2222-4222-8222-222222222222";
 
@@ -336,6 +339,32 @@ describe("root-owned hosted updater protocol", () => {
       expect(info.gid).toBe(gid);
       expect(info.mode & 0o2777).toBe(0o2770);
     }
+  });
+
+  it("grants immediate and inherited operator access to shared state", async () => {
+    if (process.platform !== "linux" || typeof process.getuid !== "function") {
+      return;
+    }
+    const stateDir = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-shared-state-acl-"));
+    cleanupRoots.push(stateDir);
+    const uid = process.getuid();
+    const gid = process.getgid();
+    await __testing.ensureRootManagedSharedApplicationDirectories(stateDir, uid, gid);
+    const configPath = path.join(stateDir, "fased.json");
+    await fsp.writeFile(configPath, "{}\n", { mode: 0o660 });
+
+    await __testing.grantOperatorApplicationStateAccess(stateDir, uid);
+    await __testing.grantOperatorApplicationStateAccess(stateDir, uid);
+
+    const replacement = path.join(stateDir, ".fased.json.next");
+    await fsp.writeFile(replacement, '{"updated":true}\n', { mode: 0o660 });
+    await fsp.rename(replacement, configPath);
+    const getfacl = await execFileAsync(
+      "/usr/bin/getfacl",
+      ["--omit-header", "--numeric", "--", configPath],
+      { env: { PATH: "/usr/bin:/bin" } },
+    );
+    expect(getfacl.stdout).toMatch(new RegExp(`^user:${uid}:rw[x-]`, "mu"));
   });
 
   it("rejects a symlink in a canonical shared application directory", async () => {

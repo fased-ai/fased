@@ -1223,41 +1223,35 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     ).toBe(PROTECTED_LOCAL_CONTROLLER_UNAVAILABLE_MESSAGE);
   });
 
-  it("derives the Protected Local controller socket from managed config without ambient env", async () => {
+  it("derives the Protected Local controller socket from install.json without app config", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-protected-controller-socket-"));
     const stateDir = path.join(root, ".fased");
-    const configPath = path.join(stateDir, "fased.json");
     const manifestPath = path.join(stateDir, "install.json");
     const instanceId = "0123456789abcdef";
     await fsp.mkdir(stateDir, { recursive: true });
-    await fsp.writeFile(
+    const configPath = path.join(stateDir, "fased.json");
+    await fsp.writeFile(configPath, "{not-json\n", { mode: 0o000 });
+    const manifest = {
+      profile: "protected-local",
+      stateDir,
       configPath,
-      `${JSON.stringify({
-        env: {
-          vars: {
-            FASED_HOST_PROFILE: "local",
-            FASED_PROTECTED_LOCAL: "1",
-            FASED_PROTECTED_LOCAL_INSTANCE: instanceId,
-            FASED_HOST_UPDATER_SOCKET: `/run/fased-local-controller/${instanceId}/request.sock`,
-          },
-        },
-      })}\n`,
-      { mode: 0o600 },
-    );
-    await fsp.writeFile(
-      manifestPath,
-      `${JSON.stringify({ profile: "protected-local", configPath })}\n`,
-      { mode: 0o600 },
-    );
+      service: {
+        name: `fased-gateway-${instanceId}.service`,
+        scope: "system",
+        launcher: `/opt/fased/local/${instanceId}/gateway-launch`,
+      },
+    };
+    await fsp.writeFile(manifestPath, `${JSON.stringify(manifest)}\n`, { mode: 0o600 });
     const previous = process.env.FASED_HOST_UPDATER_SOCKET;
     delete process.env.FASED_HOST_UPDATER_SOCKET;
     try {
       expect(
-        __testing.resolveRootManagedControllerSocket(
-          { manifestPath },
-          { profile: "protected-local", configPath },
-        ),
-      ).toBe(`/run/fased-local-controller/${instanceId}/request.sock`);
+        __testing.resolveManagedControllerDescriptor({ manifestPath, stateDir }, manifest),
+      ).toEqual({
+        profile: "protected-local",
+        socketPath: `/run/fased-local-controller/${instanceId}/request.sock`,
+        instanceId,
+      });
     } finally {
       if (previous === undefined) {
         delete process.env.FASED_HOST_UPDATER_SOCKET;
@@ -1266,6 +1260,68 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
       }
       await fsp.rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("normalizes Hosting through the same managed controller contract", () => {
+    const stateDir = "/home/app/.fased";
+    expect(
+      __testing.resolveManagedControllerDescriptor(
+        { stateDir, manifestPath: path.join(stateDir, "install.json") },
+        {
+          profile: "hosting",
+          stateDir,
+          configPath: path.join(stateDir, "fased.json"),
+          service: {
+            name: "fased-gateway.service",
+            scope: "system",
+            launcher: "/usr/local/libexec/fased-gateway-launch",
+          },
+        },
+      ),
+    ).toEqual({
+      profile: "hosting",
+      socketPath: "/run/fased-host-updater/request.sock",
+      instanceId: null,
+    });
+  });
+
+  it("rejects manifest-controlled controller socket redirection", () => {
+    const stateDir = "/home/operator/.fased";
+    const instanceId = "0123456789abcdef";
+    const manifest = {
+      profile: "protected-local",
+      stateDir,
+      configPath: path.join(stateDir, "fased.json"),
+      service: {
+        name: `fased-gateway-${instanceId}.service`,
+        scope: "system",
+        launcher: "/tmp/attacker-controlled-launcher",
+      },
+    };
+    expect(() =>
+      __testing.resolveManagedControllerDescriptor(
+        { stateDir, manifestPath: path.join(stateDir, "install.json") },
+        manifest,
+      ),
+    ).toThrow(/controller identity/u);
+  });
+
+  it("resolves update channels without application configuration", () => {
+    expect(
+      __testing.resolveConfiguredChannel(
+        { channelExplicit: true, channel: "beta" },
+        { update: { channel: "stable" } },
+      ),
+    ).toBe("beta");
+    expect(
+      __testing.resolveConfiguredChannel(
+        { channelExplicit: false, channel: "stable" },
+        { update: { channel: "beta" } },
+      ),
+    ).toBe("beta");
+    expect(
+      __testing.resolveConfiguredChannel({ channelExplicit: false, channel: "stable" }, {}),
+    ).toBe("stable");
   });
 
   it("distinguishes a definitive pre-v2 rejection from an ambiguous post-send disconnect", async () => {

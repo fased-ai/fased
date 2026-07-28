@@ -130,6 +130,21 @@ verify_mining_history() {
   jq -e 'type == "object"' /tmp/mining-history.json >/dev/null
 }
 
+run_as_stale_operator() {
+  /usr/bin/setpriv \
+    --reuid "$(id -u testop)" \
+    --regid "$(id -g testop)" \
+    --clear-groups \
+    -- \
+    env \
+      HOME=/home/testop \
+      USER=testop \
+      LOGNAME=testop \
+      PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+      FASED_NODE=/usr/local/bin/node \
+      "$@"
+}
+
 verify_profileless_config_write() {
   local instance="$1"
   local runtime_root="$2"
@@ -1254,6 +1269,18 @@ verify_shared_federation_state "$instance" "$runtime"
 verify_profileless_config_write "$instance" "$runtime"
 signer_pid_before="$(systemctl show -p MainPID --value "fased-signerd-$instance.service")"
 gateway_pid_before="$(systemctl show -p MainPID --value "fased-gateway-$instance.service")"
+test "$(run_as_stale_operator id -G)" = "$(id -g testop)"
+run_as_stale_operator test -r "$state/fased.json"
+run_as_stale_operator "$state/bin/fased" update --timeout 30 \
+  >/tmp/protected-stale-session-update.out 2>/tmp/protected-stale-session-update.err
+grep -F "Already current: $version" /tmp/protected-stale-session-update.out >/dev/null
+run_as_stale_operator "$state/bin/fased" mining history \
+  --url "ws://127.0.0.1:$gateway_port" \
+  --token "$gateway_token" \
+  --timeout 5000 \
+  --json \
+  >/tmp/protected-stale-session-mining.json
+jq -e 'type == "object"' /tmp/protected-stale-session-mining.json >/dev/null
 runuser -u testop -- env "${managed_update_env[@]}" \
   "$state/install-cache/npm-global/bin/fased" update --timeout 30 \
   >/tmp/protected-noop-update.out 2>/tmp/protected-noop-update.err

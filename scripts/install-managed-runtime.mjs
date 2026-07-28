@@ -62,6 +62,7 @@ function parseArgs(argv) {
     stateDir: path.resolve(stateDir),
     prefix: path.resolve(prefix),
     profile: normalizeManagedProfile(values.get("--profile")),
+    updateChannel: values.get("--update-channel")?.trim() || null,
     hostTransactionId: values.get("--host-transaction-id")?.trim() || null,
     hostTransactionVersion: values.get("--host-transaction-version")?.trim() || null,
   };
@@ -290,6 +291,7 @@ export async function installManagedRuntime(params, dependencyOverrides = {}) {
           version: previousVersion,
           previousVersion: null,
           service: existingManifest?.service,
+          updateChannel: params.updateChannel || existingManifest?.update?.channel,
         })
       : null);
   const hostTransaction = resolveHostTransaction(
@@ -330,6 +332,7 @@ export async function installManagedRuntime(params, dependencyOverrides = {}) {
     hostedRelease,
     previousVersion: previousVersion || null,
     service: existingManifest?.service,
+    updateChannel: params.updateChannel || existingManifest?.update?.channel,
   });
   if (hostTransaction) {
     await dependencies.beginPreactivatedHostedTransaction({
@@ -428,6 +431,7 @@ export async function rollbackManagedRuntime(params) {
     hostedRelease,
     previousVersion: currentVersion,
     service: manifest.service,
+    updateChannel: manifest.update?.channel,
   });
   await atomicWriteJson(
     paths.manifestPath,

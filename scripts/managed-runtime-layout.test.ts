@@ -148,11 +148,13 @@ describe("managed runtime layout", () => {
       stateDir: fixture.stateDir,
       prefix: fixture.prefix,
       profile: "local",
+      updateChannel: "beta",
     });
 
     const manifest = readManagedInstallManifest(fixture.paths.manifestPath);
     expect(manifest?.runtime.activeVersion).toBe("1.2.3");
     expect(manifest?.service.scope).toBe("user");
+    expect(manifest?.update?.channel).toBe("beta");
     expect(fs.realpathSync(fixture.paths.currentLink)).toBe(
       path.join(fixture.paths.releasesDir, "1.2.3"),
     );

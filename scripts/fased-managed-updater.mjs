@@ -58,43 +58,56 @@ const HOSTED_TRANSACTION_PHASES = new Set([
   "rollback-ready",
 ]);
 
-function resolveRootManagedControllerSocket(paths, manifest = null) {
+function resolveManagedControllerDescriptor(paths, manifest = null) {
   const selectedManifest = manifest ?? readManagedInstallManifest(paths.manifestPath);
-  if (selectedManifest?.profile === "hosting") {
-    return HOST_UPDATER_SOCKET;
-  }
-  if (selectedManifest?.profile !== "protected-local") {
-    return process.env.FASED_HOST_UPDATER_SOCKET || HOST_UPDATER_SOCKET;
-  }
-  const configPath = selectedManifest.configPath;
-  if (!configPath || !path.isAbsolute(configPath)) {
-    throw new Error("Protected Local controller configuration path is invalid.");
-  }
-  let config;
-  try {
-    const configStat = fs.lstatSync(configPath);
-    if (!configStat.isFile() || configStat.isSymbolicLink()) {
-      throw new Error("configuration is not a regular file");
-    }
-    config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  } catch (error) {
-    throw new Error(`Protected Local controller configuration is unavailable: ${error.message}`, {
-      cause: error,
+  const profile = selectedManifest?.profile;
+  if (!isRootManagedProfile(profile)) {
+    return Object.freeze({
+      profile: "unmanaged",
+      socketPath: process.env.FASED_HOST_UPDATER_SOCKET || HOST_UPDATER_SOCKET,
+      instanceId: null,
     });
   }
-  const variables = config?.env?.vars;
-  const instanceId = String(variables?.FASED_PROTECTED_LOCAL_INSTANCE ?? "").trim();
-  const socketPath = String(variables?.FASED_HOST_UPDATER_SOCKET ?? "").trim();
-  const expectedSocket = `/run/fased-local-controller/${instanceId}/request.sock`;
+  const stateDir = path.resolve(paths.stateDir || "");
   if (
-    variables?.FASED_HOST_PROFILE !== "local" ||
-    variables?.FASED_PROTECTED_LOCAL !== "1" ||
-    !/^[a-f0-9]{16}$/u.test(instanceId) ||
-    socketPath !== expectedSocket
+    !path.isAbsolute(stateDir) ||
+    path.resolve(selectedManifest.stateDir || "") !== stateDir ||
+    path.resolve(selectedManifest.configPath || "") !== path.join(stateDir, "fased.json") ||
+    selectedManifest.service?.scope !== "system"
   ) {
-    throw new Error("Protected Local controller identity or socket is invalid.");
+    throw new Error(`${profile} controller identity in install.json is invalid.`);
   }
-  return socketPath;
+  if (profile === "hosting") {
+    if (selectedManifest.service?.name !== "fased-gateway.service") {
+      throw new Error("Hosting controller identity in install.json is invalid.");
+    }
+    return Object.freeze({
+      profile,
+      socketPath: HOST_UPDATER_SOCKET,
+      instanceId: null,
+    });
+  }
+  const serviceMatch = /^fased-gateway-([a-f0-9]{16})\.service$/u.exec(
+    String(selectedManifest.service?.name || "").trim(),
+  );
+  const instanceId = serviceMatch?.[1] || "";
+  const expectedSocket = `/run/fased-local-controller/${instanceId}/request.sock`;
+  const expectedLauncher = `/opt/fased/local/${instanceId}/gateway-launch`;
+  if (
+    !/^[a-f0-9]{16}$/u.test(instanceId) ||
+    selectedManifest.service?.launcher !== expectedLauncher
+  ) {
+    throw new Error("Protected Local controller identity in install.json is invalid.");
+  }
+  return Object.freeze({
+    profile,
+    socketPath: expectedSocket,
+    instanceId,
+  });
+}
+
+function resolveRootManagedControllerSocket(paths, manifest = null) {
+  return resolveManagedControllerDescriptor(paths, manifest).socketPath;
 }
 const TRANSACTION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -338,29 +351,12 @@ async function resolveTargetVersion(options) {
   return version.trim();
 }
 
-async function resolveConfiguredChannel(options, configPath) {
+function resolveConfiguredChannel(options, manifest) {
   if (options.channelExplicit) {
-    try {
-      const config = JSON.parse(await fsp.readFile(configPath, "utf8"));
-      config.update = { ...config.update, channel: options.channel };
-      await atomicWriteJson(configPath, config, 0o600);
-    } catch (error) {
-      if (error?.code !== "ENOENT") {
-        throw new Error(`Could not persist update channel: ${error.message}`, { cause: error });
-      }
-    }
     return options.channel;
   }
-  try {
-    const config = JSON.parse(await fsp.readFile(configPath, "utf8"));
-    const stored = String(config?.update?.channel || "").trim();
-    if (new Set(["stable", "beta", "dev"]).has(stored)) {
-      return stored;
-    }
-  } catch {
-    // Missing or invalid config uses the stable channel.
-  }
-  return "stable";
+  const stored = String(manifest?.update?.channel || "").trim();
+  return new Set(["stable", "beta", "dev"]).has(stored) ? stored : "stable";
 }
 
 async function sha256File(filePath) {
@@ -5605,6 +5601,7 @@ async function updateManagedRuntime(options) {
           hostedRelease: candidate.hostedRelease,
           previousVersion: currentVersion,
           service: existingManifest.service,
+          updateChannel: options.channel,
         });
         const migration = await measureStage(
           timings,
@@ -5701,6 +5698,7 @@ async function updateManagedRuntime(options) {
         hostedRelease,
         previousVersion: currentVersion,
         service: existingManifest.service,
+        updateChannel: options.channel,
       });
       if (isRootManagedProfile(existingManifest.profile)) {
         if (!previousRoot) {
@@ -5965,7 +5963,7 @@ export async function run(argv = process.argv.slice(2)) {
       "Managed installation manifest is missing; run the official repair installer once.",
     );
   }
-  parsed.options.channel = await resolveConfiguredChannel(parsed.options, manifest.configPath);
+  parsed.options.channel = resolveConfiguredChannel(parsed.options, manifest);
   if (parsed.options.channel === "dev") {
     await delegateToRuntime(
       parsed.options.status ? argv : ["update", "--channel", "dev", ...argv.slice(1)],
@@ -6005,6 +6003,8 @@ export const __testing = {
   recoverHostedReleaseTransaction,
   requestHostedSignerTransaction,
   requestHostedSignerTransactionWithRetry,
+  resolveConfiguredChannel,
+  resolveManagedControllerDescriptor,
   resolveRootManagedControllerSocket,
   rollbackHostedReleaseTransaction,
   restartHostedGateway,
