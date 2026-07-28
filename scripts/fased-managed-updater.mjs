@@ -2182,6 +2182,28 @@ async function restoreHostedApplication(paths, journal) {
 }
 
 async function rollbackHostedReleaseTransaction(journal, operations, originalError = null) {
+  if (journal.phase === "rollback-ready") {
+    try {
+      await operations.refreshPrevious(journal);
+    } catch (error) {
+      const incomplete = new Error(
+        `Hosted update recovery is incomplete (previous Gateway refresh: ${error.message}). Re-run fased update after correcting the reported failure.`,
+        { cause: originalError || error },
+      );
+      incomplete.code = "HOSTED_ROLLBACK_INCOMPLETE";
+      throw incomplete;
+    }
+    await operations.removeJournal();
+    if (originalError) {
+      const rolledBack = new Error(
+        `Update rolled back after coordinated health verification failed: ${originalError.message}`,
+        { cause: originalError },
+      );
+      rolledBack.code = "HOSTED_UPDATE_ROLLED_BACK";
+      throw rolledBack;
+    }
+    return { action: "rolled-back", journal };
+  }
   const failures = [];
   let gatewayQuiesced = false;
   let applicationRestored = false;

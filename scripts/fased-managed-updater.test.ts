@@ -1128,6 +1128,17 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     ]);
   });
 
+  it("resumes rollback-ready recovery without replaying the closed root transaction", async () => {
+    const events: string[] = [];
+    await expect(
+      __testing.rollbackHostedReleaseTransaction(
+        transaction("rollback-ready"),
+        transactionOperations(events),
+      ),
+    ).resolves.toMatchObject({ action: "rolled-back" });
+    expect(events).toEqual(["refresh-previous", "remove-journal"]);
+  });
+
   it("never rolls back after the durable health commit decision", async () => {
     const events: string[] = [];
     const operations = transactionOperations(events, {
