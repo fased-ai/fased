@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.19
+
+- Converge protected Local update activation under the target controller,
+  including legacy restart handoff, rollback, and same-command retry.
+- Preserve Gateway, identity, Wallet, and Mining access by reconciling only
+  declared shared-state permissions during install and update.
+- Bind application, signer, controller, and lifecycle fixtures to the exact
+  candidate commit while isolating unpublished same-version generations.
+
 ## 0.1.76-rc.18
 
 - Converge protected Local and Hosting controller permissions transactionally
