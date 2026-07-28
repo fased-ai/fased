@@ -30,6 +30,37 @@ function signerRelease(version: string) {
   };
 }
 
+async function writeProtectedApplicationFixture({
+  root,
+  version,
+  commit,
+  dependencyHash,
+}: {
+  root: string;
+  version: string;
+  commit: string;
+  dependencyHash: string;
+}) {
+  await Promise.all([
+    fsp.mkdir(path.join(root, "dist"), { recursive: true }),
+    fsp.mkdir(path.join(root, "scripts"), { recursive: true }),
+    fsp.mkdir(path.join(root, "node_modules"), { recursive: true }),
+  ]);
+  await Promise.all([
+    fsp.writeFile(path.join(root, "package.json"), `${JSON.stringify({ version })}\n`),
+    fsp.writeFile(
+      path.join(root, "dist", "build-info.json"),
+      `${JSON.stringify({ version, commit })}\n`,
+    ),
+    fsp.writeFile(
+      path.join(root, ".fased-hosted-runtime.json"),
+      `${JSON.stringify({ schemaVersion: 2, version, commit, dependencyHash })}\n`,
+    ),
+    fsp.writeFile(path.join(root, "fased.mjs"), "#!/usr/bin/env node\n"),
+    fsp.writeFile(path.join(root, "scripts", "start-managed.sh"), "#!/bin/bash\n"),
+  ]);
+}
+
 afterEach(async () => {
   for (const root of cleanupRoots.splice(0)) {
     await fsp.rm(root, { recursive: true, force: true });
@@ -1062,6 +1093,129 @@ describe("root-owned hosted updater protocol", () => {
     expect(downloads).toEqual(["fased-hosted-release-v2.json", assetName]);
     expect(await fsp.readFile(candidatePath)).toEqual(signerBytes);
     expect(staged.release).toEqual(signerRelease("1.2.3"));
+  });
+
+  it("stages and journals a commit-bound Q0 application without replacing the official same-version generation", async () => {
+    const fixture = await createFixture({
+      protectedApplication: true,
+      protectedService: true,
+    });
+    const { context, paths } = fixture;
+    const version = "1.2.3";
+    const candidateCommit = "a".repeat(40);
+    const officialCommit = "c".repeat(40);
+    const dependencyHash = "d".repeat(64);
+    const instanceId = "0123456789abcdef";
+    const authorizationPath = path.join(paths.stateDir, "q0-authorization.json");
+    const officialRoot = path.join(paths.applicationReleasesDir!, `v${version}`);
+    const candidateRoot = path.join(
+      paths.applicationReleasesDir!,
+      `v${version}.q0-app.${candidateCommit.slice(0, 12)}`,
+    );
+    await Promise.all([
+      writeProtectedApplicationFixture({
+        root: officialRoot,
+        version,
+        commit: officialCommit,
+        dependencyHash,
+      }),
+      writeProtectedApplicationFixture({
+        root: candidateRoot,
+        version,
+        commit: candidateCommit,
+        dependencyHash,
+      }),
+      fsp.writeFile(paths.versionPath, `${version}\n`, { mode: 0o600 }),
+      fsp.writeFile(
+        authorizationPath,
+        `${JSON.stringify({
+          schemaVersion: 1,
+          baseUrl: "http://127.0.0.1:39091",
+          protectedLocalInstance: instanceId,
+          releaseVersion: version,
+          releaseCommit: candidateCommit,
+          forceSameVersionRepair: true,
+        })}\n`,
+        { mode: 0o600 },
+      ),
+    ]);
+    await fsp.rm(paths.applicationCurrentLink!);
+    await fsp.symlink(officialRoot, paths.applicationCurrentLink!, "dir");
+    context.testArtifactAuthorizationPath = authorizationPath;
+    context.rootUid = process.geteuid();
+    context.probeSignerState = async () => ({
+      release: { ...signerRelease(version), commit: officialCommit },
+      invariant: "preserved-signer-state",
+    });
+    context.stageCandidate = async (_version: string, candidatePath: string) => {
+      await fsp.writeFile(candidatePath, "exact Q0 signer\n", { mode: 0o755 });
+      const application = await __testing.stageProtectedApplicationRelease({
+        version,
+        selected: {
+          release: { commit: candidateCommit },
+          application: {
+            artifact: { asset: "unused-app.tar.gz", sha256: "1".repeat(64) },
+            dependencies: {
+              asset: "unused-deps.tar.gz",
+              dependencyHash,
+              sha256: "2".repeat(64),
+            },
+          },
+        },
+        releaseUrl: "http://127.0.0.1:39091/v1.2.3",
+        manifestBytes: Buffer.from("{}\n"),
+        staging: path.join(paths.stateDir, "unused-staging"),
+        context,
+        q0ReleaseCommit: candidateCommit,
+      });
+      return {
+        release: signerRelease(version),
+        binding: {
+          manifestDigest: `sha256:${"1".repeat(64)}`,
+          signerArtifactDigest: `sha256:${"2".repeat(64)}`,
+          capabilitiesDigest: `sha256:${"3".repeat(64)}`,
+          releaseCommit: candidateCommit,
+        },
+        application,
+      };
+    };
+
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, version),
+      context,
+    );
+    const prepared = await __testing.readJournal(context);
+    expect(prepared.application).toEqual({
+      targetRoot: candidateRoot,
+      previousRoot: officialRoot,
+      changed: true,
+    });
+    expect(await fsp.realpath(paths.applicationCurrentLink!)).toBe(officialRoot);
+    const authorizationBackupPath = `${authorizationPath}.hold`;
+    await fsp.rename(authorizationPath, authorizationBackupPath);
+    await expect(__testing.readJournal(context)).rejects.toThrow(
+      "protected application transaction is unauthorized",
+    );
+    await fsp.rename(authorizationBackupPath, authorizationPath);
+
+    await __testing.activateSignerRelease(
+      request("activateRelease", TRANSACTION_ONE, version),
+      context,
+    );
+    await __testing.authorizeGatewayRelease(
+      request("authorizeGatewayRelease", TRANSACTION_ONE, version),
+      context,
+    );
+    expect(await fsp.realpath(paths.applicationCurrentLink!)).toBe(candidateRoot);
+    await __testing.commitSignerRelease(
+      request("commitRelease", TRANSACTION_ONE, version),
+      context,
+    );
+    expect((await fsp.lstat(officialRoot)).isDirectory()).toBe(true);
+    expect(
+      JSON.parse(await fsp.readFile(path.join(officialRoot, "dist", "build-info.json"), "utf8"))
+        .commit,
+    ).toBe(officialCommit);
   });
 
   it("always passes an offline bundle to GitHub attestation verification", () => {

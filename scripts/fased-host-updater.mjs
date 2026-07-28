@@ -1390,7 +1390,7 @@ async function restoreProtectedServiceBoundary(context, boundary) {
   await context.reloadUnits();
 }
 
-function validateJournal(value, context) {
+async function validateJournal(value, context) {
   if (
     !value ||
     typeof value !== "object" ||
@@ -1408,6 +1408,16 @@ function validateJournal(value, context) {
     throw new Error("host updater previous signer-state invariant is invalid");
   }
   const version = parseReleaseVersion(value.version);
+  const releaseBinding = value.releaseBinding == null ? null : value.releaseBinding;
+  if (
+    releaseBinding &&
+    (!/^sha256:[a-f0-9]{64}$/.test(releaseBinding.manifestDigest || "") ||
+      !/^sha256:[a-f0-9]{64}$/.test(releaseBinding.signerArtifactDigest || "") ||
+      !/^sha256:[a-f0-9]{64}$/.test(releaseBinding.capabilitiesDigest || "") ||
+      !/^[a-f0-9]{40}$/.test(releaseBinding.releaseCommit || ""))
+  ) {
+    throw new Error("host updater release-manifest binding is invalid");
+  }
   let application = null;
   if (value.application != null) {
     if (
@@ -1419,14 +1429,27 @@ function validateJournal(value, context) {
     ) {
       throw new Error("host updater protected application transaction is invalid");
     }
-    const targetRoot = protectedApplicationReleaseRoot(context.paths, version);
+    const officialTargetRoot = protectedApplicationReleaseRoot(context.paths, version);
+    const requestedTargetRoot = path.resolve(String(value.application.targetRoot ?? ""));
+    let targetRoot = officialTargetRoot;
+    if (requestedTargetRoot !== officialTargetRoot) {
+      const testAuthorization = await readProtectedLocalTestArtifactAuthorization(context, version);
+      if (!testAuthorization || releaseBinding?.releaseCommit !== testAuthorization.releaseCommit) {
+        throw new Error("host updater protected application transaction is unauthorized");
+      }
+      targetRoot = protectedApplicationReleaseRoot(
+        context.paths,
+        version,
+        testAuthorization.releaseCommit,
+      );
+    }
     const previousRoot =
       value.application.previousRoot == null
         ? null
         : path.resolve(String(value.application.previousRoot));
     const releasesRoot = path.resolve(context.paths.applicationReleasesDir ?? "/nonexistent");
     if (
-      path.resolve(String(value.application.targetRoot ?? "")) !== targetRoot ||
+      requestedTargetRoot !== targetRoot ||
       (previousRoot !== null && path.dirname(previousRoot) !== releasesRoot)
     ) {
       throw new Error("host updater protected application transaction escaped its release root");
@@ -1440,16 +1463,6 @@ function validateJournal(value, context) {
     throw new Error("host updater protected application transaction is missing");
   }
   const serviceBoundary = validateProtectedServiceBoundary(value.serviceBoundary, context);
-  const releaseBinding = value.releaseBinding == null ? null : value.releaseBinding;
-  if (
-    releaseBinding &&
-    (!/^sha256:[a-f0-9]{64}$/.test(releaseBinding.manifestDigest || "") ||
-      !/^sha256:[a-f0-9]{64}$/.test(releaseBinding.signerArtifactDigest || "") ||
-      !/^sha256:[a-f0-9]{64}$/.test(releaseBinding.capabilitiesDigest || "") ||
-      !/^[a-f0-9]{40}$/.test(releaseBinding.releaseCommit || ""))
-  ) {
-    throw new Error("host updater release-manifest binding is invalid");
-  }
   return {
     ...value,
     transactionId: parseTransactionId(value.transactionId),
@@ -1466,7 +1479,7 @@ function validateJournal(value, context) {
 
 async function readJournal(context) {
   try {
-    return validateJournal(
+    return await validateJournal(
       JSON.parse(await fsp.readFile(context.paths.journalPath, "utf8")),
       context,
     );
@@ -1479,7 +1492,7 @@ async function readJournal(context) {
 }
 
 async function writeJournal(context, journal) {
-  const next = validateJournal(
+  const next = await validateJournal(
     {
       ...journal,
       schemaVersion: JOURNAL_SCHEMA_VERSION,
@@ -1527,12 +1540,19 @@ async function cleanupTransactionFiles(context, transactionId) {
   });
 }
 
-function protectedApplicationReleaseRoot(paths, version) {
+function protectedApplicationReleaseRoot(paths, version, q0ReleaseCommit = null) {
   if (!paths.applicationReleasesDir || !paths.applicationCurrentLink) {
     throw new Error("protected application runtime paths are unavailable");
   }
   const releases = path.resolve(paths.applicationReleasesDir);
-  const releaseRoot = path.resolve(releases, `v${parseReleaseVersion(version)}`);
+  let generation = `v${parseReleaseVersion(version)}`;
+  if (q0ReleaseCommit !== null) {
+    if (!/^[a-f0-9]{40}$/.test(q0ReleaseCommit)) {
+      throw new Error("protected application Q0 release commit is invalid");
+    }
+    generation += `.q0-app.${q0ReleaseCommit.slice(0, 12)}`;
+  }
+  const releaseRoot = path.resolve(releases, generation);
   if (path.dirname(releaseRoot) !== releases) {
     throw new Error("protected application release path escaped its root");
   }
@@ -1738,9 +1758,13 @@ async function stageProtectedApplicationRelease({
   manifestBytes,
   staging,
   context,
+  q0ReleaseCommit = null,
 }) {
+  if (q0ReleaseCommit !== null && q0ReleaseCommit !== selected.release.commit) {
+    throw new Error("protected application Q0 generation commit is mismatched");
+  }
   await prepareProtectedApplicationDirectories(context.paths);
-  const releaseRoot = protectedApplicationReleaseRoot(context.paths, version);
+  const releaseRoot = protectedApplicationReleaseRoot(context.paths, version, q0ReleaseCommit);
   let previousRoot = null;
   try {
     previousRoot = await fsp.realpath(context.paths.applicationCurrentLink);
@@ -1884,6 +1908,7 @@ async function stageOfficialCandidate(version, candidatePath, context) {
           manifestBytes,
           staging,
           context,
+          q0ReleaseCommit: testAuthorization?.releaseCommit ?? null,
         })
       : null;
     return {
@@ -3305,6 +3330,7 @@ export const __testing = {
   rollbackSignerRelease,
   stageOfficialControllerRelease,
   stageOfficialCandidate,
+  stageProtectedApplicationRelease,
   transactionPaths,
   updateControllerRelease,
   writeJournal,
