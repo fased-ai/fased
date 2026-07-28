@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.18
+
+- Converge protected Local and Hosting controller permissions transactionally
+  while preserving the prior installation automatically on failure.
+- Keep protected Gateway device authentication, Mining history, signer
+  diagnostics, and plugin diagnostics operational after install and update.
+- Add owner-Local candidate gates that exercise the installed controller,
+  application, Mining, signer, and plugin boundaries before release work.
+
 ## 0.1.76-rc.17
 
 - Add one verified root bootstrap path that detects and transactionally
