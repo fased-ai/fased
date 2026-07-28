@@ -5512,7 +5512,7 @@ async function updateManagedRuntime(options) {
       existingManifest.profile === "protected-local" && artifactBaseUrl !== DEFAULT_RELEASE_BASE_URL
         ? readProtectedLocalTestArtifactAuthorization({
             baseUrl: artifactBaseUrl,
-            protectedLocalInstance: parseProtectedLocalEnvironment(existingManifest.configPath)
+            protectedLocalInstance: resolveManagedControllerDescriptor(paths, existingManifest)
               .instanceId,
             releaseVersion: targetVersion,
           })
