@@ -197,7 +197,7 @@ export function ensureWalletStateDir(env: NodeJS.ProcessEnv = process.env): Wall
   const paths = resolveWalletStatePaths(env);
   const shared = isSharedWalletApplicationState(env);
   if (!fs.existsSync(paths.rootDir)) {
-    fs.mkdirSync(paths.rootDir, { recursive: true, mode: shared ? 0o2770 : 0o700 });
+    fs.mkdirSync(paths.rootDir, { recursive: true, mode: shared ? 0o770 : 0o700 });
   }
   if (!shared) {
     fs.chmodSync(paths.rootDir, 0o700);

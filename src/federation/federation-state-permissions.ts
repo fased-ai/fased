@@ -31,7 +31,10 @@ export async function ensureFederationStateDirectory(
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       throw error;
     }
-    await fs.mkdir(directory, { recursive: true, mode });
+    await fs.mkdir(directory, {
+      recursive: true,
+      mode: isSharedFederationState(env) ? 0o770 : mode,
+    });
   }
   if (!isSharedFederationState(env)) {
     await fs.chmod(directory, mode);

@@ -16,6 +16,15 @@ async function modes(stateDir: string): Promise<{ directory: number; registry: n
   };
 }
 
+async function withServiceUmask(run: () => Promise<void>): Promise<void> {
+  const previous = process.umask(0o007);
+  try {
+    await run();
+  } finally {
+    process.umask(previous);
+  }
+}
+
 describe("wallet application state permissions", () => {
   it("keeps ordinary Local wallet application state owner-only", async () => {
     await withStateDirEnv("fased-wallet-state-local-", async ({ stateDir }) => {
@@ -35,13 +44,13 @@ describe("wallet application state permissions", () => {
     "keeps %s wallet application state within the restricted config group",
     async (_name, vars) => {
       await withStateDirEnv("fased-wallet-state-shared-", async ({ stateDir }) => {
-        const env = { ...process.env, FASED_STATE_DIR: stateDir, ...vars };
-        const walletDir = path.join(stateDir, "wallet");
-        await fs.mkdir(walletDir, { recursive: true, mode: 0o2770 });
-        await fs.chmod(walletDir, 0o2770);
-        ensureWalletStateDir(env);
-        writeWalletProviderRegistry(readWalletProviderRegistry(env), env);
-        expect(await modes(stateDir)).toEqual({ directory: 0o2770, registry: 0o660 });
+        await withServiceUmask(async () => {
+          const env = { ...process.env, FASED_STATE_DIR: stateDir, ...vars };
+          await fs.chmod(stateDir, 0o2770);
+          ensureWalletStateDir(env);
+          writeWalletProviderRegistry(readWalletProviderRegistry(env), env);
+          expect(await modes(stateDir)).toEqual({ directory: 0o2770, registry: 0o660 });
+        });
       });
     },
   );

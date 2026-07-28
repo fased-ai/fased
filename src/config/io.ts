@@ -1275,9 +1275,29 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
       configUsesSharedServiceState(cfgToWrite);
     const stateDirMode = sharedServiceConfig ? 0o2770 : 0o700;
     const configMode = sharedServiceConfig ? 0o660 : 0o600;
-    await deps.fs.promises.mkdir(dir, { recursive: true, mode: stateDirMode });
+    let directoryInfo;
+    try {
+      directoryInfo = await deps.fs.promises.stat(dir);
+      if (!directoryInfo.isDirectory()) {
+        throw new Error(`config state path is not a directory: ${dir}`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+      // Root-managed services run with RestrictSUIDSGID. The root controller
+      // owns the final 02770 mode; application processes create only a normal
+      // group-writable directory and inherit SGID from an existing shared
+      // parent. Passing 02770 directly to mkdir is rejected before the kernel
+      // can even report EEXIST.
+      await deps.fs.promises.mkdir(dir, {
+        recursive: true,
+        mode: sharedServiceConfig ? 0o770 : stateDirMode,
+      });
+      directoryInfo = await deps.fs.promises.stat(dir);
+    }
     if (sharedServiceConfig) {
-      const currentMode = (await deps.fs.promises.stat(dir)).mode & 0o7777;
+      const currentMode = directoryInfo.mode & 0o7777;
       if (currentMode !== stateDirMode) {
         await deps.fs.promises.chmod(dir, stateDirMode);
       }
