@@ -939,12 +939,7 @@ function grantOperatorApplicationStateAccess(spec) {
       "+",
     ]);
   }
-  for (const directory of [
-    spec.stateDir,
-    path.join(spec.stateDir, "identity"),
-    path.join(spec.stateDir, "wallet"),
-    path.join(spec.stateDir, "federation"),
-  ]) {
+  for (const directory of sharedApplicationStateDirectoriesForAclVerification(spec)) {
     const entries = aclEntryMap(captureDirectoryAcl(directory));
     if (
       entries.get(`user:${spec.operatorUid}:`) !== "rwx" ||
@@ -957,6 +952,27 @@ function grantOperatorApplicationStateAccess(spec) {
   if (!new Set(["rw-", "rwx"]).has(configEntries.get(`user:${spec.operatorUid}:`))) {
     fail("protected Local operator cannot read and update application configuration");
   }
+}
+
+function sharedApplicationStateDirectoriesForAclVerification(spec) {
+  const directories = [spec.stateDir];
+  for (const name of ["identity", "wallet", "federation"]) {
+    const directory = path.join(spec.stateDir, name);
+    let stat;
+    try {
+      stat = fs.lstatSync(directory);
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        continue;
+      }
+      throw error;
+    }
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      fail(`protected Local shared application state is not a directory: ${directory}`);
+    }
+    directories.push(directory);
+  }
+  return directories;
 }
 
 async function installRootFiles(params) {
@@ -2945,6 +2961,7 @@ export const __testing = Object.freeze({
   removeLegacySignerMaterial,
   resolveTrustedLegacyRuntimeHardlinks,
   resolveLegacySignerPaths,
+  sharedApplicationStateDirectoriesForAclVerification,
   protectedLocalGatewayHealthMatches,
   previousLegacyGatewayVersion,
   verifySignerReleaseIdentity,

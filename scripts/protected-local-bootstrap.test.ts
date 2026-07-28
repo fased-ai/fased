@@ -157,6 +157,27 @@ describe("protected Local bootstrap contract", () => {
     ]);
   });
 
+  it("allows fresh prepare to grant inherited access before shared state directories exist", () => {
+    const root = temporaryRoot();
+    const stateDir = path.join(root, ".fased");
+    fs.mkdirSync(stateDir, { recursive: true });
+
+    expect(__testing.sharedApplicationStateDirectoriesForAclVerification({ stateDir })).toEqual([
+      stateDir,
+    ]);
+
+    fs.mkdirSync(path.join(stateDir, "identity"));
+    expect(__testing.sharedApplicationStateDirectoriesForAclVerification({ stateDir })).toEqual([
+      stateDir,
+      path.join(stateDir, "identity"),
+    ]);
+
+    fs.symlinkSync(root, path.join(stateDir, "wallet"));
+    expect(() =>
+      __testing.sharedApplicationStateDirectoriesForAclVerification({ stateDir }),
+    ).toThrow(/shared application state is not a directory/u);
+  });
+
   it("accepts only bounded plugin trees whose links stay inside the plugin root", async () => {
     const root = temporaryRoot();
     const stateDir = path.join(root, ".fased");
