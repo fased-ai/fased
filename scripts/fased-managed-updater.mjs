@@ -1685,21 +1685,32 @@ export async function authorizePreactivatedHostedGateway({
   );
 }
 
-async function restartHostedGateway(version, timeoutMs = 30_000) {
+async function restartHostedGateway(
+  version,
+  timeoutMs = 30_000,
+  socketPath = process.env.FASED_HOST_UPDATER_SOCKET || HOST_UPDATER_SOCKET,
+) {
   return await requestHostedSignerTransactionWithRetry(
     "restartGateway",
     randomUUID(),
     version,
     timeoutMs,
+    socketPath,
   );
 }
 
-async function quiesceHostedGateway(transactionId, version, timeoutMs = 30_000) {
+async function quiesceHostedGateway(
+  transactionId,
+  version,
+  timeoutMs = 30_000,
+  socketPath = process.env.FASED_HOST_UPDATER_SOCKET || HOST_UPDATER_SOCKET,
+) {
   return await requestHostedSignerTransactionWithRetry(
     "gateGatewayRelease",
     transactionId,
     version,
     timeoutMs,
+    socketPath,
   );
 }
 
@@ -1710,6 +1721,7 @@ async function refreshGateway(
   allowInactiveHosted = false,
   expectedSignerRelease,
   hostedServiceAlreadyRestarted = false,
+  controllerSocketPath,
 ) {
   const cli = path.join(runtimeRoot, "fased.mjs");
   const env = {
@@ -1723,7 +1735,7 @@ async function refreshGateway(
   if (isRootManagedProfile(manifest.profile)) {
     if (!hostedServiceAlreadyRestarted) {
       try {
-        await restartHostedGateway(manifest.runtime.activeVersion, timeoutMs);
+        await restartHostedGateway(manifest.runtime.activeVersion, timeoutMs, controllerSocketPath);
       } catch (error) {
         if (!allowInactiveHosted || !error.message.includes("MainPID unavailable")) {
           throw error;
@@ -2287,7 +2299,12 @@ function hostedTransactionOperations(paths, timeoutMs, options = {}) {
       // updater, and downgrading the stable files would break recovery.
     },
     quiesceGateway: async (journal) =>
-      await quiesceHostedGateway(journal.transactionId, journal.targetVersion, timeoutMs),
+      await quiesceHostedGateway(
+        journal.transactionId,
+        journal.targetVersion,
+        timeoutMs,
+        controllerSocketPath,
+      ),
     signerRequest: async (operation, journal) => {
       if (operation === "prepareRelease") {
         await ensureHostedControllerRelease(
@@ -2352,6 +2369,8 @@ function hostedTransactionOperations(paths, timeoutMs, options = {}) {
         timeoutMs,
         true,
         journal.previousManifest?.signer?.release,
+        false,
+        controllerSocketPath,
       ),
     finalizeApplication: async (journal) => {
       if (!journal.signerRelease) {
@@ -6003,6 +6022,7 @@ export const __testing = {
   recoverHostedReleaseTransaction,
   requestHostedSignerTransaction,
   requestHostedSignerTransactionWithRetry,
+  quiesceHostedGateway,
   resolveConfiguredChannel,
   resolveManagedControllerDescriptor,
   resolveRootManagedControllerSocket,

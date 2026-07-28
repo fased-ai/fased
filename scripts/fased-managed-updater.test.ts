@@ -1386,6 +1386,38 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     }
   });
 
+  it("routes Gateway transaction operations through the selected root controller socket", async () => {
+    const operations: string[] = [];
+    const server = await withUnixServer((socket) => {
+      socket.once("data", (chunk) => {
+        const request = JSON.parse(String(chunk).trim()) as {
+          op: string;
+          transactionId: string;
+          version: string;
+        };
+        operations.push(request.op);
+        socket.end(
+          `${JSON.stringify({
+            ok: true,
+            transactionId: request.transactionId,
+            version: request.version,
+          })}\n`,
+        );
+      });
+    });
+    try {
+      await expect(
+        __testing.quiesceHostedGateway(TRANSACTION_ID, "1.2.3", 1000, server.socketPath),
+      ).resolves.toMatchObject({ ok: true });
+      await expect(
+        __testing.restartHostedGateway("1.2.3", 1000, server.socketPath),
+      ).resolves.toMatchObject({ ok: true });
+      expect(operations).toEqual(["gateGatewayRelease", "restartGateway"]);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("requires the root updater to return an exact production signer identity", async () => {
     const server = await withUnixServer((socket) => {
       socket.once("data", () => {
