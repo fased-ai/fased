@@ -2082,10 +2082,14 @@ async function grantOperatorApplicationStateAccess(stateDir, operatorUid) {
   // already-running login shell.  A named operator ACL keeps that same shell
   // usable immediately, and inherited defaults preserve access when the
   // isolated Gateway atomically replaces application-owned files.
-  await execFileAsync(setfacl, ["--modify", `user:${operatorUid}:rwx`, "--", stateDir], common);
   await execFileAsync(
     setfacl,
-    ["--modify", `default:user:${operatorUid}:rwx`, "--", stateDir],
+    ["--modify", `user:${operatorUid}:rwx,group::rwx`, "--", stateDir],
+    common,
+  );
+  await execFileAsync(
+    setfacl,
+    ["--modify", `default:user:${operatorUid}:rwx,default:group::rwx`, "--", stateDir],
     common,
   );
   const sharedRoots = (await fsp.readdir(stateDir))
@@ -2094,7 +2098,14 @@ async function grantOperatorApplicationStateAccess(stateDir, operatorUid) {
   for (const sharedRoot of sharedRoots) {
     await execFileAsync(
       setfacl,
-      ["--recursive", "--physical", "--modify", `user:${operatorUid}:rwX`, "--", sharedRoot],
+      [
+        "--recursive",
+        "--physical",
+        "--modify",
+        `user:${operatorUid}:rwX,group::rwX`,
+        "--",
+        sharedRoot,
+      ],
       common,
     );
     await execFileAsync(
@@ -2108,7 +2119,7 @@ async function grantOperatorApplicationStateAccess(stateDir, operatorUid) {
         "-exec",
         setfacl,
         "--modify",
-        `default:user:${operatorUid}:rwx`,
+        `default:user:${operatorUid}:rwx,default:group::rwx`,
         "--",
         "{}",
         "+",
@@ -2134,7 +2145,9 @@ async function grantOperatorApplicationStateAccess(stateDir, operatorUid) {
     );
     if (
       !entries.has(`user:${operatorUid}:rwx`) ||
-      !entries.has(`default:user:${operatorUid}:rwx`)
+      !entries.has(`default:user:${operatorUid}:rwx`) ||
+      !entries.has("group::rwx") ||
+      !entries.has("default:group::rwx")
     ) {
       throw new Error(`root-managed operator ACL did not converge: ${directory}`);
     }
@@ -2156,7 +2169,10 @@ async function grantOperatorApplicationStateAccess(stateDir, operatorUid) {
         .map((line) => line.trim().replace(/\s+#effective:.*$/u, ""))
         .filter(Boolean),
     );
-    if (!entries.has(`user:${operatorUid}:rw-`) && !entries.has(`user:${operatorUid}:rwx`)) {
+    if (
+      (!entries.has(`user:${operatorUid}:rw-`) && !entries.has(`user:${operatorUid}:rwx`)) ||
+      (!entries.has("group::rw-") && !entries.has("group::rwx"))
+    ) {
       throw new Error("root-managed operator cannot read and update application configuration");
     }
   }

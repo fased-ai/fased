@@ -910,8 +910,13 @@ function grantOperatorApplicationStateAccess(spec) {
   const setfacl = systemBinary(["/usr/bin/setfacl", "/bin/setfacl"], "setfacl");
   const find = systemBinary(["/usr/bin/find", "/bin/find"], "find");
   const operatorEntry = `user:${spec.operatorUid}`;
-  runSystem(setfacl, ["--modify", `${operatorEntry}:rwx`, "--", spec.stateDir]);
-  runSystem(setfacl, ["--modify", `default:${operatorEntry}:rwx`, "--", spec.stateDir]);
+  runSystem(setfacl, ["--modify", `${operatorEntry}:rwx,group::rwx`, "--", spec.stateDir]);
+  runSystem(setfacl, [
+    "--modify",
+    `default:${operatorEntry}:rwx,default:group::rwx`,
+    "--",
+    spec.stateDir,
+  ]);
   for (const name of fs
     .readdirSync(spec.stateDir)
     .filter((entry) => !PROTECTED_LOCAL_OPERATOR_ONLY_STATE.has(entry))) {
@@ -920,7 +925,7 @@ function grantOperatorApplicationStateAccess(spec) {
       "--recursive",
       "--physical",
       "--modify",
-      `${operatorEntry}:rwX`,
+      `${operatorEntry}:rwX,group::rwX`,
       "--",
       sharedRoot,
     ]);
@@ -933,7 +938,7 @@ function grantOperatorApplicationStateAccess(spec) {
       "-exec",
       setfacl,
       "--modify",
-      `default:${operatorEntry}:rwx`,
+      `default:${operatorEntry}:rwx,default:group::rwx`,
       "--",
       "{}",
       "+",
@@ -943,13 +948,18 @@ function grantOperatorApplicationStateAccess(spec) {
     const entries = aclEntryMap(captureDirectoryAcl(directory));
     if (
       entries.get(`user:${spec.operatorUid}:`) !== "rwx" ||
-      entries.get(`default:user:${spec.operatorUid}:`) !== "rwx"
+      entries.get(`default:user:${spec.operatorUid}:`) !== "rwx" ||
+      entries.get("group::") !== "rwx" ||
+      entries.get("default:group::") !== "rwx"
     ) {
       fail(`protected Local operator ACL did not converge: ${directory}`);
     }
   }
   const configEntries = aclEntryMap(captureDirectoryAcl(path.join(spec.stateDir, "fased.json")));
-  if (!new Set(["rw-", "rwx"]).has(configEntries.get(`user:${spec.operatorUid}:`))) {
+  if (
+    !new Set(["rw-", "rwx"]).has(configEntries.get(`user:${spec.operatorUid}:`)) ||
+    !new Set(["rw-", "rwx"]).has(configEntries.get("group::"))
+  ) {
     fail("protected Local operator cannot read and update application configuration");
   }
 }

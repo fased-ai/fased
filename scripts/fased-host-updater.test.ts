@@ -365,6 +365,14 @@ describe("root-owned hosted updater protocol", () => {
       { env: { PATH: "/usr/bin:/bin" } },
     );
     expect(getfacl.stdout).toMatch(new RegExp(`^user:${uid}:rw[x-]`, "mu"));
+    expect(getfacl.stdout).toMatch(/^group::rw[x-]/mu);
+    const directoryAcl = await execFileAsync(
+      "/usr/bin/getfacl",
+      ["--omit-header", "--numeric", "--", path.join(stateDir, "identity")],
+      { env: { PATH: "/usr/bin:/bin" } },
+    );
+    expect(directoryAcl.stdout).toMatch(/^group::rwx$/mu);
+    expect(directoryAcl.stdout).toMatch(/^default:group::rwx$/mu);
   });
 
   it("rejects a symlink in a canonical shared application directory", async () => {
