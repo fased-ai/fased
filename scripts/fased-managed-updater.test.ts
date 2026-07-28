@@ -1460,6 +1460,40 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     }
   });
 
+  it("never reuses a same-version runtime with a different release identity", () => {
+    const metadata = {
+      schemaVersion: 2,
+      version: "1.2.3",
+      commit: "a".repeat(40),
+      dependencyHash: "b".repeat(64),
+    };
+    const release = {
+      manifestDigest: `sha256:${"c".repeat(64)}`,
+      version: "1.2.3",
+      commit: "a".repeat(40),
+      appArtifactDigest: `sha256:${"d".repeat(64)}`,
+    };
+    expect(
+      __testing.managedRuntimeReleaseIdentitiesEqual(metadata, { ...metadata }, release, {
+        ...release,
+      }),
+    ).toBe(true);
+    expect(
+      __testing.managedRuntimeReleaseIdentitiesEqual(
+        metadata,
+        { ...metadata, commit: "e".repeat(40) },
+        release,
+        { ...release, commit: "e".repeat(40) },
+      ),
+    ).toBe(false);
+    expect(
+      __testing.managedRuntimeReleaseIdentitiesEqual(metadata, { ...metadata }, release, {
+        ...release,
+        appArtifactDigest: `sha256:${"f".repeat(64)}`,
+      }),
+    ).toBe(false);
+  });
+
   it("requires the root updater to return an exact production signer identity", async () => {
     const server = await withUnixServer((socket) => {
       socket.once("data", () => {

@@ -1470,6 +1470,18 @@ function canonicalReleaseJSON(value) {
   return JSON.stringify(value);
 }
 
+function managedRuntimeReleaseIdentitiesEqual(
+  existingMetadata,
+  targetMetadata,
+  existingRelease,
+  targetRelease,
+) {
+  return (
+    canonicalReleaseJSON(existingMetadata) === canonicalReleaseJSON(targetMetadata) &&
+    canonicalReleaseJSON(existingRelease) === canonicalReleaseJSON(targetRelease)
+  );
+}
+
 async function requestHostedSignerTransaction(
   operation,
   transactionId,
@@ -5450,6 +5462,27 @@ async function stageManagedReleaseCandidate({
     if (releaseExists) {
       try {
         await assertManagedRuntime(releaseRoot, targetVersion);
+        const existingMetadata = await readHostedRuntimeMetadata(releaseRoot);
+        if (!existingMetadata) {
+          throw new Error("Existing managed runtime metadata is missing or invalid.");
+        }
+        const existingHostedRelease = await readHostedReleaseBinding(
+          releaseRoot,
+          existingMetadata,
+          targetVersion,
+        );
+        if (
+          !managedRuntimeReleaseIdentitiesEqual(
+            existingMetadata,
+            metadata,
+            existingHostedRelease,
+            hostedRelease,
+          )
+        ) {
+          throw new Error(
+            "Existing managed runtime does not match the exact target release identity.",
+          );
+        }
       } catch {
         await fsp.rm(releaseRoot, { recursive: true, force: true });
         await fsp.rename(stagedRoot, releaseRoot);
@@ -6111,6 +6144,7 @@ export const __testing = {
   parseProtectedLocalEnvironment,
   protectedLocalMigrationRequirement,
   loadSignerEnvironment,
+  managedRuntimeReleaseIdentitiesEqual,
   parseLocalSignerTransactionArgs,
   parseLocalSourceControllerArgs,
   parseHostedTransactionArgs,
