@@ -759,14 +759,19 @@ testop ALL=(root) NOPASSWD: ALL
 EOF_SUDOERS
 chmod 0440 /etc/sudoers.d/fased-protected-local-fixture
 install -d -m 0755 -o root -g root /etc/fased/testing
-cat >/etc/fased/testing/protected-local-artifact-source.json <<EOF_ARTIFACT_SOURCE
+write_artifact_source_authorization() {
+  local protected_local_instance="$1"
+  cat >/etc/fased/testing/protected-local-artifact-source.json <<EOF_ARTIFACT_SOURCE
 {
   "schemaVersion": 1,
   "baseUrl": "http://127.0.0.1:$rpc_port",
+  "protectedLocalInstance": "$protected_local_instance",
   "releaseVersion": "$version"
 }
 EOF_ARTIFACT_SOURCE
-chmod 0444 /etc/fased/testing/protected-local-artifact-source.json
+  chmod 0444 /etc/fased/testing/protected-local-artifact-source.json
+}
+write_artifact_source_authorization ""
 if [[ "$phase" == "install" ]]; then
   printf '%s\n' "$bridge_version" >"$selected_target"
 else
@@ -830,6 +835,7 @@ if [[ "$phase" == "fresh-install" ]]; then
   test -s "$state/install.json"
   test "$(jq -r .profile "$state/install.json")" = "protected-local"
   instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
+  write_artifact_source_authorization "$instance"
   verify_protected_home_acl "$instance"
   wait_for_service "fased-local-controller-$instance.service"
   wait_for_service "fased-signerd-$instance.service"
@@ -1234,6 +1240,7 @@ grep -F "Update mode: verified target-owned Protected Local transaction" \
   /tmp/protected-update.out >/dev/null
 
 instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
+write_artifact_source_authorization "$instance"
 verify_protected_home_acl "$instance"
 wait_for_gateway_version "$version"
 wait_for_service "fased-signerd-$instance.service"

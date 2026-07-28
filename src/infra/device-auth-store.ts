@@ -154,7 +154,12 @@ function writeStore(
 ): void {
   const directory = path.dirname(filePath);
   const directoryMode = deviceAuthDirectoryMode(env);
-  fs.mkdirSync(directory, { recursive: true, mode: directoryMode });
+  if (!fs.existsSync(directory)) {
+    fs.mkdirSync(directory, {
+      recursive: true,
+      mode: sharedDeviceAuthState(env) ? 0o770 : directoryMode,
+    });
+  }
   enforceDeviceAuthDirectoryMode(directory, env);
   fs.writeFileSync(filePath, `${JSON.stringify(store, null, 2)}\n`, {
     mode: deviceAuthFileMode(env),

@@ -18,6 +18,8 @@ const RELEASE_WORKFLOW = "fased-ai/fased/.github/workflows/hosted-runtime-releas
 const RELEASE_MANIFEST_NAME = "fased-hosted-release-v2.json";
 const RELEASE_MANIFEST_BUNDLE_NAME = `${RELEASE_MANIFEST_NAME}.attestation.json`;
 const SIGNER_ATTESTATION_BUNDLE_NAME = "fased-signerd-release.attestation.json";
+const PROTECTED_LOCAL_TEST_ARTIFACT_AUTHORIZATION =
+  "/etc/fased/testing/protected-local-artifact-source.json";
 const CONTROLLER_SERVER_NAME = "fased-host-updater.mjs";
 const CONTROLLER_CLIENT_NAME = "fased-host-updaterctl.mjs";
 const CONTROLLER_SERVER_BUNDLE_NAME = `${CONTROLLER_SERVER_NAME}.attestation.json`;
@@ -447,6 +449,89 @@ async function currentControllerMatches(paths, identity) {
   }
 }
 
+async function readProtectedLocalTestArtifactAuthorization(
+  context,
+  releaseVersion,
+  authorizationPath = context.testArtifactAuthorizationPath ??
+    PROTECTED_LOCAL_TEST_ARTIFACT_AUTHORIZATION,
+) {
+  if (!context.instanceId) {
+    return null;
+  }
+  let authorizationInfo;
+  try {
+    authorizationInfo = await fsp.lstat(authorizationPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+  if (
+    !authorizationInfo.isFile() ||
+    authorizationInfo.isSymbolicLink() ||
+    authorizationInfo.nlink !== 1 ||
+    authorizationInfo.uid !== context.rootUid ||
+    (authorizationInfo.mode & 0o022) !== 0
+  ) {
+    throw new Error("The root-owned Protected Local artifact authorization is unsafe.");
+  }
+  let authorization;
+  try {
+    authorization = JSON.parse(await fsp.readFile(authorizationPath, "utf8"));
+  } catch (error) {
+    throw new Error("The root-owned Protected Local artifact authorization is invalid.", {
+      cause: error,
+    });
+  }
+  const baseUrl = String(authorization?.baseUrl || "").replace(/\/$/, "");
+  const releaseCommit = String(authorization?.releaseCommit || "").trim();
+  if (
+    authorization?.schemaVersion !== 1 ||
+    authorization?.protectedLocalInstance !== context.instanceId ||
+    authorization?.releaseVersion !== releaseVersion ||
+    authorization?.forceSameVersionRepair !== true ||
+    !/^http:\/\/127\.0\.0\.1:\d+$/u.test(baseUrl) ||
+    authorization?.baseUrl !== baseUrl ||
+    !/^[a-f0-9]{40}$/u.test(releaseCommit)
+  ) {
+    throw new Error("The root-owned Protected Local artifact authorization is invalid.");
+  }
+  return Object.freeze({
+    baseUrl,
+    protectedLocalInstance: context.instanceId,
+    releaseVersion,
+    releaseCommit,
+  });
+}
+
+async function currentAuthorizedQ0ControllerMatches(paths, identity) {
+  try {
+    const currentStat = await fsp.lstat(paths.controllerCurrentLink);
+    if (!currentStat.isSymbolicLink()) {
+      throw new Error("host updater controller current path must be a root-managed symlink");
+    }
+    const actualRoot = await fsp.realpath(paths.controllerCurrentLink);
+    const expectedRoot = path.resolve(
+      paths.controllerReleasesDir,
+      `v${identity.version}.q0.${identity.serverSha256.slice(0, 12)}`,
+    );
+    if (actualRoot !== expectedRoot) {
+      return false;
+    }
+    const digests = await readControllerGenerationDigests(actualRoot);
+    return (
+      digests.serverSha256 === identity.serverSha256 &&
+      digests.clientSha256 === identity.clientSha256
+    );
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
 async function selfCheckControllerAsset(assetPath, role, stateDir) {
   const { stdout } = await execFileAsync(process.execPath, [assetPath, "--self-check"], {
     env: {
@@ -494,6 +579,18 @@ async function atomicSymlinkDurable(target, linkPath) {
 
 async function stageOfficialControllerRelease(version, context) {
   const existingIdentity = await readControllerIdentity(context.paths);
+  const testAuthorization = await readProtectedLocalTestArtifactAuthorization(context, version);
+  if (testAuthorization) {
+    if (
+      existingIdentity?.version !== version ||
+      !(await currentAuthorizedQ0ControllerMatches(context.paths, existingIdentity))
+    ) {
+      throw new Error(
+        "The root-authorized Q0 controller candidate is not the active exact controller.",
+      );
+    }
+    return { changed: false, identity: existingIdentity };
+  }
   if (existingIdentity && compareVersions(existingIdentity.version, version) === 1) {
     throw new Error(
       `refusing host updater controller downgrade from ${existingIdentity.version} to ${version}`,
@@ -1293,7 +1390,7 @@ async function restoreProtectedServiceBoundary(context, boundary) {
   await context.reloadUnits();
 }
 
-function validateJournal(value, context) {
+async function validateJournal(value, context) {
   if (
     !value ||
     typeof value !== "object" ||
@@ -1311,6 +1408,16 @@ function validateJournal(value, context) {
     throw new Error("host updater previous signer-state invariant is invalid");
   }
   const version = parseReleaseVersion(value.version);
+  const releaseBinding = value.releaseBinding == null ? null : value.releaseBinding;
+  if (
+    releaseBinding &&
+    (!/^sha256:[a-f0-9]{64}$/.test(releaseBinding.manifestDigest || "") ||
+      !/^sha256:[a-f0-9]{64}$/.test(releaseBinding.signerArtifactDigest || "") ||
+      !/^sha256:[a-f0-9]{64}$/.test(releaseBinding.capabilitiesDigest || "") ||
+      !/^[a-f0-9]{40}$/.test(releaseBinding.releaseCommit || ""))
+  ) {
+    throw new Error("host updater release-manifest binding is invalid");
+  }
   let application = null;
   if (value.application != null) {
     if (
@@ -1322,14 +1429,27 @@ function validateJournal(value, context) {
     ) {
       throw new Error("host updater protected application transaction is invalid");
     }
-    const targetRoot = protectedApplicationReleaseRoot(context.paths, version);
+    const officialTargetRoot = protectedApplicationReleaseRoot(context.paths, version);
+    const requestedTargetRoot = path.resolve(String(value.application.targetRoot ?? ""));
+    let targetRoot = officialTargetRoot;
+    if (requestedTargetRoot !== officialTargetRoot) {
+      const testAuthorization = await readProtectedLocalTestArtifactAuthorization(context, version);
+      if (!testAuthorization || releaseBinding?.releaseCommit !== testAuthorization.releaseCommit) {
+        throw new Error("host updater protected application transaction is unauthorized");
+      }
+      targetRoot = protectedApplicationReleaseRoot(
+        context.paths,
+        version,
+        testAuthorization.releaseCommit,
+      );
+    }
     const previousRoot =
       value.application.previousRoot == null
         ? null
         : path.resolve(String(value.application.previousRoot));
     const releasesRoot = path.resolve(context.paths.applicationReleasesDir ?? "/nonexistent");
     if (
-      path.resolve(String(value.application.targetRoot ?? "")) !== targetRoot ||
+      requestedTargetRoot !== targetRoot ||
       (previousRoot !== null && path.dirname(previousRoot) !== releasesRoot)
     ) {
       throw new Error("host updater protected application transaction escaped its release root");
@@ -1343,16 +1463,6 @@ function validateJournal(value, context) {
     throw new Error("host updater protected application transaction is missing");
   }
   const serviceBoundary = validateProtectedServiceBoundary(value.serviceBoundary, context);
-  const releaseBinding = value.releaseBinding == null ? null : value.releaseBinding;
-  if (
-    releaseBinding &&
-    (!/^sha256:[a-f0-9]{64}$/.test(releaseBinding.manifestDigest || "") ||
-      !/^sha256:[a-f0-9]{64}$/.test(releaseBinding.signerArtifactDigest || "") ||
-      !/^sha256:[a-f0-9]{64}$/.test(releaseBinding.capabilitiesDigest || "") ||
-      !/^[a-f0-9]{40}$/.test(releaseBinding.releaseCommit || ""))
-  ) {
-    throw new Error("host updater release-manifest binding is invalid");
-  }
   return {
     ...value,
     transactionId: parseTransactionId(value.transactionId),
@@ -1369,7 +1479,7 @@ function validateJournal(value, context) {
 
 async function readJournal(context) {
   try {
-    return validateJournal(
+    return await validateJournal(
       JSON.parse(await fsp.readFile(context.paths.journalPath, "utf8")),
       context,
     );
@@ -1382,7 +1492,7 @@ async function readJournal(context) {
 }
 
 async function writeJournal(context, journal) {
-  const next = validateJournal(
+  const next = await validateJournal(
     {
       ...journal,
       schemaVersion: JOURNAL_SCHEMA_VERSION,
@@ -1430,12 +1540,19 @@ async function cleanupTransactionFiles(context, transactionId) {
   });
 }
 
-function protectedApplicationReleaseRoot(paths, version) {
+function protectedApplicationReleaseRoot(paths, version, q0ReleaseCommit = null) {
   if (!paths.applicationReleasesDir || !paths.applicationCurrentLink) {
     throw new Error("protected application runtime paths are unavailable");
   }
   const releases = path.resolve(paths.applicationReleasesDir);
-  const releaseRoot = path.resolve(releases, `v${parseReleaseVersion(version)}`);
+  let generation = `v${parseReleaseVersion(version)}`;
+  if (q0ReleaseCommit !== null) {
+    if (!/^[a-f0-9]{40}$/.test(q0ReleaseCommit)) {
+      throw new Error("protected application Q0 release commit is invalid");
+    }
+    generation += `.q0-app.${q0ReleaseCommit.slice(0, 12)}`;
+  }
+  const releaseRoot = path.resolve(releases, generation);
   if (path.dirname(releaseRoot) !== releases) {
     throw new Error("protected application release path escaped its root");
   }
@@ -1641,9 +1758,13 @@ async function stageProtectedApplicationRelease({
   manifestBytes,
   staging,
   context,
+  q0ReleaseCommit = null,
 }) {
+  if (q0ReleaseCommit !== null && q0ReleaseCommit !== selected.release.commit) {
+    throw new Error("protected application Q0 generation commit is mismatched");
+  }
   await prepareProtectedApplicationDirectories(context.paths);
-  const releaseRoot = protectedApplicationReleaseRoot(context.paths, version);
+  const releaseRoot = protectedApplicationReleaseRoot(context.paths, version, q0ReleaseCommit);
   let previousRoot = null;
   try {
     previousRoot = await fsp.realpath(context.paths.applicationCurrentLink);
@@ -1716,7 +1837,8 @@ async function stageProtectedApplicationRelease({
 async function stageOfficialCandidate(version, candidatePath, context) {
   const arch = releaseArchitecture();
   const platform = `linux-${arch}`;
-  const releaseUrl = `${RELEASE_BASE}/v${version}`;
+  const testAuthorization = await readProtectedLocalTestArtifactAuthorization(context, version);
+  const releaseUrl = `${testAuthorization?.baseUrl ?? RELEASE_BASE}/v${version}`;
   await fsp.mkdir(context.paths.stateDir, { recursive: true, mode: 0o700 });
   const staging = await fsp.mkdtemp(path.join(context.paths.stateDir, `.download-${version}-`));
   const releaseManifestPath = path.join(staging, RELEASE_MANIFEST_NAME);
@@ -1725,40 +1847,57 @@ async function stageOfficialCandidate(version, candidatePath, context) {
   try {
     await Promise.all([
       context.downloadReleaseAsset(`${releaseUrl}/${RELEASE_MANIFEST_NAME}`, releaseManifestPath),
-      context.downloadReleaseAsset(
-        `${releaseUrl}/${RELEASE_MANIFEST_BUNDLE_NAME}`,
-        releaseManifestBundlePath,
-      ),
+      ...(testAuthorization
+        ? []
+        : [
+            context.downloadReleaseAsset(
+              `${releaseUrl}/${RELEASE_MANIFEST_BUNDLE_NAME}`,
+              releaseManifestBundlePath,
+            ),
+          ]),
     ]);
-    await context.verifyReleaseAsset(
-      releaseManifestPath,
-      version,
-      context.paths.stateDir,
-      releaseManifestBundlePath,
-    );
+    if (!testAuthorization) {
+      await context.verifyReleaseAsset(
+        releaseManifestPath,
+        version,
+        context.paths.stateDir,
+        releaseManifestBundlePath,
+      );
+    }
     const manifestBytes = await fsp.readFile(releaseManifestPath);
     const selected = parseUnifiedHostedSignerRelease(
       JSON.parse(manifestBytes.toString("utf8")),
       version,
       platform,
     );
+    if (testAuthorization && selected.release.commit !== testAuthorization.releaseCommit) {
+      throw new Error(
+        "The root-authorized Protected Local candidate commit does not match its release.",
+      );
+    }
     const assetPath = path.join(staging, selected.artifact.asset);
     await Promise.all([
       context.downloadReleaseAsset(`${releaseUrl}/${selected.artifact.asset}`, assetPath),
-      context.downloadReleaseAsset(
-        `${releaseUrl}/${SIGNER_ATTESTATION_BUNDLE_NAME}`,
-        signerAttestationBundlePath,
-      ),
+      ...(testAuthorization
+        ? []
+        : [
+            context.downloadReleaseAsset(
+              `${releaseUrl}/${SIGNER_ATTESTATION_BUNDLE_NAME}`,
+              signerAttestationBundlePath,
+            ),
+          ]),
     ]);
     if ((await sha256(assetPath)) !== selected.artifact.sha256) {
       throw new Error("native signer does not match the attested unified release manifest");
     }
-    await context.verifyReleaseAsset(
-      assetPath,
-      version,
-      context.paths.stateDir,
-      signerAttestationBundlePath,
-    );
+    if (!testAuthorization) {
+      await context.verifyReleaseAsset(
+        assetPath,
+        version,
+        context.paths.stateDir,
+        signerAttestationBundlePath,
+      );
+    }
     await fsp.rm(candidatePath, { force: true });
     await atomicCopyFileDurable(assetPath, candidatePath, { mode: 0o755 });
     const application = context.paths.applicationReleasesDir
@@ -1769,6 +1908,7 @@ async function stageOfficialCandidate(version, candidatePath, context) {
           manifestBytes,
           staging,
           context,
+          q0ReleaseCommit: testAuthorization?.releaseCommit ?? null,
         })
       : null;
     return {
@@ -1794,6 +1934,12 @@ const ROOT_MANAGED_OPERATOR_ONLY_STATE = new Set([
   "signer-update",
   "source-paired-update",
   "updater",
+]);
+
+const ROOT_MANAGED_SHARED_APPLICATION_DIRECTORIES = Object.freeze([
+  "identity",
+  "wallet",
+  "federation",
 ]);
 
 async function systemAccountRecord(database, name) {
@@ -1867,6 +2013,54 @@ async function assertSharedDirectoryModesAvailable(stateDir, operatorUid, config
     }
   } finally {
     await fsp.rm(probe, { recursive: true, force: true });
+  }
+}
+
+async function ensureRootManagedSharedApplicationDirectory(stateDir, name, operatorUid, configGid) {
+  if (!ROOT_MANAGED_SHARED_APPLICATION_DIRECTORIES.includes(name)) {
+    throw new Error("root-managed shared application directory name is invalid");
+  }
+  const directory = path.join(stateDir, name);
+  try {
+    await fsp.mkdir(directory, { mode: 0o2770 });
+  } catch (error) {
+    if (error?.code !== "EEXIST") {
+      throw error;
+    }
+  }
+  const handle = await fsp.open(
+    directory,
+    fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
+  );
+  try {
+    const initial = await handle.stat();
+    if (!initial.isDirectory()) {
+      throw new Error(`root-managed application state path is not a directory: ${directory}`);
+    }
+    await handle.chown(operatorUid, configGid);
+    await handle.chmod(0o2770);
+    await handle.sync();
+    const current = await handle.stat();
+    const named = await fsp.lstat(directory);
+    if (
+      !named.isDirectory() ||
+      named.isSymbolicLink() ||
+      named.dev !== current.dev ||
+      named.ino !== current.ino ||
+      current.uid !== operatorUid ||
+      current.gid !== configGid ||
+      (current.mode & 0o2777) !== 0o2770
+    ) {
+      throw new Error(`root-managed shared application directory is invalid: ${directory}`);
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
+async function ensureRootManagedSharedApplicationDirectories(stateDir, operatorUid, configGid) {
+  for (const name of ROOT_MANAGED_SHARED_APPLICATION_DIRECTORIES) {
+    await ensureRootManagedSharedApplicationDirectory(stateDir, name, operatorUid, configGid);
   }
 }
 
@@ -2008,6 +2202,10 @@ async function reconcileProtectedApplicationState(context) {
     throw new Error("root-managed application-state group membership is invalid");
   }
   await assertSharedDirectoryModesAvailable(stateDir, stateStat.uid, configGid);
+  // The root controller owns the complete shared-state topology. Gateway runs
+  // with RestrictSUIDSGID and must never be responsible for creating SGID
+  // directories during startup or an update.
+  await ensureRootManagedSharedApplicationDirectories(stateDir, stateStat.uid, configGid);
   const inspectedEntries = [];
   const entries = await fsp.readdir(stateDir);
   for (const entry of entries) {
@@ -2110,6 +2308,8 @@ function createTransactionContext(overrides = {}) {
     protectedNodeBinary: overrides.protectedNodeBinary ?? process.execPath,
     controllerInstanceId: overrides.controllerInstanceId ?? randomUUID(),
     controllerRestartRequired: false,
+    testArtifactAuthorizationPath:
+      overrides.testArtifactAuthorizationPath ?? PROTECTED_LOCAL_TEST_ARTIFACT_AUTHORIZATION,
     assertReleaseAllowed:
       overrides.assertReleaseAllowed ??
       (async (version) => await assertReleaseChannelAllowed(version, paths.channelPath)),
@@ -2307,6 +2507,10 @@ async function writeInitialRollbackFloor(context, version) {
 async function prepareSignerRelease(request, context) {
   await context.assertReleaseAllowed(request.version);
   await assertRollbackFloor(context, request.version);
+  const testAuthorization = await readProtectedLocalTestArtifactAuthorization(
+    context,
+    request.version,
+  );
   const applicationState = (await context.reconcileApplicationState()) ?? {};
   const applicationStateResult = {
     applicationStateReconciled: applicationState.changed === true,
@@ -2348,7 +2552,7 @@ async function prepareSignerRelease(request, context) {
     parseSignerReleaseIdentity(previousSignerState.release, currentVersion);
     previousSignerInvariant = previousSignerState.invariant;
   }
-  if (currentVersion === request.version) {
+  if (currentVersion === request.version && !testAuthorization) {
     try {
       await fsp.access(context.paths.signerPath, fs.constants.X_OK);
       release = parseSignerReleaseIdentity(
@@ -2690,6 +2894,23 @@ async function gateGatewayRelease(request, context) {
 async function restartGatewayService(request, context) {
   const journal = await readJournal(context);
   if (journal) {
+    if (journal.phase === "gateway-authorized" && journal.version === request.version) {
+      const gatewayGate = await readGatewayGate(context);
+      if (!gatewayGate) {
+        // Older managed updaters ask the root controller to restart the
+        // Gateway immediately after authorizeGatewayRelease already started
+        // the exact target service. The promoted target controller must
+        // remain compatible with that in-flight coordinator. Treat only this
+        // version-bound, post-authorization request as the redundant no-op it
+        // is; every other restart during a transaction remains forbidden.
+        return {
+          transactionId: request.transactionId,
+          version: request.version,
+          phase: "gateway-authorized",
+          changed: false,
+        };
+      }
+    }
     throw new Error("cannot restart the Gateway while a hosted release transaction is active");
   }
   const installedVersion = await readVersionFile(context.paths.versionPath);
@@ -3097,6 +3318,7 @@ export const __testing = {
   prepareSignerRelease,
   protectedLocalControllerConfiguration,
   ensureProtectedLocalControllerServicePolicy,
+  ensureRootManagedSharedApplicationDirectories,
   reconcileProtectedApplicationState,
   rootManagedApplicationIdentity,
   readJournal,
@@ -3108,6 +3330,7 @@ export const __testing = {
   rollbackSignerRelease,
   stageOfficialControllerRelease,
   stageOfficialCandidate,
+  stageProtectedApplicationRelease,
   transactionPaths,
   updateControllerRelease,
   writeJournal,

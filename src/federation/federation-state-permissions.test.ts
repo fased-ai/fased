@@ -22,6 +22,15 @@ async function modes(stateDir: string): Promise<{ directory: number; token: numb
   };
 }
 
+async function withServiceUmask(run: () => Promise<void>): Promise<void> {
+  const previous = process.umask(0o007);
+  try {
+    await run();
+  } finally {
+    process.umask(previous);
+  }
+}
+
 describe("federation application state permissions", () => {
   it("keeps ordinary Local federation credentials owner-only", async () => {
     await withStateDirEnv("fased-federation-state-local-", async ({ stateDir }) => {
@@ -38,16 +47,17 @@ describe("federation application state permissions", () => {
     ["Hosting", { FASED_HOST_PROFILE: "hosting", FASED_PROTECTED_LOCAL: undefined }],
   ])("shares %s federation credentials only with the service config group", async (_name, vars) => {
     await withStateDirEnv("fased-federation-state-shared-", async ({ stateDir }) => {
-      const env = { ...process.env, FASED_STATE_DIR: stateDir, ...vars };
-      const federationDir = path.join(stateDir, "federation");
-      await fs.mkdir(federationDir, { recursive: true, mode: 0o2770 });
-      await fs.chmod(federationDir, 0o2770);
-      await persistFederationAccessToken(token, env);
-      expect(await modes(stateDir)).toEqual({ directory: 0o2770, token: 0o660 });
+      await withServiceUmask(async () => {
+        const env = { ...process.env, FASED_STATE_DIR: stateDir, ...vars };
+        const federationDir = path.join(stateDir, "federation");
+        await fs.chmod(stateDir, 0o2770);
+        await persistFederationAccessToken(token, env);
+        expect(await modes(stateDir)).toEqual({ directory: 0o2770, token: 0o660 });
 
-      await fs.chmod(path.join(federationDir, "access-token.json"), 0o600);
-      await persistFederationAccessToken({ ...token, hostedState: "ready" }, env);
-      expect(await modes(stateDir)).toEqual({ directory: 0o2770, token: 0o660 });
+        await fs.chmod(path.join(federationDir, "access-token.json"), 0o600);
+        await persistFederationAccessToken({ ...token, hostedState: "ready" }, env);
+        expect(await modes(stateDir)).toEqual({ directory: 0o2770, token: 0o660 });
+      });
     });
   });
 });

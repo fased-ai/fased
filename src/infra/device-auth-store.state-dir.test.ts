@@ -37,6 +37,15 @@ async function identityDirectoryMode(stateDir: string): Promise<number> {
   return (await fs.stat(path.join(stateDir, "identity"))).mode & 0o7777;
 }
 
+async function withServiceUmask(run: () => Promise<void>): Promise<void> {
+  const previous = process.umask(0o007);
+  try {
+    await run();
+  } finally {
+    process.umask(previous);
+  }
+}
+
 describe("device auth state permissions", () => {
   it("keeps ordinary Local device authentication owner-only", async () => {
     await withEnvironment(
@@ -61,24 +70,25 @@ describe("device auth state permissions", () => {
   ])("shares %s device authentication only with the service config group", async (_name, env) => {
     await withEnvironment(env, async () => {
       await withStateDirEnv("fased-device-auth-shared-", async ({ stateDir }) => {
-        const filePath = path.join(stateDir, "identity", "device-auth.json");
-        await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o2770 });
-        await fs.chmod(path.dirname(filePath), 0o2770);
-        storeDeviceAuthToken({
-          deviceId: "shared-device",
-          role: "operator",
-          token: "operator-token",
-        });
-        expect(await storedMode(stateDir)).toBe(0o660);
-        expect(await identityDirectoryMode(stateDir)).toBe(0o2770);
+        await withServiceUmask(async () => {
+          const filePath = path.join(stateDir, "identity", "device-auth.json");
+          await fs.chmod(stateDir, 0o2770);
+          storeDeviceAuthToken({
+            deviceId: "shared-device",
+            role: "operator",
+            token: "operator-token",
+          });
+          expect(await storedMode(stateDir)).toBe(0o660);
+          expect(await identityDirectoryMode(stateDir)).toBe(0o2770);
 
-        await fs.chmod(filePath, 0o600);
-        storeDeviceAuthToken({
-          deviceId: "shared-device",
-          role: "node",
-          token: "node-token",
+          await fs.chmod(filePath, 0o600);
+          storeDeviceAuthToken({
+            deviceId: "shared-device",
+            role: "node",
+            token: "node-token",
+          });
+          expect(await storedMode(stateDir)).toBe(0o660);
         });
-        expect(await storedMode(stateDir)).toBe(0o660);
       });
     });
   });
