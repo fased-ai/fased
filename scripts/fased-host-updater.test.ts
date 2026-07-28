@@ -366,6 +366,7 @@ describe("root-owned hosted updater protocol", () => {
     );
     expect(getfacl.stdout).toMatch(new RegExp(`^user:${uid}:rw[x-]`, "mu"));
     expect(getfacl.stdout).toMatch(/^group::rw[x-]/mu);
+    expect((await fsp.stat(configPath)).mode & 0o777).toBe(0o660);
     const directoryAcl = await execFileAsync(
       "/usr/bin/getfacl",
       ["--omit-header", "--numeric", "--", path.join(stateDir, "identity")],

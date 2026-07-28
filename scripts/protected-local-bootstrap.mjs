@@ -921,14 +921,6 @@ function grantOperatorApplicationStateAccess(spec) {
     .readdirSync(spec.stateDir)
     .filter((entry) => !PROTECTED_LOCAL_OPERATOR_ONLY_STATE.has(entry))) {
     const sharedRoot = path.join(spec.stateDir, name);
-    runSystem(setfacl, [
-      "--recursive",
-      "--physical",
-      "--modify",
-      `${operatorEntry}:rwX,group::rwX`,
-      "--",
-      sharedRoot,
-    ]);
     runSystem(find, [
       "-P",
       sharedRoot,
@@ -938,7 +930,21 @@ function grantOperatorApplicationStateAccess(spec) {
       "-exec",
       setfacl,
       "--modify",
-      `default:${operatorEntry}:rwx,default:group::rwx`,
+      `${operatorEntry}:rwx,group::rwx,default:${operatorEntry}:rwx,default:group::rwx`,
+      "--",
+      "{}",
+      "+",
+    ]);
+    runSystem(find, [
+      "-P",
+      sharedRoot,
+      "-xdev",
+      "-type",
+      "f",
+      "-exec",
+      setfacl,
+      "--modify",
+      `${operatorEntry}:rw-,group::rw-`,
       "--",
       "{}",
       "+",

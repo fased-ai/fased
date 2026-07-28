@@ -2097,18 +2097,6 @@ async function grantOperatorApplicationStateAccess(stateDir, operatorUid) {
     .map((name) => path.join(stateDir, name));
   for (const sharedRoot of sharedRoots) {
     await execFileAsync(
-      setfacl,
-      [
-        "--recursive",
-        "--physical",
-        "--modify",
-        `user:${operatorUid}:rwX,group::rwX`,
-        "--",
-        sharedRoot,
-      ],
-      common,
-    );
-    await execFileAsync(
       find,
       [
         "-P",
@@ -2119,7 +2107,25 @@ async function grantOperatorApplicationStateAccess(stateDir, operatorUid) {
         "-exec",
         setfacl,
         "--modify",
-        `default:user:${operatorUid}:rwx,default:group::rwx`,
+        `user:${operatorUid}:rwx,group::rwx,default:user:${operatorUid}:rwx,default:group::rwx`,
+        "--",
+        "{}",
+        "+",
+      ],
+      common,
+    );
+    await execFileAsync(
+      find,
+      [
+        "-P",
+        sharedRoot,
+        "-xdev",
+        "-type",
+        "f",
+        "-exec",
+        setfacl,
+        "--modify",
+        `user:${operatorUid}:rw-,group::rw-`,
         "--",
         "{}",
         "+",
