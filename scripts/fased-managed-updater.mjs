@@ -42,6 +42,8 @@ const DEFAULT_REGISTRY = "https://registry.npmjs.org";
 const DEFAULT_TIMEOUT_MS = 20 * 60_000;
 const RELEASE_REPOSITORY = "fased-ai/fased";
 const RELEASE_WORKFLOW = "fased-ai/fased/.github/workflows/hosted-runtime-release.yml";
+const PROTECTED_LOCAL_TEST_ARTIFACT_AUTHORIZATION =
+  "/etc/fased/testing/protected-local-artifact-source.json";
 const HOST_UPDATER_SOCKET = "/run/fased-host-updater/request.sock";
 const HOST_UPDATER_SCHEMA_VERSION = 2;
 const HOSTED_TRANSACTION_SCHEMA_VERSION = 1;
@@ -692,27 +694,7 @@ async function prepareVerifiedProtectedLocalInstaller({
   );
   const officialVersion = baseUrl === DEFAULT_RELEASE_BASE_URL ? releaseVersion : null;
   if (!officialVersion) {
-    const authorizationPath = "/etc/fased/testing/protected-local-artifact-source.json";
-    const authorizationInfo = fs.lstatSync(authorizationPath);
-    if (
-      !authorizationInfo.isFile() ||
-      authorizationInfo.isSymbolicLink() ||
-      authorizationInfo.uid !== 0 ||
-      (authorizationInfo.mode & 0o022) !== 0
-    ) {
-      throw new Error(
-        "A custom Protected Local artifact source requires a root-owned test authorization.",
-      );
-    }
-    const authorization = JSON.parse(fs.readFileSync(authorizationPath, "utf8"));
-    if (
-      authorization?.schemaVersion !== 1 ||
-      authorization?.baseUrl !== baseUrl ||
-      authorization?.releaseVersion !== releaseVersion ||
-      !/^http:\/\/127\.0\.0\.1:\d+$/u.test(baseUrl)
-    ) {
-      throw new Error("The root-owned Protected Local artifact authorization is invalid.");
-    }
+    readProtectedLocalTestArtifactAuthorization({ baseUrl, releaseVersion });
   }
   const releaseUrl = `${baseUrl}/v${releaseVersion}`;
   const installerPath = path.join(destinationDir, "install.sh");
@@ -728,6 +710,64 @@ async function prepareVerifiedProtectedLocalInstaller({
   }
   await fsp.chmod(installerPath, 0o500);
   return installerPath;
+}
+
+function readProtectedLocalTestArtifactAuthorization({
+  baseUrl,
+  releaseVersion,
+  authorizationPath = PROTECTED_LOCAL_TEST_ARTIFACT_AUTHORIZATION,
+  requiredUid = 0,
+}) {
+  const normalizedBaseUrl = String(baseUrl || "").replace(/\/$/, "");
+  if (normalizedBaseUrl === DEFAULT_RELEASE_BASE_URL) {
+    return null;
+  }
+  let authorizationInfo;
+  try {
+    authorizationInfo = fs.lstatSync(authorizationPath);
+  } catch (error) {
+    throw new Error(
+      "A custom Protected Local artifact source requires a root-owned test authorization.",
+      { cause: error },
+    );
+  }
+  if (
+    !authorizationInfo.isFile() ||
+    authorizationInfo.isSymbolicLink() ||
+    authorizationInfo.nlink !== 1 ||
+    authorizationInfo.uid !== requiredUid ||
+    (authorizationInfo.mode & 0o022) !== 0
+  ) {
+    throw new Error(
+      "A custom Protected Local artifact source requires a root-owned test authorization.",
+    );
+  }
+  let authorization;
+  try {
+    authorization = JSON.parse(fs.readFileSync(authorizationPath, "utf8"));
+  } catch (error) {
+    throw new Error("The root-owned Protected Local artifact authorization is invalid.", {
+      cause: error,
+    });
+  }
+  const releaseCommit = String(authorization?.releaseCommit || "").trim();
+  const forceSameVersionRepair = authorization?.forceSameVersionRepair === true;
+  if (
+    authorization?.schemaVersion !== 1 ||
+    authorization?.baseUrl !== normalizedBaseUrl ||
+    authorization?.releaseVersion !== releaseVersion ||
+    !/^http:\/\/127\.0\.0\.1:\d+$/u.test(normalizedBaseUrl) ||
+    (forceSameVersionRepair && !/^[a-f0-9]{40}$/u.test(releaseCommit)) ||
+    (!forceSameVersionRepair && releaseCommit)
+  ) {
+    throw new Error("The root-owned Protected Local artifact authorization is invalid.");
+  }
+  return Object.freeze({
+    baseUrl: normalizedBaseUrl,
+    releaseVersion,
+    forceSameVersionRepair,
+    releaseCommit: forceSameVersionRepair ? releaseCommit : null,
+  });
 }
 
 function protectedLocalMigrationJournalPath(paths) {
@@ -5171,6 +5211,7 @@ async function stageManagedReleaseCandidate({
   targetVersion,
   timeoutMs,
   repairCurrentFiles,
+  expectedReleaseCommit = null,
   timings,
 }) {
   const arch = resolveArchitecture();
@@ -5282,6 +5323,11 @@ async function stageManagedReleaseCandidate({
     const hostedRelease = await readHostedReleaseBinding(stagedRoot, metadata, targetVersion);
     if (isRootManagedProfile(existingManifest.profile) && !hostedRelease) {
       throw new Error("Maintained Hosting update omitted its attested unified release binding.");
+    }
+    if (expectedReleaseCommit && hostedRelease?.commit !== expectedReleaseCommit) {
+      throw new Error(
+        "The root-authorized Protected Local candidate commit does not match its release.",
+      );
     }
     await measureStage(timings, "staged runtime smoke", () => smokeRuntime(stagedRoot, timeoutMs));
 
@@ -5443,6 +5489,16 @@ async function updateManagedRuntime(options) {
     targetVersion = await measureStage(timings, "release resolution", () =>
       resolveTargetVersion(options),
     );
+    const artifactBaseUrl = (
+      process.env.FASED_HOSTED_ARTIFACT_BASE_URL || DEFAULT_RELEASE_BASE_URL
+    ).replace(/\/$/, "");
+    const testArtifactAuthorization =
+      existingManifest.profile === "protected-local" && artifactBaseUrl !== DEFAULT_RELEASE_BASE_URL
+        ? readProtectedLocalTestArtifactAuthorization({
+            baseUrl: artifactBaseUrl,
+            releaseVersion: targetVersion,
+          })
+        : null;
     const protectedLocalMigration = protectedLocalMigrationRequirement({
       manifest: existingManifest,
       currentRoot,
@@ -5456,6 +5512,9 @@ async function updateManagedRuntime(options) {
         currentVersion,
       );
       repairCurrentFiles = !consistency.consistent;
+      if (testArtifactAuthorization?.forceSameVersionRepair) {
+        repairCurrentFiles = true;
+      }
       try {
         if (!currentRoot) {
           throw new Error("current runtime link is missing");
@@ -5508,6 +5567,7 @@ async function updateManagedRuntime(options) {
         targetVersion,
         timeoutMs: options.timeoutMs,
         repairCurrentFiles,
+        expectedReleaseCommit: testArtifactAuthorization?.releaseCommit,
         timings,
       });
       const previousRoot = currentRoot;
@@ -5592,6 +5652,7 @@ async function updateManagedRuntime(options) {
       targetVersion,
       timeoutMs: options.timeoutMs,
       repairCurrentFiles,
+      expectedReleaseCommit: testArtifactAuthorization?.releaseCommit,
       timings,
     });
     const { hostedRelease, metadata, releaseRoot, temporaryRoot } = candidate;
@@ -5957,6 +6018,7 @@ export const __testing = {
   refreshLocalSourceController,
   resolveLocalSignerAsset,
   resolveLocalSignerPaths,
+  readProtectedLocalTestArtifactAuthorization,
   restoreOwnerOnlySnapshot,
   rollbackLocalSignerTransaction,
   runLocalSignerTransaction,

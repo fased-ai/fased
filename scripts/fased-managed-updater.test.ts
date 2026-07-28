@@ -720,6 +720,50 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     expect(__testing.compareVersions("1.0.0", "1.0.0-beta.10")).toBe(1);
   });
 
+  it("requires an exact owner-authorized localhost source for Q0 same-version repair", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-q0-artifact-source-"));
+    const authorizationPath = path.join(root, "authorization.json");
+    const releaseCommit = "a".repeat(40);
+    try {
+      await fsp.writeFile(
+        authorizationPath,
+        `${JSON.stringify({
+          schemaVersion: 1,
+          baseUrl: "http://127.0.0.1:39091",
+          releaseVersion: "1.2.3",
+          releaseCommit,
+          forceSameVersionRepair: true,
+        })}\n`,
+        { mode: 0o600 },
+      );
+      await expect(
+        Promise.resolve(
+          __testing.readProtectedLocalTestArtifactAuthorization({
+            baseUrl: "http://127.0.0.1:39091/",
+            releaseVersion: "1.2.3",
+            authorizationPath,
+            requiredUid: process.getuid?.() ?? 0,
+          }),
+        ),
+      ).resolves.toEqual({
+        baseUrl: "http://127.0.0.1:39091",
+        releaseVersion: "1.2.3",
+        forceSameVersionRepair: true,
+        releaseCommit,
+      });
+      expect(() =>
+        __testing.readProtectedLocalTestArtifactAuthorization({
+          baseUrl: "http://127.0.0.1:39092",
+          releaseVersion: "1.2.3",
+          authorizationPath,
+          requiredUid: process.getuid?.() ?? 0,
+        }),
+      ).toThrow("authorization is invalid");
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("classifies a same-version Local signer mismatch as repair-required", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-managed-consistency-"));
     const binaryPath = path.join(root, "bin", "fased-signerd");
