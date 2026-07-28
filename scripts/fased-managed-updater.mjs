@@ -1723,6 +1723,16 @@ async function refreshGateway(
   hostedServiceAlreadyRestarted = false,
   controllerSocketPath,
 ) {
+  const controllerDescriptor = isRootManagedProfile(manifest.profile)
+    ? resolveManagedControllerDescriptor(
+        {
+          stateDir: manifest.stateDir,
+          manifestPath: path.join(manifest.stateDir, "install.json"),
+        },
+        manifest,
+      )
+    : null;
+  const selectedControllerSocketPath = controllerSocketPath ?? controllerDescriptor?.socketPath;
   const cli = path.join(runtimeRoot, "fased.mjs");
   const env = {
     ...process.env,
@@ -1735,7 +1745,11 @@ async function refreshGateway(
   if (isRootManagedProfile(manifest.profile)) {
     if (!hostedServiceAlreadyRestarted) {
       try {
-        await restartHostedGateway(manifest.runtime.activeVersion, timeoutMs, controllerSocketPath);
+        await restartHostedGateway(
+          manifest.runtime.activeVersion,
+          timeoutMs,
+          selectedControllerSocketPath,
+        );
       } catch (error) {
         if (!allowInactiveHosted || !error.message.includes("MainPID unavailable")) {
           throw error;
@@ -1775,6 +1789,7 @@ async function refreshGateway(
       if (isRootManagedProfile(manifest.profile)) {
         await probeRootManagedSignerCompatibility({
           profile: manifest.profile,
+          instanceId: controllerDescriptor?.instanceId,
           timeoutMs: Math.min(timeoutMs, 5000),
           expectedRelease: expectedSignerRelease,
           expectedVersion: manifest.runtime.activeVersion,
@@ -1932,25 +1947,16 @@ function assertRootManagedSignerCompatibility(
 
 async function probeRootManagedSignerCompatibility({
   profile,
+  instanceId,
   timeoutMs,
   expectedRelease,
   expectedVersion,
   expectedCapabilities,
 }) {
-  const instanceId = String(process.env.FASED_PROTECTED_LOCAL_INSTANCE ?? "").trim();
-  const protectedLocal = profile === "protected-local";
-  if (protectedLocal && !/^[a-f0-9]{16}$/.test(instanceId)) {
-    throw new Error("Protected Local signer instance identity is unavailable during update");
-  }
-  const signerBinary = protectedLocal
-    ? `/opt/fased/local/${instanceId}/signer/fased-signerd`
-    : "/opt/fased/signer/fased-signerd";
-  const operatorSocket = protectedLocal
-    ? `/run/fased-local/${instanceId}/operator/operator.sock`
-    : "/run/fased-signerd/operator.sock";
+  const endpoint = rootManagedSignerEndpoint(profile, instanceId);
   const child = await runFile(
-    signerBinary,
-    ["admin", "service", "health", "--operator-socket", operatorSocket],
+    endpoint.signerBinary,
+    ["admin", "service", "health", "--operator-socket", endpoint.operatorSocket],
     {
       env: {
         HOME: process.env.HOME,
@@ -1977,6 +1983,23 @@ async function probeRootManagedSignerCompatibility({
     expectedVersion,
     expectedCapabilities,
   );
+}
+
+function rootManagedSignerEndpoint(profile, instanceId) {
+  const normalizedInstanceId = String(instanceId ?? "").trim();
+  const protectedLocal = profile === "protected-local";
+  if (protectedLocal && !/^[a-f0-9]{16}$/.test(normalizedInstanceId)) {
+    throw new Error("Protected Local signer instance identity is unavailable during update");
+  }
+  return protectedLocal
+    ? Object.freeze({
+        signerBinary: `/opt/fased/local/${normalizedInstanceId}/signer/fased-signerd`,
+        operatorSocket: `/run/fased-local/${normalizedInstanceId}/operator/operator.sock`,
+      })
+    : Object.freeze({
+        signerBinary: "/opt/fased/signer/fased-signerd",
+        operatorSocket: "/run/fased-signerd/operator.sock",
+      });
 }
 
 async function replaceCompatibilityLink(paths) {
@@ -6026,6 +6049,7 @@ export const __testing = {
   resolveConfiguredChannel,
   resolveManagedControllerDescriptor,
   resolveRootManagedControllerSocket,
+  rootManagedSignerEndpoint,
   rollbackHostedReleaseTransaction,
   restartHostedGateway,
   activateLocalSignerTransaction,

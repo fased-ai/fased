@@ -1285,6 +1285,20 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     });
   });
 
+  it("derives signer health endpoints from the normalized controller identity", () => {
+    expect(__testing.rootManagedSignerEndpoint("protected-local", "0123456789abcdef")).toEqual({
+      signerBinary: "/opt/fased/local/0123456789abcdef/signer/fased-signerd",
+      operatorSocket: "/run/fased-local/0123456789abcdef/operator/operator.sock",
+    });
+    expect(__testing.rootManagedSignerEndpoint("hosting", null)).toEqual({
+      signerBinary: "/opt/fased/signer/fased-signerd",
+      operatorSocket: "/run/fased-signerd/operator.sock",
+    });
+    expect(() => __testing.rootManagedSignerEndpoint("protected-local", null)).toThrow(
+      "Protected Local signer instance identity is unavailable",
+    );
+  });
+
   it("rejects manifest-controlled controller socket redirection", () => {
     const stateDir = "/home/operator/.fased";
     const instanceId = "0123456789abcdef";
