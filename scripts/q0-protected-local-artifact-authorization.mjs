@@ -7,6 +7,7 @@ const AUTHORIZATION_PATH = "/etc/fased/testing/protected-local-artifact-source.j
 const BACKUP_PATH = "/etc/fased/testing/q0-protected-local-artifact-source-backup.json";
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
 const COMMIT_PATTERN = /^[a-f0-9]{40}$/u;
+const INSTANCE_PATTERN = /^[a-f0-9]{16}$/u;
 
 function fail(message) {
   throw new Error(message);
@@ -16,10 +17,10 @@ function parseArguments(argv) {
   const operation = argv[0];
   if (!new Set(["activate", "restore"]).has(operation)) {
     fail(
-      "usage: q0-protected-local-artifact-authorization.mjs activate --base-url URL --version X.Y.Z --commit SHA | restore",
+      "usage: q0-protected-local-artifact-authorization.mjs activate --base-url URL --version X.Y.Z --commit SHA --instance ID | restore",
     );
   }
-  const options = { operation, baseUrl: "", version: "", commit: "" };
+  const options = { operation, baseUrl: "", version: "", commit: "", instanceId: "" };
   for (let index = 1; index < argv.length; index += 2) {
     const key = argv[index];
     const value = argv[index + 1];
@@ -32,6 +33,8 @@ function parseArguments(argv) {
       options.version = value;
     } else if (key === "--commit") {
       options.commit = value;
+    } else if (key === "--instance") {
+      options.instanceId = value;
     } else {
       fail(`unsupported Q0 artifact authorization argument: ${key}`);
     }
@@ -40,7 +43,8 @@ function parseArguments(argv) {
     operation === "activate" &&
     (!/^http:\/\/127\.0\.0\.1:\d+$/u.test(options.baseUrl) ||
       !VERSION_PATTERN.test(options.version) ||
-      !COMMIT_PATTERN.test(options.commit))
+      !COMMIT_PATTERN.test(options.commit) ||
+      !INSTANCE_PATTERN.test(options.instanceId))
   ) {
     fail("Q0 artifact authorization requires an exact loopback URL, version, and commit");
   }
@@ -121,6 +125,7 @@ async function activate(options) {
         {
           schemaVersion: 1,
           baseUrl: options.baseUrl,
+          protectedLocalInstance: options.instanceId,
           releaseVersion: options.version,
           releaseCommit: options.commit,
           forceSameVersionRepair: true,

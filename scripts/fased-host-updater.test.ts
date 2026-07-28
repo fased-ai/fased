@@ -779,6 +779,76 @@ describe("root-owned hosted updater protocol", () => {
     ).toBe(false);
   });
 
+  it("keeps the exact injected Q0 controller under instance-bound root authorization", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-q0-controller-stage-"));
+    cleanupRoots.push(root);
+    const instanceId = "0123456789abcdef";
+    const stateDir = path.join(root, "state");
+    const controllerReleasesDir = path.join(root, "controller", "releases");
+    const controllerCurrentLink = path.join(root, "controller", "current");
+    const controllerVersionPath = path.join(stateDir, "controller-version.json");
+    const authorizationPath = path.join(root, "authorization.json");
+    const serverBytes = await fsp.readFile(
+      path.join(import.meta.dirname, "fased-host-updater.mjs"),
+    );
+    const clientBytes = await fsp.readFile(
+      path.join(import.meta.dirname, "fased-host-updaterctl.mjs"),
+    );
+    const serverSha256 = createHash("sha256").update(serverBytes).digest("hex");
+    const clientSha256 = createHash("sha256").update(clientBytes).digest("hex");
+    const candidateRoot = path.join(
+      controllerReleasesDir,
+      `v1.2.3.q0.${serverSha256.slice(0, 12)}`,
+    );
+    await fsp.mkdir(candidateRoot, { recursive: true });
+    await Promise.all([
+      fsp.writeFile(path.join(candidateRoot, "fased-host-updater.mjs"), serverBytes),
+      fsp.writeFile(path.join(candidateRoot, "fased-host-updaterctl.mjs"), clientBytes),
+      fsp.mkdir(stateDir, { recursive: true }),
+    ]);
+    await fsp.symlink(candidateRoot, controllerCurrentLink, "dir");
+    await fsp.writeFile(
+      controllerVersionPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        version: "1.2.3",
+        serverSha256,
+        clientSha256,
+      })}\n`,
+    );
+    await fsp.writeFile(
+      authorizationPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        baseUrl: "http://127.0.0.1:39091",
+        protectedLocalInstance: instanceId,
+        releaseVersion: "1.2.3",
+        releaseCommit: "a".repeat(40),
+        forceSameVersionRepair: true,
+      })}\n`,
+      { mode: 0o600 },
+    );
+    const context = __testing.createTransactionContext({
+      paths: {
+        stateDir,
+        controllerReleasesDir,
+        controllerCurrentLink,
+        controllerVersionPath,
+      },
+      protectedLocalInstanceId: instanceId,
+      rootUid: process.geteuid(),
+      testArtifactAuthorizationPath: authorizationPath,
+      downloadReleaseAsset: async () => {
+        throw new Error("Q0 controller must not fall back to the published release");
+      },
+    });
+
+    await expect(__testing.stageOfficialControllerRelease("1.2.3", context)).resolves.toMatchObject(
+      { changed: false },
+    );
+    expect(await fsp.realpath(controllerCurrentLink)).toBe(candidateRoot);
+  });
+
   it("stages official signer releases through published offline attestation bundles", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-stage-"));
     cleanupRoots.push(root);
@@ -865,6 +935,87 @@ describe("root-owned hosted updater protocol", () => {
       },
       { asset: assetName, bundle: "fased-signerd-release.attestation.json" },
     ]);
+    expect(await fsp.readFile(candidatePath)).toEqual(signerBytes);
+    expect(staged.release).toEqual(signerRelease("1.2.3"));
+  });
+
+  it("stages the exact Q0 signer from the same instance-bound localhost release", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-q0-host-stage-"));
+    cleanupRoots.push(root);
+    const instanceId = "0123456789abcdef";
+    const stateDir = path.join(root, "state");
+    const candidatePath = path.join(root, "candidate", "fased-signerd");
+    const authorizationPath = path.join(root, "authorization.json");
+    const platform = `linux-${__testing.releaseArchitecture()}`;
+    const assetName = `fased-signerd-${platform}`;
+    const signerBytes = Buffer.from("exact Q0 signer fixture\n");
+    const capabilities = { protocol: { current: 2, min: 2, max: 2 } };
+    const manifest = {
+      schemaVersion: 2,
+      release: { version: "1.2.3", tag: "v1.2.3", commit: "a".repeat(40) },
+      application: {
+        linux: Object.fromEntries(
+          ["x64", "arm64"].map((architecture) => [
+            architecture,
+            {
+              artifact: {
+                asset: `fased-hosted-app-v2-linux-${architecture}-v1.2.3.tar.gz`,
+                sha256: "b".repeat(64),
+              },
+              dependencies: {
+                asset: `fased-hosted-deps-linux-${architecture}-${"c".repeat(64)}.tar.gz`,
+                sha256: "d".repeat(64),
+                dependencyHash: "c".repeat(64),
+              },
+            },
+          ]),
+        ),
+      },
+      signer: {
+        release: signerRelease("1.2.3"),
+        capabilities,
+        capabilitiesDigest: capabilitiesDigest(capabilities),
+        platforms: {
+          [platform]: {
+            asset: assetName,
+            sha256: createHash("sha256").update(signerBytes).digest("hex"),
+          },
+        },
+      },
+    };
+    await fsp.writeFile(
+      authorizationPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        baseUrl: "http://127.0.0.1:39091",
+        protectedLocalInstance: instanceId,
+        releaseVersion: "1.2.3",
+        releaseCommit: "a".repeat(40),
+        forceSameVersionRepair: true,
+      })}\n`,
+      { mode: 0o600 },
+    );
+    const downloads: string[] = [];
+    const context = __testing.createTransactionContext({
+      paths: { stateDir },
+      protectedLocalInstanceId: instanceId,
+      rootUid: process.geteuid(),
+      testArtifactAuthorizationPath: authorizationPath,
+      downloadReleaseAsset: async (url: string, destination: string) => {
+        downloads.push(path.basename(url));
+        const contents = url.endsWith("/fased-hosted-release-v2.json")
+          ? `${JSON.stringify(manifest)}\n`
+          : signerBytes;
+        await fsp.writeFile(destination, contents, { mode: 0o600 });
+      },
+      verifyReleaseAsset: async () => {
+        throw new Error("Q0 localhost assets must not use GitHub attestation");
+      },
+    });
+
+    const staged = await __testing.stageOfficialCandidate("1.2.3", candidatePath, context);
+
+    expect(downloads).toEqual(["fased-hosted-release-v2.json", assetName]);
     expect(await fsp.readFile(candidatePath)).toEqual(signerBytes);
     expect(staged.release).toEqual(signerRelease("1.2.3"));
   });

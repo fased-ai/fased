@@ -18,6 +18,8 @@ const RELEASE_WORKFLOW = "fased-ai/fased/.github/workflows/hosted-runtime-releas
 const RELEASE_MANIFEST_NAME = "fased-hosted-release-v2.json";
 const RELEASE_MANIFEST_BUNDLE_NAME = `${RELEASE_MANIFEST_NAME}.attestation.json`;
 const SIGNER_ATTESTATION_BUNDLE_NAME = "fased-signerd-release.attestation.json";
+const PROTECTED_LOCAL_TEST_ARTIFACT_AUTHORIZATION =
+  "/etc/fased/testing/protected-local-artifact-source.json";
 const CONTROLLER_SERVER_NAME = "fased-host-updater.mjs";
 const CONTROLLER_CLIENT_NAME = "fased-host-updaterctl.mjs";
 const CONTROLLER_SERVER_BUNDLE_NAME = `${CONTROLLER_SERVER_NAME}.attestation.json`;
@@ -447,6 +449,89 @@ async function currentControllerMatches(paths, identity) {
   }
 }
 
+async function readProtectedLocalTestArtifactAuthorization(
+  context,
+  releaseVersion,
+  authorizationPath = context.testArtifactAuthorizationPath ??
+    PROTECTED_LOCAL_TEST_ARTIFACT_AUTHORIZATION,
+) {
+  if (!context.instanceId) {
+    return null;
+  }
+  let authorizationInfo;
+  try {
+    authorizationInfo = await fsp.lstat(authorizationPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+  if (
+    !authorizationInfo.isFile() ||
+    authorizationInfo.isSymbolicLink() ||
+    authorizationInfo.nlink !== 1 ||
+    authorizationInfo.uid !== context.rootUid ||
+    (authorizationInfo.mode & 0o022) !== 0
+  ) {
+    throw new Error("The root-owned Protected Local artifact authorization is unsafe.");
+  }
+  let authorization;
+  try {
+    authorization = JSON.parse(await fsp.readFile(authorizationPath, "utf8"));
+  } catch (error) {
+    throw new Error("The root-owned Protected Local artifact authorization is invalid.", {
+      cause: error,
+    });
+  }
+  const baseUrl = String(authorization?.baseUrl || "").replace(/\/$/, "");
+  const releaseCommit = String(authorization?.releaseCommit || "").trim();
+  if (
+    authorization?.schemaVersion !== 1 ||
+    authorization?.protectedLocalInstance !== context.instanceId ||
+    authorization?.releaseVersion !== releaseVersion ||
+    authorization?.forceSameVersionRepair !== true ||
+    !/^http:\/\/127\.0\.0\.1:\d+$/u.test(baseUrl) ||
+    authorization?.baseUrl !== baseUrl ||
+    !/^[a-f0-9]{40}$/u.test(releaseCommit)
+  ) {
+    throw new Error("The root-owned Protected Local artifact authorization is invalid.");
+  }
+  return Object.freeze({
+    baseUrl,
+    protectedLocalInstance: context.instanceId,
+    releaseVersion,
+    releaseCommit,
+  });
+}
+
+async function currentAuthorizedQ0ControllerMatches(paths, identity) {
+  try {
+    const currentStat = await fsp.lstat(paths.controllerCurrentLink);
+    if (!currentStat.isSymbolicLink()) {
+      throw new Error("host updater controller current path must be a root-managed symlink");
+    }
+    const actualRoot = await fsp.realpath(paths.controllerCurrentLink);
+    const expectedRoot = path.resolve(
+      paths.controllerReleasesDir,
+      `v${identity.version}.q0.${identity.serverSha256.slice(0, 12)}`,
+    );
+    if (actualRoot !== expectedRoot) {
+      return false;
+    }
+    const digests = await readControllerGenerationDigests(actualRoot);
+    return (
+      digests.serverSha256 === identity.serverSha256 &&
+      digests.clientSha256 === identity.clientSha256
+    );
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
 async function selfCheckControllerAsset(assetPath, role, stateDir) {
   const { stdout } = await execFileAsync(process.execPath, [assetPath, "--self-check"], {
     env: {
@@ -494,6 +579,18 @@ async function atomicSymlinkDurable(target, linkPath) {
 
 async function stageOfficialControllerRelease(version, context) {
   const existingIdentity = await readControllerIdentity(context.paths);
+  const testAuthorization = await readProtectedLocalTestArtifactAuthorization(context, version);
+  if (testAuthorization) {
+    if (
+      existingIdentity?.version !== version ||
+      !(await currentAuthorizedQ0ControllerMatches(context.paths, existingIdentity))
+    ) {
+      throw new Error(
+        "The root-authorized Q0 controller candidate is not the active exact controller.",
+      );
+    }
+    return { changed: false, identity: existingIdentity };
+  }
   if (existingIdentity && compareVersions(existingIdentity.version, version) === 1) {
     throw new Error(
       `refusing host updater controller downgrade from ${existingIdentity.version} to ${version}`,
@@ -1716,7 +1813,8 @@ async function stageProtectedApplicationRelease({
 async function stageOfficialCandidate(version, candidatePath, context) {
   const arch = releaseArchitecture();
   const platform = `linux-${arch}`;
-  const releaseUrl = `${RELEASE_BASE}/v${version}`;
+  const testAuthorization = await readProtectedLocalTestArtifactAuthorization(context, version);
+  const releaseUrl = `${testAuthorization?.baseUrl ?? RELEASE_BASE}/v${version}`;
   await fsp.mkdir(context.paths.stateDir, { recursive: true, mode: 0o700 });
   const staging = await fsp.mkdtemp(path.join(context.paths.stateDir, `.download-${version}-`));
   const releaseManifestPath = path.join(staging, RELEASE_MANIFEST_NAME);
@@ -1725,40 +1823,57 @@ async function stageOfficialCandidate(version, candidatePath, context) {
   try {
     await Promise.all([
       context.downloadReleaseAsset(`${releaseUrl}/${RELEASE_MANIFEST_NAME}`, releaseManifestPath),
-      context.downloadReleaseAsset(
-        `${releaseUrl}/${RELEASE_MANIFEST_BUNDLE_NAME}`,
-        releaseManifestBundlePath,
-      ),
+      ...(testAuthorization
+        ? []
+        : [
+            context.downloadReleaseAsset(
+              `${releaseUrl}/${RELEASE_MANIFEST_BUNDLE_NAME}`,
+              releaseManifestBundlePath,
+            ),
+          ]),
     ]);
-    await context.verifyReleaseAsset(
-      releaseManifestPath,
-      version,
-      context.paths.stateDir,
-      releaseManifestBundlePath,
-    );
+    if (!testAuthorization) {
+      await context.verifyReleaseAsset(
+        releaseManifestPath,
+        version,
+        context.paths.stateDir,
+        releaseManifestBundlePath,
+      );
+    }
     const manifestBytes = await fsp.readFile(releaseManifestPath);
     const selected = parseUnifiedHostedSignerRelease(
       JSON.parse(manifestBytes.toString("utf8")),
       version,
       platform,
     );
+    if (testAuthorization && selected.release.commit !== testAuthorization.releaseCommit) {
+      throw new Error(
+        "The root-authorized Protected Local candidate commit does not match its release.",
+      );
+    }
     const assetPath = path.join(staging, selected.artifact.asset);
     await Promise.all([
       context.downloadReleaseAsset(`${releaseUrl}/${selected.artifact.asset}`, assetPath),
-      context.downloadReleaseAsset(
-        `${releaseUrl}/${SIGNER_ATTESTATION_BUNDLE_NAME}`,
-        signerAttestationBundlePath,
-      ),
+      ...(testAuthorization
+        ? []
+        : [
+            context.downloadReleaseAsset(
+              `${releaseUrl}/${SIGNER_ATTESTATION_BUNDLE_NAME}`,
+              signerAttestationBundlePath,
+            ),
+          ]),
     ]);
     if ((await sha256(assetPath)) !== selected.artifact.sha256) {
       throw new Error("native signer does not match the attested unified release manifest");
     }
-    await context.verifyReleaseAsset(
-      assetPath,
-      version,
-      context.paths.stateDir,
-      signerAttestationBundlePath,
-    );
+    if (!testAuthorization) {
+      await context.verifyReleaseAsset(
+        assetPath,
+        version,
+        context.paths.stateDir,
+        signerAttestationBundlePath,
+      );
+    }
     await fsp.rm(candidatePath, { force: true });
     await atomicCopyFileDurable(assetPath, candidatePath, { mode: 0o755 });
     const application = context.paths.applicationReleasesDir
@@ -2168,6 +2283,8 @@ function createTransactionContext(overrides = {}) {
     protectedNodeBinary: overrides.protectedNodeBinary ?? process.execPath,
     controllerInstanceId: overrides.controllerInstanceId ?? randomUUID(),
     controllerRestartRequired: false,
+    testArtifactAuthorizationPath:
+      overrides.testArtifactAuthorizationPath ?? PROTECTED_LOCAL_TEST_ARTIFACT_AUTHORIZATION,
     assertReleaseAllowed:
       overrides.assertReleaseAllowed ??
       (async (version) => await assertReleaseChannelAllowed(version, paths.channelPath)),

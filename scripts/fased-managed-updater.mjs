@@ -714,6 +714,7 @@ async function prepareVerifiedProtectedLocalInstaller({
 
 function readProtectedLocalTestArtifactAuthorization({
   baseUrl,
+  protectedLocalInstance,
   releaseVersion,
   authorizationPath = PROTECTED_LOCAL_TEST_ARTIFACT_AUTHORIZATION,
   requiredUid = 0,
@@ -755,7 +756,9 @@ function readProtectedLocalTestArtifactAuthorization({
   if (
     authorization?.schemaVersion !== 1 ||
     authorization?.baseUrl !== normalizedBaseUrl ||
+    authorization?.protectedLocalInstance !== protectedLocalInstance ||
     authorization?.releaseVersion !== releaseVersion ||
+    !/^[a-f0-9]{16}$/u.test(protectedLocalInstance || "") ||
     !/^http:\/\/127\.0\.0\.1:\d+$/u.test(normalizedBaseUrl) ||
     (forceSameVersionRepair && !/^[a-f0-9]{40}$/u.test(releaseCommit)) ||
     (!forceSameVersionRepair && releaseCommit)
@@ -764,6 +767,7 @@ function readProtectedLocalTestArtifactAuthorization({
   }
   return Object.freeze({
     baseUrl: normalizedBaseUrl,
+    protectedLocalInstance,
     releaseVersion,
     forceSameVersionRepair,
     releaseCommit: forceSameVersionRepair ? releaseCommit : null,
@@ -2256,6 +2260,21 @@ async function coordinateHostedReleaseTransaction(journal, operations) {
   }
 }
 
+async function recoverFailedHostedPreparation(journal, operations, error) {
+  if (error?.hostUpdaterPrepared !== true && error?.hostUpdaterAmbiguous !== true) {
+    await operations.removeJournal();
+    return true;
+  }
+  try {
+    await operations.signerRequest("rollbackRelease", journal);
+    await operations.removeJournal();
+    return true;
+  } catch {
+    // Preserve the shared transaction ID for deterministic recovery.
+    return false;
+  }
+}
+
 function hostedTransactionOperations(paths, timeoutMs, options = {}) {
   const refresh = options.refreshGateway ?? refreshGateway;
   const controllerSocketPath =
@@ -2286,25 +2305,32 @@ function hostedTransactionOperations(paths, timeoutMs, options = {}) {
         timeoutMs,
         controllerSocketPath,
       );
-      if (response.release) {
-        const manifestSignerRelease = journal.nextManifest?.release?.signer?.release;
-        const applicationCommit = journal.nextManifest?.release?.commit;
-        if (
-          (manifestSignerRelease &&
-            !signerReleaseIdentitiesEqual(manifestSignerRelease, response.release)) ||
-          (applicationCommit && applicationCommit !== response.release.commit)
-        ) {
-          throw new Error(
-            "attested hosted application and native signer release identities do not match",
-          );
+      try {
+        if (response.release) {
+          const manifestSignerRelease = journal.nextManifest?.release?.signer?.release;
+          const applicationCommit = journal.nextManifest?.release?.commit;
+          if (
+            (manifestSignerRelease &&
+              !signerReleaseIdentitiesEqual(manifestSignerRelease, response.release)) ||
+            (applicationCommit && applicationCommit !== response.release.commit)
+          ) {
+            throw new Error(
+              "attested hosted application and native signer release identities do not match",
+            );
+          }
+          if (
+            journal.signerRelease &&
+            !signerReleaseIdentitiesEqual(journal.signerRelease, response.release)
+          ) {
+            throw new Error("root updater changed signer release identity during the transaction");
+          }
+          journal.signerRelease ??= response.release;
         }
-        if (
-          journal.signerRelease &&
-          !signerReleaseIdentitiesEqual(journal.signerRelease, response.release)
-        ) {
-          throw new Error("root updater changed signer release identity during the transaction");
+      } catch (error) {
+        if (operation === "prepareRelease" && error instanceof Error) {
+          error.hostUpdaterPrepared = true;
         }
-        journal.signerRelease ??= response.release;
+        throw error;
       }
       return response;
     },
@@ -2394,16 +2420,7 @@ export async function beginPreactivatedHostedTransaction({
     try {
       await operations.signerRequest("prepareRelease", journal);
     } catch (error) {
-      if (error?.hostUpdaterAmbiguous !== true) {
-        await operations.removeJournal();
-      } else {
-        try {
-          await operations.signerRequest("rollbackRelease", journal);
-          await operations.removeJournal();
-        } catch {
-          // Preserve the shared transaction ID for deterministic repair recovery.
-        }
-      }
+      await recoverFailedHostedPreparation(journal, operations, error);
       throw error;
     }
   }
@@ -5496,6 +5513,8 @@ async function updateManagedRuntime(options) {
       existingManifest.profile === "protected-local" && artifactBaseUrl !== DEFAULT_RELEASE_BASE_URL
         ? readProtectedLocalTestArtifactAuthorization({
             baseUrl: artifactBaseUrl,
+            protectedLocalInstance: parseProtectedLocalEnvironment(existingManifest.configPath)
+              .instanceId,
             releaseVersion: targetVersion,
           })
         : null;
@@ -5702,16 +5721,7 @@ async function updateManagedRuntime(options) {
             operations.signerRequest("prepareRelease", journal),
           );
         } catch (error) {
-          if (error?.hostUpdaterAmbiguous !== true) {
-            await operations.removeJournal();
-          } else {
-            try {
-              await operations.signerRequest("rollbackRelease", journal);
-              await operations.removeJournal();
-            } catch {
-              // Preserve the transaction ID for deterministic recovery if prepare was ambiguous.
-            }
-          }
+          await recoverFailedHostedPreparation(journal, operations, error);
           throw error;
         }
         try {
@@ -5988,6 +5998,7 @@ export const __testing = {
   probeGatewayIdentity,
   probeHostedSignerCompatibility,
   readHostedTransactionJournal,
+  recoverFailedHostedPreparation,
   recoverHostedReleaseTransaction,
   requestHostedSignerTransaction,
   requestHostedSignerTransactionWithRetry,

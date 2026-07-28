@@ -724,12 +724,14 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-q0-artifact-source-"));
     const authorizationPath = path.join(root, "authorization.json");
     const releaseCommit = "a".repeat(40);
+    const protectedLocalInstance = "0123456789abcdef";
     try {
       await fsp.writeFile(
         authorizationPath,
         `${JSON.stringify({
           schemaVersion: 1,
           baseUrl: "http://127.0.0.1:39091",
+          protectedLocalInstance,
           releaseVersion: "1.2.3",
           releaseCommit,
           forceSameVersionRepair: true,
@@ -740,6 +742,7 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
         Promise.resolve(
           __testing.readProtectedLocalTestArtifactAuthorization({
             baseUrl: "http://127.0.0.1:39091/",
+            protectedLocalInstance,
             releaseVersion: "1.2.3",
             authorizationPath,
             requiredUid: process.getuid?.() ?? 0,
@@ -747,6 +750,7 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
         ),
       ).resolves.toEqual({
         baseUrl: "http://127.0.0.1:39091",
+        protectedLocalInstance,
         releaseVersion: "1.2.3",
         forceSameVersionRepair: true,
         releaseCommit,
@@ -754,6 +758,7 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
       expect(() =>
         __testing.readProtectedLocalTestArtifactAuthorization({
           baseUrl: "http://127.0.0.1:39092",
+          protectedLocalInstance,
           releaseVersion: "1.2.3",
           authorizationPath,
           requiredUid: process.getuid?.() ?? 0,
@@ -1013,6 +1018,29 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.[5]).toBe(true);
+  });
+
+  it("rolls back a root prepare that returned a mismatched release identity", async () => {
+    const events: string[] = [];
+    const error = new Error("release identity mismatch") as Error & {
+      hostUpdaterPrepared: boolean;
+    };
+    error.hostUpdaterPrepared = true;
+    const recovered = await __testing.recoverFailedHostedPreparation(
+      transaction(),
+      {
+        signerRequest: async (operation: string) => {
+          events.push(`signer:${operation}`);
+        },
+        removeJournal: async () => {
+          events.push("remove-journal");
+        },
+      },
+      error,
+    );
+
+    expect(recovered).toBe(true);
+    expect(events).toEqual(["signer:rollbackRelease", "remove-journal"]);
   });
 
   it("restores the app, then signer, then previous Gateway when target health fails", async () => {
