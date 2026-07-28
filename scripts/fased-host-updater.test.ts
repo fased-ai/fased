@@ -980,6 +980,72 @@ describe("root-owned hosted updater protocol", () => {
     ).rejects.toThrow("does not match installed signer");
   });
 
+  it("accepts the redundant legacy restart only after the target Gateway is authorized", async () => {
+    const { context, paths } = await createFixture();
+    let restarted = 0;
+    context.restartGateway = async () => {
+      restarted += 1;
+    };
+
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      context,
+    );
+    await expect(
+      __testing.restartGatewayService(request("restartGateway", TRANSACTION_TWO, "1.2.3"), context),
+    ).rejects.toThrow("cannot restart the Gateway while a hosted release transaction is active");
+
+    await __testing.activateSignerRelease(
+      request("activateRelease", TRANSACTION_ONE, "1.2.3"),
+      context,
+    );
+    await __testing.authorizeGatewayRelease(
+      request("authorizeGatewayRelease", TRANSACTION_ONE, "1.2.3"),
+      context,
+    );
+    expect(fs.existsSync(paths.gatewayGatePath)).toBe(false);
+
+    await expect(
+      __testing.restartGatewayService(request("restartGateway", TRANSACTION_TWO, "1.2.3"), context),
+    ).resolves.toEqual({
+      transactionId: TRANSACTION_TWO,
+      version: "1.2.3",
+      phase: "gateway-authorized",
+      changed: false,
+    });
+    expect(restarted).toBe(0);
+
+    await expect(
+      __testing.restartGatewayService(request("restartGateway", TRANSACTION_TWO, "1.2.4"), context),
+    ).rejects.toThrow("cannot restart the Gateway while a hosted release transaction is active");
+
+    const failed = await createFixture();
+    failed.context.startGateway = async () => {
+      throw new Error("injected target start failure");
+    };
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      failed.context,
+    );
+    await __testing.activateSignerRelease(
+      request("activateRelease", TRANSACTION_ONE, "1.2.3"),
+      failed.context,
+    );
+    await expect(
+      __testing.authorizeGatewayRelease(
+        request("authorizeGatewayRelease", TRANSACTION_ONE, "1.2.3"),
+        failed.context,
+      ),
+    ).rejects.toThrow("injected target start failure");
+    expect(fs.existsSync(failed.paths.gatewayGatePath)).toBe(true);
+    await expect(
+      __testing.restartGatewayService(
+        request("restartGateway", TRANSACTION_TWO, "1.2.3"),
+        failed.context,
+      ),
+    ).rejects.toThrow("cannot restart the Gateway while a hosted release transaction is active");
+  });
+
   it("keeps a verified forward controller after the signer transaction rolls back", async () => {
     const { context } = await createFixture();
     context.stageControllerRelease = async () => {
@@ -1223,6 +1289,10 @@ describe("root-owned hosted updater protocol", () => {
 
   it("commits the preactivated repair only after the app-account health decision", async () => {
     const { context, paths } = await createFixture();
+    let redundantRestarts = 0;
+    context.restartGateway = async () => {
+      redundantRestarts += 1;
+    };
     await __testing.prepareSignerRelease(
       request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
       context,
@@ -1247,6 +1317,10 @@ describe("root-owned hosted updater protocol", () => {
           context,
         ),
       verifyGateway: async () => {
+        await __testing.restartGatewayService(
+          request("restartGateway", TRANSACTION_TWO, "1.2.3"),
+          context,
+        );
         expect(application).toBe("target");
         expect(fs.existsSync(paths.gatewayGatePath)).toBe(false);
         expect(fs.existsSync(paths.signerGatePath)).toBe(true);
@@ -1264,6 +1338,7 @@ describe("root-owned hosted updater protocol", () => {
       managedUpdaterTesting.coordinateHostedReleaseTransaction(managedTransaction(), operations),
     ).resolves.toMatchObject({ action: "committed" });
     expect(application).toBe("target");
+    expect(redundantRestarts).toBe(0);
     expect(await fsp.readFile(paths.rollbackFloorPath, "utf8")).toBe("1.2.3\n");
     expect(fs.existsSync(paths.journalPath)).toBe(false);
     expect(fs.existsSync(paths.signerGatePath)).toBe(false);

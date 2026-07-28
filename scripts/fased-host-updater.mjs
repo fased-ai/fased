@@ -2690,6 +2690,23 @@ async function gateGatewayRelease(request, context) {
 async function restartGatewayService(request, context) {
   const journal = await readJournal(context);
   if (journal) {
+    if (journal.phase === "gateway-authorized" && journal.version === request.version) {
+      const gatewayGate = await readGatewayGate(context);
+      if (!gatewayGate) {
+        // Older managed updaters ask the root controller to restart the
+        // Gateway immediately after authorizeGatewayRelease already started
+        // the exact target service. The promoted target controller must
+        // remain compatible with that in-flight coordinator. Treat only this
+        // version-bound, post-authorization request as the redundant no-op it
+        // is; every other restart during a transaction remains forbidden.
+        return {
+          transactionId: request.transactionId,
+          version: request.version,
+          phase: "gateway-authorized",
+          changed: false,
+        };
+      }
+    }
     throw new Error("cannot restart the Gateway while a hosted release transaction is active");
   }
   const installedVersion = await readVersionFile(context.paths.versionPath);
