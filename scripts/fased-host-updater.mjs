@@ -2482,6 +2482,10 @@ async function writeInitialRollbackFloor(context, version) {
 async function prepareSignerRelease(request, context) {
   await context.assertReleaseAllowed(request.version);
   await assertRollbackFloor(context, request.version);
+  const testAuthorization = await readProtectedLocalTestArtifactAuthorization(
+    context,
+    request.version,
+  );
   const applicationState = (await context.reconcileApplicationState()) ?? {};
   const applicationStateResult = {
     applicationStateReconciled: applicationState.changed === true,
@@ -2523,7 +2527,7 @@ async function prepareSignerRelease(request, context) {
     parseSignerReleaseIdentity(previousSignerState.release, currentVersion);
     previousSignerInvariant = previousSignerState.invariant;
   }
-  if (currentVersion === request.version) {
+  if (currentVersion === request.version && !testAuthorization) {
     try {
       await fsp.access(context.paths.signerPath, fs.constants.X_OK);
       release = parseSignerReleaseIdentity(

@@ -849,6 +849,50 @@ describe("root-owned hosted updater protocol", () => {
     expect(await fsp.realpath(controllerCurrentLink)).toBe(candidateRoot);
   });
 
+  it("stages the exact signer with an authorized same-version Q0 application candidate", async () => {
+    const fixture = await createFixture({
+      protectedApplication: true,
+      protectedService: true,
+    });
+    const authorizationPath = path.join(fixture.paths.stateDir, "q0-authorization.json");
+    fixture.context.testArtifactAuthorizationPath = authorizationPath;
+    await Promise.all([
+      fsp.writeFile(fixture.paths.versionPath, "1.2.3\n", { mode: 0o600 }),
+      fsp.writeFile(
+        authorizationPath,
+        `${JSON.stringify({
+          schemaVersion: 1,
+          baseUrl: "http://127.0.0.1:39091",
+          protectedLocalInstance: "0123456789abcdef",
+          releaseVersion: "1.2.3",
+          releaseCommit: "a".repeat(40),
+          forceSameVersionRepair: true,
+        })}\n`,
+        { mode: 0o600 },
+      ),
+    ]);
+    const installedRelease = {
+      ...signerRelease("1.2.3"),
+      commit: "c".repeat(40),
+    };
+    fixture.context.probeSigner = async () => installedRelease;
+    fixture.context.probeSignerState = async () => ({
+      release: installedRelease,
+      invariant: "preserved-signer-state",
+    });
+
+    await expect(
+      __testing.prepareSignerRelease(
+        request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+        fixture.context,
+      ),
+    ).resolves.toMatchObject({
+      changed: true,
+      release: signerRelease("1.2.3"),
+    });
+    expect(fixture.events).toContain("stage:1.2.3");
+  });
+
   it("stages official signer releases through published offline attestation bundles", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-stage-"));
     cleanupRoots.push(root);
