@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.20
+
+- Make managed Local and Hosting bootstrap, target-controller handoff, and
+  interrupted retry version-neutral across supported lifecycle boundaries.
+- Preserve declared shared-state access and safely tolerate fresh state roots
+  through activation, rollback, and same-command retry.
+- Require an exact-candidate Local update, rollback, retry, and idempotence
+  lifecycle gate in pull-request CI.
+
 ## 0.1.76-rc.19
 
 - Converge protected Local update activation under the target controller,
