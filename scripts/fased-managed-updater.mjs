@@ -720,6 +720,7 @@ function readProtectedLocalTestArtifactAuthorization({
   requiredUid = 0,
 }) {
   const normalizedBaseUrl = String(baseUrl || "").replace(/\/$/, "");
+  const normalizedProtectedLocalInstance = String(protectedLocalInstance || "").trim();
   if (normalizedBaseUrl === DEFAULT_RELEASE_BASE_URL) {
     return null;
   }
@@ -753,21 +754,23 @@ function readProtectedLocalTestArtifactAuthorization({
   }
   const releaseCommit = String(authorization?.releaseCommit || "").trim();
   const forceSameVersionRepair = authorization?.forceSameVersionRepair === true;
+  const protectedLocalInstanceReady = /^[a-f0-9]{16}$/u.test(normalizedProtectedLocalInstance);
   if (
     authorization?.schemaVersion !== 1 ||
     authorization?.baseUrl !== normalizedBaseUrl ||
-    authorization?.protectedLocalInstance !== protectedLocalInstance ||
+    authorization?.protectedLocalInstance !== normalizedProtectedLocalInstance ||
     authorization?.releaseVersion !== releaseVersion ||
-    !/^[a-f0-9]{16}$/u.test(protectedLocalInstance || "") ||
+    (!protectedLocalInstanceReady && normalizedProtectedLocalInstance !== "") ||
     !/^http:\/\/127\.0\.0\.1:\d+$/u.test(normalizedBaseUrl) ||
-    (forceSameVersionRepair && !/^[a-f0-9]{40}$/u.test(releaseCommit)) ||
+    (forceSameVersionRepair &&
+      (!protectedLocalInstanceReady || !/^[a-f0-9]{40}$/u.test(releaseCommit))) ||
     (!forceSameVersionRepair && releaseCommit)
   ) {
     throw new Error("The root-owned Protected Local artifact authorization is invalid.");
   }
   return Object.freeze({
     baseUrl: normalizedBaseUrl,
-    protectedLocalInstance,
+    protectedLocalInstance: normalizedProtectedLocalInstance,
     releaseVersion,
     forceSameVersionRepair,
     releaseCommit: forceSameVersionRepair ? releaseCommit : null,
