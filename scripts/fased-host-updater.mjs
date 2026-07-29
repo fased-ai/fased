@@ -49,7 +49,8 @@ const SIGNER_GATE_PATH = "/var/lib/fased-signer-update-gate/active";
 const TRANSACTIONS_DIR = path.join(STATE_DIR, "transactions");
 const MAX_REQUEST_BYTES = 4096;
 const REQUEST_TIMEOUT_MS = 20 * 60_000;
-const JOURNAL_SCHEMA_VERSION = 2;
+const CROSS_PRODUCT_HEALTH_TIMEOUT_MS = 30_000;
+const JOURNAL_SCHEMA_VERSION = 3;
 const PROTOCOL_SCHEMA_VERSION = 2;
 const TRANSACTION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -67,6 +68,8 @@ const TRANSACTION_OPERATIONS = new Set([
 const CONTROLLER_OPERATIONS = new Set([...TRANSACTION_OPERATIONS, "controllerStatus"]);
 const TRANSACTION_PHASES = new Set([
   "prepared",
+  "state-reconciling",
+  "state-reconciled",
   "snapshotting",
   "activating",
   "active",
@@ -1553,11 +1556,177 @@ async function restoreProtectedServiceBoundary(context, boundary) {
   await context.reloadUnits();
 }
 
+function declaredStateEntryPathIsAllowed(relativePath) {
+  if (
+    DECLARED_STATE_SHARED_DIRECTORIES.some((entry) => entry.relativePath === relativePath) ||
+    DECLARED_STATE_SHARED_FILES.some((entry) => entry.relativePath === relativePath)
+  ) {
+    return true;
+  }
+  const parts = relativePath.split("/");
+  if (
+    parts.length === 4 &&
+    parts[0] === "sat-mining" &&
+    parts[1] === "wallets" &&
+    DECLARED_STATE_SAFE_COMPONENT.test(parts[2]) &&
+    DECLARED_MINING_WALLET_FILES.has(parts[3])
+  ) {
+    return true;
+  }
+  if (
+    parts.length === 3 &&
+    parts[0] === "sat-mining" &&
+    parts[1] === "wallets" &&
+    DECLARED_STATE_SAFE_COMPONENT.test(parts[2])
+  ) {
+    return true;
+  }
+  return (
+    parts.length === 3 &&
+    parts[0] === "sat-mining" &&
+    parts[1] === "validator-artifacts" &&
+    DECLARED_VALIDATOR_ARTIFACT.test(parts[2])
+  );
+}
+
+function validateDeclaredStateTransaction(value) {
+  if (value == null) {
+    return null;
+  }
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    value.schemaVersion !== DECLARED_STATE_SCHEMA_VERSION ||
+    !new Set(["protected-local", "hosting"]).has(value.profile) ||
+    !path.isAbsolute(String(value.stateDir ?? "")) ||
+    path.basename(path.resolve(value.stateDir)) !== ".fased" ||
+    !Number.isSafeInteger(value.operatorUid) ||
+    value.operatorUid <= 0 ||
+    !Number.isSafeInteger(value.configGid) ||
+    value.configGid <= 0 ||
+    !/^sha256:[a-f0-9]{64}$/u.test(value.registryDigest || "") ||
+    !/^sha256:[a-f0-9]{64}$/u.test(value.preservationHash || "") ||
+    typeof value.converged !== "boolean" ||
+    typeof value.reconciled !== "boolean" ||
+    !Array.isArray(value.entries) ||
+    value.entries.length > DECLARED_STATE_MAX_ENTRIES
+  ) {
+    throw new Error("host updater declared-state transaction is invalid");
+  }
+  const seen = new Set();
+  const entries = value.entries.map((entry) => {
+    const relativePath = String(entry?.relativePath ?? "");
+    if (
+      !entry ||
+      typeof entry !== "object" ||
+      Array.isArray(entry) ||
+      !declaredStateEntryPathIsAllowed(relativePath) ||
+      seen.has(relativePath) ||
+      !new Set(["directory", "file"]).has(entry.kind) ||
+      typeof entry.stateClass !== "string" ||
+      entry.stateClass.length === 0 ||
+      entry.stateClass.length > 64 ||
+      typeof entry.create !== "boolean" ||
+      typeof entry.preserveContent !== "boolean" ||
+      !Number.isSafeInteger(entry.desiredMode) ||
+      !new Set([0o660, 0o2770]).has(entry.desiredMode) ||
+      typeof entry.existed !== "boolean"
+    ) {
+      throw new Error("host updater declared-state entry is invalid");
+    }
+    seen.add(relativePath);
+    if (entry.kind === "directory" && entry.desiredMode !== 0o2770) {
+      throw new Error("host updater declared-state directory mode is invalid");
+    }
+    if (entry.kind === "file" && (entry.create || entry.desiredMode !== 0o660)) {
+      throw new Error("host updater declared-state file policy is invalid");
+    }
+    if (entry.existed) {
+      for (const field of ["uid", "gid", "mode", "dev", "ino", "nlink"]) {
+        if (!Number.isSafeInteger(entry[field]) || entry[field] < 0) {
+          throw new Error("host updater declared-state metadata is invalid");
+        }
+      }
+      if (entry.kind === "file" && entry.nlink !== 1) {
+        throw new Error("host updater declared-state file link count is invalid");
+      }
+    }
+    if (
+      entry.preserveContent &&
+      entry.existed &&
+      !/^sha256:[a-f0-9]{64}$/u.test(entry.contentHash || "")
+    ) {
+      throw new Error("host updater declared-state preservation digest is invalid");
+    }
+    return { ...entry, relativePath };
+  });
+  if (!Array.isArray(value.changedEntries ?? []) || typeof (value.changed ?? false) !== "boolean") {
+    throw new Error("host updater declared-state change receipt is invalid");
+  }
+  const changedEntries =
+    value.changedEntries == null
+      ? []
+      : value.changedEntries.map((entry) => {
+          const relativePath = String(entry ?? "");
+          if (!seen.has(relativePath)) {
+            throw new Error("host updater changed an undeclared application-state path");
+          }
+          return relativePath;
+        });
+  if (new Set(changedEntries).size !== changedEntries.length) {
+    throw new Error("host updater declared-state change receipt is invalid");
+  }
+  return Object.freeze({
+    ...value,
+    stateDir: path.resolve(value.stateDir),
+    entries,
+    changed: value.changed === true,
+    changedEntries,
+  });
+}
+
+function validateCrossProductHealthReceipt(value) {
+  if (value == null) {
+    return null;
+  }
+  const checkNames = ["gateway", "signer", "wallet", "mining", "network", "plugins", "state"];
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    value.schemaVersion !== 1 ||
+    typeof value.checkedAt !== "string" ||
+    Number.isNaN(Date.parse(value.checkedAt)) ||
+    !value.checks ||
+    typeof value.checks !== "object" ||
+    Array.isArray(value.checks) ||
+    Object.keys(value.checks).toSorted().join(",") !== checkNames.toSorted().join(",")
+  ) {
+    throw new Error("host updater cross-product health receipt is invalid");
+  }
+  const checks = {};
+  for (const name of checkNames) {
+    const check = value.checks[name];
+    if (
+      !check ||
+      typeof check !== "object" ||
+      Array.isArray(check) ||
+      check.ok !== true ||
+      !/^sha256:[a-f0-9]{64}$/u.test(check.evidenceDigest || "")
+    ) {
+      throw new Error(`host updater ${name} health receipt is invalid`);
+    }
+    checks[name] = Object.freeze({ ok: true, evidenceDigest: check.evidenceDigest });
+  }
+  return Object.freeze({ schemaVersion: 1, checkedAt: value.checkedAt, checks });
+}
+
 async function validateJournal(value, context) {
   if (
     !value ||
     typeof value !== "object" ||
-    !new Set([1, JOURNAL_SCHEMA_VERSION]).has(value.schemaVersion) ||
+    !new Set([1, 2, JOURNAL_SCHEMA_VERSION]).has(value.schemaVersion) ||
     !TRANSACTION_PHASES.has(value.phase)
   ) {
     throw new Error("host updater transaction journal is invalid");
@@ -1623,6 +1792,8 @@ async function validateJournal(value, context) {
     version,
   );
   const serviceBoundary = validateProtectedServiceBoundary(value.serviceBoundary, context);
+  const declaredState = validateDeclaredStateTransaction(value.declaredState);
+  const healthReceipt = validateCrossProductHealthReceipt(value.healthReceipt);
   return {
     ...value,
     transactionId: parseTransactionId(value.transactionId),
@@ -1634,6 +1805,8 @@ async function validateJournal(value, context) {
     application,
     managedApplication,
     serviceBoundary,
+    declaredState,
+    healthReceipt,
     changed: value.changed === true,
   };
 }
@@ -2068,22 +2241,258 @@ async function stageOfficialCandidate(version, candidatePath, context) {
   }
 }
 
-const ROOT_MANAGED_OPERATOR_ONLY_STATE = new Set([
-  "backups",
-  "bin",
-  "extensions",
-  "install-cache",
-  "runtime",
-  "signer-update",
-  "source-paired-update",
-  "updater",
+const DECLARED_STATE_SCHEMA_VERSION = 1;
+const DECLARED_STATE_MAX_ENTRIES = 4096;
+const DECLARED_STATE_MAX_HASH_BYTES = 16 * 1024 * 1024;
+const DECLARED_STATE_SHARED_DIRECTORIES = Object.freeze([
+  Object.freeze({ relativePath: ".", stateClass: "gateway-config-auth", create: false }),
+  Object.freeze({ relativePath: "identity", stateClass: "device-identity", create: true }),
+  Object.freeze({ relativePath: "wallet", stateClass: "wallet", create: true }),
+  Object.freeze({ relativePath: "federation", stateClass: "federation-network", create: true }),
+  Object.freeze({ relativePath: "sat-mining", stateClass: "mining", create: false }),
+  Object.freeze({ relativePath: "sat-mining/wallets", stateClass: "mining", create: false }),
+  Object.freeze({
+    relativePath: "sat-mining/validator-artifacts",
+    stateClass: "mining",
+    create: false,
+  }),
 ]);
+const DECLARED_STATE_SHARED_FILES = Object.freeze([
+  Object.freeze({
+    relativePath: "fased.json",
+    stateClass: "gateway-config-auth",
+    preserveContent: true,
+  }),
+  Object.freeze({
+    relativePath: "identity/device.json",
+    stateClass: "device-identity",
+    preserveContent: true,
+  }),
+  Object.freeze({
+    relativePath: "identity/device-auth.json",
+    stateClass: "device-identity",
+    preserveContent: false,
+  }),
+  ...[
+    "provider-registry.v1.json",
+    "policy-usage.json",
+    "wallet-send-approvals.json",
+    "wallet-audit.jsonl",
+    "wallet-service.meta.json",
+    "observability.v1.json",
+    "wallet-standard-reviews.v1.json",
+    "turnkey-reviews.v1.json",
+    "external-submissions.json",
+    "wallet-approval-auth.json",
+    "wallet-send-executions.json",
+    "wallet-inbound-events.v1.json",
+    "wallet-policy-state.v1.json",
+    "wallet-settlement-links.json",
+  ].map((name) =>
+    Object.freeze({
+      relativePath: `wallet/${name}`,
+      stateClass: "wallet",
+      preserveContent: name === "provider-registry.v1.json",
+    }),
+  ),
+  ...["access-token.json", "bond-proof.json", "peer-replay-v2.json"].map((name) =>
+    Object.freeze({
+      relativePath: `federation/${name}`,
+      stateClass: "federation-network",
+      preserveContent: name !== "peer-replay-v2.json",
+    }),
+  ),
+]);
+const DECLARED_MINING_WALLET_FILES = new Set([
+  "audit-store.json",
+  "runtime-store.json",
+  "planner-history.ndjson",
+  "action-history.ndjson",
+  "action-history.mirror.ndjson",
+  "submission-ledger.json",
+]);
+const DECLARED_STATE_SAFE_COMPONENT = /^[A-Za-z0-9._-]{1,160}$/u;
+const DECLARED_VALIDATOR_ARTIFACT = /^[A-Za-z0-9._-]{1,240}\.json$/u;
 
-const ROOT_MANAGED_SHARED_APPLICATION_DIRECTORIES = Object.freeze([
-  "identity",
-  "wallet",
-  "federation",
-]);
+function declaredStateRegistry(topology, context) {
+  const sharedIdentity = {
+    owner: topology.operator.name,
+    group: topology.configGroup.name,
+    directoryMode: "2770",
+    fileMode: "0660",
+    setgid: true,
+    acl: false,
+  };
+  return Object.freeze([
+    {
+      stateClass: "application-runtime",
+      schemaOwner: "target-controller",
+      currentSchema: 2,
+      readers: [topology.gateway.user],
+      writers: ["root"],
+      symlinkPolicy: "controller-owned-atomic-pointer-only",
+      migration: "manifest-bound-application",
+      rollback: "previous-generation-pointer",
+      preservation: "attested-release-digest",
+      health: "exact-gateway-release-identity",
+      paths: [context.paths.applicationReleasesDir, context.paths.applicationCurrentLink].filter(
+        Boolean,
+      ),
+    },
+    {
+      stateClass: "dependency-runtime",
+      schemaOwner: "target-controller",
+      currentSchema: 1,
+      readers: [topology.gateway.user],
+      writers: ["root"],
+      symlinkPolicy: "controller-owned-content-addressed-pointer-only",
+      migration: "content-addressed-reuse",
+      rollback: "previous-dependency-pointer",
+      preservation: "manifest-bound-dependency-digest",
+      health: "target-runtime-smoke",
+      paths: [],
+    },
+    {
+      stateClass: "updater-controller",
+      schemaOwner: "lifecycle-supervisor",
+      currentSchema: CONTROLLER_PROTOCOL_VERSION,
+      readers: ["root"],
+      writers: ["root"],
+      symlinkPolicy: "supervisor-owned-atomic-pointer-only",
+      migration: "capability-negotiated-controller",
+      rollback: "supervisor-generation-pointer",
+      preservation: "attested-controller-digest",
+      health: "exact-controller-process-identity",
+      paths: [
+        context.paths.controllerReleasesDir,
+        context.paths.controllerCurrentLink,
+        context.paths.stateDir,
+      ].filter(Boolean),
+    },
+    {
+      stateClass: "signer-private-state",
+      schemaOwner: "fased-signerd",
+      currentSchema: 2,
+      readers: ["signer-service"],
+      writers: ["signer-service"],
+      symlinkPolicy: "reject",
+      migration: "signer-owned-schema-migration",
+      rollback: "transaction-snapshot-and-signer-invariant",
+      preservation: "signer-state-invariant",
+      health: "exact-release-protocol-policy-network-webauthn",
+      paths: [context.paths.signerStateDBPath, context.paths.signerPath].filter(Boolean),
+    },
+    {
+      stateClass: "wallet",
+      schemaOwner: "wallet-registry-and-fased-signerd",
+      currentSchema: 1,
+      readers: [topology.operator.name, topology.gateway.user, "fased-signerd"],
+      writers: [topology.operator.name, topology.gateway.user, "fased-signerd"],
+      ...sharedIdentity,
+      symlinkPolicy: "reject",
+      migration: "wallet-registry-schema-and-signer-capability",
+      rollback: "metadata-snapshot-plus-registry-hash",
+      preservation: "wallet-registry-hash-and-signer-invariant",
+      health: "wallet-registry-signer-readiness-routing-rpc",
+      paths: ["wallet"],
+    },
+    {
+      stateClass: "mining",
+      schemaOwner: "sat-mining",
+      currentSchema: 1,
+      readers: [topology.operator.name, topology.gateway.user],
+      writers: [topology.operator.name, topology.gateway.user],
+      ...sharedIdentity,
+      symlinkPolicy: "reject",
+      migration: "bounded-wallet-state-schema",
+      rollback: "metadata-snapshot-and-semantic-readback",
+      preservation: "wallet-state-inventory",
+      health: "bounded-mining-history-read",
+      paths: ["sat-mining"],
+    },
+    {
+      stateClass: "device-identity",
+      schemaOwner: "gateway-device-auth",
+      currentSchema: 1,
+      readers: [topology.operator.name, topology.gateway.user],
+      writers: [topology.operator.name, topology.gateway.user],
+      ...sharedIdentity,
+      symlinkPolicy: "reject",
+      migration: "declared-device-files-only",
+      rollback: "metadata-snapshot-plus-device-identity-hash",
+      preservation: "device-identity-hash",
+      health: "authenticated-gateway-history-read",
+      paths: ["identity/device.json", "identity/device-auth.json"],
+    },
+    {
+      stateClass: "federation-network",
+      schemaOwner: "fased-network",
+      currentSchema: 2,
+      readers: [topology.operator.name, topology.gateway.user],
+      writers: [topology.operator.name, topology.gateway.user],
+      ...sharedIdentity,
+      symlinkPolicy: "reject",
+      migration: "declared-federation-files-only",
+      rollback: "metadata-snapshot-and-local-status",
+      preservation: "configured-network-identity",
+      health: "local-token-handle-bond-consistency",
+      paths: ["federation"],
+    },
+    {
+      stateClass: "gateway-config-auth",
+      schemaOwner: "gateway-config",
+      currentSchema: 1,
+      readers: [topology.operator.name, topology.gateway.user],
+      writers: [topology.operator.name, topology.gateway.user],
+      ...sharedIdentity,
+      symlinkPolicy: "reject",
+      migration: "config-schema",
+      rollback: "metadata-snapshot-plus-config-hash",
+      preservation: "config-content-hash",
+      health: "exact-gateway-identity-and-authenticated-cli",
+      paths: [".", "fased.json"],
+    },
+    {
+      stateClass: "provider-credentials",
+      schemaOwner: "credential-broker",
+      currentSchema: 1,
+      readers: [topology.operator.name, topology.gateway.user],
+      writers: [topology.operator.name],
+      symlinkPolicy: "reject",
+      migration: "provider-owned-declared-credential",
+      rollback: "preserve-only",
+      preservation: "opaque-credential-store",
+      health: "configured-provider-resolution",
+      paths: ["credentials", "secrets"],
+    },
+    {
+      stateClass: "agent-session-channel-plugin",
+      schemaOwner: "gateway-application",
+      currentSchema: 1,
+      readers: [topology.operator.name, topology.gateway.user],
+      writers: [topology.operator.name, topology.gateway.user],
+      symlinkPolicy: "component-specific",
+      migration: "component-owned-only",
+      rollback: "preserve-only",
+      preservation: "component-semantic-health",
+      health: "plugin-diagnostics-and-gateway-readiness",
+      paths: ["agents", "sessions", "channels", "cron", "extensions"],
+    },
+    {
+      stateClass: "profile-access",
+      schemaOwner: topology.profile === "hosting" ? "hosting-adapter" : "local-adapter",
+      currentSchema: 1,
+      readers: ["root", topology.operator.name],
+      writers: ["root"],
+      symlinkPolicy: "adapter-declared-only",
+      migration: "topology-capability-adapter",
+      rollback: "service-boundary-snapshot",
+      preservation: "exact-profile-and-service-identities",
+      health: "declared-profile-access",
+      paths: [topology.gateway.unitPath, context.paths.signerUnitPath].filter(Boolean),
+    },
+  ]);
+}
 
 async function systemAccountRecord(database, name) {
   const getent = await fixedExecutable(["/usr/bin/getent", "/bin/getent"], "getent");
@@ -2115,28 +2524,6 @@ function exactUnitValue(content, key) {
   return matches[0][1];
 }
 
-async function inspectRootManagedApplicationEntry(entryPath, entries) {
-  const stat = await fsp.lstat(entryPath);
-  if (stat.isSymbolicLink()) {
-    entries.push({ entryPath, kind: "symlink", stat });
-    return;
-  }
-  if (stat.isDirectory()) {
-    for (const entry of await fsp.readdir(entryPath)) {
-      await inspectRootManagedApplicationEntry(path.join(entryPath, entry), entries);
-    }
-    entries.push({ entryPath, kind: "directory", stat });
-    return;
-  }
-  if (!stat.isFile()) {
-    throw new Error(`root-managed application state contains an unsupported entry: ${entryPath}`);
-  }
-  if (stat.nlink !== 1) {
-    throw new Error(`root-managed application state contains a hard-linked file: ${entryPath}`);
-  }
-  entries.push({ entryPath, kind: "file", stat });
-}
-
 async function assertSharedDirectoryModesAvailable(stateDir, operatorUid, configGid) {
   const probe = await fsp.mkdtemp(path.join(stateDir, ".fased-permission-probe-"));
   try {
@@ -2160,7 +2547,9 @@ async function assertSharedDirectoryModesAvailable(stateDir, operatorUid, config
 }
 
 async function ensureRootManagedSharedApplicationDirectory(stateDir, name, operatorUid, configGid) {
-  if (!ROOT_MANAGED_SHARED_APPLICATION_DIRECTORIES.includes(name)) {
+  if (
+    !DECLARED_STATE_SHARED_DIRECTORIES.some((entry) => entry.relativePath === name && entry.create)
+  ) {
     throw new Error("root-managed shared application directory name is invalid");
   }
   const directory = path.join(stateDir, name);
@@ -2202,187 +2591,366 @@ async function ensureRootManagedSharedApplicationDirectory(stateDir, name, opera
 }
 
 async function ensureRootManagedSharedApplicationDirectories(stateDir, operatorUid, configGid) {
-  for (const name of ROOT_MANAGED_SHARED_APPLICATION_DIRECTORIES) {
-    await ensureRootManagedSharedApplicationDirectory(stateDir, name, operatorUid, configGid);
-  }
-}
-
-async function grantOperatorApplicationStateAccess(stateDir, operatorUid) {
-  if (!Number.isSafeInteger(operatorUid) || operatorUid <= 0) {
-    throw new Error("root-managed application operator UID is invalid");
-  }
-  const [setfacl, find, getfacl] = await Promise.all([
-    fixedExecutable(["/usr/bin/setfacl", "/bin/setfacl"], "setfacl"),
-    fixedExecutable(["/usr/bin/find", "/bin/find"], "find"),
-    fixedExecutable(["/usr/bin/getfacl", "/bin/getfacl"], "getfacl"),
-  ]);
-  const common = {
-    env: { PATH: "/usr/bin:/bin" },
-    timeout: REQUEST_TIMEOUT_MS,
-    maxBuffer: 64 * 1024 * 1024,
-  };
-  // Supplementary groups added during a migration are not visible to the
-  // already-running login shell.  A named operator ACL keeps that same shell
-  // usable immediately, and inherited defaults preserve access when the
-  // isolated Gateway atomically replaces application-owned files.
-  await execFileAsync(
-    setfacl,
-    ["--modify", `user:${operatorUid}:rwx,group::rwx`, "--", stateDir],
-    common,
-  );
-  await execFileAsync(
-    setfacl,
-    ["--modify", `default:user:${operatorUid}:rwx,default:group::rwx`, "--", stateDir],
-    common,
-  );
-  const sharedRoots = (await fsp.readdir(stateDir))
-    .filter((name) => !ROOT_MANAGED_OPERATOR_ONLY_STATE.has(name))
-    .map((name) => path.join(stateDir, name));
-  for (const sharedRoot of sharedRoots) {
-    await execFileAsync(
-      find,
-      [
-        "-P",
-        sharedRoot,
-        "-xdev",
-        "-type",
-        "d",
-        "-exec",
-        setfacl,
-        "--modify",
-        `user:${operatorUid}:rwx,group::rwx,default:user:${operatorUid}:rwx,default:group::rwx`,
-        "--",
-        "{}",
-        "+",
-      ],
-      common,
-    );
-    await execFileAsync(
-      find,
-      [
-        "-P",
-        sharedRoot,
-        "-xdev",
-        "-type",
-        "f",
-        "-exec",
-        setfacl,
-        "--modify",
-        `user:${operatorUid}:rw-,group::rw-`,
-        "--",
-        "{}",
-        "+",
-      ],
-      common,
-    );
-  }
-  const requiredDirectories = [
-    stateDir,
-    ...ROOT_MANAGED_SHARED_APPLICATION_DIRECTORIES.map((name) => path.join(stateDir, name)),
-  ];
-  for (const directory of requiredDirectories) {
-    const { stdout } = await execFileAsync(
-      getfacl,
-      ["--omit-header", "--absolute-names", "--numeric", "--", directory],
-      common,
-    );
-    const entries = new Set(
-      stdout
-        .split(/\r?\n/u)
-        .map((line) => line.trim().replace(/\s+#effective:.*$/u, ""))
-        .filter(Boolean),
-    );
-    if (
-      !entries.has(`user:${operatorUid}:rwx`) ||
-      !entries.has(`default:user:${operatorUid}:rwx`) ||
-      !entries.has("group::rwx") ||
-      !entries.has("default:group::rwx")
-    ) {
-      throw new Error(`root-managed operator ACL did not converge: ${directory}`);
-    }
-  }
-  const configPath = path.join(stateDir, "fased.json");
-  const configExists = await fsp
-    .lstat(configPath)
-    .then((stat) => stat.isFile() && !stat.isSymbolicLink())
-    .catch(() => false);
-  if (configExists) {
-    const { stdout } = await execFileAsync(
-      getfacl,
-      ["--omit-header", "--absolute-names", "--numeric", "--", configPath],
-      common,
-    );
-    const entries = new Set(
-      stdout
-        .split(/\r?\n/u)
-        .map((line) => line.trim().replace(/\s+#effective:.*$/u, ""))
-        .filter(Boolean),
-    );
-    if (
-      (!entries.has(`user:${operatorUid}:rw-`) && !entries.has(`user:${operatorUid}:rwx`)) ||
-      (!entries.has("group::rw-") && !entries.has("group::rwx"))
-    ) {
-      throw new Error("root-managed operator cannot read and update application configuration");
+  for (const entry of DECLARED_STATE_SHARED_DIRECTORIES) {
+    if (entry.create) {
+      await ensureRootManagedSharedApplicationDirectory(
+        stateDir,
+        entry.relativePath,
+        operatorUid,
+        configGid,
+      );
     }
   }
 }
 
-async function withInspectedApplicationEntry(entry, operation) {
-  if (entry.kind === "symlink") {
-    const current = await fsp.lstat(entry.entryPath);
-    if (
-      !current.isSymbolicLink() ||
-      current.dev !== entry.stat.dev ||
-      current.ino !== entry.stat.ino
-    ) {
-      throw new Error(`root-managed application state changed during update: ${entry.entryPath}`);
+function declaredStatePath(stateDir, relativePath) {
+  const root = path.resolve(stateDir);
+  const target = relativePath === "." ? root : path.resolve(root, relativePath);
+  if (target !== root && !target.startsWith(`${root}${path.sep}`)) {
+    throw new Error("declared application state path escaped its state root");
+  }
+  return target;
+}
+
+async function lstatIfPresent(filePath) {
+  try {
+    return await fsp.lstat(filePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
     }
-    await operation(null);
-    return;
+    throw error;
+  }
+}
+
+function addDeclaredStateRule(rules, rule) {
+  if (rules.has(rule.relativePath)) {
+    throw new Error(`duplicate declared application state path: ${rule.relativePath}`);
+  }
+  rules.set(rule.relativePath, Object.freeze(rule));
+  if (rules.size > DECLARED_STATE_MAX_ENTRIES) {
+    throw new Error("declared application state inventory is too large");
+  }
+}
+
+async function collectDeclaredStateRules(stateDir) {
+  const rules = new Map();
+  for (const entry of DECLARED_STATE_SHARED_DIRECTORIES) {
+    addDeclaredStateRule(rules, {
+      ...entry,
+      kind: "directory",
+      desiredMode: 0o2770,
+      preserveContent: false,
+    });
+  }
+  for (const entry of DECLARED_STATE_SHARED_FILES) {
+    addDeclaredStateRule(rules, {
+      ...entry,
+      kind: "file",
+      create: false,
+      desiredMode: 0o660,
+    });
+  }
+
+  const miningWalletsRoot = declaredStatePath(stateDir, "sat-mining/wallets");
+  const miningWalletsStat = await lstatIfPresent(miningWalletsRoot);
+  if (miningWalletsStat) {
+    if (!miningWalletsStat.isDirectory() || miningWalletsStat.isSymbolicLink()) {
+      throw new Error("declared Mining wallet state root is not a regular directory");
+    }
+    for (const walletId of await fsp.readdir(miningWalletsRoot)) {
+      if (!DECLARED_STATE_SAFE_COMPONENT.test(walletId) || walletId === "." || walletId === "..") {
+        continue;
+      }
+      const walletRelative = `sat-mining/wallets/${walletId}`;
+      const walletPath = declaredStatePath(stateDir, walletRelative);
+      const walletStat = await fsp.lstat(walletPath);
+      if (!walletStat.isDirectory() || walletStat.isSymbolicLink()) {
+        throw new Error(`declared Mining wallet state is unsafe: ${walletId}`);
+      }
+      addDeclaredStateRule(rules, {
+        relativePath: walletRelative,
+        stateClass: "mining",
+        kind: "directory",
+        create: false,
+        desiredMode: 0o2770,
+        preserveContent: false,
+      });
+      for (const name of DECLARED_MINING_WALLET_FILES) {
+        addDeclaredStateRule(rules, {
+          relativePath: `${walletRelative}/${name}`,
+          stateClass: "mining",
+          kind: "file",
+          create: false,
+          desiredMode: 0o660,
+          preserveContent: false,
+        });
+      }
+    }
+  }
+
+  const validatorRoot = declaredStatePath(stateDir, "sat-mining/validator-artifacts");
+  const validatorStat = await lstatIfPresent(validatorRoot);
+  if (validatorStat) {
+    if (!validatorStat.isDirectory() || validatorStat.isSymbolicLink()) {
+      throw new Error("declared Mining validator-artifact root is not a regular directory");
+    }
+    for (const name of await fsp.readdir(validatorRoot)) {
+      if (!DECLARED_VALIDATOR_ARTIFACT.test(name)) {
+        continue;
+      }
+      addDeclaredStateRule(rules, {
+        relativePath: `sat-mining/validator-artifacts/${name}`,
+        stateClass: "mining",
+        kind: "file",
+        create: false,
+        desiredMode: 0o660,
+        preserveContent: false,
+      });
+    }
+  }
+  return [...rules.values()].toSorted((left, right) =>
+    left.relativePath.localeCompare(right.relativePath),
+  );
+}
+
+async function hashDeclaredFile(handle, stat, label) {
+  if (stat.size > DECLARED_STATE_MAX_HASH_BYTES) {
+    throw new Error(`declared ${label} is too large to preserve transactionally`);
+  }
+  const bytes = await handle.readFile();
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+async function inspectDeclaredStateRule(stateDir, rule) {
+  const entryPath = declaredStatePath(stateDir, rule.relativePath);
+  const named = await lstatIfPresent(entryPath);
+  if (!named) {
+    return {
+      relativePath: rule.relativePath,
+      stateClass: rule.stateClass,
+      kind: rule.kind,
+      create: rule.create === true,
+      desiredMode: rule.desiredMode,
+      preserveContent: rule.preserveContent === true,
+      existed: false,
+    };
+  }
+  if (
+    named.isSymbolicLink() ||
+    (rule.kind === "directory" ? !named.isDirectory() : !named.isFile()) ||
+    (rule.kind === "file" && named.nlink !== 1)
+  ) {
+    throw new Error(`declared ${rule.stateClass} path is unsafe: ${rule.relativePath}`);
   }
   const flags =
     fs.constants.O_RDONLY |
     fs.constants.O_NOFOLLOW |
-    (entry.kind === "directory" ? fs.constants.O_DIRECTORY : 0);
-  const handle = await fsp.open(entry.entryPath, flags);
+    (rule.kind === "directory" ? fs.constants.O_DIRECTORY : 0);
+  const handle = await fsp.open(entryPath, flags);
   try {
     const current = await handle.stat();
+    const rebound = await fsp.lstat(entryPath);
     if (
-      current.dev !== entry.stat.dev ||
-      current.ino !== entry.stat.ino ||
-      (entry.kind === "directory" ? !current.isDirectory() : !current.isFile()) ||
-      (entry.kind === "file" && current.nlink !== 1)
+      rebound.isSymbolicLink() ||
+      rebound.dev !== current.dev ||
+      rebound.ino !== current.ino ||
+      current.dev !== named.dev ||
+      current.ino !== named.ino ||
+      (rule.kind === "directory" ? !current.isDirectory() : !current.isFile()) ||
+      (rule.kind === "file" && current.nlink !== 1)
     ) {
-      throw new Error(`root-managed application state changed during update: ${entry.entryPath}`);
+      throw new Error(`declared ${rule.stateClass} changed during inventory`);
     }
-    await operation(handle);
+    return {
+      relativePath: rule.relativePath,
+      stateClass: rule.stateClass,
+      kind: rule.kind,
+      create: rule.create === true,
+      desiredMode: rule.desiredMode,
+      preserveContent: rule.preserveContent === true,
+      existed: true,
+      uid: current.uid,
+      gid: current.gid,
+      mode: current.mode & 0o7777,
+      dev: current.dev,
+      ino: current.ino,
+      nlink: current.nlink,
+      ...(rule.preserveContent
+        ? { contentHash: await hashDeclaredFile(handle, current, rule.relativePath) }
+        : {}),
+    };
   } finally {
     await handle.close();
   }
 }
 
-async function shareInspectedApplicationEntry(entry, configGid) {
-  await withInspectedApplicationEntry(entry, async (handle) => {
-    if (!handle) {
-      await fsp.lchown(entry.entryPath, entry.stat.uid, configGid);
-      return;
-    }
-    await handle.chown(entry.stat.uid, configGid);
-    await handle.chmod(entry.kind === "directory" ? 0o2770 : 0o660 | (entry.stat.mode & 0o110));
-    await handle.sync();
-  });
+function declaredStatePreservationHash(entries) {
+  return `sha256:${createHash("sha256")
+    .update(
+      canonicalJSON(
+        entries
+          .filter((entry) => entry.preserveContent)
+          .map((entry) => ({
+            relativePath: entry.relativePath,
+            existed: entry.existed,
+            contentHash: entry.contentHash ?? null,
+          })),
+      ),
+    )
+    .digest("hex")}`;
 }
 
-async function restoreInspectedApplicationEntry(entry) {
-  await withInspectedApplicationEntry(entry, async (handle) => {
-    if (!handle) {
-      await fsp.lchown(entry.entryPath, entry.stat.uid, entry.stat.gid);
-      return;
+async function inventoryDeclaredApplicationState(topology, context) {
+  if (topology.pendingGatewayUnit || topology.pendingStateDir) {
+    return null;
+  }
+  const registry = declaredStateRegistry(topology, context);
+  const rules = await collectDeclaredStateRules(topology.stateDir);
+  const entries = [];
+  for (const rule of rules) {
+    entries.push(await inspectDeclaredStateRule(topology.stateDir, rule));
+  }
+  const registryDigest = `sha256:${createHash("sha256")
+    .update(canonicalJSON(registry))
+    .digest("hex")}`;
+  const converged = entries.every(
+    (entry) =>
+      (!entry.create || entry.existed) &&
+      (!entry.existed ||
+        (entry.gid === topology.configGroup.gid && entry.mode === entry.desiredMode)),
+  );
+  return {
+    schemaVersion: DECLARED_STATE_SCHEMA_VERSION,
+    profile: topology.profile,
+    stateDir: topology.stateDir,
+    operatorUid: topology.operator.uid,
+    configGid: topology.configGroup.gid,
+    registryDigest,
+    preservationHash: declaredStatePreservationHash(entries),
+    converged,
+    reconciled: false,
+    entries,
+  };
+}
+
+async function openDeclaredStateEntry(transaction, entry) {
+  const entryPath = declaredStatePath(transaction.stateDir, entry.relativePath);
+  const flags =
+    fs.constants.O_RDONLY |
+    fs.constants.O_NOFOLLOW |
+    (entry.kind === "directory" ? fs.constants.O_DIRECTORY : 0);
+  const handle = await fsp.open(entryPath, flags);
+  const current = await handle.stat();
+  const named = await fsp.lstat(entryPath);
+  if (
+    named.isSymbolicLink() ||
+    named.dev !== current.dev ||
+    named.ino !== current.ino ||
+    (entry.kind === "directory" ? !current.isDirectory() : !current.isFile()) ||
+    (entry.kind === "file" && current.nlink !== 1)
+  ) {
+    await handle.close();
+    throw new Error(`declared ${entry.stateClass} changed during reconciliation`);
+  }
+  if (entry.existed && (current.dev !== entry.dev || current.ino !== entry.ino)) {
+    await handle.close();
+    throw new Error(`declared ${entry.stateClass} inode changed during reconciliation`);
+  }
+  return { entryPath, handle, current };
+}
+
+async function reconcileDeclaredApplicationState(transaction) {
+  if (!transaction) {
+    return { changed: false, reconciled: false };
+  }
+  const changedEntries = [];
+  for (const entry of transaction.entries) {
+    const entryPath = declaredStatePath(transaction.stateDir, entry.relativePath);
+    if (!entry.existed) {
+      if (!entry.create) {
+        continue;
+      }
+      await fsp.mkdir(entryPath, { mode: entry.desiredMode });
     }
-    await handle.chown(entry.stat.uid, entry.stat.gid);
-    await handle.chmod(entry.stat.mode & 0o7777);
-    await handle.sync();
-  });
+    const opened = await openDeclaredStateEntry(transaction, entry);
+    try {
+      const desiredUid = entry.existed ? entry.uid : transaction.operatorUid;
+      if (
+        opened.current.uid !== desiredUid ||
+        opened.current.gid !== transaction.configGid ||
+        (opened.current.mode & 0o7777) !== entry.desiredMode
+      ) {
+        await opened.handle.chown(desiredUid, transaction.configGid);
+        await opened.handle.chmod(entry.desiredMode);
+        await opened.handle.sync();
+        changedEntries.push(entry.relativePath);
+      }
+    } finally {
+      await opened.handle.close();
+    }
+  }
+  await fsyncDirectory(transaction.stateDir);
+  return {
+    changed: changedEntries.length > 0,
+    reconciled: true,
+    changedEntries,
+  };
+}
+
+async function restoreDeclaredApplicationState(transaction) {
+  if (!transaction) {
+    return { restored: false };
+  }
+  const rollbackErrors = [];
+  for (const entry of [...transaction.entries].toReversed()) {
+    const entryPath = declaredStatePath(transaction.stateDir, entry.relativePath);
+    try {
+      if (!entry.existed) {
+        if (entry.create) {
+          await fsp.rmdir(entryPath).catch((error) => {
+            if (error?.code !== "ENOENT" && error?.code !== "ENOTEMPTY") {
+              throw error;
+            }
+          });
+        }
+        continue;
+      }
+      const opened = await openDeclaredStateEntry(transaction, { ...entry, existed: false });
+      try {
+        await opened.handle.chown(entry.uid, entry.gid);
+        await opened.handle.chmod(entry.mode);
+        await opened.handle.sync();
+      } finally {
+        await opened.handle.close();
+      }
+    } catch (error) {
+      rollbackErrors.push(error);
+    }
+  }
+  if (rollbackErrors.length > 0) {
+    const error = new Error("declared application-state metadata rollback is incomplete");
+    error.rollbackErrors = rollbackErrors;
+    throw error;
+  }
+  await fsyncDirectory(transaction.stateDir);
+  return { restored: true };
+}
+
+async function verifyDeclaredStatePreservation(transaction) {
+  if (!transaction) {
+    return { ok: true, preservationHash: null };
+  }
+  const preserved = [];
+  for (const entry of transaction.entries.filter((candidate) => candidate.preserveContent)) {
+    const current = await inspectDeclaredStateRule(transaction.stateDir, entry);
+    preserved.push(current);
+  }
+  const preservationHash = declaredStatePreservationHash(preserved);
+  if (preservationHash !== transaction.preservationHash) {
+    throw new Error("declared user state changed during the lifecycle transaction");
+  }
+  return { ok: true, preservationHash };
 }
 
 function rootManagedApplicationIdentity(context, unit) {
@@ -2409,7 +2977,31 @@ function rootManagedApplicationIdentity(context, unit) {
   return { configGroup, gatewayUnitPath, gatewayUser, protectedLocal, stateDir };
 }
 
-async function reconcileProtectedApplicationState(context) {
+async function readDeclaredJsonSchema(
+  filePath,
+  { schemaField = "schemaVersion", fallbackField = "version", maximum = 2 } = {},
+) {
+  const stat = await lstatIfPresent(filePath);
+  if (!stat) {
+    return null;
+  }
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 2 * 1024 * 1024) {
+    throw new Error(`declared state schema source is unsafe: ${filePath}`);
+  }
+  let value;
+  try {
+    value = JSON.parse(await fsp.readFile(filePath, "utf8"));
+  } catch (error) {
+    throw new Error(`declared state schema source is invalid: ${filePath}`, { cause: error });
+  }
+  const schema = value?.[schemaField] ?? value?.[fallbackField];
+  if (!Number.isSafeInteger(schema) || schema < 1 || schema > maximum) {
+    throw new Error(`declared state schema is unsupported: ${filePath}`);
+  }
+  return schema;
+}
+
+async function discoverProtectedApplicationTopology(context) {
   const protectedLocal = Boolean(context.instanceId);
   const gatewayUnitPath = protectedLocal
     ? context.paths.gatewayUnitPath
@@ -2418,7 +3010,11 @@ async function reconcileProtectedApplicationState(context) {
   if (!gatewayUnit.existed && !protectedLocal) {
     // Fresh Hosting prepares the signer before the root Gateway unit exists.
     // The installer reconciles the state immediately after it creates that unit.
-    return { changed: false, pendingGatewayUnit: true, profile: "hosting" };
+    return {
+      schemaVersion: 1,
+      pendingGatewayUnit: true,
+      profile: "hosting",
+    };
   }
   if (
     !gatewayUnit.existed ||
@@ -2442,7 +3038,7 @@ async function reconcileProtectedApplicationState(context) {
     // The installer establishes and reconciles that directory before starting
     // the Gateway, so signer preparation must remain non-mutating here.
     return {
-      changed: false,
+      schemaVersion: 1,
       pendingStateDir: true,
       profile: protectedLocal ? "protected-local" : "hosting",
       stateDir,
@@ -2455,6 +3051,10 @@ async function reconcileProtectedApplicationState(context) {
   const gatewayFields = await systemAccountRecord("passwd", gatewayUser);
   const groupFields = await systemAccountRecord("group", configGroup);
   const configGid = Number(groupFields[2]);
+  const gatewayUid = Number(gatewayFields[2]);
+  const operatorUid = Number(operatorFields[2]);
+  const operatorGid = Number(operatorFields[3]);
+  const operatorHome = String(operatorFields[5] || "");
   const members = new Set(
     String(groupFields[3] || "")
       .split(",")
@@ -2463,60 +3063,91 @@ async function reconcileProtectedApplicationState(context) {
   if (
     !Number.isSafeInteger(configGid) ||
     configGid <= 0 ||
-    Number(operatorFields[2]) !== stateStat.uid ||
+    !Number.isSafeInteger(gatewayUid) ||
+    gatewayUid <= 0 ||
+    !Number.isSafeInteger(operatorUid) ||
+    operatorUid !== stateStat.uid ||
+    !Number.isSafeInteger(operatorGid) ||
+    operatorGid <= 0 ||
+    !path.isAbsolute(operatorHome) ||
+    path.dirname(stateDir) !== path.resolve(operatorHome) ||
     !members.has(operatorFields[0]) ||
     !members.has(gatewayFields[0])
   ) {
     throw new Error("root-managed application-state group membership is invalid");
   }
-  await assertSharedDirectoryModesAvailable(stateDir, stateStat.uid, configGid);
-  // The root controller owns the complete shared-state topology. Gateway runs
-  // with RestrictSUIDSGID and must never be responsible for creating SGID
-  // directories during startup or an update.
-  await ensureRootManagedSharedApplicationDirectories(stateDir, stateStat.uid, configGid);
-  const inspectedEntries = [];
-  const entries = await fsp.readdir(stateDir);
-  for (const entry of entries) {
-    if (ROOT_MANAGED_OPERATOR_ONLY_STATE.has(entry)) {
-      continue;
-    }
-    await inspectRootManagedApplicationEntry(path.join(stateDir, entry), inspectedEntries);
-  }
-  const rootEntry = { entryPath: stateDir, kind: "directory", stat: stateStat };
-  const applied = [];
-  try {
-    for (const entry of [...inspectedEntries, rootEntry]) {
-      applied.push(entry);
-      await shareInspectedApplicationEntry(entry, configGid);
-    }
-    await grantOperatorApplicationStateAccess(stateDir, stateStat.uid);
-  } catch (error) {
-    const rollbackErrors = [];
-    for (const entry of applied.toReversed()) {
-      try {
-        await restoreInspectedApplicationEntry(entry);
-      } catch (rollbackError) {
-        rollbackErrors.push(rollbackError);
-      }
-    }
-    if (rollbackErrors.length > 0) {
-      const failure = new Error(
-        "root-managed application-state reconciliation failed and permission rollback is incomplete",
-        { cause: error },
-      );
-      failure.rollbackErrors = rollbackErrors;
-      throw failure;
-    }
-    throw error;
-  }
-  await fsyncDirectory(stateDir);
-  return {
-    changed: true,
+  const [managedInstallSchema, walletRegistrySchema] = await Promise.all([
+    readDeclaredJsonSchema(path.join(stateDir, "install.json"), {
+      schemaField: "schemaVersion",
+      maximum: 2,
+    }),
+    readDeclaredJsonSchema(path.join(stateDir, "wallet", "provider-registry.v1.json"), {
+      schemaField: "version",
+      fallbackField: "version",
+      maximum: 1,
+    }),
+  ]);
+  return Object.freeze({
+    schemaVersion: 1,
     profile: protectedLocal ? "protected-local" : "hosting",
+    managedApplication: true,
+    instanceId: protectedLocal ? context.instanceId : null,
     stateDir,
-    operatorUid: stateStat.uid,
-    configGid,
-  };
+    configPath: path.join(stateDir, "fased.json"),
+    operator: Object.freeze({
+      name: operatorFields[0],
+      uid: operatorUid,
+      gid: operatorGid,
+      home: operatorHome,
+    }),
+    gateway: Object.freeze({
+      user: gatewayUser,
+      uid: gatewayUid,
+      unitPath: gatewayUnitPath,
+    }),
+    configGroup: Object.freeze({
+      name: configGroup,
+      gid: configGid,
+    }),
+    services: Object.freeze({
+      gateway: protectedLocal
+        ? `fased-gateway-${context.instanceId}.service`
+        : "fased-gateway.service",
+      signer: protectedLocal
+        ? `fased-signerd-${context.instanceId}.service`
+        : "fased-signerd.service",
+    }),
+    capabilities: Object.freeze({
+      lifecycleControllerProtocol: CONTROLLER_PROTOCOL_VERSION,
+      signerProtocol: Object.freeze({ current: 2, min: 2, max: 2 }),
+      declaredStateRegistry: DECLARED_STATE_SCHEMA_VERSION,
+    }),
+    stateSchemas: Object.freeze({
+      managedInstall: managedInstallSchema,
+      walletRegistry: walletRegistrySchema,
+      signer: 2,
+      mining: 1,
+      federation: 2,
+    }),
+  });
+}
+
+function managedApplicationStateFromTopology(topology) {
+  if (!topology) {
+    return null;
+  }
+  if (topology.pendingGatewayUnit || topology.pendingStateDir) {
+    return topology ?? null;
+  }
+  if (topology.managedApplication === false) {
+    return null;
+  }
+  return Object.freeze({
+    profile: topology.profile,
+    stateDir: topology.stateDir,
+    operatorUid: topology.operator.uid,
+    configGid: topology.configGroup.gid,
+  });
 }
 
 function managedApplicationPaths(stateDir) {
@@ -2850,6 +3481,262 @@ async function probeTargetGateway(context, version, timeoutMs = 30_000) {
   });
 }
 
+function healthEvidenceDigest(value) {
+  return `sha256:${createHash("sha256").update(canonicalJSON(value)).digest("hex")}`;
+}
+
+function parseBoundedJsonOutput(stdout, label) {
+  const text = String(stdout ?? "").trim();
+  if (!text || text.length > 1024 * 1024) {
+    throw new Error(`${label} health output is empty or too large`);
+  }
+  const starts = [];
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === "{" || text[index] === "[") {
+      starts.push(index);
+    }
+  }
+  for (const index of starts) {
+    try {
+      return JSON.parse(text.slice(index));
+    } catch {
+      // Plugin preload messages can precede one final JSON document.
+    }
+  }
+  throw new Error(`${label} health output is not valid JSON`);
+}
+
+function healthJsonShape(value) {
+  if (Array.isArray(value)) {
+    return { type: "array", length: value.length };
+  }
+  if (value && typeof value === "object") {
+    return { type: "object", keys: Object.keys(value).toSorted() };
+  }
+  return { type: typeof value };
+}
+
+async function readGatewayHealthConfiguration(topology) {
+  const configStat = await lstatIfPresent(topology.configPath);
+  if (
+    !configStat ||
+    !configStat.isFile() ||
+    configStat.isSymbolicLink() ||
+    configStat.nlink !== 1 ||
+    configStat.size > 2 * 1024 * 1024
+  ) {
+    throw new Error("target Gateway configuration is unavailable for product health");
+  }
+  let config;
+  try {
+    config = JSON.parse(await fsp.readFile(topology.configPath, "utf8"));
+  } catch (error) {
+    throw new Error("target Gateway configuration is invalid for product health", {
+      cause: error,
+    });
+  }
+  const token =
+    typeof config?.gateway?.auth?.token === "string" ? config.gateway.auth.token.trim() : "";
+  const port = Number.isInteger(config?.gateway?.port) ? config.gateway.port : 18789;
+  if (!token || token.length > 4096 || port < 1 || port > 65535) {
+    throw new Error("target Gateway authentication configuration is incomplete");
+  }
+  return { token, port };
+}
+
+async function runTargetApplicationCommand(
+  context,
+  topology,
+  journal,
+  args,
+  label,
+  { json = true } = {},
+) {
+  const targetRoot = journal.application?.targetRoot;
+  if (
+    !targetRoot ||
+    targetRoot !== protectedApplicationReleaseRoot(context.paths, journal.version)
+  ) {
+    throw new Error("target application identity is unavailable for product health");
+  }
+  const entrypoint = path.join(targetRoot, "fased.mjs");
+  const entrypointStat = await lstatIfPresent(entrypoint);
+  if (
+    !entrypointStat ||
+    !entrypointStat.isFile() ||
+    entrypointStat.isSymbolicLink() ||
+    entrypointStat.nlink !== 1
+  ) {
+    throw new Error("target application entrypoint is invalid for product health");
+  }
+  const { token } = await readGatewayHealthConfiguration(topology);
+  const runuser = await fixedExecutable(["/usr/sbin/runuser", "/usr/bin/runuser"], "runuser");
+  const nodeBinary = path.resolve(context.protectedNodeBinary);
+  const command = [
+    "-u",
+    topology.operator.name,
+    "--",
+    "/usr/bin/env",
+    "-i",
+    `HOME=${topology.operator.home}`,
+    `USER=${topology.operator.name}`,
+    `LOGNAME=${topology.operator.name}`,
+    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    `FASED_NODE=${nodeBinary}`,
+    `FASED_STATE_DIR=${topology.stateDir}`,
+    `FASED_CONFIG_PATH=${topology.configPath}`,
+    `FASED_HOST_PROFILE=${topology.profile === "hosting" ? "hosting" : "local"}`,
+    `FASED_GATEWAY_TOKEN=${token}`,
+    nodeBinary,
+    entrypoint,
+    ...args,
+  ];
+  const { stdout } = await execFileAsync(runuser, command, {
+    env: { PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" },
+    timeout: 15_000,
+    maxBuffer: 1024 * 1024,
+  });
+  return json ? parseBoundedJsonOutput(stdout, label) : { outputPresent: stdout.length > 0 };
+}
+
+async function probeCrossProductApplicationHealth(context, topology, journal) {
+  if (topology.pendingGatewayUnit || topology.pendingStateDir) {
+    throw new Error("application topology is incomplete during product health verification");
+  }
+  const [walletStatus, walletDoctor, mining, network, plugins] = await Promise.all([
+    runTargetApplicationCommand(
+      context,
+      topology,
+      journal,
+      ["wallet", "status", "--json"],
+      "Wallet",
+    ),
+    runTargetApplicationCommand(
+      context,
+      topology,
+      journal,
+      ["wallet", "signer", "doctor", "--json"],
+      "Wallet signer",
+    ),
+    runTargetApplicationCommand(
+      context,
+      topology,
+      journal,
+      [
+        "mining",
+        "history",
+        "--timeout",
+        "5000",
+        "--json",
+        "--url",
+        `ws://127.0.0.1:${(await readGatewayHealthConfiguration(topology)).port}`,
+      ],
+      "Mining",
+    ),
+    runTargetApplicationCommand(
+      context,
+      topology,
+      journal,
+      ["federation", "status", "--json"],
+      "Fased Network",
+    ),
+    runTargetApplicationCommand(
+      context,
+      topology,
+      journal,
+      ["plugins", "doctor", "--json"],
+      "plugins",
+    ),
+  ]);
+  if (walletDoctor?.ok !== true) {
+    throw new Error("target Wallet signer health is not ready");
+  }
+  if (!mining || typeof mining !== "object" || Array.isArray(mining)) {
+    throw new Error("target Mining history health is invalid");
+  }
+  if (!network || typeof network !== "object" || Array.isArray(network)) {
+    throw new Error("target Fased Network health is invalid");
+  }
+  if (
+    network.configured === true &&
+    (typeof network.handle !== "string" || network.handle.trim().length === 0)
+  ) {
+    throw new Error("configured Fased Network identity is incomplete");
+  }
+  if (plugins?.ok !== true) {
+    throw new Error("target plugin diagnostics are not healthy");
+  }
+  const walletEvidence = {
+    signerOk: true,
+    signerChecks: Array.isArray(walletDoctor.checks) ? walletDoctor.checks.length : 0,
+    status: healthJsonShape(walletStatus),
+  };
+  const miningEvidence = healthJsonShape(mining);
+  const networkEvidence = {
+    configured: network.configured === true,
+    autoConnectEnabled: network.autoConnectEnabled === true,
+    tokenPresent: network.tokenPresent === true,
+    handlePresent: typeof network.handle === "string" && network.handle.trim().length > 0,
+    managedTokenPresent: Boolean(network.managedToken),
+  };
+  return Object.freeze({
+    wallet: { ok: true, evidenceDigest: healthEvidenceDigest(walletEvidence) },
+    mining: { ok: true, evidenceDigest: healthEvidenceDigest(miningEvidence) },
+    network: { ok: true, evidenceDigest: healthEvidenceDigest(networkEvidence) },
+    plugins: {
+      ok: true,
+      evidenceDigest: healthEvidenceDigest({
+        ok: true,
+        errors: Array.isArray(plugins.errors) ? plugins.errors.length : 0,
+        diagnostics: Array.isArray(plugins.diagnostics) ? plugins.diagnostics.length : 0,
+      }),
+    },
+  });
+}
+
+async function verifyCrossProductHealth(context, journal) {
+  const topology =
+    context.applicationTopology ??
+    (await context.discoverApplicationTopology().then((value) => {
+      context.applicationTopology = value;
+      return value;
+    }));
+  const [gateway, signerRelease, state, product] = await Promise.all([
+    context.verifyGateway(journal.version),
+    context.probeSigner(journal.version),
+    context.verifyApplicationState(journal.declaredState),
+    context.probeApplicationHealth(topology, journal),
+  ]);
+  const signer = parseSignerReleaseIdentity(signerRelease, journal.version);
+  return validateCrossProductHealthReceipt({
+    schemaVersion: 1,
+    checkedAt: new Date().toISOString(),
+    checks: {
+      gateway: {
+        ok: true,
+        evidenceDigest: healthEvidenceDigest({
+          version: gateway?.version ?? journal.version,
+          runtimeSource: gateway?.runtimeSource ?? "verified-by-adapter",
+        }),
+      },
+      signer: {
+        ok: true,
+        evidenceDigest: healthEvidenceDigest(signer),
+      },
+      wallet: product.wallet,
+      mining: product.mining,
+      network: product.network,
+      plugins: product.plugins,
+      state: {
+        ok: true,
+        evidenceDigest: healthEvidenceDigest({
+          preservationHash: state.preservationHash,
+        }),
+      },
+    },
+  });
+}
+
 async function ensureProtectedLocalControllerServicePolicy(context) {
   if (!context.instanceId || !context.paths.controllerUnitPath) {
     return false;
@@ -2927,6 +3814,7 @@ function createTransactionContext(overrides = {}) {
       overrides.runningControllerVersion ?? resolveRunningControllerVersion(),
     controllerRestartRequired: false,
     applicationState: overrides.applicationState ?? null,
+    applicationTopology: overrides.applicationTopology ?? null,
     onDurablePhase: overrides.onDurablePhase,
     historicalQ0TestStateDir: overrides.historicalQ0TestStateDir ?? HISTORICAL_Q0_TEST_STATE_DIR,
     assertReleaseAllowed:
@@ -2943,9 +3831,25 @@ function createTransactionContext(overrides = {}) {
       overrides.stageCandidate ??
       (async (version, candidatePath, context) =>
         await stageOfficialCandidate(version, candidatePath, context)),
+    discoverApplicationTopology:
+      overrides.discoverApplicationTopology ??
+      (async () => await discoverProtectedApplicationTopology(context)),
+    inventoryApplicationState:
+      overrides.inventoryApplicationState ??
+      (async (topology) => await inventoryDeclaredApplicationState(topology, context)),
     reconcileApplicationState:
       overrides.reconcileApplicationState ??
-      (async () => await reconcileProtectedApplicationState(context)),
+      (async (transaction) => await reconcileDeclaredApplicationState(transaction)),
+    restoreApplicationState:
+      overrides.restoreApplicationState ??
+      (async (transaction) => await restoreDeclaredApplicationState(transaction)),
+    verifyApplicationState:
+      overrides.verifyApplicationState ??
+      (async (transaction) => await verifyDeclaredStatePreservation(transaction)),
+    probeApplicationHealth:
+      overrides.probeApplicationHealth ??
+      (async (topology, journal) =>
+        await probeCrossProductApplicationHealth(context, topology, journal)),
     stopSigner: overrides.stopSigner ?? (async () => await stopSignerService(signerServiceName)),
     startSignerV2:
       overrides.startSignerV2 ??
@@ -2989,7 +3893,8 @@ function createTransactionContext(overrides = {}) {
       overrides.restartGateway ?? (async () => await systemctl("restart", gatewayServiceName)),
     verifyGateway:
       overrides.verifyGateway ??
-      (async (version) => await probeTargetGateway(context, version, REQUEST_TIMEOUT_MS)),
+      (async (version) =>
+        await probeTargetGateway(context, version, CROSS_PRODUCT_HEALTH_TIMEOUT_MS)),
     probeSigner:
       overrides.probeSigner ??
       (async (expectedRelease) =>
@@ -3134,12 +4039,14 @@ async function writeInitialRollbackFloor(context, version) {
 async function prepareSignerRelease(request, context) {
   await context.assertReleaseAllowed(request.version);
   await assertRollbackFloor(context, request.version);
-  const applicationState = (await context.reconcileApplicationState()) ?? {};
+  const topology = await context.discoverApplicationTopology();
+  context.applicationTopology = topology;
+  const applicationState = managedApplicationStateFromTopology(topology) ?? {};
   context.applicationState = applicationState;
   const applicationStateResult = {
-    applicationStateReconciled: applicationState.changed === true,
+    applicationTopologyDiscovered: true,
     applicationStatePending:
-      applicationState.pendingGatewayUnit === true || applicationState.pendingStateDir === true,
+      topology.pendingGatewayUnit === true || topology.pendingStateDir === true,
   };
   const active = await readJournal(context);
   if (active) {
@@ -3237,6 +4144,8 @@ async function prepareSignerRelease(request, context) {
       application,
       managedApplication,
       serviceBoundary,
+      declaredState: null,
+      healthReceipt: null,
       phase: "prepared",
       changed,
       createdAt: new Date().toISOString(),
@@ -3382,6 +4291,7 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
     await restoreManagedApplication(context, journal);
     await restoreProtectedApplication(context, journal);
     await context.restoreServiceBoundary(journal.serviceBoundary);
+    await context.restoreApplicationState(journal.declaredState);
     await cleanupTransactionFiles(context, journal.transactionId);
     await removeJournal(context);
     await removeManagedUpdateLock(journal);
@@ -3418,6 +4328,7 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
   await restoreManagedApplication(context, journal);
   await restoreProtectedApplication(context, journal);
   await context.restoreServiceBoundary(journal.serviceBoundary);
+  await context.restoreApplicationState(journal.declaredState);
   await restoreSignerUnit(context, journal, txPaths);
   if (journal.changed && rollbackFromPhase !== "prepared") {
     const candidateMayHaveRun = new Set([
@@ -3499,7 +4410,7 @@ async function authorizeGatewayRelease(request, context) {
 }
 
 async function gateGatewayRelease(request, context) {
-  const journal = await readJournal(context);
+  let journal = await readJournal(context);
   if (!journal) {
     const gate = await readGatewayGate(context);
     if (gate?.transactionId !== request.transactionId || gate?.version !== request.version) {
@@ -3523,6 +4434,50 @@ async function gateGatewayRelease(request, context) {
     if (!/not found|not loaded|no such file/i.test(error?.message || "")) {
       throw error;
     }
+  }
+  if (journal.phase !== "prepared") {
+    return {
+      transactionId: journal.transactionId,
+      version: journal.version,
+      phase: journal.phase,
+      changed: journal.changed,
+      release: journal.release,
+    };
+  }
+  const topology = await context.discoverApplicationTopology();
+  if (topology.pendingGatewayUnit || topology.pendingStateDir) {
+    throw new Error("application topology remained incomplete after the Gateway was quiesced");
+  }
+  context.applicationTopology = topology;
+  context.applicationState = managedApplicationStateFromTopology(topology);
+  const declaredState = await context.inventoryApplicationState(topology);
+  journal = await writeJournal(context, {
+    ...journal,
+    phase: "state-reconciling",
+    declaredState,
+  });
+  if (declaredState) {
+    await assertSharedDirectoryModesAvailable(
+      declaredState.stateDir,
+      declaredState.operatorUid,
+      declaredState.configGid,
+    );
+    const result = await context.reconcileApplicationState(declaredState);
+    journal = await writeJournal(context, {
+      ...journal,
+      phase: "state-reconciled",
+      declaredState: {
+        ...declaredState,
+        ...result,
+        converged: true,
+        reconciled: true,
+      },
+    });
+  } else {
+    journal = await writeJournal(context, {
+      ...journal,
+      phase: "state-reconciled",
+    });
   }
   return {
     transactionId: journal.transactionId,
@@ -3582,7 +4537,11 @@ async function activateSignerRelease(request, context) {
       release: journal.release,
     };
   }
-  if (journal.phase !== "prepared") {
+  if (journal.phase === "prepared") {
+    await gateGatewayRelease(request, context);
+    journal = await readJournal(context);
+  }
+  if (journal.phase !== "state-reconciled") {
     throw new Error(`signer transaction cannot activate from phase ${journal.phase}`);
   }
   if (!journal.changed) {
@@ -4031,7 +4990,9 @@ async function alreadyCommittedRelease(request, context) {
   if (installed !== request.version || !floor || compareVersions(request.version, floor) < 0) {
     return null;
   }
-  context.applicationState = (await context.reconcileApplicationState()) ?? null;
+  const topology = await context.discoverApplicationTopology();
+  context.applicationTopology = topology;
+  context.applicationState = managedApplicationStateFromTopology(topology);
   if (context.applicationState?.stateDir) {
     const paths = managedApplicationPaths(context.applicationState.stateDir);
     const manifest = validateManagedInstallManifest(
@@ -4043,11 +5004,23 @@ async function alreadyCommittedRelease(request, context) {
       return null;
     }
   }
-  await context.verifyGateway(request.version);
-  const release = parseSignerReleaseIdentity(
-    await context.probeSigner(request.version),
-    request.version,
-  );
+  const applicationTarget =
+    context.paths.applicationCurrentLink && fs.existsSync(context.paths.applicationCurrentLink)
+      ? await fsp.realpath(context.paths.applicationCurrentLink)
+      : null;
+  const [gateway, signer, product] = await Promise.all([
+    context.verifyGateway(request.version),
+    context.probeSigner(request.version),
+    applicationTarget && !topology?.pendingGatewayUnit && !topology?.pendingStateDir
+      ? context.probeApplicationHealth(topology, {
+          version: request.version,
+          application: { targetRoot: applicationTarget },
+        })
+      : null,
+  ]);
+  void gateway;
+  void product;
+  const release = parseSignerReleaseIdentity(signer, request.version);
   return {
     transactionId: request.transactionId,
     version: request.version,
@@ -4079,6 +5052,9 @@ async function applyReleaseTransaction(request, context) {
     }
     if (journal.phase === "prepared") {
       await gateGatewayRelease(request, context);
+      journal = await readJournal(context);
+    }
+    if (journal.phase === "state-reconciled") {
       await activateSignerRelease(request, context);
       journal = await readJournal(context);
     }
@@ -4087,8 +5063,12 @@ async function applyReleaseTransaction(request, context) {
       journal = await readJournal(context);
     }
     if (journal.phase === "gateway-authorized") {
-      await context.verifyGateway(request.version);
-      journal = await writeJournal(context, { ...journal, phase: "gateway-verified" });
+      const healthReceipt = await verifyCrossProductHealth(context, journal);
+      journal = await writeJournal(context, {
+        ...journal,
+        phase: "gateway-verified",
+        healthReceipt,
+      });
       durableCommitDecision = true;
     }
     if (journal.phase === "gateway-verified" || journal.phase === "committing") {
@@ -4145,6 +5125,8 @@ async function recoverInterruptedTransaction(context) {
   }
   if (
     journal.phase === "prepared" ||
+    journal.phase === "state-reconciling" ||
+    journal.phase === "state-reconciled" ||
     journal.phase === "snapshotting" ||
     journal.phase === "activating" ||
     journal.phase === "active" ||
@@ -4384,9 +5366,9 @@ async function prepareControllerServerContext(context) {
   if (!context.supervised && (await context.ensureControllerServicePolicy?.())) {
     return { restartRequired: true };
   }
-  if (fs.existsSync(context.paths.journalPath)) {
-    context.applicationState = (await context.reconcileApplicationState()) ?? null;
-  }
+  const topology = await context.discoverApplicationTopology();
+  context.applicationTopology = topology;
+  context.applicationState = managedApplicationStateFromTopology(topology);
   if (context.recoverInterruptedTransaction) {
     await context.recoverInterruptedTransaction();
   } else {
@@ -4435,14 +5417,20 @@ export const __testing = {
   createTransactionContext,
   dispatchUpdateRequest,
   gateGatewayRelease,
+  parseBoundedJsonOutput,
   parseServerConfiguration,
   prepareControllerServerContext,
   prepareSignerRelease,
   protectedLocalControllerConfiguration,
   ensureProtectedLocalControllerServicePolicy,
   ensureRootManagedSharedApplicationDirectories,
-  grantOperatorApplicationStateAccess,
-  reconcileProtectedApplicationState,
+  declaredStateRegistry,
+  discoverProtectedApplicationTopology,
+  inventoryDeclaredApplicationState,
+  reconcileDeclaredApplicationState,
+  restoreDeclaredApplicationState,
+  verifyDeclaredStatePreservation,
+  verifyCrossProductHealth,
   rootManagedApplicationIdentity,
   readJournal,
   recoverInterruptedTransaction,

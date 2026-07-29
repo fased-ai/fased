@@ -1,10 +1,8 @@
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   PRE_V2_HOSTING_MIGRATION_MESSAGE,
@@ -21,7 +19,6 @@ import { __testing as managedUpdaterTesting } from "./fased-managed-updater.mjs"
 import { capabilitiesDigest } from "./hosted-release-manifest.mjs";
 
 const cleanupRoots: string[] = [];
-const execFileAsync = promisify(execFile);
 const TRANSACTION_ONE = "11111111-1111-4111-8111-111111111111";
 const TRANSACTION_TWO = "22222222-2222-4222-8222-222222222222";
 
@@ -242,6 +239,50 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
     ]);
   }
   const events: string[] = [];
+  let activeSignerVersion = "1.2.2";
+  const fixtureTopology = {
+    schemaVersion: 1,
+    profile: options.managedApplication ? "protected-local" : "hosting",
+    managedApplication: options.managedApplication === true,
+    instanceId: options.managedApplication ? "0123456789abcdef" : null,
+    stateDir: path.join(root, "operator", ".fased"),
+    configPath: path.join(root, "operator", ".fased", "fased.json"),
+    operator: {
+      name: "operator",
+      uid: process.getuid(),
+      gid: process.getgid(),
+      home: path.join(root, "operator"),
+    },
+    gateway: {
+      user: options.managedApplication ? "fsgw-0123456789abcdef" : "fased-gateway",
+      uid: process.getuid(),
+      unitPath: paths.gatewayUnitPath ?? path.join(root, "systemd", "fased-gateway.service"),
+    },
+    configGroup: {
+      name: options.managedApplication ? "fscf-0123456789abcdef" : "fased-config",
+      gid: process.getgid(),
+    },
+    services: {
+      gateway: options.managedApplication
+        ? "fased-gateway-0123456789abcdef.service"
+        : "fased-gateway.service",
+      signer: options.managedApplication
+        ? "fased-signerd-0123456789abcdef.service"
+        : "fased-signerd.service",
+    },
+    capabilities: {
+      lifecycleControllerProtocol: 2,
+      signerProtocol: { current: 2, min: 2, max: 2 },
+      declaredStateRegistry: 1,
+    },
+    stateSchemas: {
+      managedInstall: options.managedApplication ? 2 : null,
+      walletRegistry: null,
+      signer: 2,
+      mining: 1,
+      federation: 2,
+    },
+  };
   const context = __testing.createTransactionContext({
     paths,
     ...(options.protectedService ? { protectedLocalInstanceId: "0123456789abcdef" } : {}),
@@ -293,16 +334,17 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
           : {}),
       };
     },
-    reconcileApplicationState: async () =>
-      options.managedApplication
-        ? {
-            changed: false,
-            profile: "protected-local",
-            stateDir: path.join(root, "operator", ".fased"),
-            operatorUid: process.getuid(),
-            configGid: process.getgid(),
-          }
-        : { changed: false },
+    discoverApplicationTopology: async () => fixtureTopology,
+    inventoryApplicationState: async () => null,
+    reconcileApplicationState: async () => ({ changed: false, reconciled: false }),
+    restoreApplicationState: async () => ({ restored: true }),
+    verifyApplicationState: async () => ({ ok: true, preservationHash: null }),
+    probeApplicationHealth: async () => ({
+      wallet: { ok: true, evidenceDigest: `sha256:${"1".repeat(64)}` },
+      mining: { ok: true, evidenceDigest: `sha256:${"2".repeat(64)}` },
+      network: { ok: true, evidenceDigest: `sha256:${"3".repeat(64)}` },
+      plugins: { ok: true, evidenceDigest: `sha256:${"4".repeat(64)}` },
+    }),
     stopSigner: async () => {
       events.push("stop");
     },
@@ -313,11 +355,13 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
     }) => {
       events.push("start-v2");
       expect(expectedRelease).toEqual(signerRelease(expectedRelease.version));
+      activeSignerVersion = expectedRelease.version;
       await fsp.writeFile(signerStateDBPath, "new-db\n", { mode: 0o600 });
       return { release: expectedRelease, invariant: "preserved-signer-state" };
     },
     startPreviousSigner: async () => {
       events.push("start-previous");
+      activeSignerVersion = "1.2.2";
     },
     reloadUnits: async () => {
       events.push("daemon-reload");
@@ -327,7 +371,7 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
     },
     stopGateway: async () => undefined,
     restartGateway: async () => undefined,
-    probeSigner: async () => signerRelease("1.2.2"),
+    probeSigner: async () => signerRelease(activeSignerVersion),
     probeSignerState: async () => ({
       release: signerRelease("1.2.2"),
       invariant: "preserved-signer-state",
@@ -402,8 +446,64 @@ describe("root-owned hosted updater protocol", () => {
     });
   });
 
-  it("reconciles shared application state before preparing a protected signer release", async () => {
+  it("defines one version-neutral topology registry for every lifecycle state class", () => {
+    const topology = {
+      profile: "protected-local",
+      operator: { name: "operator" },
+      gateway: { user: "gateway", unitPath: "/unit" },
+      configGroup: { name: "config" },
+    };
+    const registry = __testing.declaredStateRegistry(topology, {
+      paths: {
+        applicationReleasesDir: "/application/releases",
+        applicationCurrentLink: "/application/current",
+        controllerReleasesDir: "/controller/releases",
+        controllerCurrentLink: "/controller/current",
+        stateDir: "/controller/state",
+        signerStateDBPath: "/signer/state.db",
+        signerPath: "/signer/bin",
+        signerUnitPath: "/signer/unit",
+      },
+    });
+    expect(new Set(registry.map((entry: { stateClass: string }) => entry.stateClass))).toEqual(
+      new Set([
+        "application-runtime",
+        "dependency-runtime",
+        "updater-controller",
+        "signer-private-state",
+        "wallet",
+        "mining",
+        "device-identity",
+        "federation-network",
+        "gateway-config-auth",
+        "provider-credentials",
+        "agent-session-channel-plugin",
+        "profile-access",
+      ]),
+    );
+    for (const entry of registry) {
+      expect(entry).toMatchObject({
+        schemaOwner: expect.any(String),
+        currentSchema: expect.any(Number),
+        readers: expect.any(Array),
+        writers: expect.any(Array),
+        symlinkPolicy: expect.any(String),
+        migration: expect.any(String),
+        rollback: expect.any(String),
+        preservation: expect.any(String),
+        health: expect.any(String),
+        paths: expect.any(Array),
+      });
+    }
+  });
+
+  it("discovers topology without mutating application state during preparation", async () => {
     const { context, events } = await createFixture();
+    const discover = context.discoverApplicationTopology;
+    context.discoverApplicationTopology = async () => {
+      events.push("discover-application-topology");
+      return await discover();
+    };
     context.reconcileApplicationState = async () => {
       events.push("reconcile-application-state");
       return { changed: true };
@@ -412,7 +512,176 @@ describe("root-owned hosted updater protocol", () => {
       request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
       context,
     );
-    expect(events).toEqual(["reconcile-application-state", "stage:1.2.3"]);
+    expect(events).toEqual(["discover-application-topology", "stage:1.2.3"]);
+  });
+
+  it("journals declared state before its first mutation and restores it on rollback", async () => {
+    const fixture = await createFixture();
+    const stateDir = path.join(path.dirname(fixture.paths.stateDir), "operator", ".fased");
+    await fsp.mkdir(stateDir, { recursive: true, mode: 0o700 });
+    await fsp.writeFile(path.join(stateDir, "fased.json"), "{}\n", { mode: 0o600 });
+    const topology = {
+      schemaVersion: 1,
+      profile: "hosting",
+      managedApplication: false,
+      stateDir,
+      configPath: path.join(stateDir, "fased.json"),
+      operator: {
+        name: "operator",
+        uid: process.getuid(),
+        gid: process.getgid(),
+        home: path.dirname(stateDir),
+      },
+      gateway: {
+        user: "fased-gateway",
+        uid: process.getuid(),
+        unitPath: "/unit",
+      },
+      configGroup: { name: "fased-config", gid: process.getgid() },
+      services: { gateway: "gateway", signer: "signer" },
+      capabilities: {
+        lifecycleControllerProtocol: 2,
+        signerProtocol: { current: 2, min: 2, max: 2 },
+        declaredStateRegistry: 1,
+      },
+      stateSchemas: {
+        managedInstall: null,
+        walletRegistry: null,
+        signer: 2,
+        mining: 1,
+        federation: 2,
+      },
+    };
+    fixture.context.discoverApplicationTopology = async () => topology;
+    fixture.context.inventoryApplicationState = async () =>
+      await __testing.inventoryDeclaredApplicationState(topology, fixture.context);
+    const order: string[] = [];
+    fixture.context.reconcileApplicationState = async (transaction: unknown) => {
+      order.push("reconcile");
+      return await __testing.reconcileDeclaredApplicationState(transaction);
+    };
+    fixture.context.restoreApplicationState = async (transaction: unknown) =>
+      await __testing.restoreDeclaredApplicationState(transaction);
+    fixture.context.onDurablePhase = async (phase: string) => {
+      if (phase === "state-reconciling" || phase === "state-reconciled") {
+        order.push(phase);
+      }
+    };
+
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+    expect((await fsp.stat(stateDir)).mode & 0o7777).toBe(0o700);
+    await __testing.gateGatewayRelease(
+      request("gateGatewayRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+    expect(order).toEqual(["state-reconciling", "reconcile", "state-reconciled"]);
+    expect((await fsp.stat(stateDir)).mode & 0o7777).toBe(0o2770);
+    expect(await __testing.readJournal(fixture.context)).toMatchObject({
+      phase: "state-reconciled",
+      declaredState: {
+        reconciled: true,
+        preservationHash: expect.stringMatching(/^sha256:/u),
+      },
+    });
+
+    await __testing.rollbackSignerRelease(
+      request("rollbackRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+    expect((await fsp.stat(stateDir)).mode & 0o7777).toBe(0o700);
+  });
+
+  it("rejects declared user-state content changes before commit", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-preservation-"));
+    cleanupRoots.push(root);
+    const stateDir = path.join(root, ".fased");
+    await fsp.mkdir(stateDir);
+    const configPath = path.join(stateDir, "fased.json");
+    await fsp.writeFile(configPath, '{"gateway":{}}\n');
+    const topology = {
+      profile: "hosting",
+      stateDir,
+      operator: {
+        name: "operator",
+        uid: process.getuid(),
+        gid: process.getgid(),
+        home: root,
+      },
+      gateway: { user: "gateway", uid: process.getuid(), unitPath: "/unit" },
+      configGroup: { name: "config", gid: process.getgid() },
+    };
+    const transaction = await __testing.inventoryDeclaredApplicationState(topology, {
+      paths: {},
+    });
+    await fsp.writeFile(configPath, '{"gateway":{"port":1}}\n');
+    await expect(__testing.verifyDeclaredStatePreservation(transaction)).rejects.toThrow(
+      "declared user state changed",
+    );
+  });
+
+  it("runs bounded cross-product health concurrently and persists only redacted evidence", async () => {
+    const { context } = await createFixture();
+    let started = 0;
+    let releaseBarrier: (() => void) | undefined;
+    const barrier = new Promise<void>((resolve) => {
+      releaseBarrier = resolve;
+    });
+    const start = async <T>(result: T): Promise<T> => {
+      started += 1;
+      if (started === 4) {
+        releaseBarrier?.();
+      }
+      await barrier;
+      return result;
+    };
+    context.verifyGateway = async () =>
+      await start({ version: "1.2.3", runtimeSource: "managed-package" });
+    context.probeSigner = async () => await start(signerRelease("1.2.3"));
+    context.verifyApplicationState = async () =>
+      await start({ ok: true, preservationHash: `sha256:${"a".repeat(64)}` });
+    context.probeApplicationHealth = async () =>
+      await start({
+        wallet: { ok: true, evidenceDigest: `sha256:${"1".repeat(64)}` },
+        mining: { ok: true, evidenceDigest: `sha256:${"2".repeat(64)}` },
+        network: { ok: true, evidenceDigest: `sha256:${"3".repeat(64)}` },
+        plugins: { ok: true, evidenceDigest: `sha256:${"4".repeat(64)}` },
+      });
+
+    const receipt = await __testing.verifyCrossProductHealth(context, {
+      version: "1.2.3",
+      declaredState: null,
+      application: null,
+    });
+    expect(started).toBe(4);
+    expect(receipt).toMatchObject({
+      schemaVersion: 1,
+      checks: {
+        gateway: { ok: true },
+        signer: { ok: true },
+        wallet: { ok: true },
+        mining: { ok: true },
+        network: { ok: true },
+        plugins: { ok: true },
+        state: { ok: true },
+      },
+    });
+    expect(JSON.stringify(receipt)).not.toContain("secret");
+    expect(JSON.stringify(receipt)).not.toContain("preserved-signer-state");
+  });
+
+  it("parses one bounded JSON health document after plugin preload messages", () => {
+    expect(
+      __testing.parseBoundedJsonOutput(
+        '[plugins] memory-core native preload 1ms\n{"ok":true,"errors":[]}',
+        "plugins",
+      ),
+    ).toEqual({ ok: true, errors: [] });
+    expect(() => __testing.parseBoundedJsonOutput("[plugins] no json", "plugins")).toThrow(
+      "not valid JSON",
+    );
   });
 
   it("creates every canonical shared application directory under root control", async () => {
@@ -437,39 +706,45 @@ describe("root-owned hosted updater protocol", () => {
     }
   });
 
-  it("grants immediate and inherited operator access to shared state", async () => {
-    if (process.platform !== "linux" || typeof process.getuid !== "function") {
+  it("reconciles only declared application state and restores its original metadata", async () => {
+    if (process.platform === "win32" || typeof process.getuid !== "function") {
       return;
     }
-    const stateDir = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-shared-state-acl-"));
-    cleanupRoots.push(stateDir);
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-declared-state-"));
+    cleanupRoots.push(root);
+    const stateDir = path.join(root, ".fased");
     const uid = process.getuid();
     const gid = process.getgid();
+    await fsp.mkdir(stateDir);
     await __testing.ensureRootManagedSharedApplicationDirectories(stateDir, uid, gid);
     const configPath = path.join(stateDir, "fased.json");
-    await fsp.writeFile(configPath, "{}\n", { mode: 0o660 });
-
-    await __testing.grantOperatorApplicationStateAccess(stateDir, uid);
-    await __testing.grantOperatorApplicationStateAccess(stateDir, uid);
-
-    const replacement = path.join(stateDir, ".fased.json.next");
-    await fsp.writeFile(replacement, '{"updated":true}\n', { mode: 0o660 });
-    await fsp.rename(replacement, configPath);
-    const getfacl = await execFileAsync(
-      "/usr/bin/getfacl",
-      ["--omit-header", "--numeric", "--", configPath],
-      { env: { PATH: "/usr/bin:/bin" } },
-    );
-    expect(getfacl.stdout).toMatch(new RegExp(`^user:${uid}:rw[x-]`, "mu"));
-    expect(getfacl.stdout).toMatch(/^group::rw[x-]/mu);
+    const unknownPath = path.join(stateDir, "unknown-user-state.txt");
+    await Promise.all([
+      fsp.writeFile(configPath, "{}\n", { mode: 0o600 }),
+      fsp.writeFile(unknownPath, "preserve\n", { mode: 0o600 }),
+    ]);
+    const topology = {
+      schemaVersion: 1,
+      profile: "protected-local",
+      managedApplication: true,
+      stateDir,
+      operator: { name: "operator", uid, gid, home: root },
+      gateway: { user: "gateway", uid, unitPath: "/unit" },
+      configGroup: { name: "config", gid },
+    };
+    const transaction = await __testing.inventoryDeclaredApplicationState(topology, {
+      paths: {},
+    });
+    const result = await __testing.reconcileDeclaredApplicationState(transaction);
+    expect(result.changedEntries).toContain("fased.json");
     expect((await fsp.stat(configPath)).mode & 0o777).toBe(0o660);
-    const directoryAcl = await execFileAsync(
-      "/usr/bin/getfacl",
-      ["--omit-header", "--numeric", "--", path.join(stateDir, "identity")],
-      { env: { PATH: "/usr/bin:/bin" } },
-    );
-    expect(directoryAcl.stdout).toMatch(/^group::rwx$/mu);
-    expect(directoryAcl.stdout).toMatch(/^default:group::rwx$/mu);
+    expect((await fsp.stat(unknownPath)).mode & 0o777).toBe(0o600);
+    await __testing.restoreDeclaredApplicationState(transaction);
+    expect((await fsp.stat(configPath)).mode & 0o777).toBe(0o600);
+    expect(await __testing.verifyDeclaredStatePreservation(transaction)).toMatchObject({
+      ok: true,
+      preservationHash: transaction.preservationHash,
+    });
   });
 
   it("rejects a symlink in a canonical shared application directory", async () => {
@@ -509,14 +784,14 @@ describe("root-owned hosted updater protocol", () => {
       { mode: 0o644 },
     );
 
-    const result = await __testing.reconcileProtectedApplicationState({
+    const result = await __testing.discoverProtectedApplicationTopology({
       instanceId,
       rootUid: process.geteuid(),
       paths: { gatewayUnitPath },
     });
 
     expect(result).toEqual({
-      changed: false,
+      schemaVersion: 1,
       pendingStateDir: true,
       profile: "protected-local",
       stateDir,
@@ -1877,6 +2152,8 @@ describe("root-owned hosted updater protocol", () => {
 
   it.each([
     ["prepared", "rolled-back"],
+    ["state-reconciling", "rolled-back"],
+    ["state-reconciled", "rolled-back"],
     ["snapshotting", "rolled-back"],
     ["activating", "rolled-back"],
     ["active", "rolled-back"],
