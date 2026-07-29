@@ -29,7 +29,7 @@ setup.
     PowerShell or native Windows Node.js.
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+    curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
       | bash -s -- --local
     ```
 
@@ -38,7 +38,7 @@ setup.
     SSH to the VPS as root, then run this inside that VPS shell:
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+    curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
       | bash -s -- --hosting
     ```
 

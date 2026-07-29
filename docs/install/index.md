@@ -16,7 +16,7 @@ remote Linux server.
     Run this in macOS Terminal, a Linux terminal, or an Ubuntu WSL2 shell:
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
+    curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local
     ```
 
     Native Windows is not a Local runtime. Install and run Fased inside
@@ -30,7 +30,7 @@ remote Linux server.
     then run exactly:
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+    curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
       | bash -s -- --hosting
     ```
 
@@ -73,11 +73,13 @@ fased update
   </Accordion>
 
   <Accordion title="What the streamed installer trusts">
-    The mutable `main/install.sh` bootstrap begins running over HTTPS before it
-    can authenticate itself. Its fresh Hosting path is deliberately small: it
-    rejects overrides and verifies the release workflow, tag, signed manifest,
-    app layer, dependency layer, signer, architecture, commit, digests, and
-    archive layout before persistent Fased changes.
+    The command downloads `install.sh` from the latest immutable stable GitHub
+    Release. Release automation stamps it with that exact version before
+    attestation and never overwrites a published asset. An unstamped streamed
+    script exits before installation. The release entrypoint rejects overrides
+    and verifies the release workflow, tag, signed manifest, app layer,
+    dependency layer, supervisor/controller, signer, architecture, commit,
+    digests, and archive layout before persistent Fased changes.
 
     To verify `install.sh` before Bash runs it, use
     [Advanced exact-tag verification](/install/installer#exact-tag-pre-execution-verification).

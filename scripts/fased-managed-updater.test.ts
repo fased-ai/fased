@@ -1197,7 +1197,10 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
       ).message,
     ).toBe(legacyHostingBootstrapMessage("1.2.3-rc.4"));
     expect(hostingBootstrapCommand()).toBe(
-      "curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --hosting",
+      "curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --hosting",
+    );
+    expect(hostingBootstrapCommand("1.2.3")).toContain(
+      "https://github.com/fased-ai/fased/releases/download/v1.2.3/install.sh",
     );
     expect(hostingBootstrapCommand("1.2.3")).toContain(
       "--hosting --release v1.2.3 --update-channel stable",

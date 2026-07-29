@@ -78,6 +78,10 @@ export function buildProtectedLocalServicePlan(params) {
     signerStateDir: unitPath(layout.signerStateDir),
     controllerStateDir: unitPath(layout.controllerStateDir),
     installDir: unitPath(layout.installDir),
+    applicationInstallDir: unitPath(layout.applicationInstallDir),
+    signerInstallDir: unitPath(path.dirname(layout.signerBinary)),
+    supervisorInstallDir: unitPath(path.dirname(layout.supervisorBinary)),
+    supervisorStateDir: unitPath(layout.supervisorStateDir),
   };
   const gatewayLaunch = path.join(layout.installDir, "gateway-launch");
   const operatorSocketFinalize = path.join(layout.installDir, "operator-socket-finalize");
@@ -87,10 +91,11 @@ export function buildProtectedLocalServicePlan(params) {
     "current",
     "fased-host-updater.mjs",
   );
+  const supervisorLaunch = layout.supervisorBinary;
   const gatewayUnit = `[Unit]
 Description=Fased Protected Local Gateway (${layout.instanceId})
-After=${layout.signerUnit} ${layout.controllerUnit} network-online.target
-Wants=${layout.signerUnit} ${layout.controllerUnit} network-online.target
+After=${layout.signerUnit} ${layout.controllerUnit} ${layout.supervisorUnit} network-online.target
+Wants=${layout.signerUnit} ${layout.controllerUnit} ${layout.supervisorUnit} network-online.target
 ConditionPathExists=!${layout.controllerStateDir}/gateway-update-gate
 ConditionPathExists=${layout.controllerStateDir}/gateway-activation-ready
 
@@ -191,7 +196,7 @@ AmbientCapabilities=
 WantedBy=multi-user.target
 `;
   const controllerUnit = `[Unit]
-Description=Fased Protected Local paired release controller (${layout.instanceId})
+Description=Fased Protected Local target lifecycle controller (${layout.instanceId})
 After=network-online.target
 Wants=network-online.target
 
@@ -199,20 +204,21 @@ Wants=network-online.target
 Type=simple
 User=root
 Group=root
-RuntimeDirectory=fased-local-controller/${layout.instanceId}
+RuntimeDirectory=fased-local-controller-worker/${layout.instanceId}
 RuntimeDirectoryMode=0711
 StateDirectory=fased-local/${layout.instanceId}/controller
 StateDirectoryMode=0711
 UMask=0077
 Environment=HOME=${escaped.controllerStateDir}
-ExecStart=${escaped.nodeBinary} ${unitPath(controllerLaunch)} --protected-local-instance ${layout.instanceId} --socket-uid ${operatorUid} --socket-gid ${operatorGid}
+ExecStart=${escaped.nodeBinary} ${unitPath(controllerLaunch)} --protected-local-instance ${layout.instanceId} --supervised --socket-path ${unitPath(layout.controllerSocket)} --socket-uid 0 --socket-gid 0
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=read-only
 ProtectSystem=strict
-ReadWritePaths=${escaped.installDir} ${escaped.signerStateDir} ${escaped.controllerStateDir} ${escaped.appStateDir} ${escaped.repoDir} /run/fased-local-controller/${layout.instanceId} /etc/systemd/system
+ReadWritePaths=${escaped.applicationInstallDir} ${escaped.signerInstallDir} ${escaped.signerStateDir} ${escaped.controllerStateDir} ${escaped.appStateDir} /run/fased-local-controller-worker/${layout.instanceId} /etc/systemd/system
+ReadOnlyPaths=${escaped.supervisorInstallDir} ${escaped.supervisorStateDir} /etc/systemd/system/${layout.supervisorUnit}
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
@@ -223,6 +229,45 @@ LockPersonality=true
 RestrictRealtime=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
+`;
+  const supervisorUnit = `[Unit]
+Description=Fased Protected Local stable lifecycle supervisor (${layout.instanceId})
+After=${layout.controllerUnit} network-online.target
+Wants=${layout.controllerUnit} network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+RuntimeDirectory=fased-local-controller/${layout.instanceId}
+RuntimeDirectoryMode=0711
+UMask=0177
+Environment=HOME=${unitPath(layout.supervisorStateDir)}
+ExecStart=${escaped.nodeBinary} ${unitPath(supervisorLaunch)} --profile protected-local --protected-local-instance ${layout.instanceId} --operator-uid ${operatorUid} --operator-gid ${operatorGid}
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=${unitPath(layout.supervisorStateDir)} ${unitPath(path.join(layout.installDir, "controller"))} /run/fased-local-controller/${layout.instanceId}
+ReadOnlyPaths=${unitPath(path.dirname(layout.supervisorBinary))}
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+CapabilityBoundingSet=CAP_CHOWN
+AmbientCapabilities=
 
 [Install]
 WantedBy=multi-user.target
@@ -314,6 +359,11 @@ exit 1
         path: path.join("/etc/systemd/system", layout.controllerUnit),
         mode: 0o644,
         content: controllerUnit,
+      },
+      supervisorUnit: {
+        path: path.join("/etc/systemd/system", layout.supervisorUnit),
+        mode: 0o644,
+        content: supervisorUnit,
       },
       gatewayLauncher: {
         path: gatewayLaunch,

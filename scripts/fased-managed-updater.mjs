@@ -137,8 +137,8 @@ const LOCAL_SOURCE_CONTROLLER_FILES = [
   "fased-managed-updater.mjs",
 ];
 
-const PUBLIC_HOSTING_INSTALLER_URL =
-  "https://raw.githubusercontent.com/fased-ai/fased/main/install.sh";
+const PUBLIC_STABLE_INSTALLER_URL =
+  "https://github.com/fased-ai/fased/releases/latest/download/install.sh";
 const EXACT_RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
 
 export function hostingBootstrapCommand(version) {
@@ -148,7 +148,10 @@ export function hostingBootstrapCommand(version) {
   const selector = EXACT_RELEASE_VERSION_PATTERN.test(normalized)
     ? ` --release v${normalized} --update-channel ${normalized.includes("-") ? "beta" : "stable"}`
     : "";
-  return `curl -fsSL ${PUBLIC_HOSTING_INSTALLER_URL} | bash -s -- --hosting${selector}`;
+  const installerUrl = selector
+    ? `https://github.com/fased-ai/fased/releases/download/v${normalized}/install.sh`
+    : PUBLIC_STABLE_INSTALLER_URL;
+  return `curl -fsSL ${installerUrl} | bash -s -- --hosting${selector}`;
 }
 
 export function legacyHostingBootstrapMessage(version) {

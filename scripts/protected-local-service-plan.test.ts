@@ -26,6 +26,7 @@ describe("Protected Local service plan", () => {
     const gateway = result.files.gatewayUnit.content;
     const signer = result.files.signerUnit.content;
     const controller = result.files.controllerUnit.content;
+    const supervisor = result.files.supervisorUnit.content;
     expect(gateway).toContain("User=fsgw-0123456789abcdef");
     expect(gateway).toContain("SupplementaryGroups=fscf-0123456789abcdef"); // pragma: allowlist secret
     expect(gateway).not.toContain("fsop-0123456789abcdef");
@@ -81,13 +82,28 @@ describe("Protected Local service plan", () => {
     expect(signer).toContain("-master-key /var/lib/fased-local/0123456789abcdef/signer/master.key");
     expect(controller).toContain("User=root");
     expect(controller).toContain("StateDirectory=fased-local/0123456789abcdef/controller"); // pragma: allowlist secret
-    expect(controller).toContain("--socket-uid 1000 --socket-gid 62002");
+    expect(controller).toContain(
+      "--supervised --socket-path /run/fased-local-controller-worker/0123456789abcdef/controller.sock --socket-uid 0 --socket-gid 0",
+    );
+    expect(controller).toContain("RuntimeDirectory=fased-local-controller-worker/0123456789abcdef");
     expect(controller).toContain("RuntimeDirectoryMode=0711");
     expect(controller).toContain("StateDirectoryMode=0711");
+    expect(controller).toContain(
+      "ReadOnlyPaths=/opt/fased/local/0123456789abcdef/supervisor /var/lib/fased-local/0123456789abcdef/controller/supervisor /etc/systemd/system/fased-local-controller-0123456789abcdef.service",
+    );
+    expect(controller).not.toContain("ReadWritePaths=/opt/fased/local/0123456789abcdef ");
+    expect(supervisor).toContain("User=root");
+    expect(supervisor).toContain(
+      "/opt/fased/local/0123456789abcdef/supervisor/fased-lifecycle-supervisor.mjs --profile protected-local --protected-local-instance 0123456789abcdef --operator-uid 1000 --operator-gid 62002",
+    );
+    expect(supervisor).toContain("RuntimeDirectory=fased-local-controller/0123456789abcdef");
+    expect(supervisor).toContain("ReadOnlyPaths=/opt/fased/local/0123456789abcdef/supervisor");
+    expect(supervisor).toContain("CapabilityBoundingSet=CAP_CHOWN\nAmbientCapabilities=");
     expect(gateway).toContain("RestrictSUIDSGID=true");
     expect(gateway).toContain("UMask=0007");
     expect(signer).toContain("RestrictSUIDSGID=true");
     expect(controller).not.toContain("RestrictSUIDSGID=");
+    expect(supervisor).toContain("RestrictSUIDSGID=true");
     expect(result.files.operatorSocketFinalizer.content).toContain("/usr/bin/chown 1000:62002");
     expect(result.files.operatorSocketFinalizer.content).toContain("/usr/bin/chmod 0600");
   });

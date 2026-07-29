@@ -120,29 +120,48 @@ describe("attested Hosting installer artifact layout", () => {
     );
     expect(installer).toContain("Refusing to replace non-symlink host controller current path.");
     expect(installer).toContain(
-      "ExecStart=$(command -v node) /opt/fased/host-controller/current/fased-host-updater.mjs",
+      "ExecStart=$(command -v node) /opt/fased/host-controller/current/fased-host-updater.mjs --supervised --socket-path /run/fased-host-controller/controller.sock --socket-uid 0 --socket-gid 0",
     );
     expect(installer).toContain(
       "ProtectHome=read-only\n" +
         "ProtectSystem=strict\n" +
-        "ReadWritePaths=/opt/fased/host-controller /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-updater /etc/systemd/system ${target_home}/.fased",
+        "ReadWritePaths=/opt/fased/host-controller/releases /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-controller /etc/systemd/system ${target_home}/.fased",
     );
+    expect(installer).toContain(
+      "ReadOnlyPaths=/opt/fased/host-controller/supervisor /var/lib/fased-host-updater/supervisor /etc/systemd/system/fased-host-updater.service",
+    );
+    expect(installer).toContain(
+      "ExecStart=$(command -v node) ${supervisor_path} --profile hosting --operator-uid ${operator_uid} --operator-gid ${operator_gid}",
+    );
+    expect(installer).toContain(
+      "ReadWritePaths=/opt/fased/host-controller /var/lib/fased-host-updater/supervisor /run/fased-host-updater",
+    );
+    expect(installer).toContain("ReadOnlyPaths=/opt/fased/host-controller/supervisor");
     const sharedStateCreation =
       'install -d -m 2770 -o "$target_user" -g "$config_group" "${target_home}/.fased"';
     expect(installer).toContain(sharedStateCreation);
     expect(installer.indexOf(sharedStateCreation)).toBeLessThan(
       installer.indexOf("cat >/etc/systemd/system/fased-host-updater.service"),
     );
-    const updaterUnit = installer.slice(
+    const supervisorUnit = installer.slice(
       installer.indexOf("cat >/etc/systemd/system/fased-host-updater.service"),
       installer.indexOf("cat >/etc/systemd/system/fased-signerd.service"),
     );
-    expect(updaterUnit).not.toContain("RestrictSUIDSGID=true");
+    expect(supervisorUnit).toContain("RestrictSUIDSGID=true");
+    expect(supervisorUnit).toContain("CapabilityBoundingSet=CAP_CHOWN\nAmbientCapabilities=");
+    const controllerUnit = installer.slice(
+      installer.indexOf("cat >/etc/systemd/system/fased-host-controller.service"),
+      installer.indexOf("cat >/etc/systemd/system/fased-host-updater.service"),
+    );
+    expect(controllerUnit).not.toContain("RestrictSUIDSGID=true");
     expect(installer).toContain("ReadWritePaths=/opt/fased/host-controller");
     expect(installer).toContain("RestartSec=1");
     expect(installer).toContain("/var/lib/fased-host-updater/controller-version.json");
     expect(installer).toContain('node "$FASED_DIR/scripts/fased-host-updater.mjs" --self-check');
     expect(installer).toContain('node "$FASED_DIR/scripts/fased-host-updaterctl.mjs" --self-check');
+    expect(installer).toContain(
+      'node "$FASED_DIR/scripts/fased-lifecycle-supervisor.mjs" --self-check',
+    );
     expect(updater).toContain(
       "const CONTROLLER_SERVER_BUNDLE_NAME = `${CONTROLLER_SERVER_NAME}.attestation.json`",
     );
@@ -157,10 +176,27 @@ describe("attested Hosting installer artifact layout", () => {
       "install -m 0755 scripts/fased-host-updaterctl.mjs dist-native/release/fased-host-updaterctl.mjs",
     );
     expect(releaseWorkflow).toContain(
+      "install -m 0755 scripts/fased-lifecycle-supervisor.mjs dist-native/release/fased-lifecycle-supervisor.mjs",
+    );
+    expect(releaseWorkflow).toContain(
       "dist-native/release/fased-host-updater.mjs.attestation.json",
     );
     expect(releaseWorkflow).toContain(
       "dist-native/release/fased-host-updaterctl.mjs.attestation.json",
+    );
+    expect(releaseWorkflow).toContain(
+      "dist-native/release/fased-lifecycle-supervisor.mjs.attestation.json",
+    );
+    expect(releaseWorkflow).toContain(
+      "--output .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json",
+    );
+    expect(releaseWorkflow).toContain(
+      "subject-path: .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json",
+    );
+    expect(installer).toContain('GH_PROMPT_DISABLED=1 gh attestation verify "$lifecycle_metadata"');
+    expect(installer).toContain("lifecycle_expires_epoch - lifecycle_issued_epoch > 34560000");
+    expect(installer).toContain(
+      'grep -Fxq "lifecycle_metadata_sha256=${lifecycle_metadata_digest}"',
     );
     expect(updater).toContain('process.argv[2] === "--self-check"');
     expect(fs.readFileSync(path.join(root, "scripts/fased-host-updaterctl.mjs"), "utf8")).toContain(
@@ -201,7 +237,14 @@ describe("attested Hosting installer artifact layout", () => {
   });
 
   it("publishes install.sh as its own pre-execution attested release asset", () => {
-    expect(releaseWorkflow).toContain("install -m 0755 install.sh dist-native/release/install.sh");
+    const installer = fs.readFileSync(path.join(root, "install.sh"), "utf8");
+    expect(releaseWorkflow).toContain("node scripts/stamp-release-installer.mjs");
+    expect(releaseWorkflow).toContain("--output dist-native/release/install.sh");
+    expect(releaseWorkflow).not.toContain(
+      'gh release upload "$GITHUB_REF_NAME" .artifacts/hosted-runtime/* --repo "$GITHUB_REPOSITORY" --clobber',
+    );
+    expect(installer).toContain('install_entry_release_identity="__FASED_RELEASE_IDENTITY__"');
+    expect(installer).toContain("Refusing an unstamped streamed installer.");
     expect(releaseWorkflow).toContain("name: Attest root Hosting bootstrap");
     expect(releaseWorkflow).toContain("subject-path: dist-native/release/install.sh");
     expect(releaseWorkflow).toContain(
@@ -294,9 +337,19 @@ describe("attested Hosting installer artifact layout", () => {
   });
 
   it("accepts the stable and exact-release streamed fresh Hosting selectors", () => {
-    const input = fs.readFileSync(path.join(root, "install.sh"), "utf8");
-    const run = (args: string[], extraEnv: NodeJS.ProcessEnv = {}) =>
-      spawnSync("bash", ["-s", "--", ...args], {
+    const source = fs.readFileSync(path.join(root, "install.sh"), "utf8");
+    const run = (args: string[], extraEnv: NodeJS.ProcessEnv = {}) => {
+      const releaseIndex = args.indexOf("--release");
+      const requested =
+        releaseIndex >= 0 ? String(args[releaseIndex + 1] ?? "").replace(/^v/u, "") : "";
+      const identity = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/u.test(requested)
+        ? requested
+        : "1.2.3";
+      const input = source.replace(
+        'install_entry_release_identity="__FASED_RELEASE_IDENTITY__"',
+        `install_entry_release_identity="${identity}"`,
+      );
+      return spawnSync("bash", ["-s", "--", ...args], {
         encoding: "utf8",
         env: streamedHostingEnv(extraEnv),
         input,
@@ -304,6 +357,7 @@ describe("attested Hosting installer artifact layout", () => {
           ? { uid: 65534, gid: 65534 }
           : {}),
       });
+    };
 
     const exact = run(["--hosting"]);
     expect(exact.status).toBe(1);
@@ -356,6 +410,26 @@ describe("attested Hosting installer artifact layout", () => {
     expect(unsafeEnvironment.stderr).toContain(
       "Refusing Fased environment overrides during streamed VPS Hosting",
     );
+
+    const mismatched = spawnSync(
+      "bash",
+      ["-s", "--", "--hosting", "--release", "v1.2.4", "--update-channel", "stable"],
+      {
+        encoding: "utf8",
+        env: streamedHostingEnv(),
+        input: source.replace(
+          'install_entry_release_identity="__FASED_RELEASE_IDENTITY__"',
+          'install_entry_release_identity="1.2.3"',
+        ),
+        ...(typeof process.getuid === "function" && process.getuid() === 0
+          ? { uid: 65534, gid: 65534 }
+          : {}),
+      },
+    );
+    expect(mismatched.status).toBe(1);
+    expect(mismatched.stderr).toContain(
+      "The immutable installer identity does not match the requested release.",
+    );
   });
 
   it("reuses the one-command Hosting bootstrap for interrupted or completed repairs", () => {
@@ -379,10 +453,10 @@ describe("attested Hosting installer artifact layout", () => {
 
   it("keeps the exact public fresh Hosting command as a literal CI contract", () => {
     const command =
-      "curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \\\n" +
+      "curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \\\n" +
       "  | bash -s -- --hosting";
     expect(command).toBe(
-      "curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \\\n" +
+      "curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \\\n" +
         "  | bash -s -- --hosting",
     );
     const installer = fs.readFileSync(path.join(root, "install.sh"), "utf8");
@@ -439,7 +513,7 @@ describe("attested Hosting installer artifact layout", () => {
   it("documents the literal fresh Hosting command before Advanced verification", () => {
     const vpsGuide = fs.readFileSync(path.join(root, "docs/install/vps.md"), "utf8");
     const command = vpsGuide.indexOf(
-      "curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \\",
+      "curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \\",
     );
     const advanced = vpsGuide.indexOf("<AccordionGroup>");
     expect(command).toBeGreaterThanOrEqual(0);

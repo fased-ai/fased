@@ -7,7 +7,7 @@ import fsp from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -23,6 +23,10 @@ const CONTROLLER_SERVER_NAME = "fased-host-updater.mjs";
 const CONTROLLER_CLIENT_NAME = "fased-host-updaterctl.mjs";
 const CONTROLLER_SERVER_BUNDLE_NAME = `${CONTROLLER_SERVER_NAME}.attestation.json`;
 const CONTROLLER_CLIENT_BUNDLE_NAME = `${CONTROLLER_CLIENT_NAME}.attestation.json`;
+const LIFECYCLE_SUPERVISOR_NAME = "fased-lifecycle-supervisor.mjs";
+const LIFECYCLE_SUPERVISOR_BUNDLE_NAME = `${LIFECYCLE_SUPERVISOR_NAME}.attestation.json`;
+const LIFECYCLE_TRUST_METADATA_NAME = "fased-lifecycle-trust-v1.json";
+const LIFECYCLE_TRUST_METADATA_BUNDLE_NAME = `${LIFECYCLE_TRUST_METADATA_NAME}.attestation.json`;
 const CONTROLLER_SELF_CHECK_SCHEMA_VERSION = 1;
 const CONTROLLER_PROTOCOL_VERSION = 2;
 const SOCKET_PATH = "/run/fased-host-updater/request.sock";
@@ -55,6 +59,7 @@ const TRANSACTION_OPERATIONS = new Set([
   "commitRelease",
   "rollbackRelease",
 ]);
+const CONTROLLER_OPERATIONS = new Set([...TRANSACTION_OPERATIONS, "controllerStatus"]);
 const TRANSACTION_PHASES = new Set([
   "prepared",
   "snapshotting",
@@ -66,8 +71,8 @@ const TRANSACTION_PHASES = new Set([
   "restored",
 ]);
 
-const PUBLIC_HOSTING_INSTALLER_URL =
-  "https://raw.githubusercontent.com/fased-ai/fased/main/install.sh";
+const PUBLIC_STABLE_INSTALLER_URL =
+  "https://github.com/fased-ai/fased/releases/latest/download/install.sh";
 
 export function hostingBootstrapCommand(version) {
   const normalized = String(version ?? "")
@@ -76,7 +81,10 @@ export function hostingBootstrapCommand(version) {
   const selector = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(normalized)
     ? ` --release v${normalized} --update-channel ${normalized.includes("-") ? "beta" : "stable"}`
     : "";
-  return `curl -fsSL ${PUBLIC_HOSTING_INSTALLER_URL} | bash -s -- --hosting${selector}`;
+  const installerUrl = selector
+    ? `https://github.com/fased-ai/fased/releases/download/v${normalized}/install.sh`
+    : PUBLIC_STABLE_INSTALLER_URL;
+  return `curl -fsSL ${installerUrl} | bash -s -- --hosting${selector}`;
 }
 
 export function legacyHostingBootstrapMessage(version) {
@@ -155,6 +163,26 @@ export function protectedLocalControllerConfiguration(instanceId) {
   });
 }
 
+function resolveRunningControllerVersion(modulePath = fileURLToPath(import.meta.url)) {
+  let resolved;
+  try {
+    resolved = fs.realpathSync(modulePath);
+  } catch {
+    return null;
+  }
+  const match =
+    /^\/opt\/fased\/host-controller\/releases\/v([^/]+)\/fased-host-updater\.mjs$/u.exec(
+      resolved,
+    ) ??
+    /^\/opt\/fased\/local\/[a-f0-9]{16}\/controller\/releases\/v([^/]+)\/fased-host-updater\.mjs$/u.exec(
+      resolved,
+    );
+  if (!match) {
+    return null;
+  }
+  return parseReleaseVersion(match[1]);
+}
+
 export function parseReleaseVersion(value) {
   const version = String(value ?? "")
     .trim()
@@ -188,7 +216,7 @@ export function parseUpdateRequest(value) {
   if (keys.join(",") !== "op,schemaVersion,transactionId,version") {
     throw new Error("request contains unsupported fields");
   }
-  if (value.schemaVersion !== PROTOCOL_SCHEMA_VERSION || !TRANSACTION_OPERATIONS.has(value.op)) {
+  if (value.schemaVersion !== PROTOCOL_SCHEMA_VERSION || !CONTROLLER_OPERATIONS.has(value.op)) {
     throw new Error("unsupported updater transaction request");
   }
   return {
@@ -364,6 +392,228 @@ async function verifyReleaseAsset(assetPath, version, stateDir, bundlePath) {
     timeout: REQUEST_TIMEOUT_MS,
     maxBuffer: 4 * 1024 * 1024,
   });
+}
+
+function lifecycleSupervisorPaths(configuration) {
+  if (configuration.profile === "hosting") {
+    return Object.freeze({
+      supervisorPath: "/opt/fased/host-controller/supervisor/fased-lifecycle-supervisor.mjs",
+      supervisorStateDir: "/var/lib/fased-host-updater/supervisor",
+    });
+  }
+  const instanceId = configuration.instanceId;
+  return Object.freeze({
+    supervisorPath: `/opt/fased/local/${instanceId}/supervisor/fased-lifecycle-supervisor.mjs`,
+    supervisorStateDir: `/var/lib/fased-local/${instanceId}/controller/supervisor`,
+  });
+}
+
+function hostingOperatorUid(operatorGid) {
+  const groupLine = fs
+    .readFileSync("/etc/group", "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => line.split(":"))
+    .find((fields) => Number(fields[2]) === operatorGid);
+  if (!groupLine) {
+    throw new Error("Hosting operator group is unavailable");
+  }
+  const supplemental = new Set((groupLine[3] || "").split(",").filter(Boolean));
+  const candidates = fs
+    .readFileSync("/etc/passwd", "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => line.split(":"))
+    .filter(
+      (fields) =>
+        Number(fields[2]) > 0 && (Number(fields[3]) === operatorGid || supplemental.has(fields[0])),
+    )
+    .map((fields) => ({ user: fields[0], uid: Number(fields[2]) }));
+  if (candidates.length !== 1) {
+    throw new Error("Hosting operator group must resolve to one exact non-root account");
+  }
+  return candidates[0].uid;
+}
+
+export function assertLifecycleBootstrapBinding(identity, metadata, supervisorDigest) {
+  if (supervisorDigest !== metadata?.targets?.supervisor?.sha256) {
+    throw new Error("stable lifecycle supervisor is not bound by lifecycle trust metadata");
+  }
+  if (
+    identity?.serverSha256 !== metadata?.targets?.controllerServer?.sha256 ||
+    identity?.clientSha256 !== metadata?.targets?.controllerClient?.sha256
+  ) {
+    throw new Error(
+      "active lifecycle controller is not bound by the verified lifecycle trust metadata",
+    );
+  }
+}
+
+async function ensureStableSupervisorBoundary(configuration, context) {
+  if (configuration.supervised) {
+    return false;
+  }
+  const identity = await readControllerIdentity(context.paths);
+  if (!identity) {
+    throw new Error("target controller identity is unavailable for supervisor bootstrap");
+  }
+  const version = identity.version;
+  const lifecycle = lifecycleSupervisorPaths(configuration);
+  await fsp.mkdir(lifecycle.supervisorStateDir, { recursive: true, mode: 0o700 });
+  const downloadRoot = await fsp.mkdtemp(
+    path.join(lifecycle.supervisorStateDir, `.bootstrap-${version}-`),
+  );
+  const releaseUrl = `${RELEASE_BASE}/v${version}`;
+  const supervisorPath = path.join(downloadRoot, LIFECYCLE_SUPERVISOR_NAME);
+  const supervisorBundlePath = path.join(downloadRoot, LIFECYCLE_SUPERVISOR_BUNDLE_NAME);
+  const metadataPath = path.join(downloadRoot, LIFECYCLE_TRUST_METADATA_NAME);
+  const metadataBundlePath = path.join(downloadRoot, LIFECYCLE_TRUST_METADATA_BUNDLE_NAME);
+  try {
+    await Promise.all([
+      context.downloadReleaseAsset(`${releaseUrl}/${LIFECYCLE_SUPERVISOR_NAME}`, supervisorPath),
+      context.downloadReleaseAsset(
+        `${releaseUrl}/${LIFECYCLE_SUPERVISOR_BUNDLE_NAME}`,
+        supervisorBundlePath,
+      ),
+      context.downloadReleaseAsset(`${releaseUrl}/${LIFECYCLE_TRUST_METADATA_NAME}`, metadataPath),
+      context.downloadReleaseAsset(
+        `${releaseUrl}/${LIFECYCLE_TRUST_METADATA_BUNDLE_NAME}`,
+        metadataBundlePath,
+      ),
+    ]);
+    await Promise.all([
+      context.verifyReleaseAsset(
+        supervisorPath,
+        version,
+        lifecycle.supervisorStateDir,
+        supervisorBundlePath,
+      ),
+      context.verifyReleaseAsset(
+        metadataPath,
+        version,
+        lifecycle.supervisorStateDir,
+        metadataBundlePath,
+      ),
+    ]);
+    const { stdout } = await execFileAsync(process.execPath, [supervisorPath, "--self-check"], {
+      env: {
+        HOME: lifecycle.supervisorStateDir,
+        PATH: "/usr/local/bin:/usr/bin:/bin",
+      },
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    });
+    if (stdout.trim() !== '{"schemaVersion":1,"protocolVersion":1,"role":"lifecycle-supervisor"}') {
+      throw new Error("stable lifecycle supervisor self-check is incompatible");
+    }
+    const supervisorModule = await import(
+      `${pathToFileURL(supervisorPath).href}?verified=${await sha256(supervisorPath)}`
+    );
+    const channel = (await fsp.readFile(context.paths.channelPath, "utf8")).trim();
+    const platform =
+      process.arch === "x64"
+        ? "linux-x64"
+        : process.arch === "arm64"
+          ? "linux-arm64"
+          : `unsupported-${process.arch}`;
+    const metadata = supervisorModule.parseLifecycleTrustMetadata(
+      JSON.parse(await fsp.readFile(metadataPath, "utf8")),
+      {
+        expectedVersion: version,
+        channel,
+        platform,
+        now: Date.now(),
+      },
+    );
+    const supervisorDigest = await sha256(supervisorPath);
+    assertLifecycleBootstrapBinding(identity, metadata, supervisorDigest);
+    try {
+      const existing = await fsp.lstat(lifecycle.supervisorPath);
+      if (
+        !existing.isFile() ||
+        existing.isSymbolicLink() ||
+        existing.uid !== 0 ||
+        existing.nlink !== 1 ||
+        (existing.mode & 0o022) !== 0 ||
+        (await sha256(lifecycle.supervisorPath)) !== supervisorDigest
+      ) {
+        throw new Error(
+          "installed stable lifecycle supervisor differs from the immutable contract",
+        );
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+      await atomicCopyFileDurable(supervisorPath, lifecycle.supervisorPath, {
+        mode: 0o755,
+        uid: 0,
+        gid: 0,
+      });
+    }
+    const supervisorIdentityPath = path.join(
+      lifecycle.supervisorStateDir,
+      "controller-version.json",
+    );
+    const supervisorRollbackFloorPath = path.join(lifecycle.supervisorStateDir, "rollback-floor");
+    await atomicWriteFileDurable(
+      supervisorIdentityPath,
+      `${JSON.stringify(identity, null, 2)}\n`,
+      0o600,
+    );
+    let rollbackFloor = identity.version;
+    for (const floorPath of [context.paths.rollbackFloorPath, supervisorRollbackFloorPath]) {
+      try {
+        const candidate = parseReleaseVersion(await fsp.readFile(floorPath, "utf8"));
+        if (compareVersions(candidate, rollbackFloor) === 1) {
+          rollbackFloor = candidate;
+        }
+      } catch (error) {
+        if (error?.code !== "ENOENT") {
+          throw error;
+        }
+      }
+    }
+    await atomicWriteFileDurable(supervisorRollbackFloorPath, `${rollbackFloor}\n`, 0o600);
+    const operatorUid =
+      configuration.profile === "hosting"
+        ? hostingOperatorUid(configuration.socketGid)
+        : configuration.socketUid;
+    const args = [
+      lifecycle.supervisorPath,
+      "bootstrap-boundary",
+      "--profile",
+      configuration.profile,
+    ];
+    if (configuration.profile === "protected-local") {
+      args.push("--protected-local-instance", configuration.instanceId);
+    }
+    args.push(
+      "--operator-uid",
+      String(operatorUid),
+      "--operator-gid",
+      String(configuration.socketGid),
+    );
+    const { stdout: bootstrapOutput } = await execFileAsync(process.execPath, args, {
+      env: {
+        HOME: lifecycle.supervisorStateDir,
+        PATH: "/usr/local/bin:/usr/bin:/bin",
+      },
+      timeout: 120_000,
+      maxBuffer: 2 * 1024 * 1024,
+    });
+    const result = JSON.parse(bootstrapOutput);
+    if (
+      result?.schemaVersion !== 1 ||
+      result.profile !== configuration.profile ||
+      result.instanceId !== (configuration.instanceId ?? null)
+    ) {
+      throw new Error("stable lifecycle supervisor bootstrap returned a mismatched receipt");
+    }
+    return true;
+  } finally {
+    await fsp.rm(downloadRoot, { recursive: true, force: true });
+  }
 }
 
 function parseControllerIdentity(value, expectedVersion) {
@@ -2285,6 +2535,7 @@ async function ensureProtectedLocalControllerServicePolicy(context) {
 
 function createTransactionContext(overrides = {}) {
   const paths = { ...DEFAULT_PATHS, ...overrides.paths };
+  const controllerConfiguration = overrides.controllerConfiguration ?? null;
   const signerServiceName = overrides.signerServiceName ?? "fased-signerd.service";
   const gatewayServiceName = overrides.gatewayServiceName ?? "fased-gateway.service";
   const signerApplicationSocketPath =
@@ -2294,7 +2545,10 @@ function createTransactionContext(overrides = {}) {
     instanceId: overrides.protectedLocalInstanceId ?? null,
     rootUid: overrides.rootUid ?? (typeof process.geteuid === "function" ? process.geteuid() : 0),
     protectedNodeBinary: overrides.protectedNodeBinary ?? process.execPath,
+    supervised: overrides.supervised === true,
     controllerInstanceId: overrides.controllerInstanceId ?? randomUUID(),
+    runningControllerVersion:
+      overrides.runningControllerVersion ?? resolveRunningControllerVersion(),
     controllerRestartRequired: false,
     historicalQ0TestStateDir: overrides.historicalQ0TestStateDir ?? HISTORICAL_Q0_TEST_STATE_DIR,
     assertReleaseAllowed:
@@ -2336,6 +2590,11 @@ function createTransactionContext(overrides = {}) {
     ensureControllerServicePolicy:
       overrides.ensureControllerServicePolicy ??
       (async () => await ensureProtectedLocalControllerServicePolicy(context)),
+    ensureStableSupervisorBoundary:
+      overrides.ensureStableSupervisorBoundary ??
+      (controllerConfiguration
+        ? async () => await ensureStableSupervisorBoundary(controllerConfiguration, context)
+        : async () => false),
     recoverInterruptedTransaction:
       overrides.recoverInterruptedTransaction ??
       (async () => await recoverInterruptedTransaction(context)),
@@ -3373,7 +3632,20 @@ async function recoverInterruptedTransaction(context) {
 
 async function dispatchUpdateRequest(request, context) {
   switch (request.op) {
+    case "controllerStatus":
+      if (!context.supervised || context.runningControllerVersion !== request.version) {
+        throw new Error("running target lifecycle controller identity is mismatched");
+      }
+      return {
+        transactionId: request.transactionId,
+        version: request.version,
+        controllerVersion: context.runningControllerVersion,
+        controllerInstanceId: context.controllerInstanceId,
+      };
     case "updateController":
+      if (context.supervised) {
+        throw new Error("stable lifecycle supervisor owns controller promotion");
+      }
       return await updateControllerRelease(request, context);
     case "prepareRelease":
       return await prepareSignerRelease(request, context);
@@ -3402,8 +3674,18 @@ function parseServerConfiguration(argv = process.argv.slice(2)) {
   let protectedLocalInstance = null;
   let socketUid = 0;
   let socketGid = Number.NaN;
+  let supervised = false;
+  let socketPath = null;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
+    if (argument === "--supervised") {
+      supervised = true;
+      continue;
+    }
+    if (argument === "--socket-path") {
+      socketPath = String(argv[++index] ?? "").trim();
+      continue;
+    }
     if (argument === "--socket-gid") {
       socketGid = Number(argv[++index]);
       continue;
@@ -3418,16 +3700,16 @@ function parseServerConfiguration(argv = process.argv.slice(2)) {
     }
     throw new Error(`unsupported root updater argument: ${argument}`);
   }
-  if (!Number.isSafeInteger(socketGid) || socketGid <= 0) {
-    throw new Error("--socket-gid must be a positive numeric group id");
+  if (!Number.isSafeInteger(socketGid) || socketGid < 0 || (!supervised && socketGid === 0)) {
+    throw new Error("--socket-gid must be a valid numeric group id");
   }
   if (!Number.isSafeInteger(socketUid) || socketUid < 0) {
     throw new Error("--socket-uid must be a non-negative numeric user id");
   }
   if (!protectedLocalInstance && socketUid !== 0) {
-    throw new Error("Hosting root updater socket must remain root-owned");
+    throw new Error("Hosting root controller socket must remain root-owned");
   }
-  if (protectedLocalInstance && socketUid === 0) {
+  if (protectedLocalInstance && socketUid === 0 && !supervised) {
     throw new Error("Protected Local root updater socket requires its exact operator user id");
   }
   const selected = protectedLocalInstance
@@ -3439,7 +3721,26 @@ function parseServerConfiguration(argv = process.argv.slice(2)) {
         gatewayServiceName: "fased-gateway.service",
         signerApplicationSocketPath: "/run/fased-signerd/app.sock",
       };
-  return Object.freeze({ ...selected, socketUid, socketGid });
+  const expectedPrivateSocket = protectedLocalInstance
+    ? `/run/fased-local-controller-worker/${protectedLocalInstance}/controller.sock`
+    : "/run/fased-host-controller/controller.sock";
+  if (supervised) {
+    if (socketUid !== 0 || socketGid !== 0 || socketPath !== expectedPrivateSocket) {
+      throw new Error("supervised controller requires its exact root-only private socket");
+    }
+  } else if (socketPath !== null) {
+    throw new Error("custom controller socket paths require stable supervision");
+  }
+  return Object.freeze({
+    ...selected,
+    paths: Object.freeze({
+      ...selected.paths,
+      socketPath: supervised ? expectedPrivateSocket : selected.paths.socketPath,
+    }),
+    supervised,
+    socketUid,
+    socketGid,
+  });
 }
 
 export async function startServer(options = {}) {
@@ -3455,6 +3756,8 @@ export async function startServer(options = {}) {
       signerServiceName: configuration.signerServiceName,
       gatewayServiceName: configuration.gatewayServiceName,
       signerApplicationSocketPath: configuration.signerApplicationSocketPath,
+      supervised: configuration.supervised,
+      controllerConfiguration: configuration,
     });
   const preparation = await prepareControllerServerContext(context);
   if (preparation.restartRequired) {
@@ -3531,7 +3834,10 @@ export async function startServer(options = {}) {
     server.listen(context.paths.socketPath, resolve);
   });
   await fsp.chown(context.paths.socketPath, configuration.socketUid, configuration.socketGid);
-  await fsp.chmod(context.paths.socketPath, configuration.socketUid === 0 ? 0o660 : 0o600);
+  await fsp.chmod(
+    context.paths.socketPath,
+    configuration.supervised || configuration.socketUid !== 0 ? 0o600 : 0o660,
+  );
   const close = async () => {
     await new Promise((resolve) => server.close(resolve));
     await fsp.rm(context.paths.socketPath, { force: true });
@@ -3542,7 +3848,10 @@ export async function startServer(options = {}) {
 }
 
 async function prepareControllerServerContext(context) {
-  if (await context.ensureControllerServicePolicy?.()) {
+  if (!context.supervised && (await context.ensureStableSupervisorBoundary?.())) {
+    return { restartRequired: true };
+  }
+  if (!context.supervised && (await context.ensureControllerServicePolicy?.())) {
     return { restartRequired: true };
   }
   if (context.recoverInterruptedTransaction) {

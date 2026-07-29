@@ -18,7 +18,7 @@ title: "开始使用"
     在 macOS Terminal、Linux 终端或 Ubuntu WSL2 中运行：
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
+    curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local
     ```
 
     原生 Windows 使用 [WSL2 Ubuntu](/platforms/windows)。不要在 PowerShell
@@ -30,7 +30,7 @@ title: "开始使用"
     先在自己的电脑登录 Tailscale。SSH 进入全新 VPS 的 root shell 后运行：
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+    curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
       | bash -s -- --hosting
     ```
 

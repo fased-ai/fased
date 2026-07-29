@@ -16,7 +16,7 @@ title: "安装"
     在 macOS Terminal、Linux 终端或 Ubuntu WSL2 shell 中运行：
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
+    curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local
     ```
 
     原生 Windows 不是 Local 运行环境。请在
@@ -31,7 +31,7 @@ title: "安装"
     原样运行：
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+    curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
       | bash -s -- --hosting
     ```
 
@@ -72,10 +72,11 @@ fased update
   </Accordion>
 
   <Accordion title="streamed 安装器信任什么">
-    `main/install.sh` 通过 HTTPS 下载后会先开始执行，因此仍有 mutable
-    bootstrap 信任。Fresh Hosting 路径只负责拒绝 override，并在持久化修改前
-    验证 release workflow、tag、signed manifest、app、dependency、signer、
-    architecture、commit、digest 与 archive layout。
+    安装命令从最新的不可变稳定 GitHub Release 下载 `install.sh`。发布自动化
+    会在证明前写入精确版本并拒绝覆盖已发布资产；未写入版本的流式脚本会在
+    安装前退出。Fresh Hosting 路径继续验证 release workflow、tag、signed
+    manifest、app、dependency、supervisor/controller、signer、architecture、
+    commit、digest 与 archive layout。
 
     如需在 Bash 执行前验证 `install.sh`，使用
     [Advanced Installer](/install/installer) 中的 exact-tag 流程。

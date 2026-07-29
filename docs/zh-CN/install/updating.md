@@ -180,7 +180,7 @@ fased update
 ### Local / WSL2 修复
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
   | bash -s -- --repair-local
 
 hash -r

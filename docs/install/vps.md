@@ -31,7 +31,7 @@ The next command runs in this VPS root shell, not in a local PowerShell window.
 ### 3. Install Fased
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
   | bash -s -- --hosting
 ```
 
@@ -39,7 +39,7 @@ For an explicitly selected prerelease, keep the same one-command flow and add
 the exact release and beta channel:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+curl -fsSL https://github.com/fased-ai/fased/releases/download/vX.Y.Z-rc.N/install.sh \
   | bash -s -- --hosting --release vX.Y.Z-rc.N --update-channel beta
 ```
 
@@ -83,26 +83,27 @@ fased update
     writable modes, package version, and build identity are checked before the
     tagged installer receives control.
 
-    The first mutable `main/install.sh` download remains a bootstrap trust
-    assumption. Operators who require verification before any shell execution
-    should use the exact-tag procedure below.
+    The streamed entrypoint is the `install.sh` asset from the latest immutable
+    stable GitHub Release. Release automation stamps it with that exact version
+    before attestation and refuses to overwrite a published asset. An unstamped
+    streamed script, including `main/install.sh`, exits before installation.
 
   </Accordion>
 
-  <Accordion title="Advanced: verify install.sh before it runs">
+  <Accordion title="Optional: verify install.sh before it runs">
     Follow the canonical
     [exact-tag pre-execution verification](/install/installer#exact-tag-pre-execution-verification).
     It authenticates the tagged `install.sh` before Bash runs it. Normal fresh
     installation and repair can use the one-command streamed selector above.
-    The exact-tag procedure is an optional stronger control for operators who
-    require verification before the first shell executes.
+    The exact-tag procedure additionally verifies provenance before the first
+    shell executes.
   </Accordion>
 
   <Accordion title="Hosting repair and recovery">
     From the provider root console, rerun the same public command:
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+    curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
       | bash -s -- --hosting
     ```
 

@@ -70,7 +70,7 @@ The published npm package also rejects native Windows. If npm reports
 the package installation with npm platform overrides.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
+curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local
 ```
 
 After local setup:
@@ -145,7 +145,7 @@ ssh root@YOUR_PUBLIC_VPS_IP
 Then run the one-command Hosting bootstrap:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
   | bash -s -- --hosting
 ```
 
@@ -468,7 +468,7 @@ can install missing OS tools, Git, and Node. Use the explicit Local profile on
 your own machine:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
+curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local
 ```
 
 Use the VPS Hosting profile only on the server that will run Fased all the time,

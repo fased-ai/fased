@@ -1,11 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+install_entry_release_identity="__FASED_RELEASE_IDENTITY__"
+if [[ "$install_entry_release_identity" == "__FASED_RELEASE_IDENTITY__" ]]; then
+  install_entry_release_identity=""
+elif [[ ! "$install_entry_release_identity" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+  echo "This installer has an invalid immutable release identity." >&2
+  exit 1
+fi
+
 install_entry_source="${BASH_SOURCE[0]:-}"
 install_entry_is_stream=0
 case "$install_entry_source" in
   ""|bash|-|/dev/stdin) install_entry_is_stream=1 ;;
 esac
+if [[ "$install_entry_is_stream" -eq 1 && -z "$install_entry_release_identity" ]]; then
+  echo "Refusing an unstamped streamed installer." >&2
+  echo "Use the immutable GitHub Release install.sh asset documented at https://docs.fased.ai/install." >&2
+  exit 1
+fi
 install_entry_hosting=0
 install_entry_protected_local_root=0
 install_entry_verified_bundle=""
@@ -227,6 +240,13 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       --protected-local-gateway-health-timeout-ms) protected_local_gateway_health_timeout_ms="${args[$((i + 1))]:-}" ;;
     esac
   done
+  if [[ -n "$install_entry_release_identity" ]]; then
+    if [[ -n "$hosting_release" && "${hosting_release#v}" != "$install_entry_release_identity" ]]; then
+      echo "The immutable installer identity does not match the requested release." >&2
+      exit 1
+    fi
+    hosting_release="v${install_entry_release_identity}"
+  fi
 
   drain_streamed_install_input() {
     if [[ "$install_entry_is_stream" -eq 1 ]]; then
@@ -509,11 +529,20 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     local signer_expected=""
     local release_manifest="${preflight}/fased-hosted-release-v2.json"
     local release_manifest_bundle="${preflight}/fased-hosted-release-v2.json.attestation.json"
+    local lifecycle_metadata="${preflight}/fased-lifecycle-trust-v1.json"
+    local lifecycle_metadata_bundle="${preflight}/fased-lifecycle-trust-v1.json.attestation.json"
     local expected=""
     local actual=""
     local manifest_digest=""
     local manifest_commit=""
     local manifest_signer_commit=""
+    local lifecycle_metadata_digest=""
+    local lifecycle_supervisor_expected=""
+    local lifecycle_issued_at=""
+    local lifecycle_expires_at=""
+    local lifecycle_issued_epoch=""
+    local lifecycle_expires_epoch=""
+    local lifecycle_now_epoch=""
 
     enter_protected_local_bundle() {
       local selected_root_store="$1"
@@ -568,6 +597,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       local cached_commit=""
       local cached_digest=""
       local cached_signer_digest=""
+      local cached_lifecycle_digest=""
       local cached_candidate=""
       for cached_candidate in "$release_parent"/*; do
         [[ -d "$cached_candidate" && "$(basename "$cached_candidate")" =~ ^[a-f0-9]{64}$ ]] || continue
@@ -584,13 +614,17 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
           ! -L "$cached_package_root/.fased-hosting-bundle-verified" ]]; then
           cached_commit="$(awk -F= '$1 == "commit" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
           cached_signer_digest="$(awk -F= '$1 == "signer_sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
+          cached_lifecycle_digest="$(awk -F= '$1 == "lifecycle_metadata_sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
         fi
         if [[ "$cached_commit" =~ ^[a-f0-9]{40}$ && \
           "$cached_signer_digest" =~ ^[a-f0-9]{64}$ && \
+          "$cached_lifecycle_digest" =~ ^[a-f0-9]{64}$ && \
           "$(awk -F= '$1 == "version" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified" 2>/dev/null || true)" == "$release_version" && \
           "$(awk -F= '$1 == "sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified" 2>/dev/null || true)" == "$cached_digest" && \
           -d "$cached_root_store/verified-dependencies/node_modules" && \
           -f "$cached_root_store/verified-assets/fased-signerd" && \
+          -f "$cached_root_store/verified-assets/fased-lifecycle-trust-v1.json" && \
+          "$(sha256sum "$cached_root_store/verified-assets/fased-lifecycle-trust-v1.json" | awk '{print tolower($1)}')" == "$cached_lifecycle_digest" && \
           "$(sha256sum "$cached_root_store/verified-assets/fased-signerd" | awk '{print tolower($1)}')" == "$cached_signer_digest" ]] && \
           root_owned_bundle_tree_is_secure "$cached_root_store"; then
           rm -rf -- "$preflight"
@@ -604,9 +638,17 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
 
     curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-hosted-release-v2.json" -o "$release_manifest"
     curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-hosted-release-v2.json.attestation.json" -o "$release_manifest_bundle"
+    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-lifecycle-trust-v1.json" -o "$lifecycle_metadata"
+    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-lifecycle-trust-v1.json.attestation.json" -o "$lifecycle_metadata_bundle"
     GH_PROMPT_DISABLED=1 gh attestation verify "$release_manifest" \
       --repo fased-ai/fased \
       --bundle "$release_manifest_bundle" \
+      --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+      --source-ref "refs/tags/v${release_version}" \
+      --deny-self-hosted-runners >/dev/null
+    GH_PROMPT_DISABLED=1 gh attestation verify "$lifecycle_metadata" \
+      --repo fased-ai/fased \
+      --bundle "$lifecycle_metadata_bundle" \
       --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
       --source-ref "refs/tags/v${release_version}" \
       --deny-self-hosted-runners >/dev/null
@@ -662,6 +704,58 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       echo "Hosted release manifest selects a mixed commit or unexpected app artifact." >&2
       exit 1
     }
+    lifecycle_supervisor_expected="$(jq -er \
+      --arg version "$release_version" \
+      --arg commit "$manifest_commit" \
+      --arg channel "$hosting_update_channel" \
+      --arg platform "linux-${architecture}" \
+      --arg current_time "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" '
+      if (keys == ["policy", "release", "role", "schemaVersion", "targets", "validity"]) and
+        .schemaVersion == 1 and
+        .role == "fased-lifecycle-targets" and
+        (.release | keys == ["commit", "tag", "version"]) and
+        .release.version == $version and
+        .release.tag == ("v" + $version) and
+        .release.commit == $commit and
+        (.validity | keys == ["expiresAt", "issuedAt"]) and
+        (.validity.issuedAt <= $current_time) and
+        (.validity.expiresAt > $current_time) and
+        (.policy | keys == ["channels", "controllerProtocol", "platforms", "supervisorProtocol"]) and
+        .policy.channels == (if ($version | contains("-")) then ["beta"] else ["beta", "stable"] end) and
+        (.policy.channels | index($channel)) != null and
+        .policy.platforms == ["linux-arm64", "linux-x64"] and
+        (.policy.platforms | index($platform)) != null and
+        .policy.supervisorProtocol == 1 and
+        .policy.controllerProtocol == 2 and
+        (.targets | keys == ["controllerClient", "controllerServer", "supervisor"]) and
+        .targets.supervisor.asset == "fased-lifecycle-supervisor.mjs" and
+        (.targets.supervisor.sha256 | test("^[a-f0-9]{64}$")) and
+        .targets.controllerServer.asset == "fased-host-updater.mjs" and
+        (.targets.controllerServer.sha256 | test("^[a-f0-9]{64}$")) and
+        .targets.controllerClient.asset == "fased-host-updaterctl.mjs" and
+        (.targets.controllerClient.sha256 | test("^[a-f0-9]{64}$"))
+      then .targets.supervisor.sha256
+      else error("invalid lifecycle trust metadata") end
+    ' "$lifecycle_metadata")" || {
+      echo "Lifecycle trust metadata does not authorize this exact release and platform." >&2
+      exit 1
+    }
+    lifecycle_issued_at="$(jq -er '.validity.issuedAt | select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.000Z$"))' "$lifecycle_metadata")"
+    lifecycle_expires_at="$(jq -er '.validity.expiresAt | select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.000Z$"))' "$lifecycle_metadata")"
+    lifecycle_issued_epoch="$(date -u -d "$lifecycle_issued_at" +%s 2>/dev/null || true)"
+    lifecycle_expires_epoch="$(date -u -d "$lifecycle_expires_at" +%s 2>/dev/null || true)"
+    lifecycle_now_epoch="$(date -u +%s)"
+    if [[ ! "$lifecycle_issued_epoch" =~ ^[0-9]+$ || \
+      ! "$lifecycle_expires_epoch" =~ ^[0-9]+$ || \
+      ! "$lifecycle_now_epoch" =~ ^[0-9]+$ ]] || \
+      (( lifecycle_issued_epoch >= lifecycle_expires_epoch ||
+        lifecycle_now_epoch < lifecycle_issued_epoch ||
+        lifecycle_now_epoch >= lifecycle_expires_epoch ||
+        lifecycle_expires_epoch - lifecycle_issued_epoch > 34560000 )); then
+      echo "Lifecycle trust metadata validity is non-canonical, expired, or too broad." >&2
+      exit 1
+    fi
+    lifecycle_metadata_digest="$(sha256sum "$lifecycle_metadata" | awk '{print tolower($1)}')"
     archive="${preflight}/${asset}"
     dependency_archive="${preflight}/${dependency_asset}"
     signer_binary="${preflight}/${signer_asset}"
@@ -708,8 +802,14 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     local verified_package_root="$verified_extract/package"
     [[ -f "$verified_package_root/install.sh" && -f "$verified_package_root/package.json" && \
       ! -L "$verified_package_root/install.sh" && -f "$verified_package_root/dist/build-info.json" && \
-      ! -L "$verified_package_root/dist/build-info.json" ]] || {
+      ! -L "$verified_package_root/dist/build-info.json" && \
+      -f "$verified_package_root/scripts/fased-lifecycle-supervisor.mjs" && \
+      ! -L "$verified_package_root/scripts/fased-lifecycle-supervisor.mjs" ]] || {
       echo "Attested Hosting bundle is incomplete or has an invalid entrypoint." >&2
+      exit 1
+    }
+    [[ "$(sha256sum "$verified_package_root/scripts/fased-lifecycle-supervisor.mjs" | awk '{print tolower($1)}')" == "$lifecycle_supervisor_expected" ]] || {
+      echo "Packaged lifecycle supervisor does not match immutable lifecycle trust metadata." >&2
       exit 1
     }
     local packaged_version=""
@@ -753,6 +853,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       grep -Fxq "dependency_sha256=${dependency_actual}" "$existing_root/.fased-hosting-bundle-verified" && \
       grep -Fxq "dependency_hash=${dependency_hash}" "$existing_root/.fased-hosting-bundle-verified" && \
       grep -Fxq "release_manifest_sha256=${manifest_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
+      grep -Fxq "lifecycle_metadata_sha256=${lifecycle_metadata_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
       [[ -d "$root_store/verified-dependencies/node_modules" && \
         ! -L "$root_store/verified-dependencies/node_modules" ]] && \
       [[ -f "$root_store/verified-assets/fased-signerd" && \
@@ -790,6 +891,12 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       --no-same-owner --no-same-permissions
     install -d -m 0755 -o root -g root "$staging/verified-assets"
     install -m 0755 -o root -g root "$signer_binary" "$staging/verified-assets/fased-signerd"
+    install -m 0644 -o root -g root \
+      "$lifecycle_metadata" \
+      "$staging/verified-assets/fased-lifecycle-trust-v1.json"
+    install -m 0644 -o root -g root \
+      "$lifecycle_metadata_bundle" \
+      "$staging/verified-assets/fased-lifecycle-trust-v1.json.attestation.json"
     local package_root="$staging/extract/package"
     chown -R root:root "$staging"
     chmod -R a+rX "$staging"
@@ -798,8 +905,8 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       echo "Could not secure the verified Hosting bundle as root-owned and non-writable." >&2
       exit 1
     fi
-    printf 'version=%s\nsha256=%s\nsigner_sha256=%s\ndependency_sha256=%s\ndependency_hash=%s\nrelease_manifest_sha256=%s\ncommit=%s\n' \
-      "$release_version" "$actual" "$signer_actual" "$dependency_actual" "$dependency_hash" "$manifest_digest" "$packaged_commit" >"$package_root/.fased-hosting-bundle-verified"
+    printf 'version=%s\nsha256=%s\nsigner_sha256=%s\ndependency_sha256=%s\ndependency_hash=%s\nrelease_manifest_sha256=%s\nlifecycle_metadata_sha256=%s\ncommit=%s\n' \
+      "$release_version" "$actual" "$signer_actual" "$dependency_actual" "$dependency_hash" "$manifest_digest" "$lifecycle_metadata_digest" "$packaged_commit" >"$package_root/.fased-hosting-bundle-verified"
     chmod 0600 "$package_root/.fased-hosting-bundle-verified"
     sync -f "$package_root/.fased-hosting-bundle-verified" "$package_root" "$staging/extract" 2>/dev/null || true
     mv "$staging" "$root_store"
@@ -5480,11 +5587,14 @@ install_host_signer_and_updater_services() {
   fi
   local controller_server_identity
   local controller_client_identity
+  local supervisor_identity
+  supervisor_identity="$(node "$FASED_DIR/scripts/fased-lifecycle-supervisor.mjs" --self-check)"
   controller_server_identity="$(node "$FASED_DIR/scripts/fased-host-updater.mjs" --self-check)"
   controller_client_identity="$(node "$FASED_DIR/scripts/fased-host-updaterctl.mjs" --self-check)"
-  [[ "$controller_server_identity" == '{"schemaVersion":1,"protocolVersion":2,"role":"server"}' && \
+  [[ "$supervisor_identity" == '{"schemaVersion":1,"protocolVersion":1,"role":"lifecycle-supervisor"}' && \
+    "$controller_server_identity" == '{"schemaVersion":1,"protocolVersion":2,"role":"server"}' && \
     "$controller_client_identity" == '{"schemaVersion":1,"protocolVersion":2,"role":"client"}' ]] || {
-    echo "Hosted controller assets are incompatible with this installer." >&2
+    echo "Hosted lifecycle supervisor or controller assets are incompatible with this installer." >&2
     exit 1
   }
   local sat_runtime_value=""
@@ -5515,7 +5625,27 @@ install_host_signer_and_updater_services() {
   install -d -m 0755 -o root -g root /opt/fased
   install -d -m 0755 -o root -g root /opt/fased/signer
   install -d -m 0755 -o root -g root /opt/fased/host-controller/releases
+  install -d -m 0755 -o root -g root /opt/fased/host-controller/supervisor
   install -d -m 0700 -o root -g root /var/lib/fased-host-updater
+  install -d -m 0700 -o root -g root /var/lib/fased-host-updater/supervisor
+  local supervisor_path="/opt/fased/host-controller/supervisor/fased-lifecycle-supervisor.mjs"
+  local supervisor_sha
+  supervisor_sha="$(sha256sum "$FASED_DIR/scripts/fased-lifecycle-supervisor.mjs" | awk '{print $1}')"
+  if [[ -e "$supervisor_path" || -L "$supervisor_path" ]]; then
+    if [[ ! -f "$supervisor_path" || -L "$supervisor_path" || \
+      "$(stat -c '%u' "$supervisor_path")" -ne 0 || \
+      "$(stat -c '%a' "$supervisor_path")" != "755" || \
+      "$(sha256sum "$supervisor_path" | awk '{print $1}')" != "$supervisor_sha" ]]; then
+      echo "Existing stable lifecycle supervisor does not match this immutable contract." >&2
+      echo "Use explicit supervisor recovery; normal install/update will not replace it." >&2
+      exit 1
+    fi
+  else
+    install -m 0755 -o root -g root \
+      "$FASED_DIR/scripts/fased-lifecycle-supervisor.mjs" \
+      "$supervisor_path"
+    sync -f "$supervisor_path" /opt/fased/host-controller/supervisor
+  fi
   local controller_release_dir="/opt/fased/host-controller/releases/v${version}"
   local controller_staging_dir="/opt/fased/host-controller/releases/.controller-generation-${version}-$$"
   local controller_current_tmp="/opt/fased/host-controller/.current-${version}-$$"
@@ -5571,6 +5701,12 @@ install_host_signer_and_updater_services() {
   chown root:root "$controller_marker_tmp"
   chmod 0600 "$controller_marker_tmp"
   mv -f "$controller_marker_tmp" /var/lib/fased-host-updater/controller-version.json
+  install -m 0600 -o root -g root \
+    /var/lib/fased-host-updater/controller-version.json \
+    /var/lib/fased-host-updater/supervisor/controller-version.json
+  printf '%s\n' "$version" >/var/lib/fased-host-updater/supervisor/rollback-floor
+  chown root:root /var/lib/fased-host-updater/supervisor/rollback-floor
+  chmod 0600 /var/lib/fased-host-updater/supervisor/rollback-floor
   install -m 0755 -o root -g root "$FASED_DIR/scripts/hosted-legacy-wallet-migration.mjs" /usr/local/libexec/hosted-legacy-wallet-migration.mjs
   rm -f /usr/local/libexec/fased-host-bootstrapd.mjs /usr/local/libexec/fased-host-bootstrapctl.mjs
   rm -f /usr/local/sbin/fased-signer-wallet-import
@@ -5628,9 +5764,9 @@ EOF
   mv -f "$host_updater_channel_tmp" /etc/fased/host-updater-channel
   sync -f /etc/fased/host-updater-channel /etc/fased 2>/dev/null || true
 
-  cat >/etc/systemd/system/fased-host-updater.service <<EOF
+  cat >/etc/systemd/system/fased-host-controller.service <<EOF
 [Unit]
-Description=Fased verified native signer updater
+Description=Fased target lifecycle controller
 After=network-online.target
 Wants=network-online.target
 
@@ -5638,20 +5774,21 @@ Wants=network-online.target
 Type=simple
 User=root
 Group=root
-RuntimeDirectory=fased-host-updater
+RuntimeDirectory=fased-host-controller
 RuntimeDirectoryMode=0755
 StateDirectory=fased-host-updater
 StateDirectoryMode=0700
 UMask=0117
 Environment=HOME=/var/lib/fased-host-updater
-ExecStart=$(command -v node) /opt/fased/host-controller/current/fased-host-updater.mjs --socket-gid ${operator_gid}
+ExecStart=$(command -v node) /opt/fased/host-controller/current/fased-host-updater.mjs --supervised --socket-path /run/fased-host-controller/controller.sock --socket-uid 0 --socket-gid 0
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=read-only
 ProtectSystem=strict
-ReadWritePaths=/opt/fased/host-controller /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-updater /etc/systemd/system ${target_home}/.fased
+ReadWritePaths=/opt/fased/host-controller/releases /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-controller /etc/systemd/system ${target_home}/.fased
+ReadOnlyPaths=/opt/fased/host-controller/supervisor /var/lib/fased-host-updater/supervisor /etc/systemd/system/fased-host-updater.service
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
@@ -5662,10 +5799,56 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 [Install]
 WantedBy=multi-user.target
 EOF
+  chmod 0644 /etc/systemd/system/fased-host-controller.service
+
+  cat >/etc/systemd/system/fased-host-updater.service <<EOF
+[Unit]
+Description=Fased stable lifecycle supervisor
+After=fased-host-controller.service network-online.target
+Wants=fased-host-controller.service network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+RuntimeDirectory=fased-host-updater
+RuntimeDirectoryMode=0755
+UMask=0177
+Environment=HOME=/var/lib/fased-host-updater/supervisor
+ExecStart=$(command -v node) ${supervisor_path} --profile hosting --operator-uid ${operator_uid} --operator-gid ${operator_gid}
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/fased/host-controller /var/lib/fased-host-updater/supervisor /run/fased-host-updater
+ReadOnlyPaths=/opt/fased/host-controller/supervisor
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+CapabilityBoundingSet=CAP_CHOWN
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
+EOF
   chmod 0644 /etc/systemd/system/fased-host-updater.service
   sync -f "$controller_release_dir/fased-host-updater.mjs"
   sync -f "$controller_release_dir/fased-host-updaterctl.mjs"
   sync -f /var/lib/fased-host-updater/controller-version.json
+  sync -f \
+    /var/lib/fased-host-updater/supervisor/controller-version.json \
+    /var/lib/fased-host-updater/supervisor/rollback-floor \
+    /var/lib/fased-host-updater/supervisor
   sync -f /opt/fased/host-controller/releases /opt/fased/host-controller
   sync -f /usr/local/libexec/fased-host-updater.mjs
   sync -f /usr/local/libexec/fased-host-updaterctl.mjs
@@ -5679,10 +5862,12 @@ EOF
   sync -f /usr/local/share/fased/signer-policies/mining.json.template
   sync -f /usr/local/share/fased/signer-policies/vault.json.template
   sync -f /usr/local/share/fased/signer-policies/network.json.template
+  sync -f /etc/systemd/system/fased-host-controller.service
   sync -f /etc/systemd/system/fased-host-updater.service
   sync -f /usr/local/libexec /usr/local/sbin /usr/local/share/fased/signer-policies /etc/systemd/system
   systemctl daemon-reload
-  systemctl enable fased-host-updater.service >/dev/null
+  systemctl enable fased-host-controller.service fased-host-updater.service >/dev/null
+  systemctl restart fased-host-controller.service
   systemctl restart fased-host-updater.service
 
   local updater_socket_ready=0

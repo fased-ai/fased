@@ -19,7 +19,7 @@ Native Linux companion apps are planned. Contributions are welcome.
 For a Linux laptop or desktop, run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
   | bash -s -- --local
 ```
 

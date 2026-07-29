@@ -29,7 +29,7 @@ The beginner install path should stay curl-first because it can install missing
 OS tools, Git, Node, and pnpm:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
+curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local
 ```
 
 The package name is `@fased/fased`, but public setup docs should keep pointing

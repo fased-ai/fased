@@ -78,7 +78,7 @@ Choose the setup profile first.
     with Ubuntu. On Linux, use your distro terminal.
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
+    curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local
     ```
 
     On Windows, first follow [Windows Local setup](/platforms/windows). Run the
@@ -129,7 +129,7 @@ Choose the setup profile first.
     Run this **inside the VPS root SSH session**:
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+    curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
       | bash -s -- --hosting
     ```
 
@@ -164,13 +164,13 @@ Simple command recap:
 Local, run on this computer (inside Ubuntu WSL2 on Windows):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
+curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local
 ```
 
 VPS Hosting, run as root inside the fresh VPS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
   | bash -s -- --hosting
 ```
 

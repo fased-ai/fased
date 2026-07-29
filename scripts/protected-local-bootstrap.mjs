@@ -664,9 +664,22 @@ async function installControllerGeneration(sourceRoot, layout, spec) {
     fsp.readFile(path.join(releaseDir, "fased-host-updater.mjs")),
     fsp.readFile(path.join(releaseDir, "fased-host-updaterctl.mjs")),
   ]);
+  const controllerIdentity = buildControllerIdentity(spec.releaseVersion, serverBytes, clientBytes);
   await atomicWrite(
     path.join(layout.controllerStateDir, "controller-version.json"),
-    `${JSON.stringify(buildControllerIdentity(spec.releaseVersion, serverBytes, clientBytes), null, 2)}\n`,
+    `${JSON.stringify(controllerIdentity, null, 2)}\n`,
+    0o600,
+    { uid: 0, gid: 0 },
+  );
+  await atomicWrite(
+    path.join(layout.supervisorStateDir, "controller-version.json"),
+    `${JSON.stringify(controllerIdentity, null, 2)}\n`,
+    0o600,
+    { uid: 0, gid: 0 },
+  );
+  await atomicWrite(
+    path.join(layout.supervisorStateDir, "rollback-floor"),
+    `${spec.releaseVersion}\n`,
     0o600,
     { uid: 0, gid: 0 },
   );
@@ -994,11 +1007,25 @@ function sharedApplicationStateDirectoriesForAclVerification(spec) {
 async function installRootFiles(params) {
   const { sourceRoot, spec, layout, servicePlan, signerIdentity } = params;
   await fsp.mkdir(path.dirname(layout.signerBinary), { recursive: true, mode: 0o755 });
-  for (const directory of [layout.installDir, path.dirname(layout.signerBinary)]) {
+  await fsp.mkdir(path.dirname(layout.supervisorBinary), {
+    recursive: true,
+    mode: 0o755,
+  });
+  for (const directory of [
+    layout.installDir,
+    path.dirname(layout.signerBinary),
+    path.dirname(layout.supervisorBinary),
+  ]) {
     await fsp.chown(directory, 0, 0);
     await fsp.chmod(directory, 0o755);
   }
   await atomicCopy(params.signerBinary, layout.signerBinary, 0o755, { uid: 0, gid: 0 });
+  await atomicCopy(
+    path.join(sourceRoot, "scripts", "fased-lifecycle-supervisor.mjs"),
+    layout.supervisorBinary,
+    0o755,
+    { uid: 0, gid: 0 },
+  );
   await installProtectedLocalApplicationRuntime({
     sourceRoot,
     dependencyRoot: path.join(
@@ -1046,6 +1073,9 @@ async function installRootFiles(params) {
   await fsp.mkdir(layout.controllerStateDir, { recursive: true, mode: 0o711 });
   await fsp.chown(layout.controllerStateDir, 0, 0);
   await fsp.chmod(layout.controllerStateDir, 0o711);
+  await fsp.mkdir(layout.supervisorStateDir, { recursive: true, mode: 0o700 });
+  await fsp.chown(layout.supervisorStateDir, 0, 0);
+  await fsp.chmod(layout.supervisorStateDir, 0o700);
   await atomicWrite(
     path.join(layout.controllerStateDir, "signer-version"),
     `${spec.releaseVersion}\n`,
@@ -2338,12 +2368,14 @@ function assertFreshAllocationUnclaimed(layout) {
   for (const candidate of [
     layout.runtimeDir,
     `/run/fased-local-controller/${layout.instanceId}`,
+    `/run/fased-local-controller-worker/${layout.instanceId}`,
     layout.stateDir,
     layout.installDir,
     `/etc/fased/local/${layout.instanceId}`,
     `/etc/systemd/system/${layout.gatewayUnit}`,
     `/etc/systemd/system/${layout.signerUnit}`,
     `/etc/systemd/system/${layout.controllerUnit}`,
+    `/etc/systemd/system/${layout.supervisorUnit}`,
     `/usr/local/sbin/fased-local-signer-owner-${layout.instanceId}`,
   ]) {
     if (fs.existsSync(candidate)) {
@@ -2391,7 +2423,12 @@ async function rollbackBootstrapTransaction(transaction, originalError, options 
   const { spec, layout } = transaction;
   const systemctl = systemBinary(["/usr/bin/systemctl", "/bin/systemctl"], "systemctl");
   await attempt("candidate service stop", async () => {
-    for (const unit of [layout.gatewayUnit, layout.signerUnit, layout.controllerUnit]) {
+    for (const unit of [
+      layout.gatewayUnit,
+      layout.signerUnit,
+      layout.supervisorUnit,
+      layout.controllerUnit,
+    ]) {
       try {
         runSystem(systemctl, ["disable", "--now", unit]);
       } catch {
@@ -2417,6 +2454,7 @@ async function rollbackBootstrapTransaction(transaction, originalError, options 
       `/etc/systemd/system/${layout.gatewayUnit}`,
       `/etc/systemd/system/${layout.signerUnit}`,
       `/etc/systemd/system/${layout.controllerUnit}`,
+      `/etc/systemd/system/${layout.supervisorUnit}`,
     ]) {
       await fsp.rm(unitPath, { force: true });
     }
@@ -2529,6 +2567,7 @@ async function activatePreparedBootstrapTransaction(transaction) {
       gatewayUnit: layout.gatewayUnit,
       signerUnit: layout.signerUnit,
       controllerUnit: layout.controllerUnit,
+      supervisorUnit: layout.supervisorUnit,
       gatewayMode: "activate",
       wallets,
       operatorEnvironment: renderProtectedLocalOperatorEnvironment({
@@ -2729,6 +2768,7 @@ async function installProtectedLocal(params) {
         gatewayUnit: layout.gatewayUnit,
         signerUnit: layout.signerUnit,
         controllerUnit: layout.controllerUnit,
+        supervisorUnit: layout.supervisorUnit,
         gatewayMode: spec.gatewayMode,
         wallets,
         operatorEnvironment: renderProtectedLocalOperatorEnvironment({
@@ -2831,8 +2871,14 @@ async function installProtectedLocal(params) {
     if (spec.gatewayMode === "prepare") {
       await stageGatewayActivation(layout, systemctl);
     }
-    runSystem(systemctl, ["enable", layout.controllerUnit, layout.signerUnit]);
+    runSystem(systemctl, [
+      "enable",
+      layout.controllerUnit,
+      layout.supervisorUnit,
+      layout.signerUnit,
+    ]);
     runSystem(systemctl, ["restart", layout.controllerUnit]);
+    runSystem(systemctl, ["restart", layout.supervisorUnit]);
     runSystem(systemctl, ["restart", layout.signerUnit]);
     if (spec.gatewayMode === "prepare") {
       await stageGatewayActivation(layout, systemctl);
@@ -2862,6 +2908,7 @@ async function installProtectedLocal(params) {
       gatewayUnit: layout.gatewayUnit,
       signerUnit: layout.signerUnit,
       controllerUnit: layout.controllerUnit,
+      supervisorUnit: layout.supervisorUnit,
       gatewayMode: spec.gatewayMode,
       prepared: spec.gatewayMode === "prepare",
       wallets,

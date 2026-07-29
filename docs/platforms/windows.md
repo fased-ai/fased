@@ -46,7 +46,7 @@ There are two different Windows workflows:
     ```bash
     uname -s
     ps -p 1 -o comm=
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+    curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
       | bash -s -- --local
     ```
 

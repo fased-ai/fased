@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   PRE_V2_HOSTING_MIGRATION_MESSAGE,
   __testing,
+  assertLifecycleBootstrapBinding,
   hostingBootstrapCommand,
   installProtectedLocalApplicationRuntime,
   isMainModule,
@@ -683,6 +684,115 @@ describe("root-owned hosted updater protocol", () => {
     expect(recovered).toBe(false);
   });
 
+  it("hands an unsupervised controller to the stable boundary before recovery or requests", async () => {
+    let policyChecked = false;
+    let recovered = false;
+    const result = await __testing.prepareControllerServerContext({
+      supervised: false,
+      ensureStableSupervisorBoundary: async () => true,
+      ensureControllerServicePolicy: async () => {
+        policyChecked = true;
+        return false;
+      },
+      recoverInterruptedTransaction: async () => {
+        recovered = true;
+      },
+    });
+
+    expect(result).toEqual({ restartRequired: true });
+    expect(policyChecked).toBe(false);
+    expect(recovered).toBe(false);
+  });
+
+  it("reports the exact running worker identity only on the supervised private boundary", async () => {
+    const context = __testing.createTransactionContext({
+      supervised: true,
+      runningControllerVersion: "1.2.3",
+      controllerInstanceId: TRANSACTION_TWO,
+    });
+    await expect(
+      __testing.dispatchUpdateRequest(
+        request("controllerStatus", TRANSACTION_ONE, "1.2.3"),
+        context,
+      ),
+    ).resolves.toEqual({
+      transactionId: TRANSACTION_ONE,
+      version: "1.2.3",
+      controllerVersion: "1.2.3",
+      controllerInstanceId: TRANSACTION_TWO,
+    });
+    await expect(
+      __testing.dispatchUpdateRequest(
+        request("controllerStatus", TRANSACTION_ONE, "1.2.4"),
+        context,
+      ),
+    ).rejects.toThrow("running target lifecycle controller identity is mismatched");
+  });
+
+  it("accepts only the fixed root-only worker socket under stable supervision", () => {
+    expect(
+      __testing.parseServerConfiguration([
+        "--protected-local-instance",
+        "0123456789abcdef",
+        "--supervised",
+        "--socket-path",
+        "/run/fased-local-controller-worker/0123456789abcdef/controller.sock",
+        "--socket-uid",
+        "0",
+        "--socket-gid",
+        "0",
+      ]),
+    ).toMatchObject({
+      profile: "protected-local",
+      instanceId: "0123456789abcdef",
+      supervised: true,
+      socketUid: 0,
+      socketGid: 0,
+    });
+    expect(() =>
+      __testing.parseServerConfiguration([
+        "--protected-local-instance",
+        "0123456789abcdef",
+        "--supervised",
+        "--socket-path",
+        "/tmp/controller.sock",
+        "--socket-uid",
+        "0",
+        "--socket-gid",
+        "0",
+      ]),
+    ).toThrow("exact root-only private socket");
+  });
+
+  it("binds a supervisor bootstrap to the already verified controller generation", () => {
+    const identity = {
+      serverSha256: "a".repeat(64),
+      clientSha256: "b".repeat(64),
+    };
+    const metadata = {
+      targets: {
+        supervisor: { sha256: "c".repeat(64) },
+        controllerServer: { sha256: identity.serverSha256 },
+        controllerClient: { sha256: identity.clientSha256 },
+      },
+    };
+    expect(() =>
+      assertLifecycleBootstrapBinding(identity, metadata, metadata.targets.supervisor.sha256),
+    ).not.toThrow();
+    expect(() =>
+      assertLifecycleBootstrapBinding(
+        identity,
+        {
+          targets: {
+            ...metadata.targets,
+            controllerServer: { sha256: "d".repeat(64) },
+          },
+        },
+        metadata.targets.supervisor.sha256,
+      ),
+    ).toThrow("active lifecycle controller is not bound");
+  });
+
   it("promotes an offline-attested controller generation atomically for future updates", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-controller-stage-"));
     cleanupRoots.push(root);
@@ -1257,6 +1367,9 @@ describe("root-owned hosted updater protocol", () => {
     ).toThrow(legacyHostingBootstrapMessage("1.2.3-rc.4"));
     expect(hostingBootstrapCommand("1.2.3")).toContain(
       "--hosting --release v1.2.3 --update-channel stable",
+    );
+    expect(hostingBootstrapCommand("1.2.3")).toContain(
+      "https://github.com/fased-ai/fased/releases/download/v1.2.3/install.sh",
     );
     expect(hostingBootstrapCommand("v1.2.3-rc.4")).toContain(
       "--hosting --release v1.2.3-rc.4 --update-channel beta",
