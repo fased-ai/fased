@@ -5337,7 +5337,17 @@ export async function startServer(options = {}) {
               ? restartController
               : undefined,
           ),
-        (error) => writeResponse(socket, { ok: false, error: error.message }, restartController),
+        (error) =>
+          writeResponse(
+            socket,
+            {
+              ok: false,
+              transactionId: request.transactionId,
+              version: request.version,
+              error: error.message,
+            },
+            restartController,
+          ),
       );
     });
   });

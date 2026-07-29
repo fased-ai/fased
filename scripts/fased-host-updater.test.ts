@@ -2245,6 +2245,97 @@ describe("root-owned hosted updater protocol", () => {
     },
   );
 
+  it.each([
+    "artifact network loss",
+    "artifact checksum rejection",
+    "artifact staging disk exhaustion",
+    "service-boundary permission denial",
+    "signer process crash",
+    "Gateway process crash",
+    "cross-product health timeout",
+  ])("rolls back %s and succeeds on the same-command retry", async (failureClass) => {
+    const { context, paths } = await createFixture();
+    const original = {
+      stageCandidate: context.stageCandidate,
+      applyServiceBoundary: context.applyServiceBoundary,
+      startSignerV2: context.startSignerV2,
+      startGateway: context.startGateway,
+      verifyGateway: context.verifyGateway,
+    };
+    context.verifyGateway = async () => ({
+      version: "1.2.3",
+      runtimeSource: "managed-package",
+    });
+    context.probeSigner = async () => signerRelease("1.2.3");
+
+    const injectedError = (message: string, code: string) => {
+      const error = new Error(message) as Error & { code?: string };
+      error.code = code;
+      throw error;
+    };
+    switch (failureClass) {
+      case "artifact network loss":
+        context.stageCandidate = async () =>
+          injectedError("injected artifact network loss", "ECONNRESET");
+        break;
+      case "artifact checksum rejection":
+        context.stageCandidate = async () =>
+          injectedError("injected artifact checksum mismatch", "EBADMSG");
+        break;
+      case "artifact staging disk exhaustion":
+        context.stageCandidate = async () =>
+          injectedError("injected artifact staging disk exhaustion", "ENOSPC");
+        break;
+      case "service-boundary permission denial":
+        context.applyServiceBoundary = async () =>
+          injectedError("injected service-boundary permission denial", "EACCES");
+        break;
+      case "signer process crash":
+        context.startSignerV2 = async () =>
+          injectedError("injected signer process crash", "ECONNRESET");
+        break;
+      case "Gateway process crash":
+        context.startGateway = async () =>
+          injectedError("injected Gateway process crash", "ECONNRESET");
+        break;
+      case "cross-product health timeout":
+        context.verifyGateway = async () =>
+          injectedError("injected cross-product health timeout", "ETIMEDOUT");
+        break;
+      default:
+        throw new Error(`unsupported deterministic failure class: ${failureClass}`);
+    }
+
+    await expect(
+      __testing.applyReleaseTransaction(request("applyRelease", TRANSACTION_ONE, "1.2.3"), context),
+    ).rejects.toBeInstanceOf(Error);
+    expect(fs.existsSync(paths.journalPath)).toBe(false);
+    expect(fs.existsSync(paths.gatewayGatePath)).toBe(false);
+    expect(fs.existsSync(paths.signerGatePath)).toBe(false);
+    expect(await fsp.readFile(paths.versionPath, "utf8")).toBe("1.2.2\n");
+    expect(await fsp.readFile(paths.signerPath, "utf8")).toBe("old-signer\n");
+    expect(await fsp.readFile(paths.signerStateDBPath, "utf8")).toBe("old-db\n");
+
+    Object.assign(context, original);
+    context.verifyGateway = async () => ({
+      version: "1.2.3",
+      runtimeSource: "managed-package",
+    });
+    await expect(
+      __testing.applyReleaseTransaction(request("applyRelease", TRANSACTION_ONE, "1.2.3"), context),
+    ).resolves.toMatchObject({
+      transactionId: TRANSACTION_ONE,
+      version: "1.2.3",
+      phase: "committed",
+    });
+    await expect(
+      __testing.applyReleaseTransaction(request("applyRelease", TRANSACTION_ONE, "1.2.3"), context),
+    ).resolves.toMatchObject({
+      phase: "committed",
+      changed: false,
+    });
+  });
+
   it("rejects a different request without mutating the active target-owned transaction", async () => {
     const { context, paths } = await createFixture();
     context.verifyGateway = async () => ({ version: "1.2.3", runtimeSource: "managed-package" });
