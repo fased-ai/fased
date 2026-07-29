@@ -6,13 +6,13 @@ import {
 } from "./build-lifecycle-root-request.mjs";
 import { finalizeLifecycleRootMetadata } from "./finalize-lifecycle-root-metadata.mjs";
 import {
+  OFFICIAL_GITHUB_RELEASE_AUTHORITY,
   canonicalTrustBytes,
   ed25519PublicKeyRecord,
   lifecycleTrustKeyId,
   verifyInitialLifecycleRoot,
 } from "./lifecycle-trust-policy.mjs";
 import { loadLifecycleRootKeyset } from "./lifecycle-trust-production-roots.mjs";
-import { LIFECYCLE_DELEGATED_ROLES } from "./lifecycle-trust-root.mjs";
 
 const now = Date.parse("2026-07-29T12:00:00.000Z");
 const issuedAt = "2026-07-29T00:00:00.000Z";
@@ -39,12 +39,6 @@ function fixtureRootKeyset() {
   };
 }
 
-function delegatedKeys() {
-  return Object.fromEntries(
-    LIFECYCLE_DELEGATED_ROLES.map((role) => [role, generateKeyPairSync("ed25519").publicKey]),
-  );
-}
-
 function signRequest(
   request: ReturnType<typeof buildLifecycleRootSigningRequest>["request"],
   root: ReturnType<typeof fixtureRootKeyset>["roots"][number],
@@ -56,10 +50,9 @@ function signRequest(
 }
 
 describe("production lifecycle root ceremony", () => {
-  it("builds a bounded request from the production roots and separate delegated keys", async () => {
+  it("builds one bounded policy request from only the three production public roots", async () => {
     const result = buildLifecycleRootSigningRequest({
       rootKeyset: await loadLifecycleRootKeyset(),
-      delegatedPublicKeys: delegatedKeys(),
       version: 1,
       issuedAt,
       expiresAt,
@@ -72,10 +65,14 @@ describe("production lifecycle root ceremony", () => {
       signed: {
         type: "fased-lifecycle-root",
         version: 1,
-        roles: { root: { threshold: 2 } },
+        root: { threshold: 2 },
+        releaseAuthority: OFFICIAL_GITHUB_RELEASE_AUTHORITY,
       },
     });
-    expect(result.payload.length).toBeLessThanOrEqual(requestTesting.MAX_HSM_SIGNING_PAYLOAD_BYTES);
+    expect(Object.keys(result.request.signed.keys)).toHaveLength(3);
+    expect(result.payload.length).toBeLessThanOrEqual(
+      requestTesting.MAX_ROOT_SIGNING_PAYLOAD_BYTES,
+    );
     expect(result.payload.equals(canonicalTrustBytes(result.request.signed))).toBe(true);
   });
 
@@ -83,7 +80,6 @@ describe("production lifecycle root ceremony", () => {
     const rootKeyset = fixtureRootKeyset();
     const result = buildLifecycleRootSigningRequest({
       rootKeyset,
-      delegatedPublicKeys: delegatedKeys(),
       version: 1,
       issuedAt,
       expiresAt,
@@ -106,16 +102,10 @@ describe("production lifecycle root ceremony", () => {
     ).toBe(1);
   });
 
-  it("rejects one signature, duplicate roots, delegated signatures, and tampering", () => {
+  it("rejects one signature, duplicate roots, unknown signers, and tampering", () => {
     const rootKeyset = fixtureRootKeyset();
-    const delegated = Object.fromEntries(
-      LIFECYCLE_DELEGATED_ROLES.map((role) => [role, fixtureKey()]),
-    );
     const result = buildLifecycleRootSigningRequest({
       rootKeyset,
-      delegatedPublicKeys: Object.fromEntries(
-        Object.entries(delegated).map(([role, key]) => [role, key.publicKey]),
-      ),
       version: 1,
       issuedAt,
       expiresAt,
@@ -138,18 +128,17 @@ describe("production lifecycle root ceremony", () => {
       }),
     ).toThrow("distinct root keys");
 
-    const delegatedSignature = {
-      keyId: delegated.stable.keyId,
-      signature: sign(
-        null,
-        canonicalTrustBytes(result.request.signed),
-        delegated.stable.privateKey,
-      ),
-    };
+    const unknown = fixtureKey();
     expect(() =>
       finalizeLifecycleRootMetadata({
         request: result.request,
-        signatures: [first, delegatedSignature],
+        signatures: [
+          first,
+          {
+            keyId: unknown.keyId,
+            signature: sign(null, canonicalTrustBytes(result.request.signed), unknown.privateKey),
+          },
+        ],
         now,
       }),
     ).toThrow("canonical root signature");
@@ -166,20 +155,22 @@ describe("production lifecycle root ceremony", () => {
     ).toThrow("payload identity is invalid");
   });
 
-  it("rejects private material presented as a delegated public key", () => {
-    const rootKeyset = fixtureRootKeyset();
-    const delegated = delegatedKeys();
-    delegated.stable = generateKeyPairSync("ed25519").privateKey;
-
+  it("rejects the removed delegated-key command contract", () => {
     expect(() =>
-      buildLifecycleRootSigningRequest({
-        rootKeyset,
-        delegatedPublicKeys: delegated,
-        version: 1,
+      requestTesting.parseArgs([
+        "--version",
+        "1",
+        "--issued-at",
         issuedAt,
+        "--expires-at",
         expiresAt,
-        now,
-      }),
-    ).toThrow("must not contain private key material");
+        "--request",
+        "/tmp/request.json",
+        "--payload",
+        "/tmp/payload",
+        "--delegated",
+        "stable=/tmp/stable.public.pem",
+      ]),
+    ).toThrow("supported --name value pairs");
   });
 });

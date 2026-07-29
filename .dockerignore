@@ -10,7 +10,6 @@
 # not remove it from earlier layers.
 .env
 .env.*
-gha-creds-*.json
 **/.env
 **/.env.*
 .fased

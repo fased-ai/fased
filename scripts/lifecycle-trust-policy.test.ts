@@ -1,21 +1,20 @@
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
+  OFFICIAL_GITHUB_RELEASE_AUTHORITY,
   ed25519PublicKeyRecord,
   lifecycleTrustKeyId,
   signTrustEnvelope,
   trustMetadataDigest,
   verifyInitialLifecycleRoot,
+  verifyLifecycleReleaseAuthority,
   verifyLifecycleRootRotation,
-  verifyLifecycleTrustChain,
+  verifyLifecycleTrustPolicy,
 } from "./lifecycle-trust-policy.mjs";
 
 const now = Date.parse("2026-07-29T12:00:00.000Z");
 const issuedAt = "2026-07-29T00:00:00.000Z";
-const rootExpiresAt = "2030-07-29T00:00:00.000Z";
-const targetsExpiresAt = "2027-07-29T00:00:00.000Z";
-const snapshotExpiresAt = "2026-08-05T00:00:00.000Z";
-const timestampExpiresAt = "2026-07-30T00:00:00.000Z";
+const expiresAt = "2030-07-29T00:00:00.000Z";
 const releaseVersion = "1.2.3";
 const digest = (character: string) => character.repeat(64);
 
@@ -27,175 +26,80 @@ function fixtureKey() {
   return {
     keyId: lifecycleTrustKeyId(record),
     privateKey: pair.privateKey,
-    record,
+    publicKey: record,
   };
 }
 
 function rootFixture({
   version = 1,
-  oldRootKeys = null as FixtureKey[] | null,
-  revokeRole = null as string | null,
-  revokedKeys = [] as string[],
+  roots = [fixtureKey(), fixtureKey(), fixtureKey()],
+  oldRoots = null as FixtureKey[] | null,
+  releaseAuthority = OFFICIAL_GITHUB_RELEASE_AUTHORITY,
   revokedReleases = [] as string[],
   revokedDigests = [] as string[],
+  expires = expiresAt,
 } = {}) {
-  const rootKeys = [fixtureKey(), fixtureKey(), fixtureKey()];
-  const delegated = Object.fromEntries(
-    [
-      "application",
-      "beta",
-      "controller",
-      "dependencies",
-      "platform",
-      "signer",
-      "snapshot",
-      "stable",
-      "timestamp",
-    ].map((role) => [role, fixtureKey()]),
-  ) as Record<string, FixtureKey>;
-  const allKeys = [...rootKeys, ...Object.values(delegated)];
-  const effectiveRevokedKeys = [
-    ...revokedKeys,
-    ...(revokeRole ? [delegated[revokeRole].keyId] : []),
-  ].toSorted();
-  const roles = Object.fromEntries([
-    ["root", { keyIds: rootKeys.map((key) => key.keyId).toSorted(), threshold: 2 }],
-    ...Object.entries(delegated).map(([role, key]) => [
-      role,
-      { keyIds: [key.keyId], threshold: 1 },
-    ]),
-  ]);
   const signed = {
     schemaVersion: 1,
     type: "fased-lifecycle-root",
     version,
     issuedAt,
-    expiresAt: rootExpiresAt,
+    expiresAt: expires,
     keys: Object.fromEntries(
-      allKeys
-        .map((key) => [key.keyId, key.record] as const)
+      roots
+        .map((root) => [root.keyId, root.publicKey] as const)
         .toSorted(([left], [right]) => left.localeCompare(right)),
     ),
-    roles,
+    root: {
+      keyIds: roots.map(({ keyId }) => keyId).toSorted(),
+      threshold: 2,
+    },
+    releaseAuthority,
     revocations: {
-      keyIds: effectiveRevokedKeys,
       releaseVersions: revokedReleases.toSorted(),
       targetDigests: revokedDigests.toSorted(),
     },
   };
-  const signingKeys = [...(oldRootKeys?.slice(0, 2) ?? []), ...rootKeys.slice(0, 2)].filter(
+  const signingKeys = [...(oldRoots?.slice(0, 2) ?? []), ...roots.slice(0, 2)].filter(
     (key, index, entries) =>
       entries.findIndex((candidate) => candidate.keyId === key.keyId) === index,
   );
-  return {
-    rootKeys,
-    delegated,
-    envelope: signTrustEnvelope(signed, signingKeys),
-  };
+  return { roots, envelope: signTrustEnvelope(signed, signingKeys) };
 }
 
-function delegatedEnvelope(
-  root: ReturnType<typeof rootFixture>,
-  roleNames: string[],
-  signed: Record<string, unknown>,
+function verifyFixture(
+  fixture: ReturnType<typeof rootFixture>,
+  previousState: { schemaVersion: number; rootVersion: number; rootSha256: string } | null = null,
 ) {
-  return signTrustEnvelope(
-    signed,
-    roleNames.map((role) => root.delegated[role]),
-  );
-}
-
-function chainFixture(root = rootFixture()) {
-  const targets = delegatedEnvelope(root, ["stable", "controller", "platform"], {
-    schemaVersion: 1,
-    type: "fased-lifecycle-targets",
-    version: 7,
-    rootVersion: 1,
-    issuedAt,
-    expiresAt: targetsExpiresAt,
-    release: {
-      version: releaseVersion,
-      tag: `v${releaseVersion}`,
-      commit: "a".repeat(40),
-    },
-    policy: {
-      channels: ["beta", "stable"],
-      platforms: ["linux-arm64", "linux-x64"],
-      supervisorProtocol: 1,
-      controllerProtocol: 2,
-    },
-    targets: {
-      supervisor: {
-        asset: "fased-lifecycle-supervisor.mjs",
-        sha256: digest("a"),
-      },
-      controllerServer: {
-        asset: "fased-host-updater.mjs",
-        sha256: digest("b"),
-      },
-      controllerClient: {
-        asset: "fased-host-updaterctl.mjs",
-        sha256: digest("c"),
-      },
-    },
-  });
-  const snapshot = delegatedEnvelope(root, ["snapshot"], {
-    schemaVersion: 1,
-    type: "fased-lifecycle-snapshot",
-    version: 9,
-    rootVersion: 1,
-    issuedAt,
-    expiresAt: snapshotExpiresAt,
-    meta: {
-      targets: { version: 7, sha256: trustMetadataDigest(targets) },
-    },
-  });
-  const timestamp = delegatedEnvelope(root, ["timestamp"], {
-    schemaVersion: 1,
-    type: "fased-lifecycle-timestamp",
-    version: 11,
-    rootVersion: 1,
-    issuedAt,
-    expiresAt: timestampExpiresAt,
-    meta: {
-      snapshot: { version: 9, sha256: trustMetadataDigest(snapshot) },
-    },
-  });
-  return { root, targets, snapshot, timestamp };
-}
-
-function verifyFixture(fixture: ReturnType<typeof chainFixture>, previousState = null) {
-  return verifyLifecycleTrustChain({
-    candidateRootEnvelope: fixture.root.envelope,
-    pinnedRootSha256: trustMetadataDigest(fixture.root.envelope),
-    timestampEnvelope: fixture.timestamp,
-    snapshotEnvelope: fixture.snapshot,
-    targetsEnvelope: fixture.targets,
+  return verifyLifecycleTrustPolicy({
+    candidateRootEnvelope: fixture.envelope,
+    pinnedRootSha256: trustMetadataDigest(fixture.envelope),
     expectedVersion: releaseVersion,
-    channel: "stable",
-    platform: "linux-x64",
+    repository: OFFICIAL_GITHUB_RELEASE_AUTHORITY.repository,
+    workflow: OFFICIAL_GITHUB_RELEASE_AUTHORITY.workflow,
+    sourceRef: `refs/tags/v${releaseVersion}`,
+    selfHostedRunner: false,
+    targetDigests: [digest("a"), digest("b")],
     previousState,
     now,
   });
 }
 
-describe("threshold lifecycle trust policy", () => {
-  it("accepts an immutable 2-of-3 root and a delegated timestamp/snapshot/targets chain", () => {
-    const fixture = chainFixture();
-    const result = verifyFixture(fixture);
-    expect(result).toMatchObject({
-      root: { type: "fased-lifecycle-root", version: 1 },
-      targets: { type: "fased-lifecycle-targets", version: 7 },
-      state: {
-        rootVersion: 1,
-        timestampVersion: 11,
-        snapshotVersion: 9,
-        targetsVersion: 7,
+describe("official release root policy", () => {
+  it("accepts 2-of-3 roots and the exact automatic GitHub release authority", () => {
+    const fixture = rootFixture();
+    expect(verifyFixture(fixture)).toMatchObject({
+      root: {
+        type: "fased-lifecycle-root",
+        version: 1,
+        releaseAuthority: OFFICIAL_GITHUB_RELEASE_AUTHORITY,
       },
+      authority: OFFICIAL_GITHUB_RELEASE_AUTHORITY,
+      state: { schemaVersion: 1, rootVersion: 1 },
     });
   });
 
-  it("rejects a single root signature and cannot count a duplicate signer twice", () => {
+  it("rejects one root signature and cannot count one root twice", () => {
     const fixture = rootFixture();
     const oneSignature = {
       ...fixture.envelope,
@@ -220,24 +124,35 @@ describe("threshold lifecycle trust policy", () => {
     ).toThrow("unique sorted key IDs");
   });
 
-  it("rejects signatures from delegated roles on root metadata", () => {
+  it("rejects a fork, another workflow, another tag, or a self-hosted release runner", () => {
     const fixture = rootFixture();
-    const withDelegatedSignature = signTrustEnvelope(fixture.envelope.signed, [
-      fixture.rootKeys[0],
-      fixture.rootKeys[1],
-      fixture.delegated.stable,
-    ]);
-    expect(() =>
-      verifyInitialLifecycleRoot(withDelegatedSignature, {
-        pinnedSha256: trustMetadataDigest(withDelegatedSignature),
-        now,
-      }),
-    ).toThrow("outside the root role");
+    const root = verifyInitialLifecycleRoot(fixture.envelope, {
+      pinnedSha256: trustMetadataDigest(fixture.envelope),
+      now,
+    });
+    const valid = {
+      expectedVersion: releaseVersion,
+      repository: OFFICIAL_GITHUB_RELEASE_AUTHORITY.repository,
+      workflow: OFFICIAL_GITHUB_RELEASE_AUTHORITY.workflow,
+      sourceRef: `refs/tags/v${releaseVersion}`,
+      selfHostedRunner: false,
+      targetDigests: [digest("a")],
+    };
+    for (const override of [
+      { repository: "someone/fork" },
+      { workflow: "someone/fork/.github/workflows/release.yml" },
+      { sourceRef: "refs/tags/v9.9.9" },
+      { selfHostedRunner: true },
+    ]) {
+      expect(() => verifyLifecycleReleaseAuthority(root, { ...valid, ...override })).toThrow(
+        "root-approved GitHub attestation authority",
+      );
+    }
   });
 
-  it("requires every root rotation to advance once and meet both old and new 2-of-3 thresholds", () => {
+  it("requires an exact next root version signed by both old and new thresholds", () => {
     const current = rootFixture();
-    const next = rootFixture({ version: 2, oldRootKeys: current.rootKeys });
+    const next = rootFixture({ version: 2, oldRoots: current.roots });
     expect(verifyLifecycleRootRotation(current.envelope, next.envelope, { now }).version).toBe(2);
 
     const withoutOldThreshold = rootFixture({ version: 2 });
@@ -245,59 +160,48 @@ describe("threshold lifecycle trust policy", () => {
       verifyLifecycleRootRotation(current.envelope, withoutOldThreshold.envelope, { now }),
     ).toThrow("root signature threshold");
 
-    const skipped = rootFixture({ version: 3, oldRootKeys: current.rootKeys });
+    const skipped = rootFixture({ version: 3, oldRoots: current.roots });
     expect(() => verifyLifecycleRootRotation(current.envelope, skipped.envelope, { now })).toThrow(
       "advance exactly one version",
     );
   });
 
-  it("fails closed for revoked releases, keys, and target digests", () => {
-    const releaseRevoked = chainFixture(rootFixture({ revokedReleases: [releaseVersion] }));
-    expect(() => verifyFixture(releaseRevoked)).toThrow("release is revoked");
-
-    const digestRevoked = chainFixture(rootFixture({ revokedDigests: [digest("b")] }));
-    expect(() => verifyFixture(digestRevoked)).toThrow("target digest is revoked");
-
-    const keyRevoked = chainFixture(rootFixture({ revokeRole: "controller" }));
-    expect(() => verifyFixture(keyRevoked)).toThrow();
-  });
-
-  it("prevents freeze, rollback, and same-version equivocation", () => {
-    const fixture = chainFixture();
-    const accepted = verifyFixture(fixture);
-    const staleTimestamp = {
-      ...fixture.timestamp,
-      signed: {
-        ...fixture.timestamp.signed,
-        expiresAt: "2026-07-29T06:00:00.000Z",
+  it("rejects malformed GitHub release authority even when root-signed", () => {
+    const fixture = rootFixture({
+      releaseAuthority: {
+        ...OFFICIAL_GITHUB_RELEASE_AUTHORITY,
+        workflow: "someone/fork/release.sh",
       },
-    };
+    });
     expect(() =>
-      verifyLifecycleTrustChain({
-        candidateRootEnvelope: fixture.root.envelope,
-        pinnedRootSha256: trustMetadataDigest(fixture.root.envelope),
-        timestampEnvelope: staleTimestamp,
-        snapshotEnvelope: fixture.snapshot,
-        targetsEnvelope: fixture.targets,
-        expectedVersion: releaseVersion,
-        channel: "stable",
-        platform: "linux-x64",
+      verifyInitialLifecycleRoot(fixture.envelope, {
+        pinnedSha256: trustMetadataDigest(fixture.envelope),
         now,
       }),
-    ).toThrow("stale");
+    ).toThrow("canonical GitHub release workflow");
+  });
 
-    expect(() =>
-      verifyFixture(fixture, {
-        ...accepted.state,
-        targetsVersion: accepted.state.targetsVersion + 1,
-      }),
-    ).toThrow("below its trusted version floor");
+  it("fails closed for root-revoked releases and target digests", () => {
+    expect(() => verifyFixture(rootFixture({ revokedReleases: [releaseVersion] }))).toThrow(
+      "release is revoked",
+    );
+    expect(() => verifyFixture(rootFixture({ revokedDigests: [digest("a")] }))).toThrow(
+      "target digest is revoked",
+    );
+  });
 
+  it("rejects root rollback, same-version equivocation, and expired policy", () => {
+    const current = rootFixture();
+    const accepted = verifyFixture(current);
     expect(() =>
-      verifyFixture(fixture, {
+      verifyFixture(rootFixture(), {
         ...accepted.state,
-        targetsSha256: digest("f"),
+        rootVersion: accepted.state.rootVersion + 1,
       }),
-    ).toThrow("changed without advancing");
+    ).toThrow("trusted root floor");
+    expect(() => verifyFixture(rootFixture(), accepted.state)).toThrow("trusted root floor");
+    expect(() => verifyFixture(rootFixture({ expires: "2026-07-29T11:59:59.000Z" }))).toThrow(
+      "stale",
+    );
   });
 });

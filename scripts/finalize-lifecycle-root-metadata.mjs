@@ -27,7 +27,7 @@ export function finalizeLifecycleRootMetadata({ request, signatures, now = Date.
   if (!Array.isArray(signatures) || signatures.length < 2 || signatures.length > 3) {
     failTrust("lifecycle root finalization requires two or three root signatures");
   }
-  const rootIds = new Set(request.signed?.roles?.root?.keyIds ?? []);
+  const rootIds = new Set(request.signed?.root?.keyIds ?? []);
   const envelopeSignatures = signatures
     .map(({ keyId, signature }) => {
       if (

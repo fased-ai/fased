@@ -1,7 +1,6 @@
 node_modules
 **/node_modules/
 .env
-gha-creds-*.json
 docker-compose.extra.yml
 dist
 bun.lock

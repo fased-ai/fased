@@ -15,46 +15,96 @@ import {
 } from "./lifecycle-trust-crypto.mjs";
 
 const MAX_ROOT_VALIDITY_MS = 5 * 366 * 24 * 60 * 60 * 1000;
-export const LIFECYCLE_DELEGATED_ROLES = Object.freeze([
-  "application",
-  "beta",
-  "controller",
-  "dependencies",
-  "platform",
-  "signer",
-  "snapshot",
-  "stable",
-  "timestamp",
-]);
-const REQUIRED_ROOT_ROLES = Object.freeze(
-  [...LIFECYCLE_DELEGATED_ROLES, "root"].toSorted((left, right) => left.localeCompare(right)),
-);
 
-function parseRole(value, keys, label) {
-  exactTrustKeys(value, ["keyIds", "threshold"], label);
-  if (!Array.isArray(value.keyIds) || value.keyIds.length === 0) {
-    failTrust(`${label} must contain key IDs`);
+export const OFFICIAL_GITHUB_RELEASE_AUTHORITY = Object.freeze({
+  type: "github-artifact-attestation-v1",
+  repository: "fased-ai/fased",
+  workflow: "fased-ai/fased/.github/workflows/hosted-runtime-release.yml",
+  sourceRefPrefix: "refs/tags/v",
+  denySelfHostedRunners: true,
+});
+
+function parseRootRole(value, keys) {
+  exactTrustKeys(value, ["keyIds", "threshold"], "lifecycle root role");
+  if (!Array.isArray(value.keyIds)) {
+    failTrust("lifecycle root role key IDs must be an array");
   }
   const keyIds = value.keyIds.map((keyId) => String(keyId ?? ""));
   if (
+    keyIds.length !== 3 ||
     keyIds.some((keyId) => !KEY_ID_PATTERN.test(keyId) || !keys.has(keyId)) ||
     new Set(keyIds).size !== keyIds.length ||
     keyIds.join(",") !== [...keyIds].toSorted((left, right) => left.localeCompare(right)).join(",")
   ) {
-    failTrust(`${label} key IDs must be unique, sorted, and declared by the root`);
+    failTrust("lifecycle root role must contain three unique sorted declared keys");
   }
-  const threshold = parsePositiveMetadataVersion(value.threshold, `${label} threshold`);
-  if (threshold > keyIds.length) {
-    failTrust(`${label} threshold exceeds its key count`);
+  if (value.threshold !== 2) {
+    failTrust("lifecycle root role must be exactly 2-of-3");
   }
-  return Object.freeze({ keyIds: Object.freeze(keyIds), threshold });
+  if (keys.size !== keyIds.length) {
+    failTrust("lifecycle root metadata must not contain non-root signing keys");
+  }
+  return Object.freeze({ keyIds: Object.freeze(keyIds), threshold: 2 });
 }
 
-export function parseLifecycleRootEnvelope(value, now) {
+function parseReleaseAuthority(value) {
+  exactTrustKeys(
+    value,
+    ["type", "repository", "workflow", "sourceRefPrefix", "denySelfHostedRunners"],
+    "lifecycle release authority",
+  );
+  if (
+    value.type !== OFFICIAL_GITHUB_RELEASE_AUTHORITY.type ||
+    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(value.repository || "") ||
+    !new RegExp(
+      `^${value.repository.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}` +
+        String.raw`/\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml$`,
+      "u",
+    ).test(value.workflow || "") ||
+    value.sourceRefPrefix !== OFFICIAL_GITHUB_RELEASE_AUTHORITY.sourceRefPrefix ||
+    value.denySelfHostedRunners !== true
+  ) {
+    failTrust("lifecycle release authority is not a canonical GitHub release workflow");
+  }
+  return Object.freeze({
+    type: value.type,
+    repository: value.repository,
+    workflow: value.workflow,
+    sourceRefPrefix: value.sourceRefPrefix,
+    denySelfHostedRunners: true,
+  });
+}
+
+function parseSortedUnique(entries, pattern, label) {
+  if (!Array.isArray(entries)) {
+    failTrust(`${label} must be an array`);
+  }
+  const values = entries.map((entry) => String(entry ?? ""));
+  if (
+    values.some((entry) => !pattern.test(entry)) ||
+    new Set(values).size !== values.length ||
+    values.join(",") !== [...values].toSorted((left, right) => left.localeCompare(right)).join(",")
+  ) {
+    failTrust(`${label} must be unique, sorted, and canonical`);
+  }
+  return Object.freeze(values);
+}
+
+export function parseLifecycleRootEnvelope(value, now = Date.now()) {
   const parsed = parseTrustEnvelope(value, "lifecycle root envelope");
   exactTrustKeys(
     parsed.signed,
-    ["schemaVersion", "type", "version", "issuedAt", "expiresAt", "keys", "roles", "revocations"],
+    [
+      "schemaVersion",
+      "type",
+      "version",
+      "issuedAt",
+      "expiresAt",
+      "keys",
+      "root",
+      "releaseAuthority",
+      "revocations",
+    ],
     "lifecycle root metadata",
   );
   if (parsed.signed.schemaVersion !== 1 || parsed.signed.type !== "fased-lifecycle-root") {
@@ -72,8 +122,8 @@ export function parseLifecycleRootEnvelope(value, now) {
     failTrust("lifecycle root metadata is stale or has an invalid validity window");
   }
 
-  if (!isPlainTrustObject(parsed.signed.keys) || Object.keys(parsed.signed.keys).length === 0) {
-    failTrust("lifecycle root metadata must declare keys");
+  if (!isPlainTrustObject(parsed.signed.keys) || Object.keys(parsed.signed.keys).length !== 3) {
+    failTrust("lifecycle root metadata must declare exactly three keys");
   }
   const keys = new Map();
   for (const keyId of Object.keys(parsed.signed.keys).toSorted()) {
@@ -86,70 +136,15 @@ export function parseLifecycleRootEnvelope(value, now) {
     }
     keys.set(keyId, key);
   }
-
-  if (!isPlainTrustObject(parsed.signed.roles)) {
-    failTrust("lifecycle root roles are invalid");
-  }
-  const roleNames = Object.keys(parsed.signed.roles).toSorted();
-  if (roleNames.join(",") !== REQUIRED_ROOT_ROLES.join(",")) {
-    failTrust("lifecycle root metadata does not declare the complete delegated role set");
-  }
-  const roles = new Map(
-    roleNames.map((name) => [
-      name,
-      parseRole(parsed.signed.roles[name], keys, `lifecycle ${name} role`),
-    ]),
-  );
-  const rootRole = roles.get("root");
-  if (rootRole.threshold !== 2 || rootRole.keyIds.length !== 3) {
-    failTrust("lifecycle root role must be exactly 2-of-3");
-  }
-  const rootKeys = new Set(rootRole.keyIds);
-  const delegatedKeyOwners = new Map();
-  for (const [roleName, role] of roles) {
-    if (roleName === "root") {
-      continue;
-    }
-    for (const keyId of role.keyIds) {
-      if (rootKeys.has(keyId)) {
-        failTrust("offline lifecycle root keys cannot be reused for delegated release roles");
-      }
-      const priorRole = delegatedKeyOwners.get(keyId);
-      if (priorRole) {
-        failTrust(
-          `delegated lifecycle key is shared by ${String(priorRole)} and ${String(roleName)}`,
-        );
-      }
-      delegatedKeyOwners.set(keyId, roleName);
-    }
-  }
+  const root = parseRootRole(parsed.signed.root, keys);
+  const releaseAuthority = parseReleaseAuthority(parsed.signed.releaseAuthority);
 
   exactTrustKeys(
     parsed.signed.revocations,
-    ["keyIds", "releaseVersions", "targetDigests"],
+    ["releaseVersions", "targetDigests"],
     "lifecycle root revocations",
   );
-  const parseSortedUnique = (entries, pattern, label) => {
-    if (!Array.isArray(entries)) {
-      failTrust(`${label} must be an array`);
-    }
-    const values = entries.map((entry) => String(entry ?? ""));
-    if (
-      values.some((entry) => !pattern.test(entry)) ||
-      new Set(values).size !== values.length ||
-      values.join(",") !==
-        [...values].toSorted((left, right) => left.localeCompare(right)).join(",")
-    ) {
-      failTrust(`${label} must be unique, sorted, and canonical`);
-    }
-    return Object.freeze(values);
-  };
   const revocations = Object.freeze({
-    keyIds: parseSortedUnique(
-      parsed.signed.revocations.keyIds,
-      KEY_ID_PATTERN,
-      "revoked lifecycle keys",
-    ),
     releaseVersions: parseSortedUnique(
       parsed.signed.revocations.releaseVersions,
       VERSION_PATTERN,
@@ -161,34 +156,22 @@ export function parseLifecycleRootEnvelope(value, now) {
       "revoked lifecycle target digests",
     ),
   });
-  const revokedKeys = new Set(revocations.keyIds);
-  for (const [roleName, role] of roles) {
-    if (role.keyIds.filter((keyId) => !revokedKeys.has(keyId)).length < role.threshold) {
-      failTrust(`lifecycle ${String(roleName)} role cannot meet its threshold after revocation`);
-    }
-  }
   return Object.freeze({
     ...parsed,
     version,
     issuedAt,
     expiresAt,
     keys,
-    roles,
+    root,
+    releaseAuthority,
     revocations,
   });
 }
 
-export function requireLifecycleRoleThresholds(root, verified, roles) {
-  const revoked = new Set(root.revocations.keyIds);
-  for (const roleName of roles) {
-    const role = root.roles.get(roleName);
-    if (!role) {
-      failTrust(`unknown lifecycle delegated role: ${roleName}`);
-    }
-    const count = role.keyIds.filter((keyId) => verified.has(keyId) && !revoked.has(keyId)).length;
-    if (count < role.threshold) {
-      failTrust(`lifecycle ${roleName} signature threshold was not met`);
-    }
+function requireRootThreshold(root, verified) {
+  const count = root.root.keyIds.filter((keyId) => verified.has(keyId)).length;
+  if (count < root.root.threshold) {
+    failTrust("lifecycle root signature threshold was not met");
   }
 }
 
@@ -200,15 +183,11 @@ export function verifyInitialLifecycleRoot(envelope, { pinnedSha256, now = Date.
     failTrust("initial lifecycle root does not match the immutable bootstrap pin");
   }
   const root = parseLifecycleRootEnvelope(envelope, now);
-  const rootKeyIds = new Set(root.roles.get("root").keyIds);
+  const rootKeyIds = new Set(root.root.keyIds);
   if (root.signatures.some((signature) => !rootKeyIds.has(signature.keyId))) {
     failTrust("initial lifecycle root contains a signature outside the root role");
   }
-  const verified = verifyKnownTrustSignatures(root, [root]);
-  if (root.signatures.some((signature) => root.revocations.keyIds.includes(signature.keyId))) {
-    failTrust("initial lifecycle root contains a signature from a revoked key");
-  }
-  requireLifecycleRoleThresholds(root, verified, ["root"]);
+  requireRootThreshold(root, verifyKnownTrustSignatures(root, [root]));
   return root;
 }
 
@@ -218,32 +197,26 @@ export function verifyLifecycleRootRotation(
   { now = Date.now() } = {},
 ) {
   const trusted = parseLifecycleRootEnvelope(trustedEnvelope, now);
-  const trustedSignatures = verifyKnownTrustSignatures(trusted, [trusted]);
-  if (
-    trusted.signatures.some((signature) => trusted.revocations.keyIds.includes(signature.keyId))
-  ) {
-    failTrust("trusted lifecycle root contains a signature from a revoked key");
-  }
-  requireLifecycleRoleThresholds(trusted, trustedSignatures, ["root"]);
-
+  requireRootThreshold(trusted, verifyKnownTrustSignatures(trusted, [trusted]));
   if (trustMetadataDigest(trustedEnvelope) === trustMetadataDigest(candidateEnvelope)) {
     return trusted;
   }
+
   const candidate = parseLifecycleRootEnvelope(candidateEnvelope, now);
   if (candidate.version !== trusted.version + 1) {
     failTrust("lifecycle root rotation must advance exactly one version");
   }
-  const allowedRootKeyIds = new Set([
-    ...trusted.roles.get("root").keyIds,
-    ...candidate.roles.get("root").keyIds,
-  ]);
+  const allowedRootKeyIds = new Set([...trusted.root.keyIds, ...candidate.root.keyIds]);
   if (candidate.signatures.some((signature) => !allowedRootKeyIds.has(signature.keyId))) {
     failTrust("lifecycle root rotation contains a signature outside the root roles");
   }
   const verified = verifyKnownTrustSignatures(candidate, [trusted, candidate]);
-  requireLifecycleRoleThresholds(trusted, verified, ["root"]);
-  requireLifecycleRoleThresholds(candidate, verified, ["root"]);
+  requireRootThreshold(trusted, verified);
+  requireRootThreshold(candidate, verified);
   return candidate;
 }
 
-export const __testing = Object.freeze({ REQUIRED_ROOT_ROLES });
+export const __testing = Object.freeze({
+  MAX_ROOT_VALIDITY_MS,
+  parseReleaseAuthority,
+});
