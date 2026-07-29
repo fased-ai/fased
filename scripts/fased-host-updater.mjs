@@ -64,8 +64,12 @@ const TRANSACTIONS_DIR = path.join(STATE_DIR, "transactions");
 const MAX_REQUEST_BYTES = 4096;
 const REQUEST_TIMEOUT_MS = 20 * 60_000;
 const CROSS_PRODUCT_HEALTH_TIMEOUT_MS = 30_000;
-const JOURNAL_SCHEMA_VERSION = 3;
+const JOURNAL_SCHEMA_VERSION = 4;
 const PROTOCOL_SCHEMA_VERSION = 2;
+const MIGRATION_SELECTION_SCHEMA_VERSION = 1;
+const SUPPORTED_MIGRATION_PROFILES = new Set(["protected-local", "hosting"]);
+const SUPPORTED_MANAGED_INSTALL_SCHEMAS = new Set([null, 1, 2]);
+const SUPPORTED_WALLET_REGISTRY_SCHEMAS = new Set([null, 1]);
 const TRANSACTION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TRANSACTION_OPERATIONS = new Set([
@@ -965,6 +969,217 @@ function canonicalJSON(value) {
   return JSON.stringify(value);
 }
 
+function exactObjectKeys(value, expected, label) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).toSorted().join(",") !==
+      [...expected].toSorted((left, right) => left.localeCompare(right)).join(",")
+  ) {
+    throw new Error(`${label} is invalid`);
+  }
+}
+
+function parseMigrationProtocolRange(value) {
+  exactObjectKeys(value, ["current", "min", "max"], "installed signer protocol capability");
+  if (
+    !Number.isSafeInteger(value.current) ||
+    !Number.isSafeInteger(value.min) ||
+    !Number.isSafeInteger(value.max) ||
+    value.min < 1 ||
+    value.min > value.current ||
+    value.current > value.max
+  ) {
+    throw new Error("installed signer protocol capability is invalid");
+  }
+  return Object.freeze({ current: value.current, min: value.min, max: value.max });
+}
+
+function parseMigrationStateSchemas(value) {
+  exactObjectKeys(
+    value,
+    ["managedInstall", "walletRegistry", "signer", "mining", "federation"],
+    "installed lifecycle state schemas",
+  );
+  if (
+    !SUPPORTED_MANAGED_INSTALL_SCHEMAS.has(value.managedInstall) ||
+    !SUPPORTED_WALLET_REGISTRY_SCHEMAS.has(value.walletRegistry) ||
+    value.signer !== 2 ||
+    value.mining !== 1 ||
+    value.federation !== 2
+  ) {
+    throw new Error("installed lifecycle state schemas are unsupported");
+  }
+  return Object.freeze({
+    managedInstall: value.managedInstall ?? null,
+    walletRegistry: value.walletRegistry ?? null,
+    signer: value.signer,
+    mining: value.mining,
+    federation: value.federation,
+  });
+}
+
+function lifecycleMigrationInventory(topology, updaterProtocol = PROTOCOL_SCHEMA_VERSION) {
+  if (
+    !topology ||
+    typeof topology !== "object" ||
+    Array.isArray(topology) ||
+    topology.pendingGatewayUnit ||
+    topology.pendingStateDir ||
+    !SUPPORTED_MIGRATION_PROFILES.has(topology.profile) ||
+    typeof topology.managedApplication !== "boolean" ||
+    !Number.isSafeInteger(updaterProtocol) ||
+    updaterProtocol < 1
+  ) {
+    throw new Error("installed lifecycle topology is incomplete or unsupported");
+  }
+  exactObjectKeys(
+    topology.capabilities,
+    ["lifecycleControllerProtocol", "signerProtocol", "declaredStateRegistry"],
+    "installed lifecycle capabilities",
+  );
+  const signerProtocol = parseMigrationProtocolRange(topology.capabilities.signerProtocol);
+  const stateSchemas = parseMigrationStateSchemas(topology.stateSchemas);
+  if (
+    topology.capabilities.lifecycleControllerProtocol !== CONTROLLER_PROTOCOL_VERSION ||
+    topology.capabilities.declaredStateRegistry !== DECLARED_STATE_SCHEMA_VERSION ||
+    signerProtocol.current !== 2 ||
+    updaterProtocol !== PROTOCOL_SCHEMA_VERSION ||
+    (topology.profile === "protected-local" && topology.managedApplication !== true) ||
+    (topology.managedApplication === false && stateSchemas.managedInstall !== null)
+  ) {
+    throw new Error("installed lifecycle topology has no supported migration path");
+  }
+  return Object.freeze({
+    schemaVersion: MIGRATION_SELECTION_SCHEMA_VERSION,
+    profile: topology.profile,
+    platformAdapter: "linux-systemd",
+    serviceTopology:
+      topology.profile === "protected-local" ? "protected-local-system-v1" : "hosting-system-v1",
+    managedApplication: topology.managedApplication,
+    updaterProtocol,
+    controllerProtocol: topology.capabilities.lifecycleControllerProtocol,
+    signerProtocol,
+    declaredStateRegistry: topology.capabilities.declaredStateRegistry,
+    stateSchemas,
+    interruptedTransaction: "none",
+  });
+}
+
+function migrationSelectionFromInventory(inventory) {
+  exactObjectKeys(
+    inventory,
+    [
+      "schemaVersion",
+      "profile",
+      "platformAdapter",
+      "serviceTopology",
+      "managedApplication",
+      "updaterProtocol",
+      "controllerProtocol",
+      "signerProtocol",
+      "declaredStateRegistry",
+      "stateSchemas",
+      "interruptedTransaction",
+    ],
+    "installed lifecycle migration inventory",
+  );
+  const normalized = lifecycleMigrationInventory(
+    {
+      profile: inventory.profile,
+      managedApplication: inventory.managedApplication,
+      capabilities: {
+        lifecycleControllerProtocol: inventory.controllerProtocol,
+        signerProtocol: inventory.signerProtocol,
+        declaredStateRegistry: inventory.declaredStateRegistry,
+      },
+      stateSchemas: inventory.stateSchemas,
+    },
+    inventory.updaterProtocol,
+  );
+  if (
+    inventory.schemaVersion !== MIGRATION_SELECTION_SCHEMA_VERSION ||
+    inventory.platformAdapter !== normalized.platformAdapter ||
+    inventory.serviceTopology !== normalized.serviceTopology ||
+    inventory.interruptedTransaction !== "none"
+  ) {
+    throw new Error("installed lifecycle migration inventory is unsupported");
+  }
+  const adapters = Object.freeze({
+    application:
+      normalized.stateSchemas.managedInstall === null
+        ? "managed-install-absent"
+        : normalized.stateSchemas.managedInstall === 1
+          ? "managed-install-v1-to-v2"
+          : "managed-install-v2",
+    controller: "controller-protocol-v2",
+    signer: "signer-schema-v2",
+    wallet:
+      normalized.stateSchemas.walletRegistry === null
+        ? "wallet-registry-absent"
+        : "wallet-registry-v1",
+    mining: "mining-schema-v1",
+    federation: "federation-schema-v2",
+    sharedState: "declared-state-registry-v1",
+    profileAccess:
+      normalized.profile === "protected-local" ? "protected-local-system-v1" : "hosting-system-v1",
+  });
+  const unsigned = Object.freeze({
+    schemaVersion: MIGRATION_SELECTION_SCHEMA_VERSION,
+    inventory: normalized,
+    adapters,
+  });
+  return Object.freeze({
+    ...unsigned,
+    selectionDigest: `sha256:${createHash("sha256").update(canonicalJSON(unsigned)).digest("hex")}`,
+  });
+}
+
+function selectLifecycleMigration(topology, updaterProtocol = PROTOCOL_SCHEMA_VERSION) {
+  return migrationSelectionFromInventory(lifecycleMigrationInventory(topology, updaterProtocol));
+}
+
+function validateLifecycleMigrationSelection(value) {
+  if (value == null) {
+    return null;
+  }
+  exactObjectKeys(
+    value,
+    ["schemaVersion", "inventory", "adapters", "selectionDigest"],
+    "lifecycle migration selection",
+  );
+  const expected = migrationSelectionFromInventory(value.inventory);
+  if (canonicalJSON(value) !== canonicalJSON(expected)) {
+    throw new Error("lifecycle migration selection is invalid");
+  }
+  return expected;
+}
+
+function assertSameMigrationSelection(previous, next) {
+  if (
+    previous &&
+    (previous.selectionDigest !== next.selectionDigest ||
+      canonicalJSON(previous) !== canonicalJSON(next))
+  ) {
+    throw new Error("installed lifecycle topology changed after migration selection");
+  }
+  return next;
+}
+
+function lifecycleMigrationReceipt(selection) {
+  if (!selection) {
+    return null;
+  }
+  return Object.freeze({
+    schemaVersion: MIGRATION_SELECTION_SCHEMA_VERSION,
+    profile: selection.inventory.profile,
+    serviceTopology: selection.inventory.serviceTopology,
+    selectionDigest: selection.selectionDigest,
+    adapters: selection.adapters,
+  });
+}
+
 function parseUnifiedHostedSignerRelease(value, expectedVersion, platform) {
   if (
     !value ||
@@ -1750,7 +1965,7 @@ async function validateJournal(value, context) {
   if (
     !value ||
     typeof value !== "object" ||
-    !new Set([1, 2, JOURNAL_SCHEMA_VERSION]).has(value.schemaVersion) ||
+    !new Set([1, 2, 3, JOURNAL_SCHEMA_VERSION]).has(value.schemaVersion) ||
     !TRANSACTION_PHASES.has(value.phase)
   ) {
     throw new Error("host updater transaction journal is invalid");
@@ -1815,6 +2030,7 @@ async function validateJournal(value, context) {
     context,
     version,
   );
+  const migrationSelection = validateLifecycleMigrationSelection(value.migrationSelection);
   const serviceBoundary = validateProtectedServiceBoundary(value.serviceBoundary, context);
   const declaredState = validateDeclaredStateTransaction(value.declaredState);
   const healthReceipt = validateCrossProductHealthReceipt(value.healthReceipt);
@@ -1828,6 +2044,7 @@ async function validateJournal(value, context) {
     releaseBinding,
     application,
     managedApplication,
+    migrationSelection,
     serviceBoundary,
     declaredState,
     healthReceipt,
@@ -4141,6 +4358,10 @@ async function prepareSignerRelease(request, context) {
   await assertRollbackFloor(context, request.version);
   const topology = await context.discoverApplicationTopology();
   context.applicationTopology = topology;
+  const migrationSelection =
+    topology.pendingGatewayUnit || topology.pendingStateDir
+      ? null
+      : selectLifecycleMigration(topology, request.schemaVersion ?? PROTOCOL_SCHEMA_VERSION);
   const applicationState = managedApplicationStateFromTopology(topology) ?? {};
   context.applicationState = applicationState;
   const applicationStateResult = {
@@ -4243,6 +4464,7 @@ async function prepareSignerRelease(request, context) {
       previousSignerInvariant,
       application,
       managedApplication,
+      migrationSelection,
       serviceBoundary,
       declaredState: null,
       healthReceipt: null,
@@ -4273,6 +4495,7 @@ async function prepareSignerRelease(request, context) {
     changed: journal.changed,
     controllerChanged: journal.controllerChanged === true,
     release: journal.release,
+    migration: lifecycleMigrationReceipt(journal.migrationSelection),
     ...applicationStateResult,
   };
 }
@@ -4550,10 +4773,18 @@ async function gateGatewayRelease(request, context) {
   }
   context.applicationTopology = topology;
   context.applicationState = managedApplicationStateFromTopology(topology);
-  const declaredState = await context.inventoryApplicationState(topology);
+  const migrationSelection = assertSameMigrationSelection(
+    journal.migrationSelection,
+    selectLifecycleMigration(topology, request.schemaVersion ?? PROTOCOL_SCHEMA_VERSION),
+  );
+  if (migrationSelection.adapters.sharedState !== "declared-state-registry-v1") {
+    throw new Error("selected lifecycle migration has no supported shared-state adapter");
+  }
+  const declaredState = await context.inventoryApplicationState(topology, migrationSelection);
   journal = await writeJournal(context, {
     ...journal,
     phase: "state-reconciling",
+    migrationSelection,
     declaredState,
   });
   if (declaredState) {
@@ -4562,7 +4793,7 @@ async function gateGatewayRelease(request, context) {
       declaredState.operatorUid,
       declaredState.configGid,
     );
-    const result = await context.reconcileApplicationState(declaredState);
+    const result = await context.reconcileApplicationState(declaredState, migrationSelection);
     journal = await writeJournal(context, {
       ...journal,
       phase: "state-reconciled",
@@ -4640,6 +4871,9 @@ async function activateSignerRelease(request, context) {
   if (journal.phase === "prepared") {
     await gateGatewayRelease(request, context);
     journal = await readJournal(context);
+  }
+  if (!journal.migrationSelection) {
+    throw new Error("signer transaction has no validated lifecycle migration selection");
   }
   if (journal.phase !== "state-reconciled") {
     throw new Error(`signer transaction cannot activate from phase ${journal.phase}`);
@@ -5122,6 +5356,7 @@ async function recordTargetApplicationSuccess(context, journal) {
         mode: "managed",
         version: journal.version,
         alreadyCurrent: false,
+        migration: lifecycleMigrationReceipt(journal.migrationSelection),
         updatedAt: new Date().toISOString(),
       },
       null,
@@ -5147,6 +5382,7 @@ async function finishCommit(context, journal) {
     phase: "committed",
     changed: journal.changed,
     release: journal.release,
+    migration: lifecycleMigrationReceipt(journal.migrationSelection),
   };
 }
 
@@ -5188,6 +5424,10 @@ async function alreadyCommittedRelease(request, context) {
   const topology = await context.discoverApplicationTopology();
   context.applicationTopology = topology;
   context.applicationState = managedApplicationStateFromTopology(topology);
+  const migrationSelection =
+    topology.pendingGatewayUnit || topology.pendingStateDir
+      ? null
+      : selectLifecycleMigration(topology, request.schemaVersion ?? PROTOCOL_SCHEMA_VERSION);
   if (context.applicationState?.stateDir) {
     const paths = managedApplicationPaths(context.applicationState.stateDir);
     const manifest = validateManagedInstallManifest(
@@ -5222,6 +5462,7 @@ async function alreadyCommittedRelease(request, context) {
     phase: "committed",
     changed: false,
     release,
+    migration: lifecycleMigrationReceipt(migrationSelection),
   };
 }
 
@@ -5646,6 +5887,9 @@ export const __testing = {
   releaseArchitecture,
   restartGatewayService,
   rollbackSignerRelease,
+  lifecycleMigrationInventory,
+  selectLifecycleMigration,
+  validateLifecycleMigrationSelection,
   stageOfficialControllerRelease,
   stageOfficialCandidate,
   stageProtectedApplicationRelease,

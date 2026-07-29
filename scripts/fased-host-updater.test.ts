@@ -498,6 +498,161 @@ describe("root-owned hosted updater protocol", () => {
     }
   });
 
+  it("selects migration only from topology, capabilities, and state schemas", () => {
+    const topology = {
+      schemaVersion: 1,
+      profile: "protected-local",
+      managedApplication: true,
+      capabilities: {
+        lifecycleControllerProtocol: 2,
+        signerProtocol: { current: 2, min: 2, max: 2 },
+        declaredStateRegistry: 1,
+      },
+      stateSchemas: {
+        managedInstall: 1,
+        walletRegistry: 1,
+        signer: 2,
+        mining: 1,
+        federation: 2,
+      },
+      targetRelease: {
+        version: "1.2.3",
+        commit: "a".repeat(40),
+        artifactDigest: `sha256:${"b".repeat(64)}`,
+      },
+    };
+    const first = __testing.selectLifecycleMigration(topology, 2);
+    const second = __testing.selectLifecycleMigration(
+      {
+        ...topology,
+        targetRelease: {
+          version: "9.8.7",
+          commit: "c".repeat(40),
+          artifactDigest: `sha256:${"d".repeat(64)}`,
+        },
+      },
+      2,
+    );
+
+    expect(first).toEqual(second);
+    expect(first.adapters).toMatchObject({
+      application: "managed-install-v1-to-v2",
+      controller: "controller-protocol-v2",
+      signer: "signer-schema-v2",
+      wallet: "wallet-registry-v1",
+      sharedState: "declared-state-registry-v1",
+      profileAccess: "protected-local-system-v1",
+    });
+    expect(JSON.stringify(first)).not.toContain("1.2.3");
+    expect(JSON.stringify(first)).not.toContain("9.8.7");
+  });
+
+  it("changes migration selection for state schema, never for release identity", () => {
+    const topology = {
+      schemaVersion: 1,
+      profile: "protected-local",
+      managedApplication: true,
+      capabilities: {
+        lifecycleControllerProtocol: 2,
+        signerProtocol: { current: 2, min: 2, max: 2 },
+        declaredStateRegistry: 1,
+      },
+      stateSchemas: {
+        managedInstall: 1,
+        walletRegistry: 1,
+        signer: 2,
+        mining: 1,
+        federation: 2,
+      },
+    };
+    const legacy = __testing.selectLifecycleMigration(topology, 2);
+    const current = __testing.selectLifecycleMigration(
+      {
+        ...topology,
+        stateSchemas: { ...topology.stateSchemas, managedInstall: 2 },
+      },
+      2,
+    );
+
+    expect(legacy.adapters.application).toBe("managed-install-v1-to-v2");
+    expect(current.adapters.application).toBe("managed-install-v2");
+    expect(legacy.selectionDigest).not.toBe(current.selectionDigest);
+  });
+
+  it("persists release identity and migration selection as independent transaction fields", async () => {
+    const fixture = await createFixture();
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+
+    const journal = await __testing.readJournal(fixture.context);
+    expect(journal).toMatchObject({
+      schemaVersion: 4,
+      version: "1.2.3",
+      release: signerRelease("1.2.3"),
+      migrationSelection: {
+        schemaVersion: 1,
+        inventory: {
+          profile: "hosting",
+          managedApplication: false,
+          updaterProtocol: 2,
+          controllerProtocol: 2,
+          stateSchemas: {
+            managedInstall: null,
+            walletRegistry: null,
+            signer: 2,
+            mining: 1,
+            federation: 2,
+          },
+        },
+        adapters: {
+          application: "managed-install-absent",
+          profileAccess: "hosting-system-v1",
+        },
+        selectionDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+      },
+    });
+    expect(JSON.stringify(journal.migrationSelection)).not.toContain("1.2.3");
+  });
+
+  it("fails closed when the installed migration tuple changes after preparation", async () => {
+    const fixture = await createFixture();
+    const topology = await fixture.context.discoverApplicationTopology();
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+    fixture.context.discoverApplicationTopology = async () => ({
+      ...topology,
+      stateSchemas: { ...topology.stateSchemas, walletRegistry: 1 },
+    });
+
+    await expect(
+      __testing.gateGatewayRelease(
+        request("gateGatewayRelease", TRANSACTION_ONE, "1.2.3"),
+        fixture.context,
+      ),
+    ).rejects.toThrow("installed lifecycle topology changed after migration selection");
+  });
+
+  it("rejects an unsupported migration tuple before staging release artifacts", async () => {
+    const fixture = await createFixture();
+    const topology = await fixture.context.discoverApplicationTopology();
+    fixture.context.discoverApplicationTopology = async () => ({
+      ...topology,
+      stateSchemas: { ...topology.stateSchemas, mining: 2 },
+    });
+
+    await expect(
+      __testing.prepareSignerRelease(
+        request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+        fixture.context,
+      ),
+    ).rejects.toThrow("installed lifecycle state schemas are unsupported");
+    expect(fixture.events).toEqual([]);
+  });
+
   it("discovers topology without mutating application state during preparation", async () => {
     const { context, events } = await createFixture();
     const discover = context.discoverApplicationTopology;
