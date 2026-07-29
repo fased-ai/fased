@@ -5,11 +5,11 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const docsRoot = path.join(root, "docs");
 const exactHostingCommand = [
-  "curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \\",
+  "curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \\",
   "| bash -s -- --hosting",
 ].join("\n");
 const exactHostingPrereleaseCommand = [
-  "curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \\",
+  "curl -fsSL https://github.com/fased-ai/fased/releases/download/vX.Y.Z-rc.N/install.sh \\",
   "| bash -s -- --hosting --release vX.Y.Z-rc.N --update-channel beta",
 ].join("\n");
 const expectedHostingPages = new Set([
@@ -85,7 +85,10 @@ for (const absolute of markdownFiles) {
     source.match(/^[ \t]*```(?:bash|sh)[^\n]*\n[\s\S]*?^[ \t]*```[ \t]*$/gmu) ?? [];
   for (const block of codeBlocks) {
     if (
-      block.includes("raw.githubusercontent.com/fased-ai/fased/main/install.sh") &&
+      (block.includes("https://github.com/fased-ai/fased/releases/latest/download/install.sh") ||
+        block.includes(
+          "https://github.com/fased-ai/fased/releases/download/vX.Y.Z-rc.N/install.sh",
+        )) &&
       /--hosting\b/u.test(block)
     ) {
       hostingPages.add(relative);
@@ -164,7 +167,7 @@ for (const relative of ["docs/install/index.md", "docs/zh-CN/install/index.md"])
 
 for (const relative of ["docs/install/vps.md", "docs/zh-CN/install/vps.md"]) {
   const source = read(relative);
-  const command = source.indexOf("raw.githubusercontent.com/fased-ai/fased/main/install.sh");
+  const command = source.indexOf("github.com/fased-ai/fased/releases/");
   const advanced = source.indexOf("<AccordionGroup>");
   if (command < 0 || advanced < 0 || command > advanced) {
     fail(`${relative} must show the exact normal command before Advanced content`);

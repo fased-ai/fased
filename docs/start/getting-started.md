@@ -18,7 +18,7 @@ Wallets, channels, skills, and Mining can wait.
     Run in macOS Terminal, a Linux terminal, or Ubuntu WSL2:
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
+    curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local
     ```
 
     Native Windows uses [WSL2 Ubuntu](/platforms/windows). Do not run this Bash
@@ -31,7 +31,7 @@ Wallets, channels, skills, and Mining can wait.
     root, then run:
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+    curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
       | bash -s -- --hosting
     ```
 

@@ -30,7 +30,7 @@ ssh root@YOUR_PUBLIC_VPS_IP
 ### 3. 安装 Fased
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
   | bash -s -- --hosting
 ```
 
@@ -67,8 +67,9 @@ fased update
     dependency 与 signer digest；同时检查 archive path、link、owner、可写
     mode、package version 和 build identity。
 
-    首次 mutable `main/install.sh` 下载仍是 bootstrap 信任。如需在任何 shell
-    执行前验证，使用下面的 exact-tag Advanced 流程。
+    流式入口来自最新的不可变稳定 GitHub Release。发布自动化会在证明前写入
+    精确版本，并拒绝覆盖已发布资产。未写入版本的流式脚本（包括
+    `main/install.sh`）会在安装前退出。
 
   </Accordion>
 

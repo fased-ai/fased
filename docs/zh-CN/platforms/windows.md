@@ -79,7 +79,7 @@ systemd=true
 不要在 PowerShell 中运行以下命令。请在 Ubuntu 提示符中运行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh \
+curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
   | bash -s -- --local
 ```
 

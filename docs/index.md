@@ -138,7 +138,7 @@ one place.
     PowerShell. On Linux, use your distro terminal.
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/fased-ai/fased/main/install.sh | bash -s -- --local
+    curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local
     ```
 
     Then open the dashboard:

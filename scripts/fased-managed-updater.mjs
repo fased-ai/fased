@@ -42,8 +42,6 @@ const DEFAULT_REGISTRY = "https://registry.npmjs.org";
 const DEFAULT_TIMEOUT_MS = 20 * 60_000;
 const RELEASE_REPOSITORY = "fased-ai/fased";
 const RELEASE_WORKFLOW = "fased-ai/fased/.github/workflows/hosted-runtime-release.yml";
-const PROTECTED_LOCAL_TEST_ARTIFACT_AUTHORIZATION =
-  "/etc/fased/testing/protected-local-artifact-source.json";
 const HOST_UPDATER_SOCKET = "/run/fased-host-updater/request.sock";
 const HOST_UPDATER_SCHEMA_VERSION = 2;
 const HOSTED_TRANSACTION_SCHEMA_VERSION = 1;
@@ -139,8 +137,8 @@ const LOCAL_SOURCE_CONTROLLER_FILES = [
   "fased-managed-updater.mjs",
 ];
 
-const PUBLIC_HOSTING_INSTALLER_URL =
-  "https://raw.githubusercontent.com/fased-ai/fased/main/install.sh";
+const PUBLIC_STABLE_INSTALLER_URL =
+  "https://github.com/fased-ai/fased/releases/latest/download/install.sh";
 const EXACT_RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
 
 export function hostingBootstrapCommand(version) {
@@ -150,7 +148,10 @@ export function hostingBootstrapCommand(version) {
   const selector = EXACT_RELEASE_VERSION_PATTERN.test(normalized)
     ? ` --release v${normalized} --update-channel ${normalized.includes("-") ? "beta" : "stable"}`
     : "";
-  return `curl -fsSL ${PUBLIC_HOSTING_INSTALLER_URL} | bash -s -- --hosting${selector}`;
+  const installerUrl = selector
+    ? `https://github.com/fased-ai/fased/releases/download/v${normalized}/install.sh`
+    : PUBLIC_STABLE_INSTALLER_URL;
+  return `curl -fsSL ${installerUrl} | bash -s -- --hosting${selector}`;
 }
 
 export function legacyHostingBootstrapMessage(version) {
@@ -684,93 +685,17 @@ async function prepareVerifiedProtectedLocalInstaller({
   destinationDir,
   timeoutMs,
 }) {
-  const baseUrl = (process.env.FASED_HOSTED_ARTIFACT_BASE_URL || DEFAULT_RELEASE_BASE_URL).replace(
-    /\/$/,
-    "",
-  );
-  const officialVersion = baseUrl === DEFAULT_RELEASE_BASE_URL ? releaseVersion : null;
-  if (!officialVersion) {
-    readProtectedLocalTestArtifactAuthorization({ baseUrl, releaseVersion });
-  }
+  const baseUrl = DEFAULT_RELEASE_BASE_URL;
   const releaseUrl = `${baseUrl}/v${releaseVersion}`;
   const installerPath = path.join(destinationDir, "install.sh");
   const bundlePath = path.join(destinationDir, "install.sh.attestation.json");
   await Promise.all([
     downloadToFile(`${releaseUrl}/install.sh`, installerPath, timeoutMs),
-    ...(officialVersion
-      ? [downloadToFile(`${releaseUrl}/install.sh.attestation.json`, bundlePath, timeoutMs)]
-      : []),
+    downloadToFile(`${releaseUrl}/install.sh.attestation.json`, bundlePath, timeoutMs),
   ]);
-  if (officialVersion) {
-    await verifyOfficialAsset(installerPath, officialVersion, timeoutMs, bundlePath);
-  }
+  await verifyOfficialAsset(installerPath, releaseVersion, timeoutMs, bundlePath);
   await fsp.chmod(installerPath, 0o500);
   return installerPath;
-}
-
-function readProtectedLocalTestArtifactAuthorization({
-  baseUrl,
-  protectedLocalInstance,
-  releaseVersion,
-  authorizationPath = PROTECTED_LOCAL_TEST_ARTIFACT_AUTHORIZATION,
-  requiredUid = 0,
-}) {
-  const normalizedBaseUrl = String(baseUrl || "").replace(/\/$/, "");
-  const normalizedProtectedLocalInstance = String(protectedLocalInstance || "").trim();
-  if (normalizedBaseUrl === DEFAULT_RELEASE_BASE_URL) {
-    return null;
-  }
-  let authorizationInfo;
-  try {
-    authorizationInfo = fs.lstatSync(authorizationPath);
-  } catch (error) {
-    throw new Error(
-      "A custom Protected Local artifact source requires a root-owned test authorization.",
-      { cause: error },
-    );
-  }
-  if (
-    !authorizationInfo.isFile() ||
-    authorizationInfo.isSymbolicLink() ||
-    authorizationInfo.nlink !== 1 ||
-    authorizationInfo.uid !== requiredUid ||
-    (authorizationInfo.mode & 0o022) !== 0
-  ) {
-    throw new Error(
-      "A custom Protected Local artifact source requires a root-owned test authorization.",
-    );
-  }
-  let authorization;
-  try {
-    authorization = JSON.parse(fs.readFileSync(authorizationPath, "utf8"));
-  } catch (error) {
-    throw new Error("The root-owned Protected Local artifact authorization is invalid.", {
-      cause: error,
-    });
-  }
-  const releaseCommit = String(authorization?.releaseCommit || "").trim();
-  const forceSameVersionRepair = authorization?.forceSameVersionRepair === true;
-  const protectedLocalInstanceReady = /^[a-f0-9]{16}$/u.test(normalizedProtectedLocalInstance);
-  if (
-    authorization?.schemaVersion !== 1 ||
-    authorization?.baseUrl !== normalizedBaseUrl ||
-    authorization?.protectedLocalInstance !== normalizedProtectedLocalInstance ||
-    authorization?.releaseVersion !== releaseVersion ||
-    (!protectedLocalInstanceReady && normalizedProtectedLocalInstance !== "") ||
-    !/^http:\/\/127\.0\.0\.1:\d+$/u.test(normalizedBaseUrl) ||
-    (forceSameVersionRepair &&
-      (!protectedLocalInstanceReady || !/^[a-f0-9]{40}$/u.test(releaseCommit))) ||
-    (!forceSameVersionRepair && releaseCommit)
-  ) {
-    throw new Error("The root-owned Protected Local artifact authorization is invalid.");
-  }
-  return Object.freeze({
-    baseUrl: normalizedBaseUrl,
-    protectedLocalInstance: normalizedProtectedLocalInstance,
-    releaseVersion,
-    forceSameVersionRepair,
-    releaseCommit: forceSameVersionRepair ? releaseCommit : null,
-  });
 }
 
 function protectedLocalMigrationJournalPath(paths) {
@@ -1492,6 +1417,7 @@ async function requestHostedSignerTransaction(
   if (
     !new Set([
       "updateController",
+      "applyRelease",
       "prepareRelease",
       "activateRelease",
       "authorizeGatewayRelease",
@@ -1566,7 +1492,12 @@ async function requestHostedSignerTransaction(
         if (response.release !== undefined) {
           response.release = parseSignerReleaseIdentity(response.release, version);
         } else if (
-          new Set(["prepareRelease", "activateRelease", "authorizeGatewayRelease"]).has(operation)
+          new Set([
+            "applyRelease",
+            "prepareRelease",
+            "activateRelease",
+            "authorizeGatewayRelease",
+          ]).has(operation)
         ) {
           fail(new Error(`host updater ${operation} response omitted signer release identity`));
           return;
@@ -1682,6 +1613,36 @@ async function ensureHostedControllerRelease(
     }
   }
   throw new Error("verified root updater controller did not restart into the target release");
+}
+
+async function handoffTargetOwnedRelease({
+  transactionId,
+  targetVersion,
+  timeoutMs,
+  socketPath,
+  expectedSignerRelease,
+  onHandoff = () => undefined,
+  ensureController = ensureHostedControllerRelease,
+  applyRelease = async () =>
+    await requestHostedSignerTransactionWithRetry(
+      "applyRelease",
+      transactionId,
+      targetVersion,
+      timeoutMs,
+      socketPath,
+    ),
+}) {
+  await ensureController(transactionId, targetVersion, timeoutMs, socketPath);
+  onHandoff();
+  const result = await applyRelease();
+  if (
+    result.phase !== "committed" ||
+    !result.release ||
+    !signerReleaseIdentitiesEqual(result.release, expectedSignerRelease)
+  ) {
+    throw new Error("target lifecycle controller returned a mismatched commit receipt");
+  }
+  return result;
 }
 
 export async function authorizePreactivatedHostedGateway({
@@ -2685,6 +2646,81 @@ async function updateStableComponents(paths, runtimeRoot, durable = false) {
   for (const directory of new Set(stablePaths.map((value) => path.dirname(value)))) {
     await fsyncManagedPath(directory);
   }
+  await cleanupHistoricalManagedCandidateResidue(paths, runtimeRoot);
+}
+
+async function cleanupHistoricalManagedCandidateResidue(paths, runtimeRoot) {
+  const backupPath = path.join(paths.updaterDir, "q0-managed-updater-backup.json");
+  let stat;
+  try {
+    stat = await fsp.lstat(backupPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return { changed: false };
+    }
+    throw error;
+  }
+  const expectedUid = typeof process.getuid === "function" ? process.getuid() : stat.uid;
+  if (
+    !stat.isFile() ||
+    stat.isSymbolicLink() ||
+    stat.nlink !== 1 ||
+    stat.uid !== expectedUid ||
+    (stat.mode & 0o022) !== 0 ||
+    stat.size > 8 * 1024 * 1024
+  ) {
+    throw new Error("historical managed candidate backup is unsafe");
+  }
+  let value;
+  try {
+    value = JSON.parse(await fsp.readFile(backupPath, "utf8"));
+  } catch (error) {
+    throw new Error("historical managed candidate backup is invalid", { cause: error });
+  }
+  if (
+    value?.schemaVersion !== 2 ||
+    Object.keys(value).toSorted().join(",") !== "launcher,schemaVersion,updater"
+  ) {
+    throw new Error("historical managed candidate backup is invalid");
+  }
+  for (const label of ["updater", "launcher"]) {
+    const entry = value[label];
+    if (
+      !entry ||
+      Object.keys(entry).toSorted().join(",") !==
+        "candidateSha256,mode,originalBase64,originalSha256" ||
+      typeof entry.originalBase64 !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(entry.originalSha256 || "") ||
+      !/^[a-f0-9]{64}$/u.test(entry.candidateSha256 || "") ||
+      !Number.isSafeInteger(entry.mode) ||
+      entry.mode < 0 ||
+      entry.mode > 0o777
+    ) {
+      throw new Error(`historical managed ${label} backup is invalid`);
+    }
+    const original = Buffer.from(entry.originalBase64, "base64");
+    if (original.length === 0 || original.length > 4 * 1024 * 1024) {
+      throw new Error(`historical managed ${label} backup is invalid`);
+    }
+    const digest = createHash("sha256").update(original).digest("hex");
+    if (digest !== entry.originalSha256) {
+      throw new Error(`historical managed ${label} backup digest is invalid`);
+    }
+  }
+  const expectedUpdater = path.join(runtimeRoot, "scripts", "fased-managed-updater.mjs");
+  const expectedLauncher = path.join(runtimeRoot, "scripts", "fased-managed-launcher.sh");
+  const [activeUpdater, activeLauncher, targetUpdater, targetLauncher] = await Promise.all([
+    sha256File(paths.updaterPath),
+    sha256File(paths.launcherPath),
+    sha256File(expectedUpdater),
+    sha256File(expectedLauncher),
+  ]);
+  if (activeUpdater !== targetUpdater || activeLauncher !== targetLauncher) {
+    throw new Error("official managed updater identity did not converge before historical cleanup");
+  }
+  await fsp.rm(backupPath);
+  await fsyncManagedPath(path.dirname(backupPath));
+  return { changed: true };
 }
 
 async function acquireUpdateLock(stateDir) {
@@ -5328,15 +5364,11 @@ async function stageManagedReleaseCandidate({
   targetVersion,
   timeoutMs,
   repairCurrentFiles,
-  expectedReleaseCommit = null,
   timings,
 }) {
   const arch = resolveArchitecture();
-  const baseUrl = (process.env.FASED_HOSTED_ARTIFACT_BASE_URL || DEFAULT_RELEASE_BASE_URL).replace(
-    /\/$/,
-    "",
-  );
-  const officialVersion = baseUrl === DEFAULT_RELEASE_BASE_URL ? targetVersion : null;
+  const baseUrl = DEFAULT_RELEASE_BASE_URL;
+  const officialVersion = targetVersion;
   const releaseUrl = `${baseUrl}/v${targetVersion}`;
   const updateCacheRoot = path.join(paths.stateDir, "install-cache");
   await fsp.mkdir(updateCacheRoot, { recursive: true });
@@ -5441,15 +5473,10 @@ async function stageManagedReleaseCandidate({
     if (isRootManagedProfile(existingManifest.profile) && !hostedRelease) {
       throw new Error("Maintained Hosting update omitted its attested unified release binding.");
     }
-    if (expectedReleaseCommit && hostedRelease?.commit !== expectedReleaseCommit) {
-      throw new Error(
-        "The root-authorized Protected Local candidate commit does not match its release.",
-      );
-    }
     await measureStage(timings, "staged runtime smoke", () => smokeRuntime(stagedRoot, timeoutMs));
 
     let releaseRoot = path.join(paths.releasesDir, targetVersion);
-    if (repairCurrentFiles) {
+    if (repairCurrentFiles && !isRootManagedProfile(existingManifest.profile)) {
       releaseRoot = path.join(
         paths.releasesDir,
         `${targetVersion}.repair-${Date.now()}-${process.pid}`,
@@ -5586,6 +5613,7 @@ async function updateManagedRuntime(options) {
   }
 
   const releaseLock = await acquireUpdateLock(paths.stateDir);
+  let targetControllerOwnsCompletion = false;
   try {
     const staleCache = await measureStage(timings, "stale update-cache cleanup", () =>
       cleanupManagedUpdateCache(paths),
@@ -5627,18 +5655,6 @@ async function updateManagedRuntime(options) {
     targetVersion = await measureStage(timings, "release resolution", () =>
       resolveTargetVersion(options),
     );
-    const artifactBaseUrl = (
-      process.env.FASED_HOSTED_ARTIFACT_BASE_URL || DEFAULT_RELEASE_BASE_URL
-    ).replace(/\/$/, "");
-    const testArtifactAuthorization =
-      existingManifest.profile === "protected-local" && artifactBaseUrl !== DEFAULT_RELEASE_BASE_URL
-        ? readProtectedLocalTestArtifactAuthorization({
-            baseUrl: artifactBaseUrl,
-            protectedLocalInstance: resolveManagedControllerDescriptor(paths, existingManifest)
-              .instanceId,
-            releaseVersion: targetVersion,
-          })
-        : null;
     const protectedLocalMigration = protectedLocalMigrationRequirement({
       manifest: existingManifest,
       currentRoot,
@@ -5652,9 +5668,6 @@ async function updateManagedRuntime(options) {
         currentVersion,
       );
       repairCurrentFiles = !consistency.consistent;
-      if (testArtifactAuthorization?.forceSameVersionRepair) {
-        repairCurrentFiles = true;
-      }
       try {
         if (!currentRoot) {
           throw new Error("current runtime link is missing");
@@ -5707,7 +5720,6 @@ async function updateManagedRuntime(options) {
         targetVersion,
         timeoutMs: options.timeoutMs,
         repairCurrentFiles,
-        expectedReleaseCommit: testArtifactAuthorization?.releaseCommit,
         timings,
       });
       const previousRoot = currentRoot;
@@ -5793,11 +5805,11 @@ async function updateManagedRuntime(options) {
       targetVersion,
       timeoutMs: options.timeoutMs,
       repairCurrentFiles,
-      expectedReleaseCommit: testArtifactAuthorization?.releaseCommit,
       timings,
     });
     const { hostedRelease, metadata, releaseRoot, temporaryRoot } = candidate;
     let activated = false;
+    let handedOff = false;
     let previousRoot = currentRoot;
     let previousManifest = existingManifest;
     try {
@@ -5824,41 +5836,27 @@ async function updateManagedRuntime(options) {
       });
       if (isRootManagedProfile(existingManifest.profile)) {
         if (!previousRoot) {
-          throw new Error("Hosted transactional update requires an active previous runtime.");
+          throw new Error("Target-owned update requires an active previous runtime.");
         }
-        let journal = await writeHostedTransactionJournal(paths, {
-          schemaVersion: HOSTED_TRANSACTION_SCHEMA_VERSION,
-          transactionId: randomUUID(),
-          targetVersion,
-          previousVersion: currentVersion,
-          targetRoot: releaseRoot,
-          previousRoot,
-          nextManifest,
-          previousManifest,
-          phase: "prepared",
-          createdAt: new Date().toISOString(),
-        });
-        const operations = hostedTransactionOperations(paths, options.timeoutMs);
-        try {
-          await measureStage(timings, "root signer release preparation", () =>
-            operations.signerRequest("prepareRelease", journal),
-          );
-        } catch (error) {
-          await recoverFailedHostedPreparation(journal, operations, error);
-          throw error;
-        }
-        try {
-          await measureStage(timings, "coordinated activation and health", async () => {
-            const result = await coordinateHostedReleaseTransaction(journal, operations);
-            journal = result.journal;
-          });
-          activated = true;
-        } catch (error) {
-          if (error?.code === "HOSTED_COMMIT_PENDING") {
-            activated = true;
-          }
-          throw error;
-        }
+        const transactionId = randomUUID();
+        const controllerSocketPath = resolveRootManagedControllerSocket(paths);
+        // Scratch extraction is not part of the live release transaction and
+        // must be gone before ownership crosses the handoff boundary.
+        await fsp.rm(temporaryRoot, { recursive: true, force: true });
+        await measureStage(timings, "target-owned release transaction", () =>
+          handoffTargetOwnedRelease({
+            transactionId,
+            targetVersion,
+            timeoutMs: options.timeoutMs,
+            socketPath: controllerSocketPath,
+            expectedSignerRelease: hostedRelease.signer,
+            onHandoff: () => {
+              handedOff = true;
+              targetControllerOwnsCompletion = true;
+            },
+          }),
+        );
+        activated = true;
       } else {
         const signerPaths = resolveLocalSignerPaths({ stateDir: paths.stateDir });
         const pairSigner =
@@ -6004,7 +6002,9 @@ async function updateManagedRuntime(options) {
         }
       }
       timings.push({ name: "total", durationMs: Date.now() - commandStartedAt });
-      await recordManagedUpdateSuccess(paths, { version: targetVersion, alreadyCurrent: false });
+      if (!isRootManagedProfile(existingManifest.profile)) {
+        await recordManagedUpdateSuccess(paths, { version: targetVersion, alreadyCurrent: false });
+      }
       if (options.json) {
         console.log(
           JSON.stringify({
@@ -6035,8 +6035,10 @@ async function updateManagedRuntime(options) {
         }
       }
     } finally {
-      await fsp.rm(temporaryRoot, { recursive: true, force: true });
-      if (!activated) {
+      if (!handedOff) {
+        await fsp.rm(temporaryRoot, { recursive: true, force: true });
+      }
+      if (!activated && !handedOff) {
         const active = readManagedInstallManifest(paths.manifestPath);
         if (active?.runtime?.activeVersion !== currentVersion && previousRoot) {
           await atomicSymlink(previousRoot, paths.currentLink).catch(() => undefined);
@@ -6050,7 +6052,9 @@ async function updateManagedRuntime(options) {
       }
     }
   } finally {
-    await releaseLock();
+    if (!targetControllerOwnsCompletion) {
+      await releaseLock();
+    }
   }
 }
 
@@ -6116,6 +6120,7 @@ export const __testing = {
   buildLegacyLocalWalletMigrationPlan,
   coordinateHostedReleaseTransaction,
   hostedUpdaterError,
+  handoffTargetOwnedRelease,
   hostedTransactionOperations,
   ensureHostedControllerRelease,
   probeGatewayIdentity,
@@ -6134,6 +6139,7 @@ export const __testing = {
   restartHostedGateway,
   activateLocalSignerTransaction,
   commitLocalSignerTransaction,
+  cleanupHistoricalManagedCandidateResidue,
   createOwnerOnlySnapshot,
   downloadVerifiedLocalSignerRelease,
   evaluateLocalSignerHealth,
@@ -6157,7 +6163,6 @@ export const __testing = {
   refreshLocalSourceController,
   resolveLocalSignerAsset,
   resolveLocalSignerPaths,
-  readProtectedLocalTestArtifactAuthorization,
   restoreOwnerOnlySnapshot,
   rollbackLocalSignerTransaction,
   runLocalSignerTransaction,

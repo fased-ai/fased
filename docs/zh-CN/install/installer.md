@@ -57,18 +57,18 @@ bash "$BOOTSTRAP_DIR/install.sh" --repair-hosting --release "$RELEASE"
 ```
 
 只有已安装 updater 或 root-managed service 无法正常恢复时才使用 repair。
-不要从 mutable `main` pipe `--repair-hosting`，不要传入调用方创建的 verified
-marker，也不要给 operator broad sudo。
+不要从 branch pipe `--repair-hosting`，不要传入调用方创建的 verified marker，
+也不要给 operator broad sudo。
 
 ## Public mode
 
-| Mode                 | 用途                                          | 可从 `main` streamed 执行？      |
+| Mode                 | 用途                                          | 可信入口约束                     |
 | -------------------- | --------------------------------------------- | -------------------------------- |
-| `--local`            | macOS、Linux 或 WSL2 Ubuntu 的全新 Local 安装 | 可以                             |
-| `--hosting`          | 支持的 systemd VPS 全新 Hosting 安装          | 可以，但必须是唯一参数           |
+| `--local`            | macOS、Linux 或 WSL2 Ubuntu 的全新 Local 安装 | 仅 immutable release asset       |
+| `--hosting`          | 支持的 systemd VPS 全新 Hosting 安装          | 仅 immutable release asset       |
 | `--repair-local`     | 保留状态并修复 Local runtime/service          | 正常不需要 root                  |
 | `--repair-hosting`   | 保留状态并修复 Hosting runtime/service        | 不可以；仅 exact tagged file     |
-| `--release <vX.Y.Z>` | 选择 immutable stable release                 | Hosting 仅 exact tagged file     |
+| `--release <vX.Y.Z>` | 选择 immutable stable release                 | exact release asset 与 channel   |
 | `--source-install`   | Local developer source build                  | privileged Hosting 拒绝          |
 | `--no-onboard`       | 安装 runtime 但跳过 onboarding                | 仅允许的 Local 或 exact-tag 流程 |
 
@@ -76,9 +76,12 @@ marker，也不要给 operator broad sudo。
 
 ## Streamed Hosting 限制
 
-正常 Hosting 命令只接受 `--hosting`。在验证 tagged payload 前会拒绝：
+immutable release-asset Hosting 命令接受 `--hosting`，或
+`--hosting --release vX.Y.Z[-prerelease] --update-channel stable|beta`。
+未写入 release identity 的 streamed branch 脚本会在安装前退出。验证 tagged
+payload 前会拒绝：
 
-- repair、source、development channel、release 和 host-profile selector；
+- repair、source、无效 channel/release 和 host-profile selector；
 - 调用方提供的 `--verified-hosting-bundle`；
 - exported `FASED_*`；
 - proxy、自定义 CA、GitHub CLI config、dynamic loader、shell startup 与 temp

@@ -57,9 +57,9 @@ existing-host recovery. From the provider root console, rerun the
 
 It detects completed or interrupted state, verifies the immutable release
 bundle and offline attestations, then invokes the internal repair selector.
-Never pipe `--repair-hosting` from mutable `main`, pass a caller-created
-verified marker, or grant the operator broad sudo access. The exact-tag block
-above remains an optional pre-execution verification path.
+Never pipe `--repair-hosting` from a branch, pass a caller-created verified
+marker, or grant the operator broad sudo access. The exact-tag block above
+adds pre-execution provenance verification to the immutable release entrypoint.
 
 The streamed bootstrap reports which recovery path applies:
 
@@ -71,26 +71,27 @@ The streamed bootstrap reports which recovery path applies:
 
 ## Public modes
 
-| Mode                 | Intended use                                        | Streamed from `main`?               |
-| -------------------- | --------------------------------------------------- | ----------------------------------- |
-| `--local`            | Fresh Local install on macOS, Linux, or WSL2 Ubuntu | Yes                                 |
-| `--hosting`          | Fresh or recovering Hosting on a supported VPS      | Yes                                 |
-| `--repair-local`     | Preserve state and repair Local runtime/service     | No normal need for root             |
-| `--repair-hosting`   | Preserve state and repair Hosting runtime/services  | No; exact tagged file only          |
-| `--release <vX.Y.Z>` | Select an immutable release                         | Yes, with fresh Hosting and channel |
-| `--source-install`   | Developer Local source build                        | Refused for privileged Hosting      |
-| `--no-onboard`       | Install runtime without onboarding                  | Local or exact tagged flows only    |
-| `--verbose`          | Print command output in addition to log paths       | Yes where the selected mode permits |
+| Mode                 | Intended use                                         | Trusted entry contract              |
+| -------------------- | ---------------------------------------------------- | ----------------------------------- |
+| `--local`            | Fresh Local install on macOS, Linux, or WSL2 Ubuntu  | Release asset only                  |
+| `--hosting`          | Fresh or recovering Hosting on a supported VPS       | Release asset only                  |
+| `--repair-local`     | Explicit support repair for a damaged Local boundary | May require bounded authorization   |
+| `--repair-hosting`   | Preserve state and repair Hosting runtime/services   | No; exact tagged file only          |
+| `--release <vX.Y.Z>` | Select an immutable release                          | Exact release asset and channel     |
+| `--source-install`   | Developer Local source build                         | Refused for privileged Hosting      |
+| `--no-onboard`       | Install runtime without onboarding                   | Local or exact tagged flows only    |
+| `--verbose`          | Print command output in addition to log paths        | Yes where the selected mode permits |
 
 Run `./install.sh --help` from a trusted checkout for the current complete
 surface.
 
 ## Streamed Hosting restrictions
 
-The streamed Hosting command accepts either `--hosting` by itself or the exact
-selector `--hosting --release vX.Y.Z[-prerelease] --update-channel
-stable|beta`. A prerelease requires `beta`. Before tagged payload verification
-it rejects:
+The immutable release-asset Hosting command accepts either `--hosting` by
+itself or the exact selector `--hosting --release
+vX.Y.Z[-prerelease] --update-channel stable|beta`. A prerelease requires
+`beta`. An unstamped branch script exits before installation. Before tagged
+payload verification the release entrypoint rejects:
 
 - repair, source, invalid release/channel, and host-profile selectors;
 - caller-supplied `--verified-hosting-bundle` markers;

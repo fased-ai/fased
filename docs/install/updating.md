@@ -20,6 +20,9 @@ active runtime depends on the install profile:
   through a root-owned paired release controller.
 - macOS and explicit `--source-install` installs run from the source checkout.
 - `fased update` is the normal update command for both profiles.
+- A Local installation from before the protected supervisor handoff uses the
+  documented Local installer once; that verified bootstrap preserves state,
+  skips onboarding, and makes every later release use `fased update`.
 - The Control UI currently reports update status; it does not start the update.
 - Rerun `./install.sh` for repair or reinstall behavior.
 
@@ -38,6 +41,18 @@ For a managed Linux Local or WSL install, updates work from any directory:
 fased update status
 fased update
 ```
+
+If a historical Local installation predates the protected supervisor, run the
+same documented Local installer once:
+
+```bash
+curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
+  | bash -s -- --local
+```
+
+The installer detects recognized pre-handoff state, verifies the selected
+release, performs one state-preserving protected bootstrap, and does not rerun
+onboarding. After it succeeds, return permanently to `fased update`.
 
 Source/developer checkouts should still run from their checkout directory.
 
@@ -337,9 +352,8 @@ fased plugins doctor
 ```
 
 This bootstrap recovery is only for VPS Hosting installs. Local users must not
-run `--repair-hosting`. If their historical Local/WSL
-binary cannot complete `fased update`, use the Local repair command in the
-support contract below.
+run `--repair-hosting`. A recognized pre-handoff Local/WSL installation uses
+the normal documented Local installer once, then returns to `fased update`.
 
 ### One-time pre-v2 Local wallet migration
 
@@ -388,24 +402,25 @@ Use this order for every existing installation:
 1. Run `fased update`.
 2. Confirm the version changed when an update was available and the Gateway RPC
    probe is healthy.
-3. If an old CLI cannot start, fails the update, or reports success without
-   changing the version, bootstrap the runtime once with the matching Local or
-   Hosting installer command below.
+3. If a pre-handoff Local CLI cannot complete the transition, run the normal
+   documented Local installer once. If a legacy Hosting root controller is
+   absent, run the normal documented Hosting bootstrap once from provider root.
 4. Return to `fased update` for every later release.
 
 The bootstrap replaces application/runtime files, not user state. Do not delete
 `~/.fased` or `/home/app/.fased`, and do not run fresh onboarding merely to fix
 an old updater.
 
-For Local, WSL, or macOS exact-version repair, follow the canonical
-[exact-tag verification](/install/installer#exact-tag-pre-execution-verification)
-and change only its final invocation to:
+For a recognized pre-handoff Local or WSL installation, use the standard Local
+installer:
 
 ```bash
-bash "$BOOTSTRAP_DIR/install.sh" --repair-local --release "$RELEASE"
+curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
+  | bash -s -- --local
 ```
 
-Then verify the repaired runtime:
+It selects one verified release, preserves user state, skips onboarding, and
+establishes the protected supervisor/controller/signer boundary. Then verify:
 
 ```bash
 hash -r
@@ -418,12 +433,10 @@ fased gateway status
 fased plugins doctor
 ```
 
-The repair checks out the exact requested tag and pins the managed runtime to
-that same version. It replaces only a recognized installer-owned `fased`
-launcher, installs or refreshes the user service, and verifies that the running
-Gateway reports the same version. It does not overwrite an unrelated
-user-managed command or rerun onboarding. On macOS the exact tagged source is
-built because no managed Linux runtime artifact is used.
+The bootstrap refuses unrelated or unsafe state. It does not overwrite an
+unrelated user-managed command, delete user data, or rerun onboarding. Explicit
+repair remains a separate support operation for a damaged already-protected
+boundary and is not the compatibility path.
 
 VPS Hosting bootstrap must run from the provider's root console. Rerun the
 public one-command `--hosting` installer; it detects the existing installation,

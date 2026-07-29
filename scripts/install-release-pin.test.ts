@@ -49,6 +49,7 @@ function createExactLocalBootstrapHarness(
     "chmod",
     "dirname",
     "find",
+    "grep",
     "mkdir",
     "mktemp",
     "rm",
@@ -402,7 +403,7 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
     }
   });
 
-  it("routes recognized existing Local state through repair without reusing ~/fased", () => {
+  it("routes pre-handoff Local state through the standard bootstrap without repair or onboarding", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-existing-local-state-"));
     try {
       const harness = createExactLocalBootstrapHarness(tempRoot, {
@@ -413,6 +414,11 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
       fs.mkdirSync(path.join(home, "fased"), { recursive: true });
       fs.mkdirSync(stateDir, { recursive: true });
       fs.writeFileSync(path.join(stateDir, "fased.json"), "{}\n", { mode: 0o600 });
+      fs.writeFileSync(
+        path.join(stateDir, "install.json"),
+        '{"schemaVersion":1,"profile":"local"}\n',
+        { mode: 0o600 },
+      );
 
       const result = runExactLocalBootstrap(harness, tempRoot, [
         "--local",
@@ -424,8 +430,45 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
 
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain("exact-local-inner-handoff");
-      expect(result.stdout).toContain("--repair-local");
+      expect(result.stdout).toContain("--existing-local-bootstrap");
+      expect(result.stdout).not.toContain("--repair-local");
+      expect(result.stderr).toContain("Pre-handoff Local installation detected");
       expect(result.stderr).not.toContain(`Refusing to overwrite existing path: ${home}/fased`);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("directs an existing Protected Local installation to fased update without release work", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-existing-protected-local-"));
+    try {
+      const harness = createExactLocalBootstrapHarness(tempRoot, {
+        uid: process.getuid?.() ?? 1000,
+      });
+      const stateDir = path.join(tempRoot, "home", ".fased");
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(path.join(stateDir, "fased.json"), "{}\n", { mode: 0o600 });
+      fs.writeFileSync(
+        path.join(stateDir, "install.json"),
+        '{"schemaVersion":2,"profile":"protected-local"}\n',
+        { mode: 0o600 },
+      );
+
+      const result = runExactLocalBootstrap(harness, tempRoot, [
+        "--local",
+        "--release",
+        "v9.9.9-test.1",
+        "--update-channel",
+        "beta",
+      ]);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toContain(
+        "Existing Protected Local installation detected; use fased update.",
+      );
+      expect(result.stdout).not.toContain("exact-local-inner-handoff");
+      expect(result.stdout).not.toContain("package-manager progress before verified commit");
+      expect(fs.existsSync(harness.installDir)).toBe(false);
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
