@@ -15,18 +15,20 @@ import {
 } from "./lifecycle-trust-crypto.mjs";
 
 const MAX_ROOT_VALIDITY_MS = 5 * 366 * 24 * 60 * 60 * 1000;
-const REQUIRED_ROOT_ROLES = Object.freeze([
+export const LIFECYCLE_DELEGATED_ROLES = Object.freeze([
   "application",
   "beta",
   "controller",
   "dependencies",
   "platform",
-  "root",
   "signer",
   "snapshot",
   "stable",
   "timestamp",
 ]);
+const REQUIRED_ROOT_ROLES = Object.freeze(
+  [...LIFECYCLE_DELEGATED_ROLES, "root"].toSorted((left, right) => left.localeCompare(right)),
+);
 
 function parseRole(value, keys, label) {
   exactTrustKeys(value, ["keyIds", "threshold"], label);
@@ -198,6 +200,10 @@ export function verifyInitialLifecycleRoot(envelope, { pinnedSha256, now = Date.
     failTrust("initial lifecycle root does not match the immutable bootstrap pin");
   }
   const root = parseLifecycleRootEnvelope(envelope, now);
+  const rootKeyIds = new Set(root.roles.get("root").keyIds);
+  if (root.signatures.some((signature) => !rootKeyIds.has(signature.keyId))) {
+    failTrust("initial lifecycle root contains a signature outside the root role");
+  }
   const verified = verifyKnownTrustSignatures(root, [root]);
   if (root.signatures.some((signature) => root.revocations.keyIds.includes(signature.keyId))) {
     failTrust("initial lifecycle root contains a signature from a revoked key");
@@ -226,6 +232,13 @@ export function verifyLifecycleRootRotation(
   const candidate = parseLifecycleRootEnvelope(candidateEnvelope, now);
   if (candidate.version !== trusted.version + 1) {
     failTrust("lifecycle root rotation must advance exactly one version");
+  }
+  const allowedRootKeyIds = new Set([
+    ...trusted.roles.get("root").keyIds,
+    ...candidate.roles.get("root").keyIds,
+  ]);
+  if (candidate.signatures.some((signature) => !allowedRootKeyIds.has(signature.keyId))) {
+    failTrust("lifecycle root rotation contains a signature outside the root roles");
   }
   const verified = verifyKnownTrustSignatures(candidate, [trusted, candidate]);
   requireLifecycleRoleThresholds(trusted, verified, ["root"]);

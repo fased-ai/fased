@@ -23,6 +23,8 @@ const MAX_TIMESTAMP_VALIDITY_MS = 48 * 60 * 60 * 1000;
 export {
   canonicalTrustBytes,
   ed25519PublicKeyRecord,
+  exactTrustKeys,
+  failTrust,
   lifecycleTrustKeyId,
   signTrustEnvelope,
   trustMetadataDigest,

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "type": "fased-lifecycle-root-keyset",
+  "threshold": 2,
+  "keys": [
+    {
+      "name": "root-1",
+      "keyId": "a5f07688f14ff3e7c5b61d8e7109522360851c3bffbcc277ce8241d7151b4d3a",
+      "publicKey": "root-1.public.pem"
+    },
+    {
+      "name": "root-2",
+      "keyId": "93614a5dc68035b1718455dbc43163dd62e71243ab496f961ecd7f23a607a971",
+      "publicKey": "root-2.public.pem"
+    },
+    {
+      "name": "root-3",
+      "keyId": "65e5a3b316f86ddacfefd042b2e06bf9320e2e170bef2053541556ae8ba3573b",
+      "publicKey": "root-3.public.pem"
+    }
+  ]
+}

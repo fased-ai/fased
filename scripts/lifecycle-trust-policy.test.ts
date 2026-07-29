@@ -220,6 +220,21 @@ describe("threshold lifecycle trust policy", () => {
     ).toThrow("unique sorted key IDs");
   });
 
+  it("rejects signatures from delegated roles on root metadata", () => {
+    const fixture = rootFixture();
+    const withDelegatedSignature = signTrustEnvelope(fixture.envelope.signed, [
+      fixture.rootKeys[0],
+      fixture.rootKeys[1],
+      fixture.delegated.stable,
+    ]);
+    expect(() =>
+      verifyInitialLifecycleRoot(withDelegatedSignature, {
+        pinnedSha256: trustMetadataDigest(withDelegatedSignature),
+        now,
+      }),
+    ).toThrow("outside the root role");
+  });
+
   it("requires every root rotation to advance once and meet both old and new 2-of-3 thresholds", () => {
     const current = rootFixture();
     const next = rootFixture({ version: 2, oldRootKeys: current.rootKeys });
