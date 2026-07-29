@@ -8,7 +8,7 @@ import net from "node:net";
 import path from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -82,6 +82,12 @@ const TRUST_METADATA_BUNDLE_NAME = `${TRUST_METADATA_NAME}.attestation.json`;
 const SUPERVISOR_NAME = "fased-lifecycle-supervisor.mjs";
 const CONTROLLER_SERVER_NAME = "fased-host-updater.mjs";
 const CONTROLLER_CLIENT_NAME = "fased-host-updaterctl.mjs";
+const EVIDENCE_VERIFIER_NAME = "fased-privileged-release-evidence.mjs";
+const RELEASE_MANIFEST_NAME = "fased-hosted-release-v2.json";
+const PRIVILEGED_PROVENANCE_NAME = "fased-privileged-provenance-v1.intoto.json";
+const PRIVILEGED_PROVENANCE_BUNDLE_NAME = `${PRIVILEGED_PROVENANCE_NAME}.attestation.json`;
+const PRIVILEGED_SBOM_NAME = "fased-privileged-sbom-v1.spdx.json";
+const PRIVILEGED_VEX_NAME = "fased-privileged-vex-v1.openvex.json";
 const MAX_REQUEST_BYTES = 4096;
 const MAX_DOWNLOAD_BYTES = 4 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 20 * 60_000;
@@ -609,7 +615,7 @@ export function parseLifecycleTrustMetadata(
 ) {
   exactKeys(
     value,
-    ["schemaVersion", "role", "rootPolicy", "release", "validity", "policy", "targets"],
+    ["schemaVersion", "role", "rootPolicy", "release", "validity", "policy", "targets", "evidence"],
     "lifecycle trust metadata",
   );
   exactKeys(value.release, ["version", "tag", "commit"], "lifecycle release identity");
@@ -621,9 +627,10 @@ export function parseLifecycleTrustMetadata(
   );
   exactKeys(
     value.targets,
-    ["supervisor", "controllerServer", "controllerClient"],
+    ["bootstrap", "supervisor", "controllerServer", "controllerClient", "evidenceVerifier"],
     "lifecycle metadata targets",
   );
+  exactKeys(value.evidence, ["provenance", "sbom", "vex"], "lifecycle metadata evidence");
   for (const [role, target] of Object.entries(value.targets)) {
     exactKeys(target, ["asset", "sha256"], `lifecycle ${role} target`);
   }
@@ -632,9 +639,16 @@ export function parseLifecycleTrustMetadata(
   const issuedAt = Date.parse(value.validity.issuedAt);
   const expiresAt = Date.parse(value.validity.expiresAt);
   const expectedAssets = {
+    bootstrap: "install.sh",
     supervisor: SUPERVISOR_NAME,
     controllerServer: CONTROLLER_SERVER_NAME,
     controllerClient: CONTROLLER_CLIENT_NAME,
+    evidenceVerifier: EVIDENCE_VERIFIER_NAME,
+  };
+  const expectedEvidence = {
+    provenance: PRIVILEGED_PROVENANCE_NAME,
+    sbom: PRIVILEGED_SBOM_NAME,
+    vex: PRIVILEGED_VEX_NAME,
   };
   const expectedChannels = version.includes("-") ? ["beta"] : ["beta", "stable"];
   const expectedPlatforms = ["linux-arm64", "linux-x64"];
@@ -665,6 +679,13 @@ export function parseLifecycleTrustMetadata(
     const target = value.targets[role];
     if (target.asset !== expectedAsset || !DIGEST_PATTERN.test(target.sha256 || "")) {
       fail(`lifecycle ${role} target identity is invalid`);
+    }
+  }
+  for (const [role, expectedAsset] of Object.entries(expectedEvidence)) {
+    const evidence = value.evidence[role];
+    exactKeys(evidence, ["asset", "sha256"], `lifecycle ${role} evidence`);
+    if (evidence.asset !== expectedAsset || !DIGEST_PATTERN.test(evidence.sha256 || "")) {
+      fail(`lifecycle ${role} evidence identity is invalid`);
     }
   }
   return Object.freeze(value);
@@ -829,6 +850,14 @@ async function selfCheckController(assetPath, role, stateDir) {
   if (value.schemaVersion !== 1 || value.protocolVersion !== 2 || value.role !== role) {
     fail(`lifecycle controller ${role} self-check is incompatible`);
   }
+}
+
+async function verifyReleaseEvidence(verifierPath, verifierSha256, options) {
+  const verifier = await import(`${pathToFileURL(verifierPath).href}?sha256=${verifierSha256}`);
+  if (typeof verifier.verifyPrivilegedReleaseEvidence !== "function") {
+    fail("privileged release evidence verifier API is unavailable");
+  }
+  return await verifier.verifyPrivilegedReleaseEvidence(options);
 }
 
 async function readChannel(channelPath) {
@@ -1135,6 +1164,12 @@ export async function stageTrustedController(request, context) {
   const bundlePath = path.join(downloadRoot, TRUST_METADATA_BUNDLE_NAME);
   const serverPath = path.join(downloadRoot, CONTROLLER_SERVER_NAME);
   const clientPath = path.join(downloadRoot, CONTROLLER_CLIENT_NAME);
+  const evidenceVerifierPath = path.join(downloadRoot, EVIDENCE_VERIFIER_NAME);
+  const releaseManifestPath = path.join(downloadRoot, RELEASE_MANIFEST_NAME);
+  const provenancePath = path.join(downloadRoot, PRIVILEGED_PROVENANCE_NAME);
+  const provenanceBundlePath = path.join(downloadRoot, PRIVILEGED_PROVENANCE_BUNDLE_NAME);
+  const sbomPath = path.join(downloadRoot, PRIVILEGED_SBOM_NAME);
+  const vexPath = path.join(downloadRoot, PRIVILEGED_VEX_NAME);
   let stagingGeneration = null;
   try {
     await Promise.all([
@@ -1165,7 +1200,9 @@ export async function stageTrustedController(request, context) {
     assertLifecycleReleaseAllowed(
       candidateRoot,
       request.version,
-      Object.values(metadata.targets).map(({ sha256: targetSha256 }) => targetSha256),
+      [...Object.values(metadata.targets), ...Object.values(metadata.evidence)].map(
+        ({ sha256: targetSha256 }) => targetSha256,
+      ),
     );
     const installedSupervisorDigest = await sha256(paths.supervisorPath);
     if (installedSupervisorDigest !== metadata.targets.supervisor.sha256) {
@@ -1174,17 +1211,44 @@ export async function stageTrustedController(request, context) {
     await Promise.all([
       context.download(`${releaseUrl}/${metadata.targets.controllerServer.asset}`, serverPath),
       context.download(`${releaseUrl}/${metadata.targets.controllerClient.asset}`, clientPath),
+      context.download(
+        `${releaseUrl}/${metadata.targets.evidenceVerifier.asset}`,
+        evidenceVerifierPath,
+      ),
+      context.download(`${releaseUrl}/${RELEASE_MANIFEST_NAME}`, releaseManifestPath),
+      context.download(`${releaseUrl}/${metadata.evidence.provenance.asset}`, provenancePath),
+      context.download(`${releaseUrl}/${PRIVILEGED_PROVENANCE_BUNDLE_NAME}`, provenanceBundlePath),
+      context.download(`${releaseUrl}/${metadata.evidence.sbom.asset}`, sbomPath),
+      context.download(`${releaseUrl}/${metadata.evidence.vex.asset}`, vexPath),
     ]);
-    const [serverSha256, clientSha256] = await Promise.all([
+    const [serverSha256, clientSha256, evidenceVerifierSha256] = await Promise.all([
       sha256(serverPath),
       sha256(clientPath),
+      sha256(evidenceVerifierPath),
     ]);
     if (
       serverSha256 !== metadata.targets.controllerServer.sha256 ||
-      clientSha256 !== metadata.targets.controllerClient.sha256
+      clientSha256 !== metadata.targets.controllerClient.sha256 ||
+      evidenceVerifierSha256 !== metadata.targets.evidenceVerifier.sha256
     ) {
-      fail("downloaded lifecycle controller does not match immutable trust metadata");
+      fail("downloaded lifecycle controller or evidence verifier does not match trust metadata");
     }
+    await context.verifyMetadata(
+      provenancePath,
+      provenanceBundlePath,
+      request.version,
+      paths.supervisorStateDir,
+      candidateRoot,
+    );
+    await context.verifyReleaseEvidence(evidenceVerifierPath, evidenceVerifierSha256, {
+      releaseManifestPath,
+      lifecycleMetadataPath: metadataPath,
+      provenancePath,
+      sbomPath,
+      vexPath,
+      expectedVersion: request.version,
+      expectedCommit: metadata.release.commit,
+    });
     await Promise.all([
       context.selfCheckController(serverPath, "server", paths.supervisorStateDir),
       context.selfCheckController(clientPath, "client", paths.supervisorStateDir),
@@ -1827,6 +1891,7 @@ function createContext(configuration, overrides = {}) {
     currentControllerMatches: overrides.currentControllerMatches ?? currentControllerMatches,
     download: overrides.download ?? download,
     verifyMetadata: overrides.verifyMetadata ?? verifyMetadata,
+    verifyReleaseEvidence: overrides.verifyReleaseEvidence ?? verifyReleaseEvidence,
     selfCheckController: overrides.selfCheckController ?? selfCheckController,
     stageTrustedController: overrides.stageTrustedController ?? stageTrustedController,
     activateStagedController: overrides.activateStagedController ?? activateStagedController,

@@ -39,9 +39,22 @@ function metadata(overrides: Record<string, unknown> = {}) {
       controllerProtocol: 2,
     },
     targets: {
+      bootstrap: { asset: "install.sh", sha256: digest("d") },
       supervisor: { asset: "fased-lifecycle-supervisor.mjs", sha256: digest("a") },
       controllerServer: { asset: "fased-host-updater.mjs", sha256: digest("b") },
       controllerClient: { asset: "fased-host-updaterctl.mjs", sha256: digest("c") },
+      evidenceVerifier: {
+        asset: "fased-privileged-release-evidence.mjs",
+        sha256: digest("e"),
+      },
+    },
+    evidence: {
+      provenance: {
+        asset: "fased-privileged-provenance-v1.intoto.json",
+        sha256: digest("f"),
+      },
+      sbom: { asset: "fased-privileged-sbom-v1.spdx.json", sha256: digest("1") },
+      vex: { asset: "fased-privileged-vex-v1.openvex.json", sha256: digest("2") },
     },
     ...overrides,
   };
@@ -342,11 +355,18 @@ describe("stable lifecycle supervisor contract", () => {
     const createHash = (await import("node:crypto")).createHash;
     const serverSha = createHash("sha256").update(server).digest("hex");
     const clientSha = createHash("sha256").update(client).digest("hex");
+    const verifier = "verified-evidence-verifier\n";
+    const verifierSha = createHash("sha256").update(verifier).digest("hex");
     const trust = metadata({
       targets: {
+        bootstrap: { asset: "install.sh", sha256: digest("d") },
         supervisor: { asset: "fased-lifecycle-supervisor.mjs", sha256: supervisorSha },
         controllerServer: { asset: "fased-host-updater.mjs", sha256: serverSha },
         controllerClient: { asset: "fased-host-updaterctl.mjs", sha256: clientSha },
+        evidenceVerifier: {
+          asset: "fased-privileged-release-evidence.mjs",
+          sha256: verifierSha,
+        },
       },
     });
     const downloads = new Map([
@@ -354,6 +374,12 @@ describe("stable lifecycle supervisor contract", () => {
       ["fased-lifecycle-trust-v1.json.attestation.json", "{}\n"],
       ["fased-host-updater.mjs", server],
       ["fased-host-updaterctl.mjs", client],
+      ["fased-privileged-release-evidence.mjs", verifier],
+      ["fased-hosted-release-v2.json", "{}\n"],
+      ["fased-privileged-provenance-v1.intoto.json", "{}\n"],
+      ["fased-privileged-provenance-v1.intoto.json.attestation.json", "{}\n"],
+      ["fased-privileged-sbom-v1.spdx.json", "{}\n"],
+      ["fased-privileged-vex-v1.openvex.json", "{}\n"],
     ]);
     const configuration = {
       profile: "hosting",
@@ -368,6 +394,7 @@ describe("stable lifecycle supervisor contract", () => {
       platform: "linux-x64",
       now: () => now,
       verifyMetadata,
+      verifyReleaseEvidence: async () => undefined,
       selfCheckController: async () => undefined,
       download: async (url: string, destination: string) => {
         const name = url.slice(url.lastIndexOf("/") + 1);
@@ -390,7 +417,7 @@ describe("stable lifecycle supervisor contract", () => {
       serverSha256: serverSha,
       clientSha256: clientSha,
     });
-    expect(verifyMetadata).toHaveBeenCalledOnce();
+    expect(verifyMetadata).toHaveBeenCalledTimes(2);
     expect(JSON.parse(await fsp.readFile(paths.trustStatePath, "utf8"))).toMatchObject({
       rootVersion: 1,
       targetsVersion: version,

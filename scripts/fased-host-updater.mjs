@@ -38,6 +38,11 @@ const LIFECYCLE_SUPERVISOR_NAME = "fased-lifecycle-supervisor.mjs";
 const LIFECYCLE_SUPERVISOR_BUNDLE_NAME = `${LIFECYCLE_SUPERVISOR_NAME}.attestation.json`;
 const LIFECYCLE_TRUST_METADATA_NAME = "fased-lifecycle-trust-v1.json";
 const LIFECYCLE_TRUST_METADATA_BUNDLE_NAME = `${LIFECYCLE_TRUST_METADATA_NAME}.attestation.json`;
+const EVIDENCE_VERIFIER_NAME = "fased-privileged-release-evidence.mjs";
+const PRIVILEGED_PROVENANCE_NAME = "fased-privileged-provenance-v1.intoto.json";
+const PRIVILEGED_PROVENANCE_BUNDLE_NAME = `${PRIVILEGED_PROVENANCE_NAME}.attestation.json`;
+const PRIVILEGED_SBOM_NAME = "fased-privileged-sbom-v1.spdx.json";
+const PRIVILEGED_VEX_NAME = "fased-privileged-vex-v1.openvex.json";
 const CONTROLLER_SELF_CHECK_SCHEMA_VERSION = 1;
 const CONTROLLER_PROTOCOL_VERSION = 2;
 const SOCKET_PATH = "/run/fased-host-updater/request.sock";
@@ -414,6 +419,14 @@ async function verifyReleaseAsset(assetPath, version, stateDir, bundlePath) {
     timeout: REQUEST_TIMEOUT_MS,
     maxBuffer: 4 * 1024 * 1024,
   });
+}
+
+async function verifyPrivilegedReleaseEvidence(verifierPath, verifierSha256, options) {
+  const verifier = await import(`${pathToFileURL(verifierPath).href}?sha256=${verifierSha256}`);
+  if (typeof verifier.verifyPrivilegedReleaseEvidence !== "function") {
+    throw new Error("privileged release evidence verifier API is unavailable");
+  }
+  return await verifier.verifyPrivilegedReleaseEvidence(options);
 }
 
 function lifecycleSupervisorPaths(configuration) {
@@ -2155,6 +2168,19 @@ async function stageProtectedApplicationRelease({
     await fsp.writeFile(path.join(candidateRoot, ".fased-hosted-release-v2.json"), manifestBytes, {
       mode: 0o644,
     });
+    const evidenceRoot = path.join(candidateRoot, ".fased-release-evidence");
+    await fsp.mkdir(evidenceRoot, { recursive: true, mode: 0o755 });
+    await Promise.all(
+      [
+        LIFECYCLE_TRUST_METADATA_NAME,
+        PRIVILEGED_PROVENANCE_NAME,
+        PRIVILEGED_SBOM_NAME,
+        PRIVILEGED_VEX_NAME,
+      ].map(async (asset) => {
+        await fsp.copyFile(path.join(staging, asset), path.join(evidenceRoot, asset));
+        await fsp.chmod(path.join(evidenceRoot, asset), 0o644);
+      }),
+    );
     await hardenProtectedApplicationTree(candidateRoot);
     await verifyProtectedApplicationRuntime(
       candidateRoot,
@@ -2179,6 +2205,13 @@ async function stageOfficialCandidate(version, candidatePath, context) {
   const releaseManifestPath = path.join(staging, RELEASE_MANIFEST_NAME);
   const releaseManifestBundlePath = path.join(staging, RELEASE_MANIFEST_BUNDLE_NAME);
   const signerAttestationBundlePath = path.join(staging, SIGNER_ATTESTATION_BUNDLE_NAME);
+  const lifecycleMetadataPath = path.join(staging, LIFECYCLE_TRUST_METADATA_NAME);
+  const lifecycleMetadataBundlePath = path.join(staging, LIFECYCLE_TRUST_METADATA_BUNDLE_NAME);
+  const evidenceVerifierPath = path.join(staging, EVIDENCE_VERIFIER_NAME);
+  const provenancePath = path.join(staging, PRIVILEGED_PROVENANCE_NAME);
+  const provenanceBundlePath = path.join(staging, PRIVILEGED_PROVENANCE_BUNDLE_NAME);
+  const sbomPath = path.join(staging, PRIVILEGED_SBOM_NAME);
+  const vexPath = path.join(staging, PRIVILEGED_VEX_NAME);
   try {
     await Promise.all([
       context.downloadReleaseAsset(`${releaseUrl}/${RELEASE_MANIFEST_NAME}`, releaseManifestPath),
@@ -2186,19 +2219,72 @@ async function stageOfficialCandidate(version, candidatePath, context) {
         `${releaseUrl}/${RELEASE_MANIFEST_BUNDLE_NAME}`,
         releaseManifestBundlePath,
       ),
+      context.downloadReleaseAsset(
+        `${releaseUrl}/${LIFECYCLE_TRUST_METADATA_NAME}`,
+        lifecycleMetadataPath,
+      ),
+      context.downloadReleaseAsset(
+        `${releaseUrl}/${LIFECYCLE_TRUST_METADATA_BUNDLE_NAME}`,
+        lifecycleMetadataBundlePath,
+      ),
+      context.downloadReleaseAsset(`${releaseUrl}/${EVIDENCE_VERIFIER_NAME}`, evidenceVerifierPath),
+      context.downloadReleaseAsset(`${releaseUrl}/${PRIVILEGED_PROVENANCE_NAME}`, provenancePath),
+      context.downloadReleaseAsset(
+        `${releaseUrl}/${PRIVILEGED_PROVENANCE_BUNDLE_NAME}`,
+        provenanceBundlePath,
+      ),
+      context.downloadReleaseAsset(`${releaseUrl}/${PRIVILEGED_SBOM_NAME}`, sbomPath),
+      context.downloadReleaseAsset(`${releaseUrl}/${PRIVILEGED_VEX_NAME}`, vexPath),
     ]);
-    await context.verifyReleaseAsset(
-      releaseManifestPath,
-      version,
-      context.paths.stateDir,
-      releaseManifestBundlePath,
-    );
+    await Promise.all([
+      context.verifyReleaseAsset(
+        releaseManifestPath,
+        version,
+        context.paths.stateDir,
+        releaseManifestBundlePath,
+      ),
+      context.verifyReleaseAsset(
+        lifecycleMetadataPath,
+        version,
+        context.paths.stateDir,
+        lifecycleMetadataBundlePath,
+      ),
+      context.verifyReleaseAsset(
+        provenancePath,
+        version,
+        context.paths.stateDir,
+        provenanceBundlePath,
+      ),
+    ]);
     const manifestBytes = await fsp.readFile(releaseManifestPath);
     const selected = parseUnifiedHostedSignerRelease(
       JSON.parse(manifestBytes.toString("utf8")),
       version,
       platform,
     );
+    const lifecycleMetadata = JSON.parse(await fsp.readFile(lifecycleMetadataPath, "utf8"));
+    const expectedVerifier = lifecycleMetadata?.targets?.evidenceVerifier;
+    if (
+      lifecycleMetadata?.release?.version !== version ||
+      lifecycleMetadata?.release?.commit !== selected.binding.releaseCommit ||
+      expectedVerifier?.asset !== EVIDENCE_VERIFIER_NAME ||
+      !/^[a-f0-9]{64}$/u.test(expectedVerifier?.sha256 || "")
+    ) {
+      throw new Error("lifecycle evidence verifier identity is malformed or release-mismatched");
+    }
+    const evidenceVerifierSha256 = await sha256(evidenceVerifierPath);
+    if (evidenceVerifierSha256 !== expectedVerifier.sha256) {
+      throw new Error("privileged release evidence verifier does not match lifecycle metadata");
+    }
+    await context.verifyPrivilegedReleaseEvidence(evidenceVerifierPath, evidenceVerifierSha256, {
+      releaseManifestPath,
+      lifecycleMetadataPath,
+      provenancePath,
+      sbomPath,
+      vexPath,
+      expectedVersion: version,
+      expectedCommit: selected.binding.releaseCommit,
+    });
     const assetPath = path.join(staging, selected.artifact.asset);
     await Promise.all([
       context.downloadReleaseAsset(`${releaseUrl}/${selected.artifact.asset}`, assetPath),
@@ -3834,6 +3920,8 @@ function createTransactionContext(overrides = {}) {
       (async (version) => await assertReleaseChannelAllowed(version, paths.channelPath)),
     downloadReleaseAsset: overrides.downloadReleaseAsset ?? download,
     verifyReleaseAsset: overrides.verifyReleaseAsset ?? verifyReleaseAsset,
+    verifyPrivilegedReleaseEvidence:
+      overrides.verifyPrivilegedReleaseEvidence ?? verifyPrivilegedReleaseEvidence,
     selfCheckControllerAsset: overrides.selfCheckControllerAsset ?? selfCheckControllerAsset,
     stageControllerRelease:
       overrides.stageControllerRelease ??

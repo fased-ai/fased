@@ -10,9 +10,16 @@ import { verifyInitialLifecycleRoot } from "./lifecycle-trust-root.mjs";
 const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
 const COMMIT_PATTERN = /^[a-f0-9]{40}$/u;
 const TARGET_NAMES = Object.freeze({
+  bootstrap: "install.sh",
   supervisor: "fased-lifecycle-supervisor.mjs",
   controllerServer: "fased-host-updater.mjs",
   controllerClient: "fased-host-updaterctl.mjs",
+  evidenceVerifier: "fased-privileged-release-evidence.mjs",
+});
+const EVIDENCE_NAMES = Object.freeze({
+  provenance: "fased-privileged-provenance-v1.intoto.json",
+  sbom: "fased-privileged-sbom-v1.spdx.json",
+  vex: "fased-privileged-vex-v1.openvex.json",
 });
 const MAX_VALIDITY_MS = 400 * 24 * 60 * 60 * 1000;
 
@@ -93,6 +100,21 @@ export async function buildLifecycleTrustMetadata({
     }
     targets[role] = { asset, sha256: await sha256(candidate) };
   }
+  const evidence = {};
+  for (const [role, asset] of Object.entries(EVIDENCE_NAMES)) {
+    const candidate = path.join(assetsDir, asset);
+    const info = await fsp.lstat(candidate);
+    if (
+      !info.isFile() ||
+      info.isSymbolicLink() ||
+      info.nlink !== 1 ||
+      info.size <= 0 ||
+      info.size > 32 * 1024 * 1024
+    ) {
+      throw new Error(`lifecycle ${role} evidence must be one bounded regular single-link file`);
+    }
+    evidence[role] = { asset, sha256: await sha256(candidate) };
+  }
 
   return {
     schemaVersion: 1,
@@ -114,6 +136,7 @@ export async function buildLifecycleTrustMetadata({
       controllerProtocol: 2,
     },
     targets,
+    evidence,
   };
 }
 

@@ -16,9 +16,17 @@ const rootPolicyPath = path.join(
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-lifecycle-trust-"));
+  fs.writeFileSync(path.join(root, "install.sh"), "bootstrap\n");
   fs.writeFileSync(path.join(root, "fased-lifecycle-supervisor.mjs"), "supervisor\n");
   fs.writeFileSync(path.join(root, "fased-host-updater.mjs"), "server\n");
   fs.writeFileSync(path.join(root, "fased-host-updaterctl.mjs"), "client\n");
+  fs.writeFileSync(path.join(root, "fased-privileged-release-evidence.mjs"), "evidence verifier\n");
+  fs.writeFileSync(
+    path.join(root, "fased-privileged-provenance-v1.intoto.json"),
+    '{"provenance":true}\n',
+  );
+  fs.writeFileSync(path.join(root, "fased-privileged-sbom-v1.spdx.json"), '{"sbom":true}\n');
+  fs.writeFileSync(path.join(root, "fased-privileged-vex-v1.openvex.json"), '{"vex":true}\n');
   return root;
 }
 
@@ -44,13 +52,23 @@ describe("lifecycle trust metadata", () => {
         controllerProtocol: 2,
       },
       targets: {
+        bootstrap: { asset: "install.sh" },
         supervisor: { asset: "fased-lifecycle-supervisor.mjs" },
         controllerServer: { asset: "fased-host-updater.mjs" },
         controllerClient: { asset: "fased-host-updaterctl.mjs" },
+        evidenceVerifier: { asset: "fased-privileged-release-evidence.mjs" },
+      },
+      evidence: {
+        provenance: { asset: "fased-privileged-provenance-v1.intoto.json" },
+        sbom: { asset: "fased-privileged-sbom-v1.spdx.json" },
+        vex: { asset: "fased-privileged-vex-v1.openvex.json" },
       },
     });
     for (const target of Object.values(metadata.targets)) {
       expect(target.sha256).toMatch(/^[a-f0-9]{64}$/u);
+    }
+    for (const evidence of Object.values(metadata.evidence)) {
+      expect(evidence.sha256).toMatch(/^[a-f0-9]{64}$/u);
     }
   });
 

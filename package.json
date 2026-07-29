@@ -46,6 +46,7 @@
     "scripts/lifecycle-trust-policy.mjs",
     "scripts/lifecycle-trust-root.mjs",
     "scripts/lifecycle-trust-runtime.mjs",
+    "scripts/privileged-release-evidence.mjs",
     "scripts/fased-lifecycle-supervisor.mjs",
     "scripts/fased-host-updater.mjs",
     "scripts/fased-host-updaterctl.mjs",

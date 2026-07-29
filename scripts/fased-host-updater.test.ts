@@ -1342,6 +1342,7 @@ describe("root-owned hosted updater protocol", () => {
     const platform = `linux-${__testing.releaseArchitecture()}`;
     const assetName = `fased-signerd-${platform}`;
     const signerBytes = Buffer.from("verified signer fixture\n");
+    const evidenceVerifierBytes = Buffer.from("verified evidence fixture\n");
     const capabilities = { protocol: { current: 2, min: 2, max: 2 } };
     const manifest = {
       schemaVersion: 2,
@@ -1376,6 +1377,15 @@ describe("root-owned hosted updater protocol", () => {
         },
       },
     };
+    const lifecycleMetadata = {
+      release: { version: "1.2.3", commit: "a".repeat(40) },
+      targets: {
+        evidenceVerifier: {
+          asset: "fased-privileged-release-evidence.mjs",
+          sha256: createHash("sha256").update(evidenceVerifierBytes).digest("hex"),
+        },
+      },
+    };
     const downloads: string[] = [];
     const verifications: Array<{ asset: string; bundle: string }> = [];
     const context = __testing.createTransactionContext({
@@ -1385,6 +1395,10 @@ describe("root-owned hosted updater protocol", () => {
         let contents: string | Buffer = "offline attestation bundle\n";
         if (url.endsWith("/fased-hosted-release-v2.json")) {
           contents = `${JSON.stringify(manifest)}\n`;
+        } else if (url.endsWith("/fased-lifecycle-trust-v1.json")) {
+          contents = `${JSON.stringify(lifecycleMetadata)}\n`;
+        } else if (url.endsWith("/fased-privileged-release-evidence.mjs")) {
+          contents = evidenceVerifierBytes;
         } else if (url.endsWith(`/${assetName}`)) {
           contents = signerBytes;
         }
@@ -1401,6 +1415,7 @@ describe("root-owned hosted updater protocol", () => {
         expect(await fsp.readFile(bundlePath, "utf8")).toBe("offline attestation bundle\n");
         verifications.push({ asset: path.basename(assetPath), bundle: path.basename(bundlePath) });
       },
+      verifyPrivilegedReleaseEvidence: async () => undefined,
     });
 
     const staged = await __testing.stageOfficialCandidate("1.2.3", candidatePath, context);
@@ -1413,13 +1428,23 @@ describe("root-owned hosted updater protocol", () => {
         "fased-signerd-release.attestation.json",
       ]),
     );
-    expect(verifications).toEqual([
-      {
-        asset: "fased-hosted-release-v2.json",
-        bundle: "fased-hosted-release-v2.json.attestation.json",
-      },
-      { asset: assetName, bundle: "fased-signerd-release.attestation.json" },
-    ]);
+    expect(verifications).toEqual(
+      expect.arrayContaining([
+        {
+          asset: "fased-hosted-release-v2.json",
+          bundle: "fased-hosted-release-v2.json.attestation.json",
+        },
+        {
+          asset: "fased-lifecycle-trust-v1.json",
+          bundle: "fased-lifecycle-trust-v1.json.attestation.json",
+        },
+        {
+          asset: "fased-privileged-provenance-v1.intoto.json",
+          bundle: "fased-privileged-provenance-v1.intoto.json.attestation.json",
+        },
+        { asset: assetName, bundle: "fased-signerd-release.attestation.json" },
+      ]),
+    );
     expect(await fsp.readFile(candidatePath)).toEqual(signerBytes);
     expect(staged.release).toEqual(signerRelease("1.2.3"));
   });

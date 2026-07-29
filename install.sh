@@ -535,13 +535,23 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     local release_manifest_bundle="${preflight}/fased-hosted-release-v2.json.attestation.json"
     local lifecycle_metadata="${preflight}/fased-lifecycle-trust-v1.json"
     local lifecycle_metadata_bundle="${preflight}/fased-lifecycle-trust-v1.json.attestation.json"
+    local evidence_verifier="${preflight}/fased-privileged-release-evidence.mjs"
+    local provenance="${preflight}/fased-privileged-provenance-v1.intoto.json"
+    local provenance_bundle="${preflight}/fased-privileged-provenance-v1.intoto.json.attestation.json"
+    local sbom="${preflight}/fased-privileged-sbom-v1.spdx.json"
+    local vex="${preflight}/fased-privileged-vex-v1.openvex.json"
     local expected=""
     local actual=""
     local manifest_digest=""
     local manifest_commit=""
     local manifest_signer_commit=""
     local lifecycle_metadata_digest=""
+    local provenance_digest=""
+    local sbom_digest=""
+    local vex_digest=""
+    local evidence_verifier_digest=""
     local lifecycle_supervisor_expected=""
+    local evidence_verifier_expected=""
     local lifecycle_issued_at=""
     local lifecycle_expires_at=""
     local lifecycle_issued_epoch=""
@@ -602,6 +612,10 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       local cached_digest=""
       local cached_signer_digest=""
       local cached_lifecycle_digest=""
+      local cached_provenance_digest=""
+      local cached_sbom_digest=""
+      local cached_vex_digest=""
+      local cached_evidence_verifier_digest=""
       local cached_candidate=""
       for cached_candidate in "$release_parent"/*; do
         [[ -d "$cached_candidate" && "$(basename "$cached_candidate")" =~ ^[a-f0-9]{64}$ ]] || continue
@@ -619,16 +633,32 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
           cached_commit="$(awk -F= '$1 == "commit" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
           cached_signer_digest="$(awk -F= '$1 == "signer_sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
           cached_lifecycle_digest="$(awk -F= '$1 == "lifecycle_metadata_sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
+          cached_provenance_digest="$(awk -F= '$1 == "provenance_sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
+          cached_sbom_digest="$(awk -F= '$1 == "sbom_sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
+          cached_vex_digest="$(awk -F= '$1 == "vex_sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
+          cached_evidence_verifier_digest="$(awk -F= '$1 == "evidence_verifier_sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
         fi
         if [[ "$cached_commit" =~ ^[a-f0-9]{40}$ && \
           "$cached_signer_digest" =~ ^[a-f0-9]{64}$ && \
           "$cached_lifecycle_digest" =~ ^[a-f0-9]{64}$ && \
+          "$cached_provenance_digest" =~ ^[a-f0-9]{64}$ && \
+          "$cached_sbom_digest" =~ ^[a-f0-9]{64}$ && \
+          "$cached_vex_digest" =~ ^[a-f0-9]{64}$ && \
+          "$cached_evidence_verifier_digest" =~ ^[a-f0-9]{64}$ && \
           "$(awk -F= '$1 == "version" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified" 2>/dev/null || true)" == "$release_version" && \
           "$(awk -F= '$1 == "sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified" 2>/dev/null || true)" == "$cached_digest" && \
           -d "$cached_root_store/verified-dependencies/node_modules" && \
           -f "$cached_root_store/verified-assets/fased-signerd" && \
           -f "$cached_root_store/verified-assets/fased-lifecycle-trust-v1.json" && \
+          -f "$cached_root_store/verified-assets/fased-privileged-provenance-v1.intoto.json" && \
+          -f "$cached_root_store/verified-assets/fased-privileged-sbom-v1.spdx.json" && \
+          -f "$cached_root_store/verified-assets/fased-privileged-vex-v1.openvex.json" && \
+          -f "$cached_root_store/verified-assets/fased-privileged-release-evidence.mjs" && \
           "$(sha256sum "$cached_root_store/verified-assets/fased-lifecycle-trust-v1.json" | awk '{print tolower($1)}')" == "$cached_lifecycle_digest" && \
+          "$(sha256sum "$cached_root_store/verified-assets/fased-privileged-provenance-v1.intoto.json" | awk '{print tolower($1)}')" == "$cached_provenance_digest" && \
+          "$(sha256sum "$cached_root_store/verified-assets/fased-privileged-sbom-v1.spdx.json" | awk '{print tolower($1)}')" == "$cached_sbom_digest" && \
+          "$(sha256sum "$cached_root_store/verified-assets/fased-privileged-vex-v1.openvex.json" | awk '{print tolower($1)}')" == "$cached_vex_digest" && \
+          "$(sha256sum "$cached_root_store/verified-assets/fased-privileged-release-evidence.mjs" | awk '{print tolower($1)}')" == "$cached_evidence_verifier_digest" && \
           "$(sha256sum "$cached_root_store/verified-assets/fased-signerd" | awk '{print tolower($1)}')" == "$cached_signer_digest" ]] && \
           root_owned_bundle_tree_is_secure "$cached_root_store"; then
           rm -rf -- "$preflight"
@@ -644,6 +674,11 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-hosted-release-v2.json.attestation.json" -o "$release_manifest_bundle"
     curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-lifecycle-trust-v1.json" -o "$lifecycle_metadata"
     curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-lifecycle-trust-v1.json.attestation.json" -o "$lifecycle_metadata_bundle"
+    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-release-evidence.mjs" -o "$evidence_verifier"
+    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-provenance-v1.intoto.json" -o "$provenance"
+    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-provenance-v1.intoto.json.attestation.json" -o "$provenance_bundle"
+    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-sbom-v1.spdx.json" -o "$sbom"
+    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-vex-v1.openvex.json" -o "$vex"
     GH_PROMPT_DISABLED=1 gh attestation verify "$release_manifest" \
       --repo fased-ai/fased \
       --bundle "$release_manifest_bundle" \
@@ -653,6 +688,12 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     GH_PROMPT_DISABLED=1 gh attestation verify "$lifecycle_metadata" \
       --repo fased-ai/fased \
       --bundle "$lifecycle_metadata_bundle" \
+      --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+      --source-ref "refs/tags/v${release_version}" \
+      --deny-self-hosted-runners >/dev/null
+    GH_PROMPT_DISABLED=1 gh attestation verify "$provenance" \
+      --repo fased-ai/fased \
+      --bundle "$provenance_bundle" \
       --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
       --source-ref "refs/tags/v${release_version}" \
       --deny-self-hosted-runners >/dev/null
@@ -708,13 +749,14 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       echo "Hosted release manifest selects a mixed commit or unexpected app artifact." >&2
       exit 1
     }
-    lifecycle_supervisor_expected="$(jq -er \
+    local lifecycle_selection=""
+    lifecycle_selection="$(jq -er \
       --arg version "$release_version" \
       --arg commit "$manifest_commit" \
       --arg channel "$hosting_update_channel" \
       --arg platform "linux-${architecture}" \
       --arg current_time "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" '
-      if (keys == ["policy", "release", "role", "rootPolicy", "schemaVersion", "targets", "validity"]) and
+      if (keys == ["evidence", "policy", "release", "role", "rootPolicy", "schemaVersion", "targets", "validity"]) and
         .schemaVersion == 1 and
         .role == "fased-lifecycle-targets" and
         (.rootPolicy | keys == ["schemaVersion", "signatures", "signed"]) and
@@ -735,19 +777,31 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
         (.policy.platforms | index($platform)) != null and
         .policy.supervisorProtocol == 1 and
         .policy.controllerProtocol == 2 and
-        (.targets | keys == ["controllerClient", "controllerServer", "supervisor"]) and
+        (.targets | keys == ["bootstrap", "controllerClient", "controllerServer", "evidenceVerifier", "supervisor"]) and
+        .targets.bootstrap.asset == "install.sh" and
+        (.targets.bootstrap.sha256 | test("^[a-f0-9]{64}$")) and
         .targets.supervisor.asset == "fased-lifecycle-supervisor.mjs" and
         (.targets.supervisor.sha256 | test("^[a-f0-9]{64}$")) and
         .targets.controllerServer.asset == "fased-host-updater.mjs" and
         (.targets.controllerServer.sha256 | test("^[a-f0-9]{64}$")) and
         .targets.controllerClient.asset == "fased-host-updaterctl.mjs" and
-        (.targets.controllerClient.sha256 | test("^[a-f0-9]{64}$"))
-      then .targets.supervisor.sha256
+        (.targets.controllerClient.sha256 | test("^[a-f0-9]{64}$")) and
+        .targets.evidenceVerifier.asset == "fased-privileged-release-evidence.mjs" and
+        (.targets.evidenceVerifier.sha256 | test("^[a-f0-9]{64}$")) and
+        (.evidence | keys == ["provenance", "sbom", "vex"]) and
+        .evidence.provenance.asset == "fased-privileged-provenance-v1.intoto.json" and
+        (.evidence.provenance.sha256 | test("^[a-f0-9]{64}$")) and
+        .evidence.sbom.asset == "fased-privileged-sbom-v1.spdx.json" and
+        (.evidence.sbom.sha256 | test("^[a-f0-9]{64}$")) and
+        .evidence.vex.asset == "fased-privileged-vex-v1.openvex.json" and
+        (.evidence.vex.sha256 | test("^[a-f0-9]{64}$"))
+      then [.targets.supervisor.sha256, .targets.evidenceVerifier.sha256] | @tsv
       else error("invalid lifecycle trust metadata") end
     ' "$lifecycle_metadata")" || {
       echo "Lifecycle trust metadata does not authorize this exact release and platform." >&2
       exit 1
     }
+    IFS=$'\t' read -r lifecycle_supervisor_expected evidence_verifier_expected <<<"$lifecycle_selection"
     lifecycle_issued_at="$(jq -er '.validity.issuedAt | select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.000Z$"))' "$lifecycle_metadata")"
     lifecycle_expires_at="$(jq -er '.validity.expiresAt | select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.000Z$"))' "$lifecycle_metadata")"
     lifecycle_issued_epoch="$(date -u -d "$lifecycle_issued_at" +%s 2>/dev/null || true)"
@@ -763,7 +817,32 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       echo "Lifecycle trust metadata validity is non-canonical, expired, or too broad." >&2
       exit 1
     fi
+    [[ "$(sha256sum "$evidence_verifier" | awk '{print tolower($1)}')" == "$evidence_verifier_expected" ]] || {
+      echo "Privileged release evidence verifier does not match lifecycle trust metadata." >&2
+      exit 1
+    }
+    local evidence_node=""
+    evidence_node="${protected_local_node_binary:-$(command -v node || true)}"
+    [[ -n "$evidence_node" && -x "$evidence_node" ]] || {
+      echo "A root-controlled Node.js runtime is required to verify release evidence." >&2
+      exit 1
+    }
+    "$evidence_node" "$evidence_verifier" verify \
+      --release-manifest "$release_manifest" \
+      --lifecycle-metadata "$lifecycle_metadata" \
+      --provenance "$provenance" \
+      --sbom "$sbom" \
+      --vex "$vex" \
+      --version "$release_version" \
+      --commit "$manifest_commit" >/dev/null || {
+      echo "Privileged release provenance, SBOM, or VEX verification failed." >&2
+      exit 1
+    }
     lifecycle_metadata_digest="$(sha256sum "$lifecycle_metadata" | awk '{print tolower($1)}')"
+    provenance_digest="$(sha256sum "$provenance" | awk '{print tolower($1)}')"
+    sbom_digest="$(sha256sum "$sbom" | awk '{print tolower($1)}')"
+    vex_digest="$(sha256sum "$vex" | awk '{print tolower($1)}')"
+    evidence_verifier_digest="$(sha256sum "$evidence_verifier" | awk '{print tolower($1)}')"
     archive="${preflight}/${asset}"
     dependency_archive="${preflight}/${dependency_asset}"
     signer_binary="${preflight}/${signer_asset}"
@@ -812,12 +891,18 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       ! -L "$verified_package_root/install.sh" && -f "$verified_package_root/dist/build-info.json" && \
       ! -L "$verified_package_root/dist/build-info.json" && \
       -f "$verified_package_root/scripts/fased-lifecycle-supervisor.mjs" && \
-      ! -L "$verified_package_root/scripts/fased-lifecycle-supervisor.mjs" ]] || {
+      ! -L "$verified_package_root/scripts/fased-lifecycle-supervisor.mjs" && \
+      -f "$verified_package_root/scripts/privileged-release-evidence.mjs" && \
+      ! -L "$verified_package_root/scripts/privileged-release-evidence.mjs" ]] || {
       echo "Attested Hosting bundle is incomplete or has an invalid entrypoint." >&2
       exit 1
     }
     [[ "$(sha256sum "$verified_package_root/scripts/fased-lifecycle-supervisor.mjs" | awk '{print tolower($1)}')" == "$lifecycle_supervisor_expected" ]] || {
       echo "Packaged lifecycle supervisor does not match immutable lifecycle trust metadata." >&2
+      exit 1
+    }
+    [[ "$(sha256sum "$verified_package_root/scripts/privileged-release-evidence.mjs" | awk '{print tolower($1)}')" == "$evidence_verifier_expected" ]] || {
+      echo "Packaged release evidence verifier does not match lifecycle trust metadata." >&2
       exit 1
     }
     local packaged_version=""
@@ -862,11 +947,23 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       grep -Fxq "dependency_hash=${dependency_hash}" "$existing_root/.fased-hosting-bundle-verified" && \
       grep -Fxq "release_manifest_sha256=${manifest_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
       grep -Fxq "lifecycle_metadata_sha256=${lifecycle_metadata_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
+      grep -Fxq "provenance_sha256=${provenance_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
+      grep -Fxq "sbom_sha256=${sbom_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
+      grep -Fxq "vex_sha256=${vex_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
+      grep -Fxq "evidence_verifier_sha256=${evidence_verifier_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
       [[ -d "$root_store/verified-dependencies/node_modules" && \
         ! -L "$root_store/verified-dependencies/node_modules" ]] && \
       [[ -f "$root_store/verified-assets/fased-signerd" && \
         ! -L "$root_store/verified-assets/fased-signerd" && \
         "$(sha256sum "$root_store/verified-assets/fased-signerd" | awk '{print tolower($1)}')" == "$signer_actual" ]] && \
+      [[ -f "$root_store/verified-assets/fased-privileged-provenance-v1.intoto.json" && \
+        "$(sha256sum "$root_store/verified-assets/fased-privileged-provenance-v1.intoto.json" | awk '{print tolower($1)}')" == "$provenance_digest" ]] && \
+      [[ -f "$root_store/verified-assets/fased-privileged-sbom-v1.spdx.json" && \
+        "$(sha256sum "$root_store/verified-assets/fased-privileged-sbom-v1.spdx.json" | awk '{print tolower($1)}')" == "$sbom_digest" ]] && \
+      [[ -f "$root_store/verified-assets/fased-privileged-vex-v1.openvex.json" && \
+        "$(sha256sum "$root_store/verified-assets/fased-privileged-vex-v1.openvex.json" | awk '{print tolower($1)}')" == "$vex_digest" ]] && \
+      [[ -f "$root_store/verified-assets/fased-privileged-release-evidence.mjs" && \
+        "$(sha256sum "$root_store/verified-assets/fased-privileged-release-evidence.mjs" | awk '{print tolower($1)}')" == "$evidence_verifier_digest" ]] && \
       [[ "$existing_commit" =~ ^[a-f0-9]{40}$ ]] && \
       grep -Fxq "commit=${existing_commit}" "$existing_root/.fased-hosting-bundle-verified" && \
       root_owned_bundle_tree_is_secure "$root_store" && \
@@ -905,6 +1002,21 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     install -m 0644 -o root -g root \
       "$lifecycle_metadata_bundle" \
       "$staging/verified-assets/fased-lifecycle-trust-v1.json.attestation.json"
+    install -m 0755 -o root -g root \
+      "$evidence_verifier" \
+      "$staging/verified-assets/fased-privileged-release-evidence.mjs"
+    install -m 0644 -o root -g root \
+      "$provenance" \
+      "$staging/verified-assets/fased-privileged-provenance-v1.intoto.json"
+    install -m 0644 -o root -g root \
+      "$provenance_bundle" \
+      "$staging/verified-assets/fased-privileged-provenance-v1.intoto.json.attestation.json"
+    install -m 0644 -o root -g root \
+      "$sbom" \
+      "$staging/verified-assets/fased-privileged-sbom-v1.spdx.json"
+    install -m 0644 -o root -g root \
+      "$vex" \
+      "$staging/verified-assets/fased-privileged-vex-v1.openvex.json"
     local package_root="$staging/extract/package"
     chown -R root:root "$staging"
     chmod -R a+rX "$staging"
@@ -913,8 +1025,8 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       echo "Could not secure the verified Hosting bundle as root-owned and non-writable." >&2
       exit 1
     fi
-    printf 'version=%s\nsha256=%s\nsigner_sha256=%s\ndependency_sha256=%s\ndependency_hash=%s\nrelease_manifest_sha256=%s\nlifecycle_metadata_sha256=%s\ncommit=%s\n' \
-      "$release_version" "$actual" "$signer_actual" "$dependency_actual" "$dependency_hash" "$manifest_digest" "$lifecycle_metadata_digest" "$packaged_commit" >"$package_root/.fased-hosting-bundle-verified"
+    printf 'version=%s\nsha256=%s\nsigner_sha256=%s\ndependency_sha256=%s\ndependency_hash=%s\nrelease_manifest_sha256=%s\nlifecycle_metadata_sha256=%s\nprovenance_sha256=%s\nsbom_sha256=%s\nvex_sha256=%s\nevidence_verifier_sha256=%s\ncommit=%s\n' \
+      "$release_version" "$actual" "$signer_actual" "$dependency_actual" "$dependency_hash" "$manifest_digest" "$lifecycle_metadata_digest" "$provenance_digest" "$sbom_digest" "$vex_digest" "$evidence_verifier_digest" "$packaged_commit" >"$package_root/.fased-hosting-bundle-verified"
     chmod 0600 "$package_root/.fased-hosting-bundle-verified"
     sync -f "$package_root/.fased-hosting-bundle-verified" "$package_root" "$staging/extract" 2>/dev/null || true
     mv "$staging" "$root_store"
@@ -6296,9 +6408,10 @@ assert_verified_hosting_root_source() {
   local privileged_asset=""
   for privileged_asset in \
     install.sh \
-    scripts/fased-host-updater.mjs \
-    scripts/fased-host-updaterctl.mjs \
-    scripts/hosted-legacy-wallet-migration.mjs \
+     scripts/fased-host-updater.mjs \
+     scripts/fased-host-updaterctl.mjs \
+     scripts/privileged-release-evidence.mjs \
+     scripts/hosted-legacy-wallet-migration.mjs \
     scripts/fased-signer-enroll-hosting.sh \
     scripts/fased-signer-network-hosting.sh \
     scripts/fased-signer-owner-hosting.sh \

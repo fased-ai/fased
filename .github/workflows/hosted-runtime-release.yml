@@ -50,6 +50,9 @@ jobs:
       - name: Validate release contents once
         run: pnpm release:check
 
+      - name: Enforce production vulnerability threshold
+        run: pnpm audit --prod --audit-level high
+
   linux:
     name: Linux ${{ matrix.arch }}
     strategy:
@@ -130,6 +133,10 @@ jobs:
         working-directory: tools/fased-signerd
         run: go test ./...
 
+      - name: Enforce signer vulnerability threshold
+        working-directory: tools/fased-signerd
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+
       - name: Build native signer release assets
         run: bash scripts/release-fased-signerd.sh
 
@@ -149,6 +156,8 @@ jobs:
           install -m 0755 scripts/fased-lifecycle-supervisor.mjs dist-native/release/fased-lifecycle-supervisor.mjs
           install -m 0755 scripts/fased-host-updater.mjs dist-native/release/fased-host-updater.mjs
           install -m 0755 scripts/fased-host-updaterctl.mjs dist-native/release/fased-host-updaterctl.mjs
+          install -m 0755 scripts/privileged-release-evidence.mjs \
+            dist-native/release/fased-privileged-release-evidence.mjs
 
       - name: Verify native signer checksums
         working-directory: dist-native/release
@@ -272,6 +281,13 @@ jobs:
             const expires = new Date(issued.getTime() + 365 * 24 * 60 * 60 * 1000);
             process.stdout.write(`${issued.toISOString()}\n${expires.toISOString()}\n`);
           ' "$(git show -s --format=%cI "$GITHUB_SHA")")
+          node scripts/privileged-release-evidence.mjs build \
+            --assets .artifacts/hosted-runtime \
+            --version "$package_version" \
+            --commit "$GITHUB_SHA" \
+            --issued-at "${lifecycle_times[0]}" \
+            --vex-decisions release/vulnerability-decisions-v1.json \
+            --output-dir .artifacts/hosted-runtime
           node scripts/build-lifecycle-trust-metadata.mjs \
             --assets .artifacts/hosted-runtime \
             --root-policy release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json \
@@ -316,6 +332,20 @@ jobs:
             test -s ".artifacts/hosted-runtime/${required}"
           done
 
+      - name: Attest privileged release provenance
+        id: attest-candidate-provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json
+
+      - name: Stage privileged provenance attestation bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 0644 \
+            "${{ steps.attest-candidate-provenance.outputs.bundle-path }}" \
+            .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json.attestation.json
+
       - name: Attest lifecycle trust metadata
         id: attest-candidate-lifecycle-trust
         uses: actions/attest@v4
@@ -347,11 +377,21 @@ jobs:
           }
           verify fased-hosted-release-v2.json fased-hosted-release-v2.json.attestation.json
           verify fased-lifecycle-trust-v1.json fased-lifecycle-trust-v1.json.attestation.json
+          verify fased-privileged-provenance-v1.intoto.json \
+            fased-privileged-provenance-v1.intoto.json.attestation.json
           verify fased-signerd-linux-amd64 fased-signerd-release.attestation.json
           verify install.sh install.sh.attestation.json
           verify fased-lifecycle-supervisor.mjs fased-lifecycle-supervisor.mjs.attestation.json
           verify fased-host-updater.mjs fased-host-updater.mjs.attestation.json
           verify fased-host-updaterctl.mjs fased-host-updaterctl.mjs.attestation.json
+          node ../../scripts/privileged-release-evidence.mjs verify \
+            --release-manifest fased-hosted-release-v2.json \
+            --lifecycle-metadata fased-lifecycle-trust-v1.json \
+            --provenance fased-privileged-provenance-v1.intoto.json \
+            --sbom fased-privileged-sbom-v1.spdx.json \
+            --vex fased-privileged-vex-v1.openvex.json \
+            --version "$(node -p "require('../../package.json').version")" \
+            --commit "$GITHUB_SHA"
 
       - name: Upload complete non-publishing candidate
         uses: actions/upload-artifact@v4
@@ -393,6 +433,13 @@ jobs:
             const expires = new Date(issued.getTime() + 365 * 24 * 60 * 60 * 1000);
             process.stdout.write(`${issued.toISOString()}\n${expires.toISOString()}\n`);
           ' "$(git show -s --format=%cI "$GITHUB_SHA")")
+          node scripts/privileged-release-evidence.mjs build \
+            --assets .artifacts/hosted-runtime \
+            --version "$package_version" \
+            --commit "$GITHUB_SHA" \
+            --issued-at "${lifecycle_times[0]}" \
+            --vex-decisions release/vulnerability-decisions-v1.json \
+            --output-dir .artifacts/hosted-runtime
           node scripts/build-lifecycle-trust-metadata.mjs \
             --assets .artifacts/hosted-runtime \
             --root-policy release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json \
@@ -429,6 +476,43 @@ jobs:
           install -m 0644 \
             "${{ steps.attest-release-lifecycle-trust.outputs.bundle-path }}" \
             .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json.attestation.json
+
+      - name: Attest privileged release provenance
+        id: attest-release-provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json
+
+      - name: Stage privileged provenance attestation bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 0644 \
+            "${{ steps.attest-release-provenance.outputs.bundle-path }}" \
+            .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json.attestation.json
+
+      - name: Verify privileged release evidence before publication
+        shell: bash
+        env:
+          GH_PROMPT_DISABLED: "1"
+        run: |
+          set -euo pipefail
+          gh attestation verify \
+            .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle \
+              .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json.attestation.json \
+            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+            --source-ref "$GITHUB_REF" \
+            --deny-self-hosted-runners >/dev/null
+          node scripts/privileged-release-evidence.mjs verify \
+            --release-manifest .artifacts/hosted-runtime/fased-hosted-release-v2.json \
+            --lifecycle-metadata .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json \
+            --provenance .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json \
+            --sbom .artifacts/hosted-runtime/fased-privileged-sbom-v1.spdx.json \
+            --vex .artifacts/hosted-runtime/fased-privileged-vex-v1.openvex.json \
+            --version "$(node -p "require('./package.json').version")" \
+            --commit "$GITHUB_SHA"
 
       - name: Publish GitHub release assets
         env:
