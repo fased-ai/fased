@@ -1515,7 +1515,7 @@ describe("root-owned hosted updater protocol", () => {
     await expect(fsp.readFile(target, "utf8")).resolves.toBe("{}\n");
   });
 
-  it("removes validated historical residue only after exact official convergence", async () => {
+  it("tolerates validated historical residue disappearing after exact official convergence", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-historical-cleanup-"));
     cleanupRoots.push(root);
     const stateDir = path.join(root, "state");
@@ -1525,6 +1525,7 @@ describe("root-owned hosted updater protocol", () => {
     const applicationReleasesDir = path.join(root, "application", "releases");
     const applicationCurrentLink = path.join(root, "application", "current");
     const historicalDir = path.join(root, "testing");
+    const authorizationPath = path.join(historicalDir, "protected-local-artifact-source.json");
     const targetVersion = "1.2.3";
     const targetCommit = "a".repeat(40);
     const oldVersion = "1.2.2";
@@ -1634,7 +1635,7 @@ describe("root-owned hosted updater protocol", () => {
         { mode: 0o600 },
       ),
       fsp.writeFile(
-        path.join(historicalDir, "protected-local-artifact-source.json"),
+        authorizationPath,
         `${JSON.stringify({
           schemaVersion: 1,
           baseUrl: "http://127.0.0.1:39091",
@@ -1663,6 +1664,9 @@ describe("root-owned hosted updater protocol", () => {
       protectedLocalInstanceId: "0123456789abcdef",
       rootUid: process.geteuid(),
       historicalQ0TestStateDir: historicalDir,
+      beforeHistoricalResidueRemoval: async () => {
+        await fsp.rm(authorizationPath);
+      },
     });
 
     const result = await __testing.cleanupHistoricalQ0Residue(context, {
@@ -1679,13 +1683,14 @@ describe("root-owned hosted updater protocol", () => {
       applicationCandidate,
       path.join(stateDir, "q0-controller-candidate.json"),
       path.join(stateDir, "q0-application-candidate.json"),
-      path.join(historicalDir, "protected-local-artifact-source.json"),
+      authorizationPath,
       path.join(historicalDir, "q0-protected-local-artifact-source-backup.json"),
     ]) {
       expect(fs.existsSync(removed)).toBe(false);
     }
     expect(fs.existsSync(controllerOld)).toBe(true);
     expect(fs.existsSync(applicationOld)).toBe(true);
+    expect(result.removed).not.toContain(authorizationPath);
   });
 
   it("always passes an offline bundle to GitHub attestation verification", () => {

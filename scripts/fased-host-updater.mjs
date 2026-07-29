@@ -3816,6 +3816,7 @@ function createTransactionContext(overrides = {}) {
     applicationState: overrides.applicationState ?? null,
     applicationTopology: overrides.applicationTopology ?? null,
     onDurablePhase: overrides.onDurablePhase,
+    beforeHistoricalResidueRemoval: overrides.beforeHistoricalResidueRemoval,
     historicalQ0TestStateDir: overrides.historicalQ0TestStateDir ?? HISTORICAL_Q0_TEST_STATE_DIR,
     assertReleaseAllowed:
       overrides.assertReleaseAllowed ??
@@ -4706,6 +4707,18 @@ async function listHistoricalCandidateGenerations(root, pattern, label, context)
   return result;
 }
 
+async function removeValidatedHistoricalResidue(residuePath, options) {
+  try {
+    await fsp.rm(residuePath, options);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
 async function cleanupHistoricalQ0Residue(context, journal) {
   if (!context.instanceId) {
     return { changed: false, removed: [] };
@@ -4898,16 +4911,26 @@ async function cleanupHistoricalQ0Residue(context, journal) {
     }
   }
 
+  await context.beforeHistoricalResidueRemoval?.({
+    candidateRoots: [...candidateRoots],
+    residueFiles: [...residueFiles],
+  });
+
   const removed = [];
   for (const candidate of candidateRoots) {
-    await fsp.rm(candidate, { recursive: true });
-    removed.push(candidate);
+    if (await removeValidatedHistoricalResidue(candidate, { recursive: true })) {
+      removed.push(candidate);
+    }
   }
   for (const filePath of residueFiles) {
-    await fsp.rm(filePath);
-    removed.push(filePath);
+    if (await removeValidatedHistoricalResidue(filePath)) {
+      removed.push(filePath);
+    }
   }
-  for (const directory of new Set(removed.map((entry) => path.dirname(entry)))) {
+  const residueDirectories = new Set(
+    [...candidateRoots, ...residueFiles].map((entry) => path.dirname(entry)),
+  );
+  for (const directory of residueDirectories) {
     await fsyncDirectory(directory);
   }
   return { changed: true, removed };
