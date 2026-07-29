@@ -70,6 +70,36 @@ const MIGRATION_SELECTION_SCHEMA_VERSION = 1;
 const SUPPORTED_MIGRATION_PROFILES = new Set(["protected-local", "hosting"]);
 const SUPPORTED_MANAGED_INSTALL_SCHEMAS = new Set([null, 1, 2]);
 const SUPPORTED_WALLET_REGISTRY_SCHEMAS = new Set([null, 1]);
+const LIFECYCLE_COMPATIBILITY_ADAPTERS = Object.freeze({
+  application: Object.freeze({
+    absent: "managed-install-absent",
+    "schema:1": "managed-install-v1-to-v2",
+    "schema:2": "managed-install-v2",
+  }),
+  controller: Object.freeze({
+    "protocol:2": "controller-protocol-v2",
+  }),
+  signer: Object.freeze({
+    "schema:2": "signer-schema-v2",
+  }),
+  wallet: Object.freeze({
+    absent: "wallet-registry-absent",
+    "schema:1": "wallet-registry-v1",
+  }),
+  mining: Object.freeze({
+    "schema:1": "mining-schema-v1",
+  }),
+  federation: Object.freeze({
+    "schema:2": "federation-schema-v2",
+  }),
+  sharedState: Object.freeze({
+    "schema:1": "declared-state-registry-v1",
+  }),
+  profileAccess: Object.freeze({
+    "protected-local:linux-systemd": "protected-local-system-v1",
+    "hosting:linux-systemd": "hosting-system-v1",
+  }),
+});
 const TRANSACTION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TRANSACTION_OPERATIONS = new Set([
@@ -1020,6 +1050,19 @@ function parseMigrationStateSchemas(value) {
   });
 }
 
+function lifecycleCompatibilityAdapter(component, selector) {
+  const catalog = LIFECYCLE_COMPATIBILITY_ADAPTERS[component];
+  const adapter = catalog?.[selector];
+  if (!adapter) {
+    throw new Error(`installed lifecycle ${component} compatibility adapter is unsupported`);
+  }
+  return adapter;
+}
+
+function lifecycleSchemaSelector(value) {
+  return value === null ? "absent" : `schema:${value}`;
+}
+
 function lifecycleMigrationInventory(topology, updaterProtocol = PROTOCOL_SCHEMA_VERSION) {
   if (
     !topology ||
@@ -1107,23 +1150,38 @@ function migrationSelectionFromInventory(inventory) {
     throw new Error("installed lifecycle migration inventory is unsupported");
   }
   const adapters = Object.freeze({
-    application:
-      normalized.stateSchemas.managedInstall === null
-        ? "managed-install-absent"
-        : normalized.stateSchemas.managedInstall === 1
-          ? "managed-install-v1-to-v2"
-          : "managed-install-v2",
-    controller: "controller-protocol-v2",
-    signer: "signer-schema-v2",
-    wallet:
-      normalized.stateSchemas.walletRegistry === null
-        ? "wallet-registry-absent"
-        : "wallet-registry-v1",
-    mining: "mining-schema-v1",
-    federation: "federation-schema-v2",
-    sharedState: "declared-state-registry-v1",
-    profileAccess:
-      normalized.profile === "protected-local" ? "protected-local-system-v1" : "hosting-system-v1",
+    application: lifecycleCompatibilityAdapter(
+      "application",
+      lifecycleSchemaSelector(normalized.stateSchemas.managedInstall),
+    ),
+    controller: lifecycleCompatibilityAdapter(
+      "controller",
+      `protocol:${normalized.controllerProtocol}`,
+    ),
+    signer: lifecycleCompatibilityAdapter(
+      "signer",
+      lifecycleSchemaSelector(normalized.stateSchemas.signer),
+    ),
+    wallet: lifecycleCompatibilityAdapter(
+      "wallet",
+      lifecycleSchemaSelector(normalized.stateSchemas.walletRegistry),
+    ),
+    mining: lifecycleCompatibilityAdapter(
+      "mining",
+      lifecycleSchemaSelector(normalized.stateSchemas.mining),
+    ),
+    federation: lifecycleCompatibilityAdapter(
+      "federation",
+      lifecycleSchemaSelector(normalized.stateSchemas.federation),
+    ),
+    sharedState: lifecycleCompatibilityAdapter(
+      "sharedState",
+      lifecycleSchemaSelector(normalized.declaredStateRegistry),
+    ),
+    profileAccess: lifecycleCompatibilityAdapter(
+      "profileAccess",
+      `${normalized.profile}:${normalized.platformAdapter}`,
+    ),
   });
   const unsigned = Object.freeze({
     schemaVersion: MIGRATION_SELECTION_SCHEMA_VERSION,
@@ -5853,6 +5911,7 @@ if (isMain) {
 }
 
 export const __testing = {
+  LIFECYCLE_COMPATIBILITY_ADAPTERS,
   assertSignerV2Health,
   applyReleaseTransaction,
   activateSignerRelease,
