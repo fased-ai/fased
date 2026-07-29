@@ -1365,6 +1365,7 @@ LOCAL_SIGNER_INSTALL_TRANSACTION_OPEN=0
 PROTECTED_LOCAL_BOOTSTRAPPED=0
 PROTECTED_LOCAL_INSTANCE=""
 LOCAL_EXISTING_BOOTSTRAP_MANIFEST_SNAPSHOT=""
+RUNTIME_UPDATE_CHANNEL_CHANGED=0
 HOST_SIGNER_TRANSACTION_ACTIVE=0
 HOST_SIGNER_DURABLE_COMMIT_DECISION=0
 HOST_SIGNER_TRANSACTION_ID=""
@@ -3153,6 +3154,7 @@ EOF
 
 persist_runtime_update_channel() {
   local transaction_phase="${1:-active}"
+  RUNTIME_UPDATE_CHANNEL_CHANGED=0
   if [[ "$UPDATE_CHANNEL_EXPLICIT" -ne 1 && "$HOSTING_REQUESTED" -ne 1 ]]; then
     return 0
   fi
@@ -3174,7 +3176,9 @@ persist_runtime_update_channel() {
     echo "Unknown update-channel persistence phase: $transaction_phase" >&2
     return 1
   fi
-  CONFIG_PATH="$config_path" CONFIG_MODE="$config_mode" UPDATE_CHANNEL="$UPDATE_CHANNEL" node <<'NODE'
+  local result=""
+  result="$(
+    CONFIG_PATH="$config_path" CONFIG_MODE="$config_mode" UPDATE_CHANNEL="$UPDATE_CHANNEL" node <<'NODE'
 const fs = require("node:fs");
 
 const configPath = process.env.CONFIG_PATH;
@@ -3194,6 +3198,11 @@ if (!stat.isFile() || stat.isSymbolicLink()) {
 }
 const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
 config.update = config.update && typeof config.update === "object" ? config.update : {};
+if (config.update.channel === channel) {
+  fs.chmodSync(configPath, configMode);
+  process.stdout.write("unchanged");
+  process.exit(0);
+}
 config.update.channel = channel;
 const temporary = `${configPath}.update-channel-${process.pid}`;
 fs.writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, {
@@ -3202,7 +3211,34 @@ fs.writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, {
 });
 fs.renameSync(temporary, configPath);
 fs.chmodSync(configPath, configMode);
+process.stdout.write("changed");
 NODE
+  )"
+  if [[ "$result" == "changed" ]]; then
+    RUNTIME_UPDATE_CHANNEL_CHANGED=1
+  fi
+}
+
+wait_for_protected_local_gateway_config_convergence() {
+  local previous_pid="$1"
+  [[ "$RUNTIME_UPDATE_CHANNEL_CHANGED" -eq 1 ]] || return 0
+  [[ "$PROTECTED_LOCAL_INSTANCE" =~ ^[a-f0-9]{16}$ ]] || return 1
+  local unit="fased-gateway-$PROTECTED_LOCAL_INSTANCE.service"
+  local current_pid=""
+  local active=""
+  local deadline=$((SECONDS + 20))
+  while ((SECONDS < deadline)); do
+    current_pid="$(systemctl show -p MainPID --value "$unit" 2>/dev/null || true)"
+    active="$(systemctl is-active "$unit" 2>/dev/null || true)"
+    if [[ "$active" == "active" && "$current_pid" =~ ^[1-9][0-9]*$ && \
+      "$current_pid" != "$previous_pid" ]]; then
+      wait_for_gateway_health_after_restart
+      return $?
+    fi
+    sleep 0.5
+  done
+  echo "Protected Local Gateway did not settle after its update-channel change." >&2
+  return 1
 }
 
 repair_tailscale_serve_gateway_config() {
@@ -6534,7 +6570,17 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
     else
       write_install_marker "$REPO_ROOT" "false"
     fi
+    protected_gateway_pid_before_channel="$(
+      systemctl show -p MainPID --value \
+        "fased-gateway-$PROTECTED_LOCAL_INSTANCE.service" 2>/dev/null || true
+    )"
     persist_runtime_update_channel
+    if ! wait_for_protected_local_gateway_config_convergence \
+      "$protected_gateway_pid_before_channel"; then
+      status_frame_end
+      echo "Protected Local services were installed, but the final Gateway configuration did not become healthy." >&2
+      exit 1
+    fi
     step_done "Protected Local signer, Gateway, and controller online"
     if [[ "$LOCAL_EXISTING_BOOTSTRAP_REQUESTED" -eq 1 ]]; then
       echo "Pre-handoff Local bootstrap complete. Onboarding was not rerun; future releases use fased update."
