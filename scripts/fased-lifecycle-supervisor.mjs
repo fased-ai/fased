@@ -35,6 +35,7 @@ const INSTANCE_ID_PATTERN = /^[a-f0-9]{16}$/u;
 const TRANSACTION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const CONTROLLER_OPERATIONS = new Set([
+  "applyRelease",
   "prepareRelease",
   "activateRelease",
   "authorizeGatewayRelease",
@@ -572,6 +573,8 @@ async function durableReceipt(paths, request, result) {
     version: request.version,
     outcome: result.outcome,
     controllerChanged: result.controllerChanged === true,
+    phase: result.phase ?? null,
+    release: result.release ?? null,
     recordedAt: new Date().toISOString(),
   };
   await atomicWrite(
@@ -579,6 +582,32 @@ async function durableReceipt(paths, request, result) {
     `${JSON.stringify(receipt, null, 2)}\n`,
     0o600,
   );
+  return receipt;
+}
+
+async function readDurableReceipt(paths, request) {
+  try {
+    const receipt = JSON.parse(
+      await fsp.readFile(
+        path.join(paths.supervisorStateDir, "receipts", `${request.transactionId}.json`),
+        "utf8",
+      ),
+    );
+    if (
+      receipt?.schemaVersion !== 1 ||
+      receipt.transactionId !== request.transactionId ||
+      receipt.operation !== request.op ||
+      receipt.version !== request.version
+    ) {
+      return null;
+    }
+    return receipt;
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
 }
 
 export async function stageTrustedController(request, context) {
@@ -831,7 +860,7 @@ function renderBoundaryUnits(configuration, nodeBinary) {
       : `fased-local/${configuration.instanceId}/controller`;
   const controllerWrites =
     configuration.profile === "hosting"
-      ? `/opt/fased/host-controller/releases /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-controller /etc/systemd/system ${unitPath(appStateDir)}`
+      ? `/opt/fased/host-controller/releases /opt/fased/host-application /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-controller /etc/systemd/system ${unitPath(appStateDir)}`
       : `/opt/fased/local/${configuration.instanceId}/application /opt/fased/local/${configuration.instanceId}/signer /var/lib/fased-local/${configuration.instanceId}/signer /var/lib/fased-local/${configuration.instanceId}/controller ${unitPath(appStateDir)} /run/fased-local-controller-worker/${configuration.instanceId} /etc/systemd/system`;
   const controllerReadOnly =
     configuration.profile === "hosting"
@@ -1077,6 +1106,9 @@ function createContext(configuration, overrides = {}) {
     waitForController:
       overrides.waitForController ??
       (async () => await waitForControllerSocket(configuration.paths.privateSocketPath)),
+    requestController:
+      overrides.requestController ??
+      (async (request, transactionContext) => await requestController(request, transactionContext)),
   };
 }
 
@@ -1156,6 +1188,20 @@ async function probeControllerIdentity(request, context) {
 }
 
 async function handleSupervisorRequest(request, context, state) {
+  if (request.op === "applyRelease") {
+    const receipt = await readDurableReceipt(context.paths, request);
+    if (receipt?.outcome === "committed") {
+      return {
+        ok: true,
+        transactionId: request.transactionId,
+        version: request.version,
+        phase: "committed",
+        changed: false,
+        release: receipt.release,
+        replayed: true,
+      };
+    }
+  }
   if (request.op === "updateController") {
     const priorInstanceId = state.controllerInstanceId;
     const staged = await context.stageTrustedController(request, context);
@@ -1206,11 +1252,18 @@ async function handleSupervisorRequest(request, context, state) {
     };
   }
 
-  const response = await requestController(request, context);
-  if (response.ok && request.op === "commitRelease") {
+  const response = await context.requestController(request, context);
+  if (response.ok && new Set(["applyRelease", "commitRelease"]).has(request.op)) {
     await atomicWrite(context.paths.rollbackFloorPath, `${request.version}\n`, 0o600);
   }
-  if (request.op === "commitRelease" || request.op === "rollbackRelease") {
+  if (response.ok && request.op === "applyRelease" && response.phase === "committed") {
+    await durableReceipt(context.paths, request, {
+      outcome: "committed",
+      controllerChanged: false,
+      phase: response.phase,
+      release: response.release,
+    });
+  } else if (request.op === "commitRelease" || request.op === "rollbackRelease") {
     await durableReceipt(context.paths, request, {
       outcome: response.ok
         ? request.op === "commitRelease"

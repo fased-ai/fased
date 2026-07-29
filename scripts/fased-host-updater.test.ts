@@ -76,6 +76,7 @@ async function createFixture(
     protectedApplication?: boolean;
     protectedService?: boolean;
     missingPreviousApplication?: boolean;
+    managedApplication?: boolean;
   } = {},
 ) {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-updater-"));
@@ -100,7 +101,7 @@ async function createFixture(
     signerGatePath: path.join(root, "signer-update-gate", "active"),
     transactionsDir: path.join(stateDir, "transactions"),
     socketPath: path.join(root, "request.sock"),
-    ...(options.protectedApplication
+    ...(options.protectedApplication || options.managedApplication
       ? {
           applicationReleasesDir: path.join(root, "application", "releases"),
           applicationCurrentLink: path.join(root, "application", "current"),
@@ -123,7 +124,7 @@ async function createFixture(
   await fsp.writeFile(signerStateDBPath, "old-db\n", { mode: 0o600 });
   await fsp.writeFile(signerUnitPath, "ExecStart=old-signer\n", { mode: 0o644 });
   await fsp.writeFile(paths.versionPath, "1.2.2\n", { mode: 0o600 });
-  if (options.protectedApplication) {
+  if (options.protectedApplication || options.managedApplication) {
     await Promise.all([
       fsp.mkdir(path.join(paths.applicationReleasesDir!, "v1.2.2"), {
         recursive: true,
@@ -139,6 +140,22 @@ async function createFixture(
         path.join(paths.applicationReleasesDir!, "v1.2.2"),
         paths.applicationCurrentLink!,
       );
+    }
+    if (options.managedApplication) {
+      await Promise.all([
+        writeProtectedApplicationFixture({
+          root: path.join(paths.applicationReleasesDir!, "v1.2.2"),
+          version: "1.2.2",
+          commit: "a".repeat(40),
+          dependencyHash: "2".repeat(64),
+        }),
+        writeProtectedApplicationFixture({
+          root: path.join(paths.applicationReleasesDir!, "v1.2.3"),
+          version: "1.2.3",
+          commit: "a".repeat(40),
+          dependencyHash: "3".repeat(64),
+        }),
+      ]);
     }
   }
   if (options.protectedService) {
@@ -176,6 +193,54 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
       ),
     ]);
   }
+  if (options.managedApplication) {
+    const managedStateDir = path.join(root, "operator", ".fased");
+    const runtimeDir = path.join(managedStateDir, "runtime");
+    const currentLink = path.join(runtimeDir, "current");
+    const previousLink = path.join(runtimeDir, "previous");
+    const prefix = path.join(managedStateDir, "install-cache", "npm-global");
+    const compatibilityRoot = path.join(prefix, "lib", "node_modules", "@fased", "fased");
+    await Promise.all([
+      fsp.mkdir(runtimeDir, { recursive: true }),
+      fsp.mkdir(path.dirname(compatibilityRoot), { recursive: true }),
+      fsp.mkdir(path.join(managedStateDir, "updater"), { recursive: true }),
+    ]);
+    await Promise.all([
+      fsp.symlink(path.join(paths.applicationReleasesDir!, "v1.2.2"), currentLink),
+      fsp.symlink(path.join(paths.applicationReleasesDir!, "v1.2.2"), previousLink),
+      fsp.symlink(currentLink, compatibilityRoot),
+      fsp.writeFile(path.join(managedStateDir, "fased.json"), "{}\n"),
+      fsp.writeFile(
+        path.join(managedStateDir, "install.json"),
+        `${JSON.stringify({
+          schemaVersion: 2,
+          profile: "protected-local",
+          source: "managed-artifact",
+          stateDir: managedStateDir,
+          configPath: path.join(managedStateDir, "fased.json"),
+          runtime: {
+            activeVersion: "1.2.2",
+            previousVersion: null,
+            currentLink,
+            previousLink,
+            releasesDir: paths.applicationReleasesDir,
+          },
+          package: { prefix, compatibilityRoot },
+          service: {
+            name: "fased-gateway-0123456789abcdef.service",
+            scope: "system",
+            launcher: path.join(root, "gateway-launch"),
+          },
+          updater: {
+            version: "1.2.2",
+            path: path.join(managedStateDir, "updater", "fased-managed-updater.mjs"),
+          },
+          update: { channel: "stable" },
+          release: null,
+        })}\n`,
+      ),
+    ]);
+  }
   const events: string[] = [];
   const context = __testing.createTransactionContext({
     paths,
@@ -194,7 +259,7 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
           capabilitiesDigest: `sha256:${"3".repeat(64)}`,
           releaseCommit: signerRelease(version).commit,
         },
-        ...(options.protectedApplication
+        ...(options.protectedApplication || options.managedApplication
           ? {
               application: {
                 targetRoot: path.join(paths.applicationReleasesDir!, `v${version}`),
@@ -203,11 +268,41 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
                   : path.join(paths.applicationReleasesDir!, "v1.2.2"),
                 changed: version !== "1.2.2",
               },
+              ...(options.managedApplication
+                ? {
+                    applicationRelease: {
+                      version,
+                      commit: signerRelease(version).commit,
+                      manifestDigest: `sha256:${"1".repeat(64)}`,
+                      artifact: {
+                        asset: `fased-hosted-app-v2-linux-x64-v${version}.tar.gz`,
+                        sha256: "4".repeat(64),
+                      },
+                      dependencies: {
+                        asset: `fased-hosted-deps-linux-x64-${"3".repeat(64)}.tar.gz`,
+                        sha256: "5".repeat(64),
+                        dependencyHash: "3".repeat(64),
+                      },
+                      signer: signerRelease(version),
+                      capabilities: { protocol: { current: 2, min: 2, max: 2 } },
+                      capabilitiesDigest: `sha256:${"6".repeat(64)}`,
+                    },
+                  }
+                : {}),
             }
           : {}),
       };
     },
-    reconcileApplicationState: async () => ({ changed: false }),
+    reconcileApplicationState: async () =>
+      options.managedApplication
+        ? {
+            changed: false,
+            profile: "protected-local",
+            stateDir: path.join(root, "operator", ".fased"),
+            operatorUid: process.getuid(),
+            configGid: process.getgid(),
+          }
+        : { changed: false },
     stopSigner: async () => {
       events.push("stop");
     },
@@ -420,7 +515,12 @@ describe("root-owned hosted updater protocol", () => {
       paths: { gatewayUnitPath },
     });
 
-    expect(result).toEqual({ changed: false, pendingStateDir: true, stateDir });
+    expect(result).toEqual({
+      changed: false,
+      pendingStateDir: true,
+      profile: "protected-local",
+      stateDir,
+    });
   });
 
   it("installs a protected application outside the operator home and selects it atomically", async () => {
@@ -1394,6 +1494,7 @@ describe("root-owned hosted updater protocol", () => {
   it("accepts only exact protocol-v2 transaction requests", () => {
     for (const op of [
       "updateController",
+      "applyRelease",
       "prepareRelease",
       "activateRelease",
       "authorizeGatewayRelease",
@@ -1686,21 +1787,15 @@ describe("root-owned hosted updater protocol", () => {
     );
     const recovered = await __testing.recoverInterruptedTransaction(context);
     expect(recovered).toMatchObject({ recovered: true, action: "rolled-back" });
-    expect(events).toEqual(["stage:1.2.3", "stop", "daemon-reload", "start-previous"]);
+    expect(events).toEqual([
+      "stage:1.2.3",
+      "stop",
+      "daemon-reload",
+      "start-previous",
+      "start-gateway",
+    ]);
     expect(await fsp.readFile(paths.signerPath, "utf8")).toBe("old-signer\n");
     expect(fs.existsSync(paths.journalPath)).toBe(false);
-    expect(fs.existsSync(paths.gatewayGatePath)).toBe(true);
-    expect(fs.existsSync(paths.signerGatePath)).toBe(true);
-    await expect(
-      __testing.gateGatewayRelease(
-        request("gateGatewayRelease", TRANSACTION_ONE, "1.2.3"),
-        context,
-      ),
-    ).resolves.toMatchObject({ phase: "rolled-back-gated" });
-    await __testing.rollbackSignerRelease(
-      request("rollbackRelease", TRANSACTION_ONE, "1.2.3"),
-      context,
-    );
     expect(fs.existsSync(paths.gatewayGatePath)).toBe(false);
     expect(fs.existsSync(paths.signerGatePath)).toBe(false);
   });
@@ -1743,7 +1838,7 @@ describe("root-owned hosted updater protocol", () => {
     expect(await fsp.readFile(second.paths.versionPath, "utf8")).toBe("1.2.2\n");
   });
 
-  it("preserves active and Gateway-authorized signer decisions across a cold service restart", async () => {
+  it("rolls back pre-verification signer decisions across a cold service restart", async () => {
     const { context, paths } = await createFixture();
     await __testing.prepareSignerRelease(
       request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
@@ -1755,23 +1850,228 @@ describe("root-owned hosted updater protocol", () => {
     );
     await expect(__testing.recoverInterruptedTransaction(context)).resolves.toMatchObject({
       recovered: true,
-      action: "pending",
-      phase: "active",
+      action: "rolled-back",
     });
-    expect(fs.existsSync(paths.gatewayGatePath)).toBe(true);
-    expect(fs.existsSync(paths.signerGatePath)).toBe(true);
+    expect(fs.existsSync(paths.gatewayGatePath)).toBe(false);
+    expect(fs.existsSync(paths.signerGatePath)).toBe(false);
 
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      context,
+    );
+    await __testing.activateSignerRelease(
+      request("activateRelease", TRANSACTION_ONE, "1.2.3"),
+      context,
+    );
     await __testing.authorizeGatewayRelease(
       request("authorizeGatewayRelease", TRANSACTION_ONE, "1.2.3"),
       context,
     );
     await expect(__testing.recoverInterruptedTransaction(context)).resolves.toMatchObject({
       recovered: true,
-      action: "pending",
-      phase: "gateway-authorized",
+      action: "rolled-back",
     });
     expect(fs.existsSync(paths.gatewayGatePath)).toBe(false);
-    expect(fs.existsSync(paths.signerGatePath)).toBe(true);
+    expect(fs.existsSync(paths.signerGatePath)).toBe(false);
+  });
+
+  it.each([
+    ["prepared", "rolled-back"],
+    ["snapshotting", "rolled-back"],
+    ["activating", "rolled-back"],
+    ["active", "rolled-back"],
+    ["gateway-authorized", "rolled-back"],
+    ["gateway-verified", "committed"],
+    ["committing", "committed"],
+  ])(
+    "recovers a deterministic target-controller crash after durable %s by going fully %s",
+    async (crashPhase, expectedAction) => {
+      const { context, paths } = await createFixture();
+      context.verifyGateway = async () => ({ version: "1.2.3", runtimeSource: "managed-package" });
+      context.probeSigner = async () => signerRelease("1.2.3");
+      let injected = false;
+      context.onDurablePhase = async (phase: string) => {
+        if (!injected && phase === crashPhase) {
+          injected = true;
+          const error = new Error(`deterministic crash after ${phase}`) as Error & {
+            code?: string;
+          };
+          error.code = "FASED_TEST_CRASH";
+          throw error;
+        }
+      };
+
+      await expect(
+        __testing.applyReleaseTransaction(
+          request("applyRelease", TRANSACTION_ONE, "1.2.3"),
+          context,
+        ),
+      ).rejects.toMatchObject({ code: "FASED_TEST_CRASH" });
+      expect(injected).toBe(true);
+
+      context.onDurablePhase = undefined;
+      await expect(__testing.recoverInterruptedTransaction(context)).resolves.toMatchObject({
+        recovered: true,
+        action: expectedAction,
+      });
+      expect(fs.existsSync(paths.journalPath)).toBe(false);
+      expect(fs.existsSync(paths.gatewayGatePath)).toBe(false);
+      expect(fs.existsSync(paths.signerGatePath)).toBe(false);
+      expect(await fsp.readFile(paths.versionPath, "utf8")).toBe(
+        expectedAction === "committed" ? "1.2.3\n" : "1.2.2\n",
+      );
+      expect(await fsp.readFile(paths.signerPath, "utf8")).toBe(
+        expectedAction === "committed" ? "signer-1.2.3\n" : "old-signer\n",
+      );
+    },
+  );
+
+  it.each(["rolling-back", "restored"])(
+    "recovers a deterministic target-controller crash after durable %s rollback state",
+    async (crashPhase) => {
+      const { context, paths } = await createFixture({ managedApplication: true });
+      context.verifyGateway = async () => {
+        throw new Error("deterministic target health failure");
+      };
+      context.probeSigner = async () => signerRelease("1.2.3");
+      let injected = false;
+      context.onDurablePhase = async (phase: string) => {
+        if (!injected && phase === crashPhase) {
+          injected = true;
+          const error = new Error(`deterministic crash after ${phase}`) as Error & {
+            code?: string;
+          };
+          error.code = "FASED_TEST_CRASH";
+          throw error;
+        }
+      };
+
+      await expect(
+        __testing.applyReleaseTransaction(
+          request("applyRelease", TRANSACTION_ONE, "1.2.3"),
+          context,
+        ),
+      ).rejects.toMatchObject({ code: "TARGET_ROLLBACK_INCOMPLETE" });
+      expect(injected).toBe(true);
+      expect(fs.existsSync(paths.journalPath)).toBe(true);
+
+      context.onDurablePhase = undefined;
+      await expect(__testing.recoverInterruptedTransaction(context)).resolves.toMatchObject({
+        recovered: true,
+        action: "rolled-back",
+      });
+      expect(fs.existsSync(paths.journalPath)).toBe(false);
+      expect(fs.existsSync(paths.gatewayGatePath)).toBe(false);
+      expect(fs.existsSync(paths.signerGatePath)).toBe(false);
+      expect(await fsp.readFile(paths.versionPath, "utf8")).toBe("1.2.2\n");
+      expect(await fsp.readFile(paths.signerPath, "utf8")).toBe("old-signer\n");
+    },
+  );
+
+  it("rejects a different request without mutating the active target-owned transaction", async () => {
+    const { context, paths } = await createFixture();
+    context.verifyGateway = async () => ({ version: "1.2.3", runtimeSource: "managed-package" });
+    context.probeSigner = async () => signerRelease("1.2.3");
+    context.onDurablePhase = async (phase: string) => {
+      if (phase === "prepared") {
+        const error = new Error("deterministic crash after prepared") as Error & {
+          code?: string;
+        };
+        error.code = "FASED_TEST_CRASH";
+        throw error;
+      }
+    };
+    await expect(
+      __testing.applyReleaseTransaction(request("applyRelease", TRANSACTION_ONE, "1.2.3"), context),
+    ).rejects.toMatchObject({ code: "FASED_TEST_CRASH" });
+    const active = await __testing.readJournal(context);
+
+    context.onDurablePhase = undefined;
+    await expect(
+      __testing.applyReleaseTransaction(request("applyRelease", TRANSACTION_TWO, "1.2.3"), context),
+    ).rejects.toThrow(`another hosted signer transaction is active (${TRANSACTION_ONE}, v1.2.3)`);
+    expect(await __testing.readJournal(context)).toEqual(active);
+    expect(fs.existsSync(paths.gatewayGatePath)).toBe(false);
+
+    await expect(__testing.recoverInterruptedTransaction(context)).resolves.toMatchObject({
+      recovered: true,
+      action: "rolled-back",
+    });
+    expect(fs.existsSync(paths.journalPath)).toBe(false);
+  });
+
+  it("runs one target-owned transaction and makes committed retries idempotent", async () => {
+    const { context, events, paths } = await createFixture();
+    let healthChecks = 0;
+    context.verifyGateway = async () => {
+      healthChecks += 1;
+      return { version: "1.2.3", runtimeSource: "managed-package" };
+    };
+    context.probeSigner = async () => signerRelease("1.2.3");
+
+    await expect(
+      __testing.applyReleaseTransaction(request("applyRelease", TRANSACTION_ONE, "1.2.3"), context),
+    ).resolves.toMatchObject({
+      transactionId: TRANSACTION_ONE,
+      version: "1.2.3",
+      phase: "committed",
+      release: signerRelease("1.2.3"),
+    });
+    await expect(
+      __testing.applyReleaseTransaction(request("applyRelease", TRANSACTION_ONE, "1.2.3"), context),
+    ).resolves.toMatchObject({
+      transactionId: TRANSACTION_ONE,
+      version: "1.2.3",
+      phase: "committed",
+      changed: false,
+    });
+
+    expect(events.filter((event) => event === "start-v2")).toHaveLength(1);
+    expect(events.filter((event) => event === "start-gateway")).toHaveLength(1);
+    expect(healthChecks).toBe(2);
+    expect(fs.existsSync(paths.journalPath)).toBe(false);
+  });
+
+  it("commits or restores application, signer, service gate, and manifest as one transaction", async () => {
+    const committed = await createFixture({ managedApplication: true });
+    committed.context.verifyGateway = async () => ({
+      version: "1.2.3",
+      runtimeSource: "managed-package",
+    });
+    await __testing.applyReleaseTransaction(
+      request("applyRelease", TRANSACTION_ONE, "1.2.3"),
+      committed.context,
+    );
+    const committedState = path.join(committed.paths.stateDir, "..", "operator", ".fased");
+    expect(await fsp.realpath(path.join(committedState, "runtime", "current"))).toBe(
+      path.join(committed.paths.applicationReleasesDir!, "v1.2.3"),
+    );
+    expect(
+      JSON.parse(await fsp.readFile(path.join(committedState, "install.json"), "utf8")).runtime
+        .activeVersion,
+    ).toBe("1.2.3");
+    expect(await fsp.readFile(committed.paths.signerPath, "utf8")).toBe("signer-1.2.3\n");
+
+    const rolledBack = await createFixture({ managedApplication: true });
+    rolledBack.context.verifyGateway = async () => {
+      throw new Error("deterministic target health failure");
+    };
+    await expect(
+      __testing.applyReleaseTransaction(
+        request("applyRelease", TRANSACTION_TWO, "1.2.3"),
+        rolledBack.context,
+      ),
+    ).rejects.toMatchObject({ code: "TARGET_RELEASE_ROLLED_BACK" });
+    const restoredState = path.join(rolledBack.paths.stateDir, "..", "operator", ".fased");
+    expect(await fsp.realpath(path.join(restoredState, "runtime", "current"))).toBe(
+      path.join(rolledBack.paths.applicationReleasesDir!, "v1.2.2"),
+    );
+    expect(
+      JSON.parse(await fsp.readFile(path.join(restoredState, "install.json"), "utf8")).runtime
+        .activeVersion,
+    ).toBe("1.2.2");
+    expect(await fsp.readFile(rolledBack.paths.signerPath, "utf8")).toBe("old-signer\n");
+    expect(fs.existsSync(rolledBack.paths.journalPath)).toBe(false);
   });
 
   it("commits the preactivated repair only after the app-account health decision", async () => {

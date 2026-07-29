@@ -4,6 +4,8 @@ import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
+import http from "node:http";
+import https from "node:https";
 import net from "node:net";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -33,6 +35,8 @@ const SOCKET_PATH = "/run/fased-host-updater/request.sock";
 const STATE_DIR = "/var/lib/fased-host-updater";
 const CONTROLLER_RELEASES_DIR = "/opt/fased/host-controller/releases";
 const CONTROLLER_CURRENT_LINK = "/opt/fased/host-controller/current";
+const APPLICATION_RELEASES_DIR = "/opt/fased/host-application/releases";
+const APPLICATION_CURRENT_LINK = "/opt/fased/host-application/current";
 const SIGNER_PATH = "/opt/fased/signer/fased-signerd";
 const SIGNER_STATE_DB_PATH = "/var/lib/fased-signerd/state.db";
 const SIGNER_UNIT_PATH = "/etc/systemd/system/fased-signerd.service";
@@ -51,6 +55,7 @@ const TRANSACTION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TRANSACTION_OPERATIONS = new Set([
   "updateController",
+  "applyRelease",
   "prepareRelease",
   "activateRelease",
   "authorizeGatewayRelease",
@@ -66,6 +71,7 @@ const TRANSACTION_PHASES = new Set([
   "activating",
   "active",
   "gateway-authorized",
+  "gateway-verified",
   "committing",
   "rolling-back",
   "restored",
@@ -107,6 +113,8 @@ const DEFAULT_PATHS = Object.freeze({
   controllerReleasesDir: CONTROLLER_RELEASES_DIR,
   controllerCurrentLink: CONTROLLER_CURRENT_LINK,
   controllerVersionPath: path.join(STATE_DIR, "controller-version.json"),
+  applicationReleasesDir: APPLICATION_RELEASES_DIR,
+  applicationCurrentLink: APPLICATION_CURRENT_LINK,
   signerPath: SIGNER_PATH,
   signerStateDBPath: SIGNER_STATE_DB_PATH,
   signerUnitPath: SIGNER_UNIT_PATH,
@@ -1008,6 +1016,7 @@ function parseUnifiedHostedSignerRelease(value, expectedVersion, platform) {
     release: signerRelease,
     artifact,
     application: applicationEntry,
+    capabilities: signer.capabilities,
     binding: {
       releaseCommit: release.commit,
       capabilitiesDigest: signer.capabilitiesDigest,
@@ -1608,6 +1617,11 @@ async function validateJournal(value, context) {
   } else if (context.paths.applicationReleasesDir) {
     throw new Error("host updater protected application transaction is missing");
   }
+  const managedApplication = validateManagedApplicationTransaction(
+    value.managedApplication,
+    context,
+    version,
+  );
   const serviceBoundary = validateProtectedServiceBoundary(value.serviceBoundary, context);
   return {
     ...value,
@@ -1618,6 +1632,7 @@ async function validateJournal(value, context) {
     release: parseSignerReleaseIdentity(value.release, version),
     releaseBinding,
     application,
+    managedApplication,
     serviceBoundary,
     changed: value.changed === true,
   };
@@ -1651,6 +1666,7 @@ async function writeJournal(context, journal) {
     `${JSON.stringify(next, null, 2)}\n`,
     0o600,
   );
+  await context.onDurablePhase?.(next.phase, next);
   return next;
 }
 
@@ -2031,6 +2047,16 @@ async function stageOfficialCandidate(version, candidatePath, context) {
     return {
       release: selected.release,
       application,
+      applicationRelease: {
+        version,
+        commit: selected.binding.releaseCommit,
+        manifestDigest: `sha256:${createHash("sha256").update(manifestBytes).digest("hex")}`,
+        artifact: selected.application.artifact,
+        dependencies: selected.application.dependencies,
+        signer: selected.release,
+        capabilities: selected.capabilities,
+        capabilitiesDigest: selected.binding.capabilitiesDigest,
+      },
       binding: {
         ...selected.binding,
         manifestDigest: `sha256:${createHash("sha256").update(manifestBytes).digest("hex")}`,
@@ -2392,7 +2418,7 @@ async function reconcileProtectedApplicationState(context) {
   if (!gatewayUnit.existed && !protectedLocal) {
     // Fresh Hosting prepares the signer before the root Gateway unit exists.
     // The installer reconciles the state immediately after it creates that unit.
-    return { changed: false, pendingGatewayUnit: true };
+    return { changed: false, pendingGatewayUnit: true, profile: "hosting" };
   }
   if (
     !gatewayUnit.existed ||
@@ -2415,7 +2441,12 @@ async function reconcileProtectedApplicationState(context) {
     // Gateway unit in place before the app-owned state directory is recreated.
     // The installer establishes and reconciles that directory before starting
     // the Gateway, so signer preparation must remain non-mutating here.
-    return { changed: false, pendingStateDir: true, stateDir };
+    return {
+      changed: false,
+      pendingStateDir: true,
+      profile: protectedLocal ? "protected-local" : "hosting",
+      stateDir,
+    };
   }
   if (!stateStat.isDirectory() || stateStat.isSymbolicLink() || stateStat.uid === context.rootUid) {
     throw new Error("root-managed application state directory is invalid");
@@ -2479,7 +2510,344 @@ async function reconcileProtectedApplicationState(context) {
     throw error;
   }
   await fsyncDirectory(stateDir);
-  return { changed: true, stateDir, configGid };
+  return {
+    changed: true,
+    profile: protectedLocal ? "protected-local" : "hosting",
+    stateDir,
+    operatorUid: stateStat.uid,
+    configGid,
+  };
+}
+
+function managedApplicationPaths(stateDir) {
+  const root = path.resolve(String(stateDir ?? ""));
+  if (!path.isAbsolute(root) || path.basename(root) !== ".fased") {
+    throw new Error("root-managed application state path is invalid");
+  }
+  const runtimeDir = path.join(root, "runtime");
+  const prefix = path.join(root, "install-cache", "npm-global");
+  return Object.freeze({
+    stateDir: root,
+    manifestPath: path.join(root, "install.json"),
+    runtimeDir,
+    stagedReleasesDir: path.join(runtimeDir, "releases"),
+    currentLink: path.join(runtimeDir, "current"),
+    previousLink: path.join(runtimeDir, "previous"),
+    compatibilityLink: path.join(prefix, "lib", "node_modules", "@fased", "fased"),
+    updaterPath: path.join(root, "updater", "fased-managed-updater.mjs"),
+    prefix,
+  });
+}
+
+async function readOptionalLink(linkPath) {
+  try {
+    const info = await fsp.lstat(linkPath);
+    if (!info.isSymbolicLink()) {
+      throw new Error(`managed application selector is not a symlink: ${linkPath}`);
+    }
+    return await fsp.realpath(linkPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function validateManagedInstallManifest(value, applicationState, paths) {
+  const expectedProfile = applicationState.profile;
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    !new Set([1, 2]).has(value.schemaVersion) ||
+    value.profile !== expectedProfile ||
+    path.resolve(String(value.stateDir ?? "")) !== paths.stateDir ||
+    path.resolve(String(value.configPath ?? "")) !== path.join(paths.stateDir, "fased.json") ||
+    value.service?.scope !== "system" ||
+    typeof value.runtime?.activeVersion !== "string"
+  ) {
+    throw new Error("root-managed application install manifest is invalid");
+  }
+  return value;
+}
+
+function buildTargetManagedInstallManifest({
+  previousManifest,
+  paths,
+  releasesDir,
+  version,
+  applicationRelease,
+}) {
+  return {
+    ...previousManifest,
+    schemaVersion: 2,
+    source: "managed-artifact",
+    runtime: {
+      ...previousManifest.runtime,
+      activeVersion: version,
+      previousVersion: previousManifest.runtime.activeVersion,
+      currentLink: paths.currentLink,
+      previousLink: paths.previousLink,
+      releasesDir,
+      dependencyHash: applicationRelease.dependencies.dependencyHash,
+      releaseManifestDigest: applicationRelease.manifestDigest,
+      appCommit: applicationRelease.commit,
+      appArtifact: applicationRelease.artifact.asset,
+      appArtifactDigest: `sha256:${applicationRelease.artifact.sha256}`,
+    },
+    package: {
+      prefix: paths.prefix,
+      compatibilityRoot: paths.compatibilityLink,
+    },
+    updater: {
+      version,
+      path: paths.updaterPath,
+    },
+    release: {
+      version,
+      commit: applicationRelease.commit,
+      manifestDigest: applicationRelease.manifestDigest,
+      application: {
+        artifact: applicationRelease.artifact.asset,
+        digest: `sha256:${applicationRelease.artifact.sha256}`,
+        dependencies: {
+          artifact: applicationRelease.dependencies.asset,
+          digest: `sha256:${applicationRelease.dependencies.sha256}`,
+          dependencyHash: applicationRelease.dependencies.dependencyHash,
+        },
+      },
+      signer: {
+        release: applicationRelease.signer,
+        capabilities: applicationRelease.capabilities,
+        capabilitiesDigest: applicationRelease.capabilitiesDigest,
+      },
+    },
+    signer: { release: applicationRelease.signer },
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+async function prepareManagedApplicationTransaction(
+  context,
+  version,
+  application,
+  applicationRelease,
+) {
+  const state = context.applicationState;
+  if (
+    !state?.stateDir ||
+    !Number.isSafeInteger(state.operatorUid) ||
+    !Number.isSafeInteger(state.configGid)
+  ) {
+    return null;
+  }
+  if (!application || !applicationRelease) {
+    throw new Error("target lifecycle controller did not stage the application release");
+  }
+  const paths = managedApplicationPaths(state.stateDir);
+  const previousManifest = validateManagedInstallManifest(
+    JSON.parse(await fsp.readFile(paths.manifestPath, "utf8")),
+    state,
+    paths,
+  );
+  const previousRoot = await readOptionalLink(paths.currentLink);
+  if (!previousRoot) {
+    throw new Error("root-managed application has no active runtime to update");
+  }
+  const previousPreviousRoot = await readOptionalLink(paths.previousLink);
+  const targetRoot = path.resolve(application.targetRoot);
+  if (targetRoot !== protectedApplicationReleaseRoot(context.paths, version)) {
+    throw new Error("target lifecycle controller application identity is mismatched");
+  }
+  await verifyProtectedApplicationRuntime(
+    targetRoot,
+    version,
+    applicationRelease.commit,
+    applicationRelease.dependencies.dependencyHash,
+  );
+  return Object.freeze({
+    profile: state.profile,
+    stateDir: paths.stateDir,
+    previousRoot,
+    previousPreviousRoot,
+    previousManifest,
+    nextManifest: buildTargetManagedInstallManifest({
+      previousManifest,
+      paths,
+      releasesDir: context.paths.applicationReleasesDir,
+      version,
+      applicationRelease,
+    }),
+  });
+}
+
+function validateManagedApplicationTransaction(value, context, version) {
+  if (value == null) {
+    return null;
+  }
+  const state = context.applicationState;
+  if (!state?.stateDir) {
+    throw new Error("host updater managed application state is unavailable");
+  }
+  const paths = managedApplicationPaths(state.stateDir);
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).toSorted().join(",") !==
+      "nextManifest,previousManifest,previousPreviousRoot,previousRoot,profile,stateDir" ||
+    value.profile !== state.profile ||
+    path.resolve(String(value.stateDir ?? "")) !== paths.stateDir
+  ) {
+    throw new Error("host updater managed application transaction is invalid");
+  }
+  const previousManifest = validateManagedInstallManifest(value.previousManifest, state, paths);
+  const nextManifest = validateManagedInstallManifest(value.nextManifest, state, paths);
+  if (
+    nextManifest.runtime.activeVersion !== version ||
+    nextManifest.runtime.previousVersion !== previousManifest.runtime.activeVersion ||
+    nextManifest.release?.version !== version
+  ) {
+    throw new Error("host updater target application manifest is mismatched");
+  }
+  const previousRoot = path.resolve(String(value.previousRoot ?? ""));
+  const previousPreviousRoot =
+    value.previousPreviousRoot == null ? null : path.resolve(String(value.previousPreviousRoot));
+  return Object.freeze({
+    profile: value.profile,
+    stateDir: paths.stateDir,
+    previousRoot,
+    previousPreviousRoot,
+    previousManifest,
+    nextManifest,
+  });
+}
+
+async function writeManagedManifest(context, transaction, manifest) {
+  const state = context.applicationState;
+  const paths = managedApplicationPaths(transaction.stateDir);
+  await atomicWriteFileDurable(paths.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 0o660);
+  await fsp.chown(paths.manifestPath, state.operatorUid, state.configGid);
+  await fsyncDirectory(paths.stateDir);
+}
+
+async function selectManagedApplication(context, journal) {
+  if (!journal.managedApplication) {
+    return;
+  }
+  const paths = managedApplicationPaths(journal.managedApplication.stateDir);
+  const targetRoot = journal.application?.targetRoot;
+  if (!targetRoot) {
+    throw new Error("managed application target is unavailable");
+  }
+  if (journal.managedApplication.previousRoot !== targetRoot) {
+    await atomicSymlinkDurable(journal.managedApplication.previousRoot, paths.previousLink);
+  }
+  await atomicSymlinkDurable(targetRoot, paths.currentLink);
+  await atomicSymlinkDurable(paths.currentLink, paths.compatibilityLink);
+  await writeManagedManifest(
+    context,
+    journal.managedApplication,
+    journal.managedApplication.nextManifest,
+  );
+}
+
+async function restoreManagedApplication(context, journal) {
+  if (!journal.managedApplication) {
+    return;
+  }
+  const transaction = journal.managedApplication;
+  const paths = managedApplicationPaths(transaction.stateDir);
+  await atomicSymlinkDurable(transaction.previousRoot, paths.currentLink);
+  if (transaction.previousPreviousRoot) {
+    await atomicSymlinkDurable(transaction.previousPreviousRoot, paths.previousLink);
+  } else {
+    await fsp.rm(paths.previousLink, { force: true });
+    await fsyncDirectory(paths.runtimeDir);
+  }
+  await atomicSymlinkDurable(paths.currentLink, paths.compatibilityLink);
+  await writeManagedManifest(context, transaction, transaction.previousManifest);
+}
+
+async function removeManagedUpdateLock(journal) {
+  if (!journal.managedApplication) {
+    return;
+  }
+  const lockPath = path.join(journal.managedApplication.stateDir, "update.lock");
+  await fsp.rm(lockPath, { force: true });
+  await fsyncDirectory(journal.managedApplication.stateDir);
+}
+
+async function probeTargetGateway(context, version, timeoutMs = 30_000) {
+  const stateDir = context.applicationState?.stateDir;
+  if (!stateDir) {
+    throw new Error("target Gateway configuration is unavailable");
+  }
+  let endpoint = { port: 18789, tls: false };
+  try {
+    const config = JSON.parse(await fsp.readFile(path.join(stateDir, "fased.json"), "utf8"));
+    endpoint = {
+      port: Number.isInteger(config?.gateway?.port) ? config.gateway.port : 18789,
+      tls: config?.gateway?.tls?.enabled === true,
+    };
+  } catch {
+    // A missing optional port override means the product default.
+  }
+  const deadline = Date.now() + timeoutMs;
+  let lastError = new Error("target Gateway health endpoint is unavailable");
+  while (Date.now() < deadline) {
+    try {
+      const payload = await new Promise((resolve, reject) => {
+        const client = endpoint.tls ? https : http;
+        const request = client.get(
+          {
+            hostname: "127.0.0.1",
+            port: endpoint.port,
+            path: "/healthz",
+            timeout: Math.min(3000, Math.max(250, deadline - Date.now())),
+            ...(endpoint.tls ? { rejectUnauthorized: false } : {}),
+          },
+          (response) => {
+            let body = "";
+            response.setEncoding("utf8");
+            response.on("data", (chunk) => {
+              body += chunk;
+              if (body.length > 64 * 1024) {
+                request.destroy(new Error("target Gateway health response is too large"));
+              }
+            });
+            response.on("end", () => {
+              try {
+                resolve(JSON.parse(body));
+              } catch (error) {
+                reject(new Error(`target Gateway health response is invalid: ${error.message}`));
+              }
+            });
+          },
+        );
+        request.on("timeout", () =>
+          request.destroy(new Error("target Gateway health probe timed out")),
+        );
+        request.on("error", reject);
+      });
+      if (
+        payload?.version !== version ||
+        !new Set(["managed-package", "packaged-runtime"]).has(payload?.runtimeSource)
+      ) {
+        throw new Error(
+          `target Gateway identity is ${payload?.version ?? "unknown"}/${payload?.runtimeSource ?? "unknown"}`,
+        );
+      }
+      return payload;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  throw new Error(`target Gateway did not become healthy as v${version}: ${lastError.message}`, {
+    cause: lastError,
+  });
 }
 
 async function ensureProtectedLocalControllerServicePolicy(context) {
@@ -2535,6 +2903,14 @@ async function ensureProtectedLocalControllerServicePolicy(context) {
 
 function createTransactionContext(overrides = {}) {
   const paths = { ...DEFAULT_PATHS, ...overrides.paths };
+  if (
+    overrides.paths &&
+    !Object.hasOwn(overrides.paths, "applicationReleasesDir") &&
+    !Object.hasOwn(overrides.paths, "applicationCurrentLink")
+  ) {
+    delete paths.applicationReleasesDir;
+    delete paths.applicationCurrentLink;
+  }
   const controllerConfiguration = overrides.controllerConfiguration ?? null;
   const signerServiceName = overrides.signerServiceName ?? "fased-signerd.service";
   const gatewayServiceName = overrides.gatewayServiceName ?? "fased-gateway.service";
@@ -2550,6 +2926,8 @@ function createTransactionContext(overrides = {}) {
     runningControllerVersion:
       overrides.runningControllerVersion ?? resolveRunningControllerVersion(),
     controllerRestartRequired: false,
+    applicationState: overrides.applicationState ?? null,
+    onDurablePhase: overrides.onDurablePhase,
     historicalQ0TestStateDir: overrides.historicalQ0TestStateDir ?? HISTORICAL_Q0_TEST_STATE_DIR,
     assertReleaseAllowed:
       overrides.assertReleaseAllowed ??
@@ -2609,6 +2987,9 @@ function createTransactionContext(overrides = {}) {
     stopGateway: overrides.stopGateway ?? (async () => await systemctl("stop", gatewayServiceName)),
     restartGateway:
       overrides.restartGateway ?? (async () => await systemctl("restart", gatewayServiceName)),
+    verifyGateway:
+      overrides.verifyGateway ??
+      (async (version) => await probeTargetGateway(context, version, REQUEST_TIMEOUT_MS)),
     probeSigner:
       overrides.probeSigner ??
       (async (expectedRelease) =>
@@ -2754,6 +3135,7 @@ async function prepareSignerRelease(request, context) {
   await context.assertReleaseAllowed(request.version);
   await assertRollbackFloor(context, request.version);
   const applicationState = (await context.reconcileApplicationState()) ?? {};
+  context.applicationState = applicationState;
   const applicationStateResult = {
     applicationStateReconciled: applicationState.changed === true,
     applicationStatePending:
@@ -2810,6 +3192,7 @@ async function prepareSignerRelease(request, context) {
   const txPaths = transactionPaths(context.paths, request.transactionId);
   let journal;
   let application = null;
+  let managedApplication = null;
   let serviceBoundary = null;
   try {
     await fsp.mkdir(txPaths.transactionDir, { recursive: true, mode: 0o700 });
@@ -2834,6 +3217,12 @@ async function prepareSignerRelease(request, context) {
         throw new Error("protected Local release omitted its root-controlled application runtime");
       }
       application = staged?.application ?? null;
+      managedApplication = await prepareManagedApplicationTransaction(
+        context,
+        request.version,
+        application,
+        staged?.applicationRelease,
+      );
     }
     serviceBoundary = await stageProtectedServiceBoundary(context);
     journal = await writeJournal(context, {
@@ -2846,6 +3235,7 @@ async function prepareSignerRelease(request, context) {
       controllerChanged: controller.changed === true,
       previousSignerInvariant,
       application,
+      managedApplication,
       serviceBoundary,
       phase: "prepared",
       changed,
@@ -2857,6 +3247,9 @@ async function prepareSignerRelease(request, context) {
     });
     await writeUpdateGates(context, journal);
   } catch (error) {
+    if (error?.code === "FASED_TEST_CRASH") {
+      throw error;
+    }
     await cleanupTransactionFiles(context, request.transactionId).catch(() => undefined);
     if (journal) {
       await removeJournal(context).catch(() => undefined);
@@ -2986,10 +3379,12 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
   assertMatchingTransaction(journal, request);
   await writeUpdateGates(context, journal);
   if (journal.phase === "restored") {
+    await restoreManagedApplication(context, journal);
     await restoreProtectedApplication(context, journal);
     await context.restoreServiceBoundary(journal.serviceBoundary);
     await cleanupTransactionFiles(context, journal.transactionId);
     await removeJournal(context);
+    await removeManagedUpdateLock(journal);
     if (!preserveGatewayGate) {
       await removeUpdateGates(context);
       try {
@@ -3020,6 +3415,7 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
   // updater itself does not mutate the live signer during prepare.
   const signerMayNeedRestart = true;
   await context.stopSigner();
+  await restoreManagedApplication(context, journal);
   await restoreProtectedApplication(context, journal);
   await context.restoreServiceBoundary(journal.serviceBoundary);
   await restoreSignerUnit(context, journal, txPaths);
@@ -3028,6 +3424,7 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
       "activating",
       "active",
       "gateway-authorized",
+      "gateway-verified",
       "committing",
       "rolling-back",
     ]).has(rollbackFromPhase);
@@ -3044,6 +3441,7 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
   journal = await writeJournal(context, { ...journal, phase: "restored" });
   await cleanupTransactionFiles(context, journal.transactionId);
   await removeJournal(context);
+  await removeManagedUpdateLock(journal);
   if (!preserveGatewayGate) {
     await removeUpdateGates(context);
     try {
@@ -3075,6 +3473,7 @@ async function authorizeGatewayRelease(request, context) {
     await writeSignerGate(context, journal);
     await context.applyServiceBoundary(journal.serviceBoundary);
     await activateProtectedApplication(context, journal);
+    await selectManagedApplication(context, journal);
     await removeGatewayGate(context);
     try {
       await context.startGateway();
@@ -3084,6 +3483,7 @@ async function authorizeGatewayRelease(request, context) {
       }
     }
   } catch (error) {
+    await restoreManagedApplication(context, journal).catch(() => undefined);
     await restoreProtectedApplication(context, journal).catch(() => undefined);
     await context.restoreServiceBoundary(journal.serviceBoundary).catch(() => undefined);
     await writeUpdateGates(context, journal).catch(() => undefined);
@@ -3239,6 +3639,9 @@ async function activateSignerRelease(request, context) {
       release: journal.release,
     };
   } catch (error) {
+    if (error?.code === "FASED_TEST_CRASH") {
+      throw error;
+    }
     let rollbackError = null;
     try {
       await rollbackSignerRelease(request, context, { preserveGatewayGate: true });
@@ -3551,12 +3954,39 @@ async function cleanupHistoricalQ0Residue(context, journal) {
   return { changed: true, removed };
 }
 
+async function recordTargetApplicationSuccess(context, journal) {
+  if (!journal.managedApplication) {
+    return;
+  }
+  const state = context.applicationState;
+  const markerPath = path.join(journal.managedApplication.stateDir, "last-update-success.json");
+  await atomicWriteFileDurable(
+    markerPath,
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        mode: "managed",
+        version: journal.version,
+        alreadyCurrent: false,
+        updatedAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    )}\n`,
+    0o660,
+  );
+  await fsp.chown(markerPath, state.operatorUid, state.configGid);
+  await fsyncDirectory(journal.managedApplication.stateDir);
+}
+
 async function finishCommit(context, journal) {
+  await recordTargetApplicationSuccess(context, journal);
   await cleanupHistoricalQ0Residue(context, journal);
   await writeInitialRollbackFloor(context, journal.version);
   await removeUpdateGates(context);
   await cleanupTransactionFiles(context, journal.transactionId);
   await removeJournal(context);
+  await removeManagedUpdateLock(journal);
   return {
     transactionId: journal.transactionId,
     version: journal.version,
@@ -3582,13 +4012,122 @@ async function commitSignerRelease(request, context) {
     throw new Error("host updater transaction does not exist");
   }
   assertMatchingTransaction(journal, request);
-  if (journal.phase !== "gateway-authorized" && journal.phase !== "committing") {
+  if (
+    journal.phase !== "gateway-authorized" &&
+    journal.phase !== "gateway-verified" &&
+    journal.phase !== "committing"
+  ) {
     throw new Error(`signer transaction cannot commit from phase ${journal.phase}`);
   }
   if (journal.phase !== "committing") {
     journal = await writeJournal(context, { ...journal, phase: "committing" });
   }
   return await finishCommit(context, journal);
+}
+
+async function alreadyCommittedRelease(request, context) {
+  const installed = await readVersionFile(context.paths.versionPath);
+  const floor = await readRollbackFloor(context);
+  if (installed !== request.version || !floor || compareVersions(request.version, floor) < 0) {
+    return null;
+  }
+  context.applicationState = (await context.reconcileApplicationState()) ?? null;
+  if (context.applicationState?.stateDir) {
+    const paths = managedApplicationPaths(context.applicationState.stateDir);
+    const manifest = validateManagedInstallManifest(
+      JSON.parse(await fsp.readFile(paths.manifestPath, "utf8")),
+      context.applicationState,
+      paths,
+    );
+    if (manifest.runtime.activeVersion !== request.version) {
+      return null;
+    }
+  }
+  await context.verifyGateway(request.version);
+  const release = parseSignerReleaseIdentity(
+    await context.probeSigner(request.version),
+    request.version,
+  );
+  return {
+    transactionId: request.transactionId,
+    version: request.version,
+    phase: "committed",
+    changed: false,
+    release,
+  };
+}
+
+async function applyReleaseTransaction(request, context) {
+  let journal = await readJournal(context);
+  if (!journal) {
+    const committed = await alreadyCommittedRelease(request, context);
+    if (committed) {
+      return committed;
+    }
+  } else {
+    // A request that does not own the durable transaction must never enter
+    // this request's rollback path. The owning request or cold-start recovery
+    // remains solely responsible for completing or restoring it.
+    assertMatchingTransaction(journal, request);
+  }
+  let durableCommitDecision =
+    journal?.phase === "gateway-verified" || journal?.phase === "committing";
+  try {
+    if (!journal) {
+      await prepareSignerRelease(request, context);
+      journal = await readJournal(context);
+    }
+    if (journal.phase === "prepared") {
+      await gateGatewayRelease(request, context);
+      await activateSignerRelease(request, context);
+      journal = await readJournal(context);
+    }
+    if (journal.phase === "active") {
+      await authorizeGatewayRelease(request, context);
+      journal = await readJournal(context);
+    }
+    if (journal.phase === "gateway-authorized") {
+      await context.verifyGateway(request.version);
+      journal = await writeJournal(context, { ...journal, phase: "gateway-verified" });
+      durableCommitDecision = true;
+    }
+    if (journal.phase === "gateway-verified" || journal.phase === "committing") {
+      return await commitSignerRelease(request, context);
+    }
+    throw new Error(`target lifecycle transaction cannot continue from phase ${journal.phase}`);
+  } catch (error) {
+    if (error?.code === "FASED_TEST_CRASH") {
+      throw error;
+    }
+    const active = await readJournal(context).catch(() => null);
+    durableCommitDecision =
+      durableCommitDecision ||
+      active?.phase === "gateway-verified" ||
+      active?.phase === "committing";
+    if (durableCommitDecision) {
+      const pending = new Error(
+        `target release passed health verification but commit recovery is pending: ${error.message}`,
+        { cause: error },
+      );
+      pending.code = "TARGET_COMMIT_PENDING";
+      throw pending;
+    }
+    try {
+      await rollbackSignerRelease(request, context);
+    } catch (rollbackError) {
+      const incomplete = new Error(
+        `target release failed and rollback is incomplete: ${error.message}; rollback error: ${rollbackError.message}`,
+        { cause: error },
+      );
+      incomplete.code = "TARGET_ROLLBACK_INCOMPLETE";
+      throw incomplete;
+    }
+    const rolledBack = new Error(`target release failed and was rolled back: ${error.message}`, {
+      cause: error,
+    });
+    rolledBack.code = "TARGET_RELEASE_ROLLED_BACK";
+    throw rolledBack;
+  }
 }
 
 async function recoverInterruptedTransaction(context) {
@@ -3600,7 +4139,7 @@ async function recoverInterruptedTransaction(context) {
     transactionId: journal.transactionId,
     version: journal.version,
   };
-  if (journal.phase === "committing") {
+  if (journal.phase === "gateway-verified" || journal.phase === "committing") {
     const result = await finishCommit(context, journal);
     return { recovered: true, action: "committed", result };
   }
@@ -3608,26 +4147,15 @@ async function recoverInterruptedTransaction(context) {
     journal.phase === "prepared" ||
     journal.phase === "snapshotting" ||
     journal.phase === "activating" ||
+    journal.phase === "active" ||
+    journal.phase === "gateway-authorized" ||
     journal.phase === "rolling-back" ||
     journal.phase === "restored"
   ) {
-    const result = await rollbackSignerRelease(request, context, { preserveGatewayGate: true });
+    const result = await rollbackSignerRelease(request, context);
     return { recovered: true, action: "rolled-back", result };
   }
-  // Active/authorized is a valid target signer awaiting the application coordinator's
-  // durable commit/rollback decision. Keep signer mutations gated until that
-  // decision; only a Gateway-authorized transaction may run the health probe.
-  if (journal.phase === "gateway-authorized") {
-    await writeSignerGate(context, journal);
-    await context.applyServiceBoundary(journal.serviceBoundary);
-    await activateProtectedApplication(context, journal);
-    await removeGatewayGate(context);
-    await context.startGateway();
-  } else {
-    await writeUpdateGates(context, journal);
-    await context.stopGateway();
-  }
-  return { recovered: true, action: "pending", phase: journal.phase };
+  throw new Error(`host updater cannot recover transaction phase ${journal.phase}`);
 }
 
 async function dispatchUpdateRequest(request, context) {
@@ -3647,6 +4175,8 @@ async function dispatchUpdateRequest(request, context) {
         throw new Error("stable lifecycle supervisor owns controller promotion");
       }
       return await updateControllerRelease(request, context);
+    case "applyRelease":
+      return await applyReleaseTransaction(request, context);
     case "prepareRelease":
       return await prepareSignerRelease(request, context);
     case "activateRelease":
@@ -3854,6 +4384,9 @@ async function prepareControllerServerContext(context) {
   if (!context.supervised && (await context.ensureControllerServicePolicy?.())) {
     return { restartRequired: true };
   }
+  if (fs.existsSync(context.paths.journalPath)) {
+    context.applicationState = (await context.reconcileApplicationState()) ?? null;
+  }
   if (context.recoverInterruptedTransaction) {
     await context.recoverInterruptedTransaction();
   } else {
@@ -3893,6 +4426,7 @@ if (isMain) {
 
 export const __testing = {
   assertSignerV2Health,
+  applyReleaseTransaction,
   activateSignerRelease,
   authorizeGatewayRelease,
   commitSignerRelease,

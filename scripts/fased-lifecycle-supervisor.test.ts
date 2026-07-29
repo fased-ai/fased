@@ -88,7 +88,7 @@ describe("stable lifecycle supervisor contract", () => {
       operatorUid: 1000,
       operatorGid: 1000,
     });
-    expect(request("commitRelease").op).toBe("commitRelease");
+    expect(request("applyRelease").op).toBe("applyRelease");
     for (const injected of [
       { command: "/bin/sh" },
       { path: "/tmp/controller" },
@@ -119,6 +119,51 @@ describe("stable lifecycle supervisor contract", () => {
         "/tmp/controller",
       ]),
     ).toThrow("unsupported lifecycle supervisor argument");
+  });
+
+  it("records one durable target-controller receipt and replays it without a second mutation", async () => {
+    const { paths } = tempPaths();
+    await fsp.mkdir(paths.supervisorStateDir, { recursive: true });
+    const transaction = request("applyRelease");
+    const release = {
+      version,
+      commit: "a".repeat(40),
+      buildInputDigest: `sha256:${"b".repeat(64)}`,
+      development: false,
+    };
+    const forward = vi.fn(async () => ({
+      ok: true,
+      transactionId: transaction.transactionId,
+      version,
+      phase: "committed",
+      changed: true,
+      release,
+    }));
+    const context = __testing.createContext(
+      {
+        profile: "hosting",
+        operatorUid: 1000,
+        operatorGid: 1000,
+        paths,
+      },
+      { requestController: forward },
+    );
+    const state = { controllerInstanceId: randomUUID() };
+
+    await expect(
+      __testing.handleSupervisorRequest(transaction, context, state),
+    ).resolves.toMatchObject({ ok: true, phase: "committed", release });
+    await expect(
+      __testing.handleSupervisorRequest(transaction, context, state),
+    ).resolves.toMatchObject({
+      ok: true,
+      phase: "committed",
+      changed: false,
+      replayed: true,
+      release,
+    });
+    expect(forward).toHaveBeenCalledOnce();
+    expect(await fsp.readFile(paths.rollbackFloorPath, "utf8")).toBe(`${version}\n`);
   });
 
   it("keeps the replaceable controller outside supervisor code, state, and unit files", () => {

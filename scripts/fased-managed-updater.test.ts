@@ -1349,6 +1349,38 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     ).toBe("stable");
   });
 
+  it("hands a root-managed release to one target-controller transaction and performs no phase calls", async () => {
+    const operations: string[] = [];
+    let handoffAccepted = false;
+    await expect(
+      __testing.handoffTargetOwnedRelease({
+        transactionId: TRANSACTION_ID,
+        targetVersion: "1.2.3",
+        timeoutMs: 1000,
+        socketPath: "/run/fased-host-updater/request.sock",
+        expectedSignerRelease: signerRelease(),
+        ensureController: async () => {
+          operations.push("updateController");
+        },
+        onHandoff: () => {
+          handoffAccepted = true;
+        },
+        applyRelease: async () => {
+          operations.push("applyRelease");
+          return {
+            ok: true,
+            transactionId: TRANSACTION_ID,
+            version: "1.2.3",
+            phase: "committed",
+            release: signerRelease(),
+          };
+        },
+      }),
+    ).resolves.toMatchObject({ phase: "committed", release: signerRelease() });
+    expect(handoffAccepted).toBe(true);
+    expect(operations).toEqual(["updateController", "applyRelease"]);
+  });
+
   it("distinguishes a definitive pre-v2 rejection from an ambiguous post-send disconnect", async () => {
     const rejected = await withUnixServer((socket) => {
       socket.once("data", () => {

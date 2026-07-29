@@ -5626,6 +5626,7 @@ install_host_signer_and_updater_services() {
   install -d -m 0755 -o root -g root /opt/fased/signer
   install -d -m 0755 -o root -g root /opt/fased/host-controller/releases
   install -d -m 0755 -o root -g root /opt/fased/host-controller/supervisor
+  install -d -m 0755 -o root -g root /opt/fased/host-application/releases
   install -d -m 0700 -o root -g root /var/lib/fased-host-updater
   install -d -m 0700 -o root -g root /var/lib/fased-host-updater/supervisor
   local supervisor_path="/opt/fased/host-controller/supervisor/fased-lifecycle-supervisor.mjs"
@@ -5787,7 +5788,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=read-only
 ProtectSystem=strict
-ReadWritePaths=/opt/fased/host-controller/releases /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-controller /etc/systemd/system ${target_home}/.fased
+ReadWritePaths=/opt/fased/host-controller/releases /opt/fased/host-application /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-controller /etc/systemd/system ${target_home}/.fased
 ReadOnlyPaths=/opt/fased/host-controller/supervisor /var/lib/fased-host-updater/supervisor /etc/systemd/system/fased-host-updater.service
 ProtectKernelTunables=true
 ProtectKernelModules=true

@@ -1417,6 +1417,7 @@ async function requestHostedSignerTransaction(
   if (
     !new Set([
       "updateController",
+      "applyRelease",
       "prepareRelease",
       "activateRelease",
       "authorizeGatewayRelease",
@@ -1491,7 +1492,12 @@ async function requestHostedSignerTransaction(
         if (response.release !== undefined) {
           response.release = parseSignerReleaseIdentity(response.release, version);
         } else if (
-          new Set(["prepareRelease", "activateRelease", "authorizeGatewayRelease"]).has(operation)
+          new Set([
+            "applyRelease",
+            "prepareRelease",
+            "activateRelease",
+            "authorizeGatewayRelease",
+          ]).has(operation)
         ) {
           fail(new Error(`host updater ${operation} response omitted signer release identity`));
           return;
@@ -1607,6 +1613,36 @@ async function ensureHostedControllerRelease(
     }
   }
   throw new Error("verified root updater controller did not restart into the target release");
+}
+
+async function handoffTargetOwnedRelease({
+  transactionId,
+  targetVersion,
+  timeoutMs,
+  socketPath,
+  expectedSignerRelease,
+  onHandoff = () => undefined,
+  ensureController = ensureHostedControllerRelease,
+  applyRelease = async () =>
+    await requestHostedSignerTransactionWithRetry(
+      "applyRelease",
+      transactionId,
+      targetVersion,
+      timeoutMs,
+      socketPath,
+    ),
+}) {
+  await ensureController(transactionId, targetVersion, timeoutMs, socketPath);
+  onHandoff();
+  const result = await applyRelease();
+  if (
+    result.phase !== "committed" ||
+    !result.release ||
+    !signerReleaseIdentitiesEqual(result.release, expectedSignerRelease)
+  ) {
+    throw new Error("target lifecycle controller returned a mismatched commit receipt");
+  }
+  return result;
 }
 
 export async function authorizePreactivatedHostedGateway({
@@ -5440,7 +5476,7 @@ async function stageManagedReleaseCandidate({
     await measureStage(timings, "staged runtime smoke", () => smokeRuntime(stagedRoot, timeoutMs));
 
     let releaseRoot = path.join(paths.releasesDir, targetVersion);
-    if (repairCurrentFiles) {
+    if (repairCurrentFiles && !isRootManagedProfile(existingManifest.profile)) {
       releaseRoot = path.join(
         paths.releasesDir,
         `${targetVersion}.repair-${Date.now()}-${process.pid}`,
@@ -5577,6 +5613,7 @@ async function updateManagedRuntime(options) {
   }
 
   const releaseLock = await acquireUpdateLock(paths.stateDir);
+  let targetControllerOwnsCompletion = false;
   try {
     const staleCache = await measureStage(timings, "stale update-cache cleanup", () =>
       cleanupManagedUpdateCache(paths),
@@ -5772,6 +5809,7 @@ async function updateManagedRuntime(options) {
     });
     const { hostedRelease, metadata, releaseRoot, temporaryRoot } = candidate;
     let activated = false;
+    let handedOff = false;
     let previousRoot = currentRoot;
     let previousManifest = existingManifest;
     try {
@@ -5798,41 +5836,27 @@ async function updateManagedRuntime(options) {
       });
       if (isRootManagedProfile(existingManifest.profile)) {
         if (!previousRoot) {
-          throw new Error("Hosted transactional update requires an active previous runtime.");
+          throw new Error("Target-owned update requires an active previous runtime.");
         }
-        let journal = await writeHostedTransactionJournal(paths, {
-          schemaVersion: HOSTED_TRANSACTION_SCHEMA_VERSION,
-          transactionId: randomUUID(),
-          targetVersion,
-          previousVersion: currentVersion,
-          targetRoot: releaseRoot,
-          previousRoot,
-          nextManifest,
-          previousManifest,
-          phase: "prepared",
-          createdAt: new Date().toISOString(),
-        });
-        const operations = hostedTransactionOperations(paths, options.timeoutMs);
-        try {
-          await measureStage(timings, "root signer release preparation", () =>
-            operations.signerRequest("prepareRelease", journal),
-          );
-        } catch (error) {
-          await recoverFailedHostedPreparation(journal, operations, error);
-          throw error;
-        }
-        try {
-          await measureStage(timings, "coordinated activation and health", async () => {
-            const result = await coordinateHostedReleaseTransaction(journal, operations);
-            journal = result.journal;
-          });
-          activated = true;
-        } catch (error) {
-          if (error?.code === "HOSTED_COMMIT_PENDING") {
-            activated = true;
-          }
-          throw error;
-        }
+        const transactionId = randomUUID();
+        const controllerSocketPath = resolveRootManagedControllerSocket(paths);
+        // Scratch extraction is not part of the live release transaction and
+        // must be gone before ownership crosses the handoff boundary.
+        await fsp.rm(temporaryRoot, { recursive: true, force: true });
+        await measureStage(timings, "target-owned release transaction", () =>
+          handoffTargetOwnedRelease({
+            transactionId,
+            targetVersion,
+            timeoutMs: options.timeoutMs,
+            socketPath: controllerSocketPath,
+            expectedSignerRelease: hostedRelease.signer,
+            onHandoff: () => {
+              handedOff = true;
+              targetControllerOwnsCompletion = true;
+            },
+          }),
+        );
+        activated = true;
       } else {
         const signerPaths = resolveLocalSignerPaths({ stateDir: paths.stateDir });
         const pairSigner =
@@ -5978,7 +6002,9 @@ async function updateManagedRuntime(options) {
         }
       }
       timings.push({ name: "total", durationMs: Date.now() - commandStartedAt });
-      await recordManagedUpdateSuccess(paths, { version: targetVersion, alreadyCurrent: false });
+      if (!isRootManagedProfile(existingManifest.profile)) {
+        await recordManagedUpdateSuccess(paths, { version: targetVersion, alreadyCurrent: false });
+      }
       if (options.json) {
         console.log(
           JSON.stringify({
@@ -6009,8 +6035,10 @@ async function updateManagedRuntime(options) {
         }
       }
     } finally {
-      await fsp.rm(temporaryRoot, { recursive: true, force: true });
-      if (!activated) {
+      if (!handedOff) {
+        await fsp.rm(temporaryRoot, { recursive: true, force: true });
+      }
+      if (!activated && !handedOff) {
         const active = readManagedInstallManifest(paths.manifestPath);
         if (active?.runtime?.activeVersion !== currentVersion && previousRoot) {
           await atomicSymlink(previousRoot, paths.currentLink).catch(() => undefined);
@@ -6024,7 +6052,9 @@ async function updateManagedRuntime(options) {
       }
     }
   } finally {
-    await releaseLock();
+    if (!targetControllerOwnsCompletion) {
+      await releaseLock();
+    }
   }
 }
 
@@ -6090,6 +6120,7 @@ export const __testing = {
   buildLegacyLocalWalletMigrationPlan,
   coordinateHostedReleaseTransaction,
   hostedUpdaterError,
+  handoffTargetOwnedRelease,
   hostedTransactionOperations,
   ensureHostedControllerRelease,
   probeGatewayIdentity,
