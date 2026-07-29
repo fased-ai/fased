@@ -139,21 +139,30 @@ printf '%s\n' "$*" >>/tmp/fased-gh-verification.log
 EOF_GH
 chmod 0755 /usr/local/bin/gh
 
-if bash -s -- --repair-hosting </repo/install.sh 2>/tmp/repair-error; then exit 1; fi
+release_installer=/tmp/fased-release-install.sh
+release_marker='install_entry_release_identity="__FASED_RELEASE_IDENTITY__"'
+[[ "$(grep -Fxc "$release_marker" /repo/install.sh)" -eq 1 ]]
+sed \
+  "s|$release_marker|install_entry_release_identity=\"$version\"|" \
+  /repo/install.sh >"$release_installer"
+chmod 0700 "$release_installer"
+grep -Fxq "install_entry_release_identity=\"$version\"" "$release_installer"
+
+if bash -s -- --repair-hosting <"$release_installer" 2>/tmp/repair-error; then exit 1; fi
 grep -Fq 'accepts only the public one-command selector' /tmp/repair-error
 [[ ! -e /var/lib/fased-installer ]]
-if FASED_INSTALL_REPO=https://example.invalid bash -s -- --hosting </repo/install.sh 2>/tmp/env-error; then exit 1; fi
+if FASED_INSTALL_REPO=https://example.invalid bash -s -- --hosting <"$release_installer" 2>/tmp/env-error; then exit 1; fi
 grep -Fq 'Refusing Fased environment overrides' /tmp/env-error
 [[ ! -e /var/lib/fased-installer ]]
 
-bash -s -- --hosting --release v9.8.7-rc.2 --update-channel beta </repo/install.sh
+bash -s -- --hosting --release v9.8.7-rc.2 --update-channel beta <"$release_installer"
 [[ "$(cat /tmp/fased-bootstrap-success)" == "verified handoff" ]]
 [[ "$(wc -l </tmp/fased-gh-verification.log)" -eq 1 ]]
 marker="$(find /var/lib/fased-installer/releases/v9.8.7-rc.2 -name .fased-hosting-bundle-verified -type f -print -quit)"
 [[ -n "$marker" ]]
 grep -Fq 'version=9.8.7-rc.2' "$marker"
 grep -Fq "commit=$commit" "$marker"
-bash -s -- --hosting --release v9.8.7-rc.2 --update-channel beta </repo/install.sh
+bash -s -- --hosting --release v9.8.7-rc.2 --update-channel beta <"$release_installer"
 [[ "$(sed -n '1p' /tmp/fased-bootstrap-modes)" == "--hosting" ]]
 [[ "$(sed -n '2p' /tmp/fased-bootstrap-modes)" == "--repair-hosting" ]]
 printf 'streamed Hosting bootstrap container validation passed\n'

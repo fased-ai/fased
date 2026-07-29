@@ -300,9 +300,19 @@ describe("attested Hosting installer artifact layout", () => {
       path.join(root, "scripts/docker/streamed-hosting-bootstrap/Dockerfile"),
       "utf8",
     );
+    const fixture = fs.readFileSync(
+      path.join(root, "scripts/docker/streamed-hosting-bootstrap/run.sh"),
+      "utf8",
+    );
     expect(dockerfile).not.toContain("apt-get");
     expect(dockerfile).not.toContain("install -y");
     expect(dockerfile).toContain("COPY run.sh");
+    expect(fixture).toContain("release_installer=/tmp/fased-release-install.sh");
+    expect(fixture).toContain(
+      "release_marker='install_entry_release_identity=\"__FASED_RELEASE_IDENTITY__\"'",
+    );
+    expect(fixture).toContain('<"$release_installer"');
+    expect(fixture).not.toContain("</repo/install.sh");
   });
 
   it("dispatches standalone Hosting execution through the attested bundle bootstrap", () => {
