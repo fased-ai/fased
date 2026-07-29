@@ -311,6 +311,10 @@ describe("attested Hosting installer artifact layout", () => {
     expect(fixture).toContain(
       "release_marker='install_entry_release_identity=\"__FASED_RELEASE_IDENTITY__\"'",
     );
+    expect(fixture).toContain('"$fixture/fased-lifecycle-trust-v1.json"');
+    expect(fixture).toContain('"$fixture/fased-lifecycle-trust-v1.json.attestation.json"');
+    expect(fixture).toContain('"$fixture/app/package/scripts/fased-lifecycle-supervisor.mjs"');
+    expect(fixture).toContain('[[ "$(wc -l </tmp/fased-gh-verification.log)" -eq 2 ]]');
     expect(fixture).toContain('<"$release_installer"');
     expect(fixture).not.toContain("</repo/install.sh");
   });

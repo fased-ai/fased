@@ -8,7 +8,10 @@ dependency_hash=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 app_asset="fased-hosted-app-v2-linux-x64-v${version}.tar.gz"
 dependency_asset="fased-hosted-deps-linux-x64-${dependency_hash}.tar.gz"
 signer_asset=fased-signerd-linux-amd64
-mkdir -p "$fixture/app/package/dist" "$fixture/dependencies/node_modules"
+mkdir -p \
+  "$fixture/app/package/dist" \
+  "$fixture/app/package/scripts" \
+  "$fixture/dependencies/node_modules"
 
 cat >"$fixture/app/package/install.sh" <<'EOF_INNER'
 #!/usr/bin/env bash
@@ -37,6 +40,14 @@ cat >"$fixture/app/package/dist/build-info.json" <<EOF_BUILD
   "commit": "$commit"
 }
 EOF_BUILD
+cat >"$fixture/app/package/scripts/fased-lifecycle-supervisor.mjs" <<'EOF_SUPERVISOR'
+#!/usr/bin/env node
+process.exit(0);
+EOF_SUPERVISOR
+chmod 0755 "$fixture/app/package/scripts/fased-lifecycle-supervisor.mjs"
+supervisor_digest="$(
+  sha256sum "$fixture/app/package/scripts/fased-lifecycle-supervisor.mjs" | awk '{print $1}'
+)"
 tar -czf "$fixture/$app_asset" -C "$fixture/app" package
 tar -czf "$fixture/$dependency_asset" -C "$fixture/dependencies" node_modules
 printf 'synthetic signer\n' >"$fixture/$signer_asset"
@@ -72,6 +83,37 @@ cat >"$fixture/fased-hosted-release-v2.json" <<EOF_MANIFEST
 }
 EOF_MANIFEST
 printf '{"syntheticOfflineBundle":true}\n' >"$fixture/fased-hosted-release-v2.json.attestation.json"
+issued_at="$(date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%S.000Z)"
+expires_at="$(date -u -d '30 days' +%Y-%m-%dT%H:%M:%S.000Z)"
+cat >"$fixture/fased-lifecycle-trust-v1.json" <<EOF_LIFECYCLE
+{
+  "schemaVersion": 1,
+  "role": "fased-lifecycle-targets",
+  "release": {"version":"$version","tag":"v$version","commit":"$commit"},
+  "validity": {"issuedAt":"$issued_at","expiresAt":"$expires_at"},
+  "policy": {
+    "channels": ["beta"],
+    "platforms": ["linux-arm64", "linux-x64"],
+    "supervisorProtocol": 1,
+    "controllerProtocol": 2
+  },
+  "targets": {
+    "supervisor": {
+      "asset": "fased-lifecycle-supervisor.mjs",
+      "sha256": "$supervisor_digest"
+    },
+    "controllerServer": {
+      "asset": "fased-host-updater.mjs",
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    "controllerClient": {
+      "asset": "fased-host-updaterctl.mjs",
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    }
+  }
+}
+EOF_LIFECYCLE
+printf '{"syntheticOfflineBundle":true}\n' >"$fixture/fased-lifecycle-trust-v1.json.attestation.json"
 
 cat >/usr/local/bin/curl <<'EOF_CURL'
 #!/usr/bin/env bash
@@ -103,10 +145,33 @@ if [[ "$*" == *".tag_name"* ]]; then
   printf 'v9.8.7-rc.2\n'
   exit 0
 fi
+document="${!#}"
+if [[ "$*" == *".validity.issuedAt"* ]]; then
+  [[ "$document" == */fased-lifecycle-trust-v1.json && -f "$document" ]]
+  sed -n 's/.*"issuedAt":[[:space:]]*"\([^"]*\)".*/\1/p' "$document"
+  exit 0
+fi
+if [[ "$*" == *".validity.expiresAt"* ]]; then
+  [[ "$document" == */fased-lifecycle-trust-v1.json && -f "$document" ]]
+  sed -n 's/.*"expiresAt":[[:space:]]*"\([^"]*\)".*/\1/p' "$document"
+  exit 0
+fi
+if [[ "$*" == *"--arg channel beta"* ]]; then
+  [[ "$document" == */fased-lifecycle-trust-v1.json && -f "$document" ]]
+  expected="$(
+    sha256sum /tmp/fased-release-fixture/app/package/scripts/fased-lifecycle-supervisor.mjs |
+      awk '{print $1}'
+  )"
+  grep -Fq "\"version\":\"9.8.7-rc.2\"" "$document"
+  grep -Fq "\"commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"" "$document"
+  grep -Fq "\"sha256\": \"$expected\"" "$document"
+  printf '%s\n' "$expected"
+  exit 0
+fi
 [[ "$*" == *"--arg version 9.8.7-rc.2"* ]]
 [[ "$*" == *"--arg architecture x64"* ]]
 [[ "$*" == *"--arg signer_platform linux-amd64"* ]]
-manifest="${!#}"
+manifest="$document"
 [[ "$manifest" == */fased-hosted-release-v2.json && -f "$manifest" ]]
 fixture=/tmp/fased-release-fixture
 version=9.8.7-rc.2
@@ -157,11 +222,12 @@ grep -Fq 'Refusing Fased environment overrides' /tmp/env-error
 
 bash -s -- --hosting --release v9.8.7-rc.2 --update-channel beta <"$release_installer"
 [[ "$(cat /tmp/fased-bootstrap-success)" == "verified handoff" ]]
-[[ "$(wc -l </tmp/fased-gh-verification.log)" -eq 1 ]]
+[[ "$(wc -l </tmp/fased-gh-verification.log)" -eq 2 ]]
 marker="$(find /var/lib/fased-installer/releases/v9.8.7-rc.2 -name .fased-hosting-bundle-verified -type f -print -quit)"
 [[ -n "$marker" ]]
 grep -Fq 'version=9.8.7-rc.2' "$marker"
 grep -Fq "commit=$commit" "$marker"
+grep -Eq '^lifecycle_metadata_sha256=[a-f0-9]{64}$' "$marker"
 bash -s -- --hosting --release v9.8.7-rc.2 --update-channel beta <"$release_installer"
 [[ "$(sed -n '1p' /tmp/fased-bootstrap-modes)" == "--hosting" ]]
 [[ "$(sed -n '2p' /tmp/fased-bootstrap-modes)" == "--repair-hosting" ]]
