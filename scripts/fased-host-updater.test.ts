@@ -285,6 +285,7 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
   };
   const context = __testing.createTransactionContext({
     paths,
+    historicalQ0TestStateDir: path.join(root, "historical-q0-test-state"),
     ...(options.protectedService ? { protectedLocalInstanceId: "0123456789abcdef" } : {}),
     ...(options.protectedService ? { protectedNodeBinary: path.join(root, "bin", "node") } : {}),
     assertReleaseAllowed: async () => undefined,
@@ -1515,6 +1516,37 @@ describe("root-owned hosted updater protocol", () => {
     await expect(fsp.readFile(target, "utf8")).resolves.toBe("{}\n");
   });
 
+  it("refuses unknown historical test-state entries before removing residue", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-unknown-historical-cleanup-"));
+    cleanupRoots.push(root);
+    const stateDir = path.join(root, "state");
+    const controllerReleasesDir = path.join(root, "controller", "releases");
+    const historicalDir = path.join(root, "testing");
+    const unknownPath = path.join(historicalDir, "owner-data.json");
+    await Promise.all([
+      fsp.mkdir(stateDir, { recursive: true }),
+      fsp.mkdir(controllerReleasesDir, { recursive: true }),
+      fsp.mkdir(historicalDir, { recursive: true }),
+    ]);
+    await fsp.writeFile(unknownPath, "{}\n");
+    const context = __testing.createTransactionContext({
+      paths: {
+        stateDir,
+        controllerReleasesDir,
+      },
+      protectedLocalInstanceId: "0123456789abcdef",
+      rootUid: process.geteuid(),
+      historicalQ0TestStateDir: historicalDir,
+    });
+
+    await expect(
+      __testing.cleanupHistoricalQ0Residue(context, { version: "1.2.3" }),
+    ).rejects.toThrow(
+      "historical Protected Local test state directory contains unknown entry owner-data.json",
+    );
+    await expect(fsp.readFile(unknownPath, "utf8")).resolves.toBe("{}\n");
+  });
+
   it("tolerates validated historical residue disappearing after exact official convergence", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-historical-cleanup-"));
     cleanupRoots.push(root);
@@ -1665,7 +1697,7 @@ describe("root-owned hosted updater protocol", () => {
       rootUid: process.geteuid(),
       historicalQ0TestStateDir: historicalDir,
       beforeHistoricalResidueRemoval: async () => {
-        await fsp.rm(authorizationPath);
+        await fsp.rm(authorizationPath, { force: true });
       },
     });
 
@@ -1688,9 +1720,19 @@ describe("root-owned hosted updater protocol", () => {
     ]) {
       expect(fs.existsSync(removed)).toBe(false);
     }
+    expect(fs.existsSync(historicalDir)).toBe(false);
     expect(fs.existsSync(controllerOld)).toBe(true);
     expect(fs.existsSync(applicationOld)).toBe(true);
     expect(result.removed).not.toContain(authorizationPath);
+
+    await fsp.mkdir(historicalDir);
+    const emptyDirectoryResult = await __testing.cleanupHistoricalQ0Residue(context, {
+      version: targetVersion,
+      application: { targetRoot: applicationTarget },
+      releaseBinding: { releaseCommit: targetCommit },
+    });
+    expect(emptyDirectoryResult).toEqual({ changed: true, removed: [historicalDir] });
+    expect(fs.existsSync(historicalDir)).toBe(false);
   });
 
   it("always passes an offline bundle to GitHub attestation verification", () => {

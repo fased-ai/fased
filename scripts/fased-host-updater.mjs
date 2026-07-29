@@ -4719,6 +4719,44 @@ async function removeValidatedHistoricalResidue(residuePath, options) {
   }
 }
 
+async function inspectHistoricalQ0StateDirectory(directory, allowedNames, context) {
+  let stat;
+  try {
+    stat = await fsp.lstat(directory);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return { exists: false, stat: null };
+    }
+    throw error;
+  }
+  if (
+    !stat.isDirectory() ||
+    stat.isSymbolicLink() ||
+    stat.uid !== context.rootUid ||
+    (stat.mode & 0o022) !== 0
+  ) {
+    throw new Error("historical Protected Local test state directory is unsafe");
+  }
+  const entries = await fsp.readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!allowedNames.has(entry.name)) {
+      throw new Error(
+        `historical Protected Local test state directory contains unknown entry ${entry.name}`,
+      );
+    }
+  }
+  const revalidated = await fsp.lstat(directory);
+  if (
+    !revalidated.isDirectory() ||
+    revalidated.isSymbolicLink() ||
+    revalidated.dev !== stat.dev ||
+    revalidated.ino !== stat.ino
+  ) {
+    throw new Error("historical Protected Local test state directory changed during inventory");
+  }
+  return { exists: true, stat };
+}
+
 async function cleanupHistoricalQ0Residue(context, journal) {
   if (!context.instanceId) {
     return { changed: false, removed: [] };
@@ -4732,6 +4770,11 @@ async function cleanupHistoricalQ0Residue(context, journal) {
   );
   const controllerBackupPath = path.join(context.paths.stateDir, "q0-controller-candidate.json");
   const applicationBackupPath = path.join(context.paths.stateDir, "q0-application-candidate.json");
+  const historicalStateDirectory = await inspectHistoricalQ0StateDirectory(
+    testStateDir,
+    new Set([path.basename(authorizationPath), path.basename(authorizationBackupPath)]),
+    context,
+  );
 
   const [authorization, authorizationBackup, controllerBackup, applicationBackup] =
     await Promise.all([
@@ -4866,7 +4909,7 @@ async function cleanupHistoricalQ0Residue(context, journal) {
     controllerBackup?.filePath,
     applicationBackup?.filePath,
   ].filter(Boolean);
-  if (candidateRoots.size === 0 && residueFiles.length === 0) {
+  if (candidateRoots.size === 0 && residueFiles.length === 0 && !historicalStateDirectory.exists) {
     return { changed: false, removed: [] };
   }
 
@@ -4922,14 +4965,44 @@ async function cleanupHistoricalQ0Residue(context, journal) {
       removed.push(candidate);
     }
   }
-  for (const filePath of residueFiles) {
+  for (const filePath of residueFiles.filter((entry) => path.dirname(entry) !== testStateDir)) {
     if (await removeValidatedHistoricalResidue(filePath)) {
       removed.push(filePath);
     }
   }
+  if (historicalStateDirectory.exists) {
+    const current = await fsp.lstat(testStateDir);
+    if (
+      !current.isDirectory() ||
+      current.isSymbolicLink() ||
+      current.dev !== historicalStateDirectory.stat.dev ||
+      current.ino !== historicalStateDirectory.stat.ino
+    ) {
+      throw new Error("historical Protected Local test state directory changed before cleanup");
+    }
+    const remainingEntries = await fsp.readdir(testStateDir);
+    const allowedNames = new Set([
+      path.basename(authorizationPath),
+      path.basename(authorizationBackupPath),
+    ]);
+    for (const entry of remainingEntries) {
+      if (!allowedNames.has(entry)) {
+        throw new Error(
+          `historical Protected Local test state directory contains unknown entry ${entry}`,
+        );
+      }
+    }
+    if (await removeValidatedHistoricalResidue(testStateDir, { recursive: true })) {
+      removed.push(testStateDir);
+    }
+  }
   const residueDirectories = new Set(
-    [...candidateRoots, ...residueFiles].map((entry) => path.dirname(entry)),
+    [
+      ...candidateRoots,
+      ...residueFiles.filter((entry) => path.dirname(entry) !== testStateDir),
+    ].map((entry) => path.dirname(entry)),
   );
+  residueDirectories.add(path.dirname(testStateDir));
   for (const directory of residueDirectories) {
     await fsyncDirectory(directory);
   }

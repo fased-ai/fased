@@ -26,7 +26,7 @@ gateway_port=19456
 rpc_port=19457
 gateway_token=fased-protected-local-fixture-token
 snapshot=/var/lib/fased-protected-local-fixture.json
-selected_target=/etc/fased/testing/selected-target-version
+selected_target=/var/lib/fased-protected-local-fixture/selected-target-version
 fixture_acl_user=fased-fixture-acl
 fixture_acl_uid=2001
 
@@ -443,7 +443,7 @@ exit 1
 EOF_FIXTURE_GH
 chmod 0755 /opt/fased-fixture-bootstrap-tools/gh
 
-install -d -m 0755 -o root -g root /etc/fased/testing
+install -d -m 0755 -o root -g root /var/lib/fased-protected-local-fixture
 app_asset="fased-hosted-app-v2-linux-x64-v${version}.tar.gz"
 dependency_asset="$(basename "$(find /artifacts -maxdepth 1 -type f \
   -name 'fased-hosted-deps-linux-x64-*.tar.gz' -print -quit)")"
@@ -515,14 +515,14 @@ const manifest = {
   },
 };
 fs.writeFileSync(
-  "/etc/fased/testing/local-release-manifest.json",
+  "/var/lib/fased-protected-local-fixture/local-release-manifest.json",
   `${JSON.stringify(manifest, null, 2)}\n`,
 );
 EOF_LOCAL_MANIFEST
-printf '{}\n' >/etc/fased/testing/local-release-manifest.json.attestation.json
+printf '{}\n' >/var/lib/fased-protected-local-fixture/local-release-manifest.json.attestation.json
 chmod 0444 \
-  /etc/fased/testing/local-release-manifest.json \
-  /etc/fased/testing/local-release-manifest.json.attestation.json
+  /var/lib/fased-protected-local-fixture/local-release-manifest.json \
+  /var/lib/fased-protected-local-fixture/local-release-manifest.json.attestation.json
 
 cat >/usr/local/bin/curl <<'EOF_FIXTURE_CURL'
 #!/usr/bin/env bash
@@ -549,10 +549,11 @@ case "$url" in
       /legacy-artifacts/fased-hosted-release-v2.json.attestation.json "$output"
     ;;
   */fased-hosted-release-v2.json)
-    install -m 0600 /etc/fased/testing/local-release-manifest.json "$output"
+    install -m 0600 /var/lib/fased-protected-local-fixture/local-release-manifest.json "$output"
     ;;
   */fased-hosted-release-v2.json.attestation.json)
-    install -m 0600 /etc/fased/testing/local-release-manifest.json.attestation.json "$output"
+    install -m 0600 \
+      /var/lib/fased-protected-local-fixture/local-release-manifest.json.attestation.json "$output"
     ;;
   *) exec /usr/bin/curl "$@" ;;
 esac
@@ -576,7 +577,7 @@ const genesis = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"; // pragma: allow
 http.createServer((request, response) => {
   if (request.method === "GET" && request.url?.startsWith("/@fased%2ffased")) {
     const selectedVersion = fs.readFileSync(
-      "/etc/fased/testing/selected-target-version",
+      "/var/lib/fased-protected-local-fixture/selected-target-version",
       "utf8",
     ).trim();
     response.writeHead(200, { "content-type": "application/json" });
@@ -595,9 +596,9 @@ http.createServer((request, response) => {
       asset === "install.sh"
         ? "/usr/local/libexec/fased-fixture-protected-installer.sh"
         : asset === "fased-hosted-release-v2.json"
-          ? "/etc/fased/testing/local-release-manifest.json"
+          ? "/var/lib/fased-protected-local-fixture/local-release-manifest.json"
           : asset === "fased-hosted-release-v2.json.attestation.json"
-            ? "/etc/fased/testing/local-release-manifest.json.attestation.json"
+            ? "/var/lib/fased-protected-local-fixture/local-release-manifest.json.attestation.json"
             : path.join("/artifacts", asset);
     try {
       const stat = fs.statSync(selected);
@@ -753,7 +754,7 @@ cat >/etc/sudoers.d/fased-protected-local-fixture <<'EOF_SUDOERS'
 testop ALL=(root) NOPASSWD: ALL
 EOF_SUDOERS
 chmod 0440 /etc/sudoers.d/fased-protected-local-fixture
-install -d -m 0755 -o root -g root /etc/fased/testing
+install -d -m 0755 -o root -g root /var/lib/fased-protected-local-fixture
 printf '%s\n' "$version" >"$selected_target"
 chmod 0644 "$selected_target"
 
