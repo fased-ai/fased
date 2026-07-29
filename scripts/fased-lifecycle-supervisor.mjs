@@ -175,9 +175,24 @@ export function verifyEmbeddedLifecycleRootPolicy(
   pinnedSha256 = INITIAL_LIFECYCLE_ROOT_SHA256,
   now = Date.now(),
 ) {
-  if (createHash("sha256").update(canonicalRootBytes(envelope)).digest("hex") !== pinnedSha256) {
+  const digest = createHash("sha256").update(canonicalRootBytes(envelope)).digest("hex");
+  if (digest !== pinnedSha256) {
     fail("embedded lifecycle root does not match its immutable bootstrap pin");
   }
+  const root = parseLifecycleRootPolicy(envelope, now);
+  const verified = verifyLifecycleRootSignatures(root, [root]);
+  requireLifecycleRootThreshold(root, verified);
+  return Object.freeze({
+    ...root,
+    pinnedSha256,
+  });
+}
+
+function parseLifecycleRootPolicy(
+  envelope,
+  now = Date.now(),
+  { enforceCurrentValidity = true } = {},
+) {
   exactKeys(envelope, ["schemaVersion", "signed", "signatures"], "embedded lifecycle root");
   exactKeys(
     envelope.signed,
@@ -207,8 +222,7 @@ export function verifyEmbeddedLifecycleRootPolicy(
     new Date(issuedAt).toISOString() !== envelope.signed.issuedAt ||
     new Date(expiresAt).toISOString() !== envelope.signed.expiresAt ||
     issuedAt >= expiresAt ||
-    now < issuedAt ||
-    now > expiresAt ||
+    (enforceCurrentValidity && (now < issuedAt || now > expiresAt)) ||
     expiresAt - issuedAt > 5 * 366 * 24 * 60 * 60 * 1000
   ) {
     fail("embedded lifecycle root is stale, malformed, or has an invalid validity window");
@@ -243,12 +257,11 @@ export function verifyEmbeddedLifecycleRootPolicy(
     fail("embedded lifecycle root signature threshold was not met");
   }
   let priorKeyId = null;
-  let verified = 0;
-  const payload = canonicalRootBytes(envelope.signed);
+  const signatures = [];
   for (const signature of envelope.signatures) {
     exactKeys(signature, ["keyId", "signature"], "embedded lifecycle root signature");
     if (
-      !keys.has(signature.keyId) ||
+      !DIGEST_PATTERN.test(signature.keyId || "") ||
       (priorKeyId !== null && priorKeyId.localeCompare(signature.keyId) >= 0)
     ) {
       fail("embedded lifecycle root signatures must use unique sorted root key IDs");
@@ -258,13 +271,10 @@ export function verifyEmbeddedLifecycleRootPolicy(
       signature.signature,
       `embedded lifecycle root signature ${signature.keyId}`,
     );
-    if (bytes.length !== 64 || !verifyBytes(null, payload, keys.get(signature.keyId), bytes)) {
+    if (bytes.length !== 64) {
       fail("embedded lifecycle root contains an invalid Ed25519 signature");
     }
-    verified += 1;
-  }
-  if (verified < envelope.signed.root.threshold) {
-    fail("embedded lifecycle root signature threshold was not met");
+    signatures.push(Object.freeze({ keyId: signature.keyId, bytes }));
   }
 
   const authority = envelope.signed.releaseAuthority;
@@ -300,20 +310,98 @@ export function verifyEmbeddedLifecycleRootPolicy(
     ),
   });
   return Object.freeze({
+    envelope,
+    signed: envelope.signed,
     version: envelope.signed.version,
-    pinnedSha256,
+    digest: createHash("sha256").update(canonicalRootBytes(envelope)).digest("hex"),
+    keys,
+    root: Object.freeze({
+      keyIds: Object.freeze([...envelope.signed.root.keyIds]),
+      threshold: envelope.signed.root.threshold,
+    }),
+    signatures: Object.freeze(signatures),
     releaseAuthority: Object.freeze({ ...authority }),
     revocations,
   });
 }
 
-const EMBEDDED_LIFECYCLE_ROOT = verifyEmbeddedLifecycleRootPolicy();
-const RELEASE_REPOSITORY = EMBEDDED_LIFECYCLE_ROOT.releaseAuthority.repository;
-const RELEASE_WORKFLOW = EMBEDDED_LIFECYCLE_ROOT.releaseAuthority.workflow;
-const RELEASE_SOURCE_REF_PREFIX = EMBEDDED_LIFECYCLE_ROOT.releaseAuthority.sourceRefPrefix;
+function verifyLifecycleRootSignatures(candidate, roots, { rejectUnknown = true } = {}) {
+  const keys = new Map();
+  for (const root of roots) {
+    for (const [keyId, key] of root.keys) {
+      const prior = keys.get(keyId);
+      if (
+        prior &&
+        prior
+          .export({ format: "der", type: "spki" })
+          .compare(key.export({ format: "der", type: "spki" })) !== 0
+      ) {
+        fail("lifecycle roots disagree about one key ID");
+      }
+      keys.set(keyId, key);
+    }
+  }
+  const payload = canonicalRootBytes(candidate.signed);
+  const verified = new Set();
+  for (const signature of candidate.signatures) {
+    const key = keys.get(signature.keyId);
+    if (!key) {
+      if (rejectUnknown) {
+        fail("embedded lifecycle root contains a signature outside the trusted root roles");
+      }
+      continue;
+    }
+    if (!verifyBytes(null, payload, key, signature.bytes)) {
+      fail("embedded lifecycle root contains an invalid Ed25519 signature");
+    }
+    verified.add(signature.keyId);
+  }
+  return verified;
+}
 
-function assertLifecycleReleaseAllowed(version, targetDigests = []) {
-  if (EMBEDDED_LIFECYCLE_ROOT.revocations.releaseVersions.includes(version)) {
+function requireLifecycleRootThreshold(root, verified) {
+  if (root.root.keyIds.filter((keyId) => verified.has(keyId)).length < root.root.threshold) {
+    fail("embedded lifecycle root signature threshold was not met");
+  }
+}
+
+function verifyLifecycleRootTransition(
+  trustedEnvelope,
+  candidateEnvelope,
+  { previousState, now = Date.now() } = {},
+) {
+  const trusted = parseLifecycleRootPolicy(trustedEnvelope, now);
+  requireLifecycleRootThreshold(
+    trusted,
+    verifyLifecycleRootSignatures(trusted, [trusted], { rejectUnknown: false }),
+  );
+  if (
+    !previousState ||
+    previousState.rootVersion !== trusted.version ||
+    previousState.rootSha256 !== trusted.digest
+  ) {
+    fail("persisted lifecycle root does not match its trusted state floor");
+  }
+  if (
+    trusted.digest ===
+    createHash("sha256").update(canonicalRootBytes(candidateEnvelope)).digest("hex")
+  ) {
+    return trusted;
+  }
+  const candidate = parseLifecycleRootPolicy(candidateEnvelope, now);
+  if (candidate.version !== trusted.version + 1) {
+    fail("lifecycle root rotation must advance exactly one version");
+  }
+  const verified = verifyLifecycleRootSignatures(candidate, [trusted, candidate]);
+  requireLifecycleRootThreshold(trusted, verified);
+  requireLifecycleRootThreshold(candidate, verified);
+  return candidate;
+}
+
+const EMBEDDED_LIFECYCLE_ROOT = verifyEmbeddedLifecycleRootPolicy();
+
+function assertLifecycleReleaseAllowed(root, version, targetDigests = []) {
+  if (root.revocations.releaseVersions.includes(version)) {
     fail(`lifecycle release v${version} is revoked by the trusted root`);
   }
   if (
@@ -322,11 +410,7 @@ function assertLifecycleReleaseAllowed(version, targetDigests = []) {
   ) {
     fail("lifecycle target digests are invalid");
   }
-  if (
-    targetDigests.some((digest) =>
-      EMBEDDED_LIFECYCLE_ROOT.revocations.targetDigests.includes(digest),
-    )
-  ) {
+  if (targetDigests.some((digest) => root.revocations.targetDigests.includes(digest))) {
     fail("lifecycle target digest is revoked by the trusted root");
   }
 }
@@ -414,6 +498,10 @@ function lifecyclePaths(profile, instanceId = null) {
       currentLink: "/opt/fased/host-controller/current",
       controllerVersionPath: "/var/lib/fased-host-updater/supervisor/controller-version.json",
       rollbackFloorPath: "/var/lib/fased-host-updater/supervisor/rollback-floor",
+      trustedRootPath: "/var/lib/fased-host-updater/supervisor/trusted-root.json",
+      trustStatePath: "/var/lib/fased-host-updater/supervisor/trust-state.json",
+      supervisorTransactionPath:
+        "/var/lib/fased-host-updater/supervisor/controller-transaction.json",
       channelPath: "/etc/fased/host-updater-channel",
       supervisorPath: "/opt/fased/host-controller/supervisor/fased-lifecycle-supervisor.mjs",
       controllerUnit: "fased-host-controller.service",
@@ -437,6 +525,9 @@ function lifecyclePaths(profile, instanceId = null) {
     currentLink: `${install}/controller/current`,
     controllerVersionPath: `${state}/supervisor/controller-version.json`,
     rollbackFloorPath: `${state}/supervisor/rollback-floor`,
+    trustedRootPath: `${state}/supervisor/trusted-root.json`,
+    trustStatePath: `${state}/supervisor/trust-state.json`,
+    supervisorTransactionPath: `${state}/supervisor/controller-transaction.json`,
     channelPath: `/etc/fased/local/${instanceId}/update-channel`,
     supervisorPath: `${install}/supervisor/fased-lifecycle-supervisor.mjs`,
     controllerUnit: `fased-local-controller-worker-${instanceId}.service`,
@@ -518,7 +609,7 @@ export function parseLifecycleTrustMetadata(
 ) {
   exactKeys(
     value,
-    ["schemaVersion", "role", "release", "validity", "policy", "targets"],
+    ["schemaVersion", "role", "rootPolicy", "release", "validity", "policy", "targets"],
     "lifecycle trust metadata",
   );
   exactKeys(value.release, ["version", "tag", "commit"], "lifecycle release identity");
@@ -536,6 +627,7 @@ export function parseLifecycleTrustMetadata(
   for (const [role, target] of Object.entries(value.targets)) {
     exactKeys(target, ["asset", "sha256"], `lifecycle ${role} target`);
   }
+  exactKeys(value.rootPolicy, ["schemaVersion", "signed", "signatures"], "lifecycle root policy");
   const version = parseVersion(value.release.version);
   const issuedAt = Date.parse(value.validity.issuedAt);
   const expiresAt = Date.parse(value.validity.expiresAt);
@@ -690,9 +782,10 @@ async function fixedExecutable(candidates, label) {
   fail(`${label} is unavailable from a root-controlled system path`);
 }
 
-async function verifyMetadata(metadataPath, bundlePath, version, stateDir) {
-  assertLifecycleReleaseAllowed(version);
+async function verifyMetadata(metadataPath, bundlePath, version, stateDir, trustedRoot) {
+  assertLifecycleReleaseAllowed(trustedRoot, version);
   const gh = await fixedExecutable(["/usr/bin/gh", "/usr/local/bin/gh"], "GitHub CLI");
+  const authority = trustedRoot.releaseAuthority;
   await execFileAsync(
     gh,
     [
@@ -700,16 +793,14 @@ async function verifyMetadata(metadataPath, bundlePath, version, stateDir) {
       "verify",
       metadataPath,
       "--repo",
-      RELEASE_REPOSITORY,
+      authority.repository,
       "--bundle",
       bundlePath,
       "--signer-workflow",
-      RELEASE_WORKFLOW,
+      authority.workflow,
       "--source-ref",
-      `${RELEASE_SOURCE_REF_PREFIX}${version}`,
-      ...(EMBEDDED_LIFECYCLE_ROOT.releaseAuthority.denySelfHostedRunners
-        ? ["--deny-self-hosted-runners"]
-        : []),
+      `${authority.sourceRefPrefix}${version}`,
+      ...(authority.denySelfHostedRunners ? ["--deny-self-hosted-runners"] : []),
     ],
     {
       env: {
@@ -757,6 +848,140 @@ async function readRollbackFloor(paths) {
     }
     throw error;
   }
+}
+
+function initialLifecycleTrustState() {
+  return Object.freeze({
+    schemaVersion: 1,
+    rootVersion: EMBEDDED_LIFECYCLE_ROOT.version,
+    rootSha256: EMBEDDED_LIFECYCLE_ROOT.digest,
+    targetsVersion: null,
+    targetsCommit: null,
+    targetsSha256: null,
+  });
+}
+
+function parseLifecycleTrustState(value, root) {
+  exactKeys(
+    value,
+    [
+      "schemaVersion",
+      "rootVersion",
+      "rootSha256",
+      "targetsVersion",
+      "targetsCommit",
+      "targetsSha256",
+    ],
+    "persisted lifecycle trust state",
+  );
+  const emptyTargets =
+    value.targetsVersion === null && value.targetsCommit === null && value.targetsSha256 === null;
+  const populatedTargets =
+    VERSION_PATTERN.test(value.targetsVersion || "") &&
+    COMMIT_PATTERN.test(value.targetsCommit || "") &&
+    DIGEST_PATTERN.test(value.targetsSha256 || "");
+  if (
+    value.schemaVersion !== 1 ||
+    value.rootVersion !== root.version ||
+    value.rootSha256 !== root.digest ||
+    (!emptyTargets && !populatedTargets)
+  ) {
+    fail("persisted lifecycle trust state is malformed or mismatched");
+  }
+  return Object.freeze({ ...value });
+}
+
+async function readProtectedJson(filePath, label, rootUid) {
+  const info = await fsp.lstat(filePath);
+  if (
+    !info.isFile() ||
+    info.isSymbolicLink() ||
+    info.nlink !== 1 ||
+    info.uid !== rootUid ||
+    (info.mode & 0o077) !== 0 ||
+    info.size <= 0 ||
+    info.size > MAX_DOWNLOAD_BYTES
+  ) {
+    fail(`${label} is not one protected root-owned file`);
+  }
+  try {
+    return JSON.parse(await fsp.readFile(filePath, "utf8"));
+  } catch (error) {
+    throw new Error(`${label} is not valid JSON`, { cause: error });
+  }
+}
+
+async function readLifecycleTrust(paths, rootUid, now = Date.now()) {
+  let rootExists = true;
+  let stateExists = true;
+  try {
+    await fsp.access(paths.trustedRootPath);
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+    rootExists = false;
+  }
+  try {
+    await fsp.access(paths.trustStatePath);
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+    stateExists = false;
+  }
+  if (!rootExists && !stateExists) {
+    return Object.freeze({
+      root: EMBEDDED_LIFECYCLE_ROOT,
+      envelope: INITIAL_LIFECYCLE_ROOT_ENVELOPE,
+      state: initialLifecycleTrustState(),
+      persisted: false,
+    });
+  }
+  if (!rootExists || !stateExists) {
+    fail("persisted lifecycle root and trust state must exist together");
+  }
+  const envelope = await readProtectedJson(
+    paths.trustedRootPath,
+    "persisted lifecycle root",
+    rootUid,
+  );
+  const root = parseLifecycleRootPolicy(envelope, now);
+  requireLifecycleRootThreshold(
+    root,
+    verifyLifecycleRootSignatures(root, [root], { rejectUnknown: false }),
+  );
+  const state = parseLifecycleTrustState(
+    await readProtectedJson(paths.trustStatePath, "persisted lifecycle trust state", rootUid),
+    root,
+  );
+  return Object.freeze({ root, envelope, state, persisted: true });
+}
+
+function advanceLifecycleTrustState(trusted, candidateRoot, metadata) {
+  const targetsSha256 = createHash("sha256").update(canonicalRootBytes(metadata)).digest("hex");
+  const previous = trusted.state;
+  if (previous.targetsVersion !== null) {
+    const comparison = compareVersions(metadata.release.version, previous.targetsVersion);
+    if (comparison === null || comparison < 0) {
+      fail("lifecycle targets metadata is below its trusted release floor");
+    }
+    if (
+      comparison === 0 &&
+      (metadata.release.commit !== previous.targetsCommit ||
+        targetsSha256 !== previous.targetsSha256)
+    ) {
+      fail("lifecycle targets metadata changed without advancing its release version");
+    }
+  }
+  return Object.freeze({
+    schemaVersion: 1,
+    rootVersion: candidateRoot.version,
+    rootSha256: candidateRoot.digest,
+    targetsVersion: metadata.release.version,
+    targetsCommit: metadata.release.commit,
+    targetsSha256,
+  });
 }
 
 async function readControllerIdentity(paths) {
@@ -885,6 +1110,7 @@ async function readDurableReceipt(paths, request) {
 export async function stageTrustedController(request, context) {
   const { paths } = context;
   const channel = await context.readChannel(paths.channelPath);
+  const trusted = await context.readLifecycleTrust(paths, context.rootUid, context.now());
   const floor = await context.readRollbackFloor(paths);
   if (floor && compareVersions(request.version, floor) === -1) {
     fail(`controller release v${request.version} is below rollback floor v${floor}`);
@@ -893,12 +1119,9 @@ export async function stageTrustedController(request, context) {
   if (existing && compareVersions(existing.version, request.version) === 1) {
     fail(`refusing controller downgrade from ${existing.version} to ${request.version}`);
   }
-  if (
+  const currentMatches =
     existing?.version === request.version &&
-    (await context.currentControllerMatches(paths, existing))
-  ) {
-    return { changed: false, identity: existing };
-  }
+    (await context.currentControllerMatches(paths, existing));
 
   await Promise.all([
     fsp.mkdir(paths.supervisorStateDir, { recursive: true, mode: 0o700 }),
@@ -923,6 +1146,7 @@ export async function stageTrustedController(request, context) {
       bundlePath,
       request.version,
       paths.supervisorStateDir,
+      trusted.root,
     );
     const metadata = parseLifecycleTrustMetadata(
       JSON.parse(await fsp.readFile(metadataPath, "utf8")),
@@ -933,7 +1157,13 @@ export async function stageTrustedController(request, context) {
         now: context.now(),
       },
     );
+    const candidateRoot = verifyLifecycleRootTransition(trusted.envelope, metadata.rootPolicy, {
+      previousState: trusted.state,
+      now: context.now(),
+    });
+    const trustState = advanceLifecycleTrustState(trusted, candidateRoot, metadata);
     assertLifecycleReleaseAllowed(
+      candidateRoot,
       request.version,
       Object.values(metadata.targets).map(({ sha256: targetSha256 }) => targetSha256),
     );
@@ -1005,13 +1235,27 @@ export async function stageTrustedController(request, context) {
         throw error;
       }
     }
-    await atomicSymlink(generationRoot, paths.currentLink);
-    await atomicWrite(paths.controllerVersionPath, `${JSON.stringify(identity, null, 2)}\n`, 0o600);
+    if ((previousGeneration === null) !== (existing === null)) {
+      fail("controller selection and persisted identity must exist together");
+    }
+    if (
+      previousGeneration &&
+      (path.basename(previousGeneration) !== `v${existing.version}` || !currentMatches)
+    ) {
+      fail("controller selection does not match its persisted identity");
+    }
     return {
-      changed: previousGeneration !== generationRoot,
+      changed: !currentMatches || previousGeneration !== generationRoot,
       identity,
+      generationRoot,
       previousGeneration,
       previousIdentity: existing,
+      trusted,
+      candidateRoot,
+      trustState,
+      trustChanged:
+        candidateRoot.digest !== trusted.root.digest ||
+        JSON.stringify(trustState) !== JSON.stringify(trusted.state),
     };
   } finally {
     await Promise.all([
@@ -1023,8 +1267,28 @@ export async function stageTrustedController(request, context) {
   }
 }
 
+async function activateStagedController(paths, staged) {
+  if (!staged.changed) {
+    return;
+  }
+  await atomicSymlink(staged.generationRoot, paths.currentLink);
+  await atomicWrite(
+    paths.controllerVersionPath,
+    `${JSON.stringify(staged.identity, null, 2)}\n`,
+    0o600,
+  );
+}
+
 async function restoreControllerSelection(paths, staged) {
   if (staged.previousGeneration) {
+    const releasesRoot = path.resolve(paths.releasesDir);
+    const previous = path.resolve(staged.previousGeneration);
+    if (
+      path.dirname(previous) !== releasesRoot ||
+      !/^v[0-9A-Za-z.-]+$/u.test(path.basename(previous))
+    ) {
+      fail("prior controller generation escapes its fixed releases directory");
+    }
     await atomicSymlink(staged.previousGeneration, paths.currentLink);
   } else {
     await fsp.rm(paths.currentLink, { force: true });
@@ -1040,6 +1304,196 @@ async function restoreControllerSelection(paths, staged) {
     await fsp.rm(paths.controllerVersionPath, { force: true });
     await fsyncDirectory(path.dirname(paths.controllerVersionPath));
   }
+}
+
+async function commitLifecycleTrust(paths, staged) {
+  if (!staged.trustChanged) {
+    return;
+  }
+  await atomicWrite(
+    paths.trustedRootPath,
+    `${JSON.stringify(staged.candidateRoot.envelope, null, 2)}\n`,
+    0o600,
+  );
+  await atomicWrite(paths.trustStatePath, `${JSON.stringify(staged.trustState, null, 2)}\n`, 0o600);
+}
+
+async function restoreLifecycleTrust(paths, trusted) {
+  if (trusted.persisted) {
+    await atomicWrite(
+      paths.trustedRootPath,
+      `${JSON.stringify(trusted.envelope, null, 2)}\n`,
+      0o600,
+    );
+    await atomicWrite(paths.trustStatePath, `${JSON.stringify(trusted.state, null, 2)}\n`, 0o600);
+    return;
+  }
+  await Promise.all([
+    fsp.rm(paths.trustedRootPath, { force: true }),
+    fsp.rm(paths.trustStatePath, { force: true }),
+  ]);
+  await fsyncDirectory(paths.supervisorStateDir);
+}
+
+function supervisorTransactionRecord(request, staged) {
+  return Object.freeze({
+    schemaVersion: 1,
+    transactionId: request.transactionId,
+    version: request.version,
+    previousGenerationVersion: staged.previousGeneration
+      ? path.basename(staged.previousGeneration).slice(1)
+      : null,
+    previousIdentity: staged.previousIdentity,
+    previousTrust: {
+      persisted: staged.trusted.persisted,
+      envelope: staged.trusted.persisted ? staged.trusted.envelope : null,
+      state: staged.trusted.persisted ? staged.trusted.state : null,
+    },
+  });
+}
+
+function parseSupervisorTransaction(value, paths) {
+  exactKeys(
+    value,
+    [
+      "schemaVersion",
+      "transactionId",
+      "version",
+      "previousGenerationVersion",
+      "previousIdentity",
+      "previousTrust",
+    ],
+    "lifecycle supervisor transaction",
+  );
+  if (
+    value.schemaVersion !== 1 ||
+    !TRANSACTION_ID_PATTERN.test(value.transactionId || "") ||
+    !VERSION_PATTERN.test(value.version || "") ||
+    (value.previousGenerationVersion !== null &&
+      !VERSION_PATTERN.test(value.previousGenerationVersion || ""))
+  ) {
+    fail("lifecycle supervisor transaction identity is invalid");
+  }
+  let previousIdentity = null;
+  if (value.previousIdentity !== null) {
+    exactKeys(
+      value.previousIdentity,
+      ["schemaVersion", "version", "serverSha256", "clientSha256"],
+      "prior lifecycle controller identity",
+    );
+    if (
+      value.previousIdentity.schemaVersion !== 1 ||
+      value.previousIdentity.version !== value.previousGenerationVersion ||
+      !DIGEST_PATTERN.test(value.previousIdentity.serverSha256 || "") ||
+      !DIGEST_PATTERN.test(value.previousIdentity.clientSha256 || "")
+    ) {
+      fail("prior lifecycle controller identity is invalid");
+    }
+    previousIdentity = Object.freeze({ ...value.previousIdentity });
+  } else if (value.previousGenerationVersion !== null) {
+    fail("prior lifecycle generation requires its exact identity");
+  }
+  exactKeys(
+    value.previousTrust,
+    ["persisted", "envelope", "state"],
+    "prior lifecycle trust transaction state",
+  );
+  if (
+    typeof value.previousTrust.persisted !== "boolean" ||
+    (value.previousTrust.persisted
+      ? value.previousTrust.envelope === null || value.previousTrust.state === null
+      : value.previousTrust.envelope !== null || value.previousTrust.state !== null)
+  ) {
+    fail("prior lifecycle trust transaction state is invalid");
+  }
+  let previousTrust;
+  if (value.previousTrust.persisted) {
+    const root = parseLifecycleRootPolicy(value.previousTrust.envelope, Date.now(), {
+      enforceCurrentValidity: false,
+    });
+    requireLifecycleRootThreshold(
+      root,
+      verifyLifecycleRootSignatures(root, [root], { rejectUnknown: false }),
+    );
+    previousTrust = Object.freeze({
+      persisted: true,
+      envelope: value.previousTrust.envelope,
+      root,
+      state: parseLifecycleTrustState(value.previousTrust.state, root),
+    });
+  } else {
+    previousTrust = Object.freeze({
+      persisted: false,
+      envelope: INITIAL_LIFECYCLE_ROOT_ENVELOPE,
+      root: EMBEDDED_LIFECYCLE_ROOT,
+      state: initialLifecycleTrustState(),
+    });
+  }
+  return Object.freeze({
+    request: Object.freeze({
+      schemaVersion: 2,
+      op: "updateController",
+      transactionId: value.transactionId,
+      version: value.version,
+    }),
+    previousGeneration: value.previousGenerationVersion
+      ? path.join(paths.releasesDir, `v${value.previousGenerationVersion}`)
+      : null,
+    previousIdentity,
+    previousTrust,
+  });
+}
+
+async function beginSupervisorTransaction(paths, request, staged) {
+  try {
+    await fsp.access(paths.supervisorTransactionPath);
+    fail("another lifecycle supervisor transaction is already active");
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  await atomicWrite(
+    paths.supervisorTransactionPath,
+    `${JSON.stringify(supervisorTransactionRecord(request, staged), null, 2)}\n`,
+    0o600,
+  );
+}
+
+async function clearSupervisorTransaction(paths) {
+  await fsp.rm(paths.supervisorTransactionPath, { force: true });
+  await fsyncDirectory(paths.supervisorStateDir);
+}
+
+async function readSupervisorTransaction(paths, rootUid) {
+  try {
+    return parseSupervisorTransaction(
+      await readProtectedJson(
+        paths.supervisorTransactionPath,
+        "lifecycle supervisor transaction",
+        rootUid,
+      ),
+      paths,
+    );
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function recoverSupervisorTransaction(context) {
+  const transaction = await readSupervisorTransaction(context.paths, context.rootUid);
+  if (!transaction) {
+    return false;
+  }
+  await restoreControllerSelection(context.paths, transaction);
+  await restoreLifecycleTrust(context.paths, transaction.previousTrust);
+  await context.restartController();
+  await context.waitForController();
+  await clearSupervisorTransaction(context.paths);
+  return true;
 }
 
 async function systemctl(...args) {
@@ -1368,13 +1822,21 @@ function createContext(configuration, overrides = {}) {
     now: overrides.now ?? (() => Date.now()),
     readChannel: overrides.readChannel ?? readChannel,
     readRollbackFloor: overrides.readRollbackFloor ?? readRollbackFloor,
+    readLifecycleTrust: overrides.readLifecycleTrust ?? readLifecycleTrust,
     readControllerIdentity: overrides.readControllerIdentity ?? readControllerIdentity,
     currentControllerMatches: overrides.currentControllerMatches ?? currentControllerMatches,
     download: overrides.download ?? download,
     verifyMetadata: overrides.verifyMetadata ?? verifyMetadata,
     selfCheckController: overrides.selfCheckController ?? selfCheckController,
     stageTrustedController: overrides.stageTrustedController ?? stageTrustedController,
+    activateStagedController: overrides.activateStagedController ?? activateStagedController,
     restoreControllerSelection: overrides.restoreControllerSelection ?? restoreControllerSelection,
+    beginSupervisorTransaction: overrides.beginSupervisorTransaction ?? beginSupervisorTransaction,
+    commitLifecycleTrust: overrides.commitLifecycleTrust ?? commitLifecycleTrust,
+    restoreLifecycleTrust: overrides.restoreLifecycleTrust ?? restoreLifecycleTrust,
+    clearSupervisorTransaction: overrides.clearSupervisorTransaction ?? clearSupervisorTransaction,
+    recoverSupervisorTransaction:
+      overrides.recoverSupervisorTransaction ?? recoverSupervisorTransaction,
     probeControllerIdentity: overrides.probeControllerIdentity ?? probeControllerIdentity,
     restartController:
       overrides.restartController ??
@@ -1481,9 +1943,16 @@ async function handleSupervisorRequest(request, context, state) {
   if (request.op === "updateController") {
     const priorInstanceId = state.controllerInstanceId;
     const staged = await context.stageTrustedController(request, context);
+    const durableChange = staged.changed || staged.trustChanged;
+    let transactionActive = false;
     let restarted = staged.changed;
     try {
+      if (durableChange) {
+        await context.beginSupervisorTransaction(context.paths, request, staged);
+        transactionActive = true;
+      }
       if (staged.changed) {
+        await context.activateStagedController(context.paths, staged);
         await context.restartController();
         await context.waitForController();
       }
@@ -1498,18 +1967,39 @@ async function handleSupervisorRequest(request, context, state) {
         await context.waitForController();
         state.controllerInstanceId = await context.probeControllerIdentity(request, context);
       }
+      if (durableChange) {
+        await context.commitLifecycleTrust(context.paths, staged);
+        await context.clearSupervisorTransaction(context.paths);
+        transactionActive = false;
+      }
     } catch (error) {
-      if (staged.changed) {
-        await context.restoreControllerSelection(context.paths, staged);
-        await context.restartController();
-        await context.waitForController();
+      let rollbackError = null;
+      if (transactionActive) {
+        try {
+          await context.restoreControllerSelection(context.paths, staged);
+          await context.restoreLifecycleTrust(context.paths, staged.trusted);
+          if (staged.changed) {
+            await context.restartController();
+            await context.waitForController();
+          }
+          await context.clearSupervisorTransaction(context.paths);
+          transactionActive = false;
+        } catch (rollbackFailure) {
+          rollbackError = rollbackFailure;
+        }
       }
       await durableReceipt(context.paths, request, {
-        outcome: staged.changed ? "rolled-back" : "failed",
+        outcome: durableChange && !rollbackError ? "rolled-back" : "failed",
         controllerChanged: false,
       });
+      if (rollbackError) {
+        throw new Error(
+          `controller promotion failed and rollback remains pending for startup recovery: ${rollbackError.message}`,
+          { cause: error },
+        );
+      }
       throw new Error(
-        staged.changed
+        durableChange
           ? `controller promotion failed and was restored: ${error.message}`
           : `controller verification failed: ${error.message}`,
         { cause: error },
@@ -1568,7 +2058,10 @@ export async function startSupervisor(options = {}) {
     mode: 0o711,
   });
   await fsp.mkdir(context.paths.supervisorStateDir, { recursive: true, mode: 0o700 });
-  await context.waitForController();
+  const recovered = await context.recoverSupervisorTransaction(context);
+  if (!recovered) {
+    await context.waitForController();
+  }
   await fsp.rm(context.paths.publicSocketPath, { force: true });
   process.umask(0o177);
   let queue = Promise.resolve();
@@ -1681,11 +2174,18 @@ export const __testing = Object.freeze({
   INITIAL_LIFECYCLE_ROOT_SHA256,
   SUPERVISOR_NAME,
   TRUST_METADATA_NAME,
+  activateStagedController,
+  advanceLifecycleTrustState,
+  beginSupervisorTransaction,
+  commitLifecycleTrust,
   compareVersions,
   createContext,
   handleSupervisorRequest,
+  initialLifecycleTrustState,
   lifecyclePaths,
   platformIdentity,
+  recoverSupervisorTransaction,
   renderBoundaryUnits,
   restoreControllerSelection,
+  verifyLifecycleRootTransition,
 });

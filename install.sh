@@ -714,9 +714,13 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       --arg channel "$hosting_update_channel" \
       --arg platform "linux-${architecture}" \
       --arg current_time "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" '
-      if (keys == ["policy", "release", "role", "schemaVersion", "targets", "validity"]) and
+      if (keys == ["policy", "release", "role", "rootPolicy", "schemaVersion", "targets", "validity"]) and
         .schemaVersion == 1 and
         .role == "fased-lifecycle-targets" and
+        (.rootPolicy | keys == ["schemaVersion", "signatures", "signed"]) and
+        .rootPolicy.schemaVersion == 1 and
+        (.rootPolicy.signed | type == "object") and
+        (.rootPolicy.signatures | type == "array" and length >= 2) and
         (.release | keys == ["commit", "tag", "version"]) and
         .release.version == $version and
         .release.tag == ("v" + $version) and

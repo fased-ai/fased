@@ -129,6 +129,13 @@ async function createRootFixture({ crashPhase = null } = {}) {
     currentLink: controllerPaths.controllerCurrentLink,
     controllerVersionPath: controllerPaths.controllerVersionPath,
     rollbackFloorPath: path.join(controllerStateDir, "supervisor", "rollback-floor"),
+    trustedRootPath: path.join(controllerStateDir, "supervisor", "trusted-root.json"),
+    trustStatePath: path.join(controllerStateDir, "supervisor", "trust-state.json"),
+    supervisorTransactionPath: path.join(
+      controllerStateDir,
+      "supervisor",
+      "controller-transaction.json",
+    ),
     channelPath: controllerPaths.channelPath,
     supervisorPath: path.join(root, "supervisor", "fased-lifecycle-supervisor.mjs"),
     controllerUnit: "fixture-controller.service",

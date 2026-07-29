@@ -85,10 +85,12 @@ EOF_MANIFEST
 printf '{"syntheticOfflineBundle":true}\n' >"$fixture/fased-hosted-release-v2.json.attestation.json"
 issued_at="$(date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%S.000Z)"
 expires_at="$(date -u -d '30 days' +%Y-%m-%dT%H:%M:%S.000Z)"
+root_policy="$(tr -d '\n' </repo/release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json)"
 cat >"$fixture/fased-lifecycle-trust-v1.json" <<EOF_LIFECYCLE
 {
   "schemaVersion": 1,
   "role": "fased-lifecycle-targets",
+  "rootPolicy": $root_policy,
   "release": {"version":"$version","tag":"v$version","commit":"$commit"},
   "validity": {"issuedAt":"$issued_at","expiresAt":"$expires_at"},
   "policy": {

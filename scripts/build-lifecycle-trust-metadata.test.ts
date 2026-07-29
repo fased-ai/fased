@@ -3,6 +3,16 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildLifecycleTrustMetadata } from "./build-lifecycle-trust-metadata.mjs";
+import { INITIAL_LIFECYCLE_ROOT_ENVELOPE } from "./lifecycle-trust-runtime.mjs";
+
+const rootPolicyPath = path.join(
+  import.meta.dirname,
+  "..",
+  "release",
+  "lifecycle-trust",
+  "root-v1",
+  "fased-lifecycle-root-v1.json",
+);
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-lifecycle-trust-"));
@@ -16,6 +26,7 @@ describe("lifecycle trust metadata", () => {
   it("binds one release to fixed supervisor and controller target names", async () => {
     const metadata = await buildLifecycleTrustMetadata({
       assetsDir: fixture(),
+      rootPolicyPath,
       version: "1.2.3",
       commit: "a".repeat(40),
       issuedAt: "2026-07-28T00:00:00.000Z",
@@ -24,6 +35,7 @@ describe("lifecycle trust metadata", () => {
     expect(metadata).toMatchObject({
       schemaVersion: 1,
       role: "fased-lifecycle-targets",
+      rootPolicy: INITIAL_LIFECYCLE_ROOT_ENVELOPE,
       release: { version: "1.2.3", tag: "v1.2.3", commit: "a".repeat(40) },
       policy: {
         channels: ["beta", "stable"],
@@ -46,6 +58,7 @@ describe("lifecycle trust metadata", () => {
     const root = fixture();
     const metadata = await buildLifecycleTrustMetadata({
       assetsDir: root,
+      rootPolicyPath,
       version: "1.2.3-rc.1",
       commit: "b".repeat(40),
       issuedAt: "2026-07-28T00:00:00.000Z",
@@ -55,6 +68,7 @@ describe("lifecycle trust metadata", () => {
     await expect(
       buildLifecycleTrustMetadata({
         assetsDir: root,
+        rootPolicyPath,
         version: "1.2.3",
         commit: "b".repeat(40),
         issuedAt: "2026-01-01T00:00:00.000Z",
@@ -73,11 +87,28 @@ describe("lifecycle trust metadata", () => {
     await expect(
       buildLifecycleTrustMetadata({
         assetsDir: root,
+        rootPolicyPath,
         version: "1.2.3",
         commit: "c".repeat(40),
         issuedAt: "2026-07-28T00:00:00.000Z",
         expiresAt: "2027-07-28T00:00:00.000Z",
       }),
     ).rejects.toThrow("regular single-link file");
+  });
+
+  it("requires the release workflow to select one regular signed-root file", async () => {
+    const root = fixture();
+    const rootPolicyLink = path.join(root, "root-policy.json");
+    fs.symlinkSync(rootPolicyPath, rootPolicyLink);
+    await expect(
+      buildLifecycleTrustMetadata({
+        assetsDir: root,
+        rootPolicyPath: rootPolicyLink,
+        version: "1.2.3",
+        commit: "d".repeat(40),
+        issuedAt: "2026-07-28T00:00:00.000Z",
+        expiresAt: "2027-07-28T00:00:00.000Z",
+      }),
+    ).rejects.toThrow("root policy must be one bounded regular single-link file");
   });
 });

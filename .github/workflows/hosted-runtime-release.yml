@@ -274,6 +274,7 @@ jobs:
           ' "$(git show -s --format=%cI "$GITHUB_SHA")")
           node scripts/build-lifecycle-trust-metadata.mjs \
             --assets .artifacts/hosted-runtime \
+            --root-policy release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json \
             --version "$package_version" \
             --commit "$GITHUB_SHA" \
             --issued-at "${lifecycle_times[0]}" \
@@ -394,6 +395,7 @@ jobs:
           ' "$(git show -s --format=%cI "$GITHUB_SHA")")
           node scripts/build-lifecycle-trust-metadata.mjs \
             --assets .artifacts/hosted-runtime \
+            --root-policy release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json \
             --version "$package_version" \
             --commit "$GITHUB_SHA" \
             --issued-at "${lifecycle_times[0]}" \

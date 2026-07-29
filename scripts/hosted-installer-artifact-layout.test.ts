@@ -190,6 +190,9 @@ describe("attested Hosting installer artifact layout", () => {
     expect(releaseWorkflow).toContain(
       "--output .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json",
     );
+    expect(
+      releaseWorkflow.match(/--root-policy release\/lifecycle-trust\/root-v1\//gu),
+    ).toHaveLength(2);
     expect(releaseWorkflow).toContain(
       "subject-path: .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json",
     );
