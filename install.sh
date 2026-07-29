@@ -21,6 +21,7 @@ if [[ "$install_entry_is_stream" -eq 1 && -z "$install_entry_release_identity" ]
 fi
 install_entry_hosting=0
 install_entry_protected_local_root=0
+install_entry_local_repair=0
 install_entry_verified_bundle=""
 install_entry_app_handoff=""
 install_entry_legacy_ts_authkey=0
@@ -33,6 +34,9 @@ for ((install_entry_index = 0; install_entry_index < ${#install_entry_args[@]}; 
       ;;
     --protected-local-root-bootstrap)
       install_entry_protected_local_root=1
+      ;;
+    --repair-local)
+      install_entry_local_repair=1
       ;;
     --host-profile)
       if [[ "${install_entry_args[$((install_entry_index + 1))]:-}" == "hosting" ]]; then
@@ -1099,6 +1103,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
   }
 
   existing_local_state=0
+  existing_local_topology=""
   local_state_dir="${FASED_STATE_DIR:-$HOME/.fased}"
   if [[ "$hosting_bootstrap" -eq 0 && "$protected_local_bootstrap" -eq 0 && \
     ( -e "$local_state_dir" || -L "$local_state_dir" ) ]]; then
@@ -1129,7 +1134,35 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
         exit 1
       fi
       existing_local_state=1
+      if [[ -f "$local_state_dir/install.json" ]] && \
+        grep -Eq '"profile"[[:space:]]*:[[:space:]]*"protected-local"' \
+          "$local_state_dir/install.json"; then
+        existing_local_topology="protected-local"
+      elif [[ -f "$local_state_dir/install.json" ]] && \
+        grep -Eq '"profile"[[:space:]]*:[[:space:]]*"hosting"' \
+          "$local_state_dir/install.json"; then
+        existing_local_topology="hosting"
+      else
+        existing_local_topology="pre-handoff-local"
+      fi
     fi
+  fi
+
+  if [[ "$existing_local_topology" == "hosting" ]]; then
+    echo "This state belongs to a VPS Hosting installation, not Local." >&2
+    echo "Use fased update as the Hosting app user, or the documented one-command Hosting bootstrap when its privileged boundary is missing." >&2
+    drain_streamed_install_input
+    exit 1
+  fi
+  if [[ "$existing_local_topology" == "protected-local" && \
+    "$install_entry_local_repair" -ne 1 ]]; then
+    echo "Existing Protected Local installation detected; use fased update." >&2
+    drain_streamed_install_input
+    exit 0
+  fi
+  if [[ "$existing_local_topology" == "pre-handoff-local" && \
+    "$install_entry_local_repair" -ne 1 ]]; then
+    echo "Pre-handoff Local installation detected; entering one verified protected bootstrap without rerunning onboarding." >&2
   fi
 
   if ! command -v git >/dev/null 2>&1; then
@@ -1245,7 +1278,10 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
   }
 
   if [[ "$existing_local_state" -eq 1 ]]; then
-    exec_bootstrapped_installer "$install_base_dir/install.sh" "$@" --repair-local
+    if [[ "$install_entry_local_repair" -eq 1 ]]; then
+      exec_bootstrapped_installer "$install_base_dir/install.sh" "$@"
+    fi
+    exec_bootstrapped_installer "$install_base_dir/install.sh" "$@" --existing-local-bootstrap
   fi
   exec_bootstrapped_installer "$install_base_dir/install.sh" "$@"
 fi
@@ -1310,6 +1346,7 @@ RUN_ONBOARD=1
 HOSTING_REQUESTED=0
 HOSTING_REPAIR_REQUESTED=0
 LOCAL_REPAIR_REQUESTED=0
+LOCAL_EXISTING_BOOTSTRAP_REQUESTED=0
 SOURCE_INSTALL_REQUESTED=0
 DIRTY_CHECKOUT_SOURCE_AUTO_SELECTED=0
 HOSTING_RELEASE=""
@@ -1601,6 +1638,11 @@ while [[ $# -gt 0 ]]; do
       RUN_ONBOARD=0
       pass_args+=(--mode local --host-profile local --tailscale off)
       ;;
+    --existing-local-bootstrap)
+      LOCAL_EXISTING_BOOTSTRAP_REQUESTED=1
+      RUN_ONBOARD=0
+      pass_args+=(--mode local --host-profile local --tailscale off)
+      ;;
     --local)
       pass_args+=(--mode local --host-profile local --tailscale off)
       ;;
@@ -1695,6 +1737,11 @@ done
 
 if [[ ! "$UPDATE_CHANNEL" =~ ^(stable|beta)$ ]]; then
   echo "--update-channel must be stable or beta." >&2
+  exit 1
+fi
+if [[ "$LOCAL_EXISTING_BOOTSTRAP_REQUESTED" -eq 1 ]] && \
+  [[ ! -s "$FASED_CONFIG_DIR/install.json" && ! -s "$FASED_CONFIG_DIR/fased.json" ]]; then
+  echo "The internal existing-Local bootstrap requires recognized persistent Local state." >&2
   exit 1
 fi
 if [[ "$HOSTING_RELEASE" == *-* && "$UPDATE_CHANNEL" != "beta" ]]; then
@@ -6404,7 +6451,9 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
     fi
     persist_runtime_update_channel
     step_done "Protected Local signer, Gateway, and controller online"
-    if [[ "$LOCAL_REPAIR_REQUESTED" -eq 1 ]]; then
+    if [[ "$LOCAL_EXISTING_BOOTSTRAP_REQUESTED" -eq 1 ]]; then
+      echo "Pre-handoff Local bootstrap complete. Onboarding was not rerun; future releases use fased update."
+    elif [[ "$LOCAL_REPAIR_REQUESTED" -eq 1 ]]; then
       echo "Protected Local runtime and service repair complete. Onboarding was not rerun."
     else
       echo "Onboarding skipped (--no-onboard)."
@@ -6475,7 +6524,9 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
     echo "Run fased update to recover the paired transaction; do not replace the signer manually." >&2
     exit 1
   fi
-  if [[ "$LOCAL_REPAIR_REQUESTED" -eq 1 ]]; then
+  if [[ "$LOCAL_EXISTING_BOOTSTRAP_REQUESTED" -eq 1 ]]; then
+    echo "Pre-handoff Local bootstrap complete. Onboarding was not rerun; future releases use fased update."
+  elif [[ "$LOCAL_REPAIR_REQUESTED" -eq 1 ]]; then
     echo "Local runtime and gateway service repair complete. Onboarding was not rerun."
   else
     echo "Onboarding skipped (--no-onboard)."

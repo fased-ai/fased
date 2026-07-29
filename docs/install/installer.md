@@ -71,16 +71,16 @@ The streamed bootstrap reports which recovery path applies:
 
 ## Public modes
 
-| Mode                 | Intended use                                        | Trusted entry contract              |
-| -------------------- | --------------------------------------------------- | ----------------------------------- |
-| `--local`            | Fresh Local install on macOS, Linux, or WSL2 Ubuntu | Release asset only                  |
-| `--hosting`          | Fresh or recovering Hosting on a supported VPS      | Release asset only                  |
-| `--repair-local`     | Preserve state and repair Local runtime/service     | No normal need for root             |
-| `--repair-hosting`   | Preserve state and repair Hosting runtime/services  | No; exact tagged file only          |
-| `--release <vX.Y.Z>` | Select an immutable release                         | Exact release asset and channel     |
-| `--source-install`   | Developer Local source build                        | Refused for privileged Hosting      |
-| `--no-onboard`       | Install runtime without onboarding                  | Local or exact tagged flows only    |
-| `--verbose`          | Print command output in addition to log paths       | Yes where the selected mode permits |
+| Mode                 | Intended use                                         | Trusted entry contract              |
+| -------------------- | ---------------------------------------------------- | ----------------------------------- |
+| `--local`            | Fresh Local install on macOS, Linux, or WSL2 Ubuntu  | Release asset only                  |
+| `--hosting`          | Fresh or recovering Hosting on a supported VPS       | Release asset only                  |
+| `--repair-local`     | Explicit support repair for a damaged Local boundary | May require bounded authorization   |
+| `--repair-hosting`   | Preserve state and repair Hosting runtime/services   | No; exact tagged file only          |
+| `--release <vX.Y.Z>` | Select an immutable release                          | Exact release asset and channel     |
+| `--source-install`   | Developer Local source build                         | Refused for privileged Hosting      |
+| `--no-onboard`       | Install runtime without onboarding                   | Local or exact tagged flows only    |
+| `--verbose`          | Print command output in addition to log paths        | Yes where the selected mode permits |
 
 Run `./install.sh --help` from a trusted checkout for the current complete
 surface.

@@ -1049,10 +1049,23 @@ managed_update_env=(
   FASED_FIXTURE_LEGACY_VERSION="$legacy_version" \
   npm_config_registry="http://127.0.0.1:$rpc_port"
 )
+standard_bootstrap_env=(
+  "${managed_update_env[@]}"
+  FASED_INSTALL_REPO="$candidate_repo"
+)
 
-# Exercise the supported universal path directly from the immutable predecessor
-# topology to the exact candidate. A named intermediate release must never
-# select or authorize the lifecycle transaction.
+run_standard_local_bootstrap() {
+  runuser -u testop -- env "${standard_bootstrap_env[@]}" \
+    /bin/bash "$candidate_installer" \
+    --release "v$version" \
+    --update-channel "$([[ "$version" == *-* ]] && printf beta || printf stable)" \
+    --local
+}
+
+# A pre-handoff executable cannot be changed retroactively. Exercise the
+# version-neutral product contract instead: the normal verified Local installer
+# detects the topology and performs one state-preserving protected bootstrap.
+# Every subsequent transition uses only `fased update`.
 prepare_restrictive_home_acl
 original_home_acl="$(capture_home_acl)"
 legacy_gateway_version="$legacy_version"
@@ -1135,16 +1148,15 @@ EOF_FAILED_GATEWAY
 
 inject_failed_target_gateway &
 injector_pid=$!
-if runuser -u testop -- env "${managed_update_env[@]}" \
-  "$state/install-cache/npm-global/bin/fased" update "${target_update_args[@]}" --timeout 60 \
-  >/tmp/protected-update-failure.out 2>/tmp/protected-update-failure.err; then
+if run_standard_local_bootstrap \
+  >/tmp/protected-bootstrap-failure.out 2>/tmp/protected-bootstrap-failure.err; then
   update_failure_status=0
 else
   update_failure_status=$?
 fi
 wait "$injector_pid"
 test "$update_failure_status" -ne 0
-grep -F "non-target service" /tmp/protected-update-failure.err >/dev/null
+grep -F "non-target service" /tmp/protected-bootstrap-failure.err >/dev/null
 failure_instance="$(cat /tmp/injected-failure-instance)"
 wait_for_gateway_version "$legacy_gateway_version"
 verify_original_home_acl
@@ -1160,12 +1172,10 @@ test "$(sha256sum "$wallet_dir/provider-registry.v1.json" | awk '{print $1}')" =
   "$original_registry_sha"
 verify_legacy_wallet /tmp/failure-rollback-agent.json
 
-runuser -u testop -- env "${managed_update_env[@]}" \
-  "$state/install-cache/npm-global/bin/fased" update "${target_update_args[@]}" --timeout 60 \
-  >/tmp/protected-update.out 2>/tmp/protected-update.err
-grep -F "Protected Local migration" /tmp/protected-update.err >/dev/null
-grep -F "Update mode: verified target-owned Protected Local transaction" \
-  /tmp/protected-update.out >/dev/null
+run_standard_local_bootstrap \
+  >/tmp/protected-bootstrap.out 2>/tmp/protected-bootstrap.err
+grep -F "Pre-handoff Local bootstrap complete." /tmp/protected-bootstrap.out >/dev/null
+grep -F "Pre-handoff Local installation detected" /tmp/protected-bootstrap.err >/dev/null
 
 instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
 verify_protected_home_acl "$instance"
