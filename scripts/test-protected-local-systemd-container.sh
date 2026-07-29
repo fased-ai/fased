@@ -19,9 +19,6 @@ PREINSTALLED_TOOLS="${FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS:-0}"
 LEGACY_VERSION="${FASED_SYSTEMD_FIXTURE_LEGACY_VERSION:-0.1.75}"
 LEGACY_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_LEGACY_ARTIFACT_DIR:-}"
 OWN_LEGACY_ARTIFACT_DIR=0
-BRIDGE_VERSION="${FASED_SYSTEMD_FIXTURE_BRIDGE_VERSION:-0.1.76-rc.7}"
-BRIDGE_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_BRIDGE_ARTIFACT_DIR:-}"
-OWN_BRIDGE_ARTIFACT_DIR=0
 
 command -v "$RUNTIME" >/dev/null 2>&1 || {
   echo "Podman is required for the protected Local systemd fixtures." >&2
@@ -101,39 +98,6 @@ if [[ ",$SCENARIOS," == *,install,* ]]; then
       .signer.release.version == $version and
       .signer.release.commit == .release.commit' \
     "$legacy_manifest" >/dev/null
-  if [[ -z "$BRIDGE_ARTIFACT_DIR" ]]; then
-    BRIDGE_ARTIFACT_DIR="$(
-      mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-bridge-artifact.XXXXXX"
-    )"
-    OWN_BRIDGE_ARTIFACT_DIR=1
-    gh release download "v$BRIDGE_VERSION" \
-      --repo fased-ai/fased \
-      --dir "$BRIDGE_ARTIFACT_DIR" \
-      --pattern "fased-hosted-release-v2.json" \
-      --pattern "fased-hosted-app-v2-linux-x64-v${BRIDGE_VERSION}.tar.gz" \
-      --pattern "fased-hosted-deps-linux-x64-*.tar.gz" \
-      --pattern "fased-signerd-linux-amd64"
-    chmod 0755 "$BRIDGE_ARTIFACT_DIR"
-  fi
-  bridge_manifest="$BRIDGE_ARTIFACT_DIR/fased-hosted-release-v2.json"
-  bridge_dependency="$(
-    find "$BRIDGE_ARTIFACT_DIR" -maxdepth 1 -type f \
-      -name 'fased-hosted-deps-linux-x64-*.tar.gz' -print -quit
-  )"
-  [[ -f "$bridge_manifest" &&
-    -f "$BRIDGE_ARTIFACT_DIR/fased-hosted-app-v2-linux-x64-v${BRIDGE_VERSION}.tar.gz" &&
-    -n "$bridge_dependency" &&
-    -f "$bridge_dependency" &&
-    -f "$BRIDGE_ARTIFACT_DIR/fased-signerd-linux-amd64" ]] || {
-    echo "The protected Local update fixture requires the complete immutable bridge release." >&2
-    exit 1
-  }
-  jq -e --arg version "$BRIDGE_VERSION" \
-    '.release.version == $version and
-      .release.tag == ("v" + $version) and
-      .signer.release.version == $version and
-      .signer.release.commit == .release.commit' \
-    "$bridge_manifest" >/dev/null
 fi
 if [[ -z "$LEGACY_ARTIFACT_DIR" ]]; then
   LEGACY_ARTIFACT_DIR="$(
@@ -141,13 +105,6 @@ if [[ -z "$LEGACY_ARTIFACT_DIR" ]]; then
   )"
   OWN_LEGACY_ARTIFACT_DIR=1
 fi
-if [[ -z "$BRIDGE_ARTIFACT_DIR" ]]; then
-  BRIDGE_ARTIFACT_DIR="$(
-    mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-bridge-artifact.XXXXXX"
-  )"
-  OWN_BRIDGE_ARTIFACT_DIR=1
-fi
-
 cleanup_names=()
 dump_fixture_failure() {
   local name="$1"
@@ -178,9 +135,6 @@ cleanup() {
   if [[ "$OWN_LEGACY_ARTIFACT_DIR" -eq 1 ]]; then
     rm -rf -- "$LEGACY_ARTIFACT_DIR"
   fi
-  if [[ "$OWN_BRIDGE_ARTIFACT_DIR" -eq 1 ]]; then
-    rm -rf -- "$BRIDGE_ARTIFACT_DIR"
-  fi
 }
 trap cleanup EXIT INT TERM HUP
 
@@ -204,13 +158,11 @@ run_fixture_scenario() {
     -e "FASED_FIXTURE_VERSION=$VERSION" \
     -e "FASED_FIXTURE_COMMIT=$COMMIT" \
     -e "FASED_FIXTURE_LEGACY_VERSION=$LEGACY_VERSION" \
-    -e "FASED_FIXTURE_BRIDGE_VERSION=$BRIDGE_VERSION" \
     -e "FASED_FIXTURE_PREINSTALLED_TOOLS=$PREINSTALLED_TOOLS" \
     -v "$ROOT_DIR:/repo:ro,Z" \
     -v "$FIXTURE_DIR/run.sh:/usr/local/bin/fased-protected-local-systemd-fixture:ro,Z" \
     -v "$ARTIFACT_DIR:/artifacts:ro,Z" \
     -v "$LEGACY_ARTIFACT_DIR:/legacy-artifacts:ro,Z" \
-    -v "$BRIDGE_ARTIFACT_DIR:/bridge-artifacts:ro,Z" \
     "$image" >/dev/null
   for _ in {1..200}; do
     state="$("$RUNTIME" exec "$name" systemctl is-system-running 2>/dev/null || true)"

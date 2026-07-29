@@ -7,7 +7,6 @@ fixture_started="$SECONDS"
 version="${FASED_FIXTURE_VERSION:?missing fixture version}"
 commit="${FASED_FIXTURE_COMMIT:?missing fixture commit}"
 legacy_version="${FASED_FIXTURE_LEGACY_VERSION:-0.1.75}"
-bridge_version="${FASED_FIXTURE_BRIDGE_VERSION:-0.1.76-rc.7}"
 preinstalled_tools="${FASED_FIXTURE_PREINSTALLED_TOOLS:-0}"
 target_update_args=()
 if [[ "$version" == *-* ]]; then
@@ -573,7 +572,6 @@ import path from "node:path";
 const port = Number(process.env.FASED_FIXTURE_RPC_PORT);
 const version = process.env.FASED_FIXTURE_VERSION;
 const legacyVersion = process.env.FASED_FIXTURE_LEGACY_VERSION;
-const bridgeVersion = process.env.FASED_FIXTURE_BRIDGE_VERSION;
 const genesis = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"; // pragma: allowlist secret
 http.createServer((request, response) => {
   if (request.method === "GET" && request.url?.startsWith("/@fased%2ffased")) {
@@ -585,27 +583,6 @@ http.createServer((request, response) => {
     response.end(
       JSON.stringify({ "dist-tags": { latest: selectedVersion, beta: selectedVersion } }),
     );
-    return;
-  }
-  if (
-    request.method === "GET" &&
-    bridgeVersion &&
-    request.url?.startsWith(`/v${bridgeVersion}/`)
-  ) {
-    const asset = decodeURIComponent(request.url.slice(`/v${bridgeVersion}/`.length));
-    if (!/^[A-Za-z0-9._-]+$/.test(asset)) {
-      response.writeHead(400).end();
-      return;
-    }
-    const selected = path.join("/bridge-artifacts", asset);
-    try {
-      const stat = fs.statSync(selected);
-      if (!stat.isFile()) throw new Error("not a file");
-      response.writeHead(200, { "content-length": stat.size });
-      fs.createReadStream(selected).pipe(response);
-    } catch {
-      response.writeHead(404).end();
-    }
     return;
   }
   if (request.method === "GET" && request.url?.startsWith(`/v${version}/`)) {
@@ -759,7 +736,6 @@ Type=simple
 Environment=FASED_FIXTURE_RPC_PORT=$rpc_port
 Environment=FASED_FIXTURE_VERSION=$version
 Environment=FASED_FIXTURE_LEGACY_VERSION=$legacy_version
-Environment=FASED_FIXTURE_BRIDGE_VERSION=$bridge_version
 ExecStart=/usr/local/bin/node /usr/local/libexec/fased-fixture-solana-rpc.mjs
 Restart=always
 
@@ -778,11 +754,7 @@ testop ALL=(root) NOPASSWD: ALL
 EOF_SUDOERS
 chmod 0440 /etc/sudoers.d/fased-protected-local-fixture
 install -d -m 0755 -o root -g root /etc/fased/testing
-if [[ "$phase" == "install" ]]; then
-  printf '%s\n' "$bridge_version" >"$selected_target"
-else
-  printf '%s\n' "$version" >"$selected_target"
-fi
+printf '%s\n' "$version" >"$selected_target"
 chmod 0644 "$selected_target"
 
 if [[ "$phase" == "fresh-install" ]]; then
@@ -1078,61 +1050,12 @@ managed_update_env=(
   npm_config_registry="http://127.0.0.1:$rpc_port"
 )
 
-# Reproduce the owner-relevant support-floor topology without mixing releases:
-# the immutable v0.1.75 updater installs immutable RC7 in the same-user layout.
-# RC7's promoted updater then owns the one-command Protected Local migration.
-: >/tmp/bridge-update.out
-: >/tmp/bridge-update.err
-bridge_status=1
-for bridge_attempt in 1 2 3; do
-  if runuser -u testop -- env "${managed_update_env[@]}" \
-    "$state/install-cache/npm-global/bin/fased" update --channel beta --timeout 120 \
-    >>/tmp/bridge-update.out 2>>/tmp/bridge-update.err; then
-    bridge_status=0
-  else
-    bridge_status=$?
-  fi
-  [[ "$bridge_status" -eq 0 ]] && break
-  if ! grep -F "Detected unsettled top-level await" /tmp/bridge-update.err >/dev/null &&
-    ! grep -F "commit cleanup is pending" /tmp/bridge-update.err >/dev/null; then
-    exit "$bridge_status"
-  fi
-  # The immutable bridge can return while its same-user Gateway is still
-  # completing the signer restart it requested. Retrying immediately races
-  # that recovery and can manufacture repeated ENOENT failures before the
-  # current candidate is reached.
-  sleep 10
-done
-[[ "$bridge_status" -eq 0 ]]
-if ! grep -F "Updated Fased ${legacy_version} -> ${bridge_version}" \
-  /tmp/bridge-update.out >/dev/null &&
-  ! grep -F "Already current: ${bridge_version}" /tmp/bridge-update.out >/dev/null; then
-  echo "The immutable bridge updater did not converge to ${bridge_version}." >&2
-  exit 1
-fi
-test "$(jq -er .profile "$state/install.json")" = "local"
-test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$bridge_version"
-test "$(jq -er .updater.version "$state/install.json")" = "$bridge_version"
-if jq -e '.env.vars.FASED_PROTECTED_LOCAL == "1"' "$state/fased.json" >/dev/null; then
-  echo "The immutable pre-support-floor updater unexpectedly entered Protected Local." >&2
-  exit 1
-fi
-wait_for_gateway_version "$bridge_version"
-test "$(sha256sum "$legacy_binary" | awk '{print $1}')" = \
-  "$(jq -er '.signer.platforms["linux-amd64"].sha256' \
-    /bridge-artifacts/fased-hosted-release-v2.json)"
-test "$(sha256sum "$legacy_master_key" | awk '{print $1}')" = "$original_key_sha"
-test "$(sha256sum "$wallet_dir/provider-registry.v1.json" | awk '{print $1}')" = \
-  "$original_registry_sha"
-verify_legacy_wallet /tmp/bridge-agent.json
-
-# Reproduce the restrictive owner home and a continuously queued reverse
-# dependency only after the immutable bridge update has established the exact
-# owner-relevant RC7 topology. These conditions exercise the target fence; they
-# must not interfere with constructing the predecessor boundary itself.
+# Exercise the supported universal path directly from the immutable predecessor
+# topology to the exact candidate. A named intermediate release must never
+# select or authorize the lifecycle transaction.
 prepare_restrictive_home_acl
 original_home_acl="$(capture_home_acl)"
-legacy_gateway_version="$bridge_version"
+legacy_gateway_version="$legacy_version"
 user_unit_dir=/home/testop/.config/systemd/user
 test -s "$user_unit_dir/fased-gateway.service"
 cat >"$user_unit_dir/fased-fixture-gateway-reactivator.service" <<'EOF_REACTIVATOR_SERVICE'
@@ -1286,7 +1209,7 @@ runuser -u "fsgw-$instance" -- test -S \
   "/run/fased-local/$instance/application/app.sock"
 test "$(jq -r .profile "$state/install.json")" = "protected-local"
 test "$(jq -r .runtime.activeVersion "$state/install.json")" = "$version"
-test "$(jq -r .runtime.previousVersion "$state/install.json")" = "$bridge_version"
+test "$(jq -r .runtime.previousVersion "$state/install.json")" = "$legacy_gateway_version"
 test "$(jq -r .service.name "$state/install.json")" = "fased-gateway-$instance.service"
 test "$(cat "/var/lib/fased-local/$instance/controller/signer-version")" = "$version"
 test "$(jq -r .version "/var/lib/fased-local/$instance/controller/controller-version.json")" = \
