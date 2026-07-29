@@ -1364,6 +1364,7 @@ GATEWAY_RUNTIME_HEALTH_VERIFIED=0
 LOCAL_SIGNER_INSTALL_TRANSACTION_OPEN=0
 PROTECTED_LOCAL_BOOTSTRAPPED=0
 PROTECTED_LOCAL_INSTANCE=""
+LOCAL_EXISTING_BOOTSTRAP_MANIFEST_SNAPSHOT=""
 HOST_SIGNER_TRANSACTION_ACTIVE=0
 HOST_SIGNER_DURABLE_COMMIT_DECISION=0
 HOST_SIGNER_TRANSACTION_ID=""
@@ -3496,6 +3497,77 @@ rollback_local_signer_after_runtime_install() {
   LOCAL_SIGNER_INSTALL_TRANSACTION_OPEN=0
 }
 
+prepare_existing_local_bootstrap_manifest_snapshot() {
+  [[ "$LOCAL_EXISTING_BOOTSTRAP_REQUESTED" -eq 1 ]] || return 0
+  local manifest="$FASED_CONFIG_DIR/install.json"
+  local snapshot="$FASED_CONFIG_DIR/runtime/.pre-handoff-install.json"
+  local temporary=""
+  local owner=""
+  mkdir -p "$FASED_CONFIG_DIR/runtime"
+  if [[ -e "$snapshot" || -L "$snapshot" ]]; then
+    if [[ ! -f "$snapshot" || -L "$snapshot" ]]; then
+      echo "The interrupted Local bootstrap manifest snapshot is unsafe." >&2
+      return 1
+    fi
+    owner="$(stat -c '%u' "$snapshot" 2>/dev/null || true)"
+    if [[ "$owner" != "$(id -u)" ]]; then
+      echo "The interrupted Local bootstrap manifest snapshot has the wrong owner." >&2
+      return 1
+    fi
+    LOCAL_EXISTING_BOOTSTRAP_MANIFEST_SNAPSHOT="$snapshot"
+    return 0
+  fi
+  [[ -e "$manifest" || -L "$manifest" ]] || return 0
+  if [[ ! -f "$manifest" || -L "$manifest" ]]; then
+    echo "The existing Local install manifest is unsafe." >&2
+    return 1
+  fi
+  owner="$(stat -c '%u' "$manifest" 2>/dev/null || true)"
+  if [[ "$owner" != "$(id -u)" ]]; then
+    echo "The existing Local install manifest has the wrong owner." >&2
+    return 1
+  fi
+  temporary="$(mktemp "$FASED_CONFIG_DIR/runtime/.pre-handoff-install.json.tmp.XXXXXX")"
+  if ! cp -p -- "$manifest" "$temporary"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+  chmod 0600 "$temporary"
+  mv -f -- "$temporary" "$snapshot"
+  LOCAL_EXISTING_BOOTSTRAP_MANIFEST_SNAPSHOT="$snapshot"
+}
+
+restore_existing_local_bootstrap_manifest_snapshot() {
+  local snapshot="$LOCAL_EXISTING_BOOTSTRAP_MANIFEST_SNAPSHOT"
+  local manifest="$FASED_CONFIG_DIR/install.json"
+  local temporary=""
+  [[ -n "$snapshot" ]] || return 0
+  if [[ ! -f "$snapshot" || -L "$snapshot" ]]; then
+    echo "The Local bootstrap rollback manifest snapshot is unavailable or unsafe." >&2
+    return 1
+  fi
+  temporary="$(mktemp "$FASED_CONFIG_DIR/.install.json.rollback.XXXXXX")"
+  if ! cp -p -- "$snapshot" "$temporary"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+  chmod 0600 "$temporary"
+  mv -f -- "$temporary" "$manifest"
+  rm -f -- "$snapshot"
+  LOCAL_EXISTING_BOOTSTRAP_MANIFEST_SNAPSHOT=""
+}
+
+discard_existing_local_bootstrap_manifest_snapshot() {
+  local snapshot="$LOCAL_EXISTING_BOOTSTRAP_MANIFEST_SNAPSHOT"
+  [[ -n "$snapshot" ]] || return 0
+  if [[ ! -f "$snapshot" || -L "$snapshot" ]]; then
+    echo "The completed Local bootstrap manifest snapshot is unavailable or unsafe." >&2
+    return 1
+  fi
+  rm -f -- "$snapshot"
+  LOCAL_EXISTING_BOOTSTRAP_MANIFEST_SNAPSHOT=""
+}
+
 rollback_managed_runtime_after_failed_install() {
   local current_root
   local rollback_script
@@ -3520,6 +3592,9 @@ rollback_managed_runtime_after_failed_install() {
     --rollback \
     --state-dir "$FASED_CONFIG_DIR" \
     --prefix "${FASED_NPM_GLOBAL_PREFIX:-$INSTALL_CACHE_DIR/npm-global}"; then
+    return 1
+  fi
+  if ! restore_existing_local_bootstrap_manifest_snapshot; then
     return 1
   fi
   FASED_CLI_PATH="$FASED_CONFIG_DIR/bin/fased"
@@ -6340,6 +6415,11 @@ ensure_low_memory_swap_if_possible
 build_old_space_mb="$(recommended_onboard_old_space_mb)"
 build_node_options="$(node_options_with_old_space "${NODE_OPTIONS:-}" "$build_old_space_mb")"
 if use_prebuilt_release_runtime; then
+  if ! prepare_existing_local_bootstrap_manifest_snapshot; then
+    status_frame_end
+    echo "Could not prepare the transactional Local bootstrap rollback boundary." >&2
+    exit 1
+  fi
   install_prebuilt_release_runtime
 else
   pnpm_install_with_adaptive_profile
@@ -6424,6 +6504,11 @@ if protected_local_target_platform; then
       echo "Protected Local service bootstrap failed and automatic Local runtime rollback was incomplete." >&2
       echo "Retry the exact installer command; do not replace signer or wallet state manually." >&2
     fi
+    exit 1
+  fi
+  if ! discard_existing_local_bootstrap_manifest_snapshot; then
+    status_frame_end
+    echo "Protected Local bootstrap succeeded, but its temporary rollback snapshot could not be removed." >&2
     exit 1
   fi
 fi

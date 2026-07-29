@@ -73,7 +73,9 @@ if [[ ",$SCENARIOS," == *,install,* ]]; then
       --pattern "fased-hosted-release-v2.json.attestation.json" \
       --pattern "fased-hosted-app-v2-linux-x64-v${LEGACY_VERSION}.tar.gz" \
       --pattern "fased-hosted-deps-linux-x64-*.tar.gz" \
-      --pattern "fased-signerd-linux-amd64"
+      --pattern "fased-signerd-linux-amd64" \
+      --pattern "fased-signerd-release.json" \
+      --pattern "fased-signerd-checksums.txt"
     chmod 0755 "$LEGACY_ARTIFACT_DIR"
   fi
   legacy_manifest="$LEGACY_ARTIFACT_DIR/fased-hosted-release-v2.json"
@@ -88,7 +90,9 @@ if [[ ",$SCENARIOS," == *,install,* ]]; then
     -f "$legacy_app" &&
     -n "$legacy_dependency" &&
     -f "$legacy_dependency" &&
-    -f "$LEGACY_ARTIFACT_DIR/fased-signerd-linux-amd64" ]] || {
+    -f "$LEGACY_ARTIFACT_DIR/fased-signerd-linux-amd64" &&
+    -f "$LEGACY_ARTIFACT_DIR/fased-signerd-release.json" &&
+    -f "$LEGACY_ARTIFACT_DIR/fased-signerd-checksums.txt" ]] || {
     echo "The protected Local update fixture requires the complete immutable predecessor release." >&2
     exit 1
   }
@@ -97,6 +101,16 @@ if [[ ",$SCENARIOS," == *,install,* ]]; then
       .release.tag == ("v" + $version) and
       .signer.release.version == $version and
       .signer.release.commit == .release.commit' \
+    "$legacy_manifest" >/dev/null
+  legacy_signer_sha="$(
+    sha256sum "$LEGACY_ARTIFACT_DIR/fased-signerd-linux-amd64" | awk '{print $1}'
+  )"
+  jq -e --arg sha "$legacy_signer_sha" \
+    '.signer.platforms["linux-amd64"].asset == "fased-signerd-linux-amd64" and
+      .signer.platforms["linux-amd64"].sha256 == $sha' \
+    "$legacy_manifest" >/dev/null
+  jq -e --slurpfile signer "$LEGACY_ARTIFACT_DIR/fased-signerd-release.json" \
+    '.signer.release == ($signer[0] | del(.schemaVersion))' \
     "$legacy_manifest" >/dev/null
 fi
 if [[ -z "$LEGACY_ARTIFACT_DIR" ]]; then
