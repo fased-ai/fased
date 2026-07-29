@@ -15,8 +15,17 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 const RELEASE_BASE = "https://github.com/fased-ai/fased/releases/download";
-const RELEASE_REPOSITORY = "fased-ai/fased";
-const RELEASE_WORKFLOW = "fased-ai/fased/.github/workflows/hosted-runtime-release.yml";
+const LIFECYCLE_ROOT_POLICY_SHA256 =
+  "23d3e8235a39729d6ae37a5784eaa717a47e4ac725f5a416e78754ad9b4618ca";
+const ROOT_APPROVED_RELEASE_AUTHORITY = Object.freeze({
+  type: "github-artifact-attestation-v1",
+  repository: "fased-ai/fased",
+  workflow: "fased-ai/fased/.github/workflows/hosted-runtime-release.yml",
+  sourceRefPrefix: "refs/tags/v",
+  denySelfHostedRunners: true,
+});
+const RELEASE_REPOSITORY = ROOT_APPROVED_RELEASE_AUTHORITY.repository;
+const RELEASE_WORKFLOW = ROOT_APPROVED_RELEASE_AUTHORITY.workflow;
 const RELEASE_MANIFEST_NAME = "fased-hosted-release-v2.json";
 const RELEASE_MANIFEST_BUNDLE_NAME = `${RELEASE_MANIFEST_NAME}.attestation.json`;
 const SIGNER_ATTESTATION_BUNDLE_NAME = "fased-signerd-release.attestation.json";
@@ -387,8 +396,10 @@ function releaseAttestationVerifyArgs(assetPath, version, bundlePath) {
     "--signer-workflow",
     RELEASE_WORKFLOW,
     "--source-ref",
-    `refs/tags/v${version}`,
-    "--deny-self-hosted-runners",
+    `${ROOT_APPROVED_RELEASE_AUTHORITY.sourceRefPrefix}${version}`,
+    ...(ROOT_APPROVED_RELEASE_AUTHORITY.denySelfHostedRunners
+      ? ["--deny-self-hosted-runners"]
+      : []),
   ];
 }
 
@@ -5533,7 +5544,9 @@ export const __testing = {
   declaredStateRegistry,
   discoverProtectedApplicationTopology,
   inventoryDeclaredApplicationState,
+  LIFECYCLE_ROOT_POLICY_SHA256,
   reconcileDeclaredApplicationState,
+  ROOT_APPROVED_RELEASE_AUTHORITY,
   restoreDeclaredApplicationState,
   verifyDeclaredStatePreservation,
   verifyCrossProductHealth,

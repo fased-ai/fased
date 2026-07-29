@@ -3,6 +3,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  MANAGED_UPDATER_SUPPORT_FILES,
   authorizePreactivatedHostedGateway,
   beginPreactivatedHostedTransaction,
 } from "./fased-managed-updater.mjs";
@@ -182,14 +183,9 @@ async function installStableFiles(paths, releaseRoot, durable = false) {
   await copyExecutable(path.join(scriptDir, "fased-managed-launcher.sh"), paths.launcherPath);
   await copyExecutable(path.join(scriptDir, "fased-managed-service.sh"), paths.serviceLauncherPath);
   await copyExecutable(path.join(scriptDir, "fased-managed-updater.mjs"), paths.updaterPath);
-  await copyExecutable(
-    path.join(scriptDir, "managed-runtime-layout.mjs"),
-    path.join(paths.updaterDir, "managed-runtime-layout.mjs"),
-  );
-  await copyExecutable(
-    path.join(scriptDir, "hosted-release-manifest.mjs"),
-    path.join(paths.updaterDir, "hosted-release-manifest.mjs"),
-  );
+  for (const name of MANAGED_UPDATER_SUPPORT_FILES) {
+    await copyExecutable(path.join(scriptDir, name), path.join(paths.updaterDir, name));
+  }
   await fsp.mkdir(path.dirname(paths.prefixLauncherPath), { recursive: true });
   const launcherBackup = await replaceWithSymlink(paths.launcherPath, paths.prefixLauncherPath);
   if (launcherBackup) {
@@ -202,8 +198,7 @@ async function installStableFiles(paths, releaseRoot, durable = false) {
     paths.launcherPath,
     paths.serviceLauncherPath,
     paths.updaterPath,
-    path.join(paths.updaterDir, "managed-runtime-layout.mjs"),
-    path.join(paths.updaterDir, "hosted-release-manifest.mjs"),
+    ...MANAGED_UPDATER_SUPPORT_FILES.map((name) => path.join(paths.updaterDir, name)),
   ];
   for (const stablePath of stablePaths) {
     const handle = await fsp.open(stablePath, "r");

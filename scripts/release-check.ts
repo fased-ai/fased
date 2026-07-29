@@ -38,6 +38,10 @@ const requiredPathGroups = [
   "scripts/fased-managed-launcher.sh",
   "scripts/fased-managed-service.sh",
   "scripts/fased-managed-updater.mjs",
+  "scripts/lifecycle-trust-crypto.mjs",
+  "scripts/lifecycle-trust-policy.mjs",
+  "scripts/lifecycle-trust-root.mjs",
+  "scripts/lifecycle-trust-runtime.mjs",
   "scripts/fased-lifecycle-supervisor.mjs",
   "scripts/fased-signer-network-hosting.sh",
   "scripts/fased-host-updater.mjs",
@@ -57,6 +61,8 @@ const requiredPathGroups = [
   "scripts/install-managed-runtime.mjs",
   "scripts/managed-runtime-layout.mjs",
   "scripts/hosted-release-manifest.mjs",
+  "release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json",
+  "release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.sha256",
   "shared/sat-hash-v1.json",
 ];
 const requiredExactDependencies = new Map<string, string>();

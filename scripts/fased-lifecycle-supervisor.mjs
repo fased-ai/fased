@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFile } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createPublicKey, randomUUID, verify as verifyBytes } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import net from "node:net";
@@ -16,8 +16,66 @@ const execFileAsync = promisify(execFile);
 const SUPERVISOR_SCHEMA_VERSION = 1;
 const SUPERVISOR_PROTOCOL_VERSION = 1;
 const CONTROLLER_PROTOCOL_VERSION = 2;
-const RELEASE_REPOSITORY = "fased-ai/fased";
-const RELEASE_WORKFLOW = "fased-ai/fased/.github/workflows/hosted-runtime-release.yml";
+const INITIAL_LIFECYCLE_ROOT_SHA256 =
+  "23d3e8235a39729d6ae37a5784eaa717a47e4ac725f5a416e78754ad9b4618ca";
+const INITIAL_LIFECYCLE_ROOT_ENVELOPE = Object.freeze({
+  schemaVersion: 1,
+  signed: {
+    schemaVersion: 1,
+    type: "fased-lifecycle-root",
+    version: 1,
+    issuedAt: "2026-07-29T20:37:38.000Z",
+    expiresAt: "2031-07-29T20:37:38.000Z",
+    keys: {
+      "65e5a3b316f86ddacfefd042b2e06bf9320e2e170bef2053541556ae8ba3573b": {
+        keyType: "ed25519",
+        scheme: "ed25519",
+        publicKey: "MCowBQYDK2VwAyEAtk4hgp9QDKjLUfgdhT7wyKVa3Ck578DzyAjCbsUs5b8=",
+      },
+      "93614a5dc68035b1718455dbc43163dd62e71243ab496f961ecd7f23a607a971": {
+        keyType: "ed25519",
+        scheme: "ed25519",
+        publicKey: "MCowBQYDK2VwAyEA9T3Qt7kQz7YQ7bz9UPaVcdw/tzPZx5V5HdrfBTeNfqQ=",
+      },
+      a5f07688f14ff3e7c5b61d8e7109522360851c3bffbcc277ce8241d7151b4d3a: {
+        keyType: "ed25519",
+        scheme: "ed25519",
+        publicKey: "MCowBQYDK2VwAyEA+47FOrsgi9MHmEFRaz/z9gGDsA2rr6hlH/cdviRezEc=",
+      },
+    },
+    root: {
+      keyIds: [
+        "65e5a3b316f86ddacfefd042b2e06bf9320e2e170bef2053541556ae8ba3573b",
+        "93614a5dc68035b1718455dbc43163dd62e71243ab496f961ecd7f23a607a971",
+        "a5f07688f14ff3e7c5b61d8e7109522360851c3bffbcc277ce8241d7151b4d3a",
+      ],
+      threshold: 2,
+    },
+    releaseAuthority: {
+      type: "github-artifact-attestation-v1",
+      repository: "fased-ai/fased",
+      workflow: "fased-ai/fased/.github/workflows/hosted-runtime-release.yml",
+      sourceRefPrefix: "refs/tags/v",
+      denySelfHostedRunners: true,
+    },
+    revocations: {
+      releaseVersions: [],
+      targetDigests: [],
+    },
+  },
+  signatures: [
+    {
+      keyId: "93614a5dc68035b1718455dbc43163dd62e71243ab496f961ecd7f23a607a971",
+      signature:
+        "WMs+FJdQIklqIbdUCXCpBOGGjB12xNnCWgoSRIWqq7D9Vw2DtR229ICOnJpXiqpd4EJ1ogf/bTQOcMLA1bKrCg==",
+    },
+    {
+      keyId: "a5f07688f14ff3e7c5b61d8e7109522360851c3bffbcc277ce8241d7151b4d3a",
+      signature:
+        "54q7i6AG4NAx9lLbccMIxp4juYBxLAWBjpYVqvVP3mFeNjCTt6nwSYk023NB1vxyrysJYUjat/5XukYM/EmSBA==",
+    },
+  ],
+});
 const RELEASE_BASE = "https://github.com/fased-ai/fased/releases/download";
 const TRUST_METADATA_NAME = "fased-lifecycle-trust-v1.json";
 const TRUST_METADATA_BUNDLE_NAME = `${TRUST_METADATA_NAME}.attestation.json`;
@@ -59,6 +117,217 @@ function exactKeys(value, keys, label) {
       .join(",") !== [...keys].toSorted((left, right) => left.localeCompare(right)).join(",")
   ) {
     fail(`${label} contains unsupported or missing fields`);
+  }
+}
+
+function canonicalRootValue(value) {
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value)) {
+      fail("lifecycle root metadata numbers must be safe integers");
+    }
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => canonicalRootValue(entry)).join(",")}]`;
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return `{${Object.keys(value)
+      .toSorted((left, right) => left.localeCompare(right))
+      .map((key) => `${JSON.stringify(key)}:${canonicalRootValue(value[key])}`)
+      .join(",")}}`;
+  }
+  fail("lifecycle root metadata contains a non-canonical value");
+}
+
+function canonicalRootBytes(value) {
+  return Buffer.from(canonicalRootValue(value), "utf8");
+}
+
+function canonicalRootBase64(value, label) {
+  const text = String(value ?? "");
+  if (!/^[A-Za-z0-9+/]+={0,2}$/u.test(text) || text.length % 4 !== 0) {
+    fail(`${label} is not canonical base64`);
+  }
+  const bytes = Buffer.from(text, "base64");
+  if (bytes.length === 0 || bytes.toString("base64") !== text) {
+    fail(`${label} is not canonical base64`);
+  }
+  return bytes;
+}
+
+function canonicalSortedUnique(values, pattern, label) {
+  if (
+    !Array.isArray(values) ||
+    values.some((value) => !pattern.test(String(value ?? ""))) ||
+    new Set(values).size !== values.length ||
+    values.join(",") !== [...values].toSorted((left, right) => left.localeCompare(right)).join(",")
+  ) {
+    fail(`${label} must be unique, sorted, and canonical`);
+  }
+  return Object.freeze([...values]);
+}
+
+export function verifyEmbeddedLifecycleRootPolicy(
+  envelope = INITIAL_LIFECYCLE_ROOT_ENVELOPE,
+  pinnedSha256 = INITIAL_LIFECYCLE_ROOT_SHA256,
+  now = Date.now(),
+) {
+  if (createHash("sha256").update(canonicalRootBytes(envelope)).digest("hex") !== pinnedSha256) {
+    fail("embedded lifecycle root does not match its immutable bootstrap pin");
+  }
+  exactKeys(envelope, ["schemaVersion", "signed", "signatures"], "embedded lifecycle root");
+  exactKeys(
+    envelope.signed,
+    [
+      "schemaVersion",
+      "type",
+      "version",
+      "issuedAt",
+      "expiresAt",
+      "keys",
+      "root",
+      "releaseAuthority",
+      "revocations",
+    ],
+    "embedded lifecycle root metadata",
+  );
+  const issuedAt = Date.parse(envelope.signed.issuedAt);
+  const expiresAt = Date.parse(envelope.signed.expiresAt);
+  if (
+    envelope.schemaVersion !== 1 ||
+    envelope.signed.schemaVersion !== 1 ||
+    envelope.signed.type !== "fased-lifecycle-root" ||
+    !Number.isSafeInteger(envelope.signed.version) ||
+    envelope.signed.version <= 0 ||
+    !Number.isFinite(issuedAt) ||
+    !Number.isFinite(expiresAt) ||
+    new Date(issuedAt).toISOString() !== envelope.signed.issuedAt ||
+    new Date(expiresAt).toISOString() !== envelope.signed.expiresAt ||
+    issuedAt >= expiresAt ||
+    now < issuedAt ||
+    now > expiresAt ||
+    expiresAt - issuedAt > 5 * 366 * 24 * 60 * 60 * 1000
+  ) {
+    fail("embedded lifecycle root is stale, malformed, or has an invalid validity window");
+  }
+  const keyIds = Object.keys(envelope.signed.keys ?? {}).toSorted();
+  exactKeys(envelope.signed.root, ["keyIds", "threshold"], "embedded lifecycle root role");
+  if (
+    keyIds.length !== 3 ||
+    envelope.signed.root.threshold !== 2 ||
+    JSON.stringify(envelope.signed.root.keyIds) !== JSON.stringify(keyIds)
+  ) {
+    fail("embedded lifecycle root role must be exactly 2-of-3");
+  }
+  const keys = new Map();
+  for (const keyId of keyIds) {
+    const record = envelope.signed.keys[keyId];
+    exactKeys(record, ["keyType", "scheme", "publicKey"], `embedded lifecycle root key ${keyId}`);
+    if (record.keyType !== "ed25519" || record.scheme !== "ed25519") {
+      fail("embedded lifecycle root keys must use Ed25519");
+    }
+    const bytes = canonicalRootBase64(record.publicKey, `embedded lifecycle root key ${keyId}`);
+    if (createHash("sha256").update(bytes).digest("hex") !== keyId) {
+      fail("embedded lifecycle root key ID does not match its public key");
+    }
+    const key = createPublicKey({ key: bytes, format: "der", type: "spki" });
+    if (key.asymmetricKeyType !== "ed25519") {
+      fail("embedded lifecycle root key is not Ed25519");
+    }
+    keys.set(keyId, key);
+  }
+  if (!Array.isArray(envelope.signatures) || envelope.signatures.length < 2) {
+    fail("embedded lifecycle root signature threshold was not met");
+  }
+  let priorKeyId = null;
+  let verified = 0;
+  const payload = canonicalRootBytes(envelope.signed);
+  for (const signature of envelope.signatures) {
+    exactKeys(signature, ["keyId", "signature"], "embedded lifecycle root signature");
+    if (
+      !keys.has(signature.keyId) ||
+      (priorKeyId !== null && priorKeyId.localeCompare(signature.keyId) >= 0)
+    ) {
+      fail("embedded lifecycle root signatures must use unique sorted root key IDs");
+    }
+    priorKeyId = signature.keyId;
+    const bytes = canonicalRootBase64(
+      signature.signature,
+      `embedded lifecycle root signature ${signature.keyId}`,
+    );
+    if (bytes.length !== 64 || !verifyBytes(null, payload, keys.get(signature.keyId), bytes)) {
+      fail("embedded lifecycle root contains an invalid Ed25519 signature");
+    }
+    verified += 1;
+  }
+  if (verified < envelope.signed.root.threshold) {
+    fail("embedded lifecycle root signature threshold was not met");
+  }
+
+  const authority = envelope.signed.releaseAuthority;
+  exactKeys(
+    authority,
+    ["type", "repository", "workflow", "sourceRefPrefix", "denySelfHostedRunners"],
+    "embedded lifecycle release authority",
+  );
+  if (
+    authority.type !== "github-artifact-attestation-v1" ||
+    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(authority.repository || "") ||
+    authority.workflow !== `${authority.repository}/.github/workflows/hosted-runtime-release.yml` ||
+    authority.sourceRefPrefix !== "refs/tags/v" ||
+    !authority.denySelfHostedRunners
+  ) {
+    fail("embedded lifecycle release authority is invalid");
+  }
+  exactKeys(
+    envelope.signed.revocations,
+    ["releaseVersions", "targetDigests"],
+    "embedded lifecycle revocations",
+  );
+  const revocations = Object.freeze({
+    releaseVersions: canonicalSortedUnique(
+      envelope.signed.revocations.releaseVersions,
+      VERSION_PATTERN,
+      "embedded revoked lifecycle releases",
+    ),
+    targetDigests: canonicalSortedUnique(
+      envelope.signed.revocations.targetDigests,
+      DIGEST_PATTERN,
+      "embedded revoked lifecycle target digests",
+    ),
+  });
+  return Object.freeze({
+    version: envelope.signed.version,
+    pinnedSha256,
+    releaseAuthority: Object.freeze({ ...authority }),
+    revocations,
+  });
+}
+
+const EMBEDDED_LIFECYCLE_ROOT = verifyEmbeddedLifecycleRootPolicy();
+const RELEASE_REPOSITORY = EMBEDDED_LIFECYCLE_ROOT.releaseAuthority.repository;
+const RELEASE_WORKFLOW = EMBEDDED_LIFECYCLE_ROOT.releaseAuthority.workflow;
+const RELEASE_SOURCE_REF_PREFIX = EMBEDDED_LIFECYCLE_ROOT.releaseAuthority.sourceRefPrefix;
+
+function assertLifecycleReleaseAllowed(version, targetDigests = []) {
+  if (EMBEDDED_LIFECYCLE_ROOT.revocations.releaseVersions.includes(version)) {
+    fail(`lifecycle release v${version} is revoked by the trusted root`);
+  }
+  if (
+    !Array.isArray(targetDigests) ||
+    targetDigests.some((digest) => !DIGEST_PATTERN.test(digest || ""))
+  ) {
+    fail("lifecycle target digests are invalid");
+  }
+  if (
+    targetDigests.some((digest) =>
+      EMBEDDED_LIFECYCLE_ROOT.revocations.targetDigests.includes(digest),
+    )
+  ) {
+    fail("lifecycle target digest is revoked by the trusted root");
   }
 }
 
@@ -422,6 +691,7 @@ async function fixedExecutable(candidates, label) {
 }
 
 async function verifyMetadata(metadataPath, bundlePath, version, stateDir) {
+  assertLifecycleReleaseAllowed(version);
   const gh = await fixedExecutable(["/usr/bin/gh", "/usr/local/bin/gh"], "GitHub CLI");
   await execFileAsync(
     gh,
@@ -436,8 +706,10 @@ async function verifyMetadata(metadataPath, bundlePath, version, stateDir) {
       "--signer-workflow",
       RELEASE_WORKFLOW,
       "--source-ref",
-      `refs/tags/v${version}`,
-      "--deny-self-hosted-runners",
+      `${RELEASE_SOURCE_REF_PREFIX}${version}`,
+      ...(EMBEDDED_LIFECYCLE_ROOT.releaseAuthority.denySelfHostedRunners
+        ? ["--deny-self-hosted-runners"]
+        : []),
     ],
     {
       env: {
@@ -660,6 +932,10 @@ export async function stageTrustedController(request, context) {
         platform: context.platform,
         now: context.now(),
       },
+    );
+    assertLifecycleReleaseAllowed(
+      request.version,
+      Object.values(metadata.targets).map(({ sha256: targetSha256 }) => targetSha256),
     );
     const installedSupervisorDigest = await sha256(paths.supervisorPath);
     if (installedSupervisorDigest !== metadata.targets.supervisor.sha256) {
@@ -1400,6 +1676,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
 export const __testing = Object.freeze({
   CONTROLLER_CLIENT_NAME,
   CONTROLLER_SERVER_NAME,
+  EMBEDDED_LIFECYCLE_ROOT,
+  INITIAL_LIFECYCLE_ROOT_ENVELOPE,
+  INITIAL_LIFECYCLE_ROOT_SHA256,
   SUPERVISOR_NAME,
   TRUST_METADATA_NAME,
   compareVersions,

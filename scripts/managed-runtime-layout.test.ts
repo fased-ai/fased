@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
+import { MANAGED_UPDATER_SUPPORT_FILES } from "./fased-managed-updater.mjs";
 import { capabilitiesDigest } from "./hosted-release-manifest.mjs";
 import { installManagedRuntime, rollbackManagedRuntime } from "./install-managed-runtime.mjs";
 import {
@@ -84,8 +86,7 @@ function writeRuntime(packageRoot: string, version: string, options: { attested?
     "fased-managed-launcher.sh",
     "fased-managed-service.sh",
     "fased-managed-updater.mjs",
-    "managed-runtime-layout.mjs",
-    "hosted-release-manifest.mjs",
+    ...MANAGED_UPDATER_SUPPORT_FILES,
     "start-managed.sh",
   ]) {
     const source = path.join(import.meta.dirname, script);
@@ -165,6 +166,14 @@ describe("managed runtime layout", () => {
     expect(fs.readFileSync(path.join(fixture.stateDir, "wallet-state-preserved"), "utf8")).toBe(
       "unchanged\n",
     );
+    for (const name of MANAGED_UPDATER_SUPPORT_FILES) {
+      expect(fs.existsSync(path.join(fixture.paths.updaterDir, name))).toBe(true);
+    }
+    await expect(
+      import(`${pathToFileURL(fixture.paths.updaterPath).href}?installed=1`),
+    ).resolves.toMatchObject({
+      MANAGED_UPDATER_SUPPORT_FILES,
+    });
   });
 
   it("installs a schema-v2 app artifact locally without a Hosting release manifest", async () => {
