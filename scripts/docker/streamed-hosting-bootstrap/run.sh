@@ -146,16 +146,6 @@ if [[ "$*" == *".tag_name"* ]]; then
   exit 0
 fi
 document="${!#}"
-if [[ "$*" == *".validity.issuedAt"* ]]; then
-  [[ "$document" == */fased-lifecycle-trust-v1.json && -f "$document" ]]
-  sed -n 's/.*"issuedAt":[[:space:]]*"\([^"]*\)".*/\1/p' "$document"
-  exit 0
-fi
-if [[ "$*" == *".validity.expiresAt"* ]]; then
-  [[ "$document" == */fased-lifecycle-trust-v1.json && -f "$document" ]]
-  sed -n 's/.*"expiresAt":[[:space:]]*"\([^"]*\)".*/\1/p' "$document"
-  exit 0
-fi
 if [[ "$*" == *"--arg channel beta"* ]]; then
   [[ "$document" == */fased-lifecycle-trust-v1.json && -f "$document" ]]
   expected="$(
@@ -166,6 +156,16 @@ if [[ "$*" == *"--arg channel beta"* ]]; then
   grep -Fq "\"commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"" "$document"
   grep -Fq "\"sha256\": \"$expected\"" "$document"
   printf '%s\n' "$expected"
+  exit 0
+fi
+if [[ "$*" == *".validity.issuedAt"* ]]; then
+  [[ "$document" == */fased-lifecycle-trust-v1.json && -f "$document" ]]
+  sed -n 's/.*"issuedAt":[[:space:]]*"\([^"]*\)".*/\1/p' "$document"
+  exit 0
+fi
+if [[ "$*" == *".validity.expiresAt"* ]]; then
+  [[ "$document" == */fased-lifecycle-trust-v1.json && -f "$document" ]]
+  sed -n 's/.*"expiresAt":[[:space:]]*"\([^"]*\)".*/\1/p' "$document"
   exit 0
 fi
 [[ "$*" == *"--arg version 9.8.7-rc.2"* ]]
