@@ -85,7 +85,7 @@ describe("Protected Local service plan", () => {
     expect(controller).toContain(
       "--supervised --socket-path /run/fased-local-controller-worker/0123456789abcdef/controller.sock --socket-uid 0 --socket-gid 0",
     );
-    expect(controller).toContain("RuntimeDirectory=fased-local-controller-worker/0123456789abcdef");
+    expect(controller).toContain("RuntimeDirectory=fased-local-controller-worker/0123456789abcdef"); // pragma: allowlist secret
     expect(controller).toContain("RuntimeDirectoryMode=0711");
     expect(controller).toContain("StateDirectoryMode=0711");
     expect(controller).toContain(
@@ -96,8 +96,8 @@ describe("Protected Local service plan", () => {
     expect(supervisor).toContain(
       "/opt/fased/local/0123456789abcdef/supervisor/fased-lifecycle-supervisor.mjs --profile protected-local --protected-local-instance 0123456789abcdef --operator-uid 1000 --operator-gid 62002",
     );
-    expect(supervisor).toContain("RuntimeDirectory=fased-local-controller/0123456789abcdef");
-    expect(supervisor).toContain("ReadOnlyPaths=/opt/fased/local/0123456789abcdef/supervisor");
+    expect(supervisor).toContain("RuntimeDirectory=fased-local-controller/0123456789abcdef"); // pragma: allowlist secret
+    expect(supervisor).toContain("ReadOnlyPaths=/opt/fased/local/0123456789abcdef/supervisor"); // pragma: allowlist secret
     expect(supervisor).toContain("CapabilityBoundingSet=CAP_CHOWN\nAmbientCapabilities=");
     expect(gateway).toContain("RestrictSUIDSGID=true");
     expect(gateway).toContain("UMask=0007");

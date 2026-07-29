@@ -151,14 +151,14 @@ async function createRootFixture({ crashPhase = null } = {}) {
   await Promise.all([
     writeOwnedFile(
       configPath,
-      '{"fixtureSecret":"preserve-config"}\n',
+      '{"fixtureSecret":"preserve-config"}\n', // pragma: allowlist secret
       operatorUid,
       operatorGid,
       0o600,
     ),
     writeOwnedFile(
       deviceAuthPath,
-      '{"fixtureSecret":"preserve-device-auth"}\n',
+      '{"fixtureSecret":"preserve-device-auth"}\n', // pragma: allowlist secret
       operatorUid,
       operatorGid,
       0o600,
@@ -358,11 +358,11 @@ async function assertCommittedFixture(fixture) {
   );
   assert.equal(
     await fsp.readFile(fixture.configPath, "utf8"),
-    '{"fixtureSecret":"preserve-config"}\n',
+    '{"fixtureSecret":"preserve-config"}\n', // pragma: allowlist secret
   );
   assert.equal(
     await fsp.readFile(fixture.deviceAuthPath, "utf8"),
-    '{"fixtureSecret":"preserve-device-auth"}\n',
+    '{"fixtureSecret":"preserve-device-auth"}\n', // pragma: allowlist secret
   );
   assert.equal(await fsp.readFile(fixture.unknownPath, "utf8"), "preserve-private\n");
   assert.equal((await fsp.stat(fixture.stateDir)).mode & 0o7777, 0o2770);
