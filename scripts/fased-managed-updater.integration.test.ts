@@ -38,6 +38,23 @@ function copyManagedScripts(packageRoot: string) {
   fs.writeFileSync(path.join(scriptsDir, "start-managed.sh"), "#!/usr/bin/env bash\nexit 0\n", {
     mode: 0o755,
   });
+  const updaterPath = path.join(scriptsDir, "fased-managed-updater.mjs");
+  const updater = fs.readFileSync(updaterPath, "utf8");
+  const releaseBaseDeclaration =
+    'const DEFAULT_RELEASE_BASE_URL = "https://github.com/fased-ai/fased/releases/download";';
+  const officialVersionDeclaration = "const officialVersion = targetVersion;";
+  if (!updater.includes(releaseBaseDeclaration) || !updater.includes(officialVersionDeclaration)) {
+    throw new Error("managed updater fixture substitution no longer matches production source");
+  }
+  fs.writeFileSync(
+    updaterPath,
+    updater
+      .replace(
+        releaseBaseDeclaration,
+        "const DEFAULT_RELEASE_BASE_URL = process.env.FASED_FIXTURE_RELEASE_BASE_URL;",
+      )
+      .replace(officialVersionDeclaration, "const officialVersion = null;"),
+  );
 }
 
 function writeFakeRuntime(
@@ -365,8 +382,8 @@ describe("managed updater transaction", () => {
       HOME: path.join(root, "home"),
       FASED_STATE_DIR: stateDir,
       FASED_CONFIG_PATH: path.join(stateDir, "fased.json"),
-      FASED_HOSTED_ARTIFACT_BASE_URL: `http://127.0.0.1:${port}/releases/download`,
-      FASED_LOCAL_SIGNER_BASE_URL: `http://127.0.0.1:${port}/releases/download`,
+      FASED_FIXTURE_RELEASE_BASE_URL: `http://127.0.0.1:${port}/releases/download`,
+      FASED_LOCAL_SIGNER_BASE_URL: `http://localhost:${port}/releases/download`,
       FASED_LOCAL_SIGNER_ALLOW_UNATTESTED: "1",
       FASED_LOCAL_SIGNER_START: "1",
       npm_config_registry: `http://127.0.0.1:${port}`,
@@ -439,7 +456,9 @@ describe("managed updater transaction", () => {
       const pairedFiles = path.join(releaseRoot, "v1.0.2");
       const pairedBuild = path.join(root, "paired-app-build");
       const pairedAppRoot = path.join(pairedBuild, "package");
-      writeFakeRuntime(pairedAppRoot, "1.0.2", dependencyHash, false);
+      writeFakeRuntime(pairedAppRoot, "1.0.2", dependencyHash, false, {
+        commit: "c".repeat(40),
+      });
       fs.mkdirSync(pairedFiles, { recursive: true });
       fs.copyFileSync(dependencyAsset, path.join(pairedFiles, path.basename(dependencyAsset)));
       fs.copyFileSync(
@@ -450,6 +469,14 @@ describe("managed updater transaction", () => {
       execFileSync("tar", ["-czf", pairedAsset, "-C", pairedBuild, "package"]);
       writeChecksum(pairedAsset);
       const pairedSigner = writeFakeSignerRelease(pairedFiles, "1.0.2", "c");
+      writeUnifiedReleaseManifest({
+        releaseFiles: pairedFiles,
+        version: "1.0.2",
+        commit: pairedSigner.commit,
+        appAsset: pairedAsset,
+        dependencyAsset,
+        dependencyHash,
+      });
       registryTarget = "1.0.2";
 
       const paired = await execFileAsync(paths.prefixLauncherPath, ["update", "--timeout", "30"], {
@@ -521,7 +548,9 @@ describe("managed updater transaction", () => {
       const rejectedFiles = path.join(releaseRoot, "v1.0.3");
       const rejectedBuild = path.join(root, "rejected-app-build");
       const rejectedAppRoot = path.join(rejectedBuild, "package");
-      writeFakeRuntime(rejectedAppRoot, "1.0.3", dependencyHash, false);
+      writeFakeRuntime(rejectedAppRoot, "1.0.3", dependencyHash, false, {
+        commit: "d".repeat(40),
+      });
       fs.appendFileSync(
         path.join(rejectedAppRoot, "scripts", "fased-managed-updater.mjs"),
         "\n// verified-recovery-controller-1.0.3\n",
@@ -538,7 +567,15 @@ describe("managed updater transaction", () => {
       );
       execFileSync("tar", ["-czf", rejectedAsset, "-C", rejectedBuild, "package"]);
       writeChecksum(rejectedAsset);
-      writeFakeSignerRelease(rejectedFiles, "1.0.3", "d");
+      const rejectedSigner = writeFakeSignerRelease(rejectedFiles, "1.0.3", "d");
+      writeUnifiedReleaseManifest({
+        releaseFiles: rejectedFiles,
+        version: "1.0.3",
+        commit: rejectedSigner.commit,
+        appAsset: rejectedAsset,
+        dependencyAsset,
+        dependencyHash,
+      });
       registryTarget = "1.0.3";
       rejectedHealthVersion = "1.0.3";
 

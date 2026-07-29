@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fsp from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -720,104 +721,83 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     expect(__testing.compareVersions("1.0.0", "1.0.0-beta.10")).toBe(1);
   });
 
-  it("requires an exact owner-authorized localhost source for Q0 same-version repair", async () => {
-    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-q0-artifact-source-"));
-    const authorizationPath = path.join(root, "authorization.json");
-    const releaseCommit = "a".repeat(40);
-    const protectedLocalInstance = "0123456789abcdef";
+  it("removes a bounded historical updater backup only after official identity converges", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-historical-updater-"));
+    const runtimeRoot = path.join(root, "runtime");
+    const updaterDir = path.join(root, "updater");
+    const binDir = path.join(root, "bin");
+    const runtimeScripts = path.join(runtimeRoot, "scripts");
+    const updaterPath = path.join(updaterDir, "fased-managed-updater.mjs");
+    const launcherPath = path.join(binDir, "fased");
+    const backupPath = path.join(updaterDir, "q0-managed-updater-backup.json");
+    const updater = Buffer.from("official updater\n");
+    const launcher = Buffer.from("official launcher\n");
+    const digest = (value: Buffer) => createHash("sha256").update(value).digest("hex");
     try {
+      await Promise.all([
+        fsp.mkdir(runtimeScripts, { recursive: true }),
+        fsp.mkdir(updaterDir, { recursive: true }),
+        fsp.mkdir(binDir, { recursive: true }),
+      ]);
+      await Promise.all([
+        fsp.writeFile(path.join(runtimeScripts, "fased-managed-updater.mjs"), updater),
+        fsp.writeFile(path.join(runtimeScripts, "fased-managed-launcher.sh"), launcher),
+        fsp.writeFile(updaterPath, updater),
+        fsp.writeFile(launcherPath, launcher),
+      ]);
       await fsp.writeFile(
-        authorizationPath,
+        backupPath,
         `${JSON.stringify({
-          schemaVersion: 1,
-          baseUrl: "http://127.0.0.1:39091",
-          protectedLocalInstance,
-          releaseVersion: "1.2.3",
-          releaseCommit,
-          forceSameVersionRepair: true,
+          schemaVersion: 2,
+          updater: {
+            originalBase64: Buffer.from("old updater\n").toString("base64"),
+            originalSha256: digest(Buffer.from("old updater\n")),
+            candidateSha256: digest(Buffer.from("candidate updater\n")),
+            mode: 0o700,
+          },
+          launcher: {
+            originalBase64: Buffer.from("old launcher\n").toString("base64"),
+            originalSha256: digest(Buffer.from("old launcher\n")),
+            candidateSha256: digest(Buffer.from("candidate launcher\n")),
+            mode: 0o700,
+          },
         })}\n`,
         { mode: 0o600 },
       );
       await expect(
-        Promise.resolve(
-          __testing.readProtectedLocalTestArtifactAuthorization({
-            baseUrl: "http://127.0.0.1:39091/",
-            protectedLocalInstance,
-            releaseVersion: "1.2.3",
-            authorizationPath,
-            requiredUid: process.getuid?.() ?? 0,
-          }),
+        __testing.cleanupHistoricalManagedCandidateResidue(
+          { updaterDir, updaterPath, launcherPath },
+          runtimeRoot,
         ),
-      ).resolves.toEqual({
-        baseUrl: "http://127.0.0.1:39091",
-        protectedLocalInstance,
-        releaseVersion: "1.2.3",
-        forceSameVersionRepair: true,
-        releaseCommit,
-      });
-      expect(() =>
-        __testing.readProtectedLocalTestArtifactAuthorization({
-          baseUrl: "http://127.0.0.1:39092",
-          protectedLocalInstance,
-          releaseVersion: "1.2.3",
-          authorizationPath,
-          requiredUid: process.getuid?.() ?? 0,
-        }),
-      ).toThrow("authorization is invalid");
+      ).resolves.toEqual({ changed: true });
+      await expect(fsp.lstat(backupPath)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(fsp.readFile(updaterPath)).resolves.toEqual(updater);
+      await expect(fsp.readFile(launcherPath)).resolves.toEqual(launcher);
     } finally {
       await fsp.rm(root, { recursive: true, force: true });
     }
   });
 
-  it("accepts an owner-authorized localhost source before Protected Local migration", async () => {
-    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-q0-artifact-source-"));
-    const authorizationPath = path.join(root, "authorization.json");
+  it("refuses unsafe historical updater residue without changing it", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-historical-updater-"));
+    const updaterDir = path.join(root, "updater");
+    const target = path.join(root, "target.json");
+    const backupPath = path.join(updaterDir, "q0-managed-updater-backup.json");
     try {
-      await fsp.writeFile(
-        authorizationPath,
-        `${JSON.stringify({
-          schemaVersion: 1,
-          baseUrl: "http://127.0.0.1:39091",
-          protectedLocalInstance: "",
-          releaseVersion: "1.2.3",
-        })}\n`,
-        { mode: 0o600 },
-      );
-      expect(
-        __testing.readProtectedLocalTestArtifactAuthorization({
-          baseUrl: "http://127.0.0.1:39091/",
-          releaseVersion: "1.2.3",
-          authorizationPath,
-          requiredUid: process.getuid?.() ?? 0,
-        }),
-      ).toEqual({
-        baseUrl: "http://127.0.0.1:39091",
-        protectedLocalInstance: "",
-        releaseVersion: "1.2.3",
-        forceSameVersionRepair: false,
-        releaseCommit: null,
-      });
-
-      await fsp.writeFile(
-        authorizationPath,
-        `${JSON.stringify({
-          schemaVersion: 1,
-          baseUrl: "http://127.0.0.1:39091",
-          protectedLocalInstance: "",
-          releaseVersion: "1.2.3",
-          releaseCommit: "a".repeat(40),
-          forceSameVersionRepair: true,
-        })}\n`,
-        { mode: 0o600 },
-      );
-      expect(() =>
-        __testing.readProtectedLocalTestArtifactAuthorization({
-          baseUrl: "http://127.0.0.1:39091",
-          releaseVersion: "1.2.3",
-          authorizationPath,
-          requiredUid: process.getuid?.() ?? 0,
-        }),
-      ).toThrow("authorization is invalid");
+      await fsp.mkdir(updaterDir, { recursive: true });
+      await fsp.writeFile(target, "{}\n");
+      await fsp.symlink(target, backupPath);
+      await expect(
+        __testing.cleanupHistoricalManagedCandidateResidue(
+          {
+            updaterDir,
+            updaterPath: path.join(root, "unused-updater"),
+            launcherPath: path.join(root, "unused-launcher"),
+          },
+          path.join(root, "unused-runtime"),
+        ),
+      ).rejects.toThrow("historical managed candidate backup is unsafe");
+      await expect(fsp.lstat(backupPath)).resolves.toMatchObject({});
     } finally {
       await fsp.rm(root, { recursive: true, force: true });
     }

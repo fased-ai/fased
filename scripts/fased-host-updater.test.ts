@@ -848,120 +848,6 @@ describe("root-owned hosted updater protocol", () => {
     ).toBe(false);
   });
 
-  it("keeps the exact injected Q0 controller under instance-bound root authorization", async () => {
-    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-q0-controller-stage-"));
-    cleanupRoots.push(root);
-    const instanceId = "0123456789abcdef";
-    const stateDir = path.join(root, "state");
-    const controllerReleasesDir = path.join(root, "controller", "releases");
-    const controllerCurrentLink = path.join(root, "controller", "current");
-    const controllerVersionPath = path.join(stateDir, "controller-version.json");
-    const authorizationPath = path.join(root, "authorization.json");
-    const serverBytes = await fsp.readFile(
-      path.join(import.meta.dirname, "fased-host-updater.mjs"),
-    );
-    const clientBytes = await fsp.readFile(
-      path.join(import.meta.dirname, "fased-host-updaterctl.mjs"),
-    );
-    const serverSha256 = createHash("sha256").update(serverBytes).digest("hex");
-    const clientSha256 = createHash("sha256").update(clientBytes).digest("hex");
-    const candidateRoot = path.join(
-      controllerReleasesDir,
-      `v1.2.3.q0.${serverSha256.slice(0, 12)}`,
-    );
-    await fsp.mkdir(candidateRoot, { recursive: true });
-    await Promise.all([
-      fsp.writeFile(path.join(candidateRoot, "fased-host-updater.mjs"), serverBytes),
-      fsp.writeFile(path.join(candidateRoot, "fased-host-updaterctl.mjs"), clientBytes),
-      fsp.mkdir(stateDir, { recursive: true }),
-    ]);
-    await fsp.symlink(candidateRoot, controllerCurrentLink, "dir");
-    await fsp.writeFile(
-      controllerVersionPath,
-      `${JSON.stringify({
-        schemaVersion: 1,
-        version: "1.2.3",
-        serverSha256,
-        clientSha256,
-      })}\n`,
-    );
-    await fsp.writeFile(
-      authorizationPath,
-      `${JSON.stringify({
-        schemaVersion: 1,
-        baseUrl: "http://127.0.0.1:39091",
-        protectedLocalInstance: instanceId,
-        releaseVersion: "1.2.3",
-        releaseCommit: "a".repeat(40),
-        forceSameVersionRepair: true,
-      })}\n`,
-      { mode: 0o600 },
-    );
-    const context = __testing.createTransactionContext({
-      paths: {
-        stateDir,
-        controllerReleasesDir,
-        controllerCurrentLink,
-        controllerVersionPath,
-      },
-      protectedLocalInstanceId: instanceId,
-      rootUid: process.geteuid(),
-      testArtifactAuthorizationPath: authorizationPath,
-      downloadReleaseAsset: async () => {
-        throw new Error("Q0 controller must not fall back to the published release");
-      },
-    });
-
-    await expect(__testing.stageOfficialControllerRelease("1.2.3", context)).resolves.toMatchObject(
-      { changed: false },
-    );
-    expect(await fsp.realpath(controllerCurrentLink)).toBe(candidateRoot);
-  });
-
-  it("stages the exact signer with an authorized same-version Q0 application candidate", async () => {
-    const fixture = await createFixture({
-      protectedApplication: true,
-      protectedService: true,
-    });
-    const authorizationPath = path.join(fixture.paths.stateDir, "q0-authorization.json");
-    fixture.context.testArtifactAuthorizationPath = authorizationPath;
-    await Promise.all([
-      fsp.writeFile(fixture.paths.versionPath, "1.2.3\n", { mode: 0o600 }),
-      fsp.writeFile(
-        authorizationPath,
-        `${JSON.stringify({
-          schemaVersion: 1,
-          baseUrl: "http://127.0.0.1:39091",
-          protectedLocalInstance: "0123456789abcdef",
-          releaseVersion: "1.2.3",
-          releaseCommit: "a".repeat(40),
-          forceSameVersionRepair: true,
-        })}\n`,
-        { mode: 0o600 },
-      ),
-    ]);
-    const installedRelease = {
-      ...signerRelease("1.2.3"),
-      commit: "c".repeat(40),
-    };
-    fixture.context.probeSigner = async () => installedRelease;
-    fixture.context.probeSignerState = async () => ({
-      release: installedRelease,
-      invariant: "preserved-signer-state",
-    });
-
-    await expect(
-      __testing.prepareSignerRelease(
-        request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
-        fixture.context,
-      ),
-    ).resolves.toMatchObject({
-      changed: true,
-      release: signerRelease("1.2.3"),
-    });
-    expect(fixture.events).toContain("stage:1.2.3");
-  });
-
   it("stages official signer releases through published offline attestation bundles", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-stage-"));
     cleanupRoots.push(root);
@@ -1052,208 +938,269 @@ describe("root-owned hosted updater protocol", () => {
     expect(staged.release).toEqual(signerRelease("1.2.3"));
   });
 
-  it("stages the exact Q0 signer from the same instance-bound localhost release", async () => {
-    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-q0-host-stage-"));
+  it("ignores ambient historical authorization and still requires official controller assets", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-official-controller-"));
     cleanupRoots.push(root);
-    const instanceId = "0123456789abcdef";
     const stateDir = path.join(root, "state");
-    const candidatePath = path.join(root, "candidate", "fased-signerd");
-    const authorizationPath = path.join(root, "authorization.json");
-    const platform = `linux-${__testing.releaseArchitecture()}`;
-    const assetName = `fased-signerd-${platform}`;
-    const signerBytes = Buffer.from("exact Q0 signer fixture\n");
-    const capabilities = { protocol: { current: 2, min: 2, max: 2 } };
-    const manifest = {
-      schemaVersion: 2,
-      release: { version: "1.2.3", tag: "v1.2.3", commit: "a".repeat(40) },
-      application: {
-        linux: Object.fromEntries(
-          ["x64", "arm64"].map((architecture) => [
-            architecture,
-            {
-              artifact: {
-                asset: `fased-hosted-app-v2-linux-${architecture}-v1.2.3.tar.gz`,
-                sha256: "b".repeat(64),
-              },
-              dependencies: {
-                asset: `fased-hosted-deps-linux-${architecture}-${"c".repeat(64)}.tar.gz`,
-                sha256: "d".repeat(64),
-                dependencyHash: "c".repeat(64),
-              },
-            },
-          ]),
-        ),
-      },
-      signer: {
-        release: signerRelease("1.2.3"),
-        capabilities,
-        capabilitiesDigest: capabilitiesDigest(capabilities),
-        platforms: {
-          [platform]: {
-            asset: assetName,
-            sha256: createHash("sha256").update(signerBytes).digest("hex"),
-          },
-        },
-      },
-    };
-    await fsp.writeFile(
-      authorizationPath,
-      `${JSON.stringify({
-        schemaVersion: 1,
-        baseUrl: "http://127.0.0.1:39091",
-        protectedLocalInstance: instanceId,
-        releaseVersion: "1.2.3",
-        releaseCommit: "a".repeat(40),
-        forceSameVersionRepair: true,
-      })}\n`,
-      { mode: 0o600 },
-    );
-    const downloads: string[] = [];
-    const context = __testing.createTransactionContext({
-      paths: { stateDir },
-      protectedLocalInstanceId: instanceId,
-      rootUid: process.geteuid(),
-      testArtifactAuthorizationPath: authorizationPath,
-      downloadReleaseAsset: async (url: string, destination: string) => {
-        downloads.push(path.basename(url));
-        const contents = url.endsWith("/fased-hosted-release-v2.json")
-          ? `${JSON.stringify(manifest)}\n`
-          : signerBytes;
-        await fsp.writeFile(destination, contents, { mode: 0o600 });
-      },
-      verifyReleaseAsset: async () => {
-        throw new Error("Q0 localhost assets must not use GitHub attestation");
-      },
-    });
-
-    const staged = await __testing.stageOfficialCandidate("1.2.3", candidatePath, context);
-
-    expect(downloads).toEqual(["fased-hosted-release-v2.json", assetName]);
-    expect(await fsp.readFile(candidatePath)).toEqual(signerBytes);
-    expect(staged.release).toEqual(signerRelease("1.2.3"));
-  });
-
-  it("stages and journals a commit-bound Q0 application without replacing the official same-version generation", async () => {
-    const fixture = await createFixture({
-      protectedApplication: true,
-      protectedService: true,
-    });
-    const { context, paths } = fixture;
-    const version = "1.2.3";
-    const candidateCommit = "a".repeat(40);
-    const officialCommit = "c".repeat(40);
-    const dependencyHash = "d".repeat(64);
-    const instanceId = "0123456789abcdef";
-    const authorizationPath = path.join(paths.stateDir, "q0-authorization.json");
-    const officialRoot = path.join(paths.applicationReleasesDir!, `v${version}`);
-    const candidateRoot = path.join(
-      paths.applicationReleasesDir!,
-      `v${version}.q0-app.${candidateCommit.slice(0, 12)}`,
-    );
+    const releasesDir = path.join(root, "controller", "releases");
+    const currentLink = path.join(root, "controller", "current");
+    const versionPath = path.join(stateDir, "controller-version.json");
+    const historicalDir = path.join(root, "testing");
+    const candidateRoot = path.join(releasesDir, `v1.2.3.q0.${"a".repeat(12)}`);
     await Promise.all([
-      writeProtectedApplicationFixture({
-        root: officialRoot,
-        version,
-        commit: officialCommit,
-        dependencyHash,
-      }),
-      writeProtectedApplicationFixture({
-        root: candidateRoot,
-        version,
-        commit: candidateCommit,
-        dependencyHash,
-      }),
-      fsp.writeFile(paths.versionPath, `${version}\n`, { mode: 0o600 }),
+      fsp.mkdir(candidateRoot, { recursive: true }),
+      fsp.mkdir(stateDir, { recursive: true }),
+      fsp.mkdir(historicalDir, { recursive: true }),
+    ]);
+    await Promise.all([
+      fsp.writeFile(path.join(candidateRoot, "fased-host-updater.mjs"), "candidate server\n"),
+      fsp.writeFile(path.join(candidateRoot, "fased-host-updaterctl.mjs"), "candidate client\n"),
       fsp.writeFile(
-        authorizationPath,
+        path.join(historicalDir, "protected-local-artifact-source.json"),
         `${JSON.stringify({
           schemaVersion: 1,
           baseUrl: "http://127.0.0.1:39091",
-          protectedLocalInstance: instanceId,
-          releaseVersion: version,
-          releaseCommit: candidateCommit,
+          protectedLocalInstance: "0123456789abcdef",
+          releaseVersion: "1.2.3",
+          releaseCommit: "b".repeat(40),
           forceSameVersionRepair: true,
         })}\n`,
         { mode: 0o600 },
       ),
     ]);
-    await fsp.rm(paths.applicationCurrentLink!);
-    await fsp.symlink(officialRoot, paths.applicationCurrentLink!, "dir");
-    context.testArtifactAuthorizationPath = authorizationPath;
-    context.rootUid = process.geteuid();
-    context.probeSignerState = async () => ({
-      release: { ...signerRelease(version), commit: officialCommit },
-      invariant: "preserved-signer-state",
+    await fsp.symlink(candidateRoot, currentLink, "dir");
+    await fsp.writeFile(
+      versionPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        version: "1.2.3",
+        serverSha256: createHash("sha256").update("candidate server\n").digest("hex"),
+        clientSha256: createHash("sha256").update("candidate client\n").digest("hex"),
+      })}\n`,
+    );
+    const context = __testing.createTransactionContext({
+      paths: {
+        stateDir,
+        controllerReleasesDir: releasesDir,
+        controllerCurrentLink: currentLink,
+        controllerVersionPath: versionPath,
+      },
+      protectedLocalInstanceId: "0123456789abcdef",
+      historicalQ0TestStateDir: historicalDir,
+      downloadReleaseAsset: async () => {
+        throw new Error("official download attempted");
+      },
     });
-    context.stageCandidate = async (_version: string, candidatePath: string) => {
-      await fsp.writeFile(candidatePath, "exact Q0 signer\n", { mode: 0o755 });
-      const application = await __testing.stageProtectedApplicationRelease({
-        version,
-        selected: {
-          release: { commit: candidateCommit },
-          application: {
-            artifact: { asset: "unused-app.tar.gz", sha256: "1".repeat(64) },
-            dependencies: {
-              asset: "unused-deps.tar.gz",
-              dependencyHash,
-              sha256: "2".repeat(64),
-            },
-          },
-        },
-        releaseUrl: "http://127.0.0.1:39091/v1.2.3",
-        manifestBytes: Buffer.from("{}\n"),
-        staging: path.join(paths.stateDir, "unused-staging"),
-        context,
-        q0ReleaseCommit: candidateCommit,
-      });
-      return {
-        release: signerRelease(version),
-        binding: {
-          manifestDigest: `sha256:${"1".repeat(64)}`,
-          signerArtifactDigest: `sha256:${"2".repeat(64)}`,
-          capabilitiesDigest: `sha256:${"3".repeat(64)}`,
-          releaseCommit: candidateCommit,
-        },
-        application,
-      };
+
+    await expect(__testing.stageOfficialControllerRelease("1.2.3", context)).rejects.toThrow(
+      "official download attempted",
+    );
+    expect(await fsp.realpath(currentLink)).toBe(candidateRoot);
+  });
+
+  it("refuses unsafe historical authorization residue without changing it", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-unsafe-historical-cleanup-"));
+    cleanupRoots.push(root);
+    const stateDir = path.join(root, "state");
+    const controllerReleasesDir = path.join(root, "controller", "releases");
+    const historicalDir = path.join(root, "testing");
+    const target = path.join(root, "authorization-target.json");
+    const authorizationPath = path.join(historicalDir, "protected-local-artifact-source.json");
+    await Promise.all([
+      fsp.mkdir(stateDir, { recursive: true }),
+      fsp.mkdir(controllerReleasesDir, { recursive: true }),
+      fsp.mkdir(historicalDir, { recursive: true }),
+      fsp.writeFile(target, "{}\n"),
+    ]);
+    await fsp.symlink(target, authorizationPath);
+    const context = __testing.createTransactionContext({
+      paths: {
+        stateDir,
+        controllerReleasesDir,
+      },
+      protectedLocalInstanceId: "0123456789abcdef",
+      rootUid: process.geteuid(),
+      historicalQ0TestStateDir: historicalDir,
+    });
+
+    await expect(
+      __testing.cleanupHistoricalQ0Residue(context, { version: "1.2.3" }),
+    ).rejects.toThrow("historical Protected Local artifact authorization is unsafe");
+    await expect(fsp.lstat(authorizationPath)).resolves.toMatchObject({});
+    await expect(fsp.readFile(target, "utf8")).resolves.toBe("{}\n");
+  });
+
+  it("removes validated historical residue only after exact official convergence", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-historical-cleanup-"));
+    cleanupRoots.push(root);
+    const stateDir = path.join(root, "state");
+    const controllerReleasesDir = path.join(root, "controller", "releases");
+    const controllerCurrentLink = path.join(root, "controller", "current");
+    const controllerVersionPath = path.join(stateDir, "controller-version.json");
+    const applicationReleasesDir = path.join(root, "application", "releases");
+    const applicationCurrentLink = path.join(root, "application", "current");
+    const historicalDir = path.join(root, "testing");
+    const targetVersion = "1.2.3";
+    const targetCommit = "a".repeat(40);
+    const oldVersion = "1.2.2";
+    const oldCommit = "b".repeat(40);
+    const controllerTarget = path.join(controllerReleasesDir, `v${targetVersion}`);
+    const controllerOld = path.join(controllerReleasesDir, `v${oldVersion}`);
+    const controllerCandidate = path.join(
+      controllerReleasesDir,
+      `v${oldVersion}.q0.${"c".repeat(12)}`,
+    );
+    const applicationTarget = path.join(applicationReleasesDir, `v${targetVersion}`);
+    const applicationOld = path.join(applicationReleasesDir, `v${oldVersion}`);
+    const applicationCandidate = path.join(
+      applicationReleasesDir,
+      `v${oldVersion}.q0-app.${"d".repeat(12)}`,
+    );
+    for (const directory of [
+      controllerTarget,
+      controllerOld,
+      controllerCandidate,
+      applicationCandidate,
+      stateDir,
+      historicalDir,
+    ]) {
+      await fsp.mkdir(directory, { recursive: true });
+    }
+    const controllerBytes = {
+      targetServer: Buffer.from("target server\n"),
+      targetClient: Buffer.from("target client\n"),
+      oldServer: Buffer.from("old server\n"),
+      oldClient: Buffer.from("old client\n"),
     };
-
-    await __testing.prepareSignerRelease(
-      request("prepareRelease", TRANSACTION_ONE, version),
-      context,
-    );
-    const prepared = await __testing.readJournal(context);
-    expect(prepared.application).toEqual({
-      targetRoot: candidateRoot,
-      previousRoot: officialRoot,
-      changed: true,
+    await Promise.all([
+      fsp.writeFile(
+        path.join(controllerTarget, "fased-host-updater.mjs"),
+        controllerBytes.targetServer,
+      ),
+      fsp.writeFile(
+        path.join(controllerTarget, "fased-host-updaterctl.mjs"),
+        controllerBytes.targetClient,
+      ),
+      fsp.writeFile(path.join(controllerOld, "fased-host-updater.mjs"), controllerBytes.oldServer),
+      fsp.writeFile(
+        path.join(controllerOld, "fased-host-updaterctl.mjs"),
+        controllerBytes.oldClient,
+      ),
+      fsp.writeFile(path.join(controllerCandidate, "fased-host-updater.mjs"), "candidate server\n"),
+      fsp.writeFile(
+        path.join(controllerCandidate, "fased-host-updaterctl.mjs"),
+        "candidate client\n",
+      ),
+      writeProtectedApplicationFixture({
+        root: applicationTarget,
+        version: targetVersion,
+        commit: targetCommit,
+        dependencyHash: "1".repeat(64),
+      }),
+      writeProtectedApplicationFixture({
+        root: applicationOld,
+        version: oldVersion,
+        commit: oldCommit,
+        dependencyHash: "2".repeat(64),
+      }),
+    ]);
+    await Promise.all([
+      fsp.symlink(controllerTarget, controllerCurrentLink, "dir"),
+      fsp.symlink(applicationTarget, applicationCurrentLink, "dir"),
+    ]);
+    const digest = (value: Buffer) => createHash("sha256").update(value).digest("hex");
+    const targetIdentity = {
+      schemaVersion: 1,
+      version: targetVersion,
+      serverSha256: digest(controllerBytes.targetServer),
+      clientSha256: digest(controllerBytes.targetClient),
+    };
+    const oldIdentity = {
+      schemaVersion: 1,
+      version: oldVersion,
+      serverSha256: digest(controllerBytes.oldServer),
+      clientSha256: digest(controllerBytes.oldClient),
+    };
+    await Promise.all([
+      fsp.writeFile(controllerVersionPath, `${JSON.stringify(targetIdentity)}\n`, {
+        mode: 0o600,
+      }),
+      fsp.writeFile(
+        path.join(stateDir, "q0-controller-candidate.json"),
+        `${JSON.stringify({
+          schemaVersion: 1,
+          originalRoot: controllerOld,
+          candidateRoot: controllerCandidate,
+          identityBase64: Buffer.from(`${JSON.stringify(oldIdentity)}\n`).toString("base64"),
+          identityMode: 0o600,
+        })}\n`,
+        { mode: 0o600 },
+      ),
+      fsp.writeFile(
+        path.join(stateDir, "q0-application-candidate.json"),
+        `${JSON.stringify({
+          schemaVersion: 1,
+          originalRoot: applicationOld,
+          candidateRoot: applicationCandidate,
+          version: oldVersion,
+          commit: oldCommit,
+          linkOwner: { uid: process.geteuid(), gid: process.getegid() },
+        })}\n`,
+        { mode: 0o600 },
+      ),
+      fsp.writeFile(
+        path.join(historicalDir, "protected-local-artifact-source.json"),
+        `${JSON.stringify({
+          schemaVersion: 1,
+          baseUrl: "http://127.0.0.1:39091",
+          protectedLocalInstance: "0123456789abcdef",
+          releaseVersion: oldVersion,
+          releaseCommit: oldCommit,
+          forceSameVersionRepair: true,
+        })}\n`,
+        { mode: 0o600 },
+      ),
+      fsp.writeFile(
+        path.join(historicalDir, "q0-protected-local-artifact-source-backup.json"),
+        `${JSON.stringify({ schemaVersion: 1, previous: { exists: false } })}\n`,
+        { mode: 0o600 },
+      ),
+    ]);
+    const context = __testing.createTransactionContext({
+      paths: {
+        stateDir,
+        controllerReleasesDir,
+        controllerCurrentLink,
+        controllerVersionPath,
+        applicationReleasesDir,
+        applicationCurrentLink,
+      },
+      protectedLocalInstanceId: "0123456789abcdef",
+      rootUid: process.geteuid(),
+      historicalQ0TestStateDir: historicalDir,
     });
-    expect(await fsp.realpath(paths.applicationCurrentLink!)).toBe(officialRoot);
-    const authorizationBackupPath = `${authorizationPath}.hold`;
-    await fsp.rename(authorizationPath, authorizationBackupPath);
-    await expect(__testing.readJournal(context)).rejects.toThrow(
-      "protected application transaction is unauthorized",
-    );
-    await fsp.rename(authorizationBackupPath, authorizationPath);
 
-    await __testing.activateSignerRelease(
-      request("activateRelease", TRANSACTION_ONE, version),
-      context,
-    );
-    await __testing.authorizeGatewayRelease(
-      request("authorizeGatewayRelease", TRANSACTION_ONE, version),
-      context,
-    );
-    expect(await fsp.realpath(paths.applicationCurrentLink!)).toBe(candidateRoot);
-    await __testing.commitSignerRelease(
-      request("commitRelease", TRANSACTION_ONE, version),
-      context,
-    );
-    expect((await fsp.lstat(officialRoot)).isDirectory()).toBe(true);
-    expect(
-      JSON.parse(await fsp.readFile(path.join(officialRoot, "dist", "build-info.json"), "utf8"))
-        .commit,
-    ).toBe(officialCommit);
+    const result = await __testing.cleanupHistoricalQ0Residue(context, {
+      version: targetVersion,
+      application: { targetRoot: applicationTarget },
+      releaseBinding: { releaseCommit: targetCommit },
+    });
+
+    expect(result.changed).toBe(true);
+    expect(await fsp.realpath(controllerCurrentLink)).toBe(controllerTarget);
+    expect(await fsp.realpath(applicationCurrentLink)).toBe(applicationTarget);
+    for (const removed of [
+      controllerCandidate,
+      applicationCandidate,
+      path.join(stateDir, "q0-controller-candidate.json"),
+      path.join(stateDir, "q0-application-candidate.json"),
+      path.join(historicalDir, "protected-local-artifact-source.json"),
+      path.join(historicalDir, "q0-protected-local-artifact-source-backup.json"),
+    ]) {
+      expect(fs.existsSync(removed)).toBe(false);
+    }
+    expect(fs.existsSync(controllerOld)).toBe(true);
+    expect(fs.existsSync(applicationOld)).toBe(true);
   });
 
   it("always passes an offline bundle to GitHub attestation verification", () => {

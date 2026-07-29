@@ -18,8 +18,7 @@ const RELEASE_WORKFLOW = "fased-ai/fased/.github/workflows/hosted-runtime-releas
 const RELEASE_MANIFEST_NAME = "fased-hosted-release-v2.json";
 const RELEASE_MANIFEST_BUNDLE_NAME = `${RELEASE_MANIFEST_NAME}.attestation.json`;
 const SIGNER_ATTESTATION_BUNDLE_NAME = "fased-signerd-release.attestation.json";
-const PROTECTED_LOCAL_TEST_ARTIFACT_AUTHORIZATION =
-  "/etc/fased/testing/protected-local-artifact-source.json";
+const HISTORICAL_Q0_TEST_STATE_DIR = "/etc/fased/testing";
 const CONTROLLER_SERVER_NAME = "fased-host-updater.mjs";
 const CONTROLLER_CLIENT_NAME = "fased-host-updaterctl.mjs";
 const CONTROLLER_SERVER_BUNDLE_NAME = `${CONTROLLER_SERVER_NAME}.attestation.json`;
@@ -449,89 +448,6 @@ async function currentControllerMatches(paths, identity) {
   }
 }
 
-async function readProtectedLocalTestArtifactAuthorization(
-  context,
-  releaseVersion,
-  authorizationPath = context.testArtifactAuthorizationPath ??
-    PROTECTED_LOCAL_TEST_ARTIFACT_AUTHORIZATION,
-) {
-  if (!context.instanceId) {
-    return null;
-  }
-  let authorizationInfo;
-  try {
-    authorizationInfo = await fsp.lstat(authorizationPath);
-  } catch (error) {
-    if (error?.code === "ENOENT") {
-      return null;
-    }
-    throw error;
-  }
-  if (
-    !authorizationInfo.isFile() ||
-    authorizationInfo.isSymbolicLink() ||
-    authorizationInfo.nlink !== 1 ||
-    authorizationInfo.uid !== context.rootUid ||
-    (authorizationInfo.mode & 0o022) !== 0
-  ) {
-    throw new Error("The root-owned Protected Local artifact authorization is unsafe.");
-  }
-  let authorization;
-  try {
-    authorization = JSON.parse(await fsp.readFile(authorizationPath, "utf8"));
-  } catch (error) {
-    throw new Error("The root-owned Protected Local artifact authorization is invalid.", {
-      cause: error,
-    });
-  }
-  const baseUrl = String(authorization?.baseUrl || "").replace(/\/$/, "");
-  const releaseCommit = String(authorization?.releaseCommit || "").trim();
-  if (
-    authorization?.schemaVersion !== 1 ||
-    authorization?.protectedLocalInstance !== context.instanceId ||
-    authorization?.releaseVersion !== releaseVersion ||
-    authorization?.forceSameVersionRepair !== true ||
-    !/^http:\/\/127\.0\.0\.1:\d+$/u.test(baseUrl) ||
-    authorization?.baseUrl !== baseUrl ||
-    !/^[a-f0-9]{40}$/u.test(releaseCommit)
-  ) {
-    throw new Error("The root-owned Protected Local artifact authorization is invalid.");
-  }
-  return Object.freeze({
-    baseUrl,
-    protectedLocalInstance: context.instanceId,
-    releaseVersion,
-    releaseCommit,
-  });
-}
-
-async function currentAuthorizedQ0ControllerMatches(paths, identity) {
-  try {
-    const currentStat = await fsp.lstat(paths.controllerCurrentLink);
-    if (!currentStat.isSymbolicLink()) {
-      throw new Error("host updater controller current path must be a root-managed symlink");
-    }
-    const actualRoot = await fsp.realpath(paths.controllerCurrentLink);
-    const expectedRoot = path.resolve(
-      paths.controllerReleasesDir,
-      `v${identity.version}.q0.${identity.serverSha256.slice(0, 12)}`,
-    );
-    if (actualRoot !== expectedRoot) {
-      return false;
-    }
-    const digests = await readControllerGenerationDigests(actualRoot);
-    return (
-      digests.serverSha256 === identity.serverSha256 &&
-      digests.clientSha256 === identity.clientSha256
-    );
-  } catch (error) {
-    if (error?.code === "ENOENT") {
-      return false;
-    }
-    throw error;
-  }
-}
-
 async function selfCheckControllerAsset(assetPath, role, stateDir) {
   const { stdout } = await execFileAsync(process.execPath, [assetPath, "--self-check"], {
     env: {
@@ -579,18 +495,6 @@ async function atomicSymlinkDurable(target, linkPath) {
 
 async function stageOfficialControllerRelease(version, context) {
   const existingIdentity = await readControllerIdentity(context.paths);
-  const testAuthorization = await readProtectedLocalTestArtifactAuthorization(context, version);
-  if (testAuthorization) {
-    if (
-      existingIdentity?.version !== version ||
-      !(await currentAuthorizedQ0ControllerMatches(context.paths, existingIdentity))
-    ) {
-      throw new Error(
-        "The root-authorized Q0 controller candidate is not the active exact controller.",
-      );
-    }
-    return { changed: false, identity: existingIdentity };
-  }
   if (existingIdentity && compareVersions(existingIdentity.version, version) === 1) {
     throw new Error(
       `refusing host updater controller downgrade from ${existingIdentity.version} to ${version}`,
@@ -1431,18 +1335,10 @@ async function validateJournal(value, context) {
     }
     const officialTargetRoot = protectedApplicationReleaseRoot(context.paths, version);
     const requestedTargetRoot = path.resolve(String(value.application.targetRoot ?? ""));
-    let targetRoot = officialTargetRoot;
     if (requestedTargetRoot !== officialTargetRoot) {
-      const testAuthorization = await readProtectedLocalTestArtifactAuthorization(context, version);
-      if (!testAuthorization || releaseBinding?.releaseCommit !== testAuthorization.releaseCommit) {
-        throw new Error("host updater protected application transaction is unauthorized");
-      }
-      targetRoot = protectedApplicationReleaseRoot(
-        context.paths,
-        version,
-        testAuthorization.releaseCommit,
-      );
+      throw new Error("host updater protected application transaction is not an official target");
     }
+    const targetRoot = officialTargetRoot;
     const previousRoot =
       value.application.previousRoot == null
         ? null
@@ -1540,18 +1436,12 @@ async function cleanupTransactionFiles(context, transactionId) {
   });
 }
 
-function protectedApplicationReleaseRoot(paths, version, q0ReleaseCommit = null) {
+function protectedApplicationReleaseRoot(paths, version) {
   if (!paths.applicationReleasesDir || !paths.applicationCurrentLink) {
     throw new Error("protected application runtime paths are unavailable");
   }
   const releases = path.resolve(paths.applicationReleasesDir);
-  let generation = `v${parseReleaseVersion(version)}`;
-  if (q0ReleaseCommit !== null) {
-    if (!/^[a-f0-9]{40}$/.test(q0ReleaseCommit)) {
-      throw new Error("protected application Q0 release commit is invalid");
-    }
-    generation += `.q0-app.${q0ReleaseCommit.slice(0, 12)}`;
-  }
+  const generation = `v${parseReleaseVersion(version)}`;
   const releaseRoot = path.resolve(releases, generation);
   if (path.dirname(releaseRoot) !== releases) {
     throw new Error("protected application release path escaped its root");
@@ -1758,13 +1648,9 @@ async function stageProtectedApplicationRelease({
   manifestBytes,
   staging,
   context,
-  q0ReleaseCommit = null,
 }) {
-  if (q0ReleaseCommit !== null && q0ReleaseCommit !== selected.release.commit) {
-    throw new Error("protected application Q0 generation commit is mismatched");
-  }
   await prepareProtectedApplicationDirectories(context.paths);
-  const releaseRoot = protectedApplicationReleaseRoot(context.paths, version, q0ReleaseCommit);
+  const releaseRoot = protectedApplicationReleaseRoot(context.paths, version);
   let previousRoot = null;
   try {
     previousRoot = await fsp.realpath(context.paths.applicationCurrentLink);
@@ -1837,8 +1723,7 @@ async function stageProtectedApplicationRelease({
 async function stageOfficialCandidate(version, candidatePath, context) {
   const arch = releaseArchitecture();
   const platform = `linux-${arch}`;
-  const testAuthorization = await readProtectedLocalTestArtifactAuthorization(context, version);
-  const releaseUrl = `${testAuthorization?.baseUrl ?? RELEASE_BASE}/v${version}`;
+  const releaseUrl = `${RELEASE_BASE}/v${version}`;
   await fsp.mkdir(context.paths.stateDir, { recursive: true, mode: 0o700 });
   const staging = await fsp.mkdtemp(path.join(context.paths.stateDir, `.download-${version}-`));
   const releaseManifestPath = path.join(staging, RELEASE_MANIFEST_NAME);
@@ -1847,57 +1732,40 @@ async function stageOfficialCandidate(version, candidatePath, context) {
   try {
     await Promise.all([
       context.downloadReleaseAsset(`${releaseUrl}/${RELEASE_MANIFEST_NAME}`, releaseManifestPath),
-      ...(testAuthorization
-        ? []
-        : [
-            context.downloadReleaseAsset(
-              `${releaseUrl}/${RELEASE_MANIFEST_BUNDLE_NAME}`,
-              releaseManifestBundlePath,
-            ),
-          ]),
-    ]);
-    if (!testAuthorization) {
-      await context.verifyReleaseAsset(
-        releaseManifestPath,
-        version,
-        context.paths.stateDir,
+      context.downloadReleaseAsset(
+        `${releaseUrl}/${RELEASE_MANIFEST_BUNDLE_NAME}`,
         releaseManifestBundlePath,
-      );
-    }
+      ),
+    ]);
+    await context.verifyReleaseAsset(
+      releaseManifestPath,
+      version,
+      context.paths.stateDir,
+      releaseManifestBundlePath,
+    );
     const manifestBytes = await fsp.readFile(releaseManifestPath);
     const selected = parseUnifiedHostedSignerRelease(
       JSON.parse(manifestBytes.toString("utf8")),
       version,
       platform,
     );
-    if (testAuthorization && selected.release.commit !== testAuthorization.releaseCommit) {
-      throw new Error(
-        "The root-authorized Protected Local candidate commit does not match its release.",
-      );
-    }
     const assetPath = path.join(staging, selected.artifact.asset);
     await Promise.all([
       context.downloadReleaseAsset(`${releaseUrl}/${selected.artifact.asset}`, assetPath),
-      ...(testAuthorization
-        ? []
-        : [
-            context.downloadReleaseAsset(
-              `${releaseUrl}/${SIGNER_ATTESTATION_BUNDLE_NAME}`,
-              signerAttestationBundlePath,
-            ),
-          ]),
+      context.downloadReleaseAsset(
+        `${releaseUrl}/${SIGNER_ATTESTATION_BUNDLE_NAME}`,
+        signerAttestationBundlePath,
+      ),
     ]);
     if ((await sha256(assetPath)) !== selected.artifact.sha256) {
       throw new Error("native signer does not match the attested unified release manifest");
     }
-    if (!testAuthorization) {
-      await context.verifyReleaseAsset(
-        assetPath,
-        version,
-        context.paths.stateDir,
-        signerAttestationBundlePath,
-      );
-    }
+    await context.verifyReleaseAsset(
+      assetPath,
+      version,
+      context.paths.stateDir,
+      signerAttestationBundlePath,
+    );
     await fsp.rm(candidatePath, { force: true });
     await atomicCopyFileDurable(assetPath, candidatePath, { mode: 0o755 });
     const application = context.paths.applicationReleasesDir
@@ -1908,7 +1776,6 @@ async function stageOfficialCandidate(version, candidatePath, context) {
           manifestBytes,
           staging,
           context,
-          q0ReleaseCommit: testAuthorization?.releaseCommit ?? null,
         })
       : null;
     return {
@@ -2429,8 +2296,7 @@ function createTransactionContext(overrides = {}) {
     protectedNodeBinary: overrides.protectedNodeBinary ?? process.execPath,
     controllerInstanceId: overrides.controllerInstanceId ?? randomUUID(),
     controllerRestartRequired: false,
-    testArtifactAuthorizationPath:
-      overrides.testArtifactAuthorizationPath ?? PROTECTED_LOCAL_TEST_ARTIFACT_AUTHORIZATION,
+    historicalQ0TestStateDir: overrides.historicalQ0TestStateDir ?? HISTORICAL_Q0_TEST_STATE_DIR,
     assertReleaseAllowed:
       overrides.assertReleaseAllowed ??
       (async (version) => await assertReleaseChannelAllowed(version, paths.channelPath)),
@@ -2628,10 +2494,6 @@ async function writeInitialRollbackFloor(context, version) {
 async function prepareSignerRelease(request, context) {
   await context.assertReleaseAllowed(request.version);
   await assertRollbackFloor(context, request.version);
-  const testAuthorization = await readProtectedLocalTestArtifactAuthorization(
-    context,
-    request.version,
-  );
   const applicationState = (await context.reconcileApplicationState()) ?? {};
   const applicationStateResult = {
     applicationStateReconciled: applicationState.changed === true,
@@ -2673,7 +2535,7 @@ async function prepareSignerRelease(request, context) {
     parseSignerReleaseIdentity(previousSignerState.release, currentVersion);
     previousSignerInvariant = previousSignerState.invariant;
   }
-  if (currentVersion === request.version && !testAuthorization) {
+  if (currentVersion === request.version) {
     try {
       await fsp.access(context.paths.signerPath, fs.constants.X_OK);
       release = parseSignerReleaseIdentity(
@@ -3136,7 +2998,302 @@ async function activateSignerRelease(request, context) {
   }
 }
 
+async function readHistoricalQ0Json(filePath, label, context) {
+  let stat;
+  try {
+    stat = await fsp.lstat(filePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+  if (
+    !stat.isFile() ||
+    stat.isSymbolicLink() ||
+    stat.nlink !== 1 ||
+    stat.uid !== context.rootUid ||
+    (stat.mode & 0o022) !== 0 ||
+    stat.size > 2 * 1024 * 1024
+  ) {
+    throw new Error(`historical ${label} is unsafe`);
+  }
+  try {
+    return {
+      filePath,
+      value: JSON.parse(await fsp.readFile(filePath, "utf8")),
+    };
+  } catch (error) {
+    throw new Error(`historical ${label} is invalid`, { cause: error });
+  }
+}
+
+function historicalReleaseChild(root, candidate, pattern, label) {
+  const resolvedRoot = path.resolve(root);
+  const resolved = path.resolve(String(candidate || ""));
+  if (path.dirname(resolved) !== resolvedRoot || !pattern.test(path.basename(resolved))) {
+    throw new Error(`historical ${label} path is invalid`);
+  }
+  return resolved;
+}
+
+async function assertHistoricalGeneration(root, label, context) {
+  const stat = await fsp.lstat(root);
+  if (
+    !stat.isDirectory() ||
+    stat.isSymbolicLink() ||
+    stat.uid !== context.rootUid ||
+    (stat.mode & 0o022) !== 0
+  ) {
+    throw new Error(`historical ${label} generation is unsafe`);
+  }
+}
+
+async function addHistoricalCandidateIfPresent(candidates, root, label, context) {
+  try {
+    await assertHistoricalGeneration(root, label, context);
+    candidates.add(root);
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+}
+
+async function listHistoricalCandidateGenerations(root, pattern, label, context) {
+  let entries;
+  try {
+    entries = await fsp.readdir(root, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+  const result = [];
+  for (const entry of entries) {
+    if (!pattern.test(entry.name)) {
+      continue;
+    }
+    const generation = path.join(root, entry.name);
+    if (!entry.isDirectory() || entry.isSymbolicLink()) {
+      throw new Error(`historical ${label} generation is unsafe`);
+    }
+    await assertHistoricalGeneration(generation, label, context);
+    result.push(generation);
+  }
+  return result;
+}
+
+async function cleanupHistoricalQ0Residue(context, journal) {
+  if (!context.instanceId) {
+    return { changed: false, removed: [] };
+  }
+
+  const testStateDir = path.resolve(context.historicalQ0TestStateDir);
+  const authorizationPath = path.join(testStateDir, "protected-local-artifact-source.json");
+  const authorizationBackupPath = path.join(
+    testStateDir,
+    "q0-protected-local-artifact-source-backup.json",
+  );
+  const controllerBackupPath = path.join(context.paths.stateDir, "q0-controller-candidate.json");
+  const applicationBackupPath = path.join(context.paths.stateDir, "q0-application-candidate.json");
+
+  const [authorization, authorizationBackup, controllerBackup, applicationBackup] =
+    await Promise.all([
+      readHistoricalQ0Json(authorizationPath, "Protected Local artifact authorization", context),
+      readHistoricalQ0Json(
+        authorizationBackupPath,
+        "Protected Local artifact authorization backup",
+        context,
+      ),
+      readHistoricalQ0Json(controllerBackupPath, "controller candidate backup", context),
+      readHistoricalQ0Json(applicationBackupPath, "application candidate backup", context),
+    ]);
+
+  if (authorization) {
+    const value = authorization.value;
+    if (
+      value?.schemaVersion !== 1 ||
+      value.protectedLocalInstance !== context.instanceId ||
+      value.forceSameVersionRepair !== true ||
+      !/^http:\/\/127\.0\.0\.1:\d+$/u.test(value.baseUrl || "") ||
+      !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u.test(value.releaseVersion || "") ||
+      !/^[a-f0-9]{40}$/u.test(value.releaseCommit || "")
+    ) {
+      throw new Error("historical Protected Local artifact authorization is invalid");
+    }
+  }
+  if (authorizationBackup) {
+    const value = authorizationBackup.value;
+    if (value?.schemaVersion !== 1 || typeof value.previous?.exists !== "boolean") {
+      throw new Error("historical Protected Local artifact authorization backup is invalid");
+    }
+  }
+
+  const candidateRoots = new Set();
+  if (controllerBackup) {
+    const value = controllerBackup.value;
+    if (
+      value?.schemaVersion !== 1 ||
+      typeof value.identityBase64 !== "string" ||
+      !Number.isSafeInteger(value.identityMode) ||
+      value.identityMode < 0 ||
+      value.identityMode > 0o777
+    ) {
+      throw new Error("historical controller candidate backup is invalid");
+    }
+    const originalRoot = historicalReleaseChild(
+      context.paths.controllerReleasesDir,
+      value.originalRoot,
+      /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u,
+      "controller official generation",
+    );
+    const candidateRoot = historicalReleaseChild(
+      context.paths.controllerReleasesDir,
+      value.candidateRoot,
+      /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?\.q0\.[a-f0-9]{12}$/u,
+      "controller candidate generation",
+    );
+    await assertHistoricalGeneration(originalRoot, "controller official", context);
+    const originalIdentity = parseControllerIdentity(
+      JSON.parse(Buffer.from(value.identityBase64, "base64").toString("utf8")),
+    );
+    const originalDigests = await readControllerGenerationDigests(originalRoot);
+    if (
+      originalDigests.serverSha256 !== originalIdentity.serverSha256 ||
+      originalDigests.clientSha256 !== originalIdentity.clientSha256
+    ) {
+      throw new Error("historical controller official generation identity is mismatched");
+    }
+    await addHistoricalCandidateIfPresent(
+      candidateRoots,
+      candidateRoot,
+      "controller candidate",
+      context,
+    );
+  }
+
+  if (applicationBackup) {
+    const value = applicationBackup.value;
+    if (
+      value?.schemaVersion !== 1 ||
+      !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u.test(value.version || "") ||
+      !/^[a-f0-9]{40}$/u.test(value.commit || "") ||
+      !Number.isSafeInteger(value.linkOwner?.uid) ||
+      !Number.isSafeInteger(value.linkOwner?.gid)
+    ) {
+      throw new Error("historical application candidate backup is invalid");
+    }
+    const originalRoot = historicalReleaseChild(
+      context.paths.applicationReleasesDir,
+      value.originalRoot,
+      /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u,
+      "application official generation",
+    );
+    const candidateRoot = historicalReleaseChild(
+      context.paths.applicationReleasesDir,
+      value.candidateRoot,
+      /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?\.q0-app\.[a-f0-9]{12}$/u,
+      "application candidate generation",
+    );
+    await assertHistoricalGeneration(originalRoot, "application official", context);
+    await verifyProtectedApplicationRuntime(originalRoot, value.version, value.commit);
+    await addHistoricalCandidateIfPresent(
+      candidateRoots,
+      candidateRoot,
+      "application candidate",
+      context,
+    );
+  }
+
+  const [controllerCandidates, applicationCandidates] = await Promise.all([
+    listHistoricalCandidateGenerations(
+      context.paths.controllerReleasesDir,
+      /^v.+\.q0\.[a-f0-9]{12}$/u,
+      "controller candidate",
+      context,
+    ),
+    context.paths.applicationReleasesDir
+      ? listHistoricalCandidateGenerations(
+          context.paths.applicationReleasesDir,
+          /^v.+\.q0-app\.[a-f0-9]{12}$/u,
+          "application candidate",
+          context,
+        )
+      : [],
+  ]);
+  for (const candidate of [...controllerCandidates, ...applicationCandidates]) {
+    candidateRoots.add(candidate);
+  }
+  const residueFiles = [
+    authorization?.filePath,
+    authorizationBackup?.filePath,
+    controllerBackup?.filePath,
+    applicationBackup?.filePath,
+  ].filter(Boolean);
+  if (candidateRoots.size === 0 && residueFiles.length === 0) {
+    return { changed: false, removed: [] };
+  }
+
+  const controllerIdentity = await readControllerIdentity(context.paths);
+  if (
+    !controllerIdentity ||
+    controllerIdentity.version !== journal.version ||
+    !(await currentControllerMatches(context.paths, controllerIdentity))
+  ) {
+    throw new Error(
+      "official controller identity did not converge before historical residue cleanup",
+    );
+  }
+
+  let activeApplication = null;
+  if (context.paths.applicationCurrentLink) {
+    if (!journal.application || !journal.releaseBinding?.releaseCommit) {
+      throw new Error(
+        "official application identity is unavailable before historical residue cleanup",
+      );
+    }
+    activeApplication = await fsp.realpath(context.paths.applicationCurrentLink);
+    const expectedApplication = protectedApplicationReleaseRoot(context.paths, journal.version);
+    if (
+      activeApplication !== expectedApplication ||
+      path.basename(activeApplication) !== `v${journal.version}`
+    ) {
+      throw new Error(
+        "official application identity did not converge before historical residue cleanup",
+      );
+    }
+    await verifyProtectedApplicationRuntime(
+      activeApplication,
+      journal.version,
+      journal.releaseBinding.releaseCommit,
+    );
+  }
+  const activeController = await fsp.realpath(context.paths.controllerCurrentLink);
+  for (const candidate of candidateRoots) {
+    if (candidate === activeController || candidate === activeApplication) {
+      throw new Error("historical candidate generation is still active");
+    }
+  }
+
+  const removed = [];
+  for (const candidate of candidateRoots) {
+    await fsp.rm(candidate, { recursive: true });
+    removed.push(candidate);
+  }
+  for (const filePath of residueFiles) {
+    await fsp.rm(filePath);
+    removed.push(filePath);
+  }
+  for (const directory of new Set(removed.map((entry) => path.dirname(entry)))) {
+    await fsyncDirectory(directory);
+  }
+  return { changed: true, removed };
+}
+
 async function finishCommit(context, journal) {
+  await cleanupHistoricalQ0Residue(context, journal);
   await writeInitialRollbackFloor(context, journal.version);
   await removeUpdateGates(context);
   await cleanupTransactionFiles(context, journal.transactionId);
@@ -3431,6 +3588,7 @@ export const __testing = {
   authorizeGatewayRelease,
   commitSignerRelease,
   compareVersions,
+  cleanupHistoricalQ0Residue,
   createTransactionContext,
   dispatchUpdateRequest,
   gateGatewayRelease,
