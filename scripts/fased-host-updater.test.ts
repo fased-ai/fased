@@ -1392,7 +1392,7 @@ describe("root-owned hosted updater protocol", () => {
       ],
     };
     expect(() => __testing.validateCrossProductApplicationEvidence(pluginFailure)).toThrow(
-      "target plugin diagnostics are not healthy (sat-mining)",
+      "target plugin diagnostics are not healthy (sat-mining:plugin-error)",
     );
   });
 

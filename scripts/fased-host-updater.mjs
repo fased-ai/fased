@@ -4705,20 +4705,46 @@ function validateCrossProductApplicationEvidence(params) {
     plugins.errors.length > 0 ||
     plugins.diagnostics.length > 0
   ) {
-    const identifiers = new Set();
+    const category = (value) => {
+      const text = typeof value === "string" ? value : "";
+      if (/(?:EACCES|EPERM|permission denied|operation not permitted)/iu.test(text)) {
+        return "permission-denied";
+      }
+      if (/(?:ERR_MODULE_NOT_FOUND|Cannot find (?:module|package))/iu.test(text)) {
+        return "module-not-found";
+      }
+      if (/missing config schema/iu.test(text)) {
+        return "missing-schema";
+      }
+      if (/invalid config/iu.test(text)) {
+        return "invalid-config";
+      }
+      if (/entry path escapes|alias checks/iu.test(text)) {
+        return "unsafe-entry";
+      }
+      if (/register/iu.test(text)) {
+        return "register-failed";
+      }
+      return "plugin-error";
+    };
+    const identifiers = new Map();
     for (const entry of Array.isArray(plugins.errors) ? plugins.errors : []) {
       if (typeof entry?.id === "string" && entry.id.trim()) {
-        identifiers.add(entry.id.trim());
+        identifiers.set(entry.id.trim(), category(entry.error));
       }
     }
     for (const entry of Array.isArray(plugins.diagnostics) ? plugins.diagnostics : []) {
-      identifiers.add(
+      const id =
         typeof entry?.pluginId === "string" && entry.pluginId.trim()
           ? entry.pluginId.trim()
-          : "global",
-      );
+          : "global";
+      identifiers.set(id, category(entry.message));
     }
-    const boundedIdentifiers = [...identifiers].slice(0, 8).join(", ") || "unknown";
+    const boundedIdentifiers =
+      [...identifiers]
+        .slice(0, 8)
+        .map(([id, failureCategory]) => `${id}:${failureCategory}`)
+        .join(", ") || "unknown";
     throw new Error(`target plugin diagnostics are not healthy (${boundedIdentifiers})`);
   }
   if (signerIsolation.operatorDenied !== true || signerIsolation.controlDenied !== true) {
