@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.22
+
+- Build and release the Go signer with Go 1.25.12, eliminating the reachable
+  standard-library vulnerabilities reported against the previous toolchain.
+- Pin signer build identities and protected-update fixtures to the exact
+  candidate used for release validation.
+- Keep installer, onboarding, and update requirements aligned with the
+  enforced signer toolchain.
+
 ## 0.1.76-rc.21
 
 - Establish the version-neutral lifecycle supervisor and target-controller
