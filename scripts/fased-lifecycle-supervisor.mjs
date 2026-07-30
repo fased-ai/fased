@@ -786,6 +786,26 @@ async function download(url, destination) {
   await pipeline(response.body, limiter, fs.createWriteStream(destination, { mode: 0o600 }));
 }
 
+async function sealSupervisorArtifact(filePath, rootUid, rootGid) {
+  const before = await fsp.lstat(filePath);
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1) {
+    fail("downloaded lifecycle release asset is not a regular single-link file");
+  }
+  await fsp.chown(filePath, rootUid, rootGid);
+  await fsp.chmod(filePath, 0o600);
+  const after = await fsp.lstat(filePath);
+  if (
+    !after.isFile() ||
+    after.isSymbolicLink() ||
+    after.nlink !== 1 ||
+    after.uid !== rootUid ||
+    after.gid !== rootGid ||
+    (after.mode & 0o777) !== 0o600
+  ) {
+    fail("downloaded lifecycle release asset did not converge to root-only ownership");
+  }
+}
+
 async function fixedExecutable(candidates, label) {
   for (const candidate of candidates) {
     try {
@@ -1176,6 +1196,12 @@ export async function stageTrustedController(request, context) {
       context.download(`${releaseUrl}/${TRUST_METADATA_NAME}`, metadataPath),
       context.download(`${releaseUrl}/${TRUST_METADATA_BUNDLE_NAME}`, bundlePath),
     ]);
+    await Promise.all(
+      [metadataPath, bundlePath].map(
+        async (filePath) =>
+          await context.sealSupervisorArtifact(filePath, context.rootUid, context.rootGid),
+      ),
+    );
     await context.verifyMetadata(
       metadataPath,
       bundlePath,
@@ -1221,6 +1247,21 @@ export async function stageTrustedController(request, context) {
       context.download(`${releaseUrl}/${metadata.evidence.sbom.asset}`, sbomPath),
       context.download(`${releaseUrl}/${metadata.evidence.vex.asset}`, vexPath),
     ]);
+    await Promise.all(
+      [
+        serverPath,
+        clientPath,
+        evidenceVerifierPath,
+        releaseManifestPath,
+        provenancePath,
+        provenanceBundlePath,
+        sbomPath,
+        vexPath,
+      ].map(
+        async (filePath) =>
+          await context.sealSupervisorArtifact(filePath, context.rootUid, context.rootGid),
+      ),
+    );
     const [serverSha256, clientSha256, evidenceVerifierSha256] = await Promise.all([
       sha256(serverPath),
       sha256(clientPath),
@@ -1890,6 +1931,7 @@ function createContext(configuration, overrides = {}) {
     readControllerIdentity: overrides.readControllerIdentity ?? readControllerIdentity,
     currentControllerMatches: overrides.currentControllerMatches ?? currentControllerMatches,
     download: overrides.download ?? download,
+    sealSupervisorArtifact: overrides.sealSupervisorArtifact ?? sealSupervisorArtifact,
     verifyMetadata: overrides.verifyMetadata ?? verifyMetadata,
     verifyReleaseEvidence: overrides.verifyReleaseEvidence ?? verifyReleaseEvidence,
     selfCheckController: overrides.selfCheckController ?? selfCheckController,
@@ -2260,5 +2302,6 @@ export const __testing = Object.freeze({
   renderBoundaryUnits,
   restoreControllerSelection,
   authorizePublicSocket,
+  sealSupervisorArtifact,
   verifyLifecycleRootTransition,
 });

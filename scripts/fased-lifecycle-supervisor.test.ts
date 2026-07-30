@@ -420,6 +420,7 @@ describe("stable lifecycle supervisor contract", () => {
           throw new Error(`unexpected asset ${name}`);
         }
         await fsp.writeFile(destination, body);
+        await fsp.chmod(destination, 0o000);
       },
     });
     const staged = await stageTrustedController(request(), context);
