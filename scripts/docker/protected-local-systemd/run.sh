@@ -27,6 +27,8 @@ rpc_port=19457
 gateway_token=fased-protected-local-fixture-token
 snapshot=/var/lib/fased-protected-local-fixture.json
 selected_target=/var/lib/fased-protected-local-fixture/selected-target-version
+release_assets=/var/lib/fased-protected-local-fixture/release-assets
+fixture_tls=/var/lib/fased-protected-local-fixture/tls
 fixture_acl_user=fased-fixture-acl
 fixture_acl_uid=2001
 
@@ -524,6 +526,123 @@ chmod 0444 \
   /var/lib/fased-protected-local-fixture/local-release-manifest.json \
   /var/lib/fased-protected-local-fixture/local-release-manifest.json.attestation.json
 
+# The product protocol accepts only the fixed official release origin. Keep
+# candidate source substitution entirely inside this disposable fixture by
+# serving an exact release layout at a fixture-owned TLS endpoint for
+# github.com. Every root-layer digest, trust-policy, evidence, and attestation
+# check still runs; only transport is substituted.
+install -d -m 0755 -o root -g root "$release_assets" "$fixture_tls"
+install -m 0644 \
+  /var/lib/fased-protected-local-fixture/local-release-manifest.json \
+  "$release_assets/fased-hosted-release-v2.json"
+install -m 0755 "$candidate_installer" "$release_assets/install.sh"
+install -m 0755 /repo/scripts/fased-lifecycle-supervisor.mjs \
+  "$release_assets/fased-lifecycle-supervisor.mjs"
+install -m 0755 /repo/scripts/fased-host-updater.mjs \
+  "$release_assets/fased-host-updater.mjs"
+install -m 0755 /repo/scripts/fased-host-updaterctl.mjs \
+  "$release_assets/fased-host-updaterctl.mjs"
+install -m 0755 /repo/scripts/privileged-release-evidence.mjs \
+  "$release_assets/fased-privileged-release-evidence.mjs"
+install -m 0644 "/artifacts/$app_asset" "$release_assets/$app_asset"
+install -m 0644 "/artifacts/$dependency_asset" "$release_assets/$dependency_asset"
+install -m 0644 /artifacts/fased-signerd-linux-amd64 \
+  "$release_assets/fased-signerd-linux-amd64"
+
+# H0 exercises one x64 host. Complete the cross-platform evidence inventory
+# with byte-identical fixture copies so the real evidence verifier can validate
+# the canonical release schema without pretending to execute other platforms.
+install -m 0644 "/artifacts/$app_asset" \
+  "$release_assets/unused-arm64-app.tar.gz"
+install -m 0644 "/artifacts/$dependency_asset" \
+  "$release_assets/unused-arm64-dependencies.tar.gz"
+for signer_asset in \
+  fased-signerd-linux-arm64 \
+  fased-signerd-darwin-amd64 \
+  fased-signerd-darwin-arm64; do
+  install -m 0644 /artifacts/fased-signerd-linux-amd64 \
+    "$release_assets/$signer_asset"
+done
+install -m 0644 \
+  "/artifacts/fased-hosted-components-linux-x64-v${version}.spdx.json" \
+  "$release_assets/fased-hosted-components-linux-x64-v${version}.spdx.json"
+install -m 0644 \
+  "/artifacts/fased-hosted-components-linux-x64-v${version}.spdx.json" \
+  "$release_assets/fased-hosted-components-linux-arm64-v${version}.spdx.json"
+install -m 0644 \
+  "/artifacts/fased-signerd-components-v${version}.spdx.json" \
+  "$release_assets/fased-signerd-components-v${version}.spdx.json"
+
+issued_at="$(date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%S.000Z)"
+expires_at="$(date -u -d '364 days' +%Y-%m-%dT%H:%M:%S.000Z)"
+/usr/local/bin/node /repo/scripts/privileged-release-evidence.mjs build \
+  --assets "$release_assets" \
+  --version "$version" \
+  --commit "$commit" \
+  --issued-at "$issued_at" \
+  --vex-decisions /repo/release/vulnerability-decisions-v1.json \
+  --output-dir "$release_assets"
+/usr/local/bin/node /repo/scripts/build-lifecycle-trust-metadata.mjs \
+  --assets "$release_assets" \
+  --root-policy /repo/release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json \
+  --version "$version" \
+  --commit "$commit" \
+  --issued-at "$issued_at" \
+  --expires-at "$expires_at" \
+  --output "$release_assets/fased-lifecycle-trust-v1.json"
+
+for bundle in \
+  fased-hosted-release-v2.json.attestation.json \
+  fased-lifecycle-supervisor.mjs.attestation.json \
+  fased-host-updater.mjs.attestation.json \
+  fased-host-updaterctl.mjs.attestation.json \
+  fased-lifecycle-trust-v1.json.attestation.json \
+  fased-privileged-provenance-v1.intoto.json.attestation.json \
+  fased-signerd-release.attestation.json; do
+  printf '{"fixtureOfflineAttestation":true}\n' >"$release_assets/$bundle"
+  chmod 0644 "$release_assets/$bundle"
+done
+
+openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
+  -subj "/CN=Fased lifecycle fixture CA" \
+  -keyout "$fixture_tls/ca.key" \
+  -out "$fixture_tls/ca.crt" >/dev/null 2>&1
+openssl req -newkey rsa:2048 -sha256 -nodes \
+  -subj "/CN=github.com" \
+  -keyout "$fixture_tls/github.key" \
+  -out "$fixture_tls/github.csr" >/dev/null 2>&1
+cat >"$fixture_tls/github.ext" <<'EOF_FIXTURE_TLS_EXT'
+subjectAltName=DNS:github.com
+keyUsage=digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+EOF_FIXTURE_TLS_EXT
+openssl x509 -req -sha256 -days 2 \
+  -in "$fixture_tls/github.csr" \
+  -CA "$fixture_tls/ca.crt" \
+  -CAkey "$fixture_tls/ca.key" \
+  -CAcreateserial \
+  -extfile "$fixture_tls/github.ext" \
+  -out "$fixture_tls/github.crt" >/dev/null 2>&1
+chmod 0600 "$fixture_tls/ca.key" "$fixture_tls/github.key"
+chmod 0644 "$fixture_tls/ca.crt" "$fixture_tls/github.crt"
+if command -v update-ca-certificates >/dev/null 2>&1; then
+  install -m 0644 "$fixture_tls/ca.crt" \
+    /usr/local/share/ca-certificates/fased-lifecycle-fixture.crt
+  update-ca-certificates >/dev/null
+else
+  install -m 0644 "$fixture_tls/ca.crt" \
+    /etc/pki/ca-trust/source/anchors/fased-lifecycle-fixture.crt
+  update-ca-trust extract
+fi
+grep -Fqx "127.0.0.1 github.com" /etc/hosts ||
+  printf '127.0.0.1 github.com\n' >>/etc/hosts
+install -d -m 0755 /etc/systemd/system.conf.d
+cat >/etc/systemd/system.conf.d/90-fased-fixture-ca.conf <<EOF_FIXTURE_SYSTEMD_CA
+[Manager]
+DefaultEnvironment=NODE_EXTRA_CA_CERTS=$fixture_tls/ca.crt
+EOF_FIXTURE_SYSTEMD_CA
+systemctl daemon-reexec
+
 cat >/usr/local/bin/curl <<'EOF_FIXTURE_CURL'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -569,12 +688,27 @@ install -d -m 0755 /usr/local/libexec
 cat >/usr/local/libexec/fased-fixture-solana-rpc.mjs <<'EOF_RPC'
 import fs from "node:fs";
 import http from "node:http";
+import https from "node:https";
 import path from "node:path";
 const port = Number(process.env.FASED_FIXTURE_RPC_PORT);
 const version = process.env.FASED_FIXTURE_VERSION;
 const legacyVersion = process.env.FASED_FIXTURE_LEGACY_VERSION;
 const genesis = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"; // pragma: allowlist secret
-http.createServer((request, response) => {
+const releaseAssets = "/var/lib/fased-protected-local-fixture/release-assets";
+const releasePrefix = `/fased-ai/fased/releases/download/v${version}/`;
+
+function serveFile(response, selected) {
+  try {
+    const stat = fs.statSync(selected);
+    if (!stat.isFile()) throw new Error("not a file");
+    response.writeHead(200, { "content-length": stat.size });
+    fs.createReadStream(selected).pipe(response);
+  } catch {
+    response.writeHead(404).end();
+  }
+}
+
+function handleRequest(request, response) {
   if (request.method === "GET" && request.url?.startsWith("/@fased%2ffased")) {
     const selectedVersion = fs.readFileSync(
       "/var/lib/fased-protected-local-fixture/selected-target-version",
@@ -584,6 +718,15 @@ http.createServer((request, response) => {
     response.end(
       JSON.stringify({ "dist-tags": { latest: selectedVersion, beta: selectedVersion } }),
     );
+    return;
+  }
+  if (request.method === "GET" && request.url?.startsWith(releasePrefix)) {
+    const asset = decodeURIComponent(request.url.slice(releasePrefix.length));
+    if (!/^[A-Za-z0-9._-]+$/.test(asset)) {
+      response.writeHead(400).end();
+      return;
+    }
+    serveFile(response, path.join(releaseAssets, asset));
     return;
   }
   if (request.method === "GET" && request.url?.startsWith(`/v${version}/`)) {
@@ -599,15 +742,10 @@ http.createServer((request, response) => {
           ? "/var/lib/fased-protected-local-fixture/local-release-manifest.json"
           : asset === "fased-hosted-release-v2.json.attestation.json"
             ? "/var/lib/fased-protected-local-fixture/local-release-manifest.json.attestation.json"
-            : path.join("/artifacts", asset);
-    try {
-      const stat = fs.statSync(selected);
-      if (!stat.isFile()) throw new Error("not a file");
-      response.writeHead(200, { "content-length": stat.size });
-      fs.createReadStream(selected).pipe(response);
-    } catch {
-      response.writeHead(404).end();
-    }
+            : fs.existsSync(path.join(releaseAssets, asset))
+              ? path.join(releaseAssets, asset)
+              : path.join("/artifacts", asset);
+    serveFile(response, selected);
     return;
   }
   if (
@@ -621,14 +759,7 @@ http.createServer((request, response) => {
       return;
     }
     const selected = path.join("/legacy-artifacts", asset);
-    try {
-      const stat = fs.statSync(selected);
-      if (!stat.isFile()) throw new Error("not a file");
-      response.writeHead(200, { "content-length": stat.size });
-      fs.createReadStream(selected).pipe(response);
-    } catch {
-      response.writeHead(404).end();
-    }
+    serveFile(response, selected);
     return;
   }
   let raw = "";
@@ -650,7 +781,18 @@ http.createServer((request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ jsonrpc: "2.0", id: input.id ?? 1, result }));
   });
-}).listen(port, "127.0.0.1");
+}
+
+http.createServer(handleRequest).listen(port, "127.0.0.1");
+https
+  .createServer(
+    {
+      key: fs.readFileSync("/var/lib/fased-protected-local-fixture/tls/github.key"),
+      cert: fs.readFileSync("/var/lib/fased-protected-local-fixture/tls/github.crt"),
+    },
+    handleRequest,
+  )
+  .listen(443, "127.0.0.1");
 EOF_RPC
 cat >/usr/local/libexec/fased-fixture-legacy-gateway.mjs <<'EOF_LEGACY_GATEWAY'
 import http from "node:http";

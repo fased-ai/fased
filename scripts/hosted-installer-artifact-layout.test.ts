@@ -340,6 +340,34 @@ describe("attested Hosting installer artifact layout", () => {
     expect(fixture).not.toContain("</repo/install.sh");
   });
 
+  it("keeps candidate transport substitution fixture-owned and outside the product protocol", () => {
+    const fixture = fs.readFileSync(
+      path.join(root, "scripts/docker/protected-local-systemd/run.sh"),
+      "utf8",
+    );
+    const supervisor = fs.readFileSync(
+      path.join(root, "scripts/fased-lifecycle-supervisor.mjs"),
+      "utf8",
+    );
+    const updater = fs.readFileSync(path.join(root, "scripts/fased-host-updater.mjs"), "utf8");
+    expect(supervisor).toContain(
+      'const RELEASE_BASE = "https://github.com/fased-ai/fased/releases/download"',
+    );
+    expect(updater).toContain(
+      'const RELEASE_BASE = "https://github.com/fased-ai/fased/releases/download"',
+    );
+    expect(supervisor).not.toContain("FASED_HOSTED_ARTIFACT_BASE_URL");
+    expect(updater).not.toContain("FASED_HOSTED_ARTIFACT_BASE_URL");
+    expect(fixture).toContain("DefaultEnvironment=NODE_EXTRA_CA_CERTS=");
+    expect(fixture).toContain("127.0.0.1 github.com");
+    expect(fixture).toContain("/repo/scripts/privileged-release-evidence.mjs build");
+    expect(fixture).toContain("/repo/scripts/build-lifecycle-trust-metadata.mjs");
+    expect(fixture).toContain(
+      "const releasePrefix = `/fased-ai/fased/releases/download/v${version}/`",
+    );
+    expect(fixture).not.toContain("/etc/fased/testing");
+  });
+
   it("dispatches standalone Hosting execution through the attested bundle bootstrap", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-hosting-bootstrap-dispatch-"));
     try {
