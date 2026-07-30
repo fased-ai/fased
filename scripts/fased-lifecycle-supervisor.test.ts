@@ -154,6 +154,30 @@ function embeddedTrust() {
 }
 
 describe("stable lifecycle supervisor contract", () => {
+  it("restores execute permission on private directories under the service umask", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-supervisor-private-"));
+    const directory = path.join(root, "transaction");
+    const uid = process.getuid?.() ?? 0;
+    const gid = process.getgid?.() ?? 0;
+    try {
+      const created = await __testing.privateMkdtemp(`${directory}-`, uid, gid, {
+        ...fsp,
+        mkdtemp: async () => {
+          await fsp.mkdir(directory, { mode: 0o600 });
+          return directory;
+        },
+      });
+      expect(created).toBe(directory);
+      expect(await fsp.stat(directory)).toMatchObject({ uid, gid });
+      expect((await fsp.stat(directory)).mode & 0o777).toBe(0o700);
+      await expect(fsp.writeFile(path.join(directory, "metadata.json"), "{}\n")).resolves.toBe(
+        undefined,
+      );
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("tightens the public socket before transferring ownership", async () => {
     const operations: Array<["chmod" | "chown", string, number, number?]> = [];
     const socketPath = "/run/fased-local-controller/0123456789abcdef/request.sock";

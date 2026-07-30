@@ -806,6 +806,32 @@ async function sealSupervisorArtifact(filePath, rootUid, rootGid) {
   }
 }
 
+async function privateMkdtemp(prefix, rootUid, rootGid, operations = fsp) {
+  const directory = await operations.mkdtemp(prefix);
+  try {
+    const before = await operations.lstat(directory);
+    if (!before.isDirectory() || before.isSymbolicLink()) {
+      fail("lifecycle transaction directory is not a private directory");
+    }
+    await operations.chown(directory, rootUid, rootGid);
+    await operations.chmod(directory, 0o700);
+    const after = await operations.lstat(directory);
+    if (
+      !after.isDirectory() ||
+      after.isSymbolicLink() ||
+      after.uid !== rootUid ||
+      after.gid !== rootGid ||
+      (after.mode & 0o777) !== 0o700
+    ) {
+      fail("lifecycle transaction directory did not converge to root-only access");
+    }
+    return directory;
+  } catch (error) {
+    await operations.rm(directory, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
 async function fixedExecutable(candidates, label) {
   for (const candidate of candidates) {
     try {
@@ -1176,8 +1202,10 @@ export async function stageTrustedController(request, context) {
     fsp.mkdir(paths.supervisorStateDir, { recursive: true, mode: 0o700 }),
     fsp.mkdir(paths.releasesDir, { recursive: true, mode: 0o755 }),
   ]);
-  const downloadRoot = await fsp.mkdtemp(
+  const downloadRoot = await privateMkdtemp(
     path.join(paths.supervisorStateDir, `.download-${request.version}-`),
+    context.rootUid,
+    context.rootGid,
   );
   const releaseUrl = `${RELEASE_BASE}/v${request.version}`;
   const metadataPath = path.join(downloadRoot, TRUST_METADATA_NAME);
@@ -1322,8 +1350,10 @@ export async function stageTrustedController(request, context) {
       if (error?.code !== "ENOENT") {
         throw error;
       }
-      stagingGeneration = await fsp.mkdtemp(
+      stagingGeneration = await privateMkdtemp(
         path.join(paths.releasesDir, `.generation-${request.version}-`),
+        context.rootUid,
+        context.rootGid,
       );
       await Promise.all([
         atomicCopy(serverPath, path.join(stagingGeneration, CONTROLLER_SERVER_NAME)),
@@ -2314,6 +2344,7 @@ export const __testing = Object.freeze({
   renderBoundaryUnits,
   restoreControllerSelection,
   authorizePublicSocket,
+  privateMkdtemp,
   sealSupervisorArtifact,
   verifyLifecycleRootTransition,
 });
