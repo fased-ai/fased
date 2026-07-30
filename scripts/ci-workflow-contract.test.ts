@@ -98,4 +98,18 @@ describe("CI workflow routing", () => {
     expect(fixture).not.toContain("/etc/fased/testing");
     expect(fixture).toContain("/var/lib/fased-protected-local-fixture");
   });
+
+  it("keeps stale-session update resolution bound to the exact fixture candidate", async () => {
+    const fixture = await readFile(
+      resolve(repoRoot, "scripts/docker/protected-local-systemd/run.sh"),
+      "utf8",
+    );
+    const helperStart = fixture.indexOf("run_as_stale_operator() {");
+    const helperEnd = fixture.indexOf("\n}", helperStart);
+    expect(helperStart).toBeGreaterThanOrEqual(0);
+    expect(helperEnd).toBeGreaterThan(helperStart);
+    expect(fixture.slice(helperStart, helperEnd)).toContain(
+      'npm_config_registry="http://127.0.0.1:$rpc_port"',
+    );
+  });
 });
