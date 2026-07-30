@@ -1417,10 +1417,7 @@ describe("root-owned hosted updater protocol", () => {
   });
 
   it("bounds product health to one application process at a time", async () => {
-    const invocations: Array<{
-      label: string;
-      options?: { identity?: "operator" | "gateway" };
-    }> = [];
+    const invocations: string[] = [];
     let active = 0;
     let maximumActive = 0;
     const results = [
@@ -1429,12 +1426,11 @@ describe("root-owned hosted updater protocol", () => {
       { ok: true, payload: { entries: [] } },
       { configured: false },
       { walletId: null },
-      { ok: true, errors: [], diagnostics: [] },
     ];
 
     const evidence = await __testing.collectCrossProductApplicationHealthEvidence(
-      async (_args, label, options) => {
-        invocations.push({ label, options });
+      async (_args, label) => {
+        invocations.push(label);
         active += 1;
         maximumActive = Math.max(maximumActive, active);
         await new Promise((resolve) => setTimeout(resolve, 1));
@@ -1443,25 +1439,96 @@ describe("root-owned hosted updater protocol", () => {
       },
       async () => {
         expect(active).toBe(0);
-        invocations.push({ label: "signer isolation" });
+        invocations.push("signer isolation");
         return { operatorDenied: true, controlDenied: true };
+      },
+      async () => {
+        expect(active).toBe(0);
+        invocations.push("plugins");
+        return { ok: true, errors: [], diagnostics: [] };
       },
     );
 
     expect(maximumActive).toBe(1);
     expect(invocations).toEqual([
-      { label: "Wallet", options: undefined },
-      { label: "Wallet signer", options: undefined },
-      { label: "Mining", options: undefined },
-      { label: "Fased Network", options: undefined },
-      { label: "Fased Network bond", options: undefined },
-      { label: "plugins", options: { identity: "gateway" } },
-      { label: "signer isolation", options: undefined },
+      "Wallet",
+      "Wallet signer",
+      "Mining",
+      "Fased Network",
+      "Fased Network bond",
+      "plugins",
+      "signer isolation",
     ]);
     expect(evidence).toMatchObject({
       plugins: { ok: true },
       signerIsolation: { operatorDenied: true, controlDenied: true },
     });
+  });
+
+  it("accepts only the target Gateway plugin cache bound to release, config, and sources", async () => {
+    const { context, paths } = await createFixture({ managedApplication: true });
+    const topology = await context.discoverApplicationTopology();
+    const version = "1.2.3";
+    const targetRoot = path.join(paths.applicationReleasesDir!, `v${version}`);
+    const source = path.join(targetRoot, "extensions", "fixture", "index.js");
+    const cachePath = path.join(topology.stateDir, "cache", "plugin-status.json");
+    const config = {
+      plugins: {
+        entries: {
+          fixture: { enabled: true },
+        },
+      },
+    };
+    await Promise.all([
+      fsp.mkdir(path.dirname(source), { recursive: true }),
+      fsp.mkdir(path.dirname(cachePath), { recursive: true }),
+    ]);
+    await Promise.all([
+      fsp.writeFile(source, "export {};\n"),
+      fsp.writeFile(topology.configPath, `${JSON.stringify(config)}\n`),
+    ]);
+    const sourceStat = await fsp.stat(source);
+    const cache = {
+      schemaVersion: 2,
+      packageVersion: version,
+      generatedAt: new Date(0).toISOString(),
+      configPath: topology.configPath,
+      configFingerprint: createHash("sha256")
+        .update(JSON.stringify({ plugins: config.plugins }))
+        .digest("hex"),
+      plugins: [
+        {
+          id: "fixture",
+          name: "fixture",
+          source,
+          origin: "bundled",
+          status: "loaded",
+          channelIds: [],
+          providerIds: [],
+          hookNames: [],
+          sourceMtimeMs: sourceStat.mtimeMs,
+        },
+      ],
+      diagnostics: [],
+    };
+    await fsp.writeFile(cachePath, `${JSON.stringify(cache)}\n`, { mode: 0o600 });
+
+    await expect(
+      __testing.readTargetPluginStatusCache(context, topology, {
+        version,
+        application: { targetRoot },
+      }),
+    ).resolves.toEqual({ ok: true, errors: [], diagnostics: [] });
+
+    await fsp.writeFile(cachePath, `${JSON.stringify({ ...cache, packageVersion: "1.2.2" })}\n`, {
+      mode: 0o600,
+    });
+    await expect(
+      __testing.readTargetPluginStatusCache(context, topology, {
+        version,
+        application: { targetRoot },
+      }),
+    ).rejects.toThrow("stale or malformed");
   });
 
   it("creates every canonical shared application directory under root control", async () => {

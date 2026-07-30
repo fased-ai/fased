@@ -4563,6 +4563,138 @@ function healthObject(value, label) {
   return value;
 }
 
+function canonicalizePluginConfigValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(canonicalizePluginConfigValue);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .toSorted(([left], [right]) => left.localeCompare(right))
+        .map(([key, child]) => [key, canonicalizePluginConfigValue(child)]),
+    );
+  }
+  return value;
+}
+
+function pluginStatusConfigFingerprint(config) {
+  return createHash("sha256")
+    .update(
+      JSON.stringify(
+        canonicalizePluginConfigValue({
+          plugins: config?.plugins,
+        }),
+      ),
+    )
+    .digest("hex");
+}
+
+function targetPluginStatusCachePath(topology) {
+  return path.join(
+    topology.stateDir,
+    topology.profile === "protected-local" ? "cache" : "runtime",
+    "plugin-status.json",
+  );
+}
+
+function pathIsStrictlyInside(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+async function readTargetPluginStatusCache(context, topology, journal) {
+  const targetRoot = journal.application?.targetRoot;
+  const expectedTargetRoot = protectedApplicationReleaseRoot(context.paths, journal.version);
+  if (!targetRoot || path.resolve(targetRoot) !== expectedTargetRoot) {
+    throw new Error("target plugin application identity is unavailable");
+  }
+  const cachePath = targetPluginStatusCachePath(topology);
+  const cacheStat = await fsp.lstat(cachePath);
+  if (
+    !cacheStat.isFile() ||
+    cacheStat.isSymbolicLink() ||
+    cacheStat.nlink !== 1 ||
+    cacheStat.size < 2 ||
+    cacheStat.size > 2 * 1024 * 1024
+  ) {
+    throw new Error("target Gateway plugin status cache is unsafe");
+  }
+  const [cache, config] = await Promise.all([
+    fsp.readFile(cachePath, "utf8").then(JSON.parse),
+    fsp.readFile(topology.configPath, "utf8").then(JSON.parse),
+  ]);
+  if (
+    cache?.schemaVersion !== 2 ||
+    cache.packageVersion !== journal.version ||
+    typeof cache.generatedAt !== "string" ||
+    !Number.isFinite(Date.parse(cache.generatedAt)) ||
+    cache.configPath !== topology.configPath ||
+    cache.configFingerprint !== pluginStatusConfigFingerprint(config) ||
+    !Array.isArray(cache.plugins) ||
+    !Array.isArray(cache.diagnostics) ||
+    cache.plugins.length > 1024 ||
+    cache.diagnostics.length > 1024
+  ) {
+    throw new Error("target Gateway plugin status cache is stale or malformed");
+  }
+  const canonicalTargetRoot = await fsp.realpath(targetRoot);
+  for (const plugin of cache.plugins) {
+    if (
+      !plugin ||
+      typeof plugin !== "object" ||
+      Array.isArray(plugin) ||
+      typeof plugin.id !== "string" ||
+      plugin.id.length === 0 ||
+      plugin.id.length > 256 ||
+      typeof plugin.source !== "string" ||
+      plugin.source.length === 0 ||
+      plugin.source.length > 4096 ||
+      typeof plugin.origin !== "string" ||
+      !new Set(["loaded", "disabled", "error"]).has(plugin.status) ||
+      !(plugin.sourceMtimeMs === null || Number.isFinite(plugin.sourceMtimeMs))
+    ) {
+      throw new Error("target Gateway plugin status entry is malformed");
+    }
+    const source = path.resolve(plugin.source);
+    const canonicalSource = await fsp.realpath(source).catch((error) => {
+      if (plugin.sourceMtimeMs === null && error?.code === "ENOENT") {
+        return null;
+      }
+      throw error;
+    });
+    if (
+      plugin.origin === "bundled" &&
+      (!canonicalSource || !pathIsStrictlyInside(canonicalTargetRoot, canonicalSource))
+    ) {
+      throw new Error("target Gateway bundled plugin status escaped the target application");
+    }
+    if (plugin.sourceMtimeMs !== null) {
+      const sourceStat = await fsp.stat(canonicalSource);
+      if (!sourceStat.isFile() || Math.abs(sourceStat.mtimeMs - plugin.sourceMtimeMs) > 0.5) {
+        throw new Error("target Gateway plugin status source identity changed");
+      }
+    }
+  }
+  for (const diagnostic of cache.diagnostics) {
+    if (
+      !diagnostic ||
+      typeof diagnostic !== "object" ||
+      Array.isArray(diagnostic) ||
+      typeof diagnostic.level !== "string" ||
+      typeof diagnostic.message !== "string"
+    ) {
+      throw new Error("target Gateway plugin diagnostic is malformed");
+    }
+  }
+  const errors = cache.plugins.filter((plugin) => plugin.status === "error");
+  const diagnostics = cache.diagnostics.filter((entry) => entry?.level === "error");
+  return {
+    ok: errors.length === 0 && diagnostics.length === 0,
+    errors,
+    diagnostics,
+  };
+}
+
 function unwrapHealthPayload(value) {
   let current = value;
   for (let index = 0; index < 3; index += 1) {
@@ -4827,7 +4959,7 @@ async function runTargetApplicationCommand(
   journal,
   args,
   label,
-  { json = true, identity = "operator" } = {},
+  { json = true } = {},
 ) {
   const targetRoot = journal.application?.targetRoot;
   if (
@@ -4848,32 +4980,19 @@ async function runTargetApplicationCommand(
   }
   const { token } = await readGatewayHealthConfiguration(topology);
   const nodeBinary = path.resolve(context.protectedNodeBinary);
-  if (!new Set(["operator", "gateway"]).has(identity)) {
-    throw new Error("target application health identity is invalid");
-  }
-  const runAsGateway = identity === "gateway";
-  const uid = runAsGateway ? topology.gateway.uid : topology.operator.uid;
-  const gid = runAsGateway ? topology.configGroup.gid : topology.operator.gid;
-  const name = runAsGateway ? topology.gateway.user : topology.operator.name;
-  const pluginStatusCachePath = path.join(
-    topology.stateDir,
-    topology.profile === "protected-local" ? "cache" : "runtime",
-    "plugin-status.json",
-  );
   const { stdout } = await execFileAsync(nodeBinary, [entrypoint, ...args], {
-    uid,
-    gid,
+    uid: topology.operator.uid,
+    gid: topology.operator.gid,
     env: {
       HOME: topology.operator.home,
-      USER: name,
-      LOGNAME: name,
+      USER: topology.operator.name,
+      LOGNAME: topology.operator.name,
       PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
       FASED_NODE: nodeBinary,
       FASED_STATE_DIR: topology.stateDir,
       FASED_CONFIG_PATH: topology.configPath,
       FASED_HOST_PROFILE: topology.profile === "hosting" ? "hosting" : "local",
       FASED_GATEWAY_TOKEN: token,
-      ...(runAsGateway ? { FASED_PLUGIN_STATUS_CACHE_PATH: pluginStatusCachePath } : {}),
     },
     timeout: 15_000,
     maxBuffer: 1024 * 1024,
@@ -4937,7 +5056,11 @@ function targetMiningHealthArgs() {
   return ["mining", "history", "--timeout", "5000", "--json"];
 }
 
-async function collectCrossProductApplicationHealthEvidence(runCommand, probeIsolation) {
+async function collectCrossProductApplicationHealthEvidence(
+  runCommand,
+  probeIsolation,
+  probePlugins,
+) {
   // Each CLI process loads the application and native plugin graph. Running all
   // product probes at once can exhaust a 2 GiB installation and can make
   // plugin diagnostics observe another process's transient native-loader work.
@@ -4951,9 +5074,7 @@ async function collectCrossProductApplicationHealthEvidence(runCommand, probeIso
     ["federation", "bond-wallet", "status", "--json"],
     "Fased Network bond",
   );
-  const plugins = await runCommand(["plugins", "doctor", "--json"], "plugins", {
-    identity: "gateway",
-  });
+  const plugins = await probePlugins();
   const signerIsolation = await probeIsolation();
   return { walletStatus, walletDoctor, mining, network, bond, plugins, signerIsolation };
 }
@@ -4967,6 +5088,7 @@ async function probeCrossProductApplicationHealth(context, topology, journal) {
       async (args, label) =>
         await runTargetApplicationCommand(context, topology, journal, args, label),
       async () => await probeSignerSocketIsolation(context, topology),
+      async () => await readTargetPluginStatusCache(context, topology, journal),
     );
   return validateCrossProductApplicationEvidence({
     topology,
@@ -5705,6 +5827,9 @@ async function authorizeGatewayRelease(request, context) {
     journal = await writeJournal(context, {
       ...journal,
       schemaMigration: await completeLifecycleSchemaMigrations(context, journal),
+    });
+    await fsp.rm(targetPluginStatusCachePath(context.applicationTopology), {
+      force: true,
     });
     await removeGatewayGate(context);
     try {
@@ -6911,6 +7036,7 @@ export const __testing = {
   parseServerConfiguration,
   prepareControllerServerContext,
   prepareSignerRelease,
+  readTargetPluginStatusCache,
   protectedLocalControllerConfiguration,
   ensureProtectedLocalControllerServicePolicy,
   ensureRootManagedSharedApplicationDirectories,
