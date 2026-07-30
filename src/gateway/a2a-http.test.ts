@@ -14,8 +14,8 @@ import { createEphemeralDeviceIdentity, type DeviceIdentity } from "../infra/dev
 import { createA2aHandler, type A2aHttpHandler } from "./a2a-http.js";
 import { issueDurableA2aPaymentChallenge } from "./a2a-task-store.js";
 
-const TEST_PAYER = "CktRuQ2mttgRG4jNqNLPBJW7zW6zRE3xBepcGQpXU7Yf";
-const TEST_PAYEE = "GgBaCs3NqYt1dJU3puKoZ3qr7hT4YFj9bZHzszoqkqTD";
+const TEST_PAYER = "CktRuQ2mttgRG4jNqNLPBJW7zW6zRE3xBepcGQpXU7Yf"; // pragma: allowlist secret
+const TEST_PAYEE = "GgBaCs3NqYt1dJU3puKoZ3qr7hT4YFj9bZHzszoqkqTD"; // pragma: allowlist secret
 
 async function issueTestPaymentChallenge(params: {
   taskId: string;
