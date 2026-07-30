@@ -3837,6 +3837,7 @@ async function discoverProtectedApplicationTopology(context) {
   const groupFields = await systemAccountRecord("group", configGroup);
   const configGid = Number(groupFields[2]);
   const gatewayUid = Number(gatewayFields[2]);
+  const gatewayGid = Number(gatewayFields[3]);
   const operatorUid = Number(operatorFields[2]);
   const operatorGid = Number(operatorFields[3]);
   const operatorHome = String(operatorFields[5] || "");
@@ -3850,6 +3851,8 @@ async function discoverProtectedApplicationTopology(context) {
     configGid <= 0 ||
     !Number.isSafeInteger(gatewayUid) ||
     gatewayUid <= 0 ||
+    !Number.isSafeInteger(gatewayGid) ||
+    gatewayGid <= 0 ||
     !Number.isSafeInteger(operatorUid) ||
     operatorUid !== stateStat.uid ||
     !Number.isSafeInteger(operatorGid) ||
@@ -3888,6 +3891,7 @@ async function discoverProtectedApplicationTopology(context) {
     gateway: Object.freeze({
       user: gatewayUser,
       uid: gatewayUid,
+      gid: gatewayGid,
       unitPath: gatewayUnitPath,
     }),
     configGroup: Object.freeze({
@@ -4803,29 +4807,21 @@ async function runTargetApplicationCommand(
     throw new Error("target application entrypoint is invalid for product health");
   }
   const { token } = await readGatewayHealthConfiguration(topology);
-  const runuser = await fixedExecutable(["/usr/sbin/runuser", "/usr/bin/runuser"], "runuser");
   const nodeBinary = path.resolve(context.protectedNodeBinary);
-  const command = [
-    "-u",
-    topology.operator.name,
-    "--",
-    "/usr/bin/env",
-    "-i",
-    `HOME=${topology.operator.home}`,
-    `USER=${topology.operator.name}`,
-    `LOGNAME=${topology.operator.name}`,
-    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-    `FASED_NODE=${nodeBinary}`,
-    `FASED_STATE_DIR=${topology.stateDir}`,
-    `FASED_CONFIG_PATH=${topology.configPath}`,
-    `FASED_HOST_PROFILE=${topology.profile === "hosting" ? "hosting" : "local"}`,
-    `FASED_GATEWAY_TOKEN=${token}`,
-    nodeBinary,
-    entrypoint,
-    ...args,
-  ];
-  const { stdout } = await execFileAsync(runuser, command, {
-    env: { PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" },
+  const { stdout } = await execFileAsync(nodeBinary, [entrypoint, ...args], {
+    uid: topology.operator.uid,
+    gid: topology.operator.gid,
+    env: {
+      HOME: topology.operator.home,
+      USER: topology.operator.name,
+      LOGNAME: topology.operator.name,
+      PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      FASED_NODE: nodeBinary,
+      FASED_STATE_DIR: topology.stateDir,
+      FASED_CONFIG_PATH: topology.configPath,
+      FASED_HOST_PROFILE: topology.profile === "hosting" ? "hosting" : "local",
+      FASED_GATEWAY_TOKEN: token,
+    },
     timeout: 15_000,
     maxBuffer: 1024 * 1024,
   });
@@ -4851,7 +4847,6 @@ async function assertSocketDeniedToGateway(context, topology, socketPath, label)
   if (!stat.isSocket() || stat.isSymbolicLink()) {
     throw new Error(`target signer ${label} socket is invalid`);
   }
-  const runuser = await fixedExecutable(["/usr/sbin/runuser", "/usr/bin/runuser"], "runuser");
   const nodeBinary = path.resolve(context.protectedNodeBinary);
   const probe = [
     'const net=require("node:net");',
@@ -4862,15 +4857,13 @@ async function assertSocketDeniedToGateway(context, topology, socketPath, label)
     'socket.once("error",(error)=>process.exit(error.code==="EACCES"||error.code==="EPERM"?0:44));',
   ].join("");
   try {
-    await execFileAsync(
-      runuser,
-      ["-u", topology.gateway.user, "--", nodeBinary, "-e", probe, socketPath],
-      {
-        env: { PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" },
-        timeout: 5_000,
-        maxBuffer: 16 * 1024,
-      },
-    );
+    await execFileAsync(nodeBinary, ["-e", probe, socketPath], {
+      uid: topology.gateway.uid,
+      gid: topology.gateway.gid,
+      env: { PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" },
+      timeout: 5_000,
+      maxBuffer: 16 * 1024,
+    });
   } catch (error) {
     throw new Error(`target Gateway can reach or ambiguously probe signer ${label} authority`, {
       cause: error,
@@ -4885,6 +4878,10 @@ async function probeSignerSocketIsolation(context, topology) {
     assertSocketDeniedToGateway(context, topology, sockets.control, "control"),
   ]);
   return { operatorDenied: true, controlDenied: true };
+}
+
+function targetMiningHealthArgs() {
+  return ["mining", "history", "--timeout", "5000", "--json"];
 }
 
 async function probeCrossProductApplicationHealth(context, topology, journal) {
@@ -4907,21 +4904,7 @@ async function probeCrossProductApplicationHealth(context, topology, journal) {
         ["wallet", "signer", "doctor", "--json"],
         "Wallet signer",
       ),
-      runTargetApplicationCommand(
-        context,
-        topology,
-        journal,
-        [
-          "mining",
-          "history",
-          "--timeout",
-          "5000",
-          "--json",
-          "--url",
-          `ws://127.0.0.1:${(await readGatewayHealthConfiguration(topology)).port}`,
-        ],
-        "Mining",
-      ),
+      runTargetApplicationCommand(context, topology, journal, targetMiningHealthArgs(), "Mining"),
       runTargetApplicationCommand(
         context,
         topology,
@@ -4964,12 +4947,12 @@ async function verifyCrossProductHealth(context, journal) {
       context.applicationTopology = value;
       return value;
     }));
-  const [gateway, signerRelease, state, product] = await Promise.all([
+  const [gateway, signerRelease, state] = await Promise.all([
     context.verifyGateway(journal.version),
-    context.probeSigner(journal.version),
+    context.probeSigner(journal.release),
     context.verifyApplicationState(journal.declaredState),
-    context.probeApplicationHealth(topology, journal),
   ]);
+  const product = await context.probeApplicationHealth(topology, journal);
   const signer = parseSignerReleaseIdentity(signerRelease, journal.version);
   return validateCrossProductHealthReceipt({
     schemaVersion: 1,
@@ -5549,6 +5532,18 @@ async function restoreProtectedApplication(context, journal) {
   }
 }
 
+function rollbackHasPreviousGatewayRuntime(journal) {
+  if (journal.application) {
+    return journal.application.previousRoot != null;
+  }
+  if (journal.managedApplication) {
+    return journal.managedApplication.previousRoot != null;
+  }
+  // Signer-only transactions predate root-managed application activation.
+  // Preserve their established rollback behavior.
+  return true;
+}
+
 async function rollbackSignerRelease(request, context, { preserveGatewayGate = false } = {}) {
   let journal = await readJournal(context);
   if (!journal) {
@@ -5563,6 +5558,7 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
     };
   }
   assertMatchingTransaction(journal, request);
+  const restartPreviousGateway = rollbackHasPreviousGatewayRuntime(journal);
   await writeUpdateGates(context, journal);
   if (journal.phase === "restored") {
     await restoreManagedApplication(context, journal);
@@ -5574,11 +5570,13 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
     await removeManagedUpdateLock(journal);
     if (!preserveGatewayGate) {
       await removeUpdateGates(context);
-      try {
-        await context.startGateway();
-      } catch (error) {
-        if (!/not found|not loaded|no such file/i.test(error?.message || "")) {
-          throw error;
+      if (restartPreviousGateway) {
+        try {
+          await context.startGateway();
+        } catch (error) {
+          if (!/not found|not loaded|no such file/i.test(error?.message || "")) {
+            throw error;
+          }
         }
       }
     }
@@ -5632,11 +5630,13 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
   await removeManagedUpdateLock(journal);
   if (!preserveGatewayGate) {
     await removeUpdateGates(context);
-    try {
-      await context.startGateway();
-    } catch (error) {
-      if (!/not found|not loaded|no such file/i.test(error?.message || "")) {
-        throw error;
+    if (restartPreviousGateway) {
+      try {
+        await context.startGateway();
+      } catch (error) {
+        if (!/not found|not loaded|no such file/i.test(error?.message || "")) {
+          throw error;
+        }
       }
     }
   }
@@ -6900,6 +6900,7 @@ export const __testing = {
   stageOfficialControllerRelease,
   stageOfficialCandidate,
   stageProtectedApplicationRelease,
+  targetMiningHealthArgs,
   transactionPaths,
   updateControllerRelease,
   writeJournal,

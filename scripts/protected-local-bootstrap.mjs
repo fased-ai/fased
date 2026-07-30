@@ -2064,6 +2064,31 @@ function legacyGatewaySuppressionPaths(spec, layout) {
   });
 }
 
+function isValidLegacyGatewayReleaseHealth(health) {
+  return (
+    RELEASE_PATTERN.test(health?.version ?? "") &&
+    new Set(["managed-package", "packaged-runtime"]).has(health?.runtimeSource)
+  );
+}
+
+async function waitForLegacyGatewayReleaseHealth(
+  spec,
+  {
+    timeoutMs = 30_000,
+    probe = probeGatewayHealth,
+    wait = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+    now = Date.now,
+  } = {},
+) {
+  const deadline = now() + timeoutMs;
+  let health = await probe(spec);
+  while (!isValidLegacyGatewayReleaseHealth(health) && !health?.conflict && now() < deadline) {
+    await wait(100);
+    health = await probe(spec);
+  }
+  return health;
+}
+
 async function captureLegacyGatewayState(spec, layout) {
   const paths = legacyGatewaySuppressionPaths(spec, layout);
   const dropInSnapshot = await captureFile(paths.dropIn);
@@ -2104,12 +2129,9 @@ async function captureLegacyGatewayState(spec, layout) {
       dropInSnapshot,
     };
   }
-  const health = properties.ActiveState === "active" ? await probeGatewayHealth(spec) : null;
-  if (
-    health &&
-    (!RELEASE_PATTERN.test(health.version) ||
-      !new Set(["managed-package", "packaged-runtime"]).has(health.runtimeSource))
-  ) {
+  const health =
+    properties.ActiveState === "active" ? await waitForLegacyGatewayReleaseHealth(spec) : null;
+  if (health && !isValidLegacyGatewayReleaseHealth(health)) {
     fail(`legacy Local Gateway has no exact healthy release identity (${health.detail})`);
   }
   const state = {
@@ -3078,6 +3100,7 @@ export const __testing = Object.freeze({
   resolveLegacySignerPaths,
   sharedApplicationStateDirectoriesForAclVerification,
   protectedLocalGatewayHealthMatches,
+  waitForLegacyGatewayReleaseHealth,
   previousLegacyGatewayVersion,
   verifySignerReleaseIdentity,
   buildControllerIdentity,

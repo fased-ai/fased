@@ -330,6 +330,39 @@ describe("protected Local bootstrap contract", () => {
     ).toBe(false);
   });
 
+  it("waits through a transient legacy Gateway restart and accepts its exact release identity", async () => {
+    const observed = [
+      {
+        ok: false,
+        conflict: false,
+        version: "",
+        runtimeSource: "",
+        detail: "connect ECONNREFUSED 127.0.0.1:18789",
+      },
+      {
+        ok: false,
+        conflict: true,
+        version: "0.1.75",
+        runtimeSource: "managed-package",
+        detail: "status=200 version=0.1.75 runtimeSource=managed-package",
+      },
+    ];
+    let probes = 0;
+    const health = await __testing.waitForLegacyGatewayReleaseHealth(
+      {},
+      {
+        probe: async () => observed[Math.min(probes++, observed.length - 1)],
+        wait: async () => {},
+        now: () => 0,
+      },
+    );
+    expect(probes).toBe(2);
+    expect(health).toMatchObject({
+      version: "0.1.75",
+      runtimeSource: "managed-package",
+    });
+  });
+
   it("binds rollback health to the exact previous managed release", () => {
     expect(
       __testing.previousLegacyGatewayVersion({
@@ -689,7 +722,7 @@ bootstrap_protected_local_topology activate
     expect(bootstrap).toContain("install_linux_system_dependencies 0");
   });
 
-  it("leaves protected bootstrap rollback to the shared root transaction", () => {
+  it("restores the prior managed runtime after the shared root transaction rolls back", () => {
     const installer = fs.readFileSync(path.join(process.cwd(), "install.sh"), "utf8");
     const bootstrapCall = installer.lastIndexOf("if ! bootstrap_protected_local_topology activate");
     const failureEnd = installer.indexOf("\n    fi", bootstrapCall);
@@ -698,6 +731,11 @@ bootstrap_protected_local_topology activate
     expect(failureBranch).toContain(
       "Protected Local lifecycle did not commit. Its uncommitted topology was restored.",
     );
-    expect(failureBranch).not.toContain("rollback_managed_runtime_after_failed_install");
+    expect(failureBranch).toContain("rollback_managed_runtime_after_failed_install");
+    expect(failureBranch.indexOf("rollback_managed_runtime_after_failed_install")).toBeLessThan(
+      failureBranch.indexOf(
+        "Protected Local lifecycle did not commit. Its uncommitted topology was restored.",
+      ),
+    );
   });
 });

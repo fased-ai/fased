@@ -88,10 +88,13 @@ describe("Protected Local service plan", () => {
     expect(controller).toContain("RuntimeDirectory=fased-local-controller-worker/0123456789abcdef"); // pragma: allowlist secret
     expect(controller).toContain("RuntimeDirectoryMode=0711");
     expect(controller).toContain("StateDirectoryMode=0711");
+    expect(controller).toContain("AmbientCapabilities=CAP_SETUID CAP_SETGID");
     expect(controller).toContain(
-      "ReadOnlyPaths=/opt/fased/local/0123456789abcdef/supervisor /var/lib/fased-local/0123456789abcdef/controller/supervisor /etc/systemd/system/fased-local-controller-0123456789abcdef.service",
+      "ReadOnlyPaths=/opt/fased/local/0123456789abcdef/controller /opt/fased/local/0123456789abcdef/supervisor /opt/fased/local/0123456789abcdef/signer-owner /opt/fased/local/0123456789abcdef/operator-socket-finalize /var/lib/fased-local/0123456789abcdef/controller/supervisor /etc/systemd/system/fased-local-controller-0123456789abcdef.service",
     );
-    expect(controller).not.toContain("ReadWritePaths=/opt/fased/local/0123456789abcdef ");
+    expect(controller).toContain(
+      "ReadWritePaths=/opt/fased/local/0123456789abcdef /var/lib/fased-local/0123456789abcdef/signer",
+    );
     expect(supervisor).toContain("User=root");
     expect(supervisor).toContain(
       "/opt/fased/local/0123456789abcdef/supervisor/fased-lifecycle-supervisor.mjs --profile protected-local --protected-local-instance 0123456789abcdef --operator-uid 1000 --operator-gid 62002",

@@ -280,6 +280,7 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
     gateway: {
       user: options.managedApplication ? "fsgw-0123456789abcdef" : "fased-gateway",
       uid: process.getuid(),
+      gid: process.getgid(),
       unitPath: paths.gatewayUnitPath ?? path.join(root, "systemd", "fased-gateway.service"),
     },
     configGroup: {
@@ -1216,16 +1217,17 @@ describe("root-owned hosted updater protocol", () => {
     );
   });
 
-  it("runs bounded cross-product health concurrently and persists only redacted evidence", async () => {
+  it("runs prerequisite health concurrently before product probes and persists redacted evidence", async () => {
     const { context } = await createFixture();
     let started = 0;
+    let productStarted = false;
     let releaseBarrier: (() => void) | undefined;
     const barrier = new Promise<void>((resolve) => {
       releaseBarrier = resolve;
     });
     const start = async <T>(result: T): Promise<T> => {
       started += 1;
-      if (started === 4) {
+      if (started === 3) {
         releaseBarrier?.();
       }
       await barrier;
@@ -1233,28 +1235,36 @@ describe("root-owned hosted updater protocol", () => {
     };
     context.verifyGateway = async () =>
       await start({ version: "1.2.3", runtimeSource: "managed-package" });
-    context.probeSigner = async () => await start(signerRelease("1.2.3"));
+    context.probeSigner = async (expectedRelease) => {
+      expect(expectedRelease).toEqual(signerRelease("1.2.3"));
+      return await start(signerRelease("1.2.3"));
+    };
     context.verifyApplicationState = async () =>
       await start({
         ok: true,
         preservationHash: `sha256:${"a".repeat(64)}`,
         preservationHashes: { wallet: `sha256:${"b".repeat(64)}` },
       });
-    context.probeApplicationHealth = async () =>
-      await start({
+    context.probeApplicationHealth = async () => {
+      expect(started).toBe(3);
+      productStarted = true;
+      return {
         wallet: { ok: true, evidenceDigest: `sha256:${"1".repeat(64)}` },
         mining: { ok: true, evidenceDigest: `sha256:${"2".repeat(64)}` },
         network: { ok: true, evidenceDigest: `sha256:${"3".repeat(64)}` },
         plugins: { ok: true, evidenceDigest: `sha256:${"4".repeat(64)}` },
         signerIsolation: { ok: true, evidenceDigest: `sha256:${"5".repeat(64)}` },
-      });
+      };
+    };
 
     const receipt = await __testing.verifyCrossProductHealth(context, {
       version: "1.2.3",
+      release: signerRelease("1.2.3"),
       declaredState: null,
       application: null,
     });
-    expect(started).toBe(4);
+    expect(started).toBe(3);
+    expect(productStarted).toBe(true);
     expect(receipt).toMatchObject({
       schemaVersion: 1,
       checks: {
@@ -1380,6 +1390,14 @@ describe("root-owned hosted updater protocol", () => {
     expect(() => __testing.parseBoundedJsonOutput("[plugins] no json", "plugins")).toThrow(
       "not valid JSON",
     );
+  });
+
+  it("uses verified Gateway configuration for Mining health without exposing credentials", () => {
+    const args = __testing.targetMiningHealthArgs();
+    expect(args).toEqual(["mining", "history", "--timeout", "5000", "--json"]);
+    expect(args).not.toContain("--url");
+    expect(args).not.toContain("--token");
+    expect(args).not.toContain("--password");
   });
 
   it("creates every canonical shared application directory under root control", async () => {
@@ -1684,6 +1702,7 @@ describe("root-owned hosted updater protocol", () => {
       failing.context,
     );
 
+    expect(gatewayStarts).toBe(1);
     expect(previousUnit).toBe(failingUnit);
     expect(previousLauncher).toBe(failingLauncher);
   });

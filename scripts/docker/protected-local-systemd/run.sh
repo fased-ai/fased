@@ -1268,6 +1268,8 @@ printf '%s\n' "$version" >"$selected_target"
 inject_failed_target_gateway() {
   local candidate=""
   local candidate_relative=""
+  local fault_digest=""
+  local fault_launcher=""
   local instance_id=""
   for _ in {1..12000}; do
     for candidate in /opt/fased/local/*/gateway-launch; do
@@ -1276,14 +1278,38 @@ inject_failed_target_gateway() {
       instance_id="${candidate_relative%%/*}"
       [[ -n "$instance_id" && "$instance_id" != "$candidate_relative" ]] || continue
       printf '%s\n' "$instance_id" >/tmp/injected-failure-instance
-      cat >"$candidate" <<EOF_FAILED_GATEWAY
+      fault_launcher="${candidate}.fixture-fault.$$"
+      cat >"$fault_launcher" <<EOF_FAILED_GATEWAY
 #!/usr/bin/env bash
+set -euo pipefail
 export FASED_FIXTURE_GATEWAY_PORT=$gateway_port
 export FASED_FIXTURE_LEGACY_VERSION=$legacy_gateway_version
 exec /usr/local/bin/node /usr/local/libexec/fased-fixture-legacy-gateway.mjs
 EOF_FAILED_GATEWAY
-      chmod 0755 "$candidate"
-      return 0
+      chown root:root "$fault_launcher"
+      chmod 0755 "$fault_launcher"
+      mv -f "$fault_launcher" "$candidate"
+      fault_digest="$(sha256sum "$candidate" | awk '{print $1}')"
+      for _ in {1..12000}; do
+        [[ -f "$candidate" ]] || break
+        if [[ "$(sha256sum "$candidate" | awk '{print $1}')" != "$fault_digest" ]]; then
+          fault_launcher="${candidate}.fixture-fault.$$"
+          cat >"$fault_launcher" <<EOF_FAILED_GATEWAY
+#!/usr/bin/env bash
+set -euo pipefail
+export FASED_FIXTURE_GATEWAY_PORT=$gateway_port
+export FASED_FIXTURE_LEGACY_VERSION=$legacy_gateway_version
+exec /usr/local/bin/node /usr/local/libexec/fased-fixture-legacy-gateway.mjs
+EOF_FAILED_GATEWAY
+          chown root:root "$fault_launcher"
+          chmod 0755 "$fault_launcher"
+          mv -f "$fault_launcher" "$candidate"
+          return 0
+        fi
+        sleep 0.005
+      done
+      echo "failed to inject the staged target Gateway activation fault" >&2
+      return 1
     done
     sleep 0.01
   done
@@ -1301,7 +1327,10 @@ else
 fi
 wait "$injector_pid"
 test "$update_failure_status" -ne 0
-grep -F "non-target service" /tmp/protected-bootstrap-failure.err >/dev/null
+grep -F "target release failed and was rolled back" /tmp/protected-bootstrap-failure.err >/dev/null
+grep -F \
+  "target Gateway did not become healthy as v${version}: target Gateway identity is ${legacy_version}/managed-package" \
+  /tmp/protected-bootstrap-failure.err >/dev/null
 failure_instance="$(cat /tmp/injected-failure-instance)"
 wait_for_gateway_version "$legacy_gateway_version"
 verify_original_home_acl

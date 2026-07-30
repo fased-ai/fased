@@ -6679,6 +6679,12 @@ if protected_local_target_platform; then
     PROTECTED_LOCAL_LIFECYCLE_COMMITTED=1
   else
     if ! bootstrap_protected_local_topology activate; then
+      if [[ -n "$LOCAL_EXISTING_BOOTSTRAP_MANIFEST_SNAPSHOT" ]] && \
+        ! rollback_managed_runtime_after_failed_install; then
+        status_frame_end
+        echo "Protected Local lifecycle failed and the prior managed runtime could not be restored." >&2
+        exit 1
+      fi
       status_frame_end
       echo "Protected Local lifecycle did not commit. Its uncommitted topology was restored." >&2
       exit 1

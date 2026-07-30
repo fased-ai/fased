@@ -1739,11 +1739,11 @@ function renderBoundaryUnits(configuration, nodeBinary) {
   const controllerWrites =
     configuration.profile === "hosting"
       ? `/opt/fased/host-controller/releases /opt/fased/host-application /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-controller /etc/systemd/system ${unitPath(appStateDir)}`
-      : `/opt/fased/local/${configuration.instanceId}/application /opt/fased/local/${configuration.instanceId}/signer /var/lib/fased-local/${configuration.instanceId}/signer /var/lib/fased-local/${configuration.instanceId}/controller ${unitPath(appStateDir)} /run/fased-local-controller-worker/${configuration.instanceId} /etc/systemd/system`;
+      : `/opt/fased/local/${configuration.instanceId} /var/lib/fased-local/${configuration.instanceId}/signer /var/lib/fased-local/${configuration.instanceId}/controller ${unitPath(appStateDir)} /run/fased-local-controller-worker/${configuration.instanceId} /etc/systemd/system`;
   const controllerReadOnly =
     configuration.profile === "hosting"
       ? `/opt/fased/host-controller/supervisor /var/lib/fased-host-updater/supervisor ${unitPath(path.join("/etc/systemd/system", paths.supervisorUnit))}`
-      : `/opt/fased/local/${configuration.instanceId}/supervisor /var/lib/fased-local/${configuration.instanceId}/controller/supervisor ${unitPath(path.join("/etc/systemd/system", paths.supervisorUnit))}`;
+      : `/opt/fased/local/${configuration.instanceId}/controller /opt/fased/local/${configuration.instanceId}/supervisor /opt/fased/local/${configuration.instanceId}/signer-owner /opt/fased/local/${configuration.instanceId}/operator-socket-finalize /var/lib/fased-local/${configuration.instanceId}/controller/supervisor ${unitPath(path.join("/etc/systemd/system", paths.supervisorUnit))}`;
   const controller = `[Unit]
 Description=Fased target lifecycle controller
 After=network-online.target
@@ -1763,6 +1763,7 @@ ExecStart=${controllerExec}
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
+AmbientCapabilities=CAP_SETUID CAP_SETGID
 PrivateTmp=true
 ProtectHome=read-only
 ProtectSystem=strict

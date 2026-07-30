@@ -332,6 +332,7 @@ describe("stable lifecycle supervisor contract", () => {
     expect(units.controller.content).toContain(
       "ReadOnlyPaths=/opt/fased/host-controller/supervisor /var/lib/fased-host-updater/supervisor /etc/systemd/system/fixed-supervisor.service",
     );
+    expect(units.controller.content).toContain("AmbientCapabilities=CAP_SETUID CAP_SETGID");
     expect(units.supervisor.content).toContain(
       "CapabilityBoundingSet=CAP_CHOWN\nAmbientCapabilities=",
     );
