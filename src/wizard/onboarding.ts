@@ -558,7 +558,7 @@ export async function runOnboardingWizard(
           "else exit 1; fi; " +
           "v=$($GOCMD version 2>/dev/null | awk '{print $3}' | sed 's/^go//'); " +
           'maj=$(echo "$v" | cut -d. -f1); min=$(echo "$v" | cut -d. -f2); patch=$(echo "$v" | cut -d. -f3 | sed "s/[^0-9].*$//"); ' +
-          '([ "${maj:-0}" -gt 1 ] || ([ "${maj:-0}" -eq 1 ] && ([ "${min:-0}" -gt 25 ] || ([ "${min:-0}" -eq 25 ] && [ "${patch:-0}" -ge 7 ]))))',
+          '([ "${maj:-0}" -gt 1 ] || ([ "${maj:-0}" -eq 1 ] && ([ "${min:-0}" -gt 25 ] || ([ "${min:-0}" -eq 25 ] && [ "${patch:-0}" -ge 12 ]))))',
       ],
       { stdio: "ignore" },
     );
@@ -600,7 +600,7 @@ export async function runOnboardingWizard(
     if (process.platform !== "linux" || !hasCommand("curl") || !hasCommand("tar")) {
       return "unavailable";
     }
-    const goVersion = String(process.env.FASED_GO_VERSION ?? "1.25.7").trim() || "1.25.7";
+    const goVersion = String(process.env.FASED_GO_VERSION ?? "1.25.12").trim() || "1.25.12";
     const stateRoot =
       String(process.env.FASED_STATE_DIR ?? "").trim() ||
       path.join(String(process.env.HOME ?? "").trim() || process.cwd(), ".fased");
@@ -658,7 +658,7 @@ export async function runOnboardingWizard(
       return false;
     }
     const installNow = await prompter.confirm({
-      message: "Go >=1.25.7 is required for a source-built native signer. Install/update Go now?",
+      message: "Go >=1.25.12 is required for a source-built native signer. Install/update Go now?",
       initialValue: true,
     });
     if (!installNow) {
@@ -669,7 +669,7 @@ export async function runOnboardingWizard(
       await runShell(
         "arch=$(dpkg --print-architecture 2>/dev/null || uname -m); " +
           'case "$arch" in amd64|x86_64) goarch=amd64 ;; arm64|aarch64) goarch=arm64 ;; *) echo "Unsupported arch: $arch"; exit 1 ;; esac; ' +
-          "goversion=${FASED_GO_VERSION:-1.25.7}; " +
+          "goversion=${FASED_GO_VERSION:-1.25.12}; " +
           "tmp=$(mktemp); " +
           'curl -fsSL "https://go.dev/dl/go${goversion}.linux-${goarch}.tar.gz" -o "$tmp"; ' +
           "sudo rm -rf /usr/local/go; " +
@@ -1107,7 +1107,7 @@ export async function runOnboardingWizard(
         await prompter.note("Native signer already current.", "Native signer");
       }
     } else if (!(await maybeInstallGoForOnboarding())) {
-      const detail = "Go >=1.25.7 is required for a source-built native signer.";
+      const detail = "Go >=1.25.12 is required for a source-built native signer.";
       if (hostingMode && !opts.allowInsecure) {
         throw new Error(
           `${detail} Install Go and rerun onboarding, or unset FASED_BUILD_NATIVE_SIGNER_FROM_SOURCE.`,

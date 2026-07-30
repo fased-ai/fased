@@ -227,7 +227,7 @@ describe("docker-setup.sh", () => {
 
     expect(result.status).toBe(0);
     const envFile = await readFile(join(activeSandbox.rootDir, ".env"), "utf8");
-    expect(envFile).toContain("FASED_GATEWAY_TOKEN=config-token-123");
+    expect(envFile).toContain("FASED_GATEWAY_TOKEN=config-token-123"); // pragma: allowlist secret
   });
 
   it("rejects injected multiline FASED_EXTRA_MOUNTS values", async () => {
@@ -441,7 +441,7 @@ describe("docker-setup.sh", () => {
   it("builds a deterministic multi-architecture native signer into the application image", async () => {
     const dockerfile = await readFile(join(repoRoot, "Dockerfile"), "utf8");
     expect(dockerfile).toMatch(
-      /^FROM golang:1\.25\.7-bookworm@sha256:[a-f0-9]{64} AS signer-builder$/m,
+      /^FROM golang:1\.25\.12-bookworm@sha256:[a-f0-9]{64} AS signer-builder$/m,
     );
     expect(dockerfile).toMatch(/^ARG TARGETOS$/m);
     expect(dockerfile).toMatch(/^ARG TARGETARCH$/m);

@@ -251,7 +251,7 @@ function isGoModernEnough(goBin: string): boolean {
   const major = Number(match[1]);
   const minor = Number(match[2]);
   const patch = Number(match[3] ?? 0);
-  return major > 1 || (major === 1 && (minor > 25 || (minor === 25 && patch >= 7)));
+  return major > 1 || (major === 1 && (minor > 25 || (minor === 25 && patch >= 12)));
 }
 
 function hasExplicitSignerdAssetSource(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -418,7 +418,7 @@ export function installSignerdBinary(binPath: string): void {
       return;
     }
     throw new Error(
-      "FASED_BUILD_NATIVE_SIGNER_FROM_SOURCE=1 requires a source checkout and Go >= 1.25.7.",
+      "FASED_BUILD_NATIVE_SIGNER_FROM_SOURCE=1 requires a source checkout and Go >= 1.25.12.",
     );
   }
 
