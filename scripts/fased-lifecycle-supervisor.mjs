@@ -1209,6 +1209,12 @@ export async function stageTrustedController(request, context) {
       paths.supervisorStateDir,
       trusted.root,
     );
+    await Promise.all(
+      [metadataPath, bundlePath].map(
+        async (filePath) =>
+          await context.sealSupervisorArtifact(filePath, context.rootUid, context.rootGid),
+      ),
+    );
     const metadata = parseLifecycleTrustMetadata(
       JSON.parse(await fsp.readFile(metadataPath, "utf8")),
       {
@@ -1280,6 +1286,12 @@ export async function stageTrustedController(request, context) {
       request.version,
       paths.supervisorStateDir,
       candidateRoot,
+    );
+    await Promise.all(
+      [provenancePath, provenanceBundlePath].map(
+        async (filePath) =>
+          await context.sealSupervisorArtifact(filePath, context.rootUid, context.rootGid),
+      ),
     );
     await context.verifyReleaseEvidence(evidenceVerifierPath, evidenceVerifierSha256, {
       releaseManifestPath,

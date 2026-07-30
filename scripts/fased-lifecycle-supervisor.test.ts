@@ -404,7 +404,9 @@ describe("stable lifecycle supervisor contract", () => {
       operatorGid: process.getgid?.() ?? 1000,
       paths,
     };
-    const verifyMetadata = vi.fn(async () => undefined);
+    const verifyMetadata = vi.fn(async (artifactPath: string) => {
+      await fsp.chmod(artifactPath, 0o000);
+    });
     const context = __testing.createContext(configuration, {
       rootUid: process.getuid?.() ?? 0,
       rootGid: process.getgid?.() ?? 0,
