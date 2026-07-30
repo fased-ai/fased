@@ -227,7 +227,7 @@ describe("docker-setup.sh", () => {
 
     expect(result.status).toBe(0);
     const envFile = await readFile(join(activeSandbox.rootDir, ".env"), "utf8");
-    expect(envFile).toContain("FASED_GATEWAY_TOKEN=config-token-123");
+    expect(envFile).toContain("FASED_GATEWAY_TOKEN=config-token-123"); // pragma: allowlist secret
   });
 
   it("rejects injected multiline FASED_EXTRA_MOUNTS values", async () => {
