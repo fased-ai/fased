@@ -8,7 +8,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { Keypair } from "@solana/web3.js";
 import { afterEach, describe, expect, it } from "vitest";
-import { __testing } from "./fased-managed-updater.mjs";
+import { __testing, MANAGED_UPDATER_SUPPORT_FILES } from "./fased-managed-updater.mjs";
 import {
   resolveSignerBuildIdentity,
   signerIdentityLDFlags,
@@ -431,11 +431,8 @@ describe.sequential("transactional Local native signer updater", () => {
     await fsp.mkdir(path.join(sourceRoot, "scripts"), { recursive: true });
     await fsp.mkdir(path.join(sourceRoot, "dist"), { recursive: true });
     await fsp.mkdir(controllerDir, { recursive: true });
-    for (const name of [
-      "fased-managed-updater.mjs",
-      "hosted-release-manifest.mjs",
-      "managed-runtime-layout.mjs",
-    ]) {
+    const controllerFiles = [...MANAGED_UPDATER_SUPPORT_FILES, "fased-managed-updater.mjs"];
+    for (const name of controllerFiles) {
       await fsp.copyFile(
         path.join(repoRoot, "scripts", name),
         path.join(sourceRoot, "scripts", name),
@@ -482,11 +479,7 @@ describe.sequential("transactional Local native signer updater", () => {
         { stateDir: fixture.stateDir },
       ),
     ).resolves.toEqual({ action: "refreshed", targetVersion: "0.1.73" });
-    for (const name of [
-      "fased-managed-updater.mjs",
-      "hosted-release-manifest.mjs",
-      "managed-runtime-layout.mjs",
-    ]) {
+    for (const name of controllerFiles) {
       expect(digest(path.join(controllerDir, name))).toBe(
         digest(path.join(sourceRoot, "scripts", name)),
       );
