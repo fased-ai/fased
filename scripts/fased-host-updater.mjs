@@ -4705,7 +4705,21 @@ function validateCrossProductApplicationEvidence(params) {
     plugins.errors.length > 0 ||
     plugins.diagnostics.length > 0
   ) {
-    throw new Error("target plugin diagnostics are not healthy");
+    const identifiers = new Set();
+    for (const entry of Array.isArray(plugins.errors) ? plugins.errors : []) {
+      if (typeof entry?.id === "string" && entry.id.trim()) {
+        identifiers.add(entry.id.trim());
+      }
+    }
+    for (const entry of Array.isArray(plugins.diagnostics) ? plugins.diagnostics : []) {
+      identifiers.add(
+        typeof entry?.pluginId === "string" && entry.pluginId.trim()
+          ? entry.pluginId.trim()
+          : "global",
+      );
+    }
+    const boundedIdentifiers = [...identifiers].slice(0, 8).join(", ") || "unknown";
+    throw new Error(`target plugin diagnostics are not healthy (${boundedIdentifiers})`);
   }
   if (signerIsolation.operatorDenied !== true || signerIsolation.controlDenied !== true) {
     throw new Error("target Gateway can reach a privileged signer socket");

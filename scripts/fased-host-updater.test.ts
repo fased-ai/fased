@@ -1378,6 +1378,22 @@ describe("root-owned hosted updater protocol", () => {
     expect(() => __testing.validateCrossProductApplicationEvidence(reachableControl)).toThrow(
       "privileged signer socket",
     );
+
+    const pluginFailure = structuredClone(evidence);
+    pluginFailure.plugins = {
+      ok: false,
+      errors: [{ id: "sat-mining", error: "redacted internal detail" }],
+      diagnostics: [
+        {
+          level: "error",
+          pluginId: "sat-mining",
+          message: "redacted internal detail",
+        },
+      ],
+    };
+    expect(() => __testing.validateCrossProductApplicationEvidence(pluginFailure)).toThrow(
+      "target plugin diagnostics are not healthy (sat-mining)",
+    );
   });
 
   it("parses one bounded JSON health document after plugin preload messages", () => {
