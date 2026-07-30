@@ -4033,7 +4033,10 @@ function buildTargetManagedInstallManifest({
     runtime: {
       ...previousManifest?.runtime,
       activeVersion: version,
-      previousVersion: previousManifest?.runtime?.activeVersion ?? null,
+      previousVersion:
+        previousManifest?.runtime?.activeVersion === version
+          ? (previousManifest.runtime.previousVersion ?? null)
+          : (previousManifest?.runtime?.activeVersion ?? null),
       currentLink: paths.currentLink,
       previousLink: paths.previousLink,
       releasesDir,
@@ -4190,9 +4193,13 @@ function validateManagedApplicationTransaction(value, context, version) {
       ? null
       : validateManagedInstallManifest(value.previousManifest, state, paths);
   const nextManifest = validateManagedInstallManifest(value.nextManifest, state, paths);
+  const expectedPreviousVersion =
+    previousManifest?.runtime?.activeVersion === version
+      ? (previousManifest.runtime.previousVersion ?? null)
+      : (previousManifest?.runtime?.activeVersion ?? null);
   if (
     nextManifest.runtime.activeVersion !== version ||
-    nextManifest.runtime.previousVersion !== (previousManifest?.runtime?.activeVersion ?? null) ||
+    nextManifest.runtime.previousVersion !== expectedPreviousVersion ||
     nextManifest.release?.version !== version
   ) {
     throw new Error("host updater target application manifest is mismatched");
@@ -7025,6 +7032,7 @@ export const __testing = {
   applyReleaseTransaction,
   activateSignerRelease,
   authorizeGatewayRelease,
+  buildTargetManagedInstallManifest,
   commitSignerRelease,
   compareVersions,
   collectCrossProductApplicationHealthEvidence,

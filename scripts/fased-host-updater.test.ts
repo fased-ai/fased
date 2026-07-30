@@ -1531,6 +1531,69 @@ describe("root-owned hosted updater protocol", () => {
     ).rejects.toThrow("stale or malformed");
   });
 
+  it("preserves the rollback release during same-version protected convergence", () => {
+    const stateDir = "/home/operator/.fased";
+    const paths = {
+      stateDir,
+      currentLink: `${stateDir}/runtime/current`,
+      previousLink: `${stateDir}/runtime/previous`,
+      compatibilityLink: `${stateDir}/install-cache/npm-global/lib/node_modules/@fased/fased`,
+      prefix: `${stateDir}/install-cache/npm-global`,
+      updaterPath: `${stateDir}/updater/fased-managed-updater.mjs`,
+    };
+    const previousManifest = {
+      schemaVersion: 2,
+      profile: "protected-local",
+      stateDir,
+      configPath: `${stateDir}/fased.json`,
+      runtime: {
+        activeVersion: "1.2.3",
+        previousVersion: "1.2.2",
+      },
+      service: {
+        name: "fased-gateway-fixture.service",
+        scope: "system",
+        launcher: "/opt/fased/fixture/gateway-launch",
+      },
+      update: { channel: "stable" },
+    };
+    const applicationRelease = {
+      commit: "a".repeat(40),
+      manifestDigest: `sha256:${"1".repeat(64)}`,
+      artifact: {
+        asset: "fased-hosted-app-v2-linux-x64-v1.2.3.tar.gz",
+        sha256: "2".repeat(64),
+      },
+      dependencies: {
+        asset: `fased-hosted-deps-linux-x64-${"3".repeat(64)}.tar.gz`,
+        sha256: "4".repeat(64),
+        dependencyHash: "3".repeat(64),
+      },
+      signer: signerRelease("1.2.3"),
+      capabilities: { protocol: { current: 2, min: 2, max: 2 } },
+      capabilitiesDigest: `sha256:${"5".repeat(64)}`,
+    };
+
+    expect(
+      __testing.buildTargetManagedInstallManifest({
+        previousManifest,
+        applicationState: {
+          profile: "protected-local",
+          gatewayServiceName: "fased-gateway-fixture.service",
+          gatewayLauncherPath: "/opt/fased/fixture/gateway-launch",
+        },
+        paths,
+        releasesDir: "/opt/fased/fixture/application/releases",
+        version: "1.2.3",
+        applicationRelease,
+        updateChannel: "stable",
+      }).runtime,
+    ).toMatchObject({
+      activeVersion: "1.2.3",
+      previousVersion: "1.2.2",
+    });
+  });
+
   it("creates every canonical shared application directory under root control", async () => {
     if (process.platform === "win32") {
       return;
