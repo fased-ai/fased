@@ -1124,6 +1124,25 @@ export function buildProtectedLocalLifecycleApplyCommand(spec, layout, options =
   });
 }
 
+function validateProtectedLocalLifecycleResult(result, spec) {
+  const supportedApplicationAdapters = new Set([
+    "managed-install-absent",
+    "managed-install-v1-to-v2",
+    "managed-install-v2",
+  ]);
+  if (
+    result?.version !== spec.releaseVersion ||
+    result?.phase !== "committed" ||
+    result?.migration?.schemaVersion !== 1 ||
+    result?.migration?.profile !== "protected-local" ||
+    result?.migration?.serviceTopology !== "protected-local-system-v1" ||
+    !supportedApplicationAdapters.has(result?.migration?.adapters?.application)
+  ) {
+    fail("protected Local lifecycle did not commit a supported topology transaction");
+  }
+  return result;
+}
+
 function applyProtectedLocalLifecycle(spec, layout) {
   const command = buildProtectedLocalLifecycleApplyCommand(spec, layout);
   const output = runSystem(command.executable, command.args, { timeout: 20 * 60_000 });
@@ -1133,15 +1152,7 @@ function applyProtectedLocalLifecycle(spec, layout) {
   } catch (error) {
     fail(`protected Local lifecycle returned invalid JSON: ${error.message}`);
   }
-  if (
-    result?.version !== spec.releaseVersion ||
-    result?.phase !== "committed" ||
-    result?.migration?.profile !== "protected-local" ||
-    result?.migration?.adapters?.application !== "managed-install-absent"
-  ) {
-    fail("protected Local lifecycle did not commit the empty-topology transaction");
-  }
-  return result;
+  return validateProtectedLocalLifecycleResult(result, spec);
 }
 
 function verifyGatewayRuntimeAccess(layout) {
@@ -3102,6 +3113,7 @@ export const __testing = Object.freeze({
   protectedLocalGatewayHealthMatches,
   waitForLegacyGatewayReleaseHealth,
   previousLegacyGatewayVersion,
+  validateProtectedLocalLifecycleResult,
   verifySignerReleaseIdentity,
   buildControllerIdentity,
 });

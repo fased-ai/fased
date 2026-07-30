@@ -198,6 +198,47 @@ describe("protected Local bootstrap contract", () => {
     });
   });
 
+  it.each(["managed-install-absent", "managed-install-v1-to-v2", "managed-install-v2"])(
+    "accepts the target-owned %s lifecycle transaction",
+    (applicationAdapter) => {
+      const spec = {
+        releaseVersion: "0.1.80",
+      };
+      const result = {
+        version: "0.1.80",
+        phase: "committed",
+        migration: {
+          schemaVersion: 1,
+          profile: "protected-local",
+          serviceTopology: "protected-local-system-v1",
+          adapters: {
+            application: applicationAdapter,
+          },
+        },
+      };
+
+      expect(__testing.validateProtectedLocalLifecycleResult(result, spec)).toBe(result);
+    },
+  );
+
+  it("rejects a lifecycle receipt outside the protected Local compatibility inventory", () => {
+    expect(() =>
+      __testing.validateProtectedLocalLifecycleResult(
+        {
+          version: "0.1.80",
+          phase: "committed",
+          migration: {
+            schemaVersion: 1,
+            profile: "hosting",
+            serviceTopology: "hosting-system-v1",
+            adapters: { application: "managed-install-v2" },
+          },
+        },
+        { releaseVersion: "0.1.80" },
+      ),
+    ).toThrow("supported topology transaction");
+  });
+
   it("normalizes registry IDs but preserves the registered public identity", () => {
     const root = temporaryRoot();
     const stateDir = path.join(root, ".fased");
