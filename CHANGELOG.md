@@ -4,6 +4,16 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.21
+
+- Establish the version-neutral lifecycle supervisor and target-controller
+  handoff for supported Local and Hosting topologies.
+- Verify release trust with threshold-signed metadata, provenance, SBOM/VEX,
+  revocation, expiry, architecture, and compatibility policy.
+- Converge fresh installation, update, rollback, retry, signer, Wallet,
+  Mining, federation, plugin, and shared-state transactions under one
+  official candidate identity.
+
 ## 0.1.76-rc.20
 
 - Make managed Local and Hosting bootstrap, target-controller handoff, and
