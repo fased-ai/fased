@@ -1417,7 +1417,10 @@ describe("root-owned hosted updater protocol", () => {
   });
 
   it("bounds product health to one application process at a time", async () => {
-    const labels: string[] = [];
+    const invocations: Array<{
+      label: string;
+      options?: { identity?: "operator" | "gateway" };
+    }> = [];
     let active = 0;
     let maximumActive = 0;
     const results = [
@@ -1430,30 +1433,30 @@ describe("root-owned hosted updater protocol", () => {
     ];
 
     const evidence = await __testing.collectCrossProductApplicationHealthEvidence(
-      async (_args, label) => {
-        labels.push(label);
+      async (_args, label, options) => {
+        invocations.push({ label, options });
         active += 1;
         maximumActive = Math.max(maximumActive, active);
         await new Promise((resolve) => setTimeout(resolve, 1));
         active -= 1;
-        return results[labels.length - 1];
+        return results[invocations.length - 1];
       },
       async () => {
         expect(active).toBe(0);
-        labels.push("signer isolation");
+        invocations.push({ label: "signer isolation" });
         return { operatorDenied: true, controlDenied: true };
       },
     );
 
     expect(maximumActive).toBe(1);
-    expect(labels).toEqual([
-      "Wallet",
-      "Wallet signer",
-      "Mining",
-      "Fased Network",
-      "Fased Network bond",
-      "plugins",
-      "signer isolation",
+    expect(invocations).toEqual([
+      { label: "Wallet", options: undefined },
+      { label: "Wallet signer", options: undefined },
+      { label: "Mining", options: undefined },
+      { label: "Fased Network", options: undefined },
+      { label: "Fased Network bond", options: undefined },
+      { label: "plugins", options: { identity: "gateway" } },
+      { label: "signer isolation", options: undefined },
     ]);
     expect(evidence).toMatchObject({
       plugins: { ok: true },

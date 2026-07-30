@@ -4827,7 +4827,7 @@ async function runTargetApplicationCommand(
   journal,
   args,
   label,
-  { json = true } = {},
+  { json = true, identity = "operator" } = {},
 ) {
   const targetRoot = journal.application?.targetRoot;
   if (
@@ -4848,19 +4848,32 @@ async function runTargetApplicationCommand(
   }
   const { token } = await readGatewayHealthConfiguration(topology);
   const nodeBinary = path.resolve(context.protectedNodeBinary);
+  if (!new Set(["operator", "gateway"]).has(identity)) {
+    throw new Error("target application health identity is invalid");
+  }
+  const runAsGateway = identity === "gateway";
+  const uid = runAsGateway ? topology.gateway.uid : topology.operator.uid;
+  const gid = runAsGateway ? topology.configGroup.gid : topology.operator.gid;
+  const name = runAsGateway ? topology.gateway.user : topology.operator.name;
+  const pluginStatusCachePath = path.join(
+    topology.stateDir,
+    topology.profile === "protected-local" ? "cache" : "runtime",
+    "plugin-status.json",
+  );
   const { stdout } = await execFileAsync(nodeBinary, [entrypoint, ...args], {
-    uid: topology.operator.uid,
-    gid: topology.operator.gid,
+    uid,
+    gid,
     env: {
       HOME: topology.operator.home,
-      USER: topology.operator.name,
-      LOGNAME: topology.operator.name,
+      USER: name,
+      LOGNAME: name,
       PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
       FASED_NODE: nodeBinary,
       FASED_STATE_DIR: topology.stateDir,
       FASED_CONFIG_PATH: topology.configPath,
       FASED_HOST_PROFILE: topology.profile === "hosting" ? "hosting" : "local",
       FASED_GATEWAY_TOKEN: token,
+      ...(runAsGateway ? { FASED_PLUGIN_STATUS_CACHE_PATH: pluginStatusCachePath } : {}),
     },
     timeout: 15_000,
     maxBuffer: 1024 * 1024,
@@ -4938,7 +4951,9 @@ async function collectCrossProductApplicationHealthEvidence(runCommand, probeIso
     ["federation", "bond-wallet", "status", "--json"],
     "Fased Network bond",
   );
-  const plugins = await runCommand(["plugins", "doctor", "--json"], "plugins");
+  const plugins = await runCommand(["plugins", "doctor", "--json"], "plugins", {
+    identity: "gateway",
+  });
   const signerIsolation = await probeIsolation();
   return { walletStatus, walletDoctor, mining, network, bond, plugins, signerIsolation };
 }
