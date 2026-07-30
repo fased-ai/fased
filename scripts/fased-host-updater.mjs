@@ -3938,6 +3938,7 @@ function managedApplicationStateFromTopology(topology) {
     profile: topology.profile,
     stateDir: topology.stateDir,
     operatorUid: topology.operator.uid,
+    operatorGid: topology.operator.gid,
     configGid: topology.configGroup.gid,
     gatewayServiceName: topology.services.gateway,
     gatewayLauncherPath: topology.gatewayLauncherPath,
@@ -4092,6 +4093,7 @@ async function prepareManagedApplicationTransaction(
   if (
     !state?.stateDir ||
     !Number.isSafeInteger(state.operatorUid) ||
+    !Number.isSafeInteger(state.operatorGid) ||
     !Number.isSafeInteger(state.configGid)
   ) {
     return null;
@@ -4229,11 +4231,26 @@ async function writeManagedManifest(context, transaction, manifest) {
   await fsyncDirectory(paths.stateDir);
 }
 
+async function ensureInitializedManagedStableDirectories(context, paths) {
+  const state = context.applicationState;
+  for (const directory of [paths.binDir, paths.updaterDir]) {
+    await fsp.mkdir(directory, { recursive: true, mode: 0o750 });
+    const info = await fsp.lstat(directory);
+    if (!info.isDirectory() || info.isSymbolicLink()) {
+      throw new Error(`initialized managed application directory is unsafe: ${directory}`);
+    }
+    await fsp.chown(directory, state.operatorUid, state.operatorGid);
+    await fsp.chmod(directory, 0o750);
+    await fsyncDirectory(directory);
+  }
+}
+
 async function installInitializedManagedStableFiles(context, transaction, targetRoot) {
   if (transaction.previousManifest) {
     return;
   }
   const paths = managedApplicationPaths(transaction.stateDir);
+  await ensureInitializedManagedStableDirectories(context, paths);
   const sources = [
     ["fased-managed-launcher.sh", paths.launcherPath],
     ["fased-managed-service.sh", paths.serviceLauncherPath],
@@ -4244,7 +4261,7 @@ async function installInitializedManagedStableFiles(context, transaction, target
     await atomicCopyFileDurable(path.join(targetRoot, "scripts", name), destination, {
       mode: 0o750,
       uid: context.applicationState.operatorUid,
-      gid: context.applicationState.configGid,
+      gid: context.applicationState.operatorGid,
     });
   }
   await atomicSymlinkDurable(paths.launcherPath, paths.prefixLauncherPath);
@@ -7048,6 +7065,7 @@ export const __testing = {
   protectedLocalControllerConfiguration,
   ensureProtectedLocalControllerServicePolicy,
   ensureRootManagedSharedApplicationDirectories,
+  ensureInitializedManagedStableDirectories,
   declaredStateRegistry,
   validateCrossProductApplicationEvidence,
   discoverProtectedApplicationTopology,

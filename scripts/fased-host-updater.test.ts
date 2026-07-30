@@ -1594,6 +1594,36 @@ describe("root-owned hosted updater protocol", () => {
     });
   });
 
+  it("makes initialized stable CLI directories traversable by the operator", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-initialized-cli-"));
+    cleanupRoots.push(root);
+    const binDir = path.join(root, ".fased", "bin");
+    const updaterDir = path.join(root, ".fased", "updater");
+    await Promise.all([
+      fsp.mkdir(binDir, { recursive: true, mode: 0o700 }),
+      fsp.mkdir(updaterDir, { recursive: true, mode: 0o700 }),
+    ]);
+    const operatorUid = process.getuid();
+    const operatorGid = process.getgid();
+
+    await __testing.ensureInitializedManagedStableDirectories(
+      { applicationState: { operatorUid, operatorGid } },
+      { binDir, updaterDir },
+    );
+
+    for (const directory of [binDir, updaterDir]) {
+      const info = await fsp.lstat(directory);
+      expect(info.isDirectory()).toBe(true);
+      expect(info.isSymbolicLink()).toBe(false);
+      expect(info.uid).toBe(operatorUid);
+      expect(info.gid).toBe(operatorGid);
+      expect(info.mode & 0o777).toBe(0o750);
+    }
+  });
+
   it("creates every canonical shared application directory under root control", async () => {
     if (process.platform === "win32") {
       return;
