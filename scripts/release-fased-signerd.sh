@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${ROOT}/dist-native/release"
 TARGETS="${FASED_SIGNER_TARGETS:-linux/amd64,linux/arm64,darwin/amd64,darwin/arm64}"
 GO_BIN="${FASED_GO_BIN:-}"
-MIN_GO_VERSION="1.25.7"
+MIN_GO_VERSION="1.25.12"
 GOTMPDIR_DEFAULT="${HOME:-$ROOT}/.cache/fased/go-tmp"
 GOCACHE_DEFAULT="${HOME:-$ROOT}/.cache/fased/go-build-cache"
 
@@ -26,7 +26,7 @@ GO_VER="$("$GO_BIN" version 2>/dev/null | awk '{print $3}' | sed 's/^go//')"
 GO_MAJ="$(echo "$GO_VER" | cut -d. -f1)"
 GO_MIN="$(echo "$GO_VER" | cut -d. -f2)"
 GO_PATCH="$(echo "$GO_VER" | cut -d. -f3 | sed 's/[^0-9].*$//')"
-if ! [[ "${GO_MAJ:-0}" -gt 1 || ( "${GO_MAJ:-0}" -eq 1 && ( "${GO_MIN:-0}" -gt 25 || ( "${GO_MIN:-0}" -eq 25 && "${GO_PATCH:-0}" -ge 7 ) ) ) ]]; then
+if ! [[ "${GO_MAJ:-0}" -gt 1 || ( "${GO_MAJ:-0}" -eq 1 && ( "${GO_MIN:-0}" -gt 25 || ( "${GO_MIN:-0}" -eq 25 && "${GO_PATCH:-0}" -ge 12 ) ) ) ]]; then
   echo "Go >= ${MIN_GO_VERSION} required (found: $GO_VER at $GO_BIN)." >&2
   exit 1
 fi

@@ -441,7 +441,7 @@ describe("docker-setup.sh", () => {
   it("builds a deterministic multi-architecture native signer into the application image", async () => {
     const dockerfile = await readFile(join(repoRoot, "Dockerfile"), "utf8");
     expect(dockerfile).toMatch(
-      /^FROM golang:1\.25\.7-bookworm@sha256:[a-f0-9]{64} AS signer-builder$/m,
+      /^FROM golang:1\.25\.12-bookworm@sha256:[a-f0-9]{64} AS signer-builder$/m,
     );
     expect(dockerfile).toMatch(/^ARG TARGETOS$/m);
     expect(dockerfile).toMatch(/^ARG TARGETARCH$/m);

@@ -183,7 +183,7 @@ owner-only transaction journal before the Gateway starts.
 Each tagged release must publish signer assets for Linux and macOS on `amd64`
 and `arm64` before wallet setup for that version is considered releasable. A
 source checkout can still opt into a local build with
-`FASED_BUILD_NATIVE_SIGNER_FROM_SOURCE=1` and Go >= 1.25.7. Existing binaries
+`FASED_BUILD_NATIVE_SIGNER_FROM_SOURCE=1` and Go >= 1.25.12. Existing binaries
 and alternate trusted release sources remain available through
 `FASED_WALLET_LOCAL_SIGNER_BIN`, `FASED_LOCAL_SIGNER_VERSION`, and
 `FASED_LOCAL_SIGNER_BASE_URL`.
