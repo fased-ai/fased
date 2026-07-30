@@ -1400,6 +1400,51 @@ describe("root-owned hosted updater protocol", () => {
     expect(args).not.toContain("--password");
   });
 
+  it("bounds product health to one application process at a time", async () => {
+    const labels: string[] = [];
+    let active = 0;
+    let maximumActive = 0;
+    const results = [
+      { ok: true, status: { wallets: [] } },
+      { ok: true, checks: [] },
+      { ok: true, payload: { entries: [] } },
+      { configured: false },
+      { walletId: null },
+      { ok: true, errors: [], diagnostics: [] },
+    ];
+
+    const evidence = await __testing.collectCrossProductApplicationHealthEvidence(
+      async (_args, label) => {
+        labels.push(label);
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        active -= 1;
+        return results[labels.length - 1];
+      },
+      async () => {
+        expect(active).toBe(0);
+        labels.push("signer isolation");
+        return { operatorDenied: true, controlDenied: true };
+      },
+    );
+
+    expect(maximumActive).toBe(1);
+    expect(labels).toEqual([
+      "Wallet",
+      "Wallet signer",
+      "Mining",
+      "Fased Network",
+      "Fased Network bond",
+      "plugins",
+      "signer isolation",
+    ]);
+    expect(evidence).toMatchObject({
+      plugins: { ok: true },
+      signerIsolation: { operatorDenied: true, controlDenied: true },
+    });
+  });
+
   it("creates every canonical shared application directory under root control", async () => {
     if (process.platform === "win32") {
       return;

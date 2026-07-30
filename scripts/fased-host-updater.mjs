@@ -4884,50 +4884,35 @@ function targetMiningHealthArgs() {
   return ["mining", "history", "--timeout", "5000", "--json"];
 }
 
+async function collectCrossProductApplicationHealthEvidence(runCommand, probeIsolation) {
+  // Each CLI process loads the application and native plugin graph. Running all
+  // product probes at once can exhaust a 2 GiB installation and can make
+  // plugin diagnostics observe another process's transient native-loader work.
+  // Keep the inexpensive root/Gateway/signer prerequisites parallel, but bound
+  // product health to one application process at a time.
+  const walletStatus = await runCommand(["wallet", "status", "--json"], "Wallet");
+  const walletDoctor = await runCommand(["wallet", "signer", "doctor", "--json"], "Wallet signer");
+  const mining = await runCommand(targetMiningHealthArgs(), "Mining");
+  const network = await runCommand(["federation", "status", "--json"], "Fased Network");
+  const bond = await runCommand(
+    ["federation", "bond-wallet", "status", "--json"],
+    "Fased Network bond",
+  );
+  const plugins = await runCommand(["plugins", "doctor", "--json"], "plugins");
+  const signerIsolation = await probeIsolation();
+  return { walletStatus, walletDoctor, mining, network, bond, plugins, signerIsolation };
+}
+
 async function probeCrossProductApplicationHealth(context, topology, journal) {
   if (topology.pendingGatewayUnit || topology.pendingStateDir) {
     throw new Error("application topology is incomplete during product health verification");
   }
-  const [walletStatus, walletDoctor, mining, network, bond, plugins, signerIsolation] =
-    await Promise.all([
-      runTargetApplicationCommand(
-        context,
-        topology,
-        journal,
-        ["wallet", "status", "--json"],
-        "Wallet",
-      ),
-      runTargetApplicationCommand(
-        context,
-        topology,
-        journal,
-        ["wallet", "signer", "doctor", "--json"],
-        "Wallet signer",
-      ),
-      runTargetApplicationCommand(context, topology, journal, targetMiningHealthArgs(), "Mining"),
-      runTargetApplicationCommand(
-        context,
-        topology,
-        journal,
-        ["federation", "status", "--json"],
-        "Fased Network",
-      ),
-      runTargetApplicationCommand(
-        context,
-        topology,
-        journal,
-        ["federation", "bond-wallet", "status", "--json"],
-        "Fased Network bond",
-      ),
-      runTargetApplicationCommand(
-        context,
-        topology,
-        journal,
-        ["plugins", "doctor", "--json"],
-        "plugins",
-      ),
-      probeSignerSocketIsolation(context, topology),
-    ]);
+  const { walletStatus, walletDoctor, mining, network, bond, plugins, signerIsolation } =
+    await collectCrossProductApplicationHealthEvidence(
+      async (args, label) =>
+        await runTargetApplicationCommand(context, topology, journal, args, label),
+      async () => await probeSignerSocketIsolation(context, topology),
+    );
   return validateCrossProductApplicationEvidence({
     topology,
     walletStatus,
@@ -6862,6 +6847,7 @@ export const __testing = {
   authorizeGatewayRelease,
   commitSignerRelease,
   compareVersions,
+  collectCrossProductApplicationHealthEvidence,
   cleanupHistoricalQ0Residue,
   createTransactionContext,
   dispatchUpdateRequest,
