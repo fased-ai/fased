@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNTIME="${FASED_CONTAINER_RUNTIME:-podman}"
+OCI_RUNTIME="${FASED_CONTAINER_OCI_RUNTIME:-}"
 DISTROS="${FASED_SYSTEMD_FIXTURE_DISTROS:-ubuntu,rocky}"
 SCENARIOS="${FASED_SYSTEMD_FIXTURE_SCENARIOS:-fresh-install,install}"
 FIXTURE_DIR="$ROOT_DIR/scripts/docker/protected-local-systemd"
@@ -33,6 +34,16 @@ fi
 [[ "$RUNTIME" == "podman" ]] || {
   echo "The protected Local systemd fixtures currently require Podman." >&2
   exit 1
+}
+if [[ -z "$OCI_RUNTIME" ]] && command -v runc >/dev/null 2>&1; then
+  OCI_RUNTIME="$(command -v runc)"
+fi
+run_container() {
+  if [[ -n "$OCI_RUNTIME" ]]; then
+    "$RUNTIME" --runtime "$OCI_RUNTIME" "$@"
+    return
+  fi
+  "$RUNTIME" "$@"
 }
 [[ "$PREINSTALLED_TOOLS" == "0" || "$PREINSTALLED_TOOLS" == "1" ]] || {
   echo "FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS must be 0 or 1." >&2
@@ -123,7 +134,7 @@ cleanup_names=()
 dump_fixture_failure() {
   local name="$1"
   echo "Protected Local fixture diagnostics: $name" >&2
-  "$RUNTIME" exec "$name" /bin/bash -lc '
+  run_container exec "$name" /bin/bash -lc '
     systemctl --failed --no-pager >&2 || true
     systemctl cat "fased-gateway-*" >&2 || true
     find /var/lib/fased-local -maxdepth 4 -printf "%M %u:%g %p\n" >&2 2>/dev/null || true
@@ -141,7 +152,7 @@ dump_fixture_failure() {
 cleanup() {
   local name
   for name in "${cleanup_names[@]}"; do
-    "$RUNTIME" rm -f "$name" >/dev/null 2>&1 || true
+    run_container rm -f "$name" >/dev/null 2>&1 || true
   done
   if [[ "$OWN_ARTIFACT_DIR" -eq 1 ]]; then
     rm -rf -- "$ARTIFACT_DIR"
@@ -163,7 +174,7 @@ run_fixture_scenario() {
   local state=""
 
   cleanup_names+=("$name")
-  "$RUNTIME" run -d \
+  run_container run -d \
     --name "$name" \
     --privileged \
     --systemd=always \
@@ -179,7 +190,7 @@ run_fixture_scenario() {
     -v "$LEGACY_ARTIFACT_DIR:/legacy-artifacts:ro,Z" \
     "$image" >/dev/null
   for _ in {1..200}; do
-    state="$("$RUNTIME" exec "$name" systemctl is-system-running 2>/dev/null || true)"
+    state="$(run_container exec "$name" systemctl is-system-running 2>/dev/null || true)"
     if [[ "$state" == "running" || "$state" == "degraded" ]]; then
       ready=1
       break
@@ -190,16 +201,16 @@ run_fixture_scenario() {
     echo "$distro systemd fixture did not become ready." >&2
     exit 1
   }
-  if ! "$RUNTIME" exec "$name" /bin/bash \
+  if ! run_container exec "$name" /bin/bash \
     /usr/local/bin/fased-protected-local-systemd-fixture "$scenario"; then
     dump_fixture_failure "$name"
     exit 1
   fi
-  "$RUNTIME" stop "$name" >/dev/null
-  "$RUNTIME" start "$name" >/dev/null
+  run_container stop "$name" >/dev/null
+  run_container start "$name" >/dev/null
   ready=0
   for _ in {1..200}; do
-    state="$("$RUNTIME" exec "$name" systemctl is-system-running 2>/dev/null || true)"
+    state="$(run_container exec "$name" systemctl is-system-running 2>/dev/null || true)"
     if [[ "$state" == "running" || "$state" == "degraded" ]]; then
       ready=1
       break
@@ -210,12 +221,12 @@ run_fixture_scenario() {
     echo "$distro systemd fixture did not recover after container reboot." >&2
     exit 1
   }
-  if ! "$RUNTIME" exec "$name" /bin/bash \
+  if ! run_container exec "$name" /bin/bash \
     /usr/local/bin/fased-protected-local-systemd-fixture verify-reboot; then
     dump_fixture_failure "$name"
     exit 1
   fi
-  "$RUNTIME" rm -f "$name" >/dev/null
+  run_container rm -f "$name" >/dev/null
 }
 
 for distro in "${distro_list[@]}"; do
@@ -232,14 +243,14 @@ for distro in "${distro_list[@]}"; do
     archive="$IMAGE_CACHE_DIR/${distro}.oci.tar"
   fi
   if [[ -n "$archive" && -s "$archive" ]]; then
-    "$RUNTIME" load --input "$archive" >/dev/null
-    "$RUNTIME" image exists "$image"
+    run_container load --input "$archive" >/dev/null
+    run_container image exists "$image"
     printf 'fixture timing: distro=%s stage=image-cache-load elapsed=%ss\n' \
       "$distro" "$((SECONDS - image_started))"
   else
-    "$RUNTIME" build -f "$containerfile" -t "$image" "$FIXTURE_DIR"
+    run_container build -f "$containerfile" -t "$image" "$FIXTURE_DIR"
     if [[ -n "$archive" ]]; then
-      "$RUNTIME" save --format oci-archive --output "$archive" "$image"
+      run_container save --format oci-archive --output "$archive" "$image"
     fi
     printf 'fixture timing: distro=%s stage=image-build elapsed=%ss\n' \
       "$distro" "$((SECONDS - image_started))"
