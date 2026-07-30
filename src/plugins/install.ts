@@ -43,6 +43,67 @@ type ExpectedPluginIdsParams = {
   expectedPluginIds?: string[];
 };
 
+const MAX_PLUGIN_ACCESS_ENTRIES = 50_000;
+
+/**
+ * Plugin code is written by the operator but read by the isolated Gateway.
+ * Converge only the exact canonical install tree, never arbitrary user state.
+ */
+export async function convergeInstalledPluginAccess(params: {
+  extensionsDir: string;
+  targetDir: string;
+}): Promise<void> {
+  const extensionsDir = path.resolve(params.extensionsDir);
+  const targetDir = path.resolve(params.targetDir);
+  if (!isPathInside(extensionsDir, targetDir)) {
+    throw new Error("plugin access convergence target escaped the extensions directory");
+  }
+  const extensions = await fs.lstat(extensionsDir);
+  if (!extensions.isDirectory() || extensions.isSymbolicLink()) {
+    throw new Error("plugin extensions root is not a regular directory");
+  }
+  await fs.chmod(extensionsDir, 0o2770);
+  const canConvergeGroup = process.platform !== "win32";
+
+  const pending = [targetDir];
+  let inspected = 0;
+  while (pending.length > 0) {
+    const currentPath = pending.pop();
+    if (!currentPath) {
+      continue;
+    }
+    inspected += 1;
+    if (inspected > MAX_PLUGIN_ACCESS_ENTRIES) {
+      throw new Error("plugin access convergence tree is too large");
+    }
+    const stat = await fs.lstat(currentPath);
+    if (stat.isSymbolicLink()) {
+      const resolved = await fs.realpath(currentPath);
+      if (resolved !== targetDir && !isPathInside(targetDir, resolved)) {
+        throw new Error("plugin install contains a symlink outside its canonical install tree");
+      }
+      continue;
+    }
+    if (stat.isDirectory()) {
+      if (canConvergeGroup) {
+        await fs.chown(currentPath, stat.uid, extensions.gid);
+      }
+      await fs.chmod(currentPath, 0o2750);
+      for (const name of await fs.readdir(currentPath)) {
+        pending.push(path.join(currentPath, name));
+      }
+      continue;
+    }
+    if (!stat.isFile() || stat.nlink !== 1) {
+      throw new Error("plugin install contains an unsafe filesystem entry");
+    }
+    if (canConvergeGroup) {
+      await fs.chown(currentPath, stat.uid, extensions.gid);
+    }
+    await fs.chmod(currentPath, (stat.mode & 0o111) !== 0 ? 0o750 : 0o640);
+  }
+}
+
 function normalizeExpectedPluginIds(params: ExpectedPluginIdsParams): string[] {
   const ids = new Set<string>();
   for (const raw of [params.expectedPluginId, ...(params.expectedPluginIds ?? [])]) {
@@ -345,7 +406,8 @@ async function installPluginFromPackageDir(params: {
   const extensionsDir = params.extensionsDir
     ? resolveUserPath(params.extensionsDir)
     : path.join(CONFIG_DIR, "extensions");
-  await fs.mkdir(extensionsDir, { recursive: true });
+  await fs.mkdir(extensionsDir, { recursive: true, mode: 0o2770 });
+  await fs.chmod(extensionsDir, 0o2770);
 
   const targetDirResult = resolveSafeInstallDir({
     baseDir: extensionsDir,
@@ -405,6 +467,9 @@ async function installPluginFromPackageDir(params: {
           logger.warn?.(`extension entry not found: ${entry}`);
         }
       }
+    },
+    afterInstall: async () => {
+      await convergeInstalledPluginAccess({ extensionsDir, targetDir });
     },
   });
   if (!installRes.ok) {

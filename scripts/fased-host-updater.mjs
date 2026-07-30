@@ -2272,10 +2272,31 @@ function validateDeclaredStateTransaction(value) {
   if (new Set(changedEntries).size !== changedEntries.length) {
     throw new Error("host updater declared-state change receipt is invalid");
   }
+  const preservationHash = declaredStatePreservationHash(entries);
+  if (value.preservationHash !== preservationHash) {
+    throw new Error("host updater declared-state preservation receipt is inconsistent");
+  }
+  const preservationHashes = declaredStateClassPreservationHashes(entries);
+  if (
+    value.preservationHashes != null &&
+    (!value.preservationHashes ||
+      typeof value.preservationHashes !== "object" ||
+      Array.isArray(value.preservationHashes) ||
+      Object.entries(value.preservationHashes).some(
+        ([stateClass, digest]) =>
+          !/^[a-z][a-z0-9-]{0,63}$/u.test(stateClass) ||
+          !/^sha256:[a-f0-9]{64}$/u.test(String(digest)),
+      ) ||
+      canonicalJSON(value.preservationHashes) !== canonicalJSON(preservationHashes))
+  ) {
+    throw new Error("host updater declared-state class preservation receipt is invalid");
+  }
   return Object.freeze({
     ...value,
     stateDir: path.resolve(value.stateDir),
     entries,
+    preservationHash,
+    preservationHashes,
     changed: value.changed === true,
     changedEntries,
   });
@@ -2968,6 +2989,11 @@ const DECLARED_STATE_SHARED_DIRECTORIES = Object.freeze([
   Object.freeze({ relativePath: "identity", stateClass: "device-identity", create: true }),
   Object.freeze({ relativePath: "wallet", stateClass: "wallet", create: true }),
   Object.freeze({ relativePath: "federation", stateClass: "federation-network", create: true }),
+  Object.freeze({
+    relativePath: "extensions",
+    stateClass: "agent-session-channel-plugin",
+    create: true,
+  }),
   Object.freeze({ relativePath: "sat-mining", stateClass: "mining", create: false }),
   Object.freeze({ relativePath: "sat-mining/wallets", stateClass: "mining", create: false }),
   Object.freeze({
@@ -3011,14 +3037,14 @@ const DECLARED_STATE_SHARED_FILES = Object.freeze([
     Object.freeze({
       relativePath: `wallet/${name}`,
       stateClass: "wallet",
-      preserveContent: name === "provider-registry.v1.json",
+      preserveContent: true,
     }),
   ),
   ...["access-token.json", "bond-proof.json", "peer-replay-v2.json"].map((name) =>
     Object.freeze({
       relativePath: `federation/${name}`,
       stateClass: "federation-network",
-      preserveContent: name !== "peer-replay-v2.json",
+      preserveContent: true,
     }),
   ),
 ]);
@@ -3402,7 +3428,7 @@ async function collectDeclaredStateRules(stateDir) {
           kind: "file",
           create: false,
           desiredMode: 0o660,
-          preserveContent: false,
+          preserveContent: true,
         });
       }
     }
@@ -3424,7 +3450,7 @@ async function collectDeclaredStateRules(stateDir) {
         kind: "file",
         create: false,
         desiredMode: 0o660,
-        preserveContent: false,
+        preserveContent: true,
       });
     }
   }
@@ -3520,6 +3546,29 @@ function declaredStatePreservationHash(entries) {
     .digest("hex")}`;
 }
 
+function declaredStateClassPreservationHashes(entries) {
+  const byClass = new Map();
+  for (const entry of entries.filter((candidate) => candidate.preserveContent)) {
+    const records = byClass.get(entry.stateClass) ?? [];
+    records.push({
+      relativePath: entry.relativePath,
+      existed: entry.existed,
+      contentHash: entry.contentHash ?? null,
+    });
+    byClass.set(entry.stateClass, records);
+  }
+  return Object.freeze(
+    Object.fromEntries(
+      [...byClass.entries()]
+        .toSorted(([left], [right]) => left.localeCompare(right))
+        .map(([stateClass, records]) => [
+          stateClass,
+          `sha256:${createHash("sha256").update(canonicalJSON(records)).digest("hex")}`,
+        ]),
+    ),
+  );
+}
+
 async function inventoryDeclaredApplicationState(topology, context) {
   if (topology.pendingGatewayUnit || topology.pendingStateDir) {
     return null;
@@ -3547,6 +3596,7 @@ async function inventoryDeclaredApplicationState(topology, context) {
     configGid: topology.configGroup.gid,
     registryDigest,
     preservationHash: declaredStatePreservationHash(entries),
+    preservationHashes: declaredStateClassPreservationHashes(entries),
     converged,
     reconciled: false,
     entries,
@@ -3658,7 +3708,7 @@ async function restoreDeclaredApplicationState(transaction) {
 
 async function verifyDeclaredStatePreservation(transaction) {
   if (!transaction) {
-    return { ok: true, preservationHash: null };
+    return { ok: true, preservationHash: null, preservationHashes: {} };
   }
   const preserved = [];
   for (const entry of transaction.entries.filter((candidate) => candidate.preserveContent)) {
@@ -3669,7 +3719,13 @@ async function verifyDeclaredStatePreservation(transaction) {
   if (preservationHash !== transaction.preservationHash) {
     throw new Error("declared user state changed during the lifecycle transaction");
   }
-  return { ok: true, preservationHash };
+  const preservationHashes = declaredStateClassPreservationHashes(preserved);
+  const expectedHashes =
+    transaction.preservationHashes ?? declaredStateClassPreservationHashes(transaction.entries);
+  if (canonicalJSON(preservationHashes) !== canonicalJSON(expectedHashes)) {
+    throw new Error("declared user state class changed during the lifecycle transaction");
+  }
+  return { ok: true, preservationHash, preservationHashes };
 }
 
 function rootManagedApplicationIdentity(context, unit) {
@@ -4333,6 +4389,203 @@ function healthJsonShape(value) {
   return { type: typeof value };
 }
 
+function healthObject(value, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} health is invalid`);
+  }
+  return value;
+}
+
+function unwrapHealthPayload(value) {
+  let current = value;
+  for (let index = 0; index < 3; index += 1) {
+    if (
+      !current ||
+      typeof current !== "object" ||
+      Array.isArray(current) ||
+      !Object.hasOwn(current, "payload")
+    ) {
+      return current;
+    }
+    current = current.payload;
+  }
+  return current;
+}
+
+function validateCanonicalWalletHealth(walletStatus, walletDoctor, topology) {
+  if (walletDoctor?.ok !== true) {
+    throw new Error("target Wallet signer health is not ready");
+  }
+  const status = healthObject(walletStatus?.status, "target Wallet status");
+  const expectedMode =
+    topology.profile === "hosting" ? "hosting-operator" : "protected-local-operator";
+  if (status.mode !== expectedMode || !Array.isArray(status.wallets)) {
+    throw new Error("target Wallet status did not use the canonical operator registry");
+  }
+  const wallets = new Map();
+  const handles = new Set();
+  const addresses = new Set();
+  let miningWallets = 0;
+  for (const value of status.wallets) {
+    const wallet = healthObject(value, "target Wallet record");
+    const id = typeof wallet.id === "string" ? wallet.id.trim() : "";
+    const handle = typeof wallet.handle === "string" ? wallet.handle.trim() : "";
+    const address = typeof wallet.publicAddress === "string" ? wallet.publicAddress.trim() : "";
+    const role = typeof wallet.role === "string" ? wallet.role.trim() : "";
+    const signer = healthObject(wallet.signer, "target signer Wallet readiness");
+    const expectedLanes = {
+      agent: new Set(["agent-reviewed-and-autonomous"]),
+      mining: new Set(["mining-reviewed-only", "mining-typed-sat"]),
+      vault: new Set(["vault-reviewed-only"]),
+    };
+    if (
+      !/^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$/u.test(id) ||
+      handle !== `@wallet:${id}` ||
+      !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(address) ||
+      !Object.hasOwn(expectedLanes, role) ||
+      signer.walletId !== id ||
+      signer.publicKey !== address ||
+      signer.role !== role ||
+      signer.ready !== true ||
+      signer.keyReady !== true ||
+      signer.policyReady !== true ||
+      signer.networkReady !== true ||
+      !Number.isSafeInteger(signer.baselineVersion) ||
+      signer.baselineVersion < 1 ||
+      !Number.isSafeInteger(signer.policyVersion) ||
+      signer.policyVersion < 1 ||
+      !/^sha256:[a-f0-9]{64}$/u.test(String(signer.policyHash ?? "")) ||
+      !Number.isSafeInteger(signer.networkVersion) ||
+      signer.networkVersion < 1 ||
+      !/^hmac-sha256:[a-f0-9]{64}$/u.test(String(signer.networkHash ?? "")) ||
+      !expectedLanes[role].has(signer.operationLane) ||
+      wallets.has(id) ||
+      handles.has(handle) ||
+      addresses.has(address)
+    ) {
+      throw new Error("target Wallet registry and signer identity did not converge");
+    }
+    if (role === "mining") {
+      miningWallets += 1;
+    }
+    wallets.set(id, { id, handle, address, role, lane: signer.operationLane });
+    handles.add(handle);
+    addresses.add(address);
+  }
+  if (miningWallets > 1) {
+    throw new Error("target Wallet registry has more than one Mining Wallet");
+  }
+  const assignments = status.assignments ?? {};
+  if (!assignments || typeof assignments !== "object" || Array.isArray(assignments)) {
+    throw new Error("target Wallet routing assignments are invalid");
+  }
+  for (const [assignment, walletId] of Object.entries(assignments)) {
+    if (!assignment.trim() || typeof walletId !== "string" || !wallets.has(walletId)) {
+      throw new Error("target Wallet routing references a non-canonical Wallet");
+    }
+  }
+  const defaultWalletId =
+    typeof status.defaultWalletId === "string" ? status.defaultWalletId.trim() : "";
+  if (defaultWalletId && wallets.get(defaultWalletId)?.role !== "agent") {
+    throw new Error("target default Wallet routing is not assigned to an Agent Wallet");
+  }
+  return {
+    wallets,
+    evidence: {
+      mode: status.mode,
+      walletCount: wallets.size,
+      miningWalletCount: miningWallets,
+      assignmentCount: Object.keys(assignments).length,
+      defaultWalletPresent: Boolean(defaultWalletId),
+      signerChecks: Array.isArray(walletDoctor.checks) ? walletDoctor.checks.length : 0,
+    },
+  };
+}
+
+function validateCrossProductApplicationEvidence(params) {
+  const canonicalWallets = validateCanonicalWalletHealth(
+    params.walletStatus,
+    params.walletDoctor,
+    params.topology,
+  );
+  const mining = healthObject(unwrapHealthPayload(params.mining), "target Mining history");
+  const network = healthObject(params.network, "target Fased Network");
+  const bond = healthObject(params.bond, "target Fased Network bond");
+  const plugins = healthObject(params.plugins, "target plugin diagnostics");
+  const signerIsolation = healthObject(params.signerIsolation, "target signer isolation");
+  if (
+    network.configured === true &&
+    (typeof network.handle !== "string" || network.handle.trim().length === 0)
+  ) {
+    throw new Error("configured Fased Network identity is incomplete");
+  }
+  if (bond.walletId != null) {
+    const walletId = typeof bond.walletId === "string" ? bond.walletId.trim() : "";
+    const wallet = canonicalWallets.wallets.get(walletId);
+    if (
+      !wallet ||
+      wallet.role !== "vault" ||
+      typeof bond.walletAddress !== "string" ||
+      bond.walletAddress.trim() !== wallet.address
+    ) {
+      throw new Error("Fased Network bond is not bound to the canonical Vault Wallet");
+    }
+  }
+  if (
+    plugins.ok !== true ||
+    !Array.isArray(plugins.errors) ||
+    !Array.isArray(plugins.diagnostics) ||
+    plugins.errors.length > 0 ||
+    plugins.diagnostics.length > 0
+  ) {
+    throw new Error("target plugin diagnostics are not healthy");
+  }
+  if (signerIsolation.operatorDenied !== true || signerIsolation.controlDenied !== true) {
+    throw new Error("target Gateway can reach a privileged signer socket");
+  }
+  return Object.freeze({
+    wallet: {
+      ok: true,
+      evidenceDigest: healthEvidenceDigest(canonicalWallets.evidence),
+    },
+    mining: {
+      ok: true,
+      evidenceDigest: healthEvidenceDigest({
+        ...healthJsonShape(mining),
+        miningWalletIds: [...canonicalWallets.wallets.values()]
+          .filter((wallet) => wallet.role === "mining")
+          .map((wallet) => wallet.id)
+          .toSorted((left, right) => left.localeCompare(right)),
+      }),
+    },
+    network: {
+      ok: true,
+      evidenceDigest: healthEvidenceDigest({
+        configured: network.configured === true,
+        autoConnectEnabled: network.autoConnectEnabled === true,
+        tokenPresent: network.tokenPresent === true,
+        handlePresent: typeof network.handle === "string" && network.handle.trim().length > 0,
+        managedTokenPresent: Boolean(network.managedToken),
+        bondVaultPresent: bond.walletId != null,
+      }),
+    },
+    plugins: {
+      ok: true,
+      evidenceDigest: healthEvidenceDigest({
+        errors: plugins.errors.length,
+        diagnostics: plugins.diagnostics.length,
+      }),
+    },
+    signerIsolation: {
+      ok: true,
+      evidenceDigest: healthEvidenceDigest({
+        operatorDenied: true,
+        controlDenied: true,
+      }),
+    },
+  });
+}
+
 async function readGatewayHealthConfiguration(topology) {
   const configStat = await lstatIfPresent(topology.configPath);
   if (
@@ -4416,98 +4669,128 @@ async function runTargetApplicationCommand(
   return json ? parseBoundedJsonOutput(stdout, label) : { outputPresent: stdout.length > 0 };
 }
 
+function privilegedSignerSocketPaths(context) {
+  if (context.instanceId) {
+    const runtime = `/run/fased-local/${context.instanceId}`;
+    return {
+      operator: `${runtime}/operator/operator.sock`,
+      control: `${runtime}/control/control.sock`,
+    };
+  }
+  return {
+    operator: "/run/fased-signerd/operator.sock",
+    control: "/run/fased-signerd/control.sock",
+  };
+}
+
+async function assertSocketDeniedToGateway(context, topology, socketPath, label) {
+  const stat = await fsp.lstat(socketPath);
+  if (!stat.isSocket() || stat.isSymbolicLink()) {
+    throw new Error(`target signer ${label} socket is invalid`);
+  }
+  const runuser = await fixedExecutable(["/usr/sbin/runuser", "/usr/bin/runuser"], "runuser");
+  const nodeBinary = path.resolve(context.protectedNodeBinary);
+  const probe = [
+    'const net=require("node:net");',
+    "const socket=net.createConnection({path:process.argv[1]});",
+    "socket.setTimeout(3000);",
+    'socket.once("connect",()=>process.exit(42));',
+    'socket.once("timeout",()=>process.exit(43));',
+    'socket.once("error",(error)=>process.exit(error.code==="EACCES"||error.code==="EPERM"?0:44));',
+  ].join("");
+  try {
+    await execFileAsync(
+      runuser,
+      ["-u", topology.gateway.user, "--", nodeBinary, "-e", probe, socketPath],
+      {
+        env: { PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" },
+        timeout: 5_000,
+        maxBuffer: 16 * 1024,
+      },
+    );
+  } catch (error) {
+    throw new Error(`target Gateway can reach or ambiguously probe signer ${label} authority`, {
+      cause: error,
+    });
+  }
+}
+
+async function probeSignerSocketIsolation(context, topology) {
+  const sockets = privilegedSignerSocketPaths(context);
+  await Promise.all([
+    assertSocketDeniedToGateway(context, topology, sockets.operator, "operator"),
+    assertSocketDeniedToGateway(context, topology, sockets.control, "control"),
+  ]);
+  return { operatorDenied: true, controlDenied: true };
+}
+
 async function probeCrossProductApplicationHealth(context, topology, journal) {
   if (topology.pendingGatewayUnit || topology.pendingStateDir) {
     throw new Error("application topology is incomplete during product health verification");
   }
-  const [walletStatus, walletDoctor, mining, network, plugins] = await Promise.all([
-    runTargetApplicationCommand(
-      context,
-      topology,
-      journal,
-      ["wallet", "status", "--json"],
-      "Wallet",
-    ),
-    runTargetApplicationCommand(
-      context,
-      topology,
-      journal,
-      ["wallet", "signer", "doctor", "--json"],
-      "Wallet signer",
-    ),
-    runTargetApplicationCommand(
-      context,
-      topology,
-      journal,
-      [
-        "mining",
-        "history",
-        "--timeout",
-        "5000",
-        "--json",
-        "--url",
-        `ws://127.0.0.1:${(await readGatewayHealthConfiguration(topology)).port}`,
-      ],
-      "Mining",
-    ),
-    runTargetApplicationCommand(
-      context,
-      topology,
-      journal,
-      ["federation", "status", "--json"],
-      "Fased Network",
-    ),
-    runTargetApplicationCommand(
-      context,
-      topology,
-      journal,
-      ["plugins", "doctor", "--json"],
-      "plugins",
-    ),
-  ]);
-  if (walletDoctor?.ok !== true) {
-    throw new Error("target Wallet signer health is not ready");
-  }
-  if (!mining || typeof mining !== "object" || Array.isArray(mining)) {
-    throw new Error("target Mining history health is invalid");
-  }
-  if (!network || typeof network !== "object" || Array.isArray(network)) {
-    throw new Error("target Fased Network health is invalid");
-  }
-  if (
-    network.configured === true &&
-    (typeof network.handle !== "string" || network.handle.trim().length === 0)
-  ) {
-    throw new Error("configured Fased Network identity is incomplete");
-  }
-  if (plugins?.ok !== true) {
-    throw new Error("target plugin diagnostics are not healthy");
-  }
-  const walletEvidence = {
-    signerOk: true,
-    signerChecks: Array.isArray(walletDoctor.checks) ? walletDoctor.checks.length : 0,
-    status: healthJsonShape(walletStatus),
-  };
-  const miningEvidence = healthJsonShape(mining);
-  const networkEvidence = {
-    configured: network.configured === true,
-    autoConnectEnabled: network.autoConnectEnabled === true,
-    tokenPresent: network.tokenPresent === true,
-    handlePresent: typeof network.handle === "string" && network.handle.trim().length > 0,
-    managedTokenPresent: Boolean(network.managedToken),
-  };
-  return Object.freeze({
-    wallet: { ok: true, evidenceDigest: healthEvidenceDigest(walletEvidence) },
-    mining: { ok: true, evidenceDigest: healthEvidenceDigest(miningEvidence) },
-    network: { ok: true, evidenceDigest: healthEvidenceDigest(networkEvidence) },
-    plugins: {
-      ok: true,
-      evidenceDigest: healthEvidenceDigest({
-        ok: true,
-        errors: Array.isArray(plugins.errors) ? plugins.errors.length : 0,
-        diagnostics: Array.isArray(plugins.diagnostics) ? plugins.diagnostics.length : 0,
-      }),
-    },
+  const [walletStatus, walletDoctor, mining, network, bond, plugins, signerIsolation] =
+    await Promise.all([
+      runTargetApplicationCommand(
+        context,
+        topology,
+        journal,
+        ["wallet", "status", "--json"],
+        "Wallet",
+      ),
+      runTargetApplicationCommand(
+        context,
+        topology,
+        journal,
+        ["wallet", "signer", "doctor", "--json"],
+        "Wallet signer",
+      ),
+      runTargetApplicationCommand(
+        context,
+        topology,
+        journal,
+        [
+          "mining",
+          "history",
+          "--timeout",
+          "5000",
+          "--json",
+          "--url",
+          `ws://127.0.0.1:${(await readGatewayHealthConfiguration(topology)).port}`,
+        ],
+        "Mining",
+      ),
+      runTargetApplicationCommand(
+        context,
+        topology,
+        journal,
+        ["federation", "status", "--json"],
+        "Fased Network",
+      ),
+      runTargetApplicationCommand(
+        context,
+        topology,
+        journal,
+        ["federation", "bond-wallet", "status", "--json"],
+        "Fased Network bond",
+      ),
+      runTargetApplicationCommand(
+        context,
+        topology,
+        journal,
+        ["plugins", "doctor", "--json"],
+        "plugins",
+      ),
+      probeSignerSocketIsolation(context, topology),
+    ]);
+  return validateCrossProductApplicationEvidence({
+    topology,
+    walletStatus,
+    walletDoctor,
+    mining,
+    network,
+    bond,
+    plugins,
+    signerIsolation,
   });
 }
 
@@ -4538,7 +4821,10 @@ async function verifyCrossProductHealth(context, journal) {
       },
       signer: {
         ok: true,
-        evidenceDigest: healthEvidenceDigest(signer),
+        evidenceDigest: healthEvidenceDigest({
+          release: signer,
+          privilegedSockets: product.signerIsolation.evidenceDigest,
+        }),
       },
       wallet: product.wallet,
       mining: product.mining,
@@ -4548,6 +4834,7 @@ async function verifyCrossProductHealth(context, journal) {
         ok: true,
         evidenceDigest: healthEvidenceDigest({
           preservationHash: state.preservationHash,
+          preservationHashes: state.preservationHashes ?? {},
         }),
       },
     },
@@ -6424,6 +6711,7 @@ export const __testing = {
   ensureProtectedLocalControllerServicePolicy,
   ensureRootManagedSharedApplicationDirectories,
   declaredStateRegistry,
+  validateCrossProductApplicationEvidence,
   discoverProtectedApplicationTopology,
   inventoryDeclaredApplicationState,
   LIFECYCLE_ROOT_POLICY_SHA256,

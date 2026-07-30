@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import type { FasedAgentConfig } from "../config/config.js";
 import type { PluginInstallRecord } from "../config/types.plugins.js";
 import type { NpmSpecResolution } from "../infra/install-source-utils.js";
@@ -59,6 +60,7 @@ export function repairUpdateOwnedPluginInstallState(
   cfg: FasedAgentConfig,
   options: {
     resolveNpmInstallPath?: (pluginId: string) => string;
+    installPathExists?: (installPath: string) => boolean;
   } = {},
 ): UpdateOwnedPluginInstallStateRepair {
   const installs = cfg.plugins?.installs;
@@ -73,6 +75,7 @@ export function repairUpdateOwnedPluginInstallState(
   }
 
   const resolveNpmInstallPath = options.resolveNpmInstallPath ?? resolvePluginInstallDir;
+  const installPathExists = options.installPathExists ?? existsSync;
   const nextInstalls: Record<string, PluginInstallRecord> = { ...installs };
   const changes: string[] = [];
   const warnings: string[] = [];
@@ -88,10 +91,6 @@ export function repairUpdateOwnedPluginInstallState(
       warnings.push(`Skipped npm install record repair for "${pluginId}": missing npm spec.`);
       continue;
     }
-    if (record.installPath?.trim()) {
-      continue;
-    }
-
     let installPath: string;
     try {
       installPath = resolveNpmInstallPath(pluginId);
@@ -101,13 +100,25 @@ export function repairUpdateOwnedPluginInstallState(
       );
       continue;
     }
+    const configuredInstallPath = record.installPath?.trim();
+    if (configuredInstallPath) {
+      if (
+        configuredInstallPath === installPath ||
+        installPathExists(configuredInstallPath) ||
+        !installPathExists(installPath)
+      ) {
+        continue;
+      }
+    }
 
     nextInstalls[pluginId] = {
       ...record,
       installPath,
     };
     repairedPluginIds.push(pluginId);
-    changes.push(`Repaired npm install record for "${pluginId}" with install path ${installPath}.`);
+    changes.push(
+      `${configuredInstallPath ? "Replaced stale" : "Repaired"} npm install record for "${pluginId}" with install path ${installPath}.`,
+    );
   }
 
   if (repairedPluginIds.length === 0) {

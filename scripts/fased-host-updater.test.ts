@@ -340,12 +340,17 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
     inventoryApplicationState: async () => null,
     reconcileApplicationState: async () => ({ changed: false, reconciled: false }),
     restoreApplicationState: async () => ({ restored: true }),
-    verifyApplicationState: async () => ({ ok: true, preservationHash: null }),
+    verifyApplicationState: async () => ({
+      ok: true,
+      preservationHash: null,
+      preservationHashes: {},
+    }),
     probeApplicationHealth: async () => ({
       wallet: { ok: true, evidenceDigest: `sha256:${"1".repeat(64)}` },
       mining: { ok: true, evidenceDigest: `sha256:${"2".repeat(64)}` },
       network: { ok: true, evidenceDigest: `sha256:${"3".repeat(64)}` },
       plugins: { ok: true, evidenceDigest: `sha256:${"4".repeat(64)}` },
+      signerIsolation: { ok: true, evidenceDigest: `sha256:${"5".repeat(64)}` },
     }),
     stopSigner: async () => {
       events.push("stop");
@@ -1039,6 +1044,53 @@ describe("root-owned hosted updater protocol", () => {
     );
   });
 
+  it("records independent durable Wallet, Mining, Network, identity, and config hashes", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-state-classes-"));
+    cleanupRoots.push(root);
+    const stateDir = path.join(root, ".fased");
+    const walletDir = path.join(stateDir, "wallet");
+    const networkDir = path.join(stateDir, "federation");
+    const miningDir = path.join(stateDir, "sat-mining", "wallets", "mining");
+    await Promise.all([
+      fsp.mkdir(path.join(stateDir, "identity"), { recursive: true }),
+      fsp.mkdir(walletDir, { recursive: true }),
+      fsp.mkdir(networkDir, { recursive: true }),
+      fsp.mkdir(miningDir, { recursive: true }),
+    ]);
+    await Promise.all([
+      fsp.writeFile(path.join(stateDir, "fased.json"), "{}\n"),
+      fsp.writeFile(path.join(stateDir, "identity", "device.json"), '{"id":"device"}\n'),
+      fsp.writeFile(path.join(walletDir, "provider-registry.v1.json"), '{"version":1}\n'),
+      fsp.writeFile(path.join(networkDir, "peer-replay-v2.json"), '{"entries":[]}\n'),
+      fsp.writeFile(path.join(miningDir, "audit-store.json"), '{"records":[]}\n'),
+    ]);
+    const topology = {
+      profile: "hosting",
+      stateDir,
+      operator: { name: "operator", uid: process.getuid(), gid: process.getgid(), home: root },
+      gateway: { user: "gateway", uid: process.getuid(), unitPath: "/unit" },
+      configGroup: { name: "config", gid: process.getgid() },
+    };
+
+    const transaction = await __testing.inventoryDeclaredApplicationState(topology, { paths: {} });
+    expect(Object.keys(transaction.preservationHashes).toSorted()).toEqual([
+      "device-identity",
+      "federation-network",
+      "gateway-config-auth",
+      "mining",
+      "wallet",
+    ]);
+    await expect(__testing.verifyDeclaredStatePreservation(transaction)).resolves.toMatchObject({
+      ok: true,
+      preservationHashes: transaction.preservationHashes,
+    });
+
+    await fsp.writeFile(path.join(miningDir, "audit-store.json"), '{"records":[1]}\n');
+    await expect(__testing.verifyDeclaredStatePreservation(transaction)).rejects.toThrow(
+      "declared user state changed",
+    );
+  });
+
   it("runs bounded cross-product health concurrently and persists only redacted evidence", async () => {
     const { context } = await createFixture();
     let started = 0;
@@ -1058,13 +1110,18 @@ describe("root-owned hosted updater protocol", () => {
       await start({ version: "1.2.3", runtimeSource: "managed-package" });
     context.probeSigner = async () => await start(signerRelease("1.2.3"));
     context.verifyApplicationState = async () =>
-      await start({ ok: true, preservationHash: `sha256:${"a".repeat(64)}` });
+      await start({
+        ok: true,
+        preservationHash: `sha256:${"a".repeat(64)}`,
+        preservationHashes: { wallet: `sha256:${"b".repeat(64)}` },
+      });
     context.probeApplicationHealth = async () =>
       await start({
         wallet: { ok: true, evidenceDigest: `sha256:${"1".repeat(64)}` },
         mining: { ok: true, evidenceDigest: `sha256:${"2".repeat(64)}` },
         network: { ok: true, evidenceDigest: `sha256:${"3".repeat(64)}` },
         plugins: { ok: true, evidenceDigest: `sha256:${"4".repeat(64)}` },
+        signerIsolation: { ok: true, evidenceDigest: `sha256:${"5".repeat(64)}` },
       });
 
     const receipt = await __testing.verifyCrossProductHealth(context, {
@@ -1087,6 +1144,105 @@ describe("root-owned hosted updater protocol", () => {
     });
     expect(JSON.stringify(receipt)).not.toContain("secret");
     expect(JSON.stringify(receipt)).not.toContain("preserved-signer-state");
+  });
+
+  it("binds Wallet, Mining, Network, plugin, and signer-isolation health to canonical state", () => {
+    const readiness = (params: {
+      walletId: string;
+      publicKey: string;
+      role: "agent" | "vault";
+      operationLane: "agent-reviewed-and-autonomous" | "vault-reviewed-only";
+    }) => ({
+      ...params,
+      baselineVersion: 1,
+      policyVersion: 1,
+      policyHash: `sha256:${"a".repeat(64)}`,
+      networkVersion: 1,
+      networkHash: `hmac-sha256:${"b".repeat(64)}`,
+      keyReady: true,
+      policyReady: true,
+      networkReady: true,
+      ready: true,
+    });
+    const agentAddress = "11111111111111111111111111111111";
+    const vaultAddress = "So11111111111111111111111111111111111111112";
+    const evidence = {
+      topology: { profile: "protected-local" },
+      walletStatus: {
+        ok: true,
+        status: {
+          mode: "protected-local-operator",
+          defaultWalletId: "agent",
+          assignments: { main: "agent" },
+          wallets: [
+            {
+              id: "agent",
+              name: "Agent",
+              handle: "@wallet:agent",
+              publicAddress: agentAddress,
+              role: "agent",
+              signer: readiness({
+                walletId: "agent",
+                publicKey: agentAddress,
+                role: "agent",
+                operationLane: "agent-reviewed-and-autonomous",
+              }),
+            },
+            {
+              id: "vault",
+              name: "Vault",
+              handle: "@wallet:vault",
+              publicAddress: vaultAddress,
+              role: "vault",
+              signer: readiness({
+                walletId: "vault",
+                publicKey: vaultAddress,
+                role: "vault",
+                operationLane: "vault-reviewed-only",
+              }),
+            },
+          ],
+        },
+      },
+      walletDoctor: { ok: true, checks: [] },
+      mining: { ok: true, payload: { entries: [] } },
+      network: {
+        configured: true,
+        autoConnectEnabled: true,
+        tokenPresent: true,
+        handle: "@fased-agent",
+        managedToken: { present: true },
+      },
+      bond: { walletId: "vault", walletAddress: vaultAddress },
+      plugins: { ok: true, errors: [], diagnostics: [] },
+      signerIsolation: { operatorDenied: true, controlDenied: true },
+    };
+
+    expect(__testing.validateCrossProductApplicationEvidence(evidence)).toMatchObject({
+      wallet: { ok: true },
+      mining: { ok: true },
+      network: { ok: true },
+      plugins: { ok: true },
+      signerIsolation: { ok: true },
+    });
+
+    const wrongHandle = structuredClone(evidence);
+    wrongHandle.walletStatus.status.wallets[0].handle = "@wallet:wrong";
+    expect(() => __testing.validateCrossProductApplicationEvidence(wrongHandle)).toThrow(
+      "registry and signer identity",
+    );
+
+    const agentBond = structuredClone(evidence);
+    agentBond.bond = { walletId: "agent", walletAddress: agentAddress };
+    expect(() => __testing.validateCrossProductApplicationEvidence(agentBond)).toThrow(
+      "canonical Vault Wallet",
+    );
+
+    const reachableControl = structuredClone(evidence);
+    reachableControl.signerIsolation.controlDenied = false;
+    expect(() => __testing.validateCrossProductApplicationEvidence(reachableControl)).toThrow(
+      "privileged signer socket",
+    );
   });
 
   it("parses one bounded JSON health document after plugin preload messages", () => {
@@ -1113,7 +1269,7 @@ describe("root-owned hosted updater protocol", () => {
     await __testing.ensureRootManagedSharedApplicationDirectories(stateDir, uid, gid);
     await __testing.ensureRootManagedSharedApplicationDirectories(stateDir, uid, gid);
 
-    for (const name of ["identity", "wallet", "federation"]) {
+    for (const name of ["identity", "wallet", "federation", "extensions"]) {
       const info = await fsp.lstat(path.join(stateDir, name));
       expect(info.isDirectory()).toBe(true);
       expect(info.isSymbolicLink()).toBe(false);
