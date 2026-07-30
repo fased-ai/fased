@@ -44,6 +44,49 @@ describe("applyNonInteractiveWalletConfig", () => {
     expect(next.wallet?.provider?.id).toBeUndefined();
   });
 
+  it("preserves the protected Local signer boundary while wallets remain disabled", () => {
+    vi.stubEnv("FASED_PROTECTED_LOCAL", "1");
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_LIFECYCLE", "external");
+    const runtime = createRuntimeStub();
+    const next = applyNonInteractiveWalletConfig({
+      nextConfig: {
+        env: {
+          vars: {
+            FASED_PROTECTED_LOCAL: "1",
+            FASED_PROTECTED_LOCAL_INSTANCE: "0123456789abcdef",
+            FASED_WALLET_LOCAL_SIGNER_LIFECYCLE: "external",
+            FASED_WALLET_LOCAL_SIGNER_SOCKET:
+              "/run/fased-local/0123456789abcdef/application/app.sock",
+          },
+        },
+      },
+      opts: { hostProfile: "local" } as OnboardOptions,
+      runtime,
+    });
+
+    expect(next.wallet?.runtime?.enabled).toBe(false);
+    expect(next.env?.vars?.FASED_PROTECTED_LOCAL).toBe("1");
+    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_LIFECYCLE).toBe("external");
+    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_SOCKET).toBe(
+      "/run/fased-local/0123456789abcdef/application/app.sock",
+    );
+    expect(process.env.FASED_WALLET_LOCAL_SIGNER_LIFECYCLE).toBe("external");
+  });
+
+  it("preserves the Hosting signer boundary while wallets remain disabled", () => {
+    const runtime = createRuntimeStub();
+    const next = applyNonInteractiveWalletConfig({
+      nextConfig: {},
+      opts: { hostProfile: "hosting" } as OnboardOptions,
+      runtime,
+    });
+
+    expect(next.wallet?.runtime?.enabled).toBe(false);
+    expect(next.env?.vars?.FASED_HOST_PROFILE).toBe("hosting");
+    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_LIFECYCLE).toBe("external");
+    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_SOCKET).toBe("/run/fased-signerd/app.sock");
+  });
+
   it("fails closed on legacy embedded-keystore config even while wallet is disabled", () => {
     const runtime = createRuntimeStub();
     const next = applyNonInteractiveWalletConfig({

@@ -3085,6 +3085,13 @@ resolve_shared_managed_state_group() {
     printf '%s\n' "${FASED_CONFIG_GROUP:-fased-config}"
     return 0
   fi
+  local protected_instance="${FASED_PROTECTED_LOCAL_INSTANCE:-}"
+  if [[ "${PROTECTED_LOCAL_BOOTSTRAPPED:-0}" -eq 1 && \
+    "${FASED_PROTECTED_LOCAL:-0}" == "1" && \
+    "$protected_instance" =~ ^[a-f0-9]{16}$ ]]; then
+    printf 'fscf-%s\n' "$protected_instance"
+    return 0
+  fi
   if read_protected_local_env; then
     printf 'fscf-%s\n' "$PROTECTED_LOCAL_INSTANCE"
     return 0

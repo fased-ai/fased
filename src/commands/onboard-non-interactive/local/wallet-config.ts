@@ -165,6 +165,28 @@ function clearLocalSignerEnv(base: FasedAgentConfig): FasedAgentConfig {
   };
 }
 
+function rootManagedSignerProfile(
+  config: FasedAgentConfig,
+  opts: OnboardOptions,
+  env: NodeJS.ProcessEnv = process.env,
+): "protected-local" | "hosting" | null {
+  const variables = config.env?.vars;
+  if (
+    env.FASED_PROTECTED_LOCAL?.trim() === "1" ||
+    variables?.FASED_PROTECTED_LOCAL?.trim() === "1"
+  ) {
+    return "protected-local";
+  }
+  if (
+    opts.hostProfile === "hosting" ||
+    env.FASED_HOST_PROFILE?.trim() === "hosting" ||
+    variables?.FASED_HOST_PROFILE?.trim() === "hosting"
+  ) {
+    return "hosting";
+  }
+  return null;
+}
+
 function setConfigEnvVar(
   config: FasedAgentConfig,
   key: string,
@@ -247,7 +269,14 @@ export function applyNonInteractiveWalletConfig(params: {
 
   if (!enabled) {
     setWalletProvidersEnabled({ enabledProviders: [], env: process.env });
-    return applyWalletConfig(clearLocalSignerEnv(nextConfig), { enabled: false });
+    const managedSignerProfile = rootManagedSignerProfile(nextConfig, opts);
+    const disabledConfig =
+      managedSignerProfile === "hosting"
+        ? applyHostedLocalSignerDefaults(nextConfig)
+        : managedSignerProfile === "protected-local"
+          ? nextConfig
+          : clearLocalSignerEnv(nextConfig);
+    return applyWalletConfig(disabledConfig, { enabled: false });
   }
 
   const providersFromOption =
