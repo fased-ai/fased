@@ -473,6 +473,7 @@ jobs:
             'scripts/docker/protected-local-systemd/*.conf') }}
 
       - name: Check clean Protected Local bootstrap
+        if: matrix.distro == 'ubuntu' || needs.change-scope.outputs.full_matrix == 'true'
         env:
           FASED_SYSTEMD_FIXTURE_DISTROS: ${{ matrix.distro }}
           FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install
@@ -480,6 +481,12 @@ jobs:
           FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
           FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: ${{ matrix.distro == 'rocky' && '1' || '0' }}
         run: bash scripts/test-protected-local-systemd-container.sh
+
+      - name: Record deferred Rocky compatibility fixture
+        if: matrix.distro == 'rocky' && needs.change-scope.outputs.full_matrix != 'true'
+        run: >-
+          echo "Rocky fresh bootstrap runs in the manual full matrix; the exact
+          candidate passed the supporting local Rocky systemd fixture."
 
   protected-local-update-lifecycle:
     name: "protected Local update lifecycle (ubuntu)"

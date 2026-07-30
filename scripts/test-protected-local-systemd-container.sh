@@ -173,6 +173,7 @@ run_fixture_scenario() {
   local fixture_command_pid=""
   local fixture_command_started=""
   local fixture_command_status=0
+  local fixture_memory=""
   local ready=0
   local state=""
 
@@ -211,9 +212,15 @@ run_fixture_scenario() {
   while kill -0 "$fixture_command_pid" 2>/dev/null; do
     sleep 15
     if kill -0 "$fixture_command_pid" 2>/dev/null; then
+      fixture_memory="$(
+        run_container stats --no-stream --format '{{.MemUsage}}' "$name" 2>/dev/null || true
+      )"
       printf \
-        'fixture heartbeat: distro=%s scenario=%s stage=product-lifecycle elapsed=%ss\n' \
-        "$distro" "$scenario" "$((SECONDS - fixture_command_started))"
+        'fixture heartbeat: distro=%s scenario=%s stage=product-lifecycle elapsed=%ss memory=%s\n' \
+        "$distro" \
+        "$scenario" \
+        "$((SECONDS - fixture_command_started))" \
+        "${fixture_memory:-unavailable}"
     fi
   done
   wait "$fixture_command_pid" || fixture_command_status="$?"
