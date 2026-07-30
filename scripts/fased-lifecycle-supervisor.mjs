@@ -2111,6 +2111,14 @@ function writeResponse(socket, payload) {
   socket.end(`${JSON.stringify(payload)}\n`);
 }
 
+async function authorizePublicSocket(socketPath, operatorUid, operatorGid, operations = fsp) {
+  // The supervisor intentionally retains CAP_CHOWN without CAP_FOWNER.
+  // Tighten the root-owned socket before transferring ownership: after chown,
+  // chmod would require the broader capability that this boundary excludes.
+  await operations.chmod(socketPath, 0o600);
+  await operations.chown(socketPath, operatorUid, operatorGid);
+}
+
 export async function startSupervisor(options = {}) {
   if (typeof process.getuid !== "function" || process.getuid() !== 0) {
     fail("lifecycle supervisor must run as root");
@@ -2182,12 +2190,11 @@ export async function startSupervisor(options = {}) {
     server.once("error", reject);
     server.listen(context.paths.publicSocketPath, resolve);
   });
-  await fsp.chown(
+  await authorizePublicSocket(
     context.paths.publicSocketPath,
     configuration.operatorUid,
     configuration.operatorGid,
   );
-  await fsp.chmod(context.paths.publicSocketPath, 0o600);
   const close = async () => {
     await new Promise((resolve) => server.close(resolve));
     await fsp.rm(context.paths.publicSocketPath, { force: true });
@@ -2252,5 +2259,6 @@ export const __testing = Object.freeze({
   recoverSupervisorTransaction,
   renderBoundaryUnits,
   restoreControllerSelection,
+  authorizePublicSocket,
   verifyLifecycleRootTransition,
 });

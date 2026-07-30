@@ -1070,7 +1070,8 @@ async function installRootFiles(params) {
   for (const file of Object.values(servicePlan.files)) {
     await atomicWrite(file.path, file.content, file.mode, { uid: 0, gid: 0 });
   }
-  const channelPath = `/etc/fased/local/${layout.instanceId}/update-channel`;
+  const channelDirectory = await prepareProtectedLocalChannelDirectory(layout);
+  const channelPath = path.join(channelDirectory, "update-channel");
   await atomicWrite(channelPath, `${spec.updateChannel}\n`, 0o644, { uid: 0, gid: 0 });
   await fsp.mkdir(layout.signerStateDir, { recursive: true, mode: 0o700 });
   await fsp.chown(layout.signerStateDir, signerIdentity.uid, signerIdentity.gid);
@@ -1081,6 +1082,19 @@ async function installRootFiles(params) {
   await fsp.mkdir(layout.supervisorStateDir, { recursive: true, mode: 0o700 });
   await fsp.chown(layout.supervisorStateDir, 0, 0);
   await fsp.chmod(layout.supervisorStateDir, 0o700);
+}
+
+async function prepareProtectedLocalChannelDirectory(layout, options = {}) {
+  const root = options.root ?? "/etc/fased/local";
+  const expectedOwnerUid = options.expectedOwnerUid ?? 0;
+  const directory = path.join(root, layout.instanceId);
+  await fsp.mkdir(directory, { recursive: true, mode: 0o755 });
+  const info = await fsp.lstat(directory);
+  if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== expectedOwnerUid) {
+    fail(`protected Local update-channel directory is unsafe: ${directory}`);
+  }
+  await fsp.chmod(directory, 0o755);
+  return directory;
 }
 
 export function buildProtectedLocalLifecycleApplyCommand(spec, layout, options = {}) {
@@ -3055,6 +3069,7 @@ export const __testing = Object.freeze({
   gatewayAclGrantState,
   legacyInstallReferencesUserGateway,
   parseDirectoryAcl,
+  prepareProtectedLocalChannelDirectory,
   renderProtectedLocalOperatorEnvironment,
   renderProtectedLocalOwnerWrapper,
   registeredSignerWallets,

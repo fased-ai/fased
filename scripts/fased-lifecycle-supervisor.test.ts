@@ -154,6 +154,23 @@ function embeddedTrust() {
 }
 
 describe("stable lifecycle supervisor contract", () => {
+  it("tightens the public socket before transferring ownership", async () => {
+    const operations: Array<["chmod" | "chown", string, number, number?]> = [];
+    const socketPath = "/run/fased-local-controller/0123456789abcdef/request.sock";
+    await __testing.authorizePublicSocket(socketPath, 1000, 2000, {
+      chmod: async (target: string, mode: number) => {
+        operations.push(["chmod", target, mode]);
+      },
+      chown: async (target: string, uid: number, gid: number) => {
+        operations.push(["chown", target, uid, gid]);
+      },
+    });
+    expect(operations).toEqual([
+      ["chmod", socketPath, 0o600],
+      ["chown", socketPath, 1000, 2000],
+    ]);
+  });
+
   it("accepts only fixed profile selectors and a typed operation allowlist", () => {
     expect(
       parseSupervisorConfiguration([

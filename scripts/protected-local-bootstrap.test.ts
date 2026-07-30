@@ -27,6 +27,30 @@ afterEach(() => {
 });
 
 describe("protected Local bootstrap contract", () => {
+  it("normalizes the root-owned update-channel directory for service traversal", async () => {
+    const root = temporaryRoot();
+    const layout = buildProtectedLocalLayout("0123456789abcdef");
+    const directory = path.join(root, layout.instanceId);
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+
+    await expect(
+      __testing.prepareProtectedLocalChannelDirectory(layout, {
+        root,
+        expectedOwnerUid: process.getuid?.() ?? 0,
+      }),
+    ).resolves.toBe(directory);
+    expect(fs.statSync(directory).mode & 0o777).toBe(0o755);
+
+    fs.rmSync(directory, { recursive: true });
+    fs.symlinkSync(root, directory);
+    await expect(
+      __testing.prepareProtectedLocalChannelDirectory(layout, {
+        root,
+        expectedOwnerUid: process.getuid?.() ?? 0,
+      }),
+    ).rejects.toThrow(/update-channel directory is unsafe/u);
+  });
+
   it("accepts only one exact release and explicit Gateway phase", () => {
     const root = temporaryRoot();
     const home = path.join(root, "home", "operator");
