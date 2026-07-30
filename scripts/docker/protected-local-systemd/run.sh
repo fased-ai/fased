@@ -956,6 +956,14 @@ if [[ "$phase" == "fresh-install" ]]; then
   test -s "$state/install.json"
   test "$(jq -r .profile "$state/install.json")" = "protected-local"
   instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
+  runtime="$(readlink -f "$state/runtime/current")"
+  case "$runtime" in
+    "/opt/fased/local/$instance/application/releases/"*) ;;
+    *)
+      echo "fresh Protected Local runtime selector escaped the root-controlled application store" >&2
+      exit 1
+      ;;
+  esac
   verify_protected_home_acl "$instance"
   wait_for_service "fased-local-controller-$instance.service"
   wait_for_service "fased-signerd-$instance.service"
