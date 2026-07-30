@@ -74,6 +74,7 @@ async function createFixture(
     protectedService?: boolean;
     missingPreviousApplication?: boolean;
     managedApplication?: boolean;
+    managedInstallSchema?: 1 | 2;
   } = {},
 ) {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-updater-"));
@@ -210,7 +211,7 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
       fsp.writeFile(
         path.join(managedStateDir, "install.json"),
         `${JSON.stringify({
-          schemaVersion: 2,
+          schemaVersion: options.managedInstallSchema ?? 2,
           profile: "protected-local",
           source: "managed-artifact",
           stateDir: managedStateDir,
@@ -276,7 +277,7 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
       declaredStateRegistry: 1,
     },
     stateSchemas: {
-      managedInstall: options.managedApplication ? 2 : null,
+      managedInstall: options.managedApplication ? (options.managedInstallSchema ?? 2) : null,
       walletRegistry: null,
       signer: 2,
       mining: 1,
@@ -579,6 +580,66 @@ describe("root-owned hosted updater protocol", () => {
     expect(legacy.selectionDigest).not.toBe(current.selectionDigest);
   });
 
+  it("uses one deterministic controller-owned catalog for every state-schema adapter", () => {
+    const schemaComponents = [
+      "application",
+      "signer",
+      "wallet",
+      "mining",
+      "federation",
+      "sharedState",
+    ] as const;
+    const compatibilityAdapters = schemaComponents.flatMap((component) =>
+      Object.values(__testing.LIFECYCLE_COMPATIBILITY_ADAPTERS[component]),
+    );
+    expect(new Set(Object.keys(__testing.LIFECYCLE_SCHEMA_MIGRATIONS))).toEqual(
+      new Set(compatibilityAdapters),
+    );
+
+    const selection = __testing.selectLifecycleMigration(
+      {
+        schemaVersion: 1,
+        profile: "protected-local",
+        managedApplication: true,
+        capabilities: {
+          lifecycleControllerProtocol: 2,
+          signerProtocol: { current: 2, min: 2, max: 2 },
+          declaredStateRegistry: 1,
+        },
+        stateSchemas: {
+          managedInstall: 1,
+          walletRegistry: 1,
+          signer: 2,
+          mining: 1,
+          federation: 2,
+        },
+      },
+      2,
+    );
+    const first = __testing.lifecycleSchemaMigrationPlan(selection);
+    const second = __testing.lifecycleSchemaMigrationPlan(selection);
+
+    expect(first).toEqual(second);
+    expect(first.steps.map((step: { component: string }) => step.component)).toEqual(
+      schemaComponents,
+    );
+    expect(first.steps.map((step: { adapter: string }) => step.adapter)).toEqual([
+      "managed-install-v1-to-v2",
+      "signer-schema-v2",
+      "wallet-registry-v1",
+      "mining-schema-v1",
+      "federation-schema-v2",
+      "declared-state-registry-v1",
+    ]);
+    expect(first).toMatchObject({
+      schemaVersion: 1,
+      selectionDigest: selection.selectionDigest,
+      planDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+      preparedAdapters: [],
+      appliedAdapters: [],
+    });
+  });
+
   it("persists release identity and migration selection as independent transaction fields", async () => {
     const fixture = await createFixture();
     await __testing.prepareSignerRelease(
@@ -588,7 +649,7 @@ describe("root-owned hosted updater protocol", () => {
 
     const journal = await __testing.readJournal(fixture.context);
     expect(journal).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       version: "1.2.3",
       release: signerRelease("1.2.3"),
       migrationSelection: {
@@ -612,8 +673,59 @@ describe("root-owned hosted updater protocol", () => {
         },
         selectionDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
       },
+      schemaMigration: {
+        schemaVersion: 1,
+        selectionDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+        planDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+        preparedAdapters: [],
+        appliedAdapters: [],
+        steps: expect.arrayContaining([
+          expect.objectContaining({
+            order: 1,
+            stateClass: "application-runtime",
+            adapter: "managed-install-absent",
+            fromSchema: null,
+            toSchema: 2,
+            applicable: false,
+          }),
+          expect.objectContaining({
+            stateClass: "signer-private-state",
+            schemaOwner: "fased-signerd",
+            adapter: "signer-schema-v2",
+          }),
+        ]),
+      },
     });
     expect(JSON.stringify(journal.migrationSelection)).not.toContain("1.2.3");
+    expect(JSON.stringify(journal.schemaMigration)).not.toContain("1.2.3");
+  });
+
+  it("derives and promotes an interrupted journal schema 4 migration plan deterministically", async () => {
+    const fixture = await createFixture();
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+    const legacy = JSON.parse(await fsp.readFile(fixture.paths.journalPath, "utf8"));
+    legacy.schemaVersion = 4;
+    delete legacy.schemaMigration;
+    await fsp.writeFile(fixture.paths.journalPath, `${JSON.stringify(legacy, null, 2)}\n`);
+
+    const recovered = await __testing.readJournal(fixture.context);
+    expect(recovered).toMatchObject({
+      schemaVersion: 4,
+      phase: "prepared",
+      schemaMigration: {
+        selectionDigest: recovered.migrationSelection.selectionDigest,
+        preparedAdapters: [],
+        appliedAdapters: [],
+      },
+    });
+    const promoted = await __testing.writeJournal(fixture.context, recovered);
+    expect(promoted).toMatchObject({
+      schemaVersion: 5,
+      schemaMigration: recovered.schemaMigration,
+    });
   });
 
   it("fails closed when the installed migration tuple changes after preparation", async () => {
@@ -719,7 +831,11 @@ describe("root-owned hosted updater protocol", () => {
     fixture.context.restoreApplicationState = async (transaction: unknown) =>
       await __testing.restoreDeclaredApplicationState(transaction);
     fixture.context.onDurablePhase = async (phase: string) => {
-      if (phase === "state-reconciling" || phase === "state-reconciled") {
+      if (
+        phase === "state-reconciling" ||
+        phase === "state-reconciled" ||
+        phase === "schema-ready"
+      ) {
         order.push(phase);
       }
     };
@@ -733,13 +849,31 @@ describe("root-owned hosted updater protocol", () => {
       request("gateGatewayRelease", TRANSACTION_ONE, "1.2.3"),
       fixture.context,
     );
-    expect(order).toEqual(["state-reconciling", "reconcile", "state-reconciled"]);
+    expect(order).toEqual(["state-reconciling", "reconcile", "state-reconciled", "schema-ready"]);
     expect((await fsp.stat(stateDir)).mode & 0o7777).toBe(0o2770);
     expect(await __testing.readJournal(fixture.context)).toMatchObject({
-      phase: "state-reconciled",
+      phase: "schema-ready",
       declaredState: {
         reconciled: true,
         preservationHash: expect.stringMatching(/^sha256:/u),
+      },
+      schemaMigration: {
+        preparedAdapters: [
+          "managed-install-absent",
+          "signer-schema-v2",
+          "wallet-registry-absent",
+          "mining-schema-v1",
+          "federation-schema-v2",
+          "declared-state-registry-v1",
+        ],
+        appliedAdapters: [
+          "managed-install-absent",
+          "signer-schema-v2",
+          "wallet-registry-absent",
+          "mining-schema-v1",
+          "federation-schema-v2",
+          "declared-state-registry-v1",
+        ],
       },
     });
 
@@ -748,6 +882,133 @@ describe("root-owned hosted updater protocol", () => {
       fixture.context,
     );
     expect((await fsp.stat(stateDir)).mode & 0o7777).toBe(0o700);
+  });
+
+  it("stages managed schema 1 centrally, applies schema 2 atomically, and restores schema 1", async () => {
+    const fixture = await createFixture({
+      managedApplication: true,
+      managedInstallSchema: 1,
+    });
+    const managedStateDir = path.join(fixture.paths.stateDir, "..", "operator", ".fased");
+    const manifestPath = path.join(managedStateDir, "install.json");
+
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+    await __testing.gateGatewayRelease(
+      request("gateGatewayRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+    const staged = await __testing.readJournal(fixture.context);
+    expect(staged).toMatchObject({
+      phase: "schema-ready",
+      schemaMigration: {
+        preparedAdapters: expect.arrayContaining(["managed-install-v1-to-v2"]),
+      },
+    });
+    expect(staged.schemaMigration.appliedAdapters).not.toContain("managed-install-v1-to-v2");
+    expect(JSON.parse(await fsp.readFile(manifestPath, "utf8")).schemaVersion).toBe(1);
+
+    await __testing.activateSignerRelease(
+      request("activateRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+    await __testing.authorizeGatewayRelease(
+      request("authorizeGatewayRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+    const activated = await __testing.readJournal(fixture.context);
+    expect(activated).toMatchObject({
+      phase: "gateway-authorized",
+      schemaMigration: {
+        appliedAdapters: activated.schemaMigration.steps.map(
+          (step: { adapter: string }) => step.adapter,
+        ),
+      },
+    });
+    expect(JSON.parse(await fsp.readFile(manifestPath, "utf8"))).toMatchObject({
+      schemaVersion: 2,
+      runtime: { activeVersion: "1.2.3", previousVersion: "1.2.2" },
+    });
+
+    await __testing.rollbackSignerRelease(
+      request("rollbackRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+    expect(JSON.parse(await fsp.readFile(manifestPath, "utf8"))).toMatchObject({
+      schemaVersion: 1,
+      runtime: { activeVersion: "1.2.2" },
+    });
+  });
+
+  it("recovers a crash after managed schema activation and retries the same transaction once", async () => {
+    const fixture = await createFixture({
+      managedApplication: true,
+      managedInstallSchema: 1,
+    });
+    const manifestPath = path.join(
+      fixture.paths.stateDir,
+      "..",
+      "operator",
+      ".fased",
+      "install.json",
+    );
+    fixture.context.verifyGateway = async () => ({
+      version: "1.2.3",
+      runtimeSource: "managed-package",
+    });
+    let gatewayAuthorizedWrites = 0;
+    fixture.context.onDurablePhase = async (phase: string) => {
+      if (phase === "gateway-authorized") {
+        gatewayAuthorizedWrites += 1;
+        if (gatewayAuthorizedWrites === 2) {
+          const error = new Error(
+            "deterministic crash after managed schema activation",
+          ) as Error & {
+            code?: string;
+          };
+          error.code = "FASED_TEST_CRASH";
+          throw error;
+        }
+      }
+    };
+
+    await expect(
+      __testing.applyReleaseTransaction(
+        request("applyRelease", TRANSACTION_ONE, "1.2.3"),
+        fixture.context,
+      ),
+    ).rejects.toMatchObject({ code: "FASED_TEST_CRASH" });
+    expect(await __testing.readJournal(fixture.context)).toMatchObject({
+      phase: "gateway-authorized",
+      schemaMigration: { appliedAdapters: expect.arrayContaining(["managed-install-v1-to-v2"]) },
+    });
+    expect(JSON.parse(await fsp.readFile(manifestPath, "utf8")).schemaVersion).toBe(1);
+
+    fixture.context.onDurablePhase = undefined;
+    await expect(__testing.recoverInterruptedTransaction(fixture.context)).resolves.toMatchObject({
+      recovered: true,
+      action: "rolled-back",
+    });
+    expect(JSON.parse(await fsp.readFile(manifestPath, "utf8"))).toMatchObject({
+      schemaVersion: 1,
+      runtime: { activeVersion: "1.2.2" },
+    });
+
+    await expect(
+      __testing.applyReleaseTransaction(
+        request("applyRelease", TRANSACTION_ONE, "1.2.3"),
+        fixture.context,
+      ),
+    ).resolves.toMatchObject({
+      phase: "committed",
+      schemaMigration: { applied: true },
+    });
+    expect(JSON.parse(await fsp.readFile(manifestPath, "utf8"))).toMatchObject({
+      schemaVersion: 2,
+      runtime: { activeVersion: "1.2.3" },
+    });
   });
 
   it("rejects declared user-state content changes before commit", async () => {
@@ -2381,6 +2642,7 @@ describe("root-owned hosted updater protocol", () => {
     ["prepared", "rolled-back"],
     ["state-reconciling", "rolled-back"],
     ["state-reconciled", "rolled-back"],
+    ["schema-ready", "rolled-back"],
     ["snapshotting", "rolled-back"],
     ["activating", "rolled-back"],
     ["active", "rolled-back"],
@@ -2645,6 +2907,14 @@ describe("root-owned hosted updater protocol", () => {
       JSON.parse(await fsp.readFile(path.join(committedState, "install.json"), "utf8")).runtime
         .activeVersion,
     ).toBe("1.2.3");
+    expect(
+      JSON.parse(await fsp.readFile(path.join(committedState, "last-update-success.json"), "utf8"))
+        .schemaMigration,
+    ).toMatchObject({
+      schemaVersion: 1,
+      applied: true,
+      planDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+    });
     expect(await fsp.readFile(committed.paths.signerPath, "utf8")).toBe("signer-1.2.3\n");
 
     const rolledBack = await createFixture({ managedApplication: true });

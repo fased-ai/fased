@@ -64,9 +64,10 @@ const TRANSACTIONS_DIR = path.join(STATE_DIR, "transactions");
 const MAX_REQUEST_BYTES = 4096;
 const REQUEST_TIMEOUT_MS = 20 * 60_000;
 const CROSS_PRODUCT_HEALTH_TIMEOUT_MS = 30_000;
-const JOURNAL_SCHEMA_VERSION = 4;
+const JOURNAL_SCHEMA_VERSION = 5;
 const PROTOCOL_SCHEMA_VERSION = 2;
 const MIGRATION_SELECTION_SCHEMA_VERSION = 1;
+const SCHEMA_MIGRATION_SCHEMA_VERSION = 1;
 const SUPPORTED_MIGRATION_PROFILES = new Set(["protected-local", "hosting"]);
 const SUPPORTED_MANAGED_INSTALL_SCHEMAS = new Set([null, 1, 2]);
 const SUPPORTED_WALLET_REGISTRY_SCHEMAS = new Set([null, 1]);
@@ -100,6 +101,88 @@ const LIFECYCLE_COMPATIBILITY_ADAPTERS = Object.freeze({
     "hosting:linux-systemd": "hosting-system-v1",
   }),
 });
+const LIFECYCLE_SCHEMA_MIGRATIONS = Object.freeze({
+  "managed-install-absent": Object.freeze({
+    component: "application",
+    stateClass: "application-runtime",
+    schemaOwner: "target-controller",
+    fromSchema: null,
+    toSchema: 2,
+    mode: "initialize-on-activation",
+  }),
+  "managed-install-v1-to-v2": Object.freeze({
+    component: "application",
+    stateClass: "application-runtime",
+    schemaOwner: "target-controller",
+    fromSchema: 1,
+    toSchema: 2,
+    mode: "migrate-on-activation",
+  }),
+  "managed-install-v2": Object.freeze({
+    component: "application",
+    stateClass: "application-runtime",
+    schemaOwner: "target-controller",
+    fromSchema: 2,
+    toSchema: 2,
+    mode: "verify-current",
+  }),
+  "signer-schema-v2": Object.freeze({
+    component: "signer",
+    stateClass: "signer-private-state",
+    schemaOwner: "fased-signerd",
+    fromSchema: 2,
+    toSchema: 2,
+    mode: "delegate-and-verify",
+  }),
+  "wallet-registry-absent": Object.freeze({
+    component: "wallet",
+    stateClass: "wallet",
+    schemaOwner: "wallet-registry-and-fased-signerd",
+    fromSchema: null,
+    toSchema: 1,
+    mode: "preserve-optional-absence",
+  }),
+  "wallet-registry-v1": Object.freeze({
+    component: "wallet",
+    stateClass: "wallet",
+    schemaOwner: "wallet-registry-and-fased-signerd",
+    fromSchema: 1,
+    toSchema: 1,
+    mode: "verify-current",
+  }),
+  "mining-schema-v1": Object.freeze({
+    component: "mining",
+    stateClass: "mining",
+    schemaOwner: "sat-mining",
+    fromSchema: 1,
+    toSchema: 1,
+    mode: "verify-current",
+  }),
+  "federation-schema-v2": Object.freeze({
+    component: "federation",
+    stateClass: "federation-network",
+    schemaOwner: "fased-network",
+    fromSchema: 2,
+    toSchema: 2,
+    mode: "verify-current",
+  }),
+  "declared-state-registry-v1": Object.freeze({
+    component: "sharedState",
+    stateClass: "declared-state-registry",
+    schemaOwner: "target-controller",
+    fromSchema: 1,
+    toSchema: 1,
+    mode: "verify-current",
+  }),
+});
+const SCHEMA_MIGRATION_COMPONENTS = Object.freeze([
+  "application",
+  "signer",
+  "wallet",
+  "mining",
+  "federation",
+  "sharedState",
+]);
 const TRANSACTION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TRANSACTION_OPERATIONS = new Set([
@@ -118,6 +201,7 @@ const TRANSACTION_PHASES = new Set([
   "prepared",
   "state-reconciling",
   "state-reconciled",
+  "schema-ready",
   "snapshotting",
   "activating",
   "active",
@@ -1238,6 +1322,220 @@ function lifecycleMigrationReceipt(selection) {
   });
 }
 
+function schemaMigrationInput(selection, component) {
+  switch (component) {
+    case "application":
+      return selection.inventory.stateSchemas.managedInstall;
+    case "signer":
+      return selection.inventory.stateSchemas.signer;
+    case "wallet":
+      return selection.inventory.stateSchemas.walletRegistry;
+    case "mining":
+      return selection.inventory.stateSchemas.mining;
+    case "federation":
+      return selection.inventory.stateSchemas.federation;
+    case "sharedState":
+      return selection.inventory.declaredStateRegistry;
+    default:
+      throw new Error(`lifecycle schema migration component ${component} is unsupported`);
+  }
+}
+
+function schemaMigrationApplicable(selection, component, input) {
+  if (component === "application") {
+    return selection.inventory.managedApplication;
+  }
+  if (component === "wallet" && input === null) {
+    return false;
+  }
+  return true;
+}
+
+function lifecycleSchemaMigrationPlan(selection) {
+  const normalized = validateLifecycleMigrationSelection(selection);
+  if (!normalized) {
+    return null;
+  }
+  const steps = SCHEMA_MIGRATION_COMPONENTS.map((component, index) => {
+    const adapter = normalized.adapters[component];
+    const definition = LIFECYCLE_SCHEMA_MIGRATIONS[adapter];
+    const fromSchema = schemaMigrationInput(normalized, component);
+    if (!definition || definition.component !== component || definition.fromSchema !== fromSchema) {
+      throw new Error(`selected lifecycle schema adapter ${adapter || "unknown"} is unsupported`);
+    }
+    return Object.freeze({
+      order: index + 1,
+      component,
+      stateClass: definition.stateClass,
+      schemaOwner: definition.schemaOwner,
+      adapter,
+      fromSchema,
+      toSchema: definition.toSchema,
+      mode: definition.mode,
+      applicable: schemaMigrationApplicable(normalized, component, fromSchema),
+    });
+  });
+  const identity = Object.freeze({
+    schemaVersion: SCHEMA_MIGRATION_SCHEMA_VERSION,
+    selectionDigest: normalized.selectionDigest,
+    steps,
+  });
+  return Object.freeze({
+    ...identity,
+    planDigest: `sha256:${createHash("sha256").update(canonicalJSON(identity)).digest("hex")}`,
+    preparedAdapters: Object.freeze([]),
+    appliedAdapters: Object.freeze([]),
+  });
+}
+
+function orderedSchemaAdapterSubset(value, steps, label) {
+  if (!Array.isArray(value) || new Set(value).size !== value.length) {
+    throw new Error(`lifecycle schema migration ${label} is invalid`);
+  }
+  const positions = new Map(steps.map((step, index) => [step.adapter, index]));
+  let previous = -1;
+  for (const adapter of value) {
+    const position = positions.get(adapter);
+    if (position == null || position <= previous) {
+      throw new Error(`lifecycle schema migration ${label} is invalid`);
+    }
+    previous = position;
+  }
+  return Object.freeze([...value]);
+}
+
+function validateLifecycleSchemaMigration(value, selection) {
+  const expected = lifecycleSchemaMigrationPlan(selection);
+  if (!expected) {
+    if (value != null) {
+      throw new Error("lifecycle schema migration exists without a migration selection");
+    }
+    return null;
+  }
+  exactObjectKeys(
+    value,
+    [
+      "schemaVersion",
+      "selectionDigest",
+      "steps",
+      "planDigest",
+      "preparedAdapters",
+      "appliedAdapters",
+    ],
+    "lifecycle schema migration",
+  );
+  if (
+    value.schemaVersion !== SCHEMA_MIGRATION_SCHEMA_VERSION ||
+    value.selectionDigest !== expected.selectionDigest ||
+    value.planDigest !== expected.planDigest ||
+    canonicalJSON(value.steps) !== canonicalJSON(expected.steps)
+  ) {
+    throw new Error("lifecycle schema migration plan is invalid");
+  }
+  const preparedAdapters = orderedSchemaAdapterSubset(
+    value.preparedAdapters,
+    expected.steps,
+    "prepared adapters",
+  );
+  const appliedAdapters = orderedSchemaAdapterSubset(
+    value.appliedAdapters,
+    expected.steps,
+    "applied adapters",
+  );
+  const prepared = new Set(preparedAdapters);
+  if (appliedAdapters.some((adapter) => !prepared.has(adapter))) {
+    throw new Error("lifecycle schema migration applied an unprepared adapter");
+  }
+  return Object.freeze({
+    schemaVersion: SCHEMA_MIGRATION_SCHEMA_VERSION,
+    selectionDigest: expected.selectionDigest,
+    steps: expected.steps,
+    planDigest: expected.planDigest,
+    preparedAdapters,
+    appliedAdapters,
+  });
+}
+
+function stagedLifecycleSchemaMigration(value, selection) {
+  const migration = validateLifecycleSchemaMigration(value, selection);
+  if (!migration) {
+    throw new Error("lifecycle schema migration plan is unavailable");
+  }
+  const preparedAdapters = migration.steps.map((step) => step.adapter);
+  const appliedAdapters = migration.steps
+    .filter(
+      (step) =>
+        !step.applicable ||
+        (step.mode !== "initialize-on-activation" && step.mode !== "migrate-on-activation"),
+    )
+    .map((step) => step.adapter);
+  return validateLifecycleSchemaMigration(
+    {
+      ...migration,
+      preparedAdapters,
+      appliedAdapters,
+    },
+    selection,
+  );
+}
+
+function completedLifecycleSchemaMigration(value, selection) {
+  const migration = validateLifecycleSchemaMigration(value, selection);
+  if (!migration) {
+    throw new Error("lifecycle schema migration plan is unavailable");
+  }
+  const adapters = migration.steps.map((step) => step.adapter);
+  return validateLifecycleSchemaMigration(
+    {
+      ...migration,
+      preparedAdapters: adapters,
+      appliedAdapters: adapters,
+    },
+    selection,
+  );
+}
+
+function legacyLifecycleSchemaMigration(selection, phase, rollbackFromPhase) {
+  const planned = lifecycleSchemaMigrationPlan(selection);
+  if (!planned) {
+    return null;
+  }
+  const effectivePhase =
+    phase === "rolling-back" || phase === "restored" ? rollbackFromPhase || "prepared" : phase;
+  if (effectivePhase === "prepared" || effectivePhase === "state-reconciling") {
+    return planned;
+  }
+  const staged = stagedLifecycleSchemaMigration(planned, selection);
+  if (effectivePhase === "gateway-verified" || effectivePhase === "committing") {
+    return completedLifecycleSchemaMigration(staged, selection);
+  }
+  return staged;
+}
+
+function lifecycleSchemaMigrationReceipt(value, selection) {
+  if (!value || !selection) {
+    return null;
+  }
+  const migration = validateLifecycleSchemaMigration(value, selection);
+  return Object.freeze({
+    schemaVersion: SCHEMA_MIGRATION_SCHEMA_VERSION,
+    selectionDigest: migration.selectionDigest,
+    planDigest: migration.planDigest,
+    applied: migration.appliedAdapters.length === migration.steps.length,
+    steps: migration.steps.map((step) =>
+      Object.freeze({
+        order: step.order,
+        stateClass: step.stateClass,
+        schemaOwner: step.schemaOwner,
+        adapter: step.adapter,
+        fromSchema: step.fromSchema,
+        toSchema: step.toSchema,
+        applicable: step.applicable,
+      }),
+    ),
+  });
+}
+
 function parseUnifiedHostedSignerRelease(value, expectedVersion, platform) {
   if (
     !value ||
@@ -2023,7 +2321,7 @@ async function validateJournal(value, context) {
   if (
     !value ||
     typeof value !== "object" ||
-    !new Set([1, 2, 3, JOURNAL_SCHEMA_VERSION]).has(value.schemaVersion) ||
+    !new Set([1, 2, 3, 4, JOURNAL_SCHEMA_VERSION]).has(value.schemaVersion) ||
     !TRANSACTION_PHASES.has(value.phase)
   ) {
     throw new Error("host updater transaction journal is invalid");
@@ -2089,6 +2387,54 @@ async function validateJournal(value, context) {
     version,
   );
   const migrationSelection = validateLifecycleMigrationSelection(value.migrationSelection);
+  const hasSchemaMigration = Object.prototype.hasOwnProperty.call(value, "schemaMigration");
+  if (value.schemaVersion === JOURNAL_SCHEMA_VERSION && !hasSchemaMigration) {
+    throw new Error("host updater transaction schema migration is missing");
+  }
+  const schemaMigration = validateLifecycleSchemaMigration(
+    hasSchemaMigration
+      ? value.schemaMigration
+      : legacyLifecycleSchemaMigration(migrationSelection, value.phase, value.rollbackFromPhase),
+    migrationSelection,
+  );
+  const schemaAdapters = schemaMigration?.steps.map((step) => step.adapter) ?? [];
+  const preparedAdapters = new Set(schemaMigration?.preparedAdapters ?? []);
+  const appliedAdapters = new Set(schemaMigration?.appliedAdapters ?? []);
+  if (
+    value.schemaVersion === JOURNAL_SCHEMA_VERSION &&
+    new Set([
+      "schema-ready",
+      "snapshotting",
+      "activating",
+      "active",
+      "gateway-authorized",
+      "gateway-verified",
+      "committing",
+    ]).has(value.phase) &&
+    !migrationSelection
+  ) {
+    throw new Error("host updater transaction migration selection is missing");
+  }
+  if (
+    new Set([
+      "schema-ready",
+      "snapshotting",
+      "activating",
+      "active",
+      "gateway-authorized",
+      "gateway-verified",
+      "committing",
+    ]).has(value.phase) &&
+    schemaAdapters.some((adapter) => !preparedAdapters.has(adapter))
+  ) {
+    throw new Error("host updater transaction schema migrations are not prepared");
+  }
+  if (
+    new Set(["gateway-verified", "committing"]).has(value.phase) &&
+    schemaAdapters.some((adapter) => !appliedAdapters.has(adapter))
+  ) {
+    throw new Error("host updater transaction schema migrations are incomplete");
+  }
   const serviceBoundary = validateProtectedServiceBoundary(value.serviceBoundary, context);
   const declaredState = validateDeclaredStateTransaction(value.declaredState);
   const healthReceipt = validateCrossProductHealthReceipt(value.healthReceipt);
@@ -2103,6 +2449,7 @@ async function validateJournal(value, context) {
     application,
     managedApplication,
     migrationSelection,
+    schemaMigration,
     serviceBoundary,
     declaredState,
     healthReceipt,
@@ -3756,6 +4103,104 @@ async function selectManagedApplication(context, journal) {
   );
 }
 
+function prepareLifecycleSchemaMigrations(journal) {
+  const migration = validateLifecycleSchemaMigration(
+    journal.schemaMigration,
+    journal.migrationSelection,
+  );
+  if (!migration) {
+    throw new Error("target lifecycle transaction has no schema migration plan");
+  }
+  const application = migration.steps.find((step) => step.component === "application");
+  if (application?.applicable) {
+    if (!journal.managedApplication) {
+      throw new Error("managed application schema migration has no rollback-bound transaction");
+    }
+    const previousSchema = journal.managedApplication.previousManifest?.schemaVersion ?? null;
+    const nextSchema = journal.managedApplication.nextManifest?.schemaVersion ?? null;
+    if (
+      previousSchema !== application.fromSchema ||
+      nextSchema !== application.toSchema ||
+      (application.mode === "initialize-on-activation" && previousSchema !== null) ||
+      (application.mode === "migrate-on-activation" &&
+        !(previousSchema === 1 && nextSchema === 2)) ||
+      (application.mode === "verify-current" && previousSchema !== nextSchema)
+    ) {
+      throw new Error("managed application schema migration transaction is mismatched");
+    }
+  }
+  return stagedLifecycleSchemaMigration(migration, journal.migrationSelection);
+}
+
+async function completeLifecycleSchemaMigrations(context, journal) {
+  const migration = validateLifecycleSchemaMigration(
+    journal.schemaMigration,
+    journal.migrationSelection,
+  );
+  if (!migration) {
+    throw new Error("target lifecycle transaction has no schema migration plan");
+  }
+  if (migration.preparedAdapters.length !== migration.steps.length) {
+    throw new Error("target lifecycle schema migration was not prepared");
+  }
+  const activationSteps = migration.steps.filter(
+    (step) =>
+      step.applicable &&
+      (step.mode === "initialize-on-activation" || step.mode === "migrate-on-activation"),
+  );
+  if (activationSteps.length > 1) {
+    throw new Error("target lifecycle schema migration has multiple activation writers");
+  }
+  if (activationSteps.length === 1) {
+    const [step] = activationSteps;
+    if (step.component !== "application" || !journal.managedApplication) {
+      throw new Error("target lifecycle schema activation owner is invalid");
+    }
+    const paths = managedApplicationPaths(journal.managedApplication.stateDir);
+    const manifest = validateManagedInstallManifest(
+      JSON.parse(await fsp.readFile(paths.manifestPath, "utf8")),
+      context.applicationState,
+      paths,
+    );
+    const activeRoot = await readOptionalLink(paths.currentLink);
+    if (
+      manifest.schemaVersion !== step.toSchema ||
+      manifest.runtime.activeVersion !== journal.version ||
+      activeRoot !== journal.application?.targetRoot
+    ) {
+      throw new Error("managed application schema migration did not activate atomically");
+    }
+  }
+  return completedLifecycleSchemaMigration(migration, journal.migrationSelection);
+}
+
+function assertLifecycleSchemaMigrationsApplied(journal) {
+  const migration = validateLifecycleSchemaMigration(
+    journal.schemaMigration,
+    journal.migrationSelection,
+  );
+  if (
+    !migration ||
+    migration.preparedAdapters.length !== migration.steps.length ||
+    migration.appliedAdapters.length !== migration.steps.length
+  ) {
+    throw new Error("target lifecycle schema migrations are incomplete");
+  }
+  return migration;
+}
+
+function lifecycleSchemaMigrationsApplied(journal) {
+  const migration = validateLifecycleSchemaMigration(
+    journal.schemaMigration,
+    journal.migrationSelection,
+  );
+  return Boolean(
+    migration &&
+    migration.preparedAdapters.length === migration.steps.length &&
+    migration.appliedAdapters.length === migration.steps.length,
+  );
+}
+
 async function restoreManagedApplication(context, journal) {
   if (!journal.managedApplication) {
     return;
@@ -4523,6 +4968,7 @@ async function prepareSignerRelease(request, context) {
       application,
       managedApplication,
       migrationSelection,
+      schemaMigration: lifecycleSchemaMigrationPlan(migrationSelection),
       serviceBoundary,
       declaredState: null,
       healthReceipt: null,
@@ -4766,6 +5212,10 @@ async function authorizeGatewayRelease(request, context) {
     await context.applyServiceBoundary(journal.serviceBoundary);
     await activateProtectedApplication(context, journal);
     await selectManagedApplication(context, journal);
+    journal = await writeJournal(context, {
+      ...journal,
+      schemaMigration: await completeLifecycleSchemaMigrations(context, journal),
+    });
     await removeGatewayGate(context);
     try {
       await context.startGateway();
@@ -4838,11 +5288,15 @@ async function gateGatewayRelease(request, context) {
   if (migrationSelection.adapters.sharedState !== "declared-state-registry-v1") {
     throw new Error("selected lifecycle migration has no supported shared-state adapter");
   }
+  const schemaMigration = journal.schemaMigration
+    ? validateLifecycleSchemaMigration(journal.schemaMigration, migrationSelection)
+    : lifecycleSchemaMigrationPlan(migrationSelection);
   const declaredState = await context.inventoryApplicationState(topology, migrationSelection);
   journal = await writeJournal(context, {
     ...journal,
     phase: "state-reconciling",
     migrationSelection,
+    schemaMigration,
     declaredState,
   });
   if (declaredState) {
@@ -4868,6 +5322,11 @@ async function gateGatewayRelease(request, context) {
       phase: "state-reconciled",
     });
   }
+  journal = await writeJournal(context, {
+    ...journal,
+    phase: "schema-ready",
+    schemaMigration: prepareLifecycleSchemaMigrations(journal),
+  });
   return {
     transactionId: journal.transactionId,
     version: journal.version,
@@ -4930,10 +5389,17 @@ async function activateSignerRelease(request, context) {
     await gateGatewayRelease(request, context);
     journal = await readJournal(context);
   }
+  if (journal.phase === "state-reconciled") {
+    journal = await writeJournal(context, {
+      ...journal,
+      phase: "schema-ready",
+      schemaMigration: prepareLifecycleSchemaMigrations(journal),
+    });
+  }
   if (!journal.migrationSelection) {
     throw new Error("signer transaction has no validated lifecycle migration selection");
   }
-  if (journal.phase !== "state-reconciled") {
+  if (journal.phase !== "schema-ready") {
     throw new Error(`signer transaction cannot activate from phase ${journal.phase}`);
   }
   if (!journal.changed) {
@@ -5415,6 +5881,10 @@ async function recordTargetApplicationSuccess(context, journal) {
         version: journal.version,
         alreadyCurrent: false,
         migration: lifecycleMigrationReceipt(journal.migrationSelection),
+        schemaMigration: lifecycleSchemaMigrationReceipt(
+          journal.schemaMigration,
+          journal.migrationSelection,
+        ),
         updatedAt: new Date().toISOString(),
       },
       null,
@@ -5427,6 +5897,9 @@ async function recordTargetApplicationSuccess(context, journal) {
 }
 
 async function finishCommit(context, journal) {
+  if (journal.migrationSelection) {
+    assertLifecycleSchemaMigrationsApplied(journal);
+  }
   await recordTargetApplicationSuccess(context, journal);
   await cleanupHistoricalQ0Residue(context, journal);
   await writeInitialRollbackFloor(context, journal.version);
@@ -5441,6 +5914,10 @@ async function finishCommit(context, journal) {
     changed: journal.changed,
     release: journal.release,
     migration: lifecycleMigrationReceipt(journal.migrationSelection),
+    schemaMigration: lifecycleSchemaMigrationReceipt(
+      journal.schemaMigration,
+      journal.migrationSelection,
+    ),
   };
 }
 
@@ -5514,6 +5991,15 @@ async function alreadyCommittedRelease(request, context) {
   void gateway;
   void product;
   const release = parseSignerReleaseIdentity(signer, request.version);
+  const schemaMigration = migrationSelection
+    ? completedLifecycleSchemaMigration(
+        stagedLifecycleSchemaMigration(
+          lifecycleSchemaMigrationPlan(migrationSelection),
+          migrationSelection,
+        ),
+        migrationSelection,
+      )
+    : null;
   return {
     transactionId: request.transactionId,
     version: request.version,
@@ -5521,6 +6007,7 @@ async function alreadyCommittedRelease(request, context) {
     changed: false,
     release,
     migration: lifecycleMigrationReceipt(migrationSelection),
+    schemaMigration: lifecycleSchemaMigrationReceipt(schemaMigration, migrationSelection),
   };
 }
 
@@ -5548,7 +6035,7 @@ async function applyReleaseTransaction(request, context) {
       await gateGatewayRelease(request, context);
       journal = await readJournal(context);
     }
-    if (journal.phase === "state-reconciled") {
+    if (journal.phase === "state-reconciled" || journal.phase === "schema-ready") {
       await activateSignerRelease(request, context);
       journal = await readJournal(context);
     }
@@ -5557,6 +6044,11 @@ async function applyReleaseTransaction(request, context) {
       journal = await readJournal(context);
     }
     if (journal.phase === "gateway-authorized") {
+      if (!lifecycleSchemaMigrationsApplied(journal)) {
+        await authorizeGatewayRelease(request, context);
+        journal = await readJournal(context);
+      }
+      assertLifecycleSchemaMigrationsApplied(journal);
       const healthReceipt = await verifyCrossProductHealth(context, journal);
       journal = await writeJournal(context, {
         ...journal,
@@ -5621,6 +6113,7 @@ async function recoverInterruptedTransaction(context) {
     journal.phase === "prepared" ||
     journal.phase === "state-reconciling" ||
     journal.phase === "state-reconciled" ||
+    journal.phase === "schema-ready" ||
     journal.phase === "snapshotting" ||
     journal.phase === "activating" ||
     journal.phase === "active" ||
@@ -5912,6 +6405,7 @@ if (isMain) {
 
 export const __testing = {
   LIFECYCLE_COMPATIBILITY_ADAPTERS,
+  LIFECYCLE_SCHEMA_MIGRATIONS,
   assertSignerV2Health,
   applyReleaseTransaction,
   activateSignerRelease,
@@ -5947,8 +6441,11 @@ export const __testing = {
   restartGatewayService,
   rollbackSignerRelease,
   lifecycleMigrationInventory,
+  lifecycleSchemaMigrationPlan,
+  lifecycleSchemaMigrationReceipt,
   selectLifecycleMigration,
   validateLifecycleMigrationSelection,
+  validateLifecycleSchemaMigration,
   stageOfficialControllerRelease,
   stageOfficialCandidate,
   stageProtectedApplicationRelease,
