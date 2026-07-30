@@ -170,6 +170,9 @@ run_fixture_scenario() {
   local image="$2"
   local scenario="$3"
   local name="fased-protected-local-${distro}-${scenario}-$$"
+  local fixture_command_pid=""
+  local fixture_command_started=""
+  local fixture_command_status=0
   local ready=0
   local state=""
 
@@ -201,10 +204,22 @@ run_fixture_scenario() {
     echo "$distro systemd fixture did not become ready." >&2
     exit 1
   }
-  if ! run_container exec "$name" /bin/bash \
-    /usr/local/bin/fased-protected-local-systemd-fixture "$scenario"; then
+  fixture_command_started="$SECONDS"
+  run_container exec "$name" /bin/bash \
+    /usr/local/bin/fased-protected-local-systemd-fixture "$scenario" &
+  fixture_command_pid="$!"
+  while kill -0 "$fixture_command_pid" 2>/dev/null; do
+    sleep 15
+    if kill -0 "$fixture_command_pid" 2>/dev/null; then
+      printf \
+        'fixture heartbeat: distro=%s scenario=%s stage=product-lifecycle elapsed=%ss\n' \
+        "$distro" "$scenario" "$((SECONDS - fixture_command_started))"
+    fi
+  done
+  wait "$fixture_command_pid" || fixture_command_status="$?"
+  if [[ "$fixture_command_status" -ne 0 ]]; then
     dump_fixture_failure "$name"
-    exit 1
+    return "$fixture_command_status"
   fi
   run_container stop "$name" >/dev/null
   run_container start "$name" >/dev/null
