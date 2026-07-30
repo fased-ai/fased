@@ -91,6 +91,7 @@ const PRIVILEGED_VEX_NAME = "fased-privileged-vex-v1.openvex.json";
 const MAX_REQUEST_BYTES = 4096;
 const MAX_DOWNLOAD_BYTES = 4 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 20 * 60_000;
+const PRIVATE_UMASK = 0o077;
 const MAX_METADATA_VALIDITY_MS = 400 * 24 * 60 * 60 * 1000;
 const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
@@ -2220,7 +2221,7 @@ export async function startSupervisor(options = {}) {
     await context.waitForController();
   }
   await fsp.rm(context.paths.publicSocketPath, { force: true });
-  process.umask(0o177);
+  process.umask(PRIVATE_UMASK);
   let queue = Promise.resolve();
   const server = net.createServer((socket) => {
     socket.setEncoding("utf8");
@@ -2328,10 +2329,12 @@ export const __testing = Object.freeze({
   EMBEDDED_LIFECYCLE_ROOT,
   INITIAL_LIFECYCLE_ROOT_ENVELOPE,
   INITIAL_LIFECYCLE_ROOT_SHA256,
+  PRIVATE_UMASK,
   SUPERVISOR_NAME,
   TRUST_METADATA_NAME,
   activateStagedController,
   advanceLifecycleTrustState,
+  atomicWrite,
   beginSupervisorTransaction,
   commitLifecycleTrust,
   compareVersions,

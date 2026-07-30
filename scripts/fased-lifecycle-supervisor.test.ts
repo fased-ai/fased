@@ -178,6 +178,21 @@ describe("stable lifecycle supervisor contract", () => {
     }
   });
 
+  it("writes durable receipts under the supervisor umask", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-supervisor-receipt-"));
+    const receipt = path.join(root, "receipts", "transaction.json");
+    const previousUmask = process.umask(__testing.PRIVATE_UMASK);
+    try {
+      await __testing.atomicWrite(receipt, '{"ok":true}\n');
+      expect((await fsp.stat(path.dirname(receipt))).mode & 0o777).toBe(0o700);
+      expect((await fsp.stat(receipt)).mode & 0o777).toBe(0o600);
+      await expect(fsp.readFile(receipt, "utf8")).resolves.toBe('{"ok":true}\n');
+    } finally {
+      process.umask(previousUmask);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("tightens the public socket before transferring ownership", async () => {
     const operations: Array<["chmod" | "chown", string, number, number?]> = [];
     const socketPath = "/run/fased-local-controller/0123456789abcdef/request.sock";
