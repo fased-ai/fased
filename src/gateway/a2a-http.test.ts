@@ -637,11 +637,11 @@ describe("gateway A2A adapter", () => {
     });
     expect(create.error).toBeUndefined();
     const accessToken = taskToken(create);
-    await new Promise((resolve) => setTimeout(resolve, 90));
-    const get = await rpcCall({
+    const get = await waitForTaskStatus({
       handler,
-      method: "tasks.get",
-      rpcParams: { taskId: "task-canonical-1", taskAccessToken: accessToken },
+      taskId: "task-canonical-1",
+      accessToken,
+      status: "succeeded",
     });
     expect(get.error).toBeUndefined();
     const output = ((get.result as Record<string, unknown>).output ?? {}) as Record<
