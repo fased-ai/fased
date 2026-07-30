@@ -207,12 +207,12 @@ if [[ "$*" == *"--arg channel beta"* ]]; then
 fi
 if [[ "$*" == *".validity.issuedAt"* ]]; then
   [[ "$document" == */fased-lifecycle-trust-v1.json && -f "$document" ]]
-  sed -n 's/.*"issuedAt":[[:space:]]*"\([^"]*\)".*/\1/p' "$document"
+  sed -n 's/.*"issuedAt":[[:space:]]*"\([^"]*\)".*/\1/p' "$document" | tail -n 1
   exit 0
 fi
 if [[ "$*" == *".validity.expiresAt"* ]]; then
   [[ "$document" == */fased-lifecycle-trust-v1.json && -f "$document" ]]
-  sed -n 's/.*"expiresAt":[[:space:]]*"\([^"]*\)".*/\1/p' "$document"
+  sed -n 's/.*"expiresAt":[[:space:]]*"\([^"]*\)".*/\1/p' "$document" | tail -n 1
   exit 0
 fi
 [[ "$*" == *"--arg version 9.8.7-rc.2"* ]]

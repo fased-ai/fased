@@ -4,6 +4,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { officialReleaseAttestationVerifyArgs } from "../../scripts/lifecycle-trust-runtime.mjs";
 import type { FasedAgentConfig } from "../config/config.js";
 import { VERSION } from "../version.js";
 import { SIGNER_PROTOCOL_V2 } from "../wallet/signer-protocol-v2.generated.js";
@@ -128,8 +129,19 @@ describe("local signer env file helpers", () => {
     );
     expect(onboardingWalletSource).toContain("Go is not required for the official prebuilt signer");
     expect(signerInstallerSource).toContain("gh attestation verify");
-    expect(signerUpdaterSource).toContain("`refs/tags/v${version}`");
-    expect(signerUpdaterSource).toContain("--deny-self-hosted-runners");
+    expect(signerUpdaterSource).toContain("officialReleaseAttestationVerifyArgs({");
+    expect(
+      officialReleaseAttestationVerifyArgs({
+        assetPath: "/tmp/fased-signerd",
+        version: "1.2.3-rc.4",
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        "--source-ref",
+        "refs/tags/v1.2.3-rc.4",
+        "--deny-self-hosted-runners",
+      ]),
+    );
   });
 
   it("uses the same localhost WebAuthn identity on Linux, WSL2, and native macOS", () => {

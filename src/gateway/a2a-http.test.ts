@@ -99,7 +99,7 @@ function createRequest(opts: {
   return req;
 }
 
-async function waitForFinish(res: MockResponse, timeoutMs = 300): Promise<void> {
+async function waitForFinish(res: MockResponse, timeoutMs = 2_000): Promise<void> {
   if (res.writableEnded || res.destroyed) {
     return;
   }
@@ -226,6 +226,32 @@ function taskToken(response: RpcResponse): string {
   const token = (response.result as Record<string, unknown> | undefined)?.taskAccessToken;
   expect(typeof token).toBe("string");
   return String(token);
+}
+
+async function waitForTaskStatus(params: {
+  handler: A2aHttpHandler;
+  taskId: string;
+  accessToken: string;
+  status: string;
+  timeoutMs?: number;
+}): Promise<RpcResponse> {
+  const deadline = Date.now() + (params.timeoutMs ?? 2_000);
+  let response: RpcResponse = {};
+  while (Date.now() < deadline) {
+    response = await rpcCall({
+      handler: params.handler,
+      method: "tasks.get",
+      rpcParams: {
+        taskId: params.taskId,
+        taskAccessToken: params.accessToken,
+      },
+    });
+    if ((response.result as Record<string, unknown> | undefined)?.status === params.status) {
+      return response;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`task ${params.taskId} did not reach ${params.status}`);
 }
 
 describe("gateway A2A adapter", () => {
@@ -538,7 +564,12 @@ describe("gateway A2A adapter", () => {
     });
     expect(created.error).toBeUndefined();
     const accessToken = taskToken(created);
-    await new Promise((resolve) => setTimeout(resolve, 90));
+    await waitForTaskStatus({
+      handler: firstHandler,
+      taskId,
+      accessToken,
+      status: "succeeded",
+    });
 
     const restartedHandler = createHandler();
     const restored = await rpcCall({
