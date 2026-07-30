@@ -3,12 +3,30 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildLifecycleTrustMetadata } from "./build-lifecycle-trust-metadata.mjs";
+import { INITIAL_LIFECYCLE_ROOT_ENVELOPE } from "./lifecycle-trust-runtime.mjs";
+
+const rootPolicyPath = path.join(
+  import.meta.dirname,
+  "..",
+  "release",
+  "lifecycle-trust",
+  "root-v1",
+  "fased-lifecycle-root-v1.json",
+);
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-lifecycle-trust-"));
+  fs.writeFileSync(path.join(root, "install.sh"), "bootstrap\n");
   fs.writeFileSync(path.join(root, "fased-lifecycle-supervisor.mjs"), "supervisor\n");
   fs.writeFileSync(path.join(root, "fased-host-updater.mjs"), "server\n");
   fs.writeFileSync(path.join(root, "fased-host-updaterctl.mjs"), "client\n");
+  fs.writeFileSync(path.join(root, "fased-privileged-release-evidence.mjs"), "evidence verifier\n");
+  fs.writeFileSync(
+    path.join(root, "fased-privileged-provenance-v1.intoto.json"),
+    '{"provenance":true}\n',
+  );
+  fs.writeFileSync(path.join(root, "fased-privileged-sbom-v1.spdx.json"), '{"sbom":true}\n');
+  fs.writeFileSync(path.join(root, "fased-privileged-vex-v1.openvex.json"), '{"vex":true}\n');
   return root;
 }
 
@@ -16,6 +34,7 @@ describe("lifecycle trust metadata", () => {
   it("binds one release to fixed supervisor and controller target names", async () => {
     const metadata = await buildLifecycleTrustMetadata({
       assetsDir: fixture(),
+      rootPolicyPath,
       version: "1.2.3",
       commit: "a".repeat(40),
       issuedAt: "2026-07-28T00:00:00.000Z",
@@ -24,6 +43,7 @@ describe("lifecycle trust metadata", () => {
     expect(metadata).toMatchObject({
       schemaVersion: 1,
       role: "fased-lifecycle-targets",
+      rootPolicy: INITIAL_LIFECYCLE_ROOT_ENVELOPE,
       release: { version: "1.2.3", tag: "v1.2.3", commit: "a".repeat(40) },
       policy: {
         channels: ["beta", "stable"],
@@ -32,13 +52,23 @@ describe("lifecycle trust metadata", () => {
         controllerProtocol: 2,
       },
       targets: {
+        bootstrap: { asset: "install.sh" },
         supervisor: { asset: "fased-lifecycle-supervisor.mjs" },
         controllerServer: { asset: "fased-host-updater.mjs" },
         controllerClient: { asset: "fased-host-updaterctl.mjs" },
+        evidenceVerifier: { asset: "fased-privileged-release-evidence.mjs" },
+      },
+      evidence: {
+        provenance: { asset: "fased-privileged-provenance-v1.intoto.json" },
+        sbom: { asset: "fased-privileged-sbom-v1.spdx.json" },
+        vex: { asset: "fased-privileged-vex-v1.openvex.json" },
       },
     });
     for (const target of Object.values(metadata.targets)) {
       expect(target.sha256).toMatch(/^[a-f0-9]{64}$/u);
+    }
+    for (const evidence of Object.values(metadata.evidence)) {
+      expect(evidence.sha256).toMatch(/^[a-f0-9]{64}$/u);
     }
   });
 
@@ -46,6 +76,7 @@ describe("lifecycle trust metadata", () => {
     const root = fixture();
     const metadata = await buildLifecycleTrustMetadata({
       assetsDir: root,
+      rootPolicyPath,
       version: "1.2.3-rc.1",
       commit: "b".repeat(40),
       issuedAt: "2026-07-28T00:00:00.000Z",
@@ -55,6 +86,7 @@ describe("lifecycle trust metadata", () => {
     await expect(
       buildLifecycleTrustMetadata({
         assetsDir: root,
+        rootPolicyPath,
         version: "1.2.3",
         commit: "b".repeat(40),
         issuedAt: "2026-01-01T00:00:00.000Z",
@@ -73,11 +105,28 @@ describe("lifecycle trust metadata", () => {
     await expect(
       buildLifecycleTrustMetadata({
         assetsDir: root,
+        rootPolicyPath,
         version: "1.2.3",
         commit: "c".repeat(40),
         issuedAt: "2026-07-28T00:00:00.000Z",
         expiresAt: "2027-07-28T00:00:00.000Z",
       }),
     ).rejects.toThrow("regular single-link file");
+  });
+
+  it("requires the release workflow to select one regular signed-root file", async () => {
+    const root = fixture();
+    const rootPolicyLink = path.join(root, "root-policy.json");
+    fs.symlinkSync(rootPolicyPath, rootPolicyLink);
+    await expect(
+      buildLifecycleTrustMetadata({
+        assetsDir: root,
+        rootPolicyPath: rootPolicyLink,
+        version: "1.2.3",
+        commit: "d".repeat(40),
+        issuedAt: "2026-07-28T00:00:00.000Z",
+        expiresAt: "2027-07-28T00:00:00.000Z",
+      }),
+    ).rejects.toThrow("root policy must be one bounded regular single-link file");
   });
 });

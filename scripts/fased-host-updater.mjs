@@ -15,8 +15,17 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 const RELEASE_BASE = "https://github.com/fased-ai/fased/releases/download";
-const RELEASE_REPOSITORY = "fased-ai/fased";
-const RELEASE_WORKFLOW = "fased-ai/fased/.github/workflows/hosted-runtime-release.yml";
+const LIFECYCLE_ROOT_POLICY_SHA256 =
+  "23d3e8235a39729d6ae37a5784eaa717a47e4ac725f5a416e78754ad9b4618ca";
+const ROOT_APPROVED_RELEASE_AUTHORITY = Object.freeze({
+  type: "github-artifact-attestation-v1",
+  repository: "fased-ai/fased",
+  workflow: "fased-ai/fased/.github/workflows/hosted-runtime-release.yml",
+  sourceRefPrefix: "refs/tags/v",
+  denySelfHostedRunners: true,
+});
+const RELEASE_REPOSITORY = ROOT_APPROVED_RELEASE_AUTHORITY.repository;
+const RELEASE_WORKFLOW = ROOT_APPROVED_RELEASE_AUTHORITY.workflow;
 const RELEASE_MANIFEST_NAME = "fased-hosted-release-v2.json";
 const RELEASE_MANIFEST_BUNDLE_NAME = `${RELEASE_MANIFEST_NAME}.attestation.json`;
 const SIGNER_ATTESTATION_BUNDLE_NAME = "fased-signerd-release.attestation.json";
@@ -29,6 +38,19 @@ const LIFECYCLE_SUPERVISOR_NAME = "fased-lifecycle-supervisor.mjs";
 const LIFECYCLE_SUPERVISOR_BUNDLE_NAME = `${LIFECYCLE_SUPERVISOR_NAME}.attestation.json`;
 const LIFECYCLE_TRUST_METADATA_NAME = "fased-lifecycle-trust-v1.json";
 const LIFECYCLE_TRUST_METADATA_BUNDLE_NAME = `${LIFECYCLE_TRUST_METADATA_NAME}.attestation.json`;
+const EVIDENCE_VERIFIER_NAME = "fased-privileged-release-evidence.mjs";
+const PRIVILEGED_PROVENANCE_NAME = "fased-privileged-provenance-v1.intoto.json";
+const PRIVILEGED_PROVENANCE_BUNDLE_NAME = `${PRIVILEGED_PROVENANCE_NAME}.attestation.json`;
+const PRIVILEGED_SBOM_NAME = "fased-privileged-sbom-v1.spdx.json";
+const PRIVILEGED_VEX_NAME = "fased-privileged-vex-v1.openvex.json";
+const MANAGED_UPDATER_SUPPORT_FILES = Object.freeze([
+  "hosted-release-manifest.mjs",
+  "lifecycle-trust-crypto.mjs",
+  "lifecycle-trust-policy.mjs",
+  "lifecycle-trust-root.mjs",
+  "lifecycle-trust-runtime.mjs",
+  "managed-runtime-layout.mjs",
+]);
 const CONTROLLER_SELF_CHECK_SCHEMA_VERSION = 1;
 const CONTROLLER_PROTOCOL_VERSION = 2;
 const SOCKET_PATH = "/run/fased-host-updater/request.sock";
@@ -50,8 +72,125 @@ const TRANSACTIONS_DIR = path.join(STATE_DIR, "transactions");
 const MAX_REQUEST_BYTES = 4096;
 const REQUEST_TIMEOUT_MS = 20 * 60_000;
 const CROSS_PRODUCT_HEALTH_TIMEOUT_MS = 30_000;
-const JOURNAL_SCHEMA_VERSION = 3;
+const JOURNAL_SCHEMA_VERSION = 5;
 const PROTOCOL_SCHEMA_VERSION = 2;
+const MIGRATION_SELECTION_SCHEMA_VERSION = 1;
+const SCHEMA_MIGRATION_SCHEMA_VERSION = 1;
+const SUPPORTED_MIGRATION_PROFILES = new Set(["protected-local", "hosting"]);
+const SUPPORTED_MANAGED_INSTALL_SCHEMAS = new Set([null, 1, 2]);
+const SUPPORTED_WALLET_REGISTRY_SCHEMAS = new Set([null, 1]);
+const LIFECYCLE_COMPATIBILITY_ADAPTERS = Object.freeze({
+  application: Object.freeze({
+    absent: "managed-install-absent",
+    "schema:1": "managed-install-v1-to-v2",
+    "schema:2": "managed-install-v2",
+  }),
+  controller: Object.freeze({
+    "protocol:2": "controller-protocol-v2",
+  }),
+  signer: Object.freeze({
+    "schema:2": "signer-schema-v2",
+  }),
+  wallet: Object.freeze({
+    absent: "wallet-registry-absent",
+    "schema:1": "wallet-registry-v1",
+  }),
+  mining: Object.freeze({
+    "schema:1": "mining-schema-v1",
+  }),
+  federation: Object.freeze({
+    "schema:2": "federation-schema-v2",
+  }),
+  sharedState: Object.freeze({
+    "schema:1": "declared-state-registry-v1",
+  }),
+  profileAccess: Object.freeze({
+    "protected-local:linux-systemd": "protected-local-system-v1",
+    "hosting:linux-systemd": "hosting-system-v1",
+  }),
+});
+const LIFECYCLE_SCHEMA_MIGRATIONS = Object.freeze({
+  "managed-install-absent": Object.freeze({
+    component: "application",
+    stateClass: "application-runtime",
+    schemaOwner: "target-controller",
+    fromSchema: null,
+    toSchema: 2,
+    mode: "initialize-on-activation",
+  }),
+  "managed-install-v1-to-v2": Object.freeze({
+    component: "application",
+    stateClass: "application-runtime",
+    schemaOwner: "target-controller",
+    fromSchema: 1,
+    toSchema: 2,
+    mode: "migrate-on-activation",
+  }),
+  "managed-install-v2": Object.freeze({
+    component: "application",
+    stateClass: "application-runtime",
+    schemaOwner: "target-controller",
+    fromSchema: 2,
+    toSchema: 2,
+    mode: "verify-current",
+  }),
+  "signer-schema-v2": Object.freeze({
+    component: "signer",
+    stateClass: "signer-private-state",
+    schemaOwner: "fased-signerd",
+    fromSchema: 2,
+    toSchema: 2,
+    mode: "delegate-and-verify",
+  }),
+  "wallet-registry-absent": Object.freeze({
+    component: "wallet",
+    stateClass: "wallet",
+    schemaOwner: "wallet-registry-and-fased-signerd",
+    fromSchema: null,
+    toSchema: 1,
+    mode: "preserve-optional-absence",
+  }),
+  "wallet-registry-v1": Object.freeze({
+    component: "wallet",
+    stateClass: "wallet",
+    schemaOwner: "wallet-registry-and-fased-signerd",
+    fromSchema: 1,
+    toSchema: 1,
+    mode: "verify-current",
+  }),
+  "mining-schema-v1": Object.freeze({
+    component: "mining",
+    stateClass: "mining",
+    schemaOwner: "sat-mining",
+    fromSchema: 1,
+    toSchema: 1,
+    mode: "verify-current",
+  }),
+  "federation-schema-v2": Object.freeze({
+    component: "federation",
+    stateClass: "federation-network",
+    schemaOwner: "fased-network",
+    fromSchema: 2,
+    toSchema: 2,
+    mode: "verify-current",
+  }),
+  "declared-state-registry-v1": Object.freeze({
+    component: "sharedState",
+    stateClass: "declared-state-registry",
+    schemaOwner: "target-controller",
+    fromSchema: 1,
+    toSchema: 1,
+    mode: "verify-current",
+  }),
+});
+const SCHEMA_MIGRATION_COMPONENTS = Object.freeze([
+  "application",
+  "signer",
+  "wallet",
+  "mining",
+  "federation",
+  "sharedState",
+]);
 const TRANSACTION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TRANSACTION_OPERATIONS = new Set([
@@ -70,6 +209,7 @@ const TRANSACTION_PHASES = new Set([
   "prepared",
   "state-reconciling",
   "state-reconciled",
+  "schema-ready",
   "snapshotting",
   "activating",
   "active",
@@ -387,8 +527,10 @@ function releaseAttestationVerifyArgs(assetPath, version, bundlePath) {
     "--signer-workflow",
     RELEASE_WORKFLOW,
     "--source-ref",
-    `refs/tags/v${version}`,
-    "--deny-self-hosted-runners",
+    `${ROOT_APPROVED_RELEASE_AUTHORITY.sourceRefPrefix}${version}`,
+    ...(ROOT_APPROVED_RELEASE_AUTHORITY.denySelfHostedRunners
+      ? ["--deny-self-hosted-runners"]
+      : []),
   ];
 }
 
@@ -403,6 +545,14 @@ async function verifyReleaseAsset(assetPath, version, stateDir, bundlePath) {
     timeout: REQUEST_TIMEOUT_MS,
     maxBuffer: 4 * 1024 * 1024,
   });
+}
+
+async function verifyPrivilegedReleaseEvidence(verifierPath, verifierSha256, options) {
+  const verifier = await import(`${pathToFileURL(verifierPath).href}?sha256=${verifierSha256}`);
+  if (typeof verifier.verifyPrivilegedReleaseEvidence !== "function") {
+    throw new Error("privileged release evidence verifier API is unavailable");
+  }
+  return await verifier.verifyPrivilegedReleaseEvidence(options);
 }
 
 function lifecycleSupervisorPaths(configuration) {
@@ -939,6 +1089,459 @@ function canonicalJSON(value) {
       .join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+function exactObjectKeys(value, expected, label) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).toSorted().join(",") !==
+      [...expected].toSorted((left, right) => left.localeCompare(right)).join(",")
+  ) {
+    throw new Error(`${label} is invalid`);
+  }
+}
+
+function parseMigrationProtocolRange(value) {
+  exactObjectKeys(value, ["current", "min", "max"], "installed signer protocol capability");
+  if (
+    !Number.isSafeInteger(value.current) ||
+    !Number.isSafeInteger(value.min) ||
+    !Number.isSafeInteger(value.max) ||
+    value.min < 1 ||
+    value.min > value.current ||
+    value.current > value.max
+  ) {
+    throw new Error("installed signer protocol capability is invalid");
+  }
+  return Object.freeze({ current: value.current, min: value.min, max: value.max });
+}
+
+function parseMigrationStateSchemas(value) {
+  exactObjectKeys(
+    value,
+    ["managedInstall", "walletRegistry", "signer", "mining", "federation"],
+    "installed lifecycle state schemas",
+  );
+  if (
+    !SUPPORTED_MANAGED_INSTALL_SCHEMAS.has(value.managedInstall) ||
+    !SUPPORTED_WALLET_REGISTRY_SCHEMAS.has(value.walletRegistry) ||
+    value.signer !== 2 ||
+    value.mining !== 1 ||
+    value.federation !== 2
+  ) {
+    throw new Error("installed lifecycle state schemas are unsupported");
+  }
+  return Object.freeze({
+    managedInstall: value.managedInstall ?? null,
+    walletRegistry: value.walletRegistry ?? null,
+    signer: value.signer,
+    mining: value.mining,
+    federation: value.federation,
+  });
+}
+
+function lifecycleCompatibilityAdapter(component, selector) {
+  const catalog = LIFECYCLE_COMPATIBILITY_ADAPTERS[component];
+  const adapter = catalog?.[selector];
+  if (!adapter) {
+    throw new Error(`installed lifecycle ${component} compatibility adapter is unsupported`);
+  }
+  return adapter;
+}
+
+function lifecycleSchemaSelector(value) {
+  return value === null ? "absent" : `schema:${value}`;
+}
+
+function lifecycleMigrationInventory(topology, updaterProtocol = PROTOCOL_SCHEMA_VERSION) {
+  if (
+    !topology ||
+    typeof topology !== "object" ||
+    Array.isArray(topology) ||
+    topology.pendingGatewayUnit ||
+    topology.pendingStateDir ||
+    !SUPPORTED_MIGRATION_PROFILES.has(topology.profile) ||
+    typeof topology.managedApplication !== "boolean" ||
+    !Number.isSafeInteger(updaterProtocol) ||
+    updaterProtocol < 1
+  ) {
+    throw new Error("installed lifecycle topology is incomplete or unsupported");
+  }
+  exactObjectKeys(
+    topology.capabilities,
+    ["lifecycleControllerProtocol", "signerProtocol", "declaredStateRegistry"],
+    "installed lifecycle capabilities",
+  );
+  const signerProtocol = parseMigrationProtocolRange(topology.capabilities.signerProtocol);
+  const stateSchemas = parseMigrationStateSchemas(topology.stateSchemas);
+  if (
+    topology.capabilities.lifecycleControllerProtocol !== CONTROLLER_PROTOCOL_VERSION ||
+    topology.capabilities.declaredStateRegistry !== DECLARED_STATE_SCHEMA_VERSION ||
+    signerProtocol.current !== 2 ||
+    updaterProtocol !== PROTOCOL_SCHEMA_VERSION ||
+    (topology.profile === "protected-local" && topology.managedApplication !== true) ||
+    (topology.managedApplication === false && stateSchemas.managedInstall !== null)
+  ) {
+    throw new Error("installed lifecycle topology has no supported migration path");
+  }
+  return Object.freeze({
+    schemaVersion: MIGRATION_SELECTION_SCHEMA_VERSION,
+    profile: topology.profile,
+    platformAdapter: "linux-systemd",
+    serviceTopology:
+      topology.profile === "protected-local" ? "protected-local-system-v1" : "hosting-system-v1",
+    managedApplication: topology.managedApplication,
+    updaterProtocol,
+    controllerProtocol: topology.capabilities.lifecycleControllerProtocol,
+    signerProtocol,
+    declaredStateRegistry: topology.capabilities.declaredStateRegistry,
+    stateSchemas,
+    interruptedTransaction: "none",
+  });
+}
+
+function migrationSelectionFromInventory(inventory) {
+  exactObjectKeys(
+    inventory,
+    [
+      "schemaVersion",
+      "profile",
+      "platformAdapter",
+      "serviceTopology",
+      "managedApplication",
+      "updaterProtocol",
+      "controllerProtocol",
+      "signerProtocol",
+      "declaredStateRegistry",
+      "stateSchemas",
+      "interruptedTransaction",
+    ],
+    "installed lifecycle migration inventory",
+  );
+  const normalized = lifecycleMigrationInventory(
+    {
+      profile: inventory.profile,
+      managedApplication: inventory.managedApplication,
+      capabilities: {
+        lifecycleControllerProtocol: inventory.controllerProtocol,
+        signerProtocol: inventory.signerProtocol,
+        declaredStateRegistry: inventory.declaredStateRegistry,
+      },
+      stateSchemas: inventory.stateSchemas,
+    },
+    inventory.updaterProtocol,
+  );
+  if (
+    inventory.schemaVersion !== MIGRATION_SELECTION_SCHEMA_VERSION ||
+    inventory.platformAdapter !== normalized.platformAdapter ||
+    inventory.serviceTopology !== normalized.serviceTopology ||
+    inventory.interruptedTransaction !== "none"
+  ) {
+    throw new Error("installed lifecycle migration inventory is unsupported");
+  }
+  const adapters = Object.freeze({
+    application: lifecycleCompatibilityAdapter(
+      "application",
+      lifecycleSchemaSelector(normalized.stateSchemas.managedInstall),
+    ),
+    controller: lifecycleCompatibilityAdapter(
+      "controller",
+      `protocol:${normalized.controllerProtocol}`,
+    ),
+    signer: lifecycleCompatibilityAdapter(
+      "signer",
+      lifecycleSchemaSelector(normalized.stateSchemas.signer),
+    ),
+    wallet: lifecycleCompatibilityAdapter(
+      "wallet",
+      lifecycleSchemaSelector(normalized.stateSchemas.walletRegistry),
+    ),
+    mining: lifecycleCompatibilityAdapter(
+      "mining",
+      lifecycleSchemaSelector(normalized.stateSchemas.mining),
+    ),
+    federation: lifecycleCompatibilityAdapter(
+      "federation",
+      lifecycleSchemaSelector(normalized.stateSchemas.federation),
+    ),
+    sharedState: lifecycleCompatibilityAdapter(
+      "sharedState",
+      lifecycleSchemaSelector(normalized.declaredStateRegistry),
+    ),
+    profileAccess: lifecycleCompatibilityAdapter(
+      "profileAccess",
+      `${normalized.profile}:${normalized.platformAdapter}`,
+    ),
+  });
+  const unsigned = Object.freeze({
+    schemaVersion: MIGRATION_SELECTION_SCHEMA_VERSION,
+    inventory: normalized,
+    adapters,
+  });
+  return Object.freeze({
+    ...unsigned,
+    selectionDigest: `sha256:${createHash("sha256").update(canonicalJSON(unsigned)).digest("hex")}`,
+  });
+}
+
+function selectLifecycleMigration(topology, updaterProtocol = PROTOCOL_SCHEMA_VERSION) {
+  return migrationSelectionFromInventory(lifecycleMigrationInventory(topology, updaterProtocol));
+}
+
+function validateLifecycleMigrationSelection(value) {
+  if (value == null) {
+    return null;
+  }
+  exactObjectKeys(
+    value,
+    ["schemaVersion", "inventory", "adapters", "selectionDigest"],
+    "lifecycle migration selection",
+  );
+  const expected = migrationSelectionFromInventory(value.inventory);
+  if (canonicalJSON(value) !== canonicalJSON(expected)) {
+    throw new Error("lifecycle migration selection is invalid");
+  }
+  return expected;
+}
+
+function assertSameMigrationSelection(previous, next) {
+  if (
+    previous &&
+    (previous.selectionDigest !== next.selectionDigest ||
+      canonicalJSON(previous) !== canonicalJSON(next))
+  ) {
+    throw new Error("installed lifecycle topology changed after migration selection");
+  }
+  return next;
+}
+
+function lifecycleMigrationReceipt(selection) {
+  if (!selection) {
+    return null;
+  }
+  return Object.freeze({
+    schemaVersion: MIGRATION_SELECTION_SCHEMA_VERSION,
+    profile: selection.inventory.profile,
+    serviceTopology: selection.inventory.serviceTopology,
+    selectionDigest: selection.selectionDigest,
+    adapters: selection.adapters,
+  });
+}
+
+function schemaMigrationInput(selection, component) {
+  switch (component) {
+    case "application":
+      return selection.inventory.stateSchemas.managedInstall;
+    case "signer":
+      return selection.inventory.stateSchemas.signer;
+    case "wallet":
+      return selection.inventory.stateSchemas.walletRegistry;
+    case "mining":
+      return selection.inventory.stateSchemas.mining;
+    case "federation":
+      return selection.inventory.stateSchemas.federation;
+    case "sharedState":
+      return selection.inventory.declaredStateRegistry;
+    default:
+      throw new Error(`lifecycle schema migration component ${component} is unsupported`);
+  }
+}
+
+function schemaMigrationApplicable(selection, component, input) {
+  if (component === "application") {
+    return selection.inventory.managedApplication;
+  }
+  if (component === "wallet" && input === null) {
+    return false;
+  }
+  return true;
+}
+
+function lifecycleSchemaMigrationPlan(selection) {
+  const normalized = validateLifecycleMigrationSelection(selection);
+  if (!normalized) {
+    return null;
+  }
+  const steps = SCHEMA_MIGRATION_COMPONENTS.map((component, index) => {
+    const adapter = normalized.adapters[component];
+    const definition = LIFECYCLE_SCHEMA_MIGRATIONS[adapter];
+    const fromSchema = schemaMigrationInput(normalized, component);
+    if (!definition || definition.component !== component || definition.fromSchema !== fromSchema) {
+      throw new Error(`selected lifecycle schema adapter ${adapter || "unknown"} is unsupported`);
+    }
+    return Object.freeze({
+      order: index + 1,
+      component,
+      stateClass: definition.stateClass,
+      schemaOwner: definition.schemaOwner,
+      adapter,
+      fromSchema,
+      toSchema: definition.toSchema,
+      mode: definition.mode,
+      applicable: schemaMigrationApplicable(normalized, component, fromSchema),
+    });
+  });
+  const identity = Object.freeze({
+    schemaVersion: SCHEMA_MIGRATION_SCHEMA_VERSION,
+    selectionDigest: normalized.selectionDigest,
+    steps,
+  });
+  return Object.freeze({
+    ...identity,
+    planDigest: `sha256:${createHash("sha256").update(canonicalJSON(identity)).digest("hex")}`,
+    preparedAdapters: Object.freeze([]),
+    appliedAdapters: Object.freeze([]),
+  });
+}
+
+function orderedSchemaAdapterSubset(value, steps, label) {
+  if (!Array.isArray(value) || new Set(value).size !== value.length) {
+    throw new Error(`lifecycle schema migration ${label} is invalid`);
+  }
+  const positions = new Map(steps.map((step, index) => [step.adapter, index]));
+  let previous = -1;
+  for (const adapter of value) {
+    const position = positions.get(adapter);
+    if (position == null || position <= previous) {
+      throw new Error(`lifecycle schema migration ${label} is invalid`);
+    }
+    previous = position;
+  }
+  return Object.freeze([...value]);
+}
+
+function validateLifecycleSchemaMigration(value, selection) {
+  const expected = lifecycleSchemaMigrationPlan(selection);
+  if (!expected) {
+    if (value != null) {
+      throw new Error("lifecycle schema migration exists without a migration selection");
+    }
+    return null;
+  }
+  exactObjectKeys(
+    value,
+    [
+      "schemaVersion",
+      "selectionDigest",
+      "steps",
+      "planDigest",
+      "preparedAdapters",
+      "appliedAdapters",
+    ],
+    "lifecycle schema migration",
+  );
+  if (
+    value.schemaVersion !== SCHEMA_MIGRATION_SCHEMA_VERSION ||
+    value.selectionDigest !== expected.selectionDigest ||
+    value.planDigest !== expected.planDigest ||
+    canonicalJSON(value.steps) !== canonicalJSON(expected.steps)
+  ) {
+    throw new Error("lifecycle schema migration plan is invalid");
+  }
+  const preparedAdapters = orderedSchemaAdapterSubset(
+    value.preparedAdapters,
+    expected.steps,
+    "prepared adapters",
+  );
+  const appliedAdapters = orderedSchemaAdapterSubset(
+    value.appliedAdapters,
+    expected.steps,
+    "applied adapters",
+  );
+  const prepared = new Set(preparedAdapters);
+  if (appliedAdapters.some((adapter) => !prepared.has(adapter))) {
+    throw new Error("lifecycle schema migration applied an unprepared adapter");
+  }
+  return Object.freeze({
+    schemaVersion: SCHEMA_MIGRATION_SCHEMA_VERSION,
+    selectionDigest: expected.selectionDigest,
+    steps: expected.steps,
+    planDigest: expected.planDigest,
+    preparedAdapters,
+    appliedAdapters,
+  });
+}
+
+function stagedLifecycleSchemaMigration(value, selection) {
+  const migration = validateLifecycleSchemaMigration(value, selection);
+  if (!migration) {
+    throw new Error("lifecycle schema migration plan is unavailable");
+  }
+  const preparedAdapters = migration.steps.map((step) => step.adapter);
+  const appliedAdapters = migration.steps
+    .filter(
+      (step) =>
+        !step.applicable ||
+        (step.mode !== "initialize-on-activation" && step.mode !== "migrate-on-activation"),
+    )
+    .map((step) => step.adapter);
+  return validateLifecycleSchemaMigration(
+    {
+      ...migration,
+      preparedAdapters,
+      appliedAdapters,
+    },
+    selection,
+  );
+}
+
+function completedLifecycleSchemaMigration(value, selection) {
+  const migration = validateLifecycleSchemaMigration(value, selection);
+  if (!migration) {
+    throw new Error("lifecycle schema migration plan is unavailable");
+  }
+  const adapters = migration.steps.map((step) => step.adapter);
+  return validateLifecycleSchemaMigration(
+    {
+      ...migration,
+      preparedAdapters: adapters,
+      appliedAdapters: adapters,
+    },
+    selection,
+  );
+}
+
+function legacyLifecycleSchemaMigration(selection, phase, rollbackFromPhase) {
+  const planned = lifecycleSchemaMigrationPlan(selection);
+  if (!planned) {
+    return null;
+  }
+  const effectivePhase =
+    phase === "rolling-back" || phase === "restored" ? rollbackFromPhase || "prepared" : phase;
+  if (effectivePhase === "prepared" || effectivePhase === "state-reconciling") {
+    return planned;
+  }
+  const staged = stagedLifecycleSchemaMigration(planned, selection);
+  if (effectivePhase === "gateway-verified" || effectivePhase === "committing") {
+    return completedLifecycleSchemaMigration(staged, selection);
+  }
+  return staged;
+}
+
+function lifecycleSchemaMigrationReceipt(value, selection) {
+  if (!value || !selection) {
+    return null;
+  }
+  const migration = validateLifecycleSchemaMigration(value, selection);
+  return Object.freeze({
+    schemaVersion: SCHEMA_MIGRATION_SCHEMA_VERSION,
+    selectionDigest: migration.selectionDigest,
+    planDigest: migration.planDigest,
+    applied: migration.appliedAdapters.length === migration.steps.length,
+    steps: migration.steps.map((step) =>
+      Object.freeze({
+        order: step.order,
+        stateClass: step.stateClass,
+        schemaOwner: step.schemaOwner,
+        adapter: step.adapter,
+        fromSchema: step.fromSchema,
+        toSchema: step.toSchema,
+        applicable: step.applicable,
+      }),
+    ),
+  });
 }
 
 function parseUnifiedHostedSignerRelease(value, expectedVersion, platform) {
@@ -1677,10 +2280,31 @@ function validateDeclaredStateTransaction(value) {
   if (new Set(changedEntries).size !== changedEntries.length) {
     throw new Error("host updater declared-state change receipt is invalid");
   }
+  const preservationHash = declaredStatePreservationHash(entries);
+  if (value.preservationHash !== preservationHash) {
+    throw new Error("host updater declared-state preservation receipt is inconsistent");
+  }
+  const preservationHashes = declaredStateClassPreservationHashes(entries);
+  if (
+    value.preservationHashes != null &&
+    (!value.preservationHashes ||
+      typeof value.preservationHashes !== "object" ||
+      Array.isArray(value.preservationHashes) ||
+      Object.entries(value.preservationHashes).some(
+        ([stateClass, digest]) =>
+          !/^[a-z][a-z0-9-]{0,63}$/u.test(stateClass) ||
+          !/^sha256:[a-f0-9]{64}$/u.test(String(digest)),
+      ) ||
+      canonicalJSON(value.preservationHashes) !== canonicalJSON(preservationHashes))
+  ) {
+    throw new Error("host updater declared-state class preservation receipt is invalid");
+  }
   return Object.freeze({
     ...value,
     stateDir: path.resolve(value.stateDir),
     entries,
+    preservationHash,
+    preservationHashes,
     changed: value.changed === true,
     changedEntries,
   });
@@ -1726,7 +2350,7 @@ async function validateJournal(value, context) {
   if (
     !value ||
     typeof value !== "object" ||
-    !new Set([1, 2, JOURNAL_SCHEMA_VERSION]).has(value.schemaVersion) ||
+    !new Set([1, 2, 3, 4, JOURNAL_SCHEMA_VERSION]).has(value.schemaVersion) ||
     !TRANSACTION_PHASES.has(value.phase)
   ) {
     throw new Error("host updater transaction journal is invalid");
@@ -1791,6 +2415,55 @@ async function validateJournal(value, context) {
     context,
     version,
   );
+  const migrationSelection = validateLifecycleMigrationSelection(value.migrationSelection);
+  const hasSchemaMigration = Object.prototype.hasOwnProperty.call(value, "schemaMigration");
+  if (value.schemaVersion === JOURNAL_SCHEMA_VERSION && !hasSchemaMigration) {
+    throw new Error("host updater transaction schema migration is missing");
+  }
+  const schemaMigration = validateLifecycleSchemaMigration(
+    hasSchemaMigration
+      ? value.schemaMigration
+      : legacyLifecycleSchemaMigration(migrationSelection, value.phase, value.rollbackFromPhase),
+    migrationSelection,
+  );
+  const schemaAdapters = schemaMigration?.steps.map((step) => step.adapter) ?? [];
+  const preparedAdapters = new Set(schemaMigration?.preparedAdapters ?? []);
+  const appliedAdapters = new Set(schemaMigration?.appliedAdapters ?? []);
+  if (
+    value.schemaVersion === JOURNAL_SCHEMA_VERSION &&
+    new Set([
+      "schema-ready",
+      "snapshotting",
+      "activating",
+      "active",
+      "gateway-authorized",
+      "gateway-verified",
+      "committing",
+    ]).has(value.phase) &&
+    !migrationSelection
+  ) {
+    throw new Error("host updater transaction migration selection is missing");
+  }
+  if (
+    new Set([
+      "schema-ready",
+      "snapshotting",
+      "activating",
+      "active",
+      "gateway-authorized",
+      "gateway-verified",
+      "committing",
+    ]).has(value.phase) &&
+    schemaAdapters.some((adapter) => !preparedAdapters.has(adapter))
+  ) {
+    throw new Error("host updater transaction schema migrations are not prepared");
+  }
+  if (
+    new Set(["gateway-verified", "committing"]).has(value.phase) &&
+    schemaAdapters.some((adapter) => !appliedAdapters.has(adapter))
+  ) {
+    throw new Error("host updater transaction schema migrations are incomplete");
+  }
   const serviceBoundary = validateProtectedServiceBoundary(value.serviceBoundary, context);
   const declaredState = validateDeclaredStateTransaction(value.declaredState);
   const healthReceipt = validateCrossProductHealthReceipt(value.healthReceipt);
@@ -1804,6 +2477,8 @@ async function validateJournal(value, context) {
     releaseBinding,
     application,
     managedApplication,
+    migrationSelection,
+    schemaMigration,
     serviceBoundary,
     declaredState,
     healthReceipt,
@@ -2039,7 +2714,9 @@ export async function installProtectedLocalApplicationRuntime(params) {
       await fsp.rm(staging, { recursive: true, force: true });
     }
   }
-  await atomicSymlinkDurable(releaseRoot, params.paths.applicationCurrentLink);
+  if (params.activate !== false) {
+    await atomicSymlinkDurable(releaseRoot, params.paths.applicationCurrentLink);
+  }
   return { releaseRoot, previousRoot: null };
 }
 
@@ -2144,6 +2821,19 @@ async function stageProtectedApplicationRelease({
     await fsp.writeFile(path.join(candidateRoot, ".fased-hosted-release-v2.json"), manifestBytes, {
       mode: 0o644,
     });
+    const evidenceRoot = path.join(candidateRoot, ".fased-release-evidence");
+    await fsp.mkdir(evidenceRoot, { recursive: true, mode: 0o755 });
+    await Promise.all(
+      [
+        LIFECYCLE_TRUST_METADATA_NAME,
+        PRIVILEGED_PROVENANCE_NAME,
+        PRIVILEGED_SBOM_NAME,
+        PRIVILEGED_VEX_NAME,
+      ].map(async (asset) => {
+        await fsp.copyFile(path.join(staging, asset), path.join(evidenceRoot, asset));
+        await fsp.chmod(path.join(evidenceRoot, asset), 0o644);
+      }),
+    );
     await hardenProtectedApplicationTree(candidateRoot);
     await verifyProtectedApplicationRuntime(
       candidateRoot,
@@ -2168,6 +2858,13 @@ async function stageOfficialCandidate(version, candidatePath, context) {
   const releaseManifestPath = path.join(staging, RELEASE_MANIFEST_NAME);
   const releaseManifestBundlePath = path.join(staging, RELEASE_MANIFEST_BUNDLE_NAME);
   const signerAttestationBundlePath = path.join(staging, SIGNER_ATTESTATION_BUNDLE_NAME);
+  const lifecycleMetadataPath = path.join(staging, LIFECYCLE_TRUST_METADATA_NAME);
+  const lifecycleMetadataBundlePath = path.join(staging, LIFECYCLE_TRUST_METADATA_BUNDLE_NAME);
+  const evidenceVerifierPath = path.join(staging, EVIDENCE_VERIFIER_NAME);
+  const provenancePath = path.join(staging, PRIVILEGED_PROVENANCE_NAME);
+  const provenanceBundlePath = path.join(staging, PRIVILEGED_PROVENANCE_BUNDLE_NAME);
+  const sbomPath = path.join(staging, PRIVILEGED_SBOM_NAME);
+  const vexPath = path.join(staging, PRIVILEGED_VEX_NAME);
   try {
     await Promise.all([
       context.downloadReleaseAsset(`${releaseUrl}/${RELEASE_MANIFEST_NAME}`, releaseManifestPath),
@@ -2175,19 +2872,72 @@ async function stageOfficialCandidate(version, candidatePath, context) {
         `${releaseUrl}/${RELEASE_MANIFEST_BUNDLE_NAME}`,
         releaseManifestBundlePath,
       ),
+      context.downloadReleaseAsset(
+        `${releaseUrl}/${LIFECYCLE_TRUST_METADATA_NAME}`,
+        lifecycleMetadataPath,
+      ),
+      context.downloadReleaseAsset(
+        `${releaseUrl}/${LIFECYCLE_TRUST_METADATA_BUNDLE_NAME}`,
+        lifecycleMetadataBundlePath,
+      ),
+      context.downloadReleaseAsset(`${releaseUrl}/${EVIDENCE_VERIFIER_NAME}`, evidenceVerifierPath),
+      context.downloadReleaseAsset(`${releaseUrl}/${PRIVILEGED_PROVENANCE_NAME}`, provenancePath),
+      context.downloadReleaseAsset(
+        `${releaseUrl}/${PRIVILEGED_PROVENANCE_BUNDLE_NAME}`,
+        provenanceBundlePath,
+      ),
+      context.downloadReleaseAsset(`${releaseUrl}/${PRIVILEGED_SBOM_NAME}`, sbomPath),
+      context.downloadReleaseAsset(`${releaseUrl}/${PRIVILEGED_VEX_NAME}`, vexPath),
     ]);
-    await context.verifyReleaseAsset(
-      releaseManifestPath,
-      version,
-      context.paths.stateDir,
-      releaseManifestBundlePath,
-    );
+    await Promise.all([
+      context.verifyReleaseAsset(
+        releaseManifestPath,
+        version,
+        context.paths.stateDir,
+        releaseManifestBundlePath,
+      ),
+      context.verifyReleaseAsset(
+        lifecycleMetadataPath,
+        version,
+        context.paths.stateDir,
+        lifecycleMetadataBundlePath,
+      ),
+      context.verifyReleaseAsset(
+        provenancePath,
+        version,
+        context.paths.stateDir,
+        provenanceBundlePath,
+      ),
+    ]);
     const manifestBytes = await fsp.readFile(releaseManifestPath);
     const selected = parseUnifiedHostedSignerRelease(
       JSON.parse(manifestBytes.toString("utf8")),
       version,
       platform,
     );
+    const lifecycleMetadata = JSON.parse(await fsp.readFile(lifecycleMetadataPath, "utf8"));
+    const expectedVerifier = lifecycleMetadata?.targets?.evidenceVerifier;
+    if (
+      lifecycleMetadata?.release?.version !== version ||
+      lifecycleMetadata?.release?.commit !== selected.binding.releaseCommit ||
+      expectedVerifier?.asset !== EVIDENCE_VERIFIER_NAME ||
+      !/^[a-f0-9]{64}$/u.test(expectedVerifier?.sha256 || "")
+    ) {
+      throw new Error("lifecycle evidence verifier identity is malformed or release-mismatched");
+    }
+    const evidenceVerifierSha256 = await sha256(evidenceVerifierPath);
+    if (evidenceVerifierSha256 !== expectedVerifier.sha256) {
+      throw new Error("privileged release evidence verifier does not match lifecycle metadata");
+    }
+    await context.verifyPrivilegedReleaseEvidence(evidenceVerifierPath, evidenceVerifierSha256, {
+      releaseManifestPath,
+      lifecycleMetadataPath,
+      provenancePath,
+      sbomPath,
+      vexPath,
+      expectedVersion: version,
+      expectedCommit: selected.binding.releaseCommit,
+    });
     const assetPath = path.join(staging, selected.artifact.asset);
     await Promise.all([
       context.downloadReleaseAsset(`${releaseUrl}/${selected.artifact.asset}`, assetPath),
@@ -2249,6 +2999,11 @@ const DECLARED_STATE_SHARED_DIRECTORIES = Object.freeze([
   Object.freeze({ relativePath: "identity", stateClass: "device-identity", create: true }),
   Object.freeze({ relativePath: "wallet", stateClass: "wallet", create: true }),
   Object.freeze({ relativePath: "federation", stateClass: "federation-network", create: true }),
+  Object.freeze({
+    relativePath: "extensions",
+    stateClass: "agent-session-channel-plugin",
+    create: true,
+  }),
   Object.freeze({ relativePath: "sat-mining", stateClass: "mining", create: false }),
   Object.freeze({ relativePath: "sat-mining/wallets", stateClass: "mining", create: false }),
   Object.freeze({
@@ -2292,14 +3047,14 @@ const DECLARED_STATE_SHARED_FILES = Object.freeze([
     Object.freeze({
       relativePath: `wallet/${name}`,
       stateClass: "wallet",
-      preserveContent: name === "provider-registry.v1.json",
+      preserveContent: true,
     }),
   ),
   ...["access-token.json", "bond-proof.json", "peer-replay-v2.json"].map((name) =>
     Object.freeze({
       relativePath: `federation/${name}`,
       stateClass: "federation-network",
-      preserveContent: name !== "peer-replay-v2.json",
+      preserveContent: true,
     }),
   ),
 ]);
@@ -2683,7 +3438,7 @@ async function collectDeclaredStateRules(stateDir) {
           kind: "file",
           create: false,
           desiredMode: 0o660,
-          preserveContent: false,
+          preserveContent: true,
         });
       }
     }
@@ -2705,7 +3460,7 @@ async function collectDeclaredStateRules(stateDir) {
         kind: "file",
         create: false,
         desiredMode: 0o660,
-        preserveContent: false,
+        preserveContent: true,
       });
     }
   }
@@ -2801,6 +3556,29 @@ function declaredStatePreservationHash(entries) {
     .digest("hex")}`;
 }
 
+function declaredStateClassPreservationHashes(entries) {
+  const byClass = new Map();
+  for (const entry of entries.filter((candidate) => candidate.preserveContent)) {
+    const records = byClass.get(entry.stateClass) ?? [];
+    records.push({
+      relativePath: entry.relativePath,
+      existed: entry.existed,
+      contentHash: entry.contentHash ?? null,
+    });
+    byClass.set(entry.stateClass, records);
+  }
+  return Object.freeze(
+    Object.fromEntries(
+      [...byClass.entries()]
+        .toSorted(([left], [right]) => left.localeCompare(right))
+        .map(([stateClass, records]) => [
+          stateClass,
+          `sha256:${createHash("sha256").update(canonicalJSON(records)).digest("hex")}`,
+        ]),
+    ),
+  );
+}
+
 async function inventoryDeclaredApplicationState(topology, context) {
   if (topology.pendingGatewayUnit || topology.pendingStateDir) {
     return null;
@@ -2828,6 +3606,7 @@ async function inventoryDeclaredApplicationState(topology, context) {
     configGid: topology.configGroup.gid,
     registryDigest,
     preservationHash: declaredStatePreservationHash(entries),
+    preservationHashes: declaredStateClassPreservationHashes(entries),
     converged,
     reconciled: false,
     entries,
@@ -2939,7 +3718,7 @@ async function restoreDeclaredApplicationState(transaction) {
 
 async function verifyDeclaredStatePreservation(transaction) {
   if (!transaction) {
-    return { ok: true, preservationHash: null };
+    return { ok: true, preservationHash: null, preservationHashes: {} };
   }
   const preserved = [];
   for (const entry of transaction.entries.filter((candidate) => candidate.preserveContent)) {
@@ -2950,7 +3729,13 @@ async function verifyDeclaredStatePreservation(transaction) {
   if (preservationHash !== transaction.preservationHash) {
     throw new Error("declared user state changed during the lifecycle transaction");
   }
-  return { ok: true, preservationHash };
+  const preservationHashes = declaredStateClassPreservationHashes(preserved);
+  const expectedHashes =
+    transaction.preservationHashes ?? declaredStateClassPreservationHashes(transaction.entries);
+  if (canonicalJSON(preservationHashes) !== canonicalJSON(expectedHashes)) {
+    throw new Error("declared user state class changed during the lifecycle transaction");
+  }
+  return { ok: true, preservationHash, preservationHashes };
 }
 
 function rootManagedApplicationIdentity(context, unit) {
@@ -3052,6 +3837,7 @@ async function discoverProtectedApplicationTopology(context) {
   const groupFields = await systemAccountRecord("group", configGroup);
   const configGid = Number(groupFields[2]);
   const gatewayUid = Number(gatewayFields[2]);
+  const gatewayGid = Number(gatewayFields[3]);
   const operatorUid = Number(operatorFields[2]);
   const operatorGid = Number(operatorFields[3]);
   const operatorHome = String(operatorFields[5] || "");
@@ -3065,6 +3851,8 @@ async function discoverProtectedApplicationTopology(context) {
     configGid <= 0 ||
     !Number.isSafeInteger(gatewayUid) ||
     gatewayUid <= 0 ||
+    !Number.isSafeInteger(gatewayGid) ||
+    gatewayGid <= 0 ||
     !Number.isSafeInteger(operatorUid) ||
     operatorUid !== stateStat.uid ||
     !Number.isSafeInteger(operatorGid) ||
@@ -3103,6 +3891,7 @@ async function discoverProtectedApplicationTopology(context) {
     gateway: Object.freeze({
       user: gatewayUser,
       uid: gatewayUid,
+      gid: gatewayGid,
       unitPath: gatewayUnitPath,
     }),
     configGroup: Object.freeze({
@@ -3117,6 +3906,9 @@ async function discoverProtectedApplicationTopology(context) {
         ? `fased-signerd-${context.instanceId}.service`
         : "fased-signerd.service",
     }),
+    gatewayLauncherPath: protectedLocal
+      ? context.paths.gatewayLauncherPath
+      : "/usr/local/libexec/fased-gateway-launch",
     capabilities: Object.freeze({
       lifecycleControllerProtocol: CONTROLLER_PROTOCOL_VERSION,
       signerProtocol: Object.freeze({ current: 2, min: 2, max: 2 }),
@@ -3146,7 +3938,10 @@ function managedApplicationStateFromTopology(topology) {
     profile: topology.profile,
     stateDir: topology.stateDir,
     operatorUid: topology.operator.uid,
+    operatorGid: topology.operator.gid,
     configGid: topology.configGroup.gid,
+    gatewayServiceName: topology.services.gateway,
+    gatewayLauncherPath: topology.gatewayLauncherPath,
   });
 }
 
@@ -3157,6 +3952,8 @@ function managedApplicationPaths(stateDir) {
   }
   const runtimeDir = path.join(root, "runtime");
   const prefix = path.join(root, "install-cache", "npm-global");
+  const binDir = path.join(root, "bin");
+  const updaterDir = path.join(root, "updater");
   return Object.freeze({
     stateDir: root,
     manifestPath: path.join(root, "install.json"),
@@ -3165,8 +3962,13 @@ function managedApplicationPaths(stateDir) {
     currentLink: path.join(runtimeDir, "current"),
     previousLink: path.join(runtimeDir, "previous"),
     compatibilityLink: path.join(prefix, "lib", "node_modules", "@fased", "fased"),
-    updaterPath: path.join(root, "updater", "fased-managed-updater.mjs"),
+    binDir,
+    launcherPath: path.join(binDir, "fased"),
+    serviceLauncherPath: path.join(binDir, "fased-service"),
+    updaterDir,
+    updaterPath: path.join(updaterDir, "fased-managed-updater.mjs"),
     prefix,
+    prefixLauncherPath: path.join(prefix, "bin", "fased"),
   });
 }
 
@@ -3205,19 +4007,37 @@ function validateManagedInstallManifest(value, applicationState, paths) {
 
 function buildTargetManagedInstallManifest({
   previousManifest,
+  applicationState,
   paths,
   releasesDir,
   version,
   applicationRelease,
+  updateChannel,
 }) {
+  const base =
+    previousManifest ??
+    Object.freeze({
+      profile: applicationState.profile,
+      stateDir: paths.stateDir,
+      configPath: path.join(paths.stateDir, "fased.json"),
+      service: {
+        name: applicationState.gatewayServiceName,
+        scope: "system",
+        launcher: applicationState.gatewayLauncherPath,
+      },
+      update: { channel: updateChannel },
+    });
   return {
-    ...previousManifest,
+    ...base,
     schemaVersion: 2,
     source: "managed-artifact",
     runtime: {
-      ...previousManifest.runtime,
+      ...previousManifest?.runtime,
       activeVersion: version,
-      previousVersion: previousManifest.runtime.activeVersion,
+      previousVersion:
+        previousManifest?.runtime?.activeVersion === version
+          ? (previousManifest.runtime.previousVersion ?? null)
+          : (previousManifest?.runtime?.activeVersion ?? null),
       currentLink: paths.currentLink,
       previousLink: paths.previousLink,
       releasesDir,
@@ -3234,6 +4054,10 @@ function buildTargetManagedInstallManifest({
     updater: {
       version,
       path: paths.updaterPath,
+    },
+    update: {
+      ...base.update,
+      channel: updateChannel,
     },
     release: {
       version,
@@ -3269,6 +4093,7 @@ async function prepareManagedApplicationTransaction(
   if (
     !state?.stateDir ||
     !Number.isSafeInteger(state.operatorUid) ||
+    !Number.isSafeInteger(state.operatorGid) ||
     !Number.isSafeInteger(state.configGid)
   ) {
     return null;
@@ -3277,16 +4102,26 @@ async function prepareManagedApplicationTransaction(
     throw new Error("target lifecycle controller did not stage the application release");
   }
   const paths = managedApplicationPaths(state.stateDir);
-  const previousManifest = validateManagedInstallManifest(
-    JSON.parse(await fsp.readFile(paths.manifestPath, "utf8")),
-    state,
-    paths,
-  );
+  let previousManifest = null;
+  try {
+    previousManifest = validateManagedInstallManifest(
+      JSON.parse(await fsp.readFile(paths.manifestPath, "utf8")),
+      state,
+      paths,
+    );
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
   const previousRoot = await readOptionalLink(paths.currentLink);
-  if (!previousRoot) {
-    throw new Error("root-managed application has no active runtime to update");
+  if (Boolean(previousManifest) !== Boolean(previousRoot)) {
+    throw new Error("root-managed application manifest and active runtime are inconsistent");
   }
   const previousPreviousRoot = await readOptionalLink(paths.previousLink);
+  if (!previousManifest && previousPreviousRoot) {
+    throw new Error("empty root-managed application has an unexpected previous selector");
+  }
   const targetRoot = path.resolve(application.targetRoot);
   if (targetRoot !== protectedApplicationReleaseRoot(context.paths, version)) {
     throw new Error("target lifecycle controller application identity is mismatched");
@@ -3297,6 +4132,26 @@ async function prepareManagedApplicationTransaction(
     applicationRelease.commit,
     applicationRelease.dependencies.dependencyHash,
   );
+  let updateChannel = "stable";
+  try {
+    const configured = (await fsp.readFile(context.paths.channelPath, "utf8")).trim();
+    if (!new Set(["stable", "beta"]).has(configured)) {
+      throw new Error("root-managed update channel is invalid");
+    }
+    updateChannel = configured;
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  if (
+    !previousManifest &&
+    (!state.gatewayServiceName ||
+      !state.gatewayLauncherPath ||
+      !path.isAbsolute(state.gatewayLauncherPath))
+  ) {
+    throw new Error("empty root-managed application service identity is unavailable");
+  }
   return Object.freeze({
     profile: state.profile,
     stateDir: paths.stateDir,
@@ -3305,10 +4160,12 @@ async function prepareManagedApplicationTransaction(
     previousManifest,
     nextManifest: buildTargetManagedInstallManifest({
       previousManifest,
+      applicationState: state,
       paths,
       releasesDir: context.paths.applicationReleasesDir,
       version,
       applicationRelease,
+      updateChannel: previousManifest?.update?.channel ?? updateChannel,
     }),
   });
 }
@@ -3333,16 +4190,27 @@ function validateManagedApplicationTransaction(value, context, version) {
   ) {
     throw new Error("host updater managed application transaction is invalid");
   }
-  const previousManifest = validateManagedInstallManifest(value.previousManifest, state, paths);
+  const previousManifest =
+    value.previousManifest == null
+      ? null
+      : validateManagedInstallManifest(value.previousManifest, state, paths);
   const nextManifest = validateManagedInstallManifest(value.nextManifest, state, paths);
+  const expectedPreviousVersion =
+    previousManifest?.runtime?.activeVersion === version
+      ? (previousManifest.runtime.previousVersion ?? null)
+      : (previousManifest?.runtime?.activeVersion ?? null);
   if (
     nextManifest.runtime.activeVersion !== version ||
-    nextManifest.runtime.previousVersion !== previousManifest.runtime.activeVersion ||
+    nextManifest.runtime.previousVersion !== expectedPreviousVersion ||
     nextManifest.release?.version !== version
   ) {
     throw new Error("host updater target application manifest is mismatched");
   }
-  const previousRoot = path.resolve(String(value.previousRoot ?? ""));
+  const previousRoot =
+    value.previousRoot == null ? null : path.resolve(String(value.previousRoot ?? ""));
+  if (Boolean(previousManifest) !== Boolean(previousRoot)) {
+    throw new Error("host updater previous managed application identity is inconsistent");
+  }
   const previousPreviousRoot =
     value.previousPreviousRoot == null ? null : path.resolve(String(value.previousPreviousRoot));
   return Object.freeze({
@@ -3363,6 +4231,87 @@ async function writeManagedManifest(context, transaction, manifest) {
   await fsyncDirectory(paths.stateDir);
 }
 
+async function ensureInitializedManagedStableDirectories(context, paths) {
+  const state = context.applicationState;
+  for (const directory of [paths.binDir, paths.updaterDir]) {
+    await fsp.mkdir(directory, { recursive: true, mode: 0o750 });
+    const info = await fsp.lstat(directory);
+    if (!info.isDirectory() || info.isSymbolicLink()) {
+      throw new Error(`initialized managed application directory is unsafe: ${directory}`);
+    }
+    await fsp.chown(directory, state.operatorUid, state.operatorGid);
+    await fsp.chmod(directory, 0o750);
+    await fsyncDirectory(directory);
+  }
+}
+
+async function installInitializedManagedStableFiles(context, transaction, targetRoot) {
+  if (transaction.previousManifest) {
+    return;
+  }
+  const paths = managedApplicationPaths(transaction.stateDir);
+  await ensureInitializedManagedStableDirectories(context, paths);
+  const sources = [
+    ["fased-managed-launcher.sh", paths.launcherPath],
+    ["fased-managed-service.sh", paths.serviceLauncherPath],
+    ...MANAGED_UPDATER_SUPPORT_FILES.map((name) => [name, path.join(paths.updaterDir, name)]),
+    ["fased-managed-updater.mjs", paths.updaterPath],
+  ];
+  for (const [name, destination] of sources) {
+    await atomicCopyFileDurable(path.join(targetRoot, "scripts", name), destination, {
+      mode: 0o750,
+      uid: context.applicationState.operatorUid,
+      gid: context.applicationState.operatorGid,
+    });
+  }
+  await atomicSymlinkDurable(paths.launcherPath, paths.prefixLauncherPath);
+}
+
+async function removeInitializedManagedStableFiles(transaction) {
+  if (transaction.previousManifest) {
+    return;
+  }
+  const paths = managedApplicationPaths(transaction.stateDir);
+  for (const candidate of [
+    paths.prefixLauncherPath,
+    paths.launcherPath,
+    paths.serviceLauncherPath,
+    paths.updaterPath,
+    ...MANAGED_UPDATER_SUPPORT_FILES.map((name) => path.join(paths.updaterDir, name)),
+  ]) {
+    await fsp.rm(candidate, { force: true });
+  }
+  for (const directory of [
+    path.dirname(paths.prefixLauncherPath),
+    paths.binDir,
+    paths.updaterDir,
+  ]) {
+    await fsyncDirectory(directory).catch((error) => {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    });
+  }
+  for (const directory of [
+    path.dirname(paths.prefixLauncherPath),
+    path.dirname(paths.compatibilityLink),
+    path.dirname(path.dirname(paths.compatibilityLink)),
+    path.dirname(path.dirname(path.dirname(paths.compatibilityLink))),
+    paths.prefix,
+    path.dirname(paths.prefix),
+    paths.binDir,
+    paths.updaterDir,
+    paths.runtimeDir,
+  ]) {
+    await fsp.rmdir(directory).catch((error) => {
+      if (!new Set(["ENOENT", "ENOTEMPTY", "EEXIST"]).has(error?.code)) {
+        throw error;
+      }
+    });
+  }
+  await fsyncDirectory(paths.stateDir);
+}
+
 async function selectManagedApplication(context, journal) {
   if (!journal.managedApplication) {
     return;
@@ -3372,15 +4321,119 @@ async function selectManagedApplication(context, journal) {
   if (!targetRoot) {
     throw new Error("managed application target is unavailable");
   }
-  if (journal.managedApplication.previousRoot !== targetRoot) {
+  if (
+    journal.managedApplication.previousRoot &&
+    journal.managedApplication.previousRoot !== targetRoot
+  ) {
     await atomicSymlinkDurable(journal.managedApplication.previousRoot, paths.previousLink);
+  } else if (!journal.managedApplication.previousRoot) {
+    await fsp.rm(paths.previousLink, { force: true });
   }
   await atomicSymlinkDurable(targetRoot, paths.currentLink);
   await atomicSymlinkDurable(paths.currentLink, paths.compatibilityLink);
+  await installInitializedManagedStableFiles(context, journal.managedApplication, targetRoot);
   await writeManagedManifest(
     context,
     journal.managedApplication,
     journal.managedApplication.nextManifest,
+  );
+}
+
+function prepareLifecycleSchemaMigrations(journal) {
+  const migration = validateLifecycleSchemaMigration(
+    journal.schemaMigration,
+    journal.migrationSelection,
+  );
+  if (!migration) {
+    throw new Error("target lifecycle transaction has no schema migration plan");
+  }
+  const application = migration.steps.find((step) => step.component === "application");
+  if (application?.applicable) {
+    if (!journal.managedApplication) {
+      throw new Error("managed application schema migration has no rollback-bound transaction");
+    }
+    const previousSchema = journal.managedApplication.previousManifest?.schemaVersion ?? null;
+    const nextSchema = journal.managedApplication.nextManifest?.schemaVersion ?? null;
+    if (
+      previousSchema !== application.fromSchema ||
+      nextSchema !== application.toSchema ||
+      (application.mode === "initialize-on-activation" && previousSchema !== null) ||
+      (application.mode === "migrate-on-activation" &&
+        !(previousSchema === 1 && nextSchema === 2)) ||
+      (application.mode === "verify-current" && previousSchema !== nextSchema)
+    ) {
+      throw new Error("managed application schema migration transaction is mismatched");
+    }
+  }
+  return stagedLifecycleSchemaMigration(migration, journal.migrationSelection);
+}
+
+async function completeLifecycleSchemaMigrations(context, journal) {
+  const migration = validateLifecycleSchemaMigration(
+    journal.schemaMigration,
+    journal.migrationSelection,
+  );
+  if (!migration) {
+    throw new Error("target lifecycle transaction has no schema migration plan");
+  }
+  if (migration.preparedAdapters.length !== migration.steps.length) {
+    throw new Error("target lifecycle schema migration was not prepared");
+  }
+  const activationSteps = migration.steps.filter(
+    (step) =>
+      step.applicable &&
+      (step.mode === "initialize-on-activation" || step.mode === "migrate-on-activation"),
+  );
+  if (activationSteps.length > 1) {
+    throw new Error("target lifecycle schema migration has multiple activation writers");
+  }
+  if (activationSteps.length === 1) {
+    const [step] = activationSteps;
+    if (step.component !== "application" || !journal.managedApplication) {
+      throw new Error("target lifecycle schema activation owner is invalid");
+    }
+    const paths = managedApplicationPaths(journal.managedApplication.stateDir);
+    const manifest = validateManagedInstallManifest(
+      JSON.parse(await fsp.readFile(paths.manifestPath, "utf8")),
+      context.applicationState,
+      paths,
+    );
+    const activeRoot = await readOptionalLink(paths.currentLink);
+    if (
+      manifest.schemaVersion !== step.toSchema ||
+      manifest.runtime.activeVersion !== journal.version ||
+      activeRoot !== journal.application?.targetRoot
+    ) {
+      throw new Error("managed application schema migration did not activate atomically");
+    }
+  }
+  return completedLifecycleSchemaMigration(migration, journal.migrationSelection);
+}
+
+function assertLifecycleSchemaMigrationsApplied(journal) {
+  const migration = validateLifecycleSchemaMigration(
+    journal.schemaMigration,
+    journal.migrationSelection,
+  );
+  if (
+    !migration ||
+    migration.preparedAdapters.length !== migration.steps.length ||
+    migration.appliedAdapters.length !== migration.steps.length
+  ) {
+    throw new Error("target lifecycle schema migrations are incomplete");
+  }
+  return migration;
+}
+
+function lifecycleSchemaMigrationsApplied(journal) {
+  const migration = validateLifecycleSchemaMigration(
+    journal.schemaMigration,
+    journal.migrationSelection,
+  );
+  return Boolean(
+    migration &&
+    migration.preparedAdapters.length === migration.steps.length &&
+    migration.appliedAdapters.length === migration.steps.length,
   );
 }
 
@@ -3390,15 +4443,26 @@ async function restoreManagedApplication(context, journal) {
   }
   const transaction = journal.managedApplication;
   const paths = managedApplicationPaths(transaction.stateDir);
-  await atomicSymlinkDurable(transaction.previousRoot, paths.currentLink);
+  if (!transaction.previousRoot) {
+    await fsp.rm(paths.currentLink, { force: true });
+    await fsp.rm(paths.compatibilityLink, { force: true });
+    await fsp.rm(paths.manifestPath, { force: true });
+    await removeInitializedManagedStableFiles(transaction);
+  } else {
+    await atomicSymlinkDurable(transaction.previousRoot, paths.currentLink);
+    await atomicSymlinkDurable(paths.currentLink, paths.compatibilityLink);
+    await writeManagedManifest(context, transaction, transaction.previousManifest);
+  }
   if (transaction.previousPreviousRoot) {
     await atomicSymlinkDurable(transaction.previousPreviousRoot, paths.previousLink);
   } else {
     await fsp.rm(paths.previousLink, { force: true });
-    await fsyncDirectory(paths.runtimeDir);
+    await fsyncDirectory(paths.runtimeDir).catch((error) => {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    });
   }
-  await atomicSymlinkDurable(paths.currentLink, paths.compatibilityLink);
-  await writeManagedManifest(context, transaction, transaction.previousManifest);
 }
 
 async function removeManagedUpdateLock(journal) {
@@ -3516,6 +4580,375 @@ function healthJsonShape(value) {
   return { type: typeof value };
 }
 
+function healthObject(value, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} health is invalid`);
+  }
+  return value;
+}
+
+function canonicalizePluginConfigValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(canonicalizePluginConfigValue);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .toSorted(([left], [right]) => left.localeCompare(right))
+        .map(([key, child]) => [key, canonicalizePluginConfigValue(child)]),
+    );
+  }
+  return value;
+}
+
+function pluginStatusConfigFingerprint(config) {
+  return createHash("sha256")
+    .update(
+      JSON.stringify(
+        canonicalizePluginConfigValue({
+          plugins: config?.plugins,
+        }),
+      ),
+    )
+    .digest("hex");
+}
+
+function targetPluginStatusCachePath(topology) {
+  return path.join(
+    topology.stateDir,
+    topology.profile === "protected-local" ? "cache" : "runtime",
+    "plugin-status.json",
+  );
+}
+
+function pathIsStrictlyInside(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+async function readTargetPluginStatusCache(context, topology, journal) {
+  const targetRoot = journal.application?.targetRoot;
+  const expectedTargetRoot = protectedApplicationReleaseRoot(context.paths, journal.version);
+  if (!targetRoot || path.resolve(targetRoot) !== expectedTargetRoot) {
+    throw new Error("target plugin application identity is unavailable");
+  }
+  const cachePath = targetPluginStatusCachePath(topology);
+  const cacheStat = await fsp.lstat(cachePath);
+  if (
+    !cacheStat.isFile() ||
+    cacheStat.isSymbolicLink() ||
+    cacheStat.nlink !== 1 ||
+    cacheStat.size < 2 ||
+    cacheStat.size > 2 * 1024 * 1024
+  ) {
+    throw new Error("target Gateway plugin status cache is unsafe");
+  }
+  const [cache, config] = await Promise.all([
+    fsp.readFile(cachePath, "utf8").then(JSON.parse),
+    fsp.readFile(topology.configPath, "utf8").then(JSON.parse),
+  ]);
+  if (
+    cache?.schemaVersion !== 2 ||
+    cache.packageVersion !== journal.version ||
+    typeof cache.generatedAt !== "string" ||
+    !Number.isFinite(Date.parse(cache.generatedAt)) ||
+    cache.configPath !== topology.configPath ||
+    cache.configFingerprint !== pluginStatusConfigFingerprint(config) ||
+    !Array.isArray(cache.plugins) ||
+    !Array.isArray(cache.diagnostics) ||
+    cache.plugins.length > 1024 ||
+    cache.diagnostics.length > 1024
+  ) {
+    throw new Error("target Gateway plugin status cache is stale or malformed");
+  }
+  const canonicalTargetRoot = await fsp.realpath(targetRoot);
+  for (const plugin of cache.plugins) {
+    if (
+      !plugin ||
+      typeof plugin !== "object" ||
+      Array.isArray(plugin) ||
+      typeof plugin.id !== "string" ||
+      plugin.id.length === 0 ||
+      plugin.id.length > 256 ||
+      typeof plugin.source !== "string" ||
+      plugin.source.length === 0 ||
+      plugin.source.length > 4096 ||
+      typeof plugin.origin !== "string" ||
+      !new Set(["loaded", "disabled", "error"]).has(plugin.status) ||
+      !(plugin.sourceMtimeMs === null || Number.isFinite(plugin.sourceMtimeMs))
+    ) {
+      throw new Error("target Gateway plugin status entry is malformed");
+    }
+    const source = path.resolve(plugin.source);
+    const canonicalSource = await fsp.realpath(source).catch((error) => {
+      if (plugin.sourceMtimeMs === null && error?.code === "ENOENT") {
+        return null;
+      }
+      throw error;
+    });
+    if (
+      plugin.origin === "bundled" &&
+      (!canonicalSource || !pathIsStrictlyInside(canonicalTargetRoot, canonicalSource))
+    ) {
+      throw new Error("target Gateway bundled plugin status escaped the target application");
+    }
+    if (plugin.sourceMtimeMs !== null) {
+      const sourceStat = await fsp.stat(canonicalSource);
+      if (!sourceStat.isFile() || Math.abs(sourceStat.mtimeMs - plugin.sourceMtimeMs) > 0.5) {
+        throw new Error("target Gateway plugin status source identity changed");
+      }
+    }
+  }
+  for (const diagnostic of cache.diagnostics) {
+    if (
+      !diagnostic ||
+      typeof diagnostic !== "object" ||
+      Array.isArray(diagnostic) ||
+      typeof diagnostic.level !== "string" ||
+      typeof diagnostic.message !== "string"
+    ) {
+      throw new Error("target Gateway plugin diagnostic is malformed");
+    }
+  }
+  const errors = cache.plugins.filter((plugin) => plugin.status === "error");
+  const diagnostics = cache.diagnostics.filter((entry) => entry?.level === "error");
+  return {
+    ok: errors.length === 0 && diagnostics.length === 0,
+    errors,
+    diagnostics,
+  };
+}
+
+function unwrapHealthPayload(value) {
+  let current = value;
+  for (let index = 0; index < 3; index += 1) {
+    if (
+      !current ||
+      typeof current !== "object" ||
+      Array.isArray(current) ||
+      !Object.hasOwn(current, "payload")
+    ) {
+      return current;
+    }
+    current = current.payload;
+  }
+  return current;
+}
+
+function validateCanonicalWalletHealth(walletStatus, walletDoctor, topology) {
+  if (walletDoctor?.ok !== true) {
+    throw new Error("target Wallet signer health is not ready");
+  }
+  const status = healthObject(walletStatus?.status, "target Wallet status");
+  const expectedMode =
+    topology.profile === "hosting" ? "hosting-operator" : "protected-local-operator";
+  if (status.mode !== expectedMode || !Array.isArray(status.wallets)) {
+    throw new Error("target Wallet status did not use the canonical operator registry");
+  }
+  const wallets = new Map();
+  const handles = new Set();
+  const addresses = new Set();
+  let miningWallets = 0;
+  for (const value of status.wallets) {
+    const wallet = healthObject(value, "target Wallet record");
+    const id = typeof wallet.id === "string" ? wallet.id.trim() : "";
+    const handle = typeof wallet.handle === "string" ? wallet.handle.trim() : "";
+    const address = typeof wallet.publicAddress === "string" ? wallet.publicAddress.trim() : "";
+    const role = typeof wallet.role === "string" ? wallet.role.trim() : "";
+    const signer = healthObject(wallet.signer, "target signer Wallet readiness");
+    const expectedLanes = {
+      agent: new Set(["agent-reviewed-and-autonomous"]),
+      mining: new Set(["mining-reviewed-only", "mining-typed-sat"]),
+      vault: new Set(["vault-reviewed-only"]),
+    };
+    if (
+      !/^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$/u.test(id) ||
+      handle !== `@wallet:${id}` ||
+      !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(address) ||
+      !Object.hasOwn(expectedLanes, role) ||
+      signer.walletId !== id ||
+      signer.publicKey !== address ||
+      signer.role !== role ||
+      signer.ready !== true ||
+      signer.keyReady !== true ||
+      signer.policyReady !== true ||
+      signer.networkReady !== true ||
+      !Number.isSafeInteger(signer.baselineVersion) ||
+      signer.baselineVersion < 1 ||
+      !Number.isSafeInteger(signer.policyVersion) ||
+      signer.policyVersion < 1 ||
+      !/^sha256:[a-f0-9]{64}$/u.test(String(signer.policyHash ?? "")) ||
+      !Number.isSafeInteger(signer.networkVersion) ||
+      signer.networkVersion < 1 ||
+      !/^hmac-sha256:[a-f0-9]{64}$/u.test(String(signer.networkHash ?? "")) ||
+      !expectedLanes[role].has(signer.operationLane) ||
+      wallets.has(id) ||
+      handles.has(handle) ||
+      addresses.has(address)
+    ) {
+      throw new Error("target Wallet registry and signer identity did not converge");
+    }
+    if (role === "mining") {
+      miningWallets += 1;
+    }
+    wallets.set(id, { id, handle, address, role, lane: signer.operationLane });
+    handles.add(handle);
+    addresses.add(address);
+  }
+  if (miningWallets > 1) {
+    throw new Error("target Wallet registry has more than one Mining Wallet");
+  }
+  const assignments = status.assignments ?? {};
+  if (!assignments || typeof assignments !== "object" || Array.isArray(assignments)) {
+    throw new Error("target Wallet routing assignments are invalid");
+  }
+  for (const [assignment, walletId] of Object.entries(assignments)) {
+    if (!assignment.trim() || typeof walletId !== "string" || !wallets.has(walletId)) {
+      throw new Error("target Wallet routing references a non-canonical Wallet");
+    }
+  }
+  const defaultWalletId =
+    typeof status.defaultWalletId === "string" ? status.defaultWalletId.trim() : "";
+  if (defaultWalletId && wallets.get(defaultWalletId)?.role !== "agent") {
+    throw new Error("target default Wallet routing is not assigned to an Agent Wallet");
+  }
+  return {
+    wallets,
+    evidence: {
+      mode: status.mode,
+      walletCount: wallets.size,
+      miningWalletCount: miningWallets,
+      assignmentCount: Object.keys(assignments).length,
+      defaultWalletPresent: Boolean(defaultWalletId),
+      signerChecks: Array.isArray(walletDoctor.checks) ? walletDoctor.checks.length : 0,
+    },
+  };
+}
+
+function validateCrossProductApplicationEvidence(params) {
+  const canonicalWallets = validateCanonicalWalletHealth(
+    params.walletStatus,
+    params.walletDoctor,
+    params.topology,
+  );
+  const mining = healthObject(unwrapHealthPayload(params.mining), "target Mining history");
+  const network = healthObject(params.network, "target Fased Network");
+  const bond = healthObject(params.bond, "target Fased Network bond");
+  const plugins = healthObject(params.plugins, "target plugin diagnostics");
+  const signerIsolation = healthObject(params.signerIsolation, "target signer isolation");
+  if (
+    network.configured === true &&
+    (typeof network.handle !== "string" || network.handle.trim().length === 0)
+  ) {
+    throw new Error("configured Fased Network identity is incomplete");
+  }
+  if (bond.walletId != null) {
+    const walletId = typeof bond.walletId === "string" ? bond.walletId.trim() : "";
+    const wallet = canonicalWallets.wallets.get(walletId);
+    if (
+      !wallet ||
+      wallet.role !== "vault" ||
+      typeof bond.walletAddress !== "string" ||
+      bond.walletAddress.trim() !== wallet.address
+    ) {
+      throw new Error("Fased Network bond is not bound to the canonical Vault Wallet");
+    }
+  }
+  if (
+    plugins.ok !== true ||
+    !Array.isArray(plugins.errors) ||
+    !Array.isArray(plugins.diagnostics) ||
+    plugins.errors.length > 0 ||
+    plugins.diagnostics.length > 0
+  ) {
+    const category = (value) => {
+      const text = typeof value === "string" ? value : "";
+      if (/(?:EACCES|EPERM|permission denied|operation not permitted)/iu.test(text)) {
+        return "permission-denied";
+      }
+      if (/(?:ERR_MODULE_NOT_FOUND|Cannot find (?:module|package))/iu.test(text)) {
+        return "module-not-found";
+      }
+      if (/missing config schema/iu.test(text)) {
+        return "missing-schema";
+      }
+      if (/invalid config/iu.test(text)) {
+        return "invalid-config";
+      }
+      if (/entry path escapes|alias checks/iu.test(text)) {
+        return "unsafe-entry";
+      }
+      if (/register/iu.test(text)) {
+        return "register-failed";
+      }
+      return "plugin-error";
+    };
+    const identifiers = new Map();
+    for (const entry of Array.isArray(plugins.errors) ? plugins.errors : []) {
+      if (typeof entry?.id === "string" && entry.id.trim()) {
+        identifiers.set(entry.id.trim(), category(entry.error));
+      }
+    }
+    for (const entry of Array.isArray(plugins.diagnostics) ? plugins.diagnostics : []) {
+      const id =
+        typeof entry?.pluginId === "string" && entry.pluginId.trim()
+          ? entry.pluginId.trim()
+          : "global";
+      identifiers.set(id, category(entry.message));
+    }
+    const boundedIdentifiers =
+      [...identifiers]
+        .slice(0, 8)
+        .map(([id, failureCategory]) => `${id}:${failureCategory}`)
+        .join(", ") || "unknown";
+    throw new Error(`target plugin diagnostics are not healthy (${boundedIdentifiers})`);
+  }
+  if (signerIsolation.operatorDenied !== true || signerIsolation.controlDenied !== true) {
+    throw new Error("target Gateway can reach a privileged signer socket");
+  }
+  return Object.freeze({
+    wallet: {
+      ok: true,
+      evidenceDigest: healthEvidenceDigest(canonicalWallets.evidence),
+    },
+    mining: {
+      ok: true,
+      evidenceDigest: healthEvidenceDigest({
+        ...healthJsonShape(mining),
+        miningWalletIds: [...canonicalWallets.wallets.values()]
+          .filter((wallet) => wallet.role === "mining")
+          .map((wallet) => wallet.id)
+          .toSorted((left, right) => left.localeCompare(right)),
+      }),
+    },
+    network: {
+      ok: true,
+      evidenceDigest: healthEvidenceDigest({
+        configured: network.configured === true,
+        autoConnectEnabled: network.autoConnectEnabled === true,
+        tokenPresent: network.tokenPresent === true,
+        handlePresent: typeof network.handle === "string" && network.handle.trim().length > 0,
+        managedTokenPresent: Boolean(network.managedToken),
+        bondVaultPresent: bond.walletId != null,
+      }),
+    },
+    plugins: {
+      ok: true,
+      evidenceDigest: healthEvidenceDigest({
+        errors: plugins.errors.length,
+        diagnostics: plugins.diagnostics.length,
+      }),
+    },
+    signerIsolation: {
+      ok: true,
+      evidenceDigest: healthEvidenceDigest({
+        operatorDenied: true,
+        controlDenied: true,
+      }),
+    },
+  });
+}
+
 async function readGatewayHealthConfiguration(topology) {
   const configStat = await lstatIfPresent(topology.configPath);
   if (
@@ -3570,127 +5003,126 @@ async function runTargetApplicationCommand(
     throw new Error("target application entrypoint is invalid for product health");
   }
   const { token } = await readGatewayHealthConfiguration(topology);
-  const runuser = await fixedExecutable(["/usr/sbin/runuser", "/usr/bin/runuser"], "runuser");
   const nodeBinary = path.resolve(context.protectedNodeBinary);
-  const command = [
-    "-u",
-    topology.operator.name,
-    "--",
-    "/usr/bin/env",
-    "-i",
-    `HOME=${topology.operator.home}`,
-    `USER=${topology.operator.name}`,
-    `LOGNAME=${topology.operator.name}`,
-    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-    `FASED_NODE=${nodeBinary}`,
-    `FASED_STATE_DIR=${topology.stateDir}`,
-    `FASED_CONFIG_PATH=${topology.configPath}`,
-    `FASED_HOST_PROFILE=${topology.profile === "hosting" ? "hosting" : "local"}`,
-    `FASED_GATEWAY_TOKEN=${token}`,
-    nodeBinary,
-    entrypoint,
-    ...args,
-  ];
-  const { stdout } = await execFileAsync(runuser, command, {
-    env: { PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" },
+  const { stdout } = await execFileAsync(nodeBinary, [entrypoint, ...args], {
+    uid: topology.operator.uid,
+    gid: topology.operator.gid,
+    env: {
+      HOME: topology.operator.home,
+      USER: topology.operator.name,
+      LOGNAME: topology.operator.name,
+      PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      FASED_NODE: nodeBinary,
+      FASED_STATE_DIR: topology.stateDir,
+      FASED_CONFIG_PATH: topology.configPath,
+      FASED_HOST_PROFILE: topology.profile === "hosting" ? "hosting" : "local",
+      FASED_GATEWAY_TOKEN: token,
+    },
     timeout: 15_000,
     maxBuffer: 1024 * 1024,
   });
   return json ? parseBoundedJsonOutput(stdout, label) : { outputPresent: stdout.length > 0 };
 }
 
+function privilegedSignerSocketPaths(context) {
+  if (context.instanceId) {
+    const runtime = `/run/fased-local/${context.instanceId}`;
+    return {
+      operator: `${runtime}/operator/operator.sock`,
+      control: `${runtime}/control/control.sock`,
+    };
+  }
+  return {
+    operator: "/run/fased-signerd/operator.sock",
+    control: "/run/fased-signerd/control.sock",
+  };
+}
+
+async function assertSocketDeniedToGateway(context, topology, socketPath, label) {
+  const stat = await fsp.lstat(socketPath);
+  if (!stat.isSocket() || stat.isSymbolicLink()) {
+    throw new Error(`target signer ${label} socket is invalid`);
+  }
+  const nodeBinary = path.resolve(context.protectedNodeBinary);
+  const probe = [
+    'const net=require("node:net");',
+    "const socket=net.createConnection({path:process.argv[1]});",
+    "socket.setTimeout(3000);",
+    'socket.once("connect",()=>process.exit(42));',
+    'socket.once("timeout",()=>process.exit(43));',
+    'socket.once("error",(error)=>process.exit(error.code==="EACCES"||error.code==="EPERM"?0:44));',
+  ].join("");
+  try {
+    await execFileAsync(nodeBinary, ["-e", probe, socketPath], {
+      uid: topology.gateway.uid,
+      gid: topology.gateway.gid,
+      env: { PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" },
+      timeout: 5_000,
+      maxBuffer: 16 * 1024,
+    });
+  } catch (error) {
+    throw new Error(`target Gateway can reach or ambiguously probe signer ${label} authority`, {
+      cause: error,
+    });
+  }
+}
+
+async function probeSignerSocketIsolation(context, topology) {
+  const sockets = privilegedSignerSocketPaths(context);
+  await Promise.all([
+    assertSocketDeniedToGateway(context, topology, sockets.operator, "operator"),
+    assertSocketDeniedToGateway(context, topology, sockets.control, "control"),
+  ]);
+  return { operatorDenied: true, controlDenied: true };
+}
+
+function targetMiningHealthArgs() {
+  return ["mining", "history", "--timeout", "5000", "--json"];
+}
+
+async function collectCrossProductApplicationHealthEvidence(
+  runCommand,
+  probeIsolation,
+  probePlugins,
+) {
+  // Each CLI process loads the application and native plugin graph. Running all
+  // product probes at once can exhaust a 2 GiB installation and can make
+  // plugin diagnostics observe another process's transient native-loader work.
+  // Keep the inexpensive root/Gateway/signer prerequisites parallel, but bound
+  // product health to one application process at a time.
+  const walletStatus = await runCommand(["wallet", "status", "--json"], "Wallet");
+  const walletDoctor = await runCommand(["wallet", "signer", "doctor", "--json"], "Wallet signer");
+  const mining = await runCommand(targetMiningHealthArgs(), "Mining");
+  const network = await runCommand(["federation", "status", "--json"], "Fased Network");
+  const bond = await runCommand(
+    ["federation", "bond-wallet", "status", "--json"],
+    "Fased Network bond",
+  );
+  const plugins = await probePlugins();
+  const signerIsolation = await probeIsolation();
+  return { walletStatus, walletDoctor, mining, network, bond, plugins, signerIsolation };
+}
+
 async function probeCrossProductApplicationHealth(context, topology, journal) {
   if (topology.pendingGatewayUnit || topology.pendingStateDir) {
     throw new Error("application topology is incomplete during product health verification");
   }
-  const [walletStatus, walletDoctor, mining, network, plugins] = await Promise.all([
-    runTargetApplicationCommand(
-      context,
-      topology,
-      journal,
-      ["wallet", "status", "--json"],
-      "Wallet",
-    ),
-    runTargetApplicationCommand(
-      context,
-      topology,
-      journal,
-      ["wallet", "signer", "doctor", "--json"],
-      "Wallet signer",
-    ),
-    runTargetApplicationCommand(
-      context,
-      topology,
-      journal,
-      [
-        "mining",
-        "history",
-        "--timeout",
-        "5000",
-        "--json",
-        "--url",
-        `ws://127.0.0.1:${(await readGatewayHealthConfiguration(topology)).port}`,
-      ],
-      "Mining",
-    ),
-    runTargetApplicationCommand(
-      context,
-      topology,
-      journal,
-      ["federation", "status", "--json"],
-      "Fased Network",
-    ),
-    runTargetApplicationCommand(
-      context,
-      topology,
-      journal,
-      ["plugins", "doctor", "--json"],
-      "plugins",
-    ),
-  ]);
-  if (walletDoctor?.ok !== true) {
-    throw new Error("target Wallet signer health is not ready");
-  }
-  if (!mining || typeof mining !== "object" || Array.isArray(mining)) {
-    throw new Error("target Mining history health is invalid");
-  }
-  if (!network || typeof network !== "object" || Array.isArray(network)) {
-    throw new Error("target Fased Network health is invalid");
-  }
-  if (
-    network.configured === true &&
-    (typeof network.handle !== "string" || network.handle.trim().length === 0)
-  ) {
-    throw new Error("configured Fased Network identity is incomplete");
-  }
-  if (plugins?.ok !== true) {
-    throw new Error("target plugin diagnostics are not healthy");
-  }
-  const walletEvidence = {
-    signerOk: true,
-    signerChecks: Array.isArray(walletDoctor.checks) ? walletDoctor.checks.length : 0,
-    status: healthJsonShape(walletStatus),
-  };
-  const miningEvidence = healthJsonShape(mining);
-  const networkEvidence = {
-    configured: network.configured === true,
-    autoConnectEnabled: network.autoConnectEnabled === true,
-    tokenPresent: network.tokenPresent === true,
-    handlePresent: typeof network.handle === "string" && network.handle.trim().length > 0,
-    managedTokenPresent: Boolean(network.managedToken),
-  };
-  return Object.freeze({
-    wallet: { ok: true, evidenceDigest: healthEvidenceDigest(walletEvidence) },
-    mining: { ok: true, evidenceDigest: healthEvidenceDigest(miningEvidence) },
-    network: { ok: true, evidenceDigest: healthEvidenceDigest(networkEvidence) },
-    plugins: {
-      ok: true,
-      evidenceDigest: healthEvidenceDigest({
-        ok: true,
-        errors: Array.isArray(plugins.errors) ? plugins.errors.length : 0,
-        diagnostics: Array.isArray(plugins.diagnostics) ? plugins.diagnostics.length : 0,
-      }),
-    },
+  const { walletStatus, walletDoctor, mining, network, bond, plugins, signerIsolation } =
+    await collectCrossProductApplicationHealthEvidence(
+      async (args, label) =>
+        await runTargetApplicationCommand(context, topology, journal, args, label),
+      async () => await probeSignerSocketIsolation(context, topology),
+      async () => await readTargetPluginStatusCache(context, topology, journal),
+    );
+  return validateCrossProductApplicationEvidence({
+    topology,
+    walletStatus,
+    walletDoctor,
+    mining,
+    network,
+    bond,
+    plugins,
+    signerIsolation,
   });
 }
 
@@ -3701,12 +5133,12 @@ async function verifyCrossProductHealth(context, journal) {
       context.applicationTopology = value;
       return value;
     }));
-  const [gateway, signerRelease, state, product] = await Promise.all([
+  const [gateway, signerRelease, state] = await Promise.all([
     context.verifyGateway(journal.version),
-    context.probeSigner(journal.version),
+    context.probeSigner(journal.release),
     context.verifyApplicationState(journal.declaredState),
-    context.probeApplicationHealth(topology, journal),
   ]);
+  const product = await context.probeApplicationHealth(topology, journal);
   const signer = parseSignerReleaseIdentity(signerRelease, journal.version);
   return validateCrossProductHealthReceipt({
     schemaVersion: 1,
@@ -3721,7 +5153,10 @@ async function verifyCrossProductHealth(context, journal) {
       },
       signer: {
         ok: true,
-        evidenceDigest: healthEvidenceDigest(signer),
+        evidenceDigest: healthEvidenceDigest({
+          release: signer,
+          privilegedSockets: product.signerIsolation.evidenceDigest,
+        }),
       },
       wallet: product.wallet,
       mining: product.mining,
@@ -3731,6 +5166,7 @@ async function verifyCrossProductHealth(context, journal) {
         ok: true,
         evidenceDigest: healthEvidenceDigest({
           preservationHash: state.preservationHash,
+          preservationHashes: state.preservationHashes ?? {},
         }),
       },
     },
@@ -3823,6 +5259,8 @@ function createTransactionContext(overrides = {}) {
       (async (version) => await assertReleaseChannelAllowed(version, paths.channelPath)),
     downloadReleaseAsset: overrides.downloadReleaseAsset ?? download,
     verifyReleaseAsset: overrides.verifyReleaseAsset ?? verifyReleaseAsset,
+    verifyPrivilegedReleaseEvidence:
+      overrides.verifyPrivilegedReleaseEvidence ?? verifyPrivilegedReleaseEvidence,
     selfCheckControllerAsset: overrides.selfCheckControllerAsset ?? selfCheckControllerAsset,
     stageControllerRelease:
       overrides.stageControllerRelease ??
@@ -4042,6 +5480,10 @@ async function prepareSignerRelease(request, context) {
   await assertRollbackFloor(context, request.version);
   const topology = await context.discoverApplicationTopology();
   context.applicationTopology = topology;
+  const migrationSelection =
+    topology.pendingGatewayUnit || topology.pendingStateDir
+      ? null
+      : selectLifecycleMigration(topology, request.schemaVersion ?? PROTOCOL_SCHEMA_VERSION);
   const applicationState = managedApplicationStateFromTopology(topology) ?? {};
   context.applicationState = applicationState;
   const applicationStateResult = {
@@ -4144,6 +5586,8 @@ async function prepareSignerRelease(request, context) {
       previousSignerInvariant,
       application,
       managedApplication,
+      migrationSelection,
+      schemaMigration: lifecycleSchemaMigrationPlan(migrationSelection),
       serviceBoundary,
       declaredState: null,
       healthReceipt: null,
@@ -4174,6 +5618,7 @@ async function prepareSignerRelease(request, context) {
     changed: journal.changed,
     controllerChanged: journal.controllerChanged === true,
     release: journal.release,
+    migration: lifecycleMigrationReceipt(journal.migrationSelection),
     ...applicationStateResult,
   };
 }
@@ -4273,6 +5718,18 @@ async function restoreProtectedApplication(context, journal) {
   }
 }
 
+function rollbackHasPreviousGatewayRuntime(journal) {
+  if (journal.application) {
+    return journal.application.previousRoot != null;
+  }
+  if (journal.managedApplication) {
+    return journal.managedApplication.previousRoot != null;
+  }
+  // Signer-only transactions predate root-managed application activation.
+  // Preserve their established rollback behavior.
+  return true;
+}
+
 async function rollbackSignerRelease(request, context, { preserveGatewayGate = false } = {}) {
   let journal = await readJournal(context);
   if (!journal) {
@@ -4287,6 +5744,7 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
     };
   }
   assertMatchingTransaction(journal, request);
+  const restartPreviousGateway = rollbackHasPreviousGatewayRuntime(journal);
   await writeUpdateGates(context, journal);
   if (journal.phase === "restored") {
     await restoreManagedApplication(context, journal);
@@ -4298,11 +5756,13 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
     await removeManagedUpdateLock(journal);
     if (!preserveGatewayGate) {
       await removeUpdateGates(context);
-      try {
-        await context.startGateway();
-      } catch (error) {
-        if (!/not found|not loaded|no such file/i.test(error?.message || "")) {
-          throw error;
+      if (restartPreviousGateway) {
+        try {
+          await context.startGateway();
+        } catch (error) {
+          if (!/not found|not loaded|no such file/i.test(error?.message || "")) {
+            throw error;
+          }
         }
       }
     }
@@ -4356,11 +5816,13 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
   await removeManagedUpdateLock(journal);
   if (!preserveGatewayGate) {
     await removeUpdateGates(context);
-    try {
-      await context.startGateway();
-    } catch (error) {
-      if (!/not found|not loaded|no such file/i.test(error?.message || "")) {
-        throw error;
+    if (restartPreviousGateway) {
+      try {
+        await context.startGateway();
+      } catch (error) {
+        if (!/not found|not loaded|no such file/i.test(error?.message || "")) {
+          throw error;
+        }
       }
     }
   }
@@ -4386,6 +5848,13 @@ async function authorizeGatewayRelease(request, context) {
     await context.applyServiceBoundary(journal.serviceBoundary);
     await activateProtectedApplication(context, journal);
     await selectManagedApplication(context, journal);
+    journal = await writeJournal(context, {
+      ...journal,
+      schemaMigration: await completeLifecycleSchemaMigrations(context, journal),
+    });
+    await fsp.rm(targetPluginStatusCachePath(context.applicationTopology), {
+      force: true,
+    });
     await removeGatewayGate(context);
     try {
       await context.startGateway();
@@ -4451,10 +5920,22 @@ async function gateGatewayRelease(request, context) {
   }
   context.applicationTopology = topology;
   context.applicationState = managedApplicationStateFromTopology(topology);
-  const declaredState = await context.inventoryApplicationState(topology);
+  const migrationSelection = assertSameMigrationSelection(
+    journal.migrationSelection,
+    selectLifecycleMigration(topology, request.schemaVersion ?? PROTOCOL_SCHEMA_VERSION),
+  );
+  if (migrationSelection.adapters.sharedState !== "declared-state-registry-v1") {
+    throw new Error("selected lifecycle migration has no supported shared-state adapter");
+  }
+  const schemaMigration = journal.schemaMigration
+    ? validateLifecycleSchemaMigration(journal.schemaMigration, migrationSelection)
+    : lifecycleSchemaMigrationPlan(migrationSelection);
+  const declaredState = await context.inventoryApplicationState(topology, migrationSelection);
   journal = await writeJournal(context, {
     ...journal,
     phase: "state-reconciling",
+    migrationSelection,
+    schemaMigration,
     declaredState,
   });
   if (declaredState) {
@@ -4463,7 +5944,7 @@ async function gateGatewayRelease(request, context) {
       declaredState.operatorUid,
       declaredState.configGid,
     );
-    const result = await context.reconcileApplicationState(declaredState);
+    const result = await context.reconcileApplicationState(declaredState, migrationSelection);
     journal = await writeJournal(context, {
       ...journal,
       phase: "state-reconciled",
@@ -4480,6 +5961,11 @@ async function gateGatewayRelease(request, context) {
       phase: "state-reconciled",
     });
   }
+  journal = await writeJournal(context, {
+    ...journal,
+    phase: "schema-ready",
+    schemaMigration: prepareLifecycleSchemaMigrations(journal),
+  });
   return {
     transactionId: journal.transactionId,
     version: journal.version,
@@ -4542,7 +6028,17 @@ async function activateSignerRelease(request, context) {
     await gateGatewayRelease(request, context);
     journal = await readJournal(context);
   }
-  if (journal.phase !== "state-reconciled") {
+  if (journal.phase === "state-reconciled") {
+    journal = await writeJournal(context, {
+      ...journal,
+      phase: "schema-ready",
+      schemaMigration: prepareLifecycleSchemaMigrations(journal),
+    });
+  }
+  if (!journal.migrationSelection) {
+    throw new Error("signer transaction has no validated lifecycle migration selection");
+  }
+  if (journal.phase !== "schema-ready") {
     throw new Error(`signer transaction cannot activate from phase ${journal.phase}`);
   }
   if (!journal.changed) {
@@ -4719,6 +6215,44 @@ async function removeValidatedHistoricalResidue(residuePath, options) {
   }
 }
 
+async function inspectHistoricalQ0StateDirectory(directory, allowedNames, context) {
+  let stat;
+  try {
+    stat = await fsp.lstat(directory);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return { exists: false, stat: null };
+    }
+    throw error;
+  }
+  if (
+    !stat.isDirectory() ||
+    stat.isSymbolicLink() ||
+    stat.uid !== context.rootUid ||
+    (stat.mode & 0o022) !== 0
+  ) {
+    throw new Error("historical Protected Local test state directory is unsafe");
+  }
+  const entries = await fsp.readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!allowedNames.has(entry.name)) {
+      throw new Error(
+        `historical Protected Local test state directory contains unknown entry ${entry.name}`,
+      );
+    }
+  }
+  const revalidated = await fsp.lstat(directory);
+  if (
+    !revalidated.isDirectory() ||
+    revalidated.isSymbolicLink() ||
+    revalidated.dev !== stat.dev ||
+    revalidated.ino !== stat.ino
+  ) {
+    throw new Error("historical Protected Local test state directory changed during inventory");
+  }
+  return { exists: true, stat };
+}
+
 async function cleanupHistoricalQ0Residue(context, journal) {
   if (!context.instanceId) {
     return { changed: false, removed: [] };
@@ -4732,6 +6266,11 @@ async function cleanupHistoricalQ0Residue(context, journal) {
   );
   const controllerBackupPath = path.join(context.paths.stateDir, "q0-controller-candidate.json");
   const applicationBackupPath = path.join(context.paths.stateDir, "q0-application-candidate.json");
+  const historicalStateDirectory = await inspectHistoricalQ0StateDirectory(
+    testStateDir,
+    new Set([path.basename(authorizationPath), path.basename(authorizationBackupPath)]),
+    context,
+  );
 
   const [authorization, authorizationBackup, controllerBackup, applicationBackup] =
     await Promise.all([
@@ -4866,7 +6405,7 @@ async function cleanupHistoricalQ0Residue(context, journal) {
     controllerBackup?.filePath,
     applicationBackup?.filePath,
   ].filter(Boolean);
-  if (candidateRoots.size === 0 && residueFiles.length === 0) {
+  if (candidateRoots.size === 0 && residueFiles.length === 0 && !historicalStateDirectory.exists) {
     return { changed: false, removed: [] };
   }
 
@@ -4922,14 +6461,44 @@ async function cleanupHistoricalQ0Residue(context, journal) {
       removed.push(candidate);
     }
   }
-  for (const filePath of residueFiles) {
+  for (const filePath of residueFiles.filter((entry) => path.dirname(entry) !== testStateDir)) {
     if (await removeValidatedHistoricalResidue(filePath)) {
       removed.push(filePath);
     }
   }
+  if (historicalStateDirectory.exists) {
+    const current = await fsp.lstat(testStateDir);
+    if (
+      !current.isDirectory() ||
+      current.isSymbolicLink() ||
+      current.dev !== historicalStateDirectory.stat.dev ||
+      current.ino !== historicalStateDirectory.stat.ino
+    ) {
+      throw new Error("historical Protected Local test state directory changed before cleanup");
+    }
+    const remainingEntries = await fsp.readdir(testStateDir);
+    const allowedNames = new Set([
+      path.basename(authorizationPath),
+      path.basename(authorizationBackupPath),
+    ]);
+    for (const entry of remainingEntries) {
+      if (!allowedNames.has(entry)) {
+        throw new Error(
+          `historical Protected Local test state directory contains unknown entry ${entry}`,
+        );
+      }
+    }
+    if (await removeValidatedHistoricalResidue(testStateDir, { recursive: true })) {
+      removed.push(testStateDir);
+    }
+  }
   const residueDirectories = new Set(
-    [...candidateRoots, ...residueFiles].map((entry) => path.dirname(entry)),
+    [
+      ...candidateRoots,
+      ...residueFiles.filter((entry) => path.dirname(entry) !== testStateDir),
+    ].map((entry) => path.dirname(entry)),
   );
+  residueDirectories.add(path.dirname(testStateDir));
   for (const directory of residueDirectories) {
     await fsyncDirectory(directory);
   }
@@ -4950,6 +6519,11 @@ async function recordTargetApplicationSuccess(context, journal) {
         mode: "managed",
         version: journal.version,
         alreadyCurrent: false,
+        migration: lifecycleMigrationReceipt(journal.migrationSelection),
+        schemaMigration: lifecycleSchemaMigrationReceipt(
+          journal.schemaMigration,
+          journal.migrationSelection,
+        ),
         updatedAt: new Date().toISOString(),
       },
       null,
@@ -4962,6 +6536,9 @@ async function recordTargetApplicationSuccess(context, journal) {
 }
 
 async function finishCommit(context, journal) {
+  if (journal.migrationSelection) {
+    assertLifecycleSchemaMigrationsApplied(journal);
+  }
   await recordTargetApplicationSuccess(context, journal);
   await cleanupHistoricalQ0Residue(context, journal);
   await writeInitialRollbackFloor(context, journal.version);
@@ -4975,6 +6552,11 @@ async function finishCommit(context, journal) {
     phase: "committed",
     changed: journal.changed,
     release: journal.release,
+    migration: lifecycleMigrationReceipt(journal.migrationSelection),
+    schemaMigration: lifecycleSchemaMigrationReceipt(
+      journal.schemaMigration,
+      journal.migrationSelection,
+    ),
   };
 }
 
@@ -5016,6 +6598,10 @@ async function alreadyCommittedRelease(request, context) {
   const topology = await context.discoverApplicationTopology();
   context.applicationTopology = topology;
   context.applicationState = managedApplicationStateFromTopology(topology);
+  const migrationSelection =
+    topology.pendingGatewayUnit || topology.pendingStateDir
+      ? null
+      : selectLifecycleMigration(topology, request.schemaVersion ?? PROTOCOL_SCHEMA_VERSION);
   if (context.applicationState?.stateDir) {
     const paths = managedApplicationPaths(context.applicationState.stateDir);
     const manifest = validateManagedInstallManifest(
@@ -5044,12 +6630,23 @@ async function alreadyCommittedRelease(request, context) {
   void gateway;
   void product;
   const release = parseSignerReleaseIdentity(signer, request.version);
+  const schemaMigration = migrationSelection
+    ? completedLifecycleSchemaMigration(
+        stagedLifecycleSchemaMigration(
+          lifecycleSchemaMigrationPlan(migrationSelection),
+          migrationSelection,
+        ),
+        migrationSelection,
+      )
+    : null;
   return {
     transactionId: request.transactionId,
     version: request.version,
     phase: "committed",
     changed: false,
     release,
+    migration: lifecycleMigrationReceipt(migrationSelection),
+    schemaMigration: lifecycleSchemaMigrationReceipt(schemaMigration, migrationSelection),
   };
 }
 
@@ -5077,7 +6674,7 @@ async function applyReleaseTransaction(request, context) {
       await gateGatewayRelease(request, context);
       journal = await readJournal(context);
     }
-    if (journal.phase === "state-reconciled") {
+    if (journal.phase === "state-reconciled" || journal.phase === "schema-ready") {
       await activateSignerRelease(request, context);
       journal = await readJournal(context);
     }
@@ -5086,6 +6683,11 @@ async function applyReleaseTransaction(request, context) {
       journal = await readJournal(context);
     }
     if (journal.phase === "gateway-authorized") {
+      if (!lifecycleSchemaMigrationsApplied(journal)) {
+        await authorizeGatewayRelease(request, context);
+        journal = await readJournal(context);
+      }
+      assertLifecycleSchemaMigrationsApplied(journal);
       const healthReceipt = await verifyCrossProductHealth(context, journal);
       journal = await writeJournal(context, {
         ...journal,
@@ -5150,6 +6752,7 @@ async function recoverInterruptedTransaction(context) {
     journal.phase === "prepared" ||
     journal.phase === "state-reconciling" ||
     journal.phase === "state-reconciled" ||
+    journal.phase === "schema-ready" ||
     journal.phase === "snapshotting" ||
     journal.phase === "activating" ||
     journal.phase === "active" ||
@@ -5440,12 +7043,16 @@ if (isMain) {
 }
 
 export const __testing = {
+  LIFECYCLE_COMPATIBILITY_ADAPTERS,
+  LIFECYCLE_SCHEMA_MIGRATIONS,
   assertSignerV2Health,
   applyReleaseTransaction,
   activateSignerRelease,
   authorizeGatewayRelease,
+  buildTargetManagedInstallManifest,
   commitSignerRelease,
   compareVersions,
+  collectCrossProductApplicationHealthEvidence,
   cleanupHistoricalQ0Residue,
   createTransactionContext,
   dispatchUpdateRequest,
@@ -5454,13 +7061,18 @@ export const __testing = {
   parseServerConfiguration,
   prepareControllerServerContext,
   prepareSignerRelease,
+  readTargetPluginStatusCache,
   protectedLocalControllerConfiguration,
   ensureProtectedLocalControllerServicePolicy,
   ensureRootManagedSharedApplicationDirectories,
+  ensureInitializedManagedStableDirectories,
   declaredStateRegistry,
+  validateCrossProductApplicationEvidence,
   discoverProtectedApplicationTopology,
   inventoryDeclaredApplicationState,
+  LIFECYCLE_ROOT_POLICY_SHA256,
   reconcileDeclaredApplicationState,
+  ROOT_APPROVED_RELEASE_AUTHORITY,
   restoreDeclaredApplicationState,
   verifyDeclaredStatePreservation,
   verifyCrossProductHealth,
@@ -5472,9 +7084,16 @@ export const __testing = {
   releaseArchitecture,
   restartGatewayService,
   rollbackSignerRelease,
+  lifecycleMigrationInventory,
+  lifecycleSchemaMigrationPlan,
+  lifecycleSchemaMigrationReceipt,
+  selectLifecycleMigration,
+  validateLifecycleMigrationSelection,
+  validateLifecycleSchemaMigration,
   stageOfficialControllerRelease,
   stageOfficialCandidate,
   stageProtectedApplicationRelease,
+  targetMiningHealthArgs,
   transactionPaths,
   updateControllerRelease,
   writeJournal,

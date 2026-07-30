@@ -7,6 +7,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { SIGNER_PROTOCOL_V2 } from "../src/wallet/signer-protocol-v2.generated.js";
+import { MANAGED_UPDATER_SUPPORT_FILES } from "./fased-managed-updater.mjs";
 import { capabilitiesDigest } from "./hosted-release-manifest.mjs";
 import { installManagedRuntime } from "./install-managed-runtime.mjs";
 import {
@@ -30,8 +31,7 @@ function copyManagedScripts(packageRoot: string) {
     "fased-managed-launcher.sh",
     "fased-managed-service.sh",
     "fased-managed-updater.mjs",
-    "managed-runtime-layout.mjs",
-    "hosted-release-manifest.mjs",
+    ...MANAGED_UPDATER_SUPPORT_FILES,
   ]) {
     fs.copyFileSync(path.join(import.meta.dirname, script), path.join(scriptsDir, script));
   }

@@ -453,6 +453,11 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
         '{"schemaVersion":2,"profile":"protected-local"}\n',
         { mode: 0o600 },
       );
+      fs.writeFileSync(
+        path.join(stateDir, "install-complete.json"),
+        '{"schemaVersion":1,"onboardingCompleted":true}\n',
+        { mode: 0o600 },
+      );
 
       const result = runExactLocalBootstrap(harness, tempRoot, [
         "--local",
@@ -469,6 +474,47 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
       expect(result.stdout).not.toContain("exact-local-inner-handoff");
       expect(result.stdout).not.toContain("package-manager progress before verified commit");
       expect(fs.existsSync(harness.installDir)).toBe(false);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("resumes onboarding without rebuilding an incomplete committed Protected Local topology", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-incomplete-protected-local-"));
+    try {
+      const harness = createExactLocalBootstrapHarness(tempRoot, {
+        uid: process.getuid?.() ?? 1000,
+      });
+      const stateDir = path.join(tempRoot, "home", ".fased");
+      fs.mkdirSync(path.join(tempRoot, "home", "fased"), { recursive: true });
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(path.join(stateDir, "fased.json"), "{}\n", { mode: 0o600 });
+      fs.writeFileSync(
+        path.join(stateDir, "install.json"),
+        '{"schemaVersion":2,"profile":"protected-local"}\n',
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(stateDir, "install-complete.json"),
+        '{"schemaVersion":1,"onboardingCompleted":false}\n',
+        { mode: 0o600 },
+      );
+
+      const result = runExactLocalBootstrap(harness, tempRoot, [
+        "--local",
+        "--release",
+        "v9.9.9-test.1",
+        "--update-channel",
+        "beta",
+      ]);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toContain(
+        "Committed Protected Local services detected; resuming onboarding.",
+      );
+      expect(result.stdout).toContain("exact-local-inner-handoff");
+      expect(result.stdout).toContain("--resume-local-onboarding");
+      expect(result.stdout).not.toContain("--existing-local-bootstrap");
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -896,16 +942,13 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
     expect(managedEnv).toContain('env_mode="$(managed_state_file_mode)"');
 
     const protectedActivation = installer.indexOf("bootstrap_protected_local_topology activate");
-    const preparedChannel = installer.lastIndexOf(
+    const onboarding = installer.indexOf('FASED_INSTALLER_ONBOARD=1 "$FASED_CLI_PATH" onboard');
+    const finalMarker = installer.indexOf('write_install_marker "$REPO_ROOT" "true"', onboarding);
+    expect(protectedActivation).toBeGreaterThanOrEqual(0);
+    expect(onboarding).toBeGreaterThan(protectedActivation);
+    expect(finalMarker).toBeGreaterThan(onboarding);
+    expect(installer).not.toContain(
       "persist_runtime_update_channel protected-local-pre-activation",
-      protectedActivation,
     );
-    const finalMarker = installer.indexOf(
-      'write_install_marker "$REPO_ROOT" "true"',
-      protectedActivation,
-    );
-    expect(preparedChannel).toBeGreaterThanOrEqual(0);
-    expect(preparedChannel).toBeLessThan(protectedActivation);
-    expect(finalMarker).toBeGreaterThan(protectedActivation);
   });
 });

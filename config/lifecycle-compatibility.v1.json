@@ -1,0 +1,766 @@
+{
+  "schemaVersion": 1,
+  "role": "fased-lifecycle-compatibility-evidence",
+  "repository": "fased-ai/fased",
+  "publishedThrough": {
+    "tag": "v0.1.76-rc.20",
+    "commit": "7d28d414e2127ff5650c9c96444523a450bd9ae4"
+  },
+  "publishedReleaseCount": 82,
+  "selectionContract": {
+    "runtimeConsumesReleaseAssignments": false,
+    "runtimeSelectionFields": [
+      "profile",
+      "platformAdapter",
+      "serviceTopology",
+      "updaterProtocol",
+      "controllerProtocol",
+      "signerProtocol",
+      "declaredStateRegistry",
+      "stateSchemas",
+      "interruptedTransaction"
+    ],
+    "releaseEvidenceFields": ["tag", "commit"]
+  },
+  "supportFloor": {
+    "basis": "installed-topology-protocol-and-state-schema",
+    "unknownOrAmbiguousTuple": "unsupported-fail-before-mutation",
+    "local": {
+      "preHandoff": "standard-local-bootstrap-once",
+      "managedDarwin": "ordinary-update",
+      "protectedControllerV2": "ordinary-update",
+      "supervisorV1": "ordinary-update"
+    },
+    "hosting": {
+      "noTrustedForwardAuthority": "verified-hosting-root-bootstrap-once",
+      "staticControllerV2": "verified-hosting-root-bootstrap-once",
+      "selfUpdatingControllerV2": "ordinary-update",
+      "supervisorV1": "ordinary-update"
+    }
+  },
+  "forwardPaths": [
+    {
+      "id": "ordinary-update",
+      "support": "supported",
+      "entryPoint": "fased update",
+      "authorization": "none-after-managed-boundary"
+    },
+    {
+      "id": "standard-local-bootstrap-once",
+      "support": "supported-with-one-bootstrap",
+      "entryPoint": "documented Local installer",
+      "authorization": "one-os-native-ceremony"
+    },
+    {
+      "id": "verified-hosting-root-bootstrap-once",
+      "support": "supported-with-one-bootstrap",
+      "entryPoint": "documented Hosting one-curl installer",
+      "authorization": "provider-root-console"
+    },
+    {
+      "id": "immutable-updater-cannot-reach-bootstrap",
+      "support": "unsupported",
+      "entryPoint": null,
+      "authorization": null
+    }
+  ],
+  "adapters": [
+    {
+      "id": "pre-handoff-local-to-protected-v1",
+      "owner": "bootstrap-installer",
+      "dimension": "serviceTopology",
+      "input": ["legacy-local-same-user-v0", "local-user-systemd-v1", "local-user-systemd-v2"],
+      "output": "protected-local-supervisor-v1",
+      "status": "implemented",
+      "runtimeSelected": false
+    },
+    {
+      "id": "legacy-hosting-to-supervised-v1",
+      "owner": "bootstrap-installer",
+      "dimension": "serviceTopology",
+      "input": ["hosting-root-gateway-v0", "hosting-controller-v2-static"],
+      "output": "hosting-supervisor-v1",
+      "status": "implemented",
+      "runtimeSelected": false
+    },
+    {
+      "id": "controller-v2-to-supervisor-v1",
+      "owner": "stable-supervisor",
+      "dimension": "controllerProtocol",
+      "input": 2,
+      "output": 1,
+      "status": "implemented",
+      "runtimeSelected": false
+    },
+    {
+      "id": "interrupted-controller-journal-v2",
+      "owner": "target-controller",
+      "dimension": "interruptedTransaction",
+      "input": "controller-journal-v2",
+      "output": "recovered-or-rolled-back",
+      "status": "implemented",
+      "runtimeSelected": false
+    },
+    {
+      "id": "managed-install-absent",
+      "owner": "target-controller",
+      "dimension": "managedInstallSchema",
+      "input": null,
+      "output": 2,
+      "status": "implemented",
+      "runtimeSelected": true
+    },
+    {
+      "id": "managed-install-v1-to-v2",
+      "owner": "target-controller",
+      "dimension": "managedInstallSchema",
+      "input": 1,
+      "output": 2,
+      "status": "implemented",
+      "runtimeSelected": true
+    },
+    {
+      "id": "managed-install-v2",
+      "owner": "target-controller",
+      "dimension": "managedInstallSchema",
+      "input": 2,
+      "output": 2,
+      "status": "implemented",
+      "runtimeSelected": true
+    },
+    {
+      "id": "controller-protocol-v2",
+      "owner": "target-controller",
+      "dimension": "controllerProtocol",
+      "input": 2,
+      "output": 2,
+      "status": "implemented",
+      "runtimeSelected": true
+    },
+    {
+      "id": "signer-schema-v2",
+      "owner": "go-signer",
+      "dimension": "signerStateSchema",
+      "input": 2,
+      "output": 2,
+      "status": "implemented",
+      "runtimeSelected": true
+    },
+    {
+      "id": "wallet-registry-absent",
+      "owner": "target-controller",
+      "dimension": "walletStateSchema",
+      "input": null,
+      "output": 1,
+      "status": "implemented",
+      "runtimeSelected": true
+    },
+    {
+      "id": "wallet-registry-v1",
+      "owner": "target-controller",
+      "dimension": "walletStateSchema",
+      "input": 1,
+      "output": 1,
+      "status": "implemented",
+      "runtimeSelected": true
+    },
+    {
+      "id": "mining-schema-v1",
+      "owner": "target-controller",
+      "dimension": "miningStateSchema",
+      "input": 1,
+      "output": 1,
+      "status": "implemented",
+      "runtimeSelected": true
+    },
+    {
+      "id": "federation-schema-v2",
+      "owner": "target-controller",
+      "dimension": "federationStateSchema",
+      "input": 2,
+      "output": 2,
+      "status": "implemented",
+      "runtimeSelected": true
+    },
+    {
+      "id": "declared-state-registry-v1",
+      "owner": "target-controller",
+      "dimension": "declaredStateRegistry",
+      "input": 1,
+      "output": 1,
+      "status": "implemented",
+      "runtimeSelected": true
+    },
+    {
+      "id": "protected-local-system-v1",
+      "owner": "linux-systemd-adapter",
+      "dimension": "profileAccess",
+      "input": "protected-local:linux-systemd",
+      "output": "protected-local-system-v1",
+      "status": "implemented",
+      "runtimeSelected": true
+    },
+    {
+      "id": "hosting-system-v1",
+      "owner": "linux-systemd-adapter",
+      "dimension": "profileAccess",
+      "input": "hosting:linux-systemd",
+      "output": "hosting-system-v1",
+      "status": "implemented",
+      "runtimeSelected": true
+    }
+  ],
+  "topologies": [
+    {
+      "id": "local-legacy-same-user-v0",
+      "baseTopology": null,
+      "profile": "local",
+      "platformAdapter": "linux-same-user",
+      "serviceTopology": "legacy-local-same-user-v0",
+      "updaterProtocol": null,
+      "supervisorProtocol": null,
+      "controllerProtocol": null,
+      "controllerCapabilities": [],
+      "signerProtocol": null,
+      "declaredStateRegistry": null,
+      "stateSchemas": {
+        "managedInstall": null,
+        "walletRegistry": [null, 1],
+        "signer": [null, 1],
+        "mining": 1,
+        "federation": [null, 1]
+      },
+      "interruptedTransaction": "legacy-unjournaled",
+      "forwardPath": "standard-local-bootstrap-once",
+      "adapterIds": ["pre-handoff-local-to-protected-v1"],
+      "published": true
+    },
+    {
+      "id": "local-user-systemd-managed-v1",
+      "baseTopology": null,
+      "profile": "local",
+      "platformAdapter": "linux-user-systemd",
+      "serviceTopology": "local-user-systemd-v1",
+      "updaterProtocol": 1,
+      "supervisorProtocol": null,
+      "controllerProtocol": null,
+      "controllerCapabilities": [],
+      "signerProtocol": 1,
+      "declaredStateRegistry": null,
+      "stateSchemas": {
+        "managedInstall": 1,
+        "walletRegistry": [null, 1],
+        "signer": [null, 1],
+        "mining": 1,
+        "federation": [null, 1]
+      },
+      "interruptedTransaction": "managed-journal-v1",
+      "forwardPath": "standard-local-bootstrap-once",
+      "adapterIds": ["pre-handoff-local-to-protected-v1"],
+      "published": true
+    },
+    {
+      "id": "local-user-systemd-managed-v2",
+      "baseTopology": null,
+      "profile": "local",
+      "platformAdapter": "linux-user-systemd",
+      "serviceTopology": "local-user-systemd-v2",
+      "updaterProtocol": 2,
+      "supervisorProtocol": null,
+      "controllerProtocol": null,
+      "controllerCapabilities": [],
+      "signerProtocol": 2,
+      "declaredStateRegistry": null,
+      "stateSchemas": {
+        "managedInstall": 2,
+        "walletRegistry": [null, 1],
+        "signer": 2,
+        "mining": 1,
+        "federation": [null, 1, 2]
+      },
+      "interruptedTransaction": "managed-journal-v1",
+      "forwardPath": "standard-local-bootstrap-once",
+      "adapterIds": ["pre-handoff-local-to-protected-v1"],
+      "published": true
+    },
+    {
+      "id": "local-darwin-legacy-v0",
+      "baseTopology": null,
+      "profile": "local",
+      "platformAdapter": "darwin-same-user",
+      "serviceTopology": "legacy-local-same-user-v0",
+      "updaterProtocol": null,
+      "supervisorProtocol": null,
+      "controllerProtocol": null,
+      "controllerCapabilities": [],
+      "signerProtocol": null,
+      "declaredStateRegistry": null,
+      "stateSchemas": {
+        "managedInstall": null,
+        "walletRegistry": [null, 1],
+        "signer": [null, 1],
+        "mining": 1,
+        "federation": [null, 1]
+      },
+      "interruptedTransaction": "legacy-unjournaled",
+      "forwardPath": "standard-local-bootstrap-once",
+      "adapterIds": [],
+      "published": true
+    },
+    {
+      "id": "local-darwin-managed-v1",
+      "baseTopology": null,
+      "profile": "local",
+      "platformAdapter": "darwin-launchd",
+      "serviceTopology": "local-launchd-v1",
+      "updaterProtocol": 1,
+      "supervisorProtocol": null,
+      "controllerProtocol": null,
+      "controllerCapabilities": [],
+      "signerProtocol": 1,
+      "declaredStateRegistry": null,
+      "stateSchemas": {
+        "managedInstall": 1,
+        "walletRegistry": [null, 1],
+        "signer": [null, 1],
+        "mining": 1,
+        "federation": [null, 1]
+      },
+      "interruptedTransaction": "managed-journal-v1",
+      "forwardPath": "ordinary-update",
+      "adapterIds": [],
+      "published": true
+    },
+    {
+      "id": "local-darwin-managed-v2",
+      "baseTopology": null,
+      "profile": "local",
+      "platformAdapter": "darwin-launchd",
+      "serviceTopology": "local-launchd-v2",
+      "updaterProtocol": 2,
+      "supervisorProtocol": null,
+      "controllerProtocol": null,
+      "controllerCapabilities": [],
+      "signerProtocol": 2,
+      "declaredStateRegistry": null,
+      "stateSchemas": {
+        "managedInstall": 2,
+        "walletRegistry": [null, 1],
+        "signer": 2,
+        "mining": 1,
+        "federation": [null, 1, 2]
+      },
+      "interruptedTransaction": "managed-journal-v1",
+      "forwardPath": "ordinary-update",
+      "adapterIds": [],
+      "published": true
+    },
+    {
+      "id": "protected-local-controller-v2",
+      "baseTopology": null,
+      "profile": "protected-local",
+      "platformAdapter": "linux-systemd",
+      "serviceTopology": "protected-local-system-v1",
+      "updaterProtocol": 2,
+      "supervisorProtocol": null,
+      "controllerProtocol": 2,
+      "controllerCapabilities": ["updateController"],
+      "signerProtocol": 2,
+      "declaredStateRegistry": null,
+      "stateSchemas": {
+        "managedInstall": 2,
+        "walletRegistry": [null, 1],
+        "signer": 2,
+        "mining": 1,
+        "federation": [null, 1, 2]
+      },
+      "interruptedTransaction": "none",
+      "forwardPath": "ordinary-update",
+      "adapterIds": ["controller-v2-to-supervisor-v1"],
+      "published": true
+    },
+    {
+      "id": "protected-local-controller-v2-interrupted",
+      "baseTopology": "protected-local-controller-v2",
+      "profile": "protected-local",
+      "platformAdapter": "linux-systemd",
+      "serviceTopology": "protected-local-system-v1",
+      "updaterProtocol": 2,
+      "supervisorProtocol": null,
+      "controllerProtocol": 2,
+      "controllerCapabilities": ["updateController"],
+      "signerProtocol": 2,
+      "declaredStateRegistry": null,
+      "stateSchemas": {
+        "managedInstall": 2,
+        "walletRegistry": [null, 1],
+        "signer": 2,
+        "mining": 1,
+        "federation": [null, 1, 2]
+      },
+      "interruptedTransaction": "controller-journal-v2",
+      "forwardPath": "ordinary-update",
+      "adapterIds": ["interrupted-controller-journal-v2", "controller-v2-to-supervisor-v1"],
+      "published": false
+    },
+    {
+      "id": "protected-local-supervisor-v1",
+      "baseTopology": null,
+      "profile": "protected-local",
+      "platformAdapter": "linux-systemd",
+      "serviceTopology": "protected-local-system-v1",
+      "updaterProtocol": 2,
+      "supervisorProtocol": 1,
+      "controllerProtocol": 2,
+      "controllerCapabilities": ["updateController", "applyRelease"],
+      "signerProtocol": 2,
+      "declaredStateRegistry": 1,
+      "stateSchemas": {
+        "managedInstall": [1, 2],
+        "walletRegistry": [null, 1],
+        "signer": 2,
+        "mining": 1,
+        "federation": 2
+      },
+      "interruptedTransaction": "none",
+      "forwardPath": "ordinary-update",
+      "adapterIds": [
+        "managed-install-v1-to-v2",
+        "managed-install-v2",
+        "controller-protocol-v2",
+        "signer-schema-v2",
+        "wallet-registry-absent",
+        "wallet-registry-v1",
+        "mining-schema-v1",
+        "federation-schema-v2",
+        "declared-state-registry-v1",
+        "protected-local-system-v1"
+      ],
+      "published": false
+    },
+    {
+      "id": "hosting-root-gateway-v0",
+      "baseTopology": null,
+      "profile": "hosting",
+      "platformAdapter": "linux-systemd",
+      "serviceTopology": "hosting-root-gateway-v0",
+      "updaterProtocol": null,
+      "supervisorProtocol": null,
+      "controllerProtocol": null,
+      "controllerCapabilities": [],
+      "signerProtocol": [null, 1],
+      "declaredStateRegistry": null,
+      "stateSchemas": {
+        "managedInstall": [null, 1],
+        "walletRegistry": [null, 1],
+        "signer": [null, 1],
+        "mining": 1,
+        "federation": [null, 1]
+      },
+      "interruptedTransaction": "legacy-unjournaled",
+      "forwardPath": "verified-hosting-root-bootstrap-once",
+      "adapterIds": ["legacy-hosting-to-supervised-v1"],
+      "published": true
+    },
+    {
+      "id": "hosting-controller-v2-static",
+      "baseTopology": null,
+      "profile": "hosting",
+      "platformAdapter": "linux-systemd",
+      "serviceTopology": "hosting-controller-v2-static",
+      "updaterProtocol": 2,
+      "supervisorProtocol": null,
+      "controllerProtocol": 2,
+      "controllerCapabilities": ["applyRelease"],
+      "signerProtocol": 2,
+      "declaredStateRegistry": null,
+      "stateSchemas": {
+        "managedInstall": 2,
+        "walletRegistry": [null, 1],
+        "signer": 2,
+        "mining": 1,
+        "federation": [null, 1, 2]
+      },
+      "interruptedTransaction": "controller-journal-v2",
+      "forwardPath": "verified-hosting-root-bootstrap-once",
+      "adapterIds": ["legacy-hosting-to-supervised-v1"],
+      "published": true
+    },
+    {
+      "id": "hosting-controller-v2-self-updating",
+      "baseTopology": null,
+      "profile": "hosting",
+      "platformAdapter": "linux-systemd",
+      "serviceTopology": "hosting-controller-v2-self-updating",
+      "updaterProtocol": 2,
+      "supervisorProtocol": null,
+      "controllerProtocol": 2,
+      "controllerCapabilities": ["updateController", "applyRelease"],
+      "signerProtocol": 2,
+      "declaredStateRegistry": null,
+      "stateSchemas": {
+        "managedInstall": 2,
+        "walletRegistry": [null, 1],
+        "signer": 2,
+        "mining": 1,
+        "federation": [null, 1, 2]
+      },
+      "interruptedTransaction": "none",
+      "forwardPath": "ordinary-update",
+      "adapterIds": ["controller-v2-to-supervisor-v1"],
+      "published": true
+    },
+    {
+      "id": "hosting-controller-v2-interrupted",
+      "baseTopology": "hosting-controller-v2-self-updating",
+      "profile": "hosting",
+      "platformAdapter": "linux-systemd",
+      "serviceTopology": "hosting-controller-v2-self-updating",
+      "updaterProtocol": 2,
+      "supervisorProtocol": null,
+      "controllerProtocol": 2,
+      "controllerCapabilities": ["updateController", "applyRelease"],
+      "signerProtocol": 2,
+      "declaredStateRegistry": null,
+      "stateSchemas": {
+        "managedInstall": 2,
+        "walletRegistry": [null, 1],
+        "signer": 2,
+        "mining": 1,
+        "federation": [null, 1, 2]
+      },
+      "interruptedTransaction": "controller-journal-v2",
+      "forwardPath": "ordinary-update",
+      "adapterIds": ["interrupted-controller-journal-v2", "controller-v2-to-supervisor-v1"],
+      "published": false
+    },
+    {
+      "id": "hosting-supervisor-v1",
+      "baseTopology": null,
+      "profile": "hosting",
+      "platformAdapter": "linux-systemd",
+      "serviceTopology": "hosting-system-v1",
+      "updaterProtocol": 2,
+      "supervisorProtocol": 1,
+      "controllerProtocol": 2,
+      "controllerCapabilities": ["updateController", "applyRelease"],
+      "signerProtocol": 2,
+      "declaredStateRegistry": 1,
+      "stateSchemas": {
+        "managedInstall": [null, 1, 2],
+        "walletRegistry": [null, 1],
+        "signer": 2,
+        "mining": 1,
+        "federation": 2
+      },
+      "interruptedTransaction": "none",
+      "forwardPath": "ordinary-update",
+      "adapterIds": [
+        "managed-install-absent",
+        "managed-install-v1-to-v2",
+        "managed-install-v2",
+        "controller-protocol-v2",
+        "signer-schema-v2",
+        "wallet-registry-absent",
+        "wallet-registry-v1",
+        "mining-schema-v1",
+        "federation-schema-v2",
+        "declared-state-registry-v1",
+        "hosting-system-v1"
+      ],
+      "published": false
+    }
+  ],
+  "releaseGroups": [
+    {
+      "id": "legacy-source-or-npm",
+      "evidence": {
+        "managedUpdater": false,
+        "hostedArtifactInstaller": false,
+        "managedInstallSchema": null,
+        "hostController": false,
+        "hostControllerProtocol": null,
+        "hostControllerCanUpdate": false,
+        "protectedLocalBootstrap": false
+      },
+      "localTopologies": ["local-legacy-same-user-v0", "local-darwin-legacy-v0"],
+      "hostingTopology": null,
+      "interruptedLocalTopology": null,
+      "interruptedHostingTopology": null,
+      "releases": [
+        { "tag": "v0.1.1", "commit": "ad1df13146d068148cf175ef26c398fb1e7041d7" },
+        { "tag": "v0.1.2", "commit": "1509c76b03361495b985a4ee86124227363dce1e" },
+        { "tag": "v0.1.3", "commit": "ae569f06f72a9157bec3a457a2664f3d52eef3b7" },
+        { "tag": "v0.1.4", "commit": "1d9dc6ed0135e7a4f9dba0e9c891c91356d329b3" },
+        { "tag": "v0.1.5", "commit": "e3f6ea0c903581814048b652490b6f0b65825440" },
+        { "tag": "v0.1.6", "commit": "6aa20c1cf99ed317cc4958b9517cc924e1af98fb" },
+        { "tag": "v0.1.7", "commit": "44b97ee18140ddfcaf04d3a96b5ed12d000c3925" },
+        { "tag": "v0.1.8", "commit": "0030f1cb8f4ffdf7f433bffa5dfe0018dac3f778" },
+        { "tag": "v0.1.12", "commit": "b05cf8a36e90be4dda7a9402aade63ace4de1d26" },
+        { "tag": "v0.1.13", "commit": "2d7ef7f6e3930c019619098255546ce781c0f3f9" },
+        { "tag": "v0.1.14", "commit": "2c373ad2de94dbd37dfb74a827c3e3ff7034bc09" },
+        { "tag": "v0.1.15", "commit": "21c6c4d632b14810a59d6f7801ec247ccc7e2308" },
+        { "tag": "v0.1.16", "commit": "acc9d12762107844fb989fbce7bbc4e7a4b1dae9" },
+        { "tag": "v0.1.17", "commit": "9bed862f4f3b00fd939419dffa796906ec705890" },
+        { "tag": "v0.1.18", "commit": "6b74e07c98d6419290aea5d9f2de5baeeae477b5" },
+        { "tag": "v0.1.19", "commit": "ac8cf41730261c5b70b3157acdb69d2a12bca17c" },
+        { "tag": "v0.1.20", "commit": "187249f0568f18992c2dbc30d3460db6dea8539c" },
+        { "tag": "v0.1.21", "commit": "d2298bd3fbec27313f9963c513eb0805360a6fb8" },
+        { "tag": "v0.1.23", "commit": "7ddd33682d484d8b5b21e8a79a2ed9eb66f4da91" },
+        { "tag": "v0.1.24", "commit": "202c6698ec5accdf759d8f68f136f8a210a49bc4" },
+        { "tag": "v0.1.34", "commit": "5cdc4ac3c4d1ec806972c991966bea218f0278ea" }
+      ]
+    },
+    {
+      "id": "legacy-hosted-artifact",
+      "evidence": {
+        "managedUpdater": false,
+        "hostedArtifactInstaller": true,
+        "managedInstallSchema": null,
+        "hostController": false,
+        "hostControllerProtocol": null,
+        "hostControllerCanUpdate": false,
+        "protectedLocalBootstrap": false
+      },
+      "localTopologies": ["local-legacy-same-user-v0", "local-darwin-legacy-v0"],
+      "hostingTopology": "hosting-root-gateway-v0",
+      "interruptedLocalTopology": null,
+      "interruptedHostingTopology": null,
+      "releases": [
+        { "tag": "v0.1.36", "commit": "ebeca5d94f9862be4209830435a42180a5abe3e5" },
+        { "tag": "v0.1.37", "commit": "41b9386e3ee438a60a467c3890ebd5120ee1ef39" },
+        { "tag": "v0.1.38", "commit": "68d9d1e95f7fb0b92a327631dae5f0bb4221ec2f" },
+        { "tag": "v0.1.39", "commit": "7af7c4b5a77d6b4d49c0608ff401c3b70daf8160" },
+        { "tag": "v0.1.40", "commit": "a8403b7a8a07f287ffa8c564c20015b41c376fc5" },
+        { "tag": "v0.1.41", "commit": "5f3430c83667c9b71fc8ccf86ac70c8390309008" },
+        { "tag": "v0.1.42", "commit": "b683b5bd53b85521bf215caf92415163c1e68e21" },
+        { "tag": "v0.1.43", "commit": "8a99fa3ba0f493efa9499541addb33621e072151" },
+        { "tag": "v0.1.44", "commit": "f63b1ccefcdf9a9ce5c2b7d9d792e4afd33dd0a9" },
+        { "tag": "v0.1.45", "commit": "1307ad0da53796ac9055f20ef7572d554e55e680" },
+        { "tag": "v0.1.46", "commit": "97cdf32990e9dbb8d248205ba889b5e7acbaf990" },
+        { "tag": "v0.1.47", "commit": "d36f107900185fece0deb5dcc6a0734cd524bcb7" },
+        { "tag": "v0.1.48", "commit": "fcf8a39da25b2eff820717322d264c05b8e63a07" },
+        { "tag": "v0.1.49", "commit": "dfe6f33b1939f011b97533344944c177d7902db0" },
+        { "tag": "v0.1.50", "commit": "ba6bdda7911fd44c238cde53605c13002dc6d048" },
+        { "tag": "v0.1.51", "commit": "3be1ab5ffce9188ec35cd4e953a1d14c32ce6ef9" },
+        { "tag": "v0.1.52", "commit": "c3421144b0635cbb2d4d70646ec42e3640a2193e" },
+        { "tag": "v0.1.53", "commit": "21fc3eb6d5d55b3f7c005e5b55fa428cca192c78" },
+        { "tag": "v0.1.54", "commit": "0e4f7276a6ff611b7a7c084cbdbac6246a020621" },
+        { "tag": "v0.1.55", "commit": "c850bc2e9c5030a16672d753fdf92c14cfe8832e" },
+        { "tag": "v0.1.56", "commit": "2b4261aec306a95c17fd7e3a3b80d318cf0a1e3e" },
+        { "tag": "v0.1.57", "commit": "91e53d4b2c1ca02701eff503d93e889ccfaab43d" },
+        { "tag": "v0.1.58", "commit": "90e7d5c7628e5b40333a1a31d4bfb34a1db9eb74" },
+        { "tag": "v0.1.59", "commit": "52ee044888a4c31c2e7ee6958d86a61a1afdd081" }
+      ]
+    },
+    {
+      "id": "managed-install-schema-v1",
+      "evidence": {
+        "managedUpdater": true,
+        "hostedArtifactInstaller": true,
+        "managedInstallSchema": 1,
+        "hostController": false,
+        "hostControllerProtocol": null,
+        "hostControllerCanUpdate": false,
+        "protectedLocalBootstrap": false
+      },
+      "localTopologies": ["local-user-systemd-managed-v1", "local-darwin-managed-v1"],
+      "hostingTopology": "hosting-root-gateway-v0",
+      "interruptedLocalTopology": null,
+      "interruptedHostingTopology": null,
+      "releases": [
+        { "tag": "v0.1.60", "commit": "9b00a70518c45aa162394500f7b15ea0c264f4a8" },
+        { "tag": "v0.1.61", "commit": "9c5161dc77c8d1187b6c1b331e75e2ba2739c8de" },
+        { "tag": "v0.1.62", "commit": "1363215001390a35a7338616392a7f9d36ae910b" },
+        { "tag": "v0.1.63", "commit": "a64af1ca7296af5ed1432c735110cd1203aeb780" }
+      ]
+    },
+    {
+      "id": "managed-v2-static-host-controller",
+      "evidence": {
+        "managedUpdater": true,
+        "hostedArtifactInstaller": true,
+        "managedInstallSchema": 2,
+        "hostController": true,
+        "hostControllerProtocol": 2,
+        "hostControllerCanUpdate": false,
+        "protectedLocalBootstrap": false
+      },
+      "localTopologies": ["local-user-systemd-managed-v2", "local-darwin-managed-v2"],
+      "hostingTopology": "hosting-controller-v2-static",
+      "interruptedLocalTopology": null,
+      "interruptedHostingTopology": null,
+      "releases": [
+        { "tag": "v0.1.64", "commit": "3b1f5fc2be332eabd2055a752e96f9e8e1c84f3d" },
+        { "tag": "v0.1.65", "commit": "ddab66e8d4823150281598ca03144031c14e0311" },
+        { "tag": "v0.1.66", "commit": "4a1606b787409476e2f47ef3638ad69214142253" },
+        { "tag": "v0.1.67", "commit": "0cf1d3f773b1040fd0ca373c8a3f3ff60d79a493" },
+        { "tag": "v0.1.68", "commit": "ad0d395fdae5c0fbbbda8ad932b32276558b2cf2" },
+        { "tag": "v0.1.69", "commit": "a0ff463531b83e6c6040a0d5f88542fa962c668c" },
+        { "tag": "v0.1.70", "commit": "cf824f74dbb53f659700f87ab56c1b007cb76bfe" },
+        { "tag": "v0.1.71", "commit": "1c6a404c16e83eacec75f652aa8b793384a32b2f" },
+        { "tag": "v0.1.72", "commit": "9fd39dc722ef0334f88b6fd44256283667aaabe8" },
+        { "tag": "v0.1.73", "commit": "79e5bc7c45b6a53ab62e574acecda73706f6d052" },
+        { "tag": "v0.1.74", "commit": "0a46681e919bbff5f87c443633ebded9aece735a" }
+      ]
+    },
+    {
+      "id": "managed-v2-self-updating-host-controller",
+      "evidence": {
+        "managedUpdater": true,
+        "hostedArtifactInstaller": true,
+        "managedInstallSchema": 2,
+        "hostController": true,
+        "hostControllerProtocol": 2,
+        "hostControllerCanUpdate": true,
+        "protectedLocalBootstrap": false
+      },
+      "localTopologies": ["local-user-systemd-managed-v2", "local-darwin-managed-v2"],
+      "hostingTopology": "hosting-controller-v2-self-updating",
+      "interruptedLocalTopology": null,
+      "interruptedHostingTopology": "hosting-controller-v2-interrupted",
+      "releases": [
+        { "tag": "v0.1.75-rc.1", "commit": "97862e1f77754364930203ea9a2a1a06ec41d046" },
+        { "tag": "v0.1.75", "commit": "1880490fb4a081831eeaa691230a5dddcc0462c2" },
+        { "tag": "v0.1.76-rc.1", "commit": "5dc6cde921158a0d45b4efd8727239691e58d9d2" },
+        { "tag": "v0.1.76-rc.2", "commit": "c037894af4a86847db022f24ddf3bc6116104591" },
+        { "tag": "v0.1.76-rc.3", "commit": "442e186273a56e9eea19a2eb47f0793f095a6820" }
+      ]
+    },
+    {
+      "id": "protected-local-and-self-updating-hosting",
+      "evidence": {
+        "managedUpdater": true,
+        "hostedArtifactInstaller": true,
+        "managedInstallSchema": 2,
+        "hostController": true,
+        "hostControllerProtocol": 2,
+        "hostControllerCanUpdate": true,
+        "protectedLocalBootstrap": true
+      },
+      "localTopologies": ["protected-local-controller-v2", "local-darwin-managed-v2"],
+      "hostingTopology": "hosting-controller-v2-self-updating",
+      "interruptedLocalTopology": "protected-local-controller-v2-interrupted",
+      "interruptedHostingTopology": "hosting-controller-v2-interrupted",
+      "releases": [
+        { "tag": "v0.1.76-rc.4", "commit": "5b1db0aef6151d5afbb4164c6908b2a1d2b78f3a" },
+        { "tag": "v0.1.76-rc.5", "commit": "af9ccb974302fb4afca6762758c0d011b665c5be" },
+        { "tag": "v0.1.76-rc.6", "commit": "5bd22ece0b371244a6f6769c270155e018e67a5f" },
+        { "tag": "v0.1.76-rc.7", "commit": "b703c659daab8e04f5b5291c1991335a1796d88d" },
+        { "tag": "v0.1.76-rc.8", "commit": "ffd3027f20affbd9efbc0e358f7784cf4d657d43" },
+        { "tag": "v0.1.76-rc.9", "commit": "2500c643291273eb0628b45137d3c9ee5f193c4e" },
+        { "tag": "v0.1.76-rc.10", "commit": "d0895572a94742e4f2a390496848a6d5a27721bf" },
+        { "tag": "v0.1.76-rc.11", "commit": "dd9e747524c404d652c9eeb9234e1be8da7b5476" },
+        { "tag": "v0.1.76-rc.12", "commit": "4cf4e8004f1005edae01d874e4d0c129e094c3cb" },
+        { "tag": "v0.1.76-rc.13", "commit": "d27b9451bc3740a3197dd6f5227278cfd0092484" },
+        { "tag": "v0.1.76-rc.14", "commit": "a80a6b3831422a6888f072579686af26a7a3d2c0" },
+        { "tag": "v0.1.76-rc.15", "commit": "35f59ba89c83459d88a2da622f58c608223345ad" },
+        { "tag": "v0.1.76-rc.16", "commit": "2d28410a92c83e8e07a72c5878bdd6ec11cf9303" },
+        { "tag": "v0.1.76-rc.17", "commit": "b11b1a6e984eefe67f3c799a458fc0a8fd93bc3c" },
+        { "tag": "v0.1.76-rc.18", "commit": "8f043e1d4df0ae02ea22f237d71c55b8ec4d7f47" },
+        { "tag": "v0.1.76-rc.19", "commit": "00abb36891281cbfc1a70a3322b2851e373ece6f" },
+        { "tag": "v0.1.76-rc.20", "commit": "7d28d414e2127ff5650c9c96444523a450bd9ae4" }
+      ]
+    }
+  ]
+}

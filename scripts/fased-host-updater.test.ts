@@ -59,6 +59,17 @@ async function writeProtectedApplicationFixture({
     ),
     fsp.writeFile(path.join(root, "fased.mjs"), "#!/usr/bin/env node\n"),
     fsp.writeFile(path.join(root, "scripts", "start-managed.sh"), "#!/bin/bash\n"),
+    fsp.writeFile(path.join(root, "scripts", "fased-managed-launcher.sh"), "#!/bin/bash\n"),
+    fsp.writeFile(path.join(root, "scripts", "fased-managed-service.sh"), "#!/bin/bash\n"),
+    fsp.writeFile(path.join(root, "scripts", "fased-managed-updater.mjs"), "export {};\n"),
+    ...[
+      "hosted-release-manifest.mjs",
+      "lifecycle-trust-crypto.mjs",
+      "lifecycle-trust-policy.mjs",
+      "lifecycle-trust-root.mjs",
+      "lifecycle-trust-runtime.mjs",
+      "managed-runtime-layout.mjs",
+    ].map((name) => fsp.writeFile(path.join(root, "scripts", name), "export {};\n")),
   ]);
 }
 
@@ -74,6 +85,8 @@ async function createFixture(
     protectedService?: boolean;
     missingPreviousApplication?: boolean;
     managedApplication?: boolean;
+    emptyManagedApplication?: boolean;
+    managedInstallSchema?: 1 | 2;
   } = {},
 ) {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-updater-"));
@@ -121,6 +134,13 @@ async function createFixture(
   await fsp.writeFile(signerStateDBPath, "old-db\n", { mode: 0o600 });
   await fsp.writeFile(signerUnitPath, "ExecStart=old-signer\n", { mode: 0o644 });
   await fsp.writeFile(paths.versionPath, "1.2.2\n", { mode: 0o600 });
+  if (options.emptyManagedApplication) {
+    await Promise.all([
+      fsp.rm(signerPath, { force: true }),
+      fsp.rm(signerStateDBPath, { force: true }),
+      fsp.rm(paths.versionPath, { force: true }),
+    ]);
+  }
   if (options.protectedApplication || options.managedApplication) {
     await Promise.all([
       fsp.mkdir(path.join(paths.applicationReleasesDir!, "v1.2.2"), {
@@ -197,46 +217,49 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
     const previousLink = path.join(runtimeDir, "previous");
     const prefix = path.join(managedStateDir, "install-cache", "npm-global");
     const compatibilityRoot = path.join(prefix, "lib", "node_modules", "@fased", "fased");
-    await Promise.all([
-      fsp.mkdir(runtimeDir, { recursive: true }),
-      fsp.mkdir(path.dirname(compatibilityRoot), { recursive: true }),
-      fsp.mkdir(path.join(managedStateDir, "updater"), { recursive: true }),
-    ]);
-    await Promise.all([
-      fsp.symlink(path.join(paths.applicationReleasesDir!, "v1.2.2"), currentLink),
-      fsp.symlink(path.join(paths.applicationReleasesDir!, "v1.2.2"), previousLink),
-      fsp.symlink(currentLink, compatibilityRoot),
-      fsp.writeFile(path.join(managedStateDir, "fased.json"), "{}\n"),
-      fsp.writeFile(
-        path.join(managedStateDir, "install.json"),
-        `${JSON.stringify({
-          schemaVersion: 2,
-          profile: "protected-local",
-          source: "managed-artifact",
-          stateDir: managedStateDir,
-          configPath: path.join(managedStateDir, "fased.json"),
-          runtime: {
-            activeVersion: "1.2.2",
-            previousVersion: null,
-            currentLink,
-            previousLink,
-            releasesDir: paths.applicationReleasesDir,
-          },
-          package: { prefix, compatibilityRoot },
-          service: {
-            name: "fased-gateway-0123456789abcdef.service",
-            scope: "system",
-            launcher: path.join(root, "gateway-launch"),
-          },
-          updater: {
-            version: "1.2.2",
-            path: path.join(managedStateDir, "updater", "fased-managed-updater.mjs"),
-          },
-          update: { channel: "stable" },
-          release: null,
-        })}\n`,
-      ),
-    ]);
+    await fsp.mkdir(managedStateDir, { recursive: true });
+    await fsp.writeFile(path.join(managedStateDir, "fased.json"), "{}\n");
+    if (!options.emptyManagedApplication) {
+      await Promise.all([
+        fsp.mkdir(runtimeDir, { recursive: true }),
+        fsp.mkdir(path.dirname(compatibilityRoot), { recursive: true }),
+        fsp.mkdir(path.join(managedStateDir, "updater"), { recursive: true }),
+      ]);
+      await Promise.all([
+        fsp.symlink(path.join(paths.applicationReleasesDir!, "v1.2.2"), currentLink),
+        fsp.symlink(path.join(paths.applicationReleasesDir!, "v1.2.2"), previousLink),
+        fsp.symlink(currentLink, compatibilityRoot),
+        fsp.writeFile(
+          path.join(managedStateDir, "install.json"),
+          `${JSON.stringify({
+            schemaVersion: options.managedInstallSchema ?? 2,
+            profile: "protected-local",
+            source: "managed-artifact",
+            stateDir: managedStateDir,
+            configPath: path.join(managedStateDir, "fased.json"),
+            runtime: {
+              activeVersion: "1.2.2",
+              previousVersion: null,
+              currentLink,
+              previousLink,
+              releasesDir: paths.applicationReleasesDir,
+            },
+            package: { prefix, compatibilityRoot },
+            service: {
+              name: "fased-gateway-0123456789abcdef.service",
+              scope: "system",
+              launcher: path.join(root, "gateway-launch"),
+            },
+            updater: {
+              version: "1.2.2",
+              path: path.join(managedStateDir, "updater", "fased-managed-updater.mjs"),
+            },
+            update: { channel: "stable" },
+            release: null,
+          })}\n`,
+        ),
+      ]);
+    }
   }
   const events: string[] = [];
   let activeSignerVersion = "1.2.2";
@@ -247,6 +270,7 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
     instanceId: options.managedApplication ? "0123456789abcdef" : null,
     stateDir: path.join(root, "operator", ".fased"),
     configPath: path.join(root, "operator", ".fased", "fased.json"),
+    gatewayLauncherPath: options.managedApplication ? path.join(root, "gateway-launch") : undefined,
     operator: {
       name: "operator",
       uid: process.getuid(),
@@ -256,6 +280,7 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
     gateway: {
       user: options.managedApplication ? "fsgw-0123456789abcdef" : "fased-gateway",
       uid: process.getuid(),
+      gid: process.getgid(),
       unitPath: paths.gatewayUnitPath ?? path.join(root, "systemd", "fased-gateway.service"),
     },
     configGroup: {
@@ -276,7 +301,10 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
       declaredStateRegistry: 1,
     },
     stateSchemas: {
-      managedInstall: options.managedApplication ? 2 : null,
+      managedInstall:
+        options.managedApplication && !options.emptyManagedApplication
+          ? (options.managedInstallSchema ?? 2)
+          : null,
       walletRegistry: null,
       signer: 2,
       mining: 1,
@@ -285,6 +313,7 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
   };
   const context = __testing.createTransactionContext({
     paths,
+    historicalQ0TestStateDir: path.join(root, "historical-q0-test-state"),
     ...(options.protectedService ? { protectedLocalInstanceId: "0123456789abcdef" } : {}),
     ...(options.protectedService ? { protectedNodeBinary: path.join(root, "bin", "node") } : {}),
     assertReleaseAllowed: async () => undefined,
@@ -304,9 +333,10 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
           ? {
               application: {
                 targetRoot: path.join(paths.applicationReleasesDir!, `v${version}`),
-                previousRoot: options.missingPreviousApplication
-                  ? null
-                  : path.join(paths.applicationReleasesDir!, "v1.2.2"),
+                previousRoot:
+                  options.missingPreviousApplication || options.emptyManagedApplication
+                    ? null
+                    : path.join(paths.applicationReleasesDir!, "v1.2.2"),
                 changed: version !== "1.2.2",
               },
               ...(options.managedApplication
@@ -338,12 +368,17 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
     inventoryApplicationState: async () => null,
     reconcileApplicationState: async () => ({ changed: false, reconciled: false }),
     restoreApplicationState: async () => ({ restored: true }),
-    verifyApplicationState: async () => ({ ok: true, preservationHash: null }),
+    verifyApplicationState: async () => ({
+      ok: true,
+      preservationHash: null,
+      preservationHashes: {},
+    }),
     probeApplicationHealth: async () => ({
       wallet: { ok: true, evidenceDigest: `sha256:${"1".repeat(64)}` },
       mining: { ok: true, evidenceDigest: `sha256:${"2".repeat(64)}` },
       network: { ok: true, evidenceDigest: `sha256:${"3".repeat(64)}` },
       plugins: { ok: true, evidenceDigest: `sha256:${"4".repeat(64)}` },
+      signerIsolation: { ok: true, evidenceDigest: `sha256:${"5".repeat(64)}` },
     }),
     stopSigner: async () => {
       events.push("stop");
@@ -497,6 +532,272 @@ describe("root-owned hosted updater protocol", () => {
     }
   });
 
+  it("selects migration only from topology, capabilities, and state schemas", () => {
+    const topology = {
+      schemaVersion: 1,
+      profile: "protected-local",
+      managedApplication: true,
+      capabilities: {
+        lifecycleControllerProtocol: 2,
+        signerProtocol: { current: 2, min: 2, max: 2 },
+        declaredStateRegistry: 1,
+      },
+      stateSchemas: {
+        managedInstall: 1,
+        walletRegistry: 1,
+        signer: 2,
+        mining: 1,
+        federation: 2,
+      },
+      targetRelease: {
+        version: "1.2.3",
+        commit: "a".repeat(40),
+        artifactDigest: `sha256:${"b".repeat(64)}`,
+      },
+    };
+    const first = __testing.selectLifecycleMigration(topology, 2);
+    const second = __testing.selectLifecycleMigration(
+      {
+        ...topology,
+        targetRelease: {
+          version: "9.8.7",
+          commit: "c".repeat(40),
+          artifactDigest: `sha256:${"d".repeat(64)}`,
+        },
+      },
+      2,
+    );
+
+    expect(first).toEqual(second);
+    expect(first.adapters).toMatchObject({
+      application: "managed-install-v1-to-v2",
+      controller: "controller-protocol-v2",
+      signer: "signer-schema-v2",
+      wallet: "wallet-registry-v1",
+      sharedState: "declared-state-registry-v1",
+      profileAccess: "protected-local-system-v1",
+    });
+    expect(JSON.stringify(first)).not.toContain("1.2.3");
+    expect(JSON.stringify(first)).not.toContain("9.8.7");
+  });
+
+  it("changes migration selection for state schema, never for release identity", () => {
+    const topology = {
+      schemaVersion: 1,
+      profile: "protected-local",
+      managedApplication: true,
+      capabilities: {
+        lifecycleControllerProtocol: 2,
+        signerProtocol: { current: 2, min: 2, max: 2 },
+        declaredStateRegistry: 1,
+      },
+      stateSchemas: {
+        managedInstall: 1,
+        walletRegistry: 1,
+        signer: 2,
+        mining: 1,
+        federation: 2,
+      },
+    };
+    const legacy = __testing.selectLifecycleMigration(topology, 2);
+    const current = __testing.selectLifecycleMigration(
+      {
+        ...topology,
+        stateSchemas: { ...topology.stateSchemas, managedInstall: 2 },
+      },
+      2,
+    );
+
+    expect(legacy.adapters.application).toBe("managed-install-v1-to-v2");
+    expect(current.adapters.application).toBe("managed-install-v2");
+    expect(legacy.selectionDigest).not.toBe(current.selectionDigest);
+  });
+
+  it("uses one deterministic controller-owned catalog for every state-schema adapter", () => {
+    const schemaComponents = [
+      "application",
+      "signer",
+      "wallet",
+      "mining",
+      "federation",
+      "sharedState",
+    ] as const;
+    const compatibilityAdapters = schemaComponents.flatMap((component) =>
+      Object.values(__testing.LIFECYCLE_COMPATIBILITY_ADAPTERS[component]),
+    );
+    expect(new Set(Object.keys(__testing.LIFECYCLE_SCHEMA_MIGRATIONS))).toEqual(
+      new Set(compatibilityAdapters),
+    );
+
+    const selection = __testing.selectLifecycleMigration(
+      {
+        schemaVersion: 1,
+        profile: "protected-local",
+        managedApplication: true,
+        capabilities: {
+          lifecycleControllerProtocol: 2,
+          signerProtocol: { current: 2, min: 2, max: 2 },
+          declaredStateRegistry: 1,
+        },
+        stateSchemas: {
+          managedInstall: 1,
+          walletRegistry: 1,
+          signer: 2,
+          mining: 1,
+          federation: 2,
+        },
+      },
+      2,
+    );
+    const first = __testing.lifecycleSchemaMigrationPlan(selection);
+    const second = __testing.lifecycleSchemaMigrationPlan(selection);
+
+    expect(first).toEqual(second);
+    expect(first.steps.map((step: { component: string }) => step.component)).toEqual(
+      schemaComponents,
+    );
+    expect(first.steps.map((step: { adapter: string }) => step.adapter)).toEqual([
+      "managed-install-v1-to-v2",
+      "signer-schema-v2",
+      "wallet-registry-v1",
+      "mining-schema-v1",
+      "federation-schema-v2",
+      "declared-state-registry-v1",
+    ]);
+    expect(first).toMatchObject({
+      schemaVersion: 1,
+      selectionDigest: selection.selectionDigest,
+      planDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+      preparedAdapters: [],
+      appliedAdapters: [],
+    });
+  });
+
+  it("persists release identity and migration selection as independent transaction fields", async () => {
+    const fixture = await createFixture();
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+
+    const journal = await __testing.readJournal(fixture.context);
+    expect(journal).toMatchObject({
+      schemaVersion: 5,
+      version: "1.2.3",
+      release: signerRelease("1.2.3"),
+      migrationSelection: {
+        schemaVersion: 1,
+        inventory: {
+          profile: "hosting",
+          managedApplication: false,
+          updaterProtocol: 2,
+          controllerProtocol: 2,
+          stateSchemas: {
+            managedInstall: null,
+            walletRegistry: null,
+            signer: 2,
+            mining: 1,
+            federation: 2,
+          },
+        },
+        adapters: {
+          application: "managed-install-absent",
+          profileAccess: "hosting-system-v1",
+        },
+        selectionDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+      },
+      schemaMigration: {
+        schemaVersion: 1,
+        selectionDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+        planDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+        preparedAdapters: [],
+        appliedAdapters: [],
+        steps: expect.arrayContaining([
+          expect.objectContaining({
+            order: 1,
+            stateClass: "application-runtime",
+            adapter: "managed-install-absent",
+            fromSchema: null,
+            toSchema: 2,
+            applicable: false,
+          }),
+          expect.objectContaining({
+            stateClass: "signer-private-state",
+            schemaOwner: "fased-signerd",
+            adapter: "signer-schema-v2",
+          }),
+        ]),
+      },
+    });
+    expect(JSON.stringify(journal.migrationSelection)).not.toContain("1.2.3");
+    expect(JSON.stringify(journal.schemaMigration)).not.toContain("1.2.3");
+  });
+
+  it("derives and promotes an interrupted journal schema 4 migration plan deterministically", async () => {
+    const fixture = await createFixture();
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+    const legacy = JSON.parse(await fsp.readFile(fixture.paths.journalPath, "utf8"));
+    legacy.schemaVersion = 4;
+    delete legacy.schemaMigration;
+    await fsp.writeFile(fixture.paths.journalPath, `${JSON.stringify(legacy, null, 2)}\n`);
+
+    const recovered = await __testing.readJournal(fixture.context);
+    expect(recovered).toMatchObject({
+      schemaVersion: 4,
+      phase: "prepared",
+      schemaMigration: {
+        selectionDigest: recovered.migrationSelection.selectionDigest,
+        preparedAdapters: [],
+        appliedAdapters: [],
+      },
+    });
+    const promoted = await __testing.writeJournal(fixture.context, recovered);
+    expect(promoted).toMatchObject({
+      schemaVersion: 5,
+      schemaMigration: recovered.schemaMigration,
+    });
+  });
+
+  it("fails closed when the installed migration tuple changes after preparation", async () => {
+    const fixture = await createFixture();
+    const topology = await fixture.context.discoverApplicationTopology();
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+    fixture.context.discoverApplicationTopology = async () => ({
+      ...topology,
+      stateSchemas: { ...topology.stateSchemas, walletRegistry: 1 },
+    });
+
+    await expect(
+      __testing.gateGatewayRelease(
+        request("gateGatewayRelease", TRANSACTION_ONE, "1.2.3"),
+        fixture.context,
+      ),
+    ).rejects.toThrow("installed lifecycle topology changed after migration selection");
+  });
+
+  it("rejects an unsupported migration tuple before staging release artifacts", async () => {
+    const fixture = await createFixture();
+    const topology = await fixture.context.discoverApplicationTopology();
+    fixture.context.discoverApplicationTopology = async () => ({
+      ...topology,
+      stateSchemas: { ...topology.stateSchemas, mining: 2 },
+    });
+
+    await expect(
+      __testing.prepareSignerRelease(
+        request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+        fixture.context,
+      ),
+    ).rejects.toThrow("installed lifecycle state schemas are unsupported");
+    expect(fixture.events).toEqual([]);
+  });
+
   it("discovers topology without mutating application state during preparation", async () => {
     const { context, events } = await createFixture();
     const discover = context.discoverApplicationTopology;
@@ -563,7 +864,11 @@ describe("root-owned hosted updater protocol", () => {
     fixture.context.restoreApplicationState = async (transaction: unknown) =>
       await __testing.restoreDeclaredApplicationState(transaction);
     fixture.context.onDurablePhase = async (phase: string) => {
-      if (phase === "state-reconciling" || phase === "state-reconciled") {
+      if (
+        phase === "state-reconciling" ||
+        phase === "state-reconciled" ||
+        phase === "schema-ready"
+      ) {
         order.push(phase);
       }
     };
@@ -577,13 +882,31 @@ describe("root-owned hosted updater protocol", () => {
       request("gateGatewayRelease", TRANSACTION_ONE, "1.2.3"),
       fixture.context,
     );
-    expect(order).toEqual(["state-reconciling", "reconcile", "state-reconciled"]);
+    expect(order).toEqual(["state-reconciling", "reconcile", "state-reconciled", "schema-ready"]);
     expect((await fsp.stat(stateDir)).mode & 0o7777).toBe(0o2770);
     expect(await __testing.readJournal(fixture.context)).toMatchObject({
-      phase: "state-reconciled",
+      phase: "schema-ready",
       declaredState: {
         reconciled: true,
         preservationHash: expect.stringMatching(/^sha256:/u),
+      },
+      schemaMigration: {
+        preparedAdapters: [
+          "managed-install-absent",
+          "signer-schema-v2",
+          "wallet-registry-absent",
+          "mining-schema-v1",
+          "federation-schema-v2",
+          "declared-state-registry-v1",
+        ],
+        appliedAdapters: [
+          "managed-install-absent",
+          "signer-schema-v2",
+          "wallet-registry-absent",
+          "mining-schema-v1",
+          "federation-schema-v2",
+          "declared-state-registry-v1",
+        ],
       },
     });
 
@@ -592,6 +915,231 @@ describe("root-owned hosted updater protocol", () => {
       fixture.context,
     );
     expect((await fsp.stat(stateDir)).mode & 0o7777).toBe(0o700);
+  });
+
+  it("stages managed schema 1 centrally, applies schema 2 atomically, and restores schema 1", async () => {
+    const fixture = await createFixture({
+      managedApplication: true,
+      managedInstallSchema: 1,
+    });
+    const managedStateDir = path.join(fixture.paths.stateDir, "..", "operator", ".fased");
+    const manifestPath = path.join(managedStateDir, "install.json");
+
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+    await __testing.gateGatewayRelease(
+      request("gateGatewayRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+    const staged = await __testing.readJournal(fixture.context);
+    expect(staged).toMatchObject({
+      phase: "schema-ready",
+      schemaMigration: {
+        preparedAdapters: expect.arrayContaining(["managed-install-v1-to-v2"]),
+      },
+    });
+    expect(staged.schemaMigration.appliedAdapters).not.toContain("managed-install-v1-to-v2");
+    expect(JSON.parse(await fsp.readFile(manifestPath, "utf8")).schemaVersion).toBe(1);
+
+    await __testing.activateSignerRelease(
+      request("activateRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+    await __testing.authorizeGatewayRelease(
+      request("authorizeGatewayRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+    const activated = await __testing.readJournal(fixture.context);
+    expect(activated).toMatchObject({
+      phase: "gateway-authorized",
+      schemaMigration: {
+        appliedAdapters: activated.schemaMigration.steps.map(
+          (step: { adapter: string }) => step.adapter,
+        ),
+      },
+    });
+    expect(JSON.parse(await fsp.readFile(manifestPath, "utf8"))).toMatchObject({
+      schemaVersion: 2,
+      runtime: { activeVersion: "1.2.3", previousVersion: "1.2.2" },
+    });
+
+    await __testing.rollbackSignerRelease(
+      request("rollbackRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+    expect(JSON.parse(await fsp.readFile(manifestPath, "utf8"))).toMatchObject({
+      schemaVersion: 1,
+      runtime: { activeVersion: "1.2.2" },
+    });
+  });
+
+  it("recovers a crash after managed schema activation and retries the same transaction once", async () => {
+    const fixture = await createFixture({
+      managedApplication: true,
+      managedInstallSchema: 1,
+    });
+    const manifestPath = path.join(
+      fixture.paths.stateDir,
+      "..",
+      "operator",
+      ".fased",
+      "install.json",
+    );
+    fixture.context.verifyGateway = async () => ({
+      version: "1.2.3",
+      runtimeSource: "managed-package",
+    });
+    let gatewayAuthorizedWrites = 0;
+    fixture.context.onDurablePhase = async (phase: string) => {
+      if (phase === "gateway-authorized") {
+        gatewayAuthorizedWrites += 1;
+        if (gatewayAuthorizedWrites === 2) {
+          const error = new Error(
+            "deterministic crash after managed schema activation",
+          ) as Error & {
+            code?: string;
+          };
+          error.code = "FASED_TEST_CRASH";
+          throw error;
+        }
+      }
+    };
+
+    await expect(
+      __testing.applyReleaseTransaction(
+        request("applyRelease", TRANSACTION_ONE, "1.2.3"),
+        fixture.context,
+      ),
+    ).rejects.toMatchObject({ code: "FASED_TEST_CRASH" });
+    expect(await __testing.readJournal(fixture.context)).toMatchObject({
+      phase: "gateway-authorized",
+      schemaMigration: { appliedAdapters: expect.arrayContaining(["managed-install-v1-to-v2"]) },
+    });
+    expect(JSON.parse(await fsp.readFile(manifestPath, "utf8")).schemaVersion).toBe(1);
+
+    fixture.context.onDurablePhase = undefined;
+    await expect(__testing.recoverInterruptedTransaction(fixture.context)).resolves.toMatchObject({
+      recovered: true,
+      action: "rolled-back",
+    });
+    expect(JSON.parse(await fsp.readFile(manifestPath, "utf8"))).toMatchObject({
+      schemaVersion: 1,
+      runtime: { activeVersion: "1.2.2" },
+    });
+
+    await expect(
+      __testing.applyReleaseTransaction(
+        request("applyRelease", TRANSACTION_ONE, "1.2.3"),
+        fixture.context,
+      ),
+    ).resolves.toMatchObject({
+      phase: "committed",
+      schemaMigration: { applied: true },
+    });
+    expect(JSON.parse(await fsp.readFile(manifestPath, "utf8"))).toMatchObject({
+      schemaVersion: 2,
+      runtime: { activeVersion: "1.2.3" },
+    });
+  });
+
+  it("commits a fresh empty application and signer topology through the shared lifecycle", async () => {
+    const fixture = await createFixture({
+      managedApplication: true,
+      emptyManagedApplication: true,
+    });
+    const managedStateDir = path.join(fixture.paths.stateDir, "..", "operator", ".fased");
+    fixture.context.verifyGateway = async () => ({
+      version: "1.2.3",
+      runtimeSource: "managed-package",
+    });
+
+    await expect(
+      __testing.applyReleaseTransaction(
+        request("applyRelease", TRANSACTION_ONE, "1.2.3"),
+        fixture.context,
+      ),
+    ).resolves.toMatchObject({
+      phase: "committed",
+      migration: {
+        profile: "protected-local",
+        adapters: { application: "managed-install-absent" },
+      },
+    });
+
+    expect(
+      JSON.parse(await fsp.readFile(path.join(managedStateDir, "install.json"), "utf8")),
+    ).toMatchObject({
+      schemaVersion: 2,
+      profile: "protected-local",
+      runtime: { activeVersion: "1.2.3", previousVersion: null },
+    });
+    expect(await fsp.realpath(path.join(managedStateDir, "runtime", "current"))).toBe(
+      path.join(fixture.paths.applicationReleasesDir!, "v1.2.3"),
+    );
+    for (const candidate of [
+      path.join(managedStateDir, "bin", "fased"),
+      path.join(managedStateDir, "bin", "fased-service"),
+      path.join(managedStateDir, "updater", "fased-managed-updater.mjs"),
+      path.join(managedStateDir, "install-cache", "npm-global", "bin", "fased"),
+    ]) {
+      expect(fs.existsSync(candidate)).toBe(true);
+    }
+    expect(await fsp.readFile(fixture.paths.signerPath, "utf8")).toBe("signer-1.2.3\n");
+  });
+
+  it("removes an uncommitted fresh topology and succeeds on the same-command retry", async () => {
+    const fixture = await createFixture({
+      managedApplication: true,
+      emptyManagedApplication: true,
+    });
+    const managedStateDir = path.join(fixture.paths.stateDir, "..", "operator", ".fased");
+    fixture.context.verifyGateway = async () => {
+      throw new Error("deterministic fresh Gateway health failure");
+    };
+
+    let failure: (Error & { code?: string }) | undefined;
+    try {
+      await __testing.applyReleaseTransaction(
+        request("applyRelease", TRANSACTION_ONE, "1.2.3"),
+        fixture.context,
+      );
+    } catch (error) {
+      failure = error as Error & { code?: string };
+    }
+    expect(failure?.code, failure?.stack).toBe("TARGET_RELEASE_ROLLED_BACK");
+
+    for (const candidate of [
+      path.join(managedStateDir, "install.json"),
+      path.join(managedStateDir, "runtime"),
+      path.join(managedStateDir, "bin"),
+      path.join(managedStateDir, "updater"),
+      path.join(managedStateDir, "install-cache"),
+      path.join(managedStateDir, "identity"),
+      path.join(managedStateDir, "wallet"),
+      path.join(managedStateDir, "federation"),
+      path.join(managedStateDir, "extensions"),
+      fixture.paths.signerPath,
+      fixture.paths.signerStateDBPath,
+      fixture.paths.versionPath,
+      fixture.paths.journalPath,
+      fixture.paths.gatewayGatePath,
+      fixture.paths.signerGatePath,
+    ]) {
+      expect(fs.existsSync(candidate)).toBe(false);
+    }
+
+    fixture.context.verifyGateway = async () => ({
+      version: "1.2.3",
+      runtimeSource: "managed-package",
+    });
+    await expect(
+      __testing.applyReleaseTransaction(
+        request("applyRelease", TRANSACTION_ONE, "1.2.3"),
+        fixture.context,
+      ),
+    ).resolves.toMatchObject({ phase: "committed" });
   });
 
   it("rejects declared user-state content changes before commit", async () => {
@@ -622,16 +1170,64 @@ describe("root-owned hosted updater protocol", () => {
     );
   });
 
-  it("runs bounded cross-product health concurrently and persists only redacted evidence", async () => {
+  it("records independent durable Wallet, Mining, Network, identity, and config hashes", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-state-classes-"));
+    cleanupRoots.push(root);
+    const stateDir = path.join(root, ".fased");
+    const walletDir = path.join(stateDir, "wallet");
+    const networkDir = path.join(stateDir, "federation");
+    const miningDir = path.join(stateDir, "sat-mining", "wallets", "mining");
+    await Promise.all([
+      fsp.mkdir(path.join(stateDir, "identity"), { recursive: true }),
+      fsp.mkdir(walletDir, { recursive: true }),
+      fsp.mkdir(networkDir, { recursive: true }),
+      fsp.mkdir(miningDir, { recursive: true }),
+    ]);
+    await Promise.all([
+      fsp.writeFile(path.join(stateDir, "fased.json"), "{}\n"),
+      fsp.writeFile(path.join(stateDir, "identity", "device.json"), '{"id":"device"}\n'),
+      fsp.writeFile(path.join(walletDir, "provider-registry.v1.json"), '{"version":1}\n'),
+      fsp.writeFile(path.join(networkDir, "peer-replay-v2.json"), '{"entries":[]}\n'),
+      fsp.writeFile(path.join(miningDir, "audit-store.json"), '{"records":[]}\n'),
+    ]);
+    const topology = {
+      profile: "hosting",
+      stateDir,
+      operator: { name: "operator", uid: process.getuid(), gid: process.getgid(), home: root },
+      gateway: { user: "gateway", uid: process.getuid(), unitPath: "/unit" },
+      configGroup: { name: "config", gid: process.getgid() },
+    };
+
+    const transaction = await __testing.inventoryDeclaredApplicationState(topology, { paths: {} });
+    expect(Object.keys(transaction.preservationHashes).toSorted()).toEqual([
+      "device-identity",
+      "federation-network",
+      "gateway-config-auth",
+      "mining",
+      "wallet",
+    ]);
+    await expect(__testing.verifyDeclaredStatePreservation(transaction)).resolves.toMatchObject({
+      ok: true,
+      preservationHashes: transaction.preservationHashes,
+    });
+
+    await fsp.writeFile(path.join(miningDir, "audit-store.json"), '{"records":[1]}\n');
+    await expect(__testing.verifyDeclaredStatePreservation(transaction)).rejects.toThrow(
+      "declared user state changed",
+    );
+  });
+
+  it("runs prerequisite health concurrently before product probes and persists redacted evidence", async () => {
     const { context } = await createFixture();
     let started = 0;
+    let productStarted = false;
     let releaseBarrier: (() => void) | undefined;
     const barrier = new Promise<void>((resolve) => {
       releaseBarrier = resolve;
     });
     const start = async <T>(result: T): Promise<T> => {
       started += 1;
-      if (started === 4) {
+      if (started === 3) {
         releaseBarrier?.();
       }
       await barrier;
@@ -639,23 +1235,36 @@ describe("root-owned hosted updater protocol", () => {
     };
     context.verifyGateway = async () =>
       await start({ version: "1.2.3", runtimeSource: "managed-package" });
-    context.probeSigner = async () => await start(signerRelease("1.2.3"));
+    context.probeSigner = async (expectedRelease) => {
+      expect(expectedRelease).toEqual(signerRelease("1.2.3"));
+      return await start(signerRelease("1.2.3"));
+    };
     context.verifyApplicationState = async () =>
-      await start({ ok: true, preservationHash: `sha256:${"a".repeat(64)}` });
-    context.probeApplicationHealth = async () =>
       await start({
+        ok: true,
+        preservationHash: `sha256:${"a".repeat(64)}`,
+        preservationHashes: { wallet: `sha256:${"b".repeat(64)}` },
+      });
+    context.probeApplicationHealth = async () => {
+      expect(started).toBe(3);
+      productStarted = true;
+      return {
         wallet: { ok: true, evidenceDigest: `sha256:${"1".repeat(64)}` },
         mining: { ok: true, evidenceDigest: `sha256:${"2".repeat(64)}` },
         network: { ok: true, evidenceDigest: `sha256:${"3".repeat(64)}` },
         plugins: { ok: true, evidenceDigest: `sha256:${"4".repeat(64)}` },
-      });
+        signerIsolation: { ok: true, evidenceDigest: `sha256:${"5".repeat(64)}` },
+      };
+    };
 
     const receipt = await __testing.verifyCrossProductHealth(context, {
       version: "1.2.3",
+      release: signerRelease("1.2.3"),
       declaredState: null,
       application: null,
     });
-    expect(started).toBe(4);
+    expect(started).toBe(3);
+    expect(productStarted).toBe(true);
     expect(receipt).toMatchObject({
       schemaVersion: 1,
       checks: {
@@ -672,6 +1281,121 @@ describe("root-owned hosted updater protocol", () => {
     expect(JSON.stringify(receipt)).not.toContain("preserved-signer-state");
   });
 
+  it("binds Wallet, Mining, Network, plugin, and signer-isolation health to canonical state", () => {
+    const readiness = (params: {
+      walletId: string;
+      publicKey: string;
+      role: "agent" | "vault";
+      operationLane: "agent-reviewed-and-autonomous" | "vault-reviewed-only";
+    }) => ({
+      ...params,
+      baselineVersion: 1,
+      policyVersion: 1,
+      policyHash: `sha256:${"a".repeat(64)}`,
+      networkVersion: 1,
+      networkHash: `hmac-sha256:${"b".repeat(64)}`,
+      keyReady: true,
+      policyReady: true,
+      networkReady: true,
+      ready: true,
+    });
+    const agentAddress = "11111111111111111111111111111111";
+    const vaultAddress = "So11111111111111111111111111111111111111112";
+    const evidence = {
+      topology: { profile: "protected-local" },
+      walletStatus: {
+        ok: true,
+        status: {
+          mode: "protected-local-operator",
+          defaultWalletId: "agent",
+          assignments: { main: "agent" },
+          wallets: [
+            {
+              id: "agent",
+              name: "Agent",
+              handle: "@wallet:agent",
+              publicAddress: agentAddress,
+              role: "agent",
+              signer: readiness({
+                walletId: "agent",
+                publicKey: agentAddress,
+                role: "agent",
+                operationLane: "agent-reviewed-and-autonomous",
+              }),
+            },
+            {
+              id: "vault",
+              name: "Vault",
+              handle: "@wallet:vault",
+              publicAddress: vaultAddress,
+              role: "vault",
+              signer: readiness({
+                walletId: "vault",
+                publicKey: vaultAddress,
+                role: "vault",
+                operationLane: "vault-reviewed-only",
+              }),
+            },
+          ],
+        },
+      },
+      walletDoctor: { ok: true, checks: [] },
+      mining: { ok: true, payload: { entries: [] } },
+      network: {
+        configured: true,
+        autoConnectEnabled: true,
+        tokenPresent: true,
+        handle: "@fased-agent",
+        managedToken: { present: true },
+      },
+      bond: { walletId: "vault", walletAddress: vaultAddress },
+      plugins: { ok: true, errors: [], diagnostics: [] },
+      signerIsolation: { operatorDenied: true, controlDenied: true },
+    };
+
+    expect(__testing.validateCrossProductApplicationEvidence(evidence)).toMatchObject({
+      wallet: { ok: true },
+      mining: { ok: true },
+      network: { ok: true },
+      plugins: { ok: true },
+      signerIsolation: { ok: true },
+    });
+
+    const wrongHandle = structuredClone(evidence);
+    wrongHandle.walletStatus.status.wallets[0].handle = "@wallet:wrong";
+    expect(() => __testing.validateCrossProductApplicationEvidence(wrongHandle)).toThrow(
+      "registry and signer identity",
+    );
+
+    const agentBond = structuredClone(evidence);
+    agentBond.bond = { walletId: "agent", walletAddress: agentAddress };
+    expect(() => __testing.validateCrossProductApplicationEvidence(agentBond)).toThrow(
+      "canonical Vault Wallet",
+    );
+
+    const reachableControl = structuredClone(evidence);
+    reachableControl.signerIsolation.controlDenied = false;
+    expect(() => __testing.validateCrossProductApplicationEvidence(reachableControl)).toThrow(
+      "privileged signer socket",
+    );
+
+    const pluginFailure = structuredClone(evidence);
+    pluginFailure.plugins = {
+      ok: false,
+      errors: [{ id: "sat-mining", error: "redacted internal detail" }],
+      diagnostics: [
+        {
+          level: "error",
+          pluginId: "sat-mining",
+          message: "redacted internal detail",
+        },
+      ],
+    };
+    expect(() => __testing.validateCrossProductApplicationEvidence(pluginFailure)).toThrow(
+      "target plugin diagnostics are not healthy (sat-mining:plugin-error)",
+    );
+  });
+
   it("parses one bounded JSON health document after plugin preload messages", () => {
     expect(
       __testing.parseBoundedJsonOutput(
@@ -682,6 +1406,222 @@ describe("root-owned hosted updater protocol", () => {
     expect(() => __testing.parseBoundedJsonOutput("[plugins] no json", "plugins")).toThrow(
       "not valid JSON",
     );
+  });
+
+  it("uses verified Gateway configuration for Mining health without exposing credentials", () => {
+    const args = __testing.targetMiningHealthArgs();
+    expect(args).toEqual(["mining", "history", "--timeout", "5000", "--json"]);
+    expect(args).not.toContain("--url");
+    expect(args).not.toContain("--token");
+    expect(args).not.toContain("--password");
+  });
+
+  it("bounds product health to one application process at a time", async () => {
+    const invocations: string[] = [];
+    let active = 0;
+    let maximumActive = 0;
+    const results = [
+      { ok: true, status: { wallets: [] } },
+      { ok: true, checks: [] },
+      { ok: true, payload: { entries: [] } },
+      { configured: false },
+      { walletId: null },
+    ];
+
+    const evidence = await __testing.collectCrossProductApplicationHealthEvidence(
+      async (_args, label) => {
+        invocations.push(label);
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        active -= 1;
+        return results[invocations.length - 1];
+      },
+      async () => {
+        expect(active).toBe(0);
+        invocations.push("signer isolation");
+        return { operatorDenied: true, controlDenied: true };
+      },
+      async () => {
+        expect(active).toBe(0);
+        invocations.push("plugins");
+        return { ok: true, errors: [], diagnostics: [] };
+      },
+    );
+
+    expect(maximumActive).toBe(1);
+    expect(invocations).toEqual([
+      "Wallet",
+      "Wallet signer",
+      "Mining",
+      "Fased Network",
+      "Fased Network bond",
+      "plugins",
+      "signer isolation",
+    ]);
+    expect(evidence).toMatchObject({
+      plugins: { ok: true },
+      signerIsolation: { operatorDenied: true, controlDenied: true },
+    });
+  });
+
+  it("accepts only the target Gateway plugin cache bound to release, config, and sources", async () => {
+    const { context, paths } = await createFixture({ managedApplication: true });
+    const topology = await context.discoverApplicationTopology();
+    const version = "1.2.3";
+    const targetRoot = path.join(paths.applicationReleasesDir!, `v${version}`);
+    const source = path.join(targetRoot, "extensions", "fixture", "index.js");
+    const cachePath = path.join(topology.stateDir, "cache", "plugin-status.json");
+    const config = {
+      plugins: {
+        entries: {
+          fixture: { enabled: true },
+        },
+      },
+    };
+    await Promise.all([
+      fsp.mkdir(path.dirname(source), { recursive: true }),
+      fsp.mkdir(path.dirname(cachePath), { recursive: true }),
+    ]);
+    await Promise.all([
+      fsp.writeFile(source, "export {};\n"),
+      fsp.writeFile(topology.configPath, `${JSON.stringify(config)}\n`),
+    ]);
+    const sourceStat = await fsp.stat(source);
+    const cache = {
+      schemaVersion: 2,
+      packageVersion: version,
+      generatedAt: new Date(0).toISOString(),
+      configPath: topology.configPath,
+      configFingerprint: createHash("sha256")
+        .update(JSON.stringify({ plugins: config.plugins }))
+        .digest("hex"),
+      plugins: [
+        {
+          id: "fixture",
+          name: "fixture",
+          source,
+          origin: "bundled",
+          status: "loaded",
+          channelIds: [],
+          providerIds: [],
+          hookNames: [],
+          sourceMtimeMs: sourceStat.mtimeMs,
+        },
+      ],
+      diagnostics: [],
+    };
+    await fsp.writeFile(cachePath, `${JSON.stringify(cache)}\n`, { mode: 0o600 });
+
+    await expect(
+      __testing.readTargetPluginStatusCache(context, topology, {
+        version,
+        application: { targetRoot },
+      }),
+    ).resolves.toEqual({ ok: true, errors: [], diagnostics: [] });
+
+    await fsp.writeFile(cachePath, `${JSON.stringify({ ...cache, packageVersion: "1.2.2" })}\n`, {
+      mode: 0o600,
+    });
+    await expect(
+      __testing.readTargetPluginStatusCache(context, topology, {
+        version,
+        application: { targetRoot },
+      }),
+    ).rejects.toThrow("stale or malformed");
+  });
+
+  it("preserves the rollback release during same-version protected convergence", () => {
+    const stateDir = "/home/operator/.fased";
+    const paths = {
+      stateDir,
+      currentLink: `${stateDir}/runtime/current`,
+      previousLink: `${stateDir}/runtime/previous`,
+      compatibilityLink: `${stateDir}/install-cache/npm-global/lib/node_modules/@fased/fased`,
+      prefix: `${stateDir}/install-cache/npm-global`,
+      updaterPath: `${stateDir}/updater/fased-managed-updater.mjs`,
+    };
+    const previousManifest = {
+      schemaVersion: 2,
+      profile: "protected-local",
+      stateDir,
+      configPath: `${stateDir}/fased.json`,
+      runtime: {
+        activeVersion: "1.2.3",
+        previousVersion: "1.2.2",
+      },
+      service: {
+        name: "fased-gateway-fixture.service",
+        scope: "system",
+        launcher: "/opt/fased/fixture/gateway-launch",
+      },
+      update: { channel: "stable" },
+    };
+    const applicationRelease = {
+      commit: "a".repeat(40),
+      manifestDigest: `sha256:${"1".repeat(64)}`,
+      artifact: {
+        asset: "fased-hosted-app-v2-linux-x64-v1.2.3.tar.gz",
+        sha256: "2".repeat(64),
+      },
+      dependencies: {
+        asset: `fased-hosted-deps-linux-x64-${"3".repeat(64)}.tar.gz`,
+        sha256: "4".repeat(64),
+        dependencyHash: "3".repeat(64),
+      },
+      signer: signerRelease("1.2.3"),
+      capabilities: { protocol: { current: 2, min: 2, max: 2 } },
+      capabilitiesDigest: `sha256:${"5".repeat(64)}`,
+    };
+
+    expect(
+      __testing.buildTargetManagedInstallManifest({
+        previousManifest,
+        applicationState: {
+          profile: "protected-local",
+          gatewayServiceName: "fased-gateway-fixture.service",
+          gatewayLauncherPath: "/opt/fased/fixture/gateway-launch",
+        },
+        paths,
+        releasesDir: "/opt/fased/fixture/application/releases",
+        version: "1.2.3",
+        applicationRelease,
+        updateChannel: "stable",
+      }).runtime,
+    ).toMatchObject({
+      activeVersion: "1.2.3",
+      previousVersion: "1.2.2",
+    });
+  });
+
+  it("makes initialized stable CLI directories traversable by the operator", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-initialized-cli-"));
+    cleanupRoots.push(root);
+    const binDir = path.join(root, ".fased", "bin");
+    const updaterDir = path.join(root, ".fased", "updater");
+    await Promise.all([
+      fsp.mkdir(binDir, { recursive: true, mode: 0o700 }),
+      fsp.mkdir(updaterDir, { recursive: true, mode: 0o700 }),
+    ]);
+    const operatorUid = process.getuid();
+    const operatorGid = process.getgid();
+
+    await __testing.ensureInitializedManagedStableDirectories(
+      { applicationState: { operatorUid, operatorGid } },
+      { binDir, updaterDir },
+    );
+
+    for (const directory of [binDir, updaterDir]) {
+      const info = await fsp.lstat(directory);
+      expect(info.isDirectory()).toBe(true);
+      expect(info.isSymbolicLink()).toBe(false);
+      expect(info.uid).toBe(operatorUid);
+      expect(info.gid).toBe(operatorGid);
+      expect(info.mode & 0o777).toBe(0o750);
+    }
   });
 
   it("creates every canonical shared application directory under root control", async () => {
@@ -696,7 +1636,7 @@ describe("root-owned hosted updater protocol", () => {
     await __testing.ensureRootManagedSharedApplicationDirectories(stateDir, uid, gid);
     await __testing.ensureRootManagedSharedApplicationDirectories(stateDir, uid, gid);
 
-    for (const name of ["identity", "wallet", "federation"]) {
+    for (const name of ["identity", "wallet", "federation", "extensions"]) {
       const info = await fsp.lstat(path.join(stateDir, name));
       expect(info.isDirectory()).toBe(true);
       expect(info.isSymbolicLink()).toBe(false);
@@ -986,6 +1926,7 @@ describe("root-owned hosted updater protocol", () => {
       failing.context,
     );
 
+    expect(gatewayStarts).toBe(1);
     expect(previousUnit).toBe(failingUnit);
     expect(previousLauncher).toBe(failingLauncher);
   });
@@ -1341,6 +2282,7 @@ describe("root-owned hosted updater protocol", () => {
     const platform = `linux-${__testing.releaseArchitecture()}`;
     const assetName = `fased-signerd-${platform}`;
     const signerBytes = Buffer.from("verified signer fixture\n");
+    const evidenceVerifierBytes = Buffer.from("verified evidence fixture\n");
     const capabilities = { protocol: { current: 2, min: 2, max: 2 } };
     const manifest = {
       schemaVersion: 2,
@@ -1375,6 +2317,15 @@ describe("root-owned hosted updater protocol", () => {
         },
       },
     };
+    const lifecycleMetadata = {
+      release: { version: "1.2.3", commit: "a".repeat(40) },
+      targets: {
+        evidenceVerifier: {
+          asset: "fased-privileged-release-evidence.mjs",
+          sha256: createHash("sha256").update(evidenceVerifierBytes).digest("hex"),
+        },
+      },
+    };
     const downloads: string[] = [];
     const verifications: Array<{ asset: string; bundle: string }> = [];
     const context = __testing.createTransactionContext({
@@ -1384,6 +2335,10 @@ describe("root-owned hosted updater protocol", () => {
         let contents: string | Buffer = "offline attestation bundle\n";
         if (url.endsWith("/fased-hosted-release-v2.json")) {
           contents = `${JSON.stringify(manifest)}\n`;
+        } else if (url.endsWith("/fased-lifecycle-trust-v1.json")) {
+          contents = `${JSON.stringify(lifecycleMetadata)}\n`;
+        } else if (url.endsWith("/fased-privileged-release-evidence.mjs")) {
+          contents = evidenceVerifierBytes;
         } else if (url.endsWith(`/${assetName}`)) {
           contents = signerBytes;
         }
@@ -1400,6 +2355,7 @@ describe("root-owned hosted updater protocol", () => {
         expect(await fsp.readFile(bundlePath, "utf8")).toBe("offline attestation bundle\n");
         verifications.push({ asset: path.basename(assetPath), bundle: path.basename(bundlePath) });
       },
+      verifyPrivilegedReleaseEvidence: async () => undefined,
     });
 
     const staged = await __testing.stageOfficialCandidate("1.2.3", candidatePath, context);
@@ -1412,13 +2368,23 @@ describe("root-owned hosted updater protocol", () => {
         "fased-signerd-release.attestation.json",
       ]),
     );
-    expect(verifications).toEqual([
-      {
-        asset: "fased-hosted-release-v2.json",
-        bundle: "fased-hosted-release-v2.json.attestation.json",
-      },
-      { asset: assetName, bundle: "fased-signerd-release.attestation.json" },
-    ]);
+    expect(verifications).toEqual(
+      expect.arrayContaining([
+        {
+          asset: "fased-hosted-release-v2.json",
+          bundle: "fased-hosted-release-v2.json.attestation.json",
+        },
+        {
+          asset: "fased-lifecycle-trust-v1.json",
+          bundle: "fased-lifecycle-trust-v1.json.attestation.json",
+        },
+        {
+          asset: "fased-privileged-provenance-v1.intoto.json",
+          bundle: "fased-privileged-provenance-v1.intoto.json.attestation.json",
+        },
+        { asset: assetName, bundle: "fased-signerd-release.attestation.json" },
+      ]),
+    );
     expect(await fsp.readFile(candidatePath)).toEqual(signerBytes);
     expect(staged.release).toEqual(signerRelease("1.2.3"));
   });
@@ -1513,6 +2479,37 @@ describe("root-owned hosted updater protocol", () => {
     ).rejects.toThrow("historical Protected Local artifact authorization is unsafe");
     await expect(fsp.lstat(authorizationPath)).resolves.toMatchObject({});
     await expect(fsp.readFile(target, "utf8")).resolves.toBe("{}\n");
+  });
+
+  it("refuses unknown historical test-state entries before removing residue", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-unknown-historical-cleanup-"));
+    cleanupRoots.push(root);
+    const stateDir = path.join(root, "state");
+    const controllerReleasesDir = path.join(root, "controller", "releases");
+    const historicalDir = path.join(root, "testing");
+    const unknownPath = path.join(historicalDir, "owner-data.json");
+    await Promise.all([
+      fsp.mkdir(stateDir, { recursive: true }),
+      fsp.mkdir(controllerReleasesDir, { recursive: true }),
+      fsp.mkdir(historicalDir, { recursive: true }),
+    ]);
+    await fsp.writeFile(unknownPath, "{}\n");
+    const context = __testing.createTransactionContext({
+      paths: {
+        stateDir,
+        controllerReleasesDir,
+      },
+      protectedLocalInstanceId: "0123456789abcdef",
+      rootUid: process.geteuid(),
+      historicalQ0TestStateDir: historicalDir,
+    });
+
+    await expect(
+      __testing.cleanupHistoricalQ0Residue(context, { version: "1.2.3" }),
+    ).rejects.toThrow(
+      "historical Protected Local test state directory contains unknown entry owner-data.json",
+    );
+    await expect(fsp.readFile(unknownPath, "utf8")).resolves.toBe("{}\n");
   });
 
   it("tolerates validated historical residue disappearing after exact official convergence", async () => {
@@ -1665,7 +2662,7 @@ describe("root-owned hosted updater protocol", () => {
       rootUid: process.geteuid(),
       historicalQ0TestStateDir: historicalDir,
       beforeHistoricalResidueRemoval: async () => {
-        await fsp.rm(authorizationPath);
+        await fsp.rm(authorizationPath, { force: true });
       },
     });
 
@@ -1688,9 +2685,19 @@ describe("root-owned hosted updater protocol", () => {
     ]) {
       expect(fs.existsSync(removed)).toBe(false);
     }
+    expect(fs.existsSync(historicalDir)).toBe(false);
     expect(fs.existsSync(controllerOld)).toBe(true);
     expect(fs.existsSync(applicationOld)).toBe(true);
     expect(result.removed).not.toContain(authorizationPath);
+
+    await fsp.mkdir(historicalDir);
+    const emptyDirectoryResult = await __testing.cleanupHistoricalQ0Residue(context, {
+      version: targetVersion,
+      application: { targetRoot: applicationTarget },
+      releaseBinding: { releaseCommit: targetCommit },
+    });
+    expect(emptyDirectoryResult).toEqual({ changed: true, removed: [historicalDir] });
+    expect(fs.existsSync(historicalDir)).toBe(false);
   });
 
   it("always passes an offline bundle to GitHub attestation verification", () => {
@@ -2159,6 +3166,7 @@ describe("root-owned hosted updater protocol", () => {
     ["prepared", "rolled-back"],
     ["state-reconciling", "rolled-back"],
     ["state-reconciled", "rolled-back"],
+    ["schema-ready", "rolled-back"],
     ["snapshotting", "rolled-back"],
     ["activating", "rolled-back"],
     ["active", "rolled-back"],
@@ -2423,6 +3431,14 @@ describe("root-owned hosted updater protocol", () => {
       JSON.parse(await fsp.readFile(path.join(committedState, "install.json"), "utf8")).runtime
         .activeVersion,
     ).toBe("1.2.3");
+    expect(
+      JSON.parse(await fsp.readFile(path.join(committedState, "last-update-success.json"), "utf8"))
+        .schemaMigration,
+    ).toMatchObject({
+      schemaVersion: 1,
+      applied: true,
+      planDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+    });
     expect(await fsp.readFile(committed.paths.signerPath, "utf8")).toBe("signer-1.2.3\n");
 
     const rolledBack = await createFixture({ managedApplication: true });

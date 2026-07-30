@@ -45,8 +45,19 @@ cat >"$fixture/app/package/scripts/fased-lifecycle-supervisor.mjs" <<'EOF_SUPERV
 process.exit(0);
 EOF_SUPERVISOR
 chmod 0755 "$fixture/app/package/scripts/fased-lifecycle-supervisor.mjs"
+cat >"$fixture/app/package/scripts/privileged-release-evidence.mjs" <<'EOF_EVIDENCE'
+#!/usr/bin/env node
+process.exit(0);
+EOF_EVIDENCE
+chmod 0755 "$fixture/app/package/scripts/privileged-release-evidence.mjs"
+cp \
+  "$fixture/app/package/scripts/privileged-release-evidence.mjs" \
+  "$fixture/fased-privileged-release-evidence.mjs"
 supervisor_digest="$(
   sha256sum "$fixture/app/package/scripts/fased-lifecycle-supervisor.mjs" | awk '{print $1}'
+)"
+evidence_verifier_digest="$(
+  sha256sum "$fixture/fased-privileged-release-evidence.mjs" | awk '{print $1}'
 )"
 tar -czf "$fixture/$app_asset" -C "$fixture/app" package
 tar -czf "$fixture/$dependency_asset" -C "$fixture/dependencies" node_modules
@@ -83,12 +94,22 @@ cat >"$fixture/fased-hosted-release-v2.json" <<EOF_MANIFEST
 }
 EOF_MANIFEST
 printf '{"syntheticOfflineBundle":true}\n' >"$fixture/fased-hosted-release-v2.json.attestation.json"
+printf '{"syntheticProvenance":true}\n' >"$fixture/fased-privileged-provenance-v1.intoto.json"
+printf '{"syntheticOfflineBundle":true}\n' \
+  >"$fixture/fased-privileged-provenance-v1.intoto.json.attestation.json"
+printf '{"syntheticSbom":true}\n' >"$fixture/fased-privileged-sbom-v1.spdx.json"
+printf '{"syntheticVex":true}\n' >"$fixture/fased-privileged-vex-v1.openvex.json"
+provenance_digest="$(sha256sum "$fixture/fased-privileged-provenance-v1.intoto.json" | awk '{print $1}')"
+sbom_digest="$(sha256sum "$fixture/fased-privileged-sbom-v1.spdx.json" | awk '{print $1}')"
+vex_digest="$(sha256sum "$fixture/fased-privileged-vex-v1.openvex.json" | awk '{print $1}')"
 issued_at="$(date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%S.000Z)"
 expires_at="$(date -u -d '30 days' +%Y-%m-%dT%H:%M:%S.000Z)"
+root_policy="$(tr -d '\n' </repo/release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json)"
 cat >"$fixture/fased-lifecycle-trust-v1.json" <<EOF_LIFECYCLE
 {
   "schemaVersion": 1,
   "role": "fased-lifecycle-targets",
+  "rootPolicy": $root_policy,
   "release": {"version":"$version","tag":"v$version","commit":"$commit"},
   "validity": {"issuedAt":"$issued_at","expiresAt":"$expires_at"},
   "policy": {
@@ -98,6 +119,10 @@ cat >"$fixture/fased-lifecycle-trust-v1.json" <<EOF_LIFECYCLE
     "controllerProtocol": 2
   },
   "targets": {
+    "bootstrap": {
+      "asset": "install.sh",
+      "sha256": "9999999999999999999999999999999999999999999999999999999999999999"
+    },
     "supervisor": {
       "asset": "fased-lifecycle-supervisor.mjs",
       "sha256": "$supervisor_digest"
@@ -109,6 +134,24 @@ cat >"$fixture/fased-lifecycle-trust-v1.json" <<EOF_LIFECYCLE
     "controllerClient": {
       "asset": "fased-host-updaterctl.mjs",
       "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "evidenceVerifier": {
+      "asset": "fased-privileged-release-evidence.mjs",
+      "sha256": "$evidence_verifier_digest"
+    }
+  },
+  "evidence": {
+    "provenance": {
+      "asset": "fased-privileged-provenance-v1.intoto.json",
+      "sha256": "$provenance_digest"
+    },
+    "sbom": {
+      "asset": "fased-privileged-sbom-v1.spdx.json",
+      "sha256": "$sbom_digest"
+    },
+    "vex": {
+      "asset": "fased-privileged-vex-v1.openvex.json",
+      "sha256": "$vex_digest"
     }
   }
 }
@@ -152,20 +195,24 @@ if [[ "$*" == *"--arg channel beta"* ]]; then
     sha256sum /tmp/fased-release-fixture/app/package/scripts/fased-lifecycle-supervisor.mjs |
       awk '{print $1}'
   )"
+  evidence_expected="$(
+    sha256sum /tmp/fased-release-fixture/fased-privileged-release-evidence.mjs |
+      awk '{print $1}'
+  )"
   grep -Fq "\"version\":\"9.8.7-rc.2\"" "$document"
   grep -Fq "\"commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"" "$document"
   grep -Fq "\"sha256\": \"$expected\"" "$document"
-  printf '%s\n' "$expected"
+  printf '%s\t%s\n' "$expected" "$evidence_expected"
   exit 0
 fi
 if [[ "$*" == *".validity.issuedAt"* ]]; then
   [[ "$document" == */fased-lifecycle-trust-v1.json && -f "$document" ]]
-  sed -n 's/.*"issuedAt":[[:space:]]*"\([^"]*\)".*/\1/p' "$document"
+  sed -n 's/.*"issuedAt":[[:space:]]*"\([^"]*\)".*/\1/p' "$document" | tail -n 1
   exit 0
 fi
 if [[ "$*" == *".validity.expiresAt"* ]]; then
   [[ "$document" == */fased-lifecycle-trust-v1.json && -f "$document" ]]
-  sed -n 's/.*"expiresAt":[[:space:]]*"\([^"]*\)".*/\1/p' "$document"
+  sed -n 's/.*"expiresAt":[[:space:]]*"\([^"]*\)".*/\1/p' "$document" | tail -n 1
   exit 0
 fi
 [[ "$*" == *"--arg version 9.8.7-rc.2"* ]]
@@ -204,6 +251,15 @@ printf '%s\n' "$*" >>/tmp/fased-gh-verification.log
 EOF_GH
 chmod 0755 /usr/local/bin/gh
 
+cat >/usr/local/bin/node <<'EOF_NODE'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == "/tmp/fased-hosting-bootstrap."*/fased-privileged-release-evidence.mjs ]]
+[[ "$2" == "verify" ]]
+printf '%s\n' "$*" >/tmp/fased-evidence-verification.log
+EOF_NODE
+chmod 0755 /usr/local/bin/node
+
 release_installer=/tmp/fased-release-install.sh
 release_marker='install_entry_release_identity="__FASED_RELEASE_IDENTITY__"'
 [[ "$(grep -Fxc "$release_marker" /repo/install.sh)" -eq 1 ]]
@@ -222,7 +278,8 @@ grep -Fq 'Refusing Fased environment overrides' /tmp/env-error
 
 bash -s -- --hosting --release v9.8.7-rc.2 --update-channel beta <"$release_installer"
 [[ "$(cat /tmp/fased-bootstrap-success)" == "verified handoff" ]]
-[[ "$(wc -l </tmp/fased-gh-verification.log)" -eq 2 ]]
+[[ "$(wc -l </tmp/fased-gh-verification.log)" -eq 3 ]]
+grep -Fq 'fased-privileged-release-evidence.mjs verify' /tmp/fased-evidence-verification.log
 marker="$(find /var/lib/fased-installer/releases/v9.8.7-rc.2 -name .fased-hosting-bundle-verified -type f -print -quit)"
 [[ -n "$marker" ]]
 grep -Fq 'version=9.8.7-rc.2' "$marker"

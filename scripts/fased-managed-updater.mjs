@@ -13,6 +13,7 @@ import { pipeline } from "node:stream/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { readHostedReleaseManifestV2, verifyManifestArtifact } from "./hosted-release-manifest.mjs";
+import { officialReleaseAttestationVerifyArgs } from "./lifecycle-trust-runtime.mjs";
 import {
   assertManagedRuntime,
   atomicSymlink,
@@ -40,8 +41,6 @@ const execFileAsync = promisify(execFile);
 const DEFAULT_RELEASE_BASE_URL = "https://github.com/fased-ai/fased/releases/download";
 const DEFAULT_REGISTRY = "https://registry.npmjs.org";
 const DEFAULT_TIMEOUT_MS = 20 * 60_000;
-const RELEASE_REPOSITORY = "fased-ai/fased";
-const RELEASE_WORKFLOW = "fased-ai/fased/.github/workflows/hosted-runtime-release.yml";
 const HOST_UPDATER_SOCKET = "/run/fased-host-updater/request.sock";
 const HOST_UPDATER_SCHEMA_VERSION = 2;
 const HOSTED_TRANSACTION_SCHEMA_VERSION = 1;
@@ -131,9 +130,16 @@ const LOCAL_SIGNER_REQUIRED_FEATURES = [
   "atomicMultiAssetCaps",
   "signerControlledNativeFeeCaps",
 ];
-const LOCAL_SOURCE_CONTROLLER_FILES = [
+export const MANAGED_UPDATER_SUPPORT_FILES = Object.freeze([
   "hosted-release-manifest.mjs",
+  "lifecycle-trust-crypto.mjs",
+  "lifecycle-trust-policy.mjs",
+  "lifecycle-trust-root.mjs",
+  "lifecycle-trust-runtime.mjs",
   "managed-runtime-layout.mjs",
+]);
+const LOCAL_SOURCE_CONTROLLER_FILES = [
+  ...MANAGED_UPDATER_SUPPORT_FILES,
   "fased-managed-updater.mjs",
 ];
 
@@ -415,19 +421,11 @@ async function verifyOfficialAsset(
   }
   const result = await runFile(
     gh,
-    [
-      "attestation",
-      "verify",
+    officialReleaseAttestationVerifyArgs({
       assetPath,
-      "--repo",
-      RELEASE_REPOSITORY,
-      "--signer-workflow",
-      RELEASE_WORKFLOW,
-      "--source-ref",
-      `refs/tags/v${version}`,
-      "--deny-self-hosted-runners",
-      ...(bundlePath ? ["--bundle", bundlePath] : []),
-    ],
+      version,
+      bundlePath,
+    }),
     {
       env: {
         ...process.env,
@@ -2628,15 +2626,15 @@ async function updateStableComponents(paths, runtimeRoot, durable = false) {
   const stablePaths = [
     paths.launcherPath,
     paths.serviceLauncherPath,
-    path.join(paths.updaterDir, "managed-runtime-layout.mjs"),
-    path.join(paths.updaterDir, "hosted-release-manifest.mjs"),
+    ...MANAGED_UPDATER_SUPPORT_FILES.map((name) => path.join(paths.updaterDir, name)),
     paths.updaterPath,
   ];
   await copyExecutable(path.join(scripts, "fased-managed-launcher.sh"), stablePaths[0]);
   await copyExecutable(path.join(scripts, "fased-managed-service.sh"), stablePaths[1]);
-  await copyExecutable(path.join(scripts, "managed-runtime-layout.mjs"), stablePaths[2]);
-  await copyExecutable(path.join(scripts, "hosted-release-manifest.mjs"), stablePaths[3]);
-  await copyExecutable(path.join(scripts, "fased-managed-updater.mjs"), stablePaths[4]);
+  for (const name of MANAGED_UPDATER_SUPPORT_FILES) {
+    await copyExecutable(path.join(scripts, name), path.join(paths.updaterDir, name));
+  }
+  await copyExecutable(path.join(scripts, "fased-managed-updater.mjs"), paths.updaterPath);
   if (!durable) {
     return;
   }

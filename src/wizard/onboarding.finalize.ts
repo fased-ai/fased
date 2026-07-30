@@ -1487,13 +1487,10 @@ export function isRootPreparedHostingFinalization(params: {
 
 export function shouldDeferInstallerAccessHandoff(params: {
   installerOnboard: boolean;
-  deferProtectedLocalGatewayActivation: boolean;
+  protectedLocalInstaller: boolean;
   rootPreparedHosting: boolean;
 }): boolean {
-  return (
-    params.installerOnboard &&
-    (params.deferProtectedLocalGatewayActivation || params.rootPreparedHosting)
-  );
+  return params.installerOnboard && (params.protectedLocalInstaller || params.rootPreparedHosting);
 }
 
 export function shouldDeferInstallerGatewayActivation(params: {
@@ -1518,9 +1515,10 @@ export async function finalizeOnboardingWizard(
     ...nextConfig.env?.vars,
   });
   const protectedLocal = signerLifecycle?.profile === "protected-local";
-  const deferProtectedLocalGatewayActivation =
-    protectedLocal && process.env.FASED_INSTALLER_ONBOARD?.trim() === "1";
   const installerOnboard = process.env.FASED_INSTALLER_ONBOARD?.trim() === "1";
+  const installerLifecycleCommitted = process.env.FASED_INSTALL_LIFECYCLE_COMMITTED?.trim() === "1";
+  const deferProtectedLocalGatewayActivation =
+    protectedLocal && installerOnboard && !installerLifecycleCommitted;
   const deferInstallerGatewayActivation = shouldDeferInstallerGatewayActivation({
     installerOnboard,
     deferProtectedLocalGatewayActivation,
@@ -1528,7 +1526,7 @@ export async function finalizeOnboardingWizard(
   });
   const deferInstallerAccessHandoff = shouldDeferInstallerAccessHandoff({
     installerOnboard,
-    deferProtectedLocalGatewayActivation,
+    protectedLocalInstaller: protectedLocal,
     rootPreparedHosting,
   });
   const protectedLocalInstance = protectedLocal ? signerLifecycle.instanceId : undefined;

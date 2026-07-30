@@ -106,6 +106,18 @@ async function hostedDependencyHash(lockfilePath: string): Promise<string> {
   return hash.digest("hex");
 }
 
+async function releaseCreatedAt(commit: string): Promise<string> {
+  const { stdout } = await execFileAsync("git", ["show", "-s", "--format=%cI", commit], {
+    cwd: rootDir,
+    maxBuffer: 1024 * 1024,
+  });
+  const timestamp = Date.parse(stdout.trim());
+  if (!Number.isFinite(timestamp)) {
+    throw new Error("Hosted runtime commit timestamp is invalid.");
+  }
+  return new Date(timestamp).toISOString();
+}
+
 async function pruneHostedDependencies(
   nodeModulesRoot: string,
   arch: string,
@@ -304,6 +316,7 @@ async function main(): Promise<void> {
       "Hosted runtime build identity must match the package version and full commit.",
     );
   }
+  const createdAt = await releaseCreatedAt(commit);
 
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "fased-hosted-runtime-"));
   const packDir = path.join(tempRoot, "pack");
@@ -339,6 +352,24 @@ async function main(): Promise<void> {
       ],
       packageRoot,
       { npm_config_cache: path.join(tempRoot, "npm-cache") },
+    );
+    await run(
+      process.execPath,
+      [
+        path.join(rootDir, "scripts", "release-component-sbom.mjs"),
+        "node",
+        "--package-lock",
+        path.join(packageRoot, "package-lock.json"),
+        "--architecture",
+        arch,
+        "--version",
+        version,
+        "--created",
+        createdAt,
+        "--output",
+        path.join(outputDir, `fased-hosted-components-linux-${arch}-v${version}.spdx.json`),
+      ],
+      rootDir,
     );
 
     console.log("hosted-artifact: pruning runtime-irrelevant dependency files");

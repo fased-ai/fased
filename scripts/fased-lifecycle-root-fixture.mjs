@@ -129,6 +129,13 @@ async function createRootFixture({ crashPhase = null } = {}) {
     currentLink: controllerPaths.controllerCurrentLink,
     controllerVersionPath: controllerPaths.controllerVersionPath,
     rollbackFloorPath: path.join(controllerStateDir, "supervisor", "rollback-floor"),
+    trustedRootPath: path.join(controllerStateDir, "supervisor", "trusted-root.json"),
+    trustStatePath: path.join(controllerStateDir, "supervisor", "trust-state.json"),
+    supervisorTransactionPath: path.join(
+      controllerStateDir,
+      "supervisor",
+      "controller-transaction.json",
+    ),
     channelPath: controllerPaths.channelPath,
     supervisorPath: path.join(root, "supervisor", "fased-lifecycle-supervisor.mjs"),
     controllerUnit: "fixture-controller.service",
@@ -417,6 +424,8 @@ async function runCommittedFixture() {
     );
     assert.equal(applied.ok, true);
     assert.equal(applied.phase, "committed");
+    assert.equal(applied.schemaMigration?.applied, true);
+    assert.match(applied.schemaMigration?.planDigest || "", /^sha256:[a-f0-9]{64}$/u);
     await assertCommittedFixture(fixture);
 
     const replay = await socketRequest(
@@ -434,7 +443,7 @@ async function runCommittedFixture() {
 }
 
 async function runCrashRecoveryFixture() {
-  const fixture = await createRootFixture({ crashPhase: "state-reconciled" });
+  const fixture = await createRootFixture({ crashPhase: "schema-ready" });
   try {
     const failed = await socketRequest(
       fixture.publicSocketPath,
@@ -442,7 +451,7 @@ async function runCrashRecoveryFixture() {
       fixture.transactionId,
     );
     assert.equal(failed.ok, false);
-    assert.match(failed.error, /fixture crash after state-reconciled/u);
+    assert.match(failed.error, /fixture crash after schema-ready/u);
     assert.equal(fixture.injectedCrash, true);
     assert.equal(fs.existsSync(fixture.paths.journalPath), true);
 

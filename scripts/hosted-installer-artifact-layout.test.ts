@@ -48,6 +48,7 @@ describe("attested Hosting installer artifact layout", () => {
     expect(files).toContain("install.sh");
     expect(files).toContain("scripts/fased-host-updater.mjs");
     expect(files).toContain("scripts/fased-host-updaterctl.mjs");
+    expect(files).toContain("scripts/privileged-release-evidence.mjs");
     expect(files).toContain("scripts/fased-signer-enroll-hosting.sh");
     expect(files).toContain("scripts/fased-signer-network-hosting.sh");
     expect(files).toContain("scripts/fased-signer-owner-hosting.sh");
@@ -104,6 +105,23 @@ describe("attested Hosting installer artifact layout", () => {
     expect(updater).toContain('"--bundle",\n    bundlePath');
     expect(updater).toContain("`${releaseUrl}/${RELEASE_MANIFEST_BUNDLE_NAME}`");
     expect(updater).toContain("`${releaseUrl}/${SIGNER_ATTESTATION_BUNDLE_NAME}`");
+    expect(updater).toContain("PRIVILEGED_PROVENANCE_BUNDLE_NAME");
+    expect(updater).toContain("verifyPrivilegedReleaseEvidence");
+  });
+
+  it("binds provenance, SPDX SBOM, and OpenVEX evidence into every privileged release", () => {
+    const installer = fs.readFileSync(path.join(root, "install.sh"), "utf8");
+    expect(releaseWorkflow).toContain("pnpm audit --prod --audit-level high");
+    expect(releaseWorkflow).toContain("govulncheck@v1.1.4");
+    expect(releaseWorkflow).toContain("scripts/privileged-release-evidence.mjs build");
+    expect(releaseWorkflow).toContain("name: Attest privileged release provenance");
+    expect(releaseWorkflow).toContain(
+      "fased-privileged-provenance-v1.intoto.json.attestation.json",
+    );
+    expect(releaseWorkflow).toContain("fased-privileged-sbom-v1.spdx.json");
+    expect(releaseWorkflow).toContain("fased-privileged-vex-v1.openvex.json");
+    expect(installer).toContain('gh attestation verify "$provenance"');
+    expect(installer).toContain('"$evidence_node" "$evidence_verifier" verify');
   });
 
   it("publishes and installs an atomically selected root-controller generation", () => {
@@ -190,6 +208,9 @@ describe("attested Hosting installer artifact layout", () => {
     expect(releaseWorkflow).toContain(
       "--output .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json",
     );
+    expect(
+      releaseWorkflow.match(/--root-policy release\/lifecycle-trust\/root-v1\//gu),
+    ).toHaveLength(2);
     expect(releaseWorkflow).toContain(
       "subject-path: .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json",
     );
@@ -314,9 +335,37 @@ describe("attested Hosting installer artifact layout", () => {
     expect(fixture).toContain('"$fixture/fased-lifecycle-trust-v1.json"');
     expect(fixture).toContain('"$fixture/fased-lifecycle-trust-v1.json.attestation.json"');
     expect(fixture).toContain('"$fixture/app/package/scripts/fased-lifecycle-supervisor.mjs"');
-    expect(fixture).toContain('[[ "$(wc -l </tmp/fased-gh-verification.log)" -eq 2 ]]');
+    expect(fixture).toContain('[[ "$(wc -l </tmp/fased-gh-verification.log)" -eq 3 ]]');
     expect(fixture).toContain('<"$release_installer"');
     expect(fixture).not.toContain("</repo/install.sh");
+  });
+
+  it("keeps candidate transport substitution fixture-owned and outside the product protocol", () => {
+    const fixture = fs.readFileSync(
+      path.join(root, "scripts/docker/protected-local-systemd/run.sh"),
+      "utf8",
+    );
+    const supervisor = fs.readFileSync(
+      path.join(root, "scripts/fased-lifecycle-supervisor.mjs"),
+      "utf8",
+    );
+    const updater = fs.readFileSync(path.join(root, "scripts/fased-host-updater.mjs"), "utf8");
+    expect(supervisor).toContain(
+      'const RELEASE_BASE = "https://github.com/fased-ai/fased/releases/download"',
+    );
+    expect(updater).toContain(
+      'const RELEASE_BASE = "https://github.com/fased-ai/fased/releases/download"',
+    );
+    expect(supervisor).not.toContain("FASED_HOSTED_ARTIFACT_BASE_URL");
+    expect(updater).not.toContain("FASED_HOSTED_ARTIFACT_BASE_URL");
+    expect(fixture).toContain("DefaultEnvironment=NODE_EXTRA_CA_CERTS=");
+    expect(fixture).toContain("127.0.0.1 github.com");
+    expect(fixture).toContain("/repo/scripts/privileged-release-evidence.mjs build");
+    expect(fixture).toContain("/repo/scripts/build-lifecycle-trust-metadata.mjs");
+    expect(fixture).toContain(
+      "const releasePrefix = `/fased-ai/fased/releases/download/v${version}/`",
+    );
+    expect(fixture).not.toContain("/etc/fased/testing");
   });
 
   it("dispatches standalone Hosting execution through the attested bundle bootstrap", () => {

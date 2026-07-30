@@ -22,7 +22,15 @@ if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(version)) {
   throw new Error("an exact signer release version is required");
 }
 const mode = process.argv[3];
-if (!new Set(["--prepare-only", "--activate-only", "--commit-only", "--rollback-only"]).has(mode)) {
+if (
+  !new Set([
+    "--apply",
+    "--prepare-only",
+    "--activate-only",
+    "--commit-only",
+    "--rollback-only",
+  ]).has(mode)
+) {
   throw new Error(`unsupported signer updater control mode: ${mode}`);
 }
 
@@ -190,6 +198,12 @@ try {
     await ensureTargetController();
     const prepared = await requestWithRetry("prepareRelease", 120);
     process.stdout.write(`${JSON.stringify(prepared)}\n`);
+  } else if (mode === "--apply") {
+    await ensureTargetController();
+    activated = true;
+    const committed = await requestWithRetry("applyRelease", 120);
+    await clearTransactionId();
+    process.stdout.write(`${JSON.stringify(committed)}\n`);
   } else {
     const active = await requestWithRetry("activateRelease");
     activated = true;

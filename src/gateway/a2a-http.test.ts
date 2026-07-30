@@ -14,8 +14,8 @@ import { createEphemeralDeviceIdentity, type DeviceIdentity } from "../infra/dev
 import { createA2aHandler, type A2aHttpHandler } from "./a2a-http.js";
 import { issueDurableA2aPaymentChallenge } from "./a2a-task-store.js";
 
-const TEST_PAYER = "CktRuQ2mttgRG4jNqNLPBJW7zW6zRE3xBepcGQpXU7Yf";
-const TEST_PAYEE = "GgBaCs3NqYt1dJU3puKoZ3qr7hT4YFj9bZHzszoqkqTD";
+const TEST_PAYER = "CktRuQ2mttgRG4jNqNLPBJW7zW6zRE3xBepcGQpXU7Yf"; // pragma: allowlist secret
+const TEST_PAYEE = "GgBaCs3NqYt1dJU3puKoZ3qr7hT4YFj9bZHzszoqkqTD"; // pragma: allowlist secret
 
 async function issueTestPaymentChallenge(params: {
   taskId: string;
@@ -99,7 +99,7 @@ function createRequest(opts: {
   return req;
 }
 
-async function waitForFinish(res: MockResponse, timeoutMs = 300): Promise<void> {
+async function waitForFinish(res: MockResponse, timeoutMs = 2_000): Promise<void> {
   if (res.writableEnded || res.destroyed) {
     return;
   }
@@ -226,6 +226,32 @@ function taskToken(response: RpcResponse): string {
   const token = (response.result as Record<string, unknown> | undefined)?.taskAccessToken;
   expect(typeof token).toBe("string");
   return String(token);
+}
+
+async function waitForTaskStatus(params: {
+  handler: A2aHttpHandler;
+  taskId: string;
+  accessToken: string;
+  status: string;
+  timeoutMs?: number;
+}): Promise<RpcResponse> {
+  const deadline = Date.now() + (params.timeoutMs ?? 2_000);
+  let response: RpcResponse = {};
+  while (Date.now() < deadline) {
+    response = await rpcCall({
+      handler: params.handler,
+      method: "tasks.get",
+      rpcParams: {
+        taskId: params.taskId,
+        taskAccessToken: params.accessToken,
+      },
+    });
+    if ((response.result as Record<string, unknown> | undefined)?.status === params.status) {
+      return response;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`task ${params.taskId} did not reach ${params.status}`);
 }
 
 describe("gateway A2A adapter", () => {
@@ -538,7 +564,12 @@ describe("gateway A2A adapter", () => {
     });
     expect(created.error).toBeUndefined();
     const accessToken = taskToken(created);
-    await new Promise((resolve) => setTimeout(resolve, 90));
+    await waitForTaskStatus({
+      handler: firstHandler,
+      taskId,
+      accessToken,
+      status: "succeeded",
+    });
 
     const restartedHandler = createHandler();
     const restored = await rpcCall({
@@ -606,11 +637,11 @@ describe("gateway A2A adapter", () => {
     });
     expect(create.error).toBeUndefined();
     const accessToken = taskToken(create);
-    await new Promise((resolve) => setTimeout(resolve, 90));
-    const get = await rpcCall({
+    const get = await waitForTaskStatus({
       handler,
-      method: "tasks.get",
-      rpcParams: { taskId: "task-canonical-1", taskAccessToken: accessToken },
+      taskId: "task-canonical-1",
+      accessToken,
+      status: "succeeded",
     });
     expect(get.error).toBeUndefined();
     const output = ((get.result as Record<string, unknown>).output ?? {}) as Record<
@@ -659,11 +690,11 @@ describe("gateway A2A adapter", () => {
     });
     expect(create.error).toBeUndefined();
     const accessToken = taskToken(create);
-    await new Promise((resolve) => setTimeout(resolve, 90));
-    const get = await rpcCall({
+    const get = await waitForTaskStatus({
       handler,
-      method: "tasks.get",
-      rpcParams: { taskId: "task-summary-1", taskAccessToken: accessToken },
+      taskId: "task-summary-1",
+      accessToken,
+      status: "succeeded",
     });
     expect(get.error).toBeUndefined();
     const output = ((get.result as Record<string, unknown>).output ?? {}) as Record<

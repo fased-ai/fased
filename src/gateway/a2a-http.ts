@@ -59,6 +59,7 @@ type TaskRecord = {
   paymentRecovery?: DurableA2aPaymentRecovery;
   timers: NodeJS.Timeout[];
   subscribers: Set<ServerResponse>;
+  updateQueue: Promise<void>;
   executionRelease?: () => Promise<void>;
 };
 
@@ -881,6 +882,7 @@ export function createA2aHandler(opts: {
       paymentRecovery: record.paymentRecovery,
       timers: [],
       subscribers: new Set<ServerResponse>(),
+      updateQueue: Promise.resolve(),
     };
   }
 
@@ -904,63 +906,67 @@ export function createA2aHandler(opts: {
       Pick<TaskRecord, "status" | "output" | "error" | "settlement" | "paymentRecovery">
     >,
   ) {
-    const paymentRecovery =
-      patch.paymentRecovery ??
-      ((patch.status === "failed" || patch.status === "canceled") &&
-      task.settlement?.status === "executed" &&
-      task.settlement.txHash
-        ? {
-            status: "refund-required" as const,
-            paymentTxRef: task.settlement.txHash,
-            reason:
-              patch.error ??
-              `paid task entered terminal state ${patch.status}; seller must refund or resolve the dispute`,
-            updatedAt: new Date().toISOString(),
-          }
-        : undefined);
-    const durable = await updateDurableA2aTask({
-      taskId: task.taskId,
-      ...(patch.status ? { status: patch.status } : {}),
-      ...(patch.output !== undefined ? { output: patch.output } : {}),
-      ...(patch.error !== undefined ? { error: patch.error } : {}),
-      ...(patch.settlement !== undefined ? { settlement: patch.settlement } : {}),
-      ...(paymentRecovery !== undefined ? { paymentRecovery } : {}),
-      env: process.env,
-    });
-    if (
-      durable.paymentRecovery?.status === "refund-required" &&
-      !durable.paymentRecovery.approvalRequestId
-    ) {
-      const reviewedRecovery = await ensureReviewedRefundApproval(task, durable.paymentRecovery);
-      if (reviewedRecovery !== durable.paymentRecovery) {
-        const refreshed = await updateDurableA2aTask({
-          taskId: task.taskId,
-          paymentRecovery: reviewedRecovery,
-          env: process.env,
-        });
-        durable.paymentRecovery = refreshed.paymentRecovery;
-        durable.updatedAt = refreshed.updatedAt;
+    const update = task.updateQueue.then(async () => {
+      const paymentRecovery =
+        patch.paymentRecovery ??
+        ((patch.status === "failed" || patch.status === "canceled") &&
+        task.settlement?.status === "executed" &&
+        task.settlement.txHash
+          ? {
+              status: "refund-required" as const,
+              paymentTxRef: task.settlement.txHash,
+              reason:
+                patch.error ??
+                `paid task entered terminal state ${patch.status}; seller must refund or resolve the dispute`,
+              updatedAt: new Date().toISOString(),
+            }
+          : undefined);
+      const durable = await updateDurableA2aTask({
+        taskId: task.taskId,
+        ...(patch.status ? { status: patch.status } : {}),
+        ...(patch.output !== undefined ? { output: patch.output } : {}),
+        ...(patch.error !== undefined ? { error: patch.error } : {}),
+        ...(patch.settlement !== undefined ? { settlement: patch.settlement } : {}),
+        ...(paymentRecovery !== undefined ? { paymentRecovery } : {}),
+        env: process.env,
+      });
+      if (
+        durable.paymentRecovery?.status === "refund-required" &&
+        !durable.paymentRecovery.approvalRequestId
+      ) {
+        const reviewedRecovery = await ensureReviewedRefundApproval(task, durable.paymentRecovery);
+        if (reviewedRecovery !== durable.paymentRecovery) {
+          const refreshed = await updateDurableA2aTask({
+            taskId: task.taskId,
+            paymentRecovery: reviewedRecovery,
+            env: process.env,
+          });
+          durable.paymentRecovery = refreshed.paymentRecovery;
+          durable.updatedAt = refreshed.updatedAt;
+        }
       }
-    }
-    task.status = durable.status;
-    task.output = durable.output;
-    task.error = durable.error;
-    task.settlement = durable.settlement;
-    task.paymentRecovery = durable.paymentRecovery;
-    task.updatedAt = durable.updatedAt;
+      task.status = durable.status;
+      task.output = durable.output;
+      task.error = durable.error;
+      task.settlement = durable.settlement;
+      task.paymentRecovery = durable.paymentRecovery;
+      task.updatedAt = durable.updatedAt;
 
-    const snapshot = toTaskSnapshot(task);
-    for (const subscriber of task.subscribers) {
-      if (subscriber.writableEnded || subscriber.destroyed) {
-        task.subscribers.delete(subscriber);
-        continue;
+      const snapshot = toTaskSnapshot(task);
+      for (const subscriber of task.subscribers) {
+        if (subscriber.writableEnded || subscriber.destroyed) {
+          task.subscribers.delete(subscriber);
+          continue;
+        }
+        writeSseEvent(subscriber, "task.update", snapshot);
+        if (isTerminal(task.status)) {
+          subscriber.end();
+          task.subscribers.delete(subscriber);
+        }
       }
-      writeSseEvent(subscriber, "task.update", snapshot);
-      if (isTerminal(task.status)) {
-        subscriber.end();
-        task.subscribers.delete(subscriber);
-      }
-    }
+    });
+    task.updateQueue = update.catch(() => undefined);
+    await update;
   }
 
   function clearTaskTimers(task: TaskRecord) {

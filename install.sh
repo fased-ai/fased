@@ -535,13 +535,23 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     local release_manifest_bundle="${preflight}/fased-hosted-release-v2.json.attestation.json"
     local lifecycle_metadata="${preflight}/fased-lifecycle-trust-v1.json"
     local lifecycle_metadata_bundle="${preflight}/fased-lifecycle-trust-v1.json.attestation.json"
+    local evidence_verifier="${preflight}/fased-privileged-release-evidence.mjs"
+    local provenance="${preflight}/fased-privileged-provenance-v1.intoto.json"
+    local provenance_bundle="${preflight}/fased-privileged-provenance-v1.intoto.json.attestation.json"
+    local sbom="${preflight}/fased-privileged-sbom-v1.spdx.json"
+    local vex="${preflight}/fased-privileged-vex-v1.openvex.json"
     local expected=""
     local actual=""
     local manifest_digest=""
     local manifest_commit=""
     local manifest_signer_commit=""
     local lifecycle_metadata_digest=""
+    local provenance_digest=""
+    local sbom_digest=""
+    local vex_digest=""
+    local evidence_verifier_digest=""
     local lifecycle_supervisor_expected=""
+    local evidence_verifier_expected=""
     local lifecycle_issued_at=""
     local lifecycle_expires_at=""
     local lifecycle_issued_epoch=""
@@ -602,6 +612,10 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       local cached_digest=""
       local cached_signer_digest=""
       local cached_lifecycle_digest=""
+      local cached_provenance_digest=""
+      local cached_sbom_digest=""
+      local cached_vex_digest=""
+      local cached_evidence_verifier_digest=""
       local cached_candidate=""
       for cached_candidate in "$release_parent"/*; do
         [[ -d "$cached_candidate" && "$(basename "$cached_candidate")" =~ ^[a-f0-9]{64}$ ]] || continue
@@ -619,16 +633,32 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
           cached_commit="$(awk -F= '$1 == "commit" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
           cached_signer_digest="$(awk -F= '$1 == "signer_sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
           cached_lifecycle_digest="$(awk -F= '$1 == "lifecycle_metadata_sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
+          cached_provenance_digest="$(awk -F= '$1 == "provenance_sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
+          cached_sbom_digest="$(awk -F= '$1 == "sbom_sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
+          cached_vex_digest="$(awk -F= '$1 == "vex_sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
+          cached_evidence_verifier_digest="$(awk -F= '$1 == "evidence_verifier_sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
         fi
         if [[ "$cached_commit" =~ ^[a-f0-9]{40}$ && \
           "$cached_signer_digest" =~ ^[a-f0-9]{64}$ && \
           "$cached_lifecycle_digest" =~ ^[a-f0-9]{64}$ && \
+          "$cached_provenance_digest" =~ ^[a-f0-9]{64}$ && \
+          "$cached_sbom_digest" =~ ^[a-f0-9]{64}$ && \
+          "$cached_vex_digest" =~ ^[a-f0-9]{64}$ && \
+          "$cached_evidence_verifier_digest" =~ ^[a-f0-9]{64}$ && \
           "$(awk -F= '$1 == "version" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified" 2>/dev/null || true)" == "$release_version" && \
           "$(awk -F= '$1 == "sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified" 2>/dev/null || true)" == "$cached_digest" && \
           -d "$cached_root_store/verified-dependencies/node_modules" && \
           -f "$cached_root_store/verified-assets/fased-signerd" && \
           -f "$cached_root_store/verified-assets/fased-lifecycle-trust-v1.json" && \
+          -f "$cached_root_store/verified-assets/fased-privileged-provenance-v1.intoto.json" && \
+          -f "$cached_root_store/verified-assets/fased-privileged-sbom-v1.spdx.json" && \
+          -f "$cached_root_store/verified-assets/fased-privileged-vex-v1.openvex.json" && \
+          -f "$cached_root_store/verified-assets/fased-privileged-release-evidence.mjs" && \
           "$(sha256sum "$cached_root_store/verified-assets/fased-lifecycle-trust-v1.json" | awk '{print tolower($1)}')" == "$cached_lifecycle_digest" && \
+          "$(sha256sum "$cached_root_store/verified-assets/fased-privileged-provenance-v1.intoto.json" | awk '{print tolower($1)}')" == "$cached_provenance_digest" && \
+          "$(sha256sum "$cached_root_store/verified-assets/fased-privileged-sbom-v1.spdx.json" | awk '{print tolower($1)}')" == "$cached_sbom_digest" && \
+          "$(sha256sum "$cached_root_store/verified-assets/fased-privileged-vex-v1.openvex.json" | awk '{print tolower($1)}')" == "$cached_vex_digest" && \
+          "$(sha256sum "$cached_root_store/verified-assets/fased-privileged-release-evidence.mjs" | awk '{print tolower($1)}')" == "$cached_evidence_verifier_digest" && \
           "$(sha256sum "$cached_root_store/verified-assets/fased-signerd" | awk '{print tolower($1)}')" == "$cached_signer_digest" ]] && \
           root_owned_bundle_tree_is_secure "$cached_root_store"; then
           rm -rf -- "$preflight"
@@ -644,6 +674,11 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-hosted-release-v2.json.attestation.json" -o "$release_manifest_bundle"
     curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-lifecycle-trust-v1.json" -o "$lifecycle_metadata"
     curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-lifecycle-trust-v1.json.attestation.json" -o "$lifecycle_metadata_bundle"
+    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-release-evidence.mjs" -o "$evidence_verifier"
+    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-provenance-v1.intoto.json" -o "$provenance"
+    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-provenance-v1.intoto.json.attestation.json" -o "$provenance_bundle"
+    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-sbom-v1.spdx.json" -o "$sbom"
+    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-vex-v1.openvex.json" -o "$vex"
     GH_PROMPT_DISABLED=1 gh attestation verify "$release_manifest" \
       --repo fased-ai/fased \
       --bundle "$release_manifest_bundle" \
@@ -653,6 +688,12 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     GH_PROMPT_DISABLED=1 gh attestation verify "$lifecycle_metadata" \
       --repo fased-ai/fased \
       --bundle "$lifecycle_metadata_bundle" \
+      --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+      --source-ref "refs/tags/v${release_version}" \
+      --deny-self-hosted-runners >/dev/null
+    GH_PROMPT_DISABLED=1 gh attestation verify "$provenance" \
+      --repo fased-ai/fased \
+      --bundle "$provenance_bundle" \
       --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
       --source-ref "refs/tags/v${release_version}" \
       --deny-self-hosted-runners >/dev/null
@@ -708,15 +749,20 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       echo "Hosted release manifest selects a mixed commit or unexpected app artifact." >&2
       exit 1
     }
-    lifecycle_supervisor_expected="$(jq -er \
+    local lifecycle_selection=""
+    lifecycle_selection="$(jq -er \
       --arg version "$release_version" \
       --arg commit "$manifest_commit" \
       --arg channel "$hosting_update_channel" \
       --arg platform "linux-${architecture}" \
       --arg current_time "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" '
-      if (keys == ["policy", "release", "role", "schemaVersion", "targets", "validity"]) and
+      if (keys == ["evidence", "policy", "release", "role", "rootPolicy", "schemaVersion", "targets", "validity"]) and
         .schemaVersion == 1 and
         .role == "fased-lifecycle-targets" and
+        (.rootPolicy | keys == ["schemaVersion", "signatures", "signed"]) and
+        .rootPolicy.schemaVersion == 1 and
+        (.rootPolicy.signed | type == "object") and
+        (.rootPolicy.signatures | type == "array" and length >= 2) and
         (.release | keys == ["commit", "tag", "version"]) and
         .release.version == $version and
         .release.tag == ("v" + $version) and
@@ -731,19 +777,31 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
         (.policy.platforms | index($platform)) != null and
         .policy.supervisorProtocol == 1 and
         .policy.controllerProtocol == 2 and
-        (.targets | keys == ["controllerClient", "controllerServer", "supervisor"]) and
+        (.targets | keys == ["bootstrap", "controllerClient", "controllerServer", "evidenceVerifier", "supervisor"]) and
+        .targets.bootstrap.asset == "install.sh" and
+        (.targets.bootstrap.sha256 | test("^[a-f0-9]{64}$")) and
         .targets.supervisor.asset == "fased-lifecycle-supervisor.mjs" and
         (.targets.supervisor.sha256 | test("^[a-f0-9]{64}$")) and
         .targets.controllerServer.asset == "fased-host-updater.mjs" and
         (.targets.controllerServer.sha256 | test("^[a-f0-9]{64}$")) and
         .targets.controllerClient.asset == "fased-host-updaterctl.mjs" and
-        (.targets.controllerClient.sha256 | test("^[a-f0-9]{64}$"))
-      then .targets.supervisor.sha256
+        (.targets.controllerClient.sha256 | test("^[a-f0-9]{64}$")) and
+        .targets.evidenceVerifier.asset == "fased-privileged-release-evidence.mjs" and
+        (.targets.evidenceVerifier.sha256 | test("^[a-f0-9]{64}$")) and
+        (.evidence | keys == ["provenance", "sbom", "vex"]) and
+        .evidence.provenance.asset == "fased-privileged-provenance-v1.intoto.json" and
+        (.evidence.provenance.sha256 | test("^[a-f0-9]{64}$")) and
+        .evidence.sbom.asset == "fased-privileged-sbom-v1.spdx.json" and
+        (.evidence.sbom.sha256 | test("^[a-f0-9]{64}$")) and
+        .evidence.vex.asset == "fased-privileged-vex-v1.openvex.json" and
+        (.evidence.vex.sha256 | test("^[a-f0-9]{64}$"))
+      then [.targets.supervisor.sha256, .targets.evidenceVerifier.sha256] | @tsv
       else error("invalid lifecycle trust metadata") end
     ' "$lifecycle_metadata")" || {
       echo "Lifecycle trust metadata does not authorize this exact release and platform." >&2
       exit 1
     }
+    IFS=$'\t' read -r lifecycle_supervisor_expected evidence_verifier_expected <<<"$lifecycle_selection"
     lifecycle_issued_at="$(jq -er '.validity.issuedAt | select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.000Z$"))' "$lifecycle_metadata")"
     lifecycle_expires_at="$(jq -er '.validity.expiresAt | select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.000Z$"))' "$lifecycle_metadata")"
     lifecycle_issued_epoch="$(date -u -d "$lifecycle_issued_at" +%s 2>/dev/null || true)"
@@ -759,7 +817,32 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       echo "Lifecycle trust metadata validity is non-canonical, expired, or too broad." >&2
       exit 1
     fi
+    [[ "$(sha256sum "$evidence_verifier" | awk '{print tolower($1)}')" == "$evidence_verifier_expected" ]] || {
+      echo "Privileged release evidence verifier does not match lifecycle trust metadata." >&2
+      exit 1
+    }
+    local evidence_node=""
+    evidence_node="${protected_local_node_binary:-$(command -v node || true)}"
+    [[ -n "$evidence_node" && -x "$evidence_node" ]] || {
+      echo "A root-controlled Node.js runtime is required to verify release evidence." >&2
+      exit 1
+    }
+    "$evidence_node" "$evidence_verifier" verify \
+      --release-manifest "$release_manifest" \
+      --lifecycle-metadata "$lifecycle_metadata" \
+      --provenance "$provenance" \
+      --sbom "$sbom" \
+      --vex "$vex" \
+      --version "$release_version" \
+      --commit "$manifest_commit" >/dev/null || {
+      echo "Privileged release provenance, SBOM, or VEX verification failed." >&2
+      exit 1
+    }
     lifecycle_metadata_digest="$(sha256sum "$lifecycle_metadata" | awk '{print tolower($1)}')"
+    provenance_digest="$(sha256sum "$provenance" | awk '{print tolower($1)}')"
+    sbom_digest="$(sha256sum "$sbom" | awk '{print tolower($1)}')"
+    vex_digest="$(sha256sum "$vex" | awk '{print tolower($1)}')"
+    evidence_verifier_digest="$(sha256sum "$evidence_verifier" | awk '{print tolower($1)}')"
     archive="${preflight}/${asset}"
     dependency_archive="${preflight}/${dependency_asset}"
     signer_binary="${preflight}/${signer_asset}"
@@ -808,12 +891,18 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       ! -L "$verified_package_root/install.sh" && -f "$verified_package_root/dist/build-info.json" && \
       ! -L "$verified_package_root/dist/build-info.json" && \
       -f "$verified_package_root/scripts/fased-lifecycle-supervisor.mjs" && \
-      ! -L "$verified_package_root/scripts/fased-lifecycle-supervisor.mjs" ]] || {
+      ! -L "$verified_package_root/scripts/fased-lifecycle-supervisor.mjs" && \
+      -f "$verified_package_root/scripts/privileged-release-evidence.mjs" && \
+      ! -L "$verified_package_root/scripts/privileged-release-evidence.mjs" ]] || {
       echo "Attested Hosting bundle is incomplete or has an invalid entrypoint." >&2
       exit 1
     }
     [[ "$(sha256sum "$verified_package_root/scripts/fased-lifecycle-supervisor.mjs" | awk '{print tolower($1)}')" == "$lifecycle_supervisor_expected" ]] || {
       echo "Packaged lifecycle supervisor does not match immutable lifecycle trust metadata." >&2
+      exit 1
+    }
+    [[ "$(sha256sum "$verified_package_root/scripts/privileged-release-evidence.mjs" | awk '{print tolower($1)}')" == "$evidence_verifier_expected" ]] || {
+      echo "Packaged release evidence verifier does not match lifecycle trust metadata." >&2
       exit 1
     }
     local packaged_version=""
@@ -858,11 +947,23 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       grep -Fxq "dependency_hash=${dependency_hash}" "$existing_root/.fased-hosting-bundle-verified" && \
       grep -Fxq "release_manifest_sha256=${manifest_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
       grep -Fxq "lifecycle_metadata_sha256=${lifecycle_metadata_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
+      grep -Fxq "provenance_sha256=${provenance_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
+      grep -Fxq "sbom_sha256=${sbom_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
+      grep -Fxq "vex_sha256=${vex_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
+      grep -Fxq "evidence_verifier_sha256=${evidence_verifier_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
       [[ -d "$root_store/verified-dependencies/node_modules" && \
         ! -L "$root_store/verified-dependencies/node_modules" ]] && \
       [[ -f "$root_store/verified-assets/fased-signerd" && \
         ! -L "$root_store/verified-assets/fased-signerd" && \
         "$(sha256sum "$root_store/verified-assets/fased-signerd" | awk '{print tolower($1)}')" == "$signer_actual" ]] && \
+      [[ -f "$root_store/verified-assets/fased-privileged-provenance-v1.intoto.json" && \
+        "$(sha256sum "$root_store/verified-assets/fased-privileged-provenance-v1.intoto.json" | awk '{print tolower($1)}')" == "$provenance_digest" ]] && \
+      [[ -f "$root_store/verified-assets/fased-privileged-sbom-v1.spdx.json" && \
+        "$(sha256sum "$root_store/verified-assets/fased-privileged-sbom-v1.spdx.json" | awk '{print tolower($1)}')" == "$sbom_digest" ]] && \
+      [[ -f "$root_store/verified-assets/fased-privileged-vex-v1.openvex.json" && \
+        "$(sha256sum "$root_store/verified-assets/fased-privileged-vex-v1.openvex.json" | awk '{print tolower($1)}')" == "$vex_digest" ]] && \
+      [[ -f "$root_store/verified-assets/fased-privileged-release-evidence.mjs" && \
+        "$(sha256sum "$root_store/verified-assets/fased-privileged-release-evidence.mjs" | awk '{print tolower($1)}')" == "$evidence_verifier_digest" ]] && \
       [[ "$existing_commit" =~ ^[a-f0-9]{40}$ ]] && \
       grep -Fxq "commit=${existing_commit}" "$existing_root/.fased-hosting-bundle-verified" && \
       root_owned_bundle_tree_is_secure "$root_store" && \
@@ -901,6 +1002,21 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     install -m 0644 -o root -g root \
       "$lifecycle_metadata_bundle" \
       "$staging/verified-assets/fased-lifecycle-trust-v1.json.attestation.json"
+    install -m 0755 -o root -g root \
+      "$evidence_verifier" \
+      "$staging/verified-assets/fased-privileged-release-evidence.mjs"
+    install -m 0644 -o root -g root \
+      "$provenance" \
+      "$staging/verified-assets/fased-privileged-provenance-v1.intoto.json"
+    install -m 0644 -o root -g root \
+      "$provenance_bundle" \
+      "$staging/verified-assets/fased-privileged-provenance-v1.intoto.json.attestation.json"
+    install -m 0644 -o root -g root \
+      "$sbom" \
+      "$staging/verified-assets/fased-privileged-sbom-v1.spdx.json"
+    install -m 0644 -o root -g root \
+      "$vex" \
+      "$staging/verified-assets/fased-privileged-vex-v1.openvex.json"
     local package_root="$staging/extract/package"
     chown -R root:root "$staging"
     chmod -R a+rX "$staging"
@@ -909,8 +1025,8 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       echo "Could not secure the verified Hosting bundle as root-owned and non-writable." >&2
       exit 1
     fi
-    printf 'version=%s\nsha256=%s\nsigner_sha256=%s\ndependency_sha256=%s\ndependency_hash=%s\nrelease_manifest_sha256=%s\nlifecycle_metadata_sha256=%s\ncommit=%s\n' \
-      "$release_version" "$actual" "$signer_actual" "$dependency_actual" "$dependency_hash" "$manifest_digest" "$lifecycle_metadata_digest" "$packaged_commit" >"$package_root/.fased-hosting-bundle-verified"
+    printf 'version=%s\nsha256=%s\nsigner_sha256=%s\ndependency_sha256=%s\ndependency_hash=%s\nrelease_manifest_sha256=%s\nlifecycle_metadata_sha256=%s\nprovenance_sha256=%s\nsbom_sha256=%s\nvex_sha256=%s\nevidence_verifier_sha256=%s\ncommit=%s\n' \
+      "$release_version" "$actual" "$signer_actual" "$dependency_actual" "$dependency_hash" "$manifest_digest" "$lifecycle_metadata_digest" "$provenance_digest" "$sbom_digest" "$vex_digest" "$evidence_verifier_digest" "$packaged_commit" >"$package_root/.fased-hosting-bundle-verified"
     chmod 0600 "$package_root/.fased-hosting-bundle-verified"
     sync -f "$package_root/.fased-hosting-bundle-verified" "$package_root" "$staging/extract" 2>/dev/null || true
     mv "$staging" "$root_store"
@@ -1104,6 +1220,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
 
   existing_local_state=0
   existing_local_topology=""
+  existing_local_resume=0
   local_state_dir="${FASED_STATE_DIR:-$HOME/.fased}"
   if [[ "$hosting_bootstrap" -eq 0 && "$protected_local_bootstrap" -eq 0 && \
     ( -e "$local_state_dir" || -L "$local_state_dir" ) ]]; then
@@ -1156,9 +1273,15 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
   fi
   if [[ "$existing_local_topology" == "protected-local" && \
     "$install_entry_local_repair" -ne 1 ]]; then
-    echo "Existing Protected Local installation detected; use fased update." >&2
-    drain_streamed_install_input
-    exit 0
+    if [[ -f "$local_state_dir/install-complete.json" ]] && \
+      grep -Eq '"onboardingCompleted"[[:space:]]*:[[:space:]]*true' \
+        "$local_state_dir/install-complete.json"; then
+      echo "Existing Protected Local installation detected; use fased update." >&2
+      drain_streamed_install_input
+      exit 0
+    fi
+    existing_local_resume=1
+    echo "Committed Protected Local services detected; resuming onboarding." >&2
   fi
   if [[ "$existing_local_topology" == "pre-handoff-local" && \
     "$install_entry_local_repair" -ne 1 ]]; then
@@ -1281,6 +1404,9 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     if [[ "$install_entry_local_repair" -eq 1 ]]; then
       exec_bootstrapped_installer "$install_base_dir/install.sh" "$@"
     fi
+    if [[ "$existing_local_resume" -eq 1 ]]; then
+      exec_bootstrapped_installer "$install_base_dir/install.sh" "$@" --resume-local-onboarding
+    fi
     exec_bootstrapped_installer "$install_base_dir/install.sh" "$@" --existing-local-bootstrap
   fi
   exec_bootstrapped_installer "$install_base_dir/install.sh" "$@"
@@ -1347,6 +1473,7 @@ HOSTING_REQUESTED=0
 HOSTING_REPAIR_REQUESTED=0
 LOCAL_REPAIR_REQUESTED=0
 LOCAL_EXISTING_BOOTSTRAP_REQUESTED=0
+LOCAL_ONBOARDING_RESUME_REQUESTED=0
 SOURCE_INSTALL_REQUESTED=0
 DIRTY_CHECKOUT_SOURCE_AUTO_SELECTED=0
 HOSTING_RELEASE=""
@@ -1359,10 +1486,12 @@ TAILSCALE_AUTHKEY_FILE=""
 REQUESTED_SWAP_GB=""
 FASED_CLI_PATH=""
 PREBUILT_RUNTIME_INSTALLED=0
+FRESH_PROTECTED_LOCAL_REQUESTED=0
 GATEWAY_SERVICE_REFRESHED=0
 GATEWAY_RUNTIME_HEALTH_VERIFIED=0
 LOCAL_SIGNER_INSTALL_TRANSACTION_OPEN=0
 PROTECTED_LOCAL_BOOTSTRAPPED=0
+PROTECTED_LOCAL_LIFECYCLE_COMMITTED=0
 PROTECTED_LOCAL_INSTANCE=""
 LOCAL_EXISTING_BOOTSTRAP_MANIFEST_SNAPSHOT=""
 RUNTIME_UPDATE_CHANNEL_CHANGED=0
@@ -1645,6 +1774,11 @@ while [[ $# -gt 0 ]]; do
       RUN_ONBOARD=0
       pass_args+=(--mode local --host-profile local --tailscale off)
       ;;
+    --resume-local-onboarding)
+      LOCAL_ONBOARDING_RESUME_REQUESTED=1
+      RUN_ONBOARD=1
+      pass_args+=(--mode local --host-profile local --tailscale off)
+      ;;
     --local)
       pass_args+=(--mode local --host-profile local --tailscale off)
       ;;
@@ -1736,6 +1870,14 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+if [[ -n "$install_entry_release_identity" ]]; then
+  if [[ -n "$HOSTING_RELEASE" && "$HOSTING_RELEASE" != "$install_entry_release_identity" ]]; then
+    echo "The immutable installer identity does not match the requested release." >&2
+    exit 1
+  fi
+  HOSTING_RELEASE="$install_entry_release_identity"
+fi
 
 if [[ ! "$UPDATE_CHANNEL" =~ ^(stable|beta)$ ]]; then
   echo "--update-channel must be stable or beta." >&2
@@ -1930,70 +2072,51 @@ backup_existing_local_file() {
 }
 
 handle_existing_local_state() {
+  set_installer_state_dir "$FASED_CONFIG_DIR"
   if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
-    set_installer_state_dir "$FASED_CONFIG_DIR"
-    return 0
-  fi
-  if [[ -n "${FASED_STATE_DIR_EXPLICIT:-}" || -n "${FASED_CONFIG_DIR_EXPLICIT:-}" ]]; then
-    set_installer_state_dir "$FASED_CONFIG_DIR"
     return 0
   fi
   if [[ ! -d "$FASED_CONFIG_DIR" ]]; then
-    set_installer_state_dir "$FASED_CONFIG_DIR"
     return 0
   fi
-  if [[ "$RUN_ONBOARD" -eq 0 ]]; then
-    set_installer_state_dir "$FASED_CONFIG_DIR"
+  if [[ -z "$(find "$FASED_CONFIG_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null || true)" ]]; then
     return 0
   fi
-
-  local action="${FASED_EXISTING_DATA_ACTION:-}"
-  if [[ -z "$action" && ( ! -t 0 || ! -t 1 ) ]]; then
-    action="keep"
+  local profile=""
+  if [[ -f "$FASED_CONFIG_DIR/install.json" ]] && \
+    grep -Eq '"profile"[[:space:]]*:[[:space:]]*"protected-local"' \
+      "$FASED_CONFIG_DIR/install.json"; then
+    profile="protected-local"
+  elif [[ -s "$FASED_CONFIG_DIR/install.json" || -s "$FASED_CONFIG_DIR/fased.json" ]]; then
+    profile="pre-handoff-local"
   fi
-
-  if [[ -z "$action" ]]; then
-    action="keep"
-  fi
-
-  case "$action" in
-    keep)
-      set_installer_state_dir "$FASED_CONFIG_DIR"
-      ;;
-    reset-config)
-      local suffix
-      suffix="$(date -u +%Y%m%dT%H%M%SZ)"
-      local backed_up=()
-      local backup
-      backup="$(backup_existing_local_file "$FASED_CONFIG_DIR/fased.json" "local-reset-$suffix" || true)"
-      [[ -n "$backup" ]] && backed_up+=("$backup")
-      backup="$(backup_existing_local_file "$INSTALL_MARKER_PATH" "local-reset-$suffix" || true)"
-      [[ -n "$backup" ]] && backed_up+=("$backup")
-      set_installer_state_dir "$FASED_CONFIG_DIR"
-      if [[ ${#backed_up[@]} -gt 0 ]]; then
-        echo "Backed up local config metadata:"
-        printf '  %s\n' "${backed_up[@]}"
-      else
-        echo "No local config file or install marker needed backup."
-      fi
-      ;;
-    separate-state)
-      local separate_dir="${FASED_EXISTING_DATA_DIR:-}"
-      if [[ -z "$separate_dir" && -t 0 && -t 1 ]]; then
-        printf "State directory [$HOME/.fased-local]: "
-        read -r separate_dir || separate_dir=""
-      fi
-      separate_dir="${separate_dir:-$HOME/.fased-local}"
-      set_installer_state_dir "$separate_dir"
-      mkdir -p "$FASED_CONFIG_DIR"
-      chmod 700 "$FASED_CONFIG_DIR" 2>/dev/null || true
-      echo "Using separate Fased state directory: $FASED_CONFIG_DIR"
-      ;;
-    *)
-      echo "Unknown FASED_EXISTING_DATA_ACTION=$action; expected keep, reset-config, or separate-state." >&2
+  if [[ "$LOCAL_ONBOARDING_RESUME_REQUESTED" -eq 1 ]]; then
+    if [[ "$profile" != "protected-local" || \
+      "$(read_marker_onboarding_completed || true)" == "true" ]]; then
+      echo "Local onboarding resume requires one committed, incomplete Protected Local installation." >&2
       exit 1
-      ;;
-  esac
+    fi
+    return 0
+  fi
+  if [[ "$LOCAL_EXISTING_BOOTSTRAP_REQUESTED" -eq 1 || \
+    "$LOCAL_REPAIR_REQUESTED" -eq 1 || "$SOURCE_INSTALL_REQUESTED" -eq 1 ]]; then
+    if [[ -z "$profile" ]]; then
+      echo "Existing Local state is not a recognized migration or repair source." >&2
+      exit 1
+    fi
+    return 0
+  fi
+  if [[ "$profile" == "protected-local" ]]; then
+    echo "Existing Protected Local installation detected; use fased update." >&2
+    exit 1
+  fi
+  if [[ "$profile" == "pre-handoff-local" ]]; then
+    echo "Existing pre-handoff Local state must enter the verified migration path; rerun the public Local installer command." >&2
+    exit 1
+  fi
+  echo "Refusing to overlay unrecognized non-empty Local state: $FASED_CONFIG_DIR" >&2
+  echo "No existing data was changed." >&2
+  exit 1
 }
 
 resolve_requested_swap_gb() {
@@ -2889,9 +3012,17 @@ protected_local_target_platform() {
   [[ "$(uname -s 2>/dev/null || true)" == "Linux" ]] || return 1
   systemd_is_pid_one || return 1
   [[ "$(resolved_host_profile)" != "hosting" ]] || return 1
-  [[ "$PREBUILT_RUNTIME_INSTALLED" -eq 1 ]] || return 1
   [[ "$SOURCE_INSTALL_REQUESTED" -eq 0 ]] || return 1
   [[ "$(id -u)" -ne 0 ]] || return 1
+}
+
+fresh_protected_local_install_requested() {
+  protected_local_target_platform || return 1
+  [[ "$LOCAL_REPAIR_REQUESTED" -eq 0 ]] || return 1
+  [[ "$LOCAL_EXISTING_BOOTSTRAP_REQUESTED" -eq 0 ]] || return 1
+  [[ "$LOCAL_ONBOARDING_RESUME_REQUESTED" -eq 0 ]] || return 1
+  [[ -n "$HOSTING_RELEASE" ]] || return 1
+  [[ ! -s "$FASED_CONFIG_DIR/install.json" && ! -s "$FASED_CONFIG_DIR/fased.json" ]]
 }
 
 protected_local_supported() {
@@ -2954,6 +3085,13 @@ resolve_shared_managed_state_group() {
     printf '%s\n' "${FASED_CONFIG_GROUP:-fased-config}"
     return 0
   fi
+  local protected_instance="${FASED_PROTECTED_LOCAL_INSTANCE:-}"
+  if [[ "${PROTECTED_LOCAL_BOOTSTRAPPED:-0}" -eq 1 && \
+    "${FASED_PROTECTED_LOCAL:-0}" == "1" && \
+    "$protected_instance" =~ ^[a-f0-9]{16}$ ]]; then
+    printf 'fscf-%s\n' "$protected_instance"
+    return 0
+  fi
   if read_protected_local_env; then
     printf 'fscf-%s\n' "$PROTECTED_LOCAL_INSTANCE"
     return 0
@@ -2994,20 +3132,18 @@ managed_state_file_mode() {
 bootstrap_protected_local_topology() {
   local gateway_mode="$1"
   protected_local_supported || return 2
-  local runtime_root=""
-  runtime_root="$(readlink -f "$FASED_CONFIG_DIR/runtime/current" 2>/dev/null || true)"
-  if [[ -z "$runtime_root" || ! -f "$runtime_root/dist/build-info.json" || \
-    ! -f "$runtime_root/scripts/protected-local-bootstrap.mjs" ]]; then
-    echo "The exact managed Local runtime is missing its protected service bootstrap." >&2
+  local release_source="$FASED_DIR"
+  local declared_runtime="$FASED_CONFIG_DIR/runtime/current"
+  if [[ ! -f "$release_source/install.sh" || \
+    ! -f "$release_source/package.json" ]]; then
+    echo "The exact Local release is missing its protected service bootstrap." >&2
     return 1
   fi
   local release_version=""
-  local release_commit=""
-  release_version="$(node -e 'const v=require(process.argv[1]);process.stdout.write(String(v.version||""))' "$runtime_root/package.json")"
-  release_commit="$(node -e 'const v=require(process.argv[1]);process.stdout.write(String(v.commit||""))' "$runtime_root/dist/build-info.json")"
-  if [[ ! "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ || \
-    ! "$release_commit" =~ ^[a-f0-9]{40}$ ]]; then
-    echo "The managed Local runtime does not have one exact release identity." >&2
+  release_version="$(node -e 'const v=require(process.argv[1]);process.stdout.write(String(v.version||""))' "$release_source/package.json")"
+  if [[ ! "$HOSTING_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ || \
+    "$release_version" != "$HOSTING_RELEASE" ]]; then
+    echo "The Local release does not have one exact matching release identity." >&2
     return 1
   fi
   local gateway_port=""
@@ -3044,18 +3180,14 @@ bootstrap_protected_local_topology() {
     --protected-local-operator-gid "$(id -g)"
     --protected-local-operator-home "$HOME"
     --protected-local-state-dir "$FASED_CONFIG_DIR"
-    --protected-local-runtime-dir "$runtime_root"
+    --protected-local-runtime-dir "$declared_runtime"
     --protected-local-node-binary "$system_node"
     --protected-local-profile "${FASED_PROFILE:-default}"
     --protected-local-gateway-port "$gateway_port"
     --protected-local-gateway-mode "$gateway_mode"
   )
   local bootstrap_result=0
-  if [[ "$INSTALL_VERBOSE" == "1" ]]; then
-    "${bootstrap_args[@]}" || bootstrap_result=$?
-  else
-    "${bootstrap_args[@]}" >"$bootstrap_log" 2>&1 || bootstrap_result=$?
-  fi
+  "${bootstrap_args[@]}" >"$bootstrap_log" 2>&1 || bootstrap_result=$?
   if [[ "$bootstrap_result" -ne 0 ]]; then
     spinner_failed "Secure signer and Gateway services"
     [[ "$INSTALL_VERBOSE" == "1" ]] || tail -n 80 "$bootstrap_log" >&2 || true
@@ -3071,6 +3203,9 @@ bootstrap_protected_local_topology() {
     return 1
   }
   PROTECTED_LOCAL_BOOTSTRAPPED=1
+  if [[ "$gateway_mode" == "activate" ]]; then
+    PROTECTED_LOCAL_LIFECYCLE_COMMITTED=1
+  fi
 }
 
 is_app_service_session() {
@@ -6292,9 +6427,10 @@ assert_verified_hosting_root_source() {
   local privileged_asset=""
   for privileged_asset in \
     install.sh \
-    scripts/fased-host-updater.mjs \
-    scripts/fased-host-updaterctl.mjs \
-    scripts/hosted-legacy-wallet-migration.mjs \
+     scripts/fased-host-updater.mjs \
+     scripts/fased-host-updaterctl.mjs \
+     scripts/privileged-release-evidence.mjs \
+     scripts/hosted-legacy-wallet-migration.mjs \
     scripts/fased-signer-enroll-hosting.sh \
     scripts/fased-signer-network-hosting.sh \
     scripts/fased-signer-owner-hosting.sh \
@@ -6365,6 +6501,10 @@ refresh_current_checkout_and_reexec_if_needed
 
 handle_existing_local_state
 
+if fresh_protected_local_install_requested; then
+  FRESH_PROTECTED_LOCAL_REQUESTED=1
+fi
+
 REPO_ROOT="$(resolve_repo_root)"
 assert_marker_matches_repo "$REPO_ROOT"
 prefer_compatible_user_node_if_available || prefer_compatible_system_node_if_available || true
@@ -6379,9 +6519,10 @@ fi
 
 missing=()
 required_tools=(git curl)
-if use_prebuilt_release_runtime; then
+if use_prebuilt_release_runtime && [[ "$FRESH_PROTECTED_LOCAL_REQUESTED" -ne 1 ]] && \
+  [[ "$LOCAL_ONBOARDING_RESUME_REQUESTED" -ne 1 ]]; then
   required_tools+=(npm)
-else
+elif ! use_prebuilt_release_runtime; then
   required_tools+=(pnpm)
 fi
 for cmd in "${required_tools[@]}"; do
@@ -6450,7 +6591,10 @@ section "System preparation"
 ensure_low_memory_swap_if_possible
 build_old_space_mb="$(recommended_onboard_old_space_mb)"
 build_node_options="$(node_options_with_old_space "${NODE_OPTIONS:-}" "$build_old_space_mb")"
-if use_prebuilt_release_runtime; then
+if [[ "$FRESH_PROTECTED_LOCAL_REQUESTED" -eq 1 || \
+  "$LOCAL_ONBOARDING_RESUME_REQUESTED" -eq 1 ]]; then
+  :
+elif use_prebuilt_release_runtime; then
   if ! prepare_existing_local_bootstrap_manifest_snapshot; then
     status_frame_end
     echo "Could not prepare the transactional Local bootstrap rollback boundary." >&2
@@ -6477,7 +6621,11 @@ fi
 export FASED_SAT_BOND_LAYOUT_PATH="${FASED_SAT_BOND_LAYOUT_PATH:-$FASED_DIR/token/sat/bond-api/bond-position-layout.json}"
 export FASED_SAT_BOND_POLICY_LAYOUT_PATH="${FASED_SAT_BOND_POLICY_LAYOUT_PATH:-$FASED_DIR/token/sat/bond-api/bond-tier-policy-layout.json}"
 
-if use_prebuilt_release_runtime; then
+if [[ "$FRESH_PROTECTED_LOCAL_REQUESTED" -eq 1 || \
+  "$LOCAL_ONBOARDING_RESUME_REQUESTED" -eq 1 ]]; then
+  section "Runtime"
+  step_done "Lifecycle-managed runtime"
+elif use_prebuilt_release_runtime; then
   section "Runtime"
   step_done "Using prebuilt runtime"
 else
@@ -6528,23 +6676,42 @@ if protected_local_target_platform; then
     echo "Install sudo or run from an administrator-capable desktop account; do not run Fased itself as root." >&2
     exit 1
   fi
-  protected_gateway_mode="activate"
-  if [[ "$RUN_ONBOARD" -eq 1 ]]; then
-    protected_gateway_mode="prepare"
-  fi
-  if ! bootstrap_protected_local_topology "$protected_gateway_mode"; then
-    status_frame_end
-    if rollback_managed_runtime_after_failed_install; then
-      echo "Protected Local service bootstrap failed; the prior Local runtime and service topology were restored." >&2
-    else
-      echo "Protected Local service bootstrap failed and automatic Local runtime rollback was incomplete." >&2
-      echo "Retry the exact installer command; do not replace signer or wallet state manually." >&2
+  if [[ "$LOCAL_ONBOARDING_RESUME_REQUESTED" -eq 1 ]]; then
+    if ! read_protected_local_env; then
+      status_frame_end
+      echo "Committed Protected Local onboarding state is incomplete or invalid." >&2
+      exit 1
     fi
-    exit 1
+    PROTECTED_LOCAL_BOOTSTRAPPED=1
+    PROTECTED_LOCAL_LIFECYCLE_COMMITTED=1
+  else
+    if ! bootstrap_protected_local_topology activate; then
+      if [[ -n "$LOCAL_EXISTING_BOOTSTRAP_MANIFEST_SNAPSHOT" ]] && \
+        ! rollback_managed_runtime_after_failed_install; then
+        status_frame_end
+        echo "Protected Local lifecycle failed and the prior managed runtime could not be restored." >&2
+        exit 1
+      fi
+      status_frame_end
+      echo "Protected Local lifecycle did not commit. Its uncommitted topology was restored." >&2
+      exit 1
+    fi
+    if [[ -n "$LOCAL_EXISTING_BOOTSTRAP_MANIFEST_SNAPSHOT" ]] && \
+      ! discard_existing_local_bootstrap_manifest_snapshot; then
+      status_frame_end
+      echo "Protected Local bootstrap succeeded, but its temporary rollback snapshot could not be removed." >&2
+      exit 1
+    fi
   fi
-  if ! discard_existing_local_bootstrap_manifest_snapshot; then
+  FASED_CLI_PATH="$FASED_CONFIG_DIR/bin/fased"
+  export PATH="$FASED_CONFIG_DIR/bin:$PATH"
+  hash -r 2>/dev/null || true
+  install_user_cli_path_snippet "$FASED_CONFIG_DIR/bin" "$HOME/.profile"
+  install_user_cli_path_snippet "$FASED_CONFIG_DIR/bin" "$HOME/.bashrc"
+  install_user_cli_path_snippet "$FASED_CONFIG_DIR/bin" "$HOME/.zshrc"
+  if [[ ! -x "$FASED_CLI_PATH" ]] || ! "$FASED_CLI_PATH" --version >/dev/null 2>&1; then
     status_frame_end
-    echo "Protected Local bootstrap succeeded, but its temporary rollback snapshot could not be removed." >&2
+    echo "Committed Protected Local lifecycle did not install a usable CLI." >&2
     exit 1
   fi
 fi
@@ -6565,7 +6732,7 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
   fi
   if [[ "$PROTECTED_LOCAL_BOOTSTRAPPED" -eq 1 ]]; then
     marker_onboarding_completed="$(read_marker_onboarding_completed || true)"
-    if [[ "$marker_onboarding_completed" == "true" || -s "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}" ]]; then
+    if [[ "$marker_onboarding_completed" == "true" ]]; then
       write_install_marker "$REPO_ROOT" "true"
     else
       write_install_marker "$REPO_ROOT" "false"
@@ -6574,7 +6741,9 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
       systemctl show -p MainPID --value \
         "fased-gateway-$PROTECTED_LOCAL_INSTANCE.service" 2>/dev/null || true
     )"
-    persist_runtime_update_channel
+    if [[ "$PROTECTED_LOCAL_LIFECYCLE_COMMITTED" -ne 1 ]]; then
+      persist_runtime_update_channel
+    fi
     if ! wait_for_protected_local_gateway_config_convergence \
       "$protected_gateway_pid_before_channel"; then
       status_frame_end
@@ -6681,13 +6850,15 @@ onboard_color_env=()
 if supports_color && [[ -z "${NO_COLOR:-}" && -z "${FORCE_COLOR:-}" ]]; then
   onboard_color_env=(FORCE_COLOR=1)
 fi
-if ! (cd "$FASED_DIR" && env NODE_OPTIONS="$onboard_node_options" "${onboard_color_env[@]}" FASED_INSTALLER_ONBOARD=1 "$FASED_CLI_PATH" onboard --install-daemon "${pass_args[@]}"); then
-  if [[ "$PROTECTED_LOCAL_BOOTSTRAPPED" -eq 1 ]]; then
-    if ! bootstrap_protected_local_topology rollback; then
-      echo "Onboarding failed and the protected Local rollback did not complete. Retry the exact installer command; do not remove signer state manually." >&2
-      exit 1
-    fi
-    echo "Onboarding did not complete; the prior Local signer and Gateway topology was restored." >&2
+onboard_lifecycle_env=()
+if [[ "$PROTECTED_LOCAL_LIFECYCLE_COMMITTED" -eq 1 ]]; then
+  onboard_lifecycle_env=(FASED_INSTALL_LIFECYCLE_COMMITTED=1)
+fi
+if ! (cd "$FASED_DIR" && env NODE_OPTIONS="$onboard_node_options" "${onboard_color_env[@]}" "${onboard_lifecycle_env[@]}" FASED_INSTALLER_ONBOARD=1 "$FASED_CLI_PATH" onboard --install-daemon "${pass_args[@]}"); then
+  if [[ "$PROTECTED_LOCAL_LIFECYCLE_COMMITTED" -eq 1 ]]; then
+    write_install_marker "$REPO_ROOT" "false"
+    echo "Protected Local services are committed and healthy, but onboarding did not complete." >&2
+    echo "Rerun the same Local installer command to resume onboarding." >&2
   fi
   exit 1
 fi
@@ -6698,12 +6869,7 @@ if [[ ! -f "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}" ]]; then
   exit 1
 fi
 if [[ "$PROTECTED_LOCAL_BOOTSTRAPPED" -eq 1 ]]; then
-  persist_runtime_update_channel protected-local-pre-activation
-  if ! bootstrap_protected_local_topology activate; then
-    write_install_marker "$REPO_ROOT" "false"
-    echo "Onboarding completed, but Protected Local Gateway activation failed and was not committed." >&2
-    exit 1
-  fi
+  :
 else
   persist_runtime_update_channel
 fi

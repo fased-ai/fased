@@ -575,6 +575,12 @@ async function copyLegacyMaterial(legacy, layout, signerIdentity) {
 async function updateOperatorConfig(spec, layout, configGroup) {
   const configPath = path.join(spec.stateDir, "fased.json");
   const config = parseConfig(configPath);
+  const existingToken =
+    typeof config.gateway?.auth?.token === "string" ? config.gateway.auth.token.trim() : "";
+  const gatewayToken =
+    existingToken && existingToken.length <= 4096
+      ? existingToken
+      : crypto.randomBytes(32).toString("hex");
   const protectedEnv = renderProtectedLocalOperatorEnvironment({ layout, stateDir: spec.stateDir });
   const variables = {
     ...config.env?.vars,
@@ -594,6 +600,17 @@ async function updateOperatorConfig(spec, layout, configGroup) {
   }
   const next = {
     ...config,
+    gateway: {
+      ...config.gateway,
+      mode: "local",
+      bind: "loopback",
+      port: spec.gatewayPort,
+      auth: {
+        ...config.gateway?.auth,
+        mode: "token",
+        token: gatewayToken,
+      },
+    },
     env: {
       ...config.env,
       vars: variables,
@@ -885,18 +902,6 @@ async function shareApplicationState(spec, configGroup, legacy) {
   runSystem(chown, ["-R", `${spec.operatorUid}:${configGroup.gid}`, spec.stateDir]);
   runSystem(chmod, ["-R", "g+rwX,o-rwx", spec.stateDir]);
   runSystem(find, [spec.stateDir, "-type", "d", "-exec", chmod, "g+s", "{}", "+"]);
-  const identityDir = path.join(spec.stateDir, "identity");
-  await fsp.mkdir(identityDir, { recursive: true, mode: 0o2770 });
-  await fsp.chown(identityDir, spec.operatorUid, configGroup.gid);
-  await fsp.chmod(identityDir, 0o2770);
-  const walletDir = path.join(spec.stateDir, "wallet");
-  await fsp.mkdir(walletDir, { recursive: true, mode: 0o2770 });
-  await fsp.chown(walletDir, spec.operatorUid, configGroup.gid);
-  await fsp.chmod(walletDir, 0o2770);
-  const federationDir = path.join(spec.stateDir, "federation");
-  await fsp.mkdir(federationDir, { recursive: true, mode: 0o2770 });
-  await fsp.chown(federationDir, spec.operatorUid, configGroup.gid);
-  await fsp.chmod(federationDir, 0o2770);
   for (const protectedRuntimePath of [
     path.join(spec.stateDir, "runtime"),
     path.join(spec.stateDir, "updater"),
@@ -1019,7 +1024,6 @@ async function installRootFiles(params) {
     await fsp.chown(directory, 0, 0);
     await fsp.chmod(directory, 0o755);
   }
-  await atomicCopy(params.signerBinary, layout.signerBinary, 0o755, { uid: 0, gid: 0 });
   await atomicCopy(
     path.join(sourceRoot, "scripts", "fased-lifecycle-supervisor.mjs"),
     layout.supervisorBinary,
@@ -1039,6 +1043,7 @@ async function installRootFiles(params) {
       applicationReleasesDir: layout.applicationReleasesDir,
       applicationCurrentLink: layout.applicationCurrentLink,
     },
+    activate: false,
   });
   await installControllerGeneration(sourceRoot, layout, spec);
   await atomicCopy(
@@ -1065,7 +1070,8 @@ async function installRootFiles(params) {
   for (const file of Object.values(servicePlan.files)) {
     await atomicWrite(file.path, file.content, file.mode, { uid: 0, gid: 0 });
   }
-  const channelPath = `/etc/fased/local/${layout.instanceId}/update-channel`;
+  const channelDirectory = await prepareProtectedLocalChannelDirectory(layout);
+  const channelPath = path.join(channelDirectory, "update-channel");
   await atomicWrite(channelPath, `${spec.updateChannel}\n`, 0o644, { uid: 0, gid: 0 });
   await fsp.mkdir(layout.signerStateDir, { recursive: true, mode: 0o700 });
   await fsp.chown(layout.signerStateDir, signerIdentity.uid, signerIdentity.gid);
@@ -1076,12 +1082,77 @@ async function installRootFiles(params) {
   await fsp.mkdir(layout.supervisorStateDir, { recursive: true, mode: 0o700 });
   await fsp.chown(layout.supervisorStateDir, 0, 0);
   await fsp.chmod(layout.supervisorStateDir, 0o700);
-  await atomicWrite(
-    path.join(layout.controllerStateDir, "signer-version"),
-    `${spec.releaseVersion}\n`,
-    0o600,
-    { uid: 0, gid: 0 },
-  );
+}
+
+async function prepareProtectedLocalChannelDirectory(layout, options = {}) {
+  const root = options.root ?? "/etc/fased/local";
+  const expectedOwnerUid = options.expectedOwnerUid ?? 0;
+  const directory = path.join(root, layout.instanceId);
+  await fsp.mkdir(directory, { recursive: true, mode: 0o755 });
+  const info = await fsp.lstat(directory);
+  if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== expectedOwnerUid) {
+    fail(`protected Local update-channel directory is unsafe: ${directory}`);
+  }
+  await fsp.chmod(directory, 0o755);
+  return directory;
+}
+
+export function buildProtectedLocalLifecycleApplyCommand(spec, layout, options = {}) {
+  return Object.freeze({
+    executable:
+      options.runuserPath ?? systemBinary(["/usr/sbin/runuser", "/sbin/runuser"], "runuser"),
+    args: Object.freeze([
+      "-u",
+      spec.operatorUser,
+      "--",
+      "/usr/bin/env",
+      "-i",
+      `HOME=${spec.operatorHome}`,
+      `USER=${spec.operatorUser}`,
+      `LOGNAME=${spec.operatorUser}`,
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      `FASED_HOST_UPDATER_SOCKET=/run/fased-local-controller/${layout.instanceId}/request.sock`,
+      `FASED_HOST_UPDATERCTL_STATE=${path.join(
+        spec.stateDir,
+        "protected-local-controller-transaction.json",
+      )}`,
+      spec.nodeBinary,
+      path.join(layout.installDir, "controller", "current", "fased-host-updaterctl.mjs"),
+      spec.releaseVersion,
+      "--apply",
+    ]),
+  });
+}
+
+function validateProtectedLocalLifecycleResult(result, spec) {
+  const supportedApplicationAdapters = new Set([
+    "managed-install-absent",
+    "managed-install-v1-to-v2",
+    "managed-install-v2",
+  ]);
+  if (
+    result?.version !== spec.releaseVersion ||
+    result?.phase !== "committed" ||
+    result?.migration?.schemaVersion !== 1 ||
+    result?.migration?.profile !== "protected-local" ||
+    result?.migration?.serviceTopology !== "protected-local-system-v1" ||
+    !supportedApplicationAdapters.has(result?.migration?.adapters?.application)
+  ) {
+    fail("protected Local lifecycle did not commit a supported topology transaction");
+  }
+  return result;
+}
+
+function applyProtectedLocalLifecycle(spec, layout) {
+  const command = buildProtectedLocalLifecycleApplyCommand(spec, layout);
+  const output = runSystem(command.executable, command.args, { timeout: 20 * 60_000 });
+  let result;
+  try {
+    result = JSON.parse(output);
+  } catch (error) {
+    fail(`protected Local lifecycle returned invalid JSON: ${error.message}`);
+  }
+  return validateProtectedLocalLifecycleResult(result, spec);
 }
 
 function verifyGatewayRuntimeAccess(layout) {
@@ -1394,7 +1465,7 @@ function gatewayFailureJournal(layout) {
 }
 
 async function verifyGatewayHealth(spec, layout, timeoutMs = 120_000) {
-  const cliEntrypoint = path.join(spec.runtimeDir, "fased.mjs");
+  const cliEntrypoint = path.join(layout.applicationCurrentLink, "fased.mjs");
   if (!fs.existsSync(cliEntrypoint)) {
     fail("protected Local application runtime has no CLI entrypoint");
   }
@@ -1493,25 +1564,6 @@ function verifyGatewayLaunchInputs(spec, layout) {
     } catch {
       fail(`protected Local Gateway cannot read its ${label}`);
     }
-  }
-}
-
-async function stageGatewayActivation(layout, systemctl) {
-  await fsp.rm(path.join(layout.controllerStateDir, "gateway-activation-ready"), {
-    force: true,
-  });
-  runSystem(systemctl, ["disable", "--now", layout.gatewayUnit]);
-  const activeState = runSystem(systemctl, [
-    "show",
-    layout.gatewayUnit,
-    "--property=ActiveState",
-    "--value",
-  ]).trim();
-  if (activeState !== "inactive") {
-    fail(`protected Local staged Gateway remained ${activeState || "unknown"}`);
-  }
-  if (fs.existsSync(path.join(layout.controllerStateDir, "gateway-activation-ready"))) {
-    fail("protected Local staged Gateway retained its activation marker");
   }
 }
 
@@ -1861,6 +1913,7 @@ async function persistBootstrapTransaction(transaction, phase) {
             }
           : null,
         migrated: transaction.migrated === true,
+        lifecycleCommitted: transaction.lifecycleCommitted === true,
         updatedAt: new Date().toISOString(),
       },
       null,
@@ -1941,6 +1994,7 @@ function readBootstrapTransaction(layout, spec, registryPath) {
           }
         : null,
     migrated: value.migrated === true,
+    lifecycleCommitted: value.lifecycleCommitted === true,
     legacy: resolveLegacySignerPaths(spec, originalConfig),
   };
 }
@@ -2021,6 +2075,31 @@ function legacyGatewaySuppressionPaths(spec, layout) {
   });
 }
 
+function isValidLegacyGatewayReleaseHealth(health) {
+  return (
+    RELEASE_PATTERN.test(health?.version ?? "") &&
+    new Set(["managed-package", "packaged-runtime"]).has(health?.runtimeSource)
+  );
+}
+
+async function waitForLegacyGatewayReleaseHealth(
+  spec,
+  {
+    timeoutMs = 30_000,
+    probe = probeGatewayHealth,
+    wait = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+    now = Date.now,
+  } = {},
+) {
+  const deadline = now() + timeoutMs;
+  let health = await probe(spec);
+  while (!isValidLegacyGatewayReleaseHealth(health) && !health?.conflict && now() < deadline) {
+    await wait(100);
+    health = await probe(spec);
+  }
+  return health;
+}
+
 async function captureLegacyGatewayState(spec, layout) {
   const paths = legacyGatewaySuppressionPaths(spec, layout);
   const dropInSnapshot = await captureFile(paths.dropIn);
@@ -2061,12 +2140,9 @@ async function captureLegacyGatewayState(spec, layout) {
       dropInSnapshot,
     };
   }
-  const health = properties.ActiveState === "active" ? await probeGatewayHealth(spec) : null;
-  if (
-    health &&
-    (!RELEASE_PATTERN.test(health.version) ||
-      !new Set(["managed-package", "packaged-runtime"]).has(health.runtimeSource))
-  ) {
+  const health =
+    properties.ActiveState === "active" ? await waitForLegacyGatewayReleaseHealth(spec) : null;
+  if (health && !isValidLegacyGatewayReleaseHealth(health)) {
     fail(`legacy Local Gateway has no exact healthy release identity (${health.detail})`);
   }
   const state = {
@@ -2583,6 +2659,37 @@ async function activatePreparedBootstrapTransaction(transaction) {
   }
 }
 
+async function completeCommittedBootstrapTransaction(transaction) {
+  const { spec, layout } = transaction;
+  verifyGatewayRuntimeAccess(layout);
+  await waitForSocket(layout.operatorSocket);
+  await verifyOperatorCapabilities(spec, layout);
+  const wallets = verifyLogicalWalletState(spec, layout);
+  await retireLegacyGateway(transaction);
+  await removeLegacySignerMaterial(transaction.legacy);
+  await fsp.rm(path.join(layout.stateDir, "bootstrap-transaction.json"), { force: true });
+  await fsyncDirectory(layout.stateDir);
+  return {
+    schemaVersion: 1,
+    profile: "protected-local",
+    instanceId: layout.instanceId,
+    created: transaction.allocationCreated,
+    migrated: transaction.migrated,
+    alreadyProtected: false,
+    gatewayUnit: layout.gatewayUnit,
+    signerUnit: layout.signerUnit,
+    controllerUnit: layout.controllerUnit,
+    supervisorUnit: layout.supervisorUnit,
+    gatewayMode: "activate",
+    lifecycleCommitted: true,
+    wallets,
+    operatorEnvironment: renderProtectedLocalOperatorEnvironment({
+      layout,
+      stateDir: spec.stateDir,
+    }),
+  };
+}
+
 async function installProtectedLocal(params) {
   if (
     process.platform !== "linux" ||
@@ -2673,6 +2780,11 @@ async function installProtectedLocal(params) {
   }
   const interrupted = readBootstrapTransaction(layout, spec, registryPath);
   if (interrupted) {
+    if (interrupted.phase === "lifecycle-committed" && interrupted.lifecycleCommitted) {
+      const result = await completeCommittedBootstrapTransaction(interrupted);
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      return result;
+    }
     if (interrupted.phase === "prepared-awaiting-onboarding") {
       if (spec.gatewayMode === "rollback") {
         const result = await rollbackBootstrapTransaction(
@@ -2797,9 +2909,13 @@ async function installProtectedLocal(params) {
     legacyGatewayWasActive: false,
     legacyGatewayState: null,
     migrated: false,
+    lifecycleCommitted: false,
     legacy: null,
   };
   try {
+    if (spec.gatewayMode !== "activate") {
+      fail("new protected Local topology must commit before onboarding");
+    }
     await persistBootstrapTransaction(transaction, "allocated");
     transaction.groups.gateway = ensureGroup(layout.gatewayGroup);
     transaction.groups.signer = ensureGroup(layout.signerGroup);
@@ -2820,9 +2936,7 @@ async function installProtectedLocal(params) {
     addGroups(spec.operatorUser, [layout.operatorGroup, layout.configGroup]);
     addGroups(layout.gatewayUser, [layout.configGroup]);
     addGroups(layout.signerUser, [layout.gatewayGroup, layout.operatorGroup]);
-    if (spec.gatewayMode === "activate") {
-      grantGatewayHomeTraversal(transaction);
-    }
+    grantGatewayHomeTraversal(transaction);
     assertPrincipalSeparation(spec, layout);
     const servicePlan = buildProtectedLocalServicePlan({
       instanceId: layout.instanceId,
@@ -2855,71 +2969,40 @@ async function installProtectedLocal(params) {
       servicePlan,
       signerIdentity: transaction.users.signer,
     });
-    verifyGatewayRuntimeAccess(layout);
     const migrated = await copyLegacyMaterial(legacy, layout, transaction.users.signer);
     transaction.migrated = migrated.migrated;
-    if (spec.gatewayMode === "prepare") {
-      await restoreLegacyLocalStateBoundary(transaction);
-    } else {
-      await shareApplicationState(spec, transaction.groups.config, legacy);
-    }
+    await shareApplicationState(spec, transaction.groups.config, legacy);
     await persistBootstrapTransaction(transaction, "candidate-installed");
     await updateOperatorConfig(spec, layout, transaction.groups.config);
     await persistBootstrapTransaction(transaction, "application-configured");
     const systemctl = systemBinary(["/usr/bin/systemctl", "/bin/systemctl"], "systemctl");
     runSystem(systemctl, ["daemon-reload"]);
-    if (spec.gatewayMode === "prepare") {
-      await stageGatewayActivation(layout, systemctl);
-    }
+    await authorizeGatewayActivation(layout);
     runSystem(systemctl, [
       "enable",
       layout.controllerUnit,
       layout.supervisorUnit,
       layout.signerUnit,
+      layout.gatewayUnit,
     ]);
     runSystem(systemctl, ["restart", layout.controllerUnit]);
     runSystem(systemctl, ["restart", layout.supervisorUnit]);
-    runSystem(systemctl, ["restart", layout.signerUnit]);
-    if (spec.gatewayMode === "prepare") {
-      await stageGatewayActivation(layout, systemctl);
-    }
-    await waitForSocket(layout.operatorSocket);
-    await verifyOperatorCapabilities(spec, layout);
-    const wallets = verifyLogicalWalletState(spec, layout);
-    if (spec.gatewayMode === "activate") {
-      await authorizeGatewayActivation(layout);
-      verifyGatewayLaunchInputs(spec, layout);
-      runSystem(systemctl, ["enable", layout.gatewayUnit]);
-      runSystem(systemctl, ["restart", layout.gatewayUnit]);
-      await verifyGatewayHealth(spec, layout, spec.gatewayHealthTimeoutMs);
-      await retireLegacyGateway(transaction);
-      await removeLegacySignerMaterial(legacy);
-      await fsp.rm(path.join(layout.stateDir, "bootstrap-transaction.json"), { force: true });
-      await fsyncDirectory(layout.stateDir);
-    } else {
-      await persistBootstrapTransaction(transaction, "prepared-awaiting-onboarding");
-    }
-    const result = {
-      schemaVersion: 1,
-      profile: "protected-local",
-      instanceId: layout.instanceId,
-      created: allocated.created,
-      migrated: migrated.migrated,
-      gatewayUnit: layout.gatewayUnit,
-      signerUnit: layout.signerUnit,
-      controllerUnit: layout.controllerUnit,
-      supervisorUnit: layout.supervisorUnit,
-      gatewayMode: spec.gatewayMode,
-      prepared: spec.gatewayMode === "prepare",
-      wallets,
-      operatorEnvironment: renderProtectedLocalOperatorEnvironment({
-        layout,
-        stateDir: spec.stateDir,
-      }),
-    };
+    await waitForSocket(`/run/fased-local-controller/${layout.instanceId}/request.sock`, 60_000);
+    applyProtectedLocalLifecycle(spec, layout);
+    transaction.lifecycleCommitted = true;
+    await persistBootstrapTransaction(transaction, "lifecycle-committed");
+    const result = await completeCommittedBootstrapTransaction(transaction);
     process.stdout.write(`${JSON.stringify(result)}\n`);
     return result;
   } catch (error) {
+    if (transaction.lifecycleCommitted) {
+      throw new Error(
+        `protected Local lifecycle committed, but final bootstrap cleanup is pending: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error },
+      );
+    }
     return await rollbackBootstrapTransaction(
       transaction,
       error instanceof Error ? error : new Error(String(error)),
@@ -3010,6 +3093,7 @@ if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
 }
 
 export const __testing = Object.freeze({
+  buildProtectedLocalLifecycleApplyCommand,
   buildProtectedLocalBootstrapSpec,
   hardenOperatorRuntime,
   hardenInstalledPlugins,
@@ -3018,6 +3102,7 @@ export const __testing = Object.freeze({
   gatewayAclGrantState,
   legacyInstallReferencesUserGateway,
   parseDirectoryAcl,
+  prepareProtectedLocalChannelDirectory,
   renderProtectedLocalOperatorEnvironment,
   renderProtectedLocalOwnerWrapper,
   registeredSignerWallets,
@@ -3026,7 +3111,9 @@ export const __testing = Object.freeze({
   resolveLegacySignerPaths,
   sharedApplicationStateDirectoriesForAclVerification,
   protectedLocalGatewayHealthMatches,
+  waitForLegacyGatewayReleaseHealth,
   previousLegacyGatewayVersion,
+  validateProtectedLocalLifecycleResult,
   verifySignerReleaseIdentity,
   buildControllerIdentity,
 });

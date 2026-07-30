@@ -111,4 +111,37 @@ describe("repairUpdateOwnedPluginInstallState", () => {
       'Skipped npm install record repair for "demo": missing npm spec.',
     ]);
   });
+
+  it("replaces a stale npm path only when the canonical install exists", () => {
+    const existing = new Set(["/home/fc/.fased/extensions/demo"]);
+    const result = repairUpdateOwnedPluginInstallState(
+      {
+        plugins: {
+          installs: {
+            demo: {
+              source: "npm",
+              spec: "@fased/demo@latest",
+              installPath: "/home/fc/.fased/extensions/removed-demo",
+            },
+            custom: {
+              source: "npm",
+              spec: "@fased/custom@latest",
+              installPath: "/srv/fased/custom",
+            },
+          },
+        },
+      },
+      {
+        resolveNpmInstallPath: (pluginId) => `/home/fc/.fased/extensions/${pluginId}`,
+        installPathExists: (installPath) =>
+          existing.has(installPath) || installPath === "/srv/fased/custom",
+      },
+    );
+
+    expect(result.repairedPluginIds).toEqual(["demo"]);
+    expect(result.config.plugins?.installs?.demo?.installPath).toBe(
+      "/home/fc/.fased/extensions/demo",
+    );
+    expect(result.config.plugins?.installs?.custom?.installPath).toBe("/srv/fased/custom");
+  });
 });

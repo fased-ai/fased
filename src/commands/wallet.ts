@@ -2835,7 +2835,8 @@ export async function walletStatusCommand(
       ? resolveNativeSignerOperatorLifecycle(effectiveEnv)
       : undefined;
   if (operatorLifecycle) {
-    const registered = readWalletProviderRegistry(effectiveEnv).wallets.filter(
+    const registry = readWalletProviderRegistry(effectiveEnv);
+    const registered = registry.wallets.filter(
       (wallet) =>
         wallet.providerId === "local-socket-signer" &&
         (!options.walletId || wallet.id === options.walletId),
@@ -2843,6 +2844,10 @@ export async function walletStatusCommand(
     if (options.walletId && registered.length === 0) {
       throw new Error(`native signer wallet not found: ${options.walletId}`);
     }
+    const registeredIds = new Set(registered.map((wallet) => wallet.id));
+    const assignments = Object.fromEntries(
+      Object.entries(registry.assignments).filter(([, walletId]) => registeredIds.has(walletId)),
+    );
     const wallets = registered.map((wallet) => {
       const signerWalletId =
         typeof wallet.metadata?.signerWalletId === "string" && wallet.metadata.signerWalletId.trim()
@@ -2851,6 +2856,9 @@ export async function walletStatusCommand(
       return {
         id: wallet.id,
         name: wallet.name,
+        handle: `@wallet:${wallet.id}`,
+        publicAddress: wallet.addresses?.solana,
+        role: resolveWalletUserRole(wallet),
         signer: invokeNativeSignerWalletReadiness({
           signerBinPath: operatorLifecycle.signerBinPath,
           socketFlag: "--operator-socket",
@@ -2870,6 +2878,10 @@ export async function walletStatusCommand(
                 operatorLifecycle.profile === "hosting"
                   ? "hosting-operator"
                   : "protected-local-operator",
+              defaultWalletId: registeredIds.has(registry.defaultWalletId ?? "")
+                ? registry.defaultWalletId
+                : undefined,
+              assignments,
               wallets,
             },
           },

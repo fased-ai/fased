@@ -37,7 +37,7 @@ describe("hosted signer security boundary", () => {
     expect(install).toContain("! -type f ! -type d");
     expect(install).toContain("-type f -links +1");
     expect(install).toContain(
-      "printf 'version=%s\\nsha256=%s\\nsigner_sha256=%s\\ndependency_sha256=%s\\ndependency_hash=%s\\nrelease_manifest_sha256=%s\\ncommit=%s\\n'",
+      "printf 'version=%s\\nsha256=%s\\nsigner_sha256=%s\\ndependency_sha256=%s\\ndependency_hash=%s\\nrelease_manifest_sha256=%s\\nlifecycle_metadata_sha256=%s\\nprovenance_sha256=%s\\nsbom_sha256=%s\\nvex_sha256=%s\\nevidence_verifier_sha256=%s\\ncommit=%s\\n'",
     );
     expect(install).toContain('tagged_head" == "$attested_commit');
     expect(install).toContain('tagged_package_version" == "$HOSTING_RELEASE');

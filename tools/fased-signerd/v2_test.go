@@ -563,7 +563,7 @@ func TestSignerV2ReservationsSurviveRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open signer keys: %v", err)
 	}
-	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 	store.now = func() time.Time { return now }
 	_, policy, err := keys.CreateWithPolicy(signerWalletCreateRequestV2{
 		WalletID:        "agent",

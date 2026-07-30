@@ -4,13 +4,22 @@ import { createHash } from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { trustMetadataDigest } from "./lifecycle-trust-crypto.mjs";
+import { verifyInitialLifecycleRoot } from "./lifecycle-trust-root.mjs";
 
 const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
 const COMMIT_PATTERN = /^[a-f0-9]{40}$/u;
 const TARGET_NAMES = Object.freeze({
+  bootstrap: "install.sh",
   supervisor: "fased-lifecycle-supervisor.mjs",
   controllerServer: "fased-host-updater.mjs",
   controllerClient: "fased-host-updaterctl.mjs",
+  evidenceVerifier: "fased-privileged-release-evidence.mjs",
+});
+const EVIDENCE_NAMES = Object.freeze({
+  provenance: "fased-privileged-provenance-v1.intoto.json",
+  sbom: "fased-privileged-sbom-v1.spdx.json",
+  vex: "fased-privileged-vex-v1.openvex.json",
 });
 const MAX_VALIDITY_MS = 400 * 24 * 60 * 60 * 1000;
 
@@ -31,6 +40,7 @@ function parseInstant(value, label) {
 
 export async function buildLifecycleTrustMetadata({
   assetsDir,
+  rootPolicyPath,
   version,
   commit,
   issuedAt,
@@ -47,6 +57,39 @@ export async function buildLifecycleTrustMetadata({
   ) {
     throw new Error("lifecycle trust metadata validity must be positive and at most 400 days");
   }
+  const rootPolicyInfo = await fsp.lstat(rootPolicyPath);
+  if (
+    !rootPolicyInfo.isFile() ||
+    rootPolicyInfo.isSymbolicLink() ||
+    rootPolicyInfo.nlink !== 1 ||
+    rootPolicyInfo.size <= 0 ||
+    rootPolicyInfo.size > 1024 * 1024
+  ) {
+    throw new Error("lifecycle root policy must be one bounded regular single-link file");
+  }
+  let rootPolicy;
+  try {
+    rootPolicy = JSON.parse(await fsp.readFile(rootPolicyPath, "utf8"));
+  } catch (error) {
+    throw new Error("lifecycle root policy must be valid JSON", { cause: error });
+  }
+  if (
+    !rootPolicy ||
+    typeof rootPolicy !== "object" ||
+    Array.isArray(rootPolicy) ||
+    Object.keys(rootPolicy).toSorted().join(",") !== "schemaVersion,signatures,signed" ||
+    rootPolicy.schemaVersion !== 1
+  ) {
+    throw new Error("lifecycle root policy envelope is malformed");
+  }
+  const selfKeyIds = new Set(rootPolicy.signed?.root?.keyIds ?? []);
+  const selfSignedEnvelope = {
+    ...rootPolicy,
+    signatures: rootPolicy.signatures.filter((signature) => selfKeyIds.has(signature?.keyId)),
+  };
+  verifyInitialLifecycleRoot(selfSignedEnvelope, {
+    pinnedSha256: trustMetadataDigest(selfSignedEnvelope),
+  });
 
   const targets = {};
   for (const [role, asset] of Object.entries(TARGET_NAMES)) {
@@ -57,10 +100,26 @@ export async function buildLifecycleTrustMetadata({
     }
     targets[role] = { asset, sha256: await sha256(candidate) };
   }
+  const evidence = {};
+  for (const [role, asset] of Object.entries(EVIDENCE_NAMES)) {
+    const candidate = path.join(assetsDir, asset);
+    const info = await fsp.lstat(candidate);
+    if (
+      !info.isFile() ||
+      info.isSymbolicLink() ||
+      info.nlink !== 1 ||
+      info.size <= 0 ||
+      info.size > 32 * 1024 * 1024
+    ) {
+      throw new Error(`lifecycle ${role} evidence must be one bounded regular single-link file`);
+    }
+    evidence[role] = { asset, sha256: await sha256(candidate) };
+  }
 
   return {
     schemaVersion: 1,
     role: "fased-lifecycle-targets",
+    rootPolicy,
     release: {
       version,
       tag: `v${version}`,
@@ -77,6 +136,7 @@ export async function buildLifecycleTrustMetadata({
       controllerProtocol: 2,
     },
     targets,
+    evidence,
   };
 }
 
@@ -84,6 +144,7 @@ function parseArgs(argv) {
   const values = new Map();
   const allowed = new Set([
     "--assets",
+    "--root-policy",
     "--version",
     "--commit",
     "--issued-at",
@@ -95,13 +156,14 @@ function parseArgs(argv) {
     const value = argv[index + 1];
     if (!allowed.has(key) || !value || values.has(key)) {
       throw new Error(
-        "usage: build-lifecycle-trust-metadata --assets DIR --version X.Y.Z --commit SHA --issued-at INSTANT --expires-at INSTANT --output FILE",
+        "usage: build-lifecycle-trust-metadata --assets DIR --root-policy FILE --version X.Y.Z --commit SHA --issued-at INSTANT --expires-at INSTANT --output FILE",
       );
     }
     values.set(key, value);
   }
   for (const required of [
     "--assets",
+    "--root-policy",
     "--version",
     "--commit",
     "--issued-at",
@@ -114,6 +176,7 @@ function parseArgs(argv) {
   }
   return {
     assetsDir: path.resolve(values.get("--assets")),
+    rootPolicyPath: path.resolve(values.get("--root-policy")),
     version: values.get("--version"),
     commit: values.get("--commit"),
     issuedAt: values.get("--issued-at"),

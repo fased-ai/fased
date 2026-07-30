@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -26,6 +27,30 @@ afterEach(() => {
 });
 
 describe("protected Local bootstrap contract", () => {
+  it("normalizes the root-owned update-channel directory for service traversal", async () => {
+    const root = temporaryRoot();
+    const layout = buildProtectedLocalLayout("0123456789abcdef");
+    const directory = path.join(root, layout.instanceId);
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+
+    await expect(
+      __testing.prepareProtectedLocalChannelDirectory(layout, {
+        root,
+        expectedOwnerUid: process.getuid?.() ?? 0,
+      }),
+    ).resolves.toBe(directory);
+    expect(fs.statSync(directory).mode & 0o777).toBe(0o755);
+
+    fs.rmSync(directory, { recursive: true });
+    fs.symlinkSync(root, directory);
+    await expect(
+      __testing.prepareProtectedLocalChannelDirectory(layout, {
+        root,
+        expectedOwnerUid: process.getuid?.() ?? 0,
+      }),
+    ).rejects.toThrow(/update-channel directory is unsafe/u);
+  });
+
   it("accepts only one exact release and explicit Gateway phase", () => {
     const root = temporaryRoot();
     const home = path.join(root, "home", "operator");
@@ -120,6 +145,98 @@ describe("protected Local bootstrap contract", () => {
     expect(wrapper).toContain("FASED_SIGNER_OUTPUT_USER=operator");
     expect(wrapper).toContain("FASED_SIGNER_OWNER_LOCAL=1");
     expect(wrapper).toContain('exec /opt/fased/local/0123456789abcdef/signer-owner "$@"');
+  });
+
+  it("routes a fresh topology through one target-owned lifecycle apply transaction", () => {
+    const root = temporaryRoot();
+    const home = path.join(root, "home", "operator");
+    const stateDir = path.join(home, ".fased");
+    const runtimeDir = path.join(stateDir, "runtime", "current");
+    fs.mkdirSync(runtimeDir, { recursive: true });
+    const spec = buildProtectedLocalBootstrapSpec({
+      operatorUser: "operator",
+      operatorUid: 1000,
+      operatorGid: 1000,
+      operatorHome: home,
+      stateDir,
+      runtimeDir,
+      nodeBinary: "/usr/bin/node",
+      releaseVersion: "0.1.80",
+      releaseCommit: "a".repeat(40),
+      updateChannel: "stable",
+      gatewayPort: 18789,
+      gatewayMode: "activate",
+      profile: "default",
+    });
+    const layout = buildProtectedLocalLayout("0123456789abcdef");
+    const command = __testing.buildProtectedLocalLifecycleApplyCommand(spec, layout, {
+      runuserPath: "/usr/sbin/runuser",
+    });
+
+    expect(command).toEqual({
+      executable: "/usr/sbin/runuser",
+      args: [
+        "-u",
+        "operator",
+        "--",
+        "/usr/bin/env",
+        "-i",
+        `HOME=${home}`,
+        "USER=operator",
+        "LOGNAME=operator",
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "FASED_HOST_UPDATER_SOCKET=/run/fased-local-controller/0123456789abcdef/request.sock",
+        `FASED_HOST_UPDATERCTL_STATE=${path.join(
+          stateDir,
+          "protected-local-controller-transaction.json",
+        )}`,
+        "/usr/bin/node",
+        "/opt/fased/local/0123456789abcdef/controller/current/fased-host-updaterctl.mjs",
+        "0.1.80",
+        "--apply",
+      ],
+    });
+  });
+
+  it.each(["managed-install-absent", "managed-install-v1-to-v2", "managed-install-v2"])(
+    "accepts the target-owned %s lifecycle transaction",
+    (applicationAdapter) => {
+      const spec = {
+        releaseVersion: "0.1.80",
+      };
+      const result = {
+        version: "0.1.80",
+        phase: "committed",
+        migration: {
+          schemaVersion: 1,
+          profile: "protected-local",
+          serviceTopology: "protected-local-system-v1",
+          adapters: {
+            application: applicationAdapter,
+          },
+        },
+      };
+
+      expect(__testing.validateProtectedLocalLifecycleResult(result, spec)).toBe(result);
+    },
+  );
+
+  it("rejects a lifecycle receipt outside the protected Local compatibility inventory", () => {
+    expect(() =>
+      __testing.validateProtectedLocalLifecycleResult(
+        {
+          version: "0.1.80",
+          phase: "committed",
+          migration: {
+            schemaVersion: 1,
+            profile: "hosting",
+            serviceTopology: "hosting-system-v1",
+            adapters: { application: "managed-install-v2" },
+          },
+        },
+        { releaseVersion: "0.1.80" },
+      ),
+    ).toThrow("supported topology transaction");
   });
 
   it("normalizes registry IDs but preserves the registered public identity", () => {
@@ -252,6 +369,39 @@ describe("protected Local bootstrap contract", () => {
         4321,
       ),
     ).toBe(false);
+  });
+
+  it("waits through a transient legacy Gateway restart and accepts its exact release identity", async () => {
+    const observed = [
+      {
+        ok: false,
+        conflict: false,
+        version: "",
+        runtimeSource: "",
+        detail: "connect ECONNREFUSED 127.0.0.1:18789",
+      },
+      {
+        ok: false,
+        conflict: true,
+        version: "0.1.75",
+        runtimeSource: "managed-package",
+        detail: "status=200 version=0.1.75 runtimeSource=managed-package",
+      },
+    ];
+    let probes = 0;
+    const health = await __testing.waitForLegacyGatewayReleaseHealth(
+      {},
+      {
+        probe: async () => observed[Math.min(probes++, observed.length - 1)],
+        wait: async () => {},
+        now: () => 0,
+      },
+    );
+    expect(probes).toBe(2);
+    expect(health).toMatchObject({
+      version: "0.1.75",
+      runtimeSource: "managed-package",
+    });
   });
 
   it("binds rollback health to the exact previous managed release", () => {
@@ -462,10 +612,14 @@ default:other::---
     ).rejects.toThrow(/unsafe entry/u);
   });
 
-  it("packages the root bootstrap and invokes it before Local completion", () => {
+  it("packages one commit-before-onboarding protected Local lifecycle", () => {
     const installer = fs.readFileSync(path.join(process.cwd(), "install.sh"), "utf8");
     const bootstrap = fs.readFileSync(
       path.join(process.cwd(), "scripts", "protected-local-bootstrap.mjs"),
+      "utf8",
+    );
+    const updater = fs.readFileSync(
+      path.join(process.cwd(), "scripts", "fased-host-updater.mjs"),
       "utf8",
     );
     const packageMetadata = JSON.parse(
@@ -478,17 +632,116 @@ default:other::---
     expect(installer).toContain("--protected-local-gateway-mode");
     expect(installer).toContain("--protected-local-gateway-health-timeout-ms");
     expect(installer).toContain("--gateway-health-timeout-ms");
-    expect(installer).toContain("bootstrap_protected_local_topology rollback");
     expect(installer).toContain('>"$bootstrap_log" 2>&1');
     expect(installer).toContain("print_local_handoff_block");
     expect(installer).not.toContain('"$FASED_CLI_PATH" dashboard --no-open');
     expect(installer).toContain(
-      "Onboarding did not complete; the prior Local signer and Gateway topology was restored.",
+      "Protected Local services are committed and healthy, but onboarding did not complete.",
     );
+    expect(installer).toContain("bootstrap_protected_local_topology activate");
+    expect(installer).toContain("--resume-local-onboarding");
+    expect(installer).not.toContain("bootstrap_protected_local_topology rollback");
     expect(installer).toContain("signer_sha256=");
     expect(installer).toContain("apt-get install -y git curl ca-certificates jq acl");
     expect(installer).toContain('missing+=("acl")');
     expect(installer).toContain("pacman -Sy --needed --noconfirm git curl ca-certificates jq acl");
+    const sharedStateStart = bootstrap.indexOf("async function shareApplicationState(");
+    const sharedStateEnd = bootstrap.indexOf(
+      "\n\nconst PROTECTED_LOCAL_OPERATOR_ONLY_STATE",
+      sharedStateStart,
+    );
+    const sharedStateAdapter = bootstrap.slice(sharedStateStart, sharedStateEnd);
+    expect(sharedStateAdapter).not.toContain('path.join(spec.stateDir, "identity")');
+    expect(sharedStateAdapter).not.toContain('path.join(spec.stateDir, "wallet")');
+    expect(sharedStateAdapter).not.toContain('path.join(spec.stateDir, "federation")');
+    expect(updater).toContain(
+      '{ relativePath: "identity", stateClass: "device-identity", create: true }',
+    );
+    expect(updater).toContain('{ relativePath: "wallet", stateClass: "wallet", create: true }');
+    expect(updater).toContain(
+      '{ relativePath: "federation", stateClass: "federation-network", create: true }',
+    );
+  });
+
+  it("selects the fresh Local target by exact release and delegates trust to the root bundle", () => {
+    const installer = fs.readFileSync(path.join(process.cwd(), "install.sh"), "utf8");
+    const bootstrapStart = installer.indexOf("bootstrap_protected_local_topology() {");
+    const bootstrapEnd = installer.indexOf("\n\nis_app_service_session() {", bootstrapStart);
+    const bootstrap = installer.slice(bootstrapStart, bootstrapEnd);
+    const bundleEntryStart = installer.indexOf("    enter_protected_local_bundle() {");
+    const bundleEntryEnd = installer.indexOf("\n    }\n", bundleEntryStart);
+    const bundleEntry = installer.slice(bundleEntryStart, bundleEntryEnd);
+
+    expect(bootstrap).toContain('local release_source="$FASED_DIR"');
+    expect(bootstrap).toContain('"$release_source/install.sh"');
+    expect(bootstrap).toContain('"$release_source/package.json"');
+    expect(bootstrap).toContain('"$release_version" != "$HOSTING_RELEASE"');
+    expect(bootstrap).not.toContain("dist/build-info.json");
+    expect(bootstrap).not.toContain("release_commit");
+    expect(bootstrap).toContain("--protected-local-root-bootstrap");
+
+    expect(installer).toContain(
+      'if [[ "$hosting_bootstrap" -eq 1 || "$protected_local_bootstrap" -eq 1 ]]',
+    );
+    expect(installer).toContain('bootstrap_hosting_attested_bundle "$@"');
+    expect(bundleEntry).toContain('"$selected_package_root/scripts/protected-local-bootstrap.mjs"');
+    expect(bundleEntry).toContain('--source-root "$selected_package_root"');
+    expect(bundleEntry).toContain(
+      '--signer-binary "$selected_root_store/verified-assets/fased-signerd"',
+    );
+
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, "release-source");
+    const stateDir = path.join(root, "home", "operator", ".fased");
+    const binDir = path.join(root, "bin");
+    const capturePath = path.join(root, "sudo-args");
+    fs.mkdirSync(sourceRoot, { recursive: true });
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.writeFileSync(path.join(sourceRoot, "install.sh"), "#!/bin/sh\n");
+    fs.writeFileSync(path.join(sourceRoot, "package.json"), '{"version":"9.9.9-test.1"}\n');
+    fs.writeFileSync(
+      path.join(binDir, "sudo"),
+      `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >${JSON.stringify(capturePath)}
+`,
+      { mode: 0o700 },
+    );
+    const harnessPath = path.join(root, "fresh-release-handoff.sh");
+    fs.writeFileSync(
+      harnessPath,
+      `#!/bin/bash
+set -euo pipefail
+protected_local_supported() { return 0; }
+pass_args_value_after() { return 0; }
+resolve_protected_local_system_node() { printf '/usr/bin/node\\n'; }
+spinner_start() { :; }
+spinner_done() { :; }
+spinner_failed() { :; }
+install_log_path() { printf '%s\\n' ${JSON.stringify(path.join(root, "bootstrap.log"))}; }
+read_protected_local_env() { PROTECTED_LOCAL_INSTANCE=fixture; return 0; }
+${bootstrap}
+FASED_DIR=${JSON.stringify(sourceRoot)}
+FASED_CONFIG_DIR=${JSON.stringify(stateDir)}
+HOSTING_RELEASE=9.9.9-test.1
+UPDATE_CHANNEL=beta
+FASED_PROFILE=default
+INSTALL_VERBOSE=0
+AUTO_INSTALL=0
+PROTECTED_LOCAL_BOOTSTRAPPED=0
+PROTECTED_LOCAL_LIFECYCLE_COMMITTED=0
+PATH=${JSON.stringify(`${binDir}:/usr/bin:/bin`)}
+bootstrap_protected_local_topology activate
+`,
+      { mode: 0o700 },
+    );
+    const result = spawnSync("/bin/bash", [harnessPath], { encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.existsSync(path.join(sourceRoot, "dist", "build-info.json"))).toBe(false);
+    expect(fs.readFileSync(capturePath, "utf8")).toContain(
+      "--protected-local-root-bootstrap --release 9.9.9-test.1",
+    );
   });
 
   it("selects a fixed system Node instead of the operator's active version-manager Node", () => {
@@ -510,16 +763,20 @@ default:other::---
     expect(bootstrap).toContain("install_linux_system_dependencies 0");
   });
 
-  it("restores the managed runtime when protected bootstrap preflight fails", () => {
+  it("restores the prior managed runtime after the shared root transaction rolls back", () => {
     const installer = fs.readFileSync(path.join(process.cwd(), "install.sh"), "utf8");
-    const bootstrapCall = installer.lastIndexOf(
-      'if ! bootstrap_protected_local_topology "$protected_gateway_mode"',
-    );
-    const failureEnd = installer.indexOf("\n  fi", bootstrapCall);
+    const bootstrapCall = installer.lastIndexOf("if ! bootstrap_protected_local_topology activate");
+    const failureEnd = installer.indexOf("\n    fi", bootstrapCall);
     const failureBranch = installer.slice(bootstrapCall, failureEnd);
 
+    expect(failureBranch).toContain(
+      "Protected Local lifecycle did not commit. Its uncommitted topology was restored.",
+    );
     expect(failureBranch).toContain("rollback_managed_runtime_after_failed_install");
-    expect(failureBranch).toContain("the prior Local runtime and service topology were restored");
-    expect(failureBranch).toContain("automatic Local runtime rollback was incomplete");
+    expect(failureBranch.indexOf("rollback_managed_runtime_after_failed_install")).toBeLessThan(
+      failureBranch.indexOf(
+        "Protected Local lifecycle did not commit. Its uncommitted topology was restored.",
+      ),
+    );
   });
 });
