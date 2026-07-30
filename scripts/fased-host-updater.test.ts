@@ -59,6 +59,17 @@ async function writeProtectedApplicationFixture({
     ),
     fsp.writeFile(path.join(root, "fased.mjs"), "#!/usr/bin/env node\n"),
     fsp.writeFile(path.join(root, "scripts", "start-managed.sh"), "#!/bin/bash\n"),
+    fsp.writeFile(path.join(root, "scripts", "fased-managed-launcher.sh"), "#!/bin/bash\n"),
+    fsp.writeFile(path.join(root, "scripts", "fased-managed-service.sh"), "#!/bin/bash\n"),
+    fsp.writeFile(path.join(root, "scripts", "fased-managed-updater.mjs"), "export {};\n"),
+    ...[
+      "hosted-release-manifest.mjs",
+      "lifecycle-trust-crypto.mjs",
+      "lifecycle-trust-policy.mjs",
+      "lifecycle-trust-root.mjs",
+      "lifecycle-trust-runtime.mjs",
+      "managed-runtime-layout.mjs",
+    ].map((name) => fsp.writeFile(path.join(root, "scripts", name), "export {};\n")),
   ]);
 }
 
@@ -74,6 +85,7 @@ async function createFixture(
     protectedService?: boolean;
     missingPreviousApplication?: boolean;
     managedApplication?: boolean;
+    emptyManagedApplication?: boolean;
     managedInstallSchema?: 1 | 2;
   } = {},
 ) {
@@ -122,6 +134,13 @@ async function createFixture(
   await fsp.writeFile(signerStateDBPath, "old-db\n", { mode: 0o600 });
   await fsp.writeFile(signerUnitPath, "ExecStart=old-signer\n", { mode: 0o644 });
   await fsp.writeFile(paths.versionPath, "1.2.2\n", { mode: 0o600 });
+  if (options.emptyManagedApplication) {
+    await Promise.all([
+      fsp.rm(signerPath, { force: true }),
+      fsp.rm(signerStateDBPath, { force: true }),
+      fsp.rm(paths.versionPath, { force: true }),
+    ]);
+  }
   if (options.protectedApplication || options.managedApplication) {
     await Promise.all([
       fsp.mkdir(path.join(paths.applicationReleasesDir!, "v1.2.2"), {
@@ -198,46 +217,49 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
     const previousLink = path.join(runtimeDir, "previous");
     const prefix = path.join(managedStateDir, "install-cache", "npm-global");
     const compatibilityRoot = path.join(prefix, "lib", "node_modules", "@fased", "fased");
-    await Promise.all([
-      fsp.mkdir(runtimeDir, { recursive: true }),
-      fsp.mkdir(path.dirname(compatibilityRoot), { recursive: true }),
-      fsp.mkdir(path.join(managedStateDir, "updater"), { recursive: true }),
-    ]);
-    await Promise.all([
-      fsp.symlink(path.join(paths.applicationReleasesDir!, "v1.2.2"), currentLink),
-      fsp.symlink(path.join(paths.applicationReleasesDir!, "v1.2.2"), previousLink),
-      fsp.symlink(currentLink, compatibilityRoot),
-      fsp.writeFile(path.join(managedStateDir, "fased.json"), "{}\n"),
-      fsp.writeFile(
-        path.join(managedStateDir, "install.json"),
-        `${JSON.stringify({
-          schemaVersion: options.managedInstallSchema ?? 2,
-          profile: "protected-local",
-          source: "managed-artifact",
-          stateDir: managedStateDir,
-          configPath: path.join(managedStateDir, "fased.json"),
-          runtime: {
-            activeVersion: "1.2.2",
-            previousVersion: null,
-            currentLink,
-            previousLink,
-            releasesDir: paths.applicationReleasesDir,
-          },
-          package: { prefix, compatibilityRoot },
-          service: {
-            name: "fased-gateway-0123456789abcdef.service",
-            scope: "system",
-            launcher: path.join(root, "gateway-launch"),
-          },
-          updater: {
-            version: "1.2.2",
-            path: path.join(managedStateDir, "updater", "fased-managed-updater.mjs"),
-          },
-          update: { channel: "stable" },
-          release: null,
-        })}\n`,
-      ),
-    ]);
+    await fsp.mkdir(managedStateDir, { recursive: true });
+    await fsp.writeFile(path.join(managedStateDir, "fased.json"), "{}\n");
+    if (!options.emptyManagedApplication) {
+      await Promise.all([
+        fsp.mkdir(runtimeDir, { recursive: true }),
+        fsp.mkdir(path.dirname(compatibilityRoot), { recursive: true }),
+        fsp.mkdir(path.join(managedStateDir, "updater"), { recursive: true }),
+      ]);
+      await Promise.all([
+        fsp.symlink(path.join(paths.applicationReleasesDir!, "v1.2.2"), currentLink),
+        fsp.symlink(path.join(paths.applicationReleasesDir!, "v1.2.2"), previousLink),
+        fsp.symlink(currentLink, compatibilityRoot),
+        fsp.writeFile(
+          path.join(managedStateDir, "install.json"),
+          `${JSON.stringify({
+            schemaVersion: options.managedInstallSchema ?? 2,
+            profile: "protected-local",
+            source: "managed-artifact",
+            stateDir: managedStateDir,
+            configPath: path.join(managedStateDir, "fased.json"),
+            runtime: {
+              activeVersion: "1.2.2",
+              previousVersion: null,
+              currentLink,
+              previousLink,
+              releasesDir: paths.applicationReleasesDir,
+            },
+            package: { prefix, compatibilityRoot },
+            service: {
+              name: "fased-gateway-0123456789abcdef.service",
+              scope: "system",
+              launcher: path.join(root, "gateway-launch"),
+            },
+            updater: {
+              version: "1.2.2",
+              path: path.join(managedStateDir, "updater", "fased-managed-updater.mjs"),
+            },
+            update: { channel: "stable" },
+            release: null,
+          })}\n`,
+        ),
+      ]);
+    }
   }
   const events: string[] = [];
   let activeSignerVersion = "1.2.2";
@@ -248,6 +270,7 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
     instanceId: options.managedApplication ? "0123456789abcdef" : null,
     stateDir: path.join(root, "operator", ".fased"),
     configPath: path.join(root, "operator", ".fased", "fased.json"),
+    gatewayLauncherPath: options.managedApplication ? path.join(root, "gateway-launch") : undefined,
     operator: {
       name: "operator",
       uid: process.getuid(),
@@ -277,7 +300,10 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
       declaredStateRegistry: 1,
     },
     stateSchemas: {
-      managedInstall: options.managedApplication ? (options.managedInstallSchema ?? 2) : null,
+      managedInstall:
+        options.managedApplication && !options.emptyManagedApplication
+          ? (options.managedInstallSchema ?? 2)
+          : null,
       walletRegistry: null,
       signer: 2,
       mining: 1,
@@ -306,9 +332,10 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
           ? {
               application: {
                 targetRoot: path.join(paths.applicationReleasesDir!, `v${version}`),
-                previousRoot: options.missingPreviousApplication
-                  ? null
-                  : path.join(paths.applicationReleasesDir!, "v1.2.2"),
+                previousRoot:
+                  options.missingPreviousApplication || options.emptyManagedApplication
+                    ? null
+                    : path.join(paths.applicationReleasesDir!, "v1.2.2"),
                 changed: version !== "1.2.2",
               },
               ...(options.managedApplication
@@ -1014,6 +1041,104 @@ describe("root-owned hosted updater protocol", () => {
       schemaVersion: 2,
       runtime: { activeVersion: "1.2.3" },
     });
+  });
+
+  it("commits a fresh empty application and signer topology through the shared lifecycle", async () => {
+    const fixture = await createFixture({
+      managedApplication: true,
+      emptyManagedApplication: true,
+    });
+    const managedStateDir = path.join(fixture.paths.stateDir, "..", "operator", ".fased");
+    fixture.context.verifyGateway = async () => ({
+      version: "1.2.3",
+      runtimeSource: "managed-package",
+    });
+
+    await expect(
+      __testing.applyReleaseTransaction(
+        request("applyRelease", TRANSACTION_ONE, "1.2.3"),
+        fixture.context,
+      ),
+    ).resolves.toMatchObject({
+      phase: "committed",
+      migration: {
+        profile: "protected-local",
+        adapters: { application: "managed-install-absent" },
+      },
+    });
+
+    expect(
+      JSON.parse(await fsp.readFile(path.join(managedStateDir, "install.json"), "utf8")),
+    ).toMatchObject({
+      schemaVersion: 2,
+      profile: "protected-local",
+      runtime: { activeVersion: "1.2.3", previousVersion: null },
+    });
+    expect(await fsp.realpath(path.join(managedStateDir, "runtime", "current"))).toBe(
+      path.join(fixture.paths.applicationReleasesDir!, "v1.2.3"),
+    );
+    for (const candidate of [
+      path.join(managedStateDir, "bin", "fased"),
+      path.join(managedStateDir, "bin", "fased-service"),
+      path.join(managedStateDir, "updater", "fased-managed-updater.mjs"),
+      path.join(managedStateDir, "install-cache", "npm-global", "bin", "fased"),
+    ]) {
+      expect(fs.existsSync(candidate)).toBe(true);
+    }
+    expect(await fsp.readFile(fixture.paths.signerPath, "utf8")).toBe("signer-1.2.3\n");
+  });
+
+  it("removes an uncommitted fresh topology and succeeds on the same-command retry", async () => {
+    const fixture = await createFixture({
+      managedApplication: true,
+      emptyManagedApplication: true,
+    });
+    const managedStateDir = path.join(fixture.paths.stateDir, "..", "operator", ".fased");
+    fixture.context.verifyGateway = async () => {
+      throw new Error("deterministic fresh Gateway health failure");
+    };
+
+    let failure: (Error & { code?: string }) | undefined;
+    try {
+      await __testing.applyReleaseTransaction(
+        request("applyRelease", TRANSACTION_ONE, "1.2.3"),
+        fixture.context,
+      );
+    } catch (error) {
+      failure = error as Error & { code?: string };
+    }
+    expect(failure?.code, failure?.stack).toBe("TARGET_RELEASE_ROLLED_BACK");
+
+    for (const candidate of [
+      path.join(managedStateDir, "install.json"),
+      path.join(managedStateDir, "runtime"),
+      path.join(managedStateDir, "bin"),
+      path.join(managedStateDir, "updater"),
+      path.join(managedStateDir, "install-cache"),
+      path.join(managedStateDir, "identity"),
+      path.join(managedStateDir, "wallet"),
+      path.join(managedStateDir, "federation"),
+      path.join(managedStateDir, "extensions"),
+      fixture.paths.signerPath,
+      fixture.paths.signerStateDBPath,
+      fixture.paths.versionPath,
+      fixture.paths.journalPath,
+      fixture.paths.gatewayGatePath,
+      fixture.paths.signerGatePath,
+    ]) {
+      expect(fs.existsSync(candidate)).toBe(false);
+    }
+
+    fixture.context.verifyGateway = async () => ({
+      version: "1.2.3",
+      runtimeSource: "managed-package",
+    });
+    await expect(
+      __testing.applyReleaseTransaction(
+        request("applyRelease", TRANSACTION_ONE, "1.2.3"),
+        fixture.context,
+      ),
+    ).resolves.toMatchObject({ phase: "committed" });
   });
 
   it("rejects declared user-state content changes before commit", async () => {

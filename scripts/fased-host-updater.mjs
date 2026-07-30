@@ -43,6 +43,14 @@ const PRIVILEGED_PROVENANCE_NAME = "fased-privileged-provenance-v1.intoto.json";
 const PRIVILEGED_PROVENANCE_BUNDLE_NAME = `${PRIVILEGED_PROVENANCE_NAME}.attestation.json`;
 const PRIVILEGED_SBOM_NAME = "fased-privileged-sbom-v1.spdx.json";
 const PRIVILEGED_VEX_NAME = "fased-privileged-vex-v1.openvex.json";
+const MANAGED_UPDATER_SUPPORT_FILES = Object.freeze([
+  "hosted-release-manifest.mjs",
+  "lifecycle-trust-crypto.mjs",
+  "lifecycle-trust-policy.mjs",
+  "lifecycle-trust-root.mjs",
+  "lifecycle-trust-runtime.mjs",
+  "managed-runtime-layout.mjs",
+]);
 const CONTROLLER_SELF_CHECK_SCHEMA_VERSION = 1;
 const CONTROLLER_PROTOCOL_VERSION = 2;
 const SOCKET_PATH = "/run/fased-host-updater/request.sock";
@@ -2706,7 +2714,9 @@ export async function installProtectedLocalApplicationRuntime(params) {
       await fsp.rm(staging, { recursive: true, force: true });
     }
   }
-  await atomicSymlinkDurable(releaseRoot, params.paths.applicationCurrentLink);
+  if (params.activate !== false) {
+    await atomicSymlinkDurable(releaseRoot, params.paths.applicationCurrentLink);
+  }
   return { releaseRoot, previousRoot: null };
 }
 
@@ -3892,6 +3902,9 @@ async function discoverProtectedApplicationTopology(context) {
         ? `fased-signerd-${context.instanceId}.service`
         : "fased-signerd.service",
     }),
+    gatewayLauncherPath: protectedLocal
+      ? context.paths.gatewayLauncherPath
+      : "/usr/local/libexec/fased-gateway-launch",
     capabilities: Object.freeze({
       lifecycleControllerProtocol: CONTROLLER_PROTOCOL_VERSION,
       signerProtocol: Object.freeze({ current: 2, min: 2, max: 2 }),
@@ -3922,6 +3935,8 @@ function managedApplicationStateFromTopology(topology) {
     stateDir: topology.stateDir,
     operatorUid: topology.operator.uid,
     configGid: topology.configGroup.gid,
+    gatewayServiceName: topology.services.gateway,
+    gatewayLauncherPath: topology.gatewayLauncherPath,
   });
 }
 
@@ -3932,6 +3947,8 @@ function managedApplicationPaths(stateDir) {
   }
   const runtimeDir = path.join(root, "runtime");
   const prefix = path.join(root, "install-cache", "npm-global");
+  const binDir = path.join(root, "bin");
+  const updaterDir = path.join(root, "updater");
   return Object.freeze({
     stateDir: root,
     manifestPath: path.join(root, "install.json"),
@@ -3940,8 +3957,13 @@ function managedApplicationPaths(stateDir) {
     currentLink: path.join(runtimeDir, "current"),
     previousLink: path.join(runtimeDir, "previous"),
     compatibilityLink: path.join(prefix, "lib", "node_modules", "@fased", "fased"),
-    updaterPath: path.join(root, "updater", "fased-managed-updater.mjs"),
+    binDir,
+    launcherPath: path.join(binDir, "fased"),
+    serviceLauncherPath: path.join(binDir, "fased-service"),
+    updaterDir,
+    updaterPath: path.join(updaterDir, "fased-managed-updater.mjs"),
     prefix,
+    prefixLauncherPath: path.join(prefix, "bin", "fased"),
   });
 }
 
@@ -3980,19 +4002,34 @@ function validateManagedInstallManifest(value, applicationState, paths) {
 
 function buildTargetManagedInstallManifest({
   previousManifest,
+  applicationState,
   paths,
   releasesDir,
   version,
   applicationRelease,
+  updateChannel,
 }) {
+  const base =
+    previousManifest ??
+    Object.freeze({
+      profile: applicationState.profile,
+      stateDir: paths.stateDir,
+      configPath: path.join(paths.stateDir, "fased.json"),
+      service: {
+        name: applicationState.gatewayServiceName,
+        scope: "system",
+        launcher: applicationState.gatewayLauncherPath,
+      },
+      update: { channel: updateChannel },
+    });
   return {
-    ...previousManifest,
+    ...base,
     schemaVersion: 2,
     source: "managed-artifact",
     runtime: {
-      ...previousManifest.runtime,
+      ...previousManifest?.runtime,
       activeVersion: version,
-      previousVersion: previousManifest.runtime.activeVersion,
+      previousVersion: previousManifest?.runtime?.activeVersion ?? null,
       currentLink: paths.currentLink,
       previousLink: paths.previousLink,
       releasesDir,
@@ -4009,6 +4046,10 @@ function buildTargetManagedInstallManifest({
     updater: {
       version,
       path: paths.updaterPath,
+    },
+    update: {
+      ...base.update,
+      channel: updateChannel,
     },
     release: {
       version,
@@ -4052,16 +4093,26 @@ async function prepareManagedApplicationTransaction(
     throw new Error("target lifecycle controller did not stage the application release");
   }
   const paths = managedApplicationPaths(state.stateDir);
-  const previousManifest = validateManagedInstallManifest(
-    JSON.parse(await fsp.readFile(paths.manifestPath, "utf8")),
-    state,
-    paths,
-  );
+  let previousManifest = null;
+  try {
+    previousManifest = validateManagedInstallManifest(
+      JSON.parse(await fsp.readFile(paths.manifestPath, "utf8")),
+      state,
+      paths,
+    );
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
   const previousRoot = await readOptionalLink(paths.currentLink);
-  if (!previousRoot) {
-    throw new Error("root-managed application has no active runtime to update");
+  if (Boolean(previousManifest) !== Boolean(previousRoot)) {
+    throw new Error("root-managed application manifest and active runtime are inconsistent");
   }
   const previousPreviousRoot = await readOptionalLink(paths.previousLink);
+  if (!previousManifest && previousPreviousRoot) {
+    throw new Error("empty root-managed application has an unexpected previous selector");
+  }
   const targetRoot = path.resolve(application.targetRoot);
   if (targetRoot !== protectedApplicationReleaseRoot(context.paths, version)) {
     throw new Error("target lifecycle controller application identity is mismatched");
@@ -4072,6 +4123,26 @@ async function prepareManagedApplicationTransaction(
     applicationRelease.commit,
     applicationRelease.dependencies.dependencyHash,
   );
+  let updateChannel = "stable";
+  try {
+    const configured = (await fsp.readFile(context.paths.channelPath, "utf8")).trim();
+    if (!new Set(["stable", "beta"]).has(configured)) {
+      throw new Error("root-managed update channel is invalid");
+    }
+    updateChannel = configured;
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  if (
+    !previousManifest &&
+    (!state.gatewayServiceName ||
+      !state.gatewayLauncherPath ||
+      !path.isAbsolute(state.gatewayLauncherPath))
+  ) {
+    throw new Error("empty root-managed application service identity is unavailable");
+  }
   return Object.freeze({
     profile: state.profile,
     stateDir: paths.stateDir,
@@ -4080,10 +4151,12 @@ async function prepareManagedApplicationTransaction(
     previousManifest,
     nextManifest: buildTargetManagedInstallManifest({
       previousManifest,
+      applicationState: state,
       paths,
       releasesDir: context.paths.applicationReleasesDir,
       version,
       applicationRelease,
+      updateChannel: previousManifest?.update?.channel ?? updateChannel,
     }),
   });
 }
@@ -4108,16 +4181,23 @@ function validateManagedApplicationTransaction(value, context, version) {
   ) {
     throw new Error("host updater managed application transaction is invalid");
   }
-  const previousManifest = validateManagedInstallManifest(value.previousManifest, state, paths);
+  const previousManifest =
+    value.previousManifest == null
+      ? null
+      : validateManagedInstallManifest(value.previousManifest, state, paths);
   const nextManifest = validateManagedInstallManifest(value.nextManifest, state, paths);
   if (
     nextManifest.runtime.activeVersion !== version ||
-    nextManifest.runtime.previousVersion !== previousManifest.runtime.activeVersion ||
+    nextManifest.runtime.previousVersion !== (previousManifest?.runtime?.activeVersion ?? null) ||
     nextManifest.release?.version !== version
   ) {
     throw new Error("host updater target application manifest is mismatched");
   }
-  const previousRoot = path.resolve(String(value.previousRoot ?? ""));
+  const previousRoot =
+    value.previousRoot == null ? null : path.resolve(String(value.previousRoot ?? ""));
+  if (Boolean(previousManifest) !== Boolean(previousRoot)) {
+    throw new Error("host updater previous managed application identity is inconsistent");
+  }
   const previousPreviousRoot =
     value.previousPreviousRoot == null ? null : path.resolve(String(value.previousPreviousRoot));
   return Object.freeze({
@@ -4138,6 +4218,72 @@ async function writeManagedManifest(context, transaction, manifest) {
   await fsyncDirectory(paths.stateDir);
 }
 
+async function installInitializedManagedStableFiles(context, transaction, targetRoot) {
+  if (transaction.previousManifest) {
+    return;
+  }
+  const paths = managedApplicationPaths(transaction.stateDir);
+  const sources = [
+    ["fased-managed-launcher.sh", paths.launcherPath],
+    ["fased-managed-service.sh", paths.serviceLauncherPath],
+    ...MANAGED_UPDATER_SUPPORT_FILES.map((name) => [name, path.join(paths.updaterDir, name)]),
+    ["fased-managed-updater.mjs", paths.updaterPath],
+  ];
+  for (const [name, destination] of sources) {
+    await atomicCopyFileDurable(path.join(targetRoot, "scripts", name), destination, {
+      mode: 0o750,
+      uid: context.applicationState.operatorUid,
+      gid: context.applicationState.configGid,
+    });
+  }
+  await atomicSymlinkDurable(paths.launcherPath, paths.prefixLauncherPath);
+}
+
+async function removeInitializedManagedStableFiles(transaction) {
+  if (transaction.previousManifest) {
+    return;
+  }
+  const paths = managedApplicationPaths(transaction.stateDir);
+  for (const candidate of [
+    paths.prefixLauncherPath,
+    paths.launcherPath,
+    paths.serviceLauncherPath,
+    paths.updaterPath,
+    ...MANAGED_UPDATER_SUPPORT_FILES.map((name) => path.join(paths.updaterDir, name)),
+  ]) {
+    await fsp.rm(candidate, { force: true });
+  }
+  for (const directory of [
+    path.dirname(paths.prefixLauncherPath),
+    paths.binDir,
+    paths.updaterDir,
+  ]) {
+    await fsyncDirectory(directory).catch((error) => {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    });
+  }
+  for (const directory of [
+    path.dirname(paths.prefixLauncherPath),
+    path.dirname(paths.compatibilityLink),
+    path.dirname(path.dirname(paths.compatibilityLink)),
+    path.dirname(path.dirname(path.dirname(paths.compatibilityLink))),
+    paths.prefix,
+    path.dirname(paths.prefix),
+    paths.binDir,
+    paths.updaterDir,
+    paths.runtimeDir,
+  ]) {
+    await fsp.rmdir(directory).catch((error) => {
+      if (!new Set(["ENOENT", "ENOTEMPTY", "EEXIST"]).has(error?.code)) {
+        throw error;
+      }
+    });
+  }
+  await fsyncDirectory(paths.stateDir);
+}
+
 async function selectManagedApplication(context, journal) {
   if (!journal.managedApplication) {
     return;
@@ -4147,11 +4293,17 @@ async function selectManagedApplication(context, journal) {
   if (!targetRoot) {
     throw new Error("managed application target is unavailable");
   }
-  if (journal.managedApplication.previousRoot !== targetRoot) {
+  if (
+    journal.managedApplication.previousRoot &&
+    journal.managedApplication.previousRoot !== targetRoot
+  ) {
     await atomicSymlinkDurable(journal.managedApplication.previousRoot, paths.previousLink);
+  } else if (!journal.managedApplication.previousRoot) {
+    await fsp.rm(paths.previousLink, { force: true });
   }
   await atomicSymlinkDurable(targetRoot, paths.currentLink);
   await atomicSymlinkDurable(paths.currentLink, paths.compatibilityLink);
+  await installInitializedManagedStableFiles(context, journal.managedApplication, targetRoot);
   await writeManagedManifest(
     context,
     journal.managedApplication,
@@ -4263,15 +4415,26 @@ async function restoreManagedApplication(context, journal) {
   }
   const transaction = journal.managedApplication;
   const paths = managedApplicationPaths(transaction.stateDir);
-  await atomicSymlinkDurable(transaction.previousRoot, paths.currentLink);
+  if (!transaction.previousRoot) {
+    await fsp.rm(paths.currentLink, { force: true });
+    await fsp.rm(paths.compatibilityLink, { force: true });
+    await fsp.rm(paths.manifestPath, { force: true });
+    await removeInitializedManagedStableFiles(transaction);
+  } else {
+    await atomicSymlinkDurable(transaction.previousRoot, paths.currentLink);
+    await atomicSymlinkDurable(paths.currentLink, paths.compatibilityLink);
+    await writeManagedManifest(context, transaction, transaction.previousManifest);
+  }
   if (transaction.previousPreviousRoot) {
     await atomicSymlinkDurable(transaction.previousPreviousRoot, paths.previousLink);
   } else {
     await fsp.rm(paths.previousLink, { force: true });
-    await fsyncDirectory(paths.runtimeDir);
+    await fsyncDirectory(paths.runtimeDir).catch((error) => {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    });
   }
-  await atomicSymlinkDurable(paths.currentLink, paths.compatibilityLink);
-  await writeManagedManifest(context, transaction, transaction.previousManifest);
 }
 
 async function removeManagedUpdateLock(journal) {

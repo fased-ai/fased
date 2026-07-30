@@ -1,0 +1,129 @@
+import { spawn } from "node:child_process";
+import fs from "node:fs/promises";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+
+const roots: string[] = [];
+
+async function temporaryRoot(): Promise<string> {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-host-updaterctl-"));
+  roots.push(root);
+  return root;
+}
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
+});
+
+function runClient(params: {
+  socketPath: string;
+  statePath: string;
+}): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [path.join(import.meta.dirname, "fased-host-updaterctl.mjs"), "1.2.3", "--apply"],
+      {
+        env: {
+          ...process.env,
+          FASED_HOST_UPDATER_SOCKET: params.socketPath,
+          FASED_HOST_UPDATERCTL_STATE: params.statePath,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.once("error", reject);
+    child.once("close", (code) => resolve({ code, stdout, stderr }));
+  });
+}
+
+describe("host updater controller client", () => {
+  it("applies one transaction and reuses its identity after a target-owned rollback", async () => {
+    const root = await temporaryRoot();
+    const socketPath = path.join(root, "request.sock");
+    const statePath = path.join(root, "client", "transaction.json");
+    const requests: Array<{ op: string; transactionId: string; version: string }> = [];
+    let rejectFirstApply = true;
+    const server = net.createServer((socket) => {
+      socket.setEncoding("utf8");
+      let body = "";
+      socket.on("data", (chunk) => {
+        body += chunk;
+        const newline = body.indexOf("\n");
+        if (newline < 0) {
+          return;
+        }
+        const request = JSON.parse(body.slice(0, newline)) as {
+          op: string;
+          transactionId: string;
+          version: string;
+        };
+        requests.push(request);
+        if (request.op === "applyRelease" && rejectFirstApply) {
+          rejectFirstApply = false;
+          socket.end(
+            `${JSON.stringify({
+              ok: false,
+              transactionId: request.transactionId,
+              version: request.version,
+              error: "deterministic target rollback",
+            })}\n`,
+          );
+          return;
+        }
+        socket.end(
+          `${JSON.stringify({
+            ok: true,
+            transactionId: request.transactionId,
+            version: request.version,
+            controllerChanged: false,
+            phase: request.op === "applyRelease" ? "committed" : undefined,
+          })}\n`,
+        );
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+
+    try {
+      const first = await runClient({ socketPath, statePath });
+      expect(first.code).not.toBe(0);
+      expect(first.stderr).toContain("deterministic target rollback");
+      const retained = JSON.parse(await fs.readFile(statePath, "utf8")) as {
+        transactionId: string;
+      };
+
+      const second = await runClient({ socketPath, statePath });
+      expect(second).toMatchObject({ code: 0, stderr: "" });
+      expect(JSON.parse(second.stdout)).toMatchObject({
+        version: "1.2.3",
+        phase: "committed",
+      });
+      await expect(fs.access(statePath)).rejects.toMatchObject({ code: "ENOENT" });
+
+      const applyRequests = requests.filter((request) => request.op === "applyRelease");
+      expect(applyRequests).toHaveLength(2);
+      expect(new Set(applyRequests.map((request) => request.transactionId))).toEqual(
+        new Set([retained.transactionId]),
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+});

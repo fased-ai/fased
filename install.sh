@@ -1220,6 +1220,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
 
   existing_local_state=0
   existing_local_topology=""
+  existing_local_resume=0
   local_state_dir="${FASED_STATE_DIR:-$HOME/.fased}"
   if [[ "$hosting_bootstrap" -eq 0 && "$protected_local_bootstrap" -eq 0 && \
     ( -e "$local_state_dir" || -L "$local_state_dir" ) ]]; then
@@ -1272,9 +1273,15 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
   fi
   if [[ "$existing_local_topology" == "protected-local" && \
     "$install_entry_local_repair" -ne 1 ]]; then
-    echo "Existing Protected Local installation detected; use fased update." >&2
-    drain_streamed_install_input
-    exit 0
+    if [[ -f "$local_state_dir/install-complete.json" ]] && \
+      grep -Eq '"onboardingCompleted"[[:space:]]*:[[:space:]]*true' \
+        "$local_state_dir/install-complete.json"; then
+      echo "Existing Protected Local installation detected; use fased update." >&2
+      drain_streamed_install_input
+      exit 0
+    fi
+    existing_local_resume=1
+    echo "Committed Protected Local services detected; resuming onboarding." >&2
   fi
   if [[ "$existing_local_topology" == "pre-handoff-local" && \
     "$install_entry_local_repair" -ne 1 ]]; then
@@ -1397,6 +1404,9 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     if [[ "$install_entry_local_repair" -eq 1 ]]; then
       exec_bootstrapped_installer "$install_base_dir/install.sh" "$@"
     fi
+    if [[ "$existing_local_resume" -eq 1 ]]; then
+      exec_bootstrapped_installer "$install_base_dir/install.sh" "$@" --resume-local-onboarding
+    fi
     exec_bootstrapped_installer "$install_base_dir/install.sh" "$@" --existing-local-bootstrap
   fi
   exec_bootstrapped_installer "$install_base_dir/install.sh" "$@"
@@ -1463,6 +1473,7 @@ HOSTING_REQUESTED=0
 HOSTING_REPAIR_REQUESTED=0
 LOCAL_REPAIR_REQUESTED=0
 LOCAL_EXISTING_BOOTSTRAP_REQUESTED=0
+LOCAL_ONBOARDING_RESUME_REQUESTED=0
 SOURCE_INSTALL_REQUESTED=0
 DIRTY_CHECKOUT_SOURCE_AUTO_SELECTED=0
 HOSTING_RELEASE=""
@@ -1475,10 +1486,12 @@ TAILSCALE_AUTHKEY_FILE=""
 REQUESTED_SWAP_GB=""
 FASED_CLI_PATH=""
 PREBUILT_RUNTIME_INSTALLED=0
+FRESH_PROTECTED_LOCAL_REQUESTED=0
 GATEWAY_SERVICE_REFRESHED=0
 GATEWAY_RUNTIME_HEALTH_VERIFIED=0
 LOCAL_SIGNER_INSTALL_TRANSACTION_OPEN=0
 PROTECTED_LOCAL_BOOTSTRAPPED=0
+PROTECTED_LOCAL_LIFECYCLE_COMMITTED=0
 PROTECTED_LOCAL_INSTANCE=""
 LOCAL_EXISTING_BOOTSTRAP_MANIFEST_SNAPSHOT=""
 RUNTIME_UPDATE_CHANNEL_CHANGED=0
@@ -1761,6 +1774,11 @@ while [[ $# -gt 0 ]]; do
       RUN_ONBOARD=0
       pass_args+=(--mode local --host-profile local --tailscale off)
       ;;
+    --resume-local-onboarding)
+      LOCAL_ONBOARDING_RESUME_REQUESTED=1
+      RUN_ONBOARD=1
+      pass_args+=(--mode local --host-profile local --tailscale off)
+      ;;
     --local)
       pass_args+=(--mode local --host-profile local --tailscale off)
       ;;
@@ -1852,6 +1870,14 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+if [[ -n "$install_entry_release_identity" ]]; then
+  if [[ -n "$HOSTING_RELEASE" && "$HOSTING_RELEASE" != "$install_entry_release_identity" ]]; then
+    echo "The immutable installer identity does not match the requested release." >&2
+    exit 1
+  fi
+  HOSTING_RELEASE="$install_entry_release_identity"
+fi
 
 if [[ ! "$UPDATE_CHANNEL" =~ ^(stable|beta)$ ]]; then
   echo "--update-channel must be stable or beta." >&2
@@ -2046,70 +2072,51 @@ backup_existing_local_file() {
 }
 
 handle_existing_local_state() {
+  set_installer_state_dir "$FASED_CONFIG_DIR"
   if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
-    set_installer_state_dir "$FASED_CONFIG_DIR"
-    return 0
-  fi
-  if [[ -n "${FASED_STATE_DIR_EXPLICIT:-}" || -n "${FASED_CONFIG_DIR_EXPLICIT:-}" ]]; then
-    set_installer_state_dir "$FASED_CONFIG_DIR"
     return 0
   fi
   if [[ ! -d "$FASED_CONFIG_DIR" ]]; then
-    set_installer_state_dir "$FASED_CONFIG_DIR"
     return 0
   fi
-  if [[ "$RUN_ONBOARD" -eq 0 ]]; then
-    set_installer_state_dir "$FASED_CONFIG_DIR"
+  if [[ -z "$(find "$FASED_CONFIG_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null || true)" ]]; then
     return 0
   fi
-
-  local action="${FASED_EXISTING_DATA_ACTION:-}"
-  if [[ -z "$action" && ( ! -t 0 || ! -t 1 ) ]]; then
-    action="keep"
+  local profile=""
+  if [[ -f "$FASED_CONFIG_DIR/install.json" ]] && \
+    grep -Eq '"profile"[[:space:]]*:[[:space:]]*"protected-local"' \
+      "$FASED_CONFIG_DIR/install.json"; then
+    profile="protected-local"
+  elif [[ -s "$FASED_CONFIG_DIR/install.json" || -s "$FASED_CONFIG_DIR/fased.json" ]]; then
+    profile="pre-handoff-local"
   fi
-
-  if [[ -z "$action" ]]; then
-    action="keep"
-  fi
-
-  case "$action" in
-    keep)
-      set_installer_state_dir "$FASED_CONFIG_DIR"
-      ;;
-    reset-config)
-      local suffix
-      suffix="$(date -u +%Y%m%dT%H%M%SZ)"
-      local backed_up=()
-      local backup
-      backup="$(backup_existing_local_file "$FASED_CONFIG_DIR/fased.json" "local-reset-$suffix" || true)"
-      [[ -n "$backup" ]] && backed_up+=("$backup")
-      backup="$(backup_existing_local_file "$INSTALL_MARKER_PATH" "local-reset-$suffix" || true)"
-      [[ -n "$backup" ]] && backed_up+=("$backup")
-      set_installer_state_dir "$FASED_CONFIG_DIR"
-      if [[ ${#backed_up[@]} -gt 0 ]]; then
-        echo "Backed up local config metadata:"
-        printf '  %s\n' "${backed_up[@]}"
-      else
-        echo "No local config file or install marker needed backup."
-      fi
-      ;;
-    separate-state)
-      local separate_dir="${FASED_EXISTING_DATA_DIR:-}"
-      if [[ -z "$separate_dir" && -t 0 && -t 1 ]]; then
-        printf "State directory [$HOME/.fased-local]: "
-        read -r separate_dir || separate_dir=""
-      fi
-      separate_dir="${separate_dir:-$HOME/.fased-local}"
-      set_installer_state_dir "$separate_dir"
-      mkdir -p "$FASED_CONFIG_DIR"
-      chmod 700 "$FASED_CONFIG_DIR" 2>/dev/null || true
-      echo "Using separate Fased state directory: $FASED_CONFIG_DIR"
-      ;;
-    *)
-      echo "Unknown FASED_EXISTING_DATA_ACTION=$action; expected keep, reset-config, or separate-state." >&2
+  if [[ "$LOCAL_ONBOARDING_RESUME_REQUESTED" -eq 1 ]]; then
+    if [[ "$profile" != "protected-local" || \
+      "$(read_marker_onboarding_completed || true)" == "true" ]]; then
+      echo "Local onboarding resume requires one committed, incomplete Protected Local installation." >&2
       exit 1
-      ;;
-  esac
+    fi
+    return 0
+  fi
+  if [[ "$LOCAL_EXISTING_BOOTSTRAP_REQUESTED" -eq 1 || \
+    "$LOCAL_REPAIR_REQUESTED" -eq 1 || "$SOURCE_INSTALL_REQUESTED" -eq 1 ]]; then
+    if [[ -z "$profile" ]]; then
+      echo "Existing Local state is not a recognized migration or repair source." >&2
+      exit 1
+    fi
+    return 0
+  fi
+  if [[ "$profile" == "protected-local" ]]; then
+    echo "Existing Protected Local installation detected; use fased update." >&2
+    exit 1
+  fi
+  if [[ "$profile" == "pre-handoff-local" ]]; then
+    echo "Existing pre-handoff Local state must enter the verified migration path; rerun the public Local installer command." >&2
+    exit 1
+  fi
+  echo "Refusing to overlay unrecognized non-empty Local state: $FASED_CONFIG_DIR" >&2
+  echo "No existing data was changed." >&2
+  exit 1
 }
 
 resolve_requested_swap_gb() {
@@ -3005,9 +3012,17 @@ protected_local_target_platform() {
   [[ "$(uname -s 2>/dev/null || true)" == "Linux" ]] || return 1
   systemd_is_pid_one || return 1
   [[ "$(resolved_host_profile)" != "hosting" ]] || return 1
-  [[ "$PREBUILT_RUNTIME_INSTALLED" -eq 1 ]] || return 1
   [[ "$SOURCE_INSTALL_REQUESTED" -eq 0 ]] || return 1
   [[ "$(id -u)" -ne 0 ]] || return 1
+}
+
+fresh_protected_local_install_requested() {
+  protected_local_target_platform || return 1
+  [[ "$LOCAL_REPAIR_REQUESTED" -eq 0 ]] || return 1
+  [[ "$LOCAL_EXISTING_BOOTSTRAP_REQUESTED" -eq 0 ]] || return 1
+  [[ "$LOCAL_ONBOARDING_RESUME_REQUESTED" -eq 0 ]] || return 1
+  [[ -n "$HOSTING_RELEASE" ]] || return 1
+  [[ ! -s "$FASED_CONFIG_DIR/install.json" && ! -s "$FASED_CONFIG_DIR/fased.json" ]]
 }
 
 protected_local_supported() {
@@ -3110,20 +3125,18 @@ managed_state_file_mode() {
 bootstrap_protected_local_topology() {
   local gateway_mode="$1"
   protected_local_supported || return 2
-  local runtime_root=""
-  runtime_root="$(readlink -f "$FASED_CONFIG_DIR/runtime/current" 2>/dev/null || true)"
-  if [[ -z "$runtime_root" || ! -f "$runtime_root/dist/build-info.json" || \
-    ! -f "$runtime_root/scripts/protected-local-bootstrap.mjs" ]]; then
-    echo "The exact managed Local runtime is missing its protected service bootstrap." >&2
+  local release_source="$FASED_DIR"
+  local declared_runtime="$FASED_CONFIG_DIR/runtime/current"
+  if [[ ! -f "$release_source/install.sh" || \
+    ! -f "$release_source/package.json" ]]; then
+    echo "The exact Local release is missing its protected service bootstrap." >&2
     return 1
   fi
   local release_version=""
-  local release_commit=""
-  release_version="$(node -e 'const v=require(process.argv[1]);process.stdout.write(String(v.version||""))' "$runtime_root/package.json")"
-  release_commit="$(node -e 'const v=require(process.argv[1]);process.stdout.write(String(v.commit||""))' "$runtime_root/dist/build-info.json")"
-  if [[ ! "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ || \
-    ! "$release_commit" =~ ^[a-f0-9]{40}$ ]]; then
-    echo "The managed Local runtime does not have one exact release identity." >&2
+  release_version="$(node -e 'const v=require(process.argv[1]);process.stdout.write(String(v.version||""))' "$release_source/package.json")"
+  if [[ ! "$HOSTING_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ || \
+    "$release_version" != "$HOSTING_RELEASE" ]]; then
+    echo "The Local release does not have one exact matching release identity." >&2
     return 1
   fi
   local gateway_port=""
@@ -3160,18 +3173,14 @@ bootstrap_protected_local_topology() {
     --protected-local-operator-gid "$(id -g)"
     --protected-local-operator-home "$HOME"
     --protected-local-state-dir "$FASED_CONFIG_DIR"
-    --protected-local-runtime-dir "$runtime_root"
+    --protected-local-runtime-dir "$declared_runtime"
     --protected-local-node-binary "$system_node"
     --protected-local-profile "${FASED_PROFILE:-default}"
     --protected-local-gateway-port "$gateway_port"
     --protected-local-gateway-mode "$gateway_mode"
   )
   local bootstrap_result=0
-  if [[ "$INSTALL_VERBOSE" == "1" ]]; then
-    "${bootstrap_args[@]}" || bootstrap_result=$?
-  else
-    "${bootstrap_args[@]}" >"$bootstrap_log" 2>&1 || bootstrap_result=$?
-  fi
+  "${bootstrap_args[@]}" >"$bootstrap_log" 2>&1 || bootstrap_result=$?
   if [[ "$bootstrap_result" -ne 0 ]]; then
     spinner_failed "Secure signer and Gateway services"
     [[ "$INSTALL_VERBOSE" == "1" ]] || tail -n 80 "$bootstrap_log" >&2 || true
@@ -3187,6 +3196,9 @@ bootstrap_protected_local_topology() {
     return 1
   }
   PROTECTED_LOCAL_BOOTSTRAPPED=1
+  if [[ "$gateway_mode" == "activate" ]]; then
+    PROTECTED_LOCAL_LIFECYCLE_COMMITTED=1
+  fi
 }
 
 is_app_service_session() {
@@ -6482,6 +6494,10 @@ refresh_current_checkout_and_reexec_if_needed
 
 handle_existing_local_state
 
+if fresh_protected_local_install_requested; then
+  FRESH_PROTECTED_LOCAL_REQUESTED=1
+fi
+
 REPO_ROOT="$(resolve_repo_root)"
 assert_marker_matches_repo "$REPO_ROOT"
 prefer_compatible_user_node_if_available || prefer_compatible_system_node_if_available || true
@@ -6496,9 +6512,10 @@ fi
 
 missing=()
 required_tools=(git curl)
-if use_prebuilt_release_runtime; then
+if use_prebuilt_release_runtime && [[ "$FRESH_PROTECTED_LOCAL_REQUESTED" -ne 1 ]] && \
+  [[ "$LOCAL_ONBOARDING_RESUME_REQUESTED" -ne 1 ]]; then
   required_tools+=(npm)
-else
+elif ! use_prebuilt_release_runtime; then
   required_tools+=(pnpm)
 fi
 for cmd in "${required_tools[@]}"; do
@@ -6567,7 +6584,10 @@ section "System preparation"
 ensure_low_memory_swap_if_possible
 build_old_space_mb="$(recommended_onboard_old_space_mb)"
 build_node_options="$(node_options_with_old_space "${NODE_OPTIONS:-}" "$build_old_space_mb")"
-if use_prebuilt_release_runtime; then
+if [[ "$FRESH_PROTECTED_LOCAL_REQUESTED" -eq 1 || \
+  "$LOCAL_ONBOARDING_RESUME_REQUESTED" -eq 1 ]]; then
+  :
+elif use_prebuilt_release_runtime; then
   if ! prepare_existing_local_bootstrap_manifest_snapshot; then
     status_frame_end
     echo "Could not prepare the transactional Local bootstrap rollback boundary." >&2
@@ -6594,7 +6614,11 @@ fi
 export FASED_SAT_BOND_LAYOUT_PATH="${FASED_SAT_BOND_LAYOUT_PATH:-$FASED_DIR/token/sat/bond-api/bond-position-layout.json}"
 export FASED_SAT_BOND_POLICY_LAYOUT_PATH="${FASED_SAT_BOND_POLICY_LAYOUT_PATH:-$FASED_DIR/token/sat/bond-api/bond-tier-policy-layout.json}"
 
-if use_prebuilt_release_runtime; then
+if [[ "$FRESH_PROTECTED_LOCAL_REQUESTED" -eq 1 || \
+  "$LOCAL_ONBOARDING_RESUME_REQUESTED" -eq 1 ]]; then
+  section "Runtime"
+  step_done "Lifecycle-managed runtime"
+elif use_prebuilt_release_runtime; then
   section "Runtime"
   step_done "Using prebuilt runtime"
 else
@@ -6645,23 +6669,36 @@ if protected_local_target_platform; then
     echo "Install sudo or run from an administrator-capable desktop account; do not run Fased itself as root." >&2
     exit 1
   fi
-  protected_gateway_mode="activate"
-  if [[ "$RUN_ONBOARD" -eq 1 ]]; then
-    protected_gateway_mode="prepare"
-  fi
-  if ! bootstrap_protected_local_topology "$protected_gateway_mode"; then
-    status_frame_end
-    if rollback_managed_runtime_after_failed_install; then
-      echo "Protected Local service bootstrap failed; the prior Local runtime and service topology were restored." >&2
-    else
-      echo "Protected Local service bootstrap failed and automatic Local runtime rollback was incomplete." >&2
-      echo "Retry the exact installer command; do not replace signer or wallet state manually." >&2
+  if [[ "$LOCAL_ONBOARDING_RESUME_REQUESTED" -eq 1 ]]; then
+    if ! read_protected_local_env; then
+      status_frame_end
+      echo "Committed Protected Local onboarding state is incomplete or invalid." >&2
+      exit 1
     fi
-    exit 1
+    PROTECTED_LOCAL_BOOTSTRAPPED=1
+    PROTECTED_LOCAL_LIFECYCLE_COMMITTED=1
+  else
+    if ! bootstrap_protected_local_topology activate; then
+      status_frame_end
+      echo "Protected Local lifecycle did not commit. Its uncommitted topology was restored." >&2
+      exit 1
+    fi
+    if [[ -n "$LOCAL_EXISTING_BOOTSTRAP_MANIFEST_SNAPSHOT" ]] && \
+      ! discard_existing_local_bootstrap_manifest_snapshot; then
+      status_frame_end
+      echo "Protected Local bootstrap succeeded, but its temporary rollback snapshot could not be removed." >&2
+      exit 1
+    fi
   fi
-  if ! discard_existing_local_bootstrap_manifest_snapshot; then
+  FASED_CLI_PATH="$FASED_CONFIG_DIR/bin/fased"
+  export PATH="$FASED_CONFIG_DIR/bin:$PATH"
+  hash -r 2>/dev/null || true
+  install_user_cli_path_snippet "$FASED_CONFIG_DIR/bin" "$HOME/.profile"
+  install_user_cli_path_snippet "$FASED_CONFIG_DIR/bin" "$HOME/.bashrc"
+  install_user_cli_path_snippet "$FASED_CONFIG_DIR/bin" "$HOME/.zshrc"
+  if [[ ! -x "$FASED_CLI_PATH" ]] || ! "$FASED_CLI_PATH" --version >/dev/null 2>&1; then
     status_frame_end
-    echo "Protected Local bootstrap succeeded, but its temporary rollback snapshot could not be removed." >&2
+    echo "Committed Protected Local lifecycle did not install a usable CLI." >&2
     exit 1
   fi
 fi
@@ -6682,7 +6719,7 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
   fi
   if [[ "$PROTECTED_LOCAL_BOOTSTRAPPED" -eq 1 ]]; then
     marker_onboarding_completed="$(read_marker_onboarding_completed || true)"
-    if [[ "$marker_onboarding_completed" == "true" || -s "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}" ]]; then
+    if [[ "$marker_onboarding_completed" == "true" ]]; then
       write_install_marker "$REPO_ROOT" "true"
     else
       write_install_marker "$REPO_ROOT" "false"
@@ -6691,7 +6728,9 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
       systemctl show -p MainPID --value \
         "fased-gateway-$PROTECTED_LOCAL_INSTANCE.service" 2>/dev/null || true
     )"
-    persist_runtime_update_channel
+    if [[ "$PROTECTED_LOCAL_LIFECYCLE_COMMITTED" -ne 1 ]]; then
+      persist_runtime_update_channel
+    fi
     if ! wait_for_protected_local_gateway_config_convergence \
       "$protected_gateway_pid_before_channel"; then
       status_frame_end
@@ -6798,13 +6837,15 @@ onboard_color_env=()
 if supports_color && [[ -z "${NO_COLOR:-}" && -z "${FORCE_COLOR:-}" ]]; then
   onboard_color_env=(FORCE_COLOR=1)
 fi
-if ! (cd "$FASED_DIR" && env NODE_OPTIONS="$onboard_node_options" "${onboard_color_env[@]}" FASED_INSTALLER_ONBOARD=1 "$FASED_CLI_PATH" onboard --install-daemon "${pass_args[@]}"); then
-  if [[ "$PROTECTED_LOCAL_BOOTSTRAPPED" -eq 1 ]]; then
-    if ! bootstrap_protected_local_topology rollback; then
-      echo "Onboarding failed and the protected Local rollback did not complete. Retry the exact installer command; do not remove signer state manually." >&2
-      exit 1
-    fi
-    echo "Onboarding did not complete; the prior Local signer and Gateway topology was restored." >&2
+onboard_lifecycle_env=()
+if [[ "$PROTECTED_LOCAL_LIFECYCLE_COMMITTED" -eq 1 ]]; then
+  onboard_lifecycle_env=(FASED_INSTALL_LIFECYCLE_COMMITTED=1)
+fi
+if ! (cd "$FASED_DIR" && env NODE_OPTIONS="$onboard_node_options" "${onboard_color_env[@]}" "${onboard_lifecycle_env[@]}" FASED_INSTALLER_ONBOARD=1 "$FASED_CLI_PATH" onboard --install-daemon "${pass_args[@]}"); then
+  if [[ "$PROTECTED_LOCAL_LIFECYCLE_COMMITTED" -eq 1 ]]; then
+    write_install_marker "$REPO_ROOT" "false"
+    echo "Protected Local services are committed and healthy, but onboarding did not complete." >&2
+    echo "Rerun the same Local installer command to resume onboarding." >&2
   fi
   exit 1
 fi
@@ -6815,12 +6856,7 @@ if [[ ! -f "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}" ]]; then
   exit 1
 fi
 if [[ "$PROTECTED_LOCAL_BOOTSTRAPPED" -eq 1 ]]; then
-  persist_runtime_update_channel protected-local-pre-activation
-  if ! bootstrap_protected_local_topology activate; then
-    write_install_marker "$REPO_ROOT" "false"
-    echo "Onboarding completed, but Protected Local Gateway activation failed and was not committed." >&2
-    exit 1
-  fi
+  :
 else
   persist_runtime_update_channel
 fi

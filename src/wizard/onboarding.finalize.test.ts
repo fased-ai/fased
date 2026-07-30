@@ -47,24 +47,34 @@ describe("shouldDeferInstallerAccessHandoff", () => {
     expect(
       shouldDeferInstallerAccessHandoff({
         installerOnboard: true,
-        deferProtectedLocalGatewayActivation: true,
+        protectedLocalInstaller: true,
         rootPreparedHosting: false,
       }),
     ).toBe(true);
     expect(
       shouldDeferInstallerAccessHandoff({
         installerOnboard: true,
-        deferProtectedLocalGatewayActivation: false,
+        protectedLocalInstaller: false,
         rootPreparedHosting: true,
       }),
     ).toBe(true);
     expect(
       shouldDeferInstallerAccessHandoff({
         installerOnboard: false,
-        deferProtectedLocalGatewayActivation: true,
+        protectedLocalInstaller: true,
         rootPreparedHosting: true,
       }),
     ).toBe(false);
+  });
+
+  it("keeps the final URL installer-owned after protected Local already committed", () => {
+    expect(
+      shouldDeferInstallerAccessHandoff({
+        installerOnboard: true,
+        protectedLocalInstaller: true,
+        rootPreparedHosting: false,
+      }),
+    ).toBe(true);
   });
 });
 
