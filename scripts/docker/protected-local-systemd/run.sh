@@ -85,6 +85,19 @@ operator_env() {
     "FASED_HOST_UPDATERCTL_STATE=$state/protected-local-controller-transaction.json"
 }
 
+resolve_protected_runtime() {
+  local instance="$1"
+  local resolved=""
+  resolved="$(readlink -f "$state/runtime/current")"
+  case "$resolved" in
+    "/opt/fased/local/$instance/application/releases/"*) printf '%s\n' "$resolved" ;;
+    *)
+      echo "Protected Local runtime selector escaped the root-controlled application store" >&2
+      return 1
+      ;;
+  esac
+}
+
 verify_shared_device_auth() {
   local instance="$1"
   local runtime_root="$2"
@@ -337,6 +350,7 @@ verify_wallet() {
 if [[ "$phase" == "verify-reboot" ]]; then
   [[ -f "$snapshot" ]]
   instance="$(jq -er .instanceId "$snapshot")"
+  runtime="$(resolve_protected_runtime "$instance")"
   wait_for_user_manager
   wait_for_service "fased-local-controller-$instance.service"
   wait_for_service "fased-signerd-$instance.service"
@@ -956,14 +970,7 @@ if [[ "$phase" == "fresh-install" ]]; then
   test -s "$state/install.json"
   test "$(jq -r .profile "$state/install.json")" = "protected-local"
   instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
-  runtime="$(readlink -f "$state/runtime/current")"
-  case "$runtime" in
-    "/opt/fased/local/$instance/application/releases/"*) ;;
-    *)
-      echo "fresh Protected Local runtime selector escaped the root-controlled application store" >&2
-      exit 1
-      ;;
-  esac
+  runtime="$(resolve_protected_runtime "$instance")"
   verify_protected_home_acl "$instance"
   wait_for_service "fased-local-controller-$instance.service"
   wait_for_service "fased-signerd-$instance.service"
@@ -1010,7 +1017,7 @@ if [[ "$phase" == "fresh-install" ]]; then
 
   noop_started="$SECONDS"
   runuser -u testop -- env "${fresh_env[@]}" \
-    "$state/install-cache/npm-global/bin/fased" update "${target_update_args[@]}" --timeout 30 \
+    "$state/bin/fased" update "${target_update_args[@]}" --timeout 30 \
     >/tmp/fresh-noop-update.out 2>/tmp/fresh-noop-update.err
   grep -F "Already current: $version" /tmp/fresh-noop-update.out >/dev/null
   if grep -F "Protected Local migration" /tmp/fresh-noop-update.err >/dev/null; then
@@ -1360,6 +1367,7 @@ grep -F "Pre-handoff Local bootstrap complete." /tmp/protected-bootstrap.out >/d
 grep -F "Pre-handoff Local installation detected" /tmp/protected-bootstrap.err >/dev/null
 
 instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
+runtime="$(resolve_protected_runtime "$instance")"
 verify_protected_home_acl "$instance"
 wait_for_gateway_version "$version"
 wait_for_service "fased-signerd-$instance.service"
@@ -1386,7 +1394,7 @@ run_as_stale_operator "$state/bin/fased" mining history \
   >/tmp/protected-stale-session-mining.json
 jq -e 'type == "object"' /tmp/protected-stale-session-mining.json >/dev/null
 runuser -u testop -- env "${managed_update_env[@]}" \
-  "$state/install-cache/npm-global/bin/fased" update "${target_update_args[@]}" --timeout 30 \
+  "$state/bin/fased" update "${target_update_args[@]}" --timeout 30 \
   >/tmp/protected-noop-update.out 2>/tmp/protected-noop-update.err
 grep -F "Already current: $version" /tmp/protected-noop-update.out >/dev/null
 if grep -F "Protected Local migration" /tmp/protected-noop-update.err >/dev/null; then
