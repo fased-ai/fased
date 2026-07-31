@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.24
+
+- Preserve permanent per-Wallet Mining history and complete target-owned
+  updater generations from the RC23 source candidate.
+- Make tagged release validation fetch the immutable historical updater
+  fixture required to prove older-updater rollback and same-command retry.
+- Keep Local-fresh, Local-update, and Hosting lifecycle acceptance ordered and
+  block stable publication until external acceptance and Section 19 close.
+
 ## 0.1.76-rc.23
 
 - Preserve permanent per-Wallet Mining history in a scalable SQLite/WAL
