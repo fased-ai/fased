@@ -3672,7 +3672,7 @@ export function renderMining(props: MiningViewProps) {
     selectedWallet?.address ??
     String(status?.validatorAuthority ?? props.readiness?.selectedAddress ?? "").trim() ??
     "";
-  const miningWalletAddressSecretId = "mining-wallet-address";
+  const miningWalletAddressRevealId = "mining-wallet-address";
   const recentActions = status?.recentActions ?? [];
   const settledPlannerOutcomes = status?.settledHistory ?? [];
   const historyPlannerOutcomes = props.history?.outcomes ?? settledPlannerOutcomes;
@@ -6483,7 +6483,7 @@ export function renderMining(props: MiningViewProps) {
             <div class="mining-metric__label mining-metric__label--wallet">
               <span class="mining-wallet-address-chip" title="Mining wallet">
                 ${icons.wallet}
-                <span id=${miningWalletAddressSecretId} data-revealed="false">******</span>
+                <span id=${miningWalletAddressRevealId} data-revealed="false">******</span>
               </span>
               ${
                 displayWalletAddress
@@ -6495,7 +6495,7 @@ export function renderMining(props: MiningViewProps) {
                         title="Show wallet address"
                         @click=${() =>
                           toggleMiningSecretText(
-                            miningWalletAddressSecretId,
+                            miningWalletAddressRevealId,
                             "******",
                             displayWalletAddress,
                           )}

@@ -11,7 +11,7 @@ import {
 
 const SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
 const SAT_BOND_PROGRAM_ID = "8RYKuGb2k8hBcGX34QdYJXdXZkNvD3fKy85s63Pph2j7";
-const SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa";
+const SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa"; // pragma: allowlist secret
 const SAT_MINT_PROGRAM_ID = "8fb3Mpowe4pD6ed89gwm6gLuh8csPSrLi3hypcesqs5C";
 
 beforeEach(() => {
@@ -251,8 +251,8 @@ vi.mock("./src/rpc-read.js", async (importOriginal) => {
     inspectSatMinerCapitalAccountStatus: vi.fn(async () => ({
       address: "miner-capital-1",
       exists: true,
-      owner: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
-      expectedOwner: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
+      owner: SAT_PROGRAM_ID,
+      expectedOwner: SAT_PROGRAM_ID,
       dataLength: 112,
     })),
     inspectSatPayoutReadiness: vi.fn(async () => ({
@@ -907,7 +907,7 @@ describe("sat-mining plugin config persistence", () => {
       address: "miner-capital-1",
       exists: false,
       owner: null,
-      expectedOwner: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
+      expectedOwner: SAT_PROGRAM_ID,
       dataLength: 0,
     });
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
@@ -5033,14 +5033,14 @@ describe("sat-mining plugin config persistence", () => {
         address: "miner-capital-1",
         exists: false,
         owner: null,
-        expectedOwner: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
+        expectedOwner: SAT_PROGRAM_ID,
         dataLength: 0,
       })
       .mockResolvedValueOnce({
         address: "miner-capital-1",
         exists: true,
-        owner: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
-        expectedOwner: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
+        owner: SAT_PROGRAM_ID,
+        expectedOwner: SAT_PROGRAM_ID,
         dataLength: 112,
       });
 
@@ -5110,7 +5110,7 @@ describe("sat-mining plugin config persistence", () => {
       address: "miner-capital-1",
       exists: true,
       owner: "11111111111111111111111111111111",
-      expectedOwner: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
+      expectedOwner: SAT_PROGRAM_ID,
       dataLength: 0,
     });
     inspectCapitalMock.mockResolvedValueOnce(null);

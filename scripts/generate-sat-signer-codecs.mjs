@@ -229,7 +229,7 @@ ${entries}
 ] as const;
 
 export const SAT_ACCOUNT_ORDER_CONTRACT_SHA256 =
-  ${JSON.stringify(accountContractDigest)};
+  ${JSON.stringify(accountContractDigest)}; // pragma: allowlist secret
 export const SAT_UNBOUND_LEGACY_ACTIONS = [
 ${[...explicitlyUnboundLegacyActions]
   .toSorted()
@@ -328,7 +328,7 @@ const (
 \tsatFamilyBond = "bond"
 )
 
-const satAccountOrderContractSHA256 = ${JSON.stringify(accountContractDigest)}
+const satAccountOrderContractSHA256 = ${JSON.stringify(accountContractDigest)} // pragma: allowlist secret
 
 var satUnboundLegacyActions = map[string]struct{}{
 ${[...explicitlyUnboundLegacyActions]

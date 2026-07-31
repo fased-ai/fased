@@ -374,7 +374,7 @@ export const SAT_SIGNER_CODECS = [
 ] as const;
 
 export const SAT_ACCOUNT_ORDER_CONTRACT_SHA256 =
-  "8ebc48ffa550385c19dd610063e5b735491880b77c23214a25068d2a53864fc8";
+  "8ebc48ffa550385c19dd610063e5b735491880b77c23214a25068d2a53864fc8"; // pragma: allowlist secret
 export const SAT_UNBOUND_LEGACY_ACTIONS = [
   "initializeCycle",
   "openDispute",

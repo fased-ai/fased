@@ -18,7 +18,7 @@ const (
 	satFamilyBond = "bond"
 )
 
-const satAccountOrderContractSHA256 = "8ebc48ffa550385c19dd610063e5b735491880b77c23214a25068d2a53864fc8"
+const satAccountOrderContractSHA256 = "8ebc48ffa550385c19dd610063e5b735491880b77c23214a25068d2a53864fc8" // pragma: allowlist secret
 
 var satUnboundLegacyActions = map[string]struct{}{
 	"initializeCycle":      {},
