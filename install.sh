@@ -3782,6 +3782,7 @@ discard_existing_local_bootstrap_manifest_snapshot() {
 rollback_managed_runtime_after_failed_install() {
   local current_root
   local rollback_script
+  local require_existing_gateway_restore=0
   local paired_updater="$FASED_CONFIG_DIR/updater/fased-managed-updater.mjs"
   if [[ "$(resolved_host_profile)" == "hosting" && \
     -f "$FASED_CONFIG_DIR/hosted-update-transaction.json" && \
@@ -3792,6 +3793,9 @@ rollback_managed_runtime_after_failed_install() {
   fi
   if [[ "$(resolved_host_profile)" != "hosting" ]]; then
     rollback_local_signer_after_runtime_install || true
+  fi
+  if [[ -n "$LOCAL_EXISTING_BOOTSTRAP_MANIFEST_SNAPSHOT" ]]; then
+    require_existing_gateway_restore=1
   fi
   current_root="$(readlink -f "$FASED_CONFIG_DIR/runtime/current" 2>/dev/null || true)"
   rollback_script="$current_root/scripts/install-managed-runtime.mjs"
@@ -3810,8 +3814,25 @@ rollback_managed_runtime_after_failed_install() {
   fi
   FASED_CLI_PATH="$FASED_CONFIG_DIR/bin/fased"
   if [[ "$(resolved_host_profile)" != "hosting" ]]; then
-    "$FASED_CLI_PATH" gateway install --force >/dev/null 2>&1 || true
-    restart_existing_gateway_service_after_install >/dev/null 2>&1 || true
+    if ! has_user_gateway_service && ! has_system_gateway_service; then
+      if [[ "$require_existing_gateway_restore" -eq 1 ]]; then
+        echo "Managed runtime rollback did not restore the prior Gateway service." >&2
+        return 1
+      fi
+      return 0
+    fi
+    if ! restart_existing_gateway_service_after_install; then
+      echo "Managed runtime rollback could not restart the prior Gateway service." >&2
+      return 1
+    fi
+    if ! wait_for_gateway_health_after_restart; then
+      echo "Managed runtime rollback restarted the prior Gateway, but it did not become healthy." >&2
+      return 1
+    fi
+    if ! verify_gateway_runtime_identity_after_install; then
+      echo "Managed runtime rollback restored a Gateway with the wrong runtime identity." >&2
+      return 1
+    fi
   fi
   return 0
 }

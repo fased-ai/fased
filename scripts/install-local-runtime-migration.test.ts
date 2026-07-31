@@ -41,6 +41,23 @@ describe("Local and WSL managed runtime migration", () => {
     expect(installer).toContain("--rollback");
   });
 
+  it("verifies rollback without letting the restored legacy CLI rewrite its service", () => {
+    const rollbackStart = installer.indexOf("rollback_managed_runtime_after_failed_install() {");
+    const rollbackEnd = installer.indexOf("\n}\n", rollbackStart);
+    const rollback = installer.slice(rollbackStart, rollbackEnd);
+
+    expect(rollback).not.toContain('"$FASED_CLI_PATH" gateway install --force');
+    expect(rollback).toContain("restart_existing_gateway_service_after_install");
+    expect(rollback).toContain("wait_for_gateway_health_after_restart");
+    expect(rollback).toContain("verify_gateway_runtime_identity_after_install");
+    expect(rollback).toContain(
+      "Managed runtime rollback did not restore the prior Gateway service.",
+    );
+    expect(rollback).not.toContain(
+      "restart_existing_gateway_service_after_install >/dev/null 2>&1 || true",
+    );
+  });
+
   it("allows source-checkout identity only for an explicit source install", () => {
     expect(installer).toContain("if ! use_prebuilt_release_runtime; then");
     expect(installer).toContain("verify_args+=(--allow-source-checkout true)");
