@@ -1,11 +1,18 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const schemaPath = path.join(root, "extensions", "sat-mining", "signer-codec-schema.v1.json");
+const accountContractPath = path.join(
+  root,
+  "extensions",
+  "sat-mining",
+  "sat-account-order.v1.json",
+);
 const typescriptPath = path.join(
   root,
   "extensions",
@@ -15,12 +22,127 @@ const typescriptPath = path.join(
 );
 const goPath = path.join(root, "tools", "fased-signerd", "sat_manifest_generated.go");
 const check = process.argv.includes("--check");
+const explicitlyUnboundLegacyActions = new Set([
+  "initializeCycle",
+  "validatorAttestation",
+  "openDispute",
+  "resolveDispute",
+  "republishEpochRoots",
+]);
 
 function fail(message) {
   throw new Error(`SAT signer codec schema: ${message}`);
 }
 
+function accountFlags(entry) {
+  const match = /:(readonly|writable)(\+signer)?$/.exec(entry);
+  if (!match) {
+    fail(`canonical account entry ${JSON.stringify(entry)} is invalid`);
+  }
+  return `${match[2] ? "S" : "-"}${match[1] === "writable" ? "W" : "-"}`;
+}
+
+function loadAccountContract() {
+  const raw = fs.readFileSync(accountContractPath);
+  const parsed = JSON.parse(raw);
+  if (
+    parsed?.schema !== "sat.account-order.v1" ||
+    !Array.isArray(parsed?.programs?.satMining) ||
+    !Array.isArray(parsed?.programs?.satBond)
+  ) {
+    fail("canonical account-order contract is invalid");
+  }
+  return {
+    digest: createHash("sha256").update(raw).digest("hex"),
+    programs: {
+      main: parsed.programs.satMining,
+      bond: parsed.programs.satBond,
+    },
+  };
+}
+
+function assertCanonicalAccountShape(codec, accountContract) {
+  const instruction = accountContract.programs[codec.family].find(
+    (candidate) => candidate.discriminant === codec.discriminator,
+  );
+  if (!instruction) {
+    if (explicitlyUnboundLegacyActions.has(codec.action)) {
+      return;
+    }
+    fail(
+      `${codec.action} has no canonical ${codec.family} instruction for discriminator ${codec.discriminator}`,
+    );
+  }
+  if (explicitlyUnboundLegacyActions.has(codec.action)) {
+    fail(`${codec.action} unexpectedly overlaps the canonical SAT account-order contract`);
+  }
+  if (instruction.status === "reserved" || instruction.status === "retired-rejected") {
+    fail(`${codec.action} targets rejected instruction ${instruction.name}`);
+  }
+  const order = instruction.accountOrder;
+  if (!Array.isArray(order) || order.length === 0) {
+    fail(`${instruction.name} has no canonical account order`);
+  }
+  const repeated = order.filter((entry) => entry.includes("[]:"));
+  const fixed = order.filter((entry) => !entry.includes("[]:"));
+  const expectedVariablePatterns = {
+    minerCycles: ["sat_miner_cycle_state[]:writable"],
+    registryPages: ["sat_cycle_registry_page[]:readonly"],
+    minerCyclePairs: ["sat_miner_cycle_state[]:writable", "sat_miner_capital_state[]:writable"],
+    compactCycles: [
+      "front_sat_miner_cycle_state[]:readonly",
+      "back_sat_miner_cycle_state[]:readonly",
+    ],
+    claimBatch: ["sat_cycle_state[]:writable", "sat_miner_cycle_state[]:writable"],
+  };
+  if (codec.variable === "") {
+    if (repeated.length !== 0) {
+      fail(`${codec.action} omits canonical repeated accounts`);
+    }
+    const canonicalShape = fixed.map(accountFlags).join(",");
+    if (codec.accountShape !== canonicalShape) {
+      fail(
+        `${codec.action}.accountShape ${codec.accountShape} differs from canonical ${canonicalShape}`,
+      );
+    }
+    return;
+  }
+  const expectedRepeated = expectedVariablePatterns[codec.variable];
+  if (!expectedRepeated) {
+    fail(`${codec.action} has unsupported canonical variable ${codec.variable}`);
+  }
+  if (JSON.stringify(repeated) !== JSON.stringify(expectedRepeated)) {
+    fail(
+      `${codec.action} repeated account order ${JSON.stringify(repeated)} differs from canonical ${JSON.stringify(expectedRepeated)}`,
+    );
+  }
+  const firstRepeatedIndex = order.findIndex((entry) => entry.includes("[]:"));
+  const fixedPrefix = order.slice(0, firstRepeatedIndex).map(accountFlags).join(",");
+  if (codec.accountShape !== fixedPrefix) {
+    fail(
+      `${codec.action}.accountShape ${codec.accountShape} differs from canonical fixed prefix ${fixedPrefix}`,
+    );
+  }
+  const suffix = order.slice(firstRepeatedIndex).filter((entry) => !entry.includes("[]:"));
+  const expectedSuffix =
+    codec.variable === "claimBatch"
+      ? [
+          "system_program:readonly",
+          "token_program:readonly",
+          "associated_token_program:readonly",
+          "sat_mint_program:readonly",
+          "sat_rebate_vault:writable",
+        ]
+      : [];
+  if (JSON.stringify(suffix) !== JSON.stringify(expectedSuffix)) {
+    fail(
+      `${codec.action} fixed account suffix ${JSON.stringify(suffix)} differs from canonical ${JSON.stringify(expectedSuffix)}`,
+    );
+  }
+}
+
 function loadSchema() {
+  const accountContract = loadAccountContract();
   const parsed = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
   if (parsed?.version !== 1 || !Array.isArray(parsed.codecs) || parsed.codecs.length === 0) {
     fail("expected a non-empty version 1 codecs array");
@@ -80,11 +202,12 @@ function loadSchema() {
     if ((codec.dataLength === -1) !== (codec.variable === "claimBatch")) {
       fail(`${codec.action} must pair variable claimBatch with dataLength -1`);
     }
+    assertCanonicalAccountShape(codec, accountContract);
   }
-  return parsed.codecs;
+  return { codecs: parsed.codecs, accountContractDigest: accountContract.digest };
 }
 
-function renderTypescript(codecs) {
+function renderTypescript(codecs, accountContractDigest) {
   const entries = codecs
     .map(
       (codec) => `  {
@@ -103,6 +226,15 @@ function renderTypescript(codecs) {
 
 export const SAT_SIGNER_CODECS = [
 ${entries}
+] as const;
+
+export const SAT_ACCOUNT_ORDER_CONTRACT_SHA256 =
+  ${JSON.stringify(accountContractDigest)}; // pragma: allowlist secret
+export const SAT_UNBOUND_LEGACY_ACTIONS = [
+${[...explicitlyUnboundLegacyActions]
+  .toSorted()
+  .map((action) => `  ${JSON.stringify(action)},`)
+  .join("\n")}
 ] as const;
 
 export type SatSignerAction = (typeof SAT_SIGNER_CODECS)[number]["action"];
@@ -162,7 +294,7 @@ export const SAT_SIGNER_ACTIONS = SAT_SIGNER_CODECS.map(
 `;
 }
 
-function renderGo(codecs) {
+function renderGo(codecs, accountContractDigest) {
   const entries = codecs
     .map(
       (codec) => `\t${JSON.stringify(codec.action)}: {
@@ -196,6 +328,19 @@ const (
 \tsatFamilyBond = "bond"
 )
 
+const satAccountOrderContractSHA256 = ${JSON.stringify(accountContractDigest)} // pragma: allowlist secret
+
+var satUnboundLegacyActions = map[string]struct{}{
+${[...explicitlyUnboundLegacyActions]
+  .toSorted()
+  .map((action, _index, actions) => {
+    const rendered = JSON.stringify(action);
+    const width = Math.max(...actions.map((entry) => JSON.stringify(entry).length));
+    return `\t${rendered}:${" ".repeat(width - rendered.length + 1)}{},`;
+  })
+  .join("\n")}
+}
+
 var signerSATCodecsV2 = map[string]signerSATCodecV2{
 ${entries}
 }
@@ -218,6 +363,6 @@ function updateGeneratedFile(filePath, expected) {
   return true;
 }
 
-const codecs = loadSchema();
-updateGeneratedFile(typescriptPath, renderTypescript(codecs));
-updateGeneratedFile(goPath, renderGo(codecs));
+const { codecs, accountContractDigest } = loadSchema();
+updateGeneratedFile(typescriptPath, renderTypescript(codecs, accountContractDigest));
+updateGeneratedFile(goPath, renderGo(codecs, accountContractDigest));

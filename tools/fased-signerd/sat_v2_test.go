@@ -197,7 +197,7 @@ func TestSignerV2TypedSATActiveCommitUsesCapitalExposureCap(t *testing.T) {
 		Type: intentSolanaSATAction, Action: "setActiveCommit", ProgramID: program.String(),
 		DataBase64: base64.StdEncoding.EncodeToString(data),
 		Keys: []signerSATAccountV2{
-			satTestAccount(wallet, true, true), satTestAccount(capital, false, true),
+			satTestAccount(wallet, true, false), satTestAccount(capital, false, true),
 		},
 	}
 	normalized, err := normalizeSignerIntentForWalletV2(intent, &wallet)
@@ -263,7 +263,7 @@ func TestSignerV2TypedSATBondValidatesMintATAsAndCleanupHasNoRawFallback(t *test
 		Keys: []signerSATAccountV2{
 			satTestAccount(wallet, true, true), satTestAccount(tier, false, false),
 			satTestAccount(position, false, true), satTestAccount(signerATA, false, true),
-			satTestAccount(vaultATA, false, true), satTestAccount(mint, false, true),
+			satTestAccount(vaultATA, false, true), satTestAccount(mint, false, false),
 			satTestAccount(solana.SystemProgramID, false, false), satTestAccount(solana.TokenProgramID, false, false),
 			satTestAccount(solana.SPLAssociatedTokenAccountProgramID, false, false),
 		},
@@ -385,7 +385,7 @@ func TestSignerV2TypedSATClaimsBindPolicyToExactMint(t *testing.T) {
 		Keys: []signerSATAccountV2{
 			satTestAccount(wallet, true, true), satTestAccount(distributor, false, true),
 			satTestAccount(rewardVault, false, true), satTestAccount(recipientATA, false, true),
-			satTestAccount(recipientOwner, false, false), satTestAccount(mint, false, true),
+			satTestAccount(recipientOwner, false, false), satTestAccount(mint, false, false),
 			satTestAccount(solana.SystemProgramID, false, false), satTestAccount(solana.TokenProgramID, false, false),
 			satTestAccount(solana.SPLAssociatedTokenAccountProgramID, false, false),
 		},

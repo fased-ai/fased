@@ -8819,9 +8819,17 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           });
           return;
         }
+        const body = await readJsonBody(req, 4 * 1024);
+        if (!body.ok) {
+          sendLoginResponse(400, {
+            ok: false,
+            error: { code: "invalid_request", message: body.error },
+          });
+          return;
+        }
         const result = await callSatMiningGateway<{
           payload?: { cleared?: boolean; status?: unknown };
-        }>("sat.clearMiningHistory");
+        }>("sat.clearMiningHistory", body.value);
         sendLoginResponse(200, {
           ok: true,
           cleared: Boolean(result.payload?.cleared),

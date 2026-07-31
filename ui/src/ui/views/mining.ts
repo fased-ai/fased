@@ -34,7 +34,7 @@ function renderMiningHelp(text: string) {
   `;
 }
 
-export type MiningPlannerWindow = "1h" | "24h" | "30d" | "1y" | "all";
+export type MiningPlannerWindow = "1h" | "24h" | "7d" | "30d" | "1y" | "all";
 export type MiningChartMetric = "both" | "sat" | "net";
 export type MiningActivityFilter = "all" | "wallet" | "cycle";
 
@@ -1643,11 +1643,13 @@ function describeMiningWindowLabel(window: MiningPlannerWindow): string {
     ? "last hour"
     : window === "24h"
       ? "last 24 hours"
-      : window === "30d"
-        ? "last 30 days"
-        : window === "1y"
-          ? "last year"
-          : "all recorded time";
+      : window === "7d"
+        ? "last 7 days"
+        : window === "30d"
+          ? "last 30 days"
+          : window === "1y"
+            ? "last year"
+            : "all recorded time";
 }
 
 function miningWindowMs(window: MiningPlannerWindow): number | null {
@@ -1655,11 +1657,13 @@ function miningWindowMs(window: MiningPlannerWindow): number | null {
     ? 60 * 60 * 1000
     : window === "24h"
       ? 24 * 60 * 60 * 1000
-      : window === "30d"
-        ? 30 * 24 * 60 * 60 * 1000
-        : window === "1y"
-          ? 365 * 24 * 60 * 60 * 1000
-          : null;
+      : window === "7d"
+        ? 7 * 24 * 60 * 60 * 1000
+        : window === "30d"
+          ? 30 * 24 * 60 * 60 * 1000
+          : window === "1y"
+            ? 365 * 24 * 60 * 60 * 1000
+            : null;
 }
 
 type PlannerVisualPoint = {
@@ -3668,7 +3672,7 @@ export function renderMining(props: MiningViewProps) {
     selectedWallet?.address ??
     String(status?.validatorAuthority ?? props.readiness?.selectedAddress ?? "").trim() ??
     "";
-  const miningWalletAddressSecretId = "mining-wallet-address";
+  const miningWalletAddressRevealId = "mining-wallet-address";
   const recentActions = status?.recentActions ?? [];
   const settledPlannerOutcomes = status?.settledHistory ?? [];
   const historyPlannerOutcomes = props.history?.outcomes ?? settledPlannerOutcomes;
@@ -6479,7 +6483,7 @@ export function renderMining(props: MiningViewProps) {
             <div class="mining-metric__label mining-metric__label--wallet">
               <span class="mining-wallet-address-chip" title="Mining wallet">
                 ${icons.wallet}
-                <span id=${miningWalletAddressSecretId} data-revealed="false">******</span>
+                <span id=${miningWalletAddressRevealId} data-revealed="false">******</span>
               </span>
               ${
                 displayWalletAddress
@@ -6491,7 +6495,7 @@ export function renderMining(props: MiningViewProps) {
                         title="Show wallet address"
                         @click=${() =>
                           toggleMiningSecretText(
-                            miningWalletAddressSecretId,
+                            miningWalletAddressRevealId,
                             "******",
                             displayWalletAddress,
                           )}
@@ -6904,7 +6908,7 @@ export function renderMining(props: MiningViewProps) {
                 <div class="mining-section-label">Recent activity</div>
               </div>
               <div class="mining-planner-filter-group" aria-label="Mining activity window">
-                ${(["1h", "24h", "30d", "1y", "all"] as MiningPlannerWindow[]).map(
+                ${(["1h", "24h", "7d", "30d", "1y", "all"] as MiningPlannerWindow[]).map(
                   (window) => html`<button
                     class="mining-planner-filter-btn ${
                       props.activityWindow === window ? "is-active" : ""
@@ -6969,7 +6973,7 @@ export function renderMining(props: MiningViewProps) {
                 </div>
                 <div class="mining-planner-controls">
                   <div class="mining-planner-filter-group" aria-label="Mining timeline window">
-                    ${(["1h", "24h", "30d", "1y", "all"] as MiningPlannerWindow[]).map(
+                    ${(["1h", "24h", "7d", "30d", "1y", "all"] as MiningPlannerWindow[]).map(
                       (window) => html`<button
                         class="mining-planner-filter-btn ${
                           props.plannerWindow === window ? "is-active" : ""

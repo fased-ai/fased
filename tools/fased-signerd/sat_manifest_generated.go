@@ -18,6 +18,16 @@ const (
 	satFamilyBond = "bond"
 )
 
+const satAccountOrderContractSHA256 = "8ebc48ffa550385c19dd610063e5b735491880b77c23214a25068d2a53864fc8" // pragma: allowlist secret
+
+var satUnboundLegacyActions = map[string]struct{}{
+	"initializeCycle":      {},
+	"openDispute":          {},
+	"republishEpochRoots":  {},
+	"resolveDispute":       {},
+	"validatorAttestation": {},
+}
+
 var signerSATCodecsV2 = map[string]signerSATCodecV2{
 	"initializeCycle": {
 		Action:        "initializeCycle",
@@ -115,7 +125,7 @@ var signerSATCodecsV2 = map[string]signerSATCodecV2{
 		DataLength:    9,
 		Family:        satFamilyMain,
 		ContractKey:   "setActiveCommit",
-		AccountShape:  "SW,-W",
+		AccountShape:  "S-,-W",
 		Variable:      "",
 	},
 	"commitCycle": {
@@ -205,7 +215,7 @@ var signerSATCodecsV2 = map[string]signerSATCodecV2{
 		DataLength:    25,
 		Family:        satFamilyMain,
 		ContractKey:   "distributeCyclePage",
-		AccountShape:  "SW,-W,--,-W,--,-W,--,-W,-W,-W",
+		AccountShape:  "SW,-W,-W,-W,--,-W,--,-W,-W,-W",
 		Variable:      "minerCyclePairs",
 	},
 	"claimCycleRewards": {
@@ -223,7 +233,7 @@ var signerSATCodecsV2 = map[string]signerSATCodecV2{
 		DataLength:    -1,
 		Family:        satFamilyMain,
 		ContractKey:   "claimCycleRewardsBatch",
-		AccountShape:  "SW,--,-W,-W,-W,-W,-W,-W",
+		AccountShape:  "SW,-W,-W,-W,-W,-W,-W,-W",
 		Variable:      "claimBatch",
 	},
 	"claimProtocolTreasury": {
@@ -232,7 +242,7 @@ var signerSATCodecsV2 = map[string]signerSATCodecV2{
 		DataLength:    1,
 		Family:        satFamilyMain,
 		ContractKey:   "claimProtocolTreasury",
-		AccountShape:  "SW,--,-W,-W,-W,-W,-W,-W,-W,-W,--,--,--,--",
+		AccountShape:  "SW,--,--,-W,-W,-W,-W,-W,-W,-W,--,--,--,--",
 		Variable:      "",
 	},
 	"refillRegistryReserveFromTreasury": {
@@ -250,7 +260,7 @@ var signerSATCodecsV2 = map[string]signerSATCodecV2{
 		DataLength:    1,
 		Family:        satFamilyMain,
 		ContractKey:   "claimProtocolDistributorSat",
-		AccountShape:  "SW,--,-W,-W,-W,-W,-W,-W,--,--,--,--,--",
+		AccountShape:  "SW,--,--,-W,-W,-W,-W,-W,--,--,--,--,--",
 		Variable:      "",
 	},
 	"retargetUnlock": {
@@ -259,7 +269,7 @@ var signerSATCodecsV2 = map[string]signerSATCodecV2{
 		DataLength:    9,
 		Family:        satFamilyMain,
 		ContractKey:   "retargetUnlock",
-		AccountShape:  "SW,-W,--,-W",
+		AccountShape:  "S-,-W,--,-W",
 		Variable:      "",
 	},
 	"closeResolvedMinerCycleState": {
@@ -268,7 +278,7 @@ var signerSATCodecsV2 = map[string]signerSATCodecV2{
 		DataLength:    9,
 		Family:        satFamilyMain,
 		ContractKey:   "closeResolvedMinerCycleState",
-		AccountShape:  "SW,--,-W,-W,-W,-W",
+		AccountShape:  "SW,-W,-W,-W,-W,-W",
 		Variable:      "",
 	},
 	"closeResolvedCycleRegistryPage": {
@@ -277,7 +287,7 @@ var signerSATCodecsV2 = map[string]signerSATCodecV2{
 		DataLength:    17,
 		Family:        satFamilyMain,
 		ContractKey:   "closeResolvedCycleRegistryPage",
-		AccountShape:  "SW,--,-W,-W,-W",
+		AccountShape:  "SW,-W,-W,-W,-W",
 		Variable:      "",
 	},
 	"closeResolvedCycleArtifacts": {
@@ -313,7 +323,7 @@ var signerSATCodecsV2 = map[string]signerSATCodecV2{
 		DataLength:    9,
 		Family:        satFamilyBond,
 		ContractKey:   "openBondPosition",
-		AccountShape:  "SW,--,-W,-W,-W,-W,--,--,--",
+		AccountShape:  "SW,--,-W,-W,-W,--,--,--,--",
 		Variable:      "",
 	},
 	"increaseBondPosition": {
@@ -322,7 +332,7 @@ var signerSATCodecsV2 = map[string]signerSATCodecV2{
 		DataLength:    9,
 		Family:        satFamilyBond,
 		ContractKey:   "increaseBondPosition",
-		AccountShape:  "SW,--,-W,-W,-W,-W,--,--,--",
+		AccountShape:  "SW,--,-W,-W,-W,--,--,--,--",
 		Variable:      "",
 	},
 	"requestBondUnlock": {
@@ -349,7 +359,7 @@ var signerSATCodecsV2 = map[string]signerSATCodecV2{
 		DataLength:    1,
 		Family:        satFamilyBond,
 		ContractKey:   "finalizeBondUnlock",
-		AccountShape:  "SW,--,-W,-W,-W,-W,-W,-W,--,--,--",
+		AccountShape:  "SW,--,-W,-W,-W,-W,-W,--,--,--,--",
 		Variable:      "",
 	},
 	"syncBondStakingRewards": {
@@ -376,7 +386,7 @@ var signerSATCodecsV2 = map[string]signerSATCodecV2{
 		DataLength:    1,
 		Family:        satFamilyBond,
 		ContractKey:   "claimStakingRewards",
-		AccountShape:  "SW,--,-W,-W,--,-W,-W,-W,--,--,--",
+		AccountShape:  "SW,--,-W,-W,--,-W,-W,--,--,--,--",
 		Variable:      "",
 	},
 	"claimUnallocatedStakingRewards": {
@@ -385,7 +395,7 @@ var signerSATCodecsV2 = map[string]signerSATCodecV2{
 		DataLength:    1,
 		Family:        satFamilyBond,
 		ContractKey:   "claimUnallocatedStakingRewards",
-		AccountShape:  "SW,-W,-W,-W,--,-W,--,--,--",
+		AccountShape:  "SW,-W,-W,-W,--,--,--,--,--",
 		Variable:      "",
 	},
 }

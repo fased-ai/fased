@@ -28,7 +28,7 @@ describe("signer owner-policy package and installers", () => {
 
   it("installs Local owner tools only after the signer artifact is authenticated", () => {
     const installer = read("scripts/install-fased-signerd.sh");
-    const updater = read("scripts/fased-managed-updater.mjs");
+    const updater = read("scripts/fased-managed-updater-core.mjs");
     const signerInstall = installer.indexOf('node "$UPDATER" "${args[@]}"');
     const policyInstall = installer.indexOf(
       'install -m 0700 "$POLICY_HELPER_SOURCE" "$POLICY_HELPER_PATH"',

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "topology": "flat-updater-with-two-support-files",
+  "sourceTag": "v0.1.76-rc.20",
+  "entrypoint": "fased-managed-updater.mjs",
+  "files": [
+    {
+      "name": "fased-managed-updater.mjs",
+      "sha256": "bc8a2b5ce0dbae21201abf5cc1d90d8b37a6415da30e6cdb4ba18fe4d2819a77"
+    },
+    {
+      "name": "hosted-release-manifest.mjs",
+      "sha256": "bbbc824f358447eadfebab4d3ad1b37b9d87eb6b250f26afa2ec2e21ecdfdabb"
+    },
+    {
+      "name": "managed-runtime-layout.mjs",
+      "sha256": "9641201833caafd6b277569ef607a17298327b0146eb17b407aded1921665d36"
+    }
+  ]
+}

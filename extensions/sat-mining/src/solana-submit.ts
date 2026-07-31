@@ -2308,7 +2308,7 @@ export async function submitSatSetActiveCommit(
         programId,
       );
       return [
-        { pubkey: signer, isSigner: true, isWritable: true },
+        { pubkey: signer, isSigner: true, isWritable: false },
         { pubkey: satMinerCapitalState, isSigner: false, isWritable: true },
       ];
     },
@@ -2416,7 +2416,7 @@ export async function submitSatOpenBondPosition(
         { pubkey: bondPosition, isSigner: false, isWritable: true },
         { pubkey: signerTokenAccount, isSigner: false, isWritable: true },
         { pubkey: bondVault, isSigner: false, isWritable: true },
-        { pubkey: mint, isSigner: false, isWritable: true },
+        { pubkey: mint, isSigner: false, isWritable: false },
         { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
         { pubkey: new solana.PublicKey(TOKEN_PROGRAM_ID), isSigner: false, isWritable: false },
         {
@@ -2453,7 +2453,7 @@ export async function submitSatIncreaseBondPosition(
         { pubkey: bondPosition, isSigner: false, isWritable: true },
         { pubkey: signerTokenAccount, isSigner: false, isWritable: true },
         { pubkey: bondVault, isSigner: false, isWritable: true },
-        { pubkey: mint, isSigner: false, isWritable: true },
+        { pubkey: mint, isSigner: false, isWritable: false },
         { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
         { pubkey: new solana.PublicKey(TOKEN_PROGRAM_ID), isSigner: false, isWritable: false },
         {
@@ -2548,7 +2548,7 @@ export async function submitSatFinalizeBondUnlock(_config: SatMiningConfig) {
         { pubkey: bondStakingPosition, isSigner: false, isWritable: true },
         { pubkey: bondVault, isSigner: false, isWritable: true },
         { pubkey: signerTokenAccount, isSigner: false, isWritable: true },
-        { pubkey: mint, isSigner: false, isWritable: true },
+        { pubkey: mint, isSigner: false, isWritable: false },
         { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
         { pubkey: new solana.PublicKey(TOKEN_PROGRAM_ID), isSigner: false, isWritable: false },
         {
@@ -2637,7 +2637,7 @@ export async function submitSatClaimBondStakingRewards(_config: SatMiningConfig)
         { pubkey: bondPosition, isSigner: false, isWritable: false },
         { pubkey: bondStakingRewardVault, isSigner: false, isWritable: true },
         { pubkey: signerTokenAccount, isSigner: false, isWritable: true },
-        { pubkey: mint, isSigner: false, isWritable: true },
+        { pubkey: mint, isSigner: false, isWritable: false },
         { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
         { pubkey: new solana.PublicKey(TOKEN_PROGRAM_ID), isSigner: false, isWritable: false },
         {
@@ -2676,7 +2676,7 @@ export async function submitSatClaimUnallocatedStakingRewards(
         { pubkey: bondStakingRewardVault, isSigner: false, isWritable: true },
         { pubkey: recipientTokenAccount, isSigner: false, isWritable: true },
         { pubkey: recipientOwner, isSigner: false, isWritable: false },
-        { pubkey: mint, isSigner: false, isWritable: true },
+        { pubkey: mint, isSigner: false, isWritable: false },
         { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
         { pubkey: new solana.PublicKey(TOKEN_PROGRAM_ID), isSigner: false, isWritable: false },
         {
@@ -3298,7 +3298,7 @@ export async function submitSatDistributeCyclePage(
       const accounts = [
         { pubkey: signer, isSigner: true, isWritable: true },
         { pubkey: satCycleState, isSigner: false, isWritable: true },
-        { pubkey: satCycleRegistryPage, isSigner: false, isWritable: false },
+        { pubkey: satCycleRegistryPage, isSigner: false, isWritable: true },
         { pubkey: satCycleSettlementProgress, isSigner: false, isWritable: true },
         { pubkey: satGlobalState, isSigner: false, isWritable: false },
         { pubkey: satTreasuryState, isSigner: false, isWritable: true },
@@ -3499,7 +3499,7 @@ export async function submitSatClaimCycleRewardsBatch(
       const recipient = deriveAssociatedTokenAddress(solana, signer, mint);
       const accounts = [
         { pubkey: signer, isSigner: true, isWritable: true },
-        { pubkey: satGlobalState, isSigner: false, isWritable: false },
+        { pubkey: satGlobalState, isSigner: false, isWritable: true },
         { pubkey: treasury, isSigner: false, isWritable: true },
         { pubkey: satTreasuryState, isSigner: false, isWritable: true },
         { pubkey: satMinerCapitalState, isSigner: false, isWritable: true },
@@ -3585,7 +3585,7 @@ export async function submitSatClaimProtocolTreasury(
       return [
         { pubkey: signer, isSigner: true, isWritable: true },
         { pubkey: satGlobalState, isSigner: false, isWritable: false },
-        { pubkey: treasury, isSigner: false, isWritable: true },
+        { pubkey: treasury, isSigner: false, isWritable: false },
         { pubkey: satTreasuryState, isSigner: false, isWritable: true },
         { pubkey: satTreasuryVault, isSigner: false, isWritable: true },
         { pubkey: satRegistryReserve, isSigner: false, isWritable: true },
@@ -3683,7 +3683,7 @@ export async function submitSatClaimProtocolDistributorSat(
       return [
         { pubkey: signer, isSigner: true, isWritable: true },
         { pubkey: satGlobalState, isSigner: false, isWritable: false },
-        { pubkey: treasury, isSigner: false, isWritable: true },
+        { pubkey: treasury, isSigner: false, isWritable: false },
         { pubkey: satTreasuryState, isSigner: false, isWritable: true },
         { pubkey: recipientOwner, isSigner: false, isWritable: true },
         { pubkey: mintAuthority, isSigner: false, isWritable: true },
@@ -3743,7 +3743,7 @@ export async function submitSatRetargetUnlock(
         programId,
       );
       return [
-        { pubkey: signer, isSigner: true, isWritable: true },
+        { pubkey: signer, isSigner: true, isWritable: false },
         { pubkey: satGlobalState, isSigner: false, isWritable: true },
         { pubkey: satCycleState, isSigner: false, isWritable: false },
         { pubkey: satUnlockIntervalState, isSigner: false, isWritable: true },
@@ -3783,7 +3783,7 @@ function buildCloseResolvedMinerCycleStateSpec(params: {
       );
       return [
         { pubkey: signer, isSigner: true, isWritable: true },
-        { pubkey: satCycleState, isSigner: false, isWritable: false },
+        { pubkey: satCycleState, isSigner: false, isWritable: true },
         { pubkey: minerAuthority, isSigner: false, isWritable: true },
         { pubkey: satMinerCycleState, isSigner: false, isWritable: true },
         { pubkey: satMinerCapitalState, isSigner: false, isWritable: true },
@@ -3823,7 +3823,7 @@ function buildCloseResolvedCycleRegistryPageSpec(params: {
       );
       return [
         { pubkey: signer, isSigner: true, isWritable: true },
-        { pubkey: satCycleState, isSigner: false, isWritable: false },
+        { pubkey: satCycleState, isSigner: false, isWritable: true },
         { pubkey: satCycleRegistryMeta, isSigner: false, isWritable: true },
         { pubkey: satCycleRegistryPage, isSigner: false, isWritable: true },
         { pubkey: satRegistryReserve, isSigner: false, isWritable: true },

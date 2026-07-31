@@ -30,7 +30,7 @@ const signerInstallerSource = fs.readFileSync(
   "utf8",
 );
 const signerUpdaterSource = fs.readFileSync(
-  new URL("../../scripts/fased-managed-updater.mjs", import.meta.url),
+  new URL("../../scripts/fased-managed-updater-core.mjs", import.meta.url),
   "utf8",
 );
 

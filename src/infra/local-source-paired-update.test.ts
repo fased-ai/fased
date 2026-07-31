@@ -51,6 +51,11 @@ function createFixture() {
   fs.writeFileSync(path.join(sourceRoot, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
   fs.writeFileSync(
     path.join(sourceRoot, "scripts", "fased-managed-updater.mjs"),
+    'import "./fased-managed-updater-core.mjs";\n',
+    { mode: 0o700 },
+  );
+  fs.writeFileSync(
+    path.join(sourceRoot, "scripts", "fased-managed-updater-core.mjs"),
     [
       'import { controllerReady } from "./hosted-release-manifest.mjs";',
       'import fs from "node:fs";',
@@ -66,6 +71,16 @@ function createFixture() {
     "export const controllerReady = true;\n",
   );
   fs.writeFileSync(path.join(sourceRoot, "scripts", "managed-runtime-layout.mjs"), "export {};\n");
+  for (const name of [
+    "lifecycle-trust-crypto.mjs",
+    "lifecycle-trust-policy.mjs",
+    "lifecycle-trust-root.mjs",
+    "lifecycle-trust-runtime.mjs",
+    "managed-updater-bundle.mjs",
+  ]) {
+    fs.writeFileSync(path.join(sourceRoot, "scripts", name), "export {};\n");
+  }
+  fs.writeFileSync(path.join(sourceRoot, "scripts", "managed-updater-bundle.v1.json"), "{}\n");
   fs.writeFileSync(
     path.join(sourceRoot, "scripts", "install-fased-signerd.sh"),
     '#!/usr/bin/env bash\nprintf "installer %s\\n" "$*" >>"$FASED_TEST_SIGNER_LOG"\n',

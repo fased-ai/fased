@@ -38,6 +38,13 @@ describe("CI workflow routing", () => {
     expect(jobs["hosting-lifecycle"]).toBeDefined();
     expect(jobs["protected-local-update-lifecycle"]).toBeDefined();
 
+    const releaseCheck = jobs["release-check"];
+    expect(
+      releaseCheck?.steps?.find((step) => step.uses === "actions/checkout@v6")?.with?.[
+        "fetch-depth"
+      ],
+    ).toBe(0);
+
     const protectedLocalUpdate = jobs["protected-local-update-lifecycle"];
     expect(protectedLocalUpdate?.needs).toEqual(
       expect.arrayContaining(["change-scope", "hosting-lifecycle"]),

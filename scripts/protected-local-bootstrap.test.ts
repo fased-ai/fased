@@ -612,6 +612,32 @@ default:other::---
     ).rejects.toThrow(/unsafe entry/u);
   });
 
+  it("restores private legacy state without corrupting immutable updater modes", async () => {
+    const root = temporaryRoot();
+    const stateDir = path.join(root, ".fased");
+    const updaterDir = path.join(stateDir, "updater");
+    const entrypoint = path.join(updaterDir, "fased-managed-updater.mjs");
+    const receipt = path.join(updaterDir, "managed-updater-generation.v1.json");
+    fs.mkdirSync(updaterDir, { recursive: true, mode: 0o755 });
+    fs.writeFileSync(entrypoint, "#!/usr/bin/env node\n", { mode: 0o755 });
+    fs.writeFileSync(receipt, "{}\n", { mode: 0o644 });
+    const identity = fs.statSync(stateDir);
+    const spec = {
+      stateDir,
+      operatorUid: identity.uid,
+      operatorGid: identity.gid,
+    };
+
+    fs.chmodSync(updaterDir, 0o700);
+    fs.chmodSync(entrypoint, 0o700);
+    fs.chmodSync(receipt, 0o600);
+    await __testing.restoreLegacyOperatorRuntimeModes(spec);
+
+    expect(fs.statSync(updaterDir).mode & 0o777).toBe(0o755);
+    expect(fs.statSync(entrypoint).mode & 0o777).toBe(0o755);
+    expect(fs.statSync(receipt).mode & 0o777).toBe(0o644);
+  });
+
   it("packages one commit-before-onboarding protected Local lifecycle", () => {
     const installer = fs.readFileSync(path.join(process.cwd(), "install.sh"), "utf8");
     const bootstrap = fs.readFileSync(

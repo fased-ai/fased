@@ -5,7 +5,8 @@ LAUNCHER_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 LAUNCHER_STATE_DIR="$(cd "$(dirname "$LAUNCHER_PATH")/.." && pwd)"
 STATE_DIR="${FASED_STATE_DIR:-${FASED_CONFIG_DIR:-$LAUNCHER_STATE_DIR}}"
 CURRENT_LINK="$STATE_DIR/runtime/current"
-UPDATER="$STATE_DIR/updater/fased-managed-updater.mjs"
+UPDATER_GENERATION="$STATE_DIR/updater/current/fased-managed-updater.mjs"
+UPDATER_COMPAT="$STATE_DIR/updater/fased-managed-updater.mjs"
 
 node_runtime_ok() {
   local candidate="$1"
@@ -54,8 +55,13 @@ export FASED_CONFIG_PATH="$CONFIG_PATH"
 # before reading application-owned configuration so a stale login session can
 # still update after a protected Local migration creates supplementary groups
 # or after the Gateway atomically replaces fased.json.
-if [[ "${1:-}" == "update" && -f "$UPDATER" ]]; then
-  exec "$NODE_BIN" "$UPDATER" "$@"
+if [[ "${1:-}" == "update" ]]; then
+  if [[ -f "$UPDATER_GENERATION" && ! -L "$UPDATER_GENERATION" ]]; then
+    exec "$NODE_BIN" "$UPDATER_GENERATION" "$@"
+  fi
+  if [[ -f "$UPDATER_COMPAT" && ! -L "$UPDATER_COMPAT" ]]; then
+    exec "$NODE_BIN" "$UPDATER_COMPAT" "$@"
+  fi
 fi
 
 load_managed_profile_environment() {

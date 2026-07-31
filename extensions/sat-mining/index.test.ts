@@ -4,7 +4,6 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   appendSatPlannerHistoryOutcome,
-  resolveSatActionHistoryStorePath,
   resolveSatPlannerHistoryStorePath,
   resolveSatRuntimeStorePath,
   writeSatRecentActions,
@@ -12,7 +11,7 @@ import {
 
 const SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
 const SAT_BOND_PROGRAM_ID = "8RYKuGb2k8hBcGX34QdYJXdXZkNvD3fKy85s63Pph2j7";
-const SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa";
+const SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa"; // pragma: allowlist secret
 const SAT_MINT_PROGRAM_ID = "8fb3Mpowe4pD6ed89gwm6gLuh8csPSrLi3hypcesqs5C";
 
 beforeEach(() => {
@@ -252,8 +251,8 @@ vi.mock("./src/rpc-read.js", async (importOriginal) => {
     inspectSatMinerCapitalAccountStatus: vi.fn(async () => ({
       address: "miner-capital-1",
       exists: true,
-      owner: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
-      expectedOwner: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
+      owner: SAT_PROGRAM_ID,
+      expectedOwner: SAT_PROGRAM_ID,
       dataLength: 112,
     })),
     inspectSatPayoutReadiness: vi.fn(async () => ({
@@ -908,7 +907,7 @@ describe("sat-mining plugin config persistence", () => {
       address: "miner-capital-1",
       exists: false,
       owner: null,
-      expectedOwner: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
+      expectedOwner: SAT_PROGRAM_ID,
       dataLength: 0,
     });
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
@@ -5034,14 +5033,14 @@ describe("sat-mining plugin config persistence", () => {
         address: "miner-capital-1",
         exists: false,
         owner: null,
-        expectedOwner: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
+        expectedOwner: SAT_PROGRAM_ID,
         dataLength: 0,
       })
       .mockResolvedValueOnce({
         address: "miner-capital-1",
         exists: true,
-        owner: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
-        expectedOwner: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
+        owner: SAT_PROGRAM_ID,
+        expectedOwner: SAT_PROGRAM_ID,
         dataLength: 112,
       });
 
@@ -5111,7 +5110,7 @@ describe("sat-mining plugin config persistence", () => {
       address: "miner-capital-1",
       exists: true,
       owner: "11111111111111111111111111111111",
-      expectedOwner: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
+      expectedOwner: SAT_PROGRAM_ID,
       dataLength: 0,
     });
     inspectCapitalMock.mockResolvedValueOnce(null);
@@ -5812,7 +5811,7 @@ describe("sat-mining plugin config persistence", () => {
     expect(writes).toHaveLength(0);
   });
 
-  it("backfills append-only action history from persisted runtime actions on startup", async () => {
+  it("migrates persisted runtime actions into the permanent ledger on startup", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-action-history-backfill-"));
     let mainService:
       | {
@@ -5900,31 +5899,24 @@ describe("sat-mining plugin config persistence", () => {
         logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
       });
 
-      const actionHistoryPath = resolveSatActionHistoryStorePath(tempDir, "wallet-a");
-      const actionHistoryLines = (await fs.readFile(actionHistoryPath, "utf8"))
-        .trim()
-        .split("\n")
-        .filter(Boolean);
-
       let response: { ok: boolean; payload: unknown } | null = null;
-      await gatewayMethods.get("sat.getMiningStatus")!.handler({
+      await gatewayMethods.get("sat.getMiningHistory")!.handler({
+        params: { window: "all", activityWindow: "all" },
         respond: (ok, payload) => {
           response = { ok, payload };
         },
       });
 
-      expect(actionHistoryLines).toHaveLength(1);
-      expect(JSON.parse(actionHistoryLines[0] ?? "{}")).toMatchObject({
-        action: "submitCycle",
-        cycleId: 101,
-        status: "success",
-      });
+      await expect(
+        fs.stat(path.join(tempDir, "sat-mining", "wallets", "wallet-a", "mining.sqlite")),
+      ).resolves.toMatchObject({ isFile: expect.any(Function) });
       expect(response).toMatchObject({
         ok: true,
         payload: {
           ok: true,
           payload: {
-            recentActions: [expect.objectContaining({ action: "submitCycle", cycleId: 101 })],
+            actions: [expect.objectContaining({ action: "submitCycle", cycleId: 101 })],
+            totalStoredActionCount: 1,
           },
         },
       });

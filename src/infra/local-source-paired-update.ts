@@ -17,10 +17,19 @@ const PHASES = new Set([
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
-const CONTROLLER_FILES = [
+const LEGACY_CONTROLLER_FILES = [
   "fased-managed-updater.mjs",
   "hosted-release-manifest.mjs",
   "managed-runtime-layout.mjs",
+] as const;
+const GENERATION_CONTROLLER_FILES = [
+  "fased-managed-updater-core.mjs",
+  "lifecycle-trust-crypto.mjs",
+  "lifecycle-trust-policy.mjs",
+  "lifecycle-trust-root.mjs",
+  "lifecycle-trust-runtime.mjs",
+  "managed-updater-bundle.mjs",
+  "managed-updater-bundle.v1.json",
 ] as const;
 
 type LocalSourcePhase =
@@ -253,7 +262,19 @@ async function readPackageVersion(sourceRoot: string): Promise<string> {
 async function copyController(sourceRoot: string, transactionDir: string): Promise<string> {
   const controllerDir = path.join(transactionDir, "controller");
   await fs.mkdir(controllerDir, { recursive: true, mode: 0o700 });
-  for (const name of CONTROLLER_FILES) {
+  const generationController = await fs
+    .lstat(path.join(sourceRoot, "scripts", "fased-managed-updater-core.mjs"))
+    .then((stat) => stat.isFile() && !stat.isSymbolicLink())
+    .catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") {
+        return false;
+      }
+      throw error;
+    });
+  const controllerFiles = generationController
+    ? [...LEGACY_CONTROLLER_FILES, ...GENERATION_CONTROLLER_FILES]
+    : [...LEGACY_CONTROLLER_FILES];
+  for (const name of controllerFiles) {
     const source = path.join(sourceRoot, "scripts", name);
     const stat = await fs.lstat(source);
     if (!stat.isFile() || stat.isSymbolicLink()) {
@@ -261,7 +282,7 @@ async function copyController(sourceRoot: string, transactionDir: string): Promi
     }
     const destination = path.join(controllerDir, name);
     await fs.copyFile(source, destination);
-    await fs.chmod(destination, name.endsWith("updater.mjs") ? 0o700 : 0o600);
+    await fs.chmod(destination, name.endsWith(".json") ? 0o600 : 0o700);
     await fsyncPath(destination);
   }
   await fsyncPath(controllerDir);
@@ -275,7 +296,19 @@ async function ensureControllerDependencyClosure(params: {
 }): Promise<void> {
   const controllerDir = path.dirname(params.journal.controllerPath);
   const releaseSha = params.journal.target?.sha ?? params.journal.previous.sha;
-  for (const name of CONTROLLER_FILES) {
+  const generationController = await fs
+    .lstat(path.join(controllerDir, "fased-managed-updater-core.mjs"))
+    .then((stat) => stat.isFile() && !stat.isSymbolicLink())
+    .catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") {
+        return false;
+      }
+      throw error;
+    });
+  const controllerFiles = generationController
+    ? [...LEGACY_CONTROLLER_FILES, ...GENERATION_CONTROLLER_FILES]
+    : [...LEGACY_CONTROLLER_FILES];
+  for (const name of controllerFiles) {
     const destination = path.join(controllerDir, name);
     const destinationStat = await fs.lstat(destination).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") {
@@ -320,7 +353,7 @@ async function ensureControllerDependencyClosure(params: {
       throw new Error(`Local signer rollback controller dependency is unsafe: ${source}`);
     }
     await fs.copyFile(source, destination);
-    await fs.chmod(destination, name === "fased-managed-updater.mjs" ? 0o700 : 0o600);
+    await fs.chmod(destination, name.endsWith(".json") ? 0o600 : 0o700);
     await fsyncPath(destination);
   }
   await fsyncPath(controllerDir);

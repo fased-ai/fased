@@ -8,7 +8,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { Keypair } from "@solana/web3.js";
 import { afterEach, describe, expect, it } from "vitest";
-import { __testing, MANAGED_UPDATER_SUPPORT_FILES } from "./fased-managed-updater.mjs";
+import { __testing, MANAGED_UPDATER_SUPPORT_FILES } from "./fased-managed-updater-core.mjs";
 import {
   resolveSignerBuildIdentity,
   signerIdentityLDFlags,

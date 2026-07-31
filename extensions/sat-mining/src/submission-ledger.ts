@@ -46,6 +46,50 @@ export type SatSubmissionClaim = {
   owner: string;
 };
 
+export type SatSubmissionClaimParams = {
+  walletId: string;
+  workflowId: string;
+  operationKey: string;
+  intentDigest: string;
+  action: string;
+  allowFailedRetry?: boolean;
+  env?: NodeJS.ProcessEnv;
+  owner?: string;
+};
+
+export type SatSubmissionReadParams = {
+  walletId: string;
+  requestId: string;
+  env?: NodeJS.ProcessEnv;
+};
+
+export type SatSubmissionReadAllParams = {
+  walletId: string;
+  env?: NodeJS.ProcessEnv;
+};
+
+export type SatSubmissionUpdateParams = {
+  walletId: string;
+  requestId: string;
+  intentDigest: string;
+  state: SatSubmissionSignerState;
+  signature?: string;
+  error?: string;
+  owner?: string;
+  releaseLease?: boolean;
+  env?: NodeJS.ProcessEnv;
+};
+
+export type SatSubmissionLedgerAdapter = {
+  walletId: string;
+  claim(params: SatSubmissionClaimParams): Promise<SatSubmissionClaim>;
+  read(params: SatSubmissionReadParams): Promise<SatSubmissionRecord | null>;
+  readAll(params: SatSubmissionReadAllParams): Promise<SatSubmissionRecord[]>;
+  update(params: SatSubmissionUpdateParams): Promise<SatSubmissionRecord>;
+};
+
+type SatSubmissionLedgerAdapterResolver = (walletId: string) => SatSubmissionLedgerAdapter | null;
+
 const DEFAULT_LOCK_OPTIONS: FileLockOptions = {
   retries: {
     retries: 120,
@@ -58,6 +102,23 @@ const DEFAULT_LOCK_OPTIONS: FileLockOptions = {
 };
 
 const localLedgerWriteChains = new Map<string, Promise<void>>();
+let submissionLedgerAdapterResolver: SatSubmissionLedgerAdapterResolver | null = null;
+
+export function setSatSubmissionLedgerAdapterResolver(
+  resolver: SatSubmissionLedgerAdapterResolver | null,
+): void {
+  submissionLedgerAdapterResolver = resolver;
+}
+
+function resolveSubmissionLedgerAdapter(walletId: string): SatSubmissionLedgerAdapter | null {
+  const adapter = submissionLedgerAdapterResolver?.(walletId) ?? null;
+  if (adapter && adapter.walletId !== walletId) {
+    throw new Error(
+      `SAT submission ledger adapter wallet mismatch: expected ${walletId}, received ${adapter.walletId}`,
+    );
+  }
+  return adapter;
+}
 
 async function withSatSubmissionLedgerLock<T>(
   filePath: string,
@@ -149,7 +210,7 @@ function emptyLedger(): SatSubmissionLedgerFile {
   return { version: 1, records: {} };
 }
 
-function normalizeRecord(value: unknown): SatSubmissionRecord | null {
+export function normalizeSatSubmissionRecord(value: unknown): SatSubmissionRecord | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
@@ -180,7 +241,7 @@ async function readLedger(filePath: string): Promise<SatSubmissionLedgerFile> {
     }
     const records: Record<string, SatSubmissionRecord> = {};
     for (const [requestId, raw] of Object.entries(parsed.records)) {
-      const record = normalizeRecord(raw);
+      const record = normalizeSatSubmissionRecord(raw);
       if (!record || record.requestId !== requestId) {
         throw new Error(`invalid SAT submission ledger record ${requestId}`);
       }
@@ -219,7 +280,7 @@ async function writeLedger(filePath: string, ledger: SatSubmissionLedgerFile): P
   }
 }
 
-function leaseDurationMs(env: NodeJS.ProcessEnv): number {
+export function satSubmissionLeaseDurationMs(env: NodeJS.ProcessEnv): number {
   const configured = Number(env.FASED_SAT_SUBMISSION_LEASE_MS ?? "");
   if (Number.isFinite(configured) && configured >= 50 && configured <= 300_000) {
     return Math.floor(configured);
@@ -239,14 +300,17 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
-function leaseIsLive(lease: SatSubmissionLease | undefined, now = Date.now()): boolean {
+export function satSubmissionLeaseIsLive(
+  lease: SatSubmissionLease | undefined,
+  now = Date.now(),
+): boolean {
   if (!lease || Date.parse(lease.expiresAt) <= now) {
     return false;
   }
   return lease.pid === process.pid || isPidAlive(lease.pid);
 }
 
-function assertStateTransition(
+export function assertSatSubmissionStateTransition(
   requestId: string,
   current: SatSubmissionSignerState,
   next: SatSubmissionSignerState,
@@ -280,16 +344,13 @@ export function buildSatSubmissionRequestId(params: {
   return `sat-v2-${digest.slice(0, 48)}`;
 }
 
-export async function claimSatSubmission(params: {
-  walletId: string;
-  workflowId: string;
-  operationKey: string;
-  intentDigest: string;
-  action: string;
-  allowFailedRetry?: boolean;
-  env?: NodeJS.ProcessEnv;
-  owner?: string;
-}): Promise<SatSubmissionClaim> {
+export async function claimSatSubmission(
+  params: SatSubmissionClaimParams,
+): Promise<SatSubmissionClaim> {
+  const adapter = resolveSubmissionLedgerAdapter(params.walletId);
+  if (adapter) {
+    return await adapter.claim(params);
+  }
   const env = params.env ?? process.env;
   const filePath = resolveSatSubmissionLedgerPath({ walletId: params.walletId, env });
   const owner = params.owner ?? `${process.pid}:${randomUUID()}`;
@@ -322,7 +383,7 @@ export async function claimSatSubmission(params: {
           `SAT idempotency collision for ${requestId}: the workflow key is already bound to a different immutable intent digest`,
         );
       }
-      if (leaseIsLive(existing.lease) && existing.lease?.owner !== owner) {
+      if (satSubmissionLeaseIsLive(existing.lease) && existing.lease?.owner !== owner) {
         return { record: existing, created: false, claimed: false, owner };
       }
       const now = new Date().toISOString();
@@ -330,7 +391,7 @@ export async function claimSatSubmission(params: {
         owner,
         pid: process.pid,
         acquiredAt: now,
-        expiresAt: new Date(Date.now() + leaseDurationMs(env)).toISOString(),
+        expiresAt: new Date(Date.now() + satSubmissionLeaseDurationMs(env)).toISOString(),
       };
       existing.attempts += 1;
       existing.updatedAt = now;
@@ -353,7 +414,7 @@ export async function claimSatSubmission(params: {
         owner,
         pid: process.pid,
         acquiredAt: now,
-        expiresAt: new Date(Date.now() + leaseDurationMs(env)).toISOString(),
+        expiresAt: new Date(Date.now() + satSubmissionLeaseDurationMs(env)).toISOString(),
       },
     };
     ledger.records[requestId] = record;
@@ -362,11 +423,13 @@ export async function claimSatSubmission(params: {
   });
 }
 
-export async function readSatSubmission(params: {
-  walletId: string;
-  requestId: string;
-  env?: NodeJS.ProcessEnv;
-}): Promise<SatSubmissionRecord | null> {
+export async function readSatSubmission(
+  params: SatSubmissionReadParams,
+): Promise<SatSubmissionRecord | null> {
+  const adapter = resolveSubmissionLedgerAdapter(params.walletId);
+  if (adapter) {
+    return await adapter.read(params);
+  }
   const filePath = resolveSatSubmissionLedgerPath(params);
   return await withSatSubmissionLedgerLock(filePath, async () => {
     const ledger = await readLedger(filePath);
@@ -374,17 +437,29 @@ export async function readSatSubmission(params: {
   });
 }
 
-export async function updateSatSubmission(params: {
-  walletId: string;
-  requestId: string;
-  intentDigest: string;
-  state: SatSubmissionSignerState;
-  signature?: string;
-  error?: string;
-  owner?: string;
-  releaseLease?: boolean;
-  env?: NodeJS.ProcessEnv;
-}): Promise<SatSubmissionRecord> {
+export async function readSatSubmissionRecords(
+  params: SatSubmissionReadAllParams,
+): Promise<SatSubmissionRecord[]> {
+  const adapter = resolveSubmissionLedgerAdapter(params.walletId);
+  if (adapter) {
+    return await adapter.readAll(params);
+  }
+  const filePath = resolveSatSubmissionLedgerPath(params);
+  return await withSatSubmissionLedgerLock(filePath, async () => {
+    const ledger = await readLedger(filePath);
+    return Object.values(ledger.records).toSorted((left, right) =>
+      left.requestId.localeCompare(right.requestId),
+    );
+  });
+}
+
+export async function updateSatSubmission(
+  params: SatSubmissionUpdateParams,
+): Promise<SatSubmissionRecord> {
+  const adapter = resolveSubmissionLedgerAdapter(params.walletId);
+  if (adapter) {
+    return await adapter.update(params);
+  }
   const filePath = resolveSatSubmissionLedgerPath(params);
   return await withSatSubmissionLedgerLock(filePath, async () => {
     const ledger = await readLedger(filePath);
@@ -405,7 +480,7 @@ export async function updateSatSubmission(params: {
         `SAT submission ${params.requestId} returned a different transaction signature`,
       );
     }
-    assertStateTransition(params.requestId, record.state, params.state);
+    assertSatSubmissionStateTransition(params.requestId, record.state, params.state);
     record.state = params.state;
     if (params.signature !== undefined) {
       record.signature = params.signature;
@@ -436,7 +511,7 @@ export async function waitForSatSubmissionLease(params: {
     if (!record) {
       throw new Error(`SAT submission ${params.requestId} disappeared while waiting for its lease`);
     }
-    if (!leaseIsLive(record.lease)) {
+    if (!satSubmissionLeaseIsLive(record.lease)) {
       return record;
     }
     if (Date.now() >= timeoutAt) {

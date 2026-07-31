@@ -8,6 +8,10 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import * as tar from "tar";
+import {
+  MANAGED_UPDATER_RELEASE_DESCRIPTOR,
+  writeManagedUpdaterReleaseDescriptor,
+} from "./managed-updater-bundle.mjs";
 
 const execFileAsync = promisify(execFile);
 const rootDir = path.resolve(import.meta.dirname, "..");
@@ -535,6 +539,18 @@ async function main(): Promise<void> {
       path.join(packageRoot, ".fased-hosted-runtime.json"),
       `${JSON.stringify(runtimeMetadata, null, 2)}\n`,
       "utf8",
+    );
+    const updaterDescriptor = await writeManagedUpdaterReleaseDescriptor({
+      runtimeRoot: packageRoot,
+      architecture: arch,
+    });
+    const updaterDescriptorAssetName = `fased-managed-updater-bundle-linux-${arch}-v${version}.json`;
+    await fs.copyFile(
+      path.join(packageRoot, MANAGED_UPDATER_RELEASE_DESCRIPTOR),
+      path.join(outputDir, updaterDescriptorAssetName),
+    );
+    console.log(
+      `hosted-artifact: updater bundle ${updaterDescriptor.bundleDigest} (${updaterDescriptor.files.length} files)`,
     );
 
     const assetName = `fased-hosted-linux-${arch}-v${version}.tar.gz`;

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { __testing } from "./fased-managed-updater.mjs";
+import { __testing } from "./fased-managed-updater-core.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const installer = fs.readFileSync(path.join(root, "install.sh"), "utf8");
@@ -490,7 +490,7 @@ printf '%s' "$calls"
     ).toThrow("valid only with hosted-transaction finalize");
 
     const refresh = sliceBetween(
-      fs.readFileSync(path.join(root, "scripts/fased-managed-updater.mjs"), "utf8"),
+      fs.readFileSync(path.join(root, "scripts/fased-managed-updater-core.mjs"), "utf8"),
       "async function refreshGateway(",
       "async function updateStableComponents(",
     );
