@@ -1589,12 +1589,24 @@ async function restoreLegacySignerMaterial(transaction) {
   }
 }
 
+async function restoreLegacyOperatorRuntimeModes(spec) {
+  const trustedHardlinks = await resolveTrustedLegacyRuntimeHardlinks(spec);
+  for (const protectedRuntimePath of [
+    path.join(spec.stateDir, "runtime"),
+    path.join(spec.stateDir, "updater"),
+    path.join(spec.stateDir, "bin"),
+  ]) {
+    await hardenOperatorRuntime(protectedRuntimePath, spec, new Set(), trustedHardlinks);
+  }
+}
+
 async function restoreLegacyLocalStateBoundary(transaction) {
   const { spec, legacy } = transaction;
   const chown = systemBinary(["/usr/bin/chown", "/bin/chown"], "chown");
   const chmod = systemBinary(["/usr/bin/chmod", "/bin/chmod"], "chmod");
   runSystem(chown, ["-R", `${spec.operatorUid}:${spec.operatorGid}`, spec.stateDir]);
   runSystem(chmod, ["-R", "g-rwx,o-rwx", spec.stateDir]);
+  await restoreLegacyOperatorRuntimeModes(spec);
   await fsp.chown(spec.stateDir, spec.operatorUid, spec.operatorGid);
   await fsp.chmod(spec.stateDir, 0o700);
   if (fs.existsSync(legacy.materialDir)) {
@@ -3109,6 +3121,7 @@ export const __testing = Object.freeze({
   removeLegacySignerMaterial,
   resolveTrustedLegacyRuntimeHardlinks,
   resolveLegacySignerPaths,
+  restoreLegacyOperatorRuntimeModes,
   sharedApplicationStateDirectoriesForAclVerification,
   protectedLocalGatewayHealthMatches,
   waitForLegacyGatewayReleaseHealth,

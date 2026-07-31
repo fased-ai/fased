@@ -201,6 +201,38 @@ describe("managed updater content-addressed bundle", () => {
     }
   });
 
+  it("repairs rollback-restricted modes only after validating the complete generation", async () => {
+    const { updaterDir, firstRuntime } = await fixture();
+    const first = await stageManagedUpdaterGeneration({
+      updaterDir,
+      runtimeRoot: firstRuntime,
+      durable: true,
+    });
+    await Promise.all(
+      first.files.map((record) =>
+        fs.chmod(path.join(first.generationDir, record.name), record.mode & 0o700),
+      ),
+    );
+    await fs.chmod(path.join(first.generationDir, "managed-updater-generation.v1.json"), 0o600);
+
+    const repaired = await stageManagedUpdaterGeneration({
+      updaterDir,
+      runtimeRoot: firstRuntime,
+      durable: true,
+    });
+
+    expect(repaired.generationDir).toBe(first.generationDir);
+    for (const record of repaired.files) {
+      expect((await fs.stat(path.join(repaired.generationDir, record.name))).mode & 0o777).toBe(
+        record.mode,
+      );
+    }
+    expect(
+      (await fs.stat(path.join(repaired.generationDir, "managed-updater-generation.v1.json")))
+        .mode & 0o777,
+    ).toBe(0o644);
+  });
+
   it("requires the exact target-bound descriptor for a production runtime", async () => {
     const { updaterDir, firstRuntime } = await fixture();
     await makeProductionRuntime(firstRuntime);
@@ -228,7 +260,7 @@ describe("managed updater content-addressed bundle", () => {
     ).rejects.toThrow("release descriptor is mismatched");
   });
 
-  it("rejects an existing generation with extra, wrong-mode, or changed files", async () => {
+  it("rejects an existing generation with extra or changed files", async () => {
     const { updaterDir, firstRuntime } = await fixture();
     const first = await stageManagedUpdaterGeneration({
       updaterDir,
@@ -242,7 +274,10 @@ describe("managed updater content-addressed bundle", () => {
       }),
     ).rejects.toThrow(/inventory is invalid/u);
     await fs.rm(path.join(first.generationDir, "unexpected.txt"));
-    await fs.chmod(path.join(first.generationDir, "fased-managed-updater.mjs"), 0o644);
+    await fs.writeFile(
+      path.join(first.generationDir, "fased-managed-updater.mjs"),
+      "// changed updater bytes\n",
+    );
     await expect(
       stageManagedUpdaterGeneration({
         updaterDir,

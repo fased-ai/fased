@@ -407,6 +407,8 @@ async function validateManagedUpdaterGeneration({
   records,
   bundleDigest,
   releaseIdentity,
+  normalizeModes = false,
+  durable = false,
 }) {
   const stat = await fsp.lstat(generationDir);
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
@@ -423,25 +425,23 @@ async function validateManagedUpdaterGeneration({
   ) {
     throw new Error(`managed updater generation inventory is invalid: ${generationDir}`);
   }
+  const modeRepairs = [];
   for (const record of records) {
     const targetPath = path.join(generationDir, record.name);
     const identity = await sha256File(targetPath);
-    if (
-      identity.sha256 !== record.sha256 ||
-      identity.size !== record.size ||
-      identity.mode !== record.mode
-    ) {
+    if (identity.sha256 !== record.sha256 || identity.size !== record.size) {
       throw new Error(`managed updater generation identity is invalid: ${record.name}`);
+    }
+    if (identity.mode !== record.mode) {
+      if (!normalizeModes) {
+        throw new Error(`managed updater generation identity is invalid: ${record.name}`);
+      }
+      modeRepairs.push({ targetPath, mode: record.mode });
     }
   }
   const receiptPath = path.join(generationDir, MANAGED_UPDATER_GENERATION_RECEIPT);
   const receiptStat = await fsp.lstat(receiptPath);
-  if (
-    !receiptStat.isFile() ||
-    receiptStat.isSymbolicLink() ||
-    receiptStat.nlink !== 1 ||
-    (receiptStat.mode & 0o777) !== 0o644
-  ) {
+  if (!receiptStat.isFile() || receiptStat.isSymbolicLink() || receiptStat.nlink !== 1) {
     throw new Error(`managed updater generation receipt is unsafe: ${receiptPath}`);
   }
   const receipt = JSON.parse(await fsp.readFile(receiptPath, "utf8"));
@@ -455,6 +455,18 @@ async function validateManagedUpdaterGeneration({
   };
   if (canonicalJSON(receipt) !== canonicalJSON(expectedReceipt)) {
     throw new Error(`managed updater generation receipt is invalid: ${receiptPath}`);
+  }
+  if ((receiptStat.mode & 0o777) !== 0o644) {
+    if (!normalizeModes) {
+      throw new Error(`managed updater generation receipt is unsafe: ${receiptPath}`);
+    }
+    modeRepairs.push({ targetPath: receiptPath, mode: 0o644 });
+  }
+  for (const repair of modeRepairs) {
+    await fsp.chmod(repair.targetPath, repair.mode);
+    if (durable) {
+      await fsyncPath(repair.targetPath);
+    }
   }
   await import(
     `${pathToFileURL(path.join(generationDir, manifest.entrypoint)).href}?bundle-smoke=${bundleDigest}`
@@ -626,6 +638,8 @@ export async function stageManagedUpdaterGeneration({
       records,
       bundleDigest,
       releaseIdentity,
+      normalizeModes: true,
+      durable,
     });
   } else {
     await fsp.mkdir(stagingDir, { recursive: false, mode: 0o755 });
