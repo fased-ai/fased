@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.25
+
+- Repair incomplete Protected Local forward-update authority through the
+  ordinary update path without introducing another repair command.
+- Preserve the restored Gateway service owner across rollback and require its
+  exact runtime identity and health before accepting recovery.
+- Package the correction from PR #242 for ordered Local and Hosting lifecycle
+  acceptance; stable promotion remains blocked until those gates pass.
+
 ## 0.1.76-rc.24
 
 - Preserve permanent per-Wallet Mining history and complete target-owned
