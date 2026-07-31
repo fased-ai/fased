@@ -423,18 +423,18 @@ describe("protected Local bootstrap contract", () => {
     ).toThrow(/no exact previous release version/u);
   });
 
-  it("binds rollback health to the restored user systemd Gateway PID", async () => {
-    const observedPids: Array<number | undefined> = [];
+  it("binds rollback health to a stable user systemd Gateway listener", async () => {
+    const observedVersions: Array<string | undefined> = [];
     let systemdProbe = 0;
     await __testing.waitForLegacyGatewayRestored(
       {
-        spec: {},
+        spec: { gatewayPort: 18_789 },
         legacyGatewayState: { releaseVersion: "0.1.75" },
       },
       1_000,
       {
         systemctl: (_spec, args) => {
-          if (args[0] !== "show") {
+          if (args[0] === "list-jobs") {
             return "";
           }
           systemdProbe += 1;
@@ -445,22 +445,24 @@ describe("protected Local bootstrap contract", () => {
             `MainPID=${systemdProbe === 1 ? 0 : 4242}`,
           ].join("\n");
         },
-        probe: async (_spec, expectedPid, _timeoutMs, expectedVersion) => {
-          observedPids.push(expectedPid);
+        probe: async (_spec, _expectedPid, _timeoutMs, expectedVersion) => {
+          observedVersions.push(expectedVersion);
           return {
-            ok: expectedPid === 4242 && expectedVersion === "0.1.75",
-            detail: `pid=${expectedPid ?? "unknown"}`,
+            ok: expectedVersion === "0.1.75",
+            detail: `version=${expectedVersion}`,
           };
         },
+        ownsListener: async (_spec, expectedPid) => expectedPid === 4242,
         wait: async () => {},
         now: (() => {
           let now = 0;
-          return () => now++;
+          return () => (now += 100);
         })(),
+        stabilityMs: 200,
       },
     );
 
-    expect(observedPids).toEqual([4242]);
+    expect(observedVersions).toEqual(["0.1.75", "0.1.75"]);
     expect(__testing.systemdMainPid({ MainPID: "4242" })).toBe(4242);
     expect(__testing.systemdMainPid({ MainPID: "0" })).toBeUndefined();
   });

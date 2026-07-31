@@ -1346,6 +1346,7 @@ async function probeGatewayHealth(
               version: typeof payload?.version === "string" ? payload.version : "",
               runtimeSource:
                 typeof payload?.runtimeSource === "string" ? payload.runtimeSource : "",
+              pid: Number.isSafeInteger(payload?.pid) && payload.pid > 1 ? payload.pid : undefined,
               detail: `status=${response.statusCode ?? "unknown"} version=${payload?.version ?? "unknown"} runtimeSource=${payload?.runtimeSource ?? "unknown"} pid=${payload?.pid ?? "unknown"}`,
             });
           } catch (error) {
@@ -2311,22 +2312,83 @@ function systemdMainPid(properties) {
   return Number.isSafeInteger(pid) && pid > 1 ? pid : undefined;
 }
 
+async function processOwnsGatewayListener(spec, expectedPid) {
+  const expectedPort = Number(spec.gatewayPort);
+  if (!Number.isSafeInteger(expectedPort) || expectedPort < 1 || expectedPort > 65_535) {
+    return false;
+  }
+  const socketInodes = new Set();
+  for (const table of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+    let content;
+    try {
+      content = await fsp.readFile(table, "utf8");
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        continue;
+      }
+      throw error;
+    }
+    for (const line of content.split("\n").slice(1)) {
+      const fields = line.trim().split(/\s+/u);
+      if (fields.length < 10 || fields[3] !== "0A") {
+        continue;
+      }
+      const separator = fields[1].lastIndexOf(":");
+      const port = Number.parseInt(fields[1].slice(separator + 1), 16);
+      if (port === expectedPort && /^\d+$/u.test(fields[9])) {
+        socketInodes.add(fields[9]);
+      }
+    }
+  }
+  if (socketInodes.size === 0) {
+    return false;
+  }
+  let descriptors;
+  try {
+    descriptors = await fsp.readdir(`/proc/${expectedPid}/fd`);
+  } catch (error) {
+    if (new Set(["ENOENT", "EACCES"]).has(error?.code)) {
+      return false;
+    }
+    throw error;
+  }
+  for (const descriptor of descriptors) {
+    try {
+      const target = await fsp.readlink(`/proc/${expectedPid}/fd/${descriptor}`);
+      const match = /^socket:\[(\d+)\]$/u.exec(target);
+      if (match && socketInodes.has(match[1])) {
+        return true;
+      }
+    } catch (error) {
+      if (!new Set(["ENOENT", "EACCES"]).has(error?.code)) {
+        throw error;
+      }
+    }
+  }
+  return false;
+}
+
 async function waitForLegacyGatewayRestored(
   transaction,
   timeoutMs = 30_000,
   {
     systemctl = userSystemctl,
     probe = probeGatewayHealth,
+    ownsListener = processOwnsGatewayListener,
     wait = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
     now = Date.now,
+    stabilityMs = 1_000,
   } = {},
 ) {
   const { spec } = transaction;
   const expectedVersion = previousLegacyGatewayVersion(transaction);
   const deadline = now() + timeoutMs;
   let lastDetail = "legacy Gateway did not start";
+  let stablePid;
+  let stableSince;
   while (now() < deadline) {
     let properties = {};
+    let pendingJobs = "unknown";
     try {
       properties = parseSystemdProperties(
         systemctl(spec, [
@@ -2338,20 +2400,49 @@ async function waitForLegacyGatewayRestored(
           "--property=MainPID",
         ]),
       );
+      pendingJobs = systemctl(spec, [
+        "list-jobs",
+        "fased-gateway.service",
+        "--no-legend",
+        "--plain",
+      ]).trim();
     } catch (error) {
       lastDetail = error.message;
     }
     const expectedPid = systemdMainPid(properties);
     const health = expectedPid
-      ? await probe(spec, expectedPid, 1_500, expectedVersion)
+      ? await probe(spec, undefined, 1_500, expectedVersion)
       : {
           ok: false,
           detail: `user systemd MainPID=${properties.MainPID || "unknown"}`,
         };
-    if (properties.ActiveState === "active" && expectedPid && health.ok) {
-      return;
+    const listenerOwned =
+      expectedPid && health.ok
+        ? health.pid
+          ? health.pid === expectedPid
+          : await ownsListener(spec, expectedPid)
+        : false;
+    const ready =
+      properties.ActiveState === "active" &&
+      properties.SubState === "running" &&
+      expectedPid &&
+      health.ok &&
+      listenerOwned &&
+      pendingJobs === "";
+    if (ready) {
+      if (stablePid !== expectedPid) {
+        stablePid = expectedPid;
+        stableSince = now();
+      }
+      if (now() - stableSince >= stabilityMs) {
+        return;
+      }
+      await wait(100);
+      continue;
     }
-    lastDetail = `active=${properties.ActiveState || "unknown"} sub=${properties.SubState || "unknown"} result=${properties.Result || "unknown"}; ${health.detail}`;
+    stablePid = undefined;
+    stableSince = undefined;
+    lastDetail = `active=${properties.ActiveState || "unknown"} sub=${properties.SubState || "unknown"} result=${properties.Result || "unknown"} pendingJobs=${pendingJobs || "none"} listenerOwned=${listenerOwned}; ${health.detail}`;
     try {
       systemctl(spec, ["reset-failed", "fased-gateway.service"]);
     } catch {
@@ -3148,6 +3239,7 @@ export const __testing = Object.freeze({
   restoreLegacyOperatorRuntimeModes,
   sharedApplicationStateDirectoriesForAclVerification,
   protectedLocalGatewayHealthMatches,
+  processOwnsGatewayListener,
   systemdMainPid,
   waitForLegacyGatewayReleaseHealth,
   waitForLegacyGatewayRestored,
