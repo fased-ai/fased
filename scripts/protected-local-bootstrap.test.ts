@@ -404,6 +404,30 @@ describe("protected Local bootstrap contract", () => {
     });
   });
 
+  it("preserves a healthy legacy Gateway across a transient systemd state", () => {
+    const health = {
+      ok: false,
+      conflict: true,
+      version: "0.1.75",
+      runtimeSource: "managed-package",
+      detail: "status=200 version=0.1.75 runtimeSource=managed-package",
+    };
+    expect(__testing.legacyGatewayWasServing({ ActiveState: "activating" }, health)).toBe(true);
+    expect(__testing.legacyGatewayWasServing({ ActiveState: "inactive" }, health)).toBe(true);
+    expect(() =>
+      __testing.legacyGatewayWasServing(
+        { ActiveState: "active" },
+        {
+          ok: false,
+          conflict: false,
+          version: "",
+          runtimeSource: "",
+          detail: "connect ECONNREFUSED 127.0.0.1:18789",
+        },
+      ),
+    ).toThrow(/no exact healthy release identity/u);
+  });
+
   it("binds rollback health to the exact previous managed release", () => {
     expect(
       __testing.previousLegacyGatewayVersion({

@@ -2223,6 +2223,17 @@ function isValidLegacyGatewayReleaseHealth(health) {
   );
 }
 
+function legacyGatewayWasServing(properties, health) {
+  const serviceClaimsRunning = new Set(["active", "activating", "reloading"]).has(
+    properties?.ActiveState ?? "",
+  );
+  const releaseHealthy = isValidLegacyGatewayReleaseHealth(health);
+  if (serviceClaimsRunning && !releaseHealthy) {
+    fail(`legacy Local Gateway has no exact healthy release identity (${health?.detail})`);
+  }
+  return releaseHealthy;
+}
+
 async function waitForLegacyGatewayReleaseHealth(
   spec,
   {
@@ -2281,17 +2292,23 @@ async function captureLegacyGatewayState(spec, layout) {
       dropInSnapshot,
     };
   }
-  const health =
-    properties.ActiveState === "active" ? await waitForLegacyGatewayReleaseHealth(spec) : null;
-  if (health && !isValidLegacyGatewayReleaseHealth(health)) {
-    fail(`legacy Local Gateway has no exact healthy release identity (${health.detail})`);
+  let health = await probeGatewayHealth(spec, undefined, 1_500);
+  if (
+    !isValidLegacyGatewayReleaseHealth(health) &&
+    new Set(["active", "activating", "reloading"]).has(properties.ActiveState)
+  ) {
+    health = await waitForLegacyGatewayReleaseHealth(spec);
   }
+  const active = legacyGatewayWasServing(properties, health);
   const state = {
     busAvailable: true,
     exists: properties.LoadState !== "not-found",
-    active: properties.ActiveState === "active",
+    // Rollback intent follows the exact release that was serving traffic, not
+    // one transient systemd ActiveState sample. A reverse dependency can leave
+    // the unit activating while the healthy Gateway already owns the listener.
+    active,
     unitFileState: properties.UnitFileState || "disabled",
-    releaseVersion: health?.version || "",
+    releaseVersion: active ? health.version : "",
     dropInSnapshot,
   };
   if (state.exists && !isRestorableLegacyGatewayUnitFileState(state.unitFileState)) {
@@ -3356,6 +3373,7 @@ export const __testing = Object.freeze({
   inspectInstalledPluginTree,
   isRestorableLegacyGatewayUnitFileState,
   gatewayAclGrantState,
+  legacyGatewayWasServing,
   legacyInstallReferencesUserGateway,
   parseDirectoryAcl,
   prepareProtectedLocalChannelDirectory,
