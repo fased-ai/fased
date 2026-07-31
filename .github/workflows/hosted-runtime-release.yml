@@ -26,6 +26,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          # Release validation exercises one frozen pre-generation updater
+          # fixture stored at an immutable historical tag.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v6

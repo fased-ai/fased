@@ -286,6 +286,11 @@ describe("attested Hosting installer artifact layout", () => {
   });
 
   it("validates once while packaging native hosted artifacts in parallel", () => {
+    const validateJob = releaseWorkflow.slice(
+      releaseWorkflow.indexOf("  validate:"),
+      releaseWorkflow.indexOf("\n  linux:"),
+    );
+    expect(validateJob).toContain("fetch-depth: 0");
     expect(releaseWorkflow.match(/run: pnpm release:check/g)).toHaveLength(1);
     expect(releaseWorkflow).toContain("run: pnpm hosted:artifact:build --output");
     expect(releaseWorkflow).not.toContain("run: pnpm hosted:artifact --output");
