@@ -24,6 +24,10 @@ install -m 0755 "$fixture" "$staging/fased-lifecycle-root-fixture.mjs"
 install -m 0644 "$repo_root/scripts/fased-host-updater.mjs" "$staging/fased-host-updater.mjs"
 install \
   -m 0644 \
+  "$repo_root/scripts/fased-host-updaterctl.mjs" \
+  "$staging/fased-host-updaterctl.mjs"
+install \
+  -m 0644 \
   "$repo_root/scripts/fased-lifecycle-supervisor.mjs" \
   "$staging/fased-lifecycle-supervisor.mjs"
 mkdir "$staging/tmp"

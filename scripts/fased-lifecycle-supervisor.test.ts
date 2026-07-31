@@ -1,4 +1,4 @@
-import { generateKeyPairSync, randomUUID } from "node:crypto";
+import { createHash, generateKeyPairSync, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
@@ -24,6 +24,7 @@ const issuedAt = "2026-07-28T00:00:00.000Z";
 const expiresAt = "2027-07-28T00:00:00.000Z";
 const now = Date.parse("2026-07-30T00:00:00.000Z");
 const digest = (character: string) => character.repeat(64);
+const sha256Text = (value: string) => createHash("sha256").update(value).digest("hex");
 
 function metadata(overrides: Record<string, unknown> = {}) {
   return {
@@ -150,6 +151,121 @@ function embeddedTrust() {
     envelope: __testing.INITIAL_LIFECYCLE_ROOT_ENVELOPE,
     root: __testing.EMBEDDED_LIFECYCLE_ROOT,
     state,
+  };
+}
+
+async function existingControllerTransitionFixture(
+  paths: ReturnType<typeof tempPaths>["paths"],
+  previousVersion: string,
+) {
+  await fsp.mkdir(path.dirname(paths.channelPath), { recursive: true });
+  await fsp.mkdir(paths.releasesDir, { recursive: true });
+  await fsp.writeFile(paths.channelPath, "beta\n");
+  const supervisor = "stable-supervisor\n";
+  await fsp.writeFile(paths.supervisorPath, supervisor);
+
+  const targetServer = "verified-target-server\n";
+  const targetClient = "verified-target-client\n";
+  const verifier = "verified-evidence-verifier\n";
+  const targetServerSha = sha256Text(targetServer);
+  const targetClientSha = sha256Text(targetClient);
+  const trust = metadata({
+    targets: {
+      bootstrap: { asset: "install.sh", sha256: digest("d") },
+      supervisor: { asset: "fased-lifecycle-supervisor.mjs", sha256: sha256Text(supervisor) },
+      controllerServer: { asset: "fased-host-updater.mjs", sha256: targetServerSha },
+      controllerClient: { asset: "fased-host-updaterctl.mjs", sha256: targetClientSha },
+      evidenceVerifier: {
+        asset: "fased-privileged-release-evidence.mjs",
+        sha256: sha256Text(verifier),
+      },
+    },
+  });
+  const downloads = new Map([
+    ["fased-lifecycle-trust-v1.json", `${JSON.stringify(trust)}\n`],
+    ["fased-lifecycle-trust-v1.json.attestation.json", "{}\n"],
+    ["fased-host-updater.mjs", targetServer],
+    ["fased-host-updaterctl.mjs", targetClient],
+    ["fased-privileged-release-evidence.mjs", verifier],
+    ["fased-hosted-release-v2.json", "{}\n"],
+    ["fased-privileged-provenance-v1.intoto.json", "{}\n"],
+    ["fased-privileged-provenance-v1.intoto.json.attestation.json", "{}\n"],
+    ["fased-privileged-sbom-v1.spdx.json", "{}\n"],
+    ["fased-privileged-vex-v1.openvex.json", "{}\n"],
+  ]);
+
+  const previousServer = "verified-previous-server\n";
+  const previousClient = "verified-previous-client\n";
+  const previousIdentity = {
+    schemaVersion: 1,
+    version: previousVersion,
+    serverSha256: sha256Text(previousServer),
+    clientSha256: sha256Text(previousClient),
+  };
+  const previousGeneration = path.join(paths.releasesDir, `v${previousVersion}`);
+  await fsp.mkdir(previousGeneration, { recursive: true });
+  await Promise.all([
+    fsp.writeFile(path.join(previousGeneration, "fased-host-updater.mjs"), previousServer),
+    fsp.writeFile(path.join(previousGeneration, "fased-host-updaterctl.mjs"), previousClient),
+  ]);
+  await fsp.symlink(previousGeneration, paths.currentLink, "dir");
+  await fsp.mkdir(path.dirname(paths.controllerVersionPath), { recursive: true });
+  await fsp.writeFile(
+    paths.controllerVersionPath,
+    `${JSON.stringify(previousIdentity, null, 2)}\n`,
+  );
+
+  const activeInstanceId = randomUUID();
+  const restartController = vi.fn(async () => {
+    if (restartController.mock.calls.length === 1) {
+      throw new Error("injected target controller restart failure");
+    }
+  });
+  const context = __testing.createContext(
+    {
+      profile: "protected-local",
+      operatorUid: process.getuid?.() ?? 1000,
+      operatorGid: process.getgid?.() ?? 1000,
+      paths,
+    },
+    {
+      rootUid: process.getuid?.() ?? 0,
+      rootGid: process.getgid?.() ?? 0,
+      platform: "linux-x64",
+      now: () => now,
+      verifyMetadata: async () => undefined,
+      verifyReleaseEvidence: async () => undefined,
+      selfCheckController: async () => undefined,
+      download: async (url: string, destination: string) => {
+        const name = url.slice(url.lastIndexOf("/") + 1);
+        const body = downloads.get(name);
+        if (body === undefined) {
+          throw new Error(`unexpected asset ${name}`);
+        }
+        await fsp.writeFile(destination, body);
+      },
+      restartController,
+      waitForController: async () => undefined,
+      probeControllerIdentity: async (targetRequest: { version: string }) => {
+        const selected = await fsp.realpath(paths.currentLink);
+        const identity = JSON.parse(await fsp.readFile(paths.controllerVersionPath, "utf8"));
+        if (
+          selected !== path.join(paths.releasesDir, `v${targetRequest.version}`) ||
+          identity.version !== targetRequest.version
+        ) {
+          throw new Error("running controller does not match the target selection");
+        }
+        return activeInstanceId;
+      },
+    },
+  );
+  return {
+    context,
+    previousGeneration,
+    previousIdentity,
+    restartController,
+    targetServerSha,
+    targetClientSha,
   };
 }
 
@@ -486,6 +602,40 @@ describe("stable lifecycle supervisor contract", () => {
     await expect(
       fsp.lstat(path.join(root, "controller", "releases", `v${version}`)),
     ).resolves.toMatchObject({ uid: process.getuid?.() ?? 0 });
+  });
+
+  it("validates an existing controller against its own identity before A-to-B promotion", async () => {
+    const { paths } = tempPaths();
+    const fixture = await existingControllerTransitionFixture(paths, "1.2.2");
+    const state = { controllerInstanceId: randomUUID() };
+
+    await expect(
+      __testing.handleSupervisorRequest(request(), fixture.context, state),
+    ).rejects.toThrow(
+      "controller promotion failed and was restored: injected target controller restart failure",
+    );
+    expect(await fsp.realpath(paths.currentLink)).toBe(fixture.previousGeneration);
+    expect(JSON.parse(await fsp.readFile(paths.controllerVersionPath, "utf8"))).toEqual(
+      fixture.previousIdentity,
+    );
+    await expect(fsp.lstat(paths.supervisorTransactionPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    await expect(
+      __testing.handleSupervisorRequest(request(), fixture.context, state),
+    ).resolves.toMatchObject({ ok: true, version, controllerChanged: true });
+    expect(await fsp.realpath(paths.currentLink)).toBe(path.join(paths.releasesDir, `v${version}`));
+    expect(JSON.parse(await fsp.readFile(paths.controllerVersionPath, "utf8"))).toMatchObject({
+      version,
+      serverSha256: fixture.targetServerSha,
+      clientSha256: fixture.targetClientSha,
+    });
+
+    await expect(
+      __testing.handleSupervisorRequest(request(), fixture.context, state),
+    ).resolves.toMatchObject({ ok: true, version, controllerChanged: false });
+    expect(fixture.restartController).toHaveBeenCalledTimes(3);
   });
 
   it("restores the prior controller selection when worker restart fails", async () => {
