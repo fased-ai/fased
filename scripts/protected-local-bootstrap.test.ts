@@ -423,6 +423,50 @@ describe("protected Local bootstrap contract", () => {
     ).toThrow(/no exact previous release version/u);
   });
 
+  it("binds rollback health to a stable user systemd Gateway listener", async () => {
+    const observedVersions: Array<string | undefined> = [];
+    let systemdProbe = 0;
+    await __testing.waitForLegacyGatewayRestored(
+      {
+        spec: { gatewayPort: 18_789 },
+        legacyGatewayState: { releaseVersion: "0.1.75" },
+      },
+      1_000,
+      {
+        systemctl: (_spec, args) => {
+          if (args[0] === "list-jobs") {
+            return "";
+          }
+          systemdProbe += 1;
+          return [
+            "ActiveState=active",
+            "SubState=running",
+            "Result=success",
+            `MainPID=${systemdProbe === 1 ? 0 : 4242}`,
+          ].join("\n");
+        },
+        probe: async (_spec, _expectedPid, _timeoutMs, expectedVersion) => {
+          observedVersions.push(expectedVersion);
+          return {
+            ok: expectedVersion === "0.1.75",
+            detail: `version=${expectedVersion}`,
+          };
+        },
+        ownsListener: async (_spec, expectedPid) => expectedPid === 4242,
+        wait: async () => {},
+        now: (() => {
+          let now = 0;
+          return () => (now += 100);
+        })(),
+        stabilityMs: 200,
+      },
+    );
+
+    expect(observedVersions).toEqual(["0.1.75", "0.1.75"]);
+    expect(__testing.systemdMainPid({ MainPID: "4242" })).toBe(4242);
+    expect(__testing.systemdMainPid({ MainPID: "0" })).toBeUndefined();
+  });
+
   it("parses restrictive extended ACLs without discarding existing principals", () => {
     const original = __testing.parseDirectoryAcl(`
 user::rwx
@@ -687,6 +731,26 @@ default:other::---
     expect(updater).toContain(
       '{ relativePath: "federation", stateClass: "federation-network", create: true }',
     );
+  });
+
+  it("repairs an already-protected Local topology through the root lifecycle controller", () => {
+    const bootstrap = fs.readFileSync(
+      path.join(process.cwd(), "scripts", "protected-local-bootstrap.mjs"),
+      "utf8",
+    );
+    const branchStart = bootstrap.indexOf("if (!allocated.created) {");
+    const branchEnd = bootstrap.indexOf(
+      '\n    fail(\n      "protected Local instance exists without a recoverable bootstrap journal',
+      branchStart,
+    );
+    const alreadyProtected = bootstrap.slice(branchStart, branchEnd);
+
+    expect(alreadyProtected).toContain("lifecycle = applyProtectedLocalLifecycle(spec, layout)");
+    expect(alreadyProtected.indexOf("applyProtectedLocalLifecycle(spec, layout)")).toBeLessThan(
+      alreadyProtected.indexOf("verifyGatewayHealth(spec, layout"),
+    );
+    expect(alreadyProtected).not.toContain("shareApplicationState(");
+    expect(alreadyProtected).not.toContain("updateOperatorConfig(");
   });
 
   it("selects the fresh Local target by exact release and delegates trust to the root bundle", () => {

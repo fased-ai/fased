@@ -28,7 +28,7 @@
     "local": {
       "preHandoff": "standard-local-bootstrap-once",
       "managedDarwin": "ordinary-update",
-      "protectedControllerV2": "ordinary-update",
+      "protectedControllerV2": "standard-local-bootstrap-once",
       "supervisorV1": "ordinary-update"
     },
     "hosting": {
@@ -375,7 +375,7 @@
         "federation": [null, 1, 2]
       },
       "interruptedTransaction": "none",
-      "forwardPath": "ordinary-update",
+      "forwardPath": "standard-local-bootstrap-once",
       "adapterIds": ["controller-v2-to-supervisor-v1"],
       "published": true
     },
@@ -399,7 +399,7 @@
         "federation": [null, 1, 2]
       },
       "interruptedTransaction": "controller-journal-v2",
-      "forwardPath": "ordinary-update",
+      "forwardPath": "standard-local-bootstrap-once",
       "adapterIds": ["interrupted-controller-journal-v2", "controller-v2-to-supervisor-v1"],
       "published": false
     },

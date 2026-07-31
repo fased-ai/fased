@@ -20,9 +20,10 @@ active runtime depends on the install profile:
   through a root-owned paired release controller.
 - macOS and explicit `--source-install` installs run from the source checkout.
 - `fased update` is the normal update command for both profiles.
-- A Local installation from before the protected supervisor handoff uses the
-  documented Local installer once; that verified bootstrap preserves state,
-  skips onboarding, and makes every later release use `fased update`.
+- A Local installation from before the protected supervisor handoff, or one
+  with an incomplete legacy flat updater bundle, uses the documented Local
+  installer once; that verified bootstrap preserves state, skips onboarding,
+  and makes every later release use `fased update`.
 - The Control UI currently reports update status; it does not start the update.
 - Rerun `./install.sh` for repair or reinstall behavior.
 
@@ -42,17 +43,19 @@ fased update status
 fased update
 ```
 
-If a historical Local installation predates the protected supervisor, run the
-same documented Local installer once:
+If a historical Local installation predates the protected supervisor, or its
+legacy updater cannot start because its bundle is incomplete, run the same
+documented Local installer once:
 
 ```bash
 curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
   | bash -s -- --local
 ```
 
-The installer detects recognized pre-handoff state, verifies the selected
-release, performs one state-preserving protected bootstrap, and does not rerun
-onboarding. After it succeeds, return permanently to `fased update`.
+The installer detects recognized pre-supervisor or incomplete-updater state,
+verifies the selected release, performs one state-preserving protected
+bootstrap, and does not rerun onboarding. After it succeeds, return
+permanently to `fased update`.
 
 Source/developer checkouts should still run from their checkout directory.
 

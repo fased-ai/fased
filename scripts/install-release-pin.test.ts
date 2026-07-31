@@ -52,6 +52,7 @@ function createExactLocalBootstrapHarness(
     "grep",
     "mkdir",
     "mktemp",
+    "readlink",
     "rm",
     "stat",
   ]) {
@@ -458,6 +459,34 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
         '{"schemaVersion":1,"onboardingCompleted":true}\n',
         { mode: 0o600 },
       );
+      const generationDigest = "a".repeat(64);
+      const generationDir = path.join(stateDir, "updater", "generations", generationDigest);
+      fs.mkdirSync(generationDir, { recursive: true });
+      for (const name of [
+        "fased-managed-updater.mjs",
+        "fased-managed-updater-core.mjs",
+        "hosted-release-manifest.mjs",
+        "lifecycle-trust-crypto.mjs",
+        "lifecycle-trust-policy.mjs",
+        "lifecycle-trust-root.mjs",
+        "lifecycle-trust-runtime.mjs",
+        "managed-runtime-layout.mjs",
+        "managed-updater-bundle.mjs",
+        "managed-updater-bundle.v1.json",
+        "managed-updater-generation.v1.json",
+      ]) {
+        fs.writeFileSync(path.join(generationDir, name), `${name}\n`);
+      }
+      fs.symlinkSync(
+        path.join("generations", generationDigest),
+        path.join(stateDir, "updater", "current"),
+      );
+      fs.mkdirSync(path.join(stateDir, "bin"), { recursive: true });
+      fs.writeFileSync(
+        path.join(stateDir, "bin", "fased"),
+        '#!/bin/bash\nUPDATER_GENERATION="$STATE_DIR/updater/current/fased-managed-updater.mjs"\n',
+        { mode: 0o700 },
+      );
 
       const result = runExactLocalBootstrap(harness, tempRoot, [
         "--local",
@@ -474,6 +503,53 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
       expect(result.stdout).not.toContain("exact-local-inner-handoff");
       expect(result.stdout).not.toContain("package-manager progress before verified commit");
       expect(fs.existsSync(harness.installDir)).toBe(false);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("routes an existing Protected Local installation with no complete updater generation through one standard handoff", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-protected-forward-handoff-"));
+    try {
+      const harness = createExactLocalBootstrapHarness(tempRoot, {
+        uid: process.getuid?.() ?? 1000,
+      });
+      const stateDir = path.join(tempRoot, "home", ".fased");
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(path.join(stateDir, "fased.json"), "{}\n", { mode: 0o600 });
+      fs.writeFileSync(
+        path.join(stateDir, "install.json"),
+        '{"schemaVersion":2,"profile":"protected-local"}\n',
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(stateDir, "install-complete.json"),
+        '{"schemaVersion":1,"onboardingCompleted":true}\n',
+        { mode: 0o600 },
+      );
+      fs.mkdirSync(path.join(stateDir, "updater"), { recursive: true });
+      fs.writeFileSync(
+        path.join(stateDir, "updater", "fased-managed-updater.mjs"),
+        'import "./missing-support.mjs";\n',
+        { mode: 0o700 },
+      );
+
+      const result = runExactLocalBootstrap(harness, tempRoot, [
+        "--local",
+        "--release",
+        "v9.9.9-test.1",
+        "--update-channel",
+        "beta",
+      ]);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toContain(
+        "Protected Local installation needs one verified lifecycle handoff; continuing without rerunning onboarding.",
+      );
+      expect(result.stdout).toContain("exact-local-inner-handoff");
+      expect(result.stdout).toContain("--existing-local-bootstrap");
+      expect(result.stdout).not.toContain("--repair-local");
+      expect(result.stdout).not.toContain("--resume-local-onboarding");
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -569,6 +645,10 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
     expect(end).toBeGreaterThan(start);
     expect(resolver).toContain('if [[ -z "$profile" ]]');
     expect(resolver).toContain('profile="local"');
+    expect(resolver).toContain(
+      "protected-local is an installed service topology, not a release artifact",
+    );
+    expect(resolver).not.toContain("printf 'protected-local\\n'");
   });
 
   it("installs a dirty local checkout from source instead of replacing it with the published runtime", () => {

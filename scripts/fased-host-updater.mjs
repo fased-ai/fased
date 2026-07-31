@@ -4539,6 +4539,38 @@ async function ensureInitializedManagedStableDirectories(context, paths) {
   }
 }
 
+async function ensureManagedCompatibilityDirectories(context, paths) {
+  const state = context.applicationState;
+  const directories = [
+    path.dirname(paths.prefix),
+    paths.prefix,
+    path.dirname(paths.prefixLauncherPath),
+    path.dirname(path.dirname(path.dirname(paths.compatibilityLink))),
+    path.dirname(path.dirname(paths.compatibilityLink)),
+    path.dirname(paths.compatibilityLink),
+  ];
+  for (const directory of directories) {
+    const resolved = path.resolve(directory);
+    if (resolved === paths.stateDir || !resolved.startsWith(`${paths.stateDir}${path.sep}`)) {
+      throw new Error(`managed compatibility directory escaped application state: ${directory}`);
+    }
+    try {
+      await fsp.mkdir(resolved, { mode: 0o750 });
+    } catch (error) {
+      if (error?.code !== "EEXIST") {
+        throw error;
+      }
+    }
+    const info = await fsp.lstat(resolved);
+    if (!info.isDirectory() || info.isSymbolicLink()) {
+      throw new Error(`managed compatibility directory is unsafe: ${resolved}`);
+    }
+    await fsp.chown(resolved, state.operatorUid, state.operatorGid);
+    await fsp.chmod(resolved, 0o750);
+    await fsyncDirectory(resolved);
+  }
+}
+
 async function installInitializedManagedStableFiles(context, transaction, targetRoot) {
   if (transaction.previousManifest) {
     return;
@@ -4649,6 +4681,7 @@ async function installCommittedManagedLaunchers(context, journal) {
     throw new Error("committed updater generation has no target application runtime");
   }
   const paths = managedApplicationPaths(transaction.stateDir);
+  await ensureManagedCompatibilityDirectories(context, paths);
   for (const [name, destination] of [
     ["fased-managed-launcher.sh", paths.launcherPath],
     ["fased-managed-service.sh", paths.serviceLauncherPath],
@@ -4671,6 +4704,7 @@ async function selectManagedApplication(context, journal) {
   if (!targetRoot) {
     throw new Error("managed application target is unavailable");
   }
+  await ensureManagedCompatibilityDirectories(context, paths);
   await activateTargetManagedUpdaterGeneration(context, journal);
   if (
     journal.managedApplication.previousRoot &&
@@ -6998,7 +7032,7 @@ async function alreadyCommittedRelease(request, context) {
       : null;
   const [gateway, signer, product] = await Promise.all([
     context.verifyGateway(request.version),
-    context.probeSigner(request.version),
+    context.probeSigner(),
     applicationTarget && !topology?.pendingGatewayUnit && !topology?.pendingStateDir
       ? context.probeApplicationHealth(topology, {
           version: request.version,
@@ -7446,6 +7480,7 @@ export const __testing = {
   ensureProtectedLocalControllerServicePolicy,
   ensureRootManagedSharedApplicationDirectories,
   ensureInitializedManagedStableDirectories,
+  ensureManagedCompatibilityDirectories,
   declaredStateRegistry,
   validateCrossProductApplicationEvidence,
   discoverProtectedApplicationTopology,

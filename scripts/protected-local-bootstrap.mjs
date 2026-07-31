@@ -1346,6 +1346,7 @@ async function probeGatewayHealth(
               version: typeof payload?.version === "string" ? payload.version : "",
               runtimeSource:
                 typeof payload?.runtimeSource === "string" ? payload.runtimeSource : "",
+              pid: Number.isSafeInteger(payload?.pid) && payload.pid > 1 ? payload.pid : undefined,
               detail: `status=${response.statusCode ?? "unknown"} version=${payload?.version ?? "unknown"} runtimeSource=${payload?.runtimeSource ?? "unknown"} pid=${payload?.pid ?? "unknown"}`,
             });
           } catch (error) {
@@ -2306,42 +2307,153 @@ function previousLegacyGatewayVersion(transaction) {
   return version;
 }
 
-async function waitForLegacyGatewayRestored(transaction, timeoutMs = 30_000) {
+function systemdMainPid(properties) {
+  const pid = Number.parseInt(String(properties?.MainPID ?? ""), 10);
+  return Number.isSafeInteger(pid) && pid > 1 ? pid : undefined;
+}
+
+async function processOwnsGatewayListener(spec, expectedPid) {
+  const expectedPort = Number(spec.gatewayPort);
+  if (!Number.isSafeInteger(expectedPort) || expectedPort < 1 || expectedPort > 65_535) {
+    return false;
+  }
+  const socketInodes = new Set();
+  for (const table of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+    let content;
+    try {
+      content = await fsp.readFile(table, "utf8");
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        continue;
+      }
+      throw error;
+    }
+    for (const line of content.split("\n").slice(1)) {
+      const fields = line.trim().split(/\s+/u);
+      if (fields.length < 10 || fields[3] !== "0A") {
+        continue;
+      }
+      const separator = fields[1].lastIndexOf(":");
+      const port = Number.parseInt(fields[1].slice(separator + 1), 16);
+      if (port === expectedPort && /^\d+$/u.test(fields[9])) {
+        socketInodes.add(fields[9]);
+      }
+    }
+  }
+  if (socketInodes.size === 0) {
+    return false;
+  }
+  let descriptors;
+  try {
+    descriptors = await fsp.readdir(`/proc/${expectedPid}/fd`);
+  } catch (error) {
+    if (new Set(["ENOENT", "EACCES"]).has(error?.code)) {
+      return false;
+    }
+    throw error;
+  }
+  for (const descriptor of descriptors) {
+    try {
+      const target = await fsp.readlink(`/proc/${expectedPid}/fd/${descriptor}`);
+      const match = /^socket:\[(\d+)\]$/u.exec(target);
+      if (match && socketInodes.has(match[1])) {
+        return true;
+      }
+    } catch (error) {
+      if (!new Set(["ENOENT", "EACCES"]).has(error?.code)) {
+        throw error;
+      }
+    }
+  }
+  return false;
+}
+
+async function waitForLegacyGatewayRestored(
+  transaction,
+  timeoutMs = 30_000,
+  {
+    systemctl = userSystemctl,
+    probe = probeGatewayHealth,
+    ownsListener = processOwnsGatewayListener,
+    wait = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+    now = Date.now,
+    stabilityMs = 1_000,
+  } = {},
+) {
   const { spec } = transaction;
   const expectedVersion = previousLegacyGatewayVersion(transaction);
-  const deadline = Date.now() + timeoutMs;
+  const deadline = now() + timeoutMs;
   let lastDetail = "legacy Gateway did not start";
-  while (Date.now() < deadline) {
+  let stablePid;
+  let stableSince;
+  while (now() < deadline) {
     let properties = {};
+    let pendingJobs = "unknown";
     try {
       properties = parseSystemdProperties(
-        userSystemctl(spec, [
+        systemctl(spec, [
           "show",
           "fased-gateway.service",
           "--property=ActiveState",
           "--property=SubState",
           "--property=Result",
+          "--property=MainPID",
         ]),
       );
+      pendingJobs = systemctl(spec, [
+        "list-jobs",
+        "fased-gateway.service",
+        "--no-legend",
+        "--plain",
+      ]).trim();
     } catch (error) {
       lastDetail = error.message;
     }
-    const health = await probeGatewayHealth(spec, undefined, 1_500, expectedVersion);
-    if (properties.ActiveState === "active" && health.ok) {
-      return;
+    const expectedPid = systemdMainPid(properties);
+    const health = expectedPid
+      ? await probe(spec, undefined, 1_500, expectedVersion)
+      : {
+          ok: false,
+          detail: `user systemd MainPID=${properties.MainPID || "unknown"}`,
+        };
+    const listenerOwned =
+      expectedPid && health.ok
+        ? health.pid
+          ? health.pid === expectedPid
+          : await ownsListener(spec, expectedPid)
+        : false;
+    const ready =
+      properties.ActiveState === "active" &&
+      properties.SubState === "running" &&
+      expectedPid &&
+      health.ok &&
+      listenerOwned &&
+      pendingJobs === "";
+    if (ready) {
+      if (stablePid !== expectedPid) {
+        stablePid = expectedPid;
+        stableSince = now();
+      }
+      if (now() - stableSince >= stabilityMs) {
+        return;
+      }
+      await wait(100);
+      continue;
     }
-    lastDetail = `active=${properties.ActiveState || "unknown"} sub=${properties.SubState || "unknown"} result=${properties.Result || "unknown"}; ${health.detail}`;
+    stablePid = undefined;
+    stableSince = undefined;
+    lastDetail = `active=${properties.ActiveState || "unknown"} sub=${properties.SubState || "unknown"} result=${properties.Result || "unknown"} pendingJobs=${pendingJobs || "none"} listenerOwned=${listenerOwned}; ${health.detail}`;
     try {
-      userSystemctl(spec, ["reset-failed", "fased-gateway.service"]);
+      systemctl(spec, ["reset-failed", "fased-gateway.service"]);
     } catch {
       // A concurrent reverse dependency may already be replacing the failed job.
     }
     try {
-      userSystemctl(spec, ["start", "--no-block", "fased-gateway.service"]);
+      systemctl(spec, ["start", "--no-block", "fased-gateway.service"]);
     } catch {
       // Poll the unit and exact health below; a concurrent start can supersede this request.
     }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await wait(250);
   }
   fail(
     `legacy Local Gateway did not restore exact release ${expectedVersion} within ${timeoutMs}ms (${lastDetail})`,
@@ -2869,17 +2981,19 @@ async function installProtectedLocal(params) {
       } catch {
         fail("protected Local Gateway cannot traverse the operator home");
       }
-      await shareApplicationState(spec, configGroup, resolveLegacySignerPaths(spec, {}));
-      await updateOperatorConfig(spec, layout, configGroup);
+      let lifecycle = null;
+      if (spec.gatewayMode === "activate") {
+        await waitForSocket(
+          `/run/fased-local-controller/${layout.instanceId}/request.sock`,
+          60_000,
+        );
+        lifecycle = applyProtectedLocalLifecycle(spec, layout);
+      }
       await waitForSocket(layout.operatorSocket);
       await verifyOperatorCapabilities(spec, layout);
       const wallets = verifyLogicalWalletState(spec, layout);
       if (spec.gatewayMode === "activate") {
-        const systemctl = systemBinary(["/usr/bin/systemctl", "/bin/systemctl"], "systemctl");
-        await authorizeGatewayActivation(layout);
         verifyGatewayLaunchInputs(spec, layout);
-        runSystem(systemctl, ["enable", layout.gatewayUnit]);
-        runSystem(systemctl, ["restart", layout.gatewayUnit]);
         await verifyGatewayHealth(spec, layout, spec.gatewayHealthTimeoutMs);
       }
       const result = {
@@ -2894,6 +3008,7 @@ async function installProtectedLocal(params) {
         controllerUnit: layout.controllerUnit,
         supervisorUnit: layout.supervisorUnit,
         gatewayMode: spec.gatewayMode,
+        lifecycleCommitted: lifecycle?.phase === "committed",
         wallets,
         operatorEnvironment: renderProtectedLocalOperatorEnvironment({
           layout,
@@ -3124,7 +3239,10 @@ export const __testing = Object.freeze({
   restoreLegacyOperatorRuntimeModes,
   sharedApplicationStateDirectoriesForAclVerification,
   protectedLocalGatewayHealthMatches,
+  processOwnsGatewayListener,
+  systemdMainPid,
   waitForLegacyGatewayReleaseHealth,
+  waitForLegacyGatewayRestored,
   previousLegacyGatewayVersion,
   validateProtectedLocalLifecycleResult,
   verifySignerReleaseIdentity,

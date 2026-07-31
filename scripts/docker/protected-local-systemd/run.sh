@@ -1364,7 +1364,7 @@ verify_legacy_wallet /tmp/failure-rollback-agent.json
 
 run_standard_local_bootstrap \
   >/tmp/protected-bootstrap.out 2>/tmp/protected-bootstrap.err
-grep -F "Pre-handoff Local bootstrap complete." /tmp/protected-bootstrap.out >/dev/null
+grep -F "Verified Local lifecycle handoff complete." /tmp/protected-bootstrap.out >/dev/null
 grep -F "Pre-handoff Local installation detected" /tmp/protected-bootstrap.err >/dev/null
 
 instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
