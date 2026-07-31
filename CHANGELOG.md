@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.26
+
+- Validate an installed lifecycle controller against its persisted identity
+  independently from deciding whether it already matches the update target.
+- Support real controller generation A to B transitions while preserving exact
+  application and controller rollback, same-command retry, and idempotence.
+- Package the correction from PR #244 for literal owner-Local update acceptance;
+  stable promotion remains blocked until that ordinary update passes.
+
 ## 0.1.76-rc.25
 
 - Repair incomplete Protected Local forward-update authority through the
