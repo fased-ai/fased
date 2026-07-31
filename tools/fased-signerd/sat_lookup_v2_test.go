@@ -22,6 +22,11 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
+const (
+	satLookupWeb3GoldenAuthorityV2 = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW" // pragma: allowlist secret
+	satLookupWeb3GoldenAddressV2   = "4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB" // pragma: allowlist secret
+)
+
 func encodeSATLookupTableStateV2(t *testing.T, authority solana.PublicKey, addresses ...solana.PublicKey) []byte {
 	t.Helper()
 	data := make([]byte, addresslookuptable.LOOKUP_TABLE_META_SIZE+len(addresses)*32)
@@ -344,12 +349,12 @@ func assertSATLookupInstructionMatchesWeb3(t *testing.T, instruction solana.Inst
 }
 
 func TestSignerV2SATLookupInstructionsMatchWeb3Golden(t *testing.T) {
-	authority := solana.MustPublicKeyFromBase58("8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW")
+	authority := solana.MustPublicKeyFromBase58(satLookupWeb3GoldenAuthorityV2)
 	address, create, err := buildCreateSATLookupTableInstructionV2(authority, 100)
 	if err != nil {
 		t.Fatalf("build SAT lookup-table create: %v", err)
 	}
-	if address.String() != "4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB" {
+	if address.String() != satLookupWeb3GoldenAddressV2 {
 		t.Fatalf("Go lookup-table PDA derivation diverges from @solana/web3.js: %s", address)
 	}
 	lookupMeta := address.String() + ":false:true"
@@ -402,9 +407,9 @@ func satTestLookupCreateIntent(t *testing.T, wallet solana.PublicKey, slot uint6
 }
 
 func TestSignerV2SATLookupTableCreateIsTypedProgramBoundAndRentCapped(t *testing.T) {
-	web3Authority := solana.MustPublicKeyFromBase58("8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW")
+	web3Authority := solana.MustPublicKeyFromBase58(satLookupWeb3GoldenAuthorityV2)
 	web3Address, _, err := buildCreateSATLookupTableInstructionV2(web3Authority, 100)
-	if err != nil || web3Address.String() != "4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB" {
+	if err != nil || web3Address.String() != satLookupWeb3GoldenAddressV2 {
 		t.Fatalf("Go lookup-table PDA derivation diverges from @solana/web3.js: address=%s err=%v", web3Address, err)
 	}
 	wallet := solana.NewWallet().PublicKey()
