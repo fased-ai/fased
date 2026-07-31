@@ -183,6 +183,24 @@ describe("managed updater content-addressed bundle", () => {
     });
   });
 
+  it("normalizes the generation receipt mode under a restrictive installer umask", async () => {
+    const { updaterDir, firstRuntime } = await fixture();
+    const previousUmask = process.umask(0o077);
+    try {
+      const generation = await stageManagedUpdaterGeneration({
+        updaterDir,
+        runtimeRoot: firstRuntime,
+        durable: true,
+      });
+      expect(
+        (await fs.stat(path.join(generation.generationDir, "managed-updater-generation.v1.json")))
+          .mode & 0o777,
+      ).toBe(0o644);
+    } finally {
+      process.umask(previousUmask);
+    }
+  });
+
   it("requires the exact target-bound descriptor for a production runtime", async () => {
     const { updaterDir, firstRuntime } = await fixture();
     await makeProductionRuntime(firstRuntime);

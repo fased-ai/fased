@@ -660,6 +660,7 @@ export async function stageManagedUpdaterGeneration({
         mode: 0o644,
         flag: "wx",
       });
+      await fsp.chmod(receiptPath, 0o644);
       if (durable) {
         await fsyncPath(receiptPath);
         await fsyncPath(stagingDir);
