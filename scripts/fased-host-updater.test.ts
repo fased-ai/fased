@@ -1186,7 +1186,63 @@ describe("root-owned hosted updater protocol", () => {
     ]) {
       expect(fs.existsSync(candidate)).toBe(true);
     }
+    for (const directory of [
+      path.join(managedStateDir, "install-cache"),
+      path.join(managedStateDir, "install-cache", "npm-global"),
+      path.join(managedStateDir, "install-cache", "npm-global", "bin"),
+      path.join(managedStateDir, "install-cache", "npm-global", "lib"),
+      path.join(managedStateDir, "install-cache", "npm-global", "lib", "node_modules"),
+      path.join(managedStateDir, "install-cache", "npm-global", "lib", "node_modules", "@fased"),
+    ]) {
+      const info = await fsp.lstat(directory);
+      expect(info.isDirectory()).toBe(true);
+      expect(info.isSymbolicLink()).toBe(false);
+      expect(info.uid).toBe(process.getuid());
+      expect(info.gid).toBe(process.getgid());
+      expect(info.mode & 0o7777).toBe(0o750);
+    }
     expect(await fsp.readFile(fixture.paths.signerPath, "utf8")).toBe("signer-1.2.3\n");
+  });
+
+  it("makes managed compatibility directories traversable under the controller umask", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-managed-compatibility-"));
+    cleanupRoots.push(root);
+    const stateDir = path.join(root, ".fased");
+    const prefix = path.join(stateDir, "install-cache", "npm-global");
+    const paths = {
+      stateDir,
+      prefix,
+      prefixLauncherPath: path.join(prefix, "bin", "fased"),
+      compatibilityLink: path.join(prefix, "lib", "node_modules", "@fased", "fased"),
+    };
+    await fsp.mkdir(stateDir, { recursive: true });
+    const previousUmask = process.umask(0o117);
+    try {
+      await __testing.ensureManagedCompatibilityDirectories(
+        {
+          applicationState: {
+            operatorUid: process.getuid(),
+            operatorGid: process.getgid(),
+          },
+        },
+        paths,
+      );
+    } finally {
+      process.umask(previousUmask);
+    }
+    for (const directory of [
+      path.join(stateDir, "install-cache"),
+      prefix,
+      path.join(prefix, "bin"),
+      path.join(prefix, "lib"),
+      path.join(prefix, "lib", "node_modules"),
+      path.join(prefix, "lib", "node_modules", "@fased"),
+    ]) {
+      const info = await fsp.lstat(directory);
+      expect(info.isDirectory()).toBe(true);
+      expect(info.isSymbolicLink()).toBe(false);
+      expect(info.mode & 0o7777).toBe(0o750);
+    }
   });
 
   it("removes an uncommitted fresh topology and succeeds on the same-command retry", async () => {
@@ -3502,11 +3558,15 @@ describe("root-owned hosted updater protocol", () => {
   it("runs one target-owned transaction and makes committed retries idempotent", async () => {
     const { context, events, paths } = await createFixture();
     let healthChecks = 0;
+    const signerProbeInputs: unknown[] = [];
     context.verifyGateway = async () => {
       healthChecks += 1;
       return { version: "1.2.3", runtimeSource: "managed-package" };
     };
-    context.probeSigner = async () => signerRelease("1.2.3");
+    context.probeSigner = async (expectedRelease) => {
+      signerProbeInputs.push(expectedRelease);
+      return signerRelease("1.2.3");
+    };
 
     await expect(
       __testing.applyReleaseTransaction(request("applyRelease", TRANSACTION_ONE, "1.2.3"), context),
@@ -3528,6 +3588,7 @@ describe("root-owned hosted updater protocol", () => {
     expect(events.filter((event) => event === "start-v2")).toHaveLength(1);
     expect(events.filter((event) => event === "start-gateway")).toHaveLength(1);
     expect(healthChecks).toBe(2);
+    expect(signerProbeInputs).toEqual([signerRelease("1.2.3"), undefined]);
     expect(fs.existsSync(paths.journalPath)).toBe(false);
   });
 

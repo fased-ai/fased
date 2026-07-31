@@ -689,6 +689,26 @@ default:other::---
     );
   });
 
+  it("repairs an already-protected Local topology through the root lifecycle controller", () => {
+    const bootstrap = fs.readFileSync(
+      path.join(process.cwd(), "scripts", "protected-local-bootstrap.mjs"),
+      "utf8",
+    );
+    const branchStart = bootstrap.indexOf("if (!allocated.created) {");
+    const branchEnd = bootstrap.indexOf(
+      '\n    fail(\n      "protected Local instance exists without a recoverable bootstrap journal',
+      branchStart,
+    );
+    const alreadyProtected = bootstrap.slice(branchStart, branchEnd);
+
+    expect(alreadyProtected).toContain("lifecycle = applyProtectedLocalLifecycle(spec, layout)");
+    expect(alreadyProtected.indexOf("applyProtectedLocalLifecycle(spec, layout)")).toBeLessThan(
+      alreadyProtected.indexOf("verifyGatewayHealth(spec, layout"),
+    );
+    expect(alreadyProtected).not.toContain("shareApplicationState(");
+    expect(alreadyProtected).not.toContain("updateOperatorConfig(");
+  });
+
   it("selects the fresh Local target by exact release and delegates trust to the root bundle", () => {
     const installer = fs.readFileSync(path.join(process.cwd(), "install.sh"), "utf8");
     const bootstrapStart = installer.indexOf("bootstrap_protected_local_topology() {");

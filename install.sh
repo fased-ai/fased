@@ -1218,6 +1218,40 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     stat -f '%z' "$target_path" 2>/dev/null
   }
 
+  protected_local_forward_authority_ready() {
+    local state_dir="$1"
+    local current_link="$state_dir/updater/current"
+    local generation_target=""
+    local generation_dir=""
+    local required_name=""
+    local required_files=(
+      fased-managed-updater.mjs
+      fased-managed-updater-core.mjs
+      hosted-release-manifest.mjs
+      lifecycle-trust-crypto.mjs
+      lifecycle-trust-policy.mjs
+      lifecycle-trust-root.mjs
+      lifecycle-trust-runtime.mjs
+      managed-runtime-layout.mjs
+      managed-updater-bundle.mjs
+      managed-updater-bundle.v1.json
+      managed-updater-generation.v1.json
+    )
+
+    [[ -L "$current_link" ]] || return 1
+    generation_target="$(readlink "$current_link" 2>/dev/null || true)"
+    [[ "$generation_target" =~ ^generations/[a-f0-9]{64}$ ]] || return 1
+    generation_dir="$state_dir/updater/$generation_target"
+    [[ -d "$generation_dir" && ! -L "$generation_dir" ]] || return 1
+    for required_name in "${required_files[@]}"; do
+      [[ -f "$generation_dir/$required_name" && \
+        ! -L "$generation_dir/$required_name" ]] || return 1
+    done
+    [[ -f "$state_dir/bin/fased" && ! -L "$state_dir/bin/fased" ]] || return 1
+    grep -Fq 'UPDATER_GENERATION=' "$state_dir/bin/fased" || return 1
+    return 0
+  }
+
   existing_local_state=0
   existing_local_topology=""
   existing_local_resume=0
@@ -1276,12 +1310,16 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     if [[ -f "$local_state_dir/install-complete.json" ]] && \
       grep -Eq '"onboardingCompleted"[[:space:]]*:[[:space:]]*true' \
         "$local_state_dir/install-complete.json"; then
-      echo "Existing Protected Local installation detected; use fased update." >&2
-      drain_streamed_install_input
-      exit 0
+      if protected_local_forward_authority_ready "$local_state_dir"; then
+        echo "Existing Protected Local installation detected; use fased update." >&2
+        drain_streamed_install_input
+        exit 0
+      fi
+      echo "Protected Local installation needs one verified lifecycle handoff; continuing without rerunning onboarding." >&2
+    else
+      existing_local_resume=1
+      echo "Committed Protected Local services detected; resuming onboarding." >&2
     fi
-    existing_local_resume=1
-    echo "Committed Protected Local services detected; resuming onboarding." >&2
   fi
   if [[ "$existing_local_topology" == "pre-handoff-local" && \
     "$install_entry_local_repair" -ne 1 ]]; then
@@ -2996,7 +3034,9 @@ resolved_host_profile() {
   fi
   if [[ -f "$FASED_CONFIG_DIR/install.json" ]] && \
     grep -Eq '"profile"[[:space:]]*:[[:space:]]*"protected-local"' "$FASED_CONFIG_DIR/install.json"; then
-    printf 'protected-local\n'
+    # protected-local is an installed service topology, not a release artifact
+    # profile. Its application payload is the Local managed runtime.
+    printf 'local\n'
     return 0
   fi
 
@@ -6520,7 +6560,8 @@ fi
 missing=()
 required_tools=(git curl)
 if use_prebuilt_release_runtime && [[ "$FRESH_PROTECTED_LOCAL_REQUESTED" -ne 1 ]] && \
-  [[ "$LOCAL_ONBOARDING_RESUME_REQUESTED" -ne 1 ]]; then
+  [[ "$LOCAL_ONBOARDING_RESUME_REQUESTED" -ne 1 ]] && \
+  [[ "$LOCAL_EXISTING_BOOTSTRAP_REQUESTED" -ne 1 ]]; then
   required_tools+=(npm)
 elif ! use_prebuilt_release_runtime; then
   required_tools+=(pnpm)
@@ -6592,7 +6633,8 @@ ensure_low_memory_swap_if_possible
 build_old_space_mb="$(recommended_onboard_old_space_mb)"
 build_node_options="$(node_options_with_old_space "${NODE_OPTIONS:-}" "$build_old_space_mb")"
 if [[ "$FRESH_PROTECTED_LOCAL_REQUESTED" -eq 1 || \
-  "$LOCAL_ONBOARDING_RESUME_REQUESTED" -eq 1 ]]; then
+  "$LOCAL_ONBOARDING_RESUME_REQUESTED" -eq 1 || \
+  "$LOCAL_EXISTING_BOOTSTRAP_REQUESTED" -eq 1 ]]; then
   :
 elif use_prebuilt_release_runtime; then
   if ! prepare_existing_local_bootstrap_manifest_snapshot; then
@@ -6622,7 +6664,8 @@ export FASED_SAT_BOND_LAYOUT_PATH="${FASED_SAT_BOND_LAYOUT_PATH:-$FASED_DIR/toke
 export FASED_SAT_BOND_POLICY_LAYOUT_PATH="${FASED_SAT_BOND_POLICY_LAYOUT_PATH:-$FASED_DIR/token/sat/bond-api/bond-tier-policy-layout.json}"
 
 if [[ "$FRESH_PROTECTED_LOCAL_REQUESTED" -eq 1 || \
-  "$LOCAL_ONBOARDING_RESUME_REQUESTED" -eq 1 ]]; then
+  "$LOCAL_ONBOARDING_RESUME_REQUESTED" -eq 1 || \
+  "$LOCAL_EXISTING_BOOTSTRAP_REQUESTED" -eq 1 ]]; then
   section "Runtime"
   step_done "Lifecycle-managed runtime"
 elif use_prebuilt_release_runtime; then
@@ -6752,7 +6795,7 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
     fi
     step_done "Protected Local signer, Gateway, and controller online"
     if [[ "$LOCAL_EXISTING_BOOTSTRAP_REQUESTED" -eq 1 ]]; then
-      echo "Pre-handoff Local bootstrap complete. Onboarding was not rerun; future releases use fased update."
+      echo "Verified Local lifecycle handoff complete. Onboarding was not rerun; future releases use fased update."
     elif [[ "$LOCAL_REPAIR_REQUESTED" -eq 1 ]]; then
       echo "Protected Local runtime and service repair complete. Onboarding was not rerun."
     else
@@ -6825,7 +6868,7 @@ if [[ "$RUN_ONBOARD" -eq 0 ]]; then
     exit 1
   fi
   if [[ "$LOCAL_EXISTING_BOOTSTRAP_REQUESTED" -eq 1 ]]; then
-    echo "Pre-handoff Local bootstrap complete. Onboarding was not rerun; future releases use fased update."
+    echo "Verified Local lifecycle handoff complete. Onboarding was not rerun; future releases use fased update."
   elif [[ "$LOCAL_REPAIR_REQUESTED" -eq 1 ]]; then
     echo "Local runtime and gateway service repair complete. Onboarding was not rerun."
   else

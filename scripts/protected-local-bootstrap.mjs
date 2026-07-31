@@ -2869,17 +2869,19 @@ async function installProtectedLocal(params) {
       } catch {
         fail("protected Local Gateway cannot traverse the operator home");
       }
-      await shareApplicationState(spec, configGroup, resolveLegacySignerPaths(spec, {}));
-      await updateOperatorConfig(spec, layout, configGroup);
+      let lifecycle = null;
+      if (spec.gatewayMode === "activate") {
+        await waitForSocket(
+          `/run/fased-local-controller/${layout.instanceId}/request.sock`,
+          60_000,
+        );
+        lifecycle = applyProtectedLocalLifecycle(spec, layout);
+      }
       await waitForSocket(layout.operatorSocket);
       await verifyOperatorCapabilities(spec, layout);
       const wallets = verifyLogicalWalletState(spec, layout);
       if (spec.gatewayMode === "activate") {
-        const systemctl = systemBinary(["/usr/bin/systemctl", "/bin/systemctl"], "systemctl");
-        await authorizeGatewayActivation(layout);
         verifyGatewayLaunchInputs(spec, layout);
-        runSystem(systemctl, ["enable", layout.gatewayUnit]);
-        runSystem(systemctl, ["restart", layout.gatewayUnit]);
         await verifyGatewayHealth(spec, layout, spec.gatewayHealthTimeoutMs);
       }
       const result = {
@@ -2894,6 +2896,7 @@ async function installProtectedLocal(params) {
         controllerUnit: layout.controllerUnit,
         supervisorUnit: layout.supervisorUnit,
         gatewayMode: spec.gatewayMode,
+        lifecycleCommitted: lifecycle?.phase === "committed",
         wallets,
         operatorEnvironment: renderProtectedLocalOperatorEnvironment({
           layout,
