@@ -1118,14 +1118,14 @@ async function controllerGenerationDigests(generationRoot, expectedRootUid = 0) 
   return result;
 }
 
-async function currentControllerMatches(paths, identity) {
+async function currentControllerMatches(paths, identity, expectedRootUid = 0) {
   try {
     const target = await fsp.realpath(paths.currentLink);
     const expected = path.join(paths.releasesDir, `v${identity.version}`);
     if (target !== expected) {
       return false;
     }
-    const digests = await controllerGenerationDigests(target);
+    const digests = await controllerGenerationDigests(target, expectedRootUid);
     return (
       digests.serverSha256 === identity.serverSha256 &&
       digests.clientSha256 === identity.clientSha256
@@ -1195,9 +1195,10 @@ export async function stageTrustedController(request, context) {
   if (existing && compareVersions(existing.version, request.version) === 1) {
     fail(`refusing controller downgrade from ${existing.version} to ${request.version}`);
   }
-  const currentMatches =
-    existing?.version === request.version &&
-    (await context.currentControllerMatches(paths, existing));
+  const existingSelectionMatches = existing
+    ? await context.currentControllerMatches(paths, existing, context.rootUid)
+    : false;
+  const targetAlreadySelected = existing?.version === request.version && existingSelectionMatches;
 
   await Promise.all([
     fsp.mkdir(paths.supervisorStateDir, { recursive: true, mode: 0o700 }),
@@ -1388,12 +1389,12 @@ export async function stageTrustedController(request, context) {
     }
     if (
       previousGeneration &&
-      (path.basename(previousGeneration) !== `v${existing.version}` || !currentMatches)
+      (path.basename(previousGeneration) !== `v${existing.version}` || !existingSelectionMatches)
     ) {
       fail("controller selection does not match its persisted identity");
     }
     return {
-      changed: !currentMatches || previousGeneration !== generationRoot,
+      changed: !targetAlreadySelected || previousGeneration !== generationRoot,
       identity,
       generationRoot,
       previousGeneration,

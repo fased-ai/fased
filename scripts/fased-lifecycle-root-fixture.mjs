@@ -1,14 +1,19 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { startServer, __testing as controllerTesting } from "./fased-host-updater.mjs";
-import { startSupervisor, __testing as supervisorTesting } from "./fased-lifecycle-supervisor.mjs";
+import {
+  parseSupervisorRequest,
+  startSupervisor,
+  __testing as supervisorTesting,
+} from "./fased-lifecycle-supervisor.mjs";
 
 const previousVersion = "1.2.2";
 const targetVersion = "1.2.3";
@@ -17,6 +22,7 @@ const operatorGid = 1000;
 const gatewayUid = 1001;
 const configGid = 1002;
 const evidenceDigest = (character) => `sha256:${character.repeat(64)}`;
+const sha256Text = (value) => createHash("sha256").update(value).digest("hex");
 
 function signerRelease(version) {
   return {
@@ -88,6 +94,227 @@ async function writeOwnedFile(filePath, contents, uid, gid, mode) {
   await fsp.writeFile(filePath, contents, { mode });
   await fsp.chown(filePath, uid, gid);
   await fsp.chmod(filePath, mode);
+}
+
+async function runExistingControllerGenerationTransitionFixture() {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-controller-transition-"));
+  const stateDir = path.join(root, "operator", ".fased");
+  const controllerStateDir = path.join(root, "controller-state");
+  const releasesDir = path.join(root, "controller", "releases");
+  const currentLink = path.join(root, "controller", "current");
+  const controllerVersionPath = path.join(controllerStateDir, "controller-version.json");
+  const applicationRelease = path.join(root, "application", "releases", "v1.2.0");
+  const applicationCurrent = path.join(root, "application", "current");
+  const incompleteUpdater = path.join(stateDir, "updater", "fased-managed-updater.mjs");
+  const supervisorPath = fileURLToPath(
+    new URL("./fased-lifecycle-supervisor.mjs", import.meta.url),
+  );
+  const targetServerPath = fileURLToPath(new URL("./fased-host-updater.mjs", import.meta.url));
+  const targetClientPath = fileURLToPath(new URL("./fased-host-updaterctl.mjs", import.meta.url));
+  const paths = {
+    publicSocketPath: path.join(root, "run", "request.sock"),
+    privateSocketPath: path.join(root, "run", "controller.sock"),
+    stateDir: controllerStateDir,
+    supervisorStateDir: path.join(controllerStateDir, "supervisor"),
+    releasesDir,
+    currentLink,
+    controllerVersionPath,
+    rollbackFloorPath: path.join(controllerStateDir, "supervisor", "rollback-floor"),
+    trustedRootPath: path.join(controllerStateDir, "supervisor", "trusted-root.json"),
+    trustStatePath: path.join(controllerStateDir, "supervisor", "trust-state.json"),
+    supervisorTransactionPath: path.join(
+      controllerStateDir,
+      "supervisor",
+      "controller-transaction.json",
+    ),
+    channelPath: path.join(root, "channel"),
+    supervisorPath,
+    controllerUnit: "fixture-controller.service",
+    supervisorUnit: "fixture-supervisor.service",
+  };
+
+  try {
+    const previousServer = "previous-controller-server\n";
+    const previousClient = "previous-controller-client\n";
+    const previousIdentity = {
+      schemaVersion: 1,
+      version: previousVersion,
+      serverSha256: sha256Text(previousServer),
+      clientSha256: sha256Text(previousClient),
+    };
+    const previousGeneration = path.join(releasesDir, `v${previousVersion}`);
+    await Promise.all([
+      fsp.mkdir(previousGeneration, { recursive: true, mode: 0o755 }),
+      fsp.mkdir(applicationRelease, { recursive: true, mode: 0o755 }),
+      fsp.mkdir(path.dirname(incompleteUpdater), { recursive: true, mode: 0o700 }),
+      fsp.mkdir(path.dirname(paths.channelPath), { recursive: true, mode: 0o755 }),
+    ]);
+    await Promise.all([
+      fsp.writeFile(path.join(previousGeneration, "fased-host-updater.mjs"), previousServer, {
+        mode: 0o644,
+      }),
+      fsp.writeFile(path.join(previousGeneration, "fased-host-updaterctl.mjs"), previousClient, {
+        mode: 0o644,
+      }),
+      fsp.writeFile(path.join(applicationRelease, "package.json"), '{"version":"1.2.0"}\n'),
+      fsp.writeFile(incompleteUpdater, 'import "./missing-support.mjs";\n', { mode: 0o700 }),
+      fsp.writeFile(paths.channelPath, "beta\n"),
+      fsp.mkdir(path.dirname(controllerVersionPath), { recursive: true, mode: 0o700 }),
+    ]);
+    await Promise.all([
+      fsp.symlink(previousGeneration, currentLink, "dir"),
+      fsp.symlink(applicationRelease, applicationCurrent, "dir"),
+      fsp.writeFile(controllerVersionPath, `${JSON.stringify(previousIdentity, null, 2)}\n`, {
+        mode: 0o600,
+      }),
+    ]);
+    const applicationDigest = sha256Text(await fsp.readFile(incompleteUpdater, "utf8"));
+
+    const targetServer = await fsp.readFile(targetServerPath, "utf8");
+    const targetClient = await fsp.readFile(targetClientPath, "utf8");
+    const verifier = "fixture-evidence-verifier\n";
+    const metadata = {
+      schemaVersion: 1,
+      role: "fased-lifecycle-targets",
+      rootPolicy: supervisorTesting.INITIAL_LIFECYCLE_ROOT_ENVELOPE,
+      release: { version: targetVersion, tag: `v${targetVersion}`, commit: "a".repeat(40) },
+      validity: {
+        issuedAt: "2026-07-28T00:00:00.000Z",
+        expiresAt: "2027-07-28T00:00:00.000Z",
+      },
+      policy: {
+        channels: ["beta", "stable"],
+        platforms: ["linux-arm64", "linux-x64"],
+        supervisorProtocol: 1,
+        controllerProtocol: 2,
+      },
+      targets: {
+        bootstrap: { asset: "install.sh", sha256: "d".repeat(64) },
+        supervisor: {
+          asset: "fased-lifecycle-supervisor.mjs",
+          sha256: sha256Text(await fsp.readFile(supervisorPath, "utf8")),
+        },
+        controllerServer: {
+          asset: "fased-host-updater.mjs",
+          sha256: sha256Text(targetServer),
+        },
+        controllerClient: {
+          asset: "fased-host-updaterctl.mjs",
+          sha256: sha256Text(targetClient),
+        },
+        evidenceVerifier: {
+          asset: "fased-privileged-release-evidence.mjs",
+          sha256: sha256Text(verifier),
+        },
+      },
+      evidence: {
+        provenance: {
+          asset: "fased-privileged-provenance-v1.intoto.json",
+          sha256: "f".repeat(64),
+        },
+        sbom: { asset: "fased-privileged-sbom-v1.spdx.json", sha256: "1".repeat(64) },
+        vex: { asset: "fased-privileged-vex-v1.openvex.json", sha256: "2".repeat(64) },
+      },
+    };
+    const downloads = new Map([
+      ["fased-lifecycle-trust-v1.json", `${JSON.stringify(metadata)}\n`],
+      ["fased-lifecycle-trust-v1.json.attestation.json", "{}\n"],
+      ["fased-host-updater.mjs", targetServer],
+      ["fased-host-updaterctl.mjs", targetClient],
+      ["fased-privileged-release-evidence.mjs", verifier],
+      ["fased-hosted-release-v2.json", "{}\n"],
+      ["fased-privileged-provenance-v1.intoto.json", "{}\n"],
+      ["fased-privileged-provenance-v1.intoto.json.attestation.json", "{}\n"],
+      ["fased-privileged-sbom-v1.spdx.json", "{}\n"],
+      ["fased-privileged-vex-v1.openvex.json", "{}\n"],
+    ]);
+    let restartCount = 0;
+    const context = supervisorTesting.createContext(
+      {
+        profile: "protected-local",
+        instanceId: "0123456789abcdef",
+        operatorUid,
+        operatorGid,
+        paths,
+      },
+      {
+        rootUid: 0,
+        rootGid: 0,
+        platform: "linux-x64",
+        now: () => Date.parse("2026-07-30T00:00:00.000Z"),
+        verifyMetadata: async () => undefined,
+        verifyReleaseEvidence: async () => undefined,
+        selfCheckController: async () => undefined,
+        download: async (url, destination) => {
+          const name = url.slice(url.lastIndexOf("/") + 1);
+          const body = downloads.get(name);
+          assert.notEqual(body, undefined, `unexpected fixture asset ${name}`);
+          await fsp.writeFile(destination, body);
+        },
+        restartController: async () => {
+          restartCount += 1;
+          if (restartCount === 1) {
+            throw new Error("injected target controller restart failure");
+          }
+        },
+        waitForController: async () => undefined,
+        probeControllerIdentity: async (request) => {
+          const selected = await fsp.realpath(currentLink);
+          const identity = JSON.parse(await fsp.readFile(controllerVersionPath, "utf8"));
+          assert.equal(selected, path.join(releasesDir, `v${request.version}`));
+          assert.equal(identity.version, request.version);
+          return "44444444-4444-4444-8444-444444444444";
+        },
+      },
+    );
+    const state = { controllerInstanceId: "33333333-3333-4333-8333-333333333333" };
+    const transitionRequest = () =>
+      parseSupervisorRequest({
+        schemaVersion: 2,
+        op: "updateController",
+        transactionId: randomUUID(),
+        version: targetVersion,
+      });
+
+    await assert.rejects(
+      supervisorTesting.handleSupervisorRequest(transitionRequest(), context, state),
+      /controller promotion failed and was restored: injected target controller restart failure/u,
+    );
+    assert.equal(await fsp.realpath(currentLink), previousGeneration);
+    assert.deepEqual(
+      JSON.parse(await fsp.readFile(controllerVersionPath, "utf8")),
+      previousIdentity,
+    );
+    assert.equal(fs.existsSync(paths.supervisorTransactionPath), false);
+    assert.equal(await fsp.realpath(applicationCurrent), applicationRelease);
+    assert.equal(sha256Text(await fsp.readFile(incompleteUpdater, "utf8")), applicationDigest);
+
+    const retried = await supervisorTesting.handleSupervisorRequest(
+      transitionRequest(),
+      context,
+      state,
+    );
+    assert.equal(retried.ok, true);
+    assert.equal(retried.controllerChanged, true);
+    assert.equal(await fsp.realpath(currentLink), path.join(releasesDir, `v${targetVersion}`));
+    assert.equal(
+      JSON.parse(await fsp.readFile(controllerVersionPath, "utf8")).version,
+      targetVersion,
+    );
+    assert.equal(await fsp.realpath(applicationCurrent), applicationRelease);
+    assert.equal(sha256Text(await fsp.readFile(incompleteUpdater, "utf8")), applicationDigest);
+
+    const idempotent = await supervisorTesting.handleSupervisorRequest(
+      transitionRequest(),
+      context,
+      state,
+    );
+    assert.equal(idempotent.ok, true);
+    assert.equal(idempotent.controllerChanged, false);
+    assert.equal(restartCount, 3);
+  } finally {
+    await fsp.rm(root, { recursive: true, force: true });
+  }
 }
 
 async function createRootFixture({ crashPhase = null } = {}) {
@@ -278,6 +505,7 @@ async function createRootFixture({ crashPhase = null } = {}) {
         mining: { ok: true, evidenceDigest: evidenceDigest("5") },
         network: { ok: true, evidenceDigest: evidenceDigest("6") },
         plugins: { ok: true, evidenceDigest: evidenceDigest("7") },
+        signerIsolation: { ok: true, evidenceDigest: evidenceDigest("8") },
       }),
       onDurablePhase: async (phase) => {
         if (!injectedCrash && selectedCrashPhase && phase === selectedCrashPhase) {
@@ -422,7 +650,7 @@ async function runCommittedFixture() {
       "applyRelease",
       fixture.transactionId,
     );
-    assert.equal(applied.ok, true);
+    assert.equal(applied.ok, true, JSON.stringify(applied));
     assert.equal(applied.phase, "committed");
     assert.equal(applied.schemaMigration?.applied, true);
     assert.match(applied.schemaMigration?.planDigest || "", /^sha256:[a-f0-9]{64}$/u);
@@ -480,11 +708,16 @@ if (typeof process.getuid !== "function" || process.getuid() !== 0) {
 
 await runCommittedFixture();
 await runCrashRecoveryFixture();
+await runExistingControllerGenerationTransitionFixture();
 process.stdout.write(
   `${JSON.stringify({
     schemaVersion: 1,
     fixture: "root-capable-supervisor-controller-update",
-    cases: ["commit-replay", "cold-crash-rollback-retry"],
+    cases: [
+      "commit-replay",
+      "cold-crash-rollback-retry",
+      "existing-controller-a-to-b-rollback-retry-idempotence",
+    ],
     ownerInstallationTouched: false,
     freshInfrastructureCreated: false,
     result: "PASS",
