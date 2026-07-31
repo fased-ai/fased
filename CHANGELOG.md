@@ -4,6 +4,16 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.23
+
+- Preserve permanent per-Wallet Mining history in a scalable SQLite/WAL
+  ledger, including transactional migration of accumulated legacy history.
+- Promote complete target-owned updater generations atomically while
+  preserving large declared state through failure, rollback, and same-command
+  retry.
+- Scope Local-fresh, Local-update, and Hosting lifecycle CI independently so
+  release checks reuse exact artifacts without unrelated rebuilds.
+
 ## 0.1.76-rc.22
 
 - Build and release the Go signer with Go 1.25.12, eliminating the reachable
