@@ -1215,5 +1215,7 @@ export async function postMiningClearHistory(): Promise<PostMiningClearHistoryRe
     method: "POST",
     cache: "no-store",
     credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ confirmation: "clear-mining-history" }),
   });
 }

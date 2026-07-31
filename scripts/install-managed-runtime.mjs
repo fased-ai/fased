@@ -3,7 +3,6 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
-  MANAGED_UPDATER_SUPPORT_FILES,
   authorizePreactivatedHostedGateway,
   beginPreactivatedHostedTransaction,
 } from "./fased-managed-updater.mjs";
@@ -21,6 +20,11 @@ import {
   resolveLinkTarget,
   resolveManagedRuntimePaths,
 } from "./managed-runtime-layout.mjs";
+import {
+  MANAGED_UPDATER_COMPATIBILITY_FILES,
+  installManagedUpdaterCompatibilityFiles,
+  stageManagedUpdaterGeneration,
+} from "./managed-updater-bundle.mjs";
 
 const DEFAULT_HOST_TRANSACTION_TIMEOUT_MS = 2 * 60_000;
 const HOST_TRANSACTION_ID_PATTERN =
@@ -182,9 +186,35 @@ async function installStableFiles(paths, releaseRoot, durable = false) {
   const scriptDir = path.join(releaseRoot, "scripts");
   await copyExecutable(path.join(scriptDir, "fased-managed-launcher.sh"), paths.launcherPath);
   await copyExecutable(path.join(scriptDir, "fased-managed-service.sh"), paths.serviceLauncherPath);
-  await copyExecutable(path.join(scriptDir, "fased-managed-updater.mjs"), paths.updaterPath);
-  for (const name of MANAGED_UPDATER_SUPPORT_FILES) {
-    await copyExecutable(path.join(scriptDir, name), path.join(paths.updaterDir, name));
+  let currentGenerationPath = null;
+  const bundleManifestPath = path.join(scriptDir, "managed-updater-bundle.v1.json");
+  const bundleManifestPresent = await fsp
+    .lstat(bundleManifestPath)
+    .then((stat) => stat.isFile() && !stat.isSymbolicLink())
+    .catch((error) => {
+      if (error?.code === "ENOENT") {
+        return false;
+      }
+      throw error;
+    });
+  if (bundleManifestPresent) {
+    const generation = await stageManagedUpdaterGeneration({
+      updaterDir: paths.updaterDir,
+      runtimeRoot: releaseRoot,
+      durable,
+    });
+    await installManagedUpdaterCompatibilityFiles({
+      updaterDir: paths.updaterDir,
+      generation,
+      copyExecutable,
+      durable,
+    });
+    currentGenerationPath = path.join(paths.updaterDir, "current");
+  } else {
+    for (const name of MANAGED_UPDATER_COMPATIBILITY_FILES) {
+      await copyExecutable(path.join(scriptDir, name), path.join(paths.updaterDir, name));
+    }
+    await copyExecutable(path.join(scriptDir, "fased-managed-updater.mjs"), paths.updaterPath);
   }
   await fsp.mkdir(path.dirname(paths.prefixLauncherPath), { recursive: true });
   const launcherBackup = await replaceWithSymlink(paths.launcherPath, paths.prefixLauncherPath);
@@ -198,7 +228,8 @@ async function installStableFiles(paths, releaseRoot, durable = false) {
     paths.launcherPath,
     paths.serviceLauncherPath,
     paths.updaterPath,
-    ...MANAGED_UPDATER_SUPPORT_FILES.map((name) => path.join(paths.updaterDir, name)),
+    ...MANAGED_UPDATER_COMPATIBILITY_FILES.map((name) => path.join(paths.updaterDir, name)),
+    ...(currentGenerationPath ? [currentGenerationPath] : []),
   ];
   for (const stablePath of stablePaths) {
     const handle = await fsp.open(stablePath, "r");

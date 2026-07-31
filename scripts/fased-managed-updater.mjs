@@ -13,7 +13,6 @@ import { pipeline } from "node:stream/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { readHostedReleaseManifestV2, verifyManifestArtifact } from "./hosted-release-manifest.mjs";
-import { officialReleaseAttestationVerifyArgs } from "./lifecycle-trust-runtime.mjs";
 import {
   assertManagedRuntime,
   atomicSymlink,
@@ -41,6 +40,12 @@ const execFileAsync = promisify(execFile);
 const DEFAULT_RELEASE_BASE_URL = "https://github.com/fased-ai/fased/releases/download";
 const DEFAULT_REGISTRY = "https://registry.npmjs.org";
 const DEFAULT_TIMEOUT_MS = 20 * 60_000;
+const LEGACY_RELEASE_AUTHORITY = Object.freeze({
+  repository: "fased-ai/fased",
+  workflow: "fased-ai/fased/.github/workflows/hosted-runtime-release.yml",
+  sourceRefPrefix: "refs/tags/v",
+  denySelfHostedRunners: true,
+});
 const HOST_UPDATER_SOCKET = "/run/fased-host-updater/request.sock";
 const HOST_UPDATER_SCHEMA_VERSION = 2;
 const HOSTED_TRANSACTION_SCHEMA_VERSION = 1;
@@ -419,23 +424,48 @@ async function verifyOfficialAsset(
       "GitHub CLI with `gh attestation verify` is required for exact tagged Fased release assets.",
     );
   }
-  const result = await runFile(
-    gh,
-    officialReleaseAttestationVerifyArgs({
-      assetPath,
-      version,
-      bundlePath,
-    }),
-    {
-      env: {
-        ...process.env,
-        HOME: process.env.HOME,
-        PATH: "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
-        GH_PROMPT_DISABLED: "1",
-      },
-      timeoutMs,
+  const updaterDirectory = path.dirname(fileURLToPath(import.meta.url));
+  let verifyArgs = null;
+  for (const trustRuntimePath of [
+    path.join(updaterDirectory, "current", "lifecycle-trust-runtime.mjs"),
+    path.join(updaterDirectory, "lifecycle-trust-runtime.mjs"),
+  ]) {
+    try {
+      const trustRuntime = await import(pathToFileURL(trustRuntimePath).href);
+      verifyArgs = trustRuntime.officialReleaseAttestationVerifyArgs({
+        assetPath,
+        version,
+        bundlePath,
+      });
+      break;
+    } catch (error) {
+      if (error?.code !== "ERR_MODULE_NOT_FOUND" && error?.code !== "ENOENT") {
+        throw error;
+      }
+    }
+  }
+  verifyArgs ??= [
+    "attestation",
+    "verify",
+    assetPath,
+    "--repo",
+    LEGACY_RELEASE_AUTHORITY.repository,
+    ...(bundlePath ? ["--bundle", bundlePath] : []),
+    "--signer-workflow",
+    LEGACY_RELEASE_AUTHORITY.workflow,
+    "--source-ref",
+    `${LEGACY_RELEASE_AUTHORITY.sourceRefPrefix}${version}`,
+    ...(LEGACY_RELEASE_AUTHORITY.denySelfHostedRunners ? ["--deny-self-hosted-runners"] : []),
+  ];
+  const result = await runFile(gh, verifyArgs, {
+    env: {
+      ...process.env,
+      HOME: process.env.HOME,
+      PATH: "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+      GH_PROMPT_DISABLED: "1",
     },
-  );
+    timeoutMs,
+  });
   if (!result.ok) {
     throw new Error(`Release attestation verification failed: ${result.stderr.trim()}`);
   }
@@ -2623,18 +2653,50 @@ function parseHostedTransactionArgs(argv) {
 
 async function updateStableComponents(paths, runtimeRoot, durable = false) {
   const scripts = path.join(runtimeRoot, "scripts");
-  const stablePaths = [
-    paths.launcherPath,
-    paths.serviceLauncherPath,
-    ...MANAGED_UPDATER_SUPPORT_FILES.map((name) => path.join(paths.updaterDir, name)),
-    paths.updaterPath,
-  ];
-  await copyExecutable(path.join(scripts, "fased-managed-launcher.sh"), stablePaths[0]);
-  await copyExecutable(path.join(scripts, "fased-managed-service.sh"), stablePaths[1]);
-  for (const name of MANAGED_UPDATER_SUPPORT_FILES) {
-    await copyExecutable(path.join(scripts, name), path.join(paths.updaterDir, name));
+  const stablePaths = [paths.launcherPath, paths.serviceLauncherPath];
+  await copyExecutable(path.join(scripts, "fased-managed-launcher.sh"), paths.launcherPath);
+  await copyExecutable(path.join(scripts, "fased-managed-service.sh"), paths.serviceLauncherPath);
+  const bundleModulePath = path.join(scripts, "managed-updater-bundle.mjs");
+  const bundleModulePresent = await fsp
+    .lstat(bundleModulePath)
+    .then((stat) => stat.isFile() && !stat.isSymbolicLink())
+    .catch((error) => {
+      if (error?.code === "ENOENT") {
+        return false;
+      }
+      throw error;
+    });
+  if (bundleModulePresent) {
+    const bundleModule = await import(
+      `${pathToFileURL(bundleModulePath).href}?runtime=${encodeURIComponent(runtimeRoot)}`
+    );
+    const generation = await bundleModule.stageManagedUpdaterGeneration({
+      updaterDir: paths.updaterDir,
+      runtimeRoot,
+      durable,
+    });
+    await bundleModule.installManagedUpdaterCompatibilityFiles({
+      updaterDir: paths.updaterDir,
+      generation,
+      copyExecutable,
+      durable,
+    });
+    stablePaths.push(
+      ...bundleModule.MANAGED_UPDATER_COMPATIBILITY_FILES.map((name) =>
+        path.join(paths.updaterDir, name),
+      ),
+      paths.updaterPath,
+      path.join(paths.updaterDir, "current"),
+    );
+  } else {
+    for (const name of ["hosted-release-manifest.mjs", "managed-runtime-layout.mjs"]) {
+      const targetPath = path.join(paths.updaterDir, name);
+      await copyExecutable(path.join(scripts, name), targetPath);
+      stablePaths.push(targetPath);
+    }
+    await copyExecutable(path.join(scripts, "fased-managed-updater.mjs"), paths.updaterPath);
+    stablePaths.push(paths.updaterPath);
   }
-  await copyExecutable(path.join(scripts, "fased-managed-updater.mjs"), paths.updaterPath);
   if (!durable) {
     return;
   }
@@ -6166,6 +6228,7 @@ export const __testing = {
   runLocalSignerTransaction,
   runHostedTransactionControl,
   sanitizeLegacyWalletServiceDefinitions,
+  updateStableComponents,
   validateHostedTransactionJournal,
   verifyOfficialAsset,
 };

@@ -4,7 +4,6 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   appendSatPlannerHistoryOutcome,
-  resolveSatActionHistoryStorePath,
   resolveSatPlannerHistoryStorePath,
   resolveSatRuntimeStorePath,
   writeSatRecentActions,
@@ -5812,7 +5811,7 @@ describe("sat-mining plugin config persistence", () => {
     expect(writes).toHaveLength(0);
   });
 
-  it("backfills append-only action history from persisted runtime actions on startup", async () => {
+  it("migrates persisted runtime actions into the permanent ledger on startup", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-action-history-backfill-"));
     let mainService:
       | {
@@ -5900,31 +5899,24 @@ describe("sat-mining plugin config persistence", () => {
         logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
       });
 
-      const actionHistoryPath = resolveSatActionHistoryStorePath(tempDir, "wallet-a");
-      const actionHistoryLines = (await fs.readFile(actionHistoryPath, "utf8"))
-        .trim()
-        .split("\n")
-        .filter(Boolean);
-
       let response: { ok: boolean; payload: unknown } | null = null;
-      await gatewayMethods.get("sat.getMiningStatus")!.handler({
+      await gatewayMethods.get("sat.getMiningHistory")!.handler({
+        params: { window: "all", activityWindow: "all" },
         respond: (ok, payload) => {
           response = { ok, payload };
         },
       });
 
-      expect(actionHistoryLines).toHaveLength(1);
-      expect(JSON.parse(actionHistoryLines[0] ?? "{}")).toMatchObject({
-        action: "submitCycle",
-        cycleId: 101,
-        status: "success",
-      });
+      await expect(
+        fs.stat(path.join(tempDir, "sat-mining", "wallets", "wallet-a", "mining.sqlite")),
+      ).resolves.toMatchObject({ isFile: expect.any(Function) });
       expect(response).toMatchObject({
         ok: true,
         payload: {
           ok: true,
           payload: {
-            recentActions: [expect.objectContaining({ action: "submitCycle", cycleId: 101 })],
+            actions: [expect.objectContaining({ action: "submitCycle", cycleId: 101 })],
+            totalStoredActionCount: 1,
           },
         },
       });

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "entrypoint": "fased-managed-updater.mjs",
+  "files": [
+    "fased-managed-updater.mjs",
+    "hosted-release-manifest.mjs",
+    "lifecycle-trust-crypto.mjs",
+    "lifecycle-trust-policy.mjs",
+    "lifecycle-trust-root.mjs",
+    "lifecycle-trust-runtime.mjs",
+    "managed-runtime-layout.mjs"
+  ]
+}

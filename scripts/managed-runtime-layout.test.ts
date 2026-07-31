@@ -12,6 +12,7 @@ import {
   readManagedInstallManifest,
   resolveManagedRuntimePaths,
 } from "./managed-runtime-layout.mjs";
+import { MANAGED_UPDATER_COMPATIBILITY_FILES } from "./managed-updater-bundle.mjs";
 
 function writeRuntime(packageRoot: string, version: string, options: { attested?: boolean } = {}) {
   fs.mkdirSync(path.join(packageRoot, "node_modules"), { recursive: true });
@@ -87,6 +88,8 @@ function writeRuntime(packageRoot: string, version: string, options: { attested?
     "fased-managed-service.sh",
     "fased-managed-updater.mjs",
     ...MANAGED_UPDATER_SUPPORT_FILES,
+    "managed-updater-bundle.mjs",
+    "managed-updater-bundle.v1.json",
     "start-managed.sh",
   ]) {
     const source = path.join(import.meta.dirname, script);
@@ -166,7 +169,11 @@ describe("managed runtime layout", () => {
     expect(fs.readFileSync(path.join(fixture.stateDir, "wallet-state-preserved"), "utf8")).toBe(
       "unchanged\n",
     );
-    for (const name of MANAGED_UPDATER_SUPPORT_FILES) {
+    const updaterGeneration = fs.realpathSync(path.join(fixture.paths.updaterDir, "current"));
+    for (const name of ["fased-managed-updater.mjs", ...MANAGED_UPDATER_SUPPORT_FILES]) {
+      expect(fs.existsSync(path.join(updaterGeneration, name))).toBe(true);
+    }
+    for (const name of MANAGED_UPDATER_COMPATIBILITY_FILES) {
       expect(fs.existsSync(path.join(fixture.paths.updaterDir, name))).toBe(true);
     }
     await expect(

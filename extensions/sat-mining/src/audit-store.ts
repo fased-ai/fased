@@ -135,7 +135,7 @@ export type SatPlannerOutcomeMemory = {
   recordedAt: string;
 };
 
-export type SatMiningHistoryWindow = "1h" | "24h" | "30d" | "1y" | "all";
+export type SatMiningHistoryWindow = "1h" | "24h" | "7d" | "30d" | "1y" | "all";
 
 export type SatPlannerHistoryQueryResult = {
   outcomes: SatPlannerOutcomeMemory[];

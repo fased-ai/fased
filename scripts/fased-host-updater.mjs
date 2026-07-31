@@ -2993,7 +2993,6 @@ async function stageOfficialCandidate(version, candidatePath, context) {
 
 const DECLARED_STATE_SCHEMA_VERSION = 1;
 const DECLARED_STATE_MAX_ENTRIES = 4096;
-const DECLARED_STATE_MAX_HASH_BYTES = 16 * 1024 * 1024;
 const DECLARED_STATE_SHARED_DIRECTORIES = Object.freeze([
   Object.freeze({ relativePath: ".", stateClass: "gateway-config-auth", create: false }),
   Object.freeze({ relativePath: "identity", stateClass: "device-identity", create: true }),
@@ -3470,11 +3469,32 @@ async function collectDeclaredStateRules(stateDir) {
 }
 
 async function hashDeclaredFile(handle, stat, label) {
-  if (stat.size > DECLARED_STATE_MAX_HASH_BYTES) {
-    throw new Error(`declared ${label} is too large to preserve transactionally`);
+  const hash = createHash("sha256");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  let offset = 0;
+  while (offset < stat.size) {
+    const { bytesRead } = await handle.read(
+      buffer,
+      0,
+      Math.min(buffer.length, stat.size - offset),
+      offset,
+    );
+    if (bytesRead <= 0) {
+      throw new Error(`declared ${label} changed while being preserved`);
+    }
+    hash.update(buffer.subarray(0, bytesRead));
+    offset += bytesRead;
   }
-  const bytes = await handle.readFile();
-  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+  const rebound = await handle.stat();
+  if (
+    rebound.dev !== stat.dev ||
+    rebound.ino !== stat.ino ||
+    rebound.size !== stat.size ||
+    rebound.mtimeMs !== stat.mtimeMs
+  ) {
+    throw new Error(`declared ${label} changed while being preserved`);
+  }
+  return `sha256:${hash.digest("hex")}`;
 }
 
 async function inspectDeclaredStateRule(stateDir, rule) {
@@ -7057,6 +7077,7 @@ export const __testing = {
   createTransactionContext,
   dispatchUpdateRequest,
   gateGatewayRelease,
+  hashDeclaredFile,
   parseBoundedJsonOutput,
   parseServerConfiguration,
   prepareControllerServerContext,

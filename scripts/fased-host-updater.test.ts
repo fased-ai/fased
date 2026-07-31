@@ -1170,6 +1170,24 @@ describe("root-owned hosted updater protocol", () => {
     );
   });
 
+  it("streams declared Mining state larger than the former fixed hash limit", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-large-mining-state-"));
+    cleanupRoots.push(root);
+    const filePath = path.join(root, "mining.sqlite");
+    const writer = await fsp.open(filePath, "w", 0o600);
+    await writer.truncate(20 * 1024 * 1024);
+    await writer.close();
+    const handle = await fsp.open(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      const stat = await handle.stat();
+      await expect(
+        __testing.hashDeclaredFile(handle, stat, "sat-mining/wallets/mining/mining.sqlite"),
+      ).resolves.toMatch(/^sha256:[a-f0-9]{64}$/u);
+    } finally {
+      await handle.close();
+    }
+  });
+
   it("records independent durable Wallet, Mining, Network, identity, and config hashes", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-state-classes-"));
     cleanupRoots.push(root);

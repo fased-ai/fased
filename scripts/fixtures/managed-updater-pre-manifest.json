@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "topology": "flat-updater-with-two-support-files",
+  "sourceReference": "v0.1.76-rc.20:scripts/fased-managed-updater.mjs",
+  "sourceSha256": "bc8a2b5ce0dbae21201abf5cc1d90d8b37a6415da30e6cdb4ba18fe4d2819a77",
+  "entrypoint": "fased-managed-updater.mjs",
+  "supportFiles": ["hosted-release-manifest.mjs", "managed-runtime-layout.mjs"]
+}

@@ -711,7 +711,11 @@ For scheduled or conditional automation, create a scheduled task whose isolated 
             }),
           );
         case "clear_history":
-          return jsonResult(await callGateway("sat.clearMiningHistory", gatewayOpts, {}));
+          return jsonResult(
+            await callGateway("sat.clearMiningHistory", gatewayOpts, {
+              confirmation: "clear-mining-history",
+            }),
+          );
         case "strategy_analyze": {
           const [status, history] = await Promise.all([
             callGateway("sat.getMiningStatus", gatewayOpts, {}),
