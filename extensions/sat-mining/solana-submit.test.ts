@@ -1408,7 +1408,7 @@ describe("SAT cycle transaction builders", () => {
       {
         pubkey: findPda(Buffer.from("sat_cycle_state"), encodeU64(cycleId)),
         isSigner: false,
-        isWritable: false,
+        isWritable: true,
       },
       { pubkey: authority, isSigner: false, isWritable: true },
       {
@@ -1449,7 +1449,7 @@ describe("SAT cycle transaction builders", () => {
       {
         pubkey: findPda(Buffer.from("sat_cycle_state"), encodeU64(cycleId)),
         isSigner: false,
-        isWritable: false,
+        isWritable: true,
       },
       {
         pubkey: findPda(Buffer.from("sat_cycle_registry_meta"), encodeU64(cycleId)),
@@ -1568,7 +1568,7 @@ describe("SAT cycle transaction builders", () => {
       {
         pubkey: findPda(Buffer.from("sat_cycle_registry_page"), encodeU64(cycleId), encodeU64(1)),
         isSigner: false,
-        isWritable: false,
+        isWritable: true,
       },
       {
         pubkey: findPda(Buffer.from("sat_cycle_settlement_progress_v2"), encodeU64(cycleId)),

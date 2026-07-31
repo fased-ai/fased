@@ -97,7 +97,7 @@
       "contractKey": "setActiveCommit",
       "discriminator": 68,
       "dataLength": 9,
-      "accountShape": "SW,-W",
+      "accountShape": "S-,-W",
       "variable": ""
     },
     {
@@ -187,7 +187,7 @@
       "contractKey": "distributeCyclePage",
       "discriminator": 66,
       "dataLength": 25,
-      "accountShape": "SW,-W,--,-W,--,-W,--,-W,-W,-W",
+      "accountShape": "SW,-W,-W,-W,--,-W,--,-W,-W,-W",
       "variable": "minerCyclePairs"
     },
     {
@@ -205,7 +205,7 @@
       "contractKey": "claimCycleRewardsBatch",
       "discriminator": 62,
       "dataLength": -1,
-      "accountShape": "SW,--,-W,-W,-W,-W,-W,-W",
+      "accountShape": "SW,-W,-W,-W,-W,-W,-W,-W",
       "variable": "claimBatch"
     },
     {
@@ -214,7 +214,7 @@
       "contractKey": "claimProtocolTreasury",
       "discriminator": 77,
       "dataLength": 1,
-      "accountShape": "SW,--,-W,-W,-W,-W,-W,-W,-W,-W,--,--,--,--",
+      "accountShape": "SW,--,--,-W,-W,-W,-W,-W,-W,-W,--,--,--,--",
       "variable": ""
     },
     {
@@ -232,7 +232,7 @@
       "contractKey": "claimProtocolDistributorSat",
       "discriminator": 85,
       "dataLength": 1,
-      "accountShape": "SW,--,-W,-W,-W,-W,-W,-W,--,--,--,--,--",
+      "accountShape": "SW,--,--,-W,-W,-W,-W,-W,--,--,--,--,--",
       "variable": ""
     },
     {
@@ -241,7 +241,7 @@
       "contractKey": "retargetUnlock",
       "discriminator": 60,
       "dataLength": 9,
-      "accountShape": "SW,-W,--,-W",
+      "accountShape": "S-,-W,--,-W",
       "variable": ""
     },
     {
@@ -250,7 +250,7 @@
       "contractKey": "closeResolvedMinerCycleState",
       "discriminator": 69,
       "dataLength": 9,
-      "accountShape": "SW,--,-W,-W,-W,-W",
+      "accountShape": "SW,-W,-W,-W,-W,-W",
       "variable": ""
     },
     {
@@ -259,7 +259,7 @@
       "contractKey": "closeResolvedCycleRegistryPage",
       "discriminator": 70,
       "dataLength": 17,
-      "accountShape": "SW,--,-W,-W,-W",
+      "accountShape": "SW,-W,-W,-W,-W",
       "variable": ""
     },
     {
@@ -295,7 +295,7 @@
       "contractKey": "openBondPosition",
       "discriminator": 2,
       "dataLength": 9,
-      "accountShape": "SW,--,-W,-W,-W,-W,--,--,--",
+      "accountShape": "SW,--,-W,-W,-W,--,--,--,--",
       "variable": ""
     },
     {
@@ -304,7 +304,7 @@
       "contractKey": "increaseBondPosition",
       "discriminator": 3,
       "dataLength": 9,
-      "accountShape": "SW,--,-W,-W,-W,-W,--,--,--",
+      "accountShape": "SW,--,-W,-W,-W,--,--,--,--",
       "variable": ""
     },
     {
@@ -331,7 +331,7 @@
       "contractKey": "finalizeBondUnlock",
       "discriminator": 6,
       "dataLength": 1,
-      "accountShape": "SW,--,-W,-W,-W,-W,-W,-W,--,--,--",
+      "accountShape": "SW,--,-W,-W,-W,-W,-W,--,--,--,--",
       "variable": ""
     },
     {
@@ -358,7 +358,7 @@
       "contractKey": "claimStakingRewards",
       "discriminator": 10,
       "dataLength": 1,
-      "accountShape": "SW,--,-W,-W,--,-W,-W,-W,--,--,--",
+      "accountShape": "SW,--,-W,-W,--,-W,-W,--,--,--,--",
       "variable": ""
     },
     {
@@ -367,7 +367,7 @@
       "contractKey": "claimUnallocatedStakingRewards",
       "discriminator": 11,
       "dataLength": 1,
-      "accountShape": "SW,-W,-W,-W,--,-W,--,--,--",
+      "accountShape": "SW,-W,-W,-W,--,--,--,--,--",
       "variable": ""
     }
   ]

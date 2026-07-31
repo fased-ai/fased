@@ -98,7 +98,7 @@ export const SAT_SIGNER_CODECS = [
     contractKey: "setActiveCommit",
     discriminator: 68,
     dataLength: 9,
-    accountShape: "SW,-W",
+    accountShape: "S-,-W",
     variable: "",
   },
   {
@@ -188,7 +188,7 @@ export const SAT_SIGNER_CODECS = [
     contractKey: "distributeCyclePage",
     discriminator: 66,
     dataLength: 25,
-    accountShape: "SW,-W,--,-W,--,-W,--,-W,-W,-W",
+    accountShape: "SW,-W,-W,-W,--,-W,--,-W,-W,-W",
     variable: "minerCyclePairs",
   },
   {
@@ -206,7 +206,7 @@ export const SAT_SIGNER_CODECS = [
     contractKey: "claimCycleRewardsBatch",
     discriminator: 62,
     dataLength: -1,
-    accountShape: "SW,--,-W,-W,-W,-W,-W,-W",
+    accountShape: "SW,-W,-W,-W,-W,-W,-W,-W",
     variable: "claimBatch",
   },
   {
@@ -215,7 +215,7 @@ export const SAT_SIGNER_CODECS = [
     contractKey: "claimProtocolTreasury",
     discriminator: 77,
     dataLength: 1,
-    accountShape: "SW,--,-W,-W,-W,-W,-W,-W,-W,-W,--,--,--,--",
+    accountShape: "SW,--,--,-W,-W,-W,-W,-W,-W,-W,--,--,--,--",
     variable: "",
   },
   {
@@ -233,7 +233,7 @@ export const SAT_SIGNER_CODECS = [
     contractKey: "claimProtocolDistributorSat",
     discriminator: 85,
     dataLength: 1,
-    accountShape: "SW,--,-W,-W,-W,-W,-W,-W,--,--,--,--,--",
+    accountShape: "SW,--,--,-W,-W,-W,-W,-W,--,--,--,--,--",
     variable: "",
   },
   {
@@ -242,7 +242,7 @@ export const SAT_SIGNER_CODECS = [
     contractKey: "retargetUnlock",
     discriminator: 60,
     dataLength: 9,
-    accountShape: "SW,-W,--,-W",
+    accountShape: "S-,-W,--,-W",
     variable: "",
   },
   {
@@ -251,7 +251,7 @@ export const SAT_SIGNER_CODECS = [
     contractKey: "closeResolvedMinerCycleState",
     discriminator: 69,
     dataLength: 9,
-    accountShape: "SW,--,-W,-W,-W,-W",
+    accountShape: "SW,-W,-W,-W,-W,-W",
     variable: "",
   },
   {
@@ -260,7 +260,7 @@ export const SAT_SIGNER_CODECS = [
     contractKey: "closeResolvedCycleRegistryPage",
     discriminator: 70,
     dataLength: 17,
-    accountShape: "SW,--,-W,-W,-W",
+    accountShape: "SW,-W,-W,-W,-W",
     variable: "",
   },
   {
@@ -296,7 +296,7 @@ export const SAT_SIGNER_CODECS = [
     contractKey: "openBondPosition",
     discriminator: 2,
     dataLength: 9,
-    accountShape: "SW,--,-W,-W,-W,-W,--,--,--",
+    accountShape: "SW,--,-W,-W,-W,--,--,--,--",
     variable: "",
   },
   {
@@ -305,7 +305,7 @@ export const SAT_SIGNER_CODECS = [
     contractKey: "increaseBondPosition",
     discriminator: 3,
     dataLength: 9,
-    accountShape: "SW,--,-W,-W,-W,-W,--,--,--",
+    accountShape: "SW,--,-W,-W,-W,--,--,--,--",
     variable: "",
   },
   {
@@ -332,7 +332,7 @@ export const SAT_SIGNER_CODECS = [
     contractKey: "finalizeBondUnlock",
     discriminator: 6,
     dataLength: 1,
-    accountShape: "SW,--,-W,-W,-W,-W,-W,-W,--,--,--",
+    accountShape: "SW,--,-W,-W,-W,-W,-W,--,--,--,--",
     variable: "",
   },
   {
@@ -359,7 +359,7 @@ export const SAT_SIGNER_CODECS = [
     contractKey: "claimStakingRewards",
     discriminator: 10,
     dataLength: 1,
-    accountShape: "SW,--,-W,-W,--,-W,-W,-W,--,--,--",
+    accountShape: "SW,--,-W,-W,--,-W,-W,--,--,--,--",
     variable: "",
   },
   {
@@ -368,9 +368,19 @@ export const SAT_SIGNER_CODECS = [
     contractKey: "claimUnallocatedStakingRewards",
     discriminator: 11,
     dataLength: 1,
-    accountShape: "SW,-W,-W,-W,--,-W,--,--,--",
+    accountShape: "SW,-W,-W,-W,--,--,--,--,--",
     variable: "",
   },
+] as const;
+
+export const SAT_ACCOUNT_ORDER_CONTRACT_SHA256 =
+  "8ebc48ffa550385c19dd610063e5b735491880b77c23214a25068d2a53864fc8";
+export const SAT_UNBOUND_LEGACY_ACTIONS = [
+  "initializeCycle",
+  "openDispute",
+  "republishEpochRoots",
+  "resolveDispute",
+  "validatorAttestation",
 ] as const;
 
 export type SatSignerAction = (typeof SAT_SIGNER_CODECS)[number]["action"];

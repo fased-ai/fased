@@ -14,6 +14,7 @@
     "docker-compose.yml",
     "dist/",
     "docs/_layouts/",
+    "extensions/sat-mining/sat-account-order.v1.json",
     "node_modules/",
     "patches/",
     "pnpm-lock.yaml/",
