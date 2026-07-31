@@ -1144,7 +1144,7 @@ func satTestDistributionIntent(t *testing.T, wallet, program, table solana.Publi
 	keys := []signerSATAccountV2{
 		satTestAccount(wallet, true, true),
 		satTestAccount(satTestPDA(t, program, []byte("sat_cycle_state"), cycle), false, true),
-		satTestAccount(satTestPDA(t, program, []byte("sat_cycle_registry_page"), cycle, page), false, false),
+		satTestAccount(satTestPDA(t, program, []byte("sat_cycle_registry_page"), cycle, page), false, true),
 		satTestAccount(satTestPDA(t, program, []byte("sat_cycle_settlement_progress_v2"), cycle), false, true),
 		satTestAccount(satTestPDA(t, program, []byte("sat_global_state")), false, false),
 		satTestAccount(satTestPDA(t, program, []byte("sat_treasury_state")), false, true),

@@ -139,7 +139,7 @@ func makeVaultBondRPCFixtureForWalletV2(t *testing.T, wallet solana.PublicKey) v
 		&solana.AccountMeta{PublicKey: staking, IsWritable: true},
 		&solana.AccountMeta{PublicKey: bondVault, IsWritable: true},
 		&solana.AccountMeta{PublicKey: recipient, IsWritable: true},
-		&solana.AccountMeta{PublicKey: mint, IsWritable: true},
+		&solana.AccountMeta{PublicKey: mint},
 		&solana.AccountMeta{PublicKey: solana.SystemProgramID},
 		&solana.AccountMeta{PublicKey: solana.TokenProgramID},
 		&solana.AccountMeta{PublicKey: solana.SPLAssociatedTokenAccountProgramID},
