@@ -1124,6 +1124,134 @@ export function buildProtectedLocalLifecycleApplyCommand(spec, layout, options =
   });
 }
 
+async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
+  const targetSupervisor = path.join(sourceRoot, "scripts", "fased-lifecycle-supervisor.mjs");
+  const targetDigest = crypto
+    .createHash("sha256")
+    .update(await fsp.readFile(targetSupervisor))
+    .digest("hex");
+  let installedDigest = null;
+  try {
+    const installedInfo = await fsp.lstat(layout.supervisorBinary);
+    if (
+      !installedInfo.isFile() ||
+      installedInfo.isSymbolicLink() ||
+      installedInfo.nlink !== 1 ||
+      installedInfo.uid !== 0 ||
+      (installedInfo.mode & 0o022) !== 0
+    ) {
+      fail("installed protected Local supervisor is not a protected root-owned file");
+    }
+    installedDigest = crypto
+      .createHash("sha256")
+      .update(await fsp.readFile(layout.supervisorBinary))
+      .digest("hex");
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  const operatorGroup = groupRecord(layout.operatorGroup);
+  if (!operatorGroup) {
+    fail("protected Local operator group is missing during supervisor transition");
+  }
+  const systemctl = systemBinary(["/usr/bin/systemctl", "/bin/systemctl"], "systemctl");
+  const snapshots = new Map(
+    await Promise.all(
+      [
+        layout.supervisorBinary,
+        path.join("/etc/systemd/system", layout.controllerUnit),
+        path.join("/etc/systemd/system", layout.supervisorUnit),
+        path.join(layout.supervisorStateDir, "boundary.json"),
+      ].map(async (filePath) => [filePath, await captureFile(filePath)]),
+    ),
+  );
+  try {
+    runSystem(systemctl, ["stop", layout.supervisorUnit]);
+    if (targetDigest !== installedDigest) {
+      await atomicCopy(targetSupervisor, layout.supervisorBinary, 0o755, { uid: 0, gid: 0 });
+    }
+    const bootstrapOutput = runSystem(spec.nodeBinary, [
+      layout.supervisorBinary,
+      "bootstrap-boundary",
+      "--profile",
+      "protected-local",
+      "--protected-local-instance",
+      layout.instanceId,
+      "--operator-uid",
+      String(spec.operatorUid),
+      "--operator-gid",
+      String(operatorGroup.gid),
+    ]);
+    const receipt = JSON.parse(bootstrapOutput);
+    if (
+      receipt?.schemaVersion !== 1 ||
+      receipt.profile !== "protected-local" ||
+      receipt.instanceId !== layout.instanceId ||
+      receipt.supervisorUnit !== layout.supervisorUnit ||
+      receipt.controllerUnit !== layout.controllerUnit
+    ) {
+      fail("protected Local target supervisor returned a mismatched boundary receipt");
+    }
+    runSystem(systemctl, ["restart", layout.supervisorUnit]);
+    await waitForSocket(`/run/fased-local-controller/${layout.instanceId}/request.sock`, 60_000);
+    return targetDigest !== installedDigest;
+  } catch (error) {
+    const rollbackFailures = [];
+    try {
+      runSystem(systemctl, ["stop", layout.supervisorUnit], { timeout: 30_000 });
+    } catch (rollbackError) {
+      rollbackFailures.push(
+        `stop target supervisor: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+      );
+    }
+    for (const [filePath, snapshot] of snapshots) {
+      try {
+        await restoreCapturedFile(filePath, snapshot);
+      } catch (rollbackError) {
+        rollbackFailures.push(
+          `restore ${String(filePath)}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+        );
+      }
+    }
+    try {
+      runSystem(systemctl, ["daemon-reload"]);
+    } catch (rollbackError) {
+      rollbackFailures.push(
+        `reload prior units: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+      );
+    }
+    for (const unit of [layout.controllerUnit, layout.supervisorUnit]) {
+      try {
+        runSystem(systemctl, ["restart", unit]);
+      } catch (rollbackError) {
+        rollbackFailures.push(
+          `restart ${unit}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+        );
+      }
+    }
+    try {
+      await waitForSocket(`/run/fased-local-controller/${layout.instanceId}/request.sock`, 60_000);
+    } catch (rollbackError) {
+      rollbackFailures.push(
+        `restore supervisor socket: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+      );
+    }
+    if (rollbackFailures.length > 0) {
+      throw new Error(
+        `protected Local supervisor transition failed and rollback is incomplete: ${error.message}; ${rollbackFailures.join("; ")}`,
+        { cause: error },
+      );
+    }
+    throw new Error(
+      `protected Local supervisor transition failed and was restored: ${error.message}`,
+      {
+        cause: error,
+      },
+    );
+  }
+}
+
 function validateProtectedLocalLifecycleResult(result, spec) {
   const supportedApplicationAdapters = new Set([
     "managed-install-absent",
@@ -2983,6 +3111,7 @@ async function installProtectedLocal(params) {
       }
       let lifecycle = null;
       if (spec.gatewayMode === "activate") {
+        await transitionExistingSupervisorBoundary(sourceRoot, spec, layout);
         await waitForSocket(
           `/run/fased-local-controller/${layout.instanceId}/request.sock`,
           60_000,

@@ -161,8 +161,9 @@ async function existingControllerTransitionFixture(
   await fsp.mkdir(path.dirname(paths.channelPath), { recursive: true });
   await fsp.mkdir(paths.releasesDir, { recursive: true });
   await fsp.writeFile(paths.channelPath, "beta\n");
-  const supervisor = "stable-supervisor\n";
-  await fsp.writeFile(paths.supervisorPath, supervisor);
+  const previousSupervisor = "previous-stable-supervisor\n";
+  const targetSupervisor = "target-stable-supervisor\n";
+  await fsp.writeFile(paths.supervisorPath, previousSupervisor);
 
   const targetServer = "verified-target-server\n";
   const targetClient = "verified-target-client\n";
@@ -172,7 +173,10 @@ async function existingControllerTransitionFixture(
   const trust = metadata({
     targets: {
       bootstrap: { asset: "install.sh", sha256: digest("d") },
-      supervisor: { asset: "fased-lifecycle-supervisor.mjs", sha256: sha256Text(supervisor) },
+      supervisor: {
+        asset: "fased-lifecycle-supervisor.mjs",
+        sha256: sha256Text(targetSupervisor),
+      },
       controllerServer: { asset: "fased-host-updater.mjs", sha256: targetServerSha },
       controllerClient: { asset: "fased-host-updaterctl.mjs", sha256: targetClientSha },
       evidenceVerifier: {
@@ -184,6 +188,7 @@ async function existingControllerTransitionFixture(
   const downloads = new Map([
     ["fased-lifecycle-trust-v1.json", `${JSON.stringify(trust)}\n`],
     ["fased-lifecycle-trust-v1.json.attestation.json", "{}\n"],
+    ["fased-lifecycle-supervisor.mjs", targetSupervisor],
     ["fased-host-updater.mjs", targetServer],
     ["fased-host-updaterctl.mjs", targetClient],
     ["fased-privileged-release-evidence.mjs", verifier],
@@ -235,7 +240,9 @@ async function existingControllerTransitionFixture(
       now: () => now,
       verifyMetadata: async () => undefined,
       verifyReleaseEvidence: async () => undefined,
+      selfCheckSupervisor: async () => undefined,
       selfCheckController: async () => undefined,
+      runningSupervisorDigest: sha256Text(previousSupervisor),
       download: async (url: string, destination: string) => {
         const name = url.slice(url.lastIndexOf("/") + 1);
         const body = downloads.get(name);
@@ -266,6 +273,8 @@ async function existingControllerTransitionFixture(
     restartController,
     targetServerSha,
     targetClientSha,
+    previousSupervisor,
+    targetSupervisor,
   };
 }
 
@@ -545,6 +554,7 @@ describe("stable lifecycle supervisor contract", () => {
     const downloads = new Map([
       ["fased-lifecycle-trust-v1.json", `${JSON.stringify(trust)}\n`],
       ["fased-lifecycle-trust-v1.json.attestation.json", "{}\n"],
+      ["fased-lifecycle-supervisor.mjs", "stable-supervisor\n"],
       ["fased-host-updater.mjs", server],
       ["fased-host-updaterctl.mjs", client],
       ["fased-privileged-release-evidence.mjs", verifier],
@@ -570,7 +580,9 @@ describe("stable lifecycle supervisor contract", () => {
       now: () => now,
       verifyMetadata,
       verifyReleaseEvidence: async () => undefined,
+      selfCheckSupervisor: async () => undefined,
       selfCheckController: async () => undefined,
+      runningSupervisorDigest: sha256Text("stable-supervisor\n"),
       download: async (url: string, destination: string) => {
         const name = url.slice(url.lastIndexOf("/") + 1);
         const body = downloads.get(name);
@@ -618,24 +630,100 @@ describe("stable lifecycle supervisor contract", () => {
     expect(JSON.parse(await fsp.readFile(paths.controllerVersionPath, "utf8"))).toEqual(
       fixture.previousIdentity,
     );
+    expect(await fsp.readFile(paths.supervisorPath, "utf8")).toBe(fixture.previousSupervisor);
     await expect(fsp.lstat(paths.supervisorTransactionPath)).rejects.toMatchObject({
       code: "ENOENT",
     });
 
     await expect(
       __testing.handleSupervisorRequest(request(), fixture.context, state),
-    ).resolves.toMatchObject({ ok: true, version, controllerChanged: true });
+    ).resolves.toMatchObject({
+      ok: true,
+      version,
+      controllerChanged: true,
+      supervisorChanged: true,
+    });
     expect(await fsp.realpath(paths.currentLink)).toBe(path.join(paths.releasesDir, `v${version}`));
     expect(JSON.parse(await fsp.readFile(paths.controllerVersionPath, "utf8"))).toMatchObject({
       version,
       serverSha256: fixture.targetServerSha,
       clientSha256: fixture.targetClientSha,
     });
+    expect(await fsp.readFile(paths.supervisorPath, "utf8")).toBe(fixture.targetSupervisor);
+    fixture.context.runningSupervisorDigest = sha256Text(fixture.targetSupervisor);
 
     await expect(
       __testing.handleSupervisorRequest(request(), fixture.context, state),
-    ).resolves.toMatchObject({ ok: true, version, controllerChanged: false });
+    ).resolves.toMatchObject({
+      ok: true,
+      version,
+      controllerChanged: false,
+      supervisorChanged: false,
+    });
     expect(fixture.restartController).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects supervisor promotion when the installed file changed beneath the running process", async () => {
+    const { paths } = tempPaths();
+    const fixture = await existingControllerTransitionFixture(paths, "1.2.2");
+    fixture.context.runningSupervisorDigest = digest("f");
+
+    await expect(stageTrustedController(request(), fixture.context)).rejects.toThrow(
+      "installed lifecycle supervisor changed beneath the running trusted process",
+    );
+    expect(await fsp.readFile(paths.supervisorPath, "utf8")).toBe(fixture.previousSupervisor);
+    await expect(fsp.lstat(paths.supervisorTransactionPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("recovers both supervisor and controller after a crash between activation and trust commit", async () => {
+    const { paths } = tempPaths();
+    const fixture = await existingControllerTransitionFixture(paths, "1.2.2");
+    const transaction = request();
+    const staged = await stageTrustedController(transaction, fixture.context);
+
+    await __testing.beginSupervisorTransaction(paths, transaction, staged);
+    await __testing.activateStagedSupervisor(
+      paths,
+      staged,
+      process.getuid?.() ?? 0,
+      process.getgid?.() ?? 0,
+    );
+    await __testing.activateStagedController(paths, staged);
+    await __testing.commitLifecycleTrust(paths, staged);
+
+    expect(await fsp.readFile(paths.supervisorPath, "utf8")).toBe(fixture.targetSupervisor);
+    expect(await fsp.realpath(paths.currentLink)).toBe(path.join(paths.releasesDir, `v${version}`));
+
+    const restart = vi.fn(async () => undefined);
+    const context = __testing.createContext(
+      {
+        profile: "protected-local",
+        operatorUid: process.getuid?.() ?? 1000,
+        operatorGid: process.getgid?.() ?? 1000,
+        paths,
+      },
+      {
+        rootUid: process.getuid?.() ?? 0,
+        rootGid: process.getgid?.() ?? 0,
+        runningSupervisorDigest: sha256Text(fixture.targetSupervisor),
+        restartController: restart,
+        waitForController: async () => undefined,
+      },
+    );
+
+    await expect(__testing.recoverSupervisorTransaction(context)).resolves.toBe(true);
+    expect(context.supervisorRestartRequired).toBe(true);
+    expect(await fsp.readFile(paths.supervisorPath, "utf8")).toBe(fixture.previousSupervisor);
+    expect(await fsp.realpath(paths.currentLink)).toBe(fixture.previousGeneration);
+    expect(JSON.parse(await fsp.readFile(paths.controllerVersionPath, "utf8"))).toEqual(
+      fixture.previousIdentity,
+    );
+    await expect(fsp.lstat(paths.supervisorTransactionPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(restart).toHaveBeenCalledOnce();
   });
 
   it("restores the prior controller selection when worker restart fails", async () => {
@@ -928,6 +1016,8 @@ describe("stable lifecycle supervisor contract", () => {
     ]);
     await fsp.mkdir(path.dirname(paths.currentLink), { recursive: true });
     await fsp.symlink(priorGeneration, paths.currentLink, "dir");
+    await fsp.writeFile(paths.supervisorPath, "stable-supervisor\n", { mode: 0o755 });
+    const supervisorDigest = sha256Text("stable-supervisor\n");
     const previousIdentity = {
       schemaVersion: 1,
       version: priorVersion,
@@ -951,6 +1041,9 @@ describe("stable lifecycle supervisor contract", () => {
       generationRoot: nextGeneration,
       previousGeneration: priorGeneration,
       previousIdentity,
+      supervisorChanged: false,
+      previousSupervisorDigest: supervisorDigest,
+      targetSupervisorDigest: supervisorDigest,
       trusted,
       candidateRoot: trusted.root,
       trustState: __testing.advanceLifecycleTrustState(trusted, trusted.root, metadata()),

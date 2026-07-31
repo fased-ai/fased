@@ -745,7 +745,15 @@ default:other::---
     );
     const alreadyProtected = bootstrap.slice(branchStart, branchEnd);
 
+    expect(alreadyProtected).toContain(
+      "await transitionExistingSupervisorBoundary(sourceRoot, spec, layout)",
+    );
     expect(alreadyProtected).toContain("lifecycle = applyProtectedLocalLifecycle(spec, layout)");
+    expect(
+      alreadyProtected.indexOf(
+        "await transitionExistingSupervisorBoundary(sourceRoot, spec, layout)",
+      ),
+    ).toBeLessThan(alreadyProtected.indexOf("applyProtectedLocalLifecycle(spec, layout)"));
     expect(alreadyProtected.indexOf("applyProtectedLocalLifecycle(spec, layout)")).toBeLessThan(
       alreadyProtected.indexOf("verifyGatewayHealth(spec, layout"),
     );

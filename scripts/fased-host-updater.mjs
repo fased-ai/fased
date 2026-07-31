@@ -630,6 +630,8 @@ async function ensureStableSupervisorBoundary(configuration, context) {
   const supervisorBundlePath = path.join(downloadRoot, LIFECYCLE_SUPERVISOR_BUNDLE_NAME);
   const metadataPath = path.join(downloadRoot, LIFECYCLE_TRUST_METADATA_NAME);
   const metadataBundlePath = path.join(downloadRoot, LIFECYCLE_TRUST_METADATA_BUNDLE_NAME);
+  let previousSupervisor = null;
+  let supervisorReplaced = false;
   try {
     await Promise.all([
       context.downloadReleaseAsset(`${releaseUrl}/${LIFECYCLE_SUPERVISOR_NAME}`, supervisorPath),
@@ -696,12 +698,23 @@ async function ensureStableSupervisorBoundary(configuration, context) {
         existing.isSymbolicLink() ||
         existing.uid !== 0 ||
         existing.nlink !== 1 ||
-        (existing.mode & 0o022) !== 0 ||
-        (await sha256(lifecycle.supervisorPath)) !== supervisorDigest
+        (existing.mode & 0o022) !== 0
       ) {
-        throw new Error(
-          "installed stable lifecycle supervisor differs from the immutable contract",
-        );
+        throw new Error("installed stable lifecycle supervisor is not a protected root file");
+      }
+      if ((await sha256(lifecycle.supervisorPath)) !== supervisorDigest) {
+        previousSupervisor = {
+          content: await fsp.readFile(lifecycle.supervisorPath),
+          mode: existing.mode & 0o777,
+          uid: existing.uid,
+          gid: existing.gid,
+        };
+        await atomicCopyFileDurable(supervisorPath, lifecycle.supervisorPath, {
+          mode: 0o755,
+          uid: 0,
+          gid: 0,
+        });
+        supervisorReplaced = true;
       }
     } catch (error) {
       if (error?.code !== "ENOENT") {
@@ -712,6 +725,7 @@ async function ensureStableSupervisorBoundary(configuration, context) {
         uid: 0,
         gid: 0,
       });
+      supervisorReplaced = true;
     }
     const supervisorIdentityPath = path.join(
       lifecycle.supervisorStateDir,
@@ -773,6 +787,29 @@ async function ensureStableSupervisorBoundary(configuration, context) {
       throw new Error("stable lifecycle supervisor bootstrap returned a mismatched receipt");
     }
     return true;
+  } catch (error) {
+    if (supervisorReplaced) {
+      if (previousSupervisor) {
+        await atomicWriteFileDurable(
+          lifecycle.supervisorPath,
+          previousSupervisor.content,
+          previousSupervisor.mode,
+        );
+        await fsp.chown(lifecycle.supervisorPath, previousSupervisor.uid, previousSupervisor.gid);
+        await fsp.chmod(lifecycle.supervisorPath, previousSupervisor.mode);
+        const restoredHandle = await fsp.open(lifecycle.supervisorPath, "r");
+        try {
+          await restoredHandle.sync();
+        } finally {
+          await restoredHandle.close();
+        }
+        await fsyncDirectory(path.dirname(lifecycle.supervisorPath));
+      } else {
+        await fsp.rm(lifecycle.supervisorPath, { force: true });
+        await fsyncDirectory(path.dirname(lifecycle.supervisorPath));
+      }
+    }
+    throw error;
   } finally {
     await fsp.rm(downloadRoot, { recursive: true, force: true });
   }

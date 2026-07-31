@@ -5984,21 +5984,25 @@ install_host_signer_and_updater_services() {
   install -d -m 0700 -o root -g root /var/lib/fased-host-updater
   install -d -m 0700 -o root -g root /var/lib/fased-host-updater/supervisor
   local supervisor_path="/opt/fased/host-controller/supervisor/fased-lifecycle-supervisor.mjs"
+  local supervisor_staging_path="/opt/fased/host-controller/supervisor/.fased-lifecycle-supervisor-${version}-$$"
   local supervisor_sha
   supervisor_sha="$(sha256sum "$FASED_DIR/scripts/fased-lifecycle-supervisor.mjs" | awk '{print $1}')"
   if [[ -e "$supervisor_path" || -L "$supervisor_path" ]]; then
     if [[ ! -f "$supervisor_path" || -L "$supervisor_path" || \
       "$(stat -c '%u' "$supervisor_path")" -ne 0 || \
-      "$(stat -c '%a' "$supervisor_path")" != "755" || \
-      "$(sha256sum "$supervisor_path" | awk '{print $1}')" != "$supervisor_sha" ]]; then
-      echo "Existing stable lifecycle supervisor does not match this immutable contract." >&2
-      echo "Use explicit supervisor recovery; normal install/update will not replace it." >&2
+      "$(stat -c '%a' "$supervisor_path")" != "755" ]]; then
+      echo "Existing stable lifecycle supervisor is not a protected root-owned file." >&2
       exit 1
     fi
-  else
+  fi
+  if [[ ! -e "$supervisor_path" || \
+    "$(sha256sum "$supervisor_path" | awk '{print $1}')" != "$supervisor_sha" ]]; then
+    rm -f "$supervisor_staging_path"
     install -m 0755 -o root -g root \
       "$FASED_DIR/scripts/fased-lifecycle-supervisor.mjs" \
-      "$supervisor_path"
+      "$supervisor_staging_path"
+    sync -f "$supervisor_staging_path" /opt/fased/host-controller/supervisor
+    mv -f "$supervisor_staging_path" "$supervisor_path"
     sync -f "$supervisor_path" /opt/fased/host-controller/supervisor
   fi
   local controller_release_dir="/opt/fased/host-controller/releases/v${version}"
@@ -6178,7 +6182,6 @@ PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=/opt/fased/host-controller /var/lib/fased-host-updater/supervisor /run/fased-host-updater
-ReadOnlyPaths=/opt/fased/host-controller/supervisor
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true

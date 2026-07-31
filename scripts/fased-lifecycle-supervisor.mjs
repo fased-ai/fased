@@ -109,6 +109,9 @@ const CONTROLLER_OPERATIONS = new Set([
   "commitRelease",
   "rollbackRelease",
 ]);
+const RUNNING_SUPERVISOR_SHA256 = createHash("sha256")
+  .update(fs.readFileSync(fileURLToPath(import.meta.url)))
+  .digest("hex");
 
 function fail(message) {
   throw new Error(message);
@@ -899,6 +902,23 @@ async function selfCheckController(assetPath, role, stateDir) {
   }
 }
 
+async function selfCheckSupervisor(assetPath, stateDir) {
+  const { stdout } = await execFileAsync(process.execPath, [assetPath, "--self-check"], {
+    env: { HOME: stateDir, PATH: "/usr/local/bin:/usr/bin:/bin" },
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+  });
+  const value = JSON.parse(stdout);
+  exactKeys(value, ["schemaVersion", "protocolVersion", "role"], "lifecycle supervisor self-check");
+  if (
+    value.schemaVersion !== SUPERVISOR_SCHEMA_VERSION ||
+    value.protocolVersion !== SUPERVISOR_PROTOCOL_VERSION ||
+    value.role !== "lifecycle-supervisor"
+  ) {
+    fail("lifecycle supervisor self-check is incompatible");
+  }
+}
+
 async function verifyReleaseEvidence(verifierPath, verifierSha256, options) {
   const verifier = await import(`${pathToFileURL(verifierPath).href}?sha256=${verifierSha256}`);
   if (typeof verifier.verifyPrivilegedReleaseEvidence !== "function") {
@@ -1138,6 +1158,79 @@ async function currentControllerMatches(paths, identity, expectedRootUid = 0) {
   }
 }
 
+function supervisorGenerationPath(paths, digest) {
+  if (!DIGEST_PATTERN.test(digest || "")) {
+    fail("lifecycle supervisor generation digest is invalid");
+  }
+  return path.join(paths.supervisorStateDir, "supervisor-generations", `${digest}.mjs`);
+}
+
+async function assertSupervisorGeneration(filePath, digest, rootUid, rootGid) {
+  const info = await fsp.lstat(filePath);
+  if (
+    !info.isFile() ||
+    info.isSymbolicLink() ||
+    info.nlink !== 1 ||
+    info.uid !== rootUid ||
+    info.gid !== rootGid ||
+    (info.mode & 0o022) !== 0 ||
+    (await sha256(filePath)) !== digest
+  ) {
+    fail("lifecycle supervisor generation is not root-owned and immutable");
+  }
+  return filePath;
+}
+
+async function preserveSupervisorGeneration(sourcePath, digest, rootUid, rootGid, paths) {
+  const generationPath = supervisorGenerationPath(paths, digest);
+  try {
+    return await assertSupervisorGeneration(generationPath, digest, rootUid, rootGid);
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  await fsp.mkdir(path.dirname(generationPath), { recursive: true, mode: 0o700 });
+  await fsp.chown(path.dirname(generationPath), rootUid, rootGid);
+  await fsp.chmod(path.dirname(generationPath), 0o700);
+  await atomicCopy(sourcePath, generationPath, 0o700);
+  await fsp.chown(generationPath, rootUid, rootGid);
+  await fsp.chmod(generationPath, 0o700);
+  return await assertSupervisorGeneration(generationPath, digest, rootUid, rootGid);
+}
+
+async function activateStagedSupervisor(paths, staged, rootUid = 0, rootGid = 0) {
+  if (!staged.supervisorChanged) {
+    return;
+  }
+  await assertSupervisorGeneration(
+    staged.targetSupervisorGeneration,
+    staged.targetSupervisorDigest,
+    rootUid,
+    rootGid,
+  );
+  await atomicCopy(staged.targetSupervisorGeneration, paths.supervisorPath, 0o755);
+  await fsp.chown(paths.supervisorPath, rootUid, rootGid);
+  await fsp.chmod(paths.supervisorPath, 0o755);
+  if ((await sha256(paths.supervisorPath)) !== staged.targetSupervisorDigest) {
+    fail("activated lifecycle supervisor does not match its trusted target");
+  }
+}
+
+async function restoreSupervisorSelection(paths, staged, rootUid = 0, rootGid = 0) {
+  if (!staged.supervisorChanged) {
+    return;
+  }
+  const previousPath = supervisorGenerationPath(paths, staged.previousSupervisorDigest);
+  await assertSupervisorGeneration(previousPath, staged.previousSupervisorDigest, rootUid, rootGid);
+  await atomicCopy(previousPath, paths.supervisorPath, 0o755);
+  await fsp.chown(paths.supervisorPath, rootUid, rootGid);
+  await fsp.chmod(paths.supervisorPath, 0o755);
+  if ((await sha256(paths.supervisorPath)) !== staged.previousSupervisorDigest) {
+    fail("restored lifecycle supervisor does not match its prior generation");
+  }
+}
+
 async function durableReceipt(paths, request, result) {
   const receipt = {
     schemaVersion: 1,
@@ -1212,6 +1305,7 @@ export async function stageTrustedController(request, context) {
   const releaseUrl = `${RELEASE_BASE}/v${request.version}`;
   const metadataPath = path.join(downloadRoot, TRUST_METADATA_NAME);
   const bundlePath = path.join(downloadRoot, TRUST_METADATA_BUNDLE_NAME);
+  const targetSupervisorPath = path.join(downloadRoot, SUPERVISOR_NAME);
   const serverPath = path.join(downloadRoot, CONTROLLER_SERVER_NAME);
   const clientPath = path.join(downloadRoot, CONTROLLER_CLIENT_NAME);
   const evidenceVerifierPath = path.join(downloadRoot, EVIDENCE_VERIFIER_NAME);
@@ -1266,11 +1360,8 @@ export async function stageTrustedController(request, context) {
         ({ sha256: targetSha256 }) => targetSha256,
       ),
     );
-    const installedSupervisorDigest = await sha256(paths.supervisorPath);
-    if (installedSupervisorDigest !== metadata.targets.supervisor.sha256) {
-      fail("installed lifecycle supervisor is not the immutable metadata-bound target");
-    }
     await Promise.all([
+      context.download(`${releaseUrl}/${metadata.targets.supervisor.asset}`, targetSupervisorPath),
       context.download(`${releaseUrl}/${metadata.targets.controllerServer.asset}`, serverPath),
       context.download(`${releaseUrl}/${metadata.targets.controllerClient.asset}`, clientPath),
       context.download(
@@ -1285,6 +1376,7 @@ export async function stageTrustedController(request, context) {
     ]);
     await Promise.all(
       [
+        targetSupervisorPath,
         serverPath,
         clientPath,
         evidenceVerifierPath,
@@ -1298,17 +1390,22 @@ export async function stageTrustedController(request, context) {
           await context.sealSupervisorArtifact(filePath, context.rootUid, context.rootGid),
       ),
     );
-    const [serverSha256, clientSha256, evidenceVerifierSha256] = await Promise.all([
-      sha256(serverPath),
-      sha256(clientPath),
-      sha256(evidenceVerifierPath),
-    ]);
+    const [targetSupervisorDigest, serverSha256, clientSha256, evidenceVerifierSha256] =
+      await Promise.all([
+        sha256(targetSupervisorPath),
+        sha256(serverPath),
+        sha256(clientPath),
+        sha256(evidenceVerifierPath),
+      ]);
     if (
+      targetSupervisorDigest !== metadata.targets.supervisor.sha256 ||
       serverSha256 !== metadata.targets.controllerServer.sha256 ||
       clientSha256 !== metadata.targets.controllerClient.sha256 ||
       evidenceVerifierSha256 !== metadata.targets.evidenceVerifier.sha256
     ) {
-      fail("downloaded lifecycle controller or evidence verifier does not match trust metadata");
+      fail(
+        "downloaded lifecycle supervisor, controller, or evidence verifier does not match trust metadata",
+      );
     }
     await context.verifyMetadata(
       provenancePath,
@@ -1333,9 +1430,35 @@ export async function stageTrustedController(request, context) {
       expectedCommit: metadata.release.commit,
     });
     await Promise.all([
+      context.selfCheckSupervisor(targetSupervisorPath, paths.supervisorStateDir),
       context.selfCheckController(serverPath, "server", paths.supervisorStateDir),
       context.selfCheckController(clientPath, "client", paths.supervisorStateDir),
     ]);
+    const previousSupervisorDigest = await sha256(paths.supervisorPath);
+    if (previousSupervisorDigest !== context.runningSupervisorDigest) {
+      fail("installed lifecycle supervisor changed beneath the running trusted process");
+    }
+    await assertSupervisorGeneration(
+      paths.supervisorPath,
+      previousSupervisorDigest,
+      context.rootUid,
+      context.rootGid,
+    );
+    const supervisorChanged = previousSupervisorDigest !== targetSupervisorDigest;
+    const previousSupervisorGeneration = await preserveSupervisorGeneration(
+      paths.supervisorPath,
+      previousSupervisorDigest,
+      context.rootUid,
+      context.rootGid,
+      paths,
+    );
+    const targetSupervisorGeneration = await preserveSupervisorGeneration(
+      targetSupervisorPath,
+      targetSupervisorDigest,
+      context.rootUid,
+      context.rootGid,
+      paths,
+    );
     const identity = {
       schemaVersion: 1,
       version: request.version,
@@ -1399,6 +1522,11 @@ export async function stageTrustedController(request, context) {
       generationRoot,
       previousGeneration,
       previousIdentity: existing,
+      supervisorChanged,
+      previousSupervisorDigest,
+      targetSupervisorDigest,
+      previousSupervisorGeneration,
+      targetSupervisorGeneration,
       trusted,
       candidateRoot,
       trustState,
@@ -1486,13 +1614,16 @@ async function restoreLifecycleTrust(paths, trusted) {
 
 function supervisorTransactionRecord(request, staged) {
   return Object.freeze({
-    schemaVersion: 1,
+    schemaVersion: 2,
     transactionId: request.transactionId,
     version: request.version,
     previousGenerationVersion: staged.previousGeneration
       ? path.basename(staged.previousGeneration).slice(1)
       : null,
     previousIdentity: staged.previousIdentity,
+    supervisorChanged: staged.supervisorChanged === true,
+    previousSupervisorDigest: staged.previousSupervisorDigest,
+    targetSupervisorDigest: staged.targetSupervisorDigest,
     previousTrust: {
       persisted: staged.trusted.persisted,
       envelope: staged.trusted.persisted ? staged.trusted.envelope : null,
@@ -1502,26 +1633,53 @@ function supervisorTransactionRecord(request, staged) {
 }
 
 function parseSupervisorTransaction(value, paths) {
+  const schemaVersion = Number(value?.schemaVersion);
   exactKeys(
     value,
-    [
-      "schemaVersion",
-      "transactionId",
-      "version",
-      "previousGenerationVersion",
-      "previousIdentity",
-      "previousTrust",
-    ],
+    schemaVersion === 1
+      ? [
+          "schemaVersion",
+          "transactionId",
+          "version",
+          "previousGenerationVersion",
+          "previousIdentity",
+          "previousTrust",
+        ]
+      : [
+          "schemaVersion",
+          "transactionId",
+          "version",
+          "previousGenerationVersion",
+          "previousIdentity",
+          "supervisorChanged",
+          "previousSupervisorDigest",
+          "targetSupervisorDigest",
+          "previousTrust",
+        ],
     "lifecycle supervisor transaction",
   );
   if (
-    value.schemaVersion !== 1 ||
+    !new Set([1, 2]).has(schemaVersion) ||
     !TRANSACTION_ID_PATTERN.test(value.transactionId || "") ||
     !VERSION_PATTERN.test(value.version || "") ||
     (value.previousGenerationVersion !== null &&
       !VERSION_PATTERN.test(value.previousGenerationVersion || ""))
   ) {
     fail("lifecycle supervisor transaction identity is invalid");
+  }
+  const supervisorChanged = schemaVersion === 2 && value.supervisorChanged === true;
+  const previousSupervisorDigest =
+    schemaVersion === 2 ? String(value.previousSupervisorDigest ?? "") : null;
+  const targetSupervisorDigest =
+    schemaVersion === 2 ? String(value.targetSupervisorDigest ?? "") : null;
+  if (
+    schemaVersion === 2 &&
+    (typeof value.supervisorChanged !== "boolean" ||
+      !DIGEST_PATTERN.test(previousSupervisorDigest) ||
+      !DIGEST_PATTERN.test(targetSupervisorDigest) ||
+      (!supervisorChanged && previousSupervisorDigest !== targetSupervisorDigest))
+  ) {
+    fail("lifecycle supervisor transaction generation identity is invalid");
   }
   let previousIdentity = null;
   if (value.previousIdentity !== null) {
@@ -1589,6 +1747,9 @@ function parseSupervisorTransaction(value, paths) {
       ? path.join(paths.releasesDir, `v${value.previousGenerationVersion}`)
       : null,
     previousIdentity,
+    supervisorChanged,
+    previousSupervisorDigest,
+    targetSupervisorDigest,
     previousTrust,
   });
 }
@@ -1638,10 +1799,17 @@ async function recoverSupervisorTransaction(context) {
     return false;
   }
   await restoreControllerSelection(context.paths, transaction);
+  await context.restoreSupervisorSelection(context.paths, transaction);
   await restoreLifecycleTrust(context.paths, transaction.previousTrust);
   await context.restartController();
   await context.waitForController();
   await clearSupervisorTransaction(context.paths);
+  if (
+    transaction.supervisorChanged &&
+    context.runningSupervisorDigest !== transaction.previousSupervisorDigest
+  ) {
+    context.supervisorRestartRequired = true;
+  }
   return true;
 }
 
@@ -1791,11 +1959,7 @@ WantedBy=multi-user.target
   const supervisorWrites =
     configuration.profile === "hosting"
       ? "/opt/fased/host-controller /var/lib/fased-host-updater/supervisor /run/fased-host-updater"
-      : `/opt/fased/local/${configuration.instanceId}/controller /var/lib/fased-local/${configuration.instanceId}/controller/supervisor /run/fased-local-controller/${configuration.instanceId}`;
-  const supervisorReadOnly =
-    configuration.profile === "hosting"
-      ? "/opt/fased/host-controller/supervisor"
-      : `/opt/fased/local/${configuration.instanceId}/supervisor`;
+      : `/opt/fased/local/${configuration.instanceId}/controller /opt/fased/local/${configuration.instanceId}/supervisor /var/lib/fased-local/${configuration.instanceId}/controller/supervisor /run/fased-local-controller/${configuration.instanceId}`;
   const instanceArgs =
     configuration.profile === "protected-local"
       ? ` --protected-local-instance ${configuration.instanceId}`
@@ -1821,7 +1985,6 @@ PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=${supervisorWrites}
-ReadOnlyPaths=${supervisorReadOnly}
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
@@ -1963,11 +2126,15 @@ async function waitForControllerSocket(socketPath, timeoutMs = 30_000) {
 }
 
 function createContext(configuration, overrides = {}) {
+  const rootUid =
+    overrides.rootUid ?? (typeof process.geteuid === "function" ? process.geteuid() : 0);
+  const rootGid =
+    overrides.rootGid ?? (typeof process.getegid === "function" ? process.getegid() : 0);
   return {
     configuration,
     paths: configuration.paths,
-    rootUid: overrides.rootUid ?? (typeof process.geteuid === "function" ? process.geteuid() : 0),
-    rootGid: overrides.rootGid ?? (typeof process.getegid === "function" ? process.getegid() : 0),
+    rootUid,
+    rootGid,
     platform: overrides.platform ?? platformIdentity(),
     now: overrides.now ?? (() => Date.now()),
     readChannel: overrides.readChannel ?? readChannel,
@@ -1979,9 +2146,16 @@ function createContext(configuration, overrides = {}) {
     sealSupervisorArtifact: overrides.sealSupervisorArtifact ?? sealSupervisorArtifact,
     verifyMetadata: overrides.verifyMetadata ?? verifyMetadata,
     verifyReleaseEvidence: overrides.verifyReleaseEvidence ?? verifyReleaseEvidence,
+    selfCheckSupervisor: overrides.selfCheckSupervisor ?? selfCheckSupervisor,
     selfCheckController: overrides.selfCheckController ?? selfCheckController,
     stageTrustedController: overrides.stageTrustedController ?? stageTrustedController,
+    activateStagedSupervisor:
+      overrides.activateStagedSupervisor ??
+      (async (paths, staged) => await activateStagedSupervisor(paths, staged, rootUid, rootGid)),
     activateStagedController: overrides.activateStagedController ?? activateStagedController,
+    restoreSupervisorSelection:
+      overrides.restoreSupervisorSelection ??
+      (async (paths, staged) => await restoreSupervisorSelection(paths, staged, rootUid, rootGid)),
     restoreControllerSelection: overrides.restoreControllerSelection ?? restoreControllerSelection,
     beginSupervisorTransaction: overrides.beginSupervisorTransaction ?? beginSupervisorTransaction,
     commitLifecycleTrust: overrides.commitLifecycleTrust ?? commitLifecycleTrust,
@@ -1999,6 +2173,8 @@ function createContext(configuration, overrides = {}) {
     requestController:
       overrides.requestController ??
       (async (request, transactionContext) => await requestController(request, transactionContext)),
+    runningSupervisorDigest: overrides.runningSupervisorDigest ?? RUNNING_SUPERVISOR_SHA256,
+    supervisorRestartRequired: false,
   };
 }
 
@@ -2095,13 +2271,16 @@ async function handleSupervisorRequest(request, context, state) {
   if (request.op === "updateController") {
     const priorInstanceId = state.controllerInstanceId;
     const staged = await context.stageTrustedController(request, context);
-    const durableChange = staged.changed || staged.trustChanged;
+    const durableChange = staged.changed || staged.supervisorChanged || staged.trustChanged;
     let transactionActive = false;
     let restarted = staged.changed;
     try {
       if (durableChange) {
         await context.beginSupervisorTransaction(context.paths, request, staged);
         transactionActive = true;
+      }
+      if (staged.supervisorChanged) {
+        await context.activateStagedSupervisor(context.paths, staged);
       }
       if (staged.changed) {
         await context.activateStagedController(context.paths, staged);
@@ -2129,6 +2308,7 @@ async function handleSupervisorRequest(request, context, state) {
       if (transactionActive) {
         try {
           await context.restoreControllerSelection(context.paths, staged);
+          await context.restoreSupervisorSelection(context.paths, staged);
           await context.restoreLifecycleTrust(context.paths, staged.trusted);
           if (staged.changed) {
             await context.restartController();
@@ -2166,6 +2346,7 @@ async function handleSupervisorRequest(request, context, state) {
       transactionId: request.transactionId,
       version: request.version,
       controllerChanged: restarted,
+      supervisorChanged: staged.supervisorChanged === true,
       controllerInstanceId: restarted ? priorInstanceId : state.controllerInstanceId,
     };
   }
@@ -2194,8 +2375,8 @@ async function handleSupervisorRequest(request, context, state) {
   return response;
 }
 
-function writeResponse(socket, payload) {
-  socket.end(`${JSON.stringify(payload)}\n`);
+function writeResponse(socket, payload, onFlushed) {
+  socket.end(`${JSON.stringify(payload)}\n`, onFlushed);
 }
 
 async function authorizePublicSocket(socketPath, operatorUid, operatorGid, operations = fsp) {
@@ -2219,6 +2400,9 @@ export async function startSupervisor(options = {}) {
   });
   await fsp.mkdir(context.paths.supervisorStateDir, { recursive: true, mode: 0o700 });
   const recovered = await context.recoverSupervisorTransaction(context);
+  if (recovered && context.supervisorRestartRequired) {
+    return { server: null, close: async () => undefined, context, restartRequired: true };
+  }
   if (!recovered) {
     await context.waitForController();
   }
@@ -2261,8 +2445,20 @@ export async function startSupervisor(options = {}) {
       }
       const operation = queue.then(() => handleSupervisorRequest(request, context, state));
       queue = operation.catch(() => undefined);
+      const restartSupervisor = () => {
+        server.close(() => {
+          void fsp.rm(context.paths.publicSocketPath, { force: true }).finally(() => {
+            process.exitCode = 75;
+          });
+        });
+      };
       void operation.then(
-        (result) => writeResponse(socket, result),
+        (result) =>
+          writeResponse(
+            socket,
+            result,
+            result.supervisorChanged === true ? restartSupervisor : undefined,
+          ),
         (error) =>
           writeResponse(socket, {
             ok: false,
@@ -2288,7 +2484,7 @@ export async function startSupervisor(options = {}) {
   };
   process.once("SIGTERM", () => void close().then(() => process.exit(0)));
   process.once("SIGINT", () => void close().then(() => process.exit(0)));
-  return { server, close, context };
+  return { server, close, context, restartRequired: false };
 }
 
 async function main() {
@@ -2312,6 +2508,10 @@ async function main() {
   const running = await startSupervisor({
     configuration: parseSupervisorConfiguration(process.argv.slice(2)),
   });
+  if (running.restartRequired) {
+    process.exitCode = 75;
+    return;
+  }
   await new Promise((resolve, reject) => {
     running.server.once("close", resolve);
     running.server.once("error", reject);
@@ -2334,6 +2534,7 @@ export const __testing = Object.freeze({
   PRIVATE_UMASK,
   SUPERVISOR_NAME,
   TRUST_METADATA_NAME,
+  activateStagedSupervisor,
   activateStagedController,
   advanceLifecycleTrustState,
   atomicWrite,
@@ -2347,6 +2548,7 @@ export const __testing = Object.freeze({
   platformIdentity,
   recoverSupervisorTransaction,
   renderBoundaryUnits,
+  restoreSupervisorSelection,
   restoreControllerSelection,
   authorizePublicSocket,
   privateMkdtemp,

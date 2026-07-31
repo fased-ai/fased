@@ -154,7 +154,6 @@ describe("attested Hosting installer artifact layout", () => {
     expect(installer).toContain(
       "ReadWritePaths=/opt/fased/host-controller /var/lib/fased-host-updater/supervisor /run/fased-host-updater",
     );
-    expect(installer).toContain("ReadOnlyPaths=/opt/fased/host-controller/supervisor");
     const sharedStateCreation =
       'install -d -m 2770 -o "$target_user" -g "$config_group" "${target_home}/.fased"';
     expect(installer).toContain(sharedStateCreation);
@@ -165,6 +164,7 @@ describe("attested Hosting installer artifact layout", () => {
       installer.indexOf("cat >/etc/systemd/system/fased-host-updater.service"),
       installer.indexOf("cat >/etc/systemd/system/fased-signerd.service"),
     );
+    expect(supervisorUnit).not.toContain("ReadOnlyPaths=");
     expect(supervisorUnit).toContain("RestrictSUIDSGID=true");
     expect(supervisorUnit).toContain("CapabilityBoundingSet=CAP_CHOWN\nAmbientCapabilities=");
     const controllerUnit = installer.slice(
