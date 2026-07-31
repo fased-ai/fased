@@ -41,8 +41,18 @@ export function assertApplicableGates(input) {
   }
   if (enabled(input.runHosting)) {
     requireSuccess(results, "Hosting lifecycle");
+  }
+  if (enabled(input.runLocalFresh) || enabled(input.runLocalUpdate)) {
+    requireSuccess(results, "Protected Local fixture artifact");
+  }
+  if (enabled(input.runLocalFresh)) {
     requireSuccess(results, "Protected Local lifecycle");
+  }
+  if (enabled(input.runLocalUpdate)) {
     requireSuccess(results, "Protected Local update lifecycle");
+  }
+  if (enabled(input.runCiContracts)) {
+    requireSuccess(results, "CI contracts");
   }
   if (enabled(input.runUiMining)) {
     requireSuccess(results, "Mining browser");
@@ -54,6 +64,7 @@ export function assertApplicableGates(input) {
     requireSuccess(results, "macOS");
   }
   if (enabled(input.fullMatrix)) {
+    requireSuccess(results, "Protected Local Rocky lifecycle");
     requireSuccess(results, "full UI");
     requireSuccess(results, "Windows");
   }
@@ -66,6 +77,9 @@ export function gateInputFromEnv(env = process.env) {
     runNode: env.RUN_NODE,
     runSigner: env.RUN_SIGNER,
     runHosting: env.RUN_HOSTING,
+    runLocalFresh: env.RUN_LOCAL_FRESH,
+    runLocalUpdate: env.RUN_LOCAL_UPDATE,
+    runCiContracts: env.RUN_CI_CONTRACTS,
     runUiMining: env.RUN_UI_MINING,
     runSkills: env.RUN_SKILLS,
     runMacos: env.RUN_MACOS,
@@ -83,8 +97,11 @@ export function gateInputFromEnv(env = process.env) {
       "packed Local install": env.PACKED_CORE,
       "native signer": env.SIGNER,
       "Hosting lifecycle": env.HOSTING,
+      "Protected Local fixture artifact": env.PROTECTED_LOCAL_ARTIFACT,
       "Protected Local lifecycle": env.PROTECTED_LOCAL,
+      "Protected Local Rocky lifecycle": env.PROTECTED_LOCAL_ROCKY,
       "Protected Local update lifecycle": env.PROTECTED_LOCAL_UPDATE,
+      "CI contracts": env.CI_CONTRACTS,
       "Mining browser": env.UI_MINING,
       skills: env.SKILLS,
       macOS: env.MACOS,
