@@ -8,7 +8,10 @@ const signerInstaller = fs.readFileSync(
   path.join(root, "scripts", "install-fased-signerd.sh"),
   "utf8",
 );
-const updater = fs.readFileSync(path.join(root, "scripts", "fased-managed-updater.mjs"), "utf8");
+const updater = fs.readFileSync(
+  path.join(root, "scripts", "fased-managed-updater-core.mjs"),
+  "utf8",
+);
 
 describe("Local app/signer installer transaction", () => {
   it("prepares the matching signer and commits only after exact Gateway and signer health", () => {

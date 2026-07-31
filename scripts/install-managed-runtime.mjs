@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import {
   authorizePreactivatedHostedGateway,
   beginPreactivatedHostedTransaction,
-} from "./fased-managed-updater.mjs";
+} from "./fased-managed-updater-core.mjs";
 import {
   assertManagedRuntime,
   atomicSymlink,

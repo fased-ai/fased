@@ -1,8 +1,11 @@
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { resolveManagedUpdaterCore } from "./fased-managed-updater.mjs";
 import {
   activateManagedUpdaterGeneration,
   installManagedUpdaterCompatibilityFiles,
@@ -13,6 +16,7 @@ import {
 
 const FILES = [
   "fased-managed-updater.mjs",
+  "fased-managed-updater-core.mjs",
   "hosted-release-manifest.mjs",
   "lifecycle-trust-crypto.mjs",
   "lifecycle-trust-policy.mjs",
@@ -229,6 +233,31 @@ describe("managed updater content-addressed bundle", () => {
     ).rejects.toThrow(/identity is invalid/u);
   });
 
+  it("refuses a current generation whose core no longer matches its receipt", async () => {
+    const { root, updaterDir, firstRuntime } = await fixture();
+    const generation = await stageManagedUpdaterGeneration({
+      updaterDir,
+      runtimeRoot: firstRuntime,
+    });
+    await installManagedUpdaterCompatibilityFiles({
+      updaterDir,
+      generation,
+      copyExecutable,
+    });
+    await fs.writeFile(
+      path.join(generation.generationDir, "fased-managed-updater-core.mjs"),
+      "// tampered core\n",
+      { mode: 0o755 },
+    );
+
+    await expect(
+      resolveManagedUpdaterCore({
+        entrypointPath: path.join(updaterDir, "fased-managed-updater.mjs"),
+        stateDir: path.join(root, "state"),
+      }),
+    ).rejects.toThrow("release file identity is invalid");
+  });
+
   it("does not change current when target bundle validation fails", async () => {
     const { updaterDir, firstRuntime, secondRuntime } = await fixture();
     const first = await stageManagedUpdaterGeneration({
@@ -291,16 +320,58 @@ describe("managed updater content-addressed bundle", () => {
         "utf8",
       ),
     ) as {
+      sourceTag: string;
       entrypoint: string;
-      supportFiles: string[];
+      files: Array<{ name: string; sha256: string }>;
     };
     await fs.mkdir(updaterDir, { recursive: true });
-    for (const name of [...fixture.supportFiles, fixture.entrypoint]) {
-      await copyExecutable(path.join(sourceRoot, "scripts", name), path.join(updaterDir, name));
+    for (const record of fixture.files) {
+      const sourceReference = `${fixture.sourceTag}:scripts/${record.name}`;
+      const extracted = spawnSync("git", ["show", sourceReference], {
+        cwd: sourceRoot,
+        encoding: "buffer",
+        maxBuffer: 4 * 1024 * 1024,
+      });
+      if (extracted.status !== 0 || !Buffer.isBuffer(extracted.stdout)) {
+        throw new Error(
+          `frozen updater source ${sourceReference} is unavailable; fetch immutable release tags before running U1`,
+        );
+      }
+      expect(createHash("sha256").update(extracted.stdout).digest("hex")).toBe(record.sha256);
+      const destination = path.join(updaterDir, record.name);
+      const fixtureBytes =
+        record.name === fixture.entrypoint
+          ? Buffer.concat([
+              extracted.stdout,
+              Buffer.from(
+                "\nexport { updateStableComponents as __frozenUpdateStableComponents };\n",
+              ),
+            ])
+          : extracted.stdout;
+      await fs.writeFile(destination, fixtureBytes, { mode: 0o755 });
     }
 
     const imported = await import(
       `${pathToFileURL(path.join(updaterDir, fixture.entrypoint)).href}?frozen=${Date.now()}`
+    );
+    const targetRoot = path.join(root, "state", "runtime", "releases", "target");
+    const targetScripts = path.join(targetRoot, "scripts");
+    await fs.mkdir(targetScripts, { recursive: true });
+    for (const name of FILES) {
+      await copyExecutable(path.join(sourceRoot, "scripts", name), path.join(targetScripts, name));
+    }
+    await fs.writeFile(
+      path.join(targetRoot, "package.json"),
+      `${JSON.stringify({ name: "@fased/fased", version: "0.1.76-rc.22" })}\n`,
+    );
+    await fs.symlink(targetRoot, path.join(root, "state", "runtime", "current"), "dir");
+    await fs.writeFile(
+      path.join(root, "state", "install.json"),
+      `${JSON.stringify({
+        schemaVersion: 2,
+        profile: "source",
+        runtime: { activeVersion: "0.1.76-rc.22" },
+      })}\n`,
     );
     const paths = {
       updaterDir,
@@ -308,7 +379,18 @@ describe("managed updater content-addressed bundle", () => {
       launcherPath: path.join(root, "state", "bin", "fased"),
       serviceLauncherPath: path.join(root, "state", "bin", "fased-service"),
     };
-    await imported.__testing.updateStableComponents(paths, sourceRoot, true);
+    await imported.__frozenUpdateStableComponents(paths, targetRoot, true);
+
+    const bootstrap = await import(
+      `${pathToFileURL(paths.updaterPath).href}?bootstrap=${Date.now()}`
+    );
+    const selectedCore = await bootstrap.__testing.resolveManagedUpdaterCore({
+      entrypointPath: paths.updaterPath,
+      stateDir: path.join(root, "state"),
+    });
+    expect(selectedCore).toBe(path.join(targetScripts, "fased-managed-updater-core.mjs"));
+    const target = await import(`${pathToFileURL(selectedCore).href}?target=${Date.now()}`);
+    await target.__testing.updateStableComponents(paths, targetRoot, true);
 
     const generationDir = await fs.realpath(path.join(updaterDir, "current"));
     for (const name of FILES) {
@@ -319,5 +401,53 @@ describe("managed updater content-addressed bundle", () => {
     await expect(
       import(`${pathToFileURL(paths.updaterPath).href}?converged=${Date.now()}`),
     ).resolves.toHaveProperty("__testing");
+  });
+
+  it("selects only the journal-bound verified target after application rollback", async () => {
+    const { root, updaterDir, firstRuntime } = await fixture();
+    await makeProductionRuntime(firstRuntime);
+    const stateDir = path.join(root, "state");
+    const releasesDir = path.join(stateDir, "runtime", "releases");
+    const previousRoot = path.join(releasesDir, "0.1.76-rc.20");
+    const targetRoot = path.join(releasesDir, "0.1.76-rc.22");
+    await fs.mkdir(previousRoot, { recursive: true });
+    await fs.cp(firstRuntime, targetRoot, { recursive: true });
+    await fs.symlink(previousRoot, path.join(stateDir, "runtime", "current"), "dir");
+    await fs.writeFile(
+      path.join(stateDir, "install.json"),
+      `${JSON.stringify({
+        schemaVersion: 2,
+        profile: "protected-local",
+        runtime: { activeVersion: "0.1.76-rc.20" },
+      })}\n`,
+    );
+    await fs.writeFile(
+      path.join(stateDir, "hosted-update-transaction.json"),
+      `${JSON.stringify({ schemaVersion: 1, targetVersion: "0.1.76-rc.22" })}\n`,
+    );
+    await fs.mkdir(updaterDir, { recursive: true });
+    const flatEntrypoint = path.join(updaterDir, "fased-managed-updater.mjs");
+    await copyExecutable(
+      path.join(targetRoot, "scripts", "fased-managed-updater.mjs"),
+      flatEntrypoint,
+    );
+
+    await expect(
+      resolveManagedUpdaterCore({
+        entrypointPath: flatEntrypoint,
+        stateDir,
+      }),
+    ).resolves.toBe(path.join(targetRoot, "scripts", "fased-managed-updater-core.mjs"));
+
+    await fs.writeFile(
+      path.join(stateDir, "hosted-update-transaction.json"),
+      `${JSON.stringify({ schemaVersion: 1, targetVersion: "9.9.9" })}\n`,
+    );
+    await expect(
+      resolveManagedUpdaterCore({
+        entrypointPath: flatEntrypoint,
+        stateDir,
+      }),
+    ).rejects.toThrow("could not locate a complete verified target updater generation");
   });
 });

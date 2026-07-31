@@ -36,6 +36,7 @@ for managed_script in \
   fased-managed-launcher.sh \
   fased-managed-service.sh \
   fased-managed-updater.mjs \
+  fased-managed-updater-core.mjs \
   hosted-release-manifest.mjs \
   install-managed-runtime.mjs \
   lifecycle-trust-crypto.mjs \

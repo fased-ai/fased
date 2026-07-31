@@ -590,6 +590,24 @@ describe("per-wallet Mining history ledger", () => {
     const plans = store.queryPlans();
     expect(plans.actions).toContain("mining_event_scope_time");
     expect(plans.outcomes).toContain("planner_outcome_scope_time");
+    const inspection = new DatabaseSync(store.databasePath, { readOnly: true });
+    try {
+      expect(
+        inspection
+          .prepare(
+            `EXPLAIN QUERY PLAN
+             SELECT event_id
+               FROM mining_event
+              WHERE scope_id=? AND logical_key=? AND event_id<>?
+              LIMIT 1`,
+          )
+          .all(1, "logical-key", "event-id")
+          .map((row) => Object.values(row).join(" "))
+          .join("\n"),
+      ).toContain("mining_event_scope_logical");
+    } finally {
+      inspection.close();
+    }
     await expect(store.diskStatus()).resolves.toMatchObject({
       warning: expect.stringMatching(/^(?:none|low|critical)$/u),
     });

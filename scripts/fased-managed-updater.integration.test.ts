@@ -7,13 +7,15 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { SIGNER_PROTOCOL_V2 } from "../src/wallet/signer-protocol-v2.generated.js";
-import { MANAGED_UPDATER_SUPPORT_FILES } from "./fased-managed-updater.mjs";
+import { MANAGED_UPDATER_SUPPORT_FILES } from "./fased-managed-updater-core.mjs";
+import { __testing as bootstrapTesting } from "./fased-managed-updater.mjs";
 import { capabilitiesDigest } from "./hosted-release-manifest.mjs";
 import { installManagedRuntime } from "./install-managed-runtime.mjs";
 import {
   readManagedInstallManifest,
   resolveManagedRuntimePaths,
 } from "./managed-runtime-layout.mjs";
+import { writeManagedUpdaterReleaseDescriptor } from "./managed-updater-bundle.mjs";
 
 const execFileAsync = promisify(execFile);
 const cleanupRoots: string[] = [];
@@ -32,13 +34,17 @@ function copyManagedScripts(packageRoot: string) {
     "fased-managed-service.sh",
     "fased-managed-updater.mjs",
     ...MANAGED_UPDATER_SUPPORT_FILES,
+    "managed-updater-bundle.mjs",
+    "managed-updater-bundle.v1.json",
   ]) {
-    fs.copyFileSync(path.join(import.meta.dirname, script), path.join(scriptsDir, script));
+    const destination = path.join(scriptsDir, script);
+    fs.copyFileSync(path.join(import.meta.dirname, script), destination);
+    fs.chmodSync(destination, script.endsWith(".json") ? 0o644 : 0o755);
   }
   fs.writeFileSync(path.join(scriptsDir, "start-managed.sh"), "#!/usr/bin/env bash\nexit 0\n", {
     mode: 0o755,
   });
-  const updaterPath = path.join(scriptsDir, "fased-managed-updater.mjs");
+  const updaterPath = path.join(scriptsDir, "fased-managed-updater-core.mjs");
   const updater = fs.readFileSync(updaterPath, "utf8");
   const releaseBaseDeclaration =
     'const DEFAULT_RELEASE_BASE_URL = "https://github.com/fased-ai/fased/releases/download";';
@@ -57,7 +63,66 @@ function copyManagedScripts(packageRoot: string) {
   );
 }
 
-function writeFakeRuntime(
+function writeFrozenPreGenerationRuntime(
+  packageRoot: string,
+  version: string,
+  dependencyHash: string,
+) {
+  const sourceRoot = path.resolve(import.meta.dirname, "..");
+  const fixture = JSON.parse(
+    fs.readFileSync(
+      path.join(import.meta.dirname, "fixtures", "managed-updater-pre-manifest.json"),
+      "utf8",
+    ),
+  ) as {
+    sourceTag: string;
+    entrypoint: string;
+    files: Array<{ name: string; sha256: string }>;
+  };
+  fs.mkdirSync(path.join(packageRoot, "dist", "control-ui"), { recursive: true });
+  fs.mkdirSync(path.join(packageRoot, "node_modules"), { recursive: true });
+  fs.mkdirSync(path.join(packageRoot, "scripts"), { recursive: true });
+  fs.writeFileSync(
+    path.join(packageRoot, "package.json"),
+    `${JSON.stringify({ name: "@fased/fased", version, type: "module" })}\n`,
+  );
+  fs.writeFileSync(
+    path.join(packageRoot, "dist", "control-ui", "version.json"),
+    `${JSON.stringify({ version })}\n`,
+  );
+  fs.writeFileSync(
+    path.join(packageRoot, ".fased-hosted-runtime.json"),
+    `${JSON.stringify({ schemaVersion: 1, dependencyHash })}\n`,
+  );
+  fs.writeFileSync(
+    path.join(packageRoot, "fased.mjs"),
+    `if (process.argv[2] === "--version") process.stdout.write(${JSON.stringify(`${version}\n`)});\n`,
+    { mode: 0o755 },
+  );
+  for (const record of fixture.files) {
+    const bytes = execFileSync(
+      "git",
+      ["-C", sourceRoot, "show", `${fixture.sourceTag}:scripts/${record.name}`],
+      { encoding: "buffer", maxBuffer: 4 * 1024 * 1024 },
+    );
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(record.sha256);
+    fs.writeFileSync(path.join(packageRoot, "scripts", record.name), bytes, { mode: 0o755 });
+  }
+  for (const name of [
+    "fased-managed-launcher.sh",
+    "fased-managed-service.sh",
+    "start-managed.sh",
+  ]) {
+    const bytes = execFileSync(
+      "git",
+      ["-C", sourceRoot, "show", `${fixture.sourceTag}:scripts/${name}`],
+      { encoding: "buffer", maxBuffer: 4 * 1024 * 1024 },
+    );
+    fs.writeFileSync(path.join(packageRoot, "scripts", name), bytes, { mode: 0o755 });
+  }
+}
+
+async function writeFakeRuntime(
   packageRoot: string,
   version: string,
   dependencyHash: string,
@@ -98,6 +163,12 @@ function writeFakeRuntime(
     { mode: 0o755 },
   );
   copyManagedScripts(packageRoot);
+  if (release) {
+    await writeManagedUpdaterReleaseDescriptor({
+      runtimeRoot: packageRoot,
+      architecture: process.arch,
+    });
+  }
 }
 
 function writeChecksum(filePath: string) {
@@ -241,6 +312,208 @@ async function stopFakeSigner(pidPath: string) {
 }
 
 describe("managed updater transaction", () => {
+  it("converges a frozen smaller-inventory updater after rollback and same-command retry", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-frozen-updater-e2e-"));
+    cleanupRoots.push(root);
+    const stateDir = path.join(root, "home", ".fased");
+    const prefix = path.join(stateDir, "install-cache", "npm-global");
+    const paths = resolveManagedRuntimePaths({ stateDir, prefix });
+    const dependencyHash = "7".repeat(64);
+    writeFrozenPreGenerationRuntime(paths.compatibilityPackageRoot, "1.0.0", dependencyHash);
+    await installManagedRuntime({
+      packageRoot: paths.compatibilityPackageRoot,
+      stateDir,
+      prefix,
+      profile: "source",
+      updateChannel: "beta",
+    });
+
+    const miningDir = path.join(stateDir, "sat-mining", "wallets", "mining");
+    const miningHistory = path.join(miningDir, "action-history.ndjson");
+    fs.mkdirSync(miningDir, { recursive: true });
+    const largeHistory = fs.openSync(miningHistory, "w", 0o600);
+    fs.ftruncateSync(largeHistory, 20 * 1024 * 1024);
+    fs.closeSync(largeHistory);
+    const miningDigest = sha256Path(miningHistory);
+
+    const releaseRoot = path.join(root, "release-files");
+    const releaseFiles = path.join(releaseRoot, "v1.0.1");
+    const appBuild = path.join(root, "target-app-build");
+    const appRoot = path.join(appBuild, "package");
+    const targetCommit = "9".repeat(40);
+    await writeFakeRuntime(appRoot, "1.0.1", dependencyHash, false, {
+      commit: targetCommit,
+    });
+    fs.appendFileSync(
+      path.join(appRoot, "scripts", "fased-managed-updater.mjs"),
+      "\n// target-bootstrap-generation\n",
+    );
+    await writeManagedUpdaterReleaseDescriptor({
+      runtimeRoot: appRoot,
+      architecture: process.arch,
+    });
+    fs.mkdirSync(releaseFiles, { recursive: true });
+    const arch = process.arch === "arm64" ? "arm64" : "x64";
+    const appAsset = path.join(releaseFiles, `fased-hosted-app-v2-linux-${arch}-v1.0.1.tar.gz`);
+    execFileSync("tar", ["-czf", appAsset, "-C", appBuild, "package"]);
+    writeChecksum(appAsset);
+    const dependencyBuild = path.join(root, "dependency-build");
+    fs.mkdirSync(path.join(dependencyBuild, "node_modules"), { recursive: true });
+    const dependencyAsset = path.join(
+      releaseFiles,
+      `fased-hosted-deps-linux-${arch}-${dependencyHash}.tar.gz`,
+    );
+    execFileSync("tar", ["-czf", dependencyAsset, "-C", dependencyBuild, "node_modules"]);
+    writeChecksum(dependencyAsset);
+    writeUnifiedReleaseManifest({
+      releaseFiles,
+      version: "1.0.1",
+      commit: targetCommit,
+      appAsset,
+      dependencyAsset,
+      dependencyHash,
+    });
+
+    let rejectTarget = true;
+    let registryRequests = 0;
+    let artifactRequests = 0;
+    const server = http.createServer((request, response) => {
+      const requestPath = new URL(request.url || "/", "http://localhost").pathname;
+      if (requestPath === "/healthz") {
+        const active = readManagedInstallManifest(paths.manifestPath)?.runtime.activeVersion;
+        response.setHeader("content-type", "application/json");
+        response.end(
+          JSON.stringify({
+            ok: !(rejectTarget && active === "1.0.1"),
+            version: rejectTarget && active === "1.0.1" ? "rejected" : active,
+            runtimeSource: "managed-package",
+          }),
+        );
+        return;
+      }
+      if (requestPath.includes("@fased")) {
+        registryRequests += 1;
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ "dist-tags": { beta: "1.0.1", latest: "1.0.0" } }));
+        return;
+      }
+      const marker = "/releases/download/";
+      if (requestPath.startsWith(marker)) {
+        artifactRequests += 1;
+        const filePath = path.join(releaseRoot, requestPath.slice(marker.length));
+        if (!fs.existsSync(filePath)) {
+          response.statusCode = 404;
+          response.end("missing");
+          return;
+        }
+        fs.createReadStream(filePath).pipe(response);
+        return;
+      }
+      response.statusCode = 404;
+      response.end("missing");
+    });
+    const port = await listen(server);
+    fs.writeFileSync(
+      path.join(stateDir, "fased.json"),
+      `${JSON.stringify({ gateway: { port } })}\n`,
+    );
+    const env = {
+      ...process.env,
+      HOME: path.join(root, "home"),
+      FASED_STATE_DIR: stateDir,
+      FASED_CONFIG_PATH: path.join(stateDir, "fased.json"),
+      FASED_HOSTED_ARTIFACT_BASE_URL: `http://127.0.0.1:${port}/releases/download`,
+      FASED_FIXTURE_RELEASE_BASE_URL: `http://127.0.0.1:${port}/releases/download`,
+      npm_config_registry: `http://127.0.0.1:${port}`,
+    };
+    try {
+      await expect(
+        execFileAsync(paths.prefixLauncherPath, ["update", "--channel", "beta", "--timeout", "5"], {
+          cwd: root,
+          env,
+          timeout: 30_000,
+          encoding: "utf8",
+        }),
+      ).rejects.toMatchObject({ code: 1 });
+      expect(readManagedInstallManifest(paths.manifestPath)?.runtime.activeVersion).toBe("1.0.0");
+      expect(sha256Path(miningHistory)).toBe(miningDigest);
+      expect(fs.existsSync(path.join(stateDir, "local-paired-update-transaction.json"))).toBe(
+        false,
+      );
+      expect(fs.readFileSync(paths.updaterPath, "utf8")).toContain("target-bootstrap-generation");
+      expect(
+        fs.existsSync(
+          path.join(paths.releasesDir, "1.0.1", "scripts", "fased-managed-updater-core.mjs"),
+        ),
+      ).toBe(true);
+      const targetWrapper = path.join(
+        paths.releasesDir,
+        "1.0.1",
+        "scripts",
+        "fased-managed-updater.mjs",
+      );
+      const [stableWrapperIdentity, targetWrapperIdentity] = await Promise.all([
+        bootstrapTesting.hashRegularFile(paths.updaterPath),
+        bootstrapTesting.hashRegularFile(targetWrapper),
+      ]);
+      if (
+        stableWrapperIdentity.sha256 !== targetWrapperIdentity.sha256 ||
+        stableWrapperIdentity.mode !== targetWrapperIdentity.mode
+      ) {
+        throw new Error(
+          `target wrapper did not survive rollback exactly: ${JSON.stringify({
+            stableWrapperIdentity,
+            targetWrapperIdentity,
+          })}`,
+        );
+      }
+      await expect(
+        bootstrapTesting.verifiedRuntimeCore(
+          path.join(paths.releasesDir, "1.0.1"),
+          stableWrapperIdentity,
+        ),
+      ).resolves.toMatchObject({ version: "1.0.1" });
+
+      rejectTarget = false;
+      const retried = await execFileAsync(
+        paths.prefixLauncherPath,
+        ["update", "--channel", "beta", "--timeout", "30"],
+        {
+          cwd: root,
+          env,
+          timeout: 60_000,
+          encoding: "utf8",
+        },
+      );
+      expect(retried.stdout).toContain("Updated Fased 1.0.0 -> 1.0.1");
+      expect(readManagedInstallManifest(paths.manifestPath)).toMatchObject({
+        runtime: { activeVersion: "1.0.1" },
+        updater: { version: "1.0.1" },
+      });
+      const generation = fs.realpathSync(path.join(paths.updaterDir, "current"));
+      expect(fs.existsSync(path.join(generation, "fased-managed-updater-core.mjs"))).toBe(true);
+      expect(sha256Path(miningHistory)).toBe(miningDigest);
+      const requestsBeforeCurrent = { registryRequests, artifactRequests };
+
+      const current = await execFileAsync(
+        paths.prefixLauncherPath,
+        ["update", "--channel", "beta"],
+        {
+          cwd: root,
+          env,
+          timeout: 30_000,
+          encoding: "utf8",
+        },
+      );
+      expect(current.stdout).toContain("Already current: 1.0.1");
+      expect(artifactRequests).toBe(requestsBeforeCurrent.artifactRequests);
+      expect(registryRequests).toBe(requestsBeforeCurrent.registryRequests + 1);
+      expect(sha256Path(miningHistory)).toBe(miningDigest);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it("activates a verified release and makes a same-version update mutation-free", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-managed-update-e2e-"));
     cleanupRoots.push(root);
@@ -249,7 +522,7 @@ describe("managed updater transaction", () => {
     const paths = resolveManagedRuntimePaths({ stateDir, prefix });
     const dependencyHash = "b".repeat(64);
     const initialRoot = paths.compatibilityPackageRoot;
-    writeFakeRuntime(initialRoot, "1.0.0", dependencyHash, true);
+    await writeFakeRuntime(initialRoot, "1.0.0", dependencyHash, true);
     await installManagedRuntime({
       packageRoot: initialRoot,
       stateDir,
@@ -285,7 +558,9 @@ describe("managed updater transaction", () => {
     const appBuild = path.join(root, "app-build");
     const appRoot = path.join(appBuild, "package");
     const unifiedCommit = "a".repeat(40);
-    writeFakeRuntime(appRoot, "1.0.1", dependencyHash, false, { commit: unifiedCommit });
+    await writeFakeRuntime(appRoot, "1.0.1", dependencyHash, false, {
+      commit: unifiedCommit,
+    });
     fs.mkdirSync(releaseFiles, { recursive: true });
     const arch = process.arch === "arm64" ? "arm64" : "x64";
     const appAsset = path.join(releaseFiles, `fased-hosted-app-v2-linux-${arch}-v1.0.1.tar.gz`);
@@ -293,7 +568,7 @@ describe("managed updater transaction", () => {
     writeChecksum(appAsset);
     const legacyAppBuild = path.join(root, "legacy-app-build");
     const legacyAppRoot = path.join(legacyAppBuild, "package");
-    writeFakeRuntime(legacyAppRoot, "1.0.1", dependencyHash, false);
+    await writeFakeRuntime(legacyAppRoot, "1.0.1", dependencyHash, false);
     const legacyAppAsset = path.join(releaseFiles, `fased-hosted-app-linux-${arch}-v1.0.1.tar.gz`);
     execFileSync("tar", ["-czf", legacyAppAsset, "-C", legacyAppBuild, "package"]);
     writeChecksum(legacyAppAsset);
@@ -456,7 +731,7 @@ describe("managed updater transaction", () => {
       const pairedFiles = path.join(releaseRoot, "v1.0.2");
       const pairedBuild = path.join(root, "paired-app-build");
       const pairedAppRoot = path.join(pairedBuild, "package");
-      writeFakeRuntime(pairedAppRoot, "1.0.2", dependencyHash, false, {
+      await writeFakeRuntime(pairedAppRoot, "1.0.2", dependencyHash, false, {
         commit: "c".repeat(40),
       });
       fs.mkdirSync(pairedFiles, { recursive: true });
@@ -548,13 +823,17 @@ describe("managed updater transaction", () => {
       const rejectedFiles = path.join(releaseRoot, "v1.0.3");
       const rejectedBuild = path.join(root, "rejected-app-build");
       const rejectedAppRoot = path.join(rejectedBuild, "package");
-      writeFakeRuntime(rejectedAppRoot, "1.0.3", dependencyHash, false, {
+      await writeFakeRuntime(rejectedAppRoot, "1.0.3", dependencyHash, false, {
         commit: "d".repeat(40),
       });
       fs.appendFileSync(
         path.join(rejectedAppRoot, "scripts", "fased-managed-updater.mjs"),
         "\n// verified-recovery-controller-1.0.3\n",
       );
+      await writeManagedUpdaterReleaseDescriptor({
+        runtimeRoot: rejectedAppRoot,
+        architecture: process.arch,
+      });
       fs.mkdirSync(rejectedFiles, { recursive: true });
       fs.copyFileSync(dependencyAsset, path.join(rejectedFiles, path.basename(dependencyAsset)));
       fs.copyFileSync(

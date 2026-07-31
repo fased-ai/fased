@@ -38,6 +38,7 @@ const requiredPathGroups = [
   "scripts/fased-managed-launcher.sh",
   "scripts/fased-managed-service.sh",
   "scripts/fased-managed-updater.mjs",
+  "scripts/fased-managed-updater-core.mjs",
   "scripts/managed-updater-bundle.mjs",
   "scripts/managed-updater-bundle.v1.json",
   "scripts/lifecycle-trust-crypto.mjs",

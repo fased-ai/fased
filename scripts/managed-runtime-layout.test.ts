@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { MANAGED_UPDATER_SUPPORT_FILES } from "./fased-managed-updater.mjs";
+import { MANAGED_UPDATER_SUPPORT_FILES } from "./fased-managed-updater-core.mjs";
 import { capabilitiesDigest } from "./hosted-release-manifest.mjs";
 import { installManagedRuntime, rollbackManagedRuntime } from "./install-managed-runtime.mjs";
 import {
@@ -12,6 +12,7 @@ import {
   readManagedInstallManifest,
   resolveManagedRuntimePaths,
 } from "./managed-runtime-layout.mjs";
+import { writeManagedUpdaterReleaseDescriptor } from "./managed-updater-bundle.mjs";
 import { MANAGED_UPDATER_COMPATIBILITY_FILES } from "./managed-updater-bundle.mjs";
 
 function writeRuntime(packageRoot: string, version: string, options: { attested?: boolean } = {}) {
@@ -109,7 +110,7 @@ function createFixture(version: string, options: { attested?: boolean } = {}) {
   return { root, stateDir, prefix, paths };
 }
 
-function writeSchemaV2Metadata(packageRoot: string, version: string) {
+async function writeSchemaV2Metadata(packageRoot: string, version: string) {
   fs.writeFileSync(
     path.join(packageRoot, ".fased-hosted-runtime.json"),
     `${JSON.stringify({
@@ -119,6 +120,10 @@ function writeSchemaV2Metadata(packageRoot: string, version: string) {
       dependencyHash: "a".repeat(64),
     })}\n`,
   );
+  await writeManagedUpdaterReleaseDescriptor({
+    runtimeRoot: packageRoot,
+    architecture: process.arch,
+  });
 }
 
 describe("managed runtime layout", () => {
@@ -176,8 +181,13 @@ describe("managed runtime layout", () => {
     for (const name of MANAGED_UPDATER_COMPATIBILITY_FILES) {
       expect(fs.existsSync(path.join(fixture.paths.updaterDir, name))).toBe(true);
     }
+    const bootstrap = await import(`${pathToFileURL(fixture.paths.updaterPath).href}?installed=1`);
+    const selectedCore = await bootstrap.resolveManagedUpdaterCore({
+      entrypointPath: fixture.paths.updaterPath,
+      stateDir: fixture.stateDir,
+    });
     await expect(
-      import(`${pathToFileURL(fixture.paths.updaterPath).href}?installed=1`),
+      import(`${pathToFileURL(selectedCore).href}?installed-core=1`),
     ).resolves.toMatchObject({
       MANAGED_UPDATER_SUPPORT_FILES,
     });
@@ -185,7 +195,7 @@ describe("managed runtime layout", () => {
 
   it("installs a schema-v2 app artifact locally without a Hosting release manifest", async () => {
     const fixture = createFixture("1.2.3");
-    writeSchemaV2Metadata(fixture.paths.compatibilityPackageRoot, "1.2.3");
+    await writeSchemaV2Metadata(fixture.paths.compatibilityPackageRoot, "1.2.3");
 
     await installManagedRuntime({
       packageRoot: fixture.paths.compatibilityPackageRoot,
@@ -202,7 +212,7 @@ describe("managed runtime layout", () => {
 
     fs.unlinkSync(fixture.paths.compatibilityPackageRoot);
     writeRuntime(fixture.paths.compatibilityPackageRoot, "1.2.4");
-    writeSchemaV2Metadata(fixture.paths.compatibilityPackageRoot, "1.2.4");
+    await writeSchemaV2Metadata(fixture.paths.compatibilityPackageRoot, "1.2.4");
     await installManagedRuntime({
       packageRoot: fixture.paths.compatibilityPackageRoot,
       stateDir: fixture.stateDir,
@@ -230,6 +240,10 @@ describe("managed runtime layout", () => {
 
     fs.unlinkSync(fixture.paths.compatibilityPackageRoot);
     writeRuntime(fixture.paths.compatibilityPackageRoot, "1.2.4", { attested: true });
+    await writeManagedUpdaterReleaseDescriptor({
+      runtimeRoot: fixture.paths.compatibilityPackageRoot,
+      architecture: process.arch,
+    });
     await installManagedRuntime({
       packageRoot: fixture.paths.compatibilityPackageRoot,
       stateDir: fixture.stateDir,
@@ -295,6 +309,10 @@ describe("managed runtime layout", () => {
 
   it("hands an existing hosting runtime to the prepared cross-user transaction", async () => {
     const fixture = createFixture("1.2.3", { attested: true });
+    await writeManagedUpdaterReleaseDescriptor({
+      runtimeRoot: fixture.paths.compatibilityPackageRoot,
+      architecture: process.arch,
+    });
     await installManagedRuntime({
       packageRoot: fixture.paths.compatibilityPackageRoot,
       stateDir: fixture.stateDir,
@@ -309,6 +327,10 @@ describe("managed runtime layout", () => {
       path.join(fixture.paths.compatibilityPackageRoot, "scripts", "fased-managed-updater.mjs"),
       "\n// transaction-target\n",
     );
+    await writeManagedUpdaterReleaseDescriptor({
+      runtimeRoot: fixture.paths.compatibilityPackageRoot,
+      architecture: process.arch,
+    });
 
     let transaction;
     let activeRootDuringHandoff;
@@ -358,6 +380,10 @@ describe("managed runtime layout", () => {
 
   it("leaves a fresh hosting install under the root installer's signer transaction", async () => {
     const fixture = createFixture("1.2.3", { attested: true });
+    await writeManagedUpdaterReleaseDescriptor({
+      runtimeRoot: fixture.paths.compatibilityPackageRoot,
+      architecture: process.arch,
+    });
     let coordinated = false;
     const result = await installManagedRuntime(
       {

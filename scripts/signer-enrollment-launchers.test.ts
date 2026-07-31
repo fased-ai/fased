@@ -10,7 +10,7 @@ describe("signer-owned WebAuthn enrollment launchers", () => {
     const native = read("tools/fased-signerd/admin_webauthn_enrollment.go");
     const main = read("tools/fased-signerd/main.go");
     const installer = read("scripts/install-fased-signerd.sh");
-    const updater = read("scripts/fased-managed-updater.mjs");
+    const updater = read("scripts/fased-managed-updater-core.mjs");
     const onboarding = read("src/wizard/onboarding.wallet.ts");
 
     expect(main).toContain('filepath.Base(os.Args[0]) == "fased-signer-enroll"');

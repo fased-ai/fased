@@ -16,7 +16,7 @@ import {
   parseReleaseVersion,
   parseUpdateRequest,
 } from "./fased-host-updater.mjs";
-import { __testing as managedUpdaterTesting } from "./fased-managed-updater.mjs";
+import { __testing as managedUpdaterTesting } from "./fased-managed-updater-core.mjs";
 import { capabilitiesDigest } from "./hosted-release-manifest.mjs";
 
 const cleanupRoots: string[] = [];

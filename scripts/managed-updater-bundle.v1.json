@@ -9,6 +9,11 @@
       "mode": "0755"
     },
     {
+      "name": "fased-managed-updater-core.mjs",
+      "type": "support",
+      "mode": "0755"
+    },
+    {
       "name": "hosted-release-manifest.mjs",
       "type": "support",
       "mode": "0755"

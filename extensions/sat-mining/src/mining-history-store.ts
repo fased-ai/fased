@@ -505,6 +505,8 @@ function createSchema(db: DatabaseSync): void {
       ON mining_event(scope_id, occurred_at_ms DESC, sequence DESC);
     CREATE INDEX IF NOT EXISTS mining_event_scope_cycle
       ON mining_event(scope_id, cycle_id, occurred_at_ms DESC);
+    CREATE INDEX IF NOT EXISTS mining_event_scope_logical
+      ON mining_event(scope_id, logical_key, sequence ASC);
 
     CREATE TABLE IF NOT EXISTS planner_outcome (
       sequence INTEGER PRIMARY KEY AUTOINCREMENT,

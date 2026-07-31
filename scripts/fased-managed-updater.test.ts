@@ -10,7 +10,7 @@ import {
   __testing,
   hostingBootstrapCommand,
   legacyHostingBootstrapMessage,
-} from "./fased-managed-updater.mjs";
+} from "./fased-managed-updater-core.mjs";
 
 const TRANSACTION_ID = "11111111-1111-4111-8111-111111111111";
 
