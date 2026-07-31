@@ -13,6 +13,12 @@ import {
   SatMiningHistoryStore,
   type SatMiningHistoryScope,
 } from "./mining-history-store.js";
+import {
+  claimSatSubmission,
+  readSatSubmission,
+  setSatSubmissionLedgerAdapterResolver,
+  updateSatSubmission,
+} from "./submission-ledger.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -116,12 +122,110 @@ describe("per-wallet Mining history ledger", () => {
   }
 
   afterEach(async () => {
+    setSatSubmissionLedgerAdapterResolver(null);
     for (const store of stores.splice(0)) {
       store.close();
     }
     await Promise.all(
       tempDirs.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
     );
+  });
+
+  it("owns active signer submissions and their transition audit in one SQLite transaction", async () => {
+    const stateDir = await tempState();
+    const { store } = await openStore({ stateDir, walletId: "mining" });
+    setSatSubmissionLedgerAdapterResolver((walletId) =>
+      walletId === store.walletId ? store : null,
+    );
+    const env = {
+      ...process.env,
+      FASED_STATE_DIR: stateDir,
+      FASED_SAT_SUBMISSION_LEASE_MS: "5000",
+    };
+    const intentDigest = `sha256:${"ab".repeat(32)}`;
+    const first = await claimSatSubmission({
+      walletId: "mining",
+      workflowId: "cycle:42:commit",
+      operationKey: "commitCycle:42",
+      intentDigest,
+      action: "commitCycle",
+      owner: "worker-a",
+      env,
+    });
+    const competing = await claimSatSubmission({
+      walletId: "mining",
+      workflowId: "cycle:42:commit",
+      operationKey: "commitCycle:42",
+      intentDigest,
+      action: "commitCycle",
+      owner: "worker-b",
+      env,
+    });
+    expect(first).toMatchObject({ created: true, claimed: true });
+    expect(competing).toMatchObject({ created: false, claimed: false });
+
+    await updateSatSubmission({
+      walletId: "mining",
+      requestId: first.record.requestId,
+      intentDigest,
+      state: "broadcast",
+      signature: "signature-42",
+      owner: "worker-a",
+      env,
+    });
+    await updateSatSubmission({
+      walletId: "mining",
+      requestId: first.record.requestId,
+      intentDigest,
+      state: "confirmed",
+      signature: "signature-42",
+      owner: "worker-a",
+      releaseLease: true,
+      env,
+    });
+
+    await expect(
+      readSatSubmission({
+        walletId: "mining",
+        requestId: first.record.requestId,
+        env,
+      }),
+    ).resolves.toMatchObject({
+      state: "confirmed",
+      signature: "signature-42",
+      attempts: 1,
+    });
+    await expect(
+      fs.stat(path.join(stateDir, "sat-mining", "wallets", "mining", "submission-ledger.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    const inspection = new DatabaseSync(store.databasePath, { readOnly: true });
+    try {
+      expect(
+        Number(
+          (
+            inspection.prepare("SELECT COUNT(*) AS count FROM submission_record").get() as {
+              count: number;
+            }
+          ).count,
+        ),
+      ).toBe(1);
+      expect(
+        inspection
+          .prepare(
+            `SELECT transition_kind, from_state, to_state
+               FROM submission_transition
+              ORDER BY sequence ASC`,
+          )
+          .all(),
+      ).toEqual([
+        { transition_kind: "claim", from_state: null, to_state: "prepared" },
+        { transition_kind: "update", from_state: "prepared", to_state: "broadcast" },
+        { transition_kind: "update", from_state: "broadcast", to_state: "confirmed" },
+      ]);
+    } finally {
+      inspection.close();
+    }
   });
 
   it("migrates primary and mirror NDJSON once without deleting legacy files", async () => {

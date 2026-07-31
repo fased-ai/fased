@@ -185,6 +185,7 @@ import {
   digestSatSubmissionIntent,
   readSatSubmissionRecords,
   resolveSatSubmissionLedgerPath,
+  setSatSubmissionLedgerAdapterResolver,
 } from "./src/submission-ledger.js";
 import {
   buildSatValidatorArtifact,
@@ -9414,6 +9415,9 @@ const satMiningPlugin = {
       id: "sat-mining",
       start: async (ctx) => {
         serviceContext = ctx;
+        setSatSubmissionLedgerAdapterResolver((walletId) =>
+          miningHistoryStore?.walletId === walletId ? miningHistoryStore : null,
+        );
         const walletRuntimeSummary = await loadWalletScopedPersistence(state.activeConfig.walletId);
         const runtimeSummary = state.runtimeStorePath ? walletRuntimeSummary : null;
         const restoredDrain = await restoreDrainModeForLockedCapital(
@@ -9462,6 +9466,7 @@ const satMiningPlugin = {
       },
       stop: async (ctx) => {
         state.running = false;
+        setSatSubmissionLedgerAdapterResolver(null);
         stopSatWorkerBootstrapLoop();
         recordSatWorkerBootstrapIdle();
         await stopSatWorkerServices();

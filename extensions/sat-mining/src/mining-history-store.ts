@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants, createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -10,6 +10,20 @@ import type {
   SatPlannerCycleRecord,
   SatPlannerOutcomeMemory,
 } from "./audit-store.js";
+import {
+  assertSatSubmissionStateTransition,
+  buildSatSubmissionRequestId,
+  normalizeSatSubmissionRecord,
+  satSubmissionLeaseDurationMs,
+  satSubmissionLeaseIsLive,
+  type SatSubmissionClaim,
+  type SatSubmissionClaimParams,
+  type SatSubmissionLedgerAdapter,
+  type SatSubmissionReadAllParams,
+  type SatSubmissionReadParams,
+  type SatSubmissionRecord,
+  type SatSubmissionUpdateParams,
+} from "./submission-ledger.js";
 
 const MINING_HISTORY_SCHEMA_VERSION = 2;
 const MINING_HISTORY_MIGRATION_LOCK_STALE_MS = 30 * 60 * 1000;
@@ -630,6 +644,21 @@ function createSchema(db: DatabaseSync): void {
       updated_at_ms INTEGER NOT NULL,
       PRIMARY KEY(scope_id, request_id)
     ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS submission_transition (
+      sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope_id INTEGER NOT NULL REFERENCES history_scope(id),
+      request_id TEXT NOT NULL,
+      transition_kind TEXT NOT NULL,
+      from_state TEXT,
+      to_state TEXT NOT NULL,
+      transition_digest TEXT NOT NULL UNIQUE,
+      payload_json TEXT NOT NULL,
+      occurred_at_ms INTEGER NOT NULL
+    ) STRICT;
+
+    CREATE INDEX IF NOT EXISTS idx_submission_transition_scope_request
+      ON submission_transition(scope_id, request_id, sequence);
 
     CREATE TABLE IF NOT EXISTS history_deletion_receipt (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1811,11 +1840,7 @@ function upsertSubmissionRows(
     `INSERT INTO submission_record(
        scope_id, request_id, intent_digest, state, payload_json, updated_at_ms
      ) VALUES(?, ?, ?, ?, ?, ?)
-     ON CONFLICT(scope_id, request_id) DO UPDATE SET
-       intent_digest=excluded.intent_digest,
-       state=excluded.state,
-       payload_json=excluded.payload_json,
-       updated_at_ms=excluded.updated_at_ms`,
+     ON CONFLICT(scope_id, request_id) DO NOTHING`,
   );
   records.forEach((record, index) => {
     const candidate =
@@ -1827,6 +1852,79 @@ function upsertSubmissionRows(
     const state = String(candidate.state ?? "unknown");
     statement.run(scopeId, requestId, intentDigest, state, canonicalJson(record), Date.now());
   });
+}
+
+function readSubmissionRecordRow(row: SqlRow | undefined): SatSubmissionRecord | null {
+  if (!row) {
+    return null;
+  }
+  const parsed = normalizeSatSubmissionRecord(JSON.parse(String(row.payload_json)) as unknown);
+  if (!parsed) {
+    throw new Error(`Corrupt Mining submission record ${String(row.request_id ?? "unknown")}`);
+  }
+  return parsed;
+}
+
+function writeSubmissionRecord(
+  db: DatabaseSync,
+  scopeId: number,
+  record: SatSubmissionRecord,
+): void {
+  db.prepare(
+    `INSERT INTO submission_record(
+       scope_id, request_id, intent_digest, state, payload_json, updated_at_ms
+     ) VALUES(?, ?, ?, ?, ?, ?)
+     ON CONFLICT(scope_id, request_id) DO UPDATE SET
+       intent_digest=excluded.intent_digest,
+       state=excluded.state,
+       payload_json=excluded.payload_json,
+       updated_at_ms=excluded.updated_at_ms`,
+  ).run(
+    scopeId,
+    record.requestId,
+    record.intentDigest,
+    record.state,
+    canonicalJson(record),
+    Date.parse(record.updatedAt),
+  );
+}
+
+function appendSubmissionTransition(
+  db: DatabaseSync,
+  params: {
+    scopeId: number;
+    record: SatSubmissionRecord;
+    transitionKind: "claim" | "update";
+    fromState: string | null;
+  },
+): void {
+  const payloadJson = canonicalJson(params.record);
+  const transitionDigest = `sha256:${sha256(
+    canonicalJson({
+      scopeId: params.scopeId,
+      requestId: params.record.requestId,
+      transitionKind: params.transitionKind,
+      fromState: params.fromState,
+      toState: params.record.state,
+      payloadSha256: sha256(payloadJson),
+    }),
+  )}`;
+  db.prepare(
+    `INSERT INTO submission_transition(
+       scope_id, request_id, transition_kind, from_state, to_state,
+       transition_digest, payload_json, occurred_at_ms
+     ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(transition_digest) DO NOTHING`,
+  ).run(
+    params.scopeId,
+    params.record.requestId,
+    params.transitionKind,
+    params.fromState,
+    params.record.state,
+    transitionDigest,
+    payloadJson,
+    Date.parse(params.record.updatedAt),
+  );
 }
 
 function importOperationalRecords(
@@ -1947,7 +2045,7 @@ function isoOrNull(value: number | null): string | null {
   return value == null || !Number.isFinite(value) ? null : new Date(value).toISOString();
 }
 
-export class SatMiningHistoryStore {
+export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
   readonly databasePath: string;
   private readonly db: DatabaseSync;
   private scope: SatMiningHistoryScope;
@@ -2145,6 +2243,10 @@ export class SatMiningHistoryStore {
 
   getScope(): SatMiningHistoryScope {
     return { ...this.scope };
+  }
+
+  get walletId(): string {
+    return this.scope.walletId;
   }
 
   getScopeKey(): string {
@@ -2671,6 +2773,249 @@ export class SatMiningHistoryStore {
     });
   }
 
+  async claim(params: SatSubmissionClaimParams): Promise<SatSubmissionClaim> {
+    if (params.walletId !== this.walletId) {
+      throw new Error(
+        `Mining submission ledger is bound to ${this.walletId}, not ${params.walletId}`,
+      );
+    }
+    return await this.enqueueWrite(() => {
+      const env = params.env ?? process.env;
+      const owner = params.owner ?? `${process.pid}:${randomUUID()}`;
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        let operationKey = params.operationKey;
+        let requestId = buildSatSubmissionRequestId({ ...params, operationKey });
+        if (params.allowFailedRetry) {
+          for (let retry = 1; retry <= 32; retry += 1) {
+            const prior = readSubmissionRecordRow(
+              this.db
+                .prepare(
+                  `SELECT request_id, payload_json
+                     FROM submission_record
+                    WHERE scope_id=? AND request_id=?`,
+                )
+                .get(this.scopeId, requestId) as SqlRow | undefined,
+            );
+            if (!prior || prior.state !== "failed") {
+              break;
+            }
+            operationKey = `${params.operationKey}:retry:${retry}`;
+            requestId = buildSatSubmissionRequestId({ ...params, operationKey });
+            if (retry === 32) {
+              const exhausted = readSubmissionRecordRow(
+                this.db
+                  .prepare(
+                    `SELECT request_id, payload_json
+                       FROM submission_record
+                      WHERE scope_id=? AND request_id=?`,
+                  )
+                  .get(this.scopeId, requestId) as SqlRow | undefined,
+              );
+              if (exhausted?.state === "failed") {
+                throw new Error("SAT submission exhausted its safe pre-broadcast retry limit");
+              }
+            }
+          }
+        }
+        const existing = readSubmissionRecordRow(
+          this.db
+            .prepare(
+              `SELECT request_id, payload_json
+                 FROM submission_record
+                WHERE scope_id=? AND request_id=?`,
+            )
+            .get(this.scopeId, requestId) as SqlRow | undefined,
+        );
+        if (existing) {
+          if (
+            existing.intentDigest !== params.intentDigest ||
+            existing.walletId !== params.walletId ||
+            existing.workflowId !== params.workflowId ||
+            existing.operationKey !== operationKey
+          ) {
+            throw new Error(
+              `SAT idempotency collision for ${requestId}: the workflow key is already bound to a different immutable intent digest`,
+            );
+          }
+          if (satSubmissionLeaseIsLive(existing.lease) && existing.lease?.owner !== owner) {
+            this.db.exec("COMMIT");
+            return { record: existing, created: false, claimed: false, owner };
+          }
+          const fromState = existing.state;
+          const now = new Date().toISOString();
+          existing.lease = {
+            owner,
+            pid: process.pid,
+            acquiredAt: now,
+            expiresAt: new Date(Date.now() + satSubmissionLeaseDurationMs(env)).toISOString(),
+          };
+          existing.attempts += 1;
+          existing.updatedAt = now;
+          writeSubmissionRecord(this.db, this.scopeId, existing);
+          appendSubmissionTransition(this.db, {
+            scopeId: this.scopeId,
+            record: existing,
+            transitionKind: "claim",
+            fromState,
+          });
+          this.db.exec("COMMIT");
+          return { record: existing, created: false, claimed: true, owner };
+        }
+        const now = new Date().toISOString();
+        const record: SatSubmissionRecord = {
+          requestId,
+          workflowId: params.workflowId,
+          operationKey,
+          intentDigest: params.intentDigest,
+          walletId: params.walletId,
+          action: params.action,
+          state: "prepared",
+          attempts: 1,
+          createdAt: now,
+          updatedAt: now,
+          lease: {
+            owner,
+            pid: process.pid,
+            acquiredAt: now,
+            expiresAt: new Date(Date.now() + satSubmissionLeaseDurationMs(env)).toISOString(),
+          },
+        };
+        writeSubmissionRecord(this.db, this.scopeId, record);
+        appendSubmissionTransition(this.db, {
+          scopeId: this.scopeId,
+          record,
+          transitionKind: "claim",
+          fromState: null,
+        });
+        this.db.exec("COMMIT");
+        return { record, created: true, claimed: true, owner };
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  async read(params: SatSubmissionReadParams): Promise<SatSubmissionRecord | null> {
+    if (params.walletId !== this.walletId) {
+      throw new Error(
+        `Mining submission ledger is bound to ${this.walletId}, not ${params.walletId}`,
+      );
+    }
+    await this.flush();
+    return readSubmissionRecordRow(
+      this.db
+        .prepare(
+          `SELECT request_id, payload_json
+             FROM submission_record
+            WHERE scope_id=? AND request_id=?`,
+        )
+        .get(this.scopeId, params.requestId) as SqlRow | undefined,
+    );
+  }
+
+  async readAll(params: SatSubmissionReadAllParams): Promise<SatSubmissionRecord[]> {
+    if (params.walletId !== this.walletId) {
+      throw new Error(
+        `Mining submission ledger is bound to ${this.walletId}, not ${params.walletId}`,
+      );
+    }
+    await this.flush();
+    const countRow = this.db
+      .prepare("SELECT COUNT(*) AS count FROM submission_record WHERE scope_id=?")
+      .get(this.scopeId) as SqlRow;
+    const count = Number(countRow.count ?? 0);
+    if (count > 10_000) {
+      throw new Error(
+        `Mining submission ledger contains ${count} records; unbounded whole-ledger reads are disabled`,
+      );
+    }
+    return (
+      this.db
+        .prepare(
+          `SELECT request_id, payload_json
+             FROM submission_record
+            WHERE scope_id=?
+            ORDER BY request_id ASC`,
+        )
+        .all(this.scopeId) as SqlRow[]
+    ).map((row) => {
+      const record = readSubmissionRecordRow(row);
+      if (!record) {
+        throw new Error(`Corrupt Mining submission record ${String(row.request_id)}`);
+      }
+      return record;
+    });
+  }
+
+  async update(params: SatSubmissionUpdateParams): Promise<SatSubmissionRecord> {
+    if (params.walletId !== this.walletId) {
+      throw new Error(
+        `Mining submission ledger is bound to ${this.walletId}, not ${params.walletId}`,
+      );
+    }
+    return await this.enqueueWrite(() => {
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        const record = readSubmissionRecordRow(
+          this.db
+            .prepare(
+              `SELECT request_id, payload_json
+                 FROM submission_record
+                WHERE scope_id=? AND request_id=?`,
+            )
+            .get(this.scopeId, params.requestId) as SqlRow | undefined,
+        );
+        if (!record) {
+          throw new Error(`SAT submission ${params.requestId} is missing from its durable ledger`);
+        }
+        if (record.intentDigest !== params.intentDigest) {
+          throw new Error(
+            `SAT submission ${params.requestId} intent digest changed during execution`,
+          );
+        }
+        if (params.owner && record.lease?.owner !== params.owner) {
+          throw new Error(
+            `SAT submission ${params.requestId} lease ownership changed during execution`,
+          );
+        }
+        if (record.signature && params.signature && record.signature !== params.signature) {
+          throw new Error(
+            `SAT submission ${params.requestId} returned a different transaction signature`,
+          );
+        }
+        const fromState = record.state;
+        assertSatSubmissionStateTransition(params.requestId, record.state, params.state);
+        record.state = params.state;
+        if (params.signature !== undefined) {
+          record.signature = params.signature;
+        }
+        if (params.error !== undefined) {
+          record.error = params.error;
+        } else if (params.state === "confirmed") {
+          delete record.error;
+        }
+        if (params.releaseLease) {
+          delete record.lease;
+        }
+        record.updatedAt = new Date().toISOString();
+        writeSubmissionRecord(this.db, this.scopeId, record);
+        appendSubmissionTransition(this.db, {
+          scopeId: this.scopeId,
+          record,
+          transitionKind: "update",
+          fromState,
+        });
+        this.db.exec("COMMIT");
+        return record;
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
   async deleteHistory(
     request: SatMiningHistoryDeletionRequest,
   ): Promise<SatMiningHistoryDeletionReceipt> {
@@ -2866,13 +3211,13 @@ export class SatMiningHistoryStore {
     return { scopeId: selectedId, scope: readScope(this.db, selectedId) };
   }
 
-  private async enqueueWrite(operation: () => void): Promise<void> {
+  private async enqueueWrite<T>(operation: () => T | Promise<T>): Promise<T> {
     if (this.readOnly) {
       throw new Error("Mining history store is read-only");
     }
     const next = this.writeChain.catch(() => {}).then(operation);
-    this.writeChain = next;
-    await next;
+    this.writeChain = next.then(() => undefined);
+    return await next;
   }
 }
 
