@@ -10,6 +10,9 @@ describe("CI changed-surface classification", () => {
       runNode: false,
       runSigner: false,
       runHosting: false,
+      runLocalFresh: false,
+      runLocalUpdate: false,
+      runCiContracts: false,
       runUiMining: false,
     });
   });
@@ -30,11 +33,14 @@ describe("CI changed-surface classification", () => {
       runNode: false,
       runSigner: false,
       runHosting: false,
+      runLocalFresh: false,
+      runLocalUpdate: false,
+      runCiContracts: false,
       runUiMining: false,
     });
   });
 
-  it("keeps CI and Hosting fixture infrastructure off broad product lanes", () => {
+  it("runs only narrow contract checks for CI-routing infrastructure", () => {
     expect(
       classifyChangedPaths([
         ".github/workflows/ci.yml",
@@ -44,17 +50,34 @@ describe("CI changed-surface classification", () => {
         "scripts/ci-merged-main-reuse.test.ts",
         "scripts/ci-required-gates.mjs",
         "scripts/ci-required-gates.test.ts",
-        "scripts/test-protected-local-systemd-container.sh",
-        "scripts/docker/protected-local-systemd/Containerfile.ubuntu",
-        "scripts/docker/protected-local-systemd/Containerfile.rocky",
-        "scripts/docker/protected-local-systemd/run.sh",
+        "scripts/ci-workflow-contract.test.ts",
       ]),
     ).toMatchObject({
       ciInfrastructureOnly: true,
       runNode: false,
       runSigner: false,
-      runHosting: true,
+      runHosting: false,
+      runLocalFresh: false,
+      runLocalUpdate: false,
+      runCiContracts: true,
       runUiMining: false,
+    });
+  });
+
+  it("routes Protected Local fixture changes without running Hosting", () => {
+    expect(
+      classifyChangedPaths([
+        "scripts/test-protected-local-systemd-container.sh",
+        "scripts/docker/protected-local-systemd/Containerfile.ubuntu",
+        "scripts/docker/protected-local-systemd/run.sh",
+      ]),
+    ).toMatchObject({
+      ciInfrastructureOnly: false,
+      runNode: true,
+      runHosting: false,
+      runLocalFresh: true,
+      runLocalUpdate: true,
+      runCiContracts: false,
     });
   });
 
@@ -68,6 +91,8 @@ describe("CI changed-surface classification", () => {
       runNode: false,
       runSigner: false,
       runHosting: false,
+      runLocalFresh: false,
+      runLocalUpdate: false,
       fullMatrix: false,
     });
   });
@@ -81,27 +106,47 @@ describe("CI changed-surface classification", () => {
     });
   });
 
-  it("runs Hosting checks only for Hosting lifecycle paths", () => {
+  it("separates Hosting, Local fresh, and Local update lifecycle paths", () => {
     for (const path of [
       "scripts/fased-host-updater.mjs",
-      "scripts/fased-managed-updater.mjs",
       "scripts/docker/streamed-hosting-bootstrap/run.sh",
       "scripts/docker/hosting-systemd/run.sh",
-      "scripts/protected-local-bootstrap.mjs",
       "scripts/test-hosting-systemd-container.sh",
-      "src/wizard/onboarding.ts",
-      "src/daemon/systemd-system.ts",
-      "src/config/io.ts",
     ]) {
       expect(classifyChangedPaths([path]), path).toMatchObject({
         runNode: true,
         runHosting: true,
+        runLocalFresh: false,
+        runLocalUpdate: false,
         runUiMining: false,
       });
     }
+
+    expect(classifyChangedPaths(["scripts/fased-managed-updater.mjs"])).toMatchObject({
+      runHosting: true,
+      runLocalFresh: false,
+      runLocalUpdate: true,
+    });
+    expect(classifyChangedPaths(["scripts/protected-local-bootstrap.mjs"])).toMatchObject({
+      runHosting: false,
+      runLocalFresh: true,
+      runLocalUpdate: true,
+    });
+    expect(classifyChangedPaths(["src/wizard/onboarding.ts"])).toMatchObject({
+      runHosting: true,
+      runLocalFresh: true,
+      runLocalUpdate: false,
+    });
+    expect(classifyChangedPaths(["install.sh"])).toMatchObject({
+      runHosting: true,
+      runLocalFresh: true,
+      runLocalUpdate: true,
+    });
     expect(classifyChangedPaths(["src/agents/agent.ts"])).toMatchObject({
       runNode: true,
       runHosting: false,
+      runLocalFresh: false,
+      runLocalUpdate: false,
     });
   });
 
@@ -162,6 +207,9 @@ describe("CI changed-surface classification", () => {
         runMacos: true,
         runSigner: true,
         runHosting: true,
+        runLocalFresh: true,
+        runLocalUpdate: true,
+        runCiContracts: true,
         runUiMining: true,
         runSkills: true,
         fullMatrix: true,

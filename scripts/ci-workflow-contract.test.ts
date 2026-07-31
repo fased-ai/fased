@@ -9,6 +9,7 @@ const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 type WorkflowJob = {
   if?: string;
   needs?: string[];
+  "timeout-minutes"?: number;
   steps?: Array<{
     env?: Record<string, string>;
     run?: string;
@@ -35,7 +36,10 @@ describe("CI workflow routing", () => {
     expect(jobs["changed-scope"]).toBeUndefined();
     expect(jobs["android"]).toBeUndefined();
     expect(jobs["version-identity"]).toBeDefined();
+    expect(jobs["ci-contracts"]).toBeDefined();
     expect(jobs["hosting-lifecycle"]).toBeDefined();
+    expect(jobs["protected-local-fixture-artifact"]).toBeDefined();
+    expect(jobs["protected-local-rocky-lifecycle"]).toBeDefined();
     expect(jobs["protected-local-update-lifecycle"]).toBeDefined();
 
     const releaseCheck = jobs["release-check"];
@@ -47,9 +51,10 @@ describe("CI workflow routing", () => {
 
     const protectedLocalUpdate = jobs["protected-local-update-lifecycle"];
     expect(protectedLocalUpdate?.needs).toEqual(
-      expect.arrayContaining(["change-scope", "hosting-lifecycle"]),
+      expect.arrayContaining(["change-scope", "protected-local-fixture-artifact"]),
     );
-    expect(protectedLocalUpdate?.if).toBe("needs.change-scope.outputs.run_hosting == 'true'");
+    expect(protectedLocalUpdate?.if).toBe("needs.change-scope.outputs.run_local_update == 'true'");
+    expect(protectedLocalUpdate?.["timeout-minutes"]).toBe(15);
     expect(
       protectedLocalUpdate?.steps?.find((step) => step.uses === "actions/checkout@v6")?.with?.[
         "fetch-depth"
@@ -65,8 +70,11 @@ describe("CI workflow routing", () => {
     expect(required?.needs).toEqual(
       expect.arrayContaining([
         "change-scope",
+        "ci-contracts",
         "version-identity",
         "hosting-lifecycle",
+        "protected-local-fixture-artifact",
+        "protected-local-rocky-lifecycle",
         "protected-local-update-lifecycle",
         "ui-mining",
         "checks-windows",
@@ -78,7 +86,12 @@ describe("CI workflow routing", () => {
     expect(required?.steps?.at(-1)?.env).toMatchObject({
       VERSION_ONLY: "${{ needs.change-scope.outputs.version_only }}",
       RUN_HOSTING: "${{ needs.change-scope.outputs.run_hosting }}",
+      RUN_LOCAL_FRESH: "${{ needs.change-scope.outputs.run_local_fresh }}",
+      RUN_LOCAL_UPDATE: "${{ needs.change-scope.outputs.run_local_update }}",
+      RUN_CI_CONTRACTS: "${{ needs.change-scope.outputs.run_ci_contracts }}",
       RUN_UI_MINING: "${{ needs.change-scope.outputs.run_ui_mining }}",
+      PROTECTED_LOCAL_ARTIFACT: "${{ needs.protected-local-fixture-artifact.result }}",
+      PROTECTED_LOCAL_ROCKY: "${{ needs.protected-local-rocky-lifecycle.result }}",
       PROTECTED_LOCAL_UPDATE: "${{ needs.protected-local-update-lifecycle.result }}",
     });
   });
@@ -91,6 +104,38 @@ describe("CI workflow routing", () => {
     expect(jobs["ui"]?.if).toBe("needs.change-scope.outputs.full_matrix == 'true'");
     expect(jobs["macos"]?.if).toBe("needs.change-scope.outputs.run_macos == 'true'");
     expect(jobs["ui-mining"]?.if).toBe("needs.change-scope.outputs.run_ui_mining == 'true'");
+
+    expect(jobs["hosting-lifecycle"]?.if).toBe("needs.change-scope.outputs.run_hosting == 'true'");
+    expect(jobs["protected-local-lifecycle"]?.if).toBe(
+      "needs.change-scope.outputs.run_local_fresh == 'true'",
+    );
+    expect(jobs["protected-local-rocky-lifecycle"]?.if).toContain(
+      "needs.change-scope.outputs.full_matrix == 'true'",
+    );
+    expect(jobs["ci-contracts"]?.if).toBe("needs.change-scope.outputs.run_ci_contracts == 'true'");
+
+    for (const jobName of [
+      "ci-contracts",
+      "hosting-lifecycle",
+      "protected-local-fixture-artifact",
+      "protected-local-lifecycle",
+      "protected-local-rocky-lifecycle",
+      "protected-local-update-lifecycle",
+    ]) {
+      expect(jobs[jobName]?.["timeout-minutes"], jobName).toBeGreaterThan(0);
+      expect(jobs[jobName]?.["timeout-minutes"], jobName).toBeLessThanOrEqual(15);
+    }
+  });
+
+  it("keeps lifecycle fixtures out of the product Docker release workflow", async () => {
+    const dockerWorkflow = await readFile(
+      resolve(repoRoot, ".github/workflows/docker-release.yml"),
+      "utf8",
+    );
+
+    expect(dockerWorkflow).not.toContain("scripts/docker/protected-local-systemd/**");
+    expect(dockerWorkflow).not.toContain("scripts/docker/hosting-systemd/**");
+    expect(dockerWorkflow).not.toContain("scripts/docker/streamed-hosting-bootstrap/**");
   });
 
   it("selects beta for every prerelease target in the Protected Local fixture", async () => {

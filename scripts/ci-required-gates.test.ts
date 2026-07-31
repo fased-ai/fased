@@ -26,8 +26,8 @@ describe("required CI gate aggregation", () => {
     ).not.toThrow();
   });
 
-  it("requires the Node and Hosting groups only when selected", () => {
-    const nodeAndHosting = {
+  it("requires Node, Hosting, Local fresh, and Local update only when selected", () => {
+    const selected = {
       "format and lint": "success",
       "strict types baseline": "success",
       "Node tests": "success",
@@ -35,6 +35,7 @@ describe("required CI gate aggregation", () => {
       "release contracts": "success",
       "packed Local install": "success",
       "Hosting lifecycle": "success",
+      "Protected Local fixture artifact": "success",
       "Protected Local lifecycle": "success",
       "Protected Local update lifecycle": "success",
     };
@@ -42,16 +43,20 @@ describe("required CI gate aggregation", () => {
       assertApplicableGates({
         runNode: true,
         runHosting: true,
-        results: { ...alwaysGreen, ...nodeAndHosting },
+        runLocalFresh: true,
+        runLocalUpdate: true,
+        results: { ...alwaysGreen, ...selected },
       }),
     ).not.toThrow();
     expect(() =>
       assertApplicableGates({
         runNode: true,
         runHosting: true,
+        runLocalFresh: true,
+        runLocalUpdate: true,
         results: {
           ...alwaysGreen,
-          ...nodeAndHosting,
+          ...selected,
           "Hosting lifecycle": "skipped",
         },
       }),
@@ -59,27 +64,60 @@ describe("required CI gate aggregation", () => {
     expect(() =>
       assertApplicableGates({
         runNode: true,
-        runHosting: true,
+        runLocalUpdate: true,
         results: {
           ...alwaysGreen,
-          ...nodeAndHosting,
+          ...selected,
           "Protected Local update lifecycle": "failure",
         },
       }),
     ).toThrow(/required Protected Local update lifecycle result was failure/);
+
+    expect(() =>
+      assertApplicableGates({
+        runHosting: true,
+        results: { ...alwaysGreen, "Hosting lifecycle": "success" },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertApplicableGates({
+        runLocalFresh: true,
+        results: {
+          ...alwaysGreen,
+          "Protected Local fixture artifact": "success",
+          "Protected Local lifecycle": "success",
+        },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertApplicableGates({
+        runCiContracts: true,
+        results: { ...alwaysGreen, "CI contracts": "success" },
+      }),
+    ).not.toThrow();
   });
 
   it("requires all selected full-matrix lanes", () => {
     expect(() =>
       assertApplicableGates({
         fullMatrix: true,
-        results: { ...alwaysGreen, "full UI": "success", Windows: "success" },
+        results: {
+          ...alwaysGreen,
+          "Protected Local Rocky lifecycle": "success",
+          "full UI": "success",
+          Windows: "success",
+        },
       }),
     ).not.toThrow();
     expect(() =>
       assertApplicableGates({
         fullMatrix: true,
-        results: { ...alwaysGreen, "full UI": "success", Windows: "failure" },
+        results: {
+          ...alwaysGreen,
+          "Protected Local Rocky lifecycle": "success",
+          "full UI": "success",
+          Windows: "failure",
+        },
       }),
     ).toThrow(/required Windows result was failure/);
   });

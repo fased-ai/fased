@@ -7,7 +7,7 @@ const DOC_PATH_RE = /^(?:docs\/|.*\.(?:md|mdx)$|scripts\/docs-product-contract\.
 const VERSION_PATH_RE =
   /^(?:package\.json|CHANGELOG\.md|src\/brand\.ts|extensions\/[^/]+\/(?:package\.json|CHANGELOG\.md))$/;
 const CI_INFRASTRUCTURE_PATH_RE =
-  /^(?:\.github\/workflows\/ci\.yml|scripts\/ci-(?:change-scope|required-gates|merged-main-reuse)(?:\.mjs|\.test\.ts)|scripts\/test-protected-local-systemd-container\.sh|scripts\/docker\/protected-local-systemd\/)/;
+  /^(?:\.github\/workflows\/ci\.yml|scripts\/ci-(?:change-scope|required-gates|merged-main-reuse|version-identity|workflow-contract)(?:\.mjs|\.test\.ts))$/;
 const NODE_PATH_RE =
   /^(?:src\/|test\/|extensions\/|packages\/|scripts\/|ui\/|\.github\/|fased\.mjs$|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|tsconfig[^/]*\.json$|vitest[^/]*\.ts$|tsdown\.config\.ts$|\.oxlintrc\.json$|\.oxfmtrc\.jsonc$)/;
 const SIGNER_PATH_RE =
@@ -16,8 +16,17 @@ const MACOS_PATH_RE = /^(?:apps\/(?:macos|ios|shared)\/|Swabble\/)/;
 const GENERATED_NATIVE_PROTOCOL_RE =
   /^(?:apps\/macos\/Sources\/FasedAgentProtocol\/|apps\/shared\/FasedAgentKit\/Sources\/FasedAgentProtocol\/)/;
 const NATIVE_ONLY_PATH_RE = /^(?:apps\/(?:android|ios|macos|shared)\/|Swabble\/|appcast\.xml$)/;
+const SHARED_LIFECYCLE_PATH_RE =
+  /^(?:install\.sh$|scripts\/(?:build-hosted-runtime-artifact|fased-lifecycle-supervisor|hosted-release-manifest|install-(?:managed-runtime|platform-preflight|release-pin|runtime-profile)|lifecycle-|managed-runtime-layout|signer-(?:enrollment-launchers|owner-policy-installers)|start-managed)[^/]*|src\/(?:cli\/daemon-cli\/(?:install|restart-health)|commands\/(?:daemon-install-helpers|doctor-(?:gateway-health|state-integrity))|config\/io|daemon\/systemd|infra\/(?:managed-runtime|update-runner))[^/]*|\.github\/workflows\/hosted-runtime-release\.yml$)/;
+const SHARED_UPDATE_PATH_RE =
+  /^(?:scripts\/(?:fased-managed-updater|managed-updater-bundle)[^/]*|src\/infra\/update-runner[^/]*)/;
+const LOCAL_LIFECYCLE_PATH_RE =
+  /^(?:scripts\/(?:docker\/protected-local-systemd\/|protected-local-|test-protected-local-systemd-container)[^/]*|src\/(?:commands\/onboard-non-interactive\/local|infra\/local-source-paired-update)[^/]*)/;
+const LOCAL_FRESH_PATH_RE = /^(?:scripts\/(?:install-local-|test-install-runtime-profile)[^/]*)/;
+const SHARED_FRESH_PATH_RE =
+  /^(?:src\/(?:cli\/program\/register\.onboard|wizard\/onboarding)[^/]*)/;
 const HOSTING_PATH_RE =
-  /^(?:install\.sh$|scripts\/(?:docker\/(?:streamed-hosting-bootstrap|hosting-systemd|protected-local-systemd)\/|build-hosted-runtime-artifact|fased-host-|fased-managed-updater|fased-signer-(?:enroll|policy)-hosting|hosted-|hosting-|install-(?:hosted-runtime|managed-runtime|platform-preflight|release-pin|runtime-profile)|managed-runtime-layout|migrate-hosted-signer|protected-local-|signer-(?:enrollment-launchers|owner-policy-installers)|test-(?:hosted-runtime-install|hosting-systemd-container|install-runtime-profile|protected-local-systemd-container|streamed-hosting-bootstrap-container)|start-managed)[^/]*|src\/(?:cli\/daemon-cli\/(?:install|restart-health)|cli\/program\/register\.onboard|commands\/(?:daemon-install-helpers|doctor-(?:gateway-health|state-integrity)|hosted-dashboard-probe|onboard-non-interactive\/local)|config\/io|daemon\/systemd|infra\/(?:host|managed-runtime|update-runner|local-source-paired-update)|security\/(?:audit|fix)|wizard\/(?:host-security-capability|onboarding))[^/]*|\.github\/workflows\/hosted-runtime-release\.yml$)/;
+  /^(?:scripts\/(?:docker\/(?:streamed-hosting-bootstrap|hosting-systemd)\/|fased-host-|fased-signer-(?:enroll|network|owner|policy)-hosting|hosted-(?!release-manifest)|hosting-|install-hosted-runtime|migrate-hosted-signer|test-(?:hosted-runtime-install|hosting-systemd-container|streamed-hosting-bootstrap-container))[^/]*|src\/(?:commands\/hosted-dashboard-probe|infra\/host|wizard\/host-security-capability)[^/]*)/;
 const MINING_PATH_RE =
   /^(?:extensions\/sat-mining\/|src\/mining\/|src\/.*mining[^/]*|test\/ui-mining-api\.test\.ts$|ui\/src\/ui\/.*mining[^/]*|ui\/src\/ui\/(?:app-gateway|app-polling)\.ts$)/;
 const SKILLS_PATH_RE = /^(?:skills\/|scripts\/.*skill[^/]*\.(?:py|mjs|ts)$)/;
@@ -47,6 +56,9 @@ export function classifyChangedPaths(inputPaths, options = {}) {
       runMacos: false,
       runSigner: false,
       runHosting: false,
+      runLocalFresh: false,
+      runLocalUpdate: false,
+      runCiContracts: false,
       runUiMining: false,
       runSkills: false,
       fullMatrix: false,
@@ -64,6 +76,9 @@ export function classifyChangedPaths(inputPaths, options = {}) {
       runMacos: true,
       runSigner: true,
       runHosting: true,
+      runLocalFresh: true,
+      runLocalUpdate: true,
+      runCiContracts: true,
       runUiMining: true,
       runSkills: true,
       fullMatrix: true,
@@ -99,6 +114,13 @@ export function classifyChangedPaths(inputPaths, options = {}) {
     runNode = true;
   }
 
+  const sharedLifecycleChanged = paths.some((path) => SHARED_LIFECYCLE_PATH_RE.test(path));
+  const sharedUpdateChanged = paths.some((path) => SHARED_UPDATE_PATH_RE.test(path));
+  const localLifecycleChanged = paths.some((path) => LOCAL_LIFECYCLE_PATH_RE.test(path));
+  const localFreshChanged = paths.some((path) => LOCAL_FRESH_PATH_RE.test(path));
+  const sharedFreshChanged = paths.some((path) => SHARED_FRESH_PATH_RE.test(path));
+  const hostingChanged = paths.some((path) => HOSTING_PATH_RE.test(path));
+
   return {
     docsOnly,
     docsChanged,
@@ -109,7 +131,14 @@ export function classifyChangedPaths(inputPaths, options = {}) {
     runMacos,
     runSigner: !versionOnly && paths.some((path) => SIGNER_PATH_RE.test(path)),
     runHosting:
-      !versionOnly && (ciInfrastructureOnly || paths.some((path) => HOSTING_PATH_RE.test(path))),
+      !versionOnly &&
+      (sharedLifecycleChanged || sharedFreshChanged || sharedUpdateChanged || hostingChanged),
+    runLocalFresh:
+      !versionOnly &&
+      (sharedLifecycleChanged || sharedFreshChanged || localLifecycleChanged || localFreshChanged),
+    runLocalUpdate:
+      !versionOnly && (sharedLifecycleChanged || sharedUpdateChanged || localLifecycleChanged),
+    runCiContracts: ciInfrastructureOnly,
     runUiMining: !versionOnly && paths.some((path) => MINING_PATH_RE.test(path)),
     runSkills: !versionOnly && paths.some((path) => SKILLS_PATH_RE.test(path)),
     fullMatrix,
@@ -127,6 +156,9 @@ function outputEntries(scope) {
     run_macos: trueString(scope.runMacos),
     run_signer: trueString(scope.runSigner),
     run_hosting: trueString(scope.runHosting),
+    run_local_fresh: trueString(scope.runLocalFresh),
+    run_local_update: trueString(scope.runLocalUpdate),
+    run_ci_contracts: trueString(scope.runCiContracts),
     run_ui_mining: trueString(scope.runUiMining),
     run_skills: trueString(scope.runSkills),
     full_matrix: trueString(scope.fullMatrix),

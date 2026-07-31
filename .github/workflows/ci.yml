@@ -34,6 +34,9 @@ jobs:
       run_macos: ${{ steps.scope.outputs.run_macos }}
       run_signer: ${{ steps.scope.outputs.run_signer }}
       run_hosting: ${{ steps.scope.outputs.run_hosting }}
+      run_local_fresh: ${{ steps.scope.outputs.run_local_fresh }}
+      run_local_update: ${{ steps.scope.outputs.run_local_update }}
+      run_ci_contracts: ${{ steps.scope.outputs.run_ci_contracts }}
       run_ui_mining: ${{ steps.scope.outputs.run_ui_mining }}
       run_skills: ${{ steps.scope.outputs.run_skills }}
       full_matrix: ${{ steps.scope.outputs.full_matrix }}
@@ -61,11 +64,44 @@ jobs:
           GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: node scripts/ci-change-scope.mjs
 
+  # CI routing is executable product policy. Validate it without rebuilding or
+  # launching product fixtures when only that policy changes.
+  ci-contracts:
+    name: "CI routing contracts"
+    needs: [change-scope]
+    if: needs.change-scope.outputs.run_ci_contracts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Check CI routing and gate contracts
+        run: >-
+          pnpm exec vitest run
+          scripts/ci-change-scope.test.ts
+          scripts/ci-required-gates.test.ts
+          scripts/ci-merged-main-reuse.test.ts
+          scripts/ci-version-identity.test.ts
+          scripts/ci-workflow-contract.test.ts
+
   # Build dist once for Node-relevant changes and share it with downstream jobs.
   build-artifacts:
     needs: [change-scope]
-    if: needs.change-scope.outputs.run_node == 'true' || needs.change-scope.outputs.run_hosting == 'true'
+    if: >-
+      needs.change-scope.outputs.run_node == 'true' ||
+      needs.change-scope.outputs.run_hosting == 'true' ||
+      needs.change-scope.outputs.run_local_fresh == 'true' ||
+      needs.change-scope.outputs.run_local_update == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -386,11 +422,16 @@ jobs:
       - name: Enforce safe external URL opening policy
         run: pnpm lint:ui:no-raw-window-open
 
-  hosting-lifecycle:
-    name: "hosting lifecycle"
+  # Build one immutable fixture artifact only when a Local lifecycle gate needs
+  # it. Hosting no longer serializes or owns this artifact.
+  protected-local-fixture-artifact:
+    name: "protected Local fixture artifact"
     needs: [change-scope, build-artifacts]
-    if: needs.change-scope.outputs.run_hosting == 'true'
+    if: >-
+      needs.change-scope.outputs.run_local_fresh == 'true' ||
+      needs.change-scope.outputs.run_local_update == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -414,39 +455,61 @@ jobs:
           name: dist-build
           path: dist/
 
-      - name: Check hosted runtime installer
-        run: bash scripts/test-hosted-runtime-install.sh
-
-      - name: Check exact streamed Hosting bootstrap
-        run: bash scripts/test-streamed-hosting-bootstrap-container.sh
-
-      - name: Build one exact Protected Local fixture artifact
+      - name: Build one exact fixture artifact
         env:
           FASED_SIGNER_BUILD_COMMIT: ${{ github.sha }}
           FASED_SIGNER_TARGETS: linux/amd64
         run: |
           set -euo pipefail
+          started=$SECONDS
           artifact_dir="$RUNNER_TEMP/protected-local-artifact"
           bash scripts/release-fased-signerd.sh
           pnpm hosted:artifact:from-dist --output "$artifact_dir"
           cp -a dist-native/release/. "$artifact_dir/"
+          echo "ci timing: stage=protected-local-fixture-artifact elapsed=$((SECONDS - started))s"
 
-      - name: Upload exact Protected Local fixture artifact
+      - name: Upload exact fixture artifact
         uses: actions/upload-artifact@v4
         with:
           name: protected-local-fixture-artifact
           path: ${{ runner.temp }}/protected-local-artifact/
           retention-days: 1
 
-  protected-local-lifecycle:
-    name: "protected Local lifecycle (${{ matrix.distro }})"
-    needs: [change-scope, hosting-lifecycle]
+  hosting-lifecycle:
+    name: "hosting lifecycle"
+    needs: [change-scope, build-artifacts]
     if: needs.change-scope.outputs.run_hosting == 'true'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        distro: [ubuntu, rocky]
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Download exact dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-build
+          path: dist/
+
+      - name: Check hosted runtime installer
+        run: bash scripts/test-hosted-runtime-install.sh
+
+      - name: Check exact streamed Hosting bootstrap
+        run: bash scripts/test-streamed-hosting-bootstrap-container.sh
+
+  protected-local-lifecycle:
+    name: "protected Local fresh lifecycle (ubuntu)"
+    needs: [change-scope, protected-local-fixture-artifact]
+    if: needs.change-scope.outputs.run_local_fresh == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -469,31 +532,68 @@ jobs:
         with:
           path: ${{ runner.temp }}/protected-local-image-cache/
           key: >-
-            protected-local-systemd-${{ runner.os }}-${{ matrix.distro }}-v1-
+            protected-local-systemd-${{ runner.os }}-ubuntu-v1-
             ${{ hashFiles('scripts/docker/protected-local-systemd/Containerfile.*',
             'scripts/docker/protected-local-systemd/*.conf') }}
 
       - name: Check clean Protected Local bootstrap
-        if: matrix.distro == 'ubuntu' || needs.change-scope.outputs.full_matrix == 'true'
         env:
-          FASED_SYSTEMD_FIXTURE_DISTROS: ${{ matrix.distro }}
+          FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
           FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install
           FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/protected-local-artifact
           FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
-          FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: ${{ matrix.distro == 'rocky' && '1' || '0' }}
+          FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "0"
         run: bash scripts/test-protected-local-systemd-container.sh
 
-      - name: Record deferred Rocky compatibility fixture
-        if: matrix.distro == 'rocky' && needs.change-scope.outputs.full_matrix != 'true'
-        run: >-
-          echo "Rocky fresh bootstrap runs in the manual full matrix; the exact
-          candidate passed the supporting local Rocky systemd fixture."
+  protected-local-rocky-lifecycle:
+    name: "protected Local fresh lifecycle (rocky)"
+    needs: [change-scope, protected-local-fixture-artifact]
+    if: >-
+      needs.change-scope.outputs.run_local_fresh == 'true' &&
+      needs.change-scope.outputs.full_matrix == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.x
+
+      - name: Download exact Protected Local fixture artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: protected-local-fixture-artifact
+          path: ${{ runner.temp }}/protected-local-artifact/
+
+      - name: Restore cached systemd fixture base image
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/protected-local-image-cache/
+          key: >-
+            protected-local-systemd-${{ runner.os }}-rocky-v1-
+            ${{ hashFiles('scripts/docker/protected-local-systemd/Containerfile.*',
+            'scripts/docker/protected-local-systemd/*.conf') }}
+
+      - name: Check Rocky compatibility bootstrap
+        env:
+          FASED_SYSTEMD_FIXTURE_DISTROS: rocky
+          FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install
+          FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/protected-local-artifact
+          FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
+          FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
+        run: bash scripts/test-protected-local-systemd-container.sh
 
   protected-local-update-lifecycle:
     name: "protected Local update lifecycle (ubuntu)"
-    needs: [change-scope, hosting-lifecycle]
-    if: needs.change-scope.outputs.run_hosting == 'true'
+    needs: [change-scope, protected-local-fixture-artifact]
+    if: needs.change-scope.outputs.run_local_update == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -1166,9 +1266,12 @@ jobs:
     if: always()
     needs:
       - change-scope
+      - ci-contracts
       - check
       - hosting-lifecycle
+      - protected-local-fixture-artifact
       - protected-local-lifecycle
+      - protected-local-rocky-lifecycle
       - protected-local-update-lifecycle
       - version-identity
       - strict-types-baseline
@@ -1198,6 +1301,9 @@ jobs:
           RUN_NODE: ${{ needs.change-scope.outputs.run_node }}
           RUN_SIGNER: ${{ needs.change-scope.outputs.run_signer }}
           RUN_HOSTING: ${{ needs.change-scope.outputs.run_hosting }}
+          RUN_LOCAL_FRESH: ${{ needs.change-scope.outputs.run_local_fresh }}
+          RUN_LOCAL_UPDATE: ${{ needs.change-scope.outputs.run_local_update }}
+          RUN_CI_CONTRACTS: ${{ needs.change-scope.outputs.run_ci_contracts }}
           RUN_UI_MINING: ${{ needs.change-scope.outputs.run_ui_mining }}
           RUN_SKILLS: ${{ needs.change-scope.outputs.run_skills }}
           RUN_MACOS: ${{ needs.change-scope.outputs.run_macos }}
@@ -1205,8 +1311,11 @@ jobs:
           CHANGE_SCOPE: ${{ needs.change-scope.result }}
           CHECK: ${{ needs.check.result }}
           HOSTING: ${{ needs.hosting-lifecycle.result }}
+          PROTECTED_LOCAL_ARTIFACT: ${{ needs.protected-local-fixture-artifact.result }}
           PROTECTED_LOCAL: ${{ needs.protected-local-lifecycle.result }}
+          PROTECTED_LOCAL_ROCKY: ${{ needs.protected-local-rocky-lifecycle.result }}
           PROTECTED_LOCAL_UPDATE: ${{ needs.protected-local-update-lifecycle.result }}
+          CI_CONTRACTS: ${{ needs.ci-contracts.result }}
           VERSION_IDENTITY: ${{ needs.version-identity.result }}
           STRICT_TYPES: ${{ needs.strict-types-baseline.result }}
           TESTS: ${{ needs.checks.result }}
