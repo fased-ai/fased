@@ -1,13 +1,62 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "entrypoint": "fased-managed-updater.mjs",
+  "minimumSupervisorProtocol": 1,
   "files": [
-    "fased-managed-updater.mjs",
-    "hosted-release-manifest.mjs",
-    "lifecycle-trust-crypto.mjs",
-    "lifecycle-trust-policy.mjs",
-    "lifecycle-trust-root.mjs",
-    "lifecycle-trust-runtime.mjs",
-    "managed-runtime-layout.mjs"
+    {
+      "name": "fased-managed-updater.mjs",
+      "type": "entrypoint",
+      "mode": "0755"
+    },
+    {
+      "name": "hosted-release-manifest.mjs",
+      "type": "support",
+      "mode": "0755"
+    },
+    {
+      "name": "lifecycle-trust-crypto.mjs",
+      "type": "support",
+      "mode": "0755"
+    },
+    {
+      "name": "lifecycle-trust-policy.mjs",
+      "type": "support",
+      "mode": "0755"
+    },
+    {
+      "name": "lifecycle-trust-root.mjs",
+      "type": "support",
+      "mode": "0755"
+    },
+    {
+      "name": "lifecycle-trust-runtime.mjs",
+      "type": "support",
+      "mode": "0755"
+    },
+    {
+      "name": "managed-runtime-layout.mjs",
+      "type": "support",
+      "mode": "0755"
+    },
+    {
+      "name": "managed-updater-bundle.mjs",
+      "type": "support",
+      "mode": "0755"
+    },
+    {
+      "name": "managed-updater-bundle.v1.json",
+      "type": "manifest",
+      "mode": "0644"
+    },
+    {
+      "name": "fased-managed-launcher.sh",
+      "type": "launcher",
+      "mode": "0755"
+    },
+    {
+      "name": "fased-managed-service.sh",
+      "type": "launcher",
+      "mode": "0755"
+    }
   ]
 }

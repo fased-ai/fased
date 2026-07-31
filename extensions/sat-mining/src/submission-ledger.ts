@@ -374,6 +374,19 @@ export async function readSatSubmission(params: {
   });
 }
 
+export async function readSatSubmissionRecords(params: {
+  walletId: string;
+  env?: NodeJS.ProcessEnv;
+}): Promise<SatSubmissionRecord[]> {
+  const filePath = resolveSatSubmissionLedgerPath(params);
+  return await withSatSubmissionLedgerLock(filePath, async () => {
+    const ledger = await readLedger(filePath);
+    return Object.values(ledger.records).toSorted((left, right) =>
+      left.requestId.localeCompare(right.requestId),
+    );
+  });
+}
+
 export async function updateSatSubmission(params: {
   walletId: string;
   requestId: string;

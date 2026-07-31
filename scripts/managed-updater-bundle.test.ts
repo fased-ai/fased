@@ -4,8 +4,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  activateManagedUpdaterGeneration,
   installManagedUpdaterCompatibilityFiles,
+  restoreManagedUpdaterGeneration,
   stageManagedUpdaterGeneration,
+  writeManagedUpdaterReleaseDescriptor,
 } from "./managed-updater-bundle.mjs";
 
 const FILES = [
@@ -16,13 +19,34 @@ const FILES = [
   "lifecycle-trust-root.mjs",
   "lifecycle-trust-runtime.mjs",
   "managed-runtime-layout.mjs",
+  "managed-updater-bundle.mjs",
+  "managed-updater-bundle.v1.json",
+  "fased-managed-launcher.sh",
+  "fased-managed-service.sh",
 ];
+
+const FILE_RECORDS = FILES.map((name) => ({
+  name,
+  type:
+    name === "fased-managed-updater.mjs"
+      ? "entrypoint"
+      : name === "managed-updater-bundle.v1.json"
+        ? "manifest"
+        : name.endsWith(".sh")
+          ? "launcher"
+          : "support",
+  mode: name.endsWith(".json") ? "0644" : "0755",
+}));
 
 async function writeRuntime(root: string, revision: string): Promise<void> {
   const scriptsDir = path.join(root, "scripts");
   await fs.mkdir(scriptsDir, { recursive: true });
+  await fs.writeFile(
+    path.join(root, "package.json"),
+    `${JSON.stringify({ name: "@fased/fased", version: "0.1.76-rc.22" })}\n`,
+  );
   await Promise.all(
-    FILES.map((name) =>
+    FILES.filter((name) => name !== "managed-updater-bundle.v1.json").map((name) =>
       fs.writeFile(path.join(scriptsDir, name), `// ${name} ${revision}\n`, {
         mode: 0o755,
       }),
@@ -32,15 +56,32 @@ async function writeRuntime(root: string, revision: string): Promise<void> {
     path.join(scriptsDir, "managed-updater-bundle.v1.json"),
     `${JSON.stringify(
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         entrypoint: "fased-managed-updater.mjs",
-        files: FILES,
+        minimumSupervisorProtocol: 1,
+        files: FILE_RECORDS,
       },
       null,
       2,
     )}\n`,
     "utf8",
   );
+}
+
+async function makeProductionRuntime(root: string): Promise<void> {
+  await fs.writeFile(
+    path.join(root, ".fased-hosted-runtime.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      version: "0.1.76-rc.22",
+      commit: "a".repeat(40),
+      dependencyHash: "b".repeat(64),
+    })}\n`,
+  );
+  await writeManagedUpdaterReleaseDescriptor({
+    runtimeRoot: root,
+    architecture: process.arch,
+  });
 }
 
 async function copyExecutable(source: string, destination: string): Promise<void> {
@@ -82,6 +123,15 @@ describe("managed updater content-addressed bundle", () => {
       updaterDir,
       runtimeRoot: firstRuntime,
       durable: true,
+      activate: false,
+    });
+    await expect(fs.lstat(path.join(updaterDir, "current"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await activateManagedUpdaterGeneration({
+      updaterDir,
+      generationDir: first.generationDir,
+      durable: true,
     });
     await installManagedUpdaterCompatibilityFiles({
       updaterDir,
@@ -99,6 +149,9 @@ describe("managed updater content-addressed bundle", () => {
         size: expect.any(Number),
       });
     }
+    await expect(
+      fs.stat(path.join(first.generationDir, "managed-updater-generation.v1.json")),
+    ).resolves.toMatchObject({ mode: expect.any(Number) });
 
     const second = await stageManagedUpdaterGeneration({
       updaterDir,
@@ -110,6 +163,70 @@ describe("managed updater content-addressed bundle", () => {
     await expect(fs.stat(first.generationDir)).resolves.toMatchObject({
       isDirectory: expect.any(Function),
     });
+    await restoreManagedUpdaterGeneration({
+      updaterDir,
+      generationDir: first.generationDir,
+      durable: true,
+    });
+    expect(await fs.realpath(path.join(updaterDir, "current"))).toBe(first.generationDir);
+    await restoreManagedUpdaterGeneration({
+      updaterDir,
+      generationDir: null,
+      durable: true,
+    });
+    await expect(fs.lstat(path.join(updaterDir, "current"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("requires the exact target-bound descriptor for a production runtime", async () => {
+    const { updaterDir, firstRuntime } = await fixture();
+    await makeProductionRuntime(firstRuntime);
+    const staged = await stageManagedUpdaterGeneration({
+      updaterDir,
+      runtimeRoot: firstRuntime,
+      durable: true,
+      activate: false,
+    });
+    expect(staged.release).toMatchObject({
+      version: "0.1.76-rc.22",
+      commit: "a".repeat(40),
+      development: false,
+    });
+
+    const descriptorPath = path.join(firstRuntime, ".fased-managed-updater-bundle.json");
+    const descriptor = JSON.parse(await fs.readFile(descriptorPath, "utf8"));
+    descriptor.files[0].sha256 = "0".repeat(64);
+    await fs.writeFile(descriptorPath, `${JSON.stringify(descriptor)}\n`, { mode: 0o644 });
+    await expect(
+      stageManagedUpdaterGeneration({
+        updaterDir: path.join(path.dirname(updaterDir), "tampered-updater"),
+        runtimeRoot: firstRuntime,
+      }),
+    ).rejects.toThrow("release descriptor is mismatched");
+  });
+
+  it("rejects an existing generation with extra, wrong-mode, or changed files", async () => {
+    const { updaterDir, firstRuntime } = await fixture();
+    const first = await stageManagedUpdaterGeneration({
+      updaterDir,
+      runtimeRoot: firstRuntime,
+    });
+    await fs.writeFile(path.join(first.generationDir, "unexpected.txt"), "unsafe\n");
+    await expect(
+      stageManagedUpdaterGeneration({
+        updaterDir,
+        runtimeRoot: firstRuntime,
+      }),
+    ).rejects.toThrow(/inventory is invalid/u);
+    await fs.rm(path.join(first.generationDir, "unexpected.txt"));
+    await fs.chmod(path.join(first.generationDir, "fased-managed-updater.mjs"), 0o644);
+    await expect(
+      stageManagedUpdaterGeneration({
+        updaterDir,
+        runtimeRoot: firstRuntime,
+      }),
+    ).rejects.toThrow(/identity is invalid/u);
   });
 
   it("does not change current when target bundle validation fails", async () => {
@@ -120,9 +237,13 @@ describe("managed updater content-addressed bundle", () => {
     });
     const manifestPath = path.join(secondRuntime, "scripts", "managed-updater-bundle.v1.json");
     const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as {
-      files: string[];
+      files: Array<{ name: string; type: string; mode: string }>;
     };
-    manifest.files.push("missing-support.mjs");
+    manifest.files.push({
+      name: "missing-support.mjs",
+      type: "support",
+      mode: "0755",
+    });
     await fs.writeFile(manifestPath, `${JSON.stringify(manifest)}\n`, "utf8");
 
     await expect(

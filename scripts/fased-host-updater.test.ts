@@ -3,6 +3,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   PRE_V2_HOSTING_MIGRATION_MESSAGE,
@@ -87,6 +88,7 @@ async function createFixture(
     managedApplication?: boolean;
     emptyManagedApplication?: boolean;
     managedInstallSchema?: 1 | 2;
+    trackUpdaterGeneration?: boolean;
   } = {},
 ) {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-updater-"));
@@ -364,6 +366,37 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
           : {}),
       };
     },
+    stageUpdaterGeneration: async (managedPaths: { updaterDir: string }) => {
+      if (options.trackUpdaterGeneration) {
+        events.push("updater-stage-target");
+      }
+      return {
+        bundleDigest: `sha256:${"7".repeat(64)}`,
+        targetGenerationDir: path.join(managedPaths.updaterDir, "generations", "7".repeat(64)),
+        previousGenerationDir: options.emptyManagedApplication
+          ? null
+          : path.join(managedPaths.updaterDir, "generations", "6".repeat(64)),
+      };
+    },
+    activateUpdaterGeneration: async () => {
+      if (options.trackUpdaterGeneration) {
+        events.push("updater-activate-target");
+      }
+      return {
+        bundleDigest: `sha256:${"7".repeat(64)}`,
+      };
+    },
+    restoreUpdaterGeneration: async () => {
+      if (options.trackUpdaterGeneration) {
+        events.push("updater-restore-previous");
+      }
+      return { restored: true };
+    },
+    installCommittedLaunchers: async () => {
+      if (options.trackUpdaterGeneration) {
+        events.push("updater-install-stable-launchers");
+      }
+    },
     discoverApplicationTopology: async () => fixtureTopology,
     inventoryApplicationState: async () => null,
     reconcileApplicationState: async () => ({ changed: false, reconciled: false }),
@@ -434,6 +467,73 @@ function managedTransaction(phase = "signer-preactivated") {
 }
 
 describe("root-owned hosted updater protocol", () => {
+  it("preserves a large Mining ledger semantically without hashing its complete file", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-mining-ledger-semantic-"));
+    cleanupRoots.push(root);
+    const databasePath = path.join(root, "mining.sqlite");
+    const database = new DatabaseSync(databasePath);
+    database.exec(`
+      CREATE TABLE mining_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE wallet_binding(id INTEGER PRIMARY KEY);
+      CREATE TABLE chain_scope(id INTEGER PRIMARY KEY);
+      CREATE TABLE history_scope(id INTEGER PRIMARY KEY);
+      CREATE TABLE mining_event(
+        sequence INTEGER PRIMARY KEY,
+        scope_id INTEGER NOT NULL,
+        event_digest TEXT NOT NULL
+      );
+      CREATE TABLE planner_outcome(
+        sequence INTEGER PRIMARY KEY,
+        scope_id INTEGER NOT NULL,
+        event_digest TEXT NOT NULL
+      );
+      CREATE TABLE planner_cycle(
+        sequence INTEGER PRIMARY KEY,
+        scope_id INTEGER NOT NULL,
+        event_digest TEXT NOT NULL
+      );
+      CREATE TABLE round_execution(id INTEGER PRIMARY KEY);
+      CREATE TABLE pending_planner_cycle(id INTEGER PRIMARY KEY);
+      CREATE TABLE claim_backlog(id INTEGER PRIMARY KEY);
+      CREATE TABLE settlement_state(id INTEGER PRIMARY KEY);
+      CREATE TABLE submission_record(id INTEGER PRIMARY KEY);
+      CREATE TABLE audit_artifact(id INTEGER PRIMARY KEY);
+      CREATE TABLE history_deletion_receipt(id INTEGER PRIMARY KEY);
+      INSERT INTO mining_meta VALUES('schema_version', '1');
+      INSERT INTO mining_meta VALUES('history_revision', '1');
+      INSERT INTO mining_meta VALUES('history_head:1:action', 'sha256:${"a".repeat(64)}');
+      INSERT INTO wallet_binding VALUES(1);
+      INSERT INTO chain_scope VALUES(1);
+      INSERT INTO history_scope VALUES(1);
+      INSERT INTO mining_event VALUES(1, 1, 'sha256:${"a".repeat(64)}');
+      INSERT INTO pending_planner_cycle VALUES(1);
+      INSERT INTO submission_record VALUES(1);
+    `);
+    database.close();
+
+    const before = __testing.miningLedgerSemanticSnapshot(databasePath);
+    const append = new DatabaseSync(databasePath);
+    append.exec(`
+      INSERT INTO mining_event VALUES(2, 1, 'sha256:${"b".repeat(64)}');
+      UPDATE mining_meta SET value='2' WHERE key='history_revision';
+      UPDATE mining_meta SET value='sha256:${"b".repeat(64)}'
+        WHERE key='history_head:1:action';
+    `);
+    append.close();
+    const after = __testing.miningLedgerSemanticSnapshot(databasePath);
+    expect(() =>
+      __testing.assertMiningLedgerSemanticPreserved(databasePath, before, after),
+    ).not.toThrow();
+
+    const truncate = new DatabaseSync(databasePath);
+    truncate.exec("DELETE FROM mining_event WHERE sequence=1");
+    truncate.close();
+    const truncated = __testing.miningLedgerSemanticSnapshot(databasePath);
+    expect(() =>
+      __testing.assertMiningLedgerSemanticPreserved(databasePath, before, truncated),
+    ).toThrow(/history chain was truncated/u);
+  });
+
   it("derives exact shared-state identities for Protected Local and Hosting", () => {
     const protectedLocalInstanceId = "0123456789abcdef";
     expect(
@@ -682,7 +782,7 @@ describe("root-owned hosted updater protocol", () => {
 
     const journal = await __testing.readJournal(fixture.context);
     expect(journal).toMatchObject({
-      schemaVersion: 5,
+      schemaVersion: 6,
       version: "1.2.3",
       release: signerRelease("1.2.3"),
       migrationSelection: {
@@ -756,7 +856,7 @@ describe("root-owned hosted updater protocol", () => {
     });
     const promoted = await __testing.writeJournal(fixture.context, recovered);
     expect(promoted).toMatchObject({
-      schemaVersion: 5,
+      schemaVersion: 6,
       schemaMigration: recovered.schemaMigration,
     });
   });
@@ -3478,6 +3578,46 @@ describe("root-owned hosted updater protocol", () => {
         .activeVersion,
     ).toBe("1.2.2");
     expect(await fsp.readFile(rolledBack.paths.signerPath, "utf8")).toBe("old-signer\n");
+    expect(fs.existsSync(rolledBack.paths.journalPath)).toBe(false);
+  });
+
+  it("switches one complete updater generation and restores it before rollback completes", async () => {
+    const committed = await createFixture({
+      managedApplication: true,
+      trackUpdaterGeneration: true,
+    });
+    committed.context.verifyGateway = async () => ({
+      version: "1.2.3",
+      runtimeSource: "managed-package",
+    });
+    await __testing.applyReleaseTransaction(
+      request("applyRelease", TRANSACTION_ONE, "1.2.3"),
+      committed.context,
+    );
+    expect(committed.events.filter((event) => event.startsWith("updater-"))).toEqual([
+      "updater-stage-target",
+      "updater-activate-target",
+      "updater-install-stable-launchers",
+    ]);
+
+    const rolledBack = await createFixture({
+      managedApplication: true,
+      trackUpdaterGeneration: true,
+    });
+    rolledBack.context.verifyGateway = async () => {
+      throw new Error("deterministic target health failure");
+    };
+    await expect(
+      __testing.applyReleaseTransaction(
+        request("applyRelease", TRANSACTION_TWO, "1.2.3"),
+        rolledBack.context,
+      ),
+    ).rejects.toMatchObject({ code: "TARGET_RELEASE_ROLLED_BACK" });
+    expect(rolledBack.events.filter((event) => event.startsWith("updater-"))).toEqual([
+      "updater-stage-target",
+      "updater-activate-target",
+      "updater-restore-previous",
+    ]);
     expect(fs.existsSync(rolledBack.paths.journalPath)).toBe(false);
   });
 

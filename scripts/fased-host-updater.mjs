@@ -8,6 +8,7 @@ import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -72,7 +73,7 @@ const TRANSACTIONS_DIR = path.join(STATE_DIR, "transactions");
 const MAX_REQUEST_BYTES = 4096;
 const REQUEST_TIMEOUT_MS = 20 * 60_000;
 const CROSS_PRODUCT_HEALTH_TIMEOUT_MS = 30_000;
-const JOURNAL_SCHEMA_VERSION = 5;
+const JOURNAL_SCHEMA_VERSION = 6;
 const PROTOCOL_SCHEMA_VERSION = 2;
 const MIGRATION_SELECTION_SCHEMA_VERSION = 1;
 const SCHEMA_MIGRATION_SCHEMA_VERSION = 1;
@@ -2232,6 +2233,7 @@ function validateDeclaredStateTransaction(value) {
       entry.stateClass.length > 64 ||
       typeof entry.create !== "boolean" ||
       typeof entry.preserveContent !== "boolean" ||
+      (entry.preserveSemantic != null && typeof entry.preserveSemantic !== "boolean") ||
       !Number.isSafeInteger(entry.desiredMode) ||
       !new Set([0o660, 0o2770]).has(entry.desiredMode) ||
       typeof entry.existed !== "boolean"
@@ -2262,7 +2264,22 @@ function validateDeclaredStateTransaction(value) {
     ) {
       throw new Error("host updater declared-state preservation digest is invalid");
     }
-    return { ...entry, relativePath };
+    if (
+      entry.preserveSemantic === true &&
+      entry.existed &&
+      (!entry.semanticState ||
+        typeof entry.semanticState !== "object" ||
+        Array.isArray(entry.semanticState) ||
+        !/^sha256:[a-f0-9]{64}$/u.test(entry.semanticHash || "") ||
+        miningLedgerSemanticDigest(entry.semanticState) !== entry.semanticHash)
+    ) {
+      throw new Error("host updater declared-state semantic receipt is invalid");
+    }
+    return {
+      ...entry,
+      relativePath,
+      preserveSemantic: entry.preserveSemantic === true,
+    };
   });
   if (!Array.isArray(value.changedEntries ?? []) || typeof (value.changed ?? false) !== "boolean") {
     throw new Error("host updater declared-state change receipt is invalid");
@@ -2350,7 +2367,7 @@ async function validateJournal(value, context) {
   if (
     !value ||
     typeof value !== "object" ||
-    !new Set([1, 2, 3, 4, JOURNAL_SCHEMA_VERSION]).has(value.schemaVersion) ||
+    !new Set([1, 2, 3, 4, 5, JOURNAL_SCHEMA_VERSION]).has(value.schemaVersion) ||
     !TRANSACTION_PHASES.has(value.phase)
   ) {
     throw new Error("host updater transaction journal is invalid");
@@ -2415,6 +2432,13 @@ async function validateJournal(value, context) {
     context,
     version,
   );
+  if (
+    value.schemaVersion === JOURNAL_SCHEMA_VERSION &&
+    managedApplication &&
+    !managedApplication.updaterGeneration
+  ) {
+    throw new Error("host updater transaction updater generation is missing");
+  }
   const migrationSelection = validateLifecycleMigrationSelection(value.migrationSelection);
   const hasSchemaMigration = Object.prototype.hasOwnProperty.call(value, "schemaMigration");
   if (value.schemaVersion === JOURNAL_SCHEMA_VERSION && !hasSchemaMigration) {
@@ -3064,6 +3088,7 @@ const DECLARED_MINING_WALLET_FILES = new Set([
   "action-history.ndjson",
   "action-history.mirror.ndjson",
   "submission-ledger.json",
+  "mining.sqlite",
 ]);
 const DECLARED_STATE_SAFE_COMPONENT = /^[A-Za-z0-9._-]{1,160}$/u;
 const DECLARED_VALIDATOR_ARTIFACT = /^[A-Za-z0-9._-]{1,240}\.json$/u;
@@ -3437,7 +3462,8 @@ async function collectDeclaredStateRules(stateDir) {
           kind: "file",
           create: false,
           desiredMode: 0o660,
-          preserveContent: true,
+          preserveContent: name !== "mining.sqlite",
+          preserveSemantic: name === "mining.sqlite",
         });
       }
     }
@@ -3497,6 +3523,132 @@ async function hashDeclaredFile(handle, stat, label) {
   return `sha256:${hash.digest("hex")}`;
 }
 
+function miningLedgerSemanticSnapshot(filePath) {
+  const database = new DatabaseSync(filePath, { readOnly: true });
+  try {
+    database.exec("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;");
+    const tables = new Set(
+      database
+        .prepare(
+          `SELECT name FROM sqlite_master
+            WHERE type='table' AND name NOT LIKE 'sqlite_%'
+            ORDER BY name`,
+        )
+        .all()
+        .map((row) => String(row.name)),
+    );
+    const scalar = (sql, field = "value") => {
+      try {
+        const row = database.prepare(sql).get();
+        return Number(row?.[field] ?? 0);
+      } catch {
+        return 0;
+      }
+    };
+    const textMeta = (key) => {
+      if (!tables.has("mining_meta")) {
+        return null;
+      }
+      const row = database.prepare("SELECT value FROM mining_meta WHERE key=?").get(key);
+      return row?.value == null ? null : String(row.value);
+    };
+    const tableCount = (name) =>
+      tables.has(name) ? scalar(`SELECT COUNT(*) AS count FROM "${name}"`, "count") : 0;
+    const tableMax = (name, column) =>
+      tables.has(name)
+        ? scalar(`SELECT COALESCE(MAX("${column}"), 0) AS maximum FROM "${name}"`, "maximum")
+        : 0;
+    const historyHeads = tables.has("mining_meta")
+      ? database
+          .prepare(
+            `SELECT key, value FROM mining_meta
+              WHERE key LIKE 'history_head:%'
+              ORDER BY key`,
+          )
+          .all()
+          .map((row) => ({ key: String(row.key), digest: String(row.value) }))
+      : [];
+    return Object.freeze({
+      schemaVersion: Number(textMeta("schema_version") ?? 0),
+      historyRevision: Number(textMeta("history_revision") ?? 0),
+      walletBindings: tableCount("wallet_binding"),
+      chainScopes: tableCount("chain_scope"),
+      historyScopes: tableCount("history_scope"),
+      miningEvents: tableCount("mining_event"),
+      miningEventSequence: tableMax("mining_event", "sequence"),
+      plannerOutcomes: tableCount("planner_outcome"),
+      plannerOutcomeSequence: tableMax("planner_outcome", "sequence"),
+      plannerCycles: tableCount("planner_cycle"),
+      plannerCycleSequence: tableMax("planner_cycle", "sequence"),
+      roundExecutions: tableCount("round_execution"),
+      pendingPlannerCycles: tableCount("pending_planner_cycle"),
+      claimBacklog: tableCount("claim_backlog"),
+      settlementState: tableCount("settlement_state"),
+      submissionRecords: tableCount("submission_record"),
+      auditArtifacts: tableCount("audit_artifact"),
+      deletionReceipts: tableCount("history_deletion_receipt"),
+      historyHeads,
+    });
+  } finally {
+    database.close();
+  }
+}
+
+function miningLedgerSemanticDigest(snapshot) {
+  return `sha256:${createHash("sha256").update(canonicalJSON(snapshot)).digest("hex")}`;
+}
+
+function assertMiningLedgerSemanticPreserved(entryPath, before, after) {
+  for (const field of [
+    "walletBindings",
+    "chainScopes",
+    "historyScopes",
+    "miningEvents",
+    "miningEventSequence",
+    "plannerOutcomes",
+    "plannerOutcomeSequence",
+    "plannerCycles",
+    "plannerCycleSequence",
+    "roundExecutions",
+    "pendingPlannerCycles",
+    "claimBacklog",
+    "settlementState",
+    "submissionRecords",
+    "auditArtifacts",
+    "deletionReceipts",
+  ]) {
+    if (Number(after[field] ?? 0) < Number(before[field] ?? 0)) {
+      throw new Error(`declared Mining ledger lost ${field}: ${entryPath}`);
+    }
+  }
+  const database = new DatabaseSync(entryPath, { readOnly: true });
+  try {
+    database.exec("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;");
+    for (const head of before.historyHeads ?? []) {
+      const [prefix, scopeId, kind] = String(head.key).split(":");
+      const table =
+        kind === "action"
+          ? "mining_event"
+          : kind === "outcome"
+            ? "planner_outcome"
+            : kind === "planner-cycle"
+              ? "planner_cycle"
+              : null;
+      if (prefix !== "history_head" || !table || !/^\d+$/u.test(scopeId || "")) {
+        throw new Error(`declared Mining ledger head is invalid: ${entryPath}`);
+      }
+      const found = database
+        .prepare(`SELECT 1 AS found FROM "${table}" WHERE scope_id=? AND event_digest=? LIMIT 1`)
+        .get(Number(scopeId), head.digest);
+      if (Number(found?.found ?? 0) !== 1) {
+        throw new Error(`declared Mining ledger history chain was truncated: ${entryPath}`);
+      }
+    }
+  } finally {
+    database.close();
+  }
+}
+
 async function inspectDeclaredStateRule(stateDir, rule) {
   const entryPath = declaredStatePath(stateDir, rule.relativePath);
   const named = await lstatIfPresent(entryPath);
@@ -3508,6 +3660,7 @@ async function inspectDeclaredStateRule(stateDir, rule) {
       create: rule.create === true,
       desiredMode: rule.desiredMode,
       preserveContent: rule.preserveContent === true,
+      preserveSemantic: rule.preserveSemantic === true,
       existed: false,
     };
   }
@@ -3544,6 +3697,7 @@ async function inspectDeclaredStateRule(stateDir, rule) {
       create: rule.create === true,
       desiredMode: rule.desiredMode,
       preserveContent: rule.preserveContent === true,
+      preserveSemantic: rule.preserveSemantic === true,
       existed: true,
       uid: current.uid,
       gid: current.gid,
@@ -3553,6 +3707,15 @@ async function inspectDeclaredStateRule(stateDir, rule) {
       nlink: current.nlink,
       ...(rule.preserveContent
         ? { contentHash: await hashDeclaredFile(handle, current, rule.relativePath) }
+        : {}),
+      ...(rule.preserveSemantic
+        ? (() => {
+            const semanticState = miningLedgerSemanticSnapshot(entryPath);
+            return {
+              semanticState,
+              semanticHash: miningLedgerSemanticDigest(semanticState),
+            };
+          })()
         : {}),
     };
   } finally {
@@ -3565,11 +3728,12 @@ function declaredStatePreservationHash(entries) {
     .update(
       canonicalJSON(
         entries
-          .filter((entry) => entry.preserveContent)
+          .filter((entry) => entry.preserveContent || entry.preserveSemantic)
           .map((entry) => ({
             relativePath: entry.relativePath,
             existed: entry.existed,
             contentHash: entry.contentHash ?? null,
+            semanticHash: entry.semanticHash ?? null,
           })),
       ),
     )
@@ -3578,12 +3742,15 @@ function declaredStatePreservationHash(entries) {
 
 function declaredStateClassPreservationHashes(entries) {
   const byClass = new Map();
-  for (const entry of entries.filter((candidate) => candidate.preserveContent)) {
+  for (const entry of entries.filter(
+    (candidate) => candidate.preserveContent || candidate.preserveSemantic,
+  )) {
     const records = byClass.get(entry.stateClass) ?? [];
     records.push({
       relativePath: entry.relativePath,
       existed: entry.existed,
       contentHash: entry.contentHash ?? null,
+      semanticHash: entry.semanticHash ?? null,
     });
     byClass.set(entry.stateClass, records);
   }
@@ -3741,9 +3908,27 @@ async function verifyDeclaredStatePreservation(transaction) {
     return { ok: true, preservationHash: null, preservationHashes: {} };
   }
   const preserved = [];
-  for (const entry of transaction.entries.filter((candidate) => candidate.preserveContent)) {
+  for (const entry of transaction.entries.filter(
+    (candidate) => candidate.preserveContent || candidate.preserveSemantic,
+  )) {
     const current = await inspectDeclaredStateRule(transaction.stateDir, entry);
-    preserved.push(current);
+    if (entry.preserveSemantic && entry.existed) {
+      if (!current.existed || !current.semanticState) {
+        throw new Error(`declared Mining ledger disappeared: ${entry.relativePath}`);
+      }
+      assertMiningLedgerSemanticPreserved(
+        declaredStatePath(transaction.stateDir, entry.relativePath),
+        entry.semanticState,
+        current.semanticState,
+      );
+      preserved.push({
+        ...current,
+        semanticState: entry.semanticState,
+        semanticHash: entry.semanticHash,
+      });
+    } else {
+      preserved.push(current);
+    }
   }
   const preservationHash = declaredStatePreservationHash(preserved);
   if (preservationHash !== transaction.preservationHash) {
@@ -3992,6 +4177,81 @@ function managedApplicationPaths(stateDir) {
   });
 }
 
+function validateManagedUpdaterGenerationTransaction(value, paths) {
+  if (value == null) {
+    return null;
+  }
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).toSorted().join(",") !==
+      "bundleDigest,previousGenerationDir,targetGenerationDir" ||
+    !/^sha256:[a-f0-9]{64}$/u.test(value.bundleDigest || "")
+  ) {
+    throw new Error("root-managed updater generation transaction is invalid");
+  }
+  const generationsDir = path.join(paths.updaterDir, "generations");
+  const targetGenerationDir = path.resolve(String(value.targetGenerationDir ?? ""));
+  const previousGenerationDir =
+    value.previousGenerationDir == null
+      ? null
+      : path.resolve(String(value.previousGenerationDir ?? ""));
+  const insideGenerationRoot = (candidate) =>
+    candidate !== generationsDir && candidate.startsWith(`${generationsDir}${path.sep}`);
+  if (
+    !insideGenerationRoot(targetGenerationDir) ||
+    path.basename(targetGenerationDir) !== value.bundleDigest.slice("sha256:".length) ||
+    (previousGenerationDir !== null && !insideGenerationRoot(previousGenerationDir))
+  ) {
+    throw new Error("root-managed updater generation escaped its generation root");
+  }
+  return Object.freeze({
+    bundleDigest: value.bundleDigest,
+    targetGenerationDir,
+    previousGenerationDir,
+  });
+}
+
+async function loadManagedUpdaterBundleModule(targetRoot) {
+  const modulePath = path.join(path.resolve(targetRoot), "scripts", "managed-updater-bundle.mjs");
+  const stat = await fsp.lstat(modulePath);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) {
+    throw new Error("target managed updater bundle module is unsafe");
+  }
+  const imported = await import(
+    `${pathToFileURL(modulePath).href}?target-controller=${encodeURIComponent(targetRoot)}`
+  );
+  for (const name of [
+    "stageManagedUpdaterGeneration",
+    "activateManagedUpdaterGeneration",
+    "restoreManagedUpdaterGeneration",
+  ]) {
+    if (typeof imported[name] !== "function") {
+      throw new Error(`target managed updater bundle module omits ${name}`);
+    }
+  }
+  return imported;
+}
+
+async function stageTargetManagedUpdaterGeneration(paths, targetRoot) {
+  const bundle = await loadManagedUpdaterBundleModule(targetRoot);
+  const generation = await bundle.stageManagedUpdaterGeneration({
+    updaterDir: paths.updaterDir,
+    runtimeRoot: targetRoot,
+    durable: true,
+    activate: false,
+  });
+  return validateManagedUpdaterGenerationTransaction(
+    {
+      bundleDigest: generation.bundleDigest,
+      targetGenerationDir: generation.generationDir,
+      previousGenerationDir: generation.previousGenerationDir,
+    },
+    paths,
+  );
+}
+
 async function readOptionalLink(linkPath) {
   try {
     const info = await fsp.lstat(linkPath);
@@ -4152,6 +4412,12 @@ async function prepareManagedApplicationTransaction(
     applicationRelease.commit,
     applicationRelease.dependencies.dependencyHash,
   );
+  await fsp.mkdir(paths.updaterDir, { recursive: true, mode: 0o750 });
+  const updaterDirectory = await fsp.lstat(paths.updaterDir);
+  if (!updaterDirectory.isDirectory() || updaterDirectory.isSymbolicLink()) {
+    throw new Error("root-managed updater directory is unsafe");
+  }
+  const updaterGeneration = await context.stageUpdaterGeneration(paths, targetRoot);
   let updateChannel = "stable";
   try {
     const configured = (await fsp.readFile(context.paths.channelPath, "utf8")).trim();
@@ -4178,6 +4444,7 @@ async function prepareManagedApplicationTransaction(
     previousRoot,
     previousPreviousRoot,
     previousManifest,
+    updaterGeneration,
     nextManifest: buildTargetManagedInstallManifest({
       previousManifest,
       applicationState: state,
@@ -4203,8 +4470,10 @@ function validateManagedApplicationTransaction(value, context, version) {
     !value ||
     typeof value !== "object" ||
     Array.isArray(value) ||
-    Object.keys(value).toSorted().join(",") !==
-      "nextManifest,previousManifest,previousPreviousRoot,previousRoot,profile,stateDir" ||
+    !new Set([
+      "nextManifest,previousManifest,previousPreviousRoot,previousRoot,profile,stateDir",
+      "nextManifest,previousManifest,previousPreviousRoot,previousRoot,profile,stateDir,updaterGeneration",
+    ]).has(Object.keys(value).toSorted().join(",")) ||
     value.profile !== state.profile ||
     path.resolve(String(value.stateDir ?? "")) !== paths.stateDir
   ) {
@@ -4233,6 +4502,10 @@ function validateManagedApplicationTransaction(value, context, version) {
   }
   const previousPreviousRoot =
     value.previousPreviousRoot == null ? null : path.resolve(String(value.previousPreviousRoot));
+  const updaterGeneration = validateManagedUpdaterGenerationTransaction(
+    value.updaterGeneration,
+    paths,
+  );
   return Object.freeze({
     profile: value.profile,
     stateDir: paths.stateDir,
@@ -4240,6 +4513,7 @@ function validateManagedApplicationTransaction(value, context, version) {
     previousPreviousRoot,
     previousManifest,
     nextManifest,
+    updaterGeneration,
   });
 }
 
@@ -4332,6 +4606,62 @@ async function removeInitializedManagedStableFiles(transaction) {
   await fsyncDirectory(paths.stateDir);
 }
 
+async function activateTargetManagedUpdaterGeneration(context, journal) {
+  const transaction = journal.managedApplication;
+  if (!transaction?.updaterGeneration) {
+    return;
+  }
+  const targetRoot = journal.application?.targetRoot;
+  if (!targetRoot) {
+    throw new Error("target updater generation has no application runtime");
+  }
+  const paths = managedApplicationPaths(transaction.stateDir);
+  const activated = await context.activateUpdaterGeneration(
+    paths,
+    targetRoot,
+    transaction.updaterGeneration,
+  );
+  if (activated.bundleDigest !== transaction.updaterGeneration.bundleDigest) {
+    throw new Error("target updater generation identity changed before activation");
+  }
+}
+
+async function restorePreviousManagedUpdaterGeneration(context, journal) {
+  const transaction = journal.managedApplication;
+  if (!transaction?.updaterGeneration) {
+    return;
+  }
+  const targetRoot = journal.application?.targetRoot;
+  if (!targetRoot) {
+    throw new Error("rollback updater generation has no target application runtime");
+  }
+  const paths = managedApplicationPaths(transaction.stateDir);
+  await context.restoreUpdaterGeneration(paths, targetRoot, transaction.updaterGeneration);
+}
+
+async function installCommittedManagedLaunchers(context, journal) {
+  const transaction = journal.managedApplication;
+  if (!transaction?.updaterGeneration) {
+    return;
+  }
+  const targetRoot = journal.application?.targetRoot;
+  if (!targetRoot) {
+    throw new Error("committed updater generation has no target application runtime");
+  }
+  const paths = managedApplicationPaths(transaction.stateDir);
+  for (const [name, destination] of [
+    ["fased-managed-launcher.sh", paths.launcherPath],
+    ["fased-managed-service.sh", paths.serviceLauncherPath],
+  ]) {
+    await atomicCopyFileDurable(path.join(targetRoot, "scripts", name), destination, {
+      mode: 0o750,
+      uid: context.applicationState.operatorUid,
+      gid: context.applicationState.operatorGid,
+    });
+  }
+  await atomicSymlinkDurable(paths.launcherPath, paths.prefixLauncherPath);
+}
+
 async function selectManagedApplication(context, journal) {
   if (!journal.managedApplication) {
     return;
@@ -4341,6 +4671,7 @@ async function selectManagedApplication(context, journal) {
   if (!targetRoot) {
     throw new Error("managed application target is unavailable");
   }
+  await activateTargetManagedUpdaterGeneration(context, journal);
   if (
     journal.managedApplication.previousRoot &&
     journal.managedApplication.previousRoot !== targetRoot
@@ -4463,6 +4794,7 @@ async function restoreManagedApplication(context, journal) {
   }
   const transaction = journal.managedApplication;
   const paths = managedApplicationPaths(transaction.stateDir);
+  await restorePreviousManagedUpdaterGeneration(context, journal);
   if (!transaction.previousRoot) {
     await fsp.rm(paths.currentLink, { force: true });
     await fsp.rm(paths.compatibilityLink, { force: true });
@@ -5290,6 +5622,32 @@ function createTransactionContext(overrides = {}) {
       overrides.stageCandidate ??
       (async (version, candidatePath, context) =>
         await stageOfficialCandidate(version, candidatePath, context)),
+    stageUpdaterGeneration:
+      overrides.stageUpdaterGeneration ??
+      (async (paths, targetRoot) => await stageTargetManagedUpdaterGeneration(paths, targetRoot)),
+    activateUpdaterGeneration:
+      overrides.activateUpdaterGeneration ??
+      (async (paths, targetRoot, generation) => {
+        const bundle = await loadManagedUpdaterBundleModule(targetRoot);
+        return await bundle.activateManagedUpdaterGeneration({
+          updaterDir: paths.updaterDir,
+          generationDir: generation.targetGenerationDir,
+          durable: true,
+        });
+      }),
+    restoreUpdaterGeneration:
+      overrides.restoreUpdaterGeneration ??
+      (async (paths, targetRoot, generation) => {
+        const bundle = await loadManagedUpdaterBundleModule(targetRoot);
+        return await bundle.restoreManagedUpdaterGeneration({
+          updaterDir: paths.updaterDir,
+          generationDir: generation.previousGenerationDir,
+          durable: true,
+        });
+      }),
+    installCommittedLaunchers:
+      overrides.installCommittedLaunchers ??
+      (async (journal) => await installCommittedManagedLaunchers(context, journal)),
     discoverApplicationTopology:
       overrides.discoverApplicationTopology ??
       (async () => await discoverProtectedApplicationTopology(context)),
@@ -6559,6 +6917,7 @@ async function finishCommit(context, journal) {
   if (journal.migrationSelection) {
     assertLifecycleSchemaMigrationsApplied(journal);
   }
+  await context.installCommittedLaunchers(journal);
   await recordTargetApplicationSuccess(context, journal);
   await cleanupHistoricalQ0Residue(context, journal);
   await writeInitialRollbackFloor(context, journal.version);
@@ -7108,6 +7467,8 @@ export const __testing = {
   lifecycleMigrationInventory,
   lifecycleSchemaMigrationPlan,
   lifecycleSchemaMigrationReceipt,
+  miningLedgerSemanticSnapshot,
+  assertMiningLedgerSemanticPreserved,
   selectLifecycleMigration,
   validateLifecycleMigrationSelection,
   validateLifecycleSchemaMigration,

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { constants, createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
@@ -11,7 +11,7 @@ import type {
   SatPlannerOutcomeMemory,
 } from "./audit-store.js";
 
-const MINING_HISTORY_SCHEMA_VERSION = 1;
+const MINING_HISTORY_SCHEMA_VERSION = 2;
 const MINING_HISTORY_MIGRATION_LOCK_STALE_MS = 30 * 60 * 1000;
 const MINING_HISTORY_IMPORT_BATCH_SIZE = 1_000;
 const MINING_HISTORY_ACTION_PAGE_MAX = 200;
@@ -40,9 +40,49 @@ export type SatMiningHistoryMigrationSource = {
 
 export type SatMiningHistoryMigrationInput = {
   sources?: readonly SatMiningHistoryMigrationSource[];
+  preservePaths?: readonly string[];
   runtimeRecentActions?: readonly SatMiningRecentAction[];
   runtimePlannerOutcomes?: readonly SatPlannerOutcomeMemory[];
   runtimePlannerCycles?: readonly SatPlannerCycleRecord[];
+  operationalState?: SatMiningOperationalState | null;
+  auditArtifacts?: readonly unknown[];
+  submissionRecords?: readonly unknown[];
+};
+
+export type SatMiningOperationalState = {
+  pendingPlannerCycles?: readonly unknown[];
+  roundExecution?: readonly unknown[];
+  claimBacklog?: readonly unknown[];
+  settlementPageParticipants?: readonly unknown[];
+  settlementPageLookupTables?: readonly unknown[];
+  workers?: Record<string, unknown>;
+  runtimeMeta?: Record<string, unknown>;
+};
+
+export type SatMiningHistoryDeletionRequest = {
+  kinds: readonly ("actions" | "outcomes" | "planner-cycles")[];
+  fromAt?: string | null;
+  toAt?: string | null;
+};
+
+export type SatMiningHistoryDeletionReceipt = {
+  walletId: string;
+  scopeKey: string;
+  deletedActions: number;
+  deletedOutcomes: number;
+  deletedPlannerCycles: number;
+  fromAt: string | null;
+  toAt: string | null;
+  historyRevision: number;
+  deletedAt: string;
+};
+
+export type SatMiningDiskStatus = {
+  databaseBytes: number;
+  walBytes: number;
+  availableBytes: number | null;
+  warning: "none" | "low" | "critical";
+  optionalCapitalCommitmentsAllowed: boolean;
 };
 
 export type SatMiningActionCursor = {
@@ -111,6 +151,9 @@ export type SatMiningHistoryMigrationReceipt = {
   duplicatePlannerCycles: number;
   malformedRecords: number;
   sourceCount: number;
+  conflictRecords: number;
+  quarantinedRecords: number;
+  archiveManifestPath: string | null;
   integrity: string;
 };
 
@@ -129,6 +172,8 @@ type ImportCounters = {
   duplicatePlannerCycles: number;
   malformedRecords: number;
   sourceCount: number;
+  conflictRecords: number;
+  quarantinedRecords: number;
 };
 
 type MigrationLock = {
@@ -192,8 +237,55 @@ function normalizeScope(scope: SatMiningHistoryScope): SatMiningHistoryScope {
   };
 }
 
+function migrationScope(scope: SatMiningHistoryScope): SatMiningHistoryScope {
+  const normalized = normalizeScope(scope);
+  const provable =
+    normalized.network !== "legacy-unknown" &&
+    Boolean(normalized.programId) &&
+    Boolean(normalized.mintAddress);
+  if (provable) {
+    return normalized;
+  }
+  return {
+    walletId: normalized.walletId,
+    authority: null,
+    providerId: normalized.providerId,
+    network: "legacy-unknown",
+    genesisHash: null,
+    programId: null,
+    mintAddress: null,
+    mintProgramId: null,
+    manifestDigest: null,
+    protocolVersion: "legacy-unknown",
+  };
+}
+
 function scopeKey(scope: SatMiningHistoryScope): string {
   return sha256(canonicalJson(normalizeScope(scope)));
+}
+
+function bindingKey(scope: SatMiningHistoryScope): string {
+  return sha256(
+    canonicalJson({
+      walletId: scope.walletId,
+      authority: normalizeNullable(scope.authority),
+      providerId: normalizeNullable(scope.providerId),
+    }),
+  );
+}
+
+function chainScopeKey(scope: SatMiningHistoryScope): string {
+  return sha256(
+    canonicalJson({
+      network: scope.network,
+      genesisHash: normalizeNullable(scope.genesisHash),
+      programId: normalizeNullable(scope.programId),
+      mintAddress: normalizeNullable(scope.mintAddress),
+      mintProgramId: normalizeNullable(scope.mintProgramId),
+      manifestDigest: normalizeNullable(scope.manifestDigest),
+      protocolVersion: normalizeNullable(scope.protocolVersion),
+    }),
+  );
 }
 
 function isSatMiningRecentAction(value: unknown): value is SatMiningRecentAction {
@@ -335,9 +427,35 @@ function createSchema(db: DatabaseSync): void {
       value TEXT NOT NULL
     ) STRICT;
 
+    CREATE TABLE IF NOT EXISTS wallet_binding (
+      id INTEGER PRIMARY KEY,
+      binding_key TEXT NOT NULL UNIQUE,
+      wallet_id TEXT NOT NULL,
+      authority TEXT,
+      provider_id TEXT,
+      first_seen_ms INTEGER NOT NULL,
+      last_seen_ms INTEGER NOT NULL
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS chain_scope (
+      id INTEGER PRIMARY KEY,
+      scope_key TEXT NOT NULL UNIQUE,
+      network TEXT NOT NULL,
+      genesis_hash TEXT,
+      program_id TEXT,
+      mint_address TEXT,
+      mint_program_id TEXT,
+      manifest_digest TEXT,
+      protocol_version TEXT,
+      first_seen_ms INTEGER NOT NULL,
+      last_seen_ms INTEGER NOT NULL
+    ) STRICT;
+
     CREATE TABLE IF NOT EXISTS history_scope (
       id INTEGER PRIMARY KEY,
       scope_key TEXT NOT NULL UNIQUE,
+      binding_id INTEGER REFERENCES wallet_binding(id),
+      chain_scope_id INTEGER REFERENCES chain_scope(id),
       wallet_id TEXT NOT NULL,
       authority TEXT,
       provider_id TEXT,
@@ -362,6 +480,9 @@ function createSchema(db: DatabaseSync): void {
       status TEXT NOT NULL CHECK(status IN ('success', 'failure')),
       complete INTEGER,
       message TEXT,
+      logical_key TEXT NOT NULL,
+      previous_digest TEXT,
+      event_digest TEXT NOT NULL,
       source_label TEXT NOT NULL,
       payload_json TEXT NOT NULL
     ) STRICT;
@@ -376,7 +497,9 @@ function createSchema(db: DatabaseSync): void {
       event_id TEXT NOT NULL UNIQUE,
       scope_id INTEGER NOT NULL REFERENCES history_scope(id),
       cycle_id INTEGER NOT NULL,
+      revision INTEGER NOT NULL,
       recorded_at_ms INTEGER NOT NULL,
+      event_digest TEXT NOT NULL,
       source_label TEXT NOT NULL,
       payload_json TEXT NOT NULL
     ) STRICT;
@@ -391,7 +514,9 @@ function createSchema(db: DatabaseSync): void {
       event_id TEXT NOT NULL UNIQUE,
       scope_id INTEGER NOT NULL REFERENCES history_scope(id),
       cycle_id INTEGER NOT NULL,
+      revision INTEGER NOT NULL,
       recorded_at_ms INTEGER NOT NULL,
+      event_digest TEXT NOT NULL,
       source_label TEXT NOT NULL,
       payload_json TEXT NOT NULL
     ) STRICT;
@@ -409,6 +534,9 @@ function createSchema(db: DatabaseSync): void {
       valid_records INTEGER NOT NULL,
       duplicate_records INTEGER NOT NULL,
       malformed_records INTEGER NOT NULL,
+      oldest_at_ms INTEGER,
+      newest_at_ms INTEGER,
+      scope_key TEXT NOT NULL,
       imported_at_ms INTEGER NOT NULL
     ) STRICT;
 
@@ -419,17 +547,305 @@ function createSchema(db: DatabaseSync): void {
       line_number INTEGER,
       byte_offset INTEGER,
       record_sha256 TEXT NOT NULL,
+      record_text TEXT NOT NULL,
       reason TEXT NOT NULL,
       observed_at_ms INTEGER NOT NULL
     ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS migration_conflict (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope_id INTEGER NOT NULL REFERENCES history_scope(id),
+      record_kind TEXT NOT NULL,
+      logical_key TEXT NOT NULL,
+      prior_event_id TEXT NOT NULL,
+      conflicting_event_id TEXT NOT NULL,
+      source_label TEXT NOT NULL,
+      observed_at_ms INTEGER NOT NULL,
+      UNIQUE(record_kind, logical_key, conflicting_event_id)
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS round_execution (
+      scope_id INTEGER NOT NULL REFERENCES history_scope(id),
+      state_key TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      PRIMARY KEY(scope_id, state_key)
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS pending_planner_cycle (
+      scope_id INTEGER NOT NULL REFERENCES history_scope(id),
+      state_key TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      PRIMARY KEY(scope_id, state_key)
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS claim_backlog (
+      scope_id INTEGER NOT NULL REFERENCES history_scope(id),
+      state_key TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      PRIMARY KEY(scope_id, state_key)
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS settlement_state (
+      scope_id INTEGER NOT NULL REFERENCES history_scope(id),
+      state_key TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      PRIMARY KEY(scope_id, state_key)
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS worker_state (
+      scope_id INTEGER NOT NULL REFERENCES history_scope(id),
+      worker_key TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      PRIMARY KEY(scope_id, worker_key)
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS runtime_meta (
+      scope_id INTEGER NOT NULL REFERENCES history_scope(id),
+      meta_key TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      PRIMARY KEY(scope_id, meta_key)
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS audit_artifact (
+      scope_id INTEGER NOT NULL REFERENCES history_scope(id),
+      artifact_key TEXT NOT NULL,
+      artifact_digest TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      PRIMARY KEY(scope_id, artifact_key)
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS submission_record (
+      scope_id INTEGER NOT NULL REFERENCES history_scope(id),
+      request_id TEXT NOT NULL,
+      intent_digest TEXT NOT NULL,
+      state TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      PRIMARY KEY(scope_id, request_id)
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS history_deletion_receipt (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope_id INTEGER NOT NULL REFERENCES history_scope(id),
+      request_digest TEXT NOT NULL UNIQUE,
+      deleted_actions INTEGER NOT NULL,
+      deleted_outcomes INTEGER NOT NULL,
+      deleted_planner_cycles INTEGER NOT NULL,
+      from_at_ms INTEGER,
+      to_at_ms INTEGER,
+      deleted_at_ms INTEGER NOT NULL
+    ) STRICT;
   `);
   const schemaStatement = db.prepare(
-    "INSERT INTO mining_meta(key, value) VALUES('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+    "INSERT INTO mining_meta(key, value) VALUES('schema_version', ?) ON CONFLICT(key) DO NOTHING",
   );
   schemaStatement.run(String(MINING_HISTORY_SCHEMA_VERSION));
   db.prepare(
     "INSERT INTO mining_meta(key, value) VALUES('history_revision', '0') ON CONFLICT(key) DO NOTHING",
   ).run();
+}
+
+function tableExists(db: DatabaseSync, table: string): boolean {
+  return Boolean(
+    db.prepare("SELECT 1 AS found FROM sqlite_master WHERE type='table' AND name=?").get(table),
+  );
+}
+
+function tableColumns(db: DatabaseSync, table: string): Set<string> {
+  if (!tableExists(db, table)) {
+    return new Set();
+  }
+  return new Set(
+    (db.prepare(`PRAGMA table_info("${table}")`).all() as SqlRow[]).map((row) => String(row.name)),
+  );
+}
+
+function addColumnIfMissing(
+  db: DatabaseSync,
+  table: string,
+  column: string,
+  declaration: string,
+): void {
+  if (!tableColumns(db, table).has(column)) {
+    db.exec(`ALTER TABLE "${table}" ADD COLUMN "${column}" ${declaration}`);
+  }
+}
+
+function rebuildHistoryChains(db: DatabaseSync): void {
+  const actionRows = db
+    .prepare(
+      `SELECT sequence, event_id, scope_id, payload_json
+         FROM mining_event
+        ORDER BY scope_id ASC, sequence ASC`,
+    )
+    .all() as SqlRow[];
+  const actionHeads = new Map<number, string | null>();
+  const updateAction = db.prepare(
+    `UPDATE mining_event
+        SET logical_key=?, previous_digest=?, event_digest=?
+      WHERE sequence=?`,
+  );
+  for (const row of actionRows) {
+    const scopeId = Number(row.scope_id);
+    const payloadJson = String(row.payload_json);
+    const parsed = JSON.parse(payloadJson) as unknown;
+    const logicalKey = isSatMiningRecentAction(parsed)
+      ? actionLogicalKey(parsed)
+      : sha256(payloadJson);
+    const previous = actionHeads.get(scopeId) ?? null;
+    const eventDigest = nextHistoryDigest(
+      "action",
+      scopeId,
+      previous,
+      String(row.event_id),
+      payloadJson,
+    );
+    updateAction.run(logicalKey, previous, eventDigest, Number(row.sequence));
+    actionHeads.set(scopeId, eventDigest);
+  }
+  for (const [scopeId, digest] of actionHeads) {
+    if (digest) {
+      writeHistoryHead(db, scopeId, "action", digest);
+    }
+  }
+
+  const rebuildPlanner = (
+    table: "planner_outcome" | "planner_cycle",
+    kind: "outcome" | "planner-cycle",
+  ) => {
+    const rows = db
+      .prepare(
+        `SELECT sequence, event_id, scope_id, cycle_id, payload_json
+           FROM "${table}"
+          ORDER BY scope_id ASC, sequence ASC`,
+      )
+      .all() as SqlRow[];
+    const heads = new Map<number, string | null>();
+    const revisions = new Map<string, number>();
+    const update = db.prepare(`UPDATE "${table}" SET revision=?, event_digest=? WHERE sequence=?`);
+    for (const row of rows) {
+      const scopeId = Number(row.scope_id);
+      const revisionKey = `${scopeId}:${Number(row.cycle_id)}`;
+      const revision = (revisions.get(revisionKey) ?? 0) + 1;
+      const previous = heads.get(scopeId) ?? null;
+      const eventDigest = nextHistoryDigest(
+        kind,
+        scopeId,
+        previous,
+        String(row.event_id),
+        String(row.payload_json),
+      );
+      update.run(revision, eventDigest, Number(row.sequence));
+      revisions.set(revisionKey, revision);
+      heads.set(scopeId, eventDigest);
+    }
+    for (const [scopeId, digest] of heads) {
+      if (digest) {
+        writeHistoryHead(db, scopeId, kind, digest);
+      }
+    }
+  };
+  rebuildPlanner("planner_outcome", "outcome");
+  rebuildPlanner("planner_cycle", "planner-cycle");
+}
+
+function migrateExistingSchema(db: DatabaseSync): void {
+  if (!tableExists(db, "mining_meta")) {
+    return;
+  }
+  const schemaRow = db.prepare("SELECT value FROM mining_meta WHERE key='schema_version'").get() as
+    | SqlRow
+    | undefined;
+  const schemaVersion = Number(schemaRow?.value ?? 1);
+  if (schemaVersion === MINING_HISTORY_SCHEMA_VERSION) {
+    return;
+  }
+  if (schemaVersion !== 1) {
+    throw new Error(`Mining history schema ${schemaVersion || "unknown"} is unsupported`);
+  }
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    addColumnIfMissing(db, "history_scope", "binding_id", "INTEGER");
+    addColumnIfMissing(db, "history_scope", "chain_scope_id", "INTEGER");
+    addColumnIfMissing(db, "mining_event", "logical_key", "TEXT");
+    addColumnIfMissing(db, "mining_event", "previous_digest", "TEXT");
+    addColumnIfMissing(db, "mining_event", "event_digest", "TEXT");
+    addColumnIfMissing(db, "planner_outcome", "revision", "INTEGER");
+    addColumnIfMissing(db, "planner_outcome", "event_digest", "TEXT");
+    addColumnIfMissing(db, "planner_cycle", "revision", "INTEGER");
+    addColumnIfMissing(db, "planner_cycle", "event_digest", "TEXT");
+    addColumnIfMissing(db, "migration_source", "oldest_at_ms", "INTEGER");
+    addColumnIfMissing(db, "migration_source", "newest_at_ms", "INTEGER");
+    addColumnIfMissing(db, "migration_source", "scope_key", "TEXT NOT NULL DEFAULT ''");
+    addColumnIfMissing(db, "corruption_record", "record_text", "TEXT NOT NULL DEFAULT ''");
+    createSchema(db);
+    const scopes = db.prepare("SELECT id FROM history_scope ORDER BY id ASC").all() as SqlRow[];
+    for (const row of scopes) {
+      const id = Number(row.id);
+      const selected = readScope(db, id);
+      const walletKey = bindingKey(selected);
+      const deploymentKey = chainScopeKey(selected);
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO wallet_binding(
+           binding_key, wallet_id, authority, provider_id, first_seen_ms, last_seen_ms
+         ) VALUES(?, ?, ?, ?, ?, ?)
+         ON CONFLICT(binding_key) DO UPDATE SET last_seen_ms=excluded.last_seen_ms`,
+      ).run(
+        walletKey,
+        selected.walletId,
+        selected.authority ?? null,
+        selected.providerId ?? null,
+        now,
+        now,
+      );
+      db.prepare(
+        `INSERT INTO chain_scope(
+           scope_key, network, genesis_hash, program_id, mint_address,
+           mint_program_id, manifest_digest, protocol_version, first_seen_ms,
+           last_seen_ms
+         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(scope_key) DO UPDATE SET last_seen_ms=excluded.last_seen_ms`,
+      ).run(
+        deploymentKey,
+        selected.network,
+        selected.genesisHash ?? null,
+        selected.programId ?? null,
+        selected.mintAddress ?? null,
+        selected.mintProgramId ?? null,
+        selected.manifestDigest ?? null,
+        selected.protocolVersion ?? null,
+        now,
+        now,
+      );
+      const wallet = db
+        .prepare("SELECT id FROM wallet_binding WHERE binding_key=?")
+        .get(walletKey) as SqlRow;
+      const deployment = db
+        .prepare("SELECT id FROM chain_scope WHERE scope_key=?")
+        .get(deploymentKey) as SqlRow;
+      db.prepare("UPDATE history_scope SET binding_id=?, chain_scope_id=? WHERE id=?").run(
+        Number(wallet.id),
+        Number(deployment.id),
+        id,
+      );
+    }
+    rebuildHistoryChains(db);
+    db.prepare("UPDATE mining_meta SET value=? WHERE key='schema_version'").run(
+      String(MINING_HISTORY_SCHEMA_VERSION),
+    );
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function getHistoryRevision(db: DatabaseSync): number {
@@ -450,15 +866,66 @@ function incrementHistoryRevision(db: DatabaseSync): number {
 function ensureScope(db: DatabaseSync, requestedScope: SatMiningHistoryScope): number {
   const scope = normalizeScope(requestedScope);
   const key = scopeKey(scope);
+  const now = Date.now();
+  const walletBindingKey = bindingKey(scope);
+  db.prepare(
+    `INSERT INTO wallet_binding(
+       binding_key, wallet_id, authority, provider_id, first_seen_ms, last_seen_ms
+     ) VALUES(?, ?, ?, ?, ?, ?)
+     ON CONFLICT(binding_key) DO UPDATE SET last_seen_ms=excluded.last_seen_ms`,
+  ).run(
+    walletBindingKey,
+    scope.walletId,
+    scope.authority ?? null,
+    scope.providerId ?? null,
+    now,
+    now,
+  );
+  const walletBinding = db
+    .prepare("SELECT id FROM wallet_binding WHERE binding_key=?")
+    .get(walletBindingKey) as SqlRow | undefined;
+  const bindingId = Number(walletBinding?.id);
+  if (!Number.isSafeInteger(bindingId) || bindingId <= 0) {
+    throw new Error("Failed to resolve Mining Wallet binding");
+  }
+  const deploymentKey = chainScopeKey(scope);
+  db.prepare(
+    `INSERT INTO chain_scope(
+       scope_key, network, genesis_hash, program_id, mint_address,
+       mint_program_id, manifest_digest, protocol_version, first_seen_ms,
+       last_seen_ms
+     ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(scope_key) DO UPDATE SET last_seen_ms=excluded.last_seen_ms`,
+  ).run(
+    deploymentKey,
+    scope.network,
+    scope.genesisHash ?? null,
+    scope.programId ?? null,
+    scope.mintAddress ?? null,
+    scope.mintProgramId ?? null,
+    scope.manifestDigest ?? null,
+    scope.protocolVersion ?? null,
+    now,
+    now,
+  );
+  const chainScope = db
+    .prepare("SELECT id FROM chain_scope WHERE scope_key=?")
+    .get(deploymentKey) as SqlRow | undefined;
+  const chainScopeId = Number(chainScope?.id);
+  if (!Number.isSafeInteger(chainScopeId) || chainScopeId <= 0) {
+    throw new Error("Failed to resolve Mining chain scope");
+  }
   db.prepare(
     `INSERT INTO history_scope(
-       scope_key, wallet_id, authority, provider_id, network, genesis_hash,
-       program_id, mint_address, mint_program_id, manifest_digest,
-       protocol_version, created_at_ms
-     ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       scope_key, binding_id, chain_scope_id, wallet_id, authority, provider_id,
+       network, genesis_hash, program_id, mint_address, mint_program_id,
+       manifest_digest, protocol_version, created_at_ms
+     ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(scope_key) DO NOTHING`,
   ).run(
     key,
+    bindingId,
+    chainScopeId,
     scope.walletId,
     scope.authority ?? null,
     scope.providerId ?? null,
@@ -469,7 +936,7 @@ function ensureScope(db: DatabaseSync, requestedScope: SatMiningHistoryScope): n
     scope.mintProgramId ?? null,
     scope.manifestDigest ?? null,
     scope.protocolVersion ?? null,
-    Date.now(),
+    now,
   );
   const row = db.prepare("SELECT id FROM history_scope WHERE scope_key=?").get(key) as
     | SqlRow
@@ -514,14 +981,76 @@ function plannerCycleEventId(scopeId: number, entry: SatPlannerCycleRecord): str
   return sha256(`cycle\0${scopeId}\0${canonicalJson(entry)}`);
 }
 
+function actionLogicalKey(entry: SatMiningRecentAction): string {
+  return sha256(
+    canonicalJson({
+      at: entry.at,
+      action: entry.action,
+      cycleId: entry.cycleId ?? null,
+      txHash: entry.txHash ?? null,
+      status: entry.status,
+    }),
+  );
+}
+
+function historyHeadKey(scopeId: number, kind: "action" | "outcome" | "planner-cycle"): string {
+  return `history_head:${scopeId}:${kind}`;
+}
+
+function readHistoryHead(
+  db: DatabaseSync,
+  scopeId: number,
+  kind: "action" | "outcome" | "planner-cycle",
+): string | null {
+  const row = db
+    .prepare("SELECT value FROM mining_meta WHERE key=?")
+    .get(historyHeadKey(scopeId, kind)) as SqlRow | undefined;
+  return normalizeNullable(row?.value);
+}
+
+function writeHistoryHead(
+  db: DatabaseSync,
+  scopeId: number,
+  kind: "action" | "outcome" | "planner-cycle",
+  digest: string,
+): void {
+  db.prepare(
+    `INSERT INTO mining_meta(key, value) VALUES(?, ?)
+     ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+  ).run(historyHeadKey(scopeId, kind), digest);
+}
+
+function nextHistoryDigest(
+  kind: "action" | "outcome" | "planner-cycle",
+  scopeId: number,
+  previousDigest: string | null,
+  eventId: string,
+  payloadJson: string,
+): string {
+  return `sha256:${sha256(
+    canonicalJson({
+      kind,
+      scopeId,
+      previousDigest,
+      eventId,
+      payloadSha256: sha256(payloadJson),
+    }),
+  )}`;
+}
+
 function insertAction(
+  db: DatabaseSync,
   statement: StatementSync,
   scopeId: number,
   entry: SatMiningRecentAction,
   sourceLabel: string,
 ): boolean {
+  const eventId = actionEventId(scopeId, entry);
+  const payloadJson = canonicalJson(entry);
+  const previousDigest = readHistoryHead(db, scopeId, "action");
+  const eventDigest = nextHistoryDigest("action", scopeId, previousDigest, eventId, payloadJson);
   const result = statement.run(
-    actionEventId(scopeId, entry),
+    eventId,
     scopeId,
     Date.parse(entry.at),
     entry.action,
@@ -530,52 +1059,100 @@ function insertAction(
     entry.status,
     entry.complete == null ? null : entry.complete ? 1 : 0,
     entry.message ?? null,
+    actionLogicalKey(entry),
+    previousDigest,
+    eventDigest,
     sourceLabel,
-    canonicalJson(entry),
+    payloadJson,
   );
-  return Number(result.changes) > 0;
+  const changed = Number(result.changes) > 0;
+  if (changed) {
+    writeHistoryHead(db, scopeId, "action", eventDigest);
+  }
+  return changed;
 }
 
 function insertOutcome(
+  db: DatabaseSync,
   statement: StatementSync,
   scopeId: number,
   entry: SatPlannerOutcomeMemory,
   sourceLabel: string,
 ): boolean {
+  const eventId = plannerOutcomeEventId(scopeId, entry);
+  const payloadJson = canonicalJson(entry);
+  const previousDigest = readHistoryHead(db, scopeId, "outcome");
+  const eventDigest = nextHistoryDigest("outcome", scopeId, previousDigest, eventId, payloadJson);
+  const revisionRow = db
+    .prepare(
+      "SELECT COALESCE(MAX(revision), 0) AS revision FROM planner_outcome WHERE scope_id=? AND cycle_id=?",
+    )
+    .get(scopeId, entry.cycleId) as SqlRow;
+  const revision = Number(revisionRow.revision ?? 0) + 1;
   const result = statement.run(
-    plannerOutcomeEventId(scopeId, entry),
+    eventId,
     scopeId,
     entry.cycleId,
+    revision,
     Date.parse(entry.recordedAt),
+    eventDigest,
     sourceLabel,
-    canonicalJson(entry),
+    payloadJson,
   );
-  return Number(result.changes) > 0;
+  const changed = Number(result.changes) > 0;
+  if (changed) {
+    writeHistoryHead(db, scopeId, "outcome", eventDigest);
+  }
+  return changed;
 }
 
 function insertPlannerCycle(
+  db: DatabaseSync,
   statement: StatementSync,
   scopeId: number,
   entry: SatPlannerCycleRecord,
   sourceLabel: string,
 ): boolean {
+  const eventId = plannerCycleEventId(scopeId, entry);
+  const payloadJson = canonicalJson(entry);
+  const previousDigest = readHistoryHead(db, scopeId, "planner-cycle");
+  const eventDigest = nextHistoryDigest(
+    "planner-cycle",
+    scopeId,
+    previousDigest,
+    eventId,
+    payloadJson,
+  );
+  const revisionRow = db
+    .prepare(
+      "SELECT COALESCE(MAX(revision), 0) AS revision FROM planner_cycle WHERE scope_id=? AND cycle_id=?",
+    )
+    .get(scopeId, entry.cycleId) as SqlRow;
+  const revision = Number(revisionRow.revision ?? 0) + 1;
   const result = statement.run(
-    plannerCycleEventId(scopeId, entry),
+    eventId,
     scopeId,
     entry.cycleId,
+    revision,
     Date.parse(entry.recordedAt),
+    eventDigest,
     sourceLabel,
-    canonicalJson(entry),
+    payloadJson,
   );
-  return Number(result.changes) > 0;
+  const changed = Number(result.changes) > 0;
+  if (changed) {
+    writeHistoryHead(db, scopeId, "planner-cycle", eventDigest);
+  }
+  return changed;
 }
 
 function actionInsertStatement(db: DatabaseSync): StatementSync {
   return db.prepare(
     `INSERT INTO mining_event(
        event_id, scope_id, occurred_at_ms, action, cycle_id, tx_hash, status,
-       complete, message, source_label, payload_json
-     ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       complete, message, logical_key, previous_digest, event_digest,
+       source_label, payload_json
+     ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(event_id) DO NOTHING`,
   );
 }
@@ -583,8 +1160,9 @@ function actionInsertStatement(db: DatabaseSync): StatementSync {
 function outcomeInsertStatement(db: DatabaseSync): StatementSync {
   return db.prepare(
     `INSERT INTO planner_outcome(
-       event_id, scope_id, cycle_id, recorded_at_ms, source_label, payload_json
-     ) VALUES(?, ?, ?, ?, ?, ?)
+       event_id, scope_id, cycle_id, revision, recorded_at_ms, event_digest,
+       source_label, payload_json
+     ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(event_id) DO NOTHING`,
   );
 }
@@ -592,8 +1170,9 @@ function outcomeInsertStatement(db: DatabaseSync): StatementSync {
 function plannerCycleInsertStatement(db: DatabaseSync): StatementSync {
   return db.prepare(
     `INSERT INTO planner_cycle(
-       event_id, scope_id, cycle_id, recorded_at_ms, source_label, payload_json
-     ) VALUES(?, ?, ?, ?, ?, ?)
+       event_id, scope_id, cycle_id, revision, recorded_at_ms, event_digest,
+       source_label, payload_json
+     ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(event_id) DO NOTHING`,
   );
 }
@@ -667,6 +1246,172 @@ async function fsyncDirectory(directory: string): Promise<void> {
   }
 }
 
+async function copyFileStreaming(sourcePath: string, destinationPath: string): Promise<void> {
+  const source = await fs.open(sourcePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const destination = await fs.open(destinationPath, "wx", 0o440);
+  try {
+    const stat = await source.stat();
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    let offset = 0;
+    while (offset < stat.size) {
+      const { bytesRead } = await source.read(
+        buffer,
+        0,
+        Math.min(buffer.length, stat.size - offset),
+        offset,
+      );
+      if (bytesRead <= 0) {
+        throw new Error(`Mining legacy source changed during archival: ${sourcePath}`);
+      }
+      await destination.write(buffer, 0, bytesRead, offset);
+      offset += bytesRead;
+    }
+    await destination.sync();
+  } finally {
+    await Promise.all([source.close(), destination.close()]);
+  }
+}
+
+async function archiveLegacySources(
+  databasePath: string,
+  migration: SatMiningHistoryMigrationInput | undefined,
+): Promise<string | null> {
+  const selectedPaths = [
+    ...(migration?.sources ?? []).map((source) => source.path),
+    ...(migration?.preservePaths ?? []),
+  ];
+  const uniquePaths = [...new Set(selectedPaths.map((entry) => path.resolve(entry)))];
+  const records = [];
+  for (const sourcePath of uniquePaths) {
+    const stat = await fs.lstat(sourcePath).catch(() => null);
+    if (!stat) {
+      continue;
+    }
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) {
+      throw new Error(`Unsafe Mining legacy source: ${sourcePath}`);
+    }
+    records.push({
+      sourcePath,
+      size: stat.size,
+      mtimeMs: Math.floor(stat.mtimeMs),
+      sha256: await streamSha256(sourcePath),
+    });
+  }
+  if (records.length === 0) {
+    return null;
+  }
+  const archiveDigest = sha256(canonicalJson(records));
+  const archiveDir = path.join(
+    path.dirname(databasePath),
+    "legacy-archive",
+    `migration-${archiveDigest}`,
+  );
+  const manifestPath = path.join(archiveDir, "manifest.json");
+  const existingManifest = await fs.lstat(manifestPath).catch(() => null);
+  if (existingManifest) {
+    if (!existingManifest.isFile() || existingManifest.isSymbolicLink()) {
+      throw new Error(`Unsafe Mining legacy archive manifest: ${manifestPath}`);
+    }
+    return manifestPath;
+  }
+  const available = await fs.statfs(path.dirname(databasePath)).catch(() => null);
+  const requiredBytes = records.reduce((sum, record) => sum + record.size, 0);
+  const availableBytes = available ? Number(available.bavail) * Number(available.bsize) : null;
+  if (availableBytes != null && availableBytes < requiredBytes + 64 * 1024 * 1024) {
+    throw new Error(
+      `Insufficient disk space to preserve Mining legacy history (${requiredBytes} bytes required)`,
+    );
+  }
+  await fs.mkdir(archiveDir, { recursive: true, mode: 0o750 });
+  const archived = [];
+  for (const [index, record] of records.entries()) {
+    const destinationName = `${String(index).padStart(3, "0")}-${path.basename(record.sourcePath)}`;
+    const destinationPath = path.join(archiveDir, destinationName);
+    try {
+      await fs.copyFile(
+        record.sourcePath,
+        destinationPath,
+        constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE,
+      );
+      await fs.chmod(destinationPath, 0o440);
+      const handle = await fs.open(destinationPath, "r");
+      try {
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        throw error;
+      }
+      await fs.rm(destinationPath, { force: true }).catch(() => {});
+      await copyFileStreaming(record.sourcePath, destinationPath);
+    }
+    const archivedDigest = await streamSha256(destinationPath);
+    if (archivedDigest !== record.sha256) {
+      throw new Error(`Mining legacy archive digest mismatch: ${record.sourcePath}`);
+    }
+    archived.push({ ...record, archiveName: destinationName });
+  }
+  const manifest = {
+    schemaVersion: 1,
+    archiveDigest: `sha256:${archiveDigest}`,
+    createdAt: new Date().toISOString(),
+    sources: archived,
+  };
+  const temporaryManifest = `${manifestPath}.${process.pid}.tmp`;
+  await fs.writeFile(temporaryManifest, `${JSON.stringify(manifest, null, 2)}\n`, {
+    mode: 0o440,
+    flag: "wx",
+  });
+  const manifestHandle = await fs.open(temporaryManifest, "r");
+  try {
+    await manifestHandle.sync();
+  } finally {
+    await manifestHandle.close();
+  }
+  await fs.rename(temporaryManifest, manifestPath);
+  await fsyncDirectory(archiveDir);
+  await fsyncDirectory(path.dirname(archiveDir));
+  return manifestPath;
+}
+
+const STALE_MINING_TEMP_PATTERN =
+  /^(?:runtime-store|audit-store|planner-history|action-history|submission-ledger)(?:\.[A-Za-z0-9._-]+)?\.\d+\.\d+\.tmp$/u;
+
+async function quarantineStaleMiningTemps(databasePath: string): Promise<number> {
+  const walletDir = path.dirname(databasePath);
+  const quarantineDir = path.join(walletDir, "corruption-quarantine");
+  let quarantined = 0;
+  for (const name of await fs.readdir(walletDir).catch(() => [])) {
+    if (!STALE_MINING_TEMP_PATTERN.test(name)) {
+      continue;
+    }
+    const candidate = path.join(walletDir, name);
+    const stat = await fs.lstat(candidate);
+    if (
+      !stat.isFile() ||
+      stat.isSymbolicLink() ||
+      stat.nlink !== 1 ||
+      Date.now() - stat.mtimeMs < MINING_HISTORY_MIGRATION_LOCK_STALE_MS
+    ) {
+      continue;
+    }
+    await fs.mkdir(quarantineDir, { recursive: true, mode: 0o750 });
+    const destination = path.join(
+      quarantineDir,
+      `${name}.${sha256(`${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`).slice(0, 16)}`,
+    );
+    await fs.rename(candidate, destination);
+    quarantined += 1;
+  }
+  if (quarantined > 0) {
+    await fsyncDirectory(quarantineDir);
+    await fsyncDirectory(walletDir);
+  }
+  return quarantined;
+}
+
 function recordCorruption(
   db: DatabaseSync,
   params: {
@@ -681,17 +1426,54 @@ function recordCorruption(
   db.prepare(
     `INSERT INTO corruption_record(
        source_label, source_path, line_number, byte_offset, record_sha256,
-       reason, observed_at_ms
-     ) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+       record_text, reason, observed_at_ms
+     ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     params.sourceLabel,
     params.sourcePath,
     params.lineNumber ?? null,
     params.byteOffset ?? null,
     sha256(params.record),
+    params.record,
     params.reason,
     Date.now(),
   );
+}
+
+function recordActionConflict(
+  db: DatabaseSync,
+  scopeId: number,
+  entry: SatMiningRecentAction,
+  sourceLabel: string,
+): boolean {
+  const logicalKey = actionLogicalKey(entry);
+  const conflictingEventId = actionEventId(scopeId, entry);
+  const prior = db
+    .prepare(
+      `SELECT event_id
+         FROM mining_event
+        WHERE scope_id=? AND logical_key=? AND event_id<>?
+        ORDER BY sequence ASC
+        LIMIT 1`,
+    )
+    .get(scopeId, logicalKey, conflictingEventId) as SqlRow | undefined;
+  if (!prior) {
+    return false;
+  }
+  const result = db
+    .prepare(
+      `INSERT INTO migration_conflict(
+         scope_id, record_kind, logical_key, prior_event_id,
+         conflicting_event_id, source_label, observed_at_ms
+       ) VALUES(?, 'action', ?, ?, ?, ?, ?)
+       ON CONFLICT(record_kind, logical_key, conflicting_event_id) DO NOTHING`,
+    )
+    .run(scopeId, logicalKey, String(prior.event_id), conflictingEventId, sourceLabel, Date.now());
+  return Number(result.changes) > 0;
+}
+
+function immediate(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 async function importNdjsonSource(
@@ -720,12 +1502,17 @@ async function importNdjsonSource(
   let duplicateRecords = 0;
   let malformedRecords = 0;
   let lineNumber = 0;
+  let byteOffset = 0;
+  let oldestAtMs: number | null = null;
+  let newestAtMs: number | null = null;
   let batchCount = 0;
   db.exec("BEGIN IMMEDIATE");
   try {
     for await (const line of lines) {
       lineNumber += 1;
       const trimmed = line.trim();
+      const lineByteOffset = byteOffset;
+      byteOffset += Buffer.byteLength(line, "utf8") + 1;
       if (!trimmed) {
         continue;
       }
@@ -739,6 +1526,7 @@ async function importNdjsonSource(
           sourceLabel: source.label,
           sourcePath: source.path,
           lineNumber,
+          byteOffset: lineByteOffset,
           record: trimmed,
           reason: "invalid-json",
         });
@@ -747,13 +1535,22 @@ async function importNdjsonSource(
 
       let inserted = false;
       if (source.kind === "action" && isSatMiningRecentAction(parsed)) {
-        inserted = insertAction(actionStatement, scopeId, parsed, source.label);
+        if (recordActionConflict(db, scopeId, parsed, source.label)) {
+          counters.conflictRecords += 1;
+        }
+        inserted = insertAction(db, actionStatement, scopeId, parsed, source.label);
         counters.importedActions += inserted ? 1 : 0;
         counters.duplicateActions += inserted ? 0 : 1;
+        const atMs = Date.parse(parsed.at);
+        oldestAtMs = oldestAtMs == null ? atMs : Math.min(oldestAtMs, atMs);
+        newestAtMs = newestAtMs == null ? atMs : Math.max(newestAtMs, atMs);
       } else if (source.kind === "planner" && isSatPlannerOutcome(parsed)) {
-        inserted = insertOutcome(outcomeStatement, scopeId, parsed, source.label);
+        inserted = insertOutcome(db, outcomeStatement, scopeId, parsed, source.label);
         counters.importedOutcomes += inserted ? 1 : 0;
         counters.duplicateOutcomes += inserted ? 0 : 1;
+        const atMs = Date.parse(parsed.recordedAt);
+        oldestAtMs = oldestAtMs == null ? atMs : Math.min(oldestAtMs, atMs);
+        newestAtMs = newestAtMs == null ? atMs : Math.max(newestAtMs, atMs);
       } else {
         malformedRecords += 1;
         counters.malformedRecords += 1;
@@ -761,6 +1558,7 @@ async function importNdjsonSource(
           sourceLabel: source.label,
           sourcePath: source.path,
           lineNumber,
+          byteOffset: lineByteOffset,
           record: trimmed,
           reason: `invalid-${source.kind}-record`,
         });
@@ -771,8 +1569,9 @@ async function importNdjsonSource(
       batchCount += 1;
       if (batchCount >= MINING_HISTORY_IMPORT_BATCH_SIZE) {
         db.exec("COMMIT");
-        db.exec("BEGIN IMMEDIATE");
         batchCount = 0;
+        await immediate();
+        db.exec("BEGIN IMMEDIATE");
       }
     }
     db.exec("COMMIT");
@@ -788,8 +1587,8 @@ async function importNdjsonSource(
     `INSERT INTO migration_source(
        source_label, source_path, source_kind, source_size, source_mtime_ms,
        source_sha256, valid_records, duplicate_records, malformed_records,
-       imported_at_ms
-     ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       oldest_at_ms, newest_at_ms, scope_key, imported_at_ms
+     ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(source_label) DO UPDATE SET
        source_path=excluded.source_path,
        source_kind=excluded.source_kind,
@@ -799,6 +1598,9 @@ async function importNdjsonSource(
        valid_records=excluded.valid_records,
        duplicate_records=excluded.duplicate_records,
        malformed_records=excluded.malformed_records,
+       oldest_at_ms=excluded.oldest_at_ms,
+       newest_at_ms=excluded.newest_at_ms,
+       scope_key=excluded.scope_key,
        imported_at_ms=excluded.imported_at_ms`,
   ).run(
     source.label,
@@ -810,9 +1612,19 @@ async function importNdjsonSource(
     validRecords,
     duplicateRecords,
     malformedRecords,
+    oldestAtMs,
+    newestAtMs,
+    String(
+      (
+        db.prepare("SELECT scope_key FROM history_scope WHERE id=?").get(scopeId) as
+          | SqlRow
+          | undefined
+      )?.scope_key ?? "",
+    ),
     Date.now(),
   );
   counters.sourceCount += 1;
+  counters.quarantinedRecords += malformedRecords;
 }
 
 function importRuntimeRecords(
@@ -831,7 +1643,13 @@ function importRuntimeRecords(
         counters.malformedRecords += 1;
         continue;
       }
-      const inserted = insertAction(actionStatement, scopeId, entry, "runtime-store:recentActions");
+      const inserted = insertAction(
+        db,
+        actionStatement,
+        scopeId,
+        entry,
+        "runtime-store:recentActions",
+      );
       counters.importedActions += inserted ? 1 : 0;
       counters.duplicateActions += inserted ? 0 : 1;
     }
@@ -841,6 +1659,7 @@ function importRuntimeRecords(
         continue;
       }
       const inserted = insertOutcome(
+        db,
         outcomeStatement,
         scopeId,
         entry,
@@ -855,6 +1674,7 @@ function importRuntimeRecords(
         continue;
       }
       const inserted = insertPlannerCycle(
+        db,
         cycleStatement,
         scopeId,
         entry,
@@ -863,6 +1683,162 @@ function importRuntimeRecords(
       counters.importedPlannerCycles += inserted ? 1 : 0;
       counters.duplicatePlannerCycles += inserted ? 0 : 1;
     }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function stateKey(entry: unknown, keys: readonly string[], fallbackIndex: number): string {
+  if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+    for (const key of keys) {
+      const value = (entry as Record<string, unknown>)[key];
+      if (typeof value === "string" && value.trim()) {
+        return value.trim();
+      }
+      if (typeof value === "number" && Number.isSafeInteger(value)) {
+        return String(value);
+      }
+    }
+  }
+  return `record-${fallbackIndex}-${sha256(canonicalJson(entry)).slice(0, 24)}`;
+}
+
+function replaceJsonRows(
+  db: DatabaseSync,
+  table: "round_execution" | "pending_planner_cycle" | "claim_backlog" | "settlement_state",
+  scopeId: number,
+  entries: readonly unknown[],
+  keyFields: readonly string[],
+): void {
+  db.prepare(`DELETE FROM ${table} WHERE scope_id=?`).run(scopeId);
+  const statement = db.prepare(
+    `INSERT INTO ${table}(scope_id, state_key, payload_json, updated_at_ms)
+     VALUES(?, ?, ?, ?)`,
+  );
+  const now = Date.now();
+  entries.forEach((entry, index) => {
+    statement.run(scopeId, stateKey(entry, keyFields, index), canonicalJson(entry), now);
+  });
+}
+
+function replaceOperationalStateRows(
+  db: DatabaseSync,
+  scopeId: number,
+  state: SatMiningOperationalState | null | undefined,
+): void {
+  if (!state) {
+    return;
+  }
+  replaceJsonRows(db, "round_execution", scopeId, state.roundExecution ?? [], ["roundKey"]);
+  replaceJsonRows(db, "pending_planner_cycle", scopeId, state.pendingPlannerCycles ?? [], [
+    "cycleId",
+  ]);
+  replaceJsonRows(db, "claim_backlog", scopeId, state.claimBacklog ?? [], ["cycleId"]);
+  replaceJsonRows(
+    db,
+    "settlement_state",
+    scopeId,
+    [
+      ...(state.settlementPageParticipants ?? []).map((entry) => ({
+        stateKey: `participants:${stateKey(entry, ["cacheKey"], 0)}`,
+        kind: "participants",
+        ...(entry && typeof entry === "object" ? entry : { value: entry }),
+      })),
+      ...(state.settlementPageLookupTables ?? []).map((entry) => ({
+        stateKey: `lookup-table:${stateKey(entry, ["cacheKey"], 0)}`,
+        kind: "lookup-table",
+        ...(entry && typeof entry === "object" ? entry : { value: entry }),
+      })),
+    ],
+    ["stateKey"],
+  );
+  db.prepare("DELETE FROM worker_state WHERE scope_id=?").run(scopeId);
+  const workerStatement = db.prepare(
+    `INSERT INTO worker_state(scope_id, worker_key, payload_json, updated_at_ms)
+     VALUES(?, ?, ?, ?)`,
+  );
+  for (const [key, value] of Object.entries(state.workers ?? {}).toSorted(([a], [b]) =>
+    a.localeCompare(b),
+  )) {
+    workerStatement.run(scopeId, key, canonicalJson(value), Date.now());
+  }
+  db.prepare("DELETE FROM runtime_meta WHERE scope_id=?").run(scopeId);
+  const metaStatement = db.prepare(
+    `INSERT INTO runtime_meta(scope_id, meta_key, payload_json, updated_at_ms)
+     VALUES(?, ?, ?, ?)`,
+  );
+  for (const [key, value] of Object.entries(state.runtimeMeta ?? {}).toSorted(([a], [b]) =>
+    a.localeCompare(b),
+  )) {
+    metaStatement.run(scopeId, key, canonicalJson(value), Date.now());
+  }
+}
+
+function upsertAuditArtifactRows(
+  db: DatabaseSync,
+  scopeId: number,
+  artifacts: readonly unknown[],
+): void {
+  const statement = db.prepare(
+    `INSERT INTO audit_artifact(
+       scope_id, artifact_key, artifact_digest, payload_json, updated_at_ms
+     ) VALUES(?, ?, ?, ?, ?)
+     ON CONFLICT(scope_id, artifact_key) DO UPDATE SET
+       artifact_digest=excluded.artifact_digest,
+       payload_json=excluded.payload_json,
+       updated_at_ms=excluded.updated_at_ms`,
+  );
+  artifacts.forEach((artifact, index) => {
+    const payload = canonicalJson(artifact);
+    statement.run(
+      scopeId,
+      stateKey(artifact, ["roundKey", "artifactId", "id"], index),
+      `sha256:${sha256(payload)}`,
+      payload,
+      Date.now(),
+    );
+  });
+}
+
+function upsertSubmissionRows(
+  db: DatabaseSync,
+  scopeId: number,
+  records: readonly unknown[],
+): void {
+  const statement = db.prepare(
+    `INSERT INTO submission_record(
+       scope_id, request_id, intent_digest, state, payload_json, updated_at_ms
+     ) VALUES(?, ?, ?, ?, ?, ?)
+     ON CONFLICT(scope_id, request_id) DO UPDATE SET
+       intent_digest=excluded.intent_digest,
+       state=excluded.state,
+       payload_json=excluded.payload_json,
+       updated_at_ms=excluded.updated_at_ms`,
+  );
+  records.forEach((record, index) => {
+    const candidate =
+      record && typeof record === "object" && !Array.isArray(record)
+        ? (record as Record<string, unknown>)
+        : {};
+    const requestId = stateKey(record, ["requestId"], index);
+    const intentDigest = String(candidate.intentDigest ?? "");
+    const state = String(candidate.state ?? "unknown");
+    statement.run(scopeId, requestId, intentDigest, state, canonicalJson(record), Date.now());
+  });
+}
+
+function importOperationalRecords(
+  db: DatabaseSync,
+  scopeId: number,
+  input: SatMiningHistoryMigrationInput | undefined,
+): void {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    replaceOperationalStateRows(db, scopeId, input?.operationalState);
+    upsertAuditArtifactRows(db, scopeId, input?.auditArtifacts ?? []);
+    upsertSubmissionRows(db, scopeId, input?.submissionRecords ?? []);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
@@ -899,16 +1875,25 @@ function readTimeBounds(
   table: "mining_event" | "planner_outcome",
   scopeId: number,
   timeColumn: "occurred_at_ms" | "recorded_at_ms",
-  windowStartMs: number | null,
+  rangeStartMs: number | null,
+  rangeEndMs: number | null = null,
 ): HistoryTimeBounds {
-  const condition = windowStartMs == null ? "" : ` AND ${timeColumn} >= ?`;
-  const args = windowStartMs == null ? [scopeId] : [scopeId, windowStartMs];
+  const conditions = [];
+  const args = [scopeId];
+  if (rangeStartMs != null) {
+    conditions.push(`${timeColumn}>=?`);
+    args.push(rangeStartMs);
+  }
+  if (rangeEndMs != null) {
+    conditions.push(`${timeColumn}<=?`);
+    args.push(rangeEndMs);
+  }
   const row = db
     .prepare(
       `SELECT COUNT(*) AS count, MIN(${timeColumn}) AS oldest_at_ms,
               MAX(${timeColumn}) AS newest_at_ms
          FROM ${table}
-        WHERE scope_id=?${condition}`,
+        WHERE scope_id=?${conditions.length > 0 ? ` AND ${conditions.join(" AND ")}` : ""}`,
     )
     .get(...args) as SqlRow;
   return {
@@ -921,10 +1906,19 @@ function readTimeBounds(
 function readOutcomeTimeBounds(
   db: DatabaseSync,
   scopeId: number,
-  windowStartMs: number | null,
+  rangeStartMs: number | null,
+  rangeEndMs: number | null = null,
 ): HistoryTimeBounds {
-  const condition = windowStartMs == null ? "" : " AND recorded_at_ms >= ?";
-  const args = windowStartMs == null ? [scopeId] : [scopeId, windowStartMs];
+  const conditions = [];
+  const args = [scopeId];
+  if (rangeStartMs != null) {
+    conditions.push("recorded_at_ms>=?");
+    args.push(rangeStartMs);
+  }
+  if (rangeEndMs != null) {
+    conditions.push("recorded_at_ms<=?");
+    args.push(rangeEndMs);
+  }
   const row = db
     .prepare(
       `WITH ranked AS (
@@ -934,7 +1928,7 @@ function readOutcomeTimeBounds(
                   ORDER BY recorded_at_ms DESC, sequence DESC
                 ) AS rank
            FROM planner_outcome
-          WHERE scope_id=?${condition}
+          WHERE scope_id=?${conditions.length > 0 ? ` AND ${conditions.join(" AND ")}` : ""}
        )
        SELECT COUNT(*) AS count, MIN(recorded_at_ms) AS oldest_at_ms,
               MAX(recorded_at_ms) AS newest_at_ms
@@ -958,6 +1952,7 @@ export class SatMiningHistoryStore {
   private readonly db: DatabaseSync;
   private scope: SatMiningHistoryScope;
   private scopeId: number;
+  private readonly readOnly: boolean;
   private writeChain: Promise<void> = Promise.resolve();
 
   private constructor(
@@ -965,11 +1960,13 @@ export class SatMiningHistoryStore {
     db: DatabaseSync,
     scope: SatMiningHistoryScope,
     scopeId: number,
+    readOnly = false,
   ) {
     this.databasePath = databasePath;
     this.db = db;
     this.scope = scope;
     this.scopeId = scopeId;
+    this.readOnly = readOnly;
   }
 
   static async open(params: OpenMiningHistoryStoreParams): Promise<{
@@ -987,6 +1984,7 @@ export class SatMiningHistoryStore {
     let receipt: SatMiningHistoryMigrationReceipt | null = null;
     const lock = await acquireMigrationLock(`${databasePath}.migration.lock`);
     try {
+      const quarantinedTemps = await quarantineStaleMiningTemps(databasePath);
       if (!existing) {
         const stagingPath = `${databasePath}.migrating`;
         try {
@@ -995,6 +1993,7 @@ export class SatMiningHistoryStore {
           applyDatabasePragmas(db);
           createSchema(db);
           const scopeId = ensureScope(db, normalizedScope);
+          const migrationScopeId = ensureScope(db, migrationScope(normalizedScope));
           const counters: ImportCounters = {
             importedActions: 0,
             duplicateActions: 0,
@@ -1004,11 +2003,14 @@ export class SatMiningHistoryStore {
             duplicatePlannerCycles: 0,
             malformedRecords: 0,
             sourceCount: 0,
+            conflictRecords: 0,
+            quarantinedRecords: quarantinedTemps,
           };
           for (const source of params.migration?.sources ?? []) {
-            await importNdjsonSource(db, scopeId, source, counters);
+            await importNdjsonSource(db, migrationScopeId, source, counters);
           }
-          importRuntimeRecords(db, scopeId, params.migration, counters);
+          importRuntimeRecords(db, migrationScopeId, params.migration, counters);
+          importOperationalRecords(db, scopeId, params.migration);
           incrementHistoryRevision(db);
           const integrityRow = db.prepare("PRAGMA integrity_check").get() as SqlRow;
           const integrity = String(Object.values(integrityRow)[0] ?? "");
@@ -1020,9 +2022,11 @@ export class SatMiningHistoryStore {
           await fs.chmod(stagingPath, 0o660);
           await fs.rename(stagingPath, databasePath);
           await fsyncDirectory(path.dirname(databasePath));
+          const archiveManifestPath = await archiveLegacySources(databasePath, params.migration);
           receipt = {
             schemaVersion: MINING_HISTORY_SCHEMA_VERSION,
             ...counters,
+            archiveManifestPath,
             integrity,
           };
         } catch (error) {
@@ -1033,8 +2037,10 @@ export class SatMiningHistoryStore {
         const migrationDb = new DatabaseSync(databasePath);
         try {
           applyDatabasePragmas(migrationDb);
+          migrateExistingSchema(migrationDb);
           createSchema(migrationDb);
           const scopeId = ensureScope(migrationDb, normalizedScope);
+          const migrationScopeId = ensureScope(migrationDb, migrationScope(normalizedScope));
           const counters: ImportCounters = {
             importedActions: 0,
             duplicateActions: 0,
@@ -1044,11 +2050,14 @@ export class SatMiningHistoryStore {
             duplicatePlannerCycles: 0,
             malformedRecords: 0,
             sourceCount: 0,
+            conflictRecords: 0,
+            quarantinedRecords: quarantinedTemps,
           };
           for (const source of params.migration?.sources ?? []) {
-            await importNdjsonSource(migrationDb, scopeId, source, counters);
+            await importNdjsonSource(migrationDb, migrationScopeId, source, counters);
           }
-          importRuntimeRecords(migrationDb, scopeId, params.migration, counters);
+          importRuntimeRecords(migrationDb, migrationScopeId, params.migration, counters);
+          importOperationalRecords(migrationDb, scopeId, params.migration);
           const changed =
             counters.importedActions +
               counters.importedOutcomes +
@@ -1065,9 +2074,11 @@ export class SatMiningHistoryStore {
           }
           migrationDb.exec("PRAGMA wal_checkpoint(TRUNCATE)");
           if (changed || counters.sourceCount > 0) {
+            const archiveManifestPath = await archiveLegacySources(databasePath, params.migration);
             receipt = {
               schemaVersion: MINING_HISTORY_SCHEMA_VERSION,
               ...counters,
+              archiveManifestPath,
               integrity,
             };
           }
@@ -1081,6 +2092,7 @@ export class SatMiningHistoryStore {
 
     const db = new DatabaseSync(databasePath);
     applyDatabasePragmas(db);
+    migrateExistingSchema(db);
     createSchema(db);
     const scopeId = ensureScope(db, normalizedScope);
     return {
@@ -1089,8 +2101,65 @@ export class SatMiningHistoryStore {
     };
   }
 
+  static async openReadOnly(params: {
+    databasePath: string;
+    scopeKey?: string | null;
+  }): Promise<SatMiningHistoryStore> {
+    const databasePath = path.resolve(params.databasePath);
+    const stat = await fs.lstat(databasePath);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) {
+      throw new Error(`Unsafe Mining history database path: ${databasePath}`);
+    }
+    const db = new DatabaseSync(databasePath, { readOnly: true });
+    try {
+      db.exec(
+        "PRAGMA query_only=ON; PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF; PRAGMA busy_timeout=5000;",
+      );
+      const schema = Number(
+        (
+          db.prepare("SELECT value FROM mining_meta WHERE key='schema_version'").get() as
+            | SqlRow
+            | undefined
+        )?.value ?? 0,
+      );
+      if (schema !== MINING_HISTORY_SCHEMA_VERSION) {
+        throw new Error(`Mining history schema ${schema || "unknown"} is unsupported`);
+      }
+      const row = params.scopeKey
+        ? (db.prepare("SELECT id FROM history_scope WHERE scope_key=?").get(params.scopeKey) as
+            | SqlRow
+            | undefined)
+        : (db
+            .prepare("SELECT id FROM history_scope ORDER BY created_at_ms DESC, id DESC LIMIT 1")
+            .get() as SqlRow | undefined);
+      const scopeId = Number(row?.id);
+      if (!Number.isSafeInteger(scopeId) || scopeId <= 0) {
+        throw new Error("Mining history has no readable scope");
+      }
+      return new SatMiningHistoryStore(databasePath, db, readScope(db, scopeId), scopeId, true);
+    } catch (error) {
+      db.close();
+      throw error;
+    }
+  }
+
   getScope(): SatMiningHistoryScope {
     return { ...this.scope };
+  }
+
+  getScopeKey(): string {
+    return scopeKey(this.scope);
+  }
+
+  listScopes(): Array<{ scopeKey: string; scope: SatMiningHistoryScope }> {
+    return (
+      this.db
+        .prepare("SELECT id, scope_key FROM history_scope ORDER BY created_at_ms ASC, id ASC")
+        .all() as SqlRow[]
+    ).map((row) => ({
+      scopeKey: String(row.scope_key),
+      scope: readScope(this.db, Number(row.id)),
+    }));
   }
 
   getRevision(): number {
@@ -1119,7 +2188,7 @@ export class SatMiningHistoryStore {
       this.db.exec("BEGIN IMMEDIATE");
       try {
         for (const entry of valid) {
-          changed = insertAction(statement, this.scopeId, entry, sourceLabel) || changed;
+          changed = insertAction(this.db, statement, this.scopeId, entry, sourceLabel) || changed;
         }
         if (changed) {
           incrementHistoryRevision(this.db);
@@ -1143,7 +2212,7 @@ export class SatMiningHistoryStore {
       const statement = outcomeInsertStatement(this.db);
       this.db.exec("BEGIN IMMEDIATE");
       try {
-        if (insertOutcome(statement, this.scopeId, entry, sourceLabel)) {
+        if (insertOutcome(this.db, statement, this.scopeId, entry, sourceLabel)) {
           incrementHistoryRevision(this.db);
         }
         this.db.exec("COMMIT");
@@ -1162,7 +2231,7 @@ export class SatMiningHistoryStore {
       const statement = plannerCycleInsertStatement(this.db);
       this.db.exec("BEGIN IMMEDIATE");
       try {
-        if (insertPlannerCycle(statement, this.scopeId, entry, sourceLabel)) {
+        if (insertPlannerCycle(this.db, statement, this.scopeId, entry, sourceLabel)) {
           incrementHistoryRevision(this.db);
         }
         this.db.exec("COMMIT");
@@ -1259,21 +2328,38 @@ export class SatMiningHistoryStore {
 
   queryActions(params?: {
     window?: SatMiningHistoryWindow;
+    fromAt?: string | null;
+    toAt?: string | null;
     limit?: number;
     cursor?: string | null;
+    scopeKey?: string | null;
   }): SatMiningActionPage {
+    const selected = this.resolveScopeSelection(params?.scopeKey);
     const window = params?.window ?? "all";
-    const windowStartMs = historyWindowStartMs(window);
+    const requestedFromMs = params?.fromAt ? Date.parse(params.fromAt) : null;
+    const requestedToMs = params?.toAt ? Date.parse(params.toAt) : null;
+    if (
+      (requestedFromMs != null && !Number.isFinite(requestedFromMs)) ||
+      (requestedToMs != null && !Number.isFinite(requestedToMs)) ||
+      (requestedFromMs != null && requestedToMs != null && requestedFromMs > requestedToMs)
+    ) {
+      throw new Error("Mining action history range is invalid");
+    }
+    const windowStartMs = requestedFromMs ?? historyWindowStartMs(window);
     const cursor = decodeActionCursor(params?.cursor);
     const limit = Math.max(
       1,
       Math.min(MINING_HISTORY_ACTION_PAGE_MAX, Math.floor(params?.limit ?? 100)),
     );
     const conditions = ["scope_id=?"];
-    const args: Array<string | number> = [this.scopeId];
+    const args: Array<string | number> = [selected.scopeId];
     if (windowStartMs != null) {
       conditions.push("occurred_at_ms>=?");
       args.push(windowStartMs);
+    }
+    if (requestedToMs != null) {
+      conditions.push("occurred_at_ms<=?");
+      args.push(requestedToMs);
     }
     if (cursor) {
       conditions.push("(occurred_at_ms<? OR (occurred_at_ms=? AND sequence<?))");
@@ -1293,15 +2379,16 @@ export class SatMiningHistoryStore {
     const bounds = readTimeBounds(
       this.db,
       "mining_event",
-      this.scopeId,
+      selected.scopeId,
       "occurred_at_ms",
       windowStartMs,
+      requestedToMs,
     );
-    const total = readTimeBounds(this.db, "mining_event", this.scopeId, "occurred_at_ms", null);
+    const total = readTimeBounds(this.db, "mining_event", selected.scopeId, "occurred_at_ms", null);
     const last = selectedRows.at(-1);
     return {
-      walletId: this.scope.walletId,
-      scope: this.getScope(),
+      walletId: selected.scope.walletId,
+      scope: selected.scope,
       actions: selectedRows.map(rowToAction),
       nextCursor:
         hasMore && last
@@ -1324,21 +2411,38 @@ export class SatMiningHistoryStore {
 
   queryOutcomes(params?: {
     window?: SatMiningHistoryWindow;
+    fromAt?: string | null;
+    toAt?: string | null;
     limit?: number;
     cursor?: string | null;
+    scopeKey?: string | null;
   }): SatMiningOutcomePage {
+    const selected = this.resolveScopeSelection(params?.scopeKey);
     const window = params?.window ?? "all";
-    const windowStartMs = historyWindowStartMs(window);
+    const requestedFromMs = params?.fromAt ? Date.parse(params.fromAt) : null;
+    const requestedToMs = params?.toAt ? Date.parse(params.toAt) : null;
+    if (
+      (requestedFromMs != null && !Number.isFinite(requestedFromMs)) ||
+      (requestedToMs != null && !Number.isFinite(requestedToMs)) ||
+      (requestedFromMs != null && requestedToMs != null && requestedFromMs > requestedToMs)
+    ) {
+      throw new Error("Mining outcome history range is invalid");
+    }
+    const windowStartMs = requestedFromMs ?? historyWindowStartMs(window);
     const cursor = decodeOutcomeCursor(params?.cursor);
     const limit = Math.max(
       1,
       Math.min(MINING_HISTORY_OUTCOME_PAGE_MAX, Math.floor(params?.limit ?? 100)),
     );
     const conditions = ["scope_id=?"];
-    const args: Array<string | number> = [this.scopeId];
+    const args: Array<string | number> = [selected.scopeId];
     if (windowStartMs != null) {
       conditions.push("recorded_at_ms>=?");
       args.push(windowStartMs);
+    }
+    if (requestedToMs != null) {
+      conditions.push("recorded_at_ms<=?");
+      args.push(requestedToMs);
     }
     if (cursor) {
       conditions.push(
@@ -1375,12 +2479,12 @@ export class SatMiningHistoryStore {
       .all(...args, limit + 1) as SqlRow[];
     const hasMore = rows.length > limit;
     const selectedRows = rows.slice(0, limit);
-    const bounds = readOutcomeTimeBounds(this.db, this.scopeId, windowStartMs);
-    const total = readOutcomeTimeBounds(this.db, this.scopeId, null);
+    const bounds = readOutcomeTimeBounds(this.db, selected.scopeId, windowStartMs, requestedToMs);
+    const total = readOutcomeTimeBounds(this.db, selected.scopeId, null);
     const last = selectedRows.at(-1);
     return {
-      walletId: this.scope.walletId,
-      scope: this.getScope(),
+      walletId: selected.scope.walletId,
+      scope: selected.scope,
       outcomes: selectedRows.map(rowToOutcome),
       nextCursor:
         hasMore && last
@@ -1405,15 +2509,17 @@ export class SatMiningHistoryStore {
   querySeries(params: {
     window: SatMiningHistoryWindow;
     maxPoints: number;
+    scopeKey?: string | null;
   }): SatMiningHistorySeries {
+    const selected = this.resolveScopeSelection(params.scopeKey);
     const windowStartMs = historyWindowStartMs(params.window);
     const maxPoints = Math.max(1, Math.min(2048, Math.floor(params.maxPoints)));
-    const bounds = readOutcomeTimeBounds(this.db, this.scopeId, windowStartMs);
-    const total = readOutcomeTimeBounds(this.db, this.scopeId, null);
+    const bounds = readOutcomeTimeBounds(this.db, selected.scopeId, windowStartMs);
+    const total = readOutcomeTimeBounds(this.db, selected.scopeId, null);
     if (bounds.count === 0) {
       return {
-        walletId: this.scope.walletId,
-        scope: this.getScope(),
+        walletId: selected.scope.walletId,
+        scope: selected.scope,
         outcomes: [],
         totalStoredOutcomeCount: total.count,
         matchingOutcomeCount: 0,
@@ -1428,7 +2534,7 @@ export class SatMiningHistoryStore {
     const endMs = bounds.newestAtMs ?? startMs;
     const bucketMs = Math.max(1, Math.ceil((endMs - startMs + 1) / maxPoints));
     const conditions = ["scope_id=?"];
-    const conditionArgs: Array<string | number> = [this.scopeId];
+    const conditionArgs: Array<string | number> = [selected.scopeId];
     if (windowStartMs != null) {
       conditions.push("recorded_at_ms>=?");
       conditionArgs.push(windowStartMs);
@@ -1458,8 +2564,8 @@ export class SatMiningHistoryStore {
       )
       .all(...conditionArgs, startMs, bucketMs) as SqlRow[];
     return {
-      walletId: this.scope.walletId,
-      scope: this.getScope(),
+      walletId: selected.scope.walletId,
+      scope: selected.scope,
       outcomes: rows.map(rowToOutcome),
       totalStoredOutcomeCount: total.count,
       matchingOutcomeCount: bounds.count,
@@ -1471,14 +2577,11 @@ export class SatMiningHistoryStore {
     };
   }
 
-  async clearHistory(): Promise<void> {
+  async replaceOperationalState(state: SatMiningOperationalState): Promise<void> {
     await this.enqueueWrite(() => {
       this.db.exec("BEGIN IMMEDIATE");
       try {
-        this.db.prepare("DELETE FROM mining_event WHERE scope_id=?").run(this.scopeId);
-        this.db.prepare("DELETE FROM planner_outcome WHERE scope_id=?").run(this.scopeId);
-        this.db.prepare("DELETE FROM planner_cycle WHERE scope_id=?").run(this.scopeId);
-        incrementHistoryRevision(this.db);
+        replaceOperationalStateRows(this.db, this.scopeId, state);
         this.db.exec("COMMIT");
       } catch (error) {
         this.db.exec("ROLLBACK");
@@ -1487,8 +2590,244 @@ export class SatMiningHistoryStore {
     });
   }
 
+  readOperationalState(): SatMiningOperationalState {
+    const rows = (
+      table: "round_execution" | "pending_planner_cycle" | "claim_backlog" | "settlement_state",
+    ): unknown[] =>
+      (
+        this.db
+          .prepare(
+            `SELECT payload_json FROM ${table}
+              WHERE scope_id=?
+              ORDER BY state_key ASC`,
+          )
+          .all(this.scopeId) as SqlRow[]
+      ).map((row) => JSON.parse(String(row.payload_json)) as unknown);
+    const settlement = rows("settlement_state") as Array<Record<string, unknown>>;
+    return {
+      roundExecution: rows("round_execution"),
+      pendingPlannerCycles: rows("pending_planner_cycle"),
+      claimBacklog: rows("claim_backlog"),
+      settlementPageParticipants: settlement.filter((entry) => entry.kind === "participants"),
+      settlementPageLookupTables: settlement.filter((entry) => entry.kind === "lookup-table"),
+      workers: Object.fromEntries(
+        (
+          this.db
+            .prepare(
+              `SELECT worker_key, payload_json FROM worker_state
+                WHERE scope_id=? ORDER BY worker_key ASC`,
+            )
+            .all(this.scopeId) as SqlRow[]
+        ).map((row) => [String(row.worker_key), JSON.parse(String(row.payload_json))]),
+      ),
+      runtimeMeta: Object.fromEntries(
+        (
+          this.db
+            .prepare(
+              `SELECT meta_key, payload_json FROM runtime_meta
+                WHERE scope_id=? ORDER BY meta_key ASC`,
+            )
+            .all(this.scopeId) as SqlRow[]
+        ).map((row) => [String(row.meta_key), JSON.parse(String(row.payload_json))]),
+      ),
+    };
+  }
+
+  async replaceAuditArtifacts(artifacts: readonly unknown[]): Promise<void> {
+    await this.enqueueWrite(() => {
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        this.db.prepare("DELETE FROM audit_artifact WHERE scope_id=?").run(this.scopeId);
+        upsertAuditArtifactRows(this.db, this.scopeId, artifacts);
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  readAuditArtifacts(): unknown[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT payload_json FROM audit_artifact
+            WHERE scope_id=? ORDER BY artifact_key ASC`,
+        )
+        .all(this.scopeId) as SqlRow[]
+    ).map((row) => JSON.parse(String(row.payload_json)) as unknown);
+  }
+
+  async upsertSubmissionRecords(records: readonly unknown[]): Promise<void> {
+    await this.enqueueWrite(() => {
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        upsertSubmissionRows(this.db, this.scopeId, records);
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  async deleteHistory(
+    request: SatMiningHistoryDeletionRequest,
+  ): Promise<SatMiningHistoryDeletionReceipt> {
+    const kinds = [...new Set(request.kinds)];
+    if (
+      kinds.length === 0 ||
+      kinds.some((kind) => !["actions", "outcomes", "planner-cycles"].includes(kind))
+    ) {
+      throw new Error("Mining history deletion requires explicit record kinds");
+    }
+    const fromAtMs = request.fromAt ? Date.parse(request.fromAt) : null;
+    const toAtMs = request.toAt ? Date.parse(request.toAt) : null;
+    if (
+      (fromAtMs != null && !Number.isFinite(fromAtMs)) ||
+      (toAtMs != null && !Number.isFinite(toAtMs)) ||
+      (fromAtMs != null && toAtMs != null && fromAtMs > toAtMs)
+    ) {
+      throw new Error("Mining history deletion range is invalid");
+    }
+    let receipt!: SatMiningHistoryDeletionReceipt;
+    await this.enqueueWrite(() => {
+      const remove = (
+        table: "mining_event" | "planner_outcome" | "planner_cycle",
+        timeColumn: "occurred_at_ms" | "recorded_at_ms",
+      ): number => {
+        const conditions = ["scope_id=?"];
+        const args: Array<number> = [this.scopeId];
+        if (fromAtMs != null) {
+          conditions.push(`${timeColumn}>=?`);
+          args.push(fromAtMs);
+        }
+        if (toAtMs != null) {
+          conditions.push(`${timeColumn}<=?`);
+          args.push(toAtMs);
+        }
+        return Number(
+          this.db.prepare(`DELETE FROM ${table} WHERE ${conditions.join(" AND ")}`).run(...args)
+            .changes,
+        );
+      };
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        const deletedActions = kinds.includes("actions")
+          ? remove("mining_event", "occurred_at_ms")
+          : 0;
+        const deletedOutcomes = kinds.includes("outcomes")
+          ? remove("planner_outcome", "recorded_at_ms")
+          : 0;
+        const deletedPlannerCycles = kinds.includes("planner-cycles")
+          ? remove("planner_cycle", "recorded_at_ms")
+          : 0;
+        const deletedAt = new Date().toISOString();
+        const requestDigest = sha256(
+          canonicalJson({
+            scopeKey: this.getScopeKey(),
+            kinds,
+            fromAtMs,
+            toAtMs,
+            deletedAt,
+          }),
+        );
+        this.db
+          .prepare(
+            `INSERT INTO history_deletion_receipt(
+               scope_id, request_digest, deleted_actions, deleted_outcomes,
+               deleted_planner_cycles, from_at_ms, to_at_ms, deleted_at_ms
+             ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            this.scopeId,
+            requestDigest,
+            deletedActions,
+            deletedOutcomes,
+            deletedPlannerCycles,
+            fromAtMs,
+            toAtMs,
+            Date.parse(deletedAt),
+          );
+        const historyRevision = incrementHistoryRevision(this.db);
+        receipt = {
+          walletId: this.scope.walletId,
+          scopeKey: this.getScopeKey(),
+          deletedActions,
+          deletedOutcomes,
+          deletedPlannerCycles,
+          fromAt: isoOrNull(fromAtMs),
+          toAt: isoOrNull(toAtMs),
+          historyRevision,
+          deletedAt,
+        };
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+    return receipt;
+  }
+
+  async clearHistory(): Promise<void> {
+    await this.deleteHistory({
+      kinds: ["actions", "outcomes", "planner-cycles"],
+    });
+  }
+
+  async diskStatus(): Promise<SatMiningDiskStatus> {
+    const [database, wal, filesystem] = await Promise.all([
+      fs.stat(this.databasePath),
+      fs.stat(`${this.databasePath}-wal`).catch(() => null),
+      fs.statfs(path.dirname(this.databasePath)).catch(() => null),
+    ]);
+    const availableBytes = filesystem ? Number(filesystem.bavail) * Number(filesystem.bsize) : null;
+    const warning =
+      availableBytes == null
+        ? "none"
+        : availableBytes < 256 * 1024 * 1024
+          ? "critical"
+          : availableBytes < 1024 * 1024 * 1024
+            ? "low"
+            : "none";
+    return {
+      databaseBytes: database.size,
+      walBytes: wal?.size ?? 0,
+      availableBytes,
+      warning,
+      optionalCapitalCommitmentsAllowed: warning !== "critical",
+    };
+  }
+
+  queryPlans(): { actions: string; outcomes: string } {
+    const actions = this.db
+      .prepare(
+        `EXPLAIN QUERY PLAN
+         SELECT sequence FROM mining_event
+          WHERE scope_id=?
+          ORDER BY occurred_at_ms DESC, sequence DESC LIMIT 100`,
+      )
+      .all(this.scopeId)
+      .map((row) => Object.values(row as SqlRow).join(" "))
+      .join("\n");
+    const outcomes = this.db
+      .prepare(
+        `EXPLAIN QUERY PLAN
+         SELECT sequence FROM planner_outcome
+          WHERE scope_id=?
+          ORDER BY recorded_at_ms DESC, cycle_id DESC, sequence DESC LIMIT 100`,
+      )
+      .all(this.scopeId)
+      .map((row) => Object.values(row as SqlRow).join(" "))
+      .join("\n");
+    return { actions, outcomes };
+  }
+
   checkpoint(): void {
-    this.db.exec("PRAGMA wal_checkpoint(PASSIVE)");
+    if (!this.readOnly) {
+      this.db.exec("PRAGMA wal_checkpoint(PASSIVE)");
+    }
   }
 
   async flush(): Promise<void> {
@@ -1501,11 +2840,36 @@ export class SatMiningHistoryStore {
   }
 
   close(): void {
-    this.checkpoint();
+    if (!this.readOnly) {
+      this.checkpoint();
+    }
     this.db.close();
   }
 
+  private resolveScopeSelection(requestedScopeKey?: string | null): {
+    scopeId: number;
+    scope: SatMiningHistoryScope;
+  } {
+    if (!requestedScopeKey || requestedScopeKey === this.getScopeKey()) {
+      return { scopeId: this.scopeId, scope: this.getScope() };
+    }
+    if (!/^[a-f0-9]{64}$/u.test(requestedScopeKey)) {
+      throw new Error("Mining history scope key is invalid");
+    }
+    const row = this.db
+      .prepare("SELECT id FROM history_scope WHERE scope_key=?")
+      .get(requestedScopeKey) as SqlRow | undefined;
+    const selectedId = Number(row?.id);
+    if (!Number.isSafeInteger(selectedId) || selectedId <= 0) {
+      throw new Error("Mining history scope is not registered for this Wallet");
+    }
+    return { scopeId: selectedId, scope: readScope(this.db, selectedId) };
+  }
+
   private async enqueueWrite(operation: () => void): Promise<void> {
+    if (this.readOnly) {
+      throw new Error("Mining history store is read-only");
+    }
     const next = this.writeChain.catch(() => {}).then(operation);
     this.writeChain = next;
     await next;

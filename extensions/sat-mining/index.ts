@@ -77,7 +77,11 @@ import {
   summarizeSatMaintenanceCleanupResults,
   type SatMaintenanceCleanupResultSummary,
 } from "./src/maintenance-output.js";
-import { SatMiningHistoryStore, type SatMiningHistoryScope } from "./src/mining-history-store.js";
+import {
+  resolveSatMiningHistoryDatabasePath,
+  SatMiningHistoryStore,
+  type SatMiningHistoryScope,
+} from "./src/mining-history-store.js";
 import { generateSatRoundPlan } from "./src/payloads.js";
 import {
   classifyPlannerRegime,
@@ -177,12 +181,18 @@ import {
   runWithSatSubmissionWorkflow,
 } from "./src/solana-submit.js";
 import { computeMiningStrategy } from "./src/strategy-engine.js";
-import { digestSatSubmissionIntent } from "./src/submission-ledger.js";
+import {
+  digestSatSubmissionIntent,
+  readSatSubmissionRecords,
+  resolveSatSubmissionLedgerPath,
+} from "./src/submission-ledger.js";
 import {
   buildSatValidatorArtifact,
   findSatValidatorArtifact,
   writeSatValidatorArtifact,
 } from "./src/validator-artifacts.js";
+
+type SatGatewayMethodHandler = Parameters<FasedAgentPluginApi["registerGatewayMethod"]>[1];
 
 const SAT_CYCLE_SECONDS = 300;
 const SAT_CYCLES_PER_DAY = Math.ceil((24 * 60 * 60) / SAT_CYCLE_SECONDS);
@@ -881,7 +891,11 @@ const satMiningPlugin = {
       if (!state.auditStorePath) {
         return;
       }
-      await writeSatAuditArtifacts(state.auditStorePath, [...state.auditArtifacts.values()]);
+      const artifacts = [...state.auditArtifacts.values()];
+      if (miningHistoryStore) {
+        await miningHistoryStore.replaceAuditArtifacts(artifacts);
+      }
+      await writeSatAuditArtifacts(state.auditStorePath, artifacts);
     };
     const buildAuditDetails = (epochId?: number, microRoundId?: number): SatAuditArtifact => {
       const key =
@@ -2268,9 +2282,50 @@ const satMiningPlugin = {
         protocolVersion: "sat-v2",
       };
     };
+    const buildMiningOperationalState = () => ({
+      pendingPlannerCycles: Array.from(state.pendingPlannerCycles.values()),
+      roundExecution: Array.from(state.roundExecution.entries()).map(([roundKey, execution]) => ({
+        roundKey,
+        execution,
+      })),
+      claimBacklog: Array.from(state.claimBacklog.values()),
+      settlementPageParticipants: Array.from(state.settlementPageParticipants.entries()).map(
+        ([cacheKey, participants]) => ({
+          cacheKey,
+          participants,
+        }),
+      ),
+      settlementPageLookupTables: Array.from(state.settlementPageLookupTables.entries()).map(
+        ([cacheKey, lookupTableAddress]) => ({ cacheKey, lookupTableAddress }),
+      ),
+      workers: state.workers as unknown as Record<string, unknown>,
+      runtimeMeta: {
+        lastKnownStatus: state.lastKnownStatus,
+        chainTime: state.chainTime,
+        currentRunStartedAt: state.currentRunStartedAt,
+        runStartSolBalanceLamports: state.runStartSolBalanceLamports,
+        runStartSatBalanceRaw: state.runStartSatBalanceRaw,
+        enabledWanted: state.activeConfig.enabled,
+        lastAction: state.lastAction,
+        lastActionTxHash: state.lastActionTxHash,
+        lastFailure: state.lastFailure,
+      },
+    });
+    const ensureMiningDiskCapacityForOptionalCommitment = async () => {
+      if (!miningHistoryStore) {
+        return;
+      }
+      const disk = await miningHistoryStore.diskStatus();
+      if (!disk.optionalCapitalCommitmentsAllowed) {
+        throw new Error(
+          "Mining history storage is critically low. Export or free disk space before adding new capital; reveal, claim, unlock, settlement, stop, and recovery remain available.",
+        );
+      }
+    };
     const persistRecentActions = async () => {
       if (miningHistoryStore) {
         await miningHistoryStore.appendActions(state.recentActions, "runtime");
+        await miningHistoryStore.replaceOperationalState(buildMiningOperationalState());
       } else if (state.actionHistoryStorePath) {
         const seen = new Set(state.actionHistoryEntryKeys);
         const pendingActionHistoryEntries: typeof state.recentActions = [];
@@ -2394,10 +2449,21 @@ const satMiningPlugin = {
       state.runtimeStorePath = nextRuntimeStorePath;
       state.plannerHistoryStorePath = nextPlannerHistoryStorePath;
       state.actionHistoryStorePath = nextActionHistoryStorePath;
-      for (const artifact of await readSatAuditArtifacts(state.auditStorePath)) {
+      const legacyAuditArtifacts = await readSatAuditArtifacts(state.auditStorePath);
+      for (const artifact of legacyAuditArtifacts) {
         state.auditArtifacts.set(artifact.roundKey, artifact);
       }
       const runtimeSummary = await readSatRuntimeSummary(state.runtimeStorePath);
+      const { effectiveEnv } = resolveWalletRuntimeContext();
+      const canonicalWalletId = String(walletId ?? "").trim() || "unattached";
+      const submissionLedgerPath = resolveSatSubmissionLedgerPath({
+        walletId: canonicalWalletId,
+        env: effectiveEnv,
+      });
+      const submissionRecords = await readSatSubmissionRecords({
+        walletId: canonicalWalletId,
+        env: effectiveEnv,
+      });
       state.archivedFailures = runtimeSummary.archivedFailures;
       state.plannerHistory = runtimeSummary.plannerHistory;
       state.plannerCycles = runtimeSummary.plannerCycles;
@@ -2466,6 +2532,28 @@ const satMiningPlugin = {
           runtimeRecentActions: runtimeSummary.recentActions,
           runtimePlannerOutcomes: runtimeSummary.plannerHistory,
           runtimePlannerCycles: runtimeSummary.plannerCycles,
+          preservePaths: [nextRuntimeStorePath, nextAuditStorePath, submissionLedgerPath],
+          operationalState: {
+            pendingPlannerCycles: runtimeSummary.pendingPlannerCycles,
+            roundExecution: runtimeSummary.roundExecution,
+            claimBacklog: runtimeSummary.claimBacklog,
+            settlementPageParticipants: runtimeSummary.settlementPageParticipants,
+            settlementPageLookupTables: runtimeSummary.settlementPageLookupTables,
+            workers: runtimeSummary.workers as unknown as Record<string, unknown>,
+            runtimeMeta: {
+              lastKnownStatus: runtimeSummary.lastKnownStatus,
+              chainTime: runtimeSummary.chainTime,
+              currentRunStartedAt: runtimeSummary.currentRunStartedAt,
+              runStartSolBalanceLamports: runtimeSummary.runStartSolBalanceLamports,
+              runStartSatBalanceRaw: runtimeSummary.runStartSatBalanceRaw,
+              enabledWanted: runtimeSummary.enabledWanted,
+              lastAction: runtimeSummary.lastAction,
+              lastActionTxHash: runtimeSummary.lastActionTxHash,
+              lastFailure: runtimeSummary.lastFailure,
+            },
+          },
+          auditArtifacts: legacyAuditArtifacts,
+          submissionRecords,
         },
       });
       miningHistoryStore = openedHistory.store;
@@ -2474,6 +2562,51 @@ const satMiningPlugin = {
           `[sat-mining] permanent history ledger ready (wallet=${openedHistory.store.getScope().walletId}, importedActions=${openedHistory.migration.importedActions}, importedOutcomes=${openedHistory.migration.importedOutcomes}, malformed=${openedHistory.migration.malformedRecords})`,
         );
       }
+      const ledgerAuditArtifacts = miningHistoryStore.readAuditArtifacts() as SatAuditArtifact[];
+      state.auditArtifacts = new Map(
+        ledgerAuditArtifacts.map((artifact) => [artifact.roundKey, artifact]),
+      );
+      const operational = miningHistoryStore.readOperationalState();
+      state.pendingPlannerCycles = new Map(
+        (operational.pendingPlannerCycles as typeof runtimeSummary.pendingPlannerCycles).map(
+          (entry) => [entry.cycleId, entry],
+        ),
+      );
+      state.roundExecution = new Map(
+        (operational.roundExecution as typeof runtimeSummary.roundExecution).map((entry) => [
+          entry.roundKey,
+          entry.execution,
+        ]),
+      );
+      state.claimBacklog = new Map(
+        (operational.claimBacklog as typeof runtimeSummary.claimBacklog).map((entry) => [
+          entry.cycleId,
+          entry,
+        ]),
+      );
+      state.settlementPageParticipants = new Map(
+        (
+          operational.settlementPageParticipants as typeof runtimeSummary.settlementPageParticipants
+        ).map((entry) => [entry.cacheKey, [...entry.participants]]),
+      );
+      state.settlementPageLookupTables = new Map(
+        (
+          operational.settlementPageLookupTables as typeof runtimeSummary.settlementPageLookupTables
+        ).map((entry) => [entry.cacheKey, entry.lookupTableAddress]),
+      );
+      const operationalWorkers = operational.workers ?? {};
+      for (const workerKey of ["roundWatcher", "epoch", "claim", "recovery"] as const) {
+        const selected = operationalWorkers[workerKey] as
+          | (typeof state.workers)[typeof workerKey]
+          | undefined;
+        if (selected) {
+          state.workers[workerKey] = selected;
+        }
+      }
+      const runtimeMeta = operational.runtimeMeta ?? {};
+      state.lastKnownStatus =
+        (runtimeMeta.lastKnownStatus as typeof state.lastKnownStatus) ?? state.lastKnownStatus;
+      state.chainTime = (runtimeMeta.chainTime as typeof state.chainTime) ?? state.chainTime;
       state.recentActions = miningHistoryStore.readRecentActions(
         SAT_ACTION_HISTORY_RECENT_TAIL_LIMIT,
       );
@@ -2519,12 +2652,22 @@ const satMiningPlugin = {
         execution.epochFinalized = true;
         execution.claimSubmitted = true;
       }
-      state.currentRunStartedAt = runtimeSummary.currentRunStartedAt;
-      state.runStartSolBalanceLamports = runtimeSummary.runStartSolBalanceLamports;
-      state.runStartSatBalanceRaw = runtimeSummary.runStartSatBalanceRaw;
-      state.lastAction = runtimeSummary.lastAction;
-      state.lastActionTxHash = runtimeSummary.lastActionTxHash;
-      state.lastFailure = runtimeSummary.lastFailure;
+      state.currentRunStartedAt =
+        (runtimeMeta.currentRunStartedAt as typeof state.currentRunStartedAt) ??
+        runtimeSummary.currentRunStartedAt;
+      state.runStartSolBalanceLamports =
+        (runtimeMeta.runStartSolBalanceLamports as typeof state.runStartSolBalanceLamports) ??
+        runtimeSummary.runStartSolBalanceLamports;
+      state.runStartSatBalanceRaw =
+        (runtimeMeta.runStartSatBalanceRaw as typeof state.runStartSatBalanceRaw) ??
+        runtimeSummary.runStartSatBalanceRaw;
+      state.lastAction =
+        (runtimeMeta.lastAction as typeof state.lastAction) ?? runtimeSummary.lastAction;
+      state.lastActionTxHash =
+        (runtimeMeta.lastActionTxHash as typeof state.lastActionTxHash) ??
+        runtimeSummary.lastActionTxHash;
+      state.lastFailure =
+        (runtimeMeta.lastFailure as typeof state.lastFailure) ?? runtimeSummary.lastFailure;
       return runtimeSummary;
     };
     const switchWalletScopedPersistence = async (walletId?: string) => {
@@ -3814,6 +3957,7 @@ const satMiningPlugin = {
       }
       if (options?.syncActiveCommit !== false && state.activeWalletAddress) {
         try {
+          await ensureMiningDiskCapacityForOptionalCommitment();
           await submitSatSetActiveCommit(state.activeConfig, {
             lamports: state.activeConfig.commitLamports ?? 250_000_000,
           });
@@ -7584,6 +7728,7 @@ const satMiningPlugin = {
         const lamports = Number((params as { lamports?: number })?.lamports ?? 0);
         const authority = await resolveSatCapitalActionAuthority();
         await maybePrimeSatMinerCapitalAccount(authority);
+        await ensureMiningDiskCapacityForOptionalCommitment();
         const submitted = await submitSatDepositMinerCapital(state.activeConfig, { lamports });
         markActionSuccess("depositMinerCapital", submitted.txHash, null);
         respond(true, jsonOk({ submitted, status: await getMiningStatus() }));
@@ -7620,6 +7765,7 @@ const satMiningPlugin = {
             : true;
         const authority = await resolveSatCapitalActionAuthority();
         await maybePrimeSatMinerCapitalAccount(authority);
+        await ensureMiningDiskCapacityForOptionalCommitment();
         const submitted = await submitSatSetActiveCommit(state.activeConfig, { lamports });
         if (persistConfig) {
           state.activeConfig.commitLamports = lamports;
@@ -7644,6 +7790,7 @@ const satMiningPlugin = {
         if (!/^[0-9a-f]{64}$/i.test(commitmentHex)) {
           throw new Error("cycle commitment must be a 32-byte hexadecimal digest");
         }
+        await ensureMiningDiskCapacityForOptionalCommitment();
         const submitted = await submitSatCommitCycle(state.activeConfig, {
           cycleId,
           commitmentHex,
@@ -8430,12 +8577,50 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.getMiningActionPage", async ({ params, respond }) => {
+    const withMiningHistoryQueryStore = async <T>(
+      input: { walletId?: unknown; scopeId?: unknown },
+      query: (store: SatMiningHistoryStore, scopeKey: string | null) => T | Promise<T>,
+    ): Promise<T> => {
+      const requestedWalletId = String(input.walletId ?? resolveConfiguredWalletId() ?? "").trim();
+      if (!requestedWalletId) {
+        throw new Error("Mining history query requires a Wallet ID");
+      }
+      const requestedScopeKey =
+        typeof input.scopeId === "string" && input.scopeId.trim() ? input.scopeId.trim() : null;
+      const currentWalletId = resolveConfiguredWalletId();
+      if (requestedWalletId === currentWalletId && miningHistoryStore) {
+        return await query(miningHistoryStore, requestedScopeKey);
+      }
+      if (!serviceContext) {
+        throw new Error("Mining history service is not ready");
+      }
+      const { effectiveEnv } = resolveWalletRuntimeContext();
+      const registered = readWalletProviderRegistry(effectiveEnv).wallets.some(
+        (wallet) => wallet.id === requestedWalletId,
+      );
+      if (!registered) {
+        throw new Error(`Mining Wallet ${requestedWalletId} is not registered`);
+      }
+      const queryStore = await SatMiningHistoryStore.openReadOnly({
+        databasePath: resolveSatMiningHistoryDatabasePath(
+          serviceContext.stateDir,
+          requestedWalletId,
+        ),
+        scopeKey: requestedScopeKey,
+      });
       try {
-        if (!miningHistoryStore) {
-          throw new Error("Mining history ledger is not ready");
-        }
+        return await query(queryStore, requestedScopeKey);
+      } finally {
+        queryStore.close();
+      }
+    };
+    const queryMiningActions: SatGatewayMethodHandler = async ({ params, respond }) => {
+      try {
         const input = (params ?? {}) as {
+          walletId?: unknown;
+          scopeId?: unknown;
+          fromAt?: unknown;
+          toAt?: unknown;
           window?: unknown;
           limit?: unknown;
           cursor?: unknown;
@@ -8446,27 +8631,31 @@ const satMiningPlugin = {
         ).includes(windowRaw as SatMiningHistoryWindow)
           ? (windowRaw as SatMiningHistoryWindow)
           : "all";
-        respond(
-          true,
-          jsonOk(
-            miningHistoryStore.queryActions({
-              window,
-              limit: Number(input.limit ?? 100),
-              cursor: typeof input.cursor === "string" ? input.cursor : null,
-            }),
-          ),
+        const page = await withMiningHistoryQueryStore(input, (store, scopeKey) =>
+          store.queryActions({
+            window,
+            fromAt: typeof input.fromAt === "string" ? input.fromAt : null,
+            toAt: typeof input.toAt === "string" ? input.toAt : null,
+            limit: Number(input.limit ?? 100),
+            cursor: typeof input.cursor === "string" ? input.cursor : null,
+            scopeKey,
+          }),
         );
+        respond(true, jsonOk(page));
       } catch (error) {
         respondGatewayError(respond, error);
       }
-    });
+    };
+    api.registerGatewayMethod("sat.getMiningActionPage", queryMiningActions);
+    api.registerGatewayMethod("sat.queryMiningActions", queryMiningActions);
 
-    api.registerGatewayMethod("sat.getMiningOutcomePage", async ({ params, respond }) => {
+    const queryMiningOutcomes: SatGatewayMethodHandler = async ({ params, respond }) => {
       try {
-        if (!miningHistoryStore) {
-          throw new Error("Mining history ledger is not ready");
-        }
         const input = (params ?? {}) as {
+          walletId?: unknown;
+          scopeId?: unknown;
+          fromAt?: unknown;
+          toAt?: unknown;
           window?: unknown;
           limit?: unknown;
           cursor?: unknown;
@@ -8477,16 +8666,46 @@ const satMiningPlugin = {
         ).includes(windowRaw as SatMiningHistoryWindow)
           ? (windowRaw as SatMiningHistoryWindow)
           : "all";
-        respond(
-          true,
-          jsonOk(
-            miningHistoryStore.queryOutcomes({
-              window,
-              limit: Number(input.limit ?? 100),
-              cursor: typeof input.cursor === "string" ? input.cursor : null,
-            }),
-          ),
+        const page = await withMiningHistoryQueryStore(input, (store, scopeKey) =>
+          store.queryOutcomes({
+            window,
+            fromAt: typeof input.fromAt === "string" ? input.fromAt : null,
+            toAt: typeof input.toAt === "string" ? input.toAt : null,
+            limit: Number(input.limit ?? 100),
+            cursor: typeof input.cursor === "string" ? input.cursor : null,
+            scopeKey,
+          }),
         );
+        respond(true, jsonOk(page));
+      } catch (error) {
+        respondGatewayError(respond, error);
+      }
+    };
+    api.registerGatewayMethod("sat.getMiningOutcomePage", queryMiningOutcomes);
+    api.registerGatewayMethod("sat.queryMiningOutcomes", queryMiningOutcomes);
+
+    api.registerGatewayMethod("sat.getMiningHistorySeries", async ({ params, respond }) => {
+      try {
+        const input = (params ?? {}) as {
+          walletId?: unknown;
+          scopeId?: unknown;
+          window?: unknown;
+          maxPoints?: unknown;
+        };
+        const windowRaw = String(input.window ?? "24h").trim();
+        const window: SatMiningHistoryWindow = (
+          ["1h", "24h", "7d", "30d", "1y", "all"] as SatMiningHistoryWindow[]
+        ).includes(windowRaw as SatMiningHistoryWindow)
+          ? (windowRaw as SatMiningHistoryWindow)
+          : "24h";
+        const series = await withMiningHistoryQueryStore(input, (store, scopeKey) =>
+          store.querySeries({
+            window,
+            maxPoints: Number(input.maxPoints ?? SAT_PLANNER_HISTORY_CHART_POINT_LIMIT),
+            scopeKey,
+          }),
+        );
+        respond(true, jsonOk(series));
       } catch (error) {
         respondGatewayError(respond, error);
       }
@@ -8788,6 +9007,7 @@ const satMiningPlugin = {
         state.activeConfig.drainOnly = false;
         if (activeWallet?.address) {
           await maybePrimeSatMinerCapitalAccount(activeWallet.address);
+          await ensureMiningDiskCapacityForOptionalCommitment();
           await submitSatSetActiveCommit(state.activeConfig, {
             lamports: state.activeConfig.commitLamports ?? 250_000_000,
           });
