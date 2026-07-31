@@ -423,6 +423,48 @@ describe("protected Local bootstrap contract", () => {
     ).toThrow(/no exact previous release version/u);
   });
 
+  it("binds rollback health to the restored user systemd Gateway PID", async () => {
+    const observedPids: Array<number | undefined> = [];
+    let systemdProbe = 0;
+    await __testing.waitForLegacyGatewayRestored(
+      {
+        spec: {},
+        legacyGatewayState: { releaseVersion: "0.1.75" },
+      },
+      1_000,
+      {
+        systemctl: (_spec, args) => {
+          if (args[0] !== "show") {
+            return "";
+          }
+          systemdProbe += 1;
+          return [
+            "ActiveState=active",
+            "SubState=running",
+            "Result=success",
+            `MainPID=${systemdProbe === 1 ? 0 : 4242}`,
+          ].join("\n");
+        },
+        probe: async (_spec, expectedPid, _timeoutMs, expectedVersion) => {
+          observedPids.push(expectedPid);
+          return {
+            ok: expectedPid === 4242 && expectedVersion === "0.1.75",
+            detail: `pid=${expectedPid ?? "unknown"}`,
+          };
+        },
+        wait: async () => {},
+        now: (() => {
+          let now = 0;
+          return () => now++;
+        })(),
+      },
+    );
+
+    expect(observedPids).toEqual([4242]);
+    expect(__testing.systemdMainPid({ MainPID: "4242" })).toBe(4242);
+    expect(__testing.systemdMainPid({ MainPID: "0" })).toBeUndefined();
+  });
+
   it("parses restrictive extended ACLs without discarding existing principals", () => {
     const original = __testing.parseDirectoryAcl(`
 user::rwx

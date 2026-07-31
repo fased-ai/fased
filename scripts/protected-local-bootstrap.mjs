@@ -2306,42 +2306,63 @@ function previousLegacyGatewayVersion(transaction) {
   return version;
 }
 
-async function waitForLegacyGatewayRestored(transaction, timeoutMs = 30_000) {
+function systemdMainPid(properties) {
+  const pid = Number.parseInt(String(properties?.MainPID ?? ""), 10);
+  return Number.isSafeInteger(pid) && pid > 1 ? pid : undefined;
+}
+
+async function waitForLegacyGatewayRestored(
+  transaction,
+  timeoutMs = 30_000,
+  {
+    systemctl = userSystemctl,
+    probe = probeGatewayHealth,
+    wait = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+    now = Date.now,
+  } = {},
+) {
   const { spec } = transaction;
   const expectedVersion = previousLegacyGatewayVersion(transaction);
-  const deadline = Date.now() + timeoutMs;
+  const deadline = now() + timeoutMs;
   let lastDetail = "legacy Gateway did not start";
-  while (Date.now() < deadline) {
+  while (now() < deadline) {
     let properties = {};
     try {
       properties = parseSystemdProperties(
-        userSystemctl(spec, [
+        systemctl(spec, [
           "show",
           "fased-gateway.service",
           "--property=ActiveState",
           "--property=SubState",
           "--property=Result",
+          "--property=MainPID",
         ]),
       );
     } catch (error) {
       lastDetail = error.message;
     }
-    const health = await probeGatewayHealth(spec, undefined, 1_500, expectedVersion);
-    if (properties.ActiveState === "active" && health.ok) {
+    const expectedPid = systemdMainPid(properties);
+    const health = expectedPid
+      ? await probe(spec, expectedPid, 1_500, expectedVersion)
+      : {
+          ok: false,
+          detail: `user systemd MainPID=${properties.MainPID || "unknown"}`,
+        };
+    if (properties.ActiveState === "active" && expectedPid && health.ok) {
       return;
     }
     lastDetail = `active=${properties.ActiveState || "unknown"} sub=${properties.SubState || "unknown"} result=${properties.Result || "unknown"}; ${health.detail}`;
     try {
-      userSystemctl(spec, ["reset-failed", "fased-gateway.service"]);
+      systemctl(spec, ["reset-failed", "fased-gateway.service"]);
     } catch {
       // A concurrent reverse dependency may already be replacing the failed job.
     }
     try {
-      userSystemctl(spec, ["start", "--no-block", "fased-gateway.service"]);
+      systemctl(spec, ["start", "--no-block", "fased-gateway.service"]);
     } catch {
       // Poll the unit and exact health below; a concurrent start can supersede this request.
     }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await wait(250);
   }
   fail(
     `legacy Local Gateway did not restore exact release ${expectedVersion} within ${timeoutMs}ms (${lastDetail})`,
@@ -3127,7 +3148,9 @@ export const __testing = Object.freeze({
   restoreLegacyOperatorRuntimeModes,
   sharedApplicationStateDirectoriesForAclVerification,
   protectedLocalGatewayHealthMatches,
+  systemdMainPid,
   waitForLegacyGatewayReleaseHealth,
+  waitForLegacyGatewayRestored,
   previousLegacyGatewayVersion,
   validateProtectedLocalLifecycleResult,
   verifySignerReleaseIdentity,
