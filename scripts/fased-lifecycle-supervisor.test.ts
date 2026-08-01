@@ -683,6 +683,122 @@ describe("stable lifecycle supervisor contract", () => {
     expect(await fsp.readFile(paths.rollbackFloorPath, "utf8")).toBe(`${version}\n`);
   });
 
+  it("continues one matching prepared transaction without invoking crash recovery", async () => {
+    const { paths } = tempPaths();
+    const transaction = request("activateRelease");
+    const selectionReceipt = __testing.createControllerSelectionReceipt(
+      transaction,
+      {
+        releaseCommit: "a".repeat(40),
+        targetManifestSha256: digest("1"),
+        trustPolicySha256: digest("0"),
+        identity: { serverSha256: digest("2"), clientSha256: digest("3") },
+      },
+      randomUUID(),
+    );
+    type RootTransaction = Record<string, unknown>;
+    let rootTransaction: RootTransaction = __testing.rootProductTransactionRecord({
+      request: transaction,
+      phase: "prepared",
+      previousVersion: null,
+      targetControllerReceipt: selectionReceipt,
+      selectionDigest: selectionReceipt.selectionDigest,
+      now,
+    }) as unknown as RootTransaction;
+    const productJournal = {
+      transactionId: transaction.transactionId,
+      version: transaction.version,
+      phase: "prepared",
+      previousVersion: null,
+      selectionDigest: selectionReceipt.selectionDigest,
+      targetControllerReceipt: selectionReceipt,
+      targetReleaseIdentity: null,
+      artifactDigests: {
+        application: null,
+        dependencies: null,
+        signer: null,
+        updaterBundle: null,
+      },
+      journalSha256: digest("4"),
+    };
+    const recover = vi.fn(async () => ({ recovered: true }));
+    const reselect = parseSupervisorRequest({
+      schemaVersion: 3,
+      op: "updateController",
+      transactionId: transaction.transactionId,
+      nonce: randomUUID(),
+      version: transaction.version,
+      clientCapabilities: transaction.clientCapabilities,
+    });
+    const select = vi.fn(async () => ({
+      changed: false,
+      supervisorChanged: false,
+      trustChanged: false,
+      releaseCommit: selectionReceipt.releaseCommit,
+      targetManifestSha256: selectionReceipt.targetManifestSha256,
+      trustPolicySha256: selectionReceipt.trustPolicySha256,
+      identity: {
+        schemaVersion: 1,
+        version: transaction.version,
+        serverSha256: selectionReceipt.controllerServerSha256,
+        clientSha256: selectionReceipt.controllerClientSha256,
+      },
+    }));
+    const forward = vi.fn(async () => ({
+      ok: true,
+      transactionId: transaction.transactionId,
+      version: transaction.version,
+      phase: "active",
+      changed: true,
+    }));
+    const context = __testing.createContext(
+      {
+        profile: "hosting",
+        operatorUid: 1000,
+        operatorGid: 1000,
+        paths,
+      },
+      {
+        readRootProductTransaction: async () => rootTransaction,
+        writeRootProductTransaction: async (_paths: unknown, value: RootTransaction) => {
+          rootTransaction = value;
+          return value;
+        },
+        readControllerProductJournal: async () => productJournal,
+        recoverRootProductTransaction: recover,
+        stageTrustedController: select,
+        probeControllerIdentity: async () => selectionReceipt.controllerInstanceId,
+        cleanupHistoricalControllerCandidates: async () => [],
+        writeControllerSelectionReceipt: async () => selectionReceipt,
+        readControllerSelectionReceipt: async () => selectionReceipt,
+        requestController: forward,
+      },
+    );
+
+    await expect(
+      __testing.handleSupervisorRequest(reselect, context, {
+        controllerInstanceId: selectionReceipt.controllerInstanceId,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      controllerChanged: false,
+      selectionDigest: selectionReceipt.selectionDigest,
+    });
+    await expect(
+      __testing.handleSupervisorRequest(transaction, context, {
+        controllerInstanceId: randomUUID(),
+      }),
+    ).resolves.toMatchObject({ ok: true, phase: "active" });
+    expect(recover).not.toHaveBeenCalled();
+    expect(select).toHaveBeenCalledOnce();
+    expect(forward).toHaveBeenCalledOnce();
+    expect(rootTransaction).toMatchObject({
+      transactionId: transaction.transactionId,
+      version: transaction.version,
+      phase: "active",
+    });
+  });
+
   it("recovers interrupted target A before selecting requested target B", async () => {
     const { paths } = tempPaths();
     await fsp.mkdir(paths.supervisorStateDir, { recursive: true });

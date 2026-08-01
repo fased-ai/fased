@@ -9,7 +9,11 @@ const assetsDir = "/artifacts";
 
 async function copyFixtureAsset(url, destination) {
   const asset = path.basename(new URL(url).pathname);
-  const source = path.join(assetsDir, asset);
+  const releaseSource = path.join("/var/lib/fased-hosting-fixture/release-assets", asset);
+  const source = await fsp
+    .access(releaseSource)
+    .then(() => releaseSource)
+    .catch(() => path.join(assetsDir, asset));
   await fsp.copyFile(source, destination);
   await fsp.chmod(destination, 0o600);
 }

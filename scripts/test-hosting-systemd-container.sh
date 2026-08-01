@@ -129,6 +129,26 @@ dump_fixture_failure() {
       >&2 2>/dev/null || true
     cat /var/lib/fased-host-updater/controller-version.json >&2 2>/dev/null || true
     /usr/local/bin/fased-hosting-systemd-fixture controller-status >&2 2>/dev/null || true
+    echo "==> lifecycle transaction diagnostics" >&2
+    find /var/lib/fased-host-updater -maxdepth 5 -printf "%m %u:%g %p\n" >&2 2>/dev/null || true
+    for record in \
+      /var/lib/fased-host-updater/ctl-transaction.json \
+      /var/lib/fased-host-updater/active-signer-transaction.json \
+      /var/lib/fased-host-updater/supervisor/product-transaction.json \
+      /var/lib/fased-host-updater/supervisor/controller-transaction.json \
+      /var/lib/fased-host-updater/supervisor/receipts/*/*.json; do
+      [[ -f "$record" ]] || continue
+      echo "==> $record" >&2
+      cat "$record" >&2 || true
+    done
+    sha256sum \
+      /opt/fased/host-controller/supervisor/fased-lifecycle-supervisor.mjs \
+      /artifacts/fased-lifecycle-supervisor.mjs \
+      /repo/scripts/fased-lifecycle-supervisor.mjs \
+      >&2 2>/dev/null || true
+    grep -n "sameProductTransaction" \
+      /opt/fased/host-controller/supervisor/fased-lifecycle-supervisor.mjs \
+      >&2 2>/dev/null || true
   ' || true
 }
 

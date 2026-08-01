@@ -3588,6 +3588,23 @@ async function recoverBeforeSupervisorRequest(request, context) {
   if (!active && !productJournal) {
     return null;
   }
+  const sameProductTransaction =
+    active &&
+    productJournal &&
+    (request.op === "updateController" || ROOT_TRANSACTION_OPERATIONS.has(request.op)) &&
+    active.transactionId === request.transactionId &&
+    active.version === request.version &&
+    productJournal.transactionId === request.transactionId &&
+    productJournal.version === request.version;
+  if (sameProductTransaction) {
+    // Every client phase verifies the selected controller again before it
+    // continues a prepared release. Both that idempotent updateController
+    // request and the subsequent prepare/activate/authorize/commit requests
+    // belong to this transaction. Treating either as crash recovery rolls the
+    // controller journal back immediately before it can continue.
+    assertRootProductJournalBinding(active, productJournal);
+    return null;
+  }
   let selectionIsFresh = false;
   if (active?.targetControllerReceipt) {
     try {
@@ -3735,8 +3752,19 @@ async function handleSupervisorRequest(request, context, state) {
       context.rootUid,
     );
     if (existingRootTransaction) {
+      const existingProductJournal =
+        existingRootTransaction.phase === "selected"
+          ? null
+          : await context.readControllerProductJournal(context.paths, context.rootUid);
+      const continuingProductTransaction =
+        existingProductJournal &&
+        existingProductJournal.transactionId === request.transactionId &&
+        existingProductJournal.version === request.version;
+      if (continuingProductTransaction) {
+        assertRootProductJournalBinding(existingRootTransaction, existingProductJournal);
+      }
       if (
-        existingRootTransaction.phase !== "selected" ||
+        (existingRootTransaction.phase !== "selected" && !continuingProductTransaction) ||
         existingRootTransaction.transactionId !== request.transactionId ||
         existingRootTransaction.version !== request.version ||
         existingRootTransaction.selectionDigest !== selectionReceipt.selectionDigest ||

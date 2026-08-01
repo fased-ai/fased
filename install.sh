@@ -1537,6 +1537,7 @@ HOST_SIGNER_TRANSACTION_ACTIVE=0
 HOST_SIGNER_DURABLE_COMMIT_DECISION=0
 HOST_SIGNER_TRANSACTION_ID=""
 HOST_SIGNER_TRANSACTION_VERSION=""
+HOSTING_APPLICATION_BOUNDARY_PREPARED=0
 LOW_MEMORY_SWAP_THRESHOLD_MB=2304
 LOW_MEMORY_SWAP_GB=4
 HOSTING_SWAP_GB=2
@@ -4476,7 +4477,9 @@ reexec_as_app_user() {
   copy_bootstrap_ssh_keys_for_target_user "$target_user" "$target_home"
   if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
     prepare_hosting_root_prerequisites "$target_user" "$target_repo_dir"
-    install_fixed_host_gateway_service "$target_repo_dir"
+    if [[ "$HOSTING_APPLICATION_BOUNDARY_PREPARED" -ne 1 ]]; then
+      install_fixed_host_gateway_service "$target_repo_dir"
+    fi
     # Establish the shared root/app/Gateway state boundary before onboarding writes
     # configuration, wallet, plugin, or network state. Reconcile it again before the
     # coordinated restart because onboarding may create additional descendants.
@@ -4986,6 +4989,16 @@ bootstrap_repo_for_target_user() {
       exit 1
     }
     install -d -m 0755 -o "$target_user" -g "$target_user" "$target_parent"
+    if [[ -d "$target_install_dir/.git" && ! -L "$target_install_dir" ]]; then
+      local existing_head=""
+      local existing_package_version=""
+      existing_head="$(runuser -u "$target_user" -- git -C "$target_install_dir" rev-parse HEAD 2>/dev/null || true)"
+      existing_package_version="$(awk -F'"' '/^[[:space:]]*"version"[[:space:]]*:/ { print $4; exit }' "$target_install_dir/package.json" 2>/dev/null || true)"
+      if [[ "$existing_head" == "$attested_commit" && "$existing_package_version" == "$HOSTING_RELEASE" ]]; then
+        echo "== Root bootstrap: exact app checkout v${HOSTING_RELEASE} already prepared for $target_user =="
+        return 0
+      fi
+    fi
     runuser -u "$target_user" -- rm -rf -- "$tagged_staging"
     echo "== Root bootstrap: preparing exact app checkout v${HOSTING_RELEASE} as $target_user =="
     runuser -u "$target_user" -- git clone \
@@ -5625,6 +5638,34 @@ reconcile_hosting_shared_state() {
   )
   [[ ! -f "$state_dir/fased.json" ]] || chmod 0660 "$state_dir/fased.json"
   [[ ! -f "$state_dir/install.json" ]] || chmod 0660 "$state_dir/install.json"
+}
+
+prepare_fresh_hosting_application_boundary() {
+  local target_user="${FASED_INSTALL_USER:-app}"
+  local target_home=""
+  local target_install_dir="${FASED_INSTALL_DIR:-$INSTALL_BASE_DIR}"
+  local target_repo_dir=""
+  target_home="$(getent passwd "$target_user" | cut -d: -f6)"
+  [[ -n "$target_home" ]] || target_home="/home/$target_user"
+  if [[ -z "${FASED_INSTALL_DIR:-}" && "$target_install_dir" == "$HOME/fased" && "$target_home" != "$HOME" ]]; then
+    target_install_dir="$target_home/fased"
+  fi
+
+  if [[ -f /etc/systemd/system/fased-gateway.service && -d "$target_home/.fased" ]]; then
+    return 0
+  fi
+
+  echo "== Root bootstrap: establishing the Hosting application boundary before signer activation =="
+  bootstrap_repo_for_target_user "$target_user" "$target_install_dir"
+  target_repo_dir="$(resolve_fased_dir_from_base "$target_install_dir" || true)"
+  [[ -n "$target_repo_dir" ]] || {
+    echo "Cannot establish the fresh Hosting application boundary." >&2
+    return 1
+  }
+  configure_target_user_fased_shell_dir "$target_user" "$target_home" "$target_repo_dir"
+  install_fixed_host_gateway_service "$target_repo_dir"
+  reconcile_hosting_shared_state "$target_home"
+  HOSTING_APPLICATION_BOUNDARY_PREPARED=1
 }
 
 run_tailscale_auth_from_private_file() (
@@ -6559,6 +6600,7 @@ if [[ "$(id -u)" -eq 0 ]]; then
   install_missing_deps_as_root_if_needed
   best_effort_enable_root_host_time_sync
   if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
+    prepare_fresh_hosting_application_boundary
     install_host_signer_and_updater_services
     migrate_legacy_hosted_signer_if_needed
   fi
