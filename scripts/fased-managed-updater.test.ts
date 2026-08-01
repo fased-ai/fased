@@ -95,6 +95,37 @@ function transactionOperations(events: string[], overrides: Record<string, unkno
 }
 
 describe("stable managed updater", () => {
+  it("accepts only the exact root-owned Hosting predecessor release boundary", () => {
+    const paths = { releasesDir: "/home/app/.fased/runtime/releases" };
+    const journal = {
+      ...transaction(),
+      targetRoot: "/home/app/.fased/runtime/releases/1.2.3",
+      previousRoot: "/opt/fased/host-application/releases/1.2.2",
+      nextManifest: {
+        profile: "hosting",
+        runtime: { activeVersion: "1.2.3" },
+      },
+      previousManifest: {
+        profile: "hosting",
+        runtime: {
+          activeVersion: "1.2.2",
+          releasesDir: "/opt/fased/host-application/releases",
+        },
+      },
+    };
+
+    expect(__testing.validateHostedTransactionJournal(paths, journal)).toMatchObject({
+      targetRoot: "/home/app/.fased/runtime/releases/1.2.3",
+      previousRoot: "/opt/fased/host-application/releases/1.2.2",
+    });
+    expect(() =>
+      __testing.validateHostedTransactionJournal(paths, {
+        ...journal,
+        previousRoot: "/opt/fased/host-application/escaped/1.2.2",
+      }),
+    ).toThrow("previousRoot is outside the managed releases directories");
+  });
+
   it("reports the exact published-updater bridge boundary for Linux Local installs", () => {
     expect(
       __testing.protectedLocalMigrationRequirement({

@@ -2017,6 +2017,30 @@ function managedReleaseRoot(paths, value, label) {
   return resolved;
 }
 
+function managedPreviousReleaseRoot(paths, value, previousManifest) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error("previousRoot is missing from the hosted update journal");
+  }
+  const resolved = path.resolve(value);
+  const stagedReleasesDir = path.resolve(paths.releasesDir);
+  if (path.dirname(resolved) === stagedReleasesDir) {
+    return resolved;
+  }
+
+  const profile = previousManifest?.profile;
+  const declaredReleasesDir = path.resolve(String(previousManifest?.runtime?.releasesDir ?? ""));
+  const hostingReleasesDir = "/opt/fased/host-application/releases";
+  const protectedLocalReleasesPattern =
+    /^\/opt\/fased\/local\/[a-f0-9]{16}\/application\/releases$/u;
+  const declaredRootIsValid =
+    (profile === "hosting" && declaredReleasesDir === hostingReleasesDir) ||
+    (profile === "protected-local" && protectedLocalReleasesPattern.test(declaredReleasesDir));
+  if (!declaredRootIsValid || path.dirname(resolved) !== declaredReleasesDir) {
+    throw new Error("previousRoot is outside the managed releases directories");
+  }
+  return resolved;
+}
+
 function validateHostedTransactionJournal(paths, value) {
   if (
     !value ||
@@ -2035,8 +2059,6 @@ function validateHostedTransactionJournal(paths, value) {
   ) {
     throw new Error("hosted application update journal contains an invalid release version");
   }
-  const targetRoot = managedReleaseRoot(paths, value.targetRoot, "targetRoot");
-  const previousRoot = managedReleaseRoot(paths, value.previousRoot, "previousRoot");
   if (
     !isRootManagedProfile(value.nextManifest?.profile) ||
     value.previousManifest?.profile !== value.nextManifest?.profile ||
@@ -2045,6 +2067,12 @@ function validateHostedTransactionJournal(paths, value) {
   ) {
     throw new Error("hosted application update journal manifests do not match the transaction");
   }
+  const targetRoot = managedReleaseRoot(paths, value.targetRoot, "targetRoot");
+  const previousRoot = managedPreviousReleaseRoot(
+    paths,
+    value.previousRoot,
+    value.previousManifest,
+  );
   const signerRelease =
     value.signerRelease == null
       ? null
