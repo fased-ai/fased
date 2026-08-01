@@ -7427,7 +7427,14 @@ async function activateSignerRelease(request, context) {
     }
     let rollbackError = null;
     try {
-      await rollbackSignerRelease(request, context, { preserveGatewayGate: true });
+      await rollbackSignerRelease(request, context, {
+        // A supervised controller owns the complete product transaction. Its
+        // failure response is not handed back to an outer application
+        // coordinator, so rollback must also restore the previous Gateway.
+        // Legacy unsupervised callers still restore the application first and
+        // therefore keep the Gateway gated until their outer rollback ends.
+        preserveGatewayGate: !context.supervised,
+      });
     } catch (caught) {
       rollbackError = caught;
     }

@@ -3724,6 +3724,31 @@ describe("root-owned hosted updater protocol", () => {
     expect(fs.existsSync(paths.signerGatePath)).toBe(true);
   });
 
+  it("restores the previous Gateway when supervised signer activation rolls back", async () => {
+    const { context, events, paths } = await createFixture({
+      supervised: true,
+      runningControllerVersion: "1.2.3",
+    });
+    const prepareRequest = supervisedRequest("prepareRelease", TRANSACTION_ONE, "1.2.3");
+    await __testing.prepareSignerRelease(prepareRequest, context);
+    context.startSignerV2 = async () => {
+      throw new Error("injected supervised signer activation failure");
+    };
+
+    await expect(
+      __testing.activateSignerRelease(
+        parseUpdateRequest({ ...prepareRequest, op: "activateRelease" }),
+        context,
+      ),
+    ).rejects.toThrow("injected supervised signer activation failure");
+    expect(await fsp.readFile(paths.signerPath, "utf8")).toBe("old-signer\n");
+    expect(await fsp.readFile(paths.versionPath, "utf8")).toBe("1.2.2\n");
+    expect(fs.existsSync(paths.journalPath)).toBe(false);
+    expect(fs.existsSync(paths.gatewayGatePath)).toBe(false);
+    expect(fs.existsSync(paths.signerGatePath)).toBe(false);
+    expect(events).toContain("start-gateway");
+  });
+
   it("rejects signer master-key replacement and restores all signer-private files", async () => {
     const { context, paths } = await createFixture();
     await __testing.prepareSignerRelease(
