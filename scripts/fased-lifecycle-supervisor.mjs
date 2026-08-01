@@ -1733,7 +1733,7 @@ async function durableReceipt(paths, request, result) {
   return receipt;
 }
 
-async function readDurableReceipt(paths, request) {
+async function readDurableReceipt(paths, request, allowedOperations = [request.op]) {
   try {
     const receipt = JSON.parse(
       await fsp.readFile(
@@ -1744,7 +1744,7 @@ async function readDurableReceipt(paths, request) {
     if (
       receipt?.schemaVersion !== 1 ||
       receipt.transactionId !== request.transactionId ||
-      receipt.operation !== request.op ||
+      !allowedOperations.includes(receipt.operation) ||
       receipt.version !== request.version
     ) {
       return null;
@@ -3166,7 +3166,7 @@ function renderBoundaryUnits(configuration, nodeBinary) {
       : `fased-local/${configuration.instanceId}/controller`;
   const controllerWrites =
     configuration.profile === "hosting"
-      ? `/opt/fased/host-application /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-controller /etc/systemd/system ${unitPath(appStateDir)}`
+      ? `/opt/fased/host-application /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-controller /usr/local/libexec /etc/systemd/system ${unitPath(appStateDir)}`
       : `/opt/fased/local/${configuration.instanceId} /var/lib/fased-local/${configuration.instanceId}/signer /var/lib/fased-local/${configuration.instanceId}/controller ${unitPath(appStateDir)} /run/fased-local-controller-worker/${configuration.instanceId} /etc/systemd/system`;
   const controllerReadOnly =
     configuration.profile === "hosting"
@@ -3628,6 +3628,22 @@ async function recoverBeforeSupervisorRequest(request, context) {
 
 async function handleSupervisorRequest(request, context, state) {
   await recoverBeforeSupervisorRequest(request, context);
+  if (request.op === "rollbackRelease") {
+    const recovered = await readDurableReceipt(context.paths, request, [
+      "rollbackRelease",
+      "recoverRelease",
+    ]);
+    if (recovered?.outcome === "rolled-back") {
+      return {
+        ok: true,
+        transactionId: request.transactionId,
+        version: request.version,
+        phase: "rolled-back",
+        changed: false,
+        replayed: true,
+      };
+    }
+  }
   if (request.op === "applyRelease") {
     const receipt = await readDurableReceipt(context.paths, request);
     if (

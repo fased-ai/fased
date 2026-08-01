@@ -683,6 +683,58 @@ describe("stable lifecycle supervisor contract", () => {
     expect(await fsp.readFile(paths.rollbackFloorPath, "utf8")).toBe(`${version}\n`);
   });
 
+  it("replays rollback after restart recovery without using the stale process receipt", async () => {
+    const { paths } = tempPaths();
+    const rollback = request("rollbackRelease");
+    const receiptsDir = path.join(paths.supervisorStateDir, "receipts");
+    await fsp.mkdir(receiptsDir, { recursive: true });
+    await fsp.writeFile(
+      path.join(receiptsDir, `${rollback.transactionId}.json`),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        transactionId: rollback.transactionId,
+        operation: "recoverRelease",
+        version: rollback.version,
+        outcome: "rolled-back",
+        controllerChanged: false,
+        phase: "rolled-back",
+        release: null,
+        recordedAt: new Date(now).toISOString(),
+      })}\n`,
+    );
+    const readSelection = vi.fn(async () => {
+      throw new Error("stale process-bound receipt must not be dispatched");
+    });
+    const forward = vi.fn(async () => {
+      throw new Error("recovered rollback must not reach the target controller");
+    });
+    const context = __testing.createContext(
+      {
+        profile: "hosting",
+        operatorUid: 1000,
+        operatorGid: 1000,
+        paths,
+      },
+      {
+        readControllerSelectionReceipt: readSelection,
+        requestController: forward,
+      },
+    );
+
+    await expect(
+      __testing.handleSupervisorRequest(rollback, context, {
+        controllerInstanceId: randomUUID(),
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      phase: "rolled-back",
+      changed: false,
+      replayed: true,
+    });
+    expect(readSelection).not.toHaveBeenCalled();
+    expect(forward).not.toHaveBeenCalled();
+  });
+
   it("continues one matching prepared transaction without invoking crash recovery", async () => {
     const { paths } = tempPaths();
     const transaction = request("activateRelease");
@@ -1141,6 +1193,9 @@ describe("stable lifecycle supervisor contract", () => {
     );
     expect(units.controller.content).not.toMatch(
       /^ReadWritePaths=.*\/opt\/fased\/host-controller/mu,
+    );
+    expect(units.controller.content).toContain(
+      "ReadWritePaths=/opt/fased/host-application /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-controller /usr/local/libexec /etc/systemd/system",
     );
     expect(units.controller.content).toContain("AmbientCapabilities=CAP_SETUID CAP_SETGID");
     expect(units.supervisor.content).toContain(

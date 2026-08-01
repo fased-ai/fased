@@ -147,7 +147,7 @@ describe("attested Hosting installer artifact layout", () => {
     expect(installer).toContain(
       "ProtectHome=read-only\n" +
         "ProtectSystem=strict\n" +
-        "ReadWritePaths=/opt/fased/host-application /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-controller /etc/systemd/system ${target_home}/.fased",
+        "ReadWritePaths=/opt/fased/host-application /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-controller /usr/local/libexec /etc/systemd/system ${target_home}/.fased",
     );
     expect(installer).toContain(
       "ReadOnlyPaths=/opt/fased/host-controller /var/lib/fased-host-updater/controller-version.json /var/lib/fased-host-updater/supervisor /etc/systemd/system/fased-host-controller.service /etc/systemd/system/fased-host-controller.service.d /etc/systemd/system/fased-host-updater.service /etc/systemd/system/fased-host-updater.service.d",
