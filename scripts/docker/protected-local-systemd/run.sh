@@ -348,6 +348,286 @@ verify_wallet() {
     --wallet-id "$wallet_id"
 }
 
+lifecycle_socket_requests() {
+  local socket_path="$1"
+  local operation="$2"
+  local transaction_id="$3"
+  local release_version="$4"
+  local request_count="$5"
+  local output_path="$6"
+  env \
+    FASED_FIXTURE_SOCKET_PATH="$socket_path" \
+    FASED_FIXTURE_OPERATION="$operation" \
+    FASED_FIXTURE_TRANSACTION_ID="$transaction_id" \
+    FASED_FIXTURE_RELEASE_VERSION="$release_version" \
+    FASED_FIXTURE_REQUEST_COUNT="$request_count" \
+    /usr/local/bin/node --input-type=module >"$output_path" <<'EOF_LIFECYCLE_REQUEST'
+import net from "node:net";
+
+const socketPath = process.env.FASED_FIXTURE_SOCKET_PATH;
+const operation = process.env.FASED_FIXTURE_OPERATION;
+const transactionId = process.env.FASED_FIXTURE_TRANSACTION_ID;
+const version = process.env.FASED_FIXTURE_RELEASE_VERSION;
+const requestCount = Number(process.env.FASED_FIXTURE_REQUEST_COUNT);
+const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+async function requestOnce() {
+  return await new Promise((resolve, reject) => {
+    const socket = net.createConnection({ path: socketPath });
+    socket.setEncoding("utf8");
+    socket.setTimeout(120_000);
+    let body = "";
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      reject(error);
+    };
+    socket.once("connect", () => {
+      socket.write(`${JSON.stringify({ schemaVersion: 2, op: operation, transactionId, version })}\n`);
+    });
+    socket.on("data", (chunk) => {
+      body += chunk;
+      const newline = body.indexOf("\n");
+      if (newline < 0 || settled) return;
+      try {
+        settled = true;
+        const response = JSON.parse(body.slice(0, newline));
+        socket.destroy();
+        resolve(response);
+      } catch (error) {
+        fail(error);
+      }
+    });
+    socket.once("timeout", () => fail(new Error(`${operation} timed out`)));
+    socket.once("error", fail);
+    socket.once("close", () => {
+      if (!settled) fail(new Error(`${operation} closed without a response`));
+    });
+  });
+}
+
+async function requestWithRetry() {
+  let lastError;
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    try {
+      return await requestOnce();
+    } catch (error) {
+      lastError = error;
+      if (!new Set(["ENOENT", "ECONNREFUSED", "ECONNRESET", "EPIPE"]).has(error?.code)) {
+        throw error;
+      }
+      await delay(100);
+    }
+  }
+  throw lastError;
+}
+
+const responses = [];
+for (let index = 0; index < requestCount; index += 1) {
+  responses.push(await requestWithRetry());
+  if (index + 1 < requestCount) await delay(500);
+}
+process.stdout.write(`${JSON.stringify(responses)}\n`);
+EOF_LIFECYCLE_REQUEST
+}
+
+verify_supervised_controller_a_to_b() {
+  local instance="$1"
+  local controller_state="/var/lib/fased-local/$instance/controller"
+  local controller_root="/opt/fased/local/$instance/controller"
+  local controller_unit="fased-local-controller-worker-$instance.service"
+  local supervisor_unit="fased-local-controller-$instance.service"
+  local public_socket="/run/fased-local-controller/$instance/request.sock"
+  local private_socket="/run/fased-local-controller-worker/$instance/controller.sock"
+  local target_generation=""
+  local predecessor_generation="$controller_root/releases/v$legacy_version"
+  local supervisor_identity="$controller_state/supervisor/controller-version.json"
+  local product_identity="$controller_state/controller-version.json"
+  local preservation_manifest=/tmp/controller-a-to-b-preservation.sha256
+  local transaction_id=""
+  local status_transaction_id=""
+  local selection_digest=""
+  local selection_receipt=""
+  local target_manifest_sha=""
+  local target_server_sha=""
+  local target_client_sha=""
+  local controller_pid=""
+  local controller_drop_in="/etc/systemd/system/$controller_unit.d"
+  local supervisor_drop_in="/etc/systemd/system/$supervisor_unit.d"
+  local failure_marker="$controller_state/fixture-controller-restart-failure"
+  local failure_script=/usr/local/libexec/fased-fixture-controller-fail-once
+  local failure_override="$controller_drop_in/99-fixture-fail-once.conf"
+
+  target_generation="$(readlink -f "$controller_root/current")"
+  test "$target_generation" = "$controller_root/releases/v$version"
+  test -f "$supervisor_identity"
+  test -d "$controller_drop_in"
+  test -d "$supervisor_drop_in"
+  test -z "$(find "$controller_drop_in" "$supervisor_drop_in" -mindepth 1 -maxdepth 1 -print -quit)"
+
+  install -d -m 2770 -o testop -g "fscf-$instance" \
+    "$state/sat-mining/wallets/agent" "$state/extensions"
+  runuser -u testop -- env FASED_FIXTURE_MINING_LEDGER="$state/sat-mining/wallets/agent/mining.sqlite" \
+    /usr/local/bin/node --input-type=module <<'EOF_MINING_LEDGER'
+import { DatabaseSync } from "node:sqlite";
+const database = new DatabaseSync(process.env.FASED_FIXTURE_MINING_LEDGER);
+try {
+  database.exec(
+    "CREATE TABLE IF NOT EXISTS mining_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);" +
+      "INSERT OR REPLACE INTO mining_meta(key,value) VALUES('schema_version','1'),('history_revision','7');",
+  );
+} finally {
+  database.close();
+}
+EOF_MINING_LEDGER
+  chown testop:"fscf-$instance" "$state/sat-mining/wallets/agent/mining.sqlite"
+  chmod 0660 "$state/sat-mining/wallets/agent/mining.sqlite"
+  printf '{"schemaVersion":1,"rpc":"fixture-rpc","policy":"agent"}\n' \
+    >"$state/wallet/fixture-policy-rpc.json"
+  printf '{"schemaVersion":1,"enabled":["fixture"]}\n' \
+    >"$state/extensions/fixture-plugin-state.json"
+  chown testop:"fscf-$instance" \
+    "$state/wallet/fixture-policy-rpc.json" \
+    "$state/extensions/fixture-plugin-state.json"
+  chmod 0660 \
+    "$state/wallet/fixture-policy-rpc.json" \
+    "$state/extensions/fixture-plugin-state.json"
+
+  sha256sum \
+    "$state/wallet/provider-registry.v1.json" \
+    "$state/wallet/fixture-policy-rpc.json" \
+    "$controller_state/../signer/state.db" \
+    "$controller_state/../signer/master.key" \
+    "$state/sat-mining/wallets/agent/mining.sqlite" \
+    "$state/federation/access-token.json" \
+    "$state/extensions/fixture-plugin-state.json" \
+    >"$preservation_manifest"
+
+  systemctl stop "$supervisor_unit" "$controller_unit"
+  rm -rf -- "$predecessor_generation"
+  install -d -m 0755 -o root -g root "$predecessor_generation"
+  install -m 0644 -o root -g root \
+    "$target_generation/fased-host-updater.mjs" \
+    "$predecessor_generation/fased-host-updater.mjs"
+  install -m 0644 -o root -g root \
+    "$target_generation/fased-host-updaterctl.mjs" \
+    "$predecessor_generation/fased-host-updaterctl.mjs"
+  jq --arg version "$legacy_version" '.version = $version' "$supervisor_identity" \
+    >/tmp/controller-predecessor-identity.json
+  install -m 0600 -o root -g root \
+    /tmp/controller-predecessor-identity.json "$supervisor_identity"
+  install -m 0600 -o root -g root \
+    /tmp/controller-predecessor-identity.json "$product_identity"
+  ln -s "$predecessor_generation" "$controller_root/current.fixture"
+  mv -Tf "$controller_root/current.fixture" "$controller_root/current"
+  systemctl start "$controller_unit" "$supervisor_unit"
+  wait_for_service "$controller_unit"
+  wait_for_service "$supervisor_unit"
+  wait_for_socket "$private_socket"
+  wait_for_socket "$public_socket"
+
+  status_transaction_id="$(/usr/local/bin/node -e 'process.stdout.write(crypto.randomUUID())')"
+  lifecycle_socket_requests \
+    "$private_socket" controllerStatus "$status_transaction_id" "$legacy_version" 1 \
+    /tmp/controller-predecessor-status.json
+  jq -e --arg version "$legacy_version" \
+    'length == 1 and .[0].ok == true and .[0].controllerVersion == $version' \
+    /tmp/controller-predecessor-status.json >/dev/null
+
+  cat >"$failure_script" <<EOF_CONTROLLER_FAIL_ONCE
+#!/usr/bin/env bash
+set -euo pipefail
+marker=$failure_marker
+if [[ -f "\$marker" ]]; then
+  rm -f -- "\$marker"
+  exit 72
+fi
+EOF_CONTROLLER_FAIL_ONCE
+  chmod 0755 "$failure_script"
+  cat >"$failure_override" <<EOF_CONTROLLER_FAILURE_OVERRIDE
+[Service]
+ExecStartPre=$failure_script
+EOF_CONTROLLER_FAILURE_OVERRIDE
+  chmod 0644 "$failure_override"
+  touch "$failure_marker"
+  systemctl daemon-reload
+
+  transaction_id="$(/usr/local/bin/node -e 'process.stdout.write(crypto.randomUUID())')"
+  lifecycle_socket_requests \
+    "$public_socket" updateController "$transaction_id" "$version" 1 \
+    /tmp/controller-transition-failure.json
+  jq -e \
+    'length == 1 and .[0].ok == false and (.error | contains("controller promotion failed and was restored"))' \
+    /tmp/controller-transition-failure.json >/dev/null
+  wait_for_service "$controller_unit"
+  test "$(readlink -f "$controller_root/current")" = "$predecessor_generation"
+  test "$(jq -r .version "$supervisor_identity")" = "$legacy_version"
+  test ! -e "$controller_state/supervisor/controller-transaction.json"
+  test ! -e "$failure_marker"
+  sha256sum --check --status "$preservation_manifest"
+
+  rm -f -- "$failure_override" "$failure_script"
+  systemctl daemon-reload
+  systemctl reset-failed "$controller_unit"
+  lifecycle_socket_requests \
+    "$public_socket" updateController "$transaction_id" "$version" 2 \
+    /tmp/controller-transition-success.json
+  jq -e --arg version "$version" \
+    'length == 2 and .[0].ok == true and .[0].version == $version and .[0].controllerChanged == true and .[1].ok == true and .[1].version == $version and .[1].controllerChanged == false and (.[1].controllerInstanceId | type == "string") and (.[1].selectionDigest | test("^[a-f0-9]{64}$"))' \
+    /tmp/controller-transition-success.json >/dev/null
+  wait_for_service "$controller_unit"
+  wait_for_service "$supervisor_unit"
+  test "$(readlink -f "$controller_root/current")" = "$target_generation"
+  test "$(jq -r .version "$supervisor_identity")" = "$version"
+  test ! -e "$predecessor_generation"
+  test ! -e "$controller_state/supervisor/controller-transaction.json"
+  sha256sum --check --status "$preservation_manifest"
+
+  selection_digest="$(jq -er '.[1].selectionDigest' /tmp/controller-transition-success.json)"
+  selection_receipt="$controller_state/supervisor/controller-selections/$transaction_id/$selection_digest.json"
+  target_manifest_sha="$(sha256sum "$release_assets/fased-hosted-release-v2.json" | awk '{print $1}')"
+  target_server_sha="$(sha256sum "$target_generation/fased-host-updater.mjs" | awk '{print $1}')"
+  target_client_sha="$(sha256sum "$target_generation/fased-host-updaterctl.mjs" | awk '{print $1}')"
+  jq -e \
+    --arg transaction "$transaction_id" \
+    --arg version "$version" \
+    --arg commit "$commit" \
+    --arg manifest "$target_manifest_sha" \
+    --arg server "$target_server_sha" \
+    --arg client "$target_client_sha" \
+    --arg instance "$(jq -er '.[1].controllerInstanceId' /tmp/controller-transition-success.json)" \
+    --arg selection "$selection_digest" \
+    '.transactionId == $transaction and .version == $version and .releaseCommit == $commit and .targetManifestSha256 == $manifest and .controllerServerSha256 == $server and .controllerClientSha256 == $client and .controllerInstanceId == $instance and .selectionDigest == $selection and .protocolCapabilities == {"controllerProtocol":2,"requestSchema":2,"supervisorProtocol":1}' \
+    "$selection_receipt" >/dev/null
+  test "$(cat "$controller_state/supervisor/controller-selections/$transaction_id/current")" = \
+    "$selection_digest"
+
+  controller_pid="$(systemctl show -p MainPID --value "$controller_unit")"
+  test "$controller_pid" -gt 1
+  if nsenter --target "$controller_pid" --mount -- \
+    mkdir "$controller_root/fixture-forbidden-controller-write" 2>/tmp/controller-write.err; then
+    echo "target controller wrote its supervisor-owned generation tree" >&2
+    exit 1
+  fi
+  if nsenter --target "$controller_pid" --mount -- \
+    touch "$controller_drop_in/fixture-forbidden.conf" 2>/tmp/controller-drop-in-write.err; then
+    echo "target controller wrote its own systemd drop-in" >&2
+    exit 1
+  fi
+  if nsenter --target "$controller_pid" --mount -- \
+    touch "$supervisor_drop_in/fixture-forbidden.conf" 2>/tmp/supervisor-drop-in-write.err; then
+    echo "target controller wrote the supervisor systemd drop-in" >&2
+    exit 1
+  fi
+  test ! -e "$controller_root/fixture-forbidden-controller-write"
+  test ! -e "$controller_drop_in/fixture-forbidden.conf"
+  test ! -e "$supervisor_drop_in/fixture-forbidden.conf"
+  printf 'generated-systemd supervised controller A-to-B rollback/retry fixture passed: %s\n' \
+    "$instance"
+}
+
 if [[ "$phase" == "verify-reboot" ]]; then
   [[ -f "$snapshot" ]]
   instance="$(jq -er .instanceId "$snapshot")"
@@ -1462,6 +1742,8 @@ runuser -u testop -- "/opt/fased/local/$instance/signer/fased-signerd" \
   >/tmp/active-agent-balance.json
 jq -e '.balance == "2000000000" and .unit == "lamports"' \
   /tmp/active-agent-balance.json >/dev/null
+
+verify_supervised_controller_a_to_b "$instance"
 
 systemctl restart "fased-local-controller-$instance.service" \
   "fased-signerd-$instance.service" "fased-gateway-$instance.service"

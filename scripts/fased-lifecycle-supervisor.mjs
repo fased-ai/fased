@@ -2145,8 +2145,8 @@ function renderBoundaryUnits(configuration, nodeBinary) {
       : `/opt/fased/local/${configuration.instanceId} /var/lib/fased-local/${configuration.instanceId}/signer /var/lib/fased-local/${configuration.instanceId}/controller ${unitPath(appStateDir)} /run/fased-local-controller-worker/${configuration.instanceId} /etc/systemd/system`;
   const controllerReadOnly =
     configuration.profile === "hosting"
-      ? `/opt/fased/host-controller /var/lib/fased-host-updater/controller-version.json /var/lib/fased-host-updater/supervisor ${unitPath(path.join("/etc/systemd/system", paths.controllerUnit))} ${unitPath(path.join("/etc/systemd/system", paths.supervisorUnit))}`
-      : `/opt/fased/local/${configuration.instanceId}/controller /opt/fased/local/${configuration.instanceId}/supervisor /opt/fased/local/${configuration.instanceId}/signer-owner /opt/fased/local/${configuration.instanceId}/operator-socket-finalize /var/lib/fased-local/${configuration.instanceId}/controller/controller-version.json /var/lib/fased-local/${configuration.instanceId}/controller/supervisor ${unitPath(path.join("/etc/systemd/system", paths.controllerUnit))} ${unitPath(path.join("/etc/systemd/system", paths.supervisorUnit))}`;
+      ? `/opt/fased/host-controller /var/lib/fased-host-updater/controller-version.json /var/lib/fased-host-updater/supervisor ${unitPath(path.join("/etc/systemd/system", paths.controllerUnit))} ${unitPath(path.join("/etc/systemd/system", `${paths.controllerUnit}.d`))} ${unitPath(path.join("/etc/systemd/system", paths.supervisorUnit))} ${unitPath(path.join("/etc/systemd/system", `${paths.supervisorUnit}.d`))}`
+      : `/opt/fased/local/${configuration.instanceId}/controller /opt/fased/local/${configuration.instanceId}/supervisor /opt/fased/local/${configuration.instanceId}/signer-owner /opt/fased/local/${configuration.instanceId}/operator-socket-finalize /var/lib/fased-local/${configuration.instanceId}/controller/controller-version.json /var/lib/fased-local/${configuration.instanceId}/controller/supervisor ${unitPath(path.join("/etc/systemd/system", paths.controllerUnit))} ${unitPath(path.join("/etc/systemd/system", `${paths.controllerUnit}.d`))} ${unitPath(path.join("/etc/systemd/system", paths.supervisorUnit))} ${unitPath(path.join("/etc/systemd/system", `${paths.supervisorUnit}.d`))}`;
   const controller = `[Unit]
 Description=Fased target lifecycle controller
 After=network-online.target
@@ -2248,6 +2248,34 @@ WantedBy=multi-user.target
   });
 }
 
+async function ensureProtectedUnitDropInDirectory(unitName) {
+  const directory = path.join("/etc/systemd/system", `${unitName}.d`);
+  try {
+    const info = await fsp.lstat(directory);
+    if (
+      !info.isDirectory() ||
+      info.isSymbolicLink() ||
+      info.uid !== 0 ||
+      (info.mode & 0o022) !== 0
+    ) {
+      fail(`lifecycle unit drop-in boundary is unsafe: ${directory}`);
+    }
+    const entries = await fsp.readdir(directory);
+    if (entries.length !== 0) {
+      fail(`lifecycle unit drop-in boundary is not empty: ${directory}`);
+    }
+    return Object.freeze({ directory, created: false });
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  await fsp.mkdir(directory, { mode: 0o755 });
+  await fsp.chown(directory, 0, 0);
+  await fsp.chmod(directory, 0o755);
+  return Object.freeze({ directory, created: true });
+}
+
 async function captureFile(filePath) {
   try {
     const info = await fsp.lstat(filePath);
@@ -2299,10 +2327,17 @@ export async function installSupervisorBoundary(configuration) {
   }
   const units = renderBoundaryUnits(configuration, nodeBinary);
   const snapshots = new Map();
+  const protectedDropInDirectories = [];
   for (const unit of Object.values(units)) {
     snapshots.set(unit.path, await captureFile(unit.path));
   }
   try {
+    for (const unitName of [
+      configuration.paths.controllerUnit,
+      configuration.paths.supervisorUnit,
+    ]) {
+      protectedDropInDirectories.push(await ensureProtectedUnitDropInDirectory(unitName));
+    }
     for (const unit of Object.values(units)) {
       await atomicWrite(unit.path, unit.content, 0o644);
     }
@@ -2330,6 +2365,11 @@ export async function installSupervisorBoundary(configuration) {
   } catch (error) {
     for (const [filePath, snapshot] of snapshots) {
       await restoreCapturedFile(filePath, snapshot);
+    }
+    for (const { directory, created } of protectedDropInDirectories.toReversed()) {
+      if (created) {
+        await fsp.rmdir(directory).catch(() => undefined);
+      }
     }
     await systemctl("daemon-reload").catch(() => undefined);
     throw error;

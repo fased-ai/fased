@@ -495,7 +495,7 @@ describe("stable lifecycle supervisor contract", () => {
       "/usr/bin/node",
     );
     expect(units.controller.content).toContain(
-      "ReadOnlyPaths=/opt/fased/host-controller /var/lib/fased-host-updater/controller-version.json /var/lib/fased-host-updater/supervisor /etc/systemd/system/fixed-controller.service /etc/systemd/system/fixed-supervisor.service",
+      "ReadOnlyPaths=/opt/fased/host-controller /var/lib/fased-host-updater/controller-version.json /var/lib/fased-host-updater/supervisor /etc/systemd/system/fixed-controller.service /etc/systemd/system/fixed-controller.service.d /etc/systemd/system/fixed-supervisor.service /etc/systemd/system/fixed-supervisor.service.d",
     );
     expect(units.controller.content).not.toMatch(
       /^ReadWritePaths=.*\/opt\/fased\/host-controller/mu,
