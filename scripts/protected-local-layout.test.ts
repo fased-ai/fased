@@ -143,6 +143,9 @@ describe("protected Local instance allocation", () => {
       controlSocket: "/run/test/0123456789abcdef/control/control.sock",
       signerStateDir: "/var/lib/test/0123456789abcdef/signer",
       installDir: "/opt/test/0123456789abcdef",
+      supervisorBinary: "/opt/test/0123456789abcdef/supervisor/fased-lifecycle-supervisor.mjs",
+      supervisorClient: "/opt/test/0123456789abcdef/libexec/fased-host-updaterctl.mjs",
+      legacySupervisorClient: "/opt/test/0123456789abcdef/supervisor/fased-host-updaterctl.mjs",
     });
   });
 });

@@ -948,6 +948,104 @@ async function hardenProtectedLocalClientHint(spec) {
   return true;
 }
 
+const LEGACY_MANAGED_UPDATE_PHASES = new Set([
+  "prepared",
+  "quiescing",
+  "signer-preactivated",
+  "app-active",
+  "signer-active",
+  "gateway-verified",
+  "rolling-back",
+  "rollback-ready",
+]);
+
+async function suspendLegacyManagedUpdateJournal(spec) {
+  const journalPath = path.join(spec.stateDir, "hosted-update-transaction.json");
+  let named;
+  try {
+    named = await fsp.lstat(journalPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return Object.freeze({ existed: false, journalPath });
+    }
+    throw error;
+  }
+  if (
+    !named.isFile() ||
+    named.isSymbolicLink() ||
+    named.nlink !== 1 ||
+    named.uid !== spec.operatorUid ||
+    (named.mode & 0o177) !== 0 ||
+    named.size < 2 ||
+    named.size > 2 * 1024 * 1024
+  ) {
+    fail("legacy managed updater transaction journal is unsafe");
+  }
+  const handle = await fsp.open(journalPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  let content;
+  try {
+    const opened = await handle.stat();
+    if (
+      !opened.isFile() ||
+      opened.nlink !== 1 ||
+      opened.dev !== named.dev ||
+      opened.ino !== named.ino
+    ) {
+      fail("legacy managed updater transaction journal changed during suspension");
+    }
+    content = await handle.readFile();
+  } finally {
+    await handle.close();
+  }
+  let journal;
+  try {
+    journal = JSON.parse(content.toString("utf8"));
+  } catch (error) {
+    throw new Error("legacy managed updater transaction journal is invalid", { cause: error });
+  }
+  if (
+    journal?.schemaVersion !== 1 ||
+    !RELEASE_PATTERN.test(String(journal.targetVersion ?? "")) ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      String(journal.transactionId ?? ""),
+    ) ||
+    !LEGACY_MANAGED_UPDATE_PHASES.has(journal.phase)
+  ) {
+    fail("legacy managed updater transaction journal is invalid");
+  }
+  const beforeRemove = await fsp.lstat(journalPath);
+  if (
+    !beforeRemove.isFile() ||
+    beforeRemove.isSymbolicLink() ||
+    beforeRemove.dev !== named.dev ||
+    beforeRemove.ino !== named.ino
+  ) {
+    fail("legacy managed updater transaction journal changed before suspension");
+  }
+  await fsp.rm(journalPath);
+  await fsyncDirectory(spec.stateDir);
+  return Object.freeze({
+    existed: true,
+    journalPath,
+    content,
+    mode: named.mode & 0o777,
+    uid: named.uid,
+    gid: named.gid,
+  });
+}
+
+async function restoreLegacyManagedUpdateJournal(snapshot) {
+  if (!snapshot?.existed) {
+    return false;
+  }
+  await atomicWrite(snapshot.journalPath, snapshot.content, snapshot.mode, {
+    uid: snapshot.uid,
+    gid: snapshot.gid,
+  });
+  await fsyncDirectory(path.dirname(snapshot.journalPath));
+  return true;
+}
+
 const PROTECTED_LOCAL_OPERATOR_ONLY_STATE = new Set([
   "backups",
   "bin",
@@ -1080,16 +1178,20 @@ async function installRootFiles(params) {
   await fsp.mkdir(path.dirname(layout.signerBinary), { recursive: true, mode: 0o755 });
   await fsp.mkdir(path.dirname(layout.supervisorBinary), {
     recursive: true,
+    mode: 0o700,
+  });
+  await fsp.mkdir(path.dirname(layout.supervisorClient), {
+    recursive: true,
     mode: 0o755,
   });
-  for (const directory of [
-    layout.installDir,
-    path.dirname(layout.signerBinary),
-    path.dirname(layout.supervisorBinary),
-  ]) {
+  for (const directory of [layout.installDir, path.dirname(layout.signerBinary)]) {
     await fsp.chown(directory, 0, 0);
     await fsp.chmod(directory, 0o755);
   }
+  await fsp.chown(path.dirname(layout.supervisorBinary), 0, 0);
+  await fsp.chmod(path.dirname(layout.supervisorBinary), 0o700);
+  await fsp.chown(path.dirname(layout.supervisorClient), 0, 0);
+  await fsp.chmod(path.dirname(layout.supervisorClient), 0o755);
   await atomicCopy(
     path.join(sourceRoot, "scripts", "fased-lifecycle-supervisor.mjs"),
     layout.supervisorBinary,
@@ -1199,8 +1301,8 @@ export function buildProtectedLocalLifecycleApplyCommand(spec, layout, options =
   });
 }
 
-async function captureProtectedLocalSupervisorClientDirectory(layout, options = {}) {
-  const directory = path.dirname(layout.supervisorClient);
+async function captureProtectedLocalPrivateSupervisorDirectory(layout, options = {}) {
+  const directory = path.dirname(layout.supervisorBinary);
   const expectedUid = options.expectedUid ?? 0;
   const expectedGid = options.expectedGid ?? 0;
   const info = await fsp.lstat(directory);
@@ -1211,7 +1313,7 @@ async function captureProtectedLocalSupervisorClientDirectory(layout, options = 
     info.gid !== expectedGid ||
     (info.mode & 0o022) !== 0
   ) {
-    fail("protected Local supervisor client directory is unsafe");
+    fail("protected Local private supervisor directory is unsafe");
   }
   return Object.freeze({
     directory,
@@ -1223,7 +1325,7 @@ async function captureProtectedLocalSupervisorClientDirectory(layout, options = 
   });
 }
 
-async function setProtectedLocalSupervisorClientDirectoryMode(snapshot, mode) {
+async function setProtectedLocalPrivateSupervisorDirectoryMode(snapshot, mode) {
   const before = await fsp.lstat(snapshot.directory);
   if (
     !before.isDirectory() ||
@@ -1234,7 +1336,7 @@ async function setProtectedLocalSupervisorClientDirectoryMode(snapshot, mode) {
     before.gid !== snapshot.gid ||
     (before.mode & 0o022) !== 0
   ) {
-    fail("protected Local supervisor client directory changed during transition");
+    fail("protected Local private supervisor directory changed during transition");
   }
   await fsp.chmod(snapshot.directory, mode);
   const after = await fsp.lstat(snapshot.directory);
@@ -1247,8 +1349,36 @@ async function setProtectedLocalSupervisorClientDirectoryMode(snapshot, mode) {
     after.gid !== snapshot.gid ||
     (after.mode & 0o777) !== mode
   ) {
-    fail("protected Local supervisor client directory mode did not converge");
+    fail("protected Local private supervisor directory mode did not converge");
   }
+}
+
+async function prepareProtectedLocalSupervisorClientDirectory(layout, options = {}) {
+  const directory = path.dirname(layout.supervisorClient);
+  const expectedUid = options.expectedUid ?? 0;
+  const expectedGid = options.expectedGid ?? 0;
+  let created = false;
+  try {
+    await fsp.mkdir(directory, { mode: 0o755 });
+    created = true;
+  } catch (error) {
+    if (error?.code !== "EEXIST") {
+      throw error;
+    }
+  }
+  const info = await fsp.lstat(directory);
+  if (
+    !info.isDirectory() ||
+    info.isSymbolicLink() ||
+    info.uid !== expectedUid ||
+    info.gid !== expectedGid ||
+    (info.mode & 0o022) !== 0
+  ) {
+    fail("protected Local supervisor client executable directory is unsafe");
+  }
+  await fsp.chown(directory, expectedUid, expectedGid);
+  await fsp.chmod(directory, 0o755);
+  return Object.freeze({ directory, created });
 }
 
 async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
@@ -1333,16 +1463,18 @@ async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
       [
         layout.supervisorBinary,
         layout.supervisorClient,
+        layout.legacySupervisorClient,
         path.join("/etc/systemd/system", layout.controllerUnit),
         path.join("/etc/systemd/system", layout.supervisorUnit),
         path.join(layout.supervisorStateDir, "boundary.json"),
       ].map(async (filePath) => [filePath, await captureFile(filePath)]),
     ),
   );
-  const supervisorClientDirectory = await captureProtectedLocalSupervisorClientDirectory(layout);
+  const privateSupervisorDirectory = await captureProtectedLocalPrivateSupervisorDirectory(layout);
+  let supervisorClientDirectory = null;
   try {
     runSystem(systemctl, ["stop", layout.supervisorUnit]);
-    await setProtectedLocalSupervisorClientDirectoryMode(supervisorClientDirectory, 0o755);
+    supervisorClientDirectory = await prepareProtectedLocalSupervisorClientDirectory(layout);
     if (targetDigest !== installedDigest) {
       await atomicCopy(targetSupervisor, layout.supervisorBinary, 0o755, { uid: 0, gid: 0 });
     }
@@ -1373,7 +1505,17 @@ async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
     }
     runSystem(systemctl, ["restart", layout.supervisorUnit]);
     await waitForSocket(`/run/fased-local-controller/${layout.instanceId}/request.sock`, 60_000);
-    return targetDigest !== installedDigest || targetClientDigest !== installedClientDigest;
+    if (layout.legacySupervisorClient !== layout.supervisorClient) {
+      await fsp.rm(layout.legacySupervisorClient, { force: true });
+      await fsyncDirectory(path.dirname(layout.legacySupervisorClient));
+    }
+    await setProtectedLocalPrivateSupervisorDirectoryMode(privateSupervisorDirectory, 0o700);
+    return (
+      targetDigest !== installedDigest ||
+      targetClientDigest !== installedClientDigest ||
+      privateSupervisorDirectory.mode !== 0o700 ||
+      snapshots.get(layout.legacySupervisorClient)?.existed === true
+    );
   } catch (error) {
     const rollbackFailures = [];
     try {
@@ -1393,16 +1535,29 @@ async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
       }
     }
     try {
-      await setProtectedLocalSupervisorClientDirectoryMode(
-        supervisorClientDirectory,
-        supervisorClientDirectory.mode,
+      await setProtectedLocalPrivateSupervisorDirectoryMode(
+        privateSupervisorDirectory,
+        privateSupervisorDirectory.mode,
       );
     } catch (rollbackError) {
       rollbackFailures.push(
-        `restore ${supervisorClientDirectory.directory}: ${
+        `restore ${privateSupervisorDirectory.directory}: ${
           rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
         }`,
       );
+    }
+    if (supervisorClientDirectory?.created) {
+      try {
+        await fsp.rmdir(supervisorClientDirectory.directory);
+      } catch (rollbackError) {
+        if (!new Set(["ENOENT", "ENOTEMPTY"]).has(rollbackError?.code)) {
+          rollbackFailures.push(
+            `restore ${supervisorClientDirectory.directory}: ${
+              rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+            }`,
+          );
+        }
+      }
     }
     for (const directory of boundaryDropInDirectories.toReversed()) {
       if (boundaryDropInPresence.get(directory)) {
@@ -3345,13 +3500,27 @@ async function installProtectedLocal(params) {
         fail("protected Local Gateway cannot traverse the operator home");
       }
       let lifecycle = null;
+      let suspendedLegacyJournal = null;
       if (spec.gatewayMode === "activate") {
         await transitionExistingSupervisorBoundary(sourceRoot, spec, layout);
         await waitForSocket(
           `/run/fased-local-controller/${layout.instanceId}/request.sock`,
           60_000,
         );
-        lifecycle = applyProtectedLocalLifecycle(spec, layout);
+        suspendedLegacyJournal = await suspendLegacyManagedUpdateJournal(spec);
+        try {
+          lifecycle = applyProtectedLocalLifecycle(spec, layout);
+        } catch (error) {
+          try {
+            await restoreLegacyManagedUpdateJournal(suspendedLegacyJournal);
+          } catch (rollbackError) {
+            throw new Error(
+              `protected Local lifecycle failed and the legacy updater journal could not be restored: ${error.message}; ${rollbackError.message}`,
+              { cause: rollbackError },
+            );
+          }
+          throw error;
+        }
       }
       await waitForSocket(layout.operatorSocket);
       await verifyOperatorCapabilities(spec, layout);
@@ -3585,7 +3754,7 @@ if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
 
 export const __testing = Object.freeze({
   buildProtectedLocalLifecycleApplyCommand,
-  captureProtectedLocalSupervisorClientDirectory,
+  captureProtectedLocalPrivateSupervisorDirectory,
   buildProtectedLocalBootstrapSpec,
   hardenOperatorRuntime,
   hardenInstalledPlugins,
@@ -3598,7 +3767,10 @@ export const __testing = Object.freeze({
   legacyInstallReferencesUserGateway,
   parseDirectoryAcl,
   prepareProtectedLocalChannelDirectory,
-  setProtectedLocalSupervisorClientDirectoryMode,
+  prepareProtectedLocalSupervisorClientDirectory,
+  restoreLegacyManagedUpdateJournal,
+  setProtectedLocalPrivateSupervisorDirectoryMode,
+  suspendLegacyManagedUpdateJournal,
   renderProtectedLocalOperatorEnvironment,
   renderProtectedLocalOwnerWrapper,
   registeredSignerWallets,

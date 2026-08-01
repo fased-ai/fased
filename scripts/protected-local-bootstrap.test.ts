@@ -79,7 +79,37 @@ describe("protected Local bootstrap contract", () => {
     ).rejects.toThrow(/update-channel directory is unsafe/u);
   });
 
-  it("makes a legacy supervisor client directory traversable and restores its prior mode", async () => {
+  it("suspends a stale application-owned update journal and restores it only on rollback", async () => {
+    const root = temporaryRoot();
+    const stateDir = path.join(root, ".fased");
+    const journalPath = path.join(stateDir, "hosted-update-transaction.json");
+    const journal = `${JSON.stringify({
+      schemaVersion: 1,
+      transactionId: "00000000-0000-4000-8000-000000000001",
+      targetVersion: "0.1.76-rc.22",
+      phase: "rolling-back",
+    })}\n`;
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(journalPath, journal, { mode: 0o600 });
+    const spec = {
+      stateDir,
+      operatorUid: process.getuid?.() ?? 0,
+      operatorGid: process.getgid?.() ?? 0,
+    };
+
+    const suspended = await __testing.suspendLegacyManagedUpdateJournal(spec);
+    expect(suspended).toMatchObject({ existed: true, journalPath });
+    expect(fs.existsSync(journalPath)).toBe(false);
+
+    await expect(__testing.restoreLegacyManagedUpdateJournal(suspended)).resolves.toBe(true);
+    expect(fs.readFileSync(journalPath, "utf8")).toBe(journal);
+    expect(fs.statSync(journalPath).mode & 0o777).toBe(0o600);
+
+    await __testing.suspendLegacyManagedUpdateJournal(spec);
+    expect(fs.existsSync(journalPath)).toBe(false);
+  });
+
+  it("keeps the supervisor private and gives its client a separate executable boundary", async () => {
     const root = temporaryRoot();
     const uid = process.getuid?.() ?? 0;
     const gid = process.getgid?.() ?? 0;
@@ -88,20 +118,24 @@ describe("protected Local bootstrap contract", () => {
       stateRoot: path.join(root, "state"),
       installRoot: path.join(root, "install"),
     });
-    const directory = path.dirname(layout.supervisorClient);
-    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const privateDirectory = path.dirname(layout.supervisorBinary);
+    const clientDirectory = path.dirname(layout.supervisorClient);
+    fs.mkdirSync(privateDirectory, { recursive: true, mode: 0o700 });
 
-    const snapshot = await __testing.captureProtectedLocalSupervisorClientDirectory(layout, {
+    const snapshot = await __testing.captureProtectedLocalPrivateSupervisorDirectory(layout, {
       expectedUid: uid,
       expectedGid: gid,
     });
     expect(snapshot.mode).toBe(0o700);
 
-    await __testing.setProtectedLocalSupervisorClientDirectoryMode(snapshot, 0o755);
-    expect(fs.statSync(directory).mode & 0o777).toBe(0o755);
-
-    await __testing.setProtectedLocalSupervisorClientDirectoryMode(snapshot, snapshot.mode);
-    expect(fs.statSync(directory).mode & 0o777).toBe(0o700);
+    await expect(
+      __testing.prepareProtectedLocalSupervisorClientDirectory(layout, {
+        expectedUid: uid,
+        expectedGid: gid,
+      }),
+    ).resolves.toMatchObject({ directory: clientDirectory, created: true });
+    expect(fs.statSync(privateDirectory).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(clientDirectory).mode & 0o777).toBe(0o755);
 
     const bootstrap = fs.readFileSync(
       path.join(process.cwd(), "scripts", "protected-local-bootstrap.mjs"),
@@ -115,21 +149,20 @@ describe("protected Local bootstrap contract", () => {
       transitionStart,
     );
     const transition = bootstrap.slice(transitionStart, transitionEnd);
-    expect(
-      transition.indexOf(
-        "await setProtectedLocalSupervisorClientDirectoryMode(supervisorClientDirectory, 0o755)",
-      ),
-    ).toBeLessThan(transition.indexOf("atomicCopy(targetSupervisorClient"));
-    expect(transition).toContain("supervisorClientDirectory.mode");
+    expect(transition).not.toContain("setProtectedLocalSupervisorClientDirectoryMode");
+    expect(transition).toContain("prepareProtectedLocalSupervisorClientDirectory(layout)");
+    expect(transition).toContain("setProtectedLocalPrivateSupervisorDirectoryMode(");
+    expect(transition).toContain("privateSupervisorDirectory, 0o700");
+    expect(transition).toContain("fsp.rm(layout.legacySupervisorClient");
 
-    fs.rmSync(directory, { recursive: true });
-    fs.symlinkSync(root, directory);
+    fs.rmSync(privateDirectory, { recursive: true });
+    fs.symlinkSync(root, privateDirectory);
     await expect(
-      __testing.captureProtectedLocalSupervisorClientDirectory(layout, {
+      __testing.captureProtectedLocalPrivateSupervisorDirectory(layout, {
         expectedUid: uid,
         expectedGid: gid,
       }),
-    ).rejects.toThrow(/supervisor client directory is unsafe/u);
+    ).rejects.toThrow(/private supervisor directory is unsafe/u);
   });
 
   it("accepts only one exact release and explicit Gateway phase", () => {
@@ -272,7 +305,7 @@ describe("protected Local bootstrap contract", () => {
           "protected-local-controller-transaction.json",
         )}`,
         "/usr/bin/node",
-        "/opt/fased/local/0123456789abcdef/supervisor/fased-host-updaterctl.mjs",
+        "/opt/fased/local/0123456789abcdef/libexec/fased-host-updaterctl.mjs",
         "0.1.80",
         "--apply",
       ],

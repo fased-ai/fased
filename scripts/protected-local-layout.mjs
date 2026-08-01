@@ -204,7 +204,11 @@ export function buildProtectedLocalLayout(instanceId, roots = {}) {
     applicationCurrentLink: path.join(applicationInstallDir, "current"),
     signerBinary: path.join(instanceInstall, "signer", "fased-signerd"),
     supervisorBinary: path.join(instanceInstall, "supervisor", "fased-lifecycle-supervisor.mjs"),
-    supervisorClient: path.join(instanceInstall, "supervisor", "fased-host-updaterctl.mjs"),
+    // The supervisor implementation is root-private. The operator-facing
+    // client is deliberately installed outside that boundary so invoking the
+    // narrow socket protocol never requires opening the supervisor directory.
+    supervisorClient: path.join(instanceInstall, "libexec", "fased-host-updaterctl.mjs"),
+    legacySupervisorClient: path.join(instanceInstall, "supervisor", "fased-host-updaterctl.mjs"),
     controllerSocket: path.join(
       "/run/fased-local-controller-worker",
       instanceId,
