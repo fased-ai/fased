@@ -4,6 +4,16 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.27
+
+- Promote verified lifecycle-supervisor and controller generations atomically
+  for Protected Local and Hosting installations, with exact crash recovery and
+  rollback to the previously serving Gateway.
+- Publish complete owner-only update locks atomically so concurrent updater
+  processes cannot enter the same signer transaction.
+- Package the fully green correction from PR #246 for literal owner-Local and
+  VPS acceptance; stable promotion remains blocked until those commands pass.
+
 ## 0.1.76-rc.26
 
 - Validate an installed lifecycle controller against its persisted identity
