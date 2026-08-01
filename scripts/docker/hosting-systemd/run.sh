@@ -1093,7 +1093,11 @@ jq -e '.ready == true and .role == "agent"' /tmp/repair-agent.json >/dev/null
 jq -e '.ready == true and .role == "vault"' /tmp/repair-vault.json >/dev/null
 
 mark_stage injected-activation-failure
-chmod 0600 "$state/identity/device-auth.json"
+# Repair above already proved legacy 0600 -> shared 0660 convergence. Keep
+# that healthy metadata as the product-transaction baseline: prepare performs
+# discovery only, while activation gates the Gateway before declared-state
+# reconciliation. A failed activation must therefore restore this exact
+# healthy baseline rather than rely on prepare to mutate live state.
 chmod 0644 /opt/fased/signer/fased-signerd
 /usr/local/bin/node /usr/local/libexec/fased-host-updaterctl.mjs "$version" --prepare-only \
   >/tmp/failure-prepare.json
