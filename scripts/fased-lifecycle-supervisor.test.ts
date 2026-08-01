@@ -318,6 +318,34 @@ describe("stable lifecycle supervisor contract", () => {
     }
   });
 
+  it("removes only inactive validated historical controller candidates", async () => {
+    const { root, paths } = tempPaths();
+    const uid = process.getuid?.() ?? 0;
+    const active = path.join(paths.releasesDir, `v${version}`);
+    const candidate = path.join(paths.releasesDir, `v1.2.2.q0.${"a".repeat(12)}`);
+    try {
+      await Promise.all([
+        fsp.mkdir(active, { recursive: true }),
+        fsp.mkdir(candidate, { recursive: true }),
+      ]);
+      for (const generation of [active, candidate]) {
+        await Promise.all([
+          fsp.writeFile(path.join(generation, "fased-host-updater.mjs"), "server\n"),
+          fsp.writeFile(path.join(generation, "fased-host-updaterctl.mjs"), "client\n"),
+        ]);
+      }
+      await fsp.symlink(active, paths.currentLink, "dir");
+
+      await expect(
+        __testing.cleanupHistoricalControllerCandidates(paths, version, uid),
+      ).resolves.toEqual([candidate]);
+      await expect(fsp.realpath(paths.currentLink)).resolves.toBe(active);
+      await expect(fsp.lstat(candidate)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("tightens the public socket before transferring ownership", async () => {
     const operations: Array<["chmod" | "chown", string, number, number?]> = [];
     const socketPath = "/run/fased-local-controller/0123456789abcdef/request.sock";
@@ -404,6 +432,15 @@ describe("stable lifecycle supervisor contract", () => {
       changed: true,
       release,
     }));
+    const selectionReceipt = __testing.createControllerSelectionReceipt(
+      transaction,
+      {
+        releaseCommit: "a".repeat(40),
+        targetManifestSha256: digest("1"),
+        identity: { serverSha256: digest("2"), clientSha256: digest("3") },
+      },
+      randomUUID(),
+    );
     const context = __testing.createContext(
       {
         profile: "hosting",
@@ -411,7 +448,10 @@ describe("stable lifecycle supervisor contract", () => {
         operatorGid: 1000,
         paths,
       },
-      { requestController: forward },
+      {
+        requestController: forward,
+        readControllerSelectionReceipt: async () => selectionReceipt,
+      },
     );
     const state = { controllerInstanceId: randomUUID() };
 
@@ -455,7 +495,10 @@ describe("stable lifecycle supervisor contract", () => {
       "/usr/bin/node",
     );
     expect(units.controller.content).toContain(
-      "ReadOnlyPaths=/opt/fased/host-controller/supervisor /var/lib/fased-host-updater/supervisor /etc/systemd/system/fixed-supervisor.service",
+      "ReadOnlyPaths=/opt/fased/host-controller /var/lib/fased-host-updater/controller-version.json /var/lib/fased-host-updater/supervisor /etc/systemd/system/fixed-controller.service /etc/systemd/system/fixed-controller.service.d /etc/systemd/system/fixed-supervisor.service /etc/systemd/system/fixed-supervisor.service.d",
+    );
+    expect(units.controller.content).not.toMatch(
+      /^ReadWritePaths=.*\/opt\/fased\/host-controller/mu,
     );
     expect(units.controller.content).toContain("AmbientCapabilities=CAP_SETUID CAP_SETGID");
     expect(units.supervisor.content).toContain(
@@ -652,6 +695,43 @@ describe("stable lifecycle supervisor contract", () => {
     expect(await fsp.readFile(paths.supervisorPath, "utf8")).toBe(fixture.targetSupervisor);
     fixture.context.runningSupervisorDigest = sha256Text(fixture.targetSupervisor);
 
+    const receiptRequests = await fsp.readdir(
+      path.join(paths.supervisorStateDir, "controller-selections"),
+    );
+    expect(receiptRequests).toHaveLength(1);
+    const receiptCurrent = (
+      await fsp.readFile(
+        path.join(paths.supervisorStateDir, "controller-selections", receiptRequests[0], "current"),
+        "utf8",
+      )
+    ).trim();
+    const receipt = JSON.parse(
+      await fsp.readFile(
+        path.join(
+          paths.supervisorStateDir,
+          "controller-selections",
+          receiptRequests[0],
+          `${receiptCurrent}.json`,
+        ),
+        "utf8",
+      ),
+    );
+    expect(receipt).toMatchObject({
+      version,
+      releaseCommit: "a".repeat(40),
+      controllerServerSha256: fixture.targetServerSha,
+      controllerClientSha256: fixture.targetClientSha,
+      controllerInstanceId: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+      ),
+      protocolCapabilities: {
+        supervisorProtocol: 1,
+        controllerProtocol: 2,
+        requestSchema: 2,
+      },
+      selectionDigest: receiptCurrent,
+    });
+
     await expect(
       __testing.handleSupervisorRequest(request(), fixture.context, state),
     ).resolves.toMatchObject({
@@ -754,6 +834,8 @@ describe("stable lifecycle supervisor contract", () => {
             serverSha256: digest("a"),
             clientSha256: digest("b"),
           },
+          releaseCommit: "a".repeat(40),
+          targetManifestSha256: digest("1"),
           generationRoot: "/fixed/next",
           previousGeneration: "/fixed/previous",
           previousIdentity: {
@@ -810,6 +892,8 @@ describe("stable lifecycle supervisor contract", () => {
             serverSha256: digest("a"),
             clientSha256: digest("b"),
           },
+          releaseCommit: "a".repeat(40),
+          targetManifestSha256: digest("1"),
           generationRoot: "/fixed/next",
           previousGeneration: "/fixed/previous",
           previousIdentity: {
@@ -839,6 +923,10 @@ describe("stable lifecycle supervisor contract", () => {
           calls.push("probe");
           return randomUUID();
         },
+        cleanupHistoricalControllerCandidates: async () => {
+          calls.push("cleanup");
+          return [];
+        },
         commitLifecycleTrust: async () => {
           calls.push("trust");
         },
@@ -853,7 +941,77 @@ describe("stable lifecycle supervisor contract", () => {
         controllerInstanceId: randomUUID(),
       }),
     ).resolves.toMatchObject({ ok: true, controllerChanged: true });
-    expect(calls).toEqual(["journal", "activate", "restart", "wait", "probe", "trust", "clear"]);
+    expect(calls).toEqual([
+      "journal",
+      "activate",
+      "restart",
+      "wait",
+      "probe",
+      "cleanup",
+      "trust",
+      "clear",
+    ]);
+  });
+
+  it("restores controller selection when supervisor-owned residue cleanup fails", async () => {
+    const { paths } = tempPaths();
+    await fsp.mkdir(paths.supervisorStateDir, { recursive: true });
+    const restore = vi.fn(async () => undefined);
+    const clear = vi.fn(async () => undefined);
+    const restart = vi.fn(async () => undefined);
+    const context = __testing.createContext(
+      {
+        profile: "protected-local",
+        operatorUid: 1000,
+        operatorGid: 1000,
+        paths,
+      },
+      {
+        stageTrustedController: async () => ({
+          changed: true,
+          identity: {
+            schemaVersion: 1,
+            version,
+            serverSha256: digest("a"),
+            clientSha256: digest("b"),
+          },
+          releaseCommit: "a".repeat(40),
+          targetManifestSha256: digest("1"),
+          generationRoot: "/fixed/next",
+          previousGeneration: "/fixed/previous",
+          previousIdentity: {
+            schemaVersion: 1,
+            version: "1.2.2",
+            serverSha256: digest("c"),
+            clientSha256: digest("d"),
+          },
+          trusted: embeddedTrust(),
+          candidateRoot: __testing.EMBEDDED_LIFECYCLE_ROOT,
+          trustState: __testing.initialLifecycleTrustState(),
+          trustChanged: false,
+        }),
+        beginSupervisorTransaction: async () => undefined,
+        activateStagedController: async () => undefined,
+        restoreControllerSelection: restore,
+        restoreLifecycleTrust: async () => undefined,
+        clearSupervisorTransaction: clear,
+        restartController: restart,
+        waitForController: async () => undefined,
+        probeControllerIdentity: async () => randomUUID(),
+        cleanupHistoricalControllerCandidates: async () => {
+          throw new Error("injected historical cleanup failure");
+        },
+      },
+    );
+
+    await expect(
+      __testing.handleSupervisorRequest(request(), context, {
+        controllerInstanceId: randomUUID(),
+      }),
+    ).rejects.toThrow("controller promotion failed and was restored");
+    expect(restore).toHaveBeenCalledOnce();
+    expect(clear).toHaveBeenCalledOnce();
+    expect(restart).toHaveBeenCalledTimes(2);
   });
 
   it("removes an unactivated first controller selection when no prior generation exists", async () => {
@@ -898,6 +1056,8 @@ describe("stable lifecycle supervisor contract", () => {
             serverSha256: digest("a"),
             clientSha256: digest("b"),
           },
+          releaseCommit: "a".repeat(40),
+          targetManifestSha256: digest("1"),
         }),
         probeControllerIdentity: probe,
         restartController: restart,

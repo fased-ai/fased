@@ -16,12 +16,15 @@ import {
   parseReleaseVersion,
   parseUpdateRequest,
 } from "./fased-host-updater.mjs";
+import { __testing as supervisorTesting } from "./fased-lifecycle-supervisor.mjs";
 import { __testing as managedUpdaterTesting } from "./fased-managed-updater-core.mjs";
 import { capabilitiesDigest } from "./hosted-release-manifest.mjs";
 
 const cleanupRoots: string[] = [];
 const TRANSACTION_ONE = "11111111-1111-4111-8111-111111111111";
 const TRANSACTION_TWO = "22222222-2222-4222-8222-222222222222";
+const CONTROLLER_SERVER_SHA256 = "c".repeat(64);
+const CONTROLLER_CLIENT_SHA256 = "d".repeat(64);
 
 function signerRelease(version: string) {
   return {
@@ -30,6 +33,26 @@ function signerRelease(version: string) {
     buildInputDigest: `sha256:${"b".repeat(64)}`,
     development: false,
   };
+}
+
+function supervisorReceipt(
+  transactionId: string,
+  version: string,
+  controllerInstanceId = TRANSACTION_TWO,
+  targetManifestSha256 = "1".repeat(64),
+) {
+  return supervisorTesting.createControllerSelectionReceipt(
+    { transactionId, version },
+    {
+      releaseCommit: signerRelease(version).commit,
+      targetManifestSha256,
+      identity: {
+        serverSha256: CONTROLLER_SERVER_SHA256,
+        clientSha256: CONTROLLER_CLIENT_SHA256,
+      },
+    },
+    controllerInstanceId,
+  );
 }
 
 async function writeProtectedApplicationFixture({
@@ -89,6 +112,8 @@ async function createFixture(
     emptyManagedApplication?: boolean;
     managedInstallSchema?: 1 | 2;
     trackUpdaterGeneration?: boolean;
+    supervised?: boolean;
+    runningControllerVersion?: string;
   } = {},
 ) {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-updater-"));
@@ -102,6 +127,7 @@ async function createFixture(
     controllerReleasesDir: path.join(root, "controller", "releases"),
     controllerCurrentLink: path.join(root, "controller", "current"),
     controllerVersionPath: path.join(stateDir, "controller-version.json"),
+    supervisorStateDir: path.join(stateDir, "supervisor"),
     signerPath,
     signerStateDBPath,
     signerUnitPath,
@@ -318,8 +344,26 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
     historicalQ0TestStateDir: path.join(root, "historical-q0-test-state"),
     ...(options.protectedService ? { protectedLocalInstanceId: "0123456789abcdef" } : {}),
     ...(options.protectedService ? { protectedNodeBinary: path.join(root, "bin", "node") } : {}),
+    supervised: options.supervised === true,
+    controllerInstanceId: options.supervised ? TRANSACTION_TWO : undefined,
+    runningControllerVersion: options.runningControllerVersion,
+    runningControllerIdentity: options.supervised
+      ? {
+          version: options.runningControllerVersion ?? "1.2.3",
+          serverSha256: CONTROLLER_SERVER_SHA256,
+          clientSha256: CONTROLLER_CLIENT_SHA256,
+        }
+      : undefined,
+    readSupervisorSelectionReceipt: async (receipt: unknown) => receipt,
     assertReleaseAllowed: async () => undefined,
-    stageControllerRelease: async () => ({ changed: false }),
+    stageControllerRelease: async () => {
+      if (options.supervised) {
+        const error = new Error("supervised controller attempted forbidden controller staging");
+        Object.assign(error, { code: "EROFS" });
+        throw error;
+      }
+      return { changed: false };
+    },
     stageCandidate: async (version: string, candidatePath: string) => {
       events.push(`stage:${version}`);
       await fsp.writeFile(candidatePath, `signer-${version}\n`, { mode: 0o755 });
@@ -450,6 +494,16 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
 
 function request(op: string, transactionId: string, version: string) {
   return parseUpdateRequest({ schemaVersion: 2, op, transactionId, version });
+}
+
+function supervisedRequest(op: string, transactionId: string, version: string) {
+  return parseUpdateRequest({
+    schemaVersion: 2,
+    op,
+    transactionId,
+    version,
+    supervisorReceipt: supervisorReceipt(transactionId, version),
+  });
 }
 
 function managedTransaction(phase = "signer-preactivated") {
@@ -2199,6 +2253,11 @@ describe("root-owned hosted updater protocol", () => {
       supervised: true,
       runningControllerVersion: "1.2.3",
       controllerInstanceId: TRANSACTION_TWO,
+      runningControllerIdentity: {
+        version: "1.2.3",
+        serverSha256: CONTROLLER_SERVER_SHA256,
+        clientSha256: CONTROLLER_CLIENT_SHA256,
+      },
     });
     await expect(
       __testing.dispatchUpdateRequest(
@@ -2210,6 +2269,13 @@ describe("root-owned hosted updater protocol", () => {
       version: "1.2.3",
       controllerVersion: "1.2.3",
       controllerInstanceId: TRANSACTION_TWO,
+      controllerServerSha256: CONTROLLER_SERVER_SHA256,
+      controllerClientSha256: CONTROLLER_CLIENT_SHA256,
+      protocolCapabilities: {
+        supervisorProtocol: 1,
+        controllerProtocol: 2,
+        requestSchema: 2,
+      },
     });
     await expect(
       __testing.dispatchUpdateRequest(
@@ -2217,6 +2283,143 @@ describe("root-owned hosted updater protocol", () => {
         context,
       ),
     ).rejects.toThrow("running target lifecycle controller identity is mismatched");
+  });
+
+  it("keeps controller promotion outside the supervised target transaction", async () => {
+    const fixture = await createFixture({
+      supervised: true,
+      runningControllerVersion: "1.2.3",
+    });
+
+    expect(Object.hasOwn(fixture.context, "stageControllerRelease")).toBe(false);
+    await expect(
+      __testing.prepareSignerRelease(
+        supervisedRequest("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+        fixture.context,
+      ),
+    ).resolves.toMatchObject({
+      phase: "prepared",
+      controllerChanged: false,
+    });
+    expect(fixture.events).toEqual(["stage:1.2.3"]);
+  });
+
+  it("requires a supervisor selection receipt before any supervised product mutation", async () => {
+    const fixture = await createFixture({
+      supervised: true,
+      runningControllerVersion: "1.2.3",
+    });
+
+    await expect(
+      __testing.prepareSignerRelease(
+        request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+        fixture.context,
+      ),
+    ).rejects.toThrow("supervisor controller selection receipt is invalid");
+    expect(fixture.events).toEqual([]);
+    expect(fs.existsSync(fixture.paths.journalPath)).toBe(false);
+  });
+
+  it("binds a supervised target journal to one immutable selection receipt", async () => {
+    const fixture = await createFixture({
+      supervised: true,
+      runningControllerVersion: "1.2.3",
+    });
+    await __testing.prepareSignerRelease(
+      supervisedRequest("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+    const conflictingReceipt = supervisorReceipt(
+      TRANSACTION_ONE,
+      "1.2.3",
+      TRANSACTION_TWO,
+      "9".repeat(64),
+    );
+
+    await expect(
+      __testing.applyReleaseTransaction(
+        parseUpdateRequest({
+          schemaVersion: 2,
+          op: "applyRelease",
+          transactionId: TRANSACTION_ONE,
+          version: "1.2.3",
+          supervisorReceipt: conflictingReceipt,
+        }),
+        fixture.context,
+      ),
+    ).rejects.toThrow("does not match its supervisor selection receipt");
+    expect(await __testing.readJournal(fixture.context)).toMatchObject({
+      supervisorReceipt: {
+        selectionDigest: supervisorReceipt(TRANSACTION_ONE, "1.2.3").selectionDigest,
+      },
+      phase: "prepared",
+    });
+  });
+
+  it("refuses to mutate supervisor-owned historical controller generations", async () => {
+    const fixture = await createFixture({
+      supervised: true,
+      runningControllerVersion: "1.2.3",
+      protectedService: true,
+    });
+    const candidate = path.join(fixture.paths.controllerReleasesDir, `v1.2.2.q0.${"a".repeat(12)}`);
+    await fsp.mkdir(candidate, { recursive: true });
+
+    await expect(
+      __testing.cleanupHistoricalQ0Residue(fixture.context, { version: "1.2.3" }),
+    ).rejects.toThrow("stable lifecycle supervisor did not clean historical controller residue");
+    await expect(fsp.lstat(candidate)).resolves.toMatchObject({});
+  });
+
+  it("rejects a supervised target identity mismatch before staging product state", async () => {
+    const fixture = await createFixture({
+      supervised: true,
+      runningControllerVersion: "1.2.2",
+    });
+
+    await expect(
+      __testing.prepareSignerRelease(
+        supervisedRequest("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+        fixture.context,
+      ),
+    ).rejects.toThrow("running target lifecycle controller identity is mismatched");
+    expect(fixture.events).toEqual([]);
+    expect(fs.existsSync(fixture.paths.journalPath)).toBe(false);
+  });
+
+  it("commits and recovers only through the supervisor-selected target controller", async () => {
+    const committedFixture = await createFixture({
+      supervised: true,
+      runningControllerVersion: "1.2.3",
+    });
+    committedFixture.context.verifyGateway = async (version: string) => ({
+      version,
+      runtimeSource: "managed-package",
+    });
+
+    await expect(
+      __testing.applyReleaseTransaction(
+        supervisedRequest("applyRelease", TRANSACTION_ONE, "1.2.3"),
+        committedFixture.context,
+      ),
+    ).resolves.toMatchObject({ phase: "committed", version: "1.2.3" });
+    expect(Object.hasOwn(committedFixture.context, "stageControllerRelease")).toBe(false);
+    expect(await fsp.readFile(committedFixture.paths.versionPath, "utf8")).toBe("1.2.3\n");
+    expect(fs.existsSync(committedFixture.paths.journalPath)).toBe(false);
+
+    const interruptedFixture = await createFixture({
+      supervised: true,
+      runningControllerVersion: "1.2.3",
+    });
+    await __testing.prepareSignerRelease(
+      supervisedRequest("prepareRelease", TRANSACTION_TWO, "1.2.3"),
+      interruptedFixture.context,
+    );
+    interruptedFixture.context.runningControllerVersion = "1.2.2";
+    await expect(
+      __testing.recoverInterruptedTransaction(interruptedFixture.context),
+    ).rejects.toThrow("running target lifecycle controller identity is mismatched");
+    expect(fs.existsSync(interruptedFixture.paths.journalPath)).toBe(true);
   });
 
   it("accepts only the fixed root-only worker socket under stable supervision", () => {

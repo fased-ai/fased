@@ -5973,6 +5973,23 @@ install_host_signer_and_updater_services() {
     exit 1
   fi
 
+  local lifecycle_unit
+  local lifecycle_drop_in_dir
+  for lifecycle_unit in fased-host-controller.service fased-host-updater.service; do
+    lifecycle_drop_in_dir="/etc/systemd/system/${lifecycle_unit}.d"
+    if [[ -e "$lifecycle_drop_in_dir" || -L "$lifecycle_drop_in_dir" ]]; then
+      if [[ ! -d "$lifecycle_drop_in_dir" || -L "$lifecycle_drop_in_dir" || \
+        "$(stat -c '%u:%g' "$lifecycle_drop_in_dir")" != "0:0" || \
+        -n "$(find "$lifecycle_drop_in_dir" -maxdepth 0 -perm /022 -print -quit)" || \
+        -n "$(find "$lifecycle_drop_in_dir" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+        echo "Hosted lifecycle unit drop-in boundary is unsafe: $lifecycle_drop_in_dir" >&2
+        exit 1
+      fi
+    else
+      install -d -m 0755 -o root -g root "$lifecycle_drop_in_dir"
+    fi
+  done
+
   install -d -m 0755 -o root -g root /usr/local/libexec
   install -d -m 0755 -o root -g root /usr/local/sbin
   install -d -m 0755 -o root -g root /usr/local/share/fased/signer-policies
@@ -6146,8 +6163,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=read-only
 ProtectSystem=strict
-ReadWritePaths=/opt/fased/host-controller/releases /opt/fased/host-application /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-controller /etc/systemd/system ${target_home}/.fased
-ReadOnlyPaths=/opt/fased/host-controller/supervisor /var/lib/fased-host-updater/supervisor /etc/systemd/system/fased-host-updater.service
+ReadWritePaths=/opt/fased/host-application /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-controller /etc/systemd/system ${target_home}/.fased
+ReadOnlyPaths=/opt/fased/host-controller /var/lib/fased-host-updater/controller-version.json /var/lib/fased-host-updater/supervisor /etc/systemd/system/fased-host-controller.service /etc/systemd/system/fased-host-controller.service.d /etc/systemd/system/fased-host-updater.service /etc/systemd/system/fased-host-updater.service.d
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
@@ -6222,6 +6239,8 @@ EOF
   sync -f /usr/local/share/fased/signer-policies/network.json.template
   sync -f /etc/systemd/system/fased-host-controller.service
   sync -f /etc/systemd/system/fased-host-updater.service
+  sync -f /etc/systemd/system/fased-host-controller.service.d
+  sync -f /etc/systemd/system/fased-host-updater.service.d
   sync -f /usr/local/libexec /usr/local/sbin /usr/local/share/fased/signer-policies /etc/systemd/system
   systemctl daemon-reload
   systemctl enable fased-host-controller.service fased-host-updater.service >/dev/null

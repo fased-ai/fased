@@ -1009,6 +1009,32 @@ function sharedApplicationStateDirectoriesForAclVerification(spec) {
   return directories;
 }
 
+async function ensureProtectedLocalUnitDropInBoundary(unit) {
+  const directory = path.join("/etc/systemd/system", `${unit}.d`);
+  try {
+    const existing = await fsp.lstat(directory);
+    if (
+      !existing.isDirectory() ||
+      existing.isSymbolicLink() ||
+      existing.uid !== 0 ||
+      existing.gid !== 0 ||
+      (existing.mode & 0o022) !== 0 ||
+      (await fsp.readdir(directory)).length !== 0
+    ) {
+      fail(`protected Local lifecycle unit drop-in boundary is unsafe: ${directory}`);
+    }
+    return directory;
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  await fsp.mkdir(directory, { mode: 0o755 });
+  await fsp.chown(directory, 0, 0);
+  await fsp.chmod(directory, 0o755);
+  return directory;
+}
+
 async function installRootFiles(params) {
   const { sourceRoot, spec, layout, servicePlan, signerIdentity } = params;
   await fsp.mkdir(path.dirname(layout.signerBinary), { recursive: true, mode: 0o755 });
@@ -1067,6 +1093,9 @@ async function installRootFiles(params) {
       gid: 0,
     },
   );
+  for (const unit of [layout.controllerUnit, layout.supervisorUnit]) {
+    await ensureProtectedLocalUnitDropInBoundary(unit);
+  }
   for (const file of Object.values(servicePlan.files)) {
     await atomicWrite(file.path, file.content, file.mode, { uid: 0, gid: 0 });
   }
@@ -1156,6 +1185,25 @@ async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
     fail("protected Local operator group is missing during supervisor transition");
   }
   const systemctl = systemBinary(["/usr/bin/systemctl", "/bin/systemctl"], "systemctl");
+  const boundaryDropInDirectories = [
+    path.join("/etc/systemd/system", `${layout.controllerUnit}.d`),
+    path.join("/etc/systemd/system", `${layout.supervisorUnit}.d`),
+  ];
+  const boundaryDropInPresence = new Map(
+    await Promise.all(
+      boundaryDropInDirectories.map(async (directory) => {
+        try {
+          await fsp.lstat(directory);
+          return [directory, true];
+        } catch (error) {
+          if (error?.code === "ENOENT") {
+            return [directory, false];
+          }
+          throw error;
+        }
+      }),
+    ),
+  );
   const snapshots = new Map(
     await Promise.all(
       [
@@ -1212,6 +1260,22 @@ async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
         rollbackFailures.push(
           `restore ${String(filePath)}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
         );
+      }
+    }
+    for (const directory of boundaryDropInDirectories.toReversed()) {
+      if (boundaryDropInPresence.get(directory)) {
+        continue;
+      }
+      try {
+        await fsp.rmdir(directory);
+      } catch (rollbackError) {
+        if (rollbackError?.code !== "ENOENT") {
+          rollbackFailures.push(
+            `restore ${directory}: ${
+              rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+            }`,
+          );
+        }
       }
     }
     try {
@@ -2720,7 +2784,9 @@ function assertFreshAllocationUnclaimed(layout) {
     `/etc/systemd/system/${layout.gatewayUnit}`,
     `/etc/systemd/system/${layout.signerUnit}`,
     `/etc/systemd/system/${layout.controllerUnit}`,
+    `/etc/systemd/system/${layout.controllerUnit}.d`,
     `/etc/systemd/system/${layout.supervisorUnit}`,
+    `/etc/systemd/system/${layout.supervisorUnit}.d`,
     `/usr/local/sbin/fased-local-signer-owner-${layout.instanceId}`,
   ]) {
     if (fs.existsSync(candidate)) {
@@ -2802,6 +2868,16 @@ async function rollbackBootstrapTransaction(transaction, originalError, options 
       `/etc/systemd/system/${layout.supervisorUnit}`,
     ]) {
       await fsp.rm(unitPath, { force: true });
+    }
+    for (const dropInDirectory of [
+      `/etc/systemd/system/${layout.controllerUnit}.d`,
+      `/etc/systemd/system/${layout.supervisorUnit}.d`,
+    ]) {
+      await fsp.rmdir(dropInDirectory).catch((error) => {
+        if (error?.code !== "ENOENT") {
+          throw error;
+        }
+      });
     }
     await fsp.rm(`/usr/local/sbin/fased-local-signer-owner-${layout.instanceId}`, {
       force: true,
