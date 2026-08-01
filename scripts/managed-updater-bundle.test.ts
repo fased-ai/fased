@@ -17,6 +17,7 @@ import {
 const FILES = [
   "fased-managed-updater.mjs",
   "fased-managed-updater-core.mjs",
+  "fased-host-updaterctl.mjs",
   "hosted-release-manifest.mjs",
   "lifecycle-trust-crypto.mjs",
   "lifecycle-trust-policy.mjs",

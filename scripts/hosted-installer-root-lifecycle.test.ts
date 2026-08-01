@@ -132,7 +132,8 @@ printf 'streamed-bootstrap\\n' | bash ${JSON.stringify(harness)}
     expect(coordinator).toContain("FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock");
     expect(coordinator).toContain("FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external");
     expect(installer).toContain("Environment=FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external");
-    expect(services).toContain("--socket-gid ${operator_gid}");
+    expect(services).toContain("--operator-gid ${operator_gid}");
+    expect(services).toContain("--socket-uid 0 --socket-gid 0");
     expect(services).toContain("-socket /run/fased-signerd/app.sock");
     expect(services).toContain("-operator-socket /run/fased-signerd/operator.sock");
     expect(services).toContain("updater_socket_attempt < 150");
@@ -323,7 +324,7 @@ tailscale_serve_route_ready 18789
     const hostedRepair = sliceBetween(
       noOnboard,
       'if [[ "$HOSTING_REPAIR_REQUESTED" -eq 1 ]]',
-      "if ! prepare_existing_local_signer_after_runtime_install",
+      'if [[ "$PROTECTED_LOCAL_BOOTSTRAPPED" -eq 1 ]]',
     );
 
     expect(hostedRepair).toContain("Hosted application runtime repair staged");

@@ -1381,6 +1381,60 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     expect(operations).toEqual(["updateController", "applyRelease"]);
   });
 
+  it("lets the selected target own all root-managed product mutation", async () => {
+    const operations: string[] = [];
+    const targetRoot = "/opt/fased/application/releases/1.2.3";
+    const paths = {
+      manifestPath: "/home/operator/.fased/install.json",
+      currentLink: "/home/operator/.fased/runtime/current",
+      stateDir: "/home/operator/.fased",
+    };
+    await expect(
+      __testing.convergeRootManagedTarget(
+        {
+          paths,
+          existingManifest: { profile: "protected-local" },
+          currentVersion: "1.2.2",
+          targetVersion: "1.2.3",
+          timeoutMs: 1000,
+          onHandoff: () => operations.push("boundary-crossed"),
+        },
+        {
+          randomTransactionId: () => TRANSACTION_ID,
+          resolveControllerSocket: () => "/run/fased-local-controller/fixture/request.sock",
+          handoff: async (request: Record<string, unknown>) => {
+            operations.push("supervisor-transaction");
+            (request.onHandoff as () => void)();
+            return {
+              ok: true,
+              transactionId: TRANSACTION_ID,
+              version: "1.2.3",
+              phase: "committed",
+              changed: true,
+              release: signerRelease(),
+            };
+          },
+          readManifest: () => ({
+            profile: "protected-local",
+            runtime: { activeVersion: "1.2.3" },
+          }),
+          resolveCurrentRoot: async () => targetRoot,
+          readVersion: async () => "1.2.3",
+          removeLegacyJournal: async () => operations.push("retire-legacy-hint"),
+        },
+      ),
+    ).resolves.toMatchObject({
+      transactionId: TRANSACTION_ID,
+      previousVersion: "1.2.2",
+      currentRoot: targetRoot,
+    });
+    expect(operations).toEqual([
+      "supervisor-transaction",
+      "boundary-crossed",
+      "retire-legacy-hint",
+    ]);
+  });
+
   it("distinguishes a definitive pre-v2 rejection from an ambiguous post-send disconnect", async () => {
     const rejected = await withUnixServer((socket) => {
       socket.once("data", () => {

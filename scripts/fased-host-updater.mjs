@@ -55,7 +55,7 @@ const MANAGED_UPDATER_SUPPORT_FILES = Object.freeze([
 const CONTROLLER_SELF_CHECK_SCHEMA_VERSION = 1;
 const CONTROLLER_PROTOCOL_VERSION = 2;
 const SUPERVISOR_PROTOCOL_VERSION = 1;
-const CONTROLLER_SELECTION_SCHEMA_VERSION = 1;
+const CONTROLLER_SELECTION_SCHEMA_VERSION = 2;
 const SOCKET_PATH = "/run/fased-host-updater/request.sock";
 const STATE_DIR = "/var/lib/fased-host-updater";
 const CONTROLLER_RELEASES_DIR = "/opt/fased/host-controller/releases";
@@ -64,6 +64,8 @@ const APPLICATION_RELEASES_DIR = "/opt/fased/host-application/releases";
 const APPLICATION_CURRENT_LINK = "/opt/fased/host-application/current";
 const SIGNER_PATH = "/opt/fased/signer/fased-signerd";
 const SIGNER_STATE_DB_PATH = "/var/lib/fased-signerd/state.db";
+const SIGNER_MASTER_KEY_PATH = "/var/lib/fased-signerd/master.key";
+const SIGNER_AUDIT_LOG_PATH = "/var/lib/fased-signerd/audit.jsonl";
 const SIGNER_UNIT_PATH = "/etc/systemd/system/fased-signerd.service";
 const VERSION_PATH = path.join(STATE_DIR, "signer-version");
 const CHANNEL_PATH = "/etc/fased/host-updater-channel";
@@ -75,7 +77,7 @@ const TRANSACTIONS_DIR = path.join(STATE_DIR, "transactions");
 const MAX_REQUEST_BYTES = 4096;
 const REQUEST_TIMEOUT_MS = 20 * 60_000;
 const CROSS_PRODUCT_HEALTH_TIMEOUT_MS = 30_000;
-const JOURNAL_SCHEMA_VERSION = 6;
+const JOURNAL_SCHEMA_VERSION = 7;
 const PROTOCOL_SCHEMA_VERSION = 2;
 const CONTROLLER_SELECTION_CAPABILITIES = Object.freeze({
   supervisorProtocol: SUPERVISOR_PROTOCOL_VERSION,
@@ -212,7 +214,11 @@ const TRANSACTION_OPERATIONS = new Set([
   "commitRelease",
   "rollbackRelease",
 ]);
-const CONTROLLER_OPERATIONS = new Set([...TRANSACTION_OPERATIONS, "controllerStatus"]);
+const CONTROLLER_OPERATIONS = new Set([
+  ...TRANSACTION_OPERATIONS,
+  "controllerStatus",
+  "releaseStatus",
+]);
 const TRANSACTION_PHASES = new Set([
   "prepared",
   "state-reconciling",
@@ -269,6 +275,8 @@ const DEFAULT_PATHS = Object.freeze({
   applicationCurrentLink: APPLICATION_CURRENT_LINK,
   signerPath: SIGNER_PATH,
   signerStateDBPath: SIGNER_STATE_DB_PATH,
+  signerMasterKeyPath: SIGNER_MASTER_KEY_PATH,
+  signerAuditLogPath: SIGNER_AUDIT_LOG_PATH,
   signerUnitPath: SIGNER_UNIT_PATH,
   versionPath: VERSION_PATH,
   channelPath: CHANNEL_PATH,
@@ -312,6 +320,8 @@ export function protectedLocalControllerConfiguration(instanceId) {
       gatewayLauncherPath: `${instanceInstallDir}/gateway-launch`,
       signerPath: `${instanceInstallDir}/signer/fased-signerd`,
       signerStateDBPath: `${signerStateDir}/state.db`,
+      signerMasterKeyPath: `${signerStateDir}/master.key`,
+      signerAuditLogPath: `${signerStateDir}/audit.jsonl`,
       signerUnitPath: `/etc/systemd/system/fased-signerd-${normalized}.service`,
       versionPath: `${controllerStateDir}/signer-version`,
       channelPath: `/etc/fased/local/${normalized}/update-channel`,
@@ -392,20 +402,38 @@ function parseTransactionId(value) {
 }
 
 function parseSupervisorSelectionReceipt(value, expected = {}) {
+  const schemaVersion = Number(value?.schemaVersion);
   exactObjectKeys(
     value,
-    [
-      "schemaVersion",
-      "transactionId",
-      "version",
-      "releaseCommit",
-      "targetManifestSha256",
-      "controllerServerSha256",
-      "controllerClientSha256",
-      "controllerInstanceId",
-      "protocolCapabilities",
-      "selectionDigest",
-    ],
+    schemaVersion === 1
+      ? [
+          "schemaVersion",
+          "transactionId",
+          "version",
+          "releaseCommit",
+          "targetManifestSha256",
+          "controllerServerSha256",
+          "controllerClientSha256",
+          "controllerInstanceId",
+          "protocolCapabilities",
+          "selectionDigest",
+        ]
+      : [
+          "schemaVersion",
+          "transactionId",
+          "version",
+          "releaseCommit",
+          "targetManifestSha256",
+          "controllerServerSha256",
+          "controllerClientSha256",
+          "controllerInstanceId",
+          "protocolCapabilities",
+          "nonce",
+          "selectedAt",
+          "expiresAt",
+          "trustPolicySha256",
+          "selectionDigest",
+        ],
     "supervisor controller selection receipt",
   );
   exactObjectKeys(
@@ -414,7 +442,7 @@ function parseSupervisorSelectionReceipt(value, expected = {}) {
     "supervisor controller selection capabilities",
   );
   const unsigned = {
-    schemaVersion: Number(value.schemaVersion),
+    schemaVersion,
     transactionId: parseTransactionId(value.transactionId),
     version: parseReleaseVersion(value.version),
     releaseCommit: String(value.releaseCommit ?? ""),
@@ -427,16 +455,34 @@ function parseSupervisorSelectionReceipt(value, expected = {}) {
       controllerProtocol: Number(value.protocolCapabilities.controllerProtocol),
       requestSchema: Number(value.protocolCapabilities.requestSchema),
     },
+    ...(schemaVersion === CONTROLLER_SELECTION_SCHEMA_VERSION
+      ? {
+          nonce: parseTransactionId(value.nonce),
+          selectedAt: String(value.selectedAt ?? ""),
+          expiresAt: String(value.expiresAt ?? ""),
+          trustPolicySha256: String(value.trustPolicySha256 ?? ""),
+        }
+      : {}),
   };
+  const selectedAt = Date.parse(unsigned.selectedAt ?? "");
+  const expiresAt = Date.parse(unsigned.expiresAt ?? "");
   const selectionDigest = createHash("sha256").update(canonicalJSON(unsigned)).digest("hex");
   if (
-    unsigned.schemaVersion !== CONTROLLER_SELECTION_SCHEMA_VERSION ||
+    !new Set([1, CONTROLLER_SELECTION_SCHEMA_VERSION]).has(unsigned.schemaVersion) ||
     !/^[a-f0-9]{40}$/u.test(unsigned.releaseCommit) ||
     !/^[a-f0-9]{64}$/u.test(unsigned.targetManifestSha256) ||
     !/^[a-f0-9]{64}$/u.test(unsigned.controllerServerSha256) ||
     !/^[a-f0-9]{64}$/u.test(unsigned.controllerClientSha256) ||
     canonicalJSON(unsigned.protocolCapabilities) !==
       canonicalJSON(CONTROLLER_SELECTION_CAPABILITIES) ||
+    (unsigned.schemaVersion === CONTROLLER_SELECTION_SCHEMA_VERSION &&
+      (!Number.isFinite(selectedAt) ||
+        new Date(selectedAt).toISOString() !== unsigned.selectedAt ||
+        !Number.isFinite(expiresAt) ||
+        new Date(expiresAt).toISOString() !== unsigned.expiresAt ||
+        selectedAt >= expiresAt ||
+        expiresAt - selectedAt > 24 * 60 * 60 * 1000 ||
+        !/^[a-f0-9]{64}$/u.test(unsigned.trustPolicySha256))) ||
     value.selectionDigest !== selectionDigest ||
     (expected.transactionId && unsigned.transactionId !== expected.transactionId) ||
     (expected.version && unsigned.version !== expected.version)
@@ -1994,6 +2040,8 @@ function transactionPaths(paths, transactionId) {
     ),
     previousBinaryPath: path.join(transactionDir, "fased-signerd.previous"),
     stateDBSnapshotPath: path.join(transactionDir, "state.db.previous"),
+    masterKeySnapshotPath: path.join(transactionDir, "master.key.previous"),
+    auditLogSnapshotPath: path.join(transactionDir, "audit.jsonl.previous"),
     signerUnitSnapshotPath: path.join(transactionDir, "fased-signerd.service.previous"),
   };
 }
@@ -2410,6 +2458,7 @@ function validateDeclaredStateTransaction(value) {
       typeof entry.create !== "boolean" ||
       typeof entry.preserveContent !== "boolean" ||
       (entry.preserveSemantic != null && typeof entry.preserveSemantic !== "boolean") ||
+      (entry.allowSymlinks != null && typeof entry.allowSymlinks !== "boolean") ||
       !Number.isSafeInteger(entry.desiredMode) ||
       !new Set([0o660, 0o2770]).has(entry.desiredMode) ||
       typeof entry.existed !== "boolean"
@@ -2441,6 +2490,18 @@ function validateDeclaredStateTransaction(value) {
       throw new Error("host updater declared-state preservation digest is invalid");
     }
     if (
+      entry.kind === "directory" &&
+      entry.preserveContent &&
+      entry.existed &&
+      (!Number.isSafeInteger(entry.treeEntries) ||
+        entry.treeEntries < 0 ||
+        entry.treeEntries > DECLARED_STATE_TREE_MAX_ENTRIES ||
+        !Number.isSafeInteger(entry.treeBytes) ||
+        entry.treeBytes < 0)
+    ) {
+      throw new Error("host updater declared-state tree receipt is invalid");
+    }
+    if (
       entry.preserveSemantic === true &&
       entry.existed &&
       (!entry.semanticState ||
@@ -2455,6 +2516,7 @@ function validateDeclaredStateTransaction(value) {
       ...entry,
       relativePath,
       preserveSemantic: entry.preserveSemantic === true,
+      allowSymlinks: entry.allowSymlinks === true,
     };
   });
   if (!Array.isArray(value.changedEntries ?? []) || typeof (value.changed ?? false) !== "boolean") {
@@ -2543,7 +2605,7 @@ async function validateJournal(value, context) {
   if (
     !value ||
     typeof value !== "object" ||
-    !new Set([1, 2, 3, 4, 5, JOURNAL_SCHEMA_VERSION]).has(value.schemaVersion) ||
+    !new Set([1, 2, 3, 4, 5, 6, JOURNAL_SCHEMA_VERSION]).has(value.schemaVersion) ||
     !TRANSACTION_PHASES.has(value.phase)
   ) {
     throw new Error("host updater transaction journal is invalid");
@@ -2675,6 +2737,22 @@ async function validateJournal(value, context) {
   const serviceBoundary = validateProtectedServiceBoundary(value.serviceBoundary, context);
   const declaredState = validateDeclaredStateTransaction(value.declaredState);
   const healthReceipt = validateCrossProductHealthReceipt(value.healthReceipt);
+  const signerPrivateState = validateSignerPrivateStateSnapshot(value.signerPrivateState);
+  if (
+    value.schemaVersion === JOURNAL_SCHEMA_VERSION &&
+    value.changed === true &&
+    new Set([
+      "snapshotting",
+      "activating",
+      "active",
+      "gateway-authorized",
+      "gateway-verified",
+      "committing",
+    ]).has(value.phase) &&
+    !signerPrivateState
+  ) {
+    throw new Error("host updater signer private-state snapshot is missing");
+  }
   return {
     ...value,
     transactionId,
@@ -2691,6 +2769,7 @@ async function validateJournal(value, context) {
     serviceBoundary,
     declaredState,
     healthReceipt,
+    signerPrivateState,
     changed: value.changed === true,
   };
 }
@@ -2745,6 +2824,108 @@ async function fileMetadata(filePath) {
     }
     throw error;
   }
+}
+
+function validatePrivateFileSnapshot(value, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`host updater ${label} snapshot is invalid`);
+  }
+  if (value.existed === false && Object.keys(value).join(",") === "existed") {
+    return Object.freeze({ existed: false });
+  }
+  if (
+    value.existed !== true ||
+    Object.keys(value).toSorted().join(",") !== "existed,gid,mode,sha256,size,uid" ||
+    !Number.isSafeInteger(value.uid) ||
+    value.uid < 0 ||
+    !Number.isSafeInteger(value.gid) ||
+    value.gid < 0 ||
+    !Number.isSafeInteger(value.mode) ||
+    value.mode < 0 ||
+    value.mode > 0o777 ||
+    !Number.isSafeInteger(value.size) ||
+    value.size < 0 ||
+    !/^sha256:[a-f0-9]{64}$/u.test(value.sha256 || "")
+  ) {
+    throw new Error(`host updater ${label} snapshot is invalid`);
+  }
+  return Object.freeze({ ...value });
+}
+
+function validateSignerPrivateStateSnapshot(value) {
+  if (value == null) {
+    return null;
+  }
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    value.schemaVersion !== 1 ||
+    Object.keys(value).toSorted().join(",") !== "auditLog,masterKey,schemaVersion,stateDB"
+  ) {
+    throw new Error("host updater signer private-state snapshot is invalid");
+  }
+  return Object.freeze({
+    schemaVersion: 1,
+    stateDB: validatePrivateFileSnapshot(value.stateDB, "signer database"),
+    masterKey: validatePrivateFileSnapshot(value.masterKey, "signer master key"),
+    auditLog: validatePrivateFileSnapshot(value.auditLog, "signer audit log"),
+  });
+}
+
+async function privateFileSnapshot(filePath, label) {
+  const metadata = await fileMetadata(filePath);
+  if (!metadata.existed) {
+    return Object.freeze({ existed: false });
+  }
+  const named = await fsp.lstat(filePath);
+  if (named.nlink !== 1) {
+    throw new Error(`${label} must not be hard-linked`);
+  }
+  const handle = await fsp.open(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const current = await handle.stat();
+    if (
+      !current.isFile() ||
+      current.dev !== named.dev ||
+      current.ino !== named.ino ||
+      current.nlink !== 1
+    ) {
+      throw new Error(`${label} changed during snapshot inventory`);
+    }
+    return validatePrivateFileSnapshot(
+      {
+        existed: true,
+        uid: current.uid,
+        gid: current.gid,
+        mode: current.mode & 0o777,
+        size: current.size,
+        sha256: await hashDeclaredFile(handle, current, label),
+      },
+      label,
+    );
+  } finally {
+    await handle.close();
+  }
+}
+
+async function assertSnapshotDiskCapacity(directory, snapshots) {
+  const requiredContentBytes = snapshots
+    .filter((entry) => entry.existed)
+    .reduce((sum, entry) => sum + BigInt(entry.size), 0n);
+  const reserveBytes =
+    requiredContentBytes / 10n > 8n * 1024n * 1024n
+      ? requiredContentBytes / 10n
+      : 8n * 1024n * 1024n;
+  const requiredBytes = requiredContentBytes + reserveBytes;
+  const filesystem = await fsp.statfs(directory, { bigint: true });
+  const availableBytes = filesystem.bavail * filesystem.bsize;
+  if (availableBytes < requiredBytes) {
+    throw new Error(
+      `insufficient disk space for transactional signer snapshot (${requiredBytes} bytes required, ${availableBytes} available)`,
+    );
+  }
+  return Object.freeze({ requiredBytes, availableBytes });
 }
 
 async function cleanupTransactionFiles(context, transactionId) {
@@ -3202,16 +3383,56 @@ async function stageOfficialCandidate(version, candidatePath, context) {
 
 const DECLARED_STATE_SCHEMA_VERSION = 1;
 const DECLARED_STATE_MAX_ENTRIES = 4096;
+const DECLARED_STATE_TREE_MAX_ENTRIES = 1_000_000;
+const DECLARED_STATE_TREE_MAX_DEPTH = 64;
+const DECLARED_STATE_TREE_MAX_PATH_BYTES = 8192;
 const DECLARED_STATE_SHARED_DIRECTORIES = Object.freeze([
   Object.freeze({ relativePath: ".", stateClass: "gateway-config-auth", create: false }),
-  Object.freeze({ relativePath: "identity", stateClass: "device-identity", create: true }),
-  Object.freeze({ relativePath: "wallet", stateClass: "wallet", create: true }),
-  Object.freeze({ relativePath: "federation", stateClass: "federation-network", create: true }),
+  Object.freeze({
+    relativePath: "identity",
+    stateClass: "device-identity",
+    create: true,
+    preserveContent: true,
+  }),
+  Object.freeze({
+    relativePath: "wallet",
+    stateClass: "wallet",
+    create: true,
+    preserveContent: true,
+  }),
+  Object.freeze({
+    relativePath: "federation",
+    stateClass: "federation-network",
+    create: true,
+    preserveContent: true,
+  }),
   Object.freeze({
     relativePath: "extensions",
     stateClass: "agent-session-channel-plugin",
     create: true,
+    preserveContent: true,
+    allowSymlinks: true,
   }),
+  ...[
+    ["credentials", "provider-credentials"],
+    ["secrets", "provider-credentials"],
+    ["agents", "agent-session-channel-plugin"],
+    ["sessions", "agent-session-channel-plugin"],
+    ["channels", "agent-session-channel-plugin"],
+    ["cron", "agent-session-channel-plugin"],
+    ["tasks", "agent-session-channel-plugin"],
+    ["schedules", "agent-session-channel-plugin"],
+    ["devices", "agent-session-channel-plugin"],
+    ["delivery-queue", "agent-session-channel-plugin"],
+    ["memory", "agent-session-channel-plugin"],
+  ].map(([relativePath, stateClass]) =>
+    Object.freeze({
+      relativePath,
+      stateClass,
+      create: false,
+      preserveContent: true,
+    }),
+  ),
   Object.freeze({ relativePath: "sat-mining", stateClass: "mining", create: false }),
   Object.freeze({ relativePath: "sat-mining/wallets", stateClass: "mining", create: false }),
   Object.freeze({
@@ -3344,7 +3565,12 @@ function declaredStateRegistry(topology, context) {
       rollback: "transaction-snapshot-and-signer-invariant",
       preservation: "signer-state-invariant",
       health: "exact-release-protocol-policy-network-webauthn",
-      paths: [context.paths.signerStateDBPath, context.paths.signerPath].filter(Boolean),
+      paths: [
+        context.paths.signerStateDBPath,
+        context.paths.signerMasterKeyPath,
+        context.paths.signerAuditLogPath,
+        context.paths.signerPath,
+      ].filter(Boolean),
     },
     {
       stateClass: "wallet",
@@ -3604,7 +3830,8 @@ async function collectDeclaredStateRules(stateDir) {
       ...entry,
       kind: "directory",
       desiredMode: 0o2770,
-      preserveContent: false,
+      preserveContent: entry.preserveContent === true,
+      allowSymlinks: entry.allowSymlinks === true,
     });
   }
   for (const entry of DECLARED_STATE_SHARED_FILES) {
@@ -3706,6 +3933,103 @@ async function hashDeclaredFile(handle, stat, label) {
     throw new Error(`declared ${label} changed while being preserved`);
   }
   return `sha256:${hash.digest("hex")}`;
+}
+
+async function hashDeclaredDirectoryTree(rootPath, label, { allowSymlinks = false } = {}) {
+  const hash = createHash("sha256");
+  let entries = 0;
+  let bytes = 0;
+  const update = (record) => {
+    const encoded = canonicalJSON(record);
+    hash.update(`${Buffer.byteLength(encoded)}:`);
+    hash.update(encoded);
+  };
+  const walk = async (directoryPath, relativeRoot, depth) => {
+    if (depth > DECLARED_STATE_TREE_MAX_DEPTH) {
+      throw new Error(`declared ${label} tree exceeds the maximum directory depth`);
+    }
+    const directoryHandle = await fsp.open(
+      directoryPath,
+      fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
+    );
+    try {
+      const before = await directoryHandle.stat();
+      if (!before.isDirectory()) {
+        throw new Error(`declared ${label} tree contains a non-directory boundary`);
+      }
+      const children = (await fsp.readdir(directoryPath, { withFileTypes: true })).toSorted(
+        (left, right) => left.name.localeCompare(right.name),
+      );
+      for (const child of children) {
+        const childRelative = relativeRoot ? `${relativeRoot}/${child.name}` : child.name;
+        if (Buffer.byteLength(childRelative) > DECLARED_STATE_TREE_MAX_PATH_BYTES) {
+          throw new Error(`declared ${label} tree contains an overlong path`);
+        }
+        entries += 1;
+        if (entries > DECLARED_STATE_TREE_MAX_ENTRIES) {
+          throw new Error(`declared ${label} tree contains too many entries`);
+        }
+        const childPath = path.join(directoryPath, child.name);
+        const named = await fsp.lstat(childPath);
+        if (named.isSymbolicLink()) {
+          if (!allowSymlinks) {
+            throw new Error(`declared ${label} tree contains a symbolic link: ${childRelative}`);
+          }
+          const target = await fsp.readlink(childPath);
+          update({ kind: "symlink", path: childRelative, target });
+          continue;
+        }
+        if (named.isDirectory()) {
+          update({ kind: "directory", path: childRelative });
+          await walk(childPath, childRelative, depth + 1);
+          continue;
+        }
+        if (!named.isFile() || named.nlink !== 1) {
+          throw new Error(`declared ${label} tree contains an unsafe node: ${childRelative}`);
+        }
+        const fileHandle = await fsp.open(
+          childPath,
+          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+        );
+        try {
+          const current = await fileHandle.stat();
+          if (
+            !current.isFile() ||
+            current.nlink !== 1 ||
+            current.dev !== named.dev ||
+            current.ino !== named.ino
+          ) {
+            throw new Error(`declared ${label} tree changed during inventory`);
+          }
+          bytes += current.size;
+          update({
+            kind: "file",
+            path: childRelative,
+            size: current.size,
+            sha256: await hashDeclaredFile(fileHandle, current, `${label}/${childRelative}`),
+          });
+        } finally {
+          await fileHandle.close();
+        }
+      }
+      const after = await directoryHandle.stat();
+      if (
+        after.dev !== before.dev ||
+        after.ino !== before.ino ||
+        after.mtimeMs !== before.mtimeMs
+      ) {
+        throw new Error(`declared ${label} tree changed during inventory`);
+      }
+    } finally {
+      await directoryHandle.close();
+    }
+  };
+  await walk(rootPath, "", 0);
+  return Object.freeze({
+    contentHash: `sha256:${hash.digest("hex")}`,
+    treeEntries: entries,
+    treeBytes: bytes,
+  });
 }
 
 function miningLedgerSemanticSnapshot(filePath) {
@@ -3846,6 +4170,7 @@ async function inspectDeclaredStateRule(stateDir, rule) {
       desiredMode: rule.desiredMode,
       preserveContent: rule.preserveContent === true,
       preserveSemantic: rule.preserveSemantic === true,
+      allowSymlinks: rule.allowSymlinks === true,
       existed: false,
     };
   }
@@ -3883,6 +4208,7 @@ async function inspectDeclaredStateRule(stateDir, rule) {
       desiredMode: rule.desiredMode,
       preserveContent: rule.preserveContent === true,
       preserveSemantic: rule.preserveSemantic === true,
+      allowSymlinks: rule.allowSymlinks === true,
       existed: true,
       uid: current.uid,
       gid: current.gid,
@@ -3891,7 +4217,11 @@ async function inspectDeclaredStateRule(stateDir, rule) {
       ino: current.ino,
       nlink: current.nlink,
       ...(rule.preserveContent
-        ? { contentHash: await hashDeclaredFile(handle, current, rule.relativePath) }
+        ? rule.kind === "directory"
+          ? await hashDeclaredDirectoryTree(entryPath, rule.relativePath, {
+              allowSymlinks: rule.allowSymlinks === true,
+            })
+          : { contentHash: await hashDeclaredFile(handle, current, rule.relativePath) }
         : {}),
       ...(rule.preserveSemantic
         ? (() => {
@@ -4117,7 +4447,25 @@ async function verifyDeclaredStatePreservation(transaction) {
   }
   const preservationHash = declaredStatePreservationHash(preserved);
   if (preservationHash !== transaction.preservationHash) {
-    throw new Error("declared user state changed during the lifecycle transaction");
+    const expectedByPath = new Map(
+      transaction.entries
+        .filter((entry) => entry.preserveContent || entry.preserveSemantic)
+        .map((entry) => [entry.relativePath, entry]),
+    );
+    const changedPaths = preserved
+      .filter((entry) => {
+        const expected = expectedByPath.get(entry.relativePath);
+        return (
+          !expected ||
+          entry.existed !== expected.existed ||
+          (entry.contentHash ?? null) !== (expected.contentHash ?? null) ||
+          (entry.semanticHash ?? null) !== (expected.semanticHash ?? null)
+        );
+      })
+      .map((entry) => entry.relativePath)
+      .slice(0, 8);
+    const detail = changedPaths.length > 0 ? `: ${changedPaths.join(", ")}` : "";
+    throw new Error(`declared user state changed during the lifecycle transaction${detail}`);
   }
   const preservationHashes = declaredStateClassPreservationHashes(preserved);
   const expectedHashes =
@@ -5798,6 +6146,21 @@ async function ensureProtectedLocalControllerServicePolicy(context) {
 function createTransactionContext(overrides = {}) {
   const paths = { ...DEFAULT_PATHS, ...overrides.paths };
   if (
+    overrides.paths?.signerStateDBPath &&
+    !Object.hasOwn(overrides.paths, "signerMasterKeyPath")
+  ) {
+    paths.signerMasterKeyPath = path.join(
+      path.dirname(overrides.paths.signerStateDBPath),
+      "master.key",
+    );
+  }
+  if (overrides.paths?.signerStateDBPath && !Object.hasOwn(overrides.paths, "signerAuditLogPath")) {
+    paths.signerAuditLogPath = path.join(
+      path.dirname(overrides.paths.signerStateDBPath),
+      "audit.jsonl",
+    );
+  }
+  if (
     overrides.paths &&
     !Object.hasOwn(overrides.paths, "applicationReleasesDir") &&
     !Object.hasOwn(overrides.paths, "applicationCurrentLink")
@@ -5892,6 +6255,9 @@ function createTransactionContext(overrides = {}) {
     restoreApplicationState:
       overrides.restoreApplicationState ??
       (async (transaction) => await restoreDeclaredApplicationState(transaction)),
+    assertSnapshotDiskCapacity:
+      overrides.assertSnapshotDiskCapacity ??
+      (async (directory, snapshots) => await assertSnapshotDiskCapacity(directory, snapshots)),
     verifyApplicationState:
       overrides.verifyApplicationState ??
       (async (transaction) => await verifyDeclaredStatePreservation(transaction)),
@@ -5968,6 +6334,13 @@ async function assertSupervisorSelectedController(
   }
   const receipt = parseSupervisorSelectionReceipt(request.supervisorReceipt, request);
   const persisted = await context.readSupervisorSelectionReceipt(receipt);
+  if (
+    !allowProcessRestart &&
+    persisted.schemaVersion === CONTROLLER_SELECTION_SCHEMA_VERSION &&
+    (Date.now() < Date.parse(persisted.selectedAt) || Date.now() > Date.parse(persisted.expiresAt))
+  ) {
+    throw new Error("supervisor controller selection receipt is outside its validity window");
+  }
   const running = context.runningControllerIdentity;
   if (
     context.runningControllerVersion !== request.version ||
@@ -6271,6 +6644,7 @@ async function prepareSignerRelease(request, context) {
       createdAt: new Date().toISOString(),
       previousBinary: null,
       stateDB: null,
+      signerPrivateState: null,
       signerUnit,
       rollbackFromPhase: null,
     });
@@ -6337,6 +6711,133 @@ async function restoreStateDB(context, journal, txPaths) {
   }
   await fsp.rm(context.paths.signerStateDBPath, { force: true });
   await fsyncDirectory(path.dirname(context.paths.signerStateDBPath));
+}
+
+async function restorePrivateFile(filePath, snapshotPath, metadata) {
+  if (metadata.existed) {
+    await fsp.access(snapshotPath);
+    await atomicCopyFileDurable(snapshotPath, filePath, {
+      mode: metadata.mode,
+      uid: metadata.uid,
+      gid: metadata.gid,
+    });
+    const restored = await privateFileSnapshot(filePath, path.basename(filePath));
+    if (restored.sha256 !== metadata.sha256 || restored.size !== metadata.size) {
+      throw new Error(`signer private-state rollback did not restore ${path.basename(filePath)}`);
+    }
+    return;
+  }
+  await fsp.rm(filePath, { force: true });
+  await fsyncDirectory(path.dirname(filePath));
+}
+
+async function restoreSignerPrivateState(context, journal, txPaths) {
+  if (journal.rollbackFromPhase === "snapshotting") {
+    return;
+  }
+  if (!journal.signerPrivateState) {
+    await restoreStateDB(context, journal, txPaths);
+    return;
+  }
+  await restorePrivateFile(
+    context.paths.signerStateDBPath,
+    txPaths.stateDBSnapshotPath,
+    journal.signerPrivateState.stateDB,
+  );
+  await restorePrivateFile(
+    context.paths.signerMasterKeyPath,
+    txPaths.masterKeySnapshotPath,
+    journal.signerPrivateState.masterKey,
+  );
+  await restorePrivateFile(
+    context.paths.signerAuditLogPath,
+    txPaths.auditLogSnapshotPath,
+    journal.signerPrivateState.auditLog,
+  );
+}
+
+async function copySignerPrivateStateSnapshot(context, txPaths, snapshot) {
+  for (const [sourcePath, snapshotPath, metadata] of [
+    [context.paths.signerStateDBPath, txPaths.stateDBSnapshotPath, snapshot.stateDB],
+    [context.paths.signerMasterKeyPath, txPaths.masterKeySnapshotPath, snapshot.masterKey],
+    [context.paths.signerAuditLogPath, txPaths.auditLogSnapshotPath, snapshot.auditLog],
+  ]) {
+    if (!metadata.existed) {
+      continue;
+    }
+    await atomicCopyFileDurable(sourcePath, snapshotPath, {
+      mode: metadata.mode,
+      uid: metadata.uid,
+      gid: metadata.gid,
+    });
+    const copied = await privateFileSnapshot(snapshotPath, path.basename(sourcePath));
+    if (copied.sha256 !== metadata.sha256 || copied.size !== metadata.size) {
+      throw new Error(`signer private-state snapshot changed for ${path.basename(sourcePath)}`);
+    }
+  }
+}
+
+async function hashFilePrefix(filePath, bytes, label) {
+  const handle = await fsp.open(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size < bytes) {
+      throw new Error(`${label} was truncated during activation`);
+    }
+    const hash = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    let offset = 0;
+    while (offset < bytes) {
+      const { bytesRead } = await handle.read(
+        buffer,
+        0,
+        Math.min(buffer.length, bytes - offset),
+        offset,
+      );
+      if (bytesRead <= 0) {
+        throw new Error(`${label} was truncated during activation`);
+      }
+      hash.update(buffer.subarray(0, bytesRead));
+      offset += bytesRead;
+    }
+    return `sha256:${hash.digest("hex")}`;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function verifySignerPrivateStateAfterActivation(context, snapshot) {
+  const [stateDB, masterKey, auditLog] = await Promise.all([
+    privateFileSnapshot(context.paths.signerStateDBPath, "signer database"),
+    privateFileSnapshot(context.paths.signerMasterKeyPath, "signer master key"),
+    privateFileSnapshot(context.paths.signerAuditLogPath, "signer audit log"),
+  ]);
+  if (!stateDB.existed) {
+    throw new Error("activated signer did not establish its state database");
+  }
+  if (
+    snapshot.masterKey.existed &&
+    (!masterKey.existed || masterKey.sha256 !== snapshot.masterKey.sha256)
+  ) {
+    throw new Error("activated signer changed its master-key identity");
+  }
+  if (!masterKey.existed) {
+    throw new Error("activated signer did not establish its master key");
+  }
+  if (snapshot.auditLog.existed) {
+    if (
+      !auditLog.existed ||
+      auditLog.size < snapshot.auditLog.size ||
+      (await hashFilePrefix(
+        context.paths.signerAuditLogPath,
+        snapshot.auditLog.size,
+        "signer audit log",
+      )) !== snapshot.auditLog.sha256
+    ) {
+      throw new Error("activated signer truncated or rewrote its audit history");
+    }
+  }
+  return Object.freeze({ stateDB, masterKey, auditLog });
 }
 
 async function restorePreviousBinary(context, journal, txPaths) {
@@ -6477,7 +6978,7 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
     ]).has(rollbackFromPhase);
     if (candidateMayHaveRun) {
       await restorePreviousBinary(context, journal, txPaths);
-      await restoreStateDB(context, journal, txPaths);
+      await restoreSignerPrivateState(context, journal, txPaths);
       await restoreVersionFile(context, journal.previousVersion);
     }
   }
@@ -6728,26 +7229,33 @@ async function activateSignerRelease(request, context) {
   }
 
   const txPaths = transactionPaths(context.paths, journal.transactionId);
-  const previousBinary = await fileMetadata(context.paths.signerPath);
-  const stateDB = await fileMetadata(context.paths.signerStateDBPath);
-  journal = await writeJournal(context, {
-    ...journal,
-    phase: "snapshotting",
-    previousBinary,
-    stateDB,
-  });
   try {
     await context.stopSigner();
+    const previousBinary = await fileMetadata(context.paths.signerPath);
+    const signerPrivateState = validateSignerPrivateStateSnapshot({
+      schemaVersion: 1,
+      stateDB: await privateFileSnapshot(context.paths.signerStateDBPath, "signer database"),
+      masterKey: await privateFileSnapshot(context.paths.signerMasterKeyPath, "signer master key"),
+      auditLog: await privateFileSnapshot(context.paths.signerAuditLogPath, "signer audit log"),
+    });
+    await context.assertSnapshotDiskCapacity(txPaths.transactionDir, [
+      signerPrivateState.stateDB,
+      signerPrivateState.masterKey,
+      signerPrivateState.auditLog,
+    ]);
+    journal = await writeJournal(context, {
+      ...journal,
+      phase: "snapshotting",
+      previousBinary,
+      stateDB: signerPrivateState.stateDB,
+      signerPrivateState,
+    });
     if (previousBinary.existed) {
       await atomicCopyFileDurable(context.paths.signerPath, txPaths.previousBinaryPath, {
         mode: previousBinary.mode,
       });
     }
-    if (stateDB.existed) {
-      await atomicCopyFileDurable(context.paths.signerStateDBPath, txPaths.stateDBSnapshotPath, {
-        mode: 0o600,
-      });
-    }
+    await copySignerPrivateStateSnapshot(context, txPaths, signerPrivateState);
     journal = await writeJournal(context, { ...journal, phase: "activating" });
     await fsp.rename(txPaths.candidatePath, context.paths.signerPath);
     await fsyncDirectory(path.dirname(context.paths.signerPath));
@@ -6760,6 +7268,7 @@ async function activateSignerRelease(request, context) {
         "activated signer did not preserve exact wallet, policy, network, and WebAuthn state",
       );
     }
+    await verifySignerPrivateStateAfterActivation(context, signerPrivateState);
     await atomicWriteFileDurable(context.paths.versionPath, `${journal.version}\n`, 0o600);
     journal = await writeJournal(context, { ...journal, phase: "active" });
     return {
@@ -7358,6 +7867,43 @@ async function alreadyCommittedRelease(request, context) {
   };
 }
 
+async function releaseStatus(request, context) {
+  await assertSupervisorSelectedController(request, context, { allowProcessRestart: true });
+  const journal = await readJournal(context);
+  if (journal) {
+    assertMatchingTransaction(journal, request);
+    return {
+      transactionId: request.transactionId,
+      version: request.version,
+      phase: journal.phase,
+      changed: journal.changed,
+      durableCommitDecision: new Set(["gateway-verified", "committing"]).has(journal.phase),
+    };
+  }
+  const committed = await alreadyCommittedRelease(request, context);
+  if (committed) {
+    return { ...committed, healthy: true };
+  }
+  const installedVersion = await readVersionFile(context.paths.versionPath);
+  if (installedVersion) {
+    const previous = await alreadyCommittedRelease(
+      { ...request, version: installedVersion },
+      context,
+    );
+    if (!previous) {
+      throw new Error("restored product generation did not pass cross-product health");
+    }
+  }
+  return {
+    transactionId: request.transactionId,
+    version: request.version,
+    phase: "rolled-back",
+    changed: false,
+    installedVersion,
+    healthy: true,
+  };
+}
+
 async function applyReleaseTransaction(request, context) {
   await assertSupervisorSelectedController(request, context);
   let journal = await readJournal(context);
@@ -7483,7 +8029,8 @@ async function dispatchUpdateRequest(request, context) {
   if (
     context.supervised &&
     request.op !== "updateController" &&
-    request.op !== "controllerStatus"
+    request.op !== "controllerStatus" &&
+    request.op !== "releaseStatus"
   ) {
     await assertSupervisorSelectedController(request, context);
   }
@@ -7505,6 +8052,8 @@ async function dispatchUpdateRequest(request, context) {
         controllerClientSha256: context.runningControllerIdentity.clientSha256,
         protocolCapabilities: CONTROLLER_SELECTION_CAPABILITIES,
       };
+    case "releaseStatus":
+      return await releaseStatus(request, context);
     case "updateController":
       if (context.supervised) {
         throw new Error("stable lifecycle supervisor owns controller promotion");
@@ -7807,6 +8356,7 @@ export const __testing = {
   verifyCrossProductHealth,
   rootManagedApplicationIdentity,
   readJournal,
+  releaseStatus,
   recoverInterruptedTransaction,
   releaseAttestationVerifyArgs,
   releaseAllowedForChannel,

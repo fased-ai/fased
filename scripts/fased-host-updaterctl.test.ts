@@ -20,11 +20,16 @@ afterEach(async () => {
 function runClient(params: {
   socketPath: string;
   statePath: string;
+  version?: string;
 }): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
-      [path.join(import.meta.dirname, "fased-host-updaterctl.mjs"), "1.2.3", "--apply"],
+      [
+        path.join(import.meta.dirname, "fased-host-updaterctl.mjs"),
+        params.version ?? "1.2.3",
+        "--apply",
+      ],
       {
         env: {
           ...process.env,
@@ -54,7 +59,14 @@ describe("host updater controller client", () => {
     const root = await temporaryRoot();
     const socketPath = path.join(root, "request.sock");
     const statePath = path.join(root, "client", "transaction.json");
-    const requests: Array<{ op: string; transactionId: string; version: string }> = [];
+    const requests: Array<{
+      schemaVersion: number;
+      op: string;
+      transactionId: string;
+      nonce: string;
+      version: string;
+      clientCapabilities: { protocolVersion: number; requestSchema: number };
+    }> = [];
     let rejectFirstApply = true;
     const server = net.createServer((socket) => {
       socket.setEncoding("utf8");
@@ -66,9 +78,12 @@ describe("host updater controller client", () => {
           return;
         }
         const request = JSON.parse(body.slice(0, newline)) as {
+          schemaVersion: number;
           op: string;
           transactionId: string;
+          nonce: string;
           version: string;
+          clientCapabilities: { protocolVersion: number; requestSchema: number };
         };
         requests.push(request);
         if (request.op === "applyRelease" && rejectFirstApply) {
@@ -117,9 +132,91 @@ describe("host updater controller client", () => {
 
       const applyRequests = requests.filter((request) => request.op === "applyRelease");
       expect(applyRequests).toHaveLength(2);
+      expect(requests.every((request) => request.schemaVersion === 3)).toBe(true);
+      expect(
+        requests.every(
+          (request) =>
+            request.clientCapabilities?.protocolVersion === 2 &&
+            request.clientCapabilities?.requestSchema === 3 &&
+            /^[0-9a-f-]{36}$/u.test(request.nonce),
+        ),
+      ).toBe(true);
       expect(new Set(applyRequests.map((request) => request.transactionId))).toEqual(
         new Set([retained.transactionId]),
       );
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("treats an unfinished different-target marker as a hint and reaches the supervisor", async () => {
+    const root = await temporaryRoot();
+    const socketPath = path.join(root, "request.sock");
+    const statePath = path.join(root, "client", "transaction.json");
+    const priorTransactionId = "00000000-0000-4000-8000-000000000001";
+    await fs.mkdir(path.dirname(statePath), { recursive: true });
+    await fs.writeFile(
+      statePath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        transactionId: priorTransactionId,
+        version: "1.2.2",
+      })}\n`,
+      { mode: 0o600 },
+    );
+    const requests: Array<{
+      schemaVersion: number;
+      op: string;
+      transactionId: string;
+      nonce: string;
+      version: string;
+      clientCapabilities: { protocolVersion: number; requestSchema: number };
+    }> = [];
+    const server = net.createServer((socket) => {
+      socket.setEncoding("utf8");
+      let body = "";
+      socket.on("data", (chunk) => {
+        body += chunk;
+        const newline = body.indexOf("\n");
+        if (newline < 0) {
+          return;
+        }
+        const request = JSON.parse(body.slice(0, newline)) as {
+          schemaVersion: number;
+          op: string;
+          transactionId: string;
+          nonce: string;
+          version: string;
+          clientCapabilities: { protocolVersion: number; requestSchema: number };
+        };
+        requests.push(request);
+        socket.end(
+          `${JSON.stringify({
+            ok: true,
+            transactionId: request.transactionId,
+            version: request.version,
+            controllerChanged: false,
+            phase: request.op === "applyRelease" ? "committed" : undefined,
+          })}\n`,
+        );
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+
+    try {
+      const result = await runClient({ socketPath, statePath, version: "1.2.3" });
+      expect(result).toMatchObject({ code: 0, stderr: "" });
+      expect(requests.map(({ op }) => op)).toEqual(["updateController", "applyRelease"]);
+      expect(new Set(requests.map(({ version }) => version))).toEqual(new Set(["1.2.3"]));
+      expect(requests[0]?.transactionId).not.toBe(priorTransactionId);
+      expect(new Set(requests.map(({ transactionId }) => transactionId)).size).toBe(1);
+      expect(new Set(requests.map(({ nonce }) => nonce)).size).toBe(1);
+      await expect(fs.access(statePath)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));

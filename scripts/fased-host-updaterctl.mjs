@@ -1,37 +1,40 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import fsp from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const socketPath = process.env.FASED_HOST_UPDATER_SOCKET || "/run/fased-host-updater/request.sock";
-const statePath =
-  process.env.FASED_HOST_UPDATERCTL_STATE || "/var/lib/fased-host-updater/ctl-transaction.json";
-const transactionPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-if (process.argv[2] === "--self-check") {
-  process.stdout.write(
-    `${JSON.stringify({ schemaVersion: 1, protocolVersion: 2, role: "client" })}\n`,
-  );
-  process.exit(0);
-}
-const version = String(process.argv[2] ?? "")
-  .trim()
-  .replace(/^v/, "");
-if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(version)) {
-  throw new Error("an exact signer release version is required");
-}
-const mode = process.argv[3];
-if (
-  !new Set([
-    "--apply",
-    "--prepare-only",
-    "--activate-only",
-    "--commit-only",
-    "--rollback-only",
-  ]).has(mode)
-) {
-  throw new Error(`unsupported signer updater control mode: ${mode}`);
+export const SUPERVISOR_REQUEST_SCHEMA_VERSION = 3;
+export const SUPERVISOR_CLIENT_PROTOCOL_VERSION = 2;
+export const DEFAULT_SUPERVISOR_SOCKET = "/run/fased-host-updater/request.sock";
+export const DEFAULT_CLIENT_STATE = "/var/lib/fased-host-updater/ctl-transaction.json";
+export const TRANSACTION_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+export const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
+
+const CONTROL_MODES = new Set([
+  "--apply",
+  "--prepare-only",
+  "--activate-only",
+  "--commit-only",
+  "--rollback-only",
+]);
+const SUPERVISOR_CLIENT_CAPABILITIES = Object.freeze({
+  protocolVersion: SUPERVISOR_CLIENT_PROTOCOL_VERSION,
+  requestSchema: SUPERVISOR_REQUEST_SCHEMA_VERSION,
+});
+
+function parseReleaseVersion(value) {
+  const version = String(value ?? "")
+    .trim()
+    .replace(/^v/u, "");
+  if (!RELEASE_VERSION_PATTERN.test(version)) {
+    throw new Error("an exact signer release version is required");
+  }
+  return version;
 }
 
 async function fsyncDirectory(directory) {
@@ -43,22 +46,34 @@ async function fsyncDirectory(directory) {
   }
 }
 
-async function loadOrCreateTransactionId() {
+async function readClientHint(statePath) {
   try {
+    const info = await fsp.lstat(statePath);
+    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || (info.mode & 0o177) !== 0) {
+      throw new Error("supervisor client transaction hint is unsafe");
+    }
     const saved = JSON.parse(await fsp.readFile(statePath, "utf8"));
-    if (saved.version !== version || !transactionPattern.test(saved.transactionId || "")) {
-      throw new Error(
-        `another root signer update transaction is unfinished (${saved.version || "unknown"}); re-run its repair before v${version}`,
-      );
+    if (
+      saved?.schemaVersion !== 1 ||
+      !RELEASE_VERSION_PATTERN.test(String(saved.version ?? "")) ||
+      !TRANSACTION_ID_PATTERN.test(String(saved.transactionId ?? ""))
+    ) {
+      throw new Error("supervisor client transaction hint is invalid");
     }
-    return saved.transactionId.toLowerCase();
+    return Object.freeze({
+      schemaVersion: 1,
+      transactionId: String(saved.transactionId).toLowerCase(),
+      version: String(saved.version),
+    });
   } catch (error) {
-    if (error?.code !== "ENOENT") {
-      throw error;
+    if (error?.code === "ENOENT") {
+      return null;
     }
+    throw error;
   }
+}
 
-  const transactionId = randomUUID();
+async function persistClientHint(statePath, transactionId, version) {
   await fsp.mkdir(path.dirname(statePath), { recursive: true, mode: 0o700 });
   const temporaryPath = `${statePath}.tmp-${process.pid}-${Date.now()}`;
   const handle = await fsp.open(temporaryPath, "wx", 0o600);
@@ -72,36 +87,88 @@ async function loadOrCreateTransactionId() {
   }
   await fsp.rename(temporaryPath, statePath);
   await fsyncDirectory(path.dirname(statePath));
-  return transactionId;
 }
 
-async function clearTransactionId() {
+async function clearClientHint(statePath) {
   await fsp.rm(statePath, { force: true });
-  await fsyncDirectory(path.dirname(statePath));
+  try {
+    await fsyncDirectory(path.dirname(statePath));
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
 }
 
-const transactionId = await loadOrCreateTransactionId();
-
-async function request(op) {
+export async function requestSupervisorOperation({
+  socketPath = DEFAULT_SUPERVISOR_SOCKET,
+  operation,
+  transactionId,
+  nonce,
+  version,
+  timeoutMs = 20 * 60_000,
+}) {
+  const normalizedVersion = parseReleaseVersion(version);
+  const normalizedTransactionId = String(transactionId ?? "").toLowerCase();
+  const normalizedNonce = String(nonce ?? "").toLowerCase();
+  if (!TRANSACTION_ID_PATTERN.test(normalizedTransactionId)) {
+    throw new Error("supervisor client transaction ID must be a UUIDv4");
+  }
+  if (!TRANSACTION_ID_PATTERN.test(normalizedNonce)) {
+    throw new Error("supervisor client request nonce must be a UUIDv4");
+  }
+  if (
+    operation !== "updateController" &&
+    !new Set([
+      "applyRelease",
+      "prepareRelease",
+      "activateRelease",
+      "authorizeGatewayRelease",
+      "gateGatewayRelease",
+      "restartGateway",
+      "commitRelease",
+      "rollbackRelease",
+    ]).has(operation)
+  ) {
+    throw new Error(`unsupported supervisor operation: ${operation}`);
+  }
   return await new Promise((resolve, reject) => {
     const socket = net.createConnection({ path: socketPath });
     socket.setEncoding("utf8");
-    socket.setTimeout(20 * 60_000);
+    socket.setTimeout(timeoutMs);
     let body = "";
     let settled = false;
+    let requestSent = false;
     const fail = (error) => {
       if (settled) {
         return;
       }
       settled = true;
       socket.destroy();
+      if (error && typeof error === "object") {
+        error.supervisorRequestSent = requestSent;
+      }
       reject(error);
     };
     socket.once("connect", () => {
-      socket.write(`${JSON.stringify({ schemaVersion: 2, op, transactionId, version })}\n`);
+      requestSent = true;
+      socket.write(
+        `${JSON.stringify({
+          schemaVersion: SUPERVISOR_REQUEST_SCHEMA_VERSION,
+          op: operation,
+          transactionId: normalizedTransactionId,
+          nonce: normalizedNonce,
+          version: normalizedVersion,
+          clientCapabilities: SUPERVISOR_CLIENT_CAPABILITIES,
+        })}\n`,
+      );
     });
     socket.on("data", (chunk) => {
       body += chunk;
+      if (body.length > 64 * 1024) {
+        fail(new Error("lifecycle supervisor response exceeded its bound"));
+        return;
+      }
       const newline = body.indexOf("\n");
       if (newline < 0 || settled) {
         return;
@@ -110,24 +177,30 @@ async function request(op) {
         const response = JSON.parse(body.slice(0, newline));
         if (
           !response?.ok ||
-          response.transactionId !== transactionId ||
-          response.version !== version
+          response.transactionId !== normalizedTransactionId ||
+          response.version !== normalizedVersion
         ) {
-          fail(new Error(response?.error || `host updater rejected ${op}`));
+          fail(new Error(response?.error || `lifecycle supervisor rejected ${operation}`));
           return;
         }
         settled = true;
         socket.destroy();
         resolve(response);
       } catch (error) {
-        fail(new Error(`host updater returned invalid JSON: ${error.message}`, { cause: error }));
+        fail(
+          new Error(`lifecycle supervisor returned invalid JSON: ${error.message}`, {
+            cause: error,
+          }),
+        );
       }
     });
-    socket.once("timeout", () => fail(new Error(`host updater timed out during ${op}`)));
+    socket.once("timeout", () =>
+      fail(new Error(`lifecycle supervisor timed out during ${operation}`)),
+    );
     socket.once("error", fail);
     socket.once("close", () => {
       if (!settled) {
-        fail(new Error(`host updater closed before ${op} completed`));
+        fail(new Error(`lifecycle supervisor closed before ${operation} completed`));
       }
     });
   });
@@ -136,15 +209,15 @@ async function request(op) {
 function retryableConnectionError(error) {
   return (
     new Set(["ENOENT", "ECONNREFUSED", "ECONNRESET", "EPIPE"]).has(error?.code) ||
-    /closed before|timed out/i.test(error?.message || "")
+    /closed before|timed out/iu.test(error?.message || "")
   );
 }
 
-async function requestWithRetry(op, attempts = 3) {
+export async function requestSupervisorOperationWithRetry(params, attempts = 3) {
   let lastError;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
-      return await request(op);
+      return await requestSupervisorOperation(params);
     } catch (error) {
       lastError = error;
       if (!retryableConnectionError(error) || attempt + 1 >= attempts) {
@@ -156,67 +229,142 @@ async function requestWithRetry(op, attempts = 3) {
   throw lastError;
 }
 
-async function ensureTargetController() {
-  const first = await requestWithRetry("updateController", 120);
+export async function ensureSupervisorTargetController(params, overrides = {}) {
+  const request =
+    overrides.request ??
+    (async () =>
+      await requestSupervisorOperationWithRetry({ ...params, operation: "updateController" }, 120));
+  const wait =
+    overrides.wait ?? (async () => await new Promise((resolve) => setTimeout(resolve, 500)));
+  const first = await request();
   if (first.controllerChanged !== true) {
-    return;
+    return first;
   }
   const previousInstance = first.controllerInstanceId;
-  if (!transactionPattern.test(previousInstance || "")) {
-    throw new Error("root updater omitted its controller process identity");
+  if (!TRANSACTION_ID_PATTERN.test(previousInstance || "")) {
+    throw new Error("lifecycle supervisor omitted its controller process identity");
   }
   for (let attempt = 0; attempt < 120; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await wait();
     try {
-      const current = await requestWithRetry("updateController");
+      const current = await request();
       if (
         current.controllerChanged !== true &&
-        transactionPattern.test(current.controllerInstanceId || "") &&
+        TRANSACTION_ID_PATTERN.test(current.controllerInstanceId || "") &&
         current.controllerInstanceId !== previousInstance
       ) {
-        return;
+        return current;
       }
     } catch {
-      // systemd is replacing the verified root-controller process.
+      // systemd is replacing the verified target-controller process.
     }
   }
-  throw new Error("verified root updater controller did not restart into the target release");
+  throw new Error("verified lifecycle controller did not restart into the target release");
 }
 
-let activated = false;
-try {
-  if (mode === "--rollback-only") {
-    const rolledBack = await requestWithRetry("rollbackRelease", 120);
-    await clearTransactionId();
-    process.stdout.write(`${JSON.stringify(rolledBack)}\n`);
-  } else if (mode === "--commit-only") {
-    activated = true;
-    const committed = await requestWithRetry("commitRelease", 120);
-    await clearTransactionId();
-    process.stdout.write(`${JSON.stringify(committed)}\n`);
-  } else if (mode === "--prepare-only") {
-    await ensureTargetController();
-    const prepared = await requestWithRetry("prepareRelease", 120);
-    process.stdout.write(`${JSON.stringify(prepared)}\n`);
-  } else if (mode === "--apply") {
-    await ensureTargetController();
-    activated = true;
-    const committed = await requestWithRetry("applyRelease", 120);
-    await clearTransactionId();
-    process.stdout.write(`${JSON.stringify(committed)}\n`);
-  } else {
-    const active = await requestWithRetry("activateRelease");
-    activated = true;
-    process.stdout.write(`${JSON.stringify(active)}\n`);
+export async function runSupervisorClient({
+  version,
+  mode,
+  socketPath = DEFAULT_SUPERVISOR_SOCKET,
+  statePath = DEFAULT_CLIENT_STATE,
+}) {
+  const normalizedVersion = parseReleaseVersion(version);
+  if (!CONTROL_MODES.has(mode)) {
+    throw new Error(`unsupported signer updater control mode: ${mode}`);
   }
-} catch (error) {
-  if (!activated) {
-    try {
-      await requestWithRetry("rollbackRelease");
-      await clearTransactionId();
-    } catch {
-      // Keep the durable transaction ID so the next root repair can resume safely.
+
+  const hint = await readClientHint(statePath);
+  // This file is deliberately only a retry hint. A marker for target A must
+  // never prevent the root-owned supervisor from recovering A before target B.
+  const transactionId =
+    hint?.version === normalizedVersion ? hint.transactionId : randomUUID().toLowerCase();
+  const nonce = randomUUID().toLowerCase();
+  const params = { socketPath, transactionId, nonce, version: normalizedVersion };
+  let targetSelected = false;
+  let activated = false;
+  try {
+    if (mode === "--rollback-only") {
+      const rolledBack = await requestSupervisorOperationWithRetry(
+        { ...params, operation: "rollbackRelease" },
+        120,
+      );
+      await clearClientHint(statePath);
+      return rolledBack;
     }
+    if (mode === "--commit-only") {
+      activated = true;
+      const committed = await requestSupervisorOperationWithRetry(
+        { ...params, operation: "commitRelease" },
+        120,
+      );
+      await clearClientHint(statePath);
+      return committed;
+    }
+
+    await ensureSupervisorTargetController(params);
+    targetSelected = true;
+    await persistClientHint(statePath, transactionId, normalizedVersion);
+    if (mode === "--prepare-only") {
+      return await requestSupervisorOperationWithRetry(
+        { ...params, operation: "prepareRelease" },
+        120,
+      );
+    }
+    if (mode === "--apply") {
+      activated = true;
+      const committed = await requestSupervisorOperationWithRetry(
+        { ...params, operation: "applyRelease" },
+        120,
+      );
+      await clearClientHint(statePath);
+      return committed;
+    }
+    activated = true;
+    return await requestSupervisorOperationWithRetry({ ...params, operation: "activateRelease" });
+  } catch (error) {
+    if (targetSelected && !activated) {
+      try {
+        await requestSupervisorOperationWithRetry({ ...params, operation: "rollbackRelease" });
+        await clearClientHint(statePath);
+      } catch {
+        // The root ledger remains authoritative. Retain the hint for diagnostics only.
+      }
+    }
+    throw error;
   }
-  throw error;
+}
+
+export function isMainModule(entryPath, modulePath = fileURLToPath(import.meta.url)) {
+  if (!entryPath) {
+    return false;
+  }
+  try {
+    return fs.realpathSync(entryPath) === fs.realpathSync(modulePath);
+  } catch {
+    return false;
+  }
+}
+
+async function main() {
+  if (process.argv[2] === "--self-check") {
+    process.stdout.write(
+      `${JSON.stringify({
+        schemaVersion: 1,
+        protocolVersion: SUPERVISOR_CLIENT_PROTOCOL_VERSION,
+        role: "client",
+      })}\n`,
+    );
+    return;
+  }
+  const result = await runSupervisorClient({
+    version: process.argv[2],
+    mode: process.argv[3],
+    socketPath: process.env.FASED_HOST_UPDATER_SOCKET || DEFAULT_SUPERVISOR_SOCKET,
+    statePath: process.env.FASED_HOST_UPDATERCTL_STATE || DEFAULT_CLIENT_STATE,
+  });
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+}
+
+if (isMainModule(process.argv[1])) {
+  await main();
 }

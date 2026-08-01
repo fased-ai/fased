@@ -63,10 +63,12 @@ function metadata(overrides: Record<string, unknown> = {}) {
 
 function request(op = "updateController") {
   return parseSupervisorRequest({
-    schemaVersion: 2,
+    schemaVersion: 3,
     op,
     transactionId: randomUUID(),
+    nonce: randomUUID(),
     version,
+    clientCapabilities: { protocolVersion: 2, requestSchema: 3 },
   });
 }
 
@@ -91,6 +93,9 @@ function tempPaths() {
         "supervisor",
         "controller-transaction.json",
       ),
+      rootTransactionPath: path.join(root, "state", "supervisor", "product-transaction.json"),
+      productJournalPath: path.join(root, "state", "active-signer-transaction.json"),
+      productVersionPath: path.join(root, "state", "signer-version"),
       channelPath: path.join(root, "channel"),
       supervisorPath: path.join(root, "supervisor.mjs"),
       controllerUnit: "fixed-controller.service",
@@ -253,6 +258,15 @@ async function existingControllerTransitionFixture(
       },
       restartController,
       waitForController: async () => undefined,
+      verifyRecoveredProduct: async (
+        transaction: { version: string },
+        installedVersion: string | null,
+      ) =>
+        Object.freeze({
+          action: installedVersion === transaction.version ? "committed" : "rolled-back",
+          release: null,
+          supporting: false,
+        }),
       probeControllerIdentity: async (targetRequest: { version: string }) => {
         const selected = await fsp.realpath(paths.currentLink);
         const identity = JSON.parse(await fsp.readFile(paths.controllerVersionPath, "utf8"));
@@ -382,6 +396,10 @@ describe("stable lifecycle supervisor contract", () => {
       operatorGid: 1000,
     });
     expect(request("applyRelease").op).toBe("applyRelease");
+    expect(request("applyRelease")).toMatchObject({
+      schemaVersion: 3,
+      clientCapabilities: { protocolVersion: 2, requestSchema: 3 },
+    });
     for (const injected of [
       { command: "/bin/sh" },
       { path: "/tmp/controller" },
@@ -414,6 +432,199 @@ describe("stable lifecycle supervisor contract", () => {
     ).toThrow("unsupported lifecycle supervisor argument");
   });
 
+  it("keeps root transaction identity immutable and the commit decision monotonic", () => {
+    const transaction = request("applyRelease");
+    const receipt = __testing.createControllerSelectionReceipt(
+      transaction,
+      {
+        releaseCommit: "a".repeat(40),
+        targetManifestSha256: digest("1"),
+        trustPolicySha256: digest("0"),
+        identity: { serverSha256: digest("2"), clientSha256: digest("3") },
+      },
+      randomUUID(),
+    );
+    const previous = __testing.rootProductTransactionRecord({
+      request: transaction,
+      phase: "gateway-verified",
+      previousVersion: "1.2.2",
+      targetControllerReceipt: receipt,
+      selectionDigest: receipt.selectionDigest,
+      durableCommitDecision: true,
+      now,
+    });
+    const reversed = __testing.rootProductTransactionRecord({
+      request: transaction,
+      phase: "dispatching",
+      previousVersion: "1.2.2",
+      targetControllerReceipt: receipt,
+      selectionDigest: receipt.selectionDigest,
+      durableCommitDecision: false,
+      createdAt: previous.createdAt,
+      now,
+    });
+    expect(() => __testing.assertRootProductTransactionTransition(previous, reversed)).toThrow(
+      "cannot reverse its durable commit decision",
+    );
+    const otherRequest = { ...transaction, transactionId: randomUUID() };
+    const otherReceipt = __testing.createControllerSelectionReceipt(
+      otherRequest,
+      {
+        releaseCommit: "a".repeat(40),
+        targetManifestSha256: digest("1"),
+        trustPolicySha256: digest("0"),
+        identity: { serverSha256: digest("2"), clientSha256: digest("3") },
+      },
+      randomUUID(),
+    );
+    const other = __testing.rootProductTransactionRecord({
+      request: otherRequest,
+      phase: "gateway-verified",
+      previousVersion: "1.2.2",
+      targetControllerReceipt: otherReceipt,
+      selectionDigest: otherReceipt.selectionDigest,
+      durableCommitDecision: true,
+      now,
+    });
+    expect(() => __testing.assertRootProductTransactionTransition(previous, other)).toThrow(
+      "identity cannot change",
+    );
+    expect(() =>
+      __testing.assertRootProductTransactionTransition(
+        previous,
+        __testing.advanceRootProductTransaction(previous, {
+          phase: "rolling-back",
+          now: now + 1,
+        }),
+      ),
+    ).toThrow("cannot roll back after its durable commit decision");
+    expect(() =>
+      __testing.assertRootProductTransactionTransition(
+        __testing.rootProductTransactionRecord({
+          request: transaction,
+          phase: "restored",
+          previousVersion: "1.2.2",
+          targetControllerReceipt: receipt,
+          selectionDigest: receipt.selectionDigest,
+          createdAt: previous.createdAt,
+          now,
+        }),
+        __testing.rootProductTransactionRecord({
+          request: transaction,
+          phase: "dispatching",
+          previousVersion: "1.2.2",
+          targetControllerReceipt: receipt,
+          selectionDigest: receipt.selectionDigest,
+          createdAt: previous.createdAt,
+          now: now + 1,
+        }),
+      ),
+    ).toThrow("cannot advance from restored to dispatching");
+  });
+
+  it("accepts only the exact legacy and stable supervisor capability pairs", () => {
+    const transaction = request("applyRelease");
+    const record = __testing.rootProductTransactionRecord({
+      request: transaction,
+      phase: "selected",
+      now,
+    });
+    expect(() =>
+      __testing.parseRootProductTransaction({
+        ...record,
+        clientCapabilities: { protocolVersion: 1, requestSchema: 3 },
+      }),
+    ).toThrow("malformed");
+    expect(() =>
+      __testing.parseRootProductTransaction({
+        ...record,
+        clientCapabilities: { protocolVersion: 2, requestSchema: 2 },
+      }),
+    ).toThrow("malformed");
+  });
+
+  it("upgrades a legacy root-ledger record without changing transaction authority", () => {
+    const transaction = parseSupervisorRequest({
+      schemaVersion: 2,
+      op: "applyRelease",
+      transactionId: randomUUID(),
+      version,
+    });
+    const current = __testing.rootProductTransactionRecord({
+      request: transaction,
+      phase: "prepared",
+      previousVersion: "1.2.2",
+      now,
+    });
+    const legacy = { ...current, schemaVersion: 1 } as Record<string, unknown>;
+    delete legacy.protocolVersion;
+    delete legacy.requestNonce;
+    delete legacy.clientCapabilities;
+    delete legacy.rollbackPointers;
+
+    const parsed = __testing.parseRootProductTransaction(legacy);
+    const advanced = __testing.advanceRootProductTransaction(parsed, {
+      phase: "state-reconciling",
+      now: now + 1,
+    });
+
+    expect(parsed).toMatchObject({
+      schemaVersion: 1,
+      requestNonce: transaction.transactionId,
+      rollbackPointers: {
+        controllerGenerationVersion: null,
+        productVersion: "1.2.2",
+      },
+    });
+    expect(advanced).toMatchObject({
+      schemaVersion: 2,
+      protocolVersion: 2,
+      transactionId: transaction.transactionId,
+      previousVersion: "1.2.2",
+      phase: "state-reconciling",
+    });
+    expect(() => __testing.assertRootProductTransactionTransition(parsed, advanced)).not.toThrow();
+  });
+
+  it("binds controller selection to a nonce, validity window, and trust policy", () => {
+    const transaction = request("updateController");
+    const selectedAt = Date.parse("2026-07-28T00:00:00.000Z");
+    const receipt = __testing.createControllerSelectionReceipt(
+      transaction,
+      {
+        releaseCommit: "a".repeat(40),
+        targetManifestSha256: digest("1"),
+        trustPolicySha256: digest("0"),
+        identity: { serverSha256: digest("2"), clientSha256: digest("3") },
+      },
+      randomUUID(),
+      { now: selectedAt, nonce: "33333333-3333-4333-8333-333333333333" },
+    );
+
+    expect(receipt).toMatchObject({
+      schemaVersion: 2,
+      nonce: "33333333-3333-4333-8333-333333333333",
+      selectedAt: "2026-07-28T00:00:00.000Z",
+      expiresAt: "2026-07-29T00:00:00.000Z",
+      trustPolicySha256: digest("0"),
+    });
+    expect(() =>
+      __testing.assertControllerSelectionReceiptFresh(receipt, selectedAt + 1),
+    ).not.toThrow();
+    expect(() =>
+      __testing.assertControllerSelectionReceiptFresh(
+        receipt,
+        selectedAt + 24 * 60 * 60 * 1000 + 1,
+      ),
+    ).toThrow("outside its validity window");
+    expect(() =>
+      __testing.parseControllerSelectionReceipt({
+        ...receipt,
+        trustPolicySha256: digest("f"),
+      }),
+    ).toThrow("malformed or mismatched");
+  });
+
   it("records one durable target-controller receipt and replays it without a second mutation", async () => {
     const { paths } = tempPaths();
     await fsp.mkdir(paths.supervisorStateDir, { recursive: true });
@@ -437,6 +648,7 @@ describe("stable lifecycle supervisor contract", () => {
       {
         releaseCommit: "a".repeat(40),
         targetManifestSha256: digest("1"),
+        trustPolicySha256: digest("0"),
         identity: { serverSha256: digest("2"), clientSha256: digest("3") },
       },
       randomUUID(),
@@ -469,6 +681,301 @@ describe("stable lifecycle supervisor contract", () => {
     });
     expect(forward).toHaveBeenCalledOnce();
     expect(await fsp.readFile(paths.rollbackFloorPath, "utf8")).toBe(`${version}\n`);
+  });
+
+  it("recovers interrupted target A before selecting requested target B", async () => {
+    const { paths } = tempPaths();
+    await fsp.mkdir(paths.supervisorStateDir, { recursive: true });
+    const targetARequest = parseSupervisorRequest({
+      schemaVersion: 2,
+      op: "updateController",
+      transactionId: randomUUID(),
+      version: "1.2.2",
+    });
+    const targetBRequest = parseSupervisorRequest({
+      schemaVersion: 2,
+      op: "updateController",
+      transactionId: randomUUID(),
+      version,
+    });
+    const receiptA = __testing.createControllerSelectionReceipt(
+      targetARequest,
+      {
+        releaseCommit: "a".repeat(40),
+        targetManifestSha256: digest("1"),
+        trustPolicySha256: digest("0"),
+        identity: { serverSha256: digest("2"), clientSha256: digest("3") },
+      },
+      randomUUID(),
+    );
+    const receiptB = __testing.createControllerSelectionReceipt(
+      targetBRequest,
+      {
+        releaseCommit: "b".repeat(40),
+        targetManifestSha256: digest("4"),
+        trustPolicySha256: digest("0"),
+        identity: { serverSha256: digest("5"), clientSha256: digest("6") },
+      },
+      randomUUID(),
+    );
+    type RootTransaction = Record<string, unknown>;
+    let rootTransaction: RootTransaction | null = __testing.rootProductTransactionRecord({
+      request: targetARequest,
+      phase: "prepared",
+      previousVersion: "1.2.1",
+      targetControllerReceipt: receiptA,
+      selectionDigest: receiptA.selectionDigest,
+      now,
+    }) as unknown as RootTransaction;
+    let productJournal: Record<string, unknown> | null = {
+      transactionId: targetARequest.transactionId,
+      version: targetARequest.version,
+      phase: "prepared",
+      previousVersion: "1.2.1",
+      selectionDigest: receiptA.selectionDigest,
+      targetControllerReceipt: receiptA,
+      targetReleaseIdentity: {
+        version: targetARequest.version,
+        commit: "a".repeat(40),
+        buildInputDigest: `sha256:${digest("7")}`,
+        development: false,
+      },
+      artifactDigests: {
+        application: digest("8"),
+        dependencies: digest("9"),
+        signer: digest("a"),
+        updaterBundle: digest("b"),
+      },
+      journalSha256: digest("c"),
+    };
+    const calls: string[] = [];
+    const context = __testing.createContext(
+      {
+        profile: "protected-local",
+        operatorUid: process.getuid?.() ?? 1000,
+        operatorGid: process.getgid?.() ?? 1000,
+        paths,
+      },
+      {
+        rootUid: process.getuid?.() ?? 0,
+        rootGid: process.getgid?.() ?? 0,
+        readRootProductTransaction: async () => rootTransaction,
+        writeRootProductTransaction: async (_paths: unknown, value: RootTransaction) => {
+          rootTransaction = value;
+          return value;
+        },
+        clearRootProductTransaction: async () => {
+          calls.push("clear-A");
+          rootTransaction = null;
+        },
+        readControllerProductJournal: async () => productJournal,
+        readProductVersion: async () => "1.2.1",
+        restartController: async () => {
+          calls.push("recover-A");
+          productJournal = null;
+        },
+        waitForController: async () => undefined,
+        verifyRecoveredProduct: async () => {
+          calls.push("health-A");
+          return { action: "rolled-back", release: null, supporting: false };
+        },
+        stageTrustedController: async () => {
+          calls.push("stage-B");
+          return {
+            changed: false,
+            supervisorChanged: false,
+            trustChanged: false,
+            releaseCommit: "b".repeat(40),
+            targetManifestSha256: digest("4"),
+            identity: {
+              schemaVersion: 1,
+              version,
+              serverSha256: digest("5"),
+              clientSha256: digest("6"),
+            },
+            previousIdentity: {
+              schemaVersion: 1,
+              version: "1.2.2",
+              serverSha256: digest("2"),
+              clientSha256: digest("3"),
+            },
+          };
+        },
+        probeControllerIdentity: async () => receiptB.controllerInstanceId,
+        cleanupHistoricalControllerCandidates: async () => [],
+        writeControllerSelectionReceipt: async () => receiptB,
+      },
+    );
+
+    await expect(
+      __testing.handleSupervisorRequest(targetBRequest, context, {
+        controllerInstanceId: randomUUID(),
+      }),
+    ).resolves.toMatchObject({ ok: true, version, controllerChanged: false });
+    expect(calls).toEqual(["recover-A", "health-A", "clear-A", "stage-B"]);
+    expect(rootTransaction).toMatchObject({
+      transactionId: targetBRequest.transactionId,
+      version,
+      phase: "selected",
+      previousControllerGenerationVersion: "1.2.2",
+      selectionDigest: receiptB.selectionDigest,
+    });
+  });
+
+  it("finishes committed target A before selecting requested target B", async () => {
+    const { paths } = tempPaths();
+    await fsp.mkdir(paths.supervisorStateDir, { recursive: true });
+    const targetARequest = parseSupervisorRequest({
+      schemaVersion: 3,
+      op: "updateController",
+      transactionId: randomUUID(),
+      nonce: randomUUID(),
+      version: "1.2.2",
+      clientCapabilities: { protocolVersion: 2, requestSchema: 3 },
+    });
+    const targetBRequest = request();
+    const receiptA = __testing.createControllerSelectionReceipt(
+      targetARequest,
+      {
+        releaseCommit: "a".repeat(40),
+        targetManifestSha256: digest("1"),
+        trustPolicySha256: digest("0"),
+        identity: { serverSha256: digest("2"), clientSha256: digest("3") },
+      },
+      randomUUID(),
+      { now },
+    );
+    const receiptB = __testing.createControllerSelectionReceipt(
+      targetBRequest,
+      {
+        releaseCommit: "b".repeat(40),
+        targetManifestSha256: digest("4"),
+        trustPolicySha256: digest("0"),
+        identity: { serverSha256: digest("5"), clientSha256: digest("6") },
+      },
+      randomUUID(),
+      { now },
+    );
+    type RootTransaction = Record<string, unknown>;
+    let rootTransaction: RootTransaction | null = __testing.rootProductTransactionRecord({
+      request: targetARequest,
+      phase: "gateway-verified",
+      previousVersion: "1.2.1",
+      targetControllerReceipt: receiptA,
+      targetReleaseIdentity: {
+        version: "1.2.2",
+        commit: "a".repeat(40),
+        buildInputDigest: `sha256:${digest("7")}`,
+        development: false,
+      },
+      selectionDigest: receiptA.selectionDigest,
+      durableCommitDecision: true,
+      now,
+    }) as unknown as RootTransaction;
+    let productJournal: Record<string, unknown> | null = {
+      transactionId: targetARequest.transactionId,
+      version: targetARequest.version,
+      phase: "gateway-verified",
+      previousVersion: "1.2.1",
+      selectionDigest: receiptA.selectionDigest,
+      targetControllerReceipt: receiptA,
+      targetReleaseIdentity: {
+        version: "1.2.2",
+        commit: "a".repeat(40),
+        buildInputDigest: `sha256:${digest("7")}`,
+        development: false,
+      },
+      artifactDigests: {
+        application: null,
+        dependencies: null,
+        signer: null,
+        updaterBundle: null,
+      },
+      journalSha256: digest("c"),
+    };
+    const calls: string[] = [];
+    const context = __testing.createContext(
+      {
+        profile: "protected-local",
+        operatorUid: process.getuid?.() ?? 1000,
+        operatorGid: process.getgid?.() ?? 1000,
+        paths,
+      },
+      {
+        rootUid: process.getuid?.() ?? 0,
+        rootGid: process.getgid?.() ?? 0,
+        now: () => now,
+        readRootProductTransaction: async () => rootTransaction,
+        writeRootProductTransaction: async (_paths: unknown, value: RootTransaction) => {
+          rootTransaction = value;
+          return value;
+        },
+        clearRootProductTransaction: async () => {
+          calls.push("clear-A");
+          rootTransaction = null;
+        },
+        readControllerProductJournal: async () => productJournal,
+        readProductVersion: async () => "1.2.2",
+        restartController: async () => {
+          calls.push("finish-A");
+          productJournal = null;
+        },
+        waitForController: async () => undefined,
+        verifyRecoveredProduct: async () => {
+          calls.push("health-A");
+          return {
+            action: "committed",
+            release: {
+              version: "1.2.2",
+              commit: "a".repeat(40),
+              buildInputDigest: `sha256:${digest("7")}`,
+              development: false,
+            },
+            supporting: false,
+          };
+        },
+        stageTrustedController: async () => {
+          calls.push("stage-B");
+          return {
+            changed: false,
+            supervisorChanged: false,
+            trustChanged: false,
+            releaseCommit: "b".repeat(40),
+            targetManifestSha256: digest("4"),
+            trustPolicySha256: digest("0"),
+            identity: {
+              schemaVersion: 1,
+              version,
+              serverSha256: digest("5"),
+              clientSha256: digest("6"),
+            },
+            previousIdentity: {
+              schemaVersion: 1,
+              version: "1.2.2",
+              serverSha256: digest("2"),
+              clientSha256: digest("3"),
+            },
+          };
+        },
+        probeControllerIdentity: async () => receiptB.controllerInstanceId,
+        cleanupHistoricalControllerCandidates: async () => [],
+        writeControllerSelectionReceipt: async () => receiptB,
+      },
+    );
+
+    await expect(
+      __testing.handleSupervisorRequest(targetBRequest, context, {
+        controllerInstanceId: randomUUID(),
+      }),
+    ).resolves.toMatchObject({ ok: true, version, controllerChanged: false });
+    expect(calls).toEqual(["finish-A", "health-A", "clear-A", "stage-B"]);
+    expect(rootTransaction).toMatchObject({
+      transactionId: targetBRequest.transactionId,
+      version,
+      phase: "selected",
+      previousVersion: "1.2.2",
+      selectionDigest: receiptB.selectionDigest,
+    });
   });
 
   it("keeps the replaceable controller outside supervisor code, state, and unit files", () => {
@@ -757,7 +1264,7 @@ describe("stable lifecycle supervisor contract", () => {
     });
   });
 
-  it("recovers both supervisor and controller after a crash between activation and trust commit", async () => {
+  it("commits the target supervisor slot after its first verified startup", async () => {
     const { paths } = tempPaths();
     const fixture = await existingControllerTransitionFixture(paths, "1.2.2");
     const transaction = request();
@@ -776,7 +1283,6 @@ describe("stable lifecycle supervisor contract", () => {
     expect(await fsp.readFile(paths.supervisorPath, "utf8")).toBe(fixture.targetSupervisor);
     expect(await fsp.realpath(paths.currentLink)).toBe(path.join(paths.releasesDir, `v${version}`));
 
-    const restart = vi.fn(async () => undefined);
     const context = __testing.createContext(
       {
         profile: "protected-local",
@@ -788,17 +1294,59 @@ describe("stable lifecycle supervisor contract", () => {
         rootUid: process.getuid?.() ?? 0,
         rootGid: process.getgid?.() ?? 0,
         runningSupervisorDigest: sha256Text(fixture.targetSupervisor),
+      },
+    );
+
+    await expect(__testing.recoverSupervisorTransaction(context)).resolves.toBe(false);
+    expect(await fsp.readFile(paths.supervisorPath, "utf8")).toBe(fixture.targetSupervisor);
+    expect(await fsp.realpath(paths.currentLink)).toBe(path.join(paths.releasesDir, `v${version}`));
+    expect(await fsp.realpath(path.join(paths.supervisorStateDir, "supervisor-known-good"))).toBe(
+      __testing.supervisorGenerationPath(paths, sha256Text(fixture.targetSupervisor)),
+    );
+    await expect(fsp.lstat(paths.supervisorTransactionPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("restores the known-good supervisor slot when the prior process recovers activation", async () => {
+    const { paths } = tempPaths();
+    const fixture = await existingControllerTransitionFixture(paths, "1.2.2");
+    const transaction = request();
+    const staged = await stageTrustedController(transaction, fixture.context);
+    await __testing.beginSupervisorTransaction(paths, transaction, staged);
+    await __testing.activateStagedSupervisor(
+      paths,
+      staged,
+      process.getuid?.() ?? 0,
+      process.getgid?.() ?? 0,
+    );
+    await __testing.activateStagedController(paths, staged);
+    await __testing.commitLifecycleTrust(paths, staged);
+    const restart = vi.fn(async () => undefined);
+    const context = __testing.createContext(
+      {
+        profile: "protected-local",
+        operatorUid: process.getuid?.() ?? 1000,
+        operatorGid: process.getgid?.() ?? 1000,
+        paths,
+      },
+      {
+        rootUid: process.getuid?.() ?? 0,
+        rootGid: process.getgid?.() ?? 0,
+        runningSupervisorDigest: sha256Text(fixture.previousSupervisor),
         restartController: restart,
         waitForController: async () => undefined,
       },
     );
 
     await expect(__testing.recoverSupervisorTransaction(context)).resolves.toBe(true);
-    expect(context.supervisorRestartRequired).toBe(true);
     expect(await fsp.readFile(paths.supervisorPath, "utf8")).toBe(fixture.previousSupervisor);
     expect(await fsp.realpath(paths.currentLink)).toBe(fixture.previousGeneration);
     expect(JSON.parse(await fsp.readFile(paths.controllerVersionPath, "utf8"))).toEqual(
       fixture.previousIdentity,
+    );
+    expect(await fsp.realpath(path.join(paths.supervisorStateDir, "supervisor-known-good"))).toBe(
+      __testing.supervisorGenerationPath(paths, sha256Text(fixture.previousSupervisor)),
     );
     await expect(fsp.lstat(paths.supervisorTransactionPath)).rejects.toMatchObject({
       code: "ENOENT",
@@ -1058,6 +1606,7 @@ describe("stable lifecycle supervisor contract", () => {
           },
           releaseCommit: "a".repeat(40),
           targetManifestSha256: digest("1"),
+          trustPolicySha256: digest("0"),
         }),
         probeControllerIdentity: probe,
         restartController: restart,

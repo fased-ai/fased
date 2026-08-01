@@ -204,6 +204,7 @@ export function buildProtectedLocalLayout(instanceId, roots = {}) {
     applicationCurrentLink: path.join(applicationInstallDir, "current"),
     signerBinary: path.join(instanceInstall, "signer", "fased-signerd"),
     supervisorBinary: path.join(instanceInstall, "supervisor", "fased-lifecycle-supervisor.mjs"),
+    supervisorClient: path.join(instanceInstall, "supervisor", "fased-host-updaterctl.mjs"),
     controllerSocket: path.join(
       "/run/fased-local-controller-worker",
       instanceId,

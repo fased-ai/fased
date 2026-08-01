@@ -191,7 +191,7 @@ describe("protected Local bootstrap contract", () => {
           "protected-local-controller-transaction.json",
         )}`,
         "/usr/bin/node",
-        "/opt/fased/local/0123456789abcdef/controller/current/fased-host-updaterctl.mjs",
+        "/opt/fased/local/0123456789abcdef/supervisor/fased-host-updaterctl.mjs",
         "0.1.80",
         "--apply",
       ],
@@ -748,12 +748,14 @@ default:other::---
     expect(sharedStateAdapter).not.toContain('path.join(spec.stateDir, "identity")');
     expect(sharedStateAdapter).not.toContain('path.join(spec.stateDir, "wallet")');
     expect(sharedStateAdapter).not.toContain('path.join(spec.stateDir, "federation")');
-    expect(updater).toContain(
-      '{ relativePath: "identity", stateClass: "device-identity", create: true }',
+    expect(updater).toMatch(
+      /relativePath: "identity",\s+stateClass: "device-identity",\s+create: true,\s+preserveContent: true,/u,
     );
-    expect(updater).toContain('{ relativePath: "wallet", stateClass: "wallet", create: true }');
-    expect(updater).toContain(
-      '{ relativePath: "federation", stateClass: "federation-network", create: true }',
+    expect(updater).toMatch(
+      /relativePath: "wallet",\s+stateClass: "wallet",\s+create: true,\s+preserveContent: true,/u,
+    );
+    expect(updater).toMatch(
+      /relativePath: "federation",\s+stateClass: "federation-network",\s+create: true,\s+preserveContent: true,/u,
     );
   });
 

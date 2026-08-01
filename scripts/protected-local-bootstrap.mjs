@@ -1056,6 +1056,12 @@ async function installRootFiles(params) {
     0o755,
     { uid: 0, gid: 0 },
   );
+  await atomicCopy(
+    path.join(sourceRoot, "scripts", "fased-host-updaterctl.mjs"),
+    layout.supervisorClient,
+    0o755,
+    { uid: 0, gid: 0 },
+  );
   await installProtectedLocalApplicationRuntime({
     sourceRoot,
     dependencyRoot: path.join(
@@ -1146,7 +1152,7 @@ export function buildProtectedLocalLifecycleApplyCommand(spec, layout, options =
         "protected-local-controller-transaction.json",
       )}`,
       spec.nodeBinary,
-      path.join(layout.installDir, "controller", "current", "fased-host-updaterctl.mjs"),
+      layout.supervisorClient,
       spec.releaseVersion,
       "--apply",
     ]),
@@ -1155,11 +1161,13 @@ export function buildProtectedLocalLifecycleApplyCommand(spec, layout, options =
 
 async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
   const targetSupervisor = path.join(sourceRoot, "scripts", "fased-lifecycle-supervisor.mjs");
+  const targetSupervisorClient = path.join(sourceRoot, "scripts", "fased-host-updaterctl.mjs");
   const targetDigest = crypto
     .createHash("sha256")
     .update(await fsp.readFile(targetSupervisor))
     .digest("hex");
   let installedDigest = null;
+  let installedClientDigest = null;
   try {
     const installedInfo = await fsp.lstat(layout.supervisorBinary);
     if (
@@ -1180,6 +1188,30 @@ async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
       throw error;
     }
   }
+  try {
+    const installedInfo = await fsp.lstat(layout.supervisorClient);
+    if (
+      !installedInfo.isFile() ||
+      installedInfo.isSymbolicLink() ||
+      installedInfo.nlink !== 1 ||
+      installedInfo.uid !== 0 ||
+      (installedInfo.mode & 0o022) !== 0
+    ) {
+      fail("installed protected Local supervisor client is not a protected root-owned file");
+    }
+    installedClientDigest = crypto
+      .createHash("sha256")
+      .update(await fsp.readFile(layout.supervisorClient))
+      .digest("hex");
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  const targetClientDigest = crypto
+    .createHash("sha256")
+    .update(await fsp.readFile(targetSupervisorClient))
+    .digest("hex");
   const operatorGroup = groupRecord(layout.operatorGroup);
   if (!operatorGroup) {
     fail("protected Local operator group is missing during supervisor transition");
@@ -1208,6 +1240,7 @@ async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
     await Promise.all(
       [
         layout.supervisorBinary,
+        layout.supervisorClient,
         path.join("/etc/systemd/system", layout.controllerUnit),
         path.join("/etc/systemd/system", layout.supervisorUnit),
         path.join(layout.supervisorStateDir, "boundary.json"),
@@ -1218,6 +1251,9 @@ async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
     runSystem(systemctl, ["stop", layout.supervisorUnit]);
     if (targetDigest !== installedDigest) {
       await atomicCopy(targetSupervisor, layout.supervisorBinary, 0o755, { uid: 0, gid: 0 });
+    }
+    if (targetClientDigest !== installedClientDigest) {
+      await atomicCopy(targetSupervisorClient, layout.supervisorClient, 0o755, { uid: 0, gid: 0 });
     }
     const bootstrapOutput = runSystem(spec.nodeBinary, [
       layout.supervisorBinary,
@@ -1243,7 +1279,7 @@ async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
     }
     runSystem(systemctl, ["restart", layout.supervisorUnit]);
     await waitForSocket(`/run/fased-local-controller/${layout.instanceId}/request.sock`, 60_000);
-    return targetDigest !== installedDigest;
+    return targetDigest !== installedDigest || targetClientDigest !== installedClientDigest;
   } catch (error) {
     const rollbackFailures = [];
     try {

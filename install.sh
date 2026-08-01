@@ -6001,9 +6001,13 @@ install_host_signer_and_updater_services() {
   install -d -m 0700 -o root -g root /var/lib/fased-host-updater
   install -d -m 0700 -o root -g root /var/lib/fased-host-updater/supervisor
   local supervisor_path="/opt/fased/host-controller/supervisor/fased-lifecycle-supervisor.mjs"
+  local supervisor_client_path="/opt/fased/host-controller/supervisor/fased-host-updaterctl.mjs"
   local supervisor_staging_path="/opt/fased/host-controller/supervisor/.fased-lifecycle-supervisor-${version}-$$"
+  local supervisor_client_staging_path="/opt/fased/host-controller/supervisor/.fased-host-updaterctl-${version}-$$"
   local supervisor_sha
+  local supervisor_client_sha
   supervisor_sha="$(sha256sum "$FASED_DIR/scripts/fased-lifecycle-supervisor.mjs" | awk '{print $1}')"
+  supervisor_client_sha="$(sha256sum "$FASED_DIR/scripts/fased-host-updaterctl.mjs" | awk '{print $1}')"
   if [[ -e "$supervisor_path" || -L "$supervisor_path" ]]; then
     if [[ ! -f "$supervisor_path" || -L "$supervisor_path" || \
       "$(stat -c '%u' "$supervisor_path")" -ne 0 || \
@@ -6021,6 +6025,24 @@ install_host_signer_and_updater_services() {
     sync -f "$supervisor_staging_path" /opt/fased/host-controller/supervisor
     mv -f "$supervisor_staging_path" "$supervisor_path"
     sync -f "$supervisor_path" /opt/fased/host-controller/supervisor
+  fi
+  if [[ -e "$supervisor_client_path" || -L "$supervisor_client_path" ]]; then
+    if [[ ! -f "$supervisor_client_path" || -L "$supervisor_client_path" || \
+      "$(stat -c '%u' "$supervisor_client_path")" -ne 0 || \
+      "$(stat -c '%a' "$supervisor_client_path")" != "755" ]]; then
+      echo "Existing stable lifecycle supervisor client is not a protected root-owned file." >&2
+      exit 1
+    fi
+  fi
+  if [[ ! -e "$supervisor_client_path" || \
+    "$(sha256sum "$supervisor_client_path" | awk '{print $1}')" != "$supervisor_client_sha" ]]; then
+    rm -f "$supervisor_client_staging_path"
+    install -m 0755 -o root -g root \
+      "$FASED_DIR/scripts/fased-host-updaterctl.mjs" \
+      "$supervisor_client_staging_path"
+    sync -f "$supervisor_client_staging_path" /opt/fased/host-controller/supervisor
+    mv -f "$supervisor_client_staging_path" "$supervisor_client_path"
+    sync -f "$supervisor_client_path" /opt/fased/host-controller/supervisor
   fi
   local controller_release_dir="/opt/fased/host-controller/releases/v${version}"
   local controller_staging_dir="/opt/fased/host-controller/releases/.controller-generation-${version}-$$"
@@ -6070,7 +6092,7 @@ install_host_signer_and_updater_services() {
   rm -f /usr/local/libexec/fased-host-updater.mjs /usr/local/libexec/fased-host-updaterctl.mjs
   ln -s /opt/fased/host-controller/current/fased-host-updater.mjs \
     /usr/local/libexec/fased-host-updater.mjs
-  ln -s /opt/fased/host-controller/current/fased-host-updaterctl.mjs \
+  ln -s /opt/fased/host-controller/supervisor/fased-host-updaterctl.mjs \
     /usr/local/libexec/fased-host-updaterctl.mjs
   printf '{"schemaVersion":1,"version":"%s","serverSha256":"%s","clientSha256":"%s"}\n' \
     "$version" "$controller_server_sha" "$controller_client_sha" >"$controller_marker_tmp"
@@ -6219,6 +6241,7 @@ EOF
   chmod 0644 /etc/systemd/system/fased-host-updater.service
   sync -f "$controller_release_dir/fased-host-updater.mjs"
   sync -f "$controller_release_dir/fased-host-updaterctl.mjs"
+  sync -f "$supervisor_client_path"
   sync -f /var/lib/fased-host-updater/controller-version.json
   sync -f \
     /var/lib/fased-host-updater/supervisor/controller-version.json \

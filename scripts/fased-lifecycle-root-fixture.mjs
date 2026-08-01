@@ -10,6 +10,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { startServer, __testing as controllerTesting } from "./fased-host-updater.mjs";
+import { runSupervisorClient } from "./fased-host-updaterctl.mjs";
 import {
   parseSupervisorRequest,
   startSupervisor,
@@ -56,10 +57,12 @@ async function socketRequest(socketPath, op, transactionId) {
     socket.once("connect", () => {
       socket.write(
         `${JSON.stringify({
-          schemaVersion: 2,
+          schemaVersion: 3,
           op,
           transactionId,
+          nonce: randomUUID(),
           version: targetVersion,
+          clientCapabilities: { protocolVersion: 2, requestSchema: 3 },
         })}\n`,
       );
     });
@@ -133,6 +136,9 @@ async function runExistingControllerGenerationTransitionFixture() {
       "supervisor",
       "controller-transaction.json",
     ),
+    rootTransactionPath: path.join(controllerStateDir, "supervisor", "product-transaction.json"),
+    productJournalPath: path.join(controllerStateDir, "active-signer-transaction.json"),
+    productVersionPath: path.join(controllerStateDir, "signer-version"),
     channelPath: path.join(root, "channel"),
     supervisorPath,
     controllerUnit: "fixture-controller.service",
@@ -277,6 +283,11 @@ async function runExistingControllerGenerationTransitionFixture() {
           assert.equal(identity.version, request.version);
           return "44444444-4444-4444-8444-444444444444";
         },
+        verifyRecoveredProduct: async () => ({
+          action: "rolled-back",
+          release: null,
+          supporting: true,
+        }),
       },
     );
     const state = { controllerInstanceId: "33333333-3333-4333-8333-333333333333" };
@@ -354,6 +365,12 @@ async function createRootFixture({ crashPhase = null } = {}) {
   const miningLedgerPath = path.join(stateDir, "sat-mining", "wallets", "agent", "mining.sqlite");
   const networkIdentityPath = path.join(stateDir, "federation", "access-token.json");
   const pluginStatePath = path.join(stateDir, "extensions", "fixture-plugin-state.json");
+  const obsoleteClientPath = path.join(
+    root,
+    "obsolete-controller",
+    "current",
+    "fased-host-updaterctl.mjs",
+  );
   const signerMasterKeyPath = path.join(path.dirname(signerStateDBPath), "master.key");
   const controllerPaths = {
     socketPath: privateSocketPath,
@@ -389,6 +406,9 @@ async function createRootFixture({ crashPhase = null } = {}) {
       "supervisor",
       "controller-transaction.json",
     ),
+    rootTransactionPath: path.join(controllerStateDir, "supervisor", "product-transaction.json"),
+    productJournalPath: controllerPaths.journalPath,
+    productVersionPath: controllerPaths.versionPath,
     channelPath: controllerPaths.channelPath,
     supervisorPath: path.join(root, "supervisor", "fased-lifecycle-supervisor.mjs"),
     controllerUnit: "fixture-controller.service",
@@ -413,6 +433,7 @@ async function createRootFixture({ crashPhase = null } = {}) {
     fsp.mkdir(path.dirname(miningLedgerPath), { recursive: true, mode: 0o700 }),
     fsp.mkdir(path.dirname(networkIdentityPath), { recursive: true, mode: 0o700 }),
     fsp.mkdir(path.dirname(pluginStatePath), { recursive: true, mode: 0o700 }),
+    fsp.mkdir(path.dirname(obsoleteClientPath), { recursive: true, mode: 0o755 }),
     fsp.mkdir(activeControllerRoot, { recursive: true, mode: 0o755 }),
     fsp.mkdir(historicalControllerCandidate, { recursive: true, mode: 0o755 }),
   ]);
@@ -482,6 +503,10 @@ async function createRootFixture({ crashPhase = null } = {}) {
     fsp.writeFile(signerMasterKeyPath, "preserve-master-key\n", { mode: 0o600 }),
     fsp.writeFile(signerUnitPath, "ExecStart=previous-signer\n", { mode: 0o644 }),
     fsp.writeFile(controllerPaths.versionPath, `${previousVersion}\n`, { mode: 0o600 }),
+    fsp.writeFile(controllerPaths.rollbackFloorPath, `${previousVersion}\n`, { mode: 0o600 }),
+    fsp.writeFile(obsoleteClientPath, 'throw new Error("obsolete target client executed");\n', {
+      mode: 0o755,
+    }),
   ]);
   const miningDatabase = new DatabaseSync(miningLedgerPath);
   try {
@@ -656,6 +681,7 @@ async function createRootFixture({ crashPhase = null } = {}) {
     operatorGid: 0,
     paths: supervisorPaths,
   });
+  let controller = null;
   const supervisorContext = supervisorTesting.createContext(supervisorConfiguration, {
     rootUid: 0,
     rootGid: 0,
@@ -665,6 +691,7 @@ async function createRootFixture({ crashPhase = null } = {}) {
       trustChanged: false,
       releaseCommit: "a".repeat(40),
       targetManifestSha256: "1".repeat(64),
+      trustPolicySha256: supervisorTesting.EMBEDDED_LIFECYCLE_ROOT.digest,
       identity: {
         schemaVersion: 1,
         version: targetVersion,
@@ -672,9 +699,19 @@ async function createRootFixture({ crashPhase = null } = {}) {
         clientSha256: controllerClientSha256,
       },
     }),
+    restartController: async () => {
+      if (controller) {
+        await controller.close();
+      }
+      controller = await startServer({
+        configuration: controllerConfiguration,
+        context: createControllerContext(crashPhase),
+      });
+    },
+    waitForController: async () => undefined,
   });
 
-  let controller = await startServer({
+  controller = await startServer({
     configuration: controllerConfiguration,
     context: createControllerContext(crashPhase),
   });
@@ -691,6 +728,7 @@ async function createRootFixture({ crashPhase = null } = {}) {
     configPath,
     deviceAuthPath,
     unknownPath,
+    obsoleteClientPath,
     preservedStatePaths,
     preservedStateDigests,
     historicalControllerCandidate,
@@ -706,7 +744,7 @@ async function createRootFixture({ crashPhase = null } = {}) {
       return injectedCrash;
     },
     async restartController() {
-      await controller.close();
+      await controller?.close();
       controller = await startServer({
         configuration: controllerConfiguration,
         context: createControllerContext(),
@@ -714,10 +752,44 @@ async function createRootFixture({ crashPhase = null } = {}) {
     },
     async close() {
       await supervisor.close();
-      await controller.close();
+      await controller?.close();
       await fsp.rm(root, { recursive: true, force: true });
     },
   };
+}
+
+async function runStableClientCrossTargetFixture() {
+  const fixture = await createRootFixture();
+  const statePath = path.join(fixture.stateDir, "updater", "ctl-transaction.json");
+  const staleTransactionId = randomUUID();
+  const obsoleteClientDigest = await sha256File(fixture.obsoleteClientPath);
+  try {
+    await writeOwnedFile(
+      statePath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        transactionId: staleTransactionId,
+        version: previousVersion,
+      })}\n`,
+      operatorUid,
+      operatorGid,
+      0o600,
+    );
+    const applied = await runSupervisorClient({
+      version: targetVersion,
+      mode: "--apply",
+      socketPath: fixture.publicSocketPath,
+      statePath,
+    });
+    assert.equal(applied.phase, "committed");
+    assert.notEqual(applied.transactionId, staleTransactionId);
+    assert.equal(fs.existsSync(statePath), false);
+    assert.equal(await sha256File(fixture.obsoleteClientPath), obsoleteClientDigest);
+    fixture.transactionId = applied.transactionId;
+    await assertCommittedFixture(fixture);
+  } finally {
+    await fixture.close();
+  }
 }
 
 async function assertCommittedFixture(fixture) {
@@ -833,9 +905,6 @@ async function runCrashRecoveryFixture() {
     assert.equal(failed.ok, false);
     assert.match(failed.error, /fixture crash after schema-ready/u);
     assert.equal(fixture.injectedCrash, true);
-    assert.equal(fs.existsSync(fixture.paths.journalPath), true);
-
-    await fixture.restartController();
     assert.equal(fs.existsSync(fixture.paths.journalPath), false);
     assert.equal(await fsp.readFile(fixture.paths.versionPath, "utf8"), `${previousVersion}\n`);
     assert.equal(await fsp.readFile(fixture.paths.signerPath, "utf8"), "previous-signer\n");
@@ -874,6 +943,7 @@ if (typeof process.getuid !== "function" || process.getuid() !== 0) {
 await runCommittedFixture();
 await runCrashRecoveryFixture();
 await runExistingControllerGenerationTransitionFixture();
+await runStableClientCrossTargetFixture();
 process.stdout.write(
   `${JSON.stringify({
     schemaVersion: 1,
@@ -882,6 +952,7 @@ process.stdout.write(
       "commit-replay",
       "cold-crash-rollback-retry",
       "existing-supervisor-and-controller-a-to-b-rollback-retry-idempotence",
+      "stable-client-ignores-old-target-hint-and-obsolete-client",
     ],
     ownerInstallationTouched: false,
     freshInfrastructureCreated: false,
