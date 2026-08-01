@@ -97,6 +97,8 @@ const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
 const COMMIT_PATTERN = /^[a-f0-9]{40}$/u;
 const INSTANCE_ID_PATTERN = /^[a-f0-9]{16}$/u;
+const HISTORICAL_CONTROLLER_CANDIDATE_PATTERN =
+  /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?\.q0\.[a-f0-9]{12}$/u;
 const TRANSACTION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const CONTROLLER_OPERATIONS = new Set([
@@ -1158,6 +1160,63 @@ async function currentControllerMatches(paths, identity, expectedRootUid = 0) {
   }
 }
 
+async function cleanupHistoricalControllerCandidates(paths, version, expectedRootUid = 0) {
+  const releasesRoot = path.resolve(paths.releasesDir);
+  let entries;
+  try {
+    entries = await fsp.readdir(releasesRoot, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+
+  const candidates = entries.filter((entry) =>
+    HISTORICAL_CONTROLLER_CANDIDATE_PATTERN.test(entry.name),
+  );
+  if (candidates.length === 0) {
+    return [];
+  }
+  const expectedActive = path.join(releasesRoot, `v${parseVersion(version)}`);
+  const active = await fsp.realpath(paths.currentLink);
+  if (active !== expectedActive) {
+    fail("supervisor-selected controller did not converge before historical cleanup");
+  }
+
+  const removed = [];
+  for (const entry of candidates) {
+    const candidate = path.join(releasesRoot, entry.name);
+    const before = await fsp.lstat(candidate);
+    if (
+      !entry.isDirectory() ||
+      entry.isSymbolicLink() ||
+      !before.isDirectory() ||
+      before.isSymbolicLink() ||
+      before.uid !== expectedRootUid ||
+      (before.mode & 0o022) !== 0
+    ) {
+      fail("historical controller candidate is unsafe");
+    }
+    await controllerGenerationDigests(candidate, expectedRootUid);
+    const revalidated = await fsp.lstat(candidate);
+    if (
+      !revalidated.isDirectory() ||
+      revalidated.isSymbolicLink() ||
+      revalidated.dev !== before.dev ||
+      revalidated.ino !== before.ino
+    ) {
+      fail("historical controller candidate changed during cleanup");
+    }
+    await fsp.rm(candidate, { recursive: true });
+    removed.push(candidate);
+  }
+  if (removed.length > 0) {
+    await fsyncDirectory(releasesRoot);
+  }
+  return removed;
+}
+
 function supervisorGenerationPath(paths, digest) {
   if (!DIGEST_PATTERN.test(digest || "")) {
     fail("lifecycle supervisor generation digest is invalid");
@@ -2163,6 +2222,8 @@ function createContext(configuration, overrides = {}) {
     clearSupervisorTransaction: overrides.clearSupervisorTransaction ?? clearSupervisorTransaction,
     recoverSupervisorTransaction:
       overrides.recoverSupervisorTransaction ?? recoverSupervisorTransaction,
+    cleanupHistoricalControllerCandidates:
+      overrides.cleanupHistoricalControllerCandidates ?? cleanupHistoricalControllerCandidates,
     probeControllerIdentity: overrides.probeControllerIdentity ?? probeControllerIdentity,
     restartController:
       overrides.restartController ??
@@ -2298,6 +2359,11 @@ async function handleSupervisorRequest(request, context, state) {
         await context.waitForController();
         state.controllerInstanceId = await context.probeControllerIdentity(request, context);
       }
+      await context.cleanupHistoricalControllerCandidates(
+        context.paths,
+        request.version,
+        context.rootUid,
+      );
       if (durableChange) {
         await context.commitLifecycleTrust(context.paths, staged);
         await context.clearSupervisorTransaction(context.paths);
@@ -2540,6 +2606,7 @@ export const __testing = Object.freeze({
   atomicWrite,
   beginSupervisorTransaction,
   commitLifecycleTrust,
+  cleanupHistoricalControllerCandidates,
   compareVersions,
   createContext,
   handleSupervisorRequest,

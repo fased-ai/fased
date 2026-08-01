@@ -382,6 +382,14 @@ async function createRootFixture({ crashPhase = null } = {}) {
     controllerUnit: "fixture-controller.service",
     supervisorUnit: "fixture-supervisor.service",
   };
+  const activeControllerRoot = path.join(
+    controllerPaths.controllerReleasesDir,
+    `v${targetVersion}`,
+  );
+  const historicalControllerCandidate = path.join(
+    controllerPaths.controllerReleasesDir,
+    `v${previousVersion}.q0.${"a".repeat(12)}`,
+  );
 
   await Promise.all([
     fsp.mkdir(controllerStateDir, { recursive: true, mode: 0o700 }),
@@ -389,7 +397,20 @@ async function createRootFixture({ crashPhase = null } = {}) {
     fsp.mkdir(path.dirname(signerStateDBPath), { recursive: true, mode: 0o700 }),
     fsp.mkdir(path.dirname(signerUnitPath), { recursive: true, mode: 0o755 }),
     fsp.mkdir(identityDir, { recursive: true, mode: 0o700 }),
+    fsp.mkdir(activeControllerRoot, { recursive: true, mode: 0o755 }),
+    fsp.mkdir(historicalControllerCandidate, { recursive: true, mode: 0o755 }),
   ]);
+  for (const generation of [activeControllerRoot, historicalControllerCandidate]) {
+    await Promise.all([
+      fsp.writeFile(path.join(generation, "fased-host-updater.mjs"), "fixture server\n", {
+        mode: 0o644,
+      }),
+      fsp.writeFile(path.join(generation, "fased-host-updaterctl.mjs"), "fixture client\n", {
+        mode: 0o644,
+      }),
+    ]);
+  }
+  await fsp.symlink(activeControllerRoot, controllerPaths.controllerCurrentLink, "dir");
   await fsp.chown(path.join(root, "operator"), operatorUid, operatorGid);
   await fsp.chmod(path.join(root, "operator"), 0o700);
   await fsp.chown(stateDir, operatorUid, operatorGid);
@@ -471,7 +492,11 @@ async function createRootFixture({ crashPhase = null } = {}) {
       controllerInstanceId: "33333333-3333-4333-8333-333333333333",
       historicalQ0TestStateDir: path.join(root, "historical-q0"),
       assertReleaseAllowed: async () => undefined,
-      stageControllerRelease: async () => ({ changed: false }),
+      stageControllerRelease: async () => {
+        const error = new Error("supervised controller attempted forbidden controller staging");
+        error.code = "EROFS";
+        throw error;
+      },
       stageCandidate: async (version, candidatePath) => {
         await fsp.writeFile(candidatePath, `signer-${version}\n`, { mode: 0o755 });
         return {
@@ -572,6 +597,7 @@ async function createRootFixture({ crashPhase = null } = {}) {
     configPath,
     deviceAuthPath,
     unknownPath,
+    historicalControllerCandidate,
     stateDir,
     transactionId: randomUUID(),
     get gatewayStarts() {
@@ -659,6 +685,7 @@ async function runCommittedFixture() {
       fixture.transactionId,
     );
     assert.equal(controller.ok, true);
+    assert.equal(fs.existsSync(fixture.historicalControllerCandidate), false);
     const applied = await socketRequest(
       fixture.publicSocketPath,
       "applyRelease",

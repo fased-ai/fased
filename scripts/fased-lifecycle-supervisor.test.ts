@@ -318,6 +318,34 @@ describe("stable lifecycle supervisor contract", () => {
     }
   });
 
+  it("removes only inactive validated historical controller candidates", async () => {
+    const { root, paths } = tempPaths();
+    const uid = process.getuid?.() ?? 0;
+    const active = path.join(paths.releasesDir, `v${version}`);
+    const candidate = path.join(paths.releasesDir, `v1.2.2.q0.${"a".repeat(12)}`);
+    try {
+      await Promise.all([
+        fsp.mkdir(active, { recursive: true }),
+        fsp.mkdir(candidate, { recursive: true }),
+      ]);
+      for (const generation of [active, candidate]) {
+        await Promise.all([
+          fsp.writeFile(path.join(generation, "fased-host-updater.mjs"), "server\n"),
+          fsp.writeFile(path.join(generation, "fased-host-updaterctl.mjs"), "client\n"),
+        ]);
+      }
+      await fsp.symlink(active, paths.currentLink, "dir");
+
+      await expect(
+        __testing.cleanupHistoricalControllerCandidates(paths, version, uid),
+      ).resolves.toEqual([candidate]);
+      await expect(fsp.realpath(paths.currentLink)).resolves.toBe(active);
+      await expect(fsp.lstat(candidate)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("tightens the public socket before transferring ownership", async () => {
     const operations: Array<["chmod" | "chown", string, number, number?]> = [];
     const socketPath = "/run/fased-local-controller/0123456789abcdef/request.sock";
@@ -839,6 +867,10 @@ describe("stable lifecycle supervisor contract", () => {
           calls.push("probe");
           return randomUUID();
         },
+        cleanupHistoricalControllerCandidates: async () => {
+          calls.push("cleanup");
+          return [];
+        },
         commitLifecycleTrust: async () => {
           calls.push("trust");
         },
@@ -853,7 +885,75 @@ describe("stable lifecycle supervisor contract", () => {
         controllerInstanceId: randomUUID(),
       }),
     ).resolves.toMatchObject({ ok: true, controllerChanged: true });
-    expect(calls).toEqual(["journal", "activate", "restart", "wait", "probe", "trust", "clear"]);
+    expect(calls).toEqual([
+      "journal",
+      "activate",
+      "restart",
+      "wait",
+      "probe",
+      "cleanup",
+      "trust",
+      "clear",
+    ]);
+  });
+
+  it("restores controller selection when supervisor-owned residue cleanup fails", async () => {
+    const { paths } = tempPaths();
+    await fsp.mkdir(paths.supervisorStateDir, { recursive: true });
+    const restore = vi.fn(async () => undefined);
+    const clear = vi.fn(async () => undefined);
+    const restart = vi.fn(async () => undefined);
+    const context = __testing.createContext(
+      {
+        profile: "protected-local",
+        operatorUid: 1000,
+        operatorGid: 1000,
+        paths,
+      },
+      {
+        stageTrustedController: async () => ({
+          changed: true,
+          identity: {
+            schemaVersion: 1,
+            version,
+            serverSha256: digest("a"),
+            clientSha256: digest("b"),
+          },
+          generationRoot: "/fixed/next",
+          previousGeneration: "/fixed/previous",
+          previousIdentity: {
+            schemaVersion: 1,
+            version: "1.2.2",
+            serverSha256: digest("c"),
+            clientSha256: digest("d"),
+          },
+          trusted: embeddedTrust(),
+          candidateRoot: __testing.EMBEDDED_LIFECYCLE_ROOT,
+          trustState: __testing.initialLifecycleTrustState(),
+          trustChanged: false,
+        }),
+        beginSupervisorTransaction: async () => undefined,
+        activateStagedController: async () => undefined,
+        restoreControllerSelection: restore,
+        restoreLifecycleTrust: async () => undefined,
+        clearSupervisorTransaction: clear,
+        restartController: restart,
+        waitForController: async () => undefined,
+        probeControllerIdentity: async () => randomUUID(),
+        cleanupHistoricalControllerCandidates: async () => {
+          throw new Error("injected historical cleanup failure");
+        },
+      },
+    );
+
+    await expect(
+      __testing.handleSupervisorRequest(request(), context, {
+        controllerInstanceId: randomUUID(),
+      }),
+    ).rejects.toThrow("controller promotion failed and was restored");
+    expect(restore).toHaveBeenCalledOnce();
+    expect(clear).toHaveBeenCalledOnce();
+    expect(restart).toHaveBeenCalledTimes(2);
   });
 
   it("removes an unactivated first controller selection when no prior generation exists", async () => {

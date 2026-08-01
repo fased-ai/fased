@@ -5662,12 +5662,18 @@ function createTransactionContext(overrides = {}) {
   const gatewayServiceName = overrides.gatewayServiceName ?? "fased-gateway.service";
   const signerApplicationSocketPath =
     overrides.signerApplicationSocketPath ?? "/run/fased-signerd/app.sock";
+  const supervised = overrides.supervised === true;
+  const stageControllerRelease = supervised
+    ? null
+    : (overrides.stageControllerRelease ??
+      (async (version, transactionContext) =>
+        await stageOfficialControllerRelease(version, transactionContext)));
   const context = {
     paths,
     instanceId: overrides.protectedLocalInstanceId ?? null,
     rootUid: overrides.rootUid ?? (typeof process.geteuid === "function" ? process.geteuid() : 0),
     protectedNodeBinary: overrides.protectedNodeBinary ?? process.execPath,
-    supervised: overrides.supervised === true,
+    supervised,
     controllerInstanceId: overrides.controllerInstanceId ?? randomUUID(),
     runningControllerVersion:
       overrides.runningControllerVersion ?? resolveRunningControllerVersion(),
@@ -5685,10 +5691,7 @@ function createTransactionContext(overrides = {}) {
     verifyPrivilegedReleaseEvidence:
       overrides.verifyPrivilegedReleaseEvidence ?? verifyPrivilegedReleaseEvidence,
     selfCheckControllerAsset: overrides.selfCheckControllerAsset ?? selfCheckControllerAsset,
-    stageControllerRelease:
-      overrides.stageControllerRelease ??
-      (async (version, transactionContext) =>
-        await stageOfficialControllerRelease(version, transactionContext)),
+    ...(stageControllerRelease ? { stageControllerRelease } : {}),
     stageCandidate:
       overrides.stageCandidate ??
       (async (version, candidatePath, context) =>
@@ -5797,7 +5800,40 @@ function createTransactionContext(overrides = {}) {
   return context;
 }
 
+function assertSupervisorSelectedController(request, context) {
+  if (!context.supervised) {
+    return false;
+  }
+  if (
+    context.runningControllerVersion !== request.version ||
+    !TRANSACTION_ID_PATTERN.test(context.controllerInstanceId || "")
+  ) {
+    throw new Error("running target lifecycle controller identity is mismatched");
+  }
+  return true;
+}
+
+async function controllerForTransaction(request, context) {
+  if (assertSupervisorSelectedController(request, context)) {
+    return {
+      changed: false,
+      identity: {
+        version: context.runningControllerVersion,
+        controllerInstanceId: context.controllerInstanceId,
+        selectedBy: "stable-supervisor",
+      },
+    };
+  }
+  if (typeof context.stageControllerRelease !== "function") {
+    throw new Error("unsupervised lifecycle controller has no controller staging capability");
+  }
+  return await context.stageControllerRelease(request.version, context);
+}
+
 async function updateControllerRelease(request, context) {
+  if (context.supervised) {
+    throw new Error("stable lifecycle supervisor owns controller promotion");
+  }
   await context.assertReleaseAllowed(request.version);
   await assertRollbackFloor(context, request.version);
   const active = await readJournal(context);
@@ -5925,6 +5961,7 @@ async function writeInitialRollbackFloor(context, version) {
 }
 
 async function prepareSignerRelease(request, context) {
+  assertSupervisorSelectedController(request, context);
   await context.assertReleaseAllowed(request.version);
   await assertRollbackFloor(context, request.version);
   const topology = await context.discoverApplicationTopology();
@@ -5963,7 +6000,7 @@ async function prepareSignerRelease(request, context) {
     throw new Error(`refusing signer downgrade from ${currentVersion} to ${request.version}`);
   }
 
-  const controller = await context.stageControllerRelease(request.version, context);
+  const controller = await controllerForTransaction(request, context);
 
   let changed = true;
   let release = null;
@@ -6753,7 +6790,8 @@ async function cleanupHistoricalQ0Residue(context, journal) {
     }
   }
 
-  const candidateRoots = new Set();
+  const controllerCandidateRoots = new Set();
+  const applicationCandidateRoots = new Set();
   if (controllerBackup) {
     const value = controllerBackup.value;
     if (
@@ -6789,7 +6827,7 @@ async function cleanupHistoricalQ0Residue(context, journal) {
       throw new Error("historical controller official generation identity is mismatched");
     }
     await addHistoricalCandidateIfPresent(
-      candidateRoots,
+      controllerCandidateRoots,
       candidateRoot,
       "controller candidate",
       context,
@@ -6822,7 +6860,7 @@ async function cleanupHistoricalQ0Residue(context, journal) {
     await assertHistoricalGeneration(originalRoot, "application official", context);
     await verifyProtectedApplicationRuntime(originalRoot, value.version, value.commit);
     await addHistoricalCandidateIfPresent(
-      candidateRoots,
+      applicationCandidateRoots,
       candidateRoot,
       "application candidate",
       context,
@@ -6845,9 +6883,19 @@ async function cleanupHistoricalQ0Residue(context, journal) {
         )
       : [],
   ]);
-  for (const candidate of [...controllerCandidates, ...applicationCandidates]) {
-    candidateRoots.add(candidate);
+  for (const candidate of controllerCandidates) {
+    controllerCandidateRoots.add(candidate);
   }
+  for (const candidate of applicationCandidates) {
+    applicationCandidateRoots.add(candidate);
+  }
+  if (context.supervised && controllerCandidateRoots.size > 0) {
+    throw new Error("stable lifecycle supervisor did not clean historical controller residue");
+  }
+  const candidateRoots = new Set([
+    ...(context.supervised ? [] : controllerCandidateRoots),
+    ...applicationCandidateRoots,
+  ]);
   const residueFiles = [
     authorization?.filePath,
     authorizationBackup?.filePath,
@@ -6858,15 +6906,28 @@ async function cleanupHistoricalQ0Residue(context, journal) {
     return { changed: false, removed: [] };
   }
 
-  const controllerIdentity = await readControllerIdentity(context.paths);
-  if (
-    !controllerIdentity ||
-    controllerIdentity.version !== journal.version ||
-    !(await currentControllerMatches(context.paths, controllerIdentity))
-  ) {
-    throw new Error(
-      "official controller identity did not converge before historical residue cleanup",
-    );
+  if (context.supervised) {
+    assertSupervisorSelectedController({ version: journal.version }, context);
+    const activeController = await fsp.realpath(context.paths.controllerCurrentLink);
+    if (
+      activeController !==
+      path.join(path.resolve(context.paths.controllerReleasesDir), `v${journal.version}`)
+    ) {
+      throw new Error(
+        "supervisor-selected controller did not converge before historical residue cleanup",
+      );
+    }
+  } else {
+    const controllerIdentity = await readControllerIdentity(context.paths);
+    if (
+      !controllerIdentity ||
+      controllerIdentity.version !== journal.version ||
+      !(await currentControllerMatches(context.paths, controllerIdentity))
+    ) {
+      throw new Error(
+        "official controller identity did not converge before historical residue cleanup",
+      );
+    }
   }
 
   let activeApplication = null;
@@ -7101,6 +7162,7 @@ async function alreadyCommittedRelease(request, context) {
 }
 
 async function applyReleaseTransaction(request, context) {
+  assertSupervisorSelectedController(request, context);
   let journal = await readJournal(context);
   if (!journal) {
     const committed = await alreadyCommittedRelease(request, context);
@@ -7194,6 +7256,7 @@ async function recoverInterruptedTransaction(context) {
     transactionId: journal.transactionId,
     version: journal.version,
   };
+  assertSupervisorSelectedController(request, context);
   if (journal.phase === "gateway-verified" || journal.phase === "committing") {
     const result = await finishCommit(context, journal);
     return { recovered: true, action: "committed", result };
@@ -7217,9 +7280,12 @@ async function recoverInterruptedTransaction(context) {
 }
 
 async function dispatchUpdateRequest(request, context) {
+  if (context.supervised && request.op !== "updateController") {
+    assertSupervisorSelectedController(request, context);
+  }
   switch (request.op) {
     case "controllerStatus":
-      if (!context.supervised || context.runningControllerVersion !== request.version) {
+      if (!context.supervised) {
         throw new Error("running target lifecycle controller identity is mismatched");
       }
       return {
