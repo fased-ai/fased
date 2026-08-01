@@ -1393,6 +1393,39 @@ describe("root-owned hosted updater protocol", () => {
     );
   });
 
+  it("preserves an absent baseline when the target initializes a declared shared-state root", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-created-state-root-"));
+    cleanupRoots.push(root);
+    const stateDir = path.join(root, ".fased");
+    await fsp.mkdir(stateDir);
+    await fsp.writeFile(path.join(stateDir, "fased.json"), "{}\n");
+    const topology = {
+      profile: "protected-local",
+      stateDir,
+      operator: {
+        name: "operator",
+        uid: process.getuid(),
+        gid: process.getgid(),
+        home: root,
+      },
+      gateway: { user: "gateway", uid: process.getuid(), unitPath: "/unit" },
+      configGroup: { name: "config", gid: process.getgid() },
+    };
+    const transaction = await __testing.inventoryDeclaredApplicationState(topology, { paths: {} });
+
+    await __testing.reconcileDeclaredApplicationState(transaction);
+    await fsp.writeFile(
+      path.join(stateDir, "extensions", "initialized-by-target.json"),
+      '{"schemaVersion":1}\n',
+    );
+
+    await expect(__testing.verifyDeclaredStatePreservation(transaction)).resolves.toMatchObject({
+      ok: true,
+      preservationHash: transaction.preservationHash,
+      preservationHashes: transaction.preservationHashes,
+    });
+  });
+
   it("streams declared Mining state larger than the former fixed hash limit", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-large-mining-state-"));
     cleanupRoots.push(root);

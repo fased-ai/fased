@@ -4441,6 +4441,19 @@ async function verifyDeclaredStatePreservation(transaction) {
         semanticState: entry.semanticState,
         semanticHash: entry.semanticHash,
       });
+    } else if (!entry.existed && entry.create && current.existed) {
+      // A declared shared-state root can be absent on an older or fresh
+      // topology. Reconciliation creates that root before the target signer or
+      // Gateway initializes it. There is no predecessor content to compare in
+      // that case, so retain the inventoried absence in the preservation
+      // receipt while still inspecting the new path above for type/symlink
+      // safety. Pre-existing roots continue to require exact content hashes.
+      preserved.push({
+        ...current,
+        existed: false,
+        contentHash: null,
+        semanticHash: null,
+      });
     } else {
       preserved.push(current);
     }
