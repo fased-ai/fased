@@ -4960,10 +4960,25 @@ async function prepareManagedApplicationTransaction(
   );
   await fsp.mkdir(paths.updaterDir, { recursive: true, mode: 0o750 });
   const updaterDirectory = await fsp.lstat(paths.updaterDir);
-  if (!updaterDirectory.isDirectory() || updaterDirectory.isSymbolicLink()) {
+  if (
+    !updaterDirectory.isDirectory() ||
+    updaterDirectory.isSymbolicLink() ||
+    (!previousManifest &&
+      (updaterDirectory.uid !== context.rootUid || (updaterDirectory.mode & 0o022) !== 0))
+  ) {
     throw new Error("root-managed updater directory is unsafe");
   }
   const updaterGeneration = await context.stageUpdaterGeneration(paths, targetRoot);
+  if (!previousManifest) {
+    // The root controller creates and verifies the first immutable generation.
+    // Fresh onboarding then runs as the trusted operator, which must be able to
+    // install only the compatibility selector/files around that generation.
+    // The Gateway is not a member of the operator group and remains unable to
+    // mutate this directory.
+    await fsp.chown(paths.updaterDir, state.operatorUid, state.operatorGid);
+    await fsp.chmod(paths.updaterDir, 0o750);
+    await fsyncDirectory(paths.updaterDir);
+  }
   let updateChannel = "stable";
   try {
     const configured = (await fsp.readFile(context.paths.channelPath, "utf8")).trim();
