@@ -460,13 +460,33 @@ verify_supervised_controller_a_to_b() {
   local failure_script=/usr/local/libexec/fased-fixture-controller-fail-once
   local failure_override="$controller_drop_in/99-fixture-fail-once.conf"
 
+  printf 'generated-systemd controller transition stage: preflight\n'
   target_generation="$(readlink -f "$controller_root/current")"
-  test "$target_generation" = "$controller_root/releases/v$version"
-  test -f "$supervisor_identity"
-  test -d "$controller_drop_in"
-  test -d "$supervisor_drop_in"
-  test -z "$(find "$controller_drop_in" "$supervisor_drop_in" -mindepth 1 -maxdepth 1 -print -quit)"
+  [[ "$target_generation" == "$controller_root/releases/v$version" ]] || {
+    echo "generated-systemd preflight: active controller generation is not the target" >&2
+    return 1
+  }
+  [[ -f "$supervisor_identity" ]] || {
+    echo "generated-systemd preflight: supervisor controller identity is missing" >&2
+    return 1
+  }
+  [[ -d "$controller_drop_in" ]] || {
+    echo "generated-systemd preflight: target controller drop-in boundary is missing" >&2
+    return 1
+  }
+  [[ -d "$supervisor_drop_in" ]] || {
+    echo "generated-systemd preflight: supervisor drop-in boundary is missing" >&2
+    return 1
+  }
+  if find "$controller_drop_in" "$supervisor_drop_in" \
+    -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+    echo "generated-systemd preflight: protected unit drop-in boundary is not empty" >&2
+    find "$controller_drop_in" "$supervisor_drop_in" \
+      -mindepth 1 -maxdepth 1 -printf '%m %u:%g %p\n' >&2
+    return 1
+  fi
 
+  printf 'generated-systemd controller transition stage: preservation-state\n'
   install -d -m 2770 -o testop -g "fscf-$instance" \
     "$state/sat-mining/wallets/agent" "$state/extensions"
   runuser -u testop -- env FASED_FIXTURE_MINING_LEDGER="$state/sat-mining/wallets/agent/mining.sqlite" \
@@ -505,6 +525,7 @@ EOF_MINING_LEDGER
     "$state/extensions/fixture-plugin-state.json" \
     >"$preservation_manifest"
 
+  printf 'generated-systemd controller transition stage: predecessor-activation\n'
   systemctl stop "$supervisor_unit" "$controller_unit"
   rm -rf -- "$predecessor_generation"
   install -d -m 0755 -o root -g root "$predecessor_generation"
@@ -536,6 +557,7 @@ EOF_MINING_LEDGER
     'length == 1 and .[0].ok == true and .[0].controllerVersion == $version' \
     /tmp/controller-predecessor-status.json >/dev/null
 
+  printf 'generated-systemd controller transition stage: injected-rollback\n'
   cat >"$failure_script" <<EOF_CONTROLLER_FAIL_ONCE
 #!/usr/bin/env bash
 set -euo pipefail
@@ -559,7 +581,7 @@ EOF_CONTROLLER_FAILURE_OVERRIDE
     "$public_socket" updateController "$transaction_id" "$version" 1 \
     /tmp/controller-transition-failure.json
   jq -e \
-    'length == 1 and .[0].ok == false and (.error | contains("controller promotion failed and was restored"))' \
+    'length == 1 and .[0].ok == false and (.[0].error | contains("controller promotion failed and was restored"))' \
     /tmp/controller-transition-failure.json >/dev/null
   wait_for_service "$controller_unit"
   test "$(readlink -f "$controller_root/current")" = "$predecessor_generation"
@@ -568,6 +590,7 @@ EOF_CONTROLLER_FAILURE_OVERRIDE
   test ! -e "$failure_marker"
   sha256sum --check --status "$preservation_manifest"
 
+  printf 'generated-systemd controller transition stage: same-command-retry\n'
   rm -f -- "$failure_override" "$failure_script"
   systemctl daemon-reload
   systemctl reset-failed "$controller_unit"
@@ -593,6 +616,7 @@ EOF_CONTROLLER_FAILURE_OVERRIDE
   test ! -e "$controller_state/supervisor/controller-transaction.json"
   sha256sum --check --status "$preservation_manifest"
 
+  printf 'generated-systemd controller transition stage: receipt-binding\n'
   selection_digest="$(jq -er '.[1].selectionDigest' /tmp/controller-transition-success.json)"
   selection_receipt="$controller_state/supervisor/controller-selections/$transaction_id/$selection_digest.json"
   target_manifest_sha="$(sha256sum "$release_assets/fased-hosted-release-v2.json" | awk '{print $1}')"
@@ -612,6 +636,7 @@ EOF_CONTROLLER_FAILURE_OVERRIDE
   test "$(cat "$controller_state/supervisor/controller-selections/$transaction_id/current")" = \
     "$selection_digest"
 
+  printf 'generated-systemd controller transition stage: namespace-denial\n'
   controller_pid="$(systemctl show -p MainPID --value "$controller_unit")"
   test "$controller_pid" -gt 1
   if nsenter --target "$controller_pid" --mount -- \
