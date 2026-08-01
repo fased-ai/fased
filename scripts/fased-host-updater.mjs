@@ -6450,12 +6450,18 @@ async function assertSupervisorSelectedController(
   if (
     context.runningControllerVersion !== request.version ||
     !running ||
-    running.version !== request.version ||
-    running.serverSha256 !== persisted.controllerServerSha256 ||
-    running.clientSha256 !== persisted.controllerClientSha256 ||
-    (!allowProcessRestart && context.controllerInstanceId !== persisted.controllerInstanceId)
+    running.version !== request.version
   ) {
-    throw new Error("running target lifecycle controller identity is mismatched");
+    throw new Error("running target lifecycle controller identity is mismatched: version");
+  }
+  if (
+    running.serverSha256 !== persisted.controllerServerSha256 ||
+    running.clientSha256 !== persisted.controllerClientSha256
+  ) {
+    throw new Error("running target lifecycle controller identity is mismatched: artifact digest");
+  }
+  if (!allowProcessRestart && context.controllerInstanceId !== persisted.controllerInstanceId) {
+    throw new Error("running target lifecycle controller identity is mismatched: process");
   }
   return persisted;
 }
