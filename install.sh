@@ -5723,6 +5723,10 @@ prepare_fresh_hosting_application_boundary() {
   fi
 
   if [[ -f /etc/systemd/system/fased-gateway.service && -d "$target_home/.fased" ]]; then
+    # Preserve the existing root-controlled Gateway boundary during repair.
+    # Without this marker the later root-to-app handoff would replace its
+    # protected launcher/unit with the bootstrap checkout service.
+    HOSTING_APPLICATION_BOUNDARY_PREPARED=1
     return 0
   fi
 

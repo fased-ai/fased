@@ -405,6 +405,23 @@ tailscale_serve_route_ready 18789
     expect(prebuilt).toContain("return 0\n  fi\n  local npm_prefix=");
   });
 
+  it("preserves an existing protected Gateway boundary during Hosting repair", () => {
+    const prepareBoundary = sliceBetween(
+      installer,
+      "prepare_fresh_hosting_application_boundary()",
+      "run_tailscale_auth_from_private_file()",
+    );
+    const existingBoundary = sliceBetween(
+      prepareBoundary,
+      "if [[ -f /etc/systemd/system/fased-gateway.service",
+      'echo "== Root bootstrap: establishing the Hosting application boundary',
+    );
+    const rootCoordinator = sliceBetween(installer, "reexec_as_app_user()", "go_modern_enough()");
+    expect(existingBoundary).toContain("HOSTING_APPLICATION_BOUNDARY_PREPARED=1");
+    expect(existingBoundary).toContain("return 0");
+    expect(rootCoordinator).toContain('if [[ "$HOSTING_APPLICATION_BOUNDARY_PREPARED" -ne 1 ]]');
+  });
+
   it.each(["fresh", "repair", "pre-v2 migration"])(
     "uses root-owned systemd restart and app health probing for %s Hosting",
     (scenario) => {
