@@ -100,7 +100,10 @@ describe("Protected Local service plan", () => {
       "/opt/fased/local/0123456789abcdef/supervisor/fased-lifecycle-supervisor.mjs --profile protected-local --protected-local-instance 0123456789abcdef --operator-uid 1000 --operator-gid 62002",
     );
     expect(supervisor).toContain("RuntimeDirectory=fased-local-controller/0123456789abcdef"); // pragma: allowlist secret
-    expect(supervisor).toContain("ReadOnlyPaths=/opt/fased/local/0123456789abcdef/supervisor"); // pragma: allowlist secret
+    expect(supervisor).toContain(
+      "ReadWritePaths=/var/lib/fased-local/0123456789abcdef/controller/supervisor /opt/fased/local/0123456789abcdef/controller /opt/fased/local/0123456789abcdef/supervisor",
+    );
+    expect(supervisor).not.toContain("ReadOnlyPaths=");
     expect(supervisor).toContain("CapabilityBoundingSet=CAP_CHOWN\nAmbientCapabilities=");
     expect(gateway).toContain("RestrictSUIDSGID=true");
     expect(gateway).toContain("UMask=0007");

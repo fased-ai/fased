@@ -106,9 +106,10 @@ async function runExistingControllerGenerationTransitionFixture() {
   const applicationRelease = path.join(root, "application", "releases", "v1.2.0");
   const applicationCurrent = path.join(root, "application", "current");
   const incompleteUpdater = path.join(stateDir, "updater", "fased-managed-updater.mjs");
-  const supervisorPath = fileURLToPath(
+  const targetSupervisorPath = fileURLToPath(
     new URL("./fased-lifecycle-supervisor.mjs", import.meta.url),
   );
+  const supervisorPath = path.join(root, "supervisor", "fased-lifecycle-supervisor.mjs");
   const targetServerPath = fileURLToPath(new URL("./fased-host-updater.mjs", import.meta.url));
   const targetClientPath = fileURLToPath(new URL("./fased-host-updaterctl.mjs", import.meta.url));
   const paths = {
@@ -148,6 +149,7 @@ async function runExistingControllerGenerationTransitionFixture() {
       fsp.mkdir(applicationRelease, { recursive: true, mode: 0o755 }),
       fsp.mkdir(path.dirname(incompleteUpdater), { recursive: true, mode: 0o700 }),
       fsp.mkdir(path.dirname(paths.channelPath), { recursive: true, mode: 0o755 }),
+      fsp.mkdir(path.dirname(supervisorPath), { recursive: true, mode: 0o755 }),
     ]);
     await Promise.all([
       fsp.writeFile(path.join(previousGeneration, "fased-host-updater.mjs"), previousServer, {
@@ -159,6 +161,7 @@ async function runExistingControllerGenerationTransitionFixture() {
       fsp.writeFile(path.join(applicationRelease, "package.json"), '{"version":"1.2.0"}\n'),
       fsp.writeFile(incompleteUpdater, 'import "./missing-support.mjs";\n', { mode: 0o700 }),
       fsp.writeFile(paths.channelPath, "beta\n"),
+      fsp.writeFile(supervisorPath, "previous-lifecycle-supervisor\n", { mode: 0o755 }),
       fsp.mkdir(path.dirname(controllerVersionPath), { recursive: true, mode: 0o700 }),
     ]);
     await Promise.all([
@@ -170,6 +173,7 @@ async function runExistingControllerGenerationTransitionFixture() {
     ]);
     const applicationDigest = sha256Text(await fsp.readFile(incompleteUpdater, "utf8"));
 
+    const targetSupervisor = await fsp.readFile(targetSupervisorPath, "utf8");
     const targetServer = await fsp.readFile(targetServerPath, "utf8");
     const targetClient = await fsp.readFile(targetClientPath, "utf8");
     const verifier = "fixture-evidence-verifier\n";
@@ -192,7 +196,7 @@ async function runExistingControllerGenerationTransitionFixture() {
         bootstrap: { asset: "install.sh", sha256: "d".repeat(64) },
         supervisor: {
           asset: "fased-lifecycle-supervisor.mjs",
-          sha256: sha256Text(await fsp.readFile(supervisorPath, "utf8")),
+          sha256: sha256Text(targetSupervisor),
         },
         controllerServer: {
           asset: "fased-host-updater.mjs",
@@ -219,6 +223,7 @@ async function runExistingControllerGenerationTransitionFixture() {
     const downloads = new Map([
       ["fased-lifecycle-trust-v1.json", `${JSON.stringify(metadata)}\n`],
       ["fased-lifecycle-trust-v1.json.attestation.json", "{}\n"],
+      ["fased-lifecycle-supervisor.mjs", targetSupervisor],
       ["fased-host-updater.mjs", targetServer],
       ["fased-host-updaterctl.mjs", targetClient],
       ["fased-privileged-release-evidence.mjs", verifier],
@@ -228,6 +233,7 @@ async function runExistingControllerGenerationTransitionFixture() {
       ["fased-privileged-sbom-v1.spdx.json", "{}\n"],
       ["fased-privileged-vex-v1.openvex.json", "{}\n"],
     ]);
+    const previousSupervisorDigest = sha256Text(await fsp.readFile(supervisorPath, "utf8"));
     let restartCount = 0;
     const context = supervisorTesting.createContext(
       {
@@ -245,6 +251,7 @@ async function runExistingControllerGenerationTransitionFixture() {
         verifyMetadata: async () => undefined,
         verifyReleaseEvidence: async () => undefined,
         selfCheckController: async () => undefined,
+        runningSupervisorDigest: previousSupervisorDigest,
         download: async (url, destination) => {
           const name = url.slice(url.lastIndexOf("/") + 1);
           const body = downloads.get(name);
@@ -286,6 +293,7 @@ async function runExistingControllerGenerationTransitionFixture() {
       previousIdentity,
     );
     assert.equal(fs.existsSync(paths.supervisorTransactionPath), false);
+    assert.equal(sha256Text(await fsp.readFile(supervisorPath, "utf8")), previousSupervisorDigest);
     assert.equal(await fsp.realpath(applicationCurrent), applicationRelease);
     assert.equal(sha256Text(await fsp.readFile(incompleteUpdater, "utf8")), applicationDigest);
 
@@ -301,6 +309,11 @@ async function runExistingControllerGenerationTransitionFixture() {
       JSON.parse(await fsp.readFile(controllerVersionPath, "utf8")).version,
       targetVersion,
     );
+    assert.equal(
+      sha256Text(await fsp.readFile(supervisorPath, "utf8")),
+      sha256Text(targetSupervisor),
+    );
+    context.runningSupervisorDigest = sha256Text(targetSupervisor);
     assert.equal(await fsp.realpath(applicationCurrent), applicationRelease);
     assert.equal(sha256Text(await fsp.readFile(incompleteUpdater, "utf8")), applicationDigest);
 
@@ -311,6 +324,7 @@ async function runExistingControllerGenerationTransitionFixture() {
     );
     assert.equal(idempotent.ok, true);
     assert.equal(idempotent.controllerChanged, false);
+    assert.equal(idempotent.supervisorChanged, false);
     assert.equal(restartCount, 3);
   } finally {
     await fsp.rm(root, { recursive: true, force: true });
@@ -716,7 +730,7 @@ process.stdout.write(
     cases: [
       "commit-replay",
       "cold-crash-rollback-retry",
-      "existing-controller-a-to-b-rollback-retry-idempotence",
+      "existing-supervisor-and-controller-a-to-b-rollback-retry-idempotence",
     ],
     ownerInstallationTouched: false,
     freshInfrastructureCreated: false,

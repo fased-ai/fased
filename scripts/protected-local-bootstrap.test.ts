@@ -404,6 +404,30 @@ describe("protected Local bootstrap contract", () => {
     });
   });
 
+  it("preserves a healthy legacy Gateway across a transient systemd state", () => {
+    const health = {
+      ok: false,
+      conflict: true,
+      version: "0.1.75",
+      runtimeSource: "managed-package",
+      detail: "status=200 version=0.1.75 runtimeSource=managed-package",
+    };
+    expect(__testing.legacyGatewayWasServing({ ActiveState: "activating" }, health)).toBe(true);
+    expect(__testing.legacyGatewayWasServing({ ActiveState: "inactive" }, health)).toBe(true);
+    expect(() =>
+      __testing.legacyGatewayWasServing(
+        { ActiveState: "active" },
+        {
+          ok: false,
+          conflict: false,
+          version: "",
+          runtimeSource: "",
+          detail: "connect ECONNREFUSED 127.0.0.1:18789",
+        },
+      ),
+    ).toThrow(/no exact healthy release identity/u);
+  });
+
   it("binds rollback health to the exact previous managed release", () => {
     expect(
       __testing.previousLegacyGatewayVersion({
@@ -745,7 +769,15 @@ default:other::---
     );
     const alreadyProtected = bootstrap.slice(branchStart, branchEnd);
 
+    expect(alreadyProtected).toContain(
+      "await transitionExistingSupervisorBoundary(sourceRoot, spec, layout)",
+    );
     expect(alreadyProtected).toContain("lifecycle = applyProtectedLocalLifecycle(spec, layout)");
+    expect(
+      alreadyProtected.indexOf(
+        "await transitionExistingSupervisorBoundary(sourceRoot, spec, layout)",
+      ),
+    ).toBeLessThan(alreadyProtected.indexOf("applyProtectedLocalLifecycle(spec, layout)"));
     expect(alreadyProtected.indexOf("applyProtectedLocalLifecycle(spec, layout)")).toBeLessThan(
       alreadyProtected.indexOf("verifyGatewayHealth(spec, layout"),
     );
