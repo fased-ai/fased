@@ -5139,14 +5139,21 @@ async function installInitializedManagedStableFiles(context, transaction, target
   const paths = managedApplicationPaths(transaction.stateDir);
   await ensureInitializedManagedStableDirectories(context, paths);
   const sources = [
-    ["fased-managed-launcher.sh", paths.launcherPath],
-    ["fased-managed-service.sh", paths.serviceLauncherPath],
-    ...MANAGED_UPDATER_SUPPORT_FILES.map((name) => [name, path.join(paths.updaterDir, name)]),
-    ["fased-managed-updater.mjs", paths.updaterPath],
+    ["fased-managed-launcher.sh", paths.launcherPath, 0o750],
+    ["fased-managed-service.sh", paths.serviceLauncherPath, 0o750],
+    ...MANAGED_UPDATER_SUPPORT_FILES.map((name) => [
+      name,
+      path.join(paths.updaterDir, name),
+      0o750,
+    ]),
+    // The immutable generation receipt binds the entrypoint mode as well as
+    // its bytes. Parent-directory isolation still limits this operator-owned
+    // compatibility copy to the trusted operator.
+    ["fased-managed-updater.mjs", paths.updaterPath, 0o755],
   ];
-  for (const [name, destination] of sources) {
+  for (const [name, destination, mode] of sources) {
     await atomicCopyFileDurable(path.join(targetRoot, "scripts", name), destination, {
-      mode: 0o750,
+      mode,
       uid: context.applicationState.operatorUid,
       gid: context.applicationState.operatorGid,
     });

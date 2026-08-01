@@ -1253,6 +1253,10 @@ describe("root-owned hosted updater protocol", () => {
     ]) {
       expect(fs.existsSync(candidate)).toBe(true);
     }
+    expect(
+      (await fsp.lstat(path.join(managedStateDir, "updater", "fased-managed-updater.mjs"))).mode &
+        0o777,
+    ).toBe(0o755);
     for (const directory of [
       path.join(managedStateDir, "install-cache"),
       path.join(managedStateDir, "install-cache", "npm-global"),
