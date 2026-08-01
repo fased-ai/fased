@@ -4,6 +4,17 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.30
+
+- Keep the privileged Local supervisor and controller tree private while
+  exposing only the digest-verified updater client from a separate executable
+  root-owned path.
+- Transactionally converge partial protected Local updater layouts, stale user
+  journals, service activation, and rollback without changing Wallet, signer,
+  Mining, Network, or plugin state.
+- Package the exact tree proven by PR #253 for literal Local acceptance; stable
+  promotion remains blocked until the public install and update commands pass.
+
 ## 0.1.76-rc.29
 
 - Centralize Local and Hosting recovery under the stable privileged lifecycle
