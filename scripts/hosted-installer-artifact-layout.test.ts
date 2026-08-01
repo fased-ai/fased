@@ -175,6 +175,7 @@ describe("attested Hosting installer artifact layout", () => {
       installer.indexOf("cat >/etc/systemd/system/fased-host-controller.service"),
       installer.indexOf("cat >/etc/systemd/system/fased-host-updater.service"),
     );
+    expect(controllerUnit).toContain("AmbientCapabilities=CAP_SETUID CAP_SETGID");
     expect(controllerUnit).not.toContain("RestrictSUIDSGID=true");
     expect(installer).toContain("ReadWritePaths=/opt/fased/host-controller");
     expect(installer).toContain("RestartSec=1");

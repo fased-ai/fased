@@ -6298,6 +6298,7 @@ ExecStart=$(command -v node) /opt/fased/host-controller/current/fased-host-updat
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
+AmbientCapabilities=CAP_SETUID CAP_SETGID
 PrivateTmp=true
 ProtectHome=read-only
 ProtectSystem=strict

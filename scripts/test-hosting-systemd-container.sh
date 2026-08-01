@@ -33,7 +33,12 @@ fi
 
 cleanup_names=()
 cleanup() {
+  local status=$?
   local name
+  if [[ "$status" -ne 0 && "${FASED_KEEP_FAILED_CONTAINER:-0}" == "1" ]]; then
+    printf 'Preserving failed Hosting fixture container(s): %s\n' "${cleanup_names[*]}" >&2
+    return
+  fi
   for name in "${cleanup_names[@]}"; do
     "$RUNTIME" rm -f "$name" >/dev/null 2>&1 || true
   done
@@ -105,6 +110,11 @@ dump_fixture_failure() {
   local name="$1"
   echo "Hosting fixture diagnostics: $name" >&2
   "$RUNTIME" exec "$name" /bin/bash -lc '
+    for focused in /tmp/failure-activate.err /tmp/failure-activate.out /tmp/fased-fixture-stage.out; do
+      [[ -f "$focused" ]] || continue
+      echo "==> $focused" >&2
+      cat "$focused" >&2 || true
+    done
     systemctl --failed --no-pager >&2 || true
     journalctl \
       -u fased-host-controller.service \
