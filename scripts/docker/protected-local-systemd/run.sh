@@ -581,7 +581,15 @@ EOF_CONTROLLER_FAILURE_OVERRIDE
   wait_for_service "$supervisor_unit"
   test "$(readlink -f "$controller_root/current")" = "$target_generation"
   test "$(jq -r .version "$supervisor_identity")" = "$version"
-  test ! -e "$predecessor_generation"
+  # Retain the last ordinary controller generation as the exact rollback
+  # source. Only explicitly named historical Q0 candidates are disposable.
+  test -d "$predecessor_generation"
+  test ! -L "$predecessor_generation"
+  test "$(stat -c '%u:%g:%a' "$predecessor_generation")" = "0:0:755"
+  test "$(sha256sum "$predecessor_generation/fased-host-updater.mjs" | awk '{print $1}')" = \
+    "$(sha256sum "$target_generation/fased-host-updater.mjs" | awk '{print $1}')"
+  test "$(sha256sum "$predecessor_generation/fased-host-updaterctl.mjs" | awk '{print $1}')" = \
+    "$(sha256sum "$target_generation/fased-host-updaterctl.mjs" | awk '{print $1}')"
   test ! -e "$controller_state/supervisor/controller-transaction.json"
   sha256sum --check --status "$preservation_manifest"
 
