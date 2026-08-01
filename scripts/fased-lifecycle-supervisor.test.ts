@@ -751,6 +751,11 @@ describe("stable lifecycle supervisor contract", () => {
       phase: "active",
       changed: true,
     }));
+    const probe = vi
+      .fn<() => Promise<string>>()
+      .mockRejectedValueOnce(new Error("transient private socket probe"))
+      .mockResolvedValue(selectionReceipt.controllerInstanceId);
+    const restart = vi.fn(async () => undefined);
     const context = __testing.createContext(
       {
         profile: "hosting",
@@ -767,7 +772,8 @@ describe("stable lifecycle supervisor contract", () => {
         readControllerProductJournal: async () => productJournal,
         recoverRootProductTransaction: recover,
         stageTrustedController: select,
-        probeControllerIdentity: async () => selectionReceipt.controllerInstanceId,
+        probeControllerIdentity: probe,
+        restartController: restart,
         cleanupHistoricalControllerCandidates: async () => [],
         writeControllerSelectionReceipt: async () => selectionReceipt,
         readControllerSelectionReceipt: async () => selectionReceipt,
@@ -775,6 +781,18 @@ describe("stable lifecycle supervisor contract", () => {
       },
     );
 
+    await expect(
+      __testing.handleSupervisorRequest(reselect, context, {
+        controllerInstanceId: selectionReceipt.controllerInstanceId,
+      }),
+    ).rejects.toThrow("controller verification failed: transient private socket probe");
+    expect(recover).not.toHaveBeenCalled();
+    expect(restart).not.toHaveBeenCalled();
+    expect(rootTransaction).toMatchObject({
+      transactionId: transaction.transactionId,
+      version: transaction.version,
+      phase: "prepared",
+    });
     await expect(
       __testing.handleSupervisorRequest(reselect, context, {
         controllerInstanceId: selectionReceipt.controllerInstanceId,
@@ -790,7 +808,8 @@ describe("stable lifecycle supervisor contract", () => {
       }),
     ).resolves.toMatchObject({ ok: true, phase: "active" });
     expect(recover).not.toHaveBeenCalled();
-    expect(select).toHaveBeenCalledOnce();
+    expect(restart).not.toHaveBeenCalled();
+    expect(select).toHaveBeenCalledTimes(2);
     expect(forward).toHaveBeenCalledOnce();
     expect(rootTransaction).toMatchObject({
       transactionId: transaction.transactionId,
@@ -1726,7 +1745,7 @@ describe("stable lifecycle supervisor contract", () => {
     await expect(fsp.lstat(paths.controllerVersionPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("restarts an already-selected generation when the running worker identity is stale", async () => {
+  it("does not invalidate an active receipt after one unchanged-worker probe failure", async () => {
     const { paths } = tempPaths();
     await fsp.mkdir(paths.supervisorStateDir, { recursive: true });
     const activeInstance = randomUUID();
@@ -1760,16 +1779,24 @@ describe("stable lifecycle supervisor contract", () => {
         waitForController: async () => undefined,
       },
     );
-    const result = await __testing.handleSupervisorRequest(request(), context, {
-      controllerInstanceId: randomUUID(),
-    });
-
-    expect(result).toMatchObject({
+    const transaction = request();
+    await expect(
+      __testing.handleSupervisorRequest(transaction, context, {
+        controllerInstanceId: randomUUID(),
+      }),
+    ).rejects.toThrow("controller verification failed: stale worker");
+    expect(restart).not.toHaveBeenCalled();
+    await expect(
+      __testing.handleSupervisorRequest(transaction, context, {
+        controllerInstanceId: activeInstance,
+      }),
+    ).resolves.toMatchObject({
       ok: true,
       version,
-      controllerChanged: true,
+      controllerChanged: false,
+      controllerInstanceId: activeInstance,
     });
-    expect(restart).toHaveBeenCalledOnce();
+    expect(restart).not.toHaveBeenCalled();
     expect(probe).toHaveBeenCalledTimes(2);
   });
 

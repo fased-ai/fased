@@ -136,7 +136,9 @@ dump_fixture_failure() {
       /var/lib/fased-host-updater/active-signer-transaction.json \
       /var/lib/fased-host-updater/supervisor/product-transaction.json \
       /var/lib/fased-host-updater/supervisor/controller-transaction.json \
-      /var/lib/fased-host-updater/supervisor/receipts/*/*.json; do
+      /var/lib/fased-host-updater/supervisor/controller-selections/*/*.json \
+      /var/lib/fased-host-updater/supervisor/controller-selections/*/current \
+      /var/lib/fased-host-updater/supervisor/receipts/*.json; do
       [[ -f "$record" ]] || continue
       echo "==> $record" >&2
       cat "$record" >&2 || true

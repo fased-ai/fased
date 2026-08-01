@@ -3666,25 +3666,18 @@ async function handleSupervisorRequest(request, context, state) {
         await context.restartController();
         await context.waitForController();
       }
-      try {
-        state.controllerInstanceId = await context.probeControllerIdentity(
-          request,
-          context,
-          staged.identity,
-        );
-      } catch (error) {
-        if (staged.changed) {
-          throw error;
-        }
-        restarted = true;
-        await context.restartController();
-        await context.waitForController();
-        state.controllerInstanceId = await context.probeControllerIdentity(
-          request,
-          context,
-          staged.identity,
-        );
-      }
+      // An unchanged controller can be serving an already-prepared product
+      // transaction whose supervisor receipt is bound to this exact process.
+      // Restarting it after one failed probe invalidates that receipt and turns
+      // a retryable observation failure into a forced rollback. Let systemd
+      // recover a genuinely failed worker and let the stable client retry the
+      // same bounded request; only a newly selected generation is restarted by
+      // this transaction.
+      state.controllerInstanceId = await context.probeControllerIdentity(
+        request,
+        context,
+        staged.identity,
+      );
       await context.cleanupHistoricalControllerCandidates(
         context.paths,
         request.version,
