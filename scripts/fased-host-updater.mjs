@@ -604,6 +604,30 @@ async function fixedExecutable(candidates, label) {
   throw new Error(`${label} is not installed in a root-controlled system path`);
 }
 
+function systemIdentityExecArguments(uid, gid, executable, args = []) {
+  if (
+    !Number.isSafeInteger(uid) ||
+    uid <= 0 ||
+    !Number.isSafeInteger(gid) ||
+    gid <= 0 ||
+    !path.isAbsolute(executable) ||
+    !Array.isArray(args) ||
+    args.some((argument) => typeof argument !== "string")
+  ) {
+    throw new Error("system identity execution requires exact non-root numeric identities");
+  }
+  return [`--reuid=${uid}`, `--regid=${gid}`, "--init-groups", "--", executable, ...args];
+}
+
+async function execFileAsSystemIdentity(executable, args, uid, gid, options) {
+  const setpriv = await fixedExecutable(["/usr/bin/setpriv", "/bin/setpriv"], "setpriv");
+  return await execFileAsync(
+    setpriv,
+    systemIdentityExecArguments(uid, gid, executable, args),
+    options,
+  );
+}
+
 async function fsyncDirectory(directory) {
   const handle = await fsp.open(directory, "r");
   try {
@@ -6028,23 +6052,27 @@ async function runTargetApplicationCommand(
   }
   const { token } = await readGatewayHealthConfiguration(topology);
   const nodeBinary = path.resolve(context.protectedNodeBinary);
-  const { stdout } = await execFileAsync(nodeBinary, [entrypoint, ...args], {
-    uid: topology.operator.uid,
-    gid: topology.operator.gid,
-    env: {
-      HOME: topology.operator.home,
-      USER: topology.operator.name,
-      LOGNAME: topology.operator.name,
-      PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      FASED_NODE: nodeBinary,
-      FASED_STATE_DIR: topology.stateDir,
-      FASED_CONFIG_PATH: topology.configPath,
-      FASED_HOST_PROFILE: topology.profile === "hosting" ? "hosting" : "local",
-      FASED_GATEWAY_TOKEN: token,
+  const { stdout } = await execFileAsSystemIdentity(
+    nodeBinary,
+    [entrypoint, ...args],
+    topology.operator.uid,
+    topology.operator.gid,
+    {
+      env: {
+        HOME: topology.operator.home,
+        USER: topology.operator.name,
+        LOGNAME: topology.operator.name,
+        PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        FASED_NODE: nodeBinary,
+        FASED_STATE_DIR: topology.stateDir,
+        FASED_CONFIG_PATH: topology.configPath,
+        FASED_HOST_PROFILE: topology.profile === "hosting" ? "hosting" : "local",
+        FASED_GATEWAY_TOKEN: token,
+      },
+      timeout: 15_000,
+      maxBuffer: 1024 * 1024,
     },
-    timeout: 15_000,
-    maxBuffer: 1024 * 1024,
-  });
+  );
   return json ? parseBoundedJsonOutput(stdout, label) : { outputPresent: stdout.length > 0 };
 }
 
@@ -6077,13 +6105,17 @@ async function assertSocketDeniedToGateway(context, topology, socketPath, label)
     'socket.once("error",(error)=>process.exit(error.code==="EACCES"||error.code==="EPERM"?0:44));',
   ].join("");
   try {
-    await execFileAsync(nodeBinary, ["-e", probe, socketPath], {
-      uid: topology.gateway.uid,
-      gid: topology.gateway.gid,
-      env: { PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" },
-      timeout: 5_000,
-      maxBuffer: 16 * 1024,
-    });
+    await execFileAsSystemIdentity(
+      nodeBinary,
+      ["-e", probe, socketPath],
+      topology.gateway.uid,
+      topology.gateway.gid,
+      {
+        env: { PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" },
+        timeout: 5_000,
+        maxBuffer: 16 * 1024,
+      },
+    );
   } catch (error) {
     throw new Error(`target Gateway can reach or ambiguously probe signer ${label} authority`, {
       cause: error,
@@ -8485,6 +8517,7 @@ export const __testing = {
   stageOfficialControllerRelease,
   stageOfficialCandidate,
   stageProtectedApplicationRelease,
+  systemIdentityExecArguments,
   targetMiningHealthArgs,
   transactionPaths,
   updateControllerRelease,

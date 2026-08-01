@@ -451,7 +451,9 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       command -v awk >/dev/null 2>&1 || packages+=(gawk)
       command -v jq >/dev/null 2>&1 || packages+=(jq)
       command -v grep >/dev/null 2>&1 || packages+=(grep)
-      command -v flock >/dev/null 2>&1 || packages+=(util-linux)
+      if ! command -v flock >/dev/null 2>&1 || ! command -v setpriv >/dev/null 2>&1; then
+        packages+=(util-linux)
+      fi
       if command -v apt-get >/dev/null 2>&1; then
         apt-get update
         env DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
@@ -469,7 +471,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       install_hosting_bootstrap_tools
       install_current_github_cli_bootstrap
     fi
-    for command in curl tar sha256sum awk jq stat find grep flock; do
+    for command in curl tar sha256sum awk jq stat find grep flock setpriv; do
       if ! command -v "$command" >/dev/null 2>&1; then
         echo "Missing required Hosting bootstrap command: $command" >&2
         echo "Install curl, jq, tar, coreutils, and findutils from the provider console, then retry." >&2
@@ -2413,9 +2415,11 @@ install_linux_system_dependencies() {
   fi
 
   if need_cmd apt-get; then
+    local -a apt_packages=(git curl ca-certificates jq acl)
+    need_cmd setpriv || apt_packages+=(util-linux)
     run_as_root apt-get update
     run_as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
-      apt-get install -y git curl ca-certificates jq acl
+      apt-get install -y "${apt_packages[@]}"
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
       install_nodesource_node_apt
@@ -2432,6 +2436,7 @@ install_linux_system_dependencies() {
     need_cmd curl || rpm_packages+=(curl)
     need_cmd jq || rpm_packages+=(jq)
     { need_cmd getfacl && need_cmd setfacl; } || rpm_packages+=(acl)
+    need_cmd setpriv || rpm_packages+=(util-linux)
     run_as_root "$dnf_cmd" install -y "${rpm_packages[@]}"
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
@@ -2449,6 +2454,7 @@ install_linux_system_dependencies() {
     need_cmd curl || rpm_packages+=(curl)
     need_cmd jq || rpm_packages+=(jq)
     { need_cmd getfacl && need_cmd setfacl; } || rpm_packages+=(acl)
+    need_cmd setpriv || rpm_packages+=(util-linux)
     run_as_root yum install -y "${rpm_packages[@]}"
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
@@ -2458,14 +2464,15 @@ install_linux_system_dependencies() {
       prefer_compatible_system_node_if_available || true
     fi
   elif need_cmd apk; then
-    run_as_root apk add --no-cache git curl ca-certificates jq acl nodejs npm
+    run_as_root apk add --no-cache git curl ca-certificates jq acl util-linux nodejs npm
     hash -r 2>/dev/null || true
   elif need_cmd pacman; then
-    run_as_root pacman -Sy --needed --noconfirm git curl ca-certificates jq acl nodejs npm
+    run_as_root pacman -Sy --needed --noconfirm git curl ca-certificates jq acl util-linux nodejs npm
     hash -r 2>/dev/null || true
   elif need_cmd zypper; then
     run_as_root zypper --non-interactive refresh || true
-    run_as_root zypper --non-interactive install --no-recommends git curl ca-certificates jq acl
+    run_as_root zypper --non-interactive install --no-recommends \
+      git curl ca-certificates jq acl util-linux
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
       run_as_root zypper --non-interactive install --no-recommends nodejs24 npm24 || \
@@ -2479,6 +2486,11 @@ install_linux_system_dependencies() {
     echo "Detected system: $(linux_os_summary)" >&2
     echo "Supported auto-install package managers: apt-get, dnf, dnf5, yum, zypper, apk, pacman." >&2
     echo "Install git, curl, jq, Node 24, and pnpm manually, then rerun ./install.sh." >&2
+    return 1
+  fi
+
+  if ! need_cmd setpriv; then
+    echo "Protected Linux lifecycle requires setpriv from util-linux." >&2
     return 1
   fi
 

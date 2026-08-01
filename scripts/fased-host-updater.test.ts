@@ -1772,6 +1772,30 @@ describe("root-owned hosted updater protocol", () => {
     expect(args).not.toContain("--password");
   });
 
+  it("runs product probes with the complete declared service-account group identity", () => {
+    expect(
+      __testing.systemIdentityExecArguments(1001, 1001, "/usr/bin/node", [
+        "/opt/fased/application/fased.mjs",
+        "wallet",
+        "status",
+        "--json",
+      ]),
+    ).toEqual([
+      "--reuid=1001",
+      "--regid=1001",
+      "--init-groups",
+      "--",
+      "/usr/bin/node",
+      "/opt/fased/application/fased.mjs",
+      "wallet",
+      "status",
+      "--json",
+    ]);
+    expect(() => __testing.systemIdentityExecArguments(0, 1001, "/usr/bin/node", [])).toThrow(
+      "exact non-root numeric identities",
+    );
+  });
+
   it("bounds product health to one application process at a time", async () => {
     const invocations: string[] = [];
     let active = 0;
