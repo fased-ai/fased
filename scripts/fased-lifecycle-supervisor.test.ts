@@ -1250,6 +1250,37 @@ describe("stable lifecycle supervisor contract", () => {
     expect(fixture.restartController).toHaveBeenCalledTimes(3);
   });
 
+  it("keeps one selected product transaction across a same-command controller retry", async () => {
+    const { paths } = tempPaths();
+    const fixture = await existingControllerTransitionFixture(paths, "1.2.2");
+    const state = { controllerInstanceId: randomUUID() };
+    const initial = request();
+
+    await expect(
+      __testing.handleSupervisorRequest(initial, fixture.context, state),
+    ).rejects.toThrow("controller promotion failed and was restored");
+    await expect(
+      __testing.handleSupervisorRequest(initial, fixture.context, state),
+    ).resolves.toMatchObject({ ok: true, controllerChanged: true });
+    fixture.context.runningSupervisorDigest = sha256Text(fixture.targetSupervisor);
+    const selectedBeforeRetry = JSON.parse(await fsp.readFile(paths.rootTransactionPath, "utf8"));
+    const retry = parseSupervisorRequest({
+      schemaVersion: 3,
+      op: "updateController",
+      transactionId: initial.transactionId,
+      nonce: randomUUID(),
+      version: initial.version,
+      clientCapabilities: initial.clientCapabilities,
+    });
+
+    await expect(
+      __testing.handleSupervisorRequest(retry, fixture.context, state),
+    ).resolves.toMatchObject({ ok: true, controllerChanged: false });
+    expect(JSON.parse(await fsp.readFile(paths.rootTransactionPath, "utf8"))).toEqual(
+      selectedBeforeRetry,
+    );
+  });
+
   it("rejects supervisor promotion when the installed file changed beneath the running process", async () => {
     const { paths } = tempPaths();
     const fixture = await existingControllerTransitionFixture(paths, "1.2.2");

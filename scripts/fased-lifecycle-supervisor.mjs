@@ -3730,22 +3730,39 @@ async function handleSupervisorRequest(request, context, state) {
         { cause: error },
       );
     }
-    const previousVersion = await context.readProductVersion(context.paths, context.rootUid);
-    await context.writeRootProductTransaction(
+    const existingRootTransaction = await context.readRootProductTransaction(
       context.paths,
-      rootProductTransactionRecord({
-        request,
-        phase: "selected",
-        previousVersion,
-        previousControllerIdentity: staged.previousIdentity ?? null,
-        previousControllerGenerationVersion: staged.previousIdentity?.version ?? null,
-        targetControllerReceipt: selectionReceipt,
-        selectionDigest: selectionReceipt.selectionDigest,
-        now: context.now(),
-      }),
       context.rootUid,
-      context.rootGid,
     );
+    if (existingRootTransaction) {
+      if (
+        existingRootTransaction.phase !== "selected" ||
+        existingRootTransaction.transactionId !== request.transactionId ||
+        existingRootTransaction.version !== request.version ||
+        existingRootTransaction.selectionDigest !== selectionReceipt.selectionDigest ||
+        canonicalRootValue(existingRootTransaction.targetControllerReceipt) !==
+          canonicalRootValue(selectionReceipt)
+      ) {
+        fail("selected root product transaction does not match the controller retry");
+      }
+    } else {
+      const previousVersion = await context.readProductVersion(context.paths, context.rootUid);
+      await context.writeRootProductTransaction(
+        context.paths,
+        rootProductTransactionRecord({
+          request,
+          phase: "selected",
+          previousVersion,
+          previousControllerIdentity: staged.previousIdentity ?? null,
+          previousControllerGenerationVersion: staged.previousIdentity?.version ?? null,
+          targetControllerReceipt: selectionReceipt,
+          selectionDigest: selectionReceipt.selectionDigest,
+          now: context.now(),
+        }),
+        context.rootUid,
+        context.rootGid,
+      );
+    }
     await durableReceipt(context.paths, request, {
       outcome: "verified",
       controllerChanged: restarted,
