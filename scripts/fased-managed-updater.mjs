@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, writeSync } from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -510,8 +510,10 @@ if (await runningAsEntrypoint()) {
   try {
     await run();
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(1);
+    // Emit updater failures synchronously so a piped CLI or immediate process
+    // teardown cannot discard the only actionable diagnostic.
+    writeSync(2, `${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
   }
 }
 

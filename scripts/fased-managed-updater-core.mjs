@@ -2789,13 +2789,28 @@ async function cleanupHistoricalManagedCandidateResidue(paths, runtimeRoot) {
 async function acquireUpdateLock(stateDir) {
   const lockPath = path.join(stateDir, "update.lock");
   await fsp.mkdir(stateDir, { recursive: true });
+  const candidatePath = path.join(
+    stateDir,
+    `.update.lock.${process.pid}.${randomUUID()}.candidate`,
+  );
   try {
-    const handle = await fsp.open(lockPath, "wx", 0o600);
-    await handle.writeFile(
-      `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`,
-    );
-    await handle.close();
+    const handle = await fsp.open(candidatePath, "wx", 0o600);
+    try {
+      await handle.writeFile(
+        `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`,
+      );
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    // Publish a complete lock record in one filesystem operation. Creating the
+    // final path before writing its payload lets a contender mistake the brief
+    // empty file for a stale lock and enter the same transaction concurrently.
+    await fsp.link(candidatePath, lockPath);
+    await fsp.rm(candidatePath, { force: true });
+    await fsyncManagedPath(stateDir);
   } catch (error) {
+    await fsp.rm(candidatePath, { force: true }).catch(() => undefined);
     if (error?.code !== "EEXIST") {
       throw error;
     }
@@ -6167,8 +6182,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   try {
     await run();
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(1);
+    fs.writeSync(2, `${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
   }
 }
 

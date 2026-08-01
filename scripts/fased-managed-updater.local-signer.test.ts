@@ -300,6 +300,22 @@ async function waitForSocket(socketPath: string) {
   throw new Error(`socket did not appear: ${socketPath}`);
 }
 
+async function waitForFile(filePath: string, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (
+      await fsp
+        .stat(filePath)
+        .then(() => true)
+        .catch(() => false)
+    ) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`file did not appear: ${filePath}`);
+}
+
 async function startInstalledSigner(paths: ReturnType<typeof __testing.resolveLocalSignerPaths>) {
   await fsp.mkdir(paths.materialDir, { recursive: true, mode: 0o700 });
   const child = spawn(
@@ -1343,7 +1359,7 @@ describe.sequential("transactional Local native signer updater", () => {
       [updater, "local-signer", "install", "--version", "5.0.0"],
       { env, timeout: 20_000 },
     );
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await waitForFile(path.join(fixture.paths.updateRoot, "update.lock"));
     await expect(
       execFileAsync(process.execPath, [updater, "local-signer", "install", "--version", "5.0.0"], {
         env,
@@ -1351,5 +1367,11 @@ describe.sequential("transactional Local native signer updater", () => {
       }),
     ).rejects.toMatchObject({ stderr: expect.stringContaining("Another Fased update") });
     await expect(first).resolves.toBeTruthy();
+    expect(fs.existsSync(path.join(fixture.paths.updateRoot, "update.lock"))).toBe(false);
+    expect(
+      fs
+        .readdirSync(fixture.paths.updateRoot)
+        .some((name) => name.startsWith(".update.lock.") && name.endsWith(".candidate")),
+    ).toBe(false);
   }, 30_000);
 });
