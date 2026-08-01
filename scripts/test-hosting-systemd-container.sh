@@ -179,6 +179,7 @@ for distro in "${distro_list[@]}"; do
     --name "$name" \
     --privileged \
     --systemd=always \
+    --add-host github.com:127.0.0.1 \
     --tmpfs /run \
     --tmpfs /tmp \
     -e "FASED_FIXTURE_VERSION=$VERSION" \

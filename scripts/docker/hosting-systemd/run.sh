@@ -822,9 +822,20 @@ EOF_FIXTURE_TLS_EXT
     -out "$fixture_tls/github.crt" >/dev/null 2>&1
   chmod 0600 "$fixture_tls/ca.key" "$fixture_tls/github.key"
   chmod 0644 "$fixture_tls/ca.crt" "$fixture_tls/github.crt"
-  install -m 0644 "$fixture_tls/ca.crt" \
-    /usr/local/share/ca-certificates/fased-hosting-lifecycle-fixture.crt
-  update-ca-certificates >/dev/null
+  if command -v update-ca-certificates >/dev/null 2>&1; then
+    install -d -m 0755 /usr/local/share/ca-certificates
+    install -m 0644 "$fixture_tls/ca.crt" \
+      /usr/local/share/ca-certificates/fased-hosting-lifecycle-fixture.crt
+    update-ca-certificates >/dev/null
+  elif command -v update-ca-trust >/dev/null 2>&1; then
+    install -d -m 0755 /etc/pki/ca-trust/source/anchors
+    install -m 0644 "$fixture_tls/ca.crt" \
+      /etc/pki/ca-trust/source/anchors/fased-hosting-lifecycle-fixture.crt
+    update-ca-trust extract >/dev/null
+  else
+    echo "Hosting fixture has no supported system CA trust command." >&2
+    exit 1
+  fi
   grep -Fqx "127.0.0.1 github.com" /etc/hosts ||
     printf '127.0.0.1 github.com\n' >>/etc/hosts
   install -d -m 0755 /etc/systemd/system.conf.d
