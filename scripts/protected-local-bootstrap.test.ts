@@ -79,6 +79,59 @@ describe("protected Local bootstrap contract", () => {
     ).rejects.toThrow(/update-channel directory is unsafe/u);
   });
 
+  it("makes a legacy supervisor client directory traversable and restores its prior mode", async () => {
+    const root = temporaryRoot();
+    const uid = process.getuid?.() ?? 0;
+    const gid = process.getgid?.() ?? 0;
+    const layout = buildProtectedLocalLayout("0123456789abcdef", {
+      runtimeRoot: path.join(root, "run"),
+      stateRoot: path.join(root, "state"),
+      installRoot: path.join(root, "install"),
+    });
+    const directory = path.dirname(layout.supervisorClient);
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+
+    const snapshot = await __testing.captureProtectedLocalSupervisorClientDirectory(layout, {
+      expectedUid: uid,
+      expectedGid: gid,
+    });
+    expect(snapshot.mode).toBe(0o700);
+
+    await __testing.setProtectedLocalSupervisorClientDirectoryMode(snapshot, 0o755);
+    expect(fs.statSync(directory).mode & 0o777).toBe(0o755);
+
+    await __testing.setProtectedLocalSupervisorClientDirectoryMode(snapshot, snapshot.mode);
+    expect(fs.statSync(directory).mode & 0o777).toBe(0o700);
+
+    const bootstrap = fs.readFileSync(
+      path.join(process.cwd(), "scripts", "protected-local-bootstrap.mjs"),
+      "utf8",
+    );
+    const transitionStart = bootstrap.indexOf(
+      "async function transitionExistingSupervisorBoundary",
+    );
+    const transitionEnd = bootstrap.indexOf(
+      "\nfunction validateProtectedLocalLifecycleResult",
+      transitionStart,
+    );
+    const transition = bootstrap.slice(transitionStart, transitionEnd);
+    expect(
+      transition.indexOf(
+        "await setProtectedLocalSupervisorClientDirectoryMode(supervisorClientDirectory, 0o755)",
+      ),
+    ).toBeLessThan(transition.indexOf("atomicCopy(targetSupervisorClient"));
+    expect(transition).toContain("supervisorClientDirectory.mode");
+
+    fs.rmSync(directory, { recursive: true });
+    fs.symlinkSync(root, directory);
+    await expect(
+      __testing.captureProtectedLocalSupervisorClientDirectory(layout, {
+        expectedUid: uid,
+        expectedGid: gid,
+      }),
+    ).rejects.toThrow(/supervisor client directory is unsafe/u);
+  });
+
   it("accepts only one exact release and explicit Gateway phase", () => {
     const root = temporaryRoot();
     const home = path.join(root, "home", "operator");
