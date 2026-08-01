@@ -16,6 +16,8 @@ asset="/artifacts/fased-hosted-app-v2-linux-x64-v${version}.tar.gz"
 asset_digest="$(sha256sum "$asset" | awk '{print $1}')"
 verified_root="/var/lib/fased-installer/releases/v${version}/${asset_digest}/extract/package"
 root_store="$(dirname "$(dirname "$verified_root")")"
+release_assets=/var/lib/fased-hosting-fixture/release-assets
+fixture_tls=/var/lib/fased-hosting-fixture/tls
 
 mark_stage() {
   printf 'Hosting fixture stage: %s\n' "$1" | tee /tmp/fased-fixture-stage.out
@@ -714,6 +716,170 @@ EOF_GATEWAY
   systemctl daemon-reload
 }
 
+prepare_candidate_release_transport() {
+  install -d -m 0755 -o root -g root \
+    "$release_assets" "$fixture_tls" /usr/local/libexec
+  install -m 0755 /artifacts/install.sh "$release_assets/install.sh"
+  install -m 0755 /artifacts/fased-lifecycle-supervisor.mjs \
+    "$release_assets/fased-lifecycle-supervisor.mjs"
+  install -m 0755 /artifacts/fased-host-updater.mjs \
+    "$release_assets/fased-host-updater.mjs"
+  install -m 0755 /artifacts/fased-host-updaterctl.mjs \
+    "$release_assets/fased-host-updaterctl.mjs"
+  install -m 0755 /artifacts/fased-privileged-release-evidence.mjs \
+    "$release_assets/fased-privileged-release-evidence.mjs"
+  install -m 0644 /artifacts/fased-hosted-release-v2.json \
+    "$release_assets/fased-hosted-release-v2.json"
+  install -m 0644 \
+    /artifacts/fased-hosted-app-v2-linux-x64-v${version}.tar.gz \
+    "$release_assets/fased-hosted-app-v2-linux-x64-v${version}.tar.gz"
+  install -m 0644 \
+    /artifacts/fased-hosted-app-v2-linux-arm64-v${version}.tar.gz \
+    "$release_assets/fased-hosted-app-v2-linux-arm64-v${version}.tar.gz"
+  local dependency_asset=""
+  dependency_asset="$(basename "$(find /artifacts -maxdepth 1 -type f \
+    -name 'fased-hosted-deps-linux-x64-*.tar.gz' -print -quit)")"
+  install -m 0644 "/artifacts/$dependency_asset" "$release_assets/$dependency_asset"
+  install -m 0644 \
+    "/artifacts/${dependency_asset/linux-x64/linux-arm64}" \
+    "$release_assets/${dependency_asset/linux-x64/linux-arm64}"
+  local signer_asset=""
+  for signer_asset in \
+    fased-signerd-linux-amd64 \
+    fased-signerd-linux-arm64 \
+    fased-signerd-darwin-amd64 \
+    fased-signerd-darwin-arm64 \
+    fased-signerd-release.json; do
+    install -m 0644 "/artifacts/$signer_asset" "$release_assets/$signer_asset"
+  done
+  install -m 0644 /artifacts/fased-hosted-components-linux-x64-v${version}.spdx.json \
+    "$release_assets/fased-hosted-components-linux-x64-v${version}.spdx.json"
+  install -m 0644 /artifacts/fased-hosted-components-linux-x64-v${version}.spdx.json \
+    "$release_assets/fased-hosted-components-linux-arm64-v${version}.spdx.json"
+  install -m 0644 /artifacts/fased-signerd-components-v${version}.spdx.json \
+    "$release_assets/fased-signerd-components-v${version}.spdx.json"
+
+  local issued_at=""
+  local expires_at=""
+  issued_at="$(date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%S.000Z)"
+  expires_at="$(date -u -d '364 days' +%Y-%m-%dT%H:%M:%S.000Z)"
+  /usr/local/bin/node /repo/scripts/privileged-release-evidence.mjs build \
+    --assets "$release_assets" \
+    --version "$version" \
+    --commit "$commit" \
+    --issued-at "$issued_at" \
+    --vex-decisions /repo/release/vulnerability-decisions-v1.json \
+    --output-dir "$release_assets"
+  /usr/local/bin/node /repo/scripts/build-lifecycle-trust-metadata.mjs \
+    --assets "$release_assets" \
+    --root-policy /repo/release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json \
+    --version "$version" \
+    --commit "$commit" \
+    --issued-at "$issued_at" \
+    --expires-at "$expires_at" \
+    --output "$release_assets/fased-lifecycle-trust-v1.json"
+  local bundle=""
+  for bundle in \
+    fased-hosted-release-v2.json.attestation.json \
+    fased-lifecycle-supervisor.mjs.attestation.json \
+    fased-host-updater.mjs.attestation.json \
+    fased-host-updaterctl.mjs.attestation.json \
+    fased-lifecycle-trust-v1.json.attestation.json \
+    fased-privileged-provenance-v1.intoto.json.attestation.json \
+    fased-signerd-release.attestation.json; do
+    printf '{"fixtureOfflineAttestation":true}\n' >"$release_assets/$bundle"
+    chmod 0644 "$release_assets/$bundle"
+  done
+
+  openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
+    -subj "/CN=Fased Hosting lifecycle fixture CA" \
+    -keyout "$fixture_tls/ca.key" \
+    -out "$fixture_tls/ca.crt" >/dev/null 2>&1
+  openssl req -newkey rsa:2048 -sha256 -nodes \
+    -subj "/CN=github.com" \
+    -keyout "$fixture_tls/github.key" \
+    -out "$fixture_tls/github.csr" >/dev/null 2>&1
+  cat >"$fixture_tls/github.ext" <<'EOF_FIXTURE_TLS_EXT'
+subjectAltName=DNS:github.com
+keyUsage=digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+EOF_FIXTURE_TLS_EXT
+  openssl x509 -req -sha256 -days 2 \
+    -in "$fixture_tls/github.csr" \
+    -CA "$fixture_tls/ca.crt" \
+    -CAkey "$fixture_tls/ca.key" \
+    -CAcreateserial \
+    -extfile "$fixture_tls/github.ext" \
+    -out "$fixture_tls/github.crt" >/dev/null 2>&1
+  chmod 0600 "$fixture_tls/ca.key" "$fixture_tls/github.key"
+  chmod 0644 "$fixture_tls/ca.crt" "$fixture_tls/github.crt"
+  install -m 0644 "$fixture_tls/ca.crt" \
+    /usr/local/share/ca-certificates/fased-hosting-lifecycle-fixture.crt
+  update-ca-certificates >/dev/null
+  grep -Fqx "127.0.0.1 github.com" /etc/hosts ||
+    printf '127.0.0.1 github.com\n' >>/etc/hosts
+  install -d -m 0755 /etc/systemd/system.conf.d
+  cat >/etc/systemd/system.conf.d/90-fased-fixture-ca.conf <<EOF_FIXTURE_SYSTEMD_CA
+[Manager]
+DefaultEnvironment=NODE_EXTRA_CA_CERTS=$fixture_tls/ca.crt
+EOF_FIXTURE_SYSTEMD_CA
+
+  cat >/usr/local/libexec/fased-fixture-github.mjs <<'EOF_FIXTURE_GITHUB'
+import fs from "node:fs";
+import https from "node:https";
+import path from "node:path";
+
+const version = process.env.FASED_FIXTURE_VERSION;
+const releaseAssets = "/var/lib/fased-hosting-fixture/release-assets";
+const releasePrefix = `/fased-ai/fased/releases/download/v${version}/`;
+https
+  .createServer(
+    {
+      key: fs.readFileSync("/var/lib/fased-hosting-fixture/tls/github.key"),
+      cert: fs.readFileSync("/var/lib/fased-hosting-fixture/tls/github.crt"),
+    },
+    (request, response) => {
+      if (request.method !== "GET" || !request.url?.startsWith(releasePrefix)) {
+        response.writeHead(404).end();
+        return;
+      }
+      const asset = decodeURIComponent(request.url.slice(releasePrefix.length));
+      if (!/^[A-Za-z0-9._-]+$/.test(asset)) {
+        response.writeHead(400).end();
+        return;
+      }
+      const selected = path.join(releaseAssets, asset);
+      try {
+        const info = fs.statSync(selected);
+        if (!info.isFile()) throw new Error("not a file");
+        response.writeHead(200, { "content-length": info.size });
+        fs.createReadStream(selected).pipe(response);
+      } catch {
+        response.writeHead(404).end();
+      }
+    },
+  )
+  .listen(443, "127.0.0.1");
+EOF_FIXTURE_GITHUB
+  cat >/etc/systemd/system/fased-fixture-github.service <<EOF_FIXTURE_GITHUB_UNIT
+[Unit]
+Description=Fased fixture exact GitHub release transport
+After=network.target
+
+[Service]
+Type=simple
+Environment=FASED_FIXTURE_VERSION=$version
+ExecStart=/usr/local/bin/node /usr/local/libexec/fased-fixture-github.mjs
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF_FIXTURE_GITHUB_UNIT
+  systemctl daemon-reexec
+  systemctl enable --now fased-fixture-github.service
+  wait_for_service fased-fixture-github.service
+}
+
 install_fixture_rpc() {
   install -d -m 0755 -o root -g root /usr/local/libexec
   cat >/usr/local/libexec/fased-fixture-solana-rpc.mjs <<'EOF_RPC'
@@ -846,6 +1012,7 @@ fi
 }
 
 install_fixture_command_shims
+prepare_candidate_release_transport
 install_fixture_system_services
 install_fixture_rpc
 prepare_verified_bundle

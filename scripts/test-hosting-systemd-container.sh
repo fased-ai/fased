@@ -55,6 +55,8 @@ cp "$ARTIFACT_DIR/$app_identity" "$FIXTURE_ASSETS/$app_identity"
 dependency_hash="$(jq -er .dependencyHash "$FIXTURE_ASSETS/$app_identity")"
 dependency_asset="fased-hosted-deps-linux-x64-${dependency_hash}.tar.gz"
 cp "$ARTIFACT_DIR/$dependency_asset" "$FIXTURE_ASSETS/$dependency_asset"
+cp "$ARTIFACT_DIR/fased-hosted-components-linux-x64-v${VERSION}.spdx.json" \
+  "$FIXTURE_ASSETS/fased-hosted-components-linux-x64-v${VERSION}.spdx.json"
 
 arm_app_asset="fased-hosted-app-v2-linux-arm64-v${VERSION}.tar.gz"
 arm_dependency_asset="fased-hosted-deps-linux-arm64-${dependency_hash}.tar.gz"
@@ -73,8 +75,15 @@ for platform in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
 done
 cp "$ROOT_DIR/dist-native/release/fased-signerd-release.json" \
   "$FIXTURE_ASSETS/fased-signerd-release.json"
+cp "$ROOT_DIR/dist-native/release/fased-signerd-components-v${VERSION}.spdx.json" \
+  "$FIXTURE_ASSETS/fased-signerd-components-v${VERSION}.spdx.json"
+cp "$ROOT_DIR/install.sh" "$FIXTURE_ASSETS/install.sh"
+cp "$ROOT_DIR/scripts/fased-lifecycle-supervisor.mjs" \
+  "$FIXTURE_ASSETS/fased-lifecycle-supervisor.mjs"
 cp "$ROOT_DIR/scripts/fased-host-updater.mjs" "$FIXTURE_ASSETS/fased-host-updater.mjs"
 cp "$ROOT_DIR/scripts/fased-host-updaterctl.mjs" "$FIXTURE_ASSETS/fased-host-updaterctl.mjs"
+cp "$ROOT_DIR/scripts/privileged-release-evidence.mjs" \
+  "$FIXTURE_ASSETS/fased-privileged-release-evidence.mjs"
 for bundle in \
   fased-hosted-release-v2.json.attestation.json \
   fased-signerd-release.attestation.json \
@@ -107,6 +116,17 @@ dump_fixture_failure() {
       echo "==> $log" >&2
       tail -n 120 "$log" >&2 || true
     done
+    echo "==> controller generation diagnostics" >&2
+    find /opt/fased/host-controller/releases -maxdepth 2 -printf "%m %u:%g %p\n" >&2 2>/dev/null || true
+    sha256sum \
+      /opt/fased/host-controller/releases/v*/fased-host-updater.mjs \
+      /opt/fased/host-controller/releases/v*/fased-host-updaterctl.mjs \
+      /artifacts/fased-host-updater.mjs \
+      /artifacts/fased-host-updaterctl.mjs \
+      /var/lib/fased-installer/releases/*/*/extract/package/scripts/fased-host-updater.mjs \
+      /var/lib/fased-installer/releases/*/*/extract/package/scripts/fased-host-updaterctl.mjs \
+      >&2 2>/dev/null || true
+    cat /var/lib/fased-host-updater/controller-version.json >&2 2>/dev/null || true
   ' || true
 }
 
