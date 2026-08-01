@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.28
+
+- Keep lifecycle-controller generation staging and rollback under the stable
+  privileged supervisor instead of the replaceable target controller.
+- Bind supervised controller handoff to verified release identity and prevent
+  the application worker from mutating privileged controller state.
+- Package the merged correction from PR #248 for literal Local and Hosting
+  acceptance; stable promotion remains blocked until those commands pass.
+
 ## 0.1.76-rc.27
 
 - Promote verified lifecycle-supervisor and controller generations atomically
