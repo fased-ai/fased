@@ -20,6 +20,8 @@ const context = __testing.createTransactionContext({
   signerServiceName: configuration.signerServiceName,
   gatewayServiceName: configuration.gatewayServiceName,
   signerApplicationSocketPath: configuration.signerApplicationSocketPath,
+  supervised: configuration.supervised,
+  controllerConfiguration: configuration,
   downloadReleaseAsset: copyFixtureAsset,
   verifyReleaseAsset: async () => undefined,
 });

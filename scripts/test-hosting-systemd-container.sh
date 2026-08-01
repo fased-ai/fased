@@ -107,6 +107,7 @@ dump_fixture_failure() {
   "$RUNTIME" exec "$name" /bin/bash -lc '
     systemctl --failed --no-pager >&2 || true
     journalctl \
+      -u fased-host-controller.service \
       -u fased-host-updater.service \
       -u fased-signerd.service \
       -u fased-gateway.service \
@@ -127,6 +128,7 @@ dump_fixture_failure() {
       /var/lib/fased-installer/releases/*/*/extract/package/scripts/fased-host-updaterctl.mjs \
       >&2 2>/dev/null || true
     cat /var/lib/fased-host-updater/controller-version.json >&2 2>/dev/null || true
+    /usr/local/bin/fased-hosting-systemd-fixture controller-status >&2 2>/dev/null || true
   ' || true
 }
 

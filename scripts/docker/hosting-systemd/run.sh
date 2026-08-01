@@ -985,6 +985,19 @@ verify_runtime() {
   fi
 }
 
+if [[ "$phase" == "controller-status" ]]; then
+  diagnostic_transaction_id="$(/usr/local/bin/node -e 'process.stdout.write(crypto.randomUUID())')"
+  lifecycle_socket_requests \
+    /run/fased-host-controller/controller.sock \
+    controllerStatus \
+    "$diagnostic_transaction_id" \
+    "$version" \
+    1 \
+    /tmp/hosting-controller-diagnostic-status.json
+  cat /tmp/hosting-controller-diagnostic-status.json
+  exit 0
+fi
+
 if [[ "$phase" == "verify-reboot" ]]; then
   [[ -f "$snapshot" ]]
   verify_runtime >/tmp/reboot-health.json
