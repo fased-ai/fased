@@ -180,7 +180,12 @@ export async function requestSupervisorOperation({
           response.transactionId !== normalizedTransactionId ||
           response.version !== normalizedVersion
         ) {
-          fail(new Error(response?.error || `lifecycle supervisor rejected ${operation}`));
+          const error = new Error(response?.error || `lifecycle supervisor rejected ${operation}`);
+          error.supervisorRecoveryComplete =
+            response?.transactionId === normalizedTransactionId &&
+            response?.version === normalizedVersion &&
+            response?.recoveryComplete === true;
+          fail(error);
           return;
         }
         settled = true;
@@ -322,7 +327,12 @@ export async function runSupervisorClient({
     activated = true;
     return await requestSupervisorOperationWithRetry({ ...params, operation: "activateRelease" });
   } catch (error) {
-    if (targetSelected && !activated) {
+    if (targetSelected && error?.supervisorRecoveryComplete === true) {
+      // The stable root supervisor has durably restored the previous product
+      // generation. Its ledger is authoritative, so the unprivileged retry
+      // hint must not survive and falsely advertise an active transaction.
+      await clearClientHint(statePath);
+    } else if (targetSelected && !activated) {
       try {
         await requestSupervisorOperationWithRetry({ ...params, operation: "rollbackRelease" });
         await clearClientHint(statePath);

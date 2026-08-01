@@ -3911,6 +3911,7 @@ async function handleSupervisorRequest(request, context, state) {
       throw error;
     }
   } catch (error) {
+    let recoveryComplete = false;
     if (rootTransaction) {
       await context.recoverRootProductTransaction(context).catch((recoveryError) => {
         throw new Error(
@@ -3918,6 +3919,10 @@ async function handleSupervisorRequest(request, context, state) {
           { cause: error },
         );
       });
+      recoveryComplete = true;
+    }
+    if (recoveryComplete && error && typeof error === "object") {
+      error.supervisorRecoveryComplete = true;
     }
     throw error;
   }
@@ -4067,6 +4072,7 @@ export async function startSupervisor(options = {}) {
             ok: false,
             transactionId: request.transactionId,
             version: request.version,
+            recoveryComplete: error?.supervisorRecoveryComplete === true,
             error: error.message,
           }),
       );

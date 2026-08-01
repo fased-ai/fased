@@ -223,4 +223,54 @@ describe("host updater controller client", () => {
       });
     }
   });
+
+  it("clears its retry hint only after the root supervisor confirms recovery", async () => {
+    const root = await temporaryRoot();
+    const socketPath = path.join(root, "request.sock");
+    const statePath = path.join(root, "client", "transaction.json");
+    const requests: string[] = [];
+    const server = net.createServer((socket) => {
+      socket.setEncoding("utf8");
+      let body = "";
+      socket.on("data", (chunk) => {
+        body += chunk;
+        const newline = body.indexOf("\n");
+        if (newline < 0) {
+          return;
+        }
+        const request = JSON.parse(body.slice(0, newline)) as {
+          op: string;
+          transactionId: string;
+          version: string;
+        };
+        requests.push(request.op);
+        socket.end(
+          `${JSON.stringify({
+            ok: request.op === "updateController",
+            transactionId: request.transactionId,
+            version: request.version,
+            controllerChanged: false,
+            recoveryComplete: request.op === "applyRelease",
+            error: request.op === "applyRelease" ? "rolled back by root supervisor" : undefined,
+          })}\n`,
+        );
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+
+    try {
+      const result = await runClient({ socketPath, statePath });
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toContain("rolled back by root supervisor");
+      expect(requests).toEqual(["updateController", "applyRelease"]);
+      await expect(fs.access(statePath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
 });
