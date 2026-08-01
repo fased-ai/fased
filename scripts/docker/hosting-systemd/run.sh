@@ -311,6 +311,12 @@ verify_supervised_controller_a_to_b() {
   fi
 
   printf 'Hosting generated-systemd controller transition stage: preservation-state\n'
+  # The controller-only transition must not mutate product state. Quiesce the
+  # live Gateway while taking and checking exact hashes so its legitimate
+  # device/federation background writes cannot be misclassified as updater
+  # corruption. Product activation, restart, and reboot are exercised below.
+  systemctl stop fased-gateway.service
+  test "$(systemctl is-active fased-gateway.service 2>/dev/null || true)" = "inactive"
   install -d -m 2770 -o app -g fased-config \
     "$state/sat-mining/wallets/agent" "$state/extensions"
   runuser -u app -- env FASED_FIXTURE_MINING_LEDGER="$state/sat-mining/wallets/agent/mining.sqlite" \
@@ -517,6 +523,8 @@ EOF_CONTROLLER_FAILURE_OVERRIDE
   test ! -e "$controller_root/fixture-forbidden-controller-write"
   test ! -e "$controller_drop_in/fixture-forbidden.conf"
   test ! -e "$supervisor_drop_in/fixture-forbidden.conf"
+  systemctl start fased-gateway.service
+  verify_runtime >/tmp/hosting-controller-a-to-b-health.json
   printf 'Hosting generated-systemd supervised controller A-to-B lifecycle passed\n'
 }
 

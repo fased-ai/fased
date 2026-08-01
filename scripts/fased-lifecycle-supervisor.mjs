@@ -2994,6 +2994,48 @@ async function recoverRootProductTransaction(context) {
   }
   assertRootProductJournalBinding(transaction, productJournal);
 
+  if (transaction.phase === "selected" && !productJournal) {
+    const installedVersion = await context.readProductVersion(context.paths, context.rootUid);
+    if (installedVersion !== transaction.previousVersion) {
+      fail("controller-only recovery found an unexpected product generation");
+    }
+    if (!transaction.targetControllerReceipt) {
+      fail("controller-only recovery has no selected target-controller receipt");
+    }
+    await context.probeControllerIdentity(
+      {
+        transactionId: transaction.transactionId,
+        version: transaction.version,
+      },
+      context,
+      {
+        serverSha256: transaction.targetControllerReceipt.controllerServerSha256,
+        clientSha256: transaction.targetControllerReceipt.controllerClientSha256,
+      },
+    );
+    await durableReceipt(
+      context.paths,
+      {
+        op: "recoverRelease",
+        transactionId: transaction.transactionId,
+        version: transaction.version,
+      },
+      {
+        outcome: "rolled-back",
+        controllerChanged: false,
+        phase: "rolled-back",
+        selectionDigest: transaction.selectionDigest ?? undefined,
+      },
+    );
+    await context.clearRootProductTransaction(context.paths);
+    return Object.freeze({
+      recovered: true,
+      action: "rolled-back",
+      transactionId: transaction.transactionId,
+      version: transaction.version,
+    });
+  }
+
   if (transaction.recoveryAttempts >= MAX_ROOT_RECOVERY_ATTEMPTS) {
     fail("root product transaction exceeded its bounded recovery attempts");
   }

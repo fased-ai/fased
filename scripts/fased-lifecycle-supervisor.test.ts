@@ -1009,6 +1009,70 @@ describe("stable lifecycle supervisor contract", () => {
     });
   });
 
+  it("clears a controller-only selection after restart without product recovery", async () => {
+    const { paths } = tempPaths();
+    await fsp.mkdir(paths.supervisorStateDir, { recursive: true });
+    const selected = request("updateController");
+    const receipt = __testing.createControllerSelectionReceipt(
+      selected,
+      {
+        releaseCommit: "a".repeat(40),
+        targetManifestSha256: digest("1"),
+        trustPolicySha256: digest("0"),
+        identity: { serverSha256: digest("2"), clientSha256: digest("3") },
+      },
+      randomUUID(),
+    );
+    let rootTransaction: Record<string, unknown> | null = __testing.rootProductTransactionRecord({
+      request: selected,
+      phase: "selected",
+      previousVersion: "1.2.2",
+      targetControllerReceipt: receipt,
+      selectionDigest: receipt.selectionDigest,
+      now,
+    }) as unknown as Record<string, unknown>;
+    const probe = vi.fn(async () => randomUUID());
+    const verifyProduct = vi.fn(async () => {
+      throw new Error("controller-only recovery must not run product health");
+    });
+    const restart = vi.fn(async () => undefined);
+    const context = __testing.createContext(
+      {
+        profile: "hosting",
+        operatorUid: 1000,
+        operatorGid: 1000,
+        paths,
+      },
+      {
+        readRootProductTransaction: async () => rootTransaction,
+        readControllerProductJournal: async () => null,
+        readProductVersion: async () => "1.2.2",
+        clearRootProductTransaction: async () => {
+          rootTransaction = null;
+        },
+        probeControllerIdentity: probe,
+        verifyRecoveredProduct: verifyProduct,
+        restartController: restart,
+      },
+    );
+
+    await expect(__testing.recoverRootProductTransaction(context)).resolves.toMatchObject({
+      recovered: true,
+      action: "rolled-back",
+      transactionId: selected.transactionId,
+    });
+    expect(rootTransaction).toBeNull();
+    expect(probe).toHaveBeenCalledOnce();
+    expect(verifyProduct).not.toHaveBeenCalled();
+    expect(restart).not.toHaveBeenCalled();
+    await expect(
+      fsp.readFile(
+        path.join(paths.supervisorStateDir, "receipts", `${selected.transactionId}.json`),
+        "utf8",
+      ),
+    ).resolves.toContain('"operation": "recoverRelease"');
+  });
+
   it("finishes committed target A before selecting requested target B", async () => {
     const { paths } = tempPaths();
     await fsp.mkdir(paths.supervisorStateDir, { recursive: true });
