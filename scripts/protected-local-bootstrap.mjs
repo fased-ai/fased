@@ -1199,6 +1199,58 @@ export function buildProtectedLocalLifecycleApplyCommand(spec, layout, options =
   });
 }
 
+async function captureProtectedLocalSupervisorClientDirectory(layout, options = {}) {
+  const directory = path.dirname(layout.supervisorClient);
+  const expectedUid = options.expectedUid ?? 0;
+  const expectedGid = options.expectedGid ?? 0;
+  const info = await fsp.lstat(directory);
+  if (
+    !info.isDirectory() ||
+    info.isSymbolicLink() ||
+    info.uid !== expectedUid ||
+    info.gid !== expectedGid ||
+    (info.mode & 0o022) !== 0
+  ) {
+    fail("protected Local supervisor client directory is unsafe");
+  }
+  return Object.freeze({
+    directory,
+    dev: info.dev,
+    ino: info.ino,
+    uid: info.uid,
+    gid: info.gid,
+    mode: info.mode & 0o777,
+  });
+}
+
+async function setProtectedLocalSupervisorClientDirectoryMode(snapshot, mode) {
+  const before = await fsp.lstat(snapshot.directory);
+  if (
+    !before.isDirectory() ||
+    before.isSymbolicLink() ||
+    before.dev !== snapshot.dev ||
+    before.ino !== snapshot.ino ||
+    before.uid !== snapshot.uid ||
+    before.gid !== snapshot.gid ||
+    (before.mode & 0o022) !== 0
+  ) {
+    fail("protected Local supervisor client directory changed during transition");
+  }
+  await fsp.chmod(snapshot.directory, mode);
+  const after = await fsp.lstat(snapshot.directory);
+  if (
+    !after.isDirectory() ||
+    after.isSymbolicLink() ||
+    after.dev !== snapshot.dev ||
+    after.ino !== snapshot.ino ||
+    after.uid !== snapshot.uid ||
+    after.gid !== snapshot.gid ||
+    (after.mode & 0o777) !== mode
+  ) {
+    fail("protected Local supervisor client directory mode did not converge");
+  }
+}
+
 async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
   const targetSupervisor = path.join(sourceRoot, "scripts", "fased-lifecycle-supervisor.mjs");
   const targetSupervisorClient = path.join(sourceRoot, "scripts", "fased-host-updaterctl.mjs");
@@ -1287,8 +1339,10 @@ async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
       ].map(async (filePath) => [filePath, await captureFile(filePath)]),
     ),
   );
+  const supervisorClientDirectory = await captureProtectedLocalSupervisorClientDirectory(layout);
   try {
     runSystem(systemctl, ["stop", layout.supervisorUnit]);
+    await setProtectedLocalSupervisorClientDirectoryMode(supervisorClientDirectory, 0o755);
     if (targetDigest !== installedDigest) {
       await atomicCopy(targetSupervisor, layout.supervisorBinary, 0o755, { uid: 0, gid: 0 });
     }
@@ -1337,6 +1391,18 @@ async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
           `restore ${String(filePath)}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
         );
       }
+    }
+    try {
+      await setProtectedLocalSupervisorClientDirectoryMode(
+        supervisorClientDirectory,
+        supervisorClientDirectory.mode,
+      );
+    } catch (rollbackError) {
+      rollbackFailures.push(
+        `restore ${supervisorClientDirectory.directory}: ${
+          rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+        }`,
+      );
     }
     for (const directory of boundaryDropInDirectories.toReversed()) {
       if (boundaryDropInPresence.get(directory)) {
@@ -3519,6 +3585,7 @@ if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
 
 export const __testing = Object.freeze({
   buildProtectedLocalLifecycleApplyCommand,
+  captureProtectedLocalSupervisorClientDirectory,
   buildProtectedLocalBootstrapSpec,
   hardenOperatorRuntime,
   hardenInstalledPlugins,
@@ -3531,6 +3598,7 @@ export const __testing = Object.freeze({
   legacyInstallReferencesUserGateway,
   parseDirectoryAcl,
   prepareProtectedLocalChannelDirectory,
+  setProtectedLocalSupervisorClientDirectoryMode,
   renderProtectedLocalOperatorEnvironment,
   renderProtectedLocalOwnerWrapper,
   registeredSignerWallets,
