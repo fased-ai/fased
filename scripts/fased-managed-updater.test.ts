@@ -109,7 +109,11 @@ describe("stable managed updater", () => {
         profile: "hosting",
         runtime: {
           activeVersion: "1.2.2",
-          releasesDir: "/opt/fased/host-application/releases",
+          // Older Hosting application coordinators persisted their staging
+          // root after the privileged controller had selected the canonical
+          // root-owned predecessor. The exact canonical predecessor remains
+          // safe to accept while that split identity is converged.
+          releasesDir: "/home/app/.fased/runtime/releases",
         },
       },
     };

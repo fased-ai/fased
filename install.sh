@@ -2889,6 +2889,69 @@ use_prebuilt_release_runtime() {
     "$(uname -m 2>/dev/null || true)"
 }
 
+activate_prepared_hosting_runtime() {
+  local version="${HOSTING_RELEASE#v}"
+  local transaction_id="${FASED_HOST_UPDATE_TRANSACTION_ID:-}"
+  local transaction_version="${FASED_HOST_UPDATE_TRANSACTION_VERSION:-}"
+  local release_root="/opt/fased/host-application/releases/v${version}"
+  local authorizer="$release_root/scripts/fased-managed-updater-core.mjs"
+  local npm_prefix="${FASED_NPM_GLOBAL_PREFIX:-$INSTALL_CACHE_DIR/npm-global}"
+  local bin_dir="$FASED_CONFIG_DIR/bin"
+  local target="$bin_dir/fased"
+
+  [[ "$(resolved_host_profile)" == "hosting" ]] || return 2
+  [[ -n "$transaction_id" && "$transaction_version" == "$version" ]] || return 2
+  [[ -f "$authorizer" && ! -L "$authorizer" ]] || {
+    echo "The root controller did not stage the exact Hosting application runtime." >&2
+    return 1
+  }
+
+  if ! FASED_HOST_UPDATER_SOCKET="${FASED_HOST_UPDATER_SOCKET:-/run/fased-host-updater/request.sock}" \
+    node --input-type=module - "$authorizer" "$transaction_id" "$version" <<'EOF_ACTIVATE_HOSTING_RUNTIME'
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const [modulePath, transactionId, version] = process.argv.slice(2);
+const { authorizePreactivatedHostedGateway } = await import(pathToFileURL(modulePath));
+await authorizePreactivatedHostedGateway({ transactionId, targetVersion: version });
+
+const stateDir = path.resolve(process.env.FASED_STATE_DIR || path.join(process.env.HOME, ".fased"));
+const manifestPath = path.join(stateDir, "install.json");
+const currentLink = path.join(stateDir, "runtime", "current");
+const expectedRoot = `/opt/fased/host-application/releases/v${version}`;
+const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+const currentRoot = fs.realpathSync(currentLink);
+if (
+  manifest?.schemaVersion !== 2 ||
+  manifest?.profile !== "hosting" ||
+  manifest?.runtime?.activeVersion !== version ||
+  path.resolve(String(manifest?.runtime?.releasesDir || "")) !==
+    "/opt/fased/host-application/releases" ||
+  currentRoot !== expectedRoot
+) {
+  throw new Error("the root-selected Hosting application identity did not converge");
+}
+EOF_ACTIVATE_HOSTING_RUNTIME
+  then
+    echo "The root-selected Hosting application runtime did not activate exactly." >&2
+    return 1
+  fi
+
+  export PATH="$bin_dir:$npm_prefix/bin:$PATH"
+  hash -r 2>/dev/null || true
+  FASED_CLI_PATH="$target"
+  install_user_cli_path_snippet "$bin_dir" "$HOME/.profile"
+  install_user_cli_path_snippet "$bin_dir" "$HOME/.bashrc"
+  install_user_cli_path_snippet "$bin_dir" "$HOME/.zshrc"
+  if [[ ! -x "$FASED_CLI_PATH" ]] || ! "$FASED_CLI_PATH" --version >/dev/null 2>&1; then
+    echo "The root-selected Hosting CLI did not start correctly: $FASED_CLI_PATH" >&2
+    return 1
+  fi
+  PREBUILT_RUNTIME_INSTALLED=1
+  return 0
+}
+
 install_prebuilt_release_runtime() {
   local runtime_profile
   runtime_profile="$(resolved_host_profile)"
@@ -2902,6 +2965,15 @@ install_prebuilt_release_runtime() {
   elif [[ "$runtime_profile" == "hosting" ]]; then
     echo "Maintained Hosting requires one exact stable --release vX.Y.Z." >&2
     return 1
+  fi
+  if [[ "$runtime_profile" == "hosting" && -n "${FASED_HOST_UPDATE_TRANSACTION_ID:-}" ]]; then
+    spinner_start "Activate verified Hosting runtime"
+    if ! activate_prepared_hosting_runtime; then
+      spinner_failed "Activate verified Hosting runtime"
+      return 1
+    fi
+    spinner_done "Verified Hosting runtime ready"
+    return 0
   fi
   local npm_prefix="${FASED_NPM_GLOBAL_PREFIX:-$INSTALL_CACHE_DIR/npm-global}"
   local bin_dir="$npm_prefix/bin"

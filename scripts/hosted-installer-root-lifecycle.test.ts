@@ -384,6 +384,27 @@ tailscale_serve_route_ready 18789
     );
   });
 
+  it("uses the root-selected application once instead of activating a second app-owned copy", () => {
+    const activation = sliceBetween(
+      installer,
+      "activate_prepared_hosting_runtime()",
+      "install_prebuilt_release_runtime()",
+    );
+    const prebuilt = sliceBetween(
+      installer,
+      "install_prebuilt_release_runtime()",
+      "pass_args_contains()",
+    );
+    expect(activation).toContain("authorizePreactivatedHostedGateway");
+    expect(activation).toContain("/opt/fased/host-application/releases/v${version}");
+    expect(activation).toContain('manifest?.runtime?.releasesDir || ""');
+    expect(activation).toContain("currentRoot !== expectedRoot");
+    expect(prebuilt.indexOf("activate_prepared_hosting_runtime")).toBeLessThan(
+      prebuilt.indexOf("scripts/install-hosted-runtime.sh"),
+    );
+    expect(prebuilt).toContain("return 0\n  fi\n  local npm_prefix=");
+  });
+
   it.each(["fresh", "repair", "pre-v2 migration"])(
     "uses root-owned systemd restart and app health probing for %s Hosting",
     (scenario) => {

@@ -2028,14 +2028,16 @@ function managedPreviousReleaseRoot(paths, value, previousManifest) {
   }
 
   const profile = previousManifest?.profile;
-  const declaredReleasesDir = path.resolve(String(previousManifest?.runtime?.releasesDir ?? ""));
   const hostingReleasesDir = "/opt/fased/host-application/releases";
   const protectedLocalReleasesPattern =
     /^\/opt\/fased\/local\/[a-f0-9]{16}\/application\/releases$/u;
-  const declaredRootIsValid =
-    (profile === "hosting" && declaredReleasesDir === hostingReleasesDir) ||
-    (profile === "protected-local" && protectedLocalReleasesPattern.test(declaredReleasesDir));
-  if (!declaredRootIsValid || path.dirname(resolved) !== declaredReleasesDir) {
+  const canonicalReleasesDir =
+    profile === "hosting"
+      ? hostingReleasesDir
+      : profile === "protected-local" && protectedLocalReleasesPattern.test(path.dirname(resolved))
+        ? path.dirname(resolved)
+        : null;
+  if (!canonicalReleasesDir || path.dirname(resolved) !== canonicalReleasesDir) {
     throw new Error("previousRoot is outside the managed releases directories");
   }
   return resolved;
