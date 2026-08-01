@@ -2,7 +2,8 @@
 
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { __testing, startServer } from "../../fased-host-updater.mjs";
+const { __testing, startServer } =
+  await import("file:///opt/fased/host-controller/current/fased-host-updater.mjs");
 
 const assetsDir = "/artifacts";
 
