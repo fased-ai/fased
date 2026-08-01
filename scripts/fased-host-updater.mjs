@@ -2078,16 +2078,38 @@ function validateProtectedServiceFileCapture(value, label, expectedRootUid) {
   return Object.freeze({ ...value });
 }
 
+function managedGatewayServicePaths(context) {
+  const explicitUnitPath = context.paths.gatewayUnitPath ?? null;
+  const explicitLauncherPath = context.paths.gatewayLauncherPath ?? null;
+  const deriveHostingPaths = context.applicationState?.profile === "hosting";
+  const unitPath =
+    explicitUnitPath ??
+    (deriveHostingPaths ? (context.applicationTopology?.gateway?.unitPath ?? null) : null);
+  const launcherPath =
+    explicitLauncherPath ??
+    (deriveHostingPaths
+      ? (context.applicationState?.gatewayLauncherPath ??
+        context.applicationTopology?.gatewayLauncherPath ??
+        null)
+      : null);
+  if (unitPath === null && launcherPath === null) {
+    return null;
+  }
+  if (!path.isAbsolute(unitPath ?? "") || !path.isAbsolute(launcherPath ?? "")) {
+    throw new Error("root-managed Gateway service paths are incomplete");
+  }
+  return Object.freeze({ unitPath, launcherPath });
+}
+
 function validateProtectedServiceBoundary(value, context) {
-  if (!context.paths.gatewayUnitPath && !context.paths.gatewayLauncherPath) {
+  const servicePaths = managedGatewayServicePaths(context);
+  if (!servicePaths) {
     if (value != null) {
-      throw new Error("host updater received a protected service transaction in Hosting mode");
+      throw new Error("host updater received a service transaction without a managed Gateway");
     }
     return null;
   }
   if (
-    !context.paths.gatewayUnitPath ||
-    !context.paths.gatewayLauncherPath ||
     !value ||
     typeof value !== "object" ||
     Array.isArray(value) ||
@@ -2156,31 +2178,43 @@ function upsertSystemdEnvironment(content, key, value) {
   const pattern = new RegExp(`^Environment=${key}=.*$`, "gmu");
   const matches = content.match(pattern) || [];
   if (matches.length > 1) {
-    throw new Error(`protected Local Gateway unit has duplicate ${key} entries`);
+    throw new Error(`root-managed Gateway unit has duplicate ${key} entries`);
   }
   if (matches.length === 1) {
     return content.replace(pattern, `Environment=${key}=${value}`);
   }
   const anchor = /^Environment=FASED_STATE_DIR=.*$/mu;
-  if (!anchor.test(content)) {
-    throw new Error("protected Local Gateway unit has no FASED_STATE_DIR");
+  if (anchor.test(content)) {
+    return content.replace(anchor, (line) => `${line}\nEnvironment=${key}=${value}`);
   }
-  return content.replace(anchor, (line) => `${line}\nEnvironment=${key}=${value}`);
+  const service = /^\[Service\]$/gmu;
+  const serviceMatches = content.match(service) || [];
+  if (serviceMatches.length !== 1) {
+    throw new Error("root-managed Gateway unit has no unambiguous Service section");
+  }
+  return content.replace(service, (line) => `${line}\nEnvironment=${key}=${value}`);
 }
 
 function shellSingleQuote(value) {
   return `'${String(value).replaceAll("'", "'\"'\"'")}'`;
 }
 
-function renderProtectedGatewayLauncher({ applicationRoot, nodeBinary, stateDir, gatewayPort }) {
+function renderProtectedGatewayLauncher({
+  applicationRoot,
+  nodeBinary,
+  stateDir,
+  gatewayPort,
+  profile = "protected-local",
+}) {
   const application = shellSingleQuote(applicationRoot);
   const node = shellSingleQuote(nodeBinary);
   const config = shellSingleQuote(path.join(stateDir, "fased.json"));
   const port = String(gatewayPort);
+  const label = profile === "hosting" ? "Hosting" : "protected Local";
   return `#!/usr/bin/env bash
 set -euo pipefail
 [[ -s ${config} ]] || {
-  echo "protected Local Gateway configuration is unavailable" >&2
+  echo "${label} Gateway configuration is unavailable" >&2
   exit 78
 }
 gateway_entry=""
@@ -2195,7 +2229,7 @@ for candidate in \\
   fi
 done
 [[ -n "$gateway_entry" ]] || {
-  echo "protected Local Gateway entrypoint is unavailable" >&2
+  echo "${label} Gateway entrypoint is unavailable" >&2
   exit 78
 }
 runtime_version="$(${node} -e '
@@ -2209,10 +2243,11 @@ runtime_version="$(${node} -e '
   }
   process.stdout.write(packageVersion.trim());
 ' ${application})" || {
-  echo "protected Local Gateway release identity is unavailable or inconsistent" >&2
+  echo "${label} Gateway release identity is unavailable or inconsistent" >&2
   exit 78
 }
 export FASED_VERSION="$runtime_version"
+export FASED_HOST_PROFILE=${shellSingleQuote(profile)}
 exec ${node} \\
   --disable-warning=ExperimentalWarning \\
   --disable-warning=DEP0040 \\
@@ -2221,6 +2256,10 @@ exec ${node} \\
 }
 
 function protectedServiceDesiredContent(context, boundary) {
+  const servicePaths = managedGatewayServicePaths(context);
+  if (!servicePaths) {
+    throw new Error("root-managed Gateway service paths are unavailable");
+  }
   const applicationRoot = context.paths.applicationCurrentLink;
   const nodeBinary = fs.realpathSync(context.protectedNodeBinary);
   const nodeInfo = fs.lstatSync(nodeBinary);
@@ -2231,15 +2270,33 @@ function protectedServiceDesiredContent(context, boundary) {
     (nodeInfo.mode & 0o022) !== 0 ||
     (nodeInfo.mode & 0o111) === 0
   ) {
-    throw new Error("protected Local controller Node.js runtime is not root-controlled");
+    throw new Error("root-managed controller Node.js runtime is not root-controlled");
   }
   let gatewayUnit = Buffer.from(boundary.gatewayUnit.contentBase64, "base64").toString("utf8");
-  if (
-    !gatewayUnit.includes(`Environment=FASED_PROTECTED_LOCAL_INSTANCE=${context.instanceId}`) ||
-    !gatewayUnit.includes(`User=fsgw-${context.instanceId}`) ||
-    !gatewayUnit.includes("ProtectSystem=strict")
-  ) {
-    throw new Error("protected Local Gateway unit identity or hardening is invalid");
+  const profile =
+    context.applicationState?.profile ??
+    (context.instanceId ? "protected-local" : context.applicationTopology?.profile);
+  if (profile === "protected-local") {
+    if (
+      !gatewayUnit.includes(`Environment=FASED_PROTECTED_LOCAL_INSTANCE=${context.instanceId}`) ||
+      !gatewayUnit.includes(`User=fsgw-${context.instanceId}`) ||
+      !gatewayUnit.includes("ProtectSystem=strict")
+    ) {
+      throw new Error("protected Local Gateway unit identity or hardening is invalid");
+    }
+  } else if (profile === "hosting") {
+    const gatewayUser = context.applicationTopology?.gateway?.user;
+    if (
+      !gatewayUser ||
+      !gatewayUnit.includes(`User=${gatewayUser}`) ||
+      !gatewayUnit.includes("Environment=FASED_HOST_PROFILE=hosting") ||
+      !gatewayUnit.includes(`ExecStart=${servicePaths.launcherPath}`) ||
+      !gatewayUnit.includes("ProtectSystem=strict")
+    ) {
+      throw new Error("Hosting Gateway unit identity or hardening is invalid");
+    }
+  } else {
+    throw new Error("root-managed Gateway profile is unsupported");
   }
   gatewayUnit = replaceExactlyOneLine(
     gatewayUnit,
@@ -2247,11 +2304,15 @@ function protectedServiceDesiredContent(context, boundary) {
     `WorkingDirectory=${applicationRoot}`,
     "Gateway working directory",
   );
-  gatewayUnit = upsertSystemdEnvironment(
-    gatewayUnit,
-    "FASED_CONFIG_DIR",
-    gatewayUnit.match(/^Environment=FASED_STATE_DIR=(.*)$/mu)?.[1] || "",
-  );
+  const stateDir =
+    context.applicationState?.stateDir ??
+    gatewayUnit.match(/^Environment=FASED_STATE_DIR=(.*)$/mu)?.[1] ??
+    null;
+  if (!path.isAbsolute(stateDir ?? "")) {
+    throw new Error("root-managed Gateway state directory is unavailable");
+  }
+  gatewayUnit = upsertSystemdEnvironment(gatewayUnit, "FASED_STATE_DIR", stateDir);
+  gatewayUnit = upsertSystemdEnvironment(gatewayUnit, "FASED_CONFIG_DIR", stateDir);
   gatewayUnit = upsertSystemdEnvironment(
     gatewayUnit,
     "FASED_MANAGED_RUNTIME_ROOT",
@@ -2265,18 +2326,18 @@ function protectedServiceDesiredContent(context, boundary) {
     "utf8",
   );
   if (!gatewayLauncher.startsWith("#!/usr/bin/env bash\nset -euo pipefail\n")) {
-    throw new Error("protected Local Gateway launcher is invalid");
+    throw new Error("root-managed Gateway launcher is invalid");
   }
-  const stateDir = gatewayUnit.match(/^Environment=FASED_STATE_DIR=(.*)$/mu)?.[1] || "";
   const gatewayPort = gatewayUnit.match(/^Environment=FASED_GATEWAY_PORT=(\d+)$/mu)?.[1] || "";
   if (!path.isAbsolute(stateDir) || !/^\d{1,5}$/u.test(gatewayPort)) {
-    throw new Error("protected Local Gateway unit is missing its state directory or port");
+    throw new Error("root-managed Gateway unit is missing its state directory or port");
   }
   const renderedLauncher = renderProtectedGatewayLauncher({
     applicationRoot,
     nodeBinary,
     stateDir,
     gatewayPort,
+    profile,
   });
   return Object.freeze({
     gatewayUnit,
@@ -2285,17 +2346,18 @@ function protectedServiceDesiredContent(context, boundary) {
 }
 
 async function stageProtectedServiceBoundary(context) {
-  if (!context.paths.gatewayUnitPath && !context.paths.gatewayLauncherPath) {
+  const servicePaths = managedGatewayServicePaths(context);
+  if (!servicePaths) {
     return null;
   }
   const gatewayUnit = await captureProtectedServiceFile(
-    context.paths.gatewayUnitPath,
-    "protected Local Gateway unit",
+    servicePaths.unitPath,
+    "root-managed Gateway unit",
     context.rootUid,
   );
   const gatewayLauncher = await captureProtectedServiceFile(
-    context.paths.gatewayLauncherPath,
-    "protected Local Gateway launcher",
+    servicePaths.launcherPath,
+    "root-managed Gateway launcher",
     context.rootUid,
   );
   const snapshots = { changed: true, gatewayUnit, gatewayLauncher };
@@ -2318,19 +2380,23 @@ async function applyProtectedServiceBoundary(context, boundary) {
   if (!boundary?.changed) {
     return;
   }
+  const servicePaths = managedGatewayServicePaths(context);
+  if (!servicePaths) {
+    throw new Error("root-managed Gateway service paths are unavailable");
+  }
   const desired = protectedServiceDesiredContent(context, boundary);
   const pairs = [
     [
-      context.paths.gatewayUnitPath,
+      servicePaths.unitPath,
       boundary.gatewayUnit,
       Buffer.from(desired.gatewayUnit),
-      "protected Local Gateway unit",
+      "root-managed Gateway unit",
     ],
     [
-      context.paths.gatewayLauncherPath,
+      servicePaths.launcherPath,
       boundary.gatewayLauncher,
       Buffer.from(desired.gatewayLauncher),
-      "protected Local Gateway launcher",
+      "root-managed Gateway launcher",
     ],
   ];
   for (const [filePath, captured, nextContent, label] of pairs) {
@@ -2351,19 +2417,23 @@ async function restoreProtectedServiceBoundary(context, boundary) {
   if (!boundary?.changed) {
     return;
   }
+  const servicePaths = managedGatewayServicePaths(context);
+  if (!servicePaths) {
+    throw new Error("root-managed Gateway service paths are unavailable");
+  }
   const desired = protectedServiceDesiredContent(context, boundary);
   const pairs = [
     [
-      context.paths.gatewayUnitPath,
+      servicePaths.unitPath,
       boundary.gatewayUnit,
       Buffer.from(desired.gatewayUnit),
-      "protected Local Gateway unit",
+      "root-managed Gateway unit",
     ],
     [
-      context.paths.gatewayLauncherPath,
+      servicePaths.launcherPath,
       boundary.gatewayLauncher,
       Buffer.from(desired.gatewayLauncher),
-      "protected Local Gateway launcher",
+      "root-managed Gateway launcher",
     ],
   ];
   for (const [filePath, captured, desiredContent, label] of pairs) {

@@ -110,6 +110,7 @@ async function createFixture(
     protectedService?: boolean;
     missingPreviousApplication?: boolean;
     managedApplication?: boolean;
+    managedApplicationProfile?: "protected-local" | "hosting";
     emptyManagedApplication?: boolean;
     managedInstallSchema?: 1 | 2;
     trackUpdaterGeneration?: boolean;
@@ -119,6 +120,7 @@ async function createFixture(
 ) {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-updater-"));
   cleanupRoots.push(root);
+  const managedApplicationProfile = options.managedApplicationProfile ?? "protected-local";
   const stateDir = path.join(root, "updater-state");
   const signerPath = path.join(root, "opt", "fased", "signer", "fased-signerd");
   const signerStateDBPath = path.join(root, "signer-state", "state.db");
@@ -224,7 +226,17 @@ async function createFixture(
       fsp.writeFile(protectedNodeBinary, "#!/bin/sh\nexit 0\n", { mode: 0o755 }),
       fsp.writeFile(
         paths.gatewayUnitPath!,
-        `[Service]
+        managedApplicationProfile === "hosting"
+          ? `[Service]
+User=fased-gateway
+WorkingDirectory=/home/operator/fased
+Environment=HOME=/home/operator
+Environment=FASED_GATEWAY_PORT=18789
+Environment=FASED_HOST_PROFILE=hosting
+ExecStart=${paths.gatewayLauncherPath!}
+ProtectSystem=strict
+`
+          : `[Service]
 User=fsgw-${instanceId}
 WorkingDirectory=/home/operator/.fased/runtime/releases/1.2.2
 Environment=FASED_STATE_DIR=/home/operator/.fased
@@ -270,7 +282,7 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
           path.join(managedStateDir, "install.json"),
           `${JSON.stringify({
             schemaVersion: options.managedInstallSchema ?? 2,
-            profile: "protected-local",
+            profile: managedApplicationProfile,
             source: "managed-artifact",
             stateDir: managedStateDir,
             configPath: path.join(managedStateDir, "fased.json"),
@@ -283,7 +295,10 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
             },
             package: { prefix, compatibilityRoot },
             service: {
-              name: "fased-gateway-0123456789abcdef.service",
+              name:
+                managedApplicationProfile === "hosting"
+                  ? "fased-gateway.service"
+                  : "fased-gateway-0123456789abcdef.service",
               scope: "system",
               launcher: path.join(root, "gateway-launch"),
             },
@@ -302,12 +317,17 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
   let activeSignerVersion = "1.2.2";
   const fixtureTopology = {
     schemaVersion: 1,
-    profile: options.managedApplication ? "protected-local" : "hosting",
+    profile: options.managedApplication ? managedApplicationProfile : "hosting",
     managedApplication: options.managedApplication === true,
-    instanceId: options.managedApplication ? "0123456789abcdef" : null,
+    instanceId:
+      options.managedApplication && managedApplicationProfile === "protected-local"
+        ? "0123456789abcdef"
+        : null,
     stateDir: path.join(root, "operator", ".fased"),
     configPath: path.join(root, "operator", ".fased", "fased.json"),
-    gatewayLauncherPath: options.managedApplication ? path.join(root, "gateway-launch") : undefined,
+    gatewayLauncherPath: options.managedApplication
+      ? (paths.gatewayLauncherPath ?? path.join(root, "gateway-launch"))
+      : undefined,
     operator: {
       name: "operator",
       uid: process.getuid(),
@@ -315,22 +335,30 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
       home: path.join(root, "operator"),
     },
     gateway: {
-      user: options.managedApplication ? "fsgw-0123456789abcdef" : "fased-gateway",
+      user:
+        options.managedApplication && managedApplicationProfile === "protected-local"
+          ? "fsgw-0123456789abcdef"
+          : "fased-gateway",
       uid: process.getuid(),
       gid: process.getgid(),
       unitPath: paths.gatewayUnitPath ?? path.join(root, "systemd", "fased-gateway.service"),
     },
     configGroup: {
-      name: options.managedApplication ? "fscf-0123456789abcdef" : "fased-config",
+      name:
+        options.managedApplication && managedApplicationProfile === "protected-local"
+          ? "fscf-0123456789abcdef"
+          : "fased-config",
       gid: process.getgid(),
     },
     services: {
-      gateway: options.managedApplication
-        ? "fased-gateway-0123456789abcdef.service"
-        : "fased-gateway.service",
-      signer: options.managedApplication
-        ? "fased-signerd-0123456789abcdef.service"
-        : "fased-signerd.service",
+      gateway:
+        options.managedApplication && managedApplicationProfile === "protected-local"
+          ? "fased-gateway-0123456789abcdef.service"
+          : "fased-gateway.service",
+      signer:
+        options.managedApplication && managedApplicationProfile === "protected-local"
+          ? "fased-signerd-0123456789abcdef.service"
+          : "fased-signerd.service",
     },
     capabilities: {
       lifecycleControllerProtocol: 2,
@@ -351,7 +379,9 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
   const context = __testing.createTransactionContext({
     paths,
     historicalQ0TestStateDir: path.join(root, "historical-q0-test-state"),
-    ...(options.protectedService ? { protectedLocalInstanceId: "0123456789abcdef" } : {}),
+    ...(options.protectedService && managedApplicationProfile === "protected-local"
+      ? { protectedLocalInstanceId: "0123456789abcdef" }
+      : {}),
     ...(options.protectedService ? { protectedNodeBinary: path.join(root, "bin", "node") } : {}),
     supervised: options.supervised === true,
     controllerInstanceId: options.supervised ? TRANSACTION_TWO : undefined,
@@ -2255,6 +2285,65 @@ describe("root-owned hosted updater protocol", () => {
     expect(gatewayStarts).toBe(1);
     expect(previousUnit).toBe(failingUnit);
     expect(previousLauncher).toBe(failingLauncher);
+  });
+
+  it("moves the generated Hosting Gateway onto the managed release and restores it on failure", async () => {
+    const prepared = await createFixture({
+      managedApplication: true,
+      managedApplicationProfile: "hosting",
+      protectedService: true,
+      emptyManagedApplication: true,
+    });
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      prepared.context,
+    );
+    await __testing.activateSignerRelease(
+      request("activateRelease", TRANSACTION_ONE, "1.2.3"),
+      prepared.context,
+    );
+    await __testing.authorizeGatewayRelease(
+      request("authorizeGatewayRelease", TRANSACTION_ONE, "1.2.3"),
+      prepared.context,
+    );
+    const nextUnit = await fsp.readFile(prepared.paths.gatewayUnitPath!, "utf8");
+    const nextLauncher = await fsp.readFile(prepared.paths.gatewayLauncherPath!, "utf8");
+    expect(nextUnit).toContain(`WorkingDirectory=${prepared.paths.applicationCurrentLink!}`);
+    expect(nextUnit).toContain("Environment=FASED_HOST_PROFILE=hosting");
+    expect(nextUnit).toContain("Environment=FASED_STATE_DIR=");
+    expect(nextLauncher).toContain(`${prepared.paths.applicationCurrentLink!}'/dist/entry.js`);
+    expect(nextLauncher).toContain(
+      "Hosting Gateway release identity is unavailable or inconsistent",
+    );
+    expect(nextLauncher).not.toContain("scripts/start-managed.sh");
+
+    const failing = await createFixture({
+      managedApplication: true,
+      managedApplicationProfile: "hosting",
+      protectedService: true,
+      emptyManagedApplication: true,
+    });
+    const previousUnit = await fsp.readFile(failing.paths.gatewayUnitPath!, "utf8");
+    const previousLauncher = await fsp.readFile(failing.paths.gatewayLauncherPath!, "utf8");
+    failing.context.startGateway = async () => {
+      throw new Error("injected Hosting Gateway start failure");
+    };
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_TWO, "1.2.3"),
+      failing.context,
+    );
+    await __testing.activateSignerRelease(
+      request("activateRelease", TRANSACTION_TWO, "1.2.3"),
+      failing.context,
+    );
+    await expect(
+      __testing.authorizeGatewayRelease(
+        request("authorizeGatewayRelease", TRANSACTION_TWO, "1.2.3"),
+        failing.context,
+      ),
+    ).rejects.toThrow("injected Hosting Gateway start failure");
+    expect(await fsp.readFile(failing.paths.gatewayUnitPath!, "utf8")).toBe(previousUnit);
+    expect(await fsp.readFile(failing.paths.gatewayLauncherPath!, "utf8")).toBe(previousLauncher);
   });
 
   it("recognizes the systemd entrypoint through the immutable current symlink", async () => {
