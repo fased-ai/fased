@@ -2339,6 +2339,11 @@ function protectedServiceDesiredContent(context, boundary) {
   gatewayUnit = upsertSystemdEnvironment(gatewayUnit, "FASED_CONFIG_DIR", stateDir);
   gatewayUnit = upsertSystemdEnvironment(
     gatewayUnit,
+    "FASED_PLUGIN_STATUS_CACHE_PATH",
+    path.join(stateDir, "cache", "plugin-status.json"),
+  );
+  gatewayUnit = upsertSystemdEnvironment(
+    gatewayUnit,
     "FASED_MANAGED_RUNTIME_ROOT",
     applicationRoot,
   );
@@ -3482,6 +3487,12 @@ const DECLARED_STATE_TREE_MAX_DEPTH = 64;
 const DECLARED_STATE_TREE_MAX_PATH_BYTES = 8192;
 const DECLARED_STATE_SHARED_DIRECTORIES = Object.freeze([
   Object.freeze({ relativePath: ".", stateClass: "gateway-config-auth", create: false }),
+  Object.freeze({
+    relativePath: "cache",
+    stateClass: "derived-runtime-cache",
+    create: true,
+    preserveContent: false,
+  }),
   Object.freeze({
     relativePath: "identity",
     stateClass: "device-identity",
@@ -5662,11 +5673,7 @@ function pluginStatusConfigFingerprint(config) {
 }
 
 function targetPluginStatusCachePath(topology) {
-  return path.join(
-    topology.stateDir,
-    topology.profile === "protected-local" ? "cache" : "runtime",
-    "plugin-status.json",
-  );
+  return path.join(topology.stateDir, "cache", "plugin-status.json");
 }
 
 function pathIsStrictlyInside(root, candidate) {

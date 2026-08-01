@@ -5648,6 +5648,7 @@ Environment=FASED_MANAGED_INTERNAL=1
 Environment=FASED_GATEWAY_SERVICE=1
 Environment=FASED_GATEWAY_PORT=18789
 Environment=FASED_HOST_PROFILE=hosting
+Environment=FASED_PLUGIN_STATUS_CACHE_PATH=${target_home}/.fased/cache/plugin-status.json
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external
 Environment=FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock
@@ -5693,6 +5694,7 @@ reconcile_hosting_shared_state() {
   local config_group="${FASED_CONFIG_GROUP:-fased-config}"
   local state_dir="${target_home}/.fased"
   install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir"
+  install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/cache"
   install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/identity"
   install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/wallet"
   install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/federation"

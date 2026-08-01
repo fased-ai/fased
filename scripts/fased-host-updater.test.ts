@@ -1448,6 +1448,7 @@ describe("root-owned hosted updater protocol", () => {
     const transaction = await __testing.inventoryDeclaredApplicationState(topology, { paths: {} });
 
     await __testing.reconcileDeclaredApplicationState(transaction);
+    expect((await fsp.stat(path.join(stateDir, "cache"))).mode & 0o2777).toBe(0o2770);
     await fsp.writeFile(
       path.join(stateDir, "extensions", "initialized-by-target.json"),
       '{"schemaVersion":1}\n',
@@ -2335,6 +2336,13 @@ describe("root-owned hosted updater protocol", () => {
     expect(nextUnit).toContain(`WorkingDirectory=${prepared.paths.applicationCurrentLink!}`);
     expect(nextUnit).toContain("Environment=FASED_HOST_PROFILE=hosting");
     expect(nextUnit).toContain("Environment=FASED_STATE_DIR=");
+    expect(nextUnit).toContain(
+      `Environment=FASED_PLUGIN_STATUS_CACHE_PATH=${path.join(
+        prepared.context.applicationTopology.stateDir,
+        "cache",
+        "plugin-status.json",
+      )}`,
+    );
     expect(nextLauncher).toContain(`${prepared.paths.applicationCurrentLink!}'/dist/entry.js`);
     expect(nextLauncher).toContain(
       "Hosting Gateway release identity is unavailable or inconsistent",
