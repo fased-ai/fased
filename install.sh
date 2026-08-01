@@ -451,7 +451,9 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       command -v awk >/dev/null 2>&1 || packages+=(gawk)
       command -v jq >/dev/null 2>&1 || packages+=(jq)
       command -v grep >/dev/null 2>&1 || packages+=(grep)
-      command -v flock >/dev/null 2>&1 || packages+=(util-linux)
+      if ! command -v flock >/dev/null 2>&1 || ! command -v setpriv >/dev/null 2>&1; then
+        packages+=(util-linux)
+      fi
       if command -v apt-get >/dev/null 2>&1; then
         apt-get update
         env DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
@@ -469,7 +471,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       install_hosting_bootstrap_tools
       install_current_github_cli_bootstrap
     fi
-    for command in curl tar sha256sum awk jq stat find grep flock; do
+    for command in curl tar sha256sum awk jq stat find grep flock setpriv; do
       if ! command -v "$command" >/dev/null 2>&1; then
         echo "Missing required Hosting bootstrap command: $command" >&2
         echo "Install curl, jq, tar, coreutils, and findutils from the provider console, then retry." >&2
@@ -1537,6 +1539,7 @@ HOST_SIGNER_TRANSACTION_ACTIVE=0
 HOST_SIGNER_DURABLE_COMMIT_DECISION=0
 HOST_SIGNER_TRANSACTION_ID=""
 HOST_SIGNER_TRANSACTION_VERSION=""
+HOSTING_APPLICATION_BOUNDARY_PREPARED=0
 LOW_MEMORY_SWAP_THRESHOLD_MB=2304
 LOW_MEMORY_SWAP_GB=4
 HOSTING_SWAP_GB=2
@@ -2412,9 +2415,11 @@ install_linux_system_dependencies() {
   fi
 
   if need_cmd apt-get; then
+    local -a apt_packages=(git curl ca-certificates jq acl)
+    need_cmd setpriv || apt_packages+=(util-linux)
     run_as_root apt-get update
     run_as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
-      apt-get install -y git curl ca-certificates jq acl
+      apt-get install -y "${apt_packages[@]}"
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
       install_nodesource_node_apt
@@ -2431,6 +2436,7 @@ install_linux_system_dependencies() {
     need_cmd curl || rpm_packages+=(curl)
     need_cmd jq || rpm_packages+=(jq)
     { need_cmd getfacl && need_cmd setfacl; } || rpm_packages+=(acl)
+    need_cmd setpriv || rpm_packages+=(util-linux)
     run_as_root "$dnf_cmd" install -y "${rpm_packages[@]}"
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
@@ -2448,6 +2454,7 @@ install_linux_system_dependencies() {
     need_cmd curl || rpm_packages+=(curl)
     need_cmd jq || rpm_packages+=(jq)
     { need_cmd getfacl && need_cmd setfacl; } || rpm_packages+=(acl)
+    need_cmd setpriv || rpm_packages+=(util-linux)
     run_as_root yum install -y "${rpm_packages[@]}"
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
@@ -2457,14 +2464,15 @@ install_linux_system_dependencies() {
       prefer_compatible_system_node_if_available || true
     fi
   elif need_cmd apk; then
-    run_as_root apk add --no-cache git curl ca-certificates jq acl nodejs npm
+    run_as_root apk add --no-cache git curl ca-certificates jq acl util-linux nodejs npm
     hash -r 2>/dev/null || true
   elif need_cmd pacman; then
-    run_as_root pacman -Sy --needed --noconfirm git curl ca-certificates jq acl nodejs npm
+    run_as_root pacman -Sy --needed --noconfirm git curl ca-certificates jq acl util-linux nodejs npm
     hash -r 2>/dev/null || true
   elif need_cmd zypper; then
     run_as_root zypper --non-interactive refresh || true
-    run_as_root zypper --non-interactive install --no-recommends git curl ca-certificates jq acl
+    run_as_root zypper --non-interactive install --no-recommends \
+      git curl ca-certificates jq acl util-linux
     hash -r 2>/dev/null || true
     if ! node_runtime_ok; then
       run_as_root zypper --non-interactive install --no-recommends nodejs24 npm24 || \
@@ -2478,6 +2486,11 @@ install_linux_system_dependencies() {
     echo "Detected system: $(linux_os_summary)" >&2
     echo "Supported auto-install package managers: apt-get, dnf, dnf5, yum, zypper, apk, pacman." >&2
     echo "Install git, curl, jq, Node 24, and pnpm manually, then rerun ./install.sh." >&2
+    return 1
+  fi
+
+  if ! need_cmd setpriv; then
+    echo "Protected Linux lifecycle requires setpriv from util-linux." >&2
     return 1
   fi
 
@@ -2888,6 +2901,69 @@ use_prebuilt_release_runtime() {
     "$(uname -m 2>/dev/null || true)"
 }
 
+activate_prepared_hosting_runtime() {
+  local version="${HOSTING_RELEASE#v}"
+  local transaction_id="${FASED_HOST_UPDATE_TRANSACTION_ID:-}"
+  local transaction_version="${FASED_HOST_UPDATE_TRANSACTION_VERSION:-}"
+  local release_root="/opt/fased/host-application/releases/v${version}"
+  local authorizer="$release_root/scripts/fased-managed-updater-core.mjs"
+  local npm_prefix="${FASED_NPM_GLOBAL_PREFIX:-$INSTALL_CACHE_DIR/npm-global}"
+  local bin_dir="$FASED_CONFIG_DIR/bin"
+  local target="$bin_dir/fased"
+
+  [[ "$(resolved_host_profile)" == "hosting" ]] || return 2
+  [[ -n "$transaction_id" && "$transaction_version" == "$version" ]] || return 2
+  [[ -f "$authorizer" && ! -L "$authorizer" ]] || {
+    echo "The root controller did not stage the exact Hosting application runtime." >&2
+    return 1
+  }
+
+  if ! FASED_HOST_UPDATER_SOCKET="${FASED_HOST_UPDATER_SOCKET:-/run/fased-host-updater/request.sock}" \
+    node --input-type=module - "$authorizer" "$transaction_id" "$version" <<'EOF_ACTIVATE_HOSTING_RUNTIME'
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const [modulePath, transactionId, version] = process.argv.slice(2);
+const { authorizePreactivatedHostedGateway } = await import(pathToFileURL(modulePath));
+await authorizePreactivatedHostedGateway({ transactionId, targetVersion: version });
+
+const stateDir = path.resolve(process.env.FASED_STATE_DIR || path.join(process.env.HOME, ".fased"));
+const manifestPath = path.join(stateDir, "install.json");
+const currentLink = path.join(stateDir, "runtime", "current");
+const expectedRoot = `/opt/fased/host-application/releases/v${version}`;
+const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+const currentRoot = fs.realpathSync(currentLink);
+if (
+  manifest?.schemaVersion !== 2 ||
+  manifest?.profile !== "hosting" ||
+  manifest?.runtime?.activeVersion !== version ||
+  path.resolve(String(manifest?.runtime?.releasesDir || "")) !==
+    "/opt/fased/host-application/releases" ||
+  currentRoot !== expectedRoot
+) {
+  throw new Error("the root-selected Hosting application identity did not converge");
+}
+EOF_ACTIVATE_HOSTING_RUNTIME
+  then
+    echo "The root-selected Hosting application runtime did not activate exactly." >&2
+    return 1
+  fi
+
+  export PATH="$bin_dir:$npm_prefix/bin:$PATH"
+  hash -r 2>/dev/null || true
+  FASED_CLI_PATH="$target"
+  install_user_cli_path_snippet "$bin_dir" "$HOME/.profile"
+  install_user_cli_path_snippet "$bin_dir" "$HOME/.bashrc"
+  install_user_cli_path_snippet "$bin_dir" "$HOME/.zshrc"
+  if [[ ! -x "$FASED_CLI_PATH" ]] || ! "$FASED_CLI_PATH" --version >/dev/null 2>&1; then
+    echo "The root-selected Hosting CLI did not start correctly: $FASED_CLI_PATH" >&2
+    return 1
+  fi
+  PREBUILT_RUNTIME_INSTALLED=1
+  return 0
+}
+
 install_prebuilt_release_runtime() {
   local runtime_profile
   runtime_profile="$(resolved_host_profile)"
@@ -2901,6 +2977,15 @@ install_prebuilt_release_runtime() {
   elif [[ "$runtime_profile" == "hosting" ]]; then
     echo "Maintained Hosting requires one exact stable --release vX.Y.Z." >&2
     return 1
+  fi
+  if [[ "$runtime_profile" == "hosting" && -n "${FASED_HOST_UPDATE_TRANSACTION_ID:-}" ]]; then
+    spinner_start "Activate verified Hosting runtime"
+    if ! activate_prepared_hosting_runtime; then
+      spinner_failed "Activate verified Hosting runtime"
+      return 1
+    fi
+    spinner_done "Verified Hosting runtime ready"
+    return 0
   fi
   local npm_prefix="${FASED_NPM_GLOBAL_PREFIX:-$INSTALL_CACHE_DIR/npm-global}"
   local bin_dir="$npm_prefix/bin"
@@ -4476,7 +4561,9 @@ reexec_as_app_user() {
   copy_bootstrap_ssh_keys_for_target_user "$target_user" "$target_home"
   if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
     prepare_hosting_root_prerequisites "$target_user" "$target_repo_dir"
-    install_fixed_host_gateway_service "$target_repo_dir"
+    if [[ "$HOSTING_APPLICATION_BOUNDARY_PREPARED" -ne 1 ]]; then
+      install_fixed_host_gateway_service "$target_repo_dir"
+    fi
     # Establish the shared root/app/Gateway state boundary before onboarding writes
     # configuration, wallet, plugin, or network state. Reconcile it again before the
     # coordinated restart because onboarding may create additional descendants.
@@ -4986,6 +5073,16 @@ bootstrap_repo_for_target_user() {
       exit 1
     }
     install -d -m 0755 -o "$target_user" -g "$target_user" "$target_parent"
+    if [[ -d "$target_install_dir/.git" && ! -L "$target_install_dir" ]]; then
+      local existing_head=""
+      local existing_package_version=""
+      existing_head="$(runuser -u "$target_user" -- git -C "$target_install_dir" rev-parse HEAD 2>/dev/null || true)"
+      existing_package_version="$(awk -F'"' '/^[[:space:]]*"version"[[:space:]]*:/ { print $4; exit }' "$target_install_dir/package.json" 2>/dev/null || true)"
+      if [[ "$existing_head" == "$attested_commit" && "$existing_package_version" == "$HOSTING_RELEASE" ]]; then
+        echo "== Root bootstrap: exact app checkout v${HOSTING_RELEASE} already prepared for $target_user =="
+        return 0
+      fi
+    fi
     runuser -u "$target_user" -- rm -rf -- "$tagged_staging"
     echo "== Root bootstrap: preparing exact app checkout v${HOSTING_RELEASE} as $target_user =="
     runuser -u "$target_user" -- git clone \
@@ -5508,9 +5605,7 @@ install_fixed_host_gateway_service() {
   install -d -m 2770 -o "$target_user" -g "$config_group" "${target_home}/.fased/identity"
   install -d -m 2770 -o "$target_user" -g "$config_group" "${target_home}/.fased/wallet"
   install -d -m 2770 -o "$target_user" -g "$config_group" "${target_home}/.fased/federation"
-  chgrp -R "$config_group" "${target_home}/.fased"
-  chmod -R g+rwX,o-rwx "${target_home}/.fased"
-  find "${target_home}/.fased" -type d -exec chmod g+s {} +
+  reconcile_hosting_shared_state "$target_home"
   [[ "$target_repo_dir" == "$target_home/"* && "$target_repo_dir" =~ ^/[A-Za-z0-9_./@-]+$ ]] || {
     echo "Hosted Gateway checkout must remain below the app account home." >&2
     exit 1
@@ -5553,6 +5648,7 @@ Environment=FASED_MANAGED_INTERNAL=1
 Environment=FASED_GATEWAY_SERVICE=1
 Environment=FASED_GATEWAY_PORT=18789
 Environment=FASED_HOST_PROFILE=hosting
+Environment=FASED_PLUGIN_STATUS_CACHE_PATH=${target_home}/.fased/cache/plugin-status.json
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external
 Environment=FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock
@@ -5598,16 +5694,18 @@ reconcile_hosting_shared_state() {
   local config_group="${FASED_CONFIG_GROUP:-fased-config}"
   local state_dir="${target_home}/.fased"
   install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir"
+  install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/cache"
   install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/identity"
   install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/wallet"
   install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/federation"
-  chgrp -R "$config_group" "$state_dir"
-  chmod -R g+rwX,o-rwx "$state_dir"
-  find "$state_dir" -type d -exec chmod g+s {} +
+  install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/extensions"
   setfacl --modify "user:${target_user}:rwx" "$state_dir"
   setfacl --modify "default:user:${target_user}:rwx" "$state_dir"
   local shared_entry=""
   while IFS= read -r -d '' shared_entry; do
+    chgrp -hR "$config_group" "$shared_entry"
+    chmod -R g+rwX,o-rwx "$shared_entry"
+    find -P "$shared_entry" -xdev -type d -exec chmod g+s {} +
     setfacl --recursive --physical --modify "user:${target_user}:rwX" "$shared_entry"
     find -P "$shared_entry" -xdev -type d \
       -exec setfacl --modify "default:user:${target_user}:rwx" {} +
@@ -5625,6 +5723,38 @@ reconcile_hosting_shared_state() {
   )
   [[ ! -f "$state_dir/fased.json" ]] || chmod 0660 "$state_dir/fased.json"
   [[ ! -f "$state_dir/install.json" ]] || chmod 0660 "$state_dir/install.json"
+}
+
+prepare_fresh_hosting_application_boundary() {
+  local target_user="${FASED_INSTALL_USER:-app}"
+  local target_home=""
+  local target_install_dir="${FASED_INSTALL_DIR:-$INSTALL_BASE_DIR}"
+  local target_repo_dir=""
+  target_home="$(getent passwd "$target_user" | cut -d: -f6)"
+  [[ -n "$target_home" ]] || target_home="/home/$target_user"
+  if [[ -z "${FASED_INSTALL_DIR:-}" && "$target_install_dir" == "$HOME/fased" && "$target_home" != "$HOME" ]]; then
+    target_install_dir="$target_home/fased"
+  fi
+
+  if [[ -f /etc/systemd/system/fased-gateway.service && -d "$target_home/.fased" ]]; then
+    # Preserve the existing root-controlled Gateway boundary during repair.
+    # Without this marker the later root-to-app handoff would replace its
+    # protected launcher/unit with the bootstrap checkout service.
+    HOSTING_APPLICATION_BOUNDARY_PREPARED=1
+    return 0
+  fi
+
+  echo "== Root bootstrap: establishing the Hosting application boundary before signer activation =="
+  bootstrap_repo_for_target_user "$target_user" "$target_install_dir"
+  target_repo_dir="$(resolve_fased_dir_from_base "$target_install_dir" || true)"
+  [[ -n "$target_repo_dir" ]] || {
+    echo "Cannot establish the fresh Hosting application boundary." >&2
+    return 1
+  }
+  configure_target_user_fased_shell_dir "$target_user" "$target_home" "$target_repo_dir"
+  install_fixed_host_gateway_service "$target_repo_dir"
+  reconcile_hosting_shared_state "$target_home"
+  HOSTING_APPLICATION_BOUNDARY_PREPARED=1
 }
 
 run_tailscale_auth_from_private_file() (
@@ -6001,9 +6131,13 @@ install_host_signer_and_updater_services() {
   install -d -m 0700 -o root -g root /var/lib/fased-host-updater
   install -d -m 0700 -o root -g root /var/lib/fased-host-updater/supervisor
   local supervisor_path="/opt/fased/host-controller/supervisor/fased-lifecycle-supervisor.mjs"
+  local supervisor_client_path="/opt/fased/host-controller/supervisor/fased-host-updaterctl.mjs"
   local supervisor_staging_path="/opt/fased/host-controller/supervisor/.fased-lifecycle-supervisor-${version}-$$"
+  local supervisor_client_staging_path="/opt/fased/host-controller/supervisor/.fased-host-updaterctl-${version}-$$"
   local supervisor_sha
+  local supervisor_client_sha
   supervisor_sha="$(sha256sum "$FASED_DIR/scripts/fased-lifecycle-supervisor.mjs" | awk '{print $1}')"
+  supervisor_client_sha="$(sha256sum "$FASED_DIR/scripts/fased-host-updaterctl.mjs" | awk '{print $1}')"
   if [[ -e "$supervisor_path" || -L "$supervisor_path" ]]; then
     if [[ ! -f "$supervisor_path" || -L "$supervisor_path" || \
       "$(stat -c '%u' "$supervisor_path")" -ne 0 || \
@@ -6021,6 +6155,24 @@ install_host_signer_and_updater_services() {
     sync -f "$supervisor_staging_path" /opt/fased/host-controller/supervisor
     mv -f "$supervisor_staging_path" "$supervisor_path"
     sync -f "$supervisor_path" /opt/fased/host-controller/supervisor
+  fi
+  if [[ -e "$supervisor_client_path" || -L "$supervisor_client_path" ]]; then
+    if [[ ! -f "$supervisor_client_path" || -L "$supervisor_client_path" || \
+      "$(stat -c '%u' "$supervisor_client_path")" -ne 0 || \
+      "$(stat -c '%a' "$supervisor_client_path")" != "755" ]]; then
+      echo "Existing stable lifecycle supervisor client is not a protected root-owned file." >&2
+      exit 1
+    fi
+  fi
+  if [[ ! -e "$supervisor_client_path" || \
+    "$(sha256sum "$supervisor_client_path" | awk '{print $1}')" != "$supervisor_client_sha" ]]; then
+    rm -f "$supervisor_client_staging_path"
+    install -m 0755 -o root -g root \
+      "$FASED_DIR/scripts/fased-host-updaterctl.mjs" \
+      "$supervisor_client_staging_path"
+    sync -f "$supervisor_client_staging_path" /opt/fased/host-controller/supervisor
+    mv -f "$supervisor_client_staging_path" "$supervisor_client_path"
+    sync -f "$supervisor_client_path" /opt/fased/host-controller/supervisor
   fi
   local controller_release_dir="/opt/fased/host-controller/releases/v${version}"
   local controller_staging_dir="/opt/fased/host-controller/releases/.controller-generation-${version}-$$"
@@ -6070,7 +6222,7 @@ install_host_signer_and_updater_services() {
   rm -f /usr/local/libexec/fased-host-updater.mjs /usr/local/libexec/fased-host-updaterctl.mjs
   ln -s /opt/fased/host-controller/current/fased-host-updater.mjs \
     /usr/local/libexec/fased-host-updater.mjs
-  ln -s /opt/fased/host-controller/current/fased-host-updaterctl.mjs \
+  ln -s /opt/fased/host-controller/supervisor/fased-host-updaterctl.mjs \
     /usr/local/libexec/fased-host-updaterctl.mjs
   printf '{"schemaVersion":1,"version":"%s","serverSha256":"%s","clientSha256":"%s"}\n' \
     "$version" "$controller_server_sha" "$controller_client_sha" >"$controller_marker_tmp"
@@ -6160,10 +6312,11 @@ ExecStart=$(command -v node) /opt/fased/host-controller/current/fased-host-updat
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
+AmbientCapabilities=CAP_SETUID CAP_SETGID
 PrivateTmp=true
 ProtectHome=read-only
 ProtectSystem=strict
-ReadWritePaths=/opt/fased/host-application /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-controller /etc/systemd/system ${target_home}/.fased
+ReadWritePaths=/opt/fased/host-application /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-controller /usr/local/libexec /etc/systemd/system ${target_home}/.fased
 ReadOnlyPaths=/opt/fased/host-controller /var/lib/fased-host-updater/controller-version.json /var/lib/fased-host-updater/supervisor /etc/systemd/system/fased-host-controller.service /etc/systemd/system/fased-host-controller.service.d /etc/systemd/system/fased-host-updater.service /etc/systemd/system/fased-host-updater.service.d
 ProtectKernelTunables=true
 ProtectKernelModules=true
@@ -6219,6 +6372,7 @@ EOF
   chmod 0644 /etc/systemd/system/fased-host-updater.service
   sync -f "$controller_release_dir/fased-host-updater.mjs"
   sync -f "$controller_release_dir/fased-host-updaterctl.mjs"
+  sync -f "$supervisor_client_path"
   sync -f /var/lib/fased-host-updater/controller-version.json
   sync -f \
     /var/lib/fased-host-updater/supervisor/controller-version.json \
@@ -6536,6 +6690,7 @@ if [[ "$(id -u)" -eq 0 ]]; then
   install_missing_deps_as_root_if_needed
   best_effort_enable_root_host_time_sync
   if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
+    prepare_fresh_hosting_application_boundary
     install_host_signer_and_updater_services
     migrate_legacy_hosted_signer_if_needed
   fi

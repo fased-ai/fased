@@ -132,7 +132,8 @@ printf 'streamed-bootstrap\\n' | bash ${JSON.stringify(harness)}
     expect(coordinator).toContain("FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock");
     expect(coordinator).toContain("FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external");
     expect(installer).toContain("Environment=FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external");
-    expect(services).toContain("--socket-gid ${operator_gid}");
+    expect(services).toContain("--operator-gid ${operator_gid}");
+    expect(services).toContain("--socket-uid 0 --socket-gid 0");
     expect(services).toContain("-socket /run/fased-signerd/app.sock");
     expect(services).toContain("-operator-socket /run/fased-signerd/operator.sock");
     expect(services).toContain("updater_socket_attempt < 150");
@@ -169,6 +170,21 @@ printf 'streamed-bootstrap\\n' | bash ${JSON.stringify(harness)}
     expect(sharedState).toContain(
       'setfacl --recursive --physical --modify "user:${target_user}:rwX" "$shared_entry"',
     );
+    expect(sharedState).toContain('chgrp -hR "$config_group" "$shared_entry"');
+    expect(sharedState).toContain('chmod -R g+rwX,o-rwx "$shared_entry"');
+    expect(sharedState).not.toContain('chgrp -R "$config_group" "$state_dir"');
+    expect(sharedState).not.toContain('chmod -R g+rwX,o-rwx "$state_dir"');
+    for (const privilegedRoot of [
+      "backups",
+      "bin",
+      "install-cache",
+      "runtime",
+      "signer-update",
+      "source-paired-update",
+      "updater",
+    ]) {
+      expect(sharedState).toContain(`! -name ${privilegedRoot}`);
+    }
   });
 
   it("delays SSH and firewall hardening until runtime health and never asks for DNS retyping", () => {
@@ -323,7 +339,7 @@ tailscale_serve_route_ready 18789
     const hostedRepair = sliceBetween(
       noOnboard,
       'if [[ "$HOSTING_REPAIR_REQUESTED" -eq 1 ]]',
-      "if ! prepare_existing_local_signer_after_runtime_install",
+      'if [[ "$PROTECTED_LOCAL_BOOTSTRAPPED" -eq 1 ]]',
     );
 
     expect(hostedRepair).toContain("Hosted application runtime repair staged");
@@ -366,6 +382,44 @@ tailscale_serve_route_ready 18789
     expect(rootCoordinator.indexOf("verify_root_coordinated_hosted_gateway")).toBeLessThan(
       rootCoordinator.indexOf("finalize_legacy_hosted_signer_migration"),
     );
+  });
+
+  it("uses the root-selected application once instead of activating a second app-owned copy", () => {
+    const activation = sliceBetween(
+      installer,
+      "activate_prepared_hosting_runtime()",
+      "install_prebuilt_release_runtime()",
+    );
+    const prebuilt = sliceBetween(
+      installer,
+      "install_prebuilt_release_runtime()",
+      "pass_args_contains()",
+    );
+    expect(activation).toContain("authorizePreactivatedHostedGateway");
+    expect(activation).toContain("/opt/fased/host-application/releases/v${version}");
+    expect(activation).toContain('manifest?.runtime?.releasesDir || ""');
+    expect(activation).toContain("currentRoot !== expectedRoot");
+    expect(prebuilt.indexOf("activate_prepared_hosting_runtime")).toBeLessThan(
+      prebuilt.indexOf("scripts/install-hosted-runtime.sh"),
+    );
+    expect(prebuilt).toContain("return 0\n  fi\n  local npm_prefix=");
+  });
+
+  it("preserves an existing protected Gateway boundary during Hosting repair", () => {
+    const prepareBoundary = sliceBetween(
+      installer,
+      "prepare_fresh_hosting_application_boundary()",
+      "run_tailscale_auth_from_private_file()",
+    );
+    const existingBoundary = sliceBetween(
+      prepareBoundary,
+      "if [[ -f /etc/systemd/system/fased-gateway.service",
+      'echo "== Root bootstrap: establishing the Hosting application boundary',
+    );
+    const rootCoordinator = sliceBetween(installer, "reexec_as_app_user()", "go_modern_enough()");
+    expect(existingBoundary).toContain("HOSTING_APPLICATION_BOUNDARY_PREPARED=1");
+    expect(existingBoundary).toContain("return 0");
+    expect(rootCoordinator).toContain('if [[ "$HOSTING_APPLICATION_BOUNDARY_PREPARED" -ne 1 ]]');
   });
 
   it.each(["fresh", "repair", "pre-v2 migration"])(

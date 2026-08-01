@@ -14,6 +14,10 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import {
+  ensureSupervisorTargetController,
+  requestSupervisorOperation,
+} from "./fased-host-updaterctl.mjs";
 import { readHostedReleaseManifestV2, verifyManifestArtifact } from "./hosted-release-manifest.mjs";
 import {
   assertManagedRuntime,
@@ -49,7 +53,6 @@ const LEGACY_RELEASE_AUTHORITY = Object.freeze({
   denySelfHostedRunners: true,
 });
 const HOST_UPDATER_SOCKET = "/run/fased-host-updater/request.sock";
-const HOST_UPDATER_SCHEMA_VERSION = 2;
 const HOSTED_TRANSACTION_SCHEMA_VERSION = 1;
 const HOSTED_TRANSACTION_PHASES = new Set([
   "prepared",
@@ -139,6 +142,7 @@ const LOCAL_SIGNER_REQUIRED_FEATURES = [
 ];
 export const MANAGED_UPDATER_SUPPORT_FILES = Object.freeze([
   "fased-managed-updater-core.mjs",
+  "fased-host-updaterctl.mjs",
   "hosted-release-manifest.mjs",
   "lifecycle-trust-crypto.mjs",
   "lifecycle-trust-policy.mjs",
@@ -1463,109 +1467,44 @@ async function requestHostedSignerTransaction(
   if (!TRANSACTION_ID_PATTERN.test(transactionId)) {
     throw new Error("host updater transaction ID must be a UUIDv4");
   }
-  return await new Promise((resolve, reject) => {
-    const socket = net.createConnection({ path: socketPath });
-    socket.setEncoding("utf8");
-    socket.setTimeout(timeoutMs);
-    let body = "";
-    let settled = false;
-    let requestSent = false;
-    const fail = (error, ambiguous = requestSent) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      socket.destroy();
-      reject(
-        hostedUpdaterError(
-          error,
-          ambiguous,
-          socketPath.startsWith("/run/fased-local-controller/"),
-          version,
-        ),
-      );
-    };
-    socket.once("connect", () => {
-      requestSent = true;
-      socket.write(
-        `${JSON.stringify({
-          schemaVersion: HOST_UPDATER_SCHEMA_VERSION,
-          op: operation,
-          transactionId,
-          version,
-        })}\n`,
-      );
+  try {
+    const response = await requestSupervisorOperation({
+      socketPath,
+      operation,
+      transactionId,
+      nonce: randomUUID(),
+      version,
+      timeoutMs,
     });
-    socket.on("data", (chunk) => {
-      body += chunk;
-      const newline = body.indexOf("\n");
-      if (newline < 0 || settled) {
-        return;
-      }
-      try {
-        const response = JSON.parse(body.slice(0, newline));
-        if (
-          !response?.ok ||
-          response.transactionId !== transactionId ||
-          response.version !== version
-        ) {
-          const explicitPreV2Rejection =
-            response?.ok === false &&
-            /unsupported|schema|transactionId|request contains unsupported fields/i.test(
-              response?.error || "",
-            );
-          fail(
-            new Error(response?.error || `host updater rejected ${operation}`),
-            !explicitPreV2Rejection,
-          );
-          return;
-        }
-        if (response.release !== undefined) {
-          response.release = parseSignerReleaseIdentity(response.release, version);
-        } else if (
-          new Set([
-            "applyRelease",
-            "prepareRelease",
-            "activateRelease",
-            "authorizeGatewayRelease",
-          ]).has(operation)
-        ) {
-          fail(new Error(`host updater ${operation} response omitted signer release identity`));
-          return;
-        }
-        if (
-          operation === "updateController" &&
-          (typeof response.controllerChanged !== "boolean" ||
-            !TRANSACTION_ID_PATTERN.test(response.controllerInstanceId || ""))
-        ) {
-          fail(new Error("host updater returned an invalid controller identity"));
-          return;
-        }
-        settled = true;
-        socket.destroy();
-        resolve(response);
-      } catch (error) {
-        fail(
-          new Error(`host updater returned an invalid response: ${error.message}`, {
-            cause: error,
-          }),
-        );
-      }
-    });
-    socket.once("timeout", () => fail(new Error(`host updater timed out during ${operation}`)));
-    socket.once("error", (error) =>
-      fail(
-        new Error(`root-managed signer updater is unavailable (${error.message})`, {
-          cause: error,
-        }),
-      ),
+    if (response.release !== undefined) {
+      response.release = parseSignerReleaseIdentity(response.release, version);
+    } else if (
+      new Set(["applyRelease", "prepareRelease", "activateRelease", "authorizeGatewayRelease"]).has(
+        operation,
+      )
+    ) {
+      throw new Error(`host updater ${operation} response omitted signer release identity`);
+    }
+    if (
+      operation === "updateController" &&
+      (typeof response.controllerChanged !== "boolean" ||
+        !TRANSACTION_ID_PATTERN.test(response.controllerInstanceId || ""))
+    ) {
+      throw new Error("host updater returned an invalid controller identity");
+    }
+    return response;
+  } catch (error) {
+    const explicitPreV2Rejection =
+      /unsupported|schema|transactionId|request contains unsupported fields/iu.test(
+        error?.message || "",
+      );
+    throw hostedUpdaterError(
+      error,
+      error?.supervisorRequestSent === true && !explicitPreV2Rejection,
+      socketPath.startsWith("/run/fased-local-controller/"),
+      version,
     );
-    socket.once("close", () => {
-      if (!settled) {
-        fail(new Error("host updater closed before returning a response"));
-      }
-    });
-  });
+  }
 }
 
 async function requestHostedSignerTransactionWithRetry(
@@ -1620,30 +1559,10 @@ async function ensureHostedControllerRelease(
       ));
   const wait =
     overrides.wait ?? (async () => await new Promise((resolve) => setTimeout(resolve, 500)));
-  const first = await send();
-  if (first.controllerChanged !== true) {
-    return first;
-  }
-  const priorInstance = first.controllerInstanceId;
-  if (!TRANSACTION_ID_PATTERN.test(priorInstance || "")) {
-    throw new Error("root updater omitted its controller process identity");
-  }
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    await wait();
-    try {
-      const current = await send();
-      if (
-        current.controllerChanged !== true &&
-        TRANSACTION_ID_PATTERN.test(current.controllerInstanceId || "") &&
-        current.controllerInstanceId !== priorInstance
-      ) {
-        return current;
-      }
-    } catch {
-      // systemd is replacing the verified root-controller process.
-    }
-  }
-  throw new Error("verified root updater controller did not restart into the target release");
+  return await ensureSupervisorTargetController(
+    { socketPath, transactionId, version, timeoutMs },
+    { request: send, wait },
+  );
 }
 
 async function handoffTargetOwnedRelease({
@@ -1651,7 +1570,7 @@ async function handoffTargetOwnedRelease({
   targetVersion,
   timeoutMs,
   socketPath,
-  expectedSignerRelease,
+  expectedSignerRelease = null,
   onHandoff = () => undefined,
   ensureController = ensureHostedControllerRelease,
   applyRelease = async () =>
@@ -1669,11 +1588,64 @@ async function handoffTargetOwnedRelease({
   if (
     result.phase !== "committed" ||
     !result.release ||
-    !signerReleaseIdentitiesEqual(result.release, expectedSignerRelease)
+    (expectedSignerRelease !== null &&
+      !signerReleaseIdentitiesEqual(result.release, expectedSignerRelease))
   ) {
     throw new Error("target lifecycle controller returned a mismatched commit receipt");
   }
   return result;
+}
+
+async function convergeRootManagedTarget(
+  {
+    paths,
+    existingManifest,
+    currentVersion,
+    targetVersion,
+    timeoutMs,
+    onHandoff = () => undefined,
+  },
+  overrides = {},
+) {
+  if (!isRootManagedProfile(existingManifest?.profile)) {
+    throw new Error("target-owned convergence requires a root-managed profile");
+  }
+  const transactionId = (overrides.randomTransactionId ?? randomUUID)();
+  const socketPath = (overrides.resolveControllerSocket ?? resolveRootManagedControllerSocket)(
+    paths,
+  );
+  const result = await (overrides.handoff ?? handoffTargetOwnedRelease)({
+    transactionId,
+    targetVersion,
+    timeoutMs,
+    socketPath,
+    onHandoff,
+  });
+  const manifest = (overrides.readManifest ?? readManagedInstallManifest)(paths.manifestPath);
+  const currentRoot = await (overrides.resolveCurrentRoot ?? resolveLinkTarget)(paths.currentLink);
+  const installedVersion = currentRoot
+    ? await (overrides.readVersion ?? readPackageVersion)(currentRoot)
+    : null;
+  if (
+    !manifest ||
+    manifest.profile !== existingManifest.profile ||
+    manifest.runtime?.activeVersion !== targetVersion ||
+    !currentRoot ||
+    installedVersion !== targetVersion
+  ) {
+    throw new Error("target-owned update returned before the managed runtime converged");
+  }
+  // This is a compatibility hint left by old application-owned coordinators.
+  // It cannot authorize or block the root transaction and is retired only
+  // after the supervisor returned an exact committed target.
+  await (overrides.removeLegacyJournal ?? removeHostedTransactionJournal)(paths);
+  return Object.freeze({
+    result,
+    transactionId,
+    currentRoot,
+    manifest,
+    previousVersion: currentVersion,
+  });
 }
 
 export async function authorizePreactivatedHostedGateway({
@@ -2045,6 +2017,32 @@ function managedReleaseRoot(paths, value, label) {
   return resolved;
 }
 
+function managedPreviousReleaseRoot(paths, value, previousManifest) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error("previousRoot is missing from the hosted update journal");
+  }
+  const resolved = path.resolve(value);
+  const stagedReleasesDir = path.resolve(paths.releasesDir);
+  if (path.dirname(resolved) === stagedReleasesDir) {
+    return resolved;
+  }
+
+  const profile = previousManifest?.profile;
+  const hostingReleasesDir = "/opt/fased/host-application/releases";
+  const protectedLocalReleasesPattern =
+    /^\/opt\/fased\/local\/[a-f0-9]{16}\/application\/releases$/u;
+  const canonicalReleasesDir =
+    profile === "hosting"
+      ? hostingReleasesDir
+      : profile === "protected-local" && protectedLocalReleasesPattern.test(path.dirname(resolved))
+        ? path.dirname(resolved)
+        : null;
+  if (!canonicalReleasesDir || path.dirname(resolved) !== canonicalReleasesDir) {
+    throw new Error("previousRoot is outside the managed releases directories");
+  }
+  return resolved;
+}
+
 function validateHostedTransactionJournal(paths, value) {
   if (
     !value ||
@@ -2063,8 +2061,6 @@ function validateHostedTransactionJournal(paths, value) {
   ) {
     throw new Error("hosted application update journal contains an invalid release version");
   }
-  const targetRoot = managedReleaseRoot(paths, value.targetRoot, "targetRoot");
-  const previousRoot = managedReleaseRoot(paths, value.previousRoot, "previousRoot");
   if (
     !isRootManagedProfile(value.nextManifest?.profile) ||
     value.previousManifest?.profile !== value.nextManifest?.profile ||
@@ -2073,6 +2069,12 @@ function validateHostedTransactionJournal(paths, value) {
   ) {
     throw new Error("hosted application update journal manifests do not match the transaction");
   }
+  const targetRoot = managedReleaseRoot(paths, value.targetRoot, "targetRoot");
+  const previousRoot = managedPreviousReleaseRoot(
+    paths,
+    value.previousRoot,
+    value.previousManifest,
+  );
   const signerRelease =
     value.signerRelease == null
       ? null
@@ -5701,23 +5703,7 @@ async function updateManagedRuntime(options) {
         `Warning: could not remove ${staleCache.failed.length} stale managed update cache director${staleCache.failed.length === 1 ? "y" : "ies"}.`,
       );
     }
-    if (isRootManagedProfile(existingManifest.profile)) {
-      await measureStage(
-        timings,
-        existingManifest.profile === "protected-local"
-          ? "interrupted Protected Local transaction recovery"
-          : "interrupted Hosting transaction recovery",
-        () => recoverHostedReleaseTransaction(paths, options.timeoutMs),
-      );
-      existingManifest = readManagedInstallManifest(paths.manifestPath);
-      if (!existingManifest) {
-        throw new Error("Managed installation manifest is invalid after hosted update recovery.");
-      }
-      currentRoot = await resolveLinkTarget(paths.currentLink);
-      currentVersion = currentRoot
-        ? (await readPackageVersion(currentRoot)) || existingManifest.runtime.activeVersion
-        : existingManifest.runtime.activeVersion;
-    } else {
+    if (!isRootManagedProfile(existingManifest.profile)) {
       await measureStage(timings, "interrupted Local app/signer transaction recovery", () =>
         recoverLocalPairedUpdate(paths, options.timeoutMs),
       );
@@ -5738,6 +5724,62 @@ async function updateManagedRuntime(options) {
       currentRoot,
     });
     const comparison = compareVersions(currentVersion, targetVersion);
+    if (isRootManagedProfile(existingManifest.profile)) {
+      if (comparison === 1) {
+        throw new Error(
+          `Refusing to downgrade managed runtime from ${currentVersion} to ${targetVersion} without an explicit release recovery workflow.`,
+        );
+      }
+      if (!options.restart && comparison !== 0) {
+        throw new Error(
+          "Managed transactional updates require service restart and health verification.",
+        );
+      }
+      let handedOff = false;
+      const convergence = await measureStage(timings, "target-owned release transaction", () =>
+        convergeRootManagedTarget({
+          paths,
+          existingManifest,
+          currentVersion,
+          targetVersion,
+          timeoutMs: options.timeoutMs,
+          onHandoff: () => {
+            handedOff = true;
+            targetControllerOwnsCompletion = true;
+          },
+        }),
+      );
+      if (!handedOff) {
+        throw new Error("target-owned update returned without crossing the supervisor boundary");
+      }
+      timings.push({ name: "total", durationMs: Date.now() - commandStartedAt });
+      const alreadyCurrent = comparison === 0 && convergence.result.changed === false;
+      if (options.json) {
+        console.log(
+          JSON.stringify({
+            ok: true,
+            alreadyCurrent,
+            before: currentVersion,
+            after: targetVersion,
+            mode: "target-owned-root-managed-transaction",
+            timings,
+          }),
+        );
+      } else if (alreadyCurrent) {
+        console.log(`Already current: ${targetVersion}`);
+      } else {
+        console.log(`Updated Fased ${currentVersion} -> ${targetVersion}`);
+        console.log("Update mode: target-owned root-managed transaction");
+        console.log("Gateway: verified");
+        if (options.verbose) {
+          console.log("Timing:");
+          for (const timing of timings) {
+            console.log(`  ${timing.name}: ${formatDuration(timing.durationMs)}`);
+          }
+        }
+      }
+      return;
+    }
     let repairCurrentFiles = false;
     if (comparison === 0) {
       const consistency = await inspectLocalManagedConsistency(
@@ -5887,7 +5929,6 @@ async function updateManagedRuntime(options) {
     });
     const { hostedRelease, metadata, releaseRoot, temporaryRoot } = candidate;
     let activated = false;
-    let handedOff = false;
     let previousRoot = currentRoot;
     let previousManifest = existingManifest;
     try {
@@ -5912,30 +5953,7 @@ async function updateManagedRuntime(options) {
         service: existingManifest.service,
         updateChannel: options.channel,
       });
-      if (isRootManagedProfile(existingManifest.profile)) {
-        if (!previousRoot) {
-          throw new Error("Target-owned update requires an active previous runtime.");
-        }
-        const transactionId = randomUUID();
-        const controllerSocketPath = resolveRootManagedControllerSocket(paths);
-        // Scratch extraction is not part of the live release transaction and
-        // must be gone before ownership crosses the handoff boundary.
-        await fsp.rm(temporaryRoot, { recursive: true, force: true });
-        await measureStage(timings, "target-owned release transaction", () =>
-          handoffTargetOwnedRelease({
-            transactionId,
-            targetVersion,
-            timeoutMs: options.timeoutMs,
-            socketPath: controllerSocketPath,
-            expectedSignerRelease: hostedRelease.signer,
-            onHandoff: () => {
-              handedOff = true;
-              targetControllerOwnsCompletion = true;
-            },
-          }),
-        );
-        activated = true;
-      } else {
+      {
         const signerPaths = resolveLocalSignerPaths({ stateDir: paths.stateDir });
         const pairSigner =
           Boolean(previousRoot) && (await localSignerIsInstalledOrConfigured(signerPaths));
@@ -6080,9 +6098,7 @@ async function updateManagedRuntime(options) {
         }
       }
       timings.push({ name: "total", durationMs: Date.now() - commandStartedAt });
-      if (!isRootManagedProfile(existingManifest.profile)) {
-        await recordManagedUpdateSuccess(paths, { version: targetVersion, alreadyCurrent: false });
-      }
+      await recordManagedUpdateSuccess(paths, { version: targetVersion, alreadyCurrent: false });
       if (options.json) {
         console.log(
           JSON.stringify({
@@ -6113,10 +6129,8 @@ async function updateManagedRuntime(options) {
         }
       }
     } finally {
-      if (!handedOff) {
-        await fsp.rm(temporaryRoot, { recursive: true, force: true });
-      }
-      if (!activated && !handedOff) {
+      await fsp.rm(temporaryRoot, { recursive: true, force: true });
+      if (!activated) {
         const active = readManagedInstallManifest(paths.manifestPath);
         if (active?.runtime?.activeVersion !== currentVersion && previousRoot) {
           await atomicSymlink(previousRoot, paths.currentLink).catch(() => undefined);
@@ -6197,6 +6211,7 @@ export const __testing = {
   beginPreactivatedHostedTransaction,
   buildLegacyLocalWalletMigrationPlan,
   coordinateHostedReleaseTransaction,
+  convergeRootManagedTarget,
   hostedUpdaterError,
   handoffTargetOwnedRelease,
   hostedTransactionOperations,

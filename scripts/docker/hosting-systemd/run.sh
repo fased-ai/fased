@@ -4,6 +4,7 @@ set -euo pipefail
 phase="${1:-install}"
 version="${FASED_FIXTURE_VERSION:?missing fixture version}"
 commit="${FASED_FIXTURE_COMMIT:?missing fixture commit}"
+predecessor_version=0.1.75
 gateway_port=18789
 gateway_token=fased-hosting-fixture-token
 rpc_port=19557
@@ -15,6 +16,8 @@ asset="/artifacts/fased-hosted-app-v2-linux-x64-v${version}.tar.gz"
 asset_digest="$(sha256sum "$asset" | awk '{print $1}')"
 verified_root="/var/lib/fased-installer/releases/v${version}/${asset_digest}/extract/package"
 root_store="$(dirname "$(dirname "$verified_root")")"
+release_assets=/var/lib/fased-hosting-fixture/release-assets
+fixture_tls=/var/lib/fased-hosting-fixture/tls
 
 mark_stage() {
   printf 'Hosting fixture stage: %s\n' "$1" | tee /tmp/fased-fixture-stage.out
@@ -179,6 +182,352 @@ verify_wallet() {
     --wallet-id "$wallet_id"
 }
 
+lifecycle_socket_requests() {
+  local socket_path="$1"
+  local operation="$2"
+  local transaction_id="$3"
+  local release_version="$4"
+  local request_count="$5"
+  local output_path="$6"
+  env \
+    FASED_FIXTURE_SOCKET_PATH="$socket_path" \
+    FASED_FIXTURE_OPERATION="$operation" \
+    FASED_FIXTURE_TRANSACTION_ID="$transaction_id" \
+    FASED_FIXTURE_RELEASE_VERSION="$release_version" \
+    FASED_FIXTURE_REQUEST_COUNT="$request_count" \
+    /usr/local/bin/node --input-type=module >"$output_path" <<'EOF_LIFECYCLE_REQUEST'
+import net from "node:net";
+
+const socketPath = process.env.FASED_FIXTURE_SOCKET_PATH;
+const operation = process.env.FASED_FIXTURE_OPERATION;
+const transactionId = process.env.FASED_FIXTURE_TRANSACTION_ID;
+const version = process.env.FASED_FIXTURE_RELEASE_VERSION;
+const requestCount = Number(process.env.FASED_FIXTURE_REQUEST_COUNT);
+const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+async function requestOnce() {
+  return await new Promise((resolve, reject) => {
+    const socket = net.createConnection({ path: socketPath });
+    socket.setEncoding("utf8");
+    socket.setTimeout(120_000);
+    let body = "";
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      reject(error);
+    };
+    socket.once("connect", () => {
+      socket.write(`${JSON.stringify({ schemaVersion: 2, op: operation, transactionId, version })}\n`);
+    });
+    socket.on("data", (chunk) => {
+      body += chunk;
+      const newline = body.indexOf("\n");
+      if (newline < 0 || settled) return;
+      try {
+        settled = true;
+        const response = JSON.parse(body.slice(0, newline));
+        socket.destroy();
+        resolve(response);
+      } catch (error) {
+        fail(error);
+      }
+    });
+    socket.once("timeout", () => fail(new Error(`${operation} timed out`)));
+    socket.once("error", fail);
+    socket.once("close", () => {
+      if (!settled) fail(new Error(`${operation} closed without a response`));
+    });
+  });
+}
+
+async function requestWithRetry() {
+  let lastError;
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    try {
+      return await requestOnce();
+    } catch (error) {
+      lastError = error;
+      if (!new Set(["ENOENT", "ECONNREFUSED", "ECONNRESET", "EPIPE"]).has(error?.code)) {
+        throw error;
+      }
+      await delay(100);
+    }
+  }
+  throw lastError;
+}
+
+const responses = [];
+for (let index = 0; index < requestCount; index += 1) {
+  responses.push(await requestWithRetry());
+  if (index + 1 < requestCount) await delay(500);
+}
+process.stdout.write(`${JSON.stringify(responses)}\n`);
+EOF_LIFECYCLE_REQUEST
+}
+
+verify_supervised_controller_a_to_b() {
+  local controller_state=/var/lib/fased-host-updater
+  local controller_root=/opt/fased/host-controller
+  local controller_unit=fased-host-controller.service
+  local supervisor_unit=fased-host-updater.service
+  local public_socket=/run/fased-host-updater/request.sock
+  local private_socket=/run/fased-host-controller/controller.sock
+  local target_generation=""
+  local predecessor_generation="$controller_root/releases/v$predecessor_version"
+  local supervisor_identity="$controller_state/supervisor/controller-version.json"
+  local product_identity="$controller_state/controller-version.json"
+  local preservation_manifest=/tmp/hosting-controller-a-to-b-preservation.sha256
+  local transaction_id=""
+  local status_transaction_id=""
+  local selection_digest=""
+  local selection_receipt=""
+  local target_manifest_sha=""
+  local target_server_sha=""
+  local target_client_sha=""
+  local controller_pid=""
+  local supervisor_pid=""
+  local request_pid=""
+  local controller_drop_in="/etc/systemd/system/$controller_unit.d"
+  local supervisor_drop_in="/etc/systemd/system/$supervisor_unit.d"
+  local interruption_marker="$controller_state/fixture-controller-interruption"
+  local interruption_script=/usr/local/libexec/fased-fixture-controller-block
+  local interruption_override="$controller_drop_in/98-fixture-block.conf"
+  local failure_marker="$controller_state/fixture-controller-restart-failure"
+  local failure_script=/usr/local/libexec/fased-fixture-controller-fail-once
+  local failure_override="$controller_drop_in/99-fixture-fail-once.conf"
+
+  printf 'Hosting generated-systemd controller transition stage: preflight\n'
+  target_generation="$(readlink -f "$controller_root/current")"
+  test "$target_generation" = "$controller_root/releases/v$version"
+  test -f "$supervisor_identity"
+  test -d "$controller_drop_in"
+  test -d "$supervisor_drop_in"
+  if find "$controller_drop_in" "$supervisor_drop_in" \
+    -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+    echo "Hosting generated-systemd protected unit drop-in boundary is not empty" >&2
+    return 1
+  fi
+
+  printf 'Hosting generated-systemd controller transition stage: preservation-state\n'
+  # The controller-only transition must not mutate product state. Quiesce the
+  # live Gateway while taking and checking exact hashes so its legitimate
+  # device/federation background writes cannot be misclassified as updater
+  # corruption. Product activation, restart, and reboot are exercised below.
+  systemctl stop fased-gateway.service
+  test "$(systemctl is-active fased-gateway.service 2>/dev/null || true)" = "inactive"
+  install -d -m 2770 -o app -g fased-config \
+    "$state/sat-mining/wallets/agent" "$state/extensions"
+  runuser -u app -- env FASED_FIXTURE_MINING_LEDGER="$state/sat-mining/wallets/agent/mining.sqlite" \
+    /usr/local/bin/node --input-type=module <<'EOF_MINING_LEDGER'
+import { DatabaseSync } from "node:sqlite";
+const database = new DatabaseSync(process.env.FASED_FIXTURE_MINING_LEDGER);
+try {
+  database.exec(
+    "CREATE TABLE IF NOT EXISTS mining_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);" +
+      "INSERT OR REPLACE INTO mining_meta(key,value) VALUES('schema_version','1'),('history_revision','7');",
+  );
+} finally {
+  database.close();
+}
+EOF_MINING_LEDGER
+  chown app:fased-config "$state/sat-mining/wallets/agent/mining.sqlite"
+  chmod 0660 "$state/sat-mining/wallets/agent/mining.sqlite"
+  printf '{"schemaVersion":1,"rpc":"fixture-rpc","policy":"agent"}\n' \
+    >"$state/wallet/fixture-policy-rpc.json"
+  printf '{"schemaVersion":1,"enabled":["fixture"]}\n' \
+    >"$state/extensions/fixture-plugin-state.json"
+  chown app:fased-config \
+    "$state/wallet/fixture-policy-rpc.json" \
+    "$state/extensions/fixture-plugin-state.json"
+  chmod 0660 \
+    "$state/wallet/fixture-policy-rpc.json" \
+    "$state/extensions/fixture-plugin-state.json"
+  sha256sum \
+    "$state/wallet/provider-registry.v1.json" \
+    "$state/wallet/fixture-policy-rpc.json" \
+    /var/lib/fased-signerd/state.db \
+    /var/lib/fased-signerd/master.key \
+    "$state/sat-mining/wallets/agent/mining.sqlite" \
+    "$state/identity/device-auth.json" \
+    "$state/federation/access-token.json" \
+    "$state/extensions/fixture-plugin-state.json" \
+    >"$preservation_manifest"
+
+  printf 'Hosting generated-systemd controller transition stage: predecessor-activation\n'
+  systemctl stop "$supervisor_unit" "$controller_unit"
+  rm -rf -- "$predecessor_generation"
+  install -d -m 0755 -o root -g root "$predecessor_generation"
+  install -m 0644 -o root -g root \
+    "$target_generation/fased-host-updater.mjs" \
+    "$predecessor_generation/fased-host-updater.mjs"
+  install -m 0644 -o root -g root \
+    "$target_generation/fased-host-updaterctl.mjs" \
+    "$predecessor_generation/fased-host-updaterctl.mjs"
+  jq --arg version "$predecessor_version" '.version = $version' "$supervisor_identity" \
+    >/tmp/hosting-controller-predecessor-identity.json
+  install -m 0600 -o root -g root \
+    /tmp/hosting-controller-predecessor-identity.json "$supervisor_identity"
+  install -m 0600 -o root -g root \
+    /tmp/hosting-controller-predecessor-identity.json "$product_identity"
+  ln -s "$predecessor_generation" "$controller_root/current.fixture"
+  mv -Tf "$controller_root/current.fixture" "$controller_root/current"
+  systemctl start "$controller_unit" "$supervisor_unit"
+  wait_for_service "$controller_unit"
+  wait_for_service "$supervisor_unit"
+  wait_for_socket "$private_socket"
+  wait_for_socket "$public_socket"
+  status_transaction_id="$(/usr/local/bin/node -e 'process.stdout.write(crypto.randomUUID())')"
+  lifecycle_socket_requests \
+    "$private_socket" controllerStatus "$status_transaction_id" "$predecessor_version" 1 \
+    /tmp/hosting-controller-predecessor-status.json
+  jq -e --arg version "$predecessor_version" \
+    'length == 1 and .[0].ok == true and .[0].controllerVersion == $version' \
+    /tmp/hosting-controller-predecessor-status.json >/dev/null
+
+  printf 'Hosting generated-systemd controller transition stage: interruption-recovery\n'
+  cat >"$interruption_script" <<EOF_CONTROLLER_BLOCK
+#!/usr/bin/env bash
+set -euo pipefail
+while [[ -f "$interruption_marker" ]]; do sleep 0.1; done
+EOF_CONTROLLER_BLOCK
+  chmod 0755 "$interruption_script"
+  cat >"$interruption_override" <<EOF_CONTROLLER_BLOCK_OVERRIDE
+[Service]
+ExecStartPre=$interruption_script
+EOF_CONTROLLER_BLOCK_OVERRIDE
+  chmod 0644 "$interruption_override"
+  touch "$interruption_marker"
+  systemctl daemon-reload
+  transaction_id="$(/usr/local/bin/node -e 'process.stdout.write(crypto.randomUUID())')"
+  lifecycle_socket_requests \
+    "$public_socket" updateController "$transaction_id" "$version" 1 \
+    /tmp/hosting-controller-interrupted.json &
+  request_pid=$!
+  for _ in {1..300}; do
+    if [[ -f "$controller_state/supervisor/controller-transaction.json" ]] && \
+      [[ "$(readlink -f "$controller_root/current")" == "$target_generation" ]]; then
+      break
+    fi
+    sleep 0.1
+  done
+  test -f "$controller_state/supervisor/controller-transaction.json"
+  test "$(readlink -f "$controller_root/current")" = "$target_generation"
+  supervisor_pid="$(systemctl show -p MainPID --value "$supervisor_unit")"
+  test "$supervisor_pid" -gt 1
+  kill -KILL "$supervisor_pid"
+  kill "$request_pid" 2>/dev/null || true
+  wait "$request_pid" 2>/dev/null || true
+  rm -f -- "$interruption_marker" "$interruption_override" "$interruption_script"
+  systemctl daemon-reload
+  systemctl reset-failed "$controller_unit" "$supervisor_unit" || true
+  wait_for_service "$controller_unit"
+  wait_for_service "$supervisor_unit"
+  wait_for_socket "$private_socket"
+  wait_for_socket "$public_socket"
+  test "$(readlink -f "$controller_root/current")" = "$predecessor_generation"
+  test "$(jq -r .version "$supervisor_identity")" = "$predecessor_version"
+  test ! -e "$controller_state/supervisor/controller-transaction.json"
+  sha256sum --check --status "$preservation_manifest"
+
+  printf 'Hosting generated-systemd controller transition stage: injected-rollback\n'
+  cat >"$failure_script" <<EOF_CONTROLLER_FAIL_ONCE
+#!/usr/bin/env bash
+set -euo pipefail
+marker=$failure_marker
+if [[ -f "\$marker" ]]; then
+  rm -f -- "\$marker"
+  exit 72
+fi
+EOF_CONTROLLER_FAIL_ONCE
+  chmod 0755 "$failure_script"
+  cat >"$failure_override" <<EOF_CONTROLLER_FAILURE_OVERRIDE
+[Service]
+ExecStartPre=$failure_script
+EOF_CONTROLLER_FAILURE_OVERRIDE
+  chmod 0644 "$failure_override"
+  touch "$failure_marker"
+  systemctl daemon-reload
+  transaction_id="$(/usr/local/bin/node -e 'process.stdout.write(crypto.randomUUID())')"
+  lifecycle_socket_requests \
+    "$public_socket" updateController "$transaction_id" "$version" 1 \
+    /tmp/hosting-controller-transition-failure.json
+  jq -e \
+    'length == 1 and .[0].ok == false and (.[0].error | contains("controller promotion failed and was restored"))' \
+    /tmp/hosting-controller-transition-failure.json >/dev/null
+  wait_for_service "$controller_unit"
+  test "$(readlink -f "$controller_root/current")" = "$predecessor_generation"
+  test "$(jq -r .version "$supervisor_identity")" = "$predecessor_version"
+  test ! -e "$controller_state/supervisor/controller-transaction.json"
+  test ! -e "$failure_marker"
+  sha256sum --check --status "$preservation_manifest"
+
+  printf 'Hosting generated-systemd controller transition stage: same-command-retry\n'
+  rm -f -- "$failure_override" "$failure_script"
+  systemctl daemon-reload
+  systemctl reset-failed "$controller_unit"
+  lifecycle_socket_requests \
+    "$public_socket" updateController "$transaction_id" "$version" 2 \
+    /tmp/hosting-controller-transition-success.json
+  jq -e --arg version "$version" \
+    'length == 2 and .[0].ok == true and .[0].version == $version and .[0].controllerChanged == true and .[1].ok == true and .[1].version == $version and .[1].controllerChanged == false and (.[1].controllerInstanceId | type == "string") and (.[1].selectionDigest | test("^[a-f0-9]{64}$"))' \
+    /tmp/hosting-controller-transition-success.json >/dev/null
+  wait_for_service "$controller_unit"
+  wait_for_service "$supervisor_unit"
+  test "$(readlink -f "$controller_root/current")" = "$target_generation"
+  test "$(jq -r .version "$supervisor_identity")" = "$version"
+  test -d "$predecessor_generation"
+  test ! -L "$predecessor_generation"
+  test ! -e "$controller_state/supervisor/controller-transaction.json"
+  sha256sum --check --status "$preservation_manifest"
+
+  printf 'Hosting generated-systemd controller transition stage: receipt-binding\n'
+  selection_digest="$(jq -er '.[1].selectionDigest' /tmp/hosting-controller-transition-success.json)"
+  selection_receipt="$controller_state/supervisor/controller-selections/$transaction_id/$selection_digest.json"
+  target_manifest_sha="$(sha256sum /artifacts/fased-hosted-release-v2.json | awk '{print $1}')"
+  target_server_sha="$(sha256sum "$target_generation/fased-host-updater.mjs" | awk '{print $1}')"
+  target_client_sha="$(sha256sum "$target_generation/fased-host-updaterctl.mjs" | awk '{print $1}')"
+  jq -e \
+    --arg transaction "$transaction_id" \
+    --arg version "$version" \
+    --arg commit "$commit" \
+    --arg manifest "$target_manifest_sha" \
+    --arg server "$target_server_sha" \
+    --arg client "$target_client_sha" \
+    --arg instance "$(jq -er '.[1].controllerInstanceId' /tmp/hosting-controller-transition-success.json)" \
+    --arg selection "$selection_digest" \
+    '.transactionId == $transaction and .version == $version and .releaseCommit == $commit and .targetManifestSha256 == $manifest and .controllerServerSha256 == $server and .controllerClientSha256 == $client and .controllerInstanceId == $instance and .selectionDigest == $selection and .protocolCapabilities == {"controllerProtocol":2,"requestSchema":2,"supervisorProtocol":1}' \
+    "$selection_receipt" >/dev/null
+  test "$(cat "$controller_state/supervisor/controller-selections/$transaction_id/current")" = \
+    "$selection_digest"
+
+  printf 'Hosting generated-systemd controller transition stage: namespace-denial\n'
+  controller_pid="$(systemctl show -p MainPID --value "$controller_unit")"
+  test "$controller_pid" -gt 1
+  if nsenter --target "$controller_pid" --mount -- \
+    mkdir "$controller_root/fixture-forbidden-controller-write" 2>/tmp/hosting-controller-write.err; then
+    echo "Hosting target controller wrote its supervisor-owned generation tree" >&2
+    return 1
+  fi
+  if nsenter --target "$controller_pid" --mount -- \
+    touch "$controller_drop_in/fixture-forbidden.conf" 2>/tmp/hosting-controller-drop-in-write.err; then
+    echo "Hosting target controller wrote its own systemd drop-in" >&2
+    return 1
+  fi
+  if nsenter --target "$controller_pid" --mount -- \
+    touch "$supervisor_drop_in/fixture-forbidden.conf" 2>/tmp/hosting-supervisor-drop-in-write.err; then
+    echo "Hosting target controller wrote the supervisor systemd drop-in" >&2
+    return 1
+  fi
+  test ! -e "$controller_root/fixture-forbidden-controller-write"
+  test ! -e "$controller_drop_in/fixture-forbidden.conf"
+  test ! -e "$supervisor_drop_in/fixture-forbidden.conf"
+  systemctl start fased-gateway.service
+  verify_runtime >/tmp/hosting-controller-a-to-b-health.json
+  printf 'Hosting generated-systemd supervised controller A-to-B lifecycle passed\n'
+}
+
 install_fixture_command_shims() {
   mv /usr/local/bin/node /usr/local/bin/node-real
   cat >/usr/local/bin/node <<'EOF_NODE'
@@ -201,6 +550,7 @@ if [[ "${1:-}" == "clone" ]]; then
   mkdir -p "$destination"
   tar \
     --exclude=.git \
+    --exclude=.artifacts \
     --exclude=node_modules \
     --exclude=.pnpm-store \
     --exclude=dist \
@@ -375,6 +725,181 @@ EOF_GATEWAY
   systemctl daemon-reload
 }
 
+prepare_candidate_release_transport() {
+  install -d -m 0755 -o root -g root \
+    "$release_assets" "$fixture_tls" /usr/local/libexec
+  install -m 0755 /artifacts/install.sh "$release_assets/install.sh"
+  install -m 0755 /artifacts/fased-lifecycle-supervisor.mjs \
+    "$release_assets/fased-lifecycle-supervisor.mjs"
+  install -m 0755 /artifacts/fased-host-updater.mjs \
+    "$release_assets/fased-host-updater.mjs"
+  install -m 0755 /artifacts/fased-host-updaterctl.mjs \
+    "$release_assets/fased-host-updaterctl.mjs"
+  install -m 0755 /artifacts/fased-privileged-release-evidence.mjs \
+    "$release_assets/fased-privileged-release-evidence.mjs"
+  install -m 0644 /artifacts/fased-hosted-release-v2.json \
+    "$release_assets/fased-hosted-release-v2.json"
+  install -m 0644 \
+    /artifacts/fased-hosted-app-v2-linux-x64-v${version}.tar.gz \
+    "$release_assets/fased-hosted-app-v2-linux-x64-v${version}.tar.gz"
+  install -m 0644 \
+    /artifacts/fased-hosted-app-v2-linux-arm64-v${version}.tar.gz \
+    "$release_assets/fased-hosted-app-v2-linux-arm64-v${version}.tar.gz"
+  local dependency_asset=""
+  dependency_asset="$(basename "$(find /artifacts -maxdepth 1 -type f \
+    -name 'fased-hosted-deps-linux-x64-*.tar.gz' -print -quit)")"
+  install -m 0644 "/artifacts/$dependency_asset" "$release_assets/$dependency_asset"
+  install -m 0644 \
+    "/artifacts/${dependency_asset/linux-x64/linux-arm64}" \
+    "$release_assets/${dependency_asset/linux-x64/linux-arm64}"
+  local signer_asset=""
+  for signer_asset in \
+    fased-signerd-linux-amd64 \
+    fased-signerd-linux-arm64 \
+    fased-signerd-darwin-amd64 \
+    fased-signerd-darwin-arm64 \
+    fased-signerd-release.json; do
+    install -m 0644 "/artifacts/$signer_asset" "$release_assets/$signer_asset"
+  done
+  install -m 0644 /artifacts/fased-hosted-components-linux-x64-v${version}.spdx.json \
+    "$release_assets/fased-hosted-components-linux-x64-v${version}.spdx.json"
+  install -m 0644 /artifacts/fased-hosted-components-linux-x64-v${version}.spdx.json \
+    "$release_assets/fased-hosted-components-linux-arm64-v${version}.spdx.json"
+  install -m 0644 /artifacts/fased-signerd-components-v${version}.spdx.json \
+    "$release_assets/fased-signerd-components-v${version}.spdx.json"
+
+  local issued_at=""
+  local expires_at=""
+  issued_at="$(date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%S.000Z)"
+  expires_at="$(date -u -d '364 days' +%Y-%m-%dT%H:%M:%S.000Z)"
+  /usr/local/bin/node /repo/scripts/privileged-release-evidence.mjs build \
+    --assets "$release_assets" \
+    --version "$version" \
+    --commit "$commit" \
+    --issued-at "$issued_at" \
+    --vex-decisions /repo/release/vulnerability-decisions-v1.json \
+    --output-dir "$release_assets"
+  /usr/local/bin/node /repo/scripts/build-lifecycle-trust-metadata.mjs \
+    --assets "$release_assets" \
+    --root-policy /repo/release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json \
+    --version "$version" \
+    --commit "$commit" \
+    --issued-at "$issued_at" \
+    --expires-at "$expires_at" \
+    --output "$release_assets/fased-lifecycle-trust-v1.json"
+  local bundle=""
+  for bundle in \
+    fased-hosted-release-v2.json.attestation.json \
+    fased-lifecycle-supervisor.mjs.attestation.json \
+    fased-host-updater.mjs.attestation.json \
+    fased-host-updaterctl.mjs.attestation.json \
+    fased-lifecycle-trust-v1.json.attestation.json \
+    fased-privileged-provenance-v1.intoto.json.attestation.json \
+    fased-signerd-release.attestation.json; do
+    printf '{"fixtureOfflineAttestation":true}\n' >"$release_assets/$bundle"
+    chmod 0644 "$release_assets/$bundle"
+  done
+
+  openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
+    -subj "/CN=Fased Hosting lifecycle fixture CA" \
+    -keyout "$fixture_tls/ca.key" \
+    -out "$fixture_tls/ca.crt" >/dev/null 2>&1
+  openssl req -newkey rsa:2048 -sha256 -nodes \
+    -subj "/CN=github.com" \
+    -keyout "$fixture_tls/github.key" \
+    -out "$fixture_tls/github.csr" >/dev/null 2>&1
+  cat >"$fixture_tls/github.ext" <<'EOF_FIXTURE_TLS_EXT'
+subjectAltName=DNS:github.com
+keyUsage=digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+EOF_FIXTURE_TLS_EXT
+  openssl x509 -req -sha256 -days 2 \
+    -in "$fixture_tls/github.csr" \
+    -CA "$fixture_tls/ca.crt" \
+    -CAkey "$fixture_tls/ca.key" \
+    -CAcreateserial \
+    -extfile "$fixture_tls/github.ext" \
+    -out "$fixture_tls/github.crt" >/dev/null 2>&1
+  chmod 0600 "$fixture_tls/ca.key" "$fixture_tls/github.key"
+  chmod 0644 "$fixture_tls/ca.crt" "$fixture_tls/github.crt"
+  if command -v update-ca-certificates >/dev/null 2>&1; then
+    install -d -m 0755 /usr/local/share/ca-certificates
+    install -m 0644 "$fixture_tls/ca.crt" \
+      /usr/local/share/ca-certificates/fased-hosting-lifecycle-fixture.crt
+    update-ca-certificates >/dev/null
+  elif command -v update-ca-trust >/dev/null 2>&1; then
+    install -d -m 0755 /etc/pki/ca-trust/source/anchors
+    install -m 0644 "$fixture_tls/ca.crt" \
+      /etc/pki/ca-trust/source/anchors/fased-hosting-lifecycle-fixture.crt
+    update-ca-trust extract >/dev/null
+  else
+    echo "Hosting fixture has no supported system CA trust command." >&2
+    exit 1
+  fi
+  grep -Fqx "127.0.0.1 github.com" /etc/hosts ||
+    printf '127.0.0.1 github.com\n' >>/etc/hosts
+  install -d -m 0755 /etc/systemd/system.conf.d
+  cat >/etc/systemd/system.conf.d/90-fased-fixture-ca.conf <<EOF_FIXTURE_SYSTEMD_CA
+[Manager]
+DefaultEnvironment=NODE_EXTRA_CA_CERTS=$fixture_tls/ca.crt
+EOF_FIXTURE_SYSTEMD_CA
+
+  cat >/usr/local/libexec/fased-fixture-github.mjs <<'EOF_FIXTURE_GITHUB'
+import fs from "node:fs";
+import https from "node:https";
+import path from "node:path";
+
+const version = process.env.FASED_FIXTURE_VERSION;
+const releaseAssets = "/var/lib/fased-hosting-fixture/release-assets";
+const releasePrefix = `/fased-ai/fased/releases/download/v${version}/`;
+https
+  .createServer(
+    {
+      key: fs.readFileSync("/var/lib/fased-hosting-fixture/tls/github.key"),
+      cert: fs.readFileSync("/var/lib/fased-hosting-fixture/tls/github.crt"),
+    },
+    (request, response) => {
+      if (request.method !== "GET" || !request.url?.startsWith(releasePrefix)) {
+        response.writeHead(404).end();
+        return;
+      }
+      const asset = decodeURIComponent(request.url.slice(releasePrefix.length));
+      if (!/^[A-Za-z0-9._-]+$/.test(asset)) {
+        response.writeHead(400).end();
+        return;
+      }
+      const selected = path.join(releaseAssets, asset);
+      try {
+        const info = fs.statSync(selected);
+        if (!info.isFile()) throw new Error("not a file");
+        response.writeHead(200, { "content-length": info.size });
+        fs.createReadStream(selected).pipe(response);
+      } catch {
+        response.writeHead(404).end();
+      }
+    },
+  )
+  .listen(443, "127.0.0.1");
+EOF_FIXTURE_GITHUB
+  cat >/etc/systemd/system/fased-fixture-github.service <<EOF_FIXTURE_GITHUB_UNIT
+[Unit]
+Description=Fased fixture exact GitHub release transport
+After=network.target
+
+[Service]
+Type=simple
+Environment=FASED_FIXTURE_VERSION=$version
+ExecStart=/usr/local/bin/node /usr/local/libexec/fased-fixture-github.mjs
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF_FIXTURE_GITHUB_UNIT
+  systemctl daemon-reexec
+  systemctl enable --now fased-fixture-github.service
+  wait_for_service fased-fixture-github.service
+}
+
 install_fixture_rpc() {
   install -d -m 0755 -o root -g root /usr/local/libexec
   cat >/usr/local/libexec/fased-fixture-solana-rpc.mjs <<'EOF_RPC'
@@ -480,6 +1005,19 @@ verify_runtime() {
   fi
 }
 
+if [[ "$phase" == "controller-status" ]]; then
+  diagnostic_transaction_id="$(/usr/local/bin/node -e 'process.stdout.write(crypto.randomUUID())')"
+  lifecycle_socket_requests \
+    /run/fased-host-controller/controller.sock \
+    controllerStatus \
+    "$diagnostic_transaction_id" \
+    "$version" \
+    1 \
+    /tmp/hosting-controller-diagnostic-status.json
+  cat /tmp/hosting-controller-diagnostic-status.json
+  exit 0
+fi
+
 if [[ "$phase" == "verify-reboot" ]]; then
   [[ -f "$snapshot" ]]
   verify_runtime >/tmp/reboot-health.json
@@ -495,6 +1033,8 @@ if [[ "$phase" == "verify-reboot" ]]; then
     "$(jq -r .masterKeySha256 "$snapshot")"
   test "$(sha256sum "$state/wallet/provider-registry.v1.json" | awk '{print $1}')" = \
     "$(jq -r .registrySha256 "$snapshot")"
+  run_app_cli update --channel beta >/tmp/hosting-already-current.out
+  grep -Fx "Already current: $version" /tmp/hosting-already-current.out >/dev/null
   printf 'Hosting reboot fixture passed: %s\n' "$version"
   exit 0
 fi
@@ -505,6 +1045,7 @@ fi
 }
 
 install_fixture_command_shims
+prepare_candidate_release_transport
 install_fixture_system_services
 install_fixture_rpc
 prepare_verified_bundle
@@ -548,6 +1089,8 @@ runuser -u app -- /opt/fased/signer/fased-signerd \
   >/tmp/agent-balance.json
 jq -e '.balance == "3000000000" and .unit == "lamports"' /tmp/agent-balance.json >/dev/null
 
+verify_supervised_controller_a_to_b
+
 mark_stage repair
 chmod 0600 "$state/identity/device-auth.json"
 run_hosting_installer --repair-hosting
@@ -561,7 +1104,11 @@ jq -e '.ready == true and .role == "agent"' /tmp/repair-agent.json >/dev/null
 jq -e '.ready == true and .role == "vault"' /tmp/repair-vault.json >/dev/null
 
 mark_stage injected-activation-failure
-chmod 0600 "$state/identity/device-auth.json"
+# Repair above already proved legacy 0600 -> shared 0660 convergence. Keep
+# that healthy metadata as the product-transaction baseline: prepare performs
+# discovery only, while activation gates the Gateway before declared-state
+# reconciliation. A failed activation must therefore restore this exact
+# healthy baseline rather than rely on prepare to mutate live state.
 chmod 0644 /opt/fased/signer/fased-signerd
 /usr/local/bin/node /usr/local/libexec/fased-host-updaterctl.mjs "$version" --prepare-only \
   >/tmp/failure-prepare.json

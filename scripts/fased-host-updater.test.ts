@@ -46,6 +46,7 @@ function supervisorReceipt(
     {
       releaseCommit: signerRelease(version).commit,
       targetManifestSha256,
+      trustPolicySha256: "e".repeat(64),
       identity: {
         serverSha256: CONTROLLER_SERVER_SHA256,
         clientSha256: CONTROLLER_CLIENT_SHA256,
@@ -109,6 +110,7 @@ async function createFixture(
     protectedService?: boolean;
     missingPreviousApplication?: boolean;
     managedApplication?: boolean;
+    managedApplicationProfile?: "protected-local" | "hosting";
     emptyManagedApplication?: boolean;
     managedInstallSchema?: 1 | 2;
     trackUpdaterGeneration?: boolean;
@@ -118,9 +120,12 @@ async function createFixture(
 ) {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-updater-"));
   cleanupRoots.push(root);
+  const managedApplicationProfile = options.managedApplicationProfile ?? "protected-local";
   const stateDir = path.join(root, "updater-state");
   const signerPath = path.join(root, "opt", "fased", "signer", "fased-signerd");
   const signerStateDBPath = path.join(root, "signer-state", "state.db");
+  const signerMasterKeyPath = path.join(root, "signer-state", "master.key");
+  const signerAuditLogPath = path.join(root, "signer-state", "audit.jsonl");
   const signerUnitPath = path.join(root, "systemd", "fased-signerd.service");
   const paths = {
     stateDir,
@@ -130,6 +135,8 @@ async function createFixture(
     supervisorStateDir: path.join(stateDir, "supervisor"),
     signerPath,
     signerStateDBPath,
+    signerMasterKeyPath,
+    signerAuditLogPath,
     signerUnitPath,
     versionPath: path.join(stateDir, "signer-version"),
     channelPath: path.join(root, "host-updater-channel"),
@@ -160,12 +167,16 @@ async function createFixture(
   ]);
   await fsp.writeFile(signerPath, "old-signer\n", { mode: 0o755 });
   await fsp.writeFile(signerStateDBPath, "old-db\n", { mode: 0o600 });
+  await fsp.writeFile(signerMasterKeyPath, "old-master-key\n", { mode: 0o600 });
+  await fsp.writeFile(signerAuditLogPath, "old-audit\n", { mode: 0o600 });
   await fsp.writeFile(signerUnitPath, "ExecStart=old-signer\n", { mode: 0o644 });
   await fsp.writeFile(paths.versionPath, "1.2.2\n", { mode: 0o600 });
   if (options.emptyManagedApplication) {
     await Promise.all([
       fsp.rm(signerPath, { force: true }),
       fsp.rm(signerStateDBPath, { force: true }),
+      fsp.rm(signerMasterKeyPath, { force: true }),
+      fsp.rm(signerAuditLogPath, { force: true }),
       fsp.rm(paths.versionPath, { force: true }),
     ]);
   }
@@ -215,7 +226,17 @@ async function createFixture(
       fsp.writeFile(protectedNodeBinary, "#!/bin/sh\nexit 0\n", { mode: 0o755 }),
       fsp.writeFile(
         paths.gatewayUnitPath!,
-        `[Service]
+        managedApplicationProfile === "hosting"
+          ? `[Service]
+User=fased-gateway
+WorkingDirectory=/home/operator/fased
+Environment=HOME=/home/operator
+Environment=FASED_GATEWAY_PORT=18789
+Environment=FASED_HOST_PROFILE=hosting
+ExecStart=${paths.gatewayLauncherPath!}
+ProtectSystem=strict
+`
+          : `[Service]
 User=fsgw-${instanceId}
 WorkingDirectory=/home/operator/.fased/runtime/releases/1.2.2
 Environment=FASED_STATE_DIR=/home/operator/.fased
@@ -261,7 +282,7 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
           path.join(managedStateDir, "install.json"),
           `${JSON.stringify({
             schemaVersion: options.managedInstallSchema ?? 2,
-            profile: "protected-local",
+            profile: managedApplicationProfile,
             source: "managed-artifact",
             stateDir: managedStateDir,
             configPath: path.join(managedStateDir, "fased.json"),
@@ -274,7 +295,10 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
             },
             package: { prefix, compatibilityRoot },
             service: {
-              name: "fased-gateway-0123456789abcdef.service",
+              name:
+                managedApplicationProfile === "hosting"
+                  ? "fased-gateway.service"
+                  : "fased-gateway-0123456789abcdef.service",
               scope: "system",
               launcher: path.join(root, "gateway-launch"),
             },
@@ -293,12 +317,17 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
   let activeSignerVersion = "1.2.2";
   const fixtureTopology = {
     schemaVersion: 1,
-    profile: options.managedApplication ? "protected-local" : "hosting",
+    profile: options.managedApplication ? managedApplicationProfile : "hosting",
     managedApplication: options.managedApplication === true,
-    instanceId: options.managedApplication ? "0123456789abcdef" : null,
+    instanceId:
+      options.managedApplication && managedApplicationProfile === "protected-local"
+        ? "0123456789abcdef"
+        : null,
     stateDir: path.join(root, "operator", ".fased"),
     configPath: path.join(root, "operator", ".fased", "fased.json"),
-    gatewayLauncherPath: options.managedApplication ? path.join(root, "gateway-launch") : undefined,
+    gatewayLauncherPath: options.managedApplication
+      ? (paths.gatewayLauncherPath ?? path.join(root, "gateway-launch"))
+      : undefined,
     operator: {
       name: "operator",
       uid: process.getuid(),
@@ -306,22 +335,30 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
       home: path.join(root, "operator"),
     },
     gateway: {
-      user: options.managedApplication ? "fsgw-0123456789abcdef" : "fased-gateway",
+      user:
+        options.managedApplication && managedApplicationProfile === "protected-local"
+          ? "fsgw-0123456789abcdef"
+          : "fased-gateway",
       uid: process.getuid(),
       gid: process.getgid(),
       unitPath: paths.gatewayUnitPath ?? path.join(root, "systemd", "fased-gateway.service"),
     },
     configGroup: {
-      name: options.managedApplication ? "fscf-0123456789abcdef" : "fased-config",
+      name:
+        options.managedApplication && managedApplicationProfile === "protected-local"
+          ? "fscf-0123456789abcdef"
+          : "fased-config",
       gid: process.getgid(),
     },
     services: {
-      gateway: options.managedApplication
-        ? "fased-gateway-0123456789abcdef.service"
-        : "fased-gateway.service",
-      signer: options.managedApplication
-        ? "fased-signerd-0123456789abcdef.service"
-        : "fased-signerd.service",
+      gateway:
+        options.managedApplication && managedApplicationProfile === "protected-local"
+          ? "fased-gateway-0123456789abcdef.service"
+          : "fased-gateway.service",
+      signer:
+        options.managedApplication && managedApplicationProfile === "protected-local"
+          ? "fased-signerd-0123456789abcdef.service"
+          : "fased-signerd.service",
     },
     capabilities: {
       lifecycleControllerProtocol: 2,
@@ -342,7 +379,9 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
   const context = __testing.createTransactionContext({
     paths,
     historicalQ0TestStateDir: path.join(root, "historical-q0-test-state"),
-    ...(options.protectedService ? { protectedLocalInstanceId: "0123456789abcdef" } : {}),
+    ...(options.protectedService && managedApplicationProfile === "protected-local"
+      ? { protectedLocalInstanceId: "0123456789abcdef" }
+      : {}),
     ...(options.protectedService ? { protectedNodeBinary: path.join(root, "bin", "node") } : {}),
     supervised: options.supervised === true,
     controllerInstanceId: options.supervised ? TRANSACTION_TWO : undefined,
@@ -469,6 +508,10 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
       expect(expectedRelease).toEqual(signerRelease(expectedRelease.version));
       activeSignerVersion = expectedRelease.version;
       await fsp.writeFile(signerStateDBPath, "new-db\n", { mode: 0o600 });
+      await fsp.access(signerMasterKeyPath).catch(async () => {
+        await fsp.writeFile(signerMasterKeyPath, "new-master-key\n", { mode: 0o600 });
+      });
+      await fsp.appendFile(signerAuditLogPath, "activation-audit\n", { mode: 0o600 });
       return { release: expectedRelease, invariant: "preserved-signer-state" };
     },
     startPreviousSigner: async () => {
@@ -836,7 +879,7 @@ describe("root-owned hosted updater protocol", () => {
 
     const journal = await __testing.readJournal(fixture.context);
     expect(journal).toMatchObject({
-      schemaVersion: 6,
+      schemaVersion: 7,
       version: "1.2.3",
       release: signerRelease("1.2.3"),
       migrationSelection: {
@@ -910,7 +953,7 @@ describe("root-owned hosted updater protocol", () => {
     });
     const promoted = await __testing.writeJournal(fixture.context, recovered);
     expect(promoted).toMatchObject({
-      schemaVersion: 6,
+      schemaVersion: 7,
       schemaMigration: recovered.schemaMigration,
     });
   });
@@ -1240,6 +1283,10 @@ describe("root-owned hosted updater protocol", () => {
     ]) {
       expect(fs.existsSync(candidate)).toBe(true);
     }
+    expect(
+      (await fsp.lstat(path.join(managedStateDir, "updater", "fased-managed-updater.mjs"))).mode &
+        0o777,
+    ).toBe(0o755);
     for (const directory of [
       path.join(managedStateDir, "install-cache"),
       path.join(managedStateDir, "install-cache", "npm-global"),
@@ -1380,6 +1427,40 @@ describe("root-owned hosted updater protocol", () => {
     );
   });
 
+  it("preserves an absent baseline when the target initializes a declared shared-state root", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-created-state-root-"));
+    cleanupRoots.push(root);
+    const stateDir = path.join(root, ".fased");
+    await fsp.mkdir(stateDir);
+    await fsp.writeFile(path.join(stateDir, "fased.json"), "{}\n");
+    const topology = {
+      profile: "protected-local",
+      stateDir,
+      operator: {
+        name: "operator",
+        uid: process.getuid(),
+        gid: process.getgid(),
+        home: root,
+      },
+      gateway: { user: "gateway", uid: process.getuid(), unitPath: "/unit" },
+      configGroup: { name: "config", gid: process.getgid() },
+    };
+    const transaction = await __testing.inventoryDeclaredApplicationState(topology, { paths: {} });
+
+    await __testing.reconcileDeclaredApplicationState(transaction);
+    expect((await fsp.stat(path.join(stateDir, "cache"))).mode & 0o2777).toBe(0o2770);
+    await fsp.writeFile(
+      path.join(stateDir, "extensions", "initialized-by-target.json"),
+      '{"schemaVersion":1}\n',
+    );
+
+    await expect(__testing.verifyDeclaredStatePreservation(transaction)).resolves.toMatchObject({
+      ok: true,
+      preservationHash: transaction.preservationHash,
+      preservationHashes: transaction.preservationHashes,
+    });
+  });
+
   it("streams declared Mining state larger than the former fixed hash limit", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-large-mining-state-"));
     cleanupRoots.push(root);
@@ -1428,10 +1509,12 @@ describe("root-owned hosted updater protocol", () => {
 
     const transaction = await __testing.inventoryDeclaredApplicationState(topology, { paths: {} });
     expect(Object.keys(transaction.preservationHashes).toSorted()).toEqual([
+      "agent-session-channel-plugin",
       "device-identity",
       "federation-network",
       "gateway-config-auth",
       "mining",
+      "provider-credentials",
       "wallet",
     ]);
     await expect(__testing.verifyDeclaredStatePreservation(transaction)).resolves.toMatchObject({
@@ -1440,6 +1523,52 @@ describe("root-owned hosted updater protocol", () => {
     });
 
     await fsp.writeFile(path.join(miningDir, "audit-store.json"), '{"records":[1]}\n');
+    await expect(__testing.verifyDeclaredStatePreservation(transaction)).rejects.toThrow(
+      "declared user state changed",
+    );
+  });
+
+  it("streams opaque credential, agent, task, session, channel, and plugin trees", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-opaque-state-"));
+    cleanupRoots.push(root);
+    const stateDir = path.join(root, ".fased");
+    for (const directory of [
+      "secrets",
+      "agents/main/sessions",
+      "channels",
+      "cron",
+      "tasks",
+      "extensions/example",
+    ]) {
+      await fsp.mkdir(path.join(stateDir, directory), { recursive: true });
+    }
+    await Promise.all([
+      fsp.writeFile(path.join(stateDir, "fased.json"), "{}\n"),
+      fsp.writeFile(path.join(stateDir, "secrets", "provider.json"), '{"token":"redacted"}\n'),
+      fsp.writeFile(path.join(stateDir, "agents/main/sessions", "session.json"), "{}\n"),
+      fsp.writeFile(path.join(stateDir, "channels", "delivery.json"), "{}\n"),
+      fsp.writeFile(path.join(stateDir, "cron", "jobs.json"), "{}\n"),
+      fsp.writeFile(path.join(stateDir, "tasks", "task.json"), "{}\n"),
+      fsp.writeFile(path.join(stateDir, "extensions/example", "plugin.js"), "export {};\n"),
+    ]);
+    await fsp.symlink("plugin.js", path.join(stateDir, "extensions/example", "current.js"));
+    const topology = {
+      profile: "protected-local",
+      stateDir,
+      operator: { name: "operator", uid: process.getuid(), gid: process.getgid(), home: root },
+      gateway: { user: "gateway", uid: process.getuid(), unitPath: "/unit" },
+      configGroup: { name: "config", gid: process.getgid() },
+    };
+
+    const transaction = await __testing.inventoryDeclaredApplicationState(topology, { paths: {} });
+    expect(transaction.preservationHashes).toMatchObject({
+      "agent-session-channel-plugin": expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+      "provider-credentials": expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+    });
+    await expect(__testing.verifyDeclaredStatePreservation(transaction)).resolves.toMatchObject({
+      ok: true,
+    });
+    await fsp.writeFile(path.join(stateDir, "tasks", "task.json"), '{"changed":true}\n');
     await expect(__testing.verifyDeclaredStatePreservation(transaction)).rejects.toThrow(
       "declared user state changed",
     );
@@ -1642,6 +1771,30 @@ describe("root-owned hosted updater protocol", () => {
     expect(args).not.toContain("--url");
     expect(args).not.toContain("--token");
     expect(args).not.toContain("--password");
+  });
+
+  it("runs product probes with the complete declared service-account group identity", () => {
+    expect(
+      __testing.systemIdentityExecArguments(1001, 1001, "/usr/bin/node", [
+        "/opt/fased/application/fased.mjs",
+        "wallet",
+        "status",
+        "--json",
+      ]),
+    ).toEqual([
+      "--reuid=1001",
+      "--regid=1001",
+      "--init-groups",
+      "--",
+      "/usr/bin/node",
+      "/opt/fased/application/fased.mjs",
+      "wallet",
+      "status",
+      "--json",
+    ]);
+    expect(() => __testing.systemIdentityExecArguments(0, 1001, "/usr/bin/node", [])).toThrow(
+      "exact non-root numeric identities",
+    );
   });
 
   it("bounds product health to one application process at a time", async () => {
@@ -2159,6 +2312,72 @@ describe("root-owned hosted updater protocol", () => {
     expect(previousLauncher).toBe(failingLauncher);
   });
 
+  it("moves the generated Hosting Gateway onto the managed release and restores it on failure", async () => {
+    const prepared = await createFixture({
+      managedApplication: true,
+      managedApplicationProfile: "hosting",
+      protectedService: true,
+      emptyManagedApplication: true,
+    });
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      prepared.context,
+    );
+    await __testing.activateSignerRelease(
+      request("activateRelease", TRANSACTION_ONE, "1.2.3"),
+      prepared.context,
+    );
+    await __testing.authorizeGatewayRelease(
+      request("authorizeGatewayRelease", TRANSACTION_ONE, "1.2.3"),
+      prepared.context,
+    );
+    const nextUnit = await fsp.readFile(prepared.paths.gatewayUnitPath!, "utf8");
+    const nextLauncher = await fsp.readFile(prepared.paths.gatewayLauncherPath!, "utf8");
+    expect(nextUnit).toContain(`WorkingDirectory=${prepared.paths.applicationCurrentLink!}`);
+    expect(nextUnit).toContain("Environment=FASED_HOST_PROFILE=hosting");
+    expect(nextUnit).toContain("Environment=FASED_STATE_DIR=");
+    expect(nextUnit).toContain(
+      `Environment=FASED_PLUGIN_STATUS_CACHE_PATH=${path.join(
+        prepared.context.applicationTopology.stateDir,
+        "cache",
+        "plugin-status.json",
+      )}`,
+    );
+    expect(nextLauncher).toContain(`${prepared.paths.applicationCurrentLink!}'/dist/entry.js`);
+    expect(nextLauncher).toContain(
+      "Hosting Gateway release identity is unavailable or inconsistent",
+    );
+    expect(nextLauncher).not.toContain("scripts/start-managed.sh");
+
+    const failing = await createFixture({
+      managedApplication: true,
+      managedApplicationProfile: "hosting",
+      protectedService: true,
+      emptyManagedApplication: true,
+    });
+    const previousUnit = await fsp.readFile(failing.paths.gatewayUnitPath!, "utf8");
+    const previousLauncher = await fsp.readFile(failing.paths.gatewayLauncherPath!, "utf8");
+    failing.context.startGateway = async () => {
+      throw new Error("injected Hosting Gateway start failure");
+    };
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_TWO, "1.2.3"),
+      failing.context,
+    );
+    await __testing.activateSignerRelease(
+      request("activateRelease", TRANSACTION_TWO, "1.2.3"),
+      failing.context,
+    );
+    await expect(
+      __testing.authorizeGatewayRelease(
+        request("authorizeGatewayRelease", TRANSACTION_TWO, "1.2.3"),
+        failing.context,
+      ),
+    ).rejects.toThrow("injected Hosting Gateway start failure");
+    expect(await fsp.readFile(failing.paths.gatewayUnitPath!, "utf8")).toBe(previousUnit);
+    expect(await fsp.readFile(failing.paths.gatewayLauncherPath!, "utf8")).toBe(previousLauncher);
+  });
+
   it("recognizes the systemd entrypoint through the immutable current symlink", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-controller-entrypoint-"));
     cleanupRoots.push(root);
@@ -2285,6 +2504,34 @@ describe("root-owned hosted updater protocol", () => {
     ).rejects.toThrow("running target lifecycle controller identity is mismatched");
   });
 
+  it("reports committed product health through the supervised private boundary", async () => {
+    const fixture = await createFixture({
+      supervised: true,
+      runningControllerVersion: "1.2.3",
+    });
+    fixture.context.verifyGateway = async () => ({
+      version: "1.2.3",
+      runtimeSource: "managed-package",
+    });
+    await __testing.applyReleaseTransaction(
+      supervisedRequest("applyRelease", TRANSACTION_ONE, "1.2.3"),
+      fixture.context,
+    );
+
+    await expect(
+      __testing.dispatchUpdateRequest(
+        supervisedRequest("releaseStatus", TRANSACTION_ONE, "1.2.3"),
+        fixture.context,
+      ),
+    ).resolves.toMatchObject({
+      transactionId: TRANSACTION_ONE,
+      version: "1.2.3",
+      phase: "committed",
+      healthy: true,
+      release: signerRelease("1.2.3"),
+    });
+  });
+
   it("keeps controller promotion outside the supervised target transaction", async () => {
     const fixture = await createFixture({
       supervised: true,
@@ -2320,15 +2567,47 @@ describe("root-owned hosted updater protocol", () => {
     expect(fs.existsSync(fixture.paths.journalPath)).toBe(false);
   });
 
+  it("rejects an expired supervisor receipt before product mutation", async () => {
+    const fixture = await createFixture({
+      supervised: true,
+      runningControllerVersion: "1.2.3",
+    });
+    const expiredReceipt = supervisorTesting.createControllerSelectionReceipt(
+      { transactionId: TRANSACTION_ONE, version: "1.2.3" },
+      {
+        releaseCommit: signerRelease("1.2.3").commit,
+        targetManifestSha256: "1".repeat(64),
+        trustPolicySha256: "e".repeat(64),
+        identity: {
+          serverSha256: CONTROLLER_SERVER_SHA256,
+          clientSha256: CONTROLLER_CLIENT_SHA256,
+        },
+      },
+      TRANSACTION_TWO,
+      { now: Date.now() - 25 * 60 * 60 * 1000 },
+    );
+    const updateRequest = parseUpdateRequest({
+      schemaVersion: 2,
+      op: "prepareRelease",
+      transactionId: TRANSACTION_ONE,
+      version: "1.2.3",
+      supervisorReceipt: expiredReceipt,
+    });
+
+    await expect(__testing.prepareSignerRelease(updateRequest, fixture.context)).rejects.toThrow(
+      "outside its validity window",
+    );
+    expect(fixture.events).toEqual([]);
+    expect(fs.existsSync(fixture.paths.journalPath)).toBe(false);
+  });
+
   it("binds a supervised target journal to one immutable selection receipt", async () => {
     const fixture = await createFixture({
       supervised: true,
       runningControllerVersion: "1.2.3",
     });
-    await __testing.prepareSignerRelease(
-      supervisedRequest("prepareRelease", TRANSACTION_ONE, "1.2.3"),
-      fixture.context,
-    );
+    const originalRequest = supervisedRequest("prepareRelease", TRANSACTION_ONE, "1.2.3");
+    await __testing.prepareSignerRelease(originalRequest, fixture.context);
     const conflictingReceipt = supervisorReceipt(
       TRANSACTION_ONE,
       "1.2.3",
@@ -2350,7 +2629,7 @@ describe("root-owned hosted updater protocol", () => {
     ).rejects.toThrow("does not match its supervisor selection receipt");
     expect(await __testing.readJournal(fixture.context)).toMatchObject({
       supervisorReceipt: {
-        selectionDigest: supervisorReceipt(TRANSACTION_ONE, "1.2.3").selectionDigest,
+        selectionDigest: originalRequest.supervisorReceipt.selectionDigest,
       },
       phase: "prepared",
     });
@@ -3345,6 +3624,8 @@ describe("root-owned hosted updater protocol", () => {
     expect(prepared).toMatchObject({ phase: "prepared", changed: true });
     expect(await fsp.readFile(paths.signerPath, "utf8")).toBe("old-signer\n");
     expect(await fsp.readFile(paths.signerStateDBPath, "utf8")).toBe("old-db\n");
+    expect(await fsp.readFile(paths.signerMasterKeyPath, "utf8")).toBe("old-master-key\n");
+    expect(await fsp.readFile(paths.signerAuditLogPath, "utf8")).toBe("old-audit\n");
     expect(await fsp.readFile(paths.versionPath, "utf8")).toBe("1.2.2\n");
     expect(await fsp.readFile(paths.signerUnitPath, "utf8")).toBe("ExecStart=old-signer\n");
     expect(fs.existsSync(paths.gatewayGatePath)).toBe(true);
@@ -3361,6 +3642,10 @@ describe("root-owned hosted updater protocol", () => {
     expect(await fsp.readFile(paths.signerStateDBPath, "utf8")).toBe("new-db\n");
     expect(await fsp.readFile(transactionPaths.previousBinaryPath, "utf8")).toBe("old-signer\n");
     expect(await fsp.readFile(transactionPaths.stateDBSnapshotPath, "utf8")).toBe("old-db\n");
+    expect(await fsp.readFile(transactionPaths.masterKeySnapshotPath, "utf8")).toBe(
+      "old-master-key\n",
+    );
+    expect(await fsp.readFile(transactionPaths.auditLogSnapshotPath, "utf8")).toBe("old-audit\n");
     expect(await fsp.readFile(transactionPaths.signerUnitSnapshotPath, "utf8")).toBe(
       "ExecStart=old-signer\n",
     );
@@ -3368,6 +3653,8 @@ describe("root-owned hosted updater protocol", () => {
     expect(fs.existsSync(paths.signerGatePath)).toBe(true);
 
     await fsp.writeFile(paths.signerUnitPath, "ExecStart=new-signer-v2\n", { mode: 0o644 });
+    await fsp.writeFile(paths.signerMasterKeyPath, "mutated-master-key\n", { mode: 0o600 });
+    await fsp.writeFile(paths.signerAuditLogPath, "mutated-audit\n", { mode: 0o600 });
 
     await __testing.rollbackSignerRelease(
       request("rollbackRelease", TRANSACTION_ONE, "1.2.3"),
@@ -3375,6 +3662,8 @@ describe("root-owned hosted updater protocol", () => {
     );
     expect(await fsp.readFile(paths.signerPath, "utf8")).toBe("old-signer\n");
     expect(await fsp.readFile(paths.signerStateDBPath, "utf8")).toBe("old-db\n");
+    expect(await fsp.readFile(paths.signerMasterKeyPath, "utf8")).toBe("old-master-key\n");
+    expect(await fsp.readFile(paths.signerAuditLogPath, "utf8")).toBe("old-audit\n");
     expect(await fsp.readFile(paths.versionPath, "utf8")).toBe("1.2.2\n");
     expect(await fsp.readFile(paths.signerUnitPath, "utf8")).toBe("ExecStart=old-signer\n");
     expect(fs.existsSync(paths.journalPath)).toBe(false);
@@ -3441,6 +3730,80 @@ describe("root-owned hosted updater protocol", () => {
     expect(fs.existsSync(paths.journalPath)).toBe(false);
     expect(fs.existsSync(paths.gatewayGatePath)).toBe(true);
     expect(fs.existsSync(paths.signerGatePath)).toBe(true);
+  });
+
+  it("restores the previous Gateway when supervised signer activation rolls back", async () => {
+    const { context, events, paths } = await createFixture({
+      supervised: true,
+      runningControllerVersion: "1.2.3",
+    });
+    const prepareRequest = supervisedRequest("prepareRelease", TRANSACTION_ONE, "1.2.3");
+    await __testing.prepareSignerRelease(prepareRequest, context);
+    context.startSignerV2 = async () => {
+      throw new Error("injected supervised signer activation failure");
+    };
+
+    await expect(
+      __testing.activateSignerRelease(
+        parseUpdateRequest({ ...prepareRequest, op: "activateRelease" }),
+        context,
+      ),
+    ).rejects.toThrow("injected supervised signer activation failure");
+    expect(await fsp.readFile(paths.signerPath, "utf8")).toBe("old-signer\n");
+    expect(await fsp.readFile(paths.versionPath, "utf8")).toBe("1.2.2\n");
+    expect(fs.existsSync(paths.journalPath)).toBe(false);
+    expect(fs.existsSync(paths.gatewayGatePath)).toBe(false);
+    expect(fs.existsSync(paths.signerGatePath)).toBe(false);
+    expect(events).toContain("start-gateway");
+  });
+
+  it("rejects signer master-key replacement and restores all signer-private files", async () => {
+    const { context, paths } = await createFixture();
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      context,
+    );
+    context.startSignerV2 = async () => {
+      await fsp.writeFile(paths.signerStateDBPath, "new-db\n", { mode: 0o600 });
+      await fsp.writeFile(paths.signerMasterKeyPath, "replacement-key\n", { mode: 0o600 });
+      await fsp.appendFile(paths.signerAuditLogPath, "activation-audit\n");
+      return { release: signerRelease("1.2.3"), invariant: "preserved-signer-state" };
+    };
+
+    await expect(
+      __testing.activateSignerRelease(
+        request("activateRelease", TRANSACTION_ONE, "1.2.3"),
+        context,
+      ),
+    ).rejects.toThrow("changed its master-key identity");
+    expect(await fsp.readFile(paths.signerStateDBPath, "utf8")).toBe("old-db\n");
+    expect(await fsp.readFile(paths.signerMasterKeyPath, "utf8")).toBe("old-master-key\n");
+    expect(await fsp.readFile(paths.signerAuditLogPath, "utf8")).toBe("old-audit\n");
+  });
+
+  it("fails before signer mutation when transactional snapshot space is insufficient", async () => {
+    const { context, paths } = await createFixture();
+    await __testing.prepareSignerRelease(
+      request("prepareRelease", TRANSACTION_ONE, "1.2.3"),
+      context,
+    );
+    context.assertSnapshotDiskCapacity = async () => {
+      const error = new Error("insufficient disk space for transactional signer snapshot");
+      Object.assign(error, { code: "ENOSPC" });
+      throw error;
+    };
+
+    await expect(
+      __testing.activateSignerRelease(
+        request("activateRelease", TRANSACTION_ONE, "1.2.3"),
+        context,
+      ),
+    ).rejects.toThrow("insufficient disk space");
+    expect(await fsp.readFile(paths.signerPath, "utf8")).toBe("old-signer\n");
+    expect(await fsp.readFile(paths.signerStateDBPath, "utf8")).toBe("old-db\n");
+    expect(await fsp.readFile(paths.signerMasterKeyPath, "utf8")).toBe("old-master-key\n");
+    expect(await fsp.readFile(paths.signerAuditLogPath, "utf8")).toBe("old-audit\n");
+    expect(fs.existsSync(paths.journalPath)).toBe(false);
   });
 
   it("recovers interrupted prepare conservatively without stopping the live signer", async () => {

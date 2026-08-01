@@ -27,6 +27,34 @@ afterEach(() => {
 });
 
 describe("protected Local bootstrap contract", () => {
+  it("restores the operator-only supervisor retry hint after shared-state convergence", async () => {
+    const root = temporaryRoot();
+    const stateDir = path.join(root, ".fased");
+    const hintPath = path.join(stateDir, "protected-local-controller-transaction.json");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(hintPath, '{"schemaVersion":1}\n', { mode: 0o660 });
+    const spec = {
+      stateDir,
+      operatorUid: process.getuid?.() ?? 0,
+      operatorGid: process.getgid?.() ?? 0,
+    };
+
+    await expect(__testing.hardenProtectedLocalClientHint(spec)).resolves.toBe(true);
+    expect(
+      __testing.isProtectedLocalOperatorOnlyState("protected-local-controller-transaction.json"),
+    ).toBe(true);
+    const info = fs.lstatSync(hintPath);
+    expect(info.uid).toBe(process.getuid?.() ?? 0);
+    expect(info.gid).toBe(process.getgid?.() ?? 0);
+    expect(info.mode & 0o777).toBe(0o600);
+
+    fs.rmSync(hintPath);
+    fs.symlinkSync(path.join(root, "outside"), hintPath);
+    await expect(__testing.hardenProtectedLocalClientHint(spec)).rejects.toThrow(
+      /transaction hint is unsafe/u,
+    );
+  });
+
   it("normalizes the root-owned update-channel directory for service traversal", async () => {
     const root = temporaryRoot();
     const layout = buildProtectedLocalLayout("0123456789abcdef");
@@ -191,7 +219,7 @@ describe("protected Local bootstrap contract", () => {
           "protected-local-controller-transaction.json",
         )}`,
         "/usr/bin/node",
-        "/opt/fased/local/0123456789abcdef/controller/current/fased-host-updaterctl.mjs",
+        "/opt/fased/local/0123456789abcdef/supervisor/fased-host-updaterctl.mjs",
         "0.1.80",
         "--apply",
       ],
@@ -748,12 +776,14 @@ default:other::---
     expect(sharedStateAdapter).not.toContain('path.join(spec.stateDir, "identity")');
     expect(sharedStateAdapter).not.toContain('path.join(spec.stateDir, "wallet")');
     expect(sharedStateAdapter).not.toContain('path.join(spec.stateDir, "federation")');
-    expect(updater).toContain(
-      '{ relativePath: "identity", stateClass: "device-identity", create: true }',
+    expect(updater).toMatch(
+      /relativePath: "identity",\s+stateClass: "device-identity",\s+create: true,\s+preserveContent: true,/u,
     );
-    expect(updater).toContain('{ relativePath: "wallet", stateClass: "wallet", create: true }');
-    expect(updater).toContain(
-      '{ relativePath: "federation", stateClass: "federation-network", create: true }',
+    expect(updater).toMatch(
+      /relativePath: "wallet",\s+stateClass: "wallet",\s+create: true,\s+preserveContent: true,/u,
+    );
+    expect(updater).toMatch(
+      /relativePath: "federation",\s+stateClass: "federation-network",\s+create: true,\s+preserveContent: true,/u,
     );
   });
 

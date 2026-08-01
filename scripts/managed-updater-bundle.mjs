@@ -24,6 +24,11 @@ const BUNDLE_FILE_MODES = new Map([
   ["0755", 0o755],
 ]);
 
+function isSafeReleaseDescriptorMode(mode) {
+  const permissions = mode & 0o7777;
+  return (permissions & 0o400) !== 0 && (permissions & 0o7133) === 0;
+}
+
 function canonicalJSON(value) {
   if (Array.isArray(value)) {
     return `[${value.map((entry) => canonicalJSON(entry)).join(",")}]`;
@@ -184,7 +189,7 @@ async function readReleaseIdentity(runtimeRoot) {
           !descriptorStat.isFile() ||
           descriptorStat.isSymbolicLink() ||
           descriptorStat.nlink !== 1 ||
-          (descriptorStat.mode & 0o777) !== 0o644
+          !isSafeReleaseDescriptorMode(descriptorStat.mode)
         ) {
           throw new Error(`managed updater release descriptor is unsafe: ${descriptorPath}`);
         }
@@ -353,7 +358,7 @@ async function verifyManagedUpdaterReleaseDescriptor(runtimeRoot, expected) {
     !named.isFile() ||
     named.isSymbolicLink() ||
     named.nlink !== 1 ||
-    (named.mode & 0o777) !== 0o644
+    !isSafeReleaseDescriptorMode(named.mode)
   ) {
     throw new Error(`managed updater release descriptor is unsafe: ${descriptorPath}`);
   }

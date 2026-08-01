@@ -17,6 +17,7 @@ import {
 const FILES = [
   "fased-managed-updater.mjs",
   "fased-managed-updater-core.mjs",
+  "fased-host-updaterctl.mjs",
   "hosted-release-manifest.mjs",
   "lifecycle-trust-crypto.mjs",
   "lifecycle-trust-policy.mjs",
@@ -258,6 +259,32 @@ describe("managed updater content-addressed bundle", () => {
         runtimeRoot: firstRuntime,
       }),
     ).rejects.toThrow("release descriptor is mismatched");
+  });
+
+  it("accepts a private umask descriptor and rejects a group-writable descriptor", async () => {
+    const { updaterDir, firstRuntime } = await fixture();
+    await makeProductionRuntime(firstRuntime);
+    const descriptorPath = path.join(firstRuntime, ".fased-managed-updater-bundle.json");
+
+    await fs.chmod(descriptorPath, 0o640);
+    await expect(
+      stageManagedUpdaterGeneration({
+        updaterDir,
+        runtimeRoot: firstRuntime,
+        durable: true,
+        activate: false,
+      }),
+    ).resolves.toMatchObject({
+      release: { version: "0.1.76-rc.22", development: false },
+    });
+
+    await fs.chmod(descriptorPath, 0o660);
+    await expect(
+      stageManagedUpdaterGeneration({
+        updaterDir: path.join(path.dirname(updaterDir), "unsafe-updater"),
+        runtimeRoot: firstRuntime,
+      }),
+    ).rejects.toThrow("release descriptor is unsafe");
   });
 
   it("rejects an existing generation with extra or changed files", async () => {

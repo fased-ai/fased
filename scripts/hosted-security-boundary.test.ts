@@ -203,6 +203,12 @@ describe("hosted signer security boundary", () => {
     expect(gatewayService).toContain("SupplementaryGroups=${config_group}");
     expect(gatewayService).toContain("UMask=0007");
     expect(gatewayService).toContain(
+      "Environment=FASED_PLUGIN_STATUS_CACHE_PATH=${target_home}/.fased/cache/plugin-status.json",
+    );
+    expect(gatewayService).toContain(
+      'install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/cache"',
+    );
+    expect(gatewayService).toContain(
       "Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     );
     expect(gatewayService).not.toContain("User=${target_user}");

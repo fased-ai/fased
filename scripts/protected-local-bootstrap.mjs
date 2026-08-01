@@ -902,6 +902,7 @@ async function shareApplicationState(spec, configGroup, legacy) {
   runSystem(chown, ["-R", `${spec.operatorUid}:${configGroup.gid}`, spec.stateDir]);
   runSystem(chmod, ["-R", "g+rwX,o-rwx", spec.stateDir]);
   runSystem(find, [spec.stateDir, "-type", "d", "-exec", chmod, "g+s", "{}", "+"]);
+  await hardenProtectedLocalClientHint(spec);
   for (const protectedRuntimePath of [
     path.join(spec.stateDir, "runtime"),
     path.join(spec.stateDir, "updater"),
@@ -913,16 +914,55 @@ async function shareApplicationState(spec, configGroup, legacy) {
   await protectLegacyMaterial(legacy, spec);
 }
 
+async function hardenProtectedLocalClientHint(spec) {
+  const hintPath = path.join(spec.stateDir, "protected-local-controller-transaction.json");
+  let named;
+  try {
+    named = await fsp.lstat(hintPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+  if (!named.isFile() || named.isSymbolicLink() || named.nlink !== 1) {
+    fail("protected Local supervisor client transaction hint is unsafe");
+  }
+  const handle = await fsp.open(hintPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const current = await handle.stat();
+    if (
+      !current.isFile() ||
+      current.nlink !== 1 ||
+      current.dev !== named.dev ||
+      current.ino !== named.ino
+    ) {
+      fail("protected Local supervisor client transaction hint changed during hardening");
+    }
+    await handle.chown(spec.operatorUid, spec.operatorGid);
+    await handle.chmod(0o600);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  return true;
+}
+
 const PROTECTED_LOCAL_OPERATOR_ONLY_STATE = new Set([
   "backups",
   "bin",
   "extensions",
   "install-cache",
+  "protected-local-controller-transaction.json",
   "runtime",
   "signer-update",
   "source-paired-update",
   "updater",
 ]);
+
+function isProtectedLocalOperatorOnlyState(name) {
+  return PROTECTED_LOCAL_OPERATOR_ONLY_STATE.has(name);
+}
 
 function grantOperatorApplicationStateAccess(spec) {
   const setfacl = systemBinary(["/usr/bin/setfacl", "/bin/setfacl"], "setfacl");
@@ -937,7 +977,7 @@ function grantOperatorApplicationStateAccess(spec) {
   ]);
   for (const name of fs
     .readdirSync(spec.stateDir)
-    .filter((entry) => !PROTECTED_LOCAL_OPERATOR_ONLY_STATE.has(entry))) {
+    .filter((entry) => !isProtectedLocalOperatorOnlyState(entry))) {
     const sharedRoot = path.join(spec.stateDir, name);
     runSystem(find, [
       "-P",
@@ -1056,6 +1096,12 @@ async function installRootFiles(params) {
     0o755,
     { uid: 0, gid: 0 },
   );
+  await atomicCopy(
+    path.join(sourceRoot, "scripts", "fased-host-updaterctl.mjs"),
+    layout.supervisorClient,
+    0o755,
+    { uid: 0, gid: 0 },
+  );
   await installProtectedLocalApplicationRuntime({
     sourceRoot,
     dependencyRoot: path.join(
@@ -1146,7 +1192,7 @@ export function buildProtectedLocalLifecycleApplyCommand(spec, layout, options =
         "protected-local-controller-transaction.json",
       )}`,
       spec.nodeBinary,
-      path.join(layout.installDir, "controller", "current", "fased-host-updaterctl.mjs"),
+      layout.supervisorClient,
       spec.releaseVersion,
       "--apply",
     ]),
@@ -1155,11 +1201,13 @@ export function buildProtectedLocalLifecycleApplyCommand(spec, layout, options =
 
 async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
   const targetSupervisor = path.join(sourceRoot, "scripts", "fased-lifecycle-supervisor.mjs");
+  const targetSupervisorClient = path.join(sourceRoot, "scripts", "fased-host-updaterctl.mjs");
   const targetDigest = crypto
     .createHash("sha256")
     .update(await fsp.readFile(targetSupervisor))
     .digest("hex");
   let installedDigest = null;
+  let installedClientDigest = null;
   try {
     const installedInfo = await fsp.lstat(layout.supervisorBinary);
     if (
@@ -1180,6 +1228,30 @@ async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
       throw error;
     }
   }
+  try {
+    const installedInfo = await fsp.lstat(layout.supervisorClient);
+    if (
+      !installedInfo.isFile() ||
+      installedInfo.isSymbolicLink() ||
+      installedInfo.nlink !== 1 ||
+      installedInfo.uid !== 0 ||
+      (installedInfo.mode & 0o022) !== 0
+    ) {
+      fail("installed protected Local supervisor client is not a protected root-owned file");
+    }
+    installedClientDigest = crypto
+      .createHash("sha256")
+      .update(await fsp.readFile(layout.supervisorClient))
+      .digest("hex");
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  const targetClientDigest = crypto
+    .createHash("sha256")
+    .update(await fsp.readFile(targetSupervisorClient))
+    .digest("hex");
   const operatorGroup = groupRecord(layout.operatorGroup);
   if (!operatorGroup) {
     fail("protected Local operator group is missing during supervisor transition");
@@ -1208,6 +1280,7 @@ async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
     await Promise.all(
       [
         layout.supervisorBinary,
+        layout.supervisorClient,
         path.join("/etc/systemd/system", layout.controllerUnit),
         path.join("/etc/systemd/system", layout.supervisorUnit),
         path.join(layout.supervisorStateDir, "boundary.json"),
@@ -1218,6 +1291,9 @@ async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
     runSystem(systemctl, ["stop", layout.supervisorUnit]);
     if (targetDigest !== installedDigest) {
       await atomicCopy(targetSupervisor, layout.supervisorBinary, 0o755, { uid: 0, gid: 0 });
+    }
+    if (targetClientDigest !== installedClientDigest) {
+      await atomicCopy(targetSupervisorClient, layout.supervisorClient, 0o755, { uid: 0, gid: 0 });
     }
     const bootstrapOutput = runSystem(spec.nodeBinary, [
       layout.supervisorBinary,
@@ -1243,7 +1319,7 @@ async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
     }
     runSystem(systemctl, ["restart", layout.supervisorUnit]);
     await waitForSocket(`/run/fased-local-controller/${layout.instanceId}/request.sock`, 60_000);
-    return targetDigest !== installedDigest;
+    return targetDigest !== installedDigest || targetClientDigest !== installedClientDigest;
   } catch (error) {
     const rollbackFailures = [];
     try {
@@ -3446,6 +3522,8 @@ export const __testing = Object.freeze({
   buildProtectedLocalBootstrapSpec,
   hardenOperatorRuntime,
   hardenInstalledPlugins,
+  hardenProtectedLocalClientHint,
+  isProtectedLocalOperatorOnlyState,
   inspectInstalledPluginTree,
   isRestorableLegacyGatewayUnitFileState,
   gatewayAclGrantState,

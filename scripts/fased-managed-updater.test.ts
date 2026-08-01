@@ -95,6 +95,41 @@ function transactionOperations(events: string[], overrides: Record<string, unkno
 }
 
 describe("stable managed updater", () => {
+  it("accepts only the exact root-owned Hosting predecessor release boundary", () => {
+    const paths = { releasesDir: "/home/app/.fased/runtime/releases" };
+    const journal = {
+      ...transaction(),
+      targetRoot: "/home/app/.fased/runtime/releases/1.2.3",
+      previousRoot: "/opt/fased/host-application/releases/1.2.2",
+      nextManifest: {
+        profile: "hosting",
+        runtime: { activeVersion: "1.2.3" },
+      },
+      previousManifest: {
+        profile: "hosting",
+        runtime: {
+          activeVersion: "1.2.2",
+          // Older Hosting application coordinators persisted their staging
+          // root after the privileged controller had selected the canonical
+          // root-owned predecessor. The exact canonical predecessor remains
+          // safe to accept while that split identity is converged.
+          releasesDir: "/home/app/.fased/runtime/releases",
+        },
+      },
+    };
+
+    expect(__testing.validateHostedTransactionJournal(paths, journal)).toMatchObject({
+      targetRoot: "/home/app/.fased/runtime/releases/1.2.3",
+      previousRoot: "/opt/fased/host-application/releases/1.2.2",
+    });
+    expect(() =>
+      __testing.validateHostedTransactionJournal(paths, {
+        ...journal,
+        previousRoot: "/opt/fased/host-application/escaped/1.2.2",
+      }),
+    ).toThrow("previousRoot is outside the managed releases directories");
+  });
+
   it("reports the exact published-updater bridge boundary for Linux Local installs", () => {
     expect(
       __testing.protectedLocalMigrationRequirement({
@@ -1379,6 +1414,60 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     ).resolves.toMatchObject({ phase: "committed", release: signerRelease() });
     expect(handoffAccepted).toBe(true);
     expect(operations).toEqual(["updateController", "applyRelease"]);
+  });
+
+  it("lets the selected target own all root-managed product mutation", async () => {
+    const operations: string[] = [];
+    const targetRoot = "/opt/fased/application/releases/1.2.3";
+    const paths = {
+      manifestPath: "/home/operator/.fased/install.json",
+      currentLink: "/home/operator/.fased/runtime/current",
+      stateDir: "/home/operator/.fased",
+    };
+    await expect(
+      __testing.convergeRootManagedTarget(
+        {
+          paths,
+          existingManifest: { profile: "protected-local" },
+          currentVersion: "1.2.2",
+          targetVersion: "1.2.3",
+          timeoutMs: 1000,
+          onHandoff: () => operations.push("boundary-crossed"),
+        },
+        {
+          randomTransactionId: () => TRANSACTION_ID,
+          resolveControllerSocket: () => "/run/fased-local-controller/fixture/request.sock",
+          handoff: async (request: Record<string, unknown>) => {
+            operations.push("supervisor-transaction");
+            (request.onHandoff as () => void)();
+            return {
+              ok: true,
+              transactionId: TRANSACTION_ID,
+              version: "1.2.3",
+              phase: "committed",
+              changed: true,
+              release: signerRelease(),
+            };
+          },
+          readManifest: () => ({
+            profile: "protected-local",
+            runtime: { activeVersion: "1.2.3" },
+          }),
+          resolveCurrentRoot: async () => targetRoot,
+          readVersion: async () => "1.2.3",
+          removeLegacyJournal: async () => operations.push("retire-legacy-hint"),
+        },
+      ),
+    ).resolves.toMatchObject({
+      transactionId: TRANSACTION_ID,
+      previousVersion: "1.2.2",
+      currentRoot: targetRoot,
+    });
+    expect(operations).toEqual([
+      "supervisor-transaction",
+      "boundary-crossed",
+      "retire-legacy-hint",
+    ]);
   });
 
   it("distinguishes a definitive pre-v2 rejection from an ambiguous post-send disconnect", async () => {

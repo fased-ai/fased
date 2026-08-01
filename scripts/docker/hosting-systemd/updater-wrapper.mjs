@@ -2,13 +2,18 @@
 
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { __testing, startServer } from "../../fased-host-updater.mjs";
+const { __testing, startServer } =
+  await import("file:///opt/fased/host-controller/current/fased-host-updater.mjs");
 
 const assetsDir = "/artifacts";
 
 async function copyFixtureAsset(url, destination) {
   const asset = path.basename(new URL(url).pathname);
-  const source = path.join(assetsDir, asset);
+  const releaseSource = path.join("/var/lib/fased-hosting-fixture/release-assets", asset);
+  const source = await fsp
+    .access(releaseSource)
+    .then(() => releaseSource)
+    .catch(() => path.join(assetsDir, asset));
   await fsp.copyFile(source, destination);
   await fsp.chmod(destination, 0o600);
 }
@@ -19,6 +24,8 @@ const context = __testing.createTransactionContext({
   signerServiceName: configuration.signerServiceName,
   gatewayServiceName: configuration.gatewayServiceName,
   signerApplicationSocketPath: configuration.signerApplicationSocketPath,
+  supervised: configuration.supervised,
+  controllerConfiguration: configuration,
   downloadReleaseAsset: copyFixtureAsset,
   verifyReleaseAsset: async () => undefined,
 });
