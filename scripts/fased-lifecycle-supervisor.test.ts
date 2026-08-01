@@ -432,6 +432,15 @@ describe("stable lifecycle supervisor contract", () => {
       changed: true,
       release,
     }));
+    const selectionReceipt = __testing.createControllerSelectionReceipt(
+      transaction,
+      {
+        releaseCommit: "a".repeat(40),
+        targetManifestSha256: digest("1"),
+        identity: { serverSha256: digest("2"), clientSha256: digest("3") },
+      },
+      randomUUID(),
+    );
     const context = __testing.createContext(
       {
         profile: "hosting",
@@ -439,7 +448,10 @@ describe("stable lifecycle supervisor contract", () => {
         operatorGid: 1000,
         paths,
       },
-      { requestController: forward },
+      {
+        requestController: forward,
+        readControllerSelectionReceipt: async () => selectionReceipt,
+      },
     );
     const state = { controllerInstanceId: randomUUID() };
 
@@ -483,7 +495,10 @@ describe("stable lifecycle supervisor contract", () => {
       "/usr/bin/node",
     );
     expect(units.controller.content).toContain(
-      "ReadOnlyPaths=/opt/fased/host-controller/supervisor /var/lib/fased-host-updater/supervisor /etc/systemd/system/fixed-supervisor.service",
+      "ReadOnlyPaths=/opt/fased/host-controller /var/lib/fased-host-updater/controller-version.json /var/lib/fased-host-updater/supervisor /etc/systemd/system/fixed-controller.service /etc/systemd/system/fixed-supervisor.service",
+    );
+    expect(units.controller.content).not.toMatch(
+      /^ReadWritePaths=.*\/opt\/fased\/host-controller/mu,
     );
     expect(units.controller.content).toContain("AmbientCapabilities=CAP_SETUID CAP_SETGID");
     expect(units.supervisor.content).toContain(
@@ -680,6 +695,43 @@ describe("stable lifecycle supervisor contract", () => {
     expect(await fsp.readFile(paths.supervisorPath, "utf8")).toBe(fixture.targetSupervisor);
     fixture.context.runningSupervisorDigest = sha256Text(fixture.targetSupervisor);
 
+    const receiptRequests = await fsp.readdir(
+      path.join(paths.supervisorStateDir, "controller-selections"),
+    );
+    expect(receiptRequests).toHaveLength(1);
+    const receiptCurrent = (
+      await fsp.readFile(
+        path.join(paths.supervisorStateDir, "controller-selections", receiptRequests[0], "current"),
+        "utf8",
+      )
+    ).trim();
+    const receipt = JSON.parse(
+      await fsp.readFile(
+        path.join(
+          paths.supervisorStateDir,
+          "controller-selections",
+          receiptRequests[0],
+          `${receiptCurrent}.json`,
+        ),
+        "utf8",
+      ),
+    );
+    expect(receipt).toMatchObject({
+      version,
+      releaseCommit: "a".repeat(40),
+      controllerServerSha256: fixture.targetServerSha,
+      controllerClientSha256: fixture.targetClientSha,
+      controllerInstanceId: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+      ),
+      protocolCapabilities: {
+        supervisorProtocol: 1,
+        controllerProtocol: 2,
+        requestSchema: 2,
+      },
+      selectionDigest: receiptCurrent,
+    });
+
     await expect(
       __testing.handleSupervisorRequest(request(), fixture.context, state),
     ).resolves.toMatchObject({
@@ -782,6 +834,8 @@ describe("stable lifecycle supervisor contract", () => {
             serverSha256: digest("a"),
             clientSha256: digest("b"),
           },
+          releaseCommit: "a".repeat(40),
+          targetManifestSha256: digest("1"),
           generationRoot: "/fixed/next",
           previousGeneration: "/fixed/previous",
           previousIdentity: {
@@ -838,6 +892,8 @@ describe("stable lifecycle supervisor contract", () => {
             serverSha256: digest("a"),
             clientSha256: digest("b"),
           },
+          releaseCommit: "a".repeat(40),
+          targetManifestSha256: digest("1"),
           generationRoot: "/fixed/next",
           previousGeneration: "/fixed/previous",
           previousIdentity: {
@@ -919,6 +975,8 @@ describe("stable lifecycle supervisor contract", () => {
             serverSha256: digest("a"),
             clientSha256: digest("b"),
           },
+          releaseCommit: "a".repeat(40),
+          targetManifestSha256: digest("1"),
           generationRoot: "/fixed/next",
           previousGeneration: "/fixed/previous",
           previousIdentity: {
@@ -998,6 +1056,8 @@ describe("stable lifecycle supervisor contract", () => {
             serverSha256: digest("a"),
             clientSha256: digest("b"),
           },
+          releaseCommit: "a".repeat(40),
+          targetManifestSha256: digest("1"),
         }),
         probeControllerIdentity: probe,
         restartController: restart,

@@ -7,6 +7,7 @@ import fsp from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { startServer, __testing as controllerTesting } from "./fased-host-updater.mjs";
 import {
@@ -23,6 +24,10 @@ const gatewayUid = 1001;
 const configGid = 1002;
 const evidenceDigest = (character) => `sha256:${character.repeat(64)}`;
 const sha256Text = (value) => createHash("sha256").update(value).digest("hex");
+const sha256File = async (filePath) =>
+  createHash("sha256")
+    .update(await fsp.readFile(filePath))
+    .digest("hex");
 
 function signerRelease(version) {
   return {
@@ -344,9 +349,16 @@ async function createRootFixture({ crashPhase = null } = {}) {
   const configPath = path.join(stateDir, "fased.json");
   const deviceAuthPath = path.join(identityDir, "device-auth.json");
   const unknownPath = path.join(stateDir, "owner-private.txt");
+  const walletRegistryPath = path.join(stateDir, "wallet", "provider-registry.v1.json");
+  const walletPolicyPath = path.join(stateDir, "wallet", "wallet-policy-state.v1.json");
+  const miningLedgerPath = path.join(stateDir, "sat-mining", "wallets", "agent", "mining.sqlite");
+  const networkIdentityPath = path.join(stateDir, "federation", "access-token.json");
+  const pluginStatePath = path.join(stateDir, "extensions", "fixture-plugin-state.json");
+  const signerMasterKeyPath = path.join(path.dirname(signerStateDBPath), "master.key");
   const controllerPaths = {
     socketPath: privateSocketPath,
     stateDir: controllerStateDir,
+    supervisorStateDir: path.join(controllerStateDir, "supervisor"),
     controllerReleasesDir: path.join(root, "controller", "releases"),
     controllerCurrentLink: path.join(root, "controller", "current"),
     controllerVersionPath: path.join(controllerStateDir, "controller-version.json"),
@@ -397,6 +409,10 @@ async function createRootFixture({ crashPhase = null } = {}) {
     fsp.mkdir(path.dirname(signerStateDBPath), { recursive: true, mode: 0o700 }),
     fsp.mkdir(path.dirname(signerUnitPath), { recursive: true, mode: 0o755 }),
     fsp.mkdir(identityDir, { recursive: true, mode: 0o700 }),
+    fsp.mkdir(path.dirname(walletRegistryPath), { recursive: true, mode: 0o700 }),
+    fsp.mkdir(path.dirname(miningLedgerPath), { recursive: true, mode: 0o700 }),
+    fsp.mkdir(path.dirname(networkIdentityPath), { recursive: true, mode: 0o700 }),
+    fsp.mkdir(path.dirname(pluginStatePath), { recursive: true, mode: 0o700 }),
     fsp.mkdir(activeControllerRoot, { recursive: true, mode: 0o755 }),
     fsp.mkdir(historicalControllerCandidate, { recursive: true, mode: 0o755 }),
   ]);
@@ -433,11 +449,70 @@ async function createRootFixture({ crashPhase = null } = {}) {
       0o600,
     ),
     writeOwnedFile(unknownPath, "preserve-private\n", operatorUid, operatorGid, 0o600),
+    writeOwnedFile(
+      walletRegistryPath,
+      '{"schemaVersion":1,"wallets":[{"id":"agent","handle":"@wallet:agent"}]}\n',
+      operatorUid,
+      operatorGid,
+      0o600,
+    ),
+    writeOwnedFile(
+      walletPolicyPath,
+      '{"schemaVersion":1,"rpc":"fixture-rpc","policy":"agent"}\n',
+      operatorUid,
+      operatorGid,
+      0o600,
+    ),
+    writeOwnedFile(
+      networkIdentityPath,
+      '{"schemaVersion":1,"handle":"@fased:fixture"}\n',
+      operatorUid,
+      operatorGid,
+      0o600,
+    ),
+    writeOwnedFile(
+      pluginStatePath,
+      '{"schemaVersion":1,"enabled":["fixture"]}\n',
+      operatorUid,
+      operatorGid,
+      0o600,
+    ),
     fsp.writeFile(signerPath, "previous-signer\n", { mode: 0o755 }),
     fsp.writeFile(signerStateDBPath, "preserve-signer-state\n", { mode: 0o600 }),
+    fsp.writeFile(signerMasterKeyPath, "preserve-master-key\n", { mode: 0o600 }),
     fsp.writeFile(signerUnitPath, "ExecStart=previous-signer\n", { mode: 0o644 }),
     fsp.writeFile(controllerPaths.versionPath, `${previousVersion}\n`, { mode: 0o600 }),
   ]);
+  const miningDatabase = new DatabaseSync(miningLedgerPath);
+  try {
+    miningDatabase.exec(
+      "CREATE TABLE mining_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);" +
+        "INSERT INTO mining_meta(key,value) VALUES ('schema_version','1'),('history_revision','7');",
+    );
+  } finally {
+    miningDatabase.close();
+  }
+  await fsp.chown(miningLedgerPath, operatorUid, operatorGid);
+  await fsp.chmod(miningLedgerPath, 0o600);
+  const preservedStatePaths = Object.freeze({
+    walletRegistry: walletRegistryPath,
+    policyRpc: walletPolicyPath,
+    signerDatabase: signerStateDBPath,
+    signerMasterKey: signerMasterKeyPath,
+    miningLedger: miningLedgerPath,
+    networkIdentity: networkIdentityPath,
+    pluginState: pluginStatePath,
+  });
+  const preservedStateDigests = Object.freeze(
+    Object.fromEntries(
+      await Promise.all(
+        Object.entries(preservedStatePaths).map(async ([name, filePath]) => [
+          name,
+          await sha256File(filePath),
+        ]),
+      ),
+    ),
+  );
 
   const topology = Object.freeze({
     schemaVersion: 1,
@@ -483,13 +558,20 @@ async function createRootFixture({ crashPhase = null } = {}) {
   let gatewayStarts = 0;
   let signerStarts = 0;
   let injectedCrash = false;
+  const controllerServerSha256 = sha256Text("fixture server\n");
+  const controllerClientSha256 = sha256Text("fixture client\n");
   const createControllerContext = (selectedCrashPhase = null) =>
     controllerTesting.createTransactionContext({
       paths: controllerPaths,
       rootUid: 0,
       supervised: true,
       runningControllerVersion: targetVersion,
-      controllerInstanceId: "33333333-3333-4333-8333-333333333333",
+      controllerInstanceId: randomUUID(),
+      runningControllerIdentity: {
+        version: targetVersion,
+        serverSha256: controllerServerSha256,
+        clientSha256: controllerClientSha256,
+      },
       historicalQ0TestStateDir: path.join(root, "historical-q0"),
       assertReleaseAllowed: async () => undefined,
       stageControllerRelease: async () => {
@@ -577,7 +659,19 @@ async function createRootFixture({ crashPhase = null } = {}) {
   const supervisorContext = supervisorTesting.createContext(supervisorConfiguration, {
     rootUid: 0,
     rootGid: 0,
-    stageTrustedController: async () => ({ changed: false }),
+    stageTrustedController: async () => ({
+      changed: false,
+      supervisorChanged: false,
+      trustChanged: false,
+      releaseCommit: "a".repeat(40),
+      targetManifestSha256: "1".repeat(64),
+      identity: {
+        schemaVersion: 1,
+        version: targetVersion,
+        serverSha256: controllerServerSha256,
+        clientSha256: controllerClientSha256,
+      },
+    }),
   });
 
   let controller = await startServer({
@@ -597,6 +691,8 @@ async function createRootFixture({ crashPhase = null } = {}) {
     configPath,
     deviceAuthPath,
     unknownPath,
+    preservedStatePaths,
+    preservedStateDigests,
     historicalControllerCandidate,
     stateDir,
     transactionId: randomUUID(),
@@ -650,6 +746,13 @@ async function assertCommittedFixture(fixture) {
   assert.equal(fs.existsSync(fixture.paths.journalPath), false);
   assert.equal(fs.existsSync(fixture.paths.gatewayGatePath), false);
   assert.equal(fs.existsSync(fixture.paths.signerGatePath), false);
+  for (const [name, filePath] of Object.entries(fixture.preservedStatePaths)) {
+    assert.equal(
+      await sha256File(filePath),
+      fixture.preservedStateDigests[name],
+      `${name} changed across the lifecycle transaction`,
+    );
+  }
 
   const receiptPath = path.join(
     fixture.supervisorPaths.supervisorStateDir,
@@ -673,7 +776,9 @@ async function assertCommittedFixture(fixture) {
     controllerChanged: false,
     phase: "committed",
     release: signerRelease(targetVersion),
+    selectionDigest: receipt.selectionDigest,
   });
+  assert.match(receipt.selectionDigest, /^[a-f0-9]{64}$/u);
 }
 
 async function runCommittedFixture() {
@@ -714,6 +819,12 @@ async function runCommittedFixture() {
 async function runCrashRecoveryFixture() {
   const fixture = await createRootFixture({ crashPhase: "schema-ready" });
   try {
+    const selected = await socketRequest(
+      fixture.publicSocketPath,
+      "updateController",
+      fixture.transactionId,
+    );
+    assert.equal(selected.ok, true, JSON.stringify(selected));
     const failed = await socketRequest(
       fixture.publicSocketPath,
       "applyRelease",
@@ -729,7 +840,20 @@ async function runCrashRecoveryFixture() {
     assert.equal(await fsp.readFile(fixture.paths.versionPath, "utf8"), `${previousVersion}\n`);
     assert.equal(await fsp.readFile(fixture.paths.signerPath, "utf8"), "previous-signer\n");
     assert.equal((await fsp.stat(fixture.stateDir)).mode & 0o7777, 0o700);
+    for (const [name, filePath] of Object.entries(fixture.preservedStatePaths)) {
+      assert.equal(
+        await sha256File(filePath),
+        fixture.preservedStateDigests[name],
+        `${name} changed during rollback`,
+      );
+    }
 
+    const reselection = await socketRequest(
+      fixture.publicSocketPath,
+      "updateController",
+      fixture.transactionId,
+    );
+    assert.equal(reselection.ok, true, JSON.stringify(reselection));
     const retried = await socketRequest(
       fixture.publicSocketPath,
       "applyRelease",

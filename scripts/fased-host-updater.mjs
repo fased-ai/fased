@@ -54,6 +54,8 @@ const MANAGED_UPDATER_SUPPORT_FILES = Object.freeze([
 ]);
 const CONTROLLER_SELF_CHECK_SCHEMA_VERSION = 1;
 const CONTROLLER_PROTOCOL_VERSION = 2;
+const SUPERVISOR_PROTOCOL_VERSION = 1;
+const CONTROLLER_SELECTION_SCHEMA_VERSION = 1;
 const SOCKET_PATH = "/run/fased-host-updater/request.sock";
 const STATE_DIR = "/var/lib/fased-host-updater";
 const CONTROLLER_RELEASES_DIR = "/opt/fased/host-controller/releases";
@@ -75,6 +77,11 @@ const REQUEST_TIMEOUT_MS = 20 * 60_000;
 const CROSS_PRODUCT_HEALTH_TIMEOUT_MS = 30_000;
 const JOURNAL_SCHEMA_VERSION = 6;
 const PROTOCOL_SCHEMA_VERSION = 2;
+const CONTROLLER_SELECTION_CAPABILITIES = Object.freeze({
+  supervisorProtocol: SUPERVISOR_PROTOCOL_VERSION,
+  controllerProtocol: CONTROLLER_PROTOCOL_VERSION,
+  requestSchema: PROTOCOL_SCHEMA_VERSION,
+});
 const MIGRATION_SELECTION_SCHEMA_VERSION = 1;
 const SCHEMA_MIGRATION_SCHEMA_VERSION = 1;
 const SUPPORTED_MIGRATION_PROFILES = new Set(["protected-local", "hosting"]);
@@ -257,6 +264,7 @@ const DEFAULT_PATHS = Object.freeze({
   controllerReleasesDir: CONTROLLER_RELEASES_DIR,
   controllerCurrentLink: CONTROLLER_CURRENT_LINK,
   controllerVersionPath: path.join(STATE_DIR, "controller-version.json"),
+  supervisorStateDir: path.join(STATE_DIR, "supervisor"),
   applicationReleasesDir: APPLICATION_RELEASES_DIR,
   applicationCurrentLink: APPLICATION_CURRENT_LINK,
   signerPath: SIGNER_PATH,
@@ -296,6 +304,7 @@ export function protectedLocalControllerConfiguration(instanceId) {
       controllerReleasesDir: `${controllerInstallDir}/releases`,
       controllerCurrentLink: `${controllerInstallDir}/current`,
       controllerVersionPath: `${controllerStateDir}/controller-version.json`,
+      supervisorStateDir: `${controllerStateDir}/supervisor`,
       controllerUnitPath: `/etc/systemd/system/fased-local-controller-${normalized}.service`,
       applicationReleasesDir: `${applicationInstallDir}/releases`,
       applicationCurrentLink: `${applicationInstallDir}/current`,
@@ -335,6 +344,35 @@ function resolveRunningControllerVersion(modulePath = fileURLToPath(import.meta.
   return parseReleaseVersion(match[1]);
 }
 
+function resolveRunningControllerIdentity(modulePath = fileURLToPath(import.meta.url)) {
+  let resolved;
+  try {
+    resolved = fs.realpathSync(modulePath);
+  } catch {
+    return null;
+  }
+  const match =
+    /^\/opt\/fased\/host-controller\/releases\/v([^/]+)\/fased-host-updater\.mjs$/u.exec(
+      resolved,
+    ) ??
+    /^\/opt\/fased\/local\/[a-f0-9]{16}\/controller\/releases\/v([^/]+)\/fased-host-updater\.mjs$/u.exec(
+      resolved,
+    );
+  if (!match) {
+    return null;
+  }
+  const clientPath = path.join(path.dirname(resolved), CONTROLLER_CLIENT_NAME);
+  try {
+    return Object.freeze({
+      version: parseReleaseVersion(match[1]),
+      serverSha256: createHash("sha256").update(fs.readFileSync(resolved)).digest("hex"),
+      clientSha256: createHash("sha256").update(fs.readFileSync(clientPath)).digest("hex"),
+    });
+  } catch {
+    return null;
+  }
+}
+
 export function parseReleaseVersion(value) {
   const version = String(value ?? "")
     .trim()
@@ -353,6 +391,61 @@ function parseTransactionId(value) {
   return transactionId.toLowerCase();
 }
 
+function parseSupervisorSelectionReceipt(value, expected = {}) {
+  exactObjectKeys(
+    value,
+    [
+      "schemaVersion",
+      "transactionId",
+      "version",
+      "releaseCommit",
+      "targetManifestSha256",
+      "controllerServerSha256",
+      "controllerClientSha256",
+      "controllerInstanceId",
+      "protocolCapabilities",
+      "selectionDigest",
+    ],
+    "supervisor controller selection receipt",
+  );
+  exactObjectKeys(
+    value.protocolCapabilities,
+    ["supervisorProtocol", "controllerProtocol", "requestSchema"],
+    "supervisor controller selection capabilities",
+  );
+  const unsigned = {
+    schemaVersion: Number(value.schemaVersion),
+    transactionId: parseTransactionId(value.transactionId),
+    version: parseReleaseVersion(value.version),
+    releaseCommit: String(value.releaseCommit ?? ""),
+    targetManifestSha256: String(value.targetManifestSha256 ?? ""),
+    controllerServerSha256: String(value.controllerServerSha256 ?? ""),
+    controllerClientSha256: String(value.controllerClientSha256 ?? ""),
+    controllerInstanceId: parseTransactionId(value.controllerInstanceId),
+    protocolCapabilities: {
+      supervisorProtocol: Number(value.protocolCapabilities.supervisorProtocol),
+      controllerProtocol: Number(value.protocolCapabilities.controllerProtocol),
+      requestSchema: Number(value.protocolCapabilities.requestSchema),
+    },
+  };
+  const selectionDigest = createHash("sha256").update(canonicalJSON(unsigned)).digest("hex");
+  if (
+    unsigned.schemaVersion !== CONTROLLER_SELECTION_SCHEMA_VERSION ||
+    !/^[a-f0-9]{40}$/u.test(unsigned.releaseCommit) ||
+    !/^[a-f0-9]{64}$/u.test(unsigned.targetManifestSha256) ||
+    !/^[a-f0-9]{64}$/u.test(unsigned.controllerServerSha256) ||
+    !/^[a-f0-9]{64}$/u.test(unsigned.controllerClientSha256) ||
+    canonicalJSON(unsigned.protocolCapabilities) !==
+      canonicalJSON(CONTROLLER_SELECTION_CAPABILITIES) ||
+    value.selectionDigest !== selectionDigest ||
+    (expected.transactionId && unsigned.transactionId !== expected.transactionId) ||
+    (expected.version && unsigned.version !== expected.version)
+  ) {
+    throw new Error("supervisor controller selection receipt is malformed or mismatched");
+  }
+  return Object.freeze({ ...unsigned, selectionDigest });
+}
+
 export function parseUpdateRequest(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("request must be an object");
@@ -365,17 +458,29 @@ export function parseUpdateRequest(value) {
     const version = parseReleaseVersion(value.version);
     throw new Error(legacyHostingBootstrapMessage(version));
   }
-  if (keys.join(",") !== "op,schemaVersion,transactionId,version") {
+  const hasSupervisorReceipt = Object.hasOwn(value, "supervisorReceipt");
+  const expectedKeys = hasSupervisorReceipt
+    ? "op,schemaVersion,supervisorReceipt,transactionId,version"
+    : "op,schemaVersion,transactionId,version";
+  if (keys.join(",") !== expectedKeys) {
     throw new Error("request contains unsupported fields");
   }
   if (value.schemaVersion !== PROTOCOL_SCHEMA_VERSION || !CONTROLLER_OPERATIONS.has(value.op)) {
     throw new Error("unsupported updater transaction request");
   }
-  return {
+  const request = {
     schemaVersion: PROTOCOL_SCHEMA_VERSION,
     op: value.op,
     transactionId: parseTransactionId(value.transactionId),
     version: parseReleaseVersion(value.version),
+  };
+  return {
+    ...request,
+    ...(hasSupervisorReceipt
+      ? {
+          supervisorReceipt: parseSupervisorSelectionReceipt(value.supervisorReceipt, request),
+        }
+      : {}),
   };
 }
 
@@ -568,6 +673,40 @@ function lifecycleSupervisorPaths(configuration) {
     supervisorPath: `/opt/fased/local/${instanceId}/supervisor/fased-lifecycle-supervisor.mjs`,
     supervisorStateDir: `/var/lib/fased-local/${instanceId}/controller/supervisor`,
   });
+}
+
+function supervisorSelectionReceiptPath(paths, receipt) {
+  if (!paths.supervisorStateDir) {
+    throw new Error("supervisor controller selection state is unavailable");
+  }
+  return path.join(
+    paths.supervisorStateDir,
+    "controller-selections",
+    receipt.transactionId,
+    `${receipt.selectionDigest}.json`,
+  );
+}
+
+async function readSupervisorSelectionReceipt(paths, receipt, expectedRootUid = 0) {
+  const receiptPath = supervisorSelectionReceiptPath(paths, receipt);
+  const info = await fsp.lstat(receiptPath);
+  if (
+    !info.isFile() ||
+    info.isSymbolicLink() ||
+    info.nlink !== 1 ||
+    info.uid !== expectedRootUid ||
+    (info.mode & 0o177) !== 0
+  ) {
+    throw new Error("supervisor controller selection receipt is not protected");
+  }
+  const persisted = parseSupervisorSelectionReceipt(
+    JSON.parse(await fsp.readFile(receiptPath, "utf8")),
+    receipt,
+  );
+  if (canonicalJSON(persisted) !== canonicalJSON(receipt)) {
+    throw new Error("supervisor controller selection receipt changed after handoff");
+  }
+  return persisted;
 }
 
 function hostingOperatorUid(operatorGid) {
@@ -2418,6 +2557,14 @@ async function validateJournal(value, context) {
     throw new Error("host updater previous signer-state invariant is invalid");
   }
   const version = parseReleaseVersion(value.version);
+  const transactionId = parseTransactionId(value.transactionId);
+  const supervisorReceipt =
+    value.supervisorReceipt == null
+      ? null
+      : parseSupervisorSelectionReceipt(value.supervisorReceipt, {
+          transactionId,
+          version,
+        });
   const releaseBinding = value.releaseBinding == null ? null : value.releaseBinding;
   if (
     releaseBinding &&
@@ -2530,12 +2677,13 @@ async function validateJournal(value, context) {
   const healthReceipt = validateCrossProductHealthReceipt(value.healthReceipt);
   return {
     ...value,
-    transactionId: parseTransactionId(value.transactionId),
+    transactionId,
     version,
     previousVersion:
       value.previousVersion == null ? null : parseReleaseVersion(value.previousVersion),
     release: parseSignerReleaseIdentity(value.release, version),
     releaseBinding,
+    supervisorReceipt,
     application,
     managedApplication,
     migrationSelection,
@@ -5663,6 +5811,10 @@ function createTransactionContext(overrides = {}) {
   const signerApplicationSocketPath =
     overrides.signerApplicationSocketPath ?? "/run/fased-signerd/app.sock";
   const supervised = overrides.supervised === true;
+  const rootUid =
+    overrides.rootUid ?? (typeof process.geteuid === "function" ? process.geteuid() : 0);
+  const runningControllerIdentity =
+    overrides.runningControllerIdentity ?? resolveRunningControllerIdentity();
   const stageControllerRelease = supervised
     ? null
     : (overrides.stageControllerRelease ??
@@ -5671,12 +5823,18 @@ function createTransactionContext(overrides = {}) {
   const context = {
     paths,
     instanceId: overrides.protectedLocalInstanceId ?? null,
-    rootUid: overrides.rootUid ?? (typeof process.geteuid === "function" ? process.geteuid() : 0),
+    rootUid,
     protectedNodeBinary: overrides.protectedNodeBinary ?? process.execPath,
     supervised,
     controllerInstanceId: overrides.controllerInstanceId ?? randomUUID(),
+    runningControllerIdentity,
     runningControllerVersion:
-      overrides.runningControllerVersion ?? resolveRunningControllerVersion(),
+      overrides.runningControllerVersion ??
+      runningControllerIdentity?.version ??
+      resolveRunningControllerVersion(),
+    readSupervisorSelectionReceipt:
+      overrides.readSupervisorSelectionReceipt ??
+      (async (receipt) => await readSupervisorSelectionReceipt(paths, receipt, rootUid)),
     controllerRestartRequired: false,
     applicationState: overrides.applicationState ?? null,
     applicationTopology: overrides.applicationTopology ?? null,
@@ -5800,26 +5958,42 @@ function createTransactionContext(overrides = {}) {
   return context;
 }
 
-function assertSupervisorSelectedController(request, context) {
+async function assertSupervisorSelectedController(
+  request,
+  context,
+  { allowProcessRestart = false } = {},
+) {
   if (!context.supervised) {
-    return false;
+    return null;
   }
+  const receipt = parseSupervisorSelectionReceipt(request.supervisorReceipt, request);
+  const persisted = await context.readSupervisorSelectionReceipt(receipt);
+  const running = context.runningControllerIdentity;
   if (
     context.runningControllerVersion !== request.version ||
-    !TRANSACTION_ID_PATTERN.test(context.controllerInstanceId || "")
+    !running ||
+    running.version !== request.version ||
+    running.serverSha256 !== persisted.controllerServerSha256 ||
+    running.clientSha256 !== persisted.controllerClientSha256 ||
+    (!allowProcessRestart && context.controllerInstanceId !== persisted.controllerInstanceId)
   ) {
     throw new Error("running target lifecycle controller identity is mismatched");
   }
-  return true;
+  return persisted;
 }
 
 async function controllerForTransaction(request, context) {
-  if (assertSupervisorSelectedController(request, context)) {
+  const receipt = await assertSupervisorSelectedController(request, context);
+  if (receipt) {
     return {
       changed: false,
       identity: {
-        version: context.runningControllerVersion,
-        controllerInstanceId: context.controllerInstanceId,
+        version: receipt.version,
+        controllerInstanceId: receipt.controllerInstanceId,
+        serverSha256: receipt.controllerServerSha256,
+        clientSha256: receipt.controllerClientSha256,
+        targetManifestSha256: receipt.targetManifestSha256,
+        selectionDigest: receipt.selectionDigest,
         selectedBy: "stable-supervisor",
       },
     };
@@ -5923,6 +6097,13 @@ function assertMatchingTransaction(journal, request) {
       `another hosted signer transaction is active (${journal.transactionId}, v${journal.version})`,
     );
   }
+  if (
+    journal.supervisorReceipt &&
+    (!request.supervisorReceipt ||
+      journal.supervisorReceipt.selectionDigest !== request.supervisorReceipt.selectionDigest)
+  ) {
+    throw new Error("host updater request does not match its supervisor selection receipt");
+  }
 }
 
 async function readRollbackFloor(context) {
@@ -5961,7 +6142,7 @@ async function writeInitialRollbackFloor(context, version) {
 }
 
 async function prepareSignerRelease(request, context) {
-  assertSupervisorSelectedController(request, context);
+  const supervisorReceipt = await assertSupervisorSelectedController(request, context);
   await context.assertReleaseAllowed(request.version);
   await assertRollbackFloor(context, request.version);
   const topology = await context.discoverApplicationTopology();
@@ -6049,6 +6230,13 @@ async function prepareSignerRelease(request, context) {
       if (!releaseBinding) {
         throw new Error("signer candidate omitted its attested unified release binding");
       }
+      if (
+        supervisorReceipt &&
+        (releaseBinding.manifestDigest !== `sha256:${supervisorReceipt.targetManifestSha256}` ||
+          releaseBinding.releaseCommit !== supervisorReceipt.releaseCommit)
+      ) {
+        throw new Error("target release does not match the supervisor selection receipt");
+      }
       if (context.paths.applicationReleasesDir && !staged?.application) {
         throw new Error("protected Local release omitted its root-controlled application runtime");
       }
@@ -6068,6 +6256,7 @@ async function prepareSignerRelease(request, context) {
       previousVersion: currentVersion,
       release,
       releaseBinding,
+      supervisorReceipt,
       controllerChanged: controller.changed === true,
       previousSignerInvariant,
       application,
@@ -6907,7 +7096,15 @@ async function cleanupHistoricalQ0Residue(context, journal) {
   }
 
   if (context.supervised) {
-    assertSupervisorSelectedController({ version: journal.version }, context);
+    await assertSupervisorSelectedController(
+      {
+        transactionId: journal.transactionId,
+        version: journal.version,
+        supervisorReceipt: journal.supervisorReceipt,
+      },
+      context,
+      { allowProcessRestart: true },
+    );
     const activeController = await fsp.realpath(context.paths.controllerCurrentLink);
     if (
       activeController !==
@@ -7162,7 +7359,7 @@ async function alreadyCommittedRelease(request, context) {
 }
 
 async function applyReleaseTransaction(request, context) {
-  assertSupervisorSelectedController(request, context);
+  await assertSupervisorSelectedController(request, context);
   let journal = await readJournal(context);
   if (!journal) {
     const committed = await alreadyCommittedRelease(request, context);
@@ -7255,8 +7452,11 @@ async function recoverInterruptedTransaction(context) {
   const request = {
     transactionId: journal.transactionId,
     version: journal.version,
+    supervisorReceipt: journal.supervisorReceipt,
   };
-  assertSupervisorSelectedController(request, context);
+  if (context.supervised && journal.supervisorReceipt) {
+    await assertSupervisorSelectedController(request, context, { allowProcessRestart: true });
+  }
   if (journal.phase === "gateway-verified" || journal.phase === "committing") {
     const result = await finishCommit(context, journal);
     return { recovered: true, action: "committed", result };
@@ -7280,12 +7480,20 @@ async function recoverInterruptedTransaction(context) {
 }
 
 async function dispatchUpdateRequest(request, context) {
-  if (context.supervised && request.op !== "updateController") {
-    assertSupervisorSelectedController(request, context);
+  if (
+    context.supervised &&
+    request.op !== "updateController" &&
+    request.op !== "controllerStatus"
+  ) {
+    await assertSupervisorSelectedController(request, context);
   }
   switch (request.op) {
     case "controllerStatus":
-      if (!context.supervised) {
+      if (
+        !context.supervised ||
+        !context.runningControllerIdentity ||
+        context.runningControllerIdentity.version !== request.version
+      ) {
         throw new Error("running target lifecycle controller identity is mismatched");
       }
       return {
@@ -7293,6 +7501,9 @@ async function dispatchUpdateRequest(request, context) {
         version: request.version,
         controllerVersion: context.runningControllerVersion,
         controllerInstanceId: context.controllerInstanceId,
+        controllerServerSha256: context.runningControllerIdentity.serverSha256,
+        controllerClientSha256: context.runningControllerIdentity.clientSha256,
+        protocolCapabilities: CONTROLLER_SELECTION_CAPABILITIES,
       };
     case "updateController":
       if (context.supervised) {

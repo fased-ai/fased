@@ -93,6 +93,7 @@ const MAX_DOWNLOAD_BYTES = 4 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 20 * 60_000;
 const PRIVATE_UMASK = 0o077;
 const MAX_METADATA_VALIDITY_MS = 400 * 24 * 60 * 60 * 1000;
+const CONTROLLER_SELECTION_SCHEMA_VERSION = 1;
 const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
 const COMMIT_PATTERN = /^[a-f0-9]{40}$/u;
@@ -111,6 +112,11 @@ const CONTROLLER_OPERATIONS = new Set([
   "commitRelease",
   "rollbackRelease",
 ]);
+const CONTROLLER_SELECTION_CAPABILITIES = Object.freeze({
+  supervisorProtocol: SUPERVISOR_PROTOCOL_VERSION,
+  controllerProtocol: CONTROLLER_PROTOCOL_VERSION,
+  requestSchema: 2,
+});
 const RUNNING_SUPERVISOR_SHA256 = createHash("sha256")
   .update(fs.readFileSync(fileURLToPath(import.meta.url)))
   .digest("hex");
@@ -156,6 +162,166 @@ function canonicalRootValue(value) {
 
 function canonicalRootBytes(value) {
   return Buffer.from(canonicalRootValue(value), "utf8");
+}
+
+function controllerSelectionDigest(value) {
+  return createHash("sha256").update(canonicalRootBytes(value)).digest("hex");
+}
+
+function controllerSelectionReceiptPath(paths, transactionId, selectionDigest) {
+  if (
+    !TRANSACTION_ID_PATTERN.test(transactionId || "") ||
+    !DIGEST_PATTERN.test(selectionDigest || "")
+  ) {
+    fail("controller selection receipt path identity is invalid");
+  }
+  return path.join(
+    paths.supervisorStateDir,
+    "controller-selections",
+    transactionId,
+    `${selectionDigest}.json`,
+  );
+}
+
+function parseControllerSelectionReceipt(value) {
+  exactKeys(
+    value,
+    [
+      "schemaVersion",
+      "transactionId",
+      "version",
+      "releaseCommit",
+      "targetManifestSha256",
+      "controllerServerSha256",
+      "controllerClientSha256",
+      "controllerInstanceId",
+      "protocolCapabilities",
+      "selectionDigest",
+    ],
+    "controller selection receipt",
+  );
+  exactKeys(
+    value.protocolCapabilities,
+    ["supervisorProtocol", "controllerProtocol", "requestSchema"],
+    "controller selection protocol capabilities",
+  );
+  const unsigned = {
+    schemaVersion: Number(value.schemaVersion),
+    transactionId: String(value.transactionId ?? "").toLowerCase(),
+    version: parseVersion(value.version),
+    releaseCommit: String(value.releaseCommit ?? ""),
+    targetManifestSha256: String(value.targetManifestSha256 ?? ""),
+    controllerServerSha256: String(value.controllerServerSha256 ?? ""),
+    controllerClientSha256: String(value.controllerClientSha256 ?? ""),
+    controllerInstanceId: String(value.controllerInstanceId ?? "").toLowerCase(),
+    protocolCapabilities: {
+      supervisorProtocol: Number(value.protocolCapabilities.supervisorProtocol),
+      controllerProtocol: Number(value.protocolCapabilities.controllerProtocol),
+      requestSchema: Number(value.protocolCapabilities.requestSchema),
+    },
+  };
+  if (
+    unsigned.schemaVersion !== CONTROLLER_SELECTION_SCHEMA_VERSION ||
+    !TRANSACTION_ID_PATTERN.test(unsigned.transactionId) ||
+    !COMMIT_PATTERN.test(unsigned.releaseCommit) ||
+    !DIGEST_PATTERN.test(unsigned.targetManifestSha256) ||
+    !DIGEST_PATTERN.test(unsigned.controllerServerSha256) ||
+    !DIGEST_PATTERN.test(unsigned.controllerClientSha256) ||
+    !TRANSACTION_ID_PATTERN.test(unsigned.controllerInstanceId) ||
+    canonicalRootValue(unsigned.protocolCapabilities) !==
+      canonicalRootValue(CONTROLLER_SELECTION_CAPABILITIES) ||
+    value.selectionDigest !== controllerSelectionDigest(unsigned)
+  ) {
+    fail("controller selection receipt is malformed or mismatched");
+  }
+  return Object.freeze({ ...unsigned, selectionDigest: value.selectionDigest });
+}
+
+function createControllerSelectionReceipt(request, staged, controllerInstanceId) {
+  const unsigned = {
+    schemaVersion: CONTROLLER_SELECTION_SCHEMA_VERSION,
+    transactionId: request.transactionId,
+    version: request.version,
+    releaseCommit: staged.releaseCommit,
+    targetManifestSha256: staged.targetManifestSha256,
+    controllerServerSha256: staged.identity?.serverSha256,
+    controllerClientSha256: staged.identity?.clientSha256,
+    controllerInstanceId,
+    protocolCapabilities: CONTROLLER_SELECTION_CAPABILITIES,
+  };
+  return parseControllerSelectionReceipt({
+    ...unsigned,
+    selectionDigest: controllerSelectionDigest(unsigned),
+  });
+}
+
+async function writeControllerSelectionReceipt(
+  paths,
+  request,
+  staged,
+  controllerInstanceId,
+  rootUid = 0,
+  rootGid = 0,
+) {
+  const receipt = createControllerSelectionReceipt(request, staged, controllerInstanceId);
+  const receiptPath = controllerSelectionReceiptPath(
+    paths,
+    receipt.transactionId,
+    receipt.selectionDigest,
+  );
+  await atomicWrite(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, 0o600);
+  await fsp.chown(receiptPath, rootUid, rootGid);
+  await fsp.chmod(receiptPath, 0o600);
+  const currentPath = path.join(path.dirname(receiptPath), "current");
+  await atomicWrite(currentPath, `${receipt.selectionDigest}\n`, 0o600);
+  await fsp.chown(currentPath, rootUid, rootGid);
+  await fsp.chmod(currentPath, 0o600);
+  return receipt;
+}
+
+async function readControllerSelectionReceipt(paths, request, rootUid = 0) {
+  let selectionDigest = String(request.selectionDigest ?? "");
+  if (!selectionDigest) {
+    const currentPath = path.join(
+      paths.supervisorStateDir,
+      "controller-selections",
+      request.transactionId,
+      "current",
+    );
+    const currentInfo = await fsp.lstat(currentPath);
+    if (
+      !currentInfo.isFile() ||
+      currentInfo.isSymbolicLink() ||
+      currentInfo.nlink !== 1 ||
+      currentInfo.uid !== rootUid ||
+      (currentInfo.mode & 0o177) !== 0
+    ) {
+      fail("current controller selection receipt is not protected");
+    }
+    selectionDigest = (await fsp.readFile(currentPath, "utf8")).trim();
+  }
+  const receiptPath = controllerSelectionReceiptPath(paths, request.transactionId, selectionDigest);
+  const info = await fsp.lstat(receiptPath);
+  if (
+    !info.isFile() ||
+    info.isSymbolicLink() ||
+    info.nlink !== 1 ||
+    info.uid !== rootUid ||
+    (info.mode & 0o177) !== 0
+  ) {
+    fail("controller selection receipt is not protected");
+  }
+  const receipt = parseControllerSelectionReceipt(
+    JSON.parse(await fsp.readFile(receiptPath, "utf8")),
+  );
+  if (
+    receipt.transactionId !== request.transactionId ||
+    receipt.version !== request.version ||
+    receipt.selectionDigest !== selectionDigest
+  ) {
+    fail("controller selection receipt does not match the supervisor transaction");
+  }
+  return receipt;
 }
 
 function canonicalRootBase64(value, label) {
@@ -1300,6 +1466,7 @@ async function durableReceipt(paths, request, result) {
     controllerChanged: result.controllerChanged === true,
     phase: result.phase ?? null,
     release: result.release ?? null,
+    ...(result.selectionDigest ? { selectionDigest: result.selectionDigest } : {}),
     recordedAt: new Date().toISOString(),
   };
   await atomicWrite(
@@ -1449,13 +1616,19 @@ export async function stageTrustedController(request, context) {
           await context.sealSupervisorArtifact(filePath, context.rootUid, context.rootGid),
       ),
     );
-    const [targetSupervisorDigest, serverSha256, clientSha256, evidenceVerifierSha256] =
-      await Promise.all([
-        sha256(targetSupervisorPath),
-        sha256(serverPath),
-        sha256(clientPath),
-        sha256(evidenceVerifierPath),
-      ]);
+    const [
+      targetSupervisorDigest,
+      serverSha256,
+      clientSha256,
+      evidenceVerifierSha256,
+      targetManifestSha256,
+    ] = await Promise.all([
+      sha256(targetSupervisorPath),
+      sha256(serverPath),
+      sha256(clientPath),
+      sha256(evidenceVerifierPath),
+      sha256(releaseManifestPath),
+    ]);
     if (
       targetSupervisorDigest !== metadata.targets.supervisor.sha256 ||
       serverSha256 !== metadata.targets.controllerServer.sha256 ||
@@ -1581,6 +1754,8 @@ export async function stageTrustedController(request, context) {
       generationRoot,
       previousGeneration,
       previousIdentity: existing,
+      releaseCommit: metadata.release.commit,
+      targetManifestSha256,
       supervisorChanged,
       previousSupervisorDigest,
       targetSupervisorDigest,
@@ -1966,12 +2141,12 @@ function renderBoundaryUnits(configuration, nodeBinary) {
       : `fased-local/${configuration.instanceId}/controller`;
   const controllerWrites =
     configuration.profile === "hosting"
-      ? `/opt/fased/host-controller/releases /opt/fased/host-application /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-controller /etc/systemd/system ${unitPath(appStateDir)}`
+      ? `/opt/fased/host-application /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-controller /etc/systemd/system ${unitPath(appStateDir)}`
       : `/opt/fased/local/${configuration.instanceId} /var/lib/fased-local/${configuration.instanceId}/signer /var/lib/fased-local/${configuration.instanceId}/controller ${unitPath(appStateDir)} /run/fased-local-controller-worker/${configuration.instanceId} /etc/systemd/system`;
   const controllerReadOnly =
     configuration.profile === "hosting"
-      ? `/opt/fased/host-controller/supervisor /var/lib/fased-host-updater/supervisor ${unitPath(path.join("/etc/systemd/system", paths.supervisorUnit))}`
-      : `/opt/fased/local/${configuration.instanceId}/controller /opt/fased/local/${configuration.instanceId}/supervisor /opt/fased/local/${configuration.instanceId}/signer-owner /opt/fased/local/${configuration.instanceId}/operator-socket-finalize /var/lib/fased-local/${configuration.instanceId}/controller/supervisor ${unitPath(path.join("/etc/systemd/system", paths.supervisorUnit))}`;
+      ? `/opt/fased/host-controller /var/lib/fased-host-updater/controller-version.json /var/lib/fased-host-updater/supervisor ${unitPath(path.join("/etc/systemd/system", paths.controllerUnit))} ${unitPath(path.join("/etc/systemd/system", paths.supervisorUnit))}`
+      : `/opt/fased/local/${configuration.instanceId}/controller /opt/fased/local/${configuration.instanceId}/supervisor /opt/fased/local/${configuration.instanceId}/signer-owner /opt/fased/local/${configuration.instanceId}/operator-socket-finalize /var/lib/fased-local/${configuration.instanceId}/controller/controller-version.json /var/lib/fased-local/${configuration.instanceId}/controller/supervisor ${unitPath(path.join("/etc/systemd/system", paths.controllerUnit))} ${unitPath(path.join("/etc/systemd/system", paths.supervisorUnit))}`;
   const controller = `[Unit]
 Description=Fased target lifecycle controller
 After=network-online.target
@@ -2224,6 +2399,10 @@ function createContext(configuration, overrides = {}) {
       overrides.recoverSupervisorTransaction ?? recoverSupervisorTransaction,
     cleanupHistoricalControllerCandidates:
       overrides.cleanupHistoricalControllerCandidates ?? cleanupHistoricalControllerCandidates,
+    writeControllerSelectionReceipt:
+      overrides.writeControllerSelectionReceipt ?? writeControllerSelectionReceipt,
+    readControllerSelectionReceipt:
+      overrides.readControllerSelectionReceipt ?? readControllerSelectionReceipt,
     probeControllerIdentity: overrides.probeControllerIdentity ?? probeControllerIdentity,
     restartController:
       overrides.restartController ??
@@ -2296,7 +2475,7 @@ async function requestController(request, context) {
   });
 }
 
-async function probeControllerIdentity(request, context) {
+async function probeControllerIdentity(request, context, expectedIdentity) {
   const response = await requestController(
     {
       ...request,
@@ -2307,7 +2486,11 @@ async function probeControllerIdentity(request, context) {
   if (
     !response.ok ||
     response.controllerVersion !== request.version ||
-    !TRANSACTION_ID_PATTERN.test(response.controllerInstanceId || "")
+    !TRANSACTION_ID_PATTERN.test(response.controllerInstanceId || "") ||
+    response.controllerServerSha256 !== expectedIdentity?.serverSha256 ||
+    response.controllerClientSha256 !== expectedIdentity?.clientSha256 ||
+    canonicalRootValue(response.protocolCapabilities) !==
+      canonicalRootValue(CONTROLLER_SELECTION_CAPABILITIES)
   ) {
     fail("replaceable lifecycle controller is not running the verified target");
   }
@@ -2335,6 +2518,7 @@ async function handleSupervisorRequest(request, context, state) {
     const durableChange = staged.changed || staged.supervisorChanged || staged.trustChanged;
     let transactionActive = false;
     let restarted = staged.changed;
+    let selectionReceipt = null;
     try {
       if (durableChange) {
         await context.beginSupervisorTransaction(context.paths, request, staged);
@@ -2349,7 +2533,11 @@ async function handleSupervisorRequest(request, context, state) {
         await context.waitForController();
       }
       try {
-        state.controllerInstanceId = await context.probeControllerIdentity(request, context);
+        state.controllerInstanceId = await context.probeControllerIdentity(
+          request,
+          context,
+          staged.identity,
+        );
       } catch (error) {
         if (staged.changed) {
           throw error;
@@ -2357,7 +2545,11 @@ async function handleSupervisorRequest(request, context, state) {
         restarted = true;
         await context.restartController();
         await context.waitForController();
-        state.controllerInstanceId = await context.probeControllerIdentity(request, context);
+        state.controllerInstanceId = await context.probeControllerIdentity(
+          request,
+          context,
+          staged.identity,
+        );
       }
       await context.cleanupHistoricalControllerCandidates(
         context.paths,
@@ -2403,9 +2595,25 @@ async function handleSupervisorRequest(request, context, state) {
         { cause: error },
       );
     }
+    try {
+      selectionReceipt = await context.writeControllerSelectionReceipt(
+        context.paths,
+        request,
+        staged,
+        state.controllerInstanceId,
+        context.rootUid,
+        context.rootGid,
+      );
+    } catch (error) {
+      throw new Error(
+        `verified target controller is selected but its authorization receipt is unavailable; retry the same update: ${error.message}`,
+        { cause: error },
+      );
+    }
     await durableReceipt(context.paths, request, {
       outcome: "verified",
       controllerChanged: restarted,
+      selectionDigest: selectionReceipt.selectionDigest,
     });
     return {
       ok: true,
@@ -2414,10 +2622,19 @@ async function handleSupervisorRequest(request, context, state) {
       controllerChanged: restarted,
       supervisorChanged: staged.supervisorChanged === true,
       controllerInstanceId: restarted ? priorInstanceId : state.controllerInstanceId,
+      selectionDigest: selectionReceipt.selectionDigest,
     };
   }
 
-  const response = await context.requestController(request, context);
+  const selectionReceipt = await context.readControllerSelectionReceipt(
+    context.paths,
+    request,
+    context.rootUid,
+  );
+  const response = await context.requestController(
+    { ...request, supervisorReceipt: selectionReceipt },
+    context,
+  );
   if (response.ok && new Set(["applyRelease", "commitRelease"]).has(request.op)) {
     await atomicWrite(context.paths.rollbackFloorPath, `${request.version}\n`, 0o600);
   }
@@ -2427,6 +2644,7 @@ async function handleSupervisorRequest(request, context, state) {
       controllerChanged: false,
       phase: response.phase,
       release: response.release,
+      selectionDigest: selectionReceipt.selectionDigest,
     });
   } else if (request.op === "commitRelease" || request.op === "rollbackRelease") {
     await durableReceipt(context.paths, request, {
@@ -2606,6 +2824,7 @@ export const __testing = Object.freeze({
   atomicWrite,
   beginSupervisorTransaction,
   commitLifecycleTrust,
+  createControllerSelectionReceipt,
   cleanupHistoricalControllerCandidates,
   compareVersions,
   createContext,
@@ -2614,9 +2833,11 @@ export const __testing = Object.freeze({
   lifecyclePaths,
   platformIdentity,
   recoverSupervisorTransaction,
+  readControllerSelectionReceipt,
   renderBoundaryUnits,
   restoreSupervisorSelection,
   restoreControllerSelection,
+  writeControllerSelectionReceipt,
   authorizePublicSocket,
   privateMkdtemp,
   sealSupervisorArtifact,
