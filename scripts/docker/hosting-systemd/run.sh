@@ -542,6 +542,7 @@ if [[ "${1:-}" == "clone" ]]; then
   mkdir -p "$destination"
   tar \
     --exclude=.git \
+    --exclude=.artifacts \
     --exclude=node_modules \
     --exclude=.pnpm-store \
     --exclude=dist \

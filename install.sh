@@ -5521,9 +5521,7 @@ install_fixed_host_gateway_service() {
   install -d -m 2770 -o "$target_user" -g "$config_group" "${target_home}/.fased/identity"
   install -d -m 2770 -o "$target_user" -g "$config_group" "${target_home}/.fased/wallet"
   install -d -m 2770 -o "$target_user" -g "$config_group" "${target_home}/.fased/federation"
-  chgrp -R "$config_group" "${target_home}/.fased"
-  chmod -R g+rwX,o-rwx "${target_home}/.fased"
-  find "${target_home}/.fased" -type d -exec chmod g+s {} +
+  reconcile_hosting_shared_state "$target_home"
   [[ "$target_repo_dir" == "$target_home/"* && "$target_repo_dir" =~ ^/[A-Za-z0-9_./@-]+$ ]] || {
     echo "Hosted Gateway checkout must remain below the app account home." >&2
     exit 1
@@ -5614,13 +5612,14 @@ reconcile_hosting_shared_state() {
   install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/identity"
   install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/wallet"
   install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/federation"
-  chgrp -R "$config_group" "$state_dir"
-  chmod -R g+rwX,o-rwx "$state_dir"
-  find "$state_dir" -type d -exec chmod g+s {} +
+  install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/extensions"
   setfacl --modify "user:${target_user}:rwx" "$state_dir"
   setfacl --modify "default:user:${target_user}:rwx" "$state_dir"
   local shared_entry=""
   while IFS= read -r -d '' shared_entry; do
+    chgrp -hR "$config_group" "$shared_entry"
+    chmod -R g+rwX,o-rwx "$shared_entry"
+    find -P "$shared_entry" -xdev -type d -exec chmod g+s {} +
     setfacl --recursive --physical --modify "user:${target_user}:rwX" "$shared_entry"
     find -P "$shared_entry" -xdev -type d \
       -exec setfacl --modify "default:user:${target_user}:rwx" {} +

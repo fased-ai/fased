@@ -170,6 +170,21 @@ printf 'streamed-bootstrap\\n' | bash ${JSON.stringify(harness)}
     expect(sharedState).toContain(
       'setfacl --recursive --physical --modify "user:${target_user}:rwX" "$shared_entry"',
     );
+    expect(sharedState).toContain('chgrp -hR "$config_group" "$shared_entry"');
+    expect(sharedState).toContain('chmod -R g+rwX,o-rwx "$shared_entry"');
+    expect(sharedState).not.toContain('chgrp -R "$config_group" "$state_dir"');
+    expect(sharedState).not.toContain('chmod -R g+rwX,o-rwx "$state_dir"');
+    for (const privilegedRoot of [
+      "backups",
+      "bin",
+      "install-cache",
+      "runtime",
+      "signer-update",
+      "source-paired-update",
+      "updater",
+    ]) {
+      expect(sharedState).toContain(`! -name ${privilegedRoot}`);
+    }
   });
 
   it("delays SSH and firewall hardening until runtime health and never asks for DNS retyping", () => {
