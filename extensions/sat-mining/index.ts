@@ -728,12 +728,19 @@ const satMiningPlugin = {
       );
       return persistedEnabled ?? runtimeEnabledWanted;
     };
+    let runtimeDrainRecoveryActive = false;
     const syncActiveConfigFromPersistedConfig = () => {
       const persistedEntry = readPersistedSatMiningEntry();
       const persisted = persistedEntry?.config;
       if (persisted == null) {
         return;
       }
+      const recoveredRuntimeMode = runtimeDrainRecoveryActive
+        ? {
+            enabled: state.activeConfig.enabled,
+            drainOnly: state.activeConfig.drainOnly,
+          }
+        : null;
       const next = parseSatMiningConfig(persisted);
       const persistedEnabled = readPersistedSatMiningEnabledFlag(persisted);
       state.activeConfig = {
@@ -754,6 +761,7 @@ const satMiningPlugin = {
           ...(next.skillConfig ?? {}),
         },
         federationPeers: [...(next.federationPeers ?? [])],
+        ...(recoveredRuntimeMode ?? {}),
       };
       state.client = new SatMiningClient(state.activeConfig);
     };
@@ -800,6 +808,7 @@ const satMiningPlugin = {
         next.plugins.entries[api.id]!.config!.enabled = state.activeConfig.enabled;
       }
       await api.runtime.config.writeConfigFile(next as never);
+      runtimeDrainRecoveryActive = false;
     };
     const resolveConfiguredWalletId = () => {
       const walletId = state.activeConfig.walletId?.trim();
@@ -2708,10 +2717,10 @@ const satMiningPlugin = {
       }
       state.activeConfig.enabled = true;
       state.activeConfig.drainOnly = true;
+      runtimeDrainRecoveryActive = true;
       api.logger.info(
         `[sat-mining] restored drain-only release mode for locked miner capital during ${source}`,
       );
-      await persistActiveConfig();
       return true;
     };
     const restoreDrainModeForLockedCapitalFromChain = async (source: string) => {
@@ -2746,10 +2755,10 @@ const satMiningPlugin = {
       }
       state.activeConfig.enabled = true;
       state.activeConfig.drainOnly = true;
+      runtimeDrainRecoveryActive = true;
       api.logger.info(
         `[sat-mining] restored drain-only release mode for locked miner capital from chain during ${source}`,
       );
-      await persistActiveConfig();
       return true;
     };
     const upsertPlannerOutcome = (

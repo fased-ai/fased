@@ -80,7 +80,7 @@ import type { GatewayRequestHandlers } from "./server-methods/types.js";
 import { hasConnectedMobileNode } from "./server-mobile-nodes.js";
 import { loadGatewayModelCatalog } from "./server-model-catalog.js";
 import { createNodeSubscriptionManager } from "./server-node-subscriptions.js";
-import { loadGatewayPlugins } from "./server-plugins.js";
+import { finalizeGatewayPluginStatus, loadGatewayPlugins } from "./server-plugins.js";
 import { createGatewayReloadHandlers } from "./server-reload-handlers.js";
 import { resolveGatewayRuntimeConfig } from "./server-runtime-config.js";
 import { createGatewayRuntimeState } from "./server-runtime-state.js";
@@ -106,6 +106,7 @@ import {
   incrementPresenceVersion,
   refreshGatewayHealthSnapshot,
 } from "./server/health-state.js";
+import { createGatewayReadinessLatch } from "./server/readiness.js";
 import { loadGatewayTlsRuntime } from "./server/tls.js";
 import {
   createSessionEventSubscriberRegistry,
@@ -277,6 +278,7 @@ async function startGatewayServerInternal(
     live: process.env.FASED_GATEWAY_STARTUP_TRACE === "1",
     liveLogger: log,
   });
+  const gatewayReadiness = createGatewayReadinessLatch();
 
   let configSnapshot = await startupTrace.measure("config.read", () => readConfigFileSnapshot());
   if (configSnapshot.legacyIssues.length > 0) {
@@ -581,6 +583,7 @@ async function startGatewayServerInternal(
       log,
       logHooks,
       logPlugins,
+      getReadiness: gatewayReadiness.snapshot,
     }),
   );
   if (managedFastStart && !minimalTestGateway) {
@@ -920,6 +923,7 @@ async function startGatewayServerInternal(
     browserControl = sidecars.browserControl;
     pluginServices = sidecars.pluginServices;
     federationAutoConnect = sidecars.federationAutoConnect;
+    finalizeGatewayPluginStatus({ registry: pluginRegistry, log });
   }
 
   // Run gateway_start plugin hook (fire-and-forget)
@@ -998,6 +1002,7 @@ async function startGatewayServerInternal(
         });
       });
 
+  gatewayReadiness.markReady();
   startupTrace.logSummary(log);
 
   const close = createGatewayCloseHandler({

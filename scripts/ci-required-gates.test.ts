@@ -95,6 +95,18 @@ describe("required CI gate aggregation", () => {
         results: { ...alwaysGreen, "CI contracts": "success" },
       }),
     ).not.toThrow();
+    expect(() =>
+      assertApplicableGates({
+        runT2Contracts: true,
+        results: { ...alwaysGreen, "T2 harness contracts": "success" },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertApplicableGates({
+        runT2Contracts: true,
+        results: { ...alwaysGreen, "T2 harness contracts": "skipped" },
+      }),
+    ).toThrow(/required T2 harness contracts result was skipped/);
   });
 
   it("requires all selected full-matrix lanes", () => {

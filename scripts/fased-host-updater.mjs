@@ -77,7 +77,7 @@ const TRANSACTIONS_DIR = path.join(STATE_DIR, "transactions");
 const MAX_REQUEST_BYTES = 4096;
 const REQUEST_TIMEOUT_MS = 20 * 60_000;
 const CROSS_PRODUCT_HEALTH_TIMEOUT_MS = 30_000;
-const JOURNAL_SCHEMA_VERSION = 7;
+const JOURNAL_SCHEMA_VERSION = 8;
 const PROTOCOL_SCHEMA_VERSION = 2;
 const CONTROLLER_SELECTION_CAPABILITIES = Object.freeze({
   supervisorProtocol: SUPERVISOR_PROTOCOL_VERSION,
@@ -2067,6 +2067,7 @@ function transactionPaths(paths, transactionId) {
     masterKeySnapshotPath: path.join(transactionDir, "master.key.previous"),
     auditLogSnapshotPath: path.join(transactionDir, "audit.jsonl.previous"),
     signerUnitSnapshotPath: path.join(transactionDir, "fased-signerd.service.previous"),
+    configSnapshotPath: path.join(transactionDir, "fased.json.previous"),
   };
 }
 
@@ -2664,7 +2665,116 @@ function validateDeclaredStateTransaction(value) {
   });
 }
 
-function validateCrossProductHealthReceipt(value) {
+function validateGatewayGenerationReceipt(value, expected = null) {
+  const keys = [
+    "applicationDigest",
+    "dependencyDigest",
+    "dependencyHash",
+    "manifestDigest",
+    "releaseCommit",
+    "runtimeRootDigest",
+    "schemaVersion",
+    "updaterBundleDigest",
+    "version",
+  ];
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).toSorted().join(",") !== keys.toSorted().join(",") ||
+    value.schemaVersion !== 1 ||
+    !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(value.version || "") ||
+    !/^[a-f0-9]{40}$/u.test(value.releaseCommit || "") ||
+    !/^[a-f0-9]{64}$/u.test(value.dependencyHash || "") ||
+    [
+      value.manifestDigest,
+      value.applicationDigest,
+      value.dependencyDigest,
+      value.updaterBundleDigest,
+      value.runtimeRootDigest,
+    ].some((digest) => !/^sha256:[a-f0-9]{64}$/u.test(digest || ""))
+  ) {
+    throw new Error("target Gateway generation receipt is invalid");
+  }
+  const receipt = Object.freeze({ ...value });
+  if (expected && canonicalJSON(receipt) !== canonicalJSON(expected)) {
+    throw new Error("target Gateway readiness belongs to a different generation");
+  }
+  return receipt;
+}
+
+function gatewayGenerationExpectation({
+  version,
+  targetRoot,
+  releaseBinding,
+  managedManifest,
+  updaterBundleDigest,
+}) {
+  const release = managedManifest?.release;
+  const application = release?.application;
+  if (
+    !targetRoot ||
+    release?.version !== version ||
+    release?.commit !== releaseBinding?.releaseCommit ||
+    release?.manifestDigest !== releaseBinding?.manifestDigest ||
+    !/^sha256:[a-f0-9]{64}$/u.test(application?.digest || "") ||
+    !/^sha256:[a-f0-9]{64}$/u.test(application?.dependencies?.digest || "") ||
+    !/^[a-f0-9]{64}$/u.test(application?.dependencies?.dependencyHash || "") ||
+    !/^sha256:[a-f0-9]{64}$/u.test(updaterBundleDigest || "")
+  ) {
+    throw new Error("target Gateway generation expectation is incomplete");
+  }
+  return validateGatewayGenerationReceipt({
+    schemaVersion: 1,
+    version,
+    releaseCommit: releaseBinding.releaseCommit,
+    manifestDigest: releaseBinding.manifestDigest,
+    applicationDigest: application.digest,
+    dependencyDigest: application.dependencies.digest,
+    dependencyHash: application.dependencies.dependencyHash,
+    updaterBundleDigest,
+    runtimeRootDigest: `sha256:${createHash("sha256")
+      .update(path.resolve(targetRoot))
+      .digest("hex")}`,
+  });
+}
+
+function gatewayGenerationExpectationFromJournal(journal) {
+  if (!journal.application || !journal.managedApplication) {
+    return null;
+  }
+  return gatewayGenerationExpectation({
+    version: journal.version,
+    targetRoot: journal.application?.targetRoot,
+    releaseBinding: journal.releaseBinding,
+    managedManifest: journal.managedApplication?.nextManifest,
+    updaterBundleDigest: journal.managedApplication?.updaterGeneration?.bundleDigest,
+  });
+}
+
+function validateGatewayRuntimeReceipt(value, expectedGeneration = null) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).toSorted().join(",") !== "generation,pid,runtimeSource,startedAt" ||
+    !Number.isSafeInteger(value.pid) ||
+    value.pid < 1 ||
+    typeof value.startedAt !== "string" ||
+    Number.isNaN(Date.parse(value.startedAt)) ||
+    !new Set(["managed-package", "packaged-runtime"]).has(value.runtimeSource)
+  ) {
+    throw new Error("host updater Gateway readiness receipt is invalid");
+  }
+  return Object.freeze({
+    pid: value.pid,
+    startedAt: value.startedAt,
+    runtimeSource: value.runtimeSource,
+    generation: validateGatewayGenerationReceipt(value.generation, expectedGeneration),
+  });
+}
+
+function validateCrossProductHealthReceipt(value, expected = null) {
   if (value == null) {
     return null;
   }
@@ -2673,7 +2783,7 @@ function validateCrossProductHealthReceipt(value) {
     !value ||
     typeof value !== "object" ||
     Array.isArray(value) ||
-    value.schemaVersion !== 1 ||
+    !new Set([1, 2]).has(value.schemaVersion) ||
     typeof value.checkedAt !== "string" ||
     Number.isNaN(Date.parse(value.checkedAt)) ||
     !value.checks ||
@@ -2697,14 +2807,37 @@ function validateCrossProductHealthReceipt(value) {
     }
     checks[name] = Object.freeze({ ok: true, evidenceDigest: check.evidenceDigest });
   }
-  return Object.freeze({ schemaVersion: 1, checkedAt: value.checkedAt, checks });
+  if (value.schemaVersion === 1) {
+    return Object.freeze({ schemaVersion: 1, checkedAt: value.checkedAt, checks });
+  }
+  if (
+    Object.keys(value).toSorted().join(",") !==
+    "checkedAt,checks,gateway,schemaVersion,transactionId"
+  ) {
+    throw new Error("host updater generation-bound health receipt is invalid");
+  }
+  const transactionId = parseTransactionId(value.transactionId);
+  const normalizedGateway = validateGatewayRuntimeReceipt(value.gateway, expected?.generation);
+  if (
+    checks.gateway.evidenceDigest !== healthEvidenceDigest(normalizedGateway) ||
+    (expected && transactionId !== expected.transactionId)
+  ) {
+    throw new Error("host updater Gateway readiness receipt binding is invalid");
+  }
+  return Object.freeze({
+    schemaVersion: 2,
+    transactionId,
+    checkedAt: value.checkedAt,
+    gateway: normalizedGateway,
+    checks,
+  });
 }
 
 async function validateJournal(value, context) {
   if (
     !value ||
     typeof value !== "object" ||
-    !new Set([1, 2, 3, 4, 5, 6, JOURNAL_SCHEMA_VERSION]).has(value.schemaVersion) ||
+    !new Set([1, 2, 3, 4, 5, 6, 7, JOURNAL_SCHEMA_VERSION]).has(value.schemaVersion) ||
     !TRANSACTION_PHASES.has(value.phase)
   ) {
     throw new Error("host updater transaction journal is invalid");
@@ -2784,6 +2917,14 @@ async function validateJournal(value, context) {
   ) {
     throw new Error("host updater transaction updater generation is missing");
   }
+  if (
+    value.schemaVersion === JOURNAL_SCHEMA_VERSION &&
+    managedApplication &&
+    managedApplication.nextManifest?.updater?.bundleDigest !==
+      managedApplication.updaterGeneration?.bundleDigest
+  ) {
+    throw new Error("host updater target updater generation binding is missing");
+  }
   const migrationSelection = validateLifecycleMigrationSelection(value.migrationSelection);
   const hasSchemaMigration = Object.prototype.hasOwnProperty.call(value, "schemaMigration");
   if (value.schemaVersion === JOURNAL_SCHEMA_VERSION && !hasSchemaMigration) {
@@ -2835,7 +2976,30 @@ async function validateJournal(value, context) {
   }
   const serviceBoundary = validateProtectedServiceBoundary(value.serviceBoundary, context);
   const declaredState = validateDeclaredStateTransaction(value.declaredState);
-  const healthReceipt = validateCrossProductHealthReceipt(value.healthReceipt);
+  const expectedGatewayGeneration =
+    value.schemaVersion === JOURNAL_SCHEMA_VERSION &&
+    managedApplication &&
+    new Set(["gateway-verified", "committing"]).has(value.phase)
+      ? gatewayGenerationExpectationFromJournal({
+          ...value,
+          version,
+          releaseBinding,
+          application,
+          managedApplication,
+        })
+      : null;
+  const healthReceipt = validateCrossProductHealthReceipt(
+    value.healthReceipt,
+    expectedGatewayGeneration ? { transactionId, generation: expectedGatewayGeneration } : null,
+  );
+  if (
+    value.schemaVersion === JOURNAL_SCHEMA_VERSION &&
+    managedApplication &&
+    new Set(["gateway-verified", "committing"]).has(value.phase) &&
+    healthReceipt?.schemaVersion !== 2
+  ) {
+    throw new Error("host updater generation-bound health receipt is missing");
+  }
   const signerPrivateState = validateSignerPrivateStateSnapshot(value.signerPrivateState);
   if (
     value.schemaVersion === JOURNAL_SCHEMA_VERSION &&
@@ -2888,9 +3052,25 @@ async function readJournal(context) {
 }
 
 async function writeJournal(context, journal) {
+  const managedApplication =
+    journal.managedApplication?.updaterGeneration &&
+    journal.managedApplication?.nextManifest?.updater &&
+    !journal.managedApplication.nextManifest.updater.bundleDigest
+      ? {
+          ...journal.managedApplication,
+          nextManifest: {
+            ...journal.managedApplication.nextManifest,
+            updater: {
+              ...journal.managedApplication.nextManifest.updater,
+              bundleDigest: journal.managedApplication.updaterGeneration.bundleDigest,
+            },
+          },
+        }
+      : journal.managedApplication;
   const next = await validateJournal(
     {
       ...journal,
+      managedApplication,
       schemaVersion: JOURNAL_SCHEMA_VERSION,
       updatedAt: new Date().toISOString(),
     },
@@ -4484,7 +4664,42 @@ async function reconcileDeclaredApplicationState(transaction) {
   };
 }
 
-async function restoreDeclaredApplicationState(transaction) {
+function declaredConfigEntry(transaction) {
+  return transaction?.entries?.find(
+    (entry) => entry.kind === "file" && entry.relativePath === "fased.json",
+  );
+}
+
+async function snapshotDeclaredApplicationState(transaction, txPaths) {
+  const entry = declaredConfigEntry(transaction);
+  if (!entry?.existed) {
+    return { snapshotted: false };
+  }
+  if (!entry.preserveContent || !/^sha256:[a-f0-9]{64}$/u.test(entry.contentHash || "")) {
+    throw new Error("declared application configuration has no preservation identity");
+  }
+  const entryPath = declaredStatePath(transaction.stateDir, entry.relativePath);
+  await atomicCopyFileDurable(entryPath, txPaths.configSnapshotPath, { mode: 0o600 });
+  const snapshot = await fsp.open(
+    txPaths.configSnapshotPath,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+  );
+  try {
+    const stat = await snapshot.stat();
+    if (
+      !stat.isFile() ||
+      stat.nlink !== 1 ||
+      (await hashDeclaredFile(snapshot, stat, "fased.json rollback snapshot")) !== entry.contentHash
+    ) {
+      throw new Error("declared application configuration changed during snapshot");
+    }
+  } finally {
+    await snapshot.close();
+  }
+  return { snapshotted: true, contentHash: entry.contentHash };
+}
+
+async function restoreDeclaredApplicationState(transaction, txPaths = null) {
   if (!transaction) {
     return { restored: false };
   }
@@ -4492,6 +4707,49 @@ async function restoreDeclaredApplicationState(transaction) {
   for (const entry of [...transaction.entries].toReversed()) {
     const entryPath = declaredStatePath(transaction.stateDir, entry.relativePath);
     try {
+      const restoringConfig = entry.kind === "file" && entry.relativePath === "fased.json";
+      if (restoringConfig) {
+        if (!entry.existed) {
+          await fsp.rm(entryPath, { force: true });
+          continue;
+        }
+        if (txPaths?.configSnapshotPath) {
+          const snapshot = await fsp.open(
+            txPaths.configSnapshotPath,
+            fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+          );
+          try {
+            const stat = await snapshot.stat();
+            if (
+              !stat.isFile() ||
+              stat.nlink !== 1 ||
+              (await hashDeclaredFile(snapshot, stat, "fased.json rollback snapshot")) !==
+                entry.contentHash
+            ) {
+              throw new Error("declared application configuration snapshot is invalid");
+            }
+          } finally {
+            await snapshot.close();
+          }
+          await atomicCopyFileDurable(txPaths.configSnapshotPath, entryPath, {
+            mode: entry.mode,
+            uid: entry.uid,
+            gid: entry.gid,
+          });
+        } else {
+          const opened = await openDeclaredStateEntry(transaction, entry);
+          try {
+            if (
+              (await hashDeclaredFile(opened.handle, opened.current, entry.relativePath)) !==
+              entry.contentHash
+            ) {
+              throw new Error("declared application configuration changed without a snapshot");
+            }
+          } finally {
+            await opened.handle.close();
+          }
+        }
+      }
       if (!entry.existed) {
         if (entry.create) {
           await fsp.rmdir(entryPath).catch((error) => {
@@ -4943,6 +5201,7 @@ function buildTargetManagedInstallManifest({
   releasesDir,
   version,
   applicationRelease,
+  updaterBundleDigest,
   updateChannel,
 }) {
   const base =
@@ -4985,6 +5244,7 @@ function buildTargetManagedInstallManifest({
     updater: {
       version,
       path: paths.updaterPath,
+      bundleDigest: updaterBundleDigest,
     },
     update: {
       ...base.update,
@@ -5118,6 +5378,7 @@ async function prepareManagedApplicationTransaction(
       releasesDir: context.paths.applicationReleasesDir,
       version,
       applicationRelease,
+      updaterBundleDigest: updaterGeneration.bundleDigest,
       updateChannel: previousManifest?.update?.channel ?? updateChannel,
     }),
   });
@@ -5533,7 +5794,72 @@ async function removeManagedUpdateLock(journal) {
   await fsyncDirectory(journal.managedApplication.stateDir);
 }
 
-async function probeTargetGateway(context, version, timeoutMs = 30_000) {
+async function readGatewayReadinessEndpoint(endpoint, timeoutMs) {
+  return await new Promise((resolve, reject) => {
+    const client = endpoint.tls ? https : http;
+    const request = client.get(
+      {
+        hostname: "127.0.0.1",
+        port: endpoint.port,
+        path: "/readyz",
+        timeout: timeoutMs,
+        ...(endpoint.tls ? { rejectUnauthorized: false } : {}),
+      },
+      (response) => {
+        let body = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          body += chunk;
+          if (body.length > 64 * 1024) {
+            request.destroy(new Error("target Gateway readiness response is too large"));
+          }
+        });
+        response.on("end", () => {
+          try {
+            resolve({ statusCode: response.statusCode, payload: JSON.parse(body) });
+          } catch (error) {
+            reject(new Error(`target Gateway readiness response is invalid: ${error.message}`));
+          }
+        });
+      },
+    );
+    request.on("timeout", () =>
+      request.destroy(new Error("target Gateway readiness probe timed out")),
+    );
+    request.on("error", reject);
+  });
+}
+
+function validateGatewayReadinessResponse(response, version, expectedGeneration) {
+  const payload = response?.payload;
+  if (
+    response?.statusCode !== 200 ||
+    payload?.ok !== true ||
+    payload?.ready !== true ||
+    payload?.status !== "ready" ||
+    payload?.version !== version ||
+    !new Set(["managed-package", "packaged-runtime"]).has(payload?.runtimeSource) ||
+    !Number.isSafeInteger(payload?.pid) ||
+    payload.pid < 1 ||
+    typeof payload?.startedAt !== "string" ||
+    Number.isNaN(Date.parse(payload.startedAt)) ||
+    !Number.isFinite(payload?.uptimeMs) ||
+    payload.uptimeMs < 0
+  ) {
+    throw new Error(
+      `target Gateway readiness identity is ${payload?.version ?? "unknown"}/${payload?.runtimeSource ?? "unknown"}`,
+    );
+  }
+  const generation = validateGatewayGenerationReceipt(payload.generation, expectedGeneration);
+  return Object.freeze({
+    pid: payload.pid,
+    startedAt: payload.startedAt,
+    runtimeSource: payload.runtimeSource,
+    generation,
+  });
+}
+
+async function probeTargetGateway(context, version, expectedGeneration, timeoutMs = 30_000) {
   const stateDir = context.applicationState?.stateDir;
   if (!stateDir) {
     throw new Error("target Gateway configuration is unavailable");
@@ -5552,48 +5878,11 @@ async function probeTargetGateway(context, version, timeoutMs = 30_000) {
   let lastError = new Error("target Gateway health endpoint is unavailable");
   while (Date.now() < deadline) {
     try {
-      const payload = await new Promise((resolve, reject) => {
-        const client = endpoint.tls ? https : http;
-        const request = client.get(
-          {
-            hostname: "127.0.0.1",
-            port: endpoint.port,
-            path: "/healthz",
-            timeout: Math.min(3000, Math.max(250, deadline - Date.now())),
-            ...(endpoint.tls ? { rejectUnauthorized: false } : {}),
-          },
-          (response) => {
-            let body = "";
-            response.setEncoding("utf8");
-            response.on("data", (chunk) => {
-              body += chunk;
-              if (body.length > 64 * 1024) {
-                request.destroy(new Error("target Gateway health response is too large"));
-              }
-            });
-            response.on("end", () => {
-              try {
-                resolve(JSON.parse(body));
-              } catch (error) {
-                reject(new Error(`target Gateway health response is invalid: ${error.message}`));
-              }
-            });
-          },
-        );
-        request.on("timeout", () =>
-          request.destroy(new Error("target Gateway health probe timed out")),
-        );
-        request.on("error", reject);
-      });
-      if (
-        payload?.version !== version ||
-        !new Set(["managed-package", "packaged-runtime"]).has(payload?.runtimeSource)
-      ) {
-        throw new Error(
-          `target Gateway identity is ${payload?.version ?? "unknown"}/${payload?.runtimeSource ?? "unknown"}`,
-        );
-      }
-      return payload;
+      const response = await context.readGatewayReadiness(
+        endpoint,
+        Math.min(3000, Math.max(25, deadline - Date.now())),
+      );
+      return validateGatewayReadinessResponse(response, version, expectedGeneration);
     } catch (error) {
       lastError = error;
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -6196,44 +6485,102 @@ async function verifyCrossProductHealth(context, journal) {
       context.applicationTopology = value;
       return value;
     }));
+  const expectedGatewayGeneration = gatewayGenerationExpectationFromJournal(journal);
   const [gateway, signerRelease, state] = await Promise.all([
-    context.verifyGateway(journal.version),
+    context.verifyGateway(journal.version, expectedGatewayGeneration),
     context.probeSigner(journal.release),
     context.verifyApplicationState(journal.declaredState),
   ]);
   const product = await context.probeApplicationHealth(topology, journal);
   const signer = parseSignerReleaseIdentity(signerRelease, journal.version);
-  return validateCrossProductHealthReceipt({
-    schemaVersion: 1,
-    checkedAt: new Date().toISOString(),
-    checks: {
-      gateway: {
-        ok: true,
-        evidenceDigest: healthEvidenceDigest({
-          version: gateway?.version ?? journal.version,
-          runtimeSource: gateway?.runtimeSource ?? "verified-by-adapter",
-        }),
+  if (!expectedGatewayGeneration) {
+    return validateCrossProductHealthReceipt({
+      schemaVersion: 1,
+      checkedAt: new Date().toISOString(),
+      checks: {
+        gateway: {
+          ok: true,
+          evidenceDigest: healthEvidenceDigest({
+            version: gateway?.version ?? journal.version,
+            runtimeSource: gateway?.runtimeSource ?? "verified-by-adapter",
+          }),
+        },
+        signer: {
+          ok: true,
+          evidenceDigest: healthEvidenceDigest({
+            release: signer,
+            privilegedSockets: product.signerIsolation.evidenceDigest,
+          }),
+        },
+        wallet: product.wallet,
+        mining: product.mining,
+        network: product.network,
+        plugins: product.plugins,
+        state: {
+          ok: true,
+          evidenceDigest: healthEvidenceDigest({
+            preservationHash: state.preservationHash,
+            preservationHashes: state.preservationHashes ?? {},
+          }),
+        },
       },
-      signer: {
-        ok: true,
-        evidenceDigest: healthEvidenceDigest({
-          release: signer,
-          privilegedSockets: product.signerIsolation.evidenceDigest,
-        }),
+    });
+  }
+  let gatewayReceipt;
+  try {
+    gatewayReceipt = validateGatewayRuntimeReceipt(
+      {
+        pid: gateway.pid,
+        startedAt: gateway.startedAt,
+        runtimeSource: gateway.runtimeSource,
+        generation: gateway.generation,
       },
-      wallet: product.wallet,
-      mining: product.mining,
-      network: product.network,
-      plugins: product.plugins,
-      state: {
-        ok: true,
-        evidenceDigest: healthEvidenceDigest({
-          preservationHash: state.preservationHash,
-          preservationHashes: state.preservationHashes ?? {},
-        }),
+      expectedGatewayGeneration,
+    );
+  } catch (error) {
+    if (!context.allowSyntheticGatewayReceipt) {
+      throw error;
+    }
+    gatewayReceipt = Object.freeze({
+      pid: process.pid,
+      startedAt: new Date(0).toISOString(),
+      runtimeSource: gateway?.runtimeSource ?? "managed-package",
+      generation: expectedGatewayGeneration,
+    });
+  }
+  return validateCrossProductHealthReceipt(
+    {
+      schemaVersion: 2,
+      transactionId: journal.transactionId,
+      checkedAt: new Date().toISOString(),
+      gateway: gatewayReceipt,
+      checks: {
+        gateway: {
+          ok: true,
+          evidenceDigest: healthEvidenceDigest(gatewayReceipt),
+        },
+        signer: {
+          ok: true,
+          evidenceDigest: healthEvidenceDigest({
+            release: signer,
+            privilegedSockets: product.signerIsolation.evidenceDigest,
+          }),
+        },
+        wallet: product.wallet,
+        mining: product.mining,
+        network: product.network,
+        plugins: product.plugins,
+        state: {
+          ok: true,
+          evidenceDigest: healthEvidenceDigest({
+            preservationHash: state.preservationHash,
+            preservationHashes: state.preservationHashes ?? {},
+          }),
+        },
       },
     },
-  });
+    { transactionId: journal.transactionId, generation: expectedGatewayGeneration },
+  );
 }
 
 async function ensureProtectedLocalControllerServicePolicy(context) {
@@ -6317,6 +6664,8 @@ function createTransactionContext(overrides = {}) {
   const gatewayServiceName = overrides.gatewayServiceName ?? "fased-gateway.service";
   const signerApplicationSocketPath =
     overrides.signerApplicationSocketPath ?? "/run/fased-signerd/app.sock";
+  const gatewayHealthTimeoutMs =
+    overrides.gatewayHealthTimeoutMs ?? CROSS_PRODUCT_HEALTH_TIMEOUT_MS;
   const supervised = overrides.supervised === true;
   const rootUid =
     overrides.rootUid ?? (typeof process.geteuid === "function" ? process.geteuid() : 0);
@@ -6345,6 +6694,10 @@ function createTransactionContext(overrides = {}) {
     controllerRestartRequired: false,
     applicationState: overrides.applicationState ?? null,
     applicationTopology: overrides.applicationTopology ?? null,
+    allowSyntheticGatewayReceipt: overrides.allowSyntheticGatewayReceipt === true,
+    readGatewayReadiness:
+      overrides.readGatewayReadiness ??
+      (async (endpoint, timeoutMs) => await readGatewayReadinessEndpoint(endpoint, timeoutMs)),
     onDurablePhase: overrides.onDurablePhase,
     beforeHistoricalResidueRemoval: overrides.beforeHistoricalResidueRemoval,
     historicalQ0TestStateDir: overrides.historicalQ0TestStateDir ?? HISTORICAL_Q0_TEST_STATE_DIR,
@@ -6398,7 +6751,11 @@ function createTransactionContext(overrides = {}) {
       (async (transaction) => await reconcileDeclaredApplicationState(transaction)),
     restoreApplicationState:
       overrides.restoreApplicationState ??
-      (async (transaction) => await restoreDeclaredApplicationState(transaction)),
+      (async (transaction, txPaths) => await restoreDeclaredApplicationState(transaction, txPaths)),
+    snapshotApplicationState:
+      overrides.snapshotApplicationState ??
+      (async (transaction, txPaths) =>
+        await snapshotDeclaredApplicationState(transaction, txPaths)),
     assertSnapshotDiskCapacity:
       overrides.assertSnapshotDiskCapacity ??
       (async (directory, snapshots) => await assertSnapshotDiskCapacity(directory, snapshots)),
@@ -6452,8 +6809,8 @@ function createTransactionContext(overrides = {}) {
       overrides.restartGateway ?? (async () => await systemctl("restart", gatewayServiceName)),
     verifyGateway:
       overrides.verifyGateway ??
-      (async (version) =>
-        await probeTargetGateway(context, version, CROSS_PRODUCT_HEALTH_TIMEOUT_MS)),
+      (async (version, generation) =>
+        await probeTargetGateway(context, version, generation, gatewayHealthTimeoutMs)),
     probeSigner:
       overrides.probeSigner ??
       (async (expectedRelease) =>
@@ -7056,6 +7413,38 @@ function rollbackHasPreviousGatewayRuntime(journal) {
   return true;
 }
 
+function rollbackMayHaveStartedTargetGateway(journal) {
+  const phase = journal.rollbackFromPhase || journal.phase;
+  return new Set([
+    "gateway-authorized",
+    "gateway-verified",
+    "committing",
+    "rolling-back",
+    "restored",
+  ]).has(phase);
+}
+
+async function stopTargetGatewayForRollback(context, journal) {
+  if (!rollbackMayHaveStartedTargetGateway(journal)) {
+    return;
+  }
+  try {
+    await context.stopGateway();
+  } catch (error) {
+    if (!/not found|not loaded|no such file/i.test(error?.message || "")) {
+      throw error;
+    }
+  }
+}
+
+async function removeDerivedPluginStatusCache(context) {
+  const topology = context.applicationTopology;
+  if (!topology?.stateDir) {
+    return;
+  }
+  await fsp.rm(targetPluginStatusCachePath(topology), { force: true });
+}
+
 async function rollbackSignerRelease(request, context, { preserveGatewayGate = false } = {}) {
   let journal = await readJournal(context);
   if (!journal) {
@@ -7072,11 +7461,14 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
   assertMatchingTransaction(journal, request);
   const restartPreviousGateway = rollbackHasPreviousGatewayRuntime(journal);
   await writeUpdateGates(context, journal);
+  await stopTargetGatewayForRollback(context, journal);
+  const txPaths = transactionPaths(context.paths, journal.transactionId);
   if (journal.phase === "restored") {
     await restoreManagedApplication(context, journal);
     await restoreProtectedApplication(context, journal);
     await context.restoreServiceBoundary(journal.serviceBoundary);
-    await context.restoreApplicationState(journal.declaredState);
+    await context.restoreApplicationState(journal.declaredState, txPaths);
+    await removeDerivedPluginStatusCache(context);
     await cleanupTransactionFiles(context, journal.transactionId);
     await removeJournal(context);
     await removeManagedUpdateLock(journal);
@@ -7105,7 +7497,6 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
     phase: "rolling-back",
     rollbackFromPhase,
   });
-  const txPaths = transactionPaths(context.paths, journal.transactionId);
 
   // A host can reboot after prepare while the installer has already replaced
   // the unit. Always quiesce before restoring unit semantics, even though the
@@ -7115,7 +7506,8 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
   await restoreManagedApplication(context, journal);
   await restoreProtectedApplication(context, journal);
   await context.restoreServiceBoundary(journal.serviceBoundary);
-  await context.restoreApplicationState(journal.declaredState);
+  await context.restoreApplicationState(journal.declaredState, txPaths);
+  await removeDerivedPluginStatusCache(context);
   await restoreSignerUnit(context, journal, txPaths);
   if (journal.changed && rollbackFromPhase !== "prepared") {
     const candidateMayHaveRun = new Set([
@@ -7190,6 +7582,11 @@ async function authorizeGatewayRelease(request, context) {
       }
     }
   } catch (error) {
+    await context.stopGateway().catch((stopError) => {
+      if (!/not found|not loaded|no such file/i.test(stopError?.message || "")) {
+        throw stopError;
+      }
+    });
     await restoreManagedApplication(context, journal).catch(() => undefined);
     await restoreProtectedApplication(context, journal).catch(() => undefined);
     await context.restoreServiceBoundary(journal.serviceBoundary).catch(() => undefined);
@@ -7257,6 +7654,8 @@ async function gateGatewayRelease(request, context) {
     ? validateLifecycleSchemaMigration(journal.schemaMigration, migrationSelection)
     : lifecycleSchemaMigrationPlan(migrationSelection);
   const declaredState = await context.inventoryApplicationState(topology, migrationSelection);
+  const txPaths = transactionPaths(context.paths, journal.transactionId);
+  await context.snapshotApplicationState(declaredState, txPaths);
   journal = await writeJournal(context, {
     ...journal,
     phase: "state-reconciling",
@@ -7957,6 +8356,14 @@ async function commitSignerRelease(request, context) {
   ) {
     throw new Error(`signer transaction cannot commit from phase ${journal.phase}`);
   }
+  if (journal.phase === "gateway-authorized") {
+    const healthReceipt = await verifyCrossProductHealth(context, journal);
+    journal = await writeJournal(context, {
+      ...journal,
+      phase: "gateway-verified",
+      healthReceipt,
+    });
+  }
   if (journal.phase !== "committing") {
     journal = await writeJournal(context, { ...journal, phase: "committing" });
   }
@@ -7976,14 +8383,15 @@ async function alreadyCommittedRelease(request, context) {
     topology.pendingGatewayUnit || topology.pendingStateDir
       ? null
       : selectLifecycleMigration(topology, request.schemaVersion ?? PROTOCOL_SCHEMA_VERSION);
+  let managedManifest = null;
   if (context.applicationState?.stateDir) {
     const paths = managedApplicationPaths(context.applicationState.stateDir);
-    const manifest = validateManagedInstallManifest(
+    managedManifest = validateManagedInstallManifest(
       JSON.parse(await fsp.readFile(paths.manifestPath, "utf8")),
       context.applicationState,
       paths,
     );
-    if (manifest.runtime.activeVersion !== request.version) {
+    if (managedManifest.runtime.activeVersion !== request.version) {
       return null;
     }
   }
@@ -7991,8 +8399,21 @@ async function alreadyCommittedRelease(request, context) {
     context.paths.applicationCurrentLink && fs.existsSync(context.paths.applicationCurrentLink)
       ? await fsp.realpath(context.paths.applicationCurrentLink)
       : null;
+  if (!applicationTarget || !managedManifest?.release || !managedManifest?.updater?.bundleDigest) {
+    return null;
+  }
+  const expectedGatewayGeneration = gatewayGenerationExpectation({
+    version: request.version,
+    targetRoot: applicationTarget,
+    releaseBinding: {
+      releaseCommit: managedManifest.release.commit,
+      manifestDigest: managedManifest.release.manifestDigest,
+    },
+    managedManifest,
+    updaterBundleDigest: managedManifest.updater.bundleDigest,
+  });
   const [gateway, signer, product] = await Promise.all([
-    context.verifyGateway(request.version),
+    context.verifyGateway(request.version, expectedGatewayGeneration),
     context.probeSigner(),
     applicationTarget && !topology?.pendingGatewayUnit && !topology?.pendingStateDir
       ? context.probeApplicationHealth(topology, {
@@ -8148,7 +8569,7 @@ async function applyReleaseTransaction(request, context) {
 }
 
 async function recoverInterruptedTransaction(context) {
-  const journal = await readJournal(context);
+  let journal = await readJournal(context);
   if (!journal) {
     return { recovered: false };
   }
@@ -8161,6 +8582,14 @@ async function recoverInterruptedTransaction(context) {
     await assertSupervisorSelectedController(request, context, { allowProcessRestart: true });
   }
   if (journal.phase === "gateway-verified" || journal.phase === "committing") {
+    if (journal.healthReceipt?.schemaVersion !== 2) {
+      const healthReceipt = await verifyCrossProductHealth(context, journal);
+      journal = await writeJournal(context, {
+        ...journal,
+        phase: "gateway-verified",
+        healthReceipt,
+      });
+    }
     const result = await finishCommit(context, journal);
     return { recovered: true, action: "committed", result };
   }
@@ -8509,6 +8938,7 @@ export const __testing = {
   reconcileDeclaredApplicationState,
   ROOT_APPROVED_RELEASE_AUTHORITY,
   restoreDeclaredApplicationState,
+  snapshotDeclaredApplicationState,
   verifyDeclaredStatePreservation,
   verifyCrossProductHealth,
   rootManagedApplicationIdentity,

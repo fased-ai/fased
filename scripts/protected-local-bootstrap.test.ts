@@ -1008,12 +1008,12 @@ bootstrap_protected_local_topology activate
     const failureBranch = installer.slice(bootstrapCall, failureEnd);
 
     expect(failureBranch).toContain(
-      "Protected Local lifecycle did not commit. Its uncommitted topology was restored.",
+      "Protected Local lifecycle did not commit. Do not assume restoration succeeded unless the lifecycle output explicitly reports complete recovery.",
     );
     expect(failureBranch).toContain("rollback_managed_runtime_after_failed_install");
     expect(failureBranch.indexOf("rollback_managed_runtime_after_failed_install")).toBeLessThan(
       failureBranch.indexOf(
-        "Protected Local lifecycle did not commit. Its uncommitted topology was restored.",
+        "Protected Local lifecycle did not commit. Do not assume restoration succeeded unless the lifecycle output explicitly reports complete recovery.",
       ),
     );
   });

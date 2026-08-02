@@ -28,6 +28,7 @@ import type { DedupeEntry } from "./server-shared.js";
 import { createGatewayHooksRequestHandler } from "./server/hooks.js";
 import { listenGatewayHttpServer } from "./server/http-listen.js";
 import { createGatewayPluginRequestHandler } from "./server/plugins-http.js";
+import type { ReadinessChecker } from "./server/readiness.js";
 import type { GatewayTlsRuntime } from "./server/tls.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 
@@ -58,6 +59,7 @@ export async function createGatewayRuntimeState(params: {
   logPlugins: ReturnType<typeof createSubsystemLogger>;
   controlUiLogin?: import("./server-http.js").GatewayHttpServerOpts["controlUiLogin"];
   getPluginRegistry?: () => PluginRegistry;
+  getReadiness: ReadinessChecker;
 }): Promise<{
   canvasHost: CanvasHostHandler | null;
   httpServer: HttpServer;
@@ -143,6 +145,7 @@ export async function createGatewayRuntimeState(params: {
       controlUiLogin: params.controlUiLogin,
       resolvedAuth: params.resolvedAuth,
       rateLimiter: params.rateLimiter,
+      getReadiness: params.getReadiness,
       tlsOptions: params.gatewayTls?.enabled ? params.gatewayTls.tlsOptions : undefined,
       strictTransportSecurityHeader: params.strictTransportSecurityHeader,
     });

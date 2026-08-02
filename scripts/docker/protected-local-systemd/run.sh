@@ -863,6 +863,12 @@ install -d -m 0755 -o root -g root "$release_assets" "$fixture_tls"
 install -m 0644 \
   /var/lib/fased-protected-local-fixture/local-release-manifest.json \
   "$release_assets/fased-hosted-release-v2.json"
+install -m 0644 -o root -g root \
+  /var/lib/fased-protected-local-fixture/local-release-manifest.json \
+  "$release_root/.fased-hosted-release-v2.json"
+printf 'release_manifest_sha256=%s\n' \
+  "$(sha256sum "$release_root/.fased-hosted-release-v2.json" | awk '{print $1}')" \
+  >>"$release_root/.fased-hosting-bundle-verified"
 install -m 0755 "$candidate_installer" "$release_assets/install.sh"
 install -m 0755 /repo/scripts/fased-lifecycle-supervisor.mjs \
   "$release_assets/fased-lifecycle-supervisor.mjs"
@@ -1658,7 +1664,10 @@ wait "$injector_pid"
 test "$update_failure_status" -ne 0
 grep -F "target release failed and was rolled back" /tmp/protected-bootstrap-failure.err >/dev/null
 grep -F \
-  "target Gateway did not become healthy as v${version}: target Gateway identity is ${legacy_version}/managed-package" \
+  "target Gateway did not become healthy as v${version}:" \
+  /tmp/protected-bootstrap-failure.err >/dev/null
+grep -F \
+  "target Gateway readiness response is invalid" \
   /tmp/protected-bootstrap-failure.err >/dev/null
 failure_instance="$(cat /tmp/injected-failure-instance)"
 wait_for_gateway_version "$legacy_gateway_version"

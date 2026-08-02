@@ -384,12 +384,33 @@ async function validateVerifiedReleaseRoot(sourceRoot, spec) {
   const runtimeMetadata = JSON.parse(
     await fsp.readFile(path.join(canonical, ".fased-hosted-runtime.json"), "utf8"),
   );
+  const releaseManifestPath = path.join(canonical, ".fased-hosted-release-v2.json");
+  const releaseManifestInfo = await fsp.lstat(releaseManifestPath);
+  if (
+    !releaseManifestInfo.isFile() ||
+    releaseManifestInfo.isSymbolicLink() ||
+    releaseManifestInfo.uid !== 0 ||
+    releaseManifestInfo.nlink !== 1 ||
+    (releaseManifestInfo.mode & 0o022) !== 0
+  ) {
+    fail("verified release manifest ownership or mode is unsafe");
+  }
+  const releaseManifestBytes = await fsp.readFile(releaseManifestPath);
+  const releaseManifest = JSON.parse(releaseManifestBytes.toString("utf8"));
+  const releaseManifestDigest = crypto
+    .createHash("sha256")
+    .update(releaseManifestBytes)
+    .digest("hex");
   if (
     marker.version !== spec.releaseVersion ||
     marker.commit !== spec.releaseCommit ||
     buildInfo.version !== spec.releaseVersion ||
     buildInfo.commit !== spec.releaseCommit ||
     packageMetadata.version !== spec.releaseVersion ||
+    releaseManifest?.schemaVersion !== 2 ||
+    releaseManifest?.release?.version !== spec.releaseVersion ||
+    releaseManifest?.release?.commit !== spec.releaseCommit ||
+    marker.release_manifest_sha256 !== releaseManifestDigest ||
     !/^[a-f0-9]{64}$/u.test(marker.dependency_sha256 ?? "") ||
     !/^[a-f0-9]{64}$/u.test(marker.dependency_hash ?? "") ||
     runtimeMetadata.dependencyHash !== marker.dependency_hash

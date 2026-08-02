@@ -14,6 +14,7 @@ export function setRegistry(registry: PluginRegistry) {
 vi.mock("./server-plugins.js", async () => {
   const { setActivePluginRegistry } = await import("../plugins/runtime.js");
   return {
+    finalizeGatewayPluginStatus: () => {},
     loadGatewayPlugins: (params: { baseMethods: string[] }) => {
       setActivePluginRegistry(registryState.registry);
       return {

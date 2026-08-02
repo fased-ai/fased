@@ -37,6 +37,7 @@ describe("CI workflow routing", () => {
     expect(jobs["android"]).toBeUndefined();
     expect(jobs["version-identity"]).toBeDefined();
     expect(jobs["ci-contracts"]).toBeDefined();
+    expect(jobs["t2-contracts"]).toBeDefined();
     expect(jobs["hosting-lifecycle"]).toBeDefined();
     expect(jobs["protected-local-fixture-artifact"]).toBeDefined();
     expect(jobs["protected-local-rocky-lifecycle"]).toBeDefined();
@@ -71,6 +72,7 @@ describe("CI workflow routing", () => {
       expect.arrayContaining([
         "change-scope",
         "ci-contracts",
+        "t2-contracts",
         "version-identity",
         "hosting-lifecycle",
         "protected-local-fixture-artifact",
@@ -89,10 +91,12 @@ describe("CI workflow routing", () => {
       RUN_LOCAL_FRESH: "${{ needs.change-scope.outputs.run_local_fresh }}",
       RUN_LOCAL_UPDATE: "${{ needs.change-scope.outputs.run_local_update }}",
       RUN_CI_CONTRACTS: "${{ needs.change-scope.outputs.run_ci_contracts }}",
+      RUN_T2_CONTRACTS: "${{ needs.change-scope.outputs.run_t2_contracts }}",
       RUN_UI_MINING: "${{ needs.change-scope.outputs.run_ui_mining }}",
       PROTECTED_LOCAL_ARTIFACT: "${{ needs.protected-local-fixture-artifact.result }}",
       PROTECTED_LOCAL_ROCKY: "${{ needs.protected-local-rocky-lifecycle.result }}",
       PROTECTED_LOCAL_UPDATE: "${{ needs.protected-local-update-lifecycle.result }}",
+      T2_CONTRACTS: "${{ needs.t2-contracts.result }}",
     });
   });
 
@@ -113,9 +117,21 @@ describe("CI workflow routing", () => {
       "needs.change-scope.outputs.full_matrix == 'true'",
     );
     expect(jobs["ci-contracts"]?.if).toBe("needs.change-scope.outputs.run_ci_contracts == 'true'");
+    expect(jobs["t2-contracts"]?.if).toBe("needs.change-scope.outputs.run_t2_contracts == 'true'");
+
+    const t2Commands = jobs["t2-contracts"]?.steps?.map((step) => step.run).filter(Boolean) ?? [];
+    expect(t2Commands).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("pnpm exec oxfmt --check"),
+        expect.stringContaining("scripts/protected-local-service-plan.test.ts"),
+      ]),
+    );
+    expect(t2Commands.join("\n")).toContain("scripts/protected-local-t2-systemd.test.ts");
+    expect(jobs["t2-contracts"]?.["timeout-minutes"]).toBe(5);
 
     for (const jobName of [
       "ci-contracts",
+      "t2-contracts",
       "hosting-lifecycle",
       "protected-local-fixture-artifact",
       "protected-local-lifecycle",

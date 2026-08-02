@@ -612,6 +612,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       local cached_package_root=""
       local cached_commit=""
       local cached_digest=""
+      local cached_manifest_digest=""
       local cached_signer_digest=""
       local cached_lifecycle_digest=""
       local cached_provenance_digest=""
@@ -633,6 +634,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
         if [[ -f "$cached_package_root/.fased-hosting-bundle-verified" && \
           ! -L "$cached_package_root/.fased-hosting-bundle-verified" ]]; then
           cached_commit="$(awk -F= '$1 == "commit" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
+          cached_manifest_digest="$(awk -F= '$1 == "release_manifest_sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
           cached_signer_digest="$(awk -F= '$1 == "signer_sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
           cached_lifecycle_digest="$(awk -F= '$1 == "lifecycle_metadata_sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
           cached_provenance_digest="$(awk -F= '$1 == "provenance_sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
@@ -641,6 +643,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
           cached_evidence_verifier_digest="$(awk -F= '$1 == "evidence_verifier_sha256" { print $2; exit }' "$cached_package_root/.fased-hosting-bundle-verified")"
         fi
         if [[ "$cached_commit" =~ ^[a-f0-9]{40}$ && \
+          "$cached_manifest_digest" =~ ^[a-f0-9]{64}$ && \
           "$cached_signer_digest" =~ ^[a-f0-9]{64}$ && \
           "$cached_lifecycle_digest" =~ ^[a-f0-9]{64}$ && \
           "$cached_provenance_digest" =~ ^[a-f0-9]{64}$ && \
@@ -656,6 +659,9 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
           -f "$cached_root_store/verified-assets/fased-privileged-sbom-v1.spdx.json" && \
           -f "$cached_root_store/verified-assets/fased-privileged-vex-v1.openvex.json" && \
           -f "$cached_root_store/verified-assets/fased-privileged-release-evidence.mjs" && \
+          -f "$cached_package_root/.fased-hosted-release-v2.json" && \
+          ! -L "$cached_package_root/.fased-hosted-release-v2.json" && \
+          "$(sha256sum "$cached_package_root/.fased-hosted-release-v2.json" | awk '{print tolower($1)}')" == "$cached_manifest_digest" && \
           "$(sha256sum "$cached_root_store/verified-assets/fased-lifecycle-trust-v1.json" | awk '{print tolower($1)}')" == "$cached_lifecycle_digest" && \
           "$(sha256sum "$cached_root_store/verified-assets/fased-privileged-provenance-v1.intoto.json" | awk '{print tolower($1)}')" == "$cached_provenance_digest" && \
           "$(sha256sum "$cached_root_store/verified-assets/fased-privileged-sbom-v1.spdx.json" | awk '{print tolower($1)}')" == "$cached_sbom_digest" && \
@@ -948,6 +954,9 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       grep -Fxq "dependency_sha256=${dependency_actual}" "$existing_root/.fased-hosting-bundle-verified" && \
       grep -Fxq "dependency_hash=${dependency_hash}" "$existing_root/.fased-hosting-bundle-verified" && \
       grep -Fxq "release_manifest_sha256=${manifest_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
+      [[ -f "$existing_root/.fased-hosted-release-v2.json" && \
+        ! -L "$existing_root/.fased-hosted-release-v2.json" && \
+        "$(sha256sum "$existing_root/.fased-hosted-release-v2.json" | awk '{print tolower($1)}')" == "$manifest_digest" ]] && \
       grep -Fxq "lifecycle_metadata_sha256=${lifecycle_metadata_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
       grep -Fxq "provenance_sha256=${provenance_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
       grep -Fxq "sbom_sha256=${sbom_digest}" "$existing_root/.fased-hosting-bundle-verified" && \
@@ -993,6 +1002,9 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
 
     install -d -m 0700 -o root -g root "$staging/extract"
     cp -a "$verified_package_root" "$staging/extract/package"
+    install -m 0644 -o root -g root \
+      "$release_manifest" \
+      "$staging/extract/package/.fased-hosted-release-v2.json"
     install -d -m 0755 -o root -g root "$staging/verified-dependencies"
     tar -xzf "$dependency_archive" -C "$staging/verified-dependencies" \
       --no-same-owner --no-same-permissions
@@ -6934,7 +6946,7 @@ if protected_local_target_platform; then
         exit 1
       fi
       status_frame_end
-      echo "Protected Local lifecycle did not commit. Its uncommitted topology was restored." >&2
+      echo "Protected Local lifecycle did not commit. Do not assume restoration succeeded unless the lifecycle output explicitly reports complete recovery." >&2
       exit 1
     fi
     if [[ -n "$LOCAL_EXISTING_BOOTSTRAP_MANIFEST_SNAPSHOT" ]] && \
