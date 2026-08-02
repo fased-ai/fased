@@ -46,7 +46,7 @@ describe("minimal Protected Local T2 generated-unit fixture", () => {
     });
     expect(plan.files.controllerUnit.content).toContain("ProtectSystem=strict");
     expect(plan.files.controllerUnit.content).toContain(
-      "ReadOnlyPaths=/opt/fased/local/0123456789abcdef/controller",
+      "ReadOnlyPaths=/opt/fased/local/0123456789abcdef/controller", // pragma: allowlist secret
     );
     expect(plan.files.controllerUnit.content).toContain(
       "/etc/systemd/system/fased-local-controller-worker-0123456789abcdef.service.d",
