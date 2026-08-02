@@ -281,6 +281,7 @@
     "test:macmini": "FASED_TEST_VM_FORKS=0 FASED_TEST_PROFILE=serial node scripts/test-parallel.mjs",
     "test:managed-updater": "bash scripts/test-install-runtime-profile.sh && bash scripts/test-hosted-runtime-install.sh && vitest run scripts/managed-runtime-layout.test.ts scripts/fased-host-updater.test.ts scripts/fased-managed-updater.test.ts scripts/fased-managed-updater.integration.test.ts scripts/migrate-hosted-signer-v2.test.ts scripts/signer-enrollment-launchers.test.ts scripts/signer-owner-policy-installers.test.ts src/infra/managed-runtime-bootstrap.test.ts src/daemon/program-args.managed.test.ts --pool=forks --maxWorkers=1",
     "test:protected-local:systemd": "bash scripts/test-protected-local-systemd-container.sh",
+    "test:protected-local:t2": "bash scripts/test-protected-local-t2-systemd.sh",
     "test:sectriage": "pnpm exec vitest run --config vitest.gateway.config.ts && vitest run --config vitest.unit.config.ts --exclude src/daemon/launchd.integration.test.ts --exclude src/process/exec.test.ts",
     "test:signer:compat": "vitest run src/wallet/providers/local-socket-signer-adapter.integration.test.ts --pool=forks --maxWorkers=1",
     "test:signer:portable": "bash scripts/test-fased-signerd-portable-builds.sh",
