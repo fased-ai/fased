@@ -164,6 +164,7 @@ async function createFixture(
     supervised?: boolean;
     runningControllerVersion?: string;
     gatewayHealthTimeoutMs?: number;
+    realGatewayReadiness?: boolean;
   } = {},
 ) {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-updater-"));
@@ -443,6 +444,14 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
       : undefined,
     allowSyntheticGatewayReceipt: true,
     gatewayHealthTimeoutMs: options.gatewayHealthTimeoutMs,
+    ...(options.realGatewayReadiness
+      ? {}
+      : {
+          verifyGateway: async (version: string) => ({
+            version,
+            runtimeSource: "managed-package",
+          }),
+        }),
     readSupervisorSelectionReceipt: async (receipt: unknown) => receipt,
     assertReleaseAllowed: async () => undefined,
     stageControllerRelease: async () => {
@@ -929,7 +938,7 @@ describe("root-owned hosted updater protocol", () => {
 
     const journal = await __testing.readJournal(fixture.context);
     expect(journal).toMatchObject({
-      schemaVersion: 7,
+      schemaVersion: 8,
       version: "1.2.3",
       release: signerRelease("1.2.3"),
       migrationSelection: {
@@ -1003,7 +1012,7 @@ describe("root-owned hosted updater protocol", () => {
     });
     const promoted = await __testing.writeJournal(fixture.context, recovered);
     expect(promoted).toMatchObject({
-      schemaVersion: 7,
+      schemaVersion: 8,
       schemaMigration: recovered.schemaMigration,
     });
   });
@@ -2557,6 +2566,7 @@ describe("root-owned hosted updater protocol", () => {
 
   it("reports committed product health through the supervised private boundary", async () => {
     const fixture = await createFixture({
+      managedApplication: true,
       supervised: true,
       runningControllerVersion: "1.2.3",
     });
@@ -4058,7 +4068,7 @@ describe("root-owned hosted updater protocol", () => {
     "Gateway process crash",
     "cross-product health timeout",
   ])("rolls back %s and succeeds on the same-command retry", async (failureClass) => {
-    const { context, paths } = await createFixture();
+    const { context, paths } = await createFixture({ managedApplication: true });
     const original = {
       stageCandidate: context.stageCandidate,
       applyServiceBoundary: context.applyServiceBoundary,
@@ -4173,7 +4183,7 @@ describe("root-owned hosted updater protocol", () => {
   });
 
   it("runs one target-owned transaction and makes committed retries idempotent", async () => {
-    const { context, events, paths } = await createFixture();
+    const { context, events, paths } = await createFixture({ managedApplication: true });
     let healthChecks = 0;
     const signerProbeInputs: unknown[] = [];
     context.verifyGateway = async () => {
@@ -4263,6 +4273,7 @@ describe("root-owned hosted updater protocol", () => {
     const fixture = await createFixture({
       managedApplication: true,
       gatewayHealthTimeoutMs: 25,
+      realGatewayReadiness: true,
     });
     fixture.context.allowSyntheticGatewayReceipt = false;
     const topology = await fixture.context.discoverApplicationTopology();
