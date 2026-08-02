@@ -543,7 +543,7 @@ describe("stable lifecycle supervisor contract", () => {
     ).toThrow("malformed");
   });
 
-  it("upgrades a legacy root-ledger record without changing transaction authority", () => {
+  it("upgrades an exact prior schema-2 root ledger without changing transaction authority", () => {
     const transaction = parseSupervisorRequest({
       schemaVersion: 2,
       op: "applyRelease",
@@ -556,11 +556,12 @@ describe("stable lifecycle supervisor contract", () => {
       previousVersion: "1.2.2",
       now,
     });
-    const legacy = { ...current, schemaVersion: 1 } as Record<string, unknown>;
-    delete legacy.protocolVersion;
-    delete legacy.requestNonce;
-    delete legacy.clientCapabilities;
-    delete legacy.rollbackPointers;
+    const legacy = { ...current, schemaVersion: 2 } as Record<string, unknown>;
+    delete legacy.legacyAdoptionDigest;
+    delete legacy.legacyAdoptionTransactionId;
+    delete legacy.legacyAdoptionPreviousVersion;
+    delete legacy.legacyAdoptionTargetVersion;
+    delete legacy.legacyAdoptionAckDigest;
 
     const parsed = __testing.parseRootProductTransaction(legacy);
     const advanced = __testing.advanceRootProductTransaction(parsed, {
@@ -569,19 +570,29 @@ describe("stable lifecycle supervisor contract", () => {
     });
 
     expect(parsed).toMatchObject({
-      schemaVersion: 1,
-      requestNonce: transaction.transactionId,
+      schemaVersion: 2,
+      requestNonce: current.requestNonce,
       rollbackPointers: {
         controllerGenerationVersion: null,
         productVersion: "1.2.2",
       },
+      legacyAdoptionDigest: null,
+      legacyAdoptionTransactionId: null,
+      legacyAdoptionPreviousVersion: null,
+      legacyAdoptionTargetVersion: null,
+      legacyAdoptionAckDigest: null,
     });
     expect(advanced).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       protocolVersion: 2,
       transactionId: transaction.transactionId,
       previousVersion: "1.2.2",
       phase: "state-reconciling",
+      legacyAdoptionDigest: null,
+      legacyAdoptionTransactionId: null,
+      legacyAdoptionPreviousVersion: null,
+      legacyAdoptionTargetVersion: null,
+      legacyAdoptionAckDigest: null,
     });
     expect(() => __testing.assertRootProductTransactionTransition(parsed, advanced)).not.toThrow();
   });
@@ -765,6 +776,7 @@ describe("stable lifecycle supervisor contract", () => {
       selectionDigest: selectionReceipt.selectionDigest,
       targetControllerReceipt: selectionReceipt,
       targetReleaseIdentity: null,
+      legacyAdoption: null,
       artifactDigests: {
         application: null,
         dependencies: null,

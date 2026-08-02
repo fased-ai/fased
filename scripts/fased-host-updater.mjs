@@ -70,6 +70,7 @@ const SIGNER_UNIT_PATH = "/etc/systemd/system/fased-signerd.service";
 const VERSION_PATH = path.join(STATE_DIR, "signer-version");
 const CHANNEL_PATH = "/etc/fased/host-updater-channel";
 const JOURNAL_PATH = path.join(STATE_DIR, "active-signer-transaction.json");
+const LEGACY_ADOPTION_RECEIPT_NAME = "legacy-managed-update-adoption.v1.json";
 const ROLLBACK_FLOOR_PATH = path.join(STATE_DIR, "rollback-floor");
 const GATEWAY_GATE_PATH = path.join(STATE_DIR, "gateway-update-gate");
 const SIGNER_GATE_PATH = "/var/lib/fased-signer-update-gate/active";
@@ -83,6 +84,11 @@ const CONTROLLER_SELECTION_CAPABILITIES = Object.freeze({
   supervisorProtocol: SUPERVISOR_PROTOCOL_VERSION,
   controllerProtocol: CONTROLLER_PROTOCOL_VERSION,
   requestSchema: PROTOCOL_SCHEMA_VERSION,
+});
+const CONTROLLER_RECOVERY_CAPABILITIES = Object.freeze({
+  protocolVersion: 1,
+  operations: Object.freeze(["recoverActive"]),
+  journalSchemas: Object.freeze([7, 8]),
 });
 const MIGRATION_SELECTION_SCHEMA_VERSION = 1;
 const SCHEMA_MIGRATION_SCHEMA_VERSION = 1;
@@ -216,8 +222,11 @@ const TRANSACTION_OPERATIONS = new Set([
 ]);
 const CONTROLLER_OPERATIONS = new Set([
   ...TRANSACTION_OPERATIONS,
+  "acknowledgeLegacyAdoption",
   "controllerStatus",
   "releaseStatus",
+  "recoveryStatus",
+  "recoverActive",
 ]);
 const TRANSACTION_PHASES = new Set([
   "prepared",
@@ -492,6 +501,133 @@ function parseSupervisorSelectionReceipt(value, expected = {}) {
   return Object.freeze({ ...unsigned, selectionDigest });
 }
 
+function parseRecoveryAuthorization(value, expected = {}) {
+  exactObjectKeys(
+    value,
+    [
+      "schemaVersion",
+      "transactionId",
+      "version",
+      "recoveryIdentityDigest",
+      "productJournalDigest",
+      "legacySelectionDigest",
+      "expectedOutcome",
+      "recoveryController",
+      "allowedOperation",
+      "recoveryEpoch",
+      "authorizedAt",
+      "authorizationDigest",
+    ],
+    "recovery controller authorization",
+  );
+  exactObjectKeys(
+    value.recoveryController,
+    [
+      "version",
+      "releaseCommit",
+      "targetManifestSha256",
+      "serverSha256",
+      "clientSha256",
+      "trustPolicySha256",
+      "protocolCapabilities",
+      "recoveryCapabilities",
+    ],
+    "recovery controller identity",
+  );
+  exactObjectKeys(
+    value.recoveryController.protocolCapabilities,
+    ["supervisorProtocol", "controllerProtocol", "requestSchema"],
+    "recovery controller protocol capabilities",
+  );
+  exactObjectKeys(
+    value.recoveryController.recoveryCapabilities,
+    ["protocolVersion", "operations", "journalSchemas"],
+    "recovery controller capabilities",
+  );
+  const unsigned = {
+    schemaVersion: Number(value.schemaVersion),
+    transactionId: parseTransactionId(value.transactionId),
+    version: parseReleaseVersion(value.version),
+    recoveryIdentityDigest: String(value.recoveryIdentityDigest ?? ""),
+    productJournalDigest: String(value.productJournalDigest ?? ""),
+    legacySelectionDigest: String(value.legacySelectionDigest ?? ""),
+    expectedOutcome: String(value.expectedOutcome ?? ""),
+    recoveryController: {
+      version: parseReleaseVersion(value.recoveryController.version),
+      releaseCommit: String(value.recoveryController.releaseCommit ?? ""),
+      targetManifestSha256: String(value.recoveryController.targetManifestSha256 ?? ""),
+      serverSha256: String(value.recoveryController.serverSha256 ?? ""),
+      clientSha256: String(value.recoveryController.clientSha256 ?? ""),
+      trustPolicySha256: String(value.recoveryController.trustPolicySha256 ?? ""),
+      protocolCapabilities: {
+        supervisorProtocol: Number(
+          value.recoveryController.protocolCapabilities.supervisorProtocol,
+        ),
+        controllerProtocol: Number(
+          value.recoveryController.protocolCapabilities.controllerProtocol,
+        ),
+        requestSchema: Number(value.recoveryController.protocolCapabilities.requestSchema),
+      },
+      recoveryCapabilities: {
+        protocolVersion: Number(value.recoveryController.recoveryCapabilities.protocolVersion),
+        operations: [...value.recoveryController.recoveryCapabilities.operations],
+        journalSchemas: [...value.recoveryController.recoveryCapabilities.journalSchemas],
+      },
+    },
+    allowedOperation: String(value.allowedOperation ?? ""),
+    recoveryEpoch: parseTransactionId(value.recoveryEpoch),
+    authorizedAt: String(value.authorizedAt ?? ""),
+  };
+  const authorizedAt = Date.parse(unsigned.authorizedAt);
+  const authorizationDigest = createHash("sha256").update(canonicalJSON(unsigned)).digest("hex");
+  if (
+    unsigned.schemaVersion !== 3 ||
+    !/^[a-f0-9]{64}$/u.test(unsigned.recoveryIdentityDigest) ||
+    !/^[a-f0-9]{64}$/u.test(unsigned.productJournalDigest) ||
+    !/^[a-f0-9]{64}$/u.test(unsigned.legacySelectionDigest) ||
+    !new Set(["committed", "rolled-back"]).has(unsigned.expectedOutcome) ||
+    !/^[a-f0-9]{40}$/u.test(unsigned.recoveryController.releaseCommit) ||
+    !/^[a-f0-9]{64}$/u.test(unsigned.recoveryController.targetManifestSha256) ||
+    !/^[a-f0-9]{64}$/u.test(unsigned.recoveryController.serverSha256) ||
+    !/^[a-f0-9]{64}$/u.test(unsigned.recoveryController.clientSha256) ||
+    !/^[a-f0-9]{64}$/u.test(unsigned.recoveryController.trustPolicySha256) ||
+    canonicalJSON(unsigned.recoveryController.protocolCapabilities) !==
+      canonicalJSON(CONTROLLER_SELECTION_CAPABILITIES) ||
+    canonicalJSON(unsigned.recoveryController.recoveryCapabilities) !==
+      canonicalJSON(CONTROLLER_RECOVERY_CAPABILITIES) ||
+    unsigned.allowedOperation !== "recoverActive" ||
+    !Number.isFinite(authorizedAt) ||
+    new Date(authorizedAt).toISOString() !== unsigned.authorizedAt ||
+    value.authorizationDigest !== authorizationDigest ||
+    (expected.transactionId && unsigned.transactionId !== expected.transactionId) ||
+    (expected.version && unsigned.version !== expected.version)
+  ) {
+    throw new Error("recovery controller authorization is malformed or mismatched");
+  }
+  return Object.freeze({ ...unsigned, authorizationDigest });
+}
+
+function parseLegacyAdoptionBinding(value) {
+  if (value == null) {
+    return null;
+  }
+  exactObjectKeys(
+    value,
+    ["previousVersion", "receiptDigest", "targetVersion", "transactionId"],
+    "legacy managed-update adoption binding",
+  );
+  const binding = Object.freeze({
+    receiptDigest: String(value.receiptDigest ?? ""),
+    transactionId: parseTransactionId(value.transactionId),
+    previousVersion: parseReleaseVersion(value.previousVersion),
+    targetVersion: parseReleaseVersion(value.targetVersion),
+  });
+  if (!/^sha256:[a-f0-9]{64}$/u.test(binding.receiptDigest)) {
+    throw new Error("legacy managed-update adoption binding is invalid");
+  }
+  return binding;
+}
+
 export function parseUpdateRequest(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("request must be an object");
@@ -505,9 +641,21 @@ export function parseUpdateRequest(value) {
     throw new Error(legacyHostingBootstrapMessage(version));
   }
   const hasSupervisorReceipt = Object.hasOwn(value, "supervisorReceipt");
-  const expectedKeys = hasSupervisorReceipt
-    ? "op,schemaVersion,supervisorReceipt,transactionId,version"
-    : "op,schemaVersion,transactionId,version";
+  const hasLegacyAdoption = Object.hasOwn(value, "legacyAdoption");
+  const hasRecoveryDigest = value.op === "recoverActive";
+  const expectedKeys = [
+    "op",
+    ...(hasRecoveryDigest ? ["recoveryDigest"] : []),
+    ...(hasRecoveryDigest ? ["recoveryControllerInstanceId"] : []),
+    ...(hasRecoveryDigest ? ["recoveryAuthorization"] : []),
+    "schemaVersion",
+    ...(hasLegacyAdoption ? ["legacyAdoption"] : []),
+    ...(hasSupervisorReceipt ? ["supervisorReceipt"] : []),
+    "transactionId",
+    "version",
+  ]
+    .toSorted()
+    .join(",");
   if (keys.join(",") !== expectedKeys) {
     throw new Error("request contains unsupported fields");
   }
@@ -519,9 +667,35 @@ export function parseUpdateRequest(value) {
     op: value.op,
     transactionId: parseTransactionId(value.transactionId),
     version: parseReleaseVersion(value.version),
+    ...(hasLegacyAdoption
+      ? { legacyAdoption: parseLegacyAdoptionBinding(value.legacyAdoption) }
+      : {}),
   };
+  if (request.legacyAdoption && request.legacyAdoption.targetVersion !== request.version) {
+    throw new Error("legacy managed-update adoption target does not match the request");
+  }
+  const recoveryDigest = hasRecoveryDigest ? String(value.recoveryDigest ?? "") : null;
+  const recoveryControllerInstanceId = hasRecoveryDigest
+    ? String(value.recoveryControllerInstanceId ?? "").toLowerCase()
+    : null;
+  const recoveryAuthorization = hasRecoveryDigest
+    ? parseRecoveryAuthorization(value.recoveryAuthorization, {
+        transactionId: request.transactionId,
+        version: request.version,
+      })
+    : null;
+  if (
+    hasRecoveryDigest &&
+    (!/^[a-f0-9]{64}$/u.test(recoveryDigest) ||
+      !TRANSACTION_ID_PATTERN.test(recoveryControllerInstanceId))
+  ) {
+    throw new Error("active recovery journal digest is invalid");
+  }
   return {
     ...request,
+    ...(hasRecoveryDigest ? { recoveryDigest } : {}),
+    ...(hasRecoveryDigest ? { recoveryControllerInstanceId } : {}),
+    ...(hasRecoveryDigest ? { recoveryAuthorization } : {}),
     ...(hasSupervisorReceipt
       ? {
           supervisorReceipt: parseSupervisorSelectionReceipt(value.supervisorReceipt, request),
@@ -2859,6 +3033,7 @@ async function validateJournal(value, context) {
           transactionId,
           version,
         });
+  const legacyAdoption = parseLegacyAdoptionBinding(value.legacyAdoption);
   const releaseBinding = value.releaseBinding == null ? null : value.releaseBinding;
   if (
     releaseBinding &&
@@ -3025,6 +3200,7 @@ async function validateJournal(value, context) {
     release: parseSignerReleaseIdentity(value.release, version),
     releaseBinding,
     supervisorReceipt,
+    legacyAdoption,
     application,
     managedApplication,
     migrationSelection,
@@ -6700,6 +6876,7 @@ function createTransactionContext(overrides = {}) {
       (async (endpoint, timeoutMs) => await readGatewayReadinessEndpoint(endpoint, timeoutMs)),
     onDurablePhase: overrides.onDurablePhase,
     beforeHistoricalResidueRemoval: overrides.beforeHistoricalResidueRemoval,
+    onLegacyAdoptionPhase: overrides.onLegacyAdoptionPhase,
     historicalQ0TestStateDir: overrides.historicalQ0TestStateDir ?? HISTORICAL_Q0_TEST_STATE_DIR,
     assertReleaseAllowed:
       overrides.assertReleaseAllowed ??
@@ -6795,7 +6972,7 @@ function createTransactionContext(overrides = {}) {
         : async () => false),
     recoverInterruptedTransaction:
       overrides.recoverInterruptedTransaction ??
-      (async () => await recoverInterruptedTransaction(context)),
+      (async (options) => await recoverInterruptedTransaction(context, options)),
     applyServiceBoundary:
       overrides.applyServiceBoundary ??
       (async (boundary) => await applyProtectedServiceBoundary(context, boundary)),
@@ -6984,6 +7161,11 @@ function assertMatchingTransaction(journal, request) {
   ) {
     throw new Error("host updater request does not match its supervisor selection receipt");
   }
+  if (
+    canonicalJSON(journal.legacyAdoption ?? null) !== canonicalJSON(request.legacyAdoption ?? null)
+  ) {
+    throw new Error("host updater request does not match its legacy adoption binding");
+  }
 }
 
 async function readRollbackFloor(context) {
@@ -7137,6 +7319,7 @@ async function prepareSignerRelease(request, context) {
       release,
       releaseBinding,
       supervisorReceipt,
+      legacyAdoption: request.legacyAdoption ?? null,
       controllerChanged: controller.changed === true,
       previousSignerInvariant,
       application,
@@ -8307,14 +8490,437 @@ async function recordTargetApplicationSuccess(context, journal) {
   await fsyncDirectory(journal.managedApplication.stateDir);
 }
 
-async function finishCommit(context, journal) {
+function legacyAdoptionAckPath(context, binding, transactionId) {
+  return path.join(
+    context.paths.stateDir,
+    "legacy-adoption-acks",
+    binding.transactionId,
+    `${transactionId}.json`,
+  );
+}
+
+function validateLegacyAdoptionSourceIdentity(value, label) {
+  exactObjectKeys(
+    value,
+    ["dev", "gid", "ino", "mode", "sha256", "size", "uid"],
+    `${label} identity`,
+  );
+  if (
+    !Number.isSafeInteger(value.dev) ||
+    value.dev < 0 ||
+    !Number.isSafeInteger(value.ino) ||
+    value.ino < 1 ||
+    !Number.isSafeInteger(value.uid) ||
+    value.uid < 1 ||
+    !Number.isSafeInteger(value.gid) ||
+    value.gid < 1 ||
+    !Number.isSafeInteger(value.mode) ||
+    (value.mode & 0o177) !== 0 ||
+    !Number.isSafeInteger(value.size) ||
+    value.size < 2 ||
+    !/^sha256:[a-f0-9]{64}$/u.test(value.sha256 || "")
+  ) {
+    throw new Error(`legacy adoption ${label} identity is invalid`);
+  }
+  return Object.freeze({ ...value });
+}
+
+function parseLegacyAdoptionAck(value, binding, request) {
+  exactObjectKeys(
+    value,
+    [
+      "schemaVersion",
+      "transactionId",
+      "version",
+      "legacyTransactionId",
+      "adoptionReceiptDigest",
+      "adoptionReceipt",
+      "legacyJournal",
+      "outcome",
+      "installedVersion",
+      "state",
+      "issuedAt",
+      "acknowledgedAt",
+      "receiptDigest",
+    ],
+    "legacy adoption completion acknowledgment",
+  );
+  const unsigned = Object.freeze({
+    schemaVersion: Number(value.schemaVersion),
+    transactionId: parseTransactionId(value.transactionId),
+    version: parseReleaseVersion(value.version),
+    legacyTransactionId: parseTransactionId(value.legacyTransactionId),
+    adoptionReceiptDigest: String(value.adoptionReceiptDigest ?? ""),
+    adoptionReceipt: validateLegacyAdoptionSourceIdentity(value.adoptionReceipt, "receipt"),
+    legacyJournal: validateLegacyAdoptionSourceIdentity(value.legacyJournal, "journal"),
+    outcome: String(value.outcome ?? ""),
+    installedVersion: parseReleaseVersion(value.installedVersion),
+    state: String(value.state ?? ""),
+    issuedAt: String(value.issuedAt ?? ""),
+    acknowledgedAt: value.acknowledgedAt === null ? null : String(value.acknowledgedAt ?? ""),
+  });
+  const issuedAt = Date.parse(unsigned.issuedAt);
+  const acknowledgedAt =
+    unsigned.acknowledgedAt === null ? null : Date.parse(unsigned.acknowledgedAt);
+  const receiptDigest = String(value.receiptDigest ?? "");
+  if (
+    unsigned.schemaVersion !== 2 ||
+    unsigned.transactionId !== request.transactionId ||
+    unsigned.version !== request.version ||
+    unsigned.legacyTransactionId !== binding.transactionId ||
+    unsigned.adoptionReceiptDigest !== binding.receiptDigest ||
+    unsigned.outcome !== "committed" ||
+    unsigned.installedVersion !== request.version ||
+    !new Set(["pending", "acknowledged"]).has(unsigned.state) ||
+    !Number.isFinite(issuedAt) ||
+    new Date(issuedAt).toISOString() !== unsigned.issuedAt ||
+    (unsigned.state === "pending" && unsigned.acknowledgedAt !== null) ||
+    (unsigned.state === "acknowledged" &&
+      (!Number.isFinite(acknowledgedAt) ||
+        new Date(acknowledgedAt).toISOString() !== unsigned.acknowledgedAt)) ||
+    receiptDigest !== `sha256:${createHash("sha256").update(canonicalJSON(unsigned)).digest("hex")}`
+  ) {
+    throw new Error("legacy adoption completion acknowledgment is mismatched");
+  }
+  return Object.freeze({ ...unsigned, receiptDigest });
+}
+
+async function readLegacyAdoptionAck(context, binding, request) {
+  const ackPath = legacyAdoptionAckPath(context, binding, request.transactionId);
+  try {
+    const named = await fsp.lstat(ackPath);
+    if (
+      !named.isFile() ||
+      named.isSymbolicLink() ||
+      named.nlink !== 1 ||
+      named.uid !== context.rootUid ||
+      (named.mode & 0o177) !== 0 ||
+      named.size <= 0 ||
+      named.size > 16 * 1024
+    ) {
+      throw new Error("legacy adoption completion acknowledgment is not protected");
+    }
+    const handle = await fsp.open(ackPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      const opened = await handle.stat();
+      if (
+        !opened.isFile() ||
+        opened.nlink !== 1 ||
+        opened.dev !== named.dev ||
+        opened.ino !== named.ino ||
+        opened.uid !== context.rootUid ||
+        (opened.mode & 0o177) !== 0 ||
+        opened.size !== named.size
+      ) {
+        throw new Error("legacy adoption completion acknowledgment changed while opening");
+      }
+      const bytes = await handle.readFile();
+      const rebound = await handle.stat();
+      if (
+        rebound.dev !== opened.dev ||
+        rebound.ino !== opened.ino ||
+        rebound.size !== opened.size ||
+        rebound.mtimeMs !== opened.mtimeMs ||
+        bytes.length !== opened.size
+      ) {
+        throw new Error("legacy adoption completion acknowledgment changed while reading");
+      }
+      return parseLegacyAdoptionAck(JSON.parse(bytes.toString("utf8")), binding, request);
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function readBoundedLegacyAdoptionSource(
+  filePath,
+  label,
+  expectedOwnerUid,
+  { optional = false, maxBytes = 2 * 1024 * 1024 } = {},
+) {
+  let named;
+  try {
+    named = await fsp.lstat(filePath);
+  } catch (error) {
+    if (error?.code === "ENOENT" && optional) {
+      return null;
+    }
+    throw error;
+  }
+  if (
+    !named.isFile() ||
+    named.isSymbolicLink() ||
+    named.nlink !== 1 ||
+    named.uid !== expectedOwnerUid ||
+    (named.mode & 0o177) !== 0 ||
+    named.size < 2 ||
+    named.size > maxBytes
+  ) {
+    throw new Error(`legacy adoption ${label} is not a safe owner-only bounded file`);
+  }
+  const handle = await fsp.open(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const opened = await handle.stat();
+    if (
+      !opened.isFile() ||
+      opened.nlink !== 1 ||
+      opened.dev !== named.dev ||
+      opened.ino !== named.ino ||
+      opened.uid !== expectedOwnerUid
+    ) {
+      throw new Error(`legacy adoption ${label} changed while it was opened`);
+    }
+    const bytes = await handle.readFile();
+    const rebound = await handle.stat();
+    if (
+      rebound.dev !== opened.dev ||
+      rebound.ino !== opened.ino ||
+      rebound.size !== opened.size ||
+      rebound.mtimeMs !== opened.mtimeMs ||
+      bytes.length !== opened.size
+    ) {
+      throw new Error(`legacy adoption ${label} changed while it was read`);
+    }
+    let value;
+    try {
+      value = JSON.parse(bytes.toString("utf8"));
+    } catch (error) {
+      throw new Error(`legacy adoption ${label} is not valid JSON`, { cause: error });
+    }
+    return Object.freeze({
+      bytes,
+      value,
+      identity: validateLegacyAdoptionSourceIdentity(
+        {
+          dev: opened.dev,
+          gid: opened.gid,
+          ino: opened.ino,
+          mode: opened.mode & 0o777,
+          sha256: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+          size: opened.size,
+          uid: opened.uid,
+        },
+        label,
+      ),
+    });
+  } finally {
+    await handle.close();
+  }
+}
+
+function validateLegacyAdoptionSourceReceipt(value, binding) {
+  exactObjectKeys(
+    value,
+    [
+      "adoptedAt",
+      "controllerHintSha256",
+      "currentRuntimeSha256",
+      "gateway",
+      "journalRemovalIntent",
+      "legacyJournalSha256",
+      "outcome",
+      "previousManifestSha256",
+      "previousRootSha256",
+      "previousVersion",
+      "profile",
+      "receiptDigest",
+      "rootVerificationPending",
+      "schemaVersion",
+      "service",
+      "stateEvidenceDigest",
+      "targetVersion",
+      "transactionId",
+    ],
+    "legacy managed-update adoption receipt",
+  );
+  const unsigned = { ...value };
+  delete unsigned.receiptDigest;
+  if (
+    value.schemaVersion !== 1 ||
+    value.profile !== "protected-local" ||
+    value.outcome !== "rolled-back" ||
+    value.journalRemovalIntent !== "remove-after-durable-receipt" ||
+    value.rootVerificationPending !== true ||
+    String(value.transactionId ?? "").toLowerCase() !== binding.transactionId ||
+    value.receiptDigest !== binding.receiptDigest ||
+    value.previousVersion !== binding.previousVersion ||
+    value.targetVersion !== binding.targetVersion ||
+    value.receiptDigest !==
+      `sha256:${createHash("sha256").update(canonicalJSON(unsigned)).digest("hex")}` ||
+    !/^sha256:[a-f0-9]{64}$/u.test(value.legacyJournalSha256 || "")
+  ) {
+    throw new Error("legacy managed-update adoption receipt changed before completion");
+  }
+  return Object.freeze({ ...value });
+}
+
+async function legacyAdoptionSourceState(context, binding, stateDir, { optional = false } = {}) {
+  const expectedOwnerUid = context.applicationState?.operatorUid;
+  if (!Number.isSafeInteger(expectedOwnerUid) || expectedOwnerUid < 1) {
+    throw new Error("legacy adoption completion has no exact application owner");
+  }
+  const receiptPath = path.join(stateDir, LEGACY_ADOPTION_RECEIPT_NAME);
+  const journalPath = path.join(stateDir, "hosted-update-transaction.json");
+  const [receiptFile, journalFile] = await Promise.all([
+    readBoundedLegacyAdoptionSource(receiptPath, "receipt", expectedOwnerUid, {
+      optional,
+      maxBytes: 256 * 1024,
+    }),
+    readBoundedLegacyAdoptionSource(journalPath, "journal", expectedOwnerUid, { optional }),
+  ]);
+  if (!receiptFile || !journalFile) {
+    return Object.freeze({ receiptPath, journalPath, receiptFile, journalFile });
+  }
+  const receipt = validateLegacyAdoptionSourceReceipt(receiptFile.value, binding);
+  if (
+    Number(journalFile.value?.schemaVersion) !== 1 ||
+    String(journalFile.value?.transactionId ?? "").toLowerCase() !== binding.transactionId ||
+    journalFile.value?.previousVersion !== binding.previousVersion ||
+    journalFile.value?.targetVersion !== binding.targetVersion ||
+    !new Set(["rolling-back", "restored"]).has(String(journalFile.value?.phase ?? "")) ||
+    receipt.legacyJournalSha256 !== journalFile.identity.sha256
+  ) {
+    throw new Error("legacy adoption source journal changed before completion");
+  }
+  return Object.freeze({ receiptPath, journalPath, receiptFile, journalFile });
+}
+
+function legacyAdoptionIdentityEqual(left, right) {
+  return canonicalJSON(left) === canonicalJSON(right);
+}
+
+async function writeLegacyAdoptionAck(context, binding, request, value) {
+  const parsed = parseLegacyAdoptionAck(value, binding, request);
+  const ackPath = legacyAdoptionAckPath(context, binding, request.transactionId);
+  await atomicWriteFileDurable(ackPath, `${JSON.stringify(parsed, null, 2)}\n`, 0o600);
+  return parsed;
+}
+
+async function prepareLegacyAdoptionCompletion(context, journal) {
+  const binding = journal.legacyAdoption;
+  if (!binding) {
+    return null;
+  }
+  const request = { transactionId: journal.transactionId, version: journal.version };
+  const existing = await readLegacyAdoptionAck(context, binding, request);
+  if (existing) {
+    return existing;
+  }
+  const stateDir = journal.managedApplication?.stateDir;
+  if (!stateDir) {
+    throw new Error("legacy adoption completion has no managed application state root");
+  }
+  const sources = await legacyAdoptionSourceState(context, binding, stateDir);
+  const unsigned = Object.freeze({
+    schemaVersion: 2,
+    transactionId: journal.transactionId,
+    version: journal.version,
+    legacyTransactionId: binding.transactionId,
+    adoptionReceiptDigest: binding.receiptDigest,
+    adoptionReceipt: sources.receiptFile.identity,
+    legacyJournal: sources.journalFile.identity,
+    outcome: "committed",
+    installedVersion: journal.version,
+    state: "pending",
+    issuedAt: new Date().toISOString(),
+    acknowledgedAt: null,
+  });
+  const completion = await writeLegacyAdoptionAck(context, binding, request, {
+    ...unsigned,
+    receiptDigest: `sha256:${createHash("sha256").update(canonicalJSON(unsigned)).digest("hex")}`,
+  });
+  await context.onLegacyAdoptionPhase?.("after-completion-durable", {
+    binding,
+    completion,
+    stateDir,
+  });
+  return completion;
+}
+
+async function acknowledgeLegacyAdoption(request, context) {
+  const binding = request.legacyAdoption;
+  if (!binding) {
+    throw new Error("legacy adoption acknowledgment has no root-authorized binding");
+  }
+  const committed = await alreadyCommittedRelease(request, context);
+  if (!committed?.legacyAdoptionAck) {
+    throw new Error("legacy adoption completion receipt is unavailable after target commit");
+  }
+  let ack = committed.legacyAdoptionAck;
+  const stateDir = context.applicationState?.stateDir;
+  if (!stateDir) {
+    throw new Error("legacy adoption acknowledgment has no managed application state root");
+  }
+  const sources = await legacyAdoptionSourceState(context, binding, stateDir, { optional: true });
+  const receiptPresent = sources.receiptFile !== null;
+  const journalPresent = sources.journalFile !== null;
+  if (
+    (receiptPresent &&
+      !legacyAdoptionIdentityEqual(sources.receiptFile.identity, ack.adoptionReceipt)) ||
+    (journalPresent &&
+      !legacyAdoptionIdentityEqual(sources.journalFile.identity, ack.legacyJournal))
+  ) {
+    throw new Error("legacy adoption source files were replaced after durable completion");
+  }
+  if (journalPresent) {
+    await fsp.rm(sources.journalPath);
+    await fsyncDirectory(stateDir);
+    await context.onLegacyAdoptionPhase?.("after-journal-removal", {
+      binding,
+      completion: ack,
+      stateDir,
+    });
+  }
+  if (receiptPresent) {
+    await fsp.rm(sources.receiptPath);
+    await fsyncDirectory(stateDir);
+    await context.onLegacyAdoptionPhase?.("after-receipt-removal", {
+      binding,
+      completion: ack,
+      stateDir,
+    });
+  }
+  if (ack.state !== "acknowledged") {
+    const unsigned = {
+      ...ack,
+      state: "acknowledged",
+      acknowledgedAt: new Date().toISOString(),
+    };
+    delete unsigned.receiptDigest;
+    Object.freeze(unsigned);
+    ack = await writeLegacyAdoptionAck(context, binding, request, {
+      ...unsigned,
+      receiptDigest: `sha256:${createHash("sha256").update(canonicalJSON(unsigned)).digest("hex")}`,
+    });
+    await context.onLegacyAdoptionPhase?.("after-acknowledgment-durable", {
+      binding,
+      completion: ack,
+      stateDir,
+    });
+  }
+  return {
+    ...committed,
+    legacyAdoption: binding,
+    legacyAdoptionAck: ack,
+  };
+}
+
+async function finishCommit(context, journal, options = {}) {
   if (journal.migrationSelection) {
     assertLifecycleSchemaMigrationsApplied(journal);
   }
   await context.installCommittedLaunchers(journal);
   await recordTargetApplicationSuccess(context, journal);
-  await cleanupHistoricalQ0Residue(context, journal);
+  if (options.skipHistoricalResidueCleanup !== true) {
+    await cleanupHistoricalQ0Residue(context, journal);
+  }
   await writeInitialRollbackFloor(context, journal.version);
+  const legacyAdoptionAck = await prepareLegacyAdoptionCompletion(context, journal);
   await removeUpdateGates(context);
   await cleanupTransactionFiles(context, journal.transactionId);
   await removeJournal(context);
@@ -8330,12 +8936,18 @@ async function finishCommit(context, journal) {
       journal.schemaMigration,
       journal.migrationSelection,
     ),
+    legacyAdoption: journal.legacyAdoption ?? null,
+    legacyAdoptionAck,
   };
 }
 
 async function commitSignerRelease(request, context) {
   let journal = await readJournal(context);
   if (!journal) {
+    const committed = await alreadyCommittedRelease(request, context);
+    if (committed) {
+      return committed;
+    }
     const installed = await readVersionFile(context.paths.versionPath);
     const floor = await readRollbackFloor(context);
     if (installed === request.version && floor && compareVersions(request.version, floor) >= 0) {
@@ -8434,6 +9046,12 @@ async function alreadyCommittedRelease(request, context) {
         migrationSelection,
       )
     : null;
+  const legacyAdoptionAck = request.legacyAdoption
+    ? await readLegacyAdoptionAck(context, request.legacyAdoption, request)
+    : null;
+  if (request.legacyAdoption && !legacyAdoptionAck) {
+    throw new Error("committed target is missing its durable legacy adoption completion receipt");
+  }
   return {
     transactionId: request.transactionId,
     version: request.version,
@@ -8442,6 +9060,8 @@ async function alreadyCommittedRelease(request, context) {
     release,
     migration: lifecycleMigrationReceipt(migrationSelection),
     schemaMigration: lifecycleSchemaMigrationReceipt(schemaMigration, migrationSelection),
+    legacyAdoption: request.legacyAdoption ?? null,
+    legacyAdoptionAck,
   };
 }
 
@@ -8464,10 +9084,9 @@ async function releaseStatus(request, context) {
   }
   const installedVersion = await readVersionFile(context.paths.versionPath);
   if (installedVersion) {
-    const previous = await alreadyCommittedRelease(
-      { ...request, version: installedVersion },
-      context,
-    );
+    const previousRequest = { ...request, version: installedVersion };
+    delete previousRequest.legacyAdoption;
+    const previous = await alreadyCommittedRelease(previousRequest, context);
     if (!previous) {
       throw new Error("restored product generation did not pass cross-product health");
     }
@@ -8568,7 +9187,7 @@ async function applyReleaseTransaction(request, context) {
   }
 }
 
-async function recoverInterruptedTransaction(context) {
+async function recoverInterruptedTransaction(context, options = {}) {
   let journal = await readJournal(context);
   if (!journal) {
     return { recovered: false };
@@ -8578,7 +9197,7 @@ async function recoverInterruptedTransaction(context) {
     version: journal.version,
     supervisorReceipt: journal.supervisorReceipt,
   };
-  if (context.supervised && journal.supervisorReceipt) {
+  if (context.supervised && journal.supervisorReceipt && !options.authorizedRecovery) {
     await assertSupervisorSelectedController(request, context, { allowProcessRestart: true });
   }
   if (journal.phase === "gateway-verified" || journal.phase === "committing") {
@@ -8590,7 +9209,9 @@ async function recoverInterruptedTransaction(context) {
         healthReceipt,
       });
     }
-    const result = await finishCommit(context, journal);
+    const result = await finishCommit(context, journal, {
+      skipHistoricalResidueCleanup: Boolean(options.authorizedRecovery),
+    });
     return { recovered: true, action: "committed", result };
   }
   if (
@@ -8611,7 +9232,134 @@ async function recoverInterruptedTransaction(context) {
   throw new Error(`host updater cannot recover transaction phase ${journal.phase}`);
 }
 
-async function dispatchUpdateRequest(request, context) {
+function controllerRecoveryState(journal, journalDigest = null, error = null) {
+  if (!journal && !error) {
+    return Object.freeze({ state: "READY" });
+  }
+  if (error) {
+    return Object.freeze({
+      state: "INVALID_LEDGER",
+      lastErrorClass: "INVALID_LEDGER",
+    });
+  }
+  return Object.freeze({
+    state: "RECOVERY_PENDING",
+    transactionId: journal?.transactionId ?? null,
+    targetVersion: journal?.version ?? null,
+    journalSchemaVersion: journal?.schemaVersion ?? null,
+    legacySelectionDigest: journal?.supervisorReceipt?.selectionDigest ?? null,
+    phase: journal?.phase ?? null,
+    durableCommitDecision: new Set(["gateway-verified", "committing"]).has(journal?.phase),
+    journalDigest,
+    lastErrorClass: null,
+  });
+}
+
+async function inspectControllerRecovery(context) {
+  try {
+    const bytes = await fsp.readFile(context.paths.journalPath, "utf8");
+    const raw = JSON.parse(bytes);
+    const journal = await validateJournal(raw, context);
+    return controllerRecoveryState(
+      journal,
+      createHash("sha256").update(canonicalJSON(raw)).digest("hex"),
+    );
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return controllerRecoveryState(null);
+    }
+    return controllerRecoveryState(null, null, error);
+  }
+}
+
+async function handleExplicitControllerRecovery(request, context, state) {
+  const pending = state.recovery;
+  const authorization = request.recoveryAuthorization;
+  if (pending.state !== "RECOVERY_PENDING") {
+    return {
+      transactionId: request.transactionId,
+      version: request.version,
+      phase: "ready",
+      changed: false,
+      replayed: true,
+      recovery: pending,
+    };
+  }
+  if (
+    pending.transactionId === null ||
+    pending.targetVersion === null ||
+    pending.journalDigest === null ||
+    request.transactionId !== pending.transactionId ||
+    request.version !== pending.targetVersion ||
+    request.recoveryDigest !== pending.journalDigest ||
+    authorization.transactionId !== pending.transactionId ||
+    authorization.version !== pending.targetVersion ||
+    authorization.productJournalDigest !== pending.journalDigest ||
+    authorization.legacySelectionDigest !== pending.legacySelectionDigest ||
+    authorization.expectedOutcome !== (pending.durableCommitDecision ? "committed" : "rolled-back")
+  ) {
+    throw new Error("active controller recovery request does not match the protected journal");
+  }
+  const recoveryController = authorization.recoveryController;
+  if (
+    request.recoveryControllerInstanceId !== context.controllerInstanceId ||
+    recoveryController.version !== context.runningControllerVersion ||
+    recoveryController.serverSha256 !== context.runningControllerIdentity?.serverSha256 ||
+    recoveryController.clientSha256 !== context.runningControllerIdentity?.clientSha256 ||
+    !recoveryController.recoveryCapabilities.journalSchemas.includes(pending.journalSchemaVersion)
+  ) {
+    throw new Error("active recovery controller process identity is mismatched");
+  }
+  try {
+    const result = await context.recoverInterruptedTransaction({
+      authorizedRecovery: authorization,
+    });
+    if (result.action !== authorization.expectedOutcome) {
+      throw new Error("controller recovery outcome does not match its bounded authorization");
+    }
+    state.recovery = await inspectControllerRecovery(context);
+    return {
+      transactionId: request.transactionId,
+      version: request.version,
+      phase: result.action === "committed" ? "committed" : "rolled-back",
+      changed: result.recovered === true,
+      recoveryControllerInstanceId: context.controllerInstanceId,
+      recoveryAuthorizationDigest: authorization.authorizationDigest,
+      recovery: state.recovery,
+    };
+  } catch (error) {
+    state.recovery = await inspectControllerRecovery(context);
+    throw error;
+  }
+}
+
+async function dispatchUpdateRequest(request, context, state = { recovery: { state: "READY" } }) {
+  state.recovery ??= Object.freeze({ state: "READY" });
+  if (request.op === "recoveryStatus") {
+    return {
+      transactionId: request.transactionId,
+      version: request.version,
+      phase: state.recovery.state === "READY" ? "ready" : "recovery-pending",
+      changed: false,
+      recovery: state.recovery,
+    };
+  }
+  if (state.recovery.state === "INITIALIZING") {
+    throw new Error("controller recovery authority is still initializing");
+  }
+  if (state.recovery.state === "INVALID_LEDGER") {
+    throw new Error("controller recovery ledger is invalid; only status is available");
+  }
+  if (state.recovery.state === "RECOVERY_PENDING") {
+    if (request.op === "recoverActive") {
+      return await handleExplicitControllerRecovery(request, context, state);
+    }
+    if (request.op !== "controllerStatus") {
+      throw new Error("controller recovery is pending; new product mutation is blocked");
+    }
+  } else if (request.op === "recoverActive") {
+    return await handleExplicitControllerRecovery(request, context, state);
+  }
   if (
     context.supervised &&
     request.op !== "updateController" &&
@@ -8637,9 +9385,12 @@ async function dispatchUpdateRequest(request, context) {
         controllerServerSha256: context.runningControllerIdentity.serverSha256,
         controllerClientSha256: context.runningControllerIdentity.clientSha256,
         protocolCapabilities: CONTROLLER_SELECTION_CAPABILITIES,
+        recoveryCapabilities: CONTROLLER_RECOVERY_CAPABILITIES,
       };
     case "releaseStatus":
       return await releaseStatus(request, context);
+    case "acknowledgeLegacyAdoption":
+      return await acknowledgeLegacyAdoption(request, context);
     case "updateController":
       if (context.supervised) {
         throw new Error("stable lifecycle supervisor owns controller promotion");
@@ -8759,17 +9510,17 @@ export async function startServer(options = {}) {
       supervised: configuration.supervised,
       controllerConfiguration: configuration,
     });
-  const preparation = await prepareControllerServerContext(context);
-  if (preparation.restartRequired) {
-    return {
-      server: null,
-      close: async () => undefined,
-      restartRequired: true,
-    };
-  }
+  return await startControllerControlPlane(configuration, context, options);
+}
+
+async function startControllerControlPlane(configuration, context, options = {}) {
   await fsp.mkdir(path.dirname(context.paths.socketPath), { recursive: true, mode: 0o750 });
   await fsp.rm(context.paths.socketPath, { force: true });
   process.umask(0o117);
+  const state = {
+    recovery: Object.freeze({ state: "INITIALIZING" }),
+    initialized: false,
+  };
   let queue = Promise.resolve();
   const server = net.createServer((socket) => {
     socket.setEncoding("utf8");
@@ -8805,7 +9556,14 @@ export async function startServer(options = {}) {
         writeResponse(socket, { ok: false, error: error.message });
         return;
       }
-      const operation = queue.then(() => dispatchUpdateRequest(request, context));
+      const operation = queue
+        .then(() => dispatchUpdateRequest(request, context, state))
+        .catch(async (error) => {
+          if (state.initialized) {
+            state.recovery = await inspectControllerRecovery(context);
+          }
+          throw error;
+        });
       queue = operation.catch(() => undefined);
       const restartController = () => {
         if (!context.controllerRestartRequired) {
@@ -8848,13 +9606,35 @@ export async function startServer(options = {}) {
     context.paths.socketPath,
     configuration.supervised || configuration.socketUid !== 0 ? 0o600 : 0o660,
   );
+  let preparation;
+  try {
+    preparation = await prepareControllerServerContext(context);
+    state.recovery = preparation.recovery ?? Object.freeze({ state: "READY" });
+    state.initialized = true;
+  } catch {
+    state.recovery = Object.freeze({
+      state: "INVALID_LEDGER",
+      lastErrorClass: "INITIALIZATION_FAILED",
+    });
+  }
   const close = async () => {
     await new Promise((resolve) => server.close(resolve));
     await fsp.rm(context.paths.socketPath, { force: true });
   };
-  process.once("SIGTERM", () => void close().then(() => process.exit(0)));
-  process.once("SIGINT", () => void close().then(() => process.exit(0)));
-  return { server, close };
+  if (options.installSignalHandlers !== false) {
+    process.once("SIGTERM", () => void close().then(() => process.exit(0)));
+    process.once("SIGINT", () => void close().then(() => process.exit(0)));
+  }
+  if (preparation?.restartRequired) {
+    await close();
+    return {
+      server: null,
+      close: async () => undefined,
+      state,
+      restartRequired: true,
+    };
+  }
+  return { server, close, state, restartRequired: false };
 }
 
 async function prepareControllerServerContext(context) {
@@ -8867,12 +9647,15 @@ async function prepareControllerServerContext(context) {
   const topology = await context.discoverApplicationTopology();
   context.applicationTopology = topology;
   context.applicationState = managedApplicationStateFromTopology(topology);
+  if (context.supervised) {
+    return { restartRequired: false, recovery: await inspectControllerRecovery(context) };
+  }
   if (context.recoverInterruptedTransaction) {
     await context.recoverInterruptedTransaction();
   } else {
     await recoverInterruptedTransaction(context);
   }
-  return { restartRequired: false };
+  return { restartRequired: false, recovery: Object.freeze({ state: "READY" }) };
 }
 
 export function isMainModule(entryPath, modulePath = fileURLToPath(import.meta.url)) {
@@ -8908,6 +9691,7 @@ export const __testing = {
   LIFECYCLE_COMPATIBILITY_ADAPTERS,
   LIFECYCLE_SCHEMA_MIGRATIONS,
   assertSignerV2Health,
+  acknowledgeLegacyAdoption,
   applyReleaseTransaction,
   activateSignerRelease,
   authorizeGatewayRelease,

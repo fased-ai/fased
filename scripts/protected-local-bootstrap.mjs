@@ -9,6 +9,15 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { installProtectedLocalApplicationRuntime } from "./fased-host-updater.mjs";
+import { validateLegacyManagedUpdateAdoptionReceipt } from "./fased-managed-updater-core.mjs";
+import {
+  assertManagedRuntime,
+  readHostedReleaseBinding,
+  readHostedRuntimeMetadata,
+  readPackageVersion,
+  resolveLinkTarget,
+  resolveManagedRuntimePaths,
+} from "./managed-runtime-layout.mjs";
 import {
   loadOrAllocateProtectedLocalInstance,
   removeProtectedLocalInstance,
@@ -969,25 +978,533 @@ async function hardenProtectedLocalClientHint(spec) {
   return true;
 }
 
-const LEGACY_MANAGED_UPDATE_PHASES = new Set([
-  "prepared",
-  "quiescing",
-  "signer-preactivated",
-  "app-active",
-  "signer-active",
-  "gateway-verified",
-  "rolling-back",
-  "rollback-ready",
-]);
+const LEGACY_ADOPTION_USER_RECEIPT = "legacy-managed-update-adoption.v1.json";
+const LEGACY_ADOPTION_ROOT_RECEIPT = "legacy-managed-update-adoption.v1.json";
+const TAGGED_SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 
-async function suspendLegacyManagedUpdateJournal(spec) {
-  const journalPath = path.join(spec.stateDir, "hosted-update-transaction.json");
+function buildLegacyManagedUpdateAdoptionCommand(sourceRoot, spec, options = {}) {
+  const runuser =
+    options.runuserPath ?? systemBinary(["/usr/sbin/runuser", "/sbin/runuser"], "runuser");
+  const updaterCore = path.join(sourceRoot, "scripts", "fased-managed-updater-core.mjs");
+  return Object.freeze({
+    executable: runuser,
+    args: Object.freeze([
+      "-u",
+      spec.operatorUser,
+      "--",
+      "/usr/bin/env",
+      "-i",
+      `HOME=${spec.operatorHome}`,
+      `USER=${spec.operatorUser}`,
+      `LOGNAME=${spec.operatorUser}`,
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      `FASED_STATE_DIR=${spec.stateDir}`,
+      `FASED_CONFIG_PATH=${path.join(spec.stateDir, "fased.json")}`,
+      spec.nodeBinary,
+      updaterCore,
+      "adopt-legacy-managed-update",
+    ]),
+  });
+}
+
+async function readFixedOperatorAdoptionReceipt(stateDir, operatorUid) {
+  const receiptPath = path.join(stateDir, LEGACY_ADOPTION_USER_RECEIPT);
+  const named = await fsp.lstat(receiptPath);
+  if (
+    !named.isFile() ||
+    named.isSymbolicLink() ||
+    named.nlink !== 1 ||
+    named.uid !== operatorUid ||
+    (named.mode & 0o177) !== 0 ||
+    named.size < 2 ||
+    named.size > 256 * 1024
+  ) {
+    fail("legacy managed update adoption receipt is not a safe operator-owned file");
+  }
+  const handle = await fsp.open(receiptPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const opened = await handle.stat();
+    if (
+      !opened.isFile() ||
+      opened.nlink !== 1 ||
+      opened.dev !== named.dev ||
+      opened.ino !== named.ino ||
+      opened.uid !== operatorUid
+    ) {
+      fail("legacy managed update adoption receipt changed during root import");
+    }
+    return Object.freeze({
+      path: receiptPath,
+      receipt: validateLegacyManagedUpdateAdoptionReceipt(
+        JSON.parse((await handle.readFile()).toString("utf8")),
+      ),
+    });
+  } finally {
+    await handle.close();
+  }
+}
+
+function canonicalRootImportJSON(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => canonicalRootImportJSON(entry)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .toSorted()
+      .map((key) => `${JSON.stringify(key)}:${canonicalRootImportJSON(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function rootImportDigest(value) {
+  const input = Buffer.isBuffer(value) ? value : canonicalRootImportJSON(value);
+  return `sha256:${crypto.createHash("sha256").update(input).digest("hex")}`;
+}
+
+function rootImportRawDigest(value) {
+  return `sha256:${crypto.createHash("sha256").update(value).digest("hex")}`;
+}
+
+async function readRootImportJson(filePath, label, ownerUid, allowedModes = [0o600]) {
+  const named = await fsp.lstat(filePath);
+  if (
+    !named.isFile() ||
+    named.isSymbolicLink() ||
+    named.nlink !== 1 ||
+    named.uid !== ownerUid ||
+    !allowedModes.includes(named.mode & 0o777) ||
+    named.size < 2 ||
+    named.size > 2 * 1024 * 1024
+  ) {
+    fail(`${label} is unsafe during root adoption verification`);
+  }
+  const handle = await fsp.open(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const opened = await handle.stat();
+    if (
+      !opened.isFile() ||
+      opened.nlink !== 1 ||
+      opened.uid !== ownerUid ||
+      opened.dev !== named.dev ||
+      opened.ino !== named.ino
+    ) {
+      fail(`${label} changed during root adoption verification`);
+    }
+    const bytes = await handle.readFile();
+    return Object.freeze({ bytes, value: JSON.parse(bytes.toString("utf8")) });
+  } finally {
+    await handle.close();
+  }
+}
+
+function validateRootImportManagedManifest(manifest, paths, version, layout) {
+  const required = new Set([
+    "configPath",
+    "package",
+    "profile",
+    "release",
+    "runtime",
+    "schemaVersion",
+    "service",
+    "source",
+    "stateDir",
+    "update",
+    "updater",
+  ]);
+  const allowed = new Set([...required, "signer", "updatedAt"]);
+  if (
+    !manifest ||
+    typeof manifest !== "object" ||
+    Array.isArray(manifest) ||
+    [...required].some((key) => !Object.hasOwn(manifest, key)) ||
+    Object.keys(manifest).some((key) => !allowed.has(key)) ||
+    manifest.schemaVersion !== 2 ||
+    manifest.profile !== "protected-local" ||
+    manifest.stateDir !== paths.stateDir ||
+    manifest.configPath !== path.join(paths.stateDir, "fased.json") ||
+    manifest.runtime?.activeVersion !== version ||
+    manifest.runtime?.currentLink !== paths.currentLink ||
+    manifest.runtime?.previousLink !== paths.previousLink ||
+    manifest.runtime?.releasesDir !== paths.releasesDir ||
+    manifest.release?.version !== version ||
+    manifest.updater?.version !== version ||
+    manifest.updater?.path !== paths.updaterPath ||
+    manifest.service?.name !== layout.gatewayUnit ||
+    manifest.service?.scope !== "system" ||
+    manifest.service?.launcher !== path.join(layout.installDir, "gateway-launch")
+  ) {
+    fail("legacy managed update manifest failed independent root verification");
+  }
+  return manifest;
+}
+
+async function readRootImportRuntimeIdentity(root, version) {
+  await assertManagedRuntime(root, version);
+  const metadata = await readHostedRuntimeMetadata(root);
+  if (!metadata) {
+    fail("legacy managed update runtime has no hosted identity during root verification");
+  }
+  const release = await readHostedReleaseBinding(root, metadata, version);
+  if (!release) {
+    fail("legacy managed update runtime has no release binding during root verification");
+  }
+  const packageVersion = await readPackageVersion(root);
+  const identity = Object.freeze({ metadata, packageVersion, release });
+  let generation = null;
+  try {
+    const updater = JSON.parse(
+      await fsp.readFile(path.join(root, ".fased-managed-updater-bundle.json"), "utf8"),
+    );
+    if (
+      updater?.schemaVersion !== 2 ||
+      updater.release?.version !== version ||
+      updater.release?.commit !== release.commit ||
+      !TAGGED_SHA256_PATTERN.test(String(updater.bundleDigest ?? ""))
+    ) {
+      fail("legacy managed update runtime has an invalid updater generation binding");
+    }
+    generation = Object.freeze({
+      schemaVersion: 1,
+      version: release.version,
+      releaseCommit: release.commit,
+      manifestDigest: release.manifestDigest,
+      applicationDigest: release.appArtifactDigest,
+      dependencyDigest: release.dependencyArtifactDigest,
+      dependencyHash: release.dependencyHash,
+      updaterBundleDigest: updater.bundleDigest,
+      runtimeRootDigest: rootImportRawDigest(root),
+    });
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  return Object.freeze({
+    generation,
+    identity,
+    identityDigest: rootImportDigest(identity),
+    root,
+    version,
+  });
+}
+
+async function probeRootImportGateway(spec, layout, expected, options = {}) {
+  if (options.probeGateway) {
+    return await options.probeGateway(expected);
+  }
+  const endpoint = { port: spec.gatewayPort };
+  const payload = await new Promise((resolve, reject) => {
+    const request = http.get(
+      {
+        hostname: "127.0.0.1",
+        port: endpoint.port,
+        path: "/readyz",
+        timeout: 5_000,
+      },
+      (response) => {
+        let body = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          body += chunk;
+          if (Buffer.byteLength(body) > 256 * 1024) {
+            request.destroy(new Error("Gateway readiness response exceeded its root import bound"));
+          }
+        });
+        response.on("end", () => {
+          try {
+            const parsed = JSON.parse(body);
+            if (response.statusCode !== 200) {
+              fail("Gateway readiness failed during root adoption verification");
+            }
+            resolve(parsed);
+          } catch (error) {
+            reject(error);
+          }
+        });
+      },
+    );
+    request.on("timeout", () =>
+      request.destroy(new Error("Gateway readiness timed out during root adoption verification")),
+    );
+    request.on("error", reject);
+  });
+  const systemctl = systemBinary(["/usr/bin/systemctl", "/bin/systemctl"], "systemctl");
+  const properties = parseSystemdProperties(
+    runSystem(systemctl, [
+      "show",
+      layout.gatewayUnit,
+      "--property=ActiveState,MainPID,ExecMainStartTimestamp",
+    ]),
+  );
+  const pid = systemdMainPid(properties);
+  const serviceStartedAt = Date.parse(String(properties.ExecMainStartTimestamp ?? ""));
+  const payloadStartedAt = Date.parse(String(payload?.startedAt ?? ""));
+  if (
+    properties.ActiveState !== "active" ||
+    payload?.ok !== true ||
+    payload?.ready !== true ||
+    payload?.status !== "ready" ||
+    payload?.version !== expected.version ||
+    !new Set(["managed-package", "packaged-runtime"]).has(payload?.runtimeSource) ||
+    !pid ||
+    payload?.pid !== pid ||
+    Number.isNaN(serviceStartedAt) ||
+    Number.isNaN(payloadStartedAt) ||
+    Math.abs(serviceStartedAt - payloadStartedAt) > 10_000 ||
+    (expected.generation
+      ? canonicalRootImportJSON(payload.generation) !== canonicalRootImportJSON(expected.generation)
+      : payload.generation != null)
+  ) {
+    fail("Gateway service identity failed independent root adoption verification");
+  }
+  return Object.freeze({
+    generationDigest: expected.generation
+      ? rootImportDigest(payload.generation)
+      : expected.identityDigest,
+    pid,
+    runtimeSource: payload.runtimeSource,
+    startedAt: payload.startedAt,
+    version: payload.version,
+  });
+}
+
+async function verifyRootImportServiceBoundary(layout, service, options = {}) {
+  if (options.verifyServiceBoundary) {
+    await options.verifyServiceBoundary(service);
+    return;
+  }
+  const unitPath = path.join("/etc/systemd/system", service.name);
+  const [launcherInfo, unitInfo, unit] = await Promise.all([
+    fsp.lstat(service.launcher),
+    fsp.lstat(unitPath),
+    fsp.readFile(unitPath, "utf8"),
+  ]);
+  if (
+    !launcherInfo.isFile() ||
+    launcherInfo.isSymbolicLink() ||
+    launcherInfo.uid !== 0 ||
+    (launcherInfo.mode & 0o022) !== 0 ||
+    !unitInfo.isFile() ||
+    unitInfo.isSymbolicLink() ||
+    unitInfo.uid !== 0 ||
+    (unitInfo.mode & 0o022) !== 0 ||
+    !unit.split("\n").includes(`ExecStart=${service.launcher}`) ||
+    service.name !== layout.gatewayUnit
+  ) {
+    fail("legacy managed update service failed independent root verification");
+  }
+}
+
+async function verifyLegacyManagedUpdateAdoptionForRoot(
+  spec,
+  layout,
+  registryEntry,
+  userReceipt,
+  options = {},
+) {
+  const resolveRuntimeLink = options.resolveRuntimeLink ?? resolveLinkTarget;
+  const readRuntimeIdentity = options.readRuntimeIdentity ?? readRootImportRuntimeIdentity;
+  const paths = resolveManagedRuntimePaths({ stateDir: registryEntry.stateDir });
+  const journalFile = await readRootImportJson(
+    path.join(registryEntry.stateDir, "hosted-update-transaction.json"),
+    "legacy managed update journal",
+    spec.operatorUid,
+  );
+  const journal = journalFile.value;
+  if (
+    !journal ||
+    typeof journal !== "object" ||
+    Array.isArray(journal) ||
+    Object.keys(journal).toSorted().join(",") !==
+      [
+        "createdAt",
+        "nextManifest",
+        "phase",
+        "previousManifest",
+        "previousRoot",
+        "previousVersion",
+        "schemaVersion",
+        "signerRelease",
+        "targetRoot",
+        "targetVersion",
+        "transactionId",
+        "updatedAt",
+      ]
+        .toSorted()
+        .join(",") ||
+    journal.schemaVersion !== 1 ||
+    journal.phase !== "rolling-back" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      String(journal.transactionId ?? ""),
+    ) ||
+    !RELEASE_PATTERN.test(String(journal.previousVersion ?? "")) ||
+    !RELEASE_PATTERN.test(String(journal.targetVersion ?? "")) ||
+    journal.previousRoot !== path.join(paths.releasesDir, journal.previousVersion) ||
+    journal.targetRoot !== path.join(paths.releasesDir, journal.targetVersion)
+  ) {
+    fail("legacy managed update journal failed independent root verification");
+  }
+  validateRootImportManagedManifest(
+    journal.previousManifest,
+    paths,
+    journal.previousVersion,
+    layout,
+  );
+  validateRootImportManagedManifest(journal.nextManifest, paths, journal.targetVersion, layout);
+  const hintFile = await readRootImportJson(
+    path.join(registryEntry.stateDir, "protected-local-controller-transaction.json"),
+    "legacy controller hint",
+    spec.operatorUid,
+  );
+  const hint = hintFile.value;
+  if (
+    !hint ||
+    Object.keys(hint).toSorted().join(",") !== "schemaVersion,transactionId,version" ||
+    hint.schemaVersion !== 1 ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      String(hint.transactionId ?? ""),
+    ) ||
+    !RELEASE_PATTERN.test(String(hint.version ?? ""))
+  ) {
+    fail("legacy controller hint failed independent root verification");
+  }
+  const installFile = await readRootImportJson(
+    paths.manifestPath,
+    "managed install manifest",
+    spec.operatorUid,
+    [0o600, 0o660],
+  );
+  validateRootImportManagedManifest(installFile.value, paths, journal.previousVersion, layout);
+  if (
+    canonicalRootImportJSON(installFile.value) !== canonicalRootImportJSON(journal.previousManifest)
+  ) {
+    fail("installed manifest does not match the independently verified previous outcome");
+  }
+  const currentRoot = await resolveRuntimeLink(paths.currentLink);
+  const rootApplication = await resolveRuntimeLink(layout.applicationCurrentLink);
+  const expectedRootApplication = path.join(
+    layout.applicationReleasesDir,
+    `v${journal.previousVersion}`,
+  );
+  if (currentRoot !== journal.previousRoot || rootApplication !== expectedRootApplication) {
+    fail(
+      "managed runtime/current or root application/current does not match the independently verified previous outcome",
+    );
+  }
+  const previousIdentity = await readRuntimeIdentity(journal.previousRoot, journal.previousVersion);
+  const currentIdentity = await readRuntimeIdentity(currentRoot, journal.previousVersion);
+  const rootIdentity = await readRuntimeIdentity(rootApplication, journal.previousVersion);
+  if (
+    previousIdentity.identityDigest !== currentIdentity.identityDigest ||
+    previousIdentity.identityDigest !== rootIdentity.identityDigest
+  ) {
+    fail("application identities differ during independent root adoption verification");
+  }
+  const configFile = await readRootImportJson(
+    path.join(registryEntry.stateDir, "fased.json"),
+    "legacy Gateway configuration",
+    spec.operatorUid,
+    [0o600, 0o660],
+  );
+  const configuredGatewayPort = Number(configFile.value?.gateway?.port ?? 18789);
+  if (configuredGatewayPort !== spec.gatewayPort) {
+    fail("legacy Gateway configuration changed before root adoption import");
+  }
+  const gateway = await probeRootImportGateway(
+    spec,
+    layout,
+    {
+      generation: rootIdentity.generation,
+      identityDigest: rootIdentity.identityDigest,
+      version: journal.previousVersion,
+    },
+    options,
+  );
+  const service = Object.freeze({
+    instanceId: layout.instanceId,
+    launcher: journal.previousManifest.service.launcher,
+    name: journal.previousManifest.service.name,
+    scope: "system",
+  });
+  await verifyRootImportServiceBoundary(layout, service, options);
+  const evidence = Object.freeze({
+    controllerHintSha256: rootImportDigest(hintFile.bytes),
+    currentRuntimeSha256: currentIdentity.identityDigest,
+    gateway,
+    legacyJournalSha256: rootImportDigest(journalFile.bytes),
+    previousManifestSha256: rootImportDigest(journal.previousManifest),
+    previousRootSha256: previousIdentity.identityDigest,
+    rootApplicationSha256: rootIdentity.identityDigest,
+    service,
+  });
+  if (
+    userReceipt.transactionId !== journal.transactionId.toLowerCase() ||
+    userReceipt.previousVersion !== journal.previousVersion ||
+    userReceipt.targetVersion !== journal.targetVersion ||
+    userReceipt.controllerHintSha256 !== evidence.controllerHintSha256 ||
+    userReceipt.currentRuntimeSha256 !== evidence.currentRuntimeSha256 ||
+    userReceipt.legacyJournalSha256 !== evidence.legacyJournalSha256 ||
+    userReceipt.previousManifestSha256 !== evidence.previousManifestSha256 ||
+    userReceipt.previousRootSha256 !== evidence.previousRootSha256 ||
+    canonicalRootImportJSON(userReceipt.gateway) !== canonicalRootImportJSON(gateway) ||
+    canonicalRootImportJSON(userReceipt.service) !== canonicalRootImportJSON(service) ||
+    userReceipt.stateEvidenceDigest !== rootImportDigest(evidence)
+  ) {
+    fail("operator adoption receipt failed independent root evidence verification");
+  }
+  return Object.freeze({ receipt: userReceipt, evidence });
+}
+
+function validateRootLegacyAdoptionBinding(value, expected) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).toSorted().join(",") !==
+      [
+        "adoptionReceiptDigest",
+        "importedAt",
+        "instanceId",
+        "legacyTransactionId",
+        "operatorGid",
+        "operatorUid",
+        "previousVersion",
+        "profile",
+        "schemaVersion",
+        "stateDirSha256",
+        "targetVersion",
+        "verification",
+      ]
+        .toSorted()
+        .join(",") ||
+    value.schemaVersion !== 1 ||
+    value.profile !== "protected-local" ||
+    value.instanceId !== expected.instanceId ||
+    value.operatorUid !== expected.operatorUid ||
+    value.operatorGid !== expected.operatorGid ||
+    value.stateDirSha256 !== expected.stateDirSha256 ||
+    value.adoptionReceiptDigest !== expected.adoptionReceiptDigest ||
+    value.legacyTransactionId !== expected.legacyTransactionId ||
+    value.previousVersion !== expected.previousVersion ||
+    value.targetVersion !== expected.targetVersion ||
+    value.verification !== "pending" ||
+    Number.isNaN(Date.parse(String(value.importedAt ?? ""))) ||
+    !TAGGED_SHA256_PATTERN.test(String(value.stateDirSha256 ?? "")) ||
+    !TAGGED_SHA256_PATTERN.test(String(value.adoptionReceiptDigest ?? ""))
+  ) {
+    fail("root legacy managed update adoption binding is invalid or mismatched");
+  }
+  return Object.freeze(value);
+}
+
+async function readExistingRootAdoptionBinding(bindingPath, expected, expectedRootUid) {
   let named;
   try {
-    named = await fsp.lstat(journalPath);
+    named = await fsp.lstat(bindingPath);
   } catch (error) {
     if (error?.code === "ENOENT") {
-      return Object.freeze({ existed: false, journalPath });
+      return null;
     }
     throw error;
   }
@@ -995,76 +1512,108 @@ async function suspendLegacyManagedUpdateJournal(spec) {
     !named.isFile() ||
     named.isSymbolicLink() ||
     named.nlink !== 1 ||
-    named.uid !== spec.operatorUid ||
+    named.uid !== expectedRootUid ||
     (named.mode & 0o177) !== 0 ||
     named.size < 2 ||
-    named.size > 2 * 1024 * 1024
+    named.size > 64 * 1024
   ) {
-    fail("legacy managed updater transaction journal is unsafe");
+    fail("root legacy managed update adoption binding is unsafe");
   }
-  const handle = await fsp.open(journalPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-  let content;
-  try {
-    const opened = await handle.stat();
-    if (
-      !opened.isFile() ||
-      opened.nlink !== 1 ||
-      opened.dev !== named.dev ||
-      opened.ino !== named.ino
-    ) {
-      fail("legacy managed updater transaction journal changed during suspension");
-    }
-    content = await handle.readFile();
-  } finally {
-    await handle.close();
-  }
-  let journal;
-  try {
-    journal = JSON.parse(content.toString("utf8"));
-  } catch (error) {
-    throw new Error("legacy managed updater transaction journal is invalid", { cause: error });
-  }
-  if (
-    journal?.schemaVersion !== 1 ||
-    !RELEASE_PATTERN.test(String(journal.targetVersion ?? "")) ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-      String(journal.transactionId ?? ""),
-    ) ||
-    !LEGACY_MANAGED_UPDATE_PHASES.has(journal.phase)
-  ) {
-    fail("legacy managed updater transaction journal is invalid");
-  }
-  const beforeRemove = await fsp.lstat(journalPath);
-  if (
-    !beforeRemove.isFile() ||
-    beforeRemove.isSymbolicLink() ||
-    beforeRemove.dev !== named.dev ||
-    beforeRemove.ino !== named.ino
-  ) {
-    fail("legacy managed updater transaction journal changed before suspension");
-  }
-  await fsp.rm(journalPath);
-  await fsyncDirectory(spec.stateDir);
-  return Object.freeze({
-    existed: true,
-    journalPath,
-    content,
-    mode: named.mode & 0o777,
-    uid: named.uid,
-    gid: named.gid,
-  });
+  return validateRootLegacyAdoptionBinding(
+    JSON.parse(await fsp.readFile(bindingPath, "utf8")),
+    expected,
+  );
 }
 
-async function restoreLegacyManagedUpdateJournal(snapshot) {
-  if (!snapshot?.existed) {
-    return false;
+export async function importLegacyManagedUpdateAdoption(
+  sourceRoot,
+  spec,
+  layout,
+  registryEntry,
+  options = {},
+) {
+  if (
+    registryEntry?.instanceId !== layout.instanceId ||
+    registryEntry.operatorUid !== spec.operatorUid ||
+    registryEntry.operatorUser !== spec.operatorUser ||
+    registryEntry.profile !== spec.profile ||
+    registryEntry.stateDir !== spec.stateDir
+  ) {
+    fail("root registry does not bind the protected Local adoption state");
   }
-  await atomicWrite(snapshot.journalPath, snapshot.content, snapshot.mode, {
-    uid: snapshot.uid,
-    gid: snapshot.gid,
+  const runAdapter =
+    options.runAdapter ??
+    (() => {
+      const command = buildLegacyManagedUpdateAdoptionCommand(sourceRoot, spec);
+      return JSON.parse(runSystem(command.executable, command.args, { timeout: 120_000 }));
+    });
+  const adapterResult = await runAdapter();
+  if (adapterResult?.status === "not-applicable") {
+    return null;
+  }
+  if (!new Set(["pending-root-import", "pending-root-verification"]).has(adapterResult?.status)) {
+    fail("legacy managed update adapter returned an unsupported state");
+  }
+  const userReceipt =
+    options.readUserReceipt !== undefined
+      ? await options.readUserReceipt()
+      : (await readFixedOperatorAdoptionReceipt(registryEntry.stateDir, spec.operatorUid)).receipt;
+  const verifiedResult =
+    options.verifyAdoption !== undefined
+      ? await options.verifyAdoption(userReceipt)
+      : await verifyLegacyManagedUpdateAdoptionForRoot(
+          spec,
+          layout,
+          registryEntry,
+          userReceipt,
+          options,
+        );
+  const independentlyVerified = validateLegacyManagedUpdateAdoptionReceipt(
+    verifiedResult?.receipt ?? verifiedResult,
+  );
+  if (
+    adapterResult.receipt?.receiptDigest !== independentlyVerified.receiptDigest ||
+    userReceipt.receiptDigest !== independentlyVerified.receiptDigest
+  ) {
+    fail("legacy managed update adoption changed before root import");
+  }
+  const stateDirSha256 = `sha256:${crypto
+    .createHash("sha256")
+    .update(registryEntry.stateDir)
+    .digest("hex")}`;
+  const expected = Object.freeze({
+    adoptionReceiptDigest: independentlyVerified.receiptDigest,
+    instanceId: layout.instanceId,
+    legacyTransactionId: independentlyVerified.transactionId,
+    operatorGid: spec.operatorGid,
+    operatorUid: spec.operatorUid,
+    previousVersion: independentlyVerified.previousVersion,
+    profile: "protected-local",
+    schemaVersion: 1,
+    stateDirSha256,
+    targetVersion: independentlyVerified.targetVersion,
+    verification: "pending",
   });
-  await fsyncDirectory(path.dirname(snapshot.journalPath));
-  return true;
+  const bindingPath =
+    options.bindingPath ?? path.join(layout.supervisorStateDir, LEGACY_ADOPTION_ROOT_RECEIPT);
+  const expectedRootUid = options.expectedRootUid ?? 0;
+  const existing = await readExistingRootAdoptionBinding(bindingPath, expected, expectedRootUid);
+  if (existing) {
+    return existing;
+  }
+  const binding = Object.freeze({
+    ...expected,
+    importedAt: new Date(options.now?.() ?? Date.now()).toISOString(),
+  });
+  if (options.writeBinding !== undefined) {
+    await options.writeBinding(bindingPath, binding);
+  } else {
+    await atomicWrite(bindingPath, `${JSON.stringify(binding, null, 2)}\n`, 0o600, {
+      uid: 0,
+      gid: 0,
+    });
+  }
+  return validateRootLegacyAdoptionBinding(binding, expected);
 }
 
 const PROTECTED_LOCAL_OPERATOR_ONLY_STATE = new Set([
@@ -3521,27 +4070,20 @@ async function installProtectedLocal(params) {
         fail("protected Local Gateway cannot traverse the operator home");
       }
       let lifecycle = null;
-      let suspendedLegacyJournal = null;
+      let legacyAdoption = null;
       if (spec.gatewayMode === "activate") {
+        legacyAdoption = await importLegacyManagedUpdateAdoption(
+          sourceRoot,
+          spec,
+          layout,
+          allocated.entry,
+        );
         await transitionExistingSupervisorBoundary(sourceRoot, spec, layout);
         await waitForSocket(
           `/run/fased-local-controller/${layout.instanceId}/request.sock`,
           60_000,
         );
-        suspendedLegacyJournal = await suspendLegacyManagedUpdateJournal(spec);
-        try {
-          lifecycle = applyProtectedLocalLifecycle(spec, layout);
-        } catch (error) {
-          try {
-            await restoreLegacyManagedUpdateJournal(suspendedLegacyJournal);
-          } catch (rollbackError) {
-            throw new Error(
-              `protected Local lifecycle failed and the legacy updater journal could not be restored: ${error.message}; ${rollbackError.message}`,
-              { cause: rollbackError },
-            );
-          }
-          throw error;
-        }
+        lifecycle = applyProtectedLocalLifecycle(spec, layout);
       }
       await waitForSocket(layout.operatorSocket);
       await verifyOperatorCapabilities(spec, layout);
@@ -3563,6 +4105,7 @@ async function installProtectedLocal(params) {
         supervisorUnit: layout.supervisorUnit,
         gatewayMode: spec.gatewayMode,
         lifecycleCommitted: lifecycle?.phase === "committed",
+        legacyAdoptionDigest: legacyAdoption?.adoptionReceiptDigest ?? null,
         wallets,
         operatorEnvironment: renderProtectedLocalOperatorEnvironment({
           layout,
@@ -3774,12 +4317,15 @@ if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
 }
 
 export const __testing = Object.freeze({
+  buildLegacyManagedUpdateAdoptionCommand,
   buildProtectedLocalLifecycleApplyCommand,
   captureProtectedLocalPrivateSupervisorDirectory,
   buildProtectedLocalBootstrapSpec,
   hardenOperatorRuntime,
   hardenInstalledPlugins,
   hardenProtectedLocalClientHint,
+  importLegacyManagedUpdateAdoption,
+  verifyLegacyManagedUpdateAdoptionForRoot,
   isProtectedLocalOperatorOnlyState,
   inspectInstalledPluginTree,
   isRestorableLegacyGatewayUnitFileState,
@@ -3789,9 +4335,7 @@ export const __testing = Object.freeze({
   parseDirectoryAcl,
   prepareProtectedLocalChannelDirectory,
   prepareProtectedLocalSupervisorClientDirectory,
-  restoreLegacyManagedUpdateJournal,
   setProtectedLocalPrivateSupervisorDirectoryMode,
-  suspendLegacyManagedUpdateJournal,
   renderProtectedLocalOperatorEnvironment,
   renderProtectedLocalOwnerWrapper,
   registeredSignerWallets,

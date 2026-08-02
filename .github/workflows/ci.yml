@@ -653,10 +653,17 @@ jobs:
           fetch-depth: 0
           submodules: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
         with:
-          node-version: 22.x
+          install-bun: "false"
+
+      - name: Run Local recovery-pending T1
+        run: >-
+          pnpm exec vitest run
+          scripts/fased-local-recovery-pending.test.ts
+          --pool=forks
+          --maxWorkers=1
 
       - name: Download exact Protected Local fixture artifact
         uses: actions/download-artifact@v4

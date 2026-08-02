@@ -92,8 +92,9 @@ const MAX_REQUEST_BYTES = 4096;
 const MAX_DOWNLOAD_BYTES = 4 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 20 * 60_000;
 const MAX_ROOT_RECOVERY_ATTEMPTS = 8;
-const ROOT_LEDGER_SCHEMA_VERSION = 2;
+const ROOT_LEDGER_SCHEMA_VERSION = 3;
 const ROOT_LEDGER_PROTOCOL_VERSION = 2;
+const LEGACY_ADOPTION_RECEIPT_NAME = "legacy-managed-update-adoption.v1.json";
 const PRIVATE_UMASK = 0o077;
 const MAX_METADATA_VALIDITY_MS = 400 * 24 * 60 * 60 * 1000;
 const CONTROLLER_SELECTION_SCHEMA_VERSION = 2;
@@ -117,6 +118,7 @@ const CONTROLLER_OPERATIONS = new Set([
   "commitRelease",
   "rollbackRelease",
 ]);
+const RECOVERY_OPERATIONS = new Set(["recoveryStatus", "recoverActive"]);
 const ROOT_TRANSACTION_OPERATIONS = new Set([
   "applyRelease",
   "prepareRelease",
@@ -139,9 +141,12 @@ const ROOT_TRANSACTION_PHASES = new Set([
   "gateway-authorized",
   "gateway-verified",
   "committing",
+  "commit-ack-pending",
+  "commit-acknowledged",
   "rolling-back",
   "restored",
   "legacy-recovery",
+  "product-recovered",
 ]);
 const ROOT_FORWARD_PHASES = Object.freeze([
   "prepared",
@@ -154,6 +159,8 @@ const ROOT_FORWARD_PHASES = Object.freeze([
   "gateway-authorized",
   "gateway-verified",
   "committing",
+  "commit-ack-pending",
+  "commit-acknowledged",
 ]);
 const ROOT_PRECOMMIT_PHASES = new Set([
   "selected",
@@ -172,6 +179,11 @@ const CONTROLLER_SELECTION_CAPABILITIES = Object.freeze({
   supervisorProtocol: SUPERVISOR_PROTOCOL_VERSION,
   controllerProtocol: CONTROLLER_PROTOCOL_VERSION,
   requestSchema: 2,
+});
+const CONTROLLER_RECOVERY_CAPABILITIES = Object.freeze({
+  protocolVersion: 1,
+  operations: Object.freeze(["recoverActive"]),
+  journalSchemas: Object.freeze([7, 8]),
 });
 const SUPERVISOR_CLIENT_CAPABILITIES = Object.freeze({
   protocolVersion: 2,
@@ -916,18 +928,38 @@ export function parseSupervisorConfiguration(argv = process.argv.slice(2)) {
 
 export function parseSupervisorRequest(value) {
   const schemaVersion = Number(value?.schemaVersion);
+  const operation = String(value?.op ?? "");
+  const hasRecoveryDigest = operation === "recoverActive";
   exactKeys(
     value,
     schemaVersion === 2
-      ? ["schemaVersion", "op", "transactionId", "version"]
-      : ["schemaVersion", "op", "transactionId", "nonce", "version", "clientCapabilities"],
+      ? [
+          "schemaVersion",
+          "op",
+          "transactionId",
+          "version",
+          ...(hasRecoveryDigest ? ["recoveryDigest"] : []),
+        ]
+      : [
+          "schemaVersion",
+          "op",
+          "transactionId",
+          "nonce",
+          "version",
+          "clientCapabilities",
+          ...(hasRecoveryDigest ? ["recoveryDigest"] : []),
+          ...(hasRecoveryDigest ? ["recoveryControllerVersion"] : []),
+        ],
     "lifecycle supervisor request",
   );
   if (!new Set([2, 3]).has(schemaVersion)) {
     fail("unsupported lifecycle supervisor request schema");
   }
-  const op = String(value.op ?? "");
-  if (op !== "updateController" && !CONTROLLER_OPERATIONS.has(op)) {
+  if (RECOVERY_OPERATIONS.has(operation) && schemaVersion !== 3) {
+    fail("lifecycle recovery requires the current authenticated request schema");
+  }
+  const op = operation;
+  if (op !== "updateController" && !CONTROLLER_OPERATIONS.has(op) && !RECOVERY_OPERATIONS.has(op)) {
     fail("unsupported lifecycle supervisor operation");
   }
   const transactionId = String(value.transactionId ?? "")
@@ -953,10 +985,18 @@ export function parseSupervisorRequest(value) {
     });
     if (
       !TRANSACTION_ID_PATTERN.test(nonce) ||
+      (hasRecoveryDigest && nonce === transactionId) ||
       canonicalRootValue(clientCapabilities) !== canonicalRootValue(SUPERVISOR_CLIENT_CAPABILITIES)
     ) {
       fail("lifecycle supervisor request nonce or capabilities are invalid");
     }
+  }
+  const recoveryDigest = hasRecoveryDigest ? String(value.recoveryDigest ?? "") : null;
+  const recoveryControllerVersion = hasRecoveryDigest
+    ? parseVersion(value.recoveryControllerVersion)
+    : null;
+  if (hasRecoveryDigest && !DIGEST_PATTERN.test(recoveryDigest)) {
+    fail("lifecycle supervisor recovery digest is invalid");
   }
   return Object.freeze({
     schemaVersion,
@@ -965,6 +1005,7 @@ export function parseSupervisorRequest(value) {
     nonce,
     version: parseVersion(value.version),
     clientCapabilities,
+    ...(hasRecoveryDigest ? { recoveryDigest, recoveryControllerVersion } : {}),
   });
 }
 
@@ -1461,9 +1502,20 @@ async function readControllerIdentity(paths) {
 }
 
 async function controllerGenerationDigests(generationRoot, expectedRootUid = 0) {
+  const releasesRoot = path.dirname(generationRoot);
+  const releasesInfo = await fsp.lstat(releasesRoot);
   const info = await fsp.lstat(generationRoot);
-  if (!info.isDirectory() || info.isSymbolicLink()) {
-    fail("controller generation must be one real directory");
+  if (
+    !releasesInfo.isDirectory() ||
+    releasesInfo.isSymbolicLink() ||
+    releasesInfo.uid !== expectedRootUid ||
+    (releasesInfo.mode & 0o022) !== 0 ||
+    !info.isDirectory() ||
+    info.isSymbolicLink() ||
+    info.uid !== expectedRootUid ||
+    (info.mode & 0o022) !== 0
+  ) {
+    fail("controller releases and generation must be real root-owned immutable directories");
   }
   const entries = await fsp.readdir(generationRoot);
   if (
@@ -2352,8 +2404,17 @@ function parseRootProductTransaction(value) {
     value,
     [
       "schemaVersion",
-      ...(schemaVersion === ROOT_LEDGER_SCHEMA_VERSION
+      ...(schemaVersion >= 2
         ? ["protocolVersion", "requestNonce", "clientCapabilities", "rollbackPointers"]
+        : []),
+      ...(schemaVersion === ROOT_LEDGER_SCHEMA_VERSION
+        ? [
+            "legacyAdoptionDigest",
+            "legacyAdoptionTransactionId",
+            "legacyAdoptionPreviousVersion",
+            "legacyAdoptionTargetVersion",
+            "legacyAdoptionAckDigest",
+          ]
         : []),
       "transactionId",
       "version",
@@ -2406,16 +2467,11 @@ function parseRootProductTransaction(value) {
     value.previousControllerGenerationVersion === null
       ? null
       : parseVersion(value.previousControllerGenerationVersion);
-  const protocolVersion =
-    schemaVersion === ROOT_LEDGER_SCHEMA_VERSION ? Number(value.protocolVersion) : 1;
+  const protocolVersion = schemaVersion >= 2 ? Number(value.protocolVersion) : 1;
   const requestNonce =
-    schemaVersion === ROOT_LEDGER_SCHEMA_VERSION
-      ? String(value.requestNonce ?? "").toLowerCase()
-      : transactionId;
+    schemaVersion >= 2 ? String(value.requestNonce ?? "").toLowerCase() : transactionId;
   const clientCapabilities =
-    schemaVersion === ROOT_LEDGER_SCHEMA_VERSION
-      ? value.clientCapabilities
-      : { protocolVersion: 1, requestSchema: 2 };
+    schemaVersion >= 2 ? value.clientCapabilities : { protocolVersion: 1, requestSchema: 2 };
   exactKeys(
     clientCapabilities,
     ["protocolVersion", "requestSchema"],
@@ -2427,7 +2483,7 @@ function parseRootProductTransaction(value) {
   });
   const clientCapabilityPair = `${normalizedClientCapabilities.protocolVersion}:${normalizedClientCapabilities.requestSchema}`;
   const rollbackPointers =
-    schemaVersion === ROOT_LEDGER_SCHEMA_VERSION
+    schemaVersion >= 2
       ? value.rollbackPointers
       : {
           controllerGenerationVersion: previousControllerGenerationVersion,
@@ -2518,8 +2574,8 @@ function parseRootProductTransaction(value) {
   const createdAt = Date.parse(String(value.createdAt ?? ""));
   const updatedAt = Date.parse(String(value.updatedAt ?? ""));
   if (
-    !new Set([1, ROOT_LEDGER_SCHEMA_VERSION]).has(schemaVersion) ||
-    (schemaVersion === ROOT_LEDGER_SCHEMA_VERSION &&
+    !new Set([1, 2, ROOT_LEDGER_SCHEMA_VERSION]).has(schemaVersion) ||
+    (schemaVersion >= 2 &&
       (protocolVersion !== ROOT_LEDGER_PROTOCOL_VERSION ||
         !TRANSACTION_ID_PATTERN.test(requestNonce) ||
         !new Set(["1:2", "2:3"]).has(clientCapabilityPair))) ||
@@ -2545,6 +2601,33 @@ function parseRootProductTransaction(value) {
   ) {
     fail("root product transaction is malformed");
   }
+  const legacyAdoptionDigest =
+    schemaVersion === ROOT_LEDGER_SCHEMA_VERSION ? value.legacyAdoptionDigest : null;
+  const legacyAdoptionTransactionId =
+    schemaVersion === ROOT_LEDGER_SCHEMA_VERSION ? value.legacyAdoptionTransactionId : null;
+  const legacyAdoptionPreviousVersion =
+    schemaVersion === ROOT_LEDGER_SCHEMA_VERSION ? value.legacyAdoptionPreviousVersion : null;
+  const legacyAdoptionTargetVersion =
+    schemaVersion === ROOT_LEDGER_SCHEMA_VERSION ? value.legacyAdoptionTargetVersion : null;
+  const legacyAdoptionAckDigest =
+    schemaVersion === ROOT_LEDGER_SCHEMA_VERSION ? value.legacyAdoptionAckDigest : null;
+  if (
+    (legacyAdoptionDigest === null) !== (legacyAdoptionTransactionId === null) ||
+    (legacyAdoptionDigest === null) !== (legacyAdoptionPreviousVersion === null) ||
+    (legacyAdoptionDigest === null) !== (legacyAdoptionTargetVersion === null) ||
+    (legacyAdoptionDigest !== null &&
+      (!/^sha256:[a-f0-9]{64}$/u.test(legacyAdoptionDigest) ||
+        !TRANSACTION_ID_PATTERN.test(legacyAdoptionTransactionId) ||
+        parseVersion(legacyAdoptionPreviousVersion) !== previousVersion ||
+        parseVersion(legacyAdoptionTargetVersion) !== version)) ||
+    (legacyAdoptionAckDigest !== null &&
+      (!/^sha256:[a-f0-9]{64}$/u.test(legacyAdoptionAckDigest) ||
+        legacyAdoptionDigest === null ||
+        value.phase !== "commit-acknowledged")) ||
+    (value.phase === "commit-acknowledged" && legacyAdoptionAckDigest === null)
+  ) {
+    fail("root product transaction legacy adoption binding is invalid");
+  }
   return Object.freeze({
     ...value,
     schemaVersion,
@@ -2565,6 +2648,11 @@ function parseRootProductTransaction(value) {
     legacyAdopted: value.legacyAdopted,
     recoveryAttempts,
     lastErrorClass,
+    legacyAdoptionDigest,
+    legacyAdoptionTransactionId,
+    legacyAdoptionPreviousVersion,
+    legacyAdoptionTargetVersion,
+    legacyAdoptionAckDigest,
   });
 }
 
@@ -2597,9 +2685,19 @@ function assertRootProductTransactionTransition(previous, next) {
       canonicalRootValue(next.clientCapabilities) ||
     canonicalRootValue(previous.rollbackPointers) !== canonicalRootValue(next.rollbackPointers) ||
     previous.legacyAdopted !== next.legacyAdopted ||
+    previous.legacyAdoptionDigest !== next.legacyAdoptionDigest ||
+    previous.legacyAdoptionTransactionId !== next.legacyAdoptionTransactionId ||
+    previous.legacyAdoptionPreviousVersion !== next.legacyAdoptionPreviousVersion ||
+    previous.legacyAdoptionTargetVersion !== next.legacyAdoptionTargetVersion ||
     previous.createdAt !== next.createdAt
   ) {
     fail("root product transaction identity cannot change during recovery");
+  }
+  if (
+    previous.legacyAdoptionAckDigest !== null &&
+    previous.legacyAdoptionAckDigest !== next.legacyAdoptionAckDigest
+  ) {
+    fail("root product transaction legacy adoption acknowledgment cannot change");
   }
   if (previous.durableCommitDecision === true && next.durableCommitDecision !== true) {
     fail("root product transaction cannot reverse its durable commit decision");
@@ -2631,6 +2729,9 @@ function assertRootProductTransactionTransition(previous, next) {
   if (previous.phase === next.phase) {
     return;
   }
+  if (next.phase === "product-recovered" && previous.phase !== "selected") {
+    return;
+  }
   if (
     next.phase === "dispatching" &&
     (previous.phase === "selected" || ROOT_FORWARD_PHASES.includes(previous.phase))
@@ -2648,6 +2749,9 @@ function assertRootProductTransactionTransition(previous, next) {
     return;
   }
   if (previous.phase === "legacy-recovery" && ROOT_FORWARD_PHASES.includes(next.phase)) {
+    return;
+  }
+  if (previous.phase === "product-recovered" && next.phase === "commit-ack-pending") {
     return;
   }
   if (previous.phase === "dispatching" && ROOT_FORWARD_PHASES.includes(next.phase)) {
@@ -2700,6 +2804,12 @@ function assertRootProductJournalBinding(transaction, productJournal) {
     ) {
       fail(`target-controller journal ${name} digest changed during recovery`);
     }
+  }
+  if (
+    canonicalRootValue(productJournal.legacyAdoption) !==
+    canonicalRootValue(rootLegacyAdoptionBinding(transaction))
+  ) {
+    fail("target-controller journal legacy adoption binding is not root-authorized");
   }
 }
 
@@ -2755,7 +2865,22 @@ async function readControllerProductJournal(paths, rootUid) {
       signer: normalizeDigest(value?.releaseBinding?.signerArtifactDigest),
       updaterBundle: normalizeDigest(value?.managedApplication?.updaterGeneration?.bundleDigest),
     });
+    const legacyAdoption =
+      value?.legacyAdoption == null
+        ? null
+        : Object.freeze({
+            receiptDigest: String(value.legacyAdoption.receiptDigest ?? ""),
+            transactionId: String(value.legacyAdoption.transactionId ?? "").toLowerCase(),
+          });
+    if (
+      legacyAdoption &&
+      (!/^sha256:[a-f0-9]{64}$/u.test(legacyAdoption.receiptDigest) ||
+        !TRANSACTION_ID_PATTERN.test(legacyAdoption.transactionId))
+    ) {
+      fail("target-controller product transaction legacy adoption binding is invalid");
+    }
     return Object.freeze({
+      schemaVersion: Number(value.schemaVersion),
       transactionId,
       version,
       phase: value.phase,
@@ -2775,6 +2900,7 @@ async function readControllerProductJournal(paths, rootUid) {
               development: value.release.development,
             }),
       artifactDigests,
+      legacyAdoption,
       journalSha256: createHash("sha256").update(canonicalRootValue(value)).digest("hex"),
     });
   } catch (error) {
@@ -2826,6 +2952,11 @@ function rootProductTransactionRecord({
   selectionDigest = null,
   durableCommitDecision = false,
   legacyAdopted = false,
+  legacyAdoptionDigest = null,
+  legacyAdoptionTransactionId = null,
+  legacyAdoptionPreviousVersion = null,
+  legacyAdoptionTargetVersion = null,
+  legacyAdoptionAckDigest = null,
   recoveryAttempts = 0,
   lastErrorClass = null,
   createdAt = null,
@@ -2855,6 +2986,11 @@ function rootProductTransactionRecord({
     selectionDigest,
     durableCommitDecision,
     legacyAdopted,
+    legacyAdoptionDigest,
+    legacyAdoptionTransactionId,
+    legacyAdoptionPreviousVersion,
+    legacyAdoptionTargetVersion,
+    legacyAdoptionAckDigest,
     recoveryAttempts,
     lastErrorClass,
     createdAt: createdAt ?? timestamp,
@@ -2877,6 +3013,11 @@ function advanceRootProductTransaction(
     targetJournalSha256 = transaction.targetJournalSha256,
     durableCommitDecision = transaction.durableCommitDecision,
     legacyAdopted = transaction.legacyAdopted,
+    legacyAdoptionDigest = transaction.legacyAdoptionDigest,
+    legacyAdoptionTransactionId = transaction.legacyAdoptionTransactionId,
+    legacyAdoptionPreviousVersion = transaction.legacyAdoptionPreviousVersion,
+    legacyAdoptionTargetVersion = transaction.legacyAdoptionTargetVersion,
+    legacyAdoptionAckDigest = transaction.legacyAdoptionAckDigest,
     recoveryAttempts = transaction.recoveryAttempts,
     lastErrorClass = transaction.lastErrorClass,
     now = Date.now(),
@@ -2899,6 +3040,11 @@ function advanceRootProductTransaction(
     selectionDigest: transaction.selectionDigest,
     durableCommitDecision,
     legacyAdopted,
+    legacyAdoptionDigest,
+    legacyAdoptionTransactionId,
+    legacyAdoptionPreviousVersion,
+    legacyAdoptionTargetVersion,
+    legacyAdoptionAckDigest,
     recoveryAttempts,
     lastErrorClass,
     createdAt: transaction.createdAt,
@@ -2909,6 +3055,249 @@ function advanceRootProductTransaction(
 function recoveryErrorClass(error) {
   const candidate = String(error?.code ?? "").toUpperCase();
   return /^[A-Z][A-Z0-9_]{0,63}$/u.test(candidate) ? candidate : "RECOVERY_FAILED";
+}
+
+function lifecycleRecoveryState(supervisorTransaction, transaction, productJournal, error = null) {
+  if (!supervisorTransaction && !transaction && !productJournal && !error) {
+    return Object.freeze({ state: "READY" });
+  }
+  if (error) {
+    return Object.freeze({
+      state: "INVALID_LEDGER",
+      lastErrorClass: "INVALID_LEDGER",
+    });
+  }
+  const transactionId =
+    supervisorTransaction?.request?.transactionId ??
+    transaction?.transactionId ??
+    productJournal?.transactionId ??
+    null;
+  const targetVersion =
+    supervisorTransaction?.request?.version ??
+    transaction?.version ??
+    productJournal?.version ??
+    null;
+  const journalDigest = recoveryBindingDigest(supervisorTransaction, transaction, productJournal);
+  const identityDigest = recoveryIdentityDigest(supervisorTransaction, transaction, productJournal);
+  const targetControllerReceipt = transaction?.targetControllerReceipt ?? null;
+  return Object.freeze({
+    state: "RECOVERY_PENDING",
+    source: supervisorTransaction ? "supervisor" : "product",
+    transactionId,
+    targetVersion,
+    phase: supervisorTransaction
+      ? "controller-selection"
+      : (productJournal?.phase ?? transaction?.phase ?? null),
+    durableCommitDecision:
+      transaction?.durableCommitDecision === true ||
+      new Set(["gateway-verified", "committing"]).has(productJournal?.phase),
+    journalDigest,
+    recoveryIdentityDigest: identityDigest,
+    recoveryAttempts: transaction?.recoveryAttempts ?? 0,
+    lastErrorClass: transaction?.lastErrorClass ?? null,
+    controller:
+      targetControllerReceipt === null
+        ? null
+        : Object.freeze({
+            version: targetControllerReceipt.version,
+            serverSha256: targetControllerReceipt.controllerServerSha256,
+            clientSha256: targetControllerReceipt.controllerClientSha256,
+            processInstanceId: targetControllerReceipt.controllerInstanceId,
+            selectionDigest: targetControllerReceipt.selectionDigest,
+            protocolCapabilities: targetControllerReceipt.protocolCapabilities,
+          }),
+  });
+}
+
+function recoveryBindingDigest(supervisorTransaction, transaction, productJournal) {
+  return createHash("sha256")
+    .update(
+      canonicalRootValue({
+        schemaVersion: 1,
+        supervisorTransaction,
+        rootProductTransaction: transaction,
+        controllerProductJournal: productJournal,
+      }),
+    )
+    .digest("hex");
+}
+
+function recoveryIdentityDigest(supervisorTransaction, transaction, productJournal) {
+  return createHash("sha256")
+    .update(
+      canonicalRootValue({
+        schemaVersion: 1,
+        source: supervisorTransaction ? "supervisor" : "product",
+        supervisor: supervisorTransaction
+          ? {
+              transactionId: supervisorTransaction.request.transactionId,
+              version: supervisorTransaction.request.version,
+              previousGeneration: supervisorTransaction.previousGeneration,
+              previousIdentity: supervisorTransaction.previousIdentity,
+              targetSupervisorDigest: supervisorTransaction.targetSupervisorDigest,
+              previousSupervisorDigest: supervisorTransaction.previousSupervisorDigest,
+            }
+          : null,
+        root: transaction
+          ? {
+              transactionId: transaction.transactionId,
+              version: transaction.version,
+              phase: transaction.phase,
+              previousVersion: transaction.previousVersion,
+              previousControllerIdentity: transaction.previousControllerIdentity,
+              targetControllerReceipt: transaction.targetControllerReceipt,
+              targetReleaseIdentity: transaction.targetReleaseIdentity,
+              artifactDigests: transaction.artifactDigests,
+              selectionDigest: transaction.selectionDigest,
+              durableCommitDecision: transaction.durableCommitDecision,
+              rollbackPointers: transaction.rollbackPointers,
+            }
+          : null,
+        product: productJournal
+          ? {
+              transactionId: productJournal.transactionId,
+              version: productJournal.version,
+              phase: productJournal.phase,
+              previousVersion: productJournal.previousVersion,
+              selectionDigest: productJournal.selectionDigest,
+              targetControllerReceipt: productJournal.targetControllerReceipt,
+              targetReleaseIdentity: productJournal.targetReleaseIdentity,
+              artifactDigests: productJournal.artifactDigests,
+            }
+          : null,
+      }),
+    )
+    .digest("hex");
+}
+
+function assertRecoveryLedgerComposition(supervisorTransaction, transaction, productJournal) {
+  if (!supervisorTransaction || (!transaction && !productJournal)) {
+    return;
+  }
+  const productTransactionId = transaction?.transactionId ?? productJournal?.transactionId;
+  const productVersion = transaction?.version ?? productJournal?.version;
+  const sameSelection =
+    supervisorTransaction.request.transactionId === productTransactionId &&
+    supervisorTransaction.request.version === productVersion;
+  const requiredController =
+    transaction?.targetControllerReceipt ?? productJournal?.targetControllerReceipt ?? null;
+  const rollbackSlotMatches =
+    supervisorTransaction.previousIdentity !== null &&
+    requiredController !== null &&
+    supervisorTransaction.previousIdentity.version === requiredController.version &&
+    supervisorTransaction.previousIdentity.serverSha256 ===
+      requiredController.controllerServerSha256 &&
+    supervisorTransaction.previousIdentity.clientSha256 ===
+      requiredController.controllerClientSha256;
+  if (!sameSelection && !rollbackSlotMatches) {
+    fail("supervisor and product recovery ledgers have no safe controller dependency");
+  }
+}
+
+async function inspectRootProductRecovery(context) {
+  try {
+    const [supervisorTransaction, transaction, productJournal] = await Promise.all([
+      context.readSupervisorTransaction(context.paths, context.rootUid),
+      context.readRootProductTransaction(context.paths, context.rootUid),
+      context.readControllerProductJournal(context.paths, context.rootUid),
+    ]);
+    assertRecoveryLedgerComposition(supervisorTransaction, transaction, productJournal);
+    if (transaction) {
+      assertRootProductJournalBinding(transaction, productJournal);
+    }
+    return lifecycleRecoveryState(supervisorTransaction, transaction, productJournal);
+  } catch (error) {
+    return lifecycleRecoveryState(null, null, null, error);
+  }
+}
+
+async function refreshSupervisorRecoveryState(context, state) {
+  state.recovery = await inspectRootProductRecovery(context);
+  return state.recovery;
+}
+
+function explicitRecoveryAttemptPath(context) {
+  return path.join(context.paths.supervisorStateDir, "explicit-recovery-attempt.json");
+}
+
+async function readExplicitRecoveryAttempt(context) {
+  try {
+    const value = await readProtectedJson(
+      explicitRecoveryAttemptPath(context),
+      "explicit recovery attempt",
+      context.rootUid,
+    );
+    exactKeys(
+      value,
+      [
+        "schemaVersion",
+        "recoveryIdentityDigest",
+        "transactionId",
+        "targetVersion",
+        "attempts",
+        "lastNonce",
+        "createdAt",
+        "updatedAt",
+      ],
+      "explicit recovery attempt",
+    );
+    if (
+      value.schemaVersion !== 1 ||
+      !DIGEST_PATTERN.test(value.recoveryIdentityDigest || "") ||
+      !TRANSACTION_ID_PATTERN.test(value.transactionId || "") ||
+      !VERSION_PATTERN.test(value.targetVersion || "") ||
+      !Number.isSafeInteger(value.attempts) ||
+      value.attempts < 1 ||
+      !TRANSACTION_ID_PATTERN.test(value.lastNonce || "") ||
+      Number.isNaN(Date.parse(value.createdAt || "")) ||
+      Number.isNaN(Date.parse(value.updatedAt || ""))
+    ) {
+      fail("explicit recovery attempt is invalid");
+    }
+    return Object.freeze({ ...value });
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function authorizeExplicitRecoveryAttempt(context, pending, request) {
+  const previous = await readExplicitRecoveryAttempt(context);
+  const sameBinding =
+    previous?.recoveryIdentityDigest === pending.recoveryIdentityDigest &&
+    previous?.transactionId === pending.transactionId &&
+    previous?.targetVersion === pending.targetVersion;
+  if (sameBinding && previous.lastNonce === request.nonce) {
+    fail("explicit recovery request nonce was already consumed");
+  }
+  // This is an audit counter, not a lifetime lockout. Each client invocation
+  // is already bounded and every attempt is bound to the exact protected
+  // recovery identity with a one-shot nonce. A transient failure must not make
+  // a later ordinary update permanently ineligible to recover.
+  const attempts = sameBinding ? Math.min(previous.attempts + 1, Number.MAX_SAFE_INTEGER) : 1;
+  const now = new Date(context.now()).toISOString();
+  const record = Object.freeze({
+    schemaVersion: 1,
+    recoveryIdentityDigest: pending.recoveryIdentityDigest,
+    transactionId: pending.transactionId,
+    targetVersion: pending.targetVersion,
+    attempts,
+    lastNonce: request.nonce,
+    createdAt: sameBinding ? previous.createdAt : now,
+    updatedAt: now,
+  });
+  const attemptPath = explicitRecoveryAttemptPath(context);
+  await atomicWrite(attemptPath, `${JSON.stringify(record, null, 2)}\n`, 0o600);
+  await fsp.chown(attemptPath, context.rootUid, context.rootGid);
+  await fsp.chmod(attemptPath, 0o600);
+  return record;
+}
+
+async function clearExplicitRecoveryAttempt(context) {
+  await fsp.rm(explicitRecoveryAttemptPath(context), { force: true });
+  await fsyncDirectory(context.paths.supervisorStateDir);
 }
 
 async function verifyRecoveredProduct(transaction, installedVersion, context) {
@@ -2924,7 +3313,10 @@ async function verifyRecoveredProduct(transaction, installedVersion, context) {
       context,
     );
     if (response.ok) {
-      const action = response.phase === "committed" ? "committed" : "rolled-back";
+      if (!new Set(["committed", "rolled-back"]).has(response.phase)) {
+        fail("target controller recovery health response has no durable outcome");
+      }
+      const action = response.phase;
       if (
         response.healthy !== true ||
         (action === "committed" && installedVersion !== transaction.version) ||
@@ -2960,10 +3352,28 @@ async function verifyRecoveredProduct(transaction, installedVersion, context) {
   });
 }
 
-async function recoverRootProductTransaction(context) {
+async function recoverRootProductTransaction(context, options = {}) {
+  const supervisorTransaction = await context.readSupervisorTransaction(
+    context.paths,
+    context.rootUid,
+  );
   let transaction = await context.readRootProductTransaction(context.paths, context.rootUid);
   let productJournal = await context.readControllerProductJournal(context.paths, context.rootUid);
   if (!transaction && productJournal) {
+    const previousControllerIdentity = await context.readControllerIdentity(
+      context.paths,
+      context.rootUid,
+    );
+    if (
+      !previousControllerIdentity ||
+      !(await context.currentControllerMatches(
+        context.paths,
+        previousControllerIdentity,
+        context.rootUid,
+      ))
+    ) {
+      fail("legacy product recovery cannot prove its previous controller generation");
+    }
     transaction = await context.writeRootProductTransaction(
       context.paths,
       rootProductTransactionRecord({
@@ -2974,6 +3384,8 @@ async function recoverRootProductTransaction(context) {
         },
         phase: "legacy-recovery",
         previousVersion: productJournal.previousVersion,
+        previousControllerIdentity,
+        previousControllerGenerationVersion: previousControllerIdentity.version,
         targetControllerReceipt: productJournal.targetControllerReceipt,
         targetReleaseIdentity: productJournal.targetReleaseIdentity,
         artifactDigests: productJournal.artifactDigests,
@@ -2993,6 +3405,116 @@ async function recoverRootProductTransaction(context) {
     return Object.freeze({ recovered: false });
   }
   assertRootProductJournalBinding(transaction, productJournal);
+  const activeJournalDigest = recoveryBindingDigest(
+    supervisorTransaction,
+    transaction,
+    productJournal,
+  );
+  if (
+    options.expectedJournalDigest !== undefined &&
+    activeJournalDigest !== options.expectedJournalDigest
+  ) {
+    fail("root product recovery journal changed before the explicit retry");
+  }
+
+  const legacyAdoption = rootLegacyAdoptionBinding(transaction);
+  if (legacyAdoption && !productJournal && transaction.phase !== "selected") {
+    if (!transaction.targetControllerReceipt) {
+      fail("legacy adoption recovery has no selected target-controller receipt");
+    }
+    const recoveryRequest = Object.freeze({
+      schemaVersion: 2,
+      op: "applyRelease",
+      transactionId: transaction.transactionId,
+      version: transaction.version,
+    });
+    const status = await context.requestController(
+      targetControllerRequest(
+        recoveryRequest,
+        "releaseStatus",
+        transaction.targetControllerReceipt,
+        legacyAdoption,
+      ),
+      context,
+    );
+    if (status?.ok === true && status.phase === "committed" && status.healthy === true) {
+      if (transaction.phase !== "commit-acknowledged") {
+        transaction = await context.writeRootProductTransaction(
+          context.paths,
+          advanceRootProductTransaction(transaction, {
+            phase: "commit-ack-pending",
+            targetReleaseIdentity: status.release ?? transaction.targetReleaseIdentity,
+            durableCommitDecision: true,
+            now: context.now(),
+          }),
+          context.rootUid,
+          context.rootGid,
+        );
+      }
+      await context.onLegacyAdoptionPhase?.("after-root-commit-durable", {
+        request: recoveryRequest,
+        rootTransaction: transaction,
+        response: status,
+      });
+      const finalized = await completeRootLegacyAdoption(
+        recoveryRequest,
+        transaction,
+        transaction.targetControllerReceipt,
+        status,
+        context,
+      );
+      await durableReceipt(context.paths, recoveryRequest, {
+        outcome: "committed",
+        controllerChanged: false,
+        phase: "committed",
+        release: finalized.release ?? transaction.targetReleaseIdentity ?? undefined,
+        selectionDigest: transaction.selectionDigest ?? undefined,
+      });
+      if (options.explicit === true) {
+        await clearRecoveryControllerArtifacts(context, transaction.transactionId);
+      }
+      await context.clearRootProductTransaction(context.paths);
+      return Object.freeze({
+        recovered: true,
+        action: "committed",
+        transactionId: transaction.transactionId,
+        version: transaction.version,
+      });
+    }
+    if (status?.ok === true && status.phase === "rolled-back" && status.healthy === true) {
+      if (
+        transaction.durableCommitDecision ||
+        status.installedVersion !== transaction.previousVersion
+      ) {
+        fail("legacy adoption rollback conflicts with the durable root transaction");
+      }
+      await restorePreviousControllerAfterProductRollback(
+        transaction,
+        context,
+        options.supervisorState,
+      );
+      await durableReceipt(context.paths, recoveryRequest, {
+        outcome: "rolled-back",
+        controllerChanged: false,
+        phase: "rolled-back",
+        selectionDigest: transaction.selectionDigest ?? undefined,
+      });
+      if (options.explicit === true) {
+        await clearRecoveryControllerArtifacts(context, transaction.transactionId);
+      }
+      await context.clearRootProductTransaction(context.paths);
+      return Object.freeze({
+        recovered: true,
+        action: "rolled-back",
+        transactionId: transaction.transactionId,
+        version: transaction.version,
+      });
+    }
+    fail(
+      status?.error ||
+        "legacy adoption recovery is pending its bound target-controller commit and acknowledgment",
+    );
+  }
 
   if (transaction.phase === "selected" && !productJournal) {
     const installedVersion = await context.readProductVersion(context.paths, context.rootUid);
@@ -3013,6 +3535,11 @@ async function recoverRootProductTransaction(context) {
         clientSha256: transaction.targetControllerReceipt.controllerClientSha256,
       },
     );
+    await restorePreviousControllerAfterProductRollback(
+      transaction,
+      context,
+      options.supervisorState,
+    );
     await durableReceipt(
       context.paths,
       {
@@ -3027,6 +3554,9 @@ async function recoverRootProductTransaction(context) {
         selectionDigest: transaction.selectionDigest ?? undefined,
       },
     );
+    if (options.explicit === true) {
+      await clearRecoveryControllerArtifacts(context, transaction.transactionId);
+    }
     await context.clearRootProductTransaction(context.paths);
     return Object.freeze({
       recovered: true,
@@ -3036,9 +3566,13 @@ async function recoverRootProductTransaction(context) {
     });
   }
 
-  if (transaction.recoveryAttempts >= MAX_ROOT_RECOVERY_ATTEMPTS) {
+  if (transaction.recoveryAttempts >= MAX_ROOT_RECOVERY_ATTEMPTS && options.explicit !== true) {
     fail("root product transaction exceeded its bounded recovery attempts");
   }
+  const nextRecoveryAttempts =
+    transaction.recoveryAttempts >= MAX_ROOT_RECOVERY_ATTEMPTS
+      ? MAX_ROOT_RECOVERY_ATTEMPTS
+      : transaction.recoveryAttempts + 1;
   transaction = await context.writeRootProductTransaction(
     context.paths,
     advanceRootProductTransaction(transaction, {
@@ -3050,17 +3584,45 @@ async function recoverRootProductTransaction(context) {
       durableCommitDecision:
         transaction.durableCommitDecision ||
         new Set(["gateway-verified", "committing"]).has(productJournal?.phase),
-      recoveryAttempts: transaction.recoveryAttempts + 1,
+      recoveryAttempts: nextRecoveryAttempts,
       lastErrorClass: null,
       now: context.now(),
     }),
     context.rootUid,
     context.rootGid,
   );
+  let explicitOutcome = null;
   try {
     if (productJournal) {
-      await context.restartController();
-      await context.waitForController();
+      if (options.explicit === true) {
+        const recoveryAuthority = await context.stageRecoveryController(
+          transaction,
+          productJournal,
+          options.recoveryRequest,
+          context,
+          options.supervisorState,
+        );
+        const result = await context.recoverControllerProductTransaction(
+          transaction,
+          productJournal,
+          recoveryAuthority,
+          context,
+        );
+        explicitOutcome = result.phase;
+        transaction = await context.writeRootProductTransaction(
+          context.paths,
+          advanceRootProductTransaction(transaction, {
+            phase: "product-recovered",
+            durableCommitDecision: result.phase === "committed",
+            now: context.now(),
+          }),
+          context.rootUid,
+          context.rootGid,
+        );
+      } else {
+        await context.restartController();
+        await context.waitForController();
+      }
       productJournal = await context.readControllerProductJournal(context.paths, context.rootUid);
       assertRootProductJournalBinding(transaction, productJournal);
       if (productJournal) {
@@ -3069,12 +3631,31 @@ async function recoverRootProductTransaction(context) {
     }
 
     const installedVersion = await context.readProductVersion(context.paths, context.rootUid);
-    const verification = await context.verifyRecoveredProduct(
-      transaction,
-      installedVersion,
-      context,
-    );
-    const committed = verification.action === "committed";
+    const committed = explicitOutcome
+      ? explicitOutcome === "committed"
+      : transaction.durableCommitDecision;
+    if (options.explicit === true) {
+      if (committed) {
+        await selectJournalBoundRecoveryController(transaction, context, options.supervisorState);
+      } else {
+        await restorePreviousControllerAfterProductRollback(
+          transaction,
+          context,
+          options.supervisorState,
+        );
+      }
+    }
+    const verification =
+      options.explicit === true && !committed
+        ? Object.freeze({ action: "rolled-back", release: null, supporting: false })
+        : await context.verifyRecoveredProduct(transaction, installedVersion, context);
+    if (
+      (committed && installedVersion !== transaction.version) ||
+      (!committed && installedVersion !== transaction.previousVersion) ||
+      verification.action !== (committed ? "committed" : "rolled-back")
+    ) {
+      fail("explicit product recovery outcome does not match its installed generation");
+    }
     await durableReceipt(
       context.paths,
       {
@@ -3093,6 +3674,9 @@ async function recoverRootProductTransaction(context) {
         selectionDigest: transaction.selectionDigest ?? undefined,
       },
     );
+    if (options.explicit === true) {
+      await clearRecoveryControllerArtifacts(context, transaction.transactionId);
+    }
     await context.clearRootProductTransaction(context.paths);
     return Object.freeze({
       recovered: true,
@@ -3187,6 +3771,106 @@ function protectedLocalStateDir(configuration, operator) {
   return stateDir;
 }
 
+function importedLegacyAdoptionPath(configuration) {
+  return path.join(configuration.paths.supervisorStateDir, LEGACY_ADOPTION_RECEIPT_NAME);
+}
+
+function parseImportedLegacyAdoption(value, configuration, expectedStateDirSha256) {
+  exactKeys(
+    value,
+    [
+      "schemaVersion",
+      "profile",
+      "instanceId",
+      "operatorUid",
+      "operatorGid",
+      "stateDirSha256",
+      "adoptionReceiptDigest",
+      "legacyTransactionId",
+      "previousVersion",
+      "targetVersion",
+      "importedAt",
+      "verification",
+    ],
+    "imported legacy adoption receipt",
+  );
+  const importedAt = Date.parse(String(value.importedAt ?? ""));
+  if (
+    Number(value.schemaVersion) !== 1 ||
+    value.profile !== configuration.profile ||
+    value.instanceId !== configuration.instanceId ||
+    Number(value.operatorUid) !== configuration.operatorUid ||
+    Number(value.operatorGid) !== configuration.operatorGid ||
+    value.stateDirSha256 !== expectedStateDirSha256 ||
+    !/^sha256:[a-f0-9]{64}$/u.test(value.adoptionReceiptDigest || "") ||
+    !TRANSACTION_ID_PATTERN.test(value.legacyTransactionId || "") ||
+    parseVersion(value.previousVersion) !== value.previousVersion ||
+    parseVersion(value.targetVersion) !== value.targetVersion ||
+    !Number.isFinite(importedAt) ||
+    new Date(importedAt).toISOString() !== value.importedAt ||
+    value.verification !== "pending"
+  ) {
+    fail("imported legacy adoption receipt is malformed or mismatched");
+  }
+  return Object.freeze({ ...value });
+}
+
+async function readImportedLegacyAdoption(context) {
+  if (context.configuration.profile !== "protected-local") {
+    return null;
+  }
+  try {
+    return parseImportedLegacyAdoption(
+      await readProtectedJson(
+        importedLegacyAdoptionPath(context.configuration),
+        "imported legacy adoption receipt",
+        context.rootUid,
+      ),
+      context.configuration,
+      context.operatorStateDirSha256,
+    );
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function assertImportedLegacyAdoptionRequest(receipt, request, previousVersion) {
+  if (!receipt) {
+    return;
+  }
+  if (receipt.targetVersion !== request.version || receipt.previousVersion !== previousVersion) {
+    fail("imported legacy adoption receipt does not bind this release transition");
+  }
+}
+
+async function acknowledgeImportedLegacyAdoption(context, receipt) {
+  if (!receipt) {
+    return;
+  }
+  if (
+    receipt.legacyAdoptionAck?.state !== "acknowledged" ||
+    receipt.legacyAdoptionAck.adoptionReceiptDigest !== receipt.adoptionReceiptDigest ||
+    receipt.legacyAdoptionAck.legacyTransactionId !== receipt.legacyTransactionId
+  ) {
+    fail("legacy adoption root cleanup has no verified target-controller acknowledgment");
+  }
+  const active = await readImportedLegacyAdoption(context);
+  if (!active) {
+    return;
+  }
+  if (
+    active.adoptionReceiptDigest !== receipt.adoptionReceiptDigest ||
+    active.legacyTransactionId !== receipt.legacyTransactionId
+  ) {
+    fail("legacy adoption acknowledgment no longer matches its root-owned receipt");
+  }
+  await fsp.rm(importedLegacyAdoptionPath(context.configuration));
+  await fsyncDirectory(context.paths.supervisorStateDir);
+}
+
 function renderBoundaryUnits(configuration, nodeBinary) {
   const { paths } = configuration;
   const operator = passwdRecord(configuration.operatorUid);
@@ -3218,6 +3902,8 @@ function renderBoundaryUnits(configuration, nodeBinary) {
 Description=Fased target lifecycle controller
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
 
 [Service]
 Type=simple
@@ -3269,6 +3955,8 @@ WantedBy=multi-user.target
 Description=Fased stable lifecycle supervisor
 After=${paths.controllerUnit} network-online.target
 Wants=${paths.controllerUnit} network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
 
 [Service]
 Type=simple
@@ -3471,13 +4159,22 @@ function createContext(configuration, overrides = {}) {
     overrides.rootUid ?? (typeof process.geteuid === "function" ? process.geteuid() : 0);
   const rootGid =
     overrides.rootGid ?? (typeof process.getegid === "function" ? process.getegid() : 0);
+  const operatorStateDirSha256 =
+    overrides.operatorStateDirSha256 ??
+    (configuration.profile === "protected-local"
+      ? `sha256:${createHash("sha256")
+          .update(protectedLocalStateDir(configuration, passwdRecord(configuration.operatorUid)))
+          .digest("hex")}`
+      : null);
   return {
     configuration,
     paths: configuration.paths,
     rootUid,
     rootGid,
+    operatorStateDirSha256,
     platform: overrides.platform ?? platformIdentity(),
     now: overrides.now ?? (() => Date.now()),
+    onLegacyAdoptionPhase: overrides.onLegacyAdoptionPhase,
     readChannel: overrides.readChannel ?? readChannel,
     readRollbackFloor: overrides.readRollbackFloor ?? readRollbackFloor,
     readLifecycleTrust: overrides.readLifecycleTrust ?? readLifecycleTrust,
@@ -3502,9 +4199,13 @@ function createContext(configuration, overrides = {}) {
     commitLifecycleTrust: overrides.commitLifecycleTrust ?? commitLifecycleTrust,
     restoreLifecycleTrust: overrides.restoreLifecycleTrust ?? restoreLifecycleTrust,
     clearSupervisorTransaction: overrides.clearSupervisorTransaction ?? clearSupervisorTransaction,
+    readSupervisorTransaction: overrides.readSupervisorTransaction ?? readSupervisorTransaction,
     recoverSupervisorTransaction:
       overrides.recoverSupervisorTransaction ?? recoverSupervisorTransaction,
     readRootProductTransaction: overrides.readRootProductTransaction ?? readRootProductTransaction,
+    readImportedLegacyAdoption: overrides.readImportedLegacyAdoption ?? readImportedLegacyAdoption,
+    acknowledgeImportedLegacyAdoption:
+      overrides.acknowledgeImportedLegacyAdoption ?? acknowledgeImportedLegacyAdoption,
     writeRootProductTransaction:
       overrides.writeRootProductTransaction ?? writeRootProductTransaction,
     clearRootProductTransaction:
@@ -3514,6 +4215,11 @@ function createContext(configuration, overrides = {}) {
     readProductVersion: overrides.readProductVersion ?? readProductVersion,
     recoverRootProductTransaction:
       overrides.recoverRootProductTransaction ?? recoverRootProductTransaction,
+    recoverControllerProductTransaction:
+      overrides.recoverControllerProductTransaction ?? recoverControllerProductTransaction,
+    stageRecoveryController: overrides.stageRecoveryController ?? stageRecoveryController,
+    probeRecoveryControllerIdentity:
+      overrides.probeRecoveryControllerIdentity ?? probeRecoveryControllerIdentity,
     verifyRecoveredProduct: overrides.verifyRecoveredProduct ?? verifyRecoveredProduct,
     cleanupHistoricalControllerCandidates:
       overrides.cleanupHistoricalControllerCandidates ?? cleanupHistoricalControllerCandidates,
@@ -3593,13 +4299,639 @@ async function requestController(request, context) {
   });
 }
 
-function targetControllerRequest(request, op = request.op, supervisorReceipt = undefined) {
+function createRecoveryAuthorization(
+  transaction,
+  productJournal,
+  recoverySelectionReceipt,
+  recoveryCapabilities,
+  recoveryIdentityDigest,
+  now = Date.now(),
+) {
+  if (
+    !transaction.targetControllerReceipt ||
+    !CONTROLLER_RECOVERY_CAPABILITIES.journalSchemas.includes(productJournal.schemaVersion)
+  ) {
+    fail("pending product journal has no supported compatibility recovery contract");
+  }
+  const unsigned = Object.freeze({
+    schemaVersion: 3,
+    transactionId: transaction.transactionId,
+    version: transaction.version,
+    recoveryIdentityDigest,
+    productJournalDigest: productJournal.journalSha256,
+    legacySelectionDigest: transaction.targetControllerReceipt.selectionDigest,
+    expectedOutcome: transaction.durableCommitDecision ? "committed" : "rolled-back",
+    recoveryController: Object.freeze({
+      version: recoverySelectionReceipt.version,
+      releaseCommit: recoverySelectionReceipt.releaseCommit,
+      targetManifestSha256: recoverySelectionReceipt.targetManifestSha256,
+      serverSha256: recoverySelectionReceipt.controllerServerSha256,
+      clientSha256: recoverySelectionReceipt.controllerClientSha256,
+      trustPolicySha256: recoverySelectionReceipt.trustPolicySha256,
+      protocolCapabilities: recoverySelectionReceipt.protocolCapabilities,
+      recoveryCapabilities,
+    }),
+    allowedOperation: "recoverActive",
+    recoveryEpoch: transaction.requestNonce,
+    authorizedAt: new Date(now).toISOString(),
+  });
+  return Object.freeze({
+    ...unsigned,
+    authorizationDigest: createHash("sha256").update(canonicalRootValue(unsigned)).digest("hex"),
+  });
+}
+
+function assertRecoveryAuthorizationBinding(authorization, expected) {
+  const unsigned = { ...authorization };
+  delete unsigned.authorizationDigest;
+  if (
+    authorization?.schemaVersion !== 3 ||
+    authorization.transactionId !== expected.transactionId ||
+    authorization.version !== expected.version ||
+    authorization.recoveryIdentityDigest !== expected.recoveryIdentityDigest ||
+    authorization.productJournalDigest !== expected.productJournalDigest ||
+    authorization.legacySelectionDigest !== expected.legacySelectionDigest ||
+    authorization.expectedOutcome !== expected.expectedOutcome ||
+    authorization.allowedOperation !== "recoverActive" ||
+    authorization.recoveryEpoch !== expected.recoveryEpoch ||
+    canonicalRootValue(authorization.recoveryController) !==
+      canonicalRootValue(expected.recoveryController) ||
+    !TRANSACTION_ID_PATTERN.test(authorization.recoveryEpoch || "") ||
+    !Number.isFinite(Date.parse(authorization.authorizedAt || "")) ||
+    new Date(Date.parse(authorization.authorizedAt)).toISOString() !== authorization.authorizedAt ||
+    authorization.authorizationDigest !==
+      createHash("sha256").update(canonicalRootValue(unsigned)).digest("hex")
+  ) {
+    fail("recovery controller authorization changed across retry");
+  }
+  return Object.freeze({ ...authorization });
+}
+
+async function readRecoveryAuthorization(context, transactionId, expected = null) {
+  const directory = path.join(
+    context.paths.supervisorStateDir,
+    "recovery-authorizations",
+    transactionId,
+  );
+  let entries;
+  try {
+    entries = await fsp.readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+  const candidates = entries.filter(
+    (entry) =>
+      entry.isFile() &&
+      !entry.isSymbolicLink() &&
+      DIGEST_PATTERN.test(entry.name.slice(0, -5)) &&
+      entry.name.endsWith(".json"),
+  );
+  if (candidates.length !== 1 || candidates.length !== entries.length) {
+    fail("recovery controller authorization set is ambiguous");
+  }
+  const authorization = await readProtectedJson(
+    path.join(directory, candidates[0].name),
+    "recovery controller authorization",
+    context.rootUid,
+  );
+  return expected
+    ? assertRecoveryAuthorizationBinding(authorization, expected)
+    : Object.freeze({ ...authorization });
+}
+
+async function persistRecoveryAuthorization(context, authorization) {
+  const authorizationPath = path.join(
+    context.paths.supervisorStateDir,
+    "recovery-authorizations",
+    authorization.transactionId,
+    `${authorization.authorizationDigest}.json`,
+  );
+  await atomicWrite(authorizationPath, `${JSON.stringify(authorization, null, 2)}\n`, 0o600);
+  await fsp.chown(authorizationPath, context.rootUid, context.rootGid);
+  await fsp.chmod(authorizationPath, 0o600);
+  const persisted = await readProtectedJson(
+    authorizationPath,
+    "recovery controller authorization",
+    context.rootUid,
+  );
+  if (canonicalRootValue(persisted) !== canonicalRootValue(authorization)) {
+    fail("recovery controller authorization changed after durable write");
+  }
+  return Object.freeze({ authorizationPath, authorization: persisted });
+}
+
+async function clearRecoveryControllerArtifacts(context, transactionId) {
+  await fsp.rm(
+    path.join(context.paths.supervisorStateDir, "recovery-authorizations", transactionId),
+    { recursive: true, force: true },
+  );
+  await fsyncDirectory(context.paths.supervisorStateDir);
+}
+
+async function probeRecoveryControllerIdentity(request, context, expectedIdentity) {
+  const response = await context.requestController(
+    targetControllerRequest(request, "controllerStatus"),
+    context,
+  );
+  if (
+    !response.ok ||
+    response.controllerVersion !== request.version ||
+    !TRANSACTION_ID_PATTERN.test(response.controllerInstanceId || "") ||
+    response.controllerServerSha256 !== expectedIdentity?.serverSha256 ||
+    response.controllerClientSha256 !== expectedIdentity?.clientSha256 ||
+    canonicalRootValue(response.protocolCapabilities) !==
+      canonicalRootValue(CONTROLLER_SELECTION_CAPABILITIES) ||
+    canonicalRootValue(response.recoveryCapabilities) !==
+      canonicalRootValue(CONTROLLER_RECOVERY_CAPABILITIES)
+  ) {
+    fail("verified recovery controller does not advertise the required compatibility contract");
+  }
+  return Object.freeze({
+    controllerInstanceId: response.controllerInstanceId,
+    recoveryCapabilities: response.recoveryCapabilities,
+  });
+}
+
+async function stageRecoveryController(transaction, productJournal, request, context, state) {
+  const recoveryRequest = Object.freeze({
+    schemaVersion: 3,
+    op: "updateController",
+    transactionId: transaction.transactionId,
+    nonce: transaction.requestNonce,
+    version: request.recoveryControllerVersion,
+    clientCapabilities: request.clientCapabilities,
+  });
+  const staged = await context.stageTrustedController(recoveryRequest, context);
+  if (staged.supervisorChanged) {
+    fail("compatibility recovery requires the already-running stable supervisor generation");
+  }
+  const authorizationIdentityDigest = recoveryIdentityDigest(null, transaction, productJournal);
+  const durableChange = staged.changed || staged.trustChanged;
+  let transactionActive = false;
+  try {
+    // Recovery-controller selection uses the same crash-recoverable supervisor
+    // transaction as an ordinary controller transition. The selection receipt
+    // is bound to the original product transaction nonce; each explicit
+    // recovery attempt still receives its own one-shot authorization nonce.
+    if (durableChange) {
+      await context.beginSupervisorTransaction(context.paths, recoveryRequest, staged);
+      transactionActive = true;
+    }
+    if (staged.changed) {
+      await context.activateStagedController(context.paths, staged);
+      await context.restartController();
+      await context.waitForController();
+    }
+    let live;
+    try {
+      live = await context.probeRecoveryControllerIdentity(
+        recoveryRequest,
+        context,
+        staged.identity,
+      );
+    } catch (error) {
+      if (staged.changed) {
+        throw error;
+      }
+      await context.restartController();
+      await context.waitForController();
+      live = await context.probeRecoveryControllerIdentity(
+        recoveryRequest,
+        context,
+        staged.identity,
+      );
+    }
+    if (staged.trustChanged) {
+      await context.commitLifecycleTrust(context.paths, staged);
+    }
+    const selectionReceipt = await context.writeControllerSelectionReceipt(
+      context.paths,
+      recoveryRequest,
+      staged,
+      live.controllerInstanceId,
+      context.rootUid,
+      context.rootGid,
+      { now: context.now(), nonce: transaction.requestNonce },
+    );
+    const proposedAuthorization = createRecoveryAuthorization(
+      transaction,
+      productJournal,
+      selectionReceipt,
+      live.recoveryCapabilities,
+      authorizationIdentityDigest,
+      context.now(),
+    );
+    const expectedAuthorization = Object.freeze({
+      transactionId: proposedAuthorization.transactionId,
+      version: proposedAuthorization.version,
+      recoveryIdentityDigest: proposedAuthorization.recoveryIdentityDigest,
+      productJournalDigest: proposedAuthorization.productJournalDigest,
+      legacySelectionDigest: proposedAuthorization.legacySelectionDigest,
+      expectedOutcome: proposedAuthorization.expectedOutcome,
+      recoveryController: proposedAuthorization.recoveryController,
+      recoveryEpoch: proposedAuthorization.recoveryEpoch,
+    });
+    const authorization =
+      (await readRecoveryAuthorization(
+        context,
+        transaction.transactionId,
+        expectedAuthorization,
+      )) ?? proposedAuthorization;
+    const durableAuthorization = await persistRecoveryAuthorization(context, authorization);
+    if (transactionActive) {
+      await context.clearSupervisorTransaction(context.paths);
+      transactionActive = false;
+    }
+    state.controllerInstanceId = live.controllerInstanceId;
+    context.recoveryControllerInstanceId = live.controllerInstanceId;
+    return Object.freeze({
+      authorization: durableAuthorization.authorization,
+      selectionReceipt,
+      selectionChanged: staged.changed,
+      // A controller process identity is deliberately transient. It proves
+      // which freshly probed process receives this attempt, but it is not part
+      // of the durable authorization so a crash/restart can replay the same
+      // transaction against the same verified controller generation.
+      liveControllerInstanceId: live.controllerInstanceId,
+    });
+  } catch (error) {
+    if (transactionActive) {
+      try {
+        if (staged.changed) {
+          await context.restoreControllerSelection(context.paths, staged);
+          await context.restartController();
+          await context.waitForController();
+        }
+        // Trust state is monotonic and is deliberately not rolled back after a
+        // verified trust transition. Only the mutable controller selection is
+        // restored before the transaction is cleared.
+        await context.clearSupervisorTransaction(context.paths);
+        transactionActive = false;
+        await clearRecoveryControllerArtifacts(context, transaction.transactionId);
+      } catch (restoreError) {
+        throw new Error(
+          `recovery controller selection failed and restoration remains pending: ${restoreError.message}`,
+          { cause: restoreError },
+        );
+      }
+    } else {
+      await clearRecoveryControllerArtifacts(context, transaction.transactionId);
+    }
+    throw error;
+  }
+}
+
+async function recoverControllerProductTransaction(
+  transaction,
+  productJournal,
+  recoveryAuthority,
+  context,
+) {
+  const authorization = recoveryAuthority.authorization;
+  const response = await context.requestController(
+    {
+      schemaVersion: 2,
+      op: "recoverActive",
+      transactionId: transaction.transactionId,
+      version: transaction.version,
+      recoveryDigest: productJournal.journalSha256,
+      recoveryControllerInstanceId: recoveryAuthority.liveControllerInstanceId,
+      recoveryAuthorization: authorization,
+    },
+    context,
+  );
+  if (
+    !response.ok ||
+    response.transactionId !== transaction.transactionId ||
+    response.version !== transaction.version ||
+    response.recoveryControllerInstanceId !== recoveryAuthority.liveControllerInstanceId ||
+    response.recoveryAuthorizationDigest !== authorization.authorizationDigest ||
+    response.phase !== authorization.expectedOutcome
+  ) {
+    fail(response.error || "target controller did not complete the bound product recovery");
+  }
+  return response;
+}
+
+async function selectJournalBoundRecoveryController(transaction, context, state) {
+  const receipt = transaction.targetControllerReceipt;
+  if (!receipt) {
+    fail("root product recovery has no journal-bound controller receipt");
+  }
+  const identity = Object.freeze({
+    schemaVersion: 1,
+    version: receipt.version,
+    serverSha256: receipt.controllerServerSha256,
+    clientSha256: receipt.controllerClientSha256,
+  });
+  const generation = path.join(context.paths.releasesDir, `v${identity.version}`);
+  const digests = await controllerGenerationDigests(generation, context.rootUid);
+  if (
+    digests.serverSha256 !== identity.serverSha256 ||
+    digests.clientSha256 !== identity.clientSha256
+  ) {
+    fail("journal-bound recovery controller generation digest is mismatched");
+  }
+  const [selectionMatched, persistedIdentity] = await Promise.all([
+    context.currentControllerMatches(context.paths, identity, context.rootUid),
+    context.readControllerIdentity(context.paths, context.rootUid),
+  ]);
+  const identityMatched = canonicalRootValue(persistedIdentity) === canonicalRootValue(identity);
+  await atomicSymlink(generation, context.paths.currentLink);
+  await atomicWrite(
+    context.paths.controllerVersionPath,
+    `${JSON.stringify(identity, null, 2)}\n`,
+    0o600,
+  );
+  await fsp.chown(context.paths.controllerVersionPath, context.rootUid, context.rootGid);
+  await fsp.chmod(context.paths.controllerVersionPath, 0o600);
+  if (!selectionMatched || !identityMatched) {
+    await context.restartController();
+    await context.waitForController();
+  }
+  const probe = async () =>
+    await context.probeControllerIdentity(
+      {
+        schemaVersion: 3,
+        op: "updateController",
+        transactionId: transaction.transactionId,
+        nonce: transaction.requestNonce,
+        version: transaction.version,
+        clientCapabilities: transaction.clientCapabilities,
+      },
+      context,
+      identity,
+    );
+  let controllerInstanceId;
+  try {
+    controllerInstanceId = await probe();
+  } catch (error) {
+    if (!selectionMatched || !identityMatched) {
+      throw error;
+    }
+    await context.restartController();
+    await context.waitForController();
+    controllerInstanceId = await probe();
+  }
+  if (state) {
+    state.controllerInstanceId = controllerInstanceId;
+  }
+  context.recoveryControllerInstanceId = controllerInstanceId;
+  return Object.freeze({ identity, controllerInstanceId });
+}
+
+async function restorePreviousControllerAfterProductRollback(transaction, context, state) {
+  if (!transaction.previousControllerIdentity) {
+    return;
+  }
+  const identity = transaction.previousControllerIdentity;
+  const generation = path.join(context.paths.releasesDir, `v${identity.version}`);
+  const digests = await controllerGenerationDigests(generation, context.rootUid);
+  if (
+    digests.serverSha256 !== identity.serverSha256 ||
+    digests.clientSha256 !== identity.clientSha256
+  ) {
+    fail("previous controller generation digest is mismatched during product rollback");
+  }
+  await atomicSymlink(generation, context.paths.currentLink);
+  await atomicWrite(
+    context.paths.controllerVersionPath,
+    `${JSON.stringify(identity, null, 2)}\n`,
+    0o600,
+  );
+  await fsp.chown(context.paths.controllerVersionPath, context.rootUid, context.rootGid);
+  await fsp.chmod(context.paths.controllerVersionPath, 0o600);
+  await context.restartController();
+  await context.waitForController();
+  const controllerInstanceId = await context.probeControllerIdentity(
+    {
+      schemaVersion: 3,
+      op: "updateController",
+      transactionId: transaction.transactionId,
+      nonce: transaction.requestNonce,
+      version: identity.version,
+      clientCapabilities: transaction.clientCapabilities,
+    },
+    context,
+    identity,
+  );
+  if (state) {
+    state.controllerInstanceId = controllerInstanceId;
+  }
+  context.recoveryControllerInstanceId = controllerInstanceId;
+}
+
+function rootLegacyAdoptionBinding(transaction) {
+  return transaction?.legacyAdoptionDigest
+    ? Object.freeze({
+        receiptDigest: transaction.legacyAdoptionDigest,
+        transactionId: transaction.legacyAdoptionTransactionId,
+        previousVersion: transaction.legacyAdoptionPreviousVersion,
+        targetVersion: transaction.legacyAdoptionTargetVersion,
+      })
+    : null;
+}
+
+function parseTargetLegacyAdoptionAck(value, binding, request, { acknowledged = false } = {}) {
+  exactKeys(
+    value,
+    [
+      "schemaVersion",
+      "transactionId",
+      "version",
+      "legacyTransactionId",
+      "adoptionReceiptDigest",
+      "adoptionReceipt",
+      "legacyJournal",
+      "outcome",
+      "installedVersion",
+      "state",
+      "issuedAt",
+      "acknowledgedAt",
+      "receiptDigest",
+    ],
+    "target-controller legacy adoption acknowledgment",
+  );
+  for (const [label, identity] of [
+    ["receipt", value.adoptionReceipt],
+    ["journal", value.legacyJournal],
+  ]) {
+    exactKeys(
+      identity,
+      ["dev", "gid", "ino", "mode", "sha256", "size", "uid"],
+      `target-controller legacy adoption ${label} identity`,
+    );
+    if (
+      !Number.isSafeInteger(identity.dev) ||
+      identity.dev < 0 ||
+      !Number.isSafeInteger(identity.ino) ||
+      identity.ino < 1 ||
+      !Number.isSafeInteger(identity.uid) ||
+      identity.uid < 1 ||
+      !Number.isSafeInteger(identity.gid) ||
+      identity.gid < 1 ||
+      !Number.isSafeInteger(identity.mode) ||
+      (identity.mode & 0o177) !== 0 ||
+      !Number.isSafeInteger(identity.size) ||
+      identity.size < 2 ||
+      !/^sha256:[a-f0-9]{64}$/u.test(identity.sha256 || "")
+    ) {
+      fail(`target-controller legacy adoption ${label} identity is invalid`);
+    }
+  }
+  const unsigned = {
+    schemaVersion: Number(value.schemaVersion),
+    transactionId: String(value.transactionId ?? "").toLowerCase(),
+    version: parseVersion(value.version),
+    legacyTransactionId: String(value.legacyTransactionId ?? "").toLowerCase(),
+    adoptionReceiptDigest: String(value.adoptionReceiptDigest ?? ""),
+    adoptionReceipt: Object.freeze({ ...value.adoptionReceipt }),
+    legacyJournal: Object.freeze({ ...value.legacyJournal }),
+    outcome: String(value.outcome ?? ""),
+    installedVersion: parseVersion(value.installedVersion),
+    state: String(value.state ?? ""),
+    issuedAt: String(value.issuedAt ?? ""),
+    acknowledgedAt: value.acknowledgedAt === null ? null : String(value.acknowledgedAt ?? ""),
+  };
+  const issuedAt = Date.parse(unsigned.issuedAt);
+  const acknowledgedAt =
+    unsigned.acknowledgedAt === null ? null : Date.parse(unsigned.acknowledgedAt);
+  const receiptDigest = String(value.receiptDigest ?? "");
+  if (
+    unsigned.schemaVersion !== 2 ||
+    unsigned.transactionId !== request.transactionId ||
+    unsigned.version !== request.version ||
+    unsigned.legacyTransactionId !== binding.transactionId ||
+    unsigned.adoptionReceiptDigest !== binding.receiptDigest ||
+    unsigned.outcome !== "committed" ||
+    unsigned.installedVersion !== request.version ||
+    !new Set(["pending", "acknowledged"]).has(unsigned.state) ||
+    (acknowledged && unsigned.state !== "acknowledged") ||
+    !Number.isFinite(issuedAt) ||
+    new Date(issuedAt).toISOString() !== unsigned.issuedAt ||
+    (unsigned.state === "pending" && unsigned.acknowledgedAt !== null) ||
+    (unsigned.state === "acknowledged" &&
+      (!Number.isFinite(acknowledgedAt) ||
+        new Date(acknowledgedAt).toISOString() !== unsigned.acknowledgedAt)) ||
+    receiptDigest !==
+      `sha256:${createHash("sha256").update(canonicalRootValue(unsigned)).digest("hex")}`
+  ) {
+    fail("target-controller legacy adoption acknowledgment is mismatched");
+  }
+  return Object.freeze({ ...unsigned, receiptDigest });
+}
+
+function assertTargetLegacyAdoptionResponse(
+  response,
+  binding,
+  request,
+  { acknowledged = false, healthy = false } = {},
+) {
+  if (
+    response?.ok !== true ||
+    response.transactionId !== request.transactionId ||
+    response.version !== request.version ||
+    response.phase !== "committed" ||
+    (healthy && response.healthy !== true) ||
+    canonicalRootValue(response.legacyAdoption) !== canonicalRootValue(binding)
+  ) {
+    fail("target-controller legacy adoption completion is not bound to the committed release");
+  }
+  return parseTargetLegacyAdoptionAck(response.legacyAdoptionAck, binding, request, {
+    acknowledged,
+  });
+}
+
+async function finalizeLegacyAdoptionAfterCommit(
+  request,
+  rootTransaction,
+  selectionReceipt,
+  response,
+  context,
+) {
+  const binding = rootLegacyAdoptionBinding(rootTransaction);
+  if (!binding) {
+    return response;
+  }
+  assertTargetLegacyAdoptionResponse(response, binding, request);
+  const status = await context.requestController(
+    targetControllerRequest(request, "releaseStatus", selectionReceipt, binding),
+    context,
+  );
+  assertTargetLegacyAdoptionResponse(status, binding, request, { healthy: true });
+  const acknowledged = await context.requestController(
+    targetControllerRequest(request, "acknowledgeLegacyAdoption", selectionReceipt, binding),
+    context,
+  );
+  const legacyAdoptionAck = assertTargetLegacyAdoptionResponse(acknowledged, binding, request, {
+    acknowledged: true,
+  });
+  return Object.freeze({ ...response, legacyAdoption: binding, legacyAdoptionAck });
+}
+
+async function completeRootLegacyAdoption(
+  request,
+  rootTransaction,
+  selectionReceipt,
+  response,
+  context,
+) {
+  const binding = rootLegacyAdoptionBinding(rootTransaction);
+  if (!binding) {
+    return response;
+  }
+  const finalized = await finalizeLegacyAdoptionAfterCommit(
+    request,
+    rootTransaction,
+    selectionReceipt,
+    response,
+    context,
+  );
+  rootTransaction = await context.writeRootProductTransaction(
+    context.paths,
+    advanceRootProductTransaction(rootTransaction, {
+      phase: "commit-acknowledged",
+      durableCommitDecision: true,
+      legacyAdoptionAckDigest: finalized.legacyAdoptionAck.receiptDigest,
+      now: context.now(),
+    }),
+    context.rootUid,
+    context.rootGid,
+  );
+  await context.onLegacyAdoptionPhase?.("after-target-ack", {
+    request,
+    rootTransaction,
+    response: finalized,
+  });
+  await context.acknowledgeImportedLegacyAdoption(context, {
+    adoptionReceiptDigest: rootTransaction.legacyAdoptionDigest,
+    legacyTransactionId: rootTransaction.legacyAdoptionTransactionId,
+    legacyAdoptionAck: finalized.legacyAdoptionAck,
+  });
+  await context.onLegacyAdoptionPhase?.("after-root-import-removal", {
+    request,
+    rootTransaction,
+    response: finalized,
+  });
+  return finalized;
+}
+
+function targetControllerRequest(
+  request,
+  op = request.op,
+  supervisorReceipt = undefined,
+  legacyAdoption = null,
+) {
   return Object.freeze({
     schemaVersion: 2,
     op,
     transactionId: request.transactionId,
     version: request.version,
     ...(supervisorReceipt ? { supervisorReceipt } : {}),
+    ...(legacyAdoption ? { legacyAdoption } : {}),
   });
 }
 
@@ -3665,10 +4997,98 @@ async function recoverBeforeSupervisorRequest(request, context) {
   if (sameSelectedTransaction) {
     return null;
   }
-  return await context.recoverRootProductTransaction(context);
+  fail("lifecycle recovery is pending; use the bound explicit recovery operation");
+}
+
+function supervisorRecoveryResponse(request, recovery, extra = {}) {
+  return Object.freeze({
+    ok: true,
+    transactionId: request.transactionId,
+    version: request.version,
+    phase: recovery.state === "READY" ? "ready" : "recovery-pending",
+    changed: false,
+    recovery,
+    ...extra,
+  });
+}
+
+async function handleExplicitSupervisorRecovery(request, context, state) {
+  const authorized = state.recovery;
+  const pending = await inspectRootProductRecovery(context);
+  state.recovery = pending;
+  if (
+    authorized.state !== pending.state ||
+    authorized.journalDigest !== pending.journalDigest ||
+    authorized.transactionId !== pending.transactionId ||
+    authorized.targetVersion !== pending.targetVersion
+  ) {
+    fail("active lifecycle recovery journal changed after status authorization");
+  }
+  if (pending.state !== "RECOVERY_PENDING") {
+    return supervisorRecoveryResponse(request, pending, { replayed: true });
+  }
+  if (
+    pending.transactionId === null ||
+    pending.targetVersion === null ||
+    pending.journalDigest === null ||
+    request.transactionId !== pending.transactionId ||
+    request.version !== pending.targetVersion ||
+    request.recoveryDigest !== pending.journalDigest
+  ) {
+    fail("active lifecycle recovery request does not match the protected journal");
+  }
+  await authorizeExplicitRecoveryAttempt(context, pending, request);
+  try {
+    let recoveryResult = null;
+    if (pending.source === "supervisor") {
+      const restartRequired = await context.recoverSupervisorTransaction(context);
+      recoveryResult = Object.freeze({ recovered: true, restartRequired });
+    } else {
+      recoveryResult = await context.recoverRootProductTransaction(context, {
+        explicit: true,
+        expectedJournalDigest: pending.journalDigest,
+        recoveryRequest: request,
+        supervisorState: state,
+      });
+    }
+    const recovery = await refreshSupervisorRecoveryState(context, state);
+    if (
+      recovery.state === "READY" ||
+      (recovery.state === "RECOVERY_PENDING" && recovery.journalDigest !== pending.journalDigest)
+    ) {
+      await clearExplicitRecoveryAttempt(context);
+    }
+    return supervisorRecoveryResponse(request, recovery, {
+      changed: recoveryResult?.recovered === true,
+      action: recoveryResult?.action ?? null,
+      restartRequired: recoveryResult?.restartRequired === true,
+    });
+  } catch (error) {
+    await refreshSupervisorRecoveryState(context, state);
+    throw error;
+  }
 }
 
 async function handleSupervisorRequest(request, context, state) {
+  state.recovery ??= Object.freeze({ state: "READY" });
+  if (request.op === "recoveryStatus") {
+    return supervisorRecoveryResponse(
+      request,
+      await refreshSupervisorRecoveryState(context, state),
+    );
+  }
+  if (state.recovery.state === "INVALID_LEDGER") {
+    fail("lifecycle recovery ledger is invalid; only status is available");
+  }
+  if (state.recovery.state === "RECOVERY_PENDING") {
+    if (request.op !== "recoverActive") {
+      fail("lifecycle recovery is pending; new product mutation is blocked");
+    }
+    return await handleExplicitSupervisorRecovery(request, context, state);
+  }
+  if (request.op === "recoverActive") {
+    return supervisorRecoveryResponse(request, state.recovery, { replayed: true });
+  }
   await recoverBeforeSupervisorRequest(request, context);
   if (request.op === "rollbackRelease") {
     const recovered = await readDurableReceipt(context.paths, request, [
@@ -3705,6 +5125,9 @@ async function handleSupervisorRequest(request, context, state) {
     }
   }
   if (request.op === "updateController") {
+    const importedLegacyAdoption = await context.readImportedLegacyAdoption(context);
+    const previousProductVersion = await context.readProductVersion(context.paths, context.rootUid);
+    assertImportedLegacyAdoptionRequest(importedLegacyAdoption, request, previousProductVersion);
     const priorInstanceId = state.controllerInstanceId;
     const staged = await context.stageTrustedController(request, context);
     const durableChange = staged.changed || staged.supervisorChanged || staged.trustChanged;
@@ -3820,22 +5243,34 @@ async function handleSupervisorRequest(request, context, state) {
         existingRootTransaction.version !== request.version ||
         existingRootTransaction.selectionDigest !== selectionReceipt.selectionDigest ||
         canonicalRootValue(existingRootTransaction.targetControllerReceipt) !==
-          canonicalRootValue(selectionReceipt)
+          canonicalRootValue(selectionReceipt) ||
+        existingRootTransaction.legacyAdoptionDigest !==
+          (importedLegacyAdoption?.adoptionReceiptDigest ?? null) ||
+        existingRootTransaction.legacyAdoptionTransactionId !==
+          (importedLegacyAdoption?.legacyTransactionId ?? null) ||
+        existingRootTransaction.legacyAdoptionPreviousVersion !==
+          (importedLegacyAdoption?.previousVersion ?? null) ||
+        existingRootTransaction.legacyAdoptionTargetVersion !==
+          (importedLegacyAdoption?.targetVersion ?? null)
       ) {
         fail("selected root product transaction does not match the controller retry");
       }
     } else {
-      const previousVersion = await context.readProductVersion(context.paths, context.rootUid);
       await context.writeRootProductTransaction(
         context.paths,
         rootProductTransactionRecord({
           request,
           phase: "selected",
-          previousVersion,
+          previousVersion: previousProductVersion,
           previousControllerIdentity: staged.previousIdentity ?? null,
           previousControllerGenerationVersion: staged.previousIdentity?.version ?? null,
           targetControllerReceipt: selectionReceipt,
           selectionDigest: selectionReceipt.selectionDigest,
+          legacyAdopted: importedLegacyAdoption !== null,
+          legacyAdoptionDigest: importedLegacyAdoption?.adoptionReceiptDigest ?? null,
+          legacyAdoptionTransactionId: importedLegacyAdoption?.legacyTransactionId ?? null,
+          legacyAdoptionPreviousVersion: importedLegacyAdoption?.previousVersion ?? null,
+          legacyAdoptionTargetVersion: importedLegacyAdoption?.targetVersion ?? null,
           now: context.now(),
         }),
         context.rootUid,
@@ -3867,14 +5302,22 @@ async function handleSupervisorRequest(request, context, state) {
   if (ROOT_TRANSACTION_OPERATIONS.has(request.op)) {
     rootTransaction = await context.readRootProductTransaction(context.paths, context.rootUid);
     if (!rootTransaction) {
+      const importedLegacyAdoption = await context.readImportedLegacyAdoption(context);
+      const previousVersion = await context.readProductVersion(context.paths, context.rootUid);
+      assertImportedLegacyAdoptionRequest(importedLegacyAdoption, request, previousVersion);
       rootTransaction = await context.writeRootProductTransaction(
         context.paths,
         rootProductTransactionRecord({
           request,
           phase: "selected",
-          previousVersion: await context.readProductVersion(context.paths, context.rootUid),
+          previousVersion,
           targetControllerReceipt: selectionReceipt,
           selectionDigest: selectionReceipt.selectionDigest,
+          legacyAdopted: importedLegacyAdoption !== null,
+          legacyAdoptionDigest: importedLegacyAdoption?.adoptionReceiptDigest ?? null,
+          legacyAdoptionTransactionId: importedLegacyAdoption?.legacyTransactionId ?? null,
+          legacyAdoptionPreviousVersion: importedLegacyAdoption?.previousVersion ?? null,
+          legacyAdoptionTargetVersion: importedLegacyAdoption?.targetVersion ?? null,
           now: context.now(),
         }),
         context.rootUid,
@@ -3899,31 +5342,21 @@ async function handleSupervisorRequest(request, context, state) {
       context.rootGid,
     );
   }
-  let response;
-  try {
-    response = await context.requestController(
-      targetControllerRequest(request, request.op, selectionReceipt),
-      context,
-    );
-    if (!response.ok) {
-      const error = new Error(response.error || `target controller rejected ${request.op}`);
-      error.code = "TARGET_CONTROLLER_REJECTED";
-      throw error;
-    }
-  } catch (error) {
-    let recoveryComplete = false;
-    if (rootTransaction) {
-      await context.recoverRootProductTransaction(context).catch((recoveryError) => {
-        throw new Error(
-          `target controller failed and root recovery remains pending: ${recoveryError.message}`,
-          { cause: error },
-        );
-      });
-      recoveryComplete = true;
-    }
-    if (recoveryComplete && error && typeof error === "object") {
-      error.supervisorRecoveryComplete = true;
-    }
+  let response = await context.requestController(
+    targetControllerRequest(
+      request,
+      request.op,
+      selectionReceipt,
+      // The target controller receives only the root-bound digest and legacy
+      // transaction identity. It never treats the schema-1 operator journal as
+      // one of its native schema-7/8 recovery journals.
+      rootLegacyAdoptionBinding(rootTransaction),
+    ),
+    context,
+  );
+  if (!response.ok) {
+    const error = new Error(response.error || `target controller rejected ${request.op}`);
+    error.code = "TARGET_CONTROLLER_REJECTED";
     throw error;
   }
   if (rootTransaction) {
@@ -3936,8 +5369,40 @@ async function handleSupervisorRequest(request, context, state) {
       response.ok &&
       response.phase === "committed"
     ) {
+      if (productJournal) {
+        fail("target controller reported commit before clearing its product journal");
+      }
+      if (rootLegacyAdoptionBinding(rootTransaction)) {
+        rootTransaction = await context.writeRootProductTransaction(
+          context.paths,
+          advanceRootProductTransaction(rootTransaction, {
+            phase: "commit-ack-pending",
+            targetReleaseIdentity: response.release ?? rootTransaction.targetReleaseIdentity,
+            durableCommitDecision: true,
+            now: context.now(),
+          }),
+          context.rootUid,
+          context.rootGid,
+        );
+        await context.onLegacyAdoptionPhase?.("after-root-commit-durable", {
+          request,
+          rootTransaction,
+          response,
+        });
+        response = await completeRootLegacyAdoption(
+          request,
+          rootTransaction,
+          selectionReceipt,
+          response,
+          context,
+        );
+      }
       await context.clearRootProductTransaction(context.paths);
     } else if (request.op === "rollbackRelease" && response.ok) {
+      if (productJournal) {
+        fail("target controller reported rollback before clearing its product journal");
+      }
+      await restorePreviousControllerAfterProductRollback(rootTransaction, context, state);
       await context.clearRootProductTransaction(context.paths);
     } else if (response.ok && ROOT_TRANSACTION_PHASES.has(response.phase)) {
       await context.writeRootProductTransaction(
@@ -4000,20 +5465,16 @@ export async function startSupervisor(options = {}) {
   }
   const configuration = options.configuration ?? parseSupervisorConfiguration();
   const context = options.context ?? createContext(configuration);
-  const state = { controllerInstanceId: randomUUID() };
+  const state = {
+    controllerInstanceId: randomUUID(),
+    recovery: Object.freeze({ state: "READY" }),
+  };
   await fsp.mkdir(path.dirname(context.paths.publicSocketPath), {
     recursive: true,
     mode: 0o711,
   });
   await fsp.mkdir(context.paths.supervisorStateDir, { recursive: true, mode: 0o700 });
-  const recovered = await context.recoverSupervisorTransaction(context);
-  if (recovered && context.supervisorRestartRequired) {
-    return { server: null, close: async () => undefined, context, restartRequired: true };
-  }
-  if (!recovered) {
-    await context.waitForController();
-  }
-  await context.recoverRootProductTransaction(context);
+  await refreshSupervisorRecoveryState(context, state);
   await fsp.rm(context.paths.publicSocketPath, { force: true });
   process.umask(PRIVATE_UMASK);
   let queue = Promise.resolve();
@@ -4051,7 +5512,12 @@ export async function startSupervisor(options = {}) {
         writeResponse(socket, { ok: false, error: error.message });
         return;
       }
-      const operation = queue.then(() => handleSupervisorRequest(request, context, state));
+      const operation = queue
+        .then(() => handleSupervisorRequest(request, context, state))
+        .catch(async (error) => {
+          await refreshSupervisorRecoveryState(context, state);
+          throw error;
+        });
       queue = operation.catch(() => undefined);
       const restartSupervisor = () => {
         server.close(() => {
@@ -4093,7 +5559,7 @@ export async function startSupervisor(options = {}) {
   };
   process.once("SIGTERM", () => void close().then(() => process.exit(0)));
   process.once("SIGINT", () => void close().then(() => process.exit(0)));
-  return { server, close, context, restartRequired: false };
+  return { server, close, context, state, restartRequired: false };
 }
 
 async function main() {
@@ -4158,13 +5624,17 @@ export const __testing = Object.freeze({
   cleanupHistoricalControllerCandidates,
   compareVersions,
   createContext,
+  createRecoveryAuthorization,
+  finalizeLegacyAdoptionAfterCommit,
   handleSupervisorRequest,
   initialLifecycleTrustState,
   lifecyclePaths,
   platformIdentity,
   recoverSupervisorTransaction,
   recoverRootProductTransaction,
+  recoveryIdentityDigest,
   rootProductTransactionRecord,
+  assertRecoveryAuthorizationBinding,
   readControllerSelectionReceipt,
   renderBoundaryUnits,
   supervisorGenerationPath,

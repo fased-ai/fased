@@ -1394,6 +1394,9 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
         timeoutMs: 1000,
         socketPath: "/run/fased-host-updater/request.sock",
         expectedSignerRelease: signerRelease(),
+        recoverSupervisor: async () => {
+          operations.push("recoveryStatus");
+        },
         ensureController: async () => {
           operations.push("updateController");
         },
@@ -1413,7 +1416,7 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
       }),
     ).resolves.toMatchObject({ phase: "committed", release: signerRelease() });
     expect(handoffAccepted).toBe(true);
-    expect(operations).toEqual(["updateController", "applyRelease"]);
+    expect(operations).toEqual(["recoveryStatus", "updateController", "applyRelease"]);
   });
 
   it("lets the selected target own all root-managed product mutation", async () => {

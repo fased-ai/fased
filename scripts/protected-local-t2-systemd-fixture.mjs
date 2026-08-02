@@ -35,6 +35,7 @@ function run(command, args, options = {}) {
     encoding: "utf8",
     timeout: options.timeout ?? 30_000,
     env: options.env ?? process.env,
+    cwd: options.cwd,
     uid: options.uid,
     gid: options.gid,
   });
@@ -150,10 +151,46 @@ function operatorIdentity() {
   }
   const passwd = run("/usr/bin/getent", ["passwd", String(info.uid)]).stdout.trim();
   const fields = passwd.split(":");
-  if (fields.length < 7 || !/^[A-Za-z_][A-Za-z0-9_.-]{0,30}$/u.test(fields[0])) {
+  const home = fields[5];
+  if (
+    fields.length < 7 ||
+    !/^[A-Za-z_][A-Za-z0-9_.-]{0,30}$/u.test(fields[0]) ||
+    !path.isAbsolute(home) ||
+    path.resolve(home) !== home
+  ) {
     fail("T2 could not resolve the checkout owner account");
   }
-  return Object.freeze({ user: fields[0], uid: info.uid, gid: info.gid });
+  return Object.freeze({ user: fields[0], uid: info.uid, gid: info.gid, home });
+}
+
+async function createRootFixtureRoot(instanceId) {
+  const parent = "/var/lib";
+  const parentInfo = await fsp.lstat(parent);
+  if (
+    !parentInfo.isDirectory() ||
+    parentInfo.isSymbolicLink() ||
+    parentInfo.uid !== 0 ||
+    (parentInfo.mode & 0o022) !== 0
+  ) {
+    fail("T2 fixture parent must be a root-owned non-writable real directory");
+  }
+  const fixtureRoot = await fsp.mkdtemp(path.join(parent, `.fased-t2-${instanceId}-`));
+  try {
+    await fsp.chmod(fixtureRoot, 0o700);
+    const info = await fsp.lstat(fixtureRoot);
+    if (
+      !info.isDirectory() ||
+      info.isSymbolicLink() ||
+      info.uid !== 0 ||
+      (info.mode & 0o077) !== 0
+    ) {
+      fail("T2 fixture root is not an exclusive root-owned directory");
+    }
+    return fixtureRoot;
+  } catch (error) {
+    await fsp.rm(fixtureRoot, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 async function writeOwnedFile(filePath, contents, uid, gid, mode) {
@@ -191,13 +228,14 @@ async function runFixture() {
   const instanceId = sha256(`${process.pid}:${randomUUID()}`).slice(0, 16);
   assert.match(instanceId, instancePattern);
   const layout = buildProtectedLocalLayout(instanceId);
-  const appRoot = `/var/lib/fased-t2/${instanceId}/operator`;
+  const appRoot = path.join(operator.home, ".fased-t2", instanceId);
   const appStateDir = path.join(appRoot, ".fased");
   const applicationRelease = path.join(layout.applicationReleasesDir, `v${previousVersion}`);
   const t2Lib = path.join(layout.installDir, "t2-lib");
   const channelRoot = `/etc/fased/local/${instanceId}`;
   const controllerDropIn = `/etc/systemd/system/${layout.controllerUnit}.d`;
   const supervisorDropIn = `/etc/systemd/system/${layout.supervisorUnit}.d`;
+  const registryOverride = path.join(supervisorDropIn, "90-t2-registry.conf");
   const failureScript = `/usr/local/libexec/fased-t2-controller-fail-${instanceId}`;
   const failureOverride = path.join(controllerDropIn, "99-t2-fail-once.conf");
   const failureMarker = path.join(layout.controllerStateDir, "t2-fail-once");
@@ -224,7 +262,7 @@ async function runFixture() {
     instanceId,
     operatorUid: operator.uid,
     operatorUser: operator.user,
-    operatorHome: appRoot,
+    operatorHome: operator.home,
     appStateDir,
     repoDir: layout.applicationCurrentLink,
     gatewayUid,
@@ -234,6 +272,29 @@ async function runFixture() {
     nodeBinary: "/usr/bin/node",
   });
   const installedUnits = [plan.files.controllerUnit, plan.files.supervisorUnit];
+  const fixedPaths = [
+    layout.installDir,
+    layout.stateDir,
+    channelRoot,
+    controllerDropIn,
+    supervisorDropIn,
+    failureScript,
+    `/run/fased-local/${instanceId}`,
+    `/run/fased-local-controller/${instanceId}`,
+    `/run/fased-local-controller-worker/${instanceId}`,
+    ...installedUnits.map((unit) => unit.path),
+  ];
+  for (const fixedPath of fixedPaths) {
+    if (fs.existsSync(fixedPath)) {
+      fail(`T2 refuses to overwrite an existing path: ${fixedPath}`);
+    }
+  }
+  const fixtureRoot = await createRootFixtureRoot(instanceId);
+  const fixtureHome = path.join(fixtureRoot, "operator-home");
+  const physicalAppRoot = path.join(fixtureHome, ".fased-t2", instanceId);
+  const physicalAppStateDir = path.join(physicalAppRoot, ".fased");
+  const registryRoot = path.join(fixtureRoot, "registry");
+  const registryPath = path.join(registryRoot, "instances.json");
   let cleanupStarted = false;
 
   const cleanup = async () => {
@@ -245,23 +306,26 @@ async function runFixture() {
       run("/usr/bin/systemctl", ["stop", unit], { allowFailure: true, timeout: 20_000 });
       run("/usr/bin/systemctl", ["reset-failed", unit], { allowFailure: true });
     }
-    await Promise.all([
-      ...installedUnits.map((unit) => fsp.rm(unit.path, { force: true })),
-      fsp.rm(controllerDropIn, { recursive: true, force: true }),
-      fsp.rm(supervisorDropIn, { recursive: true, force: true }),
-      fsp.rm(failureScript, { force: true }),
-      fsp.rm(layout.installDir, { recursive: true, force: true }),
-      fsp.rm(layout.stateDir, { recursive: true, force: true }),
-      fsp.rm(`/var/lib/fased-t2/${instanceId}`, { recursive: true, force: true }),
-      fsp.rm(channelRoot, { recursive: true, force: true }),
-      fsp.rm(`/run/fased-local/${instanceId}`, { recursive: true, force: true }),
-      fsp.rm(`/run/fased-local-controller/${instanceId}`, { recursive: true, force: true }),
-      fsp.rm(`/run/fased-local-controller-worker/${instanceId}`, {
-        recursive: true,
-        force: true,
-      }),
-    ]);
-    run("/usr/bin/systemctl", ["daemon-reload"], { allowFailure: true });
+    try {
+      await Promise.all([
+        ...installedUnits.map((unit) => fsp.rm(unit.path, { force: true })),
+        fsp.rm(controllerDropIn, { recursive: true, force: true }),
+        fsp.rm(supervisorDropIn, { recursive: true, force: true }),
+        fsp.rm(failureScript, { force: true }),
+        fsp.rm(layout.installDir, { recursive: true, force: true }),
+        fsp.rm(layout.stateDir, { recursive: true, force: true }),
+        fsp.rm(fixtureRoot, { recursive: true, force: true }),
+        fsp.rm(channelRoot, { recursive: true, force: true }),
+        fsp.rm(`/run/fased-local/${instanceId}`, { recursive: true, force: true }),
+        fsp.rm(`/run/fased-local-controller/${instanceId}`, { recursive: true, force: true }),
+        fsp.rm(`/run/fased-local-controller-worker/${instanceId}`, {
+          recursive: true,
+          force: true,
+        }),
+      ]);
+    } finally {
+      run("/usr/bin/systemctl", ["daemon-reload"], { allowFailure: true });
+    }
   };
 
   const onSignal = (signal) => {
@@ -271,24 +335,6 @@ async function runFixture() {
   process.once("SIGTERM", onSignal);
 
   try {
-    for (const fixedPath of [
-      layout.installDir,
-      layout.stateDir,
-      `/var/lib/fased-t2/${instanceId}`,
-      channelRoot,
-      controllerDropIn,
-      supervisorDropIn,
-      failureScript,
-      `/run/fased-local/${instanceId}`,
-      `/run/fased-local-controller/${instanceId}`,
-      `/run/fased-local-controller-worker/${instanceId}`,
-      ...installedUnits.map((unit) => unit.path),
-    ]) {
-      if (fs.existsSync(fixedPath)) {
-        fail(`T2 refuses to overwrite an existing path: ${fixedPath}`);
-      }
-    }
-
     const previousGeneration = path.join(
       layout.installDir,
       "controller",
@@ -308,11 +354,45 @@ async function runFixture() {
       fsp.mkdir(layout.supervisorStateDir, { recursive: true, mode: 0o700 }),
       fsp.mkdir(layout.signerStateDir, { recursive: true, mode: 0o700 }),
       fsp.mkdir(applicationRelease, { recursive: true, mode: 0o755 }),
-      fsp.mkdir(appStateDir, { recursive: true, mode: 0o700 }),
+      fsp.mkdir(physicalAppStateDir, { recursive: true, mode: 0o700 }),
+      fsp.mkdir(registryRoot, { recursive: true, mode: 0o700 }),
       fsp.mkdir(controllerDropIn, { recursive: true, mode: 0o755 }),
       fsp.mkdir(supervisorDropIn, { recursive: true, mode: 0o755 }),
       fsp.mkdir(channelRoot, { recursive: true, mode: 0o755 }),
       fsp.mkdir(path.dirname(failureScript), { recursive: true, mode: 0o755 }),
+    ]);
+    await Promise.all([
+      fsp.writeFile(
+        registryPath,
+        `${JSON.stringify(
+          {
+            schemaVersion: 1,
+            instances: [
+              {
+                instanceId,
+                operatorUid: operator.uid,
+                operatorUser: operator.user,
+                profile: "t2-generated-unit",
+                stateDir: appStateDir,
+                createdAt: new Date().toISOString(),
+              },
+            ],
+          },
+          null,
+          2,
+        )}\n`,
+        { mode: 0o600 },
+      ),
+      fsp.writeFile(
+        registryOverride,
+        `[Service]\nBindReadOnlyPaths=${registryRoot}:/var/lib/fased-local-registry ${fixtureHome}:${operator.home}\n`,
+        { mode: 0o644 },
+      ),
+      fsp.writeFile(
+        path.join(controllerDropIn, "90-t2-home.conf"),
+        `[Service]\nBindPaths=${fixtureHome}:${operator.home}\n`,
+        { mode: 0o644 },
+      ),
     ]);
 
     const controllerWorker = path.join(
@@ -378,7 +458,9 @@ async function runFixture() {
       serverSha256: await sha256File(path.join(previousGeneration, "fased-host-updater.mjs")),
       clientSha256: await sha256File(path.join(previousGeneration, "fased-host-updaterctl.mjs")),
     });
-    const releaseCommit = run("/usr/bin/git", ["rev-parse", "HEAD"]).stdout.trim();
+    const releaseCommit = run("/usr/bin/git", ["rev-parse", "HEAD"], {
+      cwd: sourceRoot,
+    }).stdout.trim();
     assert.match(releaseCommit, /^[a-f0-9]{40}$/u);
     const fixture = Object.freeze({
       schemaVersion: 1,
@@ -390,7 +472,7 @@ async function runFixture() {
       operatorUser: operator.user,
       operatorUid: operator.uid,
       operatorGid: operator.gid,
-      operatorHome: appRoot,
+      operatorHome: operator.home,
       appStateDir,
       gatewayUid,
       configGid,
@@ -409,17 +491,23 @@ async function runFixture() {
     ]);
 
     const preservedPaths = Object.freeze({
-      walletRegistry: path.join(appStateDir, "wallet", "provider-registry.v1.json"),
-      policyRpc: path.join(appStateDir, "wallet", "wallet-policy-state.v1.json"),
+      walletRegistry: path.join(physicalAppStateDir, "wallet", "provider-registry.v1.json"),
+      policyRpc: path.join(physicalAppStateDir, "wallet", "wallet-policy-state.v1.json"),
       signerDatabase: path.join(layout.signerStateDir, "state.db"),
       signerMasterKey: path.join(layout.signerStateDir, "master.key"),
-      miningLedger: path.join(appStateDir, "sat-mining", "wallets", "agent", "mining.sqlite"),
-      networkIdentity: path.join(appStateDir, "federation", "access-token.json"),
-      pluginState: path.join(appStateDir, "extensions", "t2-plugin-state.json"),
+      miningLedger: path.join(
+        physicalAppStateDir,
+        "sat-mining",
+        "wallets",
+        "agent",
+        "mining.sqlite",
+      ),
+      networkIdentity: path.join(physicalAppStateDir, "federation", "access-token.json"),
+      pluginState: path.join(physicalAppStateDir, "extensions", "t2-plugin-state.json"),
     });
     await Promise.all([
       writeOwnedFile(
-        path.join(appStateDir, "fased.json"),
+        path.join(physicalAppStateDir, "fased.json"),
         '{"gateway":{"mode":"local"}}\n',
         operator.uid,
         operator.gid,
