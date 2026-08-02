@@ -14,6 +14,10 @@ describe("minimal Protected Local T2 generated-unit fixture", () => {
     expect(fixture).toContain('systemctl("start", layout.supervisorUnit)');
     expect(fixture).toContain("controller promotion failed and was restored");
     expect(fixture).toContain("controller unexpectedly wrote");
+    expect(fixture).toContain('fsp.chown(path.join(generation, "fased-host-updater.mjs"), 0, 0)');
+    expect(fixture).toContain(
+      'const failureMarker = path.join(layout.controllerStateDir, "t2-fail-once")',
+    );
     expect(fixture).toContain("ownerInstallationTouched: false");
     expect(fixture).toContain("freshProductInstallationCreated: false");
     expect(fixture).toContain("packageBootstrapRun: false");

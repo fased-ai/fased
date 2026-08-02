@@ -25,18 +25,33 @@ jobs:
   change-scope:
     runs-on: ubuntu-latest
     outputs:
+      authority_version: ${{ steps.scope.outputs.authority_version }}
+      plan_digest: ${{ steps.scope.outputs.plan_digest }}
+      gate_plan_json: ${{ steps.scope.outputs.gate_plan_json }}
+      phase: ${{ steps.scope.outputs.phase }}
+      entry_points_json: ${{ steps.scope.outputs.entry_points_json }}
+      change_kind: ${{ steps.scope.outputs.change_kind }}
+      manual_review_required: ${{ steps.scope.outputs.manual_review_required }}
       docs_only: ${{ steps.scope.outputs.docs_only }}
       docs_changed: ${{ steps.scope.outputs.docs_changed }}
       version_only: ${{ steps.scope.outputs.version_only }}
       ci_infrastructure_only: ${{ steps.scope.outputs.ci_infrastructure_only }}
+      t2_fixture_only: ${{ steps.scope.outputs.t2_fixture_only }}
+      test_only: ${{ steps.scope.outputs.test_only }}
+      fixture_only: ${{ steps.scope.outputs.fixture_only }}
+      production_changed: ${{ steps.scope.outputs.production_changed }}
+      privilege_changed: ${{ steps.scope.outputs.privilege_changed }}
       reuse_pr_checks: ${{ steps.scope.outputs.reuse_pr_checks }}
       run_node: ${{ steps.scope.outputs.run_node }}
       run_macos: ${{ steps.scope.outputs.run_macos }}
       run_signer: ${{ steps.scope.outputs.run_signer }}
       run_hosting: ${{ steps.scope.outputs.run_hosting }}
+      run_hosting_fresh: ${{ steps.scope.outputs.run_hosting_fresh }}
+      run_hosting_update: ${{ steps.scope.outputs.run_hosting_update }}
       run_local_fresh: ${{ steps.scope.outputs.run_local_fresh }}
       run_local_update: ${{ steps.scope.outputs.run_local_update }}
       run_ci_contracts: ${{ steps.scope.outputs.run_ci_contracts }}
+      run_t2_contracts: ${{ steps.scope.outputs.run_t2_contracts }}
       run_ui_mining: ${{ steps.scope.outputs.run_ui_mining }}
       run_skills: ${{ steps.scope.outputs.run_skills }}
       full_matrix: ${{ steps.scope.outputs.full_matrix }}
@@ -86,11 +101,48 @@ jobs:
       - name: Check CI routing and gate contracts
         run: >-
           pnpm exec vitest run
+          scripts/gate-authority.test.ts
           scripts/ci-change-scope.test.ts
           scripts/ci-required-gates.test.ts
           scripts/ci-merged-main-reuse.test.ts
           scripts/ci-version-identity.test.ts
           scripts/ci-workflow-contract.test.ts
+
+  # T2 harness-only edits prove their own source contracts without rebuilding
+  # Fased or launching fresh Local/Hosting fixtures. This is SUPPORTING evidence;
+  # the authoritative same-host generated-unit transaction remains a local T2 gate.
+  t2-contracts:
+    name: "T2 harness contracts"
+    needs: [change-scope]
+    if: needs.change-scope.outputs.run_t2_contracts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Check exact T2 harness formatting
+        run: >-
+          pnpm exec oxfmt --check
+          scripts/protected-local-t2-controller-worker.mjs
+          scripts/protected-local-t2-supervisor-worker.mjs
+          scripts/protected-local-t2-systemd-fixture.mjs
+          scripts/protected-local-t2-systemd.test.ts
+          scripts/test-protected-local-t2-systemd.sh
+
+      - name: Run the six T2 source contracts
+        run: >-
+          pnpm exec vitest run
+          scripts/protected-local-service-plan.test.ts
+          scripts/protected-local-t2-systemd.test.ts
+          --pool=forks --maxWorkers=1
 
   # Build dist once for Node-relevant changes and share it with downstream jobs.
   build-artifacts:
@@ -1267,6 +1319,7 @@ jobs:
     needs:
       - change-scope
       - ci-contracts
+      - t2-contracts
       - check
       - hosting-lifecycle
       - protected-local-fixture-artifact
@@ -1304,6 +1357,7 @@ jobs:
           RUN_LOCAL_FRESH: ${{ needs.change-scope.outputs.run_local_fresh }}
           RUN_LOCAL_UPDATE: ${{ needs.change-scope.outputs.run_local_update }}
           RUN_CI_CONTRACTS: ${{ needs.change-scope.outputs.run_ci_contracts }}
+          RUN_T2_CONTRACTS: ${{ needs.change-scope.outputs.run_t2_contracts }}
           RUN_UI_MINING: ${{ needs.change-scope.outputs.run_ui_mining }}
           RUN_SKILLS: ${{ needs.change-scope.outputs.run_skills }}
           RUN_MACOS: ${{ needs.change-scope.outputs.run_macos }}
@@ -1316,6 +1370,7 @@ jobs:
           PROTECTED_LOCAL_ROCKY: ${{ needs.protected-local-rocky-lifecycle.result }}
           PROTECTED_LOCAL_UPDATE: ${{ needs.protected-local-update-lifecycle.result }}
           CI_CONTRACTS: ${{ needs.ci-contracts.result }}
+          T2_CONTRACTS: ${{ needs.t2-contracts.result }}
           VERSION_IDENTITY: ${{ needs.version-identity.result }}
           STRICT_TYPES: ${{ needs.strict-types-baseline.result }}
           TESTS: ${{ needs.checks.result }}

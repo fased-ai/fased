@@ -81,6 +81,27 @@ describe("CI changed-surface classification", () => {
     });
   });
 
+  it("routes the minimal T2 harness without product build or lifecycle lanes", () => {
+    expect(
+      classifyChangedPaths([
+        "scripts/protected-local-t2-controller-worker.mjs",
+        "scripts/protected-local-t2-supervisor-worker.mjs",
+        "scripts/protected-local-t2-systemd-fixture.mjs",
+        "scripts/protected-local-t2-systemd.test.ts",
+        "scripts/test-protected-local-t2-systemd.sh",
+      ]),
+    ).toMatchObject({
+      changeKind: "t2-fixture-only",
+      t2FixtureOnly: true,
+      runT2Contracts: true,
+      runNode: false,
+      runSigner: false,
+      runHosting: false,
+      runLocalFresh: false,
+      runLocalUpdate: false,
+    });
+  });
+
   it("reuses green PR checks only for a separately proven merged-main tree", () => {
     expect(
       classifyChangedPaths(["src/gateway/server.ts"], {

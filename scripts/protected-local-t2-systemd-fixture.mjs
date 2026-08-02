@@ -200,7 +200,7 @@ async function runFixture() {
   const supervisorDropIn = `/etc/systemd/system/${layout.supervisorUnit}.d`;
   const failureScript = `/usr/local/libexec/fased-t2-controller-fail-${instanceId}`;
   const failureOverride = path.join(controllerDropIn, "99-t2-fail-once.conf");
-  const failureMarker = path.join(layout.supervisorStateDir, "t2-fail-once");
+  const failureMarker = path.join(layout.controllerStateDir, "t2-fail-once");
   const forbiddenStageMarker = path.join(layout.supervisorStateDir, "t2-forbidden-stage");
   const fixturePath = path.join(layout.controllerStateDir, "t2-fixture.json");
   const productIdentityPath = path.join(layout.controllerStateDir, "controller-version.json");
@@ -332,6 +332,8 @@ async function runFixture() {
         fsp.copyFile(controllerClient, path.join(generation, "fased-host-updaterctl.mjs")),
       ]);
       await Promise.all([
+        fsp.chown(path.join(generation, "fased-host-updater.mjs"), 0, 0),
+        fsp.chown(path.join(generation, "fased-host-updaterctl.mjs"), 0, 0),
         fsp.chmod(path.join(generation, "fased-host-updater.mjs"), 0o644),
         fsp.chmod(path.join(generation, "fased-host-updaterctl.mjs"), 0o644),
       ]);

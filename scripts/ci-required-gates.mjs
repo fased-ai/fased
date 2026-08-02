@@ -54,6 +54,9 @@ export function assertApplicableGates(input) {
   if (enabled(input.runCiContracts)) {
     requireSuccess(results, "CI contracts");
   }
+  if (enabled(input.runT2Contracts)) {
+    requireSuccess(results, "T2 harness contracts");
+  }
   if (enabled(input.runUiMining)) {
     requireSuccess(results, "Mining browser");
   }
@@ -80,6 +83,7 @@ export function gateInputFromEnv(env = process.env) {
     runLocalFresh: env.RUN_LOCAL_FRESH,
     runLocalUpdate: env.RUN_LOCAL_UPDATE,
     runCiContracts: env.RUN_CI_CONTRACTS,
+    runT2Contracts: env.RUN_T2_CONTRACTS,
     runUiMining: env.RUN_UI_MINING,
     runSkills: env.RUN_SKILLS,
     runMacos: env.RUN_MACOS,
@@ -102,6 +106,7 @@ export function gateInputFromEnv(env = process.env) {
       "Protected Local Rocky lifecycle": env.PROTECTED_LOCAL_ROCKY,
       "Protected Local update lifecycle": env.PROTECTED_LOCAL_UPDATE,
       "CI contracts": env.CI_CONTRACTS,
+      "T2 harness contracts": env.T2_CONTRACTS,
       "Mining browser": env.UI_MINING,
       skills: env.SKILLS,
       macOS: env.MACOS,

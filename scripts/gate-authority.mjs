@@ -1,0 +1,391 @@
+#!/usr/bin/env node
+
+import { createHash } from "node:crypto";
+
+export const GATE_AUTHORITY_VERSION = 1;
+
+export const PHASES = Object.freeze(["T0", "T1", "T2", "T3", "merge-reuse", "stable"]);
+export const ENTRY_POINTS = Object.freeze([
+  "local-fresh",
+  "local-update",
+  "hosting-fresh",
+  "hosting-update",
+]);
+
+const DOC_PATH_RE = /^(?:docs\/|.*\.(?:md|mdx)$|scripts\/docs-product-contract\.mjs$)/;
+const VERSION_PATH_RE =
+  /^(?:package\.json|CHANGELOG\.md|src\/brand\.ts|extensions\/[^/]+\/(?:package\.json|CHANGELOG\.md))$/;
+const CI_INFRASTRUCTURE_PATH_RE =
+  /^(?:\.github\/workflows\/ci\.yml|scripts\/(?:gate-authority|ci-(?:change-scope|required-gates|merged-main-reuse|version-identity|workflow-contract))(?:\.mjs|\.test\.ts))$/;
+const T2_FIXTURE_PATH_RE =
+  /^scripts\/(?:protected-local-t2-(?:controller-worker|supervisor-worker|systemd-fixture)\.mjs|protected-local-t2-systemd\.test\.ts|test-protected-local-t2-systemd\.sh)$/;
+const TEST_PATH_RE =
+  /^(?:test\/|tests\/|fixtures\/|.*\.(?:test|spec)\.[^.]+$|scripts\/test-[^/]+|scripts\/docker\/[^/]+\/)/;
+const NON_PRODUCTION_TEST_PATH_RE = /^(?:test\/|tests\/|fixtures\/|.*\.(?:test|spec)\.[^.]+$)/;
+const NODE_PATH_RE =
+  /^(?:src\/|test\/|extensions\/|packages\/|scripts\/|ui\/|\.github\/|fased\.mjs$|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|tsconfig[^/]*\.json$|vitest[^/]*\.ts$|tsdown\.config\.ts$|\.oxlintrc\.json$|\.oxfmtrc\.jsonc$)/;
+const SIGNER_PATH_RE =
+  /^(?:install\.sh$|tools\/fased-signerd\/|config\/signer-protocol-v2\.json$|scripts\/(?:fased-managed-updater|install-fased-signerd|install-managed-runtime|managed-runtime-layout|protected-local-|release-fased-signerd|test-fased-signerd-portable-builds|generate-signer-protocol-v2|signer-protocol-v2\.generated)[^/]*|src\/wallet\/(?:native-signer-|providers\/local-socket-signer-adapter|signer-protocol-v2\.generated)[^/]*|src\/wizard\/onboarding\.wallet[^/]*)/;
+const MACOS_PATH_RE = /^(?:apps\/(?:macos|ios|shared)\/|Swabble\/)/;
+const GENERATED_NATIVE_PROTOCOL_RE =
+  /^(?:apps\/macos\/Sources\/FasedAgentProtocol\/|apps\/shared\/FasedAgentKit\/Sources\/FasedAgentProtocol\/)/;
+const NATIVE_ONLY_PATH_RE = /^(?:apps\/(?:android|ios|macos|shared)\/|Swabble\/|appcast\.xml$)/;
+const SHARED_LIFECYCLE_PATH_RE =
+  /^(?:install\.sh$|scripts\/(?:build-hosted-runtime-artifact|fased-lifecycle-supervisor|hosted-release-manifest|install-(?:managed-runtime|platform-preflight|release-pin|runtime-profile)|lifecycle-|managed-runtime-layout|signer-(?:enrollment-launchers|owner-policy-installers)|start-managed)[^/]*|src\/(?:cli\/daemon-cli\/(?:install|restart-health)|commands\/(?:daemon-install-helpers|doctor-(?:gateway-health|state-integrity))|config\/io|daemon\/systemd|infra\/(?:managed-runtime|update-runner))[^/]*|\.github\/workflows\/hosted-runtime-release\.yml$)/;
+const SHARED_UPDATE_PATH_RE =
+  /^(?:scripts\/(?:fased-managed-updater|managed-updater-bundle)[^/]*|src\/infra\/update-runner[^/]*)/;
+const LOCAL_LIFECYCLE_PATH_RE =
+  /^(?:scripts\/(?:docker\/protected-local-systemd\/|protected-local-|test-protected-local-systemd-container)[^/]*|src\/(?:commands\/onboard-non-interactive\/local|infra\/local-source-paired-update)[^/]*)/;
+const LOCAL_FRESH_PATH_RE = /^(?:scripts\/(?:install-local-|test-install-runtime-profile)[^/]*)/;
+const SHARED_FRESH_PATH_RE =
+  /^(?:src\/(?:cli\/program\/register\.onboard|wizard\/onboarding)[^/]*)/;
+const HOSTING_FRESH_PATH_RE =
+  /^(?:scripts\/(?:docker\/streamed-hosting-bootstrap\/|hosting-|install-hosted-runtime|test-(?:hosted-runtime-install|streamed-hosting-bootstrap-container))[^/]*|src\/(?:commands\/hosted-dashboard-probe|wizard\/host-security-capability)[^/]*)/;
+const HOSTING_UPDATE_PATH_RE =
+  /^(?:scripts\/(?:docker\/hosting-systemd\/|fased-host-|fased-signer-(?:enroll|network|owner|policy)-hosting|hosted-(?!release-manifest)|migrate-hosted-signer|test-hosting-systemd-container)[^/]*|src\/infra\/host[^/]*)/;
+const MINING_PATH_RE =
+  /^(?:extensions\/sat-mining\/|src\/mining\/|src\/.*mining[^/]*|test\/ui-mining-api\.test\.ts$|ui\/src\/ui\/.*mining[^/]*|ui\/src\/ui\/(?:app-gateway|app-polling)\.ts$)/;
+const SKILLS_PATH_RE = /^(?:skills\/|scripts\/.*skill[^/]*\.(?:py|mjs|ts)$)/;
+const PACKAGE_PATH_RE =
+  /^(?:package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|packages\/|extensions\/)/;
+const STATE_MIGRATION_PATH_RE = /(?:^|\/)(?:migrat|transaction|rollback|state)[^/]*[/.]/;
+const DOCKER_PATH_RE = /^(?:Dockerfile|docker\/|scripts\/docker\/|\.github\/workflows\/docker)/;
+const PRIVILEGED_PATH_RE =
+  /^(?:install\.sh$|tools\/fased-signerd\/|scripts\/(?:fased-(?:host-updater|lifecycle-supervisor|managed-updater)|install-(?:fased-signerd|managed-runtime)|lifecycle-|managed-runtime-layout|protected-local-(?:bootstrap|controller|layout|service-plan|supervisor)|signer-(?:enrollment-launchers|owner-policy-installers)|start-managed)[^/]*|src\/(?:daemon\/systemd|infra\/(?:managed-runtime|update-runner)|wallet\/native-signer-)[^/]*)/;
+
+export function normalizeChangedPaths(paths) {
+  return [...new Set(paths.map((value) => value.trim().replaceAll("\\", "/")).filter(Boolean))];
+}
+
+function stableValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(stableValue);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .toSorted(([left], [right]) => left.localeCompare(right))
+        .map(([key, child]) => [key, stableValue(child)]),
+    );
+  }
+  return value;
+}
+
+function digestPlan(plan) {
+  return `sha256:${createHash("sha256")
+    .update(JSON.stringify(stableValue(plan)))
+    .digest("hex")}`;
+}
+
+function assertOption(value, allowed, name) {
+  if (value !== undefined && value !== null && !allowed.includes(value)) {
+    throw new Error(`gate authority: invalid ${name} ${JSON.stringify(value)}`);
+  }
+}
+
+function isNonProductionPath(path) {
+  return (
+    DOC_PATH_RE.test(path) ||
+    CI_INFRASTRUCTURE_PATH_RE.test(path) ||
+    T2_FIXTURE_PATH_RE.test(path) ||
+    TEST_PATH_RE.test(path)
+  );
+}
+
+function emptyScope(overrides = {}) {
+  return {
+    docsOnly: false,
+    docsChanged: false,
+    versionOnly: false,
+    ciInfrastructureOnly: false,
+    t2FixtureOnly: false,
+    testOnly: false,
+    fixtureOnly: false,
+    productionChanged: false,
+    privilegeChanged: false,
+    reusePrChecks: false,
+    runNode: false,
+    runMacos: false,
+    runSigner: false,
+    runHosting: false,
+    runHostingFresh: false,
+    runHostingUpdate: false,
+    runLocalFresh: false,
+    runLocalUpdate: false,
+    runCiContracts: false,
+    runT2Contracts: false,
+    runUiMining: false,
+    runSkills: false,
+    fullMatrix: false,
+    ...overrides,
+  };
+}
+
+function acceptanceGates(scope) {
+  return Object.freeze({
+    L0: scope.runLocalFresh,
+    L1: scope.runLocalUpdate,
+    H0: scope.runHostingFresh || scope.runHostingUpdate,
+    H1: scope.runHostingFresh,
+    H2: scope.runHostingUpdate,
+  });
+}
+
+function surfaceMap(scope, paths, productionPaths, all = false) {
+  const production = productionPaths.length > 0 ? productionPaths : paths;
+  const knownProduction =
+    scope.runNode ||
+    scope.runSigner ||
+    scope.runHosting ||
+    scope.runLocalFresh ||
+    scope.runLocalUpdate ||
+    scope.runMacos ||
+    scope.runUiMining ||
+    scope.runSkills ||
+    production.some((path) => DOCKER_PATH_RE.test(path));
+  return Object.freeze({
+    documentation: all || scope.docsChanged,
+    sourceBuild: all || scope.runNode,
+    packagePlugin:
+      all || scope.versionOnly || production.some((path) => PACKAGE_PATH_RE.test(path)),
+    localFresh: all || scope.runLocalFresh,
+    localUpdate: all || scope.runLocalUpdate,
+    stateMigration: all || production.some((path) => STATE_MIGRATION_PATH_RE.test(`${path}/`)),
+    signerWallet: all || scope.runSigner,
+    hostingFresh: all || scope.runHostingFresh,
+    hostingUpdate: all || scope.runHostingUpdate,
+    dockerArchitecture: all || production.some((path) => DOCKER_PATH_RE.test(path)),
+    nativeApple: all || scope.runMacos,
+    skills: all || scope.runSkills,
+    mining: all || scope.runUiMining,
+    otherProduct: all || (scope.productionChanged && !knownProduction),
+  });
+}
+
+export function createGatePlan(inputPaths, options = {}) {
+  const phase = options.phase ?? "T3";
+  const entryPoint = options.entryPoint ?? null;
+  assertOption(phase, PHASES, "phase");
+  assertOption(entryPoint, ENTRY_POINTS, "entry point");
+
+  const paths = normalizeChangedPaths(inputPaths);
+  const fullMatrix = options.fullMatrix === true;
+  const reusePrChecks = options.reusePrChecks === true;
+  const unknown = options.unknown === true || paths.length === 0;
+
+  if (reusePrChecks && !fullMatrix) {
+    const scope = emptyScope({ reusePrChecks: true });
+    const body = {
+      authorityVersion: GATE_AUTHORITY_VERSION,
+      phase: "merge-reuse",
+      entryPoint,
+      entryPoints: [],
+      changeKind: "merge-reuse",
+      paths,
+      productionPaths: [],
+      scope,
+      surfaces: surfaceMap(scope, [], []),
+      acceptance: acceptanceGates(scope),
+      manualReviewRequired: false,
+    };
+    return Object.freeze({ ...body, planDigest: digestPlan(body) });
+  }
+
+  if (fullMatrix || unknown) {
+    const scope = emptyScope({
+      productionChanged: true,
+      privilegeChanged: true,
+      runNode: true,
+      runMacos: true,
+      runSigner: true,
+      runHosting: true,
+      runHostingFresh: true,
+      runHostingUpdate: true,
+      runLocalFresh: true,
+      runLocalUpdate: true,
+      runCiContracts: true,
+      runT2Contracts: true,
+      runUiMining: true,
+      runSkills: true,
+      fullMatrix: true,
+    });
+    const body = {
+      authorityVersion: GATE_AUTHORITY_VERSION,
+      phase,
+      entryPoint,
+      entryPoints: [...ENTRY_POINTS],
+      changeKind: "full-matrix",
+      paths,
+      productionPaths: paths,
+      scope,
+      surfaces: surfaceMap(scope, paths, paths, true),
+      acceptance: acceptanceGates(scope),
+      manualReviewRequired: unknown && !fullMatrix,
+    };
+    return Object.freeze({ ...body, planDigest: digestPlan(body) });
+  }
+
+  const docsChanged = paths.some((path) => DOC_PATH_RE.test(path));
+  const docsOnly = paths.every((path) => DOC_PATH_RE.test(path));
+  const versionOnly =
+    paths.includes("package.json") &&
+    paths.includes("src/brand.ts") &&
+    paths.every((path) => VERSION_PATH_RE.test(path));
+  const ciInfrastructureOnly =
+    !versionOnly && paths.every((path) => CI_INFRASTRUCTURE_PATH_RE.test(path));
+  const ciInfrastructureChanged = paths.some((path) => CI_INFRASTRUCTURE_PATH_RE.test(path));
+  const t2FixtureOnly = paths.every((path) => T2_FIXTURE_PATH_RE.test(path));
+  const testOnly = paths.every((path) => TEST_PATH_RE.test(path) || T2_FIXTURE_PATH_RE.test(path));
+  const fixtureOnly = paths.every((path) =>
+    /^(?:fixtures\/|scripts\/(?:docker\/|test-|protected-local-t2-))/.test(path),
+  );
+  const productionPaths = versionOnly ? [] : paths.filter((path) => !isNonProductionPath(path));
+  const productionChanged = productionPaths.length > 0;
+  const gateToolingOnly =
+    !versionOnly &&
+    !docsOnly &&
+    !productionChanged &&
+    paths.every(
+      (path) =>
+        CI_INFRASTRUCTURE_PATH_RE.test(path) ||
+        T2_FIXTURE_PATH_RE.test(path) ||
+        DOC_PATH_RE.test(path) ||
+        NON_PRODUCTION_TEST_PATH_RE.test(path),
+    );
+  const effectivePaths = productionChanged ? productionPaths : paths;
+
+  let runMacos = false;
+  let hasNonNativeNonDocs = false;
+  for (const path of effectivePaths) {
+    if (MACOS_PATH_RE.test(path) && !GENERATED_NATIVE_PROTOCOL_RE.test(path)) {
+      runMacos = true;
+    }
+    if (!DOC_PATH_RE.test(path) && !NATIVE_ONLY_PATH_RE.test(path)) {
+      hasNonNativeNonDocs = true;
+    }
+  }
+
+  let runNode =
+    !versionOnly &&
+    !ciInfrastructureOnly &&
+    !t2FixtureOnly &&
+    (productionChanged || fixtureOnly) &&
+    effectivePaths.some((path) => NODE_PATH_RE.test(path));
+  if (productionChanged && !runNode && hasNonNativeNonDocs) {
+    runNode = true;
+  }
+
+  const sharedLifecycleChanged = effectivePaths.some((path) => SHARED_LIFECYCLE_PATH_RE.test(path));
+  const sharedUpdateChanged = effectivePaths.some((path) => SHARED_UPDATE_PATH_RE.test(path));
+  const localLifecycleChanged = effectivePaths.some((path) => LOCAL_LIFECYCLE_PATH_RE.test(path));
+  const localFreshChanged = effectivePaths.some((path) => LOCAL_FRESH_PATH_RE.test(path));
+  const sharedFreshChanged = effectivePaths.some((path) => SHARED_FRESH_PATH_RE.test(path));
+  const hostingFreshChanged = effectivePaths.some((path) => HOSTING_FRESH_PATH_RE.test(path));
+  const hostingUpdateChanged = effectivePaths.some((path) => HOSTING_UPDATE_PATH_RE.test(path));
+
+  let runLocalFresh =
+    sharedLifecycleChanged || sharedFreshChanged || localLifecycleChanged || localFreshChanged;
+  let runLocalUpdate = sharedLifecycleChanged || sharedUpdateChanged || localLifecycleChanged;
+  let runHostingFresh = sharedLifecycleChanged || sharedFreshChanged || hostingFreshChanged;
+  let runHostingUpdate = sharedLifecycleChanged || sharedUpdateChanged || hostingUpdateChanged;
+
+  if (gateToolingOnly || t2FixtureOnly || (testOnly && !fixtureOnly && !productionChanged)) {
+    runLocalFresh = false;
+    runLocalUpdate = false;
+    runHostingFresh = false;
+    runHostingUpdate = false;
+  }
+
+  if (entryPoint) {
+    runLocalFresh = entryPoint === "local-fresh";
+    runLocalUpdate = entryPoint === "local-update";
+    runHostingFresh = entryPoint === "hosting-fresh";
+    runHostingUpdate = entryPoint === "hosting-update";
+  }
+
+  const privilegeChanged = productionPaths.some((path) => PRIVILEGED_PATH_RE.test(path));
+  const t2FixtureChanged = paths.some((path) => T2_FIXTURE_PATH_RE.test(path));
+  const runT2Contracts = t2FixtureOnly || t2FixtureChanged || privilegeChanged;
+  const runCiContracts = ciInfrastructureChanged;
+  const runHosting = runHostingFresh || runHostingUpdate;
+  const selectedEntryPoints = [
+    runLocalFresh && "local-fresh",
+    runLocalUpdate && "local-update",
+    runHostingFresh && "hosting-fresh",
+    runHostingUpdate && "hosting-update",
+  ].filter(Boolean);
+
+  const scope = emptyScope({
+    docsOnly,
+    docsChanged,
+    versionOnly,
+    ciInfrastructureOnly,
+    t2FixtureOnly,
+    testOnly,
+    fixtureOnly,
+    productionChanged,
+    privilegeChanged,
+    runNode,
+    runMacos,
+    runSigner: productionChanged && effectivePaths.some((path) => SIGNER_PATH_RE.test(path)),
+    runHosting,
+    runHostingFresh,
+    runHostingUpdate,
+    runLocalFresh,
+    runLocalUpdate,
+    runCiContracts,
+    runT2Contracts,
+    runUiMining: productionChanged && effectivePaths.some((path) => MINING_PATH_RE.test(path)),
+    runSkills: productionChanged && effectivePaths.some((path) => SKILLS_PATH_RE.test(path)),
+    fullMatrix,
+  });
+
+  const changeKind = versionOnly
+    ? "version-only"
+    : docsOnly
+      ? "documentation-only"
+      : ciInfrastructureOnly
+        ? "ci-infrastructure-only"
+        : t2FixtureOnly
+          ? "t2-fixture-only"
+          : fixtureOnly
+            ? "fixture-only"
+            : testOnly
+              ? "test-only"
+              : gateToolingOnly
+                ? "gate-tooling-only"
+                : productionChanged
+                  ? "production"
+                  : "unknown";
+  const body = {
+    authorityVersion: GATE_AUTHORITY_VERSION,
+    phase,
+    entryPoint,
+    entryPoints: selectedEntryPoints,
+    changeKind,
+    paths,
+    productionPaths,
+    scope,
+    surfaces: surfaceMap(scope, paths, productionPaths),
+    acceptance: acceptanceGates(scope),
+    manualReviewRequired:
+      changeKind === "unknown" ||
+      (changeKind === "production" && !entryPoint && selectedEntryPoints.length > 1),
+  };
+  return Object.freeze({ ...body, planDigest: digestPlan(body) });
+}
+
+export function classifyChangedPaths(paths, options = {}) {
+  const plan = createGatePlan(paths, options);
+  return Object.freeze({
+    ...plan.scope,
+    authorityVersion: plan.authorityVersion,
+    phase: plan.phase,
+    entryPoint: plan.entryPoint,
+    entryPoints: plan.entryPoints,
+    changeKind: plan.changeKind,
+    acceptance: plan.acceptance,
+    manualReviewRequired: plan.manualReviewRequired,
+    planDigest: plan.planDigest,
+  });
+}

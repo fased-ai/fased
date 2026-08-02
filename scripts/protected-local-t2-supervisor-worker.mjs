@@ -33,7 +33,13 @@ async function assertGeneration(generationRoot) {
       targetInfo.nlink !== 1 ||
       (targetInfo.mode & 0o022) !== 0
     ) {
-      fail("T2 controller generation target is mutable or untrusted");
+      fail(
+        `T2 controller generation target is mutable or untrusted: ${name} ` +
+          `(file=${targetInfo.isFile()} symlink=${targetInfo.isSymbolicLink()} ` +
+          `uid=${targetInfo.uid} nlink=${targetInfo.nlink} mode=${(
+            targetInfo.mode & 0o777
+          ).toString(8)})`,
+      );
     }
   }
 }
