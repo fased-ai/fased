@@ -30,15 +30,6 @@ export async function loadGatewayPlugins(params: {
   };
   const preloadedModules = await preloadNativePluginModules(loadOptions);
   const pluginRegistry = loadFasedAgentPlugins({ ...loadOptions, preloadedModules });
-  try {
-    writePluginStatusCache({
-      configPath: CONFIG_PATH,
-      packageVersion: VERSION,
-      registry: pluginRegistry,
-    });
-  } catch (error) {
-    params.log.warn(`[plugins] could not write status cache: ${String(error)}`);
-  }
   const pluginMethods = Object.keys(pluginRegistry.gatewayHandlers);
   const gatewayMethods = Array.from(new Set([...params.baseMethods, ...pluginMethods]));
   if (pluginRegistry.diagnostics.length > 0) {
@@ -60,4 +51,23 @@ export async function loadGatewayPlugins(params: {
     }
   }
   return { pluginRegistry, gatewayMethods };
+}
+
+export function finalizeGatewayPluginStatus(params: {
+  registry: ReturnType<typeof loadFasedAgentPlugins>;
+  log: { warn: (msg: string) => void };
+  cachePath?: string;
+  configPath?: string;
+  packageVersion?: string;
+}): void {
+  try {
+    writePluginStatusCache({
+      cachePath: params.cachePath,
+      configPath: params.configPath ?? CONFIG_PATH,
+      packageVersion: params.packageVersion ?? VERSION,
+      registry: params.registry,
+    });
+  } catch (error) {
+    params.log.warn(`[plugins] could not write status cache: ${String(error)}`);
+  }
 }

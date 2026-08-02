@@ -80,7 +80,7 @@ import type { GatewayRequestHandlers } from "./server-methods/types.js";
 import { hasConnectedMobileNode } from "./server-mobile-nodes.js";
 import { loadGatewayModelCatalog } from "./server-model-catalog.js";
 import { createNodeSubscriptionManager } from "./server-node-subscriptions.js";
-import { loadGatewayPlugins } from "./server-plugins.js";
+import { finalizeGatewayPluginStatus, loadGatewayPlugins } from "./server-plugins.js";
 import { createGatewayReloadHandlers } from "./server-reload-handlers.js";
 import { resolveGatewayRuntimeConfig } from "./server-runtime-config.js";
 import { createGatewayRuntimeState } from "./server-runtime-state.js";
@@ -920,6 +920,7 @@ async function startGatewayServerInternal(
     browserControl = sidecars.browserControl;
     pluginServices = sidecars.pluginServices;
     federationAutoConnect = sidecars.federationAutoConnect;
+    finalizeGatewayPluginStatus({ registry: pluginRegistry, log });
   }
 
   // Run gateway_start plugin hook (fire-and-forget)

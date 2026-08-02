@@ -2870,6 +2870,9 @@ describe("sat-mining plugin config persistence", () => {
           },
         },
       };
+      const writeConfigFile = vi.fn(async (next) => {
+        Object.assign(configState, next);
+      });
 
       satMiningPlugin.register({
         id: "sat-mining",
@@ -2887,9 +2890,7 @@ describe("sat-mining plugin config persistence", () => {
           version: "test",
           config: {
             loadConfig: vi.fn(() => structuredClone(configState)),
-            writeConfigFile: vi.fn(async (next) => {
-              Object.assign(configState, next);
-            }),
+            writeConfigFile,
           },
         },
         logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -2939,8 +2940,9 @@ describe("sat-mining plugin config persistence", () => {
           },
         },
       });
-      expect(configState.plugins.entries["sat-mining"].config.enabled).toBe(true);
-      expect(configState.plugins.entries["sat-mining"].config.drainOnly).toBe(true);
+      expect(configState.plugins.entries["sat-mining"].config.enabled).toBe(false);
+      expect(configState.plugins.entries["sat-mining"].config.drainOnly).toBe(false);
+      expect(writeConfigFile).not.toHaveBeenCalled();
     } finally {
       inspectSatOpsCapitalSpy?.mockRestore();
       await fs.rm(tempDir, { recursive: true, force: true });

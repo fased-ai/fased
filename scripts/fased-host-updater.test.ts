@@ -4208,6 +4208,85 @@ describe("root-owned hosted updater protocol", () => {
     expect(fs.existsSync(rolledBack.paths.journalPath)).toBe(false);
   });
 
+  it("stops a started target, restores exact config, clears derived readiness, and retries", async () => {
+    const fixture = await createFixture({ managedApplication: true });
+    const topology = await fixture.context.discoverApplicationTopology();
+    const configPath = topology.configPath;
+    const cachePath = path.join(topology.stateDir, "cache", "plugin-status.json");
+    const previousConfig = `${JSON.stringify({
+      plugins: { entries: { "sat-mining": { config: { enabled: false } } } },
+    })}\n`;
+    const targetConfig = `${JSON.stringify({
+      plugins: { entries: { "sat-mining": { config: { enabled: true, drainOnly: true } } } },
+    })}\n`;
+    await fsp.writeFile(configPath, previousConfig, { mode: 0o600 });
+    fixture.context.inventoryApplicationState = async () =>
+      await __testing.inventoryDeclaredApplicationState(topology, fixture.context);
+    fixture.context.reconcileApplicationState = async (transaction: unknown) =>
+      await __testing.reconcileDeclaredApplicationState(transaction);
+    fixture.context.restoreApplicationState = async (transaction: unknown, txPaths: unknown) =>
+      await __testing.restoreDeclaredApplicationState(transaction, txPaths);
+    fixture.context.verifyApplicationState = async (transaction: unknown) =>
+      await __testing.verifyDeclaredStatePreservation(transaction);
+
+    const gatewayEvents: string[] = [];
+    let injectFailure = true;
+    fixture.context.stopGateway = async () => {
+      gatewayEvents.push("stop-gateway");
+    };
+    fixture.context.startGateway = async () => {
+      const current = await fsp.realpath(path.join(topology.stateDir, "runtime", "current"));
+      const target = current.endsWith("/v1.2.3");
+      gatewayEvents.push(target ? "start-target" : "start-previous");
+      if (target && injectFailure) {
+        await fsp.writeFile(configPath, targetConfig, { mode: 0o660 });
+        await fsp.mkdir(path.dirname(cachePath), { recursive: true });
+        await fsp.writeFile(cachePath, "target-derived-readiness\n", { mode: 0o600 });
+      }
+      if (!target) {
+        expect(await fsp.readFile(configPath, "utf8")).toBe(previousConfig);
+        expect(fs.existsSync(cachePath)).toBe(false);
+      }
+    };
+    fixture.context.verifyGateway = async () => {
+      if (injectFailure) {
+        throw new Error("deterministic post-start target readiness failure");
+      }
+      return { version: "1.2.3", runtimeSource: "managed-package" };
+    };
+
+    const update = request("applyRelease", TRANSACTION_TWO, "1.2.3");
+    await expect(__testing.applyReleaseTransaction(update, fixture.context)).rejects.toMatchObject({
+      code: "TARGET_RELEASE_ROLLED_BACK",
+    });
+    expect(gatewayEvents).toEqual([
+      "stop-gateway",
+      "start-target",
+      "stop-gateway",
+      "start-previous",
+    ]);
+    expect(await fsp.readFile(configPath, "utf8")).toBe(previousConfig);
+    expect(fs.existsSync(cachePath)).toBe(false);
+    expect(fs.existsSync(fixture.paths.journalPath)).toBe(false);
+
+    injectFailure = false;
+    gatewayEvents.length = 0;
+    await expect(__testing.applyReleaseTransaction(update, fixture.context)).resolves.toMatchObject(
+      {
+        phase: "committed",
+        version: "1.2.3",
+      },
+    );
+    await expect(__testing.applyReleaseTransaction(update, fixture.context)).resolves.toMatchObject(
+      {
+        phase: "committed",
+        changed: false,
+      },
+    );
+    expect(await fsp.readFile(configPath, "utf8")).toBe(previousConfig);
+    expect(fs.existsSync(fixture.paths.journalPath)).toBe(false);
+  });
+
   it("switches one complete updater generation and restores it before rollback completes", async () => {
     const committed = await createFixture({
       managedApplication: true,

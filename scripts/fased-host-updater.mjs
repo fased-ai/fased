@@ -2067,6 +2067,7 @@ function transactionPaths(paths, transactionId) {
     masterKeySnapshotPath: path.join(transactionDir, "master.key.previous"),
     auditLogSnapshotPath: path.join(transactionDir, "audit.jsonl.previous"),
     signerUnitSnapshotPath: path.join(transactionDir, "fased-signerd.service.previous"),
+    configSnapshotPath: path.join(transactionDir, "fased.json.previous"),
   };
 }
 
@@ -4484,7 +4485,42 @@ async function reconcileDeclaredApplicationState(transaction) {
   };
 }
 
-async function restoreDeclaredApplicationState(transaction) {
+function declaredConfigEntry(transaction) {
+  return transaction?.entries?.find(
+    (entry) => entry.kind === "file" && entry.relativePath === "fased.json",
+  );
+}
+
+async function snapshotDeclaredApplicationState(transaction, txPaths) {
+  const entry = declaredConfigEntry(transaction);
+  if (!entry?.existed) {
+    return { snapshotted: false };
+  }
+  if (!entry.preserveContent || !/^sha256:[a-f0-9]{64}$/u.test(entry.contentHash || "")) {
+    throw new Error("declared application configuration has no preservation identity");
+  }
+  const entryPath = declaredStatePath(transaction.stateDir, entry.relativePath);
+  await atomicCopyFileDurable(entryPath, txPaths.configSnapshotPath, { mode: 0o600 });
+  const snapshot = await fsp.open(
+    txPaths.configSnapshotPath,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+  );
+  try {
+    const stat = await snapshot.stat();
+    if (
+      !stat.isFile() ||
+      stat.nlink !== 1 ||
+      (await hashDeclaredFile(snapshot, stat, "fased.json rollback snapshot")) !== entry.contentHash
+    ) {
+      throw new Error("declared application configuration changed during snapshot");
+    }
+  } finally {
+    await snapshot.close();
+  }
+  return { snapshotted: true, contentHash: entry.contentHash };
+}
+
+async function restoreDeclaredApplicationState(transaction, txPaths = null) {
   if (!transaction) {
     return { restored: false };
   }
@@ -4492,6 +4528,49 @@ async function restoreDeclaredApplicationState(transaction) {
   for (const entry of [...transaction.entries].toReversed()) {
     const entryPath = declaredStatePath(transaction.stateDir, entry.relativePath);
     try {
+      const restoringConfig = entry.kind === "file" && entry.relativePath === "fased.json";
+      if (restoringConfig) {
+        if (!entry.existed) {
+          await fsp.rm(entryPath, { force: true });
+          continue;
+        }
+        if (txPaths?.configSnapshotPath) {
+          const snapshot = await fsp.open(
+            txPaths.configSnapshotPath,
+            fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+          );
+          try {
+            const stat = await snapshot.stat();
+            if (
+              !stat.isFile() ||
+              stat.nlink !== 1 ||
+              (await hashDeclaredFile(snapshot, stat, "fased.json rollback snapshot")) !==
+                entry.contentHash
+            ) {
+              throw new Error("declared application configuration snapshot is invalid");
+            }
+          } finally {
+            await snapshot.close();
+          }
+          await atomicCopyFileDurable(txPaths.configSnapshotPath, entryPath, {
+            mode: entry.mode,
+            uid: entry.uid,
+            gid: entry.gid,
+          });
+        } else {
+          const opened = await openDeclaredStateEntry(transaction, entry);
+          try {
+            if (
+              (await hashDeclaredFile(opened.handle, opened.current, entry.relativePath)) !==
+              entry.contentHash
+            ) {
+              throw new Error("declared application configuration changed without a snapshot");
+            }
+          } finally {
+            await opened.handle.close();
+          }
+        }
+      }
       if (!entry.existed) {
         if (entry.create) {
           await fsp.rmdir(entryPath).catch((error) => {
@@ -6398,7 +6477,11 @@ function createTransactionContext(overrides = {}) {
       (async (transaction) => await reconcileDeclaredApplicationState(transaction)),
     restoreApplicationState:
       overrides.restoreApplicationState ??
-      (async (transaction) => await restoreDeclaredApplicationState(transaction)),
+      (async (transaction, txPaths) => await restoreDeclaredApplicationState(transaction, txPaths)),
+    snapshotApplicationState:
+      overrides.snapshotApplicationState ??
+      (async (transaction, txPaths) =>
+        await snapshotDeclaredApplicationState(transaction, txPaths)),
     assertSnapshotDiskCapacity:
       overrides.assertSnapshotDiskCapacity ??
       (async (directory, snapshots) => await assertSnapshotDiskCapacity(directory, snapshots)),
@@ -7056,6 +7139,38 @@ function rollbackHasPreviousGatewayRuntime(journal) {
   return true;
 }
 
+function rollbackMayHaveStartedTargetGateway(journal) {
+  const phase = journal.rollbackFromPhase || journal.phase;
+  return new Set([
+    "gateway-authorized",
+    "gateway-verified",
+    "committing",
+    "rolling-back",
+    "restored",
+  ]).has(phase);
+}
+
+async function stopTargetGatewayForRollback(context, journal) {
+  if (!rollbackMayHaveStartedTargetGateway(journal)) {
+    return;
+  }
+  try {
+    await context.stopGateway();
+  } catch (error) {
+    if (!/not found|not loaded|no such file/i.test(error?.message || "")) {
+      throw error;
+    }
+  }
+}
+
+async function removeDerivedPluginStatusCache(context) {
+  const topology = context.applicationTopology;
+  if (!topology?.stateDir) {
+    return;
+  }
+  await fsp.rm(targetPluginStatusCachePath(topology), { force: true });
+}
+
 async function rollbackSignerRelease(request, context, { preserveGatewayGate = false } = {}) {
   let journal = await readJournal(context);
   if (!journal) {
@@ -7072,11 +7187,14 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
   assertMatchingTransaction(journal, request);
   const restartPreviousGateway = rollbackHasPreviousGatewayRuntime(journal);
   await writeUpdateGates(context, journal);
+  await stopTargetGatewayForRollback(context, journal);
+  const txPaths = transactionPaths(context.paths, journal.transactionId);
   if (journal.phase === "restored") {
     await restoreManagedApplication(context, journal);
     await restoreProtectedApplication(context, journal);
     await context.restoreServiceBoundary(journal.serviceBoundary);
-    await context.restoreApplicationState(journal.declaredState);
+    await context.restoreApplicationState(journal.declaredState, txPaths);
+    await removeDerivedPluginStatusCache(context);
     await cleanupTransactionFiles(context, journal.transactionId);
     await removeJournal(context);
     await removeManagedUpdateLock(journal);
@@ -7105,7 +7223,6 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
     phase: "rolling-back",
     rollbackFromPhase,
   });
-  const txPaths = transactionPaths(context.paths, journal.transactionId);
 
   // A host can reboot after prepare while the installer has already replaced
   // the unit. Always quiesce before restoring unit semantics, even though the
@@ -7115,7 +7232,8 @@ async function rollbackSignerRelease(request, context, { preserveGatewayGate = f
   await restoreManagedApplication(context, journal);
   await restoreProtectedApplication(context, journal);
   await context.restoreServiceBoundary(journal.serviceBoundary);
-  await context.restoreApplicationState(journal.declaredState);
+  await context.restoreApplicationState(journal.declaredState, txPaths);
+  await removeDerivedPluginStatusCache(context);
   await restoreSignerUnit(context, journal, txPaths);
   if (journal.changed && rollbackFromPhase !== "prepared") {
     const candidateMayHaveRun = new Set([
@@ -7190,6 +7308,11 @@ async function authorizeGatewayRelease(request, context) {
       }
     }
   } catch (error) {
+    await context.stopGateway().catch((stopError) => {
+      if (!/not found|not loaded|no such file/i.test(stopError?.message || "")) {
+        throw stopError;
+      }
+    });
     await restoreManagedApplication(context, journal).catch(() => undefined);
     await restoreProtectedApplication(context, journal).catch(() => undefined);
     await context.restoreServiceBoundary(journal.serviceBoundary).catch(() => undefined);
@@ -7257,6 +7380,8 @@ async function gateGatewayRelease(request, context) {
     ? validateLifecycleSchemaMigration(journal.schemaMigration, migrationSelection)
     : lifecycleSchemaMigrationPlan(migrationSelection);
   const declaredState = await context.inventoryApplicationState(topology, migrationSelection);
+  const txPaths = transactionPaths(context.paths, journal.transactionId);
+  await context.snapshotApplicationState(declaredState, txPaths);
   journal = await writeJournal(context, {
     ...journal,
     phase: "state-reconciling",
@@ -8509,6 +8634,7 @@ export const __testing = {
   reconcileDeclaredApplicationState,
   ROOT_APPROVED_RELEASE_AUTHORITY,
   restoreDeclaredApplicationState,
+  snapshotDeclaredApplicationState,
   verifyDeclaredStatePreservation,
   verifyCrossProductHealth,
   rootManagedApplicationIdentity,

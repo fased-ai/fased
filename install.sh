@@ -6934,7 +6934,7 @@ if protected_local_target_platform; then
         exit 1
       fi
       status_frame_end
-      echo "Protected Local lifecycle did not commit. Its uncommitted topology was restored." >&2
+      echo "Protected Local lifecycle did not commit. Do not assume restoration succeeded unless the lifecycle output explicitly reports complete recovery." >&2
       exit 1
     fi
     if [[ -n "$LOCAL_EXISTING_BOOTSTRAP_MANIFEST_SNAPSHOT" ]] && \
