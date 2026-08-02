@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { buildGatewayReadinessPayload } from "../src/gateway/probe-payload.js";
 import {
   PRE_V2_HOSTING_MIGRATION_MESSAGE,
   __testing,
@@ -98,6 +99,52 @@ async function writeProtectedApplicationFixture({
   ]);
 }
 
+async function writeGatewayGenerationFixture({
+  root,
+  version,
+  commit,
+  applicationSha256,
+  dependencySha256,
+  dependencyHash,
+  updaterBundleDigest,
+}: {
+  root: string;
+  version: string;
+  commit: string;
+  applicationSha256: string;
+  dependencySha256: string;
+  dependencyHash: string;
+  updaterBundleDigest: string;
+}) {
+  await writeProtectedApplicationFixture({ root, version, commit, dependencyHash });
+  await Promise.all([
+    fsp.writeFile(
+      path.join(root, ".fased-hosted-release-v2.json"),
+      `${JSON.stringify({
+        schemaVersion: 2,
+        release: { version, commit },
+        application: {
+          linux: {
+            [process.arch]: {
+              artifact: { sha256: applicationSha256 },
+              dependencies: { sha256: dependencySha256, dependencyHash },
+            },
+          },
+        },
+      })}\n`,
+    ),
+    fsp.writeFile(
+      path.join(root, ".fased-managed-updater-bundle.json"),
+      `${JSON.stringify({
+        schemaVersion: 2,
+        architecture: process.arch,
+        bundleDigest: updaterBundleDigest,
+        release: { version, commit },
+      })}\n`,
+    ),
+  ]);
+}
+
 afterEach(async () => {
   for (const root of cleanupRoots.splice(0)) {
     await fsp.rm(root, { recursive: true, force: true });
@@ -116,6 +163,7 @@ async function createFixture(
     trackUpdaterGeneration?: boolean;
     supervised?: boolean;
     runningControllerVersion?: string;
+    gatewayHealthTimeoutMs?: number;
   } = {},
 ) {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-host-updater-"));
@@ -393,6 +441,8 @@ exec /bin/bash "/home/operator/.fased/runtime/releases/1.2.2/scripts/start-manag
           clientSha256: CONTROLLER_CLIENT_SHA256,
         }
       : undefined,
+    allowSyntheticGatewayReceipt: true,
+    gatewayHealthTimeoutMs: options.gatewayHealthTimeoutMs,
     readSupervisorSelectionReceipt: async (receipt: unknown) => receipt,
     assertReleaseAllowed: async () => undefined,
     stageControllerRelease: async () => {
@@ -1967,6 +2017,7 @@ describe("root-owned hosted updater protocol", () => {
         releasesDir: "/opt/fased/fixture/application/releases",
         version: "1.2.3",
         applicationRelease,
+        updaterBundleDigest: `sha256:${"6".repeat(64)}`,
         updateChannel: "stable",
       }).runtime,
     ).toMatchObject({
@@ -4208,8 +4259,12 @@ describe("root-owned hosted updater protocol", () => {
     expect(fs.existsSync(rolledBack.paths.journalPath)).toBe(false);
   });
 
-  it("stops a started target, restores exact config, clears derived readiness, and retries", async () => {
-    const fixture = await createFixture({ managedApplication: true });
+  it("rejects stale same-version /readyz generation, restores exact config, and retries", async () => {
+    const fixture = await createFixture({
+      managedApplication: true,
+      gatewayHealthTimeoutMs: 25,
+    });
+    fixture.context.allowSyntheticGatewayReceipt = false;
     const topology = await fixture.context.discoverApplicationTopology();
     const configPath = topology.configPath;
     const cachePath = path.join(topology.stateDir, "cache", "plugin-status.json");
@@ -4230,7 +4285,77 @@ describe("root-owned hosted updater protocol", () => {
       await __testing.verifyDeclaredStatePreservation(transaction);
 
     const gatewayEvents: string[] = [];
+    const targetRoot = path.join(fixture.paths.applicationReleasesDir!, "v1.2.3");
+    const staleRoot = path.join(fixture.paths.applicationReleasesDir!, "stale-same-version");
+    await Promise.all([
+      writeGatewayGenerationFixture({
+        root: targetRoot,
+        version: "1.2.3",
+        commit: "a".repeat(40),
+        applicationSha256: "4".repeat(64),
+        dependencySha256: "5".repeat(64),
+        dependencyHash: "3".repeat(64),
+        updaterBundleDigest: `sha256:${"7".repeat(64)}`,
+      }),
+      writeGatewayGenerationFixture({
+        root: staleRoot,
+        version: "1.2.3",
+        commit: "b".repeat(40),
+        applicationSha256: "8".repeat(64),
+        dependencySha256: "9".repeat(64),
+        dependencyHash: "3".repeat(64),
+        updaterBundleDigest: `sha256:${"6".repeat(64)}`,
+      }),
+    ]);
+    const readinessOptions = {
+      env: {
+        FASED_VERSION: "1.2.3",
+        FASED_RUNTIME_SOURCE: "managed-package",
+      },
+      architecture: process.arch,
+      pid: 4242,
+      startedAt: "2026-08-01T00:00:00.000Z",
+    } as const;
+    const targetReadiness = buildGatewayReadinessPayload(
+      { ready: true, failing: [], uptimeMs: 1_000 },
+      { ...readinessOptions, runtimeEntrypoint: path.join(targetRoot, "fased.mjs") },
+    );
+    const staleReadiness = buildGatewayReadinessPayload(
+      { ready: true, failing: [], uptimeMs: 1_000 },
+      { ...readinessOptions, runtimeEntrypoint: path.join(staleRoot, "fased.mjs") },
+    );
+    const generation = targetReadiness.generation;
+    expect(generation).not.toBeNull();
+    expect(staleReadiness.generation).not.toEqual(generation);
+    const stageCandidate = fixture.context.stageCandidate;
+    fixture.context.stageCandidate = async (...args: unknown[]) => {
+      const staged = await stageCandidate(...args);
+      return {
+        ...staged,
+        binding: { ...staged.binding, manifestDigest: generation!.manifestDigest },
+        applicationRelease: {
+          ...staged.applicationRelease,
+          manifestDigest: generation!.manifestDigest,
+          artifact: {
+            ...staged.applicationRelease.artifact,
+            sha256: generation!.applicationDigest.slice("sha256:".length),
+          },
+          dependencies: {
+            ...staged.applicationRelease.dependencies,
+            sha256: generation!.dependencyDigest.slice("sha256:".length),
+            dependencyHash: generation!.dependencyHash,
+          },
+        },
+      };
+    };
+    let staleReadinessChecks = 0;
+    let committedReceipt: unknown = null;
     let injectFailure = true;
+    fixture.context.onDurablePhase = (phase: string, journal: { healthReceipt?: unknown }) => {
+      if (phase === "gateway-verified") {
+        committedReceipt = journal.healthReceipt;
+      }
+    };
     fixture.context.stopGateway = async () => {
       gatewayEvents.push("stop-gateway");
     };
@@ -4248,11 +4373,14 @@ describe("root-owned hosted updater protocol", () => {
         expect(fs.existsSync(cachePath)).toBe(false);
       }
     };
-    fixture.context.verifyGateway = async () => {
+    fixture.context.readGatewayReadiness = async () => {
       if (injectFailure) {
-        throw new Error("deterministic post-start target readiness failure");
+        staleReadinessChecks += 1;
       }
-      return { version: "1.2.3", runtimeSource: "managed-package" };
+      return {
+        statusCode: 200,
+        payload: injectFailure ? staleReadiness : targetReadiness,
+      };
     };
 
     const update = request("applyRelease", TRANSACTION_TWO, "1.2.3");
@@ -4268,6 +4396,7 @@ describe("root-owned hosted updater protocol", () => {
     expect(await fsp.readFile(configPath, "utf8")).toBe(previousConfig);
     expect(fs.existsSync(cachePath)).toBe(false);
     expect(fs.existsSync(fixture.paths.journalPath)).toBe(false);
+    expect(staleReadinessChecks).toBeGreaterThan(0);
 
     injectFailure = false;
     gatewayEvents.length = 0;
@@ -4285,6 +4414,14 @@ describe("root-owned hosted updater protocol", () => {
     );
     expect(await fsp.readFile(configPath, "utf8")).toBe(previousConfig);
     expect(fs.existsSync(fixture.paths.journalPath)).toBe(false);
+    expect(committedReceipt).toMatchObject({
+      schemaVersion: 2,
+      transactionId: TRANSACTION_TWO,
+      gateway: {
+        pid: 4242,
+        generation,
+      },
+    });
   });
 
   it("switches one complete updater generation and restores it before rollback completes", async () => {

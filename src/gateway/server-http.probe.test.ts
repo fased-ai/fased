@@ -27,7 +27,15 @@ describe("gateway probe endpoints", () => {
         await dispatchRequest(server, req, res);
 
         expect(res.statusCode).toBe(200);
-        expect(JSON.parse(getBody())).toEqual({ ready: true, failing: [], uptimeMs: 45_000 });
+        expect(JSON.parse(getBody())).toMatchObject({
+          ok: true,
+          status: "ready",
+          ready: true,
+          failing: [],
+          uptimeMs: 45_000,
+          pid: process.pid,
+          startedAt: expect.any(String),
+        });
       },
     });
   });
@@ -80,10 +88,14 @@ describe("gateway probe endpoints", () => {
         await dispatchRequest(server, req, res);
 
         expect(res.statusCode).toBe(503);
-        expect(JSON.parse(getBody())).toEqual({
+        expect(JSON.parse(getBody())).toMatchObject({
+          ok: true,
+          status: "ready",
           ready: false,
           failing: ["discord", "telegram"],
           uptimeMs: 8_000,
+          pid: process.pid,
+          startedAt: expect.any(String),
         });
       },
     });

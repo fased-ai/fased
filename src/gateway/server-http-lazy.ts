@@ -10,7 +10,7 @@ import type { WebSocketServer } from "ws";
 import type { CanvasHostHandler } from "../canvas-host/server.js";
 import type { AuthRateLimiter } from "./auth-rate-limit.js";
 import type { ResolvedGatewayAuth } from "./auth.js";
-import { buildGatewayProbePayload } from "./probe-payload.js";
+import { buildGatewayProbePayload, buildGatewayReadinessPayload } from "./probe-payload.js";
 import type { GatewayHttpServerOpts } from "./server-http.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 
@@ -55,7 +55,9 @@ function handleGatewayProbeRequest(
     try {
       const readiness = opts.getReadiness();
       res.statusCode = readiness.ready ? 200 : 503;
-      res.end(method === "HEAD" ? undefined : JSON.stringify(readiness));
+      res.end(
+        method === "HEAD" ? undefined : JSON.stringify(buildGatewayReadinessPayload(readiness)),
+      );
     } catch {
       res.statusCode = 503;
       res.end(method === "HEAD" ? undefined : JSON.stringify({ ready: false }));

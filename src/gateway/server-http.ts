@@ -243,7 +243,7 @@ import {
   resolveGatewayClientIp,
 } from "./net.js";
 import { handleOpenAiHttpRequest } from "./openai-http.js";
-import { buildGatewayProbePayload } from "./probe-payload.js";
+import { buildGatewayProbePayload, buildGatewayReadinessPayload } from "./probe-payload.js";
 import { canonicalizePathVariant, isPathProtectedByPrefixes } from "./security-path.js";
 import type { ReadinessChecker } from "./server/readiness.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
@@ -4084,7 +4084,9 @@ async function handleGatewayProbeRequest(params: {
     try {
       const result = params.getReadiness();
       statusCode = result.ready ? 200 : 503;
-      body = JSON.stringify(includeDetails ? result : { ready: result.ready });
+      body = JSON.stringify(
+        includeDetails ? buildGatewayReadinessPayload(result) : { ready: result.ready },
+      );
     } catch {
       statusCode = 503;
       body = JSON.stringify(
