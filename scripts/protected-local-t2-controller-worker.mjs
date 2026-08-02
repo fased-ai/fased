@@ -21,6 +21,19 @@ function sha256File(filePath) {
   return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
 
+function signerRelease(version, commit) {
+  return Object.freeze({
+    version,
+    commit,
+    buildInputDigest: `sha256:${createHash("sha256").update(`t2-signer:${version}`).digest("hex")}`,
+    development: false,
+  });
+}
+
+function healthEvidence(marker) {
+  return Object.freeze({ ok: true, evidenceDigest: `sha256:${marker.repeat(64)}` });
+}
+
 async function main() {
   const instanceId = String(argument("--protected-local-instance") ?? "").trim();
   if (!instancePattern.test(instanceId)) {
@@ -97,13 +110,23 @@ async function main() {
       declaredStateRegistry: 1,
     }),
     stateSchemas: Object.freeze({
-      managedInstall: 2,
+      managedInstall: null,
       walletRegistry: 1,
       signer: 2,
       mining: 1,
       federation: 2,
     }),
   });
+
+  let activeSignerVersion = fixture.previousVersion;
+  const previousApplicationRelease = path.join(
+    base.paths.applicationReleasesDir,
+    `v${fixture.previousVersion}`,
+  );
+  const targetApplicationRelease = path.join(
+    base.paths.applicationReleasesDir,
+    `v${fixture.targetVersion}`,
+  );
 
   const context = product.__testing.createTransactionContext({
     paths: configuration.paths,
@@ -117,8 +140,101 @@ async function main() {
     controllerInstanceId: randomUUID(),
     runningControllerIdentity: runningIdentity,
     historicalQ0TestStateDir: path.join(installRoot, "t2-no-q0"),
+    allowSyntheticGatewayReceipt: true,
     assertReleaseAllowed: async () => undefined,
     discoverApplicationTopology: async () => topology,
+    stageCandidate: async (version, candidatePath) => {
+      if (version !== fixture.targetVersion) {
+        fail("T2 product candidate does not match the selected target");
+      }
+      await fsp.writeFile(candidatePath, `T2 signer ${version}\n`, { mode: 0o755 });
+      return Object.freeze({
+        release: signerRelease(version, fixture.releaseCommit),
+        binding: Object.freeze({
+          manifestDigest: `sha256:${fixture.targetManifestSha256}`,
+          signerArtifactDigest: `sha256:${sha256File(candidatePath)}`,
+          capabilitiesDigest: `sha256:${createHash("sha256").update("t2-capabilities").digest("hex")}`,
+          releaseCommit: fixture.releaseCommit,
+        }),
+        application: Object.freeze({
+          targetRoot: targetApplicationRelease,
+          previousRoot: previousApplicationRelease,
+          changed: true,
+        }),
+        applicationRelease: Object.freeze({
+          version,
+          commit: fixture.releaseCommit,
+          manifestDigest: `sha256:${fixture.targetManifestSha256}`,
+          artifact: Object.freeze({
+            asset: `fased-t2-app-v${version}.tar.gz`,
+            sha256: createHash("sha256").update(`t2-app:${version}`).digest("hex"),
+          }),
+          dependencies: Object.freeze({
+            asset: `fased-t2-deps-v${version}.tar.gz`,
+            sha256: createHash("sha256").update(`t2-deps:${version}`).digest("hex"),
+            dependencyHash: fixture.dependencyHash,
+          }),
+          signer: signerRelease(version, fixture.releaseCommit),
+          capabilities: Object.freeze({
+            protocol: Object.freeze({ current: 2, min: 2, max: 2 }),
+          }),
+          capabilitiesDigest: `sha256:${createHash("sha256").update("t2-capabilities").digest("hex")}`,
+        }),
+      });
+    },
+    stageUpdaterGeneration: async (paths) => ({
+      bundleDigest: fixture.updaterBundleDigest,
+      targetGenerationDir: path.join(
+        paths.updaterDir,
+        "generations",
+        fixture.updaterBundleDigest.slice("sha256:".length),
+      ),
+      previousGenerationDir: null,
+    }),
+    activateUpdaterGeneration: async () => ({
+      bundleDigest: fixture.updaterBundleDigest,
+    }),
+    restoreUpdaterGeneration: async () => ({ restored: true }),
+    installCommittedLaunchers: async () => undefined,
+    inventoryApplicationState: async () => null,
+    snapshotApplicationState: async () => undefined,
+    reconcileApplicationState: async () => ({ changed: false, reconciled: false }),
+    restoreApplicationState: async () => ({ restored: true }),
+    verifyApplicationState: async () => ({
+      ok: true,
+      preservationHash: null,
+      preservationHashes: {},
+    }),
+    probeApplicationHealth: async () => ({
+      wallet: healthEvidence("1"),
+      mining: healthEvidence("2"),
+      network: healthEvidence("3"),
+      plugins: healthEvidence("4"),
+      signerIsolation: healthEvidence("5"),
+    }),
+    stopSigner: async () => undefined,
+    startSignerV2: async ({ expectedRelease }) => {
+      if (expectedRelease.version !== fixture.targetVersion) {
+        fail("T2 signer activation received a mismatched release");
+      }
+      activeSignerVersion = fixture.targetVersion;
+      return Object.freeze({
+        release: signerRelease(activeSignerVersion, fixture.releaseCommit),
+        invariant: "t2-preserved-signer-state",
+      });
+    },
+    startPreviousSigner: async () => {
+      activeSignerVersion = fixture.previousVersion;
+    },
+    startGateway: async () => undefined,
+    stopGateway: async () => undefined,
+    restartGateway: async () => undefined,
+    verifyGateway: async (version) => ({ version, runtimeSource: "managed-package" }),
+    probeSigner: async () => signerRelease(activeSignerVersion, fixture.releaseCommit),
+    probeSignerState: async () => ({
+      release: signerRelease(activeSignerVersion, fixture.releaseCommit),
+      invariant: "t2-preserved-signer-state",
+    }),
     recoverInterruptedTransaction: async () => undefined,
     stageControllerRelease: async () => {
       await fsp.writeFile(fixture.forbiddenStageMarker, "called\n", { mode: 0o600 });

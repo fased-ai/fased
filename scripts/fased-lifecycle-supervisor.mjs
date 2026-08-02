@@ -4097,7 +4097,12 @@ export async function installSupervisorBoundary(configuration) {
       await atomicWrite(unit.path, unit.content, 0o644);
     }
     await systemctl("daemon-reload");
-    await systemctl("enable", "--now", configuration.paths.controllerUnit);
+    // The replaceable worker is allowed to fail while an interrupted product
+    // transaction is awaiting recovery.  Enable both units first, then start
+    // the stable supervisor.  Its Wants= relationship may attempt the worker,
+    // but a worker failure must not prevent the public recovery socket from
+    // becoming available.
+    await systemctl("enable", configuration.paths.controllerUnit);
     await systemctl("enable", configuration.paths.supervisorUnit);
     await atomicWrite(
       path.join(configuration.paths.supervisorStateDir, "boundary.json"),
@@ -4117,6 +4122,7 @@ export async function installSupervisorBoundary(configuration) {
       )}\n`,
       0o600,
     );
+    await systemctl("restart", configuration.paths.supervisorUnit);
   } catch (error) {
     for (const [filePath, snapshot] of snapshots) {
       await restoreCapturedFile(filePath, snapshot);

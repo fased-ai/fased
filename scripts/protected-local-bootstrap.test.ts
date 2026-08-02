@@ -178,6 +178,21 @@ describe("protected Local bootstrap contract", () => {
     expect(transition).toContain("privateSupervisorDirectory, 0o700");
     expect(transition).toContain("fsp.rm(layout.legacySupervisorClient");
 
+    const priorUnitSnapshots = new Map([
+      [path.join("/etc/systemd/system", layout.supervisorUnit), { existed: true }],
+      [path.join("/etc/systemd/system", layout.controllerUnit), { existed: true }],
+    ]);
+    expect(__testing.restorablePreviousSupervisorUnits(priorUnitSnapshots, layout)).toEqual([
+      layout.supervisorUnit,
+      layout.controllerUnit,
+    ]);
+    priorUnitSnapshots.set(path.join("/etc/systemd/system", layout.supervisorUnit), {
+      existed: false,
+    });
+    expect(__testing.restorablePreviousSupervisorUnits(priorUnitSnapshots, layout)).toEqual([
+      layout.controllerUnit,
+    ]);
+
     fs.rmSync(privateDirectory, { recursive: true });
     fs.symlinkSync(root, privateDirectory);
     await expect(

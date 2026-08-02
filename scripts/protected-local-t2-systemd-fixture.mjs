@@ -8,7 +8,7 @@ import fsp from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildProtectedLocalLayout } from "./protected-local-layout.mjs";
 import { buildProtectedLocalServicePlan } from "./protected-local-service-plan.mjs";
 
@@ -88,7 +88,7 @@ async function waitForService(unit) {
   );
 }
 
-async function socketRequest(socketPath, op, transactionId, version) {
+async function socketRequest(socketPath, op, transactionId, version, recovery = null) {
   return await new Promise((resolve, reject) => {
     const socket = net.createConnection({ path: socketPath });
     socket.setEncoding("utf8");
@@ -112,6 +112,12 @@ async function socketRequest(socketPath, op, transactionId, version) {
           nonce: randomUUID(),
           version,
           clientCapabilities: { protocolVersion: 2, requestSchema: 3 },
+          ...(recovery === null
+            ? {}
+            : {
+                recoveryDigest: recovery.digest,
+                recoveryControllerVersion: recovery.controllerVersion,
+              }),
         })}\n`,
       );
     });
@@ -200,18 +206,36 @@ async function writeOwnedFile(filePath, contents, uid, gid, mode) {
   await fsp.chmod(filePath, mode);
 }
 
-async function requestAsOperator(operator, socketPath, op, transactionId, version) {
-  const result = run(
-    "/usr/bin/node",
-    [selfPath, "request", socketPath, op, transactionId, version],
-    { uid: operator.uid, gid: operator.gid, timeout: 30_000 },
-  );
+async function requestAsOperator(
+  operator,
+  socketPath,
+  op,
+  transactionId,
+  version,
+  recovery = null,
+) {
+  const args = [selfPath, "request", socketPath, op, transactionId, version];
+  if (recovery !== null) {
+    args.push(recovery.digest, recovery.controllerVersion);
+  }
+  const result = run("/usr/bin/node", args, {
+    uid: operator.uid,
+    gid: operator.gid,
+    timeout: 30_000,
+  });
   return JSON.parse(result.stdout);
 }
 
 async function requestMain() {
-  const [, , , socketPath, op, transactionId, version] = process.argv;
-  const response = await socketRequest(socketPath, op, transactionId, version);
+  const [, , , socketPath, op, transactionId, version, recoveryDigest, recoveryVersion] =
+    process.argv;
+  const response = await socketRequest(
+    socketPath,
+    op,
+    transactionId,
+    version,
+    recoveryDigest ? { digest: recoveryDigest, controllerVersion: recoveryVersion } : null,
+  );
   process.stdout.write(`${JSON.stringify(response)}\n`);
 }
 
@@ -230,7 +254,11 @@ async function runFixture() {
   const layout = buildProtectedLocalLayout(instanceId);
   const appRoot = path.join(operator.home, ".fased-t2", instanceId);
   const appStateDir = path.join(appRoot, ".fased");
-  const applicationRelease = path.join(layout.applicationReleasesDir, `v${previousVersion}`);
+  const previousApplicationRelease = path.join(
+    layout.applicationReleasesDir,
+    `v${previousVersion}`,
+  );
+  const targetApplicationRelease = path.join(layout.applicationReleasesDir, `v${targetVersion}`);
   const t2Lib = path.join(layout.installDir, "t2-lib");
   const channelRoot = `/etc/fased/local/${instanceId}`;
   const controllerDropIn = `/etc/systemd/system/${layout.controllerUnit}.d`;
@@ -272,6 +300,7 @@ async function runFixture() {
     nodeBinary: "/usr/bin/node",
   });
   const installedUnits = [plan.files.controllerUnit, plan.files.supervisorUnit];
+  const installedFiles = [...installedUnits, plan.files.gatewayUnit, plan.files.gatewayLauncher];
   const fixedPaths = [
     layout.installDir,
     layout.stateDir,
@@ -282,7 +311,7 @@ async function runFixture() {
     `/run/fased-local/${instanceId}`,
     `/run/fased-local-controller/${instanceId}`,
     `/run/fased-local-controller-worker/${instanceId}`,
-    ...installedUnits.map((unit) => unit.path),
+    ...installedFiles.map((file) => file.path),
   ];
   for (const fixedPath of fixedPaths) {
     if (fs.existsSync(fixedPath)) {
@@ -303,12 +332,15 @@ async function runFixture() {
     }
     cleanupStarted = true;
     for (const unit of [layout.supervisorUnit, layout.controllerUnit]) {
-      run("/usr/bin/systemctl", ["stop", unit], { allowFailure: true, timeout: 20_000 });
+      run("/usr/bin/systemctl", ["disable", "--now", unit], {
+        allowFailure: true,
+        timeout: 20_000,
+      });
       run("/usr/bin/systemctl", ["reset-failed", unit], { allowFailure: true });
     }
     try {
       await Promise.all([
-        ...installedUnits.map((unit) => fsp.rm(unit.path, { force: true })),
+        ...installedFiles.map((file) => fsp.rm(file.path, { force: true })),
         fsp.rm(controllerDropIn, { recursive: true, force: true }),
         fsp.rm(supervisorDropIn, { recursive: true, force: true }),
         fsp.rm(failureScript, { force: true }),
@@ -353,7 +385,20 @@ async function runFixture() {
       fsp.mkdir(t2Lib, { recursive: true, mode: 0o755 }),
       fsp.mkdir(layout.supervisorStateDir, { recursive: true, mode: 0o700 }),
       fsp.mkdir(layout.signerStateDir, { recursive: true, mode: 0o700 }),
-      fsp.mkdir(applicationRelease, { recursive: true, mode: 0o755 }),
+      fsp.mkdir(previousApplicationRelease, { recursive: true, mode: 0o755 }),
+      fsp.mkdir(targetApplicationRelease, { recursive: true, mode: 0o755 }),
+      fsp.mkdir(path.join(targetApplicationRelease, "dist"), {
+        recursive: true,
+        mode: 0o755,
+      }),
+      fsp.mkdir(path.join(targetApplicationRelease, "scripts"), {
+        recursive: true,
+        mode: 0o755,
+      }),
+      fsp.mkdir(path.join(targetApplicationRelease, "node_modules"), {
+        recursive: true,
+        mode: 0o755,
+      }),
       fsp.mkdir(physicalAppStateDir, { recursive: true, mode: 0o700 }),
       fsp.mkdir(registryRoot, { recursive: true, mode: 0o700 }),
       fsp.mkdir(controllerDropIn, { recursive: true, mode: 0o755 }),
@@ -431,26 +476,71 @@ async function runFixture() {
     ]);
     await fsp.copyFile(supervisorWorker, layout.supervisorBinary);
     await fsp.chmod(layout.supervisorBinary, 0o755);
+    await fsp.mkdir(path.dirname(layout.signerBinary), { recursive: true, mode: 0o755 });
     await Promise.all([
       fsp.writeFile(path.join(layout.installDir, "signer-owner"), "T2 fixture\n", { mode: 0o644 }),
+      fsp.writeFile(layout.signerBinary, "previous T2 signer\n", { mode: 0o755 }),
       fsp.writeFile(path.join(layout.installDir, "operator-socket-finalize"), "#!/bin/true\n", {
         mode: 0o755,
       }),
       fsp.writeFile(
-        path.join(applicationRelease, "package.json"),
+        path.join(previousApplicationRelease, "package.json"),
         `${JSON.stringify({ version: previousVersion })}\n`,
         { mode: 0o644 },
       ),
-      fsp.writeFile(path.join(applicationRelease, "t2-runtime"), "preserve-runtime\n", {
+      fsp.writeFile(path.join(previousApplicationRelease, "t2-runtime"), "preserve-runtime\n", {
         mode: 0o644,
       }),
+      fsp.writeFile(
+        path.join(targetApplicationRelease, "package.json"),
+        `${JSON.stringify({ version: targetVersion })}\n`,
+        { mode: 0o644 },
+      ),
+      fsp.writeFile(path.join(targetApplicationRelease, "t2-runtime"), "target-runtime\n", {
+        mode: 0o644,
+      }),
+      fsp.writeFile(path.join(targetApplicationRelease, "fased.mjs"), "#!/usr/bin/env node\n", {
+        mode: 0o755,
+      }),
+      fsp.writeFile(
+        path.join(targetApplicationRelease, "scripts", "start-managed.sh"),
+        "#!/usr/bin/env bash\n",
+        { mode: 0o755 },
+      ),
+      fsp.writeFile(
+        path.join(targetApplicationRelease, "scripts", "fased-managed-launcher.sh"),
+        "#!/usr/bin/env bash\n",
+        { mode: 0o755 },
+      ),
+      fsp.writeFile(
+        path.join(targetApplicationRelease, "scripts", "fased-managed-service.sh"),
+        "#!/usr/bin/env bash\n",
+        { mode: 0o755 },
+      ),
+      fsp.writeFile(
+        path.join(targetApplicationRelease, "scripts", "fased-managed-updater.mjs"),
+        "export {};\n",
+        { mode: 0o644 },
+      ),
+      ...[
+        "hosted-release-manifest.mjs",
+        "lifecycle-trust-crypto.mjs",
+        "lifecycle-trust-policy.mjs",
+        "lifecycle-trust-root.mjs",
+        "lifecycle-trust-runtime.mjs",
+        "managed-runtime-layout.mjs",
+      ].map((name) =>
+        fsp.writeFile(path.join(targetApplicationRelease, "scripts", name), "export {};\n", {
+          mode: 0o644,
+        }),
+      ),
     ]);
     await fsp.symlink(
       previousGeneration,
       path.join(layout.installDir, "controller", "current"),
       "dir",
     );
-    await fsp.symlink(applicationRelease, layout.applicationCurrentLink, "dir");
+    await fsp.symlink(previousApplicationRelease, layout.applicationCurrentLink, "dir");
 
     const previousIdentity = Object.freeze({
       schemaVersion: 1,
@@ -462,6 +552,25 @@ async function runFixture() {
       cwd: sourceRoot,
     }).stdout.trim();
     assert.match(releaseCommit, /^[a-f0-9]{40}$/u);
+    const dependencyHash = sha256(`t2-dependencies:${releaseCommit}:${targetVersion}`);
+    const updaterBundleDigest = `sha256:${sha256(`t2-updater:${releaseCommit}:${targetVersion}`)}`;
+    await Promise.all([
+      fsp.writeFile(
+        path.join(targetApplicationRelease, "dist", "build-info.json"),
+        `${JSON.stringify({ version: targetVersion, commit: releaseCommit })}\n`,
+        { mode: 0o644 },
+      ),
+      fsp.writeFile(
+        path.join(targetApplicationRelease, ".fased-hosted-runtime.json"),
+        `${JSON.stringify({
+          schemaVersion: 2,
+          version: targetVersion,
+          commit: releaseCommit,
+          dependencyHash,
+        })}\n`,
+        { mode: 0o644 },
+      ),
+    ]);
     const fixture = Object.freeze({
       schemaVersion: 1,
       instanceId,
@@ -469,6 +578,8 @@ async function runFixture() {
       targetVersion,
       releaseCommit,
       targetManifestSha256: sha256(`t2:${releaseCommit}:${targetVersion}`),
+      dependencyHash,
+      updaterBundleDigest,
       operatorUser: operator.user,
       operatorUid: operator.uid,
       operatorGid: operator.gid,
@@ -567,43 +678,106 @@ async function runFixture() {
       ),
     );
 
-    for (const unit of installedUnits) {
-      await fsp.writeFile(unit.path, unit.content, { mode: unit.mode });
-      await fsp.chmod(unit.path, unit.mode);
+    const lifecycleProduct = await import(
+      pathToFileURL(path.join(t2Lib, "fased-lifecycle-supervisor-production.mjs")).href
+    );
+    const transactionId = randomUUID();
+    const runningSupervisorDigest = await sha256File(layout.supervisorBinary);
+    await lifecycleProduct.__testing.beginSupervisorTransaction(
+      lifecycleProduct.__testing.lifecyclePaths("protected-local", instanceId),
+      {
+        schemaVersion: 2,
+        op: "updateController",
+        transactionId,
+        version: targetVersion,
+      },
+      {
+        previousGeneration,
+        previousIdentity,
+        supervisorChanged: false,
+        previousSupervisorDigest: runningSupervisorDigest,
+        targetSupervisorDigest: runningSupervisorDigest,
+        trusted: { persisted: false },
+      },
+    );
+
+    await fsp.writeFile(
+      failureScript,
+      `#!/usr/bin/env bash\nset -euo pipefail\nmarker=${failureMarker}\nif [[ -f "$marker" ]]; then exit 72; fi\n`,
+      { mode: 0o755 },
+    );
+    await fsp.writeFile(failureOverride, `[Service]\nExecStartPre=${failureScript}\n`, {
+      mode: 0o644,
+    });
+    await fsp.writeFile(failureMarker, "block first worker\n", { mode: 0o600 });
+
+    for (const file of installedFiles) {
+      await fsp.mkdir(path.dirname(file.path), { recursive: true, mode: 0o755 });
+      await fsp.writeFile(file.path, file.content, { mode: file.mode });
+      await fsp.chmod(file.path, file.mode);
     }
     systemctl("daemon-reload");
-    systemctl("start", layout.controllerUnit);
-    await waitForService(layout.controllerUnit);
-    await waitForSocket(privateSocket);
-    systemctl("start", layout.supervisorUnit);
+    systemctl("enable", layout.controllerUnit);
+    systemctl("enable", layout.supervisorUnit);
+    systemctl("restart", layout.supervisorUnit);
     await waitForService(layout.supervisorUnit);
     await waitForSocket(publicSocket);
     const socketInfo = await fsp.stat(publicSocket);
     assert.equal(socketInfo.uid, operator.uid);
     assert.equal(socketInfo.gid, operator.gid);
     assert.equal(socketInfo.mode & 0o777, 0o600);
-
-    await fsp.writeFile(
-      failureScript,
-      `#!/usr/bin/env bash\nset -euo pipefail\nmarker=${failureMarker}\nif [[ -f "$marker" ]]; then rm -f -- "$marker"; exit 72; fi\n`,
-      { mode: 0o755 },
+    assert.notEqual(
+      run("/usr/bin/systemctl", ["is-active", "--quiet", layout.controllerUnit], {
+        allowFailure: true,
+      }).status,
+      0,
+      "replaceable worker unexpectedly survived the injected first start failure",
     );
-    await fsp.writeFile(failureOverride, `[Service]\nExecStartPre=${failureScript}\n`, {
-      mode: 0o644,
-    });
-    await fsp.writeFile(failureMarker, "fail once\n", { mode: 0o600 });
-    systemctl("daemon-reload");
-    const transactionId = randomUUID();
-    const failed = await requestAsOperator(
+    assert.equal(fs.existsSync(privateSocket), false);
+
+    const pending = await requestAsOperator(
       operator,
       publicSocket,
-      "updateController",
+      "recoveryStatus",
       transactionId,
       targetVersion,
     );
-    assert.equal(failed.ok, false, JSON.stringify(failed));
-    assert.match(failed.error, /controller promotion failed and was restored/u);
+    assert.equal(pending.ok, true, JSON.stringify(pending));
+    assert.equal(pending.recovery?.state, "RECOVERY_PENDING");
+    assert.equal(pending.recovery?.source, "supervisor");
+    assert.equal(pending.recovery?.transactionId, transactionId);
+    assert.match(pending.recovery?.journalDigest ?? "", /^[a-f0-9]{64}$/u);
+    for (const [name, filePath] of Object.entries(preservedPaths)) {
+      assert.equal(
+        await sha256File(filePath),
+        beforeDigests[name],
+        `${name} changed before recovery`,
+      );
+    }
+
+    await Promise.all([
+      fsp.rm(failureMarker, { force: true }),
+      fsp.rm(failureOverride, { force: true }),
+      fsp.rm(failureScript, { force: true }),
+    ]);
+    systemctl("daemon-reload");
+    run("/usr/bin/systemctl", ["reset-failed", layout.controllerUnit], { allowFailure: true });
+    const recovered = await requestAsOperator(
+      operator,
+      publicSocket,
+      "recoverActive",
+      transactionId,
+      targetVersion,
+      {
+        digest: pending.recovery.journalDigest,
+        controllerVersion: previousVersion,
+      },
+    );
+    assert.equal(recovered.ok, true, JSON.stringify(recovered));
+    assert.equal(recovered.changed, true);
+    assert.equal(recovered.recovery?.state, "READY");
     await waitForService(layout.controllerUnit);
+    await waitForSocket(privateSocket);
     await waitForService(layout.supervisorUnit);
     assert.equal(
       await fsp.realpath(path.join(layout.installDir, "controller", "current")),
@@ -616,13 +790,14 @@ async function runFixture() {
     assert.equal(fs.existsSync(supervisorTransactionPath), false);
     assert.equal(fs.existsSync(rootProductTransactionPath), false);
     assert.equal(fs.existsSync(failureMarker), false);
+    for (const [name, filePath] of Object.entries(preservedPaths)) {
+      assert.equal(
+        await sha256File(filePath),
+        beforeDigests[name],
+        `${name} changed during recovery rollback`,
+      );
+    }
 
-    await Promise.all([
-      fsp.rm(failureOverride, { force: true }),
-      fsp.rm(failureScript, { force: true }),
-    ]);
-    systemctl("daemon-reload");
-    run("/usr/bin/systemctl", ["reset-failed", layout.controllerUnit], { allowFailure: true });
     const applied = await requestAsOperator(
       operator,
       publicSocket,
@@ -641,6 +816,36 @@ async function runFixture() {
     );
     assert.equal(idempotent.ok, true, JSON.stringify(idempotent));
     assert.equal(idempotent.controllerChanged, false);
+    const committed = await requestAsOperator(
+      operator,
+      publicSocket,
+      "applyRelease",
+      transactionId,
+      targetVersion,
+    );
+    assert.equal(committed.ok, true, JSON.stringify(committed));
+    assert.equal(committed.phase, "committed");
+    systemctl("restart", layout.supervisorUnit);
+    await waitForService(layout.supervisorUnit);
+    await waitForSocket(publicSocket);
+    const readyAfterRestart = await requestAsOperator(
+      operator,
+      publicSocket,
+      "recoveryStatus",
+      transactionId,
+      targetVersion,
+    );
+    assert.equal(readyAfterRestart.ok, true, JSON.stringify(readyAfterRestart));
+    assert.equal(readyAfterRestart.recovery?.state, "READY");
+    const idempotentAfterRestart = await requestAsOperator(
+      operator,
+      publicSocket,
+      "updateController",
+      transactionId,
+      targetVersion,
+    );
+    assert.equal(idempotentAfterRestart.ok, true, JSON.stringify(idempotentAfterRestart));
+    assert.equal(idempotentAfterRestart.controllerChanged, false);
     await waitForService(layout.controllerUnit);
     assert.equal(
       await fsp.realpath(path.join(layout.installDir, "controller", "current")),
@@ -701,8 +906,12 @@ async function runFixture() {
         controllerTransition: `${previousVersion}->${targetVersion}`,
         generatedUnits: [layout.controllerUnit, layout.supervisorUnit],
         operatorSocketAuthorized: true,
-        injectedRestartRollback: true,
+        firstWorkerStartFailed: true,
+        publicRecoveryPending: true,
+        exactRecoveryRollback: true,
         sameCommandRetry: true,
+        productCommit: true,
+        restartRecoveryReady: true,
         idempotentSelection: true,
         workerWriteIsolation: true,
         receiptBinding: true,

@@ -1277,6 +1277,13 @@ describe("stable lifecycle supervisor contract", () => {
     expect(units.supervisor.content).toContain(
       "CapabilityBoundingSet=CAP_CHOWN\nAmbientCapabilities=",
     );
+    expect(units.supervisor.content).toContain(
+      "After=fixed-controller.service network-online.target",
+    );
+    expect(units.supervisor.content).toContain(
+      "Wants=fixed-controller.service network-online.target",
+    );
+    expect(units.supervisor.content).not.toContain("Requires=fixed-controller.service");
   });
 
   it("requires unexpired, architecture-bound, channel-bound immutable metadata", () => {

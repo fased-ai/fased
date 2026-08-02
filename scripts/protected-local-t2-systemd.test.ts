@@ -10,9 +10,18 @@ const fixture = fs.readFileSync(
 describe("minimal Protected Local T2 generated-unit fixture", () => {
   it("uses production-generated units without full installation machinery", () => {
     expect(fixture).toContain("buildProtectedLocalServicePlan");
-    expect(fixture).toContain('systemctl("start", layout.controllerUnit)');
-    expect(fixture).toContain('systemctl("start", layout.supervisorUnit)');
-    expect(fixture).toContain("controller promotion failed and was restored");
+    expect(fixture).toContain('systemctl("enable", layout.controllerUnit)');
+    expect(fixture).toContain('systemctl("enable", layout.supervisorUnit)');
+    expect(fixture).toContain('systemctl("restart", layout.supervisorUnit)');
+    expect(fixture).toContain('"recoveryStatus"');
+    expect(fixture).toContain('"recoverActive"');
+    expect(fixture).toContain('pending.recovery?.state, "RECOVERY_PENDING"');
+    expect(fixture).toContain("firstWorkerStartFailed: true");
+    expect(fixture).toContain("publicRecoveryPending: true");
+    expect(fixture).toContain("exactRecoveryRollback: true");
+    expect(fixture).toContain('"applyRelease"');
+    expect(fixture).toContain("productCommit: true");
+    expect(fixture).toContain("restartRecoveryReady: true");
     expect(fixture).toContain("controller unexpectedly wrote");
     expect(fixture).toContain('fsp.chown(path.join(generation, "fased-host-updater.mjs"), 0, 0)');
     expect(fixture).toContain(

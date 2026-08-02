@@ -1951,6 +1951,15 @@ async function prepareProtectedLocalSupervisorClientDirectory(layout, options = 
   return Object.freeze({ directory, created });
 }
 
+function restorablePreviousSupervisorUnits(snapshots, layout) {
+  return [
+    [layout.supervisorUnit, path.join("/etc/systemd/system", layout.supervisorUnit)],
+    [layout.controllerUnit, path.join("/etc/systemd/system", layout.controllerUnit)],
+  ]
+    .filter(([, unitPath]) => snapshots.get(unitPath)?.existed === true)
+    .map(([unit]) => unit);
+}
+
 async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
   const targetSupervisor = path.join(sourceRoot, "scripts", "fased-lifecycle-supervisor.mjs");
   const targetSupervisorClient = path.join(sourceRoot, "scripts", "fased-host-updaterctl.mjs");
@@ -2037,9 +2046,15 @@ async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
         path.join("/etc/systemd/system", layout.controllerUnit),
         path.join("/etc/systemd/system", layout.supervisorUnit),
         path.join(layout.supervisorStateDir, "boundary.json"),
+        path.join(layout.controllerStateDir, "controller-version.json"),
+        path.join(layout.supervisorStateDir, "controller-version.json"),
       ].map(async (filePath) => [filePath, await captureFile(filePath)]),
     ),
   );
+  const previousIdentityPaths = [
+    path.join(layout.controllerStateDir, "controller-version.json"),
+    path.join(layout.supervisorStateDir, "controller-version.json"),
+  ];
   const privateSupervisorDirectory = await captureProtectedLocalPrivateSupervisorDirectory(layout);
   let supervisorClientDirectory = null;
   try {
@@ -2152,7 +2167,9 @@ async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
         `reload prior units: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
       );
     }
-    for (const unit of [layout.controllerUnit, layout.supervisorUnit]) {
+    const previousUnits = restorablePreviousSupervisorUnits(snapshots, layout);
+    const previousSupervisorExisted = previousUnits.includes(layout.supervisorUnit);
+    for (const unit of previousUnits) {
       try {
         runSystem(systemctl, ["restart", unit]);
       } catch (rollbackError) {
@@ -2161,12 +2178,38 @@ async function transitionExistingSupervisorBoundary(sourceRoot, spec, layout) {
         );
       }
     }
-    try {
-      await waitForSocket(`/run/fased-local-controller/${layout.instanceId}/request.sock`, 60_000);
-    } catch (rollbackError) {
-      rollbackFailures.push(
-        `restore supervisor socket: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
-      );
+    if (previousSupervisorExisted) {
+      try {
+        await waitForSocket(
+          `/run/fased-local-controller/${layout.instanceId}/request.sock`,
+          60_000,
+        );
+      } catch (rollbackError) {
+        rollbackFailures.push(
+          `restore supervisor socket: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+        );
+      }
+    }
+    for (const identityPath of previousIdentityPaths) {
+      const previousIdentity = snapshots.get(identityPath);
+      if (previousIdentity?.existed !== true) {
+        continue;
+      }
+      try {
+        const restoredIdentity = await captureFile(identityPath);
+        if (
+          !restoredIdentity.existed ||
+          !restoredIdentity.content.equals(previousIdentity.content)
+        ) {
+          fail(`restored protected Local identity is mismatched: ${identityPath}`);
+        }
+      } catch (rollbackError) {
+        rollbackFailures.push(
+          `verify previous identity ${identityPath}: ${
+            rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+          }`,
+        );
+      }
     }
     if (rollbackFailures.length > 0) {
       throw new Error(
@@ -4335,6 +4378,7 @@ export const __testing = Object.freeze({
   parseDirectoryAcl,
   prepareProtectedLocalChannelDirectory,
   prepareProtectedLocalSupervisorClientDirectory,
+  restorablePreviousSupervisorUnits,
   setProtectedLocalPrivateSupervisorDirectoryMode,
   renderProtectedLocalOperatorEnvironment,
   renderProtectedLocalOwnerWrapper,
