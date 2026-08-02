@@ -5,6 +5,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import {
   LIFECYCLE_RELEASE_GATE_CONTEXT,
+  lifecycleReleaseArtifactSetDigest,
   lifecycleReleaseReceiptDigest,
   runLifecycleReleaseGateCli,
   verifyLifecycleReleaseGateReceipt,
@@ -15,6 +16,12 @@ const commit = "a".repeat(40);
 const tree = "b".repeat(40);
 const version = "1.2.3-rc.4";
 const now = "2026-08-02T12:00:00.000Z";
+const transactionId = `txn:${"3".repeat(64)}`;
+const artifacts = [
+  { identity: "candidate-package", digest: digest("d") },
+  { identity: "hosted-runtime-linux-x64", digest: digest("4") },
+];
+const artifactSetDigest = lifecycleReleaseArtifactSetDigest(artifacts);
 
 type JsonObject = Record<string, unknown>;
 
@@ -22,11 +29,14 @@ function payload() {
   return {
     kind: "fased-lifecycle-release-gate",
     context: LIFECYCLE_RELEASE_GATE_CONTEXT,
+    transactionId,
     authorizedActions: ["github-release", "tag"],
     candidate: { version, commit, tree },
+    artifacts,
     bindings: {
       planDigest: digest("c"),
       artifactDigest: digest("d"),
+      artifactSetDigest,
       topologyDigest: digest("e"),
       runnerDigest: digest("f"),
       evaluationDigest: digest("1"),
@@ -43,7 +53,13 @@ function payload() {
         beforeDigest: digest("2"),
         afterDigest: digest("2"),
       },
-      finalIdentity: { version, commit, tree, artifactDigest: digest("d") },
+      finalIdentity: {
+        version,
+        commit,
+        tree,
+        artifactDigest: digest("d"),
+        artifactSetDigest,
+      },
       alreadyCurrent: { required: true, status: "PASS" },
     },
     validity: {
@@ -68,6 +84,8 @@ function expectations(selectedEnvelope = envelope()) {
     expectedTree: tree,
     expectedPlanDigest: digest("c"),
     expectedArtifactDigest: digest("d"),
+    expectedArtifactSetDigest: artifactSetDigest,
+    expectedTransactionId: transactionId,
     expectedTopologyDigest: digest("e"),
     expectedRunnerDigest: digest("f"),
     expectedEvaluationDigest: digest("1"),
@@ -114,7 +132,10 @@ describe("lifecycle release gate receipt", () => {
       gate: "L1",
       evidenceTier: "T3",
       authority: "AUTHORITATIVE",
+      transactionId,
       authorizedActions: ["github-release", "tag"],
+      artifacts,
+      artifactSetDigest,
       receiptDigest: selected.receiptDigest,
       releaseEligible: true,
     });
@@ -127,6 +148,8 @@ describe("lifecycle release gate receipt", () => {
       { expectedTree: "8".repeat(40) },
       { expectedPlanDigest: digest("3") },
       { expectedArtifactDigest: digest("4") },
+      { expectedArtifactSetDigest: digest("5") },
+      { expectedTransactionId: `txn:${"6".repeat(64)}` },
       { expectedTopologyDigest: digest("5") },
       { expectedRunnerDigest: digest("6") },
       { expectedEvaluationDigest: digest("7") },
@@ -189,6 +212,35 @@ describe("lifecycle release gate receipt", () => {
       });
       expect(() => verifyLifecycleReleaseGateReceipt(selected, expectations(selected))).toThrow(
         /authorized actions/u,
+      );
+    }
+  });
+
+  it("binds one transaction to a canonical final artifact identity set", () => {
+    for (const mutate of [
+      (receipt: JsonObject) => {
+        receipt.transactionId = "transaction-1";
+      },
+      (receipt: JsonObject) => {
+        receipt.artifacts = [];
+      },
+      (receipt: JsonObject) => {
+        receipt.artifacts = [...artifacts].toReversed();
+      },
+      (receipt: JsonObject) => {
+        receipt.artifacts = [artifacts[0], artifacts[0]];
+      },
+      (receipt: JsonObject) => {
+        receipt.artifacts = [{ identity: "../candidate", digest: digest("d") }];
+      },
+      (receipt: JsonObject) => {
+        const bindings = receipt.bindings as JsonObject;
+        bindings.artifactSetDigest = digest("9");
+      },
+    ]) {
+      const selected = mutateReceipt(mutate);
+      expect(() => verifyLifecycleReleaseGateReceipt(selected, expectations(selected))).toThrow(
+        /transaction|artifact/u,
       );
     }
   });
@@ -372,6 +424,10 @@ describe("lifecycle release gate receipt", () => {
       digest("c"),
       "--expected-artifact-digest",
       digest("d"),
+      "--expected-artifact-set-digest",
+      artifactSetDigest,
+      "--expected-transaction-id",
+      transactionId,
       "--expected-topology-digest",
       digest("e"),
       "--expected-runner-digest",

@@ -182,10 +182,19 @@ describe("CI workflow routing", () => {
     const hosted = await readWorkflow(".github/workflows/hosted-runtime-release.yml");
     const hostedJobs = hosted.jobs ?? {};
     expect(hostedJobs["lifecycle-release-authorization"]).toBeUndefined();
+    expect(hostedJobs.publish?.if).toBe("startsWith(github.ref, 'refs/tags/v')");
+    expect(hostedJobs.publish?.needs).toEqual(
+      expect.arrayContaining(["validate", "linux", "signer"]),
+    );
 
     const docker = await readWorkflow(".github/workflows/docker-release.yml");
     const dockerJobs = docker.jobs ?? {};
     expect(dockerJobs["lifecycle-release-authorization"]).toBeUndefined();
+    for (const jobName of ["build-amd64", "build-arm64", "create-manifest"]) {
+      expect(dockerJobs[jobName]?.if, jobName).toBe(
+        "github.event_name == 'push' && !contains(github.ref_name, '-')",
+      );
+    }
 
     for (const workflowPath of [
       ".github/workflows/ci.yml",

@@ -11,6 +11,8 @@ const KIND = "fased-lifecycle-release-gate";
 const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
 const GIT_OBJECT_PATTERN = /^[a-f0-9]{40}$/u;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
+const TRANSACTION_ID_PATTERN = /^txn:[a-f0-9]{64}$/u;
+const ARTIFACT_IDENTITY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._@/+:-]{0,255}$/u;
 const GATE_PATTERN = /^[A-Z][A-Z0-9_-]{0,31}$/u;
 const EVIDENCE_TIERS = new Set(["T0", "T1", "T2", "T3"]);
 const AUTHORITIES = new Set(["AUTHORITATIVE", "SUPPORTING"]);
@@ -19,6 +21,7 @@ const AUTHORITATIVE_GATES = new Set(["P1", "RC0", "L0", "L1", "H1", "H2"]);
 const STATEFUL_GATES = new Set(["P1", "RC0", "L1", "H2"]);
 const PREDICATES = new Set(["rollback", "statePreservation", "alreadyCurrent"]);
 const AUTHORIZED_ACTIONS = new Set(["docker", "github-release", "stable", "tag", "version"]);
+const MAX_ARTIFACT_IDENTITIES = 1024;
 const MAX_RECEIPT_LIFETIME_MS = 60 * 60 * 1000;
 
 function fail(message) {
@@ -57,6 +60,10 @@ function canonicalJSON(value) {
 
 export function lifecycleReleaseReceiptDigest(receipt) {
   return `sha256:${createHash("sha256").update(canonicalJSON(receipt)).digest("hex")}`;
+}
+
+export function lifecycleReleaseArtifactSetDigest(artifacts) {
+  return `sha256:${createHash("sha256").update(canonicalJSON(artifacts)).digest("hex")}`;
 }
 
 function canonicalInstant(value, label) {
@@ -109,6 +116,8 @@ function validateExpected(expected) {
     ["expectedTree", GIT_OBJECT_PATTERN, "expected tree"],
     ["expectedPlanDigest", DIGEST_PATTERN, "expected plan digest"],
     ["expectedArtifactDigest", DIGEST_PATTERN, "expected artifact digest"],
+    ["expectedArtifactSetDigest", DIGEST_PATTERN, "expected artifact set digest"],
+    ["expectedTransactionId", TRANSACTION_ID_PATTERN, "expected transaction id"],
     ["expectedTopologyDigest", DIGEST_PATTERN, "expected topology digest"],
     ["expectedRunnerDigest", DIGEST_PATTERN, "expected runner digest"],
     ["expectedEvaluationDigest", DIGEST_PATTERN, "expected evaluation digest"],
@@ -143,6 +152,8 @@ function validateExpected(expected) {
       "expectedTree",
       "expectedPlanDigest",
       "expectedArtifactDigest",
+      "expectedArtifactSetDigest",
+      "expectedTransactionId",
       "expectedTopologyDigest",
       "expectedRunnerDigest",
       "expectedEvaluationDigest",
@@ -167,14 +178,55 @@ function validateCandidate(candidate) {
 function validateBindings(bindings) {
   exactKeys(
     bindings,
-    ["planDigest", "artifactDigest", "topologyDigest", "runnerDigest", "evaluationDigest"],
+    [
+      "planDigest",
+      "artifactDigest",
+      "artifactSetDigest",
+      "topologyDigest",
+      "runnerDigest",
+      "evaluationDigest",
+    ],
     "receipt bindings",
   );
   requireString(bindings.planDigest, DIGEST_PATTERN, "plan digest");
   requireString(bindings.artifactDigest, DIGEST_PATTERN, "artifact digest");
+  requireString(bindings.artifactSetDigest, DIGEST_PATTERN, "artifact set digest");
   requireString(bindings.topologyDigest, DIGEST_PATTERN, "topology digest");
   requireString(bindings.runnerDigest, DIGEST_PATTERN, "runner digest");
   requireString(bindings.evaluationDigest, DIGEST_PATTERN, "evaluation digest");
+}
+
+function validateArtifacts(artifacts, bindings) {
+  if (
+    !Array.isArray(artifacts) ||
+    artifacts.length === 0 ||
+    artifacts.length > MAX_ARTIFACT_IDENTITIES
+  ) {
+    fail(`artifacts must contain between 1 and ${MAX_ARTIFACT_IDENTITIES} identities`);
+  }
+  for (const artifact of artifacts) {
+    exactKeys(artifact, ["identity", "digest"], "artifact identity");
+    requireString(artifact.identity, ARTIFACT_IDENTITY_PATTERN, "artifact identity");
+    requireString(artifact.digest, DIGEST_PATTERN, "artifact digest");
+  }
+  const identities = artifacts.map((artifact) => artifact.identity);
+  const canonicalIdentities = [...new Set(identities)].toSorted((left, right) =>
+    left.localeCompare(right),
+  );
+  if (
+    canonicalIdentities.length !== artifacts.length ||
+    canonicalIdentities.some((identity, index) => identity !== identities[index])
+  ) {
+    fail("artifacts must have sorted unique identities");
+  }
+  const computedDigest = lifecycleReleaseArtifactSetDigest(artifacts);
+  if (computedDigest !== bindings.artifactSetDigest) {
+    fail("artifact set digest does not match the final artifact identities");
+  }
+  if (!artifacts.some((artifact) => artifact.digest === bindings.artifactDigest)) {
+    fail("primary artifact digest is absent from the final artifact identities");
+  }
+  return artifacts.map((artifact) => Object.freeze({ ...artifact }));
 }
 
 function validateGate(gate) {
@@ -271,7 +323,7 @@ function validateResult(result, candidate, bindings, gate, expected) {
 
   exactKeys(
     result.finalIdentity,
-    ["version", "commit", "tree", "artifactDigest"],
+    ["version", "commit", "tree", "artifactDigest", "artifactSetDigest"],
     "final identity",
   );
   validateCandidate({
@@ -280,11 +332,17 @@ function validateResult(result, candidate, bindings, gate, expected) {
     tree: result.finalIdentity.tree,
   });
   requireString(result.finalIdentity.artifactDigest, DIGEST_PATTERN, "final artifact digest");
+  requireString(
+    result.finalIdentity.artifactSetDigest,
+    DIGEST_PATTERN,
+    "final artifact set digest",
+  );
   if (
     result.finalIdentity.version !== candidate.version ||
     result.finalIdentity.commit !== candidate.commit ||
     result.finalIdentity.tree !== candidate.tree ||
-    result.finalIdentity.artifactDigest !== bindings.artifactDigest
+    result.finalIdentity.artifactDigest !== bindings.artifactDigest ||
+    result.finalIdentity.artifactSetDigest !== bindings.artifactSetDigest
   ) {
     fail("final identity does not match the candidate bindings");
   }
@@ -308,7 +366,18 @@ export function verifyLifecycleReleaseGateReceipt(envelope, expected) {
   requireString(envelope.receiptDigest, DIGEST_PATTERN, "receipt digest");
   exactKeys(
     envelope.receipt,
-    ["kind", "context", "authorizedActions", "candidate", "bindings", "gate", "result", "validity"],
+    [
+      "kind",
+      "context",
+      "transactionId",
+      "authorizedActions",
+      "candidate",
+      "artifacts",
+      "bindings",
+      "gate",
+      "result",
+      "validity",
+    ],
     "receipt",
   );
   if (envelope.receipt.kind !== KIND) {
@@ -317,6 +386,7 @@ export function verifyLifecycleReleaseGateReceipt(envelope, expected) {
   if (envelope.receipt.context !== LIFECYCLE_RELEASE_GATE_CONTEXT) {
     fail("receipt context is invalid");
   }
+  requireString(envelope.receipt.transactionId, TRANSACTION_ID_PATTERN, "transaction id");
   const authorizedActions = validateAuthorizedActions(
     envelope.receipt.authorizedActions,
     "authorized actions",
@@ -324,6 +394,7 @@ export function verifyLifecycleReleaseGateReceipt(envelope, expected) {
 
   validateCandidate(envelope.receipt.candidate);
   validateBindings(envelope.receipt.bindings);
+  const artifacts = validateArtifacts(envelope.receipt.artifacts, envelope.receipt.bindings);
   validateGate(envelope.receipt.gate);
   if (
     expected.requireAuthoritative === true &&
@@ -374,6 +445,10 @@ export function verifyLifecycleReleaseGateReceipt(envelope, expected) {
       bindings.planDigest !== expected.expectedPlanDigest) ||
     (expected.expectedArtifactDigest !== undefined &&
       bindings.artifactDigest !== expected.expectedArtifactDigest) ||
+    (expected.expectedArtifactSetDigest !== undefined &&
+      bindings.artifactSetDigest !== expected.expectedArtifactSetDigest) ||
+    (expected.expectedTransactionId !== undefined &&
+      envelope.receipt.transactionId !== expected.expectedTransactionId) ||
     (expected.expectedTopologyDigest !== undefined &&
       bindings.topologyDigest !== expected.expectedTopologyDigest) ||
     (expected.expectedRunnerDigest !== undefined &&
@@ -396,7 +471,10 @@ export function verifyLifecycleReleaseGateReceipt(envelope, expected) {
     gate: gate.name,
     evidenceTier: gate.evidenceTier,
     authority: gate.authority,
+    transactionId: envelope.receipt.transactionId,
     authorizedActions: Object.freeze([...authorizedActions]),
+    artifacts: Object.freeze(artifacts),
+    artifactSetDigest: bindings.artifactSetDigest,
     receiptDigest: computedDigest,
     releaseEligible: gate.authority === "AUTHORITATIVE",
   });
@@ -446,6 +524,8 @@ function parseArgs(argv) {
     "expectedTree",
     "expectedPlanDigest",
     "expectedArtifactDigest",
+    "expectedArtifactSetDigest",
+    "expectedTransactionId",
     "expectedTopologyDigest",
     "expectedRunnerDigest",
     "expectedEvaluationDigest",

@@ -15,8 +15,10 @@
       "required": [
         "kind",
         "context",
+        "transactionId",
         "authorizedActions",
         "candidate",
+        "artifacts",
         "bindings",
         "gate",
         "result",
@@ -29,6 +31,9 @@
         "context": {
           "const": "fased/lifecycle-release-gate"
         },
+        "transactionId": {
+          "$ref": "#/$defs/transactionId"
+        },
         "authorizedActions": {
           "type": "array",
           "minItems": 1,
@@ -40,12 +45,21 @@
         "candidate": {
           "$ref": "#/$defs/candidate"
         },
+        "artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1024,
+          "items": {
+            "$ref": "#/$defs/artifact"
+          }
+        },
         "bindings": {
           "type": "object",
           "additionalProperties": false,
           "required": [
             "planDigest",
             "artifactDigest",
+            "artifactSetDigest",
             "topologyDigest",
             "runnerDigest",
             "evaluationDigest"
@@ -55,6 +69,9 @@
               "$ref": "#/$defs/digest"
             },
             "artifactDigest": {
+              "$ref": "#/$defs/digest"
+            },
+            "artifactSetDigest": {
               "$ref": "#/$defs/digest"
             },
             "topologyDigest": {
@@ -142,7 +159,7 @@
             "finalIdentity": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["version", "commit", "tree", "artifactDigest"],
+              "required": ["version", "commit", "tree", "artifactDigest", "artifactSetDigest"],
               "properties": {
                 "version": {
                   "$ref": "#/$defs/version"
@@ -154,6 +171,9 @@
                   "$ref": "#/$defs/gitObject"
                 },
                 "artifactDigest": {
+                  "$ref": "#/$defs/digest"
+                },
+                "artifactSetDigest": {
                   "$ref": "#/$defs/digest"
                 }
               }
@@ -195,6 +215,24 @@
     }
   },
   "$defs": {
+    "transactionId": {
+      "type": "string",
+      "pattern": "^txn:[a-f0-9]{64}$"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "digest"],
+      "properties": {
+        "identity": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._@/+:-]{0,255}$"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
     "candidate": {
       "type": "object",
       "additionalProperties": false,
