@@ -4,6 +4,17 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.31
+
+- Bind Local update readiness to the exact target generation, including final
+  application, dependency, configuration, plugin, signer, and transaction
+  identities after startup recovery completes.
+- Prevent an early shared health cache or reachable port from committing an
+  incomplete target generation, while preserving transactional rollback and
+  same-command retry behavior.
+- Package the exact tree proven by PR #255 for literal existing Local update
+  acceptance; stable promotion remains blocked until that command passes.
+
 ## 0.1.76-rc.30
 
 - Keep the privileged Local supervisor and controller tree private while
