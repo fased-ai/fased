@@ -83,6 +83,15 @@ describe("gateway startup RPC availability", () => {
       await sidecarControl.started;
       expect(serverResolved).toBe(false);
 
+      const startingReadiness = await fetch(`http://127.0.0.1:${port}/readyz`);
+      expect(startingReadiness.status).toBe(503);
+      await expect(startingReadiness.json()).resolves.toMatchObject({
+        ok: true,
+        status: "ready",
+        ready: false,
+        failing: ["startup"],
+      });
+
       ws = new WebSocket(`ws://127.0.0.1:${port}`);
       await waitForOpen(ws);
       await connectOk(ws, { device: null });
@@ -126,6 +135,19 @@ describe("gateway startup RPC availability", () => {
       expect(history.ok).toBe(true);
       expect(history.payload?.messages).toEqual([]);
       expect(serverResolved).toBe(false);
+
+      sidecarControl.releaseSidecars();
+      await serverPromise;
+      expect(serverResolved).toBe(true);
+
+      const ready = await fetch(`http://127.0.0.1:${port}/readyz`);
+      expect(ready.status).toBe(200);
+      await expect(ready.json()).resolves.toMatchObject({
+        ok: true,
+        status: "ready",
+        ready: true,
+        failing: [],
+      });
     } finally {
       ws?.close();
       sidecarControl.releaseSidecars();
