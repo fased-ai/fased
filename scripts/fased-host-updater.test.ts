@@ -2555,6 +2555,11 @@ describe("root-owned hosted updater protocol", () => {
         controllerProtocol: 2,
         requestSchema: 2,
       },
+      recoveryCapabilities: {
+        protocolVersion: 1,
+        operations: ["recoverActive"],
+        journalSchemas: [7, 8],
+      },
     });
     await expect(
       __testing.dispatchUpdateRequest(
