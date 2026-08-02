@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { classifyChangedPaths } from "./ci-change-scope.mjs";
+import { describe, expect, it, vi } from "vitest";
+import { assertResolvedScope, classifyChangedPaths, resolveDiffBase } from "./ci-change-scope.mjs";
 
 describe("CI changed-surface classification", () => {
   it("keeps documentation-only changes lightweight", () => {
@@ -40,7 +40,7 @@ describe("CI changed-surface classification", () => {
     });
   });
 
-  it("runs only narrow contract checks for CI-routing infrastructure", () => {
+  it("runs only narrow contract checks for lifecycle-gate enforcement infrastructure", () => {
     expect(
       classifyChangedPaths([
         ".github/workflows/ci.yml",
@@ -51,9 +51,15 @@ describe("CI changed-surface classification", () => {
         "scripts/ci-required-gates.mjs",
         "scripts/ci-required-gates.test.ts",
         "scripts/ci-workflow-contract.test.ts",
+        "scripts/lifecycle-release-gate.mjs",
+        "scripts/lifecycle-release-gate.test.ts",
+        "scripts/lifecycle-release-gate-receipt.v1.schema.json",
       ]),
     ).toMatchObject({
       ciInfrastructureOnly: true,
+      lifecycleGateEnforcementOnly: true,
+      changeKind: "lifecycle-gate-enforcement-only",
+      productionChanged: false,
       runNode: false,
       runSigner: false,
       runHosting: false,
@@ -61,6 +67,55 @@ describe("CI changed-surface classification", () => {
       runLocalUpdate: false,
       runCiContracts: true,
       runUiMining: false,
+      surfaces: {
+        dockerArchitecture: false,
+        localFresh: false,
+        localUpdate: false,
+        hostingFresh: false,
+        hostingUpdate: false,
+      },
+    });
+  });
+
+  it("keeps every release-workflow edit production-scoped", () => {
+    expect(classifyChangedPaths([".github/workflows/hosted-runtime-release.yml"])).toMatchObject({
+      ciInfrastructureOnly: false,
+      lifecycleGateEnforcementOnly: false,
+      productionChanged: true,
+      runHosting: true,
+      runLocalFresh: true,
+      runLocalUpdate: true,
+    });
+    expect(classifyChangedPaths([".github/workflows/docker-release.yml"])).toMatchObject({
+      ciInfrastructureOnly: false,
+      lifecycleGateEnforcementOnly: false,
+      productionChanged: true,
+      runNode: true,
+    });
+    expect(
+      classifyChangedPaths([
+        "scripts/lifecycle-release-gate.mjs",
+        ".github/workflows/hosted-runtime-release.yml",
+      ]),
+    ).toMatchObject({
+      lifecycleGateEnforcementOnly: false,
+      productionChanged: true,
+      runCiContracts: true,
+      runHosting: true,
+      runLocalFresh: true,
+      runLocalUpdate: true,
+    });
+    expect(
+      classifyChangedPaths([
+        "scripts/lifecycle-release-gate.mjs",
+        ".github/workflows/hosted-runtime-release.yml",
+        "scripts/fased-host-updater.mjs",
+      ]),
+    ).toMatchObject({
+      lifecycleGateEnforcementOnly: false,
+      productionChanged: true,
+      runLocalUpdate: true,
+      runHostingUpdate: true,
     });
   });
 
@@ -129,7 +184,6 @@ describe("CI changed-surface classification", () => {
 
   it("separates Hosting, Local fresh, and Local update lifecycle paths", () => {
     for (const path of [
-      "scripts/fased-host-updater.mjs",
       "scripts/docker/streamed-hosting-bootstrap/run.sh",
       "scripts/docker/hosting-systemd/run.sh",
       "scripts/test-hosting-systemd-container.sh",
@@ -139,6 +193,19 @@ describe("CI changed-surface classification", () => {
         runHosting: true,
         runLocalFresh: false,
         runLocalUpdate: false,
+        runUiMining: false,
+      });
+    }
+
+    for (const path of ["scripts/fased-host-updater.mjs", "scripts/fased-host-updaterctl.mjs"]) {
+      expect(classifyChangedPaths([path]), path).toMatchObject({
+        entryPoints: ["local-update", "hosting-update"],
+        manualReviewRequired: true,
+        runNode: true,
+        runHostingFresh: false,
+        runHostingUpdate: true,
+        runLocalFresh: false,
+        runLocalUpdate: true,
         runUiMining: false,
       });
     }
@@ -236,5 +303,24 @@ describe("CI changed-surface classification", () => {
         fullMatrix: true,
       });
     }
+  });
+
+  it("diffs an explicitly dispatched branch from origin/main", () => {
+    const mergeBase = vi.fn(() => "b".repeat(40));
+
+    expect(resolveDiffBase({ GITHUB_EVENT_NAME: "workflow_dispatch" }, mergeBase)).toBe(
+      "b".repeat(40),
+    );
+    expect(mergeBase).toHaveBeenCalledWith("origin/main");
+  });
+
+  it("fails an ambiguous automatic lifecycle plan but accepts explicit scope", () => {
+    const ambiguous = classifyChangedPaths(["scripts/fased-host-updater.mjs"]);
+    const explicit = classifyChangedPaths(["scripts/fased-host-updater.mjs"], {
+      entryPoint: "local-update",
+    });
+
+    expect(() => assertResolvedScope(ambiguous, true)).toThrow(/explicit workflow_dispatch/u);
+    expect(() => assertResolvedScope(explicit, true)).not.toThrow();
   });
 });

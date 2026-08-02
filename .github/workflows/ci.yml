@@ -11,6 +11,17 @@ on:
         required: true
         default: true
         type: boolean
+      entry_point:
+        description: Narrow a reviewed lifecycle run when full_matrix is false
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - local-fresh
+          - local-update
+          - hosting-fresh
+          - hosting-update
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -20,8 +31,9 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  # Resolve one authoritative changed-surface plan for PRs and main pushes.
-  # Manual runs and failed/empty diffs fail safe to the complete supported matrix.
+  # Resolve one public supporting changed-surface plan for PRs and main pushes.
+  # The private exact-SHA gate remains the merge/release authority. Manual runs
+  # and failed/empty diffs fail safe to the complete supported matrix.
   change-scope:
     runs-on: ubuntu-latest
     outputs:
@@ -36,6 +48,7 @@ jobs:
       docs_changed: ${{ steps.scope.outputs.docs_changed }}
       version_only: ${{ steps.scope.outputs.version_only }}
       ci_infrastructure_only: ${{ steps.scope.outputs.ci_infrastructure_only }}
+      lifecycle_gate_enforcement_only: ${{ steps.scope.outputs.lifecycle_gate_enforcement_only }}
       t2_fixture_only: ${{ steps.scope.outputs.t2_fixture_only }}
       test_only: ${{ steps.scope.outputs.test_only }}
       fixture_only: ${{ steps.scope.outputs.fixture_only }}
@@ -73,6 +86,8 @@ jobs:
         id: scope
         env:
           FULL_MATRIX: ${{ github.event_name == 'workflow_dispatch' && inputs.full_matrix && 'true' || 'false' }}
+          GATE_ENTRY_POINT: ${{ github.event_name == 'workflow_dispatch' && inputs.entry_point != 'none' && inputs.entry_point || '' }}
+          FAIL_ON_MANUAL_REVIEW: "true"
           REUSE_PR_CHECKS: ${{ steps.reuse.outputs.reuse_pr_checks }}
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
           GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
@@ -102,6 +117,7 @@ jobs:
         run: >-
           pnpm exec vitest run
           scripts/gate-authority.test.ts
+          scripts/lifecycle-release-gate.test.ts
           scripts/ci-change-scope.test.ts
           scripts/ci-required-gates.test.ts
           scripts/ci-merged-main-reuse.test.ts
@@ -112,7 +128,7 @@ jobs:
   # Fased or launching fresh Local/Hosting fixtures. This is SUPPORTING evidence;
   # the authoritative same-host generated-unit transaction remains a local T2 gate.
   t2-contracts:
-    name: "T2 harness contracts"
+    name: "T2 privilege source contracts (supporting)"
     needs: [change-scope]
     if: needs.change-scope.outputs.run_t2_contracts == 'true'
     runs-on: ubuntu-latest
@@ -137,7 +153,7 @@ jobs:
           scripts/protected-local-t2-systemd.test.ts
           scripts/test-protected-local-t2-systemd.sh
 
-      - name: Run the six T2 source contracts
+      - name: Run the six T2 privilege source contracts (supporting)
         run: >-
           pnpm exec vitest run
           scripts/protected-local-service-plan.test.ts
@@ -207,7 +223,7 @@ jobs:
       - name: Check release contents
         run: pnpm release:validate-dist:contracts
 
-  # Keep the real packed fresh-install smoke independent of the contract suite.
+  # Keep the packed package smoke independent of the contract suite.
   # Both consume the exact same built dist, so this shortens the release gate
   # without rebuilding or dropping either validation path.
   packed-core-smoke:
@@ -237,7 +253,7 @@ jobs:
           name: dist-build
           path: dist/
 
-      - name: Run packed fresh-install smoke
+      - name: Run packed package smoke
         run: pnpm release:validate-dist:packed
 
   signer-platform:
@@ -528,7 +544,7 @@ jobs:
           retention-days: 1
 
   hosting-lifecycle:
-    name: "hosting lifecycle"
+    name: "Hosting supporting fixtures"
     needs: [change-scope, build-artifacts]
     if: needs.change-scope.outputs.run_hosting == 'true'
     runs-on: ubuntu-latest
@@ -550,14 +566,14 @@ jobs:
           name: dist-build
           path: dist/
 
-      - name: Check hosted runtime installer
+      - name: Run hosted runtime installer supporting check
         run: bash scripts/test-hosted-runtime-install.sh
 
-      - name: Check exact streamed Hosting bootstrap
+      - name: Run streamed Hosting bootstrap supporting fixture
         run: bash scripts/test-streamed-hosting-bootstrap-container.sh
 
   protected-local-lifecycle:
-    name: "protected Local fresh lifecycle (ubuntu)"
+    name: "Local fresh supporting fixture (ubuntu)"
     needs: [change-scope, protected-local-fixture-artifact]
     if: needs.change-scope.outputs.run_local_fresh == 'true'
     runs-on: ubuntu-latest
@@ -588,7 +604,7 @@ jobs:
             ${{ hashFiles('scripts/docker/protected-local-systemd/Containerfile.*',
             'scripts/docker/protected-local-systemd/*.conf') }}
 
-      - name: Check clean Protected Local bootstrap
+      - name: Run synthetic clean Local bootstrap
         env:
           FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
           FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install
@@ -598,7 +614,7 @@ jobs:
         run: bash scripts/test-protected-local-systemd-container.sh
 
   protected-local-rocky-lifecycle:
-    name: "protected Local fresh lifecycle (rocky)"
+    name: "Local fresh compatibility supporting fixture (rocky)"
     needs: [change-scope, protected-local-fixture-artifact]
     if: >-
       needs.change-scope.outputs.run_local_fresh == 'true' &&
@@ -631,7 +647,7 @@ jobs:
             ${{ hashFiles('scripts/docker/protected-local-systemd/Containerfile.*',
             'scripts/docker/protected-local-systemd/*.conf') }}
 
-      - name: Check Rocky compatibility bootstrap
+      - name: Run Rocky Local compatibility supporting fixture
         env:
           FASED_SYSTEMD_FIXTURE_DISTROS: rocky
           FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install
@@ -641,7 +657,7 @@ jobs:
         run: bash scripts/test-protected-local-systemd-container.sh
 
   protected-local-update-lifecycle:
-    name: "protected Local update lifecycle (ubuntu)"
+    name: "Local update supporting fixture (ubuntu)"
     needs: [change-scope, protected-local-fixture-artifact]
     if: needs.change-scope.outputs.run_local_update == 'true'
     runs-on: ubuntu-latest
@@ -673,7 +689,7 @@ jobs:
             ${{ hashFiles('scripts/docker/protected-local-systemd/Containerfile.*',
             'scripts/docker/protected-local-systemd/*.conf') }}
 
-      - name: Check Protected Local update, rollback, retry, and idempotence
+      - name: Run synthetic Local bootstrap, update, rollback, retry, and idempotence
         env:
           FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
           FASED_SYSTEMD_FIXTURE_SCENARIOS: install
@@ -1347,9 +1363,10 @@ jobs:
         with:
           submodules: false
 
-      - name: Require every applicable release gate
+      - name: Require every selected CI job
         env:
           DOCS_CHANGED: ${{ needs.change-scope.outputs.docs_changed }}
+          MANUAL_REVIEW_REQUIRED: ${{ needs.change-scope.outputs.manual_review_required }}
           VERSION_ONLY: ${{ needs.change-scope.outputs.version_only }}
           RUN_NODE: ${{ needs.change-scope.outputs.run_node }}
           RUN_SIGNER: ${{ needs.change-scope.outputs.run_signer }}

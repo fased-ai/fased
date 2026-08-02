@@ -18,12 +18,14 @@ function outputEntries(plan) {
     gate_plan_json: JSON.stringify(plan),
     phase: plan.phase,
     entry_points_json: JSON.stringify(plan.entryPoints),
+    affected_entry_points_json: JSON.stringify(plan.affectedEntryPoints),
     change_kind: plan.changeKind,
     manual_review_required: trueString(plan.manualReviewRequired),
     docs_only: trueString(scope.docsOnly),
     docs_changed: trueString(scope.docsChanged),
     version_only: trueString(scope.versionOnly),
     ci_infrastructure_only: trueString(scope.ciInfrastructureOnly),
+    lifecycle_gate_enforcement_only: trueString(scope.lifecycleGateEnforcementOnly),
     t2_fixture_only: trueString(scope.t2FixtureOnly),
     test_only: trueString(scope.testOnly),
     fixture_only: trueString(scope.fixtureOnly),
@@ -46,7 +48,14 @@ function outputEntries(plan) {
   };
 }
 
-function resolveDiffBase(env = process.env) {
+function gitMergeBase(ref) {
+  return execFileSync("git", ["merge-base", ref, "HEAD"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
+}
+
+export function resolveDiffBase(env = process.env, mergeBase = gitMergeBase) {
   if (env.GITHUB_EVENT_NAME === "push") {
     const before = env.GITHUB_EVENT_BEFORE?.trim();
     if (before && !/^0+$/.test(before)) {
@@ -59,10 +68,7 @@ function resolveDiffBase(env = process.env) {
     const baseRef = env.GITHUB_BASE_REF?.trim();
     if (baseRef) {
       try {
-        return execFileSync("git", ["merge-base", `origin/${baseRef}`, "HEAD"], {
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "ignore"],
-        }).trim();
+        return mergeBase(`origin/${baseRef}`);
       } catch {
         // Fall through to the event's immutable base SHA.
       }
@@ -70,6 +76,14 @@ function resolveDiffBase(env = process.env) {
     const baseSha = env.GITHUB_BASE_SHA?.trim();
     if (baseSha) {
       return baseSha;
+    }
+  }
+
+  if (env.GITHUB_EVENT_NAME === "workflow_dispatch") {
+    try {
+      return mergeBase("origin/main");
+    } catch {
+      return "HEAD^";
     }
   }
 
@@ -83,6 +97,14 @@ export function changedPathsFromGit(env = process.env) {
     stdio: ["ignore", "pipe", "pipe"],
   });
   return normalizeChangedPaths(output.split(/\r?\n/));
+}
+
+export function assertResolvedScope(plan, failOnManualReview) {
+  if (failOnManualReview && plan.manualReviewRequired) {
+    throw new Error(
+      "ci-change-scope: ambiguous lifecycle scope requires an explicit workflow_dispatch entry_point or full_matrix",
+    );
+  }
 }
 
 function main() {
@@ -121,6 +143,7 @@ function main() {
   }
 
   console.log(JSON.stringify({ paths, ...entries }, null, 2));
+  assertResolvedScope(plan, process.env.FAIL_ON_MANUAL_REVIEW === "true");
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

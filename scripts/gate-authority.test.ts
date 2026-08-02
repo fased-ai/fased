@@ -70,7 +70,29 @@ describe("machine gate authority", () => {
     });
 
     expect(plan.entryPoints).toEqual(["local-fresh"]);
+    expect(plan.affectedEntryPoints).toEqual([
+      "local-fresh",
+      "local-update",
+      "hosting-fresh",
+      "hosting-update",
+    ]);
     expect(plan.acceptance).toEqual({ L0: true, L1: false, H0: false, H1: false, H2: false });
+    expect(plan.affectedAcceptance).toEqual({
+      L0: true,
+      L1: true,
+      H0: true,
+      H1: true,
+      H2: true,
+    });
+  });
+
+  it("rejects an explicit lifecycle entry point outside the naturally affected set", () => {
+    expect(() =>
+      createGatePlan(["scripts/protected-local-controller.mjs"], {
+        phase: "T1",
+        entryPoint: "hosting-update",
+      }),
+    ).toThrow(/entry point "hosting-update" is not affected/u);
   });
 
   it("selects T2 and L1, but not L0 or Hosting, for privileged Local update", () => {
@@ -101,4 +123,16 @@ describe("machine gate authority", () => {
 
     expect(plan.acceptance).toEqual({ L0: false, L1: false, H0: true, H1: false, H2: true });
   });
+
+  it.each(["scripts/fased-host-updater.mjs", "scripts/fased-host-updaterctl.mjs"])(
+    "routes shared root-controller change %s to both update entry points",
+    (changedPath) => {
+      const plan = createGatePlan([changedPath], { phase: "T3" });
+
+      expect(plan.entryPoints).toEqual(["local-update", "hosting-update"]);
+      expect(plan.affectedEntryPoints).toEqual(["local-update", "hosting-update"]);
+      expect(plan.manualReviewRequired).toBe(true);
+      expect(plan.acceptance).toEqual({ L0: false, L1: true, H0: true, H1: false, H2: true });
+    },
+  );
 });

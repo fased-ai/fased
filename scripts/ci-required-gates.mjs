@@ -15,6 +15,11 @@ export function assertApplicableGates(input) {
   const results = input.results ?? {};
   requireSuccess(results, "change scope");
   requireSuccess(results, "secrets");
+  if (enabled(input.manualReviewRequired)) {
+    throw new Error(
+      "required change scope is ambiguous; select one lifecycle entry point or the explicit full matrix",
+    );
+  }
 
   if (enabled(input.versionOnly)) {
     requireSuccess(results, "version identity");
@@ -31,7 +36,7 @@ export function assertApplicableGates(input) {
       "Node tests",
       "dist build",
       "release contracts",
-      "packed Local install",
+      "packed package smoke",
     ]) {
       requireSuccess(results, name);
     }
@@ -40,22 +45,22 @@ export function assertApplicableGates(input) {
     requireSuccess(results, "native signer");
   }
   if (enabled(input.runHosting)) {
-    requireSuccess(results, "Hosting lifecycle");
+    requireSuccess(results, "Hosting supporting fixtures");
   }
   if (enabled(input.runLocalFresh) || enabled(input.runLocalUpdate)) {
     requireSuccess(results, "Protected Local fixture artifact");
   }
   if (enabled(input.runLocalFresh)) {
-    requireSuccess(results, "Protected Local lifecycle");
+    requireSuccess(results, "Local fresh supporting fixture");
   }
   if (enabled(input.runLocalUpdate)) {
-    requireSuccess(results, "Protected Local update lifecycle");
+    requireSuccess(results, "Local update supporting fixture");
   }
   if (enabled(input.runCiContracts)) {
     requireSuccess(results, "CI contracts");
   }
   if (enabled(input.runT2Contracts)) {
-    requireSuccess(results, "T2 harness contracts");
+    requireSuccess(results, "T2 privilege source contracts (supporting)");
   }
   if (enabled(input.runUiMining)) {
     requireSuccess(results, "Mining browser");
@@ -67,7 +72,7 @@ export function assertApplicableGates(input) {
     requireSuccess(results, "macOS");
   }
   if (enabled(input.fullMatrix)) {
-    requireSuccess(results, "Protected Local Rocky lifecycle");
+    requireSuccess(results, "Local Rocky supporting fixture");
     requireSuccess(results, "full UI");
     requireSuccess(results, "Windows");
   }
@@ -76,6 +81,7 @@ export function assertApplicableGates(input) {
 export function gateInputFromEnv(env = process.env) {
   return {
     docsChanged: env.DOCS_CHANGED,
+    manualReviewRequired: env.MANUAL_REVIEW_REQUIRED,
     versionOnly: env.VERSION_ONLY,
     runNode: env.RUN_NODE,
     runSigner: env.RUN_SIGNER,
@@ -98,15 +104,15 @@ export function gateInputFromEnv(env = process.env) {
       "Node tests": env.TESTS,
       "dist build": env.BUILD,
       "release contracts": env.RELEASE,
-      "packed Local install": env.PACKED_CORE,
+      "packed package smoke": env.PACKED_CORE,
       "native signer": env.SIGNER,
-      "Hosting lifecycle": env.HOSTING,
+      "Hosting supporting fixtures": env.HOSTING,
       "Protected Local fixture artifact": env.PROTECTED_LOCAL_ARTIFACT,
-      "Protected Local lifecycle": env.PROTECTED_LOCAL,
-      "Protected Local Rocky lifecycle": env.PROTECTED_LOCAL_ROCKY,
-      "Protected Local update lifecycle": env.PROTECTED_LOCAL_UPDATE,
+      "Local fresh supporting fixture": env.PROTECTED_LOCAL,
+      "Local Rocky supporting fixture": env.PROTECTED_LOCAL_ROCKY,
+      "Local update supporting fixture": env.PROTECTED_LOCAL_UPDATE,
       "CI contracts": env.CI_CONTRACTS,
-      "T2 harness contracts": env.T2_CONTRACTS,
+      "T2 privilege source contracts (supporting)": env.T2_CONTRACTS,
       "Mining browser": env.UI_MINING,
       skills: env.SKILLS,
       macOS: env.MACOS,
@@ -118,7 +124,9 @@ export function gateInputFromEnv(env = process.env) {
 
 function main() {
   assertApplicableGates(gateInputFromEnv());
-  console.log("ci-required-gates: every applicable gate succeeded");
+  console.log(
+    "ci-required-gates: every selected supporting CI job succeeded; installed acceptance remains receipt-bound",
+  );
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

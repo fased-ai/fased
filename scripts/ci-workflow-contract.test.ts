@@ -8,9 +8,12 @@ const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 
 type WorkflowJob = {
   if?: string;
+  name?: string;
   needs?: string[];
+  permissions?: Record<string, string>;
   "timeout-minutes"?: number;
   steps?: Array<{
+    id?: string;
     env?: Record<string, string>;
     run?: string;
     uses?: string;
@@ -37,11 +40,25 @@ describe("CI workflow routing", () => {
     expect(jobs["android"]).toBeUndefined();
     expect(jobs["version-identity"]).toBeDefined();
     expect(jobs["ci-contracts"]).toBeDefined();
+    expect(jobs["lifecycle-release-authorization"]).toBeUndefined();
     expect(jobs["t2-contracts"]).toBeDefined();
     expect(jobs["hosting-lifecycle"]).toBeDefined();
     expect(jobs["protected-local-fixture-artifact"]).toBeDefined();
     expect(jobs["protected-local-rocky-lifecycle"]).toBeDefined();
     expect(jobs["protected-local-update-lifecycle"]).toBeDefined();
+    expect(jobs["hosting-lifecycle"]?.name).toBe("Hosting supporting fixtures");
+    expect(jobs["protected-local-lifecycle"]?.name).toBe("Local fresh supporting fixture (ubuntu)");
+    expect(jobs["protected-local-update-lifecycle"]?.name).toBe(
+      "Local update supporting fixture (ubuntu)",
+    );
+    expect(jobs["t2-contracts"]?.name).toBe("T2 privilege source contracts (supporting)");
+
+    const changeScope = jobs["change-scope"]?.steps?.find((step) => step.id === "scope");
+    expect(changeScope?.env).toMatchObject({
+      GATE_ENTRY_POINT:
+        "${{ github.event_name == 'workflow_dispatch' && inputs.entry_point != 'none' && inputs.entry_point || '' }}",
+      FAIL_ON_MANUAL_REVIEW: "true",
+    });
 
     const releaseCheck = jobs["release-check"];
     expect(
@@ -86,6 +103,7 @@ describe("CI workflow routing", () => {
     );
     expect(required?.steps?.at(-1)?.run).toBe("node scripts/ci-required-gates.mjs");
     expect(required?.steps?.at(-1)?.env).toMatchObject({
+      MANUAL_REVIEW_REQUIRED: "${{ needs.change-scope.outputs.manual_review_required }}",
       VERSION_ONLY: "${{ needs.change-scope.outputs.version_only }}",
       RUN_HOSTING: "${{ needs.change-scope.outputs.run_hosting }}",
       RUN_LOCAL_FRESH: "${{ needs.change-scope.outputs.run_local_fresh }}",
@@ -98,6 +116,12 @@ describe("CI workflow routing", () => {
       PROTECTED_LOCAL_UPDATE: "${{ needs.protected-local-update-lifecycle.result }}",
       T2_CONTRACTS: "${{ needs.t2-contracts.result }}",
     });
+
+    const ciContractCommand = jobs["ci-contracts"]?.steps?.find((step) =>
+      step.run?.includes("scripts/gate-authority.test.ts"),
+    )?.run;
+    expect(ciContractCommand).toContain("scripts/lifecycle-release-gate.test.ts");
+    expect(ciContractCommand).not.toContain("scripts/ci-lifecycle-release-status");
   });
 
   it("keeps expensive compatibility lanes opt-in or path-scoped", async () => {
@@ -152,6 +176,26 @@ describe("CI workflow routing", () => {
     expect(dockerWorkflow).not.toContain("scripts/docker/protected-local-systemd/**");
     expect(dockerWorkflow).not.toContain("scripts/docker/hosting-systemd/**");
     expect(dockerWorkflow).not.toContain("scripts/docker/streamed-hosting-bootstrap/**");
+  });
+
+  it("never lets candidate-controlled workflow code authorize release publication", async () => {
+    const hosted = await readWorkflow(".github/workflows/hosted-runtime-release.yml");
+    const hostedJobs = hosted.jobs ?? {};
+    expect(hostedJobs["lifecycle-release-authorization"]).toBeUndefined();
+
+    const docker = await readWorkflow(".github/workflows/docker-release.yml");
+    const dockerJobs = docker.jobs ?? {};
+    expect(dockerJobs["lifecycle-release-authorization"]).toBeUndefined();
+
+    for (const workflowPath of [
+      ".github/workflows/ci.yml",
+      ".github/workflows/hosted-runtime-release.yml",
+      ".github/workflows/docker-release.yml",
+    ]) {
+      const text = await readFile(resolve(repoRoot, workflowPath), "utf8");
+      expect(text).not.toContain("ci-lifecycle-release-status.mjs");
+      expect(text).not.toContain("FASED_LIFECYCLE_GATE_ACTORS");
+    }
   });
 
   it("selects beta for every prerelease target in the Protected Local fixture", async () => {

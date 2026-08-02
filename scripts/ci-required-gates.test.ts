@@ -21,9 +21,21 @@ describe("required CI gate aggregation", () => {
       assertApplicableGates({
         docsChanged: true,
         versionOnly: true,
-        results: { ...alwaysGreen, "version identity": "success" },
+        results: {
+          ...alwaysGreen,
+          "version identity": "success",
+        },
       }),
     ).not.toThrow();
+  });
+
+  it("fails a version-only change without version identity", () => {
+    expect(() =>
+      assertApplicableGates({
+        versionOnly: true,
+        results: alwaysGreen,
+      }),
+    ).toThrow(/required version identity result was missing/u);
   });
 
   it("requires Node, Hosting, Local fresh, and Local update only when selected", () => {
@@ -33,11 +45,11 @@ describe("required CI gate aggregation", () => {
       "Node tests": "success",
       "dist build": "success",
       "release contracts": "success",
-      "packed Local install": "success",
-      "Hosting lifecycle": "success",
+      "packed package smoke": "success",
+      "Hosting supporting fixtures": "success",
       "Protected Local fixture artifact": "success",
-      "Protected Local lifecycle": "success",
-      "Protected Local update lifecycle": "success",
+      "Local fresh supporting fixture": "success",
+      "Local update supporting fixture": "success",
     };
     expect(() =>
       assertApplicableGates({
@@ -57,10 +69,10 @@ describe("required CI gate aggregation", () => {
         results: {
           ...alwaysGreen,
           ...selected,
-          "Hosting lifecycle": "skipped",
+          "Hosting supporting fixtures": "skipped",
         },
       }),
-    ).toThrow(/required Hosting lifecycle result was skipped/);
+    ).toThrow(/required Hosting supporting fixtures result was skipped/);
     expect(() =>
       assertApplicableGates({
         runNode: true,
@@ -68,15 +80,15 @@ describe("required CI gate aggregation", () => {
         results: {
           ...alwaysGreen,
           ...selected,
-          "Protected Local update lifecycle": "failure",
+          "Local update supporting fixture": "failure",
         },
       }),
-    ).toThrow(/required Protected Local update lifecycle result was failure/);
+    ).toThrow(/required Local update supporting fixture result was failure/);
 
     expect(() =>
       assertApplicableGates({
         runHosting: true,
-        results: { ...alwaysGreen, "Hosting lifecycle": "success" },
+        results: { ...alwaysGreen, "Hosting supporting fixtures": "success" },
       }),
     ).not.toThrow();
     expect(() =>
@@ -85,7 +97,7 @@ describe("required CI gate aggregation", () => {
         results: {
           ...alwaysGreen,
           "Protected Local fixture artifact": "success",
-          "Protected Local lifecycle": "success",
+          "Local fresh supporting fixture": "success",
         },
       }),
     ).not.toThrow();
@@ -98,15 +110,30 @@ describe("required CI gate aggregation", () => {
     expect(() =>
       assertApplicableGates({
         runT2Contracts: true,
-        results: { ...alwaysGreen, "T2 harness contracts": "success" },
+        results: {
+          ...alwaysGreen,
+          "T2 privilege source contracts (supporting)": "success",
+        },
       }),
     ).not.toThrow();
     expect(() =>
       assertApplicableGates({
         runT2Contracts: true,
-        results: { ...alwaysGreen, "T2 harness contracts": "skipped" },
+        results: {
+          ...alwaysGreen,
+          "T2 privilege source contracts (supporting)": "skipped",
+        },
       }),
-    ).toThrow(/required T2 harness contracts result was skipped/);
+    ).toThrow(/required T2 privilege source contracts \(supporting\) result was skipped/);
+  });
+
+  it("fails an ambiguous lifecycle scope before treating supporting jobs as acceptance", () => {
+    expect(() =>
+      assertApplicableGates({
+        manualReviewRequired: true,
+        results: alwaysGreen,
+      }),
+    ).toThrow(/change scope is ambiguous/u);
   });
 
   it("requires all selected full-matrix lanes", () => {
@@ -115,7 +142,7 @@ describe("required CI gate aggregation", () => {
         fullMatrix: true,
         results: {
           ...alwaysGreen,
-          "Protected Local Rocky lifecycle": "success",
+          "Local Rocky supporting fixture": "success",
           "full UI": "success",
           Windows: "success",
         },
@@ -126,7 +153,7 @@ describe("required CI gate aggregation", () => {
         fullMatrix: true,
         results: {
           ...alwaysGreen,
-          "Protected Local Rocky lifecycle": "success",
+          "Local Rocky supporting fixture": "success",
           "full UI": "success",
           Windows: "failure",
         },
