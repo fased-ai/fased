@@ -31,9 +31,9 @@ const predecessorVersion = "1.2.0";
 const now = Date.parse("2026-08-02T12:00:00.000Z");
 const publishedLegacyRef = "v0.1.76-rc.30";
 const publishedLegacyServerSha256 =
-  "ecad0b06bc1eb0612f052534e77760b8995ae144071f5973f7b1dab1b802ca6d";
+  "ecad0b06bc1eb0612f052534e77760b8995ae144071f5973f7b1dab1b802ca6d"; // pragma: allowlist secret
 const publishedLegacyClientSha256 =
-  "9cee31906ba86800c2a5699d9895cbe73d5b74fea6c3f2b3c56f7732d6f34799";
+  "9cee31906ba86800c2a5699d9895cbe73d5b74fea6c3f2b3c56f7732d6f34799"; // pragma: allowlist secret
 const digest = (character: string) => character.repeat(64);
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 const prefixedSha256 = (value: string) => `sha256:${sha256(value)}`;
