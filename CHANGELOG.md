@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.32
+
+- Build and attest the complete immutable Hosting/application/signer candidate
+  set without exposing a GitHub prerelease from the tag-triggered workflow.
+- Promote only the exact candidate run authorized by the private release gate,
+  then verify every remote asset name, size, and digest before exposure.
+- Package the exact release-infrastructure tree proven by PR #259; stable
+  promotion remains blocked until the independent acceptance gates pass.
+
 ## 0.1.76-rc.31
 
 - Bind Local update readiness to the exact target generation, including final
