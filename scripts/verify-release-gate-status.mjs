@@ -57,11 +57,12 @@ export function verifyReleaseGateStatus(statuses, options) {
   if (Number.isNaN(now.getTime())) {
     fail("verification time is invalid");
   }
+  const expectedStatusUrl = `https://api.github.com/repos/${options.repository}/statuses/${options.commit}`;
   const candidates = statuses
     .filter(
       (status) =>
         status?.context === RELEASE_GATE_CONTEXT &&
-        status?.sha === options.commit &&
+        status?.url === expectedStatusUrl &&
         status?.state === "success",
     )
     .toSorted((left, right) => Number(right.id || 0) - Number(left.id || 0));

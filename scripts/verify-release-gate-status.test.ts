@@ -9,7 +9,7 @@ const now = new Date("2026-08-02T12:00:00.000Z");
 function status(overrides = {}) {
   return {
     id: 10,
-    sha: commit,
+    url: `https://api.github.com/repos/fased-ai/fased/statuses/${commit}`,
     state: "success",
     context: RELEASE_GATE_CONTEXT,
     description: `r=${receiptDigest.slice(7)};e=2026-08-02T12:30:00.000Z;a=tag`,
@@ -46,7 +46,11 @@ describe("release gate status verification", () => {
       /malformed/,
     ],
     ["expired", status({ description: status().description.replace("12:30", "11:30") }), /expired/],
-    ["wrong commit", status({ sha: "c".repeat(40) }), /no successful/],
+    [
+      "wrong commit",
+      status({ url: `https://api.github.com/repos/fased-ai/fased/statuses/${"c".repeat(40)}` }),
+      /no successful/,
+    ],
     [
       "unbound artifact set",
       status({ target_url: `https://github.com/fased-ai/fased/commit/${commit}` }),
