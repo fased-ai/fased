@@ -4575,7 +4575,6 @@ async function stageRecoveryController(transaction, productJournal, request, con
         // verified trust transition. Only the mutable controller selection is
         // restored before the transaction is cleared.
         await context.clearSupervisorTransaction(context.paths);
-        transactionActive = false;
         await clearRecoveryControllerArtifacts(context, transaction.transactionId);
       } catch (restoreError) {
         throw new Error(
