@@ -307,19 +307,19 @@ describe("machine gate authority", () => {
     });
   });
 
-  it("fails closed for UI tests whose declared jsdom environment is not installed", () => {
+  it("routes UI tests that declare the installed jsdom environment", () => {
     const plan = createGatePlan(["ui/src/ui/app-chat.test.ts"]);
     expect(plan.scope).toMatchObject({
       testOnly: true,
-      runUi: false,
-      runNode: false,
+      runUi: true,
+      runNode: true,
       runNodeBuild: false,
       runNodeFull: false,
     });
-    expect(plan.manualReviewRequired).toBe(true);
+    expect(plan.manualReviewRequired).toBe(false);
   });
 
-  it("requires manual review for test-looking files outside supported exact lanes", () => {
+  it("blocks test-looking files outside supported exact lanes with a precise error", () => {
     for (const path of [
       "apps/ios/Sources/App.test.ts",
       "vendor/example.test.ts",
@@ -327,10 +327,9 @@ describe("machine gate authority", () => {
       "tests/io.test.ts",
       "src/config/io.spec.ts",
     ]) {
-      const plan = createGatePlan([path]);
-      expect(plan.scope.testOnly, path).toBe(true);
-      expect(plan.manualReviewRequired, path).toBe(true);
-      expect(plan.scope.runNodeUnit, path).toBe(false);
+      expect(() => createGatePlan([path]), path).toThrow(
+        /gate authority: classification blocked: no automatic test lane/u,
+      );
     }
   });
 
@@ -352,7 +351,7 @@ describe("machine gate authority", () => {
     });
     const mobile = createGatePlan(["apps/ios/Sources/App/Main.swift"]);
     expect(mobile.changeKind).toBe("experimental-mobile");
-    expect(mobile.manualReviewRequired).toBe(true);
+    expect(mobile.manualReviewRequired).toBe(false);
     expect(mobile.scope).toMatchObject({
       runMacosRuntime: false,
       runMacosApp: false,
@@ -361,10 +360,9 @@ describe("machine gate authority", () => {
   });
 
   it("fails closed for a new unclassified production root", () => {
-    const plan = createGatePlan(["new-product/runtime.rs"]);
-    expect(plan.changeKind).toBe("production");
-    expect(plan.manualReviewRequired).toBe(true);
-    expect(plan.scope.runNodeFull).toBe(true);
+    expect(() => createGatePlan(["new-product/runtime.rs"])).toThrow(
+      'gate authority: classification blocked: unclassified production paths ["new-product/runtime.rs"]',
+    );
   });
 
   it("fails closed for unknown source types nested under known directories", () => {
@@ -372,18 +370,35 @@ describe("machine gate authority", () => {
       "src/new-security-boundary/config.xyz",
       "scripts/new-production-daemon.rb",
     ]) {
-      const plan = createGatePlan([path]);
-      expect(plan.changeKind).toBe("production");
-      expect(plan.manualReviewRequired).toBe(true);
+      expect(() => createGatePlan([path]), path).toThrow(
+        /gate authority: classification blocked: unclassified production paths/u,
+      );
     }
   });
 
   it("does not treat lookalike CI files as trusted CI infrastructure", () => {
     for (const path of ["scripts/gate-authority.mjs.evil", ".github/workflows/ci.yml.backup"]) {
-      const plan = createGatePlan([path]);
-      expect(plan.scope.ciInfrastructureOnly).toBe(false);
-      expect(plan.manualReviewRequired).toBe(true);
+      expect(() => createGatePlan([path]), path).toThrow(
+        /gate authority: classification blocked: unclassified production paths/u,
+      );
     }
+  });
+
+  it("routes known multi-entry-point changes automatically", () => {
+    const plan = createGatePlan(["install.sh"]);
+    expect(plan.affectedEntryPoints).toEqual([
+      "local-fresh",
+      "local-update",
+      "hosting-fresh",
+      "hosting-update",
+    ]);
+    expect(plan.manualReviewRequired).toBe(false);
+  });
+
+  it("automatically falls back to the full supported matrix when path evidence is missing", () => {
+    expect(createGatePlan([]).scope.fullMatrix).toBe(true);
+    expect(createGatePlan([]).manualReviewRequired).toBe(false);
+    expect(createGatePlan([], { fullMatrix: true }).manualReviewRequired).toBe(false);
   });
 
   it("routes shared Local updater code through the supported macOS runtime lane", () => {

@@ -206,13 +206,13 @@ describe("required CI gate aggregation", () => {
     ).not.toThrow();
   });
 
-  it("fails closed when the classifier requires manual review", () => {
+  it("rejects stale plans that request a human-only classifier escape hatch", () => {
     expect(() =>
       assertApplicableGates({
         manualReviewRequired: true,
         results: alwaysGreen,
       }),
-    ).toThrow(/manual review is required/u);
+    ).toThrow(/classification blocked: a stale gate plan requested manual review/u);
   });
 
   it("requires only supported full-matrix compatibility lanes", () => {

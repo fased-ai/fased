@@ -27,18 +27,6 @@ const TEST_PATH_RE =
 const NON_PRODUCTION_TEST_PATH_RE = /^(?:test\/|tests\/|fixtures\/|.*\.(?:test|spec)\.[^.]+$)/;
 const ROUTABLE_TEST_PATH_RE = /^(?:src|scripts|test|extensions|ui)\/.*\.test\.ts$/u;
 const NON_ROUTINE_TEST_PATH_RE = /\.(?:e2e|live)\.test\.ts$/u;
-const UI_JSDOM_TEST_PATHS = new Set([
-  "ui/src/ui/app-chat.test.ts",
-  "ui/src/ui/app-chat.webchat-responsiveness.test.ts",
-  "ui/src/ui/controllers/control-ui-bootstrap.test.ts",
-  "ui/src/ui/views/chat.grouped-visibility.test.ts",
-  "ui/src/ui/views/chat.test.ts",
-  "ui/src/ui/views/dreaming.test.ts",
-  "ui/src/ui/views/instances.test.ts",
-  "ui/src/ui/views/nodes.devices.test.ts",
-  "ui/src/ui/views/sessions.test.ts",
-  "ui/src/ui/views/skills.test.ts",
-]);
 const NODE_PATH_RE =
   /^(?:src\/|test\/|extensions\/|packages\/|scripts\/|ui\/|\.github\/|fased\.mjs$|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|tsconfig[^/]*\.json$|vitest[^/]*\.ts$|tsdown\.config\.ts$|\.oxlintrc\.json$|\.oxfmtrc\.jsonc$)/;
 const KNOWN_NODE_SOURCE_PATH_RE =
@@ -154,7 +142,8 @@ function isKnownProductionPath(path) {
     SHARED_FRESH_PATH_RE.test(path) ||
     HOSTING_FRESH_PATH_RE.test(path) ||
     HOSTING_UPDATE_PATH_RE.test(path) ||
-    DOCKER_PRODUCT_PATH_RE.test(path)
+    DOCKER_PRODUCT_PATH_RE.test(path) ||
+    SKILLS_PATH_RE.test(path)
   );
 }
 
@@ -332,7 +321,9 @@ export function createGatePlan(inputPaths, options = {}) {
       surfaces: surfaceMap(scope, paths, paths, true),
       acceptance: acceptanceGates(scope),
       affectedAcceptance: acceptanceGates(scope),
-      manualReviewRequired: unknown && !fullMatrix,
+      // A failed diff is handled automatically by the complete supported
+      // matrix. It never falls through to a human approval escape hatch.
+      manualReviewRequired: false,
     };
     return Object.freeze({ ...body, planDigest: digestPlan(body) });
   }
@@ -382,15 +373,25 @@ export function createGatePlan(inputPaths, options = {}) {
   const routableTestOnly =
     testOnly &&
     !t2FixtureOnly &&
-    paths.every(
-      (path) =>
-        ROUTABLE_TEST_PATH_RE.test(path) &&
-        !NON_ROUTINE_TEST_PATH_RE.test(path) &&
-        !UI_JSDOM_TEST_PATHS.has(path),
-    );
+    paths.every((path) => ROUTABLE_TEST_PATH_RE.test(path) && !NON_ROUTINE_TEST_PATH_RE.test(path));
   const unclassifiedProductionPaths = productionPaths.filter(
     (path) => !isKnownProductionPath(path),
   );
+
+  if (testOnly && !t2FixtureOnly && !fixtureOnly && !routableTestOnly) {
+    const unroutableTestPaths = paths.filter(
+      (path) => !ROUTABLE_TEST_PATH_RE.test(path) || NON_ROUTINE_TEST_PATH_RE.test(path),
+    );
+    throw new Error(
+      `gate authority: classification blocked: no automatic test lane for ${JSON.stringify(unroutableTestPaths)}`,
+    );
+  }
+
+  if (unclassifiedProductionPaths.length > 0) {
+    throw new Error(
+      `gate authority: classification blocked: unclassified production paths ${JSON.stringify(unclassifiedProductionPaths)}`,
+    );
+  }
 
   let hasUnclassifiedNonNativeNonDocs = false;
   for (const path of effectivePaths) {
@@ -650,12 +651,10 @@ export function createGatePlan(inputPaths, options = {}) {
     surfaces: surfaceMap(affectedScope, paths, productionPaths),
     acceptance: acceptanceGates(scope),
     affectedAcceptance: acceptanceGates(affectedScope),
-    manualReviewRequired:
-      changeKind === "unknown" ||
-      experimentalMobileChanged ||
-      (testOnly && !t2FixtureOnly && !routableTestOnly) ||
-      unclassifiedProductionPaths.length > 0 ||
-      (changeKind === "production" && !entryPoint && selectedEntryPoints.length > 1),
+    // Kept for consumers of the v3 plan schema. Successful classification is
+    // fully automatic; ambiguous paths fail above instead of requesting a
+    // human-only escape hatch.
+    manualReviewRequired: false,
   };
   return Object.freeze({ ...body, planDigest: digestPlan(body) });
 }

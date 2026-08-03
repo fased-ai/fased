@@ -17,7 +17,9 @@ export function assertApplicableGates(input) {
   requireSuccess(results, "secrets");
 
   if (enabled(input.manualReviewRequired)) {
-    throw new Error("manual review is required before this change can use the routine CI lane");
+    throw new Error(
+      "classification blocked: a stale gate plan requested manual review; add an automatic route and regenerate the plan",
+    );
   }
 
   if (enabled(input.versionOnly)) {
