@@ -932,9 +932,13 @@ default:other::---
     expect(installer).toContain("--resume-local-onboarding");
     expect(installer).not.toContain("bootstrap_protected_local_topology rollback");
     expect(installer).toContain("signer_sha256=");
-    expect(installer).toContain("apt-get install -y git curl ca-certificates jq acl");
+    expect(installer).toContain("local -a apt_packages=(git curl ca-certificates jq acl)");
+    expect(installer).toContain("need_cmd setpriv || apt_packages+=(util-linux)");
+    expect(installer).toContain('apt-get install -y "${apt_packages[@]}"');
     expect(installer).toContain('missing+=("acl")');
-    expect(installer).toContain("pacman -Sy --needed --noconfirm git curl ca-certificates jq acl");
+    expect(installer).toContain(
+      "pacman -Sy --needed --noconfirm git curl ca-certificates jq acl util-linux nodejs npm",
+    );
     const sharedStateStart = bootstrap.indexOf("async function shareApplicationState(");
     const sharedStateEnd = bootstrap.indexOf(
       "\n\nconst PROTECTED_LOCAL_OPERATOR_ONLY_STATE",
