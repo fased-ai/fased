@@ -54,4 +54,23 @@ describe("wallet application state permissions", () => {
       });
     },
   );
+
+  it.each([
+    ["Protected Local", { FASED_HOST_PROFILE: "local", FASED_PROTECTED_LOCAL: "1" }],
+    ["Hosting", { FASED_HOST_PROFILE: "hosting", FASED_PROTECTED_LOCAL: undefined }],
+  ])("repairs an existing owner-only wallet directory for %s", async (_name, vars) => {
+    await withStateDirEnv("fased-wallet-state-repair-", async ({ stateDir }) => {
+      const env = { ...process.env, FASED_STATE_DIR: stateDir, ...vars };
+      const walletDir = path.join(stateDir, "wallet");
+      await fs.mkdir(walletDir, { recursive: true, mode: 0o700 });
+      await fs.writeFile(path.join(walletDir, "provider-registry.v1.json"), "{}\n", {
+        mode: 0o600,
+      });
+
+      ensureWalletStateDir(env);
+      writeWalletProviderRegistry(readWalletProviderRegistry(env), env);
+
+      expect(await modes(stateDir)).toEqual({ directory: 0o2770, registry: 0o660 });
+    });
+  });
 });

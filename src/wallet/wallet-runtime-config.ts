@@ -196,11 +196,22 @@ export function walletApplicationStateFileMode(env: NodeJS.ProcessEnv = process.
 export function ensureWalletStateDir(env: NodeJS.ProcessEnv = process.env): WalletStatePaths {
   const paths = resolveWalletStatePaths(env);
   const shared = isSharedWalletApplicationState(env);
+  const expectedMode = shared ? 0o2770 : 0o700;
   if (!fs.existsSync(paths.rootDir)) {
-    fs.mkdirSync(paths.rootDir, { recursive: true, mode: shared ? 0o770 : 0o700 });
+    fs.mkdirSync(paths.rootDir, { recursive: true, mode: shared ? 0o770 : expectedMode });
   }
-  if (!shared) {
-    fs.chmodSync(paths.rootDir, 0o700);
+  const currentMode = fs.statSync(paths.rootDir).mode & 0o7777;
+  if (currentMode !== expectedMode) {
+    try {
+      fs.chmodSync(paths.rootDir, expectedMode);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (!shared || (code !== "EACCES" && code !== "EPERM")) {
+        throw error;
+      }
+      // A peer service may not own the shared directory. The operator or root
+      // controller remains responsible for restoring its authoritative mode.
+    }
   }
   return paths;
 }
