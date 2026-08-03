@@ -12,6 +12,7 @@ type WorkflowJob = {
   "timeout-minutes"?: number;
   steps?: Array<{
     env?: Record<string, string>;
+    id?: string;
     name?: string;
     run?: string;
     uses?: string;
@@ -39,6 +40,7 @@ describe("CI workflow routing", () => {
     expect(jobs["version-identity"]).toBeDefined();
     expect(jobs["ci-contracts"]).toBeDefined();
     expect(jobs["t2-contracts"]).toBeDefined();
+    expect(jobs["node-focused"]).toBeDefined();
     expect(jobs["hosting-lifecycle"]).toBeDefined();
     expect(jobs["protected-local-fixture-artifact"]).toBeDefined();
     expect(jobs["protected-local-rocky-lifecycle"]).toBeDefined();
@@ -86,6 +88,8 @@ describe("CI workflow routing", () => {
         "change-scope",
         "ci-contracts",
         "t2-contracts",
+        "node-focused",
+        "dependency-integrity",
         "version-identity",
         "hosting-lifecycle",
         "protected-local-fixture-artifact",
@@ -94,6 +98,14 @@ describe("CI workflow routing", () => {
         "ui-mining",
         "checks-windows",
         "macos",
+        "signer-integration",
+        "signer-darwin-integration",
+        "platform-bootstrap-audit",
+        "docker-amd64",
+        "docker-arm64",
+        "codeql-javascript",
+        "codeql-go",
+        "codeql-python",
         "secrets",
       ]),
     );
@@ -105,12 +117,125 @@ describe("CI workflow routing", () => {
       RUN_LOCAL_UPDATE: "${{ needs.change-scope.outputs.run_local_update }}",
       RUN_CI_CONTRACTS: "${{ needs.change-scope.outputs.run_ci_contracts }}",
       RUN_T2_CONTRACTS: "${{ needs.change-scope.outputs.run_t2_contracts }}",
+      RUN_NODE_FOCUSED: "${{ needs.change-scope.outputs.run_node_focused }}",
+      RUN_DEPENDENCY_INTEGRITY: "${{ needs.change-scope.outputs.run_dependency_integrity }}",
+      RUN_NODE_BUILD: "${{ needs.change-scope.outputs.run_node_build }}",
+      RUN_NODE_PACKAGING: "${{ needs.change-scope.outputs.run_node_packaging }}",
+      RUN_NODE_FULL: "${{ needs.change-scope.outputs.run_node_full }}",
+      RUN_NATIVE_SIGNER: "${{ needs.change-scope.outputs.run_native_signer }}",
+      RUN_SIGNER_INTEGRATION: "${{ needs.change-scope.outputs.run_signer_integration }}",
+      RUN_SIGNER_DARWIN_INTEGRATION:
+        "${{ needs.change-scope.outputs.run_signer_darwin_integration }}",
+      RUN_PLATFORM_BOOTSTRAP: "${{ needs.change-scope.outputs.run_platform_bootstrap }}",
+      RUN_DOCKER: "${{ needs.change-scope.outputs.run_docker }}",
+      RUN_CODEQL_JAVASCRIPT: "${{ needs.change-scope.outputs.run_codeql_javascript }}",
+      RUN_CODEQL_GO: "${{ needs.change-scope.outputs.run_codeql_go }}",
+      RUN_CODEQL_PYTHON: "${{ needs.change-scope.outputs.run_codeql_python }}",
       RUN_UI_MINING: "${{ needs.change-scope.outputs.run_ui_mining }}",
       PROTECTED_LOCAL_ARTIFACT: "${{ needs.protected-local-fixture-artifact.result }}",
       PROTECTED_LOCAL_ROCKY: "${{ needs.protected-local-rocky-lifecycle.result }}",
       PROTECTED_LOCAL_UPDATE: "${{ needs.protected-local-update-lifecycle.result }}",
       T2_CONTRACTS: "${{ needs.t2-contracts.result }}",
+      FOCUSED_TESTS: "${{ needs.node-focused.result }}",
+      DEPENDENCY_INTEGRITY: "${{ needs.dependency-integrity.result }}",
+      SIGNER_INTEGRATION: "${{ needs.signer-integration.result }}",
+      SIGNER_DARWIN_INTEGRATION: "${{ needs.signer-darwin-integration.result }}",
+      PLATFORM_BOOTSTRAP: "${{ needs.platform-bootstrap-audit.result }}",
+      DOCKER_AMD64: "${{ needs.docker-amd64.result }}",
+      DOCKER_ARM64: "${{ needs.docker-arm64.result }}",
+      CODEQL_JAVASCRIPT: "${{ needs.codeql-javascript.result }}",
+      CODEQL_GO: "${{ needs.codeql-go.result }}",
+      CODEQL_PYTHON: "${{ needs.codeql-python.result }}",
     });
+  });
+
+  it("binds trusted routing to granular fast lanes", async () => {
+    const workflow = await readWorkflow(".github/workflows/ci.yml");
+    const jobs = workflow.jobs ?? {};
+    const scopeSteps = jobs["change-scope"]?.steps ?? [];
+    const privateRoute = scopeSteps.find((step) => step.id === "private-route");
+    const scope = scopeSteps.find((step) => step.id === "scope");
+
+    expect(privateRoute?.run).toBe("node scripts/ci-private-route-status.mjs");
+    expect(privateRoute?.env).toMatchObject({
+      GH_TOKEN: "${{ github.token }}",
+      FASED_PRIVATE_STATUS_ACTOR: "${{ vars.FASED_PRIVATE_STATUS_ACTOR }}",
+      FASED_PRIVATE_STATUS_ACTOR_ID: "${{ vars.FASED_PRIVATE_STATUS_ACTOR_ID }}",
+    });
+    expect(scope?.env).toMatchObject({
+      GATE_ROUTE: "${{ steps.private-route.outputs.gate_route }}",
+      GATE_PHASE: "${{ steps.private-route.outputs.gate_phase || 'T3' }}",
+      GATE_ENTRY_POINT: "${{ steps.private-route.outputs.gate_entry_point }}",
+      GATE_EXPECTED_PLAN_DIGEST: "${{ steps.private-route.outputs.expected_plan_digest }}",
+    });
+    const ciContractCommand =
+      jobs["ci-contracts"]?.steps?.find(
+        (step) => step.name === "Check CI routing and gate contracts",
+      )?.run ?? "";
+    expect(ciContractCommand).toContain("scripts/ci-private-route-status.test.ts");
+
+    const focused = jobs["node-focused"];
+    expect(focused?.if).toBe("needs.change-scope.outputs.run_node_focused == 'true'");
+    const focusedCommands = focused?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    expect(focusedCommands).toContain("scripts/protected-local-bootstrap.test.ts");
+    expect(focusedCommands).toContain("src/wallet/wallet-application-state-permissions.test.ts");
+    expect(focusedCommands).toContain("test-protected-local-supervisor-client-root-fixture.sh");
+
+    expect(jobs["checks"]?.if).toBe("needs.change-scope.outputs.run_node_full == 'true'");
+    expect(jobs["build-artifacts"]?.if).toContain("run_node_build");
+    expect(jobs["release-check"]?.if).toBe(
+      "needs.change-scope.outputs.run_node_packaging == 'true'",
+    );
+    expect(jobs["packed-core-smoke"]?.if).toBe(
+      "needs.change-scope.outputs.run_node_packaging == 'true'",
+    );
+
+    const dependency = jobs["dependency-integrity"];
+    expect(dependency?.if).toBe("needs.change-scope.outputs.run_dependency_integrity == 'true'");
+    expect(dependency?.["timeout-minutes"]).toBeLessThanOrEqual(3);
+    const dependencyCommands = dependency?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    expect(dependencyCommands).toContain("node scripts/ci-dependency-integrity.mjs");
+    expect(dependencyCommands).toContain("pnpm install --lockfile-only");
+    expect(dependencyCommands).toContain("pnpm audit --prod --audit-level high");
+
+    const secretsCommands = jobs["secrets"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    expect(secretsCommands).not.toContain("pnpm-audit-prod");
+    expect(secretsCommands).not.toContain("pnpm audit");
+
+    expect(jobs["signer-platform"]?.if).toBe(
+      "needs.change-scope.outputs.run_native_signer == 'true'",
+    );
+    expect(jobs["signer-integration"]?.if).toBe(
+      "needs.change-scope.outputs.run_signer_integration == 'true'",
+    );
+    expect(jobs["signer-darwin-integration"]?.if).toBe(
+      "needs.change-scope.outputs.run_signer_darwin_integration == 'true'",
+    );
+
+    for (const jobName of ["protected-local-lifecycle", "protected-local-update-lifecycle"]) {
+      const fixture = jobs[jobName]?.steps?.find(
+        (step) => step.env?.FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS !== undefined,
+      );
+      expect(fixture?.env?.FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS, jobName).toBe("1");
+    }
+    const bootstrap = jobs["platform-bootstrap-audit"];
+    expect(bootstrap?.if).toBe("needs.change-scope.outputs.run_platform_bootstrap == 'true'");
+    expect(
+      bootstrap?.steps?.find(
+        (step) => step.env?.FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS !== undefined,
+      )?.env?.FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS,
+    ).toBe("0");
+
+    expect(jobs["docker-amd64"]?.if).toBe("needs.change-scope.outputs.run_docker == 'true'");
+    expect(jobs["docker-arm64"]?.if).toBe("needs.change-scope.outputs.run_docker == 'true'");
+    expect(jobs["codeql-javascript"]?.if).toBe(
+      "needs.change-scope.outputs.run_codeql_javascript == 'true'",
+    );
+    expect(jobs["codeql-javascript"]?.["timeout-minutes"]).toBeGreaterThanOrEqual(20);
+    expect(jobs["codeql-go"]?.if).toBe("needs.change-scope.outputs.run_codeql_go == 'true'");
+    expect(jobs["codeql-python"]?.if).toBe(
+      "needs.change-scope.outputs.run_codeql_python == 'true'",
+    );
   });
 
   it("keeps expensive compatibility lanes opt-in or path-scoped", async () => {
@@ -165,6 +290,7 @@ describe("CI workflow routing", () => {
     expect(dockerWorkflow).not.toContain("scripts/docker/protected-local-systemd/**");
     expect(dockerWorkflow).not.toContain("scripts/docker/hosting-systemd/**");
     expect(dockerWorkflow).not.toContain("scripts/docker/streamed-hosting-bootstrap/**");
+    expect(dockerWorkflow).not.toContain("pull_request:");
   });
 
   it("builds a non-publishing tag candidate and promotes only its exact verified bytes", async () => {

@@ -1,7 +1,80 @@
 import { describe, expect, it } from "vitest";
-import { classifyChangedPaths } from "./ci-change-scope.mjs";
+import {
+  assertExpectedPlanDigest,
+  classifyChangedPaths,
+  outputEntries,
+} from "./ci-change-scope.mjs";
+import { createGatePlan } from "./gate-authority.mjs";
 
 describe("CI changed-surface classification", () => {
+  it("serializes granular Node, signer, Docker, bootstrap, and CodeQL outputs", () => {
+    const plan = createGatePlan(["scripts/protected-local-bootstrap.mjs"], {
+      entryPoint: "local-update",
+    });
+    const output = outputEntries(plan);
+
+    expect(output).toMatchObject({
+      run_node_focused: "true",
+      run_node_build: "true",
+      run_node_full: "false",
+      run_native_signer: "false",
+      run_signer_integration: "true",
+      run_local_fresh: "false",
+      run_local_update: "true",
+      run_codeql_javascript: "true",
+      run_codeql_go: "false",
+      run_codeql_python: "false",
+      codeql_languages_json: '["javascript-typescript"]',
+    });
+  });
+
+  it("routes an exact trusted dependency remediation only through dependency integrity", () => {
+    const output = outputEntries(createGatePlan(["package.json", "pnpm-lock.yaml"]), {
+      route: "dependency-remediation",
+    });
+
+    expect(output).toMatchObject({
+      change_kind: "production",
+      dependency_remediation: "true",
+      run_dependency_integrity: "true",
+      run_node: "false",
+      run_node_focused: "false",
+      run_node_build: "false",
+      run_node_packaging: "false",
+      run_node_full: "false",
+      run_signer: "false",
+      run_local_fresh: "false",
+      run_local_update: "false",
+      run_hosting: "false",
+      run_docker: "false",
+      run_codeql_javascript: "false",
+      run_codeql_go: "false",
+      run_codeql_python: "false",
+    });
+  });
+
+  it("retains dependency integrity without narrowing an untrusted package change", () => {
+    const output = outputEntries(createGatePlan(["package.json", "pnpm-lock.yaml"]));
+
+    expect(output).toMatchObject({
+      dependency_remediation: "false",
+      run_dependency_integrity: "true",
+      run_node_build: "true",
+      run_node_packaging: "true",
+      run_node_full: "true",
+    });
+  });
+
+  it("rejects a trusted private route bound to a different public plan", () => {
+    const plan = createGatePlan(["scripts/protected-local-bootstrap.mjs"], {
+      entryPoint: "local-update",
+    });
+    expect(() => assertExpectedPlanDigest(plan, plan.planDigest)).not.toThrow();
+    expect(() => assertExpectedPlanDigest(plan, `sha256:${"0".repeat(64)}`)).toThrow(
+      /trusted route plan digest mismatch/u,
+    );
+  });
+
   it("keeps documentation-only changes lightweight", () => {
     expect(classifyChangedPaths(["docs/start/install.md", "README.md"])).toMatchObject({
       docsOnly: true,

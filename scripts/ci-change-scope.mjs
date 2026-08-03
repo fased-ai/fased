@@ -10,8 +10,36 @@ function trueString(value) {
   return value ? "true" : "false";
 }
 
-function outputEntries(plan) {
+export function isDependencyRemediationRoute(plan, route) {
+  if (route !== "dependency-remediation") {
+    return false;
+  }
+  const paths = [...plan.paths].toSorted((left, right) => left.localeCompare(right));
+  if (
+    plan.entryPoint !== null ||
+    plan.changeKind !== "production" ||
+    plan.manualReviewRequired ||
+    paths.length !== 2 ||
+    paths[0] !== "package.json" ||
+    paths[1] !== "pnpm-lock.yaml"
+  ) {
+    throw new Error(
+      "ci-change-scope: trusted dependency-remediation route does not match the exact two-file plan",
+    );
+  }
+  return true;
+}
+
+export function outputEntries(plan, options = {}) {
   const scope = plan.scope;
+  const dependencyRemediation = isDependencyRemediationRoute(plan, options.route ?? "");
+  const runDependencyIntegrity = dependencyRemediation || scope.runNodePackaging;
+  const lane = (value) => !dependencyRemediation && value;
+  const codeqlLanguages = [
+    lane(scope.runCodeqlJavascript) && "javascript-typescript",
+    lane(scope.runCodeqlGo) && "go",
+    lane(scope.runCodeqlPython) && "python",
+  ].filter(Boolean);
   return {
     authority_version: String(plan.authorityVersion),
     plan_digest: plan.planDigest,
@@ -30,20 +58,47 @@ function outputEntries(plan) {
     production_changed: trueString(scope.productionChanged),
     privilege_changed: trueString(scope.privilegeChanged),
     reuse_pr_checks: trueString(scope.reusePrChecks),
-    run_node: trueString(scope.runNode),
+    dependency_remediation: trueString(dependencyRemediation),
+    run_dependency_integrity: trueString(runDependencyIntegrity),
+    run_node: trueString(lane(scope.runNode)),
+    run_node_focused: trueString(lane(scope.runNodeFocused)),
+    run_node_build: trueString(lane(scope.runNodeBuild)),
+    run_node_packaging: trueString(lane(scope.runNodePackaging)),
+    run_node_full: trueString(lane(scope.runNodeFull)),
     run_macos: trueString(scope.runMacos),
-    run_signer: trueString(scope.runSigner),
-    run_hosting: trueString(scope.runHosting),
-    run_hosting_fresh: trueString(scope.runHostingFresh),
-    run_hosting_update: trueString(scope.runHostingUpdate),
-    run_local_fresh: trueString(scope.runLocalFresh),
-    run_local_update: trueString(scope.runLocalUpdate),
+    run_signer: trueString(lane(scope.runSigner)),
+    run_native_signer: trueString(lane(scope.runNativeSigner)),
+    run_signer_integration: trueString(lane(scope.runSignerIntegration)),
+    run_signer_darwin_integration: trueString(lane(scope.runSignerDarwinIntegration)),
+    run_platform_bootstrap: trueString(lane(scope.runPlatformBootstrap)),
+    run_docker: trueString(lane(scope.runDocker)),
+    run_codeql_javascript: trueString(lane(scope.runCodeqlJavascript)),
+    run_codeql_go: trueString(lane(scope.runCodeqlGo)),
+    run_codeql_python: trueString(lane(scope.runCodeqlPython)),
+    codeql_languages_json: JSON.stringify(codeqlLanguages),
+    run_hosting: trueString(lane(scope.runHosting)),
+    run_hosting_fresh: trueString(lane(scope.runHostingFresh)),
+    run_hosting_update: trueString(lane(scope.runHostingUpdate)),
+    run_local_fresh: trueString(lane(scope.runLocalFresh)),
+    run_local_update: trueString(lane(scope.runLocalUpdate)),
     run_ci_contracts: trueString(scope.runCiContracts),
     run_t2_contracts: trueString(scope.runT2Contracts),
-    run_ui_mining: trueString(scope.runUiMining),
-    run_skills: trueString(scope.runSkills),
-    full_matrix: trueString(scope.fullMatrix),
+    run_ui_mining: trueString(lane(scope.runUiMining)),
+    run_skills: trueString(lane(scope.runSkills)),
+    full_matrix: trueString(lane(scope.fullMatrix)),
   };
+}
+
+export function assertExpectedPlanDigest(plan, expectedDigest) {
+  const expected = expectedDigest?.trim();
+  if (!expected) {
+    return;
+  }
+  if (plan.planDigest !== expected) {
+    throw new Error(
+      `ci-change-scope: trusted route plan digest mismatch: expected ${expected}, computed ${plan.planDigest}`,
+    );
+  }
 }
 
 function resolveDiffBase(env = process.env) {
@@ -111,7 +166,8 @@ function main() {
     reusePrChecks,
     unknown,
   });
-  const entries = outputEntries(plan);
+  assertExpectedPlanDigest(plan, process.env.GATE_EXPECTED_PLAN_DIGEST);
+  const entries = outputEntries(plan, { route: process.env.GATE_ROUTE || "" });
   const outputPath = process.env.GITHUB_OUTPUT;
   if (!outputPath) {
     throw new Error("ci-change-scope: GITHUB_OUTPUT is required");

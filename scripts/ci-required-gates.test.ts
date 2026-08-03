@@ -26,11 +26,27 @@ describe("required CI gate aggregation", () => {
     ).not.toThrow();
   });
 
-  it("requires Node, Hosting, Local fresh, and Local update only when selected", () => {
+  it("requires the dedicated dependency-integrity result when selected", () => {
+    expect(() =>
+      assertApplicableGates({
+        runDependencyIntegrity: true,
+        results: { ...alwaysGreen, "dependency integrity": "success" },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertApplicableGates({
+        runDependencyIntegrity: true,
+        results: { ...alwaysGreen, "dependency integrity": "skipped" },
+      }),
+    ).toThrow(/required dependency integrity result was skipped/u);
+  });
+
+  it("requires granular Node, Hosting, Local fresh, and Local update only when selected", () => {
     const selected = {
       "format and lint": "success",
       "strict types baseline": "success",
-      "Node tests": "success",
+      "focused Node tests": "success",
+      "full Node tests": "success",
       "dist build": "success",
       "release contracts": "success",
       "packed Local install": "success",
@@ -41,7 +57,10 @@ describe("required CI gate aggregation", () => {
     };
     expect(() =>
       assertApplicableGates({
-        runNode: true,
+        runNodeFocused: true,
+        runNodeBuild: true,
+        runNodePackaging: true,
+        runNodeFull: true,
         runHosting: true,
         runLocalFresh: true,
         runLocalUpdate: true,
@@ -50,7 +69,10 @@ describe("required CI gate aggregation", () => {
     ).not.toThrow();
     expect(() =>
       assertApplicableGates({
-        runNode: true,
+        runNodeFocused: true,
+        runNodeBuild: true,
+        runNodePackaging: true,
+        runNodeFull: true,
         runHosting: true,
         runLocalFresh: true,
         runLocalUpdate: true,
@@ -63,7 +85,8 @@ describe("required CI gate aggregation", () => {
     ).toThrow(/required Hosting lifecycle result was skipped/);
     expect(() =>
       assertApplicableGates({
-        runNode: true,
+        runNodeFocused: true,
+        runNodeBuild: true,
         runLocalUpdate: true,
         results: {
           ...alwaysGreen,
@@ -107,6 +130,56 @@ describe("required CI gate aggregation", () => {
         results: { ...alwaysGreen, "T2 harness contracts": "skipped" },
       }),
     ).toThrow(/required T2 harness contracts result was skipped/);
+  });
+
+  it("does not require full Node, packaging, or native signer for a focused Local update", () => {
+    expect(() =>
+      assertApplicableGates({
+        runNodeFocused: true,
+        runNodeBuild: true,
+        runSignerIntegration: true,
+        runLocalUpdate: true,
+        runT2Contracts: true,
+        results: {
+          ...alwaysGreen,
+          "format and lint": "success",
+          "strict types baseline": "success",
+          "focused Node tests": "success",
+          "dist build": "success",
+          "signer integration": "success",
+          "Protected Local fixture artifact": "success",
+          "Protected Local update lifecycle": "success",
+          "T2 harness contracts": "success",
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it("requires selected platform-bootstrap, Docker, and split signer lanes", () => {
+    expect(() =>
+      assertApplicableGates({
+        runNativeSigner: true,
+        runSignerIntegration: true,
+        runSignerDarwinIntegration: true,
+        runPlatformBootstrap: true,
+        runDocker: true,
+        runCodeqlJavascript: true,
+        runCodeqlGo: true,
+        runCodeqlPython: true,
+        results: {
+          ...alwaysGreen,
+          "native signer": "success",
+          "signer integration": "success",
+          "Darwin signer integration": "success",
+          "platform bootstrap": "success",
+          "Docker amd64": "success",
+          "Docker arm64": "success",
+          "CodeQL JavaScript": "success",
+          "CodeQL Go": "success",
+          "CodeQL Python": "success",
+        },
+      }),
+    ).not.toThrow();
   });
 
   it("requires all selected full-matrix lanes", () => {

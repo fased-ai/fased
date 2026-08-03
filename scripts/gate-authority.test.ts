@@ -14,7 +14,7 @@ describe("machine gate authority", () => {
     const plan = createGatePlan(t2FixturePaths, { phase: "T2" });
 
     expect(plan).toMatchObject({
-      authorityVersion: 1,
+      authorityVersion: 2,
       phase: "T2",
       entryPoints: [],
       changeKind: "t2-fixture-only",
@@ -57,13 +57,19 @@ describe("machine gate authority", () => {
 
   it("routes exact release promotion infrastructure without product lifecycle lanes", () => {
     const plan = createGatePlan([
+      ".github/workflows/ci.yml",
+      ".github/workflows/docker-release.yml",
       ".github/workflows/hosted-runtime-release.yml",
+      "scripts/ci-private-route-status.mjs",
+      "scripts/ci-private-route-status.test.ts",
       "scripts/release-artifact-set.mjs",
       "scripts/release-artifact-set.test.ts",
       "scripts/verify-release-gate-status.mjs",
       "scripts/verify-release-gate-status.test.ts",
       "scripts/gate-authority.mjs",
       "scripts/gate-authority.test.ts",
+      "docs/reference/ci.md",
+      "AGENTS.md",
     ]);
 
     expect(plan.changeKind).toBe("ci-infrastructure-only");
@@ -78,6 +84,10 @@ describe("machine gate authority", () => {
       runHosting: false,
       runLocalFresh: false,
       runLocalUpdate: false,
+      runDocker: false,
+      runCodeqlJavascript: false,
+      runCodeqlGo: false,
+      runCodeqlPython: false,
     });
     expect(plan.acceptance).toEqual({ L0: false, L1: false, H0: false, H1: false, H2: false });
   });
@@ -100,7 +110,7 @@ describe("machine gate authority", () => {
     expect(plan.acceptance).toEqual({ L0: true, L1: false, H0: false, H1: false, H2: false });
   });
 
-  it("selects T2 and L1, but not L0 or Hosting, for privileged Local update", () => {
+  it("selects T2 and L1, but keeps broad Node coverage for a non-allowlisted updater", () => {
     const plan = createGatePlan(["scripts/fased-managed-updater.mjs"], {
       phase: "T3",
       entryPoint: "local-update",
@@ -108,7 +118,143 @@ describe("machine gate authority", () => {
 
     expect(plan.scope.privilegeChanged).toBe(true);
     expect(plan.scope.runT2Contracts).toBe(true);
+    expect(plan.scope).toMatchObject({
+      runNodeFocused: false,
+      runNodeBuild: true,
+      runNodePackaging: false,
+      runNodeFull: true,
+      runNativeSigner: false,
+      runSignerIntegration: true,
+      runPlatformBootstrap: false,
+      runDocker: false,
+      runCodeqlJavascript: true,
+      runCodeqlGo: false,
+      runCodeqlPython: false,
+    });
     expect(plan.acceptance).toEqual({ L0: false, L1: true, H0: false, H1: false, H2: false });
+  });
+
+  it("routes the complete focused Local-update correction without L0, native signer, or Docker", () => {
+    const plan = createGatePlan(
+      [
+        "scripts/protected-local-bootstrap.mjs",
+        "scripts/protected-local-bootstrap.test.ts",
+        "scripts/protected-local-supervisor-client-root-fixture.mjs",
+        "scripts/test-protected-local-supervisor-client-root-fixture.sh",
+        "src/wallet/wallet-runtime-config.ts",
+        "src/wallet/wallet-application-state-permissions.test.ts",
+      ],
+      { phase: "T1", entryPoint: "local-update" },
+    );
+
+    expect(plan.scope).toMatchObject({
+      runNodeFocused: true,
+      runNodeBuild: true,
+      runNodePackaging: false,
+      runNodeFull: false,
+      runNativeSigner: false,
+      runSignerIntegration: true,
+      runPlatformBootstrap: false,
+      runDocker: false,
+      runCodeqlJavascript: true,
+      runCodeqlGo: false,
+      runCodeqlPython: false,
+      runT2Contracts: true,
+      runLocalFresh: false,
+      runLocalUpdate: true,
+      runHosting: false,
+    });
+    expect(plan.acceptance).toEqual({ L0: false, L1: true, H0: false, H1: false, H2: false });
+    expect(plan.affectedAcceptance).toEqual({
+      L0: true,
+      L1: true,
+      H0: false,
+      H1: false,
+      H2: false,
+    });
+  });
+
+  it("routes native signer changes through native and JavaScript integration independently", () => {
+    const native = createGatePlan(["tools/fased-signerd/main.go"]);
+    expect(native.scope).toMatchObject({
+      runNode: false,
+      runNodeBuild: false,
+      runNodeFull: false,
+      runSigner: true,
+      runNativeSigner: true,
+      runSignerIntegration: true,
+      runCodeqlGo: true,
+      runCodeqlJavascript: false,
+    });
+
+    const integration = createGatePlan(["scripts/protected-local-bootstrap.mjs"], {
+      entryPoint: "local-update",
+    });
+    expect(integration.scope).toMatchObject({
+      runSigner: true,
+      runNativeSigner: false,
+      runSignerIntegration: true,
+      runSignerDarwinIntegration: false,
+    });
+  });
+
+  it("routes Python without the Node matrix", () => {
+    const plan = createGatePlan(["skills/example/tool.py"]);
+    expect(plan.scope).toMatchObject({
+      runNode: false,
+      runNodeBuild: false,
+      runNodeFull: false,
+      runSkills: true,
+      runCodeqlPython: true,
+      runCodeqlJavascript: false,
+    });
+  });
+
+  it("keeps CI-only Docker workflow edits out of product Docker validation", () => {
+    const plan = createGatePlan([".github/workflows/docker-release.yml"]);
+    expect(plan.scope).toMatchObject({
+      ciInfrastructureOnly: true,
+      runCiContracts: true,
+      runDocker: false,
+    });
+  });
+
+  it("keeps CI-only authority edits out of production CodeQL", () => {
+    const plan = createGatePlan(["scripts/ci-private-route-status.mjs"]);
+    expect(plan.scope).toMatchObject({
+      ciInfrastructureOnly: true,
+      runCiContracts: true,
+      runCodeqlJavascript: false,
+      runNodeFull: false,
+    });
+  });
+
+  it("selects package, platform-bootstrap, Docker, and CodeQL lanes independently", () => {
+    expect(createGatePlan(["package.json", "pnpm-lock.yaml"]).scope).toMatchObject({
+      runNodeBuild: true,
+      runNodePackaging: true,
+      runNodeFull: true,
+      runDocker: false,
+    });
+    expect(createGatePlan(["install.sh"], { entryPoint: "local-fresh" }).scope).toMatchObject({
+      runPlatformBootstrap: true,
+      runLocalFresh: true,
+      runLocalUpdate: false,
+    });
+    expect(createGatePlan(["Dockerfile"]).scope).toMatchObject({
+      runDocker: true,
+    });
+    expect(createGatePlan(["skills/example/tool.py"]).scope).toMatchObject({
+      runCodeqlJavascript: false,
+      runCodeqlGo: false,
+      runCodeqlPython: true,
+    });
+  });
+
+  it("does not mistake lifecycle container fixtures for product Docker changes", () => {
+    expect(createGatePlan(["scripts/docker/protected-local-systemd/run.sh"]).scope.runDocker).toBe(
+      false,
+    );
   });
 
   it("keeps fresh Hosting H1 independent from existing Hosting H2", () => {
