@@ -4,6 +4,17 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.34
+
+- Preserve the protected Local privilege boundary while staging legacy updater
+  adoption through a separately executable, digest-verified client path.
+- Converge incomplete legacy updater dependencies and shared Wallet, Mining,
+  and application-state permissions during the standard Local bootstrap.
+- Resolve the root-controlled system Node.js runtime before release identity
+  inspection, and route focused CI through the exact trusted change class.
+- Package the exact Local-update correction proven by PR #266; RC33 remains an
+  immutable predecessor and is not modified by this candidate.
+
 ## 0.1.76-rc.33
 
 - Bind GitHub release-gate status identity to the exact commit-status API URL
