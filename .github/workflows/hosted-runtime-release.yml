@@ -5,8 +5,22 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Exact immutable tag whose candidate bytes will be promoted
+        required: true
+        type: string
+      candidate_run_id:
+        description: Tag workflow run that produced the complete candidate artifact
+        required: true
+        type: string
+      gate_receipt_digest:
+        description: Exact private github-release gate receipt digest
+        required: true
+        type: string
 
 permissions:
+  actions: read
   artifact-metadata: write
   attestations: write
   contents: write
@@ -20,8 +34,41 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  release-gate:
+    name: Verify exact release authorization
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact tagged source
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+
+      - name: Verify tag-only lifecycle release gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRUSTED_RELEASE_ACTOR: ${{ vars.FASED_TRUSTED_RELEASE_ACTOR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$TRUSTED_RELEASE_ACTOR"
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/statuses?per_page=100" \
+            --slurp | jq 'add' > "$RUNNER_TEMP/release-statuses.json"
+          node scripts/verify-release-gate-status.mjs \
+            --statuses "$RUNNER_TEMP/release-statuses.json" \
+            --commit "$GITHUB_SHA" \
+            --action tag \
+            --trusted-actor "$TRUSTED_RELEASE_ACTOR" \
+            --repository "$GITHUB_REPOSITORY"
+
   validate:
     name: Validate release contents
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release-gate
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -59,6 +106,8 @@ jobs:
 
   linux:
     name: Linux ${{ matrix.arch }}
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release-gate
     strategy:
       fail-fast: false
       matrix:
@@ -113,6 +162,8 @@ jobs:
 
   signer:
     name: Native wallet signer
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release-gate
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -256,7 +307,7 @@ jobs:
 
   candidate:
     name: Assemble offline-attested candidate
-    if: github.event_name == 'workflow_dispatch'
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: [validate, linux, signer]
     runs-on: ubuntu-24.04
     steps:
@@ -300,19 +351,6 @@ jobs:
             --issued-at "${lifecycle_times[0]}" \
             --expires-at "${lifecycle_times[1]}" \
             --output .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json
-          node --input-type=module - .artifacts/hosted-runtime/fased-hosting-candidate.json <<'NODE'
-          import { readFileSync, writeFileSync } from "node:fs";
-          const [output] = process.argv.slice(2);
-          const { version } = JSON.parse(readFileSync("package.json", "utf8"));
-          writeFileSync(output, `${JSON.stringify({
-            schemaVersion: 1,
-            version,
-            commit: process.env.GITHUB_SHA,
-            sourceRef: process.env.GITHUB_REF,
-            workflowRunId: process.env.GITHUB_RUN_ID,
-            stablePublication: false,
-          }, null, 2)}\n`, { mode: 0o644 });
-          NODE
 
       - name: Attest unified candidate manifest
         id: attest-candidate-manifest
@@ -397,117 +435,115 @@ jobs:
             --version "$(node -p "require('../../package.json').version")" \
             --commit "$GITHUB_SHA"
 
+      - name: Bind the complete candidate artifact set
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version="$(node -p "require('./package.json').version")"
+          node scripts/release-artifact-set.mjs build \
+            --directory .artifacts/hosted-runtime \
+            --version "$package_version" \
+            --commit "$GITHUB_SHA" \
+            --source-ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID"
+
+      - name: Attest the complete candidate descriptor
+        id: attest-candidate-descriptor
+        uses: actions/attest@v4
+        with:
+          subject-path: .artifacts/hosted-runtime/fased-hosting-candidate.json
+
+      - name: Stage and verify the exact promotion descriptor
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 0644 \
+            "${{ steps.attest-candidate-descriptor.outputs.bundle-path }}" \
+            .artifacts/hosted-runtime/fased-hosting-candidate.json.attestation.json
+          gh attestation verify \
+            .artifacts/hosted-runtime/fased-hosting-candidate.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle .artifacts/hosted-runtime/fased-hosting-candidate.json.attestation.json \
+            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+            --source-ref "$GITHUB_REF" \
+            --deny-self-hosted-runners >/dev/null
+          package_version="$(node -p "require('./package.json').version")"
+          node scripts/release-artifact-set.mjs verify \
+            --directory .artifacts/hosted-runtime \
+            --version "$package_version" \
+            --commit "$GITHUB_SHA" \
+            --source-ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID"
+
       - name: Upload complete non-publishing candidate
         uses: actions/upload-artifact@v4
         with:
-          name: fased-hosting-candidate-${{ github.sha }}
+          name: fased-hosting-candidate
           path: .artifacts/hosted-runtime/*
           if-no-files-found: error
           retention-days: 7
 
   publish:
-    name: Publish verified runtime assets
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [validate, linux, signer]
+    name: Promote exact verified candidate bytes
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout exact tagged source
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
 
-      - name: Download verified architecture artifacts
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+
+      - name: Download the complete tag-built candidate
         uses: actions/download-artifact@v4
         with:
-          pattern: fased-*
+          name: fased-hosting-candidate
           path: .artifacts/hosted-runtime
-          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
 
-      - name: Assemble one app and signer release manifest
-        shell: bash
-        run: |
-          set -euo pipefail
-          package_version="$(node -p "require('./package.json').version")"
-          test "$GITHUB_REF_NAME" = "v${package_version}"
-          node scripts/build-hosted-release-manifest.mjs \
-            --assets .artifacts/hosted-runtime \
-            --version "$package_version" \
-            --commit "$GITHUB_SHA" \
-            --output .artifacts/hosted-runtime/fased-hosted-release-v2.json
-          readarray -t lifecycle_times < <(node -e '
-            const issued = new Date(process.argv[1]);
-            const expires = new Date(issued.getTime() + 365 * 24 * 60 * 60 * 1000);
-            process.stdout.write(`${issued.toISOString()}\n${expires.toISOString()}\n`);
-          ' "$(git show -s --format=%cI "$GITHUB_SHA")")
-          node scripts/privileged-release-evidence.mjs build \
-            --assets .artifacts/hosted-runtime \
-            --version "$package_version" \
-            --commit "$GITHUB_SHA" \
-            --issued-at "${lifecycle_times[0]}" \
-            --vex-decisions release/vulnerability-decisions-v1.json \
-            --output-dir .artifacts/hosted-runtime
-          node scripts/build-lifecycle-trust-metadata.mjs \
-            --assets .artifacts/hosted-runtime \
-            --root-policy release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json \
-            --version "$package_version" \
-            --commit "$GITHUB_SHA" \
-            --issued-at "${lifecycle_times[0]}" \
-            --expires-at "${lifecycle_times[1]}" \
-            --output .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json
-
-      - name: Attest unified hosted release manifest
-        id: attest-hosted-release-manifest
-        uses: actions/attest@v4
-        with:
-          subject-path: .artifacts/hosted-runtime/fased-hosted-release-v2.json
-
-      - name: Stage unified manifest attestation bundle
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -m 0644 \
-            "${{ steps.attest-hosted-release-manifest.outputs.bundle-path }}" \
-            .artifacts/hosted-runtime/fased-hosted-release-v2.json.attestation.json
-
-      - name: Attest lifecycle trust metadata
-        id: attest-release-lifecycle-trust
-        uses: actions/attest@v4
-        with:
-          subject-path: .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json
-
-      - name: Stage lifecycle trust attestation bundle
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -m 0644 \
-            "${{ steps.attest-release-lifecycle-trust.outputs.bundle-path }}" \
-            .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json.attestation.json
-
-      - name: Attest privileged release provenance
-        id: attest-release-provenance
-        uses: actions/attest@v4
-        with:
-          subject-path: .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json
-
-      - name: Stage privileged provenance attestation bundle
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -m 0644 \
-            "${{ steps.attest-release-provenance.outputs.bundle-path }}" \
-            .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json.attestation.json
-
-      - name: Verify privileged release evidence before publication
-        shell: bash
+      - name: Verify exact candidate identity and release authorization
         env:
-          GH_PROMPT_DISABLED: "1"
+          GH_TOKEN: ${{ github.token }}
+          TRUSTED_RELEASE_ACTOR: ${{ vars.FASED_TRUSTED_RELEASE_ACTOR }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          GATE_RECEIPT_DIGEST: ${{ inputs.gate_receipt_digest }}
+        shell: bash
         run: |
           set -euo pipefail
+          test -n "$TRUSTED_RELEASE_ACTOR"
+          package_version="$(node -p "require('./package.json').version")"
+          test "$RELEASE_TAG" = "v${package_version}"
+          release_commit="$(git rev-parse HEAD)"
+          test "$(git describe --tags --exact-match HEAD)" = "$RELEASE_TAG"
+          candidate_verification="$(node scripts/release-artifact-set.mjs verify \
+            --directory .artifacts/hosted-runtime \
+            --version "$package_version" \
+            --commit "$release_commit" \
+            --source-ref "refs/tags/$RELEASE_TAG" \
+            --workflow-run-id "$CANDIDATE_RUN_ID")"
+          promotion_artifact_set_digest="$(jq -er .promotionArtifactSetDigest <<<"$candidate_verification")"
+          gh attestation verify \
+            .artifacts/hosted-runtime/fased-hosting-candidate.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle .artifacts/hosted-runtime/fased-hosting-candidate.json.attestation.json \
+            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+            --source-ref "refs/tags/$RELEASE_TAG" \
+            --deny-self-hosted-runners >/dev/null
           gh attestation verify \
             .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json \
             --repo "$GITHUB_REPOSITORY" \
             --bundle \
               .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json.attestation.json \
             --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-            --source-ref "$GITHUB_REF" \
+            --source-ref "refs/tags/$RELEASE_TAG" \
             --deny-self-hosted-runners >/dev/null
           node scripts/privileged-release-evidence.mjs verify \
             --release-manifest .artifacts/hosted-runtime/fased-hosted-release-v2.json \
@@ -515,32 +551,58 @@ jobs:
             --provenance .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json \
             --sbom .artifacts/hosted-runtime/fased-privileged-sbom-v1.spdx.json \
             --vex .artifacts/hosted-runtime/fased-privileged-vex-v1.openvex.json \
-            --version "$(node -p "require('./package.json').version")" \
-            --commit "$GITHUB_SHA"
+            --version "$package_version" \
+            --commit "$release_commit"
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/commits/$release_commit/statuses?per_page=100" \
+            --slurp | jq 'add' > "$RUNNER_TEMP/release-statuses.json"
+          node scripts/verify-release-gate-status.mjs \
+            --statuses "$RUNNER_TEMP/release-statuses.json" \
+            --commit "$release_commit" \
+            --action github-release \
+            --trusted-actor "$TRUSTED_RELEASE_ACTOR" \
+            --repository "$GITHUB_REPOSITORY" \
+            --receipt-digest "$GATE_RECEIPT_DIGEST" \
+            --artifact-set-digest "$promotion_artifact_set_digest"
 
-      - name: Publish GitHub release assets
+      - name: Publish one draft and expose it only after every byte uploads
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         shell: bash
         run: |
           set -euo pipefail
           package_version="$(node -p "require('./package.json').version")"
-          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            release_args=(
-              "$GITHUB_REF_NAME"
-              --repo "$GITHUB_REPOSITORY"
-              --title "Fased Agent $GITHUB_REF_NAME"
-              --generate-notes
-            )
-            if [[ "$package_version" == *-* ]]; then
-              release_args+=(--prerelease --latest=false)
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already exists; refusing non-atomic overwrite: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          created=false
+          cleanup() {
+            if [[ "$created" == true ]]; then
+              gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 || true
             fi
-            gh release create "${release_args[@]}"
-          fi
-          is_prerelease="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)"
+          }
+          trap cleanup EXIT
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Fased Agent $RELEASE_TAG" \
+            --generate-notes \
+            --draft
+          created=true
+          gh release upload "$RELEASE_TAG" .artifacts/hosted-runtime/* \
+            --repo "$GITHUB_REPOSITORY"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            --jq '[.assets[] | {name,size,digest}]' > "$RUNNER_TEMP/release-assets.json"
+          node scripts/release-artifact-set.mjs verify-assets \
+            --directory .artifacts/hosted-runtime \
+            --assets-json "$RUNNER_TEMP/release-assets.json"
           if [[ "$package_version" == *-* ]]; then
-            test "$is_prerelease" = "true"
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --draft=false --prerelease --latest=false
           else
-            test "$is_prerelease" = "false"
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --draft=false --prerelease=false --latest
           fi
-          gh release upload "$GITHUB_REF_NAME" .artifacts/hosted-runtime/* --repo "$GITHUB_REPOSITORY"
+          created=false
+          trap - EXIT

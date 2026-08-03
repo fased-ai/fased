@@ -12,6 +12,7 @@ type WorkflowJob = {
   "timeout-minutes"?: number;
   steps?: Array<{
     env?: Record<string, string>;
+    name?: string;
     run?: string;
     uses?: string;
     with?: Record<string, boolean | number | string>;
@@ -164,6 +165,38 @@ describe("CI workflow routing", () => {
     expect(dockerWorkflow).not.toContain("scripts/docker/protected-local-systemd/**");
     expect(dockerWorkflow).not.toContain("scripts/docker/hosting-systemd/**");
     expect(dockerWorkflow).not.toContain("scripts/docker/streamed-hosting-bootstrap/**");
+  });
+
+  it("builds a non-publishing tag candidate and promotes only its exact verified bytes", async () => {
+    const workflow = await readWorkflow(".github/workflows/hosted-runtime-release.yml");
+    const jobs = workflow.jobs ?? {};
+    const candidate = jobs["candidate"];
+    const publish = jobs["publish"];
+
+    expect(jobs["release-gate"]?.if).toBe("startsWith(github.ref, 'refs/tags/v')");
+    expect(candidate?.if).toBe("startsWith(github.ref, 'refs/tags/v')");
+    expect(candidate?.needs).toEqual(["validate", "linux", "signer"]);
+    expect(publish?.if).toBe("github.event_name == 'workflow_dispatch'");
+
+    const candidateText = candidate?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    const publishText = publish?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    expect(candidateText).toContain("release-artifact-set.mjs build");
+    expect(candidateText).not.toContain("gh release create");
+    expect(
+      candidate?.steps?.find((step) => step.uses === "actions/upload-artifact@v4")?.with?.name,
+    ).toBe("fased-hosting-candidate");
+
+    const download = publish?.steps?.find((step) => step.uses === "actions/download-artifact@v4");
+    expect(download?.with).toMatchObject({
+      name: "fased-hosting-candidate",
+      "run-id": "${{ inputs.candidate_run_id }}",
+    });
+    expect(publishText).toContain("--artifact-set-digest");
+    expect(publishText).toContain("release-artifact-set.mjs verify-assets");
+    expect(publishText).toContain("gh release create");
+    expect(publish?.steps?.some((step) => step.uses === "actions/attest@v4")).toBe(false);
+    expect(publishText).not.toContain("hosted:artifact:build");
+    expect(publishText).not.toContain("release-fased-signerd.sh");
   });
 
   it("selects beta for every prerelease target in the Protected Local fixture", async () => {
