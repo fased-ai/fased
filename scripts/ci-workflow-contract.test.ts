@@ -254,6 +254,13 @@ describe("CI workflow routing", () => {
     expect(jobs["signer-darwin-integration"]?.if).toBe(
       "needs.change-scope.outputs.run_signer_darwin_integration == 'true'",
     );
+    const darwinSignerSetupGo = jobs["signer-darwin-integration"]?.steps?.find(
+      (step) => step.name === "Setup Go",
+    );
+    expect(darwinSignerSetupGo?.uses).toBe(
+      "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16",
+    );
+    expect(darwinSignerSetupGo?.with?.["go-version-file"]).toBe("tools/fased-signerd/go.mod");
 
     for (const jobName of ["protected-local-lifecycle", "protected-local-update-lifecycle"]) {
       const fixture = jobs[jobName]?.steps?.find(

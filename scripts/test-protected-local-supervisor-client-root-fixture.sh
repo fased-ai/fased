@@ -24,8 +24,15 @@ mkdir -p "$staging/scripts" "$staging/tmp"
 for file in \
   protected-local-supervisor-client-root-fixture.mjs \
   protected-local-bootstrap.mjs \
+  fased-managed-updater-core.mjs \
   fased-host-updater.mjs \
   fased-host-updaterctl.mjs \
+  hosted-release-manifest.mjs \
+  lifecycle-trust-crypto.mjs \
+  lifecycle-trust-policy.mjs \
+  lifecycle-trust-root.mjs \
+  lifecycle-trust-runtime.mjs \
+  managed-runtime-layout.mjs \
   protected-local-layout.mjs \
   protected-local-service-plan.mjs; do
   install -m 0644 "$repo_root/scripts/$file" "$staging/scripts/$file"

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { MANAGED_UPDATER_SUPPORT_FILES } from "./fased-managed-updater-core.mjs";
 import {
   buildProtectedLocalBootstrapSpec,
   renderProtectedLocalOperatorEnvironment,
@@ -130,6 +131,49 @@ describe("protected Local bootstrap contract", () => {
     );
     expect(source).not.toContain("suspendLegacyManagedUpdateJournal");
     expect(fs.readFileSync(journalPath, "utf8")).toBe(journal);
+  });
+
+  it("stages legacy adoption outside the root-private verified release tree", async () => {
+    const root = temporaryRoot();
+    const uid = process.getuid?.() ?? 0;
+    const gid = process.getgid?.() ?? 0;
+    const privateSourceRoot = path.join(root, "private-release");
+    const sourceScripts = path.join(privateSourceRoot, "scripts");
+    fs.mkdirSync(sourceScripts, { recursive: true, mode: 0o700 });
+    fs.chmodSync(privateSourceRoot, 0o700);
+    for (const name of MANAGED_UPDATER_SUPPORT_FILES) {
+      fs.copyFileSync(path.join(process.cwd(), "scripts", name), path.join(sourceScripts, name));
+    }
+    const layout = buildProtectedLocalLayout("0123456789abcdef", {
+      runtimeRoot: path.join(root, "run"),
+      stateRoot: path.join(root, "state"),
+      installRoot: path.join(root, "install"),
+    });
+    fs.mkdirSync(layout.installDir, { recursive: true, mode: 0o755 });
+
+    const staged = await __testing.prepareLegacyManagedUpdateAdoptionBundle(
+      privateSourceRoot,
+      layout,
+      { expectedUid: uid, expectedGid: gid, sourceOwnerUid: uid },
+    );
+    try {
+      expect(path.relative(privateSourceRoot, staged.sourceRoot).startsWith("..")).toBe(true);
+      expect(staged.sourceRoot.startsWith(path.dirname(layout.supervisorClient))).toBe(true);
+      expect(fs.statSync(privateSourceRoot).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(staged.sourceRoot).mode & 0o777).toBe(0o755);
+      expect(fs.statSync(path.join(staged.sourceRoot, "scripts")).mode & 0o777).toBe(0o755);
+      for (const name of MANAGED_UPDATER_SUPPORT_FILES) {
+        const source = fs.readFileSync(path.join(sourceScripts, name));
+        const target = fs.readFileSync(path.join(staged.sourceRoot, "scripts", name));
+        expect(crypto.createHash("sha256").update(target).digest("hex")).toBe(
+          crypto.createHash("sha256").update(source).digest("hex"),
+        );
+        expect(fs.statSync(path.join(staged.sourceRoot, "scripts", name)).mode & 0o777).toBe(0o644);
+      }
+    } finally {
+      await staged.cleanup();
+    }
+    expect(fs.existsSync(staged.sourceRoot)).toBe(false);
   });
 
   it("keeps the supervisor private and gives its client a separate executable boundary", async () => {
@@ -888,9 +932,13 @@ default:other::---
     expect(installer).toContain("--resume-local-onboarding");
     expect(installer).not.toContain("bootstrap_protected_local_topology rollback");
     expect(installer).toContain("signer_sha256=");
-    expect(installer).toContain("apt-get install -y git curl ca-certificates jq acl");
+    expect(installer).toContain("local -a apt_packages=(git curl ca-certificates jq acl)");
+    expect(installer).toContain("need_cmd setpriv || apt_packages+=(util-linux)");
+    expect(installer).toContain('apt-get install -y "${apt_packages[@]}"');
     expect(installer).toContain('missing+=("acl")');
-    expect(installer).toContain("pacman -Sy --needed --noconfirm git curl ca-certificates jq acl");
+    expect(installer).toContain(
+      "pacman -Sy --needed --noconfirm git curl ca-certificates jq acl util-linux nodejs npm",
+    );
     const sharedStateStart = bootstrap.indexOf("async function shareApplicationState(");
     const sharedStateEnd = bootstrap.indexOf(
       "\n\nconst PROTECTED_LOCAL_OPERATOR_ONLY_STATE",
@@ -984,6 +1032,7 @@ printf '%s\\n' "$*" >${JSON.stringify(capturePath)}
 `,
       { mode: 0o700 },
     );
+    fs.writeFileSync(path.join(binDir, "node"), "#!/bin/sh\nexit 127\n", { mode: 0o700 });
     const harnessPath = path.join(root, "fresh-release-handoff.sh");
     fs.writeFileSync(
       harnessPath,
@@ -991,7 +1040,7 @@ printf '%s\\n' "$*" >${JSON.stringify(capturePath)}
 set -euo pipefail
 protected_local_supported() { return 0; }
 pass_args_value_after() { return 0; }
-resolve_protected_local_system_node() { printf '/usr/bin/node\\n'; }
+resolve_protected_local_system_node() { printf '%s\\n' ${JSON.stringify(process.execPath)}; }
 spinner_start() { :; }
 spinner_done() { :; }
 spinner_failed() { :; }

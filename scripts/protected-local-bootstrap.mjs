@@ -9,7 +9,10 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { installProtectedLocalApplicationRuntime } from "./fased-host-updater.mjs";
-import { validateLegacyManagedUpdateAdoptionReceipt } from "./fased-managed-updater-core.mjs";
+import {
+  MANAGED_UPDATER_SUPPORT_FILES,
+  validateLegacyManagedUpdateAdoptionReceipt,
+} from "./fased-managed-updater-core.mjs";
 import {
   assertManagedRuntime,
   readHostedReleaseBinding,
@@ -1007,6 +1010,88 @@ function buildLegacyManagedUpdateAdoptionCommand(sourceRoot, spec, options = {})
   });
 }
 
+async function prepareLegacyManagedUpdateAdoptionBundle(sourceRoot, layout, options = {}) {
+  const expectedUid = options.expectedUid ?? 0;
+  const expectedGid = options.expectedGid ?? 0;
+  const sourceOwnerUid = options.sourceOwnerUid ?? 0;
+  const clientBoundary = await prepareProtectedLocalSupervisorClientDirectory(layout, {
+    expectedUid,
+    expectedGid,
+  });
+  const bundleRoot = path.join(
+    clientBoundary.directory,
+    `.legacy-adoption-${process.pid}-${crypto.randomBytes(8).toString("hex")}`,
+  );
+  const scriptsRoot = path.join(bundleRoot, "scripts");
+  let prepared = false;
+  try {
+    await fsp.mkdir(scriptsRoot, { recursive: true, mode: 0o755 });
+    for (const directory of [bundleRoot, scriptsRoot]) {
+      await fsp.chown(directory, expectedUid, expectedGid);
+      await fsp.chmod(directory, 0o755);
+    }
+    for (const name of MANAGED_UPDATER_SUPPORT_FILES) {
+      const source = path.join(sourceRoot, "scripts", name);
+      const sourceInfo = await fsp.lstat(source);
+      if (
+        !sourceInfo.isFile() ||
+        sourceInfo.isSymbolicLink() ||
+        sourceInfo.nlink !== 1 ||
+        sourceInfo.uid !== sourceOwnerUid ||
+        (sourceInfo.mode & 0o022) !== 0
+      ) {
+        fail(`legacy managed update adoption source is unsafe: ${source}`);
+      }
+      const destination = path.join(scriptsRoot, name);
+      await atomicCopy(source, destination, 0o644, {
+        uid: expectedUid,
+        gid: expectedGid,
+      });
+      const [sourceBytes, destinationBytes] = await Promise.all([
+        fsp.readFile(source),
+        fsp.readFile(destination),
+      ]);
+      if (
+        crypto.createHash("sha256").update(sourceBytes).digest("hex") !==
+        crypto.createHash("sha256").update(destinationBytes).digest("hex")
+      ) {
+        fail(`legacy managed update adoption copy changed identity: ${name}`);
+      }
+    }
+    await fsyncDirectory(scriptsRoot);
+    await fsyncDirectory(bundleRoot);
+    prepared = true;
+  } finally {
+    if (!prepared) {
+      await fsp.rm(bundleRoot, { recursive: true, force: true });
+    }
+  }
+  let cleaned = false;
+  return Object.freeze({
+    sourceRoot: bundleRoot,
+    cleanup: async () => {
+      if (cleaned) {
+        return;
+      }
+      const info = await fsp.lstat(bundleRoot);
+      if (
+        !info.isDirectory() ||
+        info.isSymbolicLink() ||
+        info.uid !== expectedUid ||
+        info.gid !== expectedGid ||
+        (info.mode & 0o022) !== 0 ||
+        path.dirname(bundleRoot) !== clientBoundary.directory ||
+        !path.basename(bundleRoot).startsWith(".legacy-adoption-")
+      ) {
+        fail("legacy managed update adoption bundle changed before cleanup");
+      }
+      await fsp.rm(bundleRoot, { recursive: true });
+      await fsyncDirectory(clientBoundary.directory);
+      cleaned = true;
+    },
+  });
+}
+
 async function readFixedOperatorAdoptionReceipt(stateDir, operatorUid) {
   const receiptPath = path.join(stateDir, LEGACY_ADOPTION_USER_RECEIPT);
   const named = await fsp.lstat(receiptPath);
@@ -1541,13 +1626,18 @@ export async function importLegacyManagedUpdateAdoption(
   ) {
     fail("root registry does not bind the protected Local adoption state");
   }
-  const runAdapter =
-    options.runAdapter ??
-    (() => {
-      const command = buildLegacyManagedUpdateAdoptionCommand(sourceRoot, spec);
-      return JSON.parse(runSystem(command.executable, command.args, { timeout: 120_000 }));
-    });
-  const adapterResult = await runAdapter();
+  let adapterResult;
+  if (options.runAdapter !== undefined) {
+    adapterResult = await options.runAdapter();
+  } else {
+    const staged = await prepareLegacyManagedUpdateAdoptionBundle(sourceRoot, layout);
+    try {
+      const command = buildLegacyManagedUpdateAdoptionCommand(staged.sourceRoot, spec);
+      adapterResult = JSON.parse(runSystem(command.executable, command.args, { timeout: 120_000 }));
+    } finally {
+      await staged.cleanup();
+    }
+  }
   if (adapterResult?.status === "not-applicable") {
     return null;
   }
@@ -4376,6 +4466,7 @@ export const __testing = Object.freeze({
   legacyGatewayWasServing,
   legacyInstallReferencesUserGateway,
   parseDirectoryAcl,
+  prepareLegacyManagedUpdateAdoptionBundle,
   prepareProtectedLocalChannelDirectory,
   prepareProtectedLocalSupervisorClientDirectory,
   restorablePreviousSupervisorUnits,
