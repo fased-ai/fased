@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -28,6 +28,21 @@ async function readWorkflow(path: string): Promise<Workflow> {
   return parse(await readFile(resolve(repoRoot, path), "utf8")) as Workflow;
 }
 
+async function listFiles(path: string): Promise<string[]> {
+  const entries = await readdir(path, { withFileTypes: true });
+  const files = await Promise.all(
+    entries.map(async (entry) => {
+      const child = resolve(path, entry.name);
+      return entry.isDirectory() ? listFiles(child) : [child];
+    }),
+  );
+  return files.flat();
+}
+
+function usesAction(step: { uses?: string }, action: string): boolean {
+  return step.uses?.startsWith(`${action}@`) === true;
+}
+
 describe("CI workflow routing", () => {
   it("uses one change-scope authority and one required aggregate", async () => {
     const workflow = await readWorkflow(".github/workflows/ci.yml");
@@ -48,7 +63,7 @@ describe("CI workflow routing", () => {
 
     const releaseCheck = jobs["release-check"];
     expect(
-      releaseCheck?.steps?.find((step) => step.uses === "actions/checkout@v6")?.with?.[
+      releaseCheck?.steps?.find((step) => usesAction(step, "actions/checkout"))?.with?.[
         "fetch-depth"
       ],
     ).toBe(0);
@@ -60,7 +75,7 @@ describe("CI workflow routing", () => {
     expect(protectedLocalUpdate?.if).toBe("needs.change-scope.outputs.run_local_update == 'true'");
     expect(protectedLocalUpdate?.["timeout-minutes"]).toBe(15);
     expect(
-      protectedLocalUpdate?.steps?.find((step) => step.uses === "actions/checkout@v6")?.with?.[
+      protectedLocalUpdate?.steps?.find((step) => usesAction(step, "actions/checkout"))?.with?.[
         "fetch-depth"
       ],
     ).toBe(0);
@@ -89,6 +104,9 @@ describe("CI workflow routing", () => {
         "ci-contracts",
         "t2-contracts",
         "node-focused",
+        "node-unit",
+        "node-gateway",
+        "node-extensions",
         "dependency-integrity",
         "version-identity",
         "hosting-lifecycle",
@@ -96,8 +114,9 @@ describe("CI workflow routing", () => {
         "protected-local-rocky-lifecycle",
         "protected-local-update-lifecycle",
         "ui-mining",
-        "checks-windows",
-        "macos",
+        "ui",
+        "macos-runtime",
+        "macos-app",
         "signer-integration",
         "signer-darwin-integration",
         "platform-bootstrap-audit",
@@ -112,12 +131,16 @@ describe("CI workflow routing", () => {
     expect(required?.steps?.at(-1)?.run).toBe("node scripts/ci-required-gates.mjs");
     expect(required?.steps?.at(-1)?.env).toMatchObject({
       VERSION_ONLY: "${{ needs.change-scope.outputs.version_only }}",
+      MANUAL_REVIEW_REQUIRED: "${{ needs.change-scope.outputs.manual_review_required }}",
       RUN_HOSTING: "${{ needs.change-scope.outputs.run_hosting }}",
       RUN_LOCAL_FRESH: "${{ needs.change-scope.outputs.run_local_fresh }}",
       RUN_LOCAL_UPDATE: "${{ needs.change-scope.outputs.run_local_update }}",
       RUN_CI_CONTRACTS: "${{ needs.change-scope.outputs.run_ci_contracts }}",
       RUN_T2_CONTRACTS: "${{ needs.change-scope.outputs.run_t2_contracts }}",
       RUN_NODE_FOCUSED: "${{ needs.change-scope.outputs.run_node_focused }}",
+      RUN_NODE_UNIT: "${{ needs.change-scope.outputs.run_node_unit }}",
+      RUN_NODE_GATEWAY: "${{ needs.change-scope.outputs.run_node_gateway }}",
+      RUN_NODE_EXTENSIONS: "${{ needs.change-scope.outputs.run_node_extensions }}",
       RUN_DEPENDENCY_INTEGRITY: "${{ needs.change-scope.outputs.run_dependency_integrity }}",
       RUN_NODE_BUILD: "${{ needs.change-scope.outputs.run_node_build }}",
       RUN_NODE_PACKAGING: "${{ needs.change-scope.outputs.run_node_packaging }}",
@@ -132,11 +155,17 @@ describe("CI workflow routing", () => {
       RUN_CODEQL_GO: "${{ needs.change-scope.outputs.run_codeql_go }}",
       RUN_CODEQL_PYTHON: "${{ needs.change-scope.outputs.run_codeql_python }}",
       RUN_UI_MINING: "${{ needs.change-scope.outputs.run_ui_mining }}",
+      RUN_UI: "${{ needs.change-scope.outputs.run_ui }}",
+      RUN_MACOS_RUNTIME: "${{ needs.change-scope.outputs.run_macos_runtime }}",
+      RUN_MACOS_APP: "${{ needs.change-scope.outputs.run_macos_app }}",
       PROTECTED_LOCAL_ARTIFACT: "${{ needs.protected-local-fixture-artifact.result }}",
       PROTECTED_LOCAL_ROCKY: "${{ needs.protected-local-rocky-lifecycle.result }}",
       PROTECTED_LOCAL_UPDATE: "${{ needs.protected-local-update-lifecycle.result }}",
       T2_CONTRACTS: "${{ needs.t2-contracts.result }}",
       FOCUSED_TESTS: "${{ needs.node-focused.result }}",
+      NODE_UNIT_TESTS: "${{ needs.node-unit.result }}",
+      NODE_GATEWAY_TESTS: "${{ needs.node-gateway.result }}",
+      NODE_EXTENSION_TESTS: "${{ needs.node-extensions.result }}",
       DEPENDENCY_INTEGRITY: "${{ needs.dependency-integrity.result }}",
       SIGNER_INTEGRATION: "${{ needs.signer-integration.result }}",
       SIGNER_DARWIN_INTEGRATION: "${{ needs.signer-darwin-integration.result }}",
@@ -146,6 +175,9 @@ describe("CI workflow routing", () => {
       CODEQL_JAVASCRIPT: "${{ needs.codeql-javascript.result }}",
       CODEQL_GO: "${{ needs.codeql-go.result }}",
       CODEQL_PYTHON: "${{ needs.codeql-python.result }}",
+      UI: "${{ needs.ui.result }}",
+      MACOS_RUNTIME: "${{ needs.macos-runtime.result }}",
+      MACOS_APP: "${{ needs.macos-app.result }}",
     });
   });
 
@@ -180,6 +212,17 @@ describe("CI workflow routing", () => {
     expect(focusedCommands).toContain("scripts/protected-local-bootstrap.test.ts");
     expect(focusedCommands).toContain("src/wallet/wallet-application-state-permissions.test.ts");
     expect(focusedCommands).toContain("test-protected-local-supervisor-client-root-fixture.sh");
+
+    for (const [jobName, group] of [
+      ["node-unit", "unit"],
+      ["node-gateway", "gateway"],
+      ["node-extensions", "extensions"],
+    ] as const) {
+      const job = jobs[jobName];
+      expect(
+        job?.steps?.some((step) => step.run === `node scripts/ci-run-changed-tests.mjs ${group}`),
+      ).toBe(true);
+    }
 
     expect(jobs["checks"]?.if).toBe("needs.change-scope.outputs.run_node_full == 'true'");
     expect(jobs["build-artifacts"]?.if).toContain("run_node_build");
@@ -242,10 +285,28 @@ describe("CI workflow routing", () => {
     const workflow = await readWorkflow(".github/workflows/ci.yml");
     const jobs = workflow.jobs ?? {};
 
-    expect(jobs["checks-windows"]?.if).toBe("needs.change-scope.outputs.full_matrix == 'true'");
-    expect(jobs["ui"]?.if).toBe("needs.change-scope.outputs.full_matrix == 'true'");
-    expect(jobs["macos"]?.if).toBe("needs.change-scope.outputs.run_macos == 'true'");
+    expect(jobs["checks-windows"]).toBeUndefined();
+    expect(jobs["ios"]).toBeUndefined();
+    expect(jobs["android"]).toBeUndefined();
+    expect(jobs["ui"]?.if).toBe("needs.change-scope.outputs.run_ui == 'true'");
+    expect(jobs["macos-runtime"]?.if).toBe(
+      "needs.change-scope.outputs.run_macos_runtime == 'true'",
+    );
+    expect(jobs["macos-app"]?.if).toBe("needs.change-scope.outputs.run_macos_app == 'true'");
     expect(jobs["ui-mining"]?.if).toBe("needs.change-scope.outputs.run_ui_mining == 'true'");
+    const uiCommands = jobs["ui"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    expect(uiCommands).toContain("node scripts/ci-run-changed-tests.mjs ui");
+    expect(uiCommands).toContain("pnpm ui:build");
+    expect(uiCommands).toContain("pnpm test:ui");
+
+    const macosRuntimeCommands =
+      jobs["macos-runtime"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    expect(macosRuntimeCommands).toContain("src/daemon/launchd.test.ts");
+    expect(macosRuntimeCommands).not.toMatch(/(^|\s)pnpm test($|\s)/u);
+    const macosAppCommands =
+      jobs["macos-app"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    expect(macosAppCommands).toContain("swift build --package-path apps/macos");
+    expect(macosAppCommands).toContain("swift test --package-path apps/macos");
 
     expect(jobs["hosting-lifecycle"]?.if).toBe("needs.change-scope.outputs.run_hosting == 'true'");
     expect(jobs["protected-local-lifecycle"]?.if).toBe(
@@ -281,6 +342,49 @@ describe("CI workflow routing", () => {
     }
   });
 
+  it("keeps auxiliary compatibility workflows off unrelated pull requests", async () => {
+    const formal = await readFile(
+      resolve(repoRoot, ".github/workflows/formal-conformance.yml"),
+      "utf8",
+    );
+    const install = await readFile(
+      resolve(repoRoot, ".github/workflows/install-smoke.yml"),
+      "utf8",
+    );
+    const sanity = await readFile(
+      resolve(repoRoot, ".github/workflows/workflow-sanity.yml"),
+      "utf8",
+    );
+
+    expect(formal).not.toContain("  pull_request:");
+    expect(formal).toContain("  schedule:");
+    expect(formal).toContain("  workflow_dispatch:");
+    expect(install).not.toContain("  pull_request:");
+    expect(install).not.toContain("  push:");
+    expect(install).toContain("  workflow_dispatch:");
+    expect(sanity).not.toContain("  pull_request:");
+    expect(sanity).not.toContain("  push:");
+    expect(sanity).toContain("  workflow_dispatch:");
+  });
+
+  it("pins every third-party Action to an immutable commit", async () => {
+    const githubRoot = resolve(repoRoot, ".github");
+    const files = (await listFiles(githubRoot)).filter((path) => /\.ya?ml$/u.test(path));
+    const violations: string[] = [];
+
+    for (const path of files) {
+      const source = await readFile(path, "utf8");
+      for (const match of source.matchAll(/^\s*uses:\s*([^\s#]+)/gmu)) {
+        const reference = match[1] ?? "";
+        if (!reference.startsWith("./") && !/@[0-9a-f]{40}$/u.test(reference)) {
+          violations.push(`${path.slice(repoRoot.length + 1)}: ${reference}`);
+        }
+      }
+    }
+
+    expect(violations).toEqual([]);
+  });
+
   it("keeps lifecycle fixtures out of the product Docker release workflow", async () => {
     const dockerWorkflow = await readFile(
       resolve(repoRoot, ".github/workflows/docker-release.yml"),
@@ -309,10 +413,10 @@ describe("CI workflow routing", () => {
     expect(candidateText).toContain("release-artifact-set.mjs build");
     expect(candidateText).not.toContain("gh release create");
     expect(
-      candidate?.steps?.find((step) => step.uses === "actions/upload-artifact@v4")?.with?.name,
+      candidate?.steps?.find((step) => usesAction(step, "actions/upload-artifact"))?.with?.name,
     ).toBe("fased-hosting-candidate");
 
-    const download = publish?.steps?.find((step) => step.uses === "actions/download-artifact@v4");
+    const download = publish?.steps?.find((step) => usesAction(step, "actions/download-artifact"));
     expect(download?.with).toMatchObject({
       name: "fased-hosting-candidate",
       "run-id": "${{ inputs.candidate_run_id }}",
@@ -328,7 +432,7 @@ describe("CI workflow routing", () => {
     expect(publishText).toContain("existing_release_id");
     expect(publishText).not.toContain("gh release view");
     expect(publishText).toContain("releases/tags/$RELEASE_TAG");
-    expect(publish?.steps?.some((step) => step.uses === "actions/attest@v4")).toBe(false);
+    expect(publish?.steps?.some((step) => usesAction(step, "actions/attest"))).toBe(false);
     expect(publishText).not.toContain("hosted:artifact:build");
     expect(publishText).not.toContain("release-fased-signerd.sh");
   });

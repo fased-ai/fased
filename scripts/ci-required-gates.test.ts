@@ -182,15 +182,46 @@ describe("required CI gate aggregation", () => {
     ).not.toThrow();
   });
 
-  it("requires all selected full-matrix lanes", () => {
+  it("requires focused subsystem, UI, and supported macOS lanes", () => {
+    expect(() =>
+      assertApplicableGates({
+        runNodeUnit: true,
+        runNodeGateway: true,
+        runNodeExtensions: true,
+        runUi: true,
+        runMacosRuntime: true,
+        runMacosApp: true,
+        results: {
+          ...alwaysGreen,
+          "format and lint": "success",
+          "strict types baseline": "success",
+          "Node unit tests": "success",
+          "Node Gateway tests": "success",
+          "Node extension tests": "success",
+          "Control UI": "success",
+          "macOS runtime": "success",
+          "macOS app": "success",
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it("fails closed when the classifier requires manual review", () => {
+    expect(() =>
+      assertApplicableGates({
+        manualReviewRequired: true,
+        results: alwaysGreen,
+      }),
+    ).toThrow(/manual review is required/u);
+  });
+
+  it("requires only supported full-matrix compatibility lanes", () => {
     expect(() =>
       assertApplicableGates({
         fullMatrix: true,
         results: {
           ...alwaysGreen,
           "Protected Local Rocky lifecycle": "success",
-          "full UI": "success",
-          Windows: "success",
         },
       }),
     ).not.toThrow();
@@ -199,11 +230,9 @@ describe("required CI gate aggregation", () => {
         fullMatrix: true,
         results: {
           ...alwaysGreen,
-          "Protected Local Rocky lifecycle": "success",
-          "full UI": "success",
-          Windows: "failure",
+          "Protected Local Rocky lifecycle": "failure",
         },
       }),
-    ).toThrow(/required Windows result was failure/);
+    ).toThrow(/required Protected Local Rocky lifecycle result was failure/u);
   });
 });

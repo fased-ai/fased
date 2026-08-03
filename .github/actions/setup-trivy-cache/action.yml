@@ -9,7 +9,7 @@ runs:
       run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
 
     - name: Restore Trivy archive and database
-      uses: actions/cache@v5
+      uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
       with:
         path: ${{ runner.temp }}/fased-trivy-cache
         key: ${{ runner.os }}-${{ runner.arch }}-trivy-0.70.0-${{ steps.cache-key.outputs.date }}

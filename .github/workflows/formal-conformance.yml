@@ -1,7 +1,9 @@
 name: Formal models (informational conformance)
 
 on:
-  pull_request:
+  schedule:
+    - cron: "41 8 * * 1"
+  workflow_dispatch:
 
 concurrency:
   group: formal-conformance-${{ github.event.pull_request.number || github.ref_name }}
@@ -16,18 +18,17 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-      pull-requests: write
 
     steps:
       - name: Checkout fased (PR)
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           path: fased
 
       - name: Checkout formal models
         id: formal-models
         continue-on-error: true
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: vignesh07/fased-formal-models
           ref: main
@@ -39,7 +40,7 @@ jobs:
 
       - name: Setup Node
         if: steps.formal-models.outcome == 'success'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "22"
 
@@ -115,33 +116,10 @@ jobs:
 
       - name: Upload drift diff artifact
         if: steps.formal-models.outcome == 'success' && steps.drift.outputs.drift == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: formal-models-conformance-drift
           path: formal-models-drift.diff
-
-      - name: Comment on PR (informational)
-        if: steps.formal-models.outcome == 'success' && steps.drift.outputs.drift == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const body = [
-              '⚠️ **Formal models conformance drift detected**',
-              '',
-              'The formal models extracted constants (`generated/*`) do not match this fased PR.',
-              '',
-              'This check is **informational** (not blocking merges yet).',
-              'See the `formal-models-conformance-drift` artifact for the diff.',
-              '',
-              'If this change is intentional, follow up by updating the formal models repo or regenerating the extracted artifacts there.',
-            ].join('\n');
-
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body,
-            });
 
       - name: Summary
         if: steps.formal-models.outcome == 'success'

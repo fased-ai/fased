@@ -16,6 +16,10 @@ export function assertApplicableGates(input) {
   requireSuccess(results, "change scope");
   requireSuccess(results, "secrets");
 
+  if (enabled(input.manualReviewRequired)) {
+    throw new Error("manual review is required before this change can use the routine CI lane");
+  }
+
   if (enabled(input.versionOnly)) {
     requireSuccess(results, "version identity");
     return;
@@ -29,6 +33,10 @@ export function assertApplicableGates(input) {
   }
   const anyNode =
     enabled(input.runNodeFocused) ||
+    enabled(input.runNodeUnit) ||
+    enabled(input.runNodeGateway) ||
+    enabled(input.runNodeExtensions) ||
+    enabled(input.runUi) ||
     enabled(input.runNodeBuild) ||
     enabled(input.runNodePackaging) ||
     enabled(input.runNodeFull);
@@ -39,6 +47,15 @@ export function assertApplicableGates(input) {
   }
   if (enabled(input.runNodeFocused)) {
     requireSuccess(results, "focused Node tests");
+  }
+  if (enabled(input.runNodeUnit)) {
+    requireSuccess(results, "Node unit tests");
+  }
+  if (enabled(input.runNodeGateway)) {
+    requireSuccess(results, "Node Gateway tests");
+  }
+  if (enabled(input.runNodeExtensions)) {
+    requireSuccess(results, "Node extension tests");
   }
   if (enabled(input.runNodeBuild)) {
     requireSuccess(results, "dist build");
@@ -96,16 +113,20 @@ export function assertApplicableGates(input) {
   if (enabled(input.runUiMining)) {
     requireSuccess(results, "Mining browser");
   }
+  if (enabled(input.runUi)) {
+    requireSuccess(results, "Control UI");
+  }
   if (enabled(input.runSkills)) {
     requireSuccess(results, "skills");
   }
-  if (enabled(input.runMacos)) {
-    requireSuccess(results, "macOS");
+  if (enabled(input.runMacosRuntime)) {
+    requireSuccess(results, "macOS runtime");
+  }
+  if (enabled(input.runMacosApp)) {
+    requireSuccess(results, "macOS app");
   }
   if (enabled(input.fullMatrix)) {
     requireSuccess(results, "Protected Local Rocky lifecycle");
-    requireSuccess(results, "full UI");
-    requireSuccess(results, "Windows");
   }
 }
 
@@ -113,7 +134,11 @@ export function gateInputFromEnv(env = process.env) {
   return {
     docsChanged: env.DOCS_CHANGED,
     versionOnly: env.VERSION_ONLY,
+    manualReviewRequired: env.MANUAL_REVIEW_REQUIRED,
     runNodeFocused: env.RUN_NODE_FOCUSED,
+    runNodeUnit: env.RUN_NODE_UNIT,
+    runNodeGateway: env.RUN_NODE_GATEWAY,
+    runNodeExtensions: env.RUN_NODE_EXTENSIONS,
     runDependencyIntegrity: env.RUN_DEPENDENCY_INTEGRITY,
     runNodeBuild: env.RUN_NODE_BUILD,
     runNodePackaging: env.RUN_NODE_PACKAGING,
@@ -132,8 +157,10 @@ export function gateInputFromEnv(env = process.env) {
     runCodeqlGo: env.RUN_CODEQL_GO,
     runCodeqlPython: env.RUN_CODEQL_PYTHON,
     runUiMining: env.RUN_UI_MINING,
+    runUi: env.RUN_UI,
     runSkills: env.RUN_SKILLS,
-    runMacos: env.RUN_MACOS,
+    runMacosRuntime: env.RUN_MACOS_RUNTIME,
+    runMacosApp: env.RUN_MACOS_APP,
     fullMatrix: env.FULL_MATRIX,
     results: {
       "change scope": env.CHANGE_SCOPE,
@@ -143,6 +170,9 @@ export function gateInputFromEnv(env = process.env) {
       "format and lint": env.CHECK,
       "strict types baseline": env.STRICT_TYPES,
       "focused Node tests": env.FOCUSED_TESTS,
+      "Node unit tests": env.NODE_UNIT_TESTS,
+      "Node Gateway tests": env.NODE_GATEWAY_TESTS,
+      "Node extension tests": env.NODE_EXTENSION_TESTS,
       "dependency integrity": env.DEPENDENCY_INTEGRITY,
       "full Node tests": env.TESTS,
       "dist build": env.BUILD,
@@ -165,10 +195,10 @@ export function gateInputFromEnv(env = process.env) {
       "CodeQL Go": env.CODEQL_GO,
       "CodeQL Python": env.CODEQL_PYTHON,
       "Mining browser": env.UI_MINING,
+      "Control UI": env.UI,
       skills: env.SKILLS,
-      macOS: env.MACOS,
-      "full UI": env.UI,
-      Windows: env.WINDOWS,
+      "macOS runtime": env.MACOS_RUNTIME,
+      "macOS app": env.MACOS_APP,
     },
   };
 }
