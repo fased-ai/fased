@@ -573,36 +573,47 @@ jobs:
         run: |
           set -euo pipefail
           package_version="$(node -p "require('./package.json').version")"
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          existing_release_id="$(gh api \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.tag_name == env.RELEASE_TAG) | .id')"
+          if [[ -n "$existing_release_id" ]]; then
             echo "Release already exists; refusing non-atomic overwrite: $RELEASE_TAG" >&2
             exit 1
           fi
           created=false
+          release_id=""
           cleanup() {
-            if [[ "$created" == true ]]; then
-              gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 || true
+            if [[ "$created" == true && -n "$release_id" ]]; then
+              gh api --method DELETE \
+                "repos/$GITHUB_REPOSITORY/releases/$release_id" >/dev/null 2>&1 || true
             fi
           }
           trap cleanup EXIT
-          gh release create "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Fased Agent $RELEASE_TAG" \
-            --generate-notes \
-            --draft
+          release_json="$(gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/releases" \
+            -f tag_name="$RELEASE_TAG" \
+            -f target_commitish="$(git rev-parse HEAD)" \
+            -f name="Fased Agent $RELEASE_TAG" \
+            -F draft=true \
+            -F prerelease=false \
+            -F generate_release_notes=true)"
+          release_id="$(jq -er .id <<<"$release_json")"
           created=true
           gh release upload "$RELEASE_TAG" .artifacts/hosted-runtime/* \
             --repo "$GITHUB_REPOSITORY"
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
             --jq '[.assets[] | {name,size,digest}]' > "$RUNNER_TEMP/release-assets.json"
           node scripts/release-artifact-set.mjs verify-assets \
             --directory .artifacts/hosted-runtime \
             --assets-json "$RUNNER_TEMP/release-assets.json"
           if [[ "$package_version" == *-* ]]; then
-            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-              --draft=false --prerelease --latest=false
+            gh api --method PATCH \
+              "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+              -F draft=false -F prerelease=true -f make_latest=false >/dev/null
           else
-            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-              --draft=false --prerelease=false --latest
+            gh api --method PATCH \
+              "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+              -F draft=false -F prerelease=false -f make_latest=true >/dev/null
           fi
           created=false
           trap - EXIT
