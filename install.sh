@@ -3276,13 +3276,6 @@ bootstrap_protected_local_topology() {
     echo "The exact Local release is missing its protected service bootstrap." >&2
     return 1
   fi
-  local release_version=""
-  release_version="$(node -e 'const v=require(process.argv[1]);process.stdout.write(String(v.version||""))' "$release_source/package.json")"
-  if [[ ! "$HOSTING_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ || \
-    "$release_version" != "$HOSTING_RELEASE" ]]; then
-    echo "The Local release does not have one exact matching release identity." >&2
-    return 1
-  fi
   local gateway_port=""
   gateway_port="$(pass_args_value_after "--gateway-port" || true)"
   gateway_port="${gateway_port:-${FASED_GATEWAY_PORT:-18789}}"
@@ -3302,6 +3295,13 @@ bootstrap_protected_local_topology() {
   fi
   if [[ -z "$system_node" ]]; then
     echo "Protected Local requires a root-controlled system Node.js runtime." >&2
+    return 1
+  fi
+  local release_version=""
+  release_version="$("$system_node" -e 'const v=require(process.argv[1]);process.stdout.write(String(v.version||""))' "$release_source/package.json")"
+  if [[ ! "$HOSTING_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ || \
+    "$release_version" != "$HOSTING_RELEASE" ]]; then
+    echo "The Local release does not have one exact matching release identity." >&2
     return 1
   fi
   spinner_start "Secure signer and Gateway services"

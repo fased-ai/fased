@@ -1032,6 +1032,7 @@ printf '%s\\n' "$*" >${JSON.stringify(capturePath)}
 `,
       { mode: 0o700 },
     );
+    fs.writeFileSync(path.join(binDir, "node"), "#!/bin/sh\nexit 127\n", { mode: 0o700 });
     const harnessPath = path.join(root, "fresh-release-handoff.sh");
     fs.writeFileSync(
       harnessPath,
@@ -1039,7 +1040,7 @@ printf '%s\\n' "$*" >${JSON.stringify(capturePath)}
 set -euo pipefail
 protected_local_supported() { return 0; }
 pass_args_value_after() { return 0; }
-resolve_protected_local_system_node() { printf '/usr/bin/node\\n'; }
+resolve_protected_local_system_node() { printf '%s\\n' ${JSON.stringify(process.execPath)}; }
 spinner_start() { :; }
 spinner_done() { :; }
 spinner_failed() { :; }
