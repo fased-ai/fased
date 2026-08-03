@@ -20,6 +20,9 @@ export function assertApplicableGates(input) {
     requireSuccess(results, "version identity");
     return;
   }
+  if (enabled(input.runDependencyIntegrity)) {
+    requireSuccess(results, "dependency integrity");
+  }
 
   if (enabled(input.docsChanged)) {
     requireSuccess(results, "documentation");
@@ -111,6 +114,7 @@ export function gateInputFromEnv(env = process.env) {
     docsChanged: env.DOCS_CHANGED,
     versionOnly: env.VERSION_ONLY,
     runNodeFocused: env.RUN_NODE_FOCUSED,
+    runDependencyIntegrity: env.RUN_DEPENDENCY_INTEGRITY,
     runNodeBuild: env.RUN_NODE_BUILD,
     runNodePackaging: env.RUN_NODE_PACKAGING,
     runNodeFull: env.RUN_NODE_FULL,
@@ -139,6 +143,7 @@ export function gateInputFromEnv(env = process.env) {
       "format and lint": env.CHECK,
       "strict types baseline": env.STRICT_TYPES,
       "focused Node tests": env.FOCUSED_TESTS,
+      "dependency integrity": env.DEPENDENCY_INTEGRITY,
       "full Node tests": env.TESTS,
       "dist build": env.BUILD,
       "release contracts": env.RELEASE,

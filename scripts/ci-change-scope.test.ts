@@ -28,6 +28,43 @@ describe("CI changed-surface classification", () => {
     });
   });
 
+  it("routes an exact trusted dependency remediation only through dependency integrity", () => {
+    const output = outputEntries(createGatePlan(["package.json", "pnpm-lock.yaml"]), {
+      route: "dependency-remediation",
+    });
+
+    expect(output).toMatchObject({
+      change_kind: "production",
+      dependency_remediation: "true",
+      run_dependency_integrity: "true",
+      run_node: "false",
+      run_node_focused: "false",
+      run_node_build: "false",
+      run_node_packaging: "false",
+      run_node_full: "false",
+      run_signer: "false",
+      run_local_fresh: "false",
+      run_local_update: "false",
+      run_hosting: "false",
+      run_docker: "false",
+      run_codeql_javascript: "false",
+      run_codeql_go: "false",
+      run_codeql_python: "false",
+    });
+  });
+
+  it("retains dependency integrity without narrowing an untrusted package change", () => {
+    const output = outputEntries(createGatePlan(["package.json", "pnpm-lock.yaml"]));
+
+    expect(output).toMatchObject({
+      dependency_remediation: "false",
+      run_dependency_integrity: "true",
+      run_node_build: "true",
+      run_node_packaging: "true",
+      run_node_full: "true",
+    });
+  });
+
   it("rejects a trusted private route bound to a different public plan", () => {
     const plan = createGatePlan(["scripts/protected-local-bootstrap.mjs"], {
       entryPoint: "local-update",

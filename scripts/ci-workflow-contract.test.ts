@@ -89,6 +89,7 @@ describe("CI workflow routing", () => {
         "ci-contracts",
         "t2-contracts",
         "node-focused",
+        "dependency-integrity",
         "version-identity",
         "hosting-lifecycle",
         "protected-local-fixture-artifact",
@@ -117,6 +118,7 @@ describe("CI workflow routing", () => {
       RUN_CI_CONTRACTS: "${{ needs.change-scope.outputs.run_ci_contracts }}",
       RUN_T2_CONTRACTS: "${{ needs.change-scope.outputs.run_t2_contracts }}",
       RUN_NODE_FOCUSED: "${{ needs.change-scope.outputs.run_node_focused }}",
+      RUN_DEPENDENCY_INTEGRITY: "${{ needs.change-scope.outputs.run_dependency_integrity }}",
       RUN_NODE_BUILD: "${{ needs.change-scope.outputs.run_node_build }}",
       RUN_NODE_PACKAGING: "${{ needs.change-scope.outputs.run_node_packaging }}",
       RUN_NODE_FULL: "${{ needs.change-scope.outputs.run_node_full }}",
@@ -135,6 +137,7 @@ describe("CI workflow routing", () => {
       PROTECTED_LOCAL_UPDATE: "${{ needs.protected-local-update-lifecycle.result }}",
       T2_CONTRACTS: "${{ needs.t2-contracts.result }}",
       FOCUSED_TESTS: "${{ needs.node-focused.result }}",
+      DEPENDENCY_INTEGRITY: "${{ needs.dependency-integrity.result }}",
       SIGNER_INTEGRATION: "${{ needs.signer-integration.result }}",
       SIGNER_DARWIN_INTEGRATION: "${{ needs.signer-darwin-integration.result }}",
       PLATFORM_BOOTSTRAP: "${{ needs.platform-bootstrap-audit.result }}",
@@ -160,6 +163,7 @@ describe("CI workflow routing", () => {
       FASED_PRIVATE_STATUS_ACTOR_ID: "${{ vars.FASED_PRIVATE_STATUS_ACTOR_ID }}",
     });
     expect(scope?.env).toMatchObject({
+      GATE_ROUTE: "${{ steps.private-route.outputs.gate_route }}",
       GATE_PHASE: "${{ steps.private-route.outputs.gate_phase || 'T3' }}",
       GATE_ENTRY_POINT: "${{ steps.private-route.outputs.gate_entry_point }}",
       GATE_EXPECTED_PLAN_DIGEST: "${{ steps.private-route.outputs.expected_plan_digest }}",
@@ -185,6 +189,18 @@ describe("CI workflow routing", () => {
     expect(jobs["packed-core-smoke"]?.if).toBe(
       "needs.change-scope.outputs.run_node_packaging == 'true'",
     );
+
+    const dependency = jobs["dependency-integrity"];
+    expect(dependency?.if).toBe("needs.change-scope.outputs.run_dependency_integrity == 'true'");
+    expect(dependency?.["timeout-minutes"]).toBeLessThanOrEqual(3);
+    const dependencyCommands = dependency?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    expect(dependencyCommands).toContain("node scripts/ci-dependency-integrity.mjs");
+    expect(dependencyCommands).toContain("pnpm install --lockfile-only");
+    expect(dependencyCommands).toContain("pnpm audit --prod --audit-level high");
+
+    const secretsCommands = jobs["secrets"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    expect(secretsCommands).not.toContain("pnpm-audit-prod");
+    expect(secretsCommands).not.toContain("pnpm audit");
 
     expect(jobs["signer-platform"]?.if).toBe(
       "needs.change-scope.outputs.run_native_signer == 'true'",

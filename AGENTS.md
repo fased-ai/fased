@@ -42,7 +42,8 @@ If these are added later, treat them as additional constraints.
 - Format write: `pnpm format` (or `pnpm format:fix`)
 - Full quality gate: `pnpm check`
 - Docs gate: `pnpm check:docs`
-- Typical pre-push gate: `pnpm build && pnpm check && pnpm test`
+- Pre-push gate: run the smallest changed-surface checks selected by
+  `scripts/gate-authority.mjs`; do not default to build + check + full test.
 
 ## Test Commands
 

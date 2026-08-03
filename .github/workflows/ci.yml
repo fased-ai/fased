@@ -43,6 +43,8 @@ jobs:
       privilege_changed: ${{ steps.scope.outputs.privilege_changed }}
       reuse_pr_checks: ${{ steps.scope.outputs.reuse_pr_checks }}
       run_node: ${{ steps.scope.outputs.run_node }}
+      dependency_remediation: ${{ steps.scope.outputs.dependency_remediation }}
+      run_dependency_integrity: ${{ steps.scope.outputs.run_dependency_integrity }}
       run_node_focused: ${{ steps.scope.outputs.run_node_focused }}
       run_node_build: ${{ steps.scope.outputs.run_node_build }}
       run_node_packaging: ${{ steps.scope.outputs.run_node_packaging }}
@@ -99,6 +101,7 @@ jobs:
           GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
           GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           GATE_PHASE: ${{ steps.private-route.outputs.gate_phase || 'T3' }}
+          GATE_ROUTE: ${{ steps.private-route.outputs.gate_route }}
           GATE_ENTRY_POINT: ${{ steps.private-route.outputs.gate_entry_point }}
           GATE_EXPECTED_PLAN_DIGEST: ${{ steps.private-route.outputs.expected_plan_digest }}
         run: node scripts/ci-change-scope.mjs
@@ -224,6 +227,41 @@ jobs:
 
       - name: Prove cross-UID supervisor client traversal
         run: sudo -n bash scripts/test-protected-local-supervisor-client-root-fixture.sh
+
+  dependency-integrity:
+    name: "dependency integrity"
+    needs: [change-scope]
+    if: needs.change-scope.outputs.run_dependency_integrity == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.x
+
+      - name: Setup pnpm
+        uses: ./.github/actions/setup-pnpm-store-cache
+        with:
+          cache-key-suffix: "dependency-integrity-node22"
+
+      - name: Prove exact override-only remediation
+        if: needs.change-scope.outputs.dependency_remediation == 'true'
+        env:
+          DEPENDENCY_BASE: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/ci-dependency-integrity.mjs
+
+      - name: Verify frozen lockfile
+        run: pnpm install --lockfile-only --ignore-scripts --frozen-lockfile --prefer-offline
+
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level high
 
   # Build dist once for Node-relevant changes and share it with downstream jobs.
   build-artifacts:
@@ -1206,18 +1244,6 @@ jobs:
           fetch-depth: 0
           submodules: false
 
-      # This job audits repository metadata and the lockfile; it does not run
-      # project code, so installing the full dependency tree wastes ~45s.
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22.x
-
-      - name: Setup pnpm
-        uses: ./.github/actions/setup-pnpm-store-cache
-        with:
-          cache-key-suffix: "secrets-node22"
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -1272,9 +1298,6 @@ jobs:
           fi
 
           pre-commit run zizmor --files "${workflow_files[@]}"
-
-      - name: Audit production dependencies
-        run: pre-commit run --all-files pnpm-audit-prod
 
   checks-windows:
     needs: [change-scope, build-artifacts]
@@ -1655,6 +1678,7 @@ jobs:
       - ci-contracts
       - t2-contracts
       - node-focused
+      - dependency-integrity
       - check
       - hosting-lifecycle
       - protected-local-fixture-artifact
@@ -1695,6 +1719,7 @@ jobs:
           DOCS_CHANGED: ${{ needs.change-scope.outputs.docs_changed }}
           VERSION_ONLY: ${{ needs.change-scope.outputs.version_only }}
           RUN_NODE_FOCUSED: ${{ needs.change-scope.outputs.run_node_focused }}
+          RUN_DEPENDENCY_INTEGRITY: ${{ needs.change-scope.outputs.run_dependency_integrity }}
           RUN_NODE_BUILD: ${{ needs.change-scope.outputs.run_node_build }}
           RUN_NODE_PACKAGING: ${{ needs.change-scope.outputs.run_node_packaging }}
           RUN_NODE_FULL: ${{ needs.change-scope.outputs.run_node_full }}
@@ -1727,6 +1752,7 @@ jobs:
           VERSION_IDENTITY: ${{ needs.version-identity.result }}
           STRICT_TYPES: ${{ needs.strict-types-baseline.result }}
           FOCUSED_TESTS: ${{ needs.node-focused.result }}
+          DEPENDENCY_INTEGRITY: ${{ needs.dependency-integrity.result }}
           TESTS: ${{ needs.checks.result }}
           BUILD: ${{ needs.build-artifacts.result }}
           RELEASE: ${{ needs.release-check.result }}

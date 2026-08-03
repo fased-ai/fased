@@ -68,6 +68,8 @@ describe("machine gate authority", () => {
       "scripts/verify-release-gate-status.test.ts",
       "scripts/gate-authority.mjs",
       "scripts/gate-authority.test.ts",
+      "docs/reference/ci.md",
+      "AGENTS.md",
     ]);
 
     expect(plan.changeKind).toBe("ci-infrastructure-only");
@@ -82,6 +84,10 @@ describe("machine gate authority", () => {
       runHosting: false,
       runLocalFresh: false,
       runLocalUpdate: false,
+      runDocker: false,
+      runCodeqlJavascript: false,
+      runCodeqlGo: false,
+      runCodeqlPython: false,
     });
     expect(plan.acceptance).toEqual({ L0: false, L1: false, H0: false, H1: false, H2: false });
   });
@@ -204,21 +210,21 @@ describe("machine gate authority", () => {
     });
   });
 
-  it("runs Docker validation when the Docker workflow itself changes", () => {
+  it("keeps CI-only Docker workflow edits out of product Docker validation", () => {
     const plan = createGatePlan([".github/workflows/docker-release.yml"]);
     expect(plan.scope).toMatchObject({
       ciInfrastructureOnly: true,
       runCiContracts: true,
-      runDocker: true,
+      runDocker: false,
     });
   });
 
-  it("runs JavaScript CodeQL for non-test CI authority code", () => {
+  it("keeps CI-only authority edits out of production CodeQL", () => {
     const plan = createGatePlan(["scripts/ci-private-route-status.mjs"]);
     expect(plan.scope).toMatchObject({
       ciInfrastructureOnly: true,
       runCiContracts: true,
-      runCodeqlJavascript: true,
+      runCodeqlJavascript: false,
       runNodeFull: false,
     });
   });

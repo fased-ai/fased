@@ -9,13 +9,14 @@ export const ROUTE_STATUS_CONTEXT = "fased/private-change-gate";
 const GIT_ID_RE = /^[a-f0-9]{40,64}$/u;
 const SHA256_HEX_RE = /^[a-f0-9]{64}$/u;
 const MAX_ROUTE_LIFETIME_MS = 60 * 60 * 1000;
+const ROUTES = Object.freeze([...ENTRY_POINTS, "dependency-remediation"]);
 
 function fail(message) {
   throw new Error(`trusted CI route: ${message}`);
 }
 
 function absentRoute() {
-  return { status: "absent", entryPoint: null };
+  return { status: "absent", route: null, entryPoint: null };
 }
 
 function exactSearchParams(url) {
@@ -110,14 +111,14 @@ export function resolveTrustedCiRoute({
     fail("route schema is unsupported");
   }
 
-  const entryPoint = target.searchParams.get("entry");
+  const route = target.searchParams.get("entry");
   const phase = target.searchParams.get("phase");
   const targetBase = target.searchParams.get("base");
   const plan = target.searchParams.get("plan");
   const receipt = target.searchParams.get("receipt");
   const expires = target.searchParams.get("expires");
-  if (!ENTRY_POINTS.includes(entryPoint)) {
-    fail("entry point is unsupported");
+  if (!ROUTES.includes(route)) {
+    fail("route is unsupported");
   }
   if (!PHASES.includes(phase)) {
     fail("phase is unsupported");
@@ -136,14 +137,15 @@ export function resolveTrustedCiRoute({
   if (remaining <= 0 || remaining > MAX_ROUTE_LIFETIME_MS) {
     fail("receipt is expired or overlong");
   }
-  const expectedDescription = `route:${entryPoint};r=${receipt.slice(0, 16)}`;
+  const expectedDescription = `route:${route};r=${receipt.slice(0, 16)}`;
   if (status.description !== expectedDescription) {
     fail("description does not bind the receipt");
   }
 
   return {
     status: "selected",
-    entryPoint,
+    route,
+    entryPoint: ENTRY_POINTS.includes(route) ? route : null,
     phase,
     planDigest: `sha256:${plan}`,
     receiptDigest: `sha256:${receipt}`,
@@ -174,6 +176,7 @@ function writeOutputs(route, outputPath) {
   }
   const entries = {
     route_status: route.status,
+    gate_route: route.route ?? "",
     gate_entry_point: route.entryPoint ?? "",
     gate_phase: route.phase ?? "",
     expected_plan_digest: route.planDigest ?? "",

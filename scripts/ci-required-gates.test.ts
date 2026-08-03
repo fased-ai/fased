@@ -26,6 +26,21 @@ describe("required CI gate aggregation", () => {
     ).not.toThrow();
   });
 
+  it("requires the dedicated dependency-integrity result when selected", () => {
+    expect(() =>
+      assertApplicableGates({
+        runDependencyIntegrity: true,
+        results: { ...alwaysGreen, "dependency integrity": "success" },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertApplicableGates({
+        runDependencyIntegrity: true,
+        results: { ...alwaysGreen, "dependency integrity": "skipped" },
+      }),
+    ).toThrow(/required dependency integrity result was skipped/u);
+  });
+
   it("requires granular Node, Hosting, Local fresh, and Local update only when selected", () => {
     const selected = {
       "format and lint": "success",

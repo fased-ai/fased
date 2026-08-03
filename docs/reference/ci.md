@@ -17,7 +17,8 @@ selected child job is absent, skipped unexpectedly, or unsuccessful.
 ## Trusted lifecycle routing
 
 The public classifier is conservative by default. A focused Local-update PR
-may use the bounded `local-update` entry point only when an exact-head,
+may use the bounded `local-update` entry point, and an exact root override PR
+may use `dependency-remediation`, only when an exact-head,
 receipt-bound `fased/private-change-gate` status was published by the configured
 trusted actor. PR labels, bodies, manifests, and workflow inputs cannot select
 that route. Missing or temporarily unavailable private routing falls back to
@@ -31,13 +32,14 @@ actor ID, not another copy of the login.
 Node validation is split so a focused correction does not trigger the entire
 product matrix:
 
-| Lane                | Purpose                                              |
-| ------------------- | ---------------------------------------------------- |
-| `node-focused`      | Allowlisted directly affected tests and root fixture |
-| `build-artifacts`   | Build `dist/` once for consumers that need it        |
-| `release-check`     | Validate package/release contents                    |
-| `packed-core-smoke` | Verify the packed Local package                      |
-| `checks`            | Full sharded Node/Bun and protocol matrix            |
+| Lane                   | Purpose                                                |
+| ---------------------- | ------------------------------------------------------ |
+| `node-focused`         | Allowlisted directly affected tests and root fixture   |
+| `dependency-integrity` | Exact override diff, frozen lockfile, production audit |
+| `build-artifacts`      | Build `dist/` once for consumers that need it          |
+| `release-check`        | Validate package/release contents                      |
+| `packed-core-smoke`    | Verify the packed Local package                        |
+| `checks`               | Full sharded Node/Bun and protocol matrix              |
 
 The focused Local-update route retains exact L1 update, rollback, retry,
 restart, reboot, state-preservation, and final-idempotence evidence. It does
@@ -50,6 +52,9 @@ integration are independent lanes. CodeQL is likewise selected independently
 for JavaScript/TypeScript, Go, and Python according to the changed languages.
 Docker pull-request validation consumes the same classifier as the rest of CI;
 the release workflow handles only manual and immutable tag publication.
+CI-infrastructure-only changes select contract tests, not product Docker or
+production CodeQL. The dependency lane does not build, package, or run product
+and lifecycle matrices.
 
 ## Fixture prerequisites
 
@@ -63,7 +68,8 @@ affected (or when selected manually/scheduled).
 Every PR retains cumulative classification, workflow syntax/contracts, secret
 scanning, the selected L1/T2 and rollback/retry gates, and the aggregate
 `checks` context. Version-only changes use only identity and release metadata
-checks; broader work activates the corresponding surface lanes.
+checks. A trusted exact dependency remediation runs dependency integrity and
+secrets only; broader work activates the corresponding surface lanes.
 
 ## Time budgets
 

@@ -9,10 +9,10 @@ const repo = "fased-ai/fased";
 const actor = { login: "founder", id: 42 };
 const now = new Date("2026-08-03T12:00:00.000Z");
 
-function routeStatus(overrides: Record<string, unknown> = {}) {
+function routeStatus(overrides: Record<string, unknown> = {}, route = "local-update") {
   const target = new URL(`https://github.com/${repo}/commit/${head}`);
   target.searchParams.set("fased-ci-route", "v1");
-  target.searchParams.set("entry", "local-update");
+  target.searchParams.set("entry", route);
   target.searchParams.set("phase", "T1");
   target.searchParams.set("base", base);
   target.searchParams.set("plan", planDigest);
@@ -22,7 +22,7 @@ function routeStatus(overrides: Record<string, unknown> = {}) {
     id: 100,
     context: ROUTE_STATUS_CONTEXT,
     state: "pending",
-    description: `route:local-update;r=${receiptDigest.slice(0, 16)}`,
+    description: `route:${route};r=${receiptDigest.slice(0, 16)}`,
     target_url: target.href,
     creator: actor,
     ...overrides,
@@ -45,7 +45,20 @@ describe("private receipt-bound CI routing", () => {
   it("selects exact Local update from one trusted pending receipt", () => {
     expect(resolve([routeStatus()])).toEqual({
       status: "selected",
+      route: "local-update",
       entryPoint: "local-update",
+      phase: "T1",
+      planDigest: `sha256:${planDigest}`,
+      receiptDigest: `sha256:${receiptDigest}`,
+      statusId: 100,
+    });
+  });
+
+  it("selects dependency remediation without inventing a lifecycle entry point", () => {
+    expect(resolve([routeStatus({}, "dependency-remediation")])).toEqual({
+      status: "selected",
+      route: "dependency-remediation",
+      entryPoint: null,
       phase: "T1",
       planDigest: `sha256:${planDigest}`,
       receiptDigest: `sha256:${receiptDigest}`,
@@ -56,16 +69,18 @@ describe("private receipt-bound CI routing", () => {
   it("ignores an untrusted spoof and falls back broad when no trusted route exists", () => {
     expect(
       resolve([routeStatus({ id: 101, creator: { login: "github-actions[bot]", id: 41898282 } })]),
-    ).toEqual({ status: "absent", entryPoint: null });
+    ).toEqual({ status: "absent", route: null, entryPoint: null });
   });
 
   it("does not interpret merge success or revocation as routing authority", () => {
     expect(resolve([routeStatus({ state: "success" })])).toEqual({
       status: "absent",
+      route: null,
       entryPoint: null,
     });
     expect(resolve([routeStatus({ state: "error" })])).toEqual({
       status: "absent",
+      route: null,
       entryPoint: null,
     });
   });
@@ -91,6 +106,7 @@ describe("private receipt-bound CI routing", () => {
   it("uses only the newest exact trusted status", () => {
     expect(resolve([routeStatus({ id: 99 }), routeStatus({ id: 100, state: "error" })])).toEqual({
       status: "absent",
+      route: null,
       entryPoint: null,
     });
   });
