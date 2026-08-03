@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 
-export const GATE_AUTHORITY_VERSION = 1;
+export const GATE_AUTHORITY_VERSION = 2;
 
 export const PHASES = Object.freeze(["T0", "T1", "T2", "T3", "merge-reuse", "stable"]);
 export const ENTRY_POINTS = Object.freeze([
@@ -16,10 +16,10 @@ const DOC_PATH_RE = /^(?:docs\/|.*\.(?:md|mdx)$|scripts\/docs-product-contract\.
 const VERSION_PATH_RE =
   /^(?:package\.json|CHANGELOG\.md|src\/brand\.ts|extensions\/[^/]+\/(?:package\.json|CHANGELOG\.md))$/;
 const CI_INFRASTRUCTURE_PATH_RE =
-  /^(?:\.github\/workflows\/(?:ci|hosted-runtime-release)\.yml|scripts\/(?:gate-authority|lifecycle-release-gate|release-artifact-set|verify-release-gate-status|ci-(?:change-scope|required-gates|merged-main-reuse|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/lifecycle-release-gate-receipt\.v1\.schema\.json)$/;
+  /^(?:\.github\/workflows\/(?:ci|docker-release|hosted-runtime-release)\.yml|scripts\/(?:gate-authority|lifecycle-release-gate|release-artifact-set|verify-release-gate-status|ci-(?:change-scope|private-route-status|required-gates|merged-main-reuse|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/lifecycle-release-gate-receipt\.v1\.schema\.json)$/;
 const LIFECYCLE_GATE_REQUIRED_PATHS = Object.freeze(["scripts/lifecycle-release-gate.mjs"]);
 const LIFECYCLE_GATE_ENFORCEMENT_PATH_RE =
-  /^(?:\.github\/workflows\/ci\.yml|scripts\/(?:gate-authority|lifecycle-release-gate|ci-(?:change-scope|required-gates|merged-main-reuse|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/lifecycle-release-gate-receipt\.v1\.schema\.json)$/;
+  /^(?:\.github\/workflows\/(?:ci|docker-release)\.yml|scripts\/(?:gate-authority|lifecycle-release-gate|ci-(?:change-scope|private-route-status|required-gates|merged-main-reuse|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/lifecycle-release-gate-receipt\.v1\.schema\.json)$/;
 const T2_FIXTURE_PATH_RE =
   /^scripts\/(?:protected-local-t2-(?:controller-worker|supervisor-worker|systemd-fixture)\.mjs|protected-local-t2-systemd\.test\.ts|test-protected-local-t2-systemd\.sh)$/;
 const TEST_PATH_RE =
@@ -27,6 +27,30 @@ const TEST_PATH_RE =
 const NON_PRODUCTION_TEST_PATH_RE = /^(?:test\/|tests\/|fixtures\/|.*\.(?:test|spec)\.[^.]+$)/;
 const NODE_PATH_RE =
   /^(?:src\/|test\/|extensions\/|packages\/|scripts\/|ui\/|\.github\/|fased\.mjs$|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|tsconfig[^/]*\.json$|vitest[^/]*\.ts$|tsdown\.config\.ts$|\.oxlintrc\.json$|\.oxfmtrc\.jsonc$)/;
+// This lane runs a fixed, allowlisted test set. Keep the production allowlist
+// exact: adding another updater/signer path must fall back to the full Node
+// matrix until its nearest regression is explicitly added to `node-focused`.
+const LOCAL_UPDATE_FOCUSED_PRODUCTION_PATHS = new Set([
+  "scripts/protected-local-bootstrap.mjs",
+  "scripts/protected-local-supervisor-client-root-fixture.mjs",
+  "src/wallet/wallet-runtime-config.ts",
+]);
+const NODE_PACKAGING_PATH_RE =
+  /^(?:package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|packages\/|extensions\/[^/]+\/package\.json$|scripts\/(?:build-hosted-runtime-artifact|hosted-release-manifest|managed-runtime-layout|release-artifact-set)[^/]*)/;
+const NATIVE_SIGNER_PATH_RE =
+  /^(?:tools\/fased-signerd\/|config\/signer-protocol-v2\.json$|scripts\/(?:build-fased-signerd|fased-signerd-build-identity|generate-signer-protocol-v2|release-fased-signerd|signer-protocol-v2\.generated|test-fased-signerd-portable-builds)[^/]*|src\/wallet\/signer-protocol-v2\.generated[^/]*)/;
+const SIGNER_INTEGRATION_PATH_RE =
+  /^(?:install\.sh$|scripts\/(?:fased-managed-updater|install-fased-signerd|install-managed-runtime|managed-runtime-layout|protected-local-)[^/]*|src\/wallet\/(?:native-signer-|providers\/local-socket-signer-adapter)[^/]*|src\/wizard\/onboarding\.wallet[^/]*)/;
+const DARWIN_SIGNER_INTEGRATION_PATH_RE =
+  /^(?:install\.sh$|scripts\/(?:install-platform-preflight|install-release-pin)[^/]*|src\/wallet\/providers\/local-socket-signer-adapter[^/]*|src\/wizard\/onboarding\.wallet[^/]*)/;
+const PLATFORM_BOOTSTRAP_PATH_RE =
+  /^(?:install\.sh$|scripts\/(?:install-platform-preflight|test-install-runtime-profile)[^/]*|scripts\/docker\/protected-local-systemd\/Containerfile\.[^/]+$)/;
+const DOCKER_PRODUCT_PATH_RE =
+  /^(?:\.dockerignore$|Dockerfile$|docker-compose\.yml$|docker-setup\.sh$|\.github\/actions\/setup-trivy-cache\/|\.github\/workflows\/docker-release\.yml$|scripts\/(?:docker-signer-|fased-signerd-build-identity|scan-docker-image)[^/]*|src\/(?:commands\/wallet\.docker-signer-doctor|docker-)[^/]*|tools\/fased-signerd\/)/;
+const CODEQL_JAVASCRIPT_PATH_RE = /\.(?:cjs|cts|js|jsx|mjs|mts|ts|tsx)$/u;
+const CODEQL_GO_PATH_RE =
+  /^(?:tools\/fased-signerd\/.*\.(?:go)$|tools\/fased-signerd\/go\.(?:mod|sum))$/u;
+const CODEQL_PYTHON_PATH_RE = /\.py$/u;
 const SIGNER_PATH_RE =
   /^(?:install\.sh$|tools\/fased-signerd\/|config\/signer-protocol-v2\.json$|scripts\/(?:fased-managed-updater|install-fased-signerd|install-managed-runtime|managed-runtime-layout|protected-local-|release-fased-signerd|test-fased-signerd-portable-builds|generate-signer-protocol-v2|signer-protocol-v2\.generated)[^/]*|src\/wallet\/(?:native-signer-|providers\/local-socket-signer-adapter|signer-protocol-v2\.generated)[^/]*|src\/wizard\/onboarding\.wallet[^/]*)/;
 const MACOS_PATH_RE = /^(?:apps\/(?:macos|ios|shared)\/|Swabble\/)/;
@@ -109,8 +133,20 @@ function emptyScope(overrides = {}) {
     privilegeChanged: false,
     reusePrChecks: false,
     runNode: false,
+    runNodeFocused: false,
+    runNodeBuild: false,
+    runNodePackaging: false,
+    runNodeFull: false,
     runMacos: false,
     runSigner: false,
+    runNativeSigner: false,
+    runSignerIntegration: false,
+    runSignerDarwinIntegration: false,
+    runPlatformBootstrap: false,
+    runDocker: false,
+    runCodeqlJavascript: false,
+    runCodeqlGo: false,
+    runCodeqlPython: false,
     runHosting: false,
     runHostingFresh: false,
     runHostingUpdate: false,
@@ -207,8 +243,20 @@ export function createGatePlan(inputPaths, options = {}) {
       productionChanged: true,
       privilegeChanged: true,
       runNode: true,
+      runNodeFocused: false,
+      runNodeBuild: true,
+      runNodePackaging: true,
+      runNodeFull: true,
       runMacos: true,
       runSigner: true,
+      runNativeSigner: true,
+      runSignerIntegration: true,
+      runSignerDarwinIntegration: true,
+      runPlatformBootstrap: true,
+      runDocker: true,
+      runCodeqlJavascript: true,
+      runCodeqlGo: true,
+      runCodeqlPython: true,
       runHosting: true,
       runHostingFresh: true,
       runHostingUpdate: true,
@@ -280,13 +328,18 @@ export function createGatePlan(inputPaths, options = {}) {
   const effectivePaths = productionChanged ? productionPaths : paths;
 
   let runMacos = false;
-  let hasNonNativeNonDocs = false;
+  let hasUnclassifiedNonNativeNonDocs = false;
   for (const path of effectivePaths) {
     if (MACOS_PATH_RE.test(path) && !GENERATED_NATIVE_PROTOCOL_RE.test(path)) {
       runMacos = true;
     }
-    if (!DOC_PATH_RE.test(path) && !NATIVE_ONLY_PATH_RE.test(path)) {
-      hasNonNativeNonDocs = true;
+    if (
+      !DOC_PATH_RE.test(path) &&
+      !NATIVE_ONLY_PATH_RE.test(path) &&
+      !NATIVE_SIGNER_PATH_RE.test(path) &&
+      !CODEQL_PYTHON_PATH_RE.test(path)
+    ) {
+      hasUnclassifiedNonNativeNonDocs = true;
     }
   }
 
@@ -295,8 +348,13 @@ export function createGatePlan(inputPaths, options = {}) {
     !ciInfrastructureOnly &&
     !t2FixtureOnly &&
     (productionChanged || fixtureOnly) &&
-    effectivePaths.some((path) => NODE_PATH_RE.test(path));
-  if (productionChanged && !runNode && hasNonNativeNonDocs) {
+    effectivePaths.some(
+      (path) =>
+        NODE_PATH_RE.test(path) &&
+        !NATIVE_SIGNER_PATH_RE.test(path) &&
+        !CODEQL_PYTHON_PATH_RE.test(path),
+    );
+  if (productionChanged && !runNode && hasUnclassifiedNonNativeNonDocs) {
     runNode = true;
   }
 
@@ -346,6 +404,41 @@ export function createGatePlan(inputPaths, options = {}) {
   const runT2Contracts = t2FixtureOnly || t2FixtureChanged || privilegeChanged;
   const runCiContracts = ciInfrastructureChanged;
   const runHosting = runHostingFresh || runHostingUpdate;
+  const focusedLocalUpdate =
+    runNode &&
+    entryPoint === "local-update" &&
+    productionPaths.length > 0 &&
+    productionPaths.every((path) => LOCAL_UPDATE_FOCUSED_PRODUCTION_PATHS.has(path));
+  const runNodeFocused = focusedLocalUpdate;
+  const runNodeBuild =
+    runNode && (productionChanged || runHosting || runLocalFresh || runLocalUpdate);
+  const runNodePackaging =
+    runNode && productionPaths.some((path) => NODE_PACKAGING_PATH_RE.test(path));
+  const runNodeFull = runNode && !runNodeFocused;
+  const runNativeSigner =
+    productionChanged && effectivePaths.some((path) => NATIVE_SIGNER_PATH_RE.test(path));
+  const runSignerIntegration =
+    productionChanged &&
+    effectivePaths.some(
+      (path) => SIGNER_INTEGRATION_PATH_RE.test(path) || NATIVE_SIGNER_PATH_RE.test(path),
+    );
+  const runSignerDarwinIntegration =
+    runSignerIntegration &&
+    effectivePaths.some((path) => DARWIN_SIGNER_INTEGRATION_PATH_RE.test(path));
+  const runPlatformBootstrap =
+    runLocalFresh && effectivePaths.some((path) => PLATFORM_BOOTSTRAP_PATH_RE.test(path));
+  const runDocker = effectivePaths.some((path) => DOCKER_PRODUCT_PATH_RE.test(path));
+  const codeqlPaths = versionOnly
+    ? []
+    : paths.filter(
+        (path) =>
+          !DOC_PATH_RE.test(path) &&
+          (!isNonProductionPath(path) ||
+            (CI_INFRASTRUCTURE_PATH_RE.test(path) && !NON_PRODUCTION_TEST_PATH_RE.test(path))),
+      );
+  const runCodeqlJavascript = codeqlPaths.some((path) => CODEQL_JAVASCRIPT_PATH_RE.test(path));
+  const runCodeqlGo = codeqlPaths.some((path) => CODEQL_GO_PATH_RE.test(path));
+  const runCodeqlPython = codeqlPaths.some((path) => CODEQL_PYTHON_PATH_RE.test(path));
   const selectedEntryPoints = [
     runLocalFresh && "local-fresh",
     runLocalUpdate && "local-update",
@@ -365,8 +458,20 @@ export function createGatePlan(inputPaths, options = {}) {
     productionChanged,
     privilegeChanged,
     runNode,
+    runNodeFocused,
+    runNodeBuild,
+    runNodePackaging,
+    runNodeFull,
     runMacos,
     runSigner: productionChanged && effectivePaths.some((path) => SIGNER_PATH_RE.test(path)),
+    runNativeSigner,
+    runSignerIntegration,
+    runSignerDarwinIntegration,
+    runPlatformBootstrap,
+    runDocker,
+    runCodeqlJavascript,
+    runCodeqlGo,
+    runCodeqlPython,
     runHosting,
     runHostingFresh,
     runHostingUpdate,

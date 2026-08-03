@@ -10,8 +10,13 @@ function trueString(value) {
   return value ? "true" : "false";
 }
 
-function outputEntries(plan) {
+export function outputEntries(plan) {
   const scope = plan.scope;
+  const codeqlLanguages = [
+    scope.runCodeqlJavascript && "javascript-typescript",
+    scope.runCodeqlGo && "go",
+    scope.runCodeqlPython && "python",
+  ].filter(Boolean);
   return {
     authority_version: String(plan.authorityVersion),
     plan_digest: plan.planDigest,
@@ -31,8 +36,21 @@ function outputEntries(plan) {
     privilege_changed: trueString(scope.privilegeChanged),
     reuse_pr_checks: trueString(scope.reusePrChecks),
     run_node: trueString(scope.runNode),
+    run_node_focused: trueString(scope.runNodeFocused),
+    run_node_build: trueString(scope.runNodeBuild),
+    run_node_packaging: trueString(scope.runNodePackaging),
+    run_node_full: trueString(scope.runNodeFull),
     run_macos: trueString(scope.runMacos),
     run_signer: trueString(scope.runSigner),
+    run_native_signer: trueString(scope.runNativeSigner),
+    run_signer_integration: trueString(scope.runSignerIntegration),
+    run_signer_darwin_integration: trueString(scope.runSignerDarwinIntegration),
+    run_platform_bootstrap: trueString(scope.runPlatformBootstrap),
+    run_docker: trueString(scope.runDocker),
+    run_codeql_javascript: trueString(scope.runCodeqlJavascript),
+    run_codeql_go: trueString(scope.runCodeqlGo),
+    run_codeql_python: trueString(scope.runCodeqlPython),
+    codeql_languages_json: JSON.stringify(codeqlLanguages),
     run_hosting: trueString(scope.runHosting),
     run_hosting_fresh: trueString(scope.runHostingFresh),
     run_hosting_update: trueString(scope.runHostingUpdate),
@@ -44,6 +62,18 @@ function outputEntries(plan) {
     run_skills: trueString(scope.runSkills),
     full_matrix: trueString(scope.fullMatrix),
   };
+}
+
+export function assertExpectedPlanDigest(plan, expectedDigest) {
+  const expected = expectedDigest?.trim();
+  if (!expected) {
+    return;
+  }
+  if (plan.planDigest !== expected) {
+    throw new Error(
+      `ci-change-scope: trusted route plan digest mismatch: expected ${expected}, computed ${plan.planDigest}`,
+    );
+  }
 }
 
 function resolveDiffBase(env = process.env) {
@@ -111,6 +141,7 @@ function main() {
     reusePrChecks,
     unknown,
   });
+  assertExpectedPlanDigest(plan, process.env.GATE_EXPECTED_PLAN_DIGEST);
   const entries = outputEntries(plan);
   const outputPath = process.env.GITHUB_OUTPUT;
   if (!outputPath) {

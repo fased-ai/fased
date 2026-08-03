@@ -43,8 +43,20 @@ jobs:
       privilege_changed: ${{ steps.scope.outputs.privilege_changed }}
       reuse_pr_checks: ${{ steps.scope.outputs.reuse_pr_checks }}
       run_node: ${{ steps.scope.outputs.run_node }}
+      run_node_focused: ${{ steps.scope.outputs.run_node_focused }}
+      run_node_build: ${{ steps.scope.outputs.run_node_build }}
+      run_node_packaging: ${{ steps.scope.outputs.run_node_packaging }}
+      run_node_full: ${{ steps.scope.outputs.run_node_full }}
       run_macos: ${{ steps.scope.outputs.run_macos }}
       run_signer: ${{ steps.scope.outputs.run_signer }}
+      run_native_signer: ${{ steps.scope.outputs.run_native_signer }}
+      run_signer_integration: ${{ steps.scope.outputs.run_signer_integration }}
+      run_signer_darwin_integration: ${{ steps.scope.outputs.run_signer_darwin_integration }}
+      run_platform_bootstrap: ${{ steps.scope.outputs.run_platform_bootstrap }}
+      run_docker: ${{ steps.scope.outputs.run_docker }}
+      run_codeql_javascript: ${{ steps.scope.outputs.run_codeql_javascript }}
+      run_codeql_go: ${{ steps.scope.outputs.run_codeql_go }}
+      run_codeql_python: ${{ steps.scope.outputs.run_codeql_python }}
       run_hosting: ${{ steps.scope.outputs.run_hosting }}
       run_hosting_fresh: ${{ steps.scope.outputs.run_hosting_fresh }}
       run_hosting_update: ${{ steps.scope.outputs.run_hosting_update }}
@@ -62,6 +74,15 @@ jobs:
           fetch-depth: 0
           submodules: false
 
+      - name: Resolve trusted private CI route
+        id: private-route
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FASED_PRIVATE_STATUS_ACTOR: ${{ vars.FASED_PRIVATE_STATUS_ACTOR }}
+          FASED_PRIVATE_STATUS_ACTOR_ID: ${{ vars.FASED_PRIVATE_STATUS_ACTOR_ID }}
+        run: node scripts/ci-private-route-status.mjs
+
       - name: Prove tested PR tree for merged main
         id: reuse
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -77,6 +98,9 @@ jobs:
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
           GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
           GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GATE_PHASE: ${{ steps.private-route.outputs.gate_phase || 'T3' }}
+          GATE_ENTRY_POINT: ${{ steps.private-route.outputs.gate_entry_point }}
+          GATE_EXPECTED_PLAN_DIGEST: ${{ steps.private-route.outputs.expected_plan_digest }}
         run: node scripts/ci-change-scope.mjs
 
   # CI routing is executable product policy. Validate it without rebuilding or
@@ -98,11 +122,37 @@ jobs:
         with:
           install-bun: "false"
 
+      - name: Check CI authority formatting and lint
+        run: |
+          pnpm exec oxfmt --check \
+            .github/workflows/ci.yml \
+            .github/workflows/docker-release.yml \
+            scripts/gate-authority.mjs \
+            scripts/gate-authority.test.ts \
+            scripts/ci-change-scope.mjs \
+            scripts/ci-change-scope.test.ts \
+            scripts/ci-private-route-status.mjs \
+            scripts/ci-private-route-status.test.ts \
+            scripts/ci-required-gates.mjs \
+            scripts/ci-required-gates.test.ts \
+            scripts/ci-workflow-contract.test.ts
+          pnpm exec oxlint \
+            scripts/gate-authority.mjs \
+            scripts/gate-authority.test.ts \
+            scripts/ci-change-scope.mjs \
+            scripts/ci-change-scope.test.ts \
+            scripts/ci-private-route-status.mjs \
+            scripts/ci-private-route-status.test.ts \
+            scripts/ci-required-gates.mjs \
+            scripts/ci-required-gates.test.ts \
+            scripts/ci-workflow-contract.test.ts
+
       - name: Check CI routing and gate contracts
         run: >-
           pnpm exec vitest run
           scripts/gate-authority.test.ts
           scripts/ci-change-scope.test.ts
+          scripts/ci-private-route-status.test.ts
           scripts/ci-required-gates.test.ts
           scripts/ci-merged-main-reuse.test.ts
           scripts/ci-version-identity.test.ts
@@ -144,11 +194,42 @@ jobs:
           scripts/protected-local-t2-systemd.test.ts
           --pool=forks --maxWorkers=1
 
+  # The trusted lifecycle route selects this bounded Local-update lane. Keep
+  # commands allowlisted in workflow source; never execute commands supplied by
+  # a PR label, manifest, or status description.
+  node-focused:
+    name: "focused Node tests"
+    needs: [change-scope]
+    if: needs.change-scope.outputs.run_node_focused == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Run focused Local-update regressions
+        run: >-
+          pnpm exec vitest run
+          scripts/protected-local-bootstrap.test.ts
+          src/wallet/wallet-application-state-permissions.test.ts
+          --pool=forks
+          --maxWorkers=1
+
+      - name: Prove cross-UID supervisor client traversal
+        run: sudo -n bash scripts/test-protected-local-supervisor-client-root-fixture.sh
+
   # Build dist once for Node-relevant changes and share it with downstream jobs.
   build-artifacts:
     needs: [change-scope]
     if: >-
-      needs.change-scope.outputs.run_node == 'true' ||
+      needs.change-scope.outputs.run_node_build == 'true' ||
       needs.change-scope.outputs.run_hosting == 'true' ||
       needs.change-scope.outputs.run_local_fresh == 'true' ||
       needs.change-scope.outputs.run_local_update == 'true'
@@ -178,7 +259,7 @@ jobs:
   # Validate npm pack contents after build before merge and again on main.
   release-check:
     needs: [change-scope, build-artifacts]
-    if: needs.change-scope.outputs.run_node == 'true'
+    if: needs.change-scope.outputs.run_node_packaging == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -212,7 +293,7 @@ jobs:
   # without rebuilding or dropping either validation path.
   packed-core-smoke:
     needs: [change-scope, build-artifacts]
-    if: needs.change-scope.outputs.run_node == 'true'
+    if: needs.change-scope.outputs.run_node_packaging == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -243,7 +324,7 @@ jobs:
   signer-platform:
     name: Native signer (${{ matrix.name }})
     needs: [change-scope]
-    if: needs.change-scope.outputs.run_signer == 'true'
+    if: needs.change-scope.outputs.run_native_signer == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -279,19 +360,55 @@ jobs:
         if: runner.os == 'Linux'
         run: bash scripts/test-fased-signerd-portable-builds.sh
 
-      # The Go tests above prove the daemon on each native runner. These
-      # focused integration tests additionally prove that the packaged
-      # JavaScript updater, installer, onboarding, and socket adapter select
-      # and operate the native Darwin signer. Keep this separate from the
-      # unrelated Swift/macOS application lane.
-      - name: Setup Node environment for Local signer integration
-        if: runner.os == 'macOS'
+  signer-integration:
+    name: "signer integration"
+    needs: [change-scope]
+    if: needs.change-scope.outputs.run_signer_integration == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Setup Node environment
         uses: ./.github/actions/setup-node-env
         with:
           install-bun: "false"
 
-      - name: Test Local signer lifecycle integration
-        if: runner.os == 'macOS'
+      - name: Test JavaScript signer lifecycle integration
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: >-
+          pnpm vitest run
+          scripts/fased-managed-updater.local-signer.test.ts
+          scripts/install-local-signer-transaction.test.ts
+          scripts/install-platform-preflight.test.ts
+          scripts/install-release-pin.test.ts
+          src/wallet/providers/local-socket-signer-adapter.integration.test.ts
+          src/wizard/onboarding.wallet.test.ts
+          --pool=forks
+          --maxWorkers=1
+
+  signer-darwin-integration:
+    name: "Darwin signer integration"
+    needs: [change-scope]
+    if: needs.change-scope.outputs.run_signer_darwin_integration == 'true'
+    runs-on: macos-15
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Test Darwin signer lifecycle integration
         env:
           NODE_OPTIONS: --max-old-space-size=4096
         run: >-
@@ -308,7 +425,7 @@ jobs:
   checks:
     name: "test (${{ matrix.runtime }}, ${{ matrix.task }})"
     needs: [change-scope]
-    if: needs.change-scope.outputs.run_node == 'true'
+    if: needs.change-scope.outputs.run_node_full == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -594,7 +711,7 @@ jobs:
           FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install
           FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/protected-local-artifact
           FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
-          FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "0"
+          FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
         run: bash scripts/test-protected-local-systemd-container.sh
 
   protected-local-rocky-lifecycle:
@@ -686,8 +803,218 @@ jobs:
           FASED_SYSTEMD_FIXTURE_SCENARIOS: install
           FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/protected-local-artifact
           FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
+          FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
+        run: bash scripts/test-protected-local-systemd-container.sh
+
+  platform-bootstrap-audit:
+    name: "platform bootstrap"
+    needs: [change-scope, protected-local-fixture-artifact]
+    if: needs.change-scope.outputs.run_platform_bootstrap == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.x
+
+      - name: Download exact Protected Local fixture artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: protected-local-fixture-artifact
+          path: ${{ runner.temp }}/protected-local-artifact/
+
+      - name: Restore cached systemd fixture base image
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/protected-local-image-cache/
+          key: >-
+            protected-local-systemd-${{ runner.os }}-ubuntu-v1-
+            ${{ hashFiles('scripts/docker/protected-local-systemd/Containerfile.*',
+            'scripts/docker/protected-local-systemd/*.conf') }}
+
+      - name: Check package-manager and missing-tool bootstrap
+        env:
+          FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
+          FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install
+          FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/protected-local-artifact
+          FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
           FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "0"
         run: bash scripts/test-protected-local-systemd-container.sh
+
+  docker-amd64:
+    name: "Docker amd64"
+    needs: [change-scope]
+    if: needs.change-scope.outputs.run_docker == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node test environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Test Docker setup and coordinated backup/rollback
+        run: >-
+          pnpm exec vitest run
+          src/docker-setup.test.ts
+          scripts/docker-signer-update.backup.test.ts
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build local validation image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          tags: fased-local-ci:${{ github.sha }}
+          load: true
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=fased-pr-amd64
+          cache-to: type=gha,scope=fased-pr-amd64,mode=max
+
+      - name: Verify non-root runtime user
+        env:
+          IMAGE: fased-local-ci:${{ github.sha }}
+        run: test "$(docker image inspect "$IMAGE" --format '{{.Config.User}}')" = "node"
+
+      - name: Verify native signer is packaged
+        env:
+          IMAGE: fased-local-ci:${{ github.sha }}
+        run: |
+          expected="$(node -p "require('./package.json').version")"
+          actual="$(docker run --rm --entrypoint /usr/local/bin/fased-signerd "$IMAGE" --version)"
+          test "$actual" = "fased-signerd ${expected} commit=unknown buildInputDigest=unknown development=true"
+
+      - name: Setup Trivy cache
+        uses: ./.github/actions/setup-trivy-cache
+
+      - name: Scan local validation image
+        env:
+          IMAGE: fased-local-ci:${{ github.sha }}
+        run: scripts/scan-docker-image.sh "$IMAGE" linux/amd64
+
+  docker-arm64:
+    name: "Docker arm64"
+    needs: [change-scope]
+    if: needs.change-scope.outputs.run_docker == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build native ARM64 signer export
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: signer-artifact
+          platforms: linux/arm64
+          outputs: type=local,dest=${{ runner.temp }}/fased-signer-arm64
+          cache-from: type=gha,scope=fased-pr-signer-arm64
+          cache-to: type=gha,scope=fased-pr-signer-arm64,mode=max
+
+      - name: Execute container-built ARM64 signer
+        shell: bash
+        run: |
+          set -euo pipefail
+          signer="${RUNNER_TEMP}/fased-signer-arm64/fased-signerd"
+          chmod 0555 "$signer"
+          expected="$(node -p "require('./package.json').version")"
+          actual="$("$signer" --version)"
+          test "$actual" = "fased-signerd ${expected} commit=unknown buildInputDigest=unknown development=true"
+
+  codeql-javascript:
+    name: "CodeQL JavaScript"
+    needs: [change-scope]
+    if: needs.change-scope.outputs.run_codeql_javascript == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+
+      - name: Analyze JavaScript and TypeScript
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:javascript-typescript
+
+  codeql-go:
+    name: "CodeQL Go"
+    needs: [change-scope]
+    if: needs.change-scope.outputs.run_codeql_go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: go
+          build-mode: autobuild
+
+      - name: Autobuild Go
+        uses: github/codeql-action/autobuild@v4
+
+      - name: Analyze Go
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:go
+
+  codeql-python:
+    name: "CodeQL Python"
+    needs: [change-scope]
+    if: needs.change-scope.outputs.run_codeql_python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: python
+          build-mode: none
+
+      - name: Analyze Python
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:python
 
   version-identity:
     name: "version identity"
@@ -1327,6 +1654,7 @@ jobs:
       - change-scope
       - ci-contracts
       - t2-contracts
+      - node-focused
       - check
       - hosting-lifecycle
       - protected-local-fixture-artifact
@@ -1340,6 +1668,14 @@ jobs:
       - release-check
       - packed-core-smoke
       - signer-platform
+      - signer-integration
+      - signer-darwin-integration
+      - platform-bootstrap-audit
+      - docker-amd64
+      - docker-arm64
+      - codeql-javascript
+      - codeql-go
+      - codeql-python
       - ui-mining
       - ui
       - checks-windows
@@ -1358,8 +1694,18 @@ jobs:
         env:
           DOCS_CHANGED: ${{ needs.change-scope.outputs.docs_changed }}
           VERSION_ONLY: ${{ needs.change-scope.outputs.version_only }}
-          RUN_NODE: ${{ needs.change-scope.outputs.run_node }}
-          RUN_SIGNER: ${{ needs.change-scope.outputs.run_signer }}
+          RUN_NODE_FOCUSED: ${{ needs.change-scope.outputs.run_node_focused }}
+          RUN_NODE_BUILD: ${{ needs.change-scope.outputs.run_node_build }}
+          RUN_NODE_PACKAGING: ${{ needs.change-scope.outputs.run_node_packaging }}
+          RUN_NODE_FULL: ${{ needs.change-scope.outputs.run_node_full }}
+          RUN_NATIVE_SIGNER: ${{ needs.change-scope.outputs.run_native_signer }}
+          RUN_SIGNER_INTEGRATION: ${{ needs.change-scope.outputs.run_signer_integration }}
+          RUN_SIGNER_DARWIN_INTEGRATION: ${{ needs.change-scope.outputs.run_signer_darwin_integration }}
+          RUN_PLATFORM_BOOTSTRAP: ${{ needs.change-scope.outputs.run_platform_bootstrap }}
+          RUN_DOCKER: ${{ needs.change-scope.outputs.run_docker }}
+          RUN_CODEQL_JAVASCRIPT: ${{ needs.change-scope.outputs.run_codeql_javascript }}
+          RUN_CODEQL_GO: ${{ needs.change-scope.outputs.run_codeql_go }}
+          RUN_CODEQL_PYTHON: ${{ needs.change-scope.outputs.run_codeql_python }}
           RUN_HOSTING: ${{ needs.change-scope.outputs.run_hosting }}
           RUN_LOCAL_FRESH: ${{ needs.change-scope.outputs.run_local_fresh }}
           RUN_LOCAL_UPDATE: ${{ needs.change-scope.outputs.run_local_update }}
@@ -1380,11 +1726,20 @@ jobs:
           T2_CONTRACTS: ${{ needs.t2-contracts.result }}
           VERSION_IDENTITY: ${{ needs.version-identity.result }}
           STRICT_TYPES: ${{ needs.strict-types-baseline.result }}
+          FOCUSED_TESTS: ${{ needs.node-focused.result }}
           TESTS: ${{ needs.checks.result }}
           BUILD: ${{ needs.build-artifacts.result }}
           RELEASE: ${{ needs.release-check.result }}
           PACKED_CORE: ${{ needs.packed-core-smoke.result }}
           SIGNER: ${{ needs.signer-platform.result }}
+          SIGNER_INTEGRATION: ${{ needs.signer-integration.result }}
+          SIGNER_DARWIN_INTEGRATION: ${{ needs.signer-darwin-integration.result }}
+          PLATFORM_BOOTSTRAP: ${{ needs.platform-bootstrap-audit.result }}
+          DOCKER_AMD64: ${{ needs.docker-amd64.result }}
+          DOCKER_ARM64: ${{ needs.docker-arm64.result }}
+          CODEQL_JAVASCRIPT: ${{ needs.codeql-javascript.result }}
+          CODEQL_GO: ${{ needs.codeql-go.result }}
+          CODEQL_PYTHON: ${{ needs.codeql-python.result }}
           UI_MINING: ${{ needs.ui-mining.result }}
           UI: ${{ needs.ui.result }}
           WINDOWS: ${{ needs.checks-windows.result }}
