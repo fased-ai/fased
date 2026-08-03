@@ -129,7 +129,6 @@ describe("CI changed-surface classification", () => {
 
   it("separates Hosting, Local fresh, and Local update lifecycle paths", () => {
     for (const path of [
-      "scripts/fased-host-updater.mjs",
       "scripts/docker/streamed-hosting-bootstrap/run.sh",
       "scripts/docker/hosting-systemd/run.sh",
       "scripts/test-hosting-systemd-container.sh",
@@ -142,6 +141,14 @@ describe("CI changed-surface classification", () => {
         runUiMining: false,
       });
     }
+
+    expect(classifyChangedPaths(["scripts/fased-host-updater.mjs"])).toMatchObject({
+      runNode: true,
+      runHosting: true,
+      runLocalFresh: false,
+      runLocalUpdate: true,
+      runUiMining: false,
+    });
 
     expect(classifyChangedPaths(["scripts/fased-managed-updater.mjs"])).toMatchObject({
       runHosting: true,

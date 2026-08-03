@@ -16,7 +16,10 @@ const DOC_PATH_RE = /^(?:docs\/|.*\.(?:md|mdx)$|scripts\/docs-product-contract\.
 const VERSION_PATH_RE =
   /^(?:package\.json|CHANGELOG\.md|src\/brand\.ts|extensions\/[^/]+\/(?:package\.json|CHANGELOG\.md))$/;
 const CI_INFRASTRUCTURE_PATH_RE =
-  /^(?:\.github\/workflows\/ci\.yml|scripts\/(?:gate-authority|ci-(?:change-scope|required-gates|merged-main-reuse|version-identity|workflow-contract))(?:\.mjs|\.test\.ts))$/;
+  /^(?:\.github\/workflows\/ci\.yml|scripts\/(?:gate-authority|lifecycle-release-gate|ci-(?:change-scope|required-gates|merged-main-reuse|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/lifecycle-release-gate-receipt\.v1\.schema\.json)$/;
+const LIFECYCLE_GATE_REQUIRED_PATHS = Object.freeze(["scripts/lifecycle-release-gate.mjs"]);
+const LIFECYCLE_GATE_ENFORCEMENT_PATH_RE =
+  /^(?:\.github\/workflows\/ci\.yml|scripts\/(?:gate-authority|lifecycle-release-gate|ci-(?:change-scope|required-gates|merged-main-reuse|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/lifecycle-release-gate-receipt\.v1\.schema\.json)$/;
 const T2_FIXTURE_PATH_RE =
   /^scripts\/(?:protected-local-t2-(?:controller-worker|supervisor-worker|systemd-fixture)\.mjs|protected-local-t2-systemd\.test\.ts|test-protected-local-t2-systemd\.sh)$/;
 const TEST_PATH_RE =
@@ -33,7 +36,7 @@ const NATIVE_ONLY_PATH_RE = /^(?:apps\/(?:android|ios|macos|shared)\/|Swabble\/|
 const SHARED_LIFECYCLE_PATH_RE =
   /^(?:install\.sh$|scripts\/(?:build-hosted-runtime-artifact|fased-lifecycle-supervisor|hosted-release-manifest|install-(?:managed-runtime|platform-preflight|release-pin|runtime-profile)|lifecycle-|managed-runtime-layout|signer-(?:enrollment-launchers|owner-policy-installers)|start-managed)[^/]*|src\/(?:cli\/daemon-cli\/(?:install|restart-health)|commands\/(?:daemon-install-helpers|doctor-(?:gateway-health|state-integrity))|config\/io|daemon\/systemd|infra\/(?:managed-runtime|update-runner))[^/]*|\.github\/workflows\/hosted-runtime-release\.yml$)/;
 const SHARED_UPDATE_PATH_RE =
-  /^(?:scripts\/(?:fased-managed-updater|managed-updater-bundle)[^/]*|src\/infra\/update-runner[^/]*)/;
+  /^(?:scripts\/(?:fased-(?:host|managed)-updater|managed-updater-bundle)[^/]*|src\/infra\/update-runner[^/]*)/;
 const LOCAL_LIFECYCLE_PATH_RE =
   /^(?:scripts\/(?:docker\/protected-local-systemd\/|protected-local-|test-protected-local-systemd-container)[^/]*|src\/(?:commands\/onboard-non-interactive\/local|infra\/local-source-paired-update)[^/]*)/;
 const LOCAL_FRESH_PATH_RE = /^(?:scripts\/(?:install-local-|test-install-runtime-profile)[^/]*)/;
@@ -98,6 +101,7 @@ function emptyScope(overrides = {}) {
     docsChanged: false,
     versionOnly: false,
     ciInfrastructureOnly: false,
+    lifecycleGateEnforcementOnly: false,
     t2FixtureOnly: false,
     testOnly: false,
     fixtureOnly: false,
@@ -132,7 +136,12 @@ function acceptanceGates(scope) {
 }
 
 function surfaceMap(scope, paths, productionPaths, all = false) {
-  const production = productionPaths.length > 0 ? productionPaths : paths;
+  const production =
+    scope.ciInfrastructureOnly || scope.lifecycleGateEnforcementOnly
+      ? productionPaths
+      : productionPaths.length > 0
+        ? productionPaths
+        : paths;
   const knownProduction =
     scope.runNode ||
     scope.runSigner ||
@@ -180,12 +189,14 @@ export function createGatePlan(inputPaths, options = {}) {
       phase: "merge-reuse",
       entryPoint,
       entryPoints: [],
+      affectedEntryPoints: [],
       changeKind: "merge-reuse",
       paths,
       productionPaths: [],
       scope,
       surfaces: surfaceMap(scope, [], []),
       acceptance: acceptanceGates(scope),
+      affectedAcceptance: acceptanceGates(scope),
       manualReviewRequired: false,
     };
     return Object.freeze({ ...body, planDigest: digestPlan(body) });
@@ -214,12 +225,14 @@ export function createGatePlan(inputPaths, options = {}) {
       phase,
       entryPoint,
       entryPoints: [...ENTRY_POINTS],
+      affectedEntryPoints: [...ENTRY_POINTS],
       changeKind: "full-matrix",
       paths,
       productionPaths: paths,
       scope,
       surfaces: surfaceMap(scope, paths, paths, true),
       acceptance: acceptanceGates(scope),
+      affectedAcceptance: acceptanceGates(scope),
       manualReviewRequired: unknown && !fullMatrix,
     };
     return Object.freeze({ ...body, planDigest: digestPlan(body) });
@@ -231,15 +244,26 @@ export function createGatePlan(inputPaths, options = {}) {
     paths.includes("package.json") &&
     paths.includes("src/brand.ts") &&
     paths.every((path) => VERSION_PATH_RE.test(path));
+  const lifecycleGateEnforcementOnly =
+    !versionOnly &&
+    LIFECYCLE_GATE_REQUIRED_PATHS.every((path) => paths.includes(path)) &&
+    paths.every((path) => LIFECYCLE_GATE_ENFORCEMENT_PATH_RE.test(path));
   const ciInfrastructureOnly =
     !versionOnly && paths.every((path) => CI_INFRASTRUCTURE_PATH_RE.test(path));
-  const ciInfrastructureChanged = paths.some((path) => CI_INFRASTRUCTURE_PATH_RE.test(path));
+  const ciInfrastructureChanged =
+    lifecycleGateEnforcementOnly || paths.some((path) => CI_INFRASTRUCTURE_PATH_RE.test(path));
   const t2FixtureOnly = paths.every((path) => T2_FIXTURE_PATH_RE.test(path));
   const testOnly = paths.every((path) => TEST_PATH_RE.test(path) || T2_FIXTURE_PATH_RE.test(path));
   const fixtureOnly = paths.every((path) =>
     /^(?:fixtures\/|scripts\/(?:docker\/|test-|protected-local-t2-))/.test(path),
   );
-  const productionPaths = versionOnly ? [] : paths.filter((path) => !isNonProductionPath(path));
+  const productionPaths = versionOnly
+    ? []
+    : paths.filter(
+        (path) =>
+          !isNonProductionPath(path) &&
+          !(lifecycleGateEnforcementOnly && LIFECYCLE_GATE_ENFORCEMENT_PATH_RE.test(path)),
+      );
   const productionChanged = productionPaths.length > 0;
   const gateToolingOnly =
     !versionOnly &&
@@ -248,6 +272,7 @@ export function createGatePlan(inputPaths, options = {}) {
     paths.every(
       (path) =>
         CI_INFRASTRUCTURE_PATH_RE.test(path) ||
+        (lifecycleGateEnforcementOnly && LIFECYCLE_GATE_ENFORCEMENT_PATH_RE.test(path)) ||
         T2_FIXTURE_PATH_RE.test(path) ||
         DOC_PATH_RE.test(path) ||
         NON_PRODUCTION_TEST_PATH_RE.test(path),
@@ -296,7 +321,20 @@ export function createGatePlan(inputPaths, options = {}) {
     runHostingUpdate = false;
   }
 
+  const affectedEntryPointFlags = Object.freeze({
+    "local-fresh": runLocalFresh,
+    "local-update": runLocalUpdate,
+    "hosting-fresh": runHostingFresh,
+    "hosting-update": runHostingUpdate,
+  });
+  const affectedEntryPoints = ENTRY_POINTS.filter((name) => affectedEntryPointFlags[name]);
+
   if (entryPoint) {
+    if (!affectedEntryPointFlags[entryPoint]) {
+      throw new Error(
+        `gate authority: entry point ${JSON.stringify(entryPoint)} is not affected by the changed paths`,
+      );
+    }
     runLocalFresh = entryPoint === "local-fresh";
     runLocalUpdate = entryPoint === "local-update";
     runHostingFresh = entryPoint === "hosting-fresh";
@@ -320,6 +358,7 @@ export function createGatePlan(inputPaths, options = {}) {
     docsChanged,
     versionOnly,
     ciInfrastructureOnly,
+    lifecycleGateEnforcementOnly,
     t2FixtureOnly,
     testOnly,
     fixtureOnly,
@@ -339,35 +378,48 @@ export function createGatePlan(inputPaths, options = {}) {
     runSkills: productionChanged && effectivePaths.some((path) => SKILLS_PATH_RE.test(path)),
     fullMatrix,
   });
+  const affectedScope = {
+    ...scope,
+    runHosting:
+      affectedEntryPointFlags["hosting-fresh"] || affectedEntryPointFlags["hosting-update"],
+    runHostingFresh: affectedEntryPointFlags["hosting-fresh"],
+    runHostingUpdate: affectedEntryPointFlags["hosting-update"],
+    runLocalFresh: affectedEntryPointFlags["local-fresh"],
+    runLocalUpdate: affectedEntryPointFlags["local-update"],
+  };
 
   const changeKind = versionOnly
     ? "version-only"
     : docsOnly
       ? "documentation-only"
-      : ciInfrastructureOnly
-        ? "ci-infrastructure-only"
-        : t2FixtureOnly
-          ? "t2-fixture-only"
-          : fixtureOnly
-            ? "fixture-only"
-            : testOnly
-              ? "test-only"
-              : gateToolingOnly
-                ? "gate-tooling-only"
-                : productionChanged
-                  ? "production"
-                  : "unknown";
+      : lifecycleGateEnforcementOnly
+        ? "lifecycle-gate-enforcement-only"
+        : ciInfrastructureOnly
+          ? "ci-infrastructure-only"
+          : t2FixtureOnly
+            ? "t2-fixture-only"
+            : fixtureOnly
+              ? "fixture-only"
+              : testOnly
+                ? "test-only"
+                : gateToolingOnly
+                  ? "gate-tooling-only"
+                  : productionChanged
+                    ? "production"
+                    : "unknown";
   const body = {
     authorityVersion: GATE_AUTHORITY_VERSION,
     phase,
     entryPoint,
     entryPoints: selectedEntryPoints,
+    affectedEntryPoints,
     changeKind,
     paths,
     productionPaths,
     scope,
-    surfaces: surfaceMap(scope, paths, productionPaths),
+    surfaces: surfaceMap(affectedScope, paths, productionPaths),
     acceptance: acceptanceGates(scope),
+    affectedAcceptance: acceptanceGates(affectedScope),
     manualReviewRequired:
       changeKind === "unknown" ||
       (changeKind === "production" && !entryPoint && selectedEntryPoints.length > 1),
@@ -383,8 +435,11 @@ export function classifyChangedPaths(paths, options = {}) {
     phase: plan.phase,
     entryPoint: plan.entryPoint,
     entryPoints: plan.entryPoints,
+    affectedEntryPoints: plan.affectedEntryPoints,
     changeKind: plan.changeKind,
+    surfaces: plan.surfaces,
     acceptance: plan.acceptance,
+    affectedAcceptance: plan.affectedAcceptance,
     manualReviewRequired: plan.manualReviewRequired,
     planDigest: plan.planDigest,
   });

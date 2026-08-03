@@ -10,9 +10,18 @@ const fixture = fs.readFileSync(
 describe("minimal Protected Local T2 generated-unit fixture", () => {
   it("uses production-generated units without full installation machinery", () => {
     expect(fixture).toContain("buildProtectedLocalServicePlan");
-    expect(fixture).toContain('systemctl("start", layout.controllerUnit)');
-    expect(fixture).toContain('systemctl("start", layout.supervisorUnit)');
-    expect(fixture).toContain("controller promotion failed and was restored");
+    expect(fixture).toContain('systemctl("enable", layout.controllerUnit)');
+    expect(fixture).toContain('systemctl("enable", layout.supervisorUnit)');
+    expect(fixture).toContain('systemctl("restart", layout.supervisorUnit)');
+    expect(fixture).toContain('"recoveryStatus"');
+    expect(fixture).toContain('"recoverActive"');
+    expect(fixture).toContain('pending.recovery?.state, "RECOVERY_PENDING"');
+    expect(fixture).toContain("firstWorkerStartFailed: true");
+    expect(fixture).toContain("publicRecoveryPending: true");
+    expect(fixture).toContain("exactRecoveryRollback: true");
+    expect(fixture).toContain('"applyRelease"');
+    expect(fixture).toContain("productCommit: true");
+    expect(fixture).toContain("restartRecoveryReady: true");
     expect(fixture).toContain("controller unexpectedly wrote");
     expect(fixture).toContain('fsp.chown(path.join(generation, "fased-host-updater.mjs"), 0, 0)');
     expect(fixture).toContain(
@@ -21,6 +30,18 @@ describe("minimal Protected Local T2 generated-unit fixture", () => {
     expect(fixture).toContain("ownerInstallationTouched: false");
     expect(fixture).toContain("freshProductInstallationCreated: false");
     expect(fixture).toContain("packageBootstrapRun: false");
+    expect(fixture).toContain("createRootFixtureRoot(instanceId)");
+    expect(fixture).toContain("parentInfo.isSymbolicLink()");
+    expect(fixture).toContain("fsp.mkdtemp(path.join(parent, `.fased-t2-${instanceId}-`))");
+    expect(fixture).toContain(
+      "BindReadOnlyPaths=${registryRoot}:/var/lib/fased-local-registry ${fixtureHome}:${operator.home}",
+    );
+    expect(fixture).toContain("BindPaths=${fixtureHome}:${operator.home}");
+    expect(fixture.indexOf("for (const fixedPath of fixedPaths)")).toBeLessThan(
+      fixture.indexOf("const fixtureRoot = await createRootFixtureRoot(instanceId)"),
+    );
+    expect(fixture).not.toContain('fsp.chown(path.join(operator.home, ".fased-t2")');
+    expect(fixture).not.toContain("/var/lib/fased-t2/");
     expect(fixture).not.toContain("podman");
     expect(fixture).not.toContain("docker");
     expect(fixture).not.toContain("apt-get");

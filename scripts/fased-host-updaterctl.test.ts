@@ -86,6 +86,18 @@ describe("host updater controller client", () => {
           clientCapabilities: { protocolVersion: number; requestSchema: number };
         };
         requests.push(request);
+        if (request.op === "recoveryStatus") {
+          socket.end(
+            `${JSON.stringify({
+              ok: true,
+              transactionId: request.transactionId,
+              version: request.version,
+              phase: "ready",
+              recovery: { state: "READY" },
+            })}\n`,
+          );
+          return;
+        }
         if (request.op === "applyRelease" && rejectFirstApply) {
           rejectFirstApply = false;
           socket.end(
@@ -192,6 +204,18 @@ describe("host updater controller client", () => {
           clientCapabilities: { protocolVersion: number; requestSchema: number };
         };
         requests.push(request);
+        if (request.op === "recoveryStatus") {
+          socket.end(
+            `${JSON.stringify({
+              ok: true,
+              transactionId: request.transactionId,
+              version: request.version,
+              phase: "ready",
+              recovery: { state: "READY" },
+            })}\n`,
+          );
+          return;
+        }
         socket.end(
           `${JSON.stringify({
             ok: true,
@@ -211,7 +235,11 @@ describe("host updater controller client", () => {
     try {
       const result = await runClient({ socketPath, statePath, version: "1.2.3" });
       expect(result).toMatchObject({ code: 0, stderr: "" });
-      expect(requests.map(({ op }) => op)).toEqual(["updateController", "applyRelease"]);
+      expect(requests.map(({ op }) => op)).toEqual([
+        "recoveryStatus",
+        "updateController",
+        "applyRelease",
+      ]);
       expect(new Set(requests.map(({ version }) => version))).toEqual(new Set(["1.2.3"]));
       expect(requests[0]?.transactionId).not.toBe(priorTransactionId);
       expect(new Set(requests.map(({ transactionId }) => transactionId)).size).toBe(1);
@@ -244,6 +272,18 @@ describe("host updater controller client", () => {
           version: string;
         };
         requests.push(request.op);
+        if (request.op === "recoveryStatus") {
+          socket.end(
+            `${JSON.stringify({
+              ok: true,
+              transactionId: request.transactionId,
+              version: request.version,
+              phase: "ready",
+              recovery: { state: "READY" },
+            })}\n`,
+          );
+          return;
+        }
         socket.end(
           `${JSON.stringify({
             ok: request.op === "updateController",
@@ -265,7 +305,7 @@ describe("host updater controller client", () => {
       const result = await runClient({ socketPath, statePath });
       expect(result.code).not.toBe(0);
       expect(result.stderr).toContain("rolled back by root supervisor");
-      expect(requests).toEqual(["updateController", "applyRelease"]);
+      expect(requests).toEqual(["recoveryStatus", "updateController", "applyRelease"]);
       await expect(fs.access(statePath)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await new Promise<void>((resolve, reject) => {

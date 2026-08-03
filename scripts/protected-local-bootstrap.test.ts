@@ -79,34 +79,57 @@ describe("protected Local bootstrap contract", () => {
     ).rejects.toThrow(/update-channel directory is unsafe/u);
   });
 
-  it("suspends a stale application-owned update journal and restores it only on rollback", async () => {
+  it("runs fixed-path legacy adoption before the supervisor transition and preserves the journal", () => {
     const root = temporaryRoot();
     const stateDir = path.join(root, ".fased");
     const journalPath = path.join(stateDir, "hosted-update-transaction.json");
-    const journal = `${JSON.stringify({
-      schemaVersion: 1,
-      transactionId: "00000000-0000-4000-8000-000000000001",
-      targetVersion: "0.1.76-rc.22",
-      phase: "rolling-back",
-    })}\n`;
+    const journal = '{"schemaVersion":1,"phase":"rolling-back"}\n';
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(journalPath, journal, { mode: 0o600 });
     const spec = {
       stateDir,
-      operatorUid: process.getuid?.() ?? 0,
-      operatorGid: process.getgid?.() ?? 0,
+      operatorUser: "fixture-operator",
+      operatorHome: root,
+      nodeBinary: "/usr/bin/node",
     };
-
-    const suspended = await __testing.suspendLegacyManagedUpdateJournal(spec);
-    expect(suspended).toMatchObject({ existed: true, journalPath });
-    expect(fs.existsSync(journalPath)).toBe(false);
-
-    await expect(__testing.restoreLegacyManagedUpdateJournal(suspended)).resolves.toBe(true);
+    const command = __testing.buildLegacyManagedUpdateAdoptionCommand(root, spec, {
+      runuserPath: "/usr/sbin/runuser",
+    });
+    expect(command).toEqual({
+      executable: "/usr/sbin/runuser",
+      args: [
+        "-u",
+        "fixture-operator",
+        "--",
+        "/usr/bin/env",
+        "-i",
+        `HOME=${root}`,
+        "USER=fixture-operator",
+        "LOGNAME=fixture-operator",
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        `FASED_STATE_DIR=${stateDir}`,
+        `FASED_CONFIG_PATH=${path.join(stateDir, "fased.json")}`,
+        "/usr/bin/node",
+        path.join(root, "scripts", "fased-managed-updater-core.mjs"),
+        "adopt-legacy-managed-update",
+      ],
+    });
+    expect(command.args).not.toContain("--state-dir");
+    expect(command.args).not.toContain("--journal-path");
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "protected-local-bootstrap.mjs"),
+      "utf8",
+    );
+    expect(
+      source.indexOf("legacyAdoption = await importLegacyManagedUpdateAdoption("),
+    ).toBeGreaterThan(-1);
+    expect(
+      source.indexOf("legacyAdoption = await importLegacyManagedUpdateAdoption("),
+    ).toBeLessThan(
+      source.indexOf("await transitionExistingSupervisorBoundary(sourceRoot, spec, layout)"),
+    );
+    expect(source).not.toContain("suspendLegacyManagedUpdateJournal");
     expect(fs.readFileSync(journalPath, "utf8")).toBe(journal);
-    expect(fs.statSync(journalPath).mode & 0o777).toBe(0o600);
-
-    await __testing.suspendLegacyManagedUpdateJournal(spec);
-    expect(fs.existsSync(journalPath)).toBe(false);
   });
 
   it("keeps the supervisor private and gives its client a separate executable boundary", async () => {
@@ -154,6 +177,21 @@ describe("protected Local bootstrap contract", () => {
     expect(transition).toContain("setProtectedLocalPrivateSupervisorDirectoryMode(");
     expect(transition).toContain("privateSupervisorDirectory, 0o700");
     expect(transition).toContain("fsp.rm(layout.legacySupervisorClient");
+
+    const priorUnitSnapshots = new Map([
+      [path.join("/etc/systemd/system", layout.supervisorUnit), { existed: true }],
+      [path.join("/etc/systemd/system", layout.controllerUnit), { existed: true }],
+    ]);
+    expect(__testing.restorablePreviousSupervisorUnits(priorUnitSnapshots, layout)).toEqual([
+      layout.supervisorUnit,
+      layout.controllerUnit,
+    ]);
+    priorUnitSnapshots.set(path.join("/etc/systemd/system", layout.supervisorUnit), {
+      existed: false,
+    });
+    expect(__testing.restorablePreviousSupervisorUnits(priorUnitSnapshots, layout)).toEqual([
+      layout.controllerUnit,
+    ]);
 
     fs.rmSync(privateDirectory, { recursive: true });
     fs.symlinkSync(root, privateDirectory);

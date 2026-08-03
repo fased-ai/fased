@@ -106,6 +106,8 @@ export async function requestSupervisorOperation({
   transactionId,
   nonce,
   version,
+  recoveryDigest = null,
+  recoveryControllerVersion = null,
   timeoutMs = 20 * 60_000,
 }) {
   const normalizedVersion = parseReleaseVersion(version);
@@ -117,9 +119,16 @@ export async function requestSupervisorOperation({
   if (!TRANSACTION_ID_PATTERN.test(normalizedNonce)) {
     throw new Error("supervisor client request nonce must be a UUIDv4");
   }
+  const normalizedRecoveryControllerVersion =
+    operation === "recoverActive" ? parseReleaseVersion(recoveryControllerVersion) : null;
+  if (operation === "recoverActive" && !/^[a-f0-9]{64}$/u.test(String(recoveryDigest ?? ""))) {
+    throw new Error("supervisor client recovery digest is invalid");
+  }
   if (
     operation !== "updateController" &&
     !new Set([
+      "recoveryStatus",
+      "recoverActive",
       "applyRelease",
       "prepareRelease",
       "activateRelease",
@@ -160,6 +169,10 @@ export async function requestSupervisorOperation({
           nonce: normalizedNonce,
           version: normalizedVersion,
           clientCapabilities: SUPERVISOR_CLIENT_CAPABILITIES,
+          ...(operation === "recoverActive" ? { recoveryDigest } : {}),
+          ...(operation === "recoverActive"
+            ? { recoveryControllerVersion: normalizedRecoveryControllerVersion }
+            : {}),
         })}\n`,
       );
     });
@@ -267,6 +280,45 @@ export async function ensureSupervisorTargetController(params, overrides = {}) {
   throw new Error("verified lifecycle controller did not restart into the target release");
 }
 
+export async function recoverPendingSupervisorTransaction(params, overrides = {}) {
+  const request = overrides.request ?? requestSupervisorOperationWithRetry;
+  const wait =
+    overrides.wait ?? (async () => await new Promise((resolve) => setTimeout(resolve, 500)));
+  for (let step = 0; step < 3; step += 1) {
+    const status = await request({ ...params, operation: "recoveryStatus" }, 3);
+    if (status.recovery?.state === "READY") {
+      return status;
+    }
+    const recovery = status.recovery;
+    if (
+      recovery?.state !== "RECOVERY_PENDING" ||
+      !TRANSACTION_ID_PATTERN.test(recovery.transactionId || "") ||
+      !RELEASE_VERSION_PATTERN.test(recovery.targetVersion || "") ||
+      !/^[a-f0-9]{64}$/u.test(recovery.journalDigest || "")
+    ) {
+      throw new Error("lifecycle supervisor reported an unrecoverable protected journal");
+    }
+    const result = await request(
+      {
+        socketPath: params.socketPath,
+        operation: "recoverActive",
+        transactionId: recovery.transactionId,
+        nonce: randomUUID().toLowerCase(),
+        version: recovery.targetVersion,
+        recoveryDigest: recovery.journalDigest,
+        recoveryControllerVersion: params.version,
+        timeoutMs: params.timeoutMs,
+      },
+      1,
+    );
+    if (result.recovery?.state === "READY") {
+      return result;
+    }
+    await wait();
+  }
+  throw new Error("lifecycle recovery did not converge after its bounded explicit handoff");
+}
+
 export async function runSupervisorClient({
   version,
   mode,
@@ -288,6 +340,7 @@ export async function runSupervisorClient({
   let targetSelected = false;
   let activated = false;
   try {
+    await recoverPendingSupervisorTransaction(params);
     if (mode === "--rollback-only") {
       const rolledBack = await requestSupervisorOperationWithRetry(
         { ...params, operation: "rollbackRelease" },

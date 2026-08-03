@@ -243,6 +243,7 @@ async function existingControllerTransitionFixture(
       rootGid: process.getgid?.() ?? 0,
       platform: "linux-x64",
       now: () => now,
+      operatorStateDirSha256: `sha256:${"e".repeat(64)}`,
       verifyMetadata: async () => undefined,
       verifyReleaseEvidence: async () => undefined,
       selfCheckSupervisor: async () => undefined,
@@ -543,7 +544,7 @@ describe("stable lifecycle supervisor contract", () => {
     ).toThrow("malformed");
   });
 
-  it("upgrades a legacy root-ledger record without changing transaction authority", () => {
+  it("upgrades an exact prior schema-2 root ledger without changing transaction authority", () => {
     const transaction = parseSupervisorRequest({
       schemaVersion: 2,
       op: "applyRelease",
@@ -556,11 +557,12 @@ describe("stable lifecycle supervisor contract", () => {
       previousVersion: "1.2.2",
       now,
     });
-    const legacy = { ...current, schemaVersion: 1 } as Record<string, unknown>;
-    delete legacy.protocolVersion;
-    delete legacy.requestNonce;
-    delete legacy.clientCapabilities;
-    delete legacy.rollbackPointers;
+    const legacy = { ...current, schemaVersion: 2 } as Record<string, unknown>;
+    delete legacy.legacyAdoptionDigest;
+    delete legacy.legacyAdoptionTransactionId;
+    delete legacy.legacyAdoptionPreviousVersion;
+    delete legacy.legacyAdoptionTargetVersion;
+    delete legacy.legacyAdoptionAckDigest;
 
     const parsed = __testing.parseRootProductTransaction(legacy);
     const advanced = __testing.advanceRootProductTransaction(parsed, {
@@ -569,19 +571,29 @@ describe("stable lifecycle supervisor contract", () => {
     });
 
     expect(parsed).toMatchObject({
-      schemaVersion: 1,
-      requestNonce: transaction.transactionId,
+      schemaVersion: 2,
+      requestNonce: current.requestNonce,
       rollbackPointers: {
         controllerGenerationVersion: null,
         productVersion: "1.2.2",
       },
+      legacyAdoptionDigest: null,
+      legacyAdoptionTransactionId: null,
+      legacyAdoptionPreviousVersion: null,
+      legacyAdoptionTargetVersion: null,
+      legacyAdoptionAckDigest: null,
     });
     expect(advanced).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       protocolVersion: 2,
       transactionId: transaction.transactionId,
       previousVersion: "1.2.2",
       phase: "state-reconciling",
+      legacyAdoptionDigest: null,
+      legacyAdoptionTransactionId: null,
+      legacyAdoptionPreviousVersion: null,
+      legacyAdoptionTargetVersion: null,
+      legacyAdoptionAckDigest: null,
     });
     expect(() => __testing.assertRootProductTransactionTransition(parsed, advanced)).not.toThrow();
   });
@@ -765,6 +777,7 @@ describe("stable lifecycle supervisor contract", () => {
       selectionDigest: selectionReceipt.selectionDigest,
       targetControllerReceipt: selectionReceipt,
       targetReleaseIdentity: null,
+      legacyAdoption: null,
       artifactDigests: {
         application: null,
         dependencies: null,
@@ -1265,6 +1278,13 @@ describe("stable lifecycle supervisor contract", () => {
     expect(units.supervisor.content).toContain(
       "CapabilityBoundingSet=CAP_CHOWN\nAmbientCapabilities=",
     );
+    expect(units.supervisor.content).toContain(
+      "After=fixed-controller.service network-online.target",
+    );
+    expect(units.supervisor.content).toContain(
+      "Wants=fixed-controller.service network-online.target",
+    );
+    expect(units.supervisor.content).not.toContain("Requires=fixed-controller.service");
   });
 
   it("requires unexpired, architecture-bound, channel-bound immutable metadata", () => {
@@ -1533,6 +1553,57 @@ describe("stable lifecycle supervisor contract", () => {
     expect(JSON.parse(await fsp.readFile(paths.rootTransactionPath, "utf8"))).toEqual(
       selectedBeforeRetry,
     );
+  });
+
+  it("waits for a freshly selected controller to finish recovery initialization", async () => {
+    const { paths } = tempPaths();
+    const fixture = await existingControllerTransitionFixture(paths, "1.2.2");
+    const state = { controllerInstanceId: randomUUID() };
+    const update = request();
+
+    await expect(__testing.handleSupervisorRequest(update, fixture.context, state)).rejects.toThrow(
+      "controller promotion failed and was restored",
+    );
+
+    const exactProbe = fixture.context.probeControllerIdentity;
+    const probe = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("controller recovery authority is still initializing"))
+      .mockImplementation(exactProbe);
+    fixture.context.probeControllerIdentity = probe;
+    fixture.context.controllerIdentityRetryDelay = async () => undefined;
+
+    await expect(
+      __testing.handleSupervisorRequest(update, fixture.context, state),
+    ).resolves.toMatchObject({
+      ok: true,
+      version,
+      controllerChanged: true,
+    });
+    expect(probe).toHaveBeenCalledTimes(2);
+    expect(await fsp.realpath(paths.currentLink)).toBe(path.join(paths.releasesDir, `v${version}`));
+  });
+
+  it("does not retry a persistent selected-controller identity mismatch", async () => {
+    const { paths } = tempPaths();
+    const fixture = await existingControllerTransitionFixture(paths, "1.2.2");
+    const state = { controllerInstanceId: randomUUID() };
+    const update = request();
+
+    await expect(__testing.handleSupervisorRequest(update, fixture.context, state)).rejects.toThrow(
+      "controller promotion failed and was restored",
+    );
+
+    const probe = vi.fn(async () => {
+      throw new Error("replaceable lifecycle controller is not running the verified target");
+    });
+    fixture.context.probeControllerIdentity = probe;
+    fixture.context.controllerIdentityRetryDelay = async () => undefined;
+
+    await expect(__testing.handleSupervisorRequest(update, fixture.context, state)).rejects.toThrow(
+      "controller promotion failed and was restored: replaceable lifecycle controller is not running the verified target",
+    );
+    expect(probe).toHaveBeenCalledTimes(1);
   });
 
   it("rejects supervisor promotion when the installed file changed beneath the running process", async () => {

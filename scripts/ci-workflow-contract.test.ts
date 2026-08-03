@@ -61,11 +61,23 @@ describe("CI workflow routing", () => {
         "fetch-depth"
       ],
     ).toBe(0);
+    const localRecoveryT1 = protectedLocalUpdate?.steps?.find((step) =>
+      String(step.run ?? "").includes("scripts/fased-local-recovery-pending.test.ts"),
+    );
+    const localSystemdFixture = protectedLocalUpdate?.steps?.find(
+      (step) => step.env?.FASED_SYSTEMD_FIXTURE_SCENARIOS === "install",
+    );
     expect(
-      protectedLocalUpdate?.steps?.find(
-        (step) => step.env?.FASED_SYSTEMD_FIXTURE_SCENARIOS === "install",
-      )?.run,
-    ).toBe("bash scripts/test-protected-local-systemd-container.sh");
+      protectedLocalUpdate?.steps?.find((step) => step.uses === "./.github/actions/setup-node-env")
+        ?.with?.["install-bun"],
+    ).toBe("false");
+    expect(localRecoveryT1?.run).toContain("pnpm exec vitest run");
+    expect(localRecoveryT1?.run).toContain("--pool=forks");
+    expect(localRecoveryT1?.run).toContain("--maxWorkers=1");
+    expect(protectedLocalUpdate?.steps?.indexOf(localRecoveryT1)).toBeLessThan(
+      protectedLocalUpdate?.steps?.indexOf(localSystemdFixture),
+    );
+    expect(localSystemdFixture?.run).toBe("bash scripts/test-protected-local-systemd-container.sh");
 
     const required = jobs["required-checks"];
     expect(required?.needs).toEqual(
