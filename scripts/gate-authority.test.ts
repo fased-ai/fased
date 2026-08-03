@@ -55,6 +55,33 @@ describe("machine gate authority", () => {
     expect(plan.acceptance).toEqual({ L0: false, L1: false, H0: false, H1: false, H2: false });
   });
 
+  it("routes exact release promotion infrastructure without product lifecycle lanes", () => {
+    const plan = createGatePlan([
+      ".github/workflows/hosted-runtime-release.yml",
+      "scripts/release-artifact-set.mjs",
+      "scripts/release-artifact-set.test.ts",
+      "scripts/verify-release-gate-status.mjs",
+      "scripts/verify-release-gate-status.test.ts",
+      "scripts/gate-authority.mjs",
+      "scripts/gate-authority.test.ts",
+    ]);
+
+    expect(plan.changeKind).toBe("ci-infrastructure-only");
+    expect(plan.scope).toMatchObject({
+      ciInfrastructureOnly: true,
+      productionChanged: false,
+      privilegeChanged: false,
+      runCiContracts: true,
+      runT2Contracts: false,
+      runNode: false,
+      runSigner: false,
+      runHosting: false,
+      runLocalFresh: false,
+      runLocalUpdate: false,
+    });
+    expect(plan.acceptance).toEqual({ L0: false, L1: false, H0: false, H1: false, H2: false });
+  });
+
   it("does not let an accompanying test broaden a production change", () => {
     const withoutTest = createGatePlan(["src/gateway/server.ts"]);
     const withTest = createGatePlan(["src/gateway/server.ts", "src/gateway/server.test.ts"]);

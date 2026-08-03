@@ -16,7 +16,7 @@ const DOC_PATH_RE = /^(?:docs\/|.*\.(?:md|mdx)$|scripts\/docs-product-contract\.
 const VERSION_PATH_RE =
   /^(?:package\.json|CHANGELOG\.md|src\/brand\.ts|extensions\/[^/]+\/(?:package\.json|CHANGELOG\.md))$/;
 const CI_INFRASTRUCTURE_PATH_RE =
-  /^(?:\.github\/workflows\/ci\.yml|scripts\/(?:gate-authority|lifecycle-release-gate|ci-(?:change-scope|required-gates|merged-main-reuse|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/lifecycle-release-gate-receipt\.v1\.schema\.json)$/;
+  /^(?:\.github\/workflows\/(?:ci|hosted-runtime-release)\.yml|scripts\/(?:gate-authority|lifecycle-release-gate|release-artifact-set|verify-release-gate-status|ci-(?:change-scope|required-gates|merged-main-reuse|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/lifecycle-release-gate-receipt\.v1\.schema\.json)$/;
 const LIFECYCLE_GATE_REQUIRED_PATHS = Object.freeze(["scripts/lifecycle-release-gate.mjs"]);
 const LIFECYCLE_GATE_ENFORCEMENT_PATH_RE =
   /^(?:\.github\/workflows\/ci\.yml|scripts\/(?:gate-authority|lifecycle-release-gate|ci-(?:change-scope|required-gates|merged-main-reuse|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/lifecycle-release-gate-receipt\.v1\.schema\.json)$/;
