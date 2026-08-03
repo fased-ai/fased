@@ -90,6 +90,27 @@ describe("CI changed-surface classification", () => {
     });
   });
 
+  it("exports exact changed test paths only for a test-only plan", () => {
+    expect(
+      outputEntries(
+        createGatePlan([
+          "src/gateway/server-methods/agent.test.ts",
+          "ui/src/ui/views/instances.test.ts",
+        ]),
+      ),
+    ).toMatchObject({
+      changed_test_paths_json:
+        '["src/gateway/server-methods/agent.test.ts","ui/src/ui/views/instances.test.ts"]',
+      changed_ui_browser_tests: "false",
+    });
+    expect(outputEntries(createGatePlan(["ui/src/ui/views/nodes.browser.test.ts"]))).toMatchObject({
+      changed_ui_browser_tests: "true",
+    });
+    expect(outputEntries(createGatePlan(["src/gateway/server.ts"])).changed_test_paths_json).toBe(
+      "[]",
+    );
+  });
+
   it("recognizes the exact release-version file set", () => {
     expect(
       classifyChangedPaths([
@@ -262,7 +283,8 @@ describe("CI changed-surface classification", () => {
   it("runs Mining browser checks only for Mining-facing paths", () => {
     expect(classifyChangedPaths(["ui/src/ui/views/mining.ts"])).toMatchObject({
       runNode: true,
-      runUiMining: true,
+      runUi: true,
+      runUiMining: false,
     });
     expect(classifyChangedPaths(["ui/src/ui/views/wallet.ts"])).toMatchObject({
       runNode: true,
@@ -270,14 +292,14 @@ describe("CI changed-surface classification", () => {
     });
   });
 
-  it("keeps generated signer protocol changes off the macOS app lane", () => {
+  it("routes generated and handwritten macOS application changes to the supported app lane", () => {
     expect(
       classifyChangedPaths(["apps/macos/Sources/FasedAgentProtocol/Generated.swift"]),
     ).toMatchObject({
-      runMacos: false,
+      runMacosApp: true,
     });
     expect(classifyChangedPaths(["apps/macos/Sources/App/Main.swift"])).toMatchObject({
-      runMacos: true,
+      runMacosApp: true,
     });
   });
 
@@ -293,7 +315,21 @@ describe("CI changed-surface classification", () => {
     const scope = classifyChangedPaths([changedPath]);
 
     expect(scope.runSigner).toBe(true);
-    expect(scope.runMacos).toBe(false);
+    expect(scope.runMacosApp).toBe(false);
+  });
+
+  it("keeps native Windows absent and mobile previews outside routine platform lanes", () => {
+    const ios = classifyChangedPaths(["apps/ios/Sources/App/Main.swift"]);
+    expect(ios).toMatchObject({
+      changeKind: "experimental-mobile",
+      experimentalMobileChanged: true,
+      runMacosRuntime: false,
+      runMacosApp: false,
+    });
+    expect(classifyChangedPaths(["src/daemon/launchd.ts"])).toMatchObject({
+      runMacosRuntime: true,
+      runMacosApp: false,
+    });
   });
 
   it("enables every supported lane for a manual full matrix or failed diff", () => {
@@ -305,7 +341,9 @@ describe("CI changed-surface classification", () => {
         docsOnly: false,
         versionOnly: false,
         runNode: true,
-        runMacos: true,
+        runMacosRuntime: true,
+        runMacosApp: true,
+        runUi: true,
         runSigner: true,
         runHosting: true,
         runLocalFresh: true,

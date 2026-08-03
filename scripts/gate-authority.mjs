@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 
-export const GATE_AUTHORITY_VERSION = 2;
+export const GATE_AUTHORITY_VERSION = 3;
 
 export const PHASES = Object.freeze(["T0", "T1", "T2", "T3", "merge-reuse", "stable"]);
 export const ENTRY_POINTS = Object.freeze([
@@ -16,7 +16,7 @@ const DOC_PATH_RE = /^(?:docs\/|.*\.(?:md|mdx)$|scripts\/docs-product-contract\.
 const VERSION_PATH_RE =
   /^(?:package\.json|CHANGELOG\.md|src\/brand\.ts|extensions\/[^/]+\/(?:package\.json|CHANGELOG\.md))$/;
 const CI_INFRASTRUCTURE_PATH_RE =
-  /^(?:\.github\/workflows\/(?:ci|docker-release|hosted-runtime-release)\.yml|scripts\/(?:gate-authority|lifecycle-release-gate|release-artifact-set|verify-release-gate-status|ci-(?:change-scope|dependency-integrity|private-route-status|required-gates|merged-main-reuse|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/lifecycle-release-gate-receipt\.v1\.schema\.json)$/;
+  /^(?:\.github\/(?:actions\/[^/]+\/action\.ya?ml|workflows\/[^/]+\.ya?ml)|scripts\/(?:gate-authority|lifecycle-release-gate|release-artifact-set|verify-release-gate-status|ci-(?:change-scope|dependency-integrity|private-route-status|required-gates|merged-main-reuse|run-changed-tests|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/(?:check-composite-action-input-interpolation\.py|lifecycle-release-gate-receipt\.v1\.schema\.json)|ui\/vitest\.changed-node\.config\.ts)$/;
 const LIFECYCLE_GATE_REQUIRED_PATHS = Object.freeze(["scripts/lifecycle-release-gate.mjs"]);
 const LIFECYCLE_GATE_ENFORCEMENT_PATH_RE =
   /^(?:\.github\/workflows\/(?:ci|docker-release)\.yml|scripts\/(?:gate-authority|lifecycle-release-gate|ci-(?:change-scope|private-route-status|required-gates|merged-main-reuse|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/lifecycle-release-gate-receipt\.v1\.schema\.json)$/;
@@ -25,8 +25,14 @@ const T2_FIXTURE_PATH_RE =
 const TEST_PATH_RE =
   /^(?:test\/|tests\/|fixtures\/|.*\.(?:test|spec)\.[^.]+$|scripts\/test-[^/]+|scripts\/docker\/[^/]+\/)/;
 const NON_PRODUCTION_TEST_PATH_RE = /^(?:test\/|tests\/|fixtures\/|.*\.(?:test|spec)\.[^.]+$)/;
+const ROUTABLE_TEST_PATH_RE = /^(?:src|scripts|test|extensions|ui)\/.*\.test\.ts$/u;
+const NON_ROUTINE_TEST_PATH_RE = /\.(?:e2e|live)\.test\.ts$/u;
 const NODE_PATH_RE =
   /^(?:src\/|test\/|extensions\/|packages\/|scripts\/|ui\/|\.github\/|fased\.mjs$|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|tsconfig[^/]*\.json$|vitest[^/]*\.ts$|tsdown\.config\.ts$|\.oxlintrc\.json$|\.oxfmtrc\.jsonc$)/;
+const KNOWN_NODE_SOURCE_PATH_RE =
+  /^(?:src|test|extensions|packages|scripts|ui)\/.*\.(?:cjs|cts|css|html|js|jsx|json|mjs|mts|py|scss|sh|ts|tsx|ya?ml)$/u;
+const KNOWN_NODE_ROOT_PATH_RE =
+  /^(?:fased\.mjs|package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig[^/]*\.json|vitest[^/]*\.ts|tsdown\.config\.ts|\.oxlintrc\.json|\.oxfmtrc\.jsonc)$/u;
 // This lane runs a fixed, allowlisted test set. Keep the production allowlist
 // exact: adding another updater/signer path must fall back to the full Node
 // matrix until its nearest regression is explicitly added to `node-focused`.
@@ -53,9 +59,13 @@ const CODEQL_GO_PATH_RE =
 const CODEQL_PYTHON_PATH_RE = /\.py$/u;
 const SIGNER_PATH_RE =
   /^(?:install\.sh$|tools\/fased-signerd\/|config\/signer-protocol-v2\.json$|scripts\/(?:fased-managed-updater|install-fased-signerd|install-managed-runtime|managed-runtime-layout|protected-local-|release-fased-signerd|test-fased-signerd-portable-builds|generate-signer-protocol-v2|signer-protocol-v2\.generated)[^/]*|src\/wallet\/(?:native-signer-|providers\/local-socket-signer-adapter|signer-protocol-v2\.generated)[^/]*|src\/wizard\/onboarding\.wallet[^/]*)/;
-const MACOS_PATH_RE = /^(?:apps\/(?:macos|ios|shared)\/|Swabble\/)/;
-const GENERATED_NATIVE_PROTOCOL_RE =
-  /^(?:apps\/macos\/Sources\/FasedAgentProtocol\/|apps\/shared\/FasedAgentKit\/Sources\/FasedAgentProtocol\/)/;
+const UI_PATH_RE = /^ui\//;
+const GATEWAY_NODE_PATH_RE = /^src\/gateway\//;
+const EXTENSION_NODE_PATH_RE = /^extensions\//;
+const MACOS_APP_PATH_RE = /^(?:apps\/(?:macos|shared)\/|Swabble\/|appcast\.xml$)/;
+const EXPERIMENTAL_MOBILE_PATH_RE = /^apps\/(?:android|ios)\//;
+const MACOS_RUNTIME_PATH_RE =
+  /^(?:install\.sh$|scripts\/(?:codesign-mac-app|fased-managed-updater|install-managed-runtime|install-platform-preflight|install-release-pin|managed-runtime-layout|package-mac-app|restart-mac)[^/]*|src\/(?:cli\/daemon-cli\/install|commands\/(?:daemon-install-helpers|doctor-platform-notes)|daemon\/(?:launchd|runtime-paths)|infra\/(?:managed-runtime|update-runner)|macos\/)[^/]*)/;
 const NATIVE_ONLY_PATH_RE = /^(?:apps\/(?:android|ios|macos|shared)\/|Swabble\/|appcast\.xml$)/;
 const SHARED_LIFECYCLE_PATH_RE =
   /^(?:install\.sh$|scripts\/(?:build-hosted-runtime-artifact|fased-lifecycle-supervisor|hosted-release-manifest|install-(?:managed-runtime|platform-preflight|release-pin|runtime-profile)|lifecycle-|managed-runtime-layout|signer-(?:enrollment-launchers|owner-policy-installers)|start-managed)[^/]*|src\/(?:cli\/daemon-cli\/(?:install|restart-health)|commands\/(?:daemon-install-helpers|doctor-(?:gateway-health|state-integrity))|config\/io|daemon\/systemd|infra\/(?:managed-runtime|update-runner))[^/]*|\.github\/workflows\/hosted-runtime-release\.yml$)/;
@@ -119,6 +129,24 @@ function isNonProductionPath(path) {
   );
 }
 
+function isKnownProductionPath(path) {
+  return (
+    KNOWN_NODE_SOURCE_PATH_RE.test(path) ||
+    KNOWN_NODE_ROOT_PATH_RE.test(path) ||
+    NATIVE_SIGNER_PATH_RE.test(path) ||
+    NATIVE_ONLY_PATH_RE.test(path) ||
+    SHARED_LIFECYCLE_PATH_RE.test(path) ||
+    SHARED_UPDATE_PATH_RE.test(path) ||
+    LOCAL_LIFECYCLE_PATH_RE.test(path) ||
+    LOCAL_FRESH_PATH_RE.test(path) ||
+    SHARED_FRESH_PATH_RE.test(path) ||
+    HOSTING_FRESH_PATH_RE.test(path) ||
+    HOSTING_UPDATE_PATH_RE.test(path) ||
+    DOCKER_PRODUCT_PATH_RE.test(path) ||
+    SKILLS_PATH_RE.test(path)
+  );
+}
+
 function emptyScope(overrides = {}) {
   return {
     docsOnly: false,
@@ -137,7 +165,13 @@ function emptyScope(overrides = {}) {
     runNodeBuild: false,
     runNodePackaging: false,
     runNodeFull: false,
-    runMacos: false,
+    runNodeUnit: false,
+    runNodeGateway: false,
+    runNodeExtensions: false,
+    runUi: false,
+    runMacosRuntime: false,
+    runMacosApp: false,
+    experimentalMobileChanged: false,
     runSigner: false,
     runNativeSigner: false,
     runSignerIntegration: false,
@@ -184,7 +218,8 @@ function surfaceMap(scope, paths, productionPaths, all = false) {
     scope.runHosting ||
     scope.runLocalFresh ||
     scope.runLocalUpdate ||
-    scope.runMacos ||
+    scope.runMacosRuntime ||
+    scope.runMacosApp ||
     scope.runUiMining ||
     scope.runSkills ||
     production.some((path) => DOCKER_PATH_RE.test(path));
@@ -200,7 +235,7 @@ function surfaceMap(scope, paths, productionPaths, all = false) {
     hostingFresh: all || scope.runHostingFresh,
     hostingUpdate: all || scope.runHostingUpdate,
     dockerArchitecture: all || production.some((path) => DOCKER_PATH_RE.test(path)),
-    nativeApple: all || scope.runMacos,
+    nativeApple: all || scope.runMacosRuntime || scope.runMacosApp,
     skills: all || scope.runSkills,
     mining: all || scope.runUiMining,
     otherProduct: all || (scope.productionChanged && !knownProduction),
@@ -247,13 +282,18 @@ export function createGatePlan(inputPaths, options = {}) {
       runNodeBuild: true,
       runNodePackaging: true,
       runNodeFull: true,
-      runMacos: true,
+      runNodeUnit: false,
+      runNodeGateway: false,
+      runNodeExtensions: false,
+      runUi: true,
+      runMacosRuntime: true,
+      runMacosApp: true,
       runSigner: true,
       runNativeSigner: true,
       runSignerIntegration: true,
       runSignerDarwinIntegration: true,
       runPlatformBootstrap: true,
-      runDocker: true,
+      runDocker: false,
       runCodeqlJavascript: true,
       runCodeqlGo: true,
       runCodeqlPython: true,
@@ -281,7 +321,9 @@ export function createGatePlan(inputPaths, options = {}) {
       surfaces: surfaceMap(scope, paths, paths, true),
       acceptance: acceptanceGates(scope),
       affectedAcceptance: acceptanceGates(scope),
-      manualReviewRequired: unknown && !fullMatrix,
+      // A failed diff is handled automatically by the complete supported
+      // matrix. It never falls through to a human approval escape hatch.
+      manualReviewRequired: false,
     };
     return Object.freeze({ ...body, planDigest: digestPlan(body) });
   }
@@ -328,13 +370,31 @@ export function createGatePlan(inputPaths, options = {}) {
         NON_PRODUCTION_TEST_PATH_RE.test(path),
     );
   const effectivePaths = productionChanged ? productionPaths : paths;
+  const routableTestOnly =
+    testOnly &&
+    !t2FixtureOnly &&
+    paths.every((path) => ROUTABLE_TEST_PATH_RE.test(path) && !NON_ROUTINE_TEST_PATH_RE.test(path));
+  const unclassifiedProductionPaths = productionPaths.filter(
+    (path) => !isKnownProductionPath(path),
+  );
 
-  let runMacos = false;
+  if (testOnly && !t2FixtureOnly && !fixtureOnly && !routableTestOnly) {
+    const unroutableTestPaths = paths.filter(
+      (path) => !ROUTABLE_TEST_PATH_RE.test(path) || NON_ROUTINE_TEST_PATH_RE.test(path),
+    );
+    throw new Error(
+      `gate authority: classification blocked: no automatic test lane for ${JSON.stringify(unroutableTestPaths)}`,
+    );
+  }
+
+  if (unclassifiedProductionPaths.length > 0) {
+    throw new Error(
+      `gate authority: classification blocked: unclassified production paths ${JSON.stringify(unclassifiedProductionPaths)}`,
+    );
+  }
+
   let hasUnclassifiedNonNativeNonDocs = false;
   for (const path of effectivePaths) {
-    if (MACOS_PATH_RE.test(path) && !GENERATED_NATIVE_PROTOCOL_RE.test(path)) {
-      runMacos = true;
-    }
     if (
       !DOC_PATH_RE.test(path) &&
       !NATIVE_ONLY_PATH_RE.test(path) &&
@@ -349,12 +409,13 @@ export function createGatePlan(inputPaths, options = {}) {
     !versionOnly &&
     !ciInfrastructureOnly &&
     !t2FixtureOnly &&
-    (productionChanged || fixtureOnly) &&
+    (productionChanged || fixtureOnly || routableTestOnly) &&
     effectivePaths.some(
       (path) =>
-        NODE_PATH_RE.test(path) &&
-        !NATIVE_SIGNER_PATH_RE.test(path) &&
-        !CODEQL_PYTHON_PATH_RE.test(path),
+        (NODE_PATH_RE.test(path) &&
+          !NATIVE_SIGNER_PATH_RE.test(path) &&
+          !CODEQL_PYTHON_PATH_RE.test(path)) ||
+        (routableTestOnly && ROUTABLE_TEST_PATH_RE.test(path)),
     );
   if (productionChanged && !runNode && hasUnclassifiedNonNativeNonDocs) {
     runNode = true;
@@ -406,17 +467,67 @@ export function createGatePlan(inputPaths, options = {}) {
   const runT2Contracts = t2FixtureOnly || t2FixtureChanged || privilegeChanged;
   const runCiContracts = ciInfrastructureChanged;
   const runHosting = runHostingFresh || runHostingUpdate;
+  const pureUiProduction =
+    productionPaths.length > 0 && productionPaths.every((path) => UI_PATH_RE.test(path));
+  const pureGatewayProduction =
+    productionPaths.length > 0 && productionPaths.every((path) => GATEWAY_NODE_PATH_RE.test(path));
+  const pureExtensionProduction =
+    productionPaths.length > 0 &&
+    productionPaths.every((path) => EXTENSION_NODE_PATH_RE.test(path));
   const focusedLocalUpdate =
     runNode &&
     entryPoint === "local-update" &&
     productionPaths.length > 0 &&
     productionPaths.every((path) => LOCAL_UPDATE_FOCUSED_PRODUCTION_PATHS.has(path));
   const runNodeFocused = focusedLocalUpdate;
+  const runUi =
+    !ciInfrastructureOnly &&
+    !t2FixtureOnly &&
+    (!testOnly || routableTestOnly) &&
+    effectivePaths.some((path) => UI_PATH_RE.test(path));
+  const uiReplacesNodeFull =
+    pureUiProduction || (routableTestOnly && paths.every((path) => UI_PATH_RE.test(path)));
+  const runNodeGateway =
+    runNode &&
+    !runNodeFocused &&
+    ((routableTestOnly && paths.some((path) => GATEWAY_NODE_PATH_RE.test(path))) ||
+      pureGatewayProduction);
+  const runNodeExtensions =
+    runNode &&
+    !runNodeFocused &&
+    ((routableTestOnly && paths.some((path) => EXTENSION_NODE_PATH_RE.test(path))) ||
+      pureExtensionProduction);
+  const runNodeUnit =
+    runNode &&
+    !runNodeFocused &&
+    routableTestOnly &&
+    paths.some(
+      (path) =>
+        !UI_PATH_RE.test(path) &&
+        !GATEWAY_NODE_PATH_RE.test(path) &&
+        !EXTENSION_NODE_PATH_RE.test(path),
+    );
   const runNodeBuild =
-    runNode && (productionChanged || runHosting || runLocalFresh || runLocalUpdate);
+    runNode &&
+    !pureUiProduction &&
+    (productionChanged || runHosting || runLocalFresh || runLocalUpdate);
   const runNodePackaging =
     runNode && productionPaths.some((path) => NODE_PACKAGING_PATH_RE.test(path));
-  const runNodeFull = runNode && !runNodeFocused;
+  const runNodeFull =
+    runNode &&
+    !runNodeFocused &&
+    !uiReplacesNodeFull &&
+    !runNodeUnit &&
+    !runNodeGateway &&
+    !runNodeExtensions;
+  const runMacosRuntime =
+    productionChanged && effectivePaths.some((path) => MACOS_RUNTIME_PATH_RE.test(path));
+  const runMacosApp =
+    productionChanged && effectivePaths.some((path) => MACOS_APP_PATH_RE.test(path));
+  const experimentalMobileChanged = paths.some((path) => EXPERIMENTAL_MOBILE_PATH_RE.test(path));
+  const experimentalMobileOnly =
+    productionPaths.length > 0 &&
+    productionPaths.every((path) => EXPERIMENTAL_MOBILE_PATH_RE.test(path));
   const runNativeSigner =
     productionChanged && effectivePaths.some((path) => NATIVE_SIGNER_PATH_RE.test(path));
   const runSignerIntegration =
@@ -466,7 +577,13 @@ export function createGatePlan(inputPaths, options = {}) {
     runNodeBuild,
     runNodePackaging,
     runNodeFull,
-    runMacos,
+    runNodeUnit,
+    runNodeGateway,
+    runNodeExtensions,
+    runUi,
+    runMacosRuntime,
+    runMacosApp,
+    experimentalMobileChanged,
     runSigner: productionChanged && effectivePaths.some((path) => SIGNER_PATH_RE.test(path)),
     runNativeSigner,
     runSignerIntegration,
@@ -483,7 +600,10 @@ export function createGatePlan(inputPaths, options = {}) {
     runLocalUpdate,
     runCiContracts,
     runT2Contracts,
-    runUiMining: productionChanged && effectivePaths.some((path) => MINING_PATH_RE.test(path)),
+    runUiMining:
+      productionChanged &&
+      !effectivePaths.some((path) => UI_PATH_RE.test(path)) &&
+      effectivePaths.some((path) => MINING_PATH_RE.test(path)),
     runSkills: productionChanged && effectivePaths.some((path) => SKILLS_PATH_RE.test(path)),
     fullMatrix,
   });
@@ -513,9 +633,11 @@ export function createGatePlan(inputPaths, options = {}) {
                 ? "test-only"
                 : gateToolingOnly
                   ? "gate-tooling-only"
-                  : productionChanged
-                    ? "production"
-                    : "unknown";
+                  : experimentalMobileOnly
+                    ? "experimental-mobile"
+                    : productionChanged
+                      ? "production"
+                      : "unknown";
   const body = {
     authorityVersion: GATE_AUTHORITY_VERSION,
     phase,
@@ -529,9 +651,10 @@ export function createGatePlan(inputPaths, options = {}) {
     surfaces: surfaceMap(affectedScope, paths, productionPaths),
     acceptance: acceptanceGates(scope),
     affectedAcceptance: acceptanceGates(affectedScope),
-    manualReviewRequired:
-      changeKind === "unknown" ||
-      (changeKind === "production" && !entryPoint && selectedEntryPoints.length > 1),
+    // Kept for consumers of the v3 plan schema. Successful classification is
+    // fully automatic; ambiguous paths fail above instead of requesting a
+    // human-only escape hatch.
+    manualReviewRequired: false,
   };
   return Object.freeze({ ...body, planDigest: digestPlan(body) });
 }

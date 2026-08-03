@@ -14,7 +14,7 @@ describe("machine gate authority", () => {
     const plan = createGatePlan(t2FixturePaths, { phase: "T2" });
 
     expect(plan).toMatchObject({
-      authorityVersion: 2,
+      authorityVersion: 3,
       phase: "T2",
       entryPoints: [],
       changeKind: "t2-fixture-only",
@@ -68,6 +68,9 @@ describe("machine gate authority", () => {
       "scripts/verify-release-gate-status.test.ts",
       "scripts/gate-authority.mjs",
       "scripts/gate-authority.test.ts",
+      "scripts/ci-run-changed-tests.mjs",
+      "scripts/ci-run-changed-tests.test.ts",
+      "ui/vitest.changed-node.config.ts",
       "docs/reference/ci.md",
       "AGENTS.md",
     ]);
@@ -94,7 +97,10 @@ describe("machine gate authority", () => {
 
   it("does not let an accompanying test broaden a production change", () => {
     const withoutTest = createGatePlan(["src/gateway/server.ts"]);
-    const withTest = createGatePlan(["src/gateway/server.ts", "src/gateway/server.test.ts"]);
+    const withTest = createGatePlan([
+      "src/gateway/server.ts",
+      "src/gateway/server-methods/agent.test.ts",
+    ]);
 
     expect(withTest.productionPaths).toEqual(["src/gateway/server.ts"]);
     expect(withTest.scope).toEqual(withoutTest.scope);
@@ -273,5 +279,155 @@ describe("machine gate authority", () => {
     });
 
     expect(plan.acceptance).toEqual({ L0: false, L1: false, H0: true, H1: false, H2: true });
+  });
+
+  it("routes test-only changes to real subsystem tests without building", () => {
+    expect(createGatePlan(["src/config/io.plugin-allowlist-repair.test.ts"]).scope).toMatchObject({
+      testOnly: true,
+      runNode: true,
+      runNodeUnit: true,
+      runNodeGateway: false,
+      runNodeExtensions: false,
+      runNodeBuild: false,
+      runNodeFull: false,
+      runCodeqlJavascript: false,
+    });
+    expect(createGatePlan(["src/gateway/server-methods/agent.test.ts"]).scope).toMatchObject({
+      runNodeGateway: true,
+      runNodeFull: false,
+    });
+    expect(createGatePlan(["extensions/telegram/src/channel.test.ts"]).scope).toMatchObject({
+      runNodeExtensions: true,
+      runNodeFull: false,
+    });
+    expect(createGatePlan(["ui/src/ui/navigation.test.ts"]).scope).toMatchObject({
+      runUi: true,
+      runNodeBuild: false,
+      runNodeFull: false,
+    });
+  });
+
+  it("routes UI tests that declare the installed jsdom environment", () => {
+    const plan = createGatePlan(["ui/src/ui/app-chat.test.ts"]);
+    expect(plan.scope).toMatchObject({
+      testOnly: true,
+      runUi: true,
+      runNode: true,
+      runNodeBuild: false,
+      runNodeFull: false,
+    });
+    expect(plan.manualReviewRequired).toBe(false);
+  });
+
+  it("blocks test-looking files outside supported exact lanes with a precise error", () => {
+    for (const path of [
+      "apps/ios/Sources/App.test.ts",
+      "vendor/example.test.ts",
+      "packages/sdk/src/io.test.ts",
+      "tests/io.test.ts",
+      "src/config/io.spec.ts",
+    ]) {
+      expect(() => createGatePlan([path]), path).toThrow(
+        /gate authority: classification blocked: no automatic test lane/u,
+      );
+    }
+  });
+
+  it("routes UI and supported macOS surfaces without unsupported platform lanes", () => {
+    expect(createGatePlan(["ui/src/ui/views/wallet.ts"]).scope).toMatchObject({
+      runUi: true,
+      runNodeBuild: false,
+      runNodeFull: false,
+      runCodeqlJavascript: true,
+    });
+    expect(createGatePlan(["src/daemon/launchd.ts"]).scope).toMatchObject({
+      runMacosRuntime: true,
+      runMacosApp: false,
+    });
+    expect(createGatePlan(["apps/macos/Sources/App/Main.swift"]).scope).toMatchObject({
+      runMacosRuntime: false,
+      runMacosApp: true,
+      experimentalMobileChanged: false,
+    });
+    const mobile = createGatePlan(["apps/ios/Sources/App/Main.swift"]);
+    expect(mobile.changeKind).toBe("experimental-mobile");
+    expect(mobile.manualReviewRequired).toBe(false);
+    expect(mobile.scope).toMatchObject({
+      runMacosRuntime: false,
+      runMacosApp: false,
+      experimentalMobileChanged: true,
+    });
+  });
+
+  it("fails closed for a new unclassified production root", () => {
+    expect(() => createGatePlan(["new-product/runtime.rs"])).toThrow(
+      'gate authority: classification blocked: unclassified production paths ["new-product/runtime.rs"]',
+    );
+  });
+
+  it("fails closed for unknown source types nested under known directories", () => {
+    for (const path of [
+      "src/new-security-boundary/config.xyz",
+      "scripts/new-production-daemon.rb",
+    ]) {
+      expect(() => createGatePlan([path]), path).toThrow(
+        /gate authority: classification blocked: unclassified production paths/u,
+      );
+    }
+  });
+
+  it("does not treat lookalike CI files as trusted CI infrastructure", () => {
+    for (const path of ["scripts/gate-authority.mjs.evil", ".github/workflows/ci.yml.backup"]) {
+      expect(() => createGatePlan([path]), path).toThrow(
+        /gate authority: classification blocked: unclassified production paths/u,
+      );
+    }
+  });
+
+  it("routes known multi-entry-point changes automatically", () => {
+    const plan = createGatePlan(["install.sh"]);
+    expect(plan.affectedEntryPoints).toEqual([
+      "local-fresh",
+      "local-update",
+      "hosting-fresh",
+      "hosting-update",
+    ]);
+    expect(plan.manualReviewRequired).toBe(false);
+  });
+
+  it("automatically falls back to the full supported matrix when path evidence is missing", () => {
+    expect(createGatePlan([]).scope.fullMatrix).toBe(true);
+    expect(createGatePlan([]).manualReviewRequired).toBe(false);
+    expect(createGatePlan([], { fullMatrix: true }).manualReviewRequired).toBe(false);
+  });
+
+  it("routes shared Local updater code through the supported macOS runtime lane", () => {
+    for (const path of [
+      "scripts/fased-managed-updater.mjs",
+      "scripts/install-managed-runtime.mjs",
+      "src/cli/daemon-cli/install.ts",
+      "src/commands/daemon-install-helpers.ts",
+      "src/commands/doctor-platform-notes.ts",
+      "src/daemon/runtime-paths.ts",
+      "src/infra/update-runner.ts",
+    ]) {
+      expect(createGatePlan([path]).scope.runMacosRuntime).toBe(true);
+    }
+  });
+
+  it("routes the composite-action interpolation verifier through CI contracts", () => {
+    const plan = createGatePlan(["scripts/check-composite-action-input-interpolation.py"]);
+    expect(plan.changeKind).toBe("ci-infrastructure-only");
+    expect(plan.manualReviewRequired).toBe(false);
+    expect(plan.scope).toMatchObject({
+      ciInfrastructureOnly: true,
+      runCiContracts: true,
+      runCodeqlPython: false,
+    });
+  });
+
+  it("keeps Docker conditional during broad supported-platform runs", () => {
+    expect(createGatePlan([], { fullMatrix: true }).scope.runDocker).toBe(false);
+    expect(createGatePlan(["Dockerfile"]).scope.runDocker).toBe(true);
   });
 });
