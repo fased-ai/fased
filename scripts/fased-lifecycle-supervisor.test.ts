@@ -243,6 +243,7 @@ async function existingControllerTransitionFixture(
       rootGid: process.getgid?.() ?? 0,
       platform: "linux-x64",
       now: () => now,
+      operatorStateDirSha256: `sha256:${"e".repeat(64)}`,
       verifyMetadata: async () => undefined,
       verifyReleaseEvidence: async () => undefined,
       selfCheckSupervisor: async () => undefined,
@@ -1552,6 +1553,57 @@ describe("stable lifecycle supervisor contract", () => {
     expect(JSON.parse(await fsp.readFile(paths.rootTransactionPath, "utf8"))).toEqual(
       selectedBeforeRetry,
     );
+  });
+
+  it("waits for a freshly selected controller to finish recovery initialization", async () => {
+    const { paths } = tempPaths();
+    const fixture = await existingControllerTransitionFixture(paths, "1.2.2");
+    const state = { controllerInstanceId: randomUUID() };
+    const update = request();
+
+    await expect(__testing.handleSupervisorRequest(update, fixture.context, state)).rejects.toThrow(
+      "controller promotion failed and was restored",
+    );
+
+    const exactProbe = fixture.context.probeControllerIdentity;
+    const probe = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("controller recovery authority is still initializing"))
+      .mockImplementation(exactProbe);
+    fixture.context.probeControllerIdentity = probe;
+    fixture.context.controllerIdentityRetryDelay = async () => undefined;
+
+    await expect(
+      __testing.handleSupervisorRequest(update, fixture.context, state),
+    ).resolves.toMatchObject({
+      ok: true,
+      version,
+      controllerChanged: true,
+    });
+    expect(probe).toHaveBeenCalledTimes(2);
+    expect(await fsp.realpath(paths.currentLink)).toBe(path.join(paths.releasesDir, `v${version}`));
+  });
+
+  it("does not retry a persistent selected-controller identity mismatch", async () => {
+    const { paths } = tempPaths();
+    const fixture = await existingControllerTransitionFixture(paths, "1.2.2");
+    const state = { controllerInstanceId: randomUUID() };
+    const update = request();
+
+    await expect(__testing.handleSupervisorRequest(update, fixture.context, state)).rejects.toThrow(
+      "controller promotion failed and was restored",
+    );
+
+    const probe = vi.fn(async () => {
+      throw new Error("replaceable lifecycle controller is not running the verified target");
+    });
+    fixture.context.probeControllerIdentity = probe;
+    fixture.context.controllerIdentityRetryDelay = async () => undefined;
+
+    await expect(__testing.handleSupervisorRequest(update, fixture.context, state)).rejects.toThrow(
+      "controller promotion failed and was restored: replaceable lifecycle controller is not running the verified target",
+    );
+    expect(probe).toHaveBeenCalledTimes(1);
   });
 
   it("rejects supervisor promotion when the installed file changed beneath the running process", async () => {

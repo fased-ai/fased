@@ -91,6 +91,9 @@ const PRIVILEGED_VEX_NAME = "fased-privileged-vex-v1.openvex.json";
 const MAX_REQUEST_BYTES = 4096;
 const MAX_DOWNLOAD_BYTES = 4 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 20 * 60_000;
+const CONTROLLER_IDENTITY_READY_ATTEMPTS = 300;
+const CONTROLLER_IDENTITY_READY_DELAY_MS = 100;
+const CONTROLLER_INITIALIZING_ERROR = "controller recovery authority is still initializing";
 const MAX_ROOT_RECOVERY_ATTEMPTS = 8;
 const ROOT_LEDGER_SCHEMA_VERSION = 3;
 const ROOT_LEDGER_PROTOCOL_VERSION = 2;
@@ -4243,6 +4246,12 @@ function createContext(configuration, overrides = {}) {
     requestController:
       overrides.requestController ??
       (async (request, transactionContext) => await requestController(request, transactionContext)),
+    controllerIdentityRetryAttempts:
+      overrides.controllerIdentityRetryAttempts ?? CONTROLLER_IDENTITY_READY_ATTEMPTS,
+    controllerIdentityRetryDelay:
+      overrides.controllerIdentityRetryDelay ??
+      (async () =>
+        await new Promise((resolve) => setTimeout(resolve, CONTROLLER_IDENTITY_READY_DELAY_MS))),
     runningSupervisorDigest: overrides.runningSupervisorDigest ?? RUNNING_SUPERVISOR_SHA256,
     supervisorRestartRequired: false,
   };
@@ -4945,8 +4954,10 @@ async function probeControllerIdentity(request, context, expectedIdentity) {
     targetControllerRequest(request, "controllerStatus"),
     context,
   );
+  if (!response.ok) {
+    fail(response.error || "replaceable lifecycle controller status failed");
+  }
   if (
-    !response.ok ||
     response.controllerVersion !== request.version ||
     !TRANSACTION_ID_PATTERN.test(response.controllerInstanceId || "") ||
     response.controllerServerSha256 !== expectedIdentity?.serverSha256 ||
@@ -4957,6 +4968,34 @@ async function probeControllerIdentity(request, context, expectedIdentity) {
     fail("replaceable lifecycle controller is not running the verified target");
   }
   return response.controllerInstanceId;
+}
+
+function retryableControllerIdentityError(error) {
+  return (
+    error?.message === CONTROLLER_INITIALIZING_ERROR ||
+    new Set(["ECONNREFUSED", "ECONNRESET", "ENOENT", "EPIPE"]).has(error?.code) ||
+    error?.message === "replaceable lifecycle controller closed before responding"
+  );
+}
+
+async function waitForSelectedControllerIdentity(request, context, expectedIdentity) {
+  let lastError = null;
+  for (let attempt = 0; attempt < context.controllerIdentityRetryAttempts; attempt += 1) {
+    try {
+      return await context.probeControllerIdentity(request, context, expectedIdentity);
+    } catch (error) {
+      if (!retryableControllerIdentityError(error)) {
+        throw error;
+      }
+      lastError = error;
+      if (attempt + 1 < context.controllerIdentityRetryAttempts) {
+        await context.controllerIdentityRetryDelay();
+      }
+    }
+  }
+  fail(
+    `replaceable lifecycle controller did not finish recovery initialization: ${lastError?.message ?? "unknown readiness failure"}`,
+  );
 }
 
 async function recoverBeforeSupervisorRequest(request, context) {
@@ -5159,11 +5198,9 @@ async function handleSupervisorRequest(request, context, state) {
       // recover a genuinely failed worker and let the stable client retry the
       // same bounded request; only a newly selected generation is restarted by
       // this transaction.
-      state.controllerInstanceId = await context.probeControllerIdentity(
-        request,
-        context,
-        staged.identity,
-      );
+      state.controllerInstanceId = staged.changed
+        ? await waitForSelectedControllerIdentity(request, context, staged.identity)
+        : await context.probeControllerIdentity(request, context, staged.identity);
       await context.cleanupHistoricalControllerCandidates(
         context.paths,
         request.version,
