@@ -215,6 +215,7 @@ describe("CI workflow routing", () => {
     expect(jobs["codeql-javascript"]?.if).toBe(
       "needs.change-scope.outputs.run_codeql_javascript == 'true'",
     );
+    expect(jobs["codeql-javascript"]?.["timeout-minutes"]).toBeGreaterThanOrEqual(20);
     expect(jobs["codeql-go"]?.if).toBe("needs.change-scope.outputs.run_codeql_go == 'true'");
     expect(jobs["codeql-python"]?.if).toBe(
       "needs.change-scope.outputs.run_codeql_python == 'true'",
