@@ -193,8 +193,9 @@ describe("CI workflow routing", () => {
     });
     expect(publishText).toContain("--artifact-set-digest");
     expect(publishText).toContain("release-artifact-set.mjs verify-assets");
-    expect(publishText).toContain("gh api --method POST");
-    expect(publishText).toContain('"repos/$GITHUB_REPOSITORY/releases"');
+    expect(publishText).toContain('gh release create "$RELEASE_TAG"');
+    expect(publishText).toContain("--draft");
+    expect(publishText).toContain("select(.tag_name == env.RELEASE_TAG and .draft == true)");
     expect(publishText).toContain('"repos/$GITHUB_REPOSITORY/releases/$release_id"');
     expect(publishText).toContain("gh api --method DELETE");
     expect(publishText).toContain("existing_release_id");
