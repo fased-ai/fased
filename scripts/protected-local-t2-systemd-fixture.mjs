@@ -548,9 +548,13 @@ async function runFixture() {
       serverSha256: await sha256File(path.join(previousGeneration, "fased-host-updater.mjs")),
       clientSha256: await sha256File(path.join(previousGeneration, "fased-host-updaterctl.mjs")),
     });
-    const releaseCommit = run("/usr/bin/git", ["rev-parse", "HEAD"], {
-      cwd: sourceRoot,
-    }).stdout.trim();
+    const releaseCommit = run(
+      "/usr/bin/git",
+      ["-c", `safe.directory=${sourceRoot}`, "rev-parse", "HEAD"],
+      {
+        cwd: sourceRoot,
+      },
+    ).stdout.trim();
     assert.match(releaseCommit, /^[a-f0-9]{40}$/u);
     const dependencyHash = sha256(`t2-dependencies:${releaseCommit}:${targetVersion}`);
     const updaterBundleDigest = `sha256:${sha256(`t2-updater:${releaseCommit}:${targetVersion}`)}`;
