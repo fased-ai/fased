@@ -580,48 +580,23 @@ jobs:
             echo "Release already exists; refusing non-atomic overwrite: $RELEASE_TAG" >&2
             exit 1
           fi
-          created=false
-          release_id=""
-          cleanup() {
-            if [[ "$created" == true ]]; then
-              if [[ -z "$release_id" ]]; then
-                release_id="$(gh api \
-                  "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-                  --jq '.[] | select(.tag_name == env.RELEASE_TAG and .draft == true) | .id' \
-                  2>/dev/null || true)"
-              fi
-              if [[ -n "$release_id" ]]; then
-                gh api --method DELETE \
-                  "repos/$GITHUB_REPOSITORY/releases/$release_id" >/dev/null 2>&1 || true
-              fi
-            fi
-          }
-          trap cleanup EXIT
-          gh release create "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Fased Agent $RELEASE_TAG" \
-            --generate-notes \
-            --draft
-          created=true
-          release_id="$(gh api \
-            "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-            --jq '.[] | select(.tag_name == env.RELEASE_TAG and .draft == true) | .id')"
-          test -n "$release_id"
-          gh release upload "$RELEASE_TAG" .artifacts/hosted-runtime/* \
+          release_args=(
             --repo "$GITHUB_REPOSITORY"
-          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            --title "Fased Agent $RELEASE_TAG"
+            --generate-notes
+            --verify-tag
+          )
+          if [[ "$package_version" == *-* ]]; then
+            release_args+=(--prerelease --latest=false)
+          else
+            release_args+=(--latest)
+          fi
+          # With assets present, GitHub CLI creates a temporary draft, uploads every
+          # byte through the returned upload URL, deletes the draft on upload failure,
+          # and publishes only after all uploads succeed.
+          gh release create "$RELEASE_TAG" .artifacts/hosted-runtime/* "${release_args[@]}"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
             --jq '[.assets[] | {name,size,digest}]' > "$RUNNER_TEMP/release-assets.json"
           node scripts/release-artifact-set.mjs verify-assets \
             --directory .artifacts/hosted-runtime \
             --assets-json "$RUNNER_TEMP/release-assets.json"
-          if [[ "$package_version" == *-* ]]; then
-            gh api --method PATCH \
-              "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-              -F draft=false -F prerelease=true -f make_latest=false >/dev/null
-          else
-            gh api --method PATCH \
-              "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-              -F draft=false -F prerelease=false -f make_latest=true >/dev/null
-          fi
-          created=false
-          trap - EXIT
