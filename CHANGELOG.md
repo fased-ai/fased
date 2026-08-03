@@ -4,6 +4,16 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.33
+
+- Bind GitHub release-gate status identity to the exact commit-status API URL
+  that GitHub actually returns, while retaining the exact commit and artifact
+  set binding in the status target.
+- Reject wrong-commit status records without depending on the absent `sha`
+  field in GitHub commit-status list responses.
+- Package the focused release-infrastructure correction proven by PR #261;
+  RC32 remains an immutable failed candidate with no published release assets.
+
 ## 0.1.76-rc.32
 
 - Build and attest the complete immutable Hosting/application/signer candidate
