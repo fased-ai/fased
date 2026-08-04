@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.36
+
+- Accept legacy Gateway readiness payloads during protected Local recovery
+  while retaining strict validation for newer readiness metadata.
+- Preserve exact durable generation binding when older Gateway processes omit
+  generation and start-time fields.
+
 ## 0.1.76-rc.35
 
 - Remediate the bounded release-blocking `fast-uri`, `ip-address`, and Undici
