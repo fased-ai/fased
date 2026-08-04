@@ -57,6 +57,8 @@ describe("machine gate authority", () => {
 
   it("routes exact release promotion infrastructure without product lifecycle lanes", () => {
     const plan = createGatePlan([
+      ".pre-commit-config.yaml",
+      ".secrets.baseline",
       ".github/workflows/ci.yml",
       ".github/workflows/docker-release.yml",
       ".github/workflows/hosted-runtime-release.yml",
@@ -94,6 +96,50 @@ describe("machine gate authority", () => {
       runCodeqlPython: false,
     });
     expect(plan.acceptance).toEqual({ L0: false, L1: false, H0: false, H1: false, H2: false });
+  });
+
+  it("routes lifecycle compatibility evidence without product or full Node lanes", () => {
+    const plan = createGatePlan([
+      "config/lifecycle-compatibility.v1.json",
+      "scripts/lifecycle-compatibility-inventory.test.ts",
+    ]);
+    expect(plan.changeKind).toBe("ci-infrastructure-only");
+    expect(plan.scope).toMatchObject({
+      ciInfrastructureOnly: true,
+      productionChanged: false,
+      runCiContracts: true,
+      runNode: false,
+      runNodeBuild: false,
+      runNodeFull: false,
+      runLocalFresh: false,
+      runLocalUpdate: false,
+      runHosting: false,
+    });
+  });
+
+  it("keeps mixed lifecycle fixture and authority corrections source-only", () => {
+    const plan = createGatePlan(
+      [
+        ".github/workflows/ci.yml",
+        "config/lifecycle-compatibility.v1.json",
+        "scripts/docker/protected-local-systemd/run.sh",
+        "scripts/gate-authority.mjs",
+      ],
+      { phase: "T1", entryPoint: "local-update" },
+    );
+    expect(plan.changeKind).toBe("gate-tooling-only");
+    expect(plan.scope).toMatchObject({
+      productionChanged: false,
+      privilegeChanged: false,
+      runCiContracts: true,
+      runNode: false,
+      runNodeBuild: false,
+      runNodeFull: false,
+      runCodeqlJavascript: false,
+      runLocalFresh: false,
+      runLocalUpdate: true,
+      runHosting: false,
+    });
   });
 
   it("does not let an accompanying test broaden a production change", () => {
@@ -259,9 +305,17 @@ describe("machine gate authority", () => {
   });
 
   it("does not mistake lifecycle container fixtures for product Docker changes", () => {
-    expect(createGatePlan(["scripts/docker/protected-local-systemd/run.sh"]).scope.runDocker).toBe(
-      false,
-    );
+    expect(createGatePlan(["scripts/docker/protected-local-systemd/run.sh"]).scope).toMatchObject({
+      fixtureOnly: true,
+      productionChanged: false,
+      runNode: false,
+      runNodeBuild: false,
+      runNodeFull: false,
+      runCodeqlJavascript: false,
+      runDocker: false,
+      runLocalFresh: true,
+      runLocalUpdate: true,
+    });
   });
 
   it("keeps fresh Hosting H1 independent from existing Hosting H2", () => {

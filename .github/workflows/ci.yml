@@ -128,6 +128,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          fetch-depth: 0
           submodules: false
 
       - name: Setup Node environment
@@ -152,6 +153,9 @@ jobs:
             .github/workflows/workflow-sanity.yml \
             scripts/gate-authority.mjs \
             scripts/gate-authority.test.ts \
+            config/lifecycle-compatibility.v1.json \
+            scripts/lifecycle-compatibility-inventory.mjs \
+            scripts/lifecycle-compatibility-inventory.test.ts \
             scripts/ci-change-scope.mjs \
             scripts/ci-change-scope.test.ts \
             scripts/ci-run-changed-tests.mjs \
@@ -165,6 +169,8 @@ jobs:
           pnpm exec oxlint \
             scripts/gate-authority.mjs \
             scripts/gate-authority.test.ts \
+            scripts/lifecycle-compatibility-inventory.mjs \
+            scripts/lifecycle-compatibility-inventory.test.ts \
             scripts/ci-change-scope.mjs \
             scripts/ci-change-scope.test.ts \
             scripts/ci-run-changed-tests.mjs \
@@ -180,6 +186,7 @@ jobs:
         run: >-
           pnpm exec vitest run
           scripts/gate-authority.test.ts
+          scripts/lifecycle-compatibility-inventory.test.ts
           scripts/ci-change-scope.test.ts
           scripts/ci-run-changed-tests.test.ts
           scripts/ci-private-route-status.test.ts
@@ -187,6 +194,9 @@ jobs:
           scripts/ci-merged-main-reuse.test.ts
           scripts/ci-version-identity.test.ts
           scripts/ci-workflow-contract.test.ts
+
+      - name: Check version-neutral lifecycle compatibility evidence
+        run: node scripts/lifecycle-compatibility-inventory.mjs --verify-git
 
       - name: Check workflow semantics
         shell: bash

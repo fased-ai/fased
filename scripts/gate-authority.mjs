@@ -16,7 +16,7 @@ const DOC_PATH_RE = /^(?:docs\/|.*\.(?:md|mdx)$|scripts\/docs-product-contract\.
 const VERSION_PATH_RE =
   /^(?:package\.json|CHANGELOG\.md|src\/brand\.ts|extensions\/[^/]+\/(?:package\.json|CHANGELOG\.md))$/;
 const CI_INFRASTRUCTURE_PATH_RE =
-  /^(?:\.github\/(?:actions\/[^/]+\/action\.ya?ml|workflows\/[^/]+\.ya?ml)|scripts\/(?:gate-authority|hosted-installer-artifact-layout|lifecycle-release-gate|release-artifact-set|verify-release-gate-status|ci-(?:change-scope|dependency-integrity|private-route-status|required-gates|merged-main-reuse|run-changed-tests|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/(?:check-composite-action-input-interpolation\.py|lifecycle-release-gate-receipt\.v1\.schema\.json)|ui\/vitest\.changed-node\.config\.ts)$/;
+  /^(?:\.pre-commit-config\.yaml$|\.secrets\.baseline$|config\/lifecycle-compatibility\.v1\.json$|\.github\/(?:actions\/[^/]+\/action\.ya?ml|workflows\/[^/]+\.ya?ml)|scripts\/(?:gate-authority|hosted-installer-artifact-layout|lifecycle-compatibility-inventory|lifecycle-release-gate|release-artifact-set|verify-release-gate-status|ci-(?:change-scope|dependency-integrity|private-route-status|required-gates|merged-main-reuse|run-changed-tests|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/(?:check-composite-action-input-interpolation\.py|lifecycle-release-gate-receipt\.v1\.schema\.json)|ui\/vitest\.changed-node\.config\.ts)$/;
 const LIFECYCLE_GATE_REQUIRED_PATHS = Object.freeze(["scripts/lifecycle-release-gate.mjs"]);
 const LIFECYCLE_GATE_ENFORCEMENT_PATH_RE =
   /^(?:\.github\/workflows\/(?:ci|docker-release)\.yml|scripts\/(?:gate-authority|lifecycle-release-gate|ci-(?:change-scope|private-route-status|required-gates|merged-main-reuse|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/lifecycle-release-gate-receipt\.v1\.schema\.json)$/;
@@ -367,6 +367,7 @@ export function createGatePlan(inputPaths, options = {}) {
         (lifecycleGateEnforcementOnly && LIFECYCLE_GATE_ENFORCEMENT_PATH_RE.test(path)) ||
         T2_FIXTURE_PATH_RE.test(path) ||
         DOC_PATH_RE.test(path) ||
+        TEST_PATH_RE.test(path) ||
         NON_PRODUCTION_TEST_PATH_RE.test(path),
     );
   const effectivePaths = productionChanged ? productionPaths : paths;
@@ -409,7 +410,8 @@ export function createGatePlan(inputPaths, options = {}) {
     !versionOnly &&
     !ciInfrastructureOnly &&
     !t2FixtureOnly &&
-    (productionChanged || fixtureOnly || routableTestOnly) &&
+    !fixtureOnly &&
+    (productionChanged || routableTestOnly) &&
     effectivePaths.some(
       (path) =>
         (NODE_PATH_RE.test(path) &&
@@ -434,8 +436,20 @@ export function createGatePlan(inputPaths, options = {}) {
   let runLocalUpdate = sharedLifecycleChanged || sharedUpdateChanged || localLifecycleChanged;
   let runHostingFresh = sharedLifecycleChanged || sharedFreshChanged || hostingFreshChanged;
   let runHostingUpdate = sharedLifecycleChanged || sharedUpdateChanged || hostingUpdateChanged;
+  const lifecycleFixtureChanged = paths.some(
+    (path) =>
+      !CI_INFRASTRUCTURE_PATH_RE.test(path) &&
+      !T2_FIXTURE_PATH_RE.test(path) &&
+      (LOCAL_LIFECYCLE_PATH_RE.test(path) ||
+        HOSTING_FRESH_PATH_RE.test(path) ||
+        HOSTING_UPDATE_PATH_RE.test(path)),
+  );
 
-  if (gateToolingOnly || t2FixtureOnly || (testOnly && !fixtureOnly && !productionChanged)) {
+  if (
+    (gateToolingOnly && !lifecycleFixtureChanged) ||
+    t2FixtureOnly ||
+    (testOnly && !fixtureOnly && !productionChanged)
+  ) {
     runLocalFresh = false;
     runLocalUpdate = false;
     runHostingFresh = false;
@@ -542,15 +556,7 @@ export function createGatePlan(inputPaths, options = {}) {
     runLocalFresh && effectivePaths.some((path) => PLATFORM_BOOTSTRAP_PATH_RE.test(path));
   const runDocker =
     !ciInfrastructureOnly && effectivePaths.some((path) => DOCKER_PRODUCT_PATH_RE.test(path));
-  const codeqlPaths =
-    versionOnly || ciInfrastructureOnly
-      ? []
-      : paths.filter(
-          (path) =>
-            !DOC_PATH_RE.test(path) &&
-            (!isNonProductionPath(path) ||
-              (CI_INFRASTRUCTURE_PATH_RE.test(path) && !NON_PRODUCTION_TEST_PATH_RE.test(path))),
-        );
+  const codeqlPaths = productionChanged ? productionPaths : [];
   const runCodeqlJavascript = codeqlPaths.some((path) => CODEQL_JAVASCRIPT_PATH_RE.test(path));
   const runCodeqlGo = codeqlPaths.some((path) => CODEQL_GO_PATH_RE.test(path));
   const runCodeqlPython = codeqlPaths.some((path) => CODEQL_PYTHON_PATH_RE.test(path));

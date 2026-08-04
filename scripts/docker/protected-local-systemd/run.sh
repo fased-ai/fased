@@ -754,7 +754,14 @@ if [[ "$phase" == "install" ]]; then
   git clone --quiet --no-hardlinks /repo "$legacy_repo"
   git -C "$legacy_repo" checkout --quiet --detach "$legacy_commit"
   test "$(git -C "$legacy_repo" rev-parse "v${legacy_version}^{commit}")" = "$legacy_commit"
-  cmp "$legacy_repo/install.sh" /legacy-artifacts/install.sh
+  # The source checkout intentionally carries a placeholder identity, while
+  # the immutable release asset is stamped with the published version. Compare
+  # the scripts after normalizing only that one release-identity line.
+  normalize_installer_identity() {
+    sed -E 's/^install_entry_release_identity="[^"]*"$/install_entry_release_identity="__FASED_RELEASE_IDENTITY__"/' "$1"
+  }
+  cmp <(normalize_installer_identity "$legacy_repo/install.sh") \
+    <(normalize_installer_identity /legacy-artifacts/install.sh)
   chown -R testop:testop "$legacy_repo"
   install -m 0700 -o testop -g testop \
     /legacy-artifacts/install.sh "$legacy_installer"
