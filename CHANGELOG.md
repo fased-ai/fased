@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.39
+
+- Verify recognized protected Gateway-owned legacy configuration through its
+  exact root-owned service identity instead of assuming operator ownership.
+- Preserve durable recovery identity when older readiness payloads omit their
+  start timestamp, allowing rollback and same-command retry to converge.
+- Keep ambiguous ownership, service bindings, and readiness protocols fail
+  closed without modifying protected user state.
+
 ## 0.1.76-rc.38
 
 - Validate protected Local fresh installation and packaged update through the
