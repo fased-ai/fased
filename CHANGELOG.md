@@ -4,6 +4,17 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.37
+
+- Make lifecycle compatibility validation version-neutral by classifying
+  historical releases through persisted topology, protocol, and schema
+  families instead of hard-coded release-specific update behavior.
+- Keep ordinary pull-request CI focused while preserving exact Git-history,
+  artifact-inventory, rollback, retry, and state-preservation release gates.
+- Package the merged Local-update compatibility correction proven by PR #278;
+  candidate acceptance still requires the immutable packaged transaction and
+  literal owner-Local update.
+
 ## 0.1.76-rc.36
 
 - Accept legacy Gateway readiness payloads during protected Local recovery
