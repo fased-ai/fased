@@ -27,6 +27,14 @@ The resolver requires both repository variables `FASED_PRIVATE_STATUS_ACTOR`
 and `FASED_PRIVATE_STATUS_ACTOR_ID`; the latter is the immutable numeric GitHub
 actor ID, not another copy of the login.
 
+The route is a pre-PR input, not a late merge annotation. The required order is
+`push branch -> publish and read back the pending private route -> open PR`.
+`change-scope` resolves the route once at workflow start; publishing it after
+that job has started cannot narrow an already-selected run, so CI intentionally
+continues with cumulative lanes. If the route publisher is unavailable, leave
+the broad run intact and retry only with a new exact PR head after the route is
+published and verified.
+
 ## Node lanes
 
 Node validation is split so a focused correction does not trigger the entire
