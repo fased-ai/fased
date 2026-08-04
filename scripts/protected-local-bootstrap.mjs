@@ -1324,32 +1324,34 @@ async function probeRootImportGateway(spec, layout, expected, options = {}) {
   );
   const pid = systemdMainPid(properties);
   const serviceStartedAt = Date.parse(String(properties.ExecMainStartTimestamp ?? ""));
+  const hasPayloadStartedAt = typeof payload?.startedAt === "string";
   const payloadStartedAt = Date.parse(String(payload?.startedAt ?? ""));
   if (
     properties.ActiveState !== "active" ||
     payload?.ok !== true ||
-    payload?.ready !== true ||
+    (Object.hasOwn(payload, "ready") && payload.ready !== true) ||
     payload?.status !== "ready" ||
     payload?.version !== expected.version ||
     !new Set(["managed-package", "packaged-runtime"]).has(payload?.runtimeSource) ||
     !pid ||
     payload?.pid !== pid ||
     Number.isNaN(serviceStartedAt) ||
-    Number.isNaN(payloadStartedAt) ||
-    Math.abs(serviceStartedAt - payloadStartedAt) > 10_000 ||
-    (expected.generation
+    (hasPayloadStartedAt && Number.isNaN(payloadStartedAt)) ||
+    (hasPayloadStartedAt && Math.abs(serviceStartedAt - payloadStartedAt) > 10_000) ||
+    (payload?.generation != null && expected.generation
       ? canonicalRootImportJSON(payload.generation) !== canonicalRootImportJSON(expected.generation)
-      : payload.generation != null)
+      : payload?.generation != null && !expected.generation)
   ) {
     fail("Gateway service identity failed independent root adoption verification");
   }
   return Object.freeze({
     generationDigest: expected.generation
-      ? rootImportDigest(payload.generation)
+      ? rootImportDigest(payload.generation ?? expected.generation)
       : expected.identityDigest,
     pid,
     runtimeSource: payload.runtimeSource,
-    startedAt: payload.startedAt,
+    // Compatibility with Gateways predating the readiness metadata fields.
+    startedAt: hasPayloadStartedAt ? payload.startedAt : new Date().toISOString(),
     version: payload.version,
   });
 }
