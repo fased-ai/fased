@@ -4,7 +4,7 @@
   "description": "FasedAgent Zalo channel plugin",
   "type": "module",
   "dependencies": {
-    "undici": "7.28.0"
+    "undici": "7.29.0"
   },
   "fased": {
     "extensions": [
