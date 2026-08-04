@@ -1,6 +1,6 @@
 {
   "name": "@fased/synology-chat",
-  "version": "0.1.76-rc.34",
+  "version": "0.1.76-rc.35",
   "description": "Synology Chat channel plugin for FasedAgent",
   "type": "module",
   "dependencies": {

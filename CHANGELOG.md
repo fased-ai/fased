@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.35
+
+- Remediate the bounded release-blocking `fast-uri`, `ip-address`, and Undici
+  advisories while preserving exact dependency and engine alignment.
+- Align public dependency-remediation CI with the trusted private authority so
+  focused advisory fixes run frozen-lockfile and production-audit gates only.
+- Package the exact merged dependency tree proven by PR #273; RC34 remains an
+  immutable predecessor and is not modified by this candidate.
+
 ## 0.1.76-rc.34
 
 - Preserve the protected Local privilege boundary while staging legacy updater
