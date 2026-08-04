@@ -168,7 +168,10 @@ describe("CI changed-surface classification", () => {
       ]),
     ).toMatchObject({
       ciInfrastructureOnly: false,
-      runNode: true,
+      fixtureOnly: true,
+      runNode: false,
+      runNodeBuild: false,
+      runNodeFull: false,
       runHosting: false,
       runLocalFresh: true,
       runLocalUpdate: true,
@@ -229,7 +232,10 @@ describe("CI changed-surface classification", () => {
       "scripts/test-hosting-systemd-container.sh",
     ]) {
       expect(classifyChangedPaths([path]), path).toMatchObject({
-        runNode: true,
+        fixtureOnly: true,
+        runNode: false,
+        runNodeBuild: false,
+        runNodeFull: false,
         runHosting: true,
         runLocalFresh: false,
         runLocalUpdate: false,

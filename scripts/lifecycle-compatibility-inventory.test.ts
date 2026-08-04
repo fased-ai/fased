@@ -47,10 +47,10 @@ describe("lifecycle compatibility inventory", () => {
     const inventory = loadLifecycleCompatibilityInventory();
     const assignments = publishedReleaseAssignments(inventory);
 
-    expect(inventory.publishedReleaseCount).toBe(82);
-    expect(inventory.releaseGroups).toHaveLength(6);
-    expect(assignments).toHaveLength(82);
-    expect(new Set(assignments.map(({ tag }) => tag)).size).toBe(82);
+    expect(inventory.publishedReleaseCount).toBe(97);
+    expect(inventory.releaseGroups).toHaveLength(7);
+    expect(assignments).toHaveLength(97);
+    expect(new Set(assignments.map(({ tag }) => tag)).size).toBe(97);
     expect(inventory.topologies.map(({ id }) => id)).toEqual(
       expect.arrayContaining(__testing.REQUIRED_TOPOLOGY_CLASSES),
     );
@@ -126,5 +126,13 @@ describe("lifecycle compatibility inventory", () => {
     expect(() => updaterTesting.selectLifecycleMigration(unsupported, 2)).toThrow(
       "state schemas are unsupported",
     );
+
+    const newerUnknown = currentProtectedTopology();
+    newerUnknown.stateSchemas.managedInstall = 3;
+    const before = JSON.stringify(newerUnknown);
+    expect(() => updaterTesting.selectLifecycleMigration(newerUnknown, 2)).toThrow(
+      "state schemas are unsupported",
+    );
+    expect(JSON.stringify(newerUnknown)).toBe(before);
   });
 });
