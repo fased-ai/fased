@@ -66,6 +66,7 @@ describe("machine gate authority", () => {
       "scripts/release-artifact-set.test.ts",
       "scripts/verify-release-gate-status.mjs",
       "scripts/verify-release-gate-status.test.ts",
+      "scripts/hosted-installer-artifact-layout.test.ts",
       "scripts/gate-authority.mjs",
       "scripts/gate-authority.test.ts",
       "scripts/ci-run-changed-tests.mjs",
