@@ -15,16 +15,18 @@ export function isDependencyRemediationRoute(plan, route) {
     return false;
   }
   const paths = [...plan.paths].toSorted((left, right) => left.localeCompare(right));
+  const exactPathSets = [
+    ["package.json", "pnpm-lock.yaml"],
+    ["extensions/zalo/package.json", "package.json", "pnpm-lock.yaml"],
+  ];
   if (
     plan.entryPoint !== null ||
     plan.changeKind !== "production" ||
     plan.manualReviewRequired ||
-    paths.length !== 2 ||
-    paths[0] !== "package.json" ||
-    paths[1] !== "pnpm-lock.yaml"
+    !exactPathSets.some((expected) => JSON.stringify(paths) === JSON.stringify(expected))
   ) {
     throw new Error(
-      "ci-change-scope: trusted dependency-remediation route does not match the exact two-file plan",
+      "ci-change-scope: trusted dependency-remediation route does not match an exact advisory plan",
     );
   }
   return true;
