@@ -176,6 +176,49 @@ describe("protected Local bootstrap contract", () => {
     expect(fs.existsSync(staged.sourceRoot)).toBe(false);
   });
 
+  it("accepts a legacy configuration only from an explicitly verified service owner", async () => {
+    const root = temporaryRoot();
+    const configPath = path.join(root, "fased.json");
+    const uid = process.getuid?.() ?? 0;
+    const gid = process.getgid?.() ?? 0;
+    fs.writeFileSync(configPath, '{"gateway":{"port":18789}}\n', { mode: 0o600 });
+
+    await expect(
+      __testing.readRootImportJson(
+        configPath,
+        "legacy Gateway configuration",
+        [uid + 1, uid],
+        [0o600],
+        [gid],
+      ),
+    ).resolves.toMatchObject({ value: { gateway: { port: 18789 } } });
+    await expect(
+      __testing.readRootImportJson(
+        configPath,
+        "legacy Gateway configuration",
+        [uid + 1, uid + 2],
+        [0o600],
+        [gid],
+      ),
+    ).rejects.toThrow(/legacy Gateway configuration is unsafe/u);
+  });
+
+  it("keeps missing legacy readiness timestamps stable across root verification retries", () => {
+    const serviceStartedAt = Date.parse("2026-08-04T12:15:12.000Z");
+    const receiptStartedAt = "2026-08-04T20:59:14.470Z";
+
+    expect(__testing.rootImportGatewayStartedAt({}, serviceStartedAt, receiptStartedAt)).toBe(
+      receiptStartedAt,
+    );
+    expect(
+      __testing.rootImportGatewayStartedAt(
+        { startedAt: "2026-08-04T12:15:12.100Z" },
+        serviceStartedAt,
+        receiptStartedAt,
+      ),
+    ).toBe("2026-08-04T12:15:12.100Z");
+  });
+
   it("keeps the supervisor private and gives its client a separate executable boundary", async () => {
     const root = temporaryRoot();
     const uid = process.getuid?.() ?? 0;

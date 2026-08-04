@@ -1151,13 +1151,22 @@ function rootImportRawDigest(value) {
   return `sha256:${crypto.createHash("sha256").update(value).digest("hex")}`;
 }
 
-async function readRootImportJson(filePath, label, ownerUid, allowedModes = [0o600]) {
+async function readRootImportJson(
+  filePath,
+  label,
+  ownerUid,
+  allowedModes = [0o600],
+  allowedGids = null,
+) {
+  const allowedOwners = new Set(Array.isArray(ownerUid) ? ownerUid : [ownerUid]);
+  const allowedGroups = allowedGids === null ? null : new Set(allowedGids);
   const named = await fsp.lstat(filePath);
   if (
     !named.isFile() ||
     named.isSymbolicLink() ||
     named.nlink !== 1 ||
-    named.uid !== ownerUid ||
+    !allowedOwners.has(named.uid) ||
+    (allowedGroups !== null && !allowedGroups.has(named.gid)) ||
     !allowedModes.includes(named.mode & 0o777) ||
     named.size < 2 ||
     named.size > 2 * 1024 * 1024
@@ -1170,7 +1179,8 @@ async function readRootImportJson(filePath, label, ownerUid, allowedModes = [0o6
     if (
       !opened.isFile() ||
       opened.nlink !== 1 ||
-      opened.uid !== ownerUid ||
+      !allowedOwners.has(opened.uid) ||
+      (allowedGroups !== null && !allowedGroups.has(opened.gid)) ||
       opened.dev !== named.dev ||
       opened.ino !== named.ino
     ) {
@@ -1274,6 +1284,16 @@ async function readRootImportRuntimeIdentity(root, version) {
   });
 }
 
+function rootImportGatewayStartedAt(payload, serviceStartedAt, legacyStartedAt) {
+  if (typeof payload?.startedAt === "string") {
+    return payload.startedAt;
+  }
+  if (typeof legacyStartedAt === "string" && !Number.isNaN(Date.parse(legacyStartedAt))) {
+    return legacyStartedAt;
+  }
+  return new Date(serviceStartedAt).toISOString();
+}
+
 async function probeRootImportGateway(spec, layout, expected, options = {}) {
   if (options.probeGateway) {
     return await options.probeGateway(expected);
@@ -1350,18 +1370,30 @@ async function probeRootImportGateway(spec, layout, expected, options = {}) {
       : expected.identityDigest,
     pid,
     runtimeSource: payload.runtimeSource,
-    // Compatibility with Gateways predating the readiness metadata fields.
-    startedAt: hasPayloadStartedAt ? payload.startedAt : new Date().toISOString(),
+    // Gateways predating this readiness capability omit startedAt. Reuse the
+    // durable operator receipt value so independent root retries normalize to
+    // the same evidence instead of synthesizing a different wall-clock time.
+    startedAt: rootImportGatewayStartedAt(payload, serviceStartedAt, expected.startedAt),
     version: payload.version,
   });
 }
 
 async function verifyRootImportServiceBoundary(layout, service, options = {}) {
   if (options.verifyServiceBoundary) {
-    await options.verifyServiceBoundary(service);
-    return;
+    const identity = await options.verifyServiceBoundary(service);
+    if (
+      !Number.isSafeInteger(identity?.gatewayUid) ||
+      identity.gatewayUid <= 0 ||
+      !Number.isSafeInteger(identity?.configGid) ||
+      identity.configGid <= 0
+    ) {
+      fail("legacy managed update service identity is invalid");
+    }
+    return Object.freeze(identity);
   }
   const unitPath = path.join("/etc/systemd/system", service.name);
+  const gateway = passwdRecord(layout.gatewayUser);
+  const configGroup = groupRecord(layout.configGroup);
   const [launcherInfo, unitInfo, unit] = await Promise.all([
     fsp.lstat(service.launcher),
     fsp.lstat(unitPath),
@@ -1377,10 +1409,16 @@ async function verifyRootImportServiceBoundary(layout, service, options = {}) {
     unitInfo.uid !== 0 ||
     (unitInfo.mode & 0o022) !== 0 ||
     !unit.split("\n").includes(`ExecStart=${service.launcher}`) ||
+    !unit.split("\n").includes(`User=${layout.gatewayUser}`) ||
+    !unit.split("\n").includes(`Group=${layout.gatewayUser}`) ||
+    !unit.split("\n").includes(`SupplementaryGroups=${layout.configGroup}`) ||
+    !gateway ||
+    !configGroup ||
     service.name !== layout.gatewayUnit
   ) {
     fail("legacy managed update service failed independent root verification");
   }
+  return Object.freeze({ gatewayUid: gateway.uid, configGid: configGroup.gid });
 }
 
 async function verifyLegacyManagedUpdateAdoptionForRoot(
@@ -1488,11 +1526,19 @@ async function verifyLegacyManagedUpdateAdoptionForRoot(
   ) {
     fail("application identities differ during independent root adoption verification");
   }
+  const service = Object.freeze({
+    instanceId: layout.instanceId,
+    launcher: journal.previousManifest.service.launcher,
+    name: journal.previousManifest.service.name,
+    scope: "system",
+  });
+  const serviceIdentity = await verifyRootImportServiceBoundary(layout, service, options);
   const configFile = await readRootImportJson(
     path.join(registryEntry.stateDir, "fased.json"),
     "legacy Gateway configuration",
-    spec.operatorUid,
+    [spec.operatorUid, serviceIdentity.gatewayUid],
     [0o600, 0o660],
+    [spec.operatorGid, serviceIdentity.configGid],
   );
   const configuredGatewayPort = Number(configFile.value?.gateway?.port ?? 18789);
   if (configuredGatewayPort !== spec.gatewayPort) {
@@ -1504,17 +1550,11 @@ async function verifyLegacyManagedUpdateAdoptionForRoot(
     {
       generation: rootIdentity.generation,
       identityDigest: rootIdentity.identityDigest,
+      startedAt: userReceipt.gateway.startedAt,
       version: journal.previousVersion,
     },
     options,
   );
-  const service = Object.freeze({
-    instanceId: layout.instanceId,
-    launcher: journal.previousManifest.service.launcher,
-    name: journal.previousManifest.service.name,
-    scope: "system",
-  });
-  await verifyRootImportServiceBoundary(layout, service, options);
   const evidence = Object.freeze({
     controllerHintSha256: rootImportDigest(hintFile.bytes),
     currentRuntimeSha256: currentIdentity.identityDigest,
@@ -4460,6 +4500,8 @@ export const __testing = Object.freeze({
   hardenInstalledPlugins,
   hardenProtectedLocalClientHint,
   importLegacyManagedUpdateAdoption,
+  readRootImportJson,
+  rootImportGatewayStartedAt,
   verifyLegacyManagedUpdateAdoptionForRoot,
   isProtectedLocalOperatorOnlyState,
   inspectInstalledPluginTree,

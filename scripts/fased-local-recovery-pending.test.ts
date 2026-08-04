@@ -1043,6 +1043,7 @@ describe("Local persisted-journal recovery control plane", () => {
     );
     const verifyServiceBoundary = vi.fn(async (service: unknown) => {
       expect(service).toEqual(fixture.service);
+      return { gatewayUid: uid, configGid: gid };
     });
     const importOptions = (overrides: Record<string, unknown> = {}) => ({
       runAdapter: async () => adapterResult,
