@@ -990,6 +990,13 @@ set -euo pipefail
 output=""
 url=""
 legacy_version="${FASED_FIXTURE_LEGACY_VERSION:-}"
+if [[ -z "$legacy_version" &&
+  -f /legacy-artifacts/fased-hosted-release-v2.json ]]; then
+  legacy_version="$(
+    /usr/bin/jq -er '.release.version' \
+      /legacy-artifacts/fased-hosted-release-v2.json
+  )"
+fi
 args=("$@")
 for ((i = 0; i < ${#args[@]}; i++)); do
   case "${args[$i]}" in
@@ -1037,6 +1044,9 @@ const legacyVersion = process.env.FASED_FIXTURE_LEGACY_VERSION;
 const genesis = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"; // pragma: allowlist secret
 const releaseAssets = "/var/lib/fased-protected-local-fixture/release-assets";
 const releasePrefix = `/fased-ai/fased/releases/download/v${version}/`;
+const legacyReleasePrefix = legacyVersion
+  ? `/fased-ai/fased/releases/download/v${legacyVersion}/`
+  : null;
 
 function serveFile(response, selected) {
   try {
@@ -1068,6 +1078,19 @@ function handleRequest(request, response) {
       return;
     }
     serveFile(response, path.join(releaseAssets, asset));
+    return;
+  }
+  if (
+    request.method === "GET" &&
+    legacyReleasePrefix &&
+    request.url?.startsWith(legacyReleasePrefix)
+  ) {
+    const asset = decodeURIComponent(request.url.slice(legacyReleasePrefix.length));
+    if (!/^[A-Za-z0-9._-]+$/.test(asset)) {
+      response.writeHead(400).end();
+      return;
+    }
+    serveFile(response, path.join("/legacy-artifacts", asset));
     return;
   }
   if (request.method === "GET" && request.url?.startsWith(`/v${version}/`)) {
@@ -1205,8 +1228,20 @@ fi
 if [[ "${1:-}" == "--" &&
   "${2:-}" == "/bin/bash" &&
   "${4:-}" == "--protected-local-root-bootstrap" ]]; then
-  exec /usr/bin/sudo -- \
-    /bin/bash /usr/local/libexec/fased-fixture-protected-installer.sh "${@:4}"
+  requested_release=""
+  for ((index = 4; index <= $#; index++)); do
+    if [[ "${!index}" == "--release" ]]; then
+      value_index=$((index + 1))
+      requested_release="${!value_index:-}"
+      requested_release="${requested_release#v}"
+      break
+    fi
+  done
+  if [[ -n "${FASED_FIXTURE_VERSION:-}" &&
+    "$requested_release" == "$FASED_FIXTURE_VERSION" ]]; then
+    exec /usr/bin/sudo -- \
+      /bin/bash /usr/local/libexec/fased-fixture-protected-installer.sh "${@:4}"
+  fi
 fi
 exec /usr/bin/sudo "$@"
 EOF_SUDO_SHIM
@@ -1478,7 +1513,7 @@ test -n "$legacy_socket"
 test -n "$legacy_control"
 test -n "$legacy_db"
 test -n "$legacy_master_key"
-wallet_dir="$(dirname "$legacy_db")"
+legacy_registry="$state/wallet/provider-registry.v1.json"
 test "$(sha256sum "$legacy_binary" | awk '{print $1}')" = \
   "$(jq -er '.signer.platforms["linux-amd64"].sha256' \
     /legacy-artifacts/fased-hosted-release-v2.json)"
@@ -1521,7 +1556,7 @@ verify_legacy_wallet() {
 verify_legacy_wallet /tmp/legacy-readiness.json
 
 original_key_sha="$(sha256sum "$legacy_master_key" | awk '{print $1}')"
-original_registry_sha="$(sha256sum "$wallet_dir/provider-registry.v1.json" | awk '{print $1}')"
+original_registry_sha="$(sha256sum "$legacy_registry" | awk '{print $1}')"
 managed_update_env=(
   HOME=/home/testop \
   USER=testop \
@@ -1687,7 +1722,7 @@ user_systemctl is-enabled --quiet fased-gateway.service
 user_systemctl is-active --quiet fased-gateway.service
 test "$(sha256sum "$state/install.json" | awk '{print $1}')" = "$original_manifest_sha"
 test "$(sha256sum "$legacy_master_key" | awk '{print $1}')" = "$original_key_sha"
-test "$(sha256sum "$wallet_dir/provider-registry.v1.json" | awk '{print $1}')" = \
+test "$(sha256sum "$legacy_registry" | awk '{print $1}')" = \
   "$original_registry_sha"
 verify_legacy_wallet /tmp/failure-rollback-agent.json
 
@@ -1764,7 +1799,7 @@ jq -e --arg publicKey "$legacy_public_key" \
   /tmp/active-agent.json >/dev/null
 test ! -e "$legacy_db"
 test ! -e "$legacy_master_key"
-test "$(sha256sum "$wallet_dir/provider-registry.v1.json" | awk '{print $1}')" = \
+test "$(sha256sum "$legacy_registry" | awk '{print $1}')" = \
   "$original_registry_sha"
 
 mapfile -t env_args < <(operator_env "$instance")
