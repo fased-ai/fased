@@ -54,6 +54,31 @@ describe("CI changed-surface classification", () => {
     });
   });
 
+  it("keeps a trusted Local-update PR on source contracts and defers packaged acceptance", () => {
+    const plan = createGatePlan(["scripts/protected-local-bootstrap.mjs"], {
+      phase: "T1",
+      entryPoint: "local-update",
+    });
+    const output = outputEntries(plan, { route: "local-update" });
+
+    expect(output).toMatchObject({
+      focused_local_update: "true",
+      run_node: "true",
+      run_node_focused: "true",
+      run_node_build: "false",
+      run_local_fresh: "false",
+      run_local_update: "false",
+      run_t2_contracts: "true",
+      run_signer_integration: "true",
+    });
+  });
+
+  it("rejects a trusted Local-update route for a non-privileged or broader plan", () => {
+    expect(() =>
+      outputEntries(createGatePlan(["src/agents/agent.ts"]), { route: "local-update" }),
+    ).toThrow(/trusted local-update route does not match/u);
+  });
+
   it("retains dependency integrity without narrowing an untrusted package change", () => {
     const output = outputEntries(createGatePlan(["package.json", "pnpm-lock.yaml"]));
 
