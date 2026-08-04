@@ -32,11 +32,40 @@ export function isDependencyRemediationRoute(plan, route) {
   return true;
 }
 
+export function isFocusedLocalUpdateRoute(plan, route) {
+  if (route !== "local-update") {
+    return false;
+  }
+  if (
+    plan.entryPoint !== "local-update" ||
+    plan.entryPoints.length !== 1 ||
+    plan.entryPoints[0] !== "local-update" ||
+    plan.changeKind !== "production" ||
+    plan.manualReviewRequired ||
+    plan.scope.runLocalUpdate !== true ||
+    plan.scope.runLocalFresh !== false ||
+    plan.scope.runT2Contracts !== true ||
+    plan.acceptance.L1 !== true ||
+    plan.acceptance.L0 !== false
+  ) {
+    throw new Error(
+      "ci-change-scope: trusted local-update route does not match an exact privileged Local-update plan",
+    );
+  }
+  return true;
+}
+
 export function outputEntries(plan, options = {}) {
   const scope = plan.scope;
   const dependencyRemediation = isDependencyRemediationRoute(plan, options.route ?? "");
+  const focusedLocalUpdate = isFocusedLocalUpdateRoute(plan, options.route ?? "");
   const runDependencyIntegrity = dependencyRemediation || scope.runNodePackaging;
   const lane = (value) => !dependencyRemediation && value;
+  // The private route proves the exact T1/T2 correction before push and P1
+  // later exercises the packaged transaction. Keep PR CI on source contracts;
+  // do not rebuild and rerun the same systemd/container transaction here.
+  const prBuildLane = (value) => lane(value) && !focusedLocalUpdate;
+  const prInstalledFixtureLane = (value) => lane(value) && !focusedLocalUpdate;
   const codeqlLanguages = [
     lane(scope.runCodeqlJavascript) && "javascript-typescript",
     lane(scope.runCodeqlGo) && "go",
@@ -65,10 +94,11 @@ export function outputEntries(plan, options = {}) {
     privilege_changed: trueString(scope.privilegeChanged),
     reuse_pr_checks: trueString(scope.reusePrChecks),
     dependency_remediation: trueString(dependencyRemediation),
+    focused_local_update: trueString(focusedLocalUpdate),
     run_dependency_integrity: trueString(runDependencyIntegrity),
     run_node: trueString(lane(scope.runNode)),
     run_node_focused: trueString(lane(scope.runNodeFocused)),
-    run_node_build: trueString(lane(scope.runNodeBuild)),
+    run_node_build: trueString(prBuildLane(scope.runNodeBuild)),
     run_node_packaging: trueString(lane(scope.runNodePackaging)),
     run_node_full: trueString(lane(scope.runNodeFull)),
     run_node_unit: trueString(lane(scope.runNodeUnit)),
@@ -92,7 +122,7 @@ export function outputEntries(plan, options = {}) {
     run_hosting_fresh: trueString(lane(scope.runHostingFresh)),
     run_hosting_update: trueString(lane(scope.runHostingUpdate)),
     run_local_fresh: trueString(lane(scope.runLocalFresh)),
-    run_local_update: trueString(lane(scope.runLocalUpdate)),
+    run_local_update: trueString(prInstalledFixtureLane(scope.runLocalUpdate)),
     run_ci_contracts: trueString(scope.runCiContracts),
     run_t2_contracts: trueString(scope.runT2Contracts),
     run_ui_mining: trueString(lane(scope.runUiMining)),
