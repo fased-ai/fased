@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.38
+
+- Validate protected Local fresh installation and packaged update through the
+  exact release artifact selected by focused CI.
+- Route immutable predecessor bundles by their own release identity so legacy
+  update fixtures cannot accidentally bootstrap the candidate generation.
+- Preserve owner wallet state explicitly while proving rollback, retry,
+  restart recovery, and idempotent repeated update behavior.
+
 ## 0.1.76-rc.37
 
 - Make lifecycle compatibility validation version-neutral by classifying
