@@ -95,6 +95,36 @@ function transactionOperations(events: string[], overrides: Record<string, unkno
 }
 
 describe("stable managed updater", () => {
+  it("accepts readiness from a pre-metadata Gateway while binding durable identity", () => {
+    const generation = {
+      schemaVersion: 1,
+      version: "1.2.2",
+      releaseCommit: "a".repeat(40),
+      manifestDigest: "sha256:" + "b".repeat(64),
+      applicationDigest: "sha256:" + "c".repeat(64),
+      dependencyDigest: "sha256:" + "d".repeat(64),
+      dependencyHash: "e".repeat(64),
+      updaterBundleDigest: "sha256:" + "f".repeat(64),
+      runtimeRootDigest: "sha256:" + "0".repeat(64),
+    };
+    const result = __testing.normalizeLegacyGatewayReadiness(
+      {
+        ok: true,
+        status: "ready",
+        version: "1.2.2",
+        runtimeSource: "managed-package",
+        pid: 42,
+      },
+      {
+        expectedGeneration: generation,
+        expectedGenerationDigest: "sha256:" + "1".repeat(64),
+        expectedVersion: "1.2.2",
+      },
+    );
+    expect(result).toMatchObject({ pid: 42, version: "1.2.2" });
+    expect(result.generationDigest).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    expect(result.startedAt).toEqual(expect.any(String));
+  });
   it("accepts only the exact root-owned Hosting predecessor release boundary", () => {
     const paths = { releasesDir: "/home/app/.fased/runtime/releases" };
     const journal = {

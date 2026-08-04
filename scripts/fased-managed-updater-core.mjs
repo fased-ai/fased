@@ -1714,6 +1714,40 @@ async function readExpectedGatewayGeneration(rootIdentity) {
   });
 }
 
+function normalizeLegacyGatewayReadiness(
+  payload,
+  { expectedGeneration, expectedGenerationDigest, expectedVersion },
+) {
+  const hasReadinessGeneration = payload?.generation != null;
+  const hasReadinessStartedAt = typeof payload?.startedAt === "string";
+  if (
+    payload?.ok !== true ||
+    (Object.hasOwn(payload, "ready") && payload.ready !== true) ||
+    payload?.status !== "ready" ||
+    payload?.version !== expectedVersion ||
+    !new Set(["managed-package", "packaged-runtime"]).has(payload?.runtimeSource) ||
+    !Number.isSafeInteger(payload?.pid) ||
+    payload.pid < 1 ||
+    (hasReadinessStartedAt && Number.isNaN(Date.parse(payload.startedAt))) ||
+    (hasReadinessGeneration && expectedGeneration
+      ? canonicalReleaseJSON(payload.generation) !== canonicalReleaseJSON(expectedGeneration)
+      : hasReadinessGeneration && !expectedGeneration)
+  ) {
+    throw new Error("Gateway readiness does not match the durable previous generation");
+  }
+  return Object.freeze({
+    generationDigest: expectedGeneration
+      ? canonicalDigest(hasReadinessGeneration ? payload.generation : expectedGeneration)
+      : expectedGenerationDigest,
+    pid: payload.pid,
+    runtimeSource: payload.runtimeSource,
+    // Older managed Gateways do not expose startedAt yet. The root controller
+    // independently verifies the service PID and generated unit before importing this receipt.
+    startedAt: hasReadinessStartedAt ? payload.startedAt : new Date().toISOString(),
+    version: payload.version,
+  });
+}
+
 async function defaultProbeLegacyGateway({
   configPath,
   expectedGeneration,
@@ -1743,33 +1777,14 @@ async function defaultProbeLegacyGateway({
         response.on("end", () => {
           try {
             const payload = JSON.parse(body);
-            if (
-              response.statusCode !== 200 ||
-              payload?.ok !== true ||
-              payload?.ready !== true ||
-              payload?.status !== "ready" ||
-              payload?.version !== expectedVersion ||
-              !new Set(["managed-package", "packaged-runtime"]).has(payload?.runtimeSource) ||
-              !Number.isSafeInteger(payload?.pid) ||
-              payload.pid < 1 ||
-              typeof payload?.startedAt !== "string" ||
-              Number.isNaN(Date.parse(payload.startedAt)) ||
-              (expectedGeneration
-                ? canonicalReleaseJSON(payload.generation) !==
-                  canonicalReleaseJSON(expectedGeneration)
-                : payload.generation != null)
-            ) {
+            if (response.statusCode !== 200) {
               throw new Error("Gateway readiness does not match the durable previous generation");
             }
             resolve(
-              Object.freeze({
-                generationDigest: expectedGeneration
-                  ? canonicalDigest(payload.generation)
-                  : expectedGenerationDigest,
-                pid: payload.pid,
-                runtimeSource: payload.runtimeSource,
-                startedAt: payload.startedAt,
-                version: payload.version,
+              normalizeLegacyGatewayReadiness(payload, {
+                expectedGeneration,
+                expectedGenerationDigest,
+                expectedVersion,
               }),
             );
           } catch (error) {
@@ -6911,6 +6926,7 @@ export const __testing = {
   protectedLocalMigrationRequirement,
   loadSignerEnvironment,
   managedRuntimeReleaseIdentitiesEqual,
+  normalizeLegacyGatewayReadiness,
   parseLocalSignerTransactionArgs,
   parseLocalSourceControllerArgs,
   parseHostedTransactionArgs,
