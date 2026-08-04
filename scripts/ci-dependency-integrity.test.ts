@@ -3,45 +3,84 @@ import { verifyDependencyRemediation } from "./ci-dependency-integrity.mjs";
 
 const basePackage = {
   name: "@fased/fased",
+  dependencies: { undici: "7.28.0" },
+  engines: { node: ">=22.14.0" },
   scripts: { test: "vitest" },
-  pnpm: { overrides: { "brace-expansion": "5.0.8", postcss: "8.5.18" } },
+  pnpm: {
+    overrides: {
+      "fast-uri": "3.1.4",
+      "ip-address": "10.2.0",
+      "undici@7": "7.28.0",
+    },
+  },
 };
+const baseZaloPackage = { name: "@fased/zalo", dependencies: { undici: "7.28.0" } };
 const baseLockfile = `lockfileVersion: '9.0'
 
 overrides:
-  brace-expansion: 5.0.8
-  postcss: 8.5.18
+  fast-uri: 3.1.4
+  ip-address: 10.2.0
+  undici@7: 7.28.0
 
 importers:
 `;
 
-function verify(headPackage = structuredClone(basePackage), headLockfile = baseLockfile) {
+function verify(
+  headPackage = structuredClone(basePackage),
+  headLockfile = baseLockfile,
+  changedEntries = ["M\tpackage.json", "M\tpnpm-lock.yaml"],
+  headZaloPackage = structuredClone(baseZaloPackage),
+) {
   return verifyDependencyRemediation({
-    changedEntries: ["M\tpackage.json", "M\tpnpm-lock.yaml"],
+    changedEntries,
     basePackage,
     headPackage,
     baseLockfile,
     headLockfile,
+    baseZaloPackage,
+    headZaloPackage,
   });
 }
 
 describe("dependency integrity", () => {
-  it("accepts one higher exact override mirrored by the lockfile", () => {
+  it("accepts one named advisory override mirrored by the lockfile", () => {
     const head = structuredClone(basePackage);
-    head.pnpm.overrides["brace-expansion"] = "5.0.9";
-    expect(verify(head, baseLockfile.replace("5.0.8", "5.0.9"))).toEqual({
-      dependency: "brace-expansion",
-      fromVersion: "5.0.8",
-      toVersion: "5.0.9",
+    head.pnpm.overrides["fast-uri"] = "3.1.5";
+    expect(verify(head, baseLockfile.replace("3.1.4", "3.1.5"))).toEqual({
+      remediations: [{ dependency: "fast-uri", fromVersion: "3.1.4", toVersion: "3.1.5" }],
     });
+  });
+
+  it("accepts the bounded four-advisory remediation with aligned Undici manifests", () => {
+    const head = structuredClone(basePackage);
+    head.pnpm.overrides["fast-uri"] = "3.1.5";
+    head.pnpm.overrides["ip-address"] = "10.3.1";
+    head.pnpm.overrides["undici@7"] = "7.29.0";
+    head.pnpm.overrides["undici@8"] = "8.9.0";
+    head.dependencies.undici = "7.29.0";
+    head.engines.node = ">=22.19.0";
+    const headZalo = structuredClone(baseZaloPackage);
+    headZalo.dependencies.undici = "7.29.0";
+    const headLock = baseLockfile
+      .replace("fast-uri: 3.1.4", "fast-uri: 3.1.5")
+      .replace("ip-address: 10.2.0", "ip-address: 10.3.1")
+      .replace("undici@7: 7.28.0", "undici@7: 7.29.0\n  undici@8: 8.9.0");
+    expect(
+      verify(
+        head,
+        headLock,
+        ["M\textensions/zalo/package.json", "M\tpackage.json", "M\tpnpm-lock.yaml"],
+        headZalo,
+      ).remediations,
+    ).toHaveLength(4);
   });
 
   it("rejects package script drift in the dependency lane", () => {
     const head = structuredClone(basePackage);
-    head.pnpm.overrides["brace-expansion"] = "5.0.9";
+    head.pnpm.overrides["fast-uri"] = "3.1.5";
     head.scripts.test = "vitest --watch";
-    expect(() => verify(head, baseLockfile.replace("5.0.8", "5.0.9"))).toThrow(
-      /outside the one override/u,
+    expect(() => verify(head, baseLockfile.replace("3.1.4", "3.1.5"))).toThrow(
+      /outside the named advisory remediation/u,
     );
   });
 });

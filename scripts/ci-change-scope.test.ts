@@ -29,9 +29,10 @@ describe("CI changed-surface classification", () => {
   });
 
   it("routes an exact trusted dependency remediation only through dependency integrity", () => {
-    const output = outputEntries(createGatePlan(["package.json", "pnpm-lock.yaml"]), {
-      route: "dependency-remediation",
-    });
+    const output = outputEntries(
+      createGatePlan(["extensions/zalo/package.json", "package.json", "pnpm-lock.yaml"]),
+      { route: "dependency-remediation" },
+    );
 
     expect(output).toMatchObject({
       change_kind: "production",
