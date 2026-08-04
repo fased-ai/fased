@@ -57,6 +57,7 @@ describe("machine gate authority", () => {
 
   it("routes exact release promotion infrastructure without product lifecycle lanes", () => {
     const plan = createGatePlan([
+      ".pre-commit-config.yaml",
       ".github/workflows/ci.yml",
       ".github/workflows/docker-release.yml",
       ".github/workflows/hosted-runtime-release.yml",
