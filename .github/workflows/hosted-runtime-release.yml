@@ -27,7 +27,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: hosted-runtime-release-${{ github.ref }}
+  group: hosted-runtime-release-${{ inputs.release_tag || github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -51,10 +51,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TRUSTED_RELEASE_ACTOR: ${{ vars.FASED_TRUSTED_RELEASE_ACTOR }}
+          TRUSTED_RELEASE_ACTOR_ID: ${{ vars.FASED_TRUSTED_RELEASE_ACTOR_ID }}
         shell: bash
         run: |
           set -euo pipefail
           test -n "$TRUSTED_RELEASE_ACTOR"
+          test -n "$TRUSTED_RELEASE_ACTOR_ID"
           gh api --paginate \
             "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/statuses?per_page=100" \
             --slurp | jq 'add' > "$RUNNER_TEMP/release-statuses.json"
@@ -63,6 +65,8 @@ jobs:
             --commit "$GITHUB_SHA" \
             --action tag \
             --trusted-actor "$TRUSTED_RELEASE_ACTOR" \
+            --trusted-actor-id "$TRUSTED_RELEASE_ACTOR_ID" \
+            --release-tag "$GITHUB_REF_NAME" \
             --repository "$GITHUB_REPOSITORY"
 
   validate:
@@ -512,6 +516,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TRUSTED_RELEASE_ACTOR: ${{ vars.FASED_TRUSTED_RELEASE_ACTOR }}
+          TRUSTED_RELEASE_ACTOR_ID: ${{ vars.FASED_TRUSTED_RELEASE_ACTOR_ID }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           GATE_RECEIPT_DIGEST: ${{ inputs.gate_receipt_digest }}
@@ -519,6 +524,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$TRUSTED_RELEASE_ACTOR"
+          test -n "$TRUSTED_RELEASE_ACTOR_ID"
           package_version="$(node -p "require('./package.json').version")"
           test "$RELEASE_TAG" = "v${package_version}"
           release_commit="$(git rev-parse HEAD)"
@@ -561,6 +567,8 @@ jobs:
             --commit "$release_commit" \
             --action github-release \
             --trusted-actor "$TRUSTED_RELEASE_ACTOR" \
+            --trusted-actor-id "$TRUSTED_RELEASE_ACTOR_ID" \
+            --release-tag "$RELEASE_TAG" \
             --repository "$GITHUB_REPOSITORY" \
             --receipt-digest "$GATE_RECEIPT_DIGEST" \
             --artifact-set-digest "$promotion_artifact_set_digest"
@@ -573,6 +581,24 @@ jobs:
         run: |
           set -euo pipefail
           package_version="$(node -p "require('./package.json').version")"
+          release_id=""
+          find_draft_id() {
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --slurp | jq -er --arg tag "$RELEASE_TAG" \
+                '[.[][] | select(.tag_name == $tag and .draft == true)] |
+                 if length == 1 then .[0].id else error("exact draft release not found") end'
+          }
+          cleanup_draft() {
+            if [[ -z "$release_id" ]]; then
+              release_id="$(find_draft_id 2>/dev/null || true)"
+            fi
+            if [[ -n "$release_id" ]]; then
+              gh api --method DELETE \
+                "repos/$GITHUB_REPOSITORY/releases/$release_id" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup_draft EXIT
           existing_release_id="$(gh api \
             "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
             --jq '.[] | select(.tag_name == env.RELEASE_TAG) | .id')"
@@ -585,18 +611,33 @@ jobs:
             --title "Fased Agent $RELEASE_TAG"
             --generate-notes
             --verify-tag
+            --draft
           )
+          is_prerelease=false
+          make_latest=true
           if [[ "$package_version" == *-* ]]; then
-            release_args+=(--prerelease --latest=false)
-          else
-            release_args+=(--latest)
+            is_prerelease=true
+            make_latest=false
+            release_args+=(--prerelease)
           fi
-          # With assets present, GitHub CLI creates a temporary draft, uploads every
-          # byte through the returned upload URL, deletes the draft on upload failure,
-          # and publishes only after all uploads succeed.
+          # Keep the release explicitly private until GitHub's remote asset metadata
+          # matches the exact locally verified candidate set.
           gh release create "$RELEASE_TAG" .artifacts/hosted-runtime/* "${release_args[@]}"
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+          release_id="$(find_draft_id)"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
             --jq '[.assets[] | {name,size,digest}]' > "$RUNNER_TEMP/release-assets.json"
           node scripts/release-artifact-set.mjs verify-assets \
             --directory .artifacts/hosted-runtime \
             --assets-json "$RUNNER_TEMP/release-assets.json"
+          gh api --method PATCH \
+            "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            -F draft=false \
+            -F prerelease="$is_prerelease" \
+            -f make_latest="$make_latest" \
+            --jq '{tagName:.tag_name,draft,isPrerelease:.prerelease}' \
+            > "$RUNNER_TEMP/published-release.json"
+          test "$(jq -r .tagName "$RUNNER_TEMP/published-release.json")" = "$RELEASE_TAG"
+          test "$(jq -r .draft "$RUNNER_TEMP/published-release.json")" = "false"
+          test "$(jq -r .isPrerelease "$RUNNER_TEMP/published-release.json")" = "$is_prerelease"
+          release_id=""
+          trap - EXIT

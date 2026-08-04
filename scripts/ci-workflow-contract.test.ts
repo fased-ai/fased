@@ -404,6 +404,21 @@ describe("CI workflow routing", () => {
     expect(dockerWorkflow).not.toContain("pull_request:");
   });
 
+  it("keeps Docker validation-only without an exact Docker release receipt", async () => {
+    const dockerWorkflow = await readFile(
+      resolve(repoRoot, ".github/workflows/docker-release.yml"),
+      "utf8",
+    );
+
+    expect(dockerWorkflow).not.toMatch(/\n\s+push:\s*\n\s+tags:/u);
+    expect(dockerWorkflow).not.toContain("packages: write");
+    expect(dockerWorkflow).not.toContain("push-by-digest=true");
+    expect(dockerWorkflow).not.toContain("push=true");
+    expect(dockerWorkflow).not.toContain("imagetools create");
+    expect(dockerWorkflow).not.toContain("gh release create");
+    expect(dockerWorkflow).not.toContain("gh release upload");
+  });
+
   it("builds a non-publishing tag candidate and promotes only its exact verified bytes", async () => {
     const workflow = await readWorkflow(".github/workflows/hosted-runtime-release.yml");
     const jobs = workflow.jobs ?? {};
@@ -414,9 +429,16 @@ describe("CI workflow routing", () => {
     expect(candidate?.if).toBe("startsWith(github.ref, 'refs/tags/v')");
     expect(candidate?.needs).toEqual(["validate", "linux", "signer"]);
     expect(publish?.if).toBe("github.event_name == 'workflow_dispatch'");
+    expect(workflow.concurrency?.group).toBe(
+      "hosted-runtime-release-${{ inputs.release_tag || github.ref_name }}",
+    );
 
     const candidateText = candidate?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const publishText = publish?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    const releaseGateText =
+      jobs["release-gate"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    expect(releaseGateText).toContain('--trusted-actor-id "$TRUSTED_RELEASE_ACTOR_ID"');
+    expect(releaseGateText).toContain('--release-tag "$GITHUB_REF_NAME"');
     expect(candidateText).toContain("release-artifact-set.mjs build");
     expect(candidateText).not.toContain("gh release create");
     expect(
@@ -429,19 +451,42 @@ describe("CI workflow routing", () => {
       "run-id": "${{ inputs.candidate_run_id }}",
     });
     expect(publishText).toContain("--artifact-set-digest");
+    expect(publishText).toContain('--trusted-actor-id "$TRUSTED_RELEASE_ACTOR_ID"');
+    expect(publishText).toContain('--release-tag "$RELEASE_TAG"');
     expect(publishText).toContain("release-artifact-set.mjs verify-assets");
     expect(publishText).toContain('gh release create "$RELEASE_TAG"');
     expect(publishText).toContain('.artifacts/hosted-runtime/* "${release_args[@]}"');
     expect(publishText).toContain("--verify-tag");
-    expect(publishText).toContain("--prerelease --latest=false");
+    expect(publishText).toContain("--draft");
+    expect(publishText).toContain("release_args+=(--prerelease)");
     expect(publishText).not.toContain("gh release upload");
-    expect(publishText).not.toContain("--draft");
+    expect(publishText).toContain("cleanup_draft");
+    expect(publishText).toContain("--method DELETE");
+    expect(publishText).toContain("--method PATCH");
+    expect(publishText.indexOf("release-artifact-set.mjs verify-assets")).toBeLessThan(
+      publishText.indexOf("--method PATCH"),
+    );
     expect(publishText).toContain("existing_release_id");
     expect(publishText).not.toContain("gh release view");
-    expect(publishText).toContain("releases/tags/$RELEASE_TAG");
+    expect(publishText).toContain("releases/$release_id");
     expect(publish?.steps?.some((step) => usesAction(step, "actions/attest"))).toBe(false);
     expect(publishText).not.toContain("hosted:artifact:build");
     expect(publishText).not.toContain("release-fased-signerd.sh");
+  });
+
+  it("keeps Hosted Runtime Release as the sole GitHub Release publisher", async () => {
+    const dockerWorkflow = await readFile(
+      resolve(repoRoot, ".github/workflows/docker-release.yml"),
+      "utf8",
+    );
+    const hostedWorkflow = await readFile(
+      resolve(repoRoot, ".github/workflows/hosted-runtime-release.yml"),
+      "utf8",
+    );
+
+    expect(dockerWorkflow).not.toContain("gh release create");
+    expect(dockerWorkflow).not.toContain("gh release upload");
+    expect(hostedWorkflow).toContain('gh release create "$RELEASE_TAG"');
   });
 
   it("selects beta for every prerelease target in the Protected Local fixture", async () => {

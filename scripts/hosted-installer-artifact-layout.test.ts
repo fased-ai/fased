@@ -215,7 +215,7 @@ describe("attested Hosting installer artifact layout", () => {
     );
     expect(
       releaseWorkflow.match(/--root-policy release\/lifecycle-trust\/root-v1\//gu),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(releaseWorkflow).toContain(
       "subject-path: .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json",
     );
@@ -277,9 +277,9 @@ describe("attested Hosting installer artifact layout", () => {
       '"${{ steps.attest-hosting-bootstrap.outputs.bundle-path }}"',
     );
     expect(releaseWorkflow).toContain("dist-native/release/install.sh.attestation.json");
-    expect(releaseWorkflow).toContain(
-      'gh release upload "$GITHUB_REF_NAME" .artifacts/hosted-runtime/*',
-    );
+    expect(releaseWorkflow).toContain('gh release create "$RELEASE_TAG"');
+    expect(releaseWorkflow).toContain("--draft");
+    expect(releaseWorkflow).toContain("release-artifact-set.mjs verify-assets");
     const installerReference = fs.readFileSync(
       path.join(root, "docs/install/installer.md"),
       "utf8",
@@ -302,28 +302,30 @@ describe("attested Hosting installer artifact layout", () => {
     expect(releaseWorkflow).toContain("needs: [validate, linux, signer]");
   });
 
-  it("assembles offline-attested workflow-dispatch candidates without publishing them", () => {
+  it("assembles offline-attested tag candidates without publishing them", () => {
     expect(releaseWorkflow).toContain("name: Assemble offline-attested candidate");
-    expect(releaseWorkflow).toContain("if: github.event_name == 'workflow_dispatch'");
-    expect(releaseWorkflow).toContain("fased-hosting-candidate-${{ github.sha }}");
+    expect(releaseWorkflow).toContain("if: startsWith(github.ref, 'refs/tags/v')");
+    expect(releaseWorkflow).toContain("name: fased-hosting-candidate");
     expect(releaseWorkflow).toContain("fased-hosted-release-v2.json.attestation.json");
-    expect(releaseWorkflow).toContain("stablePublication: false");
     expect(releaseWorkflow).toContain("name: Verify every staged candidate attestation offline");
     expect(releaseWorkflow).toContain('--source-ref "$GITHUB_REF"');
     expect(releaseWorkflow).toContain("--deny-self-hosted-runners");
     expect(releaseWorkflow).toContain(
       "if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'",
     );
-    expect(releaseWorkflow).toContain(
-      "name: Publish verified runtime assets\n    if: startsWith(github.ref, 'refs/tags/v')",
-    );
+    expect(releaseWorkflow).toContain("name: Promote exact verified candidate bytes");
+    expect(releaseWorkflow).toContain("if: github.event_name == 'workflow_dispatch'");
   });
 
   it("publishes tagged prereleases as non-latest GitHub prereleases", () => {
     expect(releaseWorkflow).toContain('if [[ "$package_version" == *-* ]]');
-    expect(releaseWorkflow).toContain("release_args+=(--prerelease --latest=false)");
-    expect(releaseWorkflow).toContain("--json isPrerelease --jq .isPrerelease");
-    expect(releaseWorkflow).toContain('test "$is_prerelease" = "true"');
+    expect(releaseWorkflow).toContain("release_args+=(--prerelease)");
+    expect(releaseWorkflow).toContain("make_latest=false");
+    expect(releaseWorkflow).toContain('-f make_latest="$make_latest"');
+    expect(releaseWorkflow).toContain('-F prerelease="$is_prerelease"');
+    expect(releaseWorkflow).toContain(
+      'test "$(jq -r .isPrerelease "$RUNNER_TEMP/published-release.json")" = "$is_prerelease"',
+    );
   });
 
   it("runs the streamed bootstrap fixture without an external package mirror layer", () => {
