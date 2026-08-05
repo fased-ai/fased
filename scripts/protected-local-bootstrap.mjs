@@ -1583,17 +1583,21 @@ async function verifyLegacyManagedUpdateAdoptionForRoot(
     rootApplicationSha256: rootIdentity.identityDigest,
     service,
   });
+  const receiptEvidence = Object.freeze({
+    ...evidence,
+    controllerHintSha256: userReceipt.controllerHintSha256,
+    gateway: userReceipt.gateway,
+  });
   if (
     userReceipt.transactionId !== journal.transactionId.toLowerCase() ||
     userReceipt.previousVersion !== journal.previousVersion ||
     userReceipt.targetVersion !== journal.targetVersion ||
-    userReceipt.controllerHintSha256 !== evidence.controllerHintSha256 ||
     userReceipt.currentRuntimeSha256 !== evidence.currentRuntimeSha256 ||
     userReceipt.legacyJournalSha256 !== evidence.legacyJournalSha256 ||
     userReceipt.previousManifestSha256 !== evidence.previousManifestSha256 ||
     userReceipt.previousRootSha256 !== evidence.previousRootSha256 ||
     canonicalRootImportJSON(userReceipt.service) !== canonicalRootImportJSON(service) ||
-    userReceipt.stateEvidenceDigest !== rootImportDigest(evidence)
+    userReceipt.stateEvidenceDigest !== rootImportDigest(receiptEvidence)
   ) {
     fail("operator adoption receipt failed independent root evidence verification");
   }

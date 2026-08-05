@@ -272,6 +272,7 @@ jobs:
         run: >-
           pnpm exec vitest run
           scripts/protected-local-bootstrap.test.ts
+          scripts/fased-local-recovery-pending.test.ts
           src/wallet/wallet-application-state-permissions.test.ts
           --pool=forks
           --maxWorkers=1

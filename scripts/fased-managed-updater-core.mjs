@@ -1756,6 +1756,25 @@ function legacyGatewayDurableIdentity(gateway) {
   });
 }
 
+function legacyAdoptionDurableIdentity(receipt) {
+  return Object.freeze({
+    currentRuntimeSha256: receipt.currentRuntimeSha256,
+    gateway: legacyGatewayDurableIdentity(receipt.gateway),
+    journalRemovalIntent: receipt.journalRemovalIntent,
+    legacyJournalSha256: receipt.legacyJournalSha256,
+    outcome: receipt.outcome,
+    previousManifestSha256: receipt.previousManifestSha256,
+    previousRootSha256: receipt.previousRootSha256,
+    previousVersion: receipt.previousVersion,
+    profile: receipt.profile,
+    rootVerificationPending: receipt.rootVerificationPending,
+    schemaVersion: receipt.schemaVersion,
+    service: receipt.service,
+    targetVersion: receipt.targetVersion,
+    transactionId: receipt.transactionId,
+  });
+}
+
 async function defaultProbeLegacyGateway({
   configPath,
   expectedGeneration,
@@ -2066,7 +2085,15 @@ export async function adoptLegacyManagedUpdate(options = {}) {
     receiptDigest: canonicalDigest(unsignedReceipt),
   });
   if (existingReceipt) {
-    if (canonicalReleaseJSON(existingReceipt) !== canonicalReleaseJSON(receipt)) {
+    // The controller-client hint is retry progress, not product state. A newer
+    // attempt may legitimately replace it while the schema-1 rollback journal
+    // and selected product generation remain unchanged. Replay the immutable
+    // receipt when those durable identities still agree; root independently
+    // verifies the current hint, service, runtime, and Gateway before import.
+    if (
+      canonicalReleaseJSON(legacyAdoptionDurableIdentity(existingReceipt)) !==
+      canonicalReleaseJSON(legacyAdoptionDurableIdentity(receipt))
+    ) {
       throw new Error("legacy managed update adoption receipt no longer matches durable state");
     }
   } else {
@@ -2085,7 +2112,7 @@ export async function adoptLegacyManagedUpdate(options = {}) {
   }
   return Object.freeze({
     status: "pending-root-import",
-    receipt,
+    receipt: existingReceipt ?? receipt,
     receiptPath,
     replayed: Boolean(existingReceipt),
   });

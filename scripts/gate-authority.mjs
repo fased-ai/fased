@@ -37,6 +37,7 @@ const KNOWN_NODE_ROOT_PATH_RE =
 // exact: adding another updater/signer path must fall back to the full Node
 // matrix until its nearest regression is explicitly added to `node-focused`.
 const LOCAL_UPDATE_FOCUSED_PRODUCTION_PATHS = new Set([
+  "scripts/fased-managed-updater-core.mjs",
   "scripts/protected-local-bootstrap.mjs",
   "scripts/protected-local-supervisor-client-root-fixture.mjs",
   "src/wallet/wallet-runtime-config.ts",

@@ -20,12 +20,15 @@ PREINSTALLED_TOOLS="${FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS:-0}"
 LEGACY_VERSION="${FASED_SYSTEMD_FIXTURE_LEGACY_VERSION:-0.1.75}"
 LEGACY_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_LEGACY_ARTIFACT_DIR:-}"
 OWN_LEGACY_ARTIFACT_DIR=0
+MODERN_VERSION="${FASED_SYSTEMD_FIXTURE_MODERN_VERSION:-0.1.76-rc.38}"
+MODERN_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_MODERN_ARTIFACT_DIR:-}"
+OWN_MODERN_ARTIFACT_DIR=0
 
 command -v "$RUNTIME" >/dev/null 2>&1 || {
   echo "Podman is required for the protected Local systemd fixtures." >&2
   exit 1
 }
-if [[ ",$SCENARIOS," == *,install,* ]]; then
+if [[ ",$SCENARIOS," == *,install,* || ",$SCENARIOS," == *,modern-update,* ]]; then
   command -v gh >/dev/null 2>&1 || {
     echo "GitHub CLI is required for the literal Protected Local update fixture." >&2
     exit 1
@@ -51,6 +54,16 @@ run_container() {
 }
 
 if [[ -z "$ARTIFACT_DIR" ]]; then
+  if [[ ! -f "$ROOT_DIR/dist/build-info.json" ]] ||
+    [[ "$(jq -r .version "$ROOT_DIR/dist/build-info.json")" != "$VERSION" ]] ||
+    [[ "$(jq -r .commit "$ROOT_DIR/dist/build-info.json")" != "$COMMIT" ]]; then
+    pnpm --dir "$ROOT_DIR" build
+  fi
+  [[ "$(jq -r .version "$ROOT_DIR/dist/build-info.json")" == "$VERSION" &&
+    "$(jq -r .commit "$ROOT_DIR/dist/build-info.json")" == "$COMMIT" ]] || {
+    echo "The protected Local fixture refuses stale dist identity." >&2
+    exit 1
+  }
   GOTMPDIR="${GOTMPDIR:-${TMPDIR:-/tmp}/fased-go-tmp}" \
   GOCACHE="${GOCACHE:-${TMPDIR:-/tmp}/fased-go-cache}" \
   FASED_SIGNER_BUILD_COMMIT="$COMMIT" \
@@ -124,6 +137,24 @@ if [[ ",$SCENARIOS," == *,install,* ]]; then
     '.signer.release == ($signer[0] | del(.schemaVersion))' \
     "$legacy_manifest" >/dev/null
 fi
+if [[ ",$SCENARIOS," == *,modern-update,* ]]; then
+  if [[ -z "$MODERN_ARTIFACT_DIR" ]]; then
+    MODERN_ARTIFACT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-modern-artifact.XXXXXX")"
+    OWN_MODERN_ARTIFACT_DIR=1
+    gh release download "v$MODERN_VERSION" \
+      --repo fased-ai/fased \
+      --dir "$MODERN_ARTIFACT_DIR"
+    chmod 0755 "$MODERN_ARTIFACT_DIR"
+  fi
+  modern_manifest="$MODERN_ARTIFACT_DIR/fased-hosted-release-v2.json"
+  [[ -f "$MODERN_ARTIFACT_DIR/install.sh" && -f "$modern_manifest" ]] || {
+    echo "The modern Protected Local update fixture requires a complete predecessor release." >&2
+    exit 1
+  }
+  jq -e --arg version "$MODERN_VERSION" \
+    '.release.version == $version and .release.tag == ("v" + $version)' \
+    "$modern_manifest" >/dev/null
+fi
 if [[ -z "$LEGACY_ARTIFACT_DIR" ]]; then
   LEGACY_ARTIFACT_DIR="$(
     mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-legacy-artifact.XXXXXX"
@@ -160,6 +191,9 @@ cleanup() {
   if [[ "$OWN_LEGACY_ARTIFACT_DIR" -eq 1 ]]; then
     rm -rf -- "$LEGACY_ARTIFACT_DIR"
   fi
+  if [[ "$OWN_MODERN_ARTIFACT_DIR" -eq 1 ]]; then
+    rm -rf -- "$MODERN_ARTIFACT_DIR"
+  fi
 }
 trap cleanup EXIT INT TERM HUP
 
@@ -176,6 +210,12 @@ run_fixture_scenario() {
   local fixture_memory=""
   local ready=0
   local state=""
+  local predecessor_artifact_dir="$LEGACY_ARTIFACT_DIR"
+  local predecessor_version="$LEGACY_VERSION"
+  if [[ "$scenario" == "modern-update" ]]; then
+    predecessor_artifact_dir="$MODERN_ARTIFACT_DIR"
+    predecessor_version="$MODERN_VERSION"
+  fi
 
   cleanup_names+=("$name")
   run_container run -d \
@@ -186,12 +226,12 @@ run_fixture_scenario() {
     --tmpfs /tmp \
     -e "FASED_FIXTURE_VERSION=$VERSION" \
     -e "FASED_FIXTURE_COMMIT=$COMMIT" \
-    -e "FASED_FIXTURE_LEGACY_VERSION=$LEGACY_VERSION" \
+    -e "FASED_FIXTURE_LEGACY_VERSION=$predecessor_version" \
     -e "FASED_FIXTURE_PREINSTALLED_TOOLS=$PREINSTALLED_TOOLS" \
     -v "$ROOT_DIR:/repo:ro,Z" \
     -v "$FIXTURE_DIR/run.sh:/usr/local/bin/fased-protected-local-systemd-fixture:ro,Z" \
     -v "$ARTIFACT_DIR:/artifacts:ro,Z" \
-    -v "$LEGACY_ARTIFACT_DIR:/legacy-artifacts:ro,Z" \
+    -v "$predecessor_artifact_dir:/legacy-artifacts:ro,Z" \
     "$image" >/dev/null
   for _ in {1..200}; do
     state="$(run_container exec "$name" systemctl is-system-running 2>/dev/null || true)"
@@ -281,7 +321,7 @@ done
 
 for scenario in "${scenario_list[@]}"; do
   case "$scenario" in
-    fresh-install|install) ;;
+    fresh-install|install|modern-update) ;;
     *)
       echo "Unsupported protected Local fixture scenario: $scenario" >&2
       exit 1

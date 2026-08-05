@@ -210,6 +210,7 @@ describe("CI workflow routing", () => {
     expect(focused?.if).toBe("needs.change-scope.outputs.run_node_focused == 'true'");
     const focusedCommands = focused?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     expect(focusedCommands).toContain("scripts/protected-local-bootstrap.test.ts");
+    expect(focusedCommands).toContain("scripts/fased-local-recovery-pending.test.ts");
     expect(focusedCommands).toContain("src/wallet/wallet-application-state-permissions.test.ts");
     expect(focusedCommands).toContain("test-protected-local-supervisor-client-root-fixture.sh");
 
@@ -497,9 +498,13 @@ describe("CI workflow routing", () => {
 
     expect(fixture).toContain('if [[ "$version" == *-* ]]');
     expect(fixture).toContain("target_update_args=(--channel beta)");
-    expect(fixture.match(/update "\$\{target_update_args\[@\]\}" --timeout/gu)).toHaveLength(3);
+    expect(fixture.match(/update "\$\{target_update_args\[@\]\}" --timeout/gu)).toHaveLength(6);
     expect(fixture).not.toContain("/etc/fased/testing");
     expect(fixture).toContain("/var/lib/fased-protected-local-fixture");
+    expect(fixture).toContain('if [[ "$phase" == "modern-update" ]]');
+    expect(fixture).toContain(
+      "modern packaged Protected Local rollback, retry, restart, preservation, and no-op passed",
+    );
   });
 
   it("keeps stale-session update resolution bound to the exact fixture candidate", async () => {
