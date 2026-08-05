@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.43
+
+- Converge supported legacy and managed Local installations through one
+  topology-, capability-, and schema-driven lifecycle takeover.
+- Preserve Wallet, signer, Mining, network, plugin, and configuration state
+  across failed activation, exact rollback, same-command retry, and restart.
+- Keep ordinary update logic version-neutral and reject unsafe or unknown-newer
+  control state without mutation.
+
 ## 0.1.76-rc.42
 
 - Replace parallel legacy-adoption paths with one topology-driven Local and
