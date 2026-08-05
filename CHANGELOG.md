@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.40
+
+- Canonicalize Protected Local recovery around one durable supervisor-owned
+  transaction instead of creating parallel legacy-adoption state.
+- Preserve Wallet, signer, Mining, network, plugin, and configuration state
+  across failed activation, rollback, same-command retry, restart, and reboot.
+- Prove packaged protected updates from the immutable predecessor and keep
+  repeat updates idempotent with an `Already current` result.
+
 ## 0.1.76-rc.39
 
 - Verify recognized protected Gateway-owned legacy configuration through its
