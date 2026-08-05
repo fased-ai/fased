@@ -181,7 +181,7 @@ describe("protected Local lifecycle-control normalization", () => {
     ).toEqual({ strategy: "UNIVERSAL_TAKEOVER", reason: "legacy-control-quarantined" });
   });
 
-  it("leaves unknown-newer root authority byte-for-byte unchanged", async () => {
+  it("leaves unknown-newer state byte-for-byte unchanged", async () => {
     const options = await fixture();
     const journalPath = path.join(options.supervisorStateDir, "product-transaction.json");
     const bytes = await writeJson(journalPath, {
