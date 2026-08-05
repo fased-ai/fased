@@ -703,8 +703,11 @@ if [[ "$phase" == "verify-reboot" ]]; then
   exit 0
 fi
 
-[[ "$phase" == "install" || "$phase" == "fresh-install" || "$phase" == "modern-update" ]] || {
-  echo "usage: fased-protected-local-systemd-fixture fresh-install|install|modern-update|verify-reboot" >&2
+[[ "$phase" == "install" ||
+  "$phase" == "fresh-install" ||
+  "$phase" == "modern-update" ||
+  "$phase" == "legacy-takeover" ]] || {
+  echo "usage: fased-protected-local-systemd-fixture fresh-install|install|modern-update|legacy-takeover|verify-reboot" >&2
   exit 64
 }
 
@@ -748,7 +751,7 @@ git -C "$candidate_repo" checkout --quiet --detach "$commit"
 git -C "$candidate_repo" tag --force "v$version" "$commit"
 chown -R testop:testop "$candidate_repo"
 install -m 0700 -o testop -g testop "$candidate_repo/install.sh" "$candidate_installer"
-if [[ "$phase" == "install" || "$phase" == "modern-update" ]]; then
+if [[ "$phase" == "install" || "$phase" == "modern-update" || "$phase" == "legacy-takeover" ]]; then
   legacy_commit="$(jq -er .release.commit /legacy-artifacts/fased-hosted-release-v2.json)"
   rm -rf "$legacy_repo"
   git clone --quiet --no-hardlinks /repo "$legacy_repo"
@@ -1273,7 +1276,7 @@ testop ALL=(root) NOPASSWD: ALL
 EOF_SUDOERS
 chmod 0440 /etc/sudoers.d/fased-protected-local-fixture
 install -d -m 0755 -o root -g root /var/lib/fased-protected-local-fixture
-if [[ "$phase" == "modern-update" ]]; then
+if [[ "$phase" == "modern-update" || "$phase" == "legacy-takeover" ]]; then
   printf '%s\n' "$legacy_version" >"$selected_target"
 else
   printf '%s\n' "$version" >"$selected_target"
@@ -1436,7 +1439,7 @@ if [[ "$phase" == "fresh-install" ]]; then
   exit 0
 fi
 
-if [[ "$phase" == "modern-update" ]]; then
+if [[ "$phase" == "modern-update" || "$phase" == "legacy-takeover" ]]; then
   modern_env=(
     HOME=/home/testop
     USER=testop
@@ -1477,6 +1480,27 @@ if [[ "$phase" == "modern-update" ]]; then
   wait_for_service "fased-signerd-$instance.service"
   wait_for_service "fased-gateway-$instance.service"
   wait_for_gateway_version "$legacy_version"
+
+  if [[ "$phase" == "legacy-takeover" ]]; then
+    takeover_transaction=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+    cat >"$state/hosted-update-transaction.json" <<EOF_TAKEOVER_OPERATOR
+{"schemaVersion":1,"phase":"rolling-back","transactionId":"$takeover_transaction"}
+EOF_TAKEOVER_OPERATOR
+    cat >"$state/legacy-managed-update-adoption.v1.json" <<EOF_TAKEOVER_RECEIPT
+{"schemaVersion":1,"outcome":"rolled-back","rootVerificationPending":true,"transactionId":"$takeover_transaction"}
+EOF_TAKEOVER_RECEIPT
+    cat >"$state/protected-local-controller-transaction.json" <<EOF_TAKEOVER_HINT
+{"schemaVersion":1,"version":"$legacy_version"}
+EOF_TAKEOVER_HINT
+    chown testop:"fscf-$instance" \
+      "$state/hosted-update-transaction.json" \
+      "$state/legacy-managed-update-adoption.v1.json" \
+      "$state/protected-local-controller-transaction.json"
+    chmod 0600 \
+      "$state/hosted-update-transaction.json" \
+      "$state/legacy-managed-update-adoption.v1.json" \
+      "$state/protected-local-controller-transaction.json"
+  fi
 
   for wallet_spec in "agent:Agent:agent" "vault:Vault:vault"; do
     IFS=: read -r wallet_id wallet_name wallet_role <<<"$wallet_spec"
@@ -1568,6 +1592,23 @@ EOF_MODERN_MINING_LEDGER
   legacy_gateway_version="$legacy_version"
   printf '%s\n' "$version" >"$selected_target"
 
+  run_target_update() {
+    local timeout_seconds="$1"
+    if [[ "$phase" == "legacy-takeover" ]]; then
+      runuser -u testop -- env "${modern_operator_env[@]}" \
+        FASED_INSTALL_REPO="$candidate_repo" \
+        npm_config_registry="http://127.0.0.1:$rpc_port" \
+        /bin/bash "$candidate_installer" \
+        --release "v$version" \
+        --update-channel "$([[ "$version" == *-* ]] && printf beta || printf stable)" \
+        --local
+      return
+    fi
+    runuser -u testop -- env "${modern_operator_env[@]}" \
+      npm_config_registry="http://127.0.0.1:$rpc_port" \
+      "$state/bin/fased" update "${target_update_args[@]}" --timeout "$timeout_seconds"
+  }
+
   modern_launcher="/opt/fased/local/$instance/gateway-launch"
   modern_launcher_original="${modern_launcher}.fixture-original.$$"
   cp -a "$modern_launcher" "$modern_launcher_original"
@@ -1604,9 +1645,7 @@ EOF_MODERN_FAILED_GATEWAY
 
   inject_modern_failed_gateway &
   modern_injector_pid=$!
-  if runuser -u testop -- env "${modern_operator_env[@]}" \
-      npm_config_registry="http://127.0.0.1:$rpc_port" \
-      "$state/bin/fased" update "${target_update_args[@]}" --timeout 30 \
+  if run_target_update 30 \
       >/tmp/modern-update-failure.out 2>/tmp/modern-update-failure.err; then
     modern_failure_status=0
   else
@@ -1621,6 +1660,10 @@ EOF_MODERN_FAILED_GATEWAY
     wait_for_gateway_version "$legacy_version"
     test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$legacy_version"
     verify_modern_state_manifest
+    if [[ "$phase" == "legacy-takeover" ]]; then
+      test -s "$state/hosted-update-transaction.json"
+      test -s "$state/legacy-managed-update-adoption.v1.json"
+    fi
   elif grep -F "lifecycle recovery is pending" /tmp/modern-update-failure.err >/dev/null; then
     modern_root_transaction="/var/lib/fased-local/$instance/controller/supervisor/product-transaction.json"
     modern_recovery_transaction="$(jq -er .transactionId "$modern_root_transaction")"
@@ -1630,9 +1673,7 @@ EOF_MODERN_FAILED_GATEWAY
     exit 1
   fi
 
-  runuser -u testop -- env "${modern_operator_env[@]}" \
-    npm_config_registry="http://127.0.0.1:$rpc_port" \
-    "$state/bin/fased" update "${target_update_args[@]}" --timeout 90 \
+  run_target_update 90 \
     >/tmp/modern-update-success.out 2>/tmp/modern-update-success.err
   if [[ -n "$modern_recovery_transaction" ]]; then
     modern_recovery_receipt="/var/lib/fased-local/$instance/controller/supervisor/receipts/${modern_recovery_transaction}.json"
@@ -1642,6 +1683,12 @@ EOF_MODERN_FAILED_GATEWAY
   wait_for_gateway_version "$version"
   test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$version"
   test "$(jq -er .runtime.previousVersion "$state/install.json")" = "$legacy_version"
+  if [[ "$phase" == "legacy-takeover" ]]; then
+    test ! -e "$state/hosted-update-transaction.json"
+    test ! -e "$state/legacy-managed-update-adoption.v1.json"
+    test ! -e "$state/protected-local-controller-transaction.json"
+    test -s "/var/lib/fased-local/$instance/controller/supervisor/control-normalization/last-success.json"
+  fi
   verify_modern_state_manifest
   verify_modern_semantic_state
 
@@ -1675,7 +1722,11 @@ EOF_MODERN_FAILED_GATEWAY
       masterKeySha256: $masterKeySha256
     }' >"$snapshot"
   chmod 0600 "$snapshot"
-  printf 'modern packaged Protected Local rollback, retry, restart, preservation, and no-op passed: %s\n' "$instance"
+  if [[ "$phase" == "legacy-takeover" ]]; then
+    printf 'legacy packaged Protected Local takeover, rollback, retry, restart, preservation, and no-op passed: %s\n' "$instance"
+  else
+    printf 'modern packaged Protected Local rollback, retry, restart, preservation, and no-op passed: %s\n' "$instance"
+  fi
   exit 0
 fi
 

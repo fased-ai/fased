@@ -35,6 +35,7 @@ async function fixture() {
     controllerStateDir,
     supervisorStateDir,
     expectedOperatorUid: process.getuid?.() ?? 0,
+    expectedOperatorStateGid: process.getgid?.() ?? 0,
     expectedRootUid: process.getuid?.() ?? 0,
     targetVersion: "1.2.3",
     previousVersion: "1.2.2",
@@ -51,6 +52,37 @@ async function writeJson(file: string, value: unknown) {
 }
 
 describe("protected Local lifecycle-control normalization", () => {
+  it("accepts the canonical protected Local shared state root", async () => {
+    const options = await fixture();
+    await fs.chmod(options.operatorStateDir, 0o2770);
+
+    await expect(prepareProtectedLocalControlNormalization(options)).resolves.toEqual({
+      strategy: "STANDARD",
+      reason: "canonical-control",
+    });
+  });
+
+  it("rejects a shared state root outside the expected configuration group", async () => {
+    const options = await fixture();
+    await fs.chmod(options.operatorStateDir, 0o2770);
+
+    await expect(
+      prepareProtectedLocalControlNormalization({
+        ...options,
+        expectedOperatorStateGid: options.expectedOperatorStateGid + 1,
+      }),
+    ).rejects.toThrow(/control directory is unsafe/);
+  });
+
+  it("rejects a group-writable state root without the setgid boundary", async () => {
+    const options = await fixture();
+    await fs.chmod(options.operatorStateDir, 0o770);
+
+    await expect(prepareProtectedLocalControlNormalization(options)).rejects.toThrow(
+      /control directory is unsafe/,
+    );
+  });
+
   it("selects one legacy reset for mixed control generations without version matrices", () => {
     expect(
       classifyProtectedLocalControl({
@@ -70,7 +102,7 @@ describe("protected Local lifecycle-control normalization", () => {
         rootProductTransaction: null,
         controllerProductJournal: null,
       }),
-    ).toEqual({ strategy: "LEGACY_CONTROL_RESET", reason: "legacy-rollback-receipt" });
+    ).toEqual({ strategy: "UNIVERSAL_TAKEOVER", reason: "legacy-control-quarantined" });
     expect(
       classifyProtectedLocalControl({
         operatorJournal: null,
@@ -122,18 +154,18 @@ describe("protected Local lifecycle-control normalization", () => {
     });
   });
 
-  it("fails closed on unknown newer control schemas", () => {
-    expect(() =>
+  it("takes over disposable operator control without a release-version matrix", () => {
+    expect(
       classifyProtectedLocalControl({
-        operatorJournal: { schemaVersion: 2 },
+        operatorJournal: { schemaVersion: 77, phase: "future-legacy-residue" },
         adoptionReceipt: null,
         controllerHint: null,
         supervisorTransaction: null,
         rootProductTransaction: null,
         controllerProductJournal: null,
       }),
-    ).toThrow(/unknown newer lifecycle-control schema/);
-    expect(() =>
+    ).toEqual({ strategy: "UNIVERSAL_TAKEOVER", reason: "legacy-control-quarantined" });
+    expect(
       classifyProtectedLocalControl({
         operatorJournal: {
           schemaVersion: 1,
@@ -146,16 +178,15 @@ describe("protected Local lifecycle-control normalization", () => {
         rootProductTransaction: null,
         controllerProductJournal: null,
       }),
-    ).toThrow(/legacy transaction is non-terminal/);
+    ).toEqual({ strategy: "UNIVERSAL_TAKEOVER", reason: "legacy-control-quarantined" });
   });
 
-  it("leaves unknown-newer state byte-for-byte unchanged", async () => {
+  it("leaves unknown-newer root authority byte-for-byte unchanged", async () => {
     const options = await fixture();
-    const journalPath = path.join(options.operatorStateDir, "hosted-update-transaction.json");
+    const journalPath = path.join(options.supervisorStateDir, "product-transaction.json");
     const bytes = await writeJson(journalPath, {
-      schemaVersion: 2,
+      schemaVersion: 4,
       phase: "future",
-      transactionId: legacyTransactionId,
     });
 
     await expect(prepareProtectedLocalControlNormalization(options)).rejects.toThrow(
@@ -165,6 +196,34 @@ describe("protected Local lifecycle-control normalization", () => {
     await expect(
       fs.access(path.join(options.supervisorStateDir, "control-normalization", "active.json")),
     ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("quarantines opaque legacy control and restores it byte-for-byte", async () => {
+    const options = await fixture();
+    const journalPath = path.join(options.operatorStateDir, "hosted-update-transaction.json");
+    const opaque = Buffer.from("interrupted legacy journal\nnot-json\n", "utf8");
+    await fs.writeFile(journalPath, opaque, { mode: 0o600 });
+
+    const prepared = await prepareProtectedLocalControlNormalization(options);
+    expect(prepared.strategy).toBe("UNIVERSAL_TAKEOVER");
+    await expect(fs.access(journalPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    await rollbackProtectedLocalControlNormalization(options);
+    expect(await fs.readFile(journalPath)).toEqual(opaque);
+  });
+
+  it("never mistakes opaque root residue for a recoverable current transaction", async () => {
+    const options = await fixture();
+    const transactionPath = path.join(options.supervisorStateDir, "product-transaction.json");
+    const opaque = Buffer.from("truncated-root-transaction", "utf8");
+    await fs.writeFile(transactionPath, opaque, { mode: 0o600 });
+
+    const prepared = await prepareProtectedLocalControlNormalization(options);
+    expect(prepared.strategy).toBe("UNIVERSAL_TAKEOVER");
+    await expect(fs.access(transactionPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    await rollbackProtectedLocalControlNormalization(options);
+    expect(await fs.readFile(transactionPath)).toEqual(opaque);
   });
 
   it("rejects a symbolic control file without reading or unlinking its target", async () => {
@@ -224,7 +283,7 @@ describe("protected Local lifecycle-control normalization", () => {
     const trust = await writeJson(trustPath, { schemaVersion: 1, root: "keep" });
 
     const prepared = await prepareProtectedLocalControlNormalization(options);
-    expect(prepared.strategy).toBe("LEGACY_CONTROL_RESET");
+    expect(prepared.strategy).toBe("UNIVERSAL_TAKEOVER");
     await expect(fs.access(journalPath)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.access(rootTransactionPath)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await fs.readFile(userStatePath, "utf8")).toBe(userState);

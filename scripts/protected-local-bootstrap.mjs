@@ -1636,6 +1636,7 @@ function protectedLocalControlNormalizationOptions(spec, layout, options = {}) {
     controllerStateDir: layout.controllerStateDir,
     supervisorStateDir: layout.supervisorStateDir,
     expectedOperatorUid: spec.operatorUid,
+    expectedOperatorStateGid: options.expectedOperatorStateGid,
     expectedRootUid: options.expectedRootUid ?? 0,
     previousVersion,
     targetVersion: spec.releaseVersion,
@@ -1659,6 +1660,7 @@ async function normalizeExistingProtectedLocalControl(sourceRoot, spec, layout, 
     restartService: async (systemctl, unit) => runSystem(systemctl, ["restart", unit]),
     systemctlPath: null,
     expectedRootUid: 0,
+    expectedOperatorStateGid: null,
     ...overrides,
   };
   const options = protectedLocalControlNormalizationOptions(spec, layout, dependencies);
@@ -1669,7 +1671,7 @@ async function normalizeExistingProtectedLocalControl(sourceRoot, spec, layout, 
   try {
     await dependencies.recover(options);
     const prepared = await dependencies.prepare(options);
-    if (prepared.strategy !== "LEGACY_CONTROL_RESET") {
+    if (prepared.strategy !== "UNIVERSAL_TAKEOVER") {
       await dependencies.transition(sourceRoot, spec, layout);
       return Object.freeze({ strategy: prepared.strategy, receipt: null });
     }
@@ -3557,6 +3559,7 @@ async function installProtectedLocal(params) {
           sourceRoot,
           spec,
           layout,
+          { expectedOperatorStateGid: configGroup.gid },
         );
         await waitForSocket(
           `/run/fased-local-controller/${layout.instanceId}/request.sock`,
