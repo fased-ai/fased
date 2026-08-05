@@ -48,6 +48,7 @@ jobs:
       reuse_pr_checks: ${{ steps.scope.outputs.reuse_pr_checks }}
       run_node: ${{ steps.scope.outputs.run_node }}
       dependency_remediation: ${{ steps.scope.outputs.dependency_remediation }}
+      focused_local_update: ${{ steps.scope.outputs.focused_local_update }}
       run_dependency_integrity: ${{ steps.scope.outputs.run_dependency_integrity }}
       run_node_focused: ${{ steps.scope.outputs.run_node_focused }}
       run_node_build: ${{ steps.scope.outputs.run_node_build }}
@@ -268,9 +269,42 @@ jobs:
         with:
           install-bun: "false"
 
+      - name: Check focused Local-update source
+        run: |
+          pnpm exec oxfmt --check \
+            config/lifecycle-compatibility.v1.json \
+            docs/reference/ci.md \
+            package.json \
+            scripts/ci-change-scope.mjs \
+            scripts/ci-change-scope.test.ts \
+            scripts/fased-local-recovery-pending.test.ts \
+            scripts/fased-managed-updater-core.mjs \
+            scripts/fased-managed-updater.test.ts \
+            scripts/gate-authority.mjs \
+            scripts/lifecycle-control-normalizer.mjs \
+            scripts/lifecycle-control-normalizer.test.ts \
+            scripts/protected-local-bootstrap.mjs \
+            scripts/protected-local-bootstrap.test.ts \
+            scripts/protected-local-controller.test.ts \
+            scripts/release-check.ts
+          pnpm exec oxlint \
+            scripts/ci-change-scope.mjs \
+            scripts/ci-change-scope.test.ts \
+            scripts/fased-local-recovery-pending.test.ts \
+            scripts/fased-managed-updater-core.mjs \
+            scripts/fased-managed-updater.test.ts \
+            scripts/gate-authority.mjs \
+            scripts/lifecycle-control-normalizer.mjs \
+            scripts/lifecycle-control-normalizer.test.ts \
+            scripts/protected-local-bootstrap.mjs \
+            scripts/protected-local-bootstrap.test.ts \
+            scripts/protected-local-controller.test.ts \
+            scripts/release-check.ts
+
       - name: Run focused Local-update regressions
         run: >-
           pnpm exec vitest run
+          scripts/lifecycle-control-normalizer.test.ts
           scripts/protected-local-bootstrap.test.ts
           scripts/fased-local-recovery-pending.test.ts
           src/wallet/wallet-application-state-permissions.test.ts
@@ -754,7 +788,9 @@ jobs:
   check:
     name: "check"
     needs: [change-scope]
-    if: needs.change-scope.outputs.run_node == 'true'
+    if: >-
+      needs.change-scope.outputs.run_node == 'true' &&
+      needs.change-scope.outputs.focused_local_update != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -1220,7 +1256,9 @@ jobs:
   strict-types-baseline:
     name: "strict types baseline"
     needs: [change-scope]
-    if: needs.change-scope.outputs.run_node == 'true'
+    if: >-
+      needs.change-scope.outputs.run_node == 'true' &&
+      needs.change-scope.outputs.focused_local_update != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -1358,7 +1396,10 @@ jobs:
   # Validate docs (format, lint, broken links) only when docs files changed.
   check-docs:
     needs: [change-scope]
-    if: needs.change-scope.outputs.docs_changed == 'true' && needs.change-scope.outputs.version_only != 'true'
+    if: >-
+      needs.change-scope.outputs.docs_changed == 'true' &&
+      needs.change-scope.outputs.version_only != 'true' &&
+      needs.change-scope.outputs.focused_local_update != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -1589,6 +1630,7 @@ jobs:
       - name: Require every applicable release gate
         env:
           DOCS_CHANGED: ${{ needs.change-scope.outputs.docs_changed }}
+          FOCUSED_LOCAL_UPDATE: ${{ needs.change-scope.outputs.focused_local_update }}
           VERSION_ONLY: ${{ needs.change-scope.outputs.version_only }}
           MANUAL_REVIEW_REQUIRED: ${{ needs.change-scope.outputs.manual_review_required }}
           RUN_NODE_FOCUSED: ${{ needs.change-scope.outputs.run_node_focused }}

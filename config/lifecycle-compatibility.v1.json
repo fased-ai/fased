@@ -102,6 +102,15 @@
       "runtimeSelected": false
     },
     {
+      "id": "mixed-protected-local-control-v1-to-standard",
+      "owner": "bootstrap-installer",
+      "dimension": "interruptedTransaction",
+      "input": "mixed-legacy-control-v1",
+      "output": "none",
+      "status": "implemented",
+      "runtimeSelected": false
+    },
+    {
       "id": "managed-install-absent",
       "owner": "target-controller",
       "dimension": "managedInstallSchema",
@@ -436,6 +445,30 @@
         "declared-state-registry-v1",
         "protected-local-system-v1"
       ],
+      "published": true
+    },
+    {
+      "id": "protected-local-supervisor-v1-mixed-control",
+      "baseTopology": "protected-local-supervisor-v1",
+      "profile": "protected-local",
+      "platformAdapter": "linux-systemd",
+      "serviceTopology": "protected-local-system-v1",
+      "updaterProtocol": 2,
+      "supervisorProtocol": 1,
+      "controllerProtocol": 2,
+      "controllerCapabilities": ["updateController", "applyRelease"],
+      "signerProtocol": 2,
+      "declaredStateRegistry": 1,
+      "stateSchemas": {
+        "managedInstall": [1, 2],
+        "walletRegistry": [null, 1],
+        "signer": 2,
+        "mining": 1,
+        "federation": 2
+      },
+      "interruptedTransaction": "mixed-legacy-control-v1",
+      "forwardPath": "standard-local-bootstrap-once",
+      "adapterIds": ["mixed-protected-local-control-v1-to-standard"],
       "published": true
     },
     {
@@ -775,7 +808,7 @@
       },
       "localTopologies": ["protected-local-supervisor-v1", "local-darwin-managed-v2"],
       "hostingTopology": "hosting-supervisor-v1",
-      "interruptedLocalTopology": "protected-local-controller-v2-interrupted",
+      "interruptedLocalTopology": "protected-local-supervisor-v1-mixed-control",
       "interruptedHostingTopology": "hosting-controller-v2-interrupted",
       "releases": [
         { "tag": "v0.1.76-rc.21", "commit": "5274ce17081b3b98286c00a3e8c9e8fbf18add09" },

@@ -4,7 +4,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { MANAGED_UPDATER_SUPPORT_FILES } from "./fased-managed-updater-core.mjs";
 import {
   buildProtectedLocalBootstrapSpec,
   renderProtectedLocalOperatorEnvironment,
@@ -80,143 +79,132 @@ describe("protected Local bootstrap contract", () => {
     ).rejects.toThrow(/update-channel directory is unsafe/u);
   });
 
-  it("runs fixed-path legacy adoption before the supervisor transition and preserves the journal", () => {
+  it("normalizes legacy control metadata before the supervisor transition", () => {
     const root = temporaryRoot();
     const stateDir = path.join(root, ".fased");
     const journalPath = path.join(stateDir, "hosted-update-transaction.json");
     const journal = '{"schemaVersion":1,"phase":"rolling-back"}\n';
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(journalPath, journal, { mode: 0o600 });
-    const spec = {
-      stateDir,
-      operatorUser: "fixture-operator",
-      operatorHome: root,
-      nodeBinary: "/usr/bin/node",
-    };
-    const command = __testing.buildLegacyManagedUpdateAdoptionCommand(root, spec, {
-      runuserPath: "/usr/sbin/runuser",
-    });
-    expect(command).toEqual({
-      executable: "/usr/sbin/runuser",
-      args: [
-        "-u",
-        "fixture-operator",
-        "--",
-        "/usr/bin/env",
-        "-i",
-        `HOME=${root}`,
-        "USER=fixture-operator",
-        "LOGNAME=fixture-operator",
-        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        `FASED_STATE_DIR=${stateDir}`,
-        `FASED_CONFIG_PATH=${path.join(stateDir, "fased.json")}`,
-        "/usr/bin/node",
-        path.join(root, "scripts", "fased-managed-updater-core.mjs"),
-        "adopt-legacy-managed-update",
-      ],
-    });
-    expect(command.args).not.toContain("--state-dir");
-    expect(command.args).not.toContain("--journal-path");
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "protected-local-bootstrap.mjs"),
       "utf8",
     );
-    expect(
-      source.indexOf("legacyAdoption = await importLegacyManagedUpdateAdoption("),
-    ).toBeGreaterThan(-1);
-    expect(
-      source.indexOf("legacyAdoption = await importLegacyManagedUpdateAdoption("),
-    ).toBeLessThan(
-      source.indexOf("await transitionExistingSupervisorBoundary(sourceRoot, spec, layout)"),
+    const normalization = source.indexOf(
+      "controlNormalization = await normalizeExistingProtectedLocalControl(",
     );
-    expect(source).not.toContain("suspendLegacyManagedUpdateJournal");
+    const lifecycle = source.indexOf("lifecycle = applyProtectedLocalLifecycle(spec, layout)");
+    expect(normalization).toBeGreaterThan(-1);
+    expect(normalization).toBeLessThan(lifecycle);
+    expect(source.slice(normalization, lifecycle)).not.toContain(
+      "importLegacyManagedUpdateAdoption(",
+    );
     expect(fs.readFileSync(journalPath, "utf8")).toBe(journal);
   });
 
-  it("stages legacy adoption outside the root-private verified release tree", async () => {
+  it("converges a mixed protected Local control plane into one standard boundary", async () => {
     const root = temporaryRoot();
-    const uid = process.getuid?.() ?? 0;
-    const gid = process.getgid?.() ?? 0;
-    const privateSourceRoot = path.join(root, "private-release");
-    const sourceScripts = path.join(privateSourceRoot, "scripts");
-    fs.mkdirSync(sourceScripts, { recursive: true, mode: 0o700 });
-    fs.chmodSync(privateSourceRoot, 0o700);
-    for (const name of MANAGED_UPDATER_SUPPORT_FILES) {
-      fs.copyFileSync(path.join(process.cwd(), "scripts", name), path.join(sourceScripts, name));
-    }
+    const stateDir = path.join(root, ".fased");
     const layout = buildProtectedLocalLayout("0123456789abcdef", {
       runtimeRoot: path.join(root, "run"),
       stateRoot: path.join(root, "state"),
       installRoot: path.join(root, "install"),
     });
-    fs.mkdirSync(layout.installDir, { recursive: true, mode: 0o755 });
-
-    const staged = await __testing.prepareLegacyManagedUpdateAdoptionBundle(
-      privateSourceRoot,
-      layout,
-      { expectedUid: uid, expectedGid: gid, sourceOwnerUid: uid },
+    fs.mkdirSync(layout.supervisorStateDir, { recursive: true });
+    fs.mkdirSync(path.join(stateDir, "wallets"), { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, "install.json"),
+      `${JSON.stringify({ schemaVersion: 2, runtime: { activeVersion: "1.2.2" } })}\n`,
+      { mode: 0o600 },
     );
-    try {
-      expect(path.relative(privateSourceRoot, staged.sourceRoot).startsWith("..")).toBe(true);
-      expect(staged.sourceRoot.startsWith(path.dirname(layout.supervisorClient))).toBe(true);
-      expect(fs.statSync(privateSourceRoot).mode & 0o777).toBe(0o700);
-      expect(fs.statSync(staged.sourceRoot).mode & 0o777).toBe(0o755);
-      expect(fs.statSync(path.join(staged.sourceRoot, "scripts")).mode & 0o777).toBe(0o755);
-      for (const name of MANAGED_UPDATER_SUPPORT_FILES) {
-        const source = fs.readFileSync(path.join(sourceScripts, name));
-        const target = fs.readFileSync(path.join(staged.sourceRoot, "scripts", name));
-        expect(crypto.createHash("sha256").update(target).digest("hex")).toBe(
-          crypto.createHash("sha256").update(source).digest("hex"),
-        );
-        expect(fs.statSync(path.join(staged.sourceRoot, "scripts", name)).mode & 0o777).toBe(0o644);
-      }
-    } finally {
-      await staged.cleanup();
-    }
-    expect(fs.existsSync(staged.sourceRoot)).toBe(false);
-  });
-
-  it("accepts a legacy configuration only from an explicitly verified service owner", async () => {
-    const root = temporaryRoot();
-    const configPath = path.join(root, "fased.json");
-    const uid = process.getuid?.() ?? 0;
-    const gid = process.getgid?.() ?? 0;
-    fs.writeFileSync(configPath, '{"gateway":{"port":18789}}\n', { mode: 0o600 });
-
-    await expect(
-      __testing.readRootImportJson(
-        configPath,
-        "legacy Gateway configuration",
-        [uid + 1, uid],
-        [0o600],
-        [gid],
-      ),
-    ).resolves.toMatchObject({ value: { gateway: { port: 18789 } } });
-    await expect(
-      __testing.readRootImportJson(
-        configPath,
-        "legacy Gateway configuration",
-        [uid + 1, uid + 2],
-        [0o600],
-        [gid],
-      ),
-    ).rejects.toThrow(/legacy Gateway configuration is unsafe/u);
-  });
-
-  it("keeps missing legacy readiness timestamps stable across root verification retries", () => {
-    const serviceStartedAt = Date.parse("2026-08-04T12:15:12.000Z");
-    const receiptStartedAt = "2026-08-04T20:59:14.470Z";
-
-    expect(__testing.rootImportGatewayStartedAt({}, serviceStartedAt, receiptStartedAt)).toBe(
-      receiptStartedAt,
+    const legacyTransactionId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const legacyJournal = `${JSON.stringify({
+      schemaVersion: 1,
+      phase: "rolling-back",
+      transactionId: legacyTransactionId,
+    })}\n`;
+    fs.writeFileSync(path.join(stateDir, "hosted-update-transaction.json"), legacyJournal, {
+      mode: 0o600,
+    });
+    fs.writeFileSync(
+      path.join(stateDir, "legacy-managed-update-adoption.v1.json"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        outcome: "rolled-back",
+        rootVerificationPending: true,
+        transactionId: legacyTransactionId,
+      })}\n`,
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(stateDir, "protected-local-controller-transaction.json"),
+      `${JSON.stringify({ schemaVersion: 1, version: "1.2.1" })}\n`,
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(layout.supervisorStateDir, "product-transaction.json"),
+      `${JSON.stringify({
+        schemaVersion: 3,
+        phase: "restored",
+        durableCommitDecision: false,
+      })}\n`,
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(layout.controllerStateDir, "active-signer-transaction.json"),
+      `${JSON.stringify({ schemaVersion: 8, phase: "restored" })}\n`,
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(path.join(stateDir, "wallets", "registry.json"), "wallet-state\n");
+    const calls: string[] = [];
+    const result = await __testing.normalizeExistingProtectedLocalControl(
+      root,
+      {
+        stateDir,
+        operatorUid: process.getuid?.() ?? 0,
+        releaseVersion: "1.2.3",
+      },
+      layout,
+      {
+        expectedRootUid: process.getuid?.() ?? 0,
+        systemctlPath: "/fixture/systemctl",
+        stopServices: async (_systemctl: string, units: string[]) => {
+          calls.push(`stop:${units.join(",")}`);
+        },
+        restartService: async (_systemctl: string, unit: string) => {
+          calls.push(`restart:${unit}`);
+        },
+        transition: async (
+          _sourceRoot: string,
+          _spec: unknown,
+          _layout: unknown,
+          options: { onBoundaryCommitted?: () => Promise<unknown> } = {},
+        ) => {
+          calls.push("transition");
+          await options.onBoundaryCommitted?.();
+        },
+      },
+    );
+    expect(result.strategy).toBe("LEGACY_CONTROL_RESET");
+    expect(result.receipt).toMatchObject({
+      previousVersion: "1.2.2",
+      targetVersion: "1.2.3",
+      outcome: "committed",
+    });
+    expect(calls).toEqual([`stop:${layout.supervisorUnit},${layout.controllerUnit}`, "transition"]);
+    expect(fs.existsSync(path.join(stateDir, "hosted-update-transaction.json"))).toBe(false);
+    expect(fs.existsSync(path.join(stateDir, "legacy-managed-update-adoption.v1.json"))).toBe(
+      false,
+    );
+    expect(fs.existsSync(path.join(layout.supervisorStateDir, "product-transaction.json"))).toBe(
+      false,
     );
     expect(
-      __testing.rootImportGatewayStartedAt(
-        { startedAt: "2026-08-04T12:15:12.100Z" },
-        serviceStartedAt,
-        receiptStartedAt,
-      ),
-    ).toBe("2026-08-04T12:15:12.100Z");
+      fs.existsSync(path.join(layout.controllerStateDir, "active-signer-transaction.json")),
+    ).toBe(false);
+    expect(fs.readFileSync(path.join(stateDir, "wallets", "registry.json"), "utf8")).toBe(
+      "wallet-state\n",
+    );
   });
 
   it("keeps the supervisor private and gives its client a separate executable boundary", async () => {
@@ -959,6 +947,7 @@ default:other::---
       fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
     ) as { files: string[] };
     expect(packageMetadata.files).toContain("scripts/protected-local-bootstrap.mjs");
+    expect(packageMetadata.files).toContain("scripts/lifecycle-control-normalizer.mjs");
     expect(bootstrap).toContain('"/opt/fased",\n    "/opt/fased/local"');
     expect(installer).toContain("--protected-local-root-bootstrap");
     expect(installer).toContain("bootstrap_protected_local_topology");
@@ -1014,15 +1003,11 @@ default:other::---
     );
     const alreadyProtected = bootstrap.slice(branchStart, branchEnd);
 
-    expect(alreadyProtected).toContain(
-      "await transitionExistingSupervisorBoundary(sourceRoot, spec, layout)",
-    );
+    expect(alreadyProtected).toContain("await normalizeExistingProtectedLocalControl(");
     expect(alreadyProtected).toContain("lifecycle = applyProtectedLocalLifecycle(spec, layout)");
-    expect(
-      alreadyProtected.indexOf(
-        "await transitionExistingSupervisorBoundary(sourceRoot, spec, layout)",
-      ),
-    ).toBeLessThan(alreadyProtected.indexOf("applyProtectedLocalLifecycle(spec, layout)"));
+    expect(alreadyProtected.indexOf("await normalizeExistingProtectedLocalControl(")).toBeLessThan(
+      alreadyProtected.indexOf("applyProtectedLocalLifecycle(spec, layout)"),
+    );
     expect(alreadyProtected.indexOf("applyProtectedLocalLifecycle(spec, layout)")).toBeLessThan(
       alreadyProtected.indexOf("verifyGatewayHealth(spec, layout"),
     );

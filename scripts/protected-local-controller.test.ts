@@ -23,6 +23,8 @@ describe("Protected Local root controller configuration", () => {
         gatewayLauncherPath: `/opt/fased/local/${instanceId}/gateway-launch`,
         signerPath: `/opt/fased/local/${instanceId}/signer/fased-signerd`,
         signerStateDBPath: `/var/lib/fased-local/${instanceId}/signer/state.db`,
+        signerMasterKeyPath: `/var/lib/fased-local/${instanceId}/signer/master.key`,
+        signerAuditLogPath: `/var/lib/fased-local/${instanceId}/signer/audit.jsonl`,
         signerUnitPath: `/etc/systemd/system/fased-signerd-${instanceId}.service`,
         versionPath: `/var/lib/fased-local/${instanceId}/controller/signer-version`,
         channelPath: `/etc/fased/local/${instanceId}/update-channel`,
@@ -31,6 +33,7 @@ describe("Protected Local root controller configuration", () => {
         gatewayGatePath: `/var/lib/fased-local/${instanceId}/controller/gateway-update-gate`,
         signerGatePath: `/var/lib/fased-local/${instanceId}/controller/signer-update-gate`,
         transactionsDir: `/var/lib/fased-local/${instanceId}/controller/transactions`,
+        supervisorStateDir: `/var/lib/fased-local/${instanceId}/controller/supervisor`,
       },
     });
   });

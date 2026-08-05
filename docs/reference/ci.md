@@ -49,11 +49,15 @@ product matrix:
 | `packed-core-smoke`    | Verify the packed Local package                        |
 | `checks`               | Full sharded Node/Bun and protocol matrix              |
 
-The focused Local-update route retains exact L1 update, rollback, retry,
-restart, reboot, state-preservation, and final-idempotence evidence. It does
-not run fresh Local L0. Fresh Ubuntu, Rocky compatibility, Hosting, Docker,
-macOS/iOS, Mining UI, and broad product jobs run only when their changed
-surface selects them.
+The focused Local-update route consumes exact-tree private T1/T2 evidence
+produced before the PR opens. Public PR CI runs one allowlisted focused-source
+job plus applicable workflow contracts, secret scanning, and JavaScript
+CodeQL; it does not rebuild or replay the privileged transaction. The exact
+merged source is packaged once and P1 runs once before an immutable candidate
+is created. Literal L1 update, restart, state preservation, and final
+idempotence then run once against that candidate. It does not run fresh Local
+L0. Fresh Ubuntu, Rocky compatibility, Hosting, Docker, macOS/iOS, Mining UI,
+and broad product jobs run only when their changed surface selects them.
 
 Native Go signer validation, JavaScript signer integration, and Darwin signer
 integration are independent lanes. CodeQL is likewise selected independently
@@ -85,7 +89,8 @@ These are operating budgets, not acceptance shortcuts:
 
 - focused application or Wallet correction: 3–5 minutes before CodeQL, and
   about 5–8 minutes when JavaScript/TypeScript CodeQL is selected;
-- privileged Local-update correction: 6–10 minutes;
+- focused Local-update PR: 2–3 minutes before CodeQL, and about 5–8 minutes
+  including CodeQL; privileged T2 and packaged P1 run once before the PR;
 - version-only pull request: 2–3 minutes; and
 - total runner consumption for a focused pull request: at most 15 minutes.
 

@@ -155,6 +155,28 @@ describe("required CI gate aggregation", () => {
     ).not.toThrow();
   });
 
+  it("accepts one focused Local-update source job instead of duplicate broad checks", () => {
+    expect(() =>
+      assertApplicableGates({
+        docsChanged: true,
+        focusedLocalUpdate: true,
+        runNodeFocused: true,
+        runCiContracts: true,
+        runCodeqlJavascript: true,
+        results: {
+          ...alwaysGreen,
+          "focused Node tests": "success",
+          "CI contracts": "success",
+          "CodeQL JavaScript": "success",
+          documentation: "skipped",
+          "format and lint": "skipped",
+          "strict types baseline": "skipped",
+          "T2 harness contracts": "skipped",
+        },
+      }),
+    ).not.toThrow();
+  });
+
   it("requires selected platform-bootstrap, Docker, and split signer lanes", () => {
     expect(() =>
       assertApplicableGates({

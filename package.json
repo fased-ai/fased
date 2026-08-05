@@ -60,6 +60,7 @@
     "scripts/fased-signer-policy-hosting.sh",
     "scripts/fased-signer-policy-local.sh",
     "scripts/migrate-hosted-signer-v2.mjs",
+    "scripts/lifecycle-control-normalizer.mjs",
     "scripts/protected-local-bootstrap.mjs",
     "scripts/protected-local-layout.mjs",
     "scripts/protected-local-service-plan.mjs",
