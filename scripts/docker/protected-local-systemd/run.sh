@@ -98,6 +98,24 @@ resolve_protected_runtime() {
   esac
 }
 
+resolve_predecessor_runtime() {
+  local phase="$1"
+  local instance="$2"
+  local resolved=""
+  if [[ "$phase" == "legacy-takeover" ]]; then
+    resolved="$(readlink -f "$state/runtime/current")"
+    case "$resolved" in
+      "$state/runtime/releases/"*) printf '%s\n' "$resolved" ;;
+      *)
+        echo "Legacy predecessor runtime selector escaped the operator runtime store" >&2
+        return 1
+        ;;
+    esac
+    return 0
+  fi
+  resolve_protected_runtime "$instance"
+}
+
 verify_shared_device_auth() {
   local instance="$1"
   local runtime_root="$2"
@@ -1474,7 +1492,7 @@ if [[ "$phase" == "modern-update" || "$phase" == "legacy-takeover" ]]; then
   test "$(jq -er .profile "$state/install.json")" = "protected-local"
   test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$legacy_version"
   instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
-  runtime="$(resolve_protected_runtime "$instance")"
+  runtime="$(resolve_predecessor_runtime "$phase" "$instance")"
   mapfile -t modern_operator_env < <(operator_env "$instance")
   wait_for_service "fased-local-controller-$instance.service"
   wait_for_service "fased-signerd-$instance.service"
