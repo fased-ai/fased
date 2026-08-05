@@ -23,12 +23,17 @@ OWN_LEGACY_ARTIFACT_DIR=0
 MODERN_VERSION="${FASED_SYSTEMD_FIXTURE_MODERN_VERSION:-0.1.76-rc.38}"
 MODERN_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_MODERN_ARTIFACT_DIR:-}"
 OWN_MODERN_ARTIFACT_DIR=0
+TAKEOVER_VERSION="${FASED_SYSTEMD_FIXTURE_TAKEOVER_VERSION:-0.1.76-rc.20}"
+TAKEOVER_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_TAKEOVER_ARTIFACT_DIR:-}"
+OWN_TAKEOVER_ARTIFACT_DIR=0
 
 command -v "$RUNTIME" >/dev/null 2>&1 || {
   echo "Podman is required for the protected Local systemd fixtures." >&2
   exit 1
 }
-if [[ ",$SCENARIOS," == *,install,* || ",$SCENARIOS," == *,modern-update,* ]]; then
+if [[ ",$SCENARIOS," == *,install,* ||
+  ",$SCENARIOS," == *,modern-update,* ||
+  ",$SCENARIOS," == *,legacy-takeover,* ]]; then
   command -v gh >/dev/null 2>&1 || {
     echo "GitHub CLI is required for the literal Protected Local update fixture." >&2
     exit 1
@@ -155,6 +160,26 @@ if [[ ",$SCENARIOS," == *,modern-update,* ]]; then
     '.release.version == $version and .release.tag == ("v" + $version)' \
     "$modern_manifest" >/dev/null
 fi
+if [[ ",$SCENARIOS," == *,legacy-takeover,* ]]; then
+  if [[ -z "$TAKEOVER_ARTIFACT_DIR" ]]; then
+    TAKEOVER_ARTIFACT_DIR="$(
+      mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-takeover-artifact.XXXXXX"
+    )"
+    OWN_TAKEOVER_ARTIFACT_DIR=1
+    gh release download "v$TAKEOVER_VERSION" \
+      --repo fased-ai/fased \
+      --dir "$TAKEOVER_ARTIFACT_DIR"
+    chmod 0755 "$TAKEOVER_ARTIFACT_DIR"
+  fi
+  takeover_manifest="$TAKEOVER_ARTIFACT_DIR/fased-hosted-release-v2.json"
+  [[ -f "$TAKEOVER_ARTIFACT_DIR/install.sh" && -f "$takeover_manifest" ]] || {
+    echo "The legacy-takeover fixture requires a complete immutable predecessor release." >&2
+    exit 1
+  }
+  jq -e --arg version "$TAKEOVER_VERSION" \
+    '.release.version == $version and .release.tag == ("v" + $version)' \
+    "$takeover_manifest" >/dev/null
+fi
 if [[ -z "$LEGACY_ARTIFACT_DIR" ]]; then
   LEGACY_ARTIFACT_DIR="$(
     mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-legacy-artifact.XXXXXX"
@@ -194,6 +219,9 @@ cleanup() {
   if [[ "$OWN_MODERN_ARTIFACT_DIR" -eq 1 ]]; then
     rm -rf -- "$MODERN_ARTIFACT_DIR"
   fi
+  if [[ "$OWN_TAKEOVER_ARTIFACT_DIR" -eq 1 ]]; then
+    rm -rf -- "$TAKEOVER_ARTIFACT_DIR"
+  fi
 }
 trap cleanup EXIT INT TERM HUP
 
@@ -215,6 +243,9 @@ run_fixture_scenario() {
   if [[ "$scenario" == "modern-update" ]]; then
     predecessor_artifact_dir="$MODERN_ARTIFACT_DIR"
     predecessor_version="$MODERN_VERSION"
+  elif [[ "$scenario" == "legacy-takeover" ]]; then
+    predecessor_artifact_dir="$TAKEOVER_ARTIFACT_DIR"
+    predecessor_version="$TAKEOVER_VERSION"
   fi
 
   cleanup_names+=("$name")
@@ -321,7 +352,7 @@ done
 
 for scenario in "${scenario_list[@]}"; do
   case "$scenario" in
-    fresh-install|install|modern-update) ;;
+    fresh-install|install|modern-update|legacy-takeover) ;;
     *)
       echo "Unsupported protected Local fixture scenario: $scenario" >&2
       exit 1

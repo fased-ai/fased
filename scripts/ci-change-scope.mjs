@@ -65,9 +65,9 @@ export function outputEntries(plan, options = {}) {
     dependencyRemediation || (scope.runNodePackaging && !focusedLocalUpdate);
   const lane = (value) => !dependencyRemediation && value;
   const focusedLane = (value) => lane(value) && !focusedLocalUpdate;
-  // The private route binds exact T1/T2 and packaged P1 evidence to this tree
-  // before the PR opens. Keep public PR CI on focused source/security contracts;
-  // do not rebuild or rerun the same privileged and packaged transactions.
+  // The private route binds exact T1/T2 source evidence before the PR opens.
+  // Packaged P1 stays at the immutable candidate boundary. Keep public PR CI on
+  // focused source/security contracts without repeating privileged transactions.
   const prBuildLane = (value) => lane(value) && !focusedLocalUpdate;
   const prInstalledFixtureLane = (value) => lane(value) && !focusedLocalUpdate;
   const codeqlLanguages = [

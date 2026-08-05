@@ -167,6 +167,7 @@ describe("protected Local bootstrap contract", () => {
       layout,
       {
         expectedRootUid: process.getuid?.() ?? 0,
+        expectedOperatorStateGid: process.getgid?.() ?? 0,
         systemctlPath: "/fixture/systemctl",
         stopServices: async (_systemctl: string, units: string[]) => {
           calls.push(`stop:${units.join(",")}`);
@@ -185,7 +186,7 @@ describe("protected Local bootstrap contract", () => {
         },
       },
     );
-    expect(result.strategy).toBe("LEGACY_CONTROL_RESET");
+    expect(result.strategy).toBe("UNIVERSAL_TAKEOVER");
     expect(result.receipt).toMatchObject({
       previousVersion: "1.2.2",
       targetVersion: "1.2.3",

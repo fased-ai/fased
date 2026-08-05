@@ -458,8 +458,12 @@ describe("CI workflow routing", () => {
     const candidate = jobs["candidate"];
     const publish = jobs["publish"];
 
-    expect(jobs["release-gate"]?.if).toBe("startsWith(github.ref, 'refs/tags/v')");
-    expect(candidate?.if).toBe("startsWith(github.ref, 'refs/tags/v')");
+    expect(jobs["release-gate"]?.if).toBe(
+      "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')",
+    );
+    expect(candidate?.if).toBe(
+      "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')",
+    );
     expect(candidate?.needs).toEqual(["validate", "linux", "signer"]);
     expect(publish?.if).toBe("github.event_name == 'workflow_dispatch'");
     expect(workflow.concurrency?.group).toBe(
@@ -530,12 +534,19 @@ describe("CI workflow routing", () => {
 
     expect(fixture).toContain('if [[ "$version" == *-* ]]');
     expect(fixture).toContain("target_update_args=(--channel beta)");
-    expect(fixture.match(/update "\$\{target_update_args\[@\]\}" --timeout/gu)).toHaveLength(6);
+    expect(fixture.match(/update "\$\{target_update_args\[@\]\}" --timeout/gu)).toHaveLength(5);
     expect(fixture).not.toContain("/etc/fased/testing");
     expect(fixture).toContain("/var/lib/fased-protected-local-fixture");
-    expect(fixture).toContain('if [[ "$phase" == "modern-update" ]]');
+    expect(fixture).toContain(
+      'if [[ "$phase" == "modern-update" || "$phase" == "legacy-takeover" ]]',
+    );
+    expect(fixture).toContain("run_target_update() {");
+    expect(fixture).toContain('if [[ "$phase" == "legacy-takeover" ]]');
     expect(fixture).toContain(
       "modern packaged Protected Local rollback, retry, restart, preservation, and no-op passed",
+    );
+    expect(fixture).toContain(
+      "legacy packaged Protected Local takeover, rollback, retry, restart, preservation, and no-op passed",
     );
   });
 

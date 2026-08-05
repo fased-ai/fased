@@ -10,6 +10,7 @@ const TRANSACTION_ID_PATTERN =
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
 const MAX_CONTROL_FILE_BYTES = 1024 * 1024;
 const NORMALIZATION_SCHEMA_VERSION = 1;
+const OPAQUE_CONTROL_RECORD = Symbol("opaque-control-record");
 
 const CONTROL_RECORDS = Object.freeze([
   Object.freeze({
@@ -146,7 +147,7 @@ function validateOptions(options) {
   if (!TRANSACTION_ID_PATTERN.test(options.transactionId ?? "")) {
     fail("normalization transaction ID is invalid");
   }
-  for (const name of ["expectedOperatorUid", "expectedRootUid"]) {
+  for (const name of ["expectedOperatorUid", "expectedOperatorStateGid", "expectedRootUid"]) {
     if (!Number.isSafeInteger(options[name]) || options[name] < 0) {
       fail(`${name} is invalid`);
     }
@@ -170,7 +171,12 @@ function recordPath(options, record) {
   return path.join(root, record.path);
 }
 
-async function safeReadJson(filePath, expectedUid, displayPath = filePath) {
+async function safeReadFile(
+  filePath,
+  expectedUid,
+  displayPath = filePath,
+  { allowEmpty = false } = {},
+) {
   let named;
   try {
     named = await fsp.lstat(filePath);
@@ -186,7 +192,7 @@ async function safeReadJson(filePath, expectedUid, displayPath = filePath) {
     named.nlink !== 1 ||
     named.uid !== expectedUid ||
     (named.mode & 0o022) !== 0 ||
-    named.size <= 0 ||
+    (!allowEmpty && named.size <= 0) ||
     named.size > MAX_CONTROL_FILE_BYTES
   ) {
     fail(`control file is unsafe: ${displayPath}`);
@@ -202,7 +208,7 @@ async function safeReadJson(filePath, expectedUid, displayPath = filePath) {
       opened.uid !== expectedUid ||
       (opened.mode & 0o022) !== 0 ||
       opened.size !== named.size ||
-      opened.size <= 0 ||
+      (!allowEmpty && opened.size <= 0) ||
       opened.size > MAX_CONTROL_FILE_BYTES
     ) {
       fail(`control file changed while it was being read: ${displayPath}`);
@@ -218,26 +224,55 @@ async function safeReadJson(filePath, expectedUid, displayPath = filePath) {
     ) {
       fail(`control file changed while it was being read: ${displayPath}`);
     }
-    let value;
-    try {
-      value = JSON.parse(bytes.toString("utf8"));
-    } catch {
-      fail(`control file is not valid JSON: ${displayPath}`);
-    }
-    return Object.freeze({ info: opened, bytes, value });
+    return Object.freeze({ info: opened, bytes });
   } finally {
     await handle.close();
   }
 }
 
-async function openDirectoryAnchor(directoryPath, expectedUid) {
+async function safeReadJson(filePath, expectedUid, displayPath = filePath) {
+  const captured = await safeReadFile(filePath, expectedUid, displayPath);
+  if (!captured) {
+    return null;
+  }
+  let value;
+  try {
+    value = JSON.parse(captured.bytes.toString("utf8"));
+  } catch {
+    fail(`control file is not valid JSON: ${displayPath}`);
+  }
+  return Object.freeze({ ...captured, value });
+}
+
+async function safeReadControlFile(filePath, expectedUid, displayPath = filePath) {
+  const captured = await safeReadFile(filePath, expectedUid, displayPath, { allowEmpty: true });
+  if (!captured) {
+    return null;
+  }
+  try {
+    return Object.freeze({ ...captured, value: JSON.parse(captured.bytes.toString("utf8")) });
+  } catch {
+    return Object.freeze({ ...captured, value: OPAQUE_CONTROL_RECORD });
+  }
+}
+
+function directoryMatchesTrustBoundary(info, policy) {
+  if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== policy.expectedUid) {
+    return false;
+  }
+  if ((info.mode & 0o022) === 0) {
+    return true;
+  }
+  return (
+    policy.expectedSharedGid !== null &&
+    info.gid === policy.expectedSharedGid &&
+    (info.mode & 0o2777) === 0o2770
+  );
+}
+
+async function openDirectoryAnchor(directoryPath, policy) {
   const named = await fsp.lstat(directoryPath);
-  if (
-    !named.isDirectory() ||
-    named.isSymbolicLink() ||
-    named.uid !== expectedUid ||
-    (named.mode & 0o022) !== 0
-  ) {
+  if (!directoryMatchesTrustBoundary(named, policy)) {
     fail(`control directory is unsafe: ${directoryPath}`);
   }
   const handle = await fsp.open(
@@ -250,12 +285,11 @@ async function openDirectoryAnchor(directoryPath, expectedUid) {
       !opened.isDirectory() ||
       opened.dev !== named.dev ||
       opened.ino !== named.ino ||
-      opened.uid !== expectedUid ||
-      (opened.mode & 0o022) !== 0
+      !directoryMatchesTrustBoundary(opened, policy)
     ) {
       fail(`control directory changed while it was being opened: ${directoryPath}`);
     }
-    return Object.freeze({ directoryPath, expectedUid, handle, dev: opened.dev, ino: opened.ino });
+    return Object.freeze({ directoryPath, policy, handle, dev: opened.dev, ino: opened.ino });
   } catch (error) {
     await handle.close();
     throw error;
@@ -267,15 +301,18 @@ async function openControlAnchors(options) {
   try {
     anchors.operator = await openDirectoryAnchor(
       options.operatorStateDir,
-      options.expectedOperatorUid,
+      Object.freeze({
+        expectedUid: options.expectedOperatorUid,
+        expectedSharedGid: options.expectedOperatorStateGid,
+      }),
     );
     anchors.controller = await openDirectoryAnchor(
       options.controllerStateDir,
-      options.expectedRootUid,
+      Object.freeze({ expectedUid: options.expectedRootUid, expectedSharedGid: null }),
     );
     anchors.supervisor = await openDirectoryAnchor(
       options.supervisorStateDir,
-      options.expectedRootUid,
+      Object.freeze({ expectedUid: options.expectedRootUid, expectedSharedGid: null }),
     );
     return Object.freeze(anchors);
   } catch (error) {
@@ -304,8 +341,7 @@ async function syncAndCloseControlAnchors(anchors) {
         visible.isSymbolicLink() ||
         visible.dev !== anchor.dev ||
         visible.ino !== anchor.ino ||
-        visible.uid !== anchor.expectedUid ||
-        (visible.mode & 0o022) !== 0
+        !directoryMatchesTrustBoundary(visible, anchor.policy)
       ) {
         fail(`control directory changed during normalization: ${anchor.directoryPath}`);
       }
@@ -322,28 +358,49 @@ async function syncAndCloseControlAnchors(anchors) {
 }
 
 export function classifyProtectedLocalControl(records) {
+  let takeoverRequired = false;
   for (const record of CONTROL_RECORDS) {
     const value = records[record.key] ?? null;
     if (value === null) {
       continue;
     }
+    if (value === OPAQUE_CONTROL_RECORD) {
+      takeoverRequired = true;
+      continue;
+    }
     const schemaVersion = Number(value.schemaVersion);
     if (!Number.isSafeInteger(schemaVersion) || schemaVersion < 1) {
-      fail(`invalid lifecycle-control schema: ${record.key}`);
+      takeoverRequired = true;
+      continue;
     }
     if (!record.supportedSchemas.includes(schemaVersion)) {
       const maximum = Math.max(...record.supportedSchemas);
-      const qualifier = schemaVersion > maximum ? "unknown newer" : "unsupported older";
-      fail(`${qualifier} lifecycle-control schema: ${record.key} v${schemaVersion}`);
+      if (schemaVersion > maximum && record.relativeTo !== "operator") {
+        fail(`unknown newer lifecycle-control schema: ${record.key} v${schemaVersion}`);
+      }
+      takeoverRequired = true;
     }
   }
-  if (records.supervisorTransaction !== null && records.supervisorTransaction !== undefined) {
+  const supportedValue = (key) => {
+    const record = CONTROL_RECORDS.find((candidate) => candidate.key === key);
+    const value = records[key] ?? null;
+    const schemaVersion = Number(value?.schemaVersion);
+    return record &&
+      value !== OPAQUE_CONTROL_RECORD &&
+      value !== null &&
+      typeof value === "object" &&
+      record.supportedSchemas.includes(schemaVersion)
+      ? value
+      : null;
+  };
+  const supervisorTransaction = supportedValue("supervisorTransaction");
+  if (supervisorTransaction) {
     return Object.freeze({
       strategy: "STANDARD_RECOVERY",
       reason: "root-supervisor-authority-preserved",
     });
   }
-  const rootProductTransaction = records.rootProductTransaction ?? null;
+  const rootProductTransaction = supportedValue("rootProductTransaction");
   if (
     rootProductTransaction &&
     (rootProductTransaction.durableCommitDecision !== false ||
@@ -354,39 +411,30 @@ export function classifyProtectedLocalControl(records) {
       reason: "root-product-authority-preserved",
     });
   }
-  const controllerProductJournal = records.controllerProductJournal ?? null;
+  const controllerProductJournal = supportedValue("controllerProductJournal");
   if (controllerProductJournal && controllerProductJournal.phase !== "restored") {
     return Object.freeze({
       strategy: "STANDARD_RECOVERY",
       reason: "root-controller-authority-preserved",
     });
   }
-  const operatorJournal = records.operatorJournal ?? null;
-  const adoptionReceipt = records.adoptionReceipt ?? null;
-  if (adoptionReceipt) {
-    const receiptTransaction = String(adoptionReceipt.transactionId ?? "").toLowerCase();
-    const journalTransaction = String(operatorJournal?.transactionId ?? "").toLowerCase();
-    if (
-      adoptionReceipt.outcome !== "rolled-back" ||
-      adoptionReceipt.rootVerificationPending !== true ||
-      !TRANSACTION_ID_PATTERN.test(receiptTransaction) ||
-      (operatorJournal !== null && receiptTransaction !== journalTransaction)
-    ) {
-      fail("legacy rollback is not durably proven");
-    }
+  const legacyKeys = [
+    "operatorJournal",
+    "adoptionReceipt",
+    "controllerHint",
+    "legacyControllerSelection",
+    "rootAdoptionReceipt",
+  ];
+  if (
+    takeoverRequired ||
+    legacyKeys.some((key) => records[key] !== null && records[key] !== undefined) ||
+    (records.rootProductTransaction !== null && records.rootProductTransaction !== undefined) ||
+    (records.controllerProductJournal !== null && records.controllerProductJournal !== undefined)
+  ) {
     return Object.freeze({
-      strategy: "LEGACY_CONTROL_RESET",
-      reason: "legacy-rollback-receipt",
+      strategy: "UNIVERSAL_TAKEOVER",
+      reason: "legacy-control-quarantined",
     });
-  }
-  if (operatorJournal) {
-    if (
-      !["restored", "committed"].includes(operatorJournal.phase) ||
-      !TRANSACTION_ID_PATTERN.test(String(operatorJournal.transactionId ?? "").toLowerCase())
-    ) {
-      fail("legacy transaction is non-terminal and cannot be normalized");
-    }
-    return Object.freeze({ strategy: "LEGACY_CONTROL_RESET", reason: "legacy-terminal-journal" });
   }
   return Object.freeze({ strategy: "STANDARD", reason: "canonical-control" });
 }
@@ -516,7 +564,7 @@ export async function prepareProtectedLocalControlNormalization(input) {
   const options = validateOptions(input);
   const existing = await loadActive(options);
   if (existing) {
-    return Object.freeze({ strategy: "LEGACY_CONTROL_RESET", ...existing });
+    return Object.freeze({ strategy: "UNIVERSAL_TAKEOVER", ...existing });
   }
 
   const anchors = await openControlAnchors(options);
@@ -530,7 +578,7 @@ export async function prepareProtectedLocalControlNormalization(input) {
       const filePath = recordPath(options, record);
       const expectedUid =
         record.relativeTo === "operator" ? options.expectedOperatorUid : options.expectedRootUid;
-      const captured = await safeReadJson(
+      const captured = await safeReadControlFile(
         anchoredRecordPath(anchors, record),
         expectedUid,
         filePath,
@@ -550,7 +598,7 @@ export async function prepareProtectedLocalControlNormalization(input) {
       }
     }
     const classification = classifyProtectedLocalControl(records);
-    if (classification.strategy !== "LEGACY_CONTROL_RESET") {
+    if (classification.strategy !== "UNIVERSAL_TAKEOVER") {
       result = classification;
     } else {
       await fsp.mkdir(options.backupRoot, { recursive: true, mode: 0o700 });
@@ -589,17 +637,18 @@ export async function prepareProtectedLocalControlNormalization(input) {
       activeCreated = true;
       for (const file of files) {
         const record = CONTROL_RECORDS.find((candidate) => candidate.key === file.key);
-        const current = await safeReadJson(
+        const current = await safeReadFile(
           anchoredRecordPath(anchors, record),
           file.uid,
           file.path,
+          { allowEmpty: true },
         );
         if (!current || sha256(current.bytes) !== file.digest) {
           fail(`control file changed before normalization: ${file.path}`);
         }
         await fsp.unlink(anchoredRecordPath(anchors, record));
       }
-      result = Object.freeze({ strategy: "LEGACY_CONTROL_RESET", ...active });
+      result = Object.freeze({ strategy: "UNIVERSAL_TAKEOVER", ...active });
     }
   } catch (error) {
     failure = error;
@@ -732,13 +781,15 @@ export async function rollbackProtectedLocalControlNormalization(input) {
   try {
     for (const file of active.files) {
       const backupPath = path.join(options.backupRoot, file.backupName);
-      const backup = await safeReadJson(backupPath, options.expectedRootUid);
+      const backup = await safeReadFile(backupPath, options.expectedRootUid, backupPath, {
+        allowEmpty: true,
+      });
       if (!backup || sha256(backup.bytes) !== file.digest) {
         fail(`normalization backup is missing or mismatched: ${file.backupName}`);
       }
       const record = CONTROL_RECORDS.find((candidate) => candidate.key === file.key);
       const accessPath = anchoredRecordPath(anchors, record);
-      const existing = await safeReadJson(accessPath, file.uid, file.path);
+      const existing = await safeReadFile(accessPath, file.uid, file.path, { allowEmpty: true });
       if (existing) {
         if (
           sha256(existing.bytes) !== file.digest ||
