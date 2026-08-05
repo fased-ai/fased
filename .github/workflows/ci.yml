@@ -1172,7 +1172,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - name: Initialize CodeQL
+      - name: Initialize focused Local-update CodeQL
+        if: needs.change-scope.outputs.focused_local_update == 'true'
+        uses: github/codeql-action/init@d1ba80a13dd99fba24a470575428917156a28b43 # v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          config: |
+            name: "Focused Local-update"
+            paths:
+              - scripts
+              - src/wallet/wallet-runtime-config.ts
+
+      - name: Initialize full CodeQL
+        if: needs.change-scope.outputs.focused_local_update != 'true'
         uses: github/codeql-action/init@d1ba80a13dd99fba24a470575428917156a28b43 # v4
         with:
           languages: javascript-typescript

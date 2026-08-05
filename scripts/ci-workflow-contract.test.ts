@@ -12,6 +12,7 @@ type WorkflowJob = {
   "timeout-minutes"?: number;
   steps?: Array<{
     env?: Record<string, string>;
+    if?: string;
     id?: string;
     name?: string;
     run?: string;
@@ -26,6 +27,15 @@ type Workflow = {
 
 async function readWorkflow(path: string): Promise<Workflow> {
   return parse(await readFile(resolve(repoRoot, path), "utf8")) as Workflow;
+}
+
+async function readFocusedLocalUpdateProductionPaths(): Promise<string[]> {
+  const source = await readFile(resolve(repoRoot, "scripts/gate-authority.mjs"), "utf8");
+  const allowlist = source.match(
+    /const LOCAL_UPDATE_FOCUSED_PRODUCTION_PATHS = new Set\(\[([\s\S]*?)\]\);/u,
+  );
+  expect(allowlist, "focused Local-update allowlist is missing").not.toBeNull();
+  return [...(allowlist?.[1] ?? "").matchAll(/"([^"]+)"/gu)].map((match) => match[1]);
 }
 
 async function listFiles(path: string): Promise<string[]> {
@@ -283,6 +293,28 @@ describe("CI workflow routing", () => {
       "needs.change-scope.outputs.run_codeql_javascript == 'true'",
     );
     expect(jobs["codeql-javascript"]?.["timeout-minutes"]).toBeGreaterThanOrEqual(20);
+    const javascriptSteps = jobs["codeql-javascript"]?.steps ?? [];
+    const focusedInit = javascriptSteps.find(
+      (step) => step.name === "Initialize focused Local-update CodeQL",
+    );
+    const fullInit = javascriptSteps.find((step) => step.name === "Initialize full CodeQL");
+    expect(focusedInit?.if).toBe("needs.change-scope.outputs.focused_local_update == 'true'");
+    expect(fullInit?.if).toBe("needs.change-scope.outputs.focused_local_update != 'true'");
+    const focusedConfig = parse(String(focusedInit?.with?.config ?? "")) as {
+      paths?: string[];
+    };
+    const coveredRoots = focusedConfig.paths ?? [];
+    for (const sourcePath of await readFocusedLocalUpdateProductionPaths()) {
+      if (!/\.(?:cjs|cts|js|jsx|mjs|mts|ts|tsx)$/u.test(sourcePath)) {
+        continue;
+      }
+      expect(
+        coveredRoots.some(
+          (root) => sourcePath === root || sourcePath.startsWith(`${root.replace(/\/$/u, "")}/`),
+        ),
+        `focused CodeQL does not cover ${sourcePath}`,
+      ).toBe(true);
+    }
     expect(jobs["codeql-go"]?.if).toBe("needs.change-scope.outputs.run_codeql_go == 'true'");
     expect(jobs["codeql-python"]?.if).toBe(
       "needs.change-scope.outputs.run_codeql_python == 'true'",
