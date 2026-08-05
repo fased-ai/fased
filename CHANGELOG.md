@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.41
+
+- Unify supervised Local and Hosting controller identity on the durable
+  supervisor-owned version record used for activation and recovery.
+- Allow a pending protected update to resume against the verified controller
+  generation instead of looping on a stale worker-owned identity record.
+- Preserve rollback, retry, restart, critical user state, and idempotent
+  `Already current` behavior through the packaged update transaction.
+
 ## 0.1.76-rc.40
 
 - Canonicalize Protected Local recovery around one durable supervisor-owned
