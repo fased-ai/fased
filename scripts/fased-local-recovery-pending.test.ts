@@ -930,6 +930,12 @@ describe("Local persisted-journal recovery control plane", () => {
     const durableUserReceipt = managedUpdaterTesting.validateLegacyManagedUpdateAdoptionReceipt(
       JSON.parse(durableUserReceiptBytes),
     ) as Record<string, unknown>;
+    const successorControllerHint = Object.freeze({
+      schemaVersion: 1,
+      transactionId: randomUUID(),
+      version: recoveryControllerVersion,
+    });
+    await writeJson(fixture.controllerHintPath, successorControllerHint);
     const replayedGateway = {
       ...fixture.gateway,
       pid: fixture.gateway.pid + 100,

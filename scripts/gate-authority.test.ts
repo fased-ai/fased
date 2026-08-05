@@ -190,6 +190,8 @@ describe("machine gate authority", () => {
   it("routes the complete focused Local-update correction without L0, native signer, or Docker", () => {
     const plan = createGatePlan(
       [
+        "scripts/fased-managed-updater-core.mjs",
+        "scripts/fased-local-recovery-pending.test.ts",
         "scripts/protected-local-bootstrap.mjs",
         "scripts/protected-local-bootstrap.test.ts",
         "scripts/protected-local-supervisor-client-root-fixture.mjs",
@@ -221,9 +223,9 @@ describe("machine gate authority", () => {
     expect(plan.affectedAcceptance).toEqual({
       L0: true,
       L1: true,
-      H0: false,
+      H0: true,
       H1: false,
-      H2: false,
+      H2: true,
     });
   });
 

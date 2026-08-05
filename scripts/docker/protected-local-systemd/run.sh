@@ -703,8 +703,8 @@ if [[ "$phase" == "verify-reboot" ]]; then
   exit 0
 fi
 
-[[ "$phase" == "install" || "$phase" == "fresh-install" ]] || {
-  echo "usage: fased-protected-local-systemd-fixture fresh-install|install|verify-reboot" >&2
+[[ "$phase" == "install" || "$phase" == "fresh-install" || "$phase" == "modern-update" ]] || {
+  echo "usage: fased-protected-local-systemd-fixture fresh-install|install|modern-update|verify-reboot" >&2
   exit 64
 }
 
@@ -748,7 +748,7 @@ git -C "$candidate_repo" checkout --quiet --detach "$commit"
 git -C "$candidate_repo" tag --force "v$version" "$commit"
 chown -R testop:testop "$candidate_repo"
 install -m 0700 -o testop -g testop "$candidate_repo/install.sh" "$candidate_installer"
-if [[ "$phase" == "install" ]]; then
+if [[ "$phase" == "install" || "$phase" == "modern-update" ]]; then
   legacy_commit="$(jq -er .release.commit /legacy-artifacts/fased-hosted-release-v2.json)"
   rm -rf "$legacy_repo"
   git clone --quiet --no-hardlinks /repo "$legacy_repo"
@@ -1273,7 +1273,11 @@ testop ALL=(root) NOPASSWD: ALL
 EOF_SUDOERS
 chmod 0440 /etc/sudoers.d/fased-protected-local-fixture
 install -d -m 0755 -o root -g root /var/lib/fased-protected-local-fixture
-printf '%s\n' "$version" >"$selected_target"
+if [[ "$phase" == "modern-update" ]]; then
+  printf '%s\n' "$legacy_version" >"$selected_target"
+else
+  printf '%s\n' "$version" >"$selected_target"
+fi
 chmod 0644 "$selected_target"
 
 if [[ "$phase" == "fresh-install" ]]; then
@@ -1429,6 +1433,249 @@ if [[ "$phase" == "fresh-install" ]]; then
     "$restart_elapsed" \
     "$((SECONDS - fixture_started))"
   printf 'fresh Protected Local install, Gateway, and wallet fixture passed: %s\n' "$instance"
+  exit 0
+fi
+
+if [[ "$phase" == "modern-update" ]]; then
+  modern_env=(
+    HOME=/home/testop
+    USER=testop
+    LOGNAME=testop
+    FASED_STATE_DIR="$state"
+    FASED_CONFIG_PATH="$state/fased.json"
+    FASED_GATEWAY_PORT="$gateway_port"
+    FASED_GATEWAY_TOKEN="$gateway_token"
+    FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port"
+    FASED_INSTALL_REPO="$legacy_repo"
+    npm_config_registry="http://127.0.0.1:$rpc_port"
+  )
+  runuser -u testop -- env "${modern_env[@]}" \
+    /bin/bash "$legacy_installer" \
+      --release "v$legacy_version" \
+      --update-channel beta \
+      --local \
+      --install-dir /home/testop/fased \
+      -- \
+      --non-interactive \
+      --accept-risk \
+      --auth-choice skip \
+      --workspace /home/testop/.fased/workspace \
+      --gateway-auth token \
+      --gateway-token "$gateway_token" \
+      --gateway-port "$gateway_port" \
+      --gateway-bind loopback \
+      --skip-skills \
+      --skip-health \
+    >/tmp/modern-predecessor-install.out 2>/tmp/modern-predecessor-install.err
+
+  test "$(jq -er .profile "$state/install.json")" = "protected-local"
+  test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$legacy_version"
+  instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
+  runtime="$(resolve_protected_runtime "$instance")"
+  mapfile -t modern_operator_env < <(operator_env "$instance")
+  wait_for_service "fased-local-controller-$instance.service"
+  wait_for_service "fased-signerd-$instance.service"
+  wait_for_service "fased-gateway-$instance.service"
+  wait_for_gateway_version "$legacy_version"
+
+  for wallet_spec in "agent:Agent:agent" "vault:Vault:vault"; do
+    IFS=: read -r wallet_id wallet_name wallet_role <<<"$wallet_spec"
+    runuser -u testop -- env "${modern_operator_env[@]}" \
+      /usr/local/bin/node "$runtime/fased.mjs" wallet setup \
+      --mode local-signer-create \
+      --wallet-id "$wallet_id" \
+      --wallet-name "$wallet_name" \
+      --role "$wallet_role" \
+      --rpc-url "http://127.0.0.1:$rpc_port" \
+      --non-interactive \
+      --json \
+      >"/tmp/modern-${wallet_id}-create.json"
+  done
+  wait_for_gateway_version "$legacy_version"
+  verify_shared_device_auth "$instance" "$runtime"
+  verify_shared_federation_state "$instance" "$runtime"
+  wait_for_gateway_version "$legacy_version"
+  verify_mining_history
+  verify_shared_wallet_registry "$instance" "$runtime"
+  install -d -m 2770 -o testop -g "fscf-$instance" \
+    "$state/sat-mining/wallets/agent" "$state/extensions"
+  runuser -u testop -- env \
+    FASED_FIXTURE_MINING_LEDGER="$state/sat-mining/wallets/agent/mining.sqlite" \
+    /usr/local/bin/node --input-type=module <<'EOF_MODERN_MINING_LEDGER'
+import { DatabaseSync } from "node:sqlite";
+const database = new DatabaseSync(process.env.FASED_FIXTURE_MINING_LEDGER);
+try {
+  database.exec(
+    "CREATE TABLE mining_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);" +
+      "INSERT INTO mining_meta(key,value) VALUES('schema_version','1'),('history_revision','7');",
+  );
+} finally {
+  database.close();
+}
+EOF_MODERN_MINING_LEDGER
+  printf '{"schemaVersion":1,"rpc":"fixture-rpc","policy":"agent"}\n' \
+    >"$state/wallet/fixture-policy-rpc.json"
+  printf '{"schemaVersion":1,"enabled":["fixture"]}\n' \
+    >"$state/extensions/fixture-plugin-state.json"
+  chown testop:"fscf-$instance" \
+    "$state/sat-mining/wallets/agent/mining.sqlite" \
+    "$state/wallet/fixture-policy-rpc.json" \
+    "$state/extensions/fixture-plugin-state.json"
+  chmod 0660 \
+    "$state/sat-mining/wallets/agent/mining.sqlite" \
+    "$state/wallet/fixture-policy-rpc.json" \
+    "$state/extensions/fixture-plugin-state.json"
+  verify_wallet "$instance" agent >/tmp/modern-agent-before.json
+  verify_wallet "$instance" vault >/tmp/modern-vault-before.json
+  jq -S '{nodeId, handle}' "$state/federation/access-token.json" \
+    >/tmp/modern-federation-identity-before.json
+
+  modern_state_manifest=/tmp/modern-update-preservation.sha256
+  sha256sum \
+    "$state/fased.json" \
+    "$state/identity/device.json" \
+    "$state/wallet/provider-registry.v1.json" \
+    "$state/wallet/fixture-policy-rpc.json" \
+    "$state/sat-mining/wallets/agent/mining.sqlite" \
+    "$state/extensions/fixture-plugin-state.json" \
+    "/var/lib/fased-local/$instance/signer/master.key" \
+    >"$modern_state_manifest"
+  verify_modern_state_manifest() {
+    if ! sha256sum --check "$modern_state_manifest"; then
+      echo "protected Local state changed outside a declared migration" >&2
+      return 1
+    fi
+  }
+  verify_modern_semantic_state() {
+    local application_current="/opt/fased/local/$instance/application/current"
+    local operator_current="$state/runtime/current"
+    verify_wallet "$instance" agent >/tmp/modern-agent-current.json
+    verify_wallet "$instance" vault >/tmp/modern-vault-current.json
+    diff -u \
+      <(jq -S . /tmp/modern-agent-before.json) \
+      <(jq -S . /tmp/modern-agent-current.json)
+    diff -u \
+      <(jq -S . /tmp/modern-vault-before.json) \
+      <(jq -S . /tmp/modern-vault-current.json)
+    diff -u \
+      /tmp/modern-federation-identity-before.json \
+      <(jq -S '{nodeId, handle}' "$state/federation/access-token.json")
+    test "$(readlink -f "$operator_current")" = "$(readlink -f "$application_current")"
+    test "$(jq -er .profile "$state/install.json")" = "protected-local"
+    test "$(jq -er .env.vars.FASED_PROTECTED_LOCAL_INSTANCE "$state/fased.json")" = "$instance"
+    test ! -e "/var/lib/fased-local/$instance/controller/supervisor/product-transaction.json"
+  }
+  legacy_gateway_version="$legacy_version"
+  printf '%s\n' "$version" >"$selected_target"
+
+  modern_launcher="/opt/fased/local/$instance/gateway-launch"
+  modern_launcher_original="${modern_launcher}.fixture-original.$$"
+  cp -a "$modern_launcher" "$modern_launcher_original"
+
+  inject_modern_failed_gateway() {
+    local current_link="/opt/fased/local/$instance/application/current"
+    local initial_target=""
+    local observed_target=""
+    local fault="${modern_launcher}.fixture-fault.$$"
+    initial_target="$(readlink -f "$current_link")"
+    for _ in {1..12000}; do
+      observed_target="$(readlink -f "$current_link")"
+      if [[ "$observed_target" != "$initial_target" ]]; then
+        cat >"$fault" <<EOF_MODERN_FAILED_GATEWAY
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\$(readlink -f '$current_link')" == '$initial_target' ]]; then
+  exec '$modern_launcher_original' "\$@"
+fi
+export FASED_FIXTURE_GATEWAY_PORT=$gateway_port
+export FASED_FIXTURE_LEGACY_VERSION=$legacy_gateway_version
+exec /usr/local/bin/node /usr/local/libexec/fased-fixture-legacy-gateway.mjs
+EOF_MODERN_FAILED_GATEWAY
+        chown root:root "$fault"
+        chmod 0755 "$fault"
+        mv -f "$fault" "$modern_launcher"
+        return 0
+      fi
+      sleep 0.005
+    done
+    echo "failed to inject the modern target Gateway activation fault" >&2
+    return 1
+  }
+
+  inject_modern_failed_gateway &
+  modern_injector_pid=$!
+  if runuser -u testop -- env "${modern_operator_env[@]}" \
+      npm_config_registry="http://127.0.0.1:$rpc_port" \
+      "$state/bin/fased" update "${target_update_args[@]}" --timeout 30 \
+      >/tmp/modern-update-failure.out 2>/tmp/modern-update-failure.err; then
+    modern_failure_status=0
+  else
+    modern_failure_status=$?
+  fi
+  wait "$modern_injector_pid"
+  mv -f "$modern_launcher_original" "$modern_launcher"
+  test "$modern_failure_status" -ne 0
+  modern_recovery_transaction=""
+  if grep -F "target release failed and was rolled back" \
+      /tmp/modern-update-failure.err >/dev/null; then
+    wait_for_gateway_version "$legacy_version"
+    test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$legacy_version"
+    verify_modern_state_manifest
+  elif grep -F "lifecycle recovery is pending" /tmp/modern-update-failure.err >/dev/null; then
+    modern_root_transaction="/var/lib/fased-local/$instance/controller/supervisor/product-transaction.json"
+    modern_recovery_transaction="$(jq -er .transactionId "$modern_root_transaction")"
+  else
+    echo "modern update did not report a bounded rollback outcome" >&2
+    sed -n '1,160p' /tmp/modern-update-failure.err >&2
+    exit 1
+  fi
+
+  runuser -u testop -- env "${modern_operator_env[@]}" \
+    npm_config_registry="http://127.0.0.1:$rpc_port" \
+    "$state/bin/fased" update "${target_update_args[@]}" --timeout 90 \
+    >/tmp/modern-update-success.out 2>/tmp/modern-update-success.err
+  if [[ -n "$modern_recovery_transaction" ]]; then
+    modern_recovery_receipt="/var/lib/fased-local/$instance/controller/supervisor/receipts/${modern_recovery_transaction}.json"
+    test "$(jq -er .operation "$modern_recovery_receipt")" = "recoverRelease"
+    test "$(jq -er .outcome "$modern_recovery_receipt")" = "rolled-back"
+  fi
+  wait_for_gateway_version "$version"
+  test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$version"
+  test "$(jq -er .runtime.previousVersion "$state/install.json")" = "$legacy_version"
+  verify_modern_state_manifest
+  verify_modern_semantic_state
+
+  runtime="$(resolve_protected_runtime "$instance")"
+  mapfile -t modern_operator_env < <(operator_env "$instance")
+  systemctl restart "fased-local-controller-$instance.service" \
+    "fased-signerd-$instance.service" "fased-gateway-$instance.service"
+  wait_for_gateway_version "$version"
+  verify_modern_state_manifest
+  verify_modern_semantic_state
+  runuser -u testop -- env "${modern_operator_env[@]}" \
+    npm_config_registry="http://127.0.0.1:$rpc_port" \
+    "$state/bin/fased" update "${target_update_args[@]}" --timeout 30 \
+    >/tmp/modern-update-noop.out 2>/tmp/modern-update-noop.err
+  grep -F "Already current: $version" /tmp/modern-update-noop.out >/dev/null
+
+  verify_wallet "$instance" agent >/tmp/modern-agent-after.json
+  verify_wallet "$instance" vault >/tmp/modern-vault-after.json
+  agent_readiness_sha="$(jq -S -c . /tmp/modern-agent-after.json | sha256sum | awk '{print $1}')"
+  vault_readiness_sha="$(jq -S -c . /tmp/modern-vault-after.json | sha256sum | awk '{print $1}')"
+  key_sha="$(sha256sum "/var/lib/fased-local/$instance/signer/master.key" | awk '{print $1}')"
+  jq -n \
+    --arg instanceId "$instance" \
+    --arg agentReadinessSha256 "$agent_readiness_sha" \
+    --arg vaultReadinessSha256 "$vault_readiness_sha" \
+    --arg masterKeySha256 "$key_sha" \
+    '{
+      instanceId: $instanceId,
+      agentReadinessSha256: $agentReadinessSha256,
+      vaultReadinessSha256: $vaultReadinessSha256,
+      masterKeySha256: $masterKeySha256
+    }' >"$snapshot"
+  chmod 0600 "$snapshot"
+  printf 'modern packaged Protected Local rollback, retry, restart, preservation, and no-op passed: %s\n' "$instance"
   exit 0
 fi
 
