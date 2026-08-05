@@ -27,6 +27,28 @@ afterEach(() => {
 });
 
 describe("protected Local bootstrap contract", () => {
+  it("treats an absent controller generation as already stopped", async () => {
+    const calls: string[] = [];
+    await __testing.stopExistingSystemdServices(
+      "/fixture/systemctl",
+      ["fased-local-controller-legacy.service", "fased-local-controller-worker-new.service"],
+      {
+        unitLoadState: async (_systemctl: string, unit: string) => {
+          calls.push(`show:${unit}`);
+          return unit.includes("worker") ? "not-found" : "loaded";
+        },
+        stopService: async (_systemctl: string, unit: string) => {
+          calls.push(`stop:${unit}`);
+        },
+      },
+    );
+    expect(calls).toEqual([
+      "show:fased-local-controller-legacy.service",
+      "stop:fased-local-controller-legacy.service",
+      "show:fased-local-controller-worker-new.service",
+    ]);
+  });
+
   it("restores the operator-only supervisor retry hint after shared-state convergence", async () => {
     const root = temporaryRoot();
     const stateDir = path.join(root, ".fased");

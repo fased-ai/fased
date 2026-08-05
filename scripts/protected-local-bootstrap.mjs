@@ -1648,6 +1648,27 @@ function protectedLocalControlNormalizationOptions(spec, layout, options = {}) {
   });
 }
 
+async function stopExistingSystemdServices(systemctl, units, overrides = {}) {
+  const unitLoadState =
+    overrides.unitLoadState ??
+    (async (executable, unit) =>
+      runSystem(executable, ["show", "--property=LoadState", "--value", unit], {
+        timeout: 30_000,
+      }).trim());
+  const stopService =
+    overrides.stopService ??
+    (async (executable, unit) =>
+      runSystem(executable, ["stop", unit], {
+        timeout: 30_000,
+      }));
+  for (const unit of new Set(units)) {
+    if ((await unitLoadState(systemctl, unit)) === "not-found") {
+      continue;
+    }
+    await stopService(systemctl, unit);
+  }
+}
+
 async function normalizeExistingProtectedLocalControl(sourceRoot, spec, layout, overrides = {}) {
   const dependencies = {
     transition: transitionExistingSupervisorBoundary,
@@ -1656,7 +1677,7 @@ async function normalizeExistingProtectedLocalControl(sourceRoot, spec, layout, 
     markCommitted: markProtectedLocalBoundaryCommitted,
     commit: commitProtectedLocalControlNormalization,
     rollback: rollbackProtectedLocalControlNormalization,
-    stopServices: async (systemctl, units) => runSystem(systemctl, ["stop", ...units]),
+    stopServices: stopExistingSystemdServices,
     restartService: async (systemctl, unit) => runSystem(systemctl, ["restart", unit]),
     systemctlPath: null,
     expectedRootUid: 0,
@@ -3827,6 +3848,7 @@ export const __testing = Object.freeze({
   resolveLegacySignerPaths,
   restoreLegacyOperatorRuntimeModes,
   sharedApplicationStateDirectoriesForAclVerification,
+  stopExistingSystemdServices,
   protectedLocalGatewayHealthMatches,
   processOwnsGatewayListener,
   systemdMainPid,

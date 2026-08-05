@@ -550,6 +550,24 @@ describe("CI workflow routing", () => {
     );
   });
 
+  it("allows the legacy operator runtime only before takeover", async () => {
+    const fixture = await readFile(
+      resolve(repoRoot, "scripts/docker/protected-local-systemd/run.sh"),
+      "utf8",
+    );
+    const resolverStart = fixture.indexOf("resolve_predecessor_runtime() {");
+    const resolverEnd = fixture.indexOf("\n}", resolverStart);
+    expect(resolverStart).toBeGreaterThanOrEqual(0);
+    expect(resolverEnd).toBeGreaterThan(resolverStart);
+    const resolver = fixture.slice(resolverStart, resolverEnd);
+    expect(resolver).toContain('if [[ "$phase" == "legacy-takeover" ]]');
+    expect(resolver).toContain('"$state/runtime/releases/"*');
+    expect(resolver).toContain('resolve_protected_runtime "$instance"');
+
+    expect(fixture).toContain('runtime="$(resolve_predecessor_runtime "$phase" "$instance")"');
+    expect(fixture).toContain('runtime="$(resolve_protected_runtime "$instance")"');
+  });
+
   it("keeps stale-session update resolution bound to the exact fixture candidate", async () => {
     const fixture = await readFile(
       resolve(repoRoot, "scripts/docker/protected-local-systemd/run.sh"),
