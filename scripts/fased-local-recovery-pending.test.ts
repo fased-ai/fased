@@ -930,7 +930,14 @@ describe("Local persisted-journal recovery control plane", () => {
     const durableUserReceipt = managedUpdaterTesting.validateLegacyManagedUpdateAdoptionReceipt(
       JSON.parse(durableUserReceiptBytes),
     ) as Record<string, unknown>;
-    const adapterResult = await managedUpdaterTesting.adoptLegacyManagedUpdate(adoptionOptions());
+    const replayedGateway = {
+      ...fixture.gateway,
+      pid: fixture.gateway.pid + 100,
+      startedAt: "2026-08-02T12:05:00.000Z",
+    };
+    const adapterResult = await managedUpdaterTesting.adoptLegacyManagedUpdate(
+      adoptionOptions({ probeGateway: async () => replayedGateway }),
+    );
     expect(adapterResult).toMatchObject({
       status: "pending-root-import",
       replayed: true,
@@ -1038,7 +1045,7 @@ describe("Local persisted-journal recovery control plane", () => {
         expect(expected.generation).toEqual(
           fixture.rootApplicationRuntime.expectedGatewayGeneration,
         );
-        return fixture.gateway;
+        return replayedGateway;
       },
     );
     const verifyServiceBoundary = vi.fn(async (service: unknown) => {
@@ -1101,7 +1108,7 @@ describe("Local persisted-journal recovery control plane", () => {
     await fs.writeFile(fixture.installPath, fixture.installBytes, { mode: 0o600 });
 
     const mismatchedGatewayProbe = vi.fn(async () => ({
-      ...fixture.gateway,
+      ...replayedGateway,
       generationDigest: `sha256:${digest("9")}`,
     }));
     await expect(
