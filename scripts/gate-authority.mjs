@@ -37,9 +37,12 @@ const KNOWN_NODE_ROOT_PATH_RE =
 // exact: adding another updater/signer path must fall back to the full Node
 // matrix until its nearest regression is explicitly added to `node-focused`.
 const LOCAL_UPDATE_FOCUSED_PRODUCTION_PATHS = new Set([
+  "package.json",
   "scripts/fased-managed-updater-core.mjs",
+  "scripts/lifecycle-control-normalizer.mjs",
   "scripts/protected-local-bootstrap.mjs",
   "scripts/protected-local-supervisor-client-root-fixture.mjs",
+  "scripts/release-check.ts",
   "src/wallet/wallet-runtime-config.ts",
 ]);
 const NODE_PACKAGING_PATH_RE =
@@ -69,11 +72,11 @@ const MACOS_RUNTIME_PATH_RE =
   /^(?:install\.sh$|scripts\/(?:codesign-mac-app|fased-managed-updater|install-managed-runtime|install-platform-preflight|install-release-pin|managed-runtime-layout|package-mac-app|restart-mac)[^/]*|src\/(?:cli\/daemon-cli\/install|commands\/(?:daemon-install-helpers|doctor-platform-notes)|daemon\/(?:launchd|runtime-paths)|infra\/(?:managed-runtime|update-runner)|macos\/)[^/]*)/;
 const NATIVE_ONLY_PATH_RE = /^(?:apps\/(?:android|ios|macos|shared)\/|Swabble\/|appcast\.xml$)/;
 const SHARED_LIFECYCLE_PATH_RE =
-  /^(?:install\.sh$|scripts\/(?:build-hosted-runtime-artifact|fased-lifecycle-supervisor|hosted-release-manifest|install-(?:managed-runtime|platform-preflight|release-pin|runtime-profile)|lifecycle-|managed-runtime-layout|signer-(?:enrollment-launchers|owner-policy-installers)|start-managed)[^/]*|src\/(?:cli\/daemon-cli\/(?:install|restart-health)|commands\/(?:daemon-install-helpers|doctor-(?:gateway-health|state-integrity))|config\/io|daemon\/systemd|infra\/(?:managed-runtime|update-runner))[^/]*|\.github\/workflows\/hosted-runtime-release\.yml$)/;
+  /^(?:install\.sh$|scripts\/(?:build-hosted-runtime-artifact|fased-lifecycle-supervisor|hosted-release-manifest|install-(?:managed-runtime|platform-preflight|release-pin|runtime-profile)|lifecycle-(?!control-normalizer)|managed-runtime-layout|signer-(?:enrollment-launchers|owner-policy-installers)|start-managed)[^/]*|src\/(?:cli\/daemon-cli\/(?:install|restart-health)|commands\/(?:daemon-install-helpers|doctor-(?:gateway-health|state-integrity))|config\/io|daemon\/systemd|infra\/(?:managed-runtime|update-runner))[^/]*|\.github\/workflows\/hosted-runtime-release\.yml$)/;
 const SHARED_UPDATE_PATH_RE =
   /^(?:scripts\/(?:fased-(?:host|managed)-updater|managed-updater-bundle)[^/]*|src\/infra\/update-runner[^/]*)/;
 const LOCAL_LIFECYCLE_PATH_RE =
-  /^(?:scripts\/(?:docker\/protected-local-systemd\/|protected-local-|test-protected-local-systemd-container)[^/]*|src\/(?:commands\/onboard-non-interactive\/local|infra\/local-source-paired-update)[^/]*)/;
+  /^(?:scripts\/(?:docker\/protected-local-systemd\/|lifecycle-control-normalizer|protected-local-|test-protected-local-systemd-container)[^/]*|src\/(?:commands\/onboard-non-interactive\/local|infra\/local-source-paired-update)[^/]*)/;
 const LOCAL_FRESH_PATH_RE = /^(?:scripts\/(?:install-local-|test-install-runtime-profile)[^/]*)/;
 const SHARED_FRESH_PATH_RE =
   /^(?:src\/(?:cli\/program\/register\.onboard|wizard\/onboarding)[^/]*)/;

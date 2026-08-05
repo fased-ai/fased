@@ -42,6 +42,8 @@ export function isFocusedLocalUpdateRoute(plan, route) {
     plan.entryPoints[0] !== "local-update" ||
     plan.changeKind !== "production" ||
     plan.manualReviewRequired ||
+    plan.scope.privilegeChanged !== true ||
+    plan.scope.runNodeFocused !== true ||
     plan.scope.runLocalUpdate !== true ||
     plan.scope.runLocalFresh !== false ||
     plan.scope.runT2Contracts !== true ||
@@ -59,11 +61,13 @@ export function outputEntries(plan, options = {}) {
   const scope = plan.scope;
   const dependencyRemediation = isDependencyRemediationRoute(plan, options.route ?? "");
   const focusedLocalUpdate = isFocusedLocalUpdateRoute(plan, options.route ?? "");
-  const runDependencyIntegrity = dependencyRemediation || scope.runNodePackaging;
+  const runDependencyIntegrity =
+    dependencyRemediation || (scope.runNodePackaging && !focusedLocalUpdate);
   const lane = (value) => !dependencyRemediation && value;
-  // The private route proves the exact T1/T2 correction before push and P1
-  // later exercises the packaged transaction. Keep PR CI on source contracts;
-  // do not rebuild and rerun the same systemd/container transaction here.
+  const focusedLane = (value) => lane(value) && !focusedLocalUpdate;
+  // The private route binds exact T1/T2 and packaged P1 evidence to this tree
+  // before the PR opens. Keep public PR CI on focused source/security contracts;
+  // do not rebuild or rerun the same privileged and packaged transactions.
   const prBuildLane = (value) => lane(value) && !focusedLocalUpdate;
   const prInstalledFixtureLane = (value) => lane(value) && !focusedLocalUpdate;
   const codeqlLanguages = [
@@ -97,21 +101,21 @@ export function outputEntries(plan, options = {}) {
     focused_local_update: trueString(focusedLocalUpdate),
     run_dependency_integrity: trueString(runDependencyIntegrity),
     run_node: trueString(lane(scope.runNode)),
-    run_node_focused: trueString(lane(scope.runNodeFocused)),
+    run_node_focused: trueString(lane(scope.runNodeFocused || focusedLocalUpdate)),
     run_node_build: trueString(prBuildLane(scope.runNodeBuild)),
-    run_node_packaging: trueString(lane(scope.runNodePackaging)),
-    run_node_full: trueString(lane(scope.runNodeFull)),
-    run_node_unit: trueString(lane(scope.runNodeUnit)),
-    run_node_gateway: trueString(lane(scope.runNodeGateway)),
-    run_node_extensions: trueString(lane(scope.runNodeExtensions)),
-    run_ui: trueString(lane(scope.runUi)),
-    run_macos_runtime: trueString(scope.runMacosRuntime),
-    run_macos_app: trueString(scope.runMacosApp),
+    run_node_packaging: trueString(focusedLane(scope.runNodePackaging)),
+    run_node_full: trueString(focusedLane(scope.runNodeFull)),
+    run_node_unit: trueString(focusedLane(scope.runNodeUnit)),
+    run_node_gateway: trueString(focusedLane(scope.runNodeGateway)),
+    run_node_extensions: trueString(focusedLane(scope.runNodeExtensions)),
+    run_ui: trueString(focusedLane(scope.runUi)),
+    run_macos_runtime: trueString(focusedLane(scope.runMacosRuntime)),
+    run_macos_app: trueString(focusedLane(scope.runMacosApp)),
     experimental_mobile_changed: trueString(scope.experimentalMobileChanged),
-    run_signer: trueString(lane(scope.runSigner)),
-    run_native_signer: trueString(lane(scope.runNativeSigner)),
-    run_signer_integration: trueString(lane(scope.runSignerIntegration)),
-    run_signer_darwin_integration: trueString(lane(scope.runSignerDarwinIntegration)),
+    run_signer: trueString(focusedLane(scope.runSigner)),
+    run_native_signer: trueString(focusedLane(scope.runNativeSigner)),
+    run_signer_integration: trueString(focusedLane(scope.runSignerIntegration)),
+    run_signer_darwin_integration: trueString(focusedLane(scope.runSignerDarwinIntegration)),
     run_platform_bootstrap: trueString(lane(scope.runPlatformBootstrap)),
     run_docker: trueString(lane(scope.runDocker)),
     run_codeql_javascript: trueString(lane(scope.runCodeqlJavascript)),
@@ -124,7 +128,7 @@ export function outputEntries(plan, options = {}) {
     run_local_fresh: trueString(lane(scope.runLocalFresh)),
     run_local_update: trueString(prInstalledFixtureLane(scope.runLocalUpdate)),
     run_ci_contracts: trueString(scope.runCiContracts),
-    run_t2_contracts: trueString(scope.runT2Contracts),
+    run_t2_contracts: trueString(focusedLane(scope.runT2Contracts)),
     run_ui_mining: trueString(lane(scope.runUiMining)),
     run_skills: trueString(lane(scope.runSkills)),
     full_matrix: trueString(lane(scope.fullMatrix)),

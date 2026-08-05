@@ -55,10 +55,13 @@ describe("CI changed-surface classification", () => {
   });
 
   it("keeps a trusted Local-update PR on source contracts and defers packaged acceptance", () => {
-    const plan = createGatePlan(["scripts/protected-local-bootstrap.mjs"], {
-      phase: "T1",
-      entryPoint: "local-update",
-    });
+    const plan = createGatePlan(
+      ["scripts/lifecycle-control-normalizer.mjs", "scripts/protected-local-bootstrap.mjs"],
+      {
+        phase: "T1",
+        entryPoint: "local-update",
+      },
+    );
     const output = outputEntries(plan, { route: "local-update" });
 
     expect(output).toMatchObject({
@@ -66,16 +69,68 @@ describe("CI changed-surface classification", () => {
       run_node: "true",
       run_node_focused: "true",
       run_node_build: "false",
+      run_node_packaging: "false",
+      run_node_full: "false",
       run_local_fresh: "false",
       run_local_update: "false",
-      run_t2_contracts: "true",
-      run_signer_integration: "true",
+      run_t2_contracts: "false",
+      run_signer_integration: "false",
+      run_macos_runtime: "false",
+    });
+  });
+
+  it("keeps the complete updater and package-inventory diff on the focused PR lane", () => {
+    const plan = createGatePlan(
+      [
+        ".github/workflows/ci.yml",
+        "package.json",
+        "scripts/ci-change-scope.mjs",
+        "scripts/ci-change-scope.test.ts",
+        "scripts/fased-managed-updater-core.mjs",
+        "scripts/gate-authority.mjs",
+        "scripts/lifecycle-control-normalizer.mjs",
+        "scripts/lifecycle-control-normalizer.test.ts",
+        "scripts/protected-local-bootstrap.mjs",
+        "scripts/protected-local-bootstrap.test.ts",
+        "scripts/release-check.ts",
+      ],
+      { phase: "T1", entryPoint: "local-update" },
+    );
+    const output = outputEntries(plan, { route: "local-update" });
+
+    expect(output).toMatchObject({
+      focused_local_update: "true",
+      run_dependency_integrity: "false",
+      run_node_focused: "true",
+      run_node_build: "false",
+      run_node_packaging: "false",
+      run_node_full: "false",
+      run_signer_integration: "false",
+      run_macos_runtime: "false",
+      run_local_update: "false",
+      run_ci_contracts: "true",
+      run_t2_contracts: "false",
+      run_codeql_javascript: "true",
     });
   });
 
   it("rejects a trusted Local-update route for a non-privileged or broader plan", () => {
     expect(() =>
       outputEntries(createGatePlan(["src/agents/agent.ts"]), { route: "local-update" }),
+    ).toThrow(/(?:entry point .* is not affected|trusted local-update route does not match)/u);
+    expect(() =>
+      outputEntries(createGatePlan(["package.json"], { entryPoint: "local-update" }), {
+        route: "local-update",
+      }),
+    ).toThrow(/(?:entry point .* is not affected|trusted local-update route does not match)/u);
+    expect(() =>
+      outputEntries(
+        createGatePlan(
+          ["scripts/protected-local-bootstrap.mjs", "src/wallet/native-signer-operator-client.ts"],
+          { phase: "T1", entryPoint: "local-update" },
+        ),
+        { route: "local-update" },
+      ),
     ).toThrow(/trusted local-update route does not match/u);
   });
 
