@@ -1294,6 +1294,14 @@ function rootImportGatewayStartedAt(payload, serviceStartedAt, legacyStartedAt) 
   return new Date(serviceStartedAt).toISOString();
 }
 
+function rootImportGatewayDurableIdentity(gateway) {
+  return Object.freeze({
+    generationDigest: gateway.generationDigest,
+    runtimeSource: gateway.runtimeSource,
+    version: gateway.version,
+  });
+}
+
 async function probeRootImportGateway(spec, layout, expected, options = {}) {
   if (options.probeGateway) {
     return await options.probeGateway(expected);
@@ -1544,7 +1552,7 @@ async function verifyLegacyManagedUpdateAdoptionForRoot(
   if (configuredGatewayPort !== spec.gatewayPort) {
     fail("legacy Gateway configuration changed before root adoption import");
   }
-  const gateway = await probeRootImportGateway(
+  const observedGateway = await probeRootImportGateway(
     spec,
     layout,
     {
@@ -1555,6 +1563,16 @@ async function verifyLegacyManagedUpdateAdoptionForRoot(
     },
     options,
   );
+  if (
+    canonicalRootImportJSON(rootImportGatewayDurableIdentity(userReceipt.gateway)) !==
+    canonicalRootImportJSON(rootImportGatewayDurableIdentity(observedGateway))
+  ) {
+    fail("operator adoption receipt failed independent root evidence verification");
+  }
+  // The probe above verifies the current systemd PID against current Gateway
+  // readiness. Receipt comparison deliberately uses the immutable historical
+  // observation so a legitimate restart cannot invalidate durable adoption.
+  const gateway = userReceipt.gateway;
   const evidence = Object.freeze({
     controllerHintSha256: rootImportDigest(hintFile.bytes),
     currentRuntimeSha256: currentIdentity.identityDigest,
@@ -1574,7 +1592,6 @@ async function verifyLegacyManagedUpdateAdoptionForRoot(
     userReceipt.legacyJournalSha256 !== evidence.legacyJournalSha256 ||
     userReceipt.previousManifestSha256 !== evidence.previousManifestSha256 ||
     userReceipt.previousRootSha256 !== evidence.previousRootSha256 ||
-    canonicalRootImportJSON(userReceipt.gateway) !== canonicalRootImportJSON(gateway) ||
     canonicalRootImportJSON(userReceipt.service) !== canonicalRootImportJSON(service) ||
     userReceipt.stateEvidenceDigest !== rootImportDigest(evidence)
   ) {

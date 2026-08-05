@@ -1748,6 +1748,14 @@ function normalizeLegacyGatewayReadiness(
   });
 }
 
+function legacyGatewayDurableIdentity(gateway) {
+  return Object.freeze({
+    generationDigest: gateway.generationDigest,
+    runtimeSource: gateway.runtimeSource,
+    version: gateway.version,
+  });
+}
+
 async function defaultProbeLegacyGateway({
   configPath,
   expectedGeneration,
@@ -1989,22 +1997,34 @@ export async function adoptLegacyManagedUpdate(options = {}) {
     rootApplication.expectedGatewayGeneration ??
     (await readExpectedGatewayGeneration(rootApplication));
   const probeGateway = options.probeGateway ?? defaultProbeLegacyGateway;
-  const gateway = await probeGateway({
+  const observedGateway = await probeGateway({
     configPath: path.join(stateDir, "fased.json"),
     expectedGeneration,
     expectedGenerationDigest: rootApplication.identityDigest,
     expectedVersion: journal.previousVersion,
   });
   if (
-    gateway?.version !== journal.previousVersion ||
-    !TAGGED_SHA256_PATTERN.test(String(gateway?.generationDigest ?? "")) ||
-    !Number.isSafeInteger(gateway?.pid) ||
-    gateway.pid < 1 ||
-    !new Set(["managed-package", "packaged-runtime"]).has(gateway?.runtimeSource) ||
-    Number.isNaN(Date.parse(String(gateway?.startedAt ?? "")))
+    observedGateway?.version !== journal.previousVersion ||
+    !TAGGED_SHA256_PATTERN.test(String(observedGateway?.generationDigest ?? "")) ||
+    !Number.isSafeInteger(observedGateway?.pid) ||
+    observedGateway.pid < 1 ||
+    !new Set(["managed-package", "packaged-runtime"]).has(observedGateway?.runtimeSource) ||
+    Number.isNaN(Date.parse(String(observedGateway?.startedAt ?? "")))
   ) {
     throw new Error("Gateway does not match the durable previous transaction outcome");
   }
+  if (
+    existingReceipt &&
+    canonicalReleaseJSON(legacyGatewayDurableIdentity(existingReceipt.gateway)) !==
+      canonicalReleaseJSON(legacyGatewayDurableIdentity(observedGateway))
+  ) {
+    throw new Error("Gateway does not match the durable previous transaction outcome");
+  }
+  // PID and start time are live service observations. A pending immutable
+  // receipt remains replayable after a legitimate Gateway restart as long as
+  // the durable release generation is unchanged; root independently verifies
+  // the current systemd PID and readiness response before importing it.
+  const gateway = existingReceipt?.gateway ?? observedGateway;
   const service = Object.freeze({
     instanceId: journal.serviceIdentity.instanceId,
     launcher: journal.previousManifest.service.launcher,
