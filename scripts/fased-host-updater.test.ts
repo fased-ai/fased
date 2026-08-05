@@ -2768,25 +2768,50 @@ describe("root-owned hosted updater protocol", () => {
   });
 
   it("accepts only the fixed root-only worker socket under stable supervision", () => {
-    expect(
-      __testing.parseServerConfiguration([
-        "--protected-local-instance",
-        "0123456789abcdef",
-        "--supervised",
-        "--socket-path",
-        "/run/fased-local-controller-worker/0123456789abcdef/controller.sock",
-        "--socket-uid",
-        "0",
-        "--socket-gid",
-        "0",
-      ]),
-    ).toMatchObject({
+    const local = __testing.parseServerConfiguration([
+      "--protected-local-instance",
+      "0123456789abcdef",
+      "--supervised",
+      "--socket-path",
+      "/run/fased-local-controller-worker/0123456789abcdef/controller.sock",
+      "--socket-uid",
+      "0",
+      "--socket-gid",
+      "0",
+    ]);
+    expect(local).toMatchObject({
       profile: "protected-local",
       instanceId: "0123456789abcdef",
       supervised: true,
       socketUid: 0,
       socketGid: 0,
     });
+    expect(local.paths.controllerVersionPath).toBe(
+      "/var/lib/fased-local/0123456789abcdef/controller/supervisor/controller-version.json",
+    );
+    const hosting = __testing.parseServerConfiguration([
+      "--supervised",
+      "--socket-path",
+      "/run/fased-host-controller/controller.sock",
+      "--socket-uid",
+      "0",
+      "--socket-gid",
+      "0",
+    ]);
+    expect(hosting.paths.controllerVersionPath).toBe(
+      "/var/lib/fased-host-updater/supervisor/controller-version.json",
+    );
+    const legacyLocal = __testing.parseServerConfiguration([
+      "--protected-local-instance",
+      "0123456789abcdef",
+      "--socket-uid",
+      "1000",
+      "--socket-gid",
+      "1000",
+    ]);
+    expect(legacyLocal.paths.controllerVersionPath).toBe(
+      "/var/lib/fased-local/0123456789abcdef/controller/controller-version.json",
+    );
     expect(() =>
       __testing.parseServerConfiguration([
         "--protected-local-instance",

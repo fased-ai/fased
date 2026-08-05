@@ -9487,6 +9487,9 @@ function parseServerConfiguration(argv = process.argv.slice(2)) {
     paths: Object.freeze({
       ...selected.paths,
       socketPath: supervised ? expectedPrivateSocket : selected.paths.socketPath,
+      controllerVersionPath: supervised
+        ? path.join(selected.paths.supervisorStateDir, "controller-version.json")
+        : selected.paths.controllerVersionPath,
     }),
     supervised,
     socketUid,
