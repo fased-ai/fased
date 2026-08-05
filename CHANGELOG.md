@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.44
+
+- Accept supported legacy Local runtime selectors only during the bounded
+  takeover precondition, then enforce the protected root-owned runtime store.
+- Treat absent historical controller units as already stopped while preserving
+  strict failure handling for existing Local controller generations.
+- Preserve the single transactional activation, rollback, retry, restart, and
+  state-preservation contract across legacy and managed predecessors.
+
 ## 0.1.76-rc.43
 
 - Converge supported legacy and managed Local installations through one
