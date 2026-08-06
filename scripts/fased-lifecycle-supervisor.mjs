@@ -4736,7 +4736,7 @@ async function restorePreviousControllerAfterProductRollback(transaction, contex
   await fsp.chmod(context.paths.controllerVersionPath, 0o600);
   await context.restartController();
   await context.waitForController();
-  const controllerInstanceId = await context.probeControllerIdentity(
+  const controllerInstanceId = await waitForSelectedControllerIdentity(
     {
       schemaVersion: 3,
       op: "updateController",
@@ -5728,6 +5728,7 @@ export const __testing = Object.freeze({
   supervisorGenerationPath,
   restoreSupervisorSelection,
   restoreControllerSelection,
+  restorePreviousControllerAfterProductRollback,
   writeControllerSelectionReceipt,
   authorizePublicSocket,
   privateMkdtemp,
