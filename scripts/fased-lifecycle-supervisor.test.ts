@@ -1555,6 +1555,56 @@ describe("stable lifecycle supervisor contract", () => {
     );
   });
 
+  it("resumes the exact selected transaction after the supervisor restarts", async () => {
+    const { paths } = tempPaths();
+    const fixture = await existingControllerTransitionFixture(paths, "1.2.2");
+    const initialState = { controllerInstanceId: randomUUID() };
+    const update = request();
+
+    await expect(
+      __testing.handleSupervisorRequest(update, fixture.context, initialState),
+    ).rejects.toThrow("controller promotion failed and was restored");
+    await expect(
+      __testing.handleSupervisorRequest(update, fixture.context, initialState),
+    ).resolves.toMatchObject({ ok: true, controllerChanged: true, supervisorChanged: true });
+    fixture.context.runningSupervisorDigest = sha256Text(fixture.targetSupervisor);
+
+    const restartedState = {
+      controllerInstanceId: randomUUID(),
+      recovery: {
+        state: "RECOVERY_PENDING",
+        source: "product",
+        transactionId: update.transactionId,
+        targetVersion: update.version,
+        phase: "selected",
+      },
+    };
+    const retry = parseSupervisorRequest({
+      schemaVersion: 3,
+      op: "updateController",
+      transactionId: update.transactionId,
+      nonce: randomUUID(),
+      version: update.version,
+      clientCapabilities: update.clientCapabilities,
+    });
+
+    await expect(
+      __testing.handleSupervisorRequest(retry, fixture.context, restartedState),
+    ).resolves.toMatchObject({ ok: true, controllerChanged: false, supervisorChanged: false });
+
+    const differentTarget = parseSupervisorRequest({
+      schemaVersion: 3,
+      op: "updateController",
+      transactionId: randomUUID(),
+      nonce: randomUUID(),
+      version: update.version,
+      clientCapabilities: update.clientCapabilities,
+    });
+    await expect(
+      __testing.handleSupervisorRequest(differentTarget, fixture.context, restartedState),
+    ).rejects.toThrow("lifecycle recovery is pending; new product mutation is blocked");
+  });
+
   it("waits for a freshly selected controller to finish recovery initialization", async () => {
     const { paths } = tempPaths();
     const fixture = await existingControllerTransitionFixture(paths, "1.2.2");

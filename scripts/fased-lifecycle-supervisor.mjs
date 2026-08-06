@@ -5124,7 +5124,14 @@ async function handleSupervisorRequest(request, context, state) {
   if (state.recovery.state === "INVALID_LEDGER") {
     fail("lifecycle recovery ledger is invalid; only status is available");
   }
-  if (state.recovery.state === "RECOVERY_PENDING") {
+  const continuingBoundProductTransaction =
+    state.recovery.state === "RECOVERY_PENDING" &&
+    state.recovery.source === "product" &&
+    state.recovery.phase === "selected" &&
+    (request.op === "updateController" || ROOT_TRANSACTION_OPERATIONS.has(request.op)) &&
+    request.transactionId === state.recovery.transactionId &&
+    request.version === state.recovery.targetVersion;
+  if (state.recovery.state === "RECOVERY_PENDING" && !continuingBoundProductTransaction) {
     if (request.op !== "recoverActive") {
       fail("lifecycle recovery is pending; new product mutation is blocked");
     }
