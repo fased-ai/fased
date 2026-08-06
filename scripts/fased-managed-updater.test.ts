@@ -1514,6 +1514,40 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     }
   });
 
+  it("does not retry an explicit target lifecycle rejection", async () => {
+    let requests = 0;
+    const rejected = await withUnixServer((socket) => {
+      socket.once("data", () => {
+        requests += 1;
+        socket.end(
+          `${JSON.stringify({
+            ok: false,
+            transactionId: TRANSACTION_ID,
+            version: "1.2.3",
+            error: "target release failed and was rolled back: Wallet health failed",
+          })}\n`,
+        );
+      });
+    });
+    try {
+      await expect(
+        __testing.requestHostedSignerTransactionWithRetry(
+          "applyRelease",
+          TRANSACTION_ID,
+          "1.2.3",
+          1000,
+          rejected.socketPath,
+        ),
+      ).rejects.toMatchObject({
+        hostUpdaterAmbiguous: false,
+        message: expect.stringContaining("Wallet health failed"),
+      });
+      expect(requests).toBe(1);
+    } finally {
+      await rejected.close();
+    }
+  });
+
   it("routes a missing Hosting root controller to the same verified one-command bridge", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-missing-root-controller-"));
     const socketPath = path.join(root, "missing", "request.sock");

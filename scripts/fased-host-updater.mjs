@@ -6073,10 +6073,15 @@ function healthEvidenceDigest(value) {
   return `sha256:${createHash("sha256").update(canonicalJSON(value)).digest("hex")}`;
 }
 
+const TARGET_APPLICATION_COMMAND_TIMEOUT_MS = 60_000;
+
 function parseBoundedJsonOutput(stdout, label) {
   const text = String(stdout ?? "").trim();
-  if (!text || text.length > 1024 * 1024) {
-    throw new Error(`${label} health output is empty or too large`);
+  if (!text) {
+    throw new Error(`${label} health output is empty`);
+  }
+  if (text.length > 1024 * 1024) {
+    throw new Error(`${label} health output is too large`);
   }
   const starts = [];
   for (let index = 0; index < text.length; index += 1) {
@@ -6515,7 +6520,7 @@ async function runTargetApplicationCommand(
     topology.operator.gid,
     {
       env: targetApplicationCommandEnvironment(topology, nodeBinary),
-      timeout: 15_000,
+      timeout: TARGET_APPLICATION_COMMAND_TIMEOUT_MS,
       maxBuffer: 1024 * 1024,
     },
   );
@@ -9726,6 +9731,7 @@ export const __testing = {
   systemIdentityExecArguments,
   targetMiningHealthArgs,
   targetApplicationCommandEnvironment,
+  TARGET_APPLICATION_COMMAND_TIMEOUT_MS,
   transactionPaths,
   updateControllerRelease,
   writeJournal,

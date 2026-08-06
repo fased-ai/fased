@@ -1499,9 +1499,13 @@ async function requestHostedSignerTransaction(
       /unsupported|schema|transactionId|request contains unsupported fields/iu.test(
         error?.message || "",
       );
+    const ambiguousTransportFailure =
+      error?.supervisorRequestSent === true &&
+      (new Set(["ECONNRESET", "EPIPE"]).has(error?.code) ||
+        /closed before|timed out/iu.test(error?.message || ""));
     throw hostedUpdaterError(
       error,
-      error?.supervisorRequestSent === true && !explicitPreV2Rejection,
+      ambiguousTransportFailure && !explicitPreV2Rejection,
       socketPath.startsWith("/run/fased-local-controller/"),
       version,
     );
@@ -1530,6 +1534,9 @@ async function requestHostedSignerTransactionWithRetry(
     } catch (error) {
       lastError = error;
       sawAmbiguousFailure ||= error?.hostUpdaterAmbiguous === true;
+      if (error?.hostUpdaterAmbiguous !== true || attempt + 1 >= attempts) {
+        break;
+      }
       if (attempt + 1 < attempts) {
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
