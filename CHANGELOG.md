@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.46
+
+- Finalize a verified target supervisor handoff during protected Local startup
+  so an interrupted managed update resumes and commits instead of timing out.
+- Preserve fail-closed behavior for unbound or competing lifecycle
+  transactions while retaining rollback, restart, and user-state guarantees.
+
 ## 0.1.76-rc.45
 
 - Allow protected Local takeover workers to start when the obsolete legacy
