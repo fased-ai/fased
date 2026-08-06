@@ -38,9 +38,11 @@ const KNOWN_NODE_ROOT_PATH_RE =
 // matrix until its nearest regression is explicitly added to `node-focused`.
 const LOCAL_UPDATE_FOCUSED_PRODUCTION_PATHS = new Set([
   "package.json",
+  "scripts/fased-lifecycle-supervisor.mjs",
   "scripts/fased-managed-updater-core.mjs",
   "scripts/lifecycle-control-normalizer.mjs",
   "scripts/protected-local-bootstrap.mjs",
+  "scripts/protected-local-service-plan.mjs",
   "scripts/protected-local-supervisor-client-root-fixture.mjs",
   "scripts/release-check.ts",
   "src/wallet/wallet-runtime-config.ts",

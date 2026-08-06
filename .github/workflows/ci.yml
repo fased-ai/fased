@@ -277,6 +277,7 @@ jobs:
             package.json \
             scripts/ci-change-scope.mjs \
             scripts/ci-change-scope.test.ts \
+            scripts/fased-lifecycle-supervisor.mjs \
             scripts/fased-local-recovery-pending.test.ts \
             scripts/fased-managed-updater-core.mjs \
             scripts/fased-managed-updater.test.ts \
@@ -286,10 +287,14 @@ jobs:
             scripts/protected-local-bootstrap.mjs \
             scripts/protected-local-bootstrap.test.ts \
             scripts/protected-local-controller.test.ts \
+            scripts/protected-local-service-plan.mjs \
+            scripts/protected-local-service-plan.test.ts \
+            scripts/protected-local-t2-systemd-fixture.mjs \
             scripts/release-check.ts
           pnpm exec oxlint \
             scripts/ci-change-scope.mjs \
             scripts/ci-change-scope.test.ts \
+            scripts/fased-lifecycle-supervisor.mjs \
             scripts/fased-local-recovery-pending.test.ts \
             scripts/fased-managed-updater-core.mjs \
             scripts/fased-managed-updater.test.ts \
@@ -299,6 +304,9 @@ jobs:
             scripts/protected-local-bootstrap.mjs \
             scripts/protected-local-bootstrap.test.ts \
             scripts/protected-local-controller.test.ts \
+            scripts/protected-local-service-plan.mjs \
+            scripts/protected-local-service-plan.test.ts \
+            scripts/protected-local-t2-systemd-fixture.mjs \
             scripts/release-check.ts
 
       - name: Run focused Local-update regressions
@@ -306,6 +314,7 @@ jobs:
           pnpm exec vitest run
           scripts/lifecycle-control-normalizer.test.ts
           scripts/protected-local-bootstrap.test.ts
+          scripts/protected-local-service-plan.test.ts
           scripts/fased-local-recovery-pending.test.ts
           src/wallet/wallet-application-state-permissions.test.ts
           --pool=forks

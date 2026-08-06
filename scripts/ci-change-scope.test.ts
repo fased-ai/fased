@@ -56,9 +56,14 @@ describe("CI changed-surface classification", () => {
 
   it("keeps a trusted Local-update PR on source contracts and defers packaged acceptance", () => {
     const plan = createGatePlan(
-      ["scripts/lifecycle-control-normalizer.mjs", "scripts/protected-local-bootstrap.mjs"],
+      [
+        "scripts/fased-lifecycle-supervisor.mjs",
+        "scripts/lifecycle-control-normalizer.mjs",
+        "scripts/protected-local-bootstrap.mjs",
+        "scripts/protected-local-service-plan.mjs",
+      ],
       {
-        phase: "T1",
+        phase: "T2",
         entryPoint: "local-update",
       },
     );

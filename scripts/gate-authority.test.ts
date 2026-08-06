@@ -190,10 +190,13 @@ describe("machine gate authority", () => {
   it("routes the complete focused Local-update correction without L0, native signer, or Docker", () => {
     const plan = createGatePlan(
       [
+        "scripts/fased-lifecycle-supervisor.mjs",
         "scripts/fased-managed-updater-core.mjs",
         "scripts/fased-local-recovery-pending.test.ts",
         "scripts/protected-local-bootstrap.mjs",
         "scripts/protected-local-bootstrap.test.ts",
+        "scripts/protected-local-service-plan.mjs",
+        "scripts/protected-local-service-plan.test.ts",
         "scripts/protected-local-supervisor-client-root-fixture.mjs",
         "scripts/test-protected-local-supervisor-client-root-fixture.sh",
         "src/wallet/wallet-runtime-config.ts",
@@ -224,7 +227,7 @@ describe("machine gate authority", () => {
       L0: true,
       L1: true,
       H0: true,
-      H1: false,
+      H1: true,
       H2: true,
     });
   });
