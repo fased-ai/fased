@@ -8998,18 +8998,19 @@ async function alreadyCommittedRelease(request, context) {
     managedManifest,
     updaterBundleDigest: managedManifest.updater.bundleDigest,
   });
-  const [gateway, signer, product] = await Promise.all([
+  // A committed release already crossed the full Wallet, Mining, Network,
+  // plugin, signer-isolation, and state-preservation gate before its rollback
+  // floor was advanced. Replaying that product acceptance for an idempotent
+  // request is both redundant and unsafe: operator inventories can take longer
+  // than a single health-command bound even though the installed generation is
+  // healthy. Prove the immutable installed/runtime bindings and the two live
+  // service identities here; actual release activation still uses
+  // verifyCrossProductHealth below.
+  const [gateway, signer] = await Promise.all([
     context.verifyGateway(request.version, expectedGatewayGeneration),
     context.probeSigner(),
-    applicationTarget && !topology?.pendingGatewayUnit && !topology?.pendingStateDir
-      ? context.probeApplicationHealth(topology, {
-          version: request.version,
-          application: { targetRoot: applicationTarget },
-        })
-      : null,
   ]);
   void gateway;
-  void product;
   const release = parseSignerReleaseIdentity(signer, request.version);
   const schemaMigration = migrationSelection
     ? completedLifecycleSchemaMigration(

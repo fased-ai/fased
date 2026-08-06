@@ -2592,7 +2592,7 @@ describe("root-owned hosted updater protocol", () => {
     ).rejects.toThrow("running target lifecycle controller identity is mismatched");
   });
 
-  it("reports committed product health through the supervised private boundary", async () => {
+  it("reports a committed release without replaying product acceptance", async () => {
     const fixture = await createFixture({
       managedApplication: true,
       supervised: true,
@@ -2606,6 +2606,9 @@ describe("root-owned hosted updater protocol", () => {
       supervisedRequest("applyRelease", TRANSACTION_ONE, "1.2.3"),
       fixture.context,
     );
+    fixture.context.probeApplicationHealth = async () => {
+      throw new Error("committed release replayed expensive product acceptance");
+    };
 
     await expect(
       __testing.dispatchUpdateRequest(
