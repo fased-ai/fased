@@ -883,7 +883,7 @@ describe("stable lifecycle supervisor contract", () => {
     });
   });
 
-  it("recovers interrupted target A before selecting requested target B", async () => {
+  it("blocks target B while interrupted target A requires explicit recovery", async () => {
     const { paths } = tempPaths();
     await fsp.mkdir(paths.supervisorStateDir, { recursive: true });
     const targetARequest = parseSupervisorRequest({
@@ -959,6 +959,7 @@ describe("stable lifecycle supervisor contract", () => {
       {
         rootUid: process.getuid?.() ?? 0,
         rootGid: process.getgid?.() ?? 0,
+        operatorStateDirSha256: digest("e"),
         readRootProductTransaction: async () => rootTransaction,
         writeRootProductTransaction: async (_paths: unknown, value: RootTransaction) => {
           rootTransaction = value;
@@ -1011,14 +1012,12 @@ describe("stable lifecycle supervisor contract", () => {
       __testing.handleSupervisorRequest(targetBRequest, context, {
         controllerInstanceId: randomUUID(),
       }),
-    ).resolves.toMatchObject({ ok: true, version, controllerChanged: false });
-    expect(calls).toEqual(["recover-A", "health-A", "clear-A", "stage-B"]);
+    ).rejects.toThrow("lifecycle recovery is pending; use the bound explicit recovery operation");
+    expect(calls).toEqual([]);
     expect(rootTransaction).toMatchObject({
-      transactionId: targetBRequest.transactionId,
-      version,
-      phase: "selected",
-      previousControllerGenerationVersion: "1.2.2",
-      selectionDigest: receiptB.selectionDigest,
+      transactionId: targetARequest.transactionId,
+      version: targetARequest.version,
+      phase: "prepared",
     });
   });
 
@@ -1086,7 +1085,7 @@ describe("stable lifecycle supervisor contract", () => {
     ).resolves.toContain('"operation": "recoverRelease"');
   });
 
-  it("finishes committed target A before selecting requested target B", async () => {
+  it("blocks target B while committed target A requires explicit recovery", async () => {
     const { paths } = tempPaths();
     await fsp.mkdir(paths.supervisorStateDir, { recursive: true });
     const targetARequest = parseSupervisorRequest({
@@ -1168,6 +1167,7 @@ describe("stable lifecycle supervisor contract", () => {
       {
         rootUid: process.getuid?.() ?? 0,
         rootGid: process.getgid?.() ?? 0,
+        operatorStateDirSha256: digest("e"),
         now: () => now,
         readRootProductTransaction: async () => rootTransaction,
         writeRootProductTransaction: async (_paths: unknown, value: RootTransaction) => {
@@ -1231,14 +1231,12 @@ describe("stable lifecycle supervisor contract", () => {
       __testing.handleSupervisorRequest(targetBRequest, context, {
         controllerInstanceId: randomUUID(),
       }),
-    ).resolves.toMatchObject({ ok: true, version, controllerChanged: false });
-    expect(calls).toEqual(["finish-A", "health-A", "clear-A", "stage-B"]);
+    ).rejects.toThrow("lifecycle recovery is pending; use the bound explicit recovery operation");
+    expect(calls).toEqual([]);
     expect(rootTransaction).toMatchObject({
-      transactionId: targetBRequest.transactionId,
-      version,
-      phase: "selected",
-      previousVersion: "1.2.2",
-      selectionDigest: receiptB.selectionDigest,
+      transactionId: targetARequest.transactionId,
+      version: targetARequest.version,
+      phase: "gateway-verified",
     });
   });
 
@@ -1444,10 +1442,9 @@ describe("stable lifecycle supervisor contract", () => {
     const { paths } = tempPaths();
     const fixture = await existingControllerTransitionFixture(paths, "1.2.2");
     const state = { controllerInstanceId: randomUUID() };
+    const update = request();
 
-    await expect(
-      __testing.handleSupervisorRequest(request(), fixture.context, state),
-    ).rejects.toThrow(
+    await expect(__testing.handleSupervisorRequest(update, fixture.context, state)).rejects.toThrow(
       "controller promotion failed and was restored: injected target controller restart failure",
     );
     expect(await fsp.realpath(paths.currentLink)).toBe(fixture.previousGeneration);
@@ -1460,7 +1457,7 @@ describe("stable lifecycle supervisor contract", () => {
     });
 
     await expect(
-      __testing.handleSupervisorRequest(request(), fixture.context, state),
+      __testing.handleSupervisorRequest(update, fixture.context, state),
     ).resolves.toMatchObject({
       ok: true,
       version,
@@ -1514,7 +1511,7 @@ describe("stable lifecycle supervisor contract", () => {
     });
 
     await expect(
-      __testing.handleSupervisorRequest(request(), fixture.context, state),
+      __testing.handleSupervisorRequest(update, fixture.context, state),
     ).resolves.toMatchObject({
       ok: true,
       version,
@@ -1767,6 +1764,7 @@ describe("stable lifecycle supervisor contract", () => {
       {
         rootUid: process.getuid?.() ?? 0,
         rootGid: process.getgid?.() ?? 0,
+        operatorStateDirSha256: digest("e"),
         runningSupervisorDigest: sha256Text(fixture.previousSupervisor),
         restartController: restart,
         waitForController: async () => undefined,
@@ -1808,6 +1806,7 @@ describe("stable lifecycle supervisor contract", () => {
         paths,
       },
       {
+        operatorStateDirSha256: digest("e"),
         stageTrustedController: async () => ({
           changed: true,
           identity: {
@@ -1949,6 +1948,7 @@ describe("stable lifecycle supervisor contract", () => {
         paths,
       },
       {
+        operatorStateDirSha256: digest("e"),
         stageTrustedController: async () => ({
           changed: true,
           identity: {
