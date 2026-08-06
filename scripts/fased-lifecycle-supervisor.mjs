@@ -2401,6 +2401,21 @@ async function recoverSupervisorTransaction(context) {
   return true;
 }
 
+async function finalizePlannedTargetSupervisorStartup(context) {
+  const transaction = await context.readSupervisorTransaction(context.paths, context.rootUid);
+  if (
+    !transaction?.supervisorChanged ||
+    context.runningSupervisorDigest !== transaction.targetSupervisorDigest
+  ) {
+    return false;
+  }
+  const restartRequired = await context.recoverSupervisorTransaction(context);
+  if (restartRequired) {
+    fail("target lifecycle supervisor startup unexpectedly selected rollback recovery");
+  }
+  return true;
+}
+
 function parseRootProductTransaction(value) {
   const schemaVersion = Number(value?.schemaVersion);
   exactKeys(
@@ -5124,7 +5139,14 @@ async function handleSupervisorRequest(request, context, state) {
   if (state.recovery.state === "INVALID_LEDGER") {
     fail("lifecycle recovery ledger is invalid; only status is available");
   }
-  if (state.recovery.state === "RECOVERY_PENDING") {
+  const continuingBoundProductTransaction =
+    state.recovery.state === "RECOVERY_PENDING" &&
+    state.recovery.source === "product" &&
+    state.recovery.phase === "selected" &&
+    (request.op === "updateController" || ROOT_TRANSACTION_OPERATIONS.has(request.op)) &&
+    request.transactionId === state.recovery.transactionId &&
+    request.version === state.recovery.targetVersion;
+  if (state.recovery.state === "RECOVERY_PENDING" && !continuingBoundProductTransaction) {
     if (request.op !== "recoverActive") {
       fail("lifecycle recovery is pending; new product mutation is blocked");
     }
@@ -5516,6 +5538,7 @@ export async function startSupervisor(options = {}) {
     mode: 0o711,
   });
   await fsp.mkdir(context.paths.supervisorStateDir, { recursive: true, mode: 0o700 });
+  await finalizePlannedTargetSupervisorStartup(context);
   await refreshSupervisorRecoveryState(context, state);
   await fsp.rm(context.paths.publicSocketPath, { force: true });
   process.umask(PRIVATE_UMASK);
@@ -5667,6 +5690,7 @@ export const __testing = Object.freeze({
   compareVersions,
   createContext,
   createRecoveryAuthorization,
+  finalizePlannedTargetSupervisorStartup,
   finalizeLegacyAdoptionAfterCommit,
   handleSupervisorRequest,
   initialLifecycleTrustState,
