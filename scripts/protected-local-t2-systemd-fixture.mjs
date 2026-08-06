@@ -595,9 +595,6 @@ async function runFixture() {
     });
     await Promise.all([
       fsp.writeFile(fixturePath, `${JSON.stringify(fixture, null, 2)}\n`, { mode: 0o600 }),
-      fsp.writeFile(productIdentityPath, `${JSON.stringify(previousIdentity, null, 2)}\n`, {
-        mode: 0o600,
-      }),
       fsp.writeFile(supervisorIdentityPath, `${JSON.stringify(previousIdentity, null, 2)}\n`, {
         mode: 0o600,
       }),
@@ -720,6 +717,7 @@ async function runFixture() {
       await fsp.writeFile(file.path, file.content, { mode: file.mode });
       await fsp.chmod(file.path, file.mode);
     }
+    assert.equal(fs.existsSync(productIdentityPath), false);
     systemctl("daemon-reload");
     systemctl("enable", layout.controllerUnit);
     systemctl("enable", layout.supervisorUnit);
@@ -909,6 +907,7 @@ async function runFixture() {
         instanceId,
         controllerTransition: `${previousVersion}->${targetVersion}`,
         generatedUnits: [layout.controllerUnit, layout.supervisorUnit],
+        legacyControllerIdentityAbsent: true,
         operatorSocketAuthorized: true,
         firstWorkerStartFailed: true,
         publicRecoveryPending: true,

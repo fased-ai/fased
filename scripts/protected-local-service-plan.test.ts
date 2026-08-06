@@ -90,7 +90,7 @@ describe("Protected Local service plan", () => {
     expect(controller).toContain("StateDirectoryMode=0711");
     expect(controller).toContain("AmbientCapabilities=CAP_SETUID CAP_SETGID");
     expect(controller).toContain(
-      "ReadOnlyPaths=/opt/fased/local/0123456789abcdef/controller /opt/fased/local/0123456789abcdef/supervisor /opt/fased/local/0123456789abcdef/signer-owner /opt/fased/local/0123456789abcdef/operator-socket-finalize /var/lib/fased-local/0123456789abcdef/controller/controller-version.json /var/lib/fased-local/0123456789abcdef/controller/supervisor /etc/systemd/system/fased-local-controller-worker-0123456789abcdef.service /etc/systemd/system/fased-local-controller-worker-0123456789abcdef.service.d /etc/systemd/system/fased-local-controller-0123456789abcdef.service /etc/systemd/system/fased-local-controller-0123456789abcdef.service.d",
+      "ReadOnlyPaths=/opt/fased/local/0123456789abcdef/controller /opt/fased/local/0123456789abcdef/supervisor /opt/fased/local/0123456789abcdef/signer-owner /opt/fased/local/0123456789abcdef/operator-socket-finalize -/var/lib/fased-local/0123456789abcdef/controller/controller-version.json /var/lib/fased-local/0123456789abcdef/controller/supervisor /etc/systemd/system/fased-local-controller-worker-0123456789abcdef.service /etc/systemd/system/fased-local-controller-worker-0123456789abcdef.service.d /etc/systemd/system/fased-local-controller-0123456789abcdef.service /etc/systemd/system/fased-local-controller-0123456789abcdef.service.d",
     );
     expect(controller).toContain(
       "ReadWritePaths=/opt/fased/local/0123456789abcdef /var/lib/fased-local/0123456789abcdef/signer",
