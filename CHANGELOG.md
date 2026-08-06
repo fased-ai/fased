@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.49
+
+- Allow legitimate Wallet inventories to complete bounded release health
+  verification without weakening the output-size or transaction limits.
+- Preserve the first explicit rollback predicate instead of hiding it behind
+  an automatic supervisor retry.
+
 ## 0.1.76-rc.48
 
 - Return `Already current` from durable release and live service identities
