@@ -4,6 +4,14 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.45
+
+- Allow protected Local takeover workers to start when the obsolete legacy
+  controller identity file is absent, while retaining the canonical
+  supervisor identity as the transaction authority.
+- Preserve rollback, retry, restart, service isolation, and critical user-state
+  guarantees across the managed Local update path.
+
 ## 0.1.76-rc.44
 
 - Accept supported legacy Local runtime selectors only during the bounded
