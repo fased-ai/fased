@@ -1631,6 +1631,36 @@ describe("stable lifecycle supervisor contract", () => {
     expect(await fsp.realpath(paths.currentLink)).toBe(path.join(paths.releasesDir, `v${version}`));
   });
 
+  it("waits for an explicit recovery controller to finish initialization", async () => {
+    const ready = {
+      controllerInstanceId: randomUUID(),
+      recoveryCapabilities: {
+        protocolVersion: 1,
+        operations: ["recoverActive"],
+        journalSchemas: [7, 8],
+      },
+    };
+    const probe = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("controller recovery authority is still initializing"))
+      .mockResolvedValue(ready);
+    const delay = vi.fn(async () => undefined);
+
+    await expect(
+      __testing.waitForRecoveryControllerIdentity(
+        request(),
+        {
+          probeRecoveryControllerIdentity: probe,
+          controllerIdentityRetryAttempts: 3,
+          controllerIdentityRetryDelay: delay,
+        },
+        {},
+      ),
+    ).resolves.toEqual(ready);
+    expect(probe).toHaveBeenCalledTimes(2);
+    expect(delay).toHaveBeenCalledOnce();
+  });
+
   it("does not retry a persistent selected-controller identity mismatch", async () => {
     const { paths } = tempPaths();
     const fixture = await existingControllerTransitionFixture(paths, "1.2.2");

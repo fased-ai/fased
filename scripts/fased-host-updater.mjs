@@ -6469,32 +6469,17 @@ function validateCrossProductApplicationEvidence(params) {
   });
 }
 
-async function readGatewayHealthConfiguration(topology) {
-  const configStat = await lstatIfPresent(topology.configPath);
-  if (
-    !configStat ||
-    !configStat.isFile() ||
-    configStat.isSymbolicLink() ||
-    configStat.nlink !== 1 ||
-    configStat.size > 2 * 1024 * 1024
-  ) {
-    throw new Error("target Gateway configuration is unavailable for product health");
-  }
-  let config;
-  try {
-    config = JSON.parse(await fsp.readFile(topology.configPath, "utf8"));
-  } catch (error) {
-    throw new Error("target Gateway configuration is invalid for product health", {
-      cause: error,
-    });
-  }
-  const token =
-    typeof config?.gateway?.auth?.token === "string" ? config.gateway.auth.token.trim() : "";
-  const port = Number.isInteger(config?.gateway?.port) ? config.gateway.port : 18789;
-  if (!token || token.length > 4096 || port < 1 || port > 65535) {
-    throw new Error("target Gateway authentication configuration is incomplete");
-  }
-  return { token, port };
+function targetApplicationCommandEnvironment(topology, nodeBinary) {
+  return {
+    HOME: topology.operator.home,
+    USER: topology.operator.name,
+    LOGNAME: topology.operator.name,
+    PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    FASED_NODE: nodeBinary,
+    FASED_STATE_DIR: topology.stateDir,
+    FASED_CONFIG_PATH: topology.configPath,
+    FASED_HOST_PROFILE: topology.profile === "hosting" ? "hosting" : "local",
+  };
 }
 
 async function runTargetApplicationCommand(
@@ -6522,7 +6507,6 @@ async function runTargetApplicationCommand(
   ) {
     throw new Error("target application entrypoint is invalid for product health");
   }
-  const { token } = await readGatewayHealthConfiguration(topology);
   const nodeBinary = path.resolve(context.protectedNodeBinary);
   const { stdout } = await execFileAsSystemIdentity(
     nodeBinary,
@@ -6530,17 +6514,7 @@ async function runTargetApplicationCommand(
     topology.operator.uid,
     topology.operator.gid,
     {
-      env: {
-        HOME: topology.operator.home,
-        USER: topology.operator.name,
-        LOGNAME: topology.operator.name,
-        PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        FASED_NODE: nodeBinary,
-        FASED_STATE_DIR: topology.stateDir,
-        FASED_CONFIG_PATH: topology.configPath,
-        FASED_HOST_PROFILE: topology.profile === "hosting" ? "hosting" : "local",
-        FASED_GATEWAY_TOKEN: token,
-      },
+      env: targetApplicationCommandEnvironment(topology, nodeBinary),
       timeout: 15_000,
       maxBuffer: 1024 * 1024,
     },
@@ -9750,6 +9724,7 @@ export const __testing = {
   stageProtectedApplicationRelease,
   systemIdentityExecArguments,
   targetMiningHealthArgs,
+  targetApplicationCommandEnvironment,
   transactionPaths,
   updateControllerRelease,
   writeJournal,
