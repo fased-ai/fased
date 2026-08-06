@@ -4515,24 +4515,18 @@ async function stageRecoveryController(transaction, productJournal, request, con
       await context.restartController();
       await context.waitForController();
     }
+    const probe = async () =>
+      await waitForRecoveryControllerIdentity(recoveryRequest, context, staged.identity);
     let live;
     try {
-      live = await context.probeRecoveryControllerIdentity(
-        recoveryRequest,
-        context,
-        staged.identity,
-      );
+      live = await probe();
     } catch (error) {
       if (staged.changed) {
         throw error;
       }
       await context.restartController();
       await context.waitForController();
-      live = await context.probeRecoveryControllerIdentity(
-        recoveryRequest,
-        context,
-        staged.identity,
-      );
+      live = await probe();
     }
     if (staged.trustChanged) {
       await context.commitLifecycleTrust(context.paths, staged);
@@ -5010,6 +5004,26 @@ async function waitForSelectedControllerIdentity(request, context, expectedIdent
   }
   fail(
     `replaceable lifecycle controller did not finish recovery initialization: ${lastError?.message ?? "unknown readiness failure"}`,
+  );
+}
+
+async function waitForRecoveryControllerIdentity(request, context, expectedIdentity) {
+  let lastError = null;
+  for (let attempt = 0; attempt < context.controllerIdentityRetryAttempts; attempt += 1) {
+    try {
+      return await context.probeRecoveryControllerIdentity(request, context, expectedIdentity);
+    } catch (error) {
+      if (!retryableControllerIdentityError(error)) {
+        throw error;
+      }
+      lastError = error;
+      if (attempt + 1 < context.controllerIdentityRetryAttempts) {
+        await context.controllerIdentityRetryDelay();
+      }
+    }
+  }
+  fail(
+    `recovery controller did not finish initialization: ${lastError?.message ?? "unknown readiness failure"}`,
   );
 }
 
@@ -5711,4 +5725,5 @@ export const __testing = Object.freeze({
   privateMkdtemp,
   sealSupervisorArtifact,
   verifyLifecycleRootTransition,
+  waitForRecoveryControllerIdentity,
 });

@@ -1832,6 +1832,29 @@ describe("root-owned hosted updater protocol", () => {
     expect(args).not.toContain("--password");
   });
 
+  it("does not inject Gateway credentials into operator health commands", () => {
+    const env = __testing.targetApplicationCommandEnvironment(
+      {
+        profile: "protected-local",
+        stateDir: "/home/operator/.fased",
+        configPath: "/home/operator/.fased/fased.json",
+        operator: { home: "/home/operator", name: "operator" },
+      },
+      "/usr/bin/node",
+    );
+
+    expect(env).toMatchObject({
+      HOME: "/home/operator",
+      USER: "operator",
+      LOGNAME: "operator",
+      FASED_NODE: "/usr/bin/node",
+      FASED_STATE_DIR: "/home/operator/.fased",
+      FASED_CONFIG_PATH: "/home/operator/.fased/fased.json",
+      FASED_HOST_PROFILE: "local",
+    });
+    expect(env).not.toHaveProperty("FASED_GATEWAY_TOKEN");
+  });
+
   it("runs product probes with the complete declared service-account group identity", () => {
     expect(
       __testing.systemIdentityExecArguments(1001, 1001, "/usr/bin/node", [
