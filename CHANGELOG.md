@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.47
+
+- Wait for the recovery controller to finish initializing before verifying its
+  identity during interrupted protected Local updates.
+- Keep Gateway credentials out of operator health subprocesses so wallet health
+  emits the JSON required to commit or roll back an update safely.
+
 ## 0.1.76-rc.46
 
 - Finalize a verified target supervisor handoff during protected Local startup
