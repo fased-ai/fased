@@ -4,6 +4,11 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.50
+
+- Let an interrupted protected Local update complete its bounded recovery when
+  the verified recovery controller is still finishing initialization.
+
 ## 0.1.76-rc.49
 
 - Allow legitimate Wallet inventories to complete bounded release health
