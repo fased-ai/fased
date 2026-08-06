@@ -1661,6 +1661,50 @@ describe("stable lifecycle supervisor contract", () => {
     expect(delay).toHaveBeenCalledOnce();
   });
 
+  it("waits for recoverActive while the selected recovery controller initializes", async () => {
+    const transactionId = randomUUID();
+    const controllerInstanceId = randomUUID();
+    const authorizationDigest = digest("a");
+    const requestController = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        transactionId,
+        version,
+        error: "controller recovery authority is still initializing",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        transactionId,
+        version,
+        recoveryControllerInstanceId: controllerInstanceId,
+        recoveryAuthorizationDigest: authorizationDigest,
+        phase: "rolled-back",
+      });
+    const delay = vi.fn(async () => undefined);
+
+    await expect(
+      __testing.recoverControllerProductTransaction(
+        { transactionId, version },
+        { journalSha256: digest("b") },
+        {
+          authorization: {
+            authorizationDigest,
+            expectedOutcome: "rolled-back",
+          },
+          liveControllerInstanceId: controllerInstanceId,
+        },
+        {
+          requestController,
+          controllerIdentityRetryAttempts: 3,
+          controllerIdentityRetryDelay: delay,
+        },
+      ),
+    ).resolves.toMatchObject({ ok: true, phase: "rolled-back" });
+    expect(requestController).toHaveBeenCalledTimes(2);
+    expect(delay).toHaveBeenCalledOnce();
+  });
+
   it("does not retry a persistent selected-controller identity mismatch", async () => {
     const { paths } = tempPaths();
     const fixture = await existingControllerTransitionFixture(paths, "1.2.2");

@@ -4614,20 +4614,27 @@ async function recoverControllerProductTransaction(
   context,
 ) {
   const authorization = recoveryAuthority.authorization;
-  const response = await context.requestController(
-    {
-      schemaVersion: 2,
-      op: "recoverActive",
-      transactionId: transaction.transactionId,
-      version: transaction.version,
-      recoveryDigest: productJournal.journalSha256,
-      recoveryControllerInstanceId: recoveryAuthority.liveControllerInstanceId,
-      recoveryAuthorization: authorization,
-    },
-    context,
-  );
+  const request = Object.freeze({
+    schemaVersion: 2,
+    op: "recoverActive",
+    transactionId: transaction.transactionId,
+    version: transaction.version,
+    recoveryDigest: productJournal.journalSha256,
+    recoveryControllerInstanceId: recoveryAuthority.liveControllerInstanceId,
+    recoveryAuthorization: authorization,
+  });
+  let response = null;
+  for (let attempt = 0; attempt < context.controllerIdentityRetryAttempts; attempt += 1) {
+    response = await context.requestController(request, context);
+    if (response.ok || response.error !== CONTROLLER_INITIALIZING_ERROR) {
+      break;
+    }
+    if (attempt + 1 < context.controllerIdentityRetryAttempts) {
+      await context.controllerIdentityRetryDelay();
+    }
+  }
   if (
-    !response.ok ||
+    !response?.ok ||
     response.transactionId !== transaction.transactionId ||
     response.version !== transaction.version ||
     response.recoveryControllerInstanceId !== recoveryAuthority.liveControllerInstanceId ||
@@ -5713,6 +5720,7 @@ export const __testing = Object.freeze({
   recoverSupervisorTransaction,
   recoverRootProductTransaction,
   recoveryIdentityDigest,
+  recoverControllerProductTransaction,
   rootProductTransactionRecord,
   assertRecoveryAuthorizationBinding,
   readControllerSelectionReceipt,
