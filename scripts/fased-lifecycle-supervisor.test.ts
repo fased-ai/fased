@@ -1661,6 +1661,40 @@ describe("stable lifecycle supervisor contract", () => {
     expect(delay).toHaveBeenCalledOnce();
   });
 
+  it("waits for the previous controller to initialize during product rollback", async () => {
+    const { paths } = tempPaths();
+    const fixture = await existingControllerTransitionFixture(paths, "1.2.2");
+    const exactProbe = fixture.context.probeControllerIdentity;
+    const probe = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("controller recovery authority is still initializing"))
+      .mockImplementation(exactProbe);
+    const restart = vi.fn(async () => undefined);
+    fixture.context.probeControllerIdentity = probe;
+    fixture.context.restartController = restart;
+    fixture.context.controllerIdentityRetryDelay = async () => undefined;
+    const state = { controllerInstanceId: randomUUID() };
+
+    await expect(
+      __testing.restorePreviousControllerAfterProductRollback(
+        {
+          transactionId: randomUUID(),
+          requestNonce: randomUUID(),
+          clientCapabilities: { protocolVersion: 2, requestSchema: 3 },
+          previousControllerIdentity: fixture.previousIdentity,
+        },
+        fixture.context,
+        state,
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(restart).toHaveBeenCalledOnce();
+    expect(probe).toHaveBeenCalledTimes(2);
+    expect(state.controllerInstanceId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+    );
+  });
+
   it("waits for recoverActive while the selected recovery controller initializes", async () => {
     const transactionId = randomUUID();
     const controllerInstanceId = randomUUID();
