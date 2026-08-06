@@ -1822,6 +1822,10 @@ describe("root-owned hosted updater protocol", () => {
     expect(() => __testing.parseBoundedJsonOutput("[plugins] no json", "plugins")).toThrow(
       "not valid JSON",
     );
+    expect(() => __testing.parseBoundedJsonOutput("", "Wallet")).toThrow(
+      "Wallet health output is empty",
+    );
+    expect(__testing.TARGET_APPLICATION_COMMAND_TIMEOUT_MS).toBe(60_000);
   });
 
   it("uses verified Gateway configuration for Mining health without exposing credentials", () => {
