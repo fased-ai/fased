@@ -4,6 +4,11 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.51
+
+- Wait for the previous protected Local controller to finish recovery
+  initialization before completing product rollback.
+
 ## 0.1.76-rc.50
 
 - Let an interrupted protected Local update complete its bounded recovery when
