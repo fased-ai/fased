@@ -2401,6 +2401,21 @@ async function recoverSupervisorTransaction(context) {
   return true;
 }
 
+async function finalizePlannedTargetSupervisorStartup(context) {
+  const transaction = await context.readSupervisorTransaction(context.paths, context.rootUid);
+  if (
+    !transaction?.supervisorChanged ||
+    context.runningSupervisorDigest !== transaction.targetSupervisorDigest
+  ) {
+    return false;
+  }
+  const restartRequired = await context.recoverSupervisorTransaction(context);
+  if (restartRequired) {
+    fail("target lifecycle supervisor startup unexpectedly selected rollback recovery");
+  }
+  return true;
+}
+
 function parseRootProductTransaction(value) {
   const schemaVersion = Number(value?.schemaVersion);
   exactKeys(
@@ -5523,6 +5538,7 @@ export async function startSupervisor(options = {}) {
     mode: 0o711,
   });
   await fsp.mkdir(context.paths.supervisorStateDir, { recursive: true, mode: 0o700 });
+  await finalizePlannedTargetSupervisorStartup(context);
   await refreshSupervisorRecoveryState(context, state);
   await fsp.rm(context.paths.publicSocketPath, { force: true });
   process.umask(PRIVATE_UMASK);
@@ -5674,6 +5690,7 @@ export const __testing = Object.freeze({
   compareVersions,
   createContext,
   createRecoveryAuthorization,
+  finalizePlannedTargetSupervisorStartup,
   finalizeLegacyAdoptionAfterCommit,
   handleSupervisorRequest,
   initialLifecycleTrustState,

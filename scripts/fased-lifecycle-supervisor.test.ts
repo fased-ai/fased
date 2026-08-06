@@ -1699,11 +1699,12 @@ describe("stable lifecycle supervisor contract", () => {
       {
         rootUid: process.getuid?.() ?? 0,
         rootGid: process.getgid?.() ?? 0,
+        operatorStateDirSha256: digest("e"),
         runningSupervisorDigest: sha256Text(fixture.targetSupervisor),
       },
     );
 
-    await expect(__testing.recoverSupervisorTransaction(context)).resolves.toBe(false);
+    await expect(__testing.finalizePlannedTargetSupervisorStartup(context)).resolves.toBe(true);
     expect(await fsp.readFile(paths.supervisorPath, "utf8")).toBe(fixture.targetSupervisor);
     expect(await fsp.realpath(paths.currentLink)).toBe(path.join(paths.releasesDir, `v${version}`));
     expect(await fsp.realpath(path.join(paths.supervisorStateDir, "supervisor-known-good"))).toBe(
@@ -1712,6 +1713,33 @@ describe("stable lifecycle supervisor contract", () => {
     await expect(fsp.lstat(paths.supervisorTransactionPath)).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("does not auto-recover an unbound supervisor startup", async () => {
+    const { paths } = tempPaths();
+    const recover = vi.fn(async () => false);
+    const context = __testing.createContext(
+      {
+        profile: "protected-local",
+        operatorUid: process.getuid?.() ?? 1000,
+        operatorGid: process.getgid?.() ?? 1000,
+        paths,
+      },
+      {
+        rootUid: process.getuid?.() ?? 0,
+        rootGid: process.getgid?.() ?? 0,
+        operatorStateDirSha256: digest("e"),
+        runningSupervisorDigest: digest("a"),
+        readSupervisorTransaction: async () => ({
+          supervisorChanged: true,
+          targetSupervisorDigest: digest("b"),
+        }),
+        recoverSupervisorTransaction: recover,
+      },
+    );
+
+    await expect(__testing.finalizePlannedTargetSupervisorStartup(context)).resolves.toBe(false);
+    expect(recover).not.toHaveBeenCalled();
   });
 
   it("restores the known-good supervisor slot when the prior process recovers activation", async () => {
