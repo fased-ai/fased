@@ -15,14 +15,6 @@ on:
         description: Exact supported public stable version used by packaged update P1
         required: true
         type: string
-      predecessor_scenario:
-        description: Public predecessor topology exercised by packaged update P1
-        required: true
-        default: install
-        type: choice
-        options:
-          - install
-          - managed-update
 
 permissions:
   actions: read
@@ -39,6 +31,8 @@ jobs:
   validate:
     name: Validate release contents
     runs-on: ubuntu-24.04
+    outputs:
+      p1_scenarios: ${{ steps.p1-plan.outputs.scenarios }}
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -91,6 +85,22 @@ jobs:
             echo "Candidate release already exists: v$RELEASE_VERSION" >&2
             exit 1
           fi
+
+      - name: Verify public compatibility coverage and derive P1 topology
+        id: p1-plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/lifecycle-compatibility-inventory.mjs --verify-public-github
+          scenarios="$(
+            node scripts/lifecycle-compatibility-inventory.mjs \
+              --p1-scenarios "$PREDECESSOR_VERSION"
+          )"
+          test -n "$scenarios"
+          printf 'scenarios=%s\n' "$scenarios" >>"$GITHUB_OUTPUT"
 
       - name: Validate release contents once
         run: pnpm release:check
@@ -507,7 +517,7 @@ jobs:
 
   p1:
     name: Packaged Local install and stable update
-    needs: [candidate]
+    needs: [validate, candidate]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -532,7 +542,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
-          FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install,${{ inputs.predecessor_scenario }}
+          FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install,${{ needs.validate.outputs.p1_scenarios }}
           FASED_SYSTEMD_FIXTURE_PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
           FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
           FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/fased-hosting-candidate
@@ -540,12 +550,16 @@ jobs:
           FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
         run: bash scripts/test-protected-local-systemd-container.sh
 
-  tag-ready:
-    name: Verify owner tag before publication approval
+  publish:
+    name: Promote exact verified candidate bytes
     needs: [candidate, p1]
+    environment: candidate-release
+    permissions:
+      actions: read
+      contents: write
     runs-on: ubuntu-24.04
     steps:
-      - name: Checkout exact P1-tested source and tags
+      - name: Checkout exact P1-tested source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ inputs.source_commit }}
@@ -559,21 +573,6 @@ jobs:
           set -euo pipefail
           remote_tag="$(git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" | awk '{print $1}')"
           test "$remote_tag" = "$GITHUB_SHA"
-
-  publish:
-    name: Promote exact verified candidate bytes
-    needs: [candidate, p1, tag-ready]
-    environment: candidate-release
-    permissions:
-      actions: read
-      contents: write
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout exact P1-tested source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ inputs.source_commit }}
-          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6

@@ -3,10 +3,10 @@
   "role": "fased-lifecycle-compatibility-evidence",
   "repository": "fased-ai/fased",
   "publishedThrough": {
-    "tag": "v0.1.76-rc.35",
-    "commit": "cc6671b0630aea8104ec6a26ccd888c3eeae0a6c"
+    "tag": "v0.1.76-rc.53",
+    "commit": "de45ee2df821dfac779f75ff95b3a4cc7241e3ee"
   },
-  "publishedReleaseCount": 97,
+  "publishedReleaseCount": 105,
   "selectionContract": {
     "runtimeConsumesReleaseAssignments": false,
     "runtimeSelectionFields": [
@@ -811,9 +811,7 @@
       "interruptedLocalTopology": "protected-local-supervisor-v1-mixed-control",
       "interruptedHostingTopology": "hosting-controller-v2-interrupted",
       "releases": [
-        { "tag": "v0.1.76-rc.21", "commit": "5274ce17081b3b98286c00a3e8c9e8fbf18add09" },
         { "tag": "v0.1.76-rc.22", "commit": "77e32a489752b2e02fc0bd4a88a8211245aaa2cb" },
-        { "tag": "v0.1.76-rc.23", "commit": "c3a986c701fc5279ac312b1df08090698a4b8f03" },
         { "tag": "v0.1.76-rc.24", "commit": "13e99ac8d23bf3ba53b622c9cf70e0ecbb7afb81" },
         { "tag": "v0.1.76-rc.25", "commit": "fba01b35fb9b141697a0558cceb0091e8059c6d8" },
         { "tag": "v0.1.76-rc.26", "commit": "2939c131c02d279271efc0d39e17ab67b5e6b38e" },
@@ -822,10 +820,20 @@
         { "tag": "v0.1.76-rc.29", "commit": "6c132dbcbb3ba231151508f0924cf563b0a3f2e1" },
         { "tag": "v0.1.76-rc.30", "commit": "4442baaa3155fbc0c62b74e05a387dedde616cbe" },
         { "tag": "v0.1.76-rc.31", "commit": "e6b5cf47c2668dff93ee95da08c4834eb7219d4d" },
-        { "tag": "v0.1.76-rc.32", "commit": "fc055b8673ec53821151bdcd0a294f7ef72ab3f6" },
         { "tag": "v0.1.76-rc.33", "commit": "472c448ed361282e2015c14182e0f364d847ef26" },
-        { "tag": "v0.1.76-rc.34", "commit": "801a1929fc97989f9f00973dc6a90e29ece16bb6" },
-        { "tag": "v0.1.76-rc.35", "commit": "cc6671b0630aea8104ec6a26ccd888c3eeae0a6c" }
+        { "tag": "v0.1.76-rc.35", "commit": "cc6671b0630aea8104ec6a26ccd888c3eeae0a6c" },
+        { "tag": "v0.1.76-rc.38", "commit": "085e1166a424610f698ddddbace0e057e82f3cd3" },
+        { "tag": "v0.1.76-rc.39", "commit": "22eb469477cfa809e934782c40716dd93bd54f7b" },
+        { "tag": "v0.1.76-rc.40", "commit": "ba5dff4457fdd20764e5ae6c2734eb920022d9d0" },
+        { "tag": "v0.1.76-rc.41", "commit": "3a1f33001d8d76eba4881a4a8b877ca87dfdbbff" },
+        { "tag": "v0.1.76-rc.42", "commit": "5163e9996f7334c16dfc7802a3bea0e6776ca40a" },
+        { "tag": "v0.1.76-rc.44", "commit": "aa3eee2ae8f974c67068f66e6f845dbdfac92b1a" },
+        { "tag": "v0.1.76-rc.46", "commit": "3687f660eb5d77679d578b99f3f733c502cfc8c6" },
+        { "tag": "v0.1.76-rc.47", "commit": "e7faa4d822e7ab8400911dda1d11a9c7fa735d29" },
+        { "tag": "v0.1.76-rc.48", "commit": "c7fac841fcb2b24b34bf3b8b912e37dc58706c8a" },
+        { "tag": "v0.1.76-rc.49", "commit": "68557c00cb14cb333312a869cec2084dcc1274bd" },
+        { "tag": "v0.1.76-rc.50", "commit": "59fdd284eedafade0b89384131b6537b34951e08" },
+        { "tag": "v0.1.76-rc.53", "commit": "de45ee2df821dfac779f75ff95b3a4cc7241e3ee" }
       ]
     }
   ]
