@@ -69,7 +69,8 @@ export function outputEntries(plan, options = {}) {
   // Packaged P1 stays at the immutable candidate boundary. Keep public PR CI on
   // focused source/security contracts without repeating privileged transactions.
   const prBuildLane = (value) => lane(value) && !focusedLocalUpdate;
-  const prInstalledFixtureLane = (value) => lane(value) && !focusedLocalUpdate;
+  const prInstalledAcceptanceLane = (value) =>
+    lane(value) && !focusedLocalUpdate && scope.productionChanged;
   const codeqlLanguages = [
     lane(scope.runCodeqlJavascript) && "javascript-typescript",
     lane(scope.runCodeqlGo) && "go",
@@ -122,11 +123,11 @@ export function outputEntries(plan, options = {}) {
     run_codeql_go: trueString(lane(scope.runCodeqlGo)),
     run_codeql_python: trueString(lane(scope.runCodeqlPython)),
     codeql_languages_json: JSON.stringify(codeqlLanguages),
-    run_hosting: trueString(lane(scope.runHosting)),
-    run_hosting_fresh: trueString(lane(scope.runHostingFresh)),
-    run_hosting_update: trueString(lane(scope.runHostingUpdate)),
-    run_local_fresh: trueString(lane(scope.runLocalFresh)),
-    run_local_update: trueString(prInstalledFixtureLane(scope.runLocalUpdate)),
+    run_hosting: trueString(prInstalledAcceptanceLane(scope.runHosting)),
+    run_hosting_fresh: trueString(prInstalledAcceptanceLane(scope.runHostingFresh)),
+    run_hosting_update: trueString(prInstalledAcceptanceLane(scope.runHostingUpdate)),
+    run_local_fresh: trueString(prInstalledAcceptanceLane(scope.runLocalFresh)),
+    run_local_update: trueString(prInstalledAcceptanceLane(scope.runLocalUpdate)),
     run_ci_contracts: trueString(scope.runCiContracts),
     run_t2_contracts: trueString(focusedLane(scope.runT2Contracts)),
     run_ui_mining: trueString(lane(scope.runUiMining)),
