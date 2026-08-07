@@ -27,6 +27,7 @@ import {
   atomicWriteJson,
   buildManagedInstallManifest,
   copyExecutable,
+  inspectManagedInstallManifest,
   readHostedRuntimeMetadata,
   readHostedReleaseBinding,
   readManagedInstallManifest,
@@ -34,10 +35,11 @@ import {
   resolveLinkTarget,
   resolveManagedRuntimePaths,
 } from "./managed-runtime-layout.mjs";
-
-function isRootManagedProfile(profile) {
-  return profile === "hosting" || profile === "protected-local";
-}
+import {
+  isRootManagedProfile,
+  legacyModeForManagedUpdatePlan,
+  selectManagedUpdatePlan,
+} from "./managed-update-contract.mjs";
 
 function managedManifestMode(manifest) {
   return isRootManagedProfile(manifest?.profile) ? 0o660 : 0o600;
@@ -150,6 +152,7 @@ export const MANAGED_UPDATER_SUPPORT_FILES = Object.freeze([
   "lifecycle-trust-root.mjs",
   "lifecycle-trust-runtime.mjs",
   "managed-runtime-layout.mjs",
+  "managed-update-contract.mjs",
 ]);
 const LOCAL_SOURCE_CONTROLLER_FILES = [
   ...MANAGED_UPDATER_SUPPORT_FILES,
@@ -3757,10 +3760,49 @@ async function readProcessCommand(pid) {
 function processIsAlive(pid) {
   try {
     process.kill(pid, 0);
+    if (process.platform === "linux") {
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+      const state = stat.slice(stat.lastIndexOf(") ") + 2, stat.lastIndexOf(") ") + 3);
+      if (state === "Z" || state === "X") {
+        return false;
+      }
+    }
     return true;
   } catch (error) {
     return error?.code === "EPERM";
   }
+}
+
+async function unixSocketHasListener(socketPath, timeoutMs = 500) {
+  return await new Promise((resolve, reject) => {
+    const socket = net.createConnection(socketPath);
+    let settled = false;
+    const finish = (error, listening = false) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      socket.destroy();
+      if (error) {
+        reject(error);
+      } else {
+        resolve(listening);
+      }
+    };
+    const timeout = setTimeout(
+      () => finish(new Error(`Timed out verifying Local signer socket ${socketPath}`)),
+      timeoutMs,
+    );
+    socket.once("connect", () => finish(null, true));
+    socket.once("error", (error) => {
+      if (error?.code === "ECONNREFUSED" || error?.code === "ENOENT") {
+        finish(null, false);
+        return;
+      }
+      finish(error);
+    });
+  });
 }
 
 async function requireExactSignerPid(pid, binaryPath) {
@@ -3797,12 +3839,20 @@ async function resolveRunningSignerPid(paths) {
     throw new Error("Multiple Local signer PIDs were recorded; refusing an ambiguous update");
   }
   if (pids.size === 0) {
-    const socketExists = await fsp
-      .lstat(paths.socketPath)
-      .then((stat) => stat.isSocket())
-      .catch(() => false);
-    if (socketExists) {
-      throw new Error("Local signer socket exists without a verifiable exact PID; repair manually");
+    for (const socketPath of [paths.socketPath, paths.controlSocketPath]) {
+      const socketExists = await fsp
+        .lstat(socketPath)
+        .then((stat) => stat.isSocket())
+        .catch(() => false);
+      if (!socketExists) {
+        continue;
+      }
+      if (await unixSocketHasListener(socketPath)) {
+        throw new Error(
+          "Local signer socket has a live listener without a verifiable exact PID; refusing to mutate it",
+        );
+      }
+      await fsp.rm(socketPath, { force: true });
     }
     return null;
   }
@@ -5369,55 +5419,13 @@ async function inspectLocalManagedConsistency(paths, manifest, currentVersion, p
   });
 }
 
-const CONTROL_GENERATION_CONFLICTS = new Set([
-  "last_success_mismatch",
-  "last_success_unreadable",
-  "runtime_manifest_mismatch",
-  "stable_updater_mismatch",
-]);
-const CUSTODY_GENERATION_CONFLICTS = new Set([
-  "signer_identity_unreadable",
-  "signer_manifest_mismatch",
-  "signer_version_mismatch",
-]);
-
 /** Select exactly one managed update owner before any update-side mutation. */
 export function selectManagedUpdateMode({ profile, migration, consistencyReasons = [] } = {}) {
-  if (isRootManagedProfile(profile)) {
-    return Object.freeze({ mode: "root-managed", reason: "canonical_root_profile" });
-  }
-  if (profile === "source") {
-    return Object.freeze({ mode: "portable-managed", reason: "development_source_profile" });
-  }
-  if (profile !== "local") {
-    return Object.freeze({ mode: "repair-required", reason: "unsupported_managed_profile" });
-  }
-  if (!migration || typeof migration !== "object") {
-    return Object.freeze({ mode: "repair-required", reason: "migration_state_missing" });
-  }
-  const reasons = new Set(
-    Array.isArray(consistencyReasons)
-      ? consistencyReasons.filter((reason) => typeof reason === "string")
-      : [],
-  );
-  const controlConflict = [...CONTROL_GENERATION_CONFLICTS].some((reason) => reasons.has(reason));
-  const custodyConflict = [...CUSTODY_GENERATION_CONFLICTS].some((reason) => reasons.has(reason));
-  if (controlConflict && custodyConflict) {
-    return Object.freeze({
-      mode: "repair-required",
-      reason: "mixed_control_and_custody_generations",
-    });
-  }
-  if (migration.required && !migration.supported) {
-    return Object.freeze({
-      mode: "repair-required",
-      reason: String(migration.reason || "migration_unavailable"),
-    });
-  }
-  if (migration.required) {
-    return Object.freeze({ mode: "migrate-to-protected", reason: "supported_local_bridge" });
-  }
-  return Object.freeze({ mode: "portable-managed", reason: "canonical_local_profile" });
+  const selected = selectManagedUpdatePlan({ profile, migration, consistencyReasons });
+  return Object.freeze({
+    mode: legacyModeForManagedUpdatePlan(selected),
+    reason: selected.reason,
+  });
 }
 
 function managedUpdateRepairError(selection) {
@@ -5721,12 +5729,11 @@ async function updateManagedRuntime(options) {
   const commandStartedAt = Date.now();
   const timings = [];
   const paths = resolveManagedRuntimePaths();
-  let existingManifest = readManagedInstallManifest(paths.manifestPath);
-  if (!existingManifest) {
-    throw new Error(
-      "Managed installation manifest is missing; run the official repair installer once.",
-    );
+  const manifestInspection = inspectManagedInstallManifest(paths.manifestPath);
+  if (manifestInspection.status !== "valid") {
+    throw managedUpdateRepairError({ reason: manifestInspection.reason });
   }
+  let existingManifest = manifestInspection.manifest;
   let currentRoot = await resolveLinkTarget(paths.currentLink);
   let currentVersion = currentRoot
     ? (await readPackageVersion(currentRoot)) || existingManifest.runtime.activeVersion
@@ -5742,9 +5749,8 @@ async function updateManagedRuntime(options) {
     manifest: existingManifest,
     currentRoot,
   });
-  const initialUpdateSelection = selectManagedUpdateMode({
+  const initialUpdatePlan = selectManagedUpdatePlan({
     profile: existingManifest.profile,
-    currentVersion,
     migration: initialProtectedLocalMigration,
     consistencyReasons: initialConsistency.reasons,
   });
@@ -5762,10 +5768,12 @@ async function updateManagedRuntime(options) {
       currentVersion,
       targetVersion,
       available,
-      repairRequired: initialUpdateSelection.mode === "repair-required",
-      repairReason:
-        initialUpdateSelection.mode === "repair-required" ? initialUpdateSelection.reason : null,
-      updateMode: initialUpdateSelection.mode,
+      repairRequired: initialUpdatePlan.operation === "repair",
+      repairReason: initialUpdatePlan.operation === "repair" ? initialUpdatePlan.reason : null,
+      updateMode: legacyModeForManagedUpdatePlan(initialUpdatePlan),
+      updateOperation: initialUpdatePlan.operation,
+      updateAdapter: initialUpdatePlan.adapter,
+      mutationOwner: initialUpdatePlan.mutationOwner,
       consistencyReasons: initialConsistency.reasons,
       protectedLocalMigrationRequired: initialProtectedLocalMigration.required,
       protectedLocalMigrationSupported: initialProtectedLocalMigration.supported,
@@ -5780,8 +5788,8 @@ async function updateManagedRuntime(options) {
       console.log(`Current: ${currentVersion}`);
       console.log(`Target: ${targetVersion}`);
       console.log(
-        initialUpdateSelection.mode === "repair-required"
-          ? `Repair required: ${initialUpdateSelection.reason}`
+        initialUpdatePlan.operation === "repair"
+          ? `Repair required: ${initialUpdatePlan.reason}`
           : initialProtectedLocalMigration.required
             ? initialProtectedLocalMigration.supported
               ? "Migration required: Protected Local service boundary"
@@ -5792,7 +5800,7 @@ async function updateManagedRuntime(options) {
                 ? "Update: current"
                 : `Repair required: ${initialConsistency.reasons.join(", ")}`,
       );
-      if (options.dryRun && initialUpdateSelection.mode === "repair-required") {
+      if (options.dryRun && initialUpdatePlan.operation === "repair") {
         console.log(
           "Action: one-time verified repair installer; ordinary update will not mutate state",
         );
@@ -5802,15 +5810,15 @@ async function updateManagedRuntime(options) {
         );
       } else if (options.dryRun && available) {
         console.log("Action: verified artifact transaction with Gateway health rollback");
-      } else if (options.dryRun && !consistency.consistent) {
+      } else if (options.dryRun && !initialConsistency.consistent) {
         console.log("Action: same-version paired application/signer repair");
       }
     }
     return;
   }
 
-  if (initialUpdateSelection.mode === "repair-required") {
-    throw managedUpdateRepairError(initialUpdateSelection);
+  if (initialUpdatePlan.operation === "repair") {
+    throw managedUpdateRepairError(initialUpdatePlan);
   }
 
   const releaseLock = await acquireUpdateLock(paths.stateDir);
@@ -6378,6 +6386,7 @@ export const __testing = {
   refreshLocalSourceController,
   resolveLocalSignerAsset,
   resolveLocalSignerPaths,
+  resolveRunningSignerPid,
   restoreOwnerOnlySnapshot,
   rollbackLocalSignerTransaction,
   runLocalSignerTransaction,

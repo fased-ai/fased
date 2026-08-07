@@ -49,6 +49,11 @@
       "mode": "0755"
     },
     {
+      "name": "managed-update-contract.mjs",
+      "type": "support",
+      "mode": "0755"
+    },
+    {
       "name": "managed-updater-bundle.mjs",
       "type": "support",
       "mode": "0755"

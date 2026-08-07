@@ -24,6 +24,7 @@ const FILES = [
   "lifecycle-trust-root.mjs",
   "lifecycle-trust-runtime.mjs",
   "managed-runtime-layout.mjs",
+  "managed-update-contract.mjs",
   "managed-updater-bundle.mjs",
   "managed-updater-bundle.v1.json",
   "fased-managed-launcher.sh",

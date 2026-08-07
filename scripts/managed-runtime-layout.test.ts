@@ -8,6 +8,7 @@ import { capabilitiesDigest } from "./hosted-release-manifest.mjs";
 import { installManagedRuntime, rollbackManagedRuntime } from "./install-managed-runtime.mjs";
 import {
   buildManagedInstallManifest,
+  inspectManagedInstallManifest,
   normalizeManagedProfile,
   readManagedInstallManifest,
   resolveManagedRuntimePaths,
@@ -98,6 +99,46 @@ function writeRuntime(packageRoot: string, version: string, options: { attested?
     fs.chmodSync(path.join(packageRoot, "scripts", script), 0o755);
   }
 }
+
+describe("managed installation manifest inspection", () => {
+  it("fails closed on unknown newer schemas without normalizing them to Local", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-newer-manifest-"));
+    const manifestPath = path.join(root, "install.json");
+    fs.writeFileSync(
+      manifestPath,
+      `${JSON.stringify({
+        schemaVersion: 999,
+        profile: "protected-local",
+        runtime: { activeVersion: "9.9.9" },
+      })}\n`,
+    );
+    expect(inspectManagedInstallManifest(manifestPath)).toEqual({
+      status: "unsupported-newer",
+      reason: "unsupported_newer_manifest_schema",
+      schemaVersion: 999,
+    });
+    expect(readManagedInstallManifest(manifestPath)).toBeNull();
+  });
+
+  it("rejects a symlinked installation manifest", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-symlink-manifest-"));
+    const target = path.join(root, "target.json");
+    const manifestPath = path.join(root, "install.json");
+    fs.writeFileSync(
+      target,
+      `${JSON.stringify({
+        schemaVersion: 2,
+        profile: "local",
+        runtime: { activeVersion: "1.2.3" },
+      })}\n`,
+    );
+    fs.symlinkSync(target, manifestPath);
+    expect(inspectManagedInstallManifest(manifestPath)).toEqual({
+      status: "invalid",
+      reason: "unsafe_manifest_file",
+    });
+  });
+});
 
 function createFixture(version: string, options: { attested?: boolean } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-managed-layout-"));

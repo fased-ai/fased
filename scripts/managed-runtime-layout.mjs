@@ -5,6 +5,9 @@ import path from "node:path";
 import { readHostedReleaseManifestV2 } from "./hosted-release-manifest.mjs";
 
 export const MANAGED_INSTALL_SCHEMA_VERSION = 2;
+const MANAGED_INSTALL_MIN_SCHEMA_VERSION = 1;
+const MANAGED_RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
+const MANAGED_PROFILES = new Set(["hosting", "protected-local", "local", "source"]);
 
 export function resolveManagedStateDir(env = process.env, homedir = os.homedir) {
   return path.resolve(
@@ -54,19 +57,45 @@ export function normalizeManagedProfile(value) {
   return "local";
 }
 
-export function readManagedInstallManifest(manifestPath) {
+export function inspectManagedInstallManifest(manifestPath) {
   try {
+    const stat = fs.lstatSync(manifestPath);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      return Object.freeze({ status: "invalid", reason: "unsafe_manifest_file" });
+    }
     const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-    if (parsed?.schemaVersion !== 1 && parsed?.schemaVersion !== MANAGED_INSTALL_SCHEMA_VERSION) {
-      return null;
+    if (
+      Number.isSafeInteger(parsed?.schemaVersion) &&
+      parsed.schemaVersion > MANAGED_INSTALL_SCHEMA_VERSION
+    ) {
+      return Object.freeze({
+        status: "unsupported-newer",
+        reason: "unsupported_newer_manifest_schema",
+        schemaVersion: parsed.schemaVersion,
+      });
     }
-    if (!parsed.runtime || typeof parsed.runtime.activeVersion !== "string") {
-      return null;
+    if (
+      !Number.isSafeInteger(parsed?.schemaVersion) ||
+      parsed.schemaVersion < MANAGED_INSTALL_MIN_SCHEMA_VERSION ||
+      parsed.schemaVersion > MANAGED_INSTALL_SCHEMA_VERSION ||
+      !MANAGED_PROFILES.has(parsed.profile) ||
+      !parsed.runtime ||
+      !MANAGED_RELEASE_VERSION_PATTERN.test(parsed.runtime.activeVersion || "")
+    ) {
+      return Object.freeze({ status: "invalid", reason: "invalid_manifest_contract" });
     }
-    return parsed;
-  } catch {
-    return null;
+    return Object.freeze({ status: "valid", manifest: parsed });
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return Object.freeze({ status: "missing", reason: "manifest_missing" });
+    }
+    return Object.freeze({ status: "invalid", reason: "manifest_unreadable" });
   }
+}
+
+export function readManagedInstallManifest(manifestPath) {
+  const result = inspectManagedInstallManifest(manifestPath);
+  return result.status === "valid" ? result.manifest : null;
 }
 
 export async function readPackageVersion(packageRoot) {
