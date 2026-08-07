@@ -493,7 +493,11 @@ export function createGatePlan(inputPaths, options = {}) {
     privilegeChanged &&
     productionPaths.length > 0 &&
     productionPaths.every((path) => LOCAL_UPDATE_FOCUSED_PRODUCTION_PATHS.has(path));
-  const runNodeFocused = focusedLocalUpdate;
+  const focusedReleaseInventory =
+    runNode &&
+    productionPaths.length > 0 &&
+    productionPaths.every((path) => path === "scripts/release-check.ts");
+  const runNodeFocused = focusedLocalUpdate || focusedReleaseInventory;
   const runUi =
     !ciInfrastructureOnly &&
     !t2FixtureOnly &&

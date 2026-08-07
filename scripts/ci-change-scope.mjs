@@ -13,16 +13,16 @@ function trueString(value) {
 export function outputEntries(plan) {
   const scope = plan.scope;
   const dependencyRemediation = false;
-  const focusedLocalUpdate = scope.runNodeFocused && scope.runLocalUpdate;
-  const runDependencyIntegrity =
-    dependencyRemediation || (scope.runNodePackaging && !focusedLocalUpdate);
+  const focusedNode = scope.runNodeFocused;
+  const focusedLocalUpdate = focusedNode && scope.runLocalUpdate;
+  const runDependencyIntegrity = dependencyRemediation || (scope.runNodePackaging && !focusedNode);
   const lane = (value) => !dependencyRemediation && value;
-  const focusedLane = (value) => lane(value) && !focusedLocalUpdate;
+  const focusedLane = (value) => lane(value) && !focusedNode;
   // Packaged P1 stays at the immutable candidate boundary. Keep ordinary PR CI
   // on focused source/security contracts without repeating that transaction.
-  const prBuildLane = (value) => lane(value) && !focusedLocalUpdate;
+  const prBuildLane = (value) => lane(value) && !focusedNode;
   const prInstalledAcceptanceLane = (value) =>
-    lane(value) && !focusedLocalUpdate && scope.productionChanged;
+    lane(value) && !focusedNode && scope.productionChanged;
   const codeqlLanguages = [
     lane(scope.runCodeqlJavascript) && "javascript-typescript",
     lane(scope.runCodeqlGo) && "go",
