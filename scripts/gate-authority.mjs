@@ -495,9 +495,13 @@ export function createGatePlan(inputPaths, options = {}) {
   const pureExtensionProduction =
     productionPaths.length > 0 &&
     productionPaths.every((path) => EXTENSION_NODE_PATH_RE.test(path));
+  // A narrow updater change is derivable from the protected classifier and the
+  // changed paths. It must not depend on an out-of-band release ledger or a
+  // custom commit status selecting an entry point.
   const focusedLocalUpdate =
     runNode &&
-    entryPoint === "local-update" &&
+    runLocalUpdate &&
+    privilegeChanged &&
     productionPaths.length > 0 &&
     productionPaths.every((path) => LOCAL_UPDATE_FOCUSED_PRODUCTION_PATHS.has(path));
   const runNodeFocused = focusedLocalUpdate;

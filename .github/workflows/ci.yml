@@ -87,14 +87,13 @@ jobs:
           fetch-depth: 0
           submodules: false
 
-      - name: Resolve trusted private CI route
-        id: private-route
-        if: github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          FASED_PRIVATE_STATUS_ACTOR: ${{ vars.FASED_PRIVATE_STATUS_ACTOR }}
-          FASED_PRIVATE_STATUS_ACTOR_ID: ${{ vars.FASED_PRIVATE_STATUS_ACTOR_ID }}
-        run: node scripts/ci-private-route-status.mjs
+      - name: Checkout trusted authority
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: .ci-authority
+          fetch-depth: 1
+          submodules: false
 
       - name: Prove tested PR tree for merged main
         id: reuse
@@ -111,11 +110,7 @@ jobs:
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
           GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
           GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          GATE_PHASE: ${{ steps.private-route.outputs.gate_phase || 'T3' }}
-          GATE_ROUTE: ${{ steps.private-route.outputs.gate_route }}
-          GATE_ENTRY_POINT: ${{ steps.private-route.outputs.gate_entry_point }}
-          GATE_EXPECTED_PLAN_DIGEST: ${{ steps.private-route.outputs.expected_plan_digest }}
-        run: node scripts/ci-change-scope.mjs
+        run: node .ci-authority/scripts/ci-change-scope.mjs
 
   # CI routing is executable product policy. Validate it without rebuilding or
   # launching product fixtures when only that policy changes.
@@ -161,8 +156,6 @@ jobs:
             scripts/ci-change-scope.test.ts \
             scripts/ci-run-changed-tests.mjs \
             scripts/ci-run-changed-tests.test.ts \
-            scripts/ci-private-route-status.mjs \
-            scripts/ci-private-route-status.test.ts \
             scripts/ci-required-gates.mjs \
             scripts/ci-required-gates.test.ts \
             scripts/ci-workflow-contract.test.ts \
@@ -176,8 +169,6 @@ jobs:
             scripts/ci-change-scope.test.ts \
             scripts/ci-run-changed-tests.mjs \
             scripts/ci-run-changed-tests.test.ts \
-            scripts/ci-private-route-status.mjs \
-            scripts/ci-private-route-status.test.ts \
             scripts/ci-required-gates.mjs \
             scripts/ci-required-gates.test.ts \
             scripts/ci-workflow-contract.test.ts \
@@ -190,7 +181,6 @@ jobs:
           scripts/lifecycle-compatibility-inventory.test.ts
           scripts/ci-change-scope.test.ts
           scripts/ci-run-changed-tests.test.ts
-          scripts/ci-private-route-status.test.ts
           scripts/ci-required-gates.test.ts
           scripts/ci-merged-main-reuse.test.ts
           scripts/ci-version-identity.test.ts

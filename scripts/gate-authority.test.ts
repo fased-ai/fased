@@ -62,8 +62,6 @@ describe("machine gate authority", () => {
       ".github/workflows/ci.yml",
       ".github/workflows/docker-release.yml",
       ".github/workflows/hosted-runtime-release.yml",
-      "scripts/ci-private-route-status.mjs",
-      "scripts/ci-private-route-status.test.ts",
       "scripts/release-artifact-set.mjs",
       "scripts/release-artifact-set.test.ts",
       "scripts/verify-release-gate-status.mjs",
@@ -293,7 +291,7 @@ describe("machine gate authority", () => {
   });
 
   it("keeps CI-only authority edits out of production CodeQL", () => {
-    const plan = createGatePlan(["scripts/ci-private-route-status.mjs"]);
+    const plan = createGatePlan(["scripts/ci-change-scope.mjs"]);
     expect(plan.scope).toMatchObject({
       ciInfrastructureOnly: true,
       runCiContracts: true,
