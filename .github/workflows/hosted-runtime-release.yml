@@ -15,6 +15,10 @@ on:
         description: Exact supported public stable version used by packaged update P1
         required: true
         type: string
+      pre_candidate_run_id:
+        description: Successful Pre-candidate workflow run bound to the unversioned parent source
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -86,6 +90,44 @@ jobs:
             exit 1
           fi
 
+      - name: Verify immutable pre-candidate pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRE_CANDIDATE_RUN_ID: ${{ inputs.pre_candidate_run_id }}
+          PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$PRE_CANDIDATE_RUN_ID" =~ ^[0-9]+$ ]]
+          base_commit="$(git rev-parse "$SOURCE_COMMIT^")"
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PRE_CANDIDATE_RUN_ID")"
+          jq -e \
+            --arg baseCommit "$base_commit" \
+            '.name == "Pre-candidate" and .path == ".github/workflows/pre-candidate.yml" and .event == "workflow_dispatch" and .conclusion == "success" and .head_sha == $baseCommit' \
+            <<<"$run_json" >/dev/null
+          GITHUB_EVENT_NAME=pull_request \
+            GITHUB_BASE_REF= \
+            GITHUB_BASE_SHA="$base_commit" \
+            node scripts/ci-version-identity.mjs
+          evidence_dir="$RUNNER_TEMP/pre-candidate-evidence"
+          gh run download "$PRE_CANDIDATE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name fased-pre-candidate-evidence \
+            --dir "$evidence_dir"
+          evidence="$evidence_dir/evidence.json"
+          test -f "$evidence"
+          jq -e \
+            --arg sourceCommit "$base_commit" \
+            --arg sourceTree "$(git rev-parse "$base_commit^{tree}")" \
+            --arg lockfileDigest "sha256:$(git show "$base_commit:pnpm-lock.yaml" | sha256sum | awk '{print $1}')" \
+            --arg releaseVersion "$RELEASE_VERSION" \
+            --arg predecessorVersion "$PREDECESSOR_VERSION" \
+            --arg workflowRunId "$PRE_CANDIDATE_RUN_ID" \
+            '.schemaVersion == 1 and .sourceCommit == $sourceCommit and .sourceTree == $sourceTree and .lockfileDigest == $lockfileDigest and .nextReleaseVersion == $releaseVersion and .predecessorVersion == $predecessorVersion and .workflowRunId == $workflowRunId' \
+            "$evidence" >/dev/null
+
       - name: Verify public compatibility coverage and derive P1 topology
         id: p1-plan
         env:
@@ -102,11 +144,11 @@ jobs:
           test -n "$scenarios"
           printf 'scenarios=%s\n' "$scenarios" >>"$GITHUB_OUTPUT"
 
-      - name: Validate release contents once
-        run: pnpm release:check
-
       - name: Enforce production vulnerability threshold
         run: pnpm audit --prod --audit-level high
+
+      - name: Validate release contents once
+        run: pnpm release:check
 
       - name: Upload exact shared build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

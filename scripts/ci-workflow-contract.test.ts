@@ -404,6 +404,20 @@ describe("CI workflow routing", () => {
     expect(sanity).toContain("  workflow_dispatch:");
   });
 
+  it("keeps Bun and Docker tooling out of the ordinary PR lane", async () => {
+    const pr = await readFile(resolve(repoRoot, ".github/workflows/pr.yml"), "utf8");
+    const setup = await readFile(
+      resolve(repoRoot, ".github/actions/setup-node-env/action.yml"),
+      "utf8",
+    );
+
+    expect(pr).not.toContain("docker/setup-buildx-action");
+    expect(pr).not.toContain("docker/build-push-action");
+    expect(pr).not.toContain("docker/login-action");
+    expect(pr).toContain('install-bun: "false"');
+    expect(setup).toMatch(/install-bun:[\s\S]*?default: "false"/u);
+  });
+
   it("pins every third-party Action to an immutable commit", async () => {
     const githubRoot = resolve(repoRoot, ".github");
     const files = (await listFiles(githubRoot)).filter((path) => /\.ya?ml$/u.test(path));
@@ -460,6 +474,7 @@ describe("CI workflow routing", () => {
     const linuxText = jobs["linux"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
 
     expect(workflow.on).not.toHaveProperty("push");
+    expect(workflow.on.workflow_dispatch.inputs.pre_candidate_run_id.required).toBe(true);
     expect(jobs["release-gate"]).toBeUndefined();
     expect(candidate?.needs).toEqual(["validate", "linux", "signer"]);
     expect(p1?.needs).toEqual(["validate", "candidate"]);
@@ -482,6 +497,12 @@ describe("CI workflow routing", () => {
     ]);
     expect(candidateText).toContain("release-artifact-set.mjs build");
     expect(validateText).toContain("pnpm release:check");
+    expect(
+      jobs["validate"]?.steps?.some((step) => step.name === "Verify immutable pre-candidate pass"),
+    ).toBe(true);
+    expect(validateText.indexOf("pnpm audit --prod --audit-level high")).toBeLessThan(
+      validateText.indexOf("pnpm release:check"),
+    );
     expect(linuxText).toContain("hosted:artifact:from-dist");
     expect(linuxText).not.toContain("hosted:artifact:build");
     expect(candidateText).toContain('--source-ref "refs/heads/main"');
@@ -532,6 +553,26 @@ describe("CI workflow routing", () => {
     expect(publish?.steps?.some((step) => usesAction(step, "actions/attest"))).toBe(false);
     expect(publishText).not.toContain("hosted:artifact:build");
     expect(publishText).not.toContain("release-fased-signerd.sh");
+  });
+
+  it("binds pre-candidate evidence before a version is allocated", async () => {
+    const workflow = await readWorkflow(".github/workflows/pre-candidate.yml");
+    const validate = workflow.jobs?.validate;
+    const commands = validate?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+
+    expect(workflow.on).not.toHaveProperty("push");
+    expect(workflow.on).not.toHaveProperty("pull_request");
+    expect(workflow.on).toHaveProperty("workflow_dispatch");
+    expect(validate?.["timeout-minutes"]).toBeLessThanOrEqual(12);
+    expect(commands).toContain("pnpm install --frozen-lockfile");
+    expect(commands.indexOf("pnpm audit --prod --audit-level high")).toBeLessThan(
+      commands.indexOf("pnpm release:check"),
+    );
+    expect(commands).toContain("--verify-public-github");
+    expect(commands).toContain("lockfileDigest");
+    expect(
+      validate?.steps?.find((step) => usesAction(step, "actions/upload-artifact"))?.with?.name,
+    ).toBe("fased-pre-candidate-evidence");
   });
 
   it("keeps Hosted Runtime Release as the sole GitHub Release publisher", async () => {

@@ -2,6 +2,7 @@
 
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
+import { verifyRepositoryDependencyRemediation } from "./ci-dependency-integrity.mjs";
 import { classifyChangedPaths, createGatePlan, normalizeChangedPaths } from "./gate-authority.mjs";
 
 export { classifyChangedPaths };
@@ -10,9 +11,38 @@ function trueString(value) {
   return value ? "true" : "false";
 }
 
-export function outputEntries(plan) {
+export function detectDependencyRemediation(
+  plan,
+  env = process.env,
+  verify = verifyRepositoryDependencyRemediation,
+) {
+  const paths = [...plan.paths].toSorted((left, right) => left.localeCompare(right));
+  if (
+    plan.changeKind !== "production" ||
+    plan.manualReviewRequired ||
+    paths.length !== 2 ||
+    paths[0] !== "package.json" ||
+    paths[1] !== "pnpm-lock.yaml"
+  ) {
+    return Object.freeze({ dependencyRemediation: false, dependencyNames: [] });
+  }
+  try {
+    const result = verify(env);
+    return Object.freeze({
+      dependencyRemediation: true,
+      dependencyNames: result.remediations.map(({ dependency }) => dependency),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`ci-change-scope: dependency remediation rejected: ${message}`);
+    return Object.freeze({ dependencyRemediation: false, dependencyNames: [] });
+  }
+}
+
+export function outputEntries(plan, options = {}) {
   const scope = plan.scope;
-  const dependencyRemediation = false;
+  const dependencyRemediation = options.dependencyRemediation === true;
+  const dependencyNames = dependencyRemediation ? (options.dependencyNames ?? []) : [];
   const focusedNode = scope.runNodeFocused;
   const focusedLocalUpdate = focusedNode && scope.runLocalUpdate;
   const runDependencyIntegrity = dependencyRemediation || (scope.runNodePackaging && !focusedNode);
@@ -51,11 +81,12 @@ export function outputEntries(plan) {
     privilege_changed: trueString(scope.privilegeChanged),
     reuse_pr_checks: trueString(scope.reusePrChecks),
     dependency_remediation: trueString(dependencyRemediation),
+    dependency_names_json: JSON.stringify(dependencyNames),
     focused_local_update: trueString(focusedLocalUpdate),
     run_dependency_integrity: trueString(runDependencyIntegrity),
     run_node: trueString(lane(scope.runNode)),
     run_node_focused: trueString(lane(scope.runNodeFocused || focusedLocalUpdate)),
-    run_node_build: trueString(prBuildLane(scope.runNodeBuild)),
+    run_node_build: trueString(dependencyRemediation || prBuildLane(scope.runNodeBuild)),
     run_node_packaging: trueString(focusedLane(scope.runNodePackaging)),
     run_node_full: trueString(focusedLane(scope.runNodeFull)),
     run_node_unit: trueString(focusedLane(scope.runNodeUnit)),
@@ -153,7 +184,8 @@ function main() {
     reusePrChecks,
     unknown,
   });
-  const entries = outputEntries(plan);
+  const remediation = detectDependencyRemediation(plan);
+  const entries = outputEntries(plan, remediation);
   const outputPath = process.env.GITHUB_OUTPUT;
   if (!outputPath) {
     throw new Error("ci-change-scope: GITHUB_OUTPUT is required");

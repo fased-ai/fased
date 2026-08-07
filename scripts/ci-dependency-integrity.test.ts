@@ -51,6 +51,16 @@ describe("dependency integrity", () => {
     });
   });
 
+  it("accepts the bounded nanoid override addition used by the production audit repair", () => {
+    const head = structuredClone(basePackage);
+    head.pnpm.overrides.nanoid = "3.3.17";
+    expect(
+      verify(head, baseLockfile.replace("overrides:\n", "overrides:\n  nanoid: 3.3.17\n")),
+    ).toEqual({
+      remediations: [{ dependency: "nanoid", fromVersion: null, toVersion: "3.3.17" }],
+    });
+  });
+
   it("accepts the bounded four-advisory remediation with aligned Undici manifests", () => {
     const head = structuredClone(basePackage);
     head.pnpm.overrides["fast-uri"] = "3.1.5";
