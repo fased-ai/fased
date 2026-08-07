@@ -3,6 +3,7 @@
 ## 0.1.76-rc.53
 
 ### Changes
+
 - Version alignment with core FasedAgent release numbers.
 
 ## 0.1.76-rc.52
