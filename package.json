@@ -420,6 +420,7 @@
       "lodash": "4.18.1",
       "linkify-it": "5.0.2",
       "music-metadata": "11.12.3",
+      "nanoid": "3.3.17",
       "path-to-regexp@<1.0.0": "0.1.13",
       "path-to-regexp@>=8.0.0 <8.4.2": "8.4.2",
       "picomatch": "4.0.4",
