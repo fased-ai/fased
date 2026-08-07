@@ -10,64 +10,16 @@ function trueString(value) {
   return value ? "true" : "false";
 }
 
-export function isDependencyRemediationRoute(plan, route) {
-  if (route !== "dependency-remediation") {
-    return false;
-  }
-  const paths = [...plan.paths].toSorted((left, right) => left.localeCompare(right));
-  const exactPathSets = [
-    ["package.json", "pnpm-lock.yaml"],
-    ["extensions/zalo/package.json", "package.json", "pnpm-lock.yaml"],
-  ];
-  if (
-    plan.entryPoint !== null ||
-    plan.changeKind !== "production" ||
-    plan.manualReviewRequired ||
-    !exactPathSets.some((expected) => JSON.stringify(paths) === JSON.stringify(expected))
-  ) {
-    throw new Error(
-      "ci-change-scope: trusted dependency-remediation route does not match an exact advisory plan",
-    );
-  }
-  return true;
-}
-
-export function isFocusedLocalUpdateRoute(plan, route) {
-  if (route !== "local-update") {
-    return false;
-  }
-  if (
-    plan.entryPoint !== "local-update" ||
-    plan.entryPoints.length !== 1 ||
-    plan.entryPoints[0] !== "local-update" ||
-    plan.changeKind !== "production" ||
-    plan.manualReviewRequired ||
-    plan.scope.privilegeChanged !== true ||
-    plan.scope.runNodeFocused !== true ||
-    plan.scope.runLocalUpdate !== true ||
-    plan.scope.runLocalFresh !== false ||
-    plan.scope.runT2Contracts !== true ||
-    plan.acceptance.L1 !== true ||
-    plan.acceptance.L0 !== false
-  ) {
-    throw new Error(
-      "ci-change-scope: trusted local-update route does not match an exact privileged Local-update plan",
-    );
-  }
-  return true;
-}
-
-export function outputEntries(plan, options = {}) {
+export function outputEntries(plan) {
   const scope = plan.scope;
-  const dependencyRemediation = isDependencyRemediationRoute(plan, options.route ?? "");
-  const focusedLocalUpdate = isFocusedLocalUpdateRoute(plan, options.route ?? "");
+  const dependencyRemediation = false;
+  const focusedLocalUpdate = scope.runNodeFocused && scope.runLocalUpdate;
   const runDependencyIntegrity =
     dependencyRemediation || (scope.runNodePackaging && !focusedLocalUpdate);
   const lane = (value) => !dependencyRemediation && value;
   const focusedLane = (value) => lane(value) && !focusedLocalUpdate;
-  // The private route binds exact T1/T2 source evidence before the PR opens.
-  // Packaged P1 stays at the immutable candidate boundary. Keep public PR CI on
-  // focused source/security contracts without repeating privileged transactions.
+  // Packaged P1 stays at the immutable candidate boundary. Keep ordinary PR CI
+  // on focused source/security contracts without repeating that transaction.
   const prBuildLane = (value) => lane(value) && !focusedLocalUpdate;
   const prInstalledAcceptanceLane = (value) =>
     lane(value) && !focusedLocalUpdate && scope.productionChanged;
@@ -136,18 +88,6 @@ export function outputEntries(plan, options = {}) {
   };
 }
 
-export function assertExpectedPlanDigest(plan, expectedDigest) {
-  const expected = expectedDigest?.trim();
-  if (!expected) {
-    return;
-  }
-  if (plan.planDigest !== expected) {
-    throw new Error(
-      `ci-change-scope: trusted route plan digest mismatch: expected ${expected}, computed ${plan.planDigest}`,
-    );
-  }
-}
-
 function resolveDiffBase(env = process.env) {
   if (env.GITHUB_EVENT_NAME === "push") {
     const before = env.GITHUB_EVENT_BEFORE?.trim();
@@ -190,8 +130,8 @@ export function changedPathsFromGit(env = process.env) {
 function main() {
   const fullMatrix = process.env.FULL_MATRIX === "true";
   const reusePrChecks = process.env.REUSE_PR_CHECKS === "true";
-  const phase = process.env.GATE_PHASE || "T3";
-  const entryPoint = process.env.GATE_ENTRY_POINT || null;
+  const phase = "T3";
+  const entryPoint = null;
   let paths = [];
   let unknown = false;
 
@@ -213,8 +153,7 @@ function main() {
     reusePrChecks,
     unknown,
   });
-  assertExpectedPlanDigest(plan, process.env.GATE_EXPECTED_PLAN_DIGEST);
-  const entries = outputEntries(plan, { route: process.env.GATE_ROUTE || "" });
+  const entries = outputEntries(plan);
   const outputPath = process.env.GITHUB_OUTPUT;
   if (!outputPath) {
     throw new Error("ci-change-scope: GITHUB_OUTPUT is required");

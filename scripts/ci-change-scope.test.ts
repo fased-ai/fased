@@ -1,26 +1,20 @@
 import { describe, expect, it } from "vitest";
-import {
-  assertExpectedPlanDigest,
-  classifyChangedPaths,
-  outputEntries,
-} from "./ci-change-scope.mjs";
+import { classifyChangedPaths, outputEntries } from "./ci-change-scope.mjs";
 import { createGatePlan } from "./gate-authority.mjs";
 
 describe("CI changed-surface classification", () => {
-  it("serializes granular Node, signer, Docker, bootstrap, and CodeQL outputs", () => {
-    const plan = createGatePlan(["scripts/protected-local-bootstrap.mjs"], {
-      entryPoint: "local-update",
-    });
+  it("automatically keeps a narrow updater change on the focused source lane", () => {
+    const plan = createGatePlan(["scripts/protected-local-bootstrap.mjs"]);
     const output = outputEntries(plan);
 
     expect(output).toMatchObject({
       run_node_focused: "true",
-      run_node_build: "true",
+      run_node_build: "false",
       run_node_full: "false",
       run_native_signer: "false",
-      run_signer_integration: "true",
+      run_signer_integration: "false",
       run_local_fresh: "false",
-      run_local_update: "true",
+      run_local_update: "false",
       run_codeql_javascript: "true",
       run_codeql_go: "false",
       run_codeql_python: "false",
@@ -28,33 +22,7 @@ describe("CI changed-surface classification", () => {
     });
   });
 
-  it("routes an exact trusted dependency remediation only through dependency integrity", () => {
-    const output = outputEntries(
-      createGatePlan(["extensions/zalo/package.json", "package.json", "pnpm-lock.yaml"]),
-      { route: "dependency-remediation" },
-    );
-
-    expect(output).toMatchObject({
-      change_kind: "production",
-      dependency_remediation: "true",
-      run_dependency_integrity: "true",
-      run_node: "false",
-      run_node_focused: "false",
-      run_node_build: "false",
-      run_node_packaging: "false",
-      run_node_full: "false",
-      run_signer: "false",
-      run_local_fresh: "false",
-      run_local_update: "false",
-      run_hosting: "false",
-      run_docker: "false",
-      run_codeql_javascript: "false",
-      run_codeql_go: "false",
-      run_codeql_python: "false",
-    });
-  });
-
-  it("keeps a trusted Local-update PR on source contracts and defers packaged acceptance", () => {
+  it("keeps a Local-update PR on source contracts and defers packaged acceptance", () => {
     const plan = createGatePlan(
       [
         "scripts/fased-lifecycle-supervisor.mjs",
@@ -62,12 +30,9 @@ describe("CI changed-surface classification", () => {
         "scripts/protected-local-bootstrap.mjs",
         "scripts/protected-local-service-plan.mjs",
       ],
-      {
-        phase: "T2",
-        entryPoint: "local-update",
-      },
+      { phase: "T2" },
     );
-    const output = outputEntries(plan, { route: "local-update" });
+    const output = outputEntries(plan);
 
     expect(output).toMatchObject({
       focused_local_update: "true",
@@ -99,9 +64,9 @@ describe("CI changed-surface classification", () => {
         "scripts/protected-local-bootstrap.test.ts",
         "scripts/release-check.ts",
       ],
-      { phase: "T1", entryPoint: "local-update" },
+      { phase: "T1" },
     );
-    const output = outputEntries(plan, { route: "local-update" });
+    const output = outputEntries(plan);
 
     expect(output).toMatchObject({
       focused_local_update: "true",
@@ -119,26 +84,6 @@ describe("CI changed-surface classification", () => {
     });
   });
 
-  it("rejects a trusted Local-update route for a non-privileged or broader plan", () => {
-    expect(() =>
-      outputEntries(createGatePlan(["src/agents/agent.ts"]), { route: "local-update" }),
-    ).toThrow(/(?:entry point .* is not affected|trusted local-update route does not match)/u);
-    expect(() =>
-      outputEntries(createGatePlan(["package.json"], { entryPoint: "local-update" }), {
-        route: "local-update",
-      }),
-    ).toThrow(/(?:entry point .* is not affected|trusted local-update route does not match)/u);
-    expect(() =>
-      outputEntries(
-        createGatePlan(
-          ["scripts/protected-local-bootstrap.mjs", "src/wallet/native-signer-operator-client.ts"],
-          { phase: "T1", entryPoint: "local-update" },
-        ),
-        { route: "local-update" },
-      ),
-    ).toThrow(/trusted local-update route does not match/u);
-  });
-
   it("retains dependency integrity without narrowing an untrusted package change", () => {
     const output = outputEntries(createGatePlan(["package.json", "pnpm-lock.yaml"]));
 
@@ -149,16 +94,6 @@ describe("CI changed-surface classification", () => {
       run_node_packaging: "true",
       run_node_full: "true",
     });
-  });
-
-  it("rejects a trusted private route bound to a different public plan", () => {
-    const plan = createGatePlan(["scripts/protected-local-bootstrap.mjs"], {
-      entryPoint: "local-update",
-    });
-    expect(() => assertExpectedPlanDigest(plan, plan.planDigest)).not.toThrow();
-    expect(() => assertExpectedPlanDigest(plan, `sha256:${"0".repeat(64)}`)).toThrow(
-      /trusted route plan digest mismatch/u,
-    );
   });
 
   it("keeps documentation-only changes lightweight", () => {

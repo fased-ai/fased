@@ -191,30 +191,29 @@ describe("CI workflow routing", () => {
     });
   });
 
-  it("binds trusted routing to granular fast lanes", async () => {
+  it("classifies PRs from protected-base policy without private release state", async () => {
     const workflow = await readWorkflow(".github/workflows/ci.yml");
     const jobs = workflow.jobs ?? {};
     const scopeSteps = jobs["change-scope"]?.steps ?? [];
     const privateRoute = scopeSteps.find((step) => step.id === "private-route");
+    const authorityCheckout = scopeSteps.find((step) => step.name === "Checkout trusted authority");
     const scope = scopeSteps.find((step) => step.id === "scope");
 
-    expect(privateRoute?.run).toBe("node scripts/ci-private-route-status.mjs");
-    expect(privateRoute?.env).toMatchObject({
-      GH_TOKEN: "${{ github.token }}",
-      FASED_PRIVATE_STATUS_ACTOR: "${{ vars.FASED_PRIVATE_STATUS_ACTOR }}",
-      FASED_PRIVATE_STATUS_ACTOR_ID: "${{ vars.FASED_PRIVATE_STATUS_ACTOR_ID }}",
+    expect(privateRoute).toBeUndefined();
+    expect(authorityCheckout?.with).toMatchObject({
+      ref: "${{ github.event.pull_request.base.sha || github.sha }}",
+      path: ".ci-authority",
     });
-    expect(scope?.env).toMatchObject({
-      GATE_ROUTE: "${{ steps.private-route.outputs.gate_route }}",
-      GATE_PHASE: "${{ steps.private-route.outputs.gate_phase || 'T3' }}",
-      GATE_ENTRY_POINT: "${{ steps.private-route.outputs.gate_entry_point }}",
-      GATE_EXPECTED_PLAN_DIGEST: "${{ steps.private-route.outputs.expected_plan_digest }}",
-    });
+    expect(scope?.run).toBe("node .ci-authority/scripts/ci-change-scope.mjs");
+    expect(scope?.env).not.toHaveProperty("GATE_ROUTE");
+    expect(scope?.env).not.toHaveProperty("GATE_PHASE");
+    expect(scope?.env).not.toHaveProperty("GATE_ENTRY_POINT");
+    expect(scope?.env).not.toHaveProperty("GATE_EXPECTED_PLAN_DIGEST");
     const ciContractCommand =
       jobs["ci-contracts"]?.steps?.find(
         (step) => step.name === "Check CI routing and gate contracts",
       )?.run ?? "";
-    expect(ciContractCommand).toContain("scripts/ci-private-route-status.test.ts");
+    expect(ciContractCommand).not.toContain("scripts/ci-private-route-status.test.ts");
 
     const focused = jobs["node-focused"];
     expect(focused?.if).toBe("needs.change-scope.outputs.run_node_focused == 'true'");
