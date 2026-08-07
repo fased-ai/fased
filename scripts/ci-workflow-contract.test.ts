@@ -293,12 +293,10 @@ describe("CI workflow routing", () => {
     );
     expect(jobs["codeql-javascript"]?.["timeout-minutes"]).toBeGreaterThanOrEqual(20);
     const javascriptSteps = jobs["codeql-javascript"]?.steps ?? [];
-    const focusedInit = javascriptSteps.find(
-      (step) => step.name === "Initialize focused Local-update CodeQL",
-    );
+    const focusedInit = javascriptSteps.find((step) => step.name === "Initialize focused CodeQL");
     const fullInit = javascriptSteps.find((step) => step.name === "Initialize full CodeQL");
-    expect(focusedInit?.if).toBe("needs.change-scope.outputs.focused_local_update == 'true'");
-    expect(fullInit?.if).toBe("needs.change-scope.outputs.focused_local_update != 'true'");
+    expect(focusedInit?.if).toBe("needs.change-scope.outputs.run_node_focused == 'true'");
+    expect(fullInit?.if).toBe("needs.change-scope.outputs.run_node_focused != 'true'");
     const focusedConfig = parse(String(focusedInit?.with?.config ?? "")) as {
       paths?: string[];
     };
