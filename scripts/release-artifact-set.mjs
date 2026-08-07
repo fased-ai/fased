@@ -87,18 +87,35 @@ async function safeDirectoryFiles(directory) {
   return files;
 }
 
-function validateIdentity({ version, commit, sourceRef, workflowRunId }) {
+function validateIdentity({
+  version,
+  commit,
+  tree,
+  lockfileDigest,
+  sourceRef,
+  workflowRunId,
+  workflowRunAttempt,
+}) {
   if (!VERSION_PATTERN.test(version || "")) {
     fail("candidate version is invalid");
   }
   if (!COMMIT_PATTERN.test(commit || "")) {
     fail("candidate commit is invalid");
   }
-  if (sourceRef !== `refs/tags/v${version}`) {
-    fail("candidate source ref must be the exact version tag");
+  if (!COMMIT_PATTERN.test(tree || "")) {
+    fail("candidate tree is invalid");
+  }
+  if (!DIGEST_PATTERN.test(lockfileDigest || "")) {
+    fail("candidate lockfile digest is invalid");
+  }
+  if (sourceRef !== "refs/heads/main") {
+    fail("candidate source ref must be protected main");
   }
   if (!/^[1-9][0-9]*$/u.test(String(workflowRunId || ""))) {
     fail("candidate workflow run ID is invalid");
+  }
+  if (!/^[1-9][0-9]*$/u.test(String(workflowRunAttempt || ""))) {
+    fail("candidate workflow run attempt is invalid");
   }
 }
 
@@ -106,10 +123,21 @@ export async function buildCandidateDescriptor({
   directory,
   version,
   commit,
+  tree,
+  lockfileDigest,
   sourceRef,
   workflowRunId,
+  workflowRunAttempt,
 }) {
-  validateIdentity({ version, commit, sourceRef, workflowRunId });
+  validateIdentity({
+    version,
+    commit,
+    tree,
+    lockfileDigest,
+    sourceRef,
+    workflowRunId,
+    workflowRunAttempt,
+  });
   const files = await safeDirectoryFiles(directory);
   if (files.some(({ name }) => name === CANDIDATE_DESCRIPTOR || name === CANDIDATE_ATTESTATION)) {
     fail("candidate descriptor output already exists");
@@ -122,11 +150,14 @@ export async function buildCandidateDescriptor({
     artifacts.push({ name, sha256: await sha256File(file), size });
   }
   const descriptor = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     version,
     commit,
+    tree,
+    lockfileDigest,
     sourceRef,
     workflowRunId: String(workflowRunId),
+    workflowRunAttempt: String(workflowRunAttempt),
     artifacts,
     artifactSetDigest: digestValue(artifacts),
   };
@@ -145,14 +176,17 @@ function parseDescriptor(value, expected = {}) {
       "schemaVersion",
       "version",
       "commit",
+      "tree",
+      "lockfileDigest",
       "sourceRef",
       "workflowRunId",
+      "workflowRunAttempt",
       "artifacts",
       "artifactSetDigest",
     ],
     "candidate descriptor",
   );
-  if (value.schemaVersion !== 2) {
+  if (value.schemaVersion !== 3) {
     fail("candidate descriptor schema is unsupported");
   }
   validateIdentity(value);
@@ -305,7 +339,18 @@ function parseArgs(argv) {
   const required =
     command === "verify-assets"
       ? ["--directory", "--assets-json"]
-      : ["--directory", "--version", "--commit", "--source-ref", "--workflow-run-id"];
+      : [
+          "--directory",
+          "--version",
+          "--commit",
+          "--tree",
+          "--lockfile-digest",
+          "--source-ref",
+          "--workflow-run-id",
+        ];
+  if (command === "build") {
+    required.push("--workflow-run-attempt");
+  }
   for (const key of required) {
     if (!values.has(key)) {
       fail(`missing ${key}`);
@@ -316,8 +361,11 @@ function parseArgs(argv) {
     directory: path.resolve(values.get("--directory")),
     version: values.get("--version"),
     commit: values.get("--commit"),
+    tree: values.get("--tree"),
+    lockfileDigest: values.get("--lockfile-digest"),
     sourceRef: values.get("--source-ref"),
     workflowRunId: values.get("--workflow-run-id"),
+    workflowRunAttempt: values.get("--workflow-run-attempt"),
     assetsJson: values.has("--assets-json") ? path.resolve(values.get("--assets-json")) : null,
   };
 }
@@ -333,8 +381,11 @@ async function main(argv) {
             expected: {
               version: options.version,
               commit: options.commit,
+              tree: options.tree,
+              lockfileDigest: options.lockfileDigest,
               sourceRef: options.sourceRef,
               workflowRunId: options.workflowRunId,
+              workflowRunAttempt: options.workflowRunAttempt,
             },
           })
         : await verifyPublishedAssets({

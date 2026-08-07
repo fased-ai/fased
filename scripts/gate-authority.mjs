@@ -16,10 +16,7 @@ const DOC_PATH_RE = /^(?:docs\/|.*\.(?:md|mdx)$|scripts\/docs-product-contract\.
 const VERSION_PATH_RE =
   /^(?:package\.json|CHANGELOG\.md|src\/brand\.ts|extensions\/[^/]+\/(?:package\.json|CHANGELOG\.md))$/;
 const CI_INFRASTRUCTURE_PATH_RE =
-  /^(?:\.pre-commit-config\.yaml$|\.secrets\.baseline$|config\/lifecycle-compatibility\.v1\.json$|\.github\/(?:actions\/[^/]+\/action\.ya?ml|workflows\/[^/]+\.ya?ml)|scripts\/(?:gate-authority|hosted-installer-artifact-layout|lifecycle-compatibility-inventory|lifecycle-release-gate|release-artifact-set|verify-release-gate-status|ci-(?:change-scope|dependency-integrity|private-route-status|required-gates|merged-main-reuse|run-changed-tests|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/(?:check-composite-action-input-interpolation\.py|lifecycle-release-gate-receipt\.v1\.schema\.json)|ui\/vitest\.changed-node\.config\.ts)$/;
-const LIFECYCLE_GATE_REQUIRED_PATHS = Object.freeze(["scripts/lifecycle-release-gate.mjs"]);
-const LIFECYCLE_GATE_ENFORCEMENT_PATH_RE =
-  /^(?:\.github\/workflows\/(?:ci|docker-release)\.yml|scripts\/(?:gate-authority|lifecycle-release-gate|ci-(?:change-scope|private-route-status|required-gates|merged-main-reuse|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/lifecycle-release-gate-receipt\.v1\.schema\.json)$/;
+  /^(?:\.pre-commit-config\.yaml$|\.secrets\.baseline$|config\/lifecycle-compatibility\.v1\.json$|\.github\/(?:actions\/[^/]+\/action\.ya?ml|workflows\/[^/]+\.ya?ml)|scripts\/(?:gate-authority|hosted-installer-artifact-layout|lifecycle-compatibility-inventory|release-artifact-set|ci-(?:change-scope|dependency-integrity|required-gates|merged-main-reuse|run-changed-tests|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/check-composite-action-input-interpolation\.py|ui\/vitest\.changed-node\.config\.ts)$/;
 const T2_FIXTURE_PATH_RE =
   /^scripts\/(?:protected-local-t2-(?:controller-worker|supervisor-worker|systemd-fixture)\.mjs|protected-local-t2-systemd\.test\.ts|test-protected-local-t2-systemd\.sh)$/;
 const TEST_PATH_RE =
@@ -341,28 +338,18 @@ export function createGatePlan(inputPaths, options = {}) {
     paths.includes("package.json") &&
     paths.includes("src/brand.ts") &&
     paths.every((path) => VERSION_PATH_RE.test(path));
-  const lifecycleGateEnforcementOnly =
-    !versionOnly &&
-    LIFECYCLE_GATE_REQUIRED_PATHS.every((path) => paths.includes(path)) &&
-    paths.every((path) => LIFECYCLE_GATE_ENFORCEMENT_PATH_RE.test(path));
+  const lifecycleGateEnforcementOnly = false;
   const ciInfrastructureOnly =
     !versionOnly &&
     paths.some((path) => CI_INFRASTRUCTURE_PATH_RE.test(path)) &&
     paths.every((path) => CI_INFRASTRUCTURE_PATH_RE.test(path) || DOC_PATH_RE.test(path));
-  const ciInfrastructureChanged =
-    lifecycleGateEnforcementOnly || paths.some((path) => CI_INFRASTRUCTURE_PATH_RE.test(path));
+  const ciInfrastructureChanged = paths.some((path) => CI_INFRASTRUCTURE_PATH_RE.test(path));
   const t2FixtureOnly = paths.every((path) => T2_FIXTURE_PATH_RE.test(path));
   const testOnly = paths.every((path) => TEST_PATH_RE.test(path) || T2_FIXTURE_PATH_RE.test(path));
   const fixtureOnly = paths.every((path) =>
     /^(?:fixtures\/|scripts\/(?:docker\/|test-|protected-local-t2-))/.test(path),
   );
-  const productionPaths = versionOnly
-    ? []
-    : paths.filter(
-        (path) =>
-          !isNonProductionPath(path) &&
-          !(lifecycleGateEnforcementOnly && LIFECYCLE_GATE_ENFORCEMENT_PATH_RE.test(path)),
-      );
+  const productionPaths = versionOnly ? [] : paths.filter((path) => !isNonProductionPath(path));
   const productionChanged = productionPaths.length > 0;
   const gateToolingOnly =
     !versionOnly &&
@@ -371,7 +358,6 @@ export function createGatePlan(inputPaths, options = {}) {
     paths.every(
       (path) =>
         CI_INFRASTRUCTURE_PATH_RE.test(path) ||
-        (lifecycleGateEnforcementOnly && LIFECYCLE_GATE_ENFORCEMENT_PATH_RE.test(path)) ||
         T2_FIXTURE_PATH_RE.test(path) ||
         DOC_PATH_RE.test(path) ||
         TEST_PATH_RE.test(path) ||

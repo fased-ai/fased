@@ -64,8 +64,6 @@ describe("machine gate authority", () => {
       ".github/workflows/hosted-runtime-release.yml",
       "scripts/release-artifact-set.mjs",
       "scripts/release-artifact-set.test.ts",
-      "scripts/verify-release-gate-status.mjs",
-      "scripts/verify-release-gate-status.test.ts",
       "scripts/hosted-installer-artifact-layout.test.ts",
       "scripts/gate-authority.mjs",
       "scripts/gate-authority.test.ts",

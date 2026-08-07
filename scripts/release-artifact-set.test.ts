@@ -33,8 +33,11 @@ describe("exact release artifact promotion", () => {
       directory,
       version: "0.1.76-rc.32",
       commit: "a".repeat(40),
-      sourceRef: "refs/tags/v0.1.76-rc.32",
+      tree: "b".repeat(40),
+      lockfileDigest: `sha256:${"c".repeat(64)}`,
+      sourceRef: "refs/heads/main",
       workflowRunId: "12345",
+      workflowRunAttempt: "1",
     });
     expect(built.descriptor.artifacts.map(({ name }) => name)).toEqual([
       "application.tar.gz",
@@ -46,8 +49,11 @@ describe("exact release artifact promotion", () => {
       expected: {
         version: "0.1.76-rc.32",
         commit: "a".repeat(40),
-        sourceRef: "refs/tags/v0.1.76-rc.32",
+        tree: "b".repeat(40),
+        lockfileDigest: `sha256:${"c".repeat(64)}`,
+        sourceRef: "refs/heads/main",
         workflowRunId: "12345",
+        workflowRunAttempt: "1",
       },
     });
     expect(verified.descriptorDigest).toBe(built.descriptorDigest);
@@ -66,8 +72,11 @@ describe("exact release artifact promotion", () => {
       directory,
       version: "0.1.76-rc.32",
       commit: "b".repeat(40),
-      sourceRef: "refs/tags/v0.1.76-rc.32",
+      tree: "c".repeat(40),
+      lockfileDigest: `sha256:${"d".repeat(64)}`,
+      sourceRef: "refs/heads/main",
       workflowRunId: "99",
+      workflowRunAttempt: "1",
     });
     await fsp.writeFile(path.join(directory, CANDIDATE_ATTESTATION), "attestation\n");
     await fsp.writeFile(path.join(directory, "application.tar.gz"), "changed\n");
@@ -88,30 +97,39 @@ describe("exact release artifact promotion", () => {
         directory: linked,
         version: "0.1.76-rc.32",
         commit: "c".repeat(40),
-        sourceRef: "refs/tags/v0.1.76-rc.32",
+        tree: "d".repeat(40),
+        lockfileDigest: `sha256:${"e".repeat(64)}`,
+        sourceRef: "refs/heads/main",
         workflowRunId: "100",
+        workflowRunAttempt: "1",
       }),
     ).rejects.toThrow("regular single-link");
   });
 
-  it("requires tag-bound identity and a descriptor attestation", async () => {
+  it("requires protected-main source identity and a descriptor attestation", async () => {
     const directory = await fixture();
     await expect(
       buildCandidateDescriptor({
         directory,
         version: "0.1.76-rc.32",
         commit: "d".repeat(40),
-        sourceRef: "refs/heads/main",
+        tree: "e".repeat(40),
+        lockfileDigest: `sha256:${"f".repeat(64)}`,
+        sourceRef: "refs/heads/topic",
         workflowRunId: "101",
+        workflowRunAttempt: "1",
       }),
-    ).rejects.toThrow("exact version tag");
+    ).rejects.toThrow("protected main");
 
     await buildCandidateDescriptor({
       directory,
       version: "0.1.76-rc.32",
       commit: "d".repeat(40),
-      sourceRef: "refs/tags/v0.1.76-rc.32",
+      tree: "e".repeat(40),
+      lockfileDigest: `sha256:${"f".repeat(64)}`,
+      sourceRef: "refs/heads/main",
       workflowRunId: "101",
+      workflowRunAttempt: "1",
     });
     expect(fs.existsSync(path.join(directory, CANDIDATE_DESCRIPTOR))).toBe(true);
     await expect(verifyCandidateDirectory({ directory })).rejects.toThrow(
@@ -125,8 +143,11 @@ describe("exact release artifact promotion", () => {
       directory,
       version: "0.1.76-rc.32",
       commit: "e".repeat(40),
-      sourceRef: "refs/tags/v0.1.76-rc.32",
+      tree: "f".repeat(40),
+      lockfileDigest: `sha256:${"a".repeat(64)}`,
+      sourceRef: "refs/heads/main",
       workflowRunId: "102",
+      workflowRunAttempt: "1",
     });
     await fsp.writeFile(path.join(directory, CANDIDATE_ATTESTATION), "attestation\n");
     const artifacts = await buildPromotionArtifacts(directory);

@@ -451,44 +451,55 @@ describe("CI workflow routing", () => {
     expect(dockerWorkflow).not.toContain("gh release upload");
   });
 
-  it("builds a non-publishing tag candidate and promotes only its exact verified bytes", async () => {
+  it("builds once from protected main, runs P1, then verifies the owner tag and publishes", async () => {
     const workflow = await readWorkflow(".github/workflows/hosted-runtime-release.yml");
     const jobs = workflow.jobs ?? {};
     const candidate = jobs["candidate"];
+    const p1 = jobs["p1"];
     const publish = jobs["publish"];
+    const validateText = jobs["validate"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    const linuxText = jobs["linux"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
 
-    expect(jobs["release-gate"]?.if).toBe(
-      "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')",
-    );
-    expect(candidate?.if).toBe(
-      "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')",
-    );
+    expect(workflow.on).not.toHaveProperty("push");
+    expect(jobs["release-gate"]).toBeUndefined();
     expect(candidate?.needs).toEqual(["validate", "linux", "signer"]);
-    expect(publish?.if).toBe("github.event_name == 'workflow_dispatch'");
+    expect(p1?.needs).toEqual(["candidate"]);
+    expect(publish?.needs).toEqual(["candidate", "p1"]);
+    expect(publish?.environment).toBe("candidate-release");
     expect(workflow.concurrency?.group).toBe(
-      "hosted-runtime-release-${{ inputs.release_tag || github.ref_name }}",
+      "hosted-runtime-release-${{ inputs.release_version }}-${{ inputs.source_commit }}",
     );
 
     const candidateText = candidate?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    const p1Text = p1?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const publishText = publish?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    const releaseGateText =
-      jobs["release-gate"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    expect(releaseGateText).toContain('--trusted-actor-id "$TRUSTED_RELEASE_ACTOR_ID"');
-    expect(releaseGateText).toContain('--release-tag "$GITHUB_REF_NAME"');
     expect(candidateText).toContain("release-artifact-set.mjs build");
+    expect(validateText).toContain("pnpm release:check");
+    expect(linuxText).toContain("hosted:artifact:from-dist");
+    expect(linuxText).not.toContain("hosted:artifact:build");
+    expect(candidateText).toContain('--source-ref "refs/heads/main"');
+    expect(candidateText).toContain("--tree");
+    expect(candidateText).toContain("--lockfile-digest");
+    expect(candidateText).toContain("--workflow-run-attempt");
+    expect(publishText).not.toContain("--workflow-run-attempt");
     expect(candidateText).not.toContain("gh release create");
     expect(
       candidate?.steps?.find((step) => usesAction(step, "actions/upload-artifact"))?.with?.name,
     ).toBe("fased-hosting-candidate");
 
-    const download = publish?.steps?.find((step) => usesAction(step, "actions/download-artifact"));
-    expect(download?.with).toMatchObject({
+    const p1Download = p1?.steps?.find((step) => usesAction(step, "actions/download-artifact"));
+    expect(p1Download?.with).toMatchObject({
       name: "fased-hosting-candidate",
-      "run-id": "${{ inputs.candidate_run_id }}",
     });
-    expect(publishText).toContain("--artifact-set-digest");
-    expect(publishText).toContain('--trusted-actor-id "$TRUSTED_RELEASE_ACTOR_ID"');
-    expect(publishText).toContain('--release-tag "$RELEASE_TAG"');
+    expect(p1Text).toContain("test-protected-local-systemd-container.sh");
+    expect(
+      p1?.steps?.find(
+        (step) => step.name === "Run packaged fresh-install and supported-stable update P1",
+      )?.env,
+    ).toMatchObject({ FASED_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install,install" });
+    expect(publishText).not.toContain("git tag");
+    expect(publishText).not.toContain("git push origin");
+    expect(publishText).toContain("git ls-remote --exit-code --tags origin");
     expect(publishText).toContain("release-artifact-set.mjs verify-assets");
     expect(publishText).toContain('gh release create "$RELEASE_TAG"');
     expect(publishText).toContain('.artifacts/hosted-runtime/* "${release_args[@]}"');
