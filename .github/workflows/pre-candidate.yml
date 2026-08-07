@@ -31,7 +31,7 @@ jobs:
   validate:
     name: Validate source before allocating a candidate
     runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    timeout-minutes: 5
     steps:
       - name: Checkout exact unversioned source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -44,12 +44,6 @@ jobs:
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.x
-
-      - name: Setup Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version-file: tools/fased-signerd/go.mod
-          cache-dependency-path: tools/fased-signerd/go.sum
 
       - name: Setup pnpm + cache store
         uses: ./.github/actions/setup-pnpm-store-cache
@@ -81,6 +75,33 @@ jobs:
       - name: Enforce production vulnerability threshold
         run: pnpm audit --prod --audit-level high
 
+      - name: Verify exact successful merged-main checks
+        id: main-pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          runs="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SOURCE_COMMIT&branch=main&event=push&status=success&per_page=20"
+          )"
+          main_run_id="$(
+            jq -er \
+              --arg sourceCommit "$SOURCE_COMMIT" \
+              '[.workflow_runs[] | select(.head_sha == $sourceCommit and .head_branch == "main" and .event == "push" and .conclusion == "success")] | sort_by(.run_number) | last | .id' \
+              <<<"$runs"
+          )"
+          jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$main_run_id/jobs?per_page=100")"
+          main_checks_job_id="$(
+            jq -er \
+              '[.jobs[] | select(.name == "checks" and .conclusion == "success")] | last | .id' \
+              <<<"$jobs"
+          )"
+          printf 'run_id=%s\n' "$main_run_id" >>"$GITHUB_OUTPUT"
+          printf 'checks_job_id=%s\n' "$main_checks_job_id" >>"$GITHUB_OUTPUT"
+
       - name: Verify public compatibility inventory
         env:
           GH_TOKEN: ${{ github.token }}
@@ -91,11 +112,10 @@ jobs:
           node scripts/lifecycle-compatibility-inventory.mjs --verify-public-github
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
 
-      - name: Validate release contents
-        run: pnpm release:check
-
       - name: Record immutable pre-candidate evidence
         env:
+          MAIN_CHECKS_JOB_ID: ${{ steps.main-pass.outputs.checks_job_id }}
+          MAIN_RUN_ID: ${{ steps.main-pass.outputs.run_id }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
           NEXT_RELEASE_VERSION: ${{ inputs.next_release_version }}
           PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
@@ -109,8 +129,10 @@ jobs:
             --arg lockfileDigest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
             --arg nextReleaseVersion "$NEXT_RELEASE_VERSION" \
             --arg predecessorVersion "$PREDECESSOR_VERSION" \
+            --arg mainRunId "$MAIN_RUN_ID" \
+            --arg mainChecksJobId "$MAIN_CHECKS_JOB_ID" \
             --arg workflowRunId "$GITHUB_RUN_ID" \
-            '{schemaVersion:1,sourceCommit:$sourceCommit,sourceTree:$sourceTree,lockfileDigest:$lockfileDigest,nextReleaseVersion:$nextReleaseVersion,predecessorVersion:$predecessorVersion,workflowRunId:$workflowRunId}' \
+            '{schemaVersion:1,sourceCommit:$sourceCommit,sourceTree:$sourceTree,lockfileDigest:$lockfileDigest,nextReleaseVersion:$nextReleaseVersion,predecessorVersion:$predecessorVersion,mainRunId:$mainRunId,mainChecksJobId:$mainChecksJobId,workflowRunId:$workflowRunId}' \
             >.artifacts/pre-candidate/evidence.json
 
       - name: Upload pre-candidate evidence

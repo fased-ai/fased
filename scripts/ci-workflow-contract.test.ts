@@ -497,12 +497,24 @@ describe("CI workflow routing", () => {
       "fased-signerd-release",
     ]);
     expect(candidateText).toContain("release-artifact-set.mjs build");
-    expect(validateText).toContain("pnpm release:check");
+    expect(validateText).toContain("pnpm build");
+    expect(validateText).toContain("pnpm check:plugin-sdk:types");
+    expect(validateText).toContain("node --import tsx scripts/release-check.ts");
+    expect(validateText).toContain("pnpm release:validate-dist:packed");
+    expect(validateText).not.toContain("pnpm release:check");
+    expect(validateText).not.toContain("pnpm signer:protocol:check");
+    expect(validateText).not.toContain("pnpm sat:signer-codecs:check");
+    expect(validateText).not.toContain("pnpm test:signer:compat");
+    expect(validateText).not.toContain("pnpm test:local-source-update-compat");
+    expect(validateText).not.toContain("pnpm test:managed-updater");
+    expect(validateText).toContain(".mainRunId");
+    expect(validateText).toContain(".mainChecksJobId");
+    expect(validateText).toContain("actions/jobs/$main_checks_job_id");
     expect(
       jobs["validate"]?.steps?.some((step) => step.name === "Verify immutable pre-candidate pass"),
     ).toBe(true);
     expect(validateText.indexOf("pnpm audit --prod --audit-level high")).toBeLessThan(
-      validateText.indexOf("pnpm release:check"),
+      validateText.indexOf("pnpm build"),
     );
     expect(linuxText).toContain("hosted:artifact:from-dist");
     expect(linuxText).not.toContain("hosted:artifact:build");
@@ -564,11 +576,23 @@ describe("CI workflow routing", () => {
     expect(workflow.on).not.toHaveProperty("push");
     expect(workflow.on).not.toHaveProperty("pull_request");
     expect(workflow.on).toHaveProperty("workflow_dispatch");
-    expect(validate?.["timeout-minutes"]).toBeLessThanOrEqual(12);
+    expect(validate?.["timeout-minutes"]).toBeLessThanOrEqual(5);
     expect(commands).toContain("pnpm install --frozen-lockfile");
-    expect(commands.indexOf("pnpm audit --prod --audit-level high")).toBeLessThan(
-      commands.indexOf("pnpm release:check"),
-    );
+    expect(commands).toContain("actions/workflows/ci.yml/runs?head_sha=$SOURCE_COMMIT");
+    expect(commands).toContain('.name == "checks" and .conclusion == "success"');
+    expect(commands).toContain("mainRunId");
+    expect(commands).toContain("mainChecksJobId");
+    expect(commands).not.toContain("pnpm release:check");
+    expect(commands).not.toMatch(/(^|\s)pnpm build($|\s)/u);
+    expect(commands).not.toContain("pnpm signer:protocol:check");
+    expect(commands).not.toContain("pnpm sat:signer-codecs:check");
+    expect(commands).not.toContain("pnpm check:dependency-ownership");
+    expect(commands).not.toContain("pnpm test:signer:compat");
+    expect(commands).not.toContain("pnpm test:local-source-update-compat");
+    expect(commands).not.toContain("pnpm test:managed-updater");
+    expect(commands).not.toContain("pnpm check:plugin-sdk:types");
+    expect(commands).not.toContain("scripts/release-check.ts");
+    expect(commands).not.toContain("pnpm release:validate-dist:packed");
     expect(commands).toContain("--verify-public-github");
     expect(commands).toContain("lockfileDigest");
     expect(
