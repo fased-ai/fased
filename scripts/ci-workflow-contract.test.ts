@@ -141,6 +141,7 @@ describe("CI workflow routing", () => {
     expect(required?.steps?.at(-1)?.run).toBe("node scripts/ci-required-gates.mjs");
     expect(required?.steps?.at(-1)?.env).toMatchObject({
       VERSION_ONLY: "${{ needs.change-scope.outputs.version_only }}",
+      DEPENDENCY_REMEDIATION: "${{ needs.change-scope.outputs.dependency_remediation }}",
       MANUAL_REVIEW_REQUIRED: "${{ needs.change-scope.outputs.manual_review_required }}",
       RUN_HOSTING: "${{ needs.change-scope.outputs.run_hosting }}",
       RUN_LOCAL_FRESH: "${{ needs.change-scope.outputs.run_local_fresh }}",

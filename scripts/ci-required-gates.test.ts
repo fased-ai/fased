@@ -41,6 +41,23 @@ describe("required CI gate aggregation", () => {
     ).toThrow(/required dependency integrity result was skipped/u);
   });
 
+  it("accepts the exact dependency-remediation aggregate without generic Node gates", () => {
+    expect(() =>
+      assertApplicableGates({
+        dependencyRemediation: true,
+        runDependencyIntegrity: true,
+        runNodeBuild: true,
+        results: {
+          ...alwaysGreen,
+          "dependency integrity": "success",
+          "dist build": "success",
+          "format and lint": "skipped",
+          "strict types baseline": "skipped",
+        },
+      }),
+    ).not.toThrow();
+  });
+
   it("requires granular Node, Hosting, Local fresh, and Local update only when selected", () => {
     const selected = {
       "format and lint": "success",

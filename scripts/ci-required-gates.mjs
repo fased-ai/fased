@@ -42,7 +42,7 @@ export function assertApplicableGates(input) {
     enabled(input.runNodeBuild) ||
     enabled(input.runNodePackaging) ||
     enabled(input.runNodeFull);
-  if (anyNode && !enabled(input.runNodeFocused)) {
+  if (anyNode && !enabled(input.runNodeFocused) && !enabled(input.dependencyRemediation)) {
     for (const name of ["format and lint", "strict types baseline"]) {
       requireSuccess(results, name);
     }
@@ -137,6 +137,7 @@ export function gateInputFromEnv(env = process.env) {
     docsChanged: env.DOCS_CHANGED,
     focusedLocalUpdate: env.FOCUSED_LOCAL_UPDATE,
     versionOnly: env.VERSION_ONLY,
+    dependencyRemediation: env.DEPENDENCY_REMEDIATION,
     manualReviewRequired: env.MANUAL_REVIEW_REQUIRED,
     runNodeFocused: env.RUN_NODE_FOCUSED,
     runNodeUnit: env.RUN_NODE_UNIT,
