@@ -1627,50 +1627,43 @@ EOF_MODERN_MINING_LEDGER
       "$state/bin/fased" update "${target_update_args[@]}" --timeout "$timeout_seconds"
   }
 
-  modern_launcher="/opt/fased/local/$instance/gateway-launch"
-  modern_launcher_original="${modern_launcher}.fixture-original.$$"
-  cp -a "$modern_launcher" "$modern_launcher_original"
-
-  inject_modern_failed_gateway() {
-    local current_link="/opt/fased/local/$instance/application/current"
-    local initial_target=""
-    local observed_target=""
-    local fault="${modern_launcher}.fixture-fault.$$"
-    initial_target="$(readlink -f "$current_link")"
-    for _ in {1..12000}; do
-      observed_target="$(readlink -f "$current_link")"
-      if [[ "$observed_target" != "$initial_target" ]]; then
-        cat >"$fault" <<EOF_MODERN_FAILED_GATEWAY
+  modern_current_link="/opt/fased/local/$instance/application/current"
+  modern_initial_target="$(readlink -f "$modern_current_link")"
+  modern_gateway_unit="fased-gateway-$instance.service"
+  modern_fault_root="/run/fased-fixture-modern-gateway-fault-$$"
+  modern_fault_script="$modern_fault_root/reject-target.sh"
+  modern_fault_marker="$modern_fault_root/injected"
+  modern_fault_dropin="/etc/systemd/system/${modern_gateway_unit}.d/99-fased-fixture-target-fault.conf"
+  mkdir -p "$modern_fault_root" "$(dirname "$modern_fault_dropin")"
+  cat >"$modern_fault_script" <<EOF_MODERN_FAILED_GATEWAY
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "\$(readlink -f '$current_link')" == '$initial_target' ]]; then
-  exec '$modern_launcher_original' "\$@"
+if [[ "\$(readlink -f '$modern_current_link')" != '$modern_initial_target' ]]; then
+  : >'$modern_fault_marker'
+  exit 1
 fi
-export FASED_FIXTURE_GATEWAY_PORT=$gateway_port
-export FASED_FIXTURE_LEGACY_VERSION=$legacy_gateway_version
-exec /usr/local/bin/node /usr/local/libexec/fased-fixture-legacy-gateway.mjs
 EOF_MODERN_FAILED_GATEWAY
-        chown root:root "$fault"
-        chmod 0755 "$fault"
-        mv -f "$fault" "$modern_launcher"
-        return 0
-      fi
-      sleep 0.005
-    done
-    echo "failed to inject the modern target Gateway activation fault" >&2
-    return 1
-  }
-
-  inject_modern_failed_gateway &
-  modern_injector_pid=$!
+  chown root:root "$modern_fault_script"
+  chmod 0755 "$modern_fault_script"
+  cat >"$modern_fault_dropin" <<EOF_MODERN_FAILED_GATEWAY_DROPIN
+[Service]
+ExecStartPre=$modern_fault_script
+EOF_MODERN_FAILED_GATEWAY_DROPIN
+  systemctl daemon-reload
   if run_target_update 30 \
       >/tmp/modern-update-failure.out 2>/tmp/modern-update-failure.err; then
     modern_failure_status=0
   else
     modern_failure_status=$?
   fi
-  wait "$modern_injector_pid"
-  mv -f "$modern_launcher_original" "$modern_launcher"
+  rm -f "$modern_fault_dropin"
+  systemctl daemon-reload
+  test -e "$modern_fault_marker" || {
+    echo "failed to inject the modern target Gateway activation fault" >&2
+    sed -n '1,200p' /tmp/modern-update-failure.err >&2
+    exit 1
+  }
+  rm -rf -- "$modern_fault_root"
   test "$modern_failure_status" -ne 0
   modern_recovery_transaction=""
   if grep -F "target release failed and was rolled back" \
