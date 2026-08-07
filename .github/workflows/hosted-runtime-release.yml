@@ -1,83 +1,37 @@
 name: Hosted Runtime Release
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
-      release_tag:
-        description: Exact immutable tag whose candidate bytes will be promoted
+      release_version:
+        description: Unused package version to build and promote from protected main
         required: true
         type: string
-      candidate_run_id:
-        description: Tag workflow run that produced the complete candidate artifact
-        required: true
-        type: string
-      gate_receipt_digest:
-        description: Exact private github-release gate receipt digest
+      source_commit:
+        description: Exact protected-main commit to build once
         required: true
         type: string
 
 permissions:
   actions: read
-  artifact-metadata: write
-  attestations: write
-  contents: write
-  id-token: write
+  contents: read
 
 concurrency:
-  group: hosted-runtime-release-${{ inputs.release_tag || github.ref_name }}
+  group: hosted-runtime-release-${{ inputs.release_version }}-${{ inputs.source_commit }}
   cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  release-gate:
-    name: Verify exact release authorization
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout exact tagged source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 24.x
-
-      - name: Verify tag-only lifecycle release gate
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TRUSTED_RELEASE_ACTOR: ${{ vars.FASED_TRUSTED_RELEASE_ACTOR }}
-          TRUSTED_RELEASE_ACTOR_ID: ${{ vars.FASED_TRUSTED_RELEASE_ACTOR_ID }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "$TRUSTED_RELEASE_ACTOR"
-          test -n "$TRUSTED_RELEASE_ACTOR_ID"
-          gh api --paginate \
-            "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/statuses?per_page=100" \
-            --slurp | jq 'add' > "$RUNNER_TEMP/release-statuses.json"
-          node scripts/verify-release-gate-status.mjs \
-            --statuses "$RUNNER_TEMP/release-statuses.json" \
-            --commit "$GITHUB_SHA" \
-            --action tag \
-            --trusted-actor "$TRUSTED_RELEASE_ACTOR" \
-            --trusted-actor-id "$TRUSTED_RELEASE_ACTOR_ID" \
-            --release-tag "$GITHUB_REF_NAME" \
-            --repository "$GITHUB_REPOSITORY"
-
   validate:
     name: Validate release contents
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: release-gate
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ inputs.source_commit }}
           # Release validation exercises one frozen pre-generation updater
           # fixture stored at an immutable historical tag.
           fetch-depth: 0
@@ -102,16 +56,50 @@ jobs:
       - name: Install build dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify exact protected-main candidate identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_SHA" = "$SOURCE_COMMIT"
+          test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
+          remote_main="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          test "$remote_main" = "$SOURCE_COMMIT"
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$RELEASE_VERSION" >/dev/null 2>&1; then
+            echo "Candidate tag already exists: v$RELEASE_VERSION" >&2
+            exit 1
+          fi
+          if gh release view "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Candidate release already exists: v$RELEASE_VERSION" >&2
+            exit 1
+          fi
+
       - name: Validate release contents once
         run: pnpm release:check
 
       - name: Enforce production vulnerability threshold
         run: pnpm audit --prod --audit-level high
 
+      - name: Upload exact shared build
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fased-candidate-dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
   linux:
     name: Linux ${{ matrix.arch }}
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: release-gate
+    needs: validate
+    permissions:
+      actions: read
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -124,6 +112,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_commit }}
 
       - name: Setup Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -139,20 +129,16 @@ jobs:
       - name: Install build dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build and package hosted runtime artifact
-        run: pnpm hosted:artifact:build --output .artifacts/hosted-runtime
+      - name: Download exact shared build
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: fased-candidate-dist
+          path: dist
 
-      - name: Verify tag matches package version
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: |
-          set -euo pipefail
-          package_version="$(node -p "require('./package.json').version")"
-          tag_version="${GITHUB_REF#refs/tags/v}"
-          test "$package_version" = "$tag_version"
+      - name: Package hosted runtime artifact from exact shared build
+        run: pnpm hosted:artifact:from-dist --output .artifacts/hosted-runtime
 
       - name: Attest hosted runtime release assets
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-path: .artifacts/hosted-runtime/*
@@ -166,27 +152,25 @@ jobs:
 
   signer:
     name: Native wallet signer
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: release-gate
+    needs: validate
+    permissions:
+      actions: read
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_commit }}
 
       - name: Setup Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: tools/fased-signerd/go.mod
           cache-dependency-path: tools/fased-signerd/go.sum
-
-      - name: Verify tag matches package version
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: |
-          set -euo pipefail
-          package_version="$(node -p "require('./package.json').version")"
-          tag_version="${GITHUB_REF#refs/tags/v}"
-          test "$package_version" = "$tag_version"
 
       - name: Test native signer
         working-directory: tools/fased-signerd
@@ -311,12 +295,19 @@ jobs:
 
   candidate:
     name: Assemble offline-attested candidate
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [validate, linux, signer]
+    permissions:
+      actions: read
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout exact candidate source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_commit }}
 
       - name: Download candidate architecture and signer artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -418,7 +409,7 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --bundle "$2" \
               --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-              --source-ref "$GITHUB_REF" \
+              --source-ref "refs/heads/main" \
               --deny-self-hosted-runners >/dev/null
           }
           verify fased-hosted-release-v2.json fased-hosted-release-v2.json.attestation.json
@@ -448,8 +439,11 @@ jobs:
             --directory .artifacts/hosted-runtime \
             --version "$package_version" \
             --commit "$GITHUB_SHA" \
-            --source-ref "$GITHUB_REF" \
-            --workflow-run-id "$GITHUB_RUN_ID"
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
+            --source-ref "refs/heads/main" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
 
       - name: Attest the complete candidate descriptor
         id: attest-candidate-descriptor
@@ -469,15 +463,18 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --bundle .artifacts/hosted-runtime/fased-hosting-candidate.json.attestation.json \
             --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-            --source-ref "$GITHUB_REF" \
+            --source-ref "refs/heads/main" \
             --deny-self-hosted-runners >/dev/null
           package_version="$(node -p "require('./package.json').version")"
           node scripts/release-artifact-set.mjs verify \
             --directory .artifacts/hosted-runtime \
             --version "$package_version" \
             --commit "$GITHUB_SHA" \
-            --source-ref "$GITHUB_REF" \
-            --workflow-run-id "$GITHUB_RUN_ID"
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
+            --source-ref "refs/heads/main" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
 
       - name: Upload complete non-publishing candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -485,17 +482,54 @@ jobs:
           name: fased-hosting-candidate
           path: .artifacts/hosted-runtime/*
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
+
+  p1:
+    name: Packaged Local install and stable update
+    needs: [candidate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact candidate source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 0
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Download exact candidate bytes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: fased-hosting-candidate
+          path: ${{ runner.temp }}/fased-hosting-candidate
+
+      - name: Run packaged fresh-install and supported-stable update P1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
+          FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install,install
+          FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/fased-hosting-candidate
+          FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
+          FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
+        run: bash scripts/test-protected-local-systemd-container.sh
 
   publish:
     name: Promote exact verified candidate bytes
-    if: github.event_name == 'workflow_dispatch'
+    needs: [candidate, p1]
+    environment: candidate-release
+    permissions:
+      actions: read
+      contents: write
     runs-on: ubuntu-24.04
     steps:
-      - name: Checkout exact tagged source
+      - name: Checkout exact P1-tested source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ inputs.release_tag }}
+          ref: ${{ inputs.source_commit }}
           fetch-depth: 0
 
       - name: Setup Node.js
@@ -503,45 +537,38 @@ jobs:
         with:
           node-version: 24.x
 
-      - name: Download the complete tag-built candidate
+      - name: Download the complete P1-tested candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: fased-hosting-candidate
           path: .artifacts/hosted-runtime
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.candidate_run_id }}
 
-      - name: Verify exact candidate identity and release authorization
+      - name: Verify exact candidate identity
         env:
           GH_TOKEN: ${{ github.token }}
-          TRUSTED_RELEASE_ACTOR: ${{ vars.FASED_TRUSTED_RELEASE_ACTOR }}
-          TRUSTED_RELEASE_ACTOR_ID: ${{ vars.FASED_TRUSTED_RELEASE_ACTOR_ID }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
-          GATE_RECEIPT_DIGEST: ${{ inputs.gate_receipt_digest }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$TRUSTED_RELEASE_ACTOR"
-          test -n "$TRUSTED_RELEASE_ACTOR_ID"
           package_version="$(node -p "require('./package.json').version")"
-          test "$RELEASE_TAG" = "v${package_version}"
+          test "$RELEASE_VERSION" = "$package_version"
           release_commit="$(git rev-parse HEAD)"
-          test "$(git describe --tags --exact-match HEAD)" = "$RELEASE_TAG"
-          candidate_verification="$(node scripts/release-artifact-set.mjs verify \
+          test "$release_commit" = "$SOURCE_COMMIT"
+          node scripts/release-artifact-set.mjs verify \
             --directory .artifacts/hosted-runtime \
             --version "$package_version" \
             --commit "$release_commit" \
-            --source-ref "refs/tags/$RELEASE_TAG" \
-            --workflow-run-id "$CANDIDATE_RUN_ID")"
-          promotion_artifact_set_digest="$(jq -er .promotionArtifactSetDigest <<<"$candidate_verification")"
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
+            --source-ref "refs/heads/main" \
+            --workflow-run-id "$GITHUB_RUN_ID"
           gh attestation verify \
             .artifacts/hosted-runtime/fased-hosting-candidate.json \
             --repo "$GITHUB_REPOSITORY" \
             --bundle .artifacts/hosted-runtime/fased-hosting-candidate.json.attestation.json \
             --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-            --source-ref "refs/tags/$RELEASE_TAG" \
+            --source-ref "refs/heads/main" \
             --deny-self-hosted-runners >/dev/null
           gh attestation verify \
             .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json \
@@ -549,7 +576,7 @@ jobs:
             --bundle \
               .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json.attestation.json \
             --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-            --source-ref "refs/tags/$RELEASE_TAG" \
+            --source-ref "refs/heads/main" \
             --deny-self-hosted-runners >/dev/null
           node scripts/privileged-release-evidence.mjs verify \
             --release-manifest .artifacts/hosted-runtime/fased-hosted-release-v2.json \
@@ -559,24 +586,20 @@ jobs:
             --vex .artifacts/hosted-runtime/fased-privileged-vex-v1.openvex.json \
             --version "$package_version" \
             --commit "$release_commit"
-          gh api --paginate \
-            "repos/$GITHUB_REPOSITORY/commits/$release_commit/statuses?per_page=100" \
-            --slurp | jq 'add' > "$RUNNER_TEMP/release-statuses.json"
-          node scripts/verify-release-gate-status.mjs \
-            --statuses "$RUNNER_TEMP/release-statuses.json" \
-            --commit "$release_commit" \
-            --action github-release \
-            --trusted-actor "$TRUSTED_RELEASE_ACTOR" \
-            --trusted-actor-id "$TRUSTED_RELEASE_ACTOR_ID" \
-            --release-tag "$RELEASE_TAG" \
-            --repository "$GITHUB_REPOSITORY" \
-            --receipt-digest "$GATE_RECEIPT_DIGEST" \
-            --artifact-set-digest "$promotion_artifact_set_digest"
+
+      - name: Verify owner-created immutable tag after P1
+        env:
+          RELEASE_TAG: v${{ inputs.release_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_tag="$(git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" | awk '{print $1}')"
+          test "$remote_tag" = "$GITHUB_SHA"
 
       - name: Publish one draft and expose it only after every byte uploads
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_TAG: v${{ inputs.release_version }}
         shell: bash
         run: |
           set -euo pipefail
