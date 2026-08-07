@@ -187,6 +187,21 @@ describe("machine gate authority", () => {
     expect(plan.acceptance).toEqual({ L0: false, L1: true, H0: false, H1: false, H2: false });
   });
 
+  it("keeps the root host updater on broad Node coverage", () => {
+    const plan = createGatePlan(["scripts/fased-host-updater.mjs"], {
+      phase: "T1",
+      entryPoint: "local-update",
+    });
+
+    expect(plan.scope).toMatchObject({
+      runNodeFocused: false,
+      runNodeBuild: true,
+      runNodeFull: true,
+      runT2Contracts: true,
+      runLocalUpdate: true,
+    });
+  });
+
   it("routes the complete focused Local-update correction without L0, native signer, or Docker", () => {
     const plan = createGatePlan(
       [
