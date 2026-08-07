@@ -69,6 +69,7 @@
     "scripts/install-runtime-profile.sh",
     "scripts/install-managed-runtime.mjs",
     "scripts/managed-runtime-layout.mjs",
+    "scripts/managed-update-contract.mjs",
     "scripts/hosted-release-manifest.mjs",
     "scripts/hosted-legacy-wallet-migration.mjs",
     "scripts/run-node.mjs",
