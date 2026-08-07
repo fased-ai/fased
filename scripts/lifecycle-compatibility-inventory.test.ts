@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import { __testing as updaterTesting } from "./fased-host-updater.mjs";
 import {
   __testing,
+  candidateP1Scenarios,
   loadLifecycleCompatibilityInventory,
   publishedReleaseAssignments,
+  verifyPublicReleaseCoverage,
   validateLifecycleCompatibilityInventory,
 } from "./lifecycle-compatibility-inventory.mjs";
 
@@ -47,14 +49,50 @@ describe("lifecycle compatibility inventory", () => {
     const inventory = loadLifecycleCompatibilityInventory();
     const assignments = publishedReleaseAssignments(inventory);
 
-    expect(inventory.publishedReleaseCount).toBe(97);
+    expect(inventory.publishedReleaseCount).toBe(105);
     expect(inventory.releaseGroups).toHaveLength(7);
-    expect(assignments).toHaveLength(97);
-    expect(new Set(assignments.map(({ tag }) => tag)).size).toBe(97);
+    expect(assignments).toHaveLength(105);
+    expect(new Set(assignments.map(({ tag }) => tag)).size).toBe(105);
     expect(inventory.topologies.map(({ id }) => id)).toEqual(
       expect.arrayContaining(__testing.REQUIRED_TOPOLOGY_CLASSES),
     );
     expect(assignments.at(-1)).toMatchObject(inventory.publishedThrough);
+  });
+
+  it("requires every public GitHub release in the compatibility inventory", () => {
+    const inventory = loadLifecycleCompatibilityInventory();
+    const releases = publishedReleaseAssignments(inventory).map(({ tag }, index) => ({
+      tag_name: tag,
+      draft: false,
+      published_at: new Date(index * 1000).toISOString(),
+    }));
+    expect(verifyPublicReleaseCoverage(inventory, releases)).toMatchObject({
+      releaseCount: inventory.publishedReleaseCount,
+      publishedThrough: inventory.publishedThrough,
+    });
+
+    expect(() => verifyPublicReleaseCoverage(inventory, releases.slice(0, -1))).toThrow(
+      "inventory-only public releases",
+    );
+    expect(() =>
+      verifyPublicReleaseCoverage(inventory, [
+        ...releases,
+        {
+          tag_name: "v9.9.9",
+          draft: false,
+          published_at: new Date(releases.length * 1000).toISOString(),
+        },
+      ]),
+    ).toThrow("unassigned public GitHub releases");
+  });
+
+  it("derives packaged P1 scenarios from the predecessor topology", () => {
+    const inventory = loadLifecycleCompatibilityInventory();
+    expect(candidateP1Scenarios(inventory, "0.1.75")).toEqual(["install"]);
+    expect(candidateP1Scenarios(inventory, "0.1.76-rc.35")).toEqual(["managed-update"]);
+    expect(() => candidateP1Scenarios(inventory, "9.9.9")).toThrow(
+      "has no compatibility assignment",
+    );
   });
 
   it("keeps release evidence out of runtime migration selection", () => {

@@ -37,12 +37,12 @@ describe("version-neutral lifecycle acceptance", () => {
       jobs?: Record<string, { steps?: Array<{ env?: Record<string, string>; name?: string }> }>;
     };
     expect(workflow.on?.workflow_dispatch?.inputs).toHaveProperty("predecessor_version");
-    expect(workflow.on?.workflow_dispatch?.inputs).toHaveProperty("predecessor_scenario");
+    expect(workflow.on?.workflow_dispatch?.inputs).not.toHaveProperty("predecessor_scenario");
     const step = workflow.jobs?.p1?.steps?.find((candidate) =>
       candidate.name?.includes("supported-stable update P1"),
     );
     expect(step?.env).toMatchObject({
-      FASED_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install,${{ inputs.predecessor_scenario }}",
+      FASED_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install,${{ needs.validate.outputs.p1_scenarios }}",
       FASED_SYSTEMD_FIXTURE_PREDECESSOR_VERSION: "${{ inputs.predecessor_version }}",
       FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "${{ inputs.predecessor_version }}",
     });

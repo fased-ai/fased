@@ -136,6 +136,79 @@ export function publishedReleaseAssignments(inventory) {
   );
 }
 
+export function candidateP1Scenarios(inventory, version) {
+  validateLifecycleCompatibilityInventory(inventory);
+  const normalized = String(version || "").replace(/^v/u, "");
+  const assignment = publishedReleaseAssignments(inventory).find(
+    (release) => release.tag === `v${normalized}`,
+  );
+  if (!assignment) {
+    fail(`predecessor v${normalized} has no compatibility assignment`);
+  }
+  const topologies = new Map(inventory.topologies.map((topology) => [topology.id, topology]));
+  const scenarios = new Set();
+  for (const topologyId of assignment.localTopologies) {
+    const topology = topologies.get(topologyId);
+    if (!topology || !String(topology.platformAdapter).startsWith("linux-")) {
+      continue;
+    }
+    if (topology.forwardPath === "standard-local-bootstrap-once") {
+      scenarios.add("install");
+    } else if (topology.forwardPath === "ordinary-update") {
+      scenarios.add("managed-update");
+    } else {
+      fail(
+        `predecessor ${assignment.tag} has unsupported Local forward path ${topology.forwardPath}`,
+      );
+    }
+  }
+  if (scenarios.size === 0) {
+    fail(`predecessor ${assignment.tag} has no supported Linux Local P1 topology`);
+  }
+  return [...scenarios].toSorted((left, right) => left.localeCompare(right));
+}
+
+export function verifyPublicReleaseCoverage(inventory, releases) {
+  validateLifecycleCompatibilityInventory(inventory);
+  if (!Array.isArray(releases)) {
+    fail("public GitHub release response is invalid");
+  }
+  const publicReleases = releases.filter(
+    (release) => release?.draft === false && TAG_PATTERN.test(release?.tag_name || ""),
+  );
+  const publicTags = new Set(publicReleases.map((release) => release.tag_name));
+  if (publicTags.size !== publicReleases.length) {
+    fail("public GitHub releases contain duplicate tags");
+  }
+  const assignedTags = new Set(publishedReleaseAssignments(inventory).map(({ tag }) => tag));
+  const unassigned = [...publicTags]
+    .filter((tag) => !assignedTags.has(tag))
+    .toSorted((left, right) => left.localeCompare(right));
+  if (unassigned.length > 0) {
+    fail(`unassigned public GitHub releases: ${unassigned.join(", ")}`);
+  }
+  const inventoryOnly = [...assignedTags]
+    .filter((tag) => !publicTags.has(tag))
+    .toSorted((left, right) => left.localeCompare(right));
+  if (inventoryOnly.length > 0) {
+    fail(`inventory-only public releases: ${inventoryOnly.join(", ")}`);
+  }
+  const ordered = publicReleases.toSorted((left, right) =>
+    String(left.published_at || "").localeCompare(String(right.published_at || "")),
+  );
+  const latest = ordered.at(-1);
+  if (!latest?.published_at || latest.tag_name !== inventory.publishedThrough.tag) {
+    fail(
+      `latest public GitHub release is ${latest?.tag_name || "missing"}, expected ${inventory.publishedThrough.tag}`,
+    );
+  }
+  return Object.freeze({
+    repository: inventory.repository,
+    releaseCount: publicReleases.length,
+    publishedThrough: inventory.publishedThrough,
+  });
+}
+
 export function validateLifecycleCompatibilityInventory(inventory) {
   exactKeys(
     inventory,
@@ -503,22 +576,52 @@ export function verifyGitReleaseEvidence(inventory, repoRoot = DEFAULT_REPO_ROOT
   });
 }
 
+function readPublicGitHubReleases(repository) {
+  const rows = execFileSync(
+    "gh",
+    [
+      "api",
+      "--paginate",
+      "--jq",
+      ".[] | [.tag_name, .draft, .published_at] | @tsv",
+      `repos/${repository}/releases?per_page=100`,
+    ],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+  return rows
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((row) => {
+      const [tag_name, draft, published_at] = row.split("\t");
+      return { tag_name, draft: draft === "true", published_at };
+    });
+}
+
 function main() {
-  const args = new Set(process.argv.slice(2));
-  for (const arg of args) {
-    if (arg !== "--verify-git") {
-      fail(`unsupported argument ${arg}`);
-    }
-  }
+  const args = process.argv.slice(2);
   const inventory = loadLifecycleCompatibilityInventory();
-  const evidence = args.has("--verify-git")
-    ? verifyGitReleaseEvidence(inventory)
-    : {
-        repository: inventory.repository,
-        releaseCount: inventory.publishedReleaseCount,
-        releaseGroupCount: inventory.releaseGroups.length,
-        publishedThrough: inventory.publishedThrough,
-      };
+  let evidence;
+  if (args.length === 0) {
+    evidence = {
+      repository: inventory.repository,
+      releaseCount: inventory.publishedReleaseCount,
+      releaseGroupCount: inventory.releaseGroups.length,
+      publishedThrough: inventory.publishedThrough,
+    };
+  } else if (args.length === 1 && args[0] === "--verify-git") {
+    evidence = verifyGitReleaseEvidence(inventory);
+  } else if (args.length === 1 && args[0] === "--verify-public-github") {
+    evidence = verifyPublicReleaseCoverage(
+      inventory,
+      readPublicGitHubReleases(inventory.repository),
+    );
+  } else if (args.length === 2 && args[0] === "--p1-scenarios") {
+    process.stdout.write(`${candidateP1Scenarios(inventory, args[1]).join(",")}\n`);
+    return;
+  } else {
+    fail(`unsupported arguments ${args.join(" ")}`);
+  }
   process.stdout.write(`${JSON.stringify({ ok: true, ...evidence })}\n`);
 }
 
