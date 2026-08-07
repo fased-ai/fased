@@ -1647,7 +1647,7 @@ EOF_MODERN_FAILED_GATEWAY
   chmod 0755 "$modern_fault_script"
   cat >"$modern_fault_dropin" <<EOF_MODERN_FAILED_GATEWAY_DROPIN
 [Service]
-ExecStartPre=$modern_fault_script
+ExecStartPre=+$modern_fault_script
 EOF_MODERN_FAILED_GATEWAY_DROPIN
   systemctl daemon-reload
   if run_target_update 30 \
