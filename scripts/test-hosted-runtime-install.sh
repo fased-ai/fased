@@ -46,7 +46,8 @@ for managed_script in \
   lifecycle-trust-runtime.mjs \
   managed-updater-bundle.mjs \
   managed-updater-bundle.v1.json \
-  managed-runtime-layout.mjs; do
+  managed-runtime-layout.mjs \
+  managed-update-contract.mjs; do
   cp "$ROOT_DIR/scripts/$managed_script" "$PACKAGE_ROOT/scripts/$managed_script"
   chmod 755 "$PACKAGE_ROOT/scripts/$managed_script"
 done

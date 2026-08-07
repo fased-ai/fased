@@ -30,7 +30,7 @@ export function assertApplicableGates(input) {
     requireSuccess(results, "dependency integrity");
   }
 
-  if (enabled(input.docsChanged) && !enabled(input.focusedLocalUpdate)) {
+  if (enabled(input.docsChanged) && !enabled(input.runNodeFocused)) {
     requireSuccess(results, "documentation");
   }
   const anyNode =
@@ -42,7 +42,7 @@ export function assertApplicableGates(input) {
     enabled(input.runNodeBuild) ||
     enabled(input.runNodePackaging) ||
     enabled(input.runNodeFull);
-  if (anyNode && !enabled(input.focusedLocalUpdate)) {
+  if (anyNode && !enabled(input.runNodeFocused)) {
     for (const name of ["format and lint", "strict types baseline"]) {
       requireSuccess(results, name);
     }
