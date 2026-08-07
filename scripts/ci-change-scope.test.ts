@@ -49,6 +49,21 @@ describe("CI changed-surface classification", () => {
     });
   });
 
+  it("keeps a release inventory correction on the focused PR lane", () => {
+    const output = outputEntries(createGatePlan(["scripts/release-check.ts"]));
+
+    expect(output).toMatchObject({
+      focused_local_update: "false",
+      run_node_focused: "true",
+      run_node_build: "false",
+      run_node_packaging: "false",
+      run_node_full: "false",
+      run_local_update: "false",
+      run_hosting_update: "false",
+      run_codeql_javascript: "true",
+    });
+  });
+
   it("keeps the complete updater and package-inventory diff on the focused PR lane", () => {
     const plan = createGatePlan(
       [

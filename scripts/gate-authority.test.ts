@@ -218,6 +218,19 @@ describe("machine gate authority", () => {
     });
   });
 
+  it("routes a release inventory correction through focused Node coverage", () => {
+    const plan = createGatePlan(["scripts/release-check.ts"]);
+
+    expect(plan.scope).toMatchObject({
+      privilegeChanged: false,
+      runNodeFocused: true,
+      runNodeBuild: true,
+      runNodeFull: false,
+      runLocalUpdate: false,
+      runHostingUpdate: false,
+    });
+  });
+
   it("routes the complete focused Local-update correction without L0, native signer, or Docker", () => {
     const plan = createGatePlan(
       [
