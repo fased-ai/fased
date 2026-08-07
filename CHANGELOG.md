@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.52
+
+- Create the canonical protected Local supervisor state boundary before
+  normalizing legacy lifecycle control.
+- Make packaged rollback fault injection deterministic at target systemd
+  activation.
+
 ## 0.1.76-rc.51
 
 - Wait for the previous protected Local controller to finish recovery
