@@ -245,13 +245,12 @@ describe("CI changed-surface classification", () => {
   });
 
   it("routes Protected Local fixture changes without running Hosting", () => {
-    expect(
-      classifyChangedPaths([
-        "scripts/test-protected-local-systemd-container.sh",
-        "scripts/docker/protected-local-systemd/Containerfile.ubuntu",
-        "scripts/docker/protected-local-systemd/run.sh",
-      ]),
-    ).toMatchObject({
+    const paths = [
+      "scripts/test-protected-local-systemd-container.sh",
+      "scripts/docker/protected-local-systemd/Containerfile.ubuntu",
+      "scripts/docker/protected-local-systemd/run.sh",
+    ];
+    expect(classifyChangedPaths(paths)).toMatchObject({
       ciInfrastructureOnly: false,
       fixtureOnly: true,
       runNode: false,
@@ -261,6 +260,13 @@ describe("CI changed-surface classification", () => {
       runLocalFresh: true,
       runLocalUpdate: true,
       runCiContracts: false,
+    });
+    expect(outputEntries(createGatePlan(paths))).toMatchObject({
+      fixture_only: "true",
+      production_changed: "false",
+      run_node_build: "false",
+      run_local_fresh: "false",
+      run_local_update: "false",
     });
   });
 
@@ -325,6 +331,13 @@ describe("CI changed-surface classification", () => {
         runLocalFresh: false,
         runLocalUpdate: false,
         runUiMining: false,
+      });
+      expect(outputEntries(createGatePlan([path])), path).toMatchObject({
+        fixture_only: "true",
+        production_changed: "false",
+        run_hosting: "false",
+        run_hosting_fresh: "false",
+        run_hosting_update: "false",
       });
     }
 
