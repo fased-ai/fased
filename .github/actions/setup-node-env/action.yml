@@ -14,7 +14,7 @@ inputs:
   install-bun:
     description: Whether to install Bun alongside Node.
     required: false
-    default: "true"
+    default: "false"
   initialize-submodules:
     description: Whether to initialize Git submodules before dependency installation.
     required: false

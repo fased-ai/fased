@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { classifyChangedPaths, outputEntries } from "./ci-change-scope.mjs";
+import {
+  classifyChangedPaths,
+  detectDependencyRemediation,
+  outputEntries,
+} from "./ci-change-scope.mjs";
 import { createGatePlan } from "./gate-authority.mjs";
 
 describe("CI changed-surface classification", () => {
@@ -105,8 +109,29 @@ describe("CI changed-surface classification", () => {
     });
   });
 
-  it("retains dependency integrity without narrowing an untrusted package change", () => {
-    const output = outputEntries(createGatePlan(["package.json", "pnpm-lock.yaml"]));
+  it("routes a content-verified dependency remediation without the full Node suite", () => {
+    const plan = createGatePlan(["package.json", "pnpm-lock.yaml"]);
+    const remediation = detectDependencyRemediation(plan, {}, () => ({
+      remediations: [{ dependency: "nanoid", fromVersion: null, toVersion: "3.3.17" }],
+    }));
+    const output = outputEntries(plan, remediation);
+
+    expect(output).toMatchObject({
+      dependency_remediation: "true",
+      dependency_names_json: '["nanoid"]',
+      run_dependency_integrity: "true",
+      run_node_build: "true",
+      run_node_packaging: "false",
+      run_node_full: "false",
+    });
+  });
+
+  it("retains broad checks when package changes fail content verification", () => {
+    const plan = createGatePlan(["package.json", "pnpm-lock.yaml"]);
+    const remediation = detectDependencyRemediation(plan, {}, () => {
+      throw new Error("not an exact remediation");
+    });
+    const output = outputEntries(plan, remediation);
 
     expect(output).toMatchObject({
       dependency_remediation: "false",

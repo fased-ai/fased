@@ -21,6 +21,9 @@ jobs:
       manual_review_required: ${{ steps.scope.outputs.manual_review_required }}
       docs_changed: ${{ steps.scope.outputs.docs_changed }}
       version_only: ${{ steps.scope.outputs.version_only }}
+      dependency_remediation: ${{ steps.scope.outputs.dependency_remediation }}
+      dependency_names_json: ${{ steps.scope.outputs.dependency_names_json }}
+      run_dependency_integrity: ${{ steps.scope.outputs.run_dependency_integrity }}
       run_ci_contracts: ${{ steps.scope.outputs.run_ci_contracts }}
       run_node_focused: ${{ steps.scope.outputs.run_node_focused }}
       run_node_unit: ${{ steps.scope.outputs.run_node_unit }}
@@ -80,9 +83,16 @@ jobs:
           submodules: false
 
       - name: Setup Node environment
+        if: needs.classify.outputs.version_only != 'true'
         uses: ./.github/actions/setup-node-env
         with:
           install-bun: "false"
+
+      - name: Setup Node.js for exact version-only validation
+        if: needs.classify.outputs.version_only == 'true'
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.x
 
       - name: Setup Go when selected
         if: needs.classify.outputs.run_native_signer == 'true' || needs.classify.outputs.run_node_packaging == 'true'
@@ -90,6 +100,48 @@ jobs:
         with:
           go-version-file: tools/fased-signerd/go.mod
           cache-dependency-path: tools/fased-signerd/go.sum
+
+      - name: Prove exact dependency remediation
+        if: needs.classify.outputs.dependency_remediation == 'true'
+        env:
+          DEPENDENCY_BASE: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/ci-dependency-integrity.mjs
+
+      - name: Audit production dependencies
+        if: needs.classify.outputs.dependency_remediation == 'true'
+        run: pnpm audit --prod --audit-level high
+
+      - name: Verify frozen lockfile integrity
+        if: needs.classify.outputs.dependency_remediation == 'true'
+        run: pnpm install --lockfile-only --ignore-scripts --frozen-lockfile --prefer-offline
+
+      - name: Verify affected dependency paths and tests
+        if: needs.classify.outputs.dependency_remediation == 'true'
+        env:
+          DEPENDENCY_NAMES_JSON: ${{ needs.classify.outputs.dependency_names_json }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t dependencies < <(jq -er '.[]' <<<"$DEPENDENCY_NAMES_JSON")
+          test "${#dependencies[@]}" -gt 0
+          tests=()
+          for dependency in "${dependencies[@]}"; do
+            [[ "$dependency" =~ ^[A-Za-z0-9@._/-]+$ ]]
+            pnpm why "$dependency" -r --prod
+            case "$dependency" in
+              nanoid)
+                tests+=(
+                  extensions/matrix/src/matrix/client.test.ts
+                  extensions/matrix/src/matrix/format.test.ts
+                )
+                ;;
+              *)
+                echo "No focused affected-test mapping for $dependency" >&2
+                exit 1
+                ;;
+            esac
+          done
+          pnpm exec vitest run "${tests[@]}" --pool=forks --maxWorkers=1
 
       - name: Validate exact version-only diff
         if: needs.classify.outputs.version_only == 'true'
@@ -208,7 +260,7 @@ jobs:
           python -m pytest -q skills
 
       - name: Check documentation
-        if: needs.classify.outputs.docs_changed == 'true'
+        if: needs.classify.outputs.docs_changed == 'true' && needs.classify.outputs.version_only != 'true'
         run: pnpm check:docs
 
       - name: Check changed source formatting and lint

@@ -8,6 +8,7 @@ const EXACT_VERSION_RE = /^\d+\.\d+\.\d+$/u;
 const ADVISORY_REMEDIATIONS = Object.freeze({
   "fast-uri": Object.freeze({ from: "3.1.4", to: "3.1.5" }),
   "ip-address": Object.freeze({ from: "10.2.0", to: "10.3.1" }),
+  nanoid: Object.freeze({ from: null, to: "3.3.17" }),
   "undici@7": Object.freeze({ from: "7.28.0", to: "7.29.0" }),
   "undici@8": Object.freeze({ from: null, to: "8.9.0" }),
 });
