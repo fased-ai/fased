@@ -198,6 +198,26 @@ describe("machine gate authority", () => {
     });
   });
 
+  it("routes the unified updater contract and bundle through focused Node coverage", () => {
+    const plan = createGatePlan([
+      "package.json",
+      "scripts/fased-managed-updater-core.mjs",
+      "scripts/managed-runtime-layout.mjs",
+      "scripts/managed-update-contract.mjs",
+      "scripts/managed-updater-bundle.v1.json",
+    ]);
+
+    expect(plan.scope).toMatchObject({
+      runNodeFocused: true,
+      runNodeBuild: true,
+      runNodePackaging: true,
+      runNodeFull: false,
+      runT2Contracts: true,
+      runLocalUpdate: true,
+      runHostingUpdate: true,
+    });
+  });
+
   it("routes the complete focused Local-update correction without L0, native signer, or Docker", () => {
     const plan = createGatePlan(
       [

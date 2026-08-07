@@ -271,7 +271,13 @@ jobs:
             scripts/fased-local-recovery-pending.test.ts \
             scripts/fased-managed-updater-core.mjs \
             scripts/fased-managed-updater.test.ts \
+            scripts/managed-runtime-layout.mjs \
+            scripts/managed-runtime-layout.test.ts \
+            scripts/managed-update-contract.mjs \
+            scripts/managed-update-contract.test.ts \
             scripts/managed-update-mode.test.ts \
+            scripts/managed-updater-bundle.test.ts \
+            scripts/managed-updater-bundle.v1.json \
             scripts/gate-authority.mjs \
             scripts/lifecycle-control-normalizer.mjs \
             scripts/lifecycle-control-normalizer.test.ts \
@@ -289,7 +295,12 @@ jobs:
             scripts/fased-local-recovery-pending.test.ts \
             scripts/fased-managed-updater-core.mjs \
             scripts/fased-managed-updater.test.ts \
+            scripts/managed-runtime-layout.mjs \
+            scripts/managed-runtime-layout.test.ts \
+            scripts/managed-update-contract.mjs \
+            scripts/managed-update-contract.test.ts \
             scripts/managed-update-mode.test.ts \
+            scripts/managed-updater-bundle.test.ts \
             scripts/gate-authority.mjs \
             scripts/lifecycle-control-normalizer.mjs \
             scripts/lifecycle-control-normalizer.test.ts \
@@ -308,7 +319,11 @@ jobs:
           scripts/protected-local-bootstrap.test.ts
           scripts/protected-local-service-plan.test.ts
           scripts/fased-local-recovery-pending.test.ts
+          scripts/fased-managed-updater.test.ts
+          scripts/managed-runtime-layout.test.ts
+          scripts/managed-update-contract.test.ts
           scripts/managed-update-mode.test.ts
+          scripts/managed-updater-bundle.test.ts
           src/wallet/wallet-application-state-permissions.test.ts
           --pool=forks
           --maxWorkers=1
