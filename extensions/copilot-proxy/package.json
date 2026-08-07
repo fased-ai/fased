@@ -1,6 +1,6 @@
 {
   "name": "@fased/copilot-proxy",
-  "version": "0.1.76-rc.55",
+  "version": "0.1.76-rc.56",
   "private": true,
   "description": "FasedAgent Copilot Proxy provider plugin",
   "type": "module",

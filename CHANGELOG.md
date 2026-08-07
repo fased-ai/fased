@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.56
+
+- Centralize managed update mutation under the target controller and reject
+  mixed generations before state changes.
+- Make candidate promotion deterministic, derive packaged update topology from
+  public compatibility evidence, and keep the protected PR lane compact.
+
 ## 0.1.76-rc.55
 
 - Reject mixed managed updater generations before any lifecycle mutation,
