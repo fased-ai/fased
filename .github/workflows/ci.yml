@@ -1665,6 +1665,7 @@ jobs:
           DOCS_CHANGED: ${{ needs.change-scope.outputs.docs_changed }}
           FOCUSED_LOCAL_UPDATE: ${{ needs.change-scope.outputs.focused_local_update }}
           VERSION_ONLY: ${{ needs.change-scope.outputs.version_only }}
+          DEPENDENCY_REMEDIATION: ${{ needs.change-scope.outputs.dependency_remediation }}
           MANUAL_REVIEW_REQUIRED: ${{ needs.change-scope.outputs.manual_review_required }}
           RUN_NODE_FOCUSED: ${{ needs.change-scope.outputs.run_node_focused }}
           RUN_NODE_UNIT: ${{ needs.change-scope.outputs.run_node_unit }}
