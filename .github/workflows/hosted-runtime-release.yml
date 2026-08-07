@@ -523,9 +523,29 @@ jobs:
           FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
         run: bash scripts/test-protected-local-systemd-container.sh
 
+  tag-ready:
+    name: Verify owner tag before publication approval
+    needs: [candidate, p1]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact P1-tested source and tags
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 0
+
+      - name: Verify owner-created immutable tag after P1
+        env:
+          RELEASE_TAG: v${{ inputs.release_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_tag="$(git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" | awk '{print $1}')"
+          test "$remote_tag" = "$GITHUB_SHA"
+
   publish:
     name: Promote exact verified candidate bytes
-    needs: [candidate, p1]
+    needs: [candidate, p1, tag-ready]
     environment: candidate-release
     permissions:
       actions: read
@@ -592,15 +612,6 @@ jobs:
             --vex .artifacts/hosted-runtime/fased-privileged-vex-v1.openvex.json \
             --version "$package_version" \
             --commit "$release_commit"
-
-      - name: Verify owner-created immutable tag after P1
-        env:
-          RELEASE_TAG: v${{ inputs.release_version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          remote_tag="$(git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" | awk '{print $1}')"
-          test "$remote_tag" = "$GITHUB_SHA"
 
       - name: Publish one draft and expose it only after every byte uploads
         env:

@@ -1,0 +1,288 @@
+name: PR
+
+on:
+  pull_request:
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  classify:
+    name: classify
+    runs-on: ubuntu-latest
+    outputs:
+      changed_test_paths_json: ${{ steps.scope.outputs.changed_test_paths_json }}
+      changed_ui_browser_tests: ${{ steps.scope.outputs.changed_ui_browser_tests }}
+      test_only: ${{ steps.scope.outputs.test_only }}
+      manual_review_required: ${{ steps.scope.outputs.manual_review_required }}
+      docs_changed: ${{ steps.scope.outputs.docs_changed }}
+      version_only: ${{ steps.scope.outputs.version_only }}
+      run_ci_contracts: ${{ steps.scope.outputs.run_ci_contracts }}
+      run_node_focused: ${{ steps.scope.outputs.run_node_focused }}
+      run_node_unit: ${{ steps.scope.outputs.run_node_unit }}
+      run_node_gateway: ${{ steps.scope.outputs.run_node_gateway }}
+      run_node_extensions: ${{ steps.scope.outputs.run_node_extensions }}
+      run_node_build: ${{ steps.scope.outputs.run_node_build }}
+      run_node_packaging: ${{ steps.scope.outputs.run_node_packaging }}
+      run_node_full: ${{ steps.scope.outputs.run_node_full }}
+      run_native_signer: ${{ steps.scope.outputs.run_native_signer }}
+      run_signer_integration: ${{ steps.scope.outputs.run_signer_integration }}
+      run_ui: ${{ steps.scope.outputs.run_ui }}
+      run_ui_mining: ${{ steps.scope.outputs.run_ui_mining }}
+      run_skills: ${{ steps.scope.outputs.run_skills }}
+      run_codeql_javascript: ${{ steps.scope.outputs.run_codeql_javascript }}
+      run_codeql_go: ${{ steps.scope.outputs.run_codeql_go }}
+      run_codeql_python: ${{ steps.scope.outputs.run_codeql_python }}
+      codeql_languages_json: ${{ steps.scope.outputs.codeql_languages_json }}
+    steps:
+      - name: Checkout proposed tree
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Checkout protected-base classifier
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .ci-authority
+          fetch-depth: 1
+          submodules: false
+
+      - name: Classify changed surface
+        id: scope
+        env:
+          FULL_MATRIX: "false"
+          GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node .ci-authority/scripts/ci-change-scope.mjs
+
+  selected-tests:
+    name: selected-tests
+    needs: [classify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Reject an unclassified change
+        if: needs.classify.outputs.manual_review_required == 'true'
+        run: |
+          echo "The protected-base classifier has no automatic route for this change." >&2
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Setup Go when selected
+        if: needs.classify.outputs.run_native_signer == 'true' || needs.classify.outputs.run_node_packaging == 'true'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: tools/fased-signerd/go.mod
+          cache-dependency-path: tools/fased-signerd/go.sum
+
+      - name: Validate exact version-only diff
+        if: needs.classify.outputs.version_only == 'true'
+        env:
+          GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/ci-version-identity.mjs
+
+      - name: Check CI routing contracts
+        if: needs.classify.outputs.run_ci_contracts == 'true'
+        run: >-
+          pnpm exec vitest run
+          scripts/gate-authority.test.ts
+          scripts/lifecycle-compatibility-inventory.test.ts
+          scripts/ci-change-scope.test.ts
+          scripts/ci-run-changed-tests.test.ts
+          scripts/ci-required-gates.test.ts
+          scripts/ci-merged-main-reuse.test.ts
+          scripts/ci-version-identity.test.ts
+          scripts/ci-workflow-contract.test.ts
+          scripts/ci-compact-workflow.test.ts
+
+      - name: Run focused Local-update regressions
+        if: needs.classify.outputs.run_node_focused == 'true'
+        run: >-
+          pnpm exec vitest run
+          scripts/lifecycle-control-normalizer.test.ts
+          scripts/protected-local-bootstrap.test.ts
+          scripts/protected-local-service-plan.test.ts
+          scripts/fased-local-recovery-pending.test.ts
+          scripts/fased-managed-updater.test.ts
+          scripts/managed-runtime-layout.test.ts
+          scripts/managed-update-contract.test.ts
+          scripts/managed-update-mode.test.ts
+          scripts/managed-updater-bundle.test.ts
+          src/wallet/wallet-application-state-permissions.test.ts
+          --pool=forks
+          --maxWorkers=1
+
+      - name: Prove cross-UID supervisor client traversal
+        if: needs.classify.outputs.run_node_focused == 'true'
+        run: sudo -n bash scripts/test-protected-local-supervisor-client-root-fixture.sh
+
+      - name: Run selected unit tests
+        if: needs.classify.outputs.run_node_unit == 'true'
+        env:
+          CHANGED_TEST_PATHS_JSON: ${{ needs.classify.outputs.changed_test_paths_json }}
+        run: node scripts/ci-run-changed-tests.mjs unit
+
+      - name: Run selected Gateway tests
+        if: needs.classify.outputs.run_node_gateway == 'true'
+        env:
+          CHANGED_TEST_PATHS_JSON: ${{ needs.classify.outputs.changed_test_paths_json }}
+        run: node scripts/ci-run-changed-tests.mjs gateway
+
+      - name: Run selected extension tests
+        if: needs.classify.outputs.run_node_extensions == 'true'
+        env:
+          CHANGED_TEST_PATHS_JSON: ${{ needs.classify.outputs.changed_test_paths_json }}
+        run: node scripts/ci-run-changed-tests.mjs extensions
+
+      - name: Run full Node tests when explicitly selected
+        if: needs.classify.outputs.run_node_full == 'true'
+        run: pnpm test
+
+      - name: Build once when selected
+        if: needs.classify.outputs.run_node_build == 'true'
+        run: pnpm build
+
+      - name: Check package contracts
+        if: needs.classify.outputs.run_node_packaging == 'true'
+        run: pnpm release:validate-dist:contracts
+
+      - name: Test native signer on Linux
+        if: needs.classify.outputs.run_native_signer == 'true'
+        working-directory: tools/fased-signerd
+        run: go test ./...
+
+      - name: Test signer integration
+        if: needs.classify.outputs.run_signer_integration == 'true'
+        run: >-
+          pnpm vitest run
+          scripts/fased-managed-updater.local-signer.test.ts
+          scripts/install-local-signer-transaction.test.ts
+          src/wallet/providers/local-socket-signer-adapter.integration.test.ts
+          src/wizard/onboarding.wallet.test.ts
+          --pool=forks
+          --maxWorkers=1
+
+      - name: Install Chromium for selected UI browser tests
+        if: needs.classify.outputs.run_ui_mining == 'true' || (needs.classify.outputs.run_ui == 'true' && needs.classify.outputs.changed_ui_browser_tests == 'true')
+        run: pnpm --dir ui exec playwright install chromium
+
+      - name: Run selected Control UI tests
+        if: needs.classify.outputs.run_ui == 'true'
+        env:
+          CHANGED_TEST_PATHS_JSON: ${{ needs.classify.outputs.changed_test_paths_json }}
+        run: node scripts/ci-run-changed-tests.mjs ui
+
+      - name: Run Mining UI tests
+        if: needs.classify.outputs.run_ui_mining == 'true'
+        run: pnpm test:ui:mining
+
+      - name: Setup Python for skill tests
+        if: needs.classify.outputs.run_skills == 'true'
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Run selected skill tests
+        if: needs.classify.outputs.run_skills == 'true'
+        run: |
+          python -m pip install pytest ruff pyyaml
+          python -m ruff check skills
+          python -m pytest -q skills
+
+      - name: Check documentation
+        if: needs.classify.outputs.docs_changed == 'true'
+        run: pnpm check:docs
+
+      - name: Check changed source formatting and lint
+        if: needs.classify.outputs.version_only != 'true'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          mapfile -t format_files < <(git diff --name-only "$BASE" HEAD | grep -E '\.(cjs|css|html|js|json|json5|jsx|md|mdx|mjs|scss|ts|tsx|yaml|yml)$' || true)
+          if [ "${#format_files[@]}" -gt 0 ]; then pnpm exec oxfmt --check "${format_files[@]}"; fi
+          mapfile -t lint_files < <(git diff --name-only "$BASE" HEAD | grep -E '\.(cjs|js|jsx|mjs|ts|tsx)$' || true)
+          if [ "${#lint_files[@]}" -gt 0 ]; then pnpm exec oxlint "${lint_files[@]}"; fi
+
+  security:
+    name: security
+    needs: [classify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pre-commit
+        run: python -m pip install pre-commit
+
+      - name: Detect secrets and private keys
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          pre-commit run detect-secrets --from-ref "$BASE" --to-ref HEAD
+          pre-commit run detect-private-key --from-ref "$BASE" --to-ref HEAD
+
+      - name: Audit changed workflows
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          mapfile -t files < <(git diff --name-only "$BASE" HEAD -- '.github/workflows/*.yml' '.github/workflows/*.yaml')
+          if [ "${#files[@]}" -gt 0 ]; then pre-commit run zizmor --files "${files[@]}"; fi
+
+      - name: Initialize selected CodeQL languages
+        if: needs.classify.outputs.codeql_languages_json != '[]'
+        uses: github/codeql-action/init@d1ba80a13dd99fba24a470575428917156a28b43 # v4
+        with:
+          languages: ${{ join(fromJSON(needs.classify.outputs.codeql_languages_json), ',') }}
+
+      - name: Autobuild selected compiled language
+        if: needs.classify.outputs.run_codeql_go == 'true'
+        uses: github/codeql-action/autobuild@d1ba80a13dd99fba24a470575428917156a28b43 # v4
+
+      - name: Analyze selected languages
+        if: needs.classify.outputs.codeql_languages_json != '[]'
+        uses: github/codeql-action/analyze@d1ba80a13dd99fba24a470575428917156a28b43 # v4
+
+  checks:
+    name: checks
+    if: always()
+    needs: [classify, selected-tests, security]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the compact PR gates
+        env:
+          CLASSIFY: ${{ needs.classify.result }}
+          SELECTED: ${{ needs.selected-tests.result }}
+          SECURITY: ${{ needs.security.result }}
+        run: |
+          test "$CLASSIFY" = success
+          test "$SELECTED" = success
+          test "$SECURITY" = success
