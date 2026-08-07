@@ -4,6 +4,12 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.55
+
+- Reject mixed managed updater generations before any lifecycle mutation,
+  preserving the supported stable-to-current update path and owner state.
+- Keep updater-only pull requests on the focused CI route.
+
 ## 0.1.76-rc.54
 
 - Accept the historical Local install-profile label only at the protected
