@@ -5354,12 +5354,15 @@ async function readOptionalLink(linkPath) {
 
 function validateManagedInstallManifest(value, applicationState, paths) {
   const expectedProfile = applicationState.profile;
+  const profileMatches =
+    value?.profile === expectedProfile ||
+    (expectedProfile === "protected-local" && value?.profile === "local");
   if (
     !value ||
     typeof value !== "object" ||
     Array.isArray(value) ||
     !new Set([1, 2]).has(value.schemaVersion) ||
-    value.profile !== expectedProfile ||
+    !profileMatches ||
     path.resolve(String(value.stateDir ?? "")) !== paths.stateDir ||
     path.resolve(String(value.configPath ?? "")) !== path.join(paths.stateDir, "fased.json") ||
     value.service?.scope !== "system" ||
@@ -5396,6 +5399,10 @@ function buildTargetManagedInstallManifest({
   return {
     ...base,
     schemaVersion: 2,
+    // "local" was the historical managed-manifest label. The system topology
+    // is now authoritative, so every successful protected Local transaction
+    // converges the persisted manifest on the canonical profile name.
+    profile: applicationState.profile,
     source: "managed-artifact",
     runtime: {
       ...previousManifest?.runtime,
@@ -9697,6 +9704,7 @@ export const __testing = {
   ensureRootManagedSharedApplicationDirectories,
   ensureInitializedManagedStableDirectories,
   ensureManagedCompatibilityDirectories,
+  validateManagedInstallManifest,
   declaredStateRegistry,
   validateCrossProductApplicationEvidence,
   discoverProtectedApplicationTopology,

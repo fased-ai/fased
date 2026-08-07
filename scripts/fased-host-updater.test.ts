@@ -2062,6 +2062,78 @@ describe("root-owned hosted updater protocol", () => {
     });
   });
 
+  it("accepts the historical Local manifest label and converges it canonically", () => {
+    const stateDir = "/home/operator/.fased";
+    const paths = {
+      stateDir,
+      currentLink: `${stateDir}/runtime/current`,
+      previousLink: `${stateDir}/runtime/previous`,
+      compatibilityLink: `${stateDir}/install-cache/npm-global/lib/node_modules/@fased/fased`,
+      prefix: `${stateDir}/install-cache/npm-global`,
+      updaterPath: `${stateDir}/updater/fased-managed-updater.mjs`,
+    };
+    const previousManifest = {
+      schemaVersion: 2,
+      profile: "local",
+      stateDir,
+      configPath: `${stateDir}/fased.json`,
+      runtime: { activeVersion: "1.2.2", previousVersion: "1.2.1" },
+      service: {
+        name: "fased-gateway-fixture.service",
+        scope: "system",
+        launcher: "/opt/fased/fixture/gateway-launch",
+      },
+      update: { channel: "stable" },
+    };
+    const applicationState = {
+      profile: "protected-local",
+      gatewayServiceName: "fased-gateway-fixture.service",
+      gatewayLauncherPath: "/opt/fased/fixture/gateway-launch",
+    };
+    const applicationRelease = {
+      commit: "a".repeat(40),
+      manifestDigest: `sha256:${"1".repeat(64)}`,
+      artifact: {
+        asset: "fased-hosted-app-v2-linux-x64-v1.2.3.tar.gz",
+        sha256: "2".repeat(64),
+      },
+      dependencies: {
+        asset: `fased-hosted-deps-linux-x64-${"3".repeat(64)}.tar.gz`,
+        sha256: "4".repeat(64),
+        dependencyHash: "3".repeat(64),
+      },
+      signer: signerRelease("1.2.3"),
+      capabilities: { protocol: { current: 2, min: 2, max: 2 } },
+      capabilitiesDigest: `sha256:${"5".repeat(64)}`,
+    };
+
+    expect(
+      __testing.validateManagedInstallManifest(previousManifest, applicationState, paths),
+    ).toBe(previousManifest);
+    expect(
+      __testing.buildTargetManagedInstallManifest({
+        previousManifest,
+        applicationState,
+        paths,
+        releasesDir: "/opt/fased/fixture/application/releases",
+        version: "1.2.3",
+        applicationRelease,
+        updaterBundleDigest: `sha256:${"6".repeat(64)}`,
+        updateChannel: "stable",
+      }),
+    ).toMatchObject({
+      profile: "protected-local",
+      runtime: { activeVersion: "1.2.3", previousVersion: "1.2.2" },
+    });
+    expect(() =>
+      __testing.validateManagedInstallManifest(
+        previousManifest,
+        { ...applicationState, profile: "hosting" },
+        paths,
+      ),
+    ).toThrow("root-managed application install manifest is invalid");
+  });
+
   it("makes initialized stable CLI directories traversable by the operator", async () => {
     if (process.platform === "win32") {
       return;
