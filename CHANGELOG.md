@@ -4,6 +4,11 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.53
+
+- Correct the protected Local packaged rollback fixture and keep fixture-only
+  changes on the focused CI-contract lane.
+
 ## 0.1.76-rc.52
 
 - Create the canonical protected Local supervisor state boundary before
