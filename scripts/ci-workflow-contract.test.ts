@@ -505,7 +505,10 @@ describe("CI workflow routing", () => {
       p1?.steps?.find(
         (step) => step.name === "Run packaged fresh-install and supported-stable update P1",
       )?.env,
-    ).toMatchObject({ FASED_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install,install" });
+    ).toMatchObject({
+      FASED_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install,${{ inputs.predecessor_scenario }}",
+      FASED_SYSTEMD_FIXTURE_PREDECESSOR_VERSION: "${{ inputs.predecessor_version }}",
+    });
     expect(publishText).not.toContain("git tag");
     expect(publishText).not.toContain("git push origin");
     expect(tagReadyText).toContain("git ls-remote --exit-code --tags origin");
@@ -557,20 +560,16 @@ describe("CI workflow routing", () => {
     expect(fixture.match(/update "\$\{target_update_args\[@\]\}" --timeout/gu)).toHaveLength(5);
     expect(fixture).not.toContain("/etc/fased/testing");
     expect(fixture).toContain("/var/lib/fased-protected-local-fixture");
-    expect(fixture).toContain(
-      'if [[ "$phase" == "modern-update" || "$phase" == "legacy-takeover" ]]',
-    );
+    expect(fixture).toContain('if [[ "$phase" == "managed-update" ]]');
     expect(fixture).toContain("run_target_update() {");
-    expect(fixture).toContain('if [[ "$phase" == "legacy-takeover" ]]');
     expect(fixture).toContain(
-      "modern packaged Protected Local rollback, retry, restart, preservation, and no-op passed",
+      "managed packaged Protected Local rollback, retry, restart, preservation, and no-op passed",
     );
-    expect(fixture).toContain(
-      "legacy packaged Protected Local takeover, rollback, retry, restart, preservation, and no-op passed",
-    );
+    expect(fixture).not.toContain("legacy-takeover");
+    expect(fixture).not.toContain("modern-update");
   });
 
-  it("allows the legacy operator runtime only before takeover", async () => {
+  it("keeps the managed predecessor runtime inside the root-controlled store", async () => {
     const fixture = await readFile(
       resolve(repoRoot, "scripts/docker/protected-local-systemd/run.sh"),
       "utf8",
@@ -580,9 +579,9 @@ describe("CI workflow routing", () => {
     expect(resolverStart).toBeGreaterThanOrEqual(0);
     expect(resolverEnd).toBeGreaterThan(resolverStart);
     const resolver = fixture.slice(resolverStart, resolverEnd);
-    expect(resolver).toContain('if [[ "$phase" == "legacy-takeover" ]]');
-    expect(resolver).toContain('"$state/runtime/releases/"*');
+    expect(resolver).toContain('test "$phase" = "managed-update"');
     expect(resolver).toContain('resolve_protected_runtime "$instance"');
+    expect(resolver).not.toContain('"$state/runtime/releases/"*');
 
     expect(fixture).toContain('runtime="$(resolve_predecessor_runtime "$phase" "$instance")"');
     expect(fixture).toContain('runtime="$(resolve_protected_runtime "$instance")"');

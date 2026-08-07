@@ -6,7 +6,7 @@ phase="${1:-install}"
 fixture_started="$SECONDS"
 version="${FASED_FIXTURE_VERSION:?missing fixture version}"
 commit="${FASED_FIXTURE_COMMIT:?missing fixture commit}"
-legacy_version="${FASED_FIXTURE_LEGACY_VERSION:-0.1.75}"
+predecessor_version="${FASED_FIXTURE_PREDECESSOR_VERSION:-}"
 preinstalled_tools="${FASED_FIXTURE_PREINSTALLED_TOOLS:-0}"
 target_update_args=()
 if [[ "$version" == *-* ]]; then
@@ -17,11 +17,11 @@ release_root="/var/lib/fased-installer/releases/v${version}/${digest}/extract/pa
 root_store="$(dirname "$(dirname "$release_root")")"
 candidate_repo=/var/lib/fased-protected-local-candidate
 candidate_installer=/var/lib/fased-protected-local-install.sh
-legacy_repo=/var/lib/fased-protected-local-predecessor
-legacy_installer=/var/lib/fased-protected-local-predecessor-install.sh
+predecessor_repo=/var/lib/fased-protected-local-predecessor
+predecessor_installer=/var/lib/fased-protected-local-predecessor-install.sh
 state=/home/testop/.fased
 runtime="$state/runtime/releases/$version"
-legacy_runtime="$state/runtime/releases/$legacy_version"
+legacy_runtime="$state/runtime/releases/$predecessor_version"
 gateway_port=19456
 rpc_port=19457
 gateway_token=fased-protected-local-fixture-token
@@ -101,18 +101,7 @@ resolve_protected_runtime() {
 resolve_predecessor_runtime() {
   local phase="$1"
   local instance="$2"
-  local resolved=""
-  if [[ "$phase" == "legacy-takeover" ]]; then
-    resolved="$(readlink -f "$state/runtime/current")"
-    case "$resolved" in
-      "$state/runtime/releases/"*) printf '%s\n' "$resolved" ;;
-      *)
-        echo "Legacy predecessor runtime selector escaped the operator runtime store" >&2
-        return 1
-        ;;
-    esac
-    return 0
-  fi
+  test "$phase" = "managed-update"
   resolve_protected_runtime "$instance"
 }
 
@@ -460,7 +449,7 @@ verify_supervised_controller_a_to_b() {
   local public_socket="/run/fased-local-controller/$instance/request.sock"
   local private_socket="/run/fased-local-controller-worker/$instance/controller.sock"
   local target_generation=""
-  local predecessor_generation="$controller_root/releases/v$legacy_version"
+  local predecessor_generation="$controller_root/releases/v$predecessor_version"
   local supervisor_identity="$controller_state/supervisor/controller-version.json"
   local product_identity="$controller_state/controller-version.json"
   local preservation_manifest=/tmp/controller-a-to-b-preservation.sha256
@@ -553,7 +542,7 @@ EOF_MINING_LEDGER
   install -m 0644 -o root -g root \
     "$target_generation/fased-host-updaterctl.mjs" \
     "$predecessor_generation/fased-host-updaterctl.mjs"
-  jq --arg version "$legacy_version" '.version = $version' "$supervisor_identity" \
+  jq --arg version "$predecessor_version" '.version = $version' "$supervisor_identity" \
     >/tmp/controller-predecessor-identity.json
   install -m 0600 -o root -g root \
     /tmp/controller-predecessor-identity.json "$supervisor_identity"
@@ -569,9 +558,9 @@ EOF_MINING_LEDGER
 
   status_transaction_id="$(/usr/local/bin/node -e 'process.stdout.write(crypto.randomUUID())')"
   lifecycle_socket_requests \
-    "$private_socket" controllerStatus "$status_transaction_id" "$legacy_version" 1 \
+    "$private_socket" controllerStatus "$status_transaction_id" "$predecessor_version" 1 \
     /tmp/controller-predecessor-status.json
-  jq -e --arg version "$legacy_version" \
+  jq -e --arg version "$predecessor_version" \
     'length == 1 and .[0].ok == true and .[0].controllerVersion == $version' \
     /tmp/controller-predecessor-status.json >/dev/null
 
@@ -603,7 +592,7 @@ EOF_CONTROLLER_FAILURE_OVERRIDE
     /tmp/controller-transition-failure.json >/dev/null
   wait_for_service "$controller_unit"
   test "$(readlink -f "$controller_root/current")" = "$predecessor_generation"
-  test "$(jq -r .version "$supervisor_identity")" = "$legacy_version"
+  test "$(jq -r .version "$supervisor_identity")" = "$predecessor_version"
   test ! -e "$controller_state/supervisor/controller-transaction.json"
   test ! -e "$failure_marker"
   sha256sum --check --status "$preservation_manifest"
@@ -723,11 +712,15 @@ fi
 
 [[ "$phase" == "install" ||
   "$phase" == "fresh-install" ||
-  "$phase" == "modern-update" ||
-  "$phase" == "legacy-takeover" ]] || {
-  echo "usage: fased-protected-local-systemd-fixture fresh-install|install|modern-update|legacy-takeover|verify-reboot" >&2
+  "$phase" == "managed-update" ]] || {
+  echo "usage: fased-protected-local-systemd-fixture fresh-install|install|managed-update|verify-reboot" >&2
   exit 64
 }
+if [[ "$phase" != "fresh-install" &&
+  ! "$predecessor_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+  echo "The update fixture requires an explicit predecessor version." >&2
+  exit 64
+fi
 
 useradd --uid 2000 --user-group --create-home --shell /bin/bash testop
 prepare_restrictive_home_acl
@@ -769,23 +762,23 @@ git -C "$candidate_repo" checkout --quiet --detach "$commit"
 git -C "$candidate_repo" tag --force "v$version" "$commit"
 chown -R testop:testop "$candidate_repo"
 install -m 0700 -o testop -g testop "$candidate_repo/install.sh" "$candidate_installer"
-if [[ "$phase" == "install" || "$phase" == "modern-update" || "$phase" == "legacy-takeover" ]]; then
-  legacy_commit="$(jq -er .release.commit /legacy-artifacts/fased-hosted-release-v2.json)"
-  rm -rf "$legacy_repo"
-  git clone --quiet --no-hardlinks /repo "$legacy_repo"
-  git -C "$legacy_repo" checkout --quiet --detach "$legacy_commit"
-  test "$(git -C "$legacy_repo" rev-parse "v${legacy_version}^{commit}")" = "$legacy_commit"
+if [[ "$phase" == "install" || "$phase" == "managed-update" ]]; then
+  legacy_commit="$(jq -er .release.commit /predecessor-artifacts/fased-hosted-release-v2.json)"
+  rm -rf "$predecessor_repo"
+  git clone --quiet --no-hardlinks /repo "$predecessor_repo"
+  git -C "$predecessor_repo" checkout --quiet --detach "$legacy_commit"
+  test "$(git -C "$predecessor_repo" rev-parse "v${predecessor_version}^{commit}")" = "$legacy_commit"
   # The source checkout intentionally carries a placeholder identity, while
   # the immutable release asset is stamped with the published version. Compare
   # the scripts after normalizing only that one release-identity line.
   normalize_installer_identity() {
     sed -E 's/^install_entry_release_identity="[^"]*"$/install_entry_release_identity="__FASED_RELEASE_IDENTITY__"/' "$1"
   }
-  cmp <(normalize_installer_identity "$legacy_repo/install.sh") \
-    <(normalize_installer_identity /legacy-artifacts/install.sh)
-  chown -R testop:testop "$legacy_repo"
+  cmp <(normalize_installer_identity "$predecessor_repo/install.sh") \
+    <(normalize_installer_identity /predecessor-artifacts/install.sh)
+  chown -R testop:testop "$predecessor_repo"
   install -m 0700 -o testop -g testop \
-    /legacy-artifacts/install.sh "$legacy_installer"
+    /predecessor-artifacts/install.sh "$predecessor_installer"
 fi
 
 install -d -m 0700 -o root -g root /opt/fased-fixture-bootstrap-tools
@@ -1010,12 +1003,12 @@ cat >/usr/local/bin/curl <<'EOF_FIXTURE_CURL'
 set -euo pipefail
 output=""
 url=""
-legacy_version="${FASED_FIXTURE_LEGACY_VERSION:-}"
-if [[ -z "$legacy_version" &&
-  -f /legacy-artifacts/fased-hosted-release-v2.json ]]; then
-  legacy_version="$(
+predecessor_version="${FASED_FIXTURE_PREDECESSOR_VERSION:-}"
+if [[ -z "$predecessor_version" &&
+  -f /predecessor-artifacts/fased-hosted-release-v2.json ]]; then
+  predecessor_version="$(
     /usr/bin/jq -er '.release.version' \
-      /legacy-artifacts/fased-hosted-release-v2.json
+      /predecessor-artifacts/fased-hosted-release-v2.json
   )"
 fi
 args=("$@")
@@ -1029,12 +1022,12 @@ for ((i = 0; i < ${#args[@]}; i++)); do
   esac
 done
 case "$url" in
-  */v"$legacy_version"/fased-hosted-release-v2.json)
-    install -m 0600 /legacy-artifacts/fased-hosted-release-v2.json "$output"
+  */v"$predecessor_version"/fased-hosted-release-v2.json)
+    install -m 0600 /predecessor-artifacts/fased-hosted-release-v2.json "$output"
     ;;
-  */v"$legacy_version"/fased-hosted-release-v2.json.attestation.json)
+  */v"$predecessor_version"/fased-hosted-release-v2.json.attestation.json)
     install -m 0600 \
-      /legacy-artifacts/fased-hosted-release-v2.json.attestation.json "$output"
+      /predecessor-artifacts/fased-hosted-release-v2.json.attestation.json "$output"
     ;;
   */fased-hosted-release-v2.json)
     install -m 0600 /var/lib/fased-protected-local-fixture/local-release-manifest.json "$output"
@@ -1061,7 +1054,7 @@ import https from "node:https";
 import path from "node:path";
 const port = Number(process.env.FASED_FIXTURE_RPC_PORT);
 const version = process.env.FASED_FIXTURE_VERSION;
-const legacyVersion = process.env.FASED_FIXTURE_LEGACY_VERSION;
+const legacyVersion = process.env.FASED_FIXTURE_PREDECESSOR_VERSION;
 const genesis = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"; // pragma: allowlist secret
 const releaseAssets = "/var/lib/fased-protected-local-fixture/release-assets";
 const releasePrefix = `/fased-ai/fased/releases/download/v${version}/`;
@@ -1111,7 +1104,7 @@ function handleRequest(request, response) {
       response.writeHead(400).end();
       return;
     }
-    serveFile(response, path.join("/legacy-artifacts", asset));
+    serveFile(response, path.join("/predecessor-artifacts", asset));
     return;
   }
   if (request.method === "GET" && request.url?.startsWith(`/v${version}/`)) {
@@ -1143,7 +1136,7 @@ function handleRequest(request, response) {
       response.writeHead(400).end();
       return;
     }
-    const selected = path.join("/legacy-artifacts", asset);
+    const selected = path.join("/predecessor-artifacts", asset);
     serveFile(response, selected);
     return;
   }
@@ -1183,7 +1176,7 @@ cat >/usr/local/libexec/fased-fixture-legacy-gateway.mjs <<'EOF_LEGACY_GATEWAY'
 import http from "node:http";
 
 const port = Number(process.env.FASED_FIXTURE_GATEWAY_PORT);
-const version = process.env.FASED_FIXTURE_LEGACY_VERSION;
+const version = process.env.FASED_FIXTURE_PREDECESSOR_VERSION;
 http
   .createServer((request, response) => {
     if (request.url === "/healthz") {
@@ -1275,7 +1268,7 @@ Description=Fased fixture Solana RPC
 Type=simple
 Environment=FASED_FIXTURE_RPC_PORT=$rpc_port
 Environment=FASED_FIXTURE_VERSION=$version
-Environment=FASED_FIXTURE_LEGACY_VERSION=$legacy_version
+Environment=FASED_FIXTURE_PREDECESSOR_VERSION=$predecessor_version
 ExecStart=/usr/local/bin/node /usr/local/libexec/fased-fixture-solana-rpc.mjs
 Restart=always
 
@@ -1294,8 +1287,8 @@ testop ALL=(root) NOPASSWD: ALL
 EOF_SUDOERS
 chmod 0440 /etc/sudoers.d/fased-protected-local-fixture
 install -d -m 0755 -o root -g root /var/lib/fased-protected-local-fixture
-if [[ "$phase" == "modern-update" || "$phase" == "legacy-takeover" ]]; then
-  printf '%s\n' "$legacy_version" >"$selected_target"
+if [[ "$phase" == "managed-update" ]]; then
+  printf '%s\n' "$predecessor_version" >"$selected_target"
 else
   printf '%s\n' "$version" >"$selected_target"
 fi
@@ -1457,8 +1450,8 @@ if [[ "$phase" == "fresh-install" ]]; then
   exit 0
 fi
 
-if [[ "$phase" == "modern-update" || "$phase" == "legacy-takeover" ]]; then
-  modern_env=(
+if [[ "$phase" == "managed-update" ]]; then
+  managed_env=(
     HOME=/home/testop
     USER=testop
     LOGNAME=testop
@@ -1467,12 +1460,12 @@ if [[ "$phase" == "modern-update" || "$phase" == "legacy-takeover" ]]; then
     FASED_GATEWAY_PORT="$gateway_port"
     FASED_GATEWAY_TOKEN="$gateway_token"
     FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port"
-    FASED_INSTALL_REPO="$legacy_repo"
+    FASED_INSTALL_REPO="$predecessor_repo"
     npm_config_registry="http://127.0.0.1:$rpc_port"
   )
-  runuser -u testop -- env "${modern_env[@]}" \
-    /bin/bash "$legacy_installer" \
-      --release "v$legacy_version" \
+  runuser -u testop -- env "${managed_env[@]}" \
+    /bin/bash "$predecessor_installer" \
+      --release "v$predecessor_version" \
       --update-channel beta \
       --local \
       --install-dir /home/testop/fased \
@@ -1487,42 +1480,21 @@ if [[ "$phase" == "modern-update" || "$phase" == "legacy-takeover" ]]; then
       --gateway-bind loopback \
       --skip-skills \
       --skip-health \
-    >/tmp/modern-predecessor-install.out 2>/tmp/modern-predecessor-install.err
+    >/tmp/managed-predecessor-install.out 2>/tmp/managed-predecessor-install.err
 
   test "$(jq -er .profile "$state/install.json")" = "protected-local"
-  test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$legacy_version"
+  test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$predecessor_version"
   instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
   runtime="$(resolve_predecessor_runtime "$phase" "$instance")"
-  mapfile -t modern_operator_env < <(operator_env "$instance")
+  mapfile -t managed_operator_env < <(operator_env "$instance")
   wait_for_service "fased-local-controller-$instance.service"
   wait_for_service "fased-signerd-$instance.service"
   wait_for_service "fased-gateway-$instance.service"
-  wait_for_gateway_version "$legacy_version"
-
-  if [[ "$phase" == "legacy-takeover" ]]; then
-    takeover_transaction=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
-    cat >"$state/hosted-update-transaction.json" <<EOF_TAKEOVER_OPERATOR
-{"schemaVersion":1,"phase":"rolling-back","transactionId":"$takeover_transaction"}
-EOF_TAKEOVER_OPERATOR
-    cat >"$state/legacy-managed-update-adoption.v1.json" <<EOF_TAKEOVER_RECEIPT
-{"schemaVersion":1,"outcome":"rolled-back","rootVerificationPending":true,"transactionId":"$takeover_transaction"}
-EOF_TAKEOVER_RECEIPT
-    cat >"$state/protected-local-controller-transaction.json" <<EOF_TAKEOVER_HINT
-{"schemaVersion":1,"version":"$legacy_version"}
-EOF_TAKEOVER_HINT
-    chown testop:"fscf-$instance" \
-      "$state/hosted-update-transaction.json" \
-      "$state/legacy-managed-update-adoption.v1.json" \
-      "$state/protected-local-controller-transaction.json"
-    chmod 0600 \
-      "$state/hosted-update-transaction.json" \
-      "$state/legacy-managed-update-adoption.v1.json" \
-      "$state/protected-local-controller-transaction.json"
-  fi
+  wait_for_gateway_version "$predecessor_version"
 
   for wallet_spec in "agent:Agent:agent" "vault:Vault:vault"; do
     IFS=: read -r wallet_id wallet_name wallet_role <<<"$wallet_spec"
-    runuser -u testop -- env "${modern_operator_env[@]}" \
+    runuser -u testop -- env "${managed_operator_env[@]}" \
       /usr/local/bin/node "$runtime/fased.mjs" wallet setup \
       --mode local-signer-create \
       --wallet-id "$wallet_id" \
@@ -1531,19 +1503,19 @@ EOF_TAKEOVER_HINT
       --rpc-url "http://127.0.0.1:$rpc_port" \
       --non-interactive \
       --json \
-      >"/tmp/modern-${wallet_id}-create.json"
+      >"/tmp/managed-${wallet_id}-create.json"
   done
-  wait_for_gateway_version "$legacy_version"
+  wait_for_gateway_version "$predecessor_version"
   verify_shared_device_auth "$instance" "$runtime"
   verify_shared_federation_state "$instance" "$runtime"
-  wait_for_gateway_version "$legacy_version"
+  wait_for_gateway_version "$predecessor_version"
   verify_mining_history
   verify_shared_wallet_registry "$instance" "$runtime"
   install -d -m 2770 -o testop -g "fscf-$instance" \
     "$state/sat-mining/wallets/agent" "$state/extensions"
   runuser -u testop -- env \
     FASED_FIXTURE_MINING_LEDGER="$state/sat-mining/wallets/agent/mining.sqlite" \
-    /usr/local/bin/node --input-type=module <<'EOF_MODERN_MINING_LEDGER'
+    /usr/local/bin/node --input-type=module <<'EOF_MANAGED_MINING_LEDGER'
 import { DatabaseSync } from "node:sqlite";
 const database = new DatabaseSync(process.env.FASED_FIXTURE_MINING_LEDGER);
 try {
@@ -1554,7 +1526,7 @@ try {
 } finally {
   database.close();
 }
-EOF_MODERN_MINING_LEDGER
+EOF_MANAGED_MINING_LEDGER
   printf '{"schemaVersion":1,"rpc":"fixture-rpc","policy":"agent"}\n' \
     >"$state/wallet/fixture-policy-rpc.json"
   printf '{"schemaVersion":1,"enabled":["fixture"]}\n' \
@@ -1567,12 +1539,12 @@ EOF_MODERN_MINING_LEDGER
     "$state/sat-mining/wallets/agent/mining.sqlite" \
     "$state/wallet/fixture-policy-rpc.json" \
     "$state/extensions/fixture-plugin-state.json"
-  verify_wallet "$instance" agent >/tmp/modern-agent-before.json
-  verify_wallet "$instance" vault >/tmp/modern-vault-before.json
+  verify_wallet "$instance" agent >/tmp/managed-agent-before.json
+  verify_wallet "$instance" vault >/tmp/managed-vault-before.json
   jq -S '{nodeId, handle}' "$state/federation/access-token.json" \
-    >/tmp/modern-federation-identity-before.json
+    >/tmp/managed-federation-identity-before.json
 
-  modern_state_manifest=/tmp/modern-update-preservation.sha256
+  managed_state_manifest=/tmp/managed-update-preservation.sha256
   sha256sum \
     "$state/fased.json" \
     "$state/identity/device.json" \
@@ -1581,145 +1553,125 @@ EOF_MODERN_MINING_LEDGER
     "$state/sat-mining/wallets/agent/mining.sqlite" \
     "$state/extensions/fixture-plugin-state.json" \
     "/var/lib/fased-local/$instance/signer/master.key" \
-    >"$modern_state_manifest"
-  verify_modern_state_manifest() {
-    if ! sha256sum --check "$modern_state_manifest"; then
+    >"$managed_state_manifest"
+  verify_managed_state_manifest() {
+    if ! sha256sum --check "$managed_state_manifest"; then
       echo "protected Local state changed outside a declared migration" >&2
       return 1
     fi
   }
-  verify_modern_semantic_state() {
+  verify_managed_semantic_state() {
     local application_current="/opt/fased/local/$instance/application/current"
     local operator_current="$state/runtime/current"
-    verify_wallet "$instance" agent >/tmp/modern-agent-current.json
-    verify_wallet "$instance" vault >/tmp/modern-vault-current.json
+    verify_wallet "$instance" agent >/tmp/managed-agent-current.json
+    verify_wallet "$instance" vault >/tmp/managed-vault-current.json
     diff -u \
-      <(jq -S . /tmp/modern-agent-before.json) \
-      <(jq -S . /tmp/modern-agent-current.json)
+      <(jq -S . /tmp/managed-agent-before.json) \
+      <(jq -S . /tmp/managed-agent-current.json)
     diff -u \
-      <(jq -S . /tmp/modern-vault-before.json) \
-      <(jq -S . /tmp/modern-vault-current.json)
+      <(jq -S . /tmp/managed-vault-before.json) \
+      <(jq -S . /tmp/managed-vault-current.json)
     diff -u \
-      /tmp/modern-federation-identity-before.json \
+      /tmp/managed-federation-identity-before.json \
       <(jq -S '{nodeId, handle}' "$state/federation/access-token.json")
     test "$(readlink -f "$operator_current")" = "$(readlink -f "$application_current")"
     test "$(jq -er .profile "$state/install.json")" = "protected-local"
     test "$(jq -er .env.vars.FASED_PROTECTED_LOCAL_INSTANCE "$state/fased.json")" = "$instance"
     test ! -e "/var/lib/fased-local/$instance/controller/supervisor/product-transaction.json"
   }
-  legacy_gateway_version="$legacy_version"
+  predecessor_gateway_version="$predecessor_version"
   printf '%s\n' "$version" >"$selected_target"
 
   run_target_update() {
     local timeout_seconds="$1"
-    if [[ "$phase" == "legacy-takeover" ]]; then
-      runuser -u testop -- env "${modern_operator_env[@]}" \
-        FASED_INSTALL_REPO="$candidate_repo" \
-        npm_config_registry="http://127.0.0.1:$rpc_port" \
-        /bin/bash "$candidate_installer" \
-        --release "v$version" \
-        --update-channel "$([[ "$version" == *-* ]] && printf beta || printf stable)" \
-        --local
-      return
-    fi
-    runuser -u testop -- env "${modern_operator_env[@]}" \
+    runuser -u testop -- env "${managed_operator_env[@]}" \
       npm_config_registry="http://127.0.0.1:$rpc_port" \
       "$state/bin/fased" update "${target_update_args[@]}" --timeout "$timeout_seconds"
   }
 
-  modern_current_link="/opt/fased/local/$instance/application/current"
-  modern_initial_target="$(readlink -f "$modern_current_link")"
-  modern_gateway_unit="fased-gateway-$instance.service"
-  modern_fault_root="/run/fased-fixture-modern-gateway-fault-$$"
-  modern_fault_script="$modern_fault_root/reject-target.sh"
-  modern_fault_marker="$modern_fault_root/injected"
-  modern_fault_dropin="/etc/systemd/system/${modern_gateway_unit}.d/99-fased-fixture-target-fault.conf"
-  mkdir -p "$modern_fault_root" "$(dirname "$modern_fault_dropin")"
-  cat >"$modern_fault_script" <<EOF_MODERN_FAILED_GATEWAY
+  managed_current_link="/opt/fased/local/$instance/application/current"
+  managed_initial_target="$(readlink -f "$managed_current_link")"
+  managed_gateway_unit="fased-gateway-$instance.service"
+  managed_fault_root="/run/fased-fixture-managed-gateway-fault-$$"
+  managed_fault_script="$managed_fault_root/reject-target.sh"
+  managed_fault_marker="$managed_fault_root/injected"
+  managed_fault_dropin="/etc/systemd/system/${managed_gateway_unit}.d/99-fased-fixture-target-fault.conf"
+  mkdir -p "$managed_fault_root" "$(dirname "$managed_fault_dropin")"
+  cat >"$managed_fault_script" <<EOF_MANAGED_FAILED_GATEWAY
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "\$(readlink -f '$modern_current_link')" != '$modern_initial_target' ]]; then
-  : >'$modern_fault_marker'
+if [[ "\$(readlink -f '$managed_current_link')" != '$managed_initial_target' ]]; then
+  : >'$managed_fault_marker'
   exit 1
 fi
-EOF_MODERN_FAILED_GATEWAY
-  chown root:root "$modern_fault_script"
-  chmod 0755 "$modern_fault_script"
-  cat >"$modern_fault_dropin" <<EOF_MODERN_FAILED_GATEWAY_DROPIN
+EOF_MANAGED_FAILED_GATEWAY
+  chown root:root "$managed_fault_script"
+  chmod 0755 "$managed_fault_script"
+  cat >"$managed_fault_dropin" <<EOF_MANAGED_FAILED_GATEWAY_DROPIN
 [Service]
-ExecStartPre=+$modern_fault_script
-EOF_MODERN_FAILED_GATEWAY_DROPIN
+ExecStartPre=+$managed_fault_script
+EOF_MANAGED_FAILED_GATEWAY_DROPIN
   systemctl daemon-reload
   if run_target_update 30 \
-      >/tmp/modern-update-failure.out 2>/tmp/modern-update-failure.err; then
-    modern_failure_status=0
+      >/tmp/managed-update-failure.out 2>/tmp/managed-update-failure.err; then
+    managed_failure_status=0
   else
-    modern_failure_status=$?
+    managed_failure_status=$?
   fi
-  rm -f "$modern_fault_dropin"
+  rm -f "$managed_fault_dropin"
   systemctl daemon-reload
-  test -e "$modern_fault_marker" || {
-    echo "failed to inject the modern target Gateway activation fault" >&2
-    sed -n '1,200p' /tmp/modern-update-failure.err >&2
+  test -e "$managed_fault_marker" || {
+    echo "failed to inject the managed target Gateway activation fault" >&2
+    sed -n '1,200p' /tmp/managed-update-failure.err >&2
     exit 1
   }
-  rm -rf -- "$modern_fault_root"
-  test "$modern_failure_status" -ne 0
-  modern_recovery_transaction=""
+  rm -rf -- "$managed_fault_root"
+  test "$managed_failure_status" -ne 0
+  managed_recovery_transaction=""
   if grep -F "target release failed and was rolled back" \
-      /tmp/modern-update-failure.err >/dev/null; then
-    wait_for_gateway_version "$legacy_version"
-    test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$legacy_version"
-    verify_modern_state_manifest
-    if [[ "$phase" == "legacy-takeover" ]]; then
-      test -s "$state/hosted-update-transaction.json"
-      test -s "$state/legacy-managed-update-adoption.v1.json"
-    fi
-  elif grep -F "lifecycle recovery is pending" /tmp/modern-update-failure.err >/dev/null; then
-    modern_root_transaction="/var/lib/fased-local/$instance/controller/supervisor/product-transaction.json"
-    modern_recovery_transaction="$(jq -er .transactionId "$modern_root_transaction")"
+      /tmp/managed-update-failure.err >/dev/null; then
+    wait_for_gateway_version "$predecessor_version"
+    test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$predecessor_version"
+    verify_managed_state_manifest
+  elif grep -F "lifecycle recovery is pending" /tmp/managed-update-failure.err >/dev/null; then
+    managed_root_transaction="/var/lib/fased-local/$instance/controller/supervisor/product-transaction.json"
+    managed_recovery_transaction="$(jq -er .transactionId "$managed_root_transaction")"
   else
-    echo "modern update did not report a bounded rollback outcome" >&2
-    sed -n '1,160p' /tmp/modern-update-failure.err >&2
+    echo "managed update did not report a bounded rollback outcome" >&2
+    sed -n '1,160p' /tmp/managed-update-failure.err >&2
     exit 1
   fi
 
   run_target_update 90 \
-    >/tmp/modern-update-success.out 2>/tmp/modern-update-success.err
-  if [[ -n "$modern_recovery_transaction" ]]; then
-    modern_recovery_receipt="/var/lib/fased-local/$instance/controller/supervisor/receipts/${modern_recovery_transaction}.json"
-    test "$(jq -er .operation "$modern_recovery_receipt")" = "recoverRelease"
-    test "$(jq -er .outcome "$modern_recovery_receipt")" = "rolled-back"
+    >/tmp/managed-update-success.out 2>/tmp/managed-update-success.err
+  if [[ -n "$managed_recovery_transaction" ]]; then
+    managed_recovery_receipt="/var/lib/fased-local/$instance/controller/supervisor/receipts/${managed_recovery_transaction}.json"
+    test "$(jq -er .operation "$managed_recovery_receipt")" = "recoverRelease"
+    test "$(jq -er .outcome "$managed_recovery_receipt")" = "rolled-back"
   fi
   wait_for_gateway_version "$version"
   test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$version"
-  test "$(jq -er .runtime.previousVersion "$state/install.json")" = "$legacy_version"
-  if [[ "$phase" == "legacy-takeover" ]]; then
-    test ! -e "$state/hosted-update-transaction.json"
-    test ! -e "$state/legacy-managed-update-adoption.v1.json"
-    test ! -e "$state/protected-local-controller-transaction.json"
-    test -s "/var/lib/fased-local/$instance/controller/supervisor/control-normalization/last-success.json"
-  fi
-  verify_modern_state_manifest
-  verify_modern_semantic_state
+  test "$(jq -er .runtime.previousVersion "$state/install.json")" = "$predecessor_version"
+  verify_managed_state_manifest
+  verify_managed_semantic_state
 
   runtime="$(resolve_protected_runtime "$instance")"
-  mapfile -t modern_operator_env < <(operator_env "$instance")
+  mapfile -t managed_operator_env < <(operator_env "$instance")
   systemctl restart "fased-local-controller-$instance.service" \
     "fased-signerd-$instance.service" "fased-gateway-$instance.service"
   wait_for_gateway_version "$version"
-  verify_modern_state_manifest
-  verify_modern_semantic_state
-  runuser -u testop -- env "${modern_operator_env[@]}" \
+  verify_managed_state_manifest
+  verify_managed_semantic_state
+  runuser -u testop -- env "${managed_operator_env[@]}" \
     npm_config_registry="http://127.0.0.1:$rpc_port" \
     "$state/bin/fased" update "${target_update_args[@]}" --timeout 30 \
-    >/tmp/modern-update-noop.out 2>/tmp/modern-update-noop.err
-  grep -F "Already current: $version" /tmp/modern-update-noop.out >/dev/null
+    >/tmp/managed-update-noop.out 2>/tmp/managed-update-noop.err
+  grep -F "Already current: $version" /tmp/managed-update-noop.out >/dev/null
 
-  verify_wallet "$instance" agent >/tmp/modern-agent-after.json
-  verify_wallet "$instance" vault >/tmp/modern-vault-after.json
-  agent_readiness_sha="$(jq -S -c . /tmp/modern-agent-after.json | sha256sum | awk '{print $1}')"
-  vault_readiness_sha="$(jq -S -c . /tmp/modern-vault-after.json | sha256sum | awk '{print $1}')"
+  verify_wallet "$instance" agent >/tmp/managed-agent-after.json
+  verify_wallet "$instance" vault >/tmp/managed-vault-after.json
+  agent_readiness_sha="$(jq -S -c . /tmp/managed-agent-after.json | sha256sum | awk '{print $1}')"
+  vault_readiness_sha="$(jq -S -c . /tmp/managed-vault-after.json | sha256sum | awk '{print $1}')"
   key_sha="$(sha256sum "/var/lib/fased-local/$instance/signer/master.key" | awk '{print $1}')"
   jq -n \
     --arg instanceId "$instance" \
@@ -1733,23 +1685,19 @@ EOF_MODERN_FAILED_GATEWAY_DROPIN
       masterKeySha256: $masterKeySha256
     }' >"$snapshot"
   chmod 0600 "$snapshot"
-  if [[ "$phase" == "legacy-takeover" ]]; then
-    printf 'legacy packaged Protected Local takeover, rollback, retry, restart, preservation, and no-op passed: %s\n' "$instance"
-  else
-    printf 'modern packaged Protected Local rollback, retry, restart, preservation, and no-op passed: %s\n' "$instance"
-  fi
+  printf 'managed packaged Protected Local rollback, retry, restart, preservation, and no-op passed: %s\n' "$instance"
   exit 0
 fi
 
 # Install the complete immutable predecessor through its own released installer,
 # application, dependency layer, signer, updater, and service setup. L1 must
 # never manufacture a previous topology from current components.
-# v0.1.75 requires gh to pre-exist because its immutable outer resolver installs
+# Some supported predecessor installers require gh to pre-exist because their immutable outer resolver installs
 # verification tools inside command substitution. That historical fresh-install
 # limitation is not repaired retroactively by the target candidate.
 /usr/bin/install -m 0755 \
   /opt/fased-fixture-bootstrap-tools/gh /usr/local/bin/gh
-legacy_channel="$([[ "$legacy_version" == *-* ]] && printf beta || printf stable)"
+legacy_channel="$([[ "$predecessor_version" == *-* ]] && printf beta || printf stable)"
 legacy_install_env=(
   HOME=/home/testop
   USER=testop
@@ -1763,14 +1711,14 @@ legacy_install_env=(
   FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port"
   FASED_LOCAL_SIGNER_BASE_URL="http://127.0.0.1:$rpc_port"
   FASED_LOCAL_SIGNER_ALLOW_UNATTESTED=1
-  FASED_INSTALL_REPO="$legacy_repo"
-  FASED_FIXTURE_LEGACY_VERSION="$legacy_version"
+  FASED_INSTALL_REPO="$predecessor_repo"
+  FASED_FIXTURE_PREDECESSOR_VERSION="$predecessor_version"
   npm_config_registry="http://127.0.0.1:$rpc_port"
 )
 set +e
 runuser -u testop -- env "${legacy_install_env[@]}" \
   /bin/bash -s -- \
-    --release "v$legacy_version" \
+    --release "v$predecessor_version" \
     --update-channel "$legacy_channel" \
     --local \
     --install-dir /home/testop/fased \
@@ -1791,22 +1739,22 @@ runuser -u testop -- env "${legacy_install_env[@]}" \
     --wallet-install-enabled \
     --skip-skills \
     --skip-health \
-  <"$legacy_installer" \
+  <"$predecessor_installer" \
   >/tmp/legacy-install.out 2>/tmp/legacy-install.err
 legacy_install_status=$?
 set -e
 if [[ "$legacy_install_status" -ne 0 ]]; then
   test "$legacy_install_status" -eq 1
-  grep -F "Installed stable Fased updater and activated managed runtime v${legacy_version}." \
+  grep -F "Installed stable Fased updater and activated managed runtime v${predecessor_version}." \
     /tmp/legacy-install.out >/dev/null
   grep -F "Installed systemd service:" /tmp/legacy-install.out >/dev/null
 fi
 
 test "$(jq -er .profile "$state/install.json")" = "local"
-test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$legacy_version"
+test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$predecessor_version"
 legacy_runtime="$(readlink -f "$state/runtime/current")"
-test "$(jq -er .version "$legacy_runtime/package.json")" = "$legacy_version"
-test "$(jq -er .version "$legacy_runtime/dist/build-info.json")" = "$legacy_version"
+test "$(jq -er .version "$legacy_runtime/package.json")" = "$predecessor_version"
+test "$(jq -er .version "$legacy_runtime/dist/build-info.json")" = "$predecessor_version"
 test "$(jq -er .commit "$legacy_runtime/dist/build-info.json")" = "$legacy_commit"
 legacy_signer_env="$state/wallet/signer.env"
 read_legacy_signer_env() {
@@ -1825,9 +1773,9 @@ test -n "$legacy_master_key"
 legacy_registry="$state/wallet/provider-registry.v1.json"
 test "$(sha256sum "$legacy_binary" | awk '{print $1}')" = \
   "$(jq -er '.signer.platforms["linux-amd64"].sha256' \
-    /legacy-artifacts/fased-hosted-release-v2.json)"
+    /predecessor-artifacts/fased-hosted-release-v2.json)"
 wait_for_socket "$legacy_control"
-wait_for_gateway_version "$legacy_version"
+wait_for_gateway_version "$predecessor_version"
 
 legacy_cli="$state/install-cache/npm-global/bin/fased"
 runuser -u testop -- env "${legacy_install_env[@]}" \
@@ -1877,7 +1825,7 @@ managed_update_env=(
   FASED_GATEWAY_PORT="$gateway_port" \
   FASED_GATEWAY_TOKEN="$gateway_token" \
   FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
-  FASED_FIXTURE_LEGACY_VERSION="$legacy_version" \
+  FASED_FIXTURE_PREDECESSOR_VERSION="$predecessor_version" \
   npm_config_registry="http://127.0.0.1:$rpc_port"
 )
 standard_bootstrap_env=(
@@ -1899,7 +1847,7 @@ run_standard_local_bootstrap() {
 # Every subsequent transition uses only `fased update`.
 prepare_restrictive_home_acl
 original_home_acl="$(capture_home_acl)"
-legacy_gateway_version="$legacy_version"
+predecessor_gateway_version="$predecessor_version"
 user_unit_dir=/home/testop/.config/systemd/user
 test -s "$user_unit_dir/fased-gateway.service"
 cat >"$user_unit_dir/fased-fixture-gateway-reactivator.service" <<'EOF_REACTIVATOR_SERVICE'
@@ -1930,7 +1878,7 @@ chown testop:testop \
 chmod 0600 "$user_unit_dir"/*.service "$user_unit_dir"/*.timer
 user_systemctl daemon-reload
 user_systemctl enable --now fased-fixture-gateway-reactivator.timer
-wait_for_gateway_version "$legacy_gateway_version"
+wait_for_gateway_version "$predecessor_gateway_version"
 original_manifest_sha="$(sha256sum "$state/install.json" | awk '{print $1}')"
 install -d -m 0700 -o testop -g testop "$state/identity"
 cat >"$state/identity/device-auth.json" <<'EOF_LEGACY_DEVICE_AUTH'
@@ -1969,7 +1917,7 @@ inject_failed_target_gateway() {
 #!/usr/bin/env bash
 set -euo pipefail
 export FASED_FIXTURE_GATEWAY_PORT=$gateway_port
-export FASED_FIXTURE_LEGACY_VERSION=$legacy_gateway_version
+export FASED_FIXTURE_PREDECESSOR_VERSION=$predecessor_gateway_version
 exec /usr/local/bin/node /usr/local/libexec/fased-fixture-legacy-gateway.mjs
 EOF_FAILED_GATEWAY
       chown root:root "$fault_launcher"
@@ -1984,7 +1932,7 @@ EOF_FAILED_GATEWAY
 #!/usr/bin/env bash
 set -euo pipefail
 export FASED_FIXTURE_GATEWAY_PORT=$gateway_port
-export FASED_FIXTURE_LEGACY_VERSION=$legacy_gateway_version
+export FASED_FIXTURE_PREDECESSOR_VERSION=$predecessor_gateway_version
 exec /usr/local/bin/node /usr/local/libexec/fased-fixture-legacy-gateway.mjs
 EOF_FAILED_GATEWAY
           chown root:root "$fault_launcher"
@@ -2021,7 +1969,7 @@ grep -F \
   "target Gateway readiness response is invalid" \
   /tmp/protected-bootstrap-failure.err >/dev/null
 failure_instance="$(cat /tmp/injected-failure-instance)"
-wait_for_gateway_version "$legacy_gateway_version"
+wait_for_gateway_version "$predecessor_gateway_version"
 verify_original_home_acl
 test ! -e "$user_unit_dir/fased-gateway.service.d/90-fased-protected-local.conf"
 test ! -e "/var/lib/fased-local/$failure_instance/controller/protected-local-active"
@@ -2083,7 +2031,7 @@ runuser -u "fsgw-$instance" -- test -S \
   "/run/fased-local/$instance/application/app.sock"
 test "$(jq -r .profile "$state/install.json")" = "protected-local"
 test "$(jq -r .runtime.activeVersion "$state/install.json")" = "$version"
-test "$(jq -r .runtime.previousVersion "$state/install.json")" = "$legacy_gateway_version"
+test "$(jq -r .runtime.previousVersion "$state/install.json")" = "$predecessor_gateway_version"
 test "$(jq -r .service.name "$state/install.json")" = "fased-gateway-$instance.service"
 test "$(cat "/var/lib/fased-local/$instance/controller/signer-version")" = "$version"
 test "$(jq -r .version "/var/lib/fased-local/$instance/controller/controller-version.json")" = \

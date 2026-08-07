@@ -158,6 +158,7 @@ jobs:
             scripts/ci-required-gates.mjs \
             scripts/ci-required-gates.test.ts \
             scripts/ci-workflow-contract.test.ts \
+            scripts/lifecycle-version-neutral.test.ts \
             ui/vitest.changed-node.config.ts
           pnpm exec oxlint \
             scripts/gate-authority.mjs \
@@ -171,6 +172,7 @@ jobs:
             scripts/ci-required-gates.mjs \
             scripts/ci-required-gates.test.ts \
             scripts/ci-workflow-contract.test.ts \
+            scripts/lifecycle-version-neutral.test.ts \
             ui/vitest.changed-node.config.ts
 
       - name: Check CI routing and gate contracts
@@ -184,6 +186,7 @@ jobs:
           scripts/ci-merged-main-reuse.test.ts
           scripts/ci-version-identity.test.ts
           scripts/ci-workflow-contract.test.ts
+          scripts/lifecycle-version-neutral.test.ts
 
       - name: Check version-neutral lifecycle compatibility evidence
         run: node scripts/lifecycle-compatibility-inventory.mjs --verify-git
