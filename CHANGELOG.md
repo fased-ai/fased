@@ -4,6 +4,11 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.54
+
+- Accept the historical Local install-profile label only at the protected
+  Local compatibility boundary and commit its canonical replacement.
+
 ## 0.1.76-rc.53
 
 - Correct the protected Local packaged rollback fixture and keep fixture-only
