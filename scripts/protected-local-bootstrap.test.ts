@@ -132,7 +132,7 @@ describe("protected Local bootstrap contract", () => {
       stateRoot: path.join(root, "state"),
       installRoot: path.join(root, "install"),
     });
-    fs.mkdirSync(layout.supervisorStateDir, { recursive: true });
+    fs.mkdirSync(layout.controllerStateDir, { recursive: true });
     fs.mkdirSync(path.join(stateDir, "wallets"), { recursive: true });
     fs.writeFileSync(
       path.join(stateDir, "install.json"),
@@ -164,15 +164,6 @@ describe("protected Local bootstrap contract", () => {
       { mode: 0o600 },
     );
     fs.writeFileSync(
-      path.join(layout.supervisorStateDir, "product-transaction.json"),
-      `${JSON.stringify({
-        schemaVersion: 3,
-        phase: "restored",
-        durableCommitDecision: false,
-      })}\n`,
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(
       path.join(layout.controllerStateDir, "active-signer-transaction.json"),
       `${JSON.stringify({ schemaVersion: 8, phase: "restored" })}\n`,
       { mode: 0o600 },
@@ -189,6 +180,7 @@ describe("protected Local bootstrap contract", () => {
       layout,
       {
         expectedRootUid: process.getuid?.() ?? 0,
+        expectedRootGid: process.getgid?.() ?? 0,
         expectedOperatorStateGid: process.getgid?.() ?? 0,
         systemctlPath: "/fixture/systemctl",
         stopServices: async (_systemctl: string, units: string[]) => {
@@ -219,9 +211,7 @@ describe("protected Local bootstrap contract", () => {
     expect(fs.existsSync(path.join(stateDir, "legacy-managed-update-adoption.v1.json"))).toBe(
       false,
     );
-    expect(fs.existsSync(path.join(layout.supervisorStateDir, "product-transaction.json"))).toBe(
-      false,
-    );
+    expect(fs.statSync(layout.supervisorStateDir).mode & 0o777).toBe(0o700);
     expect(
       fs.existsSync(path.join(layout.controllerStateDir, "active-signer-transaction.json")),
     ).toBe(false);

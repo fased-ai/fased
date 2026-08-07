@@ -1205,6 +1205,45 @@ async function prepareProtectedLocalChannelDirectory(layout, options = {}) {
   return directory;
 }
 
+async function prepareProtectedLocalSupervisorStateDirectory(layout, options = {}) {
+  const directory = layout.supervisorStateDir;
+  const parent = path.dirname(directory);
+  const expectedUid = options.expectedUid ?? 0;
+  const expectedGid = options.expectedGid ?? 0;
+  const parentInfo = await fsp.lstat(parent);
+  if (
+    !parentInfo.isDirectory() ||
+    parentInfo.isSymbolicLink() ||
+    parentInfo.uid !== expectedUid ||
+    parentInfo.gid !== expectedGid ||
+    (parentInfo.mode & 0o022) !== 0
+  ) {
+    fail("protected Local controller state directory is unsafe");
+  }
+  let created = false;
+  try {
+    await fsp.mkdir(directory, { mode: 0o700 });
+    created = true;
+  } catch (error) {
+    if (error?.code !== "EEXIST") {
+      throw error;
+    }
+  }
+  const info = await fsp.lstat(directory);
+  if (
+    !info.isDirectory() ||
+    info.isSymbolicLink() ||
+    info.uid !== expectedUid ||
+    info.gid !== expectedGid ||
+    (info.mode & 0o022) !== 0
+  ) {
+    fail("protected Local supervisor state directory is unsafe");
+  }
+  await fsp.chown(directory, expectedUid, expectedGid);
+  await fsp.chmod(directory, 0o700);
+  return Object.freeze({ directory, created });
+}
+
 export function buildProtectedLocalLifecycleApplyCommand(spec, layout, options = {}) {
   return Object.freeze({
     executable:
@@ -1681,9 +1720,14 @@ async function normalizeExistingProtectedLocalControl(sourceRoot, spec, layout, 
     restartService: async (systemctl, unit) => runSystem(systemctl, ["restart", unit]),
     systemctlPath: null,
     expectedRootUid: 0,
+    expectedRootGid: 0,
     expectedOperatorStateGid: null,
     ...overrides,
   };
+  await prepareProtectedLocalSupervisorStateDirectory(layout, {
+    expectedUid: dependencies.expectedRootUid,
+    expectedGid: dependencies.expectedRootGid,
+  });
   const options = protectedLocalControlNormalizationOptions(spec, layout, dependencies);
   const systemctl =
     dependencies.systemctlPath ??
@@ -3837,6 +3881,7 @@ export const __testing = Object.freeze({
   normalizeExistingProtectedLocalControl,
   protectedLocalControlNormalizationOptions,
   prepareProtectedLocalChannelDirectory,
+  prepareProtectedLocalSupervisorStateDirectory,
   prepareProtectedLocalSupervisorClientDirectory,
   restorablePreviousSupervisorUnits,
   setProtectedLocalPrivateSupervisorDirectoryMode,
