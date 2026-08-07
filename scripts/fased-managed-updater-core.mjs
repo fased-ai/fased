@@ -5369,6 +5369,69 @@ async function inspectLocalManagedConsistency(paths, manifest, currentVersion, p
   });
 }
 
+const CONTROL_GENERATION_CONFLICTS = new Set([
+  "last_success_mismatch",
+  "last_success_unreadable",
+  "runtime_manifest_mismatch",
+  "stable_updater_mismatch",
+]);
+const CUSTODY_GENERATION_CONFLICTS = new Set([
+  "signer_identity_unreadable",
+  "signer_manifest_mismatch",
+  "signer_version_mismatch",
+]);
+
+/** Select exactly one managed update owner before any update-side mutation. */
+export function selectManagedUpdateMode({ profile, migration, consistencyReasons = [] } = {}) {
+  if (isRootManagedProfile(profile)) {
+    return Object.freeze({ mode: "root-managed", reason: "canonical_root_profile" });
+  }
+  if (profile === "source") {
+    return Object.freeze({ mode: "portable-managed", reason: "development_source_profile" });
+  }
+  if (profile !== "local") {
+    return Object.freeze({ mode: "repair-required", reason: "unsupported_managed_profile" });
+  }
+  if (!migration || typeof migration !== "object") {
+    return Object.freeze({ mode: "repair-required", reason: "migration_state_missing" });
+  }
+  const reasons = new Set(
+    Array.isArray(consistencyReasons)
+      ? consistencyReasons.filter((reason) => typeof reason === "string")
+      : [],
+  );
+  const controlConflict = [...CONTROL_GENERATION_CONFLICTS].some((reason) => reasons.has(reason));
+  const custodyConflict = [...CUSTODY_GENERATION_CONFLICTS].some((reason) => reasons.has(reason));
+  if (controlConflict && custodyConflict) {
+    return Object.freeze({
+      mode: "repair-required",
+      reason: "mixed_control_and_custody_generations",
+    });
+  }
+  if (migration.required && !migration.supported) {
+    return Object.freeze({
+      mode: "repair-required",
+      reason: String(migration.reason || "migration_unavailable"),
+    });
+  }
+  if (migration.required) {
+    return Object.freeze({ mode: "migrate-to-protected", reason: "supported_local_bridge" });
+  }
+  return Object.freeze({ mode: "portable-managed", reason: "canonical_local_profile" });
+}
+
+function managedUpdateRepairError(selection) {
+  const reason = selection?.reason || "managed_state_conflict";
+  const message =
+    reason === "mixed_control_and_custody_generations"
+      ? "Managed control and signer generations conflict; ordinary update was not started. Run the official verified repair installer once. Preserved user state was not changed."
+      : `Managed update cannot safely continue (${reason}); ordinary update was not started. Run the official verified repair installer once. Preserved user state was not changed.`;
+  const error = new Error(message);
+  error.code = "MANAGED_REPAIR_REQUIRED";
+  error.reason = reason;
+  return error;
+}
+
 async function restoreLocalPairedApplication(paths, journal) {
   await atomicSymlink(journal.previousRoot, paths.currentLink);
   await replaceCompatibilityLink(paths);
@@ -5670,6 +5733,22 @@ async function updateManagedRuntime(options) {
     : existingManifest.runtime.activeVersion;
   let targetVersion;
 
+  const initialConsistency = await inspectLocalManagedConsistency(
+    paths,
+    existingManifest,
+    currentVersion,
+  );
+  const initialProtectedLocalMigration = protectedLocalMigrationRequirement({
+    manifest: existingManifest,
+    currentRoot,
+  });
+  const initialUpdateSelection = selectManagedUpdateMode({
+    profile: existingManifest.profile,
+    currentVersion,
+    migration: initialProtectedLocalMigration,
+    consistencyReasons: initialConsistency.reasons,
+  });
+
   if (options.status || options.dryRun) {
     targetVersion = await measureStage(
       timings,
@@ -5678,24 +5757,18 @@ async function updateManagedRuntime(options) {
       false,
     );
     const available = compareVersions(currentVersion, targetVersion) === -1;
-    const consistency = await inspectLocalManagedConsistency(
-      paths,
-      existingManifest,
-      currentVersion,
-    );
-    const protectedLocalMigration = protectedLocalMigrationRequirement({
-      manifest: existingManifest,
-      currentRoot,
-    });
     const result = {
       install: `managed ${existingManifest.profile}`,
       currentVersion,
       targetVersion,
       available,
-      repairRequired: protectedLocalMigration.required || !consistency.consistent,
-      consistencyReasons: consistency.reasons,
-      protectedLocalMigrationRequired: protectedLocalMigration.required,
-      protectedLocalMigrationSupported: protectedLocalMigration.supported,
+      repairRequired: initialUpdateSelection.mode === "repair-required",
+      repairReason:
+        initialUpdateSelection.mode === "repair-required" ? initialUpdateSelection.reason : null,
+      updateMode: initialUpdateSelection.mode,
+      consistencyReasons: initialConsistency.reasons,
+      protectedLocalMigrationRequired: initialProtectedLocalMigration.required,
+      protectedLocalMigrationSupported: initialProtectedLocalMigration.supported,
       dryRun: options.dryRun,
       updaterVersion: existingManifest.updater?.version || "unknown",
     };
@@ -5707,17 +5780,23 @@ async function updateManagedRuntime(options) {
       console.log(`Current: ${currentVersion}`);
       console.log(`Target: ${targetVersion}`);
       console.log(
-        protectedLocalMigration.required
-          ? protectedLocalMigration.supported
-            ? "Migration required: Protected Local service boundary"
-            : `Migration unavailable: ${protectedLocalMigration.reason}`
-          : available
-            ? `Update available: ${targetVersion}`
-            : consistency.consistent
-              ? "Update: current"
-              : `Repair required: ${consistency.reasons.join(", ")}`,
+        initialUpdateSelection.mode === "repair-required"
+          ? `Repair required: ${initialUpdateSelection.reason}`
+          : initialProtectedLocalMigration.required
+            ? initialProtectedLocalMigration.supported
+              ? "Migration required: Protected Local service boundary"
+              : `Migration unavailable: ${initialProtectedLocalMigration.reason}`
+            : available
+              ? `Update available: ${targetVersion}`
+              : initialConsistency.consistent
+                ? "Update: current"
+                : `Repair required: ${initialConsistency.reasons.join(", ")}`,
       );
-      if (options.dryRun && protectedLocalMigration.required) {
+      if (options.dryRun && initialUpdateSelection.mode === "repair-required") {
+        console.log(
+          "Action: one-time verified repair installer; ordinary update will not mutate state",
+        );
+      } else if (options.dryRun && initialProtectedLocalMigration.required) {
         console.log(
           "Action: one-time verified Protected Local migration with automatic rollback on failure",
         );
@@ -5728,6 +5807,10 @@ async function updateManagedRuntime(options) {
       }
     }
     return;
+  }
+
+  if (initialUpdateSelection.mode === "repair-required") {
+    throw managedUpdateRepairError(initialUpdateSelection);
   }
 
   const releaseLock = await acquireUpdateLock(paths.stateDir);
