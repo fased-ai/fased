@@ -471,6 +471,13 @@ describe("CI workflow routing", () => {
     const candidateText = candidate?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const p1Text = p1?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const publishText = publish?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    const candidateDownloads = candidate?.steps?.filter((step) =>
+      usesAction(step, "actions/download-artifact"),
+    );
+    expect(candidateDownloads?.map((step) => step.with?.pattern ?? step.with?.name)).toEqual([
+      "fased-hosted-runtime-*",
+      "fased-signerd-release",
+    ]);
     expect(candidateText).toContain("release-artifact-set.mjs build");
     expect(validateText).toContain("pnpm release:check");
     expect(linuxText).toContain("hosted:artifact:from-dist");
