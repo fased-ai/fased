@@ -454,6 +454,7 @@ describe("CI workflow routing", () => {
     const jobs = workflow.jobs ?? {};
     const candidate = jobs["candidate"];
     const p1 = jobs["p1"];
+    const tagReady = jobs["tag-ready"];
     const publish = jobs["publish"];
     const validateText = jobs["validate"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const linuxText = jobs["linux"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
@@ -462,7 +463,9 @@ describe("CI workflow routing", () => {
     expect(jobs["release-gate"]).toBeUndefined();
     expect(candidate?.needs).toEqual(["validate", "linux", "signer"]);
     expect(p1?.needs).toEqual(["candidate"]);
-    expect(publish?.needs).toEqual(["candidate", "p1"]);
+    expect(tagReady?.needs).toEqual(["candidate", "p1"]);
+    expect(tagReady?.environment).toBeUndefined();
+    expect(publish?.needs).toEqual(["candidate", "p1", "tag-ready"]);
     expect(publish?.environment).toBe("candidate-release");
     expect(workflow.concurrency?.group).toBe(
       "hosted-runtime-release-${{ inputs.release_version }}-${{ inputs.source_commit }}",
@@ -470,6 +473,7 @@ describe("CI workflow routing", () => {
 
     const candidateText = candidate?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const p1Text = p1?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    const tagReadyText = tagReady?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const publishText = publish?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const candidateDownloads = candidate?.steps?.filter((step) =>
       usesAction(step, "actions/download-artifact"),
@@ -504,7 +508,8 @@ describe("CI workflow routing", () => {
     ).toMatchObject({ FASED_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install,install" });
     expect(publishText).not.toContain("git tag");
     expect(publishText).not.toContain("git push origin");
-    expect(publishText).toContain("git ls-remote --exit-code --tags origin");
+    expect(tagReadyText).toContain("git ls-remote --exit-code --tags origin");
+    expect(publishText).not.toContain("git ls-remote --exit-code --tags origin");
     expect(publishText).toContain("release-artifact-set.mjs verify-assets");
     expect(publishText).toContain('gh release create "$RELEASE_TAG"');
     expect(publishText).toContain('.artifacts/hosted-runtime/* "${release_args[@]}"');
