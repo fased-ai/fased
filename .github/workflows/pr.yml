@@ -111,6 +111,7 @@ jobs:
           scripts/ci-version-identity.test.ts
           scripts/ci-workflow-contract.test.ts
           scripts/ci-compact-workflow.test.ts
+          scripts/lifecycle-version-neutral.test.ts
 
       - name: Run focused Local-update regressions
         if: needs.classify.outputs.run_node_focused == 'true'

@@ -17,23 +17,18 @@ ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR:-}"
 OWN_ARTIFACT_DIR=0
 IMAGE_CACHE_DIR="${FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR:-}"
 PREINSTALLED_TOOLS="${FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS:-0}"
-LEGACY_VERSION="${FASED_SYSTEMD_FIXTURE_LEGACY_VERSION:-0.1.75}"
-LEGACY_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_LEGACY_ARTIFACT_DIR:-}"
-OWN_LEGACY_ARTIFACT_DIR=0
-MODERN_VERSION="${FASED_SYSTEMD_FIXTURE_MODERN_VERSION:-0.1.76-rc.38}"
-MODERN_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_MODERN_ARTIFACT_DIR:-}"
-OWN_MODERN_ARTIFACT_DIR=0
-TAKEOVER_VERSION="${FASED_SYSTEMD_FIXTURE_TAKEOVER_VERSION:-0.1.76-rc.20}"
-TAKEOVER_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_TAKEOVER_ARTIFACT_DIR:-}"
-OWN_TAKEOVER_ARTIFACT_DIR=0
+PREDECESSOR_VERSION="${FASED_SYSTEMD_FIXTURE_PREDECESSOR_VERSION:-}"
+PREDECESSOR_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_PREDECESSOR_ARTIFACT_DIR:-}"
+OWN_PREDECESSOR_ARTIFACT_DIR=0
+MANAGED_PREDECESSOR_VERSION="${FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION:-}"
+MANAGED_PREDECESSOR_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_ARTIFACT_DIR:-}"
+OWN_MANAGED_PREDECESSOR_ARTIFACT_DIR=0
 
 command -v "$RUNTIME" >/dev/null 2>&1 || {
   echo "Podman is required for the protected Local systemd fixtures." >&2
   exit 1
 }
-if [[ ",$SCENARIOS," == *,install,* ||
-  ",$SCENARIOS," == *,modern-update,* ||
-  ",$SCENARIOS," == *,legacy-takeover,* ]]; then
+if [[ ",$SCENARIOS," == *,install,* || ",$SCENARIOS," == *,managed-update,* ]]; then
   command -v gh >/dev/null 2>&1 || {
     echo "GitHub CLI is required for the literal Protected Local update fixture." >&2
     exit 1
@@ -89,102 +84,92 @@ fi
   exit 1
 }
 if [[ ",$SCENARIOS," == *,install,* ]]; then
-  if [[ -z "$LEGACY_ARTIFACT_DIR" ]]; then
-    LEGACY_ARTIFACT_DIR="$(
-      mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-legacy-artifact.XXXXXX"
+  [[ "$PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || {
+    echo "The install fixture requires FASED_SYSTEMD_FIXTURE_PREDECESSOR_VERSION." >&2
+    exit 1
+  }
+  if [[ -z "$PREDECESSOR_ARTIFACT_DIR" ]]; then
+    PREDECESSOR_ARTIFACT_DIR="$(
+      mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-predecessor-artifact.XXXXXX"
     )"
-    OWN_LEGACY_ARTIFACT_DIR=1
-    gh release download "v$LEGACY_VERSION" \
+    OWN_PREDECESSOR_ARTIFACT_DIR=1
+    gh release download "v$PREDECESSOR_VERSION" \
       --repo fased-ai/fased \
-      --dir "$LEGACY_ARTIFACT_DIR" \
+      --dir "$PREDECESSOR_ARTIFACT_DIR" \
       --pattern "install.sh" \
       --pattern "fased-hosted-release-v2.json" \
       --pattern "fased-hosted-release-v2.json.attestation.json" \
-      --pattern "fased-hosted-app-v2-linux-x64-v${LEGACY_VERSION}.tar.gz" \
+      --pattern "fased-hosted-app-v2-linux-x64-v${PREDECESSOR_VERSION}.tar.gz" \
       --pattern "fased-hosted-deps-linux-x64-*.tar.gz" \
       --pattern "fased-signerd-linux-amd64" \
       --pattern "fased-signerd-release.json" \
       --pattern "fased-signerd-checksums.txt"
-    chmod 0755 "$LEGACY_ARTIFACT_DIR"
+    chmod 0755 "$PREDECESSOR_ARTIFACT_DIR"
   fi
-  legacy_manifest="$LEGACY_ARTIFACT_DIR/fased-hosted-release-v2.json"
-  legacy_app="$LEGACY_ARTIFACT_DIR/fased-hosted-app-v2-linux-x64-v${LEGACY_VERSION}.tar.gz"
-  legacy_dependency="$(
-    find "$LEGACY_ARTIFACT_DIR" -maxdepth 1 -type f \
+  predecessor_manifest="$PREDECESSOR_ARTIFACT_DIR/fased-hosted-release-v2.json"
+  predecessor_app="$PREDECESSOR_ARTIFACT_DIR/fased-hosted-app-v2-linux-x64-v${PREDECESSOR_VERSION}.tar.gz"
+  predecessor_dependency="$(
+    find "$PREDECESSOR_ARTIFACT_DIR" -maxdepth 1 -type f \
       -name 'fased-hosted-deps-linux-x64-*.tar.gz' -print -quit
   )"
-  [[ -f "$LEGACY_ARTIFACT_DIR/install.sh" &&
-    -f "$legacy_manifest" &&
-    -f "$LEGACY_ARTIFACT_DIR/fased-hosted-release-v2.json.attestation.json" &&
-    -f "$legacy_app" &&
-    -n "$legacy_dependency" &&
-    -f "$legacy_dependency" &&
-    -f "$LEGACY_ARTIFACT_DIR/fased-signerd-linux-amd64" &&
-    -f "$LEGACY_ARTIFACT_DIR/fased-signerd-release.json" &&
-    -f "$LEGACY_ARTIFACT_DIR/fased-signerd-checksums.txt" ]] || {
+  [[ -f "$PREDECESSOR_ARTIFACT_DIR/install.sh" &&
+    -f "$predecessor_manifest" &&
+    -f "$PREDECESSOR_ARTIFACT_DIR/fased-hosted-release-v2.json.attestation.json" &&
+    -f "$predecessor_app" &&
+    -n "$predecessor_dependency" &&
+    -f "$predecessor_dependency" &&
+    -f "$PREDECESSOR_ARTIFACT_DIR/fased-signerd-linux-amd64" &&
+    -f "$PREDECESSOR_ARTIFACT_DIR/fased-signerd-release.json" &&
+    -f "$PREDECESSOR_ARTIFACT_DIR/fased-signerd-checksums.txt" ]] || {
     echo "The protected Local update fixture requires the complete immutable predecessor release." >&2
     exit 1
   }
-  jq -e --arg version "$LEGACY_VERSION" \
+  jq -e --arg version "$PREDECESSOR_VERSION" \
     '.release.version == $version and
       .release.tag == ("v" + $version) and
       .signer.release.version == $version and
       .signer.release.commit == .release.commit' \
-    "$legacy_manifest" >/dev/null
-  legacy_signer_sha="$(
-    sha256sum "$LEGACY_ARTIFACT_DIR/fased-signerd-linux-amd64" | awk '{print $1}'
+    "$predecessor_manifest" >/dev/null
+  predecessor_signer_sha="$(
+    sha256sum "$PREDECESSOR_ARTIFACT_DIR/fased-signerd-linux-amd64" | awk '{print $1}'
   )"
-  jq -e --arg sha "$legacy_signer_sha" \
+  jq -e --arg sha "$predecessor_signer_sha" \
     '.signer.platforms["linux-amd64"].asset == "fased-signerd-linux-amd64" and
       .signer.platforms["linux-amd64"].sha256 == $sha' \
-    "$legacy_manifest" >/dev/null
-  jq -e --slurpfile signer "$LEGACY_ARTIFACT_DIR/fased-signerd-release.json" \
+    "$predecessor_manifest" >/dev/null
+  jq -e --slurpfile signer "$PREDECESSOR_ARTIFACT_DIR/fased-signerd-release.json" \
     '.signer.release == ($signer[0] | del(.schemaVersion))' \
-    "$legacy_manifest" >/dev/null
+    "$predecessor_manifest" >/dev/null
 fi
-if [[ ",$SCENARIOS," == *,modern-update,* ]]; then
-  if [[ -z "$MODERN_ARTIFACT_DIR" ]]; then
-    MODERN_ARTIFACT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-modern-artifact.XXXXXX")"
-    OWN_MODERN_ARTIFACT_DIR=1
-    gh release download "v$MODERN_VERSION" \
-      --repo fased-ai/fased \
-      --dir "$MODERN_ARTIFACT_DIR"
-    chmod 0755 "$MODERN_ARTIFACT_DIR"
-  fi
-  modern_manifest="$MODERN_ARTIFACT_DIR/fased-hosted-release-v2.json"
-  [[ -f "$MODERN_ARTIFACT_DIR/install.sh" && -f "$modern_manifest" ]] || {
-    echo "The modern Protected Local update fixture requires a complete predecessor release." >&2
+if [[ ",$SCENARIOS," == *,managed-update,* ]]; then
+  [[ "$MANAGED_PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || {
+    echo "The managed-update fixture requires FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION." >&2
     exit 1
   }
-  jq -e --arg version "$MODERN_VERSION" \
-    '.release.version == $version and .release.tag == ("v" + $version)' \
-    "$modern_manifest" >/dev/null
-fi
-if [[ ",$SCENARIOS," == *,legacy-takeover,* ]]; then
-  if [[ -z "$TAKEOVER_ARTIFACT_DIR" ]]; then
-    TAKEOVER_ARTIFACT_DIR="$(
-      mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-takeover-artifact.XXXXXX"
+  if [[ -z "$MANAGED_PREDECESSOR_ARTIFACT_DIR" ]]; then
+    MANAGED_PREDECESSOR_ARTIFACT_DIR="$(
+      mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-managed-predecessor-artifact.XXXXXX"
     )"
-    OWN_TAKEOVER_ARTIFACT_DIR=1
-    gh release download "v$TAKEOVER_VERSION" \
+    OWN_MANAGED_PREDECESSOR_ARTIFACT_DIR=1
+    gh release download "v$MANAGED_PREDECESSOR_VERSION" \
       --repo fased-ai/fased \
-      --dir "$TAKEOVER_ARTIFACT_DIR"
-    chmod 0755 "$TAKEOVER_ARTIFACT_DIR"
+      --dir "$MANAGED_PREDECESSOR_ARTIFACT_DIR"
+    chmod 0755 "$MANAGED_PREDECESSOR_ARTIFACT_DIR"
   fi
-  takeover_manifest="$TAKEOVER_ARTIFACT_DIR/fased-hosted-release-v2.json"
-  [[ -f "$TAKEOVER_ARTIFACT_DIR/install.sh" && -f "$takeover_manifest" ]] || {
-    echo "The legacy-takeover fixture requires a complete immutable predecessor release." >&2
+  managed_predecessor_manifest="$MANAGED_PREDECESSOR_ARTIFACT_DIR/fased-hosted-release-v2.json"
+  [[ -f "$MANAGED_PREDECESSOR_ARTIFACT_DIR/install.sh" && -f "$managed_predecessor_manifest" ]] || {
+    echo "The managed Protected Local update fixture requires a complete predecessor release." >&2
     exit 1
   }
-  jq -e --arg version "$TAKEOVER_VERSION" \
+  jq -e --arg version "$MANAGED_PREDECESSOR_VERSION" \
     '.release.version == $version and .release.tag == ("v" + $version)' \
-    "$takeover_manifest" >/dev/null
+    "$managed_predecessor_manifest" >/dev/null
 fi
-if [[ -z "$LEGACY_ARTIFACT_DIR" ]]; then
-  LEGACY_ARTIFACT_DIR="$(
-    mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-legacy-artifact.XXXXXX"
+if [[ -z "$PREDECESSOR_ARTIFACT_DIR" ]]; then
+  PREDECESSOR_ARTIFACT_DIR="$(
+    mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-predecessor-artifact.XXXXXX"
   )"
-  OWN_LEGACY_ARTIFACT_DIR=1
+  OWN_PREDECESSOR_ARTIFACT_DIR=1
 fi
 cleanup_names=()
 dump_fixture_failure() {
@@ -213,14 +198,11 @@ cleanup() {
   if [[ "$OWN_ARTIFACT_DIR" -eq 1 ]]; then
     rm -rf -- "$ARTIFACT_DIR"
   fi
-  if [[ "$OWN_LEGACY_ARTIFACT_DIR" -eq 1 ]]; then
-    rm -rf -- "$LEGACY_ARTIFACT_DIR"
+  if [[ "$OWN_PREDECESSOR_ARTIFACT_DIR" -eq 1 ]]; then
+    rm -rf -- "$PREDECESSOR_ARTIFACT_DIR"
   fi
-  if [[ "$OWN_MODERN_ARTIFACT_DIR" -eq 1 ]]; then
-    rm -rf -- "$MODERN_ARTIFACT_DIR"
-  fi
-  if [[ "$OWN_TAKEOVER_ARTIFACT_DIR" -eq 1 ]]; then
-    rm -rf -- "$TAKEOVER_ARTIFACT_DIR"
+  if [[ "$OWN_MANAGED_PREDECESSOR_ARTIFACT_DIR" -eq 1 ]]; then
+    rm -rf -- "$MANAGED_PREDECESSOR_ARTIFACT_DIR"
   fi
 }
 trap cleanup EXIT INT TERM HUP
@@ -238,14 +220,11 @@ run_fixture_scenario() {
   local fixture_memory=""
   local ready=0
   local state=""
-  local predecessor_artifact_dir="$LEGACY_ARTIFACT_DIR"
-  local predecessor_version="$LEGACY_VERSION"
-  if [[ "$scenario" == "modern-update" ]]; then
-    predecessor_artifact_dir="$MODERN_ARTIFACT_DIR"
-    predecessor_version="$MODERN_VERSION"
-  elif [[ "$scenario" == "legacy-takeover" ]]; then
-    predecessor_artifact_dir="$TAKEOVER_ARTIFACT_DIR"
-    predecessor_version="$TAKEOVER_VERSION"
+  local predecessor_artifact_dir="$PREDECESSOR_ARTIFACT_DIR"
+  local predecessor_version="$PREDECESSOR_VERSION"
+  if [[ "$scenario" == "managed-update" ]]; then
+    predecessor_artifact_dir="$MANAGED_PREDECESSOR_ARTIFACT_DIR"
+    predecessor_version="$MANAGED_PREDECESSOR_VERSION"
   fi
 
   cleanup_names+=("$name")
@@ -257,12 +236,12 @@ run_fixture_scenario() {
     --tmpfs /tmp \
     -e "FASED_FIXTURE_VERSION=$VERSION" \
     -e "FASED_FIXTURE_COMMIT=$COMMIT" \
-    -e "FASED_FIXTURE_LEGACY_VERSION=$predecessor_version" \
+    -e "FASED_FIXTURE_PREDECESSOR_VERSION=$predecessor_version" \
     -e "FASED_FIXTURE_PREINSTALLED_TOOLS=$PREINSTALLED_TOOLS" \
     -v "$ROOT_DIR:/repo:ro,Z" \
     -v "$FIXTURE_DIR/run.sh:/usr/local/bin/fased-protected-local-systemd-fixture:ro,Z" \
     -v "$ARTIFACT_DIR:/artifacts:ro,Z" \
-    -v "$predecessor_artifact_dir:/legacy-artifacts:ro,Z" \
+    -v "$predecessor_artifact_dir:/predecessor-artifacts:ro,Z" \
     "$image" >/dev/null
   for _ in {1..200}; do
     state="$(run_container exec "$name" systemctl is-system-running 2>/dev/null || true)"
@@ -352,7 +331,7 @@ done
 
 for scenario in "${scenario_list[@]}"; do
   case "$scenario" in
-    fresh-install|install|modern-update|legacy-takeover) ;;
+    fresh-install|install|managed-update) ;;
     *)
       echo "Unsupported protected Local fixture scenario: $scenario" >&2
       exit 1
