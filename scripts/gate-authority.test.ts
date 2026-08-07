@@ -187,16 +187,16 @@ describe("machine gate authority", () => {
     expect(plan.acceptance).toEqual({ L0: false, L1: true, H0: false, H1: false, H2: false });
   });
 
-  it("keeps the root host updater on broad Node coverage", () => {
+  it("routes the root host updater through focused Node coverage", () => {
     const plan = createGatePlan(["scripts/fased-host-updater.mjs"], {
       phase: "T1",
       entryPoint: "local-update",
     });
 
     expect(plan.scope).toMatchObject({
-      runNodeFocused: false,
+      runNodeFocused: true,
       runNodeBuild: true,
-      runNodeFull: true,
+      runNodeFull: false,
       runT2Contracts: true,
       runLocalUpdate: true,
     });
