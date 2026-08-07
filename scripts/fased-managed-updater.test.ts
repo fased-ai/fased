@@ -742,6 +742,25 @@ fs.writeFileSync(process.env.FASED_TEST_GH_LOG, JSON.stringify(process.argv.slic
     });
   });
 
+  it("fails closed on a live signer socket without an exact PID", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-live-signer-socket-"));
+    const paths = __testing.resolveLocalSignerPaths({ stateDir: root });
+    await fsp.mkdir(path.dirname(paths.socketPath), { recursive: true });
+    const server = net.createServer(() => undefined);
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(paths.socketPath, resolve);
+    });
+    try {
+      await expect(__testing.resolveRunningSignerPid(paths)).rejects.toThrow(
+        "live listener without a verifiable exact PID",
+      );
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("delegates dev and non-transactional update subcommands to the active runtime", () => {
     expect(__testing.parseArgs(["update", "--channel", "dev"]).delegate).toBe(true);
     expect(__testing.parseArgs(["update", "wizard"]).delegate).toBe(true);

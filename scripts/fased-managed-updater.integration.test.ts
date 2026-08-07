@@ -292,6 +292,13 @@ async function stopFakeSigner(pidPath: string) {
   const alive = () => {
     try {
       process.kill(pid, 0);
+      if (process.platform === "linux") {
+        const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+        const state = stat.slice(stat.lastIndexOf(") ") + 2, stat.lastIndexOf(") ") + 3);
+        if (state === "Z" || state === "X") {
+          return false;
+        }
+      }
       return true;
     } catch {
       return false;
@@ -308,6 +315,20 @@ async function stopFakeSigner(pidPath: string) {
   }
   if (alive()) {
     process.kill(pid, "SIGKILL");
+  }
+  const killedDeadline = Date.now() + 2_000;
+  while (alive() && Date.now() < killedDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  if (alive()) {
+    throw new Error(`fake signer PID ${pid} did not stop`);
+  }
+  for (const stalePath of [
+    pidPath,
+    path.join(path.dirname(pidPath), "local-signer.sock"),
+    path.join(path.dirname(pidPath), "local-signer-control.sock"),
+  ]) {
+    fs.rmSync(stalePath, { force: true });
   }
 }
 

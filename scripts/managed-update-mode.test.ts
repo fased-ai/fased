@@ -75,11 +75,11 @@ describe("managed update mode", () => {
       new URL("./fased-managed-updater-core.mjs", import.meta.url),
       "utf8",
     );
-    const rejection = source.indexOf(
-      'if (initialUpdateSelection.mode === "repair-required") {',
-      source.indexOf("async function updateManagedRuntime"),
-    );
+    const entry = source.indexOf("async function updateManagedRuntime");
+    const inspection = source.indexOf("inspectManagedInstallManifest", entry);
+    const rejection = source.indexOf('if (initialUpdatePlan.operation === "repair") {', entry);
     const lock = source.indexOf("const releaseLock = await acquireUpdateLock", rejection);
+    expect(inspection).toBeGreaterThan(entry);
     expect(rejection).toBeGreaterThan(-1);
     expect(lock).toBeGreaterThan(rejection);
   });
