@@ -27,6 +27,10 @@ const VERSION_PATH_RE =
   /^(?:package\.json|CHANGELOG\.md|src\/brand\.ts|extensions\/[^/]+\/(?:package\.json|CHANGELOG\.md))$/;
 const CI_INFRASTRUCTURE_PATH_RE =
   /^(?:\.pre-commit-config\.yaml$|\.secrets\.baseline$|config\/lifecycle-compatibility\.v1\.json$|\.github\/(?:actions\/[^/]+\/action\.ya?ml|workflows\/[^/]+\.ya?ml)|scripts\/(?:gate-authority|hosted-installer-artifact-layout|lifecycle-compatibility-inventory|release-artifact-set|ci-(?:change-scope|dependency-integrity|required-gates|merged-main-reuse|run-changed-tests|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/check-composite-action-input-interpolation\.py|ui\/vitest\.changed-node\.config\.ts)$/;
+const INSTALLER_P1_FIXTURE_PATHS = new Set([
+  "scripts/ci-workflow-contract.test.ts",
+  "scripts/test-protected-local-systemd-container.sh",
+]);
 const T2_FIXTURE_PATH_RE =
   /^scripts\/(?:protected-local-t2-(?:controller-worker|supervisor-worker|systemd-fixture)\.mjs|protected-local-t2-systemd\.test\.ts|test-protected-local-t2-systemd\.sh)$/;
 const TEST_PATH_RE =
@@ -362,10 +366,12 @@ export function createGatePlan(inputPaths, options = {}) {
     paths.includes("src/brand.ts") &&
     paths.every((path) => VERSION_PATH_RE.test(path));
   const lifecycleGateEnforcementOnly = false;
+  const installerP1FixtureOnly = paths.every((path) => INSTALLER_P1_FIXTURE_PATHS.has(path));
   const ciInfrastructureOnly =
     !versionOnly &&
-    paths.some((path) => CI_INFRASTRUCTURE_PATH_RE.test(path)) &&
-    paths.every((path) => CI_INFRASTRUCTURE_PATH_RE.test(path) || DOC_PATH_RE.test(path));
+    (installerP1FixtureOnly ||
+      (paths.some((path) => CI_INFRASTRUCTURE_PATH_RE.test(path)) &&
+        paths.every((path) => CI_INFRASTRUCTURE_PATH_RE.test(path) || DOC_PATH_RE.test(path))));
   const ciInfrastructureChanged = paths.some((path) => CI_INFRASTRUCTURE_PATH_RE.test(path));
   const t2FixtureOnly = paths.every((path) => T2_FIXTURE_PATH_RE.test(path));
   const testOnly = paths.every((path) => TEST_PATH_RE.test(path) || T2_FIXTURE_PATH_RE.test(path));
@@ -395,7 +401,7 @@ export function createGatePlan(inputPaths, options = {}) {
     (path) => !isKnownProductionPath(path),
   );
 
-  if (testOnly && !t2FixtureOnly && !fixtureOnly && !routableTestOnly) {
+  if (testOnly && !ciInfrastructureOnly && !t2FixtureOnly && !fixtureOnly && !routableTestOnly) {
     const unroutableTestPaths = paths.filter(
       (path) => !ROUTABLE_TEST_PATH_RE.test(path) || NON_ROUTINE_TEST_PATH_RE.test(path),
     );
