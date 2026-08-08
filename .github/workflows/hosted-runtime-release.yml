@@ -66,7 +66,7 @@ jobs:
       - name: Install build dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Verify exact tagged protected-main candidate identity
+      - name: Verify exact untagged protected-main candidate identity
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.release_version }}
@@ -77,15 +77,11 @@ jobs:
           set -euo pipefail
           test "$GITHUB_SHA" = "$SOURCE_COMMIT"
           test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
-          test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"
           [[ "$PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           test "$PREDECESSOR_VERSION" != "$RELEASE_VERSION"
           remote_main="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
           test "$remote_main" = "$SOURCE_COMMIT"
-          remote_tag="$(
-            gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$RELEASE_VERSION" --jq .object.sha
-          )"
-          test "$remote_tag" = "$SOURCE_COMMIT"
+          ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$RELEASE_VERSION" >/dev/null 2>&1
           if gh release view "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Candidate release already exists: v$RELEASE_VERSION" >&2
             exit 1
