@@ -149,7 +149,7 @@ jobs:
         env:
           GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
           GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: node scripts/ci-version-identity.mjs
+        run: node scripts/ci-version-identity.mjs --allow-published-base-restore
 
       - name: Check CI routing contracts
         if: needs.classify.outputs.run_ci_contracts == 'true'
