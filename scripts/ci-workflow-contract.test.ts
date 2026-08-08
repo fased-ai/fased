@@ -72,6 +72,11 @@ describe("CI workflow routing", () => {
     expect(jobs["changed-scope"]).toBeUndefined();
     expect(jobs["android"]).toBeUndefined();
     expect(jobs["version-identity"]).toBeDefined();
+    expect(
+      jobs["version-identity"]?.steps?.find(
+        (step) => step.name === "Validate exact version-only diff",
+      )?.run,
+    ).toBe("node scripts/ci-version-identity.mjs --allow-published-base-restore");
     expect(jobs["ci-contracts"]).toBeDefined();
     expect(jobs["t2-contracts"]).toBeDefined();
     expect(jobs["node-focused"]).toBeDefined();
