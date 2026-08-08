@@ -83,6 +83,26 @@ func (s *Store) ResolveGeneration(pointer string) (model.Generation, error) {
 	return s.verifiedGeneration(generationID)
 }
 
+func (s *Store) ReadGenerationContract(generationID string) (bundle.Inventory, model.Generation, error) {
+	if err := validateGenerationID(generationID); err != nil {
+		return bundle.Inventory{}, model.Generation{}, err
+	}
+	root := s.generationPath(generationID)
+	inventoryJSON, err := readRegular(filepath.Join(root, generationInventoryName))
+	if err != nil {
+		return bundle.Inventory{}, model.Generation{}, err
+	}
+	inventory, err := bundle.DecodeInventory(inventoryJSON)
+	if err != nil {
+		return bundle.Inventory{}, model.Generation{}, err
+	}
+	generation, err := s.verifyGenerationPath(root, generationID)
+	if err != nil {
+		return bundle.Inventory{}, model.Generation{}, err
+	}
+	return inventory, generation, nil
+}
+
 func (s *Store) verifiedGeneration(generationID string) (model.Generation, error) {
 	if err := validateGenerationID(generationID); err != nil {
 		return model.Generation{}, err

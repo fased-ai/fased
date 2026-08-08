@@ -43,6 +43,8 @@ func testTransaction(phase Phase) Transaction {
 		Previous:             &previous,
 		ManifestDigest:       testDigestA,
 		StateInventoryDigest: testDigestB,
+		MigrationPlanDigest:  testDigestA,
+		SignerPlanDigest:     testDigestB,
 	}
 }
 

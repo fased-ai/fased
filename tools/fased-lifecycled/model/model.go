@@ -85,6 +85,8 @@ type Transaction struct {
 	Previous             *Generation `json:"previous,omitempty"`
 	ManifestDigest       string      `json:"manifestDigest"`
 	StateInventoryDigest string      `json:"stateInventoryDigest"`
+	MigrationPlanDigest  string      `json:"migrationPlanDigest"`
+	SignerPlanDigest     string      `json:"signerPlanDigest"`
 }
 
 type RecoveryDecision struct {
@@ -227,6 +229,12 @@ func (t Transaction) Validate() error {
 	}
 	if !digestPattern.MatchString(t.StateInventoryDigest) {
 		return errors.New("state inventory binding must be a lowercase sha256 digest")
+	}
+	if !digestPattern.MatchString(t.MigrationPlanDigest) {
+		return errors.New("migration plan binding must be a lowercase sha256 digest")
+	}
+	if !digestPattern.MatchString(t.SignerPlanDigest) {
+		return errors.New("signer plan binding must be a lowercase sha256 digest")
 	}
 	return nil
 }

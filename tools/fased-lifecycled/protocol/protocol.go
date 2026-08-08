@@ -29,10 +29,12 @@ type Request struct {
 }
 
 type Response struct {
-	SchemaVersion uint32 `json:"schemaVersion"`
-	RequestID     string `json:"requestId"`
-	Outcome       string `json:"outcome"`
-	Detail        string `json:"detail,omitempty"`
+	SchemaVersion      uint32 `json:"schemaVersion"`
+	RequestID          string `json:"requestId"`
+	Outcome            string `json:"outcome"`
+	Detail             string `json:"detail,omitempty"`
+	TransactionID      string `json:"transactionId,omitempty"`
+	ActiveGenerationID string `json:"activeGenerationId,omitempty"`
 }
 
 var (

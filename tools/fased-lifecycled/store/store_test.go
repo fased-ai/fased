@@ -50,6 +50,8 @@ func transaction(phase model.Phase) model.Transaction {
 		Previous:             &previous,
 		ManifestDigest:       digestA,
 		StateInventoryDigest: digestB,
+		MigrationPlanDigest:  digestA,
+		SignerPlanDigest:     digestB,
 	}
 }
 
@@ -156,7 +158,9 @@ func TestStageAndActivateUseOnlyContentAddressedStorePaths(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(payload, "bin", "fased"), []byte("verified"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	inventory, expected, err := bundle.Inspect(payload, "0.1.76", commitB, commitB)
+	stateSchemas := map[string]uint32{"signer": 1}
+	capabilities := manifest().Capabilities
+	inventory, expected, err := bundle.Inspect(payload, "0.1.76", commitB, commitB, stateSchemas, capabilities)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +210,9 @@ func TestStageRejectsTamperedInboxWithoutMovingIt(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(payload, "fased"), []byte("verified"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	inventory, expected, err := bundle.Inspect(payload, "0.1.76", commitB, commitB)
+	stateSchemas := map[string]uint32{"signer": 1}
+	capabilities := manifest().Capabilities
+	inventory, expected, err := bundle.Inspect(payload, "0.1.76", commitB, commitB, stateSchemas, capabilities)
 	if err != nil {
 		t.Fatal(err)
 	}

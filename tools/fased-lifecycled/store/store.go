@@ -148,6 +148,8 @@ func (s *Store) ReadJournal(authority Authority, transactionID string) (model.Tr
 		Target:               placeholderGeneration(),
 		ManifestDigest:       "sha256:0000000000000000000000000000000000000000000000000000000000000000",
 		StateInventoryDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		MigrationPlanDigest:  "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		SignerPlanDigest:     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
 	}
 	if err := probe.Validate(); err != nil {
 		return model.Transaction{}, fmt.Errorf("invalid transaction id: %w", err)

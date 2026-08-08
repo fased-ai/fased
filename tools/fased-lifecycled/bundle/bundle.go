@@ -27,19 +27,28 @@ type Artifact struct {
 }
 
 type Inventory struct {
-	SchemaVersion uint32     `json:"schemaVersion"`
-	Version       string     `json:"version"`
-	Commit        string     `json:"commit"`
-	Tree          string     `json:"tree"`
-	Artifacts     []Artifact `json:"artifacts"`
+	SchemaVersion uint32                 `json:"schemaVersion"`
+	Version       string                 `json:"version"`
+	Commit        string                 `json:"commit"`
+	Tree          string                 `json:"tree"`
+	StateSchemas  map[string]uint32      `json:"stateSchemas"`
+	Capabilities  model.CapabilityRanges `json:"capabilities"`
+	Artifacts     []Artifact             `json:"artifacts"`
 }
 
-func Inspect(root, version, commit, tree string) (Inventory, model.Generation, error) {
+func Inspect(root, version, commit, tree string, stateSchemas map[string]uint32, capabilities model.CapabilityRanges) (Inventory, model.Generation, error) {
 	clean, err := secureRoot(root)
 	if err != nil {
 		return Inventory{}, model.Generation{}, err
 	}
-	inventory := Inventory{SchemaVersion: CurrentInventorySchemaVersion, Version: version, Commit: commit, Tree: tree}
+	inventory := Inventory{
+		SchemaVersion: CurrentInventorySchemaVersion,
+		Version:       version,
+		Commit:        commit,
+		Tree:          tree,
+		StateSchemas:  stateSchemas,
+		Capabilities:  capabilities,
+	}
 	err = filepath.WalkDir(clean, func(filePath string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -100,7 +109,7 @@ func Verify(root string, expected Inventory, generation model.Generation) error 
 	if bound != generation {
 		return errors.New("generation identity does not match the declared artifact inventory")
 	}
-	actual, actualGeneration, err := Inspect(root, expected.Version, expected.Commit, expected.Tree)
+	actual, actualGeneration, err := Inspect(root, expected.Version, expected.Commit, expected.Tree, expected.StateSchemas, expected.Capabilities)
 	if err != nil {
 		return err
 	}
@@ -173,6 +182,17 @@ func validateInventory(inventory Inventory) error {
 	}
 	if len(inventory.Artifacts) == 0 {
 		return errors.New("artifact inventory must not be empty")
+	}
+	if len(inventory.StateSchemas) == 0 {
+		return errors.New("artifact inventory state schemas must not be empty")
+	}
+	for name, version := range inventory.StateSchemas {
+		if name == "" || version == 0 {
+			return errors.New("artifact inventory state schemas require nonempty names and nonzero versions")
+		}
+	}
+	if err := inventory.Capabilities.Validate(); err != nil {
+		return err
 	}
 	previous := ""
 	for _, artifact := range inventory.Artifacts {
