@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.58
+
+- Bind candidate attestations to the exact immutable release tag while retaining
+  build-once packaging and protected publication.
+- Preserve compatibility with supported installed updaters that require tagged
+  source provenance before accepting public release assets.
+
 ## 0.1.76-rc.57
 
 - Patch the production dependency audit while keeping dependency remediation on
