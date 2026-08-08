@@ -15,8 +15,7 @@ updates:
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: weekly
-      day: monday
+      interval: daily
     cooldown:
       default-days: 2
     groups:
@@ -30,7 +29,7 @@ updates:
         update-types:
           - minor
           - patch
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 10
     registries:
       - npm-npmjs
 
@@ -38,8 +37,7 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
-      day: tuesday
+      interval: daily
     cooldown:
       default-days: 2
     groups:
@@ -49,14 +47,13 @@ updates:
         update-types:
           - minor
           - patch
-    open-pull-requests-limit: 1
+    open-pull-requests-limit: 5
 
   # Swift Package Manager - macOS app
   - package-ecosystem: swift
     directory: /apps/macos
     schedule:
-      interval: weekly
-      day: wednesday
+      interval: daily
     cooldown:
       default-days: 2
     groups:
@@ -66,14 +63,13 @@ updates:
         update-types:
           - minor
           - patch
-    open-pull-requests-limit: 1
+    open-pull-requests-limit: 5
 
   # Swift Package Manager - shared FasedAgentKit
   - package-ecosystem: swift
     directory: /apps/shared/FasedAgentKit
     schedule:
-      interval: weekly
-      day: thursday
+      interval: daily
     cooldown:
       default-days: 2
     groups:
@@ -83,14 +79,13 @@ updates:
         update-types:
           - minor
           - patch
-    open-pull-requests-limit: 1
+    open-pull-requests-limit: 5
 
   # Swift Package Manager - Swabble
   - package-ecosystem: swift
     directory: /Swabble
     schedule:
-      interval: weekly
-      day: friday
+      interval: daily
     cooldown:
       default-days: 2
     groups:
@@ -100,14 +95,13 @@ updates:
         update-types:
           - minor
           - patch
-    open-pull-requests-limit: 1
+    open-pull-requests-limit: 5
 
   # Gradle - Android app
   - package-ecosystem: gradle
     directory: /apps/android
     schedule:
-      interval: weekly
-      day: saturday
+      interval: daily
     cooldown:
       default-days: 2
     groups:
@@ -117,32 +111,30 @@ updates:
         update-types:
           - minor
           - patch
-    open-pull-requests-limit: 1
+    open-pull-requests-limit: 5
 
   # Docker base images
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
-      day: sunday
     cooldown:
       default-days: 2
     groups:
       docker-images:
         patterns:
           - "*"
-    open-pull-requests-limit: 1
+    open-pull-requests-limit: 5
 
   # Sandbox Docker base images
   - package-ecosystem: docker
     directory: /deploy/containers
     schedule:
       interval: weekly
-      day: sunday
     cooldown:
       default-days: 2
     groups:
       docker-images:
         patterns:
           - "*"
-    open-pull-requests-limit: 1
+    open-pull-requests-limit: 5
