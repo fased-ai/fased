@@ -4,6 +4,12 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.62
+
+- Bind pre-tag candidate descriptors to exact protected `main`, then require
+  the immutable owner tag only after packaged P1 passes.
+- Include the Wallet RPC-readiness convergence correction prepared in rc.60.
+
 ## 0.1.76-rc.61
 
 - Build and test immutable candidate bytes before accepting the owner-created
