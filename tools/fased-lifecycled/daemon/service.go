@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 
 	"fased-lifecycled/bundle"
 	"fased-lifecycled/engine"
@@ -43,6 +44,7 @@ type Service struct {
 	Inventory  StateInventory
 	Supervisor Supervisor
 	NewID      IDGenerator
+	mutationMu sync.Mutex
 }
 
 func (service *Service) Handle(ctx context.Context, request protocol.Request) (protocol.Response, error) {
@@ -56,8 +58,12 @@ func (service *Service) Handle(ctx context.Context, request protocol.Request) (p
 	case protocol.OperationInspect:
 		return service.inspect(request)
 	case protocol.OperationConverge:
+		service.mutationMu.Lock()
+		defer service.mutationMu.Unlock()
 		return service.converge(ctx, request)
 	case protocol.OperationRecover:
+		service.mutationMu.Lock()
+		defer service.mutationMu.Unlock()
 		return service.recover(ctx, request)
 	default:
 		return protocol.Response{}, errors.New("unsupported lifecycle operation")

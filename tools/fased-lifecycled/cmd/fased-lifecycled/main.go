@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -18,6 +19,7 @@ import (
 	"fased-lifecycled/daemon"
 	"fased-lifecycled/engine"
 	"fased-lifecycled/migrator"
+	"fased-lifecycled/model"
 	"fased-lifecycled/platform"
 	"fased-lifecycled/protocol"
 	"fased-lifecycled/signer"
@@ -60,8 +62,14 @@ func run(args []string) error {
 	if os.Geteuid() != 0 {
 		return errors.New("lifecycle supervisor and target modes require root")
 	}
+	if args[0] == "initialize" {
+		return runInitialize(args[1:], os.Stdout)
+	}
 	if args[0] == "stage" {
 		return runStage(args[1:], os.Stdout)
+	}
+	if args[0] == "apply" {
+		return runApply(args[1:], os.Stdout)
 	}
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -91,6 +99,214 @@ func run(args []string) error {
 	default:
 		return errors.New("unsupported lifecycle daemon mode")
 	}
+}
+
+func runInitialize(args []string, output io.Writer) error {
+	flags := flag.NewFlagSet("initialize", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	var profileRaw, instanceID, ownerStateRoot, generationRoot string
+	var operatorUID, operatorGID, gatewayUID, gatewayGID, signerUID, signerGID uint64
+	flags.StringVar(&profileRaw, "profile", "", "")
+	flags.StringVar(&instanceID, "instance", "", "")
+	flags.StringVar(&ownerStateRoot, "owner-state", "", "")
+	flags.StringVar(&generationRoot, "generation", "", "")
+	flags.Uint64Var(&operatorUID, "operator-uid", 0, "")
+	flags.Uint64Var(&operatorGID, "operator-gid", 0, "")
+	flags.Uint64Var(&gatewayUID, "gateway-uid", 0, "")
+	flags.Uint64Var(&gatewayGID, "gateway-gid", 0, "")
+	flags.Uint64Var(&signerUID, "signer-uid", 0, "")
+	flags.Uint64Var(&signerGID, "signer-gid", 0, "")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || operatorUID > uint64(^uint32(0)) || operatorGID > uint64(^uint32(0)) || gatewayUID > uint64(^uint32(0)) || gatewayGID > uint64(^uint32(0)) || signerUID > uint64(^uint32(0)) || signerGID > uint64(^uint32(0)) {
+		return errors.New("invalid lifecycle initialization arguments")
+	}
+	config, err := platform.NewConfig(model.Profile(profileRaw), instanceID, ownerStateRoot,
+		platform.Principal{UID: uint32(operatorUID), GID: uint32(operatorGID)},
+		platform.Principal{UID: uint32(gatewayUID), GID: uint32(gatewayGID)},
+		platform.Principal{UID: uint32(signerUID), GID: uint32(signerGID)})
+	if err != nil {
+		return err
+	}
+	if _, err := store.Open(config.LifecycleRoot); err != nil {
+		return err
+	}
+	configData, err := platform.CanonicalConfigJSON(config)
+	if err != nil {
+		return err
+	}
+	configPath := filepath.Join(config.LifecycleRoot, "platform.json")
+	if err := installExactRecord(configPath, configData, 0o600); err != nil {
+		return err
+	}
+	stableBinary := "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled"
+	if err := installStableBinary(stableBinary); err != nil {
+		return err
+	}
+	unitData, err := platform.RenderSupervisorUnit(config, stableBinary)
+	if err != nil {
+		return err
+	}
+	identity, err := config.Identity()
+	if err != nil {
+		return err
+	}
+	if err := installExactRecord(filepath.Join(config.UnitRoot, identity.Services["supervisor"]), unitData, 0o644); err != nil {
+		return err
+	}
+	systemd, err := systemdClient()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := systemd.DaemonReload(ctx); err != nil {
+		return err
+	}
+	if err := systemd.Enable(ctx, identity.Services["supervisor"]); err != nil {
+		return err
+	}
+	return runApply([]string{"--config", configPath, "--generation", generationRoot}, output)
+}
+
+func installExactRecord(path string, data []byte, mode os.FileMode) error {
+	if existing, err := os.ReadFile(path); err == nil {
+		info, statErr := os.Lstat(path)
+		if statErr != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != mode.Perm() || string(existing) != string(data) {
+			return errors.New("existing lifecycle bootstrap record differs; explicit repair is required")
+		}
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".fased-bootstrap-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(mode); err != nil {
+		temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(data); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryPath, path)
+}
+
+func installStableBinary(path string) error {
+	if info, err := os.Lstat(path); err == nil {
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o755 || !ok || stat.Uid != 0 || stat.Nlink != 1 {
+			return errors.New("installed lifecycle supervisor binary is unsafe")
+		}
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(executable)
+	if err != nil {
+		return err
+	}
+	return installExactRecord(path, data, 0o755)
+}
+
+func runApply(args []string, output io.Writer) error {
+	flags := flag.NewFlagSet("apply", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	var configPath, generationRoot string
+	flags.StringVar(&configPath, "config", "", "")
+	flags.StringVar(&generationRoot, "generation", "", "")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !filepath.IsAbs(generationRoot) || filepath.Clean(generationRoot) != generationRoot {
+		return errors.New("invalid lifecycle apply arguments")
+	}
+	config, err := loadConfig(configPath, 0)
+	if err != nil {
+		return err
+	}
+	state, err := store.Open(config.LifecycleRoot)
+	if err != nil {
+		return err
+	}
+	generation, err := state.ImportGeneration(generationRoot)
+	if err != nil {
+		return err
+	}
+	expectedManifest := "absent"
+	if _, digest, readErr := state.ReadManifest(); readErr == nil {
+		expectedManifest = digest
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return readErr
+	}
+	systemd, err := systemdClient()
+	if err != nil {
+		return err
+	}
+	identity, err := config.Identity()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+	if err := systemd.Start(ctx, identity.Services["supervisor"]); err != nil {
+		return err
+	}
+	if err := waitForSocket(ctx, config.SupervisorSocket()); err != nil {
+		return err
+	}
+	requestID, err := randomRequestID()
+	if err != nil {
+		return err
+	}
+	response, err := daemon.Call(ctx, config.SupervisorSocket(), protocol.Request{
+		SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID,
+		Operation: protocol.OperationConverge, TargetGenerationID: generation.ID,
+		ExpectedManifestDigest: expectedManifest,
+	}, 5*time.Minute)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(output).Encode(response)
+}
+
+func waitForSocket(ctx context.Context, path string) error {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		info, err := os.Lstat(path)
+		if err == nil && info.Mode()&os.ModeSocket != 0 && info.Mode()&os.ModeSymlink == 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return errors.New("lifecycle supervisor socket did not become ready")
+		case <-ticker.C:
+		}
+	}
+}
+
+func randomRequestID() (string, error) {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "", err
+	}
+	value[6] = (value[6] & 0x0f) | 0x40
+	value[8] = (value[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", value[0:4], value[4:6], value[6:8], value[8:10], value[10:16]), nil
 }
 
 func runStage(args []string, output io.Writer) error {

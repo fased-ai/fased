@@ -225,3 +225,10 @@ func DecodeConfig(data []byte) (Config, error) {
 	}
 	return config, nil
 }
+
+func CanonicalConfigJSON(config Config) ([]byte, error) {
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+	return json.Marshal(config)
+}
