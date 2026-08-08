@@ -2,10 +2,12 @@
 package platform
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -155,6 +157,21 @@ func (config Config) ControllerRuntimeRoot() string {
 	return "/run/fased-host-controller"
 }
 
+func (config Config) ControllerSocket() string {
+	return filepath.Join(config.ControllerRuntimeRoot(), "controller.sock")
+}
+
+func (config Config) SupervisorRuntimeRoot() string {
+	if config.Profile == model.ProfileProtectedLocal {
+		return filepath.Join("/run/fased-local-controller", config.InstanceID)
+	}
+	return "/run/fased-host-updater"
+}
+
+func (config Config) SupervisorSocket() string {
+	return filepath.Join(config.SupervisorRuntimeRoot(), "request.sock")
+}
+
 func (config Config) SignerStateRoot() string {
 	if config.Profile == model.ProfileProtectedLocal {
 		return filepath.Join(config.ProductStateRoot, "signer")
@@ -187,4 +204,24 @@ func (config Config) Identity() (model.PlatformIdentity, error) {
 		return model.PlatformIdentity{}, err
 	}
 	return model.NewPlatformIdentity(config.Profile, config.InstanceID, digest)
+}
+
+func DecodeConfig(data []byte) (Config, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var config Config
+	if err := decoder.Decode(&config); err != nil {
+		return Config{}, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return Config{}, errors.New("unexpected trailing platform configuration")
+		}
+		return Config{}, err
+	}
+	if err := config.Validate(); err != nil {
+		return Config{}, err
+	}
+	return config, nil
 }

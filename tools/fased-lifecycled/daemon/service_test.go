@@ -47,6 +47,8 @@ type fakeStore struct {
 	journal        model.Transaction
 }
 
+func (state fakeStore) StageGeneration(string) error { return nil }
+
 func (state fakeStore) ReadManifest() (model.Manifest, string, error) {
 	if state.manifest == nil {
 		return model.Manifest{}, "", os.ErrNotExist

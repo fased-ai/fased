@@ -19,6 +19,7 @@ import (
 const absentManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 type StateStore interface {
+	StageGeneration(string) error
 	ReadManifest() (model.Manifest, string, error)
 	ReadJournal(store.Authority, string) (model.Transaction, error)
 	ReadGenerationContract(string) (bundle.Inventory, model.Generation, error)
@@ -101,6 +102,9 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 		if digestErr != nil || installedPlatformDigest != platformDigest {
 			return protocol.Response{}, errors.New("installed platform identity requires explicit repair")
 		}
+	}
+	if err := service.Store.StageGeneration(request.TargetGenerationID); err != nil {
+		return protocol.Response{}, err
 	}
 	inventory, generation, err := service.Store.ReadGenerationContract(request.TargetGenerationID)
 	if err != nil {

@@ -48,7 +48,7 @@ func (server *Server) Serve(ctx context.Context, listener *net.UnixListener) err
 			}
 			return err
 		}
-		peer, err := unixPeer(connection)
+		peer, err := UnixPeer(connection)
 		if err != nil {
 			_ = connection.Close()
 			continue
@@ -112,7 +112,7 @@ func (server *Server) validate() error {
 	return nil
 }
 
-func unixPeer(connection *net.UnixConn) (Peer, error) {
+func UnixPeer(connection *net.UnixConn) (Peer, error) {
 	raw, err := connection.SyscallConn()
 	if err != nil {
 		return Peer{}, err
