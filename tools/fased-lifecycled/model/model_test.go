@@ -33,7 +33,7 @@ func testCapabilities() CapabilityRanges {
 }
 
 func testPlatform(profile Profile) PlatformIdentity {
-	platform, _ := NewPlatformIdentity(profile, "test-instance")
+	platform, _ := NewPlatformIdentity(profile, "test-instance", testDigestA)
 	return platform
 }
 
@@ -48,6 +48,8 @@ func testTransaction(phase Phase) Transaction {
 		Phase:                phase,
 		Revision:             1,
 		Target:               testGeneration(testDigestB, "0.1.76", testCommitB, testCommitB, testDigestB),
+		TargetStateSchemas:   map[string]uint32{"signer": 2},
+		TargetCapabilities:   testCapabilities(),
 		Previous:             &previous,
 		ManifestDigest:       testDigestA,
 		StateInventoryDigest: testDigestB,
@@ -160,7 +162,7 @@ func TestStrictJSONRejectsProcessIdentityAndTrailingData(t *testing.T) {
 	manifest := `{
 		"schemaVersion":1,
 		"profile":"protected-local",
-		"platform":{"adapter":"linux-systemd-local-v1","instanceId":"test-instance","services":{"controller":"fased-local-controller-test-instance.service","gateway":"fased-local-gateway-test-instance.service","signer":"fased-local-signer-test-instance.service","supervisor":"fased-local-supervisor-test-instance.service"}},
+		"platform":{"adapter":"linux-systemd-local-v1","instanceId":"test-instance","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","services":{"controller":"fased-local-controller-worker-test-instance.service","gateway":"fased-gateway-test-instance.service","signer":"fased-signerd-test-instance.service","supervisor":"fased-local-controller-test-instance.service"}},
 		"stateSchemas":{"signer":1},
 		"capabilities":{
 			"supervisor":{"min":1,"max":1},
@@ -177,7 +179,7 @@ func TestStrictJSONRejectsProcessIdentityAndTrailingData(t *testing.T) {
 	valid := `{
 		"schemaVersion":1,
 		"profile":"protected-local",
-		"platform":{"adapter":"linux-systemd-local-v1","instanceId":"test-instance","services":{"controller":"fased-local-controller-test-instance.service","gateway":"fased-local-gateway-test-instance.service","signer":"fased-local-signer-test-instance.service","supervisor":"fased-local-supervisor-test-instance.service"}},
+		"platform":{"adapter":"linux-systemd-local-v1","instanceId":"test-instance","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","services":{"controller":"fased-local-controller-worker-test-instance.service","gateway":"fased-gateway-test-instance.service","signer":"fased-signerd-test-instance.service","supervisor":"fased-local-controller-test-instance.service"}},
 		"stateSchemas":{"signer":1},
 		"capabilities":{
 			"supervisor":{"min":1,"max":1},

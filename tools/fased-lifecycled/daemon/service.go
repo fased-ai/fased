@@ -132,6 +132,7 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 		SchemaVersion: model.CurrentTransactionSchemaVersion, ID: transactionID,
 		Profile: service.Profile, Phase: model.PhaseIdle, Revision: 1,
 		Target: generation, Previous: previous, ManifestDigest: manifestDigest,
+		TargetStateSchemas: inventory.StateSchemas, TargetCapabilities: inventory.Capabilities,
 		StateInventoryDigest: stateDigest, MigrationPlanDigest: plan.Digest,
 		SignerPlanDigest: signerPlanDigest,
 		PlatformDigest:   platformDigest,

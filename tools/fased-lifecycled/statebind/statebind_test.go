@@ -92,7 +92,7 @@ func TestBindRejectsSymlinkHardlinkMissingAndNoncanonicalPlan(t *testing.T) {
 		t.Fatal("multiply linked state was accepted")
 	}
 	missing := Binder{Specs: []Spec{{Name: "signer", Path: filepath.Join(t.TempDir(), "missing")}}}
-	platform, _ := model.NewPlatformIdentity(model.ProfileProtectedLocal, "test-instance")
+	platform, _ := model.NewPlatformIdentity(model.ProfileProtectedLocal, "test-instance", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	installed := model.Manifest{SchemaVersion: 1, Profile: model.ProfileProtectedLocal, Platform: platform,
 		ActiveGeneration: &generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities}
 	installedPlan, err := planner.Build(&installed, planner.Target{Profile: model.ProfileProtectedLocal, Generation: generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities})

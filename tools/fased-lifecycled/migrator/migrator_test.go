@@ -21,6 +21,11 @@ func transaction() model.Transaction {
 		SchemaVersion: model.CurrentTransactionSchemaVersion, ID: "018f47d2-5a6b-7c8d-9e0f-123456789abc",
 		Profile: model.ProfileProtectedLocal, Phase: model.PhasePrepared, Revision: 3,
 		Target: model.Generation{ID: digestB, Version: "0.1.76", Commit: commitB, Tree: commitB, ArtifactSetDigest: digestB}, Previous: &previous,
+		TargetStateSchemas: map[string]uint32{"managedInstall": 2, "signer": 2},
+		TargetCapabilities: model.CapabilityRanges{
+			Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1},
+			Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 1, Max: 1},
+		},
 		ManifestDigest: digestA, StateInventoryDigest: digestB, MigrationPlanDigest: digestA, SignerPlanDigest: digestB, PlatformDigest: digestA,
 		Migrations: []model.Migration{{State: "managedInstall", From: 1, To: 2}, {State: "signer", From: 1, To: 2}},
 	}

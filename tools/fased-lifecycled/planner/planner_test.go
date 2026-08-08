@@ -37,7 +37,7 @@ func target() Target {
 
 func installed() model.Manifest {
 	active := generation(digestA, "0.1.75", commitA)
-	platform, _ := model.NewPlatformIdentity(model.ProfileProtectedLocal, "test-instance")
+	platform, _ := model.NewPlatformIdentity(model.ProfileProtectedLocal, "test-instance", digestA)
 	return model.Manifest{
 		SchemaVersion:    model.CurrentManifestSchemaVersion,
 		Profile:          model.ProfileProtectedLocal,

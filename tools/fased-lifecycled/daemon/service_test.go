@@ -35,7 +35,7 @@ func generation(id, version, commit string) model.Generation {
 }
 
 func platform() model.PlatformIdentity {
-	value, _ := model.NewPlatformIdentity(model.ProfileProtectedLocal, "test-instance")
+	value, _ := model.NewPlatformIdentity(model.ProfileProtectedLocal, "test-instance", digestA)
 	return value
 }
 
@@ -180,7 +180,7 @@ func TestAlreadyCurrentDoesNotAllocateTransaction(t *testing.T) {
 func TestInstalledPlatformMismatchRequiresExplicitRepair(t *testing.T) {
 	inventory, target := targetContract()
 	active := generation(digestA, "0.1.75", commitA)
-	wrong, _ := model.NewPlatformIdentity(model.ProfileProtectedLocal, "other-instance")
+	wrong, _ := model.NewPlatformIdentity(model.ProfileProtectedLocal, "other-instance", digestA)
 	manifest := model.Manifest{
 		SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal,
 		Platform: wrong, ActiveGeneration: &active,

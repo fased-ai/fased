@@ -79,25 +79,28 @@ type Manifest struct {
 }
 
 type PlatformIdentity struct {
-	Adapter    string            `json:"adapter"`
-	InstanceID string            `json:"instanceId"`
-	Services   map[string]string `json:"services"`
+	Adapter             string            `json:"adapter"`
+	InstanceID          string            `json:"instanceId"`
+	ConfigurationDigest string            `json:"configurationDigest"`
+	Services            map[string]string `json:"services"`
 }
 
 type Transaction struct {
-	SchemaVersion        uint32      `json:"schemaVersion"`
-	ID                   string      `json:"transactionId"`
-	Profile              Profile     `json:"profile"`
-	Phase                Phase       `json:"phase"`
-	Revision             uint64      `json:"revision"`
-	Target               Generation  `json:"target"`
-	Previous             *Generation `json:"previous,omitempty"`
-	ManifestDigest       string      `json:"manifestDigest"`
-	StateInventoryDigest string      `json:"stateInventoryDigest"`
-	MigrationPlanDigest  string      `json:"migrationPlanDigest"`
-	SignerPlanDigest     string      `json:"signerPlanDigest"`
-	PlatformDigest       string      `json:"platformDigest"`
-	Migrations           []Migration `json:"migrations"`
+	SchemaVersion        uint32            `json:"schemaVersion"`
+	ID                   string            `json:"transactionId"`
+	Profile              Profile           `json:"profile"`
+	Phase                Phase             `json:"phase"`
+	Revision             uint64            `json:"revision"`
+	Target               Generation        `json:"target"`
+	TargetStateSchemas   map[string]uint32 `json:"targetStateSchemas"`
+	TargetCapabilities   CapabilityRanges  `json:"targetCapabilities"`
+	Previous             *Generation       `json:"previous,omitempty"`
+	ManifestDigest       string            `json:"manifestDigest"`
+	StateInventoryDigest string            `json:"stateInventoryDigest"`
+	MigrationPlanDigest  string            `json:"migrationPlanDigest"`
+	SignerPlanDigest     string            `json:"signerPlanDigest"`
+	PlatformDigest       string            `json:"platformDigest"`
+	Migrations           []Migration       `json:"migrations"`
 }
 
 type Migration struct {
@@ -134,7 +137,10 @@ func (p PlatformIdentity) Validate(profile Profile) error {
 	if !instanceIDPattern.MatchString(p.InstanceID) {
 		return errors.New("platform instance id is invalid")
 	}
-	expected, err := NewPlatformIdentity(profile, p.InstanceID)
+	if !digestPattern.MatchString(p.ConfigurationDigest) {
+		return errors.New("platform configuration must be a lowercase sha256 digest")
+	}
+	expected, err := NewPlatformIdentity(profile, p.InstanceID, p.ConfigurationDigest)
 	if err != nil {
 		return err
 	}
@@ -151,22 +157,31 @@ func (p PlatformIdentity) Validate(profile Profile) error {
 	return nil
 }
 
-func NewPlatformIdentity(profile Profile, instanceID string) (PlatformIdentity, error) {
+func NewPlatformIdentity(profile Profile, instanceID, configurationDigest string) (PlatformIdentity, error) {
 	if err := validateProfile(profile); err != nil {
 		return PlatformIdentity{}, err
 	}
 	if !instanceIDPattern.MatchString(instanceID) {
 		return PlatformIdentity{}, errors.New("platform instance id is invalid")
 	}
-	prefix, adapter := "fased-local", "linux-systemd-local-v1"
+	if !digestPattern.MatchString(configurationDigest) {
+		return PlatformIdentity{}, errors.New("platform configuration must be a lowercase sha256 digest")
+	}
+	adapter := "linux-systemd-local-v1"
+	services := map[string]string{
+		"controller": fmt.Sprintf("fased-local-controller-worker-%s.service", instanceID),
+		"gateway":    fmt.Sprintf("fased-gateway-%s.service", instanceID),
+		"signer":     fmt.Sprintf("fased-signerd-%s.service", instanceID),
+		"supervisor": fmt.Sprintf("fased-local-controller-%s.service", instanceID),
+	}
 	if profile == ProfileHosting {
-		prefix, adapter = "fased-hosting", "linux-systemd-hosting-v1"
+		adapter = "linux-systemd-hosting-v1"
+		services = map[string]string{
+			"controller": "fased-host-controller.service", "gateway": "fased-gateway.service",
+			"signer": "fased-signerd.service", "supervisor": "fased-host-updater.service",
+		}
 	}
-	services := make(map[string]string, 4)
-	for _, role := range []string{"controller", "gateway", "signer", "supervisor"} {
-		services[role] = fmt.Sprintf("%s-%s-%s.service", prefix, role, instanceID)
-	}
-	return PlatformIdentity{Adapter: adapter, InstanceID: instanceID, Services: services}, nil
+	return PlatformIdentity{Adapter: adapter, InstanceID: instanceID, ConfigurationDigest: configurationDigest, Services: services}, nil
 }
 
 func (p PlatformIdentity) Digest(profile Profile) (string, error) {
@@ -180,9 +195,9 @@ func (p PlatformIdentity) Digest(profile Profile) (string, error) {
 	sort.Strings(roles)
 	type service struct{ Role, Unit string }
 	canonical := struct {
-		Adapter, InstanceID string
-		Services            []service
-	}{Adapter: p.Adapter, InstanceID: p.InstanceID}
+		Adapter, InstanceID, ConfigurationDigest string
+		Services                                 []service
+	}{Adapter: p.Adapter, InstanceID: p.InstanceID, ConfigurationDigest: p.ConfigurationDigest}
 	for _, role := range roles {
 		canonical.Services = append(canonical.Services, service{Role: role, Unit: p.Services[role]})
 	}
@@ -310,6 +325,17 @@ func (t Transaction) Validate() error {
 	}
 	if err := t.Target.Validate(); err != nil {
 		return fmt.Errorf("target generation: %w", err)
+	}
+	if len(t.TargetStateSchemas) == 0 {
+		return errors.New("transaction target state schema inventory must not be empty")
+	}
+	for name, version := range t.TargetStateSchemas {
+		if !stateSchemaPattern.MatchString(name) || version == 0 {
+			return fmt.Errorf("transaction target state schema %q is invalid", name)
+		}
+	}
+	if err := t.TargetCapabilities.Validate(); err != nil {
+		return fmt.Errorf("transaction target capabilities: %w", err)
 	}
 	if t.Previous != nil {
 		if err := t.Previous.Validate(); err != nil {
