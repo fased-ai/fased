@@ -69,7 +69,7 @@ const LOCAL_UPDATE_FOCUSED_PRODUCTION_PATHS = new Set([
 const NODE_PACKAGING_PATH_RE =
   /^(?:package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|packages\/|extensions\/[^/]+\/package\.json$|scripts\/(?:build-hosted-runtime-artifact|hosted-release-manifest|managed-runtime-layout|release-artifact-set)[^/]*)/;
 const NATIVE_SIGNER_PATH_RE =
-  /^(?:tools\/fased-signerd\/|config\/signer-protocol-v2\.json$|scripts\/(?:build-fased-signerd|fased-signerd-build-identity|generate-signer-protocol-v2|release-fased-signerd|signer-protocol-v2\.generated|test-fased-signerd-portable-builds)[^/]*|src\/wallet\/signer-protocol-v2\.generated[^/]*)/;
+  /^(?:tools\/(?:fased-signerd|fased-lifecycled)\/|config\/signer-protocol-v2\.json$|scripts\/(?:assemble-lifecycle-generation|build-(?:fased-lifecycled|fased-signerd|lifecycle-generation)|fased-(?:lifecycled|signerd)-build-identity|generate-signer-protocol-v2|release-fased-(?:lifecycled|signerd)|signer-protocol-v2\.generated|test-(?:build-lifecycle-generation|fased-signerd-portable-builds))[^/]*|src\/wallet\/signer-protocol-v2\.generated[^/]*)/;
 const SIGNER_INTEGRATION_PATH_RE =
   /^(?:install\.sh$|scripts\/(?:fased-managed-updater|install-fased-signerd|install-managed-runtime|managed-runtime-layout|protected-local-)[^/]*|src\/wallet\/(?:native-signer-|providers\/local-socket-signer-adapter)[^/]*|src\/wizard\/onboarding\.wallet[^/]*)/;
 const DARWIN_SIGNER_INTEGRATION_PATH_RE =
@@ -80,10 +80,10 @@ const DOCKER_PRODUCT_PATH_RE =
   /^(?:\.dockerignore$|Dockerfile$|docker-compose\.yml$|docker-setup\.sh$|\.github\/actions\/setup-trivy-cache\/|\.github\/workflows\/docker-release\.yml$|scripts\/(?:docker-signer-|fased-signerd-build-identity|scan-docker-image)[^/]*|src\/(?:commands\/wallet\.docker-signer-doctor|docker-)[^/]*|tools\/fased-signerd\/)/;
 const CODEQL_JAVASCRIPT_PATH_RE = /\.(?:cjs|cts|js|jsx|mjs|mts|ts|tsx)$/u;
 const CODEQL_GO_PATH_RE =
-  /^(?:tools\/fased-signerd\/.*\.(?:go)$|tools\/fased-signerd\/go\.(?:mod|sum))$/u;
+  /^(?:tools\/(?:fased-signerd|fased-lifecycled)\/.*\.(?:go)$|tools\/(?:fased-signerd|fased-lifecycled)\/go\.(?:mod|sum))$/u;
 const CODEQL_PYTHON_PATH_RE = /\.py$/u;
 const SIGNER_PATH_RE =
-  /^(?:install\.sh$|tools\/fased-signerd\/|config\/signer-protocol-v2\.json$|scripts\/(?:fased-managed-updater|install-fased-signerd|install-managed-runtime|managed-runtime-layout|protected-local-|release-fased-signerd|test-fased-signerd-portable-builds|generate-signer-protocol-v2|signer-protocol-v2\.generated)[^/]*|src\/wallet\/(?:native-signer-|providers\/local-socket-signer-adapter|signer-protocol-v2\.generated)[^/]*|src\/wizard\/onboarding\.wallet[^/]*)/;
+  /^(?:install\.sh$|tools\/(?:fased-signerd|fased-lifecycled)\/|config\/signer-protocol-v2\.json$|scripts\/(?:assemble-lifecycle-generation|build-(?:fased-lifecycled|lifecycle-generation)|fased-lifecycled-build-identity|fased-managed-updater|install-fased-signerd|install-managed-runtime|managed-runtime-layout|protected-local-|release-fased-(?:lifecycled|signerd)|test-(?:build-lifecycle-generation|fased-signerd-portable-builds)|generate-signer-protocol-v2|signer-protocol-v2\.generated)[^/]*|src\/wallet\/(?:native-signer-|providers\/local-socket-signer-adapter|signer-protocol-v2\.generated)[^/]*|src\/wizard\/onboarding\.wallet[^/]*)/;
 const UI_PATH_RE = /^ui\//;
 const GATEWAY_NODE_PATH_RE = /^src\/gateway\//;
 const EXTENSION_NODE_PATH_RE = /^extensions\//;
@@ -113,7 +113,7 @@ const PACKAGE_PATH_RE =
 const STATE_MIGRATION_PATH_RE = /(?:^|\/)(?:migrat|transaction|rollback|state)[^/]*[/.]/;
 const DOCKER_PATH_RE = /^(?:Dockerfile|docker\/|scripts\/docker\/|\.github\/workflows\/docker)/;
 const PRIVILEGED_PATH_RE =
-  /^(?:install\.sh$|tools\/fased-signerd\/|scripts\/(?:fased-(?:host-updater|lifecycle-supervisor|managed-updater)|install-(?:fased-signerd|managed-runtime)|lifecycle-|managed-runtime-layout|protected-local-(?:bootstrap|controller|layout|service-plan|supervisor)|signer-(?:enrollment-launchers|owner-policy-installers)|start-managed)[^/]*|src\/(?:daemon\/systemd|infra\/(?:managed-runtime|update-runner)|wallet\/native-signer-)[^/]*)/;
+  /^(?:install\.sh$|tools\/(?:fased-signerd|fased-lifecycled)\/|scripts\/(?:assemble-lifecycle-generation|build-(?:fased-lifecycled|lifecycle-generation)|fased-(?:host-updater|lifecycle-supervisor|managed-updater)|install-(?:fased-signerd|managed-runtime)|lifecycle-|managed-runtime-layout|protected-local-(?:bootstrap|controller|layout|service-plan|supervisor)|release-fased-lifecycled|signer-(?:enrollment-launchers|owner-policy-installers)|start-managed|test-build-lifecycle-generation)[^/]*|src\/(?:daemon\/systemd|infra\/(?:managed-runtime|update-runner)|wallet\/native-signer-)[^/]*)/;
 
 export function normalizeChangedPaths(paths) {
   return [...new Set(paths.map((value) => value.trim().replaceAll("\\", "/")).filter(Boolean))];
