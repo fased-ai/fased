@@ -6282,6 +6282,7 @@ function validateCanonicalWalletHealth(walletStatus, walletDoctor, topology) {
   const addresses = new Set();
   const signerWalletIds = new Set();
   let miningWallets = 0;
+  let networkReadyWallets = 0;
   for (const value of status.wallets) {
     const wallet = healthObject(value, "target Wallet record");
     const id = typeof wallet.id === "string" ? wallet.id.trim() : "";
@@ -6303,10 +6304,11 @@ function validateCanonicalWalletHealth(walletStatus, walletDoctor, topology) {
       !/^[a-z0-9][a-z0-9_]{0,63}$/u.test(signerWalletId) ||
       signer.publicKey !== address ||
       signer.role !== role ||
-      signer.ready !== true ||
       signer.keyReady !== true ||
       signer.policyReady !== true ||
-      signer.networkReady !== true ||
+      typeof signer.networkReady !== "boolean" ||
+      typeof signer.ready !== "boolean" ||
+      signer.ready !== (signer.keyReady && signer.policyReady && signer.networkReady) ||
       !Number.isSafeInteger(signer.baselineVersion) ||
       signer.baselineVersion < 1 ||
       !Number.isSafeInteger(signer.policyVersion) ||
@@ -6325,6 +6327,9 @@ function validateCanonicalWalletHealth(walletStatus, walletDoctor, topology) {
     }
     if (role === "mining") {
       miningWallets += 1;
+    }
+    if (signer.networkReady) {
+      networkReadyWallets += 1;
     }
     wallets.set(id, {
       id,
@@ -6361,6 +6366,7 @@ function validateCanonicalWalletHealth(walletStatus, walletDoctor, topology) {
       mode: status.mode,
       walletCount: wallets.size,
       miningWalletCount: miningWallets,
+      networkReadyWalletCount: networkReadyWallets,
       assignmentCount: Object.keys(assignments).length,
       defaultWalletPresent: Boolean(defaultWalletId),
       signerChecks: Array.isArray(walletDoctor.checks) ? walletDoctor.checks.length : 0,

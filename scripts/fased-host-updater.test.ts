@@ -1777,6 +1777,27 @@ describe("root-owned hosted updater protocol", () => {
       signerIsolation: { ok: true },
     });
 
+    const transientlyUnavailableNetwork = structuredClone(evidence);
+    transientlyUnavailableNetwork.walletStatus.status.wallets[0].signer.networkReady = false;
+    transientlyUnavailableNetwork.walletStatus.status.wallets[0].signer.ready = false;
+    expect(
+      __testing.validateCrossProductApplicationEvidence(transientlyUnavailableNetwork),
+    ).toMatchObject({
+      wallet: { ok: true },
+    });
+
+    const inconsistentNetworkReadiness = structuredClone(transientlyUnavailableNetwork);
+    inconsistentNetworkReadiness.walletStatus.status.wallets[0].signer.ready = true;
+    expect(() =>
+      __testing.validateCrossProductApplicationEvidence(inconsistentNetworkReadiness),
+    ).toThrow("registry and signer identity");
+
+    const unauthenticatedStoredNetwork = structuredClone(transientlyUnavailableNetwork);
+    unauthenticatedStoredNetwork.walletStatus.status.wallets[0].signer.networkHash = "invalid";
+    expect(() =>
+      __testing.validateCrossProductApplicationEvidence(unauthenticatedStoredNetwork),
+    ).toThrow("registry and signer identity");
+
     const normalizedSignerIdentity = structuredClone(evidence);
     normalizedSignerIdentity.walletStatus.status.wallets[0].id = "agent-2";
     normalizedSignerIdentity.walletStatus.status.wallets[0].name = "Agent 2";
