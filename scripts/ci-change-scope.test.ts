@@ -176,6 +176,24 @@ describe("CI changed-surface classification", () => {
     });
   });
 
+  it("routes bounded workspace manifests through the same remediation lane", () => {
+    const plan = createGatePlan(["package.json", "pnpm-lock.yaml", "ui/package.json"]);
+    const remediation = detectDependencyRemediation(plan, {}, () => ({
+      remediations: [
+        { dependency: "dompurify", fromVersion: "3.4.11", toVersion: "3.4.13" },
+        { dependency: "dompurify", fromVersion: "3.4.12", toVersion: "3.4.13" },
+      ],
+    }));
+    const output = outputEntries(plan, remediation);
+
+    expect(output).toMatchObject({
+      dependency_remediation: "true",
+      dependency_names_json: '["dompurify"]',
+      run_node_build: "true",
+      run_node_full: "false",
+    });
+  });
+
   it("retains broad checks when package changes fail content verification", () => {
     const plan = createGatePlan(["package.json", "pnpm-lock.yaml"]);
     const remediation = detectDependencyRemediation(plan, {}, () => {

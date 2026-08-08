@@ -22,12 +22,17 @@ export function detectDependencyRemediation(
   verify = verifyRepositoryDependencyRemediation,
 ) {
   const paths = [...plan.paths].toSorted((left, right) => left.localeCompare(right));
+  const manifestPaths = paths.filter(
+    (path) => path === "package.json" || path.endsWith("/package.json"),
+  );
   if (
     plan.changeKind !== "production" ||
     plan.manualReviewRequired ||
-    paths.length !== 2 ||
-    paths[0] !== "package.json" ||
-    paths[1] !== "pnpm-lock.yaml"
+    manifestPaths.length < 1 ||
+    manifestPaths.length > 8 ||
+    !paths.includes("pnpm-lock.yaml") ||
+    paths.length !== manifestPaths.length + 1 ||
+    !paths.every((path) => path === "pnpm-lock.yaml" || manifestPaths.includes(path))
   ) {
     return Object.freeze({ dependencyRemediation: false, dependencyNames: [] });
   }
@@ -35,7 +40,9 @@ export function detectDependencyRemediation(
     const result = verify(env);
     return Object.freeze({
       dependencyRemediation: true,
-      dependencyNames: result.remediations.map(({ dependency }) => dependency),
+      dependencyNames: [
+        ...new Set(result.remediations.map(({ dependency }) => dependency)),
+      ].toSorted((left, right) => left.localeCompare(right)),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

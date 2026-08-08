@@ -1,96 +1,122 @@
 import { describe, expect, it } from "vitest";
 import { verifyDependencyRemediation } from "./ci-dependency-integrity.mjs";
 
-const basePackage = {
-  name: "@fased/fased",
-  dependencies: { undici: "7.28.0" },
-  engines: { node: ">=22.14.0" },
-  scripts: { test: "vitest" },
-  pnpm: {
-    overrides: {
-      "fast-uri": "3.1.4",
-      "ip-address": "10.2.0",
-      "undici@7": "7.28.0",
+const baseManifests = {
+  "package.json": {
+    name: "@fased/fased",
+    dependencies: { tar: "7.5.19" },
+    scripts: { test: "vitest" },
+    pnpm: {
+      overrides: {
+        hono: "4.12.27",
+        tar: "7.5.19",
+        "undici@6": "6.27.0",
+      },
     },
   },
+  "ui/package.json": {
+    name: "fased-control-ui",
+    dependencies: { dompurify: "3.4.11" },
+    scripts: { test: "vitest" },
+  },
 };
-const baseZaloPackage = { name: "@fased/zalo", dependencies: { undici: "7.28.0" } };
 const baseLockfile = `lockfileVersion: '9.0'
 
 overrides:
-  fast-uri: 3.1.4
-  ip-address: 10.2.0
-  undici@7: 7.28.0
+  hono: 4.12.27
+  tar: 7.5.19
+  undici@6: 6.27.0
 
 importers:
 `;
 
 function verify(
-  headPackage = structuredClone(basePackage),
+  headManifests = structuredClone(baseManifests),
   headLockfile = baseLockfile,
-  changedEntries = ["M\tpackage.json", "M\tpnpm-lock.yaml"],
-  headZaloPackage = structuredClone(baseZaloPackage),
+  changedEntries = ["M\tpackage.json", "M\tpnpm-lock.yaml", "M\tui/package.json"],
 ) {
   return verifyDependencyRemediation({
     changedEntries,
-    basePackage,
-    headPackage,
+    baseManifests,
+    headManifests,
     baseLockfile,
     headLockfile,
-    baseZaloPackage,
-    headZaloPackage,
   });
 }
 
 describe("dependency integrity", () => {
-  it("accepts one named advisory override mirrored by the lockfile", () => {
-    const head = structuredClone(basePackage);
-    head.pnpm.overrides["fast-uri"] = "3.1.5";
-    expect(verify(head, baseLockfile.replace("3.1.4", "3.1.5"))).toEqual({
-      remediations: [{ dependency: "fast-uri", fromVersion: "3.1.4", toVersion: "3.1.5" }],
-    });
-  });
-
-  it("accepts the bounded nanoid override addition used by the production audit repair", () => {
-    const head = structuredClone(basePackage);
-    head.pnpm.overrides.nanoid = "3.3.17";
-    expect(
-      verify(head, baseLockfile.replace("overrides:\n", "overrides:\n  nanoid: 3.3.17\n")),
-    ).toEqual({
-      remediations: [{ dependency: "nanoid", fromVersion: null, toVersion: "3.3.17" }],
-    });
-  });
-
-  it("accepts the bounded four-advisory remediation with aligned Undici manifests", () => {
-    const head = structuredClone(basePackage);
-    head.pnpm.overrides["fast-uri"] = "3.1.5";
-    head.pnpm.overrides["ip-address"] = "10.3.1";
-    head.pnpm.overrides["undici@7"] = "7.29.0";
-    head.pnpm.overrides["undici@8"] = "8.9.0";
-    head.dependencies.undici = "7.29.0";
-    head.engines.node = ">=22.19.0";
-    const headZalo = structuredClone(baseZaloPackage);
-    headZalo.dependencies.undici = "7.29.0";
-    const headLock = baseLockfile
-      .replace("fast-uri: 3.1.4", "fast-uri: 3.1.5")
-      .replace("ip-address: 10.2.0", "ip-address: 10.3.1")
-      .replace("undici@7: 7.28.0", "undici@7: 7.29.0\n  undici@8: 8.9.0");
-    expect(
-      verify(
-        head,
-        headLock,
-        ["M\textensions/zalo/package.json", "M\tpackage.json", "M\tpnpm-lock.yaml"],
-        headZalo,
-      ).remediations,
-    ).toHaveLength(4);
-  });
-
-  it("rejects package script drift in the dependency lane", () => {
-    const head = structuredClone(basePackage);
-    head.pnpm.overrides["fast-uri"] = "3.1.5";
-    head.scripts.test = "vitest --watch";
-    expect(() => verify(head, baseLockfile.replace("3.1.4", "3.1.5"))).toThrow(
-      /outside the named advisory remediation/u,
+  it("accepts version-only remediation across root and workspace manifests", () => {
+    const head = structuredClone(baseManifests);
+    head["package.json"].dependencies.tar = "7.5.21";
+    head["package.json"].pnpm.overrides.hono = "4.12.34";
+    head["package.json"].pnpm.overrides.tar = "7.5.21";
+    head["package.json"].pnpm.overrides["undici@6"] = "6.28.0";
+    head["ui/package.json"].dependencies.dompurify = "3.4.13";
+    const result = verify(
+      head,
+      baseLockfile
+        .replace("hono: 4.12.27", "hono: 4.12.34")
+        .replace("tar: 7.5.19", "tar: 7.5.21")
+        .replace("undici@6: 6.27.0", "undici@6: 6.28.0"),
     );
+
+    expect(
+      [...new Set(result.remediations.map(({ dependency }) => dependency))].toSorted(
+        (left, right) => left.localeCompare(right),
+      ),
+    ).toEqual(["dompurify", "hono", "tar", "undici"]);
+  });
+
+  it("accepts a bounded new root override", () => {
+    const head = { "package.json": structuredClone(baseManifests["package.json"]) };
+    head["package.json"].pnpm.overrides.nanoid = "3.3.17";
+    const result = verifyDependencyRemediation({
+      changedEntries: ["M\tpackage.json", "M\tpnpm-lock.yaml"],
+      baseManifests: { "package.json": baseManifests["package.json"] },
+      headManifests: head,
+      baseLockfile,
+      headLockfile: baseLockfile.replace("overrides:\n", "overrides:\n  nanoid: 3.3.17\n"),
+    });
+    expect(result.remediations).toContainEqual({
+      dependency: "nanoid",
+      field: "pnpm.overrides.nanoid",
+      fromVersion: null,
+      manifest: "package.json",
+      toVersion: "3.3.17",
+    });
+  });
+
+  it("rejects package script drift", () => {
+    const head = structuredClone(baseManifests);
+    head["package.json"].pnpm.overrides.hono = "4.12.34";
+    head["package.json"].scripts.test = "vitest --watch";
+    expect(() => verify(head, baseLockfile.replace("hono: 4.12.27", "hono: 4.12.34"))).toThrow(
+      /outside dependency versions/u,
+    );
+  });
+
+  it("rejects downgrades and version-range widening", () => {
+    const downgrade = structuredClone(baseManifests);
+    downgrade["package.json"].dependencies.tar = "7.5.18";
+    expect(() => verify(downgrade, `${baseLockfile}\n# changed`)).toThrow(
+      /not a version increase/u,
+    );
+
+    const widened = structuredClone(baseManifests);
+    widened["ui/package.json"].dependencies.dompurify = "^3.4.13";
+    expect(() => verify(widened, `${baseLockfile}\n# changed`)).toThrow(/version-range prefix/u);
+  });
+
+  it("rejects source files outside manifests and the lockfile", () => {
+    const head = structuredClone(baseManifests);
+    head["package.json"].pnpm.overrides.hono = "4.12.34";
+    expect(() =>
+      verify(head, baseLockfile.replace("hono: 4.12.27", "hono: 4.12.34"), [
+        "M\tpackage.json",
+        "M\tpnpm-lock.yaml",
+        "M\tsrc/index.ts",
+        "M\tui/package.json",
+      ]),
+    ).toThrow(/outside package manifests/u);
   });
 });

@@ -113,7 +113,7 @@ describe("compact CI topology", () => {
     });
     expect(dependencySteps.map((step) => step.name)).toEqual([
       "Prove exact dependency remediation",
-      "Audit production dependencies",
+      "Audit complete dependency graph",
       "Verify frozen lockfile integrity",
       "Verify affected dependency paths and tests",
     ]);

@@ -3,15 +3,13 @@
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
-const EXACT_VERSION_RE = /^\d+\.\d+\.\d+$/u;
-
-const ADVISORY_REMEDIATIONS = Object.freeze({
-  "fast-uri": Object.freeze({ from: "3.1.4", to: "3.1.5" }),
-  "ip-address": Object.freeze({ from: "10.2.0", to: "10.3.1" }),
-  nanoid: Object.freeze({ from: null, to: "3.3.17" }),
-  "undici@7": Object.freeze({ from: "7.28.0", to: "7.29.0" }),
-  "undici@8": Object.freeze({ from: null, to: "8.9.0" }),
-});
+const VERSION_SPEC_RE = /^(?<prefix>[~^]?)(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$/u;
+const DEPENDENCY_FIELDS = Object.freeze([
+  "dependencies",
+  "devDependencies",
+  "optionalDependencies",
+  "peerDependencies",
+]);
 
 function fail(message) {
   throw new Error(`dependency integrity: ${message}`);
@@ -31,19 +29,26 @@ function stableValue(value) {
   return value;
 }
 
-function exactVersionParts(value) {
-  if (!EXACT_VERSION_RE.test(value ?? "")) {
-    fail(`override version ${JSON.stringify(value)} is not an exact stable semantic version`);
+function versionSpec(value, label) {
+  const match = VERSION_SPEC_RE.exec(value ?? "");
+  if (!match?.groups) {
+    fail(`${label} ${JSON.stringify(value)} is not a bounded stable semantic version`);
   }
-  return value.split(".").map(Number);
+  return {
+    prefix: match.groups.prefix,
+    parts: [match.groups.major, match.groups.minor, match.groups.patch].map(Number),
+  };
 }
 
-function isHigherVersion(previous, target) {
-  const left = exactVersionParts(previous);
-  const right = exactVersionParts(target);
-  for (let index = 0; index < left.length; index += 1) {
-    if (right[index] !== left[index]) {
-      return right[index] > left[index];
+function isHigherVersion(previous, target, label) {
+  const left = versionSpec(previous, `${label} previous version`);
+  const right = versionSpec(target, `${label} target version`);
+  if (left.prefix !== right.prefix) {
+    fail(`${label} changes its version-range prefix`);
+  }
+  for (let index = 0; index < left.parts.length; index += 1) {
+    if (right.parts[index] !== left.parts[index]) {
+      return right.parts[index] > left.parts[index];
     }
   }
   return false;
@@ -104,98 +109,122 @@ function changedKeys(previous, target) {
     .toSorted((left, right) => left.localeCompare(right));
 }
 
+function dependencyName(key, override = false) {
+  if (!override) {
+    return key;
+  }
+  if (key.startsWith("@")) {
+    const separator = key.indexOf("@", key.indexOf("/") + 1);
+    return separator > 0 ? key.slice(0, separator) : key;
+  }
+  const separator = key.indexOf("@");
+  return separator > 0 ? key.slice(0, separator) : key;
+}
+
+function recordVersionChange(
+  remediations,
+  { dependency, field, fromVersion, manifest, toVersion },
+) {
+  if (fromVersion === undefined) {
+    versionSpec(toVersion, `${manifest} ${field}.${dependency}`);
+  } else if (!isHigherVersion(fromVersion, toVersion, `${manifest} ${field}.${dependency}`)) {
+    fail(`${manifest} ${field}.${dependency} is not a version increase`);
+  }
+  remediations.push({ dependency, field, fromVersion: fromVersion ?? null, manifest, toVersion });
+}
+
+function verifyManifest(path, baseManifest, headManifest, remediations) {
+  const normalized = structuredClone(baseManifest);
+  for (const field of DEPENDENCY_FIELDS) {
+    const baseDependencies = baseManifest[field] ?? {};
+    const headDependencies = headManifest[field] ?? {};
+    for (const key of changedKeys(baseDependencies, headDependencies)) {
+      const toVersion = headDependencies[key];
+      if (typeof toVersion !== "string") {
+        fail(`${path} removes ${field}.${key}`);
+      }
+      recordVersionChange(remediations, {
+        dependency: key,
+        field,
+        fromVersion: baseDependencies[key],
+        manifest: path,
+        toVersion,
+      });
+      normalized[field] = { ...normalized[field], [key]: toVersion };
+    }
+  }
+
+  if (path === "package.json") {
+    const baseOverrides = packageOverrides(baseManifest, "base");
+    const headOverrides = packageOverrides(headManifest, "head");
+    for (const key of changedKeys(baseOverrides, headOverrides)) {
+      const toVersion = headOverrides[key];
+      if (typeof toVersion !== "string") {
+        fail(`package.json removes pnpm.overrides.${key}`);
+      }
+      recordVersionChange(remediations, {
+        dependency: dependencyName(key, true),
+        field: `pnpm.overrides.${key}`,
+        fromVersion: baseOverrides[key],
+        manifest: path,
+        toVersion,
+      });
+      normalized.pnpm.overrides[key] = toVersion;
+    }
+  }
+
+  if (JSON.stringify(stableValue(normalized)) !== JSON.stringify(stableValue(headManifest))) {
+    fail(`${path} changes fields outside dependency versions and root overrides`);
+  }
+}
+
 export function verifyDependencyRemediation({
   changedEntries,
-  basePackage,
-  headPackage,
+  baseManifests,
+  headManifests,
   baseLockfile,
   headLockfile,
-  baseZaloPackage,
-  headZaloPackage,
 }) {
-  const baseOverrides = packageOverrides(basePackage, "base");
-  const headOverrides = packageOverrides(headPackage, "head");
-  const packageChanges = changedKeys(baseOverrides, headOverrides);
-  if (packageChanges.length < 1 || packageChanges.length > 4) {
-    fail("package.json must change between one and four named advisory overrides");
+  const manifestPaths = Object.keys(headManifests).toSorted((left, right) =>
+    left.localeCompare(right),
+  );
+  if (manifestPaths.length < 1 || manifestPaths.length > 8) {
+    fail("change must contain between one and eight existing package manifests");
   }
-
-  const remediations = packageChanges.map((dependency) => {
-    const allowed = ADVISORY_REMEDIATIONS[dependency];
-    if (!allowed) {
-      fail(`override ${dependency} is outside the named advisory set`);
-    }
-    const fromVersion = baseOverrides[dependency] ?? null;
-    const toVersion = headOverrides[dependency];
-    if (fromVersion !== allowed.from || toVersion !== allowed.to) {
-      fail(`override transition for ${dependency} is not authorized`);
-    }
-    if (fromVersion !== null && !isHigherVersion(fromVersion, toVersion)) {
-      fail(`target override for ${dependency} is not a higher exact stable semantic version`);
-    }
-    exactVersionParts(toVersion);
-    return { dependency, fromVersion, toVersion };
-  });
-
-  const expectedPaths = packageChanges.includes("undici@7")
-    ? ["M\textensions/zalo/package.json", "M\tpackage.json", "M\tpnpm-lock.yaml"]
-    : ["M\tpackage.json", "M\tpnpm-lock.yaml"];
+  const expectedPaths = [
+    ...manifestPaths.map((path) => `M\t${path}`),
+    "M\tpnpm-lock.yaml",
+  ].toSorted((left, right) => left.localeCompare(right));
   if (JSON.stringify(changedEntries) !== JSON.stringify(expectedPaths)) {
-    fail("diff is outside the exact advisory manifest set");
+    fail("diff is outside package manifests plus the exact pnpm lockfile");
   }
 
-  const normalizedBase = structuredClone(basePackage);
-  for (const remediation of remediations) {
-    normalizedBase.pnpm.overrides[remediation.dependency] = remediation.toVersion;
+  if (baseLockfile === headLockfile) {
+    fail("pnpm-lock.yaml does not change");
   }
-  if (packageChanges.includes("undici@7")) {
-    if (
-      basePackage.dependencies?.undici !== "7.28.0" ||
-      headPackage.dependencies?.undici !== "7.29.0"
-    ) {
-      fail("root undici dependency is not aligned with the undici@7 remediation");
+  const remediations = [];
+  for (const path of manifestPaths) {
+    if (!baseManifests[path] || !headManifests[path]) {
+      fail(`${path} is not present on both sides of the change`);
     }
-    normalizedBase.dependencies.undici = "7.29.0";
+    verifyManifest(path, baseManifests[path], headManifests[path], remediations);
   }
-  if (packageChanges.includes("undici@8")) {
-    if (basePackage.engines?.node !== ">=22.14.0" || headPackage.engines?.node !== ">=22.19.0") {
-      fail("Node engine floor is not aligned with the undici@8 remediation");
-    }
-    normalizedBase.engines.node = ">=22.19.0";
-  }
-  if (JSON.stringify(stableValue(normalizedBase)) !== JSON.stringify(stableValue(headPackage))) {
-    fail("package.json changes fields outside the named advisory remediation");
+  if (remediations.length < 1 || remediations.length > 24) {
+    fail("change must contain between one and twenty-four dependency version increases");
   }
 
-  if (packageChanges.includes("undici@7")) {
-    const normalizedBaseZalo = structuredClone(baseZaloPackage);
-    if (
-      baseZaloPackage?.dependencies?.undici !== "7.28.0" ||
-      headZaloPackage?.dependencies?.undici !== "7.29.0"
-    ) {
-      fail("Zalo undici dependency is not aligned with the undici@7 remediation");
-    }
-    normalizedBaseZalo.dependencies.undici = "7.29.0";
-    if (
-      JSON.stringify(stableValue(normalizedBaseZalo)) !==
-      JSON.stringify(stableValue(headZaloPackage))
-    ) {
-      fail("Zalo package changes fields outside the undici advisory remediation");
-    }
-  }
-
-  const baseLockOverrides = parseRootOverrides(baseLockfile);
-  const headLockOverrides = parseRootOverrides(headLockfile);
-  const lockChanges = changedKeys(baseLockOverrides, headLockOverrides);
-  if (JSON.stringify(lockChanges) !== JSON.stringify(packageChanges)) {
-    fail("lockfile root override changes do not match package.json");
-  }
-  for (const remediation of remediations) {
-    if (
-      (baseLockOverrides[remediation.dependency] ?? null) !== remediation.fromVersion ||
-      headLockOverrides[remediation.dependency] !== remediation.toVersion
-    ) {
-      fail(`lockfile root override does not match ${remediation.dependency}`);
+  if (headManifests["package.json"]) {
+    const baseOverrides = packageOverrides(baseManifests["package.json"], "base");
+    const headOverrides = packageOverrides(headManifests["package.json"], "head");
+    const baseLockOverrides = parseRootOverrides(baseLockfile);
+    const headLockOverrides = parseRootOverrides(headLockfile);
+    for (const key of changedKeys(baseOverrides, headOverrides)) {
+      if (
+        baseLockOverrides[key] !== baseOverrides[key] ||
+        headLockOverrides[key] !== headOverrides[key]
+      ) {
+        fail(`lockfile root override does not match package.json pnpm.overrides.${key}`);
+      }
     }
   }
 
@@ -228,18 +257,22 @@ export function verifyRepositoryDependencyRemediation(env = process.env) {
     .split(/\r?\n/u)
     .filter(Boolean)
     .toSorted((left, right) => left.localeCompare(right));
+  const manifestPaths = changedEntries
+    .map((entry) => /^M\t(?<path>(?:.+\/)?package\.json)$/u.exec(entry)?.groups?.path)
+    .filter(Boolean)
+    .toSorted((left, right) => left.localeCompare(right));
+  const baseManifests = Object.fromEntries(
+    manifestPaths.map((path) => [path, JSON.parse(git(["show", `${base}:${path}`]))]),
+  );
+  const headManifests = Object.fromEntries(
+    manifestPaths.map((path) => [path, JSON.parse(git(["show", `HEAD:${path}`]))]),
+  );
   return verifyDependencyRemediation({
     changedEntries,
-    basePackage: JSON.parse(git(["show", `${base}:package.json`])),
-    headPackage: JSON.parse(git(["show", "HEAD:package.json"])),
+    baseManifests,
+    headManifests,
     baseLockfile: git(["show", `${base}:pnpm-lock.yaml`]),
     headLockfile: git(["show", "HEAD:pnpm-lock.yaml"]),
-    baseZaloPackage: changedEntries.includes("M\textensions/zalo/package.json")
-      ? JSON.parse(git(["show", `${base}:extensions/zalo/package.json`]))
-      : undefined,
-    headZaloPackage: changedEntries.includes("M\textensions/zalo/package.json")
-      ? JSON.parse(git(["show", "HEAD:extensions/zalo/package.json"]))
-      : undefined,
   });
 }
 
