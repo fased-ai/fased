@@ -30,6 +30,7 @@ type Config struct {
 	Operator         Principal     `json:"operator"`
 	Gateway          Principal     `json:"gateway"`
 	Signer           Principal     `json:"signer"`
+	GatewayPort      uint16        `json:"gatewayPort"`
 	InstallRoot      string        `json:"installRoot"`
 	LifecycleRoot    string        `json:"lifecycleRoot"`
 	ProductStateRoot string        `json:"productStateRoot"`
@@ -40,7 +41,11 @@ type Config struct {
 var instancePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 
 func NewConfig(profile model.Profile, instanceID, ownerStateRoot string, operator, gateway, signer Principal) (Config, error) {
-	config, err := deriveConfig(profile, instanceID, ownerStateRoot, operator, gateway, signer)
+	return NewConfigWithGatewayPort(profile, instanceID, ownerStateRoot, 18789, operator, gateway, signer)
+}
+
+func NewConfigWithGatewayPort(profile model.Profile, instanceID, ownerStateRoot string, gatewayPort uint16, operator, gateway, signer Principal) (Config, error) {
+	config, err := deriveConfig(profile, instanceID, ownerStateRoot, gatewayPort, operator, gateway, signer)
 	if err != nil {
 		return Config{}, err
 	}
@@ -59,6 +64,9 @@ func (config Config) Validate() error {
 	}
 	if config.Profile != model.ProfileProtectedLocal && config.Profile != model.ProfileHosting {
 		return errors.New("platform configuration profile is invalid")
+	}
+	if config.GatewayPort == 0 {
+		return errors.New("platform Gateway port is invalid")
 	}
 	for name, principal := range map[string]Principal{"operator": config.Operator, "gateway": config.Gateway, "signer": config.Signer} {
 		if principal.UID == 0 || principal.GID == 0 {
@@ -81,7 +89,7 @@ func (config Config) Validate() error {
 			return fmt.Errorf("platform %s path contains unsupported whitespace or control characters", name)
 		}
 	}
-	expected, err := deriveConfig(config.Profile, config.InstanceID, config.OwnerStateRoot, config.Operator, config.Gateway, config.Signer)
+	expected, err := deriveConfig(config.Profile, config.InstanceID, config.OwnerStateRoot, config.GatewayPort, config.Operator, config.Gateway, config.Signer)
 	if err != nil {
 		return err
 	}
@@ -91,7 +99,7 @@ func (config Config) Validate() error {
 	return nil
 }
 
-func deriveConfig(profile model.Profile, instanceID, ownerStateRoot string, operator, gateway, signer Principal) (Config, error) {
+func deriveConfig(profile model.Profile, instanceID, ownerStateRoot string, gatewayPort uint16, operator, gateway, signer Principal) (Config, error) {
 	prefix := "local"
 	if profile == model.ProfileHosting {
 		prefix = "hosting"
@@ -100,7 +108,7 @@ func deriveConfig(profile model.Profile, instanceID, ownerStateRoot string, oper
 	}
 	config := Config{
 		SchemaVersion: CurrentConfigSchemaVersion, Profile: profile, InstanceID: instanceID,
-		OwnerStateRoot: ownerStateRoot, Operator: operator, Gateway: gateway, Signer: signer,
+		OwnerStateRoot: ownerStateRoot, Operator: operator, Gateway: gateway, Signer: signer, GatewayPort: gatewayPort,
 		InstallRoot:      filepath.Join("/opt/fased", prefix, instanceID),
 		LifecycleRoot:    filepath.Join("/var/lib/fased-"+prefix, instanceID, "lifecycle"),
 		ProductStateRoot: filepath.Join("/var/lib/fased-"+prefix, instanceID),
@@ -148,6 +156,17 @@ func (config Config) OperatorGroupName() string {
 		return "fsop-" + config.InstanceID
 	}
 	return "fased-operator"
+}
+
+func (config Config) ConfigGroupName() string {
+	if config.Profile == model.ProfileProtectedLocal {
+		return "fscf-" + config.InstanceID
+	}
+	return "fased-config"
+}
+
+func (config Config) OwnerHome() string {
+	return filepath.Dir(config.OwnerStateRoot)
 }
 
 func (config Config) ControllerRuntimeRoot() string {

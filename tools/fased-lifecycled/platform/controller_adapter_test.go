@@ -74,6 +74,9 @@ func TestControllerAdapterUsesIndependentVerifiedHandoff(t *testing.T) {
 		t.Fatalf("unexpected controller order:\n got=%v\nwant=%v", calls, want)
 	}
 	definition := string(units.definitions[identity.Services["controller"]])
+	if !strings.Contains(definition, "--socket /run/fased-local-controller-worker/example/controller.sock") || strings.Contains(definition, "/controller/controller.sock") {
+		t.Fatalf("controller unit socket is not canonical:\n%s", definition)
+	}
 	if strings.Contains(definition, "/bin/sh") || !strings.Contains(definition, "RestrictAddressFamilies=AF_UNIX") {
 		t.Fatalf("controller unit is not narrow and direct:\n%s", definition)
 	}

@@ -133,7 +133,7 @@ Group=root
 RuntimeDirectory=%s
 RuntimeDirectoryMode=0710
 UMask=0077
-ExecStart=%s target --config %s/platform.json --socket %s/controller/controller.sock
+ExecStart=%s target --config %s/platform.json --socket %s
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
@@ -142,14 +142,14 @@ PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=%s %s %s %s %s
-RestrictAddressFamilies=AF_UNIX
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_SETUID CAP_SETGID
 AmbientCapabilities=
 
 [Install]
 WantedBy=multi-user.target
 `, adapter.Config.InstanceID, runtimeDirectory, entrypoint, adapter.Config.LifecycleRoot,
-		controllerRuntimeRoot, adapter.Config.InstallRoot, adapter.Config.LifecycleRoot,
+		adapter.Config.ControllerSocket(), adapter.Config.InstallRoot, adapter.Config.LifecycleRoot,
 		adapter.Config.ProductStateRoot, adapter.Config.OwnerStateRoot, adapter.Config.UnitRoot)
 	return []byte(unit)
 }

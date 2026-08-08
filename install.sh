@@ -589,7 +589,8 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
           "$protected_local_gateway_health_timeout_ms"
         )
       fi
-      exec "$protected_local_node_binary" \
+      local bootstrap_result=""
+      bootstrap_result="$("$protected_local_node_binary" \
         "$selected_package_root/scripts/protected-local-bootstrap.mjs" install \
         --source-root "$selected_package_root" \
         --signer-binary "$selected_root_store/verified-assets/fased-signerd" \
@@ -606,7 +607,37 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
         --profile "$protected_local_profile" \
         --gateway-port "$protected_local_gateway_port" \
         --gateway-mode "$protected_local_gateway_mode" \
-        "${gateway_health_args[@]}"
+        "${gateway_health_args[@]}")"
+      printf '%s\n' "$bootstrap_result"
+      if [[ "$protected_local_gateway_mode" != "activate" ]]; then
+        return 0
+      fi
+      local lifecycle_instance=""
+      lifecycle_instance="$(printf '%s\n' "$bootstrap_result" | "$protected_local_node_binary" -e '
+        let input="";
+        process.stdin.on("data", chunk => input += chunk);
+        process.stdin.on("end", () => {
+          const lines = input.trim().split(/\n/u).filter(Boolean);
+          const value = JSON.parse(lines.at(-1));
+          if (!/^[a-f0-9]{16}$/u.test(String(value.instanceId || ""))) process.exit(1);
+          process.stdout.write(value.instanceId);
+        });
+      ')"
+      local gateway_user="fsgw-${lifecycle_instance}"
+      local signer_user="fssg-${lifecycle_instance}"
+      "$protected_local_node_binary" \
+        "$selected_package_root/scripts/generation-updater.mjs" initialize \
+        --version "$release_version" \
+        --profile protected-local \
+        --instance "$lifecycle_instance" \
+        --owner-state "$protected_local_state_dir" \
+        --gateway-port "$protected_local_gateway_port" \
+        --operator-uid "$protected_local_operator_uid" \
+        --operator-gid "$protected_local_operator_gid" \
+        --gateway-uid "$(id -u "$gateway_user")" \
+        --gateway-gid "$(id -g "$gateway_user")" \
+        --signer-uid "$(id -u "$signer_user")" \
+        --signer-gid "$(id -g "$signer_user")"
     }
 
     umask 077
@@ -1069,6 +1100,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     drain_streamed_install_input
     if [[ "$protected_local_bootstrap" -eq 1 ]]; then
       enter_protected_local_bundle "$root_store" "$final_root" "$packaged_commit"
+      exit 0
     fi
     exec bash "$final_root/install.sh" "${verified_inner_args[@]}" \
       --release "$release_version" \
@@ -4735,6 +4767,10 @@ reexec_as_app_user() {
   fi
 
   if [[ "$child_status" -eq 0 && "$HOSTING_REQUESTED" -eq 1 ]]; then
+    initialize_hosting_generation_lifecycle || child_status=1
+  fi
+
+  if [[ "$child_status" -eq 0 && "$HOSTING_REQUESTED" -eq 1 ]]; then
     finalize_hosting_root_prerequisites || child_status=1
     systemctl is-active --quiet fased-signerd.service || child_status=1
     systemctl is-active --quiet fased-host-updater.service || child_status=1
@@ -6591,6 +6627,31 @@ finalize_legacy_hosted_signer_migration() {
     "${signer_home}/.fased/wallet/local-signer.sock" \
     /usr/local/sbin/fased-signer-maintenance \
     /usr/local/sbin/fased-signer-isolation
+}
+
+initialize_hosting_generation_lifecycle() {
+  [[ "$HOSTING_REQUESTED" -eq 1 && "$(id -u)" -eq 0 ]] || return 0
+  local target_user="${FASED_INSTALL_USER:-app}"
+  local gateway_user="${FASED_GATEWAY_USER:-fased-gateway}"
+  local signer_user="${FASED_SIGNER_USER:-fased-signer}"
+  local target_home=""
+  target_home="$(getent passwd "$target_user" | cut -d: -f6)"
+  [[ -n "$target_home" && -f "$FASED_DIR/scripts/generation-updater.mjs" ]] || {
+    echo "Verified Hosting generation initializer is missing its canonical source or owner home." >&2
+    return 1
+  }
+  node "$FASED_DIR/scripts/generation-updater.mjs" initialize \
+    --version "$HOSTING_RELEASE" \
+    --profile hosting \
+    --instance hosting \
+    --owner-state "$target_home/.fased" \
+    --gateway-port 18789 \
+    --operator-uid "$(id -u "$target_user")" \
+    --operator-gid "$(id -g "$target_user")" \
+    --gateway-uid "$(id -u "$gateway_user")" \
+    --gateway-gid "$(id -g "$gateway_user")" \
+    --signer-uid "$(id -u "$signer_user")" \
+    --signer-gid "$(id -g "$signer_user")"
 }
 
 assert_verified_hosting_root_source() {

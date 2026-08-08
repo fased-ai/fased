@@ -17,13 +17,20 @@ import (
 	"fased-lifecycled/model"
 )
 
-const CurrentInventorySchemaVersion uint32 = 1
+const CurrentInventorySchemaVersion uint32 = 2
+
+const (
+	ArtifactFile    = "file"
+	ArtifactSymlink = "symlink"
+)
 
 type Artifact struct {
 	Path       string `json:"path"`
+	Kind       string `json:"kind"`
 	SHA256     string `json:"sha256"`
 	Size       int64  `json:"size"`
 	Executable bool   `json:"executable"`
+	LinkTarget string `json:"linkTarget,omitempty"`
 }
 
 type Inventory struct {
@@ -57,7 +64,22 @@ func Inspect(root, version, commit, tree string, stateSchemas map[string]uint32,
 			return nil
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("generation contains symlink %q", filePath)
+			relative, err := filepath.Rel(clean, filePath)
+			if err != nil {
+				return err
+			}
+			target, err := safeSymlink(clean, filePath)
+			if err != nil {
+				return err
+			}
+			inventory.Artifacts = append(inventory.Artifacts, Artifact{
+				Path:       filepath.ToSlash(relative),
+				Kind:       ArtifactSymlink,
+				SHA256:     hashBytes([]byte(target)),
+				Size:       int64(len(target)),
+				LinkTarget: filepath.ToSlash(target),
+			})
+			return nil
 		}
 		if entry.IsDir() {
 			return nil
@@ -79,6 +101,7 @@ func Inspect(root, version, commit, tree string, stateSchemas map[string]uint32,
 		}
 		inventory.Artifacts = append(inventory.Artifacts, Artifact{
 			Path:       filepath.ToSlash(relative),
+			Kind:       ArtifactFile,
 			SHA256:     digest,
 			Size:       info.Size(),
 			Executable: info.Mode().Perm()&0o111 != 0,
@@ -208,6 +231,19 @@ func validateInventory(inventory Inventory) error {
 		if !validDigest(artifact.SHA256) || artifact.Size < 0 {
 			return fmt.Errorf("invalid artifact identity for %q", artifact.Path)
 		}
+		switch artifact.Kind {
+		case ArtifactFile:
+			if artifact.LinkTarget != "" {
+				return fmt.Errorf("regular artifact %q declares a link target", artifact.Path)
+			}
+		case ArtifactSymlink:
+			resolved := path.Clean(path.Join(path.Dir(artifact.Path), artifact.LinkTarget))
+			if artifact.LinkTarget == "" || path.IsAbs(artifact.LinkTarget) || strings.Contains(artifact.LinkTarget, `\`) || resolved == ".." || strings.HasPrefix(resolved, "../") || artifact.Executable || artifact.Size != int64(len(artifact.LinkTarget)) || artifact.SHA256 != hashBytes([]byte(artifact.LinkTarget)) {
+				return fmt.Errorf("unsafe symbolic-link artifact %q", artifact.Path)
+			}
+		default:
+			return fmt.Errorf("unsupported artifact kind %q", artifact.Kind)
+		}
 		previous = artifact.Path
 	}
 	probe := model.Generation{
@@ -246,6 +282,45 @@ func hashFile(filePath string) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
+}
+
+func hashBytes(value []byte) string {
+	sum := sha256.Sum256(value)
+	return fmt.Sprintf("sha256:%x", sum)
+}
+
+func safeSymlink(root, filePath string) (string, error) {
+	target, err := os.Readlink(filePath)
+	if err != nil {
+		return "", err
+	}
+	if filepath.IsAbs(target) || strings.Contains(target, `\`) {
+		return "", fmt.Errorf("generation contains unsafe symlink %q", filePath)
+	}
+	lexical := filepath.Clean(filepath.Join(filepath.Dir(filePath), target))
+	if !insideRoot(root, lexical) {
+		return "", fmt.Errorf("generation symlink %q escapes the generation", filePath)
+	}
+	resolved, err := filepath.EvalSymlinks(filePath)
+	if err != nil {
+		return "", fmt.Errorf("generation contains dangling or cyclic symlink %q: %w", filePath, err)
+	}
+	if !insideRoot(root, resolved) {
+		return "", fmt.Errorf("generation symlink %q resolves outside the generation", filePath)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() && !info.IsDir() {
+		return "", fmt.Errorf("generation symlink %q targets an unsupported entry", filePath)
+	}
+	return target, nil
+}
+
+func insideRoot(root, candidate string) bool {
+	relative, err := filepath.Rel(root, candidate)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func validDigest(value string) bool {

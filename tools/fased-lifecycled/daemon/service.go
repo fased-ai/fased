@@ -18,6 +18,7 @@ import (
 )
 
 const absentManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+const supervisorCapability uint32 = 1
 
 type StateStore interface {
 	StageGeneration(string) error
@@ -115,6 +116,9 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 	inventory, generation, err := service.Store.ReadGenerationContract(request.TargetGenerationID)
 	if err != nil {
 		return protocol.Response{}, err
+	}
+	if inventory.Capabilities.Supervisor.Min > supervisorCapability || inventory.Capabilities.Supervisor.Max < supervisorCapability {
+		return protocol.Response{}, errors.New("target generation requires an unsupported stable supervisor capability")
 	}
 	plan, err := planner.Build(current, planner.Target{
 		Profile: service.Profile, Generation: generation,

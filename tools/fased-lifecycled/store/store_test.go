@@ -216,6 +216,9 @@ func TestImportGenerationCopiesAndReverifiesExactBytes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(payload, "bin", "fased"), []byte("verified"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Symlink("fased", filepath.Join(payload, "bin", "alias")); err != nil {
+		t.Fatal(err)
+	}
 	inventory, expected, err := bundle.Inspect(payload, "0.1.76", commitB, commitB,
 		map[string]uint32{"signer": 1}, manifest().Capabilities)
 	if err != nil {
@@ -235,6 +238,10 @@ func TestImportGenerationCopiesAndReverifiesExactBytes(t *testing.T) {
 	}
 	if second, err := state.ImportGeneration(source); err != nil || second != expected {
 		t.Fatalf("idempotent import failed: %+v err=%v", second, err)
+	}
+	importedAlias := filepath.Join(state.inboxGenerationPath(expected.ID), generationPayloadName, "bin", "alias")
+	if target, err := os.Readlink(importedAlias); err != nil || target != "fased" {
+		t.Fatalf("safe imported symlink was not preserved: target=%q err=%v", target, err)
 	}
 	if err := os.WriteFile(filepath.Join(payload, "bin", "fased"), []byte("substituted"), 0o755); err != nil {
 		t.Fatal(err)

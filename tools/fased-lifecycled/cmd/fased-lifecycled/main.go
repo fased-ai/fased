@@ -151,7 +151,7 @@ func runInitialize(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("initialize", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var profileRaw, instanceID, ownerStateRoot, generationRoot string
-	var operatorUID, operatorGID, gatewayUID, gatewayGID, signerUID, signerGID uint64
+	var operatorUID, operatorGID, gatewayUID, gatewayGID, signerUID, signerGID, gatewayPort uint64
 	flags.StringVar(&profileRaw, "profile", "", "")
 	flags.StringVar(&instanceID, "instance", "", "")
 	flags.StringVar(&ownerStateRoot, "owner-state", "", "")
@@ -162,10 +162,11 @@ func runInitialize(args []string, output io.Writer) error {
 	flags.Uint64Var(&gatewayGID, "gateway-gid", 0, "")
 	flags.Uint64Var(&signerUID, "signer-uid", 0, "")
 	flags.Uint64Var(&signerGID, "signer-gid", 0, "")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || operatorUID > uint64(^uint32(0)) || operatorGID > uint64(^uint32(0)) || gatewayUID > uint64(^uint32(0)) || gatewayGID > uint64(^uint32(0)) || signerUID > uint64(^uint32(0)) || signerGID > uint64(^uint32(0)) {
+	flags.Uint64Var(&gatewayPort, "gateway-port", 0, "")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || gatewayPort == 0 || gatewayPort > 65535 || operatorUID > uint64(^uint32(0)) || operatorGID > uint64(^uint32(0)) || gatewayUID > uint64(^uint32(0)) || gatewayGID > uint64(^uint32(0)) || signerUID > uint64(^uint32(0)) || signerGID > uint64(^uint32(0)) {
 		return errors.New("invalid lifecycle initialization arguments")
 	}
-	config, err := platform.NewConfig(model.Profile(profileRaw), instanceID, ownerStateRoot,
+	config, err := platform.NewConfigWithGatewayPort(model.Profile(profileRaw), instanceID, ownerStateRoot, uint16(gatewayPort),
 		platform.Principal{UID: uint32(operatorUID), GID: uint32(operatorGID)},
 		platform.Principal{UID: uint32(gatewayUID), GID: uint32(gatewayGID)},
 		platform.Principal{UID: uint32(signerUID), GID: uint32(signerGID)})
@@ -427,9 +428,12 @@ func runSupervisor(ctx context.Context, config platform.Config, socketPath strin
 	supervisor := &engine.SupervisorEngine{Journal: state, Controller: controllerAdapter, Target: targetClient}
 	binder := &statebind.Binder{Specs: []statebind.Spec{
 		{Name: "federation", Path: filepath.Join(config.OwnerStateRoot, "federation")},
-		{Name: "managedInstall", Path: config.InstallRoot},
+		{Name: "managedInstall", Path: config.InstallRoot, RootOnly: true},
 		{Name: "mining", Path: filepath.Join(config.OwnerStateRoot, "mining")},
-		{Name: "signer", Path: config.SignerStateRoot()},
+		// Signer content is snapshotted and rollback-bound by the signer participant.
+		// Inventory only the signer-owned root here so a live bbolt transaction cannot
+		// race the generic filesystem hasher.
+		{Name: "signer", Path: config.SignerStateRoot(), RootOnly: true},
 		{Name: "walletRegistry", Path: filepath.Join(config.OwnerStateRoot, "wallet")},
 	}}
 	service := &daemon.Service{Profile: config.Profile, Platform: identity, Store: state, Inventory: binder, Supervisor: supervisor}
@@ -472,7 +476,7 @@ func runTarget(ctx context.Context, config platform.Config, socketPath string) e
 	signerParticipant := &signer.Participant{Config: config,
 		Caller: signer.CommandCaller{ClientBinary: executable, Config: config}, Offline: signer.CommandOfflineRestorer{},
 		Generations: state, ExpectedGateUID: 0}
-	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Systemd: systemd, Generations: state}
+	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Systemd: systemd, Generations: state, Health: platform.LoopbackGatewayHealth{}}
 	targetEngine := &engine.TargetEngine{Journal: state, Generations: state,
 		Migrator: &migrator.SchemaMigrator{Registry: registry}, Signer: signerParticipant,
 		Adapter: targetAdapter, Installation: &platform.ManifestCommitter{Store: state, Identity: identity}}

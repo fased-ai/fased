@@ -19,6 +19,7 @@ import {
   recoverPendingSupervisorTransaction,
   requestSupervisorOperation,
 } from "./fased-host-updaterctl.mjs";
+import { generationLifecycle, runGenerationUpdate } from "./generation-updater.mjs";
 import { readHostedReleaseManifestV2, verifyManifestArtifact } from "./hosted-release-manifest.mjs";
 import {
   assertManagedRuntime,
@@ -145,6 +146,7 @@ const LOCAL_SIGNER_REQUIRED_FEATURES = [
 ];
 export const MANAGED_UPDATER_SUPPORT_FILES = Object.freeze([
   "fased-managed-updater-core.mjs",
+  "generation-updater.mjs",
   "fased-host-updaterctl.mjs",
   "hosted-release-manifest.mjs",
   "lifecycle-trust-crypto.mjs",
@@ -6316,6 +6318,31 @@ export async function run(argv = process.argv.slice(2)) {
       parsed.options.status ? argv : ["update", "--channel", "dev", ...argv.slice(1)],
       paths,
     );
+    return;
+  }
+  const lifecycle = generationLifecycle(manifest);
+  if (lifecycle && !parsed.options.status && !parsed.options.dryRun) {
+    const targetVersion = await resolveTargetVersion(parsed.options);
+    const sudoPath = rootControlledExecutable(["/usr/bin/sudo", "/bin/sudo"], "sudo");
+    const result = await runGenerationUpdate({
+      lifecycle,
+      version: targetVersion,
+      timeoutMs: parsed.options.timeoutMs,
+      baseUrl: process.env.FASED_RELEASE_BASE_URL || DEFAULT_RELEASE_BASE_URL,
+      architecture: resolveArchitecture(),
+      download: downloadToFile,
+      verifyOfficialAsset: ({ assetPath, version, timeoutMs, bundlePath }) =>
+        verifyOfficialAsset(assetPath, version, timeoutMs, bundlePath),
+      runAdministrator: runInteractiveAdministrator,
+      sudoPath,
+    });
+    if (parsed.options.json) {
+      process.stdout.write(`${JSON.stringify({ ok: true, ...result })}\n`);
+    } else if (result.outcome === "ALREADY_CURRENT") {
+      console.log(`Already current: Fased ${result.version}`);
+    } else {
+      console.log(`Updated Fased to ${result.version}`);
+    }
     return;
   }
   await updateManagedRuntime(parsed.options);

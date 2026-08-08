@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -66,6 +67,13 @@ type fakeGenerations struct {
 	calls *[]string
 }
 
+type fakeHealth struct{ calls *[]string }
+
+func (health fakeHealth) Verify(_ context.Context, port uint16, target model.Generation) error {
+	*health.calls = append(*health.calls, fmt.Sprintf("gateway.ready:%d:%s:%s", port, target.Version, target.Commit))
+	return nil
+}
+
 func (generations fakeGenerations) GenerationPayloadPath(string) (string, error) {
 	return generations.root, nil
 }
@@ -93,7 +101,7 @@ func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) 
 		t.Fatal(err)
 	}
 	calls := []string{}
-	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, calls: &calls}}, tx, &calls
+	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, calls: &calls}, Health: fakeHealth{calls: &calls}}, tx, &calls
 }
 
 func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing.T) {
@@ -118,6 +126,7 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 		"units.activate", "systemd.reload", "systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
 		"systemd.enable:fased-gateway-example.service", "systemd.start:fased-gateway-example.service",
 		"systemd.active:fased-signerd-example.service", "systemd.active:fased-gateway-example.service",
+		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		"generation.activate:" + digestB + ":" + digestA, "units.discard",
 	}
 	if !reflect.DeepEqual(*calls, want) {
@@ -127,6 +136,13 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 	combined := string(definitions[adapter.Identity.Services["signer"]]) + string(definitions[adapter.Identity.Services["gateway"]])
 	if strings.Contains(combined, "/bin/sh") || !strings.Contains(combined, "NoNewPrivileges=true") || !strings.Contains(combined, "User=996") {
 		t.Fatalf("canonical units lack privilege or direct-exec contracts:\n%s", combined)
+	}
+	if !strings.Contains(combined, "SupplementaryGroups=fscf-example") ||
+		!strings.Contains(combined, "RuntimeDirectoryMode=0755") ||
+		!strings.Contains(combined, "WorkingDirectory="+filepath.Join(adapter.Generations.(fakeGenerations).root, "runtime")) ||
+		!strings.Contains(combined, "Environment=HOME=/home/example") ||
+		!strings.Contains(combined, "Environment=FASED_HOST_PROFILE=local") {
+		t.Fatalf("canonical Gateway unit lacks Local runtime context:\n%s", combined)
 	}
 }
 

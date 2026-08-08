@@ -26,6 +26,7 @@ type Spec struct {
 	Path     string
 	MaxFiles int
 	MaxBytes int64
+	RootOnly bool
 }
 
 type Binder struct {
@@ -142,6 +143,10 @@ func inspectState(ctx context.Context, spec Spec, schema uint32, allowAbsent boo
 	resolved, err := filepath.EvalSymlinks(spec.Path)
 	if err != nil || resolved != spec.Path {
 		return stateRecord{}, errors.New("state root path must not traverse symlinks")
+	}
+	if spec.RootOnly {
+		record.Entries = append(record.Entries, fileRecord{Path: ".", Mode: uint32(rootInfo.Mode().Perm()), Size: rootInfo.Size()})
+		return record, nil
 	}
 	var total int64
 	err = filepath.WalkDir(spec.Path, func(path string, entry os.DirEntry, walkErr error) error {

@@ -16,12 +16,17 @@ type GenerationManager interface {
 	ActivateGeneration(string, string) error
 }
 
+type GatewayHealth interface {
+	Verify(context.Context, uint16, model.Generation) error
+}
+
 type TargetAdapter struct {
 	Config      Config
 	Identity    model.PlatformIdentity
 	Units       UnitStore
 	Systemd     Systemd
 	Generations GenerationManager
+	Health      GatewayHealth
 }
 
 func (adapter *TargetAdapter) Prepare(_ context.Context, tx model.Transaction) error {
@@ -65,13 +70,13 @@ func (adapter *TargetAdapter) Activate(ctx context.Context, tx model.Transaction
 	return nil
 }
 
-func (adapter *TargetAdapter) Verify(ctx context.Context, _ model.Transaction) error {
+func (adapter *TargetAdapter) Verify(ctx context.Context, tx model.Transaction) error {
 	for _, unit := range adapter.startOrder() {
 		if err := adapter.Systemd.IsActive(ctx, unit); err != nil {
 			return fmt.Errorf("service %s is not active: %w", unit, err)
 		}
 	}
-	return nil
+	return adapter.Health.Verify(ctx, adapter.Config.GatewayPort, tx.Target)
 }
 
 func (adapter *TargetAdapter) Commit(_ context.Context, tx model.Transaction) error {
@@ -108,7 +113,7 @@ func (adapter *TargetAdapter) Discard(_ context.Context, tx model.Transaction) e
 }
 
 func (adapter *TargetAdapter) validate(tx model.Transaction) error {
-	if adapter == nil || adapter.Units == nil || adapter.Systemd == nil || adapter.Generations == nil {
+	if adapter == nil || adapter.Units == nil || adapter.Systemd == nil || adapter.Generations == nil || adapter.Health == nil {
 		return errors.New("target platform adapter is incomplete")
 	}
 	if err := adapter.Config.Validate(); err != nil {
@@ -153,7 +158,7 @@ Type=simple
 User=%d
 Group=%d
 RuntimeDirectory=%s
-RuntimeDirectoryMode=0750
+RuntimeDirectoryMode=0755
 UMask=0077
 ExecStart=%s -socket %s -operator-socket %s -control-socket %s -socket-mode 0660 -socket-group %s -operator-socket-group %s -application-uid %d -operator-uid %d -control-uid %d -state-db %s/state.db -master-key %s/master.key -update-gate %s -audit-log %s/audit.jsonl
 Restart=always
@@ -184,9 +189,20 @@ Wants=%s network-online.target
 Type=simple
 User=%d
 Group=%d
+SupplementaryGroups=%s
 UMask=0007
+WorkingDirectory=%s/runtime
+Environment=HOME=%s
 Environment=FASED_STATE_DIR=%s
 Environment=FASED_CONFIG_PATH=%s/fased.json
+Environment=FASED_CONFIG_DIR=%s
+Environment=FASED_MANAGED_RUNTIME_ROOT=%s/runtime
+Environment=FASED_GATEWAY_MODE=managed
+Environment=FASED_MANAGED_INTERNAL=1
+Environment=FASED_GATEWAY_SERVICE=1
+Environment=FASED_RUNTIME_SOURCE=managed-package
+Environment=FASED_HOST_PROFILE=%s
+Environment=FASED_GATEWAY_PORT=%d
 Environment=FASED_WALLET_LOCAL_SIGNER_SOCKET=%s
 ExecStart=%s
 Restart=always
@@ -204,12 +220,20 @@ AmbientCapabilities=
 [Install]
 WantedBy=multi-user.target
 `, adapter.Config.InstanceID, adapter.Identity.Services["signer"], adapter.Identity.Services["signer"],
-		adapter.Config.Gateway.UID, adapter.Config.Gateway.GID, adapter.Config.OwnerStateRoot,
-		adapter.Config.OwnerStateRoot, adapter.Config.ApplicationSocket(),
+		adapter.Config.Gateway.UID, adapter.Config.Gateway.GID, adapter.Config.ConfigGroupName(), payload,
+		adapter.Config.OwnerHome(), adapter.Config.OwnerStateRoot,
+		adapter.Config.OwnerStateRoot, adapter.Config.OwnerStateRoot, payload, profileEnvironment(adapter.Config.Profile), adapter.Config.GatewayPort, adapter.Config.ApplicationSocket(),
 		filepath.Join(payload, "bin/fased-gateway-launch"), adapter.Config.OwnerStateRoot)
 	return map[string][]byte{
 		adapter.Identity.Services["signer"]: []byte(signer), adapter.Identity.Services["gateway"]: []byte(gateway),
 	}
+}
+
+func profileEnvironment(profile model.Profile) string {
+	if profile == model.ProfileProtectedLocal {
+		return "local"
+	}
+	return "hosting"
 }
 
 func requireExecutable(path string) error {

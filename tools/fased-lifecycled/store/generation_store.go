@@ -82,7 +82,19 @@ func copyRegularTree(source, destination string) error {
 		}
 		target := filepath.Join(destination, relative)
 		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("generation import contains symlink %q", relative)
+			link, err := os.Readlink(current)
+			if err != nil {
+				return err
+			}
+			if filepath.IsAbs(link) || strings.Contains(link, `\`) {
+				return fmt.Errorf("generation import contains unsafe symlink %q", relative)
+			}
+			lexical := filepath.Clean(filepath.Join(filepath.Dir(current), link))
+			relativeTarget, err := filepath.Rel(source, lexical)
+			if err != nil || relativeTarget == ".." || strings.HasPrefix(relativeTarget, ".."+string(filepath.Separator)) {
+				return fmt.Errorf("generation import symlink %q escapes the source", relative)
+			}
+			return os.Symlink(link, target)
 		}
 		info, err := entry.Info()
 		if err != nil {

@@ -57,7 +57,7 @@ func TestInspectAndVerifyExactGeneration(t *testing.T) {
 	}
 }
 
-func TestVerifyRejectsSubstitutionExtraFileAndSymlink(t *testing.T) {
+func TestVerifyRejectsSubstitutionAndExtraFile(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "bin/fased", "binary", 0o755)
 	inventory, generation := inspect(t, root)
@@ -74,12 +74,42 @@ func TestVerifyRejectsSubstitutionExtraFileAndSymlink(t *testing.T) {
 	if err := os.Remove(filepath.Join(root, "extra")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("fased", filepath.Join(root, "bin", "alias")); err != nil {
+}
+
+func TestInspectBindsSafeInTreeSymlinkAndRejectsUnsafeLinks(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "bin/fased", "binary", 0o755)
+	alias := filepath.Join(root, "bin", "alias")
+	if err := os.Symlink("fased", alias); err != nil {
+		t.Fatal(err)
+	}
+	inventory, generation := inspect(t, root)
+	if len(inventory.Artifacts) != 2 || inventory.Artifacts[0].Kind != ArtifactSymlink || inventory.Artifacts[0].LinkTarget != "fased" {
+		t.Fatalf("safe symlink was not bound exactly: %+v", inventory.Artifacts)
+	}
+	if err := Verify(root, inventory, generation); err != nil {
+		t.Fatalf("safe in-tree symlink did not verify: %v", err)
+	}
+	if err := os.Remove(alias); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside")
+	write(t, filepath.Dir(outside), filepath.Base(outside), "outside", 0o644)
+	if err := os.Symlink(outside, alias); err != nil {
 		t.Fatal(err)
 	}
 	schemas, capabilities := contract()
 	if _, _, err := Inspect(root, "0.1.76", testCommit, testCommit, schemas, capabilities); err == nil {
-		t.Fatal("symlinked artifact was accepted")
+		t.Fatal("absolute escaping symlink was accepted")
+	}
+	if err := os.Remove(alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../outside", alias); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Inspect(root, "0.1.76", testCommit, testCommit, schemas, capabilities); err == nil {
+		t.Fatal("relative escaping symlink was accepted")
 	}
 }
 

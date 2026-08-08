@@ -676,6 +676,15 @@ describe("CI workflow routing", () => {
     );
     expect(containerFixture).toContain('"install_entry_release_identity=\\"${VERSION}\\""');
     expect(containerFixture).toContain(".release.commit == $commit");
+    expect(containerFixture).toContain('bash "$ROOT_DIR/scripts/release-fased-lifecycled.sh"');
+    expect(containerFixture).toContain(
+      'node "$ROOT_DIR/scripts/assemble-lifecycle-generation.mjs"',
+    );
+    expect(containerFixture).toContain('node "$ROOT_DIR/scripts/release-artifact-set.mjs" build');
+    expect(containerFixture).toContain('--source-ref "refs/tags/v${VERSION}"');
+    expect(containerFixture).toContain(
+      '"$ARTIFACT_DIR/fased-hosting-candidate.json.attestation.json"',
+    );
   });
 
   it("keeps the managed predecessor runtime inside the root-controlled store", async () => {

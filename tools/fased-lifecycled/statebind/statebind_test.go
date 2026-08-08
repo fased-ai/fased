@@ -103,3 +103,22 @@ func TestBindRejectsSymlinkHardlinkMissingAndNoncanonicalPlan(t *testing.T) {
 		t.Fatal("missing installed state was accepted")
 	}
 }
+
+func TestBindCanTreatInstallationAsRootIdentityWithoutTraversingSelectors(t *testing.T) {
+	inventory, generation := target(t)
+	plan, err := planner.Build(nil, planner.Target{Profile: model.ProfileProtectedLocal, Generation: generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities})
+	if err != nil {
+		t.Fatal(err)
+	}
+	install := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(install, "releases", "one"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("releases/one", filepath.Join(install, "current")); err != nil {
+		t.Fatal(err)
+	}
+	binder := Binder{Specs: []Spec{{Name: "signer", Path: install, RootOnly: true}}}
+	if _, _, err := binder.Bind(context.Background(), nil, inventory, plan); err != nil {
+		t.Fatalf("installation selector was treated as protected user state: %v", err)
+	}
+}

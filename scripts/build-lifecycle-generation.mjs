@@ -30,10 +30,31 @@ async function regularExecutable(file, name) {
   }
 }
 
-async function copyTree(source, target) {
+function inside(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
+}
+
+async function copyTree(source, target, root = source) {
   const stat = await fs.lstat(source);
   if (stat.isSymbolicLink()) {
-    throw new Error(`runtime contains symlink: ${source}`);
+    const link = await fs.readlink(source);
+    if (path.isAbsolute(link) || link.includes("\\")) {
+      throw new Error(`runtime contains unsafe symlink: ${source}`);
+    }
+    const lexicalTarget = path.resolve(path.dirname(source), link);
+    let resolvedTarget;
+    try {
+      resolvedTarget = await fs.realpath(source);
+    } catch {
+      throw new Error(`runtime contains dangling or cyclic symlink: ${source}`);
+    }
+    if (!inside(root, lexicalTarget) || !inside(root, resolvedTarget)) {
+      throw new Error(`runtime symlink escapes package: ${source}`);
+    }
+    await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o755 });
+    await fs.symlink(link, target);
+    return;
   }
   if (stat.isFile()) {
     await fs.copyFile(source, target);
@@ -45,7 +66,7 @@ async function copyTree(source, target) {
   }
   await fs.mkdir(target, { recursive: true, mode: 0o755 });
   for (const entry of (await fs.readdir(source)).toSorted()) {
-    await copyTree(path.join(source, entry), path.join(target, entry));
+    await copyTree(path.join(source, entry), path.join(target, entry), root);
   }
 }
 

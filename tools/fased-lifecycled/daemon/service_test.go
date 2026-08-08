@@ -93,7 +93,7 @@ func targetContract() (bundle.Inventory, model.Generation) {
 	return bundle.Inventory{
 		SchemaVersion: bundle.CurrentInventorySchemaVersion, Version: "0.1.76", Commit: commitB, Tree: commitB,
 		StateSchemas: map[string]uint32{"signer": 2}, Capabilities: capabilities(),
-		Artifacts: []bundle.Artifact{{Path: "bin/fased", SHA256: digestB, Size: 1, Executable: true}},
+		Artifacts: []bundle.Artifact{{Path: "bin/fased", Kind: bundle.ArtifactFile, SHA256: digestB, Size: 1, Executable: true}},
 	}, generation(digestB, "0.1.76", commitB)
 }
 
@@ -204,5 +204,24 @@ func TestInstalledPlatformMismatchRequiresExplicitRepair(t *testing.T) {
 	}
 	if bindings.calls != 0 || supervisor.runs != 0 {
 		t.Fatal("platform mismatch reached state inventory or mutation")
+	}
+}
+
+func TestTargetRequiringNewerStableSupervisorFailsBeforeMutation(t *testing.T) {
+	inventory, target := targetContract()
+	inventory.Capabilities.Supervisor = model.CapabilityRange{Min: 2, Max: 2}
+	bindings := &fakeInventory{}
+	supervisor := &fakeSupervisor{}
+	service := Service{
+		Profile: model.ProfileProtectedLocal, Platform: platform(),
+		Store: fakeStore{inventory: inventory, generation: target}, Inventory: bindings, Supervisor: supervisor,
+	}
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID,
+		Operation: protocol.OperationConverge, TargetGenerationID: target.ID, ExpectedManifestDigest: "absent"}
+	if _, err := service.Handle(context.Background(), request); err == nil {
+		t.Fatal("generation requiring an unsupported stable supervisor was accepted")
+	}
+	if bindings.calls != 0 || supervisor.runs != 0 {
+		t.Fatal("unsupported supervisor capability reached state inventory or mutation")
 	}
 }
