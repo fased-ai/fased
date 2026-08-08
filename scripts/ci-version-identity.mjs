@@ -125,11 +125,36 @@ export function validateCurrentVersionInventory(repoRoot = resolve(".")) {
   return version;
 }
 
+export function assertLatestPublishedBaseRestore({ base, previousVersion, repoRoot, version }) {
+  const previousTag = `refs/tags/v${previousVersion}`;
+  try {
+    execFileSync("git", ["show-ref", "--verify", "--quiet", previousTag], { cwd: repoRoot });
+  } catch {
+    // A failed candidate must remain untagged.
+    const tagRef = `refs/tags/v${version}`;
+    execFileSync("git", ["merge-base", "--is-ancestor", tagRef, base], { cwd: repoRoot });
+    const latestPublishedTag = execFileSync(
+      "git",
+      ["tag", "--merged", base, "--list", "v*", "--sort=-v:refname"],
+      { cwd: repoRoot, encoding: "utf8" },
+    )
+      .split(/\r?\n/u)
+      .find((tag) => tag.startsWith("v") && VERSION_RE.test(tag.slice(1)));
+    assert.equal(
+      latestPublishedTag,
+      `v${version}`,
+      "version restore target is not the latest published ancestor",
+    );
+    return;
+  }
+  throw new Error(`failed candidate version v${previousVersion} is already tagged`);
+}
+
 export function validateVersionOnlyDiff(
   base,
   paths,
   repoRoot = resolve("."),
-  { allowExactTag = false } = {},
+  { allowExactTag = false, allowPublishedBaseRestore = false } = {},
 ) {
   const scope = classifyChangedPaths(paths);
   assert.equal(scope.versionOnly, true, "changed paths are not an exact version-only release set");
@@ -175,23 +200,38 @@ export function validateVersionOnlyDiff(
     assert.equal(tagCommit, headCommit, `release tag v${version} does not resolve to HEAD`);
     return version;
   }
+  if (allowPublishedBaseRestore) {
+    assertLatestPublishedBaseRestore({
+      base,
+      previousVersion: previousRoot.version,
+      repoRoot,
+      version,
+    });
+    return version;
+  }
   throw new Error(`release tag v${version} already exists`);
 }
 
 function main() {
   const args = process.argv.slice(2);
   const allowExactTag = args.length === 1 && args[0] === "--allow-exact-tag";
-  if (args.length > 0 && !allowExactTag) {
+  const allowPublishedBaseRestore =
+    args.length === 1 && args[0] === "--allow-published-base-restore";
+  if (args.length > 0 && !allowExactTag && !allowPublishedBaseRestore) {
     throw new Error(`unsupported arguments: ${args.join(" ")}`);
   }
   const base = diffBase();
   const paths = changedPathsFromGit();
-  const version = validateVersionOnlyDiff(base, paths, resolve("."), { allowExactTag });
-  console.log(
-    `ci-version-identity: ${version} is an exact ${
-      allowExactTag ? "immutable-tagged" : "untagged"
-    } version-only change`,
-  );
+  const version = validateVersionOnlyDiff(base, paths, resolve("."), {
+    allowExactTag,
+    allowPublishedBaseRestore,
+  });
+  const identityMode = allowExactTag
+    ? "immutable-tagged"
+    : allowPublishedBaseRestore
+      ? "untagged-or-latest-published-base-restored"
+      : "untagged";
+  console.log(`ci-version-identity: ${version} is an exact ${identityMode} version-only change`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

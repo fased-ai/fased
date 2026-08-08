@@ -1,6 +1,11 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   assertBrandVersionOnlyChange,
+  assertLatestPublishedBaseRestore,
   assertPackageVersionOnlyChange,
   isLineSubsequence,
 } from "./ci-version-identity.mjs";
@@ -56,5 +61,40 @@ describe("version-only release identity", () => {
       isLineSubsequence("# Changelog\n\n## 1.2.3\n", "# Changelog\n\n## 1.2.4\n\n## 1.2.3\n"),
     ).toBe(true);
     expect(isLineSubsequence("# Changelog\n\n## 1.2.3\n", "# Changelog\n\n## 1.2.4\n")).toBe(false);
+  });
+
+  it("restores only the latest published ancestor after an untagged candidate", () => {
+    const root = mkdtempSync(join(tmpdir(), "fased-version-restore-"));
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: "pipe" }).trim();
+    git("init", "--quiet");
+    git("config", "user.name", "Fased CI");
+    git("config", "user.email", "ci@fased.invalid");
+    writeFileSync(join(root, "version.txt"), "1.2.3\n");
+    git("add", "version.txt");
+    git("commit", "--quiet", "-m", "published base");
+    git("tag", "v1.2.3");
+    writeFileSync(join(root, "version.txt"), "1.2.4-rc.1\n");
+    git("commit", "--quiet", "-am", "failed candidate");
+    const base = git("rev-parse", "HEAD");
+
+    expect(() =>
+      assertLatestPublishedBaseRestore({
+        base,
+        previousVersion: "1.2.4-rc.1",
+        repoRoot: root,
+        version: "1.2.3",
+      }),
+    ).not.toThrow();
+
+    git("tag", "v1.2.4-rc.1");
+    expect(() =>
+      assertLatestPublishedBaseRestore({
+        base,
+        previousVersion: "1.2.4-rc.1",
+        repoRoot: root,
+        version: "1.2.3",
+      }),
+    ).toThrow(/already tagged/u);
   });
 });
