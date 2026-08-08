@@ -1777,6 +1777,31 @@ describe("root-owned hosted updater protocol", () => {
       signerIsolation: { ok: true },
     });
 
+    const normalizedSignerIdentity = structuredClone(evidence);
+    normalizedSignerIdentity.walletStatus.status.wallets[0].id = "agent-2";
+    normalizedSignerIdentity.walletStatus.status.wallets[0].name = "Agent 2";
+    normalizedSignerIdentity.walletStatus.status.wallets[0].handle = "@wallet:agent-2";
+    normalizedSignerIdentity.walletStatus.status.wallets[0].signer.walletId = "agent_2";
+    normalizedSignerIdentity.walletStatus.status.defaultWalletId = "agent-2";
+    normalizedSignerIdentity.walletStatus.status.assignments = { main: "agent-2" };
+    expect(
+      __testing.validateCrossProductApplicationEvidence(normalizedSignerIdentity),
+    ).toMatchObject({
+      wallet: { ok: true },
+    });
+
+    const nonCanonicalSignerIdentity = structuredClone(evidence);
+    nonCanonicalSignerIdentity.walletStatus.status.wallets[0].signer.walletId = "agent-2";
+    expect(() =>
+      __testing.validateCrossProductApplicationEvidence(nonCanonicalSignerIdentity),
+    ).toThrow("registry and signer identity");
+
+    const duplicateSignerIdentity = structuredClone(evidence);
+    duplicateSignerIdentity.walletStatus.status.wallets[1].signer.walletId = "agent";
+    expect(() =>
+      __testing.validateCrossProductApplicationEvidence(duplicateSignerIdentity),
+    ).toThrow("registry and signer identity");
+
     const wrongHandle = structuredClone(evidence);
     wrongHandle.walletStatus.status.wallets[0].handle = "@wallet:wrong";
     expect(() => __testing.validateCrossProductApplicationEvidence(wrongHandle)).toThrow(

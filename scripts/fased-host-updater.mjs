@@ -6280,6 +6280,7 @@ function validateCanonicalWalletHealth(walletStatus, walletDoctor, topology) {
   const wallets = new Map();
   const handles = new Set();
   const addresses = new Set();
+  const signerWalletIds = new Set();
   let miningWallets = 0;
   for (const value of status.wallets) {
     const wallet = healthObject(value, "target Wallet record");
@@ -6288,6 +6289,7 @@ function validateCanonicalWalletHealth(walletStatus, walletDoctor, topology) {
     const address = typeof wallet.publicAddress === "string" ? wallet.publicAddress.trim() : "";
     const role = typeof wallet.role === "string" ? wallet.role.trim() : "";
     const signer = healthObject(wallet.signer, "target signer Wallet readiness");
+    const signerWalletId = typeof signer.walletId === "string" ? signer.walletId.trim() : "";
     const expectedLanes = {
       agent: new Set(["agent-reviewed-and-autonomous"]),
       mining: new Set(["mining-reviewed-only", "mining-typed-sat"]),
@@ -6298,7 +6300,7 @@ function validateCanonicalWalletHealth(walletStatus, walletDoctor, topology) {
       handle !== `@wallet:${id}` ||
       !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(address) ||
       !Object.hasOwn(expectedLanes, role) ||
-      signer.walletId !== id ||
+      !/^[a-z0-9][a-z0-9_]{0,63}$/u.test(signerWalletId) ||
       signer.publicKey !== address ||
       signer.role !== role ||
       signer.ready !== true ||
@@ -6316,16 +6318,25 @@ function validateCanonicalWalletHealth(walletStatus, walletDoctor, topology) {
       !expectedLanes[role].has(signer.operationLane) ||
       wallets.has(id) ||
       handles.has(handle) ||
-      addresses.has(address)
+      addresses.has(address) ||
+      signerWalletIds.has(signerWalletId)
     ) {
       throw new Error("target Wallet registry and signer identity did not converge");
     }
     if (role === "mining") {
       miningWallets += 1;
     }
-    wallets.set(id, { id, handle, address, role, lane: signer.operationLane });
+    wallets.set(id, {
+      id,
+      handle,
+      address,
+      role,
+      signerWalletId,
+      lane: signer.operationLane,
+    });
     handles.add(handle);
     addresses.add(address);
+    signerWalletIds.add(signerWalletId);
   }
   if (miningWallets > 1) {
     throw new Error("target Wallet registry has more than one Mining Wallet");
