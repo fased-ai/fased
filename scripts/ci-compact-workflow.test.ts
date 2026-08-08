@@ -63,7 +63,7 @@ describe("compact CI topology", () => {
       security.steps?.find((step) => step.name === "Initialize selected CodeQL languages")?.with?.[
         "config-file"
       ],
-    ).toContain("codeql-pr-scope.yml");
+    ).toBe("${{ matrix.target == 'javascript-typescript' && '.codeql-pr-scope.yml' || '' }}");
   });
 
   it("uses bounded lifecycle regressions instead of the full workspace suite", async () => {

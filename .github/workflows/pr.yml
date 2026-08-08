@@ -376,14 +376,14 @@ jobs:
           done
           printf '%s\n' "${!selected[@]}" | sort | jq -Rn \
             '{name:"Focused changed-source PR analysis",paths:[inputs]}' \
-            > "${RUNNER_TEMP}/codeql-pr-scope.yml"
+            > "${GITHUB_WORKSPACE}/.codeql-pr-scope.yml"
 
       - name: Initialize selected CodeQL languages
         if: matrix.target != 'common'
         uses: github/codeql-action/init@d1ba80a13dd99fba24a470575428917156a28b43 # v4
         with:
           languages: ${{ matrix.target }}
-          config-file: ${{ matrix.target == 'javascript-typescript' && format('{0}/codeql-pr-scope.yml', runner.temp) || '' }}
+          config-file: ${{ matrix.target == 'javascript-typescript' && '.codeql-pr-scope.yml' || '' }}
 
       - name: Autobuild selected compiled language
         if: matrix.target == 'go'
