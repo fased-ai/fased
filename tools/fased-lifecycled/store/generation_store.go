@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,118 @@ import (
 	"fased-lifecycled/bundle"
 	"fased-lifecycled/model"
 )
+
+// ImportGeneration copies one already complete external generation into the
+// root-owned inbox and verifies the copied bytes before exposing them to the
+// supervisor. The caller supplies no version selector: identity comes only
+// from the inventory and payload.
+func (s *Store) ImportGeneration(source string) (model.Generation, error) {
+	if !filepath.IsAbs(source) || filepath.Clean(source) != source {
+		return model.Generation{}, errors.New("generation import source must be absolute and clean")
+	}
+	inventoryJSON, err := readRegular(filepath.Join(source, generationInventoryName))
+	if err != nil {
+		return model.Generation{}, err
+	}
+	inventory, err := bundle.DecodeInventory(inventoryJSON)
+	if err != nil {
+		return model.Generation{}, err
+	}
+	generation, err := bundle.Identity(inventory)
+	if err != nil {
+		return model.Generation{}, err
+	}
+	if err := bundle.Verify(filepath.Join(source, generationPayloadName), inventory, generation); err != nil {
+		return model.Generation{}, fmt.Errorf("generation import verification failed: %w", err)
+	}
+	inboxRoot := filepath.Join(s.root, "inbox")
+	if err := os.MkdirAll(inboxRoot, 0o700); err != nil {
+		return model.Generation{}, err
+	}
+	destination := s.inboxGenerationPath(generation.ID)
+	if _, err := os.Lstat(destination); err == nil {
+		if _, verifyErr := s.verifyGenerationPath(destination, generation.ID); verifyErr != nil {
+			return model.Generation{}, errors.New("existing inbox generation conflicts with verified source")
+		}
+		return generation, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return model.Generation{}, err
+	}
+	temporary, err := os.MkdirTemp(inboxRoot, ".import-*")
+	if err != nil {
+		return model.Generation{}, err
+	}
+	defer os.RemoveAll(temporary)
+	if err := copyRegularTree(source, temporary); err != nil {
+		return model.Generation{}, err
+	}
+	if _, err := s.verifyGenerationPath(temporary, generation.ID); err != nil {
+		return model.Generation{}, fmt.Errorf("copied generation verification failed: %w", err)
+	}
+	if err := os.Rename(temporary, destination); err != nil {
+		return model.Generation{}, err
+	}
+	if err := syncDirectory(inboxRoot); err != nil {
+		return model.Generation{}, err
+	}
+	return generation, nil
+}
+
+func copyRegularTree(source, destination string) error {
+	return filepath.WalkDir(source, func(current string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(source, current)
+		if err != nil {
+			return err
+		}
+		if relative == "." {
+			return os.Chmod(destination, 0o700)
+		}
+		target := filepath.Join(destination, relative)
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("generation import contains symlink %q", relative)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return os.Mkdir(target, 0o700)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("generation import contains unsupported entry %q", relative)
+		}
+		input, err := os.Open(current)
+		if err != nil {
+			return err
+		}
+		mode := os.FileMode(0o600)
+		if info.Mode().Perm()&0o111 != 0 {
+			mode = 0o700
+		}
+		output, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+		if err != nil {
+			input.Close()
+			return err
+		}
+		_, copyErr := io.Copy(output, io.LimitReader(input, info.Size()+1))
+		closeInputErr := input.Close()
+		syncErr := output.Sync()
+		closeOutputErr := output.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeInputErr != nil {
+			return closeInputErr
+		}
+		if syncErr != nil {
+			return syncErr
+		}
+		return closeOutputErr
+	})
+}
 
 const (
 	generationInventoryName = "inventory.json"

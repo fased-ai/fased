@@ -77,3 +77,24 @@ func TestServerReturnsBoundErrorResponse(t *testing.T) {
 		t.Fatalf("unexpected error response: %+v err=%v", response, err)
 	}
 }
+
+func TestCallUsesBoundNewlineProtocolWithoutImplicitRetry(t *testing.T) {
+	handler := &transportHandler{}
+	server := transportServer(handler)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client, daemon := net.Pipe()
+	defer client.Close()
+	done := make(chan error, 1)
+	go func() { done <- server.HandlePeer(ctx, daemon, Peer{UID: 1000}) }()
+	request := protocol.Request{SchemaVersion: 1, RequestID: requestID, Operation: protocol.OperationInspect}
+	callCtx, callCancel := context.WithTimeout(ctx, time.Second)
+	defer callCancel()
+	response, err := callConnection(callCtx, client, request)
+	if err != nil || response.Outcome != "MANAGED" || handler.calls != 1 {
+		t.Fatalf("unexpected client response: %+v calls=%d err=%v", response, handler.calls, err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}

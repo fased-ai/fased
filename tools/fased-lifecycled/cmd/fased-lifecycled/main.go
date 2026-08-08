@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"fased-lifecycled/engine"
 	"fased-lifecycled/migrator"
 	"fased-lifecycled/platform"
+	"fased-lifecycled/protocol"
 	"fased-lifecycled/signer"
 	"fased-lifecycled/statebind"
 	"fased-lifecycled/store"
@@ -52,8 +54,14 @@ func run(args []string) error {
 	if args[0] == "signer-call" {
 		return signer.RunSocketHelper(args[1:], os.Stdin, os.Stdout)
 	}
+	if args[0] == "request" {
+		return runRequest(args[1:], os.Stdout)
+	}
 	if os.Geteuid() != 0 {
 		return errors.New("lifecycle supervisor and target modes require root")
+	}
+	if args[0] == "stage" {
+		return runStage(args[1:], os.Stdout)
 	}
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -83,6 +91,56 @@ func run(args []string) error {
 	default:
 		return errors.New("unsupported lifecycle daemon mode")
 	}
+}
+
+func runStage(args []string, output io.Writer) error {
+	flags := flag.NewFlagSet("stage", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	var configPath, generationRoot string
+	flags.StringVar(&configPath, "config", "", "")
+	flags.StringVar(&generationRoot, "generation", "", "")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !filepath.IsAbs(generationRoot) || filepath.Clean(generationRoot) != generationRoot {
+		return errors.New("invalid lifecycle stage arguments")
+	}
+	config, err := loadConfig(configPath, 0)
+	if err != nil {
+		return err
+	}
+	state, err := store.Open(config.LifecycleRoot)
+	if err != nil {
+		return err
+	}
+	generation, err := state.ImportGeneration(generationRoot)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(output).Encode(generation)
+}
+
+func runRequest(args []string, output io.Writer) error {
+	flags := flag.NewFlagSet("request", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	var socketPath, operation, requestID, targetID, manifestDigest, transactionID string
+	flags.StringVar(&socketPath, "socket", "", "")
+	flags.StringVar(&operation, "operation", "", "")
+	flags.StringVar(&requestID, "request-id", "", "")
+	flags.StringVar(&targetID, "target-generation", "", "")
+	flags.StringVar(&manifestDigest, "expected-manifest", "", "")
+	flags.StringVar(&transactionID, "transaction", "", "")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !filepath.IsAbs(socketPath) {
+		return errors.New("invalid lifecycle request arguments")
+	}
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID,
+		Operation: protocol.Operation(operation), TargetGenerationID: targetID,
+		ExpectedManifestDigest: manifestDigest, TransactionID: transactionID}
+	if err := request.Validate(); err != nil {
+		return err
+	}
+	response, err := daemon.Call(context.Background(), socketPath, request, 6*time.Minute)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(output).Encode(response)
 }
 
 func runSupervisor(ctx context.Context, config platform.Config, socketPath string) error {
