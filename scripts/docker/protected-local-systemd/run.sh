@@ -781,6 +781,8 @@ if [[ "$phase" == "install" || "$phase" == "managed-update" ]]; then
   }
   cmp <(normalize_installer_identity "$predecessor_repo/install.sh") \
     <(normalize_installer_identity /predecessor-artifacts/install.sh)
+  install -m 0700 -o testop -g testop \
+    /predecessor-artifacts/install.sh "$predecessor_repo/install.sh"
   chown -R testop:testop "$predecessor_repo"
   install -m 0700 -o testop -g testop \
     /predecessor-artifacts/install.sh "$predecessor_installer"
@@ -1500,7 +1502,7 @@ if [[ "$phase" == "managed-update" ]]; then
     npm_config_registry="http://127.0.0.1:$rpc_port"
   )
   runuser -u testop -- env "${managed_env[@]}" \
-    /bin/bash "$predecessor_installer" \
+    /bin/bash "$predecessor_repo/install.sh" \
       --release "v$predecessor_version" \
       --update-channel beta \
       --local \

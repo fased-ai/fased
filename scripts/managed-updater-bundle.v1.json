@@ -14,6 +14,11 @@
       "mode": "0755"
     },
     {
+      "name": "generation-updater.mjs",
+      "type": "support",
+      "mode": "0755"
+    },
+    {
       "name": "fased-host-updaterctl.mjs",
       "type": "support",
       "mode": "0755"

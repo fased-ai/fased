@@ -160,6 +160,45 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		return marshalSignerResultV2(health)
+	case "v2.lifecycle.upgrade.prepare", "v2.lifecycle.upgrade.verify", "v2.lifecycle.upgrade.commit", "v2.lifecycle.upgrade.abort":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		if err := requireControlSocketV2(control); err != nil {
+			return nil, err
+		}
+		body, err := decodeSignerLifecycleUpgradeRequestV1(req.Request)
+		if err != nil {
+			return nil, err
+		}
+		if err := requireSignerLifecycleGateBindingV1(cfg.updateGatePath, body, 0); err != nil {
+			return nil, err
+		}
+		switch req.Op {
+		case "v2.lifecycle.upgrade.prepare":
+			result, err := prepareSignerLifecycleUpgradeV1(s.store, cfg.stateDBPath, body)
+			if err != nil {
+				return nil, err
+			}
+			return marshalSignerResultV2(result)
+		case "v2.lifecycle.upgrade.verify":
+			result, err := verifySignerLifecycleUpgradeV1(s.store, cfg.stateDBPath, body)
+			if err != nil {
+				return nil, err
+			}
+			return marshalSignerResultV2(result)
+		case "v2.lifecycle.upgrade.commit":
+			result, err := commitSignerLifecycleUpgradeV1(s.store, cfg.stateDBPath, body)
+			if err != nil {
+				return nil, err
+			}
+			return marshalSignerResultV2(result)
+		default:
+			if err := abortSignerLifecycleUpgradeV1(s.store, cfg.stateDBPath, body); err != nil {
+				return nil, err
+			}
+			return marshalSignerResultV2(map[string]any{"transactionId": body.TransactionID, "phase": "aborted"})
+		}
 	case "getAddresses":
 		wallet, err := s.keys.PublicRecord(req.WalletID)
 		if err != nil {

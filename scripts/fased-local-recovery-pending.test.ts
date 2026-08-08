@@ -700,13 +700,134 @@ describe("Local persisted-journal recovery control plane", () => {
       context,
       recoveryB.identity,
     );
-    expect(writeControllerSelectionReceipt).toHaveBeenCalledTimes(5);
+    expect(writeControllerSelectionReceipt).not.toHaveBeenCalled();
     expect(probeControllerIdentity).toHaveBeenLastCalledWith(
       expect.any(Object),
       context,
       previous.identity,
     );
     expect(calls.at(-1)).toBe("clear-root");
+  });
+
+  it("preserves the original selection receipt when the same recovery controller restarts", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-local-recovery-restart-"));
+    roots.push(root);
+    const paths = fixturePaths(root);
+    const uid = process.getuid?.() ?? 0;
+    const gid = process.getgid?.() ?? 0;
+    await fs.mkdir(paths.supervisorStateDir, { recursive: true, mode: 0o700 });
+
+    const transactionId = randomUUID();
+    const requestNonce = randomUUID();
+    const originalInstance = randomUUID();
+    const restartedInstance = randomUUID();
+    const selectionRequest = supervisorRequest("updateController", transactionId, targetVersion, {
+      nonce: requestNonce,
+    });
+    const identity = {
+      schemaVersion: 1,
+      version: targetVersion,
+      serverSha256: digest("a"),
+      clientSha256: digest("b"),
+    };
+    const staged = {
+      changed: false,
+      supervisorChanged: false,
+      trustChanged: false,
+      releaseCommit: "c".repeat(40),
+      targetManifestSha256: digest("d"),
+      trustPolicySha256: digest("e"),
+      identity,
+    };
+    const originalReceipt = await supervisorTesting.writeControllerSelectionReceipt(
+      paths,
+      selectionRequest,
+      staged,
+      originalInstance,
+      uid,
+      gid,
+      { now, nonce: requestNonce },
+    );
+    const transaction = supervisorTesting.rootProductTransactionRecord({
+      request: selectionRequest,
+      phase: "committing",
+      previousVersion,
+      targetControllerReceipt: originalReceipt,
+      selectionDigest: originalReceipt.selectionDigest,
+      targetJournalSha256: digest("f"),
+      durableCommitDecision: true,
+      now,
+    });
+    await fs.writeFile(paths.rootTransactionPath, `${JSON.stringify(transaction, null, 2)}\n`, {
+      mode: 0o600,
+    });
+    const productJournal = {
+      schemaVersion: 8,
+      transactionId,
+      version: targetVersion,
+      phase: "committing",
+      previousVersion,
+      selectionDigest: originalReceipt.selectionDigest,
+      targetControllerReceipt: originalReceipt,
+      targetReleaseIdentity: null,
+      artifactDigests: null,
+      journalSha256: digest("f"),
+    };
+    const recoveryCapabilities = Object.freeze({
+      protocolVersion: 1,
+      operations: Object.freeze(["recoverActive"]),
+      journalSchemas: Object.freeze([7, 8]),
+    });
+    const context = {
+      paths,
+      rootUid: uid,
+      rootGid: gid,
+      now: () => now,
+      controllerIdentityRetryAttempts: 1,
+      controllerIdentityRetryDelay: async () => undefined,
+      stageTrustedController: async () => staged,
+      probeRecoveryControllerIdentity: async () => ({
+        controllerInstanceId: restartedInstance,
+        recoveryCapabilities,
+      }),
+      writeControllerSelectionReceipt: supervisorTesting.writeControllerSelectionReceipt,
+      restartController: async () => undefined,
+      waitForController: async () => undefined,
+      commitLifecycleTrust: async () => undefined,
+    } as unknown as Parameters<typeof supervisorTesting.stageRecoveryController>[3];
+    const state = {
+      controllerInstanceId: restartedInstance,
+      recovery: Object.freeze({ state: "RECOVERY_PENDING" }),
+    };
+    const recoveryRequest = supervisorRequest("recoverActive", transactionId, targetVersion, {
+      recoveryDigest: digest("f"),
+      recoveryControllerVersion: targetVersion,
+    });
+
+    const recovered = await supervisorTesting.stageRecoveryController(
+      transaction,
+      productJournal,
+      recoveryRequest,
+      context,
+      state,
+    );
+
+    expect(recovered.liveControllerInstanceId).toBe(restartedInstance);
+    expect(recovered.selectionReceipt.controllerInstanceId).toBe(restartedInstance);
+    expect(recovered.authorization).toMatchObject({
+      legacySelectionDigest: originalReceipt.selectionDigest,
+      expectedOutcome: "committed",
+      recoveryController: {
+        version: targetVersion,
+        serverSha256: identity.serverSha256,
+        clientSha256: identity.clientSha256,
+      },
+    });
+    await expect(
+      supervisorTesting.readControllerSelectionReceipt(paths, selectionRequest, uid, {
+        allowExpired: true,
+      }),
+    ).resolves.toEqual(originalReceipt);
   });
 
   it("rejects a live recovery-controller process mismatch before mutation", async () => {

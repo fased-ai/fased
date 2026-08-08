@@ -179,7 +179,7 @@ jobs:
 
   linux:
     name: Linux ${{ matrix.arch }}
-    needs: validate
+    needs: [validate, signer]
     permissions:
       actions: read
       artifact-metadata: write
@@ -221,8 +221,31 @@ jobs:
           name: fased-candidate-dist
           path: dist
 
+      - name: Download exact native lifecycle assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: fased-signerd-release
+          path: dist-native/release
+
       - name: Package hosted runtime artifact from exact shared build
         run: pnpm hosted:artifact:from-dist --output .artifacts/hosted-runtime
+
+      - name: Assemble exact lifecycle generation
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          go_arch=amd64
+          if [[ "${{ matrix.arch }}" == arm64 ]]; then go_arch=arm64; fi
+          node scripts/assemble-lifecycle-generation.mjs \
+            --runtime-archive ".artifacts/hosted-runtime/fased-hosted-linux-${{ matrix.arch }}-v${version}.tar.gz" \
+            --signer "dist-native/release/fased-signerd-linux-${go_arch}" \
+            --lifecycled "dist-native/release/fased-lifecycled-linux-${go_arch}" \
+            --output-dir .artifacts/hosted-runtime \
+            --version "$version" \
+            --commit "$GITHUB_SHA" \
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --architecture "${{ matrix.arch }}"
 
       - name: Attest hosted runtime release assets
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
@@ -267,7 +290,9 @@ jobs:
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
       - name: Build native signer release assets
-        run: bash scripts/release-fased-signerd.sh
+        run: |
+          bash scripts/release-fased-signerd.sh
+          bash scripts/release-fased-lifecycled.sh
 
       - name: Stage root Hosting bootstrap release asset
         shell: bash
@@ -292,6 +317,10 @@ jobs:
         working-directory: dist-native/release
         run: sha256sum --check fased-signerd-checksums.txt
 
+      - name: Verify lifecycle daemon checksums
+        working-directory: dist-native/release
+        run: sha256sum --check fased-lifecycled-checksums.txt
+
       - name: Attest native signer release assets
         id: attest-native-signer
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
@@ -307,6 +336,19 @@ jobs:
           install -m 0644 \
             "${{ steps.attest-native-signer.outputs.bundle-path }}" \
             dist-native/release/fased-signerd-release.attestation.json
+
+      - name: Attest native lifecycle daemon release assets
+        id: attest-native-lifecycle
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
+        with:
+          subject-path: dist-native/release/fased-lifecycled-*
+
+      - name: Stage native lifecycle attestation bundle
+        shell: bash
+        run: |
+          install -m 0644 \
+            "${{ steps.attest-native-lifecycle.outputs.bundle-path }}" \
+            dist-native/release/fased-lifecycled-release.attestation.json
 
       - name: Attest root Hosting bootstrap
         id: attest-hosting-bootstrap

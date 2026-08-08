@@ -25,7 +25,27 @@ var applicationUpdateGateReadOperations = map[string]bool{
 	"getBalance":                   true,
 }
 
+var signerLifecycleUpdateOperationsV1 = map[string]bool{
+	"v2.lifecycle.upgrade.prepare": true,
+	"v2.lifecycle.upgrade.verify":  true,
+	"v2.lifecycle.upgrade.commit":  true,
+	"v2.lifecycle.upgrade.abort":   true,
+}
+
 func enforceApplicationUpdateGate(gatePath, operation string, control bool, trustedUID int) error {
+	if signerLifecycleUpdateOperationsV1[operation] {
+		if !control {
+			return errors.New("signer lifecycle upgrade requires the control socket")
+		}
+		active, err := trustedUpdateGateActive(gatePath, trustedUID)
+		if err != nil {
+			return fmt.Errorf("signer update gate is invalid; refusing lifecycle operation: %w", err)
+		}
+		if !active {
+			return errors.New("signer lifecycle upgrade requires an active trusted update gate")
+		}
+		return nil
+	}
 	if strings.TrimSpace(gatePath) == "" || applicationUpdateGateReadOperations[operation] {
 		return nil
 	}

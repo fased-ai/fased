@@ -24,6 +24,8 @@ OWN_PREDECESSOR_ARTIFACT_DIR=0
 MANAGED_PREDECESSOR_VERSION="${FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION:-}"
 MANAGED_PREDECESSOR_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_ARTIFACT_DIR:-}"
 OWN_MANAGED_PREDECESSOR_ARTIFACT_DIR=0
+SOURCE_REPO_DIR=""
+OWN_SOURCE_REPO_DIR=0
 
 command -v "$RUNTIME" >/dev/null 2>&1 || {
   echo "Podman is required for the protected Local systemd fixtures." >&2
@@ -59,6 +61,12 @@ run_container() {
 }
 
 if [[ -z "$ARTIFACT_DIR" ]]; then
+  [[ -x "$ROOT_DIR/node_modules/.bin/tsdown" &&
+    -x "$ROOT_DIR/ui/node_modules/.bin/vite" ]] || {
+    echo "The protected Local fixture requires a complete frozen development install." >&2
+    echo "Run pnpm install --frozen-lockfile from the repository root, then retry." >&2
+    exit 1
+  }
   if [[ ! -f "$ROOT_DIR/dist/build-info.json" ]] ||
     [[ "$(jq -r .version "$ROOT_DIR/dist/build-info.json")" != "$VERSION" ]] ||
     [[ "$(jq -r .commit "$ROOT_DIR/dist/build-info.json")" != "$COMMIT" ]]; then
@@ -69,15 +77,44 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
     echo "The protected Local fixture refuses stale dist identity." >&2
     exit 1
   }
-  GOTMPDIR="${GOTMPDIR:-${TMPDIR:-/tmp}/fased-go-tmp}" \
-  GOCACHE="${GOCACHE:-${TMPDIR:-/tmp}/fased-go-cache}" \
+  fixture_go_tmp="${GOTMPDIR:-${TMPDIR:-/tmp}/fased-go-tmp}"
+  fixture_go_cache="${GOCACHE:-${TMPDIR:-/tmp}/fased-go-cache}"
+  mkdir -p "$fixture_go_tmp" "$fixture_go_cache"
+  GOTMPDIR="$fixture_go_tmp" \
+  GOCACHE="$fixture_go_cache" \
   FASED_SIGNER_BUILD_COMMIT="$COMMIT" \
   FASED_SIGNER_TARGETS=linux/amd64 \
     bash "$ROOT_DIR/scripts/release-fased-signerd.sh"
+  GOTMPDIR="$fixture_go_tmp" \
+  GOCACHE="$fixture_go_cache" \
+  FASED_LIFECYCLE_BUILD_COMMIT="$COMMIT" \
+  FASED_LIFECYCLE_BUILD_TREE="$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')" \
+  FASED_LIFECYCLE_TARGETS=linux/amd64 \
+    bash "$ROOT_DIR/scripts/release-fased-lifecycled.sh"
   ARTIFACT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-artifact.XXXXXX")"
   OWN_ARTIFACT_DIR=1
   pnpm --dir "$ROOT_DIR" hosted:artifact:from-dist --output "$ARTIFACT_DIR"
   cp -a "$ROOT_DIR/dist-native/release/." "$ARTIFACT_DIR/"
+  node "$ROOT_DIR/scripts/assemble-lifecycle-generation.mjs" \
+    --runtime-archive "$ARTIFACT_DIR/fased-hosted-linux-x64-v${VERSION}.tar.gz" \
+    --signer "$ARTIFACT_DIR/fased-signerd-linux-amd64" \
+    --lifecycled "$ARTIFACT_DIR/fased-lifecycled-linux-amd64" \
+    --output-dir "$ARTIFACT_DIR" \
+    --version "$VERSION" \
+    --commit "$COMMIT" \
+    --tree "$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')" \
+    --architecture x64
+  node "$ROOT_DIR/scripts/release-artifact-set.mjs" build \
+    --directory "$ARTIFACT_DIR" \
+    --version "$VERSION" \
+    --commit "$COMMIT" \
+    --tree "$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')" \
+    --lockfile-digest "sha256:$(sha256sum "$ROOT_DIR/pnpm-lock.yaml" | awk '{print $1}')" \
+    --source-ref "refs/tags/v${VERSION}" \
+    --workflow-run-id 1 \
+    --workflow-run-attempt 1
+  printf '{"fixtureOfflineAttestation":true}\n' \
+    >"$ARTIFACT_DIR/fased-hosting-candidate.json.attestation.json"
 fi
 [[ -f "$ARTIFACT_DIR/fased-hosted-linux-x64-v${VERSION}.tar.gz" ]] || {
   echo "The protected Local fixture requires the exact x64 packaged runtime artifact." >&2
@@ -103,7 +140,10 @@ if [[ "$PUBLIC_ACQUISITION" == "1" ]]; then
     fased-host-updater.mjs.attestation.json \
     fased-host-updaterctl.mjs \
     fased-host-updaterctl.mjs.attestation.json \
-    fased-signerd-release.attestation.json; do
+    fased-signerd-release.attestation.json \
+    fased-hosting-candidate.json \
+    fased-hosting-candidate.json.attestation.json \
+    "fased-generation-linux-x64-v${VERSION}.tar.gz"; do
     [[ -f "$ARTIFACT_DIR/$required_asset" ]] || {
       echo "The public-acquisition fixture is missing $required_asset." >&2
       exit 1
@@ -245,8 +285,20 @@ cleanup() {
   if [[ "$OWN_MANAGED_PREDECESSOR_ARTIFACT_DIR" -eq 1 ]]; then
     rm -rf -- "$MANAGED_PREDECESSOR_ARTIFACT_DIR"
   fi
+  if [[ "$OWN_SOURCE_REPO_DIR" -eq 1 ]]; then
+    rm -rf -- "$SOURCE_REPO_DIR"
+  fi
 }
 trap cleanup EXIT INT TERM HUP
+
+SOURCE_REPO_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-source.XXXXXX")"
+OWN_SOURCE_REPO_DIR=1
+git clone --quiet --no-hardlinks "$ROOT_DIR" "$SOURCE_REPO_DIR"
+git -C "$SOURCE_REPO_DIR" checkout --quiet --detach "$COMMIT"
+[[ "$(git -C "$SOURCE_REPO_DIR" rev-parse HEAD)" == "$COMMIT" ]] || {
+  echo "The protected Local fixture failed to materialize the exact source commit." >&2
+  exit 1
+}
 
 IFS=',' read -r -a distro_list <<<"$DISTROS"
 IFS=',' read -r -a scenario_list <<<"$SCENARIOS"
@@ -280,7 +332,7 @@ run_fixture_scenario() {
     -e "FASED_FIXTURE_PREDECESSOR_VERSION=$predecessor_version" \
     -e "FASED_FIXTURE_PREINSTALLED_TOOLS=$PREINSTALLED_TOOLS" \
     -e "FASED_FIXTURE_PUBLIC_ACQUISITION=$PUBLIC_ACQUISITION" \
-    -v "$ROOT_DIR:/repo:ro,Z" \
+    -v "$SOURCE_REPO_DIR:/repo:ro,Z" \
     -v "$FIXTURE_DIR/run.sh:/usr/local/bin/fased-protected-local-systemd-fixture:ro,Z" \
     -v "$ARTIFACT_DIR:/artifacts:ro,Z" \
     -v "$predecessor_artifact_dir:/predecessor-artifacts:ro,Z" \

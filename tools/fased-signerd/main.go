@@ -274,6 +274,10 @@ func mustValidate(req request, cfg signerConfig) error {
 		if len(req.Request) == 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
+	case "v2.lifecycle.upgrade.prepare", "v2.lifecycle.upgrade.verify", "v2.lifecycle.upgrade.commit", "v2.lifecycle.upgrade.abort":
+		if len(req.Request) == 0 || req.Chain != "" || req.WalletID != "" || req.Operator != nil {
+			return errors.New("invalid signer request")
+		}
 	case "v2.network.get", "v2.policy.get", "v2.wallet.get", "v2.wallet.readiness", "v2.wallet.reencrypt", "v2.wallet.rotation.status", "v2.jupiter.trigger.history":
 		if len(req.Request) > 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
@@ -453,6 +457,10 @@ func parseArgs() signerConfig {
 		"v2.jupiter.trigger.history":       getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 120),
 		"v2.review.authorization.begin":    getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_REVIEW_AUTH", 60),
 		"v2.review.authorization.finish":   getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_REVIEW_AUTH", 60),
+		"v2.lifecycle.upgrade.prepare":     10,
+		"v2.lifecycle.upgrade.verify":      10,
+		"v2.lifecycle.upgrade.commit":      10,
+		"v2.lifecycle.upgrade.abort":       10,
 		"v2.review.prepare":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_REVIEW", 60),
 		"v2.review.execute":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_EXECUTE", 60),
 		"getAddresses":                     getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_GETADDRESSES", 120),
@@ -543,6 +551,14 @@ func main() {
 		applyProcessDumpHardening()
 		if err := runSignerAdminCLI(os.Args[2:], os.Stdin, os.Stdout, os.Environ()); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "fased-signerd admin: %s\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "lifecycle-upgrade-abort" {
+		applyProcessDumpHardening()
+		if err := runSignerLifecycleAbortCLI(os.Args[2:], os.Stdin, os.Stdout); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "fased-signerd lifecycle-upgrade-abort: %s\n", err)
 			os.Exit(1)
 		}
 		return
@@ -788,7 +804,11 @@ func handleAuthorizedConn(
 			audit.write(requestAudit)
 			continue
 		}
-		if err := enforceApplicationUpdateGate(cfg.updateGatePath, req.Op, control || operator, 0); err != nil {
+		gateControl := control || operator
+		if signerLifecycleUpdateOperationsV1[req.Op] {
+			gateControl = control && !operator
+		}
+		if err := enforceApplicationUpdateGate(cfg.updateGatePath, req.Op, gateControl, 0); err != nil {
 			_, _ = conn.Write([]byte(fmt.Sprintf(`{"ok":false,"error":%q}`+"\n", err.Error())))
 			requestAudit["ok"] = false
 			requestAudit["error"] = "update_gate"

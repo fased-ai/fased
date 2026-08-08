@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { assertSafeWindowsShellArgs, shouldUseShellForCommand } from "../../scripts/ui.js";
+import {
+  assertSafeWindowsShellArgs,
+  missingDependenciesMessage,
+  shouldUseShellForCommand,
+} from "../../scripts/ui.js";
 
 describe("scripts/ui windows spawn behavior", () => {
   it("enables shell for Windows command launchers that require cmd.exe", () => {
@@ -31,5 +35,11 @@ describe("scripts/ui windows spawn behavior", () => {
 
   it("does not reject args on non-windows platforms", () => {
     expect(() => assertSafeWindowsShellArgs(["contains&metacharacters"], "linux")).not.toThrow();
+  });
+
+  it("requires an explicit frozen install instead of mutating workspace dependencies", () => {
+    expect(missingDependenciesMessage()).toBe(
+      "UI dependencies are incomplete. Run pnpm install --frozen-lockfile from the repository root, then retry.\n",
+    );
   });
 });

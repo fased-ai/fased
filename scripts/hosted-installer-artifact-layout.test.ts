@@ -48,6 +48,7 @@ describe("attested Hosting installer artifact layout", () => {
     expect(files).toContain("install.sh");
     expect(files).toContain("scripts/fased-host-updater.mjs");
     expect(files).toContain("scripts/fased-host-updaterctl.mjs");
+    expect(files).toContain("scripts/generation-updater.mjs");
     expect(files).toContain("scripts/privileged-release-evidence.mjs");
     expect(files).toContain("scripts/fased-signer-enroll-hosting.sh");
     expect(files).toContain("scripts/fased-signer-network-hosting.sh");
@@ -59,6 +60,20 @@ describe("attested Hosting installer artifact layout", () => {
     expect(files).toContain("scripts/fased-signer-policy-hosting.sh");
     expect(files).toContain("scripts/install-runtime-profile.sh");
     expect(files).toContain("config/");
+  });
+
+  it("hands verified Local and Hosting installs to the canonical generation supervisor", () => {
+    const installer = fs.readFileSync(path.join(root, "install.sh"), "utf8");
+    expect(installer).toContain(
+      '"$selected_package_root/scripts/generation-updater.mjs" initialize',
+    );
+    expect(installer).toContain(
+      'enter_protected_local_bundle "$root_store" "$final_root" "$packaged_commit"\n      exit 0',
+    );
+    expect(installer).toContain("initialize_hosting_generation_lifecycle");
+    expect(installer).toContain("--profile protected-local");
+    expect(installer).toContain("--profile hosting");
+    expect(installer).toContain("--instance hosting");
   });
 
   it("does not ship the retired app-visible root bootstrap daemon or client", () => {

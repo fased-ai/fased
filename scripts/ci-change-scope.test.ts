@@ -8,23 +8,6 @@ import {
 import { createGatePlan } from "./gate-authority.mjs";
 
 describe("CI changed-surface classification", () => {
-  it("routes the version-neutral lifecycle engine through focused Go security checks", () => {
-    const plan = createGatePlan([
-      "tools/fased-lifecycled/engine/target.go",
-      "scripts/build-lifecycle-generation.mjs",
-    ]);
-    const output = outputEntries(plan);
-
-    expect(output).toMatchObject({
-      run_native_signer: "true",
-      run_codeql_go: "true",
-      run_codeql_javascript: "true",
-      run_node_full: "false",
-      run_local_update: "false",
-      run_hosting_update: "false",
-    });
-  });
-
   it("selects the narrow installer release-verification lane only for a function-contained change", () => {
     const before = `prefix\n  root_owned_bundle_tree_is_secure() {\n  }\n    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-vex-v1.openvex.json" -o "$vex"\n    old hosting verifier\n    local manifest_selection=""\n      echo "Could not download the Local release attestation bundle." >&2\n      return 1\n    fi\n    old local verifier\n    local release_commit=""\nsuffix\n`;
     const after = `prefix\n  verify_release_attestation_source() {\n    corrected shared verifier\n  }\n\n  root_owned_bundle_tree_is_secure() {\n  }\n    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-vex-v1.openvex.json" -o "$vex"\n    corrected hosting verifier\n    local manifest_selection=""\n      echo "Could not download the Local release attestation bundle." >&2\n      return 1\n    fi\n    corrected local verifier\n    local release_commit=""\nsuffix\n`;
@@ -73,6 +56,23 @@ describe("CI changed-surface classification", () => {
       run_codeql_go: "false",
       run_codeql_python: "false",
       codeql_languages_json: '["javascript-typescript"]',
+    });
+  });
+
+  it("routes the version-neutral lifecycle engine through focused Go security checks", () => {
+    const plan = createGatePlan([
+      "tools/fased-lifecycled/engine/target.go",
+      "scripts/build-lifecycle-generation.mjs",
+    ]);
+    const output = outputEntries(plan);
+
+    expect(output).toMatchObject({
+      run_native_signer: "true",
+      run_codeql_go: "true",
+      run_codeql_javascript: "true",
+      run_node_full: "false",
+      run_local_update: "false",
+      run_hosting_update: "false",
     });
   });
 

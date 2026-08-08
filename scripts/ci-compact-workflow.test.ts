@@ -22,6 +22,73 @@ describe("compact CI topology", () => {
     ]);
   });
 
+  it("runs common security and selected CodeQL languages in parallel", async () => {
+    const { document } = await workflow("pr.yml");
+    const classify = document.jobs?.classify as {
+      outputs?: Record<string, string>;
+      steps?: Array<{ id?: string; run?: string }>;
+    };
+    const security = document.jobs?.security as {
+      "timeout-minutes"?: number;
+      strategy?: { matrix?: { target?: string } };
+      steps?: Array<{
+        if?: string;
+        name?: string;
+        run?: string;
+        with?: { "config-file"?: string; languages?: string };
+      }>;
+    };
+
+    expect(classify.outputs?.security_targets_json).toBe(
+      "${{ steps.security-matrix.outputs.targets_json }}",
+    );
+    expect(classify.steps?.find((step) => step.id === "security-matrix")?.run).toContain(
+      '["common"] + $languages',
+    );
+    expect(security["timeout-minutes"]).toBe(20);
+    expect(security.strategy?.matrix?.target).toBe(
+      "${{ fromJSON(needs.classify.outputs.security_targets_json) }}",
+    );
+    expect(
+      security.steps?.find((step) => step.name === "Initialize selected CodeQL languages")?.with
+        ?.languages,
+    ).toBe("${{ matrix.target }}");
+    const focusedScope = security.steps?.find(
+      (step) => step.name === "Build focused JavaScript CodeQL scope",
+    );
+    expect(focusedScope?.if).toBe("matrix.target == 'javascript-typescript'");
+    expect(focusedScope?.run).toContain("git diff --name-only");
+    expect(focusedScope?.run).toContain('scope="scripts"');
+    expect(
+      security.steps?.find((step) => step.name === "Initialize selected CodeQL languages")?.with?.[
+        "config-file"
+      ],
+    ).toBe("${{ matrix.target == 'javascript-typescript' && '.codeql-pr-scope.yml' || '' }}");
+  });
+
+  it("uses bounded lifecycle regressions instead of the full workspace suite", async () => {
+    const { document } = await workflow("pr.yml");
+    const classify = document.jobs?.classify as { outputs?: Record<string, string> };
+    const selected = document.jobs?.["selected-tests"] as {
+      steps?: Array<{ if?: string; name?: string; run?: string }>;
+    };
+    const full = selected.steps?.find(
+      (step) => step.name === "Run full Node tests when explicitly selected",
+    );
+    const lifecycle = selected.steps?.find(
+      (step) => step.name === "Run lifecycle-engine regressions",
+    );
+
+    expect(classify.outputs?.run_local_update).toBe("${{ steps.scope.outputs.run_local_update }}");
+    expect(full?.if).toContain("run_native_signer == 'true'");
+    expect(full?.if).toContain("run_local_update == 'true'");
+    expect(lifecycle?.if).toContain("run_node_full == 'true'");
+    expect(lifecycle?.if).toContain("run_native_signer == 'true'");
+    expect(lifecycle?.if).toContain("run_local_update == 'true'");
+    expect(lifecycle?.run).toContain("scripts/generation-updater.test.ts");
+    expect(lifecycle?.run).toContain("scripts/fased-managed-updater.test.ts");
+  });
+
   it("keeps the broad matrix outside pull requests", async () => {
     const { source } = await workflow("ci.yml");
     expect(source).not.toMatch(/^\s*pull_request:/mu);

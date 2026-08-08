@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -110,23 +110,6 @@ function run(cmd, args) {
   });
 }
 
-function runSync(cmd, args, envOverride) {
-  let result;
-  try {
-    result = spawnSync(cmd, args, createSpawnOptions(cmd, args, envOverride));
-  } catch (err) {
-    console.error(`Failed to launch ${cmd}:`, err);
-    process.exit(1);
-    return;
-  }
-  if (result.signal) {
-    process.exit(1);
-  }
-  if ((result.status ?? 1) !== 0) {
-    process.exit(result.status ?? 1);
-  }
-}
-
 function depsInstalled(kind) {
   try {
     const require = createRequire(path.join(uiDir, "package.json"));
@@ -141,6 +124,10 @@ function depsInstalled(kind) {
   } catch {
     return false;
   }
+}
+
+export function missingDependenciesMessage() {
+  return "UI dependencies are incomplete. Run pnpm install --frozen-lockfile from the repository root, then retry.\n";
 }
 
 function resolveScriptAction(action) {
@@ -184,10 +171,9 @@ export function main(argv = process.argv.slice(2)) {
   }
 
   if (!depsInstalled(action === "test" ? "test" : "build")) {
-    const installEnv =
-      action === "build" ? { ...process.env, NODE_ENV: "production" } : process.env;
-    const installArgs = action === "build" ? ["install", "--prod"] : ["install"];
-    runSync(runner.cmd, installArgs, installEnv);
+    process.stderr.write(missingDependenciesMessage());
+    process.exit(1);
+    return;
   }
 
   run(runner.cmd, ["run", script, ...rest]);
