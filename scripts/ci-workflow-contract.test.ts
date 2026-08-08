@@ -478,7 +478,7 @@ describe("CI workflow routing", () => {
     expect(dockerWorkflow).not.toContain("gh release upload");
   });
 
-  it("builds once from protected main, runs P1, then waits for the owner tag", async () => {
+  it("builds once from an owner-tagged protected-main commit before P1", async () => {
     const workflow = await readWorkflow(".github/workflows/hosted-runtime-release.yml");
     const jobs = workflow.jobs ?? {};
     const candidate = jobs["candidate"];
@@ -512,10 +512,11 @@ describe("CI workflow routing", () => {
     ]);
     expect(candidateText).toContain("release-artifact-set.mjs build");
     expect(validateText).toContain("pnpm build");
-    expect(validateText).not.toContain('test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"');
+    expect(validateText).toContain('test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"');
     expect(validateText).toContain(
-      '! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$RELEASE_VERSION"',
+      'git ls-remote --exit-code --tags origin "refs/tags/v$RELEASE_VERSION"',
     );
+    expect(validateText).toContain('test "$remote_tag" = "$SOURCE_COMMIT"');
     expect(validateText).toContain("--allow-exact-tag");
     expect(validateText).toContain("pnpm check:plugin-sdk:types");
     expect(validateText).toContain("node --import tsx scripts/release-check.ts");
@@ -658,9 +659,8 @@ describe("CI workflow routing", () => {
     expect(fixture).not.toContain("modern-update");
     expect(fixture).toContain("install -m 0700 -o testop -g testop /artifacts/install.sh");
     expect(fixture).toContain("install -m 0644 /artifacts/fased-hosted-release-v2.json");
-    expect(fixture).toContain(
-      'if [[ "$public_acquisition" == "1" && "\\$source_ref" == "refs/tags/v${version}" ]]',
-    );
+    expect(fixture).toContain('if [[ "$public_acquisition" == "1" ]]');
+    expect(fixture).toContain('if [[ "\\$source_ref" == "refs/tags/v${version}" ]]');
     expect(fixture).toContain('"\\$source_ref" == "refs/heads/main"');
     const containerFixture = await readFile(
       resolve(repoRoot, "scripts/test-protected-local-systemd-container.sh"),

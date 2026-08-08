@@ -804,11 +804,13 @@ if [[ "\${1:-}" == "attestation" && "\${2:-}" == "verify" ]]; then
       break
     fi
   done
-  if [[ "$public_acquisition" == "1" && "\$source_ref" == "refs/tags/v${version}" ]]; then
+  if [[ "$public_acquisition" == "1" ]]; then
+    if [[ "\$source_ref" == "refs/tags/v${version}" ]]; then
+      exit 0
+    fi
     exit 1
   fi
-  if [[ "$public_acquisition" != "1" ||
-    "\$source_ref" == "refs/heads/main" ||
+  if [[ "\$source_ref" == "refs/heads/main" ||
     "\$source_ref" == refs/tags/v* ]]; then
     exit 0
   fi
