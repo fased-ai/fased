@@ -546,6 +546,7 @@ describe("CI workflow routing", () => {
     ).toMatchObject({
       FASED_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install,${{ needs.validate.outputs.p1_scenarios }}",
       FASED_SYSTEMD_FIXTURE_PREDECESSOR_VERSION: "${{ inputs.predecessor_version }}",
+      FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1",
     });
     expect(publishText).not.toContain("git tag");
     expect(publishText).not.toContain("git push origin");
@@ -641,6 +642,20 @@ describe("CI workflow routing", () => {
     );
     expect(fixture).not.toContain("legacy-takeover");
     expect(fixture).not.toContain("modern-update");
+    expect(fixture).toContain("install -m 0700 -o testop -g testop /artifacts/install.sh");
+    expect(fixture).toContain("install -m 0644 /artifacts/fased-hosted-release-v2.json");
+    expect(fixture).toContain(
+      'if [[ "$public_acquisition" == "1" && "\\$source_ref" == "refs/tags/v${version}" ]]',
+    );
+    expect(fixture).toContain('"\\$source_ref" == "refs/heads/main"');
+    const containerFixture = await readFile(
+      resolve(repoRoot, "scripts/test-protected-local-systemd-container.sh"),
+      "utf8",
+    );
+    expect(containerFixture).toContain(
+      '"install_entry_release_identity=\\"${VERSION}:${COMMIT}\\""',
+    );
+    expect(containerFixture).toContain(".release.commit == $commit");
   });
 
   it("keeps the managed predecessor runtime inside the root-controlled store", async () => {
