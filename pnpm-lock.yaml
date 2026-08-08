@@ -14,13 +14,13 @@ overrides:
   basic-ftp: 5.3.1
   brace-expansion: 5.0.9
   defu: 6.1.7
-  dompurify: 3.4.12
+  dompurify: 3.4.13
   body-parser: 2.3.0
   fast-uri: 3.1.5
   fast-xml-parser: 5.8.0
   file-type: 21.3.2
   follow-redirects: 1.16.0
-  hono: 4.12.27
+  hono: 4.12.34
   ip-address: 10.3.1
   lodash: 4.18.1
   linkify-it: 5.0.2
@@ -29,7 +29,7 @@ overrides:
   path-to-regexp@<1.0.0: 0.1.13
   path-to-regexp@>=8.0.0 <8.4.2: 8.4.2
   picomatch: 4.0.4
-  postcss: 8.5.18
+  postcss: 8.5.23
   protobufjs@<8.0.0: 7.6.5
   protobufjs@>=8.0.0 <8.2.0: 8.2.0
   request: npm:@cypress/request@3.0.10
@@ -42,9 +42,10 @@ overrides:
   simple-git: 3.36.0
   node-domexception: npm:@nolyfill/domexception@^1.0.28
   '@sinclair/typebox': 0.34.48
-  tar: 7.5.19
+  sanitize-html: 2.17.5
+  tar: 7.5.21
   tough-cookie: 4.1.3
-  undici@6: 6.27.0
+  undici@6: 6.28.0
   undici@7: 7.29.0
   undici@8: 8.9.0
   uuid: 11.1.1
@@ -157,8 +158,8 @@ importers:
         specifier: ^0.12.0
         version: 0.12.0
       tar:
-        specifier: 7.5.19
-        version: 7.5.19
+        specifier: 7.5.21
+        version: 7.5.21
       tslog:
         specifier: ^4.10.2
         version: 4.10.2
@@ -177,7 +178,7 @@ importers:
     devDependencies:
       '@buape/carbon':
         specifier: 0.0.0-beta-20260216184201
-        version: 0.0.0-beta-20260216184201(@discordjs/opus@0.10.0)(bufferutil@4.1.0)(hono@4.12.27)(opusscript@0.1.1)(utf-8-validate@6.0.6)
+        version: 0.0.0-beta-20260216184201(@discordjs/opus@0.10.0)(bufferutil@4.1.0)(hono@4.12.34)(opusscript@0.1.1)(utf-8-validate@6.0.6)
       '@discordjs/voice':
         specifier: ^0.19.0
         version: 0.19.0(@discordjs/opus@0.10.0)(bufferutil@4.1.0)(opusscript@0.1.1)(utf-8-validate@6.0.6)
@@ -352,7 +353,7 @@ importers:
     dependencies:
       '@buape/carbon':
         specifier: 0.0.0-beta-20260216184201
-        version: 0.0.0-beta-20260216184201(@discordjs/opus@0.10.0)(bufferutil@4.1.0)(hono@4.12.27)(opusscript@0.1.1)(utf-8-validate@6.0.6)
+        version: 0.0.0-beta-20260216184201(@discordjs/opus@0.10.0)(bufferutil@4.1.0)(hono@4.12.34)(opusscript@0.1.1)(utf-8-validate@6.0.6)
       '@discordjs/voice':
         specifier: ^0.19.0
         version: 0.19.0(@discordjs/opus@0.10.0)(bufferutil@4.1.0)(opusscript@0.1.1)(utf-8-validate@6.0.6)
@@ -611,8 +612,8 @@ importers:
         specifier: 1.1.1
         version: 1.1.1
       dompurify:
-        specifier: 3.4.12
-        version: 3.4.12
+        specifier: 3.4.13
+        version: 3.4.13
       lit:
         specifier: ^3.3.2
         version: 3.3.2
@@ -1178,7 +1179,7 @@ packages:
     resolution: {integrity: sha512-ZcnNVhKTmyDJeg0UlnZjvM73JBsTAuhrH/J4fjwGOw59PwOW51r4J+p6CsKZWXdKSme4MFqU62CZMOsdDrU4CA==}
     engines: {node: '>=20'}
     peerDependencies:
-      hono: 4.12.27
+      hono: 4.12.34
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -3444,6 +3445,9 @@ packages:
     resolution: {integrity: sha512-0R9ikRb668HB7QDxT1vkpuUBtqc53YyAwMwGeUFKRojY/NWKvdZ+9UYtRfGmhqNbRkTSVpMbmyhXipFFv2cb/A==}
     engines: {node: '>= 12'}
 
+  dayjs@1.11.21:
+    resolution: {integrity: sha512-98IT+HOahAisibz/yjKbzuOBwYcjJ7BCLPzARyHiyEBmRz4fatF+KPJszEHXsGYjUG234aH/cOjW1wwTbKUZlA==}
+
   debug@2.6.9:
     resolution: {integrity: sha512-bC7ElrdJaJnPbAP+1EotYvqZsb3ecl5wi6Bfi6BJTUcNowp6cvspg0jXznRTKDjm/E7AdgFBVeAPVMNcKGsHMA==}
     peerDependencies:
@@ -3511,8 +3515,8 @@ packages:
     resolution: {integrity: sha512-cgwlv/1iFQiFnU96XXgROh8xTeetsnJiDsTc7TYCLFd9+/WNkIqPTxiM/8pSd8VIrhXGTf1Ny1q1hquVqDJB5w==}
     engines: {node: '>= 4'}
 
-  dompurify@3.4.12:
-    resolution: {integrity: sha512-zQvGet8Z2sWbQhCmfFz/T5QWH2oBmjnqK3qvOjaqaNLrLEF912WamU+ohnTp0TCep/MFVHpdJuCZEdFOdTnEFg==}
+  dompurify@3.4.13:
+    resolution: {integrity: sha512-2vmYIoqjze2d+kakP8S/nS5shfsl587kzwEjcGlTdiksUVgFHnFCsLYDVj/JNqJVOQZGSYBTmuycv0PodwmnMQ==}
 
   domutils@3.2.2:
     resolution: {integrity: sha512-6kZKyUajlDuqlHKVX1w7gyslj9MPIXzIFiz/rGu35uC1wMi+kMhQwGhl4lt9unC9Vb9INnY9Z3/ZA3+FhASLaw==}
@@ -3872,8 +3876,8 @@ packages:
   highlight.js@10.7.3:
     resolution: {integrity: sha512-tzcUFauisWKNHaRkN4Wjl/ZA07gENAjFl3J/c480dprkGTg5EQstgaNFqBfUqCq54kZRIEcreTsAgF/m2quD7A==}
 
-  hono@4.12.27:
-    resolution: {integrity: sha512-1yrb/+w6HWQJrUCLkJ2IF5jNIPvvFkblV5RNOYl6bV+OA6p9GLcMpHFFGTosSvHvcAUibuUukRqhlYI4z32C7Q==}
+  hono@4.12.34:
+    resolution: {integrity: sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==}
     engines: {node: '>=16.9.0'}
 
   hookable@6.0.1:
@@ -4132,6 +4136,9 @@ packages:
   ky@1.14.3:
     resolution: {integrity: sha512-9zy9lkjac+TR1c2tG+mkNSVlyOpInnWdSMiue4F+kq8TwJSgv6o8jhLRg8Ho6SnZ9wOYUq/yozts9qQCfk7bIw==}
     engines: {node: '>=18'}
+
+  launder@1.7.1:
+    resolution: {integrity: sha512-mU6WRz5EusL9ZZuiZ5SO4Y6C0P9PAUR9iwdb6bzj4KDihm28DiHFw+/yk9DBH4f+Pv1wuzQ4e2jV3oQ7mkIqvw==}
 
   leac@0.6.0:
     resolution: {integrity: sha512-y+SqErxb8h7nE/fiEX07jsbuhrpO9lL8eca7/Y1nuWV2moNlXhyd59iDGcRf6moVyDMbmTNzL40SUyrFU/yDpg==}
@@ -4706,8 +4713,8 @@ packages:
     resolution: {integrity: sha512-LKWqWJRhstyYo9pGvgor/ivk2w94eSjE3RGVuzLGlr3NmD8bf7RcYGze1mNdEHRP6TRP6rMuDHk5t44hnTRyow==}
     engines: {node: '>=14.19.0'}
 
-  postcss@8.5.18:
-    resolution: {integrity: sha512-xdB1oSLHbz1vRWgCDalrCqEFTWzFlhqFC5tIHLMOSUIjhm3XXQ1qrFy8S/ESr1JYRRXqM3c1QFiMZUJdUTqyMQ==}
+  postcss@8.5.23:
+    resolution: {integrity: sha512-g50586zr4bZmwFiTlflMu8E0bDTb5I5gertgwAKmsdUlTQIhZtunzUlD1WSzwcVWPoAVpsrA6vlfCD7oXvRwgg==}
     engines: {node: ^10 || ^12 || >=14}
 
   postgres@3.4.8:
@@ -4911,8 +4918,8 @@ packages:
   safer-buffer@2.1.2:
     resolution: {integrity: sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==}
 
-  sanitize-html@2.17.0:
-    resolution: {integrity: sha512-dLAADUSS8rBwhaevT12yCezvioCA+bmUTPH/u57xKPT8d++voeYE6HeluA/bPbQ15TwDBG2ii+QZIEmYx8VdxA==}
+  sanitize-html@2.17.5:
+    resolution: {integrity: sha512-ZmU1joGRrvoyctKIiuwUxqR6moLoU2Wk+2bMccN6f7UwhAmwYDvWziqPxRDDN2Qip62NqnIrVrT9akbL6Wretg==}
 
   selderee@0.11.0:
     resolution: {integrity: sha512-5TF+l7p4+OsnP8BCCvSyZiSPc4x4//p5uPwK8TCnVPJYRmU2aYKMpOXvw8zM5a5JvuuCGN1jmsMwuU2W02ukfA==}
@@ -5144,8 +5151,8 @@ packages:
   tar-stream@3.1.7:
     resolution: {integrity: sha512-qJj60CXt7IU1Ffyc3NJMjh6EkuCFej46zUqJ4J7pqYlThyd9bO0XBTmcOIhSzZJVWfsLks0+nle/j538YAW9RQ==}
 
-  tar@7.5.19:
-    resolution: {integrity: sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==}
+  tar@7.5.21:
+    resolution: {integrity: sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==}
     engines: {node: '>=18'}
 
   text-decoder@1.2.7:
@@ -5306,8 +5313,8 @@ packages:
   undici-types@7.18.2:
     resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
 
-  undici@6.27.0:
-    resolution: {integrity: sha512-YmfV3YnEDzXRC5lZ2jWtWWHKGUm1zIt8AhesR1tens+HTNv+YZlN/dp6G727LOvMJ8xjP9Be7Y2Sdr96LDm+pg==}
+  undici@6.28.0:
+    resolution: {integrity: sha512-LIY910g9TI13YS95lrMFrs8Rm/u/irgHeTWoKCoteeJ04CUJ92eEfj0rVn+7VKMPBpUPiUoBKfhNyLI23EE/KA==}
     engines: {node: '>=18.17'}
 
   undici@7.29.0:
@@ -5868,14 +5875,14 @@ snapshots:
 
   '@borewit/text-codec@0.2.2': {}
 
-  '@buape/carbon@0.0.0-beta-20260216184201(@discordjs/opus@0.10.0)(bufferutil@4.1.0)(hono@4.12.27)(opusscript@0.1.1)(utf-8-validate@6.0.6)':
+  '@buape/carbon@0.0.0-beta-20260216184201(@discordjs/opus@0.10.0)(bufferutil@4.1.0)(hono@4.12.34)(opusscript@0.1.1)(utf-8-validate@6.0.6)':
     dependencies:
       '@types/node': 25.3.2
       discord-api-types: 0.38.37
     optionalDependencies:
       '@cloudflare/workers-types': 4.20260120.0
       '@discordjs/voice': 0.19.0(@discordjs/opus@0.10.0)(bufferutil@4.1.0)(opusscript@0.1.1)(utf-8-validate@6.0.6)
-      '@hono/node-server': 2.0.10(hono@4.12.27)
+      '@hono/node-server': 2.0.10(hono@4.12.34)
       '@types/bun': 1.3.9
       '@types/ws': 8.18.1
       ws: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
@@ -6004,7 +6011,7 @@ snapshots:
   '@digitalbazaar/http-client@4.3.0':
     dependencies:
       ky: 1.14.3
-      undici: 6.27.0
+      undici: 6.28.0
 
   '@discordjs/node-pre-gyp@0.4.5':
     dependencies:
@@ -6016,7 +6023,7 @@ snapshots:
       npmlog: 5.0.1
       rimraf: 3.0.2
       semver: 7.8.0
-      tar: 7.5.19
+      tar: 7.5.21
     transitivePeerDependencies:
       - encoding
       - supports-color
@@ -6339,9 +6346,9 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@hono/node-server@2.0.10(hono@4.12.27)':
+  '@hono/node-server@2.0.10(hono@4.12.34)':
     dependencies:
-      hono: 4.12.27
+      hono: 4.12.34
 
   '@img/colour@1.1.0': {}
 
@@ -6680,7 +6687,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6)':
     dependencies:
-      '@hono/node-server': 2.0.10(hono@4.12.27)
+      '@hono/node-server': 2.0.10(hono@4.12.34)
       ajv: 8.18.0
       ajv-formats: 3.0.1(ajv@8.18.0)
       content-type: 1.0.5
@@ -6690,7 +6697,7 @@ snapshots:
       eventsource-parser: 3.0.8
       express: 5.2.1
       express-rate-limit: 8.4.1(express@5.2.1)
-      hono: 4.12.27
+      hono: 4.12.34
       jose: 6.2.3
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -8080,7 +8087,7 @@ snapshots:
       postgres: 3.4.8
       request: '@cypress/request@3.0.10'
       request-promise: '@cypress/request-promise@5.0.0(@cypress/request@3.0.10)(@cypress/request@3.0.10)'
-      sanitize-html: 2.17.0
+      sanitize-html: 2.17.5
     transitivePeerDependencies:
       - '@cypress/request'
       - supports-color
@@ -8631,6 +8638,8 @@ snapshots:
 
   data-uri-to-buffer@4.0.1: {}
 
+  dayjs@1.11.21: {}
+
   debug@2.6.9:
     dependencies:
       ms: 2.0.0
@@ -8674,7 +8683,7 @@ snapshots:
     dependencies:
       domelementtype: 2.3.0
 
-  dompurify@3.4.12:
+  dompurify@3.4.13:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
 
@@ -9142,7 +9151,7 @@ snapshots:
 
   highlight.js@10.7.3: {}
 
-  hono@4.12.27: {}
+  hono@4.12.34: {}
 
   hookable@6.0.1: {}
 
@@ -9436,6 +9445,10 @@ snapshots:
   klona@2.0.6: {}
 
   ky@1.14.3: {}
+
+  launder@1.7.1:
+    dependencies:
+      dayjs: 1.11.21
 
   leac@0.6.0: {}
 
@@ -9986,7 +9999,7 @@ snapshots:
 
   pngjs@7.0.0: {}
 
-  postcss@8.5.18:
+  postcss@8.5.23:
     dependencies:
       nanoid: 3.3.17
       picocolors: 1.1.1
@@ -10218,14 +10231,15 @@ snapshots:
 
   safer-buffer@2.1.2: {}
 
-  sanitize-html@2.17.0:
+  sanitize-html@2.17.5:
     dependencies:
       deepmerge: 4.3.1
       escape-string-regexp: 4.0.0
-      htmlparser2: 8.0.2
+      htmlparser2: 10.1.0
       is-plain-object: 5.0.0
+      launder: 1.7.1
       parse-srcset: 1.0.2
-      postcss: 8.5.18
+      postcss: 8.5.23
 
   selderee@0.11.0:
     dependencies:
@@ -10523,7 +10537,7 @@ snapshots:
       - bare-abort-controller
       - react-native-b4a
 
-  tar@7.5.19:
+  tar@7.5.21:
     dependencies:
       '@isaacs/fs-minipass': 4.0.1
       chownr: 3.0.0
@@ -10679,7 +10693,7 @@ snapshots:
 
   undici-types@7.18.2: {}
 
-  undici@6.27.0: {}
+  undici@6.28.0: {}
 
   undici@7.29.0: {}
 
@@ -10741,7 +10755,7 @@ snapshots:
     dependencies:
       lightningcss: 1.32.0
       picomatch: 4.0.4
-      postcss: 8.5.18
+      postcss: 8.5.23
       rolldown: 1.1.3
       tinyglobby: 0.2.17
     optionalDependencies:
@@ -10756,7 +10770,7 @@ snapshots:
     dependencies:
       lightningcss: 1.32.0
       picomatch: 4.0.4
-      postcss: 8.5.18
+      postcss: 8.5.23
       rolldown: 1.1.3
       tinyglobby: 0.2.17
     optionalDependencies:
