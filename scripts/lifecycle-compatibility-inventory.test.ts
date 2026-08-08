@@ -49,10 +49,10 @@ describe("lifecycle compatibility inventory", () => {
     const inventory = loadLifecycleCompatibilityInventory();
     const assignments = publishedReleaseAssignments(inventory);
 
-    expect(inventory.publishedReleaseCount).toBe(107);
+    expect(inventory.publishedReleaseCount).toBe(108);
     expect(inventory.releaseGroups).toHaveLength(7);
-    expect(assignments).toHaveLength(107);
-    expect(new Set(assignments.map(({ tag }) => tag)).size).toBe(107);
+    expect(assignments).toHaveLength(108);
+    expect(new Set(assignments.map(({ tag }) => tag)).size).toBe(108);
     expect(inventory.topologies.map(({ id }) => id)).toEqual(
       expect.arrayContaining(__testing.REQUIRED_TOPOLOGY_CLASSES),
     );
