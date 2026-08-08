@@ -344,6 +344,23 @@ describe("machine gate authority", () => {
     });
   });
 
+  it("routes Dependabot policy through CI contracts without product lanes", () => {
+    const plan = createGatePlan([".github/dependabot.yml"]);
+    expect(plan.changeKind).toBe("ci-infrastructure-only");
+    expect(plan.scope).toMatchObject({
+      ciInfrastructureOnly: true,
+      productionChanged: false,
+      runCiContracts: true,
+      runNode: false,
+      runNodeBuild: false,
+      runNodeFull: false,
+      runDocker: false,
+      runHosting: false,
+      runLocalFresh: false,
+      runLocalUpdate: false,
+    });
+  });
+
   it("keeps CI-only authority edits out of production CodeQL", () => {
     const plan = createGatePlan(["scripts/ci-change-scope.mjs"]);
     expect(plan.scope).toMatchObject({

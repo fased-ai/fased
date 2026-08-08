@@ -26,7 +26,7 @@ const DOC_PATH_RE = /^(?:docs\/|.*\.(?:md|mdx)$|scripts\/docs-product-contract\.
 const VERSION_PATH_RE =
   /^(?:package\.json|CHANGELOG\.md|src\/brand\.ts|extensions\/[^/]+\/(?:package\.json|CHANGELOG\.md))$/;
 const CI_INFRASTRUCTURE_PATH_RE =
-  /^(?:\.pre-commit-config\.yaml$|\.secrets\.baseline$|config\/lifecycle-compatibility\.v1\.json$|\.github\/(?:actions\/[^/]+\/action\.ya?ml|workflows\/[^/]+\.ya?ml)|scripts\/(?:gate-authority|hosted-installer-artifact-layout|lifecycle-compatibility-inventory|release-artifact-set|ci-(?:change-scope|dependency-integrity|required-gates|merged-main-reuse|run-changed-tests|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/check-composite-action-input-interpolation\.py|ui\/vitest\.changed-node\.config\.ts)$/;
+  /^(?:\.pre-commit-config\.yaml$|\.secrets\.baseline$|config\/lifecycle-compatibility\.v1\.json$|\.github\/(?:dependabot\.yml$|actions\/[^/]+\/action\.ya?ml|workflows\/[^/]+\.ya?ml)|scripts\/(?:gate-authority|hosted-installer-artifact-layout|lifecycle-compatibility-inventory|release-artifact-set|ci-(?:change-scope|dependency-integrity|required-gates|merged-main-reuse|run-changed-tests|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/check-composite-action-input-interpolation\.py|ui\/vitest\.changed-node\.config\.ts)$/;
 const INSTALLER_P1_FIXTURE_PATHS = new Set([
   "scripts/ci-workflow-contract.test.ts",
   "scripts/docker/protected-local-systemd/run.sh",
