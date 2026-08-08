@@ -115,8 +115,10 @@ describe("machine gate authority", () => {
 
   it("routes the packaged public-acquisition fixture through CI contracts only", () => {
     const plan = createGatePlan([
-      "scripts/ci-workflow-contract.test.ts",
-      "scripts/test-protected-local-systemd-container.sh",
+      "scripts/docker/protected-local-systemd/run.sh",
+      "scripts/gate-authority.test.ts",
+      "scripts/hosted-installer-artifact-layout.test.ts",
+      "scripts/gate-authority.mjs",
     ]);
 
     expect(plan.changeKind).toBe("ci-infrastructure-only");

@@ -793,6 +793,9 @@ cat >/opt/fased-fixture-bootstrap-tools/gh <<EOF_FIXTURE_GH
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "\${1:-}" == "attestation" && "\${2:-}" == "verify" ]]; then
+  if [[ "\${3:-}" == "--help" ]]; then
+    exit 0
+  fi
   source_ref=""
   args=("\$@")
   for ((index = 0; index < \${#args[@]}; index++)); do

@@ -376,6 +376,7 @@ describe("attested Hosting installer artifact layout", () => {
     expect(updater).not.toContain("FASED_HOSTED_ARTIFACT_BASE_URL");
     expect(fixture).toContain("DefaultEnvironment=NODE_EXTRA_CA_CERTS=");
     expect(fixture).toContain("127.0.0.1 github.com");
+    expect(fixture).toContain('if [[ "\\${3:-}" == "--help" ]]');
     expect(fixture).toContain("/repo/scripts/privileged-release-evidence.mjs build");
     expect(fixture).toContain("/repo/scripts/build-lifecycle-trust-metadata.mjs");
     expect(fixture).toContain(
