@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 
-export const GATE_AUTHORITY_VERSION = 3;
+export const GATE_AUTHORITY_VERSION = 4;
 
 export const PHASES = Object.freeze(["T0", "T1", "T2", "T3", "merge-reuse", "stable"]);
 export const ENTRY_POINTS = Object.freeze([
@@ -169,6 +169,7 @@ function emptyScope(overrides = {}) {
     reusePrChecks: false,
     runNode: false,
     runNodeFocused: false,
+    runInstallerReleaseVerification: false,
     runNodeBuild: false,
     runNodePackaging: false,
     runNodeFull: false,
@@ -256,6 +257,15 @@ export function createGatePlan(inputPaths, options = {}) {
   assertOption(entryPoint, ENTRY_POINTS, "entry point");
 
   const paths = normalizeChangedPaths(inputPaths);
+  const installerReleaseVerification = options.installerReleaseVerification === true;
+  if (
+    installerReleaseVerification &&
+    (paths.length !== 2 ||
+      !paths.includes("install.sh") ||
+      !paths.includes("scripts/install-release-pin.test.ts"))
+  ) {
+    throw new Error("gate authority: invalid installer release-verification lane paths");
+  }
   const fullMatrix = options.fullMatrix === true;
   const reusePrChecks = options.reusePrChecks === true;
   const unknown = options.unknown === true || paths.length === 0;
@@ -472,9 +482,17 @@ export function createGatePlan(inputPaths, options = {}) {
     runHostingUpdate = entryPoint === "hosting-update";
   }
 
+  if (installerReleaseVerification) {
+    runLocalFresh = false;
+    runLocalUpdate = false;
+    runHostingFresh = false;
+    runHostingUpdate = false;
+  }
+
   const privilegeChanged = productionPaths.some((path) => PRIVILEGED_PATH_RE.test(path));
   const t2FixtureChanged = paths.some((path) => T2_FIXTURE_PATH_RE.test(path));
-  const runT2Contracts = t2FixtureOnly || t2FixtureChanged || privilegeChanged;
+  const runT2Contracts =
+    !installerReleaseVerification && (t2FixtureOnly || t2FixtureChanged || privilegeChanged);
   const runCiContracts = ciInfrastructureChanged;
   const runHosting = runHostingFresh || runHostingUpdate;
   const pureUiProduction =
@@ -498,6 +516,7 @@ export function createGatePlan(inputPaths, options = {}) {
     productionPaths.length > 0 &&
     productionPaths.every((path) => path === "scripts/release-check.ts");
   const runNodeFocused = focusedLocalUpdate || focusedReleaseInventory;
+  const focusedNodeLane = runNodeFocused || installerReleaseVerification;
   const runUi =
     !ciInfrastructureOnly &&
     !t2FixtureOnly &&
@@ -507,17 +526,17 @@ export function createGatePlan(inputPaths, options = {}) {
     pureUiProduction || (routableTestOnly && paths.every((path) => UI_PATH_RE.test(path)));
   const runNodeGateway =
     runNode &&
-    !runNodeFocused &&
+    !focusedNodeLane &&
     ((routableTestOnly && paths.some((path) => GATEWAY_NODE_PATH_RE.test(path))) ||
       pureGatewayProduction);
   const runNodeExtensions =
     runNode &&
-    !runNodeFocused &&
+    !focusedNodeLane &&
     ((routableTestOnly && paths.some((path) => EXTENSION_NODE_PATH_RE.test(path))) ||
       pureExtensionProduction);
   const runNodeUnit =
     runNode &&
-    !runNodeFocused &&
+    !focusedNodeLane &&
     routableTestOnly &&
     paths.some(
       (path) =>
@@ -527,19 +546,24 @@ export function createGatePlan(inputPaths, options = {}) {
     );
   const runNodeBuild =
     runNode &&
+    !installerReleaseVerification &&
     !pureUiProduction &&
     (productionChanged || runHosting || runLocalFresh || runLocalUpdate);
   const runNodePackaging =
-    runNode && productionPaths.some((path) => NODE_PACKAGING_PATH_RE.test(path));
+    runNode &&
+    !installerReleaseVerification &&
+    productionPaths.some((path) => NODE_PACKAGING_PATH_RE.test(path));
   const runNodeFull =
     runNode &&
-    !runNodeFocused &&
+    !focusedNodeLane &&
     !uiReplacesNodeFull &&
     !runNodeUnit &&
     !runNodeGateway &&
     !runNodeExtensions;
   const runMacosRuntime =
-    productionChanged && effectivePaths.some((path) => MACOS_RUNTIME_PATH_RE.test(path));
+    !installerReleaseVerification &&
+    productionChanged &&
+    effectivePaths.some((path) => MACOS_RUNTIME_PATH_RE.test(path));
   const runMacosApp =
     productionChanged && effectivePaths.some((path) => MACOS_APP_PATH_RE.test(path));
   const experimentalMobileChanged = paths.some((path) => EXPERIMENTAL_MOBILE_PATH_RE.test(path));
@@ -547,8 +571,11 @@ export function createGatePlan(inputPaths, options = {}) {
     productionPaths.length > 0 &&
     productionPaths.every((path) => EXPERIMENTAL_MOBILE_PATH_RE.test(path));
   const runNativeSigner =
-    productionChanged && effectivePaths.some((path) => NATIVE_SIGNER_PATH_RE.test(path));
+    !installerReleaseVerification &&
+    productionChanged &&
+    effectivePaths.some((path) => NATIVE_SIGNER_PATH_RE.test(path));
   const runSignerIntegration =
+    !installerReleaseVerification &&
     productionChanged &&
     effectivePaths.some(
       (path) => SIGNER_INTEGRATION_PATH_RE.test(path) || NATIVE_SIGNER_PATH_RE.test(path),
@@ -557,7 +584,9 @@ export function createGatePlan(inputPaths, options = {}) {
     runSignerIntegration &&
     effectivePaths.some((path) => DARWIN_SIGNER_INTEGRATION_PATH_RE.test(path));
   const runPlatformBootstrap =
-    runLocalFresh && effectivePaths.some((path) => PLATFORM_BOOTSTRAP_PATH_RE.test(path));
+    !installerReleaseVerification &&
+    runLocalFresh &&
+    effectivePaths.some((path) => PLATFORM_BOOTSTRAP_PATH_RE.test(path));
   const runDocker =
     !ciInfrastructureOnly && effectivePaths.some((path) => DOCKER_PRODUCT_PATH_RE.test(path));
   const codeqlPaths = productionChanged ? productionPaths : [];
@@ -584,6 +613,7 @@ export function createGatePlan(inputPaths, options = {}) {
     privilegeChanged,
     runNode,
     runNodeFocused,
+    runInstallerReleaseVerification: installerReleaseVerification,
     runNodeBuild,
     runNodePackaging,
     runNodeFull,
@@ -594,7 +624,10 @@ export function createGatePlan(inputPaths, options = {}) {
     runMacosRuntime,
     runMacosApp,
     experimentalMobileChanged,
-    runSigner: productionChanged && effectivePaths.some((path) => SIGNER_PATH_RE.test(path)),
+    runSigner:
+      !installerReleaseVerification &&
+      productionChanged &&
+      effectivePaths.some((path) => SIGNER_PATH_RE.test(path)),
     runNativeSigner,
     runSignerIntegration,
     runSignerDarwinIntegration,

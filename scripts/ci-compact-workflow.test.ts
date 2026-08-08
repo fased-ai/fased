@@ -54,6 +54,24 @@ describe("compact CI topology", () => {
     expect(dependencySteps.map((step) => step.run).join("\n")).toContain("vitest run");
   });
 
+  it("runs exact installer attestation verification without broad product lanes", async () => {
+    const { document } = await workflow("pr.yml");
+    const classify = document.jobs?.classify as { outputs?: Record<string, string> };
+    const selected = document.jobs?.["selected-tests"] as {
+      steps?: Array<{ if?: string; name?: string; run?: string }>;
+    };
+    const step = selected.steps?.find(
+      (candidate) => candidate.name === "Verify Local release-attestation path",
+    );
+
+    expect(classify.outputs?.run_installer_release_verification).toBe(
+      "${{ steps.scope.outputs.run_installer_release_verification }}",
+    );
+    expect(step?.if).toBe("needs.classify.outputs.run_installer_release_verification == 'true'");
+    expect(step?.run).toContain("bash -n install.sh");
+    expect(step?.run).toContain("scripts/install-release-pin.test.ts");
+  });
+
   it("does not install the workspace for an exact version-only PR", async () => {
     const { document } = await workflow("pr.yml");
     const selected = document.jobs?.["selected-tests"] as {
