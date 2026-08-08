@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fased Release Manager"
+  short_description: "Route Fased reports, bug PRs, and releases"
+  default_prompt: "Use $fased-release-manager and interpret fix and ship, review queue, or release candidate as scoped founder commands; keep ordinary fixes stateless and publication boundaries explicit."
