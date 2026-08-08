@@ -120,9 +120,9 @@ jobs:
           DEPENDENCY_BASE: ${{ github.event.pull_request.base.sha }}
         run: node scripts/ci-dependency-integrity.mjs
 
-      - name: Audit production dependencies
+      - name: Audit complete dependency graph
         if: needs.classify.outputs.dependency_remediation == 'true'
-        run: pnpm audit --prod --audit-level high
+        run: pnpm audit --audit-level low
 
       - name: Verify frozen lockfile integrity
         if: needs.classify.outputs.dependency_remediation == 'true'
@@ -138,9 +138,10 @@ jobs:
           mapfile -t dependencies < <(jq -er '.[]' <<<"$DEPENDENCY_NAMES_JSON")
           test "${#dependencies[@]}" -gt 0
           tests=()
+          ui_sanitizer=false
           for dependency in "${dependencies[@]}"; do
             [[ "$dependency" =~ ^[A-Za-z0-9@._/-]+$ ]]
-            pnpm why "$dependency" -r --prod
+            pnpm why "$dependency" -r
             case "$dependency" in
               nanoid)
                 tests+=(
@@ -148,13 +149,41 @@ jobs:
                   extensions/matrix/src/matrix/format.test.ts
                 )
                 ;;
+              tar)
+                tests+=(src/infra/archive.test.ts src/infra/update-runner.test.ts)
+                ;;
+              undici)
+                tests+=(
+                  src/infra/net/fetch-guard.dispatcher-cleanup.test.ts
+                  src/telegram/fetch.test.ts
+                )
+                ;;
+              sanitize-html)
+                tests+=(src/agents/tools/web-fetch-visibility.test.ts)
+                ;;
+              hono)
+                tests+=(src/agents/mcp-transport-config.test.ts src/agents/pi-bundle-mcp-runtime.test.ts)
+                ;;
+              dompurify)
+                ui_sanitizer=true
+                ;;
+              postcss)
+                # The production UI build below is the executable compatibility check.
+                ;;
               *)
                 echo "No focused affected-test mapping for $dependency" >&2
                 exit 1
                 ;;
             esac
           done
-          pnpm exec vitest run "${tests[@]}" --pool=forks --maxWorkers=1
+          if ((${#tests[@]} > 0)); then
+            mapfile -t tests < <(printf '%s\n' "${tests[@]}" | sort -u)
+            pnpm exec vitest run "${tests[@]}" --pool=forks --maxWorkers=1
+          fi
+          if [[ "$ui_sanitizer" == "true" ]]; then
+            pnpm --dir ui exec node --input-type=module -e \
+              "import createDOMPurify from 'dompurify'; if (typeof createDOMPurify !== 'function') process.exit(1)"
+          fi
 
       - name: Validate exact version-only diff
         if: needs.classify.outputs.version_only == 'true'
