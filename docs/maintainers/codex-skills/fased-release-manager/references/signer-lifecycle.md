@@ -3,8 +3,8 @@
 Read this document only when installer, updater, signer, wallet custody,
 migration, system service, Local, or Hosting behavior is affected.
 
-Historical implementation and RC incident records are archived under
-[`../archive/incidents/`](../archive/incidents/).
+Historical implementation and RC incident records live in the private
+operations archive; they are non-authoritative and are not bundled here.
 
 The authoritative install, update, repair, shared-state, and onboarding
 architecture is
