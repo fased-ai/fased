@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.60
+
+- Preserve strict Wallet and native signer identity validation during updates
+  without requiring every historical Wallet RPC endpoint to be live.
+- Keep Local activation health bound to the signer-ready Wallet set while
+  reporting the subset with current external RPC readiness.
+
 ## 0.1.76-rc.59
 
 - Preserve distinct public Wallet IDs and canonical native signer IDs during
