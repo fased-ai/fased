@@ -540,6 +540,15 @@ describe("CI workflow routing", () => {
     );
     expect(linuxText).toContain("hosted:artifact:from-dist");
     expect(jobs["linux"]?.needs).toEqual(["validate", "signer"]);
+    const linuxStepNames = jobs["linux"]?.steps?.map((step) => step.name) ?? [];
+    expect(linuxStepNames.indexOf("Download exact native lifecycle assets")).toBeLessThan(
+      linuxStepNames.indexOf("Restore executable modes on exact native lifecycle assets"),
+    );
+    expect(
+      linuxStepNames.indexOf("Restore executable modes on exact native lifecycle assets"),
+    ).toBeLessThan(linuxStepNames.indexOf("Assemble exact lifecycle generation"));
+    expect(linuxText).toContain('test ! -L "$executable"');
+    expect(linuxText).toContain('chmod 0755 "$executable"');
     expect(linuxText).toContain("assemble-lifecycle-generation.mjs");
     expect(
       jobs["linux"]?.steps?.some((step) => step.name === "Assemble exact lifecycle generation"),

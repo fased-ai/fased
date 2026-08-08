@@ -216,6 +216,9 @@ describe("attested Hosting installer artifact layout", () => {
     expect(releaseWorkflow).toContain(
       "install -m 0755 scripts/fased-lifecycle-supervisor.mjs dist-native/release/fased-lifecycle-supervisor.mjs",
     );
+    expect(releaseWorkflow).toContain("Restore executable modes on exact native lifecycle assets");
+    expect(releaseWorkflow).toContain('test ! -L "$executable"');
+    expect(releaseWorkflow).toContain('chmod 0755 "$executable"');
     expect(releaseWorkflow).toContain(
       "dist-native/release/fased-host-updater.mjs.attestation.json",
     );
