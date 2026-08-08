@@ -1284,7 +1284,7 @@ jobs:
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
           GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
           GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: node scripts/ci-version-identity.mjs
+        run: node scripts/ci-version-identity.mjs --allow-published-base-restore
 
   strict-types-baseline:
     name: "strict types baseline"
