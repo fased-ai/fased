@@ -1,0 +1,221 @@
+// Package statebind inventories the fixed, adapter-owned product state roots.
+package statebind
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"syscall"
+
+	"fased-lifecycled/bundle"
+	"fased-lifecycled/model"
+	"fased-lifecycled/planner"
+)
+
+const defaultMaxFiles = 100000
+const defaultMaxBytes int64 = 32 << 30
+
+type Spec struct {
+	Name     string
+	Path     string
+	MaxFiles int
+	MaxBytes int64
+}
+
+type Binder struct {
+	Specs []Spec
+}
+
+type fileRecord struct {
+	Path   string `json:"path"`
+	Mode   uint32 `json:"mode"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256,omitempty"`
+}
+
+type stateRecord struct {
+	Name    string       `json:"name"`
+	Schema  uint32       `json:"schema"`
+	Absent  bool         `json:"absent"`
+	Entries []fileRecord `json:"entries"`
+}
+
+func (binder *Binder) Bind(ctx context.Context, installed *model.Manifest, inventory bundle.Inventory, plan planner.Plan) (string, string, error) {
+	generation, err := bundle.Identity(inventory)
+	if err != nil {
+		return "", "", err
+	}
+	want, err := planner.Build(installed, planner.Target{
+		Profile: plan.Profile, Generation: generation,
+		StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities,
+	})
+	if err != nil {
+		return "", "", err
+	}
+	wantJSON, _ := json.Marshal(want)
+	gotJSON, _ := json.Marshal(plan)
+	if string(wantJSON) != string(gotJSON) {
+		return "", "", errors.New("state inventory plan is not the canonical compatibility plan")
+	}
+	specs, err := binder.validate(inventory.StateSchemas)
+	if err != nil {
+		return "", "", err
+	}
+	records := make([]stateRecord, 0, len(specs))
+	for _, spec := range specs {
+		if err := ctx.Err(); err != nil {
+			return "", "", err
+		}
+		record, err := inspectState(ctx, spec, inventory.StateSchemas[spec.Name], installed == nil)
+		if err != nil {
+			return "", "", fmt.Errorf("inventory state %s: %w", spec.Name, err)
+		}
+		records = append(records, record)
+	}
+	stateDigest, err := digestJSON(records)
+	if err != nil {
+		return "", "", err
+	}
+	signerBinding := struct {
+		GenerationID string             `json:"generationId"`
+		Inventory    string             `json:"stateInventoryDigest"`
+		Migration    *planner.Migration `json:"migration,omitempty"`
+	}{GenerationID: generation.ID, Inventory: stateDigest}
+	for index := range plan.Migrations {
+		if plan.Migrations[index].State == "signer" {
+			signerBinding.Migration = &plan.Migrations[index]
+			break
+		}
+	}
+	signerDigest, err := digestJSON(signerBinding)
+	return stateDigest, signerDigest, err
+}
+
+func (binder *Binder) validate(schemas map[string]uint32) ([]Spec, error) {
+	if binder == nil || len(binder.Specs) != len(schemas) {
+		return nil, errors.New("state binder must declare the exact target state set")
+	}
+	specs := append([]Spec(nil), binder.Specs...)
+	sort.Slice(specs, func(left, right int) bool { return specs[left].Name < specs[right].Name })
+	previous := ""
+	for index := range specs {
+		spec := &specs[index]
+		if spec.Name == "" || spec.Name == previous || schemas[spec.Name] == 0 {
+			return nil, errors.New("state binder contains an unknown or duplicate state")
+		}
+		if !filepath.IsAbs(spec.Path) || filepath.Clean(spec.Path) != spec.Path {
+			return nil, fmt.Errorf("state %s path must be absolute and clean", spec.Name)
+		}
+		if spec.MaxFiles == 0 {
+			spec.MaxFiles = defaultMaxFiles
+		}
+		if spec.MaxBytes == 0 {
+			spec.MaxBytes = defaultMaxBytes
+		}
+		if spec.MaxFiles < 1 || spec.MaxBytes < 1 {
+			return nil, fmt.Errorf("state %s inventory bounds are invalid", spec.Name)
+		}
+		previous = spec.Name
+	}
+	return specs, nil
+}
+
+func inspectState(ctx context.Context, spec Spec, schema uint32, allowAbsent bool) (stateRecord, error) {
+	record := stateRecord{Name: spec.Name, Schema: schema}
+	rootInfo, err := os.Lstat(spec.Path)
+	if errors.Is(err, os.ErrNotExist) && allowAbsent {
+		record.Absent = true
+		return record, nil
+	}
+	if err != nil {
+		return stateRecord{}, err
+	}
+	if rootInfo.Mode()&os.ModeSymlink != 0 {
+		return stateRecord{}, errors.New("state root must not be a symlink")
+	}
+	resolved, err := filepath.EvalSymlinks(spec.Path)
+	if err != nil || resolved != spec.Path {
+		return stateRecord{}, errors.New("state root path must not traverse symlinks")
+	}
+	var total int64
+	err = filepath.WalkDir(spec.Path, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || (!info.Mode().IsRegular() && !info.IsDir()) {
+			return errors.New("state contains a symlink or special file")
+		}
+		relative, err := filepath.Rel(spec.Path, path)
+		if err != nil {
+			return err
+		}
+		recordEntry := fileRecord{Path: filepath.ToSlash(relative), Mode: uint32(info.Mode().Perm()), Size: info.Size()}
+		if info.Mode().IsRegular() {
+			total += info.Size()
+			if total > spec.MaxBytes {
+				return errors.New("state inventory byte limit exceeded")
+			}
+			digest, err := hashStableFile(path, info)
+			if err != nil {
+				return err
+			}
+			recordEntry.SHA256 = digest
+		}
+		record.Entries = append(record.Entries, recordEntry)
+		if len(record.Entries) > spec.MaxFiles {
+			return errors.New("state inventory file limit exceeded")
+		}
+		return nil
+	})
+	return record, err
+}
+
+func hashStableFile(path string, before os.FileInfo) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	after, err := file.Stat()
+	if err != nil || !os.SameFile(before, after) || linkCount(after) != 1 {
+		return "", errors.New("state file changed identity or has multiple links")
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	final, err := file.Stat()
+	if err != nil || final.Size() != after.Size() || final.ModTime() != after.ModTime() {
+		return "", errors.New("state file changed while inventorying")
+	}
+	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
+}
+
+func linkCount(info os.FileInfo) uint64 {
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		return uint64(stat.Nlink)
+	}
+	return 0
+}
+
+func digestJSON(value any) (string, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(data)
+	return fmt.Sprintf("sha256:%x", digest), nil
+}
