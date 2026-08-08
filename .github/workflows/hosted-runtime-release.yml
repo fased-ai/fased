@@ -229,6 +229,20 @@ jobs:
           name: fased-signerd-release
           path: dist-native/release
 
+      - name: Restore executable modes on exact native lifecycle assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          go_arch=amd64
+          if [[ "${{ matrix.arch }}" == arm64 ]]; then go_arch=arm64; fi
+          for executable in \
+            "dist-native/release/fased-signerd-linux-${go_arch}" \
+            "dist-native/release/fased-lifecycled-linux-${go_arch}"; do
+            test -f "$executable"
+            test ! -L "$executable"
+            chmod 0755 "$executable"
+          done
+
       - name: Package hosted runtime artifact from exact shared build
         run: pnpm hosted:artifact:from-dist --output .artifacts/hosted-runtime
 
