@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.57
+
+- Patch the production dependency audit while keeping dependency remediation on
+  the focused protected-PR lane.
+- Reuse exact merged-main evidence before candidate allocation, build candidate
+  artifacts once, and preserve packaged updater acceptance as the release gate.
+
 ## 0.1.76-rc.56
 
 - Centralize managed update mutation under the target controller and reject
