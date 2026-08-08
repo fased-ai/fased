@@ -22,11 +22,53 @@ describe("compact CI topology", () => {
     ]);
   });
 
-  it("allows a combined broad-change security scan to finish", async () => {
+  it("runs common security and selected CodeQL languages in parallel", async () => {
     const { document } = await workflow("pr.yml");
-    const security = document.jobs?.security as { "timeout-minutes"?: number };
+    const classify = document.jobs?.classify as {
+      outputs?: Record<string, string>;
+      steps?: Array<{ id?: string; run?: string }>;
+    };
+    const security = document.jobs?.security as {
+      "timeout-minutes"?: number;
+      strategy?: { matrix?: { target?: string } };
+      steps?: Array<{ if?: string; name?: string; with?: { languages?: string } }>;
+    };
 
-    expect(security["timeout-minutes"]).toBe(15);
+    expect(classify.outputs?.security_targets_json).toBe(
+      "${{ steps.security-matrix.outputs.targets_json }}",
+    );
+    expect(classify.steps?.find((step) => step.id === "security-matrix")?.run).toContain(
+      '["common"] + $languages',
+    );
+    expect(security["timeout-minutes"]).toBe(20);
+    expect(security.strategy?.matrix?.target).toBe(
+      "${{ fromJSON(needs.classify.outputs.security_targets_json) }}",
+    );
+    expect(
+      security.steps?.find((step) => step.name === "Initialize selected CodeQL languages")?.with
+        ?.languages,
+    ).toBe("${{ matrix.target }}");
+  });
+
+  it("uses bounded lifecycle regressions instead of the full workspace suite", async () => {
+    const { document } = await workflow("pr.yml");
+    const selected = document.jobs?.["selected-tests"] as {
+      steps?: Array<{ if?: string; name?: string; run?: string }>;
+    };
+    const full = selected.steps?.find(
+      (step) => step.name === "Run full Node tests when explicitly selected",
+    );
+    const lifecycle = selected.steps?.find(
+      (step) => step.name === "Run lifecycle-engine regressions",
+    );
+
+    expect(full?.if).toContain("run_native_signer == 'true'");
+    expect(full?.if).toContain("run_local_update == 'true'");
+    expect(lifecycle?.if).toContain("run_node_full == 'true'");
+    expect(lifecycle?.if).toContain("run_native_signer == 'true'");
+    expect(lifecycle?.if).toContain("run_local_update == 'true'");
+    expect(lifecycle?.run).toContain("scripts/generation-updater.test.ts");
+    expect(lifecycle?.run).toContain("scripts/fased-managed-updater.test.ts");
   });
 
   it("keeps the broad matrix outside pull requests", async () => {

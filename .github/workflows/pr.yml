@@ -42,6 +42,7 @@ jobs:
       run_codeql_go: ${{ steps.scope.outputs.run_codeql_go }}
       run_codeql_python: ${{ steps.scope.outputs.run_codeql_python }}
       codeql_languages_json: ${{ steps.scope.outputs.codeql_languages_json }}
+      security_targets_json: ${{ steps.security-matrix.outputs.targets_json }}
     steps:
       - name: Checkout proposed tree
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -64,6 +65,14 @@ jobs:
           GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
           GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: node .ci-authority/scripts/ci-change-scope.mjs
+
+      - name: Build protected security matrix
+        id: security-matrix
+        env:
+          CODEQL_LANGUAGES_JSON: ${{ steps.scope.outputs.codeql_languages_json }}
+        run: |
+          targets="$(jq -cn --argjson languages "$CODEQL_LANGUAGES_JSON" '["common"] + $languages')"
+          echo "targets_json=$targets" >> "$GITHUB_OUTPUT"
 
   selected-tests:
     name: selected-tests
@@ -214,8 +223,24 @@ jobs:
         run: node scripts/ci-run-changed-tests.mjs extensions
 
       - name: Run full Node tests when explicitly selected
-        if: needs.classify.outputs.run_node_full == 'true'
+        if: needs.classify.outputs.run_node_full == 'true' && !(needs.classify.outputs.run_native_signer == 'true' && needs.classify.outputs.run_local_update == 'true')
         run: pnpm test
+
+      - name: Run lifecycle-engine regressions
+        if: needs.classify.outputs.run_node_full == 'true' && needs.classify.outputs.run_native_signer == 'true' && needs.classify.outputs.run_local_update == 'true'
+        run: >-
+          pnpm exec vitest run
+          scripts/fased-local-recovery-pending.test.ts
+          scripts/fased-managed-updater.test.ts
+          scripts/generation-updater.test.ts
+          scripts/hosted-installer-artifact-layout.test.ts
+          scripts/managed-runtime-layout.test.ts
+          scripts/managed-update-contract.test.ts
+          scripts/managed-update-mode.test.ts
+          scripts/managed-updater-bundle.test.ts
+          test/scripts/ui.test.ts
+          --pool=forks
+          --maxWorkers=1
 
       - name: Build once when selected
         if: needs.classify.outputs.run_node_build == 'true'
@@ -286,10 +311,14 @@ jobs:
           if [ "${#lint_files[@]}" -gt 0 ]; then pnpm exec oxlint "${lint_files[@]}"; fi
 
   security:
-    name: security
+    name: security (${{ matrix.target }})
     needs: [classify]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.classify.outputs.security_targets_json) }}
     permissions:
       security-events: write
     steps:
@@ -300,14 +329,17 @@ jobs:
           submodules: false
 
       - name: Setup Python
+        if: matrix.target == 'common'
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
       - name: Install pre-commit
+        if: matrix.target == 'common'
         run: python -m pip install pre-commit
 
       - name: Detect secrets and private keys
+        if: matrix.target == 'common'
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
@@ -315,6 +347,7 @@ jobs:
           pre-commit run detect-private-key --from-ref "$BASE" --to-ref HEAD
 
       - name: Audit changed workflows
+        if: matrix.target == 'common'
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
@@ -322,17 +355,17 @@ jobs:
           if [ "${#files[@]}" -gt 0 ]; then pre-commit run zizmor --files "${files[@]}"; fi
 
       - name: Initialize selected CodeQL languages
-        if: needs.classify.outputs.codeql_languages_json != '[]'
+        if: matrix.target != 'common'
         uses: github/codeql-action/init@d1ba80a13dd99fba24a470575428917156a28b43 # v4
         with:
-          languages: ${{ join(fromJSON(needs.classify.outputs.codeql_languages_json), ',') }}
+          languages: ${{ matrix.target }}
 
       - name: Autobuild selected compiled language
-        if: needs.classify.outputs.run_codeql_go == 'true'
+        if: matrix.target == 'go'
         uses: github/codeql-action/autobuild@d1ba80a13dd99fba24a470575428917156a28b43 # v4
 
       - name: Analyze selected languages
-        if: needs.classify.outputs.codeql_languages_json != '[]'
+        if: matrix.target != 'common'
         uses: github/codeql-action/analyze@d1ba80a13dd99fba24a470575428917156a28b43 # v4
 
   checks:
