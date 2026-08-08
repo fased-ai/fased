@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { verifyRepositoryDependencyRemediation } from "./ci-dependency-integrity.mjs";
 import { classifyChangedPaths, createGatePlan, normalizeChangedPaths } from "./gate-authority.mjs";
 
@@ -43,7 +43,7 @@ export function outputEntries(plan, options = {}) {
   const scope = plan.scope;
   const dependencyRemediation = options.dependencyRemediation === true;
   const dependencyNames = dependencyRemediation ? (options.dependencyNames ?? []) : [];
-  const focusedNode = scope.runNodeFocused;
+  const focusedNode = scope.runNodeFocused || scope.runInstallerReleaseVerification;
   const focusedLocalUpdate = focusedNode && scope.runLocalUpdate;
   const runDependencyIntegrity = dependencyRemediation || (scope.runNodePackaging && !focusedNode);
   const lane = (value) => !dependencyRemediation && value;
@@ -86,6 +86,7 @@ export function outputEntries(plan, options = {}) {
     run_dependency_integrity: trueString(runDependencyIntegrity),
     run_node: trueString(lane(scope.runNode)),
     run_node_focused: trueString(lane(scope.runNodeFocused || focusedLocalUpdate)),
+    run_installer_release_verification: trueString(lane(scope.runInstallerReleaseVerification)),
     run_node_build: trueString(dependencyRemediation || prBuildLane(scope.runNodeBuild)),
     run_node_packaging: trueString(focusedLane(scope.runNodePackaging)),
     run_node_full: trueString(focusedLane(scope.runNodeFull)),
@@ -117,6 +118,53 @@ export function outputEntries(plan, options = {}) {
     run_skills: trueString(lane(scope.runSkills)),
     full_matrix: trueString(lane(scope.fullMatrix)),
   };
+}
+
+function installerOutsideVerificationFunction(source) {
+  const startMarker = "  resolve_attested_local_release_commit() {\n";
+  const endMarker = "\n\n  local_path_uid() {";
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start + startMarker.length);
+  if (start < 0 || end < 0) {
+    throw new Error("installer release-verification function is missing");
+  }
+  return `${source.slice(0, start)}${source.slice(end)}`;
+}
+
+export function isInstallerReleaseVerificationChange(paths, baseInstaller, headInstaller) {
+  const normalized = normalizeChangedPaths(paths).toSorted((left, right) =>
+    left.localeCompare(right),
+  );
+  if (
+    normalized.length !== 2 ||
+    normalized[0] !== "install.sh" ||
+    normalized[1] !== "scripts/install-release-pin.test.ts" ||
+    baseInstaller === headInstaller
+  ) {
+    return false;
+  }
+  try {
+    return (
+      installerOutsideVerificationFunction(baseInstaller) ===
+      installerOutsideVerificationFunction(headInstaller)
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function detectInstallerReleaseVerification(paths, env = process.env) {
+  const base = resolveDiffBase(env);
+  try {
+    const baseInstaller = execFileSync("git", ["show", `${base}:install.sh`], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const headInstaller = readFileSync("install.sh", "utf8");
+    return isInstallerReleaseVerificationChange(paths, baseInstaller, headInstaller);
+  } catch {
+    return false;
+  }
 }
 
 function resolveDiffBase(env = process.env) {
@@ -177,12 +225,14 @@ function main() {
     }
   }
 
+  const installerReleaseVerification = detectInstallerReleaseVerification(paths);
   const plan = createGatePlan(paths, {
     phase,
     entryPoint,
     fullMatrix,
     reusePrChecks,
     unknown,
+    installerReleaseVerification,
   });
   const remediation = detectDependencyRemediation(plan);
   const entries = outputEntries(plan, remediation);

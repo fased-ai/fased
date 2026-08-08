@@ -2,11 +2,33 @@ import { describe, expect, it } from "vitest";
 import {
   classifyChangedPaths,
   detectDependencyRemediation,
+  isInstallerReleaseVerificationChange,
   outputEntries,
 } from "./ci-change-scope.mjs";
 import { createGatePlan } from "./gate-authority.mjs";
 
 describe("CI changed-surface classification", () => {
+  it("selects the narrow installer release-verification lane only for a function-contained change", () => {
+    const before = `prefix\n  resolve_attested_local_release_commit() {\n    old\n  }\n\n  local_path_uid() {\n    same\n  }\n`;
+    const after = `prefix\n  resolve_attested_local_release_commit() {\n    corrected\n  }\n\n  local_path_uid() {\n    same\n  }\n`;
+    const paths = ["install.sh", "scripts/install-release-pin.test.ts"];
+
+    expect(isInstallerReleaseVerificationChange(paths, before, after)).toBe(true);
+    expect(isInstallerReleaseVerificationChange(paths, before, `${after}outside`)).toBe(false);
+
+    const output = outputEntries(createGatePlan(paths, { installerReleaseVerification: true }));
+    expect(output).toMatchObject({
+      run_installer_release_verification: "true",
+      run_node_full: "false",
+      run_node_build: "false",
+      run_node_focused: "false",
+      run_native_signer: "false",
+      run_signer_integration: "false",
+      run_local_fresh: "false",
+      run_local_update: "false",
+    });
+  });
+
   it("automatically keeps a narrow updater change on the focused source lane", () => {
     const plan = createGatePlan(["scripts/protected-local-bootstrap.mjs"]);
     const output = outputEntries(plan);

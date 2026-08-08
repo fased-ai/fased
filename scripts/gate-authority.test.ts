@@ -14,7 +14,7 @@ describe("machine gate authority", () => {
     const plan = createGatePlan(t2FixturePaths, { phase: "T2" });
 
     expect(plan).toMatchObject({
-      authorityVersion: 3,
+      authorityVersion: 4,
       phase: "T2",
       entryPoints: [],
       changeKind: "t2-fixture-only",
