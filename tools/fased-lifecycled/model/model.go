@@ -3,11 +3,13 @@
 package model
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"regexp"
+	"sort"
 )
 
 const (
@@ -69,10 +71,17 @@ type CapabilityRanges struct {
 type Manifest struct {
 	SchemaVersion      uint32            `json:"schemaVersion"`
 	Profile            Profile           `json:"profile"`
+	Platform           PlatformIdentity  `json:"platform"`
 	ActiveGeneration   *Generation       `json:"activeGeneration,omitempty"`
 	PreviousGeneration *Generation       `json:"previousGeneration,omitempty"`
 	StateSchemas       map[string]uint32 `json:"stateSchemas"`
 	Capabilities       CapabilityRanges  `json:"capabilities"`
+}
+
+type PlatformIdentity struct {
+	Adapter    string            `json:"adapter"`
+	InstanceID string            `json:"instanceId"`
+	Services   map[string]string `json:"services"`
 }
 
 type Transaction struct {
@@ -87,6 +96,14 @@ type Transaction struct {
 	StateInventoryDigest string      `json:"stateInventoryDigest"`
 	MigrationPlanDigest  string      `json:"migrationPlanDigest"`
 	SignerPlanDigest     string      `json:"signerPlanDigest"`
+	PlatformDigest       string      `json:"platformDigest"`
+	Migrations           []Migration `json:"migrations"`
+}
+
+type Migration struct {
+	State string `json:"state"`
+	From  uint32 `json:"from"`
+	To    uint32 `json:"to"`
 }
 
 type RecoveryDecision struct {
@@ -100,7 +117,82 @@ var (
 	versionPattern       = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$`)
 	transactionIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	stateSchemaPattern   = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]{0,63}$`)
+	platformNamePattern  = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
+	instanceIDPattern    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
+	serviceNamePattern   = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+	unitNamePattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}\.service$`)
 )
+
+func (p PlatformIdentity) Validate(profile Profile) error {
+	want := "linux-systemd-local-v1"
+	if profile == ProfileHosting {
+		want = "linux-systemd-hosting-v1"
+	}
+	if p.Adapter != want || !platformNamePattern.MatchString(p.Adapter) {
+		return fmt.Errorf("platform adapter must be %q for profile %q", want, profile)
+	}
+	if !instanceIDPattern.MatchString(p.InstanceID) {
+		return errors.New("platform instance id is invalid")
+	}
+	expected, err := NewPlatformIdentity(profile, p.InstanceID)
+	if err != nil {
+		return err
+	}
+	required := []string{"controller", "gateway", "signer", "supervisor"}
+	if len(p.Services) != len(required) {
+		return errors.New("platform services must contain the exact required service set")
+	}
+	for _, role := range required {
+		unit, ok := p.Services[role]
+		if !ok || !serviceNamePattern.MatchString(role) || !unitNamePattern.MatchString(unit) || unit != expected.Services[role] {
+			return fmt.Errorf("platform service %q is missing or invalid", role)
+		}
+	}
+	return nil
+}
+
+func NewPlatformIdentity(profile Profile, instanceID string) (PlatformIdentity, error) {
+	if err := validateProfile(profile); err != nil {
+		return PlatformIdentity{}, err
+	}
+	if !instanceIDPattern.MatchString(instanceID) {
+		return PlatformIdentity{}, errors.New("platform instance id is invalid")
+	}
+	prefix, adapter := "fased-local", "linux-systemd-local-v1"
+	if profile == ProfileHosting {
+		prefix, adapter = "fased-hosting", "linux-systemd-hosting-v1"
+	}
+	services := make(map[string]string, 4)
+	for _, role := range []string{"controller", "gateway", "signer", "supervisor"} {
+		services[role] = fmt.Sprintf("%s-%s-%s.service", prefix, role, instanceID)
+	}
+	return PlatformIdentity{Adapter: adapter, InstanceID: instanceID, Services: services}, nil
+}
+
+func (p PlatformIdentity) Digest(profile Profile) (string, error) {
+	if err := p.Validate(profile); err != nil {
+		return "", err
+	}
+	roles := make([]string, 0, len(p.Services))
+	for role := range p.Services {
+		roles = append(roles, role)
+	}
+	sort.Strings(roles)
+	type service struct{ Role, Unit string }
+	canonical := struct {
+		Adapter, InstanceID string
+		Services            []service
+	}{Adapter: p.Adapter, InstanceID: p.InstanceID}
+	for _, role := range roles {
+		canonical.Services = append(canonical.Services, service{Role: role, Unit: p.Services[role]})
+	}
+	encoded, err := json.Marshal(canonical)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return fmt.Sprintf("sha256:%x", digest), nil
+}
 
 func (g Generation) Validate() error {
 	if !digestPattern.MatchString(g.ID) {
@@ -162,6 +254,9 @@ func (m Manifest) Validate() error {
 		return fmt.Errorf("unsupported manifest schema %d", m.SchemaVersion)
 	}
 	if err := validateProfile(m.Profile); err != nil {
+		return err
+	}
+	if err := m.Platform.Validate(m.Profile); err != nil {
 		return err
 	}
 	if m.ActiveGeneration == nil && m.PreviousGeneration != nil {
@@ -235,6 +330,19 @@ func (t Transaction) Validate() error {
 	}
 	if !digestPattern.MatchString(t.SignerPlanDigest) {
 		return errors.New("signer plan binding must be a lowercase sha256 digest")
+	}
+	if !digestPattern.MatchString(t.PlatformDigest) {
+		return errors.New("platform binding must be a lowercase sha256 digest")
+	}
+	previousState := ""
+	for _, migration := range t.Migrations {
+		if !stateSchemaPattern.MatchString(migration.State) || migration.State <= previousState {
+			return errors.New("transaction migrations must use unique sorted state names")
+		}
+		if migration.To == 0 || migration.From >= migration.To {
+			return fmt.Errorf("transaction migration %q is not monotonic", migration.State)
+		}
+		previousState = migration.State
 	}
 	return nil
 }

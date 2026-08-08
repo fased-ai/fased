@@ -34,6 +34,11 @@ func generation(id, version, commit string) model.Generation {
 	return model.Generation{ID: id, Version: version, Commit: commit, Tree: commit, ArtifactSetDigest: id}
 }
 
+func platform() model.PlatformIdentity {
+	value, _ := model.NewPlatformIdentity(model.ProfileProtectedLocal, "test-instance")
+	return value
+}
+
 type fakeStore struct {
 	manifest       *model.Manifest
 	manifestDigest string
@@ -96,7 +101,7 @@ func TestConvergeBuildsTransactionFromStoredContract(t *testing.T) {
 	bindings := &fakeInventory{}
 	supervisor := &fakeSupervisor{}
 	service := Service{
-		Profile: model.ProfileProtectedLocal, Store: state, Inventory: bindings, Supervisor: supervisor,
+		Profile: model.ProfileProtectedLocal, Platform: platform(), Store: state, Inventory: bindings, Supervisor: supervisor,
 		NewID: func() (string, error) { return transactionID, nil },
 	}
 	request := protocol.Request{
@@ -120,12 +125,14 @@ func TestManifestCASMismatchStopsBeforeInventoryOrMutation(t *testing.T) {
 	active := generation(digestA, "0.1.75", commitA)
 	manifest := model.Manifest{
 		SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal,
+		Platform:         platform(),
 		ActiveGeneration: &active, StateSchemas: map[string]uint32{"signer": 1}, Capabilities: capabilities(),
 	}
 	bindings := &fakeInventory{}
 	supervisor := &fakeSupervisor{}
 	service := Service{
 		Profile:   model.ProfileProtectedLocal,
+		Platform:  platform(),
 		Store:     fakeStore{manifest: &manifest, manifestDigest: digestA, inventory: inventory, generation: target},
 		Inventory: bindings, Supervisor: supervisor,
 	}
@@ -145,12 +152,14 @@ func TestAlreadyCurrentDoesNotAllocateTransaction(t *testing.T) {
 	inventory, target := targetContract()
 	manifest := model.Manifest{
 		SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal,
+		Platform:         platform(),
 		ActiveGeneration: &target, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities,
 	}
 	bindings := &fakeInventory{}
 	supervisor := &fakeSupervisor{}
 	service := Service{
 		Profile:   model.ProfileProtectedLocal,
+		Platform:  platform(),
 		Store:     fakeStore{manifest: &manifest, manifestDigest: digestA, inventory: inventory, generation: target},
 		Inventory: bindings, Supervisor: supervisor,
 		NewID: func() (string, error) { return "", errors.New("must not allocate") },
@@ -165,5 +174,33 @@ func TestAlreadyCurrentDoesNotAllocateTransaction(t *testing.T) {
 	}
 	if bindings.calls != 0 || supervisor.runs != 0 {
 		t.Fatal("already-current performed work")
+	}
+}
+
+func TestInstalledPlatformMismatchRequiresExplicitRepair(t *testing.T) {
+	inventory, target := targetContract()
+	active := generation(digestA, "0.1.75", commitA)
+	wrong, _ := model.NewPlatformIdentity(model.ProfileProtectedLocal, "other-instance")
+	manifest := model.Manifest{
+		SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal,
+		Platform: wrong, ActiveGeneration: &active,
+		StateSchemas: map[string]uint32{"signer": 1}, Capabilities: capabilities(),
+	}
+	bindings := &fakeInventory{}
+	supervisor := &fakeSupervisor{}
+	service := Service{
+		Profile: model.ProfileProtectedLocal, Platform: platform(),
+		Store:     fakeStore{manifest: &manifest, manifestDigest: digestA, inventory: inventory, generation: target},
+		Inventory: bindings, Supervisor: supervisor,
+	}
+	request := protocol.Request{
+		SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationConverge,
+		TargetGenerationID: target.ID, ExpectedManifestDigest: digestA,
+	}
+	if _, err := service.Handle(context.Background(), request); err == nil {
+		t.Fatal("platform mismatch was accepted as a normal update")
+	}
+	if bindings.calls != 0 || supervisor.runs != 0 {
+		t.Fatal("platform mismatch reached state inventory or mutation")
 	}
 }

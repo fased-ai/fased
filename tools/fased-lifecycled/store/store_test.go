@@ -23,9 +23,11 @@ func generation(id, version, commit string) model.Generation {
 func manifest() model.Manifest {
 	active := generation(digestB, "0.1.76", commitB)
 	previous := generation(digestA, "0.1.75", commitA)
+	platform, _ := model.NewPlatformIdentity(model.ProfileProtectedLocal, "test-instance")
 	return model.Manifest{
 		SchemaVersion:      model.CurrentManifestSchemaVersion,
 		Profile:            model.ProfileProtectedLocal,
+		Platform:           platform,
 		ActiveGeneration:   &active,
 		PreviousGeneration: &previous,
 		StateSchemas:       map[string]uint32{"signer": 2, "walletRegistry": 1},
@@ -52,6 +54,7 @@ func transaction(phase model.Phase) model.Transaction {
 		StateInventoryDigest: digestB,
 		MigrationPlanDigest:  digestA,
 		SignerPlanDigest:     digestB,
+		PlatformDigest:       digestA,
 	}
 }
 

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -31,8 +32,15 @@ func testCapabilities() CapabilityRanges {
 	}
 }
 
+func testPlatform(profile Profile) PlatformIdentity {
+	platform, _ := NewPlatformIdentity(profile, "test-instance")
+	return platform
+}
+
 func testTransaction(phase Phase) Transaction {
 	previous := testGeneration(testDigestA, "0.1.75", testCommitA, testCommitA, testDigestA)
+	platform := testPlatform(ProfileProtectedLocal)
+	platformDigest, _ := platform.Digest(ProfileProtectedLocal)
 	return Transaction{
 		SchemaVersion:        CurrentTransactionSchemaVersion,
 		ID:                   "018f47d2-5a6b-7c8d-9e0f-123456789abc",
@@ -45,6 +53,7 @@ func testTransaction(phase Phase) Transaction {
 		StateInventoryDigest: testDigestB,
 		MigrationPlanDigest:  testDigestA,
 		SignerPlanDigest:     testDigestB,
+		PlatformDigest:       platformDigest,
 	}
 }
 
@@ -64,7 +73,7 @@ func TestAdvanceUsesOneFixedStateMachine(t *testing.T) {
 				tx := testTransaction(from)
 				got, err := Advance(tx, to)
 				if from == to {
-					if err != nil || got != tx {
+					if err != nil || !reflect.DeepEqual(got, tx) {
 						t.Fatalf("idempotent transition changed transaction: got=%+v err=%v", got, err)
 					}
 					return
@@ -118,6 +127,7 @@ func TestManifestRejectsUnknownNewerAndAmbiguousState(t *testing.T) {
 	valid := Manifest{
 		SchemaVersion:      CurrentManifestSchemaVersion,
 		Profile:            ProfileProtectedLocal,
+		Platform:           testPlatform(ProfileProtectedLocal),
 		ActiveGeneration:   &active,
 		PreviousGeneration: &previous,
 		StateSchemas:       map[string]uint32{"walletRegistry": 1, "signer": 2},
@@ -150,6 +160,7 @@ func TestStrictJSONRejectsProcessIdentityAndTrailingData(t *testing.T) {
 	manifest := `{
 		"schemaVersion":1,
 		"profile":"protected-local",
+		"platform":{"adapter":"linux-systemd-local-v1","instanceId":"test-instance","services":{"controller":"fased-local-controller-test-instance.service","gateway":"fased-local-gateway-test-instance.service","signer":"fased-local-signer-test-instance.service","supervisor":"fased-local-supervisor-test-instance.service"}},
 		"stateSchemas":{"signer":1},
 		"capabilities":{
 			"supervisor":{"min":1,"max":1},
@@ -166,6 +177,7 @@ func TestStrictJSONRejectsProcessIdentityAndTrailingData(t *testing.T) {
 	valid := `{
 		"schemaVersion":1,
 		"profile":"protected-local",
+		"platform":{"adapter":"linux-systemd-local-v1","instanceId":"test-instance","services":{"controller":"fased-local-controller-test-instance.service","gateway":"fased-local-gateway-test-instance.service","signer":"fased-local-signer-test-instance.service","supervisor":"fased-local-supervisor-test-instance.service"}},
 		"stateSchemas":{"signer":1},
 		"capabilities":{
 			"supervisor":{"min":1,"max":1},
@@ -183,6 +195,7 @@ func TestCanonicalManifestJSONIsIndependentOfMapInsertionOrder(t *testing.T) {
 	first := Manifest{
 		SchemaVersion: CurrentManifestSchemaVersion,
 		Profile:       ProfileProtectedLocal,
+		Platform:      testPlatform(ProfileProtectedLocal),
 		StateSchemas:  map[string]uint32{"walletRegistry": 1, "signer": 2},
 		Capabilities:  testCapabilities(),
 	}
@@ -205,6 +218,7 @@ func TestValidationRejectsMalformedIdentityAndCapabilities(t *testing.T) {
 	manifest := Manifest{
 		SchemaVersion: CurrentManifestSchemaVersion,
 		Profile:       ProfileHosting,
+		Platform:      testPlatform(ProfileHosting),
 		StateSchemas:  map[string]uint32{"signer": 1},
 		Capabilities:  testCapabilities(),
 	}

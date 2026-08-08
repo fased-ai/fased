@@ -37,9 +37,11 @@ func target() Target {
 
 func installed() model.Manifest {
 	active := generation(digestA, "0.1.75", commitA)
+	platform, _ := model.NewPlatformIdentity(model.ProfileProtectedLocal, "test-instance")
 	return model.Manifest{
 		SchemaVersion:    model.CurrentManifestSchemaVersion,
 		Profile:          model.ProfileProtectedLocal,
+		Platform:         platform,
 		ActiveGeneration: &active,
 		StateSchemas:     map[string]uint32{"signer": 2, "walletRegistry": 2},
 		Capabilities:     capabilities(),

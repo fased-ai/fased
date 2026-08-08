@@ -37,6 +37,7 @@ type IDGenerator func() (string, error)
 
 type Service struct {
 	Profile    model.Profile
+	Platform   model.PlatformIdentity
 	Store      StateStore
 	Inventory  StateInventory
 	Supervisor Supervisor
@@ -78,6 +79,10 @@ func (service *Service) inspect(request protocol.Request) (protocol.Response, er
 }
 
 func (service *Service) converge(ctx context.Context, request protocol.Request) (protocol.Response, error) {
+	platformDigest, err := service.Platform.Digest(service.Profile)
+	if err != nil {
+		return protocol.Response{}, err
+	}
 	installed, manifestDigest, err := service.Store.ReadManifest()
 	var current *model.Manifest
 	if errors.Is(err, os.ErrNotExist) {
@@ -92,6 +97,10 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 			return protocol.Response{}, errors.New("installation manifest changed before convergence")
 		}
 		current = &installed
+		installedPlatformDigest, digestErr := installed.Platform.Digest(installed.Profile)
+		if digestErr != nil || installedPlatformDigest != platformDigest {
+			return protocol.Response{}, errors.New("installed platform identity requires explicit repair")
+		}
 	}
 	inventory, generation, err := service.Store.ReadGenerationContract(request.TargetGenerationID)
 	if err != nil {
@@ -125,6 +134,10 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 		Target: generation, Previous: previous, ManifestDigest: manifestDigest,
 		StateInventoryDigest: stateDigest, MigrationPlanDigest: plan.Digest,
 		SignerPlanDigest: signerPlanDigest,
+		PlatformDigest:   platformDigest,
+	}
+	for _, migration := range plan.Migrations {
+		tx.Migrations = append(tx.Migrations, model.Migration{State: migration.State, From: migration.From, To: migration.To})
 	}
 	if err := tx.Validate(); err != nil {
 		return protocol.Response{}, err
@@ -151,6 +164,9 @@ func (service *Service) validate() error {
 	}
 	if service.Profile != model.ProfileProtectedLocal && service.Profile != model.ProfileHosting {
 		return errors.New("lifecycle daemon profile is invalid")
+	}
+	if err := service.Platform.Validate(service.Profile); err != nil {
+		return err
 	}
 	return nil
 }

@@ -36,6 +36,7 @@ func transaction(phase model.Phase) model.Transaction {
 		StateInventoryDigest: digestB,
 		MigrationPlanDigest:  digestA,
 		SignerPlanDigest:     digestB,
+		PlatformDigest:       digestA,
 	}
 }
 
@@ -87,6 +88,14 @@ func (participant fakeParticipant) Verify(_ context.Context, _ model.Transaction
 	return nil
 }
 
+func (participant fakeParticipant) Activate(_ context.Context, _ model.Transaction) error {
+	*participant.calls = append(*participant.calls, participant.name+".activate")
+	if participant.failAt == "activate" {
+		return errors.New("injected activate failure")
+	}
+	return nil
+}
+
 func (participant fakeParticipant) Commit(_ context.Context, _ model.Transaction) error {
 	*participant.calls = append(*participant.calls, participant.name+".commit")
 	if participant.failAt == "commit" {
@@ -110,14 +119,6 @@ func (adapter fakeAdapter) Prepare(context.Context, model.Transaction) error {
 	return nil
 }
 
-func (adapter fakeAdapter) Switch(context.Context, model.Transaction) error {
-	*adapter.calls = append(*adapter.calls, "adapter.switch")
-	if adapter.failAt == "switch" {
-		return errors.New("injected switch failure")
-	}
-	return nil
-}
-
 func (adapter fakeAdapter) Verify(context.Context, model.Transaction) error {
 	*adapter.calls = append(*adapter.calls, "adapter.verify")
 	return nil
@@ -130,6 +131,17 @@ func (adapter fakeAdapter) Commit(context.Context, model.Transaction) error {
 
 func (adapter fakeAdapter) Quiesce(context.Context, model.Transaction) error {
 	*adapter.calls = append(*adapter.calls, "adapter.quiesce")
+	if adapter.failAt == "quiesce" {
+		return errors.New("injected quiesce failure")
+	}
+	return nil
+}
+
+func (adapter fakeAdapter) Activate(context.Context, model.Transaction) error {
+	*adapter.calls = append(*adapter.calls, "adapter.activate")
+	if adapter.failAt == "activate" {
+		return errors.New("injected adapter activation failure")
+	}
 	return nil
 }
 
@@ -176,7 +188,7 @@ func TestTargetEngineCommitsOneOrderedTransaction(t *testing.T) {
 	}
 	wantCalls := []string{
 		"generation.stage", "migrator.prepare", "signer.prepare", "adapter.prepare",
-		"adapter.switch", "migrator.verify", "signer.verify", "adapter.verify",
+		"adapter.quiesce", "migrator.activate", "adapter.activate", "migrator.verify", "signer.verify", "adapter.verify",
 		"migrator.commit", "signer.commit", "adapter.commit", "installation.commit",
 	}
 	if !reflect.DeepEqual(calls, wantCalls) {
@@ -195,12 +207,12 @@ func TestTargetEngineCommitsOneOrderedTransaction(t *testing.T) {
 
 func TestTargetEngineRestoresAfterSwitchFailure(t *testing.T) {
 	var calls []string
-	engine, journal := newEngine(&calls, "switch", "")
+	engine, journal := newEngine(&calls, "activate", "")
 	result, err := engine.Run(context.Background(), transaction(model.PhaseIdle))
 	if err == nil || result.Outcome != OutcomeRolledBack || result.Phase != model.PhaseRolledBack {
 		t.Fatalf("unexpected failure result: %+v err=%v", result, err)
 	}
-	wantTail := []string{"adapter.switch", "adapter.quiesce", "signer.abort", "migrator.abort", "adapter.restore", "adapter.discard"}
+	wantTail := []string{"adapter.quiesce", "migrator.activate", "adapter.activate", "adapter.quiesce", "signer.abort", "migrator.abort", "adapter.restore", "adapter.discard"}
 	if !reflect.DeepEqual(calls[len(calls)-len(wantTail):], wantTail) {
 		t.Fatalf("unexpected rollback order: %v", calls)
 	}

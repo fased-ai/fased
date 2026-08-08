@@ -46,12 +46,17 @@ type Participant interface {
 	Abort(context.Context, model.Transaction) error
 }
 
+type MigratorParticipant interface {
+	Participant
+	Activate(context.Context, model.Transaction) error
+}
+
 type PlatformAdapter interface {
 	Prepare(context.Context, model.Transaction) error
-	Switch(context.Context, model.Transaction) error
+	Quiesce(context.Context, model.Transaction) error
+	Activate(context.Context, model.Transaction) error
 	Verify(context.Context, model.Transaction) error
 	Commit(context.Context, model.Transaction) error
-	Quiesce(context.Context, model.Transaction) error
 	Restore(context.Context, model.Transaction) error
 	Discard(context.Context, model.Transaction) error
 }
@@ -63,7 +68,7 @@ type InstallationCommitter interface {
 type TargetEngine struct {
 	Journal      Journal
 	Generations  GenerationStore
-	Migrator     Participant
+	Migrator     MigratorParticipant
 	Signer       Participant
 	Adapter      PlatformAdapter
 	Installation InstallationCommitter
@@ -111,7 +116,13 @@ func (engine *TargetEngine) Run(ctx context.Context, tx model.Transaction) (Resu
 	if err != nil {
 		return Result{}, err
 	}
-	if err := engine.Adapter.Switch(ctx, tx); err != nil {
+	if err := engine.Adapter.Quiesce(ctx, tx); err != nil {
+		return engine.rollback(ctx, tx, true, err)
+	}
+	if err := engine.Migrator.Activate(ctx, tx); err != nil {
+		return engine.rollback(ctx, tx, true, err)
+	}
+	if err := engine.Adapter.Activate(ctx, tx); err != nil {
 		return engine.rollback(ctx, tx, true, err)
 	}
 	tx, err = engine.advance(tx, model.PhaseSwitched)
