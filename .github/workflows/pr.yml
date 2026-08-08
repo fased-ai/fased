@@ -34,6 +34,7 @@ jobs:
       run_node_packaging: ${{ steps.scope.outputs.run_node_packaging }}
       run_node_full: ${{ steps.scope.outputs.run_node_full }}
       run_native_signer: ${{ steps.scope.outputs.run_native_signer }}
+      run_local_update: ${{ steps.scope.outputs.run_local_update }}
       run_signer_integration: ${{ steps.scope.outputs.run_signer_integration }}
       run_ui: ${{ steps.scope.outputs.run_ui }}
       run_ui_mining: ${{ steps.scope.outputs.run_ui_mining }}

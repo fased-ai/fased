@@ -52,6 +52,7 @@ describe("compact CI topology", () => {
 
   it("uses bounded lifecycle regressions instead of the full workspace suite", async () => {
     const { document } = await workflow("pr.yml");
+    const classify = document.jobs?.classify as { outputs?: Record<string, string> };
     const selected = document.jobs?.["selected-tests"] as {
       steps?: Array<{ if?: string; name?: string; run?: string }>;
     };
@@ -62,6 +63,7 @@ describe("compact CI topology", () => {
       (step) => step.name === "Run lifecycle-engine regressions",
     );
 
+    expect(classify.outputs?.run_local_update).toBe("${{ steps.scope.outputs.run_local_update }}");
     expect(full?.if).toContain("run_native_signer == 'true'");
     expect(full?.if).toContain("run_local_update == 'true'");
     expect(lifecycle?.if).toContain("run_node_full == 'true'");
