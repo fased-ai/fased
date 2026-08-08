@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_version:
-        description: Unused package version to build and promote from protected main
+        description: Immutable tagged package version to build and promote from protected main
         required: true
         type: string
       source_commit:
@@ -66,7 +66,7 @@ jobs:
       - name: Install build dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Verify exact protected-main candidate identity
+      - name: Verify exact tagged protected-main candidate identity
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.release_version }}
@@ -77,14 +77,15 @@ jobs:
           set -euo pipefail
           test "$GITHUB_SHA" = "$SOURCE_COMMIT"
           test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
+          test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"
           [[ "$PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           test "$PREDECESSOR_VERSION" != "$RELEASE_VERSION"
           remote_main="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
           test "$remote_main" = "$SOURCE_COMMIT"
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$RELEASE_VERSION" >/dev/null 2>&1; then
-            echo "Candidate tag already exists: v$RELEASE_VERSION" >&2
-            exit 1
-          fi
+          remote_tag="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$RELEASE_VERSION" --jq .object.sha
+          )"
+          test "$remote_tag" = "$SOURCE_COMMIT"
           if gh release view "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Candidate release already exists: v$RELEASE_VERSION" >&2
             exit 1
@@ -110,7 +111,7 @@ jobs:
           GITHUB_EVENT_NAME=pull_request \
             GITHUB_BASE_REF= \
             GITHUB_BASE_SHA="$base_commit" \
-            node scripts/ci-version-identity.mjs
+            node scripts/ci-version-identity.mjs --allow-exact-tag
           evidence_dir="$RUNNER_TEMP/pre-candidate-evidence"
           gh run download "$PRE_CANDIDATE_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
@@ -502,7 +503,7 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --bundle "$2" \
               --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-              --source-ref "refs/heads/main" \
+              --source-ref "$GITHUB_REF" \
               --deny-self-hosted-runners >/dev/null
           }
           verify fased-hosted-release-v2.json fased-hosted-release-v2.json.attestation.json
@@ -534,7 +535,7 @@ jobs:
             --commit "$GITHUB_SHA" \
             --tree "$(git rev-parse 'HEAD^{tree}')" \
             --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
-            --source-ref "refs/heads/main" \
+            --source-ref "$GITHUB_REF" \
             --workflow-run-id "$GITHUB_RUN_ID" \
             --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
 
@@ -556,7 +557,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --bundle .artifacts/hosted-runtime/fased-hosting-candidate.json.attestation.json \
             --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-            --source-ref "refs/heads/main" \
+            --source-ref "$GITHUB_REF" \
             --deny-self-hosted-runners >/dev/null
           package_version="$(node -p "require('./package.json').version")"
           node scripts/release-artifact-set.mjs verify \
@@ -565,7 +566,7 @@ jobs:
             --commit "$GITHUB_SHA" \
             --tree "$(git rev-parse 'HEAD^{tree}')" \
             --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
-            --source-ref "refs/heads/main" \
+            --source-ref "$GITHUB_REF" \
             --workflow-run-id "$GITHUB_RUN_ID" \
             --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
 
@@ -627,7 +628,7 @@ jobs:
           ref: ${{ inputs.source_commit }}
           fetch-depth: 0
 
-      - name: Verify owner-created immutable tag after P1
+      - name: Reverify immutable candidate tag after P1
         env:
           RELEASE_TAG: v${{ inputs.release_version }}
         shell: bash
@@ -665,14 +666,14 @@ jobs:
             --commit "$release_commit" \
             --tree "$(git rev-parse 'HEAD^{tree}')" \
             --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
-            --source-ref "refs/heads/main" \
+            --source-ref "$GITHUB_REF" \
             --workflow-run-id "$GITHUB_RUN_ID"
           gh attestation verify \
             .artifacts/hosted-runtime/fased-hosting-candidate.json \
             --repo "$GITHUB_REPOSITORY" \
             --bundle .artifacts/hosted-runtime/fased-hosting-candidate.json.attestation.json \
             --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-            --source-ref "refs/heads/main" \
+            --source-ref "$GITHUB_REF" \
             --deny-self-hosted-runners >/dev/null
           gh attestation verify \
             .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json \
@@ -680,7 +681,7 @@ jobs:
             --bundle \
               .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json.attestation.json \
             --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-            --source-ref "refs/heads/main" \
+            --source-ref "$GITHUB_REF" \
             --deny-self-hosted-runners >/dev/null
           node scripts/privileged-release-evidence.mjs verify \
             --release-manifest .artifacts/hosted-runtime/fased-hosted-release-v2.json \

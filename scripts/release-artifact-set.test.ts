@@ -35,7 +35,7 @@ describe("exact release artifact promotion", () => {
       commit: "a".repeat(40),
       tree: "b".repeat(40),
       lockfileDigest: `sha256:${"c".repeat(64)}`,
-      sourceRef: "refs/heads/main",
+      sourceRef: "refs/tags/v0.1.76-rc.32",
       workflowRunId: "12345",
       workflowRunAttempt: "1",
     });
@@ -51,7 +51,7 @@ describe("exact release artifact promotion", () => {
         commit: "a".repeat(40),
         tree: "b".repeat(40),
         lockfileDigest: `sha256:${"c".repeat(64)}`,
-        sourceRef: "refs/heads/main",
+        sourceRef: "refs/tags/v0.1.76-rc.32",
         workflowRunId: "12345",
         workflowRunAttempt: "1",
       },
@@ -74,7 +74,7 @@ describe("exact release artifact promotion", () => {
       commit: "b".repeat(40),
       tree: "c".repeat(40),
       lockfileDigest: `sha256:${"d".repeat(64)}`,
-      sourceRef: "refs/heads/main",
+      sourceRef: "refs/tags/v0.1.76-rc.32",
       workflowRunId: "99",
       workflowRunAttempt: "1",
     });
@@ -99,14 +99,14 @@ describe("exact release artifact promotion", () => {
         commit: "c".repeat(40),
         tree: "d".repeat(40),
         lockfileDigest: `sha256:${"e".repeat(64)}`,
-        sourceRef: "refs/heads/main",
+        sourceRef: "refs/tags/v0.1.76-rc.32",
         workflowRunId: "100",
         workflowRunAttempt: "1",
       }),
     ).rejects.toThrow("regular single-link");
   });
 
-  it("requires protected-main source identity and a descriptor attestation", async () => {
+  it("requires exact immutable-tag source identity and a descriptor attestation", async () => {
     const directory = await fixture();
     await expect(
       buildCandidateDescriptor({
@@ -119,7 +119,7 @@ describe("exact release artifact promotion", () => {
         workflowRunId: "101",
         workflowRunAttempt: "1",
       }),
-    ).rejects.toThrow("protected main");
+    ).rejects.toThrow("exact immutable release tag");
 
     await buildCandidateDescriptor({
       directory,
@@ -127,7 +127,7 @@ describe("exact release artifact promotion", () => {
       commit: "d".repeat(40),
       tree: "e".repeat(40),
       lockfileDigest: `sha256:${"f".repeat(64)}`,
-      sourceRef: "refs/heads/main",
+      sourceRef: "refs/tags/v0.1.76-rc.32",
       workflowRunId: "101",
       workflowRunAttempt: "1",
     });
@@ -145,7 +145,7 @@ describe("exact release artifact promotion", () => {
       commit: "e".repeat(40),
       tree: "f".repeat(40),
       lockfileDigest: `sha256:${"a".repeat(64)}`,
-      sourceRef: "refs/heads/main",
+      sourceRef: "refs/tags/v0.1.76-rc.32",
       workflowRunId: "102",
       workflowRunAttempt: "1",
     });

@@ -464,7 +464,7 @@ describe("CI workflow routing", () => {
     expect(dockerWorkflow).not.toContain("gh release upload");
   });
 
-  it("builds once from protected main, runs P1, then verifies the owner tag and publishes", async () => {
+  it("builds once from the exact protected-main tag, runs P1, then publishes", async () => {
     const workflow = await readWorkflow(".github/workflows/hosted-runtime-release.yml");
     const jobs = workflow.jobs ?? {};
     const candidate = jobs["candidate"];
@@ -498,6 +498,9 @@ describe("CI workflow routing", () => {
     ]);
     expect(candidateText).toContain("release-artifact-set.mjs build");
     expect(validateText).toContain("pnpm build");
+    expect(validateText).toContain('test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"');
+    expect(validateText).toContain("git/ref/tags/v$RELEASE_VERSION");
+    expect(validateText).toContain("--allow-exact-tag");
     expect(validateText).toContain("pnpm check:plugin-sdk:types");
     expect(validateText).toContain("node --import tsx scripts/release-check.ts");
     expect(validateText).toContain("pnpm release:validate-dist:packed");
@@ -518,7 +521,8 @@ describe("CI workflow routing", () => {
     );
     expect(linuxText).toContain("hosted:artifact:from-dist");
     expect(linuxText).not.toContain("hosted:artifact:build");
-    expect(candidateText).toContain('--source-ref "refs/heads/main"');
+    expect(candidateText).toContain('--source-ref "$GITHUB_REF"');
+    expect(candidateText).not.toContain("refs/heads/main");
     expect(candidateText).toContain("--tree");
     expect(candidateText).toContain("--lockfile-digest");
     expect(candidateText).toContain("--workflow-run-attempt");
@@ -544,6 +548,8 @@ describe("CI workflow routing", () => {
     expect(publishText).not.toContain("git tag");
     expect(publishText).not.toContain("git push origin");
     expect(publishText).toContain("git ls-remote --exit-code --tags origin");
+    expect(publishText).toContain('--source-ref "$GITHUB_REF"');
+    expect(publishText).not.toContain("refs/heads/main");
     expect(publishText.indexOf("git ls-remote --exit-code --tags origin")).toBeLessThan(
       publishText.indexOf('gh release create "$RELEASE_TAG"'),
     );
