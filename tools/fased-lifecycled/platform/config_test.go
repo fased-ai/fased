@@ -28,7 +28,7 @@ func TestConfigDerivesCanonicalProfilePathsAndIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	hostingIdentity, err := hosting.Identity()
-	if err != nil || hostingIdentity.Adapter != "linux-systemd-hosting-v1" || hosting.InstallRoot != "/opt/fased/hosting/example" {
+	if err != nil || hostingIdentity.Adapter != "linux-systemd-hosting-v1" || hosting.InstallRoot != "/opt/fased" {
 		t.Fatalf("unexpected Hosting identity: %+v %+v err=%v", hosting, hostingIdentity, err)
 	}
 }

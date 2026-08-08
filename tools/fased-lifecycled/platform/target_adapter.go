@@ -136,8 +136,13 @@ func (adapter *TargetAdapter) startOrder() []string {
 
 func (adapter *TargetAdapter) renderTargetUnits(payload string) map[string][]byte {
 	runtimeDirectory := strings.TrimPrefix(adapter.Config.RuntimeRoot, "/run/")
-	signerState := filepath.Join(adapter.Config.ProductStateRoot, "signer")
-	controllerState := filepath.Join(adapter.Config.ProductStateRoot, "controller")
+	if adapter.Config.Profile == model.ProfileProtectedLocal {
+		runtimeDirectory = strings.Join([]string{
+			filepath.Join(runtimeDirectory, "application"), filepath.Join(runtimeDirectory, "operator"), filepath.Join(runtimeDirectory, "control"),
+		}, " ")
+	}
+	signerState := adapter.Config.SignerStateRoot()
+	updateGate := adapter.Config.UpdateGatePath()
 	signer := fmt.Sprintf(`[Unit]
 Description=Fased native signer (%s)
 After=network-online.target
@@ -150,7 +155,7 @@ Group=%d
 RuntimeDirectory=%s
 RuntimeDirectoryMode=0750
 UMask=0077
-ExecStart=%s -socket %s/application.sock -operator-socket %s/operator.sock -control-socket %s/control.sock -application-uid %d -operator-uid %d -control-uid %d -state-db %s/state.db -master-key %s/master.key -update-gate %s/signer-update-gate -audit-log %s/audit.jsonl
+ExecStart=%s -socket %s -operator-socket %s -control-socket %s -socket-mode 0660 -socket-group %s -operator-socket-group %s -application-uid %d -operator-uid %d -control-uid %d -state-db %s/state.db -master-key %s/master.key -update-gate %s -audit-log %s/audit.jsonl
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
@@ -166,10 +171,10 @@ AmbientCapabilities=
 [Install]
 WantedBy=multi-user.target
 `, adapter.Config.InstanceID, adapter.Config.Signer.UID, adapter.Config.Signer.GID,
-		runtimeDirectory, filepath.Join(payload, "bin/fased-signerd"), adapter.Config.RuntimeRoot,
-		adapter.Config.RuntimeRoot, adapter.Config.RuntimeRoot, adapter.Config.Gateway.UID,
+		runtimeDirectory, filepath.Join(payload, "bin/fased-signerd"), adapter.Config.ApplicationSocket(),
+		adapter.Config.OperatorSocket(), adapter.Config.ControlSocket(), adapter.Config.GatewayGroupName(), adapter.Config.OperatorGroupName(), adapter.Config.Gateway.UID,
 		adapter.Config.Operator.UID, adapter.Config.Signer.UID, signerState, signerState,
-		controllerState, signerState, signerState, adapter.Config.RuntimeRoot)
+		updateGate, signerState, signerState, adapter.Config.RuntimeRoot)
 	gateway := fmt.Sprintf(`[Unit]
 Description=Fased Gateway (%s)
 After=%s network-online.target
@@ -182,7 +187,7 @@ Group=%d
 UMask=0007
 Environment=FASED_STATE_DIR=%s
 Environment=FASED_CONFIG_PATH=%s/fased.json
-Environment=FASED_WALLET_LOCAL_SIGNER_SOCKET=%s/application.sock
+Environment=FASED_WALLET_LOCAL_SIGNER_SOCKET=%s
 ExecStart=%s
 Restart=always
 RestartSec=1
@@ -200,7 +205,7 @@ AmbientCapabilities=
 WantedBy=multi-user.target
 `, adapter.Config.InstanceID, adapter.Identity.Services["signer"], adapter.Identity.Services["signer"],
 		adapter.Config.Gateway.UID, adapter.Config.Gateway.GID, adapter.Config.OwnerStateRoot,
-		adapter.Config.OwnerStateRoot, adapter.Config.RuntimeRoot,
+		adapter.Config.OwnerStateRoot, adapter.Config.ApplicationSocket(),
 		filepath.Join(payload, "bin/fased-gateway-launch"), adapter.Config.OwnerStateRoot)
 	return map[string][]byte{
 		adapter.Identity.Services["signer"]: []byte(signer), adapter.Identity.Services["gateway"]: []byte(gateway),

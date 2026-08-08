@@ -23,6 +23,32 @@ func lifecycleRequest() signerLifecycleUpgradeRequestV1 {
 	}
 }
 
+func TestSignerLifecycleGateBindsExactTransaction(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gate.json")
+	request := lifecycleRequest()
+	data, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireSignerLifecycleGateBindingV1(path, request, os.Geteuid()); err != nil {
+		t.Fatal(err)
+	}
+	mismatch := request
+	mismatch.PlanDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	if err := requireSignerLifecycleGateBindingV1(path, mismatch, os.Geteuid()); err == nil {
+		t.Fatal("mismatched signer lifecycle transaction used an existing gate")
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireSignerLifecycleGateBindingV1(path, request, os.Geteuid()); err == nil {
+		t.Fatal("accessible signer lifecycle gate was accepted")
+	}
+}
+
 func openLifecycleStore(t *testing.T) (*signerStoreV2, string) {
 	t.Helper()
 	statePath := filepath.Join(t.TempDir(), "state.db")

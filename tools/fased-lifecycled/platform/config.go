@@ -96,14 +96,77 @@ func deriveConfig(profile model.Profile, instanceID, ownerStateRoot string, oper
 	} else if profile != model.ProfileProtectedLocal {
 		return Config{}, fmt.Errorf("unsupported platform profile %q", profile)
 	}
-	return Config{
+	config := Config{
 		SchemaVersion: CurrentConfigSchemaVersion, Profile: profile, InstanceID: instanceID,
 		OwnerStateRoot: ownerStateRoot, Operator: operator, Gateway: gateway, Signer: signer,
 		InstallRoot:      filepath.Join("/opt/fased", prefix, instanceID),
 		LifecycleRoot:    filepath.Join("/var/lib/fased-"+prefix, instanceID, "lifecycle"),
 		ProductStateRoot: filepath.Join("/var/lib/fased-"+prefix, instanceID),
 		UnitRoot:         "/etc/systemd/system", RuntimeRoot: filepath.Join("/run/fased-"+prefix, instanceID),
-	}, nil
+	}
+	if profile == model.ProfileHosting {
+		config.InstallRoot = "/opt/fased"
+		config.LifecycleRoot = "/var/lib/fased-lifecycled"
+		config.ProductStateRoot = "/var/lib/fased-signerd"
+		config.RuntimeRoot = "/run/fased-signerd"
+	}
+	return config, nil
+}
+
+func (config Config) ApplicationSocket() string {
+	if config.Profile == model.ProfileProtectedLocal {
+		return filepath.Join(config.RuntimeRoot, "application", "app.sock")
+	}
+	return filepath.Join(config.RuntimeRoot, "app.sock")
+}
+
+func (config Config) OperatorSocket() string {
+	if config.Profile == model.ProfileProtectedLocal {
+		return filepath.Join(config.RuntimeRoot, "operator", "operator.sock")
+	}
+	return filepath.Join(config.RuntimeRoot, "operator.sock")
+}
+
+func (config Config) ControlSocket() string {
+	if config.Profile == model.ProfileProtectedLocal {
+		return filepath.Join(config.RuntimeRoot, "control", "control.sock")
+	}
+	return filepath.Join(config.RuntimeRoot, "control.sock")
+}
+
+func (config Config) GatewayGroupName() string {
+	if config.Profile == model.ProfileProtectedLocal {
+		return "fsgw-" + config.InstanceID
+	}
+	return "fased-gateway"
+}
+
+func (config Config) OperatorGroupName() string {
+	if config.Profile == model.ProfileProtectedLocal {
+		return "fsop-" + config.InstanceID
+	}
+	return "fased-operator"
+}
+
+func (config Config) ControllerRuntimeRoot() string {
+	if config.Profile == model.ProfileProtectedLocal {
+		return filepath.Join("/run/fased-local-controller-worker", config.InstanceID)
+	}
+	return "/run/fased-host-controller"
+}
+
+func (config Config) SignerStateRoot() string {
+	if config.Profile == model.ProfileProtectedLocal {
+		return filepath.Join(config.ProductStateRoot, "signer")
+	}
+	return config.ProductStateRoot
+}
+
+func (config Config) UpdateGatePath() string {
+	if config.Profile == model.ProfileProtectedLocal {
+		return filepath.Join(config.ProductStateRoot, "controller", "signer-update-gate")
+	}
+	return "/var/lib/fased-signer-update-gate/active"
 }
 
 func (config Config) Digest() (string, error) {

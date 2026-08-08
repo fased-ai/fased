@@ -82,6 +82,32 @@ func (request signerLifecycleUpgradeRequestV1) validate() error {
 	return nil
 }
 
+func requireSignerLifecycleGateBindingV1(gatePath string, request signerLifecycleUpgradeRequestV1, trustedUID int) error {
+	if err := request.validate(); err != nil {
+		return err
+	}
+	if !filepath.IsAbs(gatePath) || filepath.Clean(gatePath) != gatePath {
+		return errors.New("signer lifecycle gate path must be absolute and clean")
+	}
+	info, err := os.Lstat(gatePath)
+	if err != nil {
+		return fmt.Errorf("read signer lifecycle gate: %w", err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 || !ok || stat.Nlink != 1 || int(stat.Uid) != trustedUID {
+		return errors.New("signer lifecycle gate is not a secure transaction record")
+	}
+	raw, err := os.ReadFile(gatePath)
+	if err != nil {
+		return err
+	}
+	bound, err := decodeSignerLifecycleUpgradeRequestV1(raw)
+	if err != nil || bound != request {
+		return errors.New("signer lifecycle gate does not match the requested transaction")
+	}
+	return nil
+}
+
 func prepareSignerLifecycleUpgradeV1(store *signerStoreV2, statePath string, request signerLifecycleUpgradeRequestV1) (signerLifecycleUpgradeReceiptV1, error) {
 	if err := request.validate(); err != nil {
 		return signerLifecycleUpgradeReceiptV1{}, err

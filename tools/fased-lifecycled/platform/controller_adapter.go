@@ -119,7 +119,8 @@ func (adapter *ControllerAdapter) validate(tx model.Transaction) error {
 }
 
 func (adapter *ControllerAdapter) renderControllerUnit(entrypoint string) []byte {
-	runtimeDirectory := strings.TrimPrefix(filepath.Join(adapter.Config.RuntimeRoot, "controller"), "/run/")
+	controllerRuntimeRoot := adapter.Config.ControllerRuntimeRoot()
+	runtimeDirectory := strings.TrimPrefix(controllerRuntimeRoot, "/run/")
 	unit := fmt.Sprintf(`[Unit]
 Description=Fased target lifecycle controller (%s)
 After=network-online.target
@@ -148,7 +149,7 @@ AmbientCapabilities=
 [Install]
 WantedBy=multi-user.target
 `, adapter.Config.InstanceID, runtimeDirectory, entrypoint, adapter.Config.LifecycleRoot,
-		adapter.Config.RuntimeRoot, adapter.Config.InstallRoot, adapter.Config.LifecycleRoot,
+		controllerRuntimeRoot, adapter.Config.InstallRoot, adapter.Config.LifecycleRoot,
 		adapter.Config.ProductStateRoot, adapter.Config.OwnerStateRoot, adapter.Config.UnitRoot)
 	return []byte(unit)
 }

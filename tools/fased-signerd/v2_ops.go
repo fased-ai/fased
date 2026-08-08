@@ -171,6 +171,9 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 		if err != nil {
 			return nil, err
 		}
+		if err := requireSignerLifecycleGateBindingV1(cfg.updateGatePath, body, 0); err != nil {
+			return nil, err
+		}
 		switch req.Op {
 		case "v2.lifecycle.upgrade.prepare":
 			result, err := prepareSignerLifecycleUpgradeV1(s.store, cfg.stateDBPath, body)
