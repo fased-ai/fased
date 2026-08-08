@@ -17,6 +17,7 @@ ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR:-}"
 OWN_ARTIFACT_DIR=0
 IMAGE_CACHE_DIR="${FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR:-}"
 PREINSTALLED_TOOLS="${FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS:-0}"
+PUBLIC_ACQUISITION="${FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION:-0}"
 PREDECESSOR_VERSION="${FASED_SYSTEMD_FIXTURE_PREDECESSOR_VERSION:-}"
 PREDECESSOR_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_PREDECESSOR_ARTIFACT_DIR:-}"
 OWN_PREDECESSOR_ARTIFACT_DIR=0
@@ -52,6 +53,10 @@ run_container() {
   echo "FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS must be 0 or 1." >&2
   exit 1
 }
+[[ "$PUBLIC_ACQUISITION" == "0" || "$PUBLIC_ACQUISITION" == "1" ]] || {
+  echo "FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION must be 0 or 1." >&2
+  exit 1
+}
 
 if [[ -z "$ARTIFACT_DIR" ]]; then
   if [[ ! -f "$ROOT_DIR/dist/build-info.json" ]] ||
@@ -83,6 +88,42 @@ fi
   echo "The protected Local fixture requires the exact signer artifact and identity." >&2
   exit 1
 }
+if [[ "$PUBLIC_ACQUISITION" == "1" ]]; then
+  for required_asset in \
+    install.sh \
+    fased-hosted-release-v2.json \
+    fased-hosted-release-v2.json.attestation.json \
+    fased-lifecycle-trust-v1.json \
+    fased-lifecycle-trust-v1.json.attestation.json \
+    fased-privileged-provenance-v1.intoto.json \
+    fased-privileged-provenance-v1.intoto.json.attestation.json \
+    fased-lifecycle-supervisor.mjs \
+    fased-lifecycle-supervisor.mjs.attestation.json \
+    fased-host-updater.mjs \
+    fased-host-updater.mjs.attestation.json \
+    fased-host-updaterctl.mjs \
+    fased-host-updaterctl.mjs.attestation.json \
+    fased-signerd-release.attestation.json; do
+    [[ -f "$ARTIFACT_DIR/$required_asset" ]] || {
+      echo "The public-acquisition fixture is missing $required_asset." >&2
+      exit 1
+    }
+  done
+  grep -Fqx \
+    "install_entry_release_identity=\"${VERSION}:${COMMIT}\"" \
+    "$ARTIFACT_DIR/install.sh" || {
+    echo "The public-acquisition fixture requires the exact stamped installer identity." >&2
+    exit 1
+  }
+  jq -e --arg version "$VERSION" --arg commit "$COMMIT" \
+    '.release.version == $version and
+      .release.tag == ("v" + $version) and
+      .release.commit == $commit' \
+    "$ARTIFACT_DIR/fased-hosted-release-v2.json" >/dev/null || {
+    echo "The public-acquisition fixture requires the exact candidate manifest identity." >&2
+    exit 1
+  }
+fi
 if [[ ",$SCENARIOS," == *,install,* ]]; then
   [[ "$PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || {
     echo "The install fixture requires FASED_SYSTEMD_FIXTURE_PREDECESSOR_VERSION." >&2
@@ -238,6 +279,7 @@ run_fixture_scenario() {
     -e "FASED_FIXTURE_COMMIT=$COMMIT" \
     -e "FASED_FIXTURE_PREDECESSOR_VERSION=$predecessor_version" \
     -e "FASED_FIXTURE_PREINSTALLED_TOOLS=$PREINSTALLED_TOOLS" \
+    -e "FASED_FIXTURE_PUBLIC_ACQUISITION=$PUBLIC_ACQUISITION" \
     -v "$ROOT_DIR:/repo:ro,Z" \
     -v "$FIXTURE_DIR/run.sh:/usr/local/bin/fased-protected-local-systemd-fixture:ro,Z" \
     -v "$ARTIFACT_DIR:/artifacts:ro,Z" \

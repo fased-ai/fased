@@ -276,8 +276,9 @@ describe("managed installer release pinning", () => {
     expect(installer).not.toContain("Refusing streamed VPS Hosting repair");
     expect(installer).toContain('hosting_release="latest"');
     expect(installer).toContain("bootstrap_hosting_attested_bundle");
-    expect(installer).toContain('gh attestation verify "$release_manifest"');
-    expect(installer).toContain('--bundle "$release_manifest_bundle"');
+    expect(installer).toContain(
+      '"$release_manifest" "$release_manifest_bundle" "$release_version"',
+    );
     expect(installer).toContain('"$actual" != "$expected"');
     expect(installer).toContain('"$dependency_actual" != "$dependency_expected"');
     expect(installer).toContain('"$signer_actual" != "$signer_expected"');
@@ -816,6 +817,20 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
+  });
+
+  it("uses one protected-main-compatible attestation policy for every release trust artifact", () => {
+    expect(installer.match(/verify_release_attestation_source\(\)/gu)).toHaveLength(1);
+    expect(installer.match(/verify_release_attestation_source \\\n/gu)).toHaveLength(3);
+    expect(installer).toContain(
+      'if ! verify_release_attestation_source "$manifest" "$bundle" "$release_version"; then',
+    );
+    expect(installer.match(/--source-ref "refs\/tags\/v\$\{release_version\}"/gu)).toBeNull();
+    expect(installer.match(/--source-ref "refs\/heads\/main"/gu)).toBeNull();
+    expect(installer).toContain(
+      'for source_ref in "refs/tags/v${release_version}" "refs/heads/main"; do',
+    );
+    expect(installer).toContain('--source-ref "$source_ref"');
   });
 
   it.each([

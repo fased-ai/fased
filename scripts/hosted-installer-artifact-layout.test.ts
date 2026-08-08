@@ -120,7 +120,7 @@ describe("attested Hosting installer artifact layout", () => {
     );
     expect(releaseWorkflow).toContain("fased-privileged-sbom-v1.spdx.json");
     expect(releaseWorkflow).toContain("fased-privileged-vex-v1.openvex.json");
-    expect(installer).toContain('gh attestation verify "$provenance"');
+    expect(installer).toContain('"$provenance" "$provenance_bundle" "$release_version"');
     expect(installer).toContain('"$evidence_node" "$evidence_verifier" verify');
   });
 
@@ -219,7 +219,9 @@ describe("attested Hosting installer artifact layout", () => {
     expect(releaseWorkflow).toContain(
       "subject-path: .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json",
     );
-    expect(installer).toContain('GH_PROMPT_DISABLED=1 gh attestation verify "$lifecycle_metadata"');
+    expect(installer).toContain(
+      '"$lifecycle_metadata" "$lifecycle_metadata_bundle" "$release_version"',
+    );
     expect(installer).toContain("lifecycle_expires_epoch - lifecycle_issued_epoch > 34560000");
     expect(installer).toContain(
       'grep -Fxq "lifecycle_metadata_sha256=${lifecycle_metadata_digest}"',
@@ -537,7 +539,9 @@ describe("attested Hosting installer artifact layout", () => {
         "  | bash -s -- --hosting",
     );
     const installer = fs.readFileSync(path.join(root, "install.sh"), "utf8");
-    const manifestVerification = installer.indexOf('gh attestation verify "$release_manifest"');
+    const manifestVerification = installer.indexOf(
+      '"$release_manifest" "$release_manifest_bundle" "$release_version"',
+    );
     const signerDigestVerification = installer.indexOf('"$signer_actual" != "$signer_expected"');
     const mutation = installer.indexOf(
       "install -d -m 0700 -o root -g root /var/lib/fased-installer",
@@ -546,7 +550,9 @@ describe("attested Hosting installer artifact layout", () => {
       '"$asset" == "fased-hosted-app-v2-linux-${architecture}-v${release_version}.tar.gz"',
     );
     expect(installer).toContain('"$signer_asset" == "fased-signerd-${signer_platform}"');
-    expect(installer).toContain('--bundle "$release_manifest_bundle"');
+    expect(installer).toContain(
+      '"$release_manifest" "$release_manifest_bundle" "$release_version"',
+    );
     expect(manifestVerification).toBeGreaterThanOrEqual(0);
     expect(signerDigestVerification).toBeGreaterThan(manifestVerification);
     expect(mutation).toBeGreaterThan(signerDigestVerification);

@@ -8,6 +8,7 @@ version="${FASED_FIXTURE_VERSION:?missing fixture version}"
 commit="${FASED_FIXTURE_COMMIT:?missing fixture commit}"
 predecessor_version="${FASED_FIXTURE_PREDECESSOR_VERSION:-}"
 preinstalled_tools="${FASED_FIXTURE_PREINSTALLED_TOOLS:-0}"
+public_acquisition="${FASED_FIXTURE_PUBLIC_ACQUISITION:-0}"
 target_update_args=()
 if [[ "$version" == *-* ]]; then
   target_update_args=(--channel beta)
@@ -761,7 +762,11 @@ git clone --quiet --no-hardlinks /repo "$candidate_repo"
 git -C "$candidate_repo" checkout --quiet --detach "$commit"
 git -C "$candidate_repo" tag --force "v$version" "$commit"
 chown -R testop:testop "$candidate_repo"
-install -m 0700 -o testop -g testop "$candidate_repo/install.sh" "$candidate_installer"
+if [[ "$public_acquisition" == "1" ]]; then
+  install -m 0700 -o testop -g testop /artifacts/install.sh "$candidate_installer"
+else
+  install -m 0700 -o testop -g testop "$candidate_repo/install.sh" "$candidate_installer"
+fi
 if [[ "$phase" == "install" || "$phase" == "managed-update" ]]; then
   legacy_commit="$(jq -er .release.commit /predecessor-artifacts/fased-hosted-release-v2.json)"
   rm -rf "$predecessor_repo"
@@ -784,11 +789,26 @@ fi
 install -d -m 0700 -o root -g root /opt/fased-fixture-bootstrap-tools
 install -m 0755 -o root -g root "$(command -v jq)" \
   /opt/fased-fixture-bootstrap-tools/jq
-cat >/opt/fased-fixture-bootstrap-tools/gh <<'EOF_FIXTURE_GH'
+cat >/opt/fased-fixture-bootstrap-tools/gh <<EOF_FIXTURE_GH
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "${1:-}" == "attestation" && "${2:-}" == "verify" ]]; then
-  exit 0
+if [[ "\${1:-}" == "attestation" && "\${2:-}" == "verify" ]]; then
+  source_ref=""
+  args=("\$@")
+  for ((index = 0; index < \${#args[@]}; index++)); do
+    if [[ "\${args[\$index]}" == "--source-ref" ]]; then
+      source_ref="\${args[\$((index + 1))]:-}"
+      break
+    fi
+  done
+  if [[ "$public_acquisition" == "1" && "\$source_ref" == "refs/tags/v${version}" ]]; then
+    exit 1
+  fi
+  if [[ "$public_acquisition" != "1" ||
+    "\$source_ref" == "refs/heads/main" ||
+    "\$source_ref" == refs/tags/v* ]]; then
+    exit 0
+  fi
 fi
 exit 1
 EOF_FIXTURE_GH
@@ -801,6 +821,12 @@ dependency_asset="$(basename "$(find /artifacts -maxdepth 1 -type f \
 app_sha="$(sha256sum "/artifacts/$app_asset" | awk '{print $1}')"
 dependency_sha="$(sha256sum "/artifacts/$dependency_asset" | awk '{print $1}')"
 signer_build_input_digest="$(jq -er .buildInputDigest /artifacts/fased-signerd-release.json)"
+if [[ "$public_acquisition" == "1" ]]; then
+  install -m 0644 /artifacts/fased-hosted-release-v2.json \
+    /var/lib/fased-protected-local-fixture/local-release-manifest.json
+  install -m 0644 /artifacts/fased-hosted-release-v2.json.attestation.json \
+    /var/lib/fased-protected-local-fixture/local-release-manifest.json.attestation.json
+else
 env \
   FASED_FIXTURE_APP_ASSET="$app_asset" \
   FASED_FIXTURE_APP_SHA="$app_sha" \
@@ -870,7 +896,8 @@ fs.writeFileSync(
   `${JSON.stringify(manifest, null, 2)}\n`,
 );
 EOF_LOCAL_MANIFEST
-printf '{}\n' >/var/lib/fased-protected-local-fixture/local-release-manifest.json.attestation.json
+  printf '{}\n' >/var/lib/fased-protected-local-fixture/local-release-manifest.json.attestation.json
+fi
 chmod 0444 \
   /var/lib/fased-protected-local-fixture/local-release-manifest.json \
   /var/lib/fased-protected-local-fixture/local-release-manifest.json.attestation.json
@@ -890,6 +917,9 @@ install -m 0644 -o root -g root \
 printf 'release_manifest_sha256=%s\n' \
   "$(sha256sum "$release_root/.fased-hosted-release-v2.json" | awk '{print $1}')" \
   >>"$release_root/.fased-hosting-bundle-verified"
+if [[ "$public_acquisition" == "1" ]]; then
+  cp -a /artifacts/. "$release_assets/"
+else
 install -m 0755 "$candidate_installer" "$release_assets/install.sh"
 install -m 0755 /repo/scripts/fased-lifecycle-supervisor.mjs \
   "$release_assets/fased-lifecycle-supervisor.mjs"
@@ -957,6 +987,7 @@ for bundle in \
   printf '{"fixtureOfflineAttestation":true}\n' >"$release_assets/$bundle"
   chmod 0644 "$release_assets/$bundle"
 done
+fi
 
 openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
   -subj "/CN=Fased lifecycle fixture CA" \

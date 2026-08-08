@@ -383,6 +383,24 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       | jq -er '.tag_name | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))'
   }
 
+  verify_release_attestation_source() {
+    local subject="$1"
+    local bundle="$2"
+    local release_version="$3"
+    local source_ref=""
+    for source_ref in "refs/tags/v${release_version}" "refs/heads/main"; do
+      if GH_PROMPT_DISABLED=1 gh attestation verify "$subject" \
+        --repo fased-ai/fased \
+        --bundle "$bundle" \
+        --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+        --source-ref "$source_ref" \
+        --deny-self-hosted-runners >/dev/null 2>&1; then
+        return 0
+      fi
+    done
+    return 1
+  }
+
   root_owned_bundle_tree_is_secure() {
     local tree="$1"
     local canonical_tree=""
@@ -687,24 +705,21 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-provenance-v1.intoto.json.attestation.json" -o "$provenance_bundle"
     curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-sbom-v1.spdx.json" -o "$sbom"
     curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-vex-v1.openvex.json" -o "$vex"
-    GH_PROMPT_DISABLED=1 gh attestation verify "$release_manifest" \
-      --repo fased-ai/fased \
-      --bundle "$release_manifest_bundle" \
-      --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-      --source-ref "refs/tags/v${release_version}" \
-      --deny-self-hosted-runners >/dev/null
-    GH_PROMPT_DISABLED=1 gh attestation verify "$lifecycle_metadata" \
-      --repo fased-ai/fased \
-      --bundle "$lifecycle_metadata_bundle" \
-      --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-      --source-ref "refs/tags/v${release_version}" \
-      --deny-self-hosted-runners >/dev/null
-    GH_PROMPT_DISABLED=1 gh attestation verify "$provenance" \
-      --repo fased-ai/fased \
-      --bundle "$provenance_bundle" \
-      --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-      --source-ref "refs/tags/v${release_version}" \
-      --deny-self-hosted-runners >/dev/null
+    verify_release_attestation_source \
+      "$release_manifest" "$release_manifest_bundle" "$release_version" || {
+      echo "Release manifest attestation verification failed." >&2
+      return 1
+    }
+    verify_release_attestation_source \
+      "$lifecycle_metadata" "$lifecycle_metadata_bundle" "$release_version" || {
+      echo "Lifecycle trust attestation verification failed." >&2
+      return 1
+    }
+    verify_release_attestation_source \
+      "$provenance" "$provenance_bundle" "$release_version" || {
+      echo "Privileged provenance attestation verification failed." >&2
+      return 1
+    }
     local manifest_selection=""
     manifest_selection="$(jq -er --arg version "$release_version" --arg architecture "$architecture" --arg signer_platform "$signer_platform" '
       if (keys == ["application", "release", "schemaVersion", "signer"]) and
@@ -1175,18 +1190,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       echo "Could not download the Local release attestation bundle." >&2
       return 1
     fi
-    if ! GH_PROMPT_DISABLED=1 gh attestation verify "$manifest" \
-      --repo fased-ai/fased \
-      --bundle "$bundle" \
-      --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-      --source-ref "refs/tags/v${release_version}" \
-      --deny-self-hosted-runners >/dev/null 2>&1 && \
-      ! GH_PROMPT_DISABLED=1 gh attestation verify "$manifest" \
-      --repo fased-ai/fased \
-      --bundle "$bundle" \
-      --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-      --source-ref "refs/heads/main" \
-      --deny-self-hosted-runners >/dev/null 2>&1; then
+    if ! verify_release_attestation_source "$manifest" "$bundle" "$release_version"; then
       rm -rf -- "$verification_dir"
       echo "Local release attestation verification failed." >&2
       return 1
