@@ -4,6 +4,12 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.64
+
+- Verify candidate installer trust assets through the exact public acquisition
+  path before publication.
+- Keep lifecycle compatibility evidence complete through rc.63.
+
 ## 0.1.76-rc.63
 
 - Accept exact protected-main release attestations when the immutable release
