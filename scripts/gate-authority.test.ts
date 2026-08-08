@@ -113,6 +113,27 @@ describe("machine gate authority", () => {
     });
   });
 
+  it("routes the packaged public-acquisition fixture through CI contracts only", () => {
+    const plan = createGatePlan([
+      "scripts/ci-workflow-contract.test.ts",
+      "scripts/test-protected-local-systemd-container.sh",
+    ]);
+
+    expect(plan.changeKind).toBe("ci-infrastructure-only");
+    expect(plan.scope).toMatchObject({
+      ciInfrastructureOnly: true,
+      productionChanged: false,
+      runCiContracts: true,
+      runNode: false,
+      runNodeBuild: false,
+      runNodeFull: false,
+      runT2Contracts: false,
+      runLocalFresh: false,
+      runLocalUpdate: false,
+      runHosting: false,
+    });
+  });
+
   it("keeps mixed lifecycle fixture and authority corrections source-only", () => {
     const plan = createGatePlan(
       [
