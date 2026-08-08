@@ -31,7 +31,12 @@ describe("compact CI topology", () => {
     const security = document.jobs?.security as {
       "timeout-minutes"?: number;
       strategy?: { matrix?: { target?: string } };
-      steps?: Array<{ if?: string; name?: string; with?: { languages?: string } }>;
+      steps?: Array<{
+        if?: string;
+        name?: string;
+        run?: string;
+        with?: { "config-file"?: string; languages?: string };
+      }>;
     };
 
     expect(classify.outputs?.security_targets_json).toBe(
@@ -48,6 +53,17 @@ describe("compact CI topology", () => {
       security.steps?.find((step) => step.name === "Initialize selected CodeQL languages")?.with
         ?.languages,
     ).toBe("${{ matrix.target }}");
+    const focusedScope = security.steps?.find(
+      (step) => step.name === "Build focused JavaScript CodeQL scope",
+    );
+    expect(focusedScope?.if).toBe("matrix.target == 'javascript-typescript'");
+    expect(focusedScope?.run).toContain("git diff --name-only");
+    expect(focusedScope?.run).toContain('scope="scripts"');
+    expect(
+      security.steps?.find((step) => step.name === "Initialize selected CodeQL languages")?.with?.[
+        "config-file"
+      ],
+    ).toContain("codeql-pr-scope.yml");
   });
 
   it("uses bounded lifecycle regressions instead of the full workspace suite", async () => {
