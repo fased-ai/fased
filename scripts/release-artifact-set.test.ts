@@ -106,11 +106,24 @@ describe("exact release artifact promotion", () => {
     ).rejects.toThrow("regular single-link");
   });
 
-  it("requires exact immutable-tag source identity and a descriptor attestation", async () => {
+  it("accepts protected main before tagging and rejects untrusted source refs", async () => {
     const directory = await fixture();
+    const protectedMain = await buildCandidateDescriptor({
+      directory,
+      version: "0.1.76-rc.32",
+      commit: "d".repeat(40),
+      tree: "e".repeat(40),
+      lockfileDigest: `sha256:${"f".repeat(64)}`,
+      sourceRef: "refs/heads/main",
+      workflowRunId: "101",
+      workflowRunAttempt: "1",
+    });
+    expect(protectedMain.descriptor.sourceRef).toBe("refs/heads/main");
+
+    const untrusted = await fixture();
     await expect(
       buildCandidateDescriptor({
-        directory,
+        directory: untrusted,
         version: "0.1.76-rc.32",
         commit: "d".repeat(40),
         tree: "e".repeat(40),
@@ -119,10 +132,11 @@ describe("exact release artifact promotion", () => {
         workflowRunId: "101",
         workflowRunAttempt: "1",
       }),
-    ).rejects.toThrow("exact immutable release tag");
+    ).rejects.toThrow("protected main or the exact immutable release tag");
 
+    const tagged = await fixture();
     await buildCandidateDescriptor({
-      directory,
+      directory: tagged,
       version: "0.1.76-rc.32",
       commit: "d".repeat(40),
       tree: "e".repeat(40),
@@ -131,8 +145,8 @@ describe("exact release artifact promotion", () => {
       workflowRunId: "101",
       workflowRunAttempt: "1",
     });
-    expect(fs.existsSync(path.join(directory, CANDIDATE_DESCRIPTOR))).toBe(true);
-    await expect(verifyCandidateDirectory({ directory })).rejects.toThrow(
+    expect(fs.existsSync(path.join(tagged, CANDIDATE_DESCRIPTOR))).toBe(true);
+    await expect(verifyCandidateDirectory({ directory: tagged })).rejects.toThrow(
       "attestation bundle is missing",
     );
   });

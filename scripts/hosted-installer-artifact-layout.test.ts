@@ -296,15 +296,16 @@ describe("attested Hosting installer artifact layout", () => {
       releaseWorkflow.indexOf("\n  linux:"),
     );
     expect(validateJob).toContain("fetch-depth: 0");
-    expect(releaseWorkflow.match(/run: pnpm release:check/g)).toHaveLength(1);
-    expect(releaseWorkflow).toContain("run: pnpm hosted:artifact:build --output");
+    expect(validateJob).toContain("name: Build exact candidate once");
+    expect(validateJob).toContain("run: pnpm build");
+    expect(releaseWorkflow).not.toContain("run: pnpm release:check");
+    expect(releaseWorkflow).toContain("pnpm hosted:artifact:from-dist --output");
     expect(releaseWorkflow).not.toContain("run: pnpm hosted:artifact --output");
     expect(releaseWorkflow).toContain("needs: [validate, linux, signer]");
   });
 
-  it("assembles offline-attested tag candidates without publishing them", () => {
+  it("assembles protected-main candidates before owner-tagged publication", () => {
     expect(releaseWorkflow).toContain("name: Assemble offline-attested candidate");
-    expect(releaseWorkflow).toContain("if: startsWith(github.ref, 'refs/tags/v')");
     expect(releaseWorkflow).toContain("name: fased-hosting-candidate");
     expect(releaseWorkflow).toContain("fased-hosted-release-v2.json.attestation.json");
     expect(releaseWorkflow).toContain("name: Verify every staged candidate attestation offline");
@@ -314,7 +315,8 @@ describe("attested Hosting installer artifact layout", () => {
       "if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'",
     );
     expect(releaseWorkflow).toContain("name: Promote exact verified candidate bytes");
-    expect(releaseWorkflow).toContain("if: github.event_name == 'workflow_dispatch'");
+    expect(releaseWorkflow).toContain("environment: candidate-release");
+    expect(releaseWorkflow).toContain("name: Reverify immutable candidate tag after P1");
   });
 
   it("publishes tagged prereleases as non-latest GitHub prereleases", () => {
