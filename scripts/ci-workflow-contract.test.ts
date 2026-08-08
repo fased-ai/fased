@@ -22,6 +22,10 @@ type WorkflowJob = {
 };
 
 type Workflow = {
+  concurrency?: {
+    "cancel-in-progress"?: boolean;
+    group?: string;
+  };
   jobs?: Record<string, WorkflowJob>;
 };
 
@@ -57,6 +61,11 @@ describe("CI workflow routing", () => {
   it("uses one change-scope authority and one required aggregate", async () => {
     const workflow = await readWorkflow(".github/workflows/ci.yml");
     const jobs = workflow.jobs ?? {};
+
+    expect(workflow.concurrency).toEqual({
+      group: "ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}",
+      "cancel-in-progress": false,
+    });
 
     expect(jobs["change-scope"]).toBeDefined();
     expect(jobs["docs-scope"]).toBeUndefined();
