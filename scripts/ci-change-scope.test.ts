@@ -59,6 +59,23 @@ describe("CI changed-surface classification", () => {
     });
   });
 
+  it("routes the version-neutral lifecycle engine through focused Go security checks", () => {
+    const plan = createGatePlan([
+      "tools/fased-lifecycled/engine/target.go",
+      "scripts/build-lifecycle-generation.mjs",
+    ]);
+    const output = outputEntries(plan);
+
+    expect(output).toMatchObject({
+      run_native_signer: "true",
+      run_codeql_go: "true",
+      run_codeql_javascript: "true",
+      run_node_full: "false",
+      run_local_update: "false",
+      run_hosting_update: "false",
+    });
+  });
+
   it("keeps a Local-update PR on source contracts and defers packaged acceptance", () => {
     const plan = createGatePlan(
       [

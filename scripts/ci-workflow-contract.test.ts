@@ -487,6 +487,7 @@ describe("CI workflow routing", () => {
     const publish = jobs["publish"];
     const validateText = jobs["validate"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const linuxText = jobs["linux"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    const signerText = jobs["signer"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
 
     expect(workflow.on).not.toHaveProperty("push");
     expect(workflow.on.workflow_dispatch.inputs.pre_candidate_run_id.required).toBe(true);
@@ -537,6 +538,13 @@ describe("CI workflow routing", () => {
       validateText.indexOf("pnpm build"),
     );
     expect(linuxText).toContain("hosted:artifact:from-dist");
+    expect(jobs["linux"]?.needs).toEqual(["validate", "signer"]);
+    expect(linuxText).toContain("assemble-lifecycle-generation.mjs");
+    expect(
+      jobs["linux"]?.steps?.some((step) => step.name === "Assemble exact lifecycle generation"),
+    ).toBe(true);
+    expect(signerText).toContain("release-fased-lifecycled.sh");
+    expect(signerText).toContain("fased-lifecycled-checksums.txt");
     expect(linuxText).not.toContain("hosted:artifact:build");
     expect(candidateText).toContain('--source-ref "$GITHUB_REF"');
     expect(candidateText).not.toContain("refs/heads/main");

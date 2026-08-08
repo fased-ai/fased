@@ -100,7 +100,9 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: tools/fased-signerd/go.mod
-          cache-dependency-path: tools/fased-signerd/go.sum
+          cache-dependency-path: |
+            tools/fased-signerd/go.sum
+            tools/fased-lifecycled/go.mod
 
       - name: Prove exact dependency remediation
         if: needs.classify.outputs.dependency_remediation == 'true'
@@ -225,8 +227,10 @@ jobs:
 
       - name: Test native signer on Linux
         if: needs.classify.outputs.run_native_signer == 'true'
-        working-directory: tools/fased-signerd
-        run: go test ./...
+        run: |
+          (cd tools/fased-signerd && go test ./...)
+          (cd tools/fased-lifecycled && go test ./...)
+          bash scripts/test-build-lifecycle-generation.sh
 
       - name: Test signer integration
         if: needs.classify.outputs.run_signer_integration == 'true'
