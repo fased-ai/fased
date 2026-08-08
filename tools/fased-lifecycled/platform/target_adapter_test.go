@@ -1,0 +1,184 @@
+package platform
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+
+	"fased-lifecycled/model"
+)
+
+type fakeUnits struct {
+	calls       *[]string
+	definitions map[string][]byte
+}
+
+func (units *fakeUnits) Prepare(_ string, definitions map[string][]byte) error {
+	*units.calls = append(*units.calls, "units.prepare")
+	units.definitions = definitions
+	return nil
+}
+func (units *fakeUnits) Activate(string, []string) error {
+	*units.calls = append(*units.calls, "units.activate")
+	return nil
+}
+func (units *fakeUnits) Restore(string, []string) error {
+	*units.calls = append(*units.calls, "units.restore")
+	return nil
+}
+func (units *fakeUnits) Discard(string) error {
+	*units.calls = append(*units.calls, "units.discard")
+	return nil
+}
+
+type fakeSystemd struct {
+	calls *[]string
+	fail  string
+}
+
+func (systemd fakeSystemd) call(name string) error {
+	*systemd.calls = append(*systemd.calls, name)
+	if systemd.fail == name {
+		return errors.New("injected systemd failure")
+	}
+	return nil
+}
+func (systemd fakeSystemd) DaemonReload(context.Context) error { return systemd.call("systemd.reload") }
+func (systemd fakeSystemd) Stop(_ context.Context, unit string) error {
+	return systemd.call("systemd.stop:" + unit)
+}
+func (systemd fakeSystemd) Start(_ context.Context, unit string) error {
+	return systemd.call("systemd.start:" + unit)
+}
+func (systemd fakeSystemd) Enable(_ context.Context, unit string) error {
+	return systemd.call("systemd.enable:" + unit)
+}
+func (systemd fakeSystemd) IsActive(_ context.Context, unit string) error {
+	return systemd.call("systemd.active:" + unit)
+}
+
+type fakeGenerations struct {
+	root  string
+	calls *[]string
+}
+
+func (generations fakeGenerations) GenerationPayloadPath(string) (string, error) {
+	return generations.root, nil
+}
+func (generations fakeGenerations) ActivateGeneration(current, previous string) error {
+	*generations.calls = append(*generations.calls, "generation.activate:"+current+":"+previous)
+	return nil
+}
+
+func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) {
+	t.Helper()
+	tx, identity := manifestTransaction(t, false)
+	root := t.TempDir()
+	for _, name := range []string{"fased-gateway-launch", "fased-signerd"} {
+		path := filepath.Join(root, "bin", name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	operator, gateway, signer := principals()
+	config, err := NewConfig(model.ProfileProtectedLocal, "example", "/home/example/.fased", operator, gateway, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := []string{}
+	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, calls: &calls}}, tx, &calls
+}
+
+func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing.T) {
+	adapter, tx, calls := targetAdapter(t)
+	if err := adapter.Prepare(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Quiesce(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Activate(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Verify(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Commit(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"units.prepare", "systemd.stop:fased-gateway-example.service", "systemd.stop:fased-signerd-example.service",
+		"units.activate", "systemd.reload", "systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
+		"systemd.enable:fased-gateway-example.service", "systemd.start:fased-gateway-example.service",
+		"systemd.active:fased-signerd-example.service", "systemd.active:fased-gateway-example.service",
+		"generation.activate:" + digestB + ":" + digestA, "units.discard",
+	}
+	if !reflect.DeepEqual(*calls, want) {
+		t.Fatalf("unexpected target adapter order:\n got=%v\nwant=%v", *calls, want)
+	}
+	definitions := adapter.Units.(*fakeUnits).definitions
+	combined := string(definitions[adapter.Identity.Services["signer"]]) + string(definitions[adapter.Identity.Services["gateway"]])
+	if strings.Contains(combined, "/bin/sh") || !strings.Contains(combined, "NoNewPrivileges=true") || !strings.Contains(combined, "User=996") {
+		t.Fatalf("canonical units lack privilege or direct-exec contracts:\n%s", combined)
+	}
+}
+
+func TestTargetAdapterRestoresPreviousButDoesNotStartAbsentFreshServices(t *testing.T) {
+	adapter, tx, calls := targetAdapter(t)
+	if err := adapter.Restore(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(*calls, []string{"units.restore", "systemd.reload", "systemd.start:fased-signerd-example.service", "systemd.start:fased-gateway-example.service"}) {
+		t.Fatalf("update restore order changed: %v", *calls)
+	}
+	*calls = nil
+	tx.Previous = nil
+	if err := adapter.Restore(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(*calls, []string{"units.restore", "systemd.reload"}) {
+		t.Fatalf("fresh rollback started absent services: %v", *calls)
+	}
+}
+
+func TestDiskUnitStoreRestoresExactPreviousUnit(t *testing.T) {
+	operator, gateway, signer := principals()
+	config, err := NewConfig(model.ProfileProtectedLocal, "example", "/home/example/.fased", operator, gateway, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewDiskUnitStore(config, "target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.rootPrefix = t.TempDir()
+	identity, _ := config.Identity()
+	unit := identity.Services["gateway"]
+	unitPath := store.unitPath(unit)
+	if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unitPath, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Prepare("018f47d2-5a6b-7c8d-9e0f-123456789abc", map[string][]byte{unit: []byte("new\n")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Activate("018f47d2-5a6b-7c8d-9e0f-123456789abc", []string{unit}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Restore("018f47d2-5a6b-7c8d-9e0f-123456789abc", []string{unit}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(unitPath)
+	if err != nil || string(data) != "old\n" {
+		t.Fatalf("unit rollback mismatch: %q err=%v", data, err)
+	}
+}

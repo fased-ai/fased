@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"fased-lifecycled/model"
 )
@@ -20,17 +21,18 @@ type Principal struct {
 }
 
 type Config struct {
-	SchemaVersion  uint32        `json:"schemaVersion"`
-	Profile        model.Profile `json:"profile"`
-	InstanceID     string        `json:"instanceId"`
-	OwnerStateRoot string        `json:"ownerStateRoot"`
-	Operator       Principal     `json:"operator"`
-	Gateway        Principal     `json:"gateway"`
-	Signer         Principal     `json:"signer"`
-	InstallRoot    string        `json:"installRoot"`
-	LifecycleRoot  string        `json:"lifecycleRoot"`
-	UnitRoot       string        `json:"unitRoot"`
-	RuntimeRoot    string        `json:"runtimeRoot"`
+	SchemaVersion    uint32        `json:"schemaVersion"`
+	Profile          model.Profile `json:"profile"`
+	InstanceID       string        `json:"instanceId"`
+	OwnerStateRoot   string        `json:"ownerStateRoot"`
+	Operator         Principal     `json:"operator"`
+	Gateway          Principal     `json:"gateway"`
+	Signer           Principal     `json:"signer"`
+	InstallRoot      string        `json:"installRoot"`
+	LifecycleRoot    string        `json:"lifecycleRoot"`
+	ProductStateRoot string        `json:"productStateRoot"`
+	UnitRoot         string        `json:"unitRoot"`
+	RuntimeRoot      string        `json:"runtimeRoot"`
 }
 
 var instancePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
@@ -66,18 +68,22 @@ func (config Config) Validate() error {
 	}
 	paths := map[string]string{
 		"owner state": config.OwnerStateRoot, "install": config.InstallRoot,
-		"lifecycle": config.LifecycleRoot, "unit": config.UnitRoot, "runtime": config.RuntimeRoot,
+		"lifecycle": config.LifecycleRoot, "product state": config.ProductStateRoot,
+		"unit": config.UnitRoot, "runtime": config.RuntimeRoot,
 	}
 	for name, path := range paths {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path || path == "/" {
 			return fmt.Errorf("platform %s path must be absolute, clean, and scoped", name)
+		}
+		if strings.IndexFunc(path, func(value rune) bool { return value <= ' ' || value == 0x7f }) >= 0 {
+			return fmt.Errorf("platform %s path contains unsupported whitespace or control characters", name)
 		}
 	}
 	expected, err := deriveConfig(config.Profile, config.InstanceID, config.OwnerStateRoot, config.Operator, config.Gateway, config.Signer)
 	if err != nil {
 		return err
 	}
-	if config.InstallRoot != expected.InstallRoot || config.LifecycleRoot != expected.LifecycleRoot || config.UnitRoot != expected.UnitRoot || config.RuntimeRoot != expected.RuntimeRoot {
+	if config.InstallRoot != expected.InstallRoot || config.LifecycleRoot != expected.LifecycleRoot || config.ProductStateRoot != expected.ProductStateRoot || config.UnitRoot != expected.UnitRoot || config.RuntimeRoot != expected.RuntimeRoot {
 		return errors.New("platform configuration contains noncanonical system paths")
 	}
 	return nil
@@ -93,9 +99,10 @@ func deriveConfig(profile model.Profile, instanceID, ownerStateRoot string, oper
 	return Config{
 		SchemaVersion: CurrentConfigSchemaVersion, Profile: profile, InstanceID: instanceID,
 		OwnerStateRoot: ownerStateRoot, Operator: operator, Gateway: gateway, Signer: signer,
-		InstallRoot:   filepath.Join("/opt/fased", prefix, instanceID),
-		LifecycleRoot: filepath.Join("/var/lib/fased-"+prefix, instanceID, "lifecycle"),
-		UnitRoot:      "/etc/systemd/system", RuntimeRoot: filepath.Join("/run/fased-"+prefix, instanceID),
+		InstallRoot:      filepath.Join("/opt/fased", prefix, instanceID),
+		LifecycleRoot:    filepath.Join("/var/lib/fased-"+prefix, instanceID, "lifecycle"),
+		ProductStateRoot: filepath.Join("/var/lib/fased-"+prefix, instanceID),
+		UnitRoot:         "/etc/systemd/system", RuntimeRoot: filepath.Join("/run/fased-"+prefix, instanceID),
 	}, nil
 }
 

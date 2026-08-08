@@ -47,6 +47,7 @@ func transaction(phase model.Phase) model.Transaction {
 
 type fakeJournal struct {
 	writes []model.Transaction
+	latest map[store.Authority]model.Transaction
 }
 
 func (journal *fakeJournal) CommitJournal(authority store.Authority, tx model.Transaction) error {
@@ -54,7 +55,19 @@ func (journal *fakeJournal) CommitJournal(authority store.Authority, tx model.Tr
 		return errors.New("wrong journal authority")
 	}
 	journal.writes = append(journal.writes, tx)
+	if journal.latest == nil {
+		journal.latest = make(map[store.Authority]model.Transaction)
+	}
+	journal.latest[authority] = tx
 	return nil
+}
+
+func (journal *fakeJournal) ReadJournal(authority store.Authority, transactionID string) (model.Transaction, error) {
+	tx, ok := journal.latest[authority]
+	if !ok || tx.ID != transactionID {
+		return model.Transaction{}, errors.New("journal not found")
+	}
+	return tx, nil
 }
 
 type fakeGenerationStore struct {
@@ -188,8 +201,12 @@ func TestTargetEngineCommitsOneOrderedTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Phase != model.PhaseCommitted || result.Outcome != OutcomeUpdated {
+	if result.Phase != model.PhaseVerified || result.Outcome != OutcomePrepared {
 		t.Fatalf("unexpected result: %+v", result)
+	}
+	result, err = engine.Commit(context.Background(), transaction(model.PhaseIdle).ID)
+	if err != nil || result.Phase != model.PhaseCommitted || result.Outcome != OutcomeUpdated {
+		t.Fatalf("explicit target commit failed: %+v err=%v", result, err)
 	}
 	wantCalls := []string{
 		"generation.stage", "migrator.prepare", "signer.prepare", "adapter.prepare",

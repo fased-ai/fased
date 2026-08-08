@@ -55,6 +55,19 @@ func (target fakeTarget) Run(context.Context, model.Transaction) (Result, error)
 	return target.result, target.err
 }
 
+func (target fakeTarget) Commit(context.Context, string) (Result, error) {
+	*target.calls = append(*target.calls, "target.commit")
+	if target.err != nil {
+		return target.result, target.err
+	}
+	return Result{Outcome: OutcomeUpdated, Phase: model.PhaseCommitted}, nil
+}
+
+func (target fakeTarget) Abort(context.Context, string) (Result, error) {
+	*target.calls = append(*target.calls, "target.abort")
+	return Result{Outcome: OutcomeRolledBack, Phase: model.PhaseRolledBack}, nil
+}
+
 func (target fakeTarget) Recover(context.Context, string) (Result, error) {
 	*target.calls = append(*target.calls, "target.recover")
 	return target.result, target.err
@@ -66,13 +79,13 @@ func TestSupervisorCommitsOnlyAfterTargetCommit(t *testing.T) {
 	engine := SupervisorEngine{
 		Journal:    journal,
 		Controller: fakeController{calls: &calls},
-		Target:     fakeTarget{calls: &calls, result: Result{Outcome: OutcomeUpdated, Phase: model.PhaseCommitted}},
+		Target:     fakeTarget{calls: &calls, result: Result{Outcome: OutcomePrepared, Phase: model.PhaseVerified}},
 	}
 	result, err := engine.Run(context.Background(), transaction(model.PhaseIdle))
 	if err != nil || result.Phase != model.PhaseCommitted {
 		t.Fatalf("supervisor run failed: %+v err=%v", result, err)
 	}
-	want := []string{"controller.stage", "controller.prepare", "controller.switch", "target.run", "controller.verify", "controller.commit"}
+	want := []string{"controller.stage", "controller.prepare", "controller.switch", "target.run", "controller.verify", "target.commit", "controller.commit"}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("unexpected supervisor order: got=%v want=%v", calls, want)
 	}
@@ -89,7 +102,7 @@ func TestSupervisorRestoresControllerWhenTargetRollsBack(t *testing.T) {
 	if err == nil || result.Phase != model.PhaseRolledBack {
 		t.Fatalf("unexpected supervisor failure: %+v err=%v", result, err)
 	}
-	wantTail := []string{"target.run", "controller.restore", "controller.discard"}
+	wantTail := []string{"target.run", "target.abort", "controller.restore", "controller.discard"}
 	if !reflect.DeepEqual(calls[len(calls)-len(wantTail):], wantTail) {
 		t.Fatalf("controller rollback order changed: %v", calls)
 	}

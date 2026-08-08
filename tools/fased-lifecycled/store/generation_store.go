@@ -42,6 +42,14 @@ func (s *Store) StageGeneration(generationID string) error {
 }
 
 func (s *Store) ActivateGeneration(currentID, previousID string) error {
+	return s.activatePointers("current", "previous", currentID, previousID)
+}
+
+func (s *Store) ActivateControllerGeneration(currentID, previousID string) error {
+	return s.activatePointers("controller-current", "controller-previous", currentID, previousID)
+}
+
+func (s *Store) activatePointers(currentPointer, previousPointer, currentID, previousID string) error {
 	if _, err := s.verifiedGeneration(currentID); err != nil {
 		return fmt.Errorf("current generation: %w", err)
 	}
@@ -52,16 +60,16 @@ func (s *Store) ActivateGeneration(currentID, previousID string) error {
 		if _, err := s.verifiedGeneration(previousID); err != nil {
 			return fmt.Errorf("previous generation: %w", err)
 		}
-		if err := s.writeGenerationPointer("previous", previousID); err != nil {
+		if err := s.writeGenerationPointer(previousPointer, previousID); err != nil {
 			return err
 		}
 	}
-	return s.writeGenerationPointer("current", currentID)
+	return s.writeGenerationPointer(currentPointer, currentID)
 }
 
 func (s *Store) ResolveGeneration(pointer string) (model.Generation, error) {
-	if pointer != "current" && pointer != "previous" {
-		return model.Generation{}, errors.New("generation pointer must be current or previous")
+	if !validPointer(pointer) {
+		return model.Generation{}, errors.New("generation pointer is invalid")
 	}
 	pointerPath := filepath.Join(s.root, pointer)
 	info, err := os.Lstat(pointerPath)
@@ -103,6 +111,13 @@ func (s *Store) ReadGenerationContract(generationID string) (bundle.Inventory, m
 	return inventory, generation, nil
 }
 
+func (s *Store) GenerationPayloadPath(generationID string) (string, error) {
+	if _, err := s.verifiedGeneration(generationID); err != nil {
+		return "", err
+	}
+	return filepath.Join(s.generationPath(generationID), generationPayloadName), nil
+}
+
 func (s *Store) verifiedGeneration(generationID string) (model.Generation, error) {
 	if err := validateGenerationID(generationID); err != nil {
 		return model.Generation{}, err
@@ -133,8 +148,8 @@ func (s *Store) verifyGenerationPath(root, generationID string) (model.Generatio
 }
 
 func (s *Store) writeGenerationPointer(pointer, generationID string) error {
-	if pointer != "current" && pointer != "previous" {
-		return errors.New("generation pointer must be current or previous")
+	if !validPointer(pointer) {
+		return errors.New("generation pointer is invalid")
 	}
 	if err := validateGenerationID(generationID); err != nil {
 		return err
@@ -159,6 +174,15 @@ func (s *Store) writeGenerationPointer(pointer, generationID string) error {
 		return err
 	}
 	return syncDirectory(s.root)
+}
+
+func validPointer(pointer string) bool {
+	switch pointer {
+	case "current", "previous", "controller-current", "controller-previous":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Store) inboxGenerationPath(generationID string) string {

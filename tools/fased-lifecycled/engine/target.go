@@ -17,6 +17,7 @@ const (
 	OutcomeAlreadyCurrent  Outcome = "ALREADY_CURRENT"
 	OutcomeRolledBack      Outcome = "ROLLED_BACK"
 	OutcomeRecoveryPending Outcome = "RECOVERY_PENDING"
+	OutcomePrepared        Outcome = "PREPARED"
 )
 
 type Result struct {
@@ -33,6 +34,11 @@ type ParticipantReceipt struct {
 
 type Journal interface {
 	CommitJournal(store.Authority, model.Transaction) error
+}
+
+type TransactionJournal interface {
+	Journal
+	ReadJournal(store.Authority, string) (model.Transaction, error)
 }
 
 type GenerationStore interface {
@@ -66,7 +72,7 @@ type InstallationCommitter interface {
 }
 
 type TargetEngine struct {
-	Journal      Journal
+	Journal      TransactionJournal
 	Generations  GenerationStore
 	Migrator     MigratorParticipant
 	Signer       Participant
@@ -142,6 +148,23 @@ func (engine *TargetEngine) Run(ctx context.Context, tx model.Transaction) (Resu
 	if err != nil {
 		return Result{}, err
 	}
+	return Result{Outcome: OutcomePrepared, Phase: tx.Phase}, nil
+}
+
+func (engine *TargetEngine) Commit(ctx context.Context, transactionID string) (Result, error) {
+	if err := engine.validate(); err != nil {
+		return Result{}, err
+	}
+	tx, err := engine.Journal.ReadJournal(store.AuthorityTargetController, transactionID)
+	if err != nil {
+		return Result{}, err
+	}
+	if tx.Phase == model.PhaseCommitted {
+		return Result{Outcome: OutcomeAlreadyCurrent, Phase: tx.Phase}, nil
+	}
+	if tx.Phase != model.PhaseVerified {
+		return Result{}, errors.New("target transaction is not ready to commit")
+	}
 	if err := engine.commit(ctx, tx); err != nil {
 		return Result{Outcome: OutcomeRecoveryPending, Phase: model.PhaseVerified}, err
 	}
@@ -150,6 +173,24 @@ func (engine *TargetEngine) Run(ctx context.Context, tx model.Transaction) (Resu
 		return Result{}, err
 	}
 	return Result{Outcome: OutcomeUpdated, Phase: tx.Phase}, nil
+}
+
+func (engine *TargetEngine) Abort(ctx context.Context, transactionID string) (Result, error) {
+	if err := engine.validate(); err != nil {
+		return Result{}, err
+	}
+	tx, err := engine.Journal.ReadJournal(store.AuthorityTargetController, transactionID)
+	if err != nil {
+		return Result{}, err
+	}
+	if tx.Phase == model.PhaseCommitted {
+		return Result{}, errors.New("committed target transaction cannot be aborted")
+	}
+	if tx.Phase == model.PhaseRolledBack {
+		return Result{Outcome: OutcomeRolledBack, Phase: tx.Phase}, nil
+	}
+	restore := tx.Phase == model.PhaseSwitched || tx.Phase == model.PhaseVerified
+	return engine.rollback(ctx, tx, restore, nil)
 }
 
 func (engine *TargetEngine) Recover(ctx context.Context, tx model.Transaction) (Result, error) {

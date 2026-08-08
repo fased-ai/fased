@@ -21,6 +21,8 @@ type ControllerAuthority interface {
 
 type TargetAuthority interface {
 	Run(context.Context, model.Transaction) (Result, error)
+	Commit(context.Context, string) (Result, error)
+	Abort(context.Context, string) (Result, error)
 	Recover(context.Context, string) (Result, error)
 }
 
@@ -69,14 +71,26 @@ func (engine *SupervisorEngine) Run(ctx context.Context, tx model.Transaction) (
 	targetTx.Phase = model.PhaseIdle
 	targetTx.Revision = 1
 	targetResult, targetErr := engine.Target.Run(ctx, targetTx)
-	if targetErr != nil || targetResult.Phase != model.PhaseCommitted {
+	if targetErr != nil || targetResult.Phase != model.PhaseVerified {
 		if targetErr == nil {
-			targetErr = errors.New("target controller did not commit its product transaction")
+			targetErr = errors.New("target controller did not verify its product transaction")
 		}
+		_, _ = engine.Target.Abort(ctx, tx.ID)
 		return engine.rollback(ctx, tx, true, targetErr)
 	}
 	if err := engine.Controller.Verify(ctx, tx, targetResult); err != nil {
+		_, abortErr := engine.Target.Abort(ctx, tx.ID)
+		if abortErr != nil {
+			err = errors.Join(err, abortErr)
+		}
 		return engine.rollback(ctx, tx, true, err)
+	}
+	targetResult, err = engine.Target.Commit(ctx, tx.ID)
+	if err != nil || targetResult.Phase != model.PhaseCommitted {
+		if err == nil {
+			err = errors.New("target controller did not commit its verified product transaction")
+		}
+		return Result{Outcome: OutcomeRecoveryPending, Phase: tx.Phase}, err
 	}
 	tx, err = engine.advance(tx, model.PhaseVerified)
 	if err != nil {
