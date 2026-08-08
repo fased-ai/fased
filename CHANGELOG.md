@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.63
+
+- Accept exact protected-main release attestations when the immutable release
+  tag resolves to the same signed commit.
+- Record the published rc.62 lifecycle topology in release compatibility
+  evidence before allocating the next candidate.
+
 ## 0.1.76-rc.62
 
 - Bind pre-tag candidate descriptors to exact protected `main`, then require
