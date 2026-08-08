@@ -3,7 +3,12 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
 import { verifyRepositoryDependencyRemediation } from "./ci-dependency-integrity.mjs";
-import { classifyChangedPaths, createGatePlan, normalizeChangedPaths } from "./gate-authority.mjs";
+import {
+  classifyChangedPaths,
+  createGatePlan,
+  INSTALLER_RELEASE_VERIFICATION_PATHS,
+  normalizeChangedPaths,
+} from "./gate-authority.mjs";
 
 export { classifyChangedPaths };
 
@@ -120,15 +125,37 @@ export function outputEntries(plan, options = {}) {
   };
 }
 
-function installerOutsideVerificationFunction(source) {
-  const startMarker = "  resolve_attested_local_release_commit() {\n";
-  const endMarker = "\n\n  local_path_uid() {";
+function replaceInstallerRegion(source, startMarker, endMarker, label) {
   const start = source.indexOf(startMarker);
   const end = source.indexOf(endMarker, start + startMarker.length);
   if (start < 0 || end < 0) {
-    throw new Error("installer release-verification function is missing");
+    throw new Error(`installer ${label} region is missing`);
   }
-  return `${source.slice(0, start)}${source.slice(end)}`;
+  return `${source.slice(0, start + startMarker.length)}__FASED_${label}__\n${source.slice(end)}`;
+}
+
+function normalizeInstallerReleaseVerification(source) {
+  const helperStart = source.indexOf("  verify_release_attestation_source() {\n");
+  if (helperStart >= 0) {
+    const helperEndMarker = "\n\n  root_owned_bundle_tree_is_secure() {";
+    const helperEnd = source.indexOf(helperEndMarker, helperStart);
+    if (helperEnd < 0) {
+      throw new Error("installer shared release-verification helper is unterminated");
+    }
+    source = `${source.slice(0, helperStart)}${source.slice(helperEnd + 2)}`;
+  }
+  source = replaceInstallerRegion(
+    source,
+    '    curl -q -fL --proto \'=https\' --tlsv1.2 "$release_url/fased-privileged-vex-v1.openvex.json" -o "$vex"\n',
+    '    local manifest_selection=""',
+    "HOSTING_ATTESTATION_VERIFICATION",
+  );
+  return replaceInstallerRegion(
+    source,
+    '      echo "Could not download the Local release attestation bundle." >&2\n      return 1\n    fi\n',
+    '    local release_commit=""',
+    "LOCAL_ATTESTATION_VERIFICATION",
+  );
 }
 
 export function isInstallerReleaseVerificationChange(paths, baseInstaller, headInstaller) {
@@ -136,17 +163,17 @@ export function isInstallerReleaseVerificationChange(paths, baseInstaller, headI
     left.localeCompare(right),
   );
   if (
-    normalized.length !== 2 ||
-    normalized[0] !== "install.sh" ||
-    normalized[1] !== "scripts/install-release-pin.test.ts" ||
+    !normalized.includes("install.sh") ||
+    !normalized.includes("scripts/install-release-pin.test.ts") ||
+    !normalized.every((path) => INSTALLER_RELEASE_VERIFICATION_PATHS.has(path)) ||
     baseInstaller === headInstaller
   ) {
     return false;
   }
   try {
     return (
-      installerOutsideVerificationFunction(baseInstaller) ===
-      installerOutsideVerificationFunction(headInstaller)
+      normalizeInstallerReleaseVerification(baseInstaller) ===
+      normalizeInstallerReleaseVerification(headInstaller)
     );
   } catch {
     return false;

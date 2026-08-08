@@ -11,6 +11,16 @@ export const ENTRY_POINTS = Object.freeze([
   "hosting-fresh",
   "hosting-update",
 ]);
+export const INSTALLER_RELEASE_VERIFICATION_PATHS = new Set([
+  ".github/workflows/hosted-runtime-release.yml",
+  "install.sh",
+  "scripts/ci-workflow-contract.test.ts",
+  "scripts/docker/protected-local-systemd/run.sh",
+  "scripts/hosted-installer-artifact-layout.test.ts",
+  "scripts/install-release-pin.test.ts",
+  "scripts/lifecycle-version-neutral.test.ts",
+  "scripts/test-protected-local-systemd-container.sh",
+]);
 
 const DOC_PATH_RE = /^(?:docs\/|.*\.(?:md|mdx)$|scripts\/docs-product-contract\.mjs$)/;
 const VERSION_PATH_RE =
@@ -260,9 +270,9 @@ export function createGatePlan(inputPaths, options = {}) {
   const installerReleaseVerification = options.installerReleaseVerification === true;
   if (
     installerReleaseVerification &&
-    (paths.length !== 2 ||
-      !paths.includes("install.sh") ||
-      !paths.includes("scripts/install-release-pin.test.ts"))
+    (!paths.includes("install.sh") ||
+      !paths.includes("scripts/install-release-pin.test.ts") ||
+      !paths.every((path) => INSTALLER_RELEASE_VERIFICATION_PATHS.has(path)))
   ) {
     throw new Error("gate authority: invalid installer release-verification lane paths");
   }
