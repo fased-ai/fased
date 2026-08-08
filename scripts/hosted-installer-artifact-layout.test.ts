@@ -321,7 +321,7 @@ describe("attested Hosting installer artifact layout", () => {
     expect(releaseWorkflow).toContain("needs: [validate, linux, signer]");
   });
 
-  it("assembles owner-tagged protected-main candidates before publication", () => {
+  it("assembles protected-main candidates before the post-P1 owner tag", () => {
     expect(releaseWorkflow).toContain("name: Assemble offline-attested candidate");
     expect(releaseWorkflow).toContain("name: fased-hosting-candidate");
     expect(releaseWorkflow).toContain("fased-hosted-release-v2.json.attestation.json");
@@ -334,7 +334,7 @@ describe("attested Hosting installer artifact layout", () => {
     expect(releaseWorkflow).toContain("name: Promote exact verified candidate bytes");
     expect(releaseWorkflow).toContain("environment: candidate-release");
     expect(releaseWorkflow).toContain("name: Reverify immutable candidate tag after P1");
-    expect(releaseWorkflow).toContain('test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"');
+    expect(releaseWorkflow).toContain('test "$GITHUB_REF" = "refs/heads/main"');
   });
 
   it("publishes tagged prereleases as non-latest GitHub prereleases", () => {
