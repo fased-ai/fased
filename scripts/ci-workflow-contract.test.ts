@@ -652,9 +652,7 @@ describe("CI workflow routing", () => {
       resolve(repoRoot, "scripts/test-protected-local-systemd-container.sh"),
       "utf8",
     );
-    expect(containerFixture).toContain(
-      '"install_entry_release_identity=\\"${VERSION}:${COMMIT}\\""',
-    );
+    expect(containerFixture).toContain('"install_entry_release_identity=\\"${VERSION}\\""');
     expect(containerFixture).toContain(".release.commit == $commit");
   });
 
