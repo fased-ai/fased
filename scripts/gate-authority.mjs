@@ -29,6 +29,10 @@ const CI_INFRASTRUCTURE_PATH_RE =
   /^(?:\.pre-commit-config\.yaml$|\.secrets\.baseline$|config\/lifecycle-compatibility\.v1\.json$|\.github\/(?:actions\/[^/]+\/action\.ya?ml|workflows\/[^/]+\.ya?ml)|scripts\/(?:gate-authority|hosted-installer-artifact-layout|lifecycle-compatibility-inventory|release-artifact-set|ci-(?:change-scope|dependency-integrity|required-gates|merged-main-reuse|run-changed-tests|version-identity|workflow-contract))(?:\.mjs|\.test\.ts)|scripts\/check-composite-action-input-interpolation\.py|ui\/vitest\.changed-node\.config\.ts)$/;
 const INSTALLER_P1_FIXTURE_PATHS = new Set([
   "scripts/ci-workflow-contract.test.ts",
+  "scripts/docker/protected-local-systemd/run.sh",
+  "scripts/gate-authority.mjs",
+  "scripts/gate-authority.test.ts",
+  "scripts/hosted-installer-artifact-layout.test.ts",
   "scripts/test-protected-local-systemd-container.sh",
 ]);
 const T2_FIXTURE_PATH_RE =
@@ -366,7 +370,9 @@ export function createGatePlan(inputPaths, options = {}) {
     paths.includes("src/brand.ts") &&
     paths.every((path) => VERSION_PATH_RE.test(path));
   const lifecycleGateEnforcementOnly = false;
-  const installerP1FixtureOnly = paths.every((path) => INSTALLER_P1_FIXTURE_PATHS.has(path));
+  const installerP1FixtureOnly =
+    paths.some((path) => CI_INFRASTRUCTURE_PATH_RE.test(path)) &&
+    paths.every((path) => INSTALLER_P1_FIXTURE_PATHS.has(path));
   const ciInfrastructureOnly =
     !versionOnly &&
     (installerP1FixtureOnly ||
@@ -468,6 +474,7 @@ export function createGatePlan(inputPaths, options = {}) {
   );
 
   if (
+    installerP1FixtureOnly ||
     (gateToolingOnly && !lifecycleFixtureChanged) ||
     t2FixtureOnly ||
     (testOnly && !fixtureOnly && !productionChanged)
