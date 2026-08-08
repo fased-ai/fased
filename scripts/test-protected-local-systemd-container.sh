@@ -110,7 +110,7 @@ if [[ "$PUBLIC_ACQUISITION" == "1" ]]; then
     }
   done
   grep -Fqx \
-    "install_entry_release_identity=\"${VERSION}:${COMMIT}\"" \
+    "install_entry_release_identity=\"${VERSION}\"" \
     "$ARTIFACT_DIR/install.sh" || {
     echo "The public-acquisition fixture requires the exact stamped installer identity." >&2
     exit 1
