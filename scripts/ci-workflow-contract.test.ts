@@ -478,7 +478,7 @@ describe("CI workflow routing", () => {
     expect(dockerWorkflow).not.toContain("gh release upload");
   });
 
-  it("builds once from an owner-tagged protected-main commit before P1", async () => {
+  it("builds once from protected main before the post-P1 owner tag", async () => {
     const workflow = await readWorkflow(".github/workflows/hosted-runtime-release.yml");
     const jobs = workflow.jobs ?? {};
     const candidate = jobs["candidate"];
@@ -513,12 +513,13 @@ describe("CI workflow routing", () => {
     ]);
     expect(candidateText).toContain("release-artifact-set.mjs build");
     expect(validateText).toContain("pnpm build");
-    expect(validateText).toContain('test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"');
+    expect(validateText).toContain('test "$GITHUB_REF" = "refs/heads/main"');
     expect(validateText).toContain(
       'git ls-remote --exit-code --tags origin "refs/tags/v$RELEASE_VERSION"',
     );
-    expect(validateText).toContain('test "$remote_tag" = "$SOURCE_COMMIT"');
-    expect(validateText).toContain("--allow-exact-tag");
+    expect(validateText).toContain("Candidate tag already exists before packaged P1");
+    expect(validateText).not.toContain('test "$remote_tag" = "$SOURCE_COMMIT"');
+    expect(validateText).not.toContain("--allow-exact-tag");
     expect(validateText).toContain("pnpm check:plugin-sdk:types");
     expect(validateText).toContain("node --import tsx scripts/release-check.ts");
     expect(validateText).toContain("pnpm release:validate-dist:packed");

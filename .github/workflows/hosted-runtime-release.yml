@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_version:
-        description: Immutable tagged package version to build once and promote from protected main
+        description: Unused package version to build once and promote from protected main
         required: true
         type: string
       source_commit:
@@ -66,7 +66,7 @@ jobs:
       - name: Install build dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Verify exact tagged protected-main candidate identity
+      - name: Verify exact untagged protected-main candidate identity
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.release_version }}
@@ -76,14 +76,16 @@ jobs:
         run: |
           set -euo pipefail
           test "$GITHUB_SHA" = "$SOURCE_COMMIT"
-          test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"
+          test "$GITHUB_REF" = "refs/heads/main"
           test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
           [[ "$PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           test "$PREDECESSOR_VERSION" != "$RELEASE_VERSION"
           remote_main="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
           test "$remote_main" = "$SOURCE_COMMIT"
-          remote_tag="$(git ls-remote --exit-code --tags origin "refs/tags/v$RELEASE_VERSION" | awk '{print $1}')"
-          test "$remote_tag" = "$SOURCE_COMMIT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$RELEASE_VERSION" >/dev/null 2>&1; then
+            echo "Candidate tag already exists before packaged P1: v$RELEASE_VERSION" >&2
+            exit 1
+          fi
           if gh release view "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Candidate release already exists: v$RELEASE_VERSION" >&2
             exit 1
@@ -109,7 +111,7 @@ jobs:
           GITHUB_EVENT_NAME=pull_request \
             GITHUB_BASE_REF= \
             GITHUB_BASE_SHA="$base_commit" \
-            node scripts/ci-version-identity.mjs --allow-exact-tag
+            node scripts/ci-version-identity.mjs
           evidence_dir="$RUNNER_TEMP/pre-candidate-evidence"
           gh run download "$PRE_CANDIDATE_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
