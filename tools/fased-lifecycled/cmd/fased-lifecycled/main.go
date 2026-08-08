@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"fased-lifecycled/bundle"
 	"fased-lifecycled/controller"
 	"fased-lifecycled/daemon"
 	"fased-lifecycled/engine"
@@ -59,6 +60,9 @@ func run(args []string) error {
 	if args[0] == "request" {
 		return runRequest(args[1:], os.Stdout)
 	}
+	if args[0] == "inventory" {
+		return runInventory(args[1:], os.Stdout)
+	}
 	if os.Geteuid() != 0 {
 		return errors.New("lifecycle supervisor and target modes require root")
 	}
@@ -99,6 +103,48 @@ func run(args []string) error {
 	default:
 		return errors.New("unsupported lifecycle daemon mode")
 	}
+}
+
+func runInventory(args []string, output io.Writer) error {
+	flags := flag.NewFlagSet("inventory", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	var root, version, commit, tree, outputPath string
+	flags.StringVar(&root, "root", "", "")
+	flags.StringVar(&version, "version", "", "")
+	flags.StringVar(&commit, "commit", "", "")
+	flags.StringVar(&tree, "tree", "", "")
+	flags.StringVar(&outputPath, "output", "", "")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || root == "" || version == "" || commit == "" || tree == "" || outputPath == "" {
+		return errors.New("root, version, commit, tree, and output are required")
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	inventory, generation, err := bundle.Inspect(absRoot, version, commit, tree, map[string]uint32{
+		"federation": 2, "managedInstall": 2, "mining": 1, "signer": 2, "walletRegistry": 1,
+	}, model.CapabilityRanges{
+		Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1},
+		Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 2, Max: 2},
+	})
+	if err != nil {
+		return err
+	}
+	data, err := bundle.CanonicalInventoryJSON(inventory)
+	if err != nil {
+		return err
+	}
+	absOutput, err := filepath.Abs(outputPath)
+	if err != nil {
+		return err
+	}
+	if filepath.Dir(absOutput) == absRoot || filepath.Dir(absOutput) == filepath.Join(absRoot, "payload") {
+		return errors.New("inventory output must be outside the inventoried payload")
+	}
+	if err := os.WriteFile(absOutput, append(data, '\n'), 0o600); err != nil {
+		return err
+	}
+	return json.NewEncoder(output).Encode(generation)
 }
 
 func runInitialize(args []string, output io.Writer) error {

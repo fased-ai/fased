@@ -7,13 +7,16 @@ trap 'rm -rf "$FIXTURE"' EXIT
 mkdir -p "$FIXTURE/runtime"
 printf '%s\n' "console.log('fixture');" >"$FIXTURE/runtime/fased.mjs"
 printf '#!/bin/sh\nexit 0\n' >"$FIXTURE/signer"
-cp "$FIXTURE/signer" "$FIXTURE/lifecycled"
-chmod 0755 "$FIXTURE/signer" "$FIXTURE/lifecycled"
+chmod 0755 "$FIXTURE/signer"
+LIFECYCLED="${FASED_TEST_LIFECYCLED:-$ROOT/dist-native/fased-lifecycled}"
+if [[ ! -x "$LIFECYCLED" ]]; then
+  bash "$ROOT/scripts/build-fased-lifecycled.sh"
+fi
 
 node "$ROOT/scripts/build-lifecycle-generation.mjs" \
   --runtime "$FIXTURE/runtime" \
   --signer "$FIXTURE/signer" \
-  --lifecycled "$FIXTURE/lifecycled" \
+  --lifecycled "$LIFECYCLED" \
   --output "$FIXTURE/generation" \
   --version 1.2.3 \
   --commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
@@ -33,7 +36,7 @@ node -e '
 
 ln -s fased.mjs "$FIXTURE/runtime/alias.mjs"
 if node "$ROOT/scripts/build-lifecycle-generation.mjs" \
-  --runtime "$FIXTURE/runtime" --signer "$FIXTURE/signer" --lifecycled "$FIXTURE/lifecycled" \
+  --runtime "$FIXTURE/runtime" --signer "$FIXTURE/signer" --lifecycled "$LIFECYCLED" \
   --output "$FIXTURE/rejected" --version 1.2.3 \
   --commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --tree bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb >/dev/null 2>&1; then
   echo "generation builder accepted a symlink" >&2

@@ -104,12 +104,10 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
     mode: 0o755,
   });
   const inventory = path.join(output, "inventory.json");
-  const moduleRoot = path.resolve(import.meta.dirname, "..", "tools", "fased-lifecycled");
   const { stdout } = await execFileAsync(
-    "go",
+    lifecycled,
     [
-      "run",
-      "./cmd/fased-generation",
+      "inventory",
       "--root",
       payload,
       "--version",
@@ -122,8 +120,8 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
       inventory,
     ],
     {
-      cwd: moduleRoot,
-      env: { ...process.env, GOCACHE: process.env.GOCACHE || "/tmp/fased-lifecycled-go-cache" },
+      cwd: path.dirname(lifecycled),
+      env: process.env,
       maxBuffer: 1024 * 1024,
     },
   );
