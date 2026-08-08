@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.59
+
+- Preserve distinct public Wallet IDs and canonical native signer IDs during
+  Local and Hosting update health convergence.
+- Reject non-canonical or duplicate signer identities while retaining exact
+  Wallet address, role, policy, network, and operation-lane verification.
+
 ## 0.1.76-rc.58
 
 - Bind candidate attestations to the exact immutable release tag while retaining
