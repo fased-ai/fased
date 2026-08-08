@@ -25,6 +25,14 @@ import (
 
 const maxConfigBytes = 64 << 10
 
+var (
+	lifecycleBuildVersion     = "dev"
+	lifecycleBuildCommit      = "unknown"
+	lifecycleBuildTree        = "unknown"
+	lifecycleBuildInputDigest = "unknown"
+	lifecycleBuildDevelopment = "true"
+)
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "fased-lifecycled: %s\n", err)
@@ -35,6 +43,11 @@ func main() {
 func run(args []string) error {
 	if len(args) == 0 {
 		return errors.New("mode must be supervisor, target, or signer-call")
+	}
+	if len(args) == 1 && args[0] == "--version" {
+		_, err := fmt.Fprintf(os.Stdout, "fased-lifecycled %s commit=%s tree=%s buildInputDigest=%s development=%s\n",
+			lifecycleBuildVersion, lifecycleBuildCommit, lifecycleBuildTree, lifecycleBuildInputDigest, lifecycleBuildDevelopment)
+		return err
 	}
 	if args[0] == "signer-call" {
 		return signer.RunSocketHelper(args[1:], os.Stdin, os.Stdout)
