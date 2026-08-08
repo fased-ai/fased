@@ -51,6 +51,7 @@ type PlatformAdapter interface {
 	Switch(context.Context, model.Transaction) error
 	Verify(context.Context, model.Transaction) error
 	Commit(context.Context, model.Transaction) error
+	Quiesce(context.Context, model.Transaction) error
 	Restore(context.Context, model.Transaction) error
 	Discard(context.Context, model.Transaction) error
 }
@@ -203,10 +204,13 @@ func (engine *TargetEngine) commit(ctx context.Context, tx model.Transaction) er
 func (engine *TargetEngine) rollback(ctx context.Context, tx model.Transaction, restore bool, cause error) (Result, error) {
 	var rollbackErrors []error
 	if restore {
-		rollbackErrors = appendIfError(rollbackErrors, engine.Adapter.Restore(ctx, tx))
+		rollbackErrors = appendIfError(rollbackErrors, engine.Adapter.Quiesce(ctx, tx))
 	}
 	rollbackErrors = appendIfError(rollbackErrors, engine.Signer.Abort(ctx, tx))
 	rollbackErrors = appendIfError(rollbackErrors, engine.Migrator.Abort(ctx, tx))
+	if restore {
+		rollbackErrors = appendIfError(rollbackErrors, engine.Adapter.Restore(ctx, tx))
+	}
 	rollbackErrors = appendIfError(rollbackErrors, engine.Adapter.Discard(ctx, tx))
 	rolled, err := engine.advance(tx, model.PhaseRolledBack)
 	rollbackErrors = appendIfError(rollbackErrors, err)

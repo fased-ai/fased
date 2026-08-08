@@ -128,6 +128,11 @@ func (adapter fakeAdapter) Commit(context.Context, model.Transaction) error {
 	return nil
 }
 
+func (adapter fakeAdapter) Quiesce(context.Context, model.Transaction) error {
+	*adapter.calls = append(*adapter.calls, "adapter.quiesce")
+	return nil
+}
+
 func (adapter fakeAdapter) Restore(context.Context, model.Transaction) error {
 	*adapter.calls = append(*adapter.calls, "adapter.restore")
 	return nil
@@ -195,7 +200,7 @@ func TestTargetEngineRestoresAfterSwitchFailure(t *testing.T) {
 	if err == nil || result.Outcome != OutcomeRolledBack || result.Phase != model.PhaseRolledBack {
 		t.Fatalf("unexpected failure result: %+v err=%v", result, err)
 	}
-	wantTail := []string{"adapter.switch", "adapter.restore", "signer.abort", "migrator.abort", "adapter.discard"}
+	wantTail := []string{"adapter.switch", "adapter.quiesce", "signer.abort", "migrator.abort", "adapter.restore", "adapter.discard"}
 	if !reflect.DeepEqual(calls[len(calls)-len(wantTail):], wantTail) {
 		t.Fatalf("unexpected rollback order: %v", calls)
 	}
@@ -218,7 +223,7 @@ func TestRecoverCompletesVerifiedAndRollsBackSwitched(t *testing.T) {
 	if err != nil || switched.Phase != model.PhaseRolledBack {
 		t.Fatalf("switched recovery failed: %+v err=%v", switched, err)
 	}
-	if len(switchedCalls) == 0 || switchedCalls[0] != "adapter.restore" {
-		t.Fatalf("switched recovery did not restore first: %v", switchedCalls)
+	if len(switchedCalls) == 0 || switchedCalls[0] != "adapter.quiesce" {
+		t.Fatalf("switched recovery did not quiesce target first: %v", switchedCalls)
 	}
 }

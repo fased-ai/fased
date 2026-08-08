@@ -52,3 +52,20 @@ func TestApplicationUpdateGateFailsClosedForUntrustedGateAndOpensOnlyWhenAbsent(
 		t.Fatalf("absent gate should allow normal policy enforcement: %v", err)
 	}
 }
+
+func TestSignerLifecycleUpgradeRequiresControlSocketAndActiveTrustedGate(t *testing.T) {
+	gatePath := filepath.Join(t.TempDir(), "active")
+	operation := "v2.lifecycle.upgrade.prepare"
+	if err := enforceApplicationUpdateGate(gatePath, operation, true, os.Geteuid()); err == nil || !strings.Contains(err.Error(), "requires an active") {
+		t.Fatalf("lifecycle operation ran without active gate: %v", err)
+	}
+	if err := os.WriteFile(gatePath, []byte("paired-update\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := enforceApplicationUpdateGate(gatePath, operation, false, os.Geteuid()); err == nil || !strings.Contains(err.Error(), "control socket") {
+		t.Fatalf("lifecycle operation ran outside control socket: %v", err)
+	}
+	if err := enforceApplicationUpdateGate(gatePath, operation, true, os.Geteuid()); err != nil {
+		t.Fatalf("trusted lifecycle operation was blocked: %v", err)
+	}
+}
