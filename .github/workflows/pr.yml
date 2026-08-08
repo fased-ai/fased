@@ -289,7 +289,7 @@ jobs:
     name: security
     needs: [classify]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       security-events: write
     steps:

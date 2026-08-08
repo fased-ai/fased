@@ -22,6 +22,13 @@ describe("compact CI topology", () => {
     ]);
   });
 
+  it("allows a combined broad-change security scan to finish", async () => {
+    const { document } = await workflow("pr.yml");
+    const security = document.jobs?.security as { "timeout-minutes"?: number };
+
+    expect(security["timeout-minutes"]).toBe(15);
+  });
+
   it("keeps the broad matrix outside pull requests", async () => {
     const { source } = await workflow("ci.yml");
     expect(source).not.toMatch(/^\s*pull_request:/mu);
