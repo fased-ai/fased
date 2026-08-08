@@ -4531,13 +4531,17 @@ async function stageRecoveryController(transaction, productJournal, request, con
     if (staged.trustChanged) {
       await context.commitLifecycleTrust(context.paths, staged);
     }
-    const selectionReceipt = await context.writeControllerSelectionReceipt(
-      context.paths,
+    // The original product selection remains the immutable authorization for
+    // the interrupted transaction. A recovery controller can be the same
+    // verified generation running in a new process, so persisting its transient
+    // process identity into that original selection slot would be equivocation.
+    // The separate durable recovery authorization below binds the verified
+    // generation, journal, outcome, and recovery epoch; the live process ID is
+    // checked independently for each attempt.
+    const selectionReceipt = createControllerSelectionReceipt(
       recoveryRequest,
       staged,
       live.controllerInstanceId,
-      context.rootUid,
-      context.rootGid,
       { now: context.now(), nonce: transaction.requestNonce },
     );
     const proposedAuthorization = createRecoveryAuthorization(
@@ -5733,6 +5737,7 @@ export const __testing = Object.freeze({
   authorizePublicSocket,
   privateMkdtemp,
   sealSupervisorArtifact,
+  stageRecoveryController,
   verifyLifecycleRootTransition,
   waitForRecoveryControllerIdentity,
 });
