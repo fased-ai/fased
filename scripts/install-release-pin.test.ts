@@ -223,6 +223,9 @@ if [[ "\${1:-}" == "attestation" && "\${2:-}" == "verify" ]]; then
   if [[ "\${FASED_TEST_ATTESTATION_FAIL:-0}" == "1" ]]; then
     exit 42
   fi
+  if [[ "\${FASED_TEST_ATTESTATION_MAIN_ONLY:-0}" == "1" && "$*" != *"--source-ref refs/heads/main"* ]]; then
+    exit 43
+  fi
   exit 0
 fi
 exit 1
@@ -780,6 +783,35 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
 
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).not.toContain("package-manager progress before verified commit");
+      expect(result.stdout).toContain("exact-local-inner-handoff");
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a protected-main build attestation only when the immutable tag resolves its exact commit", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-main-attested-local-"));
+    try {
+      const harness = createExactLocalBootstrapHarness(tempRoot, {
+        uid: 1000,
+        preinstallVerificationTools: true,
+      });
+      const result = runExactLocalBootstrap(
+        harness,
+        tempRoot,
+        [
+          "--repair-local",
+          "--release",
+          "v9.9.9-test.1",
+          "--update-channel",
+          "beta",
+          "--install-dir",
+          harness.installDir,
+        ],
+        { FASED_TEST_ATTESTATION_MAIN_ONLY: "1" },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain("exact-local-inner-handoff");
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });

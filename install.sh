@@ -1180,7 +1180,13 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       --bundle "$bundle" \
       --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
       --source-ref "refs/tags/v${release_version}" \
-      --deny-self-hosted-runners >/dev/null; then
+      --deny-self-hosted-runners >/dev/null 2>&1 && \
+      ! GH_PROMPT_DISABLED=1 gh attestation verify "$manifest" \
+      --repo fased-ai/fased \
+      --bundle "$bundle" \
+      --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+      --source-ref "refs/heads/main" \
+      --deny-self-hosted-runners >/dev/null 2>&1; then
       rm -rf -- "$verification_dir"
       echo "Local release attestation verification failed." >&2
       return 1
