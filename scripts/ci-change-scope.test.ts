@@ -9,12 +9,23 @@ import { createGatePlan } from "./gate-authority.mjs";
 
 describe("CI changed-surface classification", () => {
   it("selects the narrow installer release-verification lane only for a function-contained change", () => {
-    const before = `prefix\n  resolve_attested_local_release_commit() {\n    old\n  }\n\n  local_path_uid() {\n    same\n  }\n`;
-    const after = `prefix\n  resolve_attested_local_release_commit() {\n    corrected\n  }\n\n  local_path_uid() {\n    same\n  }\n`;
-    const paths = ["install.sh", "scripts/install-release-pin.test.ts"];
+    const before = `prefix\n  root_owned_bundle_tree_is_secure() {\n  }\n    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-vex-v1.openvex.json" -o "$vex"\n    old hosting verifier\n    local manifest_selection=""\n      echo "Could not download the Local release attestation bundle." >&2\n      return 1\n    fi\n    old local verifier\n    local release_commit=""\nsuffix\n`;
+    const after = `prefix\n  verify_release_attestation_source() {\n    corrected shared verifier\n  }\n\n  root_owned_bundle_tree_is_secure() {\n  }\n    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-vex-v1.openvex.json" -o "$vex"\n    corrected hosting verifier\n    local manifest_selection=""\n      echo "Could not download the Local release attestation bundle." >&2\n      return 1\n    fi\n    corrected local verifier\n    local release_commit=""\nsuffix\n`;
+    const paths = [
+      ".github/workflows/hosted-runtime-release.yml",
+      "install.sh",
+      "scripts/ci-workflow-contract.test.ts",
+      "scripts/docker/protected-local-systemd/run.sh",
+      "scripts/hosted-installer-artifact-layout.test.ts",
+      "scripts/install-release-pin.test.ts",
+      "scripts/test-protected-local-systemd-container.sh",
+    ];
 
     expect(isInstallerReleaseVerificationChange(paths, before, after)).toBe(true);
     expect(isInstallerReleaseVerificationChange(paths, before, `${after}outside`)).toBe(false);
+    expect(isInstallerReleaseVerificationChange([...paths, "src/index.ts"], before, after)).toBe(
+      false,
+    );
 
     const output = outputEntries(createGatePlan(paths, { installerReleaseVerification: true }));
     expect(output).toMatchObject({
