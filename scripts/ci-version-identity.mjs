@@ -125,7 +125,12 @@ export function validateCurrentVersionInventory(repoRoot = resolve(".")) {
   return version;
 }
 
-export function validateVersionOnlyDiff(base, paths, repoRoot = resolve(".")) {
+export function validateVersionOnlyDiff(
+  base,
+  paths,
+  repoRoot = resolve("."),
+  { allowExactTag = false } = {},
+) {
   const scope = classifyChangedPaths(paths);
   assert.equal(scope.versionOnly, true, "changed paths are not an exact version-only release set");
 
@@ -152,19 +157,41 @@ export function validateVersionOnlyDiff(base, paths, repoRoot = resolve(".")) {
     assert.match(after, new RegExp(`^##\\s+v?${version.replaceAll(".", "\\.")}\\s*$`, "m"));
   }
 
+  const tagRef = `refs/tags/v${version}`;
   try {
-    execFileSync("git", ["show-ref", "--verify", "--quiet", `refs/tags/v${version}`]);
+    execFileSync("git", ["show-ref", "--verify", "--quiet", tagRef], { cwd: repoRoot });
   } catch {
+    return version;
+  }
+  if (allowExactTag) {
+    const tagCommit = execFileSync("git", ["rev-parse", `${tagRef}^{commit}`], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    }).trim();
+    const headCommit = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    }).trim();
+    assert.equal(tagCommit, headCommit, `release tag v${version} does not resolve to HEAD`);
     return version;
   }
   throw new Error(`release tag v${version} already exists`);
 }
 
 function main() {
+  const args = process.argv.slice(2);
+  const allowExactTag = args.length === 1 && args[0] === "--allow-exact-tag";
+  if (args.length > 0 && !allowExactTag) {
+    throw new Error(`unsupported arguments: ${args.join(" ")}`);
+  }
   const base = diffBase();
   const paths = changedPathsFromGit();
-  const version = validateVersionOnlyDiff(base, paths);
-  console.log(`ci-version-identity: ${version} is an exact untagged version-only change`);
+  const version = validateVersionOnlyDiff(base, paths, resolve("."), { allowExactTag });
+  console.log(
+    `ci-version-identity: ${version} is an exact ${
+      allowExactTag ? "immutable-tagged" : "untagged"
+    } version-only change`,
+  );
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
