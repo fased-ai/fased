@@ -109,7 +109,7 @@ jobs:
           GITHUB_EVENT_NAME=pull_request \
             GITHUB_BASE_REF= \
             GITHUB_BASE_SHA="$base_commit" \
-            node scripts/ci-version-identity.mjs
+            node scripts/ci-version-identity.mjs --allow-exact-tag
           evidence_dir="$RUNNER_TEMP/pre-candidate-evidence"
           gh run download "$PRE_CANDIDATE_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
