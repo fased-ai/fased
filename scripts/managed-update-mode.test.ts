@@ -206,4 +206,19 @@ describe("managed update mode", () => {
       'exec "\\${values[--protected-local-node-binary]}" \\\n+  /repo/scripts/protected-local-bootstrap.mjs install',
     );
   });
+
+  it("retries a controller socket handoff that closes during generation replacement", () => {
+    for (const fixturePath of [
+      "./docker/protected-local-systemd/run.sh",
+      "./docker/hosting-systemd/run.sh",
+    ]) {
+      const fixture = fs.readFileSync(new URL(fixturePath, import.meta.url), "utf8");
+      const closeHandler = fixture.slice(
+        fixture.indexOf('socket.once("close"'),
+        fixture.indexOf("async function requestWithRetry"),
+      );
+      expect(closeHandler).toContain('error.code = "ECONNRESET"');
+      expect(fixture).toContain('new Set(["ENOENT", "ECONNREFUSED", "ECONNRESET", "EPIPE"])');
+    }
+  });
 });
