@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
+import packageMetadata from "../package.json";
 import { __testing } from "./fased-generation-updater-core.mjs";
 
 describe("generation updater command ownership", () => {
+  it("ships the generation core in the public package", () => {
+    expect(packageMetadata.files).toContain("scripts/fased-generation-updater-core.mjs");
+  });
+
   it("keeps normal managed updates on the generation engine", () => {
     expect(__testing.parseArgs(["update", "--channel", "beta", "--tag", "v1.2.3"])).toMatchObject({
       mode: "generation",
