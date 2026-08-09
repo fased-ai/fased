@@ -139,7 +139,7 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%s %s %s %s %s
+ReadWritePaths=%s %s %s %s %s %s
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_SETUID CAP_SETGID
 AmbientCapabilities=
@@ -148,6 +148,7 @@ AmbientCapabilities=
 WantedBy=multi-user.target
 `, adapter.Config.InstanceID, runtimeDirectory, entrypoint, adapter.Config.LifecycleRoot,
 		adapter.Config.ControllerSocket(), adapter.Config.InstallRoot, adapter.Config.LifecycleRoot,
-		adapter.Config.ProductStateRoot, adapter.Config.OwnerStateRoot, adapter.Config.UnitRoot)
+		adapter.Config.ProductStateRoot, adapter.Config.OwnerStateRoot, adapter.Config.UnitRoot,
+		filepath.Dir(adapter.Config.UpdateGatePath()))
 	return []byte(unit)
 }

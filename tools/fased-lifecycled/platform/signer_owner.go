@@ -8,12 +8,9 @@ import (
 )
 
 func CanonicalSignerOwnerFiles(config Config) []string {
-	if config.Profile == model.ProfileHosting {
-		return []string{"/usr/local/libexec/fased-signer-owner", "/usr/local/sbin/fased-signer-owner"}
-	}
 	return []string{
-		filepath.Join("/usr/local/libexec", "fased-local-signer-owner-"+config.InstanceID),
-		filepath.Join("/usr/local/sbin", "fased-local-signer-owner-"+config.InstanceID),
+		filepath.Join(config.InstallRoot, "helpers", "fased-signer-owner"),
+		filepath.Join(config.OwnerStateRoot, "bin", "fased-signer-owner"),
 	}
 }
 

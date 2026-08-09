@@ -21,7 +21,7 @@ func TestSignerOwnerWrapperBindsCanonicalGenerationAndIdentity(t *testing.T) {
 		"FASED_SIGNER_USER=\"fssg-example\"",
 		"FASED_SIGNER_BIN=\"/opt/fased/local/example/current/payload/bin/fased-signerd\"",
 		"FASED_SIGNER_OWNER_LOCAL=\"1\"",
-		"exec \"/usr/local/libexec/fased-local-signer-owner-example\" \"$@\"",
+		"exec \"/opt/fased/local/example/helpers/fased-signer-owner\" \"$@\"",
 	} {
 		if !strings.Contains(string(wrapper), required) {
 			t.Fatalf("signer-owner wrapper is missing %q:\n%s", required, wrapper)
