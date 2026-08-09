@@ -16,11 +16,32 @@ export const INSTALLER_RELEASE_VERIFICATION_PATHS = new Set([
   "install.sh",
   "scripts/ci-workflow-contract.test.ts",
   "scripts/docker/protected-local-systemd/run.sh",
+  "scripts/generation-updater.mjs",
+  "scripts/generation-updater.test.ts",
   "scripts/hosted-installer-artifact-layout.test.ts",
+  "scripts/hosted-security-boundary.test.ts",
+  "scripts/install-attestation-prerequisites.test.ts",
   "scripts/install-release-pin.test.ts",
+  "scripts/lifecycle-trust-policy.test.ts",
+  "scripts/lifecycle-trust-runtime.test.ts",
   "scripts/lifecycle-version-neutral.test.ts",
+  "scripts/release-artifact-set.mjs",
+  "scripts/release-artifact-set.test.ts",
   "scripts/test-protected-local-systemd-container.sh",
 ]);
+
+export function isInstallerReleaseVerificationPath(path) {
+  return INSTALLER_RELEASE_VERIFICATION_PATHS.has(path) || DOC_PATH_RE.test(path);
+}
+
+function hasReleaseVerifierTestBindings(paths) {
+  return (
+    (!paths.includes("scripts/generation-updater.mjs") ||
+      paths.includes("scripts/generation-updater.test.ts")) &&
+    (!paths.includes("scripts/release-artifact-set.mjs") ||
+      paths.includes("scripts/release-artifact-set.test.ts"))
+  );
+}
 
 const DOC_PATH_RE = /^(?:docs\/|.*\.(?:md|mdx)$|scripts\/docs-product-contract\.mjs$)/;
 const VERSION_PATH_RE =
@@ -280,7 +301,8 @@ export function createGatePlan(inputPaths, options = {}) {
     installerReleaseVerification &&
     (!paths.includes("install.sh") ||
       !paths.includes("scripts/install-release-pin.test.ts") ||
-      !paths.every((path) => INSTALLER_RELEASE_VERIFICATION_PATHS.has(path)))
+      !paths.every(isInstallerReleaseVerificationPath) ||
+      !hasReleaseVerifierTestBindings(paths))
   ) {
     throw new Error("gate authority: invalid installer release-verification lane paths");
   }
