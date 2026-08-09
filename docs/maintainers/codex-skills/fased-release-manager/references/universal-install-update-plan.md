@@ -133,23 +133,36 @@ supervisor, generated units, caches, staging, and bounded old receipts.
 - Route fresh and supported-stable operations through the shared engine.
 - Keep ambiguous installations on the explicit non-mutating repair result.
 
-### U2 — prove and cut over
+### U2 — prove, cut over, and reduce locally
 
-- Merge the focused source correction through stateless PR CI.
-- Build one candidate once in the protected candidate workflow.
-- Run packaged P1 once against the exact bytes: fresh protected Local,
-  supported stable update, injected failure, rollback/retry, restart,
-  preservation, and `Already current`.
+- Keep all work on one unpublished cleanup branch.
+- Inventory remaining legacy/adoption branches by the public contract they
+  protect.
+- Route every production install and update entry point exclusively through
+  `tools/fased-lifecycled`; never allow old and new owners to mutate one
+  installation.
+- Delete superseded private-prerelease adoption paths, journals,
+  acknowledgements, normalizers, controllers, and tests only after their Go
+  replacement passes the same branch-local transaction.
+- Build one unpublished candidate-shaped artifact and run fresh protected
+  Local, supported public-stable update, injected failure, rollback/retry,
+  restart, preservation, `Already current`, and the Hosting adapter fixture.
+- Fix every exposed predicate on this branch. Do not create a PR, candidate,
+  tag, or publication until the reduced implementation passes the complete
+  local closure.
+
+### U3 — deliver once and accept
+
+- Open one focused PR only after U2 passes; merge through protected stateless
+  CI.
+- Run PRE-CANDIDATE on the exact merged source.
+- Build one final immutable candidate once and run packaged P1 once against
+  those exact bytes.
 - Publish those bytes as a GitHub prerelease, complete owner npm beta and
   PUBLIC0, then perform literal owner Local acceptance.
 - Run real Hosting acceptance before stable promotion.
-
-### U3 — remove superseded implementations
-
-- Inventory remaining legacy/adoption branches by public contract protected.
-- Delete private-prerelease-only adoption paths, journals, acknowledgements,
-  normalizers, and tests after owner repair and the public stable bridge pass.
-- Re-run the same fresh/install/update acceptance against the reduced engine.
+- Do not create a transitional or diagnostic candidate before the reduced
+  implementation is merged.
 
 ## Product evidence
 
