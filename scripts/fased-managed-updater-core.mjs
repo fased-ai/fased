@@ -689,18 +689,19 @@ async function runInteractiveAdministrator(command, args, options = {}) {
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let timedOut = false;
     const maxBytes = 2 * 1024 * 1024;
-    const timeout = setTimeout(
-      () => child.kill("SIGKILL"),
-      options.timeoutMs || DEFAULT_TIMEOUT_MS,
-    );
-    const finish = (ok, error = null) => {
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, options.timeoutMs || DEFAULT_TIMEOUT_MS);
+    const finish = (ok, error = null, code = null, signal = null) => {
       if (settled) {
         return;
       }
       settled = true;
       clearTimeout(timeout);
-      resolve({ ok, stdout, stderr: stderr || error?.message || "" });
+      resolve({ ok, stdout, stderr: stderr || error?.message || "", code, signal, timedOut });
     };
     child.stdout.on("data", (chunk) => {
       stdout += String(chunk);
@@ -717,7 +718,7 @@ async function runInteractiveAdministrator(command, args, options = {}) {
       }
     });
     child.once("error", (error) => finish(false, error));
-    child.once("close", (code) => finish(code === 0));
+    child.once("close", (code, signal) => finish(code === 0, null, code, signal));
   });
 }
 

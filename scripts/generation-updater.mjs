@@ -427,8 +427,11 @@ async function runGenerationTransaction({
       { timeoutMs },
     );
     if (!result.ok) {
+      const detail = result.stderr.trim() || result.stdout.trim() || "no subprocess diagnostic";
+      const exit = Number.isInteger(result.code) ? String(result.code) : "none";
+      const signal = result.signal || "none";
       throw new Error(
-        result.stderr.trim() || result.stdout.trim() || "privileged lifecycle apply failed",
+        `privileged lifecycle apply failed (exit=${exit}, signal=${signal}, timedOut=${result.timedOut === true}): ${detail}`,
       );
     }
     const response = JSON.parse(result.stdout.trim());
