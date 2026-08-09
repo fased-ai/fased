@@ -433,6 +433,18 @@ describe("CI workflow routing", () => {
     expect(setup).toMatch(/install-bun:[\s\S]*?default: "false"/u);
   });
 
+  it("serializes full Node groups on the constrained PR runner", async () => {
+    const workflow = await readWorkflow(".github/workflows/pr.yml");
+    const fullNode = workflow.jobs?.["selected-tests"]?.steps?.find(
+      (step) => step.name === "Run full Node tests when explicitly selected",
+    );
+
+    expect(fullNode?.env?.FASED_TEST_PROFILE).toBe("serial");
+    expect(fullNode?.env?.FASED_TEST_VM_FORKS).toBe("0");
+    expect(fullNode?.run).toContain("pnpm canvas:a2ui:bundle");
+    expect(fullNode?.run).toContain("pnpm test");
+  });
+
   it("pins every third-party Action to an immutable commit", async () => {
     const githubRoot = resolve(repoRoot, ".github");
     const files = (await listFiles(githubRoot)).filter((path) => /\.ya?ml$/u.test(path));
@@ -478,7 +490,7 @@ describe("CI workflow routing", () => {
     expect(dockerWorkflow).not.toContain("gh release upload");
   });
 
-  it("builds once from protected main before the post-P1 owner tag", async () => {
+  it("builds once from the immutable owner tag authorized by the lifecycle root", async () => {
     const workflow = await readWorkflow(".github/workflows/hosted-runtime-release.yml");
     const jobs = workflow.jobs ?? {};
     const candidate = jobs["candidate"];
@@ -513,12 +525,12 @@ describe("CI workflow routing", () => {
     ]);
     expect(candidateText).toContain("release-artifact-set.mjs build");
     expect(validateText).toContain("pnpm build");
-    expect(validateText).toContain('test "$GITHUB_REF" = "refs/heads/main"');
+    expect(validateText).toContain('test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"');
     expect(validateText).toContain(
       'git ls-remote --exit-code --tags origin "refs/tags/v$RELEASE_VERSION"',
     );
-    expect(validateText).toContain("Candidate tag already exists before packaged P1");
-    expect(validateText).not.toContain('test "$remote_tag" = "$SOURCE_COMMIT"');
+    expect(validateText).toContain('test "$remote_tag" = "$SOURCE_COMMIT"');
+    expect(validateText).not.toContain("Candidate tag already exists before packaged P1");
     expect(validateText).not.toContain("--allow-exact-tag");
     expect(validateText).toContain("pnpm check:plugin-sdk:types");
     expect(validateText).toContain("node --import tsx scripts/release-check.ts");
@@ -687,6 +699,16 @@ describe("CI workflow routing", () => {
     expect(containerFixture).toContain('"install_entry_release_identity=\\"${VERSION}\\""');
     expect(containerFixture).toContain(".release.commit == $commit");
     expect(containerFixture).toContain('bash "$ROOT_DIR/scripts/release-fased-lifecycled.sh"');
+    expect(containerFixture).toContain('node "$ROOT_DIR/scripts/stamp-release-installer.mjs"');
+    expect(containerFixture).toContain(
+      'node "$ROOT_DIR/scripts/build-hosted-release-manifest.mjs"',
+    );
+    expect(containerFixture).toContain(
+      'node "$ROOT_DIR/scripts/privileged-release-evidence.mjs" build',
+    );
+    expect(containerFixture).toContain(
+      'node "$ROOT_DIR/scripts/build-lifecycle-trust-metadata.mjs"',
+    );
     expect(containerFixture).toContain(
       'node "$ROOT_DIR/scripts/assemble-lifecycle-generation.mjs"',
     );

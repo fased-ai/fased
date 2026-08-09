@@ -387,18 +387,12 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     local subject="$1"
     local bundle="$2"
     local release_version="$3"
-    local source_ref=""
-    for source_ref in "refs/tags/v${release_version}" "refs/heads/main"; do
-      if GH_PROMPT_DISABLED=1 gh attestation verify "$subject" \
-        --repo fased-ai/fased \
-        --bundle "$bundle" \
-        --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-        --source-ref "$source_ref" \
-        --deny-self-hosted-runners >/dev/null 2>&1; then
-        return 0
-      fi
-    done
-    return 1
+    GH_PROMPT_DISABLED=1 gh attestation verify "$subject" \
+      --repo fased-ai/fased \
+      --bundle "$bundle" \
+      --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+      --source-ref "refs/tags/v${release_version}" \
+      --deny-self-hosted-runners >/dev/null 2>&1
   }
 
   root_owned_bundle_tree_is_secure() {

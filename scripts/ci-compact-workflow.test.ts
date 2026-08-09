@@ -70,6 +70,7 @@ describe("compact CI topology", () => {
     const { document } = await workflow("pr.yml");
     const classify = document.jobs?.classify as { outputs?: Record<string, string> };
     const selected = document.jobs?.["selected-tests"] as {
+      "timeout-minutes"?: number;
       steps?: Array<{ if?: string; name?: string; run?: string }>;
     };
     const full = selected.steps?.find(
@@ -80,8 +81,11 @@ describe("compact CI topology", () => {
     );
 
     expect(classify.outputs?.run_local_update).toBe("${{ steps.scope.outputs.run_local_update }}");
+    expect(selected["timeout-minutes"]).toBe(20);
     expect(full?.if).toContain("run_native_signer == 'true'");
     expect(full?.if).toContain("run_local_update == 'true'");
+    expect(full?.run).toContain("pnpm canvas:a2ui:bundle");
+    expect(full?.run).toContain("pnpm test");
     expect(lifecycle?.if).toContain("run_node_full == 'true'");
     expect(lifecycle?.if).toContain("run_native_signer == 'true'");
     expect(lifecycle?.if).toContain("run_local_update == 'true'");

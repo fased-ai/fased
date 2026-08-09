@@ -82,6 +82,11 @@ const unitIsolatedFilesRaw = [
   "src/imessage/monitor.shutdown.unhandled-rejection.test.ts",
 ];
 const unitIsolatedFiles = unitIsolatedFilesRaw.filter((file) => fs.existsSync(file));
+const extensionIsolatedFiles = [
+  // Spawns a second TypeScript process to prove durable recovery after process exit.
+  // Running it beside the transform-heavy extension pool can starve that child for minutes.
+  "extensions/sat-mining/src/submission-ledger.test.ts",
+].filter((file) => fs.existsSync(file));
 
 const children = new Set();
 const isCI = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
@@ -144,6 +149,18 @@ const allRuns = [
       "--config",
       "vitest.extensions.config.ts",
       ...(useVmForks ? ["--pool=vmForks"] : []),
+      ...extensionIsolatedFiles.flatMap((file) => ["--exclude", file]),
+    ],
+  },
+  {
+    name: "extensions-isolated",
+    args: [
+      "vitest",
+      "run",
+      "--config",
+      "vitest.extensions.config.ts",
+      "--pool=forks",
+      ...extensionIsolatedFiles,
     ],
   },
   {
@@ -229,6 +246,7 @@ const resolvedExtensionOverride =
     : null;
 const parallelGatewayEnabled =
   process.env.FASED_TEST_PARALLEL_GATEWAY === "1" || (!isCI && highMemLocalHost);
+const alwaysSerialRuns = new Set(["extensions-isolated"]);
 // Keep gateway serial by default except when explicitly requested or on high-memory local hosts.
 const keepGatewaySerial =
   isWindowsCi ||
@@ -242,14 +260,16 @@ const keepGatewaySerial =
 const serializeAllRuns = testProfile === "serial";
 const parallelRuns = serializeAllRuns
   ? []
-  : keepGatewaySerial
-    ? runs.filter((entry) => entry.name !== "gateway")
-    : runs;
+  : runs.filter(
+      (entry) =>
+        !alwaysSerialRuns.has(entry.name) && (entry.name !== "gateway" || !keepGatewaySerial),
+    );
 const serialRuns = serializeAllRuns
   ? runs
-  : keepGatewaySerial
-    ? runs.filter((entry) => entry.name === "gateway")
-    : [];
+  : runs.filter(
+      (entry) =>
+        alwaysSerialRuns.has(entry.name) || (entry.name === "gateway" && keepGatewaySerial),
+    );
 const baseLocalWorkers = Math.max(4, Math.min(16, hostCpuCount));
 const loadAwareDisabledRaw = process.env.FASED_TEST_LOAD_AWARE?.trim().toLowerCase();
 const loadAwareDisabled = loadAwareDisabledRaw === "0" || loadAwareDisabledRaw === "false";

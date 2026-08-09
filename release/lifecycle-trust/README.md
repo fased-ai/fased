@@ -46,6 +46,7 @@ Normal work remains:
 developer opens PR
 -> CI validates it
 -> maintainer merges it
+-> owner creates the exact immutable candidate tag
 -> protected GitHub workflow builds and attests release assets
 -> installer/updater verifies the offline GitHub attestation bundle
 -> exact release metadata and artifact digests are verified

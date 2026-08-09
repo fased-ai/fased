@@ -324,7 +324,7 @@ describe("attested Hosting installer artifact layout", () => {
     expect(releaseWorkflow).toContain("needs: [validate, linux, signer]");
   });
 
-  it("assembles protected-main candidates before the post-P1 owner tag", () => {
+  it("assembles immutable-tag candidates before publication approval", () => {
     expect(releaseWorkflow).toContain("name: Assemble offline-attested candidate");
     expect(releaseWorkflow).toContain("name: fased-hosting-candidate");
     expect(releaseWorkflow).toContain("fased-hosted-release-v2.json.attestation.json");
@@ -336,8 +336,17 @@ describe("attested Hosting installer artifact layout", () => {
     );
     expect(releaseWorkflow).toContain("name: Promote exact verified candidate bytes");
     expect(releaseWorkflow).toContain("environment: candidate-release");
-    expect(releaseWorkflow).toContain("name: Reverify immutable candidate tag after P1");
-    expect(releaseWorkflow).toContain('test "$GITHUB_REF" = "refs/heads/main"');
+    expect(releaseWorkflow).toContain("name: Reverify immutable candidate tag before publication");
+    expect(releaseWorkflow).toContain('test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"');
+  });
+
+  it("keeps the generation updater on the signed root's tag-only authority", () => {
+    const generationUpdater = fs.readFileSync(
+      path.join(root, "scripts/generation-updater.mjs"),
+      "utf8",
+    );
+    expect(generationUpdater).toContain("`refs/tags/v${version}`");
+    expect(generationUpdater).not.toContain('"refs/heads/main"');
   });
 
   it("publishes tagged prereleases as non-latest GitHub prereleases", () => {
