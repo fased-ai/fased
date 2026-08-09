@@ -451,7 +451,17 @@ run_fixture_scenario() {
   done
   wait "$fixture_command_pid" || fixture_command_status="$?"
   if [[ "$fixture_command_status" -ne 0 ]]; then
-    dump_fixture_failure "$name"
+    if [[ "${FASED_SYSTEMD_FIXTURE_COMPACT_DIAGNOSTICS:-0}" == "1" ]]; then
+      run_container exec "$name" /bin/bash -lc '
+        for log in /tmp/stable-bridge-noop.err /tmp/stable-bridge-noop.out; do
+          [[ -f "$log" ]] || continue
+          echo "==> $log" >&2
+          cat "$log" >&2
+        done
+      ' || true
+    else
+      dump_fixture_failure "$name"
+    fi
     return "$fixture_command_status"
   fi
   run_container stop "$name" >/dev/null

@@ -1646,6 +1646,7 @@ if [[ "$phase" == "managed-update" ]]; then
     done
     if ! runuser -u testop -- env "${managed_operator_env[@]}" \
       npm_config_registry="http://127.0.0.1:$rpc_port" \
+      FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
       "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
       >/tmp/stable-bridge-noop.out 2>/tmp/stable-bridge-noop.err; then
       cat /tmp/stable-bridge-noop.err >&2
