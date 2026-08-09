@@ -1573,6 +1573,7 @@ if [[ "$phase" == "managed-update" ]]; then
       "$state/sat-mining/stable-bridge-history.json" \
       "$state/workspace/stable-bridge.txt"
     stable_bridge_manifest=/tmp/stable-bridge-preservation.sha256
+    stable_bridge_restart_manifest=/tmp/stable-bridge-restart-preservation.sha256
     sha256sum \
       "$state/identity/device.json" \
       "$state/wallet/provider-registry.v1.json" \
@@ -1580,6 +1581,12 @@ if [[ "$phase" == "managed-update" ]]; then
       "$state/sat-mining/stable-bridge-history.json" \
       "$state/workspace/stable-bridge.txt" \
       >"$stable_bridge_manifest"
+    sha256sum \
+      "$state/identity/device.json" \
+      "$state/extensions/stable-bridge-plugin.json" \
+      "$state/sat-mining/stable-bridge-history.json" \
+      "$state/workspace/stable-bridge.txt" \
+      >"$stable_bridge_restart_manifest"
 
     runuser -u testop -- env "${managed_env[@]}" \
       FASED_INSTALL_REPO="$candidate_repo" \
@@ -1629,7 +1636,14 @@ if [[ "$phase" == "managed-update" ]]; then
       "fased-signerd-$instance.service" \
       "fased-gateway-$instance.service"
     wait_for_gateway_version "$version"
-    sha256sum --check "$stable_bridge_manifest"
+    sha256sum --check "$stable_bridge_restart_manifest"
+    verify_shared_wallet_registry "$instance" "$runtime"
+    for wallet_id in agent vault; do
+      verify_wallet "$instance" "$wallet_id" >"/tmp/stable-${wallet_id}-restart.json"
+      diff -u \
+        <(jq -S . "/tmp/stable-${wallet_id}.json") \
+        <(jq -S . "/tmp/stable-${wallet_id}-restart.json")
+    done
     runuser -u testop -- env "${managed_operator_env[@]}" \
       npm_config_registry="http://127.0.0.1:$rpc_port" \
       "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
