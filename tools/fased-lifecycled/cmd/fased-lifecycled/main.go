@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"fased-lifecycled/bootstrap"
 	"fased-lifecycled/bundle"
 	"fased-lifecycled/controller"
 	"fased-lifecycled/daemon"
@@ -201,101 +202,55 @@ func runInitialize(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	var config platform.Config
-	if goOwnedPrincipals {
-		principalSystem, err := platform.NewLinuxPrincipalSystem()
-		if err != nil {
-			return err
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		principals, err := platform.ProvisionBootstrapPrincipals(ctx, principalSystem, platform.BootstrapRequest{
-			Profile: profile, InstanceID: instanceID, OperatorUser: operatorUser, OwnerStateRoot: ownerStateRoot,
-		})
-		if err != nil {
-			return err
-		}
-		config, err = platform.NewConfigWithGatewayPort(profile, instanceID, ownerStateRoot, uint16(gatewayPort), principals.Operator, principals.Gateway, principals.Signer)
-		if err != nil {
-			return err
-		}
-		pathPlan, err := platform.BootstrapPathPlan(config, principals)
-		if err != nil {
-			return err
-		}
-		if err := platform.ApplyBootstrapPathPlan(pathPlan); err != nil {
-			return err
-		}
-	} else {
-		config, err = platform.NewConfigWithGatewayPort(profile, instanceID, ownerStateRoot, uint16(gatewayPort),
-			platform.Principal{UID: uint32(operatorUID), GID: uint32(operatorGID)},
-			platform.Principal{UID: uint32(gatewayUID), GID: uint32(gatewayGID)},
-			platform.Principal{UID: uint32(signerUID), GID: uint32(signerGID)})
+	if !goOwnedPrincipals {
+		return errors.New("caller-owned lifecycle principal IDs are no longer supported")
 	}
+	principalSystem, err := platform.NewLinuxPrincipalSystem()
 	if err != nil {
 		return err
 	}
-	if _, err := store.Open(config.LifecycleRoot); err != nil {
-		return err
-	}
-	configData, err := platform.CanonicalConfigJSON(config)
-	if err != nil {
-		return err
-	}
-	configPath := filepath.Join(config.LifecycleRoot, "platform.json")
-	if err := installExactRecord(configPath, configData, 0o600); err != nil {
-		return err
-	}
-	stableBinary := "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled"
-	if err := installStableBinary(stableBinary); err != nil {
-		return err
-	}
-	unitData, err := platform.RenderSupervisorUnit(config, stableBinary)
-	if err != nil {
-		return err
-	}
-	identity, err := config.Identity()
-	if err != nil {
-		return err
+	var homeACL platform.HomeACL
+	if profile == model.ProfileProtectedLocal {
+		homeACL, err = platform.NewLinuxACL()
+		if err != nil {
+			return err
+		}
 	}
 	systemd, err := systemdClient()
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	unitPath := filepath.Join(config.UnitRoot, identity.Services["supervisor"])
-	replacement, err := replaceBootstrapUnit(unitPath, unitData)
+	executable, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	rollback := func(cause error) error {
-		rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), time.Minute)
-		defer rollbackCancel()
-		stopErr := systemd.Stop(rollbackCtx, identity.Services["supervisor"])
-		restoreErr := replacement.Restore()
-		reloadErr := systemd.DaemonReload(rollbackCtx)
-		var restartErr error
-		if replacement.Existed {
-			restartErr = systemd.Start(rollbackCtx, identity.Services["supervisor"])
-		}
-		return errors.Join(cause, stopErr, restoreErr, reloadErr, restartErr)
+	stableDaemon, err := os.ReadFile(executable)
+	if err != nil {
+		return err
 	}
-	if replacement.Existed {
-		if err := systemd.Stop(ctx, identity.Services["supervisor"]); err != nil {
-			return rollback(err)
-		}
+	transactionID, err := randomRequestID()
+	if err != nil {
+		return err
 	}
-	if err := systemd.DaemonReload(ctx); err != nil {
-		return rollback(err)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	result, err := bootstrap.BeginPlatformBootstrap(ctx, bootstrap.PlatformBootstrapRequest{
+		TransactionID: transactionID, Profile: profile, InstanceIDAssertion: instanceID,
+		OperatorUser: operatorUser, OwnerStateRoot: ownerStateRoot, GatewayPort: uint16(gatewayPort),
+		ExpectedRegistryOwner: 0, RegistryPath: platform.LocalInstanceRegistryPath,
+		JournalPath:      filepath.Join("/var/lib/fased-lifecycle-bootstrap", transactionID+".json"),
+		StableDaemonPath: "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled",
+		StableDaemon:     stableDaemon, Principals: principalSystem, ACL: homeACL, Systemd: systemd,
+	})
+	if err != nil {
+		return err
 	}
-	if err := systemd.Enable(ctx, identity.Services["supervisor"]); err != nil {
-		return rollback(err)
-	}
+	configPath := filepath.Join(result.Config.LifecycleRoot, "platform.json")
 	applyArguments[1] = configPath
 	if err := runApply(applyArguments, output); err != nil {
-		return rollback(err)
+		return errors.Join(err, result.Transaction.Rollback())
 	}
+	result.Transaction.Commit()
 	return nil
 }
 
@@ -496,7 +451,7 @@ func runApply(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	state, err := store.Open(config.LifecycleRoot)
+	state, err := store.OpenLayout(store.Layout{StateRoot: config.LifecycleRoot, InstallRoot: config.InstallRoot})
 	if err != nil {
 		return err
 	}
@@ -605,7 +560,7 @@ func runStage(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	state, err := store.Open(config.LifecycleRoot)
+	state, err := store.OpenLayout(store.Layout{StateRoot: config.LifecycleRoot, InstallRoot: config.InstallRoot})
 	if err != nil {
 		return err
 	}
@@ -673,7 +628,7 @@ func runRequest(args []string, output io.Writer) error {
 }
 
 func runSupervisor(ctx context.Context, config platform.Config, socketPath string) error {
-	state, err := store.Open(config.LifecycleRoot)
+	state, err := store.OpenLayout(store.Layout{StateRoot: config.LifecycleRoot, InstallRoot: config.InstallRoot})
 	if err != nil {
 		return err
 	}
@@ -715,7 +670,7 @@ func runSupervisor(ctx context.Context, config platform.Config, socketPath strin
 }
 
 func runTarget(ctx context.Context, config platform.Config, socketPath string) error {
-	state, err := store.Open(config.LifecycleRoot)
+	state, err := store.OpenLayout(store.Layout{StateRoot: config.LifecycleRoot, InstallRoot: config.InstallRoot})
 	if err != nil {
 		return err
 	}

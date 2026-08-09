@@ -22,6 +22,8 @@ func NewLinuxPrincipalSystem() (*LinuxPrincipalSystem, error) {
 		"getent":   {"/usr/bin/getent", "/bin/getent"},
 		"groupadd": {"/usr/sbin/groupadd", "/sbin/groupadd"},
 		"useradd":  {"/usr/sbin/useradd", "/sbin/useradd"},
+		"userdel":  {"/usr/sbin/userdel", "/sbin/userdel"},
+		"groupdel": {"/usr/sbin/groupdel", "/sbin/groupdel"},
 		"usermod":  {"/usr/sbin/usermod", "/sbin/usermod"},
 		"gpasswd":  {"/usr/bin/gpasswd", "/bin/gpasswd"},
 		"passwd":   {"/usr/bin/passwd", "/bin/passwd"},
@@ -161,6 +163,20 @@ func (system *LinuxPrincipalSystem) memberships(ctx context.Context, user string
 		result[group] = true
 	}
 	return result, nil
+}
+
+func (system *LinuxPrincipalSystem) Memberships(ctx context.Context, user string) (map[string]bool, error) {
+	return system.memberships(ctx, user)
+}
+
+func (system *LinuxPrincipalSystem) DeleteUser(ctx context.Context, user string) error {
+	_, err := system.output(ctx, "userdel", user)
+	return err
+}
+
+func (system *LinuxPrincipalSystem) DeleteGroup(ctx context.Context, group string) error {
+	_, err := system.output(ctx, "groupdel", group)
+	return err
 }
 
 func (system *LinuxPrincipalSystem) RemoveMembership(ctx context.Context, user, group string) error {

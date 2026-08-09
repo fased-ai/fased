@@ -61,7 +61,7 @@ func (s *Store) ImportGenerationArchive(archive string) (model.Generation, error
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return model.Generation{}, err
 	}
-	inboxRoot := filepath.Join(s.root, "inbox")
+	inboxRoot := filepath.Join(s.installRoot, "inbox")
 	if err := os.MkdirAll(inboxRoot, 0o700); err != nil {
 		return model.Generation{}, err
 	}
@@ -105,7 +105,7 @@ func (s *Store) declaredActiveGeneration(generation model.Generation) bool {
 	if err != nil || manifest.ActiveGeneration == nil || *manifest.ActiveGeneration != generation {
 		return false
 	}
-	pointer := filepath.Join(s.root, "current")
+	pointer := filepath.Join(s.installRoot, "current")
 	pointerInfo, err := os.Lstat(pointer)
 	if err != nil || pointerInfo.Mode()&os.ModeSymlink == 0 {
 		return false
@@ -114,7 +114,7 @@ func (s *Store) declaredActiveGeneration(generation model.Generation) bool {
 	if err != nil || target != filepath.ToSlash(filepath.Join("generations", strings.TrimPrefix(generation.ID, "sha256:"))) {
 		return false
 	}
-	rootInfo, err := os.Lstat(s.root)
+	rootInfo, err := os.Lstat(s.installRoot)
 	if err != nil {
 		return false
 	}
@@ -333,7 +333,7 @@ func (s *Store) ImportGeneration(source string) (model.Generation, error) {
 	if err := bundle.Verify(filepath.Join(source, generationPayloadName), inventory, generation); err != nil {
 		return model.Generation{}, fmt.Errorf("generation import verification failed: %w", err)
 	}
-	inboxRoot := filepath.Join(s.root, "inbox")
+	inboxRoot := filepath.Join(s.installRoot, "inbox")
 	if err := os.MkdirAll(inboxRoot, 0o700); err != nil {
 		return model.Generation{}, err
 	}
@@ -488,7 +488,7 @@ func (s *Store) StageGeneration(generationID string) error {
 	if _, err := s.verifyGenerationPath(inbox, generationID); err != nil {
 		return fmt.Errorf("inbox generation verification failed: %w", err)
 	}
-	generationsRoot := filepath.Join(s.root, "generations")
+	generationsRoot := filepath.Join(s.installRoot, "generations")
 	if err := os.MkdirAll(generationsRoot, 0o711); err != nil {
 		return err
 	}
@@ -531,7 +531,7 @@ func (s *Store) ResolveGeneration(pointer string) (model.Generation, error) {
 	if !validPointer(pointer) {
 		return model.Generation{}, errors.New("generation pointer is invalid")
 	}
-	pointerPath := filepath.Join(s.root, pointer)
+	pointerPath := filepath.Join(s.installRoot, pointer)
 	info, err := os.Lstat(pointerPath)
 	if err != nil {
 		return model.Generation{}, err
@@ -620,7 +620,7 @@ func (s *Store) writeGenerationPointer(pointer, generationID string) error {
 	if err := validateGenerationID(generationID); err != nil {
 		return err
 	}
-	temp, err := os.CreateTemp(s.root, ".pointer-*")
+	temp, err := os.CreateTemp(s.installRoot, ".pointer-*")
 	if err != nil {
 		return err
 	}
@@ -636,10 +636,10 @@ func (s *Store) writeGenerationPointer(pointer, generationID string) error {
 	if err := os.Symlink(target, tempPath); err != nil {
 		return err
 	}
-	if err := os.Rename(tempPath, filepath.Join(s.root, pointer)); err != nil {
+	if err := os.Rename(tempPath, filepath.Join(s.installRoot, pointer)); err != nil {
 		return err
 	}
-	return syncDirectory(s.root)
+	return syncDirectory(s.installRoot)
 }
 
 func validPointer(pointer string) bool {
@@ -652,11 +652,11 @@ func validPointer(pointer string) bool {
 }
 
 func (s *Store) inboxGenerationPath(generationID string) string {
-	return filepath.Join(s.root, "inbox", strings.TrimPrefix(generationID, "sha256:"))
+	return filepath.Join(s.installRoot, "inbox", strings.TrimPrefix(generationID, "sha256:"))
 }
 
 func (s *Store) generationPath(generationID string) string {
-	return filepath.Join(s.root, "generations", strings.TrimPrefix(generationID, "sha256:"))
+	return filepath.Join(s.installRoot, "generations", strings.TrimPrefix(generationID, "sha256:"))
 }
 
 func validateGenerationID(generationID string) error {

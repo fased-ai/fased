@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -192,6 +193,49 @@ func TestManifestCompareAndSwapIsCanonicalAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestProductionLayoutSeparatesAuthorityFromExecutableGenerations(t *testing.T) {
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	installRoot := filepath.Join(root, "install")
+	state, err := OpenLayout(Layout{StateRoot: stateRoot, InstallRoot: installRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.CommitManifest(manifest(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(stateRoot, manifestName)); err != nil {
+		t.Fatalf("manifest is not under mutable state root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(installRoot, manifestName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("manifest leaked into immutable install root: %v", err)
+	}
+	if state.inboxGenerationPath(digestA) != filepath.Join(installRoot, "inbox", strings.TrimPrefix(digestA, "sha256:")) {
+		t.Fatal("generation inbox is not under immutable install root")
+	}
+	stateInfo, err := os.Stat(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installInfo, err := os.Stat(installRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stateInfo.Mode().Perm() != 0o700 || installInfo.Mode().Perm() != 0o755 {
+		t.Fatalf("unexpected production root modes: state=%04o install=%04o", stateInfo.Mode().Perm(), installInfo.Mode().Perm())
+	}
+}
+
+func TestProductionLayoutRejectsOverlappingRoots(t *testing.T) {
+	root := t.TempDir()
+	if _, err := OpenLayout(Layout{StateRoot: root, InstallRoot: filepath.Join(root, "install")}); err == nil {
+		t.Fatal("overlapping lifecycle roots were accepted")
+	}
+	if _, err := OpenLayout(Layout{StateRoot: root, InstallRoot: root}); err == nil {
+		t.Fatal("identical lifecycle roots were accepted")
+	}
+}
+
 func TestAuthorityJournalsRequireLinearBoundTransitions(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil {
@@ -233,6 +277,60 @@ func TestAuthorityJournalsRequireLinearBoundTransitions(t *testing.T) {
 	got, err := store.ReadJournal(AuthorityTargetController, start.ID)
 	if err != nil || got.Phase != model.PhaseIdle {
 		t.Fatalf("unexpected target journal: %+v err=%v", got, err)
+	}
+}
+
+func TestAuthorityJournalsShareOneImmutableEnvelope(t *testing.T) {
+	state, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := transaction(model.PhaseIdle)
+	if err := state.CommitJournal(AuthoritySupervisor, tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.CommitJournal(AuthorityTargetController, tx); err != nil {
+		t.Fatal(err)
+	}
+	changed := tx
+	changed.StateInventoryDigest = digestA
+	if changed.StateInventoryDigest == tx.StateInventoryDigest {
+		changed.StateInventoryDigest = digestB
+	}
+	if err := state.CommitJournal(AuthorityTargetController, changed); err == nil {
+		t.Fatal("authority journal changed the immutable shared envelope")
+	}
+	envelopePath := filepath.Join(state.stateRoot, "transactions", tx.ID, "envelope.json")
+	if err := os.WriteFile(envelopePath, []byte(`{"schemaVersion":2}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.ReadJournal(AuthoritySupervisor, tx.ID); err == nil {
+		t.Fatal("journal with a tampered or unknown-newer envelope was accepted")
+	}
+}
+
+func TestUpdateLockIsExclusiveAndReusable(t *testing.T) {
+	state, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	transactionID := "018f47d2-5a6b-7c8d-9e0f-123456789abc"
+	first, err := state.AcquireUpdateLock(transactionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.AcquireUpdateLock(transactionID); err == nil {
+		t.Fatal("concurrent lifecycle mutation lock was acquired")
+	}
+	if err := first.Release(); err != nil {
+		t.Fatal(err)
+	}
+	second, err := state.AcquireUpdateLock(transactionID)
+	if err != nil {
+		t.Fatalf("released lifecycle lock was not reusable: %v", err)
+	}
+	if err := second.Release(); err != nil {
+		t.Fatal(err)
 	}
 }
 

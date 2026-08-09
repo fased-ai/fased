@@ -21,6 +21,7 @@ const absentManifestDigest = "sha256:0000000000000000000000000000000000000000000
 const supervisorCapability uint32 = 1
 
 type StateStore interface {
+	AcquireUpdateLock(string) (store.MutationLock, error)
 	StageGeneration(string) error
 	ReadManifest() (model.Manifest, string, error)
 	ReadJournal(store.Authority, string) (model.Transaction, error)
@@ -119,6 +120,25 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 			return protocol.Response{}, errors.New("installed platform identity requires explicit repair")
 		}
 	}
+	if installation.Kind == planner.InstallationManaged && installation.Manifest.ActiveGeneration != nil && installation.Manifest.ActiveGeneration.ID == request.TargetGenerationID {
+		return response(request, string(engine.OutcomeAlreadyCurrent), "", request.TargetGenerationID), nil
+	}
+	transactionID, err := service.NewID()
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	lock, err := service.Store.AcquireUpdateLock(transactionID)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	defer lock.Release()
+	if installation.Kind == planner.InstallationManaged {
+		if _, lockedDigest, readErr := service.Store.ReadManifest(); readErr != nil || lockedDigest != manifestDigest {
+			return protocol.Response{}, errors.New("installation manifest changed while acquiring the update lock")
+		}
+	} else if _, _, readErr := service.Store.ReadManifest(); !errors.Is(readErr, os.ErrNotExist) {
+		return protocol.Response{}, errors.New("installation appeared while acquiring the update lock")
+	}
 	if err := service.Store.StageGeneration(request.TargetGenerationID); err != nil {
 		return protocol.Response{}, err
 	}
@@ -140,10 +160,6 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 		return response(request, string(engine.OutcomeAlreadyCurrent), "", generation.ID), nil
 	}
 	stateDigest, signerPlanDigest, err := service.Inventory.Bind(ctx, installation, inventory, plan)
-	if err != nil {
-		return protocol.Response{}, err
-	}
-	transactionID, err := service.NewID()
 	if err != nil {
 		return protocol.Response{}, err
 	}
@@ -171,6 +187,11 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 }
 
 func (service *Service) recover(ctx context.Context, request protocol.Request) (protocol.Response, error) {
+	lock, err := service.Store.AcquireUpdateLock(request.TransactionID)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	defer lock.Release()
 	tx, err := service.Store.ReadJournal(store.AuthoritySupervisor, request.TransactionID)
 	if err != nil {
 		return protocol.Response{}, err

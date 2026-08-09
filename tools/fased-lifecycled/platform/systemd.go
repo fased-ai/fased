@@ -12,6 +12,8 @@ type Systemd interface {
 	Stop(context.Context, string) error
 	Start(context.Context, string) error
 	Enable(context.Context, string) error
+	Disable(context.Context, string) error
+	IsEnabled(context.Context, string) error
 	IsActive(context.Context, string) error
 }
 
@@ -41,6 +43,12 @@ func (systemd CommandSystemd) Start(ctx context.Context, unit string) error {
 }
 func (systemd CommandSystemd) Enable(ctx context.Context, unit string) error {
 	return systemd.run(ctx, "enable", unit)
+}
+func (systemd CommandSystemd) Disable(ctx context.Context, unit string) error {
+	return systemd.run(ctx, "disable", unit)
+}
+func (systemd CommandSystemd) IsEnabled(ctx context.Context, unit string) error {
+	return systemd.run(ctx, "is-enabled", "--quiet", unit)
 }
 func (systemd CommandSystemd) IsActive(ctx context.Context, unit string) error {
 	return systemd.run(ctx, "is-active", "--quiet", unit)

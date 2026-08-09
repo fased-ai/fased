@@ -54,7 +54,7 @@ func (s *Store) ImportDependencyArchive(archive string, layer bundle.DependencyL
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	root := filepath.Join(s.root, "dependencies")
+	root := filepath.Join(s.installRoot, "dependencies")
 	if err := os.MkdirAll(root, 0o711); err != nil {
 		return err
 	}
@@ -160,7 +160,7 @@ func (s *Store) verifyDependencyPath(root string, expected bundle.DependencyLaye
 }
 
 func (s *Store) dependencyPath(hash string) string {
-	return filepath.Join(s.root, "dependencies", hash)
+	return filepath.Join(s.installRoot, "dependencies", hash)
 }
 
 func hashDependencyArchive(file string) (string, error) {

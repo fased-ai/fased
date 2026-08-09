@@ -47,6 +47,14 @@ type fakeStore struct {
 	journal        model.Transaction
 }
 
+type fakeMutationLock struct{}
+
+func (fakeMutationLock) Release() error { return nil }
+
+func (state fakeStore) AcquireUpdateLock(string) (store.MutationLock, error) {
+	return fakeMutationLock{}, nil
+}
+
 func (state fakeStore) StageGeneration(string) error { return nil }
 
 func (state fakeStore) ReadManifest() (model.Manifest, string, error) {

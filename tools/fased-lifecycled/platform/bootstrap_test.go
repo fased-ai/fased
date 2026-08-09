@@ -75,6 +75,28 @@ func (system *memoryPrincipals) RemoveMembership(_ context.Context, user, group 
 	return nil
 }
 
+func (system *memoryPrincipals) Memberships(_ context.Context, user string) (map[string]bool, error) {
+	result := map[string]bool{}
+	for group := range system.members[user] {
+		result[group] = true
+	}
+	return result, nil
+}
+
+func (system *memoryPrincipals) DeleteUser(_ context.Context, user string) error {
+	delete(system.users, user)
+	delete(system.members, user)
+	return nil
+}
+
+func (system *memoryPrincipals) DeleteGroup(_ context.Context, group string) error {
+	delete(system.groups, group)
+	for _, memberships := range system.members {
+		delete(memberships, group)
+	}
+	return nil
+}
+
 func (system *memoryPrincipals) LockUser(context.Context, string) error { return nil }
 
 func TestProvisionBootstrapPrincipalsOwnsLocalAccountGraph(t *testing.T) {
@@ -108,6 +130,84 @@ func TestProvisionBootstrapPrincipalsOwnsLocalAccountGraph(t *testing.T) {
 	if system.members["owner"][wantNames.GatewayGroup] || system.members[wantNames.GatewayUser][wantNames.OperatorGroup] {
 		t.Fatalf("forbidden memberships retained: %+v", system.members)
 	}
+}
+
+func TestTransactionalPrincipalProvisioningRollsBackExactPreexistingGraph(t *testing.T) {
+	system := newMemoryPrincipals()
+	system.users["owner"] = AccountRecord{Name: "owner", UID: 1000, GID: 1000, Home: "/home/owner", Shell: "/bin/bash"}
+	system.groups["owner"] = GroupRecord{Name: "owner", GID: 1000}
+	system.groups["existing"] = GroupRecord{Name: "existing", GID: 1001}
+	system.members["owner"] = map[string]bool{"owner": true, "existing": true}
+	beforeUsers := cloneAccounts(system.users)
+	beforeGroups := cloneGroups(system.groups)
+	beforeMembers := cloneMemberships(system.members)
+	_, changes, err := ProvisionBootstrapPrincipalsTransactional(context.Background(), system, BootstrapRequest{
+		Profile: model.ProfileProtectedLocal, InstanceID: "0123456789abcdef",
+		OperatorUser: "owner", OwnerStateRoot: "/home/owner/.fased",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := changes.Rollback(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(system.users, beforeUsers) || !reflect.DeepEqual(system.groups, beforeGroups) || !reflect.DeepEqual(system.members, beforeMembers) {
+		t.Fatalf("principal rollback differed: users=%+v groups=%+v memberships=%+v", system.users, system.groups, system.members)
+	}
+}
+
+type failingMembershipPrincipals struct {
+	*memoryPrincipals
+	fail bool
+}
+
+func (system *failingMembershipPrincipals) AddMemberships(ctx context.Context, user string, groups []string) error {
+	if system.fail {
+		return errors.New("injected membership failure")
+	}
+	return system.memoryPrincipals.AddMemberships(ctx, user, groups)
+}
+
+func TestTransactionalPrincipalProvisioningRollsBackPartialFailure(t *testing.T) {
+	memory := newMemoryPrincipals()
+	memory.users["owner"] = AccountRecord{Name: "owner", UID: 1000, GID: 1000, Home: "/home/owner", Shell: "/bin/bash"}
+	system := &failingMembershipPrincipals{memoryPrincipals: memory, fail: true}
+	if _, _, err := ProvisionBootstrapPrincipalsTransactional(context.Background(), system, BootstrapRequest{
+		Profile: model.ProfileProtectedLocal, InstanceID: "0123456789abcdef",
+		OperatorUser: "owner", OwnerStateRoot: "/home/owner/.fased",
+	}); err == nil {
+		t.Fatal("injected principal failure succeeded")
+	}
+	if len(memory.users) != 1 || len(memory.groups) != 0 || len(memory.members) != 0 {
+		t.Fatalf("partial principal failure was not rolled back: %+v %+v %+v", memory.users, memory.groups, memory.members)
+	}
+}
+
+func cloneAccounts(source map[string]AccountRecord) map[string]AccountRecord {
+	result := map[string]AccountRecord{}
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
+func cloneGroups(source map[string]GroupRecord) map[string]GroupRecord {
+	result := map[string]GroupRecord{}
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
+func cloneMemberships(source map[string]map[string]bool) map[string]map[string]bool {
+	result := map[string]map[string]bool{}
+	for user, memberships := range source {
+		result[user] = map[string]bool{}
+		for group, value := range memberships {
+			result[user][group] = value
+		}
+	}
+	return result
 }
 
 func TestProvisionBootstrapPrincipalsCreatesCanonicalHostingAccounts(t *testing.T) {
@@ -213,5 +313,37 @@ func TestApplyBootstrapPathPlanRejectsSymlinkedAncestry(t *testing.T) {
 		Path: filepath.Join(root, "linked", "state"), UID: uint32(os.Getuid()), GID: uint32(os.Getgid()), Mode: 0o700,
 	}}); err == nil {
 		t.Fatal("symlinked bootstrap ancestry was accepted")
+	}
+}
+
+func TestBootstrapPathTransactionRestoresExistingAndRemovesCreated(t *testing.T) {
+	root := t.TempDir()
+	existing := filepath.Join(root, "existing")
+	created := filepath.Join(root, "new", "state")
+	if err := os.Mkdir(existing, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(existing, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := ApplyBootstrapPathPlanTransactional([]BootstrapPath{
+		{Path: existing, UID: uint32(os.Getuid()), GID: uint32(os.Getgid()), Mode: 0o700},
+		{Path: created, UID: uint32(os.Getuid()), GID: uint32(os.Getgid()), Mode: 0o700},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := changes.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o750 {
+		t.Fatalf("existing bootstrap path mode was not restored: %04o", info.Mode().Perm())
+	}
+	if _, err := os.Stat(filepath.Join(root, "new")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("created bootstrap ancestry was retained: %v", err)
 	}
 }

@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 
 	"fased-lifecycled/model"
 )
@@ -39,6 +38,9 @@ type PrincipalSystem interface {
 	AddUser(context.Context, AddUserRequest) error
 	AddMemberships(context.Context, string, []string) error
 	RemoveMembership(context.Context, string, string) error
+	Memberships(context.Context, string) (map[string]bool, error)
+	DeleteUser(context.Context, string) error
+	DeleteGroup(context.Context, string) error
 	LockUser(context.Context, string) error
 }
 
@@ -160,18 +162,22 @@ func ProvisionBootstrapPrincipals(ctx context.Context, system PrincipalSystem, r
 		if lookupErr != nil {
 			return AccountRecord{}, lookupErr
 		}
+		created := false
 		if !exists {
 			if err := system.AddUser(ctx, AddUserRequest{Name: name, PrimaryGroup: group, Home: serviceHomes[name], Shell: "/usr/sbin/nologin", System: true}); err != nil {
 				return AccountRecord{}, err
 			}
+			created = true
 			record, exists, lookupErr = system.LookupUser(ctx, name)
 		}
 		if lookupErr != nil || !exists || record.Name != name || record.UID == 0 || record.GID != groups[group].GID || record.Home != serviceHomes[name] ||
 			(record.Shell != "/usr/sbin/nologin" && record.Shell != "/sbin/nologin" && record.Shell != "/bin/false") {
 			return AccountRecord{}, fmt.Errorf("bootstrap service identity %s differs from its canonical account", name)
 		}
-		if err := system.LockUser(ctx, name); err != nil {
-			return AccountRecord{}, err
+		if created {
+			if err := system.LockUser(ctx, name); err != nil {
+				return AccountRecord{}, err
+			}
 		}
 		return record, nil
 	}
@@ -246,49 +252,10 @@ func BootstrapPathPlan(config Config, principals BootstrapPrincipals) ([]Bootstr
 }
 
 func ApplyBootstrapPathPlan(paths []BootstrapPath) error {
-	for _, spec := range paths {
-		if !filepath.IsAbs(spec.Path) || filepath.Clean(spec.Path) != spec.Path || spec.Path == "/" || spec.Mode.Perm()&0o002 != 0 {
-			return errors.New("bootstrap path plan contains an unsafe path or mode")
-		}
-		if err := ensureBootstrapDirectory(spec.Path, spec.Mode.Perm()); err != nil {
-			return err
-		}
-		info, err := os.Lstat(spec.Path)
-		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return errors.New("bootstrap path is not a safe directory")
-		}
-		if err := os.Chown(spec.Path, int(spec.UID), int(spec.GID)); err != nil {
-			return err
-		}
-		if err := os.Chmod(spec.Path, spec.Mode); err != nil {
-			return err
-		}
+	changes, err := ApplyBootstrapPathPlanTransactional(paths)
+	if err != nil {
+		return err
 	}
-	return nil
-}
-
-func ensureBootstrapDirectory(path string, mode os.FileMode) error {
-	current := string(filepath.Separator)
-	parts := strings.Split(strings.TrimPrefix(path, current), current)
-	for index, part := range parts {
-		if part == "" || part == "." || part == ".." {
-			return errors.New("bootstrap directory contains an invalid component")
-		}
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if errors.Is(err, os.ErrNotExist) {
-			createMode := os.FileMode(0o755)
-			if index == len(parts)-1 {
-				createMode = mode
-			}
-			if err := os.Mkdir(current, createMode); err != nil {
-				return err
-			}
-			info, err = os.Lstat(current)
-		}
-		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return errors.New("bootstrap directory ancestry is unsafe")
-		}
-	}
+	changes.Commit()
 	return nil
 }

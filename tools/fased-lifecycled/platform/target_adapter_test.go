@@ -58,6 +58,12 @@ func (systemd fakeSystemd) Start(_ context.Context, unit string) error {
 func (systemd fakeSystemd) Enable(_ context.Context, unit string) error {
 	return systemd.call("systemd.enable:" + unit)
 }
+func (systemd fakeSystemd) Disable(_ context.Context, unit string) error {
+	return systemd.call("systemd.disable:" + unit)
+}
+func (systemd fakeSystemd) IsEnabled(_ context.Context, unit string) error {
+	return systemd.call("systemd.enabled:" + unit)
+}
 func (systemd fakeSystemd) IsActive(_ context.Context, unit string) error {
 	return systemd.call("systemd.active:" + unit)
 }

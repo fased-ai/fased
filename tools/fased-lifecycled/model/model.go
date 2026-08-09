@@ -103,6 +103,26 @@ type Transaction struct {
 	Migrations           []Migration       `json:"migrations"`
 }
 
+// TransactionEnvelope contains the immutable identity shared by the
+// supervisor and target-controller journals. Authority records may advance
+// independently, but they cannot disagree about what is being installed or
+// which state, signer, platform, and rollback generation are bound to it.
+type TransactionEnvelope struct {
+	SchemaVersion        uint32            `json:"schemaVersion"`
+	ID                   string            `json:"transactionId"`
+	Profile              Profile           `json:"profile"`
+	Target               Generation        `json:"target"`
+	TargetStateSchemas   map[string]uint32 `json:"targetStateSchemas"`
+	TargetCapabilities   CapabilityRanges  `json:"targetCapabilities"`
+	Previous             *Generation       `json:"previous,omitempty"`
+	ManifestDigest       string            `json:"manifestDigest"`
+	StateInventoryDigest string            `json:"stateInventoryDigest"`
+	MigrationPlanDigest  string            `json:"migrationPlanDigest"`
+	SignerPlanDigest     string            `json:"signerPlanDigest"`
+	PlatformDigest       string            `json:"platformDigest"`
+	Migrations           []Migration       `json:"migrations"`
+}
+
 type Migration struct {
 	State string `json:"state"`
 	From  uint32 `json:"from"`
@@ -373,6 +393,33 @@ func (t Transaction) Validate() error {
 	return nil
 }
 
+func (t Transaction) Envelope() (TransactionEnvelope, error) {
+	if err := t.Validate(); err != nil {
+		return TransactionEnvelope{}, err
+	}
+	return TransactionEnvelope{
+		SchemaVersion: t.SchemaVersion, ID: t.ID, Profile: t.Profile,
+		Target: t.Target, TargetStateSchemas: t.TargetStateSchemas,
+		TargetCapabilities: t.TargetCapabilities, Previous: t.Previous,
+		ManifestDigest: t.ManifestDigest, StateInventoryDigest: t.StateInventoryDigest,
+		MigrationPlanDigest: t.MigrationPlanDigest, SignerPlanDigest: t.SignerPlanDigest,
+		PlatformDigest: t.PlatformDigest, Migrations: t.Migrations,
+	}, nil
+}
+
+func (e TransactionEnvelope) Validate() error {
+	probe := Transaction{
+		SchemaVersion: e.SchemaVersion, ID: e.ID, Profile: e.Profile,
+		Phase: PhaseIdle, Revision: 1, Target: e.Target,
+		TargetStateSchemas: e.TargetStateSchemas, TargetCapabilities: e.TargetCapabilities,
+		Previous: e.Previous, ManifestDigest: e.ManifestDigest,
+		StateInventoryDigest: e.StateInventoryDigest, MigrationPlanDigest: e.MigrationPlanDigest,
+		SignerPlanDigest: e.SignerPlanDigest, PlatformDigest: e.PlatformDigest,
+		Migrations: e.Migrations,
+	}
+	return probe.Validate()
+}
+
 func validPhase(phase Phase) bool {
 	switch phase {
 	case PhaseIdle, PhaseStaged, PhasePrepared, PhaseSwitched, PhaseVerified, PhaseCommitted, PhaseRolledBack:
@@ -475,6 +522,24 @@ func CanonicalTransactionJSON(transaction Transaction) ([]byte, error) {
 		return nil, err
 	}
 	return json.Marshal(transaction)
+}
+
+func DecodeTransactionEnvelope(reader io.Reader) (TransactionEnvelope, error) {
+	var envelope TransactionEnvelope
+	if err := decodeStrict(reader, &envelope); err != nil {
+		return TransactionEnvelope{}, err
+	}
+	if err := envelope.Validate(); err != nil {
+		return TransactionEnvelope{}, err
+	}
+	return envelope, nil
+}
+
+func CanonicalTransactionEnvelopeJSON(envelope TransactionEnvelope) ([]byte, error) {
+	if err := envelope.Validate(); err != nil {
+		return nil, err
+	}
+	return json.Marshal(envelope)
 }
 
 func decodeStrict(reader io.Reader, target any) error {
