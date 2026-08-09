@@ -6347,7 +6347,7 @@ export async function run(argv = process.argv.slice(2)) {
     if (parsed.options.json) {
       process.stdout.write(`${JSON.stringify({ ok: true, ...result })}\n`);
     } else if (result.outcome === "ALREADY_CURRENT") {
-      console.log(`Already current: Fased ${result.version}`);
+      console.log(`Already current: ${result.version}`);
     } else {
       console.log(`Updated Fased to ${result.version}`);
     }

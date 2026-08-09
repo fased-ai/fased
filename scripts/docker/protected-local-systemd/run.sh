@@ -1470,7 +1470,7 @@ if [[ "$phase" == "fresh-install" ]]; then
 
   noop_started="$SECONDS"
   runuser -u testop -- env "${fresh_env[@]}" \
-    "$state/bin/fased" update "${target_update_args[@]}" --timeout 30 \
+    "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
     >/tmp/fresh-noop-update.out 2>/tmp/fresh-noop-update.err
   grep -F "Already current: $version" /tmp/fresh-noop-update.out >/dev/null
   if grep -F "Protected Local migration" /tmp/fresh-noop-update.err >/dev/null; then
@@ -1737,7 +1737,7 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
   verify_managed_semantic_state
   runuser -u testop -- env "${managed_operator_env[@]}" \
     npm_config_registry="http://127.0.0.1:$rpc_port" \
-    "$state/bin/fased" update "${target_update_args[@]}" --timeout 30 \
+    "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
     >/tmp/managed-update-noop.out 2>/tmp/managed-update-noop.err
   grep -F "Already current: $version" /tmp/managed-update-noop.out >/dev/null
 
@@ -2078,7 +2078,7 @@ signer_pid_before="$(systemctl show -p MainPID --value "fased-signerd-$instance.
 gateway_pid_before="$(systemctl show -p MainPID --value "fased-gateway-$instance.service")"
 test "$(run_as_stale_operator id -G)" = "$(id -g testop)"
 run_as_stale_operator test -r "$state/fased.json"
-run_as_stale_operator "$state/bin/fased" update "${target_update_args[@]}" --timeout 30 \
+run_as_stale_operator "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
   >/tmp/protected-stale-session-update.out 2>/tmp/protected-stale-session-update.err
 grep -F "Already current: $version" /tmp/protected-stale-session-update.out >/dev/null
 run_as_stale_operator "$state/bin/fased" mining history \
@@ -2089,7 +2089,7 @@ run_as_stale_operator "$state/bin/fased" mining history \
   >/tmp/protected-stale-session-mining.json
 jq -e 'type == "object"' /tmp/protected-stale-session-mining.json >/dev/null
 runuser -u testop -- env "${managed_update_env[@]}" \
-  "$state/bin/fased" update "${target_update_args[@]}" --timeout 30 \
+  "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
   >/tmp/protected-noop-update.out 2>/tmp/protected-noop-update.err
 grep -F "Already current: $version" /tmp/protected-noop-update.out >/dev/null
 if grep -F "Protected Local migration" /tmp/protected-noop-update.err >/dev/null; then

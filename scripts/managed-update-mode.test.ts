@@ -130,6 +130,15 @@ describe("managed update mode", () => {
     expect(source).not.toContain("process.env.FASED_RELEASE_BASE_URL");
   });
 
+  it("preserves the established Already current CLI contract", () => {
+    const source = fs.readFileSync(
+      new URL("./fased-managed-updater-core.mjs", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain("Already current: ${result.version}");
+    expect(source).not.toContain("Already current: Fased ${result.version}");
+  });
+
   it("returns the one-time Local bootstrap without mutating pre-supervisor state", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-update-owner-"));
     const previousStateDir = process.env.FASED_STATE_DIR;
