@@ -1582,6 +1582,7 @@ if [[ "$phase" == "managed-update" ]]; then
       >"$stable_bridge_manifest"
 
     runuser -u testop -- env "${managed_env[@]}" \
+      FASED_INSTALL_REPO="$candidate_repo" \
       /bin/bash "$candidate_installer" \
       --release "v$version" \
       --update-channel beta \
