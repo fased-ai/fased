@@ -674,6 +674,62 @@ EOF_CONTROLLER_FAILURE_OVERRIDE
     "$instance"
 }
 
+verify_canonical_lifecycle_controller() {
+  local instance="$1"
+  local lifecycle_root="/var/lib/fased-local/$instance/lifecycle"
+  local manifest="$lifecycle_root/installation-manifest.json"
+  local controller_unit="fased-local-controller-worker-$instance.service"
+  local active_generation=""
+  local active_root=""
+  local controller_root=""
+  local committed_transactions=0
+  local supervisor_journal=""
+  local target_journal=""
+
+  printf 'canonical lifecycle controller stage: manifest-and-pointers\n'
+  active_generation="$(jq -er .activeGeneration.id "$manifest")"
+  [[ "$active_generation" =~ ^sha256:[a-f0-9]{64}$ ]]
+  jq -e --arg version "$version" --arg commit "$commit" \
+    '.profile == "protected-local" and
+     .activeGeneration.version == $version and
+     .activeGeneration.commit == $commit' \
+    "$manifest" >/dev/null
+  active_root="$(readlink -f "$lifecycle_root/current")"
+  controller_root="$(readlink -f "$lifecycle_root/controller-current")"
+  test "$active_root" = "$lifecycle_root/generations/${active_generation#sha256:}"
+  test "$controller_root" = "$active_root"
+  test -x "$controller_root/payload/bin/fased-lifecycled"
+
+  printf 'canonical lifecycle controller stage: unit-authority\n'
+  systemctl cat "$controller_unit" >/tmp/canonical-controller-unit.txt
+  grep -F \
+    "ExecStart=$controller_root/payload/bin/fased-lifecycled target --config $lifecycle_root/platform.json --socket /run/fased-local-controller-worker/$instance/controller.sock" \
+    /tmp/canonical-controller-unit.txt >/dev/null
+  if grep -F "/opt/fased/local/$instance/controller/current/fased-host-updater.mjs" \
+    /tmp/canonical-controller-unit.txt >/dev/null; then
+    echo "canonical lifecycle controller unit retained the retired JavaScript authority" >&2
+    return 1
+  fi
+  systemctl is-active --quiet "$controller_unit"
+
+  printf 'canonical lifecycle controller stage: authority-journals\n'
+  while IFS= read -r supervisor_journal; do
+    target_journal="${supervisor_journal%/supervisor.json}/target-controller.json"
+    test -f "$target_journal"
+    jq -e --slurpfile target "$target_journal" --arg generation "$active_generation" \
+      '.transactionId == $target[0].transactionId and
+       .target.id == $generation and
+       $target[0].target.id == $generation and
+       .phase == "COMMITTED" and
+       $target[0].phase == "COMMITTED"' \
+      "$supervisor_journal" >/dev/null || continue
+    committed_transactions=$((committed_transactions + 1))
+  done < <(find "$lifecycle_root/transactions" -mindepth 2 -maxdepth 2 \
+    -type f -name supervisor.json -print)
+  test "$committed_transactions" -ge 1
+  printf 'canonical Go lifecycle controller transaction verified: %s\n' "$instance"
+}
+
 if [[ "$phase" == "verify-reboot" ]]; then
   [[ -f "$snapshot" ]]
   instance="$(jq -er .instanceId "$snapshot")"
@@ -2280,7 +2336,7 @@ runuser -u testop -- "/opt/fased/local/$instance/signer/fased-signerd" \
 jq -e '.balance == "2000000000" and .unit == "lamports"' \
   /tmp/active-agent-balance.json >/dev/null
 
-verify_supervised_controller_a_to_b "$instance"
+verify_canonical_lifecycle_controller "$instance"
 
 systemctl restart "fased-local-controller-$instance.service" \
   "fased-signerd-$instance.service" "fased-gateway-$instance.service"
