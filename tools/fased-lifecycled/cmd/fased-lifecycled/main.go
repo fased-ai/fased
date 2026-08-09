@@ -687,12 +687,16 @@ func runTarget(ctx context.Context, config platform.Config, socketPath string) e
 		Caller: signer.CommandCaller{ClientBinary: executable, Config: config}, Offline: signer.CommandOfflineRestorer{},
 		Generations: state, ExpectedGateUID: 0}
 	var predecessor platform.Predecessor = platform.NoPredecessor{}
+	var networkPolicy platform.NetworkPolicy = platform.NoNetworkPolicy{}
 	if config.Profile == model.ProfileProtectedLocal {
 		predecessor = &platform.LocalPredecessor{Config: config, Systemd: platform.CommandUserSystemd{
 			Binary: "/usr/bin/systemctl", Principal: config.Operator, Home: config.OwnerHome(),
 		}}
+	} else {
+		predecessor = &platform.HostingPredecessor{Config: config, Systemd: systemd, State: platform.CommandServiceState{Binary: "/usr/bin/systemctl"}}
+		networkPolicy = platform.CommandHostingNetworkPolicy{TailscaleBinary: "/usr/bin/tailscale", SocketBinary: "/usr/bin/ss"}
 	}
-	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Systemd: systemd, Generations: state, Health: platform.LoopbackGatewayHealth{}, Predecessor: predecessor}
+	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Systemd: systemd, Generations: state, Health: platform.LoopbackGatewayHealth{}, Predecessor: predecessor, Network: networkPolicy}
 	targetEngine := &engine.TargetEngine{Journal: state, Generations: state,
 		Migrator: &migrator.SchemaMigrator{Registry: registry}, Signer: signerParticipant,
 		Adapter: targetAdapter, Installation: &platform.ManifestCommitter{Store: state, Identity: identity}}

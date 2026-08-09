@@ -50,7 +50,7 @@ func (adapter *ControllerAdapter) Prepare(_ context.Context, tx model.Transactio
 
 func (adapter *ControllerAdapter) Switch(ctx context.Context, tx model.Transaction) error {
 	unit := adapter.Identity.Services["controller"]
-	if tx.Previous != nil {
+	if tx.Previous != nil || tx.PlanAction == "BRIDGE_PUBLIC_STABLE" {
 		if err := adapter.Systemd.Stop(ctx, unit); err != nil {
 			return err
 		}
@@ -96,7 +96,7 @@ func (adapter *ControllerAdapter) Restore(ctx context.Context, tx model.Transact
 	if err := adapter.Systemd.DaemonReload(ctx); err != nil {
 		return err
 	}
-	if tx.Previous == nil {
+	if tx.Previous == nil && tx.PlanAction != "BRIDGE_PUBLIC_STABLE" {
 		return nil
 	}
 	return adapter.Systemd.Start(ctx, unit)

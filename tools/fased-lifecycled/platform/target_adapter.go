@@ -37,6 +37,7 @@ type TargetAdapter struct {
 	Generations GenerationManager
 	Health      GatewayHealth
 	Predecessor Predecessor
+	Network     NetworkPolicy
 }
 
 func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction) error {
@@ -44,6 +45,9 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 		return err
 	}
 	if err := adapter.Predecessor.Prepare(ctx, tx); err != nil {
+		return err
+	}
+	if err := adapter.Network.Verify(ctx, adapter.Config, tx); err != nil {
 		return err
 	}
 	payload, err := adapter.Generations.GenerationPayloadPath(tx.Target.ID)
@@ -141,7 +145,7 @@ func (adapter *TargetAdapter) Discard(ctx context.Context, tx model.Transaction)
 }
 
 func (adapter *TargetAdapter) validate(tx model.Transaction) error {
-	if adapter == nil || adapter.Units == nil || adapter.Systemd == nil || adapter.Generations == nil || adapter.Health == nil || adapter.Predecessor == nil {
+	if adapter == nil || adapter.Units == nil || adapter.Systemd == nil || adapter.Generations == nil || adapter.Health == nil || adapter.Predecessor == nil || adapter.Network == nil {
 		return errors.New("target platform adapter is incomplete")
 	}
 	if err := adapter.Config.Validate(); err != nil {

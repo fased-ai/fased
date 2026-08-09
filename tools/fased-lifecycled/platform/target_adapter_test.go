@@ -111,7 +111,7 @@ func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) 
 		t.Fatal(err)
 	}
 	calls := []string{}
-	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls}, Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}}, tx, &calls
+	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls}, Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Network: NoNetworkPolicy{}}, tx, &calls
 }
 
 func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing.T) {
@@ -228,7 +228,7 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	adapter := &TargetAdapter{
 		Config: config, Identity: identity, Units: units,
 		Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls},
-		Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{},
+		Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Network: NoNetworkPolicy{},
 	}
 	if err := adapter.Prepare(context.Background(), tx); err != nil {
 		t.Fatal(err)
