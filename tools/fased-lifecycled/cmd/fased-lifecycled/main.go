@@ -150,13 +150,14 @@ func runInventory(args []string, output io.Writer) error {
 func runInitialize(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("initialize", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var profileRaw, instanceID, ownerStateRoot, generationRoot, generationArchive string
+	var profileRaw, instanceID, ownerStateRoot, generationRoot, generationArchive, sourceTopology string
 	var operatorUID, operatorGID, gatewayUID, gatewayGID, signerUID, signerGID, gatewayPort uint64
 	flags.StringVar(&profileRaw, "profile", "", "")
 	flags.StringVar(&instanceID, "instance", "", "")
 	flags.StringVar(&ownerStateRoot, "owner-state", "", "")
 	flags.StringVar(&generationRoot, "generation", "", "")
 	flags.StringVar(&generationArchive, "generation-archive", "", "")
+	flags.StringVar(&sourceTopology, "source-topology", "", "")
 	flags.Uint64Var(&operatorUID, "operator-uid", 0, "")
 	flags.Uint64Var(&operatorGID, "operator-gid", 0, "")
 	flags.Uint64Var(&gatewayUID, "gateway-uid", 0, "")
@@ -167,7 +168,7 @@ func runInitialize(args []string, output io.Writer) error {
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || gatewayPort == 0 || gatewayPort > 65535 || operatorUID > uint64(^uint32(0)) || operatorGID > uint64(^uint32(0)) || gatewayUID > uint64(^uint32(0)) || gatewayGID > uint64(^uint32(0)) || signerUID > uint64(^uint32(0)) || signerGID > uint64(^uint32(0)) {
 		return errors.New("invalid lifecycle initialization arguments")
 	}
-	applyArguments, err := initializationApplyArguments("", generationRoot, generationArchive)
+	applyArguments, err := initializationApplyArguments("", generationRoot, generationArchive, sourceTopology)
 	if err != nil {
 		return err
 	}
@@ -242,7 +243,7 @@ func runInitialize(args []string, output io.Writer) error {
 	return nil
 }
 
-func initializationApplyArguments(configPath, generationRoot, generationArchive string) ([]string, error) {
+func initializationApplyArguments(configPath, generationRoot, generationArchive, sourceTopology string) ([]string, error) {
 	if (generationRoot == "") == (generationArchive == "") {
 		return nil, errors.New("invalid lifecycle initialization generation input")
 	}
@@ -253,7 +254,11 @@ func initializationApplyArguments(configPath, generationRoot, generationArchive 
 	if !filepath.IsAbs(selected) || filepath.Clean(selected) != selected {
 		return nil, errors.New("invalid lifecycle initialization generation input")
 	}
-	return []string{"--config", configPath, flagName, selected}, nil
+	arguments := []string{"--config", configPath, flagName, selected}
+	if sourceTopology != "" {
+		arguments = append(arguments, "--source-topology", sourceTopology)
+	}
+	return arguments, nil
 }
 
 type bootstrapUnitReplacement struct {
@@ -385,11 +390,12 @@ func ensureStableBinaryDirectory(directory string) error {
 func runApply(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("apply", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var configPath, generationRoot, generationArchive, generationID string
+	var configPath, generationRoot, generationArchive, generationID, sourceTopology string
 	flags.StringVar(&configPath, "config", "", "")
 	flags.StringVar(&generationRoot, "generation", "", "")
 	flags.StringVar(&generationArchive, "generation-archive", "", "")
 	flags.StringVar(&generationID, "generation-id", "", "")
+	flags.StringVar(&sourceTopology, "source-topology", "", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return errors.New("invalid lifecycle apply arguments")
 	}
@@ -457,6 +463,7 @@ func runApply(args []string, output io.Writer) error {
 	response, err := daemon.Call(ctx, config.SupervisorSocket(), protocol.Request{
 		SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID,
 		Operation: protocol.OperationConverge, TargetGenerationID: generation.ID,
+		SourceTopology:         sourceTopology,
 		ExpectedManifestDigest: expectedManifest,
 	}, 5*time.Minute)
 	if err != nil {
@@ -534,11 +541,12 @@ func runStage(args []string, output io.Writer) error {
 func runRequest(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("request", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var socketPath, operation, requestID, targetID, manifestDigest, transactionID string
+	var socketPath, operation, requestID, targetID, sourceTopology, manifestDigest, transactionID string
 	flags.StringVar(&socketPath, "socket", "", "")
 	flags.StringVar(&operation, "operation", "", "")
 	flags.StringVar(&requestID, "request-id", "", "")
 	flags.StringVar(&targetID, "target-generation", "", "")
+	flags.StringVar(&sourceTopology, "source-topology", "", "")
 	flags.StringVar(&manifestDigest, "expected-manifest", "", "")
 	flags.StringVar(&transactionID, "transaction", "", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !filepath.IsAbs(socketPath) {
@@ -546,6 +554,7 @@ func runRequest(args []string, output io.Writer) error {
 	}
 	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID,
 		Operation: protocol.Operation(operation), TargetGenerationID: targetID,
+		SourceTopology:         sourceTopology,
 		ExpectedManifestDigest: manifestDigest, TransactionID: transactionID}
 	if err := request.Validate(); err != nil {
 		return err

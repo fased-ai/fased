@@ -143,7 +143,10 @@ func RegistryFor(config platform.Config) (map[Key]Adapter, error) {
 		{State: "federation", From: 0, To: 2}:     directory(filepath.Join(config.OwnerStateRoot, "federation")),
 		{State: "federation", From: 1, To: 2}:     directory(filepath.Join(config.OwnerStateRoot, "federation")),
 		{State: "signer", From: 0, To: 2}:         SignerOwnedAdapter{},
-		{State: "signer", From: 1, To: 2}:         SignerOwnedAdapter{},
+		{State: "signer", From: 1, To: 2}:         LocalSignerBridgeAdapter{Config: config},
+	}
+	if config.Profile == model.ProfileHosting {
+		registry[Key{State: "signer", From: 1, To: 2}] = SignerOwnedAdapter{}
 	}
 	return registry, nil
 }

@@ -73,6 +73,63 @@ func TestPlanFreshUpdateAndAlreadyCurrent(t *testing.T) {
 	}
 }
 
+func TestPlanSelectsVersionNeutralPublicStableBridge(t *testing.T) {
+	legacy, err := PublicStableInstallation(model.ProfileProtectedLocal, TopologyLocalUserSystemdV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := target()
+	selected.StateSchemas = map[string]uint32{
+		"federation": 2, "managedInstall": 2, "mining": 1, "signer": 3, "walletRegistry": 2,
+	}
+	plan, err := BuildForInstallation(legacy, selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Action != ActionBridgePublicStable {
+		t.Fatalf("public stable selected %q, want %q", plan.Action, ActionBridgePublicStable)
+	}
+	if len(plan.Migrations) != 4 || plan.Migrations[0] != (Migration{State: "federation", From: 0, To: 2}) ||
+		plan.Migrations[1] != (Migration{State: "managedInstall", From: 1, To: 2}) ||
+		plan.Migrations[2] != (Migration{State: "signer", From: 1, To: 3}) ||
+		plan.Migrations[3] != (Migration{State: "walletRegistry", From: 1, To: 2}) {
+		t.Fatalf("unexpected public-stable migrations: %+v", plan.Migrations)
+	}
+}
+
+func TestPublicStableTopologySelectionIsVersionNeutralAndFailClosed(t *testing.T) {
+	for _, topology := range []PublicTopology{TopologyLegacyLocalSameUser, TopologyLocalUserSystemdV1, TopologyLocalUserSystemdV2} {
+		installation, err := PublicStableInstallation(model.ProfileProtectedLocal, topology)
+		if err != nil || installation.Kind != InstallationPublicStable || installation.StateSchemas["signer"] != 1 {
+			t.Fatalf("unexpected topology %q: %+v err=%v", topology, installation, err)
+		}
+	}
+	if _, err := PublicStableInstallation(model.ProfileProtectedLocal, "private-rc-residue"); err == nil {
+		t.Fatal("private or unknown topology was accepted")
+	}
+}
+
+func TestPlanSeparatesEmptyManagedAndAmbiguousInstallations(t *testing.T) {
+	fresh, err := BuildForInstallation(Installation{Kind: InstallationEmpty}, target())
+	if err != nil || fresh.Action != ActionInstall {
+		t.Fatalf("unexpected empty-installation plan: %+v err=%v", fresh, err)
+	}
+
+	current := installed()
+	managed, err := BuildForInstallation(Installation{Kind: InstallationManaged, Manifest: &current}, target())
+	if err != nil || managed.Action != ActionUpdate {
+		t.Fatalf("unexpected managed plan: %+v err=%v", managed, err)
+	}
+
+	repair, err := BuildForInstallation(Installation{
+		Kind:    InstallationAmbiguous,
+		Profile: model.ProfileProtectedLocal,
+	}, target())
+	if err != nil || repair.Action != ActionRepairRequired {
+		t.Fatalf("unexpected ambiguous-installation plan: %+v err=%v", repair, err)
+	}
+}
+
 func TestPlanFailsClosedForUnknownNewerOrUnmappedState(t *testing.T) {
 	current := installed()
 	current.StateSchemas["signer"] = 4

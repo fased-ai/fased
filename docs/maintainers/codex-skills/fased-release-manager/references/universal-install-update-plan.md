@@ -68,6 +68,36 @@ transaction envelope but never make competing recovery decisions. Adapters own
 privilege acquisition, users/groups, paths, service rendering and control,
 credential storage, and Hosting network hardening only.
 
+### Canonical implementation boundary
+
+`tools/fased-lifecycled` is the sole target lifecycle implementation. Its Go
+model, planner, store, engine, migrator, signer participant, and Local/Hosting
+platform adapters own the durable transaction. Do not create a replacement
+engine beside it.
+
+The following JavaScript files are strangler inputs, not permanent lifecycle
+owners:
+
+- `install.sh`: retain acquisition, prerequisite, profile, and user-output
+  responsibilities; move protected mutation and recovery into Go.
+- `scripts/generation-updater.mjs`: retain release acquisition, attestation,
+  archive verification, Go invocation, and bounded result translation only.
+- `scripts/fased-managed-updater-core.mjs`: retain CLI/channel resolution and
+  delegate one verified transaction; remove protected mutation, service,
+  signer, journal, and rollback ownership.
+- `scripts/protected-local-bootstrap.mjs`: freeze, replace its account/path/unit
+  bootstrap and public-stable bridge with Go, then delete it after packaged
+  closure.
+- `scripts/fased-lifecycle-supervisor.mjs`: freeze and delete after the Go
+  supervisor transaction passes.
+- `scripts/fased-host-updater.mjs`: freeze and delete after the Go target
+  transaction and Hosting adapter pass.
+
+Cut over without dual mutation: first make the Go operation pass behind one
+exclusive route, then make the old route unreachable, then delete the old
+implementation and rerun the same proof. Production code must not select an
+owner by private prerelease name.
+
 ## Durable state
 
 Use separate immutable identities:

@@ -286,7 +286,7 @@ describe("generation updater", () => {
     expect(administrator).not.toHaveBeenCalled();
   });
 
-  it("initializes one canonical platform from the descriptor-bound generation", async () => {
+  it("initializes one canonical public-stable bridge from the descriptor-bound generation", async () => {
     const value = await fixture();
     const sources = new Map([
       ["fased-hosting-candidate.json", value.descriptorPath],
@@ -311,6 +311,7 @@ describe("generation updater", () => {
         gatewayGid: 997,
         signerUid: 996,
         signerGid: 996,
+        sourceTopology: "local-user-systemd-v1",
       },
       version,
       timeoutMs: 30_000,
@@ -339,6 +340,8 @@ describe("generation updater", () => {
         "--gateway-port",
         "18789",
         "--generation-archive",
+        "--source-topology",
+        "local-user-systemd-v1",
       ]),
     );
     expect(command).not.toContain("--generation");

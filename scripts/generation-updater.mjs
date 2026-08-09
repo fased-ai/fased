@@ -17,6 +17,11 @@ const DIGEST = /^sha256:[a-f0-9]{64}$/u;
 const OID = /^[a-f0-9]{40}$/u;
 const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
 const SUPERVISOR = "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled";
+const PUBLIC_STABLE_LOCAL_TOPOLOGIES = new Set([
+  "legacy-local-same-user-v0",
+  "local-user-systemd-v1",
+  "local-user-systemd-v2",
+]);
 
 export function generationLifecycle(manifest) {
   let instance = "hosting";
@@ -365,7 +370,10 @@ async function runGenerationTransaction({
       !positiveID(initialize.gatewayUid) ||
       !positiveID(initialize.gatewayGid) ||
       !positiveID(initialize.signerUid) ||
-      !positiveID(initialize.signerGid)
+      !positiveID(initialize.signerGid) ||
+      (initialize.sourceTopology !== undefined &&
+        (initialize.profile !== "protected-local" ||
+          !PUBLIC_STABLE_LOCAL_TOPOLOGIES.has(initialize.sourceTopology)))
     ) {
       throw new Error("lifecycle generation initialization identity is invalid");
     }
@@ -427,6 +435,9 @@ async function runGenerationTransaction({
         initializerExecutableRoot,
       );
     }
+    const sourceTopologyArguments = initialize?.sourceTopology
+      ? ["--source-topology", initialize.sourceTopology]
+      : [];
     const argumentsForAdministrator =
       operation === "initialize"
         ? [
@@ -454,6 +465,7 @@ async function runGenerationTransaction({
             String(initialize.signerGid),
             "--generation-archive",
             archive,
+            ...sourceTopologyArguments,
           ]
         : null;
     let result;
@@ -548,7 +560,12 @@ function commandOptions(argv) {
     "--signer-uid",
     "--signer-gid",
   ];
-  if (values.size !== required.length || required.some((name) => !values.has(name))) {
+  const sourceTopology = values.get("--source-topology");
+  if (
+    (values.size !== required.length && values.size !== required.length + 1) ||
+    required.some((name) => !values.has(name)) ||
+    (values.size === required.length + 1 && sourceTopology === undefined)
+  ) {
     throw new Error("generation initializer is missing a required fixed input");
   }
   const profile = values.get("--profile");
@@ -582,6 +599,7 @@ function commandOptions(argv) {
       gatewayGid: integer("--gateway-gid"),
       signerUid: integer("--signer-uid"),
       signerGid: integer("--signer-gid"),
+      ...(sourceTopology ? { sourceTopology } : {}),
     },
   };
 }

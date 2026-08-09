@@ -60,7 +60,7 @@ func (state fakeStore) ReadJournal(store.Authority, string) (model.Transaction, 
 	return state.journal, nil
 }
 
-func (state fakeStore) ReadGenerationContract(string) (bundle.Inventory, model.Generation, error) {
+func (state fakeStore) ReadGenerationContract(id string) (bundle.Inventory, model.Generation, error) {
 	return state.inventory, state.generation, nil
 }
 
@@ -68,7 +68,7 @@ type fakeInventory struct {
 	calls int
 }
 
-func (inventory *fakeInventory) Bind(context.Context, *model.Manifest, bundle.Inventory, planner.Plan) (string, string, error) {
+func (inventory *fakeInventory) Bind(context.Context, planner.Installation, bundle.Inventory, planner.Plan) (string, string, error) {
 	inventory.calls++
 	return digestA, digestB, nil
 }
@@ -119,6 +119,38 @@ func TestConvergeBuildsTransactionFromStoredContract(t *testing.T) {
 	}
 	if supervisor.tx.ID != transactionID || supervisor.tx.Target != target || supervisor.tx.MigrationPlanDigest == "" || supervisor.tx.SignerPlanDigest != digestB {
 		t.Fatalf("transaction was not bound from stored evidence: %+v", supervisor.tx)
+	}
+}
+
+func TestConvergeBindsPublicStableBridgeToPreviousGeneration(t *testing.T) {
+	inventory, target := targetContract()
+	inventory.StateSchemas = map[string]uint32{
+		"federation": 2, "managedInstall": 2, "mining": 1, "signer": 2, "walletRegistry": 1,
+	}
+	state := fakeStore{inventory: inventory, generation: target}
+	bindings := &fakeInventory{}
+	supervisor := &fakeSupervisor{}
+	service := Service{
+		Profile: model.ProfileProtectedLocal, Platform: platform(), Store: state,
+		Inventory: bindings, Supervisor: supervisor,
+		NewID: func() (string, error) { return transactionID, nil },
+	}
+	request := protocol.Request{
+		SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID,
+		Operation: protocol.OperationConverge, TargetGenerationID: target.ID,
+		SourceTopology: string(planner.TopologyLocalUserSystemdV1), ExpectedManifestDigest: "absent",
+	}
+	response, err := service.Handle(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Outcome != string(engine.OutcomeUpdated) || supervisor.tx.Previous != nil {
+		t.Fatalf("public-stable bridge was not transaction-bound: response=%+v transaction=%+v", response, supervisor.tx)
+	}
+	if len(supervisor.tx.Migrations) != 3 || supervisor.tx.Migrations[0] != (model.Migration{State: "federation", From: 0, To: 2}) ||
+		supervisor.tx.Migrations[1] != (model.Migration{State: "managedInstall", From: 1, To: 2}) ||
+		supervisor.tx.Migrations[2] != (model.Migration{State: "signer", From: 1, To: 2}) {
+		t.Fatalf("unexpected bridge migrations: %+v", supervisor.tx.Migrations)
 	}
 }
 
