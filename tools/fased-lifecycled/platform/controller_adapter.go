@@ -50,8 +50,10 @@ func (adapter *ControllerAdapter) Prepare(_ context.Context, tx model.Transactio
 
 func (adapter *ControllerAdapter) Switch(ctx context.Context, tx model.Transaction) error {
 	unit := adapter.Identity.Services["controller"]
-	if err := adapter.Systemd.Stop(ctx, unit); err != nil {
-		return err
+	if tx.Previous != nil {
+		if err := adapter.Systemd.Stop(ctx, unit); err != nil {
+			return err
+		}
 	}
 	if err := adapter.Units.Activate(tx.ID, []string{unit}); err != nil {
 		return err

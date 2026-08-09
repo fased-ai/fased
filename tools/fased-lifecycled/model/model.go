@@ -102,6 +102,8 @@ type Transaction struct {
 	SchemaVersion        uint32            `json:"schemaVersion"`
 	ID                   string            `json:"transactionId"`
 	Profile              Profile           `json:"profile"`
+	PlanAction           string            `json:"planAction"`
+	SourceTopology       string            `json:"sourceTopology,omitempty"`
 	Phase                Phase             `json:"phase"`
 	Revision             uint64            `json:"revision"`
 	Target               Generation        `json:"target"`
@@ -124,6 +126,8 @@ type TransactionEnvelope struct {
 	SchemaVersion        uint32            `json:"schemaVersion"`
 	ID                   string            `json:"transactionId"`
 	Profile              Profile           `json:"profile"`
+	PlanAction           string            `json:"planAction"`
+	SourceTopology       string            `json:"sourceTopology,omitempty"`
 	Target               Generation        `json:"target"`
 	TargetStateSchemas   map[string]uint32 `json:"targetStateSchemas"`
 	TargetCapabilities   CapabilityRanges  `json:"targetCapabilities"`
@@ -350,6 +354,33 @@ func (t Transaction) Validate() error {
 	if err := validateProfile(t.Profile); err != nil {
 		return err
 	}
+	switch t.PlanAction {
+	case "INSTALL", "UPDATE":
+		if t.SourceTopology != "" {
+			return errors.New("non-bridge transaction contains a source topology")
+		}
+	case "BRIDGE_PUBLIC_STABLE":
+		if !platformNamePattern.MatchString(t.SourceTopology) {
+			return errors.New("public-stable transaction source topology is invalid")
+		}
+	default:
+		return errors.New("transaction plan action is not mutable")
+	}
+	absent := "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	switch t.PlanAction {
+	case "INSTALL":
+		if t.Previous != nil || t.ManifestDigest != absent {
+			return errors.New("fresh installation transaction has predecessor state")
+		}
+	case "BRIDGE_PUBLIC_STABLE":
+		if t.Previous != nil || t.ManifestDigest != absent {
+			return errors.New("public-stable bridge has canonical predecessor state")
+		}
+	case "UPDATE":
+		if t.Previous == nil || t.ManifestDigest == absent {
+			return errors.New("managed update is missing its canonical predecessor")
+		}
+	}
 	if !validPhase(t.Phase) {
 		return fmt.Errorf("unsupported transaction phase %q", t.Phase)
 	}
@@ -412,6 +443,7 @@ func (t Transaction) Envelope() (TransactionEnvelope, error) {
 	}
 	return TransactionEnvelope{
 		SchemaVersion: t.SchemaVersion, ID: t.ID, Profile: t.Profile,
+		PlanAction: t.PlanAction, SourceTopology: t.SourceTopology,
 		Target: t.Target, TargetStateSchemas: t.TargetStateSchemas,
 		TargetCapabilities: t.TargetCapabilities, Previous: t.Previous,
 		ManifestDigest: t.ManifestDigest, StateInventoryDigest: t.StateInventoryDigest,
@@ -423,6 +455,7 @@ func (t Transaction) Envelope() (TransactionEnvelope, error) {
 func (e TransactionEnvelope) Validate() error {
 	probe := Transaction{
 		SchemaVersion: e.SchemaVersion, ID: e.ID, Profile: e.Profile,
+		PlanAction: e.PlanAction, SourceTopology: e.SourceTopology,
 		Phase: PhaseIdle, Revision: 1, Target: e.Target,
 		TargetStateSchemas: e.TargetStateSchemas, TargetCapabilities: e.TargetCapabilities,
 		Previous: e.Previous, ManifestDigest: e.ManifestDigest,

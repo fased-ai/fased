@@ -194,6 +194,7 @@ func (s *Store) ReadJournal(authority Authority, transactionID string) (model.Tr
 		SchemaVersion:      model.CurrentTransactionSchemaVersion,
 		ID:                 transactionID,
 		Profile:            model.ProfileProtectedLocal,
+		PlanAction:         "INSTALL",
 		Phase:              model.PhaseIdle,
 		Revision:           1,
 		Target:             placeholderGeneration(),

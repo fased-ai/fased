@@ -170,7 +170,8 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 	}
 	tx := model.Transaction{
 		SchemaVersion: model.CurrentTransactionSchemaVersion, ID: transactionID,
-		Profile: service.Profile, Phase: model.PhaseIdle, Revision: 1,
+		Profile: service.Profile, PlanAction: string(plan.Action), SourceTopology: request.SourceTopology,
+		Phase: model.PhaseIdle, Revision: 1,
 		Target: generation, Previous: previous, ManifestDigest: manifestDigest,
 		TargetStateSchemas: inventory.StateSchemas, TargetCapabilities: inventory.Capabilities,
 		StateInventoryDigest: stateDigest, MigrationPlanDigest: plan.Digest,

@@ -37,6 +37,10 @@ func localSignerBridgeFixture(t *testing.T) (LocalSignerBridgeAdapter, model.Tra
 		t.Fatal(err)
 	}
 	tx := migrationTransaction("signer", 1, 2)
+	tx.PlanAction = "BRIDGE_PUBLIC_STABLE"
+	tx.SourceTopology = "local-user-systemd-v2"
+	tx.Previous = nil
+	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	tx.Previous = nil
 	adapter := LocalSignerBridgeAdapter{Config: config, rootPrefix: t.TempDir(), skipChown: true}
 	return adapter, tx, tx.Migrations[0], statePath, keyPath

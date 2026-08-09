@@ -45,6 +45,7 @@ func testTransaction(phase Phase) Transaction {
 		SchemaVersion:        CurrentTransactionSchemaVersion,
 		ID:                   "018f47d2-5a6b-7c8d-9e0f-123456789abc",
 		Profile:              ProfileProtectedLocal,
+		PlanAction:           "UPDATE",
 		Phase:                phase,
 		Revision:             1,
 		Target:               testGeneration(testDigestB, "0.1.76", testCommitB, testCommitB, testDigestB),

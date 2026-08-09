@@ -686,7 +686,13 @@ func runTarget(ctx context.Context, config platform.Config, socketPath string) e
 	signerParticipant := &signer.Participant{Config: config,
 		Caller: signer.CommandCaller{ClientBinary: executable, Config: config}, Offline: signer.CommandOfflineRestorer{},
 		Generations: state, ExpectedGateUID: 0}
-	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Systemd: systemd, Generations: state, Health: platform.LoopbackGatewayHealth{}}
+	var predecessor platform.Predecessor = platform.NoPredecessor{}
+	if config.Profile == model.ProfileProtectedLocal {
+		predecessor = &platform.LocalPredecessor{Config: config, Systemd: platform.CommandUserSystemd{
+			Binary: "/usr/bin/systemctl", Principal: config.Operator, Home: config.OwnerHome(),
+		}}
+	}
+	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Systemd: systemd, Generations: state, Health: platform.LoopbackGatewayHealth{}, Predecessor: predecessor}
 	targetEngine := &engine.TargetEngine{Journal: state, Generations: state,
 		Migrator: &migrator.SchemaMigrator{Registry: registry}, Signer: signerParticipant,
 		Adapter: targetAdapter, Installation: &platform.ManifestCommitter{Store: state, Identity: identity}}

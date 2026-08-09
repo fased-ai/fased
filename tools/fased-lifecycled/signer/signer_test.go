@@ -73,13 +73,25 @@ func participantAndTransaction(t *testing.T, fresh, failAbort bool) (*Participan
 	if fresh {
 		from = 0
 	}
-	tx := model.Transaction{SchemaVersion: 1, ID: "018f47d2-5a6b-7c8d-9e0f-123456789abc", Profile: model.ProfileProtectedLocal,
+	action := "UPDATE"
+	if fresh {
+		action = "INSTALL"
+	}
+	manifestDigest := digestA
+	var previous *model.Generation
+	if fresh {
+		manifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	} else {
+		value := model.Generation{ID: digestA, Version: "0.1.75", Commit: commitA, Tree: commitA, ArtifactSetDigest: digestA}
+		previous = &value
+	}
+	tx := model.Transaction{SchemaVersion: 1, ID: "018f47d2-5a6b-7c8d-9e0f-123456789abc", Profile: model.ProfileProtectedLocal, PlanAction: action,
 		Phase: model.PhaseStaged, Revision: 2,
 		Target:             model.Generation{ID: digestB, Version: "0.1.76", Commit: commitA, Tree: commitA, ArtifactSetDigest: digestB},
 		TargetStateSchemas: map[string]uint32{"signer": 2}, TargetCapabilities: model.CapabilityRanges{
 			Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1},
 			Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 1, Max: 1}},
-		ManifestDigest: digestA, StateInventoryDigest: digestA, MigrationPlanDigest: digestA,
+		Previous: previous, ManifestDigest: manifestDigest, StateInventoryDigest: digestA, MigrationPlanDigest: digestA,
 		SignerPlanDigest: digestB, PlatformDigest: digestA,
 		Migrations: []model.Migration{{State: "signer", From: from, To: 2}},
 	}

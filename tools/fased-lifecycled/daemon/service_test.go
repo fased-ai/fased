@@ -138,6 +138,9 @@ func TestConvergeBuildsTransactionFromStoredContract(t *testing.T) {
 	if supervisor.tx.ID != transactionID || supervisor.tx.Target != target || supervisor.tx.MigrationPlanDigest == "" || supervisor.tx.SignerPlanDigest != digestB {
 		t.Fatalf("transaction was not bound from stored evidence: %+v", supervisor.tx)
 	}
+	if supervisor.tx.PlanAction != string(planner.ActionInstall) || supervisor.tx.SourceTopology != "" {
+		t.Fatalf("fresh transaction lost its planner identity: %+v", supervisor.tx)
+	}
 }
 
 func TestConvergeBindsPublicStableBridgeToPreviousGeneration(t *testing.T) {
@@ -164,6 +167,9 @@ func TestConvergeBindsPublicStableBridgeToPreviousGeneration(t *testing.T) {
 	}
 	if response.Outcome != string(engine.OutcomeUpdated) || supervisor.tx.Previous != nil {
 		t.Fatalf("public-stable bridge was not transaction-bound: response=%+v transaction=%+v", response, supervisor.tx)
+	}
+	if supervisor.tx.PlanAction != string(planner.ActionBridgePublicStable) || supervisor.tx.SourceTopology != string(planner.TopologyLocalUserSystemdV1) {
+		t.Fatalf("bridge transaction lost its source identity: %+v", supervisor.tx)
 	}
 	if len(supervisor.tx.Migrations) != 3 || supervisor.tx.Migrations[0] != (model.Migration{State: "federation", From: 1, To: 2}) ||
 		supervisor.tx.Migrations[1] != (model.Migration{State: "managedInstall", From: 1, To: 2}) ||

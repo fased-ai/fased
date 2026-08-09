@@ -28,6 +28,7 @@ func transaction(phase model.Phase) model.Transaction {
 		SchemaVersion:      model.CurrentTransactionSchemaVersion,
 		ID:                 "018f47d2-5a6b-7c8d-9e0f-123456789abc",
 		Profile:            model.ProfileProtectedLocal,
+		PlanAction:         "UPDATE",
 		Phase:              phase,
 		Revision:           revision,
 		Target:             model.Generation{ID: digestB, Version: "0.1.76", Commit: commitB, Tree: commitB, ArtifactSetDigest: digestB},

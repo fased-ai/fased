@@ -111,7 +111,7 @@ func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) 
 		t.Fatal(err)
 	}
 	calls := []string{}
-	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls}, Health: fakeHealth{calls: &calls}}, tx, &calls
+	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls}, Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}}, tx, &calls
 }
 
 func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing.T) {
@@ -158,6 +158,43 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 	}
 }
 
+func TestFreshTargetAndControllerDoNotStopAbsentCanonicalServices(t *testing.T) {
+	adapter, tx, calls := targetAdapter(t)
+	tx.PlanAction = "INSTALL"
+	tx.Previous = nil
+	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	if err := adapter.Quiesce(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("fresh target stopped absent services: %v", *calls)
+	}
+
+	root := t.TempDir()
+	entrypoint := filepath.Join(root, "bin", "fased-lifecycled")
+	if err := os.MkdirAll(filepath.Dir(entrypoint), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(entrypoint, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	controller := &ControllerAdapter{Config: adapter.Config, Identity: adapter.Identity,
+		Units: adapter.Units, Systemd: adapter.Systemd,
+		Generations: fakeControllerGenerations{root: root, calls: calls}}
+	if err := controller.Stage(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	*calls = nil
+	if err := controller.Switch(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range *calls {
+		if strings.HasPrefix(call, "systemd.stop:") {
+			t.Fatalf("fresh controller stopped an absent service: %v", *calls)
+		}
+	}
+}
+
 func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	tx, _ := manifestTransaction(t, false)
 	operator, gateway, signer := principals()
@@ -191,7 +228,7 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	adapter := &TargetAdapter{
 		Config: config, Identity: identity, Units: units,
 		Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls},
-		Health: fakeHealth{calls: &calls},
+		Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{},
 	}
 	if err := adapter.Prepare(context.Background(), tx); err != nil {
 		t.Fatal(err)

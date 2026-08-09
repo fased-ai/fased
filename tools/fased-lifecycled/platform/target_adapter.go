@@ -21,6 +21,14 @@ type GatewayHealth interface {
 	Verify(context.Context, uint16, model.Generation) error
 }
 
+type Predecessor interface {
+	Prepare(context.Context, model.Transaction) error
+	Quiesce(context.Context, model.Transaction) error
+	Restore(context.Context, model.Transaction) error
+	Commit(context.Context, model.Transaction) error
+	Discard(context.Context, model.Transaction) error
+}
+
 type TargetAdapter struct {
 	Config      Config
 	Identity    model.PlatformIdentity
@@ -28,10 +36,14 @@ type TargetAdapter struct {
 	Systemd     Systemd
 	Generations GenerationManager
 	Health      GatewayHealth
+	Predecessor Predecessor
 }
 
-func (adapter *TargetAdapter) Prepare(_ context.Context, tx model.Transaction) error {
+func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction) error {
 	if err := adapter.validate(tx); err != nil {
+		return err
+	}
+	if err := adapter.Predecessor.Prepare(ctx, tx); err != nil {
 		return err
 	}
 	payload, err := adapter.Generations.GenerationPayloadPath(tx.Target.ID)
@@ -50,7 +62,15 @@ func (adapter *TargetAdapter) Prepare(_ context.Context, tx model.Transaction) e
 	return adapter.Units.Prepare(tx.ID, adapter.renderTargetUnits(payload, tx.Target.Version, dependency))
 }
 
-func (adapter *TargetAdapter) Quiesce(ctx context.Context, _ model.Transaction) error {
+func (adapter *TargetAdapter) Quiesce(ctx context.Context, tx model.Transaction) error {
+	// The public-stable predecessor is a separate user-scoped service in Local.
+	// Fence it before activating the canonical root-managed topology.
+	if err := adapter.Predecessor.Quiesce(ctx, tx); err != nil {
+		return err
+	}
+	if tx.Previous == nil {
+		return nil
+	}
 	if err := adapter.Systemd.Stop(ctx, adapter.Identity.Services["gateway"]); err != nil {
 		return err
 	}
@@ -84,12 +104,15 @@ func (adapter *TargetAdapter) Verify(ctx context.Context, tx model.Transaction) 
 	return adapter.Health.Verify(ctx, adapter.Config.GatewayPort, tx.Target)
 }
 
-func (adapter *TargetAdapter) Commit(_ context.Context, tx model.Transaction) error {
+func (adapter *TargetAdapter) Commit(ctx context.Context, tx model.Transaction) error {
 	previous := ""
 	if tx.Previous != nil {
 		previous = tx.Previous.ID
 	}
 	if err := adapter.Generations.ActivateGeneration(tx.Target.ID, previous); err != nil {
+		return err
+	}
+	if err := adapter.Predecessor.Commit(ctx, tx); err != nil {
 		return err
 	}
 	return adapter.Units.Discard(tx.ID)
@@ -103,22 +126,22 @@ func (adapter *TargetAdapter) Restore(ctx context.Context, tx model.Transaction)
 		return err
 	}
 	if tx.Previous == nil {
-		return nil
+		return adapter.Predecessor.Restore(ctx, tx)
 	}
 	for _, unit := range adapter.startOrder() {
 		if err := adapter.Systemd.Start(ctx, unit); err != nil {
 			return err
 		}
 	}
-	return nil
+	return adapter.Predecessor.Restore(ctx, tx)
 }
 
-func (adapter *TargetAdapter) Discard(_ context.Context, tx model.Transaction) error {
-	return adapter.Units.Discard(tx.ID)
+func (adapter *TargetAdapter) Discard(ctx context.Context, tx model.Transaction) error {
+	return errors.Join(adapter.Units.Discard(tx.ID), adapter.Predecessor.Discard(ctx, tx))
 }
 
 func (adapter *TargetAdapter) validate(tx model.Transaction) error {
-	if adapter == nil || adapter.Units == nil || adapter.Systemd == nil || adapter.Generations == nil || adapter.Health == nil {
+	if adapter == nil || adapter.Units == nil || adapter.Systemd == nil || adapter.Generations == nil || adapter.Health == nil || adapter.Predecessor == nil {
 		return errors.New("target platform adapter is incomplete")
 	}
 	if err := adapter.Config.Validate(); err != nil {
