@@ -577,6 +577,10 @@ describe("CI workflow routing", () => {
       jobs["linux"]?.steps?.some((step) => step.name === "Assemble exact lifecycle generation"),
     ).toBe(false);
     expect(candidateText).toContain("assemble-lifecycle-generation.mjs");
+    expect(candidateText).toContain("--runtime-archive");
+    expect(candidateText).toContain("fased-hosted-app-v2-linux-");
+    expect(candidateText).toContain("--dependency-archive");
+    expect(candidateText).toContain("fased-hosted-deps-linux-");
     expect(candidateText).toContain("--release-manifest");
     expect(candidateText.indexOf("build-hosted-release-manifest.mjs")).toBeLessThan(
       candidateText.indexOf("assemble-lifecycle-generation.mjs"),
@@ -728,6 +732,8 @@ describe("CI workflow routing", () => {
     expect(containerFixture).toContain(
       'node "$ROOT_DIR/scripts/assemble-lifecycle-generation.mjs"',
     );
+    expect(containerFixture).toContain('--runtime-archive "$ARTIFACT_DIR/$x64_app"');
+    expect(containerFixture).toContain('--dependency-archive "$ARTIFACT_DIR/$x64_dependency"');
     expect(containerFixture).toContain('node "$ROOT_DIR/scripts/release-artifact-set.mjs" build');
     expect(containerFixture).toContain('--source-ref "refs/tags/v${VERSION}"');
     expect(containerFixture).toContain(

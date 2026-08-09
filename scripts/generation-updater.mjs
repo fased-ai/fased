@@ -14,6 +14,8 @@ const execFileAsync = promisify(execFile);
 const loadDependency = createRequire(import.meta.url);
 
 const DIGEST = /^sha256:[a-f0-9]{64}$/u;
+const HASH = /^[a-f0-9]{64}$/u;
+const ASSET = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,255}$/u;
 const OID = /^[a-f0-9]{40}$/u;
 const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
 const SUPERVISOR = "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled";
@@ -129,6 +131,14 @@ function parseDescriptor(value, version, assetName) {
   ) {
     throw new Error("candidate descriptor does not bind one exact lifecycle generation");
   }
+  return Object.freeze({ descriptor: value, selected: selected[0] });
+}
+
+function descriptorArtifact(descriptor, name) {
+  const selected = descriptor.artifacts.filter((artifact) => artifact.name === name);
+  if (selected.length !== 1) {
+    throw new Error(`candidate descriptor does not bind dependency artifact ${name}`);
+  }
   return selected[0];
 }
 
@@ -214,6 +224,38 @@ export async function extractGeneration(archive, destination, { dependencyRoot }
     process.umask(previousUmask);
   }
   return path.join(destination, "generation");
+}
+
+async function readGenerationDependency(archive, destination, { dependencyRoot } = {}) {
+  await validateGenerationArchive(archive, { dependencyRoot });
+  const tar = await loadArchiveDependency(dependencyRoot);
+  const root = path.join(destination, "generation-contract");
+  await fsp.mkdir(root, { recursive: true, mode: 0o700 });
+  await Promise.resolve(
+    tar.x({
+      file: archive,
+      cwd: root,
+      strict: true,
+      preservePaths: false,
+      filter: (candidate) => candidate === "generation/inventory.json",
+    }),
+  );
+  const inventory = JSON.parse(
+    await fsp.readFile(path.join(root, "generation", "inventory.json"), "utf8"),
+  );
+  const dependency = inventory?.dependency;
+  if (
+    inventory?.schemaVersion !== 3 ||
+    Object.keys(dependency ?? {})
+      .toSorted()
+      .join(",") !== "archiveSHA256,asset,hash" ||
+    !HASH.test(dependency.hash ?? "") ||
+    !ASSET.test(dependency.asset ?? "") ||
+    !DIGEST.test(dependency.archiveSHA256 ?? "")
+  ) {
+    throw new Error("lifecycle generation dependency contract is missing or malformed");
+  }
+  return dependency;
 }
 
 async function extractInitializerExecutable(archive, destination, { dependencyRoot } = {}) {
@@ -397,11 +439,12 @@ async function runGenerationTransaction({
       bundlePath: descriptorBundle,
     });
     const assetName = `fased-generation-linux-${architecture}-v${version}.tar.gz`;
-    const identity = parseDescriptor(
+    const candidate = parseDescriptor(
       JSON.parse(await fsp.readFile(descriptor, "utf8")),
       version,
       assetName,
     );
+    const identity = candidate.selected;
     const archive = path.join(temporary, assetName);
     await download(`${releaseUrl}/${assetName}`, archive, timeoutMs);
     const stat = await fsp.lstat(archive);
@@ -413,6 +456,24 @@ async function runGenerationTransaction({
     ) {
       throw new Error(
         "downloaded lifecycle generation does not match the attested candidate descriptor",
+      );
+    }
+    const dependency = await readGenerationDependency(archive, temporary, { dependencyRoot });
+    const dependencyIdentity = descriptorArtifact(candidate.descriptor, dependency.asset);
+    if (dependencyIdentity.sha256 !== dependency.archiveSHA256) {
+      throw new Error("candidate descriptor and generation bind different dependency archives");
+    }
+    const dependencyArchive = path.join(temporary, dependency.asset);
+    await download(`${releaseUrl}/${dependency.asset}`, dependencyArchive, timeoutMs);
+    const dependencyStat = await fsp.lstat(dependencyArchive);
+    if (
+      !dependencyStat.isFile() ||
+      dependencyStat.isSymbolicLink() ||
+      dependencyStat.size !== dependencyIdentity.size ||
+      (await sha256(dependencyArchive)) !== dependencyIdentity.sha256
+    ) {
+      throw new Error(
+        "downloaded dependency layer does not match the attested candidate descriptor",
       );
     }
     let generation = null;
@@ -465,6 +526,8 @@ async function runGenerationTransaction({
             String(initialize.signerGid),
             "--generation-archive",
             archive,
+            "--dependency-archive",
+            dependencyArchive,
             ...sourceTopologyArguments,
           ]
         : null;
@@ -482,6 +545,8 @@ async function runGenerationTransaction({
           lifecycle.config,
           "--generation-archive",
           archive,
+          "--dependency-archive",
+          dependencyArchive,
         ],
         { timeoutMs: Math.max(timeoutMs, 10 * 60_000) },
       );

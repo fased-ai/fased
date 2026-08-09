@@ -620,9 +620,16 @@ async function main(): Promise<void> {
     const dependencyAssetName = `fased-hosted-deps-linux-${arch}-${dependencyHash}.tar.gz`;
     const dependencyAssetPath = path.join(outputDir, dependencyAssetName);
     console.log(`hosted-artifact: writing ${dependencyAssetName}`);
-    await tar.c({ cwd: packageRoot, file: dependencyAssetPath, gzip: true, portable: true }, [
-      "node_modules",
-    ]);
+    await tar.c(
+      {
+        cwd: packageRoot,
+        file: dependencyAssetPath,
+        gzip: true,
+        portable: true,
+        noMtime: true,
+      },
+      ["node_modules"],
+    );
     const dependencyDigest = await writeChecksum(dependencyAssetPath);
     const dependencyStat = await fs.stat(dependencyAssetPath);
     console.log(

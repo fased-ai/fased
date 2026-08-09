@@ -463,6 +463,15 @@ func (s *Store) StageGeneration(generationID string) error {
 	if err := validateGenerationID(generationID); err != nil {
 		return err
 	}
+	dependency, err := s.GenerationDependency(generationID)
+	if err != nil {
+		return err
+	}
+	if dependency != nil {
+		if err := s.verifyDependencyPath(s.dependencyPath(dependency.Hash), *dependency); err != nil {
+			return fmt.Errorf("generation dependency verification failed: %w", err)
+		}
+	}
 	target := s.generationPath(generationID)
 	if _, err := os.Lstat(target); err == nil {
 		if manifest, _, manifestErr := s.ReadManifest(); manifestErr == nil &&

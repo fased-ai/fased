@@ -11,16 +11,17 @@ import (
 func TestInitializationApplyArgumentsSelectsOneVerifiedInput(t *testing.T) {
 	archive := filepath.Join(t.TempDir(), "generation.tar.gz")
 	topology := "local-user-systemd-v1"
-	got, err := initializationApplyArguments("/platform.json", "", archive, topology)
+	dependency := filepath.Join(t.TempDir(), "dependencies.tar.gz")
+	got, err := initializationApplyArguments("/platform.json", "", archive, dependency, topology)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"--config", "/platform.json", "--generation-archive", archive, "--source-topology", topology}
+	want := []string{"--config", "/platform.json", "--generation-archive", archive, "--dependency-archive", dependency, "--source-topology", topology}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("arguments = %#v, want %#v", got, want)
 	}
 	for _, input := range [][2]string{{"", ""}, {"/generation", archive}, {"relative", ""}} {
-		if _, err := initializationApplyArguments("/platform.json", input[0], input[1], ""); err == nil {
+		if _, err := initializationApplyArguments("/platform.json", input[0], input[1], "", ""); err == nil {
 			t.Fatalf("expected generation inputs %#v to be rejected", input)
 		}
 	}

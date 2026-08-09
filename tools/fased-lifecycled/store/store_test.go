@@ -4,15 +4,28 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
 	"fased-lifecycled/bundle"
 	"fased-lifecycled/model"
 )
+
+func fileSHA256(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("sha256:%x", sum)
+}
 
 func writeGenerationArchive(t *testing.T, archive, source string) {
 	t.Helper()
@@ -431,6 +444,82 @@ func TestImportGenerationArchiveExtractsDirectlyAndReverifiesExactBytes(t *testi
 	importedAlias := filepath.Join(state.inboxGenerationPath(expected.ID), generationPayloadName, "bin", "alias")
 	if target, err := os.Readlink(importedAlias); err != nil || target != "fased" {
 		t.Fatalf("safe archived symlink was not preserved: target=%q err=%v", target, err)
+	}
+}
+
+func TestSharedDependencyLayerIsDigestBoundAndReused(t *testing.T) {
+	root := t.TempDir()
+	state, err := Open(filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dependencySource := filepath.Join(root, "dependency", "node_modules")
+	if err := os.MkdirAll(filepath.Join(dependencySource, "tool"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dependencySource, "tool", "index.js"), []byte("shared\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dependencyArchive := filepath.Join(root, "dependencies.tar.gz")
+	writeGenerationArchive(t, dependencyArchive, dependencySource)
+	layer := bundle.DependencyLayer{
+		Hash: strings.Repeat("c", 64), Asset: "fased-hosted-deps-linux-x64-test.tar.gz",
+		ArchiveSHA256: fileSHA256(t, dependencyArchive),
+	}
+
+	source := filepath.Join(root, "generation")
+	payload := filepath.Join(source, generationPayloadName)
+	if err := os.MkdirAll(filepath.Join(payload, "runtime", "node_modules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(payload, "runtime", "fased.mjs"), []byte("app\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inventory, expected, err := bundle.InspectWithDependency(payload, "0.1.76", commitB, commitB,
+		map[string]uint32{"signer": 1}, manifest().Capabilities, layer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := bundle.CanonicalInventoryJSON(inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, generationInventoryName), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	generationArchive := filepath.Join(root, "generation.tar.gz")
+	writeGenerationArchive(t, generationArchive, source)
+	if _, err := state.ImportGenerationArchive(generationArchive); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.StageGeneration(expected.ID); err == nil || !strings.Contains(err.Error(), "dependency verification") {
+		t.Fatalf("generation staged without its dependency layer: %v", err)
+	}
+	if err := state.ImportDependencyArchive(dependencyArchive, layer); err != nil {
+		t.Fatal(err)
+	}
+	modules, err := state.GenerationDependencyPath(expected.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markerBefore, err := os.Stat(filepath.Join(filepath.Dir(modules), dependencyMarkerName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ImportDependencyArchive(dependencyArchive, layer); err != nil {
+		t.Fatalf("idempotent dependency reuse failed: %v", err)
+	}
+	markerAfter, err := os.Stat(filepath.Join(filepath.Dir(modules), dependencyMarkerName))
+	if err != nil || !os.SameFile(markerBefore, markerAfter) {
+		t.Fatalf("dependency layer was duplicated instead of reused: %v", err)
+	}
+	if err := state.StageGeneration(expected.ID); err != nil {
+		t.Fatal(err)
+	}
+	tampered := layer
+	tampered.ArchiveSHA256 = digestA
+	if err := state.ImportDependencyArchive(dependencyArchive, tampered); err == nil {
+		t.Fatal("mismatched dependency archive digest was accepted")
 	}
 }
 

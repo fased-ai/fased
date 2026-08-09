@@ -58,6 +58,31 @@ func TestInspectAndVerifyExactGeneration(t *testing.T) {
 	}
 }
 
+func TestDependencyLayerParticipatesInGenerationIdentity(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "bin/fased", "binary", 0o755)
+	schemas, capabilities := contract()
+	layer := DependencyLayer{
+		Hash:          strings.Repeat("a", 64),
+		Asset:         "fased-hosted-deps-linux-x64-test.tar.gz",
+		ArchiveSHA256: "sha256:" + strings.Repeat("b", 64),
+	}
+	inventory, generation, err := InspectWithDependency(root, "0.1.76", testCommit, testCommit, schemas, capabilities, layer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inventory.SchemaVersion != CurrentInventorySchemaVersion || inventory.Dependency == nil {
+		t.Fatalf("dependency contract was not recorded: %+v", inventory)
+	}
+	changed := inventory
+	copyLayer := *inventory.Dependency
+	copyLayer.ArchiveSHA256 = "sha256:" + strings.Repeat("c", 64)
+	changed.Dependency = &copyLayer
+	if err := Verify(root, changed, generation); err == nil {
+		t.Fatal("dependency substitution preserved the generation identity")
+	}
+}
+
 func TestVerifyRejectsSubstitutionAndExtraFile(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "bin/fased", "binary", 0o755)

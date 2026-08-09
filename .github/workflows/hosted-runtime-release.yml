@@ -463,8 +463,10 @@ jobs:
             signer=".artifacts/hosted-runtime/fased-signerd-linux-${go_arch}"
             lifecycled=".artifacts/hosted-runtime/fased-lifecycled-linux-${go_arch}"
             chmod 0755 "$signer" "$lifecycled"
+            dependency_hash="$(jq -er ".application.linux.${architecture}.dependencies.dependencyHash" .artifacts/hosted-runtime/fased-hosted-release-v2.json)"
             node scripts/assemble-lifecycle-generation.mjs \
-              --runtime-archive ".artifacts/hosted-runtime/fased-hosted-linux-${architecture}-v${package_version}.tar.gz" \
+              --runtime-archive ".artifacts/hosted-runtime/fased-hosted-app-v2-linux-${architecture}-v${package_version}.tar.gz" \
+              --dependency-archive ".artifacts/hosted-runtime/fased-hosted-deps-linux-${architecture}-${dependency_hash}.tar.gz" \
               --release-manifest .artifacts/hosted-runtime/fased-hosted-release-v2.json \
               --signer "$signer" \
               --lifecycled "$lifecycled" \

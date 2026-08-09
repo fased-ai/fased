@@ -109,11 +109,15 @@ func runInventory(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("inventory", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var root, version, commit, tree, outputPath string
+	var dependencyHash, dependencyAsset, dependencyArchiveSHA256 string
 	flags.StringVar(&root, "root", "", "")
 	flags.StringVar(&version, "version", "", "")
 	flags.StringVar(&commit, "commit", "", "")
 	flags.StringVar(&tree, "tree", "", "")
 	flags.StringVar(&outputPath, "output", "", "")
+	flags.StringVar(&dependencyHash, "dependency-hash", "", "")
+	flags.StringVar(&dependencyAsset, "dependency-asset", "", "")
+	flags.StringVar(&dependencyArchiveSHA256, "dependency-archive-sha256", "", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || root == "" || version == "" || commit == "" || tree == "" || outputPath == "" {
 		return errors.New("root, version, commit, tree, and output are required")
 	}
@@ -121,12 +125,30 @@ func runInventory(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	inventory, generation, err := bundle.Inspect(absRoot, version, commit, tree, map[string]uint32{
+	stateSchemas := map[string]uint32{
 		"federation": 2, "managedInstall": 2, "mining": 1, "signer": 2, "walletRegistry": 1,
-	}, model.CapabilityRanges{
+	}
+	capabilities := model.CapabilityRanges{
 		Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1},
 		Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 2, Max: 2},
-	})
+	}
+	dependencyValues := 0
+	for _, value := range []string{dependencyHash, dependencyAsset, dependencyArchiveSHA256} {
+		if value != "" {
+			dependencyValues++
+		}
+	}
+	var inventory bundle.Inventory
+	var generation model.Generation
+	if dependencyValues == 0 {
+		inventory, generation, err = bundle.Inspect(absRoot, version, commit, tree, stateSchemas, capabilities)
+	} else if dependencyValues == 3 {
+		inventory, generation, err = bundle.InspectWithDependency(absRoot, version, commit, tree, stateSchemas, capabilities, bundle.DependencyLayer{
+			Hash: dependencyHash, Asset: dependencyAsset, ArchiveSHA256: dependencyArchiveSHA256,
+		})
+	} else {
+		return errors.New("dependency hash, asset, and archive digest must be supplied together")
+	}
 	if err != nil {
 		return err
 	}
@@ -150,13 +172,14 @@ func runInventory(args []string, output io.Writer) error {
 func runInitialize(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("initialize", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var profileRaw, instanceID, ownerStateRoot, generationRoot, generationArchive, sourceTopology string
+	var profileRaw, instanceID, ownerStateRoot, generationRoot, generationArchive, dependencyArchive, sourceTopology string
 	var operatorUID, operatorGID, gatewayUID, gatewayGID, signerUID, signerGID, gatewayPort uint64
 	flags.StringVar(&profileRaw, "profile", "", "")
 	flags.StringVar(&instanceID, "instance", "", "")
 	flags.StringVar(&ownerStateRoot, "owner-state", "", "")
 	flags.StringVar(&generationRoot, "generation", "", "")
 	flags.StringVar(&generationArchive, "generation-archive", "", "")
+	flags.StringVar(&dependencyArchive, "dependency-archive", "", "")
 	flags.StringVar(&sourceTopology, "source-topology", "", "")
 	flags.Uint64Var(&operatorUID, "operator-uid", 0, "")
 	flags.Uint64Var(&operatorGID, "operator-gid", 0, "")
@@ -168,7 +191,7 @@ func runInitialize(args []string, output io.Writer) error {
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || gatewayPort == 0 || gatewayPort > 65535 || operatorUID > uint64(^uint32(0)) || operatorGID > uint64(^uint32(0)) || gatewayUID > uint64(^uint32(0)) || gatewayGID > uint64(^uint32(0)) || signerUID > uint64(^uint32(0)) || signerGID > uint64(^uint32(0)) {
 		return errors.New("invalid lifecycle initialization arguments")
 	}
-	applyArguments, err := initializationApplyArguments("", generationRoot, generationArchive, sourceTopology)
+	applyArguments, err := initializationApplyArguments("", generationRoot, generationArchive, dependencyArchive, sourceTopology)
 	if err != nil {
 		return err
 	}
@@ -243,7 +266,7 @@ func runInitialize(args []string, output io.Writer) error {
 	return nil
 }
 
-func initializationApplyArguments(configPath, generationRoot, generationArchive, sourceTopology string) ([]string, error) {
+func initializationApplyArguments(configPath, generationRoot, generationArchive, dependencyArchive, sourceTopology string) ([]string, error) {
 	if (generationRoot == "") == (generationArchive == "") {
 		return nil, errors.New("invalid lifecycle initialization generation input")
 	}
@@ -255,6 +278,12 @@ func initializationApplyArguments(configPath, generationRoot, generationArchive,
 		return nil, errors.New("invalid lifecycle initialization generation input")
 	}
 	arguments := []string{"--config", configPath, flagName, selected}
+	if dependencyArchive != "" {
+		if !filepath.IsAbs(dependencyArchive) || filepath.Clean(dependencyArchive) != dependencyArchive {
+			return nil, errors.New("invalid lifecycle initialization dependency input")
+		}
+		arguments = append(arguments, "--dependency-archive", dependencyArchive)
+	}
 	if sourceTopology != "" {
 		arguments = append(arguments, "--source-topology", sourceTopology)
 	}
@@ -390,10 +419,11 @@ func ensureStableBinaryDirectory(directory string) error {
 func runApply(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("apply", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var configPath, generationRoot, generationArchive, generationID, sourceTopology string
+	var configPath, generationRoot, generationArchive, dependencyArchive, generationID, sourceTopology string
 	flags.StringVar(&configPath, "config", "", "")
 	flags.StringVar(&generationRoot, "generation", "", "")
 	flags.StringVar(&generationArchive, "generation-archive", "", "")
+	flags.StringVar(&dependencyArchive, "dependency-archive", "", "")
 	flags.StringVar(&generationID, "generation-id", "", "")
 	flags.StringVar(&sourceTopology, "source-topology", "", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
@@ -415,6 +445,9 @@ func runApply(args []string, output io.Writer) error {
 	if selectedInput != "" && (!filepath.IsAbs(selectedInput) || filepath.Clean(selectedInput) != selectedInput) {
 		return errors.New("invalid lifecycle apply arguments")
 	}
+	if dependencyArchive != "" && (!filepath.IsAbs(dependencyArchive) || filepath.Clean(dependencyArchive) != dependencyArchive) {
+		return errors.New("invalid lifecycle dependency archive")
+	}
 	config, err := loadConfig(configPath, 0)
 	if err != nil {
 		return err
@@ -433,6 +466,11 @@ func runApply(args []string, output io.Writer) error {
 	}
 	if err != nil {
 		return err
+	}
+	if generationID == "" {
+		if err := importGenerationDependency(state, generation, dependencyArchive); err != nil {
+			return err
+		}
 	}
 	expectedManifest := "absent"
 	if _, digest, readErr := state.ReadManifest(); readErr == nil {
@@ -501,10 +539,11 @@ func randomRequestID() (string, error) {
 func runStage(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("stage", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var configPath, generationRoot, generationArchive string
+	var configPath, generationRoot, generationArchive, dependencyArchive string
 	flags.StringVar(&configPath, "config", "", "")
 	flags.StringVar(&generationRoot, "generation", "", "")
 	flags.StringVar(&generationArchive, "generation-archive", "", "")
+	flags.StringVar(&dependencyArchive, "dependency-archive", "", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || (generationRoot == "") == (generationArchive == "") {
 		return errors.New("invalid lifecycle stage arguments")
 	}
@@ -514,6 +553,9 @@ func runStage(args []string, output io.Writer) error {
 	}
 	if !filepath.IsAbs(selectedInput) || filepath.Clean(selectedInput) != selectedInput {
 		return errors.New("invalid lifecycle stage arguments")
+	}
+	if dependencyArchive != "" && (!filepath.IsAbs(dependencyArchive) || filepath.Clean(dependencyArchive) != dependencyArchive) {
+		return errors.New("invalid lifecycle dependency archive")
 	}
 	config, err := loadConfig(configPath, 0)
 	if err != nil {
@@ -532,10 +574,30 @@ func runStage(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if err := importGenerationDependency(state, generation, dependencyArchive); err != nil {
+		return err
+	}
 	if err := state.StageGeneration(generation.ID); err != nil {
 		return err
 	}
 	return json.NewEncoder(output).Encode(generation)
+}
+
+func importGenerationDependency(state *store.Store, generation model.Generation, archive string) error {
+	layer, err := state.GenerationDependency(generation.ID)
+	if err != nil {
+		return err
+	}
+	if layer == nil {
+		if archive != "" {
+			return errors.New("legacy generation must not receive a dependency archive")
+		}
+		return nil
+	}
+	if archive == "" {
+		return errors.New("generation requires its exact dependency archive")
+	}
+	return state.ImportDependencyArchive(archive, *layer)
 }
 
 func runRequest(args []string, output io.Writer) error {

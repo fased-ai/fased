@@ -63,8 +63,9 @@ func (systemd fakeSystemd) IsActive(_ context.Context, unit string) error {
 }
 
 type fakeGenerations struct {
-	root  string
-	calls *[]string
+	root       string
+	dependency string
+	calls      *[]string
 }
 
 type fakeHealth struct{ calls *[]string }
@@ -76,6 +77,9 @@ func (health fakeHealth) Verify(_ context.Context, port uint16, target model.Gen
 
 func (generations fakeGenerations) GenerationPayloadPath(string) (string, error) {
 	return generations.root, nil
+}
+func (generations fakeGenerations) GenerationDependencyPath(string) (string, error) {
+	return generations.dependency, nil
 }
 func (generations fakeGenerations) ActivateGeneration(current, previous string) error {
 	*generations.calls = append(*generations.calls, "generation.activate:"+current+":"+previous)
@@ -101,7 +105,7 @@ func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) 
 		t.Fatal(err)
 	}
 	calls := []string{}
-	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, calls: &calls}, Health: fakeHealth{calls: &calls}}, tx, &calls
+	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls}, Health: fakeHealth{calls: &calls}}, tx, &calls
 }
 
 func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing.T) {
@@ -142,7 +146,8 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 		!strings.Contains(combined, "WorkingDirectory="+filepath.Join(adapter.Generations.(fakeGenerations).root, "runtime")) ||
 		!strings.Contains(combined, "Environment=HOME=/home/example") ||
 		!strings.Contains(combined, "Environment=FASED_VERSION=0.1.76") ||
-		!strings.Contains(combined, "Environment=FASED_HOST_PROFILE=local") {
+		!strings.Contains(combined, "Environment=FASED_HOST_PROFILE=local") ||
+		!strings.Contains(combined, "BindReadOnlyPaths="+filepath.Join(adapter.Generations.(fakeGenerations).root, "dependencies", "node_modules")+":"+filepath.Join(adapter.Generations.(fakeGenerations).root, "runtime", "node_modules")) {
 		t.Fatalf("canonical Gateway unit lacks Local runtime context:\n%s", combined)
 	}
 }
@@ -179,7 +184,7 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	units := &fakeUnits{calls: &calls}
 	adapter := &TargetAdapter{
 		Config: config, Identity: identity, Units: units,
-		Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, calls: &calls},
+		Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls},
 		Health: fakeHealth{calls: &calls},
 	}
 	if err := adapter.Prepare(context.Background(), tx); err != nil {

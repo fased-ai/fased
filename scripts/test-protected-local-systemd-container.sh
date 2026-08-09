@@ -147,7 +147,8 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
     --commit "$COMMIT" \
     --output "$ARTIFACT_DIR/fased-hosted-release-v2.json"
   node "$ROOT_DIR/scripts/assemble-lifecycle-generation.mjs" \
-    --runtime-archive "$ARTIFACT_DIR/fased-hosted-linux-x64-v${VERSION}.tar.gz" \
+    --runtime-archive "$ARTIFACT_DIR/$x64_app" \
+    --dependency-archive "$ARTIFACT_DIR/$x64_dependency" \
     --release-manifest "$ARTIFACT_DIR/fased-hosted-release-v2.json" \
     --signer "$ARTIFACT_DIR/fased-signerd-linux-amd64" \
     --lifecycled "$ARTIFACT_DIR/fased-lifecycled-linux-amd64" \

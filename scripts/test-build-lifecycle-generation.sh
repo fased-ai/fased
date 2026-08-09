@@ -37,7 +37,11 @@ node "$ROOT/scripts/build-lifecycle-generation.mjs" \
   --output "$FIXTURE/generation" \
   --version 1.2.3 \
   --commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-  --tree bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb >"$FIXTURE/result.json"
+  --tree bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  --dependency-hash cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
+  --dependency-asset fased-hosted-deps-linux-x64-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.tar.gz \
+  --dependency-archive-sha256 sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd \
+  >"$FIXTURE/result.json"
 
 node -e '
   const fs = require("node:fs");
@@ -46,10 +50,12 @@ node -e '
   const generation = JSON.parse(fs.readFileSync(path.join(root, "result.json"), "utf8"));
   const inventory = JSON.parse(fs.readFileSync(path.join(root, "generation", "inventory.json"), "utf8"));
   if (!/^sha256:[a-f0-9]{64}$/.test(generation.id)) process.exit(1);
-  const expected = ["bin/fased-gateway-launch", "bin/fased-lifecycled", "bin/fased-signerd", "runtime/.fased-hosted-release-v2.json", "runtime/fased.mjs", "runtime/node_modules/.bin/tool", "runtime/node_modules/tool/bin/cli.js"];
+  const expected = ["bin/fased-gateway-launch", "bin/fased-lifecycled", "bin/fased-signerd", "runtime/.fased-hosted-release-v2.json", "runtime/fased.mjs"];
   if (JSON.stringify(inventory.artifacts.map((entry) => entry.path)) !== JSON.stringify(expected)) process.exit(1);
-  const link = inventory.artifacts.find((entry) => entry.path === "runtime/node_modules/.bin/tool");
-  if (link.kind !== "symlink" || link.linkTarget !== "../tool/bin/cli.js") process.exit(1);
+  if (fs.existsSync(path.join(root, "generation", "payload", "runtime", "node_modules", "tool"))) process.exit(1);
+  if (inventory.dependency.hash !== "c".repeat(64)) process.exit(1);
+  if (inventory.dependency.archiveSHA256 !== `sha256:${"d".repeat(64)}`) process.exit(1);
+  if (!inventory.dependency.asset.endsWith(".tar.gz")) process.exit(1);
   if (inventory.stateSchemas.managedInstall !== 2 || inventory.stateSchemas.signer !== 2) process.exit(1);
 ' "$FIXTURE"
 
@@ -59,7 +65,11 @@ if node "$ROOT/scripts/build-lifecycle-generation.mjs" \
   --runtime "$FIXTURE/runtime" --release-manifest "$FIXTURE/release-manifest.json" \
   --signer "$FIXTURE/signer" --lifecycled "$LIFECYCLED" \
   --output "$FIXTURE/rejected" --version 1.2.3 \
-  --commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --tree bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb >/dev/null 2>&1; then
+  --commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --tree bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  --dependency-hash cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
+  --dependency-asset fased-hosted-deps-linux-x64-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.tar.gz \
+  --dependency-archive-sha256 sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd \
+  >/dev/null 2>&1; then
   echo "generation builder accepted an escaping symlink" >&2
   exit 1
 fi
