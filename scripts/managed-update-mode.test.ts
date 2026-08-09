@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  __testing,
   run,
   selectInstalledUpdateOwner,
   selectManagedUpdateMode,
@@ -137,6 +138,18 @@ describe("managed update mode", () => {
     );
     expect(source).toContain("Already current: ${result.version}");
     expect(source).not.toContain("Already current: Fased ${result.version}");
+  });
+
+  it("honors the direct administrator exit when a descendant retains its output pipe", async () => {
+    const startedAt = Date.now();
+    const result = await __testing.runInteractiveAdministrator(
+      "/bin/sh",
+      ["-c", "(sleep 5) & printf 'exact\\n'"],
+      { timeoutMs: 4_000 },
+    );
+    expect(result).toMatchObject({ ok: true, code: 0, signal: null, timedOut: false });
+    expect(result.stdout).toBe("exact\n");
+    expect(Date.now() - startedAt).toBeLessThan(3_000);
   });
 
   it("returns the one-time Local bootstrap without mutating pre-supervisor state", async () => {

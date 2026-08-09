@@ -690,6 +690,7 @@ async function runInteractiveAdministrator(command, args, options = {}) {
     let stderr = "";
     let settled = false;
     let timedOut = false;
+    let exitDrain = null;
     const maxBytes = 2 * 1024 * 1024;
     const timeout = setTimeout(() => {
       timedOut = true;
@@ -701,6 +702,9 @@ async function runInteractiveAdministrator(command, args, options = {}) {
       }
       settled = true;
       clearTimeout(timeout);
+      if (exitDrain) {
+        clearTimeout(exitDrain);
+      }
       resolve({ ok, stdout, stderr: stderr || error?.message || "", code, signal, timedOut });
     };
     child.stdout.on("data", (chunk) => {
@@ -718,6 +722,13 @@ async function runInteractiveAdministrator(command, args, options = {}) {
       }
     });
     child.once("error", (error) => finish(false, error));
+    child.once("exit", (code, signal) => {
+      // A systemd-started descendant can retain the inherited pipe after the
+      // direct privileged command exits. Give pending output one bounded drain
+      // interval, then honor the direct child's exit status instead of waiting
+      // indefinitely for every descendant to close the pipe.
+      exitDrain = setTimeout(() => finish(code === 0, null, code, signal), 1_000);
+    });
     child.once("close", (code, signal) => finish(code === 0, null, code, signal));
   });
 }
@@ -6452,6 +6463,7 @@ export const __testing = {
   resolveRunningSignerPid,
   restoreOwnerOnlySnapshot,
   rollbackLocalSignerTransaction,
+  runInteractiveAdministrator,
   runLocalSignerTransaction,
   runHostedTransactionControl,
   sanitizeLegacyWalletServiceDefinitions,
