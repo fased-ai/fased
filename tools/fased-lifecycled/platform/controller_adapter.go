@@ -12,7 +12,6 @@ import (
 )
 
 type ControllerGenerationManager interface {
-	StageGeneration(string) error
 	GenerationPayloadPath(string) (string, error)
 	ActivateControllerGeneration(string, string) error
 }
@@ -27,9 +26,6 @@ type ControllerAdapter struct {
 
 func (adapter *ControllerAdapter) Stage(_ context.Context, tx model.Transaction) error {
 	if err := adapter.validate(tx); err != nil {
-		return err
-	}
-	if err := adapter.Generations.StageGeneration(tx.Target.ID); err != nil {
 		return err
 	}
 	payload, err := adapter.Generations.GenerationPayloadPath(tx.Target.ID)

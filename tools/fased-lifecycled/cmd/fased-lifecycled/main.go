@@ -500,6 +500,12 @@ func runApply(args []string, output io.Writer) error {
 			return err
 		}
 	}
+	// Promote verified bytes before the stable supervisor enters its read-only
+	// installation namespace. The target controller repeats this operation
+	// idempotently as part of its own mutation transaction.
+	if err := state.StageGeneration(generation.ID); err != nil {
+		return err
+	}
 	expectedManifest := "absent"
 	if _, digest, readErr := state.ReadManifest(); readErr == nil {
 		expectedManifest = digest

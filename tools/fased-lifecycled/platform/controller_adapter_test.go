@@ -17,10 +17,6 @@ type fakeControllerGenerations struct {
 	calls *[]string
 }
 
-func (generations fakeControllerGenerations) StageGeneration(id string) error {
-	*generations.calls = append(*generations.calls, "generation.stage:"+id)
-	return nil
-}
 func (generations fakeControllerGenerations) GenerationPayloadPath(string) (string, error) {
 	return generations.root, nil
 }
@@ -65,7 +61,7 @@ func TestControllerAdapterUsesIndependentVerifiedHandoff(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"generation.stage:" + digestB, "units.prepare", "systemd.stop:fased-local-controller-worker-example.service",
+		"units.prepare", "systemd.stop:fased-local-controller-worker-example.service",
 		"units.activate", "systemd.reload", "systemd.enable:fased-local-controller-worker-example.service",
 		"systemd.start:fased-local-controller-worker-example.service", "systemd.active:fased-local-controller-worker-example.service",
 		"controller.activate:" + digestB + ":" + digestA, "units.discard",
