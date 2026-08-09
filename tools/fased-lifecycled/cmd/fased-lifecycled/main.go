@@ -150,12 +150,13 @@ func runInventory(args []string, output io.Writer) error {
 func runInitialize(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("initialize", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var profileRaw, instanceID, ownerStateRoot, generationRoot string
+	var profileRaw, instanceID, ownerStateRoot, generationRoot, generationArchive string
 	var operatorUID, operatorGID, gatewayUID, gatewayGID, signerUID, signerGID, gatewayPort uint64
 	flags.StringVar(&profileRaw, "profile", "", "")
 	flags.StringVar(&instanceID, "instance", "", "")
 	flags.StringVar(&ownerStateRoot, "owner-state", "", "")
 	flags.StringVar(&generationRoot, "generation", "", "")
+	flags.StringVar(&generationArchive, "generation-archive", "", "")
 	flags.Uint64Var(&operatorUID, "operator-uid", 0, "")
 	flags.Uint64Var(&operatorGID, "operator-gid", 0, "")
 	flags.Uint64Var(&gatewayUID, "gateway-uid", 0, "")
@@ -165,6 +166,10 @@ func runInitialize(args []string, output io.Writer) error {
 	flags.Uint64Var(&gatewayPort, "gateway-port", 0, "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || gatewayPort == 0 || gatewayPort > 65535 || operatorUID > uint64(^uint32(0)) || operatorGID > uint64(^uint32(0)) || gatewayUID > uint64(^uint32(0)) || gatewayGID > uint64(^uint32(0)) || signerUID > uint64(^uint32(0)) || signerGID > uint64(^uint32(0)) {
 		return errors.New("invalid lifecycle initialization arguments")
+	}
+	applyArguments, err := initializationApplyArguments("", generationRoot, generationArchive)
+	if err != nil {
+		return err
 	}
 	config, err := platform.NewConfigWithGatewayPort(model.Profile(profileRaw), instanceID, ownerStateRoot, uint16(gatewayPort),
 		platform.Principal{UID: uint32(operatorUID), GID: uint32(operatorGID)},
@@ -230,10 +235,25 @@ func runInitialize(args []string, output io.Writer) error {
 	if err := systemd.Enable(ctx, identity.Services["supervisor"]); err != nil {
 		return rollback(err)
 	}
-	if err := runApply([]string{"--config", configPath, "--generation", generationRoot}, output); err != nil {
+	applyArguments[1] = configPath
+	if err := runApply(applyArguments, output); err != nil {
 		return rollback(err)
 	}
 	return nil
+}
+
+func initializationApplyArguments(configPath, generationRoot, generationArchive string) ([]string, error) {
+	if (generationRoot == "") == (generationArchive == "") {
+		return nil, errors.New("invalid lifecycle initialization generation input")
+	}
+	flagName, selected := "--generation", generationRoot
+	if generationArchive != "" {
+		flagName, selected = "--generation-archive", generationArchive
+	}
+	if !filepath.IsAbs(selected) || filepath.Clean(selected) != selected {
+		return nil, errors.New("invalid lifecycle initialization generation input")
+	}
+	return []string{"--config", configPath, flagName, selected}, nil
 }
 
 type bootstrapUnitReplacement struct {

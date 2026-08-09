@@ -168,6 +168,7 @@ run_as_stale_operator() {
       LOGNAME=testop \
       PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
       FASED_NODE=/usr/local/bin/node \
+      FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
       npm_config_registry="http://127.0.0.1:$rpc_port" \
       "$@"
 }

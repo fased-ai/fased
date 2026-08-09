@@ -211,6 +211,32 @@ export async function extractGeneration(archive, destination, { dependencyRoot }
   return path.join(destination, "generation");
 }
 
+async function extractInitializerExecutable(archive, destination, { dependencyRoot } = {}) {
+  await validateGenerationArchive(archive, { dependencyRoot });
+  const tar = await loadArchiveDependency(dependencyRoot);
+  const entry = "generation/payload/bin/fased-lifecycled";
+  const previousUmask = process.umask(0o077);
+  try {
+    await Promise.resolve(
+      tar.x({
+        file: archive,
+        cwd: destination,
+        strict: true,
+        preservePaths: false,
+        filter: (candidate) => candidate === entry,
+      }),
+    );
+  } finally {
+    process.umask(previousUmask);
+  }
+  const executable = path.join(destination, entry);
+  const info = await fsp.lstat(executable);
+  if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || (info.mode & 0o111) === 0) {
+    throw new Error("lifecycle generation initializer executable is unsafe");
+  }
+  return executable;
+}
+
 export async function stageInitializerExecutable(source, root) {
   if (!path.isAbsolute(root) || path.resolve(root) !== root) {
     throw new Error("lifecycle initializer executable root is invalid");
@@ -382,22 +408,29 @@ async function runGenerationTransaction({
       );
     }
     let generation = null;
+    let initializerExecutable = null;
     if (operation === "initialize") {
-      generation = await extractGeneration(archive, temporary, { dependencyRoot });
+      if (initializerExecutableRoot) {
+        initializerExecutable = await extractInitializerExecutable(archive, temporary, {
+          dependencyRoot,
+        });
+      } else {
+        generation = await extractGeneration(archive, temporary, { dependencyRoot });
+        initializerExecutable = path.join(generation, "payload", "bin", "fased-lifecycled");
+      }
     } else {
       await validateGenerationArchive(archive, { dependencyRoot });
     }
     if (operation === "initialize" && initializerExecutableRoot) {
       initializerStage = await stageInitializerExecutable(
-        path.join(generation, "payload", "bin", "fased-lifecycled"),
+        initializerExecutable,
         initializerExecutableRoot,
       );
     }
     const argumentsForAdministrator =
       operation === "initialize"
         ? [
-            initializerStage?.executable ??
-              path.join(generation, "payload", "bin", "fased-lifecycled"),
+            initializerStage?.executable ?? initializerExecutable,
             "initialize",
             "--profile",
             initialize.profile,
@@ -419,8 +452,8 @@ async function runGenerationTransaction({
             String(initialize.signerUid),
             "--signer-gid",
             String(initialize.signerGid),
-            "--generation",
-            generation,
+            "--generation-archive",
+            archive,
           ]
         : null;
     let result;

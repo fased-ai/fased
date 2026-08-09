@@ -338,9 +338,10 @@ describe("generation updater", () => {
         "0123456789abcdef",
         "--gateway-port",
         "18789",
-        "--generation",
+        "--generation-archive",
       ]),
     );
+    expect(command).not.toContain("--generation");
   });
 
   it("preserves a failed privileged initializer diagnostic emitted on stdout", async () => {

@@ -399,9 +399,31 @@ func TestImportGenerationArchiveExtractsDirectlyAndReverifiesExactBytes(t *testi
 	archive := filepath.Join(root, "generation.tar.gz")
 	writeGenerationArchive(t, archive, source)
 
+	previousUmask := syscall.Umask(0o117)
 	imported, err := state.ImportGenerationArchive(archive)
+	syscall.Umask(previousUmask)
 	if err != nil || imported != expected {
 		t.Fatalf("unexpected archive import: %+v err=%v", imported, err)
+	}
+	importedExecutable := filepath.Join(
+		state.inboxGenerationPath(expected.ID),
+		generationPayloadName,
+		"bin",
+		"fased",
+	)
+	info, statErr := os.Stat(importedExecutable)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("archived executable mode = %04o; want 0755", info.Mode().Perm())
+	}
+	importedRootInfo, statErr := os.Stat(state.inboxGenerationPath(expected.ID))
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if importedRootInfo.Mode().Perm() != 0o711 {
+		t.Fatalf("archived generation mode = %04o; want 0711", importedRootInfo.Mode().Perm())
 	}
 	if second, err := state.ImportGenerationArchive(archive); err != nil || second != expected {
 		t.Fatalf("idempotent archive import failed: %+v err=%v", second, err)

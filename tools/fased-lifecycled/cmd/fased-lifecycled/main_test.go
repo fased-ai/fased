@@ -3,9 +3,27 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"syscall"
 	"testing"
 )
+
+func TestInitializationApplyArgumentsSelectsOneVerifiedInput(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "generation.tar.gz")
+	got, err := initializationApplyArguments("/platform.json", "", archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"--config", "/platform.json", "--generation-archive", archive}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("arguments = %#v, want %#v", got, want)
+	}
+	for _, input := range [][2]string{{"", ""}, {"/generation", archive}, {"relative", ""}} {
+		if _, err := initializationApplyArguments("/platform.json", input[0], input[1]); err == nil {
+			t.Fatalf("expected generation inputs %#v to be rejected", input)
+		}
+	}
+}
 
 func TestBootstrapUnitReplacementRestoresPreviousUnit(t *testing.T) {
 	root := t.TempDir()
