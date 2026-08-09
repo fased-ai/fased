@@ -1654,6 +1654,21 @@ if [[ "$phase" == "managed-update" ]]; then
       exit 1
     fi
     grep -F "Already current: $version" /tmp/stable-bridge-noop.out >/dev/null
+    agent_readiness_sha="$(jq -S -c . /tmp/stable-agent-restart.json | sha256sum | awk '{print $1}')"
+    vault_readiness_sha="$(jq -S -c . /tmp/stable-vault-restart.json | sha256sum | awk '{print $1}')"
+    key_sha="$(sha256sum "/var/lib/fased-local/$instance/signer/master.key" | awk '{print $1}')"
+    jq -n \
+      --arg instanceId "$instance" \
+      --arg agentReadinessSha256 "$agent_readiness_sha" \
+      --arg vaultReadinessSha256 "$vault_readiness_sha" \
+      --arg masterKeySha256 "$key_sha" \
+      '{
+        instanceId: $instanceId,
+        agentReadinessSha256: $agentReadinessSha256,
+        vaultReadinessSha256: $vaultReadinessSha256,
+        masterKeySha256: $masterKeySha256
+      }' >"$snapshot"
+    chmod 0600 "$snapshot"
     printf 'stable Local %s -> Protected Local %s verified installer bridge passed: %s\n' \
       "$predecessor_version" "$version" "$instance"
     exit 0
