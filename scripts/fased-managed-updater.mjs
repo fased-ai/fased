@@ -6,7 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const CORE_NAME = "fased-managed-updater-core.mjs";
+const CORE_NAMES = Object.freeze([
+  "fased-generation-updater-core.mjs",
+  "fased-managed-updater-core.mjs",
+]);
 const DESCRIPTOR_NAME = ".fased-managed-updater-bundle.json";
 const GENERATION_RECEIPT_NAME = "managed-updater-generation.v1.json";
 const SAFE_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
@@ -278,8 +281,10 @@ async function verifyInventory(root, descriptor, entrypointIdentity, descriptorP
         identity.size === entrypointIdentity.size &&
         identity.mode === entrypointIdentity.mode;
     }
-    if (record.name === CORE_NAME && record.type === "support") {
-      corePath = candidate;
+    if (CORE_NAMES.includes(record.name) && record.type === "support") {
+      if (!corePath || record.name === CORE_NAMES[0]) {
+        corePath = candidate;
+      }
     }
   }
   if (
@@ -430,9 +435,11 @@ export async function resolveManagedUpdaterCore({
   stateDir = resolveStateDir(),
 } = {}) {
   const updaterDir = path.dirname(path.resolve(entrypointPath));
-  const adjacentCore = await safeRegularFile(path.join(updaterDir, CORE_NAME));
-  if (adjacentCore) {
-    return adjacentCore;
+  for (const coreName of CORE_NAMES) {
+    const adjacentCore = await safeRegularFile(path.join(updaterDir, coreName));
+    if (adjacentCore) {
+      return adjacentCore;
+    }
   }
   const entrypointIdentity = await hashRegularFile(entrypointPath);
   const generationRoot = await fsp
@@ -446,11 +453,14 @@ export async function resolveManagedUpdaterCore({
   }
   const selection = await readInstallSelection(stateDir);
   if (selection) {
-    const activeCore = path.join(selection.currentRoot, "scripts", CORE_NAME);
     if (selection.profile !== "hosting" && selection.profile !== "protected-local") {
-      const selected = await safeRegularFile(activeCore);
-      if (selected) {
-        return selected;
+      for (const coreName of CORE_NAMES) {
+        const selected = await safeRegularFile(
+          path.join(selection.currentRoot, "scripts", coreName),
+        );
+        if (selected) {
+          return selected;
+        }
       }
     }
     const verifiedActive = await verifiedRuntimeCore(selection.currentRoot, entrypointIdentity);

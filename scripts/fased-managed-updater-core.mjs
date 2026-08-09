@@ -145,6 +145,7 @@ const LOCAL_SIGNER_REQUIRED_FEATURES = [
   "signerControlledNativeFeeCaps",
 ];
 export const MANAGED_UPDATER_SUPPORT_FILES = Object.freeze([
+  "fased-generation-updater-core.mjs",
   "fased-managed-updater-core.mjs",
   "generation-updater.mjs",
   "fased-host-updaterctl.mjs",

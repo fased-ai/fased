@@ -16,6 +16,7 @@ import {
 
 const FILES = [
   "fased-managed-updater.mjs",
+  "fased-generation-updater-core.mjs",
   "fased-managed-updater-core.mjs",
   "generation-updater.mjs",
   "fased-host-updaterctl.mjs",
@@ -472,8 +473,10 @@ describe("managed updater content-addressed bundle", () => {
       entrypointPath: paths.updaterPath,
       stateDir: path.join(root, "state"),
     });
-    expect(selectedCore).toBe(path.join(targetScripts, "fased-managed-updater-core.mjs"));
-    const target = await import(`${pathToFileURL(selectedCore).href}?target=${Date.now()}`);
+    expect(selectedCore).toBe(path.join(targetScripts, "fased-generation-updater-core.mjs"));
+    const target = await import(
+      `${pathToFileURL(path.join(targetScripts, "fased-managed-updater-core.mjs")).href}?target=${Date.now()}`
+    );
     await target.__testing.updateStableComponents(paths, targetRoot, true);
 
     const generationDir = await fs.realpath(path.join(updaterDir, "current"));
@@ -521,7 +524,7 @@ describe("managed updater content-addressed bundle", () => {
         entrypointPath: flatEntrypoint,
         stateDir,
       }),
-    ).resolves.toBe(path.join(targetRoot, "scripts", "fased-managed-updater-core.mjs"));
+    ).resolves.toBe(path.join(targetRoot, "scripts", "fased-generation-updater-core.mjs"));
 
     await fs.writeFile(
       path.join(stateDir, "hosted-update-transaction.json"),
