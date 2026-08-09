@@ -6,10 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const CORE_NAMES = Object.freeze([
-  "fased-generation-updater-core.mjs",
-  "fased-managed-updater-core.mjs",
-]);
+const CORE_NAMES = Object.freeze(["fased-generation-updater-core.mjs"]);
 const DESCRIPTOR_NAME = ".fased-managed-updater-bundle.json";
 const GENERATION_RECEIPT_NAME = "managed-updater-generation.v1.json";
 const SAFE_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;

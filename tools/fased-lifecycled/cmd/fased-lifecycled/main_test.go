@@ -27,20 +27,6 @@ func TestInitializationApplyArgumentsSelectsOneVerifiedInput(t *testing.T) {
 	}
 }
 
-func TestInitializationPrincipalOwnershipIsExclusive(t *testing.T) {
-	goOwned, err := initializationUsesGoOwnedPrincipals("fc", 0, 0, 0, 0, 0, 0)
-	if err != nil || !goOwned {
-		t.Fatalf("Go-owned initialization = %v, %v", goOwned, err)
-	}
-	callerOwned, err := initializationUsesGoOwnedPrincipals("", 1000, 1000, 900, 900, 899, 899)
-	if err != nil || callerOwned {
-		t.Fatalf("transitional caller-owned initialization = %v, %v", callerOwned, err)
-	}
-	if _, err := initializationUsesGoOwnedPrincipals("fc", 1000, 1000, 900, 900, 899, 899); err == nil {
-		t.Fatal("mixed principal ownership was accepted")
-	}
-}
-
 func TestBootstrapUnitReplacementRestoresPreviousUnit(t *testing.T) {
 	root := t.TempDir()
 	unit := filepath.Join(root, "fased-local-controller.service")

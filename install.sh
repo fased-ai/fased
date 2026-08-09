@@ -173,16 +173,8 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
   verified_hosting_bundle=""
   protected_local_bootstrap="$install_entry_protected_local_root"
   protected_local_operator_user=""
-  protected_local_operator_uid=""
-  protected_local_operator_gid=""
-  protected_local_operator_home=""
   protected_local_state_dir=""
-  protected_local_runtime_dir=""
-  protected_local_node_binary=""
-  protected_local_profile=""
   protected_local_gateway_port=""
-  protected_local_gateway_mode=""
-  protected_local_gateway_health_timeout_ms=""
   args=("$@")
 
   for ((i = 0; i < ${#args[@]}; i++)); do
@@ -232,16 +224,8 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
         verified_hosting_bundle="${args[$((i + 1))]}"
         ;;
       --protected-local-operator-user) protected_local_operator_user="${args[$((i + 1))]:-}" ;;
-      --protected-local-operator-uid) protected_local_operator_uid="${args[$((i + 1))]:-}" ;;
-      --protected-local-operator-gid) protected_local_operator_gid="${args[$((i + 1))]:-}" ;;
-      --protected-local-operator-home) protected_local_operator_home="${args[$((i + 1))]:-}" ;;
       --protected-local-state-dir) protected_local_state_dir="${args[$((i + 1))]:-}" ;;
-      --protected-local-runtime-dir) protected_local_runtime_dir="${args[$((i + 1))]:-}" ;;
-      --protected-local-node-binary) protected_local_node_binary="${args[$((i + 1))]:-}" ;;
-      --protected-local-profile) protected_local_profile="${args[$((i + 1))]:-}" ;;
       --protected-local-gateway-port) protected_local_gateway_port="${args[$((i + 1))]:-}" ;;
-      --protected-local-gateway-mode) protected_local_gateway_mode="${args[$((i + 1))]:-}" ;;
-      --protected-local-gateway-health-timeout-ms) protected_local_gateway_health_timeout_ms="${args[$((i + 1))]:-}" ;;
     esac
   done
   if [[ -n "$install_entry_release_identity" ]]; then
@@ -281,15 +265,8 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     fi
     protected_local_required=(
       "$protected_local_operator_user"
-      "$protected_local_operator_uid"
-      "$protected_local_operator_gid"
-      "$protected_local_operator_home"
       "$protected_local_state_dir"
-      "$protected_local_runtime_dir"
-      "$protected_local_node_binary"
-      "$protected_local_profile"
       "$protected_local_gateway_port"
-      "$protected_local_gateway_mode"
       "$hosting_release"
     )
     for protected_local_value in "${protected_local_required[@]}"; do
@@ -298,14 +275,6 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
         exit 1
       fi
     done
-    if [[ -n "$protected_local_gateway_health_timeout_ms" ]] && {
-      [[ ! "$protected_local_gateway_health_timeout_ms" =~ ^[0-9]+$ ]] ||
-        (( protected_local_gateway_health_timeout_ms < 1000 ||
-          protected_local_gateway_health_timeout_ms > 120000 ));
-    }; then
-      echo "Protected Local Gateway health timeout must be between 1000 and 120000 milliseconds." >&2
-      exit 1
-    fi
   fi
 
   if [[ "$hosting_bootstrap" -eq 1 && "$hosting_repair_bootstrap" -eq 0 && -z "$hosting_release" ]]; then
@@ -564,7 +533,6 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     local sbom_digest=""
     local vex_digest=""
     local evidence_verifier_digest=""
-    local lifecycle_supervisor_expected=""
     local evidence_verifier_expected=""
     local lifecycle_issued_at=""
     local lifecycle_expires_at=""
@@ -572,67 +540,44 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     local lifecycle_expires_epoch=""
     local lifecycle_now_epoch=""
 
-    enter_protected_local_bundle() {
+    enter_go_lifecycle_bundle() {
       local selected_root_store="$1"
       local selected_package_root="$2"
-      local selected_commit="$3"
-      local gateway_health_args=()
-      if [[ -n "$protected_local_gateway_health_timeout_ms" ]]; then
-        gateway_health_args=(
-          --gateway-health-timeout-ms
-          "$protected_local_gateway_health_timeout_ms"
-        )
+      local _selected_commit="$3"
+      local lifecycle_profile="hosting"
+      local lifecycle_instance="hosting"
+      local lifecycle_operator="${FASED_INSTALL_USER:-app}"
+      local lifecycle_owner_state="/home/${lifecycle_operator}/.fased"
+      local lifecycle_port="${FASED_GATEWAY_PORT:-18789}"
+      local lifecycle_node=""
+      local lifecycle_node_candidate=""
+      for lifecycle_node_candidate in /usr/bin/node-24 /usr/bin/node-22 /usr/local/bin/node /usr/bin/node; do
+        if [[ -x "$lifecycle_node_candidate" ]] && \
+          "$lifecycle_node_candidate" -e 'const [a,b]=process.versions.node.split(".").map(Number);if(a<22||(a===22&&b<14))process.exit(1);require("node:sqlite")' >/dev/null 2>&1; then
+          lifecycle_node="$lifecycle_node_candidate"
+          break
+        fi
+      done
+      if [[ "$protected_local_bootstrap" -eq 1 ]]; then
+        lifecycle_profile="protected-local"
+        lifecycle_instance=""
+        lifecycle_operator="$protected_local_operator_user"
+        lifecycle_owner_state="$protected_local_state_dir"
+        lifecycle_port="$protected_local_gateway_port"
       fi
-      local bootstrap_result=""
-      bootstrap_result="$("$protected_local_node_binary" \
-        "$selected_package_root/scripts/protected-local-bootstrap.mjs" install \
-        --source-root "$selected_package_root" \
-        --signer-binary "$selected_root_store/verified-assets/fased-signerd" \
-        --operator-user "$protected_local_operator_user" \
-        --operator-uid "$protected_local_operator_uid" \
-        --operator-gid "$protected_local_operator_gid" \
-        --operator-home "$protected_local_operator_home" \
-        --state-dir "$protected_local_state_dir" \
-        --runtime-dir "$protected_local_runtime_dir" \
-        --node-binary "$protected_local_node_binary" \
-        --release-version "$release_version" \
-        --release-commit "$selected_commit" \
-        --update-channel "$hosting_update_channel" \
-        --profile "$protected_local_profile" \
-        --gateway-port "$protected_local_gateway_port" \
-        --gateway-mode "$protected_local_gateway_mode" \
-        "${gateway_health_args[@]}")"
-      printf '%s\n' "$bootstrap_result"
-      if [[ "$protected_local_gateway_mode" != "activate" ]]; then
-        return 0
-      fi
-      local lifecycle_instance=""
-      lifecycle_instance="$(printf '%s\n' "$bootstrap_result" | "$protected_local_node_binary" -e '
-        let input="";
-        process.stdin.on("data", chunk => input += chunk);
-        process.stdin.on("end", () => {
-          const lines = input.trim().split(/\n/u).filter(Boolean);
-          const value = JSON.parse(lines.at(-1));
-          if (!/^[a-f0-9]{16}$/u.test(String(value.instanceId || ""))) process.exit(1);
-          process.stdout.write(value.instanceId);
-        });
-      ')"
-      local gateway_user="fsgw-${lifecycle_instance}"
-      local signer_user="fssg-${lifecycle_instance}"
+      [[ -n "$lifecycle_node" && -x "$lifecycle_node" ]] || {
+        echo "A compatible root-controlled Node.js runtime is required to enter the verified lifecycle bundle." >&2
+        return 1
+      }
       NODE_PATH="$selected_root_store/verified-dependencies/node_modules" \
-        "$protected_local_node_binary" \
+        "$lifecycle_node" \
         "$selected_package_root/scripts/generation-updater.mjs" initialize \
         --version "$release_version" \
-        --profile protected-local \
+        --profile "$lifecycle_profile" \
         --instance "$lifecycle_instance" \
-        --owner-state "$protected_local_state_dir" \
-        --gateway-port "$protected_local_gateway_port" \
-        --operator-uid "$protected_local_operator_uid" \
-        --operator-gid "$protected_local_operator_gid" \
-        --gateway-uid "$(id -u "$gateway_user")" \
-        --gateway-gid "$(id -g "$gateway_user")" \
-        --signer-uid "$(id -u "$signer_user")" \
-        --signer-gid "$(id -g "$signer_user")"
+        --owner-state "$lifecycle_owner_state" \
+        --operator-user "$lifecycle_operator" \
+        --gateway-port "$lifecycle_port"
     }
 
     umask 077
@@ -717,7 +662,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
           trap - EXIT
           echo "Reusing verified tagged Hosting bundle v${release_version} (${cached_digest})."
           drain_streamed_install_input
-          enter_protected_local_bundle "$cached_root_store" "$cached_package_root" "$cached_commit"
+          enter_go_lifecycle_bundle "$cached_root_store" "$cached_package_root" "$cached_commit"
         fi
       fi
     fi
@@ -819,22 +764,19 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
         (.validity | keys == ["expiresAt", "issuedAt"]) and
         (.validity.issuedAt <= $current_time) and
         (.validity.expiresAt > $current_time) and
-        (.policy | keys == ["channels", "controllerProtocol", "platforms", "supervisorProtocol"]) and
+        (.policy | keys == ["channels", "lifecycleProtocol", "platforms"]) and
         .policy.channels == (if ($version | contains("-")) then ["beta"] else ["beta", "stable"] end) and
         (.policy.channels | index($channel)) != null and
         .policy.platforms == ["linux-arm64", "linux-x64"] and
         (.policy.platforms | index($platform)) != null and
-        .policy.supervisorProtocol == 1 and
-        .policy.controllerProtocol == 2 and
-        (.targets | keys == ["bootstrap", "controllerClient", "controllerServer", "evidenceVerifier", "supervisor"]) and
+        .policy.lifecycleProtocol == 1 and
+        (.targets | keys == ["bootstrap", "evidenceVerifier", "lifecycleLinuxArm64", "lifecycleLinuxX64"]) and
         .targets.bootstrap.asset == "install.sh" and
         (.targets.bootstrap.sha256 | test("^[a-f0-9]{64}$")) and
-        .targets.supervisor.asset == "fased-lifecycle-supervisor.mjs" and
-        (.targets.supervisor.sha256 | test("^[a-f0-9]{64}$")) and
-        .targets.controllerServer.asset == "fased-host-updater.mjs" and
-        (.targets.controllerServer.sha256 | test("^[a-f0-9]{64}$")) and
-        .targets.controllerClient.asset == "fased-host-updaterctl.mjs" and
-        (.targets.controllerClient.sha256 | test("^[a-f0-9]{64}$")) and
+        .targets.lifecycleLinuxX64.asset == "fased-lifecycled-linux-amd64" and
+        (.targets.lifecycleLinuxX64.sha256 | test("^[a-f0-9]{64}$")) and
+        .targets.lifecycleLinuxArm64.asset == "fased-lifecycled-linux-arm64" and
+        (.targets.lifecycleLinuxArm64.sha256 | test("^[a-f0-9]{64}$")) and
         .targets.evidenceVerifier.asset == "fased-privileged-release-evidence.mjs" and
         (.targets.evidenceVerifier.sha256 | test("^[a-f0-9]{64}$")) and
         (.evidence | keys == ["provenance", "sbom", "vex"]) and
@@ -844,13 +786,13 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
         (.evidence.sbom.sha256 | test("^[a-f0-9]{64}$")) and
         .evidence.vex.asset == "fased-privileged-vex-v1.openvex.json" and
         (.evidence.vex.sha256 | test("^[a-f0-9]{64}$"))
-      then [.targets.supervisor.sha256, .targets.evidenceVerifier.sha256] | @tsv
+      then .targets.evidenceVerifier.sha256
       else error("invalid lifecycle trust metadata") end
     ' "$lifecycle_metadata")" || {
       echo "Lifecycle trust metadata does not authorize this exact release and platform." >&2
       exit 1
     }
-    IFS=$'\t' read -r lifecycle_supervisor_expected evidence_verifier_expected <<<"$lifecycle_selection"
+    evidence_verifier_expected="$lifecycle_selection"
     lifecycle_issued_at="$(jq -er '.validity.issuedAt | select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.000Z$"))' "$lifecycle_metadata")"
     lifecycle_expires_at="$(jq -er '.validity.expiresAt | select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.000Z$"))' "$lifecycle_metadata")"
     lifecycle_issued_epoch="$(date -u -d "$lifecycle_issued_at" +%s 2>/dev/null || true)"
@@ -939,15 +881,9 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     [[ -f "$verified_package_root/install.sh" && -f "$verified_package_root/package.json" && \
       ! -L "$verified_package_root/install.sh" && -f "$verified_package_root/dist/build-info.json" && \
       ! -L "$verified_package_root/dist/build-info.json" && \
-      -f "$verified_package_root/scripts/fased-lifecycle-supervisor.mjs" && \
-      ! -L "$verified_package_root/scripts/fased-lifecycle-supervisor.mjs" && \
       -f "$verified_package_root/scripts/privileged-release-evidence.mjs" && \
       ! -L "$verified_package_root/scripts/privileged-release-evidence.mjs" ]] || {
       echo "Attested Hosting bundle is incomplete or has an invalid entrypoint." >&2
-      exit 1
-    }
-    [[ "$(sha256sum "$verified_package_root/scripts/fased-lifecycle-supervisor.mjs" | awk '{print tolower($1)}')" == "$lifecycle_supervisor_expected" ]] || {
-      echo "Packaged lifecycle supervisor does not match immutable lifecycle trust metadata." >&2
       exit 1
     }
     [[ "$(sha256sum "$verified_package_root/scripts/privileged-release-evidence.mjs" | awk '{print tolower($1)}')" == "$evidence_verifier_expected" ]] || {
@@ -1028,12 +964,8 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       exec 9>&-
       echo "Reusing verified tagged Hosting bundle v${release_version} (${actual})."
       drain_streamed_install_input
-      if [[ "$protected_local_bootstrap" -eq 1 ]]; then
-        enter_protected_local_bundle "$root_store" "$existing_root" "$existing_commit"
-      fi
-      exec bash "$existing_root/install.sh" "${verified_inner_args[@]}" \
-        --release "$release_version" \
-        --verified-hosting-bundle "$existing_root"
+      enter_go_lifecycle_bundle "$root_store" "$existing_root" "$existing_commit"
+      exit 0
     fi
     if [[ -e "$root_store" ]]; then
       echo "An existing Hosting bundle at ${root_store} failed immutable verification; refusing to replace it." >&2
@@ -1093,13 +1025,8 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     local final_root="$root_store/extract/package"
     echo "Verified tagged Hosting bundle v${release_version}; entering the root-owned installer."
     drain_streamed_install_input
-    if [[ "$protected_local_bootstrap" -eq 1 ]]; then
-      enter_protected_local_bundle "$root_store" "$final_root" "$packaged_commit"
-      exit 0
-    fi
-    exec bash "$final_root/install.sh" "${verified_inner_args[@]}" \
-      --release "$release_version" \
-      --verified-hosting-bundle "$final_root"
+    enter_go_lifecycle_bundle "$root_store" "$final_root" "$packaged_commit"
+    exit 0
   }
 
   if [[ "$hosting_bootstrap" -eq 1 || "$protected_local_bootstrap" -eq 1 ]]; then
@@ -3329,7 +3256,6 @@ bootstrap_protected_local_topology() {
   local gateway_mode="$1"
   protected_local_supported || return 2
   local release_source="$FASED_DIR"
-  local declared_runtime="$FASED_CONFIG_DIR/runtime/current"
   if [[ ! -f "$release_source/install.sh" || \
     ! -f "$release_source/package.json" ]]; then
     echo "The exact Local release is missing its protected service bootstrap." >&2
@@ -3372,15 +3298,8 @@ bootstrap_protected_local_topology() {
     --release "$release_version"
     --update-channel "$UPDATE_CHANNEL"
     --protected-local-operator-user "$(id -un)"
-    --protected-local-operator-uid "$(id -u)"
-    --protected-local-operator-gid "$(id -g)"
-    --protected-local-operator-home "$HOME"
     --protected-local-state-dir "$FASED_CONFIG_DIR"
-    --protected-local-runtime-dir "$declared_runtime"
-    --protected-local-node-binary "$system_node"
-    --protected-local-profile "${FASED_PROFILE:-default}"
     --protected-local-gateway-port "$gateway_port"
-    --protected-local-gateway-mode "$gateway_mode"
   )
   local bootstrap_result=0
   "${bootstrap_args[@]}" >"$bootstrap_log" 2>&1 || bootstrap_result=$?

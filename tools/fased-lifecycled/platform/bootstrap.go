@@ -247,7 +247,10 @@ func BootstrapPathPlan(config Config, principals BootstrapPrincipals) ([]Bootstr
 			BootstrapPath{Path: "/var/lib/fased-signer-update-gate", GID: config.Signer.GID, Mode: 0o750},
 		)
 	}
-	paths = append(paths, BootstrapPath{Path: config.OwnerStateRoot, UID: config.Operator.UID, GID: principals.Groups.Config.GID, Mode: os.ModeSetgid | 0o770})
+	paths = append(paths,
+		BootstrapPath{Path: config.OwnerStateRoot, UID: config.Operator.UID, GID: principals.Groups.Config.GID, Mode: os.ModeSetgid | 0o770},
+		BootstrapPath{Path: filepath.Join(config.OwnerStateRoot, "bin"), UID: config.Operator.UID, GID: principals.Groups.Config.GID, Mode: 0o750},
+	)
 	return paths, nil
 }
 

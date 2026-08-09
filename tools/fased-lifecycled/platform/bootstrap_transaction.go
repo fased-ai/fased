@@ -22,6 +22,7 @@ const (
 	BootstrapPhaseACL        BootstrapPhase = "ACL"
 	BootstrapPhaseDaemon     BootstrapPhase = "DAEMON"
 	BootstrapPhaseConfig     BootstrapPhase = "CONFIG"
+	BootstrapPhaseLauncher   BootstrapPhase = "LAUNCHER"
 	BootstrapPhaseUnits      BootstrapPhase = "UNITS"
 )
 
@@ -133,7 +134,7 @@ func validateBootstrapEvents(events []BootstrapEvent) error {
 
 func validBootstrapPhase(phase BootstrapPhase) bool {
 	switch phase {
-	case BootstrapPhaseRegistry, BootstrapPhasePrincipals, BootstrapPhasePaths, BootstrapPhaseACL, BootstrapPhaseDaemon, BootstrapPhaseConfig, BootstrapPhaseUnits:
+	case BootstrapPhaseRegistry, BootstrapPhasePrincipals, BootstrapPhasePaths, BootstrapPhaseACL, BootstrapPhaseDaemon, BootstrapPhaseConfig, BootstrapPhaseLauncher, BootstrapPhaseUnits:
 		return true
 	default:
 		return false

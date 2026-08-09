@@ -172,6 +172,17 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 		}
 		return replacement.Rollback, nil
 	}})
+	steps = append(steps, platform.BootstrapStep{Phase: platform.BootstrapPhaseLauncher, Apply: func() (platform.BootstrapUndo, error) {
+		data, err := platform.RenderCLILauncher(config)
+		if err != nil {
+			return nil, err
+		}
+		replacement, err := platform.InstallFileTransactional(filepath.Join(config.OwnerStateRoot, "bin", "fased"), data, 0o755, 0, principals.Groups.Config.GID)
+		if err != nil {
+			return nil, err
+		}
+		return replacement.Rollback, nil
+	}})
 	steps = append(steps, platform.BootstrapStep{Phase: platform.BootstrapPhaseUnits, Apply: func() (platform.BootstrapUndo, error) {
 		identity, err := config.Identity()
 		if err != nil {

@@ -39,6 +39,10 @@ func TestLocalInstanceAllocationIsTransactionalAndIdempotent(t *testing.T) {
 	if err := CommitLocalInstance(registry, uint32(os.Getuid()), &allocation); err != nil {
 		t.Fatal(err)
 	}
+	found, ok, err := FindLocalInstance(registry, uint32(os.Getuid()), request.OperatorUID, request.OperatorUser, request.Profile, request.StateDir)
+	if err != nil || !ok || found != allocation.Entry {
+		t.Fatalf("read-only Local lookup did not return the committed boundary: found=%+v ok=%v err=%v", found, ok, err)
+	}
 	reused, err := PlanLocalInstance(registry, uint32(os.Getuid()), request, nil, time.Now())
 	if err != nil {
 		t.Fatal(err)

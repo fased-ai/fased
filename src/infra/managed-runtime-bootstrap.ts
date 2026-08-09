@@ -1,13 +1,5 @@
-import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
-import { resolveStateDir } from "../config/paths.js";
-import { resolveFasedAgentPackageRoot } from "./fased-root.js";
-
-const execFileAsync = promisify(execFile);
 
 export function resolveManagedPrefixForPackageRoot(packageRoot: string): string | null {
   const normalized = path.resolve(packageRoot);
@@ -27,78 +19,22 @@ export async function ensureManagedRuntimeBootstrap(params: {
   if (process.platform !== "linux") {
     return { installed: false, manifestPath: null, updaterPath: null };
   }
-  const profile =
-    params.profile ??
-    (env.FASED_HOST_PROFILE === "hosting" ||
-    (process.platform === "linux" &&
-      [
-        "/etc/systemd/system/fased-gateway.service",
-        "/usr/lib/systemd/system/fased-gateway.service",
-        "/lib/systemd/system/fased-gateway.service",
-      ].some((candidate) => existsSync(candidate)))
-      ? "hosting"
-      : "local");
-  const stateDir = resolveStateDir(env, os.homedir);
-  const manifestPath = path.join(stateDir, "install.json");
-  const updaterPath = path.join(stateDir, "updater", "fased-managed-updater.mjs");
-  try {
-    const parsed = JSON.parse(await fs.readFile(manifestPath, "utf8")) as {
-      schemaVersion?: unknown;
-    };
-    if (parsed.schemaVersion === 1 || parsed.schemaVersion === 2) {
-      try {
-        await fs.access(updaterPath);
-        await fs.access(path.join(stateDir, "bin", "fased"));
-        await fs.access(path.join(stateDir, "bin", "fased-service"));
-        return { installed: false, manifestPath, updaterPath };
-      } catch {
-        // Reinstall missing stable files from the active package below.
-      }
+  if (env.FASED_RUNTIME_SOURCE === "go-lifecycle") {
+    const packageRoot = path.resolve(params.packageRoot ?? env.FASED_MANAGED_RUNTIME_ROOT ?? "");
+    const declaredRoot = path.resolve(env.FASED_MANAGED_RUNTIME_ROOT ?? "");
+    if (!packageRoot || packageRoot !== declaredRoot) {
+      throw new Error("Go lifecycle runtime root is missing or inconsistent");
     }
-  } catch {
-    // A missing legacy manifest is installed below.
+    const updaterPath = path.join(packageRoot, "scripts", "fased-managed-updater.mjs");
+    const updater = await fs.lstat(updaterPath);
+    if (!updater.isFile() || updater.isSymbolicLink()) {
+      throw new Error("Go lifecycle updater entrypoint is unsafe");
+    }
+    return { installed: false, manifestPath: null, updaterPath };
   }
-
-  const packageRoot =
-    params.packageRoot ??
-    (await resolveFasedAgentPackageRoot({
-      moduleUrl: import.meta.url,
-      argv1: process.argv[1],
-      cwd: process.cwd(),
-    }));
-  if (!packageRoot) {
-    return { installed: false, manifestPath: null, updaterPath: null };
-  }
-  const prefix = resolveManagedPrefixForPackageRoot(packageRoot);
-  if (!prefix) {
-    return { installed: false, manifestPath: null, updaterPath: null };
-  }
-  const installer = path.join(packageRoot, "scripts", "install-managed-runtime.mjs");
-  try {
-    await fs.access(installer);
-  } catch {
-    return { installed: false, manifestPath: null, updaterPath: null };
-  }
-
-  await execFileAsync(
-    process.execPath,
-    [
-      installer,
-      "--package-root",
-      packageRoot,
-      "--state-dir",
-      stateDir,
-      "--prefix",
-      prefix,
-      "--profile",
-      profile,
-    ],
-    {
-      env,
-      timeout: 120_000,
-      maxBuffer: 4 * 1024 * 1024,
-      encoding: "utf8",
-    },
-  );
-  return { installed: true, manifestPath, updaterPath };
+  // Package/source installations remain on their explicit package or developer
+  // update path. Only a verified Go lifecycle launcher selects the privileged
+  // generation updater; this function never installs a second mutation owner.
+  void params.profile;
+  return { installed: false, manifestPath: null, updaterPath: null };
 }

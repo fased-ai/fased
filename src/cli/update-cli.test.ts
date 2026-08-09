@@ -751,13 +751,13 @@ describe("update-cli", () => {
     expect(serviceRestart).not.toHaveBeenCalled();
   });
 
-  it("hands a packaged update to the stable updater immediately after bootstrap", async () => {
+  it("hands a Go-managed packaged update to its immutable updater", async () => {
     const root = createCaseDir("fased-managed-transition");
     mockPackageInstallStatus(root);
     ensureManagedRuntimeBootstrap.mockResolvedValue({
-      installed: true,
-      manifestPath: "/home/test/.fased/install.json",
-      updaterPath: "/home/test/.fased/updater/fased-managed-updater.mjs",
+      installed: false,
+      manifestPath: null,
+      updaterPath: "/opt/fased/local/id/current/payload/runtime/scripts/fased-managed-updater.mjs",
     });
 
     await updateCommand({ channel: "stable", timeout: "45", yes: true });
@@ -765,7 +765,7 @@ describe("update-cli", () => {
     expect(runCommandWithTimeout).toHaveBeenCalledWith(
       [
         process.execPath,
-        "/home/test/.fased/updater/fased-managed-updater.mjs",
+        "/opt/fased/local/id/current/payload/runtime/scripts/fased-managed-updater.mjs",
         "update",
         "--channel",
         "stable",
@@ -774,7 +774,7 @@ describe("update-cli", () => {
         "--yes",
       ],
       expect.objectContaining({
-        cwd: "/home/test/.fased/updater",
+        cwd: "/opt/fased/local/id/current/payload/runtime/scripts",
         timeoutMs: 45_000,
       }),
     );
@@ -782,36 +782,38 @@ describe("update-cli", () => {
     expect(resolveNpmChannelTag).not.toHaveBeenCalled();
   });
 
-  it("keeps a managed runtime on its stable updater even when cwd is a git checkout", async () => {
+  it("keeps a Go-managed runtime on its immutable updater even when cwd is a git checkout", async () => {
     createCaseDir("fased-managed-from-git-cwd");
     ensureManagedRuntimeBootstrap.mockResolvedValue({
       installed: false,
-      manifestPath: "/home/test/.fased/install.json",
-      updaterPath: "/home/test/.fased/updater/fased-managed-updater.mjs",
+      manifestPath: null,
+      updaterPath: "/opt/fased/local/id/current/payload/runtime/scripts/fased-managed-updater.mjs",
     });
 
     await withEnvAsync(
       {
-        FASED_RUNTIME_SOURCE: "managed-package",
-        FASED_MANAGED_RUNTIME_ROOT: "/home/test/.fased/runtime/current",
+        FASED_RUNTIME_SOURCE: "go-lifecycle",
+        FASED_MANAGED_RUNTIME_ROOT: "/opt/fased/local/id/current/payload/runtime",
       },
       () => updateCommand({ timeout: "45" }),
     );
 
     expect(ensureManagedRuntimeBootstrap).toHaveBeenCalledWith({
-      packageRoot: "/home/test/.fased/runtime/current",
+      packageRoot: "/opt/fased/local/id/current/payload/runtime",
       env: expect.any(Object),
     });
     expect(runCommandWithTimeout).toHaveBeenCalledWith(
       [
         process.execPath,
-        "/home/test/.fased/updater/fased-managed-updater.mjs",
+        "/opt/fased/local/id/current/payload/runtime/scripts/fased-managed-updater.mjs",
         "update",
+        "--channel",
+        "stable",
         "--timeout",
         "45",
       ],
       expect.objectContaining({
-        cwd: "/home/test/.fased/updater",
+        cwd: "/opt/fased/local/id/current/payload/runtime/scripts",
         timeoutMs: 45_000,
       }),
     );

@@ -6,31 +6,24 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { pathToFileURL } from "node:url";
 import { generationLifecycle, runGenerationUpdate } from "./generation-updater.mjs";
-import {
-  readManagedInstallManifest,
-  resolveLinkTarget,
-  resolveManagedRuntimePaths,
-} from "./managed-runtime-layout.mjs";
 
 const DEFAULT_RELEASE_BASE_URL = "https://github.com/fased-ai/fased/releases/download";
 const DEFAULT_REGISTRY = "https://registry.npmjs.org";
 const DEFAULT_TIMEOUT_MS = 20 * 60_000;
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
+const HASH = /^[a-f0-9]{64}$/u;
+const INSTANCE = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 
 export const MANAGED_UPDATER_SUPPORT_FILES = Object.freeze([
   "fased-generation-updater-core.mjs",
-  "fased-managed-updater-core.mjs",
   "generation-updater.mjs",
-  "fased-host-updaterctl.mjs",
   "hosted-release-manifest.mjs",
   "lifecycle-trust-crypto.mjs",
   "lifecycle-trust-policy.mjs",
   "lifecycle-trust-root.mjs",
   "lifecycle-trust-runtime.mjs",
   "managed-runtime-layout.mjs",
-  "managed-update-contract.mjs",
 ]);
 
 function parseArgs(argv) {
@@ -93,12 +86,74 @@ function parseArgs(argv) {
   return Object.freeze({ mode: "generation", options: Object.freeze(options) });
 }
 
-function configuredChannel(options, manifest) {
+function configuredChannel(options) {
   if (options.channelExplicit) {
     return options.channel;
   }
-  const stored = String(manifest?.update?.channel || "").trim();
-  return new Set(["stable", "beta"]).has(stored) ? stored : "stable";
+  return "stable";
+}
+
+async function readGoLifecycleSelection(env = process.env) {
+  const profile = env.FASED_LIFECYCLE_PROFILE;
+  const instance = env.FASED_LIFECYCLE_INSTANCE;
+  if (!new Set(["protected-local", "hosting"]).has(profile) || !INSTANCE.test(instance ?? "")) {
+    throw new Error("Go lifecycle launcher identity is missing or invalid");
+  }
+  const installRoot = profile === "hosting" ? "/opt/fased" : `/opt/fased/local/${instance}`;
+  const lifecycleRoot =
+    profile === "hosting"
+      ? "/var/lib/fased-lifecycled"
+      : `/var/lib/fased-local/${instance}/lifecycle`;
+  const config = path.join(lifecycleRoot, "platform.json");
+  const runtimeRoot = path.join(installRoot, "current", "payload", "runtime");
+  if (
+    env.FASED_RUNTIME_SOURCE !== "go-lifecycle" ||
+    env.FASED_LIFECYCLE_INSTALL_ROOT !== installRoot ||
+    env.FASED_LIFECYCLE_CONFIG !== config ||
+    env.FASED_MANAGED_RUNTIME_ROOT !== runtimeRoot
+  ) {
+    throw new Error("Go lifecycle launcher paths do not match the canonical platform identity");
+  }
+  const currentRoot = await fsp.realpath(path.join(installRoot, "current"));
+  const generationsRoot = await fsp.realpath(path.join(installRoot, "generations"));
+  if (currentRoot === generationsRoot || !currentRoot.startsWith(`${generationsRoot}${path.sep}`)) {
+    throw new Error("Go lifecycle current pointer escaped its immutable generation store");
+  }
+  const inventoryPath = path.join(currentRoot, "inventory.json");
+  const inventoryInfo = await fsp.lstat(inventoryPath);
+  if (
+    !inventoryInfo.isFile() ||
+    inventoryInfo.isSymbolicLink() ||
+    inventoryInfo.size > 16 * 1024 * 1024
+  ) {
+    throw new Error("Go lifecycle current generation inventory is unsafe");
+  }
+  const inventory = JSON.parse(await fsp.readFile(inventoryPath, "utf8"));
+  if (
+    inventory?.schemaVersion !== 3 ||
+    !VERSION.test(inventory?.version ?? "") ||
+    !HASH.test(inventory?.dependency?.hash ?? "")
+  ) {
+    throw new Error("Go lifecycle current generation inventory is malformed");
+  }
+  const dependencyRoot = path.join(
+    installRoot,
+    "dependencies",
+    inventory.dependency.hash,
+    "node_modules",
+  );
+  const dependencyInfo = await fsp.lstat(dependencyRoot);
+  if (!dependencyInfo.isDirectory() || dependencyInfo.isSymbolicLink()) {
+    throw new Error("Go lifecycle current dependency layer is unsafe");
+  }
+  return Object.freeze({
+    profile,
+    instance,
+    installRoot,
+    config,
+    currentVersion: inventory.version,
+    dependencyRoot,
+  });
 }
 
 async function fetchJSON(url, timeoutMs) {
@@ -240,26 +295,6 @@ async function verifyOfficialAsset({ assetPath, version, timeoutMs, bundlePath }
   }
 }
 
-async function runLegacy(argv) {
-  const legacy = await import(
-    `${pathToFileURL(path.join(import.meta.dirname, "fased-managed-updater-core.mjs")).href}?legacy=1`
-  );
-  return await legacy.run(argv);
-}
-
-function ownerFor(manifest, lifecycle) {
-  if (lifecycle) {
-    return Object.freeze({ mode: "generation" });
-  }
-  if (manifest?.profile === "source") {
-    return Object.freeze({ mode: "development" });
-  }
-  if (manifest?.profile === "local") {
-    return Object.freeze({ mode: "bootstrap-required", reason: "lifecycle_supervisor_missing" });
-  }
-  return Object.freeze({ mode: "repair-required", reason: "lifecycle_supervisor_missing" });
-}
-
 function print(value, json) {
   if (json) {
     process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -279,61 +314,54 @@ function print(value, json) {
 export async function run(argv = process.argv.slice(2)) {
   const parsed = parseArgs(argv);
   if (parsed.mode === "legacy") {
-    return await runLegacy(parsed.argv);
+    throw new Error("The managed updater accepts only update and update status commands");
   }
-  const paths = resolveManagedRuntimePaths();
-  const manifest = readManagedInstallManifest(paths.manifestPath);
-  if (!manifest) {
+  const selection = await readGoLifecycleSelection();
+  const options = { ...parsed.options, channel: configuredChannel(parsed.options) };
+  const lifecycle = generationLifecycle(selection);
+  if (!lifecycle) {
     throw new Error(
-      "Managed installation manifest is missing; run the official repair installer once",
+      "Go lifecycle supervisor is unavailable or unsafe; verified repair is required",
     );
-  }
-  const options = { ...parsed.options, channel: configuredChannel(parsed.options, manifest) };
-  const lifecycle = generationLifecycle(manifest);
-  const owner = ownerFor(manifest, lifecycle);
-  if (owner.mode === "development") {
-    return await runLegacy(argv);
   }
   if (options.status) {
     print(
       {
         outcome: "STATUS",
-        currentVersion: manifest.runtime.activeVersion,
-        profile: manifest.profile,
+        currentVersion: selection.currentVersion,
+        profile: selection.profile,
         channel: options.channel,
-        owner: owner.mode,
+        owner: "go-lifecycle",
       },
       options.json,
     );
     return;
   }
-  if (owner.mode === "bootstrap-required") {
-    throw new Error(
-      "Lifecycle bootstrap required: run the official Local installer once; it preserves state and skips onboarding",
-    );
-  }
-  if (owner.mode === "repair-required") {
-    throw new Error("Repair required: run the documented verified Hosting root bootstrap once");
-  }
   const targetVersion = await resolveTargetVersion(options);
+  if (targetVersion === selection.currentVersion) {
+    print(
+      {
+        outcome: "ALREADY_CURRENT",
+        currentVersion: selection.currentVersion,
+        version: targetVersion,
+        profile: selection.profile,
+      },
+      options.json,
+    );
+    return;
+  }
   if (options.dryRun) {
     print(
       {
         outcome:
-          targetVersion === manifest.runtime.activeVersion ? "ALREADY_CURRENT" : "UPDATE_AVAILABLE",
-        currentVersion: manifest.runtime.activeVersion,
+          targetVersion === selection.currentVersion ? "ALREADY_CURRENT" : "UPDATE_AVAILABLE",
+        currentVersion: selection.currentVersion,
         version: targetVersion,
-        profile: manifest.profile,
+        profile: selection.profile,
       },
       options.json,
     );
     return;
-  }
-  const dependencyRoot = await resolveLinkTarget(paths.currentLink);
-  if (!dependencyRoot) {
-    throw new Error(
-      "Managed runtime dependency root is missing; run the official repair installer once",
-    );
   }
   const sudoPath = fixedExecutable(["/usr/bin/sudo", "/bin/sudo"], "sudo", {
     rootOwned: true,
@@ -349,13 +377,13 @@ export async function run(argv = process.argv.slice(2)) {
     runAdministrator: async (command, args, runOptions) =>
       await runProcess(command, args, { ...runOptions, echoStderr: true }),
     sudoPath,
-    dependencyRoot,
+    dependencyRoot: selection.dependencyRoot,
   });
-  print({ ...result, currentVersion: manifest.runtime.activeVersion }, options.json);
+  print({ ...result, currentVersion: selection.currentVersion }, options.json);
 }
 
 export const __testing = Object.freeze({
   configuredChannel,
-  ownerFor,
   parseArgs,
+  readGoLifecycleSelection,
 });

@@ -58,6 +58,25 @@ type InstanceIDSource interface {
 	Read([]byte) (int, error)
 }
 
+// FindLocalInstance performs the read-only half of Local instance selection.
+// It never allocates an identity and therefore is safe before compatibility
+// planning decides whether mutation is allowed.
+func FindLocalInstance(registryPath string, expectedOwnerUID uint32, operatorUID uint32, operatorUser, profile, stateDir string) (LocalInstanceEntry, bool, error) {
+	registry, _, err := readLocalInstanceRegistry(registryPath, expectedOwnerUID)
+	if err != nil {
+		return LocalInstanceEntry{}, false, err
+	}
+	for _, entry := range registry.Instances {
+		if entry.OperatorUID == operatorUID && entry.Profile == profile && entry.StateDir == stateDir {
+			if entry.OperatorUser != operatorUser {
+				return LocalInstanceEntry{}, false, errors.New("registered Local operator identity changed for its UID")
+			}
+			return entry, true, nil
+		}
+	}
+	return LocalInstanceEntry{}, false, nil
+}
+
 func PlanLocalInstance(registryPath string, expectedOwnerUID uint32, request LocalInstanceRequest, source InstanceIDSource, now time.Time) (LocalInstanceAllocation, error) {
 	if err := validateLocalInstanceRequest(request); err != nil {
 		return LocalInstanceAllocation{}, err

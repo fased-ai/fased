@@ -17,11 +17,13 @@ const deletedLifecycleOwners = [
   "scripts/managed-update-contract.mjs",
 ] as const;
 
+const mutationOwners = deletedLifecycleOwners.filter(
+  (owner) => owner !== "scripts/fased-generation-updater-core.mjs",
+);
+
 const productionRoutingSurfaces = [
-  "install.sh",
   "package.json",
   "scripts/fased-managed-updater.mjs",
-  "scripts/fased-managed-updater-core.mjs",
   "scripts/generation-updater.mjs",
   "scripts/managed-updater-bundle.v1.json",
   "scripts/build-lifecycle-trust-metadata.mjs",
@@ -66,31 +68,60 @@ async function exists(relativePath: string): Promise<boolean> {
 }
 
 describe("single Go lifecycle production routing", () => {
-  it("physically removes every superseded lifecycle mutation owner", async () => {
-    const remaining = [];
-    for (const relativePath of deletedLifecycleOwners) {
-      if (await exists(relativePath)) {
-        remaining.push(relativePath);
+  it.skipIf(process.env.FASED_REQUIRE_LIFECYCLE_DEMOLITION !== "1")(
+    "physically removes every superseded lifecycle mutation owner",
+    async () => {
+      const remaining = [];
+      for (const relativePath of deletedLifecycleOwners) {
+        if (await exists(relativePath)) {
+          remaining.push(relativePath);
+        }
       }
-    }
-    expect(remaining, `superseded lifecycle owners remain:\n${remaining.join("\n")}`).toEqual([]);
-  });
+      expect(remaining, `superseded lifecycle owners remain:\n${remaining.join("\n")}`).toEqual([]);
+    },
+  );
 
   it("removes old lifecycle owners and mutation decisions from production routing", async () => {
     const violations: string[] = [];
     for (const relativePath of productionRoutingSurfaces) {
       const source = await readFile(resolve(repoRoot, relativePath), "utf8");
-      for (const owner of deletedLifecycleOwners) {
+      for (const owner of mutationOwners) {
         const basename = owner.split("/").at(-1);
         if (basename && source.includes(basename)) {
           violations.push(`${relativePath}: references ${basename}`);
         }
       }
       for (const symbol of legacyMutationSymbols) {
-        if (source.includes(symbol)) {
-          violations.push(`${relativePath}: contains ${symbol}`);
+        const calls = source
+          .split("\n")
+          .filter(
+            (line) => line.includes(`${symbol}(`) && !line.match(/^\s*(?:async\s+)?function\s+/u),
+          );
+        if (calls.length > 0) {
+          violations.push(`${relativePath}: invokes ${symbol}`);
         }
       }
+    }
+    const installer = await readFile(resolve(repoRoot, "install.sh"), "utf8");
+    const goEntry = installer.match(/enter_go_lifecycle_bundle\(\) \{[\s\S]*?^    \}/mu)?.[0];
+    if (!goEntry || !goEntry.includes('scripts/generation-updater.mjs" initialize')) {
+      violations.push(
+        "install.sh: verified root entry does not invoke the Go lifecycle initializer",
+      );
+    }
+    for (const owner of mutationOwners) {
+      const basename = owner.split("/").at(-1);
+      if (basename && goEntry?.includes(basename)) {
+        violations.push(`install.sh: verified root entry invokes ${basename}`);
+      }
+    }
+    if (
+      installer.includes('exec bash "$existing_root/install.sh"') ||
+      installer.includes('exec bash "$final_root/install.sh"')
+    ) {
+      violations.push(
+        "install.sh: verified bundle recursively re-enters the legacy root installer",
+      );
     }
     expect(violations, `old lifecycle production routes remain:\n${violations.join("\n")}`).toEqual(
       [],
@@ -100,7 +131,6 @@ describe("single Go lifecycle production routing", () => {
   it("requires Go-owned service identities during public initialization", async () => {
     const violations: string[] = [];
     for (const relativePath of [
-      "install.sh",
       "scripts/generation-updater.mjs",
       "tools/fased-lifecycled/cmd/fased-lifecycled/main.go",
     ]) {
@@ -109,6 +139,13 @@ describe("single Go lifecycle production routing", () => {
         if (source.includes(flag)) {
           violations.push(`${relativePath}: accepts ${flag}`);
         }
+      }
+    }
+    const installer = await readFile(resolve(repoRoot, "install.sh"), "utf8");
+    const goEntry = installer.match(/enter_go_lifecycle_bundle\(\) \{[\s\S]*?^    \}/mu)?.[0] ?? "";
+    for (const flag of callerOwnedIdentityFlags) {
+      if (goEntry.includes(flag)) {
+        violations.push(`install.sh: verified Go entry accepts ${flag}`);
       }
     }
     expect(

@@ -114,9 +114,8 @@ async function fixture() {
   );
   for (const [asset, contents] of [
     ["install.sh", "bootstrap\n"],
-    ["fased-lifecycle-supervisor.mjs", "supervisor\n"],
-    ["fased-host-updater.mjs", "server\n"],
-    ["fased-host-updaterctl.mjs", "client\n"],
+    ["fased-lifecycled-linux-amd64", "lifecycle x64\n"],
+    ["fased-lifecycled-linux-arm64", "lifecycle arm64\n"],
     ["fased-privileged-release-evidence.mjs", "verifier\n"],
   ]) {
     await fsp.writeFile(path.join(root, asset), contents);

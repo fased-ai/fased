@@ -37,9 +37,7 @@ for managed_script in \
   fased-managed-service.sh \
   fased-managed-updater.mjs \
   fased-generation-updater-core.mjs \
-  fased-managed-updater-core.mjs \
   generation-updater.mjs \
-  fased-host-updaterctl.mjs \
   hosted-release-manifest.mjs \
   install-managed-runtime.mjs \
   lifecycle-trust-crypto.mjs \
@@ -48,8 +46,7 @@ for managed_script in \
   lifecycle-trust-runtime.mjs \
   managed-updater-bundle.mjs \
   managed-updater-bundle.v1.json \
-  managed-runtime-layout.mjs \
-  managed-update-contract.mjs; do
+  managed-runtime-layout.mjs; do
   cp "$ROOT_DIR/scripts/$managed_script" "$PACKAGE_ROOT/scripts/$managed_script"
   chmod 755 "$PACKAGE_ROOT/scripts/$managed_script"
 done

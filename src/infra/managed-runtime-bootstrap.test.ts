@@ -23,29 +23,35 @@ describe("managed runtime bootstrap", () => {
     ).toBeNull();
   });
 
-  it("reuses an existing schema-v2 managed updater without consulting cwd", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-managed-bootstrap-v2-"));
-    const stateDir = path.join(root, ".fased");
-    const updaterPath = path.join(stateDir, "updater", "fased-managed-updater.mjs");
+  it("selects the updater adjacent to a Go-managed immutable runtime", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-go-runtime-"));
+    const runtimeRoot = path.join(root, "current", "payload", "runtime");
+    const updaterPath = path.join(runtimeRoot, "scripts", "fased-managed-updater.mjs");
     fs.mkdirSync(path.dirname(updaterPath), { recursive: true });
-    fs.mkdirSync(path.join(stateDir, "bin"), { recursive: true });
-    fs.writeFileSync(path.join(stateDir, "install.json"), '{"schemaVersion":2}\n');
     fs.writeFileSync(updaterPath, "// updater\n");
-    fs.writeFileSync(path.join(stateDir, "bin", "fased"), "#!/bin/sh\n");
-    fs.writeFileSync(path.join(stateDir, "bin", "fased-service"), "#!/bin/sh\n");
     try {
       await expect(
         ensureManagedRuntimeBootstrap({
-          packageRoot: "/unrelated/git/checkout",
-          env: { ...process.env, FASED_STATE_DIR: stateDir },
+          packageRoot: runtimeRoot,
+          env: {
+            ...process.env,
+            FASED_RUNTIME_SOURCE: "go-lifecycle",
+            FASED_MANAGED_RUNTIME_ROOT: runtimeRoot,
+          },
         }),
       ).resolves.toEqual({
         installed: false,
-        manifestPath: path.join(stateDir, "install.json"),
+        manifestPath: null,
         updaterPath,
       });
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("does not bootstrap an owner-side mutation runtime", async () => {
+    await expect(
+      ensureManagedRuntimeBootstrap({ packageRoot: "/unrelated/git/checkout" }),
+    ).resolves.toEqual({ installed: false, manifestPath: null, updaterPath: null });
   });
 });

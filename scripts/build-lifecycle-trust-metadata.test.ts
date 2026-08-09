@@ -17,9 +17,8 @@ const rootPolicyPath = path.join(
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-lifecycle-trust-"));
   fs.writeFileSync(path.join(root, "install.sh"), "bootstrap\n");
-  fs.writeFileSync(path.join(root, "fased-lifecycle-supervisor.mjs"), "supervisor\n");
-  fs.writeFileSync(path.join(root, "fased-host-updater.mjs"), "server\n");
-  fs.writeFileSync(path.join(root, "fased-host-updaterctl.mjs"), "client\n");
+  fs.writeFileSync(path.join(root, "fased-lifecycled-linux-amd64"), "lifecycle x64\n");
+  fs.writeFileSync(path.join(root, "fased-lifecycled-linux-arm64"), "lifecycle arm64\n");
   fs.writeFileSync(path.join(root, "fased-privileged-release-evidence.mjs"), "evidence verifier\n");
   fs.writeFileSync(
     path.join(root, "fased-privileged-provenance-v1.intoto.json"),
@@ -31,7 +30,7 @@ function fixture() {
 }
 
 describe("lifecycle trust metadata", () => {
-  it("binds one release to fixed supervisor and controller target names", async () => {
+  it("binds one release to fixed Go lifecycle target names", async () => {
     const metadata = await buildLifecycleTrustMetadata({
       assetsDir: fixture(),
       rootPolicyPath,
@@ -48,14 +47,12 @@ describe("lifecycle trust metadata", () => {
       policy: {
         channels: ["beta", "stable"],
         platforms: ["linux-arm64", "linux-x64"],
-        supervisorProtocol: 1,
-        controllerProtocol: 2,
+        lifecycleProtocol: 1,
       },
       targets: {
         bootstrap: { asset: "install.sh" },
-        supervisor: { asset: "fased-lifecycle-supervisor.mjs" },
-        controllerServer: { asset: "fased-host-updater.mjs" },
-        controllerClient: { asset: "fased-host-updaterctl.mjs" },
+        lifecycleLinuxX64: { asset: "fased-lifecycled-linux-amd64" },
+        lifecycleLinuxArm64: { asset: "fased-lifecycled-linux-arm64" },
         evidenceVerifier: { asset: "fased-privileged-release-evidence.mjs" },
       },
       evidence: {
@@ -97,10 +94,10 @@ describe("lifecycle trust metadata", () => {
 
   it("rejects symlinked lifecycle targets", async () => {
     const root = fixture();
-    fs.rmSync(path.join(root, "fased-host-updater.mjs"));
+    fs.rmSync(path.join(root, "fased-lifecycled-linux-amd64"));
     fs.symlinkSync(
-      path.join(root, "fased-host-updaterctl.mjs"),
-      path.join(root, "fased-host-updater.mjs"),
+      path.join(root, "fased-lifecycled-linux-arm64"),
+      path.join(root, "fased-lifecycled-linux-amd64"),
     );
     await expect(
       buildLifecycleTrustMetadata({

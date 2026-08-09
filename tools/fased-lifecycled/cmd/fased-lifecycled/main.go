@@ -17,11 +17,13 @@ import (
 
 	"fased-lifecycled/bootstrap"
 	"fased-lifecycled/bundle"
+	"fased-lifecycled/candidate"
 	"fased-lifecycled/controller"
 	"fased-lifecycled/daemon"
 	"fased-lifecycled/engine"
 	"fased-lifecycled/migrator"
 	"fased-lifecycled/model"
+	"fased-lifecycled/planner"
 	"fased-lifecycled/platform"
 	"fased-lifecycled/protocol"
 	"fased-lifecycled/signer"
@@ -172,7 +174,7 @@ func runInitialize(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("initialize", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var profileRaw, instanceID, ownerStateRoot, operatorUser, generationRoot, generationArchive, dependencyArchive, sourceTopology string
-	var operatorUID, operatorGID, gatewayUID, gatewayGID, signerUID, signerGID, gatewayPort uint64
+	var gatewayPort uint64
 	flags.StringVar(&profileRaw, "profile", "", "")
 	flags.StringVar(&instanceID, "instance", "", "")
 	flags.StringVar(&ownerStateRoot, "owner-state", "", "")
@@ -181,29 +183,40 @@ func runInitialize(args []string, output io.Writer) error {
 	flags.StringVar(&generationArchive, "generation-archive", "", "")
 	flags.StringVar(&dependencyArchive, "dependency-archive", "", "")
 	flags.StringVar(&sourceTopology, "source-topology", "", "")
-	flags.Uint64Var(&operatorUID, "operator-uid", 0, "")
-	flags.Uint64Var(&operatorGID, "operator-gid", 0, "")
-	flags.Uint64Var(&gatewayUID, "gateway-uid", 0, "")
-	flags.Uint64Var(&gatewayGID, "gateway-gid", 0, "")
-	flags.Uint64Var(&signerUID, "signer-uid", 0, "")
-	flags.Uint64Var(&signerGID, "signer-gid", 0, "")
 	flags.Uint64Var(&gatewayPort, "gateway-port", 0, "")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || gatewayPort == 0 || gatewayPort > 65535 || operatorUID > uint64(^uint32(0)) || operatorGID > uint64(^uint32(0)) || gatewayUID > uint64(^uint32(0)) || gatewayGID > uint64(^uint32(0)) || signerUID > uint64(^uint32(0)) || signerGID > uint64(^uint32(0)) {
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || gatewayPort == 0 || gatewayPort > 65535 {
 		return errors.New("invalid lifecycle initialization arguments")
 	}
-	applyArguments, err := initializationApplyArguments("", generationRoot, generationArchive, dependencyArchive, sourceTopology)
-	if err != nil {
-		return err
-	}
 	profile := model.Profile(profileRaw)
-	goOwnedPrincipals, err := initializationUsesGoOwnedPrincipals(operatorUser, operatorUID, operatorGID, gatewayUID, gatewayGID, signerUID, signerGID)
-	if err != nil {
-		return err
-	}
-	if !goOwnedPrincipals {
-		return errors.New("caller-owned lifecycle principal IDs are no longer supported")
+	if operatorUser == "" {
+		return errors.New("lifecycle initialization requires an operator user")
 	}
 	principalSystem, err := platform.NewLinuxPrincipalSystem()
+	if err != nil {
+		return err
+	}
+	discovered, err := discoverInitialization(profile, instanceID, ownerStateRoot, operatorUser, principalSystem)
+	if err != nil {
+		return err
+	}
+	switch discovered.Installation.Kind {
+	case planner.InstallationAmbiguous:
+		return errors.New("installation is ambiguous; explicit repair is required")
+	case planner.InstallationUnknownNewer:
+		return errors.New("installation schema is newer than this lifecycle engine")
+	case planner.InstallationPublicStable:
+		if sourceTopology != "" && sourceTopology != string(discovered.Topology) {
+			return errors.New("caller source topology differs from read-only discovery")
+		}
+		sourceTopology = string(discovered.Topology)
+	case planner.InstallationEmpty, planner.InstallationManaged:
+		if sourceTopology != "" {
+			return errors.New("caller supplied a source topology for a non-bridge installation")
+		}
+	default:
+		return errors.New("installation discovery returned an unsupported class")
+	}
+	applyArguments, err := initializationApplyArguments("", generationRoot, generationArchive, dependencyArchive, sourceTopology)
 	if err != nil {
 		return err
 	}
@@ -252,15 +265,33 @@ func runInitialize(args []string, output io.Writer) error {
 	return nil
 }
 
-func initializationUsesGoOwnedPrincipals(operatorUser string, numeric ...uint64) (bool, error) {
-	callerOwned := false
-	for _, value := range numeric {
-		callerOwned = callerOwned || value != 0
+func discoverInitialization(profile model.Profile, instanceID, ownerStateRoot, operatorUser string, principals platform.PrincipalSystem) (platform.DiscoveryResult, error) {
+	selectedInstance := instanceID
+	if profile == model.ProfileProtectedLocal && selectedInstance == "" {
+		operator, exists, err := principals.LookupUser(context.Background(), operatorUser)
+		if err != nil || !exists {
+			return platform.DiscoveryResult{}, errors.New("Local operator is unavailable during read-only discovery")
+		}
+		entry, found, err := platform.FindLocalInstance(platform.LocalInstanceRegistryPath, 0, operator.UID, operatorUser, string(profile), ownerStateRoot)
+		if err != nil {
+			return platform.DiscoveryResult{}, err
+		}
+		if found {
+			selectedInstance = entry.InstanceID
+		} else {
+			selectedInstance = "unallocated"
+		}
 	}
-	if operatorUser != "" && callerOwned {
-		return false, errors.New("lifecycle initialization cannot mix Go-owned and caller-owned principals")
+	manifestPath := filepath.Join("/var/lib/fased-local", selectedInstance, "lifecycle", "installation-manifest.json")
+	installRoot := filepath.Join("/opt/fased/local", selectedInstance)
+	if profile == model.ProfileHosting {
+		manifestPath = "/var/lib/fased-lifecycled/installation-manifest.json"
+		installRoot = "/opt/fased"
 	}
-	return operatorUser != "", nil
+	return platform.DiscoverInstallation(platform.DiscoveryRequest{
+		Profile: profile, OwnerStateRoot: ownerStateRoot,
+		CanonicalManifestPath: manifestPath, CanonicalInstallRoot: installRoot,
+	})
 }
 
 func initializationApplyArguments(configPath, generationRoot, generationArchive, dependencyArchive, sourceTopology string) ([]string, error) {
@@ -536,11 +567,14 @@ func randomRequestID() (string, error) {
 func runStage(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("stage", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var configPath, generationRoot, generationArchive, dependencyArchive string
+	var configPath, generationRoot, generationArchive, dependencyArchive, descriptorPath, attestationPath, releaseVersion string
 	flags.StringVar(&configPath, "config", "", "")
 	flags.StringVar(&generationRoot, "generation", "", "")
 	flags.StringVar(&generationArchive, "generation-archive", "", "")
 	flags.StringVar(&dependencyArchive, "dependency-archive", "", "")
+	flags.StringVar(&descriptorPath, "candidate-descriptor", "", "")
+	flags.StringVar(&attestationPath, "candidate-attestation", "", "")
+	flags.StringVar(&releaseVersion, "release-version", "", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || (generationRoot == "") == (generationArchive == "") {
 		return errors.New("invalid lifecycle stage arguments")
 	}
@@ -553,6 +587,20 @@ func runStage(args []string, output io.Writer) error {
 	}
 	if dependencyArchive != "" && (!filepath.IsAbs(dependencyArchive) || filepath.Clean(dependencyArchive) != dependencyArchive) {
 		return errors.New("invalid lifecycle dependency archive")
+	}
+	if generationArchive != "" {
+		for _, path := range []string{descriptorPath, attestationPath} {
+			if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+				return errors.New("candidate evidence path is invalid")
+			}
+		}
+		files := map[string]string{filepath.Base(generationArchive): generationArchive}
+		if dependencyArchive != "" {
+			files[filepath.Base(dependencyArchive)] = dependencyArchive
+		}
+		if _, err := candidate.Verify(context.Background(), candidate.GitHubVerifier{Binary: githubCLI()}, descriptorPath, attestationPath, releaseVersion, files); err != nil {
+			return err
+		}
 	}
 	config, err := loadConfig(configPath, 0)
 	if err != nil {
@@ -578,6 +626,15 @@ func runStage(args []string, output io.Writer) error {
 		return err
 	}
 	return json.NewEncoder(output).Encode(generation)
+}
+
+func githubCLI() string {
+	for _, path := range []string{"/usr/bin/gh", "/usr/local/bin/gh"} {
+		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 && info.Mode().Perm()&0o111 != 0 {
+			return path
+		}
+	}
+	return ""
 }
 
 func importGenerationDependency(state *store.Store, generation model.Generation, archive string) error {
