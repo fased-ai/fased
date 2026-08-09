@@ -224,11 +224,20 @@ jobs:
           --pool=forks
           --maxWorkers=1
 
-      - name: Verify Local release-attestation path
+      - name: Verify release-attestation path
         if: needs.classify.outputs.run_installer_release_verification == 'true'
         run: |
           bash -n install.sh
-          pnpm exec vitest run scripts/install-release-pin.test.ts
+          pnpm exec vitest run \
+            scripts/generation-updater.test.ts \
+            scripts/hosted-installer-artifact-layout.test.ts \
+            scripts/hosted-security-boundary.test.ts \
+            scripts/install-attestation-prerequisites.test.ts \
+            scripts/install-release-pin.test.ts \
+            scripts/lifecycle-trust-policy.test.ts \
+            scripts/lifecycle-trust-runtime.test.ts \
+            scripts/managed-updater-bundle.test.ts \
+            scripts/release-artifact-set.test.ts
 
       - name: Prove cross-UID supervisor client traversal
         if: needs.classify.outputs.run_node_focused == 'true'

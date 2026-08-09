@@ -6,7 +6,7 @@ import { verifyRepositoryDependencyRemediation } from "./ci-dependency-integrity
 import {
   classifyChangedPaths,
   createGatePlan,
-  INSTALLER_RELEASE_VERIFICATION_PATHS,
+  isInstallerReleaseVerificationPath,
   normalizeChangedPaths,
 } from "./gate-authority.mjs";
 
@@ -172,7 +172,11 @@ export function isInstallerReleaseVerificationChange(paths, baseInstaller, headI
   if (
     !normalized.includes("install.sh") ||
     !normalized.includes("scripts/install-release-pin.test.ts") ||
-    !normalized.every((path) => INSTALLER_RELEASE_VERIFICATION_PATHS.has(path)) ||
+    !normalized.every(isInstallerReleaseVerificationPath) ||
+    (normalized.includes("scripts/generation-updater.mjs") &&
+      !normalized.includes("scripts/generation-updater.test.ts")) ||
+    (normalized.includes("scripts/release-artifact-set.mjs") &&
+      !normalized.includes("scripts/release-artifact-set.test.ts")) ||
     baseInstaller === headInstaller
   ) {
     return false;

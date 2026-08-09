@@ -13,11 +13,16 @@ describe("CI changed-surface classification", () => {
     const after = `prefix\n  verify_release_attestation_source() {\n    corrected shared verifier\n  }\n\n  root_owned_bundle_tree_is_secure() {\n  }\n    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-vex-v1.openvex.json" -o "$vex"\n    corrected hosting verifier\n    local manifest_selection=""\n      echo "Could not download the Local release attestation bundle." >&2\n      return 1\n    fi\n    corrected local verifier\n    local release_commit=""\nsuffix\n`;
     const paths = [
       ".github/workflows/hosted-runtime-release.yml",
+      "docs/maintainers/release-attestations.md",
       "install.sh",
       "scripts/ci-workflow-contract.test.ts",
       "scripts/docker/protected-local-systemd/run.sh",
+      "scripts/generation-updater.mjs",
+      "scripts/generation-updater.test.ts",
       "scripts/hosted-installer-artifact-layout.test.ts",
       "scripts/install-release-pin.test.ts",
+      "scripts/release-artifact-set.mjs",
+      "scripts/release-artifact-set.test.ts",
       "scripts/test-protected-local-systemd-container.sh",
     ];
 
@@ -26,6 +31,13 @@ describe("CI changed-surface classification", () => {
     expect(isInstallerReleaseVerificationChange([...paths, "src/index.ts"], before, after)).toBe(
       false,
     );
+    expect(
+      isInstallerReleaseVerificationChange(
+        paths.filter((path) => path !== "scripts/generation-updater.test.ts"),
+        before,
+        after,
+      ),
+    ).toBe(false);
 
     const output = outputEntries(createGatePlan(paths, { installerReleaseVerification: true }));
     expect(output).toMatchObject({

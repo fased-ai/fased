@@ -23,9 +23,13 @@ function sliceBetween(source: string, start: string, end: string): string {
 describe("hosted signer security boundary", () => {
   it("enters privileged Hosting setup only through an immutable attested release bundle", () => {
     expect(install).toContain('hosting_release="latest"');
-    expect(install).toContain('gh attestation verify "$release_manifest"');
-    expect(install).toContain('--bundle "$release_manifest_bundle"');
+    expect(install).toContain("verify_release_attestation_source()");
+    expect(install).toContain("verify_release_attestation_source \\");
+    expect(install).toContain(
+      '"$release_manifest" "$release_manifest_bundle" "$release_version" || {',
+    );
     expect(install).toContain('--source-ref "refs/tags/v${release_version}"');
+    expect(install).not.toContain('--source-ref "refs/heads/main"');
     expect(install).toContain("/var/lib/fased-installer/install.lock");
     expect(install).toContain("flock -x 9");
     expect(install).toContain('local root_store="${release_parent}/${actual}"');
