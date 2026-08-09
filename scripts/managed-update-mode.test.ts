@@ -192,19 +192,15 @@ describe("managed update mode", () => {
       new URL("./docker/protected-local-systemd/run.sh", import.meta.url),
       "utf8",
     );
-    const shim = fixture.slice(
-      fixture.indexOf("cat >/usr/local/libexec/fased-fixture-protected-installer.sh"),
-      fixture.indexOf("EOF_PROTECTED_INSTALLER", fixture.indexOf("EOF_PROTECTED_INSTALLER") + 1),
+    const installer = fs.readFileSync(new URL("../install.sh", import.meta.url), "utf8");
+    expect(fixture).not.toContain("cat >/usr/local/libexec/fased-fixture-protected-installer.sh");
+    expect(fixture).toContain(
+      'install -m 0700 -o testop -g testop /artifacts/install.sh "$candidate_installer"',
     );
-    expect(shim).toContain("bootstrap_result=");
-    expect(shim).toContain('NODE_PATH="$root_store/verified-dependencies/node_modules"');
-    expect(shim).toContain('"$release_root/scripts/generation-updater.mjs" initialize');
-    expect(shim.indexOf('generation-updater.mjs" initialize')).toBeGreaterThan(
-      shim.indexOf("protected-local-bootstrap.mjs install"),
+    expect(installer).toContain(
+      '"$selected_package_root/scripts/generation-updater.mjs" initialize',
     );
-    expect(shim).not.toContain(
-      'exec "\\${values[--protected-local-node-binary]}" \\\n+  /repo/scripts/protected-local-bootstrap.mjs install',
-    );
+    expect(installer).not.toContain("protected-local-bootstrap.mjs install");
   });
 
   it("retries a controller socket handoff that closes during generation replacement", () => {

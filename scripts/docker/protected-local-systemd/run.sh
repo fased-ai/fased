@@ -709,9 +709,9 @@ verify_canonical_lifecycle_controller() {
      .activeGeneration.version == $version and
      .activeGeneration.commit == $commit' \
     "$manifest" >/dev/null
-  active_root="$(readlink -f "$lifecycle_root/current")"
+  active_root="$(readlink -f "/opt/fased/local/$instance/current")"
   controller_root="$(readlink -f "$lifecycle_root/controller-current")"
-  test "$active_root" = "$lifecycle_root/generations/${active_generation#sha256:}"
+  test "$active_root" = "/opt/fased/local/$instance/generations/${active_generation#sha256:}"
   test "$controller_root" = "$active_root"
   test -x "$controller_root/payload/bin/fased-lifecycled"
 

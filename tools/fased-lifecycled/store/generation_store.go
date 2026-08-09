@@ -519,7 +519,21 @@ func (s *Store) ActivateGeneration(currentID, previousID string) error {
 }
 
 func (s *Store) ActivateControllerGeneration(currentID, previousID string) error {
-	return s.activatePointers("controller-current", "controller-previous", currentID, previousID)
+	if _, err := s.verifiedGeneration(currentID); err != nil {
+		return fmt.Errorf("current controller generation: %w", err)
+	}
+	if previousID != "" {
+		if currentID == previousID {
+			return errors.New("current and previous controller generation must differ")
+		}
+		if _, err := s.verifiedGeneration(previousID); err != nil {
+			return fmt.Errorf("previous controller generation: %w", err)
+		}
+		if err := s.writeControllerPointer("controller-previous", previousID); err != nil {
+			return err
+		}
+	}
+	return s.writeControllerPointer("controller-current", currentID)
 }
 
 func (s *Store) activatePointers(currentPointer, previousPointer, currentID, previousID string) error {
@@ -646,7 +660,7 @@ func (s *Store) verifyGenerationPath(root, generationID string) (model.Generatio
 }
 
 func (s *Store) writeGenerationPointer(pointer, generationID string) error {
-	if !validPointer(pointer) {
+	if pointer != "current" && pointer != "previous" {
 		return errors.New("generation pointer is invalid")
 	}
 	if err := validateGenerationID(generationID); err != nil {
@@ -674,9 +688,41 @@ func (s *Store) writeGenerationPointer(pointer, generationID string) error {
 	return syncDirectory(s.installRoot)
 }
 
+// Controller selection is supervisor authority, so its pointers live under
+// the mutable lifecycle state root. Product current/previous pointers remain
+// under the install root and are exclusively owned by the target controller.
+func (s *Store) writeControllerPointer(pointer, generationID string) error {
+	if pointer != "controller-current" && pointer != "controller-previous" {
+		return errors.New("controller generation pointer is invalid")
+	}
+	if err := validateGenerationID(generationID); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(s.stateRoot, ".controller-pointer-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Remove(tempPath); err != nil {
+		return err
+	}
+	defer os.Remove(tempPath)
+	target := s.generationPath(generationID)
+	if err := os.Symlink(target, tempPath); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, filepath.Join(s.stateRoot, pointer)); err != nil {
+		return err
+	}
+	return syncDirectory(s.stateRoot)
+}
+
 func validPointer(pointer string) bool {
 	switch pointer {
-	case "current", "previous", "controller-current", "controller-previous":
+	case "current", "previous":
 		return true
 	default:
 		return false

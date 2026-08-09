@@ -406,7 +406,7 @@ func TestGenerationInventoryHasItsOwnBoundedSizeClass(t *testing.T) {
 
 func TestStageAndActivateUseOnlyContentAddressedStorePaths(t *testing.T) {
 	root := t.TempDir()
-	store, err := Open(root)
+	store, err := OpenLayout(Layout{StateRoot: filepath.Join(root, "state"), InstallRoot: filepath.Join(root, "install")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,6 +453,16 @@ func TestStageAndActivateUseOnlyContentAddressedStorePaths(t *testing.T) {
 	}
 	if err := store.ActivateGeneration(expected.ID, ""); err != nil {
 		t.Fatal(err)
+	}
+	if err := store.ActivateControllerGeneration(expected.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	controllerTarget, err := os.Readlink(filepath.Join(store.stateRoot, "controller-current"))
+	if err != nil || controllerTarget != store.generationPath(expected.ID) {
+		t.Fatalf("controller selection was not isolated under lifecycle state: target=%q err=%v", controllerTarget, err)
+	}
+	if _, err := os.Lstat(filepath.Join(store.installRoot, "controller-current")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("supervisor controller pointer leaked into immutable install root: %v", err)
 	}
 	current, err := store.ResolveGeneration("current")
 	if err != nil || current != expected {
