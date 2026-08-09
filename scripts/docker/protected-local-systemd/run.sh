@@ -804,9 +804,6 @@ cp -a "$artifact_extract/." "$release_root/"
 cp -a "$artifact_extract/node_modules" "$root_store/verified-dependencies/node_modules"
 rm -rf "$release_root/node_modules"
 
-for script in fased-host-updater.mjs fased-host-updaterctl.mjs fased-signer-owner-hosting.sh; do
-  cmp "/repo/scripts/$script" "$release_root/scripts/$script"
-done
 install -m 0755 -o root -g root /artifacts/fased-signerd-linux-amd64 \
   "$root_store/verified-assets/fased-signerd"
 
@@ -1293,74 +1290,6 @@ http
   })
   .listen(port, "127.0.0.1");
 EOF_LEGACY_GATEWAY
-cat >/usr/local/libexec/fased-fixture-protected-installer.sh <<EOF_PROTECTED_INSTALLER
-#!/usr/bin/env bash
-set -euo pipefail
-umask 0117
-declare -A values=()
-while [[ "\$#" -gt 0 ]]; do
-  case "\$1" in
-    --protected-local-root-bootstrap) shift ;;
-    --*) values["\$1"]="\${2:-}"; shift 2 ;;
-    *) echo "unexpected fixture installer argument: \$1" >&2; exit 64 ;;
-  esac
-done
-health_args=()
-if [[ -n "\${values[--protected-local-gateway-health-timeout-ms]:-}" ]]; then
-  health_args=(
-    --gateway-health-timeout-ms
-    "\${values[--protected-local-gateway-health-timeout-ms]}"
-  )
-fi
-bootstrap_result="\$("\${values[--protected-local-node-binary]}" \
-  /repo/scripts/protected-local-bootstrap.mjs install \
-  --source-root "$release_root" \
-  --signer-binary "$root_store/verified-assets/fased-signerd" \
-  --operator-user "\${values[--protected-local-operator-user]}" \
-  --operator-uid "\${values[--protected-local-operator-uid]}" \
-  --operator-gid "\${values[--protected-local-operator-gid]}" \
-  --operator-home "\${values[--protected-local-operator-home]}" \
-  --state-dir "\${values[--protected-local-state-dir]}" \
-  --runtime-dir "\${values[--protected-local-runtime-dir]}" \
-  --node-binary "\${values[--protected-local-node-binary]}" \
-  --release-version "\${values[--release]}" \
-  --release-commit "$commit" \
-  --update-channel "\${values[--update-channel]}" \
-  --profile "\${values[--protected-local-profile]}" \
-  --gateway-port "\${values[--protected-local-gateway-port]}" \
-  --gateway-mode "\${values[--protected-local-gateway-mode]}" \
-  "\${health_args[@]}")"
-printf '%s\n' "\$bootstrap_result"
-if [[ "\${values[--protected-local-gateway-mode]}" == "activate" ]]; then
-  lifecycle_instance="\$(printf '%s\n' "\$bootstrap_result" | \
-    "\${values[--protected-local-node-binary]}" -e '
-      let input = "";
-      process.stdin.on("data", (chunk) => (input += chunk));
-      process.stdin.on("end", () => {
-        const value = JSON.parse(input.trim().split(/\\n/u).filter(Boolean).at(-1));
-        if (!/^[a-f0-9]{16}$/u.test(String(value.instanceId || ""))) process.exit(1);
-        process.stdout.write(value.instanceId);
-      });
-    ')"
-  gateway_user="fsgw-\${lifecycle_instance}"
-  signer_user="fssg-\${lifecycle_instance}"
-  NODE_PATH="$root_store/verified-dependencies/node_modules" \
-    "\${values[--protected-local-node-binary]}" \
-    "$release_root/scripts/generation-updater.mjs" initialize \
-    --version "\${values[--release]}" \
-    --profile protected-local \
-    --instance "\$lifecycle_instance" \
-    --owner-state "\${values[--protected-local-state-dir]}" \
-    --gateway-port "\${values[--protected-local-gateway-port]}" \
-    --operator-uid "\${values[--protected-local-operator-uid]}" \
-    --operator-gid "\${values[--protected-local-operator-gid]}" \
-    --gateway-uid "\$(id -u "\$gateway_user")" \
-    --gateway-gid "\$(id -g "\$gateway_user")" \
-    --signer-uid "\$(id -u "\$signer_user")" \
-    --signer-gid "\$(id -g "\$signer_user")"
-fi
-EOF_PROTECTED_INSTALLER
-chmod 0755 /usr/local/libexec/fased-fixture-protected-installer.sh
 cat >/usr/local/bin/sudo <<'EOF_SUDO_SHIM'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1372,24 +1301,6 @@ if [[ " $* " == *" apt-get "* || " $* " == *" dnf "* || " $* " == *" dnf5 "* ]];
   /usr/bin/sudo /usr/bin/install -m 0755 \
     /opt/fased-fixture-bootstrap-tools/gh /usr/local/bin/gh
   exit 0
-fi
-if [[ "${1:-}" == "--" &&
-  "${2:-}" == "/bin/bash" &&
-  "${4:-}" == "--protected-local-root-bootstrap" ]]; then
-  requested_release=""
-  for ((index = 4; index <= $#; index++)); do
-    if [[ "${!index}" == "--release" ]]; then
-      value_index=$((index + 1))
-      requested_release="${!value_index:-}"
-      requested_release="${requested_release#v}"
-      break
-    fi
-  done
-  if [[ -n "${FASED_FIXTURE_VERSION:-}" &&
-    "$requested_release" == "$FASED_FIXTURE_VERSION" ]]; then
-    exec /usr/bin/sudo -- \
-      /bin/bash /usr/local/libexec/fased-fixture-protected-installer.sh "${@:4}"
-  fi
 fi
 exec /usr/bin/sudo "$@"
 EOF_SUDO_SHIM

@@ -689,7 +689,10 @@ async function commandMain(argv) {
     timeoutMs,
     baseUrl: "https://github.com/fased-ai/fased/releases/download",
     architecture: process.arch,
-    initializerExecutableRoot: "/opt/fased",
+    // Bootstrap code is temporary acquisition state. Stage it under the
+    // existing root-owned runtime hierarchy so the Go initializer remains the
+    // sole creator and owner of the durable /opt/fased lifecycle tree.
+    initializerExecutableRoot: "/run",
     download: async (url, destination) => {
       await execFileAsync(
         curl,
