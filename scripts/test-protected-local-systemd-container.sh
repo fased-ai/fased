@@ -107,7 +107,7 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
   GOCACHE="$fixture_go_cache" \
   FASED_LIFECYCLE_BUILD_COMMIT="$COMMIT" \
   FASED_LIFECYCLE_BUILD_TREE="$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')" \
-  FASED_LIFECYCLE_TARGETS=linux/amd64 \
+  FASED_LIFECYCLE_TARGETS=linux/amd64,linux/arm64 \
     bash "$ROOT_DIR/scripts/release-fased-lifecycled.sh"
   if [[ "$BUILD_ONLY" == "1" ]]; then
     ARTIFACT_DIR="$ARTIFACT_OUTPUT_DIR"
