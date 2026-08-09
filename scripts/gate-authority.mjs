@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 
-export const GATE_AUTHORITY_VERSION = 4;
+export const GATE_AUTHORITY_VERSION = 5;
 
 export const PHASES = Object.freeze(["T0", "T1", "T2", "T3", "merge-reuse", "stable"]);
 export const ENTRY_POINTS = Object.freeze([
@@ -54,6 +54,7 @@ const INSTALLER_P1_FIXTURE_PATHS = new Set([
   "scripts/gate-authority.mjs",
   "scripts/gate-authority.test.ts",
   "scripts/hosted-installer-artifact-layout.test.ts",
+  "scripts/managed-update-mode.test.ts",
   "scripts/test-protected-local-systemd-container.sh",
 ]);
 const T2_FIXTURE_PATH_RE =
@@ -393,7 +394,9 @@ export function createGatePlan(inputPaths, options = {}) {
     paths.every((path) => VERSION_PATH_RE.test(path));
   const lifecycleGateEnforcementOnly = false;
   const installerP1FixtureOnly =
-    paths.some((path) => CI_INFRASTRUCTURE_PATH_RE.test(path)) &&
+    (paths.some((path) => CI_INFRASTRUCTURE_PATH_RE.test(path)) ||
+      (paths.includes("scripts/docker/protected-local-systemd/run.sh") &&
+        paths.includes("scripts/managed-update-mode.test.ts"))) &&
     paths.every((path) => INSTALLER_P1_FIXTURE_PATHS.has(path));
   const ciInfrastructureOnly =
     !versionOnly &&
@@ -538,7 +541,7 @@ export function createGatePlan(inputPaths, options = {}) {
   const t2FixtureChanged = paths.some((path) => T2_FIXTURE_PATH_RE.test(path));
   const runT2Contracts =
     !installerReleaseVerification && (t2FixtureOnly || t2FixtureChanged || privilegeChanged);
-  const runCiContracts = ciInfrastructureChanged;
+  const runCiContracts = ciInfrastructureChanged || installerP1FixtureOnly;
   const runHosting = runHostingFresh || runHostingUpdate;
   const pureUiProduction =
     productionPaths.length > 0 && productionPaths.every((path) => UI_PATH_RE.test(path));

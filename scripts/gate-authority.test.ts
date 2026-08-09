@@ -14,7 +14,7 @@ describe("machine gate authority", () => {
     const plan = createGatePlan(t2FixturePaths, { phase: "T2" });
 
     expect(plan).toMatchObject({
-      authorityVersion: 4,
+      authorityVersion: 5,
       phase: "T2",
       entryPoints: [],
       changeKind: "t2-fixture-only",
@@ -404,6 +404,25 @@ describe("machine gate authority", () => {
       runDocker: false,
       runLocalFresh: true,
       runLocalUpdate: true,
+    });
+  });
+
+  it("routes a lifecycle fixture with its exact regression test", () => {
+    expect(
+      createGatePlan([
+        "scripts/docker/protected-local-systemd/run.sh",
+        "scripts/managed-update-mode.test.ts",
+      ]),
+    ).toMatchObject({
+      changeKind: "ci-infrastructure-only",
+      scope: {
+        ciInfrastructureOnly: true,
+        productionChanged: false,
+        runCiContracts: true,
+        runNode: false,
+        runNodeFull: false,
+        runDocker: false,
+      },
     });
   });
 
