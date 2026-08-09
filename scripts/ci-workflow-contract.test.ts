@@ -546,7 +546,7 @@ describe("CI workflow routing", () => {
     );
     expect(validateText).toContain('test "$remote_tag" = "$SOURCE_COMMIT"');
     expect(validateText).not.toContain("Candidate tag already exists before packaged P1");
-    expect(validateText).not.toContain("--allow-exact-tag");
+    expect(validateText).toContain("node scripts/ci-version-identity.mjs --allow-exact-tag");
     expect(validateText).toContain("pnpm check:plugin-sdk:types");
     expect(validateText).toContain("node --import tsx scripts/release-check.ts");
     expect(validateText).toContain("pnpm release:validate-dist:packed");
