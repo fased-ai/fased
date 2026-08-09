@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -80,6 +81,9 @@ func (s *Store) ImportDependencyArchive(archive string, layer bundle.DependencyL
 		return err
 	}
 	if err := s.verifyDependencyPath(temporary, layer); err != nil {
+		return err
+	}
+	if err := syncDependencyFilesystem(temporary); err != nil {
 		return err
 	}
 	if err := os.Rename(temporary, destination); err != nil {
@@ -237,9 +241,8 @@ func extractDependencyArchive(archive, destination string) error {
 			}
 			_, copyErr := io.CopyN(output, reader, header.Size)
 			chmodErr := output.Chmod(mode)
-			syncErr := output.Sync()
 			closeErr := output.Close()
-			if err := errors.Join(copyErr, chmodErr, syncErr, closeErr); err != nil {
+			if err := errors.Join(copyErr, chmodErr, closeErr); err != nil {
 				return err
 			}
 		case tar.TypeSymlink:
@@ -259,4 +262,30 @@ func extractDependencyArchive(archive, destination string) error {
 		return errors.New("dependency archive does not contain node_modules")
 	}
 	return nil
+}
+
+func syncDependencyFilesystem(root string) error {
+	var trap uintptr
+	switch runtime.GOARCH {
+	case "amd64":
+		trap = 306
+	case "arm64":
+		trap = 267
+	default:
+		return fmt.Errorf("dependency filesystem sync is unsupported on %s", runtime.GOARCH)
+	}
+	directory, err := os.Open(root)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	for {
+		_, _, errno := syscall.Syscall(trap, directory.Fd(), 0, 0)
+		if errno == 0 {
+			return nil
+		}
+		if errno != syscall.EINTR {
+			return errno
+		}
+	}
 }
