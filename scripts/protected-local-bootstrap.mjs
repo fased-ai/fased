@@ -3947,6 +3947,22 @@ async function installProtectedLocal(params) {
     await persistBootstrapTransaction(transaction, "candidate-installed");
     await updateOperatorConfig(spec, layout, transaction.groups.config);
     await persistBootstrapTransaction(transaction, "application-configured");
+    // The bootstrap supervisor resolves the instance through this registry.
+    // Publish the already-journaled identity before starting it, and let the
+    // transaction rollback remove the entry if lifecycle convergence fails.
+    if (!transaction.registryCommitted) {
+      commitProtectedLocalInstance({
+        registryPath: transaction.registryPath,
+        operatorUid: spec.operatorUid,
+        operatorUser: spec.operatorUser,
+        profile: spec.profile,
+        stateDir: spec.stateDir,
+        expectedOwnerUid: 0,
+        entry: transaction.registryEntry,
+      });
+      transaction.registryCommitted = true;
+      await persistBootstrapTransaction(transaction, "registry-committed");
+    }
     const systemctl = systemBinary(["/usr/bin/systemctl", "/bin/systemctl"], "systemctl");
     runSystem(systemctl, ["daemon-reload"]);
     await authorizeGatewayActivation(layout);

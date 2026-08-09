@@ -813,7 +813,7 @@ default:other::---
     ).toBe(997);
   });
 
-  it("starts the recoverable journal before mutation and publishes the registry last", () => {
+  it("journals before mutation and publishes the registry before supervisor start", () => {
     const bootstrap = fs.readFileSync(
       path.join(process.cwd(), "scripts", "protected-local-bootstrap.mjs"),
       "utf8",
@@ -824,8 +824,9 @@ default:other::---
     const journal = install.indexOf('persistBootstrapTransaction(transaction, "planned")');
     const rootMutation = install.indexOf("prepareProtectedLocalRootDirectories(layout)");
     const lifecycle = install.indexOf("applyProtectedLocalLifecycle(spec, layout)", rootMutation);
-    const registryCommit = bootstrap.indexOf(
-      "async function completeCommittedBootstrapTransaction",
+    const registryCommit = install.indexOf("commitProtectedLocalInstance({", rootMutation);
+    const supervisorStart = install.indexOf(
+      'runSystem(systemctl, ["restart", layout.supervisorUnit])',
     );
     expect(collisionCheck).toBeGreaterThan(-1);
     expect(collisionCheck).toBeLessThan(install.indexOf("try {", collisionCheck));
@@ -833,7 +834,11 @@ default:other::---
     expect(journal).toBeLessThan(rootMutation);
     expect(rootMutation).toBeLessThan(lifecycle);
     expect(registryCommit).toBeGreaterThan(-1);
-    expect(bootstrap.slice(registryCommit)).toContain("commitProtectedLocalInstance({");
+    expect(registryCommit).toBeLessThan(supervisorStart);
+    expect(install.slice(supervisorStart)).toContain("completeCommittedBootstrapTransaction");
+    expect(
+      bootstrap.slice(bootstrap.indexOf("async function rollbackBootstrapTransaction")),
+    ).toContain("removeProtectedLocalInstance({");
     expect(bootstrap).not.toContain("loadOrAllocateProtectedLocalInstance");
   });
 
