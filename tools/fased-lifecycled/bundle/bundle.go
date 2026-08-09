@@ -137,7 +137,7 @@ func Verify(root string, expected Inventory, generation model.Generation) error 
 		return err
 	}
 	if actualGeneration != generation || !sameInventory(actual, expected) {
-		return errors.New("generation contents do not match the declared artifact inventory")
+		return inventoryMismatch(expected, actual)
 	}
 	return nil
 }
@@ -339,4 +339,32 @@ func sameInventory(left, right Inventory) bool {
 	leftJSON, leftErr := json.Marshal(left)
 	rightJSON, rightErr := json.Marshal(right)
 	return leftErr == nil && rightErr == nil && string(leftJSON) == string(rightJSON)
+}
+
+func inventoryMismatch(expected, actual Inventory) error {
+	if len(expected.Artifacts) != len(actual.Artifacts) {
+		return fmt.Errorf("generation contents do not match the declared artifact inventory: artifact count is %d, expected %d", len(actual.Artifacts), len(expected.Artifacts))
+	}
+	for index := range expected.Artifacts {
+		if expected.Artifacts[index] != actual.Artifacts[index] {
+			return fmt.Errorf(
+				"generation contents do not match the declared artifact inventory: artifact identity differs at %q (actual kind=%s sha256=%s size=%d executable=%t; expected kind=%s sha256=%s size=%d executable=%t)",
+				expected.Artifacts[index].Path,
+				actual.Artifacts[index].Kind,
+				actual.Artifacts[index].SHA256,
+				actual.Artifacts[index].Size,
+				actual.Artifacts[index].Executable,
+				expected.Artifacts[index].Kind,
+				expected.Artifacts[index].SHA256,
+				expected.Artifacts[index].Size,
+				expected.Artifacts[index].Executable,
+			)
+		}
+	}
+	expected.Artifacts = nil
+	actual.Artifacts = nil
+	if !sameInventory(expected, actual) {
+		return errors.New("generation contents do not match the declared artifact inventory: generation contract differs")
+	}
+	return errors.New("generation contents do not match the declared artifact inventory")
 }

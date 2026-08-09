@@ -940,6 +940,12 @@ install -m 0644 "/artifacts/$app_asset" "$release_assets/$app_asset"
 install -m 0644 "/artifacts/$dependency_asset" "$release_assets/$dependency_asset"
 install -m 0644 /artifacts/fased-signerd-linux-amd64 \
   "$release_assets/fased-signerd-linux-amd64"
+install -m 0644 /artifacts/fased-hosting-candidate.json \
+  "$release_assets/fased-hosting-candidate.json"
+install -m 0644 /artifacts/fased-hosting-candidate.json.attestation.json \
+  "$release_assets/fased-hosting-candidate.json.attestation.json"
+install -m 0644 "/artifacts/fased-generation-linux-x64-v${version}.tar.gz" \
+  "$release_assets/fased-generation-linux-x64-v${version}.tar.gz"
 
 # H0 exercises one x64 host. Complete the cross-platform evidence inventory
 # with byte-identical fixture copies so the real evidence verifier can validate
@@ -1245,7 +1251,7 @@ if [[ -n "\${values[--protected-local-gateway-health-timeout-ms]:-}" ]]; then
     "\${values[--protected-local-gateway-health-timeout-ms]}"
   )
 fi
-exec "\${values[--protected-local-node-binary]}" \
+bootstrap_result="\$("\${values[--protected-local-node-binary]}" \
   /repo/scripts/protected-local-bootstrap.mjs install \
   --source-root "$release_root" \
   --signer-binary "$root_store/verified-assets/fased-signerd" \
@@ -1262,7 +1268,36 @@ exec "\${values[--protected-local-node-binary]}" \
   --profile "\${values[--protected-local-profile]}" \
   --gateway-port "\${values[--protected-local-gateway-port]}" \
   --gateway-mode "\${values[--protected-local-gateway-mode]}" \
-  "\${health_args[@]}"
+  "\${health_args[@]}")"
+printf '%s\n' "\$bootstrap_result"
+if [[ "\${values[--protected-local-gateway-mode]}" == "activate" ]]; then
+  lifecycle_instance="\$(printf '%s\n' "\$bootstrap_result" | \
+    "\${values[--protected-local-node-binary]}" -e '
+      let input = "";
+      process.stdin.on("data", (chunk) => (input += chunk));
+      process.stdin.on("end", () => {
+        const value = JSON.parse(input.trim().split(/\\n/u).filter(Boolean).at(-1));
+        if (!/^[a-f0-9]{16}$/u.test(String(value.instanceId || ""))) process.exit(1);
+        process.stdout.write(value.instanceId);
+      });
+    ')"
+  gateway_user="fsgw-\${lifecycle_instance}"
+  signer_user="fssg-\${lifecycle_instance}"
+  NODE_PATH="$root_store/verified-dependencies/node_modules" \
+    "\${values[--protected-local-node-binary]}" \
+    "$release_root/scripts/generation-updater.mjs" initialize \
+    --version "\${values[--release]}" \
+    --profile protected-local \
+    --instance "\$lifecycle_instance" \
+    --owner-state "\${values[--protected-local-state-dir]}" \
+    --gateway-port "\${values[--protected-local-gateway-port]}" \
+    --operator-uid "\${values[--protected-local-operator-uid]}" \
+    --operator-gid "\${values[--protected-local-operator-gid]}" \
+    --gateway-uid "\$(id -u "\$gateway_user")" \
+    --gateway-gid "\$(id -g "\$gateway_user")" \
+    --signer-uid "\$(id -u "\$signer_user")" \
+    --signer-gid "\$(id -g "\$signer_user")"
+fi
 EOF_PROTECTED_INSTALLER
 chmod 0755 /usr/local/libexec/fased-fixture-protected-installer.sh
 cat >/usr/local/bin/sudo <<'EOF_SUDO_SHIM'
@@ -1435,7 +1470,7 @@ if [[ "$phase" == "fresh-install" ]]; then
 
   noop_started="$SECONDS"
   runuser -u testop -- env "${fresh_env[@]}" \
-    "$state/bin/fased" update "${target_update_args[@]}" --timeout 30 \
+    "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
     >/tmp/fresh-noop-update.out 2>/tmp/fresh-noop-update.err
   grep -F "Already current: $version" /tmp/fresh-noop-update.out >/dev/null
   if grep -F "Protected Local migration" /tmp/fresh-noop-update.err >/dev/null; then
@@ -1520,7 +1555,125 @@ if [[ "$phase" == "managed-update" ]]; then
       --skip-health \
     >/tmp/managed-predecessor-install.out 2>/tmp/managed-predecessor-install.err
 
-  test "$(jq -er .profile "$state/install.json")" = "protected-local"
+  predecessor_profile="$(jq -er .profile "$state/install.json")"
+  if [[ "$predecessor_profile" == "local" ]]; then
+    install -d -m 0700 -o testop -g testop \
+      "$state/extensions" "$state/sat-mining" "$state/workspace"
+    printf '{"schemaVersion":1,"enabled":["stable-bridge"]}\n' \
+      >"$state/extensions/stable-bridge-plugin.json"
+    printf '{"schemaVersion":1,"historyRevision":7}\n' \
+      >"$state/sat-mining/stable-bridge-history.json"
+    printf 'stable workspace state\n' >"$state/workspace/stable-bridge.txt"
+    chown testop:testop \
+      "$state/extensions/stable-bridge-plugin.json" \
+      "$state/sat-mining/stable-bridge-history.json" \
+      "$state/workspace/stable-bridge.txt"
+    chmod 0600 \
+      "$state/extensions/stable-bridge-plugin.json" \
+      "$state/sat-mining/stable-bridge-history.json" \
+      "$state/workspace/stable-bridge.txt"
+    stable_bridge_manifest=/tmp/stable-bridge-preservation.sha256
+    stable_bridge_restart_manifest=/tmp/stable-bridge-restart-preservation.sha256
+    sha256sum \
+      "$state/identity/device.json" \
+      "$state/wallet/provider-registry.v1.json" \
+      "$state/extensions/stable-bridge-plugin.json" \
+      "$state/sat-mining/stable-bridge-history.json" \
+      "$state/workspace/stable-bridge.txt" \
+      >"$stable_bridge_manifest"
+    sha256sum \
+      "$state/identity/device.json" \
+      "$state/extensions/stable-bridge-plugin.json" \
+      "$state/sat-mining/stable-bridge-history.json" \
+      "$state/workspace/stable-bridge.txt" \
+      >"$stable_bridge_restart_manifest"
+
+    runuser -u testop -- env "${managed_env[@]}" \
+      FASED_INSTALL_REPO="$candidate_repo" \
+      /bin/bash "$candidate_installer" \
+      --release "v$version" \
+      --update-channel beta \
+      --local \
+      --install-dir /home/testop/fased \
+      -- \
+      --non-interactive \
+      --accept-risk \
+      --auth-choice skip \
+      --workspace /home/testop/.fased/workspace \
+      --gateway-auth token \
+      --gateway-token "$gateway_token" \
+      --gateway-port "$gateway_port" \
+      --gateway-bind loopback \
+      --skip-skills \
+      --skip-health \
+      >/tmp/stable-bridge-update.out 2>/tmp/stable-bridge-update.err
+    test "$(jq -er .profile "$state/install.json")" = "protected-local"
+    test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$version"
+    sha256sum --check "$stable_bridge_manifest"
+    printf '%s\n' "$version" >"$selected_target"
+    instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
+    runtime="$(resolve_protected_runtime "$instance")"
+    mapfile -t managed_operator_env < <(operator_env "$instance")
+    wait_for_service "fased-local-controller-$instance.service"
+    wait_for_service "fased-signerd-$instance.service"
+    wait_for_service "fased-gateway-$instance.service"
+    wait_for_gateway_version "$version"
+    for wallet_spec in "agent:Agent:agent" "vault:Vault:vault"; do
+      IFS=: read -r wallet_id wallet_name wallet_role <<<"$wallet_spec"
+      runuser -u testop -- env "${managed_operator_env[@]}" \
+        /usr/local/bin/node "$runtime/fased.mjs" wallet setup \
+        --mode local-signer-create \
+        --wallet-id "$wallet_id" \
+        --wallet-name "$wallet_name" \
+        --role "$wallet_role" \
+        --rpc-url "http://127.0.0.1:$rpc_port" \
+        --non-interactive \
+        --json \
+        >"/tmp/stable-${wallet_id}-create.json"
+      verify_wallet "$instance" "$wallet_id" >"/tmp/stable-${wallet_id}.json"
+    done
+    systemctl restart \
+      "fased-local-controller-$instance.service" \
+      "fased-signerd-$instance.service" \
+      "fased-gateway-$instance.service"
+    wait_for_gateway_version "$version"
+    sha256sum --check "$stable_bridge_restart_manifest"
+    verify_shared_wallet_registry "$instance" "$runtime"
+    for wallet_id in agent vault; do
+      verify_wallet "$instance" "$wallet_id" >"/tmp/stable-${wallet_id}-restart.json"
+      diff -u \
+        <(jq -S . "/tmp/stable-${wallet_id}.json") \
+        <(jq -S . "/tmp/stable-${wallet_id}-restart.json")
+    done
+    if ! runuser -u testop -- env "${managed_operator_env[@]}" \
+      npm_config_registry="http://127.0.0.1:$rpc_port" \
+      FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
+      "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
+      >/tmp/stable-bridge-noop.out 2>/tmp/stable-bridge-noop.err; then
+      cat /tmp/stable-bridge-noop.err >&2
+      exit 1
+    fi
+    grep -F "Already current: $version" /tmp/stable-bridge-noop.out >/dev/null
+    agent_readiness_sha="$(jq -S -c . /tmp/stable-agent-restart.json | sha256sum | awk '{print $1}')"
+    vault_readiness_sha="$(jq -S -c . /tmp/stable-vault-restart.json | sha256sum | awk '{print $1}')"
+    key_sha="$(sha256sum "/var/lib/fased-local/$instance/signer/master.key" | awk '{print $1}')"
+    jq -n \
+      --arg instanceId "$instance" \
+      --arg agentReadinessSha256 "$agent_readiness_sha" \
+      --arg vaultReadinessSha256 "$vault_readiness_sha" \
+      --arg masterKeySha256 "$key_sha" \
+      '{
+        instanceId: $instanceId,
+        agentReadinessSha256: $agentReadinessSha256,
+        vaultReadinessSha256: $vaultReadinessSha256,
+        masterKeySha256: $masterKeySha256
+      }' >"$snapshot"
+    chmod 0600 "$snapshot"
+    printf 'stable Local %s -> Protected Local %s verified installer bridge passed: %s\n' \
+      "$predecessor_version" "$version" "$instance"
+    exit 0
+  fi
+  test "$predecessor_profile" = "protected-local"
   test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$predecessor_version"
   instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
   runtime="$(resolve_predecessor_runtime "$phase" "$instance")"
@@ -1702,7 +1855,7 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
   verify_managed_semantic_state
   runuser -u testop -- env "${managed_operator_env[@]}" \
     npm_config_registry="http://127.0.0.1:$rpc_port" \
-    "$state/bin/fased" update "${target_update_args[@]}" --timeout 30 \
+    "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
     >/tmp/managed-update-noop.out 2>/tmp/managed-update-noop.err
   grep -F "Already current: $version" /tmp/managed-update-noop.out >/dev/null
 
@@ -2043,7 +2196,7 @@ signer_pid_before="$(systemctl show -p MainPID --value "fased-signerd-$instance.
 gateway_pid_before="$(systemctl show -p MainPID --value "fased-gateway-$instance.service")"
 test "$(run_as_stale_operator id -G)" = "$(id -g testop)"
 run_as_stale_operator test -r "$state/fased.json"
-run_as_stale_operator "$state/bin/fased" update "${target_update_args[@]}" --timeout 30 \
+run_as_stale_operator "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
   >/tmp/protected-stale-session-update.out 2>/tmp/protected-stale-session-update.err
 grep -F "Already current: $version" /tmp/protected-stale-session-update.out >/dev/null
 run_as_stale_operator "$state/bin/fased" mining history \
@@ -2054,7 +2207,7 @@ run_as_stale_operator "$state/bin/fased" mining history \
   >/tmp/protected-stale-session-mining.json
 jq -e 'type == "object"' /tmp/protected-stale-session-mining.json >/dev/null
 runuser -u testop -- env "${managed_update_env[@]}" \
-  "$state/bin/fased" update "${target_update_args[@]}" --timeout 30 \
+  "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
   >/tmp/protected-noop-update.out 2>/tmp/protected-noop-update.err
 grep -F "Already current: $version" /tmp/protected-noop-update.out >/dev/null
 if grep -F "Protected Local migration" /tmp/protected-noop-update.err >/dev/null; then

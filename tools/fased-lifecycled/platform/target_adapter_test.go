@@ -141,6 +141,7 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 		!strings.Contains(combined, "RuntimeDirectoryMode=0755") ||
 		!strings.Contains(combined, "WorkingDirectory="+filepath.Join(adapter.Generations.(fakeGenerations).root, "runtime")) ||
 		!strings.Contains(combined, "Environment=HOME=/home/example") ||
+		!strings.Contains(combined, "Environment=FASED_VERSION=0.1.76") ||
 		!strings.Contains(combined, "Environment=FASED_HOST_PROFILE=local") {
 		t.Fatalf("canonical Gateway unit lacks Local runtime context:\n%s", combined)
 	}

@@ -2,6 +2,7 @@
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -93,7 +94,16 @@ async function sha256(file) {
 
 export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
   const args = options(argv);
-  const required = ["runtime", "signer", "lifecycled", "output", "version", "commit", "tree"];
+  const required = [
+    "runtime",
+    "release-manifest",
+    "signer",
+    "lifecycled",
+    "output",
+    "version",
+    "commit",
+    "tree",
+  ];
   for (const name of required) {
     if (!args[name]) {
       throw new Error(`--${name} is required`);
@@ -103,6 +113,7 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
     throw new Error("generation source identity is invalid");
   }
   const runtime = path.resolve(args.runtime);
+  const releaseManifest = path.resolve(args["release-manifest"]);
   const signer = path.resolve(args.signer);
   const lifecycled = path.resolve(args.lifecycled);
   const output = path.resolve(args.output);
@@ -113,10 +124,32 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
   if (!runtimeStat.isFile() || runtimeStat.isSymbolicLink()) {
     throw new Error("runtime must contain a regular fased.mjs entrypoint");
   }
+  const releaseManifestStat = await fs.lstat(releaseManifest);
+  if (
+    !releaseManifestStat.isFile() ||
+    releaseManifestStat.isSymbolicLink() ||
+    releaseManifestStat.size > 4 * 1024 * 1024
+  ) {
+    throw new Error("release manifest must be a bounded regular file");
+  }
+  const release = JSON.parse(await fs.readFile(releaseManifest, "utf8"));
+  if (
+    release?.schemaVersion !== 2 ||
+    release?.release?.version !== args.version ||
+    release?.release?.commit !== args.commit
+  ) {
+    throw new Error("release manifest does not match generation source identity");
+  }
   await fs.rm(output, { recursive: true, force: true });
   const payload = path.join(output, "payload");
   await fs.mkdir(path.join(payload, "bin"), { recursive: true, mode: 0o755 });
   await copyTree(runtime, path.join(payload, "runtime"));
+  await fs.copyFile(
+    releaseManifest,
+    path.join(payload, "runtime", ".fased-hosted-release-v2.json"),
+    fsConstants.COPYFILE_EXCL,
+  );
+  await fs.chmod(path.join(payload, "runtime", ".fased-hosted-release-v2.json"), 0o644);
   await fs.copyFile(signer, path.join(payload, "bin", "fased-signerd"));
   await fs.copyFile(lifecycled, path.join(payload, "bin", "fased-lifecycled"));
   await fs.chmod(path.join(payload, "bin", "fased-signerd"), 0o755);

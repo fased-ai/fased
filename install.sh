@@ -619,7 +619,8 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       ')"
       local gateway_user="fsgw-${lifecycle_instance}"
       local signer_user="fssg-${lifecycle_instance}"
-      "$protected_local_node_binary" \
+      NODE_PATH="$selected_root_store/verified-dependencies/node_modules" \
+        "$protected_local_node_binary" \
         "$selected_package_root/scripts/generation-updater.mjs" initialize \
         --version "$release_version" \
         --profile protected-local \
@@ -1488,14 +1489,36 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     exec bash "$installer_path" "$@"
   }
 
+  exec_bootstrapped_installer_with_internal_flag() {
+    local installer_path="$1"
+    local internal_flag="$2"
+    local inserted=0
+    local -a forwarded_args=()
+    shift 2
+    while [[ $# -gt 0 ]]; do
+      if [[ "$inserted" -eq 0 && "$1" == "--" ]]; then
+        forwarded_args+=("$internal_flag")
+        inserted=1
+      fi
+      forwarded_args+=("$1")
+      shift
+    done
+    if [[ "$inserted" -eq 0 ]]; then
+      forwarded_args+=("$internal_flag")
+    fi
+    exec_bootstrapped_installer "$installer_path" "${forwarded_args[@]}"
+  }
+
   if [[ "$existing_local_state" -eq 1 ]]; then
     if [[ "$install_entry_local_repair" -eq 1 ]]; then
       exec_bootstrapped_installer "$install_base_dir/install.sh" "$@"
     fi
     if [[ "$existing_local_resume" -eq 1 ]]; then
-      exec_bootstrapped_installer "$install_base_dir/install.sh" "$@" --resume-local-onboarding
+      exec_bootstrapped_installer_with_internal_flag \
+        "$install_base_dir/install.sh" --resume-local-onboarding "$@"
     fi
-    exec_bootstrapped_installer "$install_base_dir/install.sh" "$@" --existing-local-bootstrap
+    exec_bootstrapped_installer_with_internal_flag \
+      "$install_base_dir/install.sh" --existing-local-bootstrap "$@"
   fi
   exec_bootstrapped_installer "$install_base_dir/install.sh" "$@"
 fi

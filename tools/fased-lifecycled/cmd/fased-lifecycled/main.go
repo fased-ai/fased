@@ -196,22 +196,82 @@ func runInitialize(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := installExactRecord(filepath.Join(config.UnitRoot, identity.Services["supervisor"]), unitData, 0o644); err != nil {
-		return err
-	}
 	systemd, err := systemdClient()
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	if err := systemd.DaemonReload(ctx); err != nil {
+	unitPath := filepath.Join(config.UnitRoot, identity.Services["supervisor"])
+	replacement, err := replaceBootstrapUnit(unitPath, unitData)
+	if err != nil {
 		return err
+	}
+	rollback := func(cause error) error {
+		rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), time.Minute)
+		defer rollbackCancel()
+		stopErr := systemd.Stop(rollbackCtx, identity.Services["supervisor"])
+		restoreErr := replacement.Restore()
+		reloadErr := systemd.DaemonReload(rollbackCtx)
+		var restartErr error
+		if replacement.Existed {
+			restartErr = systemd.Start(rollbackCtx, identity.Services["supervisor"])
+		}
+		return errors.Join(cause, stopErr, restoreErr, reloadErr, restartErr)
+	}
+	if replacement.Existed {
+		if err := systemd.Stop(ctx, identity.Services["supervisor"]); err != nil {
+			return rollback(err)
+		}
+	}
+	if err := systemd.DaemonReload(ctx); err != nil {
+		return rollback(err)
 	}
 	if err := systemd.Enable(ctx, identity.Services["supervisor"]); err != nil {
+		return rollback(err)
+	}
+	if err := runApply([]string{"--config", configPath, "--generation", generationRoot}, output); err != nil {
+		return rollback(err)
+	}
+	return nil
+}
+
+type bootstrapUnitReplacement struct {
+	Path     string
+	Previous []byte
+	Existed  bool
+}
+
+func replaceBootstrapUnit(path string, data []byte) (bootstrapUnitReplacement, error) {
+	replacement := bootstrapUnitReplacement{Path: path}
+	if info, err := os.Lstat(path); err == nil {
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o644 || !ok || stat.Uid != uint32(os.Geteuid()) || stat.Nlink != 1 {
+			return replacement, errors.New("existing lifecycle supervisor unit is unsafe")
+		}
+		previous, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return replacement, readErr
+		}
+		replacement.Previous = previous
+		replacement.Existed = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return replacement, err
+	}
+	if err := writeBootstrapRecord(path, data, 0o644); err != nil {
+		return replacement, err
+	}
+	return replacement, nil
+}
+
+func (replacement bootstrapUnitReplacement) Restore() error {
+	if replacement.Existed {
+		return writeBootstrapRecord(replacement.Path, replacement.Previous, 0o644)
+	}
+	if err := os.Remove(replacement.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return runApply([]string{"--config", configPath, "--generation", generationRoot}, output)
+	return nil
 }
 
 func installExactRecord(path string, data []byte, mode os.FileMode) error {
@@ -224,6 +284,10 @@ func installExactRecord(path string, data []byte, mode os.FileMode) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	return writeBootstrapRecord(path, data, mode)
+}
+
+func writeBootstrapRecord(path string, data []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -252,6 +316,9 @@ func installExactRecord(path string, data []byte, mode os.FileMode) error {
 }
 
 func installStableBinary(path string) error {
+	if err := ensureStableBinaryDirectory(filepath.Dir(path)); err != nil {
+		return err
+	}
 	if info, err := os.Lstat(path); err == nil {
 		stat, ok := info.Sys().(*syscall.Stat_t)
 		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o755 || !ok || stat.Uid != 0 || stat.Nlink != 1 {
@@ -272,13 +339,54 @@ func installStableBinary(path string) error {
 	return installExactRecord(path, data, 0o755)
 }
 
+func ensureStableBinaryDirectory(directory string) error {
+	if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory || directory == "/" {
+		return errors.New("stable lifecycle binary directory is invalid")
+	}
+	for _, current := range []string{filepath.Dir(directory), directory} {
+		if err := os.Mkdir(current, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !ok || stat.Uid != uint32(os.Geteuid()) || info.Mode().Perm()&0o022 != 0 {
+			return errors.New("stable lifecycle binary directory is unsafe")
+		}
+		if err := os.Chmod(current, 0o755); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func runApply(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("apply", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var configPath, generationRoot string
+	var configPath, generationRoot, generationArchive, generationID string
 	flags.StringVar(&configPath, "config", "", "")
 	flags.StringVar(&generationRoot, "generation", "", "")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !filepath.IsAbs(generationRoot) || filepath.Clean(generationRoot) != generationRoot {
+	flags.StringVar(&generationArchive, "generation-archive", "", "")
+	flags.StringVar(&generationID, "generation-id", "", "")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		return errors.New("invalid lifecycle apply arguments")
+	}
+	selected := 0
+	for _, value := range []string{generationRoot, generationArchive, generationID} {
+		if value != "" {
+			selected++
+		}
+	}
+	if selected != 1 {
+		return errors.New("invalid lifecycle apply arguments")
+	}
+	selectedInput := generationRoot
+	if generationArchive != "" {
+		selectedInput = generationArchive
+	}
+	if selectedInput != "" && (!filepath.IsAbs(selectedInput) || filepath.Clean(selectedInput) != selectedInput) {
 		return errors.New("invalid lifecycle apply arguments")
 	}
 	config, err := loadConfig(configPath, 0)
@@ -289,7 +397,14 @@ func runApply(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	generation, err := state.ImportGeneration(generationRoot)
+	var generation model.Generation
+	if generationID != "" {
+		generation = model.Generation{ID: generationID}
+	} else if generationArchive != "" {
+		generation, err = state.ImportGenerationArchive(generationArchive)
+	} else {
+		generation, err = state.ImportGeneration(generationRoot)
+	}
 	if err != nil {
 		return err
 	}
@@ -359,10 +474,18 @@ func randomRequestID() (string, error) {
 func runStage(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("stage", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var configPath, generationRoot string
+	var configPath, generationRoot, generationArchive string
 	flags.StringVar(&configPath, "config", "", "")
 	flags.StringVar(&generationRoot, "generation", "", "")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !filepath.IsAbs(generationRoot) || filepath.Clean(generationRoot) != generationRoot {
+	flags.StringVar(&generationArchive, "generation-archive", "", "")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || (generationRoot == "") == (generationArchive == "") {
+		return errors.New("invalid lifecycle stage arguments")
+	}
+	selectedInput := generationRoot
+	if generationArchive != "" {
+		selectedInput = generationArchive
+	}
+	if !filepath.IsAbs(selectedInput) || filepath.Clean(selectedInput) != selectedInput {
 		return errors.New("invalid lifecycle stage arguments")
 	}
 	config, err := loadConfig(configPath, 0)
@@ -373,8 +496,16 @@ func runStage(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	generation, err := state.ImportGeneration(generationRoot)
+	var generation model.Generation
+	if generationArchive != "" {
+		generation, err = state.ImportGenerationArchive(generationArchive)
+	} else {
+		generation, err = state.ImportGeneration(generationRoot)
+	}
 	if err != nil {
+		return err
+	}
+	if err := state.StageGeneration(generation.ID); err != nil {
 		return err
 	}
 	return json.NewEncoder(output).Encode(generation)

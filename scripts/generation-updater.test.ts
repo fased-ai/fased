@@ -4,7 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import * as tar from "tar";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runGenerationInitialize, runGenerationUpdate } from "./generation-updater.mjs";
+import {
+  extractGeneration,
+  runGenerationInitialize,
+  runGenerationUpdate,
+  stageInitializerExecutable,
+} from "./generation-updater.mjs";
 
 const temporary: string[] = [];
 const version = "1.2.3";
@@ -28,7 +33,9 @@ async function fixture(linkTarget = "../tool/bin/cli.js") {
   const archiveRoot = path.join(root, "archive");
   await fsp.mkdir(path.join(archiveRoot, "generation", "payload", "bin"), { recursive: true });
   await fsp.writeFile(path.join(archiveRoot, "generation", "inventory.json"), "{}\n");
-  await fsp.writeFile(path.join(archiveRoot, "generation", "payload", "bin", "fased"), "exact\n");
+  await fsp.writeFile(path.join(archiveRoot, "generation", "payload", "bin", "fased"), "exact\n", {
+    mode: 0o755,
+  });
   const runtimeModules = path.join(archiveRoot, "generation", "payload", "runtime", "node_modules");
   await fsp.mkdir(path.join(runtimeModules, "tool", "bin"), { recursive: true });
   await fsp.mkdir(path.join(runtimeModules, ".bin"), { recursive: true });
@@ -58,12 +65,26 @@ async function fixture(linkTarget = "../tool/bin/cli.js") {
 }
 
 describe("generation updater", () => {
-  it("downloads descriptor-bound bytes and delegates one privileged apply", async () => {
+  it("stages an initializer outside a no-exec download directory and cleans safely", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-generation-stage-"));
+    temporary.push(root);
+    await fsp.chmod(root, 0o700);
+    const source = path.join(root, "source");
+    await fsp.writeFile(source, "verified bytes\n", { mode: 0o600 });
+    const stage = await stageInitializerExecutable(source, root);
+    expect(await fsp.readFile(stage.executable, "utf8")).toBe("verified bytes\n");
+    expect((await fsp.stat(stage.executable)).mode & 0o777).toBe(0o500);
+    await fsp.rm(stage.directory, { recursive: true, force: true });
+  });
+
+  it("downloads descriptor-bound bytes, stages once, and delegates one privileged apply", async () => {
     const value = await fixture();
     const verify = vi.fn(async () => undefined);
     const administrator = vi.fn(async (_command, args: string[]) => ({
       ok: true,
-      stdout: `${JSON.stringify({ outcome: "COMMITTED", transactionId: "tx" })}\n`,
+      stdout: args.includes("stage")
+        ? `${JSON.stringify({ id: `sha256:${"a".repeat(64)}`, version })}\n`
+        : `${JSON.stringify({ outcome: "UPDATED", transactionId: "tx" })}\n`,
       stderr: "",
       args,
     }));
@@ -94,8 +115,73 @@ describe("generation updater", () => {
     });
     expect(result).toMatchObject({ version, outcome: "COMMITTED", transactionId: "tx" });
     expect(verify).toHaveBeenCalledOnce();
-    expect(administrator).toHaveBeenCalledOnce();
-    expect(administrator.mock.calls[0][1]).toContain("apply");
+    expect(administrator).toHaveBeenCalledTimes(2);
+    expect(administrator.mock.calls[0][1]).toContain("stage");
+    expect(administrator.mock.calls[1][1]).toContain("apply");
+    expect(administrator.mock.calls[1][1]).toContain("--generation-id");
+  });
+
+  it("rejects an unsupported privileged convergence outcome", async () => {
+    const value = await fixture();
+    const sources = new Map([
+      ["fased-hosting-candidate.json", value.descriptorPath],
+      ["fased-hosting-candidate.json.attestation.json", value.bundlePath],
+      [assetName, value.archive],
+    ]);
+    await expect(
+      runGenerationUpdate({
+        lifecycle: {
+          supervisor: "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled",
+          config: "/var/lib/fased-lifecycled/platform.json",
+        },
+        version,
+        timeoutMs: 30_000,
+        baseUrl: "https://example.invalid/releases/download",
+        architecture: "x64",
+        download: async (url: string, destination: string) => {
+          const source = sources.get(url.split("/").at(-1) ?? "");
+          if (!source) {
+            throw new Error("unexpected download");
+          }
+          await fsp.copyFile(source, destination);
+        },
+        verifyOfficialAsset: async () => undefined,
+        runAdministrator: async (_command, args) => ({
+          ok: true,
+          stdout: args.includes("stage")
+            ? `${JSON.stringify({ id: `sha256:${"a".repeat(64)}`, version })}\n`
+            : `${JSON.stringify({ outcome: "RECOVERY_PENDING" })}\n`,
+          stderr: "",
+        }),
+        sudoPath: "/usr/bin/sudo",
+      }),
+    ).rejects.toThrow("invalid convergence outcome");
+  });
+
+  it("preserves declared executable modes under a restrictive caller umask", async () => {
+    const value = await fixture();
+    const destination = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-generation-extract-"));
+    temporary.push(destination);
+    const previousUmask = process.umask(0o117);
+    try {
+      const generation = await extractGeneration(value.archive, destination);
+      expect(
+        (await fsp.stat(path.join(generation, "payload", "bin", "fased"))).mode & 0o111,
+      ).not.toBe(0);
+    } finally {
+      process.umask(previousUmask);
+    }
+  });
+
+  it("loads archive support from the active immutable runtime", async () => {
+    const value = await fixture();
+    const destination = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-generation-runtime-"));
+    temporary.push(destination);
+    const dependencyRoot = path.resolve(".");
+    const generation = await extractGeneration(value.archive, destination, { dependencyRoot });
+    expect(await fsp.readFile(path.join(generation, "payload", "bin", "fased"), "utf8")).toBe(
+      "exact\n",
+    );
   });
 
   it("rejects a generation archive symlink that escapes before privileged mutation", async () => {
@@ -255,5 +341,47 @@ describe("generation updater", () => {
         "--generation",
       ]),
     );
+  });
+
+  it("preserves a failed privileged initializer diagnostic emitted on stdout", async () => {
+    const value = await fixture();
+    const sources = new Map([
+      ["fased-hosting-candidate.json", value.descriptorPath],
+      ["fased-hosting-candidate.json.attestation.json", value.bundlePath],
+      [assetName, value.archive],
+    ]);
+    await expect(
+      runGenerationInitialize({
+        initialize: {
+          profile: "protected-local",
+          instance: "0123456789abcdef",
+          ownerState: "/home/example/.fased",
+          gatewayPort: 18789,
+          operatorUid: 1000,
+          operatorGid: 1000,
+          gatewayUid: 997,
+          gatewayGid: 997,
+          signerUid: 996,
+          signerGid: 996,
+        },
+        version,
+        timeoutMs: 30_000,
+        baseUrl: "https://example.invalid/releases/download",
+        architecture: "x64",
+        download: async (url: string, destination: string) => {
+          const source = sources.get(url.split("/").at(-1) ?? "");
+          if (!source) {
+            throw new Error("unexpected download");
+          }
+          await fsp.copyFile(source, destination);
+        },
+        verifyOfficialAsset: async () => undefined,
+        runAdministrator: async () => ({
+          ok: false,
+          stdout: "exact lifecycle predicate\n",
+          stderr: "",
+        }),
+      }),
+    ).rejects.toThrow("exact lifecycle predicate");
   });
 });

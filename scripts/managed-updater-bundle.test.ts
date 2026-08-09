@@ -199,6 +199,8 @@ describe("managed updater content-addressed bundle", () => {
         (await fs.stat(path.join(generation.generationDir, "managed-updater-generation.v1.json")))
           .mode & 0o777,
       ).toBe(0o644);
+      expect((await fs.stat(path.join(updaterDir, "generations"))).mode & 0o777).toBe(0o755);
+      expect((await fs.stat(generation.generationDir)).mode & 0o777).toBe(0o755);
     } finally {
       process.umask(previousUmask);
     }

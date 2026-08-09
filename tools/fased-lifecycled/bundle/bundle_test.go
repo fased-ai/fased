@@ -3,6 +3,7 @@ package bundle
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"fased-lifecycled/model"
@@ -126,5 +127,24 @@ func TestInventoryRejectsTraversalAndIdentityMismatch(t *testing.T) {
 	generation.ArtifactSetDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	if err := Verify(root, inventory, generation); err == nil {
 		t.Fatal("generation identity mismatch was accepted")
+	}
+}
+
+func TestVerifyReportsFirstChangedArtifact(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "runtime.js")
+	if err := os.WriteFile(file, []byte("verified"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	schemas, capabilities := contract()
+	inventory, generation, err := Inspect(root, "0.1.76", testCommit, testCommit, schemas, capabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("changed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Verify(root, inventory, generation); err == nil || !strings.Contains(err.Error(), `artifact identity differs at "runtime.js"`) {
+		t.Fatalf("unexpected verification diagnostic: %v", err)
 	}
 }

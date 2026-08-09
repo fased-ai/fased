@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"syscall"
 	"time"
 
 	"fased-lifecycled/daemon"
@@ -20,6 +22,7 @@ import (
 
 const schemaVersion uint32 = 1
 const maxFrameBytes = 1 << 20
+const controllerReadyTimeout = 30 * time.Second
 
 type Operation string
 
@@ -151,8 +154,7 @@ func (client Client) call(ctx context.Context, input request) (engine.Result, er
 	if client.Timeout <= 0 || client.SocketPath == "" {
 		return engine.Result{}, errors.New("target controller client is incomplete")
 	}
-	dialer := net.Dialer{Timeout: client.Timeout}
-	connection, err := dialer.DialContext(ctx, "unix", client.SocketPath)
+	connection, err := client.dialReady(ctx)
 	if err != nil {
 		return engine.Result{}, err
 	}
@@ -176,6 +178,34 @@ func (client Client) call(ctx context.Context, input request) (engine.Result, er
 		return output.Result, errors.New(output.Error)
 	}
 	return output.Result, nil
+}
+
+// dialReady waits only for the systemd-started controller to create and bind
+// its private socket. It never retries after a connection has been made, so a
+// mutating request cannot be replayed after an ambiguous transport failure.
+func (client Client) dialReady(ctx context.Context) (net.Conn, error) {
+	readyTimeout := controllerReadyTimeout
+	if client.Timeout < readyTimeout {
+		readyTimeout = client.Timeout
+	}
+	readyCtx, cancel := context.WithTimeout(ctx, readyTimeout)
+	defer cancel()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		connection, err := (&net.Dialer{}).DialContext(readyCtx, "unix", client.SocketPath)
+		if err == nil {
+			return connection, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ECONNREFUSED) {
+			return nil, err
+		}
+		select {
+		case <-readyCtx.Done():
+			return nil, errors.New("target controller socket did not become ready")
+		case <-ticker.C:
+		}
+	}
 }
 
 func readFrame(connection net.Conn) ([]byte, error) {
