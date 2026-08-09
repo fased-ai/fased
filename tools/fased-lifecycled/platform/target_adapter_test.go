@@ -147,6 +147,82 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 	}
 }
 
+func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
+	tx, _ := manifestTransaction(t, false)
+	operator, gateway, signer := principals()
+	config, err := NewConfig(model.ProfileHosting, "hosting", "/home/app/.fased", operator, gateway, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := config.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	platformDigest, err := identity.Digest(model.ProfileHosting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.Profile = model.ProfileHosting
+	tx.PlatformDigest = platformDigest
+
+	root := t.TempDir()
+	for _, name := range []string{"fased-gateway-launch", "fased-signerd"} {
+		path := filepath.Join(root, "bin", name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	calls := []string{}
+	units := &fakeUnits{calls: &calls}
+	adapter := &TargetAdapter{
+		Config: config, Identity: identity, Units: units,
+		Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, calls: &calls},
+		Health: fakeHealth{calls: &calls},
+	}
+	if err := adapter.Prepare(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Quiesce(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Activate(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Verify(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Commit(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"units.prepare", "systemd.stop:fased-gateway.service", "systemd.stop:fased-signerd.service",
+		"units.activate", "systemd.reload", "systemd.enable:fased-signerd.service", "systemd.start:fased-signerd.service",
+		"systemd.enable:fased-gateway.service", "systemd.start:fased-gateway.service",
+		"systemd.active:fased-signerd.service", "systemd.active:fased-gateway.service",
+		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"generation.activate:" + digestB + ":" + digestA, "units.discard",
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("unexpected Hosting adapter order:\n got=%v\nwant=%v", calls, want)
+	}
+	combined := string(units.definitions[identity.Services["signer"]]) + string(units.definitions[identity.Services["gateway"]])
+	for _, required := range []string{
+		"User=996", "NoNewPrivileges=true", "Environment=HOME=/home/app",
+		"Environment=FASED_STATE_DIR=/home/app/.fased", "Environment=FASED_HOST_PROFILE=hosting",
+		"-state-db /var/lib/fased-signerd/state.db", "-update-gate /var/lib/fased-signer-update-gate/active",
+	} {
+		if !strings.Contains(combined, required) {
+			t.Fatalf("canonical Hosting units are missing %q:\n%s", required, combined)
+		}
+	}
+	if strings.Contains(combined, "fased-local-") || strings.Contains(combined, "/var/lib/fased-local/") {
+		t.Fatalf("Hosting units contain Local topology:\n%s", combined)
+	}
+}
+
 func TestTargetAdapterRestoresPreviousButDoesNotStartAbsentFreshServices(t *testing.T) {
 	adapter, tx, calls := targetAdapter(t)
 	if err := adapter.Restore(context.Background(), tx); err != nil {
