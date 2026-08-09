@@ -70,6 +70,8 @@ verify_protected_home_acl() {
 
 operator_env() {
   local instance="$1"
+  local signer_bin=""
+  signer_bin="$(resolve_signer_binary "$instance")"
   printf '%s\n' \
     "HOME=/home/testop" \
     "FASED_STATE_DIR=$state" \
@@ -80,10 +82,23 @@ operator_env() {
     "FASED_PROTECTED_LOCAL=1" \
     "FASED_PROTECTED_LOCAL_INSTANCE=$instance" \
     "FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external" \
-    "FASED_WALLET_LOCAL_SIGNER_BIN=/opt/fased/local/$instance/signer/fased-signerd" \
+    "FASED_WALLET_LOCAL_SIGNER_BIN=$signer_bin" \
     "FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-local/$instance/application/app.sock" \
     "FASED_HOST_UPDATER_SOCKET=/run/fased-local-controller/$instance/request.sock" \
     "FASED_HOST_UPDATERCTL_STATE=$state/protected-local-controller-transaction.json"
+}
+
+resolve_signer_binary() {
+  local instance="$1"
+  local managed="/opt/fased/local/$instance/current/payload/bin/fased-signerd"
+  local predecessor="/opt/fased/local/$instance/signer/fased-signerd"
+  if [[ -x "$managed" ]]; then
+    printf '%s\n' "$managed"
+    return
+  fi
+  # The fallback exists only so the fixture can construct the supported
+  # public-stable predecessor before proving its one-way Go bridge.
+  printf '%s\n' "$predecessor"
 }
 
 resolve_protected_runtime() {
@@ -351,7 +366,7 @@ bootstrap() {
 verify_wallet() {
   local instance="$1"
   local wallet_id="$2"
-  runuser -u testop -- "/opt/fased/local/$instance/signer/fased-signerd" \
+  runuser -u testop -- "$(resolve_signer_binary "$instance")" \
     admin wallet readiness \
     --operator-socket "/run/fased-local/$instance/operator/operator.sock" \
     --wallet-id "$wallet_id"
@@ -740,6 +755,9 @@ if [[ "$phase" == "verify-reboot" ]]; then
   wait_for_service "fased-gateway-$instance.service"
   wait_for_gateway_version "$version"
   wait_for_socket "/run/fased-local/$instance/operator/operator.sock"
+  verify_canonical_lifecycle_controller "$instance"
+  test "$(resolve_signer_binary "$instance")" = \
+    "/opt/fased/local/$instance/current/payload/bin/fased-signerd"
   verify_protected_home_acl "$instance"
   mapfile -t env_args < <(operator_env "$instance")
   verify_shared_device_auth "$instance" "$runtime"
@@ -2239,7 +2257,7 @@ runuser -u testop -- env "${env_args[@]}" \
 verify_shared_wallet_registry "$instance" "$runtime"
 verify_wallet "$instance" vault >/tmp/active-vault.json
 jq -e '.ready == true and .role == "vault"' /tmp/active-vault.json >/dev/null
-runuser -u testop -- "/opt/fased/local/$instance/signer/fased-signerd" \
+runuser -u testop -- "$(resolve_signer_binary "$instance")" \
   admin wallet balance \
   --operator-socket "/run/fased-local/$instance/operator/operator.sock" \
   --wallet-id agent \

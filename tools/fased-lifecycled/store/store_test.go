@@ -227,6 +227,32 @@ func TestProductionLayoutSeparatesAuthorityFromExecutableGenerations(t *testing.
 	}
 }
 
+func TestExistingProductionLayoutDoesNotMutateRootModes(t *testing.T) {
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	installRoot := filepath.Join(root, "install")
+	if err := os.Mkdir(stateRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(installRoot, 0o711); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenExistingLayout(Layout{StateRoot: stateRoot, InstallRoot: installRoot}); err != nil {
+		t.Fatal(err)
+	}
+	stateInfo, err := os.Stat(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installInfo, err := os.Stat(installRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stateInfo.Mode().Perm() != 0o750 || installInfo.Mode().Perm() != 0o711 {
+		t.Fatalf("existing layout modes changed: state=%04o install=%04o", stateInfo.Mode().Perm(), installInfo.Mode().Perm())
+	}
+}
+
 func TestProductionLayoutRejectsOverlappingRoots(t *testing.T) {
 	root := t.TempDir()
 	if _, err := OpenLayout(Layout{StateRoot: root, InstallRoot: filepath.Join(root, "install")}); err == nil {

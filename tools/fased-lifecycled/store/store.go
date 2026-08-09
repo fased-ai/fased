@@ -69,6 +69,29 @@ func OpenLayout(layout Layout) (*Store, error) {
 	return &Store{stateRoot: stateRoot, installRoot: installRoot}, nil
 }
 
+// OpenExistingLayout opens a platform layout without creating or changing
+// either root. Long-running supervisors use this entry point because their
+// systemd sandbox deliberately exposes the immutable installation root as
+// read-only. Platform initialization and the target controller remain the
+// only callers allowed to prepare or mutate that root.
+func OpenExistingLayout(layout Layout) (*Store, error) {
+	stateRoot, err := inspectRoot(layout.StateRoot, "lifecycle state root")
+	if err != nil {
+		return nil, err
+	}
+	installRoot, err := inspectRoot(layout.InstallRoot, "lifecycle install root")
+	if err != nil {
+		return nil, err
+	}
+	if stateRoot == installRoot {
+		return nil, errors.New("production lifecycle state and install roots must be distinct")
+	}
+	if pathContains(stateRoot, installRoot) || pathContains(installRoot, stateRoot) {
+		return nil, errors.New("lifecycle state and install roots must not overlap")
+	}
+	return &Store{stateRoot: stateRoot, installRoot: installRoot}, nil
+}
+
 func prepareRoot(root string, mode os.FileMode, label string) (string, error) {
 	if !filepath.IsAbs(root) || filepath.Clean(root) != root || root == "/" {
 		return "", fmt.Errorf("%s must be absolute, clean, and scoped", label)
@@ -79,6 +102,28 @@ func prepareRoot(root string, mode os.FileMode, label string) (string, error) {
 	}
 	if err := os.Chmod(clean, mode); err != nil {
 		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(clean)
+	if err != nil {
+		return "", err
+	}
+	if resolved != clean {
+		return "", fmt.Errorf("%s must not contain symlinks", label)
+	}
+	return clean, nil
+}
+
+func inspectRoot(root, label string) (string, error) {
+	if !filepath.IsAbs(root) || filepath.Clean(root) != root || root == "/" {
+		return "", fmt.Errorf("%s must be absolute, clean, and scoped", label)
+	}
+	clean := filepath.Clean(root)
+	info, err := os.Lstat(clean)
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return "", fmt.Errorf("%s must be an existing directory", label)
 	}
 	resolved, err := filepath.EvalSymlinks(clean)
 	if err != nil {

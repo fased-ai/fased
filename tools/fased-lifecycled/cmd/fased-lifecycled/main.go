@@ -683,7 +683,7 @@ func runRequest(args []string, output io.Writer) error {
 }
 
 func runSupervisor(ctx context.Context, config platform.Config, socketPath string) error {
-	state, err := store.OpenLayout(store.Layout{StateRoot: config.LifecycleRoot, InstallRoot: config.InstallRoot})
+	state, err := store.OpenExistingLayout(store.Layout{StateRoot: config.LifecycleRoot, InstallRoot: config.InstallRoot})
 	if err != nil {
 		return err
 	}
