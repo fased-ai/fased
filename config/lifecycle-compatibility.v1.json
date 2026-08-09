@@ -3,10 +3,10 @@
   "role": "fased-lifecycle-compatibility-evidence",
   "repository": "fased-ai/fased",
   "publishedThrough": {
-    "tag": "v0.1.76-rc.64",
-    "commit": "a54c4b9d812b4c6be112dc0016f65cc43712ad63"
+    "tag": "v0.1.76-rc.65",
+    "commit": "4cac3a157b900218572978d750f466806373c4d2"
   },
-  "publishedReleaseCount": 111,
+  "publishedReleaseCount": 112,
   "selectionContract": {
     "runtimeConsumesReleaseAssignments": false,
     "runtimeSelectionFields": [
@@ -839,7 +839,8 @@
         { "tag": "v0.1.76-rc.59", "commit": "c78615906ae94a46f28eacb29db69cc3522f9388" },
         { "tag": "v0.1.76-rc.62", "commit": "50a4a517cedfcbb993d4a3ab82a9344fdf3afe5e" },
         { "tag": "v0.1.76-rc.63", "commit": "5a60a51fa33fc641b59a9f3efa4798f23cd850c7" },
-        { "tag": "v0.1.76-rc.64", "commit": "a54c4b9d812b4c6be112dc0016f65cc43712ad63" }
+        { "tag": "v0.1.76-rc.64", "commit": "a54c4b9d812b4c6be112dc0016f65cc43712ad63" },
+        { "tag": "v0.1.76-rc.65", "commit": "4cac3a157b900218572978d750f466806373c4d2" }
       ]
     }
   ]
