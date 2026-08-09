@@ -221,4 +221,17 @@ describe("managed update mode", () => {
       expect(fixture).toContain('new Set(["ENOENT", "ECONNREFUSED", "ECONNRESET", "EPIPE"])');
     }
   });
+
+  it("verifies the canonical Go controller after lifecycle convergence", () => {
+    const fixture = fs.readFileSync(
+      new URL("./docker/protected-local-systemd/run.sh", import.meta.url),
+      "utf8",
+    );
+    expect(fixture).toContain('verify_canonical_lifecycle_controller "$instance"');
+    expect(fixture).not.toContain('verify_supervised_controller_a_to_b "$instance"');
+    expect(fixture).toContain('readlink -f "$lifecycle_root/controller-current"');
+    expect(fixture).toContain("fased-lifecycled target --config");
+    expect(fixture).toContain("target-controller.json");
+    expect(fixture).toContain('.phase == "COMMITTED"');
+  });
 });
