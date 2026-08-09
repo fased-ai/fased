@@ -479,8 +479,10 @@ func (s *Store) StageGeneration(generationID string) error {
 			s.declaredActiveGeneration(*manifest.ActiveGeneration) {
 			return nil
 		}
-		_, verifyErr := s.verifyGenerationPath(target, generationID)
-		return verifyErr
+		if _, verifyErr := s.verifyGenerationPath(target, generationID); verifyErr != nil {
+			return verifyErr
+		}
+		return os.Chmod(target, 0o711)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -496,6 +498,10 @@ func (s *Store) StageGeneration(generationID string) error {
 		return err
 	}
 	if err := os.Rename(inbox, target); err != nil {
+		return err
+	}
+	if err := os.Chmod(target, 0o711); err != nil {
+		_ = os.Rename(target, inbox)
 		return err
 	}
 	return syncDirectory(generationsRoot)

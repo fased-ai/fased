@@ -441,6 +441,13 @@ func TestStageAndActivateUseOnlyContentAddressedStorePaths(t *testing.T) {
 	if err := store.StageGeneration(expected.ID); err != nil {
 		t.Fatal(err)
 	}
+	stagedInfo, err := os.Stat(store.generationPath(expected.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stagedInfo.Mode().Perm() != 0o711 {
+		t.Fatalf("staged generation is not traversal-only: %04o", stagedInfo.Mode().Perm())
+	}
 	if err := store.StageGeneration(expected.ID); err != nil {
 		t.Fatalf("idempotent staging failed: %v", err)
 	}
