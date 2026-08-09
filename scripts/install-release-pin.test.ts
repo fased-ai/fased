@@ -431,11 +431,14 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
         "v9.9.9-test.1",
         "--update-channel",
         "beta",
+        "--",
+        "--non-interactive",
       ]);
 
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain("exact-local-inner-handoff");
       expect(result.stdout).toContain("--existing-local-bootstrap");
+      expect(result.stdout).toMatch(/--existing-local-bootstrap -- --non-interactive/);
       expect(result.stdout).not.toContain("--repair-local");
       expect(result.stderr).toContain("Pre-handoff Local installation detected");
       expect(result.stderr).not.toContain(`Refusing to overwrite existing path: ${home}/fased`);
