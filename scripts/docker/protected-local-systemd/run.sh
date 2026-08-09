@@ -1644,10 +1644,13 @@ if [[ "$phase" == "managed-update" ]]; then
         <(jq -S . "/tmp/stable-${wallet_id}.json") \
         <(jq -S . "/tmp/stable-${wallet_id}-restart.json")
     done
-    runuser -u testop -- env "${managed_operator_env[@]}" \
+    if ! runuser -u testop -- env "${managed_operator_env[@]}" \
       npm_config_registry="http://127.0.0.1:$rpc_port" \
       "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
-      >/tmp/stable-bridge-noop.out 2>/tmp/stable-bridge-noop.err
+      >/tmp/stable-bridge-noop.out 2>/tmp/stable-bridge-noop.err; then
+      cat /tmp/stable-bridge-noop.err >&2
+      exit 1
+    fi
     grep -F "Already current: $version" /tmp/stable-bridge-noop.out >/dev/null
     printf 'stable Local %s -> Protected Local %s verified installer bridge passed: %s\n' \
       "$predecessor_version" "$version" "$instance"

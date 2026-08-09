@@ -419,6 +419,15 @@ async function validateManagedUpdaterGeneration({
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new Error(`managed updater generation is unsafe: ${generationDir}`);
   }
+  if ((stat.mode & 0o777) !== 0o755) {
+    if (!normalizeModes) {
+      throw new Error(`managed updater generation is not operator-traversable: ${generationDir}`);
+    }
+    await fsp.chmod(generationDir, 0o755);
+    if (durable) {
+      await fsyncPath(generationDir);
+    }
+  }
   const expectedNames = new Set([
     ...records.map((record) => record.name),
     MANAGED_UPDATER_GENERATION_RECEIPT,
@@ -632,7 +641,17 @@ export async function stageManagedUpdaterGeneration({
     resolvedUpdaterDir,
     `.generation-${bundleDigest}-${process.pid}-${randomUUID()}`,
   );
-  await fsp.mkdir(generationsDir, { recursive: true });
+  await fsp.mkdir(generationsDir, { recursive: true, mode: 0o755 });
+  const generationsInfo = await fsp.lstat(generationsDir);
+  if (!generationsInfo.isDirectory() || generationsInfo.isSymbolicLink()) {
+    throw new Error(`managed updater generation root is unsafe: ${generationsDir}`);
+  }
+  if ((generationsInfo.mode & 0o777) !== 0o755) {
+    await fsp.chmod(generationsDir, 0o755);
+    if (durable) {
+      await fsyncPath(generationsDir);
+    }
+  }
   const currentLink = path.join(resolvedUpdaterDir, "current");
   const previousGenerationDir = await readLinkTarget(currentLink);
   const existing = await fsp.lstat(generationDir).catch(() => null);
@@ -648,6 +667,7 @@ export async function stageManagedUpdaterGeneration({
     });
   } else {
     await fsp.mkdir(stagingDir, { recursive: false, mode: 0o755 });
+    await fsp.chmod(stagingDir, 0o755);
     try {
       for (const record of records) {
         const sourcePath = path.join(scriptsDir, record.name);
