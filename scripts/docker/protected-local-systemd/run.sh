@@ -1555,7 +1555,90 @@ if [[ "$phase" == "managed-update" ]]; then
       --skip-health \
     >/tmp/managed-predecessor-install.out 2>/tmp/managed-predecessor-install.err
 
-  test "$(jq -er .profile "$state/install.json")" = "protected-local"
+  predecessor_profile="$(jq -er .profile "$state/install.json")"
+  if [[ "$predecessor_profile" == "local" ]]; then
+    install -d -m 0700 -o testop -g testop \
+      "$state/extensions" "$state/sat-mining" "$state/workspace"
+    printf '{"schemaVersion":1,"enabled":["stable-bridge"]}\n' \
+      >"$state/extensions/stable-bridge-plugin.json"
+    printf '{"schemaVersion":1,"historyRevision":7}\n' \
+      >"$state/sat-mining/stable-bridge-history.json"
+    printf 'stable workspace state\n' >"$state/workspace/stable-bridge.txt"
+    chown testop:testop \
+      "$state/extensions/stable-bridge-plugin.json" \
+      "$state/sat-mining/stable-bridge-history.json" \
+      "$state/workspace/stable-bridge.txt"
+    chmod 0600 \
+      "$state/extensions/stable-bridge-plugin.json" \
+      "$state/sat-mining/stable-bridge-history.json" \
+      "$state/workspace/stable-bridge.txt"
+    stable_bridge_manifest=/tmp/stable-bridge-preservation.sha256
+    sha256sum \
+      "$state/identity/device.json" \
+      "$state/wallet/provider-registry.v1.json" \
+      "$state/extensions/stable-bridge-plugin.json" \
+      "$state/sat-mining/stable-bridge-history.json" \
+      "$state/workspace/stable-bridge.txt" \
+      >"$stable_bridge_manifest"
+
+    runuser -u testop -- env "${managed_env[@]}" \
+      /bin/bash "$candidate_installer" \
+      --release "v$version" \
+      --update-channel beta \
+      --local \
+      --install-dir /home/testop/fased \
+      -- \
+      --non-interactive \
+      --accept-risk \
+      --auth-choice skip \
+      --workspace /home/testop/.fased/workspace \
+      --gateway-auth token \
+      --gateway-token "$gateway_token" \
+      --gateway-port "$gateway_port" \
+      --gateway-bind loopback \
+      --skip-skills \
+      --skip-health \
+      >/tmp/stable-bridge-update.out 2>/tmp/stable-bridge-update.err
+    test "$(jq -er .profile "$state/install.json")" = "protected-local"
+    test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$version"
+    sha256sum --check "$stable_bridge_manifest"
+    instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
+    runtime="$(resolve_protected_runtime "$instance")"
+    mapfile -t managed_operator_env < <(operator_env "$instance")
+    wait_for_service "fased-local-controller-$instance.service"
+    wait_for_service "fased-signerd-$instance.service"
+    wait_for_service "fased-gateway-$instance.service"
+    wait_for_gateway_version "$version"
+    for wallet_spec in "agent:Agent:agent" "vault:Vault:vault"; do
+      IFS=: read -r wallet_id wallet_name wallet_role <<<"$wallet_spec"
+      runuser -u testop -- env "${managed_operator_env[@]}" \
+        /usr/local/bin/node "$runtime/fased.mjs" wallet setup \
+        --mode local-signer-create \
+        --wallet-id "$wallet_id" \
+        --wallet-name "$wallet_name" \
+        --role "$wallet_role" \
+        --rpc-url "http://127.0.0.1:$rpc_port" \
+        --non-interactive \
+        --json \
+        >"/tmp/stable-${wallet_id}-create.json"
+      verify_wallet "$instance" "$wallet_id" >"/tmp/stable-${wallet_id}.json"
+    done
+    systemctl restart \
+      "fased-local-controller-$instance.service" \
+      "fased-signerd-$instance.service" \
+      "fased-gateway-$instance.service"
+    wait_for_gateway_version "$version"
+    sha256sum --check "$stable_bridge_manifest"
+    runuser -u testop -- env "${managed_operator_env[@]}" \
+      npm_config_registry="http://127.0.0.1:$rpc_port" \
+      "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
+      >/tmp/stable-bridge-noop.out 2>/tmp/stable-bridge-noop.err
+    grep -F "Already current: $version" /tmp/stable-bridge-noop.out >/dev/null
+    printf 'stable Local %s -> Protected Local %s verified installer bridge passed: %s\n' \
+      "$predecessor_version" "$version" "$instance"
+    exit 0
+  fi
+  test "$predecessor_profile" = "protected-local"
   test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$predecessor_version"
   instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
   runtime="$(resolve_predecessor_runtime "$phase" "$instance")"
