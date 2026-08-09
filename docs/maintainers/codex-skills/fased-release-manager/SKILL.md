@@ -40,6 +40,40 @@ continue safe local work.
 Do not mix modes. Ordinary bug work must never read or mutate release ledgers,
 candidate receipts, private status publishers, or historical workflow state.
 
+## Controlling Plan Lock
+
+When the founder approves an ordered plan or named checkpoints, treat that plan
+as the controlling execution contract until the founder explicitly replaces or
+amends it. Before the first mutation, state the active checkpoint, its allowed
+changes, its required evidence, and its stop condition.
+
+- Execute only the active checkpoint. Never skip ahead, reorder checkpoints,
+  substitute a different topology, or perform a later PR, version, tag, build,
+  publication, cleanup, or owner mutation early.
+- Before every mutating command, map the action to an explicit active-checkpoint
+  step. If it does not map, do not run it.
+- A discovery or failed predicate freezes the active checkpoint. Report expected
+  versus actual behavior and the first failed predicate; do not invent a
+  replacement sequence, candidate, compatibility branch, or workaround.
+- Propose a plan amendment when the approved plan is contradictory or no longer
+  safe. Do not execute that amendment until the founder explicitly approves it.
+- `continue`, `do it`, `finish`, prior standing PR authority, and release
+  authorization never permit deviation from the controlling plan.
+- Mark a checkpoint complete only after its declared evidence passes. If the
+  plan says to stop and report, stop before beginning the next checkpoint.
+- If multiple plans conflict, freeze mutation and ask the founder to select one
+  canonical ordering. Never silently combine them.
+- Never allocate a replacement RC for a source, workflow, or proof failure.
+  Return to the plan's BUG/local-proof checkpoint and keep all corrections on
+  the same local branch until its complete closure passes.
+
+Maintain a compact checkpoint ledger in progress updates:
+
+`checkpoint | allowed mutation | required proof | status | next boundary`
+
+System/developer safety requirements still take precedence. When they conflict
+with the plan, stop and report the conflict instead of silently deviating.
+
 ## Founder Commands
 
 Treat these literal user commands as scoped workflow authorization:
