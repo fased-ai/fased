@@ -7,11 +7,42 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
 	"fased-lifecycled/model"
 )
+
+func TestBootstrapPathPlanPreservesServiceTraversalUnderRestrictiveUmask(t *testing.T) {
+	root := t.TempDir()
+	installRoot := filepath.Join(root, "opt", "fased", "local", "instance")
+	previousUmask := syscall.Umask(0o077)
+	defer syscall.Umask(previousUmask)
+
+	changes, err := ApplyBootstrapPathPlanTransactional([]BootstrapPath{{
+		Path: installRoot, UID: uint32(os.Getuid()), GID: uint32(os.Getgid()), Mode: 0o755,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changes.Commit()
+
+	for _, path := range []string{
+		filepath.Join(root, "opt"),
+		filepath.Join(root, "opt", "fased"),
+		filepath.Join(root, "opt", "fased", "local"),
+		installRoot,
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o755 {
+			t.Fatalf("bootstrap traversal mode for %s = %04o; want 0755", path, info.Mode().Perm())
+		}
+	}
+}
 
 type memoryBootstrapJournal struct{ events []BootstrapEvent }
 

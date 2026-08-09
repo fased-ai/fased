@@ -83,6 +83,12 @@ func ensureBootstrapDirectoryTracked(path string, mode os.FileMode, changes *Boo
 			if err := os.Mkdir(current, createMode); err != nil {
 				return err
 			}
+			// Bootstrap runs with a restrictive root umask. Apply the intended
+			// mode explicitly so newly-created traversal ancestors do not become
+			// root-only and strand the unprivileged Gateway and signer services.
+			if err := os.Chmod(current, createMode); err != nil {
+				return err
+			}
 			changes.created = append(changes.created, current)
 			info, err = os.Lstat(current)
 		}
