@@ -187,6 +187,15 @@ branch, or historical release matrix. Compatibility is defined by public
 persisted-state schema, installed topology, and protocol capability—not a
 release name. Concrete versions belong only in fixtures and immutable evidence.
 
+For lifecycle convergence, treat `tools/fased-lifecycled` as the sole target
+implementation for planning, privileged mutation, activation, health,
+commit, rollback, and recovery. Freeze the JavaScript bootstrap, supervisor,
+host-updater, and managed-runtime mutation paths: they may be reduced or
+deleted, but must not receive new lifecycle behavior. Keep JavaScript only as
+the unprivileged acquisition/attestation/CLI wrapper and any temporary,
+explicitly bounded public-stable bridge until the equivalent Go transaction
+passes packaged closure. Never let old and new owners mutate one installation.
+
 For updater work preserve one manifest, lock, logical transaction, shared
 engine, and Local/Hosting adapters. Bind separate supervisor and target-controller
 journals to the same transaction identity; each authority exclusively owns its
@@ -194,6 +203,12 @@ mutation and recovery decisions. Preserve user state, fail closed on unknown
 newer schemas, roll back interrupted mutation, retry the same command, restart
 and verify health, and require `Already current` on repetition. Repair private
 development residue once; do not teach production to recognize it forever.
+
+For a multi-checkpoint lifecycle cutover, close one checkpoint at a time and
+report `PASS`, `FAIL`, or `NOT RUN` with the exact command, duration, changed
+files, and first failed predicate. Do not silently work for more than ten
+minutes. A failed checkpoint freezes later checkpoints; do not compensate with
+a PR, candidate, broader matrix, or alternate release identity.
 
 ## Authority
 

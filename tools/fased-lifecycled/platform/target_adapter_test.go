@@ -63,8 +63,9 @@ func (systemd fakeSystemd) IsActive(_ context.Context, unit string) error {
 }
 
 type fakeGenerations struct {
-	root  string
-	calls *[]string
+	root       string
+	dependency string
+	calls      *[]string
 }
 
 type fakeHealth struct{ calls *[]string }
@@ -76,6 +77,9 @@ func (health fakeHealth) Verify(_ context.Context, port uint16, target model.Gen
 
 func (generations fakeGenerations) GenerationPayloadPath(string) (string, error) {
 	return generations.root, nil
+}
+func (generations fakeGenerations) GenerationDependencyPath(string) (string, error) {
+	return generations.dependency, nil
 }
 func (generations fakeGenerations) ActivateGeneration(current, previous string) error {
 	*generations.calls = append(*generations.calls, "generation.activate:"+current+":"+previous)
@@ -101,7 +105,7 @@ func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) 
 		t.Fatal(err)
 	}
 	calls := []string{}
-	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, calls: &calls}, Health: fakeHealth{calls: &calls}}, tx, &calls
+	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls}, Health: fakeHealth{calls: &calls}}, tx, &calls
 }
 
 func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing.T) {
@@ -142,8 +146,85 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 		!strings.Contains(combined, "WorkingDirectory="+filepath.Join(adapter.Generations.(fakeGenerations).root, "runtime")) ||
 		!strings.Contains(combined, "Environment=HOME=/home/example") ||
 		!strings.Contains(combined, "Environment=FASED_VERSION=0.1.76") ||
-		!strings.Contains(combined, "Environment=FASED_HOST_PROFILE=local") {
+		!strings.Contains(combined, "Environment=FASED_HOST_PROFILE=local") ||
+		!strings.Contains(combined, "BindReadOnlyPaths="+filepath.Join(adapter.Generations.(fakeGenerations).root, "dependencies", "node_modules")+":"+filepath.Join(adapter.Generations.(fakeGenerations).root, "runtime", "node_modules")) {
 		t.Fatalf("canonical Gateway unit lacks Local runtime context:\n%s", combined)
+	}
+}
+
+func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
+	tx, _ := manifestTransaction(t, false)
+	operator, gateway, signer := principals()
+	config, err := NewConfig(model.ProfileHosting, "hosting", "/home/app/.fased", operator, gateway, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := config.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	platformDigest, err := identity.Digest(model.ProfileHosting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.Profile = model.ProfileHosting
+	tx.PlatformDigest = platformDigest
+
+	root := t.TempDir()
+	for _, name := range []string{"fased-gateway-launch", "fased-signerd"} {
+		path := filepath.Join(root, "bin", name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	calls := []string{}
+	units := &fakeUnits{calls: &calls}
+	adapter := &TargetAdapter{
+		Config: config, Identity: identity, Units: units,
+		Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls},
+		Health: fakeHealth{calls: &calls},
+	}
+	if err := adapter.Prepare(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Quiesce(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Activate(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Verify(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Commit(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"units.prepare", "systemd.stop:fased-gateway.service", "systemd.stop:fased-signerd.service",
+		"units.activate", "systemd.reload", "systemd.enable:fased-signerd.service", "systemd.start:fased-signerd.service",
+		"systemd.enable:fased-gateway.service", "systemd.start:fased-gateway.service",
+		"systemd.active:fased-signerd.service", "systemd.active:fased-gateway.service",
+		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"generation.activate:" + digestB + ":" + digestA, "units.discard",
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("unexpected Hosting adapter order:\n got=%v\nwant=%v", calls, want)
+	}
+	combined := string(units.definitions[identity.Services["signer"]]) + string(units.definitions[identity.Services["gateway"]])
+	for _, required := range []string{
+		"User=996", "NoNewPrivileges=true", "Environment=HOME=/home/app",
+		"Environment=FASED_STATE_DIR=/home/app/.fased", "Environment=FASED_HOST_PROFILE=hosting",
+		"-state-db /var/lib/fased-signerd/state.db", "-update-gate /var/lib/fased-signer-update-gate/active",
+	} {
+		if !strings.Contains(combined, required) {
+			t.Fatalf("canonical Hosting units are missing %q:\n%s", required, combined)
+		}
+	}
+	if strings.Contains(combined, "fased-local-") || strings.Contains(combined, "/var/lib/fased-local/") {
+		t.Fatalf("Hosting units contain Local topology:\n%s", combined)
 	}
 }
 

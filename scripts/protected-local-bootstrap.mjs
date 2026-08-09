@@ -18,7 +18,9 @@ import {
   rollbackProtectedLocalControlNormalization,
 } from "./lifecycle-control-normalizer.mjs";
 import {
-  loadOrAllocateProtectedLocalInstance,
+  buildProtectedLocalLayout,
+  commitProtectedLocalInstance,
+  planProtectedLocalInstance,
   removeProtectedLocalInstance,
 } from "./protected-local-layout.mjs";
 import { buildProtectedLocalServicePlan } from "./protected-local-service-plan.mjs";
@@ -205,7 +207,49 @@ function ensureGroup(group) {
   return { ...created, created: true };
 }
 
-function ensureServiceUser(user, primaryGroup, home) {
+function protectedLocalSystemUidRange(content = fs.readFileSync("/etc/login.defs", "utf8")) {
+  const values = new Map();
+  for (const rawLine of String(content).split("\n")) {
+    const match = /^\s*(SYS_UID_MIN|SYS_UID_MAX)\s+(\d+)\s*(?:#.*)?$/u.exec(rawLine);
+    if (match) {
+      values.set(match[1], Number(match[2]));
+    }
+  }
+  const minimum = values.get("SYS_UID_MIN") ?? 101;
+  const maximum = values.get("SYS_UID_MAX") ?? 999;
+  if (
+    !Number.isSafeInteger(minimum) ||
+    !Number.isSafeInteger(maximum) ||
+    minimum <= 0 ||
+    maximum < minimum
+  ) {
+    fail("system UID allocation range is invalid");
+  }
+  return Object.freeze({ minimum, maximum });
+}
+
+function selectProtectedLocalServiceUid({ usedUids, forbiddenUids, minimum, maximum }) {
+  const used = new Set(usedUids);
+  const forbidden = new Set(forbiddenUids);
+  for (let uid = maximum; uid >= minimum; uid -= 1) {
+    if (!used.has(uid) && !forbidden.has(uid)) {
+      return uid;
+    }
+  }
+  fail("no safe protected Local service UID is available");
+}
+
+function systemAccountUids() {
+  const getent = systemBinary(["/usr/bin/getent", "/bin/getent"], "getent");
+  return runSystem(getent, ["passwd"])
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => Number(line.split(":")[2]))
+    .filter((uid) => Number.isSafeInteger(uid) && uid >= 0);
+}
+
+function ensureServiceUser(user, primaryGroup, home, options = {}) {
   const existing = passwdRecord(user);
   const group = groupRecord(primaryGroup);
   if (!group) {
@@ -222,8 +266,17 @@ function ensureServiceUser(user, primaryGroup, home) {
     return { ...existing, created: false };
   }
   const useradd = systemBinary(["/usr/sbin/useradd", "/sbin/useradd"], "useradd");
+  const range = protectedLocalSystemUidRange();
+  const uid = selectProtectedLocalServiceUid({
+    usedUids: systemAccountUids(),
+    forbiddenUids: options.forbiddenUids ?? [],
+    minimum: range.minimum,
+    maximum: range.maximum,
+  });
   runSystem(useradd, [
     "--system",
+    "--uid",
+    String(uid),
     "--gid",
     primaryGroup,
     "--home-dir",
@@ -2210,6 +2263,9 @@ async function restoreLegacyOperatorRuntimeModes(spec) {
 
 async function restoreLegacyLocalStateBoundary(transaction) {
   const { spec, legacy } = transaction;
+  if (!legacy) {
+    return;
+  }
   const chown = systemBinary(["/usr/bin/chown", "/bin/chown"], "chown");
   const chmod = systemBinary(["/usr/bin/chmod", "/bin/chmod"], "chmod");
   runSystem(chown, ["-R", `${spec.operatorUid}:${spec.operatorGid}`, spec.stateDir]);
@@ -2341,6 +2397,17 @@ function aclEntryMap(snapshot) {
   );
 }
 
+function namedUserAclUids(snapshot) {
+  const uids = [];
+  for (const key of aclEntryMap(snapshot).keys()) {
+    const match = /^user:(\d+):$/u.exec(key);
+    if (match) {
+      uids.push(Number(match[1]));
+    }
+  }
+  return Object.freeze(uids);
+}
+
 function captureDirectoryAcl(directory) {
   const getfacl = systemBinary(["/usr/bin/getfacl", "/bin/getfacl"], "getfacl");
   return parseDirectoryAcl(
@@ -2452,8 +2519,9 @@ async function restoreGatewayHomeTraversal(transaction) {
   const gatewayUid = transaction.users.gateway?.uid;
   const setfacl = systemBinary(["/usr/bin/setfacl", "/bin/setfacl"], "setfacl");
   if (Number.isSafeInteger(gatewayUid) && gatewayUid > 0) {
+    const originalMap = aclEntryMap(original);
     const currentMap = aclEntryMap(captureDirectoryAcl(spec.operatorHome));
-    if (currentMap.has(`user:${gatewayUid}:`)) {
+    if (!originalMap.has(`user:${gatewayUid}:`) && currentMap.has(`user:${gatewayUid}:`)) {
       runSystem(setfacl, ["--no-mask", "--remove", `user:${gatewayUid}`, "--", spec.operatorHome], {
         timeout: 10_000,
       });
@@ -2504,21 +2572,45 @@ function deserializeCapture(captured) {
   };
 }
 
+function bootstrapTransactionDirectory(registryPath) {
+  return path.join(path.dirname(registryPath), "transactions");
+}
+
+function bootstrapTransactionPath(layout, registryPath) {
+  return path.join(bootstrapTransactionDirectory(registryPath), `${layout.instanceId}.json`);
+}
+
+function legacyBootstrapTransactionPath(layout) {
+  return path.join(layout.stateDir, "bootstrap-transaction.json");
+}
+
+async function removeBootstrapTransactionJournals(transaction) {
+  for (const candidate of [
+    bootstrapTransactionPath(transaction.layout, transaction.registryPath),
+    legacyBootstrapTransactionPath(transaction.layout),
+  ]) {
+    await fsp.rm(candidate, { force: true });
+  }
+}
+
 async function persistBootstrapTransaction(transaction, phase) {
-  const journalPath = path.join(transaction.layout.stateDir, "bootstrap-transaction.json");
-  await fsp.mkdir(transaction.layout.stateDir, { recursive: true, mode: 0o755 });
-  await fsp.chown(transaction.layout.stateDir, 0, 0);
-  await fsp.chmod(transaction.layout.stateDir, 0o755);
+  const journalDirectory = bootstrapTransactionDirectory(transaction.registryPath);
+  const journalPath = bootstrapTransactionPath(transaction.layout, transaction.registryPath);
+  await fsp.mkdir(journalDirectory, { recursive: true, mode: 0o700 });
+  await fsp.chown(journalDirectory, 0, 0);
+  await fsp.chmod(journalDirectory, 0o700);
   await atomicWrite(
     journalPath,
     `${JSON.stringify(
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         phase,
         instanceId: transaction.layout.instanceId,
         spec: transaction.spec,
         registryPath: transaction.registryPath,
         allocationCreated: transaction.allocationCreated,
+        registryEntry: transaction.registryEntry,
+        registryCommitted: transaction.registryCommitted === true,
         configSnapshot: serializeCapture(transaction.configSnapshot),
         manifestSnapshot: serializeCapture(transaction.manifestSnapshot),
         homeSnapshot: transaction.homeSnapshot,
@@ -2544,11 +2636,10 @@ async function persistBootstrapTransaction(transaction, phase) {
   );
 }
 
-function readBootstrapTransaction(layout, spec, registryPath) {
-  const journalPath = path.join(layout.stateDir, "bootstrap-transaction.json");
-  let value;
+function readBootstrapJournalFile(journalPath) {
+  let info;
   try {
-    value = JSON.parse(fs.readFileSync(journalPath, "utf8"));
+    info = fs.lstatSync(journalPath);
   } catch (error) {
     if (error?.code === "ENOENT") {
       return null;
@@ -2556,7 +2647,22 @@ function readBootstrapTransaction(layout, spec, registryPath) {
     throw error;
   }
   if (
-    value?.schemaVersion !== 1 ||
+    !info.isFile() ||
+    info.isSymbolicLink() ||
+    info.uid !== 0 ||
+    info.nlink !== 1 ||
+    (info.mode & 0o177) !== 0 ||
+    info.size <= 0 ||
+    info.size > 1024 * 1024
+  ) {
+    fail("protected Local bootstrap journal is unsafe");
+  }
+  return JSON.parse(fs.readFileSync(journalPath, "utf8"));
+}
+
+function deserializeBootstrapTransaction(value, layout, spec, registryPath) {
+  if (
+    !new Set([1, 2]).has(value?.schemaVersion) ||
     typeof value.phase !== "string" ||
     value.instanceId !== layout.instanceId ||
     value.registryPath !== registryPath ||
@@ -2583,12 +2689,27 @@ function readBootstrapTransaction(layout, spec, registryPath) {
   const originalConfig = configSnapshot.existed
     ? JSON.parse(configSnapshot.content.toString("utf8"))
     : {};
+  const registryEntry =
+    value.schemaVersion === 2 &&
+    value.registryEntry?.instanceId === layout.instanceId &&
+    value.registryEntry?.operatorUid === spec.operatorUid &&
+    value.registryEntry?.operatorUser === spec.operatorUser &&
+    value.registryEntry?.profile === spec.profile &&
+    value.registryEntry?.stateDir === spec.stateDir &&
+    typeof value.registryEntry?.createdAt === "string"
+      ? value.registryEntry
+      : null;
+  if (value.schemaVersion === 2 && !registryEntry) {
+    fail("protected Local bootstrap journal has an invalid planned registry entry");
+  }
   return {
     phase: value.phase,
     spec: { ...value.spec, gatewayMode: spec.gatewayMode },
     layout,
     registryPath,
     allocationCreated: value.allocationCreated === true,
+    registryEntry,
+    registryCommitted: value.schemaVersion === 1 || value.registryCommitted === true,
     configSnapshot,
     manifestSnapshot: deserializeCapture(value.manifestSnapshot),
     homeSnapshot: value.homeSnapshot,
@@ -2617,6 +2738,57 @@ function readBootstrapTransaction(layout, spec, registryPath) {
     lifecycleCommitted: value.lifecycleCommitted === true,
     legacy: resolveLegacySignerPaths(spec, originalConfig),
   };
+}
+
+function readBootstrapTransaction(layout, spec, registryPath) {
+  for (const journalPath of [
+    bootstrapTransactionPath(layout, registryPath),
+    legacyBootstrapTransactionPath(layout),
+  ]) {
+    const value = readBootstrapJournalFile(journalPath);
+    if (value) {
+      return deserializeBootstrapTransaction(value, layout, spec, registryPath);
+    }
+  }
+  return null;
+}
+
+function findPendingBootstrapTransaction(spec, registryPath) {
+  const directory = bootstrapTransactionDirectory(registryPath);
+  let names;
+  try {
+    names = fs.readdirSync(directory);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+  if (names.length > 1024) {
+    fail("protected Local bootstrap transaction directory is unexpectedly large");
+  }
+  const matches = [];
+  for (const name of names.toSorted()) {
+    const match = /^([a-f0-9]{16})\.json$/u.exec(name);
+    if (!match) {
+      fail("protected Local bootstrap transaction directory contains an unsupported entry");
+    }
+    const layout = buildProtectedLocalLayout(match[1]);
+    const value = readBootstrapJournalFile(path.join(directory, name));
+    if (
+      value?.registryPath === registryPath &&
+      value.spec?.operatorUid === spec.operatorUid &&
+      value.spec?.operatorUser === spec.operatorUser &&
+      value.spec?.profile === spec.profile &&
+      value.spec?.stateDir === spec.stateDir
+    ) {
+      matches.push(deserializeBootstrapTransaction(value, layout, spec, registryPath));
+    }
+  }
+  if (matches.length > 1) {
+    fail("multiple protected Local bootstrap transactions claim the same operator state");
+  }
+  return matches[0] ?? null;
 }
 
 function userSystemctl(spec, args, options = {}) {
@@ -3307,11 +3479,14 @@ async function rollbackBootstrapTransaction(transaction, originalError, options 
     await attempt("candidate state removal", async () => {
       await fsp.rm(layout.installDir, { recursive: true, force: true });
       await fsp.rm(layout.stateDir, { recursive: true, force: true });
-      removeProtectedLocalInstance({
-        registryPath: transaction.registryPath,
-        instanceId: layout.instanceId,
-        expectedOwnerUid: 0,
-      });
+      if (transaction.registryCommitted) {
+        removeProtectedLocalInstance({
+          registryPath: transaction.registryPath,
+          instanceId: layout.instanceId,
+          expectedOwnerUid: 0,
+        });
+        transaction.registryCommitted = false;
+      }
     });
   }
   await attempt("operator group rollback", async () => {
@@ -3347,7 +3522,7 @@ async function rollbackBootstrapTransaction(transaction, originalError, options 
       { cause: originalError },
     );
   }
-  await fsp.rm(path.join(layout.stateDir, "bootstrap-transaction.json"), { force: true });
+  await removeBootstrapTransactionJournals(transaction);
   if (options.returnResult === true) {
     return {
       schemaVersion: 1,
@@ -3391,7 +3566,7 @@ async function activatePreparedBootstrapTransaction(transaction) {
     await verifyGatewayHealth(spec, layout, spec.gatewayHealthTimeoutMs);
     await retireLegacyGateway(transaction);
     await removeLegacySignerMaterial(transaction.legacy);
-    await fsp.rm(path.join(layout.stateDir, "bootstrap-transaction.json"), { force: true });
+    await removeBootstrapTransactionJournals(transaction);
     await fsyncDirectory(layout.stateDir);
     return {
       schemaVersion: 1,
@@ -3421,13 +3596,29 @@ async function activatePreparedBootstrapTransaction(transaction) {
 
 async function completeCommittedBootstrapTransaction(transaction) {
   const { spec, layout } = transaction;
+  if (!transaction.registryCommitted) {
+    if (!transaction.registryEntry) {
+      fail("protected Local committed lifecycle is missing its planned registry identity");
+    }
+    commitProtectedLocalInstance({
+      registryPath: transaction.registryPath,
+      operatorUid: spec.operatorUid,
+      operatorUser: spec.operatorUser,
+      profile: spec.profile,
+      stateDir: spec.stateDir,
+      expectedOwnerUid: 0,
+      entry: transaction.registryEntry,
+    });
+    transaction.registryCommitted = true;
+    await persistBootstrapTransaction(transaction, "registry-committed");
+  }
   verifyGatewayRuntimeAccess(layout);
   await waitForSocket(layout.operatorSocket);
   await verifyOperatorCapabilities(spec, layout);
   const wallets = verifyLogicalWalletState(spec, layout);
   await retireLegacyGateway(transaction);
   await removeLegacySignerMaterial(transaction.legacy);
-  await fsp.rm(path.join(layout.stateDir, "bootstrap-transaction.json"), { force: true });
+  await removeBootstrapTransactionJournals(transaction);
   await fsyncDirectory(layout.stateDir);
   return {
     schemaVersion: 1,
@@ -3516,31 +3707,34 @@ async function installProtectedLocal(params) {
   await fsp.mkdir(path.dirname(registryPath), { recursive: true, mode: 0o700 });
   await fsp.chown(path.dirname(registryPath), 0, 0);
   await fsp.chmod(path.dirname(registryPath), 0o700);
-  const allocated = loadOrAllocateProtectedLocalInstance({
+  const instanceParams = {
     registryPath,
     operatorUid: spec.operatorUid,
     operatorUser: spec.operatorUser,
     profile: spec.profile,
     stateDir: spec.stateDir,
     expectedOwnerUid: 0,
-  });
-  const layout = allocated.layout;
-  if (allocated.created) {
-    try {
-      assertFreshAllocationUnclaimed(layout);
-    } catch (error) {
-      removeProtectedLocalInstance({
-        registryPath,
-        instanceId: layout.instanceId,
-        expectedOwnerUid: 0,
-      });
-      throw error;
+  };
+  let allocated = planProtectedLocalInstance(instanceParams);
+  let layout = allocated.layout;
+  let interrupted = readBootstrapTransaction(layout, spec, registryPath);
+  if (!interrupted && allocated.created) {
+    interrupted = findPendingBootstrapTransaction(spec, registryPath);
+    if (interrupted) {
+      layout = interrupted.layout;
+      allocated = {
+        entry: interrupted.registryEntry,
+        layout,
+        created: interrupted.allocationCreated,
+        committed: interrupted.registryCommitted,
+      };
     }
-    await prepareProtectedLocalRootDirectories(layout);
   }
-  const interrupted = readBootstrapTransaction(layout, spec, registryPath);
   if (interrupted) {
-    if (interrupted.phase === "lifecycle-committed" && interrupted.lifecycleCommitted) {
+    if (
+      new Set(["lifecycle-committed", "registry-committed"]).has(interrupted.phase) &&
+      interrupted.lifecycleCommitted
+    ) {
       const result = await completeCommittedBootstrapTransaction(interrupted);
       process.stdout.write(`${JSON.stringify(result)}\n`);
       return result;
@@ -3672,6 +3866,8 @@ async function installProtectedLocal(params) {
     layout,
     registryPath,
     allocationCreated: allocated.created,
+    registryEntry: allocated.entry,
+    registryCommitted: allocated.committed,
     configSnapshot: await captureFile(path.join(spec.stateDir, "fased.json")),
     manifestSnapshot: await captureFile(path.join(spec.stateDir, "install.json")),
     homeSnapshot: captureDirectoryMetadata(spec.operatorHome, spec.operatorUid),
@@ -3684,11 +3880,14 @@ async function installProtectedLocal(params) {
     lifecycleCommitted: false,
     legacy: null,
   };
+  assertFreshAllocationUnclaimed(layout);
   try {
     if (spec.gatewayMode !== "activate") {
       fail("new protected Local topology must commit before onboarding");
     }
-    await persistBootstrapTransaction(transaction, "allocated");
+    await persistBootstrapTransaction(transaction, "planned");
+    await prepareProtectedLocalRootDirectories(layout);
+    await persistBootstrapTransaction(transaction, "roots-created");
     transaction.groups.gateway = ensureGroup(layout.gatewayGroup);
     transaction.groups.signer = ensureGroup(layout.signerGroup);
     transaction.groups.operator = ensureGroup(layout.operatorGroup);
@@ -3698,6 +3897,7 @@ async function installProtectedLocal(params) {
       layout.gatewayUser,
       transaction.groups.gateway.group,
       layout.stateDir,
+      { forbiddenUids: namedUserAclUids(transaction.homeAclSnapshot) },
     );
     transaction.users.signer = ensureServiceUser(
       layout.signerUser,
@@ -3747,6 +3947,22 @@ async function installProtectedLocal(params) {
     await persistBootstrapTransaction(transaction, "candidate-installed");
     await updateOperatorConfig(spec, layout, transaction.groups.config);
     await persistBootstrapTransaction(transaction, "application-configured");
+    // The bootstrap supervisor resolves the instance through this registry.
+    // Publish the already-journaled identity before starting it, and let the
+    // transaction rollback remove the entry if lifecycle convergence fails.
+    if (!transaction.registryCommitted) {
+      commitProtectedLocalInstance({
+        registryPath: transaction.registryPath,
+        operatorUid: spec.operatorUid,
+        operatorUser: spec.operatorUser,
+        profile: spec.profile,
+        stateDir: spec.stateDir,
+        expectedOwnerUid: 0,
+        entry: transaction.registryEntry,
+      });
+      transaction.registryCommitted = true;
+      await persistBootstrapTransaction(transaction, "registry-committed");
+    }
     const systemctl = systemBinary(["/usr/bin/systemctl", "/bin/systemctl"], "systemctl");
     runSystem(systemctl, ["daemon-reload"]);
     await authorizeGatewayActivation(layout);
@@ -3875,6 +4091,7 @@ export const __testing = Object.freeze({
   inspectInstalledPluginTree,
   isRestorableLegacyGatewayUnitFileState,
   gatewayAclGrantState,
+  namedUserAclUids,
   legacyGatewayWasServing,
   legacyInstallReferencesUserGateway,
   parseDirectoryAcl,
@@ -3891,10 +4108,13 @@ export const __testing = Object.freeze({
   removeLegacySignerMaterial,
   resolveTrustedLegacyRuntimeHardlinks,
   resolveLegacySignerPaths,
+  selectProtectedLocalServiceUid,
+  restoreLegacyLocalStateBoundary,
   restoreLegacyOperatorRuntimeModes,
   sharedApplicationStateDirectoriesForAclVerification,
   stopExistingSystemdServices,
   protectedLocalGatewayHealthMatches,
+  protectedLocalSystemUidRange,
   processOwnsGatewayListener,
   systemdMainPid,
   waitForLegacyGatewayReleaseHealth,

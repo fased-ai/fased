@@ -85,6 +85,18 @@ describe("CI workflow routing", () => {
     expect(jobs["protected-local-rocky-lifecycle"]).toBeDefined();
     expect(jobs["protected-local-update-lifecycle"]).toBeDefined();
 
+    const fixtureArtifact = jobs["protected-local-fixture-artifact"];
+    const fixtureArtifactBuild = fixtureArtifact?.steps?.find(
+      (step) => step.name === "Build one exact fixture artifact",
+    );
+    expect(fixtureArtifactBuild?.run).toBe(
+      "bash scripts/test-protected-local-systemd-container.sh",
+    );
+    expect(fixtureArtifactBuild?.env).toMatchObject({
+      FASED_SYSTEMD_FIXTURE_BUILD_ONLY: "1",
+      FASED_SYSTEMD_FIXTURE_OUTPUT_DIR: "${{ runner.temp }}/protected-local-artifact",
+    });
+
     const releaseCheck = jobs["release-check"];
     expect(
       releaseCheck?.steps?.find((step) => usesAction(step, "actions/checkout"))?.with?.[
@@ -120,6 +132,9 @@ describe("CI workflow routing", () => {
       protectedLocalUpdate?.steps?.indexOf(localSystemdFixture),
     );
     expect(localSystemdFixture?.run).toBe("bash scripts/test-protected-local-systemd-container.sh");
+    expect(localSystemdFixture?.env).toMatchObject({
+      FASED_SYSTEMD_FIXTURE_PREDECESSOR_VERSION: "0.1.75",
+    });
 
     const required = jobs["required-checks"];
     expect(required?.needs).toEqual(
@@ -562,6 +577,10 @@ describe("CI workflow routing", () => {
       jobs["linux"]?.steps?.some((step) => step.name === "Assemble exact lifecycle generation"),
     ).toBe(false);
     expect(candidateText).toContain("assemble-lifecycle-generation.mjs");
+    expect(candidateText).toContain("--runtime-archive");
+    expect(candidateText).toContain("fased-hosted-app-v2-linux-");
+    expect(candidateText).toContain("--dependency-archive");
+    expect(candidateText).toContain("fased-hosted-deps-linux-");
     expect(candidateText).toContain("--release-manifest");
     expect(candidateText.indexOf("build-hosted-release-manifest.mjs")).toBeLessThan(
       candidateText.indexOf("assemble-lifecycle-generation.mjs"),
@@ -713,6 +732,8 @@ describe("CI workflow routing", () => {
     expect(containerFixture).toContain(
       'node "$ROOT_DIR/scripts/assemble-lifecycle-generation.mjs"',
     );
+    expect(containerFixture).toContain('--runtime-archive "$ARTIFACT_DIR/$x64_app"');
+    expect(containerFixture).toContain('--dependency-archive "$ARTIFACT_DIR/$x64_dependency"');
     expect(containerFixture).toContain('node "$ROOT_DIR/scripts/release-artifact-set.mjs" build');
     expect(containerFixture).toContain('--source-ref "refs/tags/v${VERSION}"');
     expect(containerFixture).toContain(
@@ -749,6 +770,9 @@ describe("CI workflow routing", () => {
     expect(helperEnd).toBeGreaterThan(helperStart);
     expect(fixture.slice(helperStart, helperEnd)).toContain(
       'npm_config_registry="http://127.0.0.1:$rpc_port"',
+    );
+    expect(fixture.slice(helperStart, helperEnd)).toContain(
+      'FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port"',
     );
   });
 });

@@ -13,6 +13,7 @@ import (
 
 type GenerationManager interface {
 	GenerationPayloadPath(string) (string, error)
+	GenerationDependencyPath(string) (string, error)
 	ActivateGeneration(string, string) error
 }
 
@@ -42,7 +43,11 @@ func (adapter *TargetAdapter) Prepare(_ context.Context, tx model.Transaction) e
 			return fmt.Errorf("target generation %s: %w", relative, err)
 		}
 	}
-	return adapter.Units.Prepare(tx.ID, adapter.renderTargetUnits(payload, tx.Target.Version))
+	dependency, err := adapter.Generations.GenerationDependencyPath(tx.Target.ID)
+	if err != nil {
+		return err
+	}
+	return adapter.Units.Prepare(tx.ID, adapter.renderTargetUnits(payload, tx.Target.Version, dependency))
 }
 
 func (adapter *TargetAdapter) Quiesce(ctx context.Context, _ model.Transaction) error {
@@ -139,7 +144,7 @@ func (adapter *TargetAdapter) startOrder() []string {
 	return []string{adapter.Identity.Services["signer"], adapter.Identity.Services["gateway"]}
 }
 
-func (adapter *TargetAdapter) renderTargetUnits(payload, version string) map[string][]byte {
+func (adapter *TargetAdapter) renderTargetUnits(payload, version, dependency string) map[string][]byte {
 	runtimeDirectory := strings.TrimPrefix(adapter.Config.RuntimeRoot, "/run/")
 	if adapter.Config.Profile == model.ProfileProtectedLocal {
 		runtimeDirectory = strings.Join([]string{
@@ -148,6 +153,10 @@ func (adapter *TargetAdapter) renderTargetUnits(payload, version string) map[str
 	}
 	signerState := adapter.Config.SignerStateRoot()
 	updateGate := adapter.Config.UpdateGatePath()
+	dependencyMount := ""
+	if dependency != "" {
+		dependencyMount = fmt.Sprintf("BindReadOnlyPaths=%s:%s\n", dependency, filepath.Join(payload, "runtime/node_modules"))
+	}
 	signer := fmt.Sprintf(`[Unit]
 Description=Fased native signer (%s)
 After=network-online.target
@@ -213,7 +222,7 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%s
+%sReadWritePaths=%s
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=
 AmbientCapabilities=
@@ -224,7 +233,7 @@ WantedBy=multi-user.target
 		adapter.Config.Gateway.UID, adapter.Config.Gateway.GID, adapter.Config.ConfigGroupName(), payload,
 		adapter.Config.OwnerHome(), adapter.Config.OwnerStateRoot,
 		adapter.Config.OwnerStateRoot, adapter.Config.OwnerStateRoot, payload, version, profileEnvironment(adapter.Config.Profile), adapter.Config.GatewayPort, adapter.Config.ApplicationSocket(),
-		filepath.Join(payload, "bin/fased-gateway-launch"), adapter.Config.OwnerStateRoot)
+		filepath.Join(payload, "bin/fased-gateway-launch"), dependencyMount, adapter.Config.OwnerStateRoot)
 	return map[string][]byte{
 		adapter.Identity.Services["signer"]: []byte(signer), adapter.Identity.Services["gateway"]: []byte(gateway),
 	}

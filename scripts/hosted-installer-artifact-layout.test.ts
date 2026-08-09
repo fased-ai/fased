@@ -99,6 +99,11 @@ describe("attested Hosting installer artifact layout", () => {
     expect(builder).toContain("fased-hosted-app-v2-linux-${arch}-v${version}.tar.gz");
     expect(builder).toContain("schemaVersion: 1, dependencyHash");
     expect(builder).toContain("app: { asset: unifiedAppAssetName, sha256: unifiedAppDigest }");
+    const dependencyArchive = builder.slice(
+      builder.indexOf("const dependencyAssetName"),
+      builder.indexOf("const dependencyDigest"),
+    );
+    expect(dependencyArchive).toContain("noMtime: true");
     expect(runtimeInstaller).toContain('"$RELEASE_URL/${RELEASE_MANIFEST_NAME}.attestation.json"');
     expect(runtimeInstaller).toContain('--bundle "$RELEASE_MANIFEST_BUNDLE_PATH"');
     expect(runtimeInstaller).toContain('APP_ASSET_NAME="${RELEASE_SELECTION[1]}"');

@@ -28,7 +28,7 @@ type StateStore interface {
 }
 
 type StateInventory interface {
-	Bind(context.Context, *model.Manifest, bundle.Inventory, planner.Plan) (stateDigest, signerPlanDigest string, err error)
+	Bind(context.Context, planner.Installation, bundle.Inventory, planner.Plan) (stateDigest, signerPlanDigest string, err error)
 }
 
 type Supervisor interface {
@@ -92,19 +92,28 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 		return protocol.Response{}, err
 	}
 	installed, manifestDigest, err := service.Store.ReadManifest()
-	var current *model.Manifest
+	installation := planner.Installation{Kind: planner.InstallationEmpty}
 	if errors.Is(err, os.ErrNotExist) {
 		if request.ExpectedManifestDigest != "absent" {
 			return protocol.Response{}, errors.New("installation manifest changed before convergence")
 		}
 		manifestDigest = absentManifestDigest
+		if request.SourceTopology != "" {
+			installation, err = planner.PublicStableInstallation(service.Profile, planner.PublicTopology(request.SourceTopology))
+			if err != nil {
+				return protocol.Response{}, err
+			}
+		}
 	} else if err != nil {
 		return protocol.Response{}, err
 	} else {
 		if request.ExpectedManifestDigest != manifestDigest {
 			return protocol.Response{}, errors.New("installation manifest changed before convergence")
 		}
-		current = &installed
+		if request.SourceTopology != "" {
+			return protocol.Response{}, errors.New("managed convergence does not accept a public-stable generation")
+		}
+		installation = planner.Installation{Kind: planner.InstallationManaged, Manifest: &installed}
 		installedPlatformDigest, digestErr := installed.Platform.Digest(installed.Profile)
 		if digestErr != nil || installedPlatformDigest != platformDigest {
 			return protocol.Response{}, errors.New("installed platform identity requires explicit repair")
@@ -120,7 +129,7 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 	if inventory.Capabilities.Supervisor.Min > supervisorCapability || inventory.Capabilities.Supervisor.Max < supervisorCapability {
 		return protocol.Response{}, errors.New("target generation requires an unsupported stable supervisor capability")
 	}
-	plan, err := planner.Build(current, planner.Target{
+	plan, err := planner.BuildForInstallation(installation, planner.Target{
 		Profile: service.Profile, Generation: generation,
 		StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities,
 	})
@@ -130,7 +139,7 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 	if plan.Action == planner.ActionAlreadyCurrent {
 		return response(request, string(engine.OutcomeAlreadyCurrent), "", generation.ID), nil
 	}
-	stateDigest, signerPlanDigest, err := service.Inventory.Bind(ctx, current, inventory, plan)
+	stateDigest, signerPlanDigest, err := service.Inventory.Bind(ctx, installation, inventory, plan)
 	if err != nil {
 		return protocol.Response{}, err
 	}
@@ -139,8 +148,8 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 		return protocol.Response{}, err
 	}
 	var previous *model.Generation
-	if current != nil {
-		previous = current.ActiveGeneration
+	if installation.Kind == planner.InstallationManaged {
+		previous = installation.Manifest.ActiveGeneration
 	}
 	tx := model.Transaction{
 		SchemaVersion: model.CurrentTransactionSchemaVersion, ID: transactionID,

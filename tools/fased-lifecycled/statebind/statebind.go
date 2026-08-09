@@ -14,7 +14,6 @@ import (
 	"syscall"
 
 	"fased-lifecycled/bundle"
-	"fased-lifecycled/model"
 	"fased-lifecycled/planner"
 )
 
@@ -47,12 +46,12 @@ type stateRecord struct {
 	Entries []fileRecord `json:"entries"`
 }
 
-func (binder *Binder) Bind(ctx context.Context, installed *model.Manifest, inventory bundle.Inventory, plan planner.Plan) (string, string, error) {
+func (binder *Binder) Bind(ctx context.Context, installed planner.Installation, inventory bundle.Inventory, plan planner.Plan) (string, string, error) {
 	generation, err := bundle.Identity(inventory)
 	if err != nil {
 		return "", "", err
 	}
-	want, err := planner.Build(installed, planner.Target{
+	want, err := planner.BuildForInstallation(installed, planner.Target{
 		Profile: plan.Profile, Generation: generation,
 		StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities,
 	})
@@ -69,11 +68,17 @@ func (binder *Binder) Bind(ctx context.Context, installed *model.Manifest, inven
 		return "", "", err
 	}
 	records := make([]stateRecord, 0, len(specs))
+	allowAbsent := map[string]bool{}
+	for _, migration := range plan.Migrations {
+		if migration.From == 0 {
+			allowAbsent[migration.State] = true
+		}
+	}
 	for _, spec := range specs {
 		if err := ctx.Err(); err != nil {
 			return "", "", err
 		}
-		record, err := inspectState(ctx, spec, inventory.StateSchemas[spec.Name], installed == nil)
+		record, err := inspectState(ctx, spec, inventory.StateSchemas[spec.Name], installed.Kind == planner.InstallationEmpty || allowAbsent[spec.Name])
 		if err != nil {
 			return "", "", fmt.Errorf("inventory state %s: %w", spec.Name, err)
 		}

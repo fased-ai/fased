@@ -237,7 +237,11 @@ async function requestOnce() {
     socket.once("timeout", () => fail(new Error(`${operation} timed out`)));
     socket.once("error", fail);
     socket.once("close", () => {
-      if (!settled) fail(new Error(`${operation} closed without a response`));
+      if (!settled) {
+        const error = new Error(`${operation} closed without a response`);
+        error.code = "ECONNRESET";
+        fail(error);
+      }
     });
   });
 }

@@ -4,7 +4,9 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   buildProtectedLocalLayout,
+  commitProtectedLocalInstance,
   loadOrAllocateProtectedLocalInstance,
+  planProtectedLocalInstance,
   removeProtectedLocalInstance,
 } from "./protected-local-layout.mjs";
 
@@ -31,6 +33,29 @@ function fixture() {
 }
 
 describe("protected Local instance allocation", () => {
+  it("plans a fresh instance without publishing it before bootstrap commits", () => {
+    const setup = fixture();
+    const params = {
+      registryPath: setup.registryPath,
+      operatorUid: process.getuid!(),
+      operatorUser: "alice",
+      profile: "default",
+      stateDir: setup.stateDir,
+      expectedOwnerUid: process.getuid!(),
+    };
+
+    const planned = planProtectedLocalInstance(params);
+    expect(planned.created).toBe(true);
+    expect(planned.committed).toBe(false);
+    expect(fs.existsSync(setup.registryPath)).toBe(false);
+
+    expect(commitProtectedLocalInstance({ ...params, entry: planned.entry })).toBe(true);
+    expect(JSON.parse(fs.readFileSync(setup.registryPath, "utf8")).instances).toEqual([
+      planned.entry,
+    ]);
+    expect(commitProtectedLocalInstance({ ...params, entry: planned.entry })).toBe(false);
+  });
+
   it("allocates one stable root-controlled namespace per operator/profile/state identity", () => {
     const setup = fixture();
     const params = {

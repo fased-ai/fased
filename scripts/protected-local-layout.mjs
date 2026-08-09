@@ -219,7 +219,7 @@ export function buildProtectedLocalLayout(instanceId, roots = {}) {
   };
 }
 
-export function loadOrAllocateProtectedLocalInstance(params) {
+function protectedLocalInstanceInputs(params) {
   const expectedOwnerUid = params.expectedOwnerUid ?? 0;
   const registryPath = String(params.registryPath ?? "").trim();
   if (!path.isAbsolute(registryPath) || path.resolve(registryPath) !== registryPath) {
@@ -230,6 +230,21 @@ export function loadOrAllocateProtectedLocalInstance(params) {
   const operatorUser = validateOperatorUser(params.operatorUser);
   const profile = validateProfile(params.profile);
   const stateDir = validateStateDir(params.stateDir);
+  return { expectedOwnerUid, registryPath, operatorUid, operatorUser, profile, stateDir };
+}
+
+function instanceIdentityMatches(entry, inputs) {
+  return (
+    entry.operatorUid === inputs.operatorUid &&
+    entry.operatorUser === inputs.operatorUser &&
+    entry.profile === inputs.profile &&
+    entry.stateDir === inputs.stateDir
+  );
+}
+
+export function planProtectedLocalInstance(params) {
+  const inputs = protectedLocalInstanceInputs(params);
+  const { expectedOwnerUid, registryPath, operatorUid, operatorUser, profile, stateDir } = inputs;
   const registry = readRegistry(registryPath, expectedOwnerUid);
   const existing = registry.instances.find(
     (entry) =>
@@ -243,6 +258,7 @@ export function loadOrAllocateProtectedLocalInstance(params) {
       entry: existing,
       layout: buildProtectedLocalLayout(existing.instanceId),
       created: false,
+      committed: true,
     };
   }
   let instanceId;
@@ -257,10 +273,53 @@ export function loadOrAllocateProtectedLocalInstance(params) {
     stateDir,
     createdAt: new Date().toISOString(),
   };
-  registry.instances.push(entry);
+  return {
+    entry,
+    layout: buildProtectedLocalLayout(instanceId),
+    created: true,
+    committed: false,
+  };
+}
+
+export function commitProtectedLocalInstance(params) {
+  const inputs = protectedLocalInstanceInputs(params);
+  const { expectedOwnerUid, registryPath } = inputs;
+  const entry = params.entry;
+  validateRegistry({ schemaVersion: SCHEMA_VERSION, instances: [entry] });
+  if (!instanceIdentityMatches(entry, inputs)) {
+    fail("protected Local planned instance does not match its operator identity");
+  }
+  const registry = readRegistry(registryPath, expectedOwnerUid);
+  const byIdentity = registry.instances.find(
+    (candidate) =>
+      candidate.operatorUid === inputs.operatorUid &&
+      candidate.profile === inputs.profile &&
+      candidate.stateDir === inputs.stateDir,
+  );
+  if (byIdentity) {
+    if (
+      byIdentity.instanceId !== entry.instanceId ||
+      !instanceIdentityMatches(byIdentity, inputs)
+    ) {
+      fail("protected Local instance identity was committed by another transaction");
+    }
+    return false;
+  }
+  if (registry.instances.some((candidate) => candidate.instanceId === entry.instanceId)) {
+    fail("protected Local instance ID was committed by another transaction");
+  }
+  registry.instances.push({ ...entry });
   registry.instances.sort((left, right) => left.instanceId.localeCompare(right.instanceId));
   writeRegistry(registryPath, registry, expectedOwnerUid);
-  return { entry, layout: buildProtectedLocalLayout(instanceId), created: true };
+  return true;
+}
+
+export function loadOrAllocateProtectedLocalInstance(params) {
+  const planned = planProtectedLocalInstance(params);
+  if (planned.created) {
+    commitProtectedLocalInstance({ ...params, entry: planned.entry });
+  }
+  return { ...planned, committed: true };
 }
 
 export function removeProtectedLocalInstance(params) {

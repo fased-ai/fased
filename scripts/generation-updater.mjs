@@ -14,9 +14,16 @@ const execFileAsync = promisify(execFile);
 const loadDependency = createRequire(import.meta.url);
 
 const DIGEST = /^sha256:[a-f0-9]{64}$/u;
+const HASH = /^[a-f0-9]{64}$/u;
+const ASSET = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,255}$/u;
 const OID = /^[a-f0-9]{40}$/u;
 const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
 const SUPERVISOR = "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled";
+const PUBLIC_STABLE_LOCAL_TOPOLOGIES = new Set([
+  "legacy-local-same-user-v0",
+  "local-user-systemd-v1",
+  "local-user-systemd-v2",
+]);
 
 export function generationLifecycle(manifest) {
   let instance = "hosting";
@@ -124,6 +131,14 @@ function parseDescriptor(value, version, assetName) {
   ) {
     throw new Error("candidate descriptor does not bind one exact lifecycle generation");
   }
+  return Object.freeze({ descriptor: value, selected: selected[0] });
+}
+
+function descriptorArtifact(descriptor, name) {
+  const selected = descriptor.artifacts.filter((artifact) => artifact.name === name);
+  if (selected.length !== 1) {
+    throw new Error(`candidate descriptor does not bind dependency artifact ${name}`);
+  }
   return selected[0];
 }
 
@@ -209,6 +224,64 @@ export async function extractGeneration(archive, destination, { dependencyRoot }
     process.umask(previousUmask);
   }
   return path.join(destination, "generation");
+}
+
+async function readGenerationDependency(archive, destination, { dependencyRoot } = {}) {
+  await validateGenerationArchive(archive, { dependencyRoot });
+  const tar = await loadArchiveDependency(dependencyRoot);
+  const root = path.join(destination, "generation-contract");
+  await fsp.mkdir(root, { recursive: true, mode: 0o700 });
+  await Promise.resolve(
+    tar.x({
+      file: archive,
+      cwd: root,
+      strict: true,
+      preservePaths: false,
+      filter: (candidate) => candidate === "generation/inventory.json",
+    }),
+  );
+  const inventory = JSON.parse(
+    await fsp.readFile(path.join(root, "generation", "inventory.json"), "utf8"),
+  );
+  const dependency = inventory?.dependency;
+  if (
+    inventory?.schemaVersion !== 3 ||
+    Object.keys(dependency ?? {})
+      .toSorted()
+      .join(",") !== "archiveSHA256,asset,hash" ||
+    !HASH.test(dependency.hash ?? "") ||
+    !ASSET.test(dependency.asset ?? "") ||
+    !DIGEST.test(dependency.archiveSHA256 ?? "")
+  ) {
+    throw new Error("lifecycle generation dependency contract is missing or malformed");
+  }
+  return dependency;
+}
+
+async function extractInitializerExecutable(archive, destination, { dependencyRoot } = {}) {
+  await validateGenerationArchive(archive, { dependencyRoot });
+  const tar = await loadArchiveDependency(dependencyRoot);
+  const entry = "generation/payload/bin/fased-lifecycled";
+  const previousUmask = process.umask(0o077);
+  try {
+    await Promise.resolve(
+      tar.x({
+        file: archive,
+        cwd: destination,
+        strict: true,
+        preservePaths: false,
+        filter: (candidate) => candidate === entry,
+      }),
+    );
+  } finally {
+    process.umask(previousUmask);
+  }
+  const executable = path.join(destination, entry);
+  const info = await fsp.lstat(executable);
+  if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || (info.mode & 0o111) === 0) {
+    throw new Error("lifecycle generation initializer executable is unsafe");
+  }
+  return executable;
 }
 
 export async function stageInitializerExecutable(source, root) {
@@ -339,7 +412,10 @@ async function runGenerationTransaction({
       !positiveID(initialize.gatewayUid) ||
       !positiveID(initialize.gatewayGid) ||
       !positiveID(initialize.signerUid) ||
-      !positiveID(initialize.signerGid)
+      !positiveID(initialize.signerGid) ||
+      (initialize.sourceTopology !== undefined &&
+        (initialize.profile !== "protected-local" ||
+          !PUBLIC_STABLE_LOCAL_TOPOLOGIES.has(initialize.sourceTopology)))
     ) {
       throw new Error("lifecycle generation initialization identity is invalid");
     }
@@ -363,11 +439,12 @@ async function runGenerationTransaction({
       bundlePath: descriptorBundle,
     });
     const assetName = `fased-generation-linux-${architecture}-v${version}.tar.gz`;
-    const identity = parseDescriptor(
+    const candidate = parseDescriptor(
       JSON.parse(await fsp.readFile(descriptor, "utf8")),
       version,
       assetName,
     );
+    const identity = candidate.selected;
     const archive = path.join(temporary, assetName);
     await download(`${releaseUrl}/${assetName}`, archive, timeoutMs);
     const stat = await fsp.lstat(archive);
@@ -381,23 +458,51 @@ async function runGenerationTransaction({
         "downloaded lifecycle generation does not match the attested candidate descriptor",
       );
     }
+    const dependency = await readGenerationDependency(archive, temporary, { dependencyRoot });
+    const dependencyIdentity = descriptorArtifact(candidate.descriptor, dependency.asset);
+    if (dependencyIdentity.sha256 !== dependency.archiveSHA256) {
+      throw new Error("candidate descriptor and generation bind different dependency archives");
+    }
+    const dependencyArchive = path.join(temporary, dependency.asset);
+    await download(`${releaseUrl}/${dependency.asset}`, dependencyArchive, timeoutMs);
+    const dependencyStat = await fsp.lstat(dependencyArchive);
+    if (
+      !dependencyStat.isFile() ||
+      dependencyStat.isSymbolicLink() ||
+      dependencyStat.size !== dependencyIdentity.size ||
+      (await sha256(dependencyArchive)) !== dependencyIdentity.sha256
+    ) {
+      throw new Error(
+        "downloaded dependency layer does not match the attested candidate descriptor",
+      );
+    }
     let generation = null;
+    let initializerExecutable = null;
     if (operation === "initialize") {
-      generation = await extractGeneration(archive, temporary, { dependencyRoot });
+      if (initializerExecutableRoot) {
+        initializerExecutable = await extractInitializerExecutable(archive, temporary, {
+          dependencyRoot,
+        });
+      } else {
+        generation = await extractGeneration(archive, temporary, { dependencyRoot });
+        initializerExecutable = path.join(generation, "payload", "bin", "fased-lifecycled");
+      }
     } else {
       await validateGenerationArchive(archive, { dependencyRoot });
     }
     if (operation === "initialize" && initializerExecutableRoot) {
       initializerStage = await stageInitializerExecutable(
-        path.join(generation, "payload", "bin", "fased-lifecycled"),
+        initializerExecutable,
         initializerExecutableRoot,
       );
     }
+    const sourceTopologyArguments = initialize?.sourceTopology
+      ? ["--source-topology", initialize.sourceTopology]
+      : [];
     const argumentsForAdministrator =
       operation === "initialize"
         ? [
-            initializerStage?.executable ??
-              path.join(generation, "payload", "bin", "fased-lifecycled"),
+            initializerStage?.executable ?? initializerExecutable,
             "initialize",
             "--profile",
             initialize.profile,
@@ -419,8 +524,11 @@ async function runGenerationTransaction({
             String(initialize.signerUid),
             "--signer-gid",
             String(initialize.signerGid),
-            "--generation",
-            generation,
+            "--generation-archive",
+            archive,
+            "--dependency-archive",
+            dependencyArchive,
+            ...sourceTopologyArguments,
           ]
         : null;
     let result;
@@ -437,6 +545,8 @@ async function runGenerationTransaction({
           lifecycle.config,
           "--generation-archive",
           archive,
+          "--dependency-archive",
+          dependencyArchive,
         ],
         { timeoutMs: Math.max(timeoutMs, 10 * 60_000) },
       );
@@ -515,7 +625,12 @@ function commandOptions(argv) {
     "--signer-uid",
     "--signer-gid",
   ];
-  if (values.size !== required.length || required.some((name) => !values.has(name))) {
+  const sourceTopology = values.get("--source-topology");
+  if (
+    (values.size !== required.length && values.size !== required.length + 1) ||
+    required.some((name) => !values.has(name)) ||
+    (values.size === required.length + 1 && sourceTopology === undefined)
+  ) {
     throw new Error("generation initializer is missing a required fixed input");
   }
   const profile = values.get("--profile");
@@ -549,6 +664,7 @@ function commandOptions(argv) {
       gatewayGid: integer("--gateway-gid"),
       signerUid: integer("--signer-uid"),
       signerGid: integer("--signer-gid"),
+      ...(sourceTopology ? { sourceTopology } : {}),
     },
   };
 }

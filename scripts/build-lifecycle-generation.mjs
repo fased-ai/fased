@@ -9,6 +9,9 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const OID = /^[a-f0-9]{40}$/u;
+const DIGEST = /^sha256:[a-f0-9]{64}$/u;
+const HASH = /^[a-f0-9]{64}$/u;
+const ASSET = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,255}$/u;
 const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
 
 function options(argv) {
@@ -67,6 +70,9 @@ async function copyTree(source, target, root = source) {
   }
   await fs.mkdir(target, { recursive: true, mode: 0o755 });
   for (const entry of (await fs.readdir(source)).toSorted()) {
+    if (source === root && entry === "node_modules") {
+      continue;
+    }
     await copyTree(path.join(source, entry), path.join(target, entry), root);
   }
 }
@@ -103,6 +109,9 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
     "version",
     "commit",
     "tree",
+    "dependency-hash",
+    "dependency-asset",
+    "dependency-archive-sha256",
   ];
   for (const name of required) {
     if (!args[name]) {
@@ -111,6 +120,13 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
   }
   if (!VERSION.test(args.version) || !OID.test(args.commit) || !OID.test(args.tree)) {
     throw new Error("generation source identity is invalid");
+  }
+  if (
+    !HASH.test(args["dependency-hash"]) ||
+    !ASSET.test(args["dependency-asset"]) ||
+    !DIGEST.test(args["dependency-archive-sha256"])
+  ) {
+    throw new Error("generation dependency identity is invalid");
   }
   const runtime = path.resolve(args.runtime);
   const releaseManifest = path.resolve(args["release-manifest"]);
@@ -144,6 +160,10 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
   const payload = path.join(output, "payload");
   await fs.mkdir(path.join(payload, "bin"), { recursive: true, mode: 0o755 });
   await copyTree(runtime, path.join(payload, "runtime"));
+  await fs.mkdir(path.join(payload, "runtime", "node_modules"), {
+    recursive: true,
+    mode: 0o755,
+  });
   await fs.copyFile(
     releaseManifest,
     path.join(payload, "runtime", ".fased-hosted-release-v2.json"),
@@ -172,6 +192,12 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
       args.tree,
       "--output",
       inventory,
+      "--dependency-hash",
+      args["dependency-hash"],
+      "--dependency-asset",
+      args["dependency-asset"],
+      "--dependency-archive-sha256",
+      args["dependency-archive-sha256"],
     ],
     {
       cwd: path.dirname(lifecycled),

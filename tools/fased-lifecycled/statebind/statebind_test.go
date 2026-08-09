@@ -42,18 +42,19 @@ func TestBindIsDeterministicAndDetectsStateChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	binder := Binder{Specs: []Spec{{Name: "signer", Path: state}}}
-	first, signerFirst, err := binder.Bind(context.Background(), nil, inventory, plan)
+	empty := planner.Installation{Kind: planner.InstallationEmpty}
+	first, signerFirst, err := binder.Bind(context.Background(), empty, inventory, plan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, signerSecond, err := binder.Bind(context.Background(), nil, inventory, plan)
+	second, signerSecond, err := binder.Bind(context.Background(), empty, inventory, plan)
 	if err != nil || second != first || signerSecond != signerFirst {
 		t.Fatalf("repeated binding changed: first=%s/%s second=%s/%s err=%v", first, signerFirst, second, signerSecond, err)
 	}
 	if err := os.WriteFile(file, []byte("state-b"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	changed, _, err := binder.Bind(context.Background(), nil, inventory, plan)
+	changed, _, err := binder.Bind(context.Background(), empty, inventory, plan)
 	if err != nil || changed == first {
 		t.Fatalf("state substitution was not reflected: digest=%s err=%v", changed, err)
 	}
@@ -71,15 +72,16 @@ func TestBindRejectsSymlinkHardlinkMissingAndNoncanonicalPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	binder := Binder{Specs: []Spec{{Name: "signer", Path: state}}}
+	empty := planner.Installation{Kind: planner.InstallationEmpty}
 	badPlan := plan
 	badPlan.Digest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	if _, _, err := binder.Bind(context.Background(), nil, inventory, badPlan); err == nil {
+	if _, _, err := binder.Bind(context.Background(), empty, inventory, badPlan); err == nil {
 		t.Fatal("noncanonical plan was accepted")
 	}
 	if err := os.Symlink(original, filepath.Join(state, "alias")); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := binder.Bind(context.Background(), nil, inventory, plan); err == nil {
+	if _, _, err := binder.Bind(context.Background(), empty, inventory, plan); err == nil {
 		t.Fatal("symlinked state was accepted")
 	}
 	if err := os.Remove(filepath.Join(state, "alias")); err != nil {
@@ -88,7 +90,7 @@ func TestBindRejectsSymlinkHardlinkMissingAndNoncanonicalPlan(t *testing.T) {
 	if err := os.Link(original, filepath.Join(state, "hardlink")); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := binder.Bind(context.Background(), nil, inventory, plan); err == nil {
+	if _, _, err := binder.Bind(context.Background(), empty, inventory, plan); err == nil {
 		t.Fatal("multiply linked state was accepted")
 	}
 	missing := Binder{Specs: []Spec{{Name: "signer", Path: filepath.Join(t.TempDir(), "missing")}}}
@@ -99,7 +101,8 @@ func TestBindRejectsSymlinkHardlinkMissingAndNoncanonicalPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := missing.Bind(context.Background(), &installed, inventory, installedPlan); err == nil {
+	managed := planner.Installation{Kind: planner.InstallationManaged, Manifest: &installed}
+	if _, _, err := missing.Bind(context.Background(), managed, inventory, installedPlan); err == nil {
 		t.Fatal("missing installed state was accepted")
 	}
 }
@@ -118,7 +121,7 @@ func TestBindCanTreatInstallationAsRootIdentityWithoutTraversingSelectors(t *tes
 		t.Fatal(err)
 	}
 	binder := Binder{Specs: []Spec{{Name: "signer", Path: install, RootOnly: true}}}
-	if _, _, err := binder.Bind(context.Background(), nil, inventory, plan); err != nil {
+	if _, _, err := binder.Bind(context.Background(), planner.Installation{Kind: planner.InstallationEmpty}, inventory, plan); err != nil {
 		t.Fatalf("installation selector was treated as protected user state: %v", err)
 	}
 }

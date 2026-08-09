@@ -794,6 +794,60 @@ default:other::---
     ).toThrow(/unsupported access ACL/u);
   });
 
+  it("allocates service identities without reusing operator-home ACL principals", () => {
+    expect(__testing.protectedLocalSystemUidRange("SYS_UID_MIN 995\nSYS_UID_MAX 999\n")).toEqual({
+      minimum: 995,
+      maximum: 999,
+    });
+    const acl = __testing.parseDirectoryAcl(
+      "user::rwx\nuser:998:--x\ngroup::---\nmask::--x\nother::---\n",
+    );
+    expect(__testing.namedUserAclUids(acl)).toEqual([998]);
+    expect(
+      __testing.selectProtectedLocalServiceUid({
+        usedUids: [995, 996, 999],
+        forbiddenUids: __testing.namedUserAclUids(acl),
+        minimum: 995,
+        maximum: 999,
+      }),
+    ).toBe(997);
+  });
+
+  it("journals before mutation and publishes the registry before supervisor start", () => {
+    const bootstrap = fs.readFileSync(
+      path.join(process.cwd(), "scripts", "protected-local-bootstrap.mjs"),
+      "utf8",
+    );
+    const installStart = bootstrap.indexOf("async function installProtectedLocal(params)");
+    const install = bootstrap.slice(installStart);
+    const collisionCheck = install.indexOf("assertFreshAllocationUnclaimed(layout)");
+    const journal = install.indexOf('persistBootstrapTransaction(transaction, "planned")');
+    const rootMutation = install.indexOf("prepareProtectedLocalRootDirectories(layout)");
+    const lifecycle = install.indexOf("applyProtectedLocalLifecycle(spec, layout)", rootMutation);
+    const registryCommit = install.indexOf("commitProtectedLocalInstance({", rootMutation);
+    const supervisorStart = install.indexOf(
+      'runSystem(systemctl, ["restart", layout.supervisorUnit])',
+    );
+    expect(collisionCheck).toBeGreaterThan(-1);
+    expect(collisionCheck).toBeLessThan(install.indexOf("try {", collisionCheck));
+    expect(journal).toBeGreaterThan(collisionCheck);
+    expect(journal).toBeLessThan(rootMutation);
+    expect(rootMutation).toBeLessThan(lifecycle);
+    expect(registryCommit).toBeGreaterThan(-1);
+    expect(registryCommit).toBeLessThan(supervisorStart);
+    expect(install.slice(supervisorStart)).toContain("completeCommittedBootstrapTransaction");
+    expect(
+      bootstrap.slice(bootstrap.indexOf("async function rollbackBootstrapTransaction")),
+    ).toContain("removeProtectedLocalInstance({");
+    expect(bootstrap).not.toContain("loadOrAllocateProtectedLocalInstance");
+  });
+
+  it("treats absent legacy state as a valid fresh rollback boundary", async () => {
+    await expect(
+      __testing.restoreLegacyLocalStateBoundary({ spec: {}, legacy: null }),
+    ).resolves.toBeUndefined();
+  });
+
   it("requires an exact restorable legacy user-unit state", () => {
     for (const state of ["enabled", "disabled", "static", "indirect", "masked"]) {
       expect(__testing.isRestorableLegacyGatewayUnitFileState(state)).toBe(true);

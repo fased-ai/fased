@@ -14,6 +14,8 @@ import {
 const temporary: string[] = [];
 const version = "1.2.3";
 const assetName = `fased-generation-linux-x64-v${version}.tar.gz`;
+const dependencyHash = "c".repeat(64);
+const dependencyAssetName = `fased-hosted-deps-linux-x64-${dependencyHash}.tar.gz`;
 
 afterEach(async () => {
   for (const directory of temporary.splice(0)) {
@@ -32,7 +34,25 @@ async function fixture(linkTarget = "../tool/bin/cli.js") {
   temporary.push(root);
   const archiveRoot = path.join(root, "archive");
   await fsp.mkdir(path.join(archiveRoot, "generation", "payload", "bin"), { recursive: true });
-  await fsp.writeFile(path.join(archiveRoot, "generation", "inventory.json"), "{}\n");
+  const dependencyRoot = path.join(root, "dependency");
+  await fsp.mkdir(path.join(dependencyRoot, "node_modules", "tool"), { recursive: true });
+  await fsp.writeFile(path.join(dependencyRoot, "node_modules", "tool", "index.js"), "exact\n");
+  const dependencyArchive = path.join(root, dependencyAssetName);
+  await tar.c({ cwd: dependencyRoot, file: dependencyArchive, gzip: true, portable: true }, [
+    "node_modules",
+  ]);
+  const dependencySHA256 = await digest(dependencyArchive);
+  await fsp.writeFile(
+    path.join(archiveRoot, "generation", "inventory.json"),
+    `${JSON.stringify({
+      schemaVersion: 3,
+      dependency: {
+        hash: dependencyHash,
+        asset: dependencyAssetName,
+        archiveSHA256: dependencySHA256,
+      },
+    })}\n`,
+  );
   await fsp.writeFile(path.join(archiveRoot, "generation", "payload", "bin", "fased"), "exact\n", {
     mode: 0o755,
   });
@@ -44,7 +64,11 @@ async function fixture(linkTarget = "../tool/bin/cli.js") {
   const archive = path.join(root, assetName);
   await tar.c({ cwd: archiveRoot, file: archive, gzip: true, portable: true }, ["generation"]);
   const stat = await fsp.stat(archive);
-  const artifacts = [{ name: assetName, sha256: await digest(archive), size: stat.size }];
+  const dependencyStat = await fsp.stat(dependencyArchive);
+  const artifacts = [
+    { name: assetName, sha256: await digest(archive), size: stat.size },
+    { name: dependencyAssetName, sha256: dependencySHA256, size: dependencyStat.size },
+  ];
   const descriptor = {
     schemaVersion: 3,
     version,
@@ -61,7 +85,7 @@ async function fixture(linkTarget = "../tool/bin/cli.js") {
   await fsp.writeFile(descriptorPath, `${JSON.stringify(descriptor)}\n`);
   const bundlePath = `${descriptorPath}.attestation.json`;
   await fsp.writeFile(bundlePath, "attestation\n");
-  return { root, archive, descriptorPath, bundlePath };
+  return { root, archive, dependencyArchive, descriptorPath, bundlePath };
 }
 
 describe("generation updater", () => {
@@ -92,6 +116,7 @@ describe("generation updater", () => {
       ["fased-hosting-candidate.json", value.descriptorPath],
       ["fased-hosting-candidate.json.attestation.json", value.bundlePath],
       [assetName, value.archive],
+      [dependencyAssetName, value.dependencyArchive],
     ]);
     const result = await runGenerationUpdate({
       lifecycle: {
@@ -117,6 +142,7 @@ describe("generation updater", () => {
     expect(verify).toHaveBeenCalledOnce();
     expect(administrator).toHaveBeenCalledTimes(2);
     expect(administrator.mock.calls[0][1]).toContain("stage");
+    expect(administrator.mock.calls[0][1]).toContain("--dependency-archive");
     expect(administrator.mock.calls[1][1]).toContain("apply");
     expect(administrator.mock.calls[1][1]).toContain("--generation-id");
   });
@@ -127,6 +153,7 @@ describe("generation updater", () => {
       ["fased-hosting-candidate.json", value.descriptorPath],
       ["fased-hosting-candidate.json.attestation.json", value.bundlePath],
       [assetName, value.archive],
+      [dependencyAssetName, value.dependencyArchive],
     ]);
     await expect(
       runGenerationUpdate({
@@ -191,6 +218,7 @@ describe("generation updater", () => {
       ["fased-hosting-candidate.json", value.descriptorPath],
       ["fased-hosting-candidate.json.attestation.json", value.bundlePath],
       [assetName, value.archive],
+      [dependencyAssetName, value.dependencyArchive],
     ]);
     await expect(
       runGenerationUpdate({
@@ -240,7 +268,9 @@ describe("generation updater", () => {
               ? value.descriptorPath
               : name?.endsWith("attestation.json")
                 ? value.bundlePath
-                : value.archive;
+                : name === dependencyAssetName
+                  ? value.dependencyArchive
+                  : value.archive;
           await fsp.copyFile(source, destination);
         },
         verifyOfficialAsset: async () => undefined,
@@ -248,6 +278,45 @@ describe("generation updater", () => {
         sudoPath: "/usr/bin/sudo",
       }),
     ).rejects.toThrow("artifact-set digest");
+    expect(administrator).not.toHaveBeenCalled();
+  });
+
+  it("rejects a dependency identity mismatch before privileged mutation", async () => {
+    const value = await fixture();
+    const descriptor = JSON.parse(await fsp.readFile(value.descriptorPath, "utf8"));
+    descriptor.artifacts[1].sha256 = `sha256:${"f".repeat(64)}`;
+    descriptor.artifactSetDigest = `sha256:${createHash("sha256")
+      .update(JSON.stringify(descriptor.artifacts))
+      .digest("hex")}`;
+    await fsp.writeFile(value.descriptorPath, JSON.stringify(descriptor));
+    const administrator = vi.fn();
+    await expect(
+      runGenerationUpdate({
+        lifecycle: {
+          supervisor: "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled",
+          config: "/var/lib/fased-lifecycled/platform.json",
+        },
+        version,
+        timeoutMs: 30_000,
+        baseUrl: "https://example.invalid/releases/download",
+        architecture: "x64",
+        download: async (url: string, destination: string) => {
+          const name = url.split("/").at(-1);
+          const source =
+            name === "fased-hosting-candidate.json"
+              ? value.descriptorPath
+              : name?.endsWith("attestation.json")
+                ? value.bundlePath
+                : name === dependencyAssetName
+                  ? value.dependencyArchive
+                  : value.archive;
+          await fsp.copyFile(source, destination);
+        },
+        verifyOfficialAsset: async () => undefined,
+        runAdministrator: administrator,
+        sudoPath: "/usr/bin/sudo",
+      }),
+    ).rejects.toThrow("bind different dependency archives");
     expect(administrator).not.toHaveBeenCalled();
   });
 
@@ -274,7 +343,9 @@ describe("generation updater", () => {
               ? value.descriptorPath
               : name?.endsWith("attestation.json")
                 ? value.bundlePath
-                : value.archive,
+                : name === dependencyAssetName
+                  ? value.dependencyArchive
+                  : value.archive,
             destination,
           );
         },
@@ -286,12 +357,13 @@ describe("generation updater", () => {
     expect(administrator).not.toHaveBeenCalled();
   });
 
-  it("initializes one canonical platform from the descriptor-bound generation", async () => {
+  it("initializes one canonical public-stable bridge from the descriptor-bound generation", async () => {
     const value = await fixture();
     const sources = new Map([
       ["fased-hosting-candidate.json", value.descriptorPath],
       ["fased-hosting-candidate.json.attestation.json", value.bundlePath],
       [assetName, value.archive],
+      [dependencyAssetName, value.dependencyArchive],
     ]);
     const administrator = vi.fn(async (_sudo, command: string[]) => ({
       ok: true,
@@ -311,6 +383,7 @@ describe("generation updater", () => {
         gatewayGid: 997,
         signerUid: 996,
         signerGid: 996,
+        sourceTopology: "local-user-systemd-v1",
       },
       version,
       timeoutMs: 30_000,
@@ -338,9 +411,12 @@ describe("generation updater", () => {
         "0123456789abcdef",
         "--gateway-port",
         "18789",
-        "--generation",
+        "--generation-archive",
+        "--source-topology",
+        "local-user-systemd-v1",
       ]),
     );
+    expect(command).not.toContain("--generation");
   });
 
   it("preserves a failed privileged initializer diagnostic emitted on stdout", async () => {
@@ -349,6 +425,7 @@ describe("generation updater", () => {
       ["fased-hosting-candidate.json", value.descriptorPath],
       ["fased-hosting-candidate.json.attestation.json", value.bundlePath],
       [assetName, value.archive],
+      [dependencyAssetName, value.dependencyArchive],
     ]);
     await expect(
       runGenerationInitialize({

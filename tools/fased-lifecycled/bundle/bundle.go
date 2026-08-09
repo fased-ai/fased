@@ -17,7 +17,9 @@ import (
 	"fased-lifecycled/model"
 )
 
-const CurrentInventorySchemaVersion uint32 = 2
+const CurrentInventorySchemaVersion uint32 = 3
+
+const LegacyInventorySchemaVersion uint32 = 2
 
 const (
 	ArtifactFile    = "file"
@@ -40,21 +42,41 @@ type Inventory struct {
 	Tree          string                 `json:"tree"`
 	StateSchemas  map[string]uint32      `json:"stateSchemas"`
 	Capabilities  model.CapabilityRanges `json:"capabilities"`
+	Dependency    *DependencyLayer       `json:"dependency,omitempty"`
 	Artifacts     []Artifact             `json:"artifacts"`
 }
 
+type DependencyLayer struct {
+	Hash          string `json:"hash"`
+	Asset         string `json:"asset"`
+	ArchiveSHA256 string `json:"archiveSHA256"`
+}
+
 func Inspect(root, version, commit, tree string, stateSchemas map[string]uint32, capabilities model.CapabilityRanges) (Inventory, model.Generation, error) {
+	return inspectInventory(root, version, commit, tree, stateSchemas, capabilities, nil)
+}
+
+func InspectWithDependency(root, version, commit, tree string, stateSchemas map[string]uint32, capabilities model.CapabilityRanges, dependency DependencyLayer) (Inventory, model.Generation, error) {
+	return inspectInventory(root, version, commit, tree, stateSchemas, capabilities, &dependency)
+}
+
+func inspectInventory(root, version, commit, tree string, stateSchemas map[string]uint32, capabilities model.CapabilityRanges, dependency *DependencyLayer) (Inventory, model.Generation, error) {
 	clean, err := secureRoot(root)
 	if err != nil {
 		return Inventory{}, model.Generation{}, err
 	}
+	schemaVersion := LegacyInventorySchemaVersion
+	if dependency != nil {
+		schemaVersion = CurrentInventorySchemaVersion
+	}
 	inventory := Inventory{
-		SchemaVersion: CurrentInventorySchemaVersion,
+		SchemaVersion: schemaVersion,
 		Version:       version,
 		Commit:        commit,
 		Tree:          tree,
 		StateSchemas:  stateSchemas,
 		Capabilities:  capabilities,
+		Dependency:    dependency,
 	}
 	err = filepath.WalkDir(clean, func(filePath string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -132,7 +154,7 @@ func Verify(root string, expected Inventory, generation model.Generation) error 
 	if bound != generation {
 		return errors.New("generation identity does not match the declared artifact inventory")
 	}
-	actual, actualGeneration, err := Inspect(root, expected.Version, expected.Commit, expected.Tree, expected.StateSchemas, expected.Capabilities)
+	actual, actualGeneration, err := inspectInventory(root, expected.Version, expected.Commit, expected.Tree, expected.StateSchemas, expected.Capabilities, expected.Dependency)
 	if err != nil {
 		return err
 	}
@@ -200,8 +222,16 @@ func validateInventory(inventory Inventory) error {
 	if inventory.SchemaVersion > CurrentInventorySchemaVersion {
 		return errors.New("artifact inventory schema is newer than supported")
 	}
-	if inventory.SchemaVersion != CurrentInventorySchemaVersion {
+	if inventory.SchemaVersion != LegacyInventorySchemaVersion && inventory.SchemaVersion != CurrentInventorySchemaVersion {
 		return errors.New("unsupported artifact inventory schema")
+	}
+	if inventory.SchemaVersion == LegacyInventorySchemaVersion && inventory.Dependency != nil {
+		return errors.New("legacy artifact inventory must not declare a dependency layer")
+	}
+	if inventory.SchemaVersion == CurrentInventorySchemaVersion {
+		if inventory.Dependency == nil || !validDependency(*inventory.Dependency) {
+			return errors.New("artifact inventory dependency layer is invalid")
+		}
 	}
 	if len(inventory.Artifacts) == 0 {
 		return errors.New("artifact inventory must not be empty")
@@ -254,6 +284,23 @@ func validateInventory(inventory Inventory) error {
 		ArtifactSetDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
 	}
 	return probe.Validate()
+}
+
+func validDependency(layer DependencyLayer) bool {
+	if len(layer.Hash) != 64 || !validDigest(layer.ArchiveSHA256) || layer.Asset == "" || len(layer.Asset) > 256 || path.Base(layer.Asset) != layer.Asset {
+		return false
+	}
+	for _, char := range layer.Hash {
+		if !strings.ContainsRune("0123456789abcdef", char) {
+			return false
+		}
+	}
+	for _, char := range layer.Asset {
+		if !(char >= 'a' && char <= 'z') && !(char >= 'A' && char <= 'Z') && !(char >= '0' && char <= '9') && !strings.ContainsRune("._+-", char) {
+			return false
+		}
+	}
+	return true
 }
 
 func secureRoot(root string) (string, error) {

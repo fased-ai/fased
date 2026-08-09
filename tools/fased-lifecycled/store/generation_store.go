@@ -65,11 +65,17 @@ func (s *Store) ImportGenerationArchive(archive string) (model.Generation, error
 	if err := os.MkdirAll(inboxRoot, 0o700); err != nil {
 		return model.Generation{}, err
 	}
+	if err := os.Chmod(inboxRoot, 0o700); err != nil {
+		return model.Generation{}, err
+	}
 	temporary, err := os.MkdirTemp(inboxRoot, ".archive-*")
 	if err != nil {
 		return model.Generation{}, err
 	}
 	defer os.RemoveAll(temporary)
+	if err := os.Chmod(temporary, 0o700); err != nil {
+		return model.Generation{}, err
+	}
 	if err := extractGenerationArchive(archive, temporary); err != nil {
 		return model.Generation{}, err
 	}
@@ -166,6 +172,9 @@ func readGenerationArchiveInventory(archive string) ([]byte, error) {
 }
 
 func extractGenerationArchive(archive, destination string) error {
+	if err := os.Chmod(destination, 0o711); err != nil {
+		return err
+	}
 	extractionRoot, err := os.OpenRoot(destination)
 	if err != nil {
 		return err
@@ -249,10 +258,14 @@ func extractGenerationArchive(archive, destination string) error {
 				return openErr
 			}
 			_, copyErr := io.CopyN(output, reader, header.Size)
+			chmodErr := output.Chmod(mode)
 			syncErr := output.Sync()
 			closeErr := output.Close()
 			if copyErr != nil {
 				return copyErr
+			}
+			if chmodErr != nil {
+				return chmodErr
 			}
 			if syncErr != nil {
 				return syncErr
@@ -449,6 +462,15 @@ const (
 func (s *Store) StageGeneration(generationID string) error {
 	if err := validateGenerationID(generationID); err != nil {
 		return err
+	}
+	dependency, err := s.GenerationDependency(generationID)
+	if err != nil {
+		return err
+	}
+	if dependency != nil {
+		if err := s.verifyDependencyPath(s.dependencyPath(dependency.Hash), *dependency); err != nil {
+			return fmt.Errorf("generation dependency verification failed: %w", err)
+		}
 	}
 	target := s.generationPath(generationID)
 	if _, err := os.Lstat(target); err == nil {

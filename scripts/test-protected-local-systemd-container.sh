@@ -18,6 +18,8 @@ OWN_ARTIFACT_DIR=0
 IMAGE_CACHE_DIR="${FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR:-}"
 PREINSTALLED_TOOLS="${FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS:-0}"
 PUBLIC_ACQUISITION="${FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION:-0}"
+BUILD_ONLY="${FASED_SYSTEMD_FIXTURE_BUILD_ONLY:-0}"
+ARTIFACT_OUTPUT_DIR="${FASED_SYSTEMD_FIXTURE_OUTPUT_DIR:-}"
 PREDECESSOR_VERSION="${FASED_SYSTEMD_FIXTURE_PREDECESSOR_VERSION:-}"
 PREDECESSOR_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_PREDECESSOR_ARTIFACT_DIR:-}"
 OWN_PREDECESSOR_ARTIFACT_DIR=0
@@ -27,22 +29,38 @@ OWN_MANAGED_PREDECESSOR_ARTIFACT_DIR=0
 SOURCE_REPO_DIR=""
 OWN_SOURCE_REPO_DIR=0
 
-command -v "$RUNTIME" >/dev/null 2>&1 || {
-  echo "Podman is required for the protected Local systemd fixtures." >&2
+[[ "$BUILD_ONLY" == "0" || "$BUILD_ONLY" == "1" ]] || {
+  echo "FASED_SYSTEMD_FIXTURE_BUILD_ONLY must be 0 or 1." >&2
   exit 1
 }
-if [[ ",$SCENARIOS," == *,install,* || ",$SCENARIOS," == *,managed-update,* ]]; then
-  command -v gh >/dev/null 2>&1 || {
-    echo "GitHub CLI is required for the literal Protected Local update fixture." >&2
+if [[ "$BUILD_ONLY" == "1" ]]; then
+  [[ -z "$ARTIFACT_DIR" && "$ARTIFACT_OUTPUT_DIR" == /* ]] || {
+    echo "Build-only mode requires one absolute FASED_SYSTEMD_FIXTURE_OUTPUT_DIR." >&2
     exit 1
   }
-fi
-[[ "$RUNTIME" == "podman" ]] || {
-  echo "The protected Local systemd fixtures currently require Podman." >&2
-  exit 1
-}
-if [[ -z "$OCI_RUNTIME" ]] && command -v runc >/dev/null 2>&1; then
-  OCI_RUNTIME="$(command -v runc)"
+  mkdir -p "$ARTIFACT_OUTPUT_DIR"
+  [[ -d "$ARTIFACT_OUTPUT_DIR" && -z "$(find "$ARTIFACT_OUTPUT_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]] || {
+    echo "The protected Local fixture output directory must be empty." >&2
+    exit 1
+  }
+else
+  command -v "$RUNTIME" >/dev/null 2>&1 || {
+    echo "Podman is required for the protected Local systemd fixtures." >&2
+    exit 1
+  }
+  if [[ ",$SCENARIOS," == *,install,* || ",$SCENARIOS," == *,managed-update,* ]]; then
+    command -v gh >/dev/null 2>&1 || {
+      echo "GitHub CLI is required for the literal Protected Local update fixture." >&2
+      exit 1
+    }
+  fi
+  [[ "$RUNTIME" == "podman" ]] || {
+    echo "The protected Local systemd fixtures currently require Podman." >&2
+    exit 1
+  }
+  if [[ -z "$OCI_RUNTIME" ]] && command -v runc >/dev/null 2>&1; then
+    OCI_RUNTIME="$(command -v runc)"
+  fi
 fi
 run_container() {
   if [[ -n "$OCI_RUNTIME" ]]; then
@@ -91,8 +109,12 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
   FASED_LIFECYCLE_BUILD_TREE="$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')" \
   FASED_LIFECYCLE_TARGETS=linux/amd64 \
     bash "$ROOT_DIR/scripts/release-fased-lifecycled.sh"
-  ARTIFACT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-artifact.XXXXXX")"
-  OWN_ARTIFACT_DIR=1
+  if [[ "$BUILD_ONLY" == "1" ]]; then
+    ARTIFACT_DIR="$ARTIFACT_OUTPUT_DIR"
+  else
+    ARTIFACT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-artifact.XXXXXX")"
+    OWN_ARTIFACT_DIR=1
+  fi
   pnpm --dir "$ROOT_DIR" hosted:artifact:from-dist --output "$ARTIFACT_DIR"
   cp -a "$ROOT_DIR/dist-native/release/." "$ARTIFACT_DIR/"
   x64_identity="$ARTIFACT_DIR/fased-hosted-app-linux-x64-v${VERSION}.tar.gz.release.json"
@@ -125,7 +147,8 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
     --commit "$COMMIT" \
     --output "$ARTIFACT_DIR/fased-hosted-release-v2.json"
   node "$ROOT_DIR/scripts/assemble-lifecycle-generation.mjs" \
-    --runtime-archive "$ARTIFACT_DIR/fased-hosted-linux-x64-v${VERSION}.tar.gz" \
+    --runtime-archive "$ARTIFACT_DIR/$x64_app" \
+    --dependency-archive "$ARTIFACT_DIR/$x64_dependency" \
     --release-manifest "$ARTIFACT_DIR/fased-hosted-release-v2.json" \
     --signer "$ARTIFACT_DIR/fased-signerd-linux-amd64" \
     --lifecycled "$ARTIFACT_DIR/fased-lifecycled-linux-amd64" \
@@ -197,6 +220,20 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
     --workflow-run-attempt 1
   printf '{"fixtureOfflineAttestation":true}\n' \
     >"$ARTIFACT_DIR/fased-hosting-candidate.json.attestation.json"
+fi
+if [[ "$BUILD_ONLY" == "1" ]]; then
+  for required_asset in \
+    fased-hosted-release-v2.json \
+    fased-hosting-candidate.json \
+    fased-hosting-candidate.json.attestation.json \
+    "fased-generation-linux-x64-v${VERSION}.tar.gz"; do
+    [[ -s "$ARTIFACT_DIR/$required_asset" ]] || {
+      echo "The protected Local fixture artifact is missing $required_asset." >&2
+      exit 1
+    }
+  done
+  printf '%s\n' "$ARTIFACT_DIR"
+  exit 0
 fi
 [[ -f "$ARTIFACT_DIR/fased-hosted-linux-x64-v${VERSION}.tar.gz" ]] || {
   echo "The protected Local fixture requires the exact x64 packaged runtime artifact." >&2

@@ -24,6 +24,7 @@ type Request struct {
 	RequestID              string    `json:"requestId"`
 	Operation              Operation `json:"operation"`
 	TargetGenerationID     string    `json:"targetGenerationId,omitempty"`
+	SourceTopology         string    `json:"sourceTopology,omitempty"`
 	ExpectedManifestDigest string    `json:"expectedManifestDigest,omitempty"`
 	TransactionID          string    `json:"transactionId,omitempty"`
 }
@@ -74,7 +75,7 @@ func (request Request) Validate() error {
 	}
 	switch request.Operation {
 	case OperationInspect:
-		if request.TargetGenerationID != "" || request.ExpectedManifestDigest != "" || request.TransactionID != "" {
+		if request.TargetGenerationID != "" || request.SourceTopology != "" || request.ExpectedManifestDigest != "" || request.TransactionID != "" {
 			return errors.New("inspect does not accept mutation selectors")
 		}
 	case OperationConverge:
@@ -84,6 +85,14 @@ func (request Request) Validate() error {
 		if request.ExpectedManifestDigest != "absent" && !digestPattern.MatchString(request.ExpectedManifestDigest) {
 			return errors.New("converge requires an expected manifest digest or absent")
 		}
+		if request.SourceTopology != "" {
+			if request.ExpectedManifestDigest != "absent" {
+				return errors.New("public-stable bridge requires an absent canonical manifest")
+			}
+			if len(request.SourceTopology) > 64 || !regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`).MatchString(request.SourceTopology) {
+				return errors.New("converge source topology is invalid")
+			}
+		}
 		if request.TransactionID != "" {
 			return errors.New("converge allocates its own transaction identity")
 		}
@@ -91,7 +100,7 @@ func (request Request) Validate() error {
 		if !uuidPattern.MatchString(request.TransactionID) {
 			return errors.New("recover requires a transaction id")
 		}
-		if request.TargetGenerationID != "" || request.ExpectedManifestDigest != "" {
+		if request.TargetGenerationID != "" || request.SourceTopology != "" || request.ExpectedManifestDigest != "" {
 			return errors.New("recover uses journal-bound generation identity")
 		}
 	default:

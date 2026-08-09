@@ -58,15 +58,17 @@ type Participant struct {
 	rootPrefix      string
 }
 
+const absentManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
 func (participant *Participant) Prepare(ctx context.Context, tx model.Transaction) (engine.ParticipantReceipt, error) {
-	request, fresh, err := participant.request(tx)
+	request, offline, err := participant.request(tx)
 	if err != nil {
 		return engine.ParticipantReceipt{}, err
 	}
 	if err := participant.writeGate(request); err != nil {
 		return engine.ParticipantReceipt{}, err
 	}
-	if !fresh {
+	if !offline {
 		receipt, err := participant.Caller.Call(ctx, "v2.lifecycle.upgrade.prepare", request)
 		if err != nil {
 			return engine.ParticipantReceipt{}, err
@@ -82,8 +84,8 @@ func (participant *Participant) Verify(ctx context.Context, tx model.Transaction
 	if receipt != engineReceipt(tx) {
 		return errors.New("signer participant receipt does not match transaction")
 	}
-	request, fresh, err := participant.request(tx)
-	if err != nil || fresh {
+	request, offline, err := participant.request(tx)
+	if err != nil || offline {
 		return err
 	}
 	result, err := participant.Caller.Call(ctx, "v2.lifecycle.upgrade.verify", request)
@@ -94,11 +96,11 @@ func (participant *Participant) Verify(ctx context.Context, tx model.Transaction
 }
 
 func (participant *Participant) Commit(ctx context.Context, tx model.Transaction) error {
-	request, fresh, err := participant.request(tx)
+	request, offline, err := participant.request(tx)
 	if err != nil {
 		return err
 	}
-	if !fresh {
+	if !offline {
 		result, err := participant.Caller.Call(ctx, "v2.lifecycle.upgrade.commit", request)
 		if err != nil {
 			return err
@@ -111,11 +113,11 @@ func (participant *Participant) Commit(ctx context.Context, tx model.Transaction
 }
 
 func (participant *Participant) Abort(ctx context.Context, tx model.Transaction) error {
-	request, fresh, err := participant.request(tx)
+	request, offline, err := participant.request(tx)
 	if err != nil {
 		return err
 	}
-	if fresh {
+	if offline {
 		return participant.removeGate(request)
 	}
 	if _, liveErr := participant.Caller.Call(ctx, "v2.lifecycle.upgrade.abort", request); liveErr == nil {
@@ -153,7 +155,12 @@ func (participant *Participant) request(tx model.Transaction) (UpgradeRequest, b
 	}
 	request := UpgradeRequest{SchemaVersion: 1, TransactionID: tx.ID, TargetGenerationID: tx.Target.ID,
 		StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.SignerPlanDigest, FromSchema: from, ToSchema: to}
-	return request, from == 0, nil
+	// Fresh installs and the one pre-supervisor public-stable bridge have no
+	// compatible live signer protocol. The explicit migrator owns the offline
+	// custody copy; the newly started signer and Gateway health checks verify it
+	// before commit. Managed updates always bind a previous generation and use
+	// the typed live signer protocol.
+	return request, from == 0 || tx.ManifestDigest == absentManifestDigest, nil
 }
 
 func (participant *Participant) writeGate(request UpgradeRequest) error {
