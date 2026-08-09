@@ -3122,6 +3122,11 @@ resolved_host_profile() {
     printf 'local\n'
     return 0
   fi
+  if [[ -f "$FASED_CONFIG_DIR/lifecycle.json" ]] && \
+    grep -Eq '"profile"[[:space:]]*:[[:space:]]*"protected-local"' "$FASED_CONFIG_DIR/lifecycle.json"; then
+    printf 'local\n'
+    return 0
+  fi
 
   local profile
   profile="$(pass_args_value_after "--host-profile" || true)"
@@ -3171,14 +3176,19 @@ resolve_protected_local_system_node() {
 
 read_protected_local_env() {
   local config="${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}"
-  [[ -f "$config" ]] || return 1
+  local projection="$FASED_CONFIG_DIR/lifecycle.json"
+  [[ -f "$config" || -f "$projection" ]] || return 1
   protected_local_value() {
     node -e '
       const fs = require("node:fs");
-      const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-      const result = value?.env?.vars?.[process.argv[2]];
+      const configPath = process.argv[1];
+      const projectionPath = process.argv[2];
+      const key = process.argv[3];
+      const config = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, "utf8")) : null;
+      const projection = fs.existsSync(projectionPath) ? JSON.parse(fs.readFileSync(projectionPath, "utf8")) : null;
+      const result = config?.env?.vars?.[key] ?? projection?.environment?.[key];
       if (typeof result === "string") process.stdout.write(result);
-    ' "$config" "$1"
+    ' "$config" "$projection" "$1"
   }
   FASED_PROTECTED_LOCAL="$(protected_local_value FASED_PROTECTED_LOCAL)"
   FASED_PROTECTED_LOCAL_INSTANCE="$(protected_local_value FASED_PROTECTED_LOCAL_INSTANCE)"

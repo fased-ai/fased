@@ -33,6 +33,7 @@ type TargetAdapter struct {
 	Config      Config
 	Identity    model.PlatformIdentity
 	Units       UnitStore
+	Files       LifecycleFileStore
 	Systemd     Systemd
 	Generations GenerationManager
 	Health      GatewayHealth
@@ -54,7 +55,7 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 	if err != nil {
 		return err
 	}
-	for _, relative := range []string{"bin/fased-gateway-launch", "bin/fased-signerd"} {
+	for _, relative := range []string{"bin/fased-gateway-launch", "bin/fased-signerd", "runtime/scripts/fased-signer-owner-hosting.sh"} {
 		if err := requireExecutable(filepath.Join(payload, relative)); err != nil {
 			return fmt.Errorf("target generation %s: %w", relative, err)
 		}
@@ -63,7 +64,22 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 	if err != nil {
 		return err
 	}
-	return adapter.Units.Prepare(tx.ID, adapter.renderTargetUnits(payload, tx.Target.Version, dependency))
+	if err := adapter.Units.Prepare(tx.ID, adapter.renderTargetUnits(payload, tx.Target.Version, dependency)); err != nil {
+		return err
+	}
+	helper, err := os.ReadFile(filepath.Join(payload, "runtime/scripts/fased-signer-owner-hosting.sh"))
+	if err != nil {
+		return err
+	}
+	wrapper, err := RenderSignerOwnerWrapper(adapter.Config)
+	if err != nil {
+		return err
+	}
+	paths := CanonicalSignerOwnerFiles(adapter.Config)
+	return adapter.Files.Prepare(tx.ID, map[string]LifecycleFile{
+		paths[0]: {Data: helper, Mode: 0o755},
+		paths[1]: {Data: wrapper, Mode: 0o755},
+	})
 }
 
 func (adapter *TargetAdapter) Quiesce(ctx context.Context, tx model.Transaction) error {
@@ -82,6 +98,9 @@ func (adapter *TargetAdapter) Quiesce(ctx context.Context, tx model.Transaction)
 }
 
 func (adapter *TargetAdapter) Activate(ctx context.Context, tx model.Transaction) error {
+	if err := adapter.Files.Activate(tx.ID, CanonicalSignerOwnerFiles(adapter.Config)); err != nil {
+		return err
+	}
 	if err := adapter.Units.Activate(tx.ID, adapter.targetUnits()); err != nil {
 		return err
 	}
@@ -119,10 +138,13 @@ func (adapter *TargetAdapter) Commit(ctx context.Context, tx model.Transaction) 
 	if err := adapter.Predecessor.Commit(ctx, tx); err != nil {
 		return err
 	}
-	return adapter.Units.Discard(tx.ID)
+	return errors.Join(adapter.Units.Discard(tx.ID), adapter.Files.Discard(tx.ID))
 }
 
 func (adapter *TargetAdapter) Restore(ctx context.Context, tx model.Transaction) error {
+	if err := adapter.Files.Restore(tx.ID, CanonicalSignerOwnerFiles(adapter.Config)); err != nil {
+		return err
+	}
 	if err := adapter.Units.Restore(tx.ID, adapter.targetUnits()); err != nil {
 		return err
 	}
@@ -141,11 +163,11 @@ func (adapter *TargetAdapter) Restore(ctx context.Context, tx model.Transaction)
 }
 
 func (adapter *TargetAdapter) Discard(ctx context.Context, tx model.Transaction) error {
-	return errors.Join(adapter.Units.Discard(tx.ID), adapter.Predecessor.Discard(ctx, tx))
+	return errors.Join(adapter.Units.Discard(tx.ID), adapter.Files.Discard(tx.ID), adapter.Predecessor.Discard(ctx, tx))
 }
 
 func (adapter *TargetAdapter) validate(tx model.Transaction) error {
-	if adapter == nil || adapter.Units == nil || adapter.Systemd == nil || adapter.Generations == nil || adapter.Health == nil || adapter.Predecessor == nil || adapter.Network == nil {
+	if adapter == nil || adapter.Units == nil || adapter.Files == nil || adapter.Systemd == nil || adapter.Generations == nil || adapter.Health == nil || adapter.Predecessor == nil || adapter.Network == nil {
 		return errors.New("target platform adapter is incomplete")
 	}
 	if err := adapter.Config.Validate(); err != nil {

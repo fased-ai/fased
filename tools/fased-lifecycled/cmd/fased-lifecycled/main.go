@@ -728,6 +728,10 @@ func runTarget(ctx context.Context, config platform.Config, socketPath string) e
 	if err != nil {
 		return err
 	}
+	files, err := platform.NewDiskLifecycleFileStore(config)
+	if err != nil {
+		return err
+	}
 	systemd, err := systemdClient()
 	if err != nil {
 		return err
@@ -753,7 +757,7 @@ func runTarget(ctx context.Context, config platform.Config, socketPath string) e
 		predecessor = &platform.HostingPredecessor{Config: config, Systemd: systemd, State: platform.CommandServiceState{Binary: "/usr/bin/systemctl"}}
 		networkPolicy = platform.CommandHostingNetworkPolicy{TailscaleBinary: "/usr/bin/tailscale", SocketBinary: "/usr/bin/ss"}
 	}
-	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Systemd: systemd, Generations: state, Health: platform.LoopbackGatewayHealth{}, Predecessor: predecessor, Network: networkPolicy}
+	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Files: files, Systemd: systemd, Generations: state, Health: platform.LoopbackGatewayHealth{}, Predecessor: predecessor, Network: networkPolicy}
 	targetEngine := &engine.TargetEngine{Journal: state, Generations: state,
 		Migrator: &migrator.SchemaMigrator{Registry: registry}, Signer: signerParticipant,
 		Adapter: targetAdapter, Installation: &platform.ManifestCommitter{Store: state, Identity: identity}}

@@ -181,7 +181,15 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 		if err != nil {
 			return nil, err
 		}
-		return replacement.Rollback, nil
+		projection, err := platform.CanonicalCLIProjectionJSON(config)
+		if err != nil {
+			return nil, errors.Join(err, replacement.Rollback())
+		}
+		projectionReplacement, err := platform.InstallFileTransactional(filepath.Join(config.OwnerStateRoot, "lifecycle.json"), projection, 0o640, config.Operator.UID, principals.Groups.Config.GID)
+		if err != nil {
+			return nil, errors.Join(err, replacement.Rollback())
+		}
+		return func() error { return errors.Join(projectionReplacement.Rollback(), replacement.Rollback()) }, nil
 	}})
 	steps = append(steps, platform.BootstrapStep{Phase: platform.BootstrapPhaseUnits, Apply: func() (platform.BootstrapUndo, error) {
 		identity, err := config.Identity()

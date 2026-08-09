@@ -18,6 +18,25 @@ type fakeUnits struct {
 	definitions map[string][]byte
 }
 
+type fakeLifecycleFiles struct{ calls *[]string }
+
+func (files fakeLifecycleFiles) Prepare(string, map[string]LifecycleFile) error {
+	*files.calls = append(*files.calls, "files.prepare")
+	return nil
+}
+func (files fakeLifecycleFiles) Activate(string, []string) error {
+	*files.calls = append(*files.calls, "files.activate")
+	return nil
+}
+func (files fakeLifecycleFiles) Restore(string, []string) error {
+	*files.calls = append(*files.calls, "files.restore")
+	return nil
+}
+func (files fakeLifecycleFiles) Discard(string) error {
+	*files.calls = append(*files.calls, "files.discard")
+	return nil
+}
+
 func (units *fakeUnits) Prepare(_ string, definitions map[string][]byte) error {
 	*units.calls = append(*units.calls, "units.prepare")
 	units.definitions = definitions
@@ -105,13 +124,20 @@ func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) 
 			t.Fatal(err)
 		}
 	}
+	helper := filepath.Join(root, "runtime", "scripts", "fased-signer-owner-hosting.sh")
+	if err := os.MkdirAll(filepath.Dir(helper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	operator, gateway, signer := principals()
 	config, err := NewConfig(model.ProfileProtectedLocal, "example", "/home/example/.fased", operator, gateway, signer)
 	if err != nil {
 		t.Fatal(err)
 	}
 	calls := []string{}
-	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls}, Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Network: NoNetworkPolicy{}}, tx, &calls
+	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Files: fakeLifecycleFiles{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls}, Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Network: NoNetworkPolicy{}}, tx, &calls
 }
 
 func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing.T) {
@@ -132,12 +158,12 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 		t.Fatal(err)
 	}
 	want := []string{
-		"units.prepare", "systemd.stop:fased-gateway-example.service", "systemd.stop:fased-signerd-example.service",
-		"units.activate", "systemd.reload", "systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
+		"units.prepare", "files.prepare", "systemd.stop:fased-gateway-example.service", "systemd.stop:fased-signerd-example.service",
+		"files.activate", "units.activate", "systemd.reload", "systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
 		"systemd.enable:fased-gateway-example.service", "systemd.start:fased-gateway-example.service",
 		"systemd.active:fased-signerd-example.service", "systemd.active:fased-gateway-example.service",
 		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		"generation.activate:" + digestB + ":" + digestA, "units.discard",
+		"generation.activate:" + digestB + ":" + digestA, "units.discard", "files.discard",
 	}
 	if !reflect.DeepEqual(*calls, want) {
 		t.Fatalf("unexpected target adapter order:\n got=%v\nwant=%v", *calls, want)
@@ -223,10 +249,17 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	helper := filepath.Join(root, "runtime", "scripts", "fased-signer-owner-hosting.sh")
+	if err := os.MkdirAll(filepath.Dir(helper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	calls := []string{}
 	units := &fakeUnits{calls: &calls}
 	adapter := &TargetAdapter{
-		Config: config, Identity: identity, Units: units,
+		Config: config, Identity: identity, Units: units, Files: fakeLifecycleFiles{calls: &calls},
 		Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls},
 		Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Network: NoNetworkPolicy{},
 	}
@@ -246,12 +279,12 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"units.prepare", "systemd.stop:fased-gateway.service", "systemd.stop:fased-signerd.service",
-		"units.activate", "systemd.reload", "systemd.enable:fased-signerd.service", "systemd.start:fased-signerd.service",
+		"units.prepare", "files.prepare", "systemd.stop:fased-gateway.service", "systemd.stop:fased-signerd.service",
+		"files.activate", "units.activate", "systemd.reload", "systemd.enable:fased-signerd.service", "systemd.start:fased-signerd.service",
 		"systemd.enable:fased-gateway.service", "systemd.start:fased-gateway.service",
 		"systemd.active:fased-signerd.service", "systemd.active:fased-gateway.service",
 		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		"generation.activate:" + digestB + ":" + digestA, "units.discard",
+		"generation.activate:" + digestB + ":" + digestA, "units.discard", "files.discard",
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("unexpected Hosting adapter order:\n got=%v\nwant=%v", calls, want)
@@ -276,7 +309,7 @@ func TestTargetAdapterRestoresPreviousButDoesNotStartAbsentFreshServices(t *test
 	if err := adapter.Restore(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(*calls, []string{"units.restore", "systemd.reload", "systemd.start:fased-signerd-example.service", "systemd.start:fased-gateway-example.service"}) {
+	if !reflect.DeepEqual(*calls, []string{"files.restore", "units.restore", "systemd.reload", "systemd.start:fased-signerd-example.service", "systemd.start:fased-gateway-example.service"}) {
 		t.Fatalf("update restore order changed: %v", *calls)
 	}
 	*calls = nil
@@ -284,7 +317,7 @@ func TestTargetAdapterRestoresPreviousButDoesNotStartAbsentFreshServices(t *test
 	if err := adapter.Restore(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(*calls, []string{"units.restore", "systemd.reload"}) {
+	if !reflect.DeepEqual(*calls, []string{"files.restore", "units.restore", "systemd.reload"}) {
 		t.Fatalf("fresh rollback started absent services: %v", *calls)
 	}
 }
