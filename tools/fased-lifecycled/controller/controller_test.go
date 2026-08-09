@@ -1,12 +1,72 @@
 package controller
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
+	"net"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"fased-lifecycled/engine"
 	"fased-lifecycled/model"
 )
+
+func TestClientWaitsForTargetControllerSocketWithoutReplayingRequest(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "controller.sock")
+	requestCount := make(chan int, 1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		listener, err := net.Listen("unix", socketPath)
+		if err != nil {
+			requestCount <- -1
+			return
+		}
+		defer listener.Close()
+		connection, err := listener.Accept()
+		if err != nil {
+			requestCount <- -1
+			return
+		}
+		defer connection.Close()
+		frame, err := bufio.NewReader(connection).ReadBytes('\n')
+		if err != nil {
+			requestCount <- -1
+			return
+		}
+		var input request
+		if err := json.Unmarshal(frame, &input); err != nil || input.Operation != operationRun {
+			requestCount <- -1
+			return
+		}
+		requestCount <- 1
+		_ = json.NewEncoder(connection).Encode(response{
+			SchemaVersion: schemaVersion,
+			Result:        engine.Result{Outcome: engine.OutcomePrepared, Phase: model.PhaseVerified},
+		})
+	}()
+	client := Client{SocketPath: socketPath, Timeout: time.Second}
+	result, err := client.Run(context.Background(), model.Transaction{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != engine.OutcomePrepared || <-requestCount != 1 {
+		t.Fatal("controller readiness wait changed or replayed the request")
+	}
+}
+
+func TestClientControllerReadinessWaitIsBounded(t *testing.T) {
+	client := Client{SocketPath: filepath.Join(t.TempDir(), "missing.sock"), Timeout: 120 * time.Millisecond}
+	started := time.Now()
+	_, err := client.Run(context.Background(), model.Transaction{})
+	if err == nil || err.Error() != "target controller socket did not become ready" {
+		t.Fatalf("unexpected readiness result: %v", err)
+	}
+	if time.Since(started) > time.Second {
+		t.Fatal("controller readiness wait exceeded its bound")
+	}
+}
 
 func TestServiceRejectsUnboundOperationsBeforeEngine(t *testing.T) {
 	service := Service{Engine: &engine.TargetEngine{}}

@@ -940,6 +940,12 @@ install -m 0644 "/artifacts/$app_asset" "$release_assets/$app_asset"
 install -m 0644 "/artifacts/$dependency_asset" "$release_assets/$dependency_asset"
 install -m 0644 /artifacts/fased-signerd-linux-amd64 \
   "$release_assets/fased-signerd-linux-amd64"
+install -m 0644 /artifacts/fased-hosting-candidate.json \
+  "$release_assets/fased-hosting-candidate.json"
+install -m 0644 /artifacts/fased-hosting-candidate.json.attestation.json \
+  "$release_assets/fased-hosting-candidate.json.attestation.json"
+install -m 0644 "/artifacts/fased-generation-linux-x64-v${version}.tar.gz" \
+  "$release_assets/fased-generation-linux-x64-v${version}.tar.gz"
 
 # H0 exercises one x64 host. Complete the cross-platform evidence inventory
 # with byte-identical fixture copies so the real evidence verifier can validate
@@ -1245,7 +1251,7 @@ if [[ -n "\${values[--protected-local-gateway-health-timeout-ms]:-}" ]]; then
     "\${values[--protected-local-gateway-health-timeout-ms]}"
   )
 fi
-exec "\${values[--protected-local-node-binary]}" \
+bootstrap_result="\$("\${values[--protected-local-node-binary]}" \
   /repo/scripts/protected-local-bootstrap.mjs install \
   --source-root "$release_root" \
   --signer-binary "$root_store/verified-assets/fased-signerd" \
@@ -1262,7 +1268,36 @@ exec "\${values[--protected-local-node-binary]}" \
   --profile "\${values[--protected-local-profile]}" \
   --gateway-port "\${values[--protected-local-gateway-port]}" \
   --gateway-mode "\${values[--protected-local-gateway-mode]}" \
-  "\${health_args[@]}"
+  "\${health_args[@]}")"
+printf '%s\n' "\$bootstrap_result"
+if [[ "\${values[--protected-local-gateway-mode]}" == "activate" ]]; then
+  lifecycle_instance="\$(printf '%s\n' "\$bootstrap_result" | \
+    "\${values[--protected-local-node-binary]}" -e '
+      let input = "";
+      process.stdin.on("data", (chunk) => (input += chunk));
+      process.stdin.on("end", () => {
+        const value = JSON.parse(input.trim().split(/\\n/u).filter(Boolean).at(-1));
+        if (!/^[a-f0-9]{16}$/u.test(String(value.instanceId || ""))) process.exit(1);
+        process.stdout.write(value.instanceId);
+      });
+    ')"
+  gateway_user="fsgw-\${lifecycle_instance}"
+  signer_user="fssg-\${lifecycle_instance}"
+  NODE_PATH="$root_store/verified-dependencies/node_modules" \
+    "\${values[--protected-local-node-binary]}" \
+    "$release_root/scripts/generation-updater.mjs" initialize \
+    --version "\${values[--release]}" \
+    --profile protected-local \
+    --instance "\$lifecycle_instance" \
+    --owner-state "\${values[--protected-local-state-dir]}" \
+    --gateway-port "\${values[--protected-local-gateway-port]}" \
+    --operator-uid "\${values[--protected-local-operator-uid]}" \
+    --operator-gid "\${values[--protected-local-operator-gid]}" \
+    --gateway-uid "\$(id -u "\$gateway_user")" \
+    --gateway-gid "\$(id -g "\$gateway_user")" \
+    --signer-uid "\$(id -u "\$signer_user")" \
+    --signer-gid "\$(id -g "\$signer_user")"
+fi
 EOF_PROTECTED_INSTALLER
 chmod 0755 /usr/local/libexec/fased-fixture-protected-installer.sh
 cat >/usr/local/bin/sudo <<'EOF_SUDO_SHIM'

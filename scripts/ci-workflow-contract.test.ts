@@ -556,15 +556,16 @@ describe("CI workflow routing", () => {
     expect(linuxStepNames.indexOf("Download exact native lifecycle assets")).toBeLessThan(
       linuxStepNames.indexOf("Restore executable modes on exact native lifecycle assets"),
     );
-    expect(
-      linuxStepNames.indexOf("Restore executable modes on exact native lifecycle assets"),
-    ).toBeLessThan(linuxStepNames.indexOf("Assemble exact lifecycle generation"));
     expect(linuxText).toContain('test ! -L "$executable"');
     expect(linuxText).toContain('chmod 0755 "$executable"');
-    expect(linuxText).toContain("assemble-lifecycle-generation.mjs");
     expect(
       jobs["linux"]?.steps?.some((step) => step.name === "Assemble exact lifecycle generation"),
-    ).toBe(true);
+    ).toBe(false);
+    expect(candidateText).toContain("assemble-lifecycle-generation.mjs");
+    expect(candidateText).toContain("--release-manifest");
+    expect(candidateText.indexOf("build-hosted-release-manifest.mjs")).toBeLessThan(
+      candidateText.indexOf("assemble-lifecycle-generation.mjs"),
+    );
     expect(signerText).toContain("release-fased-lifecycled.sh");
     expect(signerText).toContain("fased-lifecycled-checksums.txt");
     expect(linuxText).not.toContain("hosted:artifact:build");

@@ -244,23 +244,6 @@ jobs:
       - name: Package hosted runtime artifact from exact shared build
         run: pnpm hosted:artifact:from-dist --output .artifacts/hosted-runtime
 
-      - name: Assemble exact lifecycle generation
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="$(node -p "require('./package.json').version")"
-          go_arch=amd64
-          if [[ "${{ matrix.arch }}" == arm64 ]]; then go_arch=arm64; fi
-          node scripts/assemble-lifecycle-generation.mjs \
-            --runtime-archive ".artifacts/hosted-runtime/fased-hosted-linux-${{ matrix.arch }}-v${version}.tar.gz" \
-            --signer "dist-native/release/fased-signerd-linux-${go_arch}" \
-            --lifecycled "dist-native/release/fased-lifecycled-linux-${go_arch}" \
-            --output-dir .artifacts/hosted-runtime \
-            --version "$version" \
-            --commit "$GITHUB_SHA" \
-            --tree "$(git rev-parse 'HEAD^{tree}')" \
-            --architecture "${{ matrix.arch }}"
-
       - name: Attest hosted runtime release assets
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
@@ -474,6 +457,23 @@ jobs:
             --version "$package_version" \
             --commit "$GITHUB_SHA" \
             --output .artifacts/hosted-runtime/fased-hosted-release-v2.json
+          for architecture in x64 arm64; do
+            go_arch=amd64
+            if [[ "$architecture" == arm64 ]]; then go_arch=arm64; fi
+            signer=".artifacts/hosted-runtime/fased-signerd-linux-${go_arch}"
+            lifecycled=".artifacts/hosted-runtime/fased-lifecycled-linux-${go_arch}"
+            chmod 0755 "$signer" "$lifecycled"
+            node scripts/assemble-lifecycle-generation.mjs \
+              --runtime-archive ".artifacts/hosted-runtime/fased-hosted-linux-${architecture}-v${package_version}.tar.gz" \
+              --release-manifest .artifacts/hosted-runtime/fased-hosted-release-v2.json \
+              --signer "$signer" \
+              --lifecycled "$lifecycled" \
+              --output-dir .artifacts/hosted-runtime \
+              --version "$package_version" \
+              --commit "$GITHUB_SHA" \
+              --tree "$(git rev-parse 'HEAD^{tree}')" \
+              --architecture "$architecture"
+          done
           readarray -t lifecycle_times < <(node -e '
             const issued = new Date(process.argv[1]);
             const expires = new Date(issued.getTime() + 365 * 24 * 60 * 60 * 1000);

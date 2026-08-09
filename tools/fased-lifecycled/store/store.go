@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	manifestName  = "installation-manifest.json"
-	maxRecordSize = 1 << 20
+	manifestName               = "installation-manifest.json"
+	maxDurableRecordSize       = 1 << 20
+	maxGenerationInventorySize = 16 << 20
 )
 
 type Authority string
@@ -34,7 +35,14 @@ func Open(root string) (*Store, error) {
 		return nil, errors.New("lifecycle store root must be absolute")
 	}
 	clean := filepath.Clean(root)
-	if err := os.MkdirAll(clean, 0o700); err != nil {
+	if err := os.MkdirAll(clean, 0o711); err != nil {
+		return nil, err
+	}
+	// The immutable payload below generations is executed by the separate
+	// signer and Gateway principals. Permit traversal without permitting
+	// directory listing; durable records below this root remain mode 0600 in
+	// root-only subdirectories.
+	if err := os.Chmod(clean, 0o711); err != nil {
 		return nil, err
 	}
 	resolved, err := filepath.EvalSymlinks(clean)
@@ -200,6 +208,14 @@ func digest(data []byte) string {
 }
 
 func readRegular(path string) ([]byte, error) {
+	return readRegularBounded(path, maxDurableRecordSize, "durable lifecycle record")
+}
+
+func readGenerationInventory(path string) ([]byte, error) {
+	return readRegularBounded(path, maxGenerationInventorySize, "generation inventory")
+}
+
+func readRegularBounded(path string, limit int64, label string) ([]byte, error) {
 	before, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
@@ -219,12 +235,12 @@ func readRegular(path string) ([]byte, error) {
 	if !os.SameFile(before, after) {
 		return nil, errors.New("durable lifecycle record changed while opening")
 	}
-	data, err := io.ReadAll(io.LimitReader(file, maxRecordSize+1))
+	data, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > maxRecordSize {
-		return nil, errors.New("durable lifecycle record exceeds size limit")
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("%s exceeds size limit", label)
 	}
 	return data, nil
 }

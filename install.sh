@@ -619,7 +619,8 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       ')"
       local gateway_user="fsgw-${lifecycle_instance}"
       local signer_user="fssg-${lifecycle_instance}"
-      "$protected_local_node_binary" \
+      NODE_PATH="$selected_root_store/verified-dependencies/node_modules" \
+        "$protected_local_node_binary" \
         "$selected_package_root/scripts/generation-updater.mjs" initialize \
         --version "$release_version" \
         --profile protected-local \

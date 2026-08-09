@@ -42,7 +42,7 @@ func (adapter *TargetAdapter) Prepare(_ context.Context, tx model.Transaction) e
 			return fmt.Errorf("target generation %s: %w", relative, err)
 		}
 	}
-	return adapter.Units.Prepare(tx.ID, adapter.renderTargetUnits(payload))
+	return adapter.Units.Prepare(tx.ID, adapter.renderTargetUnits(payload, tx.Target.Version))
 }
 
 func (adapter *TargetAdapter) Quiesce(ctx context.Context, _ model.Transaction) error {
@@ -139,7 +139,7 @@ func (adapter *TargetAdapter) startOrder() []string {
 	return []string{adapter.Identity.Services["signer"], adapter.Identity.Services["gateway"]}
 }
 
-func (adapter *TargetAdapter) renderTargetUnits(payload string) map[string][]byte {
+func (adapter *TargetAdapter) renderTargetUnits(payload, version string) map[string][]byte {
 	runtimeDirectory := strings.TrimPrefix(adapter.Config.RuntimeRoot, "/run/")
 	if adapter.Config.Profile == model.ProfileProtectedLocal {
 		runtimeDirectory = strings.Join([]string{
@@ -201,6 +201,7 @@ Environment=FASED_GATEWAY_MODE=managed
 Environment=FASED_MANAGED_INTERNAL=1
 Environment=FASED_GATEWAY_SERVICE=1
 Environment=FASED_RUNTIME_SOURCE=managed-package
+Environment=FASED_VERSION=%s
 Environment=FASED_HOST_PROFILE=%s
 Environment=FASED_GATEWAY_PORT=%d
 Environment=FASED_WALLET_LOCAL_SIGNER_SOCKET=%s
@@ -222,7 +223,7 @@ WantedBy=multi-user.target
 `, adapter.Config.InstanceID, adapter.Identity.Services["signer"], adapter.Identity.Services["signer"],
 		adapter.Config.Gateway.UID, adapter.Config.Gateway.GID, adapter.Config.ConfigGroupName(), payload,
 		adapter.Config.OwnerHome(), adapter.Config.OwnerStateRoot,
-		adapter.Config.OwnerStateRoot, adapter.Config.OwnerStateRoot, payload, profileEnvironment(adapter.Config.Profile), adapter.Config.GatewayPort, adapter.Config.ApplicationSocket(),
+		adapter.Config.OwnerStateRoot, adapter.Config.OwnerStateRoot, payload, version, profileEnvironment(adapter.Config.Profile), adapter.Config.GatewayPort, adapter.Config.ApplicationSocket(),
 		filepath.Join(payload, "bin/fased-gateway-launch"), adapter.Config.OwnerStateRoot)
 	return map[string][]byte{
 		adapter.Identity.Services["signer"]: []byte(signer), adapter.Identity.Services["gateway"]: []byte(gateway),

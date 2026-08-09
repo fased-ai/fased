@@ -2,14 +2,16 @@
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import fs from "node:fs";
+import fs, { constants as fsConstants } from "node:fs";
 import fsp from "node:fs/promises";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const loadDependency = createRequire(import.meta.url);
 
 const DIGEST = /^sha256:[a-f0-9]{64}$/u;
 const OID = /^[a-f0-9]{40}$/u;
@@ -133,8 +135,23 @@ async function sha256(file) {
   return `sha256:${hash.digest("hex")}`;
 }
 
-async function extractGeneration(archive, destination) {
-  const tar = await import("tar");
+async function loadArchiveDependency(dependencyRoot) {
+  if (!dependencyRoot) {
+    return loadDependency("tar");
+  }
+  if (!path.isAbsolute(dependencyRoot) || path.resolve(dependencyRoot) !== dependencyRoot) {
+    throw new Error("lifecycle archive dependency root is invalid");
+  }
+  const packagePath = path.join(dependencyRoot, "package.json");
+  const packageInfo = await fsp.lstat(packagePath);
+  if (!packageInfo.isFile() || packageInfo.isSymbolicLink()) {
+    throw new Error("lifecycle archive dependency root is unsafe");
+  }
+  return createRequire(packagePath)("tar");
+}
+
+export async function extractGeneration(archive, destination, { dependencyRoot } = {}) {
+  const tar = await loadArchiveDependency(dependencyRoot);
   let entries = 0;
   let bytes = 0;
   let unsafeEntry = false;
@@ -174,10 +191,56 @@ async function extractGeneration(archive, destination) {
   if (unsafeEntry) {
     throw new Error("lifecycle generation archive contains an unsafe entry");
   }
-  await Promise.resolve(
-    tar.x({ file: archive, cwd: destination, strict: true, preservePaths: false }),
-  );
+  // The caller may have a hardened umask such as 0117, which strips every
+  // executable bit and invalidates the verified generation. This updater is a
+  // single-purpose process, so apply a private extraction umask only for the
+  // awaited archive operation and restore the caller's value immediately.
+  const previousUmask = process.umask(0o077);
+  try {
+    await Promise.resolve(
+      tar.x({ file: archive, cwd: destination, strict: true, preservePaths: false }),
+    );
+  } finally {
+    process.umask(previousUmask);
+  }
   return path.join(destination, "generation");
+}
+
+export async function stageInitializerExecutable(source, root) {
+  if (!path.isAbsolute(root) || path.resolve(root) !== root) {
+    throw new Error("lifecycle initializer executable root is invalid");
+  }
+  const rootInfo = await fsp.lstat(root);
+  const expectedUid = typeof process.getuid === "function" ? process.getuid() : -1;
+  if (
+    !rootInfo.isDirectory() ||
+    rootInfo.isSymbolicLink() ||
+    rootInfo.uid !== expectedUid ||
+    (rootInfo.mode & 0o022) !== 0
+  ) {
+    throw new Error("lifecycle initializer executable root is unsafe");
+  }
+  const directory = await fsp.mkdtemp(path.join(root, ".lifecycle-bootstrap-"));
+  await fsp.chmod(directory, 0o700);
+  const executable = path.join(directory, "fased-lifecycled");
+  try {
+    await fsp.copyFile(source, executable, fsConstants.COPYFILE_EXCL);
+    await fsp.chmod(executable, 0o500);
+    const info = await fsp.lstat(executable);
+    if (
+      !info.isFile() ||
+      info.isSymbolicLink() ||
+      info.nlink !== 1 ||
+      info.uid !== expectedUid ||
+      (info.mode & 0o777) !== 0o500
+    ) {
+      throw new Error("staged lifecycle initializer executable is unsafe");
+    }
+    return Object.freeze({ directory, executable });
+  } catch (error) {
+    await fsp.rm(directory, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 export async function runGenerationUpdate({
@@ -190,6 +253,7 @@ export async function runGenerationUpdate({
   verifyOfficialAsset,
   runAdministrator,
   sudoPath,
+  dependencyRoot,
 }) {
   return await runGenerationTransaction({
     lifecycle,
@@ -201,6 +265,7 @@ export async function runGenerationUpdate({
     verifyOfficialAsset,
     runAdministrator,
     sudoPath,
+    dependencyRoot,
     operation: "apply",
   });
 }
@@ -214,6 +279,8 @@ export async function runGenerationInitialize({
   download,
   verifyOfficialAsset,
   runAdministrator,
+  initializerExecutableRoot,
+  dependencyRoot,
 }) {
   return await runGenerationTransaction({
     version,
@@ -223,6 +290,8 @@ export async function runGenerationInitialize({
     download,
     verifyOfficialAsset,
     runAdministrator,
+    initializerExecutableRoot,
+    dependencyRoot,
     operation: "initialize",
     initialize,
   });
@@ -240,6 +309,8 @@ async function runGenerationTransaction({
   runAdministrator,
   sudoPath,
   operation,
+  initializerExecutableRoot,
+  dependencyRoot,
 }) {
   if (!VERSION.test(version)) {
     throw new Error("resolved lifecycle generation version is invalid");
@@ -269,6 +340,7 @@ async function runGenerationTransaction({
     }
   }
   const temporary = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-generation-update-"));
+  let initializerStage = null;
   try {
     const releaseUrl = `${baseUrl.replace(/\/+$/u, "")}/v${version}`;
     const descriptor = path.join(temporary, "fased-hosting-candidate.json");
@@ -304,11 +376,18 @@ async function runGenerationTransaction({
         "downloaded lifecycle generation does not match the attested candidate descriptor",
       );
     }
-    const generation = await extractGeneration(archive, temporary);
+    const generation = await extractGeneration(archive, temporary, { dependencyRoot });
+    if (operation === "initialize" && initializerExecutableRoot) {
+      initializerStage = await stageInitializerExecutable(
+        path.join(generation, "payload", "bin", "fased-lifecycled"),
+        initializerExecutableRoot,
+      );
+    }
     const argumentsForAdministrator =
       operation === "initialize"
         ? [
-            path.join(generation, "payload", "bin", "fased-lifecycled"),
+            initializerStage?.executable ??
+              path.join(generation, "payload", "bin", "fased-lifecycled"),
             "initialize",
             "--profile",
             initialize.profile,
@@ -348,18 +427,23 @@ async function runGenerationTransaction({
       { timeoutMs },
     );
     if (!result.ok) {
-      throw new Error(result.stderr.trim() || "privileged lifecycle apply failed");
+      throw new Error(
+        result.stderr.trim() || result.stdout.trim() || "privileged lifecycle apply failed",
+      );
     }
     const response = JSON.parse(result.stdout.trim());
-    if (!new Set(["COMMITTED", "ALREADY_CURRENT"]).has(response.outcome)) {
+    if (!new Set(["UPDATED", "COMMITTED", "ALREADY_CURRENT"]).has(response.outcome)) {
       throw new Error("lifecycle supervisor returned an invalid convergence outcome");
     }
     return Object.freeze({
       version,
-      outcome: response.outcome,
+      outcome: response.outcome === "ALREADY_CURRENT" ? "ALREADY_CURRENT" : "COMMITTED",
       transactionId: response.transactionId || null,
     });
   } finally {
+    if (initializerStage) {
+      await fsp.rm(initializerStage.directory, { recursive: true, force: true });
+    }
     await fsp.rm(temporary, { recursive: true, force: true });
   }
 }
@@ -459,6 +543,7 @@ async function commandMain(argv) {
     timeoutMs,
     baseUrl: "https://github.com/fased-ai/fased/releases/download",
     architecture: process.arch,
+    initializerExecutableRoot: "/opt/fased",
     download: async (url, destination) => {
       await execFileAsync(
         curl,
@@ -505,7 +590,11 @@ async function commandMain(argv) {
         });
         return { ok: true, stdout, stderr };
       } catch (error) {
-        return { ok: false, stdout: error.stdout ?? "", stderr: error.stderr ?? error.message };
+        return {
+          ok: false,
+          stdout: error.stdout ?? "",
+          stderr: error.stderr || error.message,
+        };
       }
     },
   });

@@ -16,6 +16,7 @@ function args(argv) {
   }
   for (const required of [
     "--runtime-archive",
+    "--release-manifest",
     "--signer",
     "--lifecycled",
     "--output-dir",
@@ -44,6 +45,8 @@ export async function assembleLifecycleGeneration(argv = process.argv.slice(2)) 
     await buildLifecycleGeneration([
       "--runtime",
       runtimeRoot,
+      "--release-manifest",
+      path.resolve(value["release-manifest"]),
       "--signer",
       path.resolve(value.signer),
       "--lifecycled",

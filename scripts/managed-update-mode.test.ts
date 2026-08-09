@@ -1,6 +1,13 @@
 import fs from "node:fs";
+import fsp from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { selectManagedUpdateMode } from "./fased-managed-updater-core.mjs";
+import {
+  run,
+  selectInstalledUpdateOwner,
+  selectManagedUpdateMode,
+} from "./fased-managed-updater-core.mjs";
 
 describe("managed update mode", () => {
   const supportedMigration = {
@@ -82,5 +89,99 @@ describe("managed update mode", () => {
     expect(inspection).toBeGreaterThan(entry);
     expect(rejection).toBeGreaterThan(-1);
     expect(lock).toBeGreaterThan(rejection);
+  });
+
+  it("never lets a production installation fall back to the portable mutation engine", () => {
+    const lifecycle = {
+      instance: "0123456789abcdef",
+      config: "/var/lib/fased-local/0123456789abcdef/lifecycle/platform.json",
+      supervisor: "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled",
+    };
+
+    expect(selectInstalledUpdateOwner({ profile: "protected-local", lifecycle })).toEqual({
+      mode: "generation",
+    });
+    expect(selectInstalledUpdateOwner({ profile: "hosting", lifecycle })).toEqual({
+      mode: "generation",
+    });
+    expect(selectInstalledUpdateOwner({ profile: "source", lifecycle: null })).toEqual({
+      mode: "portable-development",
+    });
+    expect(selectInstalledUpdateOwner({ profile: "local", lifecycle: null })).toEqual({
+      mode: "bootstrap-required",
+      reason: "lifecycle_supervisor_missing",
+    });
+    for (const profile of ["protected-local", "hosting"]) {
+      expect(selectInstalledUpdateOwner({ profile, lifecycle: null })).toEqual({
+        mode: "repair-required",
+        reason: "lifecycle_supervisor_missing",
+      });
+    }
+  });
+
+  it("uses the canonical hosted artifact base for generation updates", () => {
+    const source = fs.readFileSync(
+      new URL("./fased-managed-updater-core.mjs", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain(
+      "process.env.FASED_HOSTED_ARTIFACT_BASE_URL || DEFAULT_RELEASE_BASE_URL",
+    );
+    expect(source).not.toContain("process.env.FASED_RELEASE_BASE_URL");
+  });
+
+  it("returns the one-time Local bootstrap without mutating pre-supervisor state", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-update-owner-"));
+    const previousStateDir = process.env.FASED_STATE_DIR;
+    try {
+      process.env.FASED_STATE_DIR = root;
+      const sentinel = path.join(root, "wallet-state-preserved");
+      await fsp.writeFile(sentinel, "exact\n", { mode: 0o600 });
+      await fsp.writeFile(
+        path.join(root, "install.json"),
+        `${JSON.stringify({
+          schemaVersion: 2,
+          profile: "local",
+          updateChannel: "stable",
+          runtime: { activeVersion: "1.0.0" },
+        })}\n`,
+        { mode: 0o600 },
+      );
+
+      await expect(run(["update"])).rejects.toThrow(
+        "Lifecycle bootstrap required: run the official Local installer once",
+      );
+      await expect(fsp.readFile(sentinel, "utf8")).resolves.toBe("exact\n");
+      await expect(fsp.stat(path.join(root, "update.lock"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } finally {
+      if (previousStateDir === undefined) {
+        delete process.env.FASED_STATE_DIR;
+      } else {
+        process.env.FASED_STATE_DIR = previousStateDir;
+      }
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the offline protected Local fixture on the production generation initializer", () => {
+    const fixture = fs.readFileSync(
+      new URL("./docker/protected-local-systemd/run.sh", import.meta.url),
+      "utf8",
+    );
+    const shim = fixture.slice(
+      fixture.indexOf("cat >/usr/local/libexec/fased-fixture-protected-installer.sh"),
+      fixture.indexOf("EOF_PROTECTED_INSTALLER", fixture.indexOf("EOF_PROTECTED_INSTALLER") + 1),
+    );
+    expect(shim).toContain("bootstrap_result=");
+    expect(shim).toContain('NODE_PATH="$root_store/verified-dependencies/node_modules"');
+    expect(shim).toContain('"$release_root/scripts/generation-updater.mjs" initialize');
+    expect(shim.indexOf('generation-updater.mjs" initialize')).toBeGreaterThan(
+      shim.indexOf("protected-local-bootstrap.mjs install"),
+    );
+    expect(shim).not.toContain(
+      'exec "\\${values[--protected-local-node-binary]}" \\\n+  /repo/scripts/protected-local-bootstrap.mjs install',
+    );
   });
 });

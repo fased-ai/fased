@@ -1,8 +1,10 @@
 package store
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"fased-lifecycled/bundle"
@@ -150,6 +152,31 @@ func TestStoreRejectsSymlinkedDurableFiles(t *testing.T) {
 	}
 }
 
+func TestGenerationInventoryHasItsOwnBoundedSizeClass(t *testing.T) {
+	root := t.TempDir()
+	inventoryPath := filepath.Join(root, generationInventoryName)
+	data := bytes.Repeat([]byte{'a'}, maxDurableRecordSize+1)
+	if err := os.WriteFile(inventoryPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readRegular(inventoryPath); err == nil {
+		t.Fatal("oversized durable record was accepted")
+	}
+	got, err := readGenerationInventory(inventoryPath)
+	if err != nil {
+		t.Fatalf("valid generation inventory size was rejected: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatal("generation inventory bytes changed while reading")
+	}
+	if err := os.Truncate(inventoryPath, maxGenerationInventorySize+1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readGenerationInventory(inventoryPath); err == nil {
+		t.Fatal("oversized generation inventory was accepted")
+	}
+}
+
 func TestStageAndActivateUseOnlyContentAddressedStorePaths(t *testing.T) {
 	root := t.TempDir()
 	store, err := Open(root)
@@ -248,6 +275,91 @@ func TestImportGenerationCopiesAndReverifiesExactBytes(t *testing.T) {
 	}
 	if _, err := state.ImportGeneration(source); err == nil {
 		t.Fatal("tampered import source was accepted")
+	}
+}
+
+func TestCopyRegularTreePreservesExecutableModeUnderRestrictiveUmask(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	destination := filepath.Join(root, "destination")
+	if err := os.MkdirAll(filepath.Join(source, generationPayloadName, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(destination, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(source, generationPayloadName, "bin", "launcher")
+	if err := os.WriteFile(launcher, []byte("exact"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, generationInventoryName), []byte("private"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previousUmask := syscall.Umask(0o117)
+	defer syscall.Umask(previousUmask)
+	if err := copyRegularTree(source, destination); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(destination, generationPayloadName, "bin", "launcher"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("copied executable mode is %04o, expected 0755", info.Mode().Perm())
+	}
+	for _, directory := range []string{".", generationPayloadName, filepath.Join(generationPayloadName, "bin")} {
+		directoryInfo, err := os.Stat(filepath.Join(destination, directory))
+		if err != nil {
+			t.Fatal(err)
+		}
+		expected := os.FileMode(0o755)
+		if directory == "." {
+			expected = 0o711
+		}
+		if directoryInfo.Mode().Perm() != expected {
+			t.Fatalf("copied directory %s mode is %04o, expected %04o", directory, directoryInfo.Mode().Perm(), expected)
+		}
+	}
+	inventoryInfo, err := os.Stat(filepath.Join(destination, generationInventoryName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inventoryInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("copied inventory mode is %04o, expected 0600", inventoryInfo.Mode().Perm())
+	}
+}
+
+func TestStoreMakesOnlyGenerationTraversalPublic(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "lifecycle")
+	previousUmask := syscall.Umask(0o117)
+	defer syscall.Umask(previousUmask)
+	state, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rootInfo.Mode().Perm() != 0o711 {
+		t.Fatalf("lifecycle root is not traverse-only: mode=%04o", rootInfo.Mode().Perm())
+	}
+	if err := os.MkdirAll(filepath.Join(root, "inbox"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(root, "inbox"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.StageGeneration(digestA); err == nil {
+		// No generation exists; the call must fail before making any target.
+		t.Fatal("missing generation was staged")
+	}
+	inboxInfo, err := os.Stat(filepath.Join(root, "inbox"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inboxInfo.Mode().Perm() != 0o700 {
+		t.Fatalf("inbox lost root-only mode: mode=%04o", inboxInfo.Mode().Perm())
 	}
 }
 

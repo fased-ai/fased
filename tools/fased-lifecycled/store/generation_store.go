@@ -20,7 +20,7 @@ func (s *Store) ImportGeneration(source string) (model.Generation, error) {
 	if !filepath.IsAbs(source) || filepath.Clean(source) != source {
 		return model.Generation{}, errors.New("generation import source must be absolute and clean")
 	}
-	inventoryJSON, err := readRegular(filepath.Join(source, generationInventoryName))
+	inventoryJSON, err := readGenerationInventory(filepath.Join(source, generationInventoryName))
 	if err != nil {
 		return model.Generation{}, err
 	}
@@ -78,9 +78,10 @@ func copyRegularTree(source, destination string) error {
 			return err
 		}
 		if relative == "." {
-			return os.Chmod(destination, 0o700)
+			return os.Chmod(destination, 0o711)
 		}
 		target := filepath.Join(destination, relative)
+		inPayload := relative == generationPayloadName || strings.HasPrefix(relative, generationPayloadName+string(filepath.Separator))
 		if entry.Type()&os.ModeSymlink != 0 {
 			link, err := os.Readlink(current)
 			if err != nil {
@@ -101,7 +102,14 @@ func copyRegularTree(source, destination string) error {
 			return err
 		}
 		if entry.IsDir() {
-			return os.Mkdir(target, 0o700)
+			mode := os.FileMode(0o700)
+			if inPayload {
+				mode = 0o755
+			}
+			if err := os.Mkdir(target, mode); err != nil {
+				return err
+			}
+			return os.Chmod(target, mode)
 		}
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("generation import contains unsupported entry %q", relative)
@@ -111,12 +119,24 @@ func copyRegularTree(source, destination string) error {
 			return err
 		}
 		mode := os.FileMode(0o600)
+		if inPayload {
+			mode = 0o644
+		}
 		if info.Mode().Perm()&0o111 != 0 {
-			mode = 0o700
+			if inPayload {
+				mode = 0o755
+			} else {
+				mode = 0o700
+			}
 		}
 		output, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 		if err != nil {
 			input.Close()
+			return err
+		}
+		if err := output.Chmod(mode); err != nil {
+			input.Close()
+			output.Close()
 			return err
 		}
 		_, copyErr := io.Copy(output, io.LimitReader(input, info.Size()+1))
@@ -157,7 +177,10 @@ func (s *Store) StageGeneration(generationID string) error {
 		return fmt.Errorf("inbox generation verification failed: %w", err)
 	}
 	generationsRoot := filepath.Join(s.root, "generations")
-	if err := os.MkdirAll(generationsRoot, 0o700); err != nil {
+	if err := os.MkdirAll(generationsRoot, 0o711); err != nil {
+		return err
+	}
+	if err := os.Chmod(generationsRoot, 0o711); err != nil {
 		return err
 	}
 	if err := os.Rename(inbox, target); err != nil {
@@ -221,7 +244,7 @@ func (s *Store) ReadGenerationContract(generationID string) (bundle.Inventory, m
 		return bundle.Inventory{}, model.Generation{}, err
 	}
 	root := s.generationPath(generationID)
-	inventoryJSON, err := readRegular(filepath.Join(root, generationInventoryName))
+	inventoryJSON, err := readGenerationInventory(filepath.Join(root, generationInventoryName))
 	if err != nil {
 		return bundle.Inventory{}, model.Generation{}, err
 	}
@@ -251,7 +274,7 @@ func (s *Store) verifiedGeneration(generationID string) (model.Generation, error
 }
 
 func (s *Store) verifyGenerationPath(root, generationID string) (model.Generation, error) {
-	inventoryJSON, err := readRegular(filepath.Join(root, generationInventoryName))
+	inventoryJSON, err := readGenerationInventory(filepath.Join(root, generationInventoryName))
 	if err != nil {
 		return model.Generation{}, err
 	}

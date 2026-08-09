@@ -6321,20 +6321,28 @@ export async function run(argv = process.argv.slice(2)) {
     return;
   }
   const lifecycle = generationLifecycle(manifest);
-  if (lifecycle && !parsed.options.status && !parsed.options.dryRun) {
+  const updateOwner = selectInstalledUpdateOwner({ profile: manifest.profile, lifecycle });
+  if (updateOwner.mode === "generation" && !parsed.options.status && !parsed.options.dryRun) {
     const targetVersion = await resolveTargetVersion(parsed.options);
+    const dependencyRoot = await resolveLinkTarget(paths.currentLink);
+    if (!dependencyRoot) {
+      throw new Error(
+        "Managed runtime dependency root is missing; run the official repair installer once.",
+      );
+    }
     const sudoPath = rootControlledExecutable(["/usr/bin/sudo", "/bin/sudo"], "sudo");
     const result = await runGenerationUpdate({
       lifecycle,
       version: targetVersion,
       timeoutMs: parsed.options.timeoutMs,
-      baseUrl: process.env.FASED_RELEASE_BASE_URL || DEFAULT_RELEASE_BASE_URL,
+      baseUrl: process.env.FASED_HOSTED_ARTIFACT_BASE_URL || DEFAULT_RELEASE_BASE_URL,
       architecture: resolveArchitecture(),
       download: downloadToFile,
       verifyOfficialAsset: ({ assetPath, version, timeoutMs, bundlePath }) =>
         verifyOfficialAsset(assetPath, version, timeoutMs, bundlePath),
       runAdministrator: runInteractiveAdministrator,
       sudoPath,
+      dependencyRoot,
     });
     if (parsed.options.json) {
       process.stdout.write(`${JSON.stringify({ ok: true, ...result })}\n`);
@@ -6345,7 +6353,34 @@ export async function run(argv = process.argv.slice(2)) {
     }
     return;
   }
+  if (!parsed.options.status && !parsed.options.dryRun) {
+    if (updateOwner.mode === "bootstrap-required") {
+      throw new Error(
+        "Lifecycle bootstrap required: run the official Local installer once; it preserves state and skips onboarding.",
+      );
+    }
+    if (updateOwner.mode === "repair-required") {
+      const instruction =
+        manifest.profile === "hosting"
+          ? "Run the documented verified Hosting root bootstrap once."
+          : "Run the official Local repair installer once.";
+      throw new Error(`Repair required: ${updateOwner.reason}. ${instruction}`);
+    }
+  }
   await updateManagedRuntime(parsed.options);
+}
+
+export function selectInstalledUpdateOwner({ profile, lifecycle }) {
+  if (lifecycle) {
+    return Object.freeze({ mode: "generation" });
+  }
+  if (profile === "source") {
+    return Object.freeze({ mode: "portable-development" });
+  }
+  if (profile === "local") {
+    return Object.freeze({ mode: "bootstrap-required", reason: "lifecycle_supervisor_missing" });
+  }
+  return Object.freeze({ mode: "repair-required", reason: "lifecycle_supervisor_missing" });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
