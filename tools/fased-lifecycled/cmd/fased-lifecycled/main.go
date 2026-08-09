@@ -172,11 +172,12 @@ func runInventory(args []string, output io.Writer) error {
 func runInitialize(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("initialize", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var profileRaw, instanceID, ownerStateRoot, generationRoot, generationArchive, dependencyArchive, sourceTopology string
+	var profileRaw, instanceID, ownerStateRoot, operatorUser, generationRoot, generationArchive, dependencyArchive, sourceTopology string
 	var operatorUID, operatorGID, gatewayUID, gatewayGID, signerUID, signerGID, gatewayPort uint64
 	flags.StringVar(&profileRaw, "profile", "", "")
 	flags.StringVar(&instanceID, "instance", "", "")
 	flags.StringVar(&ownerStateRoot, "owner-state", "", "")
+	flags.StringVar(&operatorUser, "operator-user", "", "")
 	flags.StringVar(&generationRoot, "generation", "", "")
 	flags.StringVar(&generationArchive, "generation-archive", "", "")
 	flags.StringVar(&dependencyArchive, "dependency-archive", "", "")
@@ -195,10 +196,42 @@ func runInitialize(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	config, err := platform.NewConfigWithGatewayPort(model.Profile(profileRaw), instanceID, ownerStateRoot, uint16(gatewayPort),
-		platform.Principal{UID: uint32(operatorUID), GID: uint32(operatorGID)},
-		platform.Principal{UID: uint32(gatewayUID), GID: uint32(gatewayGID)},
-		platform.Principal{UID: uint32(signerUID), GID: uint32(signerGID)})
+	profile := model.Profile(profileRaw)
+	goOwnedPrincipals, err := initializationUsesGoOwnedPrincipals(operatorUser, operatorUID, operatorGID, gatewayUID, gatewayGID, signerUID, signerGID)
+	if err != nil {
+		return err
+	}
+	var config platform.Config
+	if goOwnedPrincipals {
+		principalSystem, err := platform.NewLinuxPrincipalSystem()
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		principals, err := platform.ProvisionBootstrapPrincipals(ctx, principalSystem, platform.BootstrapRequest{
+			Profile: profile, InstanceID: instanceID, OperatorUser: operatorUser, OwnerStateRoot: ownerStateRoot,
+		})
+		if err != nil {
+			return err
+		}
+		config, err = platform.NewConfigWithGatewayPort(profile, instanceID, ownerStateRoot, uint16(gatewayPort), principals.Operator, principals.Gateway, principals.Signer)
+		if err != nil {
+			return err
+		}
+		pathPlan, err := platform.BootstrapPathPlan(config, principals)
+		if err != nil {
+			return err
+		}
+		if err := platform.ApplyBootstrapPathPlan(pathPlan); err != nil {
+			return err
+		}
+	} else {
+		config, err = platform.NewConfigWithGatewayPort(profile, instanceID, ownerStateRoot, uint16(gatewayPort),
+			platform.Principal{UID: uint32(operatorUID), GID: uint32(operatorGID)},
+			platform.Principal{UID: uint32(gatewayUID), GID: uint32(gatewayGID)},
+			platform.Principal{UID: uint32(signerUID), GID: uint32(signerGID)})
+	}
 	if err != nil {
 		return err
 	}
@@ -264,6 +297,17 @@ func runInitialize(args []string, output io.Writer) error {
 		return rollback(err)
 	}
 	return nil
+}
+
+func initializationUsesGoOwnedPrincipals(operatorUser string, numeric ...uint64) (bool, error) {
+	callerOwned := false
+	for _, value := range numeric {
+		callerOwned = callerOwned || value != 0
+	}
+	if operatorUser != "" && callerOwned {
+		return false, errors.New("lifecycle initialization cannot mix Go-owned and caller-owned principals")
+	}
+	return operatorUser != "", nil
 }
 
 func initializationApplyArguments(configPath, generationRoot, generationArchive, dependencyArchive, sourceTopology string) ([]string, error) {
