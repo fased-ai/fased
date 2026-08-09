@@ -1,16 +1,215 @@
 package store
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
 	"fased-lifecycled/bundle"
 	"fased-lifecycled/model"
 )
+
+const (
+	maxGenerationArchiveEntries = 50_000
+	maxGenerationArchiveBytes   = 600 * 1024 * 1024
+)
+
+// ImportGenerationArchive expands one verified transport archive directly
+// into the root-owned inbox. This avoids copying and hashing the complete
+// runtime through an unprivileged extraction tree before the same bytes are
+// verified again. The inventory remains the authority for every extracted
+// byte and the generation is not exposed until verification succeeds.
+func (s *Store) ImportGenerationArchive(archive string) (model.Generation, error) {
+	if !filepath.IsAbs(archive) || filepath.Clean(archive) != archive {
+		return model.Generation{}, errors.New("generation archive path must be absolute and clean")
+	}
+	archiveInfo, err := os.Lstat(archive)
+	if err != nil {
+		return model.Generation{}, err
+	}
+	if !archiveInfo.Mode().IsRegular() || archiveInfo.Mode()&os.ModeSymlink != 0 {
+		return model.Generation{}, errors.New("generation archive must be a regular file")
+	}
+	inboxRoot := filepath.Join(s.root, "inbox")
+	if err := os.MkdirAll(inboxRoot, 0o700); err != nil {
+		return model.Generation{}, err
+	}
+	temporary, err := os.MkdirTemp(inboxRoot, ".archive-*")
+	if err != nil {
+		return model.Generation{}, err
+	}
+	defer os.RemoveAll(temporary)
+	if err := extractGenerationArchive(archive, temporary); err != nil {
+		return model.Generation{}, err
+	}
+	inventoryJSON, err := readGenerationInventory(filepath.Join(temporary, generationInventoryName))
+	if err != nil {
+		return model.Generation{}, err
+	}
+	inventory, err := bundle.DecodeInventory(inventoryJSON)
+	if err != nil {
+		return model.Generation{}, err
+	}
+	generation, err := bundle.Identity(inventory)
+	if err != nil {
+		return model.Generation{}, err
+	}
+	if _, err := s.verifyGenerationPath(temporary, generation.ID); err != nil {
+		return model.Generation{}, fmt.Errorf("extracted generation verification failed: %w", err)
+	}
+	destination := s.inboxGenerationPath(generation.ID)
+	if _, err := os.Lstat(destination); err == nil {
+		if _, verifyErr := s.verifyGenerationPath(destination, generation.ID); verifyErr != nil {
+			return model.Generation{}, errors.New("existing inbox generation conflicts with verified archive")
+		}
+		return generation, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return model.Generation{}, err
+	}
+	if err := os.Rename(temporary, destination); err != nil {
+		return model.Generation{}, err
+	}
+	if err := syncDirectory(inboxRoot); err != nil {
+		return model.Generation{}, err
+	}
+	return generation, nil
+}
+
+func extractGenerationArchive(archive, destination string) error {
+	input, err := os.Open(archive)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	compressed, err := gzip.NewReader(input)
+	if err != nil {
+		return err
+	}
+	defer compressed.Close()
+	reader := tar.NewReader(compressed)
+	entries := 0
+	var total int64
+	seen := make(map[string]struct{})
+	for {
+		header, nextErr := reader.Next()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			return nextErr
+		}
+		entries++
+		total += header.Size
+		if entries > maxGenerationArchiveEntries || total > maxGenerationArchiveBytes || header.Size < 0 {
+			return errors.New("generation archive exceeds its extraction budget")
+		}
+		name := strings.TrimSuffix(header.Name, "/")
+		clean := path.Clean(name)
+		if clean != name || strings.Contains(name, `\`) || (clean != "generation" && !strings.HasPrefix(clean, "generation/")) {
+			return fmt.Errorf("generation archive contains unsafe entry %q", header.Name)
+		}
+		if clean == "generation" {
+			if header.Typeflag != tar.TypeDir {
+				return errors.New("generation archive root must be a directory")
+			}
+			continue
+		}
+		relative := strings.TrimPrefix(clean, "generation/")
+		if _, duplicate := seen[relative]; duplicate {
+			return fmt.Errorf("generation archive contains duplicate entry %q", relative)
+		}
+		seen[relative] = struct{}{}
+		target := filepath.Join(destination, filepath.FromSlash(relative))
+		if err := ensureArchiveParent(destination, filepath.Dir(target)); err != nil {
+			return err
+		}
+		inPayload := relative == generationPayloadName || strings.HasPrefix(relative, generationPayloadName+"/")
+		switch header.Typeflag {
+		case tar.TypeDir:
+			mode := os.FileMode(0o700)
+			if inPayload {
+				mode = 0o755
+			}
+			if err := os.Mkdir(target, mode); err != nil {
+				return err
+			}
+			if err := os.Chmod(target, mode); err != nil {
+				return err
+			}
+		case tar.TypeReg, tar.TypeRegA:
+			mode := os.FileMode(0o600)
+			if inPayload {
+				mode = 0o644
+			}
+			if header.Mode&0o111 != 0 {
+				if inPayload {
+					mode = 0o755
+				} else {
+					mode = 0o700
+				}
+			}
+			output, openErr := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+			if openErr != nil {
+				return openErr
+			}
+			_, copyErr := io.CopyN(output, reader, header.Size)
+			syncErr := output.Sync()
+			closeErr := output.Close()
+			if copyErr != nil {
+				return copyErr
+			}
+			if syncErr != nil {
+				return syncErr
+			}
+			if closeErr != nil {
+				return closeErr
+			}
+		case tar.TypeSymlink:
+			link := header.Linkname
+			if link == "" || path.IsAbs(link) || strings.Contains(link, `\`) {
+				return fmt.Errorf("generation archive contains unsafe symlink %q", relative)
+			}
+			resolved := path.Clean(path.Join(path.Dir(relative), link))
+			if resolved == "." || resolved == ".." || strings.HasPrefix(resolved, "../") {
+				return fmt.Errorf("generation archive symlink %q escapes the generation", relative)
+			}
+			if err := os.Symlink(link, target); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("generation archive contains unsupported entry %q", relative)
+		}
+	}
+	return nil
+}
+
+func ensureArchiveParent(root, parent string) error {
+	relative, err := filepath.Rel(root, parent)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return errors.New("generation archive parent escapes the extraction root")
+	}
+	current := root
+	if relative == "." {
+		return nil
+	}
+	for _, component := range strings.Split(relative, string(filepath.Separator)) {
+		current = filepath.Join(current, component)
+		info, statErr := os.Lstat(current)
+		if statErr != nil {
+			return statErr
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("generation archive parent is not a real directory")
+		}
+	}
+	return nil
+}
 
 // ImportGeneration copies one already complete external generation into the
 // root-owned inbox and verifies the copied bytes before exposing them to the

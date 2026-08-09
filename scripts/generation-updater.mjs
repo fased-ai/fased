@@ -150,7 +150,7 @@ async function loadArchiveDependency(dependencyRoot) {
   return createRequire(packagePath)("tar");
 }
 
-export async function extractGeneration(archive, destination, { dependencyRoot } = {}) {
+export async function validateGenerationArchive(archive, { dependencyRoot } = {}) {
   const tar = await loadArchiveDependency(dependencyRoot);
   let entries = 0;
   let bytes = 0;
@@ -191,6 +191,11 @@ export async function extractGeneration(archive, destination, { dependencyRoot }
   if (unsafeEntry) {
     throw new Error("lifecycle generation archive contains an unsafe entry");
   }
+}
+
+export async function extractGeneration(archive, destination, { dependencyRoot } = {}) {
+  await validateGenerationArchive(archive, { dependencyRoot });
+  const tar = await loadArchiveDependency(dependencyRoot);
   // The caller may have a hardened umask such as 0117, which strips every
   // executable bit and invalidates the verified generation. This updater is a
   // single-purpose process, so apply a private extraction umask only for the
@@ -376,7 +381,12 @@ async function runGenerationTransaction({
         "downloaded lifecycle generation does not match the attested candidate descriptor",
       );
     }
-    const generation = await extractGeneration(archive, temporary, { dependencyRoot });
+    let generation = null;
+    if (operation === "initialize") {
+      generation = await extractGeneration(archive, temporary, { dependencyRoot });
+    } else {
+      await validateGenerationArchive(archive, { dependencyRoot });
+    }
     if (operation === "initialize" && initializerExecutableRoot) {
       initializerStage = await stageInitializerExecutable(
         path.join(generation, "payload", "bin", "fased-lifecycled"),
@@ -418,8 +428,8 @@ async function runGenerationTransaction({
             "apply",
             "--config",
             lifecycle.config,
-            "--generation",
-            generation,
+            "--generation-archive",
+            archive,
           ];
     const result = await runAdministrator(
       operation === "initialize" ? null : sudoPath,

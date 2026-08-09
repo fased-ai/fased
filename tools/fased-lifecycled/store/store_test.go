@@ -1,7 +1,10 @@
 package store
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
+	"io"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -10,6 +13,68 @@ import (
 	"fased-lifecycled/bundle"
 	"fased-lifecycled/model"
 )
+
+func writeGenerationArchive(t *testing.T, archive, source string) {
+	t.Helper()
+	output, err := os.Create(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed := gzip.NewWriter(output)
+	written := tar.NewWriter(compressed)
+	err = filepath.Walk(source, func(current string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, relErr := filepath.Rel(filepath.Dir(source), current)
+		if relErr != nil {
+			return relErr
+		}
+		link := ""
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, relErr = os.Readlink(current)
+			if relErr != nil {
+				return relErr
+			}
+		}
+		header, headerErr := tar.FileInfoHeader(info, link)
+		if headerErr != nil {
+			return headerErr
+		}
+		header.Name = filepath.ToSlash(relative)
+		if info.IsDir() {
+			header.Name += "/"
+		}
+		if headerErr := written.WriteHeader(header); headerErr != nil {
+			return headerErr
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		input, openErr := os.Open(current)
+		if openErr != nil {
+			return openErr
+		}
+		_, copyErr := io.Copy(written, input)
+		closeErr := input.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
+	})
+	if err == nil {
+		err = written.Close()
+	}
+	if err == nil {
+		err = compressed.Close()
+	}
+	if err == nil {
+		err = output.Close()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+}
 
 const (
 	digestA = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -275,6 +340,51 @@ func TestImportGenerationCopiesAndReverifiesExactBytes(t *testing.T) {
 	}
 	if _, err := state.ImportGeneration(source); err == nil {
 		t.Fatal("tampered import source was accepted")
+	}
+}
+
+func TestImportGenerationArchiveExtractsDirectlyAndReverifiesExactBytes(t *testing.T) {
+	root := t.TempDir()
+	state, err := Open(filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "generation")
+	payload := filepath.Join(source, generationPayloadName)
+	if err := os.MkdirAll(filepath.Join(payload, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(payload, "bin", "fased"), []byte("verified"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("fased", filepath.Join(payload, "bin", "alias")); err != nil {
+		t.Fatal(err)
+	}
+	inventory, expected, err := bundle.Inspect(payload, "0.1.76", commitB, commitB,
+		map[string]uint32{"signer": 1}, manifest().Capabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := bundle.CanonicalInventoryJSON(inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, generationInventoryName), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(root, "generation.tar.gz")
+	writeGenerationArchive(t, archive, source)
+
+	imported, err := state.ImportGenerationArchive(archive)
+	if err != nil || imported != expected {
+		t.Fatalf("unexpected archive import: %+v err=%v", imported, err)
+	}
+	if second, err := state.ImportGenerationArchive(archive); err != nil || second != expected {
+		t.Fatalf("idempotent archive import failed: %+v err=%v", second, err)
+	}
+	importedAlias := filepath.Join(state.inboxGenerationPath(expected.ID), generationPayloadName, "bin", "alias")
+	if target, err := os.Readlink(importedAlias); err != nil || target != "fased" {
+		t.Fatalf("safe archived symlink was not preserved: target=%q err=%v", target, err)
 	}
 }
 
