@@ -221,6 +221,30 @@ func TestFreshTargetAndControllerDoNotStopAbsentCanonicalServices(t *testing.T) 
 	}
 }
 
+func TestFreshLocalDefersGatewayUntilOnboardingCreatesConfig(t *testing.T) {
+	adapter, tx, calls := targetAdapter(t)
+	tx.PlanAction = "INSTALL"
+	tx.Previous = nil
+	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	if err := adapter.Prepare(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Activate(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Verify(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"units.prepare", "files.prepare", "files.activate", "units.activate", "systemd.reload",
+		"systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
+		"systemd.enable:fased-gateway-example.service", "systemd.active:fased-signerd-example.service",
+	}
+	if !reflect.DeepEqual(*calls, want) {
+		t.Fatalf("fresh Local started or health-checked Gateway before onboarding:\n got=%v\nwant=%v", *calls, want)
+	}
+}
+
 func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	tx, _ := manifestTransaction(t, false)
 	operator, gateway, signer := principals()

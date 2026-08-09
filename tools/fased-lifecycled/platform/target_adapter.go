@@ -111,6 +111,9 @@ func (adapter *TargetAdapter) Activate(ctx context.Context, tx model.Transaction
 		if err := adapter.Systemd.Enable(ctx, unit); err != nil {
 			return err
 		}
+		if adapter.deferFreshLocalGateway(tx) && unit == adapter.Identity.Services["gateway"] {
+			continue
+		}
 		if err := adapter.Systemd.Start(ctx, unit); err != nil {
 			return err
 		}
@@ -120,9 +123,15 @@ func (adapter *TargetAdapter) Activate(ctx context.Context, tx model.Transaction
 
 func (adapter *TargetAdapter) Verify(ctx context.Context, tx model.Transaction) error {
 	for _, unit := range adapter.startOrder() {
+		if adapter.deferFreshLocalGateway(tx) && unit == adapter.Identity.Services["gateway"] {
+			continue
+		}
 		if err := adapter.Systemd.IsActive(ctx, unit); err != nil {
 			return fmt.Errorf("service %s is not active: %w", unit, err)
 		}
+	}
+	if adapter.deferFreshLocalGateway(tx) {
+		return nil
 	}
 	return adapter.Health.Verify(ctx, adapter.Config.GatewayPort, tx.Target)
 }
@@ -191,6 +200,16 @@ func (adapter *TargetAdapter) targetUnits() []string {
 
 func (adapter *TargetAdapter) startOrder() []string {
 	return []string{adapter.Identity.Services["signer"], adapter.Identity.Services["gateway"]}
+}
+
+// A fresh protected-Local install reaches the product transaction before the
+// unprivileged onboarding command has created fased.json. Keep the Gateway unit
+// installed and enabled, but start only the signer; onboarding writes the
+// configuration and starts the Gateway through the already-committed unit.
+// Updates, public-stable bridges, and Hosting installs still require Gateway
+// readiness inside the lifecycle transaction.
+func (adapter *TargetAdapter) deferFreshLocalGateway(tx model.Transaction) bool {
+	return adapter.Config.Profile == model.ProfileProtectedLocal && tx.PlanAction == "INSTALL" && tx.Previous == nil
 }
 
 func (adapter *TargetAdapter) renderTargetUnits(payload, version, dependency string) map[string][]byte {
