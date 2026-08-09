@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 
 	"fased-lifecycled/bundle"
@@ -21,11 +22,13 @@ const defaultMaxFiles = 100000
 const defaultMaxBytes int64 = 32 << 30
 
 type Spec struct {
-	Name     string
-	Path     string
-	MaxFiles int
-	MaxBytes int64
-	RootOnly bool
+	Name                  string
+	Path                  string
+	MaxFiles              int
+	MaxBytes              int64
+	RootOnly              bool
+	Optional              bool
+	IgnoreSQLiteTransient bool
 }
 
 type Binder struct {
@@ -44,6 +47,22 @@ type stateRecord struct {
 	Schema  uint32       `json:"schema"`
 	Absent  bool         `json:"absent"`
 	Entries []fileRecord `json:"entries"`
+}
+
+func CanonicalSpecs(ownerStateRoot, installRoot, signerStateRoot string) []Spec {
+	owner := func(name, relative string) Spec {
+		return Spec{Name: name, Path: filepath.Join(ownerStateRoot, relative), Optional: true}
+	}
+	return []Spec{
+		owner("agents", "agents"), owner("channels", "channels"), owner("configuration", "fased.json"),
+		owner("credentials", "credentials"), owner("cron", "cron"), owner("deliveryQueue", "delivery-queue"),
+		owner("devices", "devices"), owner("federation", "federation"), owner("identity", "identity"),
+		{Name: "managedInstall", Path: installRoot, RootOnly: true}, owner("memory", "memory"),
+		{Name: "mining", Path: filepath.Join(ownerStateRoot, "sat-mining"), IgnoreSQLiteTransient: true},
+		owner("pluginState", "extensions"), owner("schedules", "schedules"), owner("secrets", "secrets"),
+		owner("sessions", "sessions"), {Name: "signer", Path: signerStateRoot, RootOnly: true},
+		owner("tasks", "tasks"), owner("walletRegistry", "wallet"),
+	}
 }
 
 func (binder *Binder) Bind(ctx context.Context, installed planner.Installation, inventory bundle.Inventory, plan planner.Plan) (string, string, error) {
@@ -78,7 +97,7 @@ func (binder *Binder) Bind(ctx context.Context, installed planner.Installation, 
 		if err := ctx.Err(); err != nil {
 			return "", "", err
 		}
-		record, err := inspectState(ctx, spec, inventory.StateSchemas[spec.Name], installed.Kind == planner.InstallationEmpty || allowAbsent[spec.Name])
+		record, err := inspectState(ctx, spec, inventory.StateSchemas[spec.Name], spec.Optional || installed.Kind == planner.InstallationEmpty || allowAbsent[spec.Name])
 		if err != nil {
 			return "", "", fmt.Errorf("inventory state %s: %w", spec.Name, err)
 		}
@@ -161,6 +180,9 @@ func inspectState(ctx context.Context, spec Spec, schema uint32, allowAbsent boo
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if spec.IgnoreSQLiteTransient && entry.Type().IsRegular() && isSQLiteTransient(entry.Name()) {
+			return nil
+		}
 		info, err := os.Lstat(path)
 		if err != nil {
 			return err
@@ -191,6 +213,15 @@ func inspectState(ctx context.Context, spec Spec, schema uint32, allowAbsent boo
 		return nil
 	})
 	return record, err
+}
+
+func isSQLiteTransient(name string) bool {
+	for _, suffix := range []string{"-wal", "-shm", "-journal", ".sqlite-wal", ".sqlite-shm", ".sqlite-journal"} {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 func hashStableFile(path string, before os.FileInfo) (string, error) {

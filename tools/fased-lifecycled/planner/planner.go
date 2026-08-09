@@ -19,6 +19,7 @@ const (
 	ActionUpdate             Action = "UPDATE"
 	ActionAlreadyCurrent     Action = "ALREADY_CURRENT"
 	ActionRepairRequired     Action = "REPAIR_REQUIRED"
+	ActionRejectUnknownNewer Action = "REJECT_UNKNOWN_NEWER"
 )
 
 type InstallationKind string
@@ -28,6 +29,7 @@ const (
 	InstallationManaged      InstallationKind = "MANAGED"
 	InstallationPublicStable InstallationKind = "PUBLIC_STABLE"
 	InstallationAmbiguous    InstallationKind = "AMBIGUOUS"
+	InstallationUnknownNewer InstallationKind = "UNKNOWN_NEWER"
 )
 
 // Installation is the verified, version-neutral result of topology discovery.
@@ -49,26 +51,39 @@ const (
 	TopologyLegacyLocalSameUser PublicTopology = "legacy-local-same-user-v0"
 	TopologyLocalUserSystemdV1  PublicTopology = "local-user-systemd-v1"
 	TopologyLocalUserSystemdV2  PublicTopology = "local-user-systemd-v2"
+	TopologyHostingRootV0       PublicTopology = "hosting-root-gateway-v0"
+	TopologyHostingControllerV2 PublicTopology = "hosting-controller-v2-self-updating"
 )
 
 // PublicStableInstallation converts a verified public topology into persisted
 // state schemas. The bridge replaces the old control plane, so it does not
 // claim protocol capabilities that the pre-supervisor installation never had.
 func PublicStableInstallation(profile model.Profile, topology PublicTopology) (Installation, error) {
-	if profile != model.ProfileProtectedLocal {
-		return Installation{}, errors.New("public-stable Local topology requires the protected-local target profile")
-	}
+	managedInstall := uint32(1)
 	switch topology {
 	case TopologyLegacyLocalSameUser, TopologyLocalUserSystemdV1, TopologyLocalUserSystemdV2:
-		return Installation{
-			Kind: InstallationPublicStable, Profile: profile,
-			StateSchemas: map[string]uint32{
-				"federation": 0, "managedInstall": 1, "mining": 1, "signer": 1, "walletRegistry": 1,
-			},
-		}, nil
+		if profile != model.ProfileProtectedLocal {
+			return Installation{}, errors.New("public-stable Local topology requires the protected-local target profile")
+		}
+		if topology == TopologyLocalUserSystemdV2 {
+			managedInstall = 2
+		}
+	case TopologyHostingRootV0, TopologyHostingControllerV2:
+		if profile != model.ProfileHosting {
+			return Installation{}, errors.New("public-stable Hosting topology requires the Hosting target profile")
+		}
+		if topology == TopologyHostingControllerV2 {
+			managedInstall = 2
+		}
 	default:
 		return Installation{}, fmt.Errorf("unsupported public installation topology %q", topology)
 	}
+	return Installation{
+		Kind: InstallationPublicStable, Profile: profile,
+		StateSchemas: map[string]uint32{
+			"federation": 1, "managedInstall": managedInstall, "mining": 1, "signer": 1, "walletRegistry": 1,
+		},
+	}, nil
 }
 
 type Target struct {
@@ -138,12 +153,20 @@ func BuildForInstallation(installed Installation, target Target) (Plan, error) {
 			return Plan{}, fmt.Errorf("installation profile %q cannot use target profile %q", installed.Profile, target.Profile)
 		}
 		return bind(Plan{Action: ActionRepairRequired, Profile: target.Profile, Target: target.Generation})
+	case InstallationUnknownNewer:
+		if installed.Profile != "" && installed.Profile != target.Profile {
+			return Plan{}, fmt.Errorf("installation profile %q cannot use target profile %q", installed.Profile, target.Profile)
+		}
+		return bind(Plan{Action: ActionRejectUnknownNewer, Profile: target.Profile, Target: target.Generation})
 	default:
 		return Plan{}, fmt.Errorf("unsupported installation kind %q", installed.Kind)
 	}
 }
 
 func buildManaged(installed model.Manifest, target Target) (Plan, error) {
+	if installed.SchemaVersion > model.CurrentManifestSchemaVersion {
+		return bind(Plan{Action: ActionRejectUnknownNewer, Profile: target.Profile, Target: target.Generation})
+	}
 	if err := installed.Validate(); err != nil {
 		return Plan{}, fmt.Errorf("installed manifest: %w", err)
 	}
@@ -152,6 +175,9 @@ func buildManaged(installed model.Manifest, target Target) (Plan, error) {
 	}
 	if installed.ActiveGeneration == nil {
 		return Plan{}, errors.New("managed installation has no active generation")
+	}
+	if requiresUnknownNewerRejection(installed.StateSchemas, installed.Capabilities, target) {
+		return bind(Plan{Action: ActionRejectUnknownNewer, Profile: target.Profile, Target: target.Generation})
 	}
 	if err := validateInstalledState(installed.Profile, installed.StateSchemas, installed.Capabilities, target); err != nil {
 		return Plan{}, err
@@ -164,6 +190,16 @@ func buildManaged(installed model.Manifest, target Target) (Plan, error) {
 		return bind(Plan{Action: ActionAlreadyCurrent, Profile: target.Profile, Target: target.Generation, Migrations: migrations})
 	}
 	return bind(Plan{Action: ActionUpdate, Profile: target.Profile, Target: target.Generation, Migrations: migrations})
+}
+
+func requiresUnknownNewerRejection(stateSchemas map[string]uint32, capabilities model.CapabilityRanges, target Target) bool {
+	for state, version := range stateSchemas {
+		targetVersion, ok := target.StateSchemas[state]
+		if !ok || version > targetVersion {
+			return true
+		}
+	}
+	return compatibleCapabilities(capabilities, target.Capabilities) != nil
 }
 
 func validateInstalledState(profile model.Profile, stateSchemas map[string]uint32, capabilities model.CapabilityRanges, target Target) error {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"fased-lifecycled/bundle"
@@ -28,6 +29,64 @@ func target(t *testing.T) (bundle.Inventory, model.Generation) {
 		t.Fatal(err)
 	}
 	return inventory, generation
+}
+
+func TestCanonicalStateSpecsCoverExactDeclaredStateAndRealMiningPath(t *testing.T) {
+	owner := "/home/owner/.fased"
+	specs := CanonicalSpecs(owner, "/opt/fased/local/instance", "/var/lib/fased-local/instance/signer")
+	schemas := model.CurrentStateSchemas()
+	if len(specs) != len(schemas) {
+		t.Fatalf("canonical state spec count=%d schema count=%d", len(specs), len(schemas))
+	}
+	seen := map[string]Spec{}
+	for _, spec := range specs {
+		seen[spec.Name] = spec
+	}
+	for name := range schemas {
+		if _, ok := seen[name]; !ok {
+			t.Fatalf("declared state %s has no canonical path", name)
+		}
+	}
+	if seen["mining"].Path != filepath.Join(owner, "sat-mining") || !seen["mining"].IgnoreSQLiteTransient {
+		t.Fatalf("Mining state is not bound to the semantic sat-mining root: %+v", seen["mining"])
+	}
+}
+
+func TestMiningInventoryIgnoresSQLiteSidecarsButDetectsDatabaseChange(t *testing.T) {
+	root := t.TempDir()
+	database := filepath.Join(root, "mining.sqlite")
+	wal := database + "-wal"
+	if err := os.WriteFile(database, []byte("semantic-state-a"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wal, []byte("transient-a"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spec := Spec{Name: "mining", Path: root, MaxFiles: 100, MaxBytes: 1 << 20, IgnoreSQLiteTransient: true}
+	first, err := inspectState(context.Background(), spec, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wal, []byte("transient-b-with-different-size"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second, err := inspectState(context.Background(), spec, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("SQLite transient representation changed semantic inventory: first=%+v second=%+v", first, second)
+	}
+	if err := os.WriteFile(database, []byte("semantic-state-b"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	third, err := inspectState(context.Background(), spec, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reflect.DeepEqual(second, third) {
+		t.Fatal("meaningful Mining database change was not detected")
+	}
 }
 
 func TestBindIsDeterministicAndDetectsStateChange(t *testing.T) {

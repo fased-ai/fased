@@ -45,6 +45,8 @@ type fakeStore struct {
 	inventory      bundle.Inventory
 	generation     model.Generation
 	journal        model.Transaction
+	locks          *int
+	stages         *int
 }
 
 type fakeMutationLock struct{}
@@ -52,10 +54,18 @@ type fakeMutationLock struct{}
 func (fakeMutationLock) Release() error { return nil }
 
 func (state fakeStore) AcquireUpdateLock(string) (store.MutationLock, error) {
+	if state.locks != nil {
+		*state.locks++
+	}
 	return fakeMutationLock{}, nil
 }
 
-func (state fakeStore) StageGeneration(string) error { return nil }
+func (state fakeStore) StageGeneration(string) error {
+	if state.stages != nil {
+		*state.stages++
+	}
+	return nil
+}
 
 func (state fakeStore) ReadManifest() (model.Manifest, string, error) {
 	if state.manifest == nil {
@@ -68,7 +78,7 @@ func (state fakeStore) ReadJournal(store.Authority, string) (model.Transaction, 
 	return state.journal, nil
 }
 
-func (state fakeStore) ReadGenerationContract(id string) (bundle.Inventory, model.Generation, error) {
+func (state fakeStore) ReadCandidateContract(id string) (bundle.Inventory, model.Generation, error) {
 	return state.inventory, state.generation, nil
 }
 
@@ -155,7 +165,7 @@ func TestConvergeBindsPublicStableBridgeToPreviousGeneration(t *testing.T) {
 	if response.Outcome != string(engine.OutcomeUpdated) || supervisor.tx.Previous != nil {
 		t.Fatalf("public-stable bridge was not transaction-bound: response=%+v transaction=%+v", response, supervisor.tx)
 	}
-	if len(supervisor.tx.Migrations) != 3 || supervisor.tx.Migrations[0] != (model.Migration{State: "federation", From: 0, To: 2}) ||
+	if len(supervisor.tx.Migrations) != 3 || supervisor.tx.Migrations[0] != (model.Migration{State: "federation", From: 1, To: 2}) ||
 		supervisor.tx.Migrations[1] != (model.Migration{State: "managedInstall", From: 1, To: 2}) ||
 		supervisor.tx.Migrations[2] != (model.Migration{State: "signer", From: 1, To: 2}) {
 		t.Fatalf("unexpected bridge migrations: %+v", supervisor.tx.Migrations)
@@ -263,5 +273,43 @@ func TestTargetRequiringNewerStableSupervisorFailsBeforeMutation(t *testing.T) {
 	}
 	if bindings.calls != 0 || supervisor.runs != 0 {
 		t.Fatal("unsupported supervisor capability reached state inventory or mutation")
+	}
+}
+
+func TestUnknownNewerManifestRejectsBeforeAnyMutation(t *testing.T) {
+	inventory, target := targetContract()
+	active := generation(digestA, "future", commitA)
+	manifest := model.Manifest{
+		SchemaVersion: model.CurrentManifestSchemaVersion + 1,
+		Profile:       model.ProfileProtectedLocal,
+		Platform:      platform(), ActiveGeneration: &active,
+		StateSchemas: map[string]uint32{"signer": 99}, Capabilities: capabilities(),
+	}
+	locks, stages := 0, 0
+	bindings := &fakeInventory{}
+	supervisor := &fakeSupervisor{}
+	service := Service{
+		Profile: model.ProfileProtectedLocal, Platform: platform(),
+		Store: fakeStore{
+			manifest: &manifest, manifestDigest: digestA,
+			inventory: inventory, generation: target, locks: &locks, stages: &stages,
+		},
+		Inventory: bindings, Supervisor: supervisor,
+		NewID: func() (string, error) { return "", errors.New("must not allocate") },
+	}
+	request := protocol.Request{
+		SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID,
+		Operation: protocol.OperationConverge, TargetGenerationID: target.ID,
+		ExpectedManifestDigest: digestA,
+	}
+	response, err := service.Handle(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Outcome != string(planner.ActionRejectUnknownNewer) {
+		t.Fatalf("unexpected unknown-newer response: %+v", response)
+	}
+	if locks != 0 || stages != 0 || bindings.calls != 0 || supervisor.runs != 0 {
+		t.Fatalf("unknown-newer installation reached mutation: locks=%d stages=%d inventory=%d runs=%d", locks, stages, bindings.calls, supervisor.runs)
 	}
 }

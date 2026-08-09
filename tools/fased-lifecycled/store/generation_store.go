@@ -552,10 +552,29 @@ func (s *Store) ResolveGeneration(pointer string) (model.Generation, error) {
 }
 
 func (s *Store) ReadGenerationContract(generationID string) (bundle.Inventory, model.Generation, error) {
+	return s.readGenerationContractAt(s.generationPath(generationID), generationID)
+}
+
+// ReadCandidateContract verifies candidate identity without moving it from the
+// acquisition inbox into the durable generation store. Compatibility planning
+// must complete before the first mutation of an installation transaction.
+func (s *Store) ReadCandidateContract(generationID string) (bundle.Inventory, model.Generation, error) {
 	if err := validateGenerationID(generationID); err != nil {
 		return bundle.Inventory{}, model.Generation{}, err
 	}
 	root := s.generationPath(generationID)
+	if _, err := os.Lstat(root); errors.Is(err, os.ErrNotExist) {
+		root = s.inboxGenerationPath(generationID)
+	} else if err != nil {
+		return bundle.Inventory{}, model.Generation{}, err
+	}
+	return s.readGenerationContractAt(root, generationID)
+}
+
+func (s *Store) readGenerationContractAt(root, generationID string) (bundle.Inventory, model.Generation, error) {
+	if err := validateGenerationID(generationID); err != nil {
+		return bundle.Inventory{}, model.Generation{}, err
+	}
 	inventoryJSON, err := readGenerationInventory(filepath.Join(root, generationInventoryName))
 	if err != nil {
 		return bundle.Inventory{}, model.Generation{}, err

@@ -130,6 +130,27 @@ func (SignerOwnedAdapter) Abort(context.Context, model.Transaction, model.Migrat
 	return nil
 }
 
+// PreservedStateAdapter declares a schema boundary whose content is owned by
+// the application. The lifecycle engine inventories and rollback-binds it but
+// does not create, rewrite, or delete it.
+type PreservedStateAdapter struct{}
+
+func (PreservedStateAdapter) Prepare(context.Context, model.Transaction, model.Migration) error {
+	return nil
+}
+func (PreservedStateAdapter) Activate(context.Context, model.Transaction, model.Migration) error {
+	return nil
+}
+func (PreservedStateAdapter) Verify(context.Context, model.Transaction, model.Migration) error {
+	return nil
+}
+func (PreservedStateAdapter) Commit(context.Context, model.Transaction, model.Migration) error {
+	return nil
+}
+func (PreservedStateAdapter) Abort(context.Context, model.Transaction, model.Migration) error {
+	return nil
+}
+
 func RegistryFor(config platform.Config) (map[Key]Adapter, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
@@ -139,11 +160,14 @@ func RegistryFor(config platform.Config) (map[Key]Adapter, error) {
 		{State: "managedInstall", From: 0, To: 2}: directory(config.InstallRoot),
 		{State: "managedInstall", From: 1, To: 2}: directory(config.InstallRoot),
 		{State: "walletRegistry", From: 0, To: 1}: directory(filepath.Join(config.OwnerStateRoot, "wallet")),
-		{State: "mining", From: 0, To: 1}:         directory(filepath.Join(config.OwnerStateRoot, "mining")),
+		{State: "mining", From: 0, To: 1}:         PreservedStateAdapter{},
 		{State: "federation", From: 0, To: 2}:     directory(filepath.Join(config.OwnerStateRoot, "federation")),
 		{State: "federation", From: 1, To: 2}:     directory(filepath.Join(config.OwnerStateRoot, "federation")),
 		{State: "signer", From: 0, To: 2}:         SignerOwnedAdapter{},
 		{State: "signer", From: 1, To: 2}:         LocalSignerBridgeAdapter{Config: config},
+	}
+	for _, state := range []string{"agents", "channels", "configuration", "credentials", "cron", "deliveryQueue", "devices", "identity", "memory", "pluginState", "schedules", "secrets", "sessions", "tasks"} {
+		registry[Key{State: state, From: 0, To: 1}] = PreservedStateAdapter{}
 	}
 	if config.Profile == model.ProfileHosting {
 		registry[Key{State: "signer", From: 1, To: 2}] = SignerOwnedAdapter{}

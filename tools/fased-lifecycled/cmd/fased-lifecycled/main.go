@@ -126,9 +126,7 @@ func runInventory(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	stateSchemas := map[string]uint32{
-		"federation": 2, "managedInstall": 2, "mining": 1, "signer": 2, "walletRegistry": 1,
-	}
+	stateSchemas := model.CurrentStateSchemas()
 	capabilities := model.CapabilityRanges{
 		Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1},
 		Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 2, Max: 2},
@@ -647,16 +645,7 @@ func runSupervisor(ctx context.Context, config platform.Config, socketPath strin
 	controllerAdapter := &platform.ControllerAdapter{Config: config, Identity: identity, Units: units, Systemd: systemd, Generations: state}
 	targetClient := controller.Client{SocketPath: config.ControllerSocket(), Timeout: 4 * time.Minute}
 	supervisor := &engine.SupervisorEngine{Journal: state, Controller: controllerAdapter, Target: targetClient}
-	binder := &statebind.Binder{Specs: []statebind.Spec{
-		{Name: "federation", Path: filepath.Join(config.OwnerStateRoot, "federation")},
-		{Name: "managedInstall", Path: config.InstallRoot, RootOnly: true},
-		{Name: "mining", Path: filepath.Join(config.OwnerStateRoot, "mining")},
-		// Signer content is snapshotted and rollback-bound by the signer participant.
-		// Inventory only the signer-owned root here so a live bbolt transaction cannot
-		// race the generic filesystem hasher.
-		{Name: "signer", Path: config.SignerStateRoot(), RootOnly: true},
-		{Name: "walletRegistry", Path: filepath.Join(config.OwnerStateRoot, "wallet")},
-	}}
+	binder := &statebind.Binder{Specs: statebind.CanonicalSpecs(config.OwnerStateRoot, config.InstallRoot, config.SignerStateRoot())}
 	service := &daemon.Service{Profile: config.Profile, Platform: identity, Store: state, Inventory: binder, Supervisor: supervisor}
 	listener, err := listenBound(socketPath, 0o660, int(config.Operator.GID))
 	if err != nil {

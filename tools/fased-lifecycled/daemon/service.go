@@ -25,7 +25,7 @@ type StateStore interface {
 	StageGeneration(string) error
 	ReadManifest() (model.Manifest, string, error)
 	ReadJournal(store.Authority, string) (model.Transaction, error)
-	ReadGenerationContract(string) (bundle.Inventory, model.Generation, error)
+	ReadCandidateContract(string) (bundle.Inventory, model.Generation, error)
 }
 
 type StateInventory interface {
@@ -123,6 +123,24 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 	if installation.Kind == planner.InstallationManaged && installation.Manifest.ActiveGeneration != nil && installation.Manifest.ActiveGeneration.ID == request.TargetGenerationID {
 		return response(request, string(engine.OutcomeAlreadyCurrent), "", request.TargetGenerationID), nil
 	}
+	inventory, generation, err := service.Store.ReadCandidateContract(request.TargetGenerationID)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	if inventory.Capabilities.Supervisor.Min > supervisorCapability || inventory.Capabilities.Supervisor.Max < supervisorCapability {
+		return protocol.Response{}, errors.New("target generation requires an unsupported stable supervisor capability")
+	}
+	plan, err := planner.BuildForInstallation(installation, planner.Target{
+		Profile: service.Profile, Generation: generation,
+		StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities,
+	})
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	switch plan.Action {
+	case planner.ActionAlreadyCurrent, planner.ActionRepairRequired, planner.ActionRejectUnknownNewer:
+		return response(request, string(plan.Action), "", generation.ID), nil
+	}
 	transactionID, err := service.NewID()
 	if err != nil {
 		return protocol.Response{}, err
@@ -141,23 +159,6 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 	}
 	if err := service.Store.StageGeneration(request.TargetGenerationID); err != nil {
 		return protocol.Response{}, err
-	}
-	inventory, generation, err := service.Store.ReadGenerationContract(request.TargetGenerationID)
-	if err != nil {
-		return protocol.Response{}, err
-	}
-	if inventory.Capabilities.Supervisor.Min > supervisorCapability || inventory.Capabilities.Supervisor.Max < supervisorCapability {
-		return protocol.Response{}, errors.New("target generation requires an unsupported stable supervisor capability")
-	}
-	plan, err := planner.BuildForInstallation(installation, planner.Target{
-		Profile: service.Profile, Generation: generation,
-		StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities,
-	})
-	if err != nil {
-		return protocol.Response{}, err
-	}
-	if plan.Action == planner.ActionAlreadyCurrent {
-		return response(request, string(engine.OutcomeAlreadyCurrent), "", generation.ID), nil
 	}
 	stateDigest, signerPlanDigest, err := service.Inventory.Bind(ctx, installation, inventory, plan)
 	if err != nil {

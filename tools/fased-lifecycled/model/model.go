@@ -17,6 +17,19 @@ const (
 	CurrentTransactionSchemaVersion uint32 = 1
 )
 
+// CurrentStateSchemas is the single declared preservation contract shared by
+// inventory generation, planning, migration selection, and runtime binding.
+// Callers receive a copy so no component can mutate global policy.
+func CurrentStateSchemas() map[string]uint32 {
+	return map[string]uint32{
+		"agents": 1, "channels": 1, "configuration": 1, "credentials": 1,
+		"cron": 1, "deliveryQueue": 1, "devices": 1, "federation": 2,
+		"identity": 1, "managedInstall": 2, "memory": 1, "mining": 1,
+		"pluginState": 1, "schedules": 1, "secrets": 1, "sessions": 1,
+		"signer": 2, "tasks": 1, "walletRegistry": 1,
+	}
+}
+
 type Profile string
 
 const (
