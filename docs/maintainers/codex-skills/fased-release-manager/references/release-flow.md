@@ -85,13 +85,17 @@ Prerequisites:
 - exact merged `origin/main` is clean;
 - the same exact commit has a recorded `PRE-CANDIDATE PASS`;
 - package/version inventory agrees;
-- requested version, tag, and GitHub Release are unused;
+- requested version, tag, and GitHub Release are unused before the owner tag
+  ceremony;
 - owner has authorized candidate preparation;
 - the `candidate-release` environment retains its required owner reviewer; and
 - release-tag rules permit creation only by the owner while forbidding update
   and deletion.
 
-Dispatch `.github/workflows/hosted-runtime-release.yml` from `main` with:
+After the version-only PR merges and PRE-CANDIDATE remains bound, the owner
+creates one lightweight `v<release_version>` tag at `source_commit` and verifies
+it remotely. Creating the tag does not trigger a workflow. Dispatch
+`.github/workflows/hosted-runtime-release.yml` from that exact tag with:
 
 - `release_version`: the package version without `v`;
 - `source_commit`: the exact current `origin/main` commit; and
@@ -101,7 +105,8 @@ Dispatch `.github/workflows/hosted-runtime-release.yml` from `main` with:
 
 The workflow must:
 
-1. read back protected `main` and version identity;
+1. read back the immutable tag, protected `main`, source commit, and version
+   identity and require exact equality;
 2. install from the frozen lockfile and enforce production audit policy;
 3. build shared `dist` once;
 4. package each supported architecture once from that exact dist;
@@ -114,13 +119,13 @@ The workflow must:
    and
 8. wait at `candidate-release` before publication.
 
-Do not create the tag before P1 passes. When P1 is green, the owner creates one
-lightweight `v<release_version>` tag at `source_commit`, verifies it remotely,
-then approves the waiting environment job. The publication job must verify that
-tag, download the existing run artifact, verify every identity/attestation,
-create one draft, upload all bytes, compare remote name/size/SHA-256 inventory,
-and expose the release only after equality passes. It never builds or attests
-new bytes.
+Every build attestation must therefore carry
+`refs/tags/v<release_version>`, matching the signed lifecycle-root authority.
+When P1 is green, the owner approves the waiting environment job. The
+publication job must reverify the tag, download the existing run artifact,
+verify every identity/attestation, create one draft, upload all bytes, compare
+remote name/size/SHA-256 inventory, and expose the release only after equality
+passes. It never builds or attests new bytes.
 
 If P1 has an infrastructure-only failure, rerun failed jobs once. Candidate
 verification binds the original workflow run and candidate manifest but permits

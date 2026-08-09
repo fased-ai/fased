@@ -478,34 +478,24 @@ async function commandMain(argv) {
       );
     },
     verifyOfficialAsset: async ({ assetPath, version, bundlePath }) => {
-      let verified = false;
-      for (const sourceRef of [`refs/tags/v${version}`, "refs/heads/main"]) {
-        try {
-          await execFileAsync(
-            gh,
-            [
-              "attestation",
-              "verify",
-              assetPath,
-              "--repo",
-              "fased-ai/fased",
-              "--bundle",
-              bundlePath,
-              "--signer-workflow",
-              "fased-ai/fased/.github/workflows/hosted-runtime-release.yml",
-              "--source-ref",
-              sourceRef,
-              "--deny-self-hosted-runners",
-            ],
-            { timeout: timeoutMs },
-          );
-          verified = true;
-          break;
-        } catch {}
-      }
-      if (!verified) {
-        throw new Error("candidate descriptor attestation is not official");
-      }
+      await execFileAsync(
+        gh,
+        [
+          "attestation",
+          "verify",
+          assetPath,
+          "--repo",
+          "fased-ai/fased",
+          "--bundle",
+          bundlePath,
+          "--signer-workflow",
+          "fased-ai/fased/.github/workflows/hosted-runtime-release.yml",
+          "--source-ref",
+          `refs/tags/v${version}`,
+          "--deny-self-hosted-runners",
+        ],
+        { timeout: timeoutMs },
+      );
     },
     runAdministrator: async (_sudo, command, { timeoutMs: operationTimeout }) => {
       try {

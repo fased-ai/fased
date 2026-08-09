@@ -106,19 +106,19 @@ describe("exact release artifact promotion", () => {
     ).rejects.toThrow("regular single-link");
   });
 
-  it("accepts protected main before tagging and rejects untrusted source refs", async () => {
+  it("accepts only the exact immutable release tag", async () => {
     const directory = await fixture();
-    const protectedMain = await buildCandidateDescriptor({
+    const taggedDescriptor = await buildCandidateDescriptor({
       directory,
       version: "0.1.76-rc.32",
       commit: "d".repeat(40),
       tree: "e".repeat(40),
       lockfileDigest: `sha256:${"f".repeat(64)}`,
-      sourceRef: "refs/heads/main",
+      sourceRef: "refs/tags/v0.1.76-rc.32",
       workflowRunId: "101",
       workflowRunAttempt: "1",
     });
-    expect(protectedMain.descriptor.sourceRef).toBe("refs/heads/main");
+    expect(taggedDescriptor.descriptor.sourceRef).toBe("refs/tags/v0.1.76-rc.32");
 
     const untrusted = await fixture();
     await expect(
@@ -128,11 +128,11 @@ describe("exact release artifact promotion", () => {
         commit: "d".repeat(40),
         tree: "e".repeat(40),
         lockfileDigest: `sha256:${"f".repeat(64)}`,
-        sourceRef: "refs/heads/topic",
+        sourceRef: "refs/heads/main",
         workflowRunId: "101",
         workflowRunAttempt: "1",
       }),
-    ).rejects.toThrow("protected main or the exact immutable release tag");
+    ).rejects.toThrow("exact immutable release tag");
 
     const tagged = await fixture();
     await buildCandidateDescriptor({

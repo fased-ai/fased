@@ -65,23 +65,25 @@ production audit, release validation, public compatibility/inventory
 verification, and candidate-input preflight. Any failure returns to `BUG/PR`
 without allocating an RC.
 
-One protected manual workflow accepts an unused version and exact current
-`origin/main` commit:
+One protected manual workflow is dispatched from an owner-created immutable
+tag that points at the exact current `origin/main` commit:
 
 ```text
 verify version + commit + tree + frozen lockfile
+-> verify immutable tag and protected-main equality
 -> production audit
 -> build shared dist once
 -> package each architecture once
 -> immutable candidate manifest and attestations
 -> packaged P1 against those exact bytes
 -> publication job waits at protected candidate-release environment
--> owner creates the exact immutable tag
 -> owner approves the waiting publication job
 -> verify the tag, publish, and read back the same bytes
 ```
 
-The tag never triggers a build. Publication never rebuilds. The candidate
+Creating the tag does not trigger a build; the manual workflow must be
+dispatched with that exact tag as its GitHub source ref. Publication never
+rebuilds. The candidate
 manifest binds version, commit, tree, lockfile digest, workflow run/attempt,
 artifact names, sizes, SHA-256 values, provenance, SBOM, VEX, and attestation
 identities. Later outcomes reference its digest; they do not edit it.

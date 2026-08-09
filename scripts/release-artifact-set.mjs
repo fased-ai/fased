@@ -108,8 +108,8 @@ function validateIdentity({
   if (!DIGEST_PATTERN.test(lockfileDigest || "")) {
     fail("candidate lockfile digest is invalid");
   }
-  if (sourceRef !== "refs/heads/main" && sourceRef !== `refs/tags/v${version}`) {
-    fail("candidate source ref must be protected main or the exact immutable release tag");
+  if (sourceRef !== `refs/tags/v${version}`) {
+    fail("candidate source ref must be the exact immutable release tag");
   }
   if (!/^[1-9][0-9]*$/u.test(String(workflowRunId || ""))) {
     fail("candidate workflow run ID is invalid");

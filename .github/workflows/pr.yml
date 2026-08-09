@@ -79,7 +79,7 @@ jobs:
     name: selected-tests
     needs: [classify]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Reject an unclassified change
         if: needs.classify.outputs.manual_review_required == 'true'
@@ -254,7 +254,12 @@ jobs:
 
       - name: Run full Node tests when explicitly selected
         if: needs.classify.outputs.run_node_full == 'true' && !(needs.classify.outputs.run_native_signer == 'true' && needs.classify.outputs.run_local_update == 'true')
-        run: pnpm test
+        env:
+          FASED_TEST_PROFILE: serial
+          FASED_TEST_VM_FORKS: "0"
+        run: |
+          pnpm canvas:a2ui:bundle
+          pnpm test
 
       - name: Run lifecycle-engine regressions
         if: needs.classify.outputs.run_node_full == 'true' && needs.classify.outputs.run_native_signer == 'true' && needs.classify.outputs.run_local_update == 'true'

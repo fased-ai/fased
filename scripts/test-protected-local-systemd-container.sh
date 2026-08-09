@@ -83,7 +83,7 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
   GOTMPDIR="$fixture_go_tmp" \
   GOCACHE="$fixture_go_cache" \
   FASED_SIGNER_BUILD_COMMIT="$COMMIT" \
-  FASED_SIGNER_TARGETS=linux/amd64 \
+  FASED_SIGNER_TARGETS=linux/amd64,linux/arm64,darwin/amd64,darwin/arm64 \
     bash "$ROOT_DIR/scripts/release-fased-signerd.sh"
   GOTMPDIR="$fixture_go_tmp" \
   GOCACHE="$fixture_go_cache" \
@@ -95,6 +95,32 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
   OWN_ARTIFACT_DIR=1
   pnpm --dir "$ROOT_DIR" hosted:artifact:from-dist --output "$ARTIFACT_DIR"
   cp -a "$ROOT_DIR/dist-native/release/." "$ARTIFACT_DIR/"
+  if [[ "$PUBLIC_ACQUISITION" == "1" ]]; then
+    x64_identity="$ARTIFACT_DIR/fased-hosted-app-linux-x64-v${VERSION}.tar.gz.release.json"
+    arm64_app="fased-hosted-app-v2-linux-arm64-v${VERSION}.tar.gz"
+    x64_app="$(jq -er .app.asset "$x64_identity")"
+    x64_dependency="$(jq -er .dependencies.asset "$x64_identity")"
+    dependency_hash="$(jq -er .dependencyHash "$x64_identity")"
+    arm64_dependency="fased-hosted-deps-linux-arm64-${dependency_hash}.tar.gz"
+    cp "$ARTIFACT_DIR/$x64_app" "$ARTIFACT_DIR/$arm64_app"
+    cp "$ARTIFACT_DIR/$x64_dependency" "$ARTIFACT_DIR/$arm64_dependency"
+    cp \
+      "$ARTIFACT_DIR/fased-hosted-components-linux-x64-v${VERSION}.spdx.json" \
+      "$ARTIFACT_DIR/fased-hosted-components-linux-arm64-v${VERSION}.spdx.json"
+    jq \
+      --arg architecture arm64 \
+      --arg app "$arm64_app" \
+      --arg app_sha "$(sha256sum "$ARTIFACT_DIR/$arm64_app" | awk '{print $1}')" \
+      --arg dependencies "$arm64_dependency" \
+      --arg dependencies_sha "$(sha256sum "$ARTIFACT_DIR/$arm64_dependency" | awk '{print $1}')" \
+      '.architecture = $architecture |
+       .app.asset = $app |
+       .app.sha256 = $app_sha |
+       .dependencies.asset = $dependencies |
+       .dependencies.sha256 = $dependencies_sha' \
+      "$x64_identity" \
+      >"$ARTIFACT_DIR/fased-hosted-app-linux-arm64-v${VERSION}.tar.gz.release.json"
+  fi
   node "$ROOT_DIR/scripts/assemble-lifecycle-generation.mjs" \
     --runtime-archive "$ARTIFACT_DIR/fased-hosted-linux-x64-v${VERSION}.tar.gz" \
     --signer "$ARTIFACT_DIR/fased-signerd-linux-amd64" \
@@ -104,6 +130,63 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
     --commit "$COMMIT" \
     --tree "$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')" \
     --architecture x64
+  if [[ "$PUBLIC_ACQUISITION" == "1" ]]; then
+    node "$ROOT_DIR/scripts/stamp-release-installer.mjs" \
+      --source "$ROOT_DIR/install.sh" \
+      --output "$ARTIFACT_DIR/install.sh" \
+      --version "$VERSION"
+    install -m 0755 \
+      "$ROOT_DIR/scripts/fased-lifecycle-supervisor.mjs" \
+      "$ARTIFACT_DIR/fased-lifecycle-supervisor.mjs"
+    install -m 0755 \
+      "$ROOT_DIR/scripts/fased-host-updater.mjs" \
+      "$ARTIFACT_DIR/fased-host-updater.mjs"
+    install -m 0755 \
+      "$ROOT_DIR/scripts/fased-host-updaterctl.mjs" \
+      "$ARTIFACT_DIR/fased-host-updaterctl.mjs"
+    install -m 0755 \
+      "$ROOT_DIR/scripts/privileged-release-evidence.mjs" \
+      "$ARTIFACT_DIR/fased-privileged-release-evidence.mjs"
+    node "$ROOT_DIR/scripts/build-hosted-release-manifest.mjs" \
+      --assets "$ARTIFACT_DIR" \
+      --version "$VERSION" \
+      --commit "$COMMIT" \
+      --output "$ARTIFACT_DIR/fased-hosted-release-v2.json"
+    issued_at="$(node -e '
+      process.stdout.write(new Date(process.argv[1]).toISOString());
+    ' "$(git -C "$ROOT_DIR" show -s --format=%cI "$COMMIT")")"
+    expires_at="$(node -e '
+      const issued = new Date(process.argv[1]);
+      process.stdout.write(new Date(issued.getTime() + 365 * 24 * 60 * 60 * 1000).toISOString());
+    ' "$issued_at")"
+    node "$ROOT_DIR/scripts/privileged-release-evidence.mjs" build \
+      --assets "$ARTIFACT_DIR" \
+      --version "$VERSION" \
+      --commit "$COMMIT" \
+      --issued-at "$issued_at" \
+      --vex-decisions "$ROOT_DIR/release/vulnerability-decisions-v1.json" \
+      --output-dir "$ARTIFACT_DIR"
+    node "$ROOT_DIR/scripts/build-lifecycle-trust-metadata.mjs" \
+      --assets "$ARTIFACT_DIR" \
+      --root-policy "$ROOT_DIR/release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json" \
+      --version "$VERSION" \
+      --commit "$COMMIT" \
+      --issued-at "$issued_at" \
+      --expires-at "$expires_at" \
+      --output "$ARTIFACT_DIR/fased-lifecycle-trust-v1.json"
+    for attested_asset in \
+      fased-hosted-release-v2.json \
+      fased-lifecycle-trust-v1.json \
+      fased-privileged-provenance-v1.intoto.json \
+      fased-signerd-release \
+      install.sh \
+      fased-lifecycle-supervisor.mjs \
+      fased-host-updater.mjs \
+      fased-host-updaterctl.mjs; do
+      printf '{"fixtureOfflineAttestation":true}\n' \
+        >"$ARTIFACT_DIR/${attested_asset}.attestation.json"
+    done
+  fi
   node "$ROOT_DIR/scripts/release-artifact-set.mjs" build \
     --directory "$ARTIFACT_DIR" \
     --version "$VERSION" \

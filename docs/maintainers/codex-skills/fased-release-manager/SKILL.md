@@ -54,10 +54,12 @@ Treat these literal user commands as scoped workflow authorization:
   or `REJECT` with reasons. Never merge an external contribution without a
   separate founder instruction such as `approved` or `merge PR #N`.
 - `release candidate`: select `RELEASE`; authorize `PRE-CANDIDATE`, the strictly
-  version-only candidate PR, trusted build once, and packaged P1 once. Stop when
-  the publication job is waiting at the protected environment. The owner tag,
-  GitHub Release publication, npm, owner Local or Hosting mutation, and stable
-  promotion remain explicit boundaries unless the same instruction grants them.
+  version-only candidate PR, trusted build once, and packaged P1 once. The
+  owner-authorized immutable tag must exist before the candidate workflow is
+  dispatched from that tag. Stop when the publication job is waiting at the
+  protected environment. The owner tag, GitHub Release publication, npm, owner
+  Local or Hosting mutation, and stable promotion remain explicit boundaries
+  unless the same instruction grants them.
 
 These shortcuts consume the existing focused CI routing. Do not edit, broaden,
 or duplicate CI merely to implement a shortcut.
@@ -149,7 +151,7 @@ Read bundled references, never absolute files from `/home/fc/fasedbot/docs`:
 
 Release path:
 
-`clean merged main -> PRE-CANDIDATE PASS -> version-only PR -> trusted build once -> packaged P1 once -> owner tag -> publication approval -> exact GitHub bytes -> owner npm beta -> PUBLIC0 -> owner Local -> real Hosting -> stable`
+`clean merged main -> PRE-CANDIDATE PASS -> version-only PR -> owner tag -> trusted build once -> packaged P1 once -> publication approval -> exact GitHub bytes -> owner npm beta -> PUBLIC0 -> owner Local -> real Hosting -> stable`
 
 For installer or updater changes, `PRE-CANDIDATE PASS` must include the exact
 public-style acquisition path before any version is allocated:

@@ -790,7 +790,7 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
     }
   });
 
-  it("accepts a protected-main build attestation only when the immutable tag resolves its exact commit", () => {
+  it("rejects a protected-main attestation even when release metadata names the commit", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-main-attested-local-"));
     try {
       const harness = createExactLocalBootstrapHarness(tempRoot, {
@@ -812,25 +812,22 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
         { FASED_TEST_ATTESTATION_MAIN_ONLY: "1" },
       );
 
-      expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toContain("exact-local-inner-handoff");
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).not.toContain("exact-local-inner-handoff");
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 
-  it("uses one protected-main-compatible attestation policy for every release trust artifact", () => {
+  it("uses one tag-bound attestation policy for every release trust artifact", () => {
     expect(installer.match(/verify_release_attestation_source\(\)/gu)).toHaveLength(1);
     expect(installer.match(/verify_release_attestation_source \\\n/gu)).toHaveLength(3);
     expect(installer).toContain(
       'if ! verify_release_attestation_source "$manifest" "$bundle" "$release_version"; then',
     );
-    expect(installer.match(/--source-ref "refs\/tags\/v\$\{release_version\}"/gu)).toBeNull();
+    expect(installer.match(/--source-ref "refs\/tags\/v\$\{release_version\}"/gu)).toHaveLength(1);
     expect(installer.match(/--source-ref "refs\/heads\/main"/gu)).toBeNull();
-    expect(installer).toContain(
-      'for source_ref in "refs/tags/v${release_version}" "refs/heads/main"; do',
-    );
-    expect(installer).toContain('--source-ref "$source_ref"');
+    expect(installer).not.toContain("for source_ref in");
   });
 
   it.each([
