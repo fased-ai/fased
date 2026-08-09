@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"fased-lifecycled/bundle"
 	"fased-lifecycled/model"
@@ -36,6 +37,30 @@ func (s *Store) ImportGenerationArchive(archive string) (model.Generation, error
 	if !archiveInfo.Mode().IsRegular() || archiveInfo.Mode()&os.ModeSymlink != 0 {
 		return model.Generation{}, errors.New("generation archive must be a regular file")
 	}
+	inventoryJSON, err := readGenerationArchiveInventory(archive)
+	if err != nil {
+		return model.Generation{}, err
+	}
+	inventory, err := bundle.DecodeInventory(inventoryJSON)
+	if err != nil {
+		return model.Generation{}, err
+	}
+	generation, err := bundle.Identity(inventory)
+	if err != nil {
+		return model.Generation{}, err
+	}
+	if s.declaredActiveGeneration(generation) {
+		return generation, nil
+	}
+	installed := s.generationPath(generation.ID)
+	if _, err := os.Lstat(installed); err == nil {
+		if _, verifyErr := s.verifyGenerationPath(installed, generation.ID); verifyErr != nil {
+			return model.Generation{}, errors.New("installed generation conflicts with verified archive identity")
+		}
+		return generation, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return model.Generation{}, err
+	}
 	inboxRoot := filepath.Join(s.root, "inbox")
 	if err := os.MkdirAll(inboxRoot, 0o700); err != nil {
 		return model.Generation{}, err
@@ -46,18 +71,6 @@ func (s *Store) ImportGenerationArchive(archive string) (model.Generation, error
 	}
 	defer os.RemoveAll(temporary)
 	if err := extractGenerationArchive(archive, temporary); err != nil {
-		return model.Generation{}, err
-	}
-	inventoryJSON, err := readGenerationInventory(filepath.Join(temporary, generationInventoryName))
-	if err != nil {
-		return model.Generation{}, err
-	}
-	inventory, err := bundle.DecodeInventory(inventoryJSON)
-	if err != nil {
-		return model.Generation{}, err
-	}
-	generation, err := bundle.Identity(inventory)
-	if err != nil {
 		return model.Generation{}, err
 	}
 	if _, err := s.verifyGenerationPath(temporary, generation.ID); err != nil {
@@ -79,6 +92,77 @@ func (s *Store) ImportGenerationArchive(archive string) (model.Generation, error
 		return model.Generation{}, err
 	}
 	return generation, nil
+}
+
+func (s *Store) declaredActiveGeneration(generation model.Generation) bool {
+	manifest, _, err := s.ReadManifest()
+	if err != nil || manifest.ActiveGeneration == nil || *manifest.ActiveGeneration != generation {
+		return false
+	}
+	pointer := filepath.Join(s.root, "current")
+	pointerInfo, err := os.Lstat(pointer)
+	if err != nil || pointerInfo.Mode()&os.ModeSymlink == 0 {
+		return false
+	}
+	target, err := os.Readlink(pointer)
+	if err != nil || target != filepath.ToSlash(filepath.Join("generations", strings.TrimPrefix(generation.ID, "sha256:"))) {
+		return false
+	}
+	rootInfo, err := os.Lstat(s.root)
+	if err != nil {
+		return false
+	}
+	rootStat, rootOK := rootInfo.Sys().(*syscall.Stat_t)
+	installedInfo, err := os.Lstat(s.generationPath(generation.ID))
+	if err != nil {
+		return false
+	}
+	installedStat, installedOK := installedInfo.Sys().(*syscall.Stat_t)
+	return rootOK && installedOK && installedInfo.IsDir() &&
+		installedInfo.Mode()&os.ModeSymlink == 0 && installedInfo.Mode().Perm()&0o022 == 0 &&
+		installedStat.Uid == rootStat.Uid
+}
+
+func readGenerationArchiveInventory(archive string) ([]byte, error) {
+	input, err := os.Open(archive)
+	if err != nil {
+		return nil, err
+	}
+	defer input.Close()
+	compressed, err := gzip.NewReader(input)
+	if err != nil {
+		return nil, err
+	}
+	defer compressed.Close()
+	reader := tar.NewReader(compressed)
+	entries := 0
+	var total int64
+	for {
+		header, nextErr := reader.Next()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			return nil, nextErr
+		}
+		entries++
+		total += header.Size
+		if entries > maxGenerationArchiveEntries || total > maxGenerationArchiveBytes || header.Size < 0 {
+			return nil, errors.New("generation archive exceeds its inspection budget")
+		}
+		if header.Name != "generation/inventory.json" {
+			continue
+		}
+		if header.Typeflag != tar.TypeReg || header.Size > maxGenerationInventorySize {
+			return nil, errors.New("generation archive inventory is invalid")
+		}
+		inventory := make([]byte, header.Size)
+		if _, err := io.ReadFull(reader, inventory); err != nil {
+			return nil, err
+		}
+		return inventory, nil
+	}
+	return nil, errors.New("generation archive inventory is missing")
 }
 
 func extractGenerationArchive(archive, destination string) error {
@@ -366,6 +450,11 @@ func (s *Store) StageGeneration(generationID string) error {
 	}
 	target := s.generationPath(generationID)
 	if _, err := os.Lstat(target); err == nil {
+		if manifest, _, manifestErr := s.ReadManifest(); manifestErr == nil &&
+			manifest.ActiveGeneration != nil && manifest.ActiveGeneration.ID == generationID &&
+			s.declaredActiveGeneration(*manifest.ActiveGeneration) {
+			return nil
+		}
 		_, verifyErr := s.verifyGenerationPath(target, generationID)
 		return verifyErr
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -451,7 +540,13 @@ func (s *Store) ReadGenerationContract(generationID string) (bundle.Inventory, m
 	if err != nil {
 		return bundle.Inventory{}, model.Generation{}, err
 	}
-	generation, err := s.verifyGenerationPath(root, generationID)
+	generation, err := bundle.Identity(inventory)
+	if err != nil || generation.ID != generationID {
+		return bundle.Inventory{}, model.Generation{}, errors.New("generation directory and inventory identity differ")
+	}
+	if !s.declaredActiveGeneration(generation) {
+		generation, err = s.verifyGenerationPath(root, generationID)
+	}
 	if err != nil {
 		return bundle.Inventory{}, model.Generation{}, err
 	}

@@ -422,20 +422,46 @@ async function runGenerationTransaction({
             "--generation",
             generation,
           ]
-        : [
-            "--",
-            lifecycle.supervisor,
-            "apply",
-            "--config",
-            lifecycle.config,
-            "--generation-archive",
-            archive,
-          ];
-    const result = await runAdministrator(
-      operation === "initialize" ? null : sudoPath,
-      argumentsForAdministrator,
-      { timeoutMs },
-    );
+        : null;
+    let result;
+    if (operation === "initialize") {
+      result = await runAdministrator(null, argumentsForAdministrator, { timeoutMs });
+    } else {
+      const staged = await runAdministrator(
+        sudoPath,
+        [
+          "--",
+          lifecycle.supervisor,
+          "stage",
+          "--config",
+          lifecycle.config,
+          "--generation-archive",
+          archive,
+        ],
+        { timeoutMs: Math.max(timeoutMs, 10 * 60_000) },
+      );
+      if (!staged.ok) {
+        const detail = staged.stderr.trim() || staged.stdout.trim() || "no subprocess diagnostic";
+        throw new Error(`privileged lifecycle staging failed: ${detail}`);
+      }
+      const stagedGeneration = JSON.parse(staged.stdout.trim());
+      if (!DIGEST.test(stagedGeneration.id ?? "") || stagedGeneration.version !== version) {
+        throw new Error("privileged lifecycle staging returned an invalid generation identity");
+      }
+      result = await runAdministrator(
+        sudoPath,
+        [
+          "--",
+          lifecycle.supervisor,
+          "apply",
+          "--config",
+          lifecycle.config,
+          "--generation-id",
+          stagedGeneration.id,
+        ],
+        { timeoutMs },
+      );
+    }
     if (!result.ok) {
       const detail = result.stderr.trim() || result.stdout.trim() || "no subprocess diagnostic";
       const exit = Number.isInteger(result.code) ? String(result.code) : "none";

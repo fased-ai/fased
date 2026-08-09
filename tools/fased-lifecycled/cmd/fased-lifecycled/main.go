@@ -365,18 +365,28 @@ func ensureStableBinaryDirectory(directory string) error {
 func runApply(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("apply", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var configPath, generationRoot, generationArchive string
+	var configPath, generationRoot, generationArchive, generationID string
 	flags.StringVar(&configPath, "config", "", "")
 	flags.StringVar(&generationRoot, "generation", "", "")
 	flags.StringVar(&generationArchive, "generation-archive", "", "")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || (generationRoot == "") == (generationArchive == "") {
+	flags.StringVar(&generationID, "generation-id", "", "")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		return errors.New("invalid lifecycle apply arguments")
+	}
+	selected := 0
+	for _, value := range []string{generationRoot, generationArchive, generationID} {
+		if value != "" {
+			selected++
+		}
+	}
+	if selected != 1 {
 		return errors.New("invalid lifecycle apply arguments")
 	}
 	selectedInput := generationRoot
 	if generationArchive != "" {
 		selectedInput = generationArchive
 	}
-	if !filepath.IsAbs(selectedInput) || filepath.Clean(selectedInput) != selectedInput {
+	if selectedInput != "" && (!filepath.IsAbs(selectedInput) || filepath.Clean(selectedInput) != selectedInput) {
 		return errors.New("invalid lifecycle apply arguments")
 	}
 	config, err := loadConfig(configPath, 0)
@@ -388,7 +398,9 @@ func runApply(args []string, output io.Writer) error {
 		return err
 	}
 	var generation model.Generation
-	if generationArchive != "" {
+	if generationID != "" {
+		generation = model.Generation{ID: generationID}
+	} else if generationArchive != "" {
 		generation, err = state.ImportGenerationArchive(generationArchive)
 	} else {
 		generation, err = state.ImportGeneration(generationRoot)
@@ -462,10 +474,18 @@ func randomRequestID() (string, error) {
 func runStage(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("stage", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var configPath, generationRoot string
+	var configPath, generationRoot, generationArchive string
 	flags.StringVar(&configPath, "config", "", "")
 	flags.StringVar(&generationRoot, "generation", "", "")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !filepath.IsAbs(generationRoot) || filepath.Clean(generationRoot) != generationRoot {
+	flags.StringVar(&generationArchive, "generation-archive", "", "")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || (generationRoot == "") == (generationArchive == "") {
+		return errors.New("invalid lifecycle stage arguments")
+	}
+	selectedInput := generationRoot
+	if generationArchive != "" {
+		selectedInput = generationArchive
+	}
+	if !filepath.IsAbs(selectedInput) || filepath.Clean(selectedInput) != selectedInput {
 		return errors.New("invalid lifecycle stage arguments")
 	}
 	config, err := loadConfig(configPath, 0)
@@ -476,8 +496,16 @@ func runStage(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	generation, err := state.ImportGeneration(generationRoot)
+	var generation model.Generation
+	if generationArchive != "" {
+		generation, err = state.ImportGenerationArchive(generationArchive)
+	} else {
+		generation, err = state.ImportGeneration(generationRoot)
+	}
 	if err != nil {
+		return err
+	}
+	if err := state.StageGeneration(generation.ID); err != nil {
 		return err
 	}
 	return json.NewEncoder(output).Encode(generation)

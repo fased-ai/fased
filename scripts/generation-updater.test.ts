@@ -77,12 +77,14 @@ describe("generation updater", () => {
     await fsp.rm(stage.directory, { recursive: true, force: true });
   });
 
-  it("downloads descriptor-bound bytes and delegates one privileged apply", async () => {
+  it("downloads descriptor-bound bytes, stages once, and delegates one privileged apply", async () => {
     const value = await fixture();
     const verify = vi.fn(async () => undefined);
     const administrator = vi.fn(async (_command, args: string[]) => ({
       ok: true,
-      stdout: `${JSON.stringify({ outcome: "UPDATED", transactionId: "tx" })}\n`,
+      stdout: args.includes("stage")
+        ? `${JSON.stringify({ id: `sha256:${"a".repeat(64)}`, version })}\n`
+        : `${JSON.stringify({ outcome: "UPDATED", transactionId: "tx" })}\n`,
       stderr: "",
       args,
     }));
@@ -113,8 +115,10 @@ describe("generation updater", () => {
     });
     expect(result).toMatchObject({ version, outcome: "COMMITTED", transactionId: "tx" });
     expect(verify).toHaveBeenCalledOnce();
-    expect(administrator).toHaveBeenCalledOnce();
-    expect(administrator.mock.calls[0][1]).toContain("apply");
+    expect(administrator).toHaveBeenCalledTimes(2);
+    expect(administrator.mock.calls[0][1]).toContain("stage");
+    expect(administrator.mock.calls[1][1]).toContain("apply");
+    expect(administrator.mock.calls[1][1]).toContain("--generation-id");
   });
 
   it("rejects an unsupported privileged convergence outcome", async () => {
@@ -142,9 +146,11 @@ describe("generation updater", () => {
           await fsp.copyFile(source, destination);
         },
         verifyOfficialAsset: async () => undefined,
-        runAdministrator: async () => ({
+        runAdministrator: async (_command, args) => ({
           ok: true,
-          stdout: `${JSON.stringify({ outcome: "RECOVERY_PENDING" })}\n`,
+          stdout: args.includes("stage")
+            ? `${JSON.stringify({ id: `sha256:${"a".repeat(64)}`, version })}\n`
+            : `${JSON.stringify({ outcome: "RECOVERY_PENDING" })}\n`,
           stderr: "",
         }),
         sudoPath: "/usr/bin/sudo",
