@@ -166,6 +166,12 @@ func readGenerationArchiveInventory(archive string) ([]byte, error) {
 }
 
 func extractGenerationArchive(archive, destination string) error {
+	extractionRoot, err := os.OpenRoot(destination)
+	if err != nil {
+		return err
+	}
+	defer extractionRoot.Close()
+
 	input, err := os.Open(archive)
 	if err != nil {
 		return err
@@ -209,8 +215,8 @@ func extractGenerationArchive(archive, destination string) error {
 			return fmt.Errorf("generation archive contains duplicate entry %q", relative)
 		}
 		seen[relative] = struct{}{}
-		target := filepath.Join(destination, filepath.FromSlash(relative))
-		if err := ensureArchiveParent(destination, filepath.Dir(target)); err != nil {
+		target := filepath.FromSlash(relative)
+		if err := ensureArchiveParent(extractionRoot, filepath.Dir(target)); err != nil {
 			return err
 		}
 		inPayload := relative == generationPayloadName || strings.HasPrefix(relative, generationPayloadName+"/")
@@ -220,10 +226,10 @@ func extractGenerationArchive(archive, destination string) error {
 			if inPayload {
 				mode = 0o755
 			}
-			if err := os.Mkdir(target, mode); err != nil {
+			if err := extractionRoot.Mkdir(target, mode); err != nil {
 				return err
 			}
-			if err := os.Chmod(target, mode); err != nil {
+			if err := extractionRoot.Chmod(target, mode); err != nil {
 				return err
 			}
 		case tar.TypeReg, tar.TypeRegA:
@@ -238,7 +244,7 @@ func extractGenerationArchive(archive, destination string) error {
 					mode = 0o700
 				}
 			}
-			output, openErr := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+			output, openErr := extractionRoot.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 			if openErr != nil {
 				return openErr
 			}
@@ -263,7 +269,7 @@ func extractGenerationArchive(archive, destination string) error {
 			if resolved == "." || resolved == ".." || strings.HasPrefix(resolved, "../") {
 				return fmt.Errorf("generation archive symlink %q escapes the generation", relative)
 			}
-			if err := os.Symlink(link, target); err != nil {
+			if err := extractionRoot.Symlink(filepath.FromSlash(link), target); err != nil {
 				return err
 			}
 		default:
@@ -273,18 +279,14 @@ func extractGenerationArchive(archive, destination string) error {
 	return nil
 }
 
-func ensureArchiveParent(root, parent string) error {
-	relative, err := filepath.Rel(root, parent)
-	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return errors.New("generation archive parent escapes the extraction root")
-	}
-	current := root
-	if relative == "." {
+func ensureArchiveParent(root *os.Root, parent string) error {
+	if parent == "." {
 		return nil
 	}
-	for _, component := range strings.Split(relative, string(filepath.Separator)) {
+	current := ""
+	for _, component := range strings.Split(parent, string(filepath.Separator)) {
 		current = filepath.Join(current, component)
-		info, statErr := os.Lstat(current)
+		info, statErr := root.Lstat(current)
 		if statErr != nil {
 			return statErr
 		}

@@ -76,6 +76,30 @@ func writeGenerationArchive(t *testing.T, archive, source string) {
 	}
 }
 
+func writeRawGenerationArchive(t *testing.T, archive string, headers []*tar.Header) {
+	t.Helper()
+	output, err := os.Create(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed := gzip.NewWriter(output)
+	written := tar.NewWriter(compressed)
+	for _, header := range headers {
+		if err := written.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := written.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := compressed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 const (
 	digestA = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	digestB = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -385,6 +409,43 @@ func TestImportGenerationArchiveExtractsDirectlyAndReverifiesExactBytes(t *testi
 	importedAlias := filepath.Join(state.inboxGenerationPath(expected.ID), generationPayloadName, "bin", "alias")
 	if target, err := os.Readlink(importedAlias); err != nil || target != "fased" {
 		t.Fatalf("safe archived symlink was not preserved: target=%q err=%v", target, err)
+	}
+}
+
+func TestGenerationArchiveExtractionRejectsTraversalAndEscapingSymlinks(t *testing.T) {
+	for name, malicious := range map[string]*tar.Header{
+		"traversal": {
+			Name:     "generation/../../outside",
+			Typeflag: tar.TypeReg,
+			Mode:     0o600,
+		},
+		"absolute symlink": {
+			Name:     "generation/payload/escape",
+			Typeflag: tar.TypeSymlink,
+			Linkname: "/tmp/outside",
+		},
+		"relative symlink": {
+			Name:     "generation/payload/escape",
+			Typeflag: tar.TypeSymlink,
+			Linkname: "../../../outside",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			archive := filepath.Join(root, "malicious.tar.gz")
+			writeRawGenerationArchive(t, archive, []*tar.Header{
+				{Name: "generation/", Typeflag: tar.TypeDir, Mode: 0o700},
+				{Name: "generation/payload/", Typeflag: tar.TypeDir, Mode: 0o755},
+				malicious,
+			})
+			destination := filepath.Join(root, "destination")
+			if err := os.Mkdir(destination, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := extractGenerationArchive(archive, destination); err == nil {
+				t.Fatal("unsafe archive entry was accepted")
+			}
+		})
 	}
 }
 
