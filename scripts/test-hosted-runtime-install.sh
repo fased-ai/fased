@@ -36,6 +36,7 @@ for managed_script in \
   fased-managed-launcher.sh \
   fased-managed-service.sh \
   fased-managed-updater.mjs \
+  fased-generation-updater-core.mjs \
   fased-managed-updater-core.mjs \
   generation-updater.mjs \
   fased-host-updaterctl.mjs \
