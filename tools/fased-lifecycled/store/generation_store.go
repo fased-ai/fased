@@ -482,6 +482,13 @@ func (s *Store) StageGeneration(generationID string) error {
 		if _, verifyErr := s.verifyGenerationPath(target, generationID); verifyErr != nil {
 			return verifyErr
 		}
+		info, statErr := os.Lstat(target)
+		if statErr != nil {
+			return statErr
+		}
+		if info.Mode().Perm() == 0o711 {
+			return nil
+		}
 		return os.Chmod(target, 0o711)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
