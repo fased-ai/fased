@@ -95,7 +95,7 @@ func (adapter *ControllerAdapter) Restore(ctx context.Context, tx model.Transact
 	if err := adapter.Systemd.DaemonReload(ctx); err != nil {
 		return err
 	}
-	if tx.Previous == nil && tx.PlanAction != "BRIDGE_PUBLIC_STABLE" {
+	if tx.Previous == nil {
 		return nil
 	}
 	return adapter.Systemd.Start(ctx, unit)

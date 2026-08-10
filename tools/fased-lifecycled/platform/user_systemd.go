@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os/exec"
 	"strconv"
-	"syscall"
 )
 
 type CommandUserSystemd struct {
@@ -22,10 +21,13 @@ func (systemd CommandUserSystemd) command(ctx context.Context, arguments ...stri
 	if systemd.Principal.UID == 0 || systemd.Principal.GID == 0 || systemd.Home == "" {
 		return nil, errors.New("user systemd principal is unsafe")
 	}
-	command := exec.CommandContext(ctx, systemd.Binary, append([]string{"--user"}, arguments...)...)
-	runtime := "/run/user/" + strconv.FormatUint(uint64(systemd.Principal.UID), 10)
-	command.Env = []string{"HOME=" + systemd.Home, "PATH=/usr/bin:/bin", "XDG_RUNTIME_DIR=" + runtime, "DBUS_SESSION_BUS_ADDRESS=unix:path=" + runtime + "/bus"}
-	command.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: systemd.Principal.UID, Gid: systemd.Principal.GID, NoSetGroups: true}}
+	// The target controller deliberately runs with NoNewPrivileges. Asking the
+	// child process to change credentials therefore fails under the hardened
+	// unit. Let PID 1 connect to the exact local user manager instead; the
+	// numeric UID avoids mutable account-name authority.
+	machine := strconv.FormatUint(uint64(systemd.Principal.UID), 10) + "@.host"
+	command := exec.CommandContext(ctx, systemd.Binary, append([]string{"--user", "--machine=" + machine}, arguments...)...)
+	command.Env = []string{"PATH=/usr/bin:/bin"}
 	return command, nil
 }
 

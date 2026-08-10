@@ -120,3 +120,24 @@ func TestControllerBridgeDoesNotStopAbsentCanonicalWorker(t *testing.T) {
 		}
 	}
 }
+
+func TestControllerBridgeRollbackDoesNotStartAbsentCanonicalWorker(t *testing.T) {
+	tx, identity := manifestTransaction(t, true)
+	tx.PlanAction = "BRIDGE_PUBLIC_STABLE"
+	operator, gateway, signer := principals()
+	config, err := NewConfig(model.ProfileProtectedLocal, "example", "/home/example/.fased", operator, gateway, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := []string{}
+	adapter := ControllerAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls},
+		Systemd: fakeSystemd{calls: &calls}, Generations: fakeControllerGenerations{root: t.TempDir(), calls: &calls}}
+	if err := adapter.Restore(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range calls {
+		if strings.HasPrefix(call, "systemd.start:") {
+			t.Fatalf("public-stable rollback tried to start an absent canonical worker: %v", calls)
+		}
+	}
+}
