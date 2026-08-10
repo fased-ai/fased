@@ -271,7 +271,7 @@ func TestBootstrapPathPlanIsCanonicalAndBounded(t *testing.T) {
 	want := []BootstrapPath{
 		{Path: "/opt/fased/local/local", UID: 0, GID: 0, Mode: 0o755},
 		{Path: "/var/lib/fased-local/local", UID: 0, GID: 0, Mode: 0o755},
-		{Path: "/var/lib/fased-local/local/controller", UID: 0, GID: 1000, Mode: 0o710},
+		{Path: "/var/lib/fased-local/local/controller", UID: 0, GID: 899, Mode: 0o710},
 		{Path: "/var/lib/fased-local/local/lifecycle", UID: 0, GID: 0, Mode: 0o700},
 		{Path: "/var/lib/fased-local/local/signer", UID: 899, GID: 899, Mode: 0o700},
 		{Path: "/home/owner/.fased", UID: 1000, GID: 897, Mode: os.ModeSetgid | 0o770},
