@@ -13,8 +13,14 @@ COMMIT="${FASED_SYSTEMD_FIXTURE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD)}"
   echo "The protected Local fixture requires an exact 40-character commit." >&2
   exit 1
 }
+TREE="$(git -C "$ROOT_DIR" rev-parse "${COMMIT}^{tree}")"
+LOCKFILE_DIGEST="sha256:$(git -C "$ROOT_DIR" show "${COMMIT}:pnpm-lock.yaml" | sha256sum | awk '{print $1}')"
+CACHE_HOME="${XDG_CACHE_HOME:-${HOME:-${TMPDIR:-/tmp}}/.cache}"
 ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR:-}"
 OWN_ARTIFACT_DIR=0
+ARTIFACT_CACHE_DIR="${FASED_SYSTEMD_FIXTURE_ARTIFACT_CACHE_DIR-$CACHE_HOME/fased/protected-local-artifacts}"
+ARTIFACT_CACHE_TARGET=""
+ARTIFACT_CACHE_LOCK_FD=""
 IMAGE_CACHE_DIR="${FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR:-}"
 PREINSTALLED_TOOLS="${FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS:-0}"
 PUBLIC_ACQUISITION="${FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION:-0}"
@@ -25,9 +31,55 @@ RECEIPT_DIR="${FASED_SYSTEMD_FIXTURE_RECEIPT_DIR:-}"
 OWN_RECEIPT_DIR=0
 MANAGED_PREDECESSOR_VERSION="${FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION:-}"
 MANAGED_PREDECESSOR_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_ARTIFACT_DIR:-}"
+MANAGED_PREDECESSOR_CACHE_DIR="${FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_CACHE_DIR-$CACHE_HOME/fased/predecessor-artifacts}"
 OWN_MANAGED_PREDECESSOR_ARTIFACT_DIR=0
+PARALLEL_SCENARIOS="${FASED_SYSTEMD_FIXTURE_PARALLEL_SCENARIOS:-1}"
 SOURCE_REPO_DIR=""
 OWN_SOURCE_REPO_DIR=0
+SOURCE_REPO_MOUNT_OPTIONS="ro,z"
+
+if [[ -z "$ARTIFACT_DIR" && "$BUILD_ONLY" == "0" && -n "$ARTIFACT_CACHE_DIR" ]]; then
+  [[ "$ARTIFACT_CACHE_DIR" == /* ]] || {
+    echo "FASED_SYSTEMD_FIXTURE_ARTIFACT_CACHE_DIR must be absolute or empty." >&2
+    exit 1
+  }
+  command -v flock >/dev/null 2>&1 || {
+    echo "flock is required for the shared branch artifact cache." >&2
+    exit 1
+  }
+  artifact_cache_key="${COMMIT}-${TREE}-${LOCKFILE_DIGEST#sha256:}"
+  mkdir -p "$ARTIFACT_CACHE_DIR/branch-x64"
+  ARTIFACT_CACHE_TARGET="$ARTIFACT_CACHE_DIR/branch-x64/$artifact_cache_key"
+  exec {ARTIFACT_CACHE_LOCK_FD}>"$ARTIFACT_CACHE_DIR/branch-x64/.${artifact_cache_key}.lock"
+  flock "$ARTIFACT_CACHE_LOCK_FD"
+  if [[ -e "$ARTIFACT_CACHE_TARGET" ]]; then
+    [[ -d "$ARTIFACT_CACHE_TARGET" &&
+      -f "$ARTIFACT_CACHE_TARGET/fased-hosting-candidate.json" ]] || {
+      echo "The branch artifact cache contains an incomplete entry: $ARTIFACT_CACHE_TARGET" >&2
+      exit 1
+    }
+    ARTIFACT_DIR="$ARTIFACT_CACHE_TARGET"
+    ARTIFACT_CACHE_TARGET=""
+    flock -u "$ARTIFACT_CACHE_LOCK_FD"
+    exec {ARTIFACT_CACHE_LOCK_FD}>&-
+    ARTIFACT_CACHE_LOCK_FD=""
+    echo "branch artifact cache hit: commit=$COMMIT tree=$TREE lock=$LOCKFILE_DIGEST"
+  fi
+fi
+
+cleanup_before_fixture() {
+  if [[ "$OWN_ARTIFACT_DIR" -eq 1 && -n "$ARTIFACT_DIR" ]]; then
+    rm -rf -- "$ARTIFACT_DIR"
+  fi
+  if [[ "$OWN_MANAGED_PREDECESSOR_ARTIFACT_DIR" -eq 1 &&
+    -n "$MANAGED_PREDECESSOR_ARTIFACT_DIR" ]]; then
+    rm -rf -- "$MANAGED_PREDECESSOR_ARTIFACT_DIR"
+  fi
+  if [[ -n "$ARTIFACT_CACHE_LOCK_FD" ]]; then
+    flock -u "$ARTIFACT_CACHE_LOCK_FD" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup_before_fixture EXIT INT TERM HUP
 
 if [[ -n "$ARTIFACT_DIR" ]]; then
   descriptor="$ARTIFACT_DIR/fased-hosting-candidate.json"
@@ -39,9 +91,11 @@ if [[ -n "$ARTIFACT_DIR" ]]; then
   VERSION="$(jq -er .version "$identity")"
   COMMIT="$(jq -er .commit "$identity")"
   TREE="$(jq -er .tree "$identity")"
+  LOCKFILE_DIGEST="sha256:$(git -C "$ROOT_DIR" show "${COMMIT}:pnpm-lock.yaml" | sha256sum | awk '{print $1}')"
   [[ "$VERSION" == "$(jq -er .version "$descriptor")" &&
     "$COMMIT" == "$(jq -er .commit "$descriptor")" &&
-    "$TREE" == "$(jq -er .tree "$descriptor")" ]] || {
+    "$TREE" == "$(jq -er .tree "$descriptor")" &&
+    "$LOCKFILE_DIGEST" == "$(jq -er .lockfileDigest "$descriptor")" ]] || {
     echo "The candidate descriptor and lifecycle identity disagree." >&2
     exit 1
   }
@@ -82,12 +136,6 @@ else
     echo "Podman is required for the protected Local systemd fixtures." >&2
     exit 1
   }
-  if [[ ",$SCENARIOS," == *,managed-update,* ]]; then
-    command -v gh >/dev/null 2>&1 || {
-      echo "GitHub CLI is required for the literal Protected Local update fixture." >&2
-      exit 1
-    }
-  fi
   [[ "$RUNTIME" == "podman" ]] || {
     echo "The protected Local systemd fixtures currently require Podman." >&2
     exit 1
@@ -105,6 +153,10 @@ run_container() {
 }
 [[ "$PREINSTALLED_TOOLS" == "0" || "$PREINSTALLED_TOOLS" == "1" ]] || {
   echo "FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS must be 0 or 1." >&2
+  exit 1
+}
+[[ "$PARALLEL_SCENARIOS" == "0" || "$PARALLEL_SCENARIOS" == "1" ]] || {
+  echo "FASED_SYSTEMD_FIXTURE_PARALLEL_SCENARIOS must be 0 or 1." >&2
   exit 1
 }
 [[ "$PUBLIC_ACQUISITION" == "0" || "$PUBLIC_ACQUISITION" == "1" ]] || {
@@ -140,8 +192,27 @@ copy_branch_x64_fixture_aliases() {
   echo "branch-x64 artifacts are fixture-only and cannot be published"
 }
 
+clear_branch_fixture_native_outputs() {
+  local release_dir="$ROOT_DIR/dist-native/release"
+  local stale_asset
+
+  mkdir -p "$release_dir"
+  while IFS= read -r -d '' stale_asset; do
+    rm -f -- "$stale_asset"
+  done < <(
+    find "$release_dir" -maxdepth 1 \( -type f -o -type l \) \
+      \( -name 'fased-signerd-*' -o -name 'fased-lifecycled-*' \) -print0
+  )
+}
+
 if [[ -z "$ARTIFACT_DIR" ]]; then
   PUBLIC_ACQUISITION=1
+  [[ "$(git -C "$ROOT_DIR" rev-parse HEAD)" == "$COMMIT" &&
+    -z "$(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=normal)" ]] || {
+    echo "The branch artifact builder requires one exact clean product commit." >&2
+    echo "Fixture-only changes must reuse its cached artifact instead of rebuilding." >&2
+    exit 1
+  }
   [[ -x "$ROOT_DIR/node_modules/.bin/tsdown" &&
     -x "$ROOT_DIR/ui/node_modules/.bin/vite" ]] || {
     echo "The protected Local fixture requires a complete frozen development install." >&2
@@ -161,6 +232,7 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
   fixture_go_tmp="${GOTMPDIR:-${TMPDIR:-/tmp}/fased-go-tmp}"
   fixture_go_cache="${GOCACHE:-${TMPDIR:-/tmp}/fased-go-cache}"
   mkdir -p "$fixture_go_tmp" "$fixture_go_cache"
+  clear_branch_fixture_native_outputs
   GOTMPDIR="$fixture_go_tmp" \
   GOCACHE="$fixture_go_cache" \
   FASED_SIGNER_BUILD_COMMIT="$COMMIT" \
@@ -175,6 +247,9 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
   copy_branch_x64_fixture_aliases
   if [[ "$BUILD_ONLY" == "1" ]]; then
     ARTIFACT_DIR="$ARTIFACT_OUTPUT_DIR"
+  elif [[ -n "$ARTIFACT_CACHE_TARGET" ]]; then
+    ARTIFACT_DIR="$(mktemp -d "$ARTIFACT_CACHE_DIR/branch-x64/.${artifact_cache_key}.building.XXXXXX")"
+    OWN_ARTIFACT_DIR=1
   else
     ARTIFACT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-artifact.XXXXXX")"
     OWN_ARTIFACT_DIR=1
@@ -282,6 +357,20 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
     --workflow-run-attempt 1
   printf '{"fixtureOfflineAttestation":true}\n' \
     >"$ARTIFACT_DIR/fased-hosting-candidate.json.attestation.json"
+  if [[ -n "$ARTIFACT_CACHE_TARGET" ]]; then
+    [[ ! -e "$ARTIFACT_CACHE_TARGET" ]] || {
+      echo "The branch artifact cache target appeared during the locked build." >&2
+      exit 1
+    }
+    mv "$ARTIFACT_DIR" "$ARTIFACT_CACHE_TARGET"
+    ARTIFACT_DIR="$ARTIFACT_CACHE_TARGET"
+    ARTIFACT_CACHE_TARGET=""
+    OWN_ARTIFACT_DIR=0
+    flock -u "$ARTIFACT_CACHE_LOCK_FD"
+    exec {ARTIFACT_CACHE_LOCK_FD}>&-
+    ARTIFACT_CACHE_LOCK_FD=""
+    echo "branch artifact cache stored: commit=$COMMIT tree=$TREE lock=$LOCKFILE_DIGEST"
+  fi
 fi
 if [[ "$BUILD_ONLY" == "1" ]]; then
   for required_asset in \
@@ -349,16 +438,46 @@ if [[ ",$SCENARIOS," == *,managed-update,* ]]; then
     exit 1
   }
   if [[ -z "$MANAGED_PREDECESSOR_ARTIFACT_DIR" ]]; then
-    MANAGED_PREDECESSOR_ARTIFACT_DIR="$(
-      mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-managed-predecessor-artifact.XXXXXX"
-    )"
-    OWN_MANAGED_PREDECESSOR_ARTIFACT_DIR=1
+    if [[ -n "$MANAGED_PREDECESSOR_CACHE_DIR" ]]; then
+      [[ "$MANAGED_PREDECESSOR_CACHE_DIR" == /* ]] || {
+        echo "FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_CACHE_DIR must be absolute or empty." >&2
+        exit 1
+      }
+      mkdir -p "$MANAGED_PREDECESSOR_CACHE_DIR"
+      managed_predecessor_cache_target="$MANAGED_PREDECESSOR_CACHE_DIR/v$MANAGED_PREDECESSOR_VERSION"
+      if [[ -d "$managed_predecessor_cache_target" ]]; then
+        MANAGED_PREDECESSOR_ARTIFACT_DIR="$managed_predecessor_cache_target"
+        echo "predecessor artifact cache hit: v$MANAGED_PREDECESSOR_VERSION"
+      else
+        MANAGED_PREDECESSOR_ARTIFACT_DIR="$(
+          mktemp -d "$MANAGED_PREDECESSOR_CACHE_DIR/.v${MANAGED_PREDECESSOR_VERSION}.downloading.XXXXXX"
+        )"
+        OWN_MANAGED_PREDECESSOR_ARTIFACT_DIR=1
+      fi
+    else
+      MANAGED_PREDECESSOR_ARTIFACT_DIR="$(
+        mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-managed-predecessor-artifact.XXXXXX"
+      )"
+      OWN_MANAGED_PREDECESSOR_ARTIFACT_DIR=1
+    fi
+  fi
+  managed_predecessor_manifest="$MANAGED_PREDECESSOR_ARTIFACT_DIR/fased-hosted-release-v2.json"
+  if [[ ! -f "$MANAGED_PREDECESSOR_ARTIFACT_DIR/install.sh" ||
+    ! -f "$managed_predecessor_manifest" ]]; then
+    [[ "$OWN_MANAGED_PREDECESSOR_ARTIFACT_DIR" -eq 1 ]] || {
+      echo "The immutable predecessor cache entry is incomplete." >&2
+      exit 1
+    }
+    command -v gh >/dev/null 2>&1 || {
+      echo "GitHub CLI is required when the immutable predecessor cache is empty." >&2
+      exit 1
+    }
     gh release download "v$MANAGED_PREDECESSOR_VERSION" \
       --repo fased-ai/fased \
       --dir "$MANAGED_PREDECESSOR_ARTIFACT_DIR"
     chmod 0755 "$MANAGED_PREDECESSOR_ARTIFACT_DIR"
+    managed_predecessor_manifest="$MANAGED_PREDECESSOR_ARTIFACT_DIR/fased-hosted-release-v2.json"
   fi
-  managed_predecessor_manifest="$MANAGED_PREDECESSOR_ARTIFACT_DIR/fased-hosted-release-v2.json"
   [[ -f "$MANAGED_PREDECESSOR_ARTIFACT_DIR/install.sh" && -f "$managed_predecessor_manifest" ]] || {
     echo "The managed Protected Local update fixture requires a complete predecessor release." >&2
     exit 1
@@ -366,9 +485,19 @@ if [[ ",$SCENARIOS," == *,managed-update,* ]]; then
   jq -e --arg version "$MANAGED_PREDECESSOR_VERSION" \
     '.release.version == $version and .release.tag == ("v" + $version)' \
     "$managed_predecessor_manifest" >/dev/null
+  if [[ "$OWN_MANAGED_PREDECESSOR_ARTIFACT_DIR" -eq 1 &&
+    -n "${managed_predecessor_cache_target:-}" ]]; then
+    [[ ! -e "$managed_predecessor_cache_target" ]] || {
+      echo "The predecessor cache target appeared during download." >&2
+      exit 1
+    }
+    mv "$MANAGED_PREDECESSOR_ARTIFACT_DIR" "$managed_predecessor_cache_target"
+    MANAGED_PREDECESSOR_ARTIFACT_DIR="$managed_predecessor_cache_target"
+    OWN_MANAGED_PREDECESSOR_ARTIFACT_DIR=0
+    echo "predecessor artifact cache stored: v$MANAGED_PREDECESSOR_VERSION"
+  fi
 fi
 cleanup_names=()
-preserved_failure_name=""
 dump_fixture_failure() {
   local name="$1"
   echo "Protected Local fixture diagnostics: $name" >&2
@@ -390,7 +519,9 @@ dump_fixture_failure() {
 cleanup() {
   local name
   for name in "${cleanup_names[@]}"; do
-    if [[ -n "$preserved_failure_name" && "$name" == "$preserved_failure_name" ]]; then
+    if [[ "${FASED_SYSTEMD_FIXTURE_PRESERVE_FAILURE:-0}" == "1" ]] &&
+      run_container container exists "$name" >/dev/null 2>&1; then
+      printf 'preserved failed fixture: %s\n' "$name" >&2
       continue
     fi
     run_container rm -f "$name" >/dev/null 2>&1 || true
@@ -417,10 +548,18 @@ else
   mkdir -p "$RECEIPT_DIR"
 fi
 
-SOURCE_REPO_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-source.XXXXXX")"
-OWN_SOURCE_REPO_DIR=1
-git clone --quiet --no-hardlinks "$ROOT_DIR" "$SOURCE_REPO_DIR"
-git -C "$SOURCE_REPO_DIR" checkout --quiet --detach "$COMMIT"
+if [[ "$(git -C "$ROOT_DIR" rev-parse HEAD)" == "$COMMIT" &&
+  -z "$(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=normal)" ]] &&
+  { ! command -v selinuxenabled >/dev/null 2>&1 || ! selinuxenabled; }; then
+  SOURCE_REPO_DIR="$ROOT_DIR"
+  SOURCE_REPO_MOUNT_OPTIONS="ro"
+  echo "fixture source reuse: exact clean commit $COMMIT"
+else
+  SOURCE_REPO_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-source.XXXXXX")"
+  OWN_SOURCE_REPO_DIR=1
+  git clone --quiet --no-hardlinks "$ROOT_DIR" "$SOURCE_REPO_DIR"
+  git -C "$SOURCE_REPO_DIR" checkout --quiet --detach "$COMMIT"
+fi
 [[ "$(git -C "$SOURCE_REPO_DIR" rev-parse HEAD)" == "$COMMIT" ]] || {
   echo "The protected Local fixture failed to materialize the exact source commit." >&2
   exit 1
@@ -432,7 +571,7 @@ run_fixture_scenario() {
   local distro="$1"
   local image="$2"
   local scenario="$3"
-  local name="fased-protected-local-${distro}-${scenario}-$$"
+  local name="$4"
   local fixture_command_pid=""
   local fixture_command_started=""
   local fixture_command_status=0
@@ -446,7 +585,6 @@ run_fixture_scenario() {
     predecessor_version="$MANAGED_PREDECESSOR_VERSION"
   fi
 
-  cleanup_names+=("$name")
   run_container run -d \
     --name "$name" \
     --privileged \
@@ -458,10 +596,10 @@ run_fixture_scenario() {
     -e "FASED_FIXTURE_PREDECESSOR_VERSION=$predecessor_version" \
     -e "FASED_FIXTURE_PREINSTALLED_TOOLS=$PREINSTALLED_TOOLS" \
     -e "FASED_FIXTURE_PUBLIC_ACQUISITION=$PUBLIC_ACQUISITION" \
-    -v "$SOURCE_REPO_DIR:/repo:ro,Z" \
-    -v "$FIXTURE_DIR/run.sh:/usr/local/bin/fased-protected-local-systemd-fixture:ro,Z" \
-    -v "$ARTIFACT_DIR:/artifacts:ro,Z" \
-    -v "$predecessor_artifact_dir:/predecessor-artifacts:ro,Z" \
+    -v "$SOURCE_REPO_DIR:/repo:$SOURCE_REPO_MOUNT_OPTIONS" \
+    -v "$FIXTURE_DIR/run.sh:/usr/local/bin/fased-protected-local-systemd-fixture:ro,z" \
+    -v "$ARTIFACT_DIR:/artifacts:ro,z" \
+    -v "$predecessor_artifact_dir:/predecessor-artifacts:ro,z" \
     "$image" >/dev/null
   for _ in {1..200}; do
     state="$(run_container exec "$name" systemctl is-system-running 2>/dev/null || true)"
@@ -495,10 +633,6 @@ run_fixture_scenario() {
   done
   wait "$fixture_command_pid" || fixture_command_status="$?"
   if [[ "$fixture_command_status" -ne 0 ]]; then
-    if [[ "${FASED_SYSTEMD_FIXTURE_PRESERVE_FAILURE:-0}" == "1" ]]; then
-      preserved_failure_name="$name"
-      printf 'preserved failed fixture: %s\n' "$name" >&2
-    fi
     if [[ "${FASED_SYSTEMD_FIXTURE_COMPACT_DIAGNOSTICS:-0}" == "1" ]]; then
       run_container exec "$name" /bin/bash -lc '
         for log in \
@@ -590,12 +724,57 @@ for scenario in "${scenario_list[@]}"; do
       exit 1
       ;;
   esac
-  for distro in "${distro_list[@]}"; do
-    image="fased-protected-local-systemd-${distro}:local"
-    fixture_started="$SECONDS"
-    run_fixture_scenario "$distro" "$image" "$scenario"
-    printf 'fixture timing: distro=%s scenario=%s stage=complete elapsed=%ss\n' \
-      "$distro" "$scenario" "$((SECONDS - fixture_started))"
+done
+
+for distro in "${distro_list[@]}"; do
+  image="fased-protected-local-systemd-${distro}:local"
+  if [[ "$PARALLEL_SCENARIOS" == "0" || "${#scenario_list[@]}" -eq 1 ]]; then
+    for scenario in "${scenario_list[@]}"; do
+      name="fased-protected-local-${distro}-${scenario}-$$"
+      cleanup_names+=("$name")
+      fixture_started="$SECONDS"
+      run_fixture_scenario "$distro" "$image" "$scenario" "$name"
+      printf 'fixture timing: distro=%s scenario=%s stage=complete elapsed=%ss\n' \
+        "$distro" "$scenario" "$((SECONDS - fixture_started))"
+    done
+    continue
+  fi
+
+  fixture_pids=()
+  for scenario in "${scenario_list[@]}"; do
+    name="fased-protected-local-${distro}-${scenario}-$$"
+    cleanup_names+=("$name")
+    (
+      fixture_started="$SECONDS"
+      run_fixture_scenario "$distro" "$image" "$scenario" "$name"
+      printf 'fixture timing: distro=%s scenario=%s stage=complete elapsed=%ss\n' \
+        "$distro" "$scenario" "$((SECONDS - fixture_started))"
+    ) &
+    fixture_pids+=("$!")
+  done
+
+  while [[ "${#fixture_pids[@]}" -gt 0 ]]; do
+    completed_pid=""
+    if wait -n -p completed_pid "${fixture_pids[@]}"; then
+      fixture_status=0
+    else
+      fixture_status="$?"
+    fi
+    remaining_pids=()
+    for fixture_pid in "${fixture_pids[@]}"; do
+      [[ "$fixture_pid" == "$completed_pid" ]] || remaining_pids+=("$fixture_pid")
+    done
+    fixture_pids=("${remaining_pids[@]}")
+    if [[ "$fixture_status" -ne 0 ]]; then
+      for fixture_pid in "${fixture_pids[@]}"; do
+        kill "$fixture_pid" >/dev/null 2>&1 || true
+      done
+      for fixture_pid in "${fixture_pids[@]}"; do
+        wait "$fixture_pid" >/dev/null 2>&1 || true
+      done
+      echo "Parallel protected Local proof stopped on the first failed scenario." >&2
+      exit "$fixture_status"
+    fi
   done
 done
 

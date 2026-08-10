@@ -57,7 +57,6 @@ describe("version-neutral lifecycle acceptance", () => {
       resolve(repoRoot, "scripts/test-protected-local-systemd-container.sh"),
       "utf8",
     );
-
     expect(wrapper).toContain(
       'ARTIFACT_PROFILE="${FASED_SYSTEMD_FIXTURE_ARTIFACT_PROFILE:-branch-x64}"',
     );
@@ -70,5 +69,32 @@ describe("version-neutral lifecycle acceptance", () => {
       "FASED_SIGNER_TARGETS=linux/amd64,linux/arm64,darwin/amd64,darwin/arm64",
     );
     expect(wrapper).not.toContain("FASED_LIFECYCLE_TARGETS=linux/amd64,linux/arm64");
+    expect(wrapper).toContain("clear_branch_fixture_native_outputs()");
+    expect(wrapper).toContain("-name 'fased-signerd-*'");
+    expect(wrapper).toContain("-name 'fased-lifecycled-*'");
+    expect(wrapper.indexOf("clear_branch_fixture_native_outputs\n")).toBeLessThan(
+      wrapper.indexOf('FASED_SIGNER_TARGETS="linux/amd64"'),
+    );
+  });
+
+  it("reuses immutable proof inputs and runs isolated Local scenarios fail-fast in parallel", async () => {
+    const wrapper = await readFile(
+      resolve(repoRoot, "scripts/test-protected-local-systemd-container.sh"),
+      "utf8",
+    );
+
+    expect(wrapper).toContain("FASED_SYSTEMD_FIXTURE_ARTIFACT_CACHE_DIR");
+    expect(wrapper).toContain("FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_CACHE_DIR");
+    expect(wrapper).toContain('artifact_cache_key="${COMMIT}-${TREE}-${LOCKFILE_DIGEST#sha256:}"');
+    expect(wrapper).toContain("branch artifact cache hit:");
+    expect(wrapper).toContain("predecessor artifact cache hit:");
+    expect(wrapper).toContain(
+      'PARALLEL_SCENARIOS="${FASED_SYSTEMD_FIXTURE_PARALLEL_SCENARIOS:-1}"',
+    );
+    expect(wrapper).toContain('wait -n -p completed_pid "${fixture_pids[@]}"');
+    expect(wrapper).toContain(
+      "Parallel protected Local proof stopped on the first failed scenario.",
+    );
+    expect(wrapper).toContain("fixture source reuse: exact clean commit");
   });
 });
