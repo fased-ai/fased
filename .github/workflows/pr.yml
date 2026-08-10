@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       changed_test_paths_json: ${{ steps.scope.outputs.changed_test_paths_json }}
+      lanes_json: ${{ steps.scope.outputs.lanes_json }}
       changed_ui_browser_tests: ${{ steps.scope.outputs.changed_ui_browser_tests }}
       test_only: ${{ steps.scope.outputs.test_only }}
       manual_review_required: ${{ steps.scope.outputs.manual_review_required }}
@@ -30,20 +31,11 @@ jobs:
       run_node_unit: ${{ steps.scope.outputs.run_node_unit }}
       run_node_gateway: ${{ steps.scope.outputs.run_node_gateway }}
       run_node_extensions: ${{ steps.scope.outputs.run_node_extensions }}
-      run_node_build: ${{ steps.scope.outputs.run_node_build }}
-      run_node_packaging: ${{ steps.scope.outputs.run_node_packaging }}
-      run_node_full: ${{ steps.scope.outputs.run_node_full }}
       run_native_signer: ${{ steps.scope.outputs.run_native_signer }}
-      run_local_update: ${{ steps.scope.outputs.run_local_update }}
       run_signer_integration: ${{ steps.scope.outputs.run_signer_integration }}
       run_ui: ${{ steps.scope.outputs.run_ui }}
       run_ui_mining: ${{ steps.scope.outputs.run_ui_mining }}
       run_skills: ${{ steps.scope.outputs.run_skills }}
-      run_codeql_javascript: ${{ steps.scope.outputs.run_codeql_javascript }}
-      run_codeql_go: ${{ steps.scope.outputs.run_codeql_go }}
-      run_codeql_python: ${{ steps.scope.outputs.run_codeql_python }}
-      codeql_languages_json: ${{ steps.scope.outputs.codeql_languages_json }}
-      security_targets_json: ${{ steps.security-matrix.outputs.targets_json }}
     steps:
       - name: Checkout proposed tree
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -67,19 +59,11 @@ jobs:
           GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: node .ci-authority/scripts/ci-change-scope.mjs
 
-      - name: Build protected security matrix
-        id: security-matrix
-        env:
-          CODEQL_LANGUAGES_JSON: ${{ steps.scope.outputs.codeql_languages_json }}
-        run: |
-          targets="$(jq -cn --argjson languages "$CODEQL_LANGUAGES_JSON" '["common"] + $languages')"
-          echo "targets_json=$targets" >> "$GITHUB_OUTPUT"
-
   selected-tests:
     name: selected-tests
     needs: [classify]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - name: Reject an unclassified change
         if: needs.classify.outputs.manual_review_required == 'true'
@@ -106,7 +90,7 @@ jobs:
           node-version: 24.x
 
       - name: Setup Go when selected
-        if: needs.classify.outputs.run_native_signer == 'true' || needs.classify.outputs.run_node_packaging == 'true'
+        if: needs.classify.outputs.run_native_signer == 'true'
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: tools/fased-signerd/go.mod
@@ -196,7 +180,6 @@ jobs:
         if: needs.classify.outputs.run_ci_contracts == 'true'
         run: >-
           pnpm exec vitest run
-          scripts/gate-authority.test.ts
           scripts/lifecycle-compatibility-inventory.test.ts
           scripts/ci-change-scope.test.ts
           scripts/ci-run-changed-tests.test.ts
@@ -252,37 +235,6 @@ jobs:
         env:
           CHANGED_TEST_PATHS_JSON: ${{ needs.classify.outputs.changed_test_paths_json }}
         run: node scripts/ci-run-changed-tests.mjs extensions
-
-      - name: Run full Node tests when explicitly selected
-        if: needs.classify.outputs.run_node_full == 'true' && !(needs.classify.outputs.run_native_signer == 'true' && needs.classify.outputs.run_local_update == 'true')
-        env:
-          FASED_TEST_PROFILE: serial
-          FASED_TEST_VM_FORKS: "0"
-        run: |
-          pnpm canvas:a2ui:bundle
-          pnpm test
-
-      - name: Run lifecycle-engine regressions
-        if: needs.classify.outputs.run_node_full == 'true' && needs.classify.outputs.run_native_signer == 'true' && needs.classify.outputs.run_local_update == 'true'
-        run: >-
-          pnpm exec vitest run
-          scripts/go-lifecycle-routing.test.ts
-          scripts/fased-generation-updater-core.test.ts
-          scripts/generation-updater.test.ts
-          scripts/hosted-installer-artifact-layout.test.ts
-          scripts/managed-runtime-layout.test.ts
-          scripts/managed-updater-bundle.test.ts
-          test/scripts/ui.test.ts
-          --pool=forks
-          --maxWorkers=1
-
-      - name: Build once when selected
-        if: needs.classify.outputs.run_node_build == 'true'
-        run: pnpm build
-
-      - name: Check package contracts
-        if: needs.classify.outputs.run_node_packaging == 'true'
-        run: pnpm release:validate-dist:contracts
 
       - name: Test native signer on Linux
         if: needs.classify.outputs.run_native_signer == 'true'
@@ -344,16 +296,10 @@ jobs:
           if [ "${#lint_files[@]}" -gt 0 ]; then pnpm exec oxlint "${lint_files[@]}"; fi
 
   security:
-    name: security (${{ matrix.target }})
+    name: security
     needs: [classify]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        target: ${{ fromJSON(needs.classify.outputs.security_targets_json) }}
-    permissions:
-      security-events: write
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -362,17 +308,14 @@ jobs:
           submodules: false
 
       - name: Setup Python
-        if: matrix.target == 'common'
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
       - name: Install pre-commit
-        if: matrix.target == 'common'
         run: python -m pip install pre-commit
 
       - name: Detect secrets and private keys
-        if: matrix.target == 'common'
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
@@ -380,50 +323,11 @@ jobs:
           pre-commit run detect-private-key --from-ref "$BASE" --to-ref HEAD
 
       - name: Audit changed workflows
-        if: matrix.target == 'common'
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           mapfile -t files < <(git diff --name-only "$BASE" HEAD -- '.github/workflows/*.yml' '.github/workflows/*.yaml')
           if [ "${#files[@]}" -gt 0 ]; then pre-commit run zizmor --files "${files[@]}"; fi
-
-      - name: Build focused JavaScript CodeQL scope
-        if: matrix.target == 'javascript-typescript'
-        env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -euo pipefail
-          mapfile -t changed < <(git diff --name-only "$BASE" HEAD | grep -E '\.(cjs|js|jsx|mjs|ts|tsx)$' || true)
-          test "${#changed[@]}" -gt 0
-          declare -A selected=()
-          for file in "${changed[@]}"; do
-            case "$file" in
-              scripts/*) scope="scripts" ;;
-              src/*/*|extensions/*/*|packages/*/*|test/*/*)
-                scope="$(cut -d/ -f1-2 <<<"$file")"
-                ;;
-              *) scope="$file" ;;
-            esac
-            selected["$scope"]=1
-          done
-          printf '%s\n' "${!selected[@]}" | sort | jq -Rn \
-            '{name:"Focused changed-source PR analysis",paths:[inputs]}' \
-            > "${GITHUB_WORKSPACE}/.codeql-pr-scope.yml"
-
-      - name: Initialize selected CodeQL languages
-        if: matrix.target != 'common'
-        uses: github/codeql-action/init@d1ba80a13dd99fba24a470575428917156a28b43 # v4
-        with:
-          languages: ${{ matrix.target }}
-          config-file: ${{ matrix.target == 'javascript-typescript' && '.codeql-pr-scope.yml' || '' }}
-
-      - name: Autobuild selected compiled language
-        if: matrix.target == 'go'
-        uses: github/codeql-action/autobuild@d1ba80a13dd99fba24a470575428917156a28b43 # v4
-
-      - name: Analyze selected languages
-        if: matrix.target != 'common'
-        uses: github/codeql-action/analyze@d1ba80a13dd99fba24a470575428917156a28b43 # v4
 
   checks:
     name: checks

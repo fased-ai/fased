@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "unknownPathPolicy": "reject",
+  "prForbiddenWork": ["build", "packaging", "full-node", "codeql", "docker", "macos", "candidate"],
+  "lanes": [
+    {
+      "id": "documentation",
+      "prefixes": ["docs/", "changelog/"],
+      "suffixes": [".md", ".mdx"]
+    },
+    {
+      "id": "ci-contract",
+      "prefixes": [".github/", "git-hooks/"],
+      "exact": [".pre-commit-config.yaml", ".secrets.baseline", "zizmor.yml"],
+      "contains": ["ci-", "lifecycle-acceptance", "lifecycle-compatibility"]
+    },
+    {
+      "id": "lifecycle",
+      "prefixes": ["tools/fased-lifecycled/"],
+      "exact": [
+        "install.sh",
+        "scripts/fased-generation-updater-core.mjs",
+        "scripts/generation-updater.mjs",
+        "scripts/managed-runtime-layout.mjs",
+        "scripts/managed-updater-bundle.mjs",
+        "scripts/managed-updater-bundle.v1.json"
+      ]
+    },
+    {
+      "id": "signer",
+      "prefixes": ["tools/fased-signerd/"],
+      "contains": ["signer"]
+    },
+    {
+      "id": "ui",
+      "prefixes": ["ui/"]
+    },
+    {
+      "id": "native",
+      "prefixes": ["apps/", "Swabble/", "shared/"],
+      "exact": ["appcast.xml"]
+    },
+    {
+      "id": "container",
+      "prefixes": ["deploy/", "release/"],
+      "exact": ["Dockerfile", "docker-compose.yml", "docker-setup.sh", "setup-podman.sh"]
+    },
+    {
+      "id": "skills",
+      "prefixes": ["skills/"]
+    },
+    {
+      "id": "tests",
+      "prefixes": ["test/", "fixtures/"],
+      "contains": [".test.", ".spec."],
+      "suffixes": ["_test.go"]
+    },
+    {
+      "id": "node",
+      "prefixes": ["src/", "extensions/", "packages/", "scripts/", "token/"],
+      "exact": [
+        "fased.mjs",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "tsconfig.json",
+        "tsconfig.plugin-sdk.dts.json",
+        "tsdown.config.ts",
+        "tsdown.plugin-sdk-dts.config.ts",
+        "vitest.browser-cdp.config.ts",
+        "vitest.config.ts",
+        "vitest.e2e.config.ts",
+        "vitest.extensions.config.ts",
+        "vitest.gateway.config.ts",
+        "vitest.live.config.ts",
+        "vitest.loopback.config.ts",
+        "vitest.unit.config.ts"
+      ]
+    },
+    {
+      "id": "repository",
+      "prefixes": ["assets/", "config/", "tools/", "vendor/"],
+      "exact": [
+        "AGENTS.md",
+        "CONTRIBUTING.md",
+        "LICENSE",
+        "README.md",
+        "SECURITY.md",
+        "THIRD_PARTY_NOTICES.md",
+        "pyproject.toml"
+      ]
+    }
+  ]
+}

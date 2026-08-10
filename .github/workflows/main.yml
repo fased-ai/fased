@@ -1,0 +1,39 @@
+name: Main
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: main-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  checks:
+    name: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+    steps:
+      - name: Checkout exact merged main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Verify exact protected PR evidence
+        id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-merged-main-reuse.mjs
+
+      - name: Require reusable evidence
+        env:
+          REUSE_PR_CHECKS: ${{ steps.reuse.outputs.reuse_pr_checks }}
+        run: test "$REUSE_PR_CHECKS" = true
