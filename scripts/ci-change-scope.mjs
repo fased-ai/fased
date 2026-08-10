@@ -56,6 +56,9 @@ export function outputEntries(plan, options = {}) {
   const dependencyRemediation = options.dependencyRemediation === true;
   const dependencyNames = dependencyRemediation ? (options.dependencyNames ?? []) : [];
   const focusedNode = scope.runNodeFocused || scope.runInstallerReleaseVerification;
+  const focusedCodeqlJavascript =
+    scope.runCodeqlJavascript &&
+    (scope.runNodeFocused || (plan.selectedTestPaths?.length ?? 0) > 0);
   const focusedLocalUpdate = focusedNode && scope.runLocalUpdate;
   const runDependencyIntegrity = dependencyRemediation || (scope.runNodePackaging && !focusedNode);
   const lane = (value) => !dependencyRemediation && value;
@@ -116,6 +119,7 @@ export function outputEntries(plan, options = {}) {
     run_platform_bootstrap: trueString(lane(scope.runPlatformBootstrap)),
     run_docker: trueString(lane(scope.runDocker)),
     run_codeql_javascript: trueString(lane(scope.runCodeqlJavascript)),
+    focused_codeql_javascript: trueString(lane(focusedCodeqlJavascript)),
     run_codeql_go: trueString(lane(scope.runCodeqlGo)),
     run_codeql_python: trueString(lane(scope.runCodeqlPython)),
     codeql_languages_json: JSON.stringify(codeqlLanguages),

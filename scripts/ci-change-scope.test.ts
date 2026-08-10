@@ -261,12 +261,31 @@ describe("CI changed-surface classification", () => {
     ]);
     expect(outputEntries(plan)).toMatchObject({
       changed_test_paths_json: '["src/federation/federation-state-permissions.test.ts"]',
+      focused_codeql_javascript: "true",
       run_node_unit: "true",
       run_node_full: "false",
       run_node_build: "false",
       run_ui: "false",
       run_node_gateway: "false",
       run_node_extensions: "false",
+    });
+  });
+
+  it("uses focused JavaScript CodeQL for the exact signer-doctor correction", () => {
+    expect(
+      outputEntries(
+        createGatePlan(["src/commands/wallet.ts", "src/commands/wallet.signer-doctor.test.ts"]),
+      ),
+    ).toMatchObject({
+      focused_codeql_javascript: "true",
+      run_codeql_javascript: "true",
+      run_node_focused: "false",
+      run_node_unit: "true",
+    });
+
+    expect(outputEntries(createGatePlan(["src/commands/wallet.ts"]))).toMatchObject({
+      focused_codeql_javascript: "false",
+      run_codeql_javascript: "true",
     });
   });
 
