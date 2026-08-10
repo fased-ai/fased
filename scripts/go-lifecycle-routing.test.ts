@@ -14,6 +14,9 @@ const deletedLifecycleOwners = [
   "scripts/fased-host-updaterctl.mjs",
   "scripts/lifecycle-control-normalizer.mjs",
   "scripts/fased-managed-updater-core.mjs",
+  "scripts/install-managed-runtime.mjs",
+  "scripts/install-hosted-runtime.sh",
+  "scripts/install-runtime-profile.sh",
   "scripts/managed-update-contract.mjs",
 ] as const;
 
@@ -27,7 +30,6 @@ const productionRoutingSurfaces = [
   "scripts/build-lifecycle-trust-metadata.mjs",
   "scripts/privileged-release-evidence.mjs",
   "scripts/release-check.ts",
-  "scripts/test-hosted-runtime-install.sh",
   ".github/workflows/hosted-runtime-release.yml",
 ] as const;
 

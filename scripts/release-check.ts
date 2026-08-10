@@ -57,7 +57,6 @@ const requiredPathGroups = [
   "scripts/fased-launcher-runtime.mjs",
   "scripts/install-fased-signerd.sh",
   "scripts/install-development.sh",
-  "scripts/install-managed-runtime.mjs",
   "scripts/managed-runtime-layout.mjs",
   "scripts/hosted-release-manifest.mjs",
   "release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json",
