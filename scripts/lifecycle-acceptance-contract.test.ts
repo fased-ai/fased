@@ -111,7 +111,7 @@ describe("lifecycle acceptance contract", () => {
     );
     expect(runner).toContain("FASED_SAT_MINT_ADDRESS=So11111111111111111111111111111111111111112");
     expect(runner).toContain(
-      "FASED_SAT_MINT_PROGRAM_ID=TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "FASED_SAT_MINT_PROGRAM_ID=TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", // pragma: allowlist secret
     );
     expect(runner).toContain("federation status --json");
     expect(runner).toContain("plugins doctor");

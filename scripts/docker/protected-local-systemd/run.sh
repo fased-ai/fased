@@ -188,6 +188,7 @@ verify_protected_home_acl() {
 operator_env() {
   local instance="$1"
   local signer_bin=""
+  local fixture_sat_mint_program="TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" # pragma: allowlist secret
   signer_bin="$(resolve_signer_binary "$instance")"
   printf '%s\n' \
     "HOME=/home/testop" \
@@ -198,7 +199,7 @@ operator_env() {
     "FASED_SAT_PROGRAM_ID=11111111111111111111111111111111" \
     "FASED_SAT_BOND_PROGRAM_ID=ComputeBudget111111111111111111111111111111" \
     "FASED_SAT_MINT_ADDRESS=So11111111111111111111111111111111111111112" \
-    "FASED_SAT_MINT_PROGRAM_ID=TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" \
+    "FASED_SAT_MINT_PROGRAM_ID=$fixture_sat_mint_program" \
     "FASED_HOST_PROFILE=local" \
     "FASED_LIFECYCLE_INSTALL_ROOT=/opt/fased/local/$instance" \
     "FASED_LIFECYCLE_INSTANCE=$instance" \
