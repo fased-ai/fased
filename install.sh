@@ -1331,9 +1331,9 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     signer_binary="$(jq -er '.environment.FASED_WALLET_LOCAL_SIGNER_BIN' "$projection")"
     signer_socket="$(jq -er '.environment.FASED_WALLET_LOCAL_SIGNER_SOCKET' "$projection")"
     lifecycle_socket="$(jq -er '.environment.FASED_HOST_UPDATER_SOCKET' "$projection")"
-    [[ "$instance" =~ ^[a-f0-9]{16}$ && -x "$signer_binary" &&
-      "$signer_socket" == "/run/fased-local/$instance/operator/operator.sock" &&
-      "$lifecycle_socket" == "/run/fased-local-controller/$instance/request.sock" ]] || {
+	[[ "$instance" =~ ^[a-f0-9]{16}$ && -x "$signer_binary" &&
+	  "$signer_socket" == "/run/fased-local/$instance/application/app.sock" &&
+	  "$lifecycle_socket" == "/run/fased-local-controller/$instance/request.sock" ]] || {
       echo "Verified Local lifecycle projection is inconsistent." >&2
       return 1
     }

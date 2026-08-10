@@ -690,6 +690,12 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
     expect(installer).toContain("materialize_attested_local_installer");
     expect(installer).toContain('verify_release_attestation_source "$installer" "$bundle"');
     expect(installer).toContain("run_attested_local_lifecycle");
+    expect(installer).toContain(
+      '"$signer_socket" == "/run/fased-local/$instance/application/app.sock"',
+    );
+    expect(installer).not.toContain(
+      '"$signer_socket" == "/run/fased-local/$instance/operator/operator.sock"',
+    );
     expect(installer).toContain("--protected-local-root-bootstrap");
     expect(installer).toContain("--operation COMPLETE_ONBOARDING");
     expect(installer.indexOf("run_attested_local_lifecycle")).toBeLessThan(
