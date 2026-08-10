@@ -3333,8 +3333,7 @@ export async function collectWalletSignerDoctorReport(
       .trim()
       .toLowerCase() === "hosting" ||
     socketPath === "/run/fased-signerd/app.sock";
-  const expectedSocketMode =
-    operatorLifecycle?.profile === "protected-local" ? 0o600 : hostingSigner ? 0o660 : 0o600;
+  const expectedSocketMode = operatorLifecycle || hostingSigner ? 0o660 : 0o600;
   const { pidPath, auditPath } = resolveLocalSignerSidecarPaths(socketPath);
   const checks: Array<{ check: string; ok: boolean; detail?: string }> = [];
 

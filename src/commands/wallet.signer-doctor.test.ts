@@ -34,7 +34,7 @@ afterEach(() => {
 
 describe("collectWalletSignerDoctorReport", () => {
   it.each([
-    { label: "protected Local signer", profile: "protected-local" as const, mode: 0o600 },
+    { label: "protected Local signer", profile: "protected-local" as const, mode: 0o660 },
     { label: "Hosting signer", profile: "hosting" as const, mode: 0o660 },
   ])("uses the restricted operator socket for the $label", async ({ profile, mode }) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-wallet-doctor-operator-"));
