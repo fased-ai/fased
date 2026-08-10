@@ -6,6 +6,7 @@ RUNTIME="${FASED_CONTAINER_RUNTIME:-podman}"
 DISTROS="${FASED_HOSTING_SYSTEMD_FIXTURE_DISTROS:-ubuntu}"
 ARTIFACT_DIR="${FASED_HOSTING_SYSTEMD_FIXTURE_ARTIFACT_DIR:-}"
 FIXTURE_DIR="$ROOT_DIR/scripts/docker/hosting-systemd"
+EXECUTABLE_DIR=""
 
 [[ -n "$ARTIFACT_DIR" && -d "$ARTIFACT_DIR" ]] || {
   echo "FASED_HOSTING_SYSTEMD_FIXTURE_ARTIFACT_DIR must name an existing candidate artifact directory." >&2
@@ -61,6 +62,15 @@ dependency="$(jq -er --arg version "$version" \
   exit 1
 }
 
+# GitHub artifact downloads intentionally do not preserve executable modes.
+# Keep the verified candidate directory immutable and stage only the lifecycle
+# executable with its required mode for the container proof.
+EXECUTABLE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-hosting-executable.XXXXXX")"
+install -m 0755 "$ARTIFACT_DIR/fased-lifecycled-linux-amd64" \
+  "$EXECUTABLE_DIR/fased-lifecycled-linux-amd64"
+cmp -s "$ARTIFACT_DIR/fased-lifecycled-linux-amd64" \
+  "$EXECUTABLE_DIR/fased-lifecycled-linux-amd64"
+
 cleanup_names=()
 cleanup() {
   local status=$?
@@ -72,6 +82,9 @@ cleanup() {
   for name in "${cleanup_names[@]}"; do
     "$RUNTIME" rm -f "$name" >/dev/null 2>&1 || true
   done
+  if [[ -n "$EXECUTABLE_DIR" ]]; then
+    rm -rf -- "$EXECUTABLE_DIR"
+  fi
 }
 trap cleanup EXIT INT TERM HUP
 
@@ -99,6 +112,7 @@ for distro in "${distro_list[@]}"; do
     -e "FASED_FIXTURE_DEPENDENCY=/artifacts/$dependency" \
     -v "$ROOT_DIR:/repo:ro,Z" \
     -v "$ARTIFACT_DIR:/artifacts:ro,Z" \
+    -v "$EXECUTABLE_DIR:/fixture-bin:ro,Z" \
     "$image" >/dev/null
   ready=0
   for _ in {1..200}; do
