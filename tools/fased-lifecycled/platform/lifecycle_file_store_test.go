@@ -20,6 +20,14 @@ func TestDiskLifecycleFileStoreActivatesAndRestoresExactSignerOwnerFiles(t *test
 	}
 	store.rootPrefix = t.TempDir()
 	store.expectedUID = uint32(os.Getuid())
+	stateRoot := store.resolve(config.OwnerStateRoot)
+	if err := os.MkdirAll(stateRoot, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	configPath := store.resolve(CanonicalGatewayConfigPath(config))
+	if err := os.WriteFile(configPath, []byte("old-config\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	targets := CanonicalSignerOwnerFiles(config)
 	for _, target := range targets {
 		resolved := store.resolve(target)
@@ -34,11 +42,12 @@ func TestDiskLifecycleFileStoreActivatesAndRestoresExactSignerOwnerFiles(t *test
 		targets[0]:                             {Data: []byte("helper\n"), Mode: 0o755, UID: uint32(os.Getuid()), GID: uint32(os.Getuid())},
 		targets[1]:                             {Data: []byte("wrapper\n"), Mode: 0o755, UID: uint32(os.Getuid()), GID: uint32(os.Getuid())},
 		CanonicalInstallProjectionPath(config): {Data: []byte("{}\n"), Mode: 0o640, UID: config.Operator.UID, GID: config.Operator.GID},
+		CanonicalGatewayConfigPath(config):     {Data: []byte("new-config\n"), Mode: 0o660, UID: config.Operator.UID, GID: uint32(os.Getgid())},
 	}
 	if err := store.Prepare("transaction", files); err != nil {
 		t.Fatal(err)
 	}
-	allTargets := append(targets, CanonicalInstallProjectionPath(config))
+	allTargets := append(targets, CanonicalGatewayConfigPath(config), CanonicalInstallProjectionPath(config))
 	if err := store.Activate("transaction", allTargets); err != nil {
 		t.Fatal(err)
 	}
@@ -56,6 +65,12 @@ func TestDiskLifecycleFileStoreActivatesAndRestoresExactSignerOwnerFiles(t *test
 	if info, err := os.Stat(projectionPath); err != nil || info.Mode().Perm() != 0o640 {
 		t.Fatalf("install projection mode changed: info=%v err=%v", info, err)
 	}
+	if data, err := os.ReadFile(configPath); err != nil || string(data) != "new-config\n" {
+		t.Fatalf("Gateway config was not activated: %q err=%v", data, err)
+	}
+	if info, err := os.Stat(configPath); err != nil || info.Mode().Perm() != 0o660 {
+		t.Fatalf("Gateway config mode changed: info=%v err=%v", info, err)
+	}
 	if err := store.Restore("transaction", allTargets); err != nil {
 		t.Fatal(err)
 	}
@@ -67,6 +82,12 @@ func TestDiskLifecycleFileStoreActivatesAndRestoresExactSignerOwnerFiles(t *test
 	}
 	if _, err := os.Lstat(projectionPath); !os.IsNotExist(err) {
 		t.Fatalf("absent install projection was not removed on rollback: %v", err)
+	}
+	if data, err := os.ReadFile(configPath); err != nil || string(data) != "old-config\n" {
+		t.Fatalf("Gateway config was not restored exactly: %q err=%v", data, err)
+	}
+	if info, err := os.Stat(configPath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("Gateway config metadata was not restored: info=%v err=%v", info, err)
 	}
 }
 

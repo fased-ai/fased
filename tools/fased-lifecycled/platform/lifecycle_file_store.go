@@ -13,6 +13,10 @@ func CanonicalInstallProjectionPath(config Config) string {
 	return filepath.Join(config.OwnerStateRoot, "install.json")
 }
 
+func CanonicalGatewayConfigPath(config Config) string {
+	return filepath.Join(config.OwnerStateRoot, "fased.json")
+}
+
 type LifecycleFile struct {
 	Data []byte
 	Mode os.FileMode
@@ -160,7 +164,15 @@ func (store *DiskLifecycleFileStore) validate(files map[string]LifecycleFile) er
 		allowed[target] = LifecycleFile{Mode: 0o755, UID: store.expectedUID, GID: store.expectedUID}
 	}
 	allowed[CanonicalInstallProjectionPath(store.Config)] = LifecycleFile{Mode: 0o640, UID: store.Config.Operator.UID, GID: store.Config.Operator.GID}
-	if len(files) != len(allowed) {
+	baseCount := len(allowed)
+	if _, ok := files[CanonicalGatewayConfigPath(store.Config)]; ok {
+		gid, err := canonicalConfigGroupGID(store.resolve(store.Config.OwnerStateRoot), store.Config.Operator.UID)
+		if err != nil {
+			return err
+		}
+		allowed[CanonicalGatewayConfigPath(store.Config)] = LifecycleFile{Mode: 0o660, UID: store.Config.Operator.UID, GID: gid}
+	}
+	if len(files) != baseCount && len(files) != baseCount+1 {
 		return errors.New("lifecycle file transaction must contain the exact derived file set")
 	}
 	for target, file := range files {
@@ -173,6 +185,9 @@ func (store *DiskLifecycleFileStore) validate(files map[string]LifecycleFile) er
 }
 
 func (store *DiskLifecycleFileStore) recordName(target string) string {
+	if target == CanonicalGatewayConfigPath(store.Config) {
+		return "gateway-config"
+	}
 	if target == CanonicalInstallProjectionPath(store.Config) {
 		return "install-projection"
 	}
@@ -183,10 +198,25 @@ func (store *DiskLifecycleFileStore) recordName(target string) string {
 }
 
 func (store *DiskLifecycleFileStore) safeExisting(target string, mode os.FileMode, uid uint32) bool {
+	if target == CanonicalGatewayConfigPath(store.Config) {
+		return mode&0o007 == 0 && mode&0o111 == 0 && uid == store.Config.Operator.UID
+	}
 	if target == CanonicalInstallProjectionPath(store.Config) {
 		return mode&0o002 == 0 && (uid == store.Config.Operator.UID || uid == store.expectedUID)
 	}
 	return mode == 0o755 && uid == store.expectedUID
+}
+
+func canonicalConfigGroupGID(path string, operatorUID uint32) (uint32, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return 0, err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !ok || stat.Uid != operatorUID || stat.Gid == 0 || info.Mode().Perm()&0o007 != 0 {
+		return 0, errors.New("owner state root does not expose a canonical config group")
+	}
+	return stat.Gid, nil
 }
 
 func (store *DiskLifecycleFileStore) readMetadata(path string) (lifecycleFileMetadata, error) {

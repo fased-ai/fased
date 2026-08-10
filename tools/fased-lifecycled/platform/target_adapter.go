@@ -135,13 +135,29 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 		return err
 	}
 	paths := CanonicalSignerOwnerFiles(adapter.Config)
-	return adapter.Files.Prepare(tx.ID, map[string]LifecycleFile{
+	files := map[string]LifecycleFile{
 		paths[0]: {Data: helper, Mode: 0o755, UID: 0, GID: 0},
 		paths[1]: {Data: wrapper, Mode: 0o755, UID: 0, GID: 0},
 		CanonicalInstallProjectionPath(adapter.Config): {
 			Data: projection, Mode: 0o640, UID: adapter.Config.Operator.UID, GID: adapter.Config.Operator.GID,
 		},
-	})
+	}
+	if !adapter.deferFreshLocalGateway(tx) {
+		configPath := CanonicalGatewayConfigPath(adapter.Config)
+		if err := validateOnboardingConfig(adapter.Config); err != nil {
+			return err
+		}
+		data, err := readRegularFile(configPath)
+		if err != nil {
+			return err
+		}
+		gid, err := canonicalConfigGroupGID(adapter.Config.OwnerStateRoot, adapter.Config.Operator.UID)
+		if err != nil {
+			return err
+		}
+		files[configPath] = LifecycleFile{Data: data, Mode: 0o660, UID: adapter.Config.Operator.UID, GID: gid}
+	}
+	return adapter.Files.Prepare(tx.ID, files)
 }
 
 func (adapter *TargetAdapter) Quiesce(ctx context.Context, tx model.Transaction) error {
@@ -162,7 +178,7 @@ func (adapter *TargetAdapter) Quiesce(ctx context.Context, tx model.Transaction)
 }
 
 func (adapter *TargetAdapter) Activate(ctx context.Context, tx model.Transaction) error {
-	if err := adapter.Files.Activate(tx.ID, CanonicalSignerOwnerFiles(adapter.Config)); err != nil {
+	if err := adapter.Files.Activate(tx.ID, adapter.preStartLifecycleFiles(tx)); err != nil {
 		return err
 	}
 	if err := adapter.Units.Activate(tx.ID, adapter.targetUnits()); err != nil {
@@ -218,7 +234,7 @@ func (adapter *TargetAdapter) Commit(ctx context.Context, tx model.Transaction) 
 }
 
 func (adapter *TargetAdapter) Restore(ctx context.Context, tx model.Transaction) error {
-	if err := adapter.Files.Restore(tx.ID, adapter.lifecycleFiles()); err != nil {
+	if err := adapter.Files.Restore(tx.ID, adapter.lifecycleFiles(tx)); err != nil {
 		return err
 	}
 	if err := adapter.Units.Restore(tx.ID, adapter.targetUnits()); err != nil {
@@ -238,8 +254,16 @@ func (adapter *TargetAdapter) Restore(ctx context.Context, tx model.Transaction)
 	return adapter.Predecessor.Restore(ctx, tx)
 }
 
-func (adapter *TargetAdapter) lifecycleFiles() []string {
-	return append(CanonicalSignerOwnerFiles(adapter.Config), CanonicalInstallProjectionPath(adapter.Config))
+func (adapter *TargetAdapter) preStartLifecycleFiles(tx model.Transaction) []string {
+	files := CanonicalSignerOwnerFiles(adapter.Config)
+	if !adapter.deferFreshLocalGateway(tx) {
+		files = append(files, CanonicalGatewayConfigPath(adapter.Config))
+	}
+	return files
+}
+
+func (adapter *TargetAdapter) lifecycleFiles(tx model.Transaction) []string {
+	return append(adapter.preStartLifecycleFiles(tx), CanonicalInstallProjectionPath(adapter.Config))
 }
 
 func (adapter *TargetAdapter) Discard(ctx context.Context, tx model.Transaction) error {

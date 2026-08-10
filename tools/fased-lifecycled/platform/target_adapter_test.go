@@ -138,7 +138,22 @@ func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) 
 		t.Fatal(err)
 	}
 	operator, gateway, signer := principals()
-	config, err := NewConfig(model.ProfileProtectedLocal, "example", "/home/example/.fased", operator, gateway, signer)
+	stateRoot := filepath.Join(t.TempDir(), ".fased")
+	if err := os.MkdirAll(stateRoot, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateRoot, "fased.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := NewConfig(model.ProfileProtectedLocal, "example", stateRoot, operator, gateway, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err = config.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.PlatformDigest, err = identity.Digest(model.ProfileProtectedLocal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +198,7 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 	if !strings.Contains(combined, "SupplementaryGroups=fscf-example") ||
 		!strings.Contains(combined, "RuntimeDirectoryMode=0755") ||
 		!strings.Contains(combined, "WorkingDirectory="+filepath.Join(adapter.Generations.(fakeGenerations).root, "runtime")) ||
-		!strings.Contains(combined, "Environment=HOME=/home/example") ||
+		!strings.Contains(combined, "Environment=HOME="+adapter.Config.OwnerHome()) ||
 		!strings.Contains(combined, "Environment=FASED_VERSION=0.1.76") ||
 		!strings.Contains(combined, "Environment=FASED_HOST_PROFILE=local") ||
 		!strings.Contains(combined, "BindReadOnlyPaths="+filepath.Join(adapter.Generations.(fakeGenerations).root, "dependencies", "node_modules")+":"+filepath.Join(adapter.Generations.(fakeGenerations).root, "runtime", "node_modules")) {
@@ -291,7 +306,14 @@ func TestCompleteOnboardingStartsAndVerifiesExactCommittedGateway(t *testing.T) 
 func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	tx, _ := manifestTransaction(t, false)
 	operator, gateway, signer := principals()
-	config, err := NewConfig(model.ProfileHosting, "hosting", "/home/app/.fased", operator, gateway, signer)
+	stateRoot := filepath.Join(t.TempDir(), ".fased")
+	if err := os.MkdirAll(stateRoot, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateRoot, "fased.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := NewConfig(model.ProfileHosting, "hosting", stateRoot, operator, gateway, signer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,8 +381,8 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	}
 	combined := string(units.definitions[identity.Services["signer"]]) + string(units.definitions[identity.Services["gateway"]])
 	for _, required := range []string{
-		"User=996", "NoNewPrivileges=true", "Environment=HOME=/home/app",
-		"Environment=FASED_STATE_DIR=/home/app/.fased", "Environment=FASED_HOST_PROFILE=hosting",
+		"User=996", "NoNewPrivileges=true", "Environment=HOME=" + config.OwnerHome(),
+		"Environment=FASED_STATE_DIR=" + config.OwnerStateRoot, "Environment=FASED_HOST_PROFILE=hosting",
 		"-state-db /var/lib/fased-signerd/state.db", "-update-gate /var/lib/fased-signer-update-gate/active",
 	} {
 		if !strings.Contains(combined, required) {
