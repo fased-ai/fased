@@ -33,8 +33,9 @@ type PlatformBootstrapRequest struct {
 }
 
 type PlatformBootstrapResult struct {
-	Config      platform.Config
-	Transaction *platform.AppliedBootstrapTransaction
+	Config       platform.Config
+	Transaction  *platform.AppliedBootstrapTransaction
+	CreatedRoots []platform.CreatedBootstrapRoot
 }
 
 func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapRequest) (PlatformBootstrapResult, error) {
@@ -96,6 +97,7 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 
 	var principals platform.BootstrapPrincipals
 	var config platform.Config
+	var createdRoots []platform.CreatedBootstrapRoot
 	steps = append(steps, platform.BootstrapStep{Phase: platform.BootstrapPhasePrincipals, Apply: func() (platform.BootstrapUndo, error) {
 		var changes *platform.PrincipalChanges
 		principals, changes, err = platform.ProvisionBootstrapPrincipalsTransactional(ctx, request.Principals, platform.BootstrapRequest{
@@ -122,6 +124,12 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 		changes, err := platform.ApplyBootstrapPathPlanTransactional(plan)
 		if err != nil {
 			return nil, err
+		}
+		createdRoots = createdRoots[:0]
+		for _, path := range []string{config.InstallRoot, config.LifecycleRoot, config.ProductStateRoot} {
+			if root, created := changes.CreatedRoot(path); created {
+				createdRoots = append(createdRoots, root)
+			}
 		}
 		return changes.Rollback, nil
 	}})
@@ -242,7 +250,9 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 	if err != nil {
 		return PlatformBootstrapResult{}, err
 	}
-	return PlatformBootstrapResult{Config: config, Transaction: transaction}, nil
+	return PlatformBootstrapResult{
+		Config: config, Transaction: transaction, CreatedRoots: createdRoots,
+	}, nil
 }
 
 var timeNow = time.Now

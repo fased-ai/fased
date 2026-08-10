@@ -2097,82 +2097,74 @@ chown testop:testop "$state/identity/device-auth.json"
 chmod 0600 "$state/identity/device-auth.json"
 printf '%s\n' "$version" >"$selected_target"
 
-inject_failed_target_gateway() {
-  local candidate=""
-  local candidate_relative=""
-  local fault_digest=""
-  local fault_launcher=""
-  local instance_id=""
-  for _ in {1..12000}; do
-    for candidate in /opt/fased/local/*/gateway-launch; do
-      [[ -f "$candidate" ]] || continue
-      candidate_relative="${candidate#/opt/fased/local/}"
-      instance_id="${candidate_relative%%/*}"
-      [[ -n "$instance_id" && "$instance_id" != "$candidate_relative" ]] || continue
-      printf '%s\n' "$instance_id" >/tmp/injected-failure-instance
-      fault_launcher="${candidate}.fixture-fault.$$"
-      cat >"$fault_launcher" <<EOF_FAILED_GATEWAY
+bridge_fault_root="/run/fased-fixture-bridge-gateway-fault-$$"
+bridge_fault_script="$bridge_fault_root/reject-target.sh"
+bridge_fault_marker="$bridge_fault_root/injected"
+bridge_fault_dropin_dir="/etc/systemd/system/fased-gateway-.service.d"
+bridge_fault_dropin="$bridge_fault_dropin_dir/99-fased-fixture-target-fault.conf"
+mkdir -p "$bridge_fault_root" "$bridge_fault_dropin_dir"
+cat >"$bridge_fault_script" <<EOF_FAILED_GATEWAY
 #!/usr/bin/env bash
 set -euo pipefail
-export FASED_FIXTURE_GATEWAY_PORT=$gateway_port
-export FASED_FIXTURE_PREDECESSOR_VERSION=$predecessor_gateway_version
-exec /usr/local/bin/node /usr/local/libexec/fased-fixture-legacy-gateway.mjs
+unit="\${1:?unit is required}"
+instance="\${unit#fased-gateway-}"
+instance="\${instance%.service}"
+printf '%s\n' "\$instance" >'$bridge_fault_marker'
+exit 1
 EOF_FAILED_GATEWAY
-      chown root:root "$fault_launcher"
-      chmod 0755 "$fault_launcher"
-      mv -f "$fault_launcher" "$candidate"
-      fault_digest="$(sha256sum "$candidate" | awk '{print $1}')"
-      for _ in {1..12000}; do
-        [[ -f "$candidate" ]] || break
-        if [[ "$(sha256sum "$candidate" | awk '{print $1}')" != "$fault_digest" ]]; then
-          fault_launcher="${candidate}.fixture-fault.$$"
-          cat >"$fault_launcher" <<EOF_FAILED_GATEWAY
-#!/usr/bin/env bash
-set -euo pipefail
-export FASED_FIXTURE_GATEWAY_PORT=$gateway_port
-export FASED_FIXTURE_PREDECESSOR_VERSION=$predecessor_gateway_version
-exec /usr/local/bin/node /usr/local/libexec/fased-fixture-legacy-gateway.mjs
-EOF_FAILED_GATEWAY
-          chown root:root "$fault_launcher"
-          chmod 0755 "$fault_launcher"
-          mv -f "$fault_launcher" "$candidate"
-          return 0
-        fi
-        sleep 0.005
-      done
-      echo "failed to inject the staged target Gateway activation fault" >&2
-      return 1
-    done
-    sleep 0.01
-  done
-  echo "failed to inject the target Gateway activation fault" >&2
-  return 1
-}
-
-inject_failed_target_gateway &
-injector_pid=$!
+chown root:root "$bridge_fault_script"
+chmod 0755 "$bridge_fault_script"
+cat >"$bridge_fault_dropin" <<EOF_FAILED_GATEWAY_DROPIN
+[Service]
+ExecStartPre=+$bridge_fault_script %n
+EOF_FAILED_GATEWAY_DROPIN
+systemctl daemon-reload
 if run_standard_local_bootstrap \
   >/tmp/protected-bootstrap-failure.out 2>/tmp/protected-bootstrap-failure.err; then
   update_failure_status=0
 else
   update_failure_status=$?
 fi
-wait "$injector_pid"
+rm -f "$bridge_fault_dropin"
+rmdir "$bridge_fault_dropin_dir" 2>/dev/null || true
+systemctl daemon-reload
 test "$update_failure_status" -ne 0
-grep -F "target release failed and was rolled back" /tmp/protected-bootstrap-failure.err >/dev/null
-grep -F \
-  "target Gateway did not become healthy as v${version}:" \
-  /tmp/protected-bootstrap-failure.err >/dev/null
-grep -F \
-  "target Gateway readiness response is invalid" \
-  /tmp/protected-bootstrap-failure.err >/dev/null
-failure_instance="$(cat /tmp/injected-failure-instance)"
+test -s "$bridge_fault_marker"
+grep -F "privileged lifecycle apply failed" /tmp/protected-bootstrap-failure.err >/dev/null
+failure_instance="$(cat "$bridge_fault_marker")"
+[[ "$failure_instance" =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]]
+systemctl reset-failed "fased-gateway-$failure_instance.service" 2>/dev/null || true
+rm -rf -- "$bridge_fault_root"
 wait_for_gateway_version "$predecessor_gateway_version"
 verify_original_home_acl
 test ! -e "$user_unit_dir/fased-gateway.service.d/90-fased-protected-local.conf"
-test ! -e "/var/lib/fased-local/$failure_instance/controller/protected-local-active"
 test ! -e "/var/lib/fased-local/$failure_instance"
 test ! -e "/opt/fased/local/$failure_instance"
+for root in \
+  "/run/fased-local/$failure_instance" \
+  "/run/fased-local-controller/$failure_instance" \
+  "/run/fased-local-controller-worker/$failure_instance"; do
+  test ! -e "$root"
+done
+for unit in \
+  "fased-local-controller-worker-$failure_instance.service" \
+  "fased-local-controller-$failure_instance.service" \
+  "fased-signerd-$failure_instance.service" \
+  "fased-gateway-$failure_instance.service"; do
+  test ! -e "/etc/systemd/system/$unit"
+  ! systemctl is-enabled --quiet "$unit"
+done
+if [[ -f /var/lib/fased-local-registry/instances.json ]]; then
+  ! jq -e --arg instance "$failure_instance" \
+    '.instances[]? | select(.instanceId == $instance)' \
+    /var/lib/fased-local-registry/instances.json >/dev/null
+fi
+for account in "fsgw-$failure_instance" "fssg-$failure_instance"; do
+  ! getent passwd "$account" >/dev/null
+done
+for group in "fsgw-$failure_instance" "fssg-$failure_instance" "fsop-$failure_instance" "fscf-$failure_instance"; do
+  ! getent group "$group" >/dev/null
+done
 user_systemctl is-enabled --quiet fased-gateway.service
 user_systemctl is-active --quiet fased-gateway.service
 test "$(sha256sum "$state/install.json" | awk '{print $1}')" = "$original_manifest_sha"

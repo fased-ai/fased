@@ -129,6 +129,36 @@ Default ordinary-bug path:
 
 `symptom -> narrow red -> coherent fix -> narrow green -> one PR -> focused CI -> squash merge`
 
+## Parallel Execution and Latency Discipline
+
+Use available subagents for independent, bounded work whenever the founder asks
+to parallelize or speed up execution. Keep one mutation owner: the primary
+agent alone edits the active incident branch unless files are explicitly
+partitioned with no overlap.
+
+- Parallelize read-only source review, safety review, disk/environment audit,
+  fixture review, CI inspection, and independent test-result analysis.
+- Run independent narrow tests concurrently only when they do not contend for
+  the same worktree, cache, service, port, container, or privileged state.
+- Never parallelize owner-installation mutation, lifecycle transactions,
+  destructive cleanup, merge/tag/publication boundaries, or two edits to the
+  same files.
+- Before an expensive proof, check disk, sudo, network, credentials, existing
+  processes, and reusable artifacts. Reuse caches and exact bytes; do not
+  rebuild unchanged product code for a test-only correction.
+- Keep one retained session for each long-running test or CI run. Poll that
+  session; never start a duplicate because output is quiet or context changed.
+- Run changed-package and closest-regression tests first. Broaden only after
+  they pass and only when the affected trust or lifecycle boundary requires it.
+- If a harness or environment predicate fails, repair that predicate and rerun
+  only its bounded proof. If the same product predicate fails twice, stop and
+  report instead of looping.
+- During work exceeding one minute, report the active command, elapsed time,
+  current phase, and whether it is product work or supporting evidence.
+
+Parallel work reduces diagnosis latency; it never weakens the controlling plan,
+evidence bindings, or founder approval boundaries.
+
 Installer/updater/lifecycle work must use **Lifecycle Bug Closure** below
 instead; never apply this shorter path to those boundaries.
 

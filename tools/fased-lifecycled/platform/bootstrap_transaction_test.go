@@ -44,6 +44,75 @@ func TestBootstrapPathPlanPreservesServiceTraversalUnderRestrictiveUmask(t *test
 	}
 }
 
+func TestCreatedBootstrapRootCleanupIsIdentityBound(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "created")
+	changes, err := ApplyBootstrapPathPlanTransactional([]BootstrapPath{{
+		Path: root, UID: uint32(os.Getuid()), GID: uint32(os.Getgid()), Mode: 0o700,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, created := changes.CreatedRoot(root)
+	if !created {
+		t.Fatal("new bootstrap root did not produce a cleanup token")
+	}
+	if err := os.WriteFile(filepath.Join(root, "transaction-residue"), []byte("bounded\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := token.RemoveAllIfSame(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("transaction-owned root survived cleanup: %v", err)
+	}
+}
+
+func TestCreatedBootstrapRootCleanupRejectsReplacement(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "created")
+	changes, err := ApplyBootstrapPathPlanTransactional([]BootstrapPath{{
+		Path: root, UID: uint32(os.Getuid()), GID: uint32(os.Getgid()), Mode: 0o700,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, created := changes.CreatedRoot(root)
+	if !created {
+		t.Fatal("new bootstrap root did not produce a cleanup token")
+	}
+	if err := os.Remove(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(root, "unrelated")
+	if err := os.WriteFile(sentinel, []byte("preserve\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := token.RemoveAllIfSame(); err == nil {
+		t.Fatal("replacement root was recursively removed")
+	}
+	if data, err := os.ReadFile(sentinel); err != nil || string(data) != "preserve\n" {
+		t.Fatalf("replacement root was not preserved: %q %v", data, err)
+	}
+}
+
+func TestPreexistingBootstrapRootHasNoCleanupToken(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "existing")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := ApplyBootstrapPathPlanTransactional([]BootstrapPath{{
+		Path: root, UID: uint32(os.Getuid()), GID: uint32(os.Getgid()), Mode: 0o700,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, created := changes.CreatedRoot(root); created {
+		t.Fatal("preexisting root received a destructive cleanup token")
+	}
+}
+
 type memoryBootstrapJournal struct{ events []BootstrapEvent }
 
 func (journal *memoryBootstrapJournal) Record(phase BootstrapPhase, state string) error {

@@ -1,12 +1,15 @@
 package main
 
 import (
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
 	"reflect"
 	"syscall"
 	"testing"
+
+	"fased-lifecycled/platform"
 )
 
 func TestPrepareSocketParentConvergesAuthorizedTraversal(t *testing.T) {
@@ -36,6 +39,39 @@ func TestPrepareSocketParentConvergesAuthorizedTraversal(t *testing.T) {
 		t.Fatalf("authorized group could not traverse to lifecycle socket: %v", err)
 	}
 	_ = connection.Close()
+}
+
+func TestInitializationLockSerializesAndReleases(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bootstrap.lock")
+	first, err := acquireInitializationLockAt(path, uint32(os.Geteuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := acquireInitializationLockAt(path, uint32(os.Geteuid())); err == nil {
+		t.Fatal("concurrent bootstrap lock acquisition succeeded")
+	}
+	if err := first.Release(); err != nil {
+		t.Fatal(err)
+	}
+	second, err := acquireInitializationLockAt(path, uint32(os.Geteuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBootstrapPathRemovalFailuresPreserveCriticalErrors(t *testing.T) {
+	removal := &platform.BootstrapPathRemovalError{Path: "/created", Err: syscall.ENOTEMPTY}
+	selected, only := bootstrapPathRemovalFailures(removal)
+	if !only || len(selected) != 1 || selected[0].Path != "/created" {
+		t.Fatalf("typed removal was not selected: only=%v selected=%+v", only, selected)
+	}
+	critical := errors.New("systemd rollback failed")
+	if _, only := bootstrapPathRemovalFailures(errors.Join(removal, critical)); only {
+		t.Fatal("critical rollback failure was incorrectly treated as removable residue")
+	}
 }
 
 func TestPrepareSocketParentRejectsSymlink(t *testing.T) {

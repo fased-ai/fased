@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"syscall"
 	"time"
 
@@ -170,7 +171,7 @@ func runInventory(args []string, output io.Writer) error {
 	return json.NewEncoder(output).Encode(generation)
 }
 
-func runInitialize(args []string, output io.Writer) error {
+func runInitialize(args []string, output io.Writer) (resultErr error) {
 	flags := flag.NewFlagSet("initialize", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var profileRaw, instanceID, ownerStateRoot, operatorUser, generationRoot, generationArchive, dependencyArchive, sourceTopology string
@@ -191,6 +192,11 @@ func runInitialize(args []string, output io.Writer) error {
 	if operatorUser == "" {
 		return errors.New("lifecycle initialization requires an operator user")
 	}
+	initializationLock, err := acquireInitializationLock(profile)
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, initializationLock.Release()) }()
 	principalSystem, err := platform.NewLinuxPrincipalSystem()
 	if err != nil {
 		return err
@@ -259,10 +265,115 @@ func runInitialize(args []string, output io.Writer) error {
 	configPath := filepath.Join(result.Config.LifecycleRoot, "platform.json")
 	applyArguments[1] = configPath
 	if err := runApply(applyArguments, output); err != nil {
-		return errors.Join(err, result.Transaction.Rollback())
+		rollbackErr := result.Transaction.Rollback()
+		cleanupErr := cleanupFailedInitialization(result, rollbackErr)
+		if cleanupErr == nil {
+			rollbackErr = nil
+		}
+		return errors.Join(err, rollbackErr, cleanupErr)
 	}
 	result.Transaction.Commit()
 	return nil
+}
+
+type initializationMutationLock struct{ file *os.File }
+
+func acquireInitializationLock(profile model.Profile) (*initializationMutationLock, error) {
+	var path string
+	switch profile {
+	case model.ProfileProtectedLocal:
+		path = "/run/lock/fased-bootstrap-local.lock"
+	case model.ProfileHosting:
+		path = "/run/lock/fased-bootstrap-hosting.lock"
+	default:
+		return nil, errors.New("lifecycle initialization profile is unsupported")
+	}
+	return acquireInitializationLockAt(path, 0)
+}
+
+func acquireInitializationLockAt(path string, expectedUID uint32) (*initializationMutationLock, error) {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path || path == "/" {
+		return nil, errors.New("initialization lock path is unsafe")
+	}
+	descriptor, err := syscall.Open(path, syscall.O_CREAT|syscall.O_RDWR|syscall.O_CLOEXEC|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(descriptor), path)
+	closeOnError := func(err error) (*initializationMutationLock, error) {
+		_ = file.Close()
+		return nil, err
+	}
+	var stat syscall.Stat_t
+	if err := syscall.Fstat(descriptor, &stat); err != nil {
+		return closeOnError(err)
+	}
+	if stat.Mode&syscall.S_IFMT != syscall.S_IFREG || stat.Mode&0o777 != 0o600 || stat.Uid != expectedUID || stat.Nlink != 1 {
+		return closeOnError(errors.New("initialization lock file is unsafe"))
+	}
+	if err := syscall.Flock(descriptor, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return closeOnError(errors.New("another bootstrap transaction is active"))
+		}
+		return closeOnError(err)
+	}
+	return &initializationMutationLock{file: file}, nil
+}
+
+func (lock *initializationMutationLock) Release() error {
+	if lock == nil || lock.file == nil {
+		return nil
+	}
+	file := lock.file
+	lock.file = nil
+	return errors.Join(syscall.Flock(int(file.Fd()), syscall.LOCK_UN), file.Close())
+}
+
+func cleanupFailedInitialization(result bootstrap.PlatformBootstrapResult, rollbackErr error) error {
+	if err := result.Config.Validate(); err != nil {
+		return err
+	}
+	removals, onlyRemovalFailures := bootstrapPathRemovalFailures(rollbackErr)
+	if !onlyRemovalFailures {
+		return errors.New("failed initialization retained canonical roots because safety-critical bootstrap rollback failed")
+	}
+	roots := append([]platform.CreatedBootstrapRoot(nil), result.CreatedRoots...)
+	sort.Slice(roots, func(left, right int) bool { return len(roots[left].Path()) > len(roots[right].Path()) })
+	var failures []error
+	for _, root := range roots {
+		failures = append(failures, root.RemoveAllIfSame())
+	}
+	if err := errors.Join(failures...); err != nil {
+		return err
+	}
+	for _, removal := range removals {
+		if err := os.Remove(removal.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func bootstrapPathRemovalFailures(err error) ([]*platform.BootstrapPathRemovalError, bool) {
+	if err == nil {
+		return nil, true
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var removals []*platform.BootstrapPathRemovalError
+		for _, nested := range joined.Unwrap() {
+			selected, only := bootstrapPathRemovalFailures(nested)
+			if !only {
+				return nil, false
+			}
+			removals = append(removals, selected...)
+		}
+		return removals, true
+	}
+	var removal *platform.BootstrapPathRemovalError
+	if errors.As(err, &removal) && (errors.Is(removal.Err, syscall.ENOTEMPTY) || errors.Is(removal.Err, os.ErrNotExist)) {
+		return []*platform.BootstrapPathRemovalError{removal}, true
+	}
+	return nil, false
 }
 
 func discoverInitialization(profile model.Profile, instanceID, ownerStateRoot, operatorUser string, principals platform.PrincipalSystem) (platform.DiscoveryResult, error) {

@@ -203,6 +203,16 @@ describe("managed update mode", () => {
     expect(installer).not.toContain("protected-local-bootstrap.mjs install");
   });
 
+  it("injects bridge rollback faults without modifying immutable artifacts", () => {
+    const fixture = fs.readFileSync(
+      new URL("./docker/protected-local-systemd/run.sh", import.meta.url),
+      "utf8",
+    );
+    expect(fixture).toContain("/etc/systemd/system/fased-gateway-.service.d");
+    expect(fixture).toContain("ExecStartPre=+$bridge_fault_script %n");
+    expect(fixture).not.toContain("candidate}.fixture-fault");
+  });
+
   it("retries a controller socket handoff that closes during generation replacement", () => {
     for (const fixturePath of [
       "./docker/protected-local-systemd/run.sh",

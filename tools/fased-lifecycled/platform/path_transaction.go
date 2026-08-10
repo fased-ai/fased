@@ -2,11 +2,23 @@ package platform
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 )
+
+type BootstrapPathRemovalError struct {
+	Path string
+	Err  error
+}
+
+func (failure *BootstrapPathRemovalError) Error() string {
+	return fmt.Sprintf("remove bootstrap-created path %s: %v", failure.Path, failure.Err)
+}
+
+func (failure *BootstrapPathRemovalError) Unwrap() error { return failure.Err }
 
 type pathMetadata struct {
 	path       string
@@ -15,10 +27,44 @@ type pathMetadata struct {
 	previously bool
 }
 
+type createdBootstrapPath struct {
+	path     string
+	identity os.FileInfo
+}
+
+type CreatedBootstrapRoot struct {
+	createdBootstrapPath
+}
+
+func (root CreatedBootstrapRoot) Path() string { return root.path }
+
+func (root CreatedBootstrapRoot) RemoveAllIfSame() error {
+	info, err := os.Lstat(root.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || root.identity == nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !os.SameFile(root.identity, info) {
+		return fmt.Errorf("bootstrap-created root identity changed before cleanup: %s", root.path)
+	}
+	return os.RemoveAll(root.path)
+}
+
 type BootstrapPathChanges struct {
 	metadata []pathMetadata
-	created  []string
+	created  []createdBootstrapPath
 	finished bool
+}
+
+func (changes *BootstrapPathChanges) CreatedRoot(path string) (CreatedBootstrapRoot, bool) {
+	if changes == nil {
+		return CreatedBootstrapRoot{}, false
+	}
+	for _, created := range changes.created {
+		if created.path == path {
+			return CreatedBootstrapRoot{createdBootstrapPath: created}, true
+		}
+	}
+	return CreatedBootstrapRoot{}, false
 }
 
 func ApplyBootstrapPathPlanTransactional(paths []BootstrapPath) (*BootstrapPathChanges, error) {
@@ -89,8 +135,11 @@ func ensureBootstrapDirectoryTracked(path string, mode os.FileMode, changes *Boo
 			if err := os.Chmod(current, createMode); err != nil {
 				return err
 			}
-			changes.created = append(changes.created, current)
 			info, err = os.Lstat(current)
+			if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return errors.New("bootstrap-created directory identity is unsafe")
+			}
+			changes.created = append(changes.created, createdBootstrapPath{path: current, identity: info})
 		}
 		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return errors.New("bootstrap directory ancestry is unsafe")
@@ -113,7 +162,10 @@ func (changes *BootstrapPathChanges) Rollback() error {
 		failures = append(failures, os.Chmod(metadata.path, metadata.mode))
 	}
 	for index := len(changes.created) - 1; index >= 0; index-- {
-		failures = append(failures, os.Remove(changes.created[index]))
+		created := changes.created[index]
+		if err := os.Remove(created.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			failures = append(failures, &BootstrapPathRemovalError{Path: created.path, Err: err})
+		}
 	}
 	result := errors.Join(failures...)
 	if result == nil {
