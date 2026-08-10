@@ -1773,7 +1773,6 @@ INSTALL_MARKER_PATH="$FASED_CONFIG_DIR/install-complete.json"
 INSTALL_CACHE_DIR="$FASED_CONFIG_DIR/install-cache"
 INSTALL_LOG_DIR="$FASED_CONFIG_DIR/logs"
 INSTALL_VERBOSE="${FASED_INSTALL_VERBOSE:-0}"
-INSTALL_GIT_UPDATE="${FASED_INSTALL_GIT_UPDATE:-1}"
 RELEASE_NPM_PACKAGE="${FASED_RUNTIME_NPM_PACKAGE:-${FASED_HOSTING_NPM_PACKAGE:-@fased/fased@latest}}"
 AUTO_INSTALL=1
 RUN_ONBOARD=1
@@ -1782,7 +1781,6 @@ HOSTING_REPAIR_REQUESTED=0
 LOCAL_REPAIR_REQUESTED=0
 LOCAL_EXISTING_BOOTSTRAP_REQUESTED=0
 LOCAL_ONBOARDING_RESUME_REQUESTED=0
-SOURCE_INSTALL_REQUESTED=0
 HOSTING_RELEASE=""
 UPDATE_CHANNEL="stable"
 UPDATE_CHANNEL_EXPLICIT=0
@@ -1829,7 +1827,6 @@ if supports_color; then
   C_BOLD=$'\033[1m'
   C_DIM=$'\033[2m'
   C_GRAY=$'\033[90m'
-  C_CYAN=$'\033[36m'
   C_GREEN=$'\033[32m'
   C_YELLOW=$'\033[33m'
   C_RED=$'\033[31m'
@@ -1838,13 +1835,11 @@ else
   C_BOLD=""
   C_DIM=""
   C_GRAY=""
-  C_CYAN=""
   C_GREEN=""
   C_YELLOW=""
   C_RED=""
 fi
 
-color_cyan() { printf '%s%s%s' "$C_CYAN" "$1" "$C_RESET"; }
 color_green() { printf '%s%s%s' "$C_GREEN" "$1" "$C_RESET"; }
 color_yellow() { printf '%s%s%s' "$C_YELLOW" "$1" "$C_RESET"; }
 color_red() { printf '%s%s%s' "$C_RED" "$1" "$C_RESET"; }
@@ -1989,11 +1984,9 @@ Options:
                   service without rerunning onboarding or changing user state.
   --local         Laptop/desktop profile. Tailscale is optional; on a VPS this does
                   not apply hosting SSH/firewall hardening.
-  --source-install  Build from the checkout instead of using the verified Linux
-                  release runtime. Intended for contributors and source testing;
-                  a checkout with local changes selects this automatically.
+  --source-install  Delegate to scripts/install-development.sh. This requires a
+                  contributor checkout and never runs from a streamed installer.
   --swap-gb <n>   Override automatic install-time swap size on small Linux hosts
-  --no-git-update  Do not fast-forward the checkout from origin before install
   --no-onboard     Skip running onboard (install deps only)
   --verbose       Show build/install command output instead of logging it
   -h, --help       Show this help
@@ -2050,9 +2043,6 @@ while [[ $# -gt 0 ]]; do
     --local)
       pass_args+=(--mode local --host-profile local --tailscale off)
       ;;
-    --source-install)
-      SOURCE_INSTALL_REQUESTED=1
-      ;;
     --release)
       shift
       if [[ $# -eq 0 ]]; then
@@ -2107,9 +2097,6 @@ while [[ $# -gt 0 ]]; do
       fi
       REQUESTED_SWAP_GB="$1"
       pass_args+=(--swap-gb "$1")
-      ;;
-    --no-git-update)
-      INSTALL_GIT_UPDATE=0
       ;;
     --no-onboard)
       RUN_ONBOARD=0
@@ -2314,22 +2301,6 @@ set_installer_state_dir() {
   INSTALL_LOG_DIR="$FASED_CONFIG_DIR/logs"
 }
 
-backup_existing_local_file() {
-  local file="$1"
-  local suffix="$2"
-  if [[ ! -e "$file" ]]; then
-    return 0
-  fi
-  local backup="${file}.bak-${suffix}"
-  local index=1
-  while [[ -e "$backup" ]]; do
-    backup="${file}.bak-${suffix}-${index}"
-    index=$((index + 1))
-  done
-  mv "$file" "$backup"
-  printf '%s\n' "$backup"
-}
-
 handle_existing_local_state() {
   set_installer_state_dir "$FASED_CONFIG_DIR"
   if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
@@ -2358,7 +2329,7 @@ handle_existing_local_state() {
     return 0
   fi
   if [[ "$LOCAL_EXISTING_BOOTSTRAP_REQUESTED" -eq 1 || \
-    "$LOCAL_REPAIR_REQUESTED" -eq 1 || "$SOURCE_INSTALL_REQUESTED" -eq 1 ]]; then
+    "$LOCAL_REPAIR_REQUESTED" -eq 1 ]]; then
     if [[ -z "$profile" ]]; then
       echo "Existing Local state is not a recognized migration or repair source." >&2
       exit 1
@@ -2883,48 +2854,6 @@ install_supported_system_dependencies() {
   esac
 }
 
-root_has_active_time_sync_service() {
-  if [[ "$(uname -s)" != "Linux" || "$(id -u)" -ne 0 ]] || ! need_cmd systemctl; then
-    return 1
-  fi
-  systemctl is-active --quiet systemd-timesyncd || \
-    systemctl is-active --quiet chronyd || \
-    systemctl is-active --quiet chrony
-}
-
-best_effort_enable_root_host_time_sync() {
-  if [[ "$(uname -s)" != "Linux" || "$(id -u)" -ne 0 ]]; then
-    return 0
-  fi
-
-  echo "== Ensure host clock sync for managed public runtime =="
-  if need_cmd timedatectl; then
-    timedatectl set-ntp true >/dev/null 2>&1 || true
-  fi
-
-  if need_cmd systemctl; then
-    systemctl enable --now systemd-timesyncd >/dev/null 2>&1 || \
-      systemctl restart systemd-timesyncd >/dev/null 2>&1 || true
-  fi
-
-  if root_has_active_time_sync_service; then
-    return 0
-  fi
-
-  if need_cmd apt-get; then
-    apt-get install -y chrony >/dev/null 2>&1 || true
-  fi
-  if need_cmd systemctl; then
-    systemctl enable --now chrony >/dev/null 2>&1 || \
-      systemctl enable --now chronyd >/dev/null 2>&1 || \
-      systemctl restart chrony >/dev/null 2>&1 || \
-      systemctl restart chronyd >/dev/null 2>&1 || true
-  fi
-  if need_cmd chronyc; then
-    chronyc -a makestep >/dev/null 2>&1 || true
-  fi
-}
-
 is_fased_repo_dir() {
   local dir="$1"
   [[ -f "$dir/package.json" && -d "$dir/src" ]]
@@ -2937,99 +2866,6 @@ resolve_fased_dir_from_base() {
     return 0
   fi
   return 1
-}
-
-shell_quote() {
-  printf "%q" "$1"
-}
-
-ensure_checkout_origin_remote() {
-  local repo_dir="$1"
-  local origin_url=""
-
-  if [[ ! -d "$repo_dir/.git" ]]; then
-    return 0
-  fi
-
-  origin_url="$(git -C "$repo_dir" remote get-url origin 2>/dev/null || true)"
-  if [[ -z "$origin_url" ]]; then
-    git -C "$repo_dir" remote add origin "$INSTALL_REPO_URL"
-    return 0
-  fi
-
-  case "$origin_url" in
-    /*|file://*)
-      git -C "$repo_dir" remote set-url origin "$INSTALL_REPO_URL"
-      ;;
-  esac
-}
-
-refresh_checkout_from_origin() {
-  local repo_dir="$1"
-  local label="${2:-Installer}"
-  local branch=""
-  local remote_ref=""
-  local before=""
-  local after=""
-
-  if [[ "$INSTALL_GIT_UPDATE" == "0" || ! -d "$repo_dir/.git" ]] || ! need_cmd git; then
-    return 0
-  fi
-
-  ensure_checkout_origin_remote "$repo_dir"
-
-  branch="$(git -C "$repo_dir" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
-  if [[ -z "$branch" ]]; then
-    echo "== $label: detached checkout detected, skipping git update =="
-    return 0
-  fi
-
-  if ! git -C "$repo_dir" diff --quiet --ignore-submodules -- || ! git -C "$repo_dir" diff --cached --quiet --ignore-submodules --; then
-    echo "== $label: local checkout has changes, skipping git update =="
-    return 0
-  fi
-
-  remote_ref="origin/$branch"
-  git -C "$repo_dir" fetch --quiet origin "$branch" || {
-    echo "== $label: could not fetch $remote_ref, continuing with local checkout =="
-    return 0
-  }
-
-  if ! git -C "$repo_dir" merge-base --is-ancestor HEAD "$remote_ref" >/dev/null 2>&1; then
-    echo "== $label: $repo_dir is not a fast-forward from $remote_ref, skipping git update =="
-    return 0
-  fi
-
-  before="$(git -C "$repo_dir" rev-parse --short HEAD 2>/dev/null || true)"
-  after="$(git -C "$repo_dir" rev-parse --short "$remote_ref" 2>/dev/null || true)"
-  if [[ -n "$before" && -n "$after" && "$before" != "$after" ]]; then
-    echo "== $label: updating $repo_dir from $remote_ref ($before -> $after) =="
-    git -C "$repo_dir" merge --ff-only "$remote_ref"
-  fi
-}
-
-refresh_current_checkout_and_reexec_if_needed() {
-  local repo_dir=""
-  local before=""
-  local after=""
-
-  if [[ "$INSTALL_GIT_UPDATE" == "0" || "${FASED_INSTALL_REEXECED_AFTER_UPDATE:-0}" == "1" ]] || ! need_cmd git; then
-    return 0
-  fi
-  if ! is_fased_repo_dir "$FASED_DIR" || [[ ! -d "$FASED_DIR/.git" ]]; then
-    return 0
-  fi
-
-  repo_dir="$(cd "$FASED_DIR" && pwd)"
-  before="$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || true)"
-  refresh_checkout_from_origin "$repo_dir" "Installer"
-  after="$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || true)"
-
-  if [[ -n "$before" && -n "$after" && "$before" != "$after" ]]; then
-    echo "== Installer: restarting after source update =="
-    cd "$repo_dir"
-    FASED_INSTALL_REEXECED_AFTER_UPDATE=1 exec ./install.sh "${ORIGINAL_INSTALL_ARGS[@]}"
-  fi
 }
 
 install_user_cli_path_snippet() {
@@ -3051,68 +2887,8 @@ install_user_cli_path_snippet() {
   } >>"$file"
 }
 
-install_fased_cli_launcher() {
-  local launcher="$FASED_DIR/fased.mjs"
-  local bin_dir="${FASED_CLI_BIN_DIR:-$HOME/.local/bin}"
-  local target="$bin_dir/fased"
-
-  if [[ ! -f "$launcher" ]]; then
-    echo "CLI launcher missing: $launcher" >&2
-    exit 1
-  fi
-
-  mkdir -p "$bin_dir"
-  chmod 755 "$launcher" 2>/dev/null || true
-
-  local launcher_real=""
-  local target_real=""
-  launcher_real="$(readlink -f "$launcher" 2>/dev/null || true)"
-  if [[ -e "$target" || -L "$target" ]]; then
-    target_real="$(readlink -f "$target" 2>/dev/null || true)"
-  fi
-
-  if [[ -n "$launcher_real" && "$target_real" == "$launcher_real" ]]; then
-    :
-  elif ! ln -sfn "$launcher" "$target" 2>/dev/null; then
-    target_real=""
-    if [[ -e "$target" || -L "$target" ]]; then
-      target_real="$(readlink -f "$target" 2>/dev/null || true)"
-    fi
-    if [[ -n "$launcher_real" && "$target_real" == "$launcher_real" ]]; then
-      :
-    else
-      rm -f "$target"
-      {
-        printf '#!/usr/bin/env bash\n'
-        printf 'exec %s "$@"\n' "$(shell_quote "$launcher")"
-      } >"$target"
-      chmod 755 "$target"
-    fi
-  fi
-
-  export PATH="$bin_dir:$PATH"
-  hash -r 2>/dev/null || true
-  FASED_CLI_PATH="$target"
-
-  install_user_cli_path_snippet "$bin_dir" "$HOME/.profile"
-  install_user_cli_path_snippet "$bin_dir" "$HOME/.bashrc"
-  install_user_cli_path_snippet "$bin_dir" "$HOME/.zshrc"
-
-  if ! "$FASED_CLI_PATH" --version >/dev/null 2>&1; then
-    echo "Installed CLI did not start correctly: $FASED_CLI_PATH" >&2
-    echo "Check $INSTALL_LOG_DIR and rerun ./install.sh --verbose." >&2
-    exit 1
-  fi
-
-  step_done "CLI installed"
-}
-
 use_prebuilt_release_runtime() {
-  fased_should_use_prebuilt_release_runtime \
-    "$(resolved_host_profile)" \
-    "$SOURCE_INSTALL_REQUESTED" \
-    "${FASED_SOURCE_INSTALL:-0}" \
-    "${FASED_HOSTING_SOURCE_INSTALL:-0}" \
+  fased_supports_prebuilt_release_runtime \
     "$(uname -s 2>/dev/null || true)" \
     "$(uname -m 2>/dev/null || true)"
 }
@@ -3290,7 +3066,6 @@ protected_local_target_platform() {
   [[ "$(uname -s 2>/dev/null || true)" == "Linux" ]] || return 1
   systemd_is_pid_one || return 1
   [[ "$(resolved_host_profile)" != "hosting" ]] || return 1
-  [[ "$SOURCE_INSTALL_REQUESTED" -eq 0 ]] || return 1
   [[ "$(id -u)" -ne 0 ]] || return 1
 }
 
@@ -3881,20 +3656,15 @@ refresh_existing_local_gateway_service_after_install() {
 
 verify_gateway_runtime_identity_after_install() {
   local expected_version=""
-  local -a verify_args=()
   expected_version="$("$FASED_CLI_PATH" --version 2>/dev/null | head -n 1 | tr -d '\r')"
   if [[ -z "$expected_version" ]]; then
     echo "Could not read the installed Fased CLI version." >&2
     return 1
   fi
 
-  if ! use_prebuilt_release_runtime; then
-    verify_args+=(--allow-source-checkout true)
-  fi
   node "$FASED_DIR/scripts/verify-gateway-runtime-identity.mjs" \
     --expected-version "$expected_version" \
-    --config "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}" \
-    "${verify_args[@]}"
+    --config "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}"
 }
 
 local_signer_transaction_script() {
@@ -4206,15 +3976,6 @@ step_done() {
   fi
 }
 
-step_skip() {
-  local label="$1"
-  if [[ "$INSTALL_STATUS_FRAME_OPEN" -eq 1 ]]; then
-    block_line "$(color_green "✓") $(color_dim "${label} unchanged")"
-  else
-    printf '%s %s\n' "$(color_green "✓")" "$(color_dim "${label} unchanged")"
-  fi
-}
-
 SPINNER_PID=""
 
 spinner_start() {
@@ -4265,232 +4026,6 @@ spinner_failed() {
   printf '%s %s\n' "$(color_red "✕")" "$(color_red "$label")" >&2
 }
 
-run_logged_in() {
-  local dir="$1"
-  local label="$2"
-  shift 2
-  local log_path
-  log_path="$(install_log_path "$label")"
-  spinner_start "$label"
-  if [[ "$INSTALL_VERBOSE" == "1" ]]; then
-    (cd "$dir" && "$@")
-    local verbose_status=$?
-    if [[ "$verbose_status" -eq 0 ]]; then
-      spinner_done "$label"
-    else
-      spinner_failed "$label"
-    fi
-    return "$verbose_status"
-  fi
-  if (cd "$dir" && "$@") >"$log_path" 2>&1; then
-    spinner_done "$label"
-    return 0
-  fi
-  spinner_failed "$label"
-  printf '%s %s\n' "$(color_red "Failed:")" "$label" >&2
-  printf '%s %s\n' "$(color_dim "Full log:")" "$log_path" >&2
-  printf '%s\n' "$(color_dim "Last lines:")" >&2
-  tail -n 30 "$log_path" >&2 || true
-  return 1
-}
-
-fingerprint_targets() {
-  local root="$1"
-  shift
-  local tmp
-  tmp="$(mktemp)"
-  local rel
-  for rel in "$@"; do
-    if [[ -d "$root/$rel" ]]; then
-      find "$root/$rel" \
-        -type f \
-        ! -path '*/node_modules/*' \
-        ! -path '*/dist/*' \
-        ! -path '*/.turbo/*' \
-        ! -path '*/.vite/*' \
-        -print >>"$tmp"
-    elif [[ -f "$root/$rel" ]]; then
-      printf '%s\n' "$root/$rel" >>"$tmp"
-    fi
-  done
-  if [[ ! -s "$tmp" ]]; then
-    rm -f "$tmp"
-    printf 'empty\n'
-    return 0
-  fi
-  sort -u "$tmp" | while IFS= read -r file; do
-    if need_cmd sha256sum; then
-      sha256sum "$file"
-    elif need_cmd shasum; then
-      shasum -a 256 "$file"
-    else
-      cksum "$file"
-    fi
-  done | if need_cmd sha256sum; then
-    sha256sum
-  elif need_cmd shasum; then
-    shasum -a 256
-  else
-    cksum
-  fi | awk '{print $1}'
-  rm -f "$tmp"
-}
-
-cache_file_for() {
-  local name="$1"
-  mkdir -p "$INSTALL_CACHE_DIR"
-  printf '%s/%s.sha256\n' "$INSTALL_CACHE_DIR" "$name"
-}
-
-cache_matches() {
-  local name="$1"
-  local fingerprint="$2"
-  local cache_file
-  cache_file="$(cache_file_for "$name")"
-  [[ -f "$cache_file" && "$(cat "$cache_file" 2>/dev/null)" == "$fingerprint" ]]
-}
-
-write_cache() {
-  local name="$1"
-  local fingerprint="$2"
-  local cache_file
-  cache_file="$(cache_file_for "$name")"
-  printf '%s\n' "$fingerprint" >"$cache_file"
-}
-
-upsert_managed_block() {
-  local file="$1"
-  local start_marker="$2"
-  local end_marker="$3"
-  local block="$4"
-  local tmp
-  mkdir -p "$(dirname "$file")"
-  tmp="$(mktemp)"
-  if [[ -f "$file" ]]; then
-    awk -v start="$start_marker" -v end="$end_marker" '
-      $0 == start { skipping = 1; next }
-      $0 == end { skipping = 0; next }
-      skipping != 1 { print }
-    ' "$file" >"$tmp"
-  else
-    : >"$tmp"
-  fi
-  {
-    printf '\n%s\n' "$start_marker"
-    printf '%s\n' "$block"
-    printf '%s\n' "$end_marker"
-  } >>"$tmp"
-  mv "$tmp" "$file"
-}
-
-configure_target_user_fased_shell_dir() {
-  local target_user="$1"
-  local target_home="$2"
-  local target_repo_dir="$3"
-  local start_marker="# >>> fased hosted shell directory >>>"
-  local end_marker="# <<< fased hosted shell directory <<<"
-  local block
-  block=$(cat <<EOF
-if [ -z "\${FASED_NO_AUTO_CD:-}" ] && [ -d "$target_repo_dir" ]; then
-  case "\$-" in
-    *i*) cd "$target_repo_dir" ;;
-  esac
-fi
-EOF
-)
-  upsert_managed_block "$target_home/.bashrc" "$start_marker" "$end_marker" "$block"
-  upsert_managed_block "$target_home/.profile" "$start_marker" "$end_marker" "$block"
-  chown "$target_user:$target_user" "$target_home/.bashrc" "$target_home/.profile" 2>/dev/null || true
-}
-
-copy_bootstrap_ssh_keys_for_target_user() {
-  local target_user="$1"
-  local target_home="$2"
-  local source_keys=""
-  local candidate
-  for candidate in "$HOME/.ssh/authorized_keys" "/root/.ssh/authorized_keys"; do
-    if [[ -s "$candidate" ]]; then
-      source_keys="$candidate"
-      break
-    fi
-  done
-  if [[ -z "$source_keys" ]]; then
-    return 0
-  fi
-
-  mkdir -p "$target_home/.ssh"
-  touch "$target_home/.ssh/authorized_keys"
-  local tmp
-  tmp="$(mktemp)"
-  {
-    cat "$target_home/.ssh/authorized_keys" 2>/dev/null || true
-    cat "$source_keys"
-  } | awk 'NF { print }' | sort -u >"$tmp"
-
-  if need_cmd install; then
-    install -m 600 -o "$target_user" -g "$target_user" "$tmp" "$target_home/.ssh/authorized_keys"
-  else
-    cp "$tmp" "$target_home/.ssh/authorized_keys"
-    chmod 600 "$target_home/.ssh/authorized_keys"
-    chown "$target_user:$target_user" "$target_home/.ssh/authorized_keys" 2>/dev/null || true
-  fi
-  rm -f "$tmp"
-  chmod 700 "$target_home/.ssh"
-  chown "$target_user:$target_user" "$target_home/.ssh" 2>/dev/null || true
-  echo "== Root bootstrap: copied SSH authorized_keys to '$target_user' for tailnet SSH =="
-}
-
-REMOVED_BOOTSTRAP_CHECKOUT=""
-
-remove_root_bootstrap_checkout_after_success() {
-  local source_dir="$1"
-  local target_repo_dir="$2"
-  if [[ "${FASED_KEEP_BOOTSTRAP_CHECKOUT:-0}" == "1" ]]; then
-    return 0
-  fi
-  if [[ "$(id -u)" -ne 0 || "$HOSTING_REQUESTED" -ne 1 || "$RUN_ONBOARD" -ne 1 ]]; then
-    return 0
-  fi
-  if [[ -z "$source_dir" || -z "$target_repo_dir" || "$source_dir" == "$target_repo_dir" ]]; then
-    return 0
-  fi
-  if [[ "$source_dir" != "$HOME"/* || "$source_dir" == "$HOME" || "$source_dir" == "/" ]]; then
-    return 0
-  fi
-  if [[ ! -f "$source_dir/install.sh" || ! -f "$source_dir/package.json" || ! -d "$source_dir/src" ]]; then
-    return 0
-  fi
-  REMOVED_BOOTSTRAP_CHECKOUT="$source_dir"
-  cd /
-  rm -rf "$source_dir"
-}
-
-read_target_fased_config_value() {
-  local target_user="$1"
-  local js_expr="$2"
-  local target_home
-  target_home="$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6)"
-  if [[ -z "$target_home" ]]; then
-    target_home="/home/$target_user"
-  fi
-  local config_path="$target_home/.fased/fased.json"
-  if [[ ! -f "$config_path" || ! -r "$config_path" ]]; then
-    return 0
-  fi
-  CONFIG_PATH="$config_path" JS_EXPR="$js_expr" node -e '
-const fs = require("node:fs");
-const configPath = process.env.CONFIG_PATH;
-const expr = process.env.JS_EXPR;
-try {
-  const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  const value = Function("cfg", `"use strict"; return (${expr});`)(cfg);
-  if (typeof value === "string" && value.trim()) {
-    process.stdout.write(value.trim());
-  }
-} catch {}
-' 2>/dev/null || true
-}
-
 build_dashboard_url() {
   local scheme="$1"
   local web_host="$2"
@@ -4513,10 +4048,6 @@ if (token) {
 }
 process.stdout.write(url.toString());
 ' 2>/dev/null || printf '%s://%s/' "$scheme" "$web_host"
-}
-
-build_hosted_dashboard_url() {
-  build_dashboard_url "https" "$1" "$2" "$3"
 }
 
 print_local_handoff_block() {
@@ -4547,106 +4078,6 @@ print_local_handoff_block() {
   block_line "  - In the dashboard, go to Agent > Models and connect a model provider."
   block_line "  - Open Chat and send a test message."
   block_bottom
-}
-
-print_hosted_handoff_block() {
-  local target_user="$1"
-  local target_repo_dir="$2"
-  local tailscale_dns="$3"
-  local removed_checkout="$4"
-  local ssh_host="${tailscale_dns:-YOUR_VPS_TAILSCALE_NAME}"
-  local web_host="${tailscale_dns:-YOUR_VPS_TAILSCALE_NAME}"
-  local gateway_token="${5:-}"
-  local control_base_path="${6:-}"
-  local dashboard_url
-  dashboard_url="$(build_hosted_dashboard_url "$web_host" "$gateway_token" "$control_base_path")"
-
-  block_top "HOSTED ACCESS"
-  block_line "Setup complete."
-  block_line
-  block_line "$(color_yellow "${C_BOLD}RUN AS${C_RESET}")"
-  block_line "  $target_user"
-  block_line
-  block_line "$(color_yellow "${C_BOLD}WEB UI${C_RESET}")"
-  block_line "  Open this on your own Tailscale-connected computer."
-  block_line
-  block_line "  $(color_green "$dashboard_url")"
-  block_line
-  block_line "$(color_yellow "${C_BOLD}TOKEN${C_RESET}")"
-  if [[ -n "$gateway_token" ]]; then
-    block_line "  Only paste this if the browser asks."
-    block_line
-    block_line "  $(color_green "$gateway_token")"
-  else
-    block_line "  $(color_yellow "(token not available in root handoff)")"
-    block_line
-    block_line "  Run fased dashboard --no-open as ${target_user} to print a fresh tokenized URL."
-  fi
-  block_line
-  block_line "$(color_yellow "${C_BOLD}SSH${C_RESET}")"
-  block_line "  Run:"
-  block_line
-  block_line "  $(color_green "ssh ${target_user}@${ssh_host}")"
-  block_line
-  block_line "  Starts in ${target_repo_dir}"
-  block_line
-  block_line "$(color_yellow "${C_BOLD}FALLBACK TUNNEL${C_RESET}")"
-  block_line "  Run this locally and leave it open:"
-  block_line
-  block_line "  $(color_green "ssh -N -L 18789:127.0.0.1:18789 ${target_user}@${ssh_host}")"
-  block_line
-  block_line "  Then open:"
-  block_line
-  block_line "  $(color_green "http://localhost:18789/")"
-  block_line
-  block_line "$(color_yellow "${C_BOLD}LOCAL PORT BUSY${C_RESET}")"
-  block_line "  If 18789 is already in use locally, use 18790 instead."
-  block_line
-  block_line "  $(color_green "ssh -N -L 18790:127.0.0.1:18789 ${target_user}@${ssh_host}")"
-  block_line
-  block_line "  Then open:"
-  block_line
-  block_line "  $(color_green "http://localhost:18790/")"
-  block_line
-  block_line "$(color_yellow "${C_BOLD}APP COMMANDS${C_RESET}")"
-  block_line "  $(color_green "cd ${target_repo_dir}")"
-  block_line "  $(color_green "fased status")"
-  block_line "  $(color_green "fased dashboard --no-open")"
-  block_line
-  block_line "Use the app checkout for normal operation; root was only for bootstrap."
-  if [[ -n "$removed_checkout" ]]; then
-    block_line
-    block_line "$(color_green "✓ Removed temporary root checkout")"
-    block_line "$(color_yellow "Removed:") $(color_green "$removed_checkout")"
-  fi
-  block_bottom
-}
-
-runtime_assets_ready() {
-  [[ -f "$FASED_DIR/src/canvas-host/a2ui/a2ui.bundle.js" ]] || return 1
-  [[ -f "$FASED_DIR/dist/canvas-host/a2ui/a2ui.bundle.js" ]] || return 1
-  [[ -f "$FASED_DIR/dist/export-html/template.html" ]] || return 1
-  [[ -f "$FASED_DIR/dist/export-html/vendor/marked.min.js" ]] || return 1
-  [[ -f "$FASED_DIR/dist/bundled/boot-md/HOOK.md" ]] || return 1
-  [[ -f "$FASED_DIR/dist/build-info.json" ]] || return 1
-  [[ -f "$FASED_DIR/dist/cli/daemon-cli.js" ]] || return 1
-}
-
-go_modern_enough() {
-  local gocmd=""
-  if [[ -x /usr/local/go/bin/go ]]; then
-    gocmd="/usr/local/go/bin/go"
-  elif need_cmd go; then
-    gocmd="$(command -v go)"
-  else
-    return 1
-  fi
-  local v
-  v="$("$gocmd" version 2>/dev/null | awk '{print $3}' | sed 's/^go//')"
-  local major minor
-  major="$(echo "$v" | cut -d. -f1)"
-  minor="$(echo "$v" | cut -d. -f2)"
-  [[ "${major:-0}" -gt 1 ]] || ([[ "${major:-0}" -eq 1 ]] && [[ "${minor:-0}" -ge 21 ]])
 }
 
 detect_total_mem_mb() {
@@ -4693,29 +4124,6 @@ recommended_onboard_old_space_mb() {
     return 0
   fi
   printf '1536\n'
-}
-
-resolved_core_build_profile() {
-  if [[ -n "${FASED_BUILD_PROFILE:-}" ]]; then
-    printf '%s\n' "$FASED_BUILD_PROFILE"
-    return 0
-  fi
-
-  local profile
-  profile="$(resolved_host_profile)"
-  if [[ "$profile" == "hosting" ]]; then
-    printf 'vps\n'
-    return 0
-  fi
-
-  local total_mem_mb
-  total_mem_mb="$(detect_total_mem_mb || true)"
-  if [[ -n "$total_mem_mb" && "$total_mem_mb" -gt 0 && "$total_mem_mb" -le 1536 ]]; then
-    printf 'vps\n'
-    return 0
-  fi
-
-  printf '\n'
 }
 
 has_active_swap() {
@@ -4817,136 +4225,6 @@ ensure_low_memory_swap_if_possible() {
   fi
 }
 
-pnpm_install_with_adaptive_profile() {
-  local total_mem_mb
-  total_mem_mb="$(detect_total_mem_mb)"
-  local child_concurrency=2
-  local network_concurrency=8
-  local retry_child_concurrency=1
-  local retry_network_concurrency=2
-  local node_opts="${NODE_OPTIONS:-}"
-
-  if [[ -n "$total_mem_mb" && "$total_mem_mb" -gt 0 ]]; then
-    if [[ "$total_mem_mb" -le 1536 ]]; then
-      child_concurrency=1
-      network_concurrency=2
-      retry_network_concurrency=1
-      node_opts="${node_opts}${node_opts:+ }--max-old-space-size=512"
-    elif [[ "$total_mem_mb" -le 2304 ]]; then
-      child_concurrency=1
-      network_concurrency=4
-      node_opts="${node_opts}${node_opts:+ }--max-old-space-size=768"
-    fi
-  fi
-
-  spinner_start "Installing dependencies"
-  local install_log
-  install_log="$(install_log_path "pnpm install")"
-  if [[ "$INSTALL_VERBOSE" == "1" ]]; then
-    env NODE_OPTIONS="$node_opts" pnpm --dir "$FASED_DIR" install --child-concurrency="$child_concurrency" --network-concurrency="$network_concurrency"
-    local verbose_status=$?
-    if [[ "$verbose_status" -eq 0 ]]; then
-      spinner_done "Dependencies ready"
-    else
-      spinner_failed "Installing dependencies"
-    fi
-    return "$verbose_status"
-  fi
-  if env NODE_OPTIONS="$node_opts" pnpm --dir "$FASED_DIR" install --child-concurrency="$child_concurrency" --network-concurrency="$network_concurrency" >"$install_log" 2>&1; then
-    spinner_done "Dependencies ready"
-    return 0
-  fi
-
-  spinner_clear
-  echo "Dependency install needed a slower retry."
-  ensure_low_memory_swap_if_possible || true
-  local retry_log
-  retry_log="$(install_log_path "pnpm install retry")"
-  spinner_start "Retrying dependencies"
-  env NODE_OPTIONS="${node_opts}${node_opts:+ }--max-old-space-size=512" \
-    pnpm --dir "$FASED_DIR" install --child-concurrency="$retry_child_concurrency" --network-concurrency="$retry_network_concurrency" >"$retry_log" 2>&1 || {
-      spinner_failed "Retrying dependencies"
-      echo "Failed: dependency install" >&2
-      echo "Log: $install_log" >&2
-      echo "Retry log: $retry_log" >&2
-      tail -n 80 "$retry_log" >&2 || true
-      return 1
-    }
-  spinner_done "Dependencies ready"
-}
-
-install_modern_go_linux() {
-  local arch
-  arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
-  case "$arch" in
-    amd64|x86_64) arch="amd64" ;;
-    arm64|aarch64) arch="arm64" ;;
-    *) echo "Unsupported CPU arch for Go auto-install: $arch" >&2; return 1 ;;
-  esac
-  local goversion="${FASED_GO_VERSION:-1.23.6}"
-  local url="https://go.dev/dl/go${goversion}.linux-${arch}.tar.gz"
-  local tmp
-  tmp="$(mktemp)"
-  curl -fsSL "$url" -o "$tmp"
-  sudo rm -rf /usr/local/go
-  sudo tar -C /usr/local -xzf "$tmp"
-  rm -f "$tmp"
-  sudo ln -sf /usr/local/go/bin/go /usr/local/bin/go
-}
-
-ensure_early_swap_for_hosting() {
-  if [[ "$HOSTING_REQUESTED" -ne 1 || "$(uname -s)" != "Linux" || "$(id -u)" -ne 0 ]]; then
-    return 0
-  fi
-
-  local swap_gb
-  swap_gb="$(resolve_requested_swap_gb)"
-  if [[ -z "$swap_gb" || "$swap_gb" == "0" ]]; then
-    return 0
-  fi
-
-  if swapon --show | tail -n +2 | grep -q .; then
-    return 0
-  fi
-
-  echo "== Root bootstrap: configuring ${swap_gb}G swap before dependency install =="
-  if ! configure_swapfile "$swap_gb"; then
-    echo "Root hosting bootstrap cannot continue safely because swap setup failed." >&2
-    exit 1
-  fi
-}
-
-install_missing_deps_as_root_if_needed() {
-  if [[ "$AUTO_INSTALL" -ne 1 || "$(uname -s)" != "Linux" || "$(id -u)" -ne 0 ]]; then
-    return 0
-  fi
-
-  local missing=()
-  for cmd in git curl jq; do
-    need_cmd "$cmd" || missing+=("$cmd")
-  done
-  if ! need_cmd getfacl || ! need_cmd setfacl; then
-    missing+=("acl")
-  fi
-  if ! need_cmd node; then
-    missing+=("node")
-  fi
-
-  if [[ ${#missing[@]} -gt 0 ]] || ! node_runtime_ok; then
-    echo "== Root bootstrap: installing missing system dependencies =="
-    if [[ ${#missing[@]} -gt 0 ]]; then
-      echo "Installing missing dependencies: ${missing[*]}"
-    fi
-    if ! node_runtime_ok; then
-      echo "Installing or selecting compatible Node runtime: $(node_runtime_issue)"
-    fi
-    install_linux_system_dependencies 0
-  fi
-  if [[ "$HOSTING_REQUESTED" -eq 1 ]]; then
-    install_github_cli_for_attestations
-  fi
-}
-
 if [[ "$(id -u)" -eq 0 ]]; then
   echo "Root installation must enter through the verified Go lifecycle bootstrap." >&2
   exit 1
@@ -4989,8 +4267,6 @@ fi
 if [[ "$(id -u)" -ne 0 ]] && ! pass_args_contains "--host-security-capable" && is_app_service_session; then
   pass_args+=(--host-maintenance-session)
 fi
-
-refresh_current_checkout_and_reexec_if_needed
 
 handle_existing_local_state
 
@@ -5071,8 +4347,20 @@ if ! node_runtime_ok; then
   print_node_runtime_help
   exit 1
 fi
-if use_prebuilt_release_runtime || [[ "$(uname -s)" == "Darwin" ]]; then
+if use_prebuilt_release_runtime; then
   install_github_cli_for_attestations
+fi
+
+if ! use_prebuilt_release_runtime && [[ "$FRESH_PROTECTED_LOCAL_REQUESTED" -ne 1 ]] && \
+  [[ "$LOCAL_ONBOARDING_RESUME_REQUESTED" -ne 1 ]] && \
+  [[ "$LOCAL_EXISTING_BOOTSTRAP_REQUESTED" -ne 1 ]]; then
+  developer_install_args=()
+  [[ "$RUN_ONBOARD" -eq 1 ]] || developer_install_args+=(--no-onboard)
+  if [[ "$INSTALL_VERBOSE" == "1" ]]; then
+    developer_install_args+=(--verbose)
+  fi
+  developer_install_args+=(-- "${pass_args[@]}")
+  exec "$FASED_DIR/scripts/install-development.sh" "${developer_install_args[@]}"
 fi
 
 FASED_INSTALL_VERSION="$(node -e 'const fs=require("fs");try{const p=process.argv[1];const o=JSON.parse(fs.readFileSync(p,"utf8"));process.stdout.write(o.version||"0.0.0")}catch{process.stdout.write("0.0.0")}' "$FASED_DIR/package.json" 2>/dev/null || printf '0.0.0')"
@@ -5083,8 +4371,6 @@ export CI="${CI:-1}"
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 section "System preparation"
 ensure_low_memory_swap_if_possible
-build_old_space_mb="$(recommended_onboard_old_space_mb)"
-build_node_options="$(node_options_with_old_space "${NODE_OPTIONS:-}" "$build_old_space_mb")"
 if [[ "$FRESH_PROTECTED_LOCAL_REQUESTED" -eq 1 || \
   "$LOCAL_ONBOARDING_RESUME_REQUESTED" -eq 1 || \
   "$LOCAL_EXISTING_BOOTSTRAP_REQUESTED" -eq 1 ]]; then
@@ -5097,7 +4383,9 @@ elif use_prebuilt_release_runtime; then
   fi
   install_prebuilt_release_runtime
 else
-  pnpm_install_with_adaptive_profile
+  status_frame_end
+  echo "Unsupported public installer path; use scripts/install-development.sh for source builds." >&2
+  exit 1
 fi
 
 if [[ -n "${FASED_SAT_PROGRAM_ID:-}" && -n "${FASED_SAT_BOND_PROGRAM_ID:-}" && -n "${FASED_SAT_MINT_ADDRESS:-}" && -n "${FASED_SAT_MINT_PROGRAM_ID:-}" ]]; then
@@ -5125,44 +4413,9 @@ elif use_prebuilt_release_runtime; then
   section "Runtime"
   step_done "Using prebuilt runtime"
 else
-  section "Build"
-  core_build_profile="$(resolved_core_build_profile)"
-  core_cache_name="core-build-${core_build_profile:-default}"
-  core_fingerprint="$(fingerprint_targets "$FASED_DIR" package.json pnpm-lock.yaml tsconfig.json tsdown.config.ts src scripts extensions config tools/fased-signerd)"
-  if [[ -f "$FASED_DIR/dist/entry.js" && -f "$FASED_DIR/dist/index.js" ]] && cache_matches "$core_cache_name" "$core_fingerprint"; then
-    step_skip "Core build"
-  else
-    rm -rf "$FASED_DIR/dist"
-    if [[ -n "$core_build_profile" ]]; then
-      run_logged_in "$FASED_DIR" "Build core" env NODE_OPTIONS="$build_node_options" FASED_BUILD_PROFILE="$core_build_profile" pnpm --silent run build:fast
-    else
-      run_logged_in "$FASED_DIR" "Build core" env NODE_OPTIONS="$build_node_options" pnpm --silent run build:fast
-    fi
-    write_cache "$core_cache_name" "$core_fingerprint"
-  fi
-
-  runtime_assets_fingerprint="$(fingerprint_targets "$FASED_DIR" package.json pnpm-lock.yaml scripts/bundle-a2ui.sh scripts/canvas-a2ui-copy.ts scripts/copy-export-html-templates.ts scripts/copy-hook-metadata.ts scripts/write-build-info.ts scripts/write-cli-compat.ts src/canvas-host/a2ui apps/shared/FasedAgentKit/Tools/CanvasA2UI vendor/a2ui/renderers/lit src/auto-reply/reply/export-html src/hooks/bundled src/cli/daemon-cli-compat.ts)"
-  if runtime_assets_ready && cache_matches "runtime-assets" "$runtime_assets_fingerprint"; then
-    step_skip "Runtime assets"
-  else
-    run_logged_in "$FASED_DIR" "Prepare runtime assets" env NODE_OPTIONS="$build_node_options" pnpm --silent run build:runtime-assets
-    write_cache "runtime-assets" "$runtime_assets_fingerprint"
-  fi
-
-  ui_fingerprint="$(fingerprint_targets "$FASED_DIR" package.json pnpm-lock.yaml ui/package.json ui/vite.config.ts ui/tsconfig.json ui/index.html ui/src)"
-  if [[ -f "$FASED_DIR/dist/control-ui/index.html" ]] && cache_matches "control-ui-build" "$ui_fingerprint"; then
-    step_skip "Control UI"
-  else
-    run_logged_in "$FASED_DIR" "Build Control UI" env NODE_OPTIONS="$build_node_options" pnpm --silent run ui:build
-    if [[ ! -f "$FASED_DIR/dist/control-ui/index.html" ]]; then
-      spinner_failed "Build Control UI"
-      echo "Control UI build completed but dist/control-ui/index.html is missing." >&2
-      exit 1
-    fi
-    write_cache "control-ui-build" "$ui_fingerprint"
-  fi
-
-  install_fased_cli_launcher
+  status_frame_end
+  echo "Source builds are isolated in scripts/install-development.sh." >&2
+  exit 1
 fi
 
 if protected_local_target_platform; then

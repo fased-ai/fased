@@ -4,17 +4,18 @@ import { describe, expect, it } from "vitest";
 
 describe("Local and WSL managed runtime migration", () => {
   const installer = fs.readFileSync(path.resolve(import.meta.dirname, "..", "install.sh"), "utf8");
+  const developerInstaller = fs.readFileSync(
+    path.resolve(import.meta.dirname, "install-development.sh"),
+    "utf8",
+  );
 
   it("reconciles the installer-owned command only on the prebuilt runtime path", () => {
     const prebuiltStart = installer.indexOf("install_prebuilt_release_runtime() {");
     const prebuiltEnd = installer.indexOf("\n}\n", prebuiltStart);
     const prebuilt = installer.slice(prebuiltStart, prebuiltEnd);
-    const sourceStart = installer.indexOf("install_fased_cli_launcher() {");
-    const sourceEnd = installer.indexOf("\n}\n", sourceStart);
-    const source = installer.slice(sourceStart, sourceEnd);
-
     expect(prebuilt).toContain("install-managed-cli-alias.mjs");
-    expect(source).not.toContain("install-managed-cli-alias.mjs");
+    expect(developerInstaller).not.toContain("install-managed-cli-alias.mjs");
+    expect(installer).not.toContain("install_fased_cli_launcher() {");
   });
 
   it("reinstalls an existing Local service before requesting its restart", () => {
@@ -58,9 +59,11 @@ describe("Local and WSL managed runtime migration", () => {
     );
   });
 
-  it("allows source-checkout identity only for an explicit source install", () => {
-    expect(installer).toContain("if ! use_prebuilt_release_runtime; then");
-    expect(installer).toContain("verify_args+=(--allow-source-checkout true)");
+  it("keeps source-checkout identity outside the public installer", () => {
+    expect(installer).not.toContain("--allow-source-checkout true");
+    expect(installer).not.toContain("pnpm --silent run build:fast");
+    expect(installer).toContain('exec "$FASED_DIR/scripts/install-development.sh"');
+    expect(developerInstaller).toContain('pnpm --dir "$repo_root" run build:fast');
   });
 
   it("installs the repaired CLI without touching a pre-v2 wallet so native migration can run", () => {

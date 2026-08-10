@@ -665,12 +665,16 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
 
   it("routes explicit source installation to the separate developer installer", () => {
     expect(installer).toContain('exec "$install_entry_source_dir/scripts/install-development.sh"');
+    expect(installer).toContain('exec "$FASED_DIR/scripts/install-development.sh"');
     expect(installer).not.toContain("DIRTY_CHECKOUT_SOURCE_AUTO_SELECTED");
     expect(installer).not.toContain(
       "local checkout has changes; building and installing this checkout",
     );
     expect(developerInstaller).toContain('pnpm --dir "$repo_root" install --frozen-lockfile');
     expect(developerInstaller).toContain('exec "$HOME/.local/bin/fased" onboard --install-daemon');
+    expect(installer).not.toContain("pnpm --silent run build:fast");
+    expect(installer).not.toContain("pnpm --silent run ui:build");
+    expect(installer).not.toContain("refresh_checkout_from_origin() {");
   });
 
   it("binds an exact Local repair checkout to the attested unified manifest commit", () => {
@@ -1020,11 +1024,10 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
     }
   });
 
-  it("installs GitHub CLI attestation support before a macOS signer transaction", () => {
-    expect(installer).toContain(
-      'if use_prebuilt_release_runtime || [[ "$(uname -s)" == "Darwin" ]]; then',
-    );
+  it("keeps attestation tooling on the prebuilt public path", () => {
+    expect(installer).toContain("if use_prebuilt_release_runtime; then");
     expect(installer).toContain("install_github_cli_for_attestations");
+    expect(developerInstaller).not.toContain("install_github_cli_for_attestations");
   });
 
   it("pins the managed runtime package whenever an exact release was requested", () => {
