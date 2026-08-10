@@ -133,7 +133,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$main_run_id" \
             | jq -e \
               --arg sourceCommit "$base_commit" \
-              '.path == ".github/workflows/ci.yml" and .head_sha == $sourceCommit and .head_branch == "main" and .event == "push" and .conclusion == "success"' \
+              '.path == ".github/workflows/main.yml" and .head_sha == $sourceCommit and .head_branch == "main" and .event == "push" and .conclusion == "success"' \
               >/dev/null
           gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$main_checks_job_id" \
             | jq -e \

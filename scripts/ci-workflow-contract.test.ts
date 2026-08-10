@@ -558,6 +558,7 @@ describe("CI workflow routing", () => {
     expect(validateText).toContain(".mainRunId");
     expect(validateText).toContain(".mainChecksJobId");
     expect(validateText).toContain("actions/jobs/$main_checks_job_id");
+    expect(validateText).toContain('.path == ".github/workflows/main.yml"');
     expect(
       jobs["validate"]?.steps?.some((step) => step.name === "Verify immutable pre-candidate pass"),
     ).toBe(true);
@@ -666,7 +667,7 @@ describe("CI workflow routing", () => {
     expect(workflow.on).toHaveProperty("workflow_dispatch");
     expect(validate?.["timeout-minutes"]).toBeLessThanOrEqual(5);
     expect(commands).toContain("pnpm install --frozen-lockfile");
-    expect(commands).toContain("actions/workflows/ci.yml/runs?head_sha=$SOURCE_COMMIT");
+    expect(commands).toContain("actions/workflows/main.yml/runs?head_sha=$SOURCE_COMMIT");
     expect(commands).toContain('.name == "checks" and .conclusion == "success"');
     expect(commands).toContain("mainRunId");
     expect(commands).toContain("mainChecksJobId");

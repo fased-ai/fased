@@ -85,7 +85,7 @@ jobs:
           set -euo pipefail
           runs="$(
             gh api \
-              "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SOURCE_COMMIT&branch=main&event=push&status=success&per_page=20"
+              "repos/$GITHUB_REPOSITORY/actions/workflows/main.yml/runs?head_sha=$SOURCE_COMMIT&branch=main&event=push&status=success&per_page=20"
           )"
           main_run_id="$(
             jq -er \
