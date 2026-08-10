@@ -22,6 +22,19 @@ Do not locally repeat jobs that the selected CI lane will run. PR CI never runs
 packaged P1, fresh-install acceptance, real Hosting acceptance, publication,
 or a release matrix.
 
+## Final pre-push route proof
+
+After the final local commit and before the first push, classify the exact
+combined `origin/main...HEAD` changed-path set with the protected-base
+classifier. Do not classify paths one at a time: a safe fixture script and its
+focused regression may be narrow only as one coherent bundle. Require the
+expected change kind, selected tests, security languages, and timing lane.
+
+If protected `origin/main` cannot classify the bundle, first correct and merge
+one classifier-only PR, then rebase the product/fixture branch and classify it
+once. Do not push the product branch merely to discover this bootstrap defect,
+and do not compensate by selecting a full suite.
+
 ## Surface map
 
 | Surface                   | Closest evidence                                                                | PR expansion condition                                                                   |
@@ -133,6 +146,11 @@ when their actual boundary changed.
   immutable base images, and exact public predecessor assets. Never cache state
   roots, signer/Wallet data, units, journals, or prepared root filesystems.
 - Upload bounded diagnostics only on failure and preserve the first predicate.
+- Poll one GitHub run ID with concise JSON at 30-60 second intervals. Never
+  start a duplicate run or stream an unbounded job graph while CI is quiet.
+- Fixture-only mode restoration reuses exact product artifacts: copy into the
+  disposable fixture, set mode there, and verify the digest is unchanged. It
+  never selects a product rebuild or another candidate.
 
 If a focused PR exceeds its budget, inspect classification and setup time. Do
 not restart it, add a plan generation, or broaden the matrix merely because it
