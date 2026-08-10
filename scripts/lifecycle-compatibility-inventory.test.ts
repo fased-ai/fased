@@ -43,7 +43,7 @@ describe("lifecycle compatibility inventory", () => {
 
   it("derives packaged proof from topology classes rather than every release", () => {
     const inventory = loadLifecycleCompatibilityInventory();
-    expect(candidateP1Scenarios(inventory, "0.1.75")).toEqual(["install"]);
+    expect(candidateP1Scenarios(inventory, "0.1.75")).toEqual(["managed-update"]);
     expect(candidateP1Scenarios(inventory, "0.1.76-rc.35")).toEqual(["managed-update"]);
     expect(() => candidateP1Scenarios(inventory, "9.9.9")).toThrow(
       "has no compatibility assignment",

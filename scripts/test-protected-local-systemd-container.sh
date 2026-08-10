@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNTIME="${FASED_CONTAINER_RUNTIME:-podman}"
 OCI_RUNTIME="${FASED_CONTAINER_OCI_RUNTIME:-}"
 DISTROS="${FASED_SYSTEMD_FIXTURE_DISTROS:-ubuntu,rocky}"
-SCENARIOS="${FASED_SYSTEMD_FIXTURE_SCENARIOS:-fresh-install,install}"
+SCENARIOS="${FASED_SYSTEMD_FIXTURE_SCENARIOS:-fresh-install,managed-update}"
 FIXTURE_DIR="$ROOT_DIR/scripts/docker/protected-local-systemd"
 VERSION="$(node -p 'require(process.argv[1]).version' "$ROOT_DIR/package.json")"
 COMMIT="${FASED_SYSTEMD_FIXTURE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD)}"
@@ -20,9 +20,6 @@ PREINSTALLED_TOOLS="${FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS:-0}"
 PUBLIC_ACQUISITION="${FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION:-0}"
 BUILD_ONLY="${FASED_SYSTEMD_FIXTURE_BUILD_ONLY:-0}"
 ARTIFACT_OUTPUT_DIR="${FASED_SYSTEMD_FIXTURE_OUTPUT_DIR:-}"
-PREDECESSOR_VERSION="${FASED_SYSTEMD_FIXTURE_PREDECESSOR_VERSION:-}"
-PREDECESSOR_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_PREDECESSOR_ARTIFACT_DIR:-}"
-OWN_PREDECESSOR_ARTIFACT_DIR=0
 MANAGED_PREDECESSOR_VERSION="${FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION:-}"
 MANAGED_PREDECESSOR_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_ARTIFACT_DIR:-}"
 OWN_MANAGED_PREDECESSOR_ARTIFACT_DIR=0
@@ -82,7 +79,7 @@ else
     echo "Podman is required for the protected Local systemd fixtures." >&2
     exit 1
   }
-  if [[ ",$SCENARIOS," == *,install,* || ",$SCENARIOS," == *,managed-update,* ]]; then
+  if [[ ",$SCENARIOS," == *,managed-update,* ]]; then
     command -v gh >/dev/null 2>&1 || {
       echo "GitHub CLI is required for the literal Protected Local update fixture." >&2
       exit 1
@@ -113,6 +110,7 @@ run_container() {
 }
 
 if [[ -z "$ARTIFACT_DIR" ]]; then
+  PUBLIC_ACQUISITION=1
   [[ -x "$ROOT_DIR/node_modules/.bin/tsdown" &&
     -x "$ROOT_DIR/ui/node_modules/.bin/vite" ]] || {
     echo "The protected Local fixture requires a complete frozen development install." >&2
@@ -299,64 +297,6 @@ if [[ "$PUBLIC_ACQUISITION" == "1" ]]; then
     exit 1
   }
 fi
-if [[ ",$SCENARIOS," == *,install,* ]]; then
-  [[ "$PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || {
-    echo "The install fixture requires FASED_SYSTEMD_FIXTURE_PREDECESSOR_VERSION." >&2
-    exit 1
-  }
-  if [[ -z "$PREDECESSOR_ARTIFACT_DIR" ]]; then
-    PREDECESSOR_ARTIFACT_DIR="$(
-      mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-predecessor-artifact.XXXXXX"
-    )"
-    OWN_PREDECESSOR_ARTIFACT_DIR=1
-    gh release download "v$PREDECESSOR_VERSION" \
-      --repo fased-ai/fased \
-      --dir "$PREDECESSOR_ARTIFACT_DIR" \
-      --pattern "install.sh" \
-      --pattern "fased-hosted-release-v2.json" \
-      --pattern "fased-hosted-release-v2.json.attestation.json" \
-      --pattern "fased-hosted-app-v2-linux-x64-v${PREDECESSOR_VERSION}.tar.gz" \
-      --pattern "fased-hosted-deps-linux-x64-*.tar.gz" \
-      --pattern "fased-signerd-linux-amd64" \
-      --pattern "fased-signerd-release.json" \
-      --pattern "fased-signerd-checksums.txt"
-    chmod 0755 "$PREDECESSOR_ARTIFACT_DIR"
-  fi
-  predecessor_manifest="$PREDECESSOR_ARTIFACT_DIR/fased-hosted-release-v2.json"
-  predecessor_app="$PREDECESSOR_ARTIFACT_DIR/fased-hosted-app-v2-linux-x64-v${PREDECESSOR_VERSION}.tar.gz"
-  predecessor_dependency="$(
-    find "$PREDECESSOR_ARTIFACT_DIR" -maxdepth 1 -type f \
-      -name 'fased-hosted-deps-linux-x64-*.tar.gz' -print -quit
-  )"
-  [[ -f "$PREDECESSOR_ARTIFACT_DIR/install.sh" &&
-    -f "$predecessor_manifest" &&
-    -f "$PREDECESSOR_ARTIFACT_DIR/fased-hosted-release-v2.json.attestation.json" &&
-    -f "$predecessor_app" &&
-    -n "$predecessor_dependency" &&
-    -f "$predecessor_dependency" &&
-    -f "$PREDECESSOR_ARTIFACT_DIR/fased-signerd-linux-amd64" &&
-    -f "$PREDECESSOR_ARTIFACT_DIR/fased-signerd-release.json" &&
-    -f "$PREDECESSOR_ARTIFACT_DIR/fased-signerd-checksums.txt" ]] || {
-    echo "The protected Local update fixture requires the complete immutable predecessor release." >&2
-    exit 1
-  }
-  jq -e --arg version "$PREDECESSOR_VERSION" \
-    '.release.version == $version and
-      .release.tag == ("v" + $version) and
-      .signer.release.version == $version and
-      .signer.release.commit == .release.commit' \
-    "$predecessor_manifest" >/dev/null
-  predecessor_signer_sha="$(
-    sha256sum "$PREDECESSOR_ARTIFACT_DIR/fased-signerd-linux-amd64" | awk '{print $1}'
-  )"
-  jq -e --arg sha "$predecessor_signer_sha" \
-    '.signer.platforms["linux-amd64"].asset == "fased-signerd-linux-amd64" and
-      .signer.platforms["linux-amd64"].sha256 == $sha' \
-    "$predecessor_manifest" >/dev/null
-  jq -e --slurpfile signer "$PREDECESSOR_ARTIFACT_DIR/fased-signerd-release.json" \
-    '.signer.release == ($signer[0] | del(.schemaVersion))' \
-    "$predecessor_manifest" >/dev/null
-fi
 if [[ ",$SCENARIOS," == *,managed-update,* ]]; then
   [[ "$MANAGED_PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || {
     echo "The managed-update fixture requires FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION." >&2
@@ -380,12 +320,6 @@ if [[ ",$SCENARIOS," == *,managed-update,* ]]; then
   jq -e --arg version "$MANAGED_PREDECESSOR_VERSION" \
     '.release.version == $version and .release.tag == ("v" + $version)' \
     "$managed_predecessor_manifest" >/dev/null
-fi
-if [[ -z "$PREDECESSOR_ARTIFACT_DIR" ]]; then
-  PREDECESSOR_ARTIFACT_DIR="$(
-    mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-predecessor-artifact.XXXXXX"
-  )"
-  OWN_PREDECESSOR_ARTIFACT_DIR=1
 fi
 cleanup_names=()
 dump_fixture_failure() {
@@ -413,9 +347,6 @@ cleanup() {
   done
   if [[ "$OWN_ARTIFACT_DIR" -eq 1 ]]; then
     rm -rf -- "$ARTIFACT_DIR"
-  fi
-  if [[ "$OWN_PREDECESSOR_ARTIFACT_DIR" -eq 1 ]]; then
-    rm -rf -- "$PREDECESSOR_ARTIFACT_DIR"
   fi
   if [[ "$OWN_MANAGED_PREDECESSOR_ARTIFACT_DIR" -eq 1 ]]; then
     rm -rf -- "$MANAGED_PREDECESSOR_ARTIFACT_DIR"
@@ -448,12 +379,8 @@ run_fixture_scenario() {
   local fixture_memory=""
   local ready=0
   local state=""
-  local predecessor_artifact_dir="$PREDECESSOR_ARTIFACT_DIR"
-  local predecessor_version="$PREDECESSOR_VERSION"
-  if [[ "$scenario" == "managed-update" ]]; then
-    predecessor_artifact_dir="$MANAGED_PREDECESSOR_ARTIFACT_DIR"
-    predecessor_version="$MANAGED_PREDECESSOR_VERSION"
-  fi
+  local predecessor_artifact_dir="$MANAGED_PREDECESSOR_ARTIFACT_DIR"
+  local predecessor_version="$MANAGED_PREDECESSOR_VERSION"
 
   cleanup_names+=("$name")
   run_container run -d \
@@ -506,7 +433,11 @@ run_fixture_scenario() {
   if [[ "$fixture_command_status" -ne 0 ]]; then
     if [[ "${FASED_SYSTEMD_FIXTURE_COMPACT_DIAGNOSTICS:-0}" == "1" ]]; then
       run_container exec "$name" /bin/bash -lc '
-        for log in /tmp/stable-bridge-noop.err /tmp/stable-bridge-noop.out; do
+        for log in \
+          /tmp/stable-bridge-failure.err \
+          /tmp/stable-bridge-failure.out \
+          /tmp/stable-bridge-noop.err \
+          /tmp/stable-bridge-noop.out; do
           [[ -f "$log" ]] || continue
           echo "==> $log" >&2
           cat "$log" >&2
@@ -570,7 +501,7 @@ done
 
 for scenario in "${scenario_list[@]}"; do
   case "$scenario" in
-    fresh-install|install|managed-update) ;;
+    fresh-install|managed-update) ;;
     *)
       echo "Unsupported protected Local fixture scenario: $scenario" >&2
       exit 1

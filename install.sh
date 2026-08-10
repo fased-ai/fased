@@ -1264,6 +1264,132 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     printf '%s\n' "$release_commit"
   }
 
+  materialize_attested_local_installer() {
+    local release_version="$1"
+    local verification_dir=""
+    verification_dir="$(mktemp -d "${TMPDIR:-/tmp}/fased-local-installer.XXXXXX")" || return 1
+    chmod 0700 "$verification_dir" || {
+      rm -rf -- "$verification_dir"
+      return 1
+    }
+    local installer="$verification_dir/install.sh"
+    local bundle="$verification_dir/install.sh.attestation.json"
+    local release_url="https://github.com/fased-ai/fased/releases/download/v${release_version}"
+    if ! curl -fsSL --proto '=https' --tlsv1.2 "$release_url/install.sh" -o "$installer" ||
+      ! curl -fsSL --proto '=https' --tlsv1.2 \
+        "$release_url/install.sh.attestation.json" -o "$bundle" ||
+      ! verify_release_attestation_source "$installer" "$bundle" "$release_version" ||
+      ! grep -Fqx "install_entry_release_identity=\"${release_version}\"" "$installer"; then
+      rm -rf -- "$verification_dir"
+      return 1
+    fi
+    chmod 0700 "$installer"
+    printf '%s\n' "$installer"
+  }
+
+  run_attested_local_lifecycle() {
+    local release_version="$1"
+    local verified_installer="$2"
+    local operator_user=""
+    local state_dir="$local_state_dir"
+    local gateway_port="${FASED_GATEWAY_PORT:-18789}"
+    local skip_onboard=0
+    local argument=""
+    local index=0
+    operator_user="$(id -un)"
+    for ((index = 0; index < ${#args[@]}; index++)); do
+      argument="${args[$index]}"
+      if [[ "$argument" == "--gateway-port" && $((index + 1)) -lt ${#args[@]} ]]; then
+        gateway_port="${args[$((index + 1))]}"
+      elif [[ "$argument" == "--no-onboard" ]]; then
+        skip_onboard=1
+      fi
+    done
+    [[ "$gateway_port" =~ ^[0-9]+$ && "$gateway_port" -ge 1 && "$gateway_port" -le 65535 ]] || {
+      echo "Local Gateway port must be an integer from 1 to 65535." >&2
+      return 1
+    }
+
+    sudo -- /bin/bash "$verified_installer" \
+      --protected-local-root-bootstrap \
+      --release "$release_version" \
+      --update-channel "$hosting_update_channel" \
+      --protected-local-operator-user "$operator_user" \
+      --protected-local-state-dir "$state_dir" \
+      --protected-local-gateway-port "$gateway_port"
+
+    local projection="$state_dir/lifecycle.json"
+    [[ -f "$projection" && ! -L "$projection" ]] || {
+      echo "Verified Local lifecycle returned without its canonical projection." >&2
+      return 1
+    }
+    local instance=""
+    local signer_binary=""
+    local signer_socket=""
+    local lifecycle_socket=""
+    instance="$(jq -er '.environment.FASED_PROTECTED_LOCAL_INSTANCE' "$projection")"
+    signer_binary="$(jq -er '.environment.FASED_WALLET_LOCAL_SIGNER_BIN' "$projection")"
+    signer_socket="$(jq -er '.environment.FASED_WALLET_LOCAL_SIGNER_SOCKET' "$projection")"
+    lifecycle_socket="$(jq -er '.environment.FASED_HOST_UPDATER_SOCKET' "$projection")"
+    [[ "$instance" =~ ^[a-f0-9]{16}$ && -x "$signer_binary" &&
+      "$signer_socket" == "/run/fased-local/$instance/operator/operator.sock" &&
+      "$lifecycle_socket" == "/run/fased-local-controller/$instance/request.sock" ]] || {
+      echo "Verified Local lifecycle projection is inconsistent." >&2
+      return 1
+    }
+
+    local config="$state_dir/fased.json"
+    if [[ ! -s "$config" ]]; then
+      if [[ "$skip_onboard" -eq 1 ]]; then
+        echo "Lifecycle services are committed; onboarding was skipped and Gateway remains stopped."
+        echo "Rerun the same verified installer command to complete onboarding."
+        return 0
+      fi
+      local launcher="$state_dir/bin/fased"
+      [[ -x "$launcher" && ! -L "$launcher" ]] || {
+        echo "Committed Local lifecycle CLI is unavailable for onboarding." >&2
+        return 1
+      }
+      env \
+        HOME="$HOME" \
+        FASED_STATE_DIR="$state_dir" \
+        FASED_CONFIG_PATH="$config" \
+        FASED_INSTALLER_ONBOARD=1 \
+        FASED_INSTALL_LIFECYCLE_COMMITTED=1 \
+        FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external \
+        FASED_WALLET_LOCAL_SIGNER_BIN="$signer_binary" \
+        FASED_WALLET_LOCAL_SIGNER_SOCKET="$signer_socket" \
+        FASED_HOST_UPDATER_SOCKET="$lifecycle_socket" \
+        "$launcher" onboard --install-daemon "${lifecycle_onboard_args[@]}"
+    fi
+    [[ -s "$config" && ! -L "$config" ]] || {
+      echo "Onboarding did not create the canonical Local configuration." >&2
+      return 1
+    }
+
+    local lifecycle_binary="${signer_binary%/fased-signerd}/fased-lifecycled"
+    local request_id=""
+    request_id="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || true)"
+    [[ -x "$lifecycle_binary" && "$request_id" =~ ^[0-9a-f-]{36}$ ]] || {
+      echo "Committed Local lifecycle client is unavailable." >&2
+      return 1
+    }
+    "$lifecycle_binary" request \
+      --socket "$lifecycle_socket" \
+      --operation COMPLETE_ONBOARDING \
+      --request-id "$request_id" >/dev/null
+    cat >"$state_dir/install-complete.json" <<EOF_LOCAL_COMPLETE
+{
+  "repoPath": "$(readlink -f "$state_dir/runtime/current")",
+  "fasedDir": "$(readlink -f "$state_dir/runtime/current")",
+  "onboardingCompleted": true,
+  "updatedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF_LOCAL_COMPLETE
+    chmod 0600 "$state_dir/install-complete.json"
+    echo "Verified Local lifecycle handoff complete. Future releases use fased update."
+  }
+
   local_path_uid() {
     local target_path="$1"
     if stat -c '%u' "$target_path" >/dev/null 2>&1; then
@@ -1450,6 +1576,24 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       drain_streamed_install_input
       exit 1
     fi
+  fi
+
+  if [[ "$hosting_bootstrap" -eq 0 && -n "$local_bootstrap_release" &&
+    "$install_entry_release_identity" == "$local_bootstrap_release" &&
+    ( "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" -eq 1 ) ]]; then
+    verified_local_installer="$(materialize_attested_local_installer "$local_bootstrap_release")" || {
+      echo "Could not verify the exact Local installer asset." >&2
+      drain_streamed_install_input
+      exit 1
+    }
+    if ! run_attested_local_lifecycle "$local_bootstrap_release" "$verified_local_installer"; then
+      rm -rf -- "$(dirname "$verified_local_installer")"
+      drain_streamed_install_input
+      exit 1
+    fi
+    rm -rf -- "$(dirname "$verified_local_installer")"
+    drain_streamed_install_input
+    exit 0
   fi
 
   if [[ "$hosting_bootstrap" -eq 0 && -n "$local_bootstrap_release" && \

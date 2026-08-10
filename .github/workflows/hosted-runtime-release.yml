@@ -411,7 +411,8 @@ jobs:
             if [[ "$architecture" == arm64 ]]; then go_arch=arm64; fi
             signer=".artifacts/hosted-runtime/fased-signerd-linux-${go_arch}"
             lifecycled=".artifacts/hosted-runtime/fased-lifecycled-linux-${go_arch}"
-            chmod 0755 "$signer" "$lifecycled"
+            inventory_lifecycled=".artifacts/hosted-runtime/fased-lifecycled-linux-amd64"
+            chmod 0755 "$signer" "$lifecycled" "$inventory_lifecycled"
             dependency_hash="$(jq -er ".application.linux.${architecture}.dependencies.dependencyHash" .artifacts/hosted-runtime/fased-hosted-release-v2.json)"
             node scripts/assemble-lifecycle-generation.mjs \
               --runtime-archive ".artifacts/hosted-runtime/fased-hosted-app-v2-linux-${architecture}-v${package_version}.tar.gz" \
@@ -419,6 +420,7 @@ jobs:
               --release-manifest .artifacts/hosted-runtime/fased-hosted-release-v2.json \
               --signer "$signer" \
               --lifecycled "$lifecycled" \
+              --inventory-lifecycled "$inventory_lifecycled" \
               --output-dir .artifacts/hosted-runtime \
               --version "$package_version" \
               --commit "$GITHUB_SHA" \
@@ -607,7 +609,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
           FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install,${{ needs.validate.outputs.p1_scenarios }}
-          FASED_SYSTEMD_FIXTURE_PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
           FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
           FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/fased-hosting-candidate
           FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1"

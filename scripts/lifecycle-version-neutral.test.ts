@@ -22,7 +22,6 @@ describe("version-neutral lifecycle acceptance", () => {
       expect(source).not.toContain("legacy-takeover");
       expect(source).not.toContain("modern-update");
     }
-    expect(wrapper).toContain("FASED_SYSTEMD_FIXTURE_PREDECESSOR_VERSION");
     expect(wrapper).toContain("FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION");
     expect(wrapper).toContain("managed-update");
   });
@@ -43,7 +42,6 @@ describe("version-neutral lifecycle acceptance", () => {
     );
     expect(step?.env).toMatchObject({
       FASED_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install,${{ needs.validate.outputs.p1_scenarios }}",
-      FASED_SYSTEMD_FIXTURE_PREDECESSOR_VERSION: "${{ inputs.predecessor_version }}",
       FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "${{ inputs.predecessor_version }}",
     });
   });

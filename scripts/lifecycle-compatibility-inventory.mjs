@@ -152,9 +152,10 @@ export function candidateP1Scenarios(inventory, version) {
     if (!topology || !String(topology.platformAdapter).startsWith("linux-")) {
       continue;
     }
-    if (topology.forwardPath === "standard-local-bootstrap-once") {
-      scenarios.add("install");
-    } else if (topology.forwardPath === "ordinary-update") {
+    if (
+      topology.forwardPath === "standard-local-bootstrap-once" ||
+      topology.forwardPath === "ordinary-update"
+    ) {
       scenarios.add("managed-update");
     } else {
       fail(

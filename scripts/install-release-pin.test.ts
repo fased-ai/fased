@@ -686,6 +686,17 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
     expect(installer).not.toContain('local fetched_release_commit=""');
   });
 
+  it("routes a stamped Local installer through attested artifacts before any Git checkout", () => {
+    expect(installer).toContain("materialize_attested_local_installer");
+    expect(installer).toContain('verify_release_attestation_source "$installer" "$bundle"');
+    expect(installer).toContain("run_attested_local_lifecycle");
+    expect(installer).toContain("--protected-local-root-bootstrap");
+    expect(installer).toContain("--operation COMPLETE_ONBOARDING");
+    expect(installer.indexOf("run_attested_local_lifecycle")).toBeLessThan(
+      installer.indexOf("git clone --filter=blob:none --no-checkout"),
+    );
+  });
+
   it("keeps noisy verification-tool installation outside exact Local commit capture", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fased-exact-local-bootstrap-"));
     try {

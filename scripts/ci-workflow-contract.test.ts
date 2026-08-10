@@ -119,7 +119,7 @@ describe("CI workflow routing", () => {
       String(step.run ?? "").includes("scripts/go-lifecycle-routing.test.ts"),
     );
     const localSystemdFixture = protectedLocalUpdate?.steps?.find(
-      (step) => step.env?.FASED_SYSTEMD_FIXTURE_SCENARIOS === "install",
+      (step) => step.env?.FASED_SYSTEMD_FIXTURE_SCENARIOS === "managed-update",
     );
     expect(
       protectedLocalUpdate?.steps?.find((step) => step.uses === "./.github/actions/setup-node-env")
@@ -131,7 +131,7 @@ describe("CI workflow routing", () => {
     );
     expect(localSystemdFixture?.run).toBe("bash scripts/test-protected-local-systemd-container.sh");
     expect(localSystemdFixture?.env).toMatchObject({
-      FASED_SYSTEMD_FIXTURE_PREDECESSOR_VERSION: "0.1.75",
+      FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "0.1.75",
     });
 
     const required = jobs["required-checks"];
@@ -571,6 +571,10 @@ describe("CI workflow routing", () => {
       jobs["linux"]?.steps?.some((step) => step.name === "Assemble exact lifecycle generation"),
     ).toBe(false);
     expect(candidateText).toContain("assemble-lifecycle-generation.mjs");
+    expect(candidateText).toContain('--inventory-lifecycled "$inventory_lifecycled"');
+    expect(candidateText).toContain(
+      'inventory_lifecycled=".artifacts/hosted-runtime/fased-lifecycled-linux-amd64"',
+    );
     expect(candidateText).toContain("--runtime-archive");
     expect(candidateText).toContain("fased-hosted-app-v2-linux-");
     expect(candidateText).toContain("--dependency-archive");
@@ -604,7 +608,7 @@ describe("CI workflow routing", () => {
       )?.env,
     ).toMatchObject({
       FASED_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install,${{ needs.validate.outputs.p1_scenarios }}",
-      FASED_SYSTEMD_FIXTURE_PREDECESSOR_VERSION: "${{ inputs.predecessor_version }}",
+      FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "${{ inputs.predecessor_version }}",
       FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1",
     });
     expect(publishText).not.toContain("git tag");
@@ -691,7 +695,7 @@ describe("CI workflow routing", () => {
 
     expect(fixture).toContain('if [[ "$version" == *-* ]]');
     expect(fixture).toContain("target_update_args=(--channel beta)");
-    expect(fixture.match(/update "\$\{target_update_args\[@\]\}" --timeout/gu)).toHaveLength(6);
+    expect(fixture.match(/update "\$\{target_update_args\[@\]\}" --timeout/gu)).toHaveLength(4);
     expect(fixture).not.toContain("/etc/fased/testing");
     expect(fixture).toContain("/var/lib/fased-protected-local-fixture");
     expect(fixture).toContain('if [[ "$phase" == "managed-update" ]]');

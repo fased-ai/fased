@@ -132,9 +132,11 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
   const releaseManifest = path.resolve(args["release-manifest"]);
   const signer = path.resolve(args.signer);
   const lifecycled = path.resolve(args.lifecycled);
+  const inventoryLifecycled = path.resolve(args["inventory-lifecycled"] ?? args.lifecycled);
   const output = path.resolve(args.output);
   await regularExecutable(signer, "signer");
   await regularExecutable(lifecycled, "lifecycled");
+  await regularExecutable(inventoryLifecycled, "inventory lifecycled");
   const runtimeEntry = path.join(runtime, "fased.mjs");
   const runtimeStat = await fs.lstat(runtimeEntry);
   if (!runtimeStat.isFile() || runtimeStat.isSymbolicLink()) {
@@ -179,7 +181,7 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
   });
   const inventory = path.join(output, "inventory.json");
   const { stdout } = await execFileAsync(
-    lifecycled,
+    inventoryLifecycled,
     [
       "inventory",
       "--root",
@@ -200,7 +202,7 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
       args["dependency-archive-sha256"],
     ],
     {
-      cwd: path.dirname(lifecycled),
+      cwd: path.dirname(inventoryLifecycled),
       env: process.env,
       maxBuffer: 1024 * 1024,
     },
