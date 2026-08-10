@@ -57,6 +57,14 @@ const INSTALLER_P1_FIXTURE_PATHS = new Set([
   "scripts/go-lifecycle-routing.test.ts",
   "scripts/test-protected-local-systemd-container.sh",
 ]);
+const HOSTING_P1_FIXTURE_PATHS = new Set([
+  "scripts/ci-change-scope.test.ts",
+  "scripts/gate-authority.mjs",
+  "scripts/gate-authority.test.ts",
+  "scripts/hosted-installer-artifact-layout.test.ts",
+  "scripts/docker/hosting-systemd/go-cutover.sh",
+  "scripts/test-go-hosting-systemd-container.sh",
+]);
 const T2_FIXTURE_PATH_RE = /^tools\/fased-lifecycled\/(?:engine|platform|store)\/.*_test\.go$/;
 const TEST_PATH_RE =
   /^(?:test\/|tests\/|fixtures\/|.*\.(?:test|spec)\.[^.]+$|.*_test\.go$|scripts\/test-[^/]+|scripts\/docker\/[^/]+\/)/;
@@ -397,10 +405,17 @@ export function createGatePlan(inputPaths, options = {}) {
     paths.every((path) => VERSION_PATH_RE.test(path));
   const lifecycleGateEnforcementOnly = false;
   const installerP1FixtureOnly =
-    (paths.some((path) => CI_INFRASTRUCTURE_PATH_RE.test(path)) ||
+    ((paths.some((path) => CI_INFRASTRUCTURE_PATH_RE.test(path)) ||
       (paths.includes("scripts/docker/protected-local-systemd/run.sh") &&
         paths.includes("scripts/go-lifecycle-routing.test.ts"))) &&
-    paths.every((path) => INSTALLER_P1_FIXTURE_PATHS.has(path));
+      paths.every((path) => INSTALLER_P1_FIXTURE_PATHS.has(path))) ||
+    (paths.includes("scripts/hosted-installer-artifact-layout.test.ts") &&
+      paths.some(
+        (path) =>
+          path === "scripts/docker/hosting-systemd/go-cutover.sh" ||
+          path === "scripts/test-go-hosting-systemd-container.sh",
+      ) &&
+      paths.every((path) => HOSTING_P1_FIXTURE_PATHS.has(path)));
   const ciInfrastructureOnly =
     !versionOnly &&
     (installerP1FixtureOnly ||

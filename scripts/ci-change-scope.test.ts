@@ -410,6 +410,19 @@ describe("CI changed-surface classification", () => {
       });
     }
 
+    const hostingFixtureBundle = [
+      "scripts/docker/hosting-systemd/go-cutover.sh",
+      "scripts/test-go-hosting-systemd-container.sh",
+      "scripts/hosted-installer-artifact-layout.test.ts",
+    ];
+    expect(outputEntries(createGatePlan(hostingFixtureBundle))).toMatchObject({
+      fixture_only: "false",
+      production_changed: "false",
+      run_hosting: "false",
+      run_hosting_fresh: "false",
+      run_hosting_update: "false",
+    });
+
     expect(classifyChangedPaths(["scripts/fased-host-updater.mjs"])).toMatchObject({
       runNode: true,
       runHosting: true,
