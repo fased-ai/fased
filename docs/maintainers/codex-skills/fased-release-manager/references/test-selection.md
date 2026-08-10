@@ -24,24 +24,24 @@ or a release matrix.
 
 ## Surface map
 
-| Surface                   | Closest evidence                                                                | PR expansion condition                                        |
-| ------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| docs/version/metadata     | link/schema/version identity                                                    | no product build                                              |
-| CI/classifier/workflow    | classifier and workflow-contract tests; actionlint/zizmor for changed workflows | no product lifecycle                                          |
-| Node shared core          | nearest unit/contract test                                                      | full Node only when no safe subsystem map exists              |
-| Gateway/CLI               | affected Gateway/CLI tests                                                      | build when distributable source changed                       |
-| extension/plugin          | changed extension tests and package contract                                    | packaging only when package contents changed                  |
-| UI                        | affected node/browser test                                                      | UI build for browser/production UI changes                    |
-| Mining/SAT client         | Mining contracts, signer codec identity, affected UI test                       | no protocol/deployment gate unless protocol artifacts changed |
-| Go signer                 | focused Go package tests                                                        | race tests when concurrency/lifecycle changed                 |
-| signer/Wallet integration | native signer and affected JS custody/RPC tests                                 | Darwin only when Darwin boundary changed                      |
-| Local fresh               | nearest installer/bootstrap contract                                            | packaged fresh Local only at candidate P1                     |
-| Local update/service      | exact updater regression and rollback/retry source contracts                    | T2 only for root/generated-unit boundary                      |
-| Hosting fresh/update      | Hosting adapter contracts                                                       | real VPS only at candidate/stable acceptance                  |
-| Docker/architecture       | affected image/architecture contract                                            | build only when image/runtime surface changed                 |
-| macOS                     | affected Swift/launchd/native contract                                          | macOS runner only when supported Apple surface changed        |
-| experimental mobile       | known-path syntax/unit evidence                                                 | no Agent release lane                                         |
-| skills                    | skill validator and affected script tests                                       | no product lifecycle                                          |
+| Surface                   | Closest evidence                                                                | PR expansion condition                                                                   |
+| ------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| docs/version/metadata     | link/schema/version identity                                                    | no product build                                                                         |
+| CI/classifier/workflow    | classifier and workflow-contract tests; actionlint/zizmor for changed workflows | no product lifecycle                                                                     |
+| Node shared core          | nearest unit/contract test                                                      | full Node only when no safe subsystem map exists                                         |
+| Gateway/CLI               | affected Gateway/CLI tests                                                      | build when distributable source changed                                                  |
+| extension/plugin          | changed extension tests and package contract                                    | packaging only when package contents changed                                             |
+| UI                        | affected node/browser test                                                      | UI build for browser/production UI changes                                               |
+| Mining/SAT client         | Mining contracts, signer codec identity, affected UI test                       | no protocol/deployment gate unless protocol artifacts changed                            |
+| Go signer                 | focused Go package tests                                                        | race tests when concurrency/lifecycle changed                                            |
+| signer/Wallet integration | native signer and affected JS custody/RPC tests                                 | Darwin only when Darwin boundary changed                                                 |
+| Local fresh               | nearest installer/bootstrap contract                                            | branch-local Linux x64 public-style transaction; exact candidate P1 remains release-only |
+| Local update/service      | exact updater regression and rollback/retry source contracts                    | T2 only for root/generated-unit boundary                                                 |
+| Hosting fresh/update      | Hosting adapter contracts                                                       | real VPS only at candidate/stable acceptance                                             |
+| Docker/architecture       | affected image/architecture contract                                            | build only when image/runtime surface changed                                            |
+| macOS                     | affected Swift/launchd/native contract                                          | macOS runner only when supported Apple surface changed                                   |
+| experimental mobile       | known-path syntax/unit evidence                                                 | no Agent release lane                                                                    |
+| skills                    | skill validator and affected script tests                                       | no product lifecycle                                                                     |
 
 ## Privileged T2
 
@@ -84,6 +84,15 @@ systemd-capable boundary. Do not allocate a version, create a tag, publish, or
 write release state. Fix additional predicates on the same branch and rerun
 only this closure; do not create another PR as a diagnostic step.
 
+Any product-source change after this proof invalidates it. Rerun the affected
+Linux x64 transaction before push. Candidate P1 may expand to all supported
+architectures, but it must not introduce a predicate that never passed locally.
+
+Permission-only corrections run only the closest permission regression and its
+direct ownership/atomic-write contract. They do not select UI, providers,
+plugins, models, Gateway feature suites, packaging, or full Node tests unless
+one of those production boundaries also changed.
+
 Compatibility is selected by public manifest/schema/topology/capability, not by
 every version string. A candidate P1 covers fresh protected Local plus latest
 supported public stable to candidate. Add an older fixture only for a distinct
@@ -115,9 +124,9 @@ when their actual boundary changed.
 - Cross-boundary installer/updater/signer PR p95 target: seven minutes.
 - Privileged local T2 p95 target: five minutes.
 - P1 is measured separately at the candidate boundary.
-- Cache only dependencies/toolchains keyed by platform and exact lockfile.
-  Never cache state roots, signer/Wallet data, units, journals, or prepared root
-  filesystems.
+- Cache only dependencies/toolchains keyed by platform and exact lockfile,
+  immutable base images, and exact public predecessor assets. Never cache state
+  roots, signer/Wallet data, units, journals, or prepared root filesystems.
 - Upload bounded diagnostics only on failure and preserve the first predicate.
 
 If a focused PR exceeds its budget, inspect classification and setup time. Do

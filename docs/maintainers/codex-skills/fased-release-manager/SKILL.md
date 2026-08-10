@@ -179,6 +179,9 @@ Classify each failure as `PRODUCT`, `HARNESS`, `ENVIRONMENT`, `AUTHORITY`, or
   identity, and that the fault injector does not mutate attested bytes.
 - A source change invalidates its product artifact. A fixture-only change does
   not; reuse the exact artifact and avoid rebuilding.
+- Any product-source change after local closure makes that closure stale. Rerun
+  the affected Linux x64 branch transaction before push; never carry closure
+  evidence across a product commit.
 - Record elapsed time and terminal output from one retained process session so
   context compaction cannot cause a duplicate run.
 - After closure, add only confirmed, reusable, version-neutral prevention rules
@@ -216,6 +219,9 @@ branch-built artifacts:
 
 - Exercise the same acquisition, attestation, handoff, rollback, and service
   path the end user uses; an in-process unit test or T2 alone is insufficient.
+- Keep development proof small: build Linux x64 only and run only the affected
+  Local or Hosting topology. Multi-architecture packaging belongs to the final
+  immutable candidate, not the bug loop.
 - Use an isolated disposable systemd fixture unless the task explicitly owns a
   real installation. Never mutate an owner installation with unversioned source.
 - Fix every newly exposed predicate on the same local branch. Do not open,
@@ -228,6 +234,8 @@ branch-built artifacts:
 - Only a complete local closure activates standing authorization for the one
   protected PR. PRE-CANDIDATE later confirms merged-main identity; it must not
   be the first packaged execution of corrected lifecycle code.
+- No candidate predicate may execute for the first time. Every source-dependent
+  P1 assertion must already have an equivalent passing branch-local predicate.
 
 ## Release Lane
 
@@ -271,6 +279,12 @@ is failing or unrun. A failure returns to `BUG/PR`; it does not allocate an RC.
 
 Never rebuild between P1 and publication. A publication failure reruns only
 publication. Containers are supporting fixtures, not real Hosting acceptance.
+Run independent candidate P1 scenarios concurrently against the same immutable
+artifact: fresh Local, supported-stable update with rollback/retry, and Hosting
+adapter proof. Cache toolchains, dependency stores, base images, and exact
+public predecessor assets; never cache installation state, journals, Wallet or
+signer data. Full Node/application suites belong to scheduled CI unless the
+resolved source change genuinely affects the whole product.
 
 ## Simplicity and Compatibility
 

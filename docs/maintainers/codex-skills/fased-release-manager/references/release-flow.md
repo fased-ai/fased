@@ -114,9 +114,10 @@ The workflow must:
    and attestations;
 6. write one immutable candidate descriptor with exact artifact inventory;
 7. derive the supported predecessor topology from the complete public-release
-   compatibility inventory and run one packaged P1 against the downloaded
-   candidate artifact through the exact public-style acquisition entry point;
-   and
+   compatibility inventory and run independent fresh Local,
+   supported-stable update/rollback, and Hosting adapter jobs concurrently
+   against the same downloaded candidate artifact through the exact
+   public-style acquisition entry point; and
 8. wait at `candidate-release` before publication.
 
 Every build attestation must therefore carry
@@ -131,6 +132,10 @@ If P1 has an infrastructure-only failure, rerun failed jobs once. Candidate
 verification binds the original workflow run and candidate manifest but permits
 the later attempt to consume those exact bytes. A product failure requires a
 new source commit and candidate; never rebuild the failed identity.
+
+P1 is confirmation, never discovery. Every source-dependent predicate must
+already have an equivalent passing Linux x64 branch-local result, and any
+product change after that result invalidates it before candidate allocation.
 
 ## npm and PUBLIC0
 

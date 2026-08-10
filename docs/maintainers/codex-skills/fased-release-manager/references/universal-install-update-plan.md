@@ -147,6 +147,9 @@ supervisor, generated units, caches, staging, and bounded old receipts.
 - Build one unpublished candidate-shaped artifact and run fresh protected
   Local, supported public-stable update, injected failure, rollback/retry,
   restart, preservation, `Already current`, and the Hosting adapter fixture.
+- Use Linux x64 and only affected topologies for this branch-local closure.
+  Any later product change invalidates the closure. The immutable candidate may
+  add supported architectures but may not introduce a new product predicate.
 - Fix every exposed predicate on this branch. Do not create a PR, candidate,
   tag, or publication until the reduced implementation passes the complete
   local closure.

@@ -11,7 +11,7 @@ describe("machine gate authority", () => {
     const plan = createGatePlan(t2FixturePaths, { phase: "T2" });
 
     expect(plan).toMatchObject({
-      authorityVersion: 5,
+      authorityVersion: 6,
       phase: "T2",
       entryPoints: [],
       changeKind: "t2-fixture-only",
@@ -248,6 +248,30 @@ describe("machine gate authority", () => {
       runNodeFull: false,
       runLocalUpdate: false,
       runHostingUpdate: false,
+    });
+  });
+
+  it("routes federation permission corrections through only their exact unit contract", () => {
+    const plan = createGatePlan([
+      "src/federation/federation-state-permissions.ts",
+      "src/federation/federation-state-permissions.test.ts",
+    ]);
+
+    expect(plan.selectedTestPaths).toEqual(["src/federation/federation-state-permissions.test.ts"]);
+    expect(plan.scope).toMatchObject({
+      runNode: true,
+      runNodeUnit: true,
+      runNodeFocused: false,
+      runNodeFull: false,
+      runNodeBuild: false,
+      runNodePackaging: false,
+      runNodeGateway: false,
+      runNodeExtensions: false,
+      runUi: false,
+      runUiMining: false,
+      runLocalFresh: false,
+      runLocalUpdate: false,
+      runHosting: false,
     });
   });
 
