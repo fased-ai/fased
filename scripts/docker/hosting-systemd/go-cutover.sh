@@ -49,9 +49,30 @@ initialize() {
 complete_onboarding() {
   test -d /home/app/.fased
   test "$(stat -c %a /home/app/.fased)" = 2770
-  runuser -u app -- /bin/bash -c \
-    'umask 077; printf "%s\n" '\''{"gateway":{"mode":"local","bind":"loopback","port":18789,"auth":{"mode":"token","token":"fased-hosting-fixture-token"}},"update":{"channel":"beta"}}'\'' > "$1"' \
-    -- /home/app/.fased/fased.json
+  runuser -u app -- env \
+    HOME=/home/app \
+    FASED_STATE_DIR=/home/app/.fased \
+    FASED_CONFIG_PATH=/home/app/.fased/fased.json \
+    FASED_HOST_PROFILE=hosting \
+    FASED_HOST_ROOT_PREPARED=1 \
+    FASED_INSTALLER_ONBOARD=1 \
+    FASED_INSTALL_LIFECYCLE_COMMITTED=1 \
+    FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external \
+    FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock \
+    FASED_HOST_UPDATER_SOCKET=/run/fased-host-updater/request.sock \
+    /home/app/.fased/bin/fased onboard --install-daemon \
+      --non-interactive \
+      --accept-risk \
+      --auth-choice skip \
+      --workspace /home/app/.fased/workspace \
+      --gateway-auth token \
+      --gateway-token fased-hosting-fixture-token \
+      --gateway-port "$gateway_port" \
+      --gateway-bind loopback \
+      --skip-skills \
+      --skip-health
+  test "$(stat -c %a /home/app/.fased/fased.json)" = 660
+  test "$(stat -c %G /home/app/.fased/fased.json)" = fased-config
   request_id="$(cat /proc/sys/kernel/random/uuid)"
   "$lifecycled" request \
     --socket /run/fased-host-updater/request.sock \
