@@ -255,8 +255,9 @@ export function classifyChangedPaths(inputPaths, options = {}) {
     left.localeCompare(right),
   );
   const lane = (name) => lanes.includes(name);
+  const deletedPaths = new Set((options.deletedPaths ?? []).map(normalizePath));
   const selectedTestPaths = paths
-    .filter(isRoutableTest)
+    .filter((path) => isRoutableTest(path) && !deletedPaths.has(path))
     .toSorted((left, right) => left.localeCompare(right));
   const docsOnly = lanes.every((name) => name === "documentation");
   const versionOnly =
@@ -506,10 +507,25 @@ export function changedPathsFromGit(env = process.env) {
     .filter(Boolean);
 }
 
+export function deletedPathsFromGit(env = process.env) {
+  return execFileSync(
+    "git",
+    ["diff", "--diff-filter=D", "--name-only", resolveDiffBase(env), "HEAD"],
+    { encoding: "utf8" },
+  )
+    .split(/\r?\n/u)
+    .filter(Boolean);
+}
+
 function main() {
   const fullMatrix = process.env.FULL_MATRIX === "true";
   const paths = fullMatrix ? [] : changedPathsFromGit();
-  const plan = classifyChangedPaths(paths, { fullMatrix, unknown: paths.length === 0 });
+  const deletedPaths = fullMatrix ? [] : deletedPathsFromGit();
+  const plan = classifyChangedPaths(paths, {
+    fullMatrix,
+    unknown: paths.length === 0,
+    deletedPaths,
+  });
   const entries = outputEntries(plan, detectDependencyRemediation(plan));
   if (!process.env.GITHUB_OUTPUT) {
     throw new Error("ci-change-scope: GITHUB_OUTPUT is required");

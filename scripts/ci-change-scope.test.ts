@@ -38,6 +38,16 @@ describe("lean CI changed-surface classification", () => {
     });
   });
 
+  it("does not route deleted tests as runnable files", () => {
+    const plan = classifyChangedPaths(["scripts/removed.test.ts", "scripts/retained.test.ts"], {
+      deletedPaths: ["scripts/removed.test.ts"],
+    });
+    expect(plan).toMatchObject({
+      selectedTestPaths: ["scripts/retained.test.ts"],
+      runNodeUnit: true,
+    });
+  });
+
   it("uses the focused lifecycle lane without candidate work", () => {
     expect(classifyChangedPaths(["scripts/generation-updater.mjs"])).toMatchObject({
       runNodeFocused: true,
