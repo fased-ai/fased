@@ -51,4 +51,24 @@ describe("version-neutral lifecycle acceptance", () => {
       FASED_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install",
     });
   });
+
+  it("builds branch proof artifacts for Linux x64 without compiling release platforms", async () => {
+    const wrapper = await readFile(
+      resolve(repoRoot, "scripts/test-protected-local-systemd-container.sh"),
+      "utf8",
+    );
+
+    expect(wrapper).toContain(
+      'ARTIFACT_PROFILE="${FASED_SYSTEMD_FIXTURE_ARTIFACT_PROFILE:-branch-x64}"',
+    );
+    expect(wrapper).toContain('FASED_SIGNER_TARGETS="linux/amd64"');
+    expect(wrapper).toContain('FASED_LIFECYCLE_TARGETS="linux/amd64"');
+    expect(wrapper).toContain("copy_branch_x64_fixture_aliases()");
+    expect(wrapper).toContain('cp --reflink=auto "$signer_source"');
+    expect(wrapper).toContain("branch-x64 artifacts are fixture-only and cannot be published");
+    expect(wrapper).not.toContain(
+      "FASED_SIGNER_TARGETS=linux/amd64,linux/arm64,darwin/amd64,darwin/arm64",
+    );
+    expect(wrapper).not.toContain("FASED_LIFECYCLE_TARGETS=linux/amd64,linux/arm64");
+  });
 });

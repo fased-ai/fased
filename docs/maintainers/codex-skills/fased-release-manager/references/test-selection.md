@@ -84,6 +84,11 @@ systemd-capable boundary. Do not allocate a version, create a tag, publish, or
 write release state. Fix additional predicates on the same branch and rerun
 only this closure; do not create another PR as a diagnostic step.
 
+Build that closure with the explicit `branch-x64` fixture profile. Compile only
+Linux amd64 application, signer, and lifecycle binaries. Manifest-completeness
+aliases must be copy-on-write files, clearly marked fixture-only/non-publishable, and
+must never substitute for final candidate architecture bytes.
+
 Any product-source change after this proof invalidates it. Rerun the affected
 Linux x64 transaction before push. Candidate P1 may expand to all supported
 architectures, but it must not introduce a predicate that never passed locally.

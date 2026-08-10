@@ -20,6 +20,7 @@ PREINSTALLED_TOOLS="${FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS:-0}"
 PUBLIC_ACQUISITION="${FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION:-0}"
 BUILD_ONLY="${FASED_SYSTEMD_FIXTURE_BUILD_ONLY:-0}"
 ARTIFACT_OUTPUT_DIR="${FASED_SYSTEMD_FIXTURE_OUTPUT_DIR:-}"
+ARTIFACT_PROFILE="${FASED_SYSTEMD_FIXTURE_ARTIFACT_PROFILE:-branch-x64}"
 MANAGED_PREDECESSOR_VERSION="${FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION:-}"
 MANAGED_PREDECESSOR_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_ARTIFACT_DIR:-}"
 OWN_MANAGED_PREDECESSOR_ARTIFACT_DIR=0
@@ -108,6 +109,34 @@ run_container() {
   echo "FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION must be 0 or 1." >&2
   exit 1
 }
+[[ "$ARTIFACT_PROFILE" == "branch-x64" ]] || {
+  echo "FASED_SYSTEMD_FIXTURE_ARTIFACT_PROFILE must be branch-x64." >&2
+  echo "Full-platform candidate artifacts belong to the trusted release workflow." >&2
+  exit 1
+}
+
+copy_branch_x64_fixture_aliases() {
+  local release_dir="$ROOT_DIR/dist-native/release"
+  local signer_source="$release_dir/fased-signerd-linux-amd64"
+  local lifecycle_source="$release_dir/fased-lifecycled-linux-amd64"
+  local alias
+
+  [[ -f "$signer_source" && ! -L "$signer_source" &&
+    -f "$lifecycle_source" && ! -L "$lifecycle_source" ]] || {
+    echo "The branch-x64 fixture requires exact Linux amd64 lifecycle binaries." >&2
+    exit 1
+  }
+  for alias in \
+    fased-signerd-linux-arm64 \
+    fased-signerd-darwin-amd64 \
+    fased-signerd-darwin-arm64; do
+    rm -f -- "$release_dir/$alias"
+    cp --reflink=auto "$signer_source" "$release_dir/$alias"
+  done
+  rm -f -- "$release_dir/fased-lifecycled-linux-arm64"
+  cp --reflink=auto "$lifecycle_source" "$release_dir/fased-lifecycled-linux-arm64"
+  echo "branch-x64 artifacts are fixture-only and cannot be published"
+}
 
 if [[ -z "$ARTIFACT_DIR" ]]; then
   PUBLIC_ACQUISITION=1
@@ -133,14 +162,15 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
   GOTMPDIR="$fixture_go_tmp" \
   GOCACHE="$fixture_go_cache" \
   FASED_SIGNER_BUILD_COMMIT="$COMMIT" \
-  FASED_SIGNER_TARGETS=linux/amd64,linux/arm64,darwin/amd64,darwin/arm64 \
+  FASED_SIGNER_TARGETS="linux/amd64" \
     bash "$ROOT_DIR/scripts/release-fased-signerd.sh"
   GOTMPDIR="$fixture_go_tmp" \
   GOCACHE="$fixture_go_cache" \
   FASED_LIFECYCLE_BUILD_COMMIT="$COMMIT" \
   FASED_LIFECYCLE_BUILD_TREE="$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')" \
-  FASED_LIFECYCLE_TARGETS=linux/amd64,linux/arm64 \
+  FASED_LIFECYCLE_TARGETS="linux/amd64" \
     bash "$ROOT_DIR/scripts/release-fased-lifecycled.sh"
+  copy_branch_x64_fixture_aliases
   if [[ "$BUILD_ONLY" == "1" ]]; then
     ARTIFACT_DIR="$ARTIFACT_OUTPUT_DIR"
   else
@@ -155,9 +185,9 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
   x64_dependency="$(jq -er .dependencies.asset "$x64_identity")"
   dependency_hash="$(jq -er .dependencyHash "$x64_identity")"
   arm64_dependency="fased-hosted-deps-linux-arm64-${dependency_hash}.tar.gz"
-  cp "$ARTIFACT_DIR/$x64_app" "$ARTIFACT_DIR/$arm64_app"
-  cp "$ARTIFACT_DIR/$x64_dependency" "$ARTIFACT_DIR/$arm64_dependency"
-  cp \
+  cp --reflink=auto "$ARTIFACT_DIR/$x64_app" "$ARTIFACT_DIR/$arm64_app"
+  cp --reflink=auto "$ARTIFACT_DIR/$x64_dependency" "$ARTIFACT_DIR/$arm64_dependency"
+  cp --reflink=auto \
     "$ARTIFACT_DIR/fased-hosted-components-linux-x64-v${VERSION}.spdx.json" \
     "$ARTIFACT_DIR/fased-hosted-components-linux-arm64-v${VERSION}.spdx.json"
   jq \
@@ -229,6 +259,8 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
         >"$ARTIFACT_DIR/${attested_asset}.attestation.json"
     done
   fi
+  printf '{"schemaVersion":1,"profile":"branch-x64","publishable":false}\n' \
+    >"$ARTIFACT_DIR/fased-branch-proof-x64.json"
   node "$ROOT_DIR/scripts/release-artifact-set.mjs" build \
     --directory "$ARTIFACT_DIR" \
     --version "$VERSION" \
