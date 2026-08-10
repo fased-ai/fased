@@ -854,13 +854,11 @@ printf 'version=%s\ncommit=%s\nsigner_sha256=%s\ndependency_sha256=%s\ndependenc
 chmod 0600 "$release_root/.fased-hosting-bundle-verified"
 test "$(jq -er .version "$release_root/package.json")" = "$version"
 
-if [[ "$phase" == "fresh-install" || "$public_acquisition" != "1" ]]; then
-  rm -rf "$candidate_repo"
-  git clone --quiet --no-hardlinks /repo "$candidate_repo"
-  git -C "$candidate_repo" checkout --quiet --detach "$commit"
-  git -C "$candidate_repo" tag --force "v$version" "$commit"
-  chown -R testop:testop "$candidate_repo"
-fi
+rm -rf "$candidate_repo"
+git clone --quiet --no-hardlinks /repo "$candidate_repo"
+git -C "$candidate_repo" checkout --quiet --detach "$commit"
+git -C "$candidate_repo" tag --force "v$version" "$commit"
+chown -R testop:testop "$candidate_repo"
 if [[ "$public_acquisition" == "1" ]]; then
   install -m 0700 -o testop -g testop /artifacts/install.sh "$candidate_installer"
 else
