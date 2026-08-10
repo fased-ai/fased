@@ -169,7 +169,7 @@ export async function buildCandidateDescriptor({
   return { descriptor, output, descriptorDigest: await sha256File(output) };
 }
 
-function parseDescriptor(value, expected = {}) {
+export function parseCandidateDescriptor(value, expected = {}) {
   exactKeys(
     value,
     [
@@ -231,7 +231,7 @@ export async function verifyCandidateDirectory({ directory, expected = {} }) {
   if (!descriptorEntry || !attestationEntry) {
     fail("candidate descriptor or its attestation bundle is missing");
   }
-  const descriptor = parseDescriptor(
+  const descriptor = parseCandidateDescriptor(
     JSON.parse(await fsp.readFile(descriptorEntry.file, "utf8")),
     expected,
   );

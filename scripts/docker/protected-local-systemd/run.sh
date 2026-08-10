@@ -9,6 +9,10 @@ commit="${FASED_FIXTURE_COMMIT:?missing fixture commit}"
 predecessor_version="${FASED_FIXTURE_PREDECESSOR_VERSION:-}"
 preinstalled_tools="${FASED_FIXTURE_PREINSTALLED_TOOLS:-0}"
 public_acquisition="${FASED_FIXTURE_PUBLIC_ACQUISITION:-0}"
+acceptance_contract=/artifacts/fased-lifecycle-acceptance-v1.json
+acceptance_descriptor=/artifacts/fased-hosting-candidate.json
+acceptance_passed="/tmp/fased-lifecycle-acceptance-${phase}.passed"
+acceptance_receipt="/tmp/fased-lifecycle-acceptance-${phase}.json"
 target_update_args=()
 if [[ "$version" == *-* ]]; then
   target_update_args=(--channel beta)
@@ -31,6 +35,99 @@ release_assets=/var/lib/fased-protected-local-fixture/release-assets
 fixture_tls=/var/lib/fased-protected-local-fixture/tls
 fixture_acl_user=fased-fixture-acl
 fixture_acl_uid=2001
+
+acceptance_mark() {
+  printf '%s\n' "$1" >>"$acceptance_passed"
+}
+
+acceptance_start() {
+  test "$public_acquisition" = "1"
+  test -f "$acceptance_contract"
+  test -f "$acceptance_descriptor"
+  /usr/local/bin/node /repo/scripts/lifecycle-acceptance-contract.mjs validate \
+    --contract "$acceptance_contract" >/dev/null
+  : >"$acceptance_passed"
+  acceptance_mark artifact-identity
+  acceptance_mark public-installer-acquisition
+}
+
+acceptance_finish() {
+  local descriptor_digest=""
+  descriptor_digest="sha256:$(sha256sum "$acceptance_descriptor" | awk '{print $1}')"
+  /usr/local/bin/node /repo/scripts/lifecycle-acceptance-contract.mjs issue-receipt \
+    --contract "$acceptance_contract" \
+    --scenario "$phase" \
+    --version "$version" \
+    --commit "$commit" \
+    --candidate-descriptor-digest "$descriptor_digest" \
+    --passed-file "$acceptance_passed" \
+    --output "$acceptance_receipt"
+  /usr/local/bin/node /repo/scripts/lifecycle-acceptance-contract.mjs verify-receipt \
+    --contract "$acceptance_contract" \
+    --receipt "$acceptance_receipt" \
+    --scenario "$phase" \
+    --version "$version" \
+    --commit "$commit" \
+    --candidate-descriptor-digest "$descriptor_digest" >/dev/null
+}
+
+verify_four_services() {
+  local instance="$1"
+  local unit=""
+  for unit in \
+    "fased-local-controller-$instance.service" \
+    "fased-local-controller-worker-$instance.service" \
+    "fased-signerd-$instance.service" \
+    "fased-gateway-$instance.service"; do
+    wait_for_service "$unit"
+    systemctl is-enabled --quiet "$unit"
+    systemctl is-active --quiet "$unit"
+  done
+}
+
+run_operator_acceptance() {
+  local instance="$1"
+  local runtime_root="$2"
+  local output_prefix="$3"
+  local environment_name="$4"
+  local -n environment="$environment_name"
+
+  runuser -u testop -- env "${environment[@]}" \
+    /usr/local/bin/node "$runtime_root/fased.mjs" wallet status --json \
+    >"/tmp/${output_prefix}-wallet-status.json"
+  jq -e \
+    '.ok == true and (.status.wallets | length >= 2) and all(.status.wallets[]; .signer.ready == true)' \
+    "/tmp/${output_prefix}-wallet-status.json" >/dev/null
+  acceptance_mark wallet-status
+
+  runuser -u testop -- env "${environment[@]}" \
+    /usr/local/bin/node "$runtime_root/fased.mjs" wallet signer doctor --json \
+    >"/tmp/${output_prefix}-wallet-signer-doctor.json"
+  jq -e '.ok == true and all(.checks[]; .ok == true)' \
+    "/tmp/${output_prefix}-wallet-signer-doctor.json" >/dev/null
+  acceptance_mark wallet-signer-doctor
+
+  runuser -u testop -- env "${environment[@]}" \
+    /usr/local/bin/node "$runtime_root/fased.mjs" mining status \
+    --url "ws://127.0.0.1:$gateway_port" \
+    --token "$gateway_token" \
+    --timeout 5000 \
+    --json >"/tmp/${output_prefix}-mining-status.json"
+  jq -e 'type == "object"' "/tmp/${output_prefix}-mining-status.json" >/dev/null
+  acceptance_mark mining-status
+
+  runuser -u testop -- env "${environment[@]}" \
+    /usr/local/bin/node "$runtime_root/fased.mjs" federation status --json \
+    >"/tmp/${output_prefix}-network-status.json"
+  jq -e 'type == "object"' "/tmp/${output_prefix}-network-status.json" >/dev/null
+  acceptance_mark network-status
+
+  runuser -u testop -- env "${environment[@]}" \
+    /usr/local/bin/node "$runtime_root/fased.mjs" plugins doctor \
+    >"/tmp/${output_prefix}-plugin-doctor.out"
+  grep -F "No plugin issues detected." "/tmp/${output_prefix}-plugin-doctor.out" >/dev/null
+  acceptance_mark plugin-doctor
+}
 
 prepare_restrictive_home_acl() {
   if ! id "$fixture_acl_user" >/dev/null 2>&1; then
@@ -1001,6 +1098,7 @@ if [[ "$phase" == "fresh-install" ]]; then
   install_elapsed="$((SECONDS - install_started))"
 
   hash -r
+  acceptance_start
   service_started="$SECONDS"
   test -s "$state/fased.json"
   test -s "$state/install.json"
@@ -1008,9 +1106,10 @@ if [[ "$phase" == "fresh-install" ]]; then
   instance="$(jq -er '.instanceId' "$state/lifecycle.json")"
   runtime="$(resolve_protected_runtime "$instance")"
   verify_protected_home_acl "$instance"
-  wait_for_service "fased-local-controller-$instance.service"
-  wait_for_service "fased-signerd-$instance.service"
-  wait_for_service "fased-gateway-$instance.service"
+  verify_canonical_lifecycle_controller "$instance"
+  acceptance_mark canonical-lifecycle
+  verify_four_services "$instance"
+  acceptance_mark four-services-active
   wait_for_gateway_version "$version"
   wait_for_socket "/run/fased-local/$instance/operator/operator.sock"
   test "$(stat -c '%U:%G:%a' /opt/fased)" = "root:root:755"
@@ -1049,23 +1148,22 @@ if [[ "$phase" == "fresh-install" ]]; then
     /usr/local/bin/node "$runtime/fased.mjs" health --json --timeout 5000 \
     >/tmp/fresh-health.json
   jq -e '.ok == true' /tmp/fresh-health.json >/dev/null
+  run_operator_acceptance "$instance" "$runtime" fresh env_args
   wallet_elapsed="$((SECONDS - wallet_started))"
 
-  noop_started="$SECONDS"
-  runuser -u testop -- env "${fresh_env[@]}" \
-    "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
-    >/tmp/fresh-noop-update.out 2>/tmp/fresh-noop-update.err
-  grep -F "Already current: $version" /tmp/fresh-noop-update.out >/dev/null
-  if grep -F "Protected Local migration" /tmp/fresh-noop-update.err >/dev/null; then
-    echo "fresh idempotent update repeated Protected Local migration" >&2
-    exit 1
-  fi
-  noop_elapsed="$((SECONDS - noop_started))"
+  fresh_restart_manifest=/tmp/fresh-restart-preservation.sha256
+  sha256sum \
+    "$state/fased.json" \
+    "$state/wallet/provider-registry.v1.json" \
+    "/var/lib/fased-local/$instance/signer/master.key" \
+    >"$fresh_restart_manifest"
 
   restart_started="$SECONDS"
-  systemctl restart "fased-local-controller-$instance.service" \
-    "fased-signerd-$instance.service" "fased-gateway-$instance.service"
-  wait_for_service "fased-gateway-$instance.service"
+  systemctl restart \
+    "fased-local-controller-$instance.service" \
+    "fased-signerd-$instance.service" \
+    "fased-gateway-$instance.service"
+  verify_four_services "$instance"
   wait_for_gateway_version "$version"
   runuser -u testop -- env "${env_args[@]}" \
     /usr/local/bin/node "$runtime/fased.mjs" health --json --timeout 5000 \
@@ -1076,7 +1174,29 @@ if [[ "$phase" == "fresh-install" ]]; then
     echo "Fresh Protected Local Gateway is publicly bound." >&2
     exit 1
   fi
+  acceptance_mark restart-health
+  sha256sum --check "$fresh_restart_manifest"
+  for wallet_id in agent vault; do
+    verify_wallet "$instance" "$wallet_id" >"/tmp/fresh-${wallet_id}-restart.json"
+    diff -u \
+      <(jq -S . "/tmp/fresh-${wallet_id}.json") \
+      <(jq -S . "/tmp/fresh-${wallet_id}-restart.json")
+  done
+  acceptance_mark state-preservation
   restart_elapsed="$((SECONDS - restart_started))"
+
+  noop_started="$SECONDS"
+  runuser -u testop -- env "${fresh_env[@]}" \
+    "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
+    >/tmp/fresh-noop-update.out 2>/tmp/fresh-noop-update.err
+  grep -F "Already current: $version" /tmp/fresh-noop-update.out >/dev/null
+  if grep -F "Protected Local migration" /tmp/fresh-noop-update.err >/dev/null; then
+    echo "fresh idempotent update repeated Protected Local migration" >&2
+    exit 1
+  fi
+  acceptance_mark already-current
+  noop_elapsed="$((SECONDS - noop_started))"
+  acceptance_finish
 
   agent_readiness_sha="$(jq -S -c . /tmp/fresh-agent.json | sha256sum | awk '{print $1}')"
   vault_readiness_sha="$(jq -S -c . /tmp/fresh-vault.json | sha256sum | awk '{print $1}')"
@@ -1175,6 +1295,7 @@ if [[ "$phase" == "managed-update" ]]; then
       "$state/sat-mining/stable-bridge-history.json" \
       "$state/workspace/stable-bridge.txt" \
       >"$stable_bridge_restart_manifest"
+    acceptance_start
 
     run_stable_bridge_installer() {
       runuser -u testop -- env "${managed_env[@]}" \
@@ -1272,6 +1393,7 @@ EOF_STABLE_BRIDGE_DROPIN
 
     run_stable_bridge_installer \
       >/tmp/stable-bridge-update.out 2>/tmp/stable-bridge-update.err
+    acceptance_mark rollback-retry
     test "$(jq -er .profile "$state/install.json")" = "protected-local"
     test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$version"
     sha256sum --check "$stable_bridge_manifest"
@@ -1280,9 +1402,10 @@ EOF_STABLE_BRIDGE_DROPIN
     runtime="$(resolve_protected_runtime "$instance")"
     mapfile -t managed_operator_env < <(operator_env "$instance")
     runuser -u "fsgw-$instance" -- test -r "$state/extensions/stable-bridge-plugin.json"
-    wait_for_service "fased-local-controller-$instance.service"
-    wait_for_service "fased-signerd-$instance.service"
-    wait_for_service "fased-gateway-$instance.service"
+    verify_canonical_lifecycle_controller "$instance"
+    acceptance_mark canonical-lifecycle
+    verify_four_services "$instance"
+    acceptance_mark four-services-active
     wait_for_gateway_version "$version"
     for wallet_spec in "agent:Agent:agent" "vault:Vault:vault"; do
       IFS=: read -r wallet_id wallet_name wallet_role <<<"$wallet_spec"
@@ -1298,11 +1421,14 @@ EOF_STABLE_BRIDGE_DROPIN
         >"/tmp/stable-${wallet_id}-create.json"
       verify_wallet "$instance" "$wallet_id" >"/tmp/stable-${wallet_id}.json"
     done
+    run_operator_acceptance "$instance" "$runtime" stable managed_operator_env
     systemctl restart \
       "fased-local-controller-$instance.service" \
       "fased-signerd-$instance.service" \
       "fased-gateway-$instance.service"
+    verify_four_services "$instance"
     wait_for_gateway_version "$version"
+    acceptance_mark restart-health
     sha256sum --check "$stable_bridge_restart_manifest"
     verify_shared_wallet_registry "$instance" "$runtime"
     for wallet_id in agent vault; do
@@ -1311,6 +1437,7 @@ EOF_STABLE_BRIDGE_DROPIN
         <(jq -S . "/tmp/stable-${wallet_id}.json") \
         <(jq -S . "/tmp/stable-${wallet_id}-restart.json")
     done
+    acceptance_mark state-preservation
     if ! runuser -u testop -- env "${managed_operator_env[@]}" \
       npm_config_registry="http://127.0.0.1:$rpc_port" \
       FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
@@ -1323,6 +1450,8 @@ EOF_STABLE_BRIDGE_DROPIN
     run_stable_bridge_installer \
       >/tmp/stable-bridge-installer-noop.out 2>/tmp/stable-bridge-installer-noop.err
     grep -F "Already current: $version" /tmp/stable-bridge-installer-noop.out >/dev/null
+    acceptance_mark already-current
+    acceptance_finish
     agent_readiness_sha="$(jq -S -c . /tmp/stable-agent-restart.json | sha256sum | awk '{print $1}')"
     vault_readiness_sha="$(jq -S -c . /tmp/stable-vault-restart.json | sha256sum | awk '{print $1}')"
     key_sha="$(sha256sum "/var/lib/fased-local/$instance/signer/master.key" | awk '{print $1}')"
@@ -1449,6 +1578,7 @@ EOF_MANAGED_MINING_LEDGER
       "$state/bin/fased" update "${target_update_args[@]}" --timeout "$timeout_seconds"
   }
 
+  acceptance_start
   managed_current_link="/opt/fased/local/$instance/application/current"
   managed_initial_target="$(readlink -f "$managed_current_link")"
   managed_gateway_unit="fased-gateway-$instance.service"
@@ -1504,6 +1634,7 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
 
   run_target_update 90 \
     >/tmp/managed-update-success.out 2>/tmp/managed-update-success.err
+  acceptance_mark rollback-retry
   if [[ -n "$managed_recovery_transaction" ]]; then
     managed_recovery_receipt="/var/lib/fased-local/$instance/controller/supervisor/receipts/${managed_recovery_transaction}.json"
     test "$(jq -er .operation "$managed_recovery_receipt")" = "recoverRelease"
@@ -1517,16 +1648,28 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
 
   runtime="$(resolve_protected_runtime "$instance")"
   mapfile -t managed_operator_env < <(operator_env "$instance")
-  systemctl restart "fased-local-controller-$instance.service" \
-    "fased-signerd-$instance.service" "fased-gateway-$instance.service"
+  verify_canonical_lifecycle_controller "$instance"
+  acceptance_mark canonical-lifecycle
+  verify_four_services "$instance"
+  acceptance_mark four-services-active
+  run_operator_acceptance "$instance" "$runtime" managed managed_operator_env
+  systemctl restart \
+    "fased-local-controller-$instance.service" \
+    "fased-signerd-$instance.service" \
+    "fased-gateway-$instance.service"
+  verify_four_services "$instance"
   wait_for_gateway_version "$version"
+  acceptance_mark restart-health
   verify_managed_state_manifest
   verify_managed_semantic_state
+  acceptance_mark state-preservation
   runuser -u testop -- env "${managed_operator_env[@]}" \
     npm_config_registry="http://127.0.0.1:$rpc_port" \
     "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
     >/tmp/managed-update-noop.out 2>/tmp/managed-update-noop.err
   grep -F "Already current: $version" /tmp/managed-update-noop.out >/dev/null
+  acceptance_mark already-current
+  acceptance_finish
 
   verify_wallet "$instance" agent >/tmp/managed-agent-after.json
   verify_wallet "$instance" vault >/tmp/managed-vault-after.json

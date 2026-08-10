@@ -73,6 +73,13 @@ state-preservation, and `Already current`. Serving the unpublished candidate
 assets from an isolated fixture is acceptable; bypassing acquisition by
 injecting the Actions artifact directly is supporting evidence only.
 
+Both branch proof and P1 must read the exact same artifact-bound lifecycle
+acceptance contract and emit receipts bound to the candidate descriptor. The
+contract is a fixed predicate list, never shell or code loaded from JSON. It
+must include all four services, Wallet status, signer doctor, Mining, Network,
+plugin doctor, restart, state preservation, rollback/retry where applicable,
+and `Already current`.
+
 Before correcting an installer trust predicate, enumerate every equivalent
 verifier across bootstrap, runtime acquisition, Local, and Hosting. Replace
 duplicated policy with one shared contract and test every consumer. Do not
@@ -116,8 +123,10 @@ The workflow must:
 5. build/test the native signer and assemble provenance, SBOM, VEX, manifests,
    and attestations;
 6. write one immutable candidate descriptor with exact artifact inventory;
-7. derive the supported predecessor topology from the complete public-release
-   compatibility inventory and run independent fresh Local,
+7. include immutable release compatibility evidence and the exact lifecycle
+   acceptance contract in that descriptor; derive the supported predecessor
+   topology from the historical source baseline plus verified public manifests,
+   without a per-release follow-up source edit; run independent fresh Local,
    supported-stable update/rollback, and Hosting adapter jobs concurrently
    against the same downloaded candidate artifact through the exact
    public-style acquisition entry point; and

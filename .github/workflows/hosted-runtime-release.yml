@@ -461,6 +461,16 @@ jobs:
             --issued-at "${lifecycle_times[0]}" \
             --expires-at "${lifecycle_times[1]}" \
             --output .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json
+          install -m 0644 \
+            config/lifecycle-acceptance.v1.json \
+            .artifacts/hosted-runtime/fased-lifecycle-acceptance-v1.json
+          node scripts/lifecycle-acceptance-contract.mjs validate \
+            --contract .artifacts/hosted-runtime/fased-lifecycle-acceptance-v1.json
+          node scripts/lifecycle-release-compatibility.mjs build \
+            --version "$package_version" \
+            --commit "$GITHUB_SHA" \
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --output .artifacts/hosted-runtime/fased-lifecycle-release-compatibility-v1.json
 
       - name: Attest unified candidate manifest
         id: attest-candidate-manifest
@@ -636,7 +646,16 @@ jobs:
           FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1"
           FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
           FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
+          FASED_SYSTEMD_FIXTURE_RECEIPT_DIR: ${{ runner.temp }}/lifecycle-acceptance-fresh
         run: bash scripts/test-protected-local-systemd-container.sh
+
+      - name: Upload fresh Local acceptance receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fased-lifecycle-acceptance-fresh
+          path: ${{ runner.temp }}/lifecycle-acceptance-fresh/*.json
+          if-no-files-found: error
+          retention-days: 30
 
   p1-local-update:
     name: Packaged stable update P1
@@ -705,7 +724,16 @@ jobs:
           FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1"
           FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
           FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
+          FASED_SYSTEMD_FIXTURE_RECEIPT_DIR: ${{ runner.temp }}/lifecycle-acceptance-update
         run: bash scripts/test-protected-local-systemd-container.sh
+
+      - name: Upload stable-update acceptance receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fased-lifecycle-acceptance-update
+          path: ${{ runner.temp }}/lifecycle-acceptance-update/*.json
+          if-no-files-found: error
+          retention-days: 30
 
   p1-hosting:
     name: Packaged Hosting adapter P1

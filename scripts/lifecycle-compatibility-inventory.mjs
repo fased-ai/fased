@@ -1,9 +1,20 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  digestAcceptanceContract,
+  validateAcceptanceContract,
+} from "./lifecycle-acceptance-contract.mjs";
+import {
+  RELEASE_COMPATIBILITY_ASSET,
+  parseReleaseCompatibility,
+} from "./lifecycle-release-compatibility.mjs";
+import { parseCandidateDescriptor } from "./release-artifact-set.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -136,12 +147,32 @@ export function publishedReleaseAssignments(inventory) {
   );
 }
 
-export function candidateP1Scenarios(inventory, version) {
+function releaseAssignmentFromManifest(inventory, evidence) {
+  const group = inventory.releaseGroups.find(({ id }) => id === evidence.groupId);
+  if (!group) {
+    fail(`release ${evidence.tag} references unknown compatibility group ${evidence.groupId}`);
+  }
+  return Object.freeze({
+    tag: evidence.tag,
+    commit: evidence.commit,
+    groupId: group.id,
+    evidence: group.evidence,
+    localTopologies: group.localTopologies,
+    hostingTopology: group.hostingTopology,
+    interruptedLocalTopology: group.interruptedLocalTopology,
+    interruptedHostingTopology: group.interruptedHostingTopology,
+  });
+}
+
+export function candidateP1Scenarios(inventory, version, manifestedReleases = []) {
   validateLifecycleCompatibilityInventory(inventory);
   const normalized = String(version || "").replace(/^v/u, "");
-  const assignment = publishedReleaseAssignments(inventory).find(
-    (release) => release.tag === `v${normalized}`,
-  );
+  const tag = `v${normalized}`;
+  const assignment =
+    publishedReleaseAssignments(inventory).find((release) => release.tag === tag) ||
+    manifestedReleases
+      .filter((release) => release?.tag === tag)
+      .map((release) => releaseAssignmentFromManifest(inventory, release))[0];
   if (!assignment) {
     fail(`predecessor v${normalized} has no compatibility assignment`);
   }
@@ -169,7 +200,7 @@ export function candidateP1Scenarios(inventory, version) {
   return [...scenarios].toSorted((left, right) => left.localeCompare(right));
 }
 
-export function verifyPublicReleaseCoverage(inventory, releases) {
+export function verifyPublicReleaseCoverage(inventory, releases, manifestedReleases = []) {
   validateLifecycleCompatibilityInventory(inventory);
   if (!Array.isArray(releases)) {
     fail("public GitHub release response is invalid");
@@ -181,32 +212,67 @@ export function verifyPublicReleaseCoverage(inventory, releases) {
   if (publicTags.size !== publicReleases.length) {
     fail("public GitHub releases contain duplicate tags");
   }
-  const assignedTags = new Set(publishedReleaseAssignments(inventory).map(({ tag }) => tag));
+  const sourceAssignments = publishedReleaseAssignments(inventory);
+  const manifestedByTag = new Map();
+  for (const evidence of manifestedReleases) {
+    if (
+      !evidence ||
+      !TAG_PATTERN.test(evidence.tag || "") ||
+      !COMMIT_PATTERN.test(evidence.commit || "") ||
+      typeof evidence.groupId !== "string"
+    ) {
+      fail("public release manifest assignment is invalid");
+    }
+    releaseAssignmentFromManifest(inventory, evidence);
+    if (manifestedByTag.has(evidence.tag)) {
+      fail(`public release manifest repeats ${evidence.tag}`);
+    }
+    manifestedByTag.set(evidence.tag, evidence);
+  }
+  const sourceByTag = new Map(sourceAssignments.map((assignment) => [assignment.tag, assignment]));
+  for (const [tag, evidence] of manifestedByTag) {
+    const source = sourceByTag.get(tag);
+    if (source && (source.commit !== evidence.commit || source.groupId !== evidence.groupId)) {
+      fail(`public release manifest contradicts source evidence for ${tag}`);
+    }
+  }
+  const assignedTags = new Set([...sourceByTag.keys(), ...manifestedByTag.keys()]);
   const unassigned = [...publicTags]
     .filter((tag) => !assignedTags.has(tag))
     .toSorted((left, right) => left.localeCompare(right));
   if (unassigned.length > 0) {
     fail(`unassigned public GitHub releases: ${unassigned.join(", ")}`);
   }
-  const inventoryOnly = [...assignedTags]
+  const inventoryOnly = [...sourceByTag.keys()]
     .filter((tag) => !publicTags.has(tag))
     .toSorted((left, right) => left.localeCompare(right));
   if (inventoryOnly.length > 0) {
     fail(`inventory-only public releases: ${inventoryOnly.join(", ")}`);
   }
+  const manifestedOnly = [...manifestedByTag.keys()]
+    .filter((tag) => !publicTags.has(tag))
+    .toSorted((left, right) => left.localeCompare(right));
+  if (manifestedOnly.length > 0) {
+    fail(`manifest-only public releases: ${manifestedOnly.join(", ")}`);
+  }
   const ordered = publicReleases.toSorted((left, right) =>
     String(left.published_at || "").localeCompare(String(right.published_at || "")),
   );
   const latest = ordered.at(-1);
-  if (!latest?.published_at || latest.tag_name !== inventory.publishedThrough.tag) {
-    fail(
-      `latest public GitHub release is ${latest?.tag_name || "missing"}, expected ${inventory.publishedThrough.tag}`,
-    );
+  if (!latest?.published_at) {
+    fail("latest public GitHub release is missing");
+  }
+  const latestAssignment = sourceByTag.get(latest.tag_name) || manifestedByTag.get(latest.tag_name);
+  if (!latestAssignment) {
+    fail(`latest public GitHub release ${latest.tag_name} has no verified compatibility evidence`);
   }
   return Object.freeze({
     repository: inventory.repository,
     releaseCount: publicReleases.length,
-    publishedThrough: inventory.publishedThrough,
+    publishedThrough: Object.freeze({
+      tag: latestAssignment.tag,
+      commit: latestAssignment.commit,
+    }),
   });
 }
 
@@ -217,6 +283,7 @@ export function validateLifecycleCompatibilityInventory(inventory) {
       "schemaVersion",
       "role",
       "repository",
+      "currentReleaseGroupId",
       "publishedThrough",
       "publishedReleaseCount",
       "selectionContract",
@@ -360,6 +427,12 @@ export function validateLifecycleCompatibilityInventory(inventory) {
   }
 
   const groups = uniqueRecords(inventory.releaseGroups, "release groups");
+  if (
+    typeof inventory.currentReleaseGroupId !== "string" ||
+    !groups.has(inventory.currentReleaseGroupId)
+  ) {
+    fail("current release compatibility group is missing");
+  }
   const referencedPublishedTopologies = new Set();
   const releases = [];
   const tags = new Set();
@@ -599,6 +672,126 @@ function readPublicGitHubReleases(repository) {
     });
 }
 
+function sha256File(file) {
+  return `sha256:${createHash("sha256").update(readFileSync(file)).digest("hex")}`;
+}
+
+function readManifestedPublicRelease(inventory, release) {
+  const tag = release?.tag_name;
+  if (!TAG_PATTERN.test(tag || "")) {
+    fail("cannot load compatibility evidence for an invalid public tag");
+  }
+  const directory = mkdtempSync(path.join(os.tmpdir(), "fased-public-compatibility-"));
+  const descriptorName = "fased-hosting-candidate.json";
+  const descriptorAttestationName = `${descriptorName}.attestation.json`;
+  const acceptanceName = "fased-lifecycle-acceptance-v1.json";
+  try {
+    const downloadArgs = [
+      "release",
+      "download",
+      tag,
+      "--repo",
+      inventory.repository,
+      "--dir",
+      directory,
+    ];
+    for (const name of [
+      descriptorName,
+      descriptorAttestationName,
+      RELEASE_COMPATIBILITY_ASSET,
+      acceptanceName,
+    ]) {
+      downloadArgs.push("--pattern", name);
+    }
+    execFileSync("gh", downloadArgs, { stdio: ["ignore", "ignore", "pipe"] });
+    const descriptorPath = path.join(directory, descriptorName);
+    const descriptorAttestationPath = path.join(directory, descriptorAttestationName);
+    execFileSync(
+      "gh",
+      [
+        "attestation",
+        "verify",
+        descriptorPath,
+        "--repo",
+        inventory.repository,
+        "--bundle",
+        descriptorAttestationPath,
+        "--signer-workflow",
+        "fased-ai/fased/.github/workflows/hosted-runtime-release.yml",
+        "--source-ref",
+        `refs/tags/${tag}`,
+        "--deny-self-hosted-runners",
+      ],
+      { stdio: ["ignore", "ignore", "pipe"] },
+    );
+    const descriptor = parseCandidateDescriptor(JSON.parse(readFileSync(descriptorPath, "utf8")), {
+      version: tag.slice(1),
+      sourceRef: `refs/tags/${tag}`,
+    });
+    const tagCommit = execFileSync(
+      "gh",
+      ["api", `repos/${inventory.repository}/git/ref/tags/${tag}`, "--jq", ".object.sha"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    ).trim();
+    if (tagCommit !== descriptor.commit) {
+      fail(`public release tag ${tag} does not point at its candidate commit`);
+    }
+    const byName = new Map(descriptor.artifacts.map((artifact) => [artifact.name, artifact]));
+    for (const name of [RELEASE_COMPATIBILITY_ASSET, acceptanceName]) {
+      const identity = byName.get(name);
+      const file = path.join(directory, name);
+      if (
+        !identity ||
+        statSync(file).size !== identity.size ||
+        sha256File(file) !== identity.sha256
+      ) {
+        fail(`public release ${tag} has unbound ${name}`);
+      }
+    }
+    const acceptanceContract = validateAcceptanceContract(
+      JSON.parse(readFileSync(path.join(directory, acceptanceName), "utf8")),
+    );
+    const compatibility = parseReleaseCompatibility(
+      JSON.parse(readFileSync(path.join(directory, RELEASE_COMPATIBILITY_ASSET), "utf8")),
+      {
+        repository: inventory.repository,
+        compatibilityGroupIds: inventory.releaseGroups.map((group) => group.id),
+        release: {
+          version: descriptor.version,
+          tag,
+          commit: descriptor.commit,
+          tree: descriptor.tree,
+        },
+      },
+    );
+    if (
+      compatibility.acceptanceContract.id !== acceptanceContract.contractId ||
+      compatibility.acceptanceContract.digest !== digestAcceptanceContract(acceptanceContract)
+    ) {
+      fail(`public release ${tag} compatibility evidence has the wrong acceptance contract`);
+    }
+    return Object.freeze({
+      tag,
+      commit: descriptor.commit,
+      groupId: compatibility.compatibilityGroupId,
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+function readManifestedPublicReleases(inventory, releases) {
+  const sourceTags = new Set(publishedReleaseAssignments(inventory).map(({ tag }) => tag));
+  return releases
+    .filter(
+      (release) =>
+        release?.draft === false &&
+        TAG_PATTERN.test(release?.tag_name || "") &&
+        !sourceTags.has(release.tag_name),
+    )
+    .map((release) => readManifestedPublicRelease(inventory, release));
+}
+
 function main() {
   const args = process.argv.slice(2);
   const inventory = loadLifecycleCompatibilityInventory();
@@ -613,12 +806,27 @@ function main() {
   } else if (args.length === 1 && args[0] === "--verify-git") {
     evidence = verifyGitReleaseEvidence(inventory);
   } else if (args.length === 1 && args[0] === "--verify-public-github") {
+    const releases = readPublicGitHubReleases(inventory.repository);
     evidence = verifyPublicReleaseCoverage(
       inventory,
-      readPublicGitHubReleases(inventory.repository),
+      releases,
+      readManifestedPublicReleases(inventory, releases),
     );
   } else if (args.length === 2 && args[0] === "--p1-scenarios") {
-    process.stdout.write(`${candidateP1Scenarios(inventory, args[1]).join(",")}\n`);
+    const tag = `v${String(args[1]).replace(/^v/u, "")}`;
+    const sourceAssigned = publishedReleaseAssignments(inventory).some(
+      (release) => release.tag === tag,
+    );
+    let manifestedReleases = [];
+    if (!sourceAssigned) {
+      const releases = readPublicGitHubReleases(inventory.repository).filter(
+        (release) => release.tag_name === tag,
+      );
+      manifestedReleases = readManifestedPublicReleases(inventory, releases);
+    }
+    process.stdout.write(
+      `${candidateP1Scenarios(inventory, args[1], manifestedReleases).join(",")}\n`,
+    );
     return;
   } else {
     fail(`unsupported arguments ${args.join(" ")}`);

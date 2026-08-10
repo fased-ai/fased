@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "role": "fased-lifecycle-acceptance-contract",
+  "contractId": "public-local-lifecycle-v1",
+  "scenarios": {
+    "fresh-install": [
+      "artifact-identity",
+      "public-installer-acquisition",
+      "canonical-lifecycle",
+      "four-services-active",
+      "wallet-status",
+      "wallet-signer-doctor",
+      "mining-status",
+      "network-status",
+      "plugin-doctor",
+      "restart-health",
+      "state-preservation",
+      "already-current"
+    ],
+    "managed-update": [
+      "artifact-identity",
+      "public-installer-acquisition",
+      "rollback-retry",
+      "canonical-lifecycle",
+      "four-services-active",
+      "wallet-status",
+      "wallet-signer-doctor",
+      "mining-status",
+      "network-status",
+      "plugin-doctor",
+      "restart-health",
+      "state-preservation",
+      "already-current"
+    ]
+  }
+}

@@ -41,10 +41,45 @@ describe("lifecycle compatibility inventory", () => {
     );
   });
 
+  it("accepts future public releases from immutable manifested compatibility evidence", () => {
+    const inventory = loadLifecycleCompatibilityInventory();
+    const releases = publishedReleaseAssignments(inventory).map(({ tag }, index) => ({
+      tag_name: tag,
+      draft: false,
+      published_at: new Date(index * 1000).toISOString(),
+    }));
+    releases.push({
+      tag_name: "v0.1.76-rc.71",
+      draft: false,
+      published_at: new Date(releases.length * 1000).toISOString(),
+    });
+    const evidence = {
+      tag: "v0.1.76-rc.71",
+      commit: "a".repeat(40),
+      groupId: inventory.currentReleaseGroupId,
+    };
+    expect(verifyPublicReleaseCoverage(inventory, releases, [evidence])).toMatchObject({
+      releaseCount: inventory.publishedReleaseCount + 1,
+      publishedThrough: { tag: evidence.tag, commit: evidence.commit },
+    });
+    expect(() => verifyPublicReleaseCoverage(inventory, releases)).toThrow(
+      "unassigned public GitHub releases",
+    );
+  });
+
   it("derives packaged proof from topology classes rather than every release", () => {
     const inventory = loadLifecycleCompatibilityInventory();
     expect(candidateP1Scenarios(inventory, "0.1.75")).toEqual(["managed-update"]);
     expect(candidateP1Scenarios(inventory, "0.1.76-rc.35")).toEqual(["managed-update"]);
+    expect(
+      candidateP1Scenarios(inventory, "0.1.76-rc.71", [
+        {
+          tag: "v0.1.76-rc.71",
+          commit: "a".repeat(40),
+          groupId: inventory.currentReleaseGroupId,
+        },
+      ]),
+    ).toEqual(["managed-update"]);
     expect(() => candidateP1Scenarios(inventory, "9.9.9")).toThrow(
       "has no compatibility assignment",
     );
