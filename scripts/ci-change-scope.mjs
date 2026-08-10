@@ -74,7 +74,7 @@ export function outputEntries(plan, options = {}) {
     authority_version: String(plan.authorityVersion),
     plan_digest: plan.planDigest,
     gate_plan_json: JSON.stringify(plan),
-    changed_test_paths_json: JSON.stringify(plan.scope.testOnly ? plan.paths : []),
+    changed_test_paths_json: JSON.stringify(plan.selectedTestPaths ?? []),
     changed_ui_browser_tests: trueString(
       plan.scope.testOnly && plan.paths.some((path) => /^ui\/.*\.browser\.test\.ts$/u.test(path)),
     ),

@@ -503,7 +503,9 @@ describe("CI workflow routing", () => {
     const workflow = await readWorkflow(".github/workflows/hosted-runtime-release.yml");
     const jobs = workflow.jobs ?? {};
     const candidate = jobs["candidate"];
-    const p1 = jobs["p1"];
+    const p1Fresh = jobs["p1-local-fresh"];
+    const p1Update = jobs["p1-local-update"];
+    const p1Hosting = jobs["p1-hosting"];
     const tagReady = jobs["tag-ready"];
     const publish = jobs["publish"];
     const validateText = jobs["validate"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
@@ -514,9 +516,17 @@ describe("CI workflow routing", () => {
     expect(workflow.on.workflow_dispatch.inputs.pre_candidate_run_id.required).toBe(true);
     expect(jobs["release-gate"]).toBeUndefined();
     expect(candidate?.needs).toEqual(["validate", "linux", "signer"]);
-    expect(p1?.needs).toEqual(["validate", "candidate"]);
+    expect(jobs["p1"]).toBeUndefined();
+    for (const p1 of [p1Fresh, p1Update, p1Hosting]) {
+      expect(p1?.needs).toEqual(["validate", "candidate"]);
+    }
     expect(tagReady).toBeUndefined();
-    expect(publish?.needs).toEqual(["candidate", "p1"]);
+    expect(publish?.needs).toEqual([
+      "candidate",
+      "p1-local-fresh",
+      "p1-local-update",
+      "p1-hosting",
+    ]);
     expect(publish?.environment).toBe("candidate-release");
     expect(workflow.concurrency?.group).toBe(
       "hosted-runtime-release-${{ inputs.release_version }}-${{ inputs.source_commit }}",
@@ -524,7 +534,9 @@ describe("CI workflow routing", () => {
 
     const candidateText = candidate?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const candidateStepNames = candidate?.steps?.map((step) => step.name) ?? [];
-    const p1Text = p1?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    const p1FreshText = p1Fresh?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    const p1UpdateText = p1Update?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    const p1HostingText = p1Hosting?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const publishText = publish?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const candidateDownloads = candidate?.steps?.filter((step) =>
       usesAction(step, "actions/download-artifact"),
@@ -605,20 +617,31 @@ describe("CI workflow routing", () => {
       candidate?.steps?.find((step) => usesAction(step, "actions/upload-artifact"))?.with?.name,
     ).toBe("fased-hosting-candidate");
 
-    const p1Download = p1?.steps?.find((step) => usesAction(step, "actions/download-artifact"));
-    expect(p1Download?.with).toMatchObject({
-      name: "fased-hosting-candidate",
-    });
-    expect(p1Text).toContain("test-protected-local-systemd-container.sh");
+    for (const p1 of [p1Fresh, p1Update, p1Hosting]) {
+      expect(
+        p1?.steps?.find((step) => usesAction(step, "actions/download-artifact"))?.with,
+      ).toMatchObject({ name: "fased-hosting-candidate" });
+    }
+    expect(p1FreshText).toContain("test-protected-local-systemd-container.sh");
+    expect(p1FreshText).not.toContain("test-go-hosting-systemd-container.sh");
+    expect(p1UpdateText).toContain("test-protected-local-systemd-container.sh");
+    expect(p1UpdateText).not.toContain("test-go-hosting-systemd-container.sh");
+    expect(p1HostingText).toContain("test-go-hosting-systemd-container.sh");
+    expect(p1HostingText).not.toContain("test-protected-local-systemd-container.sh");
     expect(
-      p1?.steps?.find(
-        (step) => step.name === "Run packaged fresh-install and supported-stable update P1",
-      )?.env,
+      p1Fresh?.steps?.find((step) => step.name === "Run packaged fresh Local P1")?.env,
     ).toMatchObject({
-      FASED_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install,${{ needs.validate.outputs.p1_scenarios }}",
+      FASED_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install",
+      FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1",
+    });
+    expect(
+      p1Update?.steps?.find((step) => step.name === "Run packaged supported-stable update P1")?.env,
+    ).toMatchObject({
+      FASED_SYSTEMD_FIXTURE_SCENARIOS: "${{ needs.validate.outputs.p1_scenarios }}",
       FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "${{ inputs.predecessor_version }}",
       FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1",
     });
+    expect(p1Update?.steps?.some((step) => usesAction(step, "actions/cache"))).toBe(true);
     expect(publishText).not.toContain("git tag");
     expect(publishText).not.toContain("git push origin");
     expect(publishText).toContain("git ls-remote --exit-code --tags origin");

@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 
-export const GATE_AUTHORITY_VERSION = 5;
+export const GATE_AUTHORITY_VERSION = 6;
 
 export const PHASES = Object.freeze(["T0", "T1", "T2", "T3", "merge-reuse", "stable"]);
 export const ENTRY_POINTS = Object.freeze([
@@ -84,6 +84,12 @@ const LOCAL_UPDATE_FOCUSED_PRODUCTION_PATHS = new Set([
   "tools/fased-lifecycled/daemon/service.go",
   "tools/fased-lifecycled/platform/target_adapter.go",
   "src/wallet/wallet-runtime-config.ts",
+]);
+const FEDERATION_PERMISSION_PRODUCTION_PATHS = new Set([
+  "src/federation/federation-state-permissions.ts",
+]);
+const FEDERATION_PERMISSION_TEST_PATHS = new Set([
+  "src/federation/federation-state-permissions.test.ts",
 ]);
 const NODE_PACKAGING_PATH_RE =
   /^(?:package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|packages\/|extensions\/[^/]+\/package\.json$|scripts\/(?:build-hosted-runtime-artifact|hosted-release-manifest|managed-runtime-layout|release-artifact-set)[^/]*)/;
@@ -410,6 +416,19 @@ export function createGatePlan(inputPaths, options = {}) {
   );
   const productionPaths = versionOnly ? [] : paths.filter((path) => !isNonProductionPath(path));
   const productionChanged = productionPaths.length > 0;
+  const focusedFederationPermissionChange =
+    productionChanged &&
+    productionPaths.every((path) => FEDERATION_PERMISSION_PRODUCTION_PATHS.has(path)) &&
+    paths.every(
+      (path) =>
+        FEDERATION_PERMISSION_PRODUCTION_PATHS.has(path) ||
+        FEDERATION_PERMISSION_TEST_PATHS.has(path),
+    );
+  const selectedTestPaths = focusedFederationPermissionChange
+    ? [...FEDERATION_PERMISSION_TEST_PATHS]
+    : testOnly
+      ? paths
+      : [];
   const gateToolingOnly =
     !versionOnly &&
     !docsOnly &&
@@ -584,17 +603,19 @@ export function createGatePlan(inputPaths, options = {}) {
   const runNodeUnit =
     runNode &&
     !focusedNodeLane &&
-    routableTestOnly &&
-    paths.some(
-      (path) =>
-        !UI_PATH_RE.test(path) &&
-        !GATEWAY_NODE_PATH_RE.test(path) &&
-        !EXTENSION_NODE_PATH_RE.test(path),
-    );
+    (focusedFederationPermissionChange ||
+      (routableTestOnly &&
+        paths.some(
+          (path) =>
+            !UI_PATH_RE.test(path) &&
+            !GATEWAY_NODE_PATH_RE.test(path) &&
+            !EXTENSION_NODE_PATH_RE.test(path),
+        )));
   const runNodeBuild =
     runNode &&
     !installerReleaseVerification &&
     !pureUiProduction &&
+    !focusedFederationPermissionChange &&
     (productionChanged || runHosting || runLocalFresh || runLocalUpdate);
   const runNodePackaging =
     runNode &&
@@ -737,6 +758,7 @@ export function createGatePlan(inputPaths, options = {}) {
     changeKind,
     paths,
     productionPaths,
+    selectedTestPaths,
     scope,
     surfaces: surfaceMap(affectedScope, paths, productionPaths),
     acceptance: acceptanceGates(scope),
@@ -762,6 +784,7 @@ export function classifyChangedPaths(paths, options = {}) {
     surfaces: plan.surfaces,
     acceptance: plan.acceptance,
     affectedAcceptance: plan.affectedAcceptance,
+    selectedTestPaths: plan.selectedTestPaths,
     manualReviewRequired: plan.manualReviewRequired,
     planDigest: plan.planDigest,
   });

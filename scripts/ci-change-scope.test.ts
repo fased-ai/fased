@@ -254,6 +254,22 @@ describe("CI changed-surface classification", () => {
     );
   });
 
+  it("exports the protected exact test for a federation permission correction", () => {
+    const plan = createGatePlan([
+      "src/federation/federation-state-permissions.ts",
+      "src/federation/federation-state-permissions.test.ts",
+    ]);
+    expect(outputEntries(plan)).toMatchObject({
+      changed_test_paths_json: '["src/federation/federation-state-permissions.test.ts"]',
+      run_node_unit: "true",
+      run_node_full: "false",
+      run_node_build: "false",
+      run_ui: "false",
+      run_node_gateway: "false",
+      run_node_extensions: "false",
+    });
+  });
+
   it("recognizes the exact release-version file set", () => {
     expect(
       classifyChangedPaths([
