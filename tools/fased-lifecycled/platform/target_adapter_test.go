@@ -20,6 +20,25 @@ type fakeUnits struct {
 
 type fakeLifecycleFiles struct{ calls *[]string }
 
+type fakeSharedState struct{ calls *[]string }
+
+func (state fakeSharedState) Prepare(string) error {
+	*state.calls = append(*state.calls, "shared.prepare")
+	return nil
+}
+func (state fakeSharedState) Activate(string) error {
+	*state.calls = append(*state.calls, "shared.activate")
+	return nil
+}
+func (state fakeSharedState) Restore(string) error {
+	*state.calls = append(*state.calls, "shared.restore")
+	return nil
+}
+func (state fakeSharedState) Discard(string) error {
+	*state.calls = append(*state.calls, "shared.discard")
+	return nil
+}
+
 func (files fakeLifecycleFiles) Prepare(string, map[string]LifecycleFile) error {
 	*files.calls = append(*files.calls, "files.prepare")
 	return nil
@@ -158,7 +177,7 @@ func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) 
 		t.Fatal(err)
 	}
 	calls := []string{}
-	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Files: fakeLifecycleFiles{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls}, Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Network: NoNetworkPolicy{}}, tx, &calls
+	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Files: fakeLifecycleFiles{calls: &calls}, SharedState: fakeSharedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls}, Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Network: NoNetworkPolicy{}}, tx, &calls
 }
 
 func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing.T) {
@@ -180,12 +199,12 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 		t.Fatal(err)
 	}
 	want := []string{
-		"units.prepare", "files.prepare", "systemd.stop:fased-gateway-example.service", "systemd.stop:fased-signerd-example.service",
-		"files.activate", "units.activate", "systemd.reload", "systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
+		"units.prepare", "shared.prepare", "files.prepare", "systemd.stop:fased-gateway-example.service", "systemd.stop:fased-signerd-example.service",
+		"shared.activate", "files.activate", "units.activate", "systemd.reload", "systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
 		"systemd.enable:fased-gateway-example.service", "systemd.start:fased-gateway-example.service",
 		"systemd.active:fased-signerd-example.service", "systemd.active:fased-gateway-example.service",
 		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		"generation.activate:" + digestB + ":" + digestA, "files.activate", "units.discard", "files.discard",
+		"generation.activate:" + digestB + ":" + digestA, "files.activate", "units.discard", "files.discard", "shared.discard",
 	}
 	if !reflect.DeepEqual(*calls, want) {
 		t.Fatalf("unexpected target adapter order:\n got=%v\nwant=%v", *calls, want)
@@ -199,6 +218,7 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 		!strings.Contains(combined, "RuntimeDirectoryMode=0755") ||
 		!strings.Contains(combined, "WorkingDirectory="+filepath.Join(adapter.Generations.(fakeGenerations).root, "runtime")) ||
 		!strings.Contains(combined, "Environment=HOME="+adapter.Config.OwnerHome()) ||
+		!strings.Contains(combined, "Environment=FASED_PLUGIN_STATUS_CACHE_PATH="+filepath.Join(adapter.Config.OwnerStateRoot, "cache", "plugin-status.json")) ||
 		!strings.Contains(combined, "Environment=FASED_VERSION=0.1.76") ||
 		!strings.Contains(combined, "Environment=FASED_HOST_PROFILE=local") ||
 		!strings.Contains(combined, "BindReadOnlyPaths="+filepath.Join(adapter.Generations.(fakeGenerations).root, "dependencies", "node_modules")+":"+filepath.Join(adapter.Generations.(fakeGenerations).root, "runtime", "node_modules")) {
@@ -259,7 +279,7 @@ func TestFreshLocalDefersGatewayUntilOnboardingCreatesConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"units.prepare", "files.prepare", "files.activate", "units.activate", "systemd.reload",
+		"units.prepare", "shared.prepare", "files.prepare", "shared.activate", "files.activate", "units.activate", "systemd.reload",
 		"systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
 		"systemd.enable:fased-gateway-example.service", "systemd.active:fased-signerd-example.service",
 	}
@@ -348,7 +368,7 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	calls := []string{}
 	units := &fakeUnits{calls: &calls}
 	adapter := &TargetAdapter{
-		Config: config, Identity: identity, Units: units, Files: fakeLifecycleFiles{calls: &calls},
+		Config: config, Identity: identity, Units: units, Files: fakeLifecycleFiles{calls: &calls}, SharedState: fakeSharedState{calls: &calls},
 		Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls},
 		Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Network: NoNetworkPolicy{},
 	}
@@ -369,12 +389,12 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"units.prepare", "files.prepare", "systemd.stop:fased-gateway.service", "systemd.stop:fased-signerd.service",
-		"files.activate", "units.activate", "systemd.reload", "systemd.enable:fased-signerd.service", "systemd.start:fased-signerd.service",
+		"units.prepare", "shared.prepare", "files.prepare", "systemd.stop:fased-gateway.service", "systemd.stop:fased-signerd.service",
+		"shared.activate", "files.activate", "units.activate", "systemd.reload", "systemd.enable:fased-signerd.service", "systemd.start:fased-signerd.service",
 		"systemd.enable:fased-gateway.service", "systemd.start:fased-gateway.service",
 		"systemd.active:fased-signerd.service", "systemd.active:fased-gateway.service",
 		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		"generation.activate:" + digestB + ":" + digestA, "files.activate", "units.discard", "files.discard",
+		"generation.activate:" + digestB + ":" + digestA, "files.activate", "units.discard", "files.discard", "shared.discard",
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("unexpected Hosting adapter order:\n got=%v\nwant=%v", calls, want)
@@ -383,6 +403,7 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	for _, required := range []string{
 		"User=996", "NoNewPrivileges=true", "Environment=HOME=" + config.OwnerHome(),
 		"Environment=FASED_STATE_DIR=" + config.OwnerStateRoot, "Environment=FASED_HOST_PROFILE=hosting",
+		"Environment=FASED_PLUGIN_STATUS_CACHE_PATH=" + filepath.Join(config.OwnerStateRoot, "cache", "plugin-status.json"),
 		"-state-db /var/lib/fased-signerd/state.db", "-update-gate /var/lib/fased-signer-update-gate/active",
 	} {
 		if !strings.Contains(combined, required) {
@@ -399,7 +420,7 @@ func TestTargetAdapterRestoresPreviousButDoesNotStartAbsentFreshServices(t *test
 	if err := adapter.Restore(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(*calls, []string{"files.restore", "units.restore", "systemd.reload", "systemd.start:fased-signerd-example.service", "systemd.start:fased-gateway-example.service"}) {
+	if !reflect.DeepEqual(*calls, []string{"files.restore", "shared.restore", "units.restore", "systemd.reload", "systemd.start:fased-signerd-example.service", "systemd.start:fased-gateway-example.service"}) {
 		t.Fatalf("update restore order changed: %v", *calls)
 	}
 	*calls = nil
@@ -407,7 +428,7 @@ func TestTargetAdapterRestoresPreviousButDoesNotStartAbsentFreshServices(t *test
 	if err := adapter.Restore(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(*calls, []string{"files.restore", "units.restore", "systemd.reload"}) {
+	if !reflect.DeepEqual(*calls, []string{"files.restore", "shared.restore", "units.restore", "systemd.reload"}) {
 		t.Fatalf("fresh rollback started absent services: %v", *calls)
 	}
 }
