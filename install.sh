@@ -7205,6 +7205,20 @@ if [[ ! -f "${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}" ]]; then
   echo "Rerun ./install.sh from an interactive terminal, or pass non-interactive onboarding flags after --." >&2
   exit 1
 fi
+if [[ "$PROTECTED_LOCAL_LIFECYCLE_COMMITTED" -eq 1 ]]; then
+  lifecycle_binary="${FASED_WALLET_LOCAL_SIGNER_BIN%/fased-signerd}/fased-lifecycled"
+  lifecycle_request_id="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || true)"
+  if [[ ! -x "$lifecycle_binary" || ! "$lifecycle_request_id" =~ ^[0-9a-f-]{36}$ ]] || \
+    ! "$lifecycle_binary" request \
+      --socket "$FASED_HOST_UPDATER_SOCKET" \
+      --operation COMPLETE_ONBOARDING \
+      --request-id "$lifecycle_request_id" >/dev/null; then
+    write_install_marker "$REPO_ROOT" "false"
+    echo "Protected Local onboarding completed, but the Go lifecycle service could not activate and verify the Gateway." >&2
+    echo "Rerun the same Local installer command; do not start the service manually." >&2
+    exit 1
+  fi
+fi
 if [[ "$PROTECTED_LOCAL_BOOTSTRAPPED" -eq 1 ]]; then
   :
 else

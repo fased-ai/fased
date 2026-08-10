@@ -14,9 +14,10 @@ const CurrentSchemaVersion uint32 = 1
 type Operation string
 
 const (
-	OperationInspect  Operation = "INSPECT"
-	OperationConverge Operation = "CONVERGE"
-	OperationRecover  Operation = "RECOVER"
+	OperationInspect            Operation = "INSPECT"
+	OperationConverge           Operation = "CONVERGE"
+	OperationRecover            Operation = "RECOVER"
+	OperationCompleteOnboarding Operation = "COMPLETE_ONBOARDING"
 )
 
 type Request struct {
@@ -74,9 +75,9 @@ func (request Request) Validate() error {
 		return errors.New("request id must be a lowercase UUID")
 	}
 	switch request.Operation {
-	case OperationInspect:
+	case OperationInspect, OperationCompleteOnboarding:
 		if request.TargetGenerationID != "" || request.SourceTopology != "" || request.ExpectedManifestDigest != "" || request.TransactionID != "" {
-			return errors.New("inspect does not accept mutation selectors")
+			return fmt.Errorf("%s does not accept mutation selectors", request.Operation)
 		}
 	case OperationConverge:
 		if !digestPattern.MatchString(request.TargetGenerationID) {

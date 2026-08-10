@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"fased-lifecycled/model"
 )
@@ -29,6 +30,10 @@ type Predecessor interface {
 	Discard(context.Context, model.Transaction) error
 }
 
+type ManifestReader interface {
+	ReadManifest() (model.Manifest, string, error)
+}
+
 type TargetAdapter struct {
 	Config      Config
 	Identity    model.PlatformIdentity
@@ -39,6 +44,56 @@ type TargetAdapter struct {
 	Health      GatewayHealth
 	Predecessor Predecessor
 	Network     NetworkPolicy
+	Manifest    ManifestReader
+}
+
+func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) error {
+	if adapter == nil || adapter.Config.Profile != model.ProfileProtectedLocal || adapter.Manifest == nil || adapter.Systemd == nil || adapter.Health == nil {
+		return errors.New("protected Local onboarding adapter is incomplete")
+	}
+	manifest, _, err := adapter.Manifest.ReadManifest()
+	if err != nil {
+		return err
+	}
+	if err := manifest.Validate(); err != nil || manifest.Profile != adapter.Config.Profile || manifest.ActiveGeneration == nil {
+		return errors.New("protected Local onboarding requires a committed active generation")
+	}
+	configured, err := adapter.Config.Identity()
+	if err != nil {
+		return err
+	}
+	want, _ := configured.Digest(adapter.Config.Profile)
+	got, digestErr := manifest.Platform.Digest(manifest.Profile)
+	if digestErr != nil || got != want {
+		return errors.New("protected Local onboarding platform identity mismatch")
+	}
+	if err := validateOnboardingConfig(adapter.Config); err != nil {
+		return err
+	}
+	if err := adapter.Systemd.IsActive(ctx, adapter.Identity.Services["signer"]); err != nil {
+		return fmt.Errorf("signer is not active before onboarding completion: %w", err)
+	}
+	if err := adapter.Systemd.Start(ctx, adapter.Identity.Services["gateway"]); err != nil {
+		return err
+	}
+	if err := adapter.Systemd.IsActive(ctx, adapter.Identity.Services["gateway"]); err != nil {
+		return fmt.Errorf("Gateway is not active after onboarding completion: %w", err)
+	}
+	return adapter.Health.Verify(ctx, adapter.Config.GatewayPort, *manifest.ActiveGeneration)
+}
+
+func validateOnboardingConfig(config Config) error {
+	path := filepath.Join(config.OwnerStateRoot, "fased.json")
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || !ok || stat.Nlink != 1 || stat.Uid != config.Operator.UID ||
+		info.Mode().Perm()&0o007 != 0 || info.Mode().Perm()&0o111 != 0 || info.Size() == 0 || info.Size() > 4<<20 {
+		return errors.New("protected Local onboarding configuration is unsafe")
+	}
+	return nil
 }
 
 func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction) error {

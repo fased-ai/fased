@@ -1000,27 +1000,16 @@ default:other::---
     expect(fs.statSync(receipt).mode & 0o777).toBe(0o644);
   });
 
-  it("packages one commit-before-onboarding protected Local lifecycle", () => {
+  it("packages one Go-owned commit-before-onboarding protected Local lifecycle", () => {
     const installer = fs.readFileSync(path.join(process.cwd(), "install.sh"), "utf8");
-    const bootstrap = fs.readFileSync(
-      path.join(process.cwd(), "scripts", "protected-local-bootstrap.mjs"),
-      "utf8",
-    );
-    const updater = fs.readFileSync(
-      path.join(process.cwd(), "scripts", "fased-host-updater.mjs"),
-      "utf8",
-    );
     const packageMetadata = JSON.parse(
       fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
     ) as { files: string[] };
-    expect(packageMetadata.files).toContain("scripts/protected-local-bootstrap.mjs");
-    expect(packageMetadata.files).toContain("scripts/lifecycle-control-normalizer.mjs");
-    expect(bootstrap).toContain('"/opt/fased",\n    "/opt/fased/local"');
+    expect(packageMetadata.files).not.toContain("scripts/protected-local-bootstrap.mjs");
+    expect(packageMetadata.files).not.toContain("scripts/lifecycle-control-normalizer.mjs");
+    expect(packageMetadata.files).not.toContain("scripts/fased-host-updater.mjs");
     expect(installer).toContain("--protected-local-root-bootstrap");
     expect(installer).toContain("bootstrap_protected_local_topology");
-    expect(installer).toContain("--protected-local-gateway-mode");
-    expect(installer).toContain("--protected-local-gateway-health-timeout-ms");
-    expect(installer).toContain("--gateway-health-timeout-ms");
     expect(installer).toContain('>"$bootstrap_log" 2>&1');
     expect(installer).toContain("print_local_handoff_block");
     expect(installer).not.toContain('"$FASED_CLI_PATH" dashboard --no-open');
@@ -1030,32 +1019,7 @@ default:other::---
     expect(installer).toContain("bootstrap_protected_local_topology activate");
     expect(installer).toContain("--resume-local-onboarding");
     expect(installer).not.toContain("bootstrap_protected_local_topology rollback");
-    expect(installer).toContain("signer_sha256=");
-    expect(installer).toContain("local -a apt_packages=(git curl ca-certificates jq acl)");
-    expect(installer).toContain("need_cmd setpriv || apt_packages+=(util-linux)");
-    expect(installer).toContain('apt-get install -y "${apt_packages[@]}"');
-    expect(installer).toContain('missing+=("acl")');
-    expect(installer).toContain(
-      "pacman -Sy --needed --noconfirm git curl ca-certificates jq acl util-linux nodejs npm",
-    );
-    const sharedStateStart = bootstrap.indexOf("async function shareApplicationState(");
-    const sharedStateEnd = bootstrap.indexOf(
-      "\n\nconst PROTECTED_LOCAL_OPERATOR_ONLY_STATE",
-      sharedStateStart,
-    );
-    const sharedStateAdapter = bootstrap.slice(sharedStateStart, sharedStateEnd);
-    expect(sharedStateAdapter).not.toContain('path.join(spec.stateDir, "identity")');
-    expect(sharedStateAdapter).not.toContain('path.join(spec.stateDir, "wallet")');
-    expect(sharedStateAdapter).not.toContain('path.join(spec.stateDir, "federation")');
-    expect(updater).toMatch(
-      /relativePath: "identity",\s+stateClass: "device-identity",\s+create: true,\s+preserveContent: true,/u,
-    );
-    expect(updater).toMatch(
-      /relativePath: "wallet",\s+stateClass: "wallet",\s+create: true,\s+preserveContent: true,/u,
-    );
-    expect(updater).toMatch(
-      /relativePath: "federation",\s+stateClass: "federation-network",\s+create: true,\s+preserveContent: true,/u,
-    );
+    expect(installer).toContain("--operation COMPLETE_ONBOARDING");
   });
 
   it("repairs an already-protected Local topology through the root lifecycle controller", () => {
@@ -1087,7 +1051,7 @@ default:other::---
     const bootstrapStart = installer.indexOf("bootstrap_protected_local_topology() {");
     const bootstrapEnd = installer.indexOf("\n\nis_app_service_session() {", bootstrapStart);
     const bootstrap = installer.slice(bootstrapStart, bootstrapEnd);
-    const bundleEntryStart = installer.indexOf("    enter_protected_local_bundle() {");
+    const bundleEntryStart = installer.indexOf("    enter_go_lifecycle_bundle() {");
     const bundleEntryEnd = installer.indexOf("\n    }\n", bundleEntryStart);
     const bundleEntry = installer.slice(bundleEntryStart, bundleEntryEnd);
 
@@ -1103,11 +1067,10 @@ default:other::---
       'if [[ "$hosting_bootstrap" -eq 1 || "$protected_local_bootstrap" -eq 1 ]]',
     );
     expect(installer).toContain('bootstrap_hosting_attested_bundle "$@"');
-    expect(bundleEntry).toContain('"$selected_package_root/scripts/protected-local-bootstrap.mjs"');
-    expect(bundleEntry).toContain('--source-root "$selected_package_root"');
     expect(bundleEntry).toContain(
-      '--signer-binary "$selected_root_store/verified-assets/fased-signerd"',
+      '"$selected_package_root/scripts/generation-updater.mjs" initialize',
     );
+    expect(bundleEntry).not.toContain("protected-local-bootstrap.mjs");
 
     const root = temporaryRoot();
     const sourceRoot = path.join(root, "release-source");

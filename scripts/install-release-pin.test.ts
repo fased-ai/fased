@@ -1073,11 +1073,17 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
       "if ! prepare_protected_local_onboarding_scaffold",
     );
     const onboarding = installer.indexOf('FASED_INSTALLER_ONBOARD=1 "$FASED_CLI_PATH" onboard');
+    const onboardingCompletion = installer.indexOf("--operation COMPLETE_ONBOARDING", onboarding);
     const finalMarker = installer.indexOf('write_install_marker "$REPO_ROOT" "true"', onboarding);
     expect(protectedActivation).toBeGreaterThanOrEqual(0);
     expect(onboardingScaffold).toBeGreaterThan(protectedActivation);
     expect(onboarding).toBeGreaterThan(onboardingScaffold);
     expect(onboarding).toBeGreaterThan(protectedActivation);
+    expect(onboardingCompletion).toBeGreaterThan(onboarding);
+    expect(onboardingCompletion).toBeLessThan(finalMarker);
+    expect(installer.slice(onboarding, finalMarker)).toContain(
+      'lifecycle_binary="${FASED_WALLET_LOCAL_SIGNER_BIN%/fased-signerd}/fased-lifecycled"',
+    );
     expect(finalMarker).toBeGreaterThan(onboarding);
     expect(installer).not.toContain(
       "persist_runtime_update_channel protected-local-pre-activation",

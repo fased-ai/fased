@@ -50,3 +50,14 @@ func TestInspectHasNoMutationSelectors(t *testing.T) {
 		t.Fatal("inspect request accepted a mutation selector")
 	}
 }
+
+func TestCompleteOnboardingHasNoCallerControlledSelectors(t *testing.T) {
+	input := `{"schemaVersion":1,"requestId":"018f47d2-5a6b-7c8d-9e0f-123456789abc","operation":"COMPLETE_ONBOARDING"}`
+	if _, err := DecodeRequest(strings.NewReader(input)); err != nil {
+		t.Fatal(err)
+	}
+	withTarget := strings.Replace(input, `"operation":"COMPLETE_ONBOARDING"`, `"operation":"COMPLETE_ONBOARDING","targetGenerationId":"`+digest+`"`, 1)
+	if _, err := DecodeRequest(strings.NewReader(withTarget)); err == nil {
+		t.Fatal("onboarding completion accepted a caller-controlled generation")
+	}
+}

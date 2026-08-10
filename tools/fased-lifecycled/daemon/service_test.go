@@ -96,6 +96,13 @@ type fakeSupervisor struct {
 	tx   model.Transaction
 }
 
+type fakeOnboarding struct{ calls int }
+
+func (value *fakeOnboarding) CompleteOnboarding(context.Context) (engine.Result, error) {
+	value.calls++
+	return engine.Result{Outcome: engine.OutcomeUpdated, Phase: model.PhaseCommitted}, nil
+}
+
 func (supervisor *fakeSupervisor) Run(_ context.Context, tx model.Transaction) (engine.Result, error) {
 	supervisor.runs++
 	supervisor.tx = tx
@@ -140,6 +147,20 @@ func TestConvergeBuildsTransactionFromStoredContract(t *testing.T) {
 	}
 	if supervisor.tx.PlanAction != string(planner.ActionInstall) || supervisor.tx.SourceTopology != "" {
 		t.Fatalf("fresh transaction lost its planner identity: %+v", supervisor.tx)
+	}
+}
+
+func TestCompleteOnboardingUsesCommittedManifestAndTargetController(t *testing.T) {
+	_, target := targetContract()
+	manifest := model.Manifest{SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal,
+		Platform: platform(), ActiveGeneration: &target, StateSchemas: map[string]uint32{"signer": 2}, Capabilities: capabilities()}
+	completion := &fakeOnboarding{}
+	service := Service{Profile: model.ProfileProtectedLocal, Platform: platform(),
+		Store: fakeStore{manifest: &manifest, manifestDigest: digestA}, Inventory: &fakeInventory{}, Supervisor: &fakeSupervisor{}, Onboarding: completion}
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationCompleteOnboarding}
+	response, err := service.Handle(context.Background(), request)
+	if err != nil || completion.calls != 1 || response.Outcome != string(engine.OutcomeUpdated) || response.ActiveGenerationID != target.ID {
+		t.Fatalf("unexpected onboarding completion: response=%+v calls=%d err=%v", response, completion.calls, err)
 	}
 }
 

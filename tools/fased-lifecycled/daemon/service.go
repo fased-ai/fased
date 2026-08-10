@@ -37,6 +37,10 @@ type Supervisor interface {
 	Recover(context.Context, model.Transaction) (engine.Result, error)
 }
 
+type OnboardingCompleter interface {
+	CompleteOnboarding(context.Context) (engine.Result, error)
+}
+
 type IDGenerator func() (string, error)
 
 type Service struct {
@@ -45,6 +49,7 @@ type Service struct {
 	Store      StateStore
 	Inventory  StateInventory
 	Supervisor Supervisor
+	Onboarding OnboardingCompleter
 	NewID      IDGenerator
 	mutationMu sync.Mutex
 }
@@ -67,9 +72,42 @@ func (service *Service) Handle(ctx context.Context, request protocol.Request) (p
 		service.mutationMu.Lock()
 		defer service.mutationMu.Unlock()
 		return service.recover(ctx, request)
+	case protocol.OperationCompleteOnboarding:
+		service.mutationMu.Lock()
+		defer service.mutationMu.Unlock()
+		return service.completeOnboarding(ctx, request)
 	default:
 		return protocol.Response{}, errors.New("unsupported lifecycle operation")
 	}
+}
+
+func (service *Service) completeOnboarding(ctx context.Context, request protocol.Request) (protocol.Response, error) {
+	if service.Profile != model.ProfileProtectedLocal || service.Onboarding == nil {
+		return protocol.Response{}, errors.New("onboarding completion is available only for protected Local installations")
+	}
+	manifest, _, err := service.Store.ReadManifest()
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	if err := manifest.Validate(); err != nil || manifest.Profile != service.Profile || manifest.ActiveGeneration == nil {
+		return protocol.Response{}, errors.New("committed Local installation is not ready for onboarding completion")
+	}
+	platformDigest, err := service.Platform.Digest(service.Profile)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	manifestDigest, err := manifest.Platform.Digest(manifest.Profile)
+	if err != nil || manifestDigest != platformDigest {
+		return protocol.Response{}, errors.New("committed Local platform identity changed before onboarding completion")
+	}
+	result, err := service.Onboarding.CompleteOnboarding(ctx)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	if result.Phase != model.PhaseCommitted || (result.Outcome != engine.OutcomeUpdated && result.Outcome != engine.OutcomeAlreadyCurrent) {
+		return protocol.Response{}, errors.New("target controller did not complete Local onboarding")
+	}
+	return response(request, string(result.Outcome), "", manifest.ActiveGeneration.ID), nil
 }
 
 func (service *Service) inspect(request protocol.Request) (protocol.Response, error) {

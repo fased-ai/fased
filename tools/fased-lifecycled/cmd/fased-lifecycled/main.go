@@ -709,7 +709,7 @@ func runSupervisor(ctx context.Context, config platform.Config, socketPath strin
 	targetClient := controller.Client{SocketPath: config.ControllerSocket(), Timeout: 4 * time.Minute}
 	supervisor := &engine.SupervisorEngine{Journal: state, Controller: controllerAdapter, Target: targetClient}
 	binder := &statebind.Binder{Specs: statebind.CanonicalSpecs(config.OwnerStateRoot, config.InstallRoot, config.SignerStateRoot())}
-	service := &daemon.Service{Profile: config.Profile, Platform: identity, Store: state, Inventory: binder, Supervisor: supervisor}
+	service := &daemon.Service{Profile: config.Profile, Platform: identity, Store: state, Inventory: binder, Supervisor: supervisor, Onboarding: targetClient}
 	listener, err := listenBound(socketPath, 0o660, int(config.Operator.GID))
 	if err != nil {
 		return err
@@ -763,7 +763,7 @@ func runTarget(ctx context.Context, config platform.Config, socketPath string) e
 		predecessor = &platform.HostingPredecessor{Config: config, Systemd: systemd, State: platform.CommandServiceState{Binary: "/usr/bin/systemctl"}}
 		networkPolicy = platform.CommandHostingNetworkPolicy{TailscaleBinary: "/usr/bin/tailscale", SocketBinary: "/usr/bin/ss"}
 	}
-	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Files: files, Systemd: systemd, Generations: state, Health: platform.LoopbackGatewayHealth{}, Predecessor: predecessor, Network: networkPolicy}
+	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Files: files, Systemd: systemd, Generations: state, Health: platform.LoopbackGatewayHealth{}, Predecessor: predecessor, Network: networkPolicy, Manifest: state}
 	targetEngine := &engine.TargetEngine{Journal: state, Generations: state,
 		Migrator: &migrator.SchemaMigrator{Registry: registry}, Signer: signerParticipant,
 		Adapter: targetAdapter, Installation: &platform.ManifestCommitter{Store: state, Identity: identity}}
@@ -773,7 +773,7 @@ func runTarget(ctx context.Context, config platform.Config, socketPath string) e
 	}
 	defer closeListener(listener, socketPath)
 	go closeOnContext(ctx, listener)
-	server := controller.Server{Service: &controller.Service{Engine: targetEngine}, OperationTimeout: 4 * time.Minute}
+	server := controller.Server{Service: &controller.Service{Engine: targetEngine, Onboarding: targetAdapter}, OperationTimeout: 4 * time.Minute}
 	return server.Serve(ctx, listener)
 }
 

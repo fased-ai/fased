@@ -95,6 +95,12 @@ type fakeGenerations struct {
 
 type fakeHealth struct{ calls *[]string }
 
+type fakeManifestReader struct{ manifest model.Manifest }
+
+func (reader fakeManifestReader) ReadManifest() (model.Manifest, string, error) {
+	return reader.manifest, digestA, nil
+}
+
 func (health fakeHealth) Verify(_ context.Context, port uint16, target model.Generation) error {
 	*health.calls = append(*health.calls, fmt.Sprintf("gateway.ready:%d:%s:%s", port, target.Version, target.Commit))
 	return nil
@@ -242,6 +248,41 @@ func TestFreshLocalDefersGatewayUntilOnboardingCreatesConfig(t *testing.T) {
 	}
 	if !reflect.DeepEqual(*calls, want) {
 		t.Fatalf("fresh Local started or health-checked Gateway before onboarding:\n got=%v\nwant=%v", *calls, want)
+	}
+}
+
+func TestCompleteOnboardingStartsAndVerifiesExactCommittedGateway(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), ".fased")
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(stateRoot, "fased.json")
+	if err := os.WriteFile(configPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	operator := Principal{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}
+	gateway := Principal{UID: operator.UID + 1, GID: operator.GID + 1}
+	signer := Principal{UID: operator.UID + 2, GID: operator.GID + 2}
+	config, err := NewConfig(model.ProfileProtectedLocal, "example", stateRoot, operator, gateway, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := config.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := model.Generation{ID: digestB, Version: "0.1.76", Commit: commitB, Tree: commitB, ArtifactSetDigest: digestB}
+	manifest := model.Manifest{SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal,
+		Platform: identity, ActiveGeneration: &active, StateSchemas: map[string]uint32{"signer": 2},
+		Capabilities: model.CapabilityRanges{Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1}, Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 1, Max: 1}}}
+	calls := []string{}
+	adapter := TargetAdapter{Config: config, Identity: identity, Systemd: fakeSystemd{calls: &calls}, Health: fakeHealth{calls: &calls}, Manifest: fakeManifestReader{manifest: manifest}}
+	if err := adapter.CompleteOnboarding(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"systemd.active:" + identity.Services["signer"], "systemd.start:" + identity.Services["gateway"], "systemd.active:" + identity.Services["gateway"], "gateway.ready:18789:0.1.76:" + commitB}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("unexpected onboarding completion order: got=%v want=%v", calls, want)
 	}
 }
 
