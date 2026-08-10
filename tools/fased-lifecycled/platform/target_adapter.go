@@ -386,7 +386,7 @@ Environment=FASED_GATEWAY_SERVICE=1
 Environment=FASED_RUNTIME_SOURCE=managed-package
 Environment=FASED_VERSION=%s
 Environment=FASED_HOST_PROFILE=%s
-Environment=FASED_GATEWAY_PORT=%d
+%sEnvironment=FASED_GATEWAY_PORT=%d
 Environment=FASED_WALLET_LOCAL_SIGNER_SOCKET=%s
 ExecStart=%s
 Restart=always
@@ -406,7 +406,7 @@ WantedBy=multi-user.target
 `, adapter.Config.InstanceID, adapter.Identity.Services["signer"], adapter.Identity.Services["signer"],
 		adapter.Config.Gateway.UID, adapter.Config.Gateway.GID, adapter.Config.ConfigGroupName(), payload,
 		adapter.Config.OwnerHome(), adapter.Config.OwnerStateRoot,
-		adapter.Config.OwnerStateRoot, adapter.Config.OwnerStateRoot, adapter.Config.OwnerStateRoot, payload, version, profileEnvironment(adapter.Config.Profile), adapter.Config.GatewayPort, adapter.Config.ApplicationSocket(),
+		adapter.Config.OwnerStateRoot, adapter.Config.OwnerStateRoot, adapter.Config.OwnerStateRoot, payload, version, profileEnvironment(adapter.Config.Profile), protectedLocalEnvironment(adapter.Config.Profile), adapter.Config.GatewayPort, adapter.Config.ApplicationSocket(),
 		filepath.Join(payload, "bin/fased-gateway-launch"), dependencyMount, adapter.Config.OwnerStateRoot)
 	return map[string][]byte{
 		adapter.Identity.Services["signer"]: []byte(signer), adapter.Identity.Services["gateway"]: []byte(gateway),
@@ -418,6 +418,13 @@ func profileEnvironment(profile model.Profile) string {
 		return "local"
 	}
 	return "hosting"
+}
+
+func protectedLocalEnvironment(profile model.Profile) string {
+	if profile == model.ProfileProtectedLocal {
+		return "Environment=FASED_PROTECTED_LOCAL=1\n"
+	}
+	return ""
 }
 
 func requireExecutable(path string) error {

@@ -221,6 +221,7 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 		!strings.Contains(combined, "Environment=FASED_PLUGIN_STATUS_CACHE_PATH="+filepath.Join(adapter.Config.OwnerStateRoot, "cache", "plugin-status.json")) ||
 		!strings.Contains(combined, "Environment=FASED_VERSION=0.1.76") ||
 		!strings.Contains(combined, "Environment=FASED_HOST_PROFILE=local") ||
+		!strings.Contains(combined, "Environment=FASED_PROTECTED_LOCAL=1") ||
 		!strings.Contains(combined, "BindReadOnlyPaths="+filepath.Join(adapter.Generations.(fakeGenerations).root, "dependencies", "node_modules")+":"+filepath.Join(adapter.Generations.(fakeGenerations).root, "runtime", "node_modules")) {
 		t.Fatalf("canonical Gateway unit lacks Local runtime context:\n%s", combined)
 	}
@@ -412,6 +413,9 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	}
 	if strings.Contains(combined, "fased-local-") || strings.Contains(combined, "/var/lib/fased-local/") {
 		t.Fatalf("Hosting units contain Local topology:\n%s", combined)
+	}
+	if strings.Contains(combined, "FASED_PROTECTED_LOCAL") {
+		t.Fatalf("Hosting unit contains the protected Local marker:\n%s", combined)
 	}
 }
 
