@@ -136,6 +136,9 @@ new source commit and candidate; never rebuild the failed identity.
 P1 is confirmation, never discovery. Every source-dependent predicate must
 already have an equivalent passing Linux x64 branch-local result, and any
 product change after that result invalidates it before candidate allocation.
+Branch `x64` fixture aliases are never candidate inputs: the trusted candidate
+workflow builds every supported application, signer, and lifecycle target from
+the exact final source and publishes only those real architecture bytes.
 
 ## npm and PUBLIC0
 

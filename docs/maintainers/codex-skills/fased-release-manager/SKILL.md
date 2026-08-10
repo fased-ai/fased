@@ -222,6 +222,10 @@ branch-built artifacts:
 - Keep development proof small: build Linux x64 only and run only the affected
   Local or Hosting topology. Multi-architecture packaging belongs to the final
   immutable candidate, not the bug loop.
+- Use the fixture builder's `branch-x64` profile for development proof. It may
+  create non-executable copy-on-write aliases solely to satisfy the public manifest
+  schema, but must mark the artifact non-publishable and compile no ARM or macOS
+  binaries. Never feed this fixture artifact to candidate publication.
 - Use an isolated disposable systemd fixture unless the task explicitly owns a
   real installation. Never mutate an owner installation with unversioned source.
 - Fix every newly exposed predicate on the same local branch. Do not open,
