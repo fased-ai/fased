@@ -592,6 +592,16 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       fi
       printf '%s\n' "$lifecycle_result"
 
+      # Protected Local keeps onboarding in the original unprivileged
+      # installer process. That process owns the caller's exact arguments and
+      # sends COMPLETE_ONBOARDING after the wizard writes fased.json. The root
+      # bundle handoff must only commit the lifecycle transaction and return;
+      # attempting onboarding here loses the outer argument boundary and runs
+      # the wizard twice.
+      if [[ "$lifecycle_profile" == "protected-local" ]]; then
+        return 0
+      fi
+
       local lifecycle_config="${lifecycle_owner_state}/fased.json"
       if [[ ! -s "$lifecycle_config" ]]; then
         if [[ "$lifecycle_skip_onboard" -eq 1 ]]; then

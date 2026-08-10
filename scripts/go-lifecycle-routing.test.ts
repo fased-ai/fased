@@ -121,6 +121,15 @@ describe("single Go lifecycle production routing", () => {
         violations.push(`install.sh: verified root entry omits ${required}`);
       }
     }
+    const protectedLocalReturn = goEntry.indexOf(
+      'if [[ "$lifecycle_profile" == "protected-local" ]]',
+    );
+    const rootOnboarding = goEntry.indexOf('"$lifecycle_launcher" onboard --install-daemon');
+    if (protectedLocalReturn < 0 || rootOnboarding < 0 || protectedLocalReturn > rootOnboarding) {
+      violations.push(
+        "install.sh: Protected Local does not return to its unprivileged argument-preserving onboarding owner",
+      );
+    }
     for (const owner of mutationOwners) {
       const basename = owner.split("/").at(-1);
       if (basename && goEntry?.includes(basename)) {
