@@ -2,37 +2,27 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-INSTALL_DIR_DEFAULT="${HOME}/.fased/bin"
-INSTALL_DIR="${FASED_LOCAL_SIGNER_BIN_DIR:-$INSTALL_DIR_DEFAULT}"
+INSTALL_DIR="${FASED_LOCAL_SIGNER_BIN_DIR:-${HOME}/.fased/bin}"
 VERSION="${FASED_LOCAL_SIGNER_VERSION:-}"
-POLICY_TEMPLATE_DIR="${FASED_LOCAL_SIGNER_POLICY_TEMPLATE_DIR:-$(dirname "$INSTALL_DIR")/share/signer-policies}"
-UPDATER="$ROOT/scripts/fased-managed-updater.mjs"
-ACTION="install"
-DEFER_COMMIT=0
-CONFIRM_DOWNGRADE=""
 EXPECTED_COMMIT="${FASED_LOCAL_SIGNER_EXPECTED_COMMIT:-}"
+POLICY_TEMPLATE_DIR="${FASED_LOCAL_SIGNER_POLICY_TEMPLATE_DIR:-$(dirname "$INSTALL_DIR")/share/signer-policies}"
+DEFAULT_RELEASE_BASE_URL="https://github.com/fased-ai/fased/releases/download"
 
 usage() {
   cat <<'EOF'
 Usage: install-fased-signerd.sh [options]
 
-Installs the exact version-matched native signer for Local Linux, WSL2, or
-native macOS using an offline snapshot and crash-recoverable transaction.
+Installs the exact version-matched native signer for an unprivileged Local or
+developer installation. Protected Local and Hosting signer mutation belongs
+exclusively to fased-lifecycled.
 
 Options:
-  --version vX.Y.Z              Exact signer release (defaults to package version)
-  --expected-commit SHA         Require the signer release to match this app commit
-  --defer-commit                Leave the verified candidate open for paired app health
-  --confirm-downgrade X.Y.Z     Explicitly confirm one exact reviewed downgrade target
-  --verify                      Verify the exact running binary, release, and protocol-v2 health
-  --commit                      Commit a deferred verified transaction
-  --rollback                    Restore the exact verified pre-update snapshot
-  --recover                     Recover an interrupted transaction deterministically
-  --status                      Print the current signer transaction journal
-  -h, --help                    Show this help
+  --version vX.Y.Z          Exact signer release (defaults to package version)
+  --expected-commit SHA     Require the signer release to match this app commit
+  -h, --help                Show this help
 
-Native Windows is unsupported. Run this installer inside Ubuntu on WSL2.
-Official installs require gh with `gh attestation verify`; Go is not required.
+Native Windows is unsupported. Run Fased inside Ubuntu on WSL2. Official
+installs require gh attestation verify; Go is not required.
 EOF
 }
 
@@ -46,33 +36,9 @@ while [[ $# -gt 0 ]]; do
       EXPECTED_COMMIT="${2:-}"
       shift 2
       ;;
-    --defer-commit)
-      DEFER_COMMIT=1
-      shift
-      ;;
-    --confirm-downgrade)
-      CONFIRM_DOWNGRADE="${2:-}"
-      shift 2
-      ;;
-    --commit)
-      ACTION="commit"
-      shift
-      ;;
-    --verify)
-      ACTION="verify"
-      shift
-      ;;
-    --rollback)
-      ACTION="rollback"
-      shift
-      ;;
-    --recover)
-      ACTION="recover"
-      shift
-      ;;
-    --status)
-      ACTION="status"
-      shift
+    --defer-commit|--commit|--verify|--rollback|--recover|--status|--confirm-downgrade)
+      echo "Standalone signer lifecycle transactions were retired; use fased update for managed installations." >&2
+      exit 2
       ;;
     -h|--help)
       usage
@@ -88,7 +54,8 @@ done
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 case "$OS" in
-  linux|darwin) ;;
+  linux) platform="linux" ;;
+  darwin) platform="darwin" ;;
   mingw*|msys*|cygwin*)
     echo "Native Windows is unsupported. Install and run Fased inside Ubuntu on WSL2." >&2
     exit 1
@@ -99,127 +66,152 @@ case "$OS" in
     ;;
 esac
 
-command -v node >/dev/null 2>&1 || {
-  echo "Node.js is required to run the transactional signer installer." >&2
-  exit 1
-}
-[[ -f "$UPDATER" && ! -L "$UPDATER" ]] || {
-  echo "Packaged transactional signer updater is missing: $UPDATER" >&2
-  exit 1
-}
-
-if [[ "$ACTION" == "install" || "$ACTION" == "verify" ]]; then
-  if [[ -z "$VERSION" || "$VERSION" == "latest" ]]; then
-    VERSION="$(node -p "require(process.argv[1]).version" "$ROOT/package.json" 2>/dev/null || true)"
-  fi
-  VERSION="${VERSION#v}"
-  if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
-    echo "An exact signer release version X.Y.Z is required; latest is not accepted." >&2
+case "$(uname -m)" in
+  x86_64|amd64) arch="amd64" ;;
+  aarch64|arm64) arch="arm64" ;;
+  *)
+    echo "Unsupported architecture for fased-signerd: $(uname -m)" >&2
     exit 1
-  fi
-fi
+    ;;
+esac
 
+if [[ -z "$VERSION" || "$VERSION" == "latest" ]]; then
+  VERSION="$(node -p "require(process.argv[1]).version" "$ROOT/package.json" 2>/dev/null || true)"
+fi
+VERSION="${VERSION#v}"
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+  echo "An exact signer release version X.Y.Z is required; latest is not accepted." >&2
+  exit 1
+fi
 if [[ -n "$EXPECTED_COMMIT" && ! "$EXPECTED_COMMIT" =~ ^[a-f0-9]{40}$ ]]; then
   echo "--expected-commit must be one exact 40-character Git commit." >&2
   exit 1
 fi
 
+base_url="${FASED_LOCAL_SIGNER_BASE_URL:-$DEFAULT_RELEASE_BASE_URL}"
+base_url="${base_url%/}"
+official=0
+if [[ "$base_url" == "$DEFAULT_RELEASE_BASE_URL" ]]; then
+  official=1
+elif [[ "${FASED_LOCAL_SIGNER_ALLOW_UNATTESTED:-0}" != "1" ]]; then
+  echo "A custom signer release source requires FASED_LOCAL_SIGNER_ALLOW_UNATTESTED=1." >&2
+  exit 1
+fi
+if [[ "$official" -eq 0 && "${FASED_LOCAL_SIGNER_FLAT_RELEASE:-0}" == "1" ]]; then
+  release_url="$base_url"
+else
+  release_url="$base_url/v$VERSION"
+fi
+
+asset_name="fased-signerd-${platform}-${arch}"
+manifest_name="fased-signerd-release.json"
+checksums_name="fased-signerd-checksums.txt"
 mkdir -p "$INSTALL_DIR"
-chmod 700 "$INSTALL_DIR" 2>/dev/null || true
-export FASED_LOCAL_SIGNER_BIN_DIR="$INSTALL_DIR"
-export FASED_WALLET_LOCAL_SIGNER_BIN="$INSTALL_DIR/fased-signerd"
-
-args=(local-signer "$ACTION")
-if [[ "$ACTION" == "install" || "$ACTION" == "verify" ]]; then
-  args+=(--version "$VERSION")
-  if [[ -n "$EXPECTED_COMMIT" ]]; then
-    args+=(--expected-commit "$EXPECTED_COMMIT")
-  fi
-fi
-if [[ "$ACTION" == "install" ]]; then
-  # Keep the candidate read-only and the rollback journal open until all
-  # packaged policy helpers/templates are installed successfully.
-  args+=(--defer-commit)
-  if [[ -n "$CONFIRM_DOWNGRADE" ]]; then
-    args+=(--confirm-downgrade "${CONFIRM_DOWNGRADE#v}")
-  fi
-fi
-
-TRANSACTION_OPEN=0
-rollback_failed_install() {
-  local status=$?
-  if [[ "$status" -ne 0 && "$TRANSACTION_OPEN" -eq 1 ]]; then
-    node "$UPDATER" local-signer rollback >/dev/null 2>&1 || true
-  fi
-  return "$status"
+chmod 700 "$INSTALL_DIR"
+stage="$(mktemp -d "$INSTALL_DIR/.fased-signerd-install.XXXXXX")"
+cleanup() {
+  rm -rf -- "$stage"
 }
-trap rollback_failed_install EXIT
+trap cleanup EXIT
 
-# A source install begins in the previously published JavaScript process. Once
-# that process has checked out and built the exact target commit, replace its
-# rollback controller with the target's complete, Git-verified dependency
-# closure. Dependencies are installed before the controller entry point, so an
-# interrupted handoff still leaves the previous controller able to roll back.
-if [[ "$ACTION" == "install" && -n "$EXPECTED_COMMIT" ]]; then
-  node "$UPDATER" local-source-controller refresh \
-    --source-root "$ROOT" \
-    --version "$VERSION" \
-    --expected-commit "$EXPECTED_COMMIT" >/dev/null
-fi
+copy_release_file() {
+  local name="$1"
+  local source="$release_url/$name"
+  local destination="$stage/$name"
+  if [[ "$source" == file://* ]]; then
+    local source_path="${source#file://}"
+    [[ -f "$source_path" && ! -L "$source_path" ]] || {
+      echo "Local signer release asset is missing or unsafe: $source_path" >&2
+      return 1
+    }
+    cp -- "$source_path" "$destination"
+  else
+    curl -q -fL --proto '=https' --tlsv1.2 "$source" -o "$destination"
+  fi
+  [[ -f "$destination" && ! -L "$destination" ]]
+  chmod 600 "$destination"
+}
 
-node "$UPDATER" "${args[@]}"
+copy_release_file "$asset_name"
+copy_release_file "$manifest_name"
+copy_release_file "$checksums_name"
 
-if [[ "$ACTION" != "install" ]]; then
-  trap - EXIT
-  exit 0
-fi
-TRANSACTION_OPEN=1
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
 
-POLICY_HELPER_PATH="${INSTALL_DIR}/fased-signer-owner-policy.mjs"
-POLICY_LAUNCHER_PATH="${INSTALL_DIR}/fased-signer-policy"
-POLICY_HELPER_SOURCE="${ROOT}/scripts/fased-signer-owner-policy.mjs"
-POLICY_LAUNCHER_SOURCE="${ROOT}/scripts/fased-signer-policy-local.sh"
-POLICY_TEMPLATE_SOURCE="${ROOT}/config/signer-policies"
+verify_checksum() {
+  local name="$1"
+  local expected=""
+  local actual=""
+  expected="$(awk -v target="$name" '$1 ~ /^[a-fA-F0-9]{64}$/ { file=$2; sub(/^\*/, "", file); if (file == target) { print tolower($1); exit } }' "$stage/$checksums_name")"
+  [[ "$expected" =~ ^[a-f0-9]{64}$ ]] || {
+    echo "$checksums_name has no exact entry for $name" >&2
+    return 1
+  }
+  actual="$(sha256_file "$stage/$name")"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "Checksum mismatch for $name" >&2
+    return 1
+  fi
+}
 
-required_assets=(
-  "$POLICY_HELPER_SOURCE"
-  "$POLICY_LAUNCHER_SOURCE"
-  "$POLICY_TEMPLATE_SOURCE/README.md"
-  "$POLICY_TEMPLATE_SOURCE/agent.json.template"
-  "$POLICY_TEMPLATE_SOURCE/mining.json.template"
-  "$POLICY_TEMPLATE_SOURCE/vault.json.template"
-)
-if [[ -f "$POLICY_TEMPLATE_SOURCE/network.json.template" ]]; then
-  required_assets+=("$POLICY_TEMPLATE_SOURCE/network.json.template")
-fi
-for required_path in "${required_assets[@]}"; do
-  [[ -f "$required_path" && ! -L "$required_path" ]] || {
-    echo "Packaged signer policy asset is missing or unsafe: $required_path" >&2
+verify_checksum "$asset_name"
+verify_checksum "$manifest_name"
+
+if [[ "$official" -eq 1 ]]; then
+  command -v gh >/dev/null 2>&1 || {
+    echo "GitHub CLI is required to verify the official signer attestation." >&2
     exit 1
   }
-done
-
-install -d -m 0700 "$INSTALL_DIR" "$POLICY_TEMPLATE_DIR"
-install -m 0700 "$POLICY_HELPER_SOURCE" "$POLICY_HELPER_PATH"
-install -m 0700 "$POLICY_LAUNCHER_SOURCE" "$POLICY_LAUNCHER_PATH"
-for template in README.md agent.json.template mining.json.template vault.json.template network.json.template; do
-  [[ -f "$POLICY_TEMPLATE_SOURCE/$template" ]] || continue
-  install -m 0600 "$POLICY_TEMPLATE_SOURCE/$template" "$POLICY_TEMPLATE_DIR/$template"
-done
-
-if [[ "$DEFER_COMMIT" -eq 0 ]]; then
-  node "$UPDATER" local-signer commit
-  TRANSACTION_OPEN=0
+  bundle_name="fased-signerd-release.attestation.json"
+  copy_release_file "$bundle_name"
+  for verified_file in "$asset_name" "$manifest_name"; do
+    GH_PROMPT_DISABLED=1 gh attestation verify "$stage/$verified_file" \
+      --repo fased-ai/fased \
+      --bundle "$stage/$bundle_name" \
+      --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+      --source-ref "refs/tags/v$VERSION" \
+      --deny-self-hosted-runners >/dev/null
+  done
 fi
-trap - EXIT
 
-echo "Installed exact transactional signer: $INSTALL_DIR/fased-signerd"
-echo "Installed signer enrollment launcher: $INSTALL_DIR/fased-signer-enroll"
-echo "Installed signer policy launcher: $POLICY_LAUNCHER_PATH"
-echo "Installed fail-closed policy templates: $POLICY_TEMPLATE_DIR"
-cat <<EOF
-Fresh signer-owned wallets receive their versioned Agent, Mining, or Vault
-baseline during normal wallet setup after the primary RPC is verified. Optional
-authenticator enrollment and $POLICY_LAUNCHER_PATH remain available for advanced
-owner-reviewed customization; copying a template never applies it.
-EOF
+chmod 700 "$stage/$asset_name"
+identity="$("$stage/$asset_name" --version 2>/dev/null || true)"
+node - "$stage/$manifest_name" "$VERSION" "$EXPECTED_COMMIT" "$identity" <<'NODE'
+const fs = require("node:fs");
+const [manifestPath, version, expectedCommit, output] = process.argv.slice(2);
+const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+const match = /^fased-signerd\s+(\S+)\s+commit=([a-f0-9]{40})\s+buildInputDigest=(sha256:[a-f0-9]{64})\s+development=(true|false)$/u.exec(output.trim());
+if (!match || match[1] !== version || match[4] !== "false") {
+  throw new Error("candidate signer binary identity is invalid");
+}
+if (manifest.schemaVersion !== 1 || manifest.version !== match[1] || manifest.commit !== match[2] || manifest.buildInputDigest !== match[3] || manifest.development !== false) {
+  throw new Error("candidate signer binary and release manifest identities do not match");
+}
+if (expectedCommit && match[2] !== expectedCommit) {
+  throw new Error("candidate signer commit does not match --expected-commit");
+}
+NODE
+
+target="$INSTALL_DIR/fased-signerd"
+temporary="$INSTALL_DIR/.fased-signerd.$$.new"
+install -m 0700 "$stage/$asset_name" "$temporary"
+mv -f -- "$temporary" "$target"
+
+policy_helper_source="$ROOT/scripts/fased-signer-owner-policy.mjs"
+policy_launcher_source="$ROOT/scripts/fased-signer-policy-local.sh"
+policy_template_source="$ROOT/config/signer-policies"
+install -d -m 0700 "$POLICY_TEMPLATE_DIR"
+install -m 0700 "$policy_helper_source" "$INSTALL_DIR/fased-signer-owner-policy.mjs"
+install -m 0700 "$policy_launcher_source" "$INSTALL_DIR/fased-signer-policy"
+for template in README.md agent.json.template mining.json.template vault.json.template network.json.template; do
+  [[ -f "$policy_template_source/$template" ]] || continue
+  install -m 0600 "$policy_template_source/$template" "$POLICY_TEMPLATE_DIR/$template"
+done
+
+echo "Installed exact verified signer: $target"

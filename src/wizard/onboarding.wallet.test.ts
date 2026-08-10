@@ -125,6 +125,9 @@ describe("local signer env file helpers", () => {
     );
     expect(onboardingWalletSource).toContain("Go is not required for the official prebuilt signer");
     expect(signerInstallerSource).toContain("gh attestation verify");
+    expect(signerInstallerSource).not.toContain("fased-managed-updater.mjs");
+    expect(signerInstallerSource).not.toContain('args=(local-signer "$ACTION")');
+    expect(signerInstallerSource).toContain('mv -f -- "$temporary" "$target"');
     expect(
       officialReleaseAttestationVerifyArgs({
         assetPath: "/tmp/fased-signerd",
