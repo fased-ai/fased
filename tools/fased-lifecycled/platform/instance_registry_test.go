@@ -62,6 +62,45 @@ func TestLocalInstanceAllocationIsTransactionalAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestLocalInstancePlanningAllowsCanonicalStateCreationWithoutMutatingHome(t *testing.T) {
+	root := t.TempDir()
+	registry := filepath.Join(root, "registry", "instances.json")
+	state := filepath.Join(root, ".fased")
+	request := LocalInstanceRequest{
+		TransactionID: "018f47d2-5a6b-7c8d-9e0f-123456789abc",
+		OperatorUID:   uint32(os.Getuid()), OperatorUser: "owner", Profile: "protected-local", StateDir: state,
+	}
+	allocation, err := PlanLocalInstance(registry, uint32(os.Getuid()), request, bytes.NewReader([]byte("12345678")), time.Unix(100, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allocation.Created || allocation.Entry.StateDir != state {
+		t.Fatalf("unexpected fresh Local allocation: %+v", allocation)
+	}
+	if _, err := os.Lstat(state); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("read-only instance planning created the owner state root: %v", err)
+	}
+}
+
+func TestLocalInstancePlanningRejectsUnsafeMissingStateParent(t *testing.T) {
+	root := t.TempDir()
+	realParent := filepath.Join(root, "real")
+	if err := os.Mkdir(realParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	linkedParent := filepath.Join(root, "linked")
+	if err := os.Symlink(realParent, linkedParent); err != nil {
+		t.Fatal(err)
+	}
+	request := LocalInstanceRequest{
+		TransactionID: "018f47d2-5a6b-7c8d-9e0f-123456789abc",
+		OperatorUID:   uint32(os.Getuid()), OperatorUser: "owner", Profile: "protected-local", StateDir: filepath.Join(linkedParent, ".fased"),
+	}
+	if _, err := PlanLocalInstance(filepath.Join(root, "registry.json"), uint32(os.Getuid()), request, nil, time.Now()); err == nil {
+		t.Fatal("fresh Local allocation accepted a symlinked owner-state parent")
+	}
+}
+
 func TestLocalInstanceCommitUsesCompareAndSwap(t *testing.T) {
 	registry, request := localRegistryFixture(t)
 	first, err := PlanLocalInstance(registry, uint32(os.Getuid()), request, bytes.NewReader([]byte("12345678")), time.Unix(100, 0))

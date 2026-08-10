@@ -199,6 +199,15 @@ func validateLocalInstanceRequest(request LocalInstanceRequest) error {
 		return errors.New("Local instance state directory is invalid")
 	}
 	info, err := os.Lstat(request.StateDir)
+	if errors.Is(err, os.ErrNotExist) {
+		parent := filepath.Dir(request.StateDir)
+		parentInfo, parentErr := os.Lstat(parent)
+		parentStat, parentOK := infoSyscall(parentInfo)
+		if parentErr != nil || !parentOK || !parentInfo.IsDir() || parentInfo.Mode()&os.ModeSymlink != 0 || parentStat.Uid != request.OperatorUID {
+			return errors.New("Local instance state directory parent is unavailable or unsafe")
+		}
+		return nil
+	}
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("Local instance state directory must be a non-symlink directory")
 	}

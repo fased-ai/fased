@@ -322,6 +322,7 @@ if [[ ",$SCENARIOS," == *,managed-update,* ]]; then
     "$managed_predecessor_manifest" >/dev/null
 fi
 cleanup_names=()
+preserved_failure_name=""
 dump_fixture_failure() {
   local name="$1"
   echo "Protected Local fixture diagnostics: $name" >&2
@@ -343,6 +344,9 @@ dump_fixture_failure() {
 cleanup() {
   local name
   for name in "${cleanup_names[@]}"; do
+    if [[ -n "$preserved_failure_name" && "$name" == "$preserved_failure_name" ]]; then
+      continue
+    fi
     run_container rm -f "$name" >/dev/null 2>&1 || true
   done
   if [[ "$OWN_ARTIFACT_DIR" -eq 1 ]]; then
@@ -379,8 +383,12 @@ run_fixture_scenario() {
   local fixture_memory=""
   local ready=0
   local state=""
-  local predecessor_artifact_dir="$MANAGED_PREDECESSOR_ARTIFACT_DIR"
-  local predecessor_version="$MANAGED_PREDECESSOR_VERSION"
+  local predecessor_artifact_dir="$ARTIFACT_DIR"
+  local predecessor_version=""
+  if [[ "$scenario" == "managed-update" ]]; then
+    predecessor_artifact_dir="$MANAGED_PREDECESSOR_ARTIFACT_DIR"
+    predecessor_version="$MANAGED_PREDECESSOR_VERSION"
+  fi
 
   cleanup_names+=("$name")
   run_container run -d \
@@ -431,9 +439,15 @@ run_fixture_scenario() {
   done
   wait "$fixture_command_pid" || fixture_command_status="$?"
   if [[ "$fixture_command_status" -ne 0 ]]; then
+    if [[ "${FASED_SYSTEMD_FIXTURE_PRESERVE_FAILURE:-0}" == "1" ]]; then
+      preserved_failure_name="$name"
+      printf 'preserved failed fixture: %s\n' "$name" >&2
+    fi
     if [[ "${FASED_SYSTEMD_FIXTURE_COMPACT_DIAGNOSTICS:-0}" == "1" ]]; then
       run_container exec "$name" /bin/bash -lc '
         for log in \
+          /tmp/fresh-install.err \
+          /tmp/fresh-install.out \
           /tmp/stable-bridge-failure.err \
           /tmp/stable-bridge-failure.out \
           /tmp/stable-bridge-noop.err \
