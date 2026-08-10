@@ -372,9 +372,8 @@ describe("CI changed-surface classification", () => {
 
   it("separates Hosting, Local fresh, and Local update lifecycle paths", () => {
     for (const path of [
-      "scripts/docker/streamed-hosting-bootstrap/run.sh",
-      "scripts/docker/hosting-systemd/run.sh",
-      "scripts/test-hosting-systemd-container.sh",
+      "scripts/docker/hosting-systemd/go-cutover.sh",
+      "scripts/test-go-hosting-systemd-container.sh",
     ]) {
       expect(classifyChangedPaths([path]), path).toMatchObject({
         fixtureOnly: true,

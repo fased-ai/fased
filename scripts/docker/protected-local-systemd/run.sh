@@ -725,13 +725,6 @@ set -euo pipefail
 output=""
 url=""
 predecessor_version="${FASED_FIXTURE_PREDECESSOR_VERSION:-}"
-if [[ -z "$predecessor_version" &&
-  -f /predecessor-artifacts/fased-hosted-release-v2.json ]]; then
-  predecessor_version="$(
-    /usr/bin/jq -er '.release.version' \
-      /predecessor-artifacts/fased-hosted-release-v2.json
-  )"
-fi
 args=("$@")
 for ((i = 0; i < ${#args[@]}; i++)); do
   case "${args[$i]}" in

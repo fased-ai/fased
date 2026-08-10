@@ -203,6 +203,11 @@ temporary="$INSTALL_DIR/.fased-signerd.$$.new"
 install -m 0700 "$stage/$asset_name" "$temporary"
 mv -f -- "$temporary" "$target"
 
+enrollment_target="$INSTALL_DIR/fased-signer-enroll"
+enrollment_temporary="$INSTALL_DIR/.fased-signer-enroll.$$.new"
+install -m 0700 "$stage/$asset_name" "$enrollment_temporary"
+mv -f -- "$enrollment_temporary" "$enrollment_target"
+
 policy_helper_source="$ROOT/scripts/fased-signer-owner-policy.mjs"
 policy_launcher_source="$ROOT/scripts/fased-signer-policy-local.sh"
 policy_template_source="$ROOT/config/signer-policies"
@@ -215,3 +220,4 @@ for template in README.md agent.json.template mining.json.template vault.json.te
 done
 
 echo "Installed exact verified signer: $target"
+echo "Installed signer enrollment launcher: $enrollment_target"
