@@ -99,6 +99,11 @@ const FEDERATION_PERMISSION_PRODUCTION_PATHS = new Set([
 const FEDERATION_PERMISSION_TEST_PATHS = new Set([
   "src/federation/federation-state-permissions.test.ts",
 ]);
+const WALLET_SIGNER_DOCTOR_PRODUCTION_PATHS = new Set(["src/commands/wallet.ts"]);
+const WALLET_SIGNER_DOCTOR_TEST_PATHS = new Set([
+  "src/commands/wallet.signer-doctor.test.ts",
+  "src/wallet/native-signer-lifecycle-context.test.ts",
+]);
 const NODE_PACKAGING_PATH_RE =
   /^(?:package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|packages\/|extensions\/[^/]+\/package\.json$|scripts\/(?:build-hosted-runtime-artifact|hosted-release-manifest|managed-runtime-layout|release-artifact-set)[^/]*)/;
 const NATIVE_SIGNER_PATH_RE =
@@ -439,11 +444,22 @@ export function createGatePlan(inputPaths, options = {}) {
         FEDERATION_PERMISSION_PRODUCTION_PATHS.has(path) ||
         FEDERATION_PERMISSION_TEST_PATHS.has(path),
     );
+  const focusedWalletSignerDoctorChange =
+    productionChanged &&
+    productionPaths.every((path) => WALLET_SIGNER_DOCTOR_PRODUCTION_PATHS.has(path)) &&
+    paths.includes("src/commands/wallet.signer-doctor.test.ts") &&
+    paths.every(
+      (path) =>
+        WALLET_SIGNER_DOCTOR_PRODUCTION_PATHS.has(path) ||
+        WALLET_SIGNER_DOCTOR_TEST_PATHS.has(path),
+    );
   const selectedTestPaths = focusedFederationPermissionChange
     ? [...FEDERATION_PERMISSION_TEST_PATHS]
-    : testOnly
-      ? paths
-      : [];
+    : focusedWalletSignerDoctorChange
+      ? [...WALLET_SIGNER_DOCTOR_TEST_PATHS]
+      : testOnly
+        ? paths
+        : [];
   const gateToolingOnly =
     !versionOnly &&
     !docsOnly &&
@@ -619,6 +635,7 @@ export function createGatePlan(inputPaths, options = {}) {
     runNode &&
     !focusedNodeLane &&
     (focusedFederationPermissionChange ||
+      focusedWalletSignerDoctorChange ||
       (routableTestOnly &&
         paths.some(
           (path) =>
@@ -631,6 +648,7 @@ export function createGatePlan(inputPaths, options = {}) {
     !installerReleaseVerification &&
     !pureUiProduction &&
     !focusedFederationPermissionChange &&
+    !focusedWalletSignerDoctorChange &&
     (productionChanged || runHosting || runLocalFresh || runLocalUpdate);
   const runNodePackaging =
     runNode &&

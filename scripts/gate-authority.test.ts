@@ -275,6 +275,41 @@ describe("machine gate authority", () => {
     });
   });
 
+  it("routes the protected Local signer-doctor correction through exact unit contracts", () => {
+    const plan = createGatePlan([
+      "src/commands/wallet.ts",
+      "src/commands/wallet.signer-doctor.test.ts",
+    ]);
+
+    expect(plan.selectedTestPaths).toEqual([
+      "src/commands/wallet.signer-doctor.test.ts",
+      "src/wallet/native-signer-lifecycle-context.test.ts",
+    ]);
+    expect(plan.scope).toMatchObject({
+      runNode: true,
+      runNodeUnit: true,
+      runNodeFocused: false,
+      runNodeFull: false,
+      runNodeBuild: false,
+      runNodePackaging: false,
+      runCodeqlJavascript: true,
+      runLocalFresh: false,
+      runLocalUpdate: false,
+      runHosting: false,
+    });
+  });
+
+  it("keeps unrelated wallet command changes on broad Node coverage", () => {
+    const plan = createGatePlan(["src/commands/wallet.ts"]);
+
+    expect(plan.selectedTestPaths).toEqual([]);
+    expect(plan.scope).toMatchObject({
+      runNodeUnit: false,
+      runNodeFull: true,
+      runNodeBuild: true,
+    });
+  });
+
   it("routes the complete focused Local-update correction without L0, native signer, or Docker", () => {
     const plan = createGatePlan(
       [
