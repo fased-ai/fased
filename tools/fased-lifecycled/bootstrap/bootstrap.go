@@ -134,32 +134,30 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 		}
 		return changes.Rollback, nil
 	}})
-	if request.Profile == model.ProfileProtectedLocal {
-		steps = append(steps, platform.BootstrapStep{Phase: platform.BootstrapPhaseACL, Apply: func() (platform.BootstrapUndo, error) {
-			if request.ACL == nil {
-				return nil, errors.New("Local ACL support is unavailable before mutation")
+	steps = append(steps, platform.BootstrapStep{Phase: platform.BootstrapPhaseACL, Apply: func() (platform.BootstrapUndo, error) {
+		if request.ACL == nil {
+			return nil, errors.New("owner-home ACL support is unavailable before mutation")
+		}
+		home := filepath.Dir(request.OwnerStateRoot)
+		snapshot, err := request.ACL.Capture(ctx, home)
+		if err != nil {
+			return nil, err
+		}
+		hasTraversal, err := request.ACL.HasExactTraversal(snapshot, principals.Gateway.UID)
+		if err != nil {
+			return nil, err
+		}
+		if hasTraversal {
+			if !configExists {
+				return nil, errors.New("unmanaged Gateway UID collides with an existing owner-home ACL entry")
 			}
-			home := filepath.Dir(request.OwnerStateRoot)
-			snapshot, err := request.ACL.Capture(ctx, home)
-			if err != nil {
-				return nil, err
-			}
-			hasTraversal, err := request.ACL.HasExactTraversal(snapshot, principals.Gateway.UID)
-			if err != nil {
-				return nil, err
-			}
-			if hasTraversal {
-				if !configExists {
-					return nil, errors.New("unmanaged Gateway UID collides with an existing owner-home ACL entry")
-				}
-				return func() error { return nil }, nil
-			}
-			if err := request.ACL.GrantTraversal(ctx, home, principals.Gateway.UID, snapshot); err != nil {
-				return nil, err
-			}
-			return func() error { return request.ACL.Restore(ctx, home, snapshot) }, nil
-		}})
-	}
+			return func() error { return nil }, nil
+		}
+		if err := request.ACL.GrantTraversal(ctx, home, principals.Gateway.UID, snapshot); err != nil {
+			return nil, err
+		}
+		return func() error { return request.ACL.Restore(ctx, home, snapshot) }, nil
+	}})
 	steps = append(steps, platform.BootstrapStep{Phase: platform.BootstrapPhaseDaemon, Apply: func() (platform.BootstrapUndo, error) {
 		replacement, err := platform.InstallFileTransactional(request.StableDaemonPath, request.StableDaemon, 0o755, 0, 0)
 		if err != nil {

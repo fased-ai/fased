@@ -228,12 +228,9 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	if err != nil {
 		return err
 	}
-	var homeACL platform.HomeACL
-	if profile == model.ProfileProtectedLocal {
-		homeACL, err = platform.NewLinuxACL()
-		if err != nil {
-			return err
-		}
+	homeACL, err := platform.NewLinuxACL()
+	if err != nil {
+		return err
 	}
 	systemd, err := systemdClient()
 	if err != nil {
