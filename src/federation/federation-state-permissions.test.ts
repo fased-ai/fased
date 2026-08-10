@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { withStateDirEnv } from "../test-helpers/state-dir-env.js";
 import { persistFederationAccessToken } from "./access-token.js";
+import { ensureFederationStateDirectory } from "./federation-state-permissions.js";
 
 const token = {
   tokenId: "fixture-token",
@@ -23,7 +24,7 @@ async function modes(stateDir: string): Promise<{ directory: number; token: numb
 }
 
 async function withServiceUmask(run: () => Promise<void>): Promise<void> {
-  const previous = process.umask(0o007);
+  const previous = process.umask(0o027);
   try {
     await run();
   } finally {
@@ -58,6 +59,22 @@ describe("federation application state permissions", () => {
         await persistFederationAccessToken({ ...token, hostedState: "ready" }, env);
         expect(await modes(stateDir)).toEqual({ directory: 0o2770, token: 0o660 });
       });
+    });
+  });
+
+  it("does not rewrite an existing shared directory owned by a peer service", async () => {
+    await withStateDirEnv("fased-federation-state-peer-", async ({ stateDir }) => {
+      const directory = path.join(stateDir, "federation");
+      await fs.mkdir(directory, { mode: 0o750 });
+      await fs.chmod(directory, 0o2750);
+
+      await ensureFederationStateDirectory(directory, {
+        ...process.env,
+        FASED_STATE_DIR: stateDir,
+        FASED_PROTECTED_LOCAL: "1",
+      });
+
+      expect((await fs.stat(directory)).mode & 0o7777).toBe(0o2750);
     });
   });
 });
