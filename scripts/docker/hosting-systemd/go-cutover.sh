@@ -5,7 +5,7 @@ version="${FASED_FIXTURE_VERSION:?}"
 generation="${FASED_FIXTURE_GENERATION:?}"
 dependency="${FASED_FIXTURE_DEPENDENCY:?}"
 gateway_port="${FASED_FIXTURE_GATEWAY_PORT:-18789}"
-lifecycled="/artifacts/fased-lifecycled-linux-amd64"
+lifecycled="/fixture-bin/fased-lifecycled-linux-amd64"
 
 diagnostics() {
   local status=$?

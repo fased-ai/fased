@@ -9,6 +9,8 @@ const files = new Set(manifest.files ?? []);
 const installer = read("install.sh");
 const releaseWorkflow = read(".github/workflows/hosted-runtime-release.yml");
 const ciWorkflow = read(".github/workflows/ci.yml");
+const hostingFixture = read("scripts/test-go-hosting-systemd-container.sh");
+const hostingRunner = read("scripts/docker/hosting-systemd/go-cutover.sh");
 
 const removedMutationOwners = [
   "scripts/fased-managed-updater-core.mjs",
@@ -52,11 +54,17 @@ describe("attested Go lifecycle artifact layout", () => {
   });
 
   it("builds once, runs packaged proof before the protected publication boundary, and publishes exact bytes", () => {
-    const p1 = releaseWorkflow.indexOf("  p1:");
+    const p1Jobs = [
+      releaseWorkflow.indexOf("  p1-local-fresh:"),
+      releaseWorkflow.indexOf("  p1-local-update:"),
+      releaseWorkflow.indexOf("  p1-hosting:"),
+    ];
     const publish = releaseWorkflow.indexOf("  publish:");
     const releaseCreate = releaseWorkflow.indexOf('gh release create "$RELEASE_TAG"');
-    expect(p1).toBeGreaterThan(0);
-    expect(publish).toBeGreaterThan(p1);
+    for (const p1 of p1Jobs) {
+      expect(p1).toBeGreaterThan(0);
+      expect(publish).toBeGreaterThan(p1);
+    }
     expect(releaseCreate).toBeGreaterThan(publish);
     expect(releaseWorkflow.slice(publish)).not.toContain("pnpm build");
     expect(releaseWorkflow.slice(publish)).not.toContain("go build");
@@ -65,6 +73,17 @@ describe("attested Go lifecycle artifact layout", () => {
   it("keeps the public Hosting proof on the Go-only systemd fixture", () => {
     expect(releaseWorkflow).toContain("scripts/test-go-hosting-systemd-container.sh");
     expect(releaseWorkflow).not.toContain("scripts/test-hosting-systemd-container.sh");
+  });
+
+  it("stages the verified lifecycle binary as executable without mutating candidate bytes", () => {
+    expect(hostingFixture).toContain(
+      'install -m 0755 "$ARTIFACT_DIR/fased-lifecycled-linux-amd64"',
+    );
+    expect(hostingFixture).toContain('-v "$ARTIFACT_DIR:/artifacts:ro,Z"');
+    expect(hostingFixture).toContain('-v "$EXECUTABLE_DIR:/fixture-bin:ro,Z"');
+    expect(hostingFixture).toContain('cmp -s "$ARTIFACT_DIR/fased-lifecycled-linux-amd64"');
+    expect(hostingRunner).toContain('lifecycled="/fixture-bin/fased-lifecycled-linux-amd64"');
+    expect(hostingRunner).not.toContain('lifecycled="/artifacts/fased-lifecycled-linux-amd64"');
   });
 
   it("does not route merged-main CI through the deleted legacy Hosting runner", () => {
