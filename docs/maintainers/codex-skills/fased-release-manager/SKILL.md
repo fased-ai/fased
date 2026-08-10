@@ -301,6 +301,18 @@ public predecessor assets; never cache installation state, journals, Wallet or
 signer data. Full Node/application suites belong to scheduled CI unless the
 resolved source change genuinely affects the whole product.
 
+### Owner-operated npm boundary
+
+Codex prepares the exact candidate checkout, installs the frozen lockfile,
+builds once when npm package contents require it, and dry-packs the complete
+authoritative package inventory. Codex then prints plain, standalone
+`npm publish <path> --ignore-scripts --access public --tag beta` commands for
+the owner to run manually. Do not print, request, accept, store, interpolate,
+or pass an OTP; do not include `--otp`, login, token, or secret-handling syntax.
+Do not invoke `npm publish` from the agent environment. After the owner reports
+completion, read back every exact package version and dist-tag, then run
+PUBLIC0 once without rebuilding or replaying P1.
+
 ## Simplicity and Compatibility
 
 Do not add another lifecycle state machine, release gate, private-RC production
@@ -342,5 +354,6 @@ protection.
 
 Version changes, tags, GitHub Releases, Docker publication, npm publication,
 and owner infrastructure remain explicit boundaries unless the current user
-instruction grants that exact sequence. npm remains owner-operated unless
-explicitly authorized.
+instruction grants that exact sequence. npm package publication is always a
+manual owner command boundary; Codex prepares, prints, and verifies it but does
+not execute it or handle authentication material.

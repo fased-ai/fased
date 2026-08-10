@@ -113,7 +113,9 @@ GitHub prerelease exact bytes
 -> stable promotion
 ```
 
-- npm remains owner-operated unless explicitly authorized in the current turn.
+- npm publication remains a manual owner command boundary. Codex may prepare,
+  dry-pack, print plain publish commands without authentication arguments, and
+  verify readback; it never invokes `npm publish` or handles OTP/token material.
 - PUBLIC0 is readback-only: GitHub names/sizes/digests, npm inventory and beta
   tags, with unchanged latest tags. It never rebuilds or reruns P1.
 - Local acceptance verifies acquisition, services, signer/Gateway/Wallet/

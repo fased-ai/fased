@@ -149,13 +149,20 @@ After GitHub prerelease readback succeeds:
 
 1. Generate the authoritative publishable-package inventory from the exact
    candidate source.
-2. The owner publishes every listed package with the intended prerelease tag.
-3. Verify exact versions and dist-tags from npm.
-4. Run PUBLIC0 once to read back GitHub and npm identities. Do not rebuild,
+2. Prepare the exact checkout, frozen dependencies, required package build, and
+   dry-pack validation once. Print one standalone owner command per package in
+   this form, with an absolute path and no directory-change prerequisite:
+   `npm publish <path> --ignore-scripts --access public --tag beta`.
+3. The owner manually runs every listed command. Codex never invokes
+   `npm publish` and never prints, requests, receives, stores, interpolates, or
+   passes OTP, login, token, or secret-handling syntax.
+4. Verify exact versions and dist-tags from npm.
+5. Run PUBLIC0 once to read back GitHub and npm identities. Do not rebuild,
    retest P1, or change product evidence.
 
-npm is owner-operated unless the current request explicitly authorizes Codex
-publication. Never expose tokens in command output or receipts.
+npm publication is always owner-operated. A request to continue authorizes
+preparation, command output, and readback; it does not move authentication or
+publication into the agent environment.
 
 ## Installed acceptance
 
