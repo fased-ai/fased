@@ -55,7 +55,7 @@ initialize() {
 
 assert_healthy() {
   test "$(jq -er .profile /var/lib/fased-lifecycled/installation-manifest.json)" = hosting
-  test "$(jq -er .active.version /var/lib/fased-lifecycled/installation-manifest.json)" = "$version"
+  test "$(jq -er .activeGeneration.version /var/lib/fased-lifecycled/installation-manifest.json)" = "$version"
   grep -Fq '/opt/fased/lifecycle/supervisor-v1/fased-lifecycled supervisor' \
     /etc/systemd/system/fased-host-updater.service
   grep -Fq '/payload/bin/fased-lifecycled target' \
