@@ -47,7 +47,8 @@ initialize() {
 }
 
 complete_onboarding() {
-  install -d -m 0700 -o app -g app /home/app/.fased
+  test -d /home/app/.fased
+  test "$(stat -c %a /home/app/.fased)" = 2770
   runuser -u app -- /bin/bash -c \
     'umask 077; printf "%s\n" '\''{"gateway":{"mode":"local","bind":"loopback","port":18789,"auth":{"mode":"token","token":"fased-hosting-fixture-token"}},"update":{"channel":"beta"}}'\'' > "$1"' \
     -- /home/app/.fased/fased.json
