@@ -22,75 +22,36 @@ describe("compact CI topology", () => {
     ]);
   });
 
-  it("runs common security and selected CodeQL languages in parallel", async () => {
+  it("keeps PR security cheap and moves CodeQL out of the PR", async () => {
     const { document } = await workflow("pr.yml");
-    const classify = document.jobs?.classify as {
-      outputs?: Record<string, string>;
-      steps?: Array<{ id?: string; run?: string }>;
-    };
     const security = document.jobs?.security as {
       "timeout-minutes"?: number;
-      strategy?: { matrix?: { target?: string } };
       steps?: Array<{
-        if?: string;
         name?: string;
         run?: string;
-        with?: { "config-file"?: string; languages?: string };
+        uses?: string;
       }>;
     };
 
-    expect(classify.outputs?.security_targets_json).toBe(
-      "${{ steps.security-matrix.outputs.targets_json }}",
+    expect(security["timeout-minutes"]).toBe(5);
+    expect(security.steps?.map((step) => step.name)).toEqual(
+      expect.arrayContaining(["Detect secrets and private keys", "Audit changed workflows"]),
     );
-    expect(classify.steps?.find((step) => step.id === "security-matrix")?.run).toContain(
-      '["common"] + $languages',
+    expect(security.steps?.some((step) => step.uses?.startsWith("github/codeql-action/"))).toBe(
+      false,
     );
-    expect(security["timeout-minutes"]).toBe(20);
-    expect(security.strategy?.matrix?.target).toBe(
-      "${{ fromJSON(needs.classify.outputs.security_targets_json) }}",
-    );
-    expect(
-      security.steps?.find((step) => step.name === "Initialize selected CodeQL languages")?.with
-        ?.languages,
-    ).toBe("${{ matrix.target }}");
-    const focusedScope = security.steps?.find(
-      (step) => step.name === "Build focused JavaScript CodeQL scope",
-    );
-    expect(focusedScope?.if).toBe("matrix.target == 'javascript-typescript'");
-    expect(focusedScope?.run).toContain("git diff --name-only");
-    expect(focusedScope?.run).toContain('scope="scripts"');
-    expect(
-      security.steps?.find((step) => step.name === "Initialize selected CodeQL languages")?.with?.[
-        "config-file"
-      ],
-    ).toBe("${{ matrix.target == 'javascript-typescript' && '.codeql-pr-scope.yml' || '' }}");
   });
 
   it("uses bounded lifecycle regressions instead of the full workspace suite", async () => {
     const { document } = await workflow("pr.yml");
-    const classify = document.jobs?.classify as { outputs?: Record<string, string> };
     const selected = document.jobs?.["selected-tests"] as {
       "timeout-minutes"?: number;
       steps?: Array<{ if?: string; name?: string; run?: string }>;
     };
-    const full = selected.steps?.find(
-      (step) => step.name === "Run full Node tests when explicitly selected",
-    );
-    const lifecycle = selected.steps?.find(
-      (step) => step.name === "Run lifecycle-engine regressions",
-    );
-
-    expect(classify.outputs?.run_local_update).toBe("${{ steps.scope.outputs.run_local_update }}");
-    expect(selected["timeout-minutes"]).toBe(20);
-    expect(full?.if).toContain("run_native_signer == 'true'");
-    expect(full?.if).toContain("run_local_update == 'true'");
-    expect(full?.run).toContain("pnpm canvas:a2ui:bundle");
-    expect(full?.run).toContain("pnpm test");
-    expect(lifecycle?.if).toContain("run_node_full == 'true'");
-    expect(lifecycle?.if).toContain("run_native_signer == 'true'");
-    expect(lifecycle?.if).toContain("run_local_update == 'true'");
-    expect(lifecycle?.run).toContain("scripts/generation-updater.test.ts");
-    expect(lifecycle?.run).toContain("scripts/fased-generation-updater-core.test.ts");
+    expect(selected["timeout-minutes"]).toBe(10);
+    expect(selected.steps?.some((step) => step.name?.includes("full Node"))).toBe(false);
+    expect(selected.steps?.some((step) => step.name?.includes("Build once"))).toBe(false);
+    expect(selected.steps?.some((step) => step.name?.includes("package"))).toBe(false);
   });
 
   it("keeps the broad matrix outside pull requests", async () => {
@@ -98,6 +59,20 @@ describe("compact CI topology", () => {
     expect(source).not.toMatch(/^\s*pull_request:/mu);
     expect(source).toMatch(/^\s*schedule:/mu);
     expect(source).toMatch(/^\s*workflow_dispatch:/mu);
+  });
+
+  it("reuses exact protected PR evidence on main without rebuilding", async () => {
+    const { document } = await workflow("main.yml");
+    const jobs = document.jobs ?? {};
+    expect(Object.keys(jobs)).toEqual(["checks"]);
+    const checks = jobs.checks as {
+      "timeout-minutes"?: number;
+      steps?: Array<{ name?: string; run?: string }>;
+    };
+    expect(checks["timeout-minutes"]).toBe(3);
+    expect(
+      checks.steps?.find((step) => step.name === "Verify exact protected PR evidence")?.run,
+    ).toBe("node scripts/ci-merged-main-reuse.mjs");
   });
 
   it("runs verified dependency remediation without the full Node suite", async () => {

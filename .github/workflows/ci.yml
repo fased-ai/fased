@@ -1,8 +1,6 @@
-name: CI
+name: Nightly CI
 
 on:
-  push:
-    branches: [main]
   schedule:
     - cron: "19 7 * * *"
   workflow_dispatch:
@@ -95,18 +93,11 @@ jobs:
           fetch-depth: 1
           submodules: false
 
-      - name: Prove tested PR tree for merged main
-        id: reuse
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node scripts/ci-merged-main-reuse.mjs
-
       - name: Detect changed scopes
         id: scope
         env:
-          FULL_MATRIX: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_matrix)) && 'true' || 'false' }}
-          REUSE_PR_CHECKS: ${{ steps.reuse.outputs.reuse_pr_checks }}
+          FULL_MATRIX: "true"
+          REUSE_PR_CHECKS: "false"
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
           GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
           GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -139,6 +130,7 @@ jobs:
             .github/actions/setup-pnpm-store-cache/action.yml \
             .github/actions/setup-trivy-cache/action.yml \
             .github/workflows/ci.yml \
+            .github/workflows/main.yml \
             .github/workflows/docker-release.yml \
             .github/workflows/formal-conformance.yml \
             .github/workflows/hosted-runtime-release.yml \
@@ -147,8 +139,6 @@ jobs:
             .github/workflows/sandbox-common-smoke.yml \
             .github/workflows/stale.yml \
             .github/workflows/workflow-sanity.yml \
-            scripts/gate-authority.mjs \
-            scripts/gate-authority.test.ts \
             config/lifecycle-compatibility.v1.json \
             scripts/lifecycle-compatibility-inventory.mjs \
             scripts/lifecycle-compatibility-inventory.test.ts \
@@ -162,8 +152,6 @@ jobs:
             scripts/lifecycle-version-neutral.test.ts \
             ui/vitest.changed-node.config.ts
           pnpm exec oxlint \
-            scripts/gate-authority.mjs \
-            scripts/gate-authority.test.ts \
             scripts/lifecycle-compatibility-inventory.mjs \
             scripts/lifecycle-compatibility-inventory.test.ts \
             scripts/ci-change-scope.mjs \
@@ -179,7 +167,6 @@ jobs:
       - name: Check CI routing and gate contracts
         run: >-
           pnpm exec vitest run
-          scripts/gate-authority.test.ts
           scripts/lifecycle-compatibility-inventory.test.ts
           scripts/ci-change-scope.test.ts
           scripts/ci-run-changed-tests.test.ts
@@ -266,7 +253,6 @@ jobs:
             scripts/managed-runtime-layout.test.ts \
             scripts/managed-updater-bundle.test.ts \
             scripts/managed-updater-bundle.v1.json \
-            scripts/gate-authority.mjs \
             scripts/release-check.ts
           pnpm exec oxlint \
             scripts/ci-change-scope.mjs \
@@ -277,7 +263,6 @@ jobs:
             scripts/managed-runtime-layout.mjs \
             scripts/managed-runtime-layout.test.ts \
             scripts/managed-updater-bundle.test.ts \
-            scripts/gate-authority.mjs \
             scripts/release-check.ts
 
       - name: Run focused Local-update regressions

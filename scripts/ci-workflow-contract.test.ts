@@ -33,15 +33,6 @@ async function readWorkflow(path: string): Promise<Workflow> {
   return parse(await readFile(resolve(repoRoot, path), "utf8")) as Workflow;
 }
 
-async function readFocusedLocalUpdateProductionPaths(): Promise<string[]> {
-  const source = await readFile(resolve(repoRoot, "scripts/gate-authority.mjs"), "utf8");
-  const allowlist = source.match(
-    /const LOCAL_UPDATE_FOCUSED_PRODUCTION_PATHS = new Set\(\[([\s\S]*?)\]\);/u,
-  );
-  expect(allowlist, "focused Local-update allowlist is missing").not.toBeNull();
-  return [...(allowlist?.[1] ?? "").matchAll(/"([^"]+)"/gu)].map((match) => match[1]);
-}
-
 async function listFiles(path: string): Promise<string[]> {
   const entries = await readdir(path, { withFileTypes: true });
   const files = await Promise.all(
@@ -334,17 +325,6 @@ describe("CI workflow routing", () => {
         "src/federation/federation-state-permissions.ts",
       ]),
     );
-    for (const sourcePath of await readFocusedLocalUpdateProductionPaths()) {
-      if (!/\.(?:cjs|cts|js|jsx|mjs|mts|ts|tsx)$/u.test(sourcePath)) {
-        continue;
-      }
-      expect(
-        coveredRoots.some(
-          (root) => sourcePath === root || sourcePath.startsWith(`${root.replace(/\/$/u, "")}/`),
-        ),
-        `focused CodeQL does not cover ${sourcePath}`,
-      ).toBe(true);
-    }
     expect(jobs["codeql-go"]?.if).toBe("needs.change-scope.outputs.run_codeql_go == 'true'");
     expect(jobs["codeql-python"]?.if).toBe(
       "needs.change-scope.outputs.run_codeql_python == 'true'",
@@ -448,16 +428,15 @@ describe("CI workflow routing", () => {
     expect(setup).toMatch(/install-bun:[\s\S]*?default: "false"/u);
   });
 
-  it("serializes full Node groups on the constrained PR runner", async () => {
+  it("keeps full Node, builds, packaging, and CodeQL off the PR runner", async () => {
     const workflow = await readWorkflow(".github/workflows/pr.yml");
-    const fullNode = workflow.jobs?.["selected-tests"]?.steps?.find(
-      (step) => step.name === "Run full Node tests when explicitly selected",
-    );
+    const selected = workflow.jobs?.["selected-tests"]?.steps ?? [];
+    const security = workflow.jobs?.security?.steps ?? [];
 
-    expect(fullNode?.env?.FASED_TEST_PROFILE).toBe("serial");
-    expect(fullNode?.env?.FASED_TEST_VM_FORKS).toBe("0");
-    expect(fullNode?.run).toContain("pnpm canvas:a2ui:bundle");
-    expect(fullNode?.run).toContain("pnpm test");
+    expect(selected.some((step) => step.name?.includes("full Node"))).toBe(false);
+    expect(selected.some((step) => step.name?.includes("Build once"))).toBe(false);
+    expect(selected.some((step) => step.name?.includes("package"))).toBe(false);
+    expect(security.some((step) => step.uses?.startsWith("github/codeql-action/"))).toBe(false);
   });
 
   it("pins every third-party Action to an immutable commit", async () => {

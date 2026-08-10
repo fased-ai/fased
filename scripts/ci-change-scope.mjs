@@ -1,19 +1,373 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { appendFileSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { appendFileSync } from "node:fs";
 import { verifyRepositoryDependencyRemediation } from "./ci-dependency-integrity.mjs";
-import {
-  classifyChangedPaths,
-  createGatePlan,
-  isInstallerReleaseVerificationPath,
-  normalizeChangedPaths,
-} from "./gate-authority.mjs";
 
-export { classifyChangedPaths };
+const laneManifest = Object.freeze({
+  schemaVersion: 1,
+  unknownPathPolicy: "reject",
+  prForbiddenWork: ["build", "packaging", "full-node", "codeql", "docker", "macos", "candidate"],
+  lanes: [
+    {
+      id: "documentation",
+      prefixes: ["docs/", "changelog/"],
+      suffixes: [".md", ".mdx"],
+    },
+    {
+      id: "ci-contract",
+      prefixes: [".github/", "git-hooks/"],
+      exact: [".pre-commit-config.yaml", ".secrets.baseline", "zizmor.yml"],
+      contains: ["ci-", "lifecycle-acceptance", "lifecycle-compatibility"],
+    },
+    {
+      id: "lifecycle",
+      prefixes: ["tools/fased-lifecycled/"],
+      exact: [
+        "install.sh",
+        "scripts/fased-generation-updater-core.mjs",
+        "scripts/generation-updater.mjs",
+        "scripts/managed-runtime-layout.mjs",
+        "scripts/managed-updater-bundle.mjs",
+        "scripts/managed-updater-bundle.v1.json",
+      ],
+    },
+    {
+      id: "signer",
+      prefixes: ["tools/fased-signerd/"],
+      contains: ["signer"],
+    },
+    {
+      id: "ui",
+      prefixes: ["ui/"],
+    },
+    {
+      id: "native",
+      prefixes: ["apps/", "Swabble/", "shared/"],
+      exact: ["appcast.xml"],
+    },
+    {
+      id: "container",
+      prefixes: ["deploy/", "release/"],
+      exact: ["Dockerfile", "docker-compose.yml", "docker-setup.sh", "setup-podman.sh"],
+    },
+    {
+      id: "skills",
+      prefixes: ["skills/"],
+    },
+    {
+      id: "tests",
+      prefixes: ["test/", "fixtures/"],
+      contains: [".test.", ".spec."],
+      suffixes: ["_test.go"],
+    },
+    {
+      id: "node",
+      prefixes: ["src/", "extensions/", "packages/", "scripts/", "token/"],
+      exact: [
+        "fased.mjs",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "tsconfig.json",
+        "tsconfig.plugin-sdk.dts.json",
+        "tsdown.config.ts",
+        "tsdown.plugin-sdk-dts.config.ts",
+        "vitest.browser-cdp.config.ts",
+        "vitest.config.ts",
+        "vitest.e2e.config.ts",
+        "vitest.extensions.config.ts",
+        "vitest.gateway.config.ts",
+        "vitest.live.config.ts",
+        "vitest.loopback.config.ts",
+        "vitest.unit.config.ts",
+      ],
+    },
+    {
+      id: "repository",
+      prefixes: ["assets/", "config/", "tools/", "vendor/"],
+      exact: [
+        "AGENTS.md",
+        "CONTRIBUTING.md",
+        "LICENSE",
+        "README.md",
+        "SECURITY.md",
+        "THIRD_PARTY_NOTICES.md",
+        "pyproject.toml",
+      ],
+    },
+  ],
+});
 
-function trueString(value) {
+function normalizePath(value) {
+  return String(value ?? "")
+    .trim()
+    .replaceAll("\\", "/");
+}
+
+function matchesLane(path, lane) {
+  return (
+    lane.exact?.includes(path) === true ||
+    lane.prefixes?.some((prefix) => path.startsWith(prefix)) === true ||
+    lane.suffixes?.some((suffix) => path.endsWith(suffix)) === true ||
+    lane.contains?.some((part) => path.includes(part)) === true
+  );
+}
+
+export function validateLaneManifest(value = laneManifest) {
+  if (value?.schemaVersion !== 1 || value?.unknownPathPolicy !== "reject") {
+    throw new Error("ci-change-scope: unsupported lane manifest contract");
+  }
+  if (!Array.isArray(value.lanes) || value.lanes.length === 0) {
+    throw new Error("ci-change-scope: at least one lane is required");
+  }
+  const ids = new Set();
+  for (const lane of value.lanes) {
+    if (!/^[a-z][a-z0-9-]*$/u.test(lane?.id ?? "") || ids.has(lane.id)) {
+      throw new Error(`ci-change-scope: invalid or duplicate lane ${JSON.stringify(lane?.id)}`);
+    }
+    ids.add(lane.id);
+    if (![lane.exact, lane.prefixes, lane.suffixes, lane.contains].some(Array.isArray)) {
+      throw new Error(`ci-change-scope: lane ${lane.id} has no matchers`);
+    }
+  }
+  return value;
+}
+
+export function classifyPaths(paths, value = laneManifest) {
+  validateLaneManifest(value);
+  const result = [];
+  for (const candidate of [...new Set(paths.map(normalizePath).filter(Boolean))].toSorted(
+    (left, right) => left.localeCompare(right),
+  )) {
+    if (candidate.startsWith("/") || candidate.split("/").includes("..")) {
+      throw new Error(`ci-change-scope: unsafe path ${JSON.stringify(candidate)}`);
+    }
+    const lane = value.lanes.find((entry) => matchesLane(candidate, entry));
+    if (!lane) {
+      throw new Error(`ci-change-scope: unclassified path ${JSON.stringify(candidate)}`);
+    }
+    result.push(Object.freeze({ path: candidate, lane: lane.id }));
+  }
+  return Object.freeze(result);
+}
+
+const VERSION_ROOTS = new Set(["CHANGELOG.md", "package.json", "src/brand.ts"]);
+
+function bool(value) {
   return value ? "true" : "false";
+}
+
+function isVersionPath(path) {
+  if (VERSION_ROOTS.has(path)) {
+    return true;
+  }
+  const parts = path.split("/");
+  return (
+    parts.length === 3 &&
+    parts[0] === "extensions" &&
+    (parts[2] === "CHANGELOG.md" || parts[2] === "package.json")
+  );
+}
+
+function isRoutableTest(path) {
+  return (
+    (path.startsWith("src/") ||
+      path.startsWith("scripts/") ||
+      path.startsWith("test/") ||
+      path.startsWith("extensions/") ||
+      path.startsWith("ui/")) &&
+    path.endsWith(".test.ts") &&
+    !path.endsWith(".e2e.test.ts") &&
+    !path.endsWith(".live.test.ts")
+  );
+}
+
+function digest(value) {
+  return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
+}
+
+function fullMatrixPlan() {
+  const enabled = {
+    docsOnly: false,
+    docsChanged: true,
+    versionOnly: false,
+    ciInfrastructureOnly: false,
+    t2FixtureOnly: false,
+    testOnly: false,
+    fixtureOnly: false,
+    productionChanged: true,
+    privilegeChanged: true,
+    reusePrChecks: false,
+    runNode: true,
+    runNodeFocused: false,
+    runInstallerReleaseVerification: false,
+    runNodeBuild: true,
+    runNodePackaging: true,
+    runNodeFull: true,
+    runNodeUnit: false,
+    runNodeGateway: false,
+    runNodeExtensions: false,
+    runUi: true,
+    runMacosRuntime: true,
+    runMacosApp: true,
+    experimentalMobileChanged: true,
+    runSigner: true,
+    runNativeSigner: true,
+    runSignerIntegration: true,
+    runSignerDarwinIntegration: true,
+    runPlatformBootstrap: true,
+    runDocker: true,
+    runCodeqlJavascript: true,
+    runCodeqlGo: true,
+    runCodeqlPython: true,
+    runHosting: true,
+    runHostingFresh: true,
+    runHostingUpdate: true,
+    runLocalFresh: true,
+    runLocalUpdate: true,
+    runCiContracts: true,
+    runT2Contracts: true,
+    runUiMining: true,
+    runSkills: true,
+    fullMatrix: true,
+  };
+  return Object.freeze({
+    authorityVersion: 7,
+    phase: "nightly",
+    changeKind: "full-matrix",
+    paths: [],
+    lanes: [],
+    selectedTestPaths: [],
+    manualReviewRequired: false,
+    ...enabled,
+  });
+}
+
+export function classifyChangedPaths(inputPaths, options = {}) {
+  if (options.fullMatrix === true || options.unknown === true || inputPaths.length === 0) {
+    return fullMatrixPlan();
+  }
+  const classified = classifyPaths(inputPaths);
+  const paths = classified.map(({ path }) => path);
+  const lanes = [...new Set(classified.map(({ lane }) => lane))].toSorted((left, right) =>
+    left.localeCompare(right),
+  );
+  const lane = (name) => lanes.includes(name);
+  const selectedTestPaths = paths
+    .filter(isRoutableTest)
+    .toSorted((left, right) => left.localeCompare(right));
+  const docsOnly = lanes.every((name) => name === "documentation");
+  const versionOnly =
+    paths.includes("package.json") && paths.includes("src/brand.ts") && paths.every(isVersionPath);
+  const testOnly = lanes.every((name) => name === "tests");
+  const fixtureOnly = paths.every(
+    (path) =>
+      path.startsWith("fixtures/") ||
+      path.startsWith("scripts/docker/") ||
+      path.startsWith("scripts/test-"),
+  );
+  const ciInfrastructureOnly = lanes.every(
+    (name) => name === "ci-contract" || name === "documentation",
+  );
+  const productionChanged = lanes.some(
+    (name) => !["ci-contract", "documentation", "tests"].includes(name),
+  );
+  const lifecycle = lane("lifecycle");
+  const signer = lane("signer");
+  const installer = paths.includes("install.sh");
+  const dependencyCandidate =
+    paths.includes("pnpm-lock.yaml") &&
+    paths.every(
+      (path) =>
+        path === "pnpm-lock.yaml" || path === "package.json" || path.endsWith("/package.json"),
+    );
+
+  if (
+    productionChanged &&
+    !versionOnly &&
+    !lifecycle &&
+    !signer &&
+    !dependencyCandidate &&
+    selectedTestPaths.length === 0
+  ) {
+    throw new Error(
+      `ci-change-scope: production change has no directly changed focused test: ${JSON.stringify(paths)}`,
+    );
+  }
+
+  const runNodeUnit = selectedTestPaths.some(
+    (path) =>
+      !path.startsWith("src/gateway/") &&
+      !path.startsWith("extensions/") &&
+      !path.startsWith("ui/"),
+  );
+  const runNodeGateway = selectedTestPaths.some((path) => path.startsWith("src/gateway/"));
+  const runNodeExtensions = selectedTestPaths.some((path) => path.startsWith("extensions/"));
+  const runUi = selectedTestPaths.some((path) => path.startsWith("ui/"));
+  const plan = {
+    authorityVersion: 7,
+    phase: "T1",
+    changeKind: versionOnly
+      ? "version-only"
+      : docsOnly
+        ? "documentation-only"
+        : ciInfrastructureOnly
+          ? "ci-infrastructure-only"
+          : testOnly
+            ? "test-only"
+            : productionChanged
+              ? "production"
+              : "repository",
+    paths,
+    lanes,
+    selectedTestPaths,
+    manualReviewRequired: false,
+    docsOnly,
+    docsChanged: lane("documentation"),
+    versionOnly,
+    ciInfrastructureOnly,
+    t2FixtureOnly: false,
+    testOnly,
+    fixtureOnly,
+    productionChanged,
+    privilegeChanged: lifecycle || signer || installer,
+    reusePrChecks: false,
+    runNode: !versionOnly && (lane("node") || lifecycle || selectedTestPaths.length > 0),
+    runNodeFocused: lifecycle && !installer,
+    runInstallerReleaseVerification: installer,
+    runNodeBuild: false,
+    runNodePackaging: false,
+    runNodeFull: false,
+    runNodeUnit,
+    runNodeGateway,
+    runNodeExtensions,
+    runUi,
+    runMacosRuntime: false,
+    runMacosApp: false,
+    experimentalMobileChanged: lane("native"),
+    runSigner: signer,
+    runNativeSigner: signer || paths.some((path) => path.startsWith("tools/fased-lifecycled/")),
+    runSignerIntegration: signer,
+    runSignerDarwinIntegration: false,
+    runPlatformBootstrap: false,
+    runDocker: false,
+    runCodeqlJavascript: false,
+    runCodeqlGo: false,
+    runCodeqlPython: false,
+    runHosting: false,
+    runHostingFresh: false,
+    runHostingUpdate: false,
+    runLocalFresh: false,
+    runLocalUpdate: false,
+    runCiContracts: lane("ci-contract"),
+    runT2Contracts: false,
+    runUiMining: runUi && paths.some((path) => path.includes("mining")),
+    runSkills: lane("skills"),
+    fullMatrix: false,
+  };
+  return Object.freeze({ ...plan, planDigest: digest(plan) });
 }
 
 export function detectDependencyRemediation(
@@ -21,18 +375,15 @@ export function detectDependencyRemediation(
   env = process.env,
   verify = verifyRepositoryDependencyRemediation,
 ) {
-  const paths = [...plan.paths].toSorted((left, right) => left.localeCompare(right));
-  const manifestPaths = paths.filter(
+  const manifests = plan.paths.filter(
     (path) => path === "package.json" || path.endsWith("/package.json"),
   );
   if (
     plan.changeKind !== "production" ||
-    plan.manualReviewRequired ||
-    manifestPaths.length < 1 ||
-    manifestPaths.length > 8 ||
-    !paths.includes("pnpm-lock.yaml") ||
-    paths.length !== manifestPaths.length + 1 ||
-    !paths.every((path) => path === "pnpm-lock.yaml" || manifestPaths.includes(path))
+    manifests.length < 1 ||
+    manifests.length > 8 ||
+    !plan.paths.includes("pnpm-lock.yaml") ||
+    plan.paths.length !== manifests.length + 1
   ) {
     return Object.freeze({ dependencyRemediation: false, dependencyNames: [] });
   }
@@ -45,247 +396,127 @@ export function detectDependencyRemediation(
       ].toSorted((left, right) => left.localeCompare(right)),
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`ci-change-scope: dependency remediation rejected: ${message}`);
+    console.error(
+      `ci-change-scope: dependency remediation rejected: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return Object.freeze({ dependencyRemediation: false, dependencyNames: [] });
   }
 }
 
 export function outputEntries(plan, options = {}) {
-  const scope = plan.scope;
-  const dependencyRemediation = options.dependencyRemediation === true;
-  const dependencyNames = dependencyRemediation ? (options.dependencyNames ?? []) : [];
-  const focusedNode = scope.runNodeFocused || scope.runInstallerReleaseVerification;
-  const focusedCodeqlJavascript =
-    scope.runCodeqlJavascript &&
-    (scope.runNodeFocused || (plan.selectedTestPaths?.length ?? 0) > 0);
-  const focusedLocalUpdate = focusedNode && scope.runLocalUpdate;
-  const runDependencyIntegrity = dependencyRemediation || (scope.runNodePackaging && !focusedNode);
-  const lane = (value) => !dependencyRemediation && value;
-  const focusedLane = (value) => lane(value) && !focusedNode;
-  // Packaged P1 stays at the immutable candidate boundary. Keep ordinary PR CI
-  // on focused source/security contracts without repeating that transaction.
-  const prBuildLane = (value) => lane(value) && !focusedNode;
-  const prInstalledAcceptanceLane = (value) =>
-    lane(value) && !focusedNode && scope.productionChanged;
-  const codeqlLanguages = [
-    lane(scope.runCodeqlJavascript) && "javascript-typescript",
-    lane(scope.runCodeqlGo) && "go",
-    lane(scope.runCodeqlPython) && "python",
-  ].filter(Boolean);
-  return {
+  const remediation = options.dependencyRemediation === true;
+  const entries = {
     authority_version: String(plan.authorityVersion),
-    plan_digest: plan.planDigest,
+    plan_digest: plan.planDigest ?? digest(plan),
     gate_plan_json: JSON.stringify(plan),
-    changed_test_paths_json: JSON.stringify(plan.selectedTestPaths ?? []),
-    changed_ui_browser_tests: trueString(
-      plan.scope.testOnly && plan.paths.some((path) => /^ui\/.*\.browser\.test\.ts$/u.test(path)),
+    lanes_json: JSON.stringify(plan.lanes),
+    changed_test_paths_json: JSON.stringify(plan.selectedTestPaths),
+    changed_ui_browser_tests: bool(
+      plan.selectedTestPaths.some((path) => path.endsWith(".browser.test.ts")),
     ),
     phase: plan.phase,
-    entry_points_json: JSON.stringify(plan.entryPoints),
+    entry_points_json: "[]",
     change_kind: plan.changeKind,
-    manual_review_required: trueString(plan.manualReviewRequired),
-    docs_only: trueString(scope.docsOnly),
-    docs_changed: trueString(scope.docsChanged),
-    version_only: trueString(scope.versionOnly),
-    ci_infrastructure_only: trueString(scope.ciInfrastructureOnly),
-    t2_fixture_only: trueString(scope.t2FixtureOnly),
-    test_only: trueString(scope.testOnly),
-    fixture_only: trueString(scope.fixtureOnly),
-    production_changed: trueString(scope.productionChanged),
-    privilege_changed: trueString(scope.privilegeChanged),
-    reuse_pr_checks: trueString(scope.reusePrChecks),
-    dependency_remediation: trueString(dependencyRemediation),
-    dependency_names_json: JSON.stringify(dependencyNames),
-    focused_local_update: trueString(focusedLocalUpdate),
-    run_dependency_integrity: trueString(runDependencyIntegrity),
-    run_node: trueString(lane(scope.runNode)),
-    run_node_focused: trueString(lane(scope.runNodeFocused || focusedLocalUpdate)),
-    run_installer_release_verification: trueString(lane(scope.runInstallerReleaseVerification)),
-    run_node_build: trueString(dependencyRemediation || prBuildLane(scope.runNodeBuild)),
-    run_node_packaging: trueString(focusedLane(scope.runNodePackaging)),
-    run_node_full: trueString(focusedLane(scope.runNodeFull)),
-    run_node_unit: trueString(focusedLane(scope.runNodeUnit)),
-    run_node_gateway: trueString(focusedLane(scope.runNodeGateway)),
-    run_node_extensions: trueString(focusedLane(scope.runNodeExtensions)),
-    run_ui: trueString(focusedLane(scope.runUi)),
-    run_macos_runtime: trueString(focusedLane(scope.runMacosRuntime)),
-    run_macos_app: trueString(focusedLane(scope.runMacosApp)),
-    experimental_mobile_changed: trueString(scope.experimentalMobileChanged),
-    run_signer: trueString(focusedLane(scope.runSigner)),
-    run_native_signer: trueString(focusedLane(scope.runNativeSigner)),
-    run_signer_integration: trueString(focusedLane(scope.runSignerIntegration)),
-    run_signer_darwin_integration: trueString(focusedLane(scope.runSignerDarwinIntegration)),
-    run_platform_bootstrap: trueString(lane(scope.runPlatformBootstrap)),
-    run_docker: trueString(lane(scope.runDocker)),
-    run_codeql_javascript: trueString(lane(scope.runCodeqlJavascript)),
-    focused_codeql_javascript: trueString(lane(focusedCodeqlJavascript)),
-    run_codeql_go: trueString(lane(scope.runCodeqlGo)),
-    run_codeql_python: trueString(lane(scope.runCodeqlPython)),
-    codeql_languages_json: JSON.stringify(codeqlLanguages),
-    run_hosting: trueString(prInstalledAcceptanceLane(scope.runHosting)),
-    run_hosting_fresh: trueString(prInstalledAcceptanceLane(scope.runHostingFresh)),
-    run_hosting_update: trueString(prInstalledAcceptanceLane(scope.runHostingUpdate)),
-    run_local_fresh: trueString(prInstalledAcceptanceLane(scope.runLocalFresh)),
-    run_local_update: trueString(prInstalledAcceptanceLane(scope.runLocalUpdate)),
-    run_ci_contracts: trueString(scope.runCiContracts),
-    run_t2_contracts: trueString(focusedLane(scope.runT2Contracts)),
-    run_ui_mining: trueString(lane(scope.runUiMining)),
-    run_skills: trueString(lane(scope.runSkills)),
-    full_matrix: trueString(lane(scope.fullMatrix)),
+    manual_review_required: "false",
+    dependency_remediation: bool(remediation),
+    dependency_names_json: JSON.stringify(remediation ? (options.dependencyNames ?? []) : []),
+    focused_local_update: bool(plan.runNodeFocused),
+    run_dependency_integrity: bool(remediation || plan.runNodePackaging),
   };
-}
-
-function replaceInstallerRegion(source, startMarker, endMarker, label) {
-  const start = source.indexOf(startMarker);
-  const end = source.indexOf(endMarker, start + startMarker.length);
-  if (start < 0 || end < 0) {
-    throw new Error(`installer ${label} region is missing`);
+  const mappings = {
+    docs_only: "docsOnly",
+    docs_changed: "docsChanged",
+    version_only: "versionOnly",
+    ci_infrastructure_only: "ciInfrastructureOnly",
+    t2_fixture_only: "t2FixtureOnly",
+    test_only: "testOnly",
+    fixture_only: "fixtureOnly",
+    production_changed: "productionChanged",
+    privilege_changed: "privilegeChanged",
+    reuse_pr_checks: "reusePrChecks",
+    run_node: "runNode",
+    run_node_focused: "runNodeFocused",
+    run_installer_release_verification: "runInstallerReleaseVerification",
+    run_node_build: "runNodeBuild",
+    run_node_packaging: "runNodePackaging",
+    run_node_full: "runNodeFull",
+    run_node_unit: "runNodeUnit",
+    run_node_gateway: "runNodeGateway",
+    run_node_extensions: "runNodeExtensions",
+    run_ui: "runUi",
+    run_macos_runtime: "runMacosRuntime",
+    run_macos_app: "runMacosApp",
+    experimental_mobile_changed: "experimentalMobileChanged",
+    run_signer: "runSigner",
+    run_native_signer: "runNativeSigner",
+    run_signer_integration: "runSignerIntegration",
+    run_signer_darwin_integration: "runSignerDarwinIntegration",
+    run_platform_bootstrap: "runPlatformBootstrap",
+    run_docker: "runDocker",
+    run_codeql_javascript: "runCodeqlJavascript",
+    focused_codeql_javascript: "runCodeqlJavascript",
+    run_codeql_go: "runCodeqlGo",
+    run_codeql_python: "runCodeqlPython",
+    run_hosting: "runHosting",
+    run_hosting_fresh: "runHostingFresh",
+    run_hosting_update: "runHostingUpdate",
+    run_local_fresh: "runLocalFresh",
+    run_local_update: "runLocalUpdate",
+    run_ci_contracts: "runCiContracts",
+    run_t2_contracts: "runT2Contracts",
+    run_ui_mining: "runUiMining",
+    run_skills: "runSkills",
+    full_matrix: "fullMatrix",
+  };
+  for (const [output, key] of Object.entries(mappings)) {
+    entries[output] = bool(plan[key]);
   }
-  return `${source.slice(0, start + startMarker.length)}__FASED_${label}__\n${source.slice(end)}`;
-}
-
-function normalizeInstallerReleaseVerification(source) {
-  const helperStart = source.indexOf("  verify_release_attestation_source() {\n");
-  if (helperStart >= 0) {
-    const helperEndMarker = "\n\n  root_owned_bundle_tree_is_secure() {";
-    const helperEnd = source.indexOf(helperEndMarker, helperStart);
-    if (helperEnd < 0) {
-      throw new Error("installer shared release-verification helper is unterminated");
-    }
-    source = `${source.slice(0, helperStart)}${source.slice(helperEnd + 2)}`;
-  }
-  source = replaceInstallerRegion(
-    source,
-    '    curl -q -fL --proto \'=https\' --tlsv1.2 "$release_url/fased-privileged-vex-v1.openvex.json" -o "$vex"\n',
-    '    local manifest_selection=""',
-    "HOSTING_ATTESTATION_VERIFICATION",
+  entries.codeql_languages_json = JSON.stringify(
+    [
+      plan.runCodeqlJavascript && "javascript-typescript",
+      plan.runCodeqlGo && "go",
+      plan.runCodeqlPython && "python",
+    ].filter(Boolean),
   );
-  return replaceInstallerRegion(
-    source,
-    '      echo "Could not download the Local release attestation bundle." >&2\n      return 1\n    fi\n',
-    '    local release_commit=""',
-    "LOCAL_ATTESTATION_VERIFICATION",
-  );
-}
-
-export function isInstallerReleaseVerificationChange(paths, baseInstaller, headInstaller) {
-  const normalized = normalizeChangedPaths(paths).toSorted((left, right) =>
-    left.localeCompare(right),
-  );
-  if (
-    !normalized.includes("install.sh") ||
-    !normalized.includes("scripts/install-release-pin.test.ts") ||
-    !normalized.every(isInstallerReleaseVerificationPath) ||
-    (normalized.includes("scripts/generation-updater.mjs") &&
-      !normalized.includes("scripts/generation-updater.test.ts")) ||
-    (normalized.includes("scripts/release-artifact-set.mjs") &&
-      !normalized.includes("scripts/release-artifact-set.test.ts")) ||
-    baseInstaller === headInstaller
-  ) {
-    return false;
-  }
-  try {
-    return (
-      normalizeInstallerReleaseVerification(baseInstaller) ===
-      normalizeInstallerReleaseVerification(headInstaller)
-    );
-  } catch {
-    return false;
-  }
-}
-
-export function detectInstallerReleaseVerification(paths, env = process.env) {
-  const base = resolveDiffBase(env);
-  try {
-    const baseInstaller = execFileSync("git", ["show", `${base}:install.sh`], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const headInstaller = readFileSync("install.sh", "utf8");
-    return isInstallerReleaseVerificationChange(paths, baseInstaller, headInstaller);
-  } catch {
-    return false;
-  }
+  return entries;
 }
 
 function resolveDiffBase(env = process.env) {
-  if (env.GITHUB_EVENT_NAME === "push") {
-    const before = env.GITHUB_EVENT_BEFORE?.trim();
-    if (before && !/^0+$/.test(before)) {
-      return before;
-    }
-    return "HEAD^";
-  }
-
   if (env.GITHUB_EVENT_NAME === "pull_request") {
     const baseRef = env.GITHUB_BASE_REF?.trim();
     if (baseRef) {
       try {
         return execFileSync("git", ["merge-base", `origin/${baseRef}`, "HEAD"], {
           encoding: "utf8",
-          stdio: ["ignore", "pipe", "ignore"],
         }).trim();
-      } catch {
-        // Fall through to the event's immutable base SHA.
-      }
+      } catch {}
     }
-    const baseSha = env.GITHUB_BASE_SHA?.trim();
-    if (baseSha) {
-      return baseSha;
+    if (env.GITHUB_BASE_SHA?.trim()) {
+      return env.GITHUB_BASE_SHA.trim();
     }
   }
-
-  return "HEAD^";
+  return env.GITHUB_EVENT_BEFORE?.trim() || "HEAD^";
 }
 
 export function changedPathsFromGit(env = process.env) {
-  const base = resolveDiffBase(env);
-  const output = execFileSync("git", ["diff", "--name-only", base, "HEAD"], {
+  return execFileSync("git", ["diff", "--name-only", resolveDiffBase(env), "HEAD"], {
     encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  return normalizeChangedPaths(output.split(/\r?\n/));
+  })
+    .split(/\r?\n/u)
+    .filter(Boolean);
 }
 
 function main() {
   const fullMatrix = process.env.FULL_MATRIX === "true";
-  const reusePrChecks = process.env.REUSE_PR_CHECKS === "true";
-  const phase = "T3";
-  const entryPoint = null;
-  let paths = [];
-  let unknown = false;
-
-  if (!fullMatrix && !reusePrChecks) {
-    try {
-      paths = changedPathsFromGit();
-      unknown = paths.length === 0;
-    } catch (error) {
-      unknown = true;
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`ci-change-scope: diff detection failed; enabling broad checks: ${message}`);
-    }
-  }
-
-  const installerReleaseVerification = detectInstallerReleaseVerification(paths);
-  const plan = createGatePlan(paths, {
-    phase,
-    entryPoint,
-    fullMatrix,
-    reusePrChecks,
-    unknown,
-    installerReleaseVerification,
-  });
-  const remediation = detectDependencyRemediation(plan);
-  const entries = outputEntries(plan, remediation);
-  const outputPath = process.env.GITHUB_OUTPUT;
-  if (!outputPath) {
+  const paths = fullMatrix ? [] : changedPathsFromGit();
+  const plan = classifyChangedPaths(paths, { fullMatrix, unknown: paths.length === 0 });
+  const entries = outputEntries(plan, detectDependencyRemediation(plan));
+  if (!process.env.GITHUB_OUTPUT) {
     throw new Error("ci-change-scope: GITHUB_OUTPUT is required");
   }
   for (const [name, value] of Object.entries(entries)) {
-    appendFileSync(outputPath, `${name}=${value}\n`);
+    appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
   }
-
   console.log(JSON.stringify({ paths, ...entries }, null, 2));
 }
 
