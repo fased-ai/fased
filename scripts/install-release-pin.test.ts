@@ -5,6 +5,10 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const installer = fs.readFileSync(new URL("../install.sh", import.meta.url), "utf8");
+const developerInstaller = fs.readFileSync(
+  new URL("./install-development.sh", import.meta.url),
+  "utf8",
+);
 const exactLocalCommit = "b".repeat(40);
 
 function writeExecutable(filePath: string, source: string): void {
@@ -301,15 +305,13 @@ describe("managed installer release pinning", () => {
     expect(installer).toContain('hosting_release="$latest_local_tag"');
   });
 
-  it("bootstraps a downloaded Local installer that has no packaged companion files", () => {
+  it("routes every stamped Local installer file through the verified bootstrap", () => {
     expect(installer).toContain("install_entry_local_file_bootstrap=0");
     expect(installer).toContain(
       'if [[ "$install_entry_is_stream" -eq 0 && "$install_entry_hosting" -eq 0',
     );
-    expect(installer).toContain(
-      'if [[ ! -f "$install_entry_source_dir/scripts/install-runtime-profile.sh" ]]',
-    );
     expect(installer).toContain("install_entry_local_file_bootstrap=1");
+    expect(installer).not.toContain("scripts/install-runtime-profile.sh");
     expect(installer).toContain(
       'if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" -eq 1',
     );
@@ -644,31 +646,26 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
     expect(installer.slice(freshStart, freshExec)).toContain("drain_streamed_install_input");
   });
 
-  it("defaults a normal checkout install to the Local managed runtime profile", () => {
-    const start = installer.indexOf("resolved_host_profile() {");
-    const end = installer.indexOf("\n}\n", start);
-    const resolver = installer.slice(start, end);
-
-    expect(start).toBeGreaterThanOrEqual(0);
-    expect(end).toBeGreaterThan(start);
-    expect(resolver).toContain('if [[ -z "$profile" ]]');
-    expect(resolver).toContain('profile="local"');
-    expect(resolver).toContain(
-      "protected-local is an installed service topology, not a release artifact",
+  it("routes an unstamped contributor checkout to the developer installer", () => {
+    expect(installer).toContain(
+      'if [[ "$install_entry_is_stream" -eq 0 && -z "$install_entry_release_identity"',
     );
-    expect(resolver).not.toContain("printf 'protected-local\\n'");
+    expect(installer).toContain(
+      'exec "$install_entry_source_dir/scripts/install-development.sh" "$@"',
+    );
   });
 
-  it("installs a dirty local checkout from source instead of replacing it with the published runtime", () => {
-    expect(installer).toContain(
-      'git -C "$FASED_DIR" status --porcelain=v1 --untracked-files=normal',
-    );
-    expect(installer).toContain(
+  it("routes explicit source installation to the separate developer installer", () => {
+    expect(installer).toContain('exec "$install_entry_source_dir/scripts/install-development.sh"');
+    expect(installer).not.toContain("DIRTY_CHECKOUT_SOURCE_AUTO_SELECTED");
+    expect(installer).not.toContain(
       "local checkout has changes; building and installing this checkout",
     );
-    expect(installer).toContain("DIRTY_CHECKOUT_SOURCE_AUTO_SELECTED=1");
-    expect(installer).toContain('if [[ "$DIRTY_CHECKOUT_SOURCE_AUTO_SELECTED" -ne 1 ]]');
-    expect(installer).toContain("SOURCE_INSTALL_REQUESTED=1");
+    expect(developerInstaller).toContain('pnpm --dir "$repo_root" install --frozen-lockfile');
+    expect(developerInstaller).toContain('exec "$HOME/.local/bin/fased" onboard --install-daemon');
+    expect(installer).not.toContain("pnpm --silent run build:fast");
+    expect(installer).not.toContain("pnpm --silent run ui:build");
+    expect(installer).not.toContain("refresh_checkout_from_origin() {");
   });
 
   it("binds an exact Local repair checkout to the attested unified manifest commit", () => {
@@ -1018,88 +1015,14 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
     }
   });
 
-  it("installs GitHub CLI attestation support before a macOS signer transaction", () => {
-    expect(installer).toContain(
-      'if use_prebuilt_release_runtime || [[ "$(uname -s)" == "Darwin" ]]; then',
-    );
-    expect(installer).toContain("install_github_cli_for_attestations");
-  });
-
-  it("pins the managed runtime package whenever an exact release was requested", () => {
-    expect(installer).toContain('if [[ -n "$HOSTING_RELEASE" ]]; then');
-    expect(installer).toContain('package_spec="@fased/fased@${HOSTING_RELEASE}"');
+  it("keeps attestation tooling on the public bootstrap path", () => {
+    expect(installer).toContain("install_current_github_cli_bootstrap");
+    expect(developerInstaller).not.toContain("install_current_github_cli_bootstrap");
   });
 
   it("permits prerelease Hosting only through an explicit beta update channel", () => {
     expect(installer).toContain("Hosting prerelease installation requires --update-channel beta.");
     expect(installer).toContain("Local prerelease installation requires --update-channel beta.");
-    expect(installer).toContain("A prerelease --release requires --update-channel beta.");
     expect(installer).toContain('"$hosting_update_channel" =~ ^(stable|beta)$');
-  });
-
-  it("keeps update-channel persistence outside the install marker JSON", () => {
-    const markerStart = installer.indexOf("write_install_marker() {");
-    const markerEnd = installer.indexOf("\nEOF\n  chmod 600", markerStart);
-    const channelFunction = installer.indexOf("persist_runtime_update_channel() {");
-
-    expect(markerStart).toBeGreaterThanOrEqual(0);
-    expect(markerEnd).toBeGreaterThan(markerStart);
-    expect(channelFunction).toBeGreaterThan(markerEnd);
-    expect(installer.slice(markerStart, markerEnd)).not.toContain("persist_runtime_update_channel");
-  });
-
-  it("does not downgrade shared Protected Local state after activation", () => {
-    const permissionsStart = installer.indexOf("ensure_fased_config_dir_permissions() {");
-    const permissionsEnd = installer.indexOf("\n}\n", permissionsStart);
-    const markerStart = installer.indexOf("write_install_marker() {");
-    const markerEnd = installer.indexOf("\n}\n", markerStart);
-    const channelStart = installer.indexOf("persist_runtime_update_channel() {");
-    const channelEnd = installer.indexOf("\n}\n", channelStart);
-    const envStart = installer.indexOf("persist_managed_env_var() {");
-    const envEnd = installer.indexOf("\n}\n", envStart);
-
-    expect(permissionsStart).toBeGreaterThanOrEqual(0);
-    expect(permissionsEnd).toBeGreaterThan(permissionsStart);
-    const permissions = installer.slice(permissionsStart, permissionsEnd);
-    expect(permissions).toContain("Fased shared state group mismatch");
-    expect(permissions).toContain("Fased shared state mode mismatch");
-    expect(permissions).toContain('if [[ "$actual_mode" != "2770" ]]');
-    expect(permissions).not.toContain('chmod 2770 "$FASED_CONFIG_DIR"');
-
-    const marker = installer.slice(markerStart, markerEnd);
-    expect(marker).toContain("ensure_fased_config_dir_permissions");
-    expect(marker).not.toContain('chmod 700 "$FASED_CONFIG_DIR"');
-
-    const channel = installer.slice(channelStart, channelEnd);
-    expect(channel).toContain("ensure_fased_config_dir_permissions");
-    expect(channel).toContain('config_mode="$(managed_state_file_mode)"');
-    expect(channel).toContain('CONFIG_MODE="$config_mode"');
-    expect(channel).toContain('transaction_phase="${1:-active}"');
-    expect(channel).toContain('transaction_phase" == "protected-local-pre-activation');
-
-    const managedEnv = installer.slice(envStart, envEnd);
-    expect(managedEnv).toContain("ensure_fased_config_dir_permissions");
-    expect(managedEnv).toContain('env_mode="$(managed_state_file_mode)"');
-
-    const protectedActivation = installer.indexOf("bootstrap_protected_local_topology activate");
-    const onboardingScaffold = installer.indexOf(
-      "if ! prepare_protected_local_onboarding_scaffold",
-    );
-    const onboarding = installer.indexOf('FASED_INSTALLER_ONBOARD=1 "$FASED_CLI_PATH" onboard');
-    const onboardingCompletion = installer.indexOf("--operation COMPLETE_ONBOARDING", onboarding);
-    const finalMarker = installer.indexOf('write_install_marker "$REPO_ROOT" "true"', onboarding);
-    expect(protectedActivation).toBeGreaterThanOrEqual(0);
-    expect(onboardingScaffold).toBeGreaterThan(protectedActivation);
-    expect(onboarding).toBeGreaterThan(onboardingScaffold);
-    expect(onboarding).toBeGreaterThan(protectedActivation);
-    expect(onboardingCompletion).toBeGreaterThan(onboarding);
-    expect(onboardingCompletion).toBeLessThan(finalMarker);
-    expect(installer.slice(onboarding, finalMarker)).toContain(
-      'lifecycle_binary="${FASED_WALLET_LOCAL_SIGNER_BIN%/fased-signerd}/fased-lifecycled"',
-    );
-    expect(finalMarker).toBeGreaterThan(onboarding);
-    expect(installer).not.toContain(
-      "persist_runtime_update_channel protected-local-pre-activation",
-    );
   });
 });

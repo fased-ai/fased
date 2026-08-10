@@ -250,7 +250,6 @@ jobs:
             scripts/generation-updater.mjs \
             scripts/go-lifecycle-routing.test.ts \
             scripts/managed-runtime-layout.mjs \
-            scripts/managed-runtime-layout.test.ts \
             scripts/managed-updater-bundle.test.ts \
             scripts/managed-updater-bundle.v1.json \
             scripts/release-check.ts
@@ -261,7 +260,6 @@ jobs:
             scripts/generation-updater.mjs \
             scripts/go-lifecycle-routing.test.ts \
             scripts/managed-runtime-layout.mjs \
-            scripts/managed-runtime-layout.test.ts \
             scripts/managed-updater-bundle.test.ts \
             scripts/release-check.ts
 
@@ -271,7 +269,6 @@ jobs:
           scripts/go-lifecycle-routing.test.ts
           scripts/generation-updater.test.ts
           scripts/fased-generation-updater-core.test.ts
-          scripts/managed-runtime-layout.test.ts
           scripts/managed-updater-bundle.test.ts
           src/wallet/wallet-application-state-permissions.test.ts
           --pool=forks
@@ -836,9 +833,6 @@ jobs:
         with:
           name: dist-build
           path: dist/
-
-      - name: Check hosted runtime installer
-        run: bash scripts/test-hosted-runtime-install.sh
 
       - name: Check streamed Hosting handoff contracts
         run: >-

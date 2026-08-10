@@ -14,17 +14,14 @@ function shellFunction(name: string): string {
 
 describe("official release attestation prerequisites", () => {
   it("automatically provisions a current GitHub CLI on macOS through Homebrew", () => {
-    const fn = shellFunction("install_github_cli_for_attestations");
-    expect(fn).toContain('"$(uname -s)" == "Darwin"');
-    expect(fn).toContain("need_cmd brew");
+    const fn = shellFunction("install_current_github_cli_bootstrap");
     expect(fn).toContain("brew install gh || brew upgrade gh");
-    expect(fn).toContain("github_cli_supports_attestations || {");
+    expect(fn).toContain("gh attestation verify --help");
   });
 
   it("does not silently skip attestation verification when auto-install is disabled", () => {
-    const fn = shellFunction("install_github_cli_for_attestations");
-    expect(fn).toContain('if [[ "$AUTO_INSTALL" -ne 1 ]]');
-    expect(fn).toContain("is required for official release assets");
+    const fn = shellFunction("install_current_github_cli_bootstrap");
+    expect(fn).toContain('[[ "$auto_install" -eq 1 ]] || return 1');
     expect(fn).toContain("return 1");
   });
 });
