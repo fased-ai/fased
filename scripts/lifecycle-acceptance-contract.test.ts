@@ -98,9 +98,21 @@ describe("lifecycle acceptance contract", () => {
     );
 
     expect(runner).toContain("acceptance_contract=/artifacts/fased-lifecycle-acceptance-v1.json");
+    expect(runner).toContain(
+      'acceptance_receipt="/var/lib/fased-protected-local-fixture/lifecycle-acceptance-${phase}.json"',
+    );
     expect(runner).toContain("wallet status --json");
     expect(runner).toContain("wallet signer doctor --json");
     expect(runner).toContain("mining status");
+    expect(runner).toContain('configure_fixture_sat_runtime "$instance"');
+    expect(runner).toContain("FASED_SAT_PROGRAM_ID=11111111111111111111111111111111");
+    expect(runner).toContain(
+      "FASED_SAT_BOND_PROGRAM_ID=ComputeBudget111111111111111111111111111111",
+    );
+    expect(runner).toContain("FASED_SAT_MINT_ADDRESS=So11111111111111111111111111111111111111112");
+    expect(runner).toContain(
+      "FASED_SAT_MINT_PROGRAM_ID=TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    );
     expect(runner).toContain("federation status --json");
     expect(runner).toContain("plugins doctor");
     expect(runner).toContain('"fased-local-controller-worker-$instance.service"');
@@ -112,6 +124,9 @@ describe("lifecycle acceptance contract", () => {
     expect(wrapper).toContain('"$ROOT_DIR/config/lifecycle-acceptance.v1.json"');
     expect(wrapper).toContain('lifecycle-release-compatibility.mjs" build');
     expect(wrapper).toContain('lifecycle-acceptance-contract.mjs" verify-receipt');
+    expect(wrapper).toContain(
+      '"$name:/var/lib/fased-protected-local-fixture/lifecycle-acceptance-${scenario}.json"',
+    );
     expect(wrapper).toContain("FASED_SYSTEMD_FIXTURE_PARALLEL_SCENARIOS");
     expect(wrapper).toContain("FASED_SYSTEMD_FIXTURE_ARTIFACT_CACHE_DIR");
     expect(workflow).toContain(".artifacts/hosted-runtime/fased-lifecycle-acceptance-v1.json");

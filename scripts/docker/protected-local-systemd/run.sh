@@ -12,7 +12,7 @@ public_acquisition="${FASED_FIXTURE_PUBLIC_ACQUISITION:-0}"
 acceptance_contract=/artifacts/fased-lifecycle-acceptance-v1.json
 acceptance_descriptor=/artifacts/fased-hosting-candidate.json
 acceptance_passed="/tmp/fased-lifecycle-acceptance-${phase}.passed"
-acceptance_receipt="/tmp/fased-lifecycle-acceptance-${phase}.json"
+acceptance_receipt="/var/lib/fased-protected-local-fixture/lifecycle-acceptance-${phase}.json"
 target_update_args=()
 if [[ "$version" == *-* ]]; then
   target_update_args=(--channel beta)
@@ -85,12 +85,33 @@ verify_four_services() {
   done
 }
 
+configure_fixture_sat_runtime() {
+  local instance="$1"
+  local dropin_dir="/etc/systemd/system/fased-gateway-$instance.service.d"
+
+  install -d -m 0755 -o root -g root "$dropin_dir"
+  cat >"$dropin_dir/95-fixture-sat-runtime.conf" <<'EOF_SAT_RUNTIME'
+[Service]
+Environment=FASED_SAT_PROGRAM_ID=11111111111111111111111111111111
+Environment=FASED_SAT_BOND_PROGRAM_ID=ComputeBudget111111111111111111111111111111
+Environment=FASED_SAT_MINT_ADDRESS=So11111111111111111111111111111111111111112
+Environment=FASED_SAT_MINT_PROGRAM_ID=TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+EOF_SAT_RUNTIME
+  chmod 0644 "$dropin_dir/95-fixture-sat-runtime.conf"
+  systemctl daemon-reload
+  systemctl restart "fased-gateway-$instance.service"
+  wait_for_service "fased-gateway-$instance.service"
+  wait_for_gateway_version "$version"
+}
+
 run_operator_acceptance() {
   local instance="$1"
   local runtime_root="$2"
   local output_prefix="$3"
   local environment_name="$4"
   local -n environment="$environment_name"
+
+  configure_fixture_sat_runtime "$instance"
 
   runuser -u testop -- env "${environment[@]}" \
     /usr/local/bin/node "$runtime_root/fased.mjs" wallet status --json \
@@ -174,6 +195,10 @@ operator_env() {
     "FASED_CONFIG_PATH=$state/fased.json" \
     "FASED_GATEWAY_PORT=$gateway_port" \
     "FASED_GATEWAY_TOKEN=$gateway_token" \
+    "FASED_SAT_PROGRAM_ID=11111111111111111111111111111111" \
+    "FASED_SAT_BOND_PROGRAM_ID=ComputeBudget111111111111111111111111111111" \
+    "FASED_SAT_MINT_ADDRESS=So11111111111111111111111111111111111111112" \
+    "FASED_SAT_MINT_PROGRAM_ID=TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" \
     "FASED_HOST_PROFILE=local" \
     "FASED_LIFECYCLE_INSTALL_ROOT=/opt/fased/local/$instance" \
     "FASED_LIFECYCLE_INSTANCE=$instance" \

@@ -674,7 +674,7 @@ run_fixture_scenario() {
   fi
   receipt="$RECEIPT_DIR/${distro}-${scenario}.json"
   run_container cp \
-    "$name:/tmp/fased-lifecycle-acceptance-${scenario}.json" \
+    "$name:/var/lib/fased-protected-local-fixture/lifecycle-acceptance-${scenario}.json" \
     "$receipt"
   descriptor_digest="sha256:$(sha256sum "$ARTIFACT_DIR/fased-hosting-candidate.json" | awk '{print $1}')"
   node "$ROOT_DIR/scripts/lifecycle-acceptance-contract.mjs" verify-receipt \
