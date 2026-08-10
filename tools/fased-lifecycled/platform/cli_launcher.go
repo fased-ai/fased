@@ -61,6 +61,12 @@ dependency_hash="$("$node_bin" -e '
 ' "$inventory")" || { echo "Fased dependency identity is invalid." >&2; exit 1; }
 dependency="$install_root/dependencies/$dependency_hash/node_modules"
 [[ -d "$dependency" && ! -L "$dependency" ]] || { echo "Fased dependency layer is unavailable." >&2; exit 1; }
+binding="$current/node_modules"
+expected_binding="../../dependencies/$dependency_hash/node_modules"
+[[ -L "$binding" && "$(readlink "$binding")" == "$expected_binding" && "$(readlink -f "$binding")" == "$dependency" ]] || {
+  echo "Fased generation dependency binding is invalid." >&2
+  exit 1
+}
 export NODE_PATH="$dependency"
 exec "$node_bin" "$runtime" "$@"
 `, config.InstallRoot,

@@ -658,6 +658,29 @@ func TestSharedDependencyLayerIsDigestBoundAndReused(t *testing.T) {
 	if err := state.StageGeneration(expected.ID); err != nil {
 		t.Fatal(err)
 	}
+	binding := filepath.Join(state.generationPath(expected.ID), "node_modules")
+	expectedBinding := filepath.ToSlash(filepath.Join("..", "..", "dependencies", layer.Hash, "node_modules"))
+	if actual, err := os.Readlink(binding); err != nil || actual != expectedBinding {
+		t.Fatalf("generation dependency binding = %q, %v; want %q", actual, err, expectedBinding)
+	}
+	if resolved, err := filepath.EvalSymlinks(binding); err != nil || resolved != modules {
+		t.Fatalf("generation dependency binding resolves to %q, %v; want %q", resolved, err, modules)
+	}
+	if err := os.Remove(binding); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.ToSlash(filepath.Join("..", "..", "dependencies", strings.Repeat("d", 64), "node_modules")), binding); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.StageGeneration(expected.ID); err == nil || !strings.Contains(err.Error(), "does not match the verified inventory") {
+		t.Fatalf("tampered generation dependency binding was accepted: %v", err)
+	}
+	if err := os.Remove(binding); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.StageGeneration(expected.ID); err != nil {
+		t.Fatalf("missing derived dependency binding was not repaired: %v", err)
+	}
 	tampered := layer
 	tampered.ArchiveSHA256 = digestA
 	if err := state.ImportDependencyArchive(dependencyArchive, tampered); err == nil {
@@ -748,8 +771,8 @@ func TestCopyRegularTreePreservesExecutableModeUnderRestrictiveUmask(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inventoryInfo.Mode().Perm() != 0o600 {
-		t.Fatalf("copied inventory mode is %04o, expected 0600", inventoryInfo.Mode().Perm())
+	if inventoryInfo.Mode().Perm() != 0o644 {
+		t.Fatalf("copied inventory mode is %04o, expected 0644", inventoryInfo.Mode().Perm())
 	}
 }
 

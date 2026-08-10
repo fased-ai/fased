@@ -243,6 +243,9 @@ func extractGenerationArchive(archive, destination string) error {
 			}
 		case tar.TypeReg, tar.TypeRegA:
 			mode := os.FileMode(0o600)
+			if relative == generationInventoryName {
+				mode = 0o644
+			}
 			if inPayload {
 				mode = 0o644
 			}
@@ -417,6 +420,9 @@ func copyRegularTree(source, destination string) error {
 			return err
 		}
 		mode := os.FileMode(0o600)
+		if relative == generationInventoryName {
+			mode = 0o644
+		}
 		if inPayload {
 			mode = 0o644
 		}
@@ -477,7 +483,7 @@ func (s *Store) StageGeneration(generationID string) error {
 		if manifest, _, manifestErr := s.ReadManifest(); manifestErr == nil &&
 			manifest.ActiveGeneration != nil && manifest.ActiveGeneration.ID == generationID &&
 			s.declaredActiveGeneration(*manifest.ActiveGeneration) {
-			return nil
+			return s.ensureGenerationDependencyBinding(target, dependency)
 		}
 		if _, verifyErr := s.verifyGenerationPath(target, generationID); verifyErr != nil {
 			return verifyErr
@@ -487,15 +493,21 @@ func (s *Store) StageGeneration(generationID string) error {
 			return statErr
 		}
 		if info.Mode().Perm() == 0o711 {
-			return nil
+			return s.ensureGenerationDependencyBinding(target, dependency)
 		}
-		return os.Chmod(target, 0o711)
+		if err := os.Chmod(target, 0o711); err != nil {
+			return err
+		}
+		return s.ensureGenerationDependencyBinding(target, dependency)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	inbox := s.inboxGenerationPath(generationID)
 	if _, err := s.verifyGenerationPath(inbox, generationID); err != nil {
 		return fmt.Errorf("inbox generation verification failed: %w", err)
+	}
+	if err := s.ensureGenerationDependencyBinding(inbox, dependency); err != nil {
+		return err
 	}
 	generationsRoot := filepath.Join(s.installRoot, "generations")
 	if err := os.MkdirAll(generationsRoot, 0o711); err != nil {
@@ -512,6 +524,59 @@ func (s *Store) StageGeneration(generationID string) error {
 		return err
 	}
 	return syncDirectory(generationsRoot)
+}
+
+// ensureGenerationDependencyBinding gives unprivileged CLI processes the same
+// digest-bound dependency view that systemd services receive through
+// BindReadOnlyPaths. The link is derived from the verified inventory and lives
+// beside, rather than inside, the immutable payload covered by that inventory.
+// A generation therefore selects exactly one dependency layer without copying
+// node_modules into every application generation.
+func (s *Store) ensureGenerationDependencyBinding(root string, dependency *bundle.DependencyLayer) error {
+	path := filepath.Join(root, "node_modules")
+	if dependency == nil {
+		if _, err := os.Lstat(path); err == nil {
+			return errors.New("legacy generation unexpectedly has a shared dependency binding")
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	expected := filepath.ToSlash(filepath.Join("..", "..", "dependencies", dependency.Hash, "node_modules"))
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink == 0 {
+			return errors.New("generation dependency binding is not a symbolic link")
+		}
+		actual, err := os.Readlink(path)
+		if err != nil {
+			return err
+		}
+		if actual != expected {
+			return errors.New("generation dependency binding does not match the verified inventory")
+		}
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	temporary, err := os.CreateTemp(root, ".node-modules-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := os.Remove(temporaryPath); err != nil {
+		return err
+	}
+	defer os.Remove(temporaryPath)
+	if err := os.Symlink(expected, temporaryPath); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return err
+	}
+	return syncDirectory(root)
 }
 
 func (s *Store) ActivateGeneration(currentID, previousID string) error {
