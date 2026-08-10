@@ -123,6 +123,12 @@ Linux amd64 application, signer, and lifecycle binaries. Manifest-completeness
 aliases must be copy-on-write files, clearly marked fixture-only/non-publishable, and
 must never substitute for final candidate architecture bytes.
 
+Store one verified branch artifact under a commit/tree/lockfile-digest key.
+Run fresh Local and supported-stable update concurrently against its read-only
+bytes with separate copy-on-write containers. A fixture, workflow, permission,
+contract, or skill-only correction reuses that artifact and cannot invoke the
+builder.
+
 Any product-source change after this proof invalidates it. Rerun the affected
 Linux x64 transaction before push. Candidate P1 may expand to all supported
 architectures, but it must not introduce a predicate that never passed locally.

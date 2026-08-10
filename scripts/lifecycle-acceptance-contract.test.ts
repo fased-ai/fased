@@ -112,6 +112,8 @@ describe("lifecycle acceptance contract", () => {
     expect(wrapper).toContain('"$ROOT_DIR/config/lifecycle-acceptance.v1.json"');
     expect(wrapper).toContain('lifecycle-release-compatibility.mjs" build');
     expect(wrapper).toContain('lifecycle-acceptance-contract.mjs" verify-receipt');
+    expect(wrapper).toContain("FASED_SYSTEMD_FIXTURE_PARALLEL_SCENARIOS");
+    expect(wrapper).toContain("FASED_SYSTEMD_FIXTURE_ARTIFACT_CACHE_DIR");
     expect(workflow).toContain(".artifacts/hosted-runtime/fased-lifecycle-acceptance-v1.json");
     expect(workflow).toContain(
       ".artifacts/hosted-runtime/fased-lifecycle-release-compatibility-v1.json",

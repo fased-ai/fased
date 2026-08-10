@@ -79,6 +79,13 @@ Do not build ARM or macOS assets in this lane. Do not run a complete release
 matrix. A source change invalidates the branch artifact; a harness-only change
 does not and must reuse it.
 
+Cache the unpublished x64 artifact by exact product commit, tree, and lockfile
+digest. Workflow, fixture, permission, skill, and acceptance-contract changes
+must consume an existing verified artifact and must never rebuild product
+bytes. Run fresh Local and supported-stable update concurrently against that
+read-only artifact with isolated disposable state, and stop both lanes on the
+first failed acceptance predicate.
+
 The branch and candidate use the same non-executable acceptance contract. For
 the applicable scenario it records:
 
