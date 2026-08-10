@@ -37,12 +37,18 @@ describe("version-neutral lifecycle acceptance", () => {
     };
     expect(workflow.on?.workflow_dispatch?.inputs).toHaveProperty("predecessor_version");
     expect(workflow.on?.workflow_dispatch?.inputs).not.toHaveProperty("predecessor_scenario");
-    const step = workflow.jobs?.p1?.steps?.find((candidate) =>
+    const update = workflow.jobs?.["p1-local-update"]?.steps?.find((candidate) =>
       candidate.name?.includes("supported-stable update P1"),
     );
-    expect(step?.env).toMatchObject({
-      FASED_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install,${{ needs.validate.outputs.p1_scenarios }}",
+    const fresh = workflow.jobs?.["p1-local-fresh"]?.steps?.find((candidate) =>
+      candidate.name?.includes("fresh Local P1"),
+    );
+    expect(update?.env).toMatchObject({
+      FASED_SYSTEMD_FIXTURE_SCENARIOS: "${{ needs.validate.outputs.p1_scenarios }}",
       FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "${{ inputs.predecessor_version }}",
+    });
+    expect(fresh?.env).toMatchObject({
+      FASED_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install",
     });
   });
 });
