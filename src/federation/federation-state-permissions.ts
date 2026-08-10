@@ -22,6 +22,7 @@ export async function ensureFederationStateDirectory(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
   const mode = federationStateDirectoryMode(env);
+  let created = false;
   try {
     const info = await fs.stat(directory);
     if (!info.isDirectory()) {
@@ -31,12 +32,13 @@ export async function ensureFederationStateDirectory(
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       throw error;
     }
-    await fs.mkdir(directory, {
-      recursive: true,
-      mode: isSharedFederationState(env) ? 0o770 : mode,
-    });
+    created =
+      (await fs.mkdir(directory, {
+        recursive: true,
+        mode: isSharedFederationState(env) ? 0o770 : mode,
+      })) !== undefined;
   }
-  if (!isSharedFederationState(env)) {
+  if (!isSharedFederationState(env) || created) {
     await fs.chmod(directory, mode);
   }
 }
