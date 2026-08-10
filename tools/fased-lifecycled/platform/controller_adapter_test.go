@@ -90,6 +90,23 @@ func TestControllerVerifyRejectsUnverifiedTarget(t *testing.T) {
 	}
 }
 
+func TestHostingControllerCanCommitCompatibilityMarkers(t *testing.T) {
+	operator, gateway, signer := principals()
+	config, err := NewConfig(model.ProfileHosting, "hosting", "/home/app/.fased", operator, gateway, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := config.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := ControllerAdapter{Config: config, Identity: identity}
+	definition := string(adapter.renderControllerUnit("/opt/fased/generations/digest/payload/bin/fased-lifecycled"))
+	if !strings.Contains(definition, " /var/lib/fased-host-updater\n") {
+		t.Fatalf("Hosting controller cannot commit compatibility markers:\n%s", definition)
+	}
+}
+
 func TestControllerBridgeDoesNotStopAbsentCanonicalWorker(t *testing.T) {
 	tx, identity := manifestTransaction(t, true)
 	tx.PlanAction = "BRIDGE_PUBLIC_STABLE"
