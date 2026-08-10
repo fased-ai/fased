@@ -163,7 +163,7 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 		"systemd.enable:fased-gateway-example.service", "systemd.start:fased-gateway-example.service",
 		"systemd.active:fased-signerd-example.service", "systemd.active:fased-gateway-example.service",
 		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		"generation.activate:" + digestB + ":" + digestA, "units.discard", "files.discard",
+		"generation.activate:" + digestB + ":" + digestA, "files.activate", "units.discard", "files.discard",
 	}
 	if !reflect.DeepEqual(*calls, want) {
 		t.Fatalf("unexpected target adapter order:\n got=%v\nwant=%v", *calls, want)
@@ -308,7 +308,7 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 		"systemd.enable:fased-gateway.service", "systemd.start:fased-gateway.service",
 		"systemd.active:fased-signerd.service", "systemd.active:fased-gateway.service",
 		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		"generation.activate:" + digestB + ":" + digestA, "units.discard", "files.discard",
+		"generation.activate:" + digestB + ":" + digestA, "files.activate", "units.discard", "files.discard",
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("unexpected Hosting adapter order:\n got=%v\nwant=%v", calls, want)

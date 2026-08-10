@@ -75,10 +75,17 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 	if err != nil {
 		return err
 	}
+	projection, err := CanonicalInstallProjectionJSON(adapter.Config, tx)
+	if err != nil {
+		return err
+	}
 	paths := CanonicalSignerOwnerFiles(adapter.Config)
 	return adapter.Files.Prepare(tx.ID, map[string]LifecycleFile{
-		paths[0]: {Data: helper, Mode: 0o755},
-		paths[1]: {Data: wrapper, Mode: 0o755},
+		paths[0]: {Data: helper, Mode: 0o755, UID: 0, GID: 0},
+		paths[1]: {Data: wrapper, Mode: 0o755, UID: 0, GID: 0},
+		CanonicalInstallProjectionPath(adapter.Config): {
+			Data: projection, Mode: 0o640, UID: adapter.Config.Operator.UID, GID: adapter.Config.Operator.GID,
+		},
 	})
 }
 
@@ -144,6 +151,9 @@ func (adapter *TargetAdapter) Commit(ctx context.Context, tx model.Transaction) 
 	if err := adapter.Generations.ActivateGeneration(tx.Target.ID, previous); err != nil {
 		return err
 	}
+	if err := adapter.Files.Activate(tx.ID, []string{CanonicalInstallProjectionPath(adapter.Config)}); err != nil {
+		return err
+	}
 	if err := adapter.Predecessor.Commit(ctx, tx); err != nil {
 		return err
 	}
@@ -151,7 +161,7 @@ func (adapter *TargetAdapter) Commit(ctx context.Context, tx model.Transaction) 
 }
 
 func (adapter *TargetAdapter) Restore(ctx context.Context, tx model.Transaction) error {
-	if err := adapter.Files.Restore(tx.ID, CanonicalSignerOwnerFiles(adapter.Config)); err != nil {
+	if err := adapter.Files.Restore(tx.ID, adapter.lifecycleFiles()); err != nil {
 		return err
 	}
 	if err := adapter.Units.Restore(tx.ID, adapter.targetUnits()); err != nil {
@@ -169,6 +179,10 @@ func (adapter *TargetAdapter) Restore(ctx context.Context, tx model.Transaction)
 		}
 	}
 	return adapter.Predecessor.Restore(ctx, tx)
+}
+
+func (adapter *TargetAdapter) lifecycleFiles() []string {
+	return append(CanonicalSignerOwnerFiles(adapter.Config), CanonicalInstallProjectionPath(adapter.Config))
 }
 
 func (adapter *TargetAdapter) Discard(ctx context.Context, tx model.Transaction) error {
