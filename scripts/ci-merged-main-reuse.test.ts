@@ -7,7 +7,7 @@ import {
 
 const successfulCheck = {
   name: "checks",
-  workflowName: "CI",
+  workflowName: "PR",
   status: "COMPLETED",
   conclusion: "SUCCESS",
 };
@@ -19,12 +19,16 @@ describe("merged-main PR check reuse", () => {
     expect(pullRequestNumberFromSubject("Mention #219 without squash suffix")).toBeNull();
   });
 
-  it("requires the successful CI aggregate check", () => {
+  it("requires the successful protected PR aggregate check", () => {
     expect(hasSuccessfulAggregateCheck([successfulCheck])).toBe(true);
     expect(hasSuccessfulAggregateCheck([{ ...successfulCheck, conclusion: "FAILURE" }])).toBe(
       false,
     );
     expect(hasSuccessfulAggregateCheck([{ ...successfulCheck, workflowName: "Other" }])).toBe(
+      false,
+    );
+    expect(hasSuccessfulAggregateCheck([{ ...successfulCheck, workflowName: "CI" }])).toBe(false);
+    expect(hasSuccessfulAggregateCheck([{ ...successfulCheck, status: "IN_PROGRESS" }])).toBe(
       false,
     );
   });
@@ -53,5 +57,14 @@ describe("merged-main PR check reuse", () => {
         pr: { ...input.pr, mergeCommit: { oid: "d".repeat(40) } },
       }),
     ).toMatch(/merge commit/);
+    expect(
+      assessMergedPullRequest({
+        ...input,
+        pr: {
+          ...input.pr,
+          statusCheckRollup: [{ ...successfulCheck, conclusion: "FAILURE" }],
+        },
+      }),
+    ).toMatch(/aggregate checks/);
   });
 });

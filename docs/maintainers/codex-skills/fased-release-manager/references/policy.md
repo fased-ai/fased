@@ -51,6 +51,10 @@ symptom -> narrow red test -> fix -> narrow green test
   acceptance.
 - Required `checks`, strict up-to-date policy, squash-only PR merge, linear
   history, deletion protection, and no bypass remain enforced by GitHub.
+- A merged-main run reuses successful protected PR evidence only when the PR is
+  merged, its merge commit equals current main, its tested head tree equals the
+  merged-main tree, and `PR / checks` succeeded. That run does not repeat Node,
+  CodeQL, build, package, Docker, or lifecycle jobs.
 - After squash merge, fetch and set local `main` exactly to `origin/main`; do
   not use a normal pull to reconcile squash history.
 

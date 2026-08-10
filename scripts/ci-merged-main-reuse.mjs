@@ -23,7 +23,7 @@ export function hasSuccessfulAggregateCheck(statusCheckRollup) {
     ? statusCheckRollup.some(
         (check) =>
           check?.name === "checks" &&
-          check?.workflowName === "CI" &&
+          check?.workflowName === "PR" &&
           check?.status === "COMPLETED" &&
           check?.conclusion === "SUCCESS",
       )
