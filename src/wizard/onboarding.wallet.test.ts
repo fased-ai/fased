@@ -258,6 +258,10 @@ describe("local signer env file helpers", () => {
 
       expect(fs.readFileSync(binPath, "utf8")).toBe(assetBody);
       expect(fs.statSync(binPath).mode & 0o111).not.toBe(0);
+      const enrollmentPath = path.join(path.dirname(binPath), "fased-signer-enroll");
+      expect(fs.readFileSync(enrollmentPath, "utf8")).toBe(assetBody);
+      expect(fs.statSync(enrollmentPath).mode & 0o111).not.toBe(0);
+      expect(fs.statSync(enrollmentPath).ino).not.toBe(fs.statSync(binPath).ino);
     },
   );
 

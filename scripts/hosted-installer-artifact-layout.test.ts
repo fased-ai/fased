@@ -8,6 +8,7 @@ const manifest = JSON.parse(read("package.json")) as { files?: string[] };
 const files = new Set(manifest.files ?? []);
 const installer = read("install.sh");
 const releaseWorkflow = read(".github/workflows/hosted-runtime-release.yml");
+const ciWorkflow = read(".github/workflows/ci.yml");
 
 const removedMutationOwners = [
   "scripts/fased-managed-updater-core.mjs",
@@ -64,5 +65,15 @@ describe("attested Go lifecycle artifact layout", () => {
   it("keeps the public Hosting proof on the Go-only systemd fixture", () => {
     expect(releaseWorkflow).toContain("scripts/test-go-hosting-systemd-container.sh");
     expect(releaseWorkflow).not.toContain("scripts/test-hosting-systemd-container.sh");
+  });
+
+  it("does not route merged-main CI through the deleted legacy Hosting runner", () => {
+    expect(ciWorkflow).not.toContain("scripts/test-streamed-hosting-bootstrap-container.sh");
+    expect(
+      fs.existsSync(path.join(root, "scripts/test-streamed-hosting-bootstrap-container.sh")),
+    ).toBe(false);
+    expect(
+      fs.existsSync(path.join(root, "scripts/docker/streamed-hosting-bootstrap/Dockerfile")),
+    ).toBe(false);
   });
 });

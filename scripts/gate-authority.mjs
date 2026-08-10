@@ -121,9 +121,9 @@ const LOCAL_FRESH_PATH_RE = /^(?:scripts\/(?:install-local-|test-install-runtime
 const SHARED_FRESH_PATH_RE =
   /^(?:src\/(?:cli\/program\/register\.onboard|wizard\/onboarding)[^/]*)/;
 const HOSTING_FRESH_PATH_RE =
-  /^(?:scripts\/(?:docker\/streamed-hosting-bootstrap\/|hosting-|install-hosted-runtime|test-(?:hosted-runtime-install|streamed-hosting-bootstrap-container))[^/]*|src\/(?:commands\/hosted-dashboard-probe|wizard\/host-security-capability)[^/]*)/;
+  /^(?:scripts\/(?:hosting-|install-hosted-runtime|test-hosted-runtime-install)[^/]*|src\/(?:commands\/hosted-dashboard-probe|wizard\/host-security-capability)[^/]*)/;
 const HOSTING_UPDATE_PATH_RE =
-  /^(?:scripts\/(?:docker\/hosting-systemd\/|fased-host-|fased-signer-(?:enroll|network|owner|policy)-hosting|hosted-(?!release-manifest)|migrate-hosted-signer|test-hosting-systemd-container)[^/]*|src\/infra\/host[^/]*)/;
+  /^(?:scripts\/(?:docker\/hosting-systemd\/|fased-host-|fased-signer-(?:enroll|network|owner|policy)-hosting|hosted-(?!release-manifest)|migrate-hosted-signer|test-go-hosting-systemd-container)[^/]*|src\/infra\/host[^/]*)/;
 const MINING_PATH_RE =
   /^(?:extensions\/sat-mining\/|src\/mining\/|src\/.*mining[^/]*|test\/ui-mining-api\.test\.ts$|ui\/src\/ui\/.*mining[^/]*|ui\/src\/ui\/(?:app-gateway|app-polling)\.ts$)/;
 const SKILLS_PATH_RE = /^(?:skills\/|scripts\/.*skill[^/]*\.(?:py|mjs|ts)$)/;

@@ -854,8 +854,12 @@ jobs:
       - name: Check hosted runtime installer
         run: bash scripts/test-hosted-runtime-install.sh
 
-      - name: Check exact streamed Hosting bootstrap
-        run: bash scripts/test-streamed-hosting-bootstrap-container.sh
+      - name: Check streamed Hosting handoff contracts
+        run: >-
+          pnpm exec vitest run
+          scripts/install-release-pin.test.ts
+          scripts/go-lifecycle-routing.test.ts
+          --pool=forks --maxWorkers=1
 
   protected-local-lifecycle:
     name: "protected Local fresh lifecycle (ubuntu)"
