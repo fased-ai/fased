@@ -27,10 +27,11 @@ const controllerReadyTimeout = 30 * time.Second
 type Operation string
 
 const (
-	operationRun     Operation = "RUN"
-	operationCommit  Operation = "COMMIT"
-	operationAbort   Operation = "ABORT"
-	operationRecover Operation = "RECOVER"
+	operationRun                Operation = "RUN"
+	operationCommit             Operation = "COMMIT"
+	operationAbort              Operation = "ABORT"
+	operationRecover            Operation = "RECOVER"
+	operationCompleteOnboarding Operation = "COMPLETE_ONBOARDING"
 )
 
 type request struct {
@@ -46,7 +47,14 @@ type response struct {
 	Error         string        `json:"error,omitempty"`
 }
 
-type Service struct{ Engine *engine.TargetEngine }
+type OnboardingCompleter interface {
+	CompleteOnboarding(context.Context) error
+}
+
+type Service struct {
+	Engine     *engine.TargetEngine
+	Onboarding OnboardingCompleter
+}
 
 func (service *Service) Handle(ctx context.Context, input request) (engine.Result, error) {
 	if service == nil || service.Engine == nil {
@@ -80,6 +88,14 @@ func (service *Service) Handle(ctx context.Context, input request) (engine.Resul
 			return engine.Result{}, err
 		}
 		return service.Engine.Recover(ctx, tx)
+	case operationCompleteOnboarding:
+		if input.Transaction != nil || input.TransactionID != "" || service.Onboarding == nil {
+			return engine.Result{}, errors.New("COMPLETE_ONBOARDING accepts no selectors and requires the platform adapter")
+		}
+		if err := service.Onboarding.CompleteOnboarding(ctx); err != nil {
+			return engine.Result{}, err
+		}
+		return engine.Result{Outcome: engine.OutcomeUpdated, Phase: model.PhaseCommitted}, nil
 	default:
 		return engine.Result{}, errors.New("unsupported target controller operation")
 	}
@@ -145,6 +161,9 @@ func (client Client) Abort(ctx context.Context, id string) (engine.Result, error
 }
 func (client Client) Recover(ctx context.Context, id string) (engine.Result, error) {
 	return client.callID(ctx, operationRecover, id)
+}
+func (client Client) CompleteOnboarding(ctx context.Context) (engine.Result, error) {
+	return client.call(ctx, request{SchemaVersion: schemaVersion, Operation: operationCompleteOnboarding})
 }
 func (client Client) callID(ctx context.Context, operation Operation, id string) (engine.Result, error) {
 	return client.call(ctx, request{SchemaVersion: schemaVersion, Operation: operation, TransactionID: id})

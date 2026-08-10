@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -150,6 +151,7 @@ func transaction(phase model.Phase) model.Transaction {
 		SchemaVersion:        model.CurrentTransactionSchemaVersion,
 		ID:                   "018f47d2-5a6b-7c8d-9e0f-123456789abc",
 		Profile:              model.ProfileProtectedLocal,
+		PlanAction:           "UPDATE",
 		Phase:                phase,
 		Revision:             1,
 		Target:               generation(digestB, "0.1.76", commitB),
@@ -189,6 +191,75 @@ func TestManifestCompareAndSwapIsCanonicalAndIdempotent(t *testing.T) {
 	}
 	if _, err := store.CommitManifest(manifest(), digestB); err == nil {
 		t.Fatal("stale manifest compare-and-swap succeeded")
+	}
+}
+
+func TestProductionLayoutSeparatesAuthorityFromExecutableGenerations(t *testing.T) {
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	installRoot := filepath.Join(root, "install")
+	state, err := OpenLayout(Layout{StateRoot: stateRoot, InstallRoot: installRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.CommitManifest(manifest(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(stateRoot, manifestName)); err != nil {
+		t.Fatalf("manifest is not under mutable state root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(installRoot, manifestName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("manifest leaked into immutable install root: %v", err)
+	}
+	if state.inboxGenerationPath(digestA) != filepath.Join(installRoot, "inbox", strings.TrimPrefix(digestA, "sha256:")) {
+		t.Fatal("generation inbox is not under immutable install root")
+	}
+	stateInfo, err := os.Stat(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installInfo, err := os.Stat(installRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stateInfo.Mode().Perm() != 0o700 || installInfo.Mode().Perm() != 0o755 {
+		t.Fatalf("unexpected production root modes: state=%04o install=%04o", stateInfo.Mode().Perm(), installInfo.Mode().Perm())
+	}
+}
+
+func TestExistingProductionLayoutDoesNotMutateRootModes(t *testing.T) {
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	installRoot := filepath.Join(root, "install")
+	if err := os.Mkdir(stateRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(installRoot, 0o711); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenExistingLayout(Layout{StateRoot: stateRoot, InstallRoot: installRoot}); err != nil {
+		t.Fatal(err)
+	}
+	stateInfo, err := os.Stat(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installInfo, err := os.Stat(installRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stateInfo.Mode().Perm() != 0o750 || installInfo.Mode().Perm() != 0o711 {
+		t.Fatalf("existing layout modes changed: state=%04o install=%04o", stateInfo.Mode().Perm(), installInfo.Mode().Perm())
+	}
+}
+
+func TestProductionLayoutRejectsOverlappingRoots(t *testing.T) {
+	root := t.TempDir()
+	if _, err := OpenLayout(Layout{StateRoot: root, InstallRoot: filepath.Join(root, "install")}); err == nil {
+		t.Fatal("overlapping lifecycle roots were accepted")
+	}
+	if _, err := OpenLayout(Layout{StateRoot: root, InstallRoot: root}); err == nil {
+		t.Fatal("identical lifecycle roots were accepted")
 	}
 }
 
@@ -233,6 +304,81 @@ func TestAuthorityJournalsRequireLinearBoundTransitions(t *testing.T) {
 	got, err := store.ReadJournal(AuthorityTargetController, start.ID)
 	if err != nil || got.Phase != model.PhaseIdle {
 		t.Fatalf("unexpected target journal: %+v err=%v", got, err)
+	}
+}
+
+func TestAuthorityJournalsShareOneImmutableEnvelope(t *testing.T) {
+	state, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := transaction(model.PhaseIdle)
+	if err := state.CommitJournal(AuthoritySupervisor, tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.CommitJournal(AuthorityTargetController, tx); err != nil {
+		t.Fatal(err)
+	}
+	changed := tx
+	changed.StateInventoryDigest = digestA
+	if changed.StateInventoryDigest == tx.StateInventoryDigest {
+		changed.StateInventoryDigest = digestB
+	}
+	if err := state.CommitJournal(AuthorityTargetController, changed); err == nil {
+		t.Fatal("authority journal changed the immutable shared envelope")
+	}
+	envelopePath := filepath.Join(state.stateRoot, "transactions", tx.ID, "envelope.json")
+	if err := os.WriteFile(envelopePath, []byte(`{"schemaVersion":2}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.ReadJournal(AuthoritySupervisor, tx.ID); err == nil {
+		t.Fatal("journal with a tampered or unknown-newer envelope was accepted")
+	}
+}
+
+func TestAuthorityJournalsRejectPublicPredecessorVersionRebinding(t *testing.T) {
+	state, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := transaction(model.PhaseIdle)
+	tx.PlanAction = "BRIDGE_PUBLIC_STABLE"
+	tx.SourceTopology = "local-user-systemd-v2"
+	tx.PublicPredecessorVersion = "0.1.75"
+	tx.Previous = nil
+	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	if err := state.CommitJournal(AuthoritySupervisor, tx); err != nil {
+		t.Fatal(err)
+	}
+	changed := tx
+	changed.PublicPredecessorVersion = "0.1.74"
+	if err := state.CommitJournal(AuthorityTargetController, changed); err == nil {
+		t.Fatal("target authority rebound the public predecessor version")
+	}
+}
+
+func TestUpdateLockIsExclusiveAndReusable(t *testing.T) {
+	state, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	transactionID := "018f47d2-5a6b-7c8d-9e0f-123456789abc"
+	first, err := state.AcquireUpdateLock(transactionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.AcquireUpdateLock(transactionID); err == nil {
+		t.Fatal("concurrent lifecycle mutation lock was acquired")
+	}
+	if err := first.Release(); err != nil {
+		t.Fatal(err)
+	}
+	second, err := state.AcquireUpdateLock(transactionID)
+	if err != nil {
+		t.Fatalf("released lifecycle lock was not reusable: %v", err)
+	}
+	if err := second.Release(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -281,7 +427,7 @@ func TestGenerationInventoryHasItsOwnBoundedSizeClass(t *testing.T) {
 
 func TestStageAndActivateUseOnlyContentAddressedStorePaths(t *testing.T) {
 	root := t.TempDir()
-	store, err := Open(root)
+	store, err := OpenLayout(Layout{StateRoot: filepath.Join(root, "state"), InstallRoot: filepath.Join(root, "install")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,11 +462,28 @@ func TestStageAndActivateUseOnlyContentAddressedStorePaths(t *testing.T) {
 	if err := store.StageGeneration(expected.ID); err != nil {
 		t.Fatal(err)
 	}
+	stagedInfo, err := os.Stat(store.generationPath(expected.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stagedInfo.Mode().Perm() != 0o711 {
+		t.Fatalf("staged generation is not traversal-only: %04o", stagedInfo.Mode().Perm())
+	}
 	if err := store.StageGeneration(expected.ID); err != nil {
 		t.Fatalf("idempotent staging failed: %v", err)
 	}
 	if err := store.ActivateGeneration(expected.ID, ""); err != nil {
 		t.Fatal(err)
+	}
+	if err := store.ActivateControllerGeneration(expected.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	controllerTarget, err := os.Readlink(filepath.Join(store.stateRoot, "controller-current"))
+	if err != nil || controllerTarget != store.generationPath(expected.ID) {
+		t.Fatalf("controller selection was not isolated under lifecycle state: target=%q err=%v", controllerTarget, err)
+	}
+	if _, err := os.Lstat(filepath.Join(store.installRoot, "controller-current")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("supervisor controller pointer leaked into immutable install root: %v", err)
 	}
 	current, err := store.ResolveGeneration("current")
 	if err != nil || current != expected {
@@ -516,6 +679,29 @@ func TestSharedDependencyLayerIsDigestBoundAndReused(t *testing.T) {
 	if err := state.StageGeneration(expected.ID); err != nil {
 		t.Fatal(err)
 	}
+	binding := filepath.Join(state.generationPath(expected.ID), "node_modules")
+	expectedBinding := filepath.ToSlash(filepath.Join("..", "..", "dependencies", layer.Hash, "node_modules"))
+	if actual, err := os.Readlink(binding); err != nil || actual != expectedBinding {
+		t.Fatalf("generation dependency binding = %q, %v; want %q", actual, err, expectedBinding)
+	}
+	if resolved, err := filepath.EvalSymlinks(binding); err != nil || resolved != modules {
+		t.Fatalf("generation dependency binding resolves to %q, %v; want %q", resolved, err, modules)
+	}
+	if err := os.Remove(binding); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.ToSlash(filepath.Join("..", "..", "dependencies", strings.Repeat("d", 64), "node_modules")), binding); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.StageGeneration(expected.ID); err == nil || !strings.Contains(err.Error(), "does not match the verified inventory") {
+		t.Fatalf("tampered generation dependency binding was accepted: %v", err)
+	}
+	if err := os.Remove(binding); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.StageGeneration(expected.ID); err != nil {
+		t.Fatalf("missing derived dependency binding was not repaired: %v", err)
+	}
 	tampered := layer
 	tampered.ArchiveSHA256 = digestA
 	if err := state.ImportDependencyArchive(dependencyArchive, tampered); err == nil {
@@ -606,8 +792,8 @@ func TestCopyRegularTreePreservesExecutableModeUnderRestrictiveUmask(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inventoryInfo.Mode().Perm() != 0o600 {
-		t.Fatalf("copied inventory mode is %04o, expected 0600", inventoryInfo.Mode().Perm())
+	if inventoryInfo.Mode().Perm() != 0o644 {
+		t.Fatalf("copied inventory mode is %04o, expected 0644", inventoryInfo.Mode().Perm())
 	}
 }
 

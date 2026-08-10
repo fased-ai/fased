@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,6 +7,7 @@ import * as tar from "tar";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   extractGeneration,
+  generationLifecycle,
   runGenerationInitialize,
   runGenerationUpdate,
   stageInitializerExecutable,
@@ -89,6 +91,35 @@ async function fixture(linkTarget = "../tool/bin/cli.js") {
 }
 
 describe("generation updater", () => {
+  it("delegates root-only lifecycle configuration validation to the supervisor", () => {
+    const lstat = vi.spyOn(fs, "lstatSync").mockImplementation((candidate) => {
+      if (String(candidate) === "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled") {
+        return {
+          isFile: () => true,
+          isSymbolicLink: () => false,
+          mode: 0o100755,
+        } as fs.Stats;
+      }
+      throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+    });
+    try {
+      expect(
+        generationLifecycle({
+          profile: "protected-local",
+          instance: "0123456789abcdef",
+          config: "/var/lib/fased-local/0123456789abcdef/lifecycle/platform.json",
+        }),
+      ).toEqual({
+        instance: "0123456789abcdef",
+        config: "/var/lib/fased-local/0123456789abcdef/lifecycle/platform.json",
+        supervisor: "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled",
+      });
+      expect(lstat).toHaveBeenCalledTimes(1);
+    } finally {
+      lstat.mockRestore();
+    }
+  });
+
   it("stages an initializer outside a no-exec download directory and cleans safely", async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-generation-stage-"));
     temporary.push(root);
@@ -376,13 +407,8 @@ describe("generation updater", () => {
         profile: "protected-local",
         instance: "0123456789abcdef",
         ownerState: "/home/example/.fased",
+        operatorUser: "example",
         gatewayPort: 18789,
-        operatorUid: 1000,
-        operatorGid: 1000,
-        gatewayUid: 997,
-        gatewayGid: 997,
-        signerUid: 996,
-        signerGid: 996,
         sourceTopology: "local-user-systemd-v1",
       },
       version,
@@ -409,6 +435,8 @@ describe("generation updater", () => {
         "protected-local",
         "--instance",
         "0123456789abcdef",
+        "--operator-user",
+        "example",
         "--gateway-port",
         "18789",
         "--generation-archive",
@@ -433,13 +461,8 @@ describe("generation updater", () => {
           profile: "protected-local",
           instance: "0123456789abcdef",
           ownerState: "/home/example/.fased",
+          operatorUser: "example",
           gatewayPort: 18789,
-          operatorUid: 1000,
-          operatorGid: 1000,
-          gatewayUid: 997,
-          gatewayGid: 997,
-          signerUid: 996,
-          signerGid: 996,
         },
         version,
         timeoutMs: 30_000,

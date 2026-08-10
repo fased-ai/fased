@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"fased-lifecycled/model"
 )
@@ -27,32 +28,116 @@ const (
 )
 
 type Store struct {
-	root string
+	stateRoot   string
+	installRoot string
 }
 
+// Layout separates mutable lifecycle authority from immutable executable
+// generations. StateRoot belongs under /var/lib; InstallRoot belongs under
+// /opt. Keeping these roots distinct prevents executable payloads from being
+// mistaken for durable transaction state.
+type Layout struct {
+	StateRoot   string
+	InstallRoot string
+}
+
+// Open is retained for isolated tests and migration tooling that intentionally
+// use a single temporary root. Production callers must use OpenLayout.
 func Open(root string) (*Store, error) {
-	if !filepath.IsAbs(root) {
-		return nil, errors.New("lifecycle store root must be absolute")
-	}
-	clean := filepath.Clean(root)
-	if err := os.MkdirAll(clean, 0o711); err != nil {
-		return nil, err
-	}
-	// The immutable payload below generations is executed by the separate
-	// signer and Gateway principals. Permit traversal without permitting
-	// directory listing; durable records below this root remain mode 0600 in
-	// root-only subdirectories.
-	if err := os.Chmod(clean, 0o711); err != nil {
-		return nil, err
-	}
-	resolved, err := filepath.EvalSymlinks(clean)
+	shared, err := prepareRoot(root, 0o711, "lifecycle store root")
 	if err != nil {
 		return nil, err
 	}
-	if resolved != clean {
-		return nil, errors.New("lifecycle store root must not contain symlinks")
+	return &Store{stateRoot: shared, installRoot: shared}, nil
+}
+
+func OpenLayout(layout Layout) (*Store, error) {
+	stateRoot, err := prepareRoot(layout.StateRoot, 0o700, "lifecycle state root")
+	if err != nil {
+		return nil, err
 	}
-	return &Store{root: clean}, nil
+	installRoot, err := prepareRoot(layout.InstallRoot, 0o755, "lifecycle install root")
+	if err != nil {
+		return nil, err
+	}
+	if stateRoot == installRoot {
+		return nil, errors.New("production lifecycle state and install roots must be distinct")
+	}
+	if pathContains(stateRoot, installRoot) || pathContains(installRoot, stateRoot) {
+		return nil, errors.New("lifecycle state and install roots must not overlap")
+	}
+	return &Store{stateRoot: stateRoot, installRoot: installRoot}, nil
+}
+
+// OpenExistingLayout opens a platform layout without creating or changing
+// either root. Long-running supervisors use this entry point because their
+// systemd sandbox deliberately exposes the immutable installation root as
+// read-only. Platform initialization and the target controller remain the
+// only callers allowed to prepare or mutate that root.
+func OpenExistingLayout(layout Layout) (*Store, error) {
+	stateRoot, err := inspectRoot(layout.StateRoot, "lifecycle state root")
+	if err != nil {
+		return nil, err
+	}
+	installRoot, err := inspectRoot(layout.InstallRoot, "lifecycle install root")
+	if err != nil {
+		return nil, err
+	}
+	if stateRoot == installRoot {
+		return nil, errors.New("production lifecycle state and install roots must be distinct")
+	}
+	if pathContains(stateRoot, installRoot) || pathContains(installRoot, stateRoot) {
+		return nil, errors.New("lifecycle state and install roots must not overlap")
+	}
+	return &Store{stateRoot: stateRoot, installRoot: installRoot}, nil
+}
+
+func prepareRoot(root string, mode os.FileMode, label string) (string, error) {
+	if !filepath.IsAbs(root) || filepath.Clean(root) != root || root == "/" {
+		return "", fmt.Errorf("%s must be absolute, clean, and scoped", label)
+	}
+	clean := filepath.Clean(root)
+	if err := os.MkdirAll(clean, 0o711); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(clean, mode); err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(clean)
+	if err != nil {
+		return "", err
+	}
+	if resolved != clean {
+		return "", fmt.Errorf("%s must not contain symlinks", label)
+	}
+	return clean, nil
+}
+
+func inspectRoot(root, label string) (string, error) {
+	if !filepath.IsAbs(root) || filepath.Clean(root) != root || root == "/" {
+		return "", fmt.Errorf("%s must be absolute, clean, and scoped", label)
+	}
+	clean := filepath.Clean(root)
+	info, err := os.Lstat(clean)
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return "", fmt.Errorf("%s must be an existing directory", label)
+	}
+	resolved, err := filepath.EvalSymlinks(clean)
+	if err != nil {
+		return "", err
+	}
+	if resolved != clean {
+		return "", fmt.Errorf("%s must not contain symlinks", label)
+	}
+	return clean, nil
+}
+
+func pathContains(parent, child string) bool {
+	relative, err := filepath.Rel(parent, child)
+	return err == nil && relative != "." && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func (s *Store) CommitManifest(manifest model.Manifest, expectedDigest string) (string, error) {
@@ -61,7 +146,7 @@ func (s *Store) CommitManifest(manifest model.Manifest, expectedDigest string) (
 		return "", err
 	}
 	nextDigest := digest(data)
-	path := filepath.Join(s.root, manifestName)
+	path := filepath.Join(s.stateRoot, manifestName)
 	_, currentDigest, err := s.ReadManifest()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", err
@@ -85,7 +170,7 @@ func (s *Store) CommitManifest(manifest model.Manifest, expectedDigest string) (
 }
 
 func (s *Store) ReadManifest() (model.Manifest, string, error) {
-	data, err := readRegular(filepath.Join(s.root, manifestName))
+	data, err := readRegular(filepath.Join(s.stateRoot, manifestName))
 	if err != nil {
 		return model.Manifest{}, "", err
 	}
@@ -103,8 +188,11 @@ func (s *Store) CommitJournal(authority Authority, transaction model.Transaction
 	if err := transaction.Validate(); err != nil {
 		return err
 	}
-	dir := filepath.Join(s.root, "transactions", transaction.ID)
+	dir := filepath.Join(s.stateRoot, "transactions", transaction.ID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if err := s.commitTransactionEnvelope(dir, transaction); err != nil {
 		return err
 	}
 	path := filepath.Join(dir, string(authority)+".json")
@@ -151,6 +239,7 @@ func (s *Store) ReadJournal(authority Authority, transactionID string) (model.Tr
 		SchemaVersion:      model.CurrentTransactionSchemaVersion,
 		ID:                 transactionID,
 		Profile:            model.ProfileProtectedLocal,
+		PlanAction:         "INSTALL",
 		Phase:              model.PhaseIdle,
 		Revision:           1,
 		Target:             placeholderGeneration(),
@@ -168,7 +257,7 @@ func (s *Store) ReadJournal(authority Authority, transactionID string) (model.Tr
 	if err := probe.Validate(); err != nil {
 		return model.Transaction{}, fmt.Errorf("invalid transaction id: %w", err)
 	}
-	path := filepath.Join(s.root, "transactions", transactionID, string(authority)+".json")
+	path := filepath.Join(s.stateRoot, "transactions", transactionID, string(authority)+".json")
 	data, err := readRegular(path)
 	if err != nil {
 		return model.Transaction{}, err
@@ -180,7 +269,60 @@ func (s *Store) ReadJournal(authority Authority, transactionID string) (model.Tr
 	if transaction.ID != transactionID {
 		return model.Transaction{}, errors.New("journal path and transaction identity differ")
 	}
+	if err := s.verifyTransactionEnvelope(filepath.Dir(path), transaction); err != nil {
+		return model.Transaction{}, err
+	}
 	return transaction, nil
+}
+
+func (s *Store) commitTransactionEnvelope(dir string, transaction model.Transaction) error {
+	envelope, err := transaction.Envelope()
+	if err != nil {
+		return err
+	}
+	data, err := model.CanonicalTransactionEnvelopeJSON(envelope)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(dir, "envelope.json")
+	existing, err := readRegular(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return writeAtomic(path, data, 0o600)
+	}
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(existing, data) {
+		return errors.New("transaction envelope differs from immutable transaction binding")
+	}
+	return nil
+}
+
+func (s *Store) verifyTransactionEnvelope(dir string, transaction model.Transaction) error {
+	data, err := readRegular(filepath.Join(dir, "envelope.json"))
+	if err != nil {
+		return err
+	}
+	want, err := transaction.Envelope()
+	if err != nil {
+		return err
+	}
+	got, err := model.DecodeTransactionEnvelope(bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	wantJSON, err := model.CanonicalTransactionEnvelopeJSON(want)
+	if err != nil {
+		return err
+	}
+	gotJSON, err := model.CanonicalTransactionEnvelopeJSON(got)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(wantJSON, gotJSON) {
+		return errors.New("authority journal does not match shared transaction envelope")
+	}
+	return nil
 }
 
 func validateAuthority(authority Authority) error {

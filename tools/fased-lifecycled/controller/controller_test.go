@@ -13,6 +13,13 @@ import (
 	"fased-lifecycled/model"
 )
 
+type fakeOnboardingCompleter struct{ calls int }
+
+func (value *fakeOnboardingCompleter) CompleteOnboarding(context.Context) error {
+	value.calls++
+	return nil
+}
+
 func TestClientWaitsForTargetControllerSocketWithoutReplayingRequest(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "controller.sock")
 	requestCount := make(chan int, 1)
@@ -78,6 +85,18 @@ func TestServiceRejectsUnboundOperationsBeforeEngine(t *testing.T) {
 	}
 	if _, err := service.Handle(context.Background(), request{SchemaVersion: 2, Operation: operationRecover}); err == nil {
 		t.Fatal("newer private controller protocol was accepted")
+	}
+}
+
+func TestServiceCompletesOnboardingOnlyThroughTypedAdapter(t *testing.T) {
+	completion := &fakeOnboardingCompleter{}
+	service := Service{Engine: &engine.TargetEngine{}, Onboarding: completion}
+	result, err := service.Handle(context.Background(), request{SchemaVersion: 1, Operation: operationCompleteOnboarding})
+	if err != nil || completion.calls != 1 || result.Outcome != engine.OutcomeUpdated || result.Phase != model.PhaseCommitted {
+		t.Fatalf("unexpected onboarding completion: result=%+v calls=%d err=%v", result, completion.calls, err)
+	}
+	if _, err := service.Handle(context.Background(), request{SchemaVersion: 1, Operation: operationCompleteOnboarding, TransactionID: "caller"}); err == nil {
+		t.Fatal("onboarding completion accepted a caller selector")
 	}
 }
 

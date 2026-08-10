@@ -35,7 +35,15 @@ func generation(id, version, commit string) model.Generation {
 }
 
 func platform() model.PlatformIdentity {
-	value, _ := model.NewPlatformIdentity(model.ProfileProtectedLocal, "test-instance", digestA)
+	return platformFor(model.ProfileProtectedLocal)
+}
+
+func platformFor(profile model.Profile) model.PlatformIdentity {
+	instance := "test-instance"
+	if profile == model.ProfileHosting {
+		instance = "hosting"
+	}
+	value, _ := model.NewPlatformIdentity(profile, instance, digestA)
 	return value
 }
 
@@ -45,9 +53,27 @@ type fakeStore struct {
 	inventory      bundle.Inventory
 	generation     model.Generation
 	journal        model.Transaction
+	locks          *int
+	stages         *int
 }
 
-func (state fakeStore) StageGeneration(string) error { return nil }
+type fakeMutationLock struct{}
+
+func (fakeMutationLock) Release() error { return nil }
+
+func (state fakeStore) AcquireUpdateLock(string) (store.MutationLock, error) {
+	if state.locks != nil {
+		*state.locks++
+	}
+	return fakeMutationLock{}, nil
+}
+
+func (state fakeStore) StageGeneration(string) error {
+	if state.stages != nil {
+		*state.stages++
+	}
+	return nil
+}
 
 func (state fakeStore) ReadManifest() (model.Manifest, string, error) {
 	if state.manifest == nil {
@@ -60,7 +86,7 @@ func (state fakeStore) ReadJournal(store.Authority, string) (model.Transaction, 
 	return state.journal, nil
 }
 
-func (state fakeStore) ReadGenerationContract(id string) (bundle.Inventory, model.Generation, error) {
+func (state fakeStore) ReadCandidateContract(id string) (bundle.Inventory, model.Generation, error) {
 	return state.inventory, state.generation, nil
 }
 
@@ -76,6 +102,31 @@ func (inventory *fakeInventory) Bind(context.Context, planner.Installation, bund
 type fakeSupervisor struct {
 	runs int
 	tx   model.Transaction
+}
+
+type fakeOnboarding struct{ calls int }
+
+type fakePredecessorEvidence struct {
+	topology string
+	version  string
+	calls    int
+	failOn   int
+	err      error
+}
+
+func (evidence *fakePredecessorEvidence) VerifyPublicPredecessorEvidence(topology, version string) error {
+	evidence.calls++
+	evidence.topology = topology
+	evidence.version = version
+	if evidence.failOn == 0 || evidence.calls == evidence.failOn {
+		return evidence.err
+	}
+	return nil
+}
+
+func (value *fakeOnboarding) CompleteOnboarding(context.Context) (engine.Result, error) {
+	value.calls++
+	return engine.Result{Outcome: engine.OutcomeUpdated, Phase: model.PhaseCommitted}, nil
 }
 
 func (supervisor *fakeSupervisor) Run(_ context.Context, tx model.Transaction) (engine.Result, error) {
@@ -120,6 +171,33 @@ func TestConvergeBuildsTransactionFromStoredContract(t *testing.T) {
 	if supervisor.tx.ID != transactionID || supervisor.tx.Target != target || supervisor.tx.MigrationPlanDigest == "" || supervisor.tx.SignerPlanDigest != digestB {
 		t.Fatalf("transaction was not bound from stored evidence: %+v", supervisor.tx)
 	}
+	if supervisor.tx.PlanAction != string(planner.ActionInstall) || supervisor.tx.SourceTopology != "" {
+		t.Fatalf("fresh transaction lost its planner identity: %+v", supervisor.tx)
+	}
+}
+
+func TestCompleteOnboardingUsesCommittedManifestAndTargetController(t *testing.T) {
+	testCompleteOnboardingUsesCommittedManifestAndTargetController(t, model.ProfileProtectedLocal)
+}
+
+func TestHostingCompleteOnboardingUsesCommittedManifestAndTargetController(t *testing.T) {
+	testCompleteOnboardingUsesCommittedManifestAndTargetController(t, model.ProfileHosting)
+}
+
+func testCompleteOnboardingUsesCommittedManifestAndTargetController(t *testing.T, profile model.Profile) {
+	t.Helper()
+	_, target := targetContract()
+	identity := platformFor(profile)
+	manifest := model.Manifest{SchemaVersion: model.CurrentManifestSchemaVersion, Profile: profile,
+		Platform: identity, ActiveGeneration: &target, StateSchemas: map[string]uint32{"signer": 2}, Capabilities: capabilities()}
+	completion := &fakeOnboarding{}
+	service := Service{Profile: profile, Platform: identity,
+		Store: fakeStore{manifest: &manifest, manifestDigest: digestA}, Inventory: &fakeInventory{}, Supervisor: &fakeSupervisor{}, Onboarding: completion}
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationCompleteOnboarding}
+	response, err := service.Handle(context.Background(), request)
+	if err != nil || completion.calls != 1 || response.Outcome != string(engine.OutcomeUpdated) || response.ActiveGenerationID != target.ID {
+		t.Fatalf("unexpected onboarding completion: response=%+v calls=%d err=%v", response, completion.calls, err)
+	}
 }
 
 func TestConvergeBindsPublicStableBridgeToPreviousGeneration(t *testing.T) {
@@ -130,15 +208,16 @@ func TestConvergeBindsPublicStableBridgeToPreviousGeneration(t *testing.T) {
 	state := fakeStore{inventory: inventory, generation: target}
 	bindings := &fakeInventory{}
 	supervisor := &fakeSupervisor{}
+	evidence := &fakePredecessorEvidence{}
 	service := Service{
 		Profile: model.ProfileProtectedLocal, Platform: platform(), Store: state,
-		Inventory: bindings, Supervisor: supervisor,
+		Inventory: bindings, Supervisor: supervisor, PredecessorEvidence: evidence,
 		NewID: func() (string, error) { return transactionID, nil },
 	}
 	request := protocol.Request{
 		SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID,
 		Operation: protocol.OperationConverge, TargetGenerationID: target.ID,
-		SourceTopology: string(planner.TopologyLocalUserSystemdV1), ExpectedManifestDigest: "absent",
+		SourceTopology: string(planner.TopologyLocalUserSystemdV1), PublicPredecessorVersion: "0.1.75", ExpectedManifestDigest: "absent",
 	}
 	response, err := service.Handle(context.Background(), request)
 	if err != nil {
@@ -147,10 +226,50 @@ func TestConvergeBindsPublicStableBridgeToPreviousGeneration(t *testing.T) {
 	if response.Outcome != string(engine.OutcomeUpdated) || supervisor.tx.Previous != nil {
 		t.Fatalf("public-stable bridge was not transaction-bound: response=%+v transaction=%+v", response, supervisor.tx)
 	}
-	if len(supervisor.tx.Migrations) != 3 || supervisor.tx.Migrations[0] != (model.Migration{State: "federation", From: 0, To: 2}) ||
+	if supervisor.tx.PlanAction != string(planner.ActionBridgePublicStable) || supervisor.tx.SourceTopology != string(planner.TopologyLocalUserSystemdV1) || supervisor.tx.PublicPredecessorVersion != "0.1.75" {
+		t.Fatalf("bridge transaction lost its source identity: %+v", supervisor.tx)
+	}
+	if evidence.calls != 2 || evidence.topology != request.SourceTopology || evidence.version != request.PublicPredecessorVersion {
+		t.Fatalf("public predecessor evidence was not independently verified: %+v", evidence)
+	}
+	if len(supervisor.tx.Migrations) != 3 || supervisor.tx.Migrations[0] != (model.Migration{State: "federation", From: 1, To: 2}) ||
 		supervisor.tx.Migrations[1] != (model.Migration{State: "managedInstall", From: 1, To: 2}) ||
 		supervisor.tx.Migrations[2] != (model.Migration{State: "signer", From: 1, To: 2}) {
 		t.Fatalf("unexpected bridge migrations: %+v", supervisor.tx.Migrations)
+	}
+}
+
+func TestConvergeRejectsUnverifiedPublicPredecessorEvidenceBeforeMutation(t *testing.T) {
+	inventory, target := targetContract()
+	stages := 0
+	supervisor := &fakeSupervisor{}
+	service := Service{Profile: model.ProfileProtectedLocal, Platform: platform(),
+		Store: fakeStore{inventory: inventory, generation: target, stages: &stages}, Inventory: &fakeInventory{}, Supervisor: supervisor,
+		PredecessorEvidence: &fakePredecessorEvidence{failOn: 1, err: errors.New("predecessor evidence mismatch")},
+		NewID:               func() (string, error) { return transactionID, nil }}
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationConverge,
+		TargetGenerationID: target.ID, SourceTopology: string(planner.TopologyLocalUserSystemdV1), PublicPredecessorVersion: "0.1.75", ExpectedManifestDigest: "absent"}
+	if _, err := service.Handle(context.Background(), request); err == nil || stages != 0 || supervisor.runs != 0 {
+		t.Fatalf("unverified predecessor evidence reached mutation: stages=%d runs=%d err=%v", stages, supervisor.runs, err)
+	}
+}
+
+func TestConvergeRechecksPublicPredecessorEvidenceBeforeTransaction(t *testing.T) {
+	inventory, target := targetContract()
+	inventory.StateSchemas = map[string]uint32{
+		"federation": 2, "managedInstall": 2, "mining": 1, "signer": 2, "walletRegistry": 1,
+	}
+	stages := 0
+	bindings := &fakeInventory{}
+	supervisor := &fakeSupervisor{}
+	evidence := &fakePredecessorEvidence{failOn: 2, err: errors.New("predecessor changed after binding")}
+	service := Service{Profile: model.ProfileProtectedLocal, Platform: platform(),
+		Store: fakeStore{inventory: inventory, generation: target, stages: &stages}, Inventory: bindings, Supervisor: supervisor,
+		PredecessorEvidence: evidence, NewID: func() (string, error) { return transactionID, nil }}
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationConverge,
+		TargetGenerationID: target.ID, SourceTopology: string(planner.TopologyLocalUserSystemdV1), PublicPredecessorVersion: "0.1.75", ExpectedManifestDigest: "absent"}
+	if _, err := service.Handle(context.Background(), request); err == nil || evidence.calls != 2 || stages != 1 || bindings.calls != 1 || supervisor.runs != 0 {
+		t.Fatalf("changed predecessor reached transaction: calls=%d stages=%d binds=%d runs=%d err=%v", evidence.calls, stages, bindings.calls, supervisor.runs, err)
 	}
 }
 
@@ -255,5 +374,43 @@ func TestTargetRequiringNewerStableSupervisorFailsBeforeMutation(t *testing.T) {
 	}
 	if bindings.calls != 0 || supervisor.runs != 0 {
 		t.Fatal("unsupported supervisor capability reached state inventory or mutation")
+	}
+}
+
+func TestUnknownNewerManifestRejectsBeforeAnyMutation(t *testing.T) {
+	inventory, target := targetContract()
+	active := generation(digestA, "future", commitA)
+	manifest := model.Manifest{
+		SchemaVersion: model.CurrentManifestSchemaVersion + 1,
+		Profile:       model.ProfileProtectedLocal,
+		Platform:      platform(), ActiveGeneration: &active,
+		StateSchemas: map[string]uint32{"signer": 99}, Capabilities: capabilities(),
+	}
+	locks, stages := 0, 0
+	bindings := &fakeInventory{}
+	supervisor := &fakeSupervisor{}
+	service := Service{
+		Profile: model.ProfileProtectedLocal, Platform: platform(),
+		Store: fakeStore{
+			manifest: &manifest, manifestDigest: digestA,
+			inventory: inventory, generation: target, locks: &locks, stages: &stages,
+		},
+		Inventory: bindings, Supervisor: supervisor,
+		NewID: func() (string, error) { return "", errors.New("must not allocate") },
+	}
+	request := protocol.Request{
+		SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID,
+		Operation: protocol.OperationConverge, TargetGenerationID: target.ID,
+		ExpectedManifestDigest: digestA,
+	}
+	response, err := service.Handle(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Outcome != string(planner.ActionRejectUnknownNewer) {
+		t.Fatalf("unexpected unknown-newer response: %+v", response)
+	}
+	if locks != 0 || stages != 0 || bindings.calls != 0 || supervisor.runs != 0 {
+		t.Fatalf("unknown-newer installation reached mutation: locks=%d stages=%d inventory=%d runs=%d", locks, stages, bindings.calls, supervisor.runs)
 	}
 }

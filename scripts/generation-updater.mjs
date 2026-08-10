@@ -24,32 +24,30 @@ const PUBLIC_STABLE_LOCAL_TOPOLOGIES = new Set([
   "local-user-systemd-v1",
   "local-user-systemd-v2",
 ]);
+const PUBLIC_STABLE_HOSTING_TOPOLOGIES = new Set([
+  "hosting-root-gateway-v0",
+  "hosting-controller-v2-self-updating",
+]);
 
-export function generationLifecycle(manifest) {
-  let instance = "hosting";
-  let config = "/var/lib/fased-lifecycled/platform.json";
-  if (manifest?.profile === "local" || manifest?.profile === "protected-local") {
-    const match = /^fased-gateway-([a-f0-9]{16})\.service$/u.exec(
-      String(manifest?.service?.name ?? ""),
-    );
-    if (!match) {
-      return null;
-    }
-    instance = match[1];
-    config = `/var/lib/fased-local/${instance}/lifecycle/platform.json`;
-  } else if (manifest?.profile !== "hosting") {
+export function generationLifecycle(selection) {
+  if (
+    !selection ||
+    !new Set(["protected-local", "hosting"]).has(selection.profile) ||
+    !/^[a-z0-9][a-z0-9-]{0,63}$/u.test(selection.instance ?? "")
+  ) {
+    return null;
+  }
+  const instance = selection.instance;
+  const config =
+    selection.profile === "hosting"
+      ? "/var/lib/fased-lifecycled/platform.json"
+      : `/var/lib/fased-local/${instance}/lifecycle/platform.json`;
+  if (selection.config !== config) {
     return null;
   }
   try {
     const binary = fs.lstatSync(SUPERVISOR);
-    const configParent = fs.lstatSync(path.dirname(config));
-    if (
-      !binary.isFile() ||
-      binary.isSymbolicLink() ||
-      (binary.mode & 0o111) === 0 ||
-      !configParent.isDirectory() ||
-      configParent.isSymbolicLink()
-    ) {
+    if (!binary.isFile() || binary.isSymbolicLink() || (binary.mode & 0o111) === 0) {
       return null;
     }
   } catch {
@@ -397,25 +395,23 @@ async function runGenerationTransaction({
     throw new Error("lifecycle generation architecture is unsupported");
   }
   if (operation === "initialize") {
-    const positiveID = (value) => Number.isSafeInteger(value) && value > 0 && value <= 0xffff_ffff;
     if (
       !initialize ||
       !new Set(["protected-local", "hosting"]).has(initialize.profile) ||
-      !/^[a-z0-9][a-z0-9-]{0,63}$/u.test(initialize.instance ?? "") ||
+      (initialize.instance !== "" &&
+        !/^[a-z0-9][a-z0-9-]{0,63}$/u.test(initialize.instance ?? "")) ||
+      !/^[A-Za-z_][A-Za-z0-9_.-]{0,30}$/u.test(initialize.operatorUser ?? "") ||
       !path.isAbsolute(initialize.ownerState ?? "") ||
       path.resolve(initialize.ownerState) !== initialize.ownerState ||
       !Number.isSafeInteger(initialize.gatewayPort) ||
       initialize.gatewayPort < 1 ||
       initialize.gatewayPort > 65_535 ||
-      !positiveID(initialize.operatorUid) ||
-      !positiveID(initialize.operatorGid) ||
-      !positiveID(initialize.gatewayUid) ||
-      !positiveID(initialize.gatewayGid) ||
-      !positiveID(initialize.signerUid) ||
-      !positiveID(initialize.signerGid) ||
       (initialize.sourceTopology !== undefined &&
-        (initialize.profile !== "protected-local" ||
-          !PUBLIC_STABLE_LOCAL_TOPOLOGIES.has(initialize.sourceTopology)))
+        !(
+          initialize.profile === "protected-local"
+            ? PUBLIC_STABLE_LOCAL_TOPOLOGIES
+            : PUBLIC_STABLE_HOSTING_TOPOLOGIES
+        ).has(initialize.sourceTopology))
     ) {
       throw new Error("lifecycle generation initialization identity is invalid");
     }
@@ -510,20 +506,10 @@ async function runGenerationTransaction({
             initialize.instance,
             "--owner-state",
             initialize.ownerState,
+            "--operator-user",
+            initialize.operatorUser,
             "--gateway-port",
             String(initialize.gatewayPort),
-            "--operator-uid",
-            String(initialize.operatorUid),
-            "--operator-gid",
-            String(initialize.operatorGid),
-            "--gateway-uid",
-            String(initialize.gatewayUid),
-            "--gateway-gid",
-            String(initialize.gatewayGid),
-            "--signer-uid",
-            String(initialize.signerUid),
-            "--signer-gid",
-            String(initialize.signerGid),
             "--generation-archive",
             archive,
             "--dependency-archive",
@@ -547,6 +533,12 @@ async function runGenerationTransaction({
           archive,
           "--dependency-archive",
           dependencyArchive,
+          "--candidate-descriptor",
+          descriptor,
+          "--candidate-attestation",
+          descriptorBundle,
+          "--release-version",
+          version,
         ],
         { timeoutMs: Math.max(timeoutMs, 10 * 60_000) },
       );
@@ -600,7 +592,7 @@ async function runGenerationTransaction({
 function commandOptions(argv) {
   if (argv[0] !== "initialize") {
     throw new Error(
-      "usage: generation-updater.mjs initialize --version VERSION --profile PROFILE --instance ID --owner-state PATH --gateway-port PORT --operator-uid UID --operator-gid GID --gateway-uid UID --gateway-gid GID --signer-uid UID --signer-gid GID",
+      "usage: generation-updater.mjs initialize --version VERSION --profile PROFILE --instance ID --owner-state PATH --operator-user USER --gateway-port PORT",
     );
   }
   const values = new Map();
@@ -617,13 +609,8 @@ function commandOptions(argv) {
     "--profile",
     "--instance",
     "--owner-state",
+    "--operator-user",
     "--gateway-port",
-    "--operator-uid",
-    "--operator-gid",
-    "--gateway-uid",
-    "--gateway-gid",
-    "--signer-uid",
-    "--signer-gid",
   ];
   const sourceTopology = values.get("--source-topology");
   if (
@@ -636,9 +623,11 @@ function commandOptions(argv) {
   const profile = values.get("--profile");
   const instance = values.get("--instance");
   const ownerState = values.get("--owner-state");
+  const operatorUser = values.get("--operator-user");
   if (
     !new Set(["protected-local", "hosting"]).has(profile) ||
-    !/^[a-z0-9][a-z0-9-]{0,63}$/u.test(instance) ||
+    (instance !== "" && !/^[a-z0-9][a-z0-9-]{0,63}$/u.test(instance)) ||
+    !/^[A-Za-z_][A-Za-z0-9_.-]{0,30}$/u.test(operatorUser) ||
     !path.isAbsolute(ownerState) ||
     path.resolve(ownerState) !== ownerState
   ) {
@@ -657,13 +646,8 @@ function commandOptions(argv) {
       profile,
       instance,
       ownerState,
+      operatorUser,
       gatewayPort: integer("--gateway-port"),
-      operatorUid: integer("--operator-uid"),
-      operatorGid: integer("--operator-gid"),
-      gatewayUid: integer("--gateway-uid"),
-      gatewayGid: integer("--gateway-gid"),
-      signerUid: integer("--signer-uid"),
-      signerGid: integer("--signer-gid"),
       ...(sourceTopology ? { sourceTopology } : {}),
     },
   };
@@ -698,7 +682,10 @@ async function commandMain(argv) {
     timeoutMs,
     baseUrl: "https://github.com/fased-ai/fased/releases/download",
     architecture: process.arch,
-    initializerExecutableRoot: "/opt/fased",
+    // Bootstrap code is temporary acquisition state. Stage it under the
+    // existing root-owned runtime hierarchy so the Go initializer remains the
+    // sole creator and owner of the durable /opt/fased lifecycle tree.
+    initializerExecutableRoot: "/run",
     download: async (url, destination) => {
       await execFileAsync(
         curl,

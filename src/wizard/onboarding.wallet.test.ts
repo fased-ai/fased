@@ -29,10 +29,6 @@ const signerInstallerSource = fs.readFileSync(
   new URL("../../scripts/install-fased-signerd.sh", import.meta.url),
   "utf8",
 );
-const signerUpdaterSource = fs.readFileSync(
-  new URL("../../scripts/fased-managed-updater-core.mjs", import.meta.url),
-  "utf8",
-);
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -129,7 +125,9 @@ describe("local signer env file helpers", () => {
     );
     expect(onboardingWalletSource).toContain("Go is not required for the official prebuilt signer");
     expect(signerInstallerSource).toContain("gh attestation verify");
-    expect(signerUpdaterSource).toContain("officialReleaseAttestationVerifyArgs({");
+    expect(signerInstallerSource).not.toContain("fased-managed-updater.mjs");
+    expect(signerInstallerSource).not.toContain('args=(local-signer "$ACTION")');
+    expect(signerInstallerSource).toContain('mv -f -- "$temporary" "$target"');
     expect(
       officialReleaseAttestationVerifyArgs({
         assetPath: "/tmp/fased-signerd",

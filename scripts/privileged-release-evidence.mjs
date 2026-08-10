@@ -22,9 +22,8 @@ const RELEASE_BUILD_TYPE = "https://fased.ai/build-types/privileged-release/v1";
 const ROOT_POLICY_SHA256 = "23d3e8235a39729d6ae37a5784eaa717a47e4ac725f5a416e78754ad9b4618ca";
 const LIFECYCLE_TARGETS = Object.freeze({
   bootstrap: "install.sh",
-  supervisor: "fased-lifecycle-supervisor.mjs",
-  controllerServer: "fased-host-updater.mjs",
-  controllerClient: "fased-host-updaterctl.mjs",
+  lifecycleLinuxX64: "fased-lifecycled-linux-amd64",
+  lifecycleLinuxArm64: "fased-lifecycled-linux-arm64",
   evidenceVerifier: "fased-privileged-release-evidence.mjs",
 });
 const COMPONENT_SBOM_NAMES = Object.freeze({
@@ -200,16 +199,12 @@ function parseLifecycleMetadata(value, expectedRelease) {
   exactKeys(value.release, ["version", "tag", "commit"], "lifecycle release identity");
   exactKeys(
     value.targets,
-    ["bootstrap", "supervisor", "controllerServer", "controllerClient", "evidenceVerifier"],
+    ["bootstrap", "lifecycleLinuxX64", "lifecycleLinuxArm64", "evidenceVerifier"],
     "lifecycle targets",
   );
   exactKeys(value.evidence, ["provenance", "sbom", "vex"], "lifecycle evidence");
   exactKeys(value.validity, ["issuedAt", "expiresAt"], "lifecycle validity");
-  exactKeys(
-    value.policy,
-    ["channels", "platforms", "supervisorProtocol", "controllerProtocol"],
-    "lifecycle policy",
-  );
+  exactKeys(value.policy, ["channels", "platforms", "lifecycleProtocol"], "lifecycle policy");
   if (
     value.schemaVersion !== 1 ||
     value.role !== "fased-lifecycle-targets" ||
@@ -219,8 +214,7 @@ function parseLifecycleMetadata(value, expectedRelease) {
       canonicalJSON({
         channels: expectedRelease.version.includes("-") ? ["beta"] : ["beta", "stable"],
         platforms: ["linux-arm64", "linux-x64"],
-        supervisorProtocol: 1,
-        controllerProtocol: 2,
+        lifecycleProtocol: 1,
       })
   ) {
     fail("lifecycle trust metadata identity is malformed or mismatched");

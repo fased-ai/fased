@@ -23,7 +23,7 @@ export const INSTALLER_RELEASE_VERIFICATION_PATHS = new Set([
   "scripts/install-attestation-prerequisites.test.ts",
   "scripts/install-release-pin.test.ts",
   "scripts/lifecycle-trust-policy.test.ts",
-  "scripts/lifecycle-trust-runtime.test.ts",
+  "scripts/go-lifecycle-routing.test.ts",
   "scripts/lifecycle-version-neutral.test.ts",
   "scripts/release-artifact-set.mjs",
   "scripts/release-artifact-set.test.ts",
@@ -54,14 +54,14 @@ const INSTALLER_P1_FIXTURE_PATHS = new Set([
   "scripts/gate-authority.mjs",
   "scripts/gate-authority.test.ts",
   "scripts/hosted-installer-artifact-layout.test.ts",
-  "scripts/managed-update-mode.test.ts",
+  "scripts/go-lifecycle-routing.test.ts",
   "scripts/test-protected-local-systemd-container.sh",
 ]);
-const T2_FIXTURE_PATH_RE =
-  /^scripts\/(?:protected-local-t2-(?:controller-worker|supervisor-worker|systemd-fixture)\.mjs|protected-local-t2-systemd\.test\.ts|test-protected-local-t2-systemd\.sh)$/;
+const T2_FIXTURE_PATH_RE = /^tools\/fased-lifecycled\/(?:engine|platform|store)\/.*_test\.go$/;
 const TEST_PATH_RE =
-  /^(?:test\/|tests\/|fixtures\/|.*\.(?:test|spec)\.[^.]+$|scripts\/test-[^/]+|scripts\/docker\/[^/]+\/)/;
-const NON_PRODUCTION_TEST_PATH_RE = /^(?:test\/|tests\/|fixtures\/|.*\.(?:test|spec)\.[^.]+$)/;
+  /^(?:test\/|tests\/|fixtures\/|.*\.(?:test|spec)\.[^.]+$|.*_test\.go$|scripts\/test-[^/]+|scripts\/docker\/[^/]+\/)/;
+const NON_PRODUCTION_TEST_PATH_RE =
+  /^(?:test\/|tests\/|fixtures\/|.*\.(?:test|spec)\.[^.]+$|.*_test\.go$)/;
 const ROUTABLE_TEST_PATH_RE = /^(?:src|scripts|test|extensions|ui)\/.*\.test\.ts$/u;
 const NON_ROUTINE_TEST_PATH_RE = /\.(?:e2e|live)\.test\.ts$/u;
 const NODE_PATH_RE =
@@ -75,17 +75,14 @@ const KNOWN_NODE_ROOT_PATH_RE =
 // matrix until its nearest regression is explicitly added to `node-focused`.
 const LOCAL_UPDATE_FOCUSED_PRODUCTION_PATHS = new Set([
   "package.json",
-  "scripts/fased-host-updater.mjs",
-  "scripts/fased-lifecycle-supervisor.mjs",
-  "scripts/fased-managed-updater-core.mjs",
-  "scripts/lifecycle-control-normalizer.mjs",
+  "install.sh",
+  "scripts/fased-generation-updater-core.mjs",
+  "scripts/generation-updater.mjs",
   "scripts/managed-runtime-layout.mjs",
-  "scripts/managed-update-contract.mjs",
   "scripts/managed-updater-bundle.v1.json",
-  "scripts/protected-local-bootstrap.mjs",
-  "scripts/protected-local-service-plan.mjs",
-  "scripts/protected-local-supervisor-client-root-fixture.mjs",
   "scripts/release-check.ts",
+  "tools/fased-lifecycled/daemon/service.go",
+  "tools/fased-lifecycled/platform/target_adapter.go",
   "src/wallet/wallet-runtime-config.ts",
 ]);
 const NODE_PACKAGING_PATH_RE =
@@ -117,7 +114,7 @@ const NATIVE_ONLY_PATH_RE = /^(?:apps\/(?:android|ios|macos|shared)\/|Swabble\/|
 const SHARED_LIFECYCLE_PATH_RE =
   /^(?:install\.sh$|scripts\/(?:build-hosted-runtime-artifact|fased-lifecycle-supervisor|hosted-release-manifest|install-(?:managed-runtime|platform-preflight|release-pin|runtime-profile)|lifecycle-(?!control-normalizer)|managed-runtime-layout|signer-(?:enrollment-launchers|owner-policy-installers)|start-managed)[^/]*|src\/(?:cli\/daemon-cli\/(?:install|restart-health)|commands\/(?:daemon-install-helpers|doctor-(?:gateway-health|state-integrity))|config\/io|daemon\/systemd|infra\/(?:managed-runtime|update-runner))[^/]*|\.github\/workflows\/hosted-runtime-release\.yml$)/;
 const SHARED_UPDATE_PATH_RE =
-  /^(?:scripts\/(?:fased-(?:host|managed)-updater|managed-updater-bundle)[^/]*|src\/infra\/update-runner[^/]*)/;
+  /^(?:scripts\/(?:fased-(?:generation|host|managed)-updater|managed-updater-bundle)[^/]*|src\/infra\/update-runner[^/]*)/;
 const LOCAL_LIFECYCLE_PATH_RE =
   /^(?:scripts\/(?:docker\/protected-local-systemd\/|lifecycle-control-normalizer|protected-local-|test-protected-local-systemd-container)[^/]*|src\/(?:commands\/onboard-non-interactive\/local|infra\/local-source-paired-update)[^/]*)/;
 const LOCAL_FRESH_PATH_RE = /^(?:scripts\/(?:install-local-|test-install-runtime-profile)[^/]*)/;
@@ -135,7 +132,7 @@ const PACKAGE_PATH_RE =
 const STATE_MIGRATION_PATH_RE = /(?:^|\/)(?:migrat|transaction|rollback|state)[^/]*[/.]/;
 const DOCKER_PATH_RE = /^(?:Dockerfile|docker\/|scripts\/docker\/|\.github\/workflows\/docker)/;
 const PRIVILEGED_PATH_RE =
-  /^(?:install\.sh$|tools\/(?:fased-signerd|fased-lifecycled)\/|scripts\/(?:assemble-lifecycle-generation|build-(?:fased-lifecycled|lifecycle-generation)|fased-(?:host-updater|lifecycle-supervisor|managed-updater)|install-(?:fased-signerd|managed-runtime)|lifecycle-|managed-runtime-layout|protected-local-(?:bootstrap|controller|layout|service-plan|supervisor)|release-fased-lifecycled|signer-(?:enrollment-launchers|owner-policy-installers)|start-managed|test-build-lifecycle-generation)[^/]*|src\/(?:daemon\/systemd|infra\/(?:managed-runtime|update-runner)|wallet\/native-signer-)[^/]*)/;
+  /^(?:install\.sh$|tools\/(?:fased-signerd|fased-lifecycled)\/|scripts\/(?:assemble-lifecycle-generation|build-(?:fased-lifecycled|lifecycle-generation)|fased-(?:generation-updater|host-updater|lifecycle-supervisor|managed-updater)|install-(?:fased-signerd|managed-runtime)|lifecycle-|managed-runtime-layout|protected-local-(?:bootstrap|controller|layout|service-plan|supervisor)|release-fased-lifecycled|signer-(?:enrollment-launchers|owner-policy-installers)|start-managed|test-build-lifecycle-generation)[^/]*|src\/(?:daemon\/systemd|infra\/(?:managed-runtime|update-runner)|wallet\/native-signer-)[^/]*)/;
 
 export function normalizeChangedPaths(paths) {
   return [...new Set(paths.map((value) => value.trim().replaceAll("\\", "/")).filter(Boolean))];
@@ -396,7 +393,7 @@ export function createGatePlan(inputPaths, options = {}) {
   const installerP1FixtureOnly =
     (paths.some((path) => CI_INFRASTRUCTURE_PATH_RE.test(path)) ||
       (paths.includes("scripts/docker/protected-local-systemd/run.sh") &&
-        paths.includes("scripts/managed-update-mode.test.ts"))) &&
+        paths.includes("scripts/go-lifecycle-routing.test.ts"))) &&
     paths.every((path) => INSTALLER_P1_FIXTURE_PATHS.has(path));
   const ciInfrastructureOnly =
     !versionOnly &&
@@ -406,8 +403,10 @@ export function createGatePlan(inputPaths, options = {}) {
   const ciInfrastructureChanged = paths.some((path) => CI_INFRASTRUCTURE_PATH_RE.test(path));
   const t2FixtureOnly = paths.every((path) => T2_FIXTURE_PATH_RE.test(path));
   const testOnly = paths.every((path) => TEST_PATH_RE.test(path) || T2_FIXTURE_PATH_RE.test(path));
-  const fixtureOnly = paths.every((path) =>
-    /^(?:fixtures\/|scripts\/(?:docker\/|test-|protected-local-t2-))/.test(path),
+  const fixtureOnly = paths.every(
+    (path) =>
+      /^(?:fixtures\/|scripts\/(?:docker\/|test-|protected-local-t2-))/.test(path) ||
+      /^tools\/fased-lifecycled\/.*_test\.go$/u.test(path),
   );
   const productionPaths = versionOnly ? [] : paths.filter((path) => !isNonProductionPath(path));
   const productionChanged = productionPaths.length > 0;

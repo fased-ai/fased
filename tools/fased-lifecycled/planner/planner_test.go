@@ -89,7 +89,7 @@ func TestPlanSelectsVersionNeutralPublicStableBridge(t *testing.T) {
 	if plan.Action != ActionBridgePublicStable {
 		t.Fatalf("public stable selected %q, want %q", plan.Action, ActionBridgePublicStable)
 	}
-	if len(plan.Migrations) != 4 || plan.Migrations[0] != (Migration{State: "federation", From: 0, To: 2}) ||
+	if len(plan.Migrations) != 4 || plan.Migrations[0] != (Migration{State: "federation", From: 1, To: 2}) ||
 		plan.Migrations[1] != (Migration{State: "managedInstall", From: 1, To: 2}) ||
 		plan.Migrations[2] != (Migration{State: "signer", From: 1, To: 3}) ||
 		plan.Migrations[3] != (Migration{State: "walletRegistry", From: 1, To: 2}) {
@@ -102,6 +102,12 @@ func TestPublicStableTopologySelectionIsVersionNeutralAndFailClosed(t *testing.T
 		installation, err := PublicStableInstallation(model.ProfileProtectedLocal, topology)
 		if err != nil || installation.Kind != InstallationPublicStable || installation.StateSchemas["signer"] != 1 {
 			t.Fatalf("unexpected topology %q: %+v err=%v", topology, installation, err)
+		}
+	}
+	for _, topology := range []PublicTopology{TopologyHostingRootV0, TopologyHostingControllerV2} {
+		installation, err := PublicStableInstallation(model.ProfileHosting, topology)
+		if err != nil || installation.Kind != InstallationPublicStable || installation.Profile != model.ProfileHosting {
+			t.Fatalf("unexpected Hosting topology %q: %+v err=%v", topology, installation, err)
 		}
 	}
 	if _, err := PublicStableInstallation(model.ProfileProtectedLocal, "private-rc-residue"); err == nil {
@@ -133,14 +139,17 @@ func TestPlanSeparatesEmptyManagedAndAmbiguousInstallations(t *testing.T) {
 func TestPlanFailsClosedForUnknownNewerOrUnmappedState(t *testing.T) {
 	current := installed()
 	current.StateSchemas["signer"] = 4
-	if _, err := Build(&current, target()); err == nil {
-		t.Fatal("unknown newer signer schema was accepted")
+	if plan, err := Build(&current, target()); err != nil || plan.Action != ActionRejectUnknownNewer {
+		t.Fatalf("unknown newer signer schema was not rejected explicitly: %+v err=%v", plan, err)
 	}
 
 	current = installed()
 	current.StateSchemas["privateResidue"] = 1
-	if _, err := Build(&current, target()); err == nil {
-		t.Fatal("unmapped state schema was accepted")
+	if plan, err := Build(&current, target()); err != nil || plan.Action != ActionRejectUnknownNewer {
+		t.Fatalf("unmapped state schema was not rejected explicitly: %+v err=%v", plan, err)
+	}
+	if plan, err := BuildForInstallation(Installation{Kind: InstallationUnknownNewer, Profile: model.ProfileProtectedLocal}, target()); err != nil || plan.Action != ActionRejectUnknownNewer {
+		t.Fatalf("unknown-newer discovery was not rejected explicitly: %+v err=%v", plan, err)
 	}
 }
 
@@ -154,8 +163,8 @@ func TestPlanRejectsProfileAndCapabilityMismatch(t *testing.T) {
 
 	current = installed()
 	current.Capabilities.Signer = model.CapabilityRange{Min: 1, Max: 1}
-	if _, err := Build(&current, target()); err == nil {
-		t.Fatal("incompatible signer capability was accepted")
+	if plan, err := Build(&current, target()); err != nil || plan.Action != ActionRejectUnknownNewer {
+		t.Fatalf("incompatible signer capability was not rejected explicitly: %+v err=%v", plan, err)
 	}
 }
 

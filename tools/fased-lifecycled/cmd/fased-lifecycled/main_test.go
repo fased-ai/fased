@@ -1,29 +1,129 @@
 package main
 
 import (
+	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
 	"syscall"
 	"testing"
+
+	"fased-lifecycled/platform"
 )
+
+func TestPrepareSocketParentConvergesAuthorizedTraversal(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "runtime")
+	if err := os.Mkdir(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareSocketParent(parent, os.Getegid()); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(parent, "request.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	info, err := os.Lstat(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat := info.Sys().(*syscall.Stat_t)
+	if info.Mode().Perm() != 0o710 || stat.Uid != uint32(os.Geteuid()) || stat.Gid != uint32(os.Getegid()) {
+		t.Fatalf("%s identity = %d:%d %o, want %d:%d 710", parent, stat.Uid, stat.Gid, info.Mode().Perm(), os.Geteuid(), os.Getegid())
+	}
+	connection, err := net.Dial("unix", path)
+	if err != nil {
+		t.Fatalf("authorized group could not traverse to lifecycle socket: %v", err)
+	}
+	_ = connection.Close()
+}
+
+func TestInitializationLockSerializesAndReleases(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bootstrap.lock")
+	first, err := acquireInitializationLockAt(path, uint32(os.Geteuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := acquireInitializationLockAt(path, uint32(os.Geteuid())); err == nil {
+		t.Fatal("concurrent bootstrap lock acquisition succeeded")
+	}
+	if err := first.Release(); err != nil {
+		t.Fatal(err)
+	}
+	second, err := acquireInitializationLockAt(path, uint32(os.Geteuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBootstrapPathRemovalFailuresPreserveCriticalErrors(t *testing.T) {
+	removal := &platform.BootstrapPathRemovalError{Path: "/created", Err: syscall.ENOTEMPTY}
+	selected, only := bootstrapPathRemovalFailures(removal)
+	if !only || len(selected) != 1 || selected[0].Path != "/created" {
+		t.Fatalf("typed removal was not selected: only=%v selected=%+v", only, selected)
+	}
+	critical := errors.New("systemd rollback failed")
+	if _, only := bootstrapPathRemovalFailures(errors.Join(removal, critical)); only {
+		t.Fatal("critical rollback failure was incorrectly treated as removable residue")
+	}
+}
+
+func TestPrepareSocketParentRejectsSymlink(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "runtime")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareSocketParent(link, os.Getegid()); err == nil {
+		t.Fatal("symlinked lifecycle socket directory was accepted")
+	}
+}
 
 func TestInitializationApplyArgumentsSelectsOneVerifiedInput(t *testing.T) {
 	archive := filepath.Join(t.TempDir(), "generation.tar.gz")
 	topology := "local-user-systemd-v1"
 	dependency := filepath.Join(t.TempDir(), "dependencies.tar.gz")
-	got, err := initializationApplyArguments("/platform.json", "", archive, dependency, topology)
+	got, err := initializationApplyArguments("/platform.json", "", archive, dependency, topology, "0.1.75")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"--config", "/platform.json", "--generation-archive", archive, "--dependency-archive", dependency, "--source-topology", topology}
+	want := []string{"--config", "/platform.json", "--generation-archive", archive, "--dependency-archive", dependency, "--source-topology", topology, "--public-predecessor-version", "0.1.75"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("arguments = %#v, want %#v", got, want)
 	}
 	for _, input := range [][2]string{{"", ""}, {"/generation", archive}, {"relative", ""}} {
-		if _, err := initializationApplyArguments("/platform.json", input[0], input[1], "", ""); err == nil {
+		if _, err := initializationApplyArguments("/platform.json", input[0], input[1], "", "", ""); err == nil {
 			t.Fatalf("expected generation inputs %#v to be rejected", input)
 		}
+	}
+	if _, err := initializationApplyArguments("/platform.json", "", archive, "", topology, ""); err == nil {
+		t.Fatal("bridge apply accepted missing predecessor version")
+	}
+	if _, err := initializationApplyArguments("/platform.json", "", archive, "", "", "0.1.75"); err == nil {
+		t.Fatal("bridge apply accepted predecessor version without topology")
+	}
+}
+
+func TestLifecycleRequestArgumentsBindPublicPredecessorEvidence(t *testing.T) {
+	arguments := []string{"--socket", "/run/fased/test.sock", "--operation", "CONVERGE", "--request-id", "018f47d2-5a6b-7c8d-9e0f-123456789abc",
+		"--target-generation", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "--expected-manifest", "absent",
+		"--source-topology", "local-user-systemd-v1", "--public-predecessor-version", "0.1.75"}
+	socket, request, err := parseLifecycleRequestArguments(arguments)
+	if err != nil || socket != "/run/fased/test.sock" || request.SourceTopology != "local-user-systemd-v1" || request.PublicPredecessorVersion != "0.1.75" {
+		t.Fatalf("request predecessor evidence was not forwarded: socket=%q request=%+v err=%v", socket, request, err)
+	}
+	if _, _, err := parseLifecycleRequestArguments(arguments[:len(arguments)-2]); err == nil {
+		t.Fatal("request accepted predecessor topology without its verified version")
 	}
 }
 

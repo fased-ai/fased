@@ -12,7 +12,6 @@ import (
 )
 
 type ControllerGenerationManager interface {
-	StageGeneration(string) error
 	GenerationPayloadPath(string) (string, error)
 	ActivateControllerGeneration(string, string) error
 }
@@ -27,9 +26,6 @@ type ControllerAdapter struct {
 
 func (adapter *ControllerAdapter) Stage(_ context.Context, tx model.Transaction) error {
 	if err := adapter.validate(tx); err != nil {
-		return err
-	}
-	if err := adapter.Generations.StageGeneration(tx.Target.ID); err != nil {
 		return err
 	}
 	payload, err := adapter.Generations.GenerationPayloadPath(tx.Target.ID)
@@ -50,8 +46,13 @@ func (adapter *ControllerAdapter) Prepare(_ context.Context, tx model.Transactio
 
 func (adapter *ControllerAdapter) Switch(ctx context.Context, tx model.Transaction) error {
 	unit := adapter.Identity.Services["controller"]
-	if err := adapter.Systemd.Stop(ctx, unit); err != nil {
-		return err
+	// A public-stable bridge has no canonical controller worker to stop. The
+	// predecessor adapter fences its separate user-scoped service. Only an
+	// already-managed generation can own this unit before activation.
+	if tx.Previous != nil {
+		if err := adapter.Systemd.Stop(ctx, unit); err != nil {
+			return err
+		}
 	}
 	if err := adapter.Units.Activate(tx.ID, []string{unit}); err != nil {
 		return err
@@ -141,15 +142,16 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%s %s %s %s %s
+ReadWritePaths=%s %s %s %s %s %s %s
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_SETUID CAP_SETGID
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_FSETID CAP_SETUID CAP_SETGID
 AmbientCapabilities=
 
 [Install]
 WantedBy=multi-user.target
-`, adapter.Config.InstanceID, runtimeDirectory, entrypoint, adapter.Config.LifecycleRoot,
+	`, adapter.Config.InstanceID, runtimeDirectory, entrypoint, adapter.Config.LifecycleRoot,
 		adapter.Config.ControllerSocket(), adapter.Config.InstallRoot, adapter.Config.LifecycleRoot,
-		adapter.Config.ProductStateRoot, adapter.Config.OwnerStateRoot, adapter.Config.UnitRoot)
+		adapter.Config.ProductStateRoot, adapter.Config.OwnerStateRoot, adapter.Config.UnitRoot,
+		filepath.Dir(adapter.Config.UpdateGatePath()), filepath.Dir(CanonicalProductVersionPath(adapter.Config)))
 	return []byte(unit)
 }

@@ -40,6 +40,40 @@ continue safe local work.
 Do not mix modes. Ordinary bug work must never read or mutate release ledgers,
 candidate receipts, private status publishers, or historical workflow state.
 
+## Controlling Plan Lock
+
+When the founder approves an ordered plan or named checkpoints, treat that plan
+as the controlling execution contract until the founder explicitly replaces or
+amends it. Before the first mutation, state the active checkpoint, its allowed
+changes, its required evidence, and its stop condition.
+
+- Execute only the active checkpoint. Never skip ahead, reorder checkpoints,
+  substitute a different topology, or perform a later PR, version, tag, build,
+  publication, cleanup, or owner mutation early.
+- Before every mutating command, map the action to an explicit active-checkpoint
+  step. If it does not map, do not run it.
+- A discovery or failed predicate freezes the active checkpoint. Report expected
+  versus actual behavior and the first failed predicate; do not invent a
+  replacement sequence, candidate, compatibility branch, or workaround.
+- Propose a plan amendment when the approved plan is contradictory or no longer
+  safe. Do not execute that amendment until the founder explicitly approves it.
+- `continue`, `do it`, `finish`, prior standing PR authority, and release
+  authorization never permit deviation from the controlling plan.
+- Mark a checkpoint complete only after its declared evidence passes. If the
+  plan says to stop and report, stop before beginning the next checkpoint.
+- If multiple plans conflict, freeze mutation and ask the founder to select one
+  canonical ordering. Never silently combine them.
+- Never allocate a replacement RC for a source, workflow, or proof failure.
+  Return to the plan's BUG/local-proof checkpoint and keep all corrections on
+  the same local branch until its complete closure passes.
+
+Maintain a compact checkpoint ledger in progress updates:
+
+`checkpoint | allowed mutation | required proof | status | next boundary`
+
+System/developer safety requirements still take precedence. When they conflict
+with the plan, stop and report the conflict instead of silently deviating.
+
 ## Founder Commands
 
 Treat these literal user commands as scoped workflow authorization:
@@ -94,6 +128,64 @@ For broken, failing, incorrect, or slow behavior, use `diagnosing-bugs` and:
 Default ordinary-bug path:
 
 `symptom -> narrow red -> coherent fix -> narrow green -> one PR -> focused CI -> squash merge`
+
+## Parallel Execution and Latency Discipline
+
+Use available subagents for independent, bounded work whenever the founder asks
+to parallelize or speed up execution. Keep one mutation owner: the primary
+agent alone edits the active incident branch unless files are explicitly
+partitioned with no overlap.
+
+- Parallelize read-only source review, safety review, disk/environment audit,
+  fixture review, CI inspection, and independent test-result analysis.
+- Run independent narrow tests concurrently only when they do not contend for
+  the same worktree, cache, service, port, container, or privileged state.
+- Never parallelize owner-installation mutation, lifecycle transactions,
+  destructive cleanup, merge/tag/publication boundaries, or two edits to the
+  same files.
+- Before an expensive proof, check disk, sudo, network, credentials, existing
+  processes, and reusable artifacts. Reuse caches and exact bytes; do not
+  rebuild unchanged product code for a test-only correction.
+- Keep one retained session for each long-running test or CI run. Poll that
+  session; never start a duplicate because output is quiet or context changed.
+- Run changed-package and closest-regression tests first. Broaden only after
+  they pass and only when the affected trust or lifecycle boundary requires it.
+- If a harness or environment predicate fails, repair that predicate and rerun
+  only its bounded proof. If the same product predicate fails twice, stop and
+  report instead of looping.
+- During work exceeding one minute, report the active command, elapsed time,
+  current phase, and whether it is product work or supporting evidence.
+
+Parallel work reduces diagnosis latency; it never weakens the controlling plan,
+evidence bindings, or founder approval boundaries.
+
+### Failure learning
+
+Maintain one compact in-session failure ledger:
+
+`predicate | class | root cause | correction | do-not-repeat rule`
+
+Classify each failure as `PRODUCT`, `HARNESS`, `ENVIRONMENT`, `AUTHORITY`, or
+`INFRASTRUCTURE` before changing code or rerunning anything.
+
+- Never rerun an unchanged command after a `PRODUCT` or `HARNESS` failure.
+  Inspect the first failing predicate, correct it, run its closest fast test,
+  then permit one bounded retry.
+- Retry `ENVIRONMENT` or `INFRASTRUCTURE` once only after correcting the exact
+  condition, such as sudo expiry, disk quota, network failure, wrong working
+  directory, socket path length, or read-only cache.
+- Before every long proof, verify the working directory, disk and inode budget,
+  writable temp/cache paths, required credentials, existing processes, artifact
+  identity, and that the fault injector does not mutate attested bytes.
+- A source change invalidates its product artifact. A fixture-only change does
+  not; reuse the exact artifact and avoid rebuilding.
+- Record elapsed time and terminal output from one retained process session so
+  context compaction cannot cause a duplicate run.
+- After closure, add only confirmed, reusable, version-neutral prevention rules
+  to this skill or its existing references. Never persist RC names, temporary
+  paths, raw receipts, or incident-specific state as workflow policy.
+- Keep the ledger under ten entries. Consolidate repeated causes into one rule;
+  do not create another persistent workflow database or approval state machine.
 
 Installer/updater/lifecycle work must use **Lifecycle Bug Closure** below
 instead; never apply this shorter path to those boundaries.

@@ -75,6 +75,9 @@ export async function assembleLifecycleGeneration(argv = process.argv.slice(2)) 
       path.resolve(value.signer),
       "--lifecycled",
       path.resolve(value.lifecycled),
+      ...(value["inventory-lifecycled"]
+        ? ["--inventory-lifecycled", path.resolve(value["inventory-lifecycled"])]
+        : []),
       "--output",
       generation,
       "--version",

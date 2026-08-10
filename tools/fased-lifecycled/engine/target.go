@@ -60,6 +60,7 @@ type MigratorParticipant interface {
 type PlatformAdapter interface {
 	Prepare(context.Context, model.Transaction) error
 	Quiesce(context.Context, model.Transaction) error
+	StopTarget(context.Context, model.Transaction) error
 	Activate(context.Context, model.Transaction) error
 	Verify(context.Context, model.Transaction) error
 	Commit(context.Context, model.Transaction) error
@@ -256,7 +257,7 @@ func (engine *TargetEngine) commit(ctx context.Context, tx model.Transaction) er
 func (engine *TargetEngine) rollback(ctx context.Context, tx model.Transaction, restore bool, cause error) (Result, error) {
 	var rollbackErrors []error
 	if restore {
-		rollbackErrors = appendIfError(rollbackErrors, engine.Adapter.Quiesce(ctx, tx))
+		rollbackErrors = appendIfError(rollbackErrors, engine.Adapter.StopTarget(ctx, tx))
 	}
 	rollbackErrors = appendIfError(rollbackErrors, engine.Signer.Abort(ctx, tx))
 	rollbackErrors = appendIfError(rollbackErrors, engine.Migrator.Abort(ctx, tx))

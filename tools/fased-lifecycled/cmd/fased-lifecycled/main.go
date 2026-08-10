@@ -12,15 +12,19 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"syscall"
 	"time"
 
+	"fased-lifecycled/bootstrap"
 	"fased-lifecycled/bundle"
+	"fased-lifecycled/candidate"
 	"fased-lifecycled/controller"
 	"fased-lifecycled/daemon"
 	"fased-lifecycled/engine"
 	"fased-lifecycled/migrator"
 	"fased-lifecycled/model"
+	"fased-lifecycled/planner"
 	"fased-lifecycled/platform"
 	"fased-lifecycled/protocol"
 	"fased-lifecycled/signer"
@@ -125,9 +129,7 @@ func runInventory(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	stateSchemas := map[string]uint32{
-		"federation": 2, "managedInstall": 2, "mining": 1, "signer": 2, "walletRegistry": 1,
-	}
+	stateSchemas := model.CurrentStateSchemas()
 	capabilities := model.CapabilityRanges{
 		Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1},
 		Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 2, Max: 2},
@@ -169,59 +171,64 @@ func runInventory(args []string, output io.Writer) error {
 	return json.NewEncoder(output).Encode(generation)
 }
 
-func runInitialize(args []string, output io.Writer) error {
+func runInitialize(args []string, output io.Writer) (resultErr error) {
 	flags := flag.NewFlagSet("initialize", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var profileRaw, instanceID, ownerStateRoot, generationRoot, generationArchive, dependencyArchive, sourceTopology string
-	var operatorUID, operatorGID, gatewayUID, gatewayGID, signerUID, signerGID, gatewayPort uint64
+	var profileRaw, instanceID, ownerStateRoot, operatorUser, generationRoot, generationArchive, dependencyArchive, sourceTopology string
+	var gatewayPort uint64
 	flags.StringVar(&profileRaw, "profile", "", "")
 	flags.StringVar(&instanceID, "instance", "", "")
 	flags.StringVar(&ownerStateRoot, "owner-state", "", "")
+	flags.StringVar(&operatorUser, "operator-user", "", "")
 	flags.StringVar(&generationRoot, "generation", "", "")
 	flags.StringVar(&generationArchive, "generation-archive", "", "")
 	flags.StringVar(&dependencyArchive, "dependency-archive", "", "")
 	flags.StringVar(&sourceTopology, "source-topology", "", "")
-	flags.Uint64Var(&operatorUID, "operator-uid", 0, "")
-	flags.Uint64Var(&operatorGID, "operator-gid", 0, "")
-	flags.Uint64Var(&gatewayUID, "gateway-uid", 0, "")
-	flags.Uint64Var(&gatewayGID, "gateway-gid", 0, "")
-	flags.Uint64Var(&signerUID, "signer-uid", 0, "")
-	flags.Uint64Var(&signerGID, "signer-gid", 0, "")
 	flags.Uint64Var(&gatewayPort, "gateway-port", 0, "")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || gatewayPort == 0 || gatewayPort > 65535 || operatorUID > uint64(^uint32(0)) || operatorGID > uint64(^uint32(0)) || gatewayUID > uint64(^uint32(0)) || gatewayGID > uint64(^uint32(0)) || signerUID > uint64(^uint32(0)) || signerGID > uint64(^uint32(0)) {
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || gatewayPort == 0 || gatewayPort > 65535 {
 		return errors.New("invalid lifecycle initialization arguments")
 	}
-	applyArguments, err := initializationApplyArguments("", generationRoot, generationArchive, dependencyArchive, sourceTopology)
+	profile := model.Profile(profileRaw)
+	if operatorUser == "" {
+		return errors.New("lifecycle initialization requires an operator user")
+	}
+	initializationLock, err := acquireInitializationLock(profile)
 	if err != nil {
 		return err
 	}
-	config, err := platform.NewConfigWithGatewayPort(model.Profile(profileRaw), instanceID, ownerStateRoot, uint16(gatewayPort),
-		platform.Principal{UID: uint32(operatorUID), GID: uint32(operatorGID)},
-		platform.Principal{UID: uint32(gatewayUID), GID: uint32(gatewayGID)},
-		platform.Principal{UID: uint32(signerUID), GID: uint32(signerGID)})
+	defer func() { resultErr = errors.Join(resultErr, initializationLock.Release()) }()
+	principalSystem, err := platform.NewLinuxPrincipalSystem()
 	if err != nil {
 		return err
 	}
-	if _, err := store.Open(config.LifecycleRoot); err != nil {
-		return err
-	}
-	configData, err := platform.CanonicalConfigJSON(config)
+	discovered, err := discoverInitialization(profile, instanceID, ownerStateRoot, operatorUser, principalSystem)
 	if err != nil {
 		return err
 	}
-	configPath := filepath.Join(config.LifecycleRoot, "platform.json")
-	if err := installExactRecord(configPath, configData, 0o600); err != nil {
-		return err
+	publicPredecessorVersion := ""
+	switch discovered.Installation.Kind {
+	case planner.InstallationAmbiguous:
+		return errors.New("installation is ambiguous; explicit repair is required")
+	case planner.InstallationUnknownNewer:
+		return errors.New("installation schema is newer than this lifecycle engine")
+	case planner.InstallationPublicStable:
+		if sourceTopology != "" && sourceTopology != string(discovered.Topology) {
+			return errors.New("caller source topology differs from read-only discovery")
+		}
+		sourceTopology = string(discovered.Topology)
+		publicPredecessorVersion = discovered.PublicPredecessorVersion
+	case planner.InstallationEmpty, planner.InstallationManaged:
+		if sourceTopology != "" {
+			return errors.New("caller supplied a source topology for a non-bridge installation")
+		}
+	default:
+		return errors.New("installation discovery returned an unsupported class")
 	}
-	stableBinary := "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled"
-	if err := installStableBinary(stableBinary); err != nil {
-		return err
-	}
-	unitData, err := platform.RenderSupervisorUnit(config, stableBinary)
+	applyArguments, err := initializationApplyArguments("", generationRoot, generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion)
 	if err != nil {
 		return err
 	}
-	identity, err := config.Identity()
+	homeACL, err := platform.NewLinuxACL()
 	if err != nil {
 		return err
 	}
@@ -229,44 +236,177 @@ func runInitialize(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	unitPath := filepath.Join(config.UnitRoot, identity.Services["supervisor"])
-	replacement, err := replaceBootstrapUnit(unitPath, unitData)
+	executable, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	rollback := func(cause error) error {
-		rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), time.Minute)
-		defer rollbackCancel()
-		stopErr := systemd.Stop(rollbackCtx, identity.Services["supervisor"])
-		restoreErr := replacement.Restore()
-		reloadErr := systemd.DaemonReload(rollbackCtx)
-		var restartErr error
-		if replacement.Existed {
-			restartErr = systemd.Start(rollbackCtx, identity.Services["supervisor"])
-		}
-		return errors.Join(cause, stopErr, restoreErr, reloadErr, restartErr)
+	stableDaemon, err := os.ReadFile(executable)
+	if err != nil {
+		return err
 	}
-	if replacement.Existed {
-		if err := systemd.Stop(ctx, identity.Services["supervisor"]); err != nil {
-			return rollback(err)
-		}
+	transactionID, err := randomRequestID()
+	if err != nil {
+		return err
 	}
-	if err := systemd.DaemonReload(ctx); err != nil {
-		return rollback(err)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	result, err := bootstrap.BeginPlatformBootstrap(ctx, bootstrap.PlatformBootstrapRequest{
+		TransactionID: transactionID, Profile: profile, InstanceIDAssertion: instanceID,
+		OperatorUser: operatorUser, OwnerStateRoot: ownerStateRoot, GatewayPort: uint16(gatewayPort),
+		ExpectedRegistryOwner: 0, RegistryPath: platform.LocalInstanceRegistryPath,
+		JournalPath:      filepath.Join("/var/lib/fased-lifecycle-bootstrap", transactionID+".json"),
+		StableDaemonPath: "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled",
+		StableDaemon:     stableDaemon, Principals: principalSystem, ACL: homeACL, Systemd: systemd,
+		BridgePublicStable: discovered.Installation.Kind == planner.InstallationPublicStable,
+	})
+	if err != nil {
+		return err
 	}
-	if err := systemd.Enable(ctx, identity.Services["supervisor"]); err != nil {
-		return rollback(err)
-	}
+	defer func() { resultErr = errors.Join(resultErr, result.ReleaseCreatedRootHandles()) }()
+	configPath := filepath.Join(result.Config.LifecycleRoot, "platform.json")
 	applyArguments[1] = configPath
 	if err := runApply(applyArguments, output); err != nil {
-		return rollback(err)
+		rollbackErr := result.Transaction.Rollback()
+		cleanupErr := cleanupFailedInitialization(result, rollbackErr)
+		if cleanupErr == nil {
+			rollbackErr = nil
+		}
+		return errors.Join(err, rollbackErr, cleanupErr)
 	}
+	result.Transaction.Commit()
 	return nil
 }
 
-func initializationApplyArguments(configPath, generationRoot, generationArchive, dependencyArchive, sourceTopology string) ([]string, error) {
+type initializationMutationLock struct{ file *os.File }
+
+func acquireInitializationLock(profile model.Profile) (*initializationMutationLock, error) {
+	var path string
+	switch profile {
+	case model.ProfileProtectedLocal:
+		path = "/run/lock/fased-bootstrap-local.lock"
+	case model.ProfileHosting:
+		path = "/run/lock/fased-bootstrap-hosting.lock"
+	default:
+		return nil, errors.New("lifecycle initialization profile is unsupported")
+	}
+	return acquireInitializationLockAt(path, 0)
+}
+
+func acquireInitializationLockAt(path string, expectedUID uint32) (*initializationMutationLock, error) {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path || path == "/" {
+		return nil, errors.New("initialization lock path is unsafe")
+	}
+	descriptor, err := syscall.Open(path, syscall.O_CREAT|syscall.O_RDWR|syscall.O_CLOEXEC|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(descriptor), path)
+	closeOnError := func(err error) (*initializationMutationLock, error) {
+		_ = file.Close()
+		return nil, err
+	}
+	var stat syscall.Stat_t
+	if err := syscall.Fstat(descriptor, &stat); err != nil {
+		return closeOnError(err)
+	}
+	if stat.Mode&syscall.S_IFMT != syscall.S_IFREG || stat.Mode&0o777 != 0o600 || stat.Uid != expectedUID || stat.Nlink != 1 {
+		return closeOnError(errors.New("initialization lock file is unsafe"))
+	}
+	if err := syscall.Flock(descriptor, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return closeOnError(errors.New("another bootstrap transaction is active"))
+		}
+		return closeOnError(err)
+	}
+	return &initializationMutationLock{file: file}, nil
+}
+
+func (lock *initializationMutationLock) Release() error {
+	if lock == nil || lock.file == nil {
+		return nil
+	}
+	file := lock.file
+	lock.file = nil
+	return errors.Join(syscall.Flock(int(file.Fd()), syscall.LOCK_UN), file.Close())
+}
+
+func cleanupFailedInitialization(result bootstrap.PlatformBootstrapResult, rollbackErr error) error {
+	if err := result.Config.Validate(); err != nil {
+		return err
+	}
+	removals, onlyRemovalFailures := bootstrapPathRemovalFailures(rollbackErr)
+	if !onlyRemovalFailures {
+		return errors.New("failed initialization retained canonical roots because safety-critical bootstrap rollback failed")
+	}
+	roots := append([]platform.CreatedBootstrapRoot(nil), result.CreatedRoots...)
+	sort.Slice(roots, func(left, right int) bool { return len(roots[left].Path()) > len(roots[right].Path()) })
+	var failures []error
+	for _, root := range roots {
+		failures = append(failures, root.RemoveAllIfSame())
+	}
+	if err := errors.Join(failures...); err != nil {
+		return err
+	}
+	for _, removal := range removals {
+		if err := os.Remove(removal.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func bootstrapPathRemovalFailures(err error) ([]*platform.BootstrapPathRemovalError, bool) {
+	if err == nil {
+		return nil, true
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var removals []*platform.BootstrapPathRemovalError
+		for _, nested := range joined.Unwrap() {
+			selected, only := bootstrapPathRemovalFailures(nested)
+			if !only {
+				return nil, false
+			}
+			removals = append(removals, selected...)
+		}
+		return removals, true
+	}
+	var removal *platform.BootstrapPathRemovalError
+	if errors.As(err, &removal) && (errors.Is(removal.Err, syscall.ENOTEMPTY) || errors.Is(removal.Err, os.ErrNotExist)) {
+		return []*platform.BootstrapPathRemovalError{removal}, true
+	}
+	return nil, false
+}
+
+func discoverInitialization(profile model.Profile, instanceID, ownerStateRoot, operatorUser string, principals platform.PrincipalSystem) (platform.DiscoveryResult, error) {
+	selectedInstance := instanceID
+	if profile == model.ProfileProtectedLocal && selectedInstance == "" {
+		operator, exists, err := principals.LookupUser(context.Background(), operatorUser)
+		if err != nil || !exists {
+			return platform.DiscoveryResult{}, errors.New("Local operator is unavailable during read-only discovery")
+		}
+		entry, found, err := platform.FindLocalInstance(platform.LocalInstanceRegistryPath, 0, operator.UID, operatorUser, string(profile), ownerStateRoot)
+		if err != nil {
+			return platform.DiscoveryResult{}, err
+		}
+		if found {
+			selectedInstance = entry.InstanceID
+		} else {
+			selectedInstance = "unallocated"
+		}
+	}
+	manifestPath := filepath.Join("/var/lib/fased-local", selectedInstance, "lifecycle", "installation-manifest.json")
+	installRoot := filepath.Join("/opt/fased/local", selectedInstance)
+	if profile == model.ProfileHosting {
+		manifestPath = "/var/lib/fased-lifecycled/installation-manifest.json"
+		installRoot = "/opt/fased"
+	}
+	return platform.DiscoverInstallation(platform.DiscoveryRequest{
+		Profile: profile, OwnerStateRoot: ownerStateRoot,
+		CanonicalManifestPath: manifestPath, CanonicalInstallRoot: installRoot,
+	})
+}
+
+func initializationApplyArguments(configPath, generationRoot, generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion string) ([]string, error) {
 	if (generationRoot == "") == (generationArchive == "") {
 		return nil, errors.New("invalid lifecycle initialization generation input")
 	}
@@ -284,8 +424,14 @@ func initializationApplyArguments(configPath, generationRoot, generationArchive,
 		}
 		arguments = append(arguments, "--dependency-archive", dependencyArchive)
 	}
+	if err := validatePublicPredecessorEvidence(sourceTopology, publicPredecessorVersion); err != nil {
+		return nil, err
+	}
 	if sourceTopology != "" {
 		arguments = append(arguments, "--source-topology", sourceTopology)
+	}
+	if publicPredecessorVersion != "" {
+		arguments = append(arguments, "--public-predecessor-version", publicPredecessorVersion)
 	}
 	return arguments, nil
 }
@@ -419,13 +565,14 @@ func ensureStableBinaryDirectory(directory string) error {
 func runApply(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("apply", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var configPath, generationRoot, generationArchive, dependencyArchive, generationID, sourceTopology string
+	var configPath, generationRoot, generationArchive, dependencyArchive, generationID, sourceTopology, publicPredecessorVersion string
 	flags.StringVar(&configPath, "config", "", "")
 	flags.StringVar(&generationRoot, "generation", "", "")
 	flags.StringVar(&generationArchive, "generation-archive", "", "")
 	flags.StringVar(&dependencyArchive, "dependency-archive", "", "")
 	flags.StringVar(&generationID, "generation-id", "", "")
 	flags.StringVar(&sourceTopology, "source-topology", "", "")
+	flags.StringVar(&publicPredecessorVersion, "public-predecessor-version", "", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return errors.New("invalid lifecycle apply arguments")
 	}
@@ -448,11 +595,14 @@ func runApply(args []string, output io.Writer) error {
 	if dependencyArchive != "" && (!filepath.IsAbs(dependencyArchive) || filepath.Clean(dependencyArchive) != dependencyArchive) {
 		return errors.New("invalid lifecycle dependency archive")
 	}
+	if err := validatePublicPredecessorEvidence(sourceTopology, publicPredecessorVersion); err != nil {
+		return err
+	}
 	config, err := loadConfig(configPath, 0)
 	if err != nil {
 		return err
 	}
-	state, err := store.Open(config.LifecycleRoot)
+	state, err := store.OpenLayout(store.Layout{StateRoot: config.LifecycleRoot, InstallRoot: config.InstallRoot})
 	if err != nil {
 		return err
 	}
@@ -471,6 +621,12 @@ func runApply(args []string, output io.Writer) error {
 		if err := importGenerationDependency(state, generation, dependencyArchive); err != nil {
 			return err
 		}
+	}
+	// Promote verified bytes before the stable supervisor enters its read-only
+	// installation namespace. The target controller repeats this operation
+	// idempotently as part of its own mutation transaction.
+	if err := state.StageGeneration(generation.ID); err != nil {
+		return err
 	}
 	expectedManifest := "absent"
 	if _, digest, readErr := state.ReadManifest(); readErr == nil {
@@ -501,8 +657,9 @@ func runApply(args []string, output io.Writer) error {
 	response, err := daemon.Call(ctx, config.SupervisorSocket(), protocol.Request{
 		SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID,
 		Operation: protocol.OperationConverge, TargetGenerationID: generation.ID,
-		SourceTopology:         sourceTopology,
-		ExpectedManifestDigest: expectedManifest,
+		SourceTopology:           sourceTopology,
+		PublicPredecessorVersion: publicPredecessorVersion,
+		ExpectedManifestDigest:   expectedManifest,
 	}, 5*time.Minute)
 	if err != nil {
 		return err
@@ -539,11 +696,14 @@ func randomRequestID() (string, error) {
 func runStage(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("stage", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var configPath, generationRoot, generationArchive, dependencyArchive string
+	var configPath, generationRoot, generationArchive, dependencyArchive, descriptorPath, attestationPath, releaseVersion string
 	flags.StringVar(&configPath, "config", "", "")
 	flags.StringVar(&generationRoot, "generation", "", "")
 	flags.StringVar(&generationArchive, "generation-archive", "", "")
 	flags.StringVar(&dependencyArchive, "dependency-archive", "", "")
+	flags.StringVar(&descriptorPath, "candidate-descriptor", "", "")
+	flags.StringVar(&attestationPath, "candidate-attestation", "", "")
+	flags.StringVar(&releaseVersion, "release-version", "", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || (generationRoot == "") == (generationArchive == "") {
 		return errors.New("invalid lifecycle stage arguments")
 	}
@@ -557,11 +717,25 @@ func runStage(args []string, output io.Writer) error {
 	if dependencyArchive != "" && (!filepath.IsAbs(dependencyArchive) || filepath.Clean(dependencyArchive) != dependencyArchive) {
 		return errors.New("invalid lifecycle dependency archive")
 	}
+	if generationArchive != "" {
+		for _, path := range []string{descriptorPath, attestationPath} {
+			if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+				return errors.New("candidate evidence path is invalid")
+			}
+		}
+		files := map[string]string{filepath.Base(generationArchive): generationArchive}
+		if dependencyArchive != "" {
+			files[filepath.Base(dependencyArchive)] = dependencyArchive
+		}
+		if _, err := candidate.Verify(context.Background(), candidate.GitHubVerifier{Binary: githubCLI()}, descriptorPath, attestationPath, releaseVersion, files); err != nil {
+			return err
+		}
+	}
 	config, err := loadConfig(configPath, 0)
 	if err != nil {
 		return err
 	}
-	state, err := store.Open(config.LifecycleRoot)
+	state, err := store.OpenLayout(store.Layout{StateRoot: config.LifecycleRoot, InstallRoot: config.InstallRoot})
 	if err != nil {
 		return err
 	}
@@ -583,6 +757,15 @@ func runStage(args []string, output io.Writer) error {
 	return json.NewEncoder(output).Encode(generation)
 }
 
+func githubCLI() string {
+	for _, path := range []string{"/usr/bin/gh", "/usr/local/bin/gh"} {
+		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 && info.Mode().Perm()&0o111 != 0 {
+			return path
+		}
+	}
+	return ""
+}
+
 func importGenerationDependency(state *store.Store, generation model.Generation, archive string) error {
 	layer, err := state.GenerationDependency(generation.ID)
 	if err != nil {
@@ -601,24 +784,8 @@ func importGenerationDependency(state *store.Store, generation model.Generation,
 }
 
 func runRequest(args []string, output io.Writer) error {
-	flags := flag.NewFlagSet("request", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	var socketPath, operation, requestID, targetID, sourceTopology, manifestDigest, transactionID string
-	flags.StringVar(&socketPath, "socket", "", "")
-	flags.StringVar(&operation, "operation", "", "")
-	flags.StringVar(&requestID, "request-id", "", "")
-	flags.StringVar(&targetID, "target-generation", "", "")
-	flags.StringVar(&sourceTopology, "source-topology", "", "")
-	flags.StringVar(&manifestDigest, "expected-manifest", "", "")
-	flags.StringVar(&transactionID, "transaction", "", "")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !filepath.IsAbs(socketPath) {
-		return errors.New("invalid lifecycle request arguments")
-	}
-	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID,
-		Operation: protocol.Operation(operation), TargetGenerationID: targetID,
-		SourceTopology:         sourceTopology,
-		ExpectedManifestDigest: manifestDigest, TransactionID: transactionID}
-	if err := request.Validate(); err != nil {
+	socketPath, request, err := parseLifecycleRequestArguments(args)
+	if err != nil {
 		return err
 	}
 	response, err := daemon.Call(context.Background(), socketPath, request, 6*time.Minute)
@@ -628,8 +795,45 @@ func runRequest(args []string, output io.Writer) error {
 	return json.NewEncoder(output).Encode(response)
 }
 
+func parseLifecycleRequestArguments(args []string) (string, protocol.Request, error) {
+	flags := flag.NewFlagSet("request", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	var socketPath, operation, requestID, targetID, sourceTopology, publicPredecessorVersion, manifestDigest, transactionID string
+	flags.StringVar(&socketPath, "socket", "", "")
+	flags.StringVar(&operation, "operation", "", "")
+	flags.StringVar(&requestID, "request-id", "", "")
+	flags.StringVar(&targetID, "target-generation", "", "")
+	flags.StringVar(&sourceTopology, "source-topology", "", "")
+	flags.StringVar(&publicPredecessorVersion, "public-predecessor-version", "", "")
+	flags.StringVar(&manifestDigest, "expected-manifest", "", "")
+	flags.StringVar(&transactionID, "transaction", "", "")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !filepath.IsAbs(socketPath) {
+		return "", protocol.Request{}, errors.New("invalid lifecycle request arguments")
+	}
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID,
+		Operation: protocol.Operation(operation), TargetGenerationID: targetID,
+		SourceTopology: sourceTopology, PublicPredecessorVersion: publicPredecessorVersion,
+		ExpectedManifestDigest: manifestDigest, TransactionID: transactionID}
+	if err := request.Validate(); err != nil {
+		return "", protocol.Request{}, err
+	}
+	return socketPath, request, nil
+}
+
+func validatePublicPredecessorEvidence(sourceTopology, publicPredecessorVersion string) error {
+	if (sourceTopology == "") != (publicPredecessorVersion == "") {
+		return errors.New("public predecessor topology and version must be supplied together")
+	}
+	if publicPredecessorVersion != "" {
+		if err := model.ValidateVersion(publicPredecessorVersion); err != nil {
+			return fmt.Errorf("public predecessor version: %w", err)
+		}
+	}
+	return nil
+}
+
 func runSupervisor(ctx context.Context, config platform.Config, socketPath string) error {
-	state, err := store.Open(config.LifecycleRoot)
+	state, err := store.OpenExistingLayout(store.Layout{StateRoot: config.LifecycleRoot, InstallRoot: config.InstallRoot})
 	if err != nil {
 		return err
 	}
@@ -648,17 +852,12 @@ func runSupervisor(ctx context.Context, config platform.Config, socketPath strin
 	controllerAdapter := &platform.ControllerAdapter{Config: config, Identity: identity, Units: units, Systemd: systemd, Generations: state}
 	targetClient := controller.Client{SocketPath: config.ControllerSocket(), Timeout: 4 * time.Minute}
 	supervisor := &engine.SupervisorEngine{Journal: state, Controller: controllerAdapter, Target: targetClient}
-	binder := &statebind.Binder{Specs: []statebind.Spec{
-		{Name: "federation", Path: filepath.Join(config.OwnerStateRoot, "federation")},
-		{Name: "managedInstall", Path: config.InstallRoot, RootOnly: true},
-		{Name: "mining", Path: filepath.Join(config.OwnerStateRoot, "mining")},
-		// Signer content is snapshotted and rollback-bound by the signer participant.
-		// Inventory only the signer-owned root here so a live bbolt transaction cannot
-		// race the generic filesystem hasher.
-		{Name: "signer", Path: config.SignerStateRoot(), RootOnly: true},
-		{Name: "walletRegistry", Path: filepath.Join(config.OwnerStateRoot, "wallet")},
+	binder := &statebind.Binder{Specs: statebind.CanonicalSpecs(config.OwnerStateRoot, config.InstallRoot, config.SignerStateRoot())}
+	evidence := platform.DiscoveryEvidenceVerifier{Request: platform.DiscoveryRequest{
+		Profile: config.Profile, OwnerStateRoot: config.OwnerStateRoot,
+		CanonicalManifestPath: filepath.Join(config.LifecycleRoot, "installation-manifest.json"), CanonicalInstallRoot: config.InstallRoot,
 	}}
-	service := &daemon.Service{Profile: config.Profile, Platform: identity, Store: state, Inventory: binder, Supervisor: supervisor}
+	service := &daemon.Service{Profile: config.Profile, Platform: identity, Store: state, Inventory: binder, Supervisor: supervisor, Onboarding: targetClient, PredecessorEvidence: evidence}
 	listener, err := listenBound(socketPath, 0o660, int(config.Operator.GID))
 	if err != nil {
 		return err
@@ -671,7 +870,7 @@ func runSupervisor(ctx context.Context, config platform.Config, socketPath strin
 }
 
 func runTarget(ctx context.Context, config platform.Config, socketPath string) error {
-	state, err := store.Open(config.LifecycleRoot)
+	state, err := store.OpenLayout(store.Layout{StateRoot: config.LifecycleRoot, InstallRoot: config.InstallRoot})
 	if err != nil {
 		return err
 	}
@@ -680,6 +879,14 @@ func runTarget(ctx context.Context, config platform.Config, socketPath string) e
 		return err
 	}
 	units, err := platform.NewDiskUnitStore(config, "target")
+	if err != nil {
+		return err
+	}
+	files, err := platform.NewDiskLifecycleFileStore(config)
+	if err != nil {
+		return err
+	}
+	sharedState, err := platform.NewDiskSharedStateStore(config)
 	if err != nil {
 		return err
 	}
@@ -698,7 +905,17 @@ func runTarget(ctx context.Context, config platform.Config, socketPath string) e
 	signerParticipant := &signer.Participant{Config: config,
 		Caller: signer.CommandCaller{ClientBinary: executable, Config: config}, Offline: signer.CommandOfflineRestorer{},
 		Generations: state, ExpectedGateUID: 0}
-	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Systemd: systemd, Generations: state, Health: platform.LoopbackGatewayHealth{}}
+	var predecessor platform.Predecessor = platform.NoPredecessor{}
+	var networkPolicy platform.NetworkPolicy = platform.NoNetworkPolicy{}
+	if config.Profile == model.ProfileProtectedLocal {
+		predecessor = &platform.LocalPredecessor{Config: config, Systemd: platform.CommandUserSystemd{
+			Binary: "/usr/bin/systemctl", Principal: config.Operator, Home: config.OwnerHome(),
+		}}
+	} else {
+		predecessor = &platform.HostingPredecessor{Config: config, Systemd: systemd, State: platform.CommandServiceState{Binary: "/usr/bin/systemctl"}}
+		networkPolicy = platform.CommandHostingNetworkPolicy{TailscaleBinary: "/usr/bin/tailscale", SocketBinary: "/usr/bin/ss"}
+	}
+	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Files: files, SharedState: sharedState, Systemd: systemd, Generations: state, Health: platform.LoopbackGatewayHealth{}, Predecessor: predecessor, Fence: platform.DiskLocalPredecessorFence{}, Network: networkPolicy, Manifest: state}
 	targetEngine := &engine.TargetEngine{Journal: state, Generations: state,
 		Migrator: &migrator.SchemaMigrator{Registry: registry}, Signer: signerParticipant,
 		Adapter: targetAdapter, Installation: &platform.ManifestCommitter{Store: state, Identity: identity}}
@@ -708,7 +925,7 @@ func runTarget(ctx context.Context, config platform.Config, socketPath string) e
 	}
 	defer closeListener(listener, socketPath)
 	go closeOnContext(ctx, listener)
-	server := controller.Server{Service: &controller.Service{Engine: targetEngine}, OperationTimeout: 4 * time.Minute}
+	server := controller.Server{Service: &controller.Service{Engine: targetEngine, Onboarding: targetAdapter}, OperationTimeout: 4 * time.Minute}
 	return server.Serve(ctx, listener)
 }
 
@@ -748,6 +965,9 @@ func listenBound(path string, mode os.FileMode, gid int) (*net.UnixListener, err
 	if err := os.MkdirAll(parent, 0o710); err != nil {
 		return nil, err
 	}
+	if err := prepareSocketParent(parent, gid); err != nil {
+		return nil, err
+	}
 	if info, err := os.Lstat(path); err == nil {
 		stat, ok := info.Sys().(*syscall.Stat_t)
 		if info.Mode()&os.ModeSocket == 0 || info.Mode()&os.ModeSymlink != 0 || !ok || stat.Uid != 0 {
@@ -772,6 +992,40 @@ func listenBound(path string, mode os.FileMode, gid int) (*net.UnixListener, err
 		return nil, err
 	}
 	return listener, nil
+}
+
+// systemd creates RuntimeDirectory entries using the daemon's root group.
+// The public supervisor socket is group-authorized, so its immediate parent
+// must carry the same fixed group or an authorized operator cannot traverse to
+// the socket. The private controller passes gid 0 and remains root-only.
+func prepareSocketParent(path string, gid int) error {
+	if gid < 0 {
+		return errors.New("lifecycle socket group is invalid")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	expectedUID := uint32(os.Geteuid())
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !ok || stat.Uid != expectedUID || info.Mode().Perm()&0o022 != 0 {
+		return errors.New("lifecycle socket directory is unsafe")
+	}
+	if err := os.Chown(path, int(expectedUID), gid); err != nil {
+		return err
+	}
+	if err := os.Chmod(path, 0o710); err != nil {
+		return err
+	}
+	verified, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	verifiedStat, ok := verified.Sys().(*syscall.Stat_t)
+	if !verified.IsDir() || verified.Mode()&os.ModeSymlink != 0 || !ok || verifiedStat.Uid != expectedUID || verifiedStat.Gid != uint32(gid) || verified.Mode().Perm() != 0o710 {
+		return errors.New("lifecycle socket directory identity did not converge")
+	}
+	return nil
 }
 
 func closeOnContext(ctx context.Context, listener *net.UnixListener) {

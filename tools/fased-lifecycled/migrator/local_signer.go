@@ -138,9 +138,24 @@ func (adapter LocalSignerBridgeAdapter) Verify(_ context.Context, tx model.Trans
 		expectedUID = uint32(os.Geteuid())
 	}
 	for name, want := range record.Digests {
-		got, err := digestSecureFile(filepath.Join(record.Destination, name), expectedUID)
-		if err != nil || got != want {
-			return errors.New("canonical signer state does not match the prepared legacy state")
+		path := filepath.Join(record.Destination, name)
+		if name == "master.key" {
+			got, err := digestSecureFile(path, expectedUID)
+			if err != nil || got != want {
+				return errors.New("canonical signer master key does not match the prepared legacy key")
+			}
+			continue
+		}
+		// The attested signer opens and migrates its database and may append to
+		// its audit log before lifecycle verification. Their byte digests are
+		// therefore expected to change; custody, ownership, and nonempty state
+		// remain mandatory, while signer/Gateway readiness proves semantics.
+		info, err := os.Lstat(path)
+		if err != nil || info.Size() == 0 {
+			return errors.New("canonical signer migrated state is unavailable")
+		}
+		if exists, secureErr := secureOptionalLegacyFile(path, expectedUID); secureErr != nil || !exists {
+			return errors.New("canonical signer migrated state is unsafe")
 		}
 	}
 	return nil

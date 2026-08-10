@@ -3,7 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { MANAGED_UPDATER_SUPPORT_FILES } from "./fased-managed-updater-core.mjs";
 import { capabilitiesDigest } from "./hosted-release-manifest.mjs";
 import { installManagedRuntime, rollbackManagedRuntime } from "./install-managed-runtime.mjs";
 import {
@@ -15,6 +14,17 @@ import {
 } from "./managed-runtime-layout.mjs";
 import { writeManagedUpdaterReleaseDescriptor } from "./managed-updater-bundle.mjs";
 import { MANAGED_UPDATER_COMPATIBILITY_FILES } from "./managed-updater-bundle.mjs";
+
+const MANAGED_UPDATER_SUPPORT_FILES = [
+  "fased-generation-updater-core.mjs",
+  "generation-updater.mjs",
+  "hosted-release-manifest.mjs",
+  "lifecycle-trust-crypto.mjs",
+  "lifecycle-trust-policy.mjs",
+  "lifecycle-trust-root.mjs",
+  "lifecycle-trust-runtime.mjs",
+  "managed-runtime-layout.mjs",
+] as const;
 
 function writeRuntime(packageRoot: string, version: string, options: { attested?: boolean } = {}) {
   fs.mkdirSync(path.join(packageRoot, "node_modules"), { recursive: true });

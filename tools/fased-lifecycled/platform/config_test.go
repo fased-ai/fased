@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"os"
 	"testing"
 
 	"fased-lifecycled/model"
@@ -8,6 +9,30 @@ import (
 
 func principals() (Principal, Principal, Principal) {
 	return Principal{UID: 1000, GID: 1000}, Principal{UID: 997, GID: 997}, Principal{UID: 996, GID: 996}
+}
+
+func filesystemPrincipals() (Principal, Principal, Principal) {
+	uid, gid := uint32(os.Getuid()), uint32(os.Getgid())
+	if uid == 0 {
+		uid = 1000
+	}
+	if gid == 0 {
+		gid = 1000
+	}
+	return Principal{UID: uid, GID: gid}, Principal{UID: uid + 1, GID: gid + 1}, Principal{UID: uid + 2, GID: gid + 2}
+}
+
+func prepareFilesystemOwnerStateRoot(t *testing.T, path string, operator Principal) {
+	t.Helper()
+	if err := os.MkdirAll(path, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(path, int(operator.UID), int(operator.GID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o770); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestConfigDerivesCanonicalProfilePathsAndIdentity(t *testing.T) {

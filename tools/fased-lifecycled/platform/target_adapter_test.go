@@ -2,6 +2,8 @@ package platform
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -16,6 +18,86 @@ import (
 type fakeUnits struct {
 	calls       *[]string
 	definitions map[string][]byte
+}
+
+type fakeLifecycleFiles struct {
+	calls       *[]string
+	prepared    *map[string]LifecycleFile
+	activations *[][]string
+}
+
+type fakeSharedState struct{ calls *[]string }
+
+func (state fakeSharedState) Prepare(string) error {
+	*state.calls = append(*state.calls, "shared.prepare")
+	return nil
+}
+func (state fakeSharedState) Activate(string) error {
+	*state.calls = append(*state.calls, "shared.activate")
+	return nil
+}
+func (state fakeSharedState) Restore(string) error {
+	*state.calls = append(*state.calls, "shared.restore")
+	return nil
+}
+func (state fakeSharedState) Discard(string) error {
+	*state.calls = append(*state.calls, "shared.discard")
+	return nil
+}
+
+func (files fakeLifecycleFiles) Prepare(_ string, prepared map[string]LifecycleFile) error {
+	*files.calls = append(*files.calls, "files.prepare")
+	if files.prepared != nil {
+		copy := make(map[string]LifecycleFile, len(prepared))
+		for target, file := range prepared {
+			copy[target] = file
+		}
+		*files.prepared = copy
+	}
+	return nil
+}
+func (files fakeLifecycleFiles) Activate(_ string, targets []string) error {
+	*files.calls = append(*files.calls, "files.activate")
+	if files.activations != nil {
+		*files.activations = append(*files.activations, append([]string(nil), targets...))
+	}
+	return nil
+}
+
+type fakePredecessor struct{ calls *[]string }
+
+func (bridge fakePredecessor) Prepare(context.Context, model.Transaction) error {
+	*bridge.calls = append(*bridge.calls, "predecessor.prepare")
+	return nil
+}
+func (bridge fakePredecessor) Quiesce(context.Context, model.Transaction) error { return nil }
+func (bridge fakePredecessor) Restore(context.Context, model.Transaction) error { return nil }
+func (bridge fakePredecessor) Commit(context.Context, model.Transaction) error {
+	*bridge.calls = append(*bridge.calls, "predecessor.commit")
+	return nil
+}
+func (bridge fakePredecessor) Discard(context.Context, model.Transaction) error { return nil }
+
+type fakeFence struct {
+	calls     *[]string
+	verifyErr error
+}
+
+func (fence fakeFence) Ensure(Config) error {
+	*fence.calls = append(*fence.calls, "fence.ensure")
+	return nil
+}
+func (fence fakeFence) Verify(Config) error {
+	*fence.calls = append(*fence.calls, "fence.verify")
+	return fence.verifyErr
+}
+func (files fakeLifecycleFiles) Restore(string, []string) error {
+	*files.calls = append(*files.calls, "files.restore")
+	return nil
+}
+func (files fakeLifecycleFiles) Discard(string) error {
+	*files.calls = append(*files.calls, "files.discard")
+	return nil
 }
 
 func (units *fakeUnits) Prepare(_ string, definitions map[string][]byte) error {
@@ -58,6 +140,12 @@ func (systemd fakeSystemd) Start(_ context.Context, unit string) error {
 func (systemd fakeSystemd) Enable(_ context.Context, unit string) error {
 	return systemd.call("systemd.enable:" + unit)
 }
+func (systemd fakeSystemd) Disable(_ context.Context, unit string) error {
+	return systemd.call("systemd.disable:" + unit)
+}
+func (systemd fakeSystemd) IsEnabled(_ context.Context, unit string) error {
+	return systemd.call("systemd.enabled:" + unit)
+}
 func (systemd fakeSystemd) IsActive(_ context.Context, unit string) error {
 	return systemd.call("systemd.active:" + unit)
 }
@@ -69,6 +157,12 @@ type fakeGenerations struct {
 }
 
 type fakeHealth struct{ calls *[]string }
+
+type fakeManifestReader struct{ manifest model.Manifest }
+
+func (reader fakeManifestReader) ReadManifest() (model.Manifest, string, error) {
+	return reader.manifest, digestA, nil
+}
 
 func (health fakeHealth) Verify(_ context.Context, port uint16, target model.Generation) error {
 	*health.calls = append(*health.calls, fmt.Sprintf("gateway.ready:%d:%s:%s", port, target.Version, target.Commit))
@@ -90,7 +184,7 @@ func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) 
 	t.Helper()
 	tx, identity := manifestTransaction(t, false)
 	root := t.TempDir()
-	for _, name := range []string{"fased-gateway-launch", "fased-signerd"} {
+	for _, name := range []string{"fased-gateway-launch", "fased-signerd", "fased-lifecycled"} {
 		path := filepath.Join(root, "bin", name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
@@ -99,17 +193,42 @@ func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) 
 			t.Fatal(err)
 		}
 	}
-	operator, gateway, signer := principals()
-	config, err := NewConfig(model.ProfileProtectedLocal, "example", "/home/example/.fased", operator, gateway, signer)
+	helper := filepath.Join(root, "runtime", "scripts", "fased-signer-owner-hosting.sh")
+	if err := os.MkdirAll(filepath.Dir(helper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stableDaemon := filepath.Join(t.TempDir(), "fased-lifecycled")
+	if err := os.WriteFile(stableDaemon, []byte("stable-client-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	operator, gateway, signer := filesystemPrincipals()
+	stateRoot := filepath.Join(t.TempDir(), ".fased")
+	prepareFilesystemOwnerStateRoot(t, stateRoot, operator)
+	if err := os.WriteFile(filepath.Join(stateRoot, "fased.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := NewConfig(model.ProfileProtectedLocal, "example", stateRoot, operator, gateway, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err = config.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.PlatformDigest, err = identity.Digest(model.ProfileProtectedLocal)
 	if err != nil {
 		t.Fatal(err)
 	}
 	calls := []string{}
-	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls}, Health: fakeHealth{calls: &calls}}, tx, &calls
+	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Files: fakeLifecycleFiles{calls: &calls}, SharedState: fakeSharedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls}, Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Fence: fakeFence{calls: &calls}, Network: NoNetworkPolicy{}, StableDaemonPath: stableDaemon}, tx, &calls
 }
 
 func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing.T) {
 	adapter, tx, calls := targetAdapter(t)
+	tx.Phase = model.PhasePrepared
 	if err := adapter.Prepare(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
@@ -126,36 +245,267 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 		t.Fatal(err)
 	}
 	want := []string{
-		"units.prepare", "systemd.stop:fased-gateway-example.service", "systemd.stop:fased-signerd-example.service",
-		"units.activate", "systemd.reload", "systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
+		"units.prepare", "shared.prepare", "files.prepare", "systemd.stop:fased-gateway-example.service", "systemd.stop:fased-signerd-example.service",
+		"shared.activate", "files.activate", "units.activate", "systemd.reload", "systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
 		"systemd.enable:fased-gateway-example.service", "systemd.start:fased-gateway-example.service",
 		"systemd.active:fased-signerd-example.service", "systemd.active:fased-gateway-example.service",
 		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		"generation.activate:" + digestB + ":" + digestA, "units.discard",
+		"generation.activate:" + digestB + ":" + digestA, "files.activate", "units.discard", "files.discard", "shared.discard",
 	}
 	if !reflect.DeepEqual(*calls, want) {
 		t.Fatalf("unexpected target adapter order:\n got=%v\nwant=%v", *calls, want)
 	}
 	definitions := adapter.Units.(*fakeUnits).definitions
 	combined := string(definitions[adapter.Identity.Services["signer"]]) + string(definitions[adapter.Identity.Services["gateway"]])
-	if strings.Contains(combined, "/bin/sh") || !strings.Contains(combined, "NoNewPrivileges=true") || !strings.Contains(combined, "User=996") {
+	if strings.Contains(combined, "/bin/sh") || !strings.Contains(combined, "NoNewPrivileges=true") ||
+		!strings.Contains(combined, fmt.Sprintf("User=%d", adapter.Config.Signer.UID)) {
 		t.Fatalf("canonical units lack privilege or direct-exec contracts:\n%s", combined)
 	}
 	if !strings.Contains(combined, "SupplementaryGroups=fscf-example") ||
 		!strings.Contains(combined, "RuntimeDirectoryMode=0755") ||
+		!strings.Contains(combined, "RuntimeDirectory=fased-local/example fased-local/example/application fased-local/example/operator fased-local/example/control") ||
+		!strings.Contains(combined, "Environment=FASED_PROTECTED_LOCAL_INSTANCE=example") ||
 		!strings.Contains(combined, "WorkingDirectory="+filepath.Join(adapter.Generations.(fakeGenerations).root, "runtime")) ||
-		!strings.Contains(combined, "Environment=HOME=/home/example") ||
+		!strings.Contains(combined, "Environment=HOME="+adapter.Config.OwnerHome()) ||
+		!strings.Contains(combined, "Environment=FASED_PLUGIN_STATUS_CACHE_PATH="+filepath.Join(adapter.Config.OwnerStateRoot, "cache", "plugin-status.json")) ||
 		!strings.Contains(combined, "Environment=FASED_VERSION=0.1.76") ||
 		!strings.Contains(combined, "Environment=FASED_HOST_PROFILE=local") ||
+		!strings.Contains(combined, "Environment=FASED_PROTECTED_LOCAL=1") ||
 		!strings.Contains(combined, "BindReadOnlyPaths="+filepath.Join(adapter.Generations.(fakeGenerations).root, "dependencies", "node_modules")+":"+filepath.Join(adapter.Generations.(fakeGenerations).root, "runtime", "node_modules")) {
 		t.Fatalf("canonical Gateway unit lacks Local runtime context:\n%s", combined)
 	}
 }
 
+func TestTargetAdapterQuiesceStopsSignerAfterGatewayStopFailure(t *testing.T) {
+	adapter, tx, calls := targetAdapter(t)
+	tx.Phase = model.PhaseSwitched
+	gatewayStop := "systemd.stop:" + adapter.Identity.Services["gateway"]
+	signerStop := "systemd.stop:" + adapter.Identity.Services["signer"]
+	adapter.Systemd = fakeSystemd{calls: calls, fail: gatewayStop}
+
+	if err := adapter.Quiesce(context.Background(), tx); err == nil {
+		t.Fatal("expected the injected Gateway stop failure")
+	}
+	if !reflect.DeepEqual(*calls, []string{gatewayStop, signerStop}) {
+		t.Fatalf("quiesce did not stop the signer after the Gateway failure: %v", *calls)
+	}
+}
+
+func TestFreshTargetAndControllerDoNotStopAbsentCanonicalServices(t *testing.T) {
+	adapter, tx, calls := targetAdapter(t)
+	tx.PlanAction = "INSTALL"
+	tx.Previous = nil
+	tx.Phase = model.PhasePrepared
+	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	if err := adapter.Quiesce(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("fresh target stopped absent services: %v", *calls)
+	}
+
+	root := t.TempDir()
+	entrypoint := filepath.Join(root, "bin", "fased-lifecycled")
+	if err := os.MkdirAll(filepath.Dir(entrypoint), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(entrypoint, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	controller := &ControllerAdapter{Config: adapter.Config, Identity: adapter.Identity,
+		Units: adapter.Units, Systemd: adapter.Systemd,
+		Generations: fakeControllerGenerations{root: root, calls: calls}}
+	if err := controller.Stage(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	*calls = nil
+	if err := controller.Switch(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range *calls {
+		if strings.HasPrefix(call, "systemd.stop:") {
+			t.Fatalf("fresh controller stopped an absent service: %v", *calls)
+		}
+	}
+}
+
+func TestFreshLocalDefersGatewayUntilOnboardingCreatesConfig(t *testing.T) {
+	adapter, tx, calls := targetAdapter(t)
+	tx.PlanAction = "INSTALL"
+	tx.Previous = nil
+	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	if err := adapter.Prepare(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Activate(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Verify(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"units.prepare", "shared.prepare", "files.prepare", "shared.activate", "files.activate", "units.activate", "systemd.reload",
+		"systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
+		"systemd.enable:fased-gateway-example.service", "systemd.active:fased-signerd-example.service",
+	}
+	if !reflect.DeepEqual(*calls, want) {
+		t.Fatalf("fresh Local started or health-checked Gateway before onboarding:\n got=%v\nwant=%v", *calls, want)
+	}
+}
+
+func TestLocalBridgeVerifiesDurableFenceBeforeLifecycleProjectionAndPredecessor(t *testing.T) {
+	adapter, tx, calls := targetAdapter(t)
+	tx.PlanAction = "BRIDGE_PUBLIC_STABLE"
+	tx.SourceTopology = "local-user-systemd-v2"
+	tx.PublicPredecessorVersion = "0.1.75"
+	tx.Previous = nil
+	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	prepared := map[string]LifecycleFile{}
+	activations := [][]string{}
+	adapter.Files = fakeLifecycleFiles{calls: calls, prepared: &prepared, activations: &activations}
+	adapter.Predecessor = fakePredecessor{calls: calls}
+	adapter.Fence = fakeFence{calls: calls}
+	if err := adapter.Prepare(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := prepared[LocalPredecessorDropInPath]; ok {
+		t.Fatal("global predecessor fence was incorrectly assigned to owner rollback storage")
+	}
+	productVersion := prepared[CanonicalProductVersionPath(adapter.Config)]
+	controllerIdentity := prepared[CanonicalControllerIdentityPath(adapter.Config)]
+	if string(productVersion.Data) != tx.Target.Version+"\n" || productVersion.Mode != 0o600 || productVersion.UID != 0 || productVersion.GID != 0 {
+		t.Fatalf("product version projection is not target-derived: %+v", productVersion)
+	}
+	if controllerIdentity.Mode != 0o600 || controllerIdentity.UID != 0 || controllerIdentity.GID != 0 || !strings.Contains(string(controllerIdentity.Data), `"version": "`+tx.Target.Version+`"`) {
+		t.Fatalf("controller identity projection is not target-derived: %+v", controllerIdentity)
+	}
+	var identityProjection controllerIdentityProjection
+	if err := json.Unmarshal(controllerIdentity.Data, &identityProjection); err != nil {
+		t.Fatal(err)
+	}
+	wantServerDigest := fmt.Sprintf("%x", sha256.Sum256([]byte("binary")))
+	wantClientDigest := fmt.Sprintf("%x", sha256.Sum256([]byte("stable-client-binary")))
+	if identityProjection.ServerSHA256 != wantServerDigest || identityProjection.ClientSHA256 != wantClientDigest {
+		t.Fatalf("controller identity does not bind the exact multicall binary: %+v", identityProjection)
+	}
+	if err := adapter.Commit(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	wantTargets := []string{
+		CanonicalProductVersionPath(adapter.Config), CanonicalControllerIdentityPath(adapter.Config),
+		CanonicalCLIProjectionPath(adapter.Config), CanonicalInstallProjectionPath(adapter.Config),
+	}
+	if len(activations) != 1 || !reflect.DeepEqual(activations[0], wantTargets) {
+		t.Fatalf("Local bridge commit activation order changed: got=%v want=%v", activations, wantTargets)
+	}
+	wantTail := []string{"fence.verify", "generation.activate:" + digestB + ":", "files.activate", "predecessor.commit", "units.discard", "files.discard", "shared.discard"}
+	if !reflect.DeepEqual((*calls)[len(*calls)-len(wantTail):], wantTail) {
+		t.Fatalf("predecessor committed before durable fence activation: %v", *calls)
+	}
+}
+
+func TestLocalBridgeFenceFailurePrecedesAllCommitMutation(t *testing.T) {
+	adapter, tx, calls := targetAdapter(t)
+	tx.PlanAction = "BRIDGE_PUBLIC_STABLE"
+	tx.SourceTopology = "local-user-systemd-v2"
+	tx.PublicPredecessorVersion = "0.1.75"
+	tx.Previous = nil
+	adapter.Predecessor = fakePredecessor{calls: calls}
+	adapter.Fence = fakeFence{calls: calls, verifyErr: errors.New("fence unavailable")}
+	if err := adapter.Commit(context.Background(), tx); err == nil {
+		t.Fatal("Local bridge committed without its durable predecessor fence")
+	}
+	if !reflect.DeepEqual(*calls, []string{"fence.verify"}) {
+		t.Fatalf("Local bridge mutated state before fence verification: %v", *calls)
+	}
+}
+
+func TestCompleteOnboardingStartsAndVerifiesExactCommittedGateway(t *testing.T) {
+	testCompleteOnboardingStartsAndVerifiesExactCommittedGateway(t, model.ProfileProtectedLocal, "example")
+}
+
+func TestHostingCompleteOnboardingStartsAndVerifiesExactCommittedGateway(t *testing.T) {
+	testCompleteOnboardingStartsAndVerifiesExactCommittedGateway(t, model.ProfileHosting, "hosting")
+}
+
+func testCompleteOnboardingStartsAndVerifiesExactCommittedGateway(t *testing.T, profile model.Profile, instance string) {
+	t.Helper()
+	stateRoot := filepath.Join(t.TempDir(), ".fased")
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(stateRoot, "fased.json")
+	if err := os.WriteFile(configPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	operator := Principal{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}
+	gateway := Principal{UID: operator.UID + 1, GID: operator.GID + 1}
+	signer := Principal{UID: operator.UID + 2, GID: operator.GID + 2}
+	config, err := NewConfig(profile, instance, stateRoot, operator, gateway, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := config.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := model.Generation{ID: digestB, Version: "0.1.76", Commit: commitB, Tree: commitB, ArtifactSetDigest: digestB}
+	manifest := model.Manifest{SchemaVersion: model.CurrentManifestSchemaVersion, Profile: profile,
+		Platform: identity, ActiveGeneration: &active, StateSchemas: map[string]uint32{"signer": 2},
+		Capabilities: model.CapabilityRanges{Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1}, Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 1, Max: 1}}}
+	calls := []string{}
+	adapter := TargetAdapter{Config: config, Identity: identity, Systemd: fakeSystemd{calls: &calls}, Health: fakeHealth{calls: &calls}, Manifest: fakeManifestReader{manifest: manifest}}
+	if err := adapter.CompleteOnboarding(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"systemd.active:" + identity.Services["signer"], "systemd.start:" + identity.Services["gateway"], "systemd.active:" + identity.Services["gateway"], "gateway.ready:18789:0.1.76:" + commitB}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("unexpected onboarding completion order: got=%v want=%v", calls, want)
+	}
+}
+
+func TestFreshHostingInstallDefersGatewayUntilOnboarding(t *testing.T) {
+	tx, _ := manifestTransaction(t, false)
+	operator, gateway, signer := filesystemPrincipals()
+	stateRoot := filepath.Join(t.TempDir(), ".fased")
+	prepareFilesystemOwnerStateRoot(t, stateRoot, operator)
+	config, err := NewConfig(model.ProfileHosting, "hosting", stateRoot, operator, gateway, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := config.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.Profile = model.ProfileHosting
+	tx.PlanAction = "INSTALL"
+	tx.Previous = nil
+	tx.PlatformDigest, err = identity.Digest(model.ProfileHosting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := []string{}
+	adapter := TargetAdapter{Config: config, Identity: identity, Systemd: fakeSystemd{calls: &calls}}
+	if !adapter.deferFreshGateway(tx) {
+		t.Fatal("fresh Hosting install did not defer Gateway activation until onboarding")
+	}
+	if err := adapter.Systemd.Start(context.Background(), identity.Services["signer"]); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(calls, ","); strings.Contains(got, identity.Services["gateway"]) {
+		t.Fatalf("fresh Hosting started Gateway before onboarding: %s", got)
+	}
+}
+
 func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	tx, _ := manifestTransaction(t, false)
-	operator, gateway, signer := principals()
-	config, err := NewConfig(model.ProfileHosting, "hosting", "/home/app/.fased", operator, gateway, signer)
+	operator, gateway, signer := filesystemPrincipals()
+	stateRoot := filepath.Join(t.TempDir(), ".fased")
+	prepareFilesystemOwnerStateRoot(t, stateRoot, operator)
+	if err := os.WriteFile(filepath.Join(stateRoot, "fased.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := NewConfig(model.ProfileHosting, "hosting", stateRoot, operator, gateway, signer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +521,7 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	tx.PlatformDigest = platformDigest
 
 	root := t.TempDir()
-	for _, name := range []string{"fased-gateway-launch", "fased-signerd"} {
+	for _, name := range []string{"fased-gateway-launch", "fased-signerd", "fased-lifecycled"} {
 		path := filepath.Join(root, "bin", name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
@@ -180,13 +530,25 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	helper := filepath.Join(root, "runtime", "scripts", "fased-signer-owner-hosting.sh")
+	if err := os.MkdirAll(filepath.Dir(helper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stableDaemon := filepath.Join(t.TempDir(), "fased-lifecycled")
+	if err := os.WriteFile(stableDaemon, []byte("stable-client-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	calls := []string{}
 	units := &fakeUnits{calls: &calls}
 	adapter := &TargetAdapter{
-		Config: config, Identity: identity, Units: units,
+		Config: config, Identity: identity, Units: units, Files: fakeLifecycleFiles{calls: &calls}, SharedState: fakeSharedState{calls: &calls},
 		Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls},
-		Health: fakeHealth{calls: &calls},
+		Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Fence: NoLocalPredecessorFence{}, Network: NoNetworkPolicy{}, StableDaemonPath: stableDaemon,
 	}
+	tx.Phase = model.PhasePrepared
 	if err := adapter.Prepare(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
@@ -203,20 +565,21 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"units.prepare", "systemd.stop:fased-gateway.service", "systemd.stop:fased-signerd.service",
-		"units.activate", "systemd.reload", "systemd.enable:fased-signerd.service", "systemd.start:fased-signerd.service",
+		"units.prepare", "shared.prepare", "files.prepare", "systemd.stop:fased-gateway.service", "systemd.stop:fased-signerd.service",
+		"shared.activate", "files.activate", "units.activate", "systemd.reload", "systemd.enable:fased-signerd.service", "systemd.start:fased-signerd.service",
 		"systemd.enable:fased-gateway.service", "systemd.start:fased-gateway.service",
 		"systemd.active:fased-signerd.service", "systemd.active:fased-gateway.service",
 		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		"generation.activate:" + digestB + ":" + digestA, "units.discard",
+		"generation.activate:" + digestB + ":" + digestA, "files.activate", "units.discard", "files.discard", "shared.discard",
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("unexpected Hosting adapter order:\n got=%v\nwant=%v", calls, want)
 	}
 	combined := string(units.definitions[identity.Services["signer"]]) + string(units.definitions[identity.Services["gateway"]])
 	for _, required := range []string{
-		"User=996", "NoNewPrivileges=true", "Environment=HOME=/home/app",
-		"Environment=FASED_STATE_DIR=/home/app/.fased", "Environment=FASED_HOST_PROFILE=hosting",
+		fmt.Sprintf("User=%d", signer.UID), "NoNewPrivileges=true", "Environment=HOME=" + config.OwnerHome(),
+		"Environment=FASED_STATE_DIR=" + config.OwnerStateRoot, "Environment=FASED_HOST_PROFILE=hosting",
+		"Environment=FASED_PLUGIN_STATUS_CACHE_PATH=" + filepath.Join(config.OwnerStateRoot, "cache", "plugin-status.json"),
 		"-state-db /var/lib/fased-signerd/state.db", "-update-gate /var/lib/fased-signer-update-gate/active",
 	} {
 		if !strings.Contains(combined, required) {
@@ -226,6 +589,9 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	if strings.Contains(combined, "fased-local-") || strings.Contains(combined, "/var/lib/fased-local/") {
 		t.Fatalf("Hosting units contain Local topology:\n%s", combined)
 	}
+	if strings.Contains(combined, "FASED_PROTECTED_LOCAL") {
+		t.Fatalf("Hosting unit contains the protected Local marker:\n%s", combined)
+	}
 }
 
 func TestTargetAdapterRestoresPreviousButDoesNotStartAbsentFreshServices(t *testing.T) {
@@ -233,7 +599,7 @@ func TestTargetAdapterRestoresPreviousButDoesNotStartAbsentFreshServices(t *test
 	if err := adapter.Restore(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(*calls, []string{"units.restore", "systemd.reload", "systemd.start:fased-signerd-example.service", "systemd.start:fased-gateway-example.service"}) {
+	if !reflect.DeepEqual(*calls, []string{"files.restore", "shared.restore", "units.restore", "systemd.reload", "systemd.start:fased-signerd-example.service", "systemd.start:fased-gateway-example.service"}) {
 		t.Fatalf("update restore order changed: %v", *calls)
 	}
 	*calls = nil
@@ -241,7 +607,7 @@ func TestTargetAdapterRestoresPreviousButDoesNotStartAbsentFreshServices(t *test
 	if err := adapter.Restore(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(*calls, []string{"units.restore", "systemd.reload"}) {
+	if !reflect.DeepEqual(*calls, []string{"files.restore", "shared.restore", "units.restore", "systemd.reload"}) {
 		t.Fatalf("fresh rollback started absent services: %v", *calls)
 	}
 }

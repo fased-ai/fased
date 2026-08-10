@@ -613,4 +613,25 @@ describe("config io write", () => {
       expect((await fs.stat(configPath)).mode & 0o777).toBe(0o660);
     });
   });
+
+  it("preserves canonical group-shared config permissions without profile environment", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    await withTempHome("fased-config-io-shared-posture-", async (home) => {
+      const stateDir = path.join(home, ".fased");
+      const configPath = path.join(stateDir, "fased.json");
+      await fs.mkdir(stateDir, { recursive: true, mode: 0o2770 });
+      await fs.chmod(stateDir, 0o2770);
+      await fs.writeFile(configPath, '{"gateway":{"mode":"local"}}\n', { mode: 0o660 });
+      await fs.chmod(configPath, 0o660);
+
+      const io = createConfigIO({ env: {}, homedir: () => home, logger: silentLogger });
+      const snapshot = await io.readConfigFileSnapshot();
+      await io.writeConfigFile({ ...snapshot.config, gateway: { mode: "local" } });
+
+      expect((await fs.stat(stateDir)).mode & 0o7777).toBe(0o2770);
+      expect((await fs.stat(configPath)).mode & 0o777).toBe(0o660);
+    });
+  });
 });

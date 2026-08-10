@@ -14,17 +14,7 @@
       "mode": "0755"
     },
     {
-      "name": "fased-managed-updater-core.mjs",
-      "type": "support",
-      "mode": "0755"
-    },
-    {
       "name": "generation-updater.mjs",
-      "type": "support",
-      "mode": "0755"
-    },
-    {
-      "name": "fased-host-updaterctl.mjs",
       "type": "support",
       "mode": "0755"
     },
@@ -55,11 +45,6 @@
     },
     {
       "name": "managed-runtime-layout.mjs",
-      "type": "support",
-      "mode": "0755"
-    },
-    {
-      "name": "managed-update-contract.mjs",
       "type": "support",
       "mode": "0755"
     },

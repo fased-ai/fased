@@ -21,9 +21,14 @@ export function resolveNativeSignerOperatorLifecycle(
     .trim()
     .toLowerCase();
   if (hostProfile === "hosting") {
+    const installRoot = String(env.FASED_LIFECYCLE_INSTALL_ROOT ?? "/opt/fased").trim();
+    if (installRoot !== "/opt/fased") {
+      throw new Error("Hosting lifecycle install root is not canonical");
+    }
+    const expectedBinary = path.join(installRoot, "current", "payload", "bin", "fased-signerd");
     return {
       profile: "hosting",
-      signerBinPath: "/opt/fased/signer/fased-signerd",
+      signerBinPath: expectedBinary,
       applicationSocketPath: "/run/fased-signerd/app.sock",
       operatorSocketPath: "/run/fased-signerd/operator.sock",
       controlSocketPath: "/run/fased-signerd/control.sock",
@@ -38,7 +43,12 @@ export function resolveNativeSignerOperatorLifecycle(
     throw new Error("Protected Local signer instance identity is missing or invalid");
   }
   const expectedSocket = `/run/fased-local/${instanceId}/application/app.sock`;
-  const expectedBinary = `/opt/fased/local/${instanceId}/signer/fased-signerd`;
+  const installRoot = String(env.FASED_LIFECYCLE_INSTALL_ROOT ?? "").trim();
+  const expectedInstallRoot = `/opt/fased/local/${instanceId}`;
+  if (installRoot !== expectedInstallRoot) {
+    throw new Error("Protected Local lifecycle install root does not match its instance identity");
+  }
+  const expectedBinary = `${expectedInstallRoot}/current/payload/bin/fased-signerd`;
   const configuredSocket = String(env.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? "").trim();
   const configuredBinary = String(env.FASED_WALLET_LOCAL_SIGNER_BIN ?? "").trim();
   if (

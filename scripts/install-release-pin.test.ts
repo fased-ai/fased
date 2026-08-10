@@ -471,7 +471,8 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
       fs.mkdirSync(generationDir, { recursive: true });
       for (const name of [
         "fased-managed-updater.mjs",
-        "fased-managed-updater-core.mjs",
+        "fased-generation-updater-core.mjs",
+        "generation-updater.mjs",
         "hosted-release-manifest.mjs",
         "lifecycle-trust-crypto.mjs",
         "lifecycle-trust-policy.mjs",
@@ -683,6 +684,25 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
     );
     expect(installer).toContain('fetched_release_commit=""');
     expect(installer).not.toContain('local fetched_release_commit=""');
+  });
+
+  it("routes a stamped Local installer through attested artifacts before any Git checkout", () => {
+    expect(installer).toContain("materialize_attested_local_installer");
+    expect(installer).toContain('verify_release_attestation_source "$installer" "$bundle"');
+    expect(installer).toContain("run_attested_local_lifecycle");
+    expect(installer).toContain(
+      '"$signer_socket" == "/run/fased-local/$instance/application/app.sock"',
+    );
+    expect(installer).toContain('echo "Already current: $release_version"');
+    expect(installer).toContain("Committed Local lifecycle could not complete onboarding.");
+    expect(installer).not.toContain(
+      '"$signer_socket" == "/run/fased-local/$instance/operator/operator.sock"',
+    );
+    expect(installer).toContain("--protected-local-root-bootstrap");
+    expect(installer).toContain("--operation COMPLETE_ONBOARDING");
+    expect(installer.indexOf("run_attested_local_lifecycle")).toBeLessThan(
+      installer.indexOf("git clone --filter=blob:none --no-checkout"),
+    );
   });
 
   it("keeps noisy verification-tool installation outside exact Local commit capture", () => {
@@ -1013,15 +1033,8 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
   it("permits prerelease Hosting only through an explicit beta update channel", () => {
     expect(installer).toContain("Hosting prerelease installation requires --update-channel beta.");
     expect(installer).toContain("Local prerelease installation requires --update-channel beta.");
-    expect(installer).toContain(
-      'if [[ "$HOSTING_RELEASE" == *-* && "$UPDATE_CHANNEL" != "beta" ]]',
-    );
-    expect(installer).toContain("VPS Hosting prerelease setup requires --update-channel beta.");
-    expect(installer).toContain("printf '%s\\n' \"$UPDATE_CHANNEL\"");
-    expect(installer).toContain("/etc/fased/host-updater-channel");
-    expect(installer).toContain(
-      'if [[ "$UPDATE_CHANNEL_EXPLICIT" -ne 1 && "$HOSTING_REQUESTED" -ne 1 ]]',
-    );
+    expect(installer).toContain("A prerelease --release requires --update-channel beta.");
+    expect(installer).toContain('"$hosting_update_channel" =~ ^(stable|beta)$');
   });
 
   it("keeps update-channel persistence outside the install marker JSON", () => {
@@ -1069,10 +1082,21 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
     expect(managedEnv).toContain('env_mode="$(managed_state_file_mode)"');
 
     const protectedActivation = installer.indexOf("bootstrap_protected_local_topology activate");
+    const onboardingScaffold = installer.indexOf(
+      "if ! prepare_protected_local_onboarding_scaffold",
+    );
     const onboarding = installer.indexOf('FASED_INSTALLER_ONBOARD=1 "$FASED_CLI_PATH" onboard');
+    const onboardingCompletion = installer.indexOf("--operation COMPLETE_ONBOARDING", onboarding);
     const finalMarker = installer.indexOf('write_install_marker "$REPO_ROOT" "true"', onboarding);
     expect(protectedActivation).toBeGreaterThanOrEqual(0);
+    expect(onboardingScaffold).toBeGreaterThan(protectedActivation);
+    expect(onboarding).toBeGreaterThan(onboardingScaffold);
     expect(onboarding).toBeGreaterThan(protectedActivation);
+    expect(onboardingCompletion).toBeGreaterThan(onboarding);
+    expect(onboardingCompletion).toBeLessThan(finalMarker);
+    expect(installer.slice(onboarding, finalMarker)).toContain(
+      'lifecycle_binary="${FASED_WALLET_LOCAL_SIGNER_BIN%/fased-signerd}/fased-lifecycled"',
+    );
     expect(finalMarker).toBeGreaterThan(onboarding);
     expect(installer).not.toContain(
       "persist_runtime_update_channel protected-local-pre-activation",

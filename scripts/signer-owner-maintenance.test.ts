@@ -8,6 +8,11 @@ const launcher = fs.readFileSync(
 const installer = fs.readFileSync(new URL("../install.sh", import.meta.url), "utf8");
 
 describe("Hosting signer-owner maintenance launcher", () => {
+  it("ships as an executable generation entrypoint", () => {
+    const mode = fs.statSync(new URL("./fased-signer-owner-hosting.sh", import.meta.url)).mode;
+    expect(mode & 0o111).not.toBe(0);
+  });
+
   it("keeps custody-changing commands behind one bounded signer-owner ceremony", () => {
     expect(launcher).toContain('if [[ "${EUID}" != "0" ]]');
     expect(launcher).toContain(

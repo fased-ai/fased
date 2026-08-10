@@ -304,9 +304,6 @@ jobs:
           bash -n dist-native/release/install.sh
           grep -Fxq "install_entry_release_identity=\"${package_version}\"" \
             dist-native/release/install.sh
-          install -m 0755 scripts/fased-lifecycle-supervisor.mjs dist-native/release/fased-lifecycle-supervisor.mjs
-          install -m 0755 scripts/fased-host-updater.mjs dist-native/release/fased-host-updater.mjs
-          install -m 0755 scripts/fased-host-updaterctl.mjs dist-native/release/fased-host-updaterctl.mjs
           install -m 0755 scripts/privileged-release-evidence.mjs \
             dist-native/release/fased-privileged-release-evidence.mjs
 
@@ -363,54 +360,6 @@ jobs:
             "${{ steps.attest-hosting-bootstrap.outputs.bundle-path }}" \
             dist-native/release/install.sh.attestation.json
 
-      - name: Attest stable lifecycle supervisor
-        id: attest-lifecycle-supervisor
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
-        with:
-          subject-path: dist-native/release/fased-lifecycle-supervisor.mjs
-
-      - name: Stage stable lifecycle supervisor attestation bundle
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -m 0644 \
-            "${{ steps.attest-lifecycle-supervisor.outputs.bundle-path }}" \
-            dist-native/release/fased-lifecycle-supervisor.mjs.attestation.json
-
-      - name: Attest root Hosting updater controller
-        id: attest-hosting-updater
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
-        with:
-          subject-path: dist-native/release/fased-host-updater.mjs
-
-      - name: Stage root Hosting updater attestation bundle
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -m 0644 \
-            "${{ steps.attest-hosting-updater.outputs.bundle-path }}" \
-            dist-native/release/fased-host-updater.mjs.attestation.json
-
-      - name: Attest root Hosting updater client
-        id: attest-hosting-updater-client
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
-        with:
-          subject-path: dist-native/release/fased-host-updaterctl.mjs
-
-      - name: Stage root Hosting updater client attestation bundle
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -m 0644 \
-            "${{ steps.attest-hosting-updater-client.outputs.bundle-path }}" \
-            dist-native/release/fased-host-updaterctl.mjs.attestation.json
-
       - name: Upload verified signer assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -462,7 +411,8 @@ jobs:
             if [[ "$architecture" == arm64 ]]; then go_arch=arm64; fi
             signer=".artifacts/hosted-runtime/fased-signerd-linux-${go_arch}"
             lifecycled=".artifacts/hosted-runtime/fased-lifecycled-linux-${go_arch}"
-            chmod 0755 "$signer" "$lifecycled"
+            inventory_lifecycled=".artifacts/hosted-runtime/fased-lifecycled-linux-amd64"
+            chmod 0755 "$signer" "$lifecycled" "$inventory_lifecycled"
             dependency_hash="$(jq -er ".application.linux.${architecture}.dependencies.dependencyHash" .artifacts/hosted-runtime/fased-hosted-release-v2.json)"
             node scripts/assemble-lifecycle-generation.mjs \
               --runtime-archive ".artifacts/hosted-runtime/fased-hosted-app-v2-linux-${architecture}-v${package_version}.tar.gz" \
@@ -470,6 +420,7 @@ jobs:
               --release-manifest .artifacts/hosted-runtime/fased-hosted-release-v2.json \
               --signer "$signer" \
               --lifecycled "$lifecycled" \
+              --inventory-lifecycled "$inventory_lifecycled" \
               --output-dir .artifacts/hosted-runtime \
               --version "$package_version" \
               --commit "$GITHUB_SHA" \
@@ -513,9 +464,7 @@ jobs:
           for required in \
             fased-signerd-release.attestation.json \
             install.sh.attestation.json \
-            fased-lifecycle-supervisor.mjs.attestation.json \
-            fased-host-updater.mjs.attestation.json \
-            fased-host-updaterctl.mjs.attestation.json; do
+            fased-lifecycled-release.attestation.json; do
             test -s ".artifacts/hosted-runtime/${required}"
           done
 
@@ -568,9 +517,7 @@ jobs:
             fased-privileged-provenance-v1.intoto.json.attestation.json
           verify fased-signerd-linux-amd64 fased-signerd-release.attestation.json
           verify install.sh install.sh.attestation.json
-          verify fased-lifecycle-supervisor.mjs fased-lifecycle-supervisor.mjs.attestation.json
-          verify fased-host-updater.mjs fased-host-updater.mjs.attestation.json
-          verify fased-host-updaterctl.mjs fased-host-updaterctl.mjs.attestation.json
+          verify fased-lifecycled-linux-amd64 fased-lifecycled-release.attestation.json
           node ../../scripts/privileged-release-evidence.mjs verify \
             --release-manifest fased-hosted-release-v2.json \
             --lifecycle-metadata fased-lifecycle-trust-v1.json \
@@ -662,13 +609,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
           FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install,${{ needs.validate.outputs.p1_scenarios }}
-          FASED_SYSTEMD_FIXTURE_PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
           FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
           FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/fased-hosting-candidate
           FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1"
           FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
           FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
-        run: bash scripts/test-protected-local-systemd-container.sh
+        run: |
+          bash scripts/test-protected-local-systemd-container.sh
+          FASED_HOSTING_SYSTEMD_FIXTURE_ARTIFACT_DIR="${{ runner.temp }}/fased-hosting-candidate" \
+            FASED_HOSTING_SYSTEMD_FIXTURE_DISTROS=ubuntu \
+            bash scripts/test-go-hosting-systemd-container.sh
 
   publish:
     name: Promote exact verified candidate bytes

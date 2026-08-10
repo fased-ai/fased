@@ -18,7 +18,10 @@ func RenderSupervisorUnit(config Config, binary string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	runtimeDirectory := strings.TrimPrefix(config.SupervisorRuntimeRoot(), "/run/")
+	runtimeDirectory := strings.Join([]string{
+		strings.TrimPrefix(config.SupervisorRuntimeRoot(), "/run/"),
+		strings.TrimPrefix(config.ControllerRuntimeRoot(), "/run/"),
+	}, " ")
 	unit := fmt.Sprintf(`[Unit]
 Description=Fased stable lifecycle supervisor (%s)
 After=network-online.target

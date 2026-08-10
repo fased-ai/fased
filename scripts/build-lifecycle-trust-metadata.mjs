@@ -11,9 +11,8 @@ const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-
 const COMMIT_PATTERN = /^[a-f0-9]{40}$/u;
 const TARGET_NAMES = Object.freeze({
   bootstrap: "install.sh",
-  supervisor: "fased-lifecycle-supervisor.mjs",
-  controllerServer: "fased-host-updater.mjs",
-  controllerClient: "fased-host-updaterctl.mjs",
+  lifecycleLinuxX64: "fased-lifecycled-linux-amd64",
+  lifecycleLinuxArm64: "fased-lifecycled-linux-arm64",
   evidenceVerifier: "fased-privileged-release-evidence.mjs",
 });
 const EVIDENCE_NAMES = Object.freeze({
@@ -132,8 +131,7 @@ export async function buildLifecycleTrustMetadata({
     policy: {
       channels: version.includes("-") ? ["beta"] : ["beta", "stable"],
       platforms: ["linux-arm64", "linux-x64"],
-      supervisorProtocol: 1,
-      controllerProtocol: 2,
+      lifecycleProtocol: 1,
     },
     targets,
     evidence,

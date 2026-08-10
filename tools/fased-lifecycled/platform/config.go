@@ -158,6 +158,13 @@ func (config Config) OperatorGroupName() string {
 	return "fased-operator"
 }
 
+func (config Config) SignerUserName() string {
+	if config.Profile == model.ProfileHosting {
+		return "fased-signer"
+	}
+	return "fssg-" + config.InstanceID
+}
+
 func (config Config) ConfigGroupName() string {
 	if config.Profile == model.ProfileProtectedLocal {
 		return "fscf-" + config.InstanceID

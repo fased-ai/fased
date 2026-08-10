@@ -37,22 +37,9 @@ describe("generation updater command ownership", () => {
     );
   });
 
-  it("selects generation, bootstrap, repair, and development owners by topology", () => {
-    expect(
-      __testing.ownerFor({ profile: "protected-local" }, { supervisor: "/opt/fased" }),
-    ).toEqual({
-      mode: "generation",
-    });
-    expect(__testing.ownerFor({ profile: "local" }, null)).toEqual({
-      mode: "bootstrap-required",
-      reason: "lifecycle_supervisor_missing",
-    });
-    expect(__testing.ownerFor({ profile: "hosting" }, null)).toEqual({
-      mode: "repair-required",
-      reason: "lifecycle_supervisor_missing",
-    });
-    expect(__testing.ownerFor({ profile: "source" }, null)).toEqual({
-      mode: "development",
-    });
+  it("has no secondary lifecycle owner selector", () => {
+    expect(__testing.ownerFor).toBeUndefined();
+    expect(__testing.configuredChannel({ channelExplicit: false })).toBe("stable");
+    expect(__testing.configuredChannel({ channelExplicit: true, channel: "beta" })).toBe("beta");
   });
 });

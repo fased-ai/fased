@@ -2,7 +2,7 @@
 set -euo pipefail
 trap 'status=$?; printf "fixture command failed at line %s: %s\n" "$LINENO" "$BASH_COMMAND" >&2; exit "$status"' ERR
 
-phase="${1:-install}"
+phase="${1:-fresh-install}"
 fixture_started="$SECONDS"
 version="${FASED_FIXTURE_VERSION:?missing fixture version}"
 commit="${FASED_FIXTURE_COMMIT:?missing fixture commit}"
@@ -16,7 +16,6 @@ fi
 digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 release_root="/var/lib/fased-installer/releases/v${version}/${digest}/extract/package"
 root_store="$(dirname "$(dirname "$release_root")")"
-candidate_repo=/var/lib/fased-protected-local-candidate
 candidate_installer=/var/lib/fased-protected-local-install.sh
 predecessor_repo=/var/lib/fased-protected-local-predecessor
 predecessor_installer=/var/lib/fased-protected-local-predecessor-install.sh
@@ -70,6 +69,8 @@ verify_protected_home_acl() {
 
 operator_env() {
   local instance="$1"
+  local signer_bin=""
+  signer_bin="$(resolve_signer_binary "$instance")"
   printf '%s\n' \
     "HOME=/home/testop" \
     "FASED_STATE_DIR=$state" \
@@ -77,18 +78,41 @@ operator_env() {
     "FASED_GATEWAY_PORT=$gateway_port" \
     "FASED_GATEWAY_TOKEN=$gateway_token" \
     "FASED_HOST_PROFILE=local" \
+    "FASED_LIFECYCLE_INSTALL_ROOT=/opt/fased/local/$instance" \
+    "FASED_LIFECYCLE_INSTANCE=$instance" \
+    "FASED_LIFECYCLE_PROFILE=protected-local" \
     "FASED_PROTECTED_LOCAL=1" \
     "FASED_PROTECTED_LOCAL_INSTANCE=$instance" \
     "FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external" \
-    "FASED_WALLET_LOCAL_SIGNER_BIN=/opt/fased/local/$instance/signer/fased-signerd" \
+    "FASED_WALLET_LOCAL_SIGNER_BIN=$signer_bin" \
     "FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-local/$instance/application/app.sock" \
     "FASED_HOST_UPDATER_SOCKET=/run/fased-local-controller/$instance/request.sock" \
     "FASED_HOST_UPDATERCTL_STATE=$state/protected-local-controller-transaction.json"
 }
 
+resolve_signer_binary() {
+  local instance="$1"
+  local managed="/opt/fased/local/$instance/current/payload/bin/fased-signerd"
+  local predecessor="/opt/fased/local/$instance/signer/fased-signerd"
+  if [[ -x "$managed" ]]; then
+    printf '%s\n' "$managed"
+    return
+  fi
+  # The fallback exists only so the fixture can construct the supported
+  # public-stable predecessor before proving its one-way Go bridge.
+  printf '%s\n' "$predecessor"
+}
+
 resolve_protected_runtime() {
   local instance="$1"
   local resolved=""
+  resolved="$(readlink -f "/opt/fased/local/$instance/current/payload/runtime" 2>/dev/null || true)"
+  case "$resolved" in
+    "/opt/fased/local/$instance/generations/"*"/payload/runtime")
+      printf '%s\n' "$resolved"
+      return 0
+      ;;
+  esac
   resolved="$(readlink -f "$state/runtime/current")"
   case "$resolved" in
     "/opt/fased/local/$instance/application/releases/"*) printf '%s\n' "$resolved" ;;
@@ -211,7 +235,14 @@ verify_shared_federation_state() {
         signature: "fixture-signature",
       });
     '
-  test "$(stat -c '%U:%G:%a' "$state/federation")" = "testop:fscf-$instance:2770"
+  federation_directory_identity="$(stat -c '%U:%G:%a' "$state/federation")"
+  case "$federation_directory_identity" in
+    "testop:fscf-$instance:2770"|"fsgw-$instance:fscf-$instance:2770") ;;
+    *)
+      echo "shared federation directory identity is unsafe: $federation_directory_identity" >&2
+      return 1
+      ;;
+  esac
   test "$(stat -c '%U:%G:%a' "$token_file")" = "testop:fscf-$instance:660"
   runuser -u "fsgw-$instance" -- env "${environment[@]}" FASED_FIXTURE_MODULE_URL="$module_url" \
     /usr/local/bin/node --input-type=module --eval '
@@ -324,355 +355,13 @@ wait_for_gateway_version() {
     sleep 0.1
   done
   echo "Gateway did not report expected version: $expected" >&2
+  printf 'Last Gateway health response: %s\n' "${response:-<unreachable>}" >&2
+  ss -ltnp "sport = :$gateway_port" >&2 || true
+  systemctl --no-pager --full status 'fased-gateway-*.service' >&2 || true
+  user_systemctl --no-pager --full status fased-gateway.service >&2 || true
   return 1
 }
 
-bootstrap() {
-  local mode="$1"
-  /usr/local/bin/node /repo/scripts/protected-local-bootstrap.mjs install \
-    --source-root "$release_root" \
-    --signer-binary "$root_store/verified-assets/fased-signerd" \
-    --operator-user testop \
-    --operator-uid 2000 \
-    --operator-gid 2000 \
-    --operator-home /home/testop \
-    --state-dir "$state" \
-    --runtime-dir "$runtime" \
-    --node-binary /usr/local/bin/node \
-    --release-version "$version" \
-    --release-commit "$commit" \
-    --update-channel "$([[ "$version" == *-* ]] && printf beta || printf stable)" \
-    --profile default \
-    --gateway-port "$gateway_port" \
-    --gateway-mode "$mode" \
-    --gateway-health-timeout-ms 5000
-}
-
-verify_wallet() {
-  local instance="$1"
-  local wallet_id="$2"
-  runuser -u testop -- "/opt/fased/local/$instance/signer/fased-signerd" \
-    admin wallet readiness \
-    --operator-socket "/run/fased-local/$instance/operator/operator.sock" \
-    --wallet-id "$wallet_id"
-}
-
-lifecycle_socket_requests() {
-  local socket_path="$1"
-  local operation="$2"
-  local transaction_id="$3"
-  local release_version="$4"
-  local request_count="$5"
-  local output_path="$6"
-  env \
-    FASED_FIXTURE_SOCKET_PATH="$socket_path" \
-    FASED_FIXTURE_OPERATION="$operation" \
-    FASED_FIXTURE_TRANSACTION_ID="$transaction_id" \
-    FASED_FIXTURE_RELEASE_VERSION="$release_version" \
-    FASED_FIXTURE_REQUEST_COUNT="$request_count" \
-    /usr/local/bin/node --input-type=module >"$output_path" <<'EOF_LIFECYCLE_REQUEST'
-import net from "node:net";
-
-const socketPath = process.env.FASED_FIXTURE_SOCKET_PATH;
-const operation = process.env.FASED_FIXTURE_OPERATION;
-const transactionId = process.env.FASED_FIXTURE_TRANSACTION_ID;
-const version = process.env.FASED_FIXTURE_RELEASE_VERSION;
-const requestCount = Number(process.env.FASED_FIXTURE_REQUEST_COUNT);
-const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-
-async function requestOnce() {
-  return await new Promise((resolve, reject) => {
-    const socket = net.createConnection({ path: socketPath });
-    socket.setEncoding("utf8");
-    socket.setTimeout(120_000);
-    let body = "";
-    let settled = false;
-    const fail = (error) => {
-      if (settled) return;
-      settled = true;
-      socket.destroy();
-      reject(error);
-    };
-    socket.once("connect", () => {
-      socket.write(`${JSON.stringify({ schemaVersion: 2, op: operation, transactionId, version })}\n`);
-    });
-    socket.on("data", (chunk) => {
-      body += chunk;
-      const newline = body.indexOf("\n");
-      if (newline < 0 || settled) return;
-      try {
-        settled = true;
-        const response = JSON.parse(body.slice(0, newline));
-        socket.destroy();
-        resolve(response);
-      } catch (error) {
-        fail(error);
-      }
-    });
-    socket.once("timeout", () => fail(new Error(`${operation} timed out`)));
-    socket.once("error", fail);
-    socket.once("close", () => {
-      if (!settled) {
-        const error = new Error(`${operation} closed without a response`);
-        error.code = "ECONNRESET";
-        fail(error);
-      }
-    });
-  });
-}
-
-async function requestWithRetry() {
-  let lastError;
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    try {
-      return await requestOnce();
-    } catch (error) {
-      lastError = error;
-      if (!new Set(["ENOENT", "ECONNREFUSED", "ECONNRESET", "EPIPE"]).has(error?.code)) {
-        throw error;
-      }
-      await delay(100);
-    }
-  }
-  throw lastError;
-}
-
-const responses = [];
-for (let index = 0; index < requestCount; index += 1) {
-  responses.push(await requestWithRetry());
-  if (index + 1 < requestCount) await delay(500);
-}
-process.stdout.write(`${JSON.stringify(responses)}\n`);
-EOF_LIFECYCLE_REQUEST
-}
-
-verify_supervised_controller_a_to_b() {
-  local instance="$1"
-  local controller_state="/var/lib/fased-local/$instance/controller"
-  local controller_root="/opt/fased/local/$instance/controller"
-  local controller_unit="fased-local-controller-worker-$instance.service"
-  local supervisor_unit="fased-local-controller-$instance.service"
-  local public_socket="/run/fased-local-controller/$instance/request.sock"
-  local private_socket="/run/fased-local-controller-worker/$instance/controller.sock"
-  local target_generation=""
-  local predecessor_generation="$controller_root/releases/v$predecessor_version"
-  local supervisor_identity="$controller_state/supervisor/controller-version.json"
-  local product_identity="$controller_state/controller-version.json"
-  local preservation_manifest=/tmp/controller-a-to-b-preservation.sha256
-  local transaction_id=""
-  local status_transaction_id=""
-  local selection_digest=""
-  local selection_receipt=""
-  local target_manifest_sha=""
-  local target_server_sha=""
-  local target_client_sha=""
-  local controller_pid=""
-  local controller_drop_in="/etc/systemd/system/$controller_unit.d"
-  local supervisor_drop_in="/etc/systemd/system/$supervisor_unit.d"
-  local failure_marker="$controller_state/fixture-controller-restart-failure"
-  local failure_script=/usr/local/libexec/fased-fixture-controller-fail-once
-  local failure_override="$controller_drop_in/99-fixture-fail-once.conf"
-
-  printf 'generated-systemd controller transition stage: preflight\n'
-  target_generation="$(readlink -f "$controller_root/current")"
-  [[ "$target_generation" == "$controller_root/releases/v$version" ]] || {
-    echo "generated-systemd preflight: active controller generation is not the target" >&2
-    return 1
-  }
-  [[ -f "$supervisor_identity" ]] || {
-    echo "generated-systemd preflight: supervisor controller identity is missing" >&2
-    return 1
-  }
-  [[ -d "$controller_drop_in" ]] || {
-    echo "generated-systemd preflight: target controller drop-in boundary is missing" >&2
-    return 1
-  }
-  [[ -d "$supervisor_drop_in" ]] || {
-    echo "generated-systemd preflight: supervisor drop-in boundary is missing" >&2
-    return 1
-  }
-  if find "$controller_drop_in" "$supervisor_drop_in" \
-    -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
-    echo "generated-systemd preflight: protected unit drop-in boundary is not empty" >&2
-    find "$controller_drop_in" "$supervisor_drop_in" \
-      -mindepth 1 -maxdepth 1 -printf '%m %u:%g %p\n' >&2
-    return 1
-  fi
-
-  printf 'generated-systemd controller transition stage: preservation-state\n'
-  install -d -m 2770 -o testop -g "fscf-$instance" \
-    "$state/sat-mining/wallets/agent" "$state/extensions"
-  runuser -u testop -- env FASED_FIXTURE_MINING_LEDGER="$state/sat-mining/wallets/agent/mining.sqlite" \
-    /usr/local/bin/node --input-type=module <<'EOF_MINING_LEDGER'
-import { DatabaseSync } from "node:sqlite";
-const database = new DatabaseSync(process.env.FASED_FIXTURE_MINING_LEDGER);
-try {
-  database.exec(
-    "CREATE TABLE IF NOT EXISTS mining_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);" +
-      "INSERT OR REPLACE INTO mining_meta(key,value) VALUES('schema_version','1'),('history_revision','7');",
-  );
-} finally {
-  database.close();
-}
-EOF_MINING_LEDGER
-  chown testop:"fscf-$instance" "$state/sat-mining/wallets/agent/mining.sqlite"
-  chmod 0660 "$state/sat-mining/wallets/agent/mining.sqlite"
-  printf '{"schemaVersion":1,"rpc":"fixture-rpc","policy":"agent"}\n' \
-    >"$state/wallet/fixture-policy-rpc.json"
-  printf '{"schemaVersion":1,"enabled":["fixture"]}\n' \
-    >"$state/extensions/fixture-plugin-state.json"
-  chown testop:"fscf-$instance" \
-    "$state/wallet/fixture-policy-rpc.json" \
-    "$state/extensions/fixture-plugin-state.json"
-  chmod 0660 \
-    "$state/wallet/fixture-policy-rpc.json" \
-    "$state/extensions/fixture-plugin-state.json"
-
-  sha256sum \
-    "$state/wallet/provider-registry.v1.json" \
-    "$state/wallet/fixture-policy-rpc.json" \
-    "$controller_state/../signer/state.db" \
-    "$controller_state/../signer/master.key" \
-    "$state/sat-mining/wallets/agent/mining.sqlite" \
-    "$state/federation/access-token.json" \
-    "$state/extensions/fixture-plugin-state.json" \
-    >"$preservation_manifest"
-
-  printf 'generated-systemd controller transition stage: predecessor-activation\n'
-  systemctl stop "$supervisor_unit" "$controller_unit"
-  rm -rf -- "$predecessor_generation"
-  install -d -m 0755 -o root -g root "$predecessor_generation"
-  install -m 0644 -o root -g root \
-    "$target_generation/fased-host-updater.mjs" \
-    "$predecessor_generation/fased-host-updater.mjs"
-  install -m 0644 -o root -g root \
-    "$target_generation/fased-host-updaterctl.mjs" \
-    "$predecessor_generation/fased-host-updaterctl.mjs"
-  jq --arg version "$predecessor_version" '.version = $version' "$supervisor_identity" \
-    >/tmp/controller-predecessor-identity.json
-  install -m 0600 -o root -g root \
-    /tmp/controller-predecessor-identity.json "$supervisor_identity"
-  install -m 0600 -o root -g root \
-    /tmp/controller-predecessor-identity.json "$product_identity"
-  ln -s "$predecessor_generation" "$controller_root/current.fixture"
-  mv -Tf "$controller_root/current.fixture" "$controller_root/current"
-  systemctl start "$controller_unit" "$supervisor_unit"
-  wait_for_service "$controller_unit"
-  wait_for_service "$supervisor_unit"
-  wait_for_socket "$private_socket"
-  wait_for_socket "$public_socket"
-
-  status_transaction_id="$(/usr/local/bin/node -e 'process.stdout.write(crypto.randomUUID())')"
-  lifecycle_socket_requests \
-    "$private_socket" controllerStatus "$status_transaction_id" "$predecessor_version" 1 \
-    /tmp/controller-predecessor-status.json
-  jq -e --arg version "$predecessor_version" \
-    'length == 1 and .[0].ok == true and .[0].controllerVersion == $version' \
-    /tmp/controller-predecessor-status.json >/dev/null
-
-  printf 'generated-systemd controller transition stage: injected-rollback\n'
-  cat >"$failure_script" <<EOF_CONTROLLER_FAIL_ONCE
-#!/usr/bin/env bash
-set -euo pipefail
-marker=$failure_marker
-if [[ -f "\$marker" ]]; then
-  rm -f -- "\$marker"
-  exit 72
-fi
-EOF_CONTROLLER_FAIL_ONCE
-  chmod 0755 "$failure_script"
-  cat >"$failure_override" <<EOF_CONTROLLER_FAILURE_OVERRIDE
-[Service]
-ExecStartPre=$failure_script
-EOF_CONTROLLER_FAILURE_OVERRIDE
-  chmod 0644 "$failure_override"
-  touch "$failure_marker"
-  systemctl daemon-reload
-
-  transaction_id="$(/usr/local/bin/node -e 'process.stdout.write(crypto.randomUUID())')"
-  lifecycle_socket_requests \
-    "$public_socket" updateController "$transaction_id" "$version" 1 \
-    /tmp/controller-transition-failure.json
-  jq -e \
-    'length == 1 and .[0].ok == false and (.[0].error | contains("controller promotion failed and was restored"))' \
-    /tmp/controller-transition-failure.json >/dev/null
-  wait_for_service "$controller_unit"
-  test "$(readlink -f "$controller_root/current")" = "$predecessor_generation"
-  test "$(jq -r .version "$supervisor_identity")" = "$predecessor_version"
-  test ! -e "$controller_state/supervisor/controller-transaction.json"
-  test ! -e "$failure_marker"
-  sha256sum --check --status "$preservation_manifest"
-
-  printf 'generated-systemd controller transition stage: same-command-retry\n'
-  rm -f -- "$failure_override" "$failure_script"
-  systemctl daemon-reload
-  systemctl reset-failed "$controller_unit"
-  lifecycle_socket_requests \
-    "$public_socket" updateController "$transaction_id" "$version" 2 \
-    /tmp/controller-transition-success.json
-  jq -e --arg version "$version" \
-    'length == 2 and .[0].ok == true and .[0].version == $version and .[0].controllerChanged == true and .[1].ok == true and .[1].version == $version and .[1].controllerChanged == false and (.[1].controllerInstanceId | type == "string") and (.[1].selectionDigest | test("^[a-f0-9]{64}$"))' \
-    /tmp/controller-transition-success.json >/dev/null
-  wait_for_service "$controller_unit"
-  wait_for_service "$supervisor_unit"
-  test "$(readlink -f "$controller_root/current")" = "$target_generation"
-  test "$(jq -r .version "$supervisor_identity")" = "$version"
-  # Retain the last ordinary controller generation as the exact rollback
-  # source. Only explicitly named historical Q0 candidates are disposable.
-  test -d "$predecessor_generation"
-  test ! -L "$predecessor_generation"
-  test "$(stat -c '%u:%g:%a' "$predecessor_generation")" = "0:0:755"
-  test "$(sha256sum "$predecessor_generation/fased-host-updater.mjs" | awk '{print $1}')" = \
-    "$(sha256sum "$target_generation/fased-host-updater.mjs" | awk '{print $1}')"
-  test "$(sha256sum "$predecessor_generation/fased-host-updaterctl.mjs" | awk '{print $1}')" = \
-    "$(sha256sum "$target_generation/fased-host-updaterctl.mjs" | awk '{print $1}')"
-  test ! -e "$controller_state/supervisor/controller-transaction.json"
-  sha256sum --check --status "$preservation_manifest"
-
-  printf 'generated-systemd controller transition stage: receipt-binding\n'
-  selection_digest="$(jq -er '.[1].selectionDigest' /tmp/controller-transition-success.json)"
-  selection_receipt="$controller_state/supervisor/controller-selections/$transaction_id/$selection_digest.json"
-  target_manifest_sha="$(sha256sum "$release_assets/fased-hosted-release-v2.json" | awk '{print $1}')"
-  target_server_sha="$(sha256sum "$target_generation/fased-host-updater.mjs" | awk '{print $1}')"
-  target_client_sha="$(sha256sum "$target_generation/fased-host-updaterctl.mjs" | awk '{print $1}')"
-  jq -e \
-    --arg transaction "$transaction_id" \
-    --arg version "$version" \
-    --arg commit "$commit" \
-    --arg manifest "$target_manifest_sha" \
-    --arg server "$target_server_sha" \
-    --arg client "$target_client_sha" \
-    --arg instance "$(jq -er '.[1].controllerInstanceId' /tmp/controller-transition-success.json)" \
-    --arg selection "$selection_digest" \
-    '.transactionId == $transaction and .version == $version and .releaseCommit == $commit and .targetManifestSha256 == $manifest and .controllerServerSha256 == $server and .controllerClientSha256 == $client and .controllerInstanceId == $instance and .selectionDigest == $selection and .protocolCapabilities == {"controllerProtocol":2,"requestSchema":2,"supervisorProtocol":1}' \
-    "$selection_receipt" >/dev/null
-  test "$(cat "$controller_state/supervisor/controller-selections/$transaction_id/current")" = \
-    "$selection_digest"
-
-  printf 'generated-systemd controller transition stage: namespace-denial\n'
-  controller_pid="$(systemctl show -p MainPID --value "$controller_unit")"
-  test "$controller_pid" -gt 1
-  if nsenter --target "$controller_pid" --mount -- \
-    mkdir "$controller_root/fixture-forbidden-controller-write" 2>/tmp/controller-write.err; then
-    echo "target controller wrote its supervisor-owned generation tree" >&2
-    exit 1
-  fi
-  if nsenter --target "$controller_pid" --mount -- \
-    touch "$controller_drop_in/fixture-forbidden.conf" 2>/tmp/controller-drop-in-write.err; then
-    echo "target controller wrote its own systemd drop-in" >&2
-    exit 1
-  fi
-  if nsenter --target "$controller_pid" --mount -- \
-    touch "$supervisor_drop_in/fixture-forbidden.conf" 2>/tmp/supervisor-drop-in-write.err; then
-    echo "target controller wrote the supervisor systemd drop-in" >&2
-    exit 1
-  fi
-  test ! -e "$controller_root/fixture-forbidden-controller-write"
-  test ! -e "$controller_drop_in/fixture-forbidden.conf"
-  test ! -e "$supervisor_drop_in/fixture-forbidden.conf"
-  printf 'generated-systemd supervised controller A-to-B rollback/retry fixture passed: %s\n' \
-    "$instance"
-}
 
 verify_canonical_lifecycle_controller() {
   local instance="$1"
@@ -694,9 +383,9 @@ verify_canonical_lifecycle_controller() {
      .activeGeneration.version == $version and
      .activeGeneration.commit == $commit' \
     "$manifest" >/dev/null
-  active_root="$(readlink -f "$lifecycle_root/current")"
+  active_root="$(readlink -f "/opt/fased/local/$instance/current")"
   controller_root="$(readlink -f "$lifecycle_root/controller-current")"
-  test "$active_root" = "$lifecycle_root/generations/${active_generation#sha256:}"
+  test "$active_root" = "/opt/fased/local/$instance/generations/${active_generation#sha256:}"
   test "$controller_root" = "$active_root"
   test -x "$controller_root/payload/bin/fased-lifecycled"
 
@@ -730,6 +419,15 @@ verify_canonical_lifecycle_controller() {
   printf 'canonical Go lifecycle controller transaction verified: %s\n' "$instance"
 }
 
+verify_wallet() {
+  local instance="$1"
+  local wallet_id="$2"
+  runuser -u testop -- "$(resolve_signer_binary "$instance")" \
+    admin wallet readiness \
+    --operator-socket "/run/fased-local/$instance/operator/operator.sock" \
+    --wallet-id "$wallet_id"
+}
+
 if [[ "$phase" == "verify-reboot" ]]; then
   [[ -f "$snapshot" ]]
   instance="$(jq -er .instanceId "$snapshot")"
@@ -740,6 +438,9 @@ if [[ "$phase" == "verify-reboot" ]]; then
   wait_for_service "fased-gateway-$instance.service"
   wait_for_gateway_version "$version"
   wait_for_socket "/run/fased-local/$instance/operator/operator.sock"
+  verify_canonical_lifecycle_controller "$instance"
+  test "$(resolve_signer_binary "$instance")" = \
+    "/opt/fased/local/$instance/current/payload/bin/fased-signerd"
   verify_protected_home_acl "$instance"
   mapfile -t env_args < <(operator_env "$instance")
   verify_shared_device_auth "$instance" "$runtime"
@@ -772,10 +473,13 @@ if [[ "$phase" == "verify-reboot" ]]; then
   exit 0
 fi
 
-[[ "$phase" == "install" ||
-  "$phase" == "fresh-install" ||
+[[ "$phase" == "fresh-install" ||
   "$phase" == "managed-update" ]] || {
-  echo "usage: fased-protected-local-systemd-fixture fresh-install|install|managed-update|verify-reboot" >&2
+  echo "usage: fased-protected-local-systemd-fixture fresh-install|managed-update|verify-reboot" >&2
+  exit 64
+}
+[[ "$public_acquisition" == "1" ]] || {
+  echo "The Protected Local fixture requires an exact public-style artifact set." >&2
   exit 64
 }
 if [[ "$phase" != "fresh-install" &&
@@ -804,9 +508,6 @@ cp -a "$artifact_extract/." "$release_root/"
 cp -a "$artifact_extract/node_modules" "$root_store/verified-dependencies/node_modules"
 rm -rf "$release_root/node_modules"
 
-for script in fased-host-updater.mjs fased-host-updaterctl.mjs fased-signer-owner-hosting.sh; do
-  cmp "/repo/scripts/$script" "$release_root/scripts/$script"
-done
 install -m 0755 -o root -g root /artifacts/fased-signerd-linux-amd64 \
   "$root_store/verified-assets/fased-signerd"
 
@@ -818,17 +519,8 @@ printf 'version=%s\ncommit=%s\nsigner_sha256=%s\ndependency_sha256=%s\ndependenc
 chmod 0600 "$release_root/.fased-hosting-bundle-verified"
 test "$(jq -er .version "$release_root/package.json")" = "$version"
 
-rm -rf "$candidate_repo"
-git clone --quiet --no-hardlinks /repo "$candidate_repo"
-git -C "$candidate_repo" checkout --quiet --detach "$commit"
-git -C "$candidate_repo" tag --force "v$version" "$commit"
-chown -R testop:testop "$candidate_repo"
-if [[ "$public_acquisition" == "1" ]]; then
-  install -m 0700 -o testop -g testop /artifacts/install.sh "$candidate_installer"
-else
-  install -m 0700 -o testop -g testop "$candidate_repo/install.sh" "$candidate_installer"
-fi
-if [[ "$phase" == "install" || "$phase" == "managed-update" ]]; then
+install -m 0700 -o testop -g testop /artifacts/install.sh "$candidate_installer"
+if [[ "$phase" == "managed-update" ]]; then
   legacy_commit="$(jq -er .release.commit /predecessor-artifacts/fased-hosted-release-v2.json)"
   rm -rf "$predecessor_repo"
   git clone --quiet --no-hardlinks /repo "$predecessor_repo"
@@ -985,83 +677,7 @@ install -m 0644 -o root -g root \
 printf 'release_manifest_sha256=%s\n' \
   "$(sha256sum "$release_root/.fased-hosted-release-v2.json" | awk '{print $1}')" \
   >>"$release_root/.fased-hosting-bundle-verified"
-if [[ "$public_acquisition" == "1" ]]; then
   cp -a /artifacts/. "$release_assets/"
-else
-install -m 0755 "$candidate_installer" "$release_assets/install.sh"
-install -m 0755 /repo/scripts/fased-lifecycle-supervisor.mjs \
-  "$release_assets/fased-lifecycle-supervisor.mjs"
-install -m 0755 /repo/scripts/fased-host-updater.mjs \
-  "$release_assets/fased-host-updater.mjs"
-install -m 0755 /repo/scripts/fased-host-updaterctl.mjs \
-  "$release_assets/fased-host-updaterctl.mjs"
-install -m 0755 /repo/scripts/privileged-release-evidence.mjs \
-  "$release_assets/fased-privileged-release-evidence.mjs"
-install -m 0644 "/artifacts/$app_asset" "$release_assets/$app_asset"
-install -m 0644 "/artifacts/$dependency_asset" "$release_assets/$dependency_asset"
-install -m 0644 /artifacts/fased-signerd-linux-amd64 \
-  "$release_assets/fased-signerd-linux-amd64"
-install -m 0644 /artifacts/fased-hosting-candidate.json \
-  "$release_assets/fased-hosting-candidate.json"
-install -m 0644 /artifacts/fased-hosting-candidate.json.attestation.json \
-  "$release_assets/fased-hosting-candidate.json.attestation.json"
-install -m 0644 "/artifacts/fased-generation-linux-x64-v${version}.tar.gz" \
-  "$release_assets/fased-generation-linux-x64-v${version}.tar.gz"
-
-# H0 exercises one x64 host. Complete the cross-platform evidence inventory
-# with byte-identical fixture copies so the real evidence verifier can validate
-# the canonical release schema without pretending to execute other platforms.
-install -m 0644 "/artifacts/$app_asset" \
-  "$release_assets/unused-arm64-app.tar.gz"
-install -m 0644 "/artifacts/$dependency_asset" \
-  "$release_assets/unused-arm64-dependencies.tar.gz"
-for signer_asset in \
-  fased-signerd-linux-arm64 \
-  fased-signerd-darwin-amd64 \
-  fased-signerd-darwin-arm64; do
-  install -m 0644 /artifacts/fased-signerd-linux-amd64 \
-    "$release_assets/$signer_asset"
-done
-install -m 0644 \
-  "/artifacts/fased-hosted-components-linux-x64-v${version}.spdx.json" \
-  "$release_assets/fased-hosted-components-linux-x64-v${version}.spdx.json"
-install -m 0644 \
-  "/artifacts/fased-hosted-components-linux-x64-v${version}.spdx.json" \
-  "$release_assets/fased-hosted-components-linux-arm64-v${version}.spdx.json"
-install -m 0644 \
-  "/artifacts/fased-signerd-components-v${version}.spdx.json" \
-  "$release_assets/fased-signerd-components-v${version}.spdx.json"
-
-issued_at="$(date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%S.000Z)"
-expires_at="$(date -u -d '364 days' +%Y-%m-%dT%H:%M:%S.000Z)"
-/usr/local/bin/node /repo/scripts/privileged-release-evidence.mjs build \
-  --assets "$release_assets" \
-  --version "$version" \
-  --commit "$commit" \
-  --issued-at "$issued_at" \
-  --vex-decisions /repo/release/vulnerability-decisions-v1.json \
-  --output-dir "$release_assets"
-/usr/local/bin/node /repo/scripts/build-lifecycle-trust-metadata.mjs \
-  --assets "$release_assets" \
-  --root-policy /repo/release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json \
-  --version "$version" \
-  --commit "$commit" \
-  --issued-at "$issued_at" \
-  --expires-at "$expires_at" \
-  --output "$release_assets/fased-lifecycle-trust-v1.json"
-
-for bundle in \
-  fased-hosted-release-v2.json.attestation.json \
-  fased-lifecycle-supervisor.mjs.attestation.json \
-  fased-host-updater.mjs.attestation.json \
-  fased-host-updaterctl.mjs.attestation.json \
-  fased-lifecycle-trust-v1.json.attestation.json \
-  fased-privileged-provenance-v1.intoto.json.attestation.json \
-  fased-signerd-release.attestation.json; do
-  printf '{"fixtureOfflineAttestation":true}\n' >"$release_assets/$bundle"
-  chmod 0644 "$release_assets/$bundle"
-done
-fi
 
 openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
   -subj "/CN=Fased lifecycle fixture CA" \
@@ -1293,74 +909,6 @@ http
   })
   .listen(port, "127.0.0.1");
 EOF_LEGACY_GATEWAY
-cat >/usr/local/libexec/fased-fixture-protected-installer.sh <<EOF_PROTECTED_INSTALLER
-#!/usr/bin/env bash
-set -euo pipefail
-umask 0117
-declare -A values=()
-while [[ "\$#" -gt 0 ]]; do
-  case "\$1" in
-    --protected-local-root-bootstrap) shift ;;
-    --*) values["\$1"]="\${2:-}"; shift 2 ;;
-    *) echo "unexpected fixture installer argument: \$1" >&2; exit 64 ;;
-  esac
-done
-health_args=()
-if [[ -n "\${values[--protected-local-gateway-health-timeout-ms]:-}" ]]; then
-  health_args=(
-    --gateway-health-timeout-ms
-    "\${values[--protected-local-gateway-health-timeout-ms]}"
-  )
-fi
-bootstrap_result="\$("\${values[--protected-local-node-binary]}" \
-  /repo/scripts/protected-local-bootstrap.mjs install \
-  --source-root "$release_root" \
-  --signer-binary "$root_store/verified-assets/fased-signerd" \
-  --operator-user "\${values[--protected-local-operator-user]}" \
-  --operator-uid "\${values[--protected-local-operator-uid]}" \
-  --operator-gid "\${values[--protected-local-operator-gid]}" \
-  --operator-home "\${values[--protected-local-operator-home]}" \
-  --state-dir "\${values[--protected-local-state-dir]}" \
-  --runtime-dir "\${values[--protected-local-runtime-dir]}" \
-  --node-binary "\${values[--protected-local-node-binary]}" \
-  --release-version "\${values[--release]}" \
-  --release-commit "$commit" \
-  --update-channel "\${values[--update-channel]}" \
-  --profile "\${values[--protected-local-profile]}" \
-  --gateway-port "\${values[--protected-local-gateway-port]}" \
-  --gateway-mode "\${values[--protected-local-gateway-mode]}" \
-  "\${health_args[@]}")"
-printf '%s\n' "\$bootstrap_result"
-if [[ "\${values[--protected-local-gateway-mode]}" == "activate" ]]; then
-  lifecycle_instance="\$(printf '%s\n' "\$bootstrap_result" | \
-    "\${values[--protected-local-node-binary]}" -e '
-      let input = "";
-      process.stdin.on("data", (chunk) => (input += chunk));
-      process.stdin.on("end", () => {
-        const value = JSON.parse(input.trim().split(/\\n/u).filter(Boolean).at(-1));
-        if (!/^[a-f0-9]{16}$/u.test(String(value.instanceId || ""))) process.exit(1);
-        process.stdout.write(value.instanceId);
-      });
-    ')"
-  gateway_user="fsgw-\${lifecycle_instance}"
-  signer_user="fssg-\${lifecycle_instance}"
-  NODE_PATH="$root_store/verified-dependencies/node_modules" \
-    "\${values[--protected-local-node-binary]}" \
-    "$release_root/scripts/generation-updater.mjs" initialize \
-    --version "\${values[--release]}" \
-    --profile protected-local \
-    --instance "\$lifecycle_instance" \
-    --owner-state "\${values[--protected-local-state-dir]}" \
-    --gateway-port "\${values[--protected-local-gateway-port]}" \
-    --operator-uid "\${values[--protected-local-operator-uid]}" \
-    --operator-gid "\${values[--protected-local-operator-gid]}" \
-    --gateway-uid "\$(id -u "\$gateway_user")" \
-    --gateway-gid "\$(id -g "\$gateway_user")" \
-    --signer-uid "\$(id -u "\$signer_user")" \
-    --signer-gid "\$(id -g "\$signer_user")"
-fi
-EOF_PROTECTED_INSTALLER
-chmod 0755 /usr/local/libexec/fased-fixture-protected-installer.sh
 cat >/usr/local/bin/sudo <<'EOF_SUDO_SHIM'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1372,24 +920,6 @@ if [[ " $* " == *" apt-get "* || " $* " == *" dnf "* || " $* " == *" dnf5 "* ]];
   /usr/bin/sudo /usr/bin/install -m 0755 \
     /opt/fased-fixture-bootstrap-tools/gh /usr/local/bin/gh
   exit 0
-fi
-if [[ "${1:-}" == "--" &&
-  "${2:-}" == "/bin/bash" &&
-  "${4:-}" == "--protected-local-root-bootstrap" ]]; then
-  requested_release=""
-  for ((index = 4; index <= $#; index++)); do
-    if [[ "${!index}" == "--release" ]]; then
-      value_index=$((index + 1))
-      requested_release="${!value_index:-}"
-      requested_release="${requested_release#v}"
-      break
-    fi
-  done
-  if [[ -n "${FASED_FIXTURE_VERSION:-}" &&
-    "$requested_release" == "$FASED_FIXTURE_VERSION" ]]; then
-    exec /usr/bin/sudo -- \
-      /bin/bash /usr/local/libexec/fased-fixture-protected-installer.sh "${@:4}"
-  fi
 fi
 exec /usr/bin/sudo "$@"
 EOF_SUDO_SHIM
@@ -1453,7 +983,6 @@ if [[ "$phase" == "fresh-install" ]]; then
     FASED_GATEWAY_PORT="$gateway_port"
     FASED_GATEWAY_TOKEN="$gateway_token"
     FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port"
-    FASED_INSTALL_REPO="$candidate_repo"
     npm_config_registry="http://127.0.0.1:$rpc_port"
   )
   fresh_channel="$([[ "$version" == *-* ]] && printf beta || printf stable)"
@@ -1483,7 +1012,7 @@ if [[ "$phase" == "fresh-install" ]]; then
   test -s "$state/fased.json"
   test -s "$state/install.json"
   test "$(jq -r .profile "$state/install.json")" = "protected-local"
-  instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
+  instance="$(jq -er '.instanceId' "$state/lifecycle.json")"
   runtime="$(resolve_protected_runtime "$instance")"
   verify_protected_home_acl "$instance"
   wait_for_service "fased-local-controller-$instance.service"
@@ -1589,15 +1118,17 @@ if [[ "$phase" == "managed-update" ]]; then
     HOME=/home/testop
     USER=testop
     LOGNAME=testop
+    XDG_RUNTIME_DIR=/run/user/2000
+    DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/2000/bus
     FASED_STATE_DIR="$state"
     FASED_CONFIG_PATH="$state/fased.json"
     FASED_GATEWAY_PORT="$gateway_port"
     FASED_GATEWAY_TOKEN="$gateway_token"
     FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port"
-    FASED_INSTALL_REPO="$predecessor_repo"
     npm_config_registry="http://127.0.0.1:$rpc_port"
   )
   runuser -u testop -- env "${managed_env[@]}" \
+    FASED_INSTALL_REPO="$predecessor_repo" \
     /bin/bash "$predecessor_repo/install.sh" \
       --release "v$predecessor_version" \
       --update-channel beta \
@@ -1618,6 +1149,9 @@ if [[ "$phase" == "managed-update" ]]; then
 
   predecessor_profile="$(jq -er .profile "$state/install.json")"
   if [[ "$predecessor_profile" == "local" ]]; then
+    user_systemctl is-enabled --quiet fased-gateway.service
+    user_systemctl is-active --quiet fased-gateway.service
+    wait_for_gateway_version "$predecessor_version"
     install -d -m 0700 -o testop -g testop \
       "$state/extensions" "$state/sat-mining" "$state/workspace"
     printf '{"schemaVersion":1,"enabled":["stable-bridge"]}\n' \
@@ -1649,32 +1183,110 @@ if [[ "$phase" == "managed-update" ]]; then
       "$state/workspace/stable-bridge.txt" \
       >"$stable_bridge_restart_manifest"
 
-    runuser -u testop -- env "${managed_env[@]}" \
-      FASED_INSTALL_REPO="$candidate_repo" \
-      /bin/bash "$candidate_installer" \
-      --release "v$version" \
-      --update-channel beta \
-      --local \
-      --install-dir /home/testop/fased \
-      -- \
-      --non-interactive \
-      --accept-risk \
-      --auth-choice skip \
-      --workspace /home/testop/.fased/workspace \
-      --gateway-auth token \
-      --gateway-token "$gateway_token" \
-      --gateway-port "$gateway_port" \
-      --gateway-bind loopback \
-      --skip-skills \
-      --skip-health \
+    run_stable_bridge_installer() {
+      runuser -u testop -- env "${managed_env[@]}" \
+        /bin/bash "$candidate_installer" \
+        --release "v$version" \
+        --update-channel beta \
+        --local \
+        --install-dir /home/testop/fased \
+        -- \
+        --non-interactive \
+        --accept-risk \
+        --auth-choice skip \
+        --workspace /home/testop/.fased/workspace \
+        --gateway-auth token \
+        --gateway-token "$gateway_token" \
+        --gateway-port "$gateway_port" \
+        --gateway-bind loopback \
+        --skip-skills \
+        --skip-health
+    }
+
+    bridge_fault_root="/run/fased-fixture-bridge-gateway-fault-$$"
+    bridge_fault_script="$bridge_fault_root/reject-target.sh"
+    bridge_fault_marker="$bridge_fault_root/injected"
+    bridge_fault_dropin_dir=/etc/systemd/system/fased-gateway-.service.d
+    bridge_fault_dropin="$bridge_fault_dropin_dir/99-fased-fixture-target-fault.conf"
+    mkdir -p "$bridge_fault_root" "$bridge_fault_dropin_dir"
+    cat >"$bridge_fault_script" <<EOF_STABLE_BRIDGE_FAILURE
+#!/usr/bin/env bash
+set -euo pipefail
+unit="\${1:?unit is required}"
+instance="\${unit#fased-gateway-}"
+instance="\${instance%.service}"
+printf '%s\n' "\$instance" >'$bridge_fault_marker'
+exit 1
+EOF_STABLE_BRIDGE_FAILURE
+    chmod 0755 "$bridge_fault_script"
+    cat >"$bridge_fault_dropin" <<EOF_STABLE_BRIDGE_DROPIN
+[Service]
+ExecStartPre=+$bridge_fault_script %n
+EOF_STABLE_BRIDGE_DROPIN
+    systemctl daemon-reload
+    if run_stable_bridge_installer \
+      >/tmp/stable-bridge-failure.out 2>/tmp/stable-bridge-failure.err; then
+      stable_bridge_failure_status=0
+    else
+      stable_bridge_failure_status=$?
+    fi
+    rm -f "$bridge_fault_dropin"
+    rmdir "$bridge_fault_dropin_dir" 2>/dev/null || true
+    systemctl daemon-reload
+    test "$stable_bridge_failure_status" -ne 0
+    test -s "$bridge_fault_marker"
+    grep -F "privileged lifecycle apply failed" /tmp/stable-bridge-failure.err >/dev/null
+    failure_instance="$(cat "$bridge_fault_marker")"
+    [[ "$failure_instance" =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]]
+    systemctl reset-failed "fased-gateway-$failure_instance.service" 2>/dev/null || true
+    rm -rf -- "$bridge_fault_root"
+    wait_for_gateway_version "$predecessor_version"
+    test ! -e "$state/lifecycle.json"
+    test ! -e "/var/lib/fased-local/$failure_instance"
+    test ! -e "/opt/fased/local/$failure_instance"
+    for failed_runtime_root in \
+      "/run/fased-local/$failure_instance" \
+      "/run/fased-local-controller/$failure_instance" \
+      "/run/fased-local-controller-worker/$failure_instance"; do
+      test ! -e "$failed_runtime_root"
+    done
+    for failed_unit in \
+      "fased-local-controller-worker-$failure_instance.service" \
+      "fased-local-controller-$failure_instance.service" \
+      "fased-signerd-$failure_instance.service" \
+      "fased-gateway-$failure_instance.service"; do
+      test ! -e "/etc/systemd/system/$failed_unit"
+      ! systemctl is-enabled --quiet "$failed_unit"
+    done
+    if [[ -f /var/lib/fased-local-registry/instances.json ]]; then
+      ! jq -e --arg instance "$failure_instance" \
+        '.instances[]? | select(.instanceId == $instance)' \
+        /var/lib/fased-local-registry/instances.json >/dev/null
+    fi
+    for failed_account in "fsgw-$failure_instance" "fssg-$failure_instance"; do
+      ! getent passwd "$failed_account" >/dev/null
+    done
+    for failed_group in \
+      "fsgw-$failure_instance" \
+      "fssg-$failure_instance" \
+      "fsop-$failure_instance" \
+      "fscf-$failure_instance"; do
+      ! getent group "$failed_group" >/dev/null
+    done
+    user_systemctl is-enabled --quiet fased-gateway.service
+    user_systemctl is-active --quiet fased-gateway.service
+    sha256sum --check "$stable_bridge_manifest"
+
+    run_stable_bridge_installer \
       >/tmp/stable-bridge-update.out 2>/tmp/stable-bridge-update.err
     test "$(jq -er .profile "$state/install.json")" = "protected-local"
     test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$version"
     sha256sum --check "$stable_bridge_manifest"
     printf '%s\n' "$version" >"$selected_target"
-    instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
+    instance="$(jq -er .instanceId "$state/lifecycle.json")"
     runtime="$(resolve_protected_runtime "$instance")"
     mapfile -t managed_operator_env < <(operator_env "$instance")
+    runuser -u "fsgw-$instance" -- test -r "$state/extensions/stable-bridge-plugin.json"
     wait_for_service "fased-local-controller-$instance.service"
     wait_for_service "fased-signerd-$instance.service"
     wait_for_service "fased-gateway-$instance.service"
@@ -1715,6 +1327,9 @@ if [[ "$phase" == "managed-update" ]]; then
       exit 1
     fi
     grep -F "Already current: $version" /tmp/stable-bridge-noop.out >/dev/null
+    run_stable_bridge_installer \
+      >/tmp/stable-bridge-installer-noop.out 2>/tmp/stable-bridge-installer-noop.err
+    grep -F "Already current: $version" /tmp/stable-bridge-installer-noop.out >/dev/null
     agent_readiness_sha="$(jq -S -c . /tmp/stable-agent-restart.json | sha256sum | awk '{print $1}')"
     vault_readiness_sha="$(jq -S -c . /tmp/stable-vault-restart.json | sha256sum | awk '{print $1}')"
     key_sha="$(sha256sum "/var/lib/fased-local/$instance/signer/master.key" | awk '{print $1}')"
@@ -1828,7 +1443,7 @@ EOF_MANAGED_MINING_LEDGER
       <(jq -S '{nodeId, handle}' "$state/federation/access-token.json")
     test "$(readlink -f "$operator_current")" = "$(readlink -f "$application_current")"
     test "$(jq -er .profile "$state/install.json")" = "protected-local"
-    test "$(jq -er .env.vars.FASED_PROTECTED_LOCAL_INSTANCE "$state/fased.json")" = "$instance"
+    test "$(jq -er .instanceId "$state/lifecycle.json")" = "$instance"
     test ! -e "/var/lib/fased-local/$instance/controller/supervisor/product-transaction.json"
   }
   predecessor_gateway_version="$predecessor_version"
@@ -1940,436 +1555,3 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
   printf 'managed packaged Protected Local rollback, retry, restart, preservation, and no-op passed: %s\n' "$instance"
   exit 0
 fi
-
-# Install the complete immutable predecessor through its own released installer,
-# application, dependency layer, signer, updater, and service setup. L1 must
-# never manufacture a previous topology from current components.
-# Some supported predecessor installers require gh to pre-exist because their immutable outer resolver installs
-# verification tools inside command substitution. That historical fresh-install
-# limitation is not repaired retroactively by the target candidate.
-/usr/bin/install -m 0755 \
-  /opt/fased-fixture-bootstrap-tools/gh /usr/local/bin/gh
-legacy_channel="$([[ "$predecessor_version" == *-* ]] && printf beta || printf stable)"
-legacy_install_env=(
-  HOME=/home/testop
-  USER=testop
-  LOGNAME=testop
-  XDG_RUNTIME_DIR=/run/user/2000
-  DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/2000/bus
-  FASED_STATE_DIR="$state"
-  FASED_CONFIG_PATH="$state/fased.json"
-  FASED_GATEWAY_PORT="$gateway_port"
-  FASED_GATEWAY_TOKEN="$gateway_token"
-  FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port"
-  FASED_LOCAL_SIGNER_BASE_URL="http://127.0.0.1:$rpc_port"
-  FASED_LOCAL_SIGNER_ALLOW_UNATTESTED=1
-  FASED_INSTALL_REPO="$predecessor_repo"
-  FASED_FIXTURE_PREDECESSOR_VERSION="$predecessor_version"
-  npm_config_registry="http://127.0.0.1:$rpc_port"
-)
-set +e
-runuser -u testop -- env "${legacy_install_env[@]}" \
-  /bin/bash -s -- \
-    --release "v$predecessor_version" \
-    --update-channel "$legacy_channel" \
-    --local \
-    --install-dir /home/testop/fased \
-    -- \
-    --non-interactive \
-    --accept-risk \
-    --auth-choice skip \
-    --workspace /home/testop/.fased/workspace \
-    --gateway-auth token \
-    --gateway-token "$gateway_token" \
-    --gateway-port "$gateway_port" \
-    --gateway-bind loopback \
-    --wallet-enabled \
-    --wallet-mode managed \
-    --wallet-providers local-socket-signer \
-    --wallet-default-provider local-socket-signer \
-    --wallet-chains solana \
-    --wallet-install-enabled \
-    --skip-skills \
-    --skip-health \
-  <"$predecessor_installer" \
-  >/tmp/legacy-install.out 2>/tmp/legacy-install.err
-legacy_install_status=$?
-set -e
-if [[ "$legacy_install_status" -ne 0 ]]; then
-  test "$legacy_install_status" -eq 1
-  grep -F "Installed stable Fased updater and activated managed runtime v${predecessor_version}." \
-    /tmp/legacy-install.out >/dev/null
-  grep -F "Installed systemd service:" /tmp/legacy-install.out >/dev/null
-fi
-
-test "$(jq -er .profile "$state/install.json")" = "local"
-test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$predecessor_version"
-legacy_runtime="$(readlink -f "$state/runtime/current")"
-test "$(jq -er .version "$legacy_runtime/package.json")" = "$predecessor_version"
-test "$(jq -er .version "$legacy_runtime/dist/build-info.json")" = "$predecessor_version"
-test "$(jq -er .commit "$legacy_runtime/dist/build-info.json")" = "$legacy_commit"
-legacy_signer_env="$state/wallet/signer.env"
-read_legacy_signer_env() {
-  local key="$1"
-  sed -n "s/^export ${key}=\"\\(.*\\)\"$/\\1/p" "$legacy_signer_env"
-}
-legacy_binary="$state/bin/fased-signerd"
-legacy_socket="$(read_legacy_signer_env FASED_WALLET_LOCAL_SIGNER_SOCKET)"
-legacy_control="$(read_legacy_signer_env FASED_WALLET_LOCAL_SIGNER_CONTROL_SOCKET)"
-legacy_db="$(read_legacy_signer_env FASED_WALLET_LOCAL_SIGNER_STATE_DB)"
-legacy_master_key="$(read_legacy_signer_env FASED_WALLET_LOCAL_SIGNER_MASTER_KEY)"
-test -n "$legacy_socket"
-test -n "$legacy_control"
-test -n "$legacy_db"
-test -n "$legacy_master_key"
-legacy_registry="$state/wallet/provider-registry.v1.json"
-test "$(sha256sum "$legacy_binary" | awk '{print $1}')" = \
-  "$(jq -er '.signer.platforms["linux-amd64"].sha256' \
-    /predecessor-artifacts/fased-hosted-release-v2.json)"
-wait_for_socket "$legacy_control"
-wait_for_gateway_version "$predecessor_version"
-
-legacy_cli="$state/install-cache/npm-global/bin/fased"
-runuser -u testop -- env "${legacy_install_env[@]}" \
-  "$legacy_cli" wallet setup \
-    --mode local-signer-create \
-    --wallet-id agent \
-    --wallet-name Agent \
-    --role agent \
-    --rpc-url "http://127.0.0.1:$rpc_port" \
-    --non-interactive \
-    --json \
-  >/tmp/legacy-wallet.json
-legacy_public_key="$(jq -er '.address // .wallet.publicKey' /tmp/legacy-wallet.json)"
-
-verify_legacy_wallet() {
-  local output="$1"
-  local error_output="${output}.err"
-  for _ in {1..200}; do
-    if [[ -S "$legacy_control" ]] &&
-      runuser -u testop -- "$legacy_binary" admin wallet readiness \
-        --control-socket "$legacy_control" \
-        --wallet-id agent \
-        >"$output" 2>"$error_output" &&
-      jq -e --arg publicKey "$legacy_public_key" \
-        '.ready == true and .role == "agent" and .publicKey == $publicKey' \
-        "$output" >/dev/null; then
-      rm -f -- "$error_output"
-      return 0
-    fi
-    sleep 0.1
-  done
-  cat "$error_output" >&2 || true
-  return 1
-}
-verify_legacy_wallet /tmp/legacy-readiness.json
-
-original_key_sha="$(sha256sum "$legacy_master_key" | awk '{print $1}')"
-original_registry_sha="$(sha256sum "$legacy_registry" | awk '{print $1}')"
-managed_update_env=(
-  HOME=/home/testop \
-  USER=testop \
-  LOGNAME=testop \
-  XDG_RUNTIME_DIR=/run/user/2000 \
-  DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/2000/bus \
-  FASED_STATE_DIR="$state" \
-  FASED_CONFIG_PATH="$state/fased.json" \
-  FASED_GATEWAY_PORT="$gateway_port" \
-  FASED_GATEWAY_TOKEN="$gateway_token" \
-  FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
-  FASED_FIXTURE_PREDECESSOR_VERSION="$predecessor_version" \
-  npm_config_registry="http://127.0.0.1:$rpc_port"
-)
-standard_bootstrap_env=(
-  "${managed_update_env[@]}"
-  FASED_INSTALL_REPO="$candidate_repo"
-)
-
-run_standard_local_bootstrap() {
-  runuser -u testop -- env "${standard_bootstrap_env[@]}" \
-    /bin/bash "$candidate_installer" \
-    --release "v$version" \
-    --update-channel "$([[ "$version" == *-* ]] && printf beta || printf stable)" \
-    --local
-}
-
-# A pre-handoff executable cannot be changed retroactively. Exercise the
-# version-neutral product contract instead: the normal verified Local installer
-# detects the topology and performs one state-preserving protected bootstrap.
-# Every subsequent transition uses only `fased update`.
-prepare_restrictive_home_acl
-original_home_acl="$(capture_home_acl)"
-predecessor_gateway_version="$predecessor_version"
-user_unit_dir=/home/testop/.config/systemd/user
-test -s "$user_unit_dir/fased-gateway.service"
-cat >"$user_unit_dir/fased-fixture-gateway-reactivator.service" <<'EOF_REACTIVATOR_SERVICE'
-[Unit]
-Description=Fased fixture legacy Gateway reverse dependency
-After=fased-gateway.service
-Wants=fased-gateway.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/true
-EOF_REACTIVATOR_SERVICE
-cat >"$user_unit_dir/fased-fixture-gateway-reactivator.timer" <<'EOF_REACTIVATOR_TIMER'
-[Unit]
-Description=Repeatedly exercise the legacy Gateway reverse dependency
-
-[Timer]
-OnBootSec=1
-OnUnitActiveSec=1
-Unit=fased-fixture-gateway-reactivator.service
-
-[Install]
-WantedBy=timers.target
-EOF_REACTIVATOR_TIMER
-chown testop:testop \
-  "$user_unit_dir/fased-fixture-gateway-reactivator.service" \
-  "$user_unit_dir/fased-fixture-gateway-reactivator.timer"
-chmod 0600 "$user_unit_dir"/*.service "$user_unit_dir"/*.timer
-user_systemctl daemon-reload
-user_systemctl enable --now fased-fixture-gateway-reactivator.timer
-wait_for_gateway_version "$predecessor_gateway_version"
-original_manifest_sha="$(sha256sum "$state/install.json" | awk '{print $1}')"
-install -d -m 0700 -o testop -g testop "$state/identity"
-cat >"$state/identity/device-auth.json" <<'EOF_LEGACY_DEVICE_AUTH'
-{
-  "version": 1,
-  "deviceId": "fixture-shared-device",
-  "tokens": {
-    "operator": {
-      "token": "fixture-operator-token",
-      "role": "operator",
-      "scopes": [],
-      "updatedAtMs": 1
-    }
-  }
-}
-EOF_LEGACY_DEVICE_AUTH
-chown testop:testop "$state/identity/device-auth.json"
-chmod 0600 "$state/identity/device-auth.json"
-printf '%s\n' "$version" >"$selected_target"
-
-inject_failed_target_gateway() {
-  local candidate=""
-  local candidate_relative=""
-  local fault_digest=""
-  local fault_launcher=""
-  local instance_id=""
-  for _ in {1..12000}; do
-    for candidate in /opt/fased/local/*/gateway-launch; do
-      [[ -f "$candidate" ]] || continue
-      candidate_relative="${candidate#/opt/fased/local/}"
-      instance_id="${candidate_relative%%/*}"
-      [[ -n "$instance_id" && "$instance_id" != "$candidate_relative" ]] || continue
-      printf '%s\n' "$instance_id" >/tmp/injected-failure-instance
-      fault_launcher="${candidate}.fixture-fault.$$"
-      cat >"$fault_launcher" <<EOF_FAILED_GATEWAY
-#!/usr/bin/env bash
-set -euo pipefail
-export FASED_FIXTURE_GATEWAY_PORT=$gateway_port
-export FASED_FIXTURE_PREDECESSOR_VERSION=$predecessor_gateway_version
-exec /usr/local/bin/node /usr/local/libexec/fased-fixture-legacy-gateway.mjs
-EOF_FAILED_GATEWAY
-      chown root:root "$fault_launcher"
-      chmod 0755 "$fault_launcher"
-      mv -f "$fault_launcher" "$candidate"
-      fault_digest="$(sha256sum "$candidate" | awk '{print $1}')"
-      for _ in {1..12000}; do
-        [[ -f "$candidate" ]] || break
-        if [[ "$(sha256sum "$candidate" | awk '{print $1}')" != "$fault_digest" ]]; then
-          fault_launcher="${candidate}.fixture-fault.$$"
-          cat >"$fault_launcher" <<EOF_FAILED_GATEWAY
-#!/usr/bin/env bash
-set -euo pipefail
-export FASED_FIXTURE_GATEWAY_PORT=$gateway_port
-export FASED_FIXTURE_PREDECESSOR_VERSION=$predecessor_gateway_version
-exec /usr/local/bin/node /usr/local/libexec/fased-fixture-legacy-gateway.mjs
-EOF_FAILED_GATEWAY
-          chown root:root "$fault_launcher"
-          chmod 0755 "$fault_launcher"
-          mv -f "$fault_launcher" "$candidate"
-          return 0
-        fi
-        sleep 0.005
-      done
-      echo "failed to inject the staged target Gateway activation fault" >&2
-      return 1
-    done
-    sleep 0.01
-  done
-  echo "failed to inject the target Gateway activation fault" >&2
-  return 1
-}
-
-inject_failed_target_gateway &
-injector_pid=$!
-if run_standard_local_bootstrap \
-  >/tmp/protected-bootstrap-failure.out 2>/tmp/protected-bootstrap-failure.err; then
-  update_failure_status=0
-else
-  update_failure_status=$?
-fi
-wait "$injector_pid"
-test "$update_failure_status" -ne 0
-grep -F "target release failed and was rolled back" /tmp/protected-bootstrap-failure.err >/dev/null
-grep -F \
-  "target Gateway did not become healthy as v${version}:" \
-  /tmp/protected-bootstrap-failure.err >/dev/null
-grep -F \
-  "target Gateway readiness response is invalid" \
-  /tmp/protected-bootstrap-failure.err >/dev/null
-failure_instance="$(cat /tmp/injected-failure-instance)"
-wait_for_gateway_version "$predecessor_gateway_version"
-verify_original_home_acl
-test ! -e "$user_unit_dir/fased-gateway.service.d/90-fased-protected-local.conf"
-test ! -e "/var/lib/fased-local/$failure_instance/controller/protected-local-active"
-test ! -e "/var/lib/fased-local/$failure_instance"
-test ! -e "/opt/fased/local/$failure_instance"
-user_systemctl is-enabled --quiet fased-gateway.service
-user_systemctl is-active --quiet fased-gateway.service
-test "$(sha256sum "$state/install.json" | awk '{print $1}')" = "$original_manifest_sha"
-test "$(sha256sum "$legacy_master_key" | awk '{print $1}')" = "$original_key_sha"
-test "$(sha256sum "$legacy_registry" | awk '{print $1}')" = \
-  "$original_registry_sha"
-verify_legacy_wallet /tmp/failure-rollback-agent.json
-
-run_standard_local_bootstrap \
-  >/tmp/protected-bootstrap.out 2>/tmp/protected-bootstrap.err
-grep -F "Verified Local lifecycle handoff complete." /tmp/protected-bootstrap.out >/dev/null
-grep -F "Pre-handoff Local installation detected" /tmp/protected-bootstrap.err >/dev/null
-
-instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
-runtime="$(resolve_protected_runtime "$instance")"
-verify_protected_home_acl "$instance"
-wait_for_gateway_version "$version"
-wait_for_service "fased-signerd-$instance.service"
-wait_for_service "fased-local-controller-$instance.service"
-wait_for_service "fased-gateway-$instance.service"
-test "$(stat -c '%U:%G:%a' "$state/identity/device-auth.json")" = \
-  "testop:fscf-$instance:660"
-verify_shared_device_auth "$instance" "$runtime"
-verify_mining_history
-verify_shared_federation_state "$instance" "$runtime"
-verify_profileless_config_write "$instance" "$runtime"
-signer_pid_before="$(systemctl show -p MainPID --value "fased-signerd-$instance.service")"
-gateway_pid_before="$(systemctl show -p MainPID --value "fased-gateway-$instance.service")"
-test "$(run_as_stale_operator id -G)" = "$(id -g testop)"
-run_as_stale_operator test -r "$state/fased.json"
-run_as_stale_operator "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
-  >/tmp/protected-stale-session-update.out 2>/tmp/protected-stale-session-update.err
-grep -F "Already current: $version" /tmp/protected-stale-session-update.out >/dev/null
-run_as_stale_operator "$state/bin/fased" mining history \
-  --url "ws://127.0.0.1:$gateway_port" \
-  --token "$gateway_token" \
-  --timeout 5000 \
-  --json \
-  >/tmp/protected-stale-session-mining.json
-jq -e 'type == "object"' /tmp/protected-stale-session-mining.json >/dev/null
-runuser -u testop -- env "${managed_update_env[@]}" \
-  "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
-  >/tmp/protected-noop-update.out 2>/tmp/protected-noop-update.err
-grep -F "Already current: $version" /tmp/protected-noop-update.out >/dev/null
-if grep -F "Protected Local migration" /tmp/protected-noop-update.err >/dev/null; then
-  echo "idempotent update repeated Protected Local migration" >&2
-  exit 1
-fi
-test "$(systemctl show -p MainPID --value "fased-signerd-$instance.service")" = \
-  "$signer_pid_before"
-test "$(systemctl show -p MainPID --value "fased-gateway-$instance.service")" = \
-  "$gateway_pid_before"
-runuser -u "fsgw-$instance" -- test -S \
-  "/run/fased-local/$instance/application/app.sock"
-test "$(jq -r .profile "$state/install.json")" = "protected-local"
-test "$(jq -r .runtime.activeVersion "$state/install.json")" = "$version"
-test "$(jq -r .runtime.previousVersion "$state/install.json")" = "$predecessor_gateway_version"
-test "$(jq -r .service.name "$state/install.json")" = "fased-gateway-$instance.service"
-test "$(cat "/var/lib/fased-local/$instance/controller/signer-version")" = "$version"
-test "$(jq -r .version "/var/lib/fased-local/$instance/controller/controller-version.json")" = \
-  "$version"
-test -s "/var/lib/fased-local/$instance/controller/protected-local-active"
-test -s \
-  "$user_unit_dir/fased-gateway.service.d/90-fased-protected-local.conf"
-if user_systemctl is-active --quiet fased-gateway.service; then
-  echo "legacy user Gateway remained active after protected Local migration" >&2
-  exit 1
-fi
-user_systemctl start fased-fixture-gateway-reactivator.service
-sleep 1
-if user_systemctl is-active --quiet fased-gateway.service; then
-  echo "legacy user Gateway was resurrected by a reverse dependency" >&2
-  exit 1
-fi
-wait_for_gateway_version "$version"
-verify_wallet "$instance" agent >/tmp/active-agent.json
-jq -e --arg publicKey "$legacy_public_key" \
-  '.ready == true and .role == "agent" and .publicKey == $publicKey' \
-  /tmp/active-agent.json >/dev/null
-test ! -e "$legacy_db"
-test ! -e "$legacy_master_key"
-test "$(sha256sum "$legacy_registry" | awk '{print $1}')" = \
-  "$original_registry_sha"
-
-mapfile -t env_args < <(operator_env "$instance")
-verify_shared_device_auth "$instance" "$runtime"
-verify_mining_history
-verify_shared_federation_state "$instance" "$runtime"
-runuser -u testop -- env "${env_args[@]}" \
-  /usr/local/bin/node "$runtime/fased.mjs" wallet setup \
-  --mode local-signer-create \
-  --wallet-id vault \
-  --wallet-name Vault \
-  --role vault \
-  --rpc-url "http://127.0.0.1:$rpc_port" \
-  --non-interactive \
-  --json \
-  >/tmp/protected-vault-create.json
-verify_shared_wallet_registry "$instance" "$runtime"
-verify_wallet "$instance" vault >/tmp/active-vault.json
-jq -e '.ready == true and .role == "vault"' /tmp/active-vault.json >/dev/null
-runuser -u testop -- "/opt/fased/local/$instance/signer/fased-signerd" \
-  admin wallet balance \
-  --operator-socket "/run/fased-local/$instance/operator/operator.sock" \
-  --wallet-id agent \
-  >/tmp/active-agent-balance.json
-jq -e '.balance == "2000000000" and .unit == "lamports"' \
-  /tmp/active-agent-balance.json >/dev/null
-
-verify_canonical_lifecycle_controller "$instance"
-
-systemctl restart "fased-local-controller-$instance.service" \
-  "fased-signerd-$instance.service" "fased-gateway-$instance.service"
-wait_for_service "fased-gateway-$instance.service"
-wait_for_gateway_version "$version"
-runuser -u testop -- env "${env_args[@]}" \
-  /usr/local/bin/node "$runtime/fased.mjs" health --json --timeout 5000 \
-  >/tmp/restart-health.json
-jq -e '.ok == true' /tmp/restart-health.json >/dev/null
-ss -ltn | grep -Eq "127\\.0\\.0\\.1:${gateway_port}[[:space:]]"
-if ss -ltn | grep -Eq "(0\\.0\\.0\\.0|\\[::\\]):${gateway_port}[[:space:]]"; then
-  echo "Protected Local Gateway is publicly bound." >&2
-  exit 1
-fi
-
-verify_wallet "$instance" agent >/tmp/pre-reboot-agent.json
-verify_wallet "$instance" vault >/tmp/pre-reboot-vault.json
-agent_readiness_sha="$(jq -S -c . /tmp/pre-reboot-agent.json | sha256sum | awk '{print $1}')"
-vault_readiness_sha="$(jq -S -c . /tmp/pre-reboot-vault.json | sha256sum | awk '{print $1}')"
-key_sha="$(sha256sum "/var/lib/fased-local/$instance/signer/master.key" | awk '{print $1}')"
-jq -n \
-  --arg instanceId "$instance" \
-  --arg agentReadinessSha256 "$agent_readiness_sha" \
-  --arg vaultReadinessSha256 "$vault_readiness_sha" \
-  --arg masterKeySha256 "$key_sha" \
-  --arg agentPublicKey "$legacy_public_key" \
-  '{
-    instanceId: $instanceId,
-    agentReadinessSha256: $agentReadinessSha256,
-    vaultReadinessSha256: $vaultReadinessSha256,
-    masterKeySha256: $masterKeySha256,
-    agentPublicKey: $agentPublicKey
-  }' >"$snapshot"
-chmod 0600 "$snapshot"
-
-printf 'protected Local real Gateway and wallet fixture passed: %s\n' "$instance"

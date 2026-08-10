@@ -1,9 +1,6 @@
-import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveManagedUpdaterCore } from "./fased-managed-updater.mjs";
 import {
@@ -17,16 +14,13 @@ import {
 const FILES = [
   "fased-managed-updater.mjs",
   "fased-generation-updater-core.mjs",
-  "fased-managed-updater-core.mjs",
   "generation-updater.mjs",
-  "fased-host-updaterctl.mjs",
   "hosted-release-manifest.mjs",
   "lifecycle-trust-crypto.mjs",
   "lifecycle-trust-policy.mjs",
   "lifecycle-trust-root.mjs",
   "lifecycle-trust-runtime.mjs",
   "managed-runtime-layout.mjs",
-  "managed-update-contract.mjs",
   "managed-updater-bundle.mjs",
   "managed-updater-bundle.v1.json",
   "fased-managed-launcher.sh",
@@ -330,7 +324,7 @@ describe("managed updater content-addressed bundle", () => {
       copyExecutable,
     });
     await fs.writeFile(
-      path.join(generation.generationDir, "fased-managed-updater-core.mjs"),
+      path.join(generation.generationDir, "fased-generation-updater-core.mjs"),
       "// tampered core\n",
       { mode: 0o755 },
     );
@@ -394,100 +388,26 @@ describe("managed updater content-addressed bundle", () => {
     ]);
   });
 
-  it("continues from a frozen pre-manifest flat updater into a complete generation", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "managed-updater-frozen-"));
-    tempDirs.push(root);
-    const sourceRoot = path.resolve(import.meta.dirname, "..");
-    const updaterDir = path.join(root, "state", "updater");
-    const fixture = JSON.parse(
-      await fs.readFile(
-        path.join(import.meta.dirname, "fixtures", "managed-updater-pre-manifest.json"),
-        "utf8",
-      ),
-    ) as {
-      sourceTag: string;
-      entrypoint: string;
-      files: Array<{ name: string; sha256: string }>;
-    };
-    await fs.mkdir(updaterDir, { recursive: true });
-    for (const record of fixture.files) {
-      const sourceReference = `${fixture.sourceTag}:scripts/${record.name}`;
-      const extracted = spawnSync("git", ["show", sourceReference], {
-        cwd: sourceRoot,
-        encoding: "buffer",
-        maxBuffer: 4 * 1024 * 1024,
-      });
-      if (extracted.status !== 0 || !Buffer.isBuffer(extracted.stdout)) {
-        throw new Error(
-          `frozen updater source ${sourceReference} is unavailable; fetch immutable release tags before running U1`,
-        );
-      }
-      expect(createHash("sha256").update(extracted.stdout).digest("hex")).toBe(record.sha256);
-      const destination = path.join(updaterDir, record.name);
-      const fixtureBytes =
-        record.name === fixture.entrypoint
-          ? Buffer.concat([
-              extracted.stdout,
-              Buffer.from(
-                "\nexport { updateStableComponents as __frozenUpdateStableComponents };\n",
-              ),
-            ])
-          : extracted.stdout;
-      await fs.writeFile(destination, fixtureBytes, { mode: 0o755 });
-    }
-
-    const imported = await import(
-      `${pathToFileURL(path.join(updaterDir, fixture.entrypoint)).href}?frozen=${Date.now()}`
-    );
-    const targetRoot = path.join(root, "state", "runtime", "releases", "target");
-    const targetScripts = path.join(targetRoot, "scripts");
-    await fs.mkdir(targetScripts, { recursive: true });
-    for (const name of FILES) {
-      await copyExecutable(path.join(sourceRoot, "scripts", name), path.join(targetScripts, name));
-    }
-    await fs.writeFile(
-      path.join(targetRoot, "package.json"),
-      `${JSON.stringify({ name: "@fased/fased", version: "0.1.76-rc.22" })}\n`,
-    );
-    await fs.symlink(targetRoot, path.join(root, "state", "runtime", "current"), "dir");
-    await fs.writeFile(
-      path.join(root, "state", "install.json"),
-      `${JSON.stringify({
-        schemaVersion: 2,
-        profile: "source",
-        runtime: { activeVersion: "0.1.76-rc.22" },
-      })}\n`,
-    );
-    const paths = {
+  it("stages a compact updater generation without legacy mutation owners", async () => {
+    const { updaterDir, firstRuntime } = await fixture();
+    const generation = await stageManagedUpdaterGeneration({
       updaterDir,
-      updaterPath: path.join(updaterDir, fixture.entrypoint),
-      launcherPath: path.join(root, "state", "bin", "fased"),
-      serviceLauncherPath: path.join(root, "state", "bin", "fased-service"),
-    };
-    await imported.__frozenUpdateStableComponents(paths, targetRoot, true);
-
-    const bootstrap = await import(
-      `${pathToFileURL(paths.updaterPath).href}?bootstrap=${Date.now()}`
-    );
-    const selectedCore = await bootstrap.__testing.resolveManagedUpdaterCore({
-      entrypointPath: paths.updaterPath,
-      stateDir: path.join(root, "state"),
+      runtimeRoot: firstRuntime,
     });
-    expect(selectedCore).toBe(path.join(targetScripts, "fased-generation-updater-core.mjs"));
-    const target = await import(
-      `${pathToFileURL(path.join(targetScripts, "fased-managed-updater-core.mjs")).href}?target=${Date.now()}`
-    );
-    await target.__testing.updateStableComponents(paths, targetRoot, true);
-
-    const generationDir = await fs.realpath(path.join(updaterDir, "current"));
     for (const name of FILES) {
-      await expect(fs.stat(path.join(generationDir, name))).resolves.toMatchObject({
+      await expect(fs.stat(path.join(generation.generationDir, name))).resolves.toMatchObject({
         size: expect.any(Number),
       });
     }
-    await expect(
-      import(`${pathToFileURL(paths.updaterPath).href}?converged=${Date.now()}`),
-    ).resolves.toHaveProperty("__testing");
+    for (const name of [
+      "fased-managed-updater-core.mjs",
+      "fased-host-updaterctl.mjs",
+      "managed-update-contract.mjs",
+    ]) {
+      await expect(fs.stat(path.join(generation.generationDir, name))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    }
   });
 
   it("selects only the journal-bound verified target after application rollback", async () => {

@@ -83,4 +83,13 @@ func TestRegistryIsSchemaBasedAndVersionNeutral(t *testing.T) {
 			t.Fatalf("missing explicit public schema adapter: %+v", key)
 		}
 	}
+	for _, key := range []Key{
+		{State: "walletRegistry", From: 0, To: 1},
+		{State: "federation", From: 0, To: 2},
+		{State: "federation", From: 1, To: 2},
+	} {
+		if _, ok := registry[key].(PreservedStateAdapter); !ok {
+			t.Fatalf("application-owned state received a mutating adapter: %+v %T", key, registry[key])
+		}
+	}
 }

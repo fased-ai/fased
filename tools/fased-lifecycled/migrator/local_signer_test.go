@@ -37,6 +37,11 @@ func localSignerBridgeFixture(t *testing.T) (LocalSignerBridgeAdapter, model.Tra
 		t.Fatal(err)
 	}
 	tx := migrationTransaction("signer", 1, 2)
+	tx.PlanAction = "BRIDGE_PUBLIC_STABLE"
+	tx.SourceTopology = "local-user-systemd-v2"
+	tx.PublicPredecessorVersion = "0.1.75"
+	tx.Previous = nil
+	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	tx.Previous = nil
 	adapter := LocalSignerBridgeAdapter{Config: config, rootPrefix: t.TempDir(), skipChown: true}
 	return adapter, tx, tx.Migrations[0], statePath, keyPath
@@ -114,6 +119,29 @@ func TestLocalSignerBridgeCommitsExactStateAndRemovesLegacyCopy(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(destination, "master.key")); err != nil || string(data) != "legacy-key" {
 		t.Fatalf("canonical signer key mismatch: %q %v", data, err)
+	}
+}
+
+func TestLocalSignerBridgeAcceptsAttestedSignerDatabaseMigrationButNotKeyChange(t *testing.T) {
+	adapter, tx, migration, _, _ := localSignerBridgeFixture(t)
+	if err := adapter.Prepare(context.Background(), tx, migration); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Activate(context.Background(), tx, migration); err != nil {
+		t.Fatal(err)
+	}
+	destination := adapter.resolve(adapter.Config.SignerStateRoot())
+	if err := os.WriteFile(filepath.Join(destination, "state.db"), []byte("migrated-signer-state"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Verify(context.Background(), tx, migration); err != nil {
+		t.Fatalf("legitimate signer database migration was rejected: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(destination, "master.key"), []byte("substituted-key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Verify(context.Background(), tx, migration); err == nil {
+		t.Fatal("signer key substitution was accepted")
 	}
 }
 

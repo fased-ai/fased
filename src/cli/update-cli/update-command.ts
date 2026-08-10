@@ -1015,13 +1015,14 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
   }
 
   const installKind = updateStatus.installKind;
-  const managedRuntimeSource = new Set(["managed-package", "packaged-runtime"]).has(
+  const managedRuntimeSource = new Set(["go-lifecycle", "managed-package", "packaged-runtime"]).has(
     process.env.FASED_RUNTIME_SOURCE ?? "",
   );
+  const managedChannel = requestedChannel ?? storedChannel ?? "stable";
   if (
     (installKind === "package" || managedRuntimeSource) &&
     !opts.dryRun &&
-    requestedChannel !== "dev"
+    managedChannel !== "dev"
   ) {
     try {
       const managed = await ensureManagedRuntimeBootstrap({
@@ -1039,9 +1040,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
         if (opts.restart === false) {
           managedArgs.push("--no-restart");
         }
-        if (opts.channel) {
-          managedArgs.push("--channel", opts.channel);
-        }
+        managedArgs.push("--channel", managedChannel);
         if (opts.tag) {
           managedArgs.push("--tag", opts.tag);
         }
@@ -1087,6 +1086,13 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
   const channel = requestedChannel ?? storedChannel ?? defaultChannel;
   const sourceSignerConfigured =
     installKind === "git" && (await isLocalSourceSignerConfigured(process.env));
+  if (sourceSignerConfigured) {
+    defaultRuntime.error(
+      "Protected source-checkout updates are disabled during the Go lifecycle cutover. Install a verified stable or beta release through the public installer.",
+    );
+    defaultRuntime.exit(1);
+    return;
+  }
 
   const explicitTag = normalizeTag(opts.tag);
   let tag = explicitTag ?? channelToNpmTag(channel);

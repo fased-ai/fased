@@ -61,7 +61,7 @@ func (s *Store) ImportGenerationArchive(archive string) (model.Generation, error
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return model.Generation{}, err
 	}
-	inboxRoot := filepath.Join(s.root, "inbox")
+	inboxRoot := filepath.Join(s.installRoot, "inbox")
 	if err := os.MkdirAll(inboxRoot, 0o700); err != nil {
 		return model.Generation{}, err
 	}
@@ -105,7 +105,7 @@ func (s *Store) declaredActiveGeneration(generation model.Generation) bool {
 	if err != nil || manifest.ActiveGeneration == nil || *manifest.ActiveGeneration != generation {
 		return false
 	}
-	pointer := filepath.Join(s.root, "current")
+	pointer := filepath.Join(s.installRoot, "current")
 	pointerInfo, err := os.Lstat(pointer)
 	if err != nil || pointerInfo.Mode()&os.ModeSymlink == 0 {
 		return false
@@ -114,7 +114,7 @@ func (s *Store) declaredActiveGeneration(generation model.Generation) bool {
 	if err != nil || target != filepath.ToSlash(filepath.Join("generations", strings.TrimPrefix(generation.ID, "sha256:"))) {
 		return false
 	}
-	rootInfo, err := os.Lstat(s.root)
+	rootInfo, err := os.Lstat(s.installRoot)
 	if err != nil {
 		return false
 	}
@@ -243,6 +243,9 @@ func extractGenerationArchive(archive, destination string) error {
 			}
 		case tar.TypeReg, tar.TypeRegA:
 			mode := os.FileMode(0o600)
+			if relative == generationInventoryName {
+				mode = 0o644
+			}
 			if inPayload {
 				mode = 0o644
 			}
@@ -333,7 +336,7 @@ func (s *Store) ImportGeneration(source string) (model.Generation, error) {
 	if err := bundle.Verify(filepath.Join(source, generationPayloadName), inventory, generation); err != nil {
 		return model.Generation{}, fmt.Errorf("generation import verification failed: %w", err)
 	}
-	inboxRoot := filepath.Join(s.root, "inbox")
+	inboxRoot := filepath.Join(s.installRoot, "inbox")
 	if err := os.MkdirAll(inboxRoot, 0o700); err != nil {
 		return model.Generation{}, err
 	}
@@ -417,6 +420,9 @@ func copyRegularTree(source, destination string) error {
 			return err
 		}
 		mode := os.FileMode(0o600)
+		if relative == generationInventoryName {
+			mode = 0o644
+		}
 		if inPayload {
 			mode = 0o644
 		}
@@ -477,10 +483,22 @@ func (s *Store) StageGeneration(generationID string) error {
 		if manifest, _, manifestErr := s.ReadManifest(); manifestErr == nil &&
 			manifest.ActiveGeneration != nil && manifest.ActiveGeneration.ID == generationID &&
 			s.declaredActiveGeneration(*manifest.ActiveGeneration) {
-			return nil
+			return s.ensureGenerationDependencyBinding(target, dependency)
 		}
-		_, verifyErr := s.verifyGenerationPath(target, generationID)
-		return verifyErr
+		if _, verifyErr := s.verifyGenerationPath(target, generationID); verifyErr != nil {
+			return verifyErr
+		}
+		info, statErr := os.Lstat(target)
+		if statErr != nil {
+			return statErr
+		}
+		if info.Mode().Perm() == 0o711 {
+			return s.ensureGenerationDependencyBinding(target, dependency)
+		}
+		if err := os.Chmod(target, 0o711); err != nil {
+			return err
+		}
+		return s.ensureGenerationDependencyBinding(target, dependency)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -488,7 +506,10 @@ func (s *Store) StageGeneration(generationID string) error {
 	if _, err := s.verifyGenerationPath(inbox, generationID); err != nil {
 		return fmt.Errorf("inbox generation verification failed: %w", err)
 	}
-	generationsRoot := filepath.Join(s.root, "generations")
+	if err := s.ensureGenerationDependencyBinding(inbox, dependency); err != nil {
+		return err
+	}
+	generationsRoot := filepath.Join(s.installRoot, "generations")
 	if err := os.MkdirAll(generationsRoot, 0o711); err != nil {
 		return err
 	}
@@ -498,7 +519,64 @@ func (s *Store) StageGeneration(generationID string) error {
 	if err := os.Rename(inbox, target); err != nil {
 		return err
 	}
+	if err := os.Chmod(target, 0o711); err != nil {
+		_ = os.Rename(target, inbox)
+		return err
+	}
 	return syncDirectory(generationsRoot)
+}
+
+// ensureGenerationDependencyBinding gives unprivileged CLI processes the same
+// digest-bound dependency view that systemd services receive through
+// BindReadOnlyPaths. The link is derived from the verified inventory and lives
+// beside, rather than inside, the immutable payload covered by that inventory.
+// A generation therefore selects exactly one dependency layer without copying
+// node_modules into every application generation.
+func (s *Store) ensureGenerationDependencyBinding(root string, dependency *bundle.DependencyLayer) error {
+	path := filepath.Join(root, "node_modules")
+	if dependency == nil {
+		if _, err := os.Lstat(path); err == nil {
+			return errors.New("legacy generation unexpectedly has a shared dependency binding")
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	expected := filepath.ToSlash(filepath.Join("..", "..", "dependencies", dependency.Hash, "node_modules"))
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink == 0 {
+			return errors.New("generation dependency binding is not a symbolic link")
+		}
+		actual, err := os.Readlink(path)
+		if err != nil {
+			return err
+		}
+		if actual != expected {
+			return errors.New("generation dependency binding does not match the verified inventory")
+		}
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	temporary, err := os.CreateTemp(root, ".node-modules-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := os.Remove(temporaryPath); err != nil {
+		return err
+	}
+	defer os.Remove(temporaryPath)
+	if err := os.Symlink(expected, temporaryPath); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return err
+	}
+	return syncDirectory(root)
 }
 
 func (s *Store) ActivateGeneration(currentID, previousID string) error {
@@ -506,7 +584,21 @@ func (s *Store) ActivateGeneration(currentID, previousID string) error {
 }
 
 func (s *Store) ActivateControllerGeneration(currentID, previousID string) error {
-	return s.activatePointers("controller-current", "controller-previous", currentID, previousID)
+	if _, err := s.verifiedGeneration(currentID); err != nil {
+		return fmt.Errorf("current controller generation: %w", err)
+	}
+	if previousID != "" {
+		if currentID == previousID {
+			return errors.New("current and previous controller generation must differ")
+		}
+		if _, err := s.verifiedGeneration(previousID); err != nil {
+			return fmt.Errorf("previous controller generation: %w", err)
+		}
+		if err := s.writeControllerPointer("controller-previous", previousID); err != nil {
+			return err
+		}
+	}
+	return s.writeControllerPointer("controller-current", currentID)
 }
 
 func (s *Store) activatePointers(currentPointer, previousPointer, currentID, previousID string) error {
@@ -531,7 +623,7 @@ func (s *Store) ResolveGeneration(pointer string) (model.Generation, error) {
 	if !validPointer(pointer) {
 		return model.Generation{}, errors.New("generation pointer is invalid")
 	}
-	pointerPath := filepath.Join(s.root, pointer)
+	pointerPath := filepath.Join(s.installRoot, pointer)
 	info, err := os.Lstat(pointerPath)
 	if err != nil {
 		return model.Generation{}, err
@@ -552,10 +644,29 @@ func (s *Store) ResolveGeneration(pointer string) (model.Generation, error) {
 }
 
 func (s *Store) ReadGenerationContract(generationID string) (bundle.Inventory, model.Generation, error) {
+	return s.readGenerationContractAt(s.generationPath(generationID), generationID)
+}
+
+// ReadCandidateContract verifies candidate identity without moving it from the
+// acquisition inbox into the durable generation store. Compatibility planning
+// must complete before the first mutation of an installation transaction.
+func (s *Store) ReadCandidateContract(generationID string) (bundle.Inventory, model.Generation, error) {
 	if err := validateGenerationID(generationID); err != nil {
 		return bundle.Inventory{}, model.Generation{}, err
 	}
 	root := s.generationPath(generationID)
+	if _, err := os.Lstat(root); errors.Is(err, os.ErrNotExist) {
+		root = s.inboxGenerationPath(generationID)
+	} else if err != nil {
+		return bundle.Inventory{}, model.Generation{}, err
+	}
+	return s.readGenerationContractAt(root, generationID)
+}
+
+func (s *Store) readGenerationContractAt(root, generationID string) (bundle.Inventory, model.Generation, error) {
+	if err := validateGenerationID(generationID); err != nil {
+		return bundle.Inventory{}, model.Generation{}, err
+	}
 	inventoryJSON, err := readGenerationInventory(filepath.Join(root, generationInventoryName))
 	if err != nil {
 		return bundle.Inventory{}, model.Generation{}, err
@@ -614,13 +725,13 @@ func (s *Store) verifyGenerationPath(root, generationID string) (model.Generatio
 }
 
 func (s *Store) writeGenerationPointer(pointer, generationID string) error {
-	if !validPointer(pointer) {
+	if pointer != "current" && pointer != "previous" {
 		return errors.New("generation pointer is invalid")
 	}
 	if err := validateGenerationID(generationID); err != nil {
 		return err
 	}
-	temp, err := os.CreateTemp(s.root, ".pointer-*")
+	temp, err := os.CreateTemp(s.installRoot, ".pointer-*")
 	if err != nil {
 		return err
 	}
@@ -636,15 +747,47 @@ func (s *Store) writeGenerationPointer(pointer, generationID string) error {
 	if err := os.Symlink(target, tempPath); err != nil {
 		return err
 	}
-	if err := os.Rename(tempPath, filepath.Join(s.root, pointer)); err != nil {
+	if err := os.Rename(tempPath, filepath.Join(s.installRoot, pointer)); err != nil {
 		return err
 	}
-	return syncDirectory(s.root)
+	return syncDirectory(s.installRoot)
+}
+
+// Controller selection is supervisor authority, so its pointers live under
+// the mutable lifecycle state root. Product current/previous pointers remain
+// under the install root and are exclusively owned by the target controller.
+func (s *Store) writeControllerPointer(pointer, generationID string) error {
+	if pointer != "controller-current" && pointer != "controller-previous" {
+		return errors.New("controller generation pointer is invalid")
+	}
+	if err := validateGenerationID(generationID); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(s.stateRoot, ".controller-pointer-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Remove(tempPath); err != nil {
+		return err
+	}
+	defer os.Remove(tempPath)
+	target := s.generationPath(generationID)
+	if err := os.Symlink(target, tempPath); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, filepath.Join(s.stateRoot, pointer)); err != nil {
+		return err
+	}
+	return syncDirectory(s.stateRoot)
 }
 
 func validPointer(pointer string) bool {
 	switch pointer {
-	case "current", "previous", "controller-current", "controller-previous":
+	case "current", "previous":
 		return true
 	default:
 		return false
@@ -652,11 +795,11 @@ func validPointer(pointer string) bool {
 }
 
 func (s *Store) inboxGenerationPath(generationID string) string {
-	return filepath.Join(s.root, "inbox", strings.TrimPrefix(generationID, "sha256:"))
+	return filepath.Join(s.installRoot, "inbox", strings.TrimPrefix(generationID, "sha256:"))
 }
 
 func (s *Store) generationPath(generationID string) string {
-	return filepath.Join(s.root, "generations", strings.TrimPrefix(generationID, "sha256:"))
+	return filepath.Join(s.installRoot, "generations", strings.TrimPrefix(generationID, "sha256:"))
 }
 
 func validateGenerationID(generationID string) error {

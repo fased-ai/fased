@@ -22,6 +22,7 @@ func TestSupervisorUnitIsStableAndProfileBound(t *testing.T) {
 		"User=root", "NoNewPrivileges=true", "ProtectSystem=strict", "RestrictAddressFamilies=AF_UNIX",
 		"supervisor --config /var/lib/fased-local/instance/lifecycle/platform.json",
 		"--socket /run/fased-local-controller/instance/request.sock",
+		"RuntimeDirectory=fased-local-controller/instance fased-local-controller-worker/instance",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("supervisor unit lacks %q", expected)

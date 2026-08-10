@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import * as tar from "tar";
@@ -21,15 +21,6 @@ const LEGACY_CONTROLLER_FILES = [
   "fased-managed-updater.mjs",
   "hosted-release-manifest.mjs",
   "managed-runtime-layout.mjs",
-] as const;
-const GENERATION_CONTROLLER_FILES = [
-  "fased-managed-updater-core.mjs",
-  "lifecycle-trust-crypto.mjs",
-  "lifecycle-trust-policy.mjs",
-  "lifecycle-trust-root.mjs",
-  "lifecycle-trust-runtime.mjs",
-  "managed-updater-bundle.mjs",
-  "managed-updater-bundle.v1.json",
 ] as const;
 
 type LocalSourcePhase =
@@ -259,36 +250,6 @@ async function readPackageVersion(sourceRoot: string): Promise<string> {
   return version;
 }
 
-async function copyController(sourceRoot: string, transactionDir: string): Promise<string> {
-  const controllerDir = path.join(transactionDir, "controller");
-  await fs.mkdir(controllerDir, { recursive: true, mode: 0o700 });
-  const generationController = await fs
-    .lstat(path.join(sourceRoot, "scripts", "fased-managed-updater-core.mjs"))
-    .then((stat) => stat.isFile() && !stat.isSymbolicLink())
-    .catch((error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") {
-        return false;
-      }
-      throw error;
-    });
-  const controllerFiles = generationController
-    ? [...LEGACY_CONTROLLER_FILES, ...GENERATION_CONTROLLER_FILES]
-    : [...LEGACY_CONTROLLER_FILES];
-  for (const name of controllerFiles) {
-    const source = path.join(sourceRoot, "scripts", name);
-    const stat = await fs.lstat(source);
-    if (!stat.isFile() || stat.isSymbolicLink()) {
-      throw new Error(`Source checkout is missing a safe signer transaction controller: ${source}`);
-    }
-    const destination = path.join(controllerDir, name);
-    await fs.copyFile(source, destination);
-    await fs.chmod(destination, name.endsWith(".json") ? 0o600 : 0o700);
-    await fsyncPath(destination);
-  }
-  await fsyncPath(controllerDir);
-  return path.join(controllerDir, "fased-managed-updater.mjs");
-}
-
 async function ensureControllerDependencyClosure(params: {
   journal: LocalSourcePairedUpdateJournal;
   timeoutMs: number;
@@ -296,19 +257,7 @@ async function ensureControllerDependencyClosure(params: {
 }): Promise<void> {
   const controllerDir = path.dirname(params.journal.controllerPath);
   const releaseSha = params.journal.target?.sha ?? params.journal.previous.sha;
-  const generationController = await fs
-    .lstat(path.join(controllerDir, "fased-managed-updater-core.mjs"))
-    .then((stat) => stat.isFile() && !stat.isSymbolicLink())
-    .catch((error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") {
-        return false;
-      }
-      throw error;
-    });
-  const controllerFiles = generationController
-    ? [...LEGACY_CONTROLLER_FILES, ...GENERATION_CONTROLLER_FILES]
-    : [...LEGACY_CONTROLLER_FILES];
-  for (const name of controllerFiles) {
+  for (const name of LEGACY_CONTROLLER_FILES) {
     const destination = path.join(controllerDir, name);
     const destinationStat = await fs.lstat(destination).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") {
@@ -405,67 +354,10 @@ export async function prepareLocalSourcePairedUpdate(params: {
   timeoutMs: number;
   env?: NodeJS.ProcessEnv;
 }): Promise<LocalSourcePairedUpdateJournal> {
-  const env = params.env ?? process.env;
-  const context = resolveContext(env);
-  if (await readLocalSourcePairedUpdateJournal(env)) {
-    throw new Error("An unfinished Local source app/signer transaction must be recovered first");
-  }
-  const sourceRoot = path.resolve(params.sourceRoot);
-  const previousSha = await readGitHead(sourceRoot, params.timeoutMs, env);
-  const previousVersion = await readPackageVersion(sourceRoot);
-  const branchResult = await runCommandWithTimeout(
-    ["git", "-C", sourceRoot, "symbolic-ref", "--quiet", "--short", "HEAD"],
-    { cwd: sourceRoot, timeoutMs: params.timeoutMs, env },
+  void params;
+  throw new Error(
+    "Protected source-checkout updates are disabled; install a verified release through the public installer",
   );
-  const branch =
-    branchResult.code === 0 && branchResult.stdout.trim() ? branchResult.stdout.trim() : null;
-  if (branch !== null && (branch.includes("..") || !/^[0-9A-Za-z._/-]+$/.test(branch))) {
-    throw new Error("Source checkout branch name is unsafe for transactional rollback");
-  }
-
-  const transactionId = randomUUID();
-  const transactionDir = path.join(context.transactionsDir, transactionId);
-  await fs.mkdir(transactionDir, { recursive: true, mode: 0o700 });
-  try {
-    const distRoot = path.join(sourceRoot, "dist");
-    const distStat = await fs.lstat(distRoot);
-    if (!distStat.isDirectory() || distStat.isSymbolicLink()) {
-      throw new Error("Source checkout has no safe built dist directory to snapshot");
-    }
-    const distSnapshotPath = path.join(transactionDir, "dist.tar.gz");
-    await tar.c(
-      { cwd: sourceRoot, file: distSnapshotPath, gzip: true, portable: true, noMtime: true },
-      ["dist"],
-    );
-    await fs.chmod(distSnapshotPath, 0o600);
-    await fsyncPath(distSnapshotPath);
-    const distSnapshotStat = await fs.lstat(distSnapshotPath);
-    const controllerPath = await copyController(sourceRoot, transactionDir);
-    const now = new Date().toISOString();
-    const journal: LocalSourcePairedUpdateJournal = {
-      schemaVersion: 1,
-      kind: "source-checkout",
-      transactionId,
-      transactionDir,
-      sourceRoot,
-      controllerPath,
-      phase: "prepared",
-      previous: { sha: previousSha, version: previousVersion, branch },
-      target: null,
-      distSnapshot: {
-        path: distSnapshotPath,
-        sha256: await sha256File(distSnapshotPath),
-        size: distSnapshotStat.size,
-      },
-      createdAt: now,
-      updatedAt: now,
-    };
-    await fsyncPath(transactionDir);
-    return await writeJournal(context, journal, "prepared", true);
-  } catch (error) {
-    await fs.rm(transactionDir, { recursive: true, force: true });
-    throw error;
-  }
 }
 
 export async function markLocalSourceAppActive(params: {

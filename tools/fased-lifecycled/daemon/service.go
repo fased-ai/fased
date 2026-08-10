@@ -21,10 +21,11 @@ const absentManifestDigest = "sha256:0000000000000000000000000000000000000000000
 const supervisorCapability uint32 = 1
 
 type StateStore interface {
+	AcquireUpdateLock(string) (store.MutationLock, error)
 	StageGeneration(string) error
 	ReadManifest() (model.Manifest, string, error)
 	ReadJournal(store.Authority, string) (model.Transaction, error)
-	ReadGenerationContract(string) (bundle.Inventory, model.Generation, error)
+	ReadCandidateContract(string) (bundle.Inventory, model.Generation, error)
 }
 
 type StateInventory interface {
@@ -36,16 +37,26 @@ type Supervisor interface {
 	Recover(context.Context, model.Transaction) (engine.Result, error)
 }
 
+type OnboardingCompleter interface {
+	CompleteOnboarding(context.Context) (engine.Result, error)
+}
+
+type PublicPredecessorEvidenceVerifier interface {
+	VerifyPublicPredecessorEvidence(topology, version string) error
+}
+
 type IDGenerator func() (string, error)
 
 type Service struct {
-	Profile    model.Profile
-	Platform   model.PlatformIdentity
-	Store      StateStore
-	Inventory  StateInventory
-	Supervisor Supervisor
-	NewID      IDGenerator
-	mutationMu sync.Mutex
+	Profile             model.Profile
+	Platform            model.PlatformIdentity
+	Store               StateStore
+	Inventory           StateInventory
+	Supervisor          Supervisor
+	Onboarding          OnboardingCompleter
+	PredecessorEvidence PublicPredecessorEvidenceVerifier
+	NewID               IDGenerator
+	mutationMu          sync.Mutex
 }
 
 func (service *Service) Handle(ctx context.Context, request protocol.Request) (protocol.Response, error) {
@@ -66,9 +77,42 @@ func (service *Service) Handle(ctx context.Context, request protocol.Request) (p
 		service.mutationMu.Lock()
 		defer service.mutationMu.Unlock()
 		return service.recover(ctx, request)
+	case protocol.OperationCompleteOnboarding:
+		service.mutationMu.Lock()
+		defer service.mutationMu.Unlock()
+		return service.completeOnboarding(ctx, request)
 	default:
 		return protocol.Response{}, errors.New("unsupported lifecycle operation")
 	}
+}
+
+func (service *Service) completeOnboarding(ctx context.Context, request protocol.Request) (protocol.Response, error) {
+	if (service.Profile != model.ProfileProtectedLocal && service.Profile != model.ProfileHosting) || service.Onboarding == nil {
+		return protocol.Response{}, errors.New("onboarding completion is unavailable for this lifecycle profile")
+	}
+	manifest, _, err := service.Store.ReadManifest()
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	if err := manifest.Validate(); err != nil || manifest.Profile != service.Profile || manifest.ActiveGeneration == nil {
+		return protocol.Response{}, errors.New("committed installation is not ready for onboarding completion")
+	}
+	platformDigest, err := service.Platform.Digest(service.Profile)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	manifestDigest, err := manifest.Platform.Digest(manifest.Profile)
+	if err != nil || manifestDigest != platformDigest {
+		return protocol.Response{}, errors.New("committed platform identity changed before onboarding completion")
+	}
+	result, err := service.Onboarding.CompleteOnboarding(ctx)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	if result.Phase != model.PhaseCommitted || (result.Outcome != engine.OutcomeUpdated && result.Outcome != engine.OutcomeAlreadyCurrent) {
+		return protocol.Response{}, errors.New("target controller did not complete onboarding")
+	}
+	return response(request, string(result.Outcome), "", manifest.ActiveGeneration.ID), nil
 }
 
 func (service *Service) inspect(request protocol.Request) (protocol.Response, error) {
@@ -99,6 +143,12 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 		}
 		manifestDigest = absentManifestDigest
 		if request.SourceTopology != "" {
+			if service.PredecessorEvidence == nil {
+				return protocol.Response{}, errors.New("public predecessor evidence verifier is unavailable")
+			}
+			if err := service.PredecessorEvidence.VerifyPublicPredecessorEvidence(request.SourceTopology, request.PublicPredecessorVersion); err != nil {
+				return protocol.Response{}, err
+			}
 			installation, err = planner.PublicStableInstallation(service.Profile, planner.PublicTopology(request.SourceTopology))
 			if err != nil {
 				return protocol.Response{}, err
@@ -119,10 +169,10 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 			return protocol.Response{}, errors.New("installed platform identity requires explicit repair")
 		}
 	}
-	if err := service.Store.StageGeneration(request.TargetGenerationID); err != nil {
-		return protocol.Response{}, err
+	if installation.Kind == planner.InstallationManaged && installation.Manifest.ActiveGeneration != nil && installation.Manifest.ActiveGeneration.ID == request.TargetGenerationID {
+		return response(request, string(engine.OutcomeAlreadyCurrent), "", request.TargetGenerationID), nil
 	}
-	inventory, generation, err := service.Store.ReadGenerationContract(request.TargetGenerationID)
+	inventory, generation, err := service.Store.ReadCandidateContract(request.TargetGenerationID)
 	if err != nil {
 		return protocol.Response{}, err
 	}
@@ -136,16 +186,37 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 	if err != nil {
 		return protocol.Response{}, err
 	}
-	if plan.Action == planner.ActionAlreadyCurrent {
-		return response(request, string(engine.OutcomeAlreadyCurrent), "", generation.ID), nil
+	switch plan.Action {
+	case planner.ActionAlreadyCurrent, planner.ActionRepairRequired, planner.ActionRejectUnknownNewer:
+		return response(request, string(plan.Action), "", generation.ID), nil
+	}
+	transactionID, err := service.NewID()
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	lock, err := service.Store.AcquireUpdateLock(transactionID)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	defer lock.Release()
+	if installation.Kind == planner.InstallationManaged {
+		if _, lockedDigest, readErr := service.Store.ReadManifest(); readErr != nil || lockedDigest != manifestDigest {
+			return protocol.Response{}, errors.New("installation manifest changed while acquiring the update lock")
+		}
+	} else if _, _, readErr := service.Store.ReadManifest(); !errors.Is(readErr, os.ErrNotExist) {
+		return protocol.Response{}, errors.New("installation appeared while acquiring the update lock")
+	}
+	if err := service.Store.StageGeneration(request.TargetGenerationID); err != nil {
+		return protocol.Response{}, err
 	}
 	stateDigest, signerPlanDigest, err := service.Inventory.Bind(ctx, installation, inventory, plan)
 	if err != nil {
 		return protocol.Response{}, err
 	}
-	transactionID, err := service.NewID()
-	if err != nil {
-		return protocol.Response{}, err
+	if installation.Kind == planner.InstallationPublicStable {
+		if err := service.PredecessorEvidence.VerifyPublicPredecessorEvidence(request.SourceTopology, request.PublicPredecessorVersion); err != nil {
+			return protocol.Response{}, err
+		}
 	}
 	var previous *model.Generation
 	if installation.Kind == planner.InstallationManaged {
@@ -153,7 +224,8 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 	}
 	tx := model.Transaction{
 		SchemaVersion: model.CurrentTransactionSchemaVersion, ID: transactionID,
-		Profile: service.Profile, Phase: model.PhaseIdle, Revision: 1,
+		Profile: service.Profile, PlanAction: string(plan.Action), SourceTopology: request.SourceTopology, PublicPredecessorVersion: request.PublicPredecessorVersion,
+		Phase: model.PhaseIdle, Revision: 1,
 		Target: generation, Previous: previous, ManifestDigest: manifestDigest,
 		TargetStateSchemas: inventory.StateSchemas, TargetCapabilities: inventory.Capabilities,
 		StateInventoryDigest: stateDigest, MigrationPlanDigest: plan.Digest,
@@ -171,6 +243,11 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 }
 
 func (service *Service) recover(ctx context.Context, request protocol.Request) (protocol.Response, error) {
+	lock, err := service.Store.AcquireUpdateLock(request.TransactionID)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	defer lock.Release()
 	tx, err := service.Store.ReadJournal(store.AuthoritySupervisor, request.TransactionID)
 	if err != nil {
 		return protocol.Response{}, err

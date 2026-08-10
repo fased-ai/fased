@@ -17,6 +17,19 @@ const (
 	CurrentTransactionSchemaVersion uint32 = 1
 )
 
+// CurrentStateSchemas is the single declared preservation contract shared by
+// inventory generation, planning, migration selection, and runtime binding.
+// Callers receive a copy so no component can mutate global policy.
+func CurrentStateSchemas() map[string]uint32 {
+	return map[string]uint32{
+		"agents": 1, "channels": 1, "configuration": 1, "credentials": 1,
+		"cron": 1, "deliveryQueue": 1, "devices": 1, "federation": 2,
+		"identity": 1, "managedInstall": 2, "memory": 1, "mining": 1,
+		"pluginState": 1, "schedules": 1, "secrets": 1, "sessions": 1,
+		"signer": 2, "tasks": 1, "walletRegistry": 1,
+	}
+}
+
 type Profile string
 
 const (
@@ -86,21 +99,47 @@ type PlatformIdentity struct {
 }
 
 type Transaction struct {
-	SchemaVersion        uint32            `json:"schemaVersion"`
-	ID                   string            `json:"transactionId"`
-	Profile              Profile           `json:"profile"`
-	Phase                Phase             `json:"phase"`
-	Revision             uint64            `json:"revision"`
-	Target               Generation        `json:"target"`
-	TargetStateSchemas   map[string]uint32 `json:"targetStateSchemas"`
-	TargetCapabilities   CapabilityRanges  `json:"targetCapabilities"`
-	Previous             *Generation       `json:"previous,omitempty"`
-	ManifestDigest       string            `json:"manifestDigest"`
-	StateInventoryDigest string            `json:"stateInventoryDigest"`
-	MigrationPlanDigest  string            `json:"migrationPlanDigest"`
-	SignerPlanDigest     string            `json:"signerPlanDigest"`
-	PlatformDigest       string            `json:"platformDigest"`
-	Migrations           []Migration       `json:"migrations"`
+	SchemaVersion            uint32            `json:"schemaVersion"`
+	ID                       string            `json:"transactionId"`
+	Profile                  Profile           `json:"profile"`
+	PlanAction               string            `json:"planAction"`
+	SourceTopology           string            `json:"sourceTopology,omitempty"`
+	PublicPredecessorVersion string            `json:"publicPredecessorVersion,omitempty"`
+	Phase                    Phase             `json:"phase"`
+	Revision                 uint64            `json:"revision"`
+	Target                   Generation        `json:"target"`
+	TargetStateSchemas       map[string]uint32 `json:"targetStateSchemas"`
+	TargetCapabilities       CapabilityRanges  `json:"targetCapabilities"`
+	Previous                 *Generation       `json:"previous,omitempty"`
+	ManifestDigest           string            `json:"manifestDigest"`
+	StateInventoryDigest     string            `json:"stateInventoryDigest"`
+	MigrationPlanDigest      string            `json:"migrationPlanDigest"`
+	SignerPlanDigest         string            `json:"signerPlanDigest"`
+	PlatformDigest           string            `json:"platformDigest"`
+	Migrations               []Migration       `json:"migrations"`
+}
+
+// TransactionEnvelope contains the immutable identity shared by the
+// supervisor and target-controller journals. Authority records may advance
+// independently, but they cannot disagree about what is being installed or
+// which state, signer, platform, and rollback generation are bound to it.
+type TransactionEnvelope struct {
+	SchemaVersion            uint32            `json:"schemaVersion"`
+	ID                       string            `json:"transactionId"`
+	Profile                  Profile           `json:"profile"`
+	PlanAction               string            `json:"planAction"`
+	SourceTopology           string            `json:"sourceTopology,omitempty"`
+	PublicPredecessorVersion string            `json:"publicPredecessorVersion,omitempty"`
+	Target                   Generation        `json:"target"`
+	TargetStateSchemas       map[string]uint32 `json:"targetStateSchemas"`
+	TargetCapabilities       CapabilityRanges  `json:"targetCapabilities"`
+	Previous                 *Generation       `json:"previous,omitempty"`
+	ManifestDigest           string            `json:"manifestDigest"`
+	StateInventoryDigest     string            `json:"stateInventoryDigest"`
+	MigrationPlanDigest      string            `json:"migrationPlanDigest"`
+	SignerPlanDigest         string            `json:"signerPlanDigest"`
+	PlatformDigest           string            `json:"platformDigest"`
+	Migrations               []Migration       `json:"migrations"`
 }
 
 type Migration struct {
@@ -213,8 +252,8 @@ func (g Generation) Validate() error {
 	if !digestPattern.MatchString(g.ID) {
 		return errors.New("generation id must be a lowercase sha256 digest")
 	}
-	if !versionPattern.MatchString(g.Version) {
-		return errors.New("generation version must be a semantic version without a v prefix")
+	if err := ValidateVersion(g.Version); err != nil {
+		return fmt.Errorf("generation %w", err)
 	}
 	if !gitObjectPattern.MatchString(g.Commit) {
 		return errors.New("generation commit must be a full lowercase Git object id")
@@ -224,6 +263,13 @@ func (g Generation) Validate() error {
 	}
 	if !digestPattern.MatchString(g.ArtifactSetDigest) {
 		return errors.New("generation artifact set must be a lowercase sha256 digest")
+	}
+	return nil
+}
+
+func ValidateVersion(version string) error {
+	if !versionPattern.MatchString(version) {
+		return errors.New("version must be a semantic version without a v prefix")
 	}
 	return nil
 }
@@ -317,6 +363,36 @@ func (t Transaction) Validate() error {
 	if err := validateProfile(t.Profile); err != nil {
 		return err
 	}
+	switch t.PlanAction {
+	case "INSTALL", "UPDATE":
+		if t.SourceTopology != "" || t.PublicPredecessorVersion != "" {
+			return errors.New("non-bridge transaction contains public predecessor evidence")
+		}
+	case "BRIDGE_PUBLIC_STABLE":
+		if !platformNamePattern.MatchString(t.SourceTopology) {
+			return errors.New("public-stable transaction source topology is invalid")
+		}
+		if err := ValidateVersion(t.PublicPredecessorVersion); err != nil {
+			return fmt.Errorf("public-stable predecessor version: %w", err)
+		}
+	default:
+		return errors.New("transaction plan action is not mutable")
+	}
+	absent := "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	switch t.PlanAction {
+	case "INSTALL":
+		if t.Previous != nil || t.ManifestDigest != absent {
+			return errors.New("fresh installation transaction has predecessor state")
+		}
+	case "BRIDGE_PUBLIC_STABLE":
+		if t.Previous != nil || t.ManifestDigest != absent {
+			return errors.New("public-stable bridge has canonical predecessor state")
+		}
+	case "UPDATE":
+		if t.Previous == nil || t.ManifestDigest == absent {
+			return errors.New("managed update is missing its canonical predecessor")
+		}
+	}
 	if !validPhase(t.Phase) {
 		return fmt.Errorf("unsupported transaction phase %q", t.Phase)
 	}
@@ -371,6 +447,35 @@ func (t Transaction) Validate() error {
 		previousState = migration.State
 	}
 	return nil
+}
+
+func (t Transaction) Envelope() (TransactionEnvelope, error) {
+	if err := t.Validate(); err != nil {
+		return TransactionEnvelope{}, err
+	}
+	return TransactionEnvelope{
+		SchemaVersion: t.SchemaVersion, ID: t.ID, Profile: t.Profile,
+		PlanAction: t.PlanAction, SourceTopology: t.SourceTopology, PublicPredecessorVersion: t.PublicPredecessorVersion,
+		Target: t.Target, TargetStateSchemas: t.TargetStateSchemas,
+		TargetCapabilities: t.TargetCapabilities, Previous: t.Previous,
+		ManifestDigest: t.ManifestDigest, StateInventoryDigest: t.StateInventoryDigest,
+		MigrationPlanDigest: t.MigrationPlanDigest, SignerPlanDigest: t.SignerPlanDigest,
+		PlatformDigest: t.PlatformDigest, Migrations: t.Migrations,
+	}, nil
+}
+
+func (e TransactionEnvelope) Validate() error {
+	probe := Transaction{
+		SchemaVersion: e.SchemaVersion, ID: e.ID, Profile: e.Profile,
+		PlanAction: e.PlanAction, SourceTopology: e.SourceTopology, PublicPredecessorVersion: e.PublicPredecessorVersion,
+		Phase: PhaseIdle, Revision: 1, Target: e.Target,
+		TargetStateSchemas: e.TargetStateSchemas, TargetCapabilities: e.TargetCapabilities,
+		Previous: e.Previous, ManifestDigest: e.ManifestDigest,
+		StateInventoryDigest: e.StateInventoryDigest, MigrationPlanDigest: e.MigrationPlanDigest,
+		SignerPlanDigest: e.SignerPlanDigest, PlatformDigest: e.PlatformDigest,
+		Migrations: e.Migrations,
+	}
+	return probe.Validate()
 }
 
 func validPhase(phase Phase) bool {
@@ -475,6 +580,24 @@ func CanonicalTransactionJSON(transaction Transaction) ([]byte, error) {
 		return nil, err
 	}
 	return json.Marshal(transaction)
+}
+
+func DecodeTransactionEnvelope(reader io.Reader) (TransactionEnvelope, error) {
+	var envelope TransactionEnvelope
+	if err := decodeStrict(reader, &envelope); err != nil {
+		return TransactionEnvelope{}, err
+	}
+	if err := envelope.Validate(); err != nil {
+		return TransactionEnvelope{}, err
+	}
+	return envelope, nil
+}
+
+func CanonicalTransactionEnvelopeJSON(envelope TransactionEnvelope) ([]byte, error) {
+	if err := envelope.Validate(); err != nil {
+		return nil, err
+	}
+	return json.Marshal(envelope)
 }
 
 func decodeStrict(reader io.Reader, target any) error {

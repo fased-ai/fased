@@ -540,143 +540,17 @@ describe("update-cli", () => {
     expect(defaultRuntime.log).toHaveBeenCalled();
   });
 
-  it("commits a source app and Local signer only after both health checks", async () => {
-    const prepared = {
-      phase: "prepared",
-      sourceRoot: "/test/path",
-      previous: { version: "1.0.0", sha: "a".repeat(40), branch: "main" },
-    };
-    const appActive = {
-      ...prepared,
-      phase: "app-active",
-      target: { version: "1.0.1", sha: "b".repeat(40) },
-    };
-    const signerActive = { ...appActive, phase: "signer-active" };
-    const gatewayVerified = { ...signerActive, phase: "gateway-verified" };
+  it("fails closed before preparing a protected source-checkout mutation", async () => {
     isLocalSourceSignerConfigured.mockResolvedValue(true);
-    serviceLoaded.mockResolvedValue(true);
-    probeGateway.mockResolvedValue({
-      ok: true,
-      error: null,
-      server: { version: "1.0.1", runtimeSource: "source-checkout" },
-    });
-    prepareLocalSourcePairedUpdate.mockResolvedValue(prepared);
-    markLocalSourceAppActive.mockResolvedValue(appActive);
-    activateLocalSourceSigner.mockResolvedValue(signerActive);
-    markLocalSourceGatewayVerified.mockResolvedValue(gatewayVerified);
-    vi.mocked(runGatewayUpdate).mockResolvedValue(
-      makeOkUpdateResult({
-        root: "/test/path",
-        before: { version: "1.0.0", sha: "a".repeat(40) },
-        after: { version: "1.0.1", sha: "b".repeat(40) },
-      }),
-    );
 
     await updateCommand({});
 
-    expect(prepareLocalSourcePairedUpdate).toHaveBeenCalled();
-    expect(activateLocalSourceSigner).toHaveBeenCalledWith(
-      expect.objectContaining({ journal: appActive }),
+    expect(defaultRuntime.error).toHaveBeenCalledWith(
+      expect.stringContaining("Protected source-checkout updates are disabled"),
     );
-    expect(verifyLocalSourceSigner).toHaveBeenCalledWith(
-      expect.objectContaining({ journal: signerActive }),
-    );
-    expect(markLocalSourceGatewayVerified).toHaveBeenCalledWith(signerActive, process.env);
-    expect(commitLocalSourcePairedUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ journal: gatewayVerified }),
-    );
+    expect(prepareLocalSourcePairedUpdate).not.toHaveBeenCalled();
+    expect(activateLocalSourceSigner).not.toHaveBeenCalled();
     expect(rollbackLocalSourcePairedUpdate).not.toHaveBeenCalled();
-    expect(verifyLocalSourceSigner.mock.invocationCallOrder[0]).toBeLessThan(
-      commitLocalSourcePairedUpdate.mock.invocationCallOrder[0],
-    );
-  });
-
-  it("repairs a mixed source signer even when Git is already on the target release", async () => {
-    const sha = "b".repeat(40);
-    const prepared = {
-      phase: "prepared",
-      sourceRoot: "/test/path",
-      previous: { version: "0.1.73", sha, branch: null },
-    };
-    const appActive = {
-      ...prepared,
-      phase: "app-active",
-      target: { version: "0.1.73", sha },
-    };
-    const signerActive = { ...appActive, phase: "signer-active" };
-    const gatewayVerified = { ...signerActive, phase: "gateway-verified" };
-    isLocalSourceSignerConfigured.mockResolvedValue(true);
-    serviceLoaded.mockResolvedValue(true);
-    probeGateway.mockResolvedValue({
-      ok: true,
-      error: null,
-      server: { version: "0.1.73", runtimeSource: "source-checkout" },
-    });
-    prepareLocalSourcePairedUpdate.mockResolvedValue(prepared);
-    markLocalSourceAppActive.mockResolvedValue(appActive);
-    activateLocalSourceSigner.mockResolvedValue(signerActive);
-    markLocalSourceGatewayVerified.mockResolvedValue(gatewayVerified);
-    vi.mocked(runGatewayUpdate).mockResolvedValue(
-      makeOkUpdateResult({
-        root: "/test/path",
-        before: { version: "0.1.73", sha },
-        after: { version: "0.1.73", sha },
-      }),
-    );
-
-    await updateCommand({});
-
-    expect(activateLocalSourceSigner).toHaveBeenCalledWith(
-      expect.objectContaining({ journal: appActive }),
-    );
-    expect(verifyLocalSourceSigner).toHaveBeenCalled();
-    expect(commitLocalSourcePairedUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ journal: gatewayVerified }),
-    );
-    const logs = vi
-      .mocked(defaultRuntime.log)
-      .mock.calls.map(([value]) => String(value))
-      .join("\n");
-    expect(logs).toContain("Local signer candidate preflight and activation");
-    expect(logs).not.toContain("Already current");
-  });
-
-  it("rolls back the exact source pair when post-restart signer health fails", async () => {
-    const prepared = {
-      phase: "prepared",
-      sourceRoot: "/test/path",
-      previous: { version: "1.0.0", sha: "a".repeat(40), branch: "main" },
-    };
-    const appActive = {
-      ...prepared,
-      phase: "app-active",
-      target: { version: "1.0.1", sha: "b".repeat(40) },
-    };
-    const signerActive = { ...appActive, phase: "signer-active" };
-    isLocalSourceSignerConfigured.mockResolvedValue(true);
-    serviceLoaded.mockResolvedValue(true);
-    probeGateway.mockResolvedValue({
-      ok: true,
-      error: null,
-      server: { version: "1.0.1", runtimeSource: "source-checkout" },
-    });
-    prepareLocalSourcePairedUpdate.mockResolvedValue(prepared);
-    markLocalSourceAppActive.mockResolvedValue(appActive);
-    activateLocalSourceSigner.mockResolvedValue(signerActive);
-    verifyLocalSourceSigner.mockRejectedValue(new Error("signer mismatch"));
-    vi.mocked(runGatewayUpdate).mockResolvedValue(
-      makeOkUpdateResult({
-        root: "/test/path",
-        before: { version: "1.0.0", sha: "a".repeat(40) },
-        after: { version: "1.0.1", sha: "b".repeat(40) },
-      }),
-    );
-
-    await updateCommand({});
-
-    expect(rollbackLocalSourcePairedUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ journal: signerActive }),
-    );
     expect(commitLocalSourcePairedUpdate).not.toHaveBeenCalled();
     expect(defaultRuntime.exit).toHaveBeenCalledWith(1);
   });
@@ -684,7 +558,7 @@ describe("update-cli", () => {
   it("skips plugin update discovery when no plugins are installed and reports stage timing", async () => {
     vi.mocked(runGatewayUpdate).mockResolvedValue(makeOkUpdateResult());
 
-    await updateCommand({ restart: false });
+    await updateCommand({ restart: false, verbose: true });
 
     expect(syncPluginsForUpdateChannel).not.toHaveBeenCalled();
     expect(updateNpmInstalledPlugins).not.toHaveBeenCalled();
@@ -751,13 +625,13 @@ describe("update-cli", () => {
     expect(serviceRestart).not.toHaveBeenCalled();
   });
 
-  it("hands a packaged update to the stable updater immediately after bootstrap", async () => {
+  it("hands a Go-managed packaged update to its immutable updater", async () => {
     const root = createCaseDir("fased-managed-transition");
     mockPackageInstallStatus(root);
     ensureManagedRuntimeBootstrap.mockResolvedValue({
-      installed: true,
-      manifestPath: "/home/test/.fased/install.json",
-      updaterPath: "/home/test/.fased/updater/fased-managed-updater.mjs",
+      installed: false,
+      manifestPath: null,
+      updaterPath: "/opt/fased/local/id/current/payload/runtime/scripts/fased-managed-updater.mjs",
     });
 
     await updateCommand({ channel: "stable", timeout: "45", yes: true });
@@ -765,7 +639,7 @@ describe("update-cli", () => {
     expect(runCommandWithTimeout).toHaveBeenCalledWith(
       [
         process.execPath,
-        "/home/test/.fased/updater/fased-managed-updater.mjs",
+        "/opt/fased/local/id/current/payload/runtime/scripts/fased-managed-updater.mjs",
         "update",
         "--channel",
         "stable",
@@ -774,7 +648,7 @@ describe("update-cli", () => {
         "--yes",
       ],
       expect.objectContaining({
-        cwd: "/home/test/.fased/updater",
+        cwd: "/opt/fased/local/id/current/payload/runtime/scripts",
         timeoutMs: 45_000,
       }),
     );
@@ -782,36 +656,38 @@ describe("update-cli", () => {
     expect(resolveNpmChannelTag).not.toHaveBeenCalled();
   });
 
-  it("keeps a managed runtime on its stable updater even when cwd is a git checkout", async () => {
+  it("keeps a Go-managed runtime on its immutable updater even when cwd is a git checkout", async () => {
     createCaseDir("fased-managed-from-git-cwd");
     ensureManagedRuntimeBootstrap.mockResolvedValue({
       installed: false,
-      manifestPath: "/home/test/.fased/install.json",
-      updaterPath: "/home/test/.fased/updater/fased-managed-updater.mjs",
+      manifestPath: null,
+      updaterPath: "/opt/fased/local/id/current/payload/runtime/scripts/fased-managed-updater.mjs",
     });
 
     await withEnvAsync(
       {
-        FASED_RUNTIME_SOURCE: "managed-package",
-        FASED_MANAGED_RUNTIME_ROOT: "/home/test/.fased/runtime/current",
+        FASED_RUNTIME_SOURCE: "go-lifecycle",
+        FASED_MANAGED_RUNTIME_ROOT: "/opt/fased/local/id/current/payload/runtime",
       },
       () => updateCommand({ timeout: "45" }),
     );
 
     expect(ensureManagedRuntimeBootstrap).toHaveBeenCalledWith({
-      packageRoot: "/home/test/.fased/runtime/current",
+      packageRoot: "/opt/fased/local/id/current/payload/runtime",
       env: expect.any(Object),
     });
     expect(runCommandWithTimeout).toHaveBeenCalledWith(
       [
         process.execPath,
-        "/home/test/.fased/updater/fased-managed-updater.mjs",
+        "/opt/fased/local/id/current/payload/runtime/scripts/fased-managed-updater.mjs",
         "update",
+        "--channel",
+        "stable",
         "--timeout",
         "45",
       ],
       expect.objectContaining({
-        cwd: "/home/test/.fased/updater",
+        cwd: "/opt/fased/local/id/current/payload/runtime/scripts",
         timeoutMs: 45_000,
       }),
     );
