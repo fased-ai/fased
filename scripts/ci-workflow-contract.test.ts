@@ -322,12 +322,18 @@ describe("CI workflow routing", () => {
     const javascriptSteps = jobs["codeql-javascript"]?.steps ?? [];
     const focusedInit = javascriptSteps.find((step) => step.name === "Initialize focused CodeQL");
     const fullInit = javascriptSteps.find((step) => step.name === "Initialize full CodeQL");
-    expect(focusedInit?.if).toBe("needs.change-scope.outputs.run_node_focused == 'true'");
-    expect(fullInit?.if).toBe("needs.change-scope.outputs.run_node_focused != 'true'");
+    expect(focusedInit?.if).toBe("needs.change-scope.outputs.focused_codeql_javascript == 'true'");
+    expect(fullInit?.if).toBe("needs.change-scope.outputs.focused_codeql_javascript != 'true'");
     const focusedConfig = parse(String(focusedInit?.with?.config ?? "")) as {
       paths?: string[];
     };
     const coveredRoots = focusedConfig.paths ?? [];
+    expect(coveredRoots).toEqual(
+      expect.arrayContaining([
+        "src/commands/wallet.ts",
+        "src/federation/federation-state-permissions.ts",
+      ]),
+    );
     for (const sourcePath of await readFocusedLocalUpdateProductionPaths()) {
       if (!/\.(?:cjs|cts|js|jsx|mjs|mts|ts|tsx)$/u.test(sourcePath)) {
         continue;

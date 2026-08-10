@@ -67,6 +67,7 @@ jobs:
       run_platform_bootstrap: ${{ steps.scope.outputs.run_platform_bootstrap }}
       run_docker: ${{ steps.scope.outputs.run_docker }}
       run_codeql_javascript: ${{ steps.scope.outputs.run_codeql_javascript }}
+      focused_codeql_javascript: ${{ steps.scope.outputs.focused_codeql_javascript }}
       run_codeql_go: ${{ steps.scope.outputs.run_codeql_go }}
       run_codeql_python: ${{ steps.scope.outputs.run_codeql_python }}
       run_hosting: ${{ steps.scope.outputs.run_hosting }}
@@ -1140,7 +1141,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Initialize focused CodeQL
-        if: needs.change-scope.outputs.run_node_focused == 'true'
+        if: needs.change-scope.outputs.focused_codeql_javascript == 'true'
         uses: github/codeql-action/init@d1ba80a13dd99fba24a470575428917156a28b43 # v4
         with:
           languages: javascript-typescript
@@ -1149,10 +1150,12 @@ jobs:
             name: "Focused Node"
             paths:
               - scripts
+              - src/commands/wallet.ts
+              - src/federation/federation-state-permissions.ts
               - src/wallet/wallet-runtime-config.ts
 
       - name: Initialize full CodeQL
-        if: needs.change-scope.outputs.run_node_focused != 'true'
+        if: needs.change-scope.outputs.focused_codeql_javascript != 'true'
         uses: github/codeql-action/init@d1ba80a13dd99fba24a470575428917156a28b43 # v4
         with:
           languages: javascript-typescript
