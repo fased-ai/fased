@@ -104,6 +104,13 @@ resolve_signer_binary() {
 resolve_protected_runtime() {
   local instance="$1"
   local resolved=""
+  resolved="$(readlink -f "/opt/fased/local/$instance/current/payload/runtime" 2>/dev/null || true)"
+  case "$resolved" in
+    "/opt/fased/local/$instance/generations/"*"/payload/runtime")
+      printf '%s\n' "$resolved"
+      return 0
+      ;;
+  esac
   resolved="$(readlink -f "$state/runtime/current")"
   case "$resolved" in
     "/opt/fased/local/$instance/application/releases/"*) printf '%s\n' "$resolved" ;;
