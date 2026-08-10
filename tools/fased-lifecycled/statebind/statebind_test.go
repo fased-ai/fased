@@ -50,6 +50,9 @@ func TestCanonicalStateSpecsCoverExactDeclaredStateAndRealMiningPath(t *testing.
 	if seen["mining"].Path != filepath.Join(owner, "sat-mining") || !seen["mining"].IgnoreSQLiteTransient {
 		t.Fatalf("Mining state is not bound to the semantic sat-mining root: %+v", seen["mining"])
 	}
+	if seen["walletRegistry"].Path != filepath.Join(owner, "wallet", "provider-registry.v1.json") {
+		t.Fatalf("wallet registry state includes signer sockets or material: %+v", seen["walletRegistry"])
+	}
 }
 
 func TestMiningInventoryIgnoresSQLiteSidecarsButDetectsDatabaseChange(t *testing.T) {

@@ -236,7 +236,14 @@ verify_shared_federation_state() {
         signature: "fixture-signature",
       });
     '
-  test "$(stat -c '%U:%G:%a' "$state/federation")" = "testop:fscf-$instance:2770"
+  federation_directory_identity="$(stat -c '%U:%G:%a' "$state/federation")"
+  case "$federation_directory_identity" in
+    "testop:fscf-$instance:2770"|"fsgw-$instance:fscf-$instance:2770") ;;
+    *)
+      echo "shared federation directory identity is unsafe: $federation_directory_identity" >&2
+      return 1
+      ;;
+  esac
   test "$(stat -c '%U:%G:%a' "$token_file")" = "testop:fscf-$instance:660"
   runuser -u "fsgw-$instance" -- env "${environment[@]}" FASED_FIXTURE_MODULE_URL="$module_url" \
     /usr/local/bin/node --input-type=module --eval '

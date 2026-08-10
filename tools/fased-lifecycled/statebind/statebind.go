@@ -61,7 +61,7 @@ func CanonicalSpecs(ownerStateRoot, installRoot, signerStateRoot string) []Spec 
 		{Name: "mining", Path: filepath.Join(ownerStateRoot, "sat-mining"), IgnoreSQLiteTransient: true},
 		owner("pluginState", "extensions"), owner("schedules", "schedules"), owner("secrets", "secrets"),
 		owner("sessions", "sessions"), {Name: "signer", Path: signerStateRoot, RootOnly: true},
-		owner("tasks", "tasks"), owner("walletRegistry", "wallet"),
+		owner("tasks", "tasks"), owner("walletRegistry", filepath.Join("wallet", "provider-registry.v1.json")),
 	}
 }
 
