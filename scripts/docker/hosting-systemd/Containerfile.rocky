@@ -28,11 +28,8 @@ RUN dnf install -y \
     sys-fs-fuse-connections.mount \
     systemd-remount-fs.service
 
-COPY run.sh /usr/local/bin/fased-hosting-systemd-fixture
 COPY updater-request.mjs /usr/local/bin/fased-hosting-updater-request
-RUN chmod 0755 \
-    /usr/local/bin/fased-hosting-systemd-fixture \
-    /usr/local/bin/fased-hosting-updater-request
+RUN chmod 0755 /usr/local/bin/fased-hosting-updater-request
 
 STOPSIGNAL SIGRTMIN+3
 CMD ["/usr/lib/systemd/systemd"]
