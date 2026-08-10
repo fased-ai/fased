@@ -205,6 +205,7 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	if err != nil {
 		return err
 	}
+	publicPredecessorVersion := ""
 	switch discovered.Installation.Kind {
 	case planner.InstallationAmbiguous:
 		return errors.New("installation is ambiguous; explicit repair is required")
@@ -215,6 +216,7 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 			return errors.New("caller source topology differs from read-only discovery")
 		}
 		sourceTopology = string(discovered.Topology)
+		publicPredecessorVersion = discovered.PublicPredecessorVersion
 	case planner.InstallationEmpty, planner.InstallationManaged:
 		if sourceTopology != "" {
 			return errors.New("caller supplied a source topology for a non-bridge installation")
@@ -222,7 +224,7 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	default:
 		return errors.New("installation discovery returned an unsupported class")
 	}
-	applyArguments, err := initializationApplyArguments("", generationRoot, generationArchive, dependencyArchive, sourceTopology)
+	applyArguments, err := initializationApplyArguments("", generationRoot, generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion)
 	if err != nil {
 		return err
 	}
@@ -258,6 +260,7 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 		JournalPath:      filepath.Join("/var/lib/fased-lifecycle-bootstrap", transactionID+".json"),
 		StableDaemonPath: "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled",
 		StableDaemon:     stableDaemon, Principals: principalSystem, ACL: homeACL, Systemd: systemd,
+		BridgePublicStable: discovered.Installation.Kind == planner.InstallationPublicStable,
 	})
 	if err != nil {
 		return err
@@ -405,7 +408,7 @@ func discoverInitialization(profile model.Profile, instanceID, ownerStateRoot, o
 	})
 }
 
-func initializationApplyArguments(configPath, generationRoot, generationArchive, dependencyArchive, sourceTopology string) ([]string, error) {
+func initializationApplyArguments(configPath, generationRoot, generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion string) ([]string, error) {
 	if (generationRoot == "") == (generationArchive == "") {
 		return nil, errors.New("invalid lifecycle initialization generation input")
 	}
@@ -423,8 +426,14 @@ func initializationApplyArguments(configPath, generationRoot, generationArchive,
 		}
 		arguments = append(arguments, "--dependency-archive", dependencyArchive)
 	}
+	if err := validatePublicPredecessorEvidence(sourceTopology, publicPredecessorVersion); err != nil {
+		return nil, err
+	}
 	if sourceTopology != "" {
 		arguments = append(arguments, "--source-topology", sourceTopology)
+	}
+	if publicPredecessorVersion != "" {
+		arguments = append(arguments, "--public-predecessor-version", publicPredecessorVersion)
 	}
 	return arguments, nil
 }
@@ -558,13 +567,14 @@ func ensureStableBinaryDirectory(directory string) error {
 func runApply(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("apply", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var configPath, generationRoot, generationArchive, dependencyArchive, generationID, sourceTopology string
+	var configPath, generationRoot, generationArchive, dependencyArchive, generationID, sourceTopology, publicPredecessorVersion string
 	flags.StringVar(&configPath, "config", "", "")
 	flags.StringVar(&generationRoot, "generation", "", "")
 	flags.StringVar(&generationArchive, "generation-archive", "", "")
 	flags.StringVar(&dependencyArchive, "dependency-archive", "", "")
 	flags.StringVar(&generationID, "generation-id", "", "")
 	flags.StringVar(&sourceTopology, "source-topology", "", "")
+	flags.StringVar(&publicPredecessorVersion, "public-predecessor-version", "", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return errors.New("invalid lifecycle apply arguments")
 	}
@@ -586,6 +596,9 @@ func runApply(args []string, output io.Writer) error {
 	}
 	if dependencyArchive != "" && (!filepath.IsAbs(dependencyArchive) || filepath.Clean(dependencyArchive) != dependencyArchive) {
 		return errors.New("invalid lifecycle dependency archive")
+	}
+	if err := validatePublicPredecessorEvidence(sourceTopology, publicPredecessorVersion); err != nil {
+		return err
 	}
 	config, err := loadConfig(configPath, 0)
 	if err != nil {
@@ -646,8 +659,9 @@ func runApply(args []string, output io.Writer) error {
 	response, err := daemon.Call(ctx, config.SupervisorSocket(), protocol.Request{
 		SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID,
 		Operation: protocol.OperationConverge, TargetGenerationID: generation.ID,
-		SourceTopology:         sourceTopology,
-		ExpectedManifestDigest: expectedManifest,
+		SourceTopology:           sourceTopology,
+		PublicPredecessorVersion: publicPredecessorVersion,
+		ExpectedManifestDigest:   expectedManifest,
 	}, 5*time.Minute)
 	if err != nil {
 		return err
@@ -772,24 +786,8 @@ func importGenerationDependency(state *store.Store, generation model.Generation,
 }
 
 func runRequest(args []string, output io.Writer) error {
-	flags := flag.NewFlagSet("request", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	var socketPath, operation, requestID, targetID, sourceTopology, manifestDigest, transactionID string
-	flags.StringVar(&socketPath, "socket", "", "")
-	flags.StringVar(&operation, "operation", "", "")
-	flags.StringVar(&requestID, "request-id", "", "")
-	flags.StringVar(&targetID, "target-generation", "", "")
-	flags.StringVar(&sourceTopology, "source-topology", "", "")
-	flags.StringVar(&manifestDigest, "expected-manifest", "", "")
-	flags.StringVar(&transactionID, "transaction", "", "")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !filepath.IsAbs(socketPath) {
-		return errors.New("invalid lifecycle request arguments")
-	}
-	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID,
-		Operation: protocol.Operation(operation), TargetGenerationID: targetID,
-		SourceTopology:         sourceTopology,
-		ExpectedManifestDigest: manifestDigest, TransactionID: transactionID}
-	if err := request.Validate(); err != nil {
+	socketPath, request, err := parseLifecycleRequestArguments(args)
+	if err != nil {
 		return err
 	}
 	response, err := daemon.Call(context.Background(), socketPath, request, 6*time.Minute)
@@ -797,6 +795,43 @@ func runRequest(args []string, output io.Writer) error {
 		return err
 	}
 	return json.NewEncoder(output).Encode(response)
+}
+
+func parseLifecycleRequestArguments(args []string) (string, protocol.Request, error) {
+	flags := flag.NewFlagSet("request", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	var socketPath, operation, requestID, targetID, sourceTopology, publicPredecessorVersion, manifestDigest, transactionID string
+	flags.StringVar(&socketPath, "socket", "", "")
+	flags.StringVar(&operation, "operation", "", "")
+	flags.StringVar(&requestID, "request-id", "", "")
+	flags.StringVar(&targetID, "target-generation", "", "")
+	flags.StringVar(&sourceTopology, "source-topology", "", "")
+	flags.StringVar(&publicPredecessorVersion, "public-predecessor-version", "", "")
+	flags.StringVar(&manifestDigest, "expected-manifest", "", "")
+	flags.StringVar(&transactionID, "transaction", "", "")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !filepath.IsAbs(socketPath) {
+		return "", protocol.Request{}, errors.New("invalid lifecycle request arguments")
+	}
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID,
+		Operation: protocol.Operation(operation), TargetGenerationID: targetID,
+		SourceTopology: sourceTopology, PublicPredecessorVersion: publicPredecessorVersion,
+		ExpectedManifestDigest: manifestDigest, TransactionID: transactionID}
+	if err := request.Validate(); err != nil {
+		return "", protocol.Request{}, err
+	}
+	return socketPath, request, nil
+}
+
+func validatePublicPredecessorEvidence(sourceTopology, publicPredecessorVersion string) error {
+	if (sourceTopology == "") != (publicPredecessorVersion == "") {
+		return errors.New("public predecessor topology and version must be supplied together")
+	}
+	if publicPredecessorVersion != "" {
+		if err := model.ValidateVersion(publicPredecessorVersion); err != nil {
+			return fmt.Errorf("public predecessor version: %w", err)
+		}
+	}
+	return nil
 }
 
 func runSupervisor(ctx context.Context, config platform.Config, socketPath string) error {
@@ -820,7 +855,11 @@ func runSupervisor(ctx context.Context, config platform.Config, socketPath strin
 	targetClient := controller.Client{SocketPath: config.ControllerSocket(), Timeout: 4 * time.Minute}
 	supervisor := &engine.SupervisorEngine{Journal: state, Controller: controllerAdapter, Target: targetClient}
 	binder := &statebind.Binder{Specs: statebind.CanonicalSpecs(config.OwnerStateRoot, config.InstallRoot, config.SignerStateRoot())}
-	service := &daemon.Service{Profile: config.Profile, Platform: identity, Store: state, Inventory: binder, Supervisor: supervisor, Onboarding: targetClient}
+	evidence := platform.DiscoveryEvidenceVerifier{Request: platform.DiscoveryRequest{
+		Profile: config.Profile, OwnerStateRoot: config.OwnerStateRoot,
+		CanonicalManifestPath: filepath.Join(config.LifecycleRoot, "installation-manifest.json"), CanonicalInstallRoot: config.InstallRoot,
+	}}
+	service := &daemon.Service{Profile: config.Profile, Platform: identity, Store: state, Inventory: binder, Supervisor: supervisor, Onboarding: targetClient, PredecessorEvidence: evidence}
 	listener, err := listenBound(socketPath, 0o660, int(config.Operator.GID))
 	if err != nil {
 		return err
@@ -878,7 +917,7 @@ func runTarget(ctx context.Context, config platform.Config, socketPath string) e
 		predecessor = &platform.HostingPredecessor{Config: config, Systemd: systemd, State: platform.CommandServiceState{Binary: "/usr/bin/systemctl"}}
 		networkPolicy = platform.CommandHostingNetworkPolicy{TailscaleBinary: "/usr/bin/tailscale", SocketBinary: "/usr/bin/ss"}
 	}
-	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Files: files, SharedState: sharedState, Systemd: systemd, Generations: state, Health: platform.LoopbackGatewayHealth{}, Predecessor: predecessor, Network: networkPolicy, Manifest: state}
+	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Files: files, SharedState: sharedState, Systemd: systemd, Generations: state, Health: platform.LoopbackGatewayHealth{}, Predecessor: predecessor, Fence: platform.DiskLocalPredecessorFence{}, Network: networkPolicy, Manifest: state}
 	targetEngine := &engine.TargetEngine{Journal: state, Generations: state,
 		Migrator: &migrator.SchemaMigrator{Registry: registry}, Signer: signerParticipant,
 		Adapter: targetAdapter, Installation: &platform.ManifestCommitter{Store: state, Identity: identity}}

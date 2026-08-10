@@ -35,17 +35,19 @@ type ManifestReader interface {
 }
 
 type TargetAdapter struct {
-	Config      Config
-	Identity    model.PlatformIdentity
-	Units       UnitStore
-	Files       LifecycleFileStore
-	SharedState SharedStateStore
-	Systemd     Systemd
-	Generations GenerationManager
-	Health      GatewayHealth
-	Predecessor Predecessor
-	Network     NetworkPolicy
-	Manifest    ManifestReader
+	Config           Config
+	Identity         model.PlatformIdentity
+	Units            UnitStore
+	Files            LifecycleFileStore
+	SharedState      SharedStateStore
+	Systemd          Systemd
+	Generations      GenerationManager
+	Health           GatewayHealth
+	Predecessor      Predecessor
+	Fence            LocalPredecessorFence
+	Network          NetworkPolicy
+	Manifest         ManifestReader
+	StableDaemonPath string
 }
 
 func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) error {
@@ -111,7 +113,7 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 	if err != nil {
 		return err
 	}
-	for _, relative := range []string{"bin/fased-gateway-launch", "bin/fased-signerd", "runtime/scripts/fased-signer-owner-hosting.sh"} {
+	for _, relative := range []string{"bin/fased-gateway-launch", "bin/fased-signerd", "bin/fased-lifecycled", "runtime/scripts/fased-signer-owner-hosting.sh"} {
 		if err := requireExecutable(filepath.Join(payload, relative)); err != nil {
 			return fmt.Errorf("target generation %s: %w", relative, err)
 		}
@@ -138,12 +140,33 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 	if err != nil {
 		return err
 	}
+	cliProjection, err := CanonicalCLIProjectionJSON(adapter.Config)
+	if err != nil {
+		return err
+	}
+	configGID, err := canonicalConfigGroupGID(adapter.Config.OwnerStateRoot, adapter.Config.Operator.UID)
+	if err != nil {
+		return err
+	}
+	controllerIdentity, err := CanonicalControllerIdentityJSON(payload, adapter.stableDaemonPath(), tx.Target)
+	if err != nil {
+		return err
+	}
 	paths := CanonicalSignerOwnerFiles(adapter.Config)
 	files := map[string]LifecycleFile{
 		paths[0]: {Data: helper, Mode: 0o755, UID: 0, GID: 0},
 		paths[1]: {Data: wrapper, Mode: 0o755, UID: 0, GID: 0},
 		CanonicalInstallProjectionPath(adapter.Config): {
 			Data: projection, Mode: 0o640, UID: adapter.Config.Operator.UID, GID: adapter.Config.Operator.GID,
+		},
+		CanonicalCLIProjectionPath(adapter.Config): {
+			Data: cliProjection, Mode: 0o640, UID: adapter.Config.Operator.UID, GID: configGID,
+		},
+		CanonicalProductVersionPath(adapter.Config): {
+			Data: []byte(tx.Target.Version + "\n"), Mode: 0o600, UID: 0, GID: 0,
+		},
+		CanonicalControllerIdentityPath(adapter.Config): {
+			Data: controllerIdentity, Mode: 0o600, UID: 0, GID: 0,
 		},
 	}
 	if !adapter.deferFreshLocalGateway(tx) {
@@ -164,21 +187,35 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 	return adapter.Files.Prepare(tx.ID, files)
 }
 
+func (adapter *TargetAdapter) stableDaemonPath() string {
+	if adapter.StableDaemonPath != "" {
+		return adapter.StableDaemonPath
+	}
+	return "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled"
+}
+
 func (adapter *TargetAdapter) Quiesce(ctx context.Context, tx model.Transaction) error {
 	if tx.Phase == model.PhasePrepared {
-		// Fence the selected predecessor exactly once before switching. During
+		// Fence the selected predecessor before switching. During
 		// rollback it must remain stopped until Restore reactivates it.
-		if err := adapter.Predecessor.Quiesce(ctx, tx); err != nil {
-			return err
-		}
+		predecessorError := adapter.Predecessor.Quiesce(ctx, tx)
 		if tx.Previous == nil {
-			return nil
+			return predecessorError
 		}
+		return errors.Join(predecessorError, adapter.StopTarget(ctx, tx))
 	}
-	if err := adapter.Systemd.Stop(ctx, adapter.Identity.Services["gateway"]); err != nil {
-		return err
-	}
-	return adapter.Systemd.Stop(ctx, adapter.Identity.Services["signer"])
+	return adapter.StopTarget(ctx, tx)
+}
+
+func (adapter *TargetAdapter) StopTarget(ctx context.Context, _ model.Transaction) error {
+	// Stop both services even when the Gateway is already failed or has been
+	// removed by rollback. Returning after the first stop failure can leave the
+	// signer running under a bootstrap-created account, which makes principal
+	// rollback fail and correctly prevents canonical-root cleanup.
+	return errors.Join(
+		adapter.Systemd.Stop(ctx, adapter.Identity.Services["gateway"]),
+		adapter.Systemd.Stop(ctx, adapter.Identity.Services["signer"]),
+	)
 }
 
 func (adapter *TargetAdapter) Activate(ctx context.Context, tx model.Transaction) error {
@@ -224,6 +261,11 @@ func (adapter *TargetAdapter) Verify(ctx context.Context, tx model.Transaction) 
 }
 
 func (adapter *TargetAdapter) Commit(ctx context.Context, tx model.Transaction) error {
+	if adapter.localPublicStableBridge(tx) {
+		if err := adapter.Fence.Verify(adapter.Config); err != nil {
+			return err
+		}
+	}
 	previous := ""
 	if tx.Previous != nil {
 		previous = tx.Previous.ID
@@ -231,7 +273,7 @@ func (adapter *TargetAdapter) Commit(ctx context.Context, tx model.Transaction) 
 	if err := adapter.Generations.ActivateGeneration(tx.Target.ID, previous); err != nil {
 		return err
 	}
-	if err := adapter.Files.Activate(tx.ID, []string{CanonicalInstallProjectionPath(adapter.Config)}); err != nil {
+	if err := adapter.Files.Activate(tx.ID, adapter.commitLifecycleFiles(tx)); err != nil {
 		return err
 	}
 	if err := adapter.Predecessor.Commit(ctx, tx); err != nil {
@@ -273,7 +315,18 @@ func (adapter *TargetAdapter) preStartLifecycleFiles(tx model.Transaction) []str
 }
 
 func (adapter *TargetAdapter) lifecycleFiles(tx model.Transaction) []string {
-	return append(adapter.preStartLifecycleFiles(tx), CanonicalInstallProjectionPath(adapter.Config))
+	return append(adapter.preStartLifecycleFiles(tx), adapter.commitLifecycleFiles(tx)...)
+}
+
+func (adapter *TargetAdapter) commitLifecycleFiles(tx model.Transaction) []string {
+	return []string{
+		CanonicalProductVersionPath(adapter.Config), CanonicalControllerIdentityPath(adapter.Config),
+		CanonicalCLIProjectionPath(adapter.Config), CanonicalInstallProjectionPath(adapter.Config),
+	}
+}
+
+func (adapter *TargetAdapter) localPublicStableBridge(tx model.Transaction) bool {
+	return adapter.Config.Profile == model.ProfileProtectedLocal && tx.PlanAction == "BRIDGE_PUBLIC_STABLE"
 }
 
 func (adapter *TargetAdapter) Discard(ctx context.Context, tx model.Transaction) error {
@@ -281,7 +334,7 @@ func (adapter *TargetAdapter) Discard(ctx context.Context, tx model.Transaction)
 }
 
 func (adapter *TargetAdapter) validate(tx model.Transaction) error {
-	if adapter == nil || adapter.Units == nil || adapter.Files == nil || adapter.SharedState == nil || adapter.Systemd == nil || adapter.Generations == nil || adapter.Health == nil || adapter.Predecessor == nil || adapter.Network == nil {
+	if adapter == nil || adapter.Units == nil || adapter.Files == nil || adapter.SharedState == nil || adapter.Systemd == nil || adapter.Generations == nil || adapter.Health == nil || adapter.Predecessor == nil || adapter.Fence == nil || adapter.Network == nil {
 		return errors.New("target platform adapter is incomplete")
 	}
 	if err := adapter.Config.Validate(); err != nil {
@@ -321,6 +374,7 @@ func (adapter *TargetAdapter) renderTargetUnits(payload, version, dependency str
 	runtimeDirectory := strings.TrimPrefix(adapter.Config.RuntimeRoot, "/run/")
 	if adapter.Config.Profile == model.ProfileProtectedLocal {
 		runtimeDirectory = strings.Join([]string{
+			runtimeDirectory,
 			filepath.Join(runtimeDirectory, "application"), filepath.Join(runtimeDirectory, "operator"), filepath.Join(runtimeDirectory, "control"),
 		}, " ")
 	}
@@ -406,7 +460,7 @@ WantedBy=multi-user.target
 `, adapter.Config.InstanceID, adapter.Identity.Services["signer"], adapter.Identity.Services["signer"],
 		adapter.Config.Gateway.UID, adapter.Config.Gateway.GID, adapter.Config.ConfigGroupName(), payload,
 		adapter.Config.OwnerHome(), adapter.Config.OwnerStateRoot,
-		adapter.Config.OwnerStateRoot, adapter.Config.OwnerStateRoot, adapter.Config.OwnerStateRoot, payload, version, profileEnvironment(adapter.Config.Profile), protectedLocalEnvironment(adapter.Config.Profile), adapter.Config.GatewayPort, adapter.Config.ApplicationSocket(),
+		adapter.Config.OwnerStateRoot, adapter.Config.OwnerStateRoot, adapter.Config.OwnerStateRoot, payload, version, profileEnvironment(adapter.Config.Profile), protectedLocalEnvironment(adapter.Config.Profile, adapter.Config.InstanceID), adapter.Config.GatewayPort, adapter.Config.ApplicationSocket(),
 		filepath.Join(payload, "bin/fased-gateway-launch"), dependencyMount, adapter.Config.OwnerStateRoot)
 	return map[string][]byte{
 		adapter.Identity.Services["signer"]: []byte(signer), adapter.Identity.Services["gateway"]: []byte(gateway),
@@ -420,9 +474,9 @@ func profileEnvironment(profile model.Profile) string {
 	return "hosting"
 }
 
-func protectedLocalEnvironment(profile model.Profile) string {
+func protectedLocalEnvironment(profile model.Profile, instanceID string) string {
 	if profile == model.ProfileProtectedLocal {
-		return "Environment=FASED_PROTECTED_LOCAL=1\n"
+		return fmt.Sprintf("Environment=FASED_PROTECTED_LOCAL=1\nEnvironment=FASED_PROTECTED_LOCAL_INSTANCE=%s\n", instanceID)
 	}
 	return ""
 }

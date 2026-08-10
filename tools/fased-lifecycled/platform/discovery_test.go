@@ -74,6 +74,9 @@ func writePublicStableFixture(t *testing.T, request DiscoveryRequest, profile, s
 	if err := os.MkdirAll(release, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(release, "package.json"), []byte(`{"version":"0.1.75"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Dir(launcher), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -102,8 +105,40 @@ func TestDiscoveryDerivesPublicStableTopologyFromFactsNotReleaseName(t *testing.
 	local := discoveryRequest(t, model.ProfileProtectedLocal)
 	writePublicStableFixture(t, local, "local", "user")
 	result, err := DiscoverInstallation(local)
-	if err != nil || result.Installation.Kind != planner.InstallationPublicStable || result.Topology != planner.TopologyLocalUserSystemdV2 {
+	if err != nil || result.Installation.Kind != planner.InstallationPublicStable || result.Topology != planner.TopologyLocalUserSystemdV2 || result.PublicPredecessorVersion != "0.1.75" {
 		t.Fatalf("unexpected Local public-stable discovery: %+v err=%v", result, err)
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Join(local.OwnerStateRoot, "runtime", "current"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(resolved, "package.json"), []byte(`{"version":"0.1.74"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mismatched, err := DiscoverInstallation(local)
+	if err != nil || mismatched.Installation.Kind != planner.InstallationAmbiguous {
+		t.Fatalf("manifest/runtime version mismatch did not fail closed: %+v err=%v", mismatched, err)
+	}
+	if err := os.WriteFile(filepath.Join(resolved, "package.json"), []byte(`{"version":"0.1.75"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	verifier := DiscoveryEvidenceVerifier{Request: local}
+	if err := verifier.VerifyPublicPredecessorEvidence(string(planner.TopologyLocalUserSystemdV2), "0.1.75"); err != nil {
+		t.Fatalf("verified predecessor evidence was rejected: %v", err)
+	}
+	if err := verifier.VerifyPublicPredecessorEvidence(string(planner.TopologyLocalUserSystemdV2), "0.1.74"); err == nil {
+		t.Fatal("forged predecessor version was accepted")
+	}
+	realRelease := filepath.Join(local.OwnerStateRoot, "runtime", "releases", "real")
+	if err := os.Rename(resolved, realRelease); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realRelease, resolved); err != nil {
+		t.Fatal(err)
+	}
+	unsafe, err := DiscoverInstallation(local)
+	if err != nil || unsafe.Installation.Kind != planner.InstallationAmbiguous {
+		t.Fatalf("symlinked selected release was accepted: %+v err=%v", unsafe, err)
 	}
 
 	hosting := discoveryRequest(t, model.ProfileHosting)
@@ -118,8 +153,31 @@ func TestDiscoveryDerivesPublicStableTopologyFromFactsNotReleaseName(t *testing.
 		}
 	}
 	result, err = DiscoverInstallation(hosting)
-	if err != nil || result.Installation.Kind != planner.InstallationPublicStable || result.Topology != planner.TopologyHostingControllerV2 {
+	if err != nil || result.Installation.Kind != planner.InstallationPublicStable || result.Topology != planner.TopologyHostingControllerV2 || result.PublicPredecessorVersion != "0.1.75" {
 		t.Fatalf("unexpected Hosting public-stable discovery: %+v err=%v", result, err)
+	}
+}
+
+func TestDiscoveryRejectsSymlinkedRuntimeRoot(t *testing.T) {
+	request := discoveryRequest(t, model.ProfileProtectedLocal)
+	writePublicStableFixture(t, request, "local", "user")
+	runtimePath := filepath.Join(request.OwnerStateRoot, "runtime")
+	externalRuntime := filepath.Join(t.TempDir(), "runtime")
+	if err := os.Rename(runtimePath, externalRuntime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(externalRuntime, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(externalRuntime, "releases", "active"), filepath.Join(externalRuntime, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(externalRuntime, runtimePath); err != nil {
+		t.Fatal(err)
+	}
+	result, err := DiscoverInstallation(request)
+	if err != nil || result.Installation.Kind != planner.InstallationAmbiguous {
+		t.Fatalf("symlinked runtime root was accepted: %+v err=%v", result, err)
 	}
 }
 

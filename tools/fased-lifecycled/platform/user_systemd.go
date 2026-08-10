@@ -63,6 +63,22 @@ func (systemd CommandUserSystemd) Stop(ctx context.Context, unit string) error {
 	return systemd.run(ctx, "stop", unit)
 }
 
+func (systemd CommandUserSystemd) DaemonReload(ctx context.Context) error {
+	return systemd.run(ctx, "daemon-reload")
+}
+
+func (systemd CommandUserSystemd) MaskRuntime(ctx context.Context, unit string) error {
+	return systemd.run(ctx, "mask", "--runtime", "--force", unit)
+}
+
+func (systemd CommandUserSystemd) UnmaskRuntime(ctx context.Context, unit string) error {
+	return systemd.run(ctx, "unmask", "--runtime", unit)
+}
+
 func (systemd CommandUserSystemd) Start(ctx context.Context, unit string) error {
 	return systemd.run(ctx, "start", unit)
+}
+
+func (systemd CommandUserSystemd) Disable(ctx context.Context, unit string) error {
+	return systemd.run(ctx, "disable", unit)
 }

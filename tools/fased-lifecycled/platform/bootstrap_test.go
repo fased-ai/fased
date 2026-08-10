@@ -303,7 +303,8 @@ func TestHostingBootstrapPathPlanUsesSharedCanonicalRoots(t *testing.T) {
 	}
 	if paths["/opt/fased"].Mode != 0o755 || paths["/opt/fased/lifecycle"].Mode != 0o755 ||
 		paths["/opt/fased/lifecycle/supervisor-v1"].Mode != 0o755 || paths["/var/lib/fased-lifecycled"].Mode != 0o700 ||
-		paths["/var/lib/fased-signerd"].UID != principals.Signer.UID || paths["/home/app/.fased"].GID != principals.Groups.Config.GID {
+		paths["/var/lib/fased-signerd"].UID != principals.Signer.UID || paths["/var/lib/fased-host-updater"].Mode != 0o700 ||
+		paths["/home/app/.fased"].GID != principals.Groups.Config.GID {
 		t.Fatalf("unexpected Hosting path plan: %+v", got)
 	}
 }

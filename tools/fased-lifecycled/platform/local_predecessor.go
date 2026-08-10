@@ -14,8 +14,12 @@ import (
 // supported public-stable Local user service during a bridge.
 type UserSystemd interface {
 	IsActive(context.Context, string) (bool, error)
+	DaemonReload(context.Context) error
+	MaskRuntime(context.Context, string) error
+	UnmaskRuntime(context.Context, string) error
 	Stop(context.Context, string) error
 	Start(context.Context, string) error
+	Disable(context.Context, string) error
 }
 
 type LocalPredecessor struct {
@@ -40,10 +44,11 @@ func (NoPredecessor) Commit(context.Context, model.Transaction) error  { return 
 func (NoPredecessor) Discard(context.Context, model.Transaction) error { return nil }
 
 type predecessorRecord struct {
-	TransactionID string `json:"transactionId"`
-	Topology      string `json:"topology"`
-	Service       string `json:"service"`
-	WasActive     bool   `json:"wasActive"`
+	TransactionID            string `json:"transactionId"`
+	Topology                 string `json:"topology"`
+	PublicPredecessorVersion string `json:"publicPredecessorVersion"`
+	Service                  string `json:"service"`
+	WasActive                bool   `json:"wasActive"`
 }
 
 func (bridge *LocalPredecessor) Prepare(ctx context.Context, tx model.Transaction) error {
@@ -57,7 +62,7 @@ func (bridge *LocalPredecessor) Prepare(ctx context.Context, tx model.Transactio
 	if err != nil {
 		return err
 	}
-	record := predecessorRecord{TransactionID: tx.ID, Topology: tx.SourceTopology, Service: "fased-gateway.service", WasActive: active}
+	record := predecessorRecord{TransactionID: tx.ID, Topology: tx.SourceTopology, PublicPredecessorVersion: tx.PublicPredecessorVersion, Service: "fased-gateway.service", WasActive: active}
 	data, err := json.Marshal(record)
 	if err != nil {
 		return err
@@ -67,7 +72,10 @@ func (bridge *LocalPredecessor) Prepare(ctx context.Context, tx model.Transactio
 
 func (bridge *LocalPredecessor) Quiesce(ctx context.Context, tx model.Transaction) error {
 	record, found, err := bridge.read(tx)
-	if err != nil || !found || !record.WasActive {
+	if err != nil || !found {
+		return err
+	}
+	if err := bridge.Systemd.MaskRuntime(ctx, record.Service); err != nil {
 		return err
 	}
 	return bridge.Systemd.Stop(ctx, record.Service)
@@ -75,13 +83,34 @@ func (bridge *LocalPredecessor) Quiesce(ctx context.Context, tx model.Transactio
 
 func (bridge *LocalPredecessor) Restore(ctx context.Context, tx model.Transaction) error {
 	record, found, err := bridge.read(tx)
-	if err != nil || !found || !record.WasActive {
+	if err != nil || !found {
 		return err
+	}
+	if err := bridge.Systemd.UnmaskRuntime(ctx, record.Service); err != nil {
+		return err
+	}
+	if !record.WasActive {
+		return nil
 	}
 	return bridge.Systemd.Start(ctx, record.Service)
 }
 
-func (bridge *LocalPredecessor) Commit(_ context.Context, tx model.Transaction) error {
+func (bridge *LocalPredecessor) Commit(ctx context.Context, tx model.Transaction) error {
+	record, found, err := bridge.read(tx)
+	if err != nil || !found {
+		return err
+	}
+	if err := bridge.Systemd.Disable(ctx, record.Service); err != nil {
+		return err
+	}
+	// Load the durable global drop-in while the runtime mask still prevents
+	// reverse dependencies from resurrecting the retired predecessor.
+	if err := bridge.Systemd.DaemonReload(ctx); err != nil {
+		return err
+	}
+	if err := bridge.Systemd.UnmaskRuntime(ctx, record.Service); err != nil {
+		return err
+	}
 	return bridge.discard(tx)
 }
 
@@ -122,7 +151,7 @@ func (bridge *LocalPredecessor) read(tx model.Transaction) (predecessorRecord, b
 		return predecessorRecord{}, false, err
 	}
 	var record predecessorRecord
-	if json.Unmarshal(data, &record) != nil || record.TransactionID != tx.ID || record.Topology != tx.SourceTopology || record.Service != "fased-gateway.service" {
+	if json.Unmarshal(data, &record) != nil || record.TransactionID != tx.ID || record.Topology != tx.SourceTopology || record.PublicPredecessorVersion != tx.PublicPredecessorVersion || record.Service != "fased-gateway.service" {
 		return predecessorRecord{}, false, errors.New("Local predecessor record is invalid or rebound")
 	}
 	return record, true, nil

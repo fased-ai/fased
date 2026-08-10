@@ -98,6 +98,24 @@ type fakeSupervisor struct {
 
 type fakeOnboarding struct{ calls int }
 
+type fakePredecessorEvidence struct {
+	topology string
+	version  string
+	calls    int
+	failOn   int
+	err      error
+}
+
+func (evidence *fakePredecessorEvidence) VerifyPublicPredecessorEvidence(topology, version string) error {
+	evidence.calls++
+	evidence.topology = topology
+	evidence.version = version
+	if evidence.failOn == 0 || evidence.calls == evidence.failOn {
+		return evidence.err
+	}
+	return nil
+}
+
 func (value *fakeOnboarding) CompleteOnboarding(context.Context) (engine.Result, error) {
 	value.calls++
 	return engine.Result{Outcome: engine.OutcomeUpdated, Phase: model.PhaseCommitted}, nil
@@ -172,15 +190,16 @@ func TestConvergeBindsPublicStableBridgeToPreviousGeneration(t *testing.T) {
 	state := fakeStore{inventory: inventory, generation: target}
 	bindings := &fakeInventory{}
 	supervisor := &fakeSupervisor{}
+	evidence := &fakePredecessorEvidence{}
 	service := Service{
 		Profile: model.ProfileProtectedLocal, Platform: platform(), Store: state,
-		Inventory: bindings, Supervisor: supervisor,
+		Inventory: bindings, Supervisor: supervisor, PredecessorEvidence: evidence,
 		NewID: func() (string, error) { return transactionID, nil },
 	}
 	request := protocol.Request{
 		SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID,
 		Operation: protocol.OperationConverge, TargetGenerationID: target.ID,
-		SourceTopology: string(planner.TopologyLocalUserSystemdV1), ExpectedManifestDigest: "absent",
+		SourceTopology: string(planner.TopologyLocalUserSystemdV1), PublicPredecessorVersion: "0.1.75", ExpectedManifestDigest: "absent",
 	}
 	response, err := service.Handle(context.Background(), request)
 	if err != nil {
@@ -189,13 +208,50 @@ func TestConvergeBindsPublicStableBridgeToPreviousGeneration(t *testing.T) {
 	if response.Outcome != string(engine.OutcomeUpdated) || supervisor.tx.Previous != nil {
 		t.Fatalf("public-stable bridge was not transaction-bound: response=%+v transaction=%+v", response, supervisor.tx)
 	}
-	if supervisor.tx.PlanAction != string(planner.ActionBridgePublicStable) || supervisor.tx.SourceTopology != string(planner.TopologyLocalUserSystemdV1) {
+	if supervisor.tx.PlanAction != string(planner.ActionBridgePublicStable) || supervisor.tx.SourceTopology != string(planner.TopologyLocalUserSystemdV1) || supervisor.tx.PublicPredecessorVersion != "0.1.75" {
 		t.Fatalf("bridge transaction lost its source identity: %+v", supervisor.tx)
+	}
+	if evidence.calls != 2 || evidence.topology != request.SourceTopology || evidence.version != request.PublicPredecessorVersion {
+		t.Fatalf("public predecessor evidence was not independently verified: %+v", evidence)
 	}
 	if len(supervisor.tx.Migrations) != 3 || supervisor.tx.Migrations[0] != (model.Migration{State: "federation", From: 1, To: 2}) ||
 		supervisor.tx.Migrations[1] != (model.Migration{State: "managedInstall", From: 1, To: 2}) ||
 		supervisor.tx.Migrations[2] != (model.Migration{State: "signer", From: 1, To: 2}) {
 		t.Fatalf("unexpected bridge migrations: %+v", supervisor.tx.Migrations)
+	}
+}
+
+func TestConvergeRejectsUnverifiedPublicPredecessorEvidenceBeforeMutation(t *testing.T) {
+	inventory, target := targetContract()
+	stages := 0
+	supervisor := &fakeSupervisor{}
+	service := Service{Profile: model.ProfileProtectedLocal, Platform: platform(),
+		Store: fakeStore{inventory: inventory, generation: target, stages: &stages}, Inventory: &fakeInventory{}, Supervisor: supervisor,
+		PredecessorEvidence: &fakePredecessorEvidence{failOn: 1, err: errors.New("predecessor evidence mismatch")},
+		NewID:               func() (string, error) { return transactionID, nil }}
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationConverge,
+		TargetGenerationID: target.ID, SourceTopology: string(planner.TopologyLocalUserSystemdV1), PublicPredecessorVersion: "0.1.75", ExpectedManifestDigest: "absent"}
+	if _, err := service.Handle(context.Background(), request); err == nil || stages != 0 || supervisor.runs != 0 {
+		t.Fatalf("unverified predecessor evidence reached mutation: stages=%d runs=%d err=%v", stages, supervisor.runs, err)
+	}
+}
+
+func TestConvergeRechecksPublicPredecessorEvidenceBeforeTransaction(t *testing.T) {
+	inventory, target := targetContract()
+	inventory.StateSchemas = map[string]uint32{
+		"federation": 2, "managedInstall": 2, "mining": 1, "signer": 2, "walletRegistry": 1,
+	}
+	stages := 0
+	bindings := &fakeInventory{}
+	supervisor := &fakeSupervisor{}
+	evidence := &fakePredecessorEvidence{failOn: 2, err: errors.New("predecessor changed after binding")}
+	service := Service{Profile: model.ProfileProtectedLocal, Platform: platform(),
+		Store: fakeStore{inventory: inventory, generation: target, stages: &stages}, Inventory: bindings, Supervisor: supervisor,
+		PredecessorEvidence: evidence, NewID: func() (string, error) { return transactionID, nil }}
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationConverge,
+		TargetGenerationID: target.ID, SourceTopology: string(planner.TopologyLocalUserSystemdV1), PublicPredecessorVersion: "0.1.75", ExpectedManifestDigest: "absent"}
+	if _, err := service.Handle(context.Background(), request); err == nil || evidence.calls != 2 || stages != 1 || bindings.calls != 1 || supervisor.runs != 0 {
+		t.Fatalf("changed predecessor reached transaction: calls=%d stages=%d binds=%d runs=%d err=%v", evidence.calls, stages, bindings.calls, supervisor.runs, err)
 	}
 }
 

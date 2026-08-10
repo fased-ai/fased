@@ -103,6 +103,9 @@ func CanonicalInstallProjection(config Config, tx model.Transaction) (InstallPro
 	if tx.Previous != nil {
 		value := tx.Previous.Version
 		previous = &value
+	} else if tx.PlanAction == "BRIDGE_PUBLIC_STABLE" {
+		value := tx.PublicPredecessorVersion
+		previous = &value
 	}
 	return InstallProjection{
 		SchemaVersion: CurrentInstallProjectionSchemaVersion,

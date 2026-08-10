@@ -1268,13 +1268,11 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
     }
 
     const dir = path.dirname(configPath);
-    const sharedServiceConfig =
+    const declaredSharedServiceConfig =
       deps.env.FASED_HOST_PROFILE?.trim() === "hosting" ||
       deps.env.FASED_PROTECTED_LOCAL?.trim() === "1" ||
       configUsesSharedServiceState(snapshot.config) ||
       configUsesSharedServiceState(cfgToWrite);
-    const stateDirMode = sharedServiceConfig ? 0o2770 : 0o700;
-    const configMode = sharedServiceConfig ? 0o660 : 0o600;
     let directoryInfo;
     try {
       directoryInfo = await deps.fs.promises.stat(dir);
@@ -1292,10 +1290,28 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
       // can even report EEXIST.
       await deps.fs.promises.mkdir(dir, {
         recursive: true,
-        mode: sharedServiceConfig ? 0o770 : stateDirMode,
+        mode: declaredSharedServiceConfig ? 0o770 : 0o700,
       });
       directoryInfo = await deps.fs.promises.stat(dir);
     }
+    let existingSharedServiceConfig = false;
+    if (!declaredSharedServiceConfig && (directoryInfo.mode & 0o7777) === 0o2770) {
+      try {
+        const configInfo = await deps.fs.promises.lstat(configPath);
+        existingSharedServiceConfig =
+          configInfo.isFile() &&
+          !configInfo.isSymbolicLink() &&
+          configInfo.nlink === 1 &&
+          (configInfo.mode & 0o777) === 0o660;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw error;
+        }
+      }
+    }
+    const sharedServiceConfig = declaredSharedServiceConfig || existingSharedServiceConfig;
+    const stateDirMode = sharedServiceConfig ? 0o2770 : 0o700;
+    const configMode = sharedServiceConfig ? 0o660 : 0o600;
     if (sharedServiceConfig) {
       const currentMode = directoryInfo.mode & 0o7777;
       if (currentMode !== stateDirMode) {

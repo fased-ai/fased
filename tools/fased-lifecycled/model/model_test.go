@@ -101,6 +101,29 @@ func TestAdvanceUsesOneFixedStateMachine(t *testing.T) {
 	}
 }
 
+func TestPublicBridgeVersionIsRequiredAndEnvelopeBound(t *testing.T) {
+	tx := testTransaction(PhaseIdle)
+	tx.PlanAction = "BRIDGE_PUBLIC_STABLE"
+	tx.SourceTopology = "local-user-systemd-v2"
+	tx.Previous = nil
+	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	if err := tx.Validate(); err == nil {
+		t.Fatal("bridge without public predecessor version was accepted")
+	}
+	tx.PublicPredecessorVersion = "0.1.75"
+	envelope, err := tx.Envelope()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if envelope.PublicPredecessorVersion != tx.PublicPredecessorVersion {
+		t.Fatalf("envelope lost public predecessor version: %+v", envelope)
+	}
+	envelope.PublicPredecessorVersion = "0.1.74"
+	if err := envelope.Validate(); err != nil {
+		t.Fatalf("valid semantic evidence should remain structurally valid: %v", err)
+	}
+}
+
 func TestRecoveryDecisionIsDeterministicForEveryPhase(t *testing.T) {
 	tests := map[Phase]RecoveryDecision{
 		PhaseIdle:       {Action: RecoveryNoop, Result: PhaseIdle},

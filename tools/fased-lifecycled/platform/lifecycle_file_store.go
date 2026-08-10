@@ -13,6 +13,10 @@ func CanonicalInstallProjectionPath(config Config) string {
 	return filepath.Join(config.OwnerStateRoot, "install.json")
 }
 
+func CanonicalCLIProjectionPath(config Config) string {
+	return filepath.Join(config.OwnerStateRoot, "lifecycle.json")
+}
+
 func CanonicalGatewayConfigPath(config Config) string {
 	return filepath.Join(config.OwnerStateRoot, "fased.json")
 }
@@ -164,6 +168,13 @@ func (store *DiskLifecycleFileStore) validate(files map[string]LifecycleFile) er
 		allowed[target] = LifecycleFile{Mode: 0o755, UID: store.expectedUID, GID: store.expectedUID}
 	}
 	allowed[CanonicalInstallProjectionPath(store.Config)] = LifecycleFile{Mode: 0o640, UID: store.Config.Operator.UID, GID: store.Config.Operator.GID}
+	allowed[CanonicalProductVersionPath(store.Config)] = LifecycleFile{Mode: 0o600, UID: store.expectedUID, GID: store.expectedUID}
+	allowed[CanonicalControllerIdentityPath(store.Config)] = LifecycleFile{Mode: 0o600, UID: store.expectedUID, GID: store.expectedUID}
+	configGID, err := canonicalConfigGroupGID(store.resolve(store.Config.OwnerStateRoot), store.Config.Operator.UID)
+	if err != nil {
+		return err
+	}
+	allowed[CanonicalCLIProjectionPath(store.Config)] = LifecycleFile{Mode: 0o640, UID: store.Config.Operator.UID, GID: configGID}
 	baseCount := len(allowed)
 	if _, ok := files[CanonicalGatewayConfigPath(store.Config)]; ok {
 		gid, err := canonicalConfigGroupGID(store.resolve(store.Config.OwnerStateRoot), store.Config.Operator.UID)
@@ -191,6 +202,15 @@ func (store *DiskLifecycleFileStore) recordName(target string) string {
 	if target == CanonicalInstallProjectionPath(store.Config) {
 		return "install-projection"
 	}
+	if target == CanonicalCLIProjectionPath(store.Config) {
+		return "cli-projection"
+	}
+	if target == CanonicalProductVersionPath(store.Config) {
+		return "product-version"
+	}
+	if target == CanonicalControllerIdentityPath(store.Config) {
+		return "controller-identity"
+	}
 	if filepath.Dir(target) == "/usr/local/libexec" {
 		return "helper"
 	}
@@ -201,8 +221,11 @@ func (store *DiskLifecycleFileStore) safeExisting(target string, mode os.FileMod
 	if target == CanonicalGatewayConfigPath(store.Config) {
 		return mode&0o007 == 0 && mode&0o111 == 0 && uid == store.Config.Operator.UID
 	}
-	if target == CanonicalInstallProjectionPath(store.Config) {
+	if target == CanonicalInstallProjectionPath(store.Config) || target == CanonicalCLIProjectionPath(store.Config) {
 		return mode&0o002 == 0 && (uid == store.Config.Operator.UID || uid == store.expectedUID)
+	}
+	if target == CanonicalProductVersionPath(store.Config) || target == CanonicalControllerIdentityPath(store.Config) {
+		return mode == 0o600 && uid == store.expectedUID
 	}
 	return mode == 0o755 && uid == store.expectedUID
 }

@@ -93,18 +93,37 @@ func TestInitializationApplyArgumentsSelectsOneVerifiedInput(t *testing.T) {
 	archive := filepath.Join(t.TempDir(), "generation.tar.gz")
 	topology := "local-user-systemd-v1"
 	dependency := filepath.Join(t.TempDir(), "dependencies.tar.gz")
-	got, err := initializationApplyArguments("/platform.json", "", archive, dependency, topology)
+	got, err := initializationApplyArguments("/platform.json", "", archive, dependency, topology, "0.1.75")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"--config", "/platform.json", "--generation-archive", archive, "--dependency-archive", dependency, "--source-topology", topology}
+	want := []string{"--config", "/platform.json", "--generation-archive", archive, "--dependency-archive", dependency, "--source-topology", topology, "--public-predecessor-version", "0.1.75"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("arguments = %#v, want %#v", got, want)
 	}
 	for _, input := range [][2]string{{"", ""}, {"/generation", archive}, {"relative", ""}} {
-		if _, err := initializationApplyArguments("/platform.json", input[0], input[1], "", ""); err == nil {
+		if _, err := initializationApplyArguments("/platform.json", input[0], input[1], "", "", ""); err == nil {
 			t.Fatalf("expected generation inputs %#v to be rejected", input)
 		}
+	}
+	if _, err := initializationApplyArguments("/platform.json", "", archive, "", topology, ""); err == nil {
+		t.Fatal("bridge apply accepted missing predecessor version")
+	}
+	if _, err := initializationApplyArguments("/platform.json", "", archive, "", "", "0.1.75"); err == nil {
+		t.Fatal("bridge apply accepted predecessor version without topology")
+	}
+}
+
+func TestLifecycleRequestArgumentsBindPublicPredecessorEvidence(t *testing.T) {
+	arguments := []string{"--socket", "/run/fased/test.sock", "--operation", "CONVERGE", "--request-id", "018f47d2-5a6b-7c8d-9e0f-123456789abc",
+		"--target-generation", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "--expected-manifest", "absent",
+		"--source-topology", "local-user-systemd-v1", "--public-predecessor-version", "0.1.75"}
+	socket, request, err := parseLifecycleRequestArguments(arguments)
+	if err != nil || socket != "/run/fased/test.sock" || request.SourceTopology != "local-user-systemd-v1" || request.PublicPredecessorVersion != "0.1.75" {
+		t.Fatalf("request predecessor evidence was not forwarded: socket=%q request=%+v err=%v", socket, request, err)
+	}
+	if _, _, err := parseLifecycleRequestArguments(arguments[:len(arguments)-2]); err == nil {
+		t.Fatal("request accepted predecessor topology without its verified version")
 	}
 }
 

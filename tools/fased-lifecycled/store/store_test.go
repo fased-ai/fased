@@ -336,6 +336,27 @@ func TestAuthorityJournalsShareOneImmutableEnvelope(t *testing.T) {
 	}
 }
 
+func TestAuthorityJournalsRejectPublicPredecessorVersionRebinding(t *testing.T) {
+	state, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := transaction(model.PhaseIdle)
+	tx.PlanAction = "BRIDGE_PUBLIC_STABLE"
+	tx.SourceTopology = "local-user-systemd-v2"
+	tx.PublicPredecessorVersion = "0.1.75"
+	tx.Previous = nil
+	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	if err := state.CommitJournal(AuthoritySupervisor, tx); err != nil {
+		t.Fatal(err)
+	}
+	changed := tx
+	changed.PublicPredecessorVersion = "0.1.74"
+	if err := state.CommitJournal(AuthorityTargetController, changed); err == nil {
+		t.Fatal("target authority rebound the public predecessor version")
+	}
+}
+
 func TestUpdateLockIsExclusiveAndReusable(t *testing.T) {
 	state, err := Open(t.TempDir())
 	if err != nil {

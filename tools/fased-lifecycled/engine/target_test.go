@@ -156,6 +156,14 @@ func (adapter fakeAdapter) Quiesce(context.Context, model.Transaction) error {
 	return nil
 }
 
+func (adapter fakeAdapter) StopTarget(context.Context, model.Transaction) error {
+	*adapter.calls = append(*adapter.calls, "adapter.stop-target")
+	if adapter.failAt == "stop-target" {
+		return errors.New("injected target stop failure")
+	}
+	return nil
+}
+
 func (adapter fakeAdapter) Activate(context.Context, model.Transaction) error {
 	*adapter.calls = append(*adapter.calls, "adapter.activate")
 	if adapter.failAt == "activate" {
@@ -235,7 +243,7 @@ func TestTargetEngineRestoresAfterSwitchFailure(t *testing.T) {
 	if err == nil || result.Outcome != OutcomeRolledBack || result.Phase != model.PhaseRolledBack {
 		t.Fatalf("unexpected failure result: %+v err=%v", result, err)
 	}
-	wantTail := []string{"adapter.quiesce", "migrator.activate", "adapter.activate", "adapter.quiesce", "signer.abort", "migrator.abort", "adapter.restore", "adapter.discard"}
+	wantTail := []string{"adapter.quiesce", "migrator.activate", "adapter.activate", "adapter.stop-target", "signer.abort", "migrator.abort", "adapter.restore", "adapter.discard"}
 	if !reflect.DeepEqual(calls[len(calls)-len(wantTail):], wantTail) {
 		t.Fatalf("unexpected rollback order: %v", calls)
 	}
@@ -258,7 +266,30 @@ func TestRecoverCompletesVerifiedAndRollsBackSwitched(t *testing.T) {
 	if err != nil || switched.Phase != model.PhaseRolledBack {
 		t.Fatalf("switched recovery failed: %+v err=%v", switched, err)
 	}
-	if len(switchedCalls) == 0 || switchedCalls[0] != "adapter.quiesce" {
-		t.Fatalf("switched recovery did not quiesce target first: %v", switchedCalls)
+	if len(switchedCalls) == 0 || switchedCalls[0] != "adapter.stop-target" {
+		t.Fatalf("switched recovery did not stop target first: %v", switchedCalls)
+	}
+}
+
+func TestBridgeWithoutManagedPreviousStopsTargetAfterActivationFailure(t *testing.T) {
+	var calls []string
+	engine, journal := newEngine(&calls, "activate", "")
+	tx := transaction(model.PhaseIdle)
+	tx.PlanAction = "BRIDGE_PUBLIC_STABLE"
+	tx.SourceTopology = "local-user-systemd-v2"
+	tx.PublicPredecessorVersion = "0.1.75"
+	tx.Previous = nil
+	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+	result, err := engine.Run(context.Background(), tx)
+	if err == nil || result.Outcome != OutcomeRolledBack || result.Phase != model.PhaseRolledBack {
+		t.Fatalf("unexpected bridge failure result: %+v err=%v", result, err)
+	}
+	wantTail := []string{"adapter.quiesce", "migrator.activate", "adapter.activate", "adapter.stop-target", "signer.abort", "migrator.abort", "adapter.restore", "adapter.discard"}
+	if !reflect.DeepEqual(calls[len(calls)-len(wantTail):], wantTail) {
+		t.Fatalf("bridge rollback did not stop the canonical target: got=%v want-tail=%v", calls, wantTail)
+	}
+	if journal.writes[len(journal.writes)-1].Phase != model.PhaseRolledBack {
+		t.Fatalf("bridge rollback was not journaled: %+v", journal.writes)
 	}
 }

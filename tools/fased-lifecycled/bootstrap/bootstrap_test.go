@@ -5,6 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"fased-lifecycled/model"
+	"fased-lifecycled/platform"
 )
 
 func TestUnknownNewerPlatformConfigFailsWithoutMutation(t *testing.T) {
@@ -22,5 +25,13 @@ func TestUnknownNewerPlatformConfigFailsWithoutMutation(t *testing.T) {
 	}
 	if !bytes.Equal(before, after) {
 		t.Fatal("unknown-newer platform configuration was mutated")
+	}
+}
+
+func TestProtectedLocalBootstrapRejectsNoncanonicalOwnerStateBeforeMutation(t *testing.T) {
+	request := PlatformBootstrapRequest{Profile: model.ProfileProtectedLocal, OwnerStateRoot: "/home/owner/custom"}
+	operator := platform.AccountRecord{Name: "owner", UID: 1000, GID: 1000, Home: "/home/owner"}
+	if err := validateBootstrapOperator(request, operator, true, nil); err == nil {
+		t.Fatal("protected Local bootstrap accepted an owner state root not covered by the global fence")
 	}
 }

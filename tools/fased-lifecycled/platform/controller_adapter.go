@@ -144,7 +144,7 @@ ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=%s %s %s %s %s %s
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_SETUID CAP_SETGID
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_FSETID CAP_SETUID CAP_SETGID
 AmbientCapabilities=
 
 [Install]

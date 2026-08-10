@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+
+	"fased-lifecycled/model"
 )
 
 const CurrentSchemaVersion uint32 = 1
@@ -21,13 +23,14 @@ const (
 )
 
 type Request struct {
-	SchemaVersion          uint32    `json:"schemaVersion"`
-	RequestID              string    `json:"requestId"`
-	Operation              Operation `json:"operation"`
-	TargetGenerationID     string    `json:"targetGenerationId,omitempty"`
-	SourceTopology         string    `json:"sourceTopology,omitempty"`
-	ExpectedManifestDigest string    `json:"expectedManifestDigest,omitempty"`
-	TransactionID          string    `json:"transactionId,omitempty"`
+	SchemaVersion            uint32    `json:"schemaVersion"`
+	RequestID                string    `json:"requestId"`
+	Operation                Operation `json:"operation"`
+	TargetGenerationID       string    `json:"targetGenerationId,omitempty"`
+	SourceTopology           string    `json:"sourceTopology,omitempty"`
+	PublicPredecessorVersion string    `json:"publicPredecessorVersion,omitempty"`
+	ExpectedManifestDigest   string    `json:"expectedManifestDigest,omitempty"`
+	TransactionID            string    `json:"transactionId,omitempty"`
 }
 
 type Response struct {
@@ -76,7 +79,7 @@ func (request Request) Validate() error {
 	}
 	switch request.Operation {
 	case OperationInspect, OperationCompleteOnboarding:
-		if request.TargetGenerationID != "" || request.SourceTopology != "" || request.ExpectedManifestDigest != "" || request.TransactionID != "" {
+		if request.TargetGenerationID != "" || request.SourceTopology != "" || request.PublicPredecessorVersion != "" || request.ExpectedManifestDigest != "" || request.TransactionID != "" {
 			return fmt.Errorf("%s does not accept mutation selectors", request.Operation)
 		}
 	case OperationConverge:
@@ -93,6 +96,11 @@ func (request Request) Validate() error {
 			if len(request.SourceTopology) > 64 || !regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`).MatchString(request.SourceTopology) {
 				return errors.New("converge source topology is invalid")
 			}
+			if model.ValidateVersion(request.PublicPredecessorVersion) != nil {
+				return errors.New("public-stable bridge requires a valid predecessor version")
+			}
+		} else if request.PublicPredecessorVersion != "" {
+			return errors.New("non-bridge converge contains public predecessor evidence")
 		}
 		if request.TransactionID != "" {
 			return errors.New("converge allocates its own transaction identity")
@@ -101,7 +109,7 @@ func (request Request) Validate() error {
 		if !uuidPattern.MatchString(request.TransactionID) {
 			return errors.New("recover requires a transaction id")
 		}
-		if request.TargetGenerationID != "" || request.SourceTopology != "" || request.ExpectedManifestDigest != "" {
+		if request.TargetGenerationID != "" || request.SourceTopology != "" || request.PublicPredecessorVersion != "" || request.ExpectedManifestDigest != "" {
 			return errors.New("recover uses journal-bound generation identity")
 		}
 	default:

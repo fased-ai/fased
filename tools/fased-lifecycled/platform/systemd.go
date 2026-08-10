@@ -36,7 +36,16 @@ func (systemd CommandSystemd) DaemonReload(ctx context.Context) error {
 	return systemd.run(ctx, "daemon-reload")
 }
 func (systemd CommandSystemd) Stop(ctx context.Context, unit string) error {
-	return systemd.run(ctx, "stop", unit)
+	err := systemd.run(ctx, "stop", unit)
+	if isSystemdUnitAbsent(err) {
+		return nil
+	}
+	return err
+}
+
+func isSystemdUnitAbsent(err error) bool {
+	var exitError *exec.ExitError
+	return errors.As(err, &exitError) && exitError.ExitCode() == 5
 }
 func (systemd CommandSystemd) Start(ctx context.Context, unit string) error {
 	return systemd.run(ctx, "start", unit)

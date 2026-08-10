@@ -76,6 +76,9 @@ func TestControllerAdapterUsesIndependentVerifiedHandoff(t *testing.T) {
 	if strings.Contains(definition, "/bin/sh") || !strings.Contains(definition, "RestrictAddressFamilies=AF_UNIX") {
 		t.Fatalf("controller unit is not narrow and direct:\n%s", definition)
 	}
+	if !strings.Contains(definition, "CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_FSETID CAP_SETUID CAP_SETGID") {
+		t.Fatalf("controller unit cannot preserve shared-state setgid directories:\n%s", definition)
+	}
 }
 
 func TestControllerVerifyRejectsUnverifiedTarget(t *testing.T) {

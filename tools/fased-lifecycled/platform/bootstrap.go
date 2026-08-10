@@ -249,6 +249,7 @@ func BootstrapPathPlan(config Config, principals BootstrapPrincipals) ([]Bootstr
 		paths = append(paths,
 			BootstrapPath{Path: config.LifecycleRoot, Mode: 0o700},
 			BootstrapPath{Path: config.SignerStateRoot(), UID: config.Signer.UID, GID: config.Signer.GID, Mode: 0o700},
+			BootstrapPath{Path: "/var/lib/fased-host-updater", Mode: 0o700},
 			BootstrapPath{Path: "/var/lib/fased-signer-update-gate", GID: config.Signer.GID, Mode: 0o750},
 		)
 	}

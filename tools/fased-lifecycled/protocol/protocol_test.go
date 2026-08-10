@@ -40,6 +40,37 @@ func TestOperationFieldsFailClosed(t *testing.T) {
 	}
 }
 
+func TestPublicBridgeRequiresPairedVersionEvidence(t *testing.T) {
+	base := Request{SchemaVersion: CurrentSchemaVersion, RequestID: "018f47d2-5a6b-7c8d-9e0f-123456789abc", Operation: OperationConverge, TargetGenerationID: digest, ExpectedManifestDigest: "absent"}
+	for _, request := range []Request{
+		base,
+		func() Request { value := base; value.SourceTopology = "local-user-systemd-v2"; return value }(),
+		func() Request { value := base; value.PublicPredecessorVersion = "0.1.75"; return value }(),
+		func() Request {
+			value := base
+			value.SourceTopology = "local-user-systemd-v2"
+			value.PublicPredecessorVersion = "invalid"
+			return value
+		}(),
+	} {
+		if request.SourceTopology == "" && request.PublicPredecessorVersion == "" {
+			if err := request.Validate(); err != nil {
+				t.Fatalf("fresh converge was rejected: %v", err)
+			}
+			continue
+		}
+		if err := request.Validate(); err == nil {
+			t.Fatalf("unpaired or invalid predecessor evidence was accepted: %+v", request)
+		}
+	}
+	bridge := base
+	bridge.SourceTopology = "local-user-systemd-v2"
+	bridge.PublicPredecessorVersion = "0.1.75"
+	if err := bridge.Validate(); err != nil {
+		t.Fatalf("valid public predecessor evidence was rejected: %v", err)
+	}
+}
+
 func TestInspectHasNoMutationSelectors(t *testing.T) {
 	input := `{"schemaVersion":1,"requestId":"018f47d2-5a6b-7c8d-9e0f-123456789abc","operation":"INSPECT"}`
 	if _, err := DecodeRequest(strings.NewReader(input)); err != nil {

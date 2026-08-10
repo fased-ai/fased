@@ -28,6 +28,13 @@ func TestDiskLifecycleFileStoreActivatesAndRestoresExactSignerOwnerFiles(t *test
 	if err := os.WriteFile(configPath, []byte("old-config\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	productVersionPath := store.resolve(CanonicalProductVersionPath(config))
+	if err := os.MkdirAll(filepath.Dir(productVersionPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(productVersionPath, []byte("0.1.75\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	targets := CanonicalSignerOwnerFiles(config)
 	for _, target := range targets {
 		resolved := store.resolve(target)
@@ -39,15 +46,22 @@ func TestDiskLifecycleFileStoreActivatesAndRestoresExactSignerOwnerFiles(t *test
 		}
 	}
 	files := map[string]LifecycleFile{
-		targets[0]:                             {Data: []byte("helper\n"), Mode: 0o755, UID: uint32(os.Getuid()), GID: uint32(os.Getuid())},
-		targets[1]:                             {Data: []byte("wrapper\n"), Mode: 0o755, UID: uint32(os.Getuid()), GID: uint32(os.Getuid())},
-		CanonicalInstallProjectionPath(config): {Data: []byte("{}\n"), Mode: 0o640, UID: config.Operator.UID, GID: config.Operator.GID},
-		CanonicalGatewayConfigPath(config):     {Data: []byte("new-config\n"), Mode: 0o660, UID: config.Operator.UID, GID: uint32(os.Getgid())},
+		targets[0]:                              {Data: []byte("helper\n"), Mode: 0o755, UID: uint32(os.Getuid()), GID: uint32(os.Getuid())},
+		targets[1]:                              {Data: []byte("wrapper\n"), Mode: 0o755, UID: uint32(os.Getuid()), GID: uint32(os.Getuid())},
+		CanonicalInstallProjectionPath(config):  {Data: []byte("{}\n"), Mode: 0o640, UID: config.Operator.UID, GID: config.Operator.GID},
+		CanonicalCLIProjectionPath(config):      {Data: []byte("{\"schemaVersion\":1}\n"), Mode: 0o640, UID: config.Operator.UID, GID: uint32(os.Getgid())},
+		CanonicalGatewayConfigPath(config):      {Data: []byte("new-config\n"), Mode: 0o660, UID: config.Operator.UID, GID: uint32(os.Getgid())},
+		CanonicalProductVersionPath(config):     {Data: []byte("0.1.76\n"), Mode: 0o600, UID: uint32(os.Getuid()), GID: uint32(os.Getuid())},
+		CanonicalControllerIdentityPath(config): {Data: []byte("{\"schemaVersion\":1}\n"), Mode: 0o600, UID: uint32(os.Getuid()), GID: uint32(os.Getuid())},
 	}
 	if err := store.Prepare("transaction", files); err != nil {
 		t.Fatal(err)
 	}
-	allTargets := append(targets, CanonicalGatewayConfigPath(config), CanonicalInstallProjectionPath(config))
+	cliProjectionPath := store.resolve(CanonicalCLIProjectionPath(config))
+	if _, err := os.Lstat(cliProjectionPath); !os.IsNotExist(err) {
+		t.Fatalf("CLI projection became visible before commit: %v", err)
+	}
+	allTargets := append(targets, CanonicalGatewayConfigPath(config), CanonicalProductVersionPath(config), CanonicalControllerIdentityPath(config), CanonicalCLIProjectionPath(config), CanonicalInstallProjectionPath(config))
 	if err := store.Activate("transaction", allTargets); err != nil {
 		t.Fatal(err)
 	}
@@ -64,6 +78,9 @@ func TestDiskLifecycleFileStoreActivatesAndRestoresExactSignerOwnerFiles(t *test
 	}
 	if info, err := os.Stat(projectionPath); err != nil || info.Mode().Perm() != 0o640 {
 		t.Fatalf("install projection mode changed: info=%v err=%v", info, err)
+	}
+	if projection, err := os.ReadFile(cliProjectionPath); err != nil || string(projection) != "{\"schemaVersion\":1}\n" {
+		t.Fatalf("CLI projection was not activated: %q err=%v", projection, err)
 	}
 	if data, err := os.ReadFile(configPath); err != nil || string(data) != "new-config\n" {
 		t.Fatalf("Gateway config was not activated: %q err=%v", data, err)
@@ -82,6 +99,19 @@ func TestDiskLifecycleFileStoreActivatesAndRestoresExactSignerOwnerFiles(t *test
 	}
 	if _, err := os.Lstat(projectionPath); !os.IsNotExist(err) {
 		t.Fatalf("absent install projection was not removed on rollback: %v", err)
+	}
+	if _, err := os.Lstat(cliProjectionPath); !os.IsNotExist(err) {
+		t.Fatalf("absent CLI projection was not removed on rollback: %v", err)
+	}
+	if data, err := os.ReadFile(productVersionPath); err != nil || string(data) != "0.1.75\n" {
+		t.Fatalf("preexisting product version was not restored: %q err=%v", data, err)
+	}
+	if info, err := os.Stat(productVersionPath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("preexisting product version metadata changed: info=%v err=%v", info, err)
+	}
+	controllerIdentityPath := store.resolve(CanonicalControllerIdentityPath(config))
+	if _, err := os.Lstat(controllerIdentityPath); !os.IsNotExist(err) {
+		t.Fatalf("absent controller identity was not removed on rollback: %v", err)
 	}
 	if data, err := os.ReadFile(configPath); err != nil || string(data) != "old-config\n" {
 		t.Fatalf("Gateway config was not restored exactly: %q err=%v", data, err)
@@ -122,5 +152,26 @@ func TestCanonicalInstallProjectionIsDerivedFromTransaction(t *testing.T) {
 	}
 	if projection.Runtime.CurrentLink != filepath.Join(config.InstallRoot, "current") || projection.Service.Name != "fased-gateway-example.service" {
 		t.Fatalf("install projection does not match canonical platform: %+v", projection)
+	}
+}
+
+func TestCanonicalInstallProjectionRetainsPublicStablePredecessorVersion(t *testing.T) {
+	tx, _ := manifestTransaction(t, false)
+	tx.PlanAction = "BRIDGE_PUBLIC_STABLE"
+	tx.SourceTopology = "local-user-systemd-v2"
+	tx.PublicPredecessorVersion = "0.1.75"
+	tx.Previous = nil
+	tx.ManifestDigest = absentManifestDigest
+	operator, gateway, signer := principals()
+	config, err := NewConfig(model.ProfileProtectedLocal, "example", "/home/example/.fased", operator, gateway, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, err := CanonicalInstallProjection(config, tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection.Runtime.PreviousVersion == nil || *projection.Runtime.PreviousVersion != "0.1.75" {
+		t.Fatalf("public stable predecessor provenance was lost: %+v", projection.Runtime)
 	}
 }

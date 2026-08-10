@@ -356,6 +356,10 @@ wait_for_gateway_version() {
     sleep 0.1
   done
   echo "Gateway did not report expected version: $expected" >&2
+  printf 'Last Gateway health response: %s\n' "${response:-<unreachable>}" >&2
+  ss -ltnp "sport = :$gateway_port" >&2 || true
+  systemctl --no-pager --full status 'fased-gateway-*.service' >&2 || true
+  user_systemctl --no-pager --full status fased-gateway.service >&2 || true
   return 1
 }
 
@@ -2137,7 +2141,10 @@ systemctl reset-failed "fased-gateway-$failure_instance.service" 2>/dev/null || 
 rm -rf -- "$bridge_fault_root"
 wait_for_gateway_version "$predecessor_gateway_version"
 verify_original_home_acl
-test ! -e "$user_unit_dir/fased-gateway.service.d/90-fased-protected-local.conf"
+test ! -e "$state/lifecycle.json"
+test "$(stat -c '%U:%G:%a' /etc/systemd/user/fased-gateway.service.d/90-fased-protected-local.conf)" = "root:root:644"
+grep -Fx 'ConditionPathExists=!%h/.fased/lifecycle.json' \
+  /etc/systemd/user/fased-gateway.service.d/90-fased-protected-local.conf >/dev/null
 test ! -e "/var/lib/fased-local/$failure_instance"
 test ! -e "/opt/fased/local/$failure_instance"
 for root in \
@@ -2178,7 +2185,7 @@ run_standard_local_bootstrap \
 grep -F "Verified Local lifecycle handoff complete." /tmp/protected-bootstrap.out >/dev/null
 grep -F "Pre-handoff Local installation detected" /tmp/protected-bootstrap.err >/dev/null
 
-instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
+instance="$(jq -er '.environment.FASED_PROTECTED_LOCAL_INSTANCE' "$state/lifecycle.json")"
 runtime="$(resolve_protected_runtime "$instance")"
 verify_protected_home_acl "$instance"
 wait_for_gateway_version "$version"
@@ -2226,9 +2233,8 @@ test "$(jq -r .service.name "$state/install.json")" = "fased-gateway-$instance.s
 test "$(cat "/var/lib/fased-local/$instance/controller/signer-version")" = "$version"
 test "$(jq -r .version "/var/lib/fased-local/$instance/controller/controller-version.json")" = \
   "$version"
-test -s "/var/lib/fased-local/$instance/controller/protected-local-active"
-test -s \
-  "$user_unit_dir/fased-gateway.service.d/90-fased-protected-local.conf"
+test -s "$state/lifecycle.json"
+test -s /etc/systemd/user/fased-gateway.service.d/90-fased-protected-local.conf
 if user_systemctl is-active --quiet fased-gateway.service; then
   echo "legacy user Gateway remained active after protected Local migration" >&2
   exit 1

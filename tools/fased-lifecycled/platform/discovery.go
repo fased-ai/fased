@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,8 +25,9 @@ type DiscoveryRequest struct {
 }
 
 type DiscoveryResult struct {
-	Installation planner.Installation
-	Topology     planner.PublicTopology
+	Installation             planner.Installation
+	Topology                 planner.PublicTopology
+	PublicPredecessorVersion string
 }
 
 type managedInstallRecord struct {
@@ -120,8 +122,26 @@ func discoverCanonical(request DiscoveryRequest) (DiscoveryResult, bool, error) 
 }
 
 func discoverPublicStable(request DiscoveryRequest) (DiscoveryResult, error) {
-	manifestPath := filepath.Join(request.OwnerStateRoot, "install.json")
-	data, err := readDiscoveryRecord(manifestPath)
+	ownerParent, err := os.OpenRoot(filepath.Dir(request.OwnerStateRoot))
+	if errors.Is(err, os.ErrNotExist) {
+		return DiscoveryResult{Installation: planner.Installation{Kind: planner.InstallationEmpty, Profile: request.Profile}}, nil
+	}
+	if err != nil {
+		return DiscoveryResult{Installation: planner.Installation{Kind: planner.InstallationAmbiguous, Profile: request.Profile}}, nil
+	}
+	defer ownerParent.Close()
+	ownerRoot, _, err := openBoundDiscoveryDirectory(ownerParent, filepath.Base(request.OwnerStateRoot))
+	if errors.Is(err, os.ErrNotExist) {
+		if hasKnownControlResidue(request) {
+			return DiscoveryResult{Installation: planner.Installation{Kind: planner.InstallationAmbiguous, Profile: request.Profile}}, nil
+		}
+		return DiscoveryResult{Installation: planner.Installation{Kind: planner.InstallationEmpty, Profile: request.Profile}}, nil
+	}
+	if err != nil {
+		return DiscoveryResult{Installation: planner.Installation{Kind: planner.InstallationAmbiguous, Profile: request.Profile}}, nil
+	}
+	defer ownerRoot.Close()
+	data, err := readDiscoveryRecordAt(ownerRoot, "install.json")
 	if errors.Is(err, os.ErrNotExist) {
 		if hasKnownControlResidue(request) {
 			return DiscoveryResult{Installation: planner.Installation{Kind: planner.InstallationAmbiguous, Profile: request.Profile}}, nil
@@ -147,40 +167,132 @@ func discoverPublicStable(request DiscoveryRequest) (DiscoveryResult, error) {
 		record.StateDir != request.OwnerStateRoot || record.ConfigPath != filepath.Join(request.OwnerStateRoot, "fased.json") {
 		return DiscoveryResult{Installation: planner.Installation{Kind: planner.InstallationAmbiguous, Profile: request.Profile}}, nil
 	}
-	if err := validateManagedRuntime(record, request.OwnerStateRoot); err != nil {
+	if err := validateManagedRuntime(record, ownerRoot, request.OwnerStateRoot); err != nil {
 		return DiscoveryResult{Installation: planner.Installation{Kind: planner.InstallationAmbiguous, Profile: request.Profile}}, nil
 	}
 	var topology planner.PublicTopology
 	switch request.Profile {
 	case model.ProfileProtectedLocal:
-		if record.Profile != "local" || record.Service.Scope != "user" || record.Service.Name != "fased-gateway.service" || !safeExecutableWithin(record.Service.Launcher, request.OwnerStateRoot) {
+		if record.Profile != "local" || record.Service.Scope != "user" || record.Service.Name != "fased-gateway.service" || !safeExecutableWithinRoot(record.Service.Launcher, request.OwnerStateRoot, ownerRoot) {
 			return DiscoveryResult{Installation: planner.Installation{Kind: planner.InstallationAmbiguous, Profile: request.Profile}}, nil
 		}
 		topology = planner.TopologyLocalUserSystemdV2
 	case model.ProfileHosting:
-		if record.Profile != "hosting" || record.Service.Scope != "system" || record.Service.Name != "fased-gateway.service" || !safeExecutableWithin(record.Service.Launcher, request.OwnerStateRoot) || !hasExactHostingStableUnits(request) {
+		if record.Profile != "hosting" || record.Service.Scope != "system" || record.Service.Name != "fased-gateway.service" || !safeExecutableWithinRoot(record.Service.Launcher, request.OwnerStateRoot, ownerRoot) || !hasExactHostingStableUnits(request) {
 			return DiscoveryResult{Installation: planner.Installation{Kind: planner.InstallationAmbiguous, Profile: request.Profile}}, nil
 		}
 		topology = planner.TopologyHostingControllerV2
 	}
 	installation, err := planner.PublicStableInstallation(request.Profile, topology)
-	return DiscoveryResult{Installation: installation, Topology: topology}, err
+	return DiscoveryResult{Installation: installation, Topology: topology, PublicPredecessorVersion: record.Runtime.ActiveVersion}, err
 }
 
-func validateManagedRuntime(record managedInstallRecord, ownerStateRoot string) error {
+func validateManagedRuntime(record managedInstallRecord, ownerRoot *os.Root, ownerStateRoot string) error {
 	if record.Runtime.ActiveVersion == "" || record.Runtime.CurrentLink != filepath.Join(ownerStateRoot, "runtime", "current") ||
 		record.Runtime.ReleasesDir != filepath.Join(ownerStateRoot, "runtime", "releases") {
 		return errors.New("managed runtime paths are noncanonical")
 	}
-	resolved, err := filepath.EvalSymlinks(record.Runtime.CurrentLink)
-	if err != nil || !pathWithin(record.Runtime.ReleasesDir, resolved) {
+	runtimeRoot, _, err := openBoundDiscoveryDirectory(ownerRoot, "runtime")
+	if err != nil {
+		return errors.New("managed runtime root is unavailable")
+	}
+	defer runtimeRoot.Close()
+	currentTarget, err := runtimeRoot.Readlink("current")
+	if err != nil {
 		return errors.New("managed runtime current pointer is unsafe")
 	}
-	info, err := os.Lstat(resolved)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+	releaseName, err := selectedReleaseName(filepath.Join(ownerStateRoot, "runtime"), record.Runtime.ReleasesDir, currentTarget)
+	if err != nil {
+		return err
+	}
+	releasesRoot, _, err := openBoundDiscoveryDirectory(runtimeRoot, "releases")
+	if err != nil {
+		return errors.New("managed runtime releases root is unavailable")
+	}
+	defer releasesRoot.Close()
+	selectedBefore, err := releasesRoot.Lstat(releaseName)
+	if err != nil || !selectedBefore.IsDir() || selectedBefore.Mode()&os.ModeSymlink != 0 {
 		return errors.New("managed runtime target is unsafe")
 	}
+	selectedRoot, err := releasesRoot.OpenRoot(releaseName)
+	if err != nil {
+		return errors.New("managed runtime target is unsafe")
+	}
+	defer selectedRoot.Close()
+	selectedAfter, err := selectedRoot.Stat(".")
+	if err != nil || !selectedAfter.IsDir() || !os.SameFile(selectedBefore, selectedAfter) {
+		return errors.New("managed runtime target changed while opening")
+	}
+	packageData, err := readDiscoveryRecordAt(selectedRoot, "package.json")
+	if err != nil {
+		return errors.New("managed runtime package identity is unavailable")
+	}
+	currentAfter, err := runtimeRoot.Readlink("current")
+	if err != nil || currentAfter != currentTarget {
+		return errors.New("managed runtime current pointer changed during discovery")
+	}
+	selectedAgain, selectedAgainInfo, err := openBoundDiscoveryDirectory(releasesRoot, releaseName)
+	if err != nil {
+		return errors.New("managed runtime target changed during discovery")
+	}
+	selectedAgain.Close()
+	if !os.SameFile(selectedAfter, selectedAgainInfo) {
+		return errors.New("managed runtime target changed during discovery")
+	}
+	var packageIdentity struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(packageData, &packageIdentity); err != nil || packageIdentity.Version != record.Runtime.ActiveVersion || model.ValidateVersion(packageIdentity.Version) != nil {
+		return errors.New("managed runtime version is not bound to the selected package")
+	}
 	return nil
+}
+
+func openBoundDiscoveryDirectory(parent *os.Root, name string) (*os.Root, os.FileInfo, error) {
+	before, err := parent.Lstat(name)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
+		return nil, nil, errors.New("discovery directory is unsafe")
+	}
+	root, err := parent.OpenRoot(name)
+	if err != nil {
+		return nil, nil, err
+	}
+	after, err := root.Stat(".")
+	if err != nil || !after.IsDir() || !os.SameFile(before, after) {
+		root.Close()
+		return nil, nil, errors.New("discovery directory changed while opening")
+	}
+	return root, after, nil
+}
+
+func safeExecutableWithinRoot(path, rootPath string, root *os.Root) bool {
+	relative, err := filepath.Rel(rootPath, path)
+	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return false
+	}
+	file, err := root.Open(relative)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
+}
+
+func selectedReleaseName(runtimeRoot, releasesRoot, target string) (string, error) {
+	resolved := target
+	if !filepath.IsAbs(resolved) {
+		resolved = filepath.Join(runtimeRoot, resolved)
+	}
+	resolved = filepath.Clean(resolved)
+	relative, err := filepath.Rel(releasesRoot, resolved)
+	if err != nil || relative == "." || relative == ".." || strings.Contains(relative, string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return "", errors.New("managed runtime current pointer is unsafe")
+	}
+	return relative, nil
 }
 
 func hasKnownControlResidue(request DiscoveryRequest) bool {
@@ -208,14 +320,51 @@ func hasExactHostingStableUnits(request DiscoveryRequest) bool {
 }
 
 func readDiscoveryRecord(path string) ([]byte, error) {
-	info, err := os.Lstat(path)
+	root, err := os.OpenRoot(filepath.Dir(path))
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() <= 0 || info.Size() > maxDiscoveryRecordSize {
+	defer root.Close()
+	return readDiscoveryRecordAt(root, filepath.Base(path))
+}
+
+func readDiscoveryRecordAt(root *os.Root, name string) ([]byte, error) {
+	before, err := root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || before.Size() <= 0 || before.Size() > maxDiscoveryRecordSize {
 		return nil, errors.New("discovery record is unsafe")
 	}
-	return os.ReadFile(path)
+	file, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	after, err := file.Stat()
+	if err != nil || !after.Mode().IsRegular() || !os.SameFile(before, after) {
+		return nil, errors.New("discovery record changed while opening")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxDiscoveryRecordSize+1))
+	if err != nil || len(data) == 0 || len(data) > maxDiscoveryRecordSize {
+		return nil, errors.New("discovery record is unsafe")
+	}
+	return data, nil
+}
+
+type DiscoveryEvidenceVerifier struct {
+	Request DiscoveryRequest
+}
+
+func (verifier DiscoveryEvidenceVerifier) VerifyPublicPredecessorEvidence(topology, version string) error {
+	result, err := DiscoverInstallation(verifier.Request)
+	if err != nil {
+		return err
+	}
+	if result.Installation.Kind != planner.InstallationPublicStable || string(result.Topology) != topology || result.PublicPredecessorVersion != version {
+		return errors.New("public predecessor evidence changed before convergence")
+	}
+	return nil
 }
 
 func readScopedPointer(path, root string) (string, error) {
@@ -232,18 +381,6 @@ func readScopedPointer(path, root string) (string, error) {
 		return "", errors.New("generation pointer escapes install root")
 	}
 	return filepath.ToSlash(target), nil
-}
-
-func safeExecutableWithin(path, root string) bool {
-	if !filepath.IsAbs(path) || !pathWithin(root, path) {
-		return false
-	}
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil || !pathWithin(root, resolved) {
-		return false
-	}
-	info, err := os.Stat(resolved)
-	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
 }
 
 func pathWithin(root, path string) bool {

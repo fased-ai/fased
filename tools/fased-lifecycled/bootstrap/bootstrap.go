@@ -28,6 +28,7 @@ type PlatformBootstrapRequest struct {
 	Principals              platform.PrincipalSystem
 	ACL                     platform.HomeACL
 	Systemd                 platform.Systemd
+	BridgePublicStable      bool
 	InstanceIDSource        platform.InstanceIDSource
 	ExistingConfigValidator func(platform.Config) error
 }
@@ -43,13 +44,13 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 		!filepath.IsAbs(request.JournalPath) || !filepath.IsAbs(request.StableDaemonPath) {
 		return PlatformBootstrapResult{}, errors.New("platform bootstrap dependencies are incomplete")
 	}
+	operator, exists, err := request.Principals.LookupUser(ctx, request.OperatorUser)
+	if err := validateBootstrapOperator(request, operator, exists, err); err != nil {
+		return PlatformBootstrapResult{}, errors.New("platform bootstrap operator is unavailable or unsafe")
+	}
 	journal, err := platform.OpenBootstrapJournal(request.JournalPath, request.TransactionID)
 	if err != nil {
 		return PlatformBootstrapResult{}, err
-	}
-	operator, exists, err := request.Principals.LookupUser(ctx, request.OperatorUser)
-	if err != nil || (!exists && request.Profile != model.ProfileHosting) || (exists && (operator.UID == 0 || operator.Home != filepath.Dir(request.OwnerStateRoot))) {
-		return PlatformBootstrapResult{}, errors.New("platform bootstrap operator is unavailable or unsafe")
 	}
 	instanceID := "hosting"
 	var allocation platform.LocalInstanceAllocation
@@ -189,15 +190,12 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 		if err != nil {
 			return nil, err
 		}
-		projection, err := platform.CanonicalCLIProjectionJSON(config)
-		if err != nil {
-			return nil, errors.Join(err, replacement.Rollback())
+		if request.BridgePublicStable && config.Profile == model.ProfileProtectedLocal {
+			if err := (platform.DiskLocalPredecessorFence{}).Ensure(config); err != nil {
+				return nil, errors.Join(err, replacement.Rollback())
+			}
 		}
-		projectionReplacement, err := platform.InstallFileTransactional(filepath.Join(config.OwnerStateRoot, "lifecycle.json"), projection, 0o640, config.Operator.UID, principals.Groups.Config.GID)
-		if err != nil {
-			return nil, errors.Join(err, replacement.Rollback())
-		}
-		return func() error { return errors.Join(projectionReplacement.Rollback(), replacement.Rollback()) }, nil
+		return replacement.Rollback, nil
 	}})
 	steps = append(steps, platform.BootstrapStep{Phase: platform.BootstrapPhaseUnits, Apply: func() (platform.BootstrapUndo, error) {
 		identity, err := config.Identity()
@@ -253,6 +251,25 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 	return PlatformBootstrapResult{
 		Config: config, Transaction: transaction, CreatedRoots: createdRoots,
 	}, nil
+}
+
+func validateBootstrapOperator(request PlatformBootstrapRequest, operator platform.AccountRecord, exists bool, lookupErr error) error {
+	if lookupErr != nil || !filepath.IsAbs(request.OwnerStateRoot) || filepath.Clean(request.OwnerStateRoot) != request.OwnerStateRoot {
+		return errors.New("bootstrap owner state root is invalid")
+	}
+	if !exists {
+		if request.Profile == model.ProfileHosting {
+			return nil
+		}
+		return errors.New("bootstrap operator does not exist")
+	}
+	if operator.UID == 0 || operator.Home != filepath.Dir(request.OwnerStateRoot) {
+		return errors.New("bootstrap operator identity is unsafe")
+	}
+	if request.Profile == model.ProfileProtectedLocal && request.OwnerStateRoot != filepath.Join(operator.Home, ".fased") {
+		return errors.New("protected Local owner state root is not canonical")
+	}
+	return nil
 }
 
 var timeNow = time.Now

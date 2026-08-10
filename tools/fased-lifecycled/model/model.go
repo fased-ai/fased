@@ -99,23 +99,24 @@ type PlatformIdentity struct {
 }
 
 type Transaction struct {
-	SchemaVersion        uint32            `json:"schemaVersion"`
-	ID                   string            `json:"transactionId"`
-	Profile              Profile           `json:"profile"`
-	PlanAction           string            `json:"planAction"`
-	SourceTopology       string            `json:"sourceTopology,omitempty"`
-	Phase                Phase             `json:"phase"`
-	Revision             uint64            `json:"revision"`
-	Target               Generation        `json:"target"`
-	TargetStateSchemas   map[string]uint32 `json:"targetStateSchemas"`
-	TargetCapabilities   CapabilityRanges  `json:"targetCapabilities"`
-	Previous             *Generation       `json:"previous,omitempty"`
-	ManifestDigest       string            `json:"manifestDigest"`
-	StateInventoryDigest string            `json:"stateInventoryDigest"`
-	MigrationPlanDigest  string            `json:"migrationPlanDigest"`
-	SignerPlanDigest     string            `json:"signerPlanDigest"`
-	PlatformDigest       string            `json:"platformDigest"`
-	Migrations           []Migration       `json:"migrations"`
+	SchemaVersion            uint32            `json:"schemaVersion"`
+	ID                       string            `json:"transactionId"`
+	Profile                  Profile           `json:"profile"`
+	PlanAction               string            `json:"planAction"`
+	SourceTopology           string            `json:"sourceTopology,omitempty"`
+	PublicPredecessorVersion string            `json:"publicPredecessorVersion,omitempty"`
+	Phase                    Phase             `json:"phase"`
+	Revision                 uint64            `json:"revision"`
+	Target                   Generation        `json:"target"`
+	TargetStateSchemas       map[string]uint32 `json:"targetStateSchemas"`
+	TargetCapabilities       CapabilityRanges  `json:"targetCapabilities"`
+	Previous                 *Generation       `json:"previous,omitempty"`
+	ManifestDigest           string            `json:"manifestDigest"`
+	StateInventoryDigest     string            `json:"stateInventoryDigest"`
+	MigrationPlanDigest      string            `json:"migrationPlanDigest"`
+	SignerPlanDigest         string            `json:"signerPlanDigest"`
+	PlatformDigest           string            `json:"platformDigest"`
+	Migrations               []Migration       `json:"migrations"`
 }
 
 // TransactionEnvelope contains the immutable identity shared by the
@@ -123,21 +124,22 @@ type Transaction struct {
 // independently, but they cannot disagree about what is being installed or
 // which state, signer, platform, and rollback generation are bound to it.
 type TransactionEnvelope struct {
-	SchemaVersion        uint32            `json:"schemaVersion"`
-	ID                   string            `json:"transactionId"`
-	Profile              Profile           `json:"profile"`
-	PlanAction           string            `json:"planAction"`
-	SourceTopology       string            `json:"sourceTopology,omitempty"`
-	Target               Generation        `json:"target"`
-	TargetStateSchemas   map[string]uint32 `json:"targetStateSchemas"`
-	TargetCapabilities   CapabilityRanges  `json:"targetCapabilities"`
-	Previous             *Generation       `json:"previous,omitempty"`
-	ManifestDigest       string            `json:"manifestDigest"`
-	StateInventoryDigest string            `json:"stateInventoryDigest"`
-	MigrationPlanDigest  string            `json:"migrationPlanDigest"`
-	SignerPlanDigest     string            `json:"signerPlanDigest"`
-	PlatformDigest       string            `json:"platformDigest"`
-	Migrations           []Migration       `json:"migrations"`
+	SchemaVersion            uint32            `json:"schemaVersion"`
+	ID                       string            `json:"transactionId"`
+	Profile                  Profile           `json:"profile"`
+	PlanAction               string            `json:"planAction"`
+	SourceTopology           string            `json:"sourceTopology,omitempty"`
+	PublicPredecessorVersion string            `json:"publicPredecessorVersion,omitempty"`
+	Target                   Generation        `json:"target"`
+	TargetStateSchemas       map[string]uint32 `json:"targetStateSchemas"`
+	TargetCapabilities       CapabilityRanges  `json:"targetCapabilities"`
+	Previous                 *Generation       `json:"previous,omitempty"`
+	ManifestDigest           string            `json:"manifestDigest"`
+	StateInventoryDigest     string            `json:"stateInventoryDigest"`
+	MigrationPlanDigest      string            `json:"migrationPlanDigest"`
+	SignerPlanDigest         string            `json:"signerPlanDigest"`
+	PlatformDigest           string            `json:"platformDigest"`
+	Migrations               []Migration       `json:"migrations"`
 }
 
 type Migration struct {
@@ -250,8 +252,8 @@ func (g Generation) Validate() error {
 	if !digestPattern.MatchString(g.ID) {
 		return errors.New("generation id must be a lowercase sha256 digest")
 	}
-	if !versionPattern.MatchString(g.Version) {
-		return errors.New("generation version must be a semantic version without a v prefix")
+	if err := ValidateVersion(g.Version); err != nil {
+		return fmt.Errorf("generation %w", err)
 	}
 	if !gitObjectPattern.MatchString(g.Commit) {
 		return errors.New("generation commit must be a full lowercase Git object id")
@@ -261,6 +263,13 @@ func (g Generation) Validate() error {
 	}
 	if !digestPattern.MatchString(g.ArtifactSetDigest) {
 		return errors.New("generation artifact set must be a lowercase sha256 digest")
+	}
+	return nil
+}
+
+func ValidateVersion(version string) error {
+	if !versionPattern.MatchString(version) {
+		return errors.New("version must be a semantic version without a v prefix")
 	}
 	return nil
 }
@@ -356,12 +365,15 @@ func (t Transaction) Validate() error {
 	}
 	switch t.PlanAction {
 	case "INSTALL", "UPDATE":
-		if t.SourceTopology != "" {
-			return errors.New("non-bridge transaction contains a source topology")
+		if t.SourceTopology != "" || t.PublicPredecessorVersion != "" {
+			return errors.New("non-bridge transaction contains public predecessor evidence")
 		}
 	case "BRIDGE_PUBLIC_STABLE":
 		if !platformNamePattern.MatchString(t.SourceTopology) {
 			return errors.New("public-stable transaction source topology is invalid")
+		}
+		if err := ValidateVersion(t.PublicPredecessorVersion); err != nil {
+			return fmt.Errorf("public-stable predecessor version: %w", err)
 		}
 	default:
 		return errors.New("transaction plan action is not mutable")
@@ -443,7 +455,7 @@ func (t Transaction) Envelope() (TransactionEnvelope, error) {
 	}
 	return TransactionEnvelope{
 		SchemaVersion: t.SchemaVersion, ID: t.ID, Profile: t.Profile,
-		PlanAction: t.PlanAction, SourceTopology: t.SourceTopology,
+		PlanAction: t.PlanAction, SourceTopology: t.SourceTopology, PublicPredecessorVersion: t.PublicPredecessorVersion,
 		Target: t.Target, TargetStateSchemas: t.TargetStateSchemas,
 		TargetCapabilities: t.TargetCapabilities, Previous: t.Previous,
 		ManifestDigest: t.ManifestDigest, StateInventoryDigest: t.StateInventoryDigest,
@@ -455,7 +467,7 @@ func (t Transaction) Envelope() (TransactionEnvelope, error) {
 func (e TransactionEnvelope) Validate() error {
 	probe := Transaction{
 		SchemaVersion: e.SchemaVersion, ID: e.ID, Profile: e.Profile,
-		PlanAction: e.PlanAction, SourceTopology: e.SourceTopology,
+		PlanAction: e.PlanAction, SourceTopology: e.SourceTopology, PublicPredecessorVersion: e.PublicPredecessorVersion,
 		Phase: PhaseIdle, Revision: 1, Target: e.Target,
 		TargetStateSchemas: e.TargetStateSchemas, TargetCapabilities: e.TargetCapabilities,
 		Previous: e.Previous, ManifestDigest: e.ManifestDigest,

@@ -41,17 +41,22 @@ type OnboardingCompleter interface {
 	CompleteOnboarding(context.Context) (engine.Result, error)
 }
 
+type PublicPredecessorEvidenceVerifier interface {
+	VerifyPublicPredecessorEvidence(topology, version string) error
+}
+
 type IDGenerator func() (string, error)
 
 type Service struct {
-	Profile    model.Profile
-	Platform   model.PlatformIdentity
-	Store      StateStore
-	Inventory  StateInventory
-	Supervisor Supervisor
-	Onboarding OnboardingCompleter
-	NewID      IDGenerator
-	mutationMu sync.Mutex
+	Profile             model.Profile
+	Platform            model.PlatformIdentity
+	Store               StateStore
+	Inventory           StateInventory
+	Supervisor          Supervisor
+	Onboarding          OnboardingCompleter
+	PredecessorEvidence PublicPredecessorEvidenceVerifier
+	NewID               IDGenerator
+	mutationMu          sync.Mutex
 }
 
 func (service *Service) Handle(ctx context.Context, request protocol.Request) (protocol.Response, error) {
@@ -138,6 +143,12 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 		}
 		manifestDigest = absentManifestDigest
 		if request.SourceTopology != "" {
+			if service.PredecessorEvidence == nil {
+				return protocol.Response{}, errors.New("public predecessor evidence verifier is unavailable")
+			}
+			if err := service.PredecessorEvidence.VerifyPublicPredecessorEvidence(request.SourceTopology, request.PublicPredecessorVersion); err != nil {
+				return protocol.Response{}, err
+			}
 			installation, err = planner.PublicStableInstallation(service.Profile, planner.PublicTopology(request.SourceTopology))
 			if err != nil {
 				return protocol.Response{}, err
@@ -202,13 +213,18 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 	if err != nil {
 		return protocol.Response{}, err
 	}
+	if installation.Kind == planner.InstallationPublicStable {
+		if err := service.PredecessorEvidence.VerifyPublicPredecessorEvidence(request.SourceTopology, request.PublicPredecessorVersion); err != nil {
+			return protocol.Response{}, err
+		}
+	}
 	var previous *model.Generation
 	if installation.Kind == planner.InstallationManaged {
 		previous = installation.Manifest.ActiveGeneration
 	}
 	tx := model.Transaction{
 		SchemaVersion: model.CurrentTransactionSchemaVersion, ID: transactionID,
-		Profile: service.Profile, PlanAction: string(plan.Action), SourceTopology: request.SourceTopology,
+		Profile: service.Profile, PlanAction: string(plan.Action), SourceTopology: request.SourceTopology, PublicPredecessorVersion: request.PublicPredecessorVersion,
 		Phase: model.PhaseIdle, Revision: 1,
 		Target: generation, Previous: previous, ManifestDigest: manifestDigest,
 		TargetStateSchemas: inventory.StateSchemas, TargetCapabilities: inventory.Capabilities,

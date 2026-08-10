@@ -24,6 +24,7 @@ func TestHostingPredecessorUsesSharedTransactionAndExactRollback(t *testing.T) {
 	tx.Profile = model.ProfileHosting
 	tx.PlanAction = "BRIDGE_PUBLIC_STABLE"
 	tx.SourceTopology = "hosting-controller-v2-self-updating"
+	tx.PublicPredecessorVersion = "0.1.75"
 	tx.PlatformDigest, _ = identity.Digest(model.ProfileProtectedLocal)
 	// The predecessor validates profile and transaction identity through the
 	// shared transaction; the adapter itself binds the Hosting platform digest.
@@ -46,6 +47,27 @@ func TestHostingPredecessorUsesSharedTransactionAndExactRollback(t *testing.T) {
 	}
 	if err := bridge.Commit(ctx, tx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHostingPredecessorRecordRejectsVersionRebinding(t *testing.T) {
+	operator, gateway, signer := principals()
+	config, err := NewConfig(model.ProfileHosting, "hosting", "/home/app/.fased", operator, gateway, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, _ := manifestTransaction(t, true)
+	tx.Profile = model.ProfileHosting
+	tx.PlanAction = "BRIDGE_PUBLIC_STABLE"
+	tx.SourceTopology = "hosting-controller-v2-self-updating"
+	tx.PublicPredecessorVersion = "0.1.75"
+	bridge := &HostingPredecessor{Config: config, Systemd: fakeSystemd{calls: &[]string{}}, State: fakeServiceState{active: map[string]bool{"fased-signerd.service": true, "fased-gateway.service": false}}, rootPrefix: t.TempDir()}
+	if err := bridge.Prepare(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	tx.PublicPredecessorVersion = "0.1.74"
+	if err := bridge.Quiesce(context.Background(), tx); err == nil {
+		t.Fatal("Hosting predecessor receipt was rebound to another version")
 	}
 }
 

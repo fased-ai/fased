@@ -44,9 +44,10 @@ type HostingPredecessor struct {
 }
 
 type hostingPredecessorRecord struct {
-	TransactionID string          `json:"transactionId"`
-	Topology      string          `json:"topology"`
-	Active        map[string]bool `json:"active"`
+	TransactionID            string          `json:"transactionId"`
+	Topology                 string          `json:"topology"`
+	PublicPredecessorVersion string          `json:"publicPredecessorVersion"`
+	Active                   map[string]bool `json:"active"`
 }
 
 func (bridge *HostingPredecessor) Prepare(ctx context.Context, tx model.Transaction) error {
@@ -56,7 +57,7 @@ func (bridge *HostingPredecessor) Prepare(ctx context.Context, tx model.Transact
 	if err := bridge.validate(tx); err != nil {
 		return err
 	}
-	record := hostingPredecessorRecord{TransactionID: tx.ID, Topology: tx.SourceTopology, Active: map[string]bool{}}
+	record := hostingPredecessorRecord{TransactionID: tx.ID, Topology: tx.SourceTopology, PublicPredecessorVersion: tx.PublicPredecessorVersion, Active: map[string]bool{}}
 	for _, unit := range bridge.units() {
 		active, err := bridge.State.Active(ctx, unit)
 		if err != nil {
@@ -153,7 +154,7 @@ func (bridge *HostingPredecessor) read(tx model.Transaction) (hostingPredecessor
 		return hostingPredecessorRecord{}, false, err
 	}
 	var record hostingPredecessorRecord
-	if json.Unmarshal(data, &record) != nil || record.TransactionID != tx.ID || record.Topology != tx.SourceTopology || len(record.Active) != len(bridge.units()) {
+	if json.Unmarshal(data, &record) != nil || record.TransactionID != tx.ID || record.Topology != tx.SourceTopology || record.PublicPredecessorVersion != tx.PublicPredecessorVersion || len(record.Active) != len(bridge.units()) {
 		return hostingPredecessorRecord{}, false, errors.New("Hosting predecessor record is invalid or rebound")
 	}
 	for _, unit := range bridge.units() {
