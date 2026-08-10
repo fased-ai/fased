@@ -79,6 +79,9 @@ operator_env() {
     "FASED_GATEWAY_PORT=$gateway_port" \
     "FASED_GATEWAY_TOKEN=$gateway_token" \
     "FASED_HOST_PROFILE=local" \
+    "FASED_LIFECYCLE_INSTALL_ROOT=/opt/fased/local/$instance" \
+    "FASED_LIFECYCLE_INSTANCE=$instance" \
+    "FASED_LIFECYCLE_PROFILE=protected-local" \
     "FASED_PROTECTED_LOCAL=1" \
     "FASED_PROTECTED_LOCAL_INSTANCE=$instance" \
     "FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external" \

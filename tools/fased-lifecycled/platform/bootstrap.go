@@ -237,6 +237,7 @@ func BootstrapPathPlan(config Config, principals BootstrapPrincipals) ([]Bootstr
 	if config.Profile == model.ProfileProtectedLocal {
 		paths = append(paths,
 			BootstrapPath{Path: config.ProductStateRoot, Mode: 0o755},
+			BootstrapPath{Path: filepath.Join(config.ProductStateRoot, "controller"), GID: config.Operator.GID, Mode: 0o710},
 			BootstrapPath{Path: config.LifecycleRoot, Mode: 0o700},
 			BootstrapPath{Path: config.SignerStateRoot(), UID: config.Signer.UID, GID: config.Signer.GID, Mode: 0o700},
 		)
