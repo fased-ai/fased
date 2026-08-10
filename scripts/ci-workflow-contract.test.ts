@@ -523,6 +523,7 @@ describe("CI workflow routing", () => {
     );
 
     const candidateText = candidate?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    const candidateStepNames = candidate?.steps?.map((step) => step.name) ?? [];
     const p1Text = p1?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const publishText = publish?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const candidateDownloads = candidate?.steps?.filter((step) =>
@@ -532,6 +533,13 @@ describe("CI workflow routing", () => {
       "fased-hosted-runtime-*",
       "fased-signerd-release",
     ]);
+    expect(candidateStepNames).toContain("Setup Node.js");
+    expect(candidateStepNames).toContain("Setup pnpm + cache store");
+    expect(candidateStepNames).toContain("Install exact frozen dependencies");
+    expect(candidateStepNames.indexOf("Install exact frozen dependencies")).toBeLessThan(
+      candidateStepNames.indexOf("Assemble candidate release manifest"),
+    );
+    expect(candidateText).toContain("pnpm install --frozen-lockfile");
     expect(candidateText).toContain("release-artifact-set.mjs build");
     expect(validateText).toContain("pnpm build");
     expect(validateText).toContain('test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"');
