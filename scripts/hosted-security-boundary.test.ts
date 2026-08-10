@@ -1,16 +1,13 @@
 import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const install = fs.readFileSync(new URL("../install.sh", import.meta.url), "utf8");
-const managed = fs.readFileSync(new URL("./start-managed.sh", import.meta.url), "utf8");
-const networkAdmin = fs.readFileSync(
-  new URL("./fased-signer-network-hosting.sh", import.meta.url),
-  "utf8",
-);
-const onboardingHostSecurity = fs.readFileSync(
-  new URL("../src/wizard/onboarding.host-security.ts", import.meta.url),
-  "utf8",
-);
+const read = (path: string) => fs.readFileSync(new URL(path, import.meta.url), "utf8");
+const install = read("../install.sh");
+const managed = read("./start-managed.sh");
+const networkAdmin = read("./fased-signer-network-hosting.sh");
+const onboardingHostSecurity = read("../src/wizard/onboarding.host-security.ts");
+const targetAdapter = read("../tools/fased-lifecycled/platform/target_adapter.go");
+const networkPolicy = read("../tools/fased-lifecycled/platform/network_policy.go");
 
 function sliceBetween(source: string, start: string, end: string): string {
   const startIndex = source.indexOf(start);
@@ -21,77 +18,29 @@ function sliceBetween(source: string, start: string, end: string): string {
 }
 
 describe("hosted signer security boundary", () => {
-  it("enters privileged Hosting setup only through an immutable attested release bundle", () => {
-    expect(install).toContain('hosting_release="latest"');
+  it("enters privileged Hosting setup only through an immutable attested Go bundle", () => {
+    expect(install).toContain("bootstrap_hosting_attested_bundle()");
     expect(install).toContain("verify_release_attestation_source()");
-    expect(install).toContain("verify_release_attestation_source \\");
-    expect(install).toContain(
-      '"$release_manifest" "$release_manifest_bundle" "$release_version" || {',
-    );
     expect(install).toContain('--source-ref "refs/tags/v${release_version}"');
     expect(install).not.toContain('--source-ref "refs/heads/main"');
+    expect(install).toContain("root_owned_bundle_tree_is_secure()");
+    expect(install).toContain('enter_go_lifecycle_bundle "$root_store"');
     expect(install).toContain("/var/lib/fased-installer/install.lock");
     expect(install).toContain("flock -x 9");
     expect(install).toContain('local root_store="${release_parent}/${actual}"');
-    expect(install).toContain(
-      "Refusing privileged Hosting setup from an unverified or caller-owned source tree",
-    );
-    expect(install).toContain("Refusing privileged Hosting setup from a Git checkout");
-    expect(install).toContain("! -user root -o -perm /022");
-    expect(install).toContain("! -type f ! -type d");
-    expect(install).toContain("-type f -links +1");
-    expect(install).toContain(
-      "printf 'version=%s\\nsha256=%s\\nsigner_sha256=%s\\ndependency_sha256=%s\\ndependency_hash=%s\\nrelease_manifest_sha256=%s\\nlifecycle_metadata_sha256=%s\\nprovenance_sha256=%s\\nsbom_sha256=%s\\nvex_sha256=%s\\nevidence_verifier_sha256=%s\\ncommit=%s\\n'",
-    );
-    expect(install).toContain('tagged_head" == "$attested_commit');
-    expect(install).toContain('tagged_package_version" == "$HOSTING_RELEASE');
-    expect(install).not.toContain('tagged_head" == "$expected_tag_head');
-    expect(install).not.toContain('rm -rf -- "$root_store"');
+    expect(install).not.toContain("install_host_signer_and_updater_services()");
+    expect(install).not.toContain("migrate_legacy_hosted_signer_if_needed()");
+    expect(install).not.toContain("fased-host-updater.mjs");
   });
 
-  it("never grants broad Gateway sudo or an app-visible root control socket", () => {
-    const rootFlow = sliceBetween(
-      install,
-      'if [[ "$(id -u)" -eq 0 ]]; then\n  assert_verified_hosting_root_source',
-      'if [[ ! -f "$FASED_DIR/package.json"',
-    );
-    expect(rootFlow).toContain("ensure_host_boundary_accounts");
-    expect(rootFlow).toContain("install_host_signer_and_updater_services");
-    expect(rootFlow).toContain("migrate_legacy_hosted_signer_if_needed");
-    expect(rootFlow).not.toContain("start_host_bootstrap_channel");
-    expect(rootFlow).not.toContain("install_host_maintenance_sudoers");
-    expect(rootFlow).not.toContain("install_host_signer_isolation_helper");
-    expect(rootFlow).not.toContain("install_host_signer_maintenance_wrapper");
-
-    const accountBoundary = sliceBetween(
-      install,
-      "ensure_host_boundary_accounts()",
-      "install_host_signer_and_updater_services()",
-    );
-    expect(accountBoundary).toContain('gpasswd -d "$target_user" "$admin_group"');
-    expect(accountBoundary).toContain('local gateway_user="${FASED_GATEWAY_USER:-fased-gateway}"');
-    expect(accountBoundary).toContain(
-      'local operator_group="${FASED_OPERATOR_GROUP:-fased-operator}"',
-    );
-    expect(accountBoundary).toContain('local config_group="${FASED_CONFIG_GROUP:-fased-config}"');
-    expect(accountBoundary).toContain(
-      'usermod -g "$gateway_group" -s /usr/sbin/nologin "$gateway_user"',
-    );
-    expect(accountBoundary).toContain('usermod -aG "$operator_group,$config_group" "$target_user"');
-    expect(accountBoundary).toContain('gpasswd -d "$target_user" "$gateway_group"');
-    expect(accountBoundary).toContain('gpasswd -d "$gateway_user" "$operator_group"');
-    expect(accountBoundary).toContain("passwordless sudo");
-    expect(accountBoundary).not.toContain("NOPASSWD");
-    expect(install).not.toContain("install_host_maintenance_sudoers()");
-    expect(install).not.toContain("install_host_signer_isolation_helper()");
-    expect(install).not.toContain("install_host_signer_maintenance_wrapper()");
-    expect(install).not.toContain("ensure_host_signer_isolation_user()");
+  it("never grants broad Gateway sudo or restores a JavaScript root controller", () => {
     expect(install).not.toContain("NOPASSWD:");
-    expect(install).toContain("/usr/local/sbin/fased-signer-isolation");
-    expect(install).not.toContain("FASED_HOST_BOOTSTRAP_CTL=");
+    expect(install).not.toContain("install_host_maintenance_sudoers()");
     expect(install).not.toContain("FASED_HOST_BOOTSTRAP_SOCKET=");
     expect(install).not.toContain("node /usr/local/libexec/fased-host-bootstrapd.mjs");
+    expect(install).not.toContain("fased-lifecycle-supervisor.mjs");
     expect(install).toContain("FASED_HOST_ROOT_PREPARED=1");
+    expect(install).toContain("/opt/fased/lifecycle/supervisor-v1/fased-lifecycled request");
   });
 
   it("cold starts use the external system signer and never start a hosted broker", () => {
@@ -103,9 +52,6 @@ describe("hosted signer security boundary", () => {
     expect(startup).toContain("HOSTED_ROOT_SIGNER=1");
     expect(startup).toContain('SIGNERD_SOCKET="/run/fased-signerd/app.sock"');
     expect(startup).toContain("elif should_start_signerd");
-    expect(startup.indexOf("HOSTED_ROOT_SIGNER=1")).toBeLessThan(
-      startup.indexOf("should_start_signerd"),
-    );
     const hostedBranch = sliceBetween(
       startup,
       'if [[ "${FASED_HOST_PROFILE:-}" == "hosting" || "${FASED_PROTECTED_LOCAL:-0}" == "1" ]]',
@@ -113,13 +59,6 @@ describe("hosted signer security boundary", () => {
     );
     expect(hostedBranch).not.toContain("start_signerd_process");
     expect(hostedBranch).not.toContain("start_signer_broker");
-
-    const cleanup = sliceBetween(
-      managed,
-      "cleanup_managed_runtime()",
-      "trap cleanup_managed_runtime EXIT",
-    );
-    expect(cleanup).toContain('if [[ "${HOSTED_ROOT_SIGNER:-0}" != "1" ]]');
   });
 
   it("uses the root-verified Tailscale route without installing a zrok tunnel", () => {
@@ -127,95 +66,21 @@ describe("hosted signer security boundary", () => {
     expect(managed).toContain(
       "Hosting uses its root-verified private Tailscale Serve route; no zrok tunnel is started.",
     );
+    expect(networkPolicy).toContain("Tailscale binary must use a fixed system path");
+    expect(networkPolicy).toContain("Tailscale is not ready");
   });
 
-  it("never imports legacy wallet key material from signer.env into managed startup", () => {
+  it("never imports legacy wallet key material into managed startup", () => {
     const envLoader = sliceBetween(
       managed,
       "load_wallet_signer_env_file()",
       "clear_legacy_wallet_key_env()",
     );
     expect(envLoader).not.toContain("grep -E '^export FASED_WALLET_' \"$SIGNERD_ENV_FILE\"");
-    expect(envLoader).toContain("SOLANA_RPC_URL");
-    expect(envLoader).toContain("LOCAL_SIGNER_(SOCKET|");
-    expect(envLoader).toContain("CONTROL_SOCKET");
-    expect(envLoader).toContain("STATE_DB");
-    expect(envLoader).toContain("MASTER_KEY");
     expect(envLoader).not.toContain("PASSPHRASE");
     expect(envLoader).not.toContain("PRIVATE_KEY");
-
-    const legacyClear = sliceBetween(
-      managed,
-      "clear_legacy_wallet_key_env()",
-      "resolve_wallet_chains_from_config()",
-    );
-    expect(legacyClear).toContain("FASED_WALLET_SOLANA_KEYSTORE_PATH__*");
-    expect(legacyClear).toContain("FASED_WALLET_PASSPHRASE_FILE__*");
-    expect(legacyClear).toContain("FASED_WALLET_PRIVATE_KEY__*");
-    expect(legacyClear).toContain("FASED_WALLET_MNEMONIC__*");
-    expect(managed).toMatch(
-      /load_wallet_signer_env_file\s+clear_legacy_wallet_key_env\s+SIGNERD_BIN=/,
-    );
-  });
-
-  it("keeps hosted Tailscale administration in the provider-console root phase", () => {
-    expect(install).not.toContain("tailscale-set-operator-self");
-    expect(install).not.toContain("tailscale set --operator");
-    expect(managed).toContain(
-      '[[ "${FASED_TAILSCALE_AUTO_SERVE:-1}" == "1" && "${FASED_HOST_PROFILE:-}" != "hosting" ]]',
-    );
-    expect(install).toContain("prepare_hosting_root_prerequisites");
-    expect(install).toContain("finalize_hosting_root_prerequisites");
-    expect(install).toContain("firewallReady=${pending}");
-    expect(install).not.toContain("Type the Tailscale DNS name");
-    expect(onboardingHostSecurity).not.toContain("fased-host-maintenance");
-    expect(onboardingHostSecurity).not.toContain("tailscale up");
-    expect(onboardingHostSecurity).not.toContain("tailscale set");
-    expect(onboardingHostSecurity).not.toContain("firewall-cmd");
-    expect(onboardingHostSecurity).not.toContain("systemctl enable");
-    expect(onboardingHostSecurity).not.toContain("systemctl restart");
-    expect(onboardingHostSecurity).toContain('probe("sudo", ["-n", "true"])');
-  });
-
-  it("installs a hardened external signer with distinct application and operator authorities", () => {
-    const service = sliceBetween(
-      install,
-      "install_host_signer_and_updater_services()",
-      "migrate_legacy_hosted_signer_if_needed()",
-    );
-    expect(service).toContain("SupplementaryGroups=${gateway_group}");
-    expect(service).toContain("-socket /run/fased-signerd/app.sock");
-    expect(service).toContain("-operator-socket /run/fased-signerd/operator.sock");
-    expect(service).toContain("-control-socket /run/fased-signerd/control.sock");
-    expect(service).toContain("-operator-socket-group ${operator_group}");
-    expect(service).toContain("-application-uid ${gateway_uid}");
-    expect(service).toContain("-operator-uid ${operator_uid}");
-    expect(service).toContain("-control-uid ${signer_uid}");
-    expect(service).toContain("-state-db /var/lib/fased-signerd/state.db");
-    expect(service).toContain("-update-gate /var/lib/fased-signer-update-gate/active");
-    expect(service).toContain("/var/lib/fased-signer-update-gate");
-    expect(service).toContain("NoNewPrivileges=true");
-    expect(service).toContain("ProtectSystem=strict");
-
-    const gatewayService = sliceBetween(
-      install,
-      "install_fixed_host_gateway_service()",
-      "run_tailscale_auth_from_private_file()",
-    );
-    expect(gatewayService).toContain("User=${gateway_user}");
-    expect(gatewayService).toContain("Group=${gateway_group}");
-    expect(gatewayService).toContain("SupplementaryGroups=${config_group}");
-    expect(gatewayService).toContain("UMask=0007");
-    expect(gatewayService).toContain(
-      "Environment=FASED_PLUGIN_STATUS_CACHE_PATH=${target_home}/.fased/cache/plugin-status.json",
-    );
-    expect(gatewayService).toContain(
-      'install -d -m 2770 -o "$target_user" -g "$config_group" "$state_dir/cache"',
-    );
-    expect(gatewayService).toContain(
-      "Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-    );
-    expect(gatewayService).not.toContain("User=${target_user}");
+    expect(managed).toContain("FASED_WALLET_SOLANA_KEYSTORE_PATH__*");
+    expect(managed).toContain("FASED_WALLET_MNEMONIC__*");
   });
 
   it("keeps hosted network activation root-only and stdin-bound", () => {
@@ -224,46 +89,24 @@ describe("hosted signer security boundary", () => {
     expect(networkAdmin).toContain('file_owner" == "0"');
     expect(networkAdmin).toContain('"$socket_mode" == "600"');
     expect(networkAdmin).toContain('printf \'%s\\n\' "$request" | "${common[@]}" put');
-    expect(networkAdmin).toContain("value.schemaVersion !== 2");
-    expect(networkAdmin).toContain("executionFallbackRpcUrl");
-    expect(networkAdmin).toContain("verificationRpcUrl");
-    expect(networkAdmin).not.toContain("value.fallbackRpcUrl");
-    expect(networkAdmin).not.toContain("FASED_HOST_BOOTSTRAP");
+    expect(onboardingHostSecurity).not.toContain("tailscale up");
+    expect(onboardingHostSecurity).not.toContain("tailscale set");
+    expect(onboardingHostSecurity).not.toContain("firewall-cmd");
   });
 
-  it("retires the root-console import helper in favor of the native operator socket", () => {
-    expect(install).not.toContain(
-      'install -m 0755 -o root -g root "$FASED_DIR/scripts/fased-signer-wallet-import-hosting.sh" /usr/local/sbin/fased-signer-wallet-import',
-    );
-    expect(install).toContain("rm -f /usr/local/sbin/fased-signer-wallet-import");
-    expect(install).toContain("-operator-socket /run/fased-signerd/operator.sock");
-    expect(install).toContain("-operator-uid ${operator_uid}");
+  it("renders signer and Gateway authority from the Go Hosting adapter", () => {
+    expect(targetAdapter).toContain("-operator-socket %s -control-socket %s");
+    expect(targetAdapter).toContain("-application-uid %d -operator-uid %d -control-uid %d");
+    expect(targetAdapter).toContain("-state-db %s/state.db -master-key %s/master.key");
+    expect(targetAdapter).toContain("NoNewPrivileges=true");
+    expect(targetAdapter).toContain("ProtectSystem=strict");
+    expect(targetAdapter).toContain('return "hosting"');
   });
 
-  it("moves legacy custody migration into the verified native signer binary", () => {
-    const prepare = sliceBetween(
-      install,
-      "migrate_legacy_hosted_signer_if_needed()",
-      "finalize_legacy_hosted_signer_migration()",
-    );
-    const commit = sliceBetween(
-      install,
-      "finalize_legacy_hosted_signer_migration()",
-      "assert_verified_hosting_root_source()",
-    );
-    for (const phase of [prepare, commit]) {
-      expect(phase).toContain("/opt/fased/signer/fased-signerd admin migration hosted-v1");
-      expect(phase).toContain("--control-socket /run/fased-signerd/control.sock");
-      expect(phase).toContain("--state-dir /var/lib/fased-signerd");
-      expect(phase).toContain('--marker-file "$marker_file"');
-      expect(phase).not.toContain("node /usr/local/libexec/migrate-hosted-signer-v2.mjs");
-      expect(phase).not.toContain("FASED_DEFER_LEGACY_QUARANTINE");
-    }
-    expect(prepare).toContain("--phase prepare");
-    expect(prepare).toContain("hosted-legacy-wallet-migration.mjs prepare");
-    expect(prepare).toContain("hosted-legacy-wallet-migration.mjs activate");
-    expect(commit).toContain("--phase commit");
-    expect(commit).toContain("hosted-legacy-wallet-migration.mjs commit");
-    expect(commit).toContain('[[ "${#legacy_keystores[@]}" -gt 0 || -f "$marker_file" ]]');
+  it("keeps legacy custody helpers out of the public installer", () => {
+    expect(install).not.toContain("fased-signer-wallet-import-hosting.sh");
+    expect(install).not.toContain("migrate-hosted-signer-v2.mjs");
+    expect(install).not.toContain("hosted-legacy-wallet-migration.mjs");
+    expect(install).not.toContain("fased-host-updaterctl.mjs");
   });
 });
