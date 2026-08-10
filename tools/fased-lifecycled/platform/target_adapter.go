@@ -51,15 +51,15 @@ type TargetAdapter struct {
 }
 
 func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) error {
-	if adapter == nil || adapter.Config.Profile != model.ProfileProtectedLocal || adapter.Manifest == nil || adapter.Systemd == nil || adapter.Health == nil {
-		return errors.New("protected Local onboarding adapter is incomplete")
+	if adapter == nil || (adapter.Config.Profile != model.ProfileProtectedLocal && adapter.Config.Profile != model.ProfileHosting) || adapter.Manifest == nil || adapter.Systemd == nil || adapter.Health == nil {
+		return errors.New("lifecycle onboarding adapter is incomplete")
 	}
 	manifest, _, err := adapter.Manifest.ReadManifest()
 	if err != nil {
 		return err
 	}
 	if err := manifest.Validate(); err != nil || manifest.Profile != adapter.Config.Profile || manifest.ActiveGeneration == nil {
-		return errors.New("protected Local onboarding requires a committed active generation")
+		return errors.New("lifecycle onboarding requires a committed active generation")
 	}
 	configured, err := adapter.Config.Identity()
 	if err != nil {
@@ -68,7 +68,7 @@ func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) error {
 	want, _ := configured.Digest(adapter.Config.Profile)
 	got, digestErr := manifest.Platform.Digest(manifest.Profile)
 	if digestErr != nil || got != want {
-		return errors.New("protected Local onboarding platform identity mismatch")
+		return errors.New("lifecycle onboarding platform identity mismatch")
 	}
 	if err := validateOnboardingConfig(adapter.Config); err != nil {
 		return err
@@ -94,7 +94,7 @@ func validateOnboardingConfig(config Config) error {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || !ok || stat.Nlink != 1 || stat.Uid != config.Operator.UID ||
 		info.Mode().Perm()&0o007 != 0 || info.Mode().Perm()&0o111 != 0 || info.Size() == 0 || info.Size() > 4<<20 {
-		return errors.New("protected Local onboarding configuration is unsafe")
+		return errors.New("lifecycle onboarding configuration is unsafe")
 	}
 	return nil
 }
@@ -169,7 +169,7 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 			Data: controllerIdentity, Mode: 0o600, UID: 0, GID: 0,
 		},
 	}
-	if !adapter.deferFreshLocalGateway(tx) {
+	if !adapter.deferFreshGateway(tx) {
 		configPath := CanonicalGatewayConfigPath(adapter.Config)
 		if err := validateOnboardingConfig(adapter.Config); err != nil {
 			return err
@@ -235,7 +235,7 @@ func (adapter *TargetAdapter) Activate(ctx context.Context, tx model.Transaction
 		if err := adapter.Systemd.Enable(ctx, unit); err != nil {
 			return err
 		}
-		if adapter.deferFreshLocalGateway(tx) && unit == adapter.Identity.Services["gateway"] {
+		if adapter.deferFreshGateway(tx) && unit == adapter.Identity.Services["gateway"] {
 			continue
 		}
 		if err := adapter.Systemd.Start(ctx, unit); err != nil {
@@ -247,14 +247,14 @@ func (adapter *TargetAdapter) Activate(ctx context.Context, tx model.Transaction
 
 func (adapter *TargetAdapter) Verify(ctx context.Context, tx model.Transaction) error {
 	for _, unit := range adapter.startOrder() {
-		if adapter.deferFreshLocalGateway(tx) && unit == adapter.Identity.Services["gateway"] {
+		if adapter.deferFreshGateway(tx) && unit == adapter.Identity.Services["gateway"] {
 			continue
 		}
 		if err := adapter.Systemd.IsActive(ctx, unit); err != nil {
 			return fmt.Errorf("service %s is not active: %w", unit, err)
 		}
 	}
-	if adapter.deferFreshLocalGateway(tx) {
+	if adapter.deferFreshGateway(tx) {
 		return nil
 	}
 	return adapter.Health.Verify(ctx, adapter.Config.GatewayPort, tx.Target)
@@ -308,7 +308,7 @@ func (adapter *TargetAdapter) Restore(ctx context.Context, tx model.Transaction)
 
 func (adapter *TargetAdapter) preStartLifecycleFiles(tx model.Transaction) []string {
 	files := CanonicalSignerOwnerFiles(adapter.Config)
-	if !adapter.deferFreshLocalGateway(tx) {
+	if !adapter.deferFreshGateway(tx) {
 		files = append(files, CanonicalGatewayConfigPath(adapter.Config))
 	}
 	return files
@@ -360,14 +360,14 @@ func (adapter *TargetAdapter) startOrder() []string {
 	return []string{adapter.Identity.Services["signer"], adapter.Identity.Services["gateway"]}
 }
 
-// A fresh protected-Local install reaches the product transaction before the
-// unprivileged onboarding command has created fased.json. Keep the Gateway unit
-// installed and enabled, but start only the signer; onboarding writes the
-// configuration and starts the Gateway through the already-committed unit.
-// Updates, public-stable bridges, and Hosting installs still require Gateway
-// readiness inside the lifecycle transaction.
-func (adapter *TargetAdapter) deferFreshLocalGateway(tx model.Transaction) bool {
-	return adapter.Config.Profile == model.ProfileProtectedLocal && tx.PlanAction == "INSTALL" && tx.Previous == nil
+// A fresh install reaches the product transaction before the unprivileged
+// onboarding command has created fased.json. Keep the Gateway unit installed
+// and enabled, but start only the signer; onboarding writes the configuration
+// and starts the Gateway through COMPLETE_ONBOARDING. Updates and public-stable
+// bridges still require Gateway readiness inside the lifecycle transaction.
+func (adapter *TargetAdapter) deferFreshGateway(tx model.Transaction) bool {
+	return (adapter.Config.Profile == model.ProfileProtectedLocal || adapter.Config.Profile == model.ProfileHosting) &&
+		tx.PlanAction == "INSTALL" && tx.Previous == nil
 }
 
 func (adapter *TargetAdapter) renderTargetUnits(payload, version, dependency string) map[string][]byte {

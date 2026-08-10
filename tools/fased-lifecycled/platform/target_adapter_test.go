@@ -422,6 +422,15 @@ func TestLocalBridgeFenceFailurePrecedesAllCommitMutation(t *testing.T) {
 }
 
 func TestCompleteOnboardingStartsAndVerifiesExactCommittedGateway(t *testing.T) {
+	testCompleteOnboardingStartsAndVerifiesExactCommittedGateway(t, model.ProfileProtectedLocal, "example")
+}
+
+func TestHostingCompleteOnboardingStartsAndVerifiesExactCommittedGateway(t *testing.T) {
+	testCompleteOnboardingStartsAndVerifiesExactCommittedGateway(t, model.ProfileHosting, "hosting")
+}
+
+func testCompleteOnboardingStartsAndVerifiesExactCommittedGateway(t *testing.T, profile model.Profile, instance string) {
+	t.Helper()
 	stateRoot := filepath.Join(t.TempDir(), ".fased")
 	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
 		t.Fatal(err)
@@ -433,7 +442,7 @@ func TestCompleteOnboardingStartsAndVerifiesExactCommittedGateway(t *testing.T) 
 	operator := Principal{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}
 	gateway := Principal{UID: operator.UID + 1, GID: operator.GID + 1}
 	signer := Principal{UID: operator.UID + 2, GID: operator.GID + 2}
-	config, err := NewConfig(model.ProfileProtectedLocal, "example", stateRoot, operator, gateway, signer)
+	config, err := NewConfig(profile, instance, stateRoot, operator, gateway, signer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +451,7 @@ func TestCompleteOnboardingStartsAndVerifiesExactCommittedGateway(t *testing.T) 
 		t.Fatal(err)
 	}
 	active := model.Generation{ID: digestB, Version: "0.1.76", Commit: commitB, Tree: commitB, ArtifactSetDigest: digestB}
-	manifest := model.Manifest{SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal,
+	manifest := model.Manifest{SchemaVersion: model.CurrentManifestSchemaVersion, Profile: profile,
 		Platform: identity, ActiveGeneration: &active, StateSchemas: map[string]uint32{"signer": 2},
 		Capabilities: model.CapabilityRanges{Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1}, Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 1, Max: 1}}}
 	calls := []string{}
@@ -453,6 +462,41 @@ func TestCompleteOnboardingStartsAndVerifiesExactCommittedGateway(t *testing.T) 
 	want := []string{"systemd.active:" + identity.Services["signer"], "systemd.start:" + identity.Services["gateway"], "systemd.active:" + identity.Services["gateway"], "gateway.ready:18789:0.1.76:" + commitB}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("unexpected onboarding completion order: got=%v want=%v", calls, want)
+	}
+}
+
+func TestFreshHostingInstallDefersGatewayUntilOnboarding(t *testing.T) {
+	tx, _ := manifestTransaction(t, false)
+	operator, gateway, signer := principals()
+	stateRoot := filepath.Join(t.TempDir(), ".fased")
+	if err := os.MkdirAll(stateRoot, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	config, err := NewConfig(model.ProfileHosting, "hosting", stateRoot, operator, gateway, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := config.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.Profile = model.ProfileHosting
+	tx.PlanAction = "INSTALL"
+	tx.Previous = nil
+	tx.PlatformDigest, err = identity.Digest(model.ProfileHosting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := []string{}
+	adapter := TargetAdapter{Config: config, Identity: identity, Systemd: fakeSystemd{calls: &calls}}
+	if !adapter.deferFreshGateway(tx) {
+		t.Fatal("fresh Hosting install did not defer Gateway activation until onboarding")
+	}
+	if err := adapter.Systemd.Start(context.Background(), identity.Services["signer"]); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(calls, ","); strings.Contains(got, identity.Services["gateway"]) {
+		t.Fatalf("fresh Hosting started Gateway before onboarding: %s", got)
 	}
 }
 

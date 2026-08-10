@@ -175,9 +175,15 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
   protected_local_operator_user=""
   protected_local_state_dir=""
   protected_local_gateway_port=""
+  lifecycle_skip_onboard=0
+  lifecycle_onboard_args=()
   args=("$@")
 
   for ((i = 0; i < ${#args[@]}; i++)); do
+    if [[ "${args[$i]}" == "--" ]]; then
+      lifecycle_onboard_args=("${args[@]:$((i + 1))}")
+      break
+    fi
     case "${args[$i]}" in
       --install-dir)
         if (( i + 1 >= ${#args[@]} )); then
@@ -189,6 +195,9 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
         ;;
       --no-auto-install)
         auto_install=0
+        ;;
+      --no-onboard)
+        lifecycle_skip_onboard=1
         ;;
       --hosting)
         hosting_bootstrap=1
@@ -569,7 +578,8 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
         echo "A compatible root-controlled Node.js runtime is required to enter the verified lifecycle bundle." >&2
         return 1
       }
-      NODE_PATH="$selected_root_store/verified-dependencies/node_modules" \
+      local lifecycle_result=""
+      if ! lifecycle_result="$(NODE_PATH="$selected_root_store/verified-dependencies/node_modules" \
         "$lifecycle_node" \
         "$selected_package_root/scripts/generation-updater.mjs" initialize \
         --version "$release_version" \
@@ -577,7 +587,82 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
         --instance "$lifecycle_instance" \
         --owner-state "$lifecycle_owner_state" \
         --operator-user "$lifecycle_operator" \
-        --gateway-port "$lifecycle_port"
+        --gateway-port "$lifecycle_port")"; then
+        return 1
+      fi
+      printf '%s\n' "$lifecycle_result"
+
+      local lifecycle_config="${lifecycle_owner_state}/fased.json"
+      if [[ ! -s "$lifecycle_config" ]]; then
+        if [[ "$lifecycle_skip_onboard" -eq 1 ]]; then
+          echo "Lifecycle services are committed; onboarding was skipped and Gateway remains stopped."
+          echo "Rerun the same verified installer command to complete onboarding."
+          return 0
+        fi
+        local lifecycle_home=""
+        lifecycle_home="$(getent passwd "$lifecycle_operator" | awk -F: '{print $6; exit}')"
+        if [[ -z "$lifecycle_home" || "$lifecycle_owner_state" != "$lifecycle_home/.fased" ]]; then
+          echo "Lifecycle operator home does not match the committed owner state." >&2
+          return 1
+        fi
+        local lifecycle_launcher="${lifecycle_owner_state}/bin/fased"
+        [[ -x "$lifecycle_launcher" && ! -L "$lifecycle_launcher" ]] || {
+          echo "Committed lifecycle CLI launcher is unavailable for onboarding." >&2
+          return 1
+        }
+        local -a lifecycle_environment=(
+          HOME="$lifecycle_home"
+          FASED_STATE_DIR="$lifecycle_owner_state"
+          FASED_CONFIG_PATH="$lifecycle_config"
+          FASED_INSTALLER_ONBOARD=1
+          FASED_INSTALL_LIFECYCLE_COMMITTED=1
+          FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external
+        )
+        if [[ "$lifecycle_profile" == "hosting" ]]; then
+          lifecycle_environment+=(
+            FASED_HOST_PROFILE=hosting
+            FASED_HOST_ROOT_PREPARED=1
+            FASED_UPDATE_CHANNEL="$hosting_update_channel"
+            FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock
+            FASED_HOST_UPDATER_SOCKET=/run/fased-host-updater/request.sock
+          )
+        fi
+        local lifecycle_noninteractive=0
+        local lifecycle_onboard_arg=""
+        for lifecycle_onboard_arg in "${lifecycle_onboard_args[@]}"; do
+          [[ "$lifecycle_onboard_arg" == "--non-interactive" ]] && lifecycle_noninteractive=1
+        done
+        if [[ "$lifecycle_noninteractive" -eq 1 ]]; then
+          runuser -u "$lifecycle_operator" -- env "${lifecycle_environment[@]}" \
+            "$lifecycle_launcher" onboard --install-daemon "${lifecycle_onboard_args[@]}" </dev/null
+        else
+          if ! ( : </dev/tty ) 2>/dev/null; then
+            echo "Onboarding requires an interactive terminal or -- --non-interactive options." >&2
+            return 1
+          fi
+          runuser -u "$lifecycle_operator" -- env "${lifecycle_environment[@]}" \
+            "$lifecycle_launcher" onboard --install-daemon "${lifecycle_onboard_args[@]}" </dev/tty
+        fi
+      fi
+
+      [[ -s "$lifecycle_config" ]] || {
+        echo "Onboarding did not create ${lifecycle_config}." >&2
+        return 1
+      }
+      local lifecycle_socket="/run/fased-host-updater/request.sock"
+      if [[ "$lifecycle_profile" == "protected-local" ]]; then
+        lifecycle_socket="/run/fased-local-controller/${lifecycle_instance}/request.sock"
+      fi
+      local lifecycle_request_id=""
+      lifecycle_request_id="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || true)"
+      [[ "$lifecycle_request_id" =~ ^[0-9a-f-]{36}$ ]] || {
+        echo "Could not allocate the onboarding completion request identity." >&2
+        return 1
+      }
+      /opt/fased/lifecycle/supervisor-v1/fased-lifecycled request \
+        --socket "$lifecycle_socket" \
+        --operation COMPLETE_ONBOARDING \
+        --request-id "$lifecycle_request_id"
     }
 
     umask 077

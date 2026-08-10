@@ -13,13 +13,11 @@ const deletedLifecycleOwners = [
   "scripts/fased-host-updater.mjs",
   "scripts/fased-host-updaterctl.mjs",
   "scripts/lifecycle-control-normalizer.mjs",
-  "scripts/fased-generation-updater-core.mjs",
+  "scripts/fased-managed-updater-core.mjs",
   "scripts/managed-update-contract.mjs",
 ] as const;
 
-const mutationOwners = deletedLifecycleOwners.filter(
-  (owner) => owner !== "scripts/fased-generation-updater-core.mjs",
-);
+const mutationOwners = deletedLifecycleOwners;
 
 const productionRoutingSurfaces = [
   "package.json",
@@ -103,11 +101,25 @@ describe("single Go lifecycle production routing", () => {
       }
     }
     const installer = await readFile(resolve(repoRoot, "install.sh"), "utf8");
-    const goEntry = installer.match(/enter_go_lifecycle_bundle\(\) \{[\s\S]*?^    \}/mu)?.[0];
+    const goEntryStart = installer.indexOf("    enter_go_lifecycle_bundle() {");
+    const goEntryEnd = installer.indexOf("\n    umask 077", goEntryStart);
+    const goEntry =
+      goEntryStart >= 0 && goEntryEnd > goEntryStart
+        ? installer.slice(goEntryStart, goEntryEnd)
+        : undefined;
     if (!goEntry || !goEntry.includes('scripts/generation-updater.mjs" initialize')) {
       violations.push(
         "install.sh: verified root entry does not invoke the Go lifecycle initializer",
       );
+    }
+    for (const required of [
+      'runuser -u "$lifecycle_operator"',
+      '"$lifecycle_launcher" onboard --install-daemon',
+      "--operation COMPLETE_ONBOARDING",
+    ]) {
+      if (!goEntry?.includes(required)) {
+        violations.push(`install.sh: verified root entry omits ${required}`);
+      }
     }
     for (const owner of mutationOwners) {
       const basename = owner.split("/").at(-1);
@@ -142,7 +154,12 @@ describe("single Go lifecycle production routing", () => {
       }
     }
     const installer = await readFile(resolve(repoRoot, "install.sh"), "utf8");
-    const goEntry = installer.match(/enter_go_lifecycle_bundle\(\) \{[\s\S]*?^    \}/mu)?.[0] ?? "";
+    const goEntryStart = installer.indexOf("    enter_go_lifecycle_bundle() {");
+    const goEntryEnd = installer.indexOf("\n    umask 077", goEntryStart);
+    const goEntry =
+      goEntryStart >= 0 && goEntryEnd > goEntryStart
+        ? installer.slice(goEntryStart, goEntryEnd)
+        : "";
     for (const flag of callerOwnedIdentityFlags) {
       if (goEntry.includes(flag)) {
         violations.push(`install.sh: verified Go entry accepts ${flag}`);

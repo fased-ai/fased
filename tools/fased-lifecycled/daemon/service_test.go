@@ -35,7 +35,15 @@ func generation(id, version, commit string) model.Generation {
 }
 
 func platform() model.PlatformIdentity {
-	value, _ := model.NewPlatformIdentity(model.ProfileProtectedLocal, "test-instance", digestA)
+	return platformFor(model.ProfileProtectedLocal)
+}
+
+func platformFor(profile model.Profile) model.PlatformIdentity {
+	instance := "test-instance"
+	if profile == model.ProfileHosting {
+		instance = "hosting"
+	}
+	value, _ := model.NewPlatformIdentity(profile, instance, digestA)
 	return value
 }
 
@@ -169,11 +177,21 @@ func TestConvergeBuildsTransactionFromStoredContract(t *testing.T) {
 }
 
 func TestCompleteOnboardingUsesCommittedManifestAndTargetController(t *testing.T) {
+	testCompleteOnboardingUsesCommittedManifestAndTargetController(t, model.ProfileProtectedLocal)
+}
+
+func TestHostingCompleteOnboardingUsesCommittedManifestAndTargetController(t *testing.T) {
+	testCompleteOnboardingUsesCommittedManifestAndTargetController(t, model.ProfileHosting)
+}
+
+func testCompleteOnboardingUsesCommittedManifestAndTargetController(t *testing.T, profile model.Profile) {
+	t.Helper()
 	_, target := targetContract()
-	manifest := model.Manifest{SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal,
-		Platform: platform(), ActiveGeneration: &target, StateSchemas: map[string]uint32{"signer": 2}, Capabilities: capabilities()}
+	identity := platformFor(profile)
+	manifest := model.Manifest{SchemaVersion: model.CurrentManifestSchemaVersion, Profile: profile,
+		Platform: identity, ActiveGeneration: &target, StateSchemas: map[string]uint32{"signer": 2}, Capabilities: capabilities()}
 	completion := &fakeOnboarding{}
-	service := Service{Profile: model.ProfileProtectedLocal, Platform: platform(),
+	service := Service{Profile: profile, Platform: identity,
 		Store: fakeStore{manifest: &manifest, manifestDigest: digestA}, Inventory: &fakeInventory{}, Supervisor: &fakeSupervisor{}, Onboarding: completion}
 	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationCompleteOnboarding}
 	response, err := service.Handle(context.Background(), request)
