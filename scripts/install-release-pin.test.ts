@@ -471,7 +471,8 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
       fs.mkdirSync(generationDir, { recursive: true });
       for (const name of [
         "fased-managed-updater.mjs",
-        "fased-managed-updater-core.mjs",
+        "fased-generation-updater-core.mjs",
+        "generation-updater.mjs",
         "hosted-release-manifest.mjs",
         "lifecycle-trust-crypto.mjs",
         "lifecycle-trust-policy.mjs",
@@ -1013,15 +1014,8 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
   it("permits prerelease Hosting only through an explicit beta update channel", () => {
     expect(installer).toContain("Hosting prerelease installation requires --update-channel beta.");
     expect(installer).toContain("Local prerelease installation requires --update-channel beta.");
-    expect(installer).toContain(
-      'if [[ "$HOSTING_RELEASE" == *-* && "$UPDATE_CHANNEL" != "beta" ]]',
-    );
-    expect(installer).toContain("VPS Hosting prerelease setup requires --update-channel beta.");
-    expect(installer).toContain("printf '%s\\n' \"$UPDATE_CHANNEL\"");
-    expect(installer).toContain("/etc/fased/host-updater-channel");
-    expect(installer).toContain(
-      'if [[ "$UPDATE_CHANNEL_EXPLICIT" -ne 1 && "$HOSTING_REQUESTED" -ne 1 ]]',
-    );
+    expect(installer).toContain("A prerelease --release requires --update-channel beta.");
+    expect(installer).toContain('"$hosting_update_channel" =~ ^(stable|beta)$');
   });
 
   it("keeps update-channel persistence outside the install marker JSON", () => {

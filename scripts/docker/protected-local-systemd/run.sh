@@ -854,14 +854,14 @@ printf 'version=%s\ncommit=%s\nsigner_sha256=%s\ndependency_sha256=%s\ndependenc
 chmod 0600 "$release_root/.fased-hosting-bundle-verified"
 test "$(jq -er .version "$release_root/package.json")" = "$version"
 
-rm -rf "$candidate_repo"
-git clone --quiet --no-hardlinks /repo "$candidate_repo"
-git -C "$candidate_repo" checkout --quiet --detach "$commit"
-git -C "$candidate_repo" tag --force "v$version" "$commit"
-chown -R testop:testop "$candidate_repo"
 if [[ "$public_acquisition" == "1" ]]; then
   install -m 0700 -o testop -g testop /artifacts/install.sh "$candidate_installer"
 else
+  rm -rf "$candidate_repo"
+  git clone --quiet --no-hardlinks /repo "$candidate_repo"
+  git -C "$candidate_repo" checkout --quiet --detach "$commit"
+  git -C "$candidate_repo" tag --force "v$version" "$commit"
+  chown -R testop:testop "$candidate_repo"
   install -m 0700 -o testop -g testop "$candidate_repo/install.sh" "$candidate_installer"
 fi
 if [[ "$phase" == "install" || "$phase" == "managed-update" ]]; then
@@ -2030,10 +2030,10 @@ managed_update_env=(
   FASED_FIXTURE_PREDECESSOR_VERSION="$predecessor_version" \
   npm_config_registry="http://127.0.0.1:$rpc_port"
 )
-standard_bootstrap_env=(
-  "${managed_update_env[@]}"
-  FASED_INSTALL_REPO="$candidate_repo"
-)
+standard_bootstrap_env=("${managed_update_env[@]}")
+if [[ "$public_acquisition" != "1" ]]; then
+  standard_bootstrap_env+=(FASED_INSTALL_REPO="$candidate_repo")
+fi
 
 run_standard_local_bootstrap() {
   runuser -u testop -- env "${standard_bootstrap_env[@]}" \
@@ -2184,6 +2184,10 @@ run_standard_local_bootstrap \
   >/tmp/protected-bootstrap.out 2>/tmp/protected-bootstrap.err
 grep -F "Verified Local lifecycle handoff complete." /tmp/protected-bootstrap.out >/dev/null
 grep -F "Pre-handoff Local installation detected" /tmp/protected-bootstrap.err >/dev/null
+
+run_standard_local_bootstrap \
+  >/tmp/protected-bootstrap-noop.out 2>/tmp/protected-bootstrap-noop.err
+grep -F "Already current: $version" /tmp/protected-bootstrap-noop.out >/dev/null
 
 instance="$(jq -er '.environment.FASED_PROTECTED_LOCAL_INSTANCE' "$state/lifecycle.json")"
 runtime="$(resolve_protected_runtime "$instance")"

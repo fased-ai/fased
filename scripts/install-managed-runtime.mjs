@@ -3,10 +3,6 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
-  authorizePreactivatedHostedGateway,
-  beginPreactivatedHostedTransaction,
-} from "./fased-managed-updater-core.mjs";
-import {
   assertManagedRuntime,
   atomicSymlink,
   atomicWriteJson,
@@ -29,6 +25,10 @@ import {
 const DEFAULT_HOST_TRANSACTION_TIMEOUT_MS = 2 * 60_000;
 const HOST_TRANSACTION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function rejectLegacyRootTransaction() {
+  throw new Error("root-managed lifecycle transactions must use the verified Go lifecycle engine");
+}
 
 function signerReleaseIdentitiesEqual(left, right) {
   return (
@@ -243,8 +243,8 @@ async function installStableFiles(paths, releaseRoot, durable = false) {
 
 export async function installManagedRuntime(params, dependencyOverrides = {}) {
   const dependencies = {
-    authorizePreactivatedHostedGateway,
-    beginPreactivatedHostedTransaction,
+    authorizePreactivatedHostedGateway: rejectLegacyRootTransaction,
+    beginPreactivatedHostedTransaction: rejectLegacyRootTransaction,
     ...dependencyOverrides,
   };
   const paths = resolveManagedRuntimePaths(params);

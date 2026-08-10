@@ -90,7 +90,7 @@ describe("compact CI topology", () => {
     expect(lifecycle?.if).toContain("run_native_signer == 'true'");
     expect(lifecycle?.if).toContain("run_local_update == 'true'");
     expect(lifecycle?.run).toContain("scripts/generation-updater.test.ts");
-    expect(lifecycle?.run).toContain("scripts/fased-managed-updater.test.ts");
+    expect(lifecycle?.run).toContain("scripts/fased-generation-updater-core.test.ts");
   });
 
   it("keeps the broad matrix outside pull requests", async () => {

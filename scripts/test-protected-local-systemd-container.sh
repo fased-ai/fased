@@ -29,6 +29,40 @@ OWN_MANAGED_PREDECESSOR_ARTIFACT_DIR=0
 SOURCE_REPO_DIR=""
 OWN_SOURCE_REPO_DIR=0
 
+if [[ -n "$ARTIFACT_DIR" ]]; then
+  descriptor="$ARTIFACT_DIR/fased-hosting-candidate.json"
+  identity="$ARTIFACT_DIR/fased-lifecycled-release.json"
+  [[ -f "$descriptor" && ! -L "$descriptor" && -f "$identity" && ! -L "$identity" ]] || {
+    echo "The candidate descriptor and lifecycle identity are required." >&2
+    exit 1
+  }
+  VERSION="$(jq -er .version "$identity")"
+  COMMIT="$(jq -er .commit "$identity")"
+  TREE="$(jq -er .tree "$identity")"
+  [[ "$VERSION" == "$(jq -er .version "$descriptor")" &&
+    "$COMMIT" == "$(jq -er .commit "$descriptor")" &&
+    "$TREE" == "$(jq -er .tree "$descriptor")" ]] || {
+    echo "The candidate descriptor and lifecycle identity disagree." >&2
+    exit 1
+  }
+  while IFS=$'\t' read -r name expected_size expected_digest; do
+    candidate="$ARTIFACT_DIR/$name"
+    [[ -f "$candidate" && ! -L "$candidate" ]] || {
+      echo "Candidate artifact is missing or unsafe: $name" >&2
+      exit 1
+    }
+    [[ "$(stat -c %s "$candidate")" == "$expected_size" ]] || {
+      echo "Candidate artifact size mismatch: $name" >&2
+      exit 1
+    }
+    [[ "sha256:$(sha256sum "$candidate" | awk '{print $1}')" == "$expected_digest" ]] || {
+      echo "Candidate artifact digest mismatch: $name" >&2
+      exit 1
+    }
+  done < <(jq -er '.artifacts[] | [.name, (.size|tostring), .sha256] | @tsv' "$descriptor")
+  PUBLIC_ACQUISITION=1
+fi
+
 [[ "$BUILD_ONLY" == "0" || "$BUILD_ONLY" == "1" ]] || {
   echo "FASED_SYSTEMD_FIXTURE_BUILD_ONLY must be 0 or 1." >&2
   exit 1
@@ -163,15 +197,6 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
       --output "$ARTIFACT_DIR/install.sh" \
       --version "$VERSION"
     install -m 0755 \
-      "$ROOT_DIR/scripts/fased-lifecycle-supervisor.mjs" \
-      "$ARTIFACT_DIR/fased-lifecycle-supervisor.mjs"
-    install -m 0755 \
-      "$ROOT_DIR/scripts/fased-host-updater.mjs" \
-      "$ARTIFACT_DIR/fased-host-updater.mjs"
-    install -m 0755 \
-      "$ROOT_DIR/scripts/fased-host-updaterctl.mjs" \
-      "$ARTIFACT_DIR/fased-host-updaterctl.mjs"
-    install -m 0755 \
       "$ROOT_DIR/scripts/privileged-release-evidence.mjs" \
       "$ARTIFACT_DIR/fased-privileged-release-evidence.mjs"
     issued_at="$(node -e '
@@ -201,10 +226,7 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
       fased-lifecycle-trust-v1.json \
       fased-privileged-provenance-v1.intoto.json \
       fased-signerd-release \
-      install.sh \
-      fased-lifecycle-supervisor.mjs \
-      fased-host-updater.mjs \
-      fased-host-updaterctl.mjs; do
+      install.sh; do
       printf '{"fixtureOfflineAttestation":true}\n' \
         >"$ARTIFACT_DIR/${attested_asset}.attestation.json"
     done
@@ -253,12 +275,6 @@ if [[ "$PUBLIC_ACQUISITION" == "1" ]]; then
     fased-lifecycle-trust-v1.json.attestation.json \
     fased-privileged-provenance-v1.intoto.json \
     fased-privileged-provenance-v1.intoto.json.attestation.json \
-    fased-lifecycle-supervisor.mjs \
-    fased-lifecycle-supervisor.mjs.attestation.json \
-    fased-host-updater.mjs \
-    fased-host-updater.mjs.attestation.json \
-    fased-host-updaterctl.mjs \
-    fased-host-updaterctl.mjs.attestation.json \
     fased-signerd-release.attestation.json \
     fased-hosting-candidate.json \
     fased-hosting-candidate.json.attestation.json \

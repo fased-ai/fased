@@ -613,7 +613,11 @@ jobs:
           FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1"
           FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
           FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
-        run: bash scripts/test-protected-local-systemd-container.sh
+        run: |
+          bash scripts/test-protected-local-systemd-container.sh
+          FASED_HOSTING_SYSTEMD_FIXTURE_ARTIFACT_DIR="${{ runner.temp }}/fased-hosting-candidate" \
+            FASED_HOSTING_SYSTEMD_FIXTURE_DISTROS=ubuntu \
+            bash scripts/test-go-hosting-systemd-container.sh
 
   publish:
     name: Promote exact verified candidate bytes

@@ -2,11 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createGatePlan } from "./gate-authority.mjs";
 
 const t2FixturePaths = [
-  "scripts/protected-local-t2-controller-worker.mjs",
-  "scripts/protected-local-t2-supervisor-worker.mjs",
-  "scripts/protected-local-t2-systemd-fixture.mjs",
-  "scripts/protected-local-t2-systemd.test.ts",
-  "scripts/test-protected-local-t2-systemd.sh",
+  "tools/fased-lifecycled/engine/target_test.go",
+  "tools/fased-lifecycled/platform/target_adapter_test.go",
 ];
 
 describe("machine gate authority", () => {
@@ -206,8 +203,8 @@ describe("machine gate authority", () => {
     expect(plan.acceptance).toEqual({ L0: false, L1: true, H0: false, H1: false, H2: false });
   });
 
-  it("routes the root host updater through focused Node coverage", () => {
-    const plan = createGatePlan(["scripts/fased-host-updater.mjs"], {
+  it("routes the generation updater through focused Node coverage", () => {
+    const plan = createGatePlan(["scripts/fased-generation-updater-core.mjs"], {
       phase: "T1",
       entryPoint: "local-update",
     });
@@ -224,9 +221,9 @@ describe("machine gate authority", () => {
   it("routes the unified updater contract and bundle through focused Node coverage", () => {
     const plan = createGatePlan([
       "package.json",
-      "scripts/fased-managed-updater-core.mjs",
+      "scripts/fased-generation-updater-core.mjs",
+      "scripts/generation-updater.mjs",
       "scripts/managed-runtime-layout.mjs",
-      "scripts/managed-update-contract.mjs",
       "scripts/managed-updater-bundle.v1.json",
     ]);
 
@@ -257,15 +254,11 @@ describe("machine gate authority", () => {
   it("routes the complete focused Local-update correction without L0, native signer, or Docker", () => {
     const plan = createGatePlan(
       [
-        "scripts/fased-lifecycle-supervisor.mjs",
-        "scripts/fased-managed-updater-core.mjs",
-        "scripts/fased-local-recovery-pending.test.ts",
-        "scripts/protected-local-bootstrap.mjs",
-        "scripts/protected-local-bootstrap.test.ts",
-        "scripts/protected-local-service-plan.mjs",
-        "scripts/protected-local-service-plan.test.ts",
-        "scripts/protected-local-supervisor-client-root-fixture.mjs",
-        "scripts/test-protected-local-supervisor-client-root-fixture.sh",
+        "scripts/fased-generation-updater-core.mjs",
+        "scripts/generation-updater.mjs",
+        "scripts/go-lifecycle-routing.test.ts",
+        "scripts/managed-runtime-layout.mjs",
+        "scripts/managed-updater-bundle.v1.json",
         "src/wallet/wallet-runtime-config.ts",
         "src/wallet/wallet-application-state-permissions.test.ts",
       ],
@@ -275,7 +268,7 @@ describe("machine gate authority", () => {
     expect(plan.scope).toMatchObject({
       runNodeFocused: true,
       runNodeBuild: true,
-      runNodePackaging: false,
+      runNodePackaging: true,
       runNodeFull: false,
       runNativeSigner: false,
       runSignerIntegration: true,
@@ -411,7 +404,7 @@ describe("machine gate authority", () => {
     expect(
       createGatePlan([
         "scripts/docker/protected-local-systemd/run.sh",
-        "scripts/managed-update-mode.test.ts",
+        "scripts/go-lifecycle-routing.test.ts",
       ]),
     ).toMatchObject({
       changeKind: "ci-infrastructure-only",

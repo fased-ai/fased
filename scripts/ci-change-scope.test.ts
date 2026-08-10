@@ -53,7 +53,7 @@ describe("CI changed-surface classification", () => {
   });
 
   it("automatically keeps a narrow updater change on the focused source lane", () => {
-    const plan = createGatePlan(["scripts/protected-local-bootstrap.mjs"]);
+    const plan = createGatePlan(["scripts/fased-generation-updater-core.mjs"]);
     const output = outputEntries(plan);
 
     expect(output).toMatchObject({
@@ -91,10 +91,10 @@ describe("CI changed-surface classification", () => {
   it("keeps a Local-update PR on source contracts and defers packaged acceptance", () => {
     const plan = createGatePlan(
       [
-        "scripts/fased-lifecycle-supervisor.mjs",
-        "scripts/lifecycle-control-normalizer.mjs",
-        "scripts/protected-local-bootstrap.mjs",
-        "scripts/protected-local-service-plan.mjs",
+        "scripts/fased-generation-updater-core.mjs",
+        "scripts/generation-updater.mjs",
+        "scripts/managed-runtime-layout.mjs",
+        "scripts/managed-updater-bundle.v1.json",
       ],
       { phase: "T2" },
     );
@@ -137,18 +137,14 @@ describe("CI changed-surface classification", () => {
         "package.json",
         "scripts/ci-change-scope.mjs",
         "scripts/ci-change-scope.test.ts",
-        "scripts/fased-managed-updater-core.mjs",
+        "scripts/fased-generation-updater-core.mjs",
+        "scripts/generation-updater.mjs",
         "scripts/gate-authority.mjs",
-        "scripts/lifecycle-control-normalizer.mjs",
-        "scripts/lifecycle-control-normalizer.test.ts",
+        "scripts/go-lifecycle-routing.test.ts",
         "scripts/managed-runtime-layout.mjs",
         "scripts/managed-runtime-layout.test.ts",
-        "scripts/managed-update-contract.mjs",
-        "scripts/managed-update-contract.test.ts",
         "scripts/managed-updater-bundle.test.ts",
         "scripts/managed-updater-bundle.v1.json",
-        "scripts/protected-local-bootstrap.mjs",
-        "scripts/protected-local-bootstrap.test.ts",
         "scripts/release-check.ts",
       ],
       { phase: "T1" },
@@ -334,11 +330,8 @@ describe("CI changed-surface classification", () => {
   it("routes the minimal T2 harness without product build or lifecycle lanes", () => {
     expect(
       classifyChangedPaths([
-        "scripts/protected-local-t2-controller-worker.mjs",
-        "scripts/protected-local-t2-supervisor-worker.mjs",
-        "scripts/protected-local-t2-systemd-fixture.mjs",
-        "scripts/protected-local-t2-systemd.test.ts",
-        "scripts/test-protected-local-t2-systemd.sh",
+        "tools/fased-lifecycled/engine/target_test.go",
+        "tools/fased-lifecycled/platform/target_adapter_test.go",
       ]),
     ).toMatchObject({
       changeKind: "t2-fixture-only",

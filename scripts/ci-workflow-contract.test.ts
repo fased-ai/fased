@@ -116,7 +116,7 @@ describe("CI workflow routing", () => {
       ],
     ).toBe(0);
     const localRecoveryT1 = protectedLocalUpdate?.steps?.find((step) =>
-      String(step.run ?? "").includes("scripts/fased-local-recovery-pending.test.ts"),
+      String(step.run ?? "").includes("scripts/go-lifecycle-routing.test.ts"),
     );
     const localSystemdFixture = protectedLocalUpdate?.steps?.find(
       (step) => step.env?.FASED_SYSTEMD_FIXTURE_SCENARIOS === "install",
@@ -126,8 +126,6 @@ describe("CI workflow routing", () => {
         ?.with?.["install-bun"],
     ).toBe("false");
     expect(localRecoveryT1?.run).toContain("pnpm exec vitest run");
-    expect(localRecoveryT1?.run).toContain("--pool=forks");
-    expect(localRecoveryT1?.run).toContain("--maxWorkers=1");
     expect(protectedLocalUpdate?.steps?.indexOf(localRecoveryT1)).toBeLessThan(
       protectedLocalUpdate?.steps?.indexOf(localSystemdFixture),
     );
@@ -248,10 +246,9 @@ describe("CI workflow routing", () => {
     const focused = jobs["node-focused"];
     expect(focused?.if).toBe("needs.change-scope.outputs.run_node_focused == 'true'");
     const focusedCommands = focused?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    expect(focusedCommands).toContain("scripts/protected-local-bootstrap.test.ts");
-    expect(focusedCommands).toContain("scripts/fased-local-recovery-pending.test.ts");
+    expect(focusedCommands).toContain("scripts/go-lifecycle-routing.test.ts");
+    expect(focusedCommands).toContain("scripts/fased-generation-updater-core.test.ts");
     expect(focusedCommands).toContain("src/wallet/wallet-application-state-permissions.test.ts");
-    expect(focusedCommands).toContain("test-protected-local-supervisor-client-root-fixture.sh");
 
     for (const [jobName, group] of [
       ["node-unit", "unit"],
@@ -387,12 +384,9 @@ describe("CI workflow routing", () => {
 
     const t2Commands = jobs["t2-contracts"]?.steps?.map((step) => step.run).filter(Boolean) ?? [];
     expect(t2Commands).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("pnpm exec oxfmt --check"),
-        expect.stringContaining("scripts/protected-local-service-plan.test.ts"),
-      ]),
+      expect.arrayContaining([expect.stringContaining("go -C tools/fased-lifecycled test")]),
     );
-    expect(t2Commands.join("\n")).toContain("scripts/protected-local-t2-systemd.test.ts");
+    expect(t2Commands.join("\n")).toContain("./platform");
     expect(jobs["t2-contracts"]?.["timeout-minutes"]).toBe(5);
 
     for (const jobName of [

@@ -1086,6 +1086,13 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
   const channel = requestedChannel ?? storedChannel ?? defaultChannel;
   const sourceSignerConfigured =
     installKind === "git" && (await isLocalSourceSignerConfigured(process.env));
+  if (sourceSignerConfigured) {
+    defaultRuntime.error(
+      "Protected source-checkout updates are disabled during the Go lifecycle cutover. Install a verified stable or beta release through the public installer.",
+    );
+    defaultRuntime.exit(1);
+    return;
+  }
 
   const explicitTag = normalizeTag(opts.tag);
   let tag = explicitTag ?? channelToNpmTag(channel);
