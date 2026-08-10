@@ -233,7 +233,11 @@ func BootstrapPathPlan(config Config, principals BootstrapPrincipals) ([]Bootstr
 	if principals.Operator != config.Operator || principals.Gateway != config.Gateway || principals.Signer != config.Signer || principals.Groups.Config.GID == 0 {
 		return nil, errors.New("bootstrap path principals do not match platform configuration")
 	}
-	paths := []BootstrapPath{{Path: config.InstallRoot, Mode: 0o755}}
+	paths := []BootstrapPath{
+		{Path: config.InstallRoot, Mode: 0o755},
+		{Path: "/opt/fased/lifecycle", Mode: 0o755},
+		{Path: "/opt/fased/lifecycle/supervisor-v1", Mode: 0o755},
+	}
 	if config.Profile == model.ProfileProtectedLocal {
 		paths = append(paths,
 			BootstrapPath{Path: config.ProductStateRoot, Mode: 0o755},
