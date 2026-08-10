@@ -110,6 +110,37 @@ describe("machine gate authority", () => {
     });
   });
 
+  it("routes shared lifecycle acceptance evidence without product lanes", () => {
+    const plan = createGatePlan([
+      ".github/workflows/hosted-runtime-release.yml",
+      "config/lifecycle-acceptance.v1.json",
+      "config/lifecycle-compatibility.v1.json",
+      "scripts/docker/protected-local-systemd/run.sh",
+      "scripts/lifecycle-acceptance-contract.mjs",
+      "scripts/lifecycle-acceptance-contract.test.ts",
+      "scripts/lifecycle-compatibility-inventory.mjs",
+      "scripts/lifecycle-compatibility-inventory.test.ts",
+      "scripts/lifecycle-release-compatibility.mjs",
+      "scripts/lifecycle-release-compatibility.test.ts",
+      "scripts/release-artifact-set.mjs",
+      "scripts/test-protected-local-systemd-container.sh",
+    ]);
+
+    expect(plan.changeKind).toBe("ci-infrastructure-only");
+    expect(plan.scope).toMatchObject({
+      ciInfrastructureOnly: true,
+      productionChanged: false,
+      runCiContracts: true,
+      runNode: false,
+      runNodeBuild: false,
+      runNodeFull: false,
+      runCodeqlJavascript: false,
+      runLocalFresh: false,
+      runLocalUpdate: false,
+      runHosting: false,
+    });
+  });
+
   it("routes the packaged public-acquisition fixture through CI contracts only", () => {
     const plan = createGatePlan([
       "scripts/docker/protected-local-systemd/run.sh",
@@ -133,18 +164,16 @@ describe("machine gate authority", () => {
     });
   });
 
-  it("keeps mixed lifecycle fixture and authority corrections source-only", () => {
-    const plan = createGatePlan(
-      [
-        ".github/workflows/ci.yml",
-        "config/lifecycle-compatibility.v1.json",
-        "scripts/docker/protected-local-systemd/run.sh",
-        "scripts/gate-authority.mjs",
-      ],
-      { phase: "T1", entryPoint: "local-update" },
-    );
-    expect(plan.changeKind).toBe("gate-tooling-only");
+  it("keeps mixed lifecycle fixture and authority corrections in the CI contract lane", () => {
+    const plan = createGatePlan([
+      ".github/workflows/ci.yml",
+      "config/lifecycle-compatibility.v1.json",
+      "scripts/docker/protected-local-systemd/run.sh",
+      "scripts/gate-authority.mjs",
+    ]);
+    expect(plan.changeKind).toBe("ci-infrastructure-only");
     expect(plan.scope).toMatchObject({
+      ciInfrastructureOnly: true,
       productionChanged: false,
       privilegeChanged: false,
       runCiContracts: true,
@@ -153,7 +182,7 @@ describe("machine gate authority", () => {
       runNodeFull: false,
       runCodeqlJavascript: false,
       runLocalFresh: false,
-      runLocalUpdate: true,
+      runLocalUpdate: false,
       runHosting: false,
     });
   });
