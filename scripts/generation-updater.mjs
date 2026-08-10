@@ -47,14 +47,7 @@ export function generationLifecycle(selection) {
   }
   try {
     const binary = fs.lstatSync(SUPERVISOR);
-    const configParent = fs.lstatSync(path.dirname(config));
-    if (
-      !binary.isFile() ||
-      binary.isSymbolicLink() ||
-      (binary.mode & 0o111) === 0 ||
-      !configParent.isDirectory() ||
-      configParent.isSymbolicLink()
-    ) {
+    if (!binary.isFile() || binary.isSymbolicLink() || (binary.mode & 0o111) === 0) {
       return null;
     }
   } catch {
