@@ -693,6 +693,8 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
     expect(installer).toContain(
       '"$signer_socket" == "/run/fased-local/$instance/application/app.sock"',
     );
+    expect(installer).toContain('echo "Already current: $release_version"');
+    expect(installer).toContain("Committed Local lifecycle could not complete onboarding.");
     expect(installer).not.toContain(
       '"$signer_socket" == "/run/fased-local/$instance/operator/operator.sock"',
     );

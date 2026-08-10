@@ -419,6 +419,15 @@ verify_canonical_lifecycle_controller() {
   printf 'canonical Go lifecycle controller transaction verified: %s\n' "$instance"
 }
 
+verify_wallet() {
+  local instance="$1"
+  local wallet_id="$2"
+  runuser -u testop -- "$(resolve_signer_binary "$instance")" \
+    admin wallet readiness \
+    --operator-socket "/run/fased-local/$instance/operator/operator.sock" \
+    --wallet-id "$wallet_id"
+}
+
 if [[ "$phase" == "verify-reboot" ]]; then
   [[ -f "$snapshot" ]]
   instance="$(jq -er .instanceId "$snapshot")"
@@ -1003,7 +1012,7 @@ if [[ "$phase" == "fresh-install" ]]; then
   test -s "$state/fased.json"
   test -s "$state/install.json"
   test "$(jq -r .profile "$state/install.json")" = "protected-local"
-  instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
+  instance="$(jq -er '.instanceId' "$state/lifecycle.json")"
   runtime="$(resolve_protected_runtime "$instance")"
   verify_protected_home_acl "$instance"
   wait_for_service "fased-local-controller-$instance.service"
@@ -1109,6 +1118,8 @@ if [[ "$phase" == "managed-update" ]]; then
     HOME=/home/testop
     USER=testop
     LOGNAME=testop
+    XDG_RUNTIME_DIR=/run/user/2000
+    DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/2000/bus
     FASED_STATE_DIR="$state"
     FASED_CONFIG_PATH="$state/fased.json"
     FASED_GATEWAY_PORT="$gateway_port"
@@ -1138,6 +1149,9 @@ if [[ "$phase" == "managed-update" ]]; then
 
   predecessor_profile="$(jq -er .profile "$state/install.json")"
   if [[ "$predecessor_profile" == "local" ]]; then
+    user_systemctl is-enabled --quiet fased-gateway.service
+    user_systemctl is-active --quiet fased-gateway.service
+    wait_for_gateway_version "$predecessor_version"
     install -d -m 0700 -o testop -g testop \
       "$state/extensions" "$state/sat-mining" "$state/workspace"
     printf '{"schemaVersion":1,"enabled":["stable-bridge"]}\n' \
@@ -1429,7 +1443,7 @@ EOF_MANAGED_MINING_LEDGER
       <(jq -S '{nodeId, handle}' "$state/federation/access-token.json")
     test "$(readlink -f "$operator_current")" = "$(readlink -f "$application_current")"
     test "$(jq -er .profile "$state/install.json")" = "protected-local"
-    test "$(jq -er .env.vars.FASED_PROTECTED_LOCAL_INSTANCE "$state/fased.json")" = "$instance"
+    test "$(jq -er .instanceId "$state/lifecycle.json")" = "$instance"
     test ! -e "/var/lib/fased-local/$instance/controller/supervisor/product-transaction.json"
   }
   predecessor_gateway_version="$predecessor_version"

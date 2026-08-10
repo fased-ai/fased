@@ -1310,13 +1310,22 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       return 1
     }
 
-    sudo -- /bin/bash "$verified_installer" \
+    local lifecycle_output=""
+    if ! lifecycle_output="$(sudo -- /bin/bash "$verified_installer" \
       --protected-local-root-bootstrap \
       --release "$release_version" \
       --update-channel "$hosting_update_channel" \
       --protected-local-operator-user "$operator_user" \
       --protected-local-state-dir "$state_dir" \
-      --protected-local-gateway-port "$gateway_port"
+      --protected-local-gateway-port "$gateway_port")"; then
+      return 1
+    fi
+    printf '%s\n' "$lifecycle_output"
+    local lifecycle_outcome=""
+    lifecycle_outcome="$(printf '%s\n' "$lifecycle_output" | tail -n 1 | jq -er '.outcome')" || {
+      echo "Verified Local lifecycle returned an invalid outcome." >&2
+      return 1
+    }
 
     local projection="$state_dir/lifecycle.json"
     [[ -f "$projection" && ! -L "$projection" ]] || {
@@ -1366,6 +1375,10 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       echo "Onboarding did not create the canonical Local configuration." >&2
       return 1
     }
+    if [[ "$lifecycle_outcome" == "ALREADY_CURRENT" ]]; then
+      echo "Already current: $release_version"
+      return 0
+    fi
 
     local lifecycle_binary="${signer_binary%/fased-signerd}/fased-lifecycled"
     local request_id=""
@@ -1374,10 +1387,13 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       echo "Committed Local lifecycle client is unavailable." >&2
       return 1
     }
-    "$lifecycle_binary" request \
+    if ! "$lifecycle_binary" request \
       --socket "$lifecycle_socket" \
       --operation COMPLETE_ONBOARDING \
-      --request-id "$request_id" >/dev/null
+      --request-id "$request_id" >/dev/null; then
+      echo "Committed Local lifecycle could not complete onboarding." >&2
+      return 1
+    fi
     cat >"$state_dir/install-complete.json" <<EOF_LOCAL_COMPLETE
 {
   "repoPath": "$(readlink -f "$state_dir/runtime/current")",
