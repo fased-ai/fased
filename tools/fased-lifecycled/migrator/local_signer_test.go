@@ -121,6 +121,29 @@ func TestLocalSignerBridgeCommitsExactStateAndRemovesLegacyCopy(t *testing.T) {
 	}
 }
 
+func TestLocalSignerBridgeAcceptsAttestedSignerDatabaseMigrationButNotKeyChange(t *testing.T) {
+	adapter, tx, migration, _, _ := localSignerBridgeFixture(t)
+	if err := adapter.Prepare(context.Background(), tx, migration); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Activate(context.Background(), tx, migration); err != nil {
+		t.Fatal(err)
+	}
+	destination := adapter.resolve(adapter.Config.SignerStateRoot())
+	if err := os.WriteFile(filepath.Join(destination, "state.db"), []byte("migrated-signer-state"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Verify(context.Background(), tx, migration); err != nil {
+		t.Fatalf("legitimate signer database migration was rejected: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(destination, "master.key"), []byte("substituted-key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Verify(context.Background(), tx, migration); err == nil {
+		t.Fatal("signer key substitution was accepted")
+	}
+}
+
 func TestLocalSignerBridgeRejectsPartialCustody(t *testing.T) {
 	adapter, tx, migration, _, keyPath := localSignerBridgeFixture(t)
 	if err := os.Remove(keyPath); err != nil {

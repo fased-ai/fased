@@ -145,13 +145,15 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 }
 
 func (adapter *TargetAdapter) Quiesce(ctx context.Context, tx model.Transaction) error {
-	// The public-stable predecessor is a separate user-scoped service in Local.
-	// Fence it before activating the canonical root-managed topology.
-	if err := adapter.Predecessor.Quiesce(ctx, tx); err != nil {
-		return err
-	}
-	if tx.Previous == nil {
-		return nil
+	if tx.Phase == model.PhasePrepared {
+		// Fence the selected predecessor exactly once before switching. During
+		// rollback it must remain stopped until Restore reactivates it.
+		if err := adapter.Predecessor.Quiesce(ctx, tx); err != nil {
+			return err
+		}
+		if tx.Previous == nil {
+			return nil
+		}
 	}
 	if err := adapter.Systemd.Stop(ctx, adapter.Identity.Services["gateway"]); err != nil {
 		return err

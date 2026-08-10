@@ -148,6 +148,7 @@ func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) 
 
 func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing.T) {
 	adapter, tx, calls := targetAdapter(t)
+	tx.Phase = model.PhasePrepared
 	if err := adapter.Prepare(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
@@ -194,6 +195,7 @@ func TestFreshTargetAndControllerDoNotStopAbsentCanonicalServices(t *testing.T) 
 	adapter, tx, calls := targetAdapter(t)
 	tx.PlanAction = "INSTALL"
 	tx.Previous = nil
+	tx.Phase = model.PhasePrepared
 	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	if err := adapter.Quiesce(context.Background(), tx); err != nil {
 		t.Fatal(err)
@@ -328,6 +330,7 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 		Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls},
 		Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Network: NoNetworkPolicy{},
 	}
+	tx.Phase = model.PhasePrepared
 	if err := adapter.Prepare(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
