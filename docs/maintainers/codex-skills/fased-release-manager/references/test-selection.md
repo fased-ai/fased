@@ -22,6 +22,27 @@ Do not locally repeat jobs that the selected CI lane will run. PR CI never runs
 packaged P1, fresh-install acceptance, real Hosting acceptance, publication,
 or a release matrix.
 
+## Small fix versus final proof
+
+A `small fix` is one bounded predicate with an explicit production-path owner,
+one nearest regression, and no change to release artifacts, dependency graphs,
+privilege topology, or public compatibility. Its complete path is:
+
+```text
+changed-file format/lint -> nearest regression -> directly coupled contract
+-> protected PR selected tests/security -> squash merge -> reuse exact PR-tree evidence
+```
+
+The merged-main run must verify the merge commit, PR head tree, and successful
+protected `PR / checks` result, then skip product tests and CodeQL. It must not
+repeat evidence merely because the squash commit has a different commit ID.
+
+A `final proof` is release-only. It starts after PRE-CANDIDATE passes and runs
+one immutable build/package across supported architectures plus P1 against the
+exact final bytes. Full Node, full CodeQL, broad platforms, and Docker belong
+to nightly/manual full-matrix validation unless the changed production surface
+directly requires them.
+
 ## Final pre-push route proof
 
 After the final local commit and before the first push, classify the exact
