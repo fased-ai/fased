@@ -86,3 +86,37 @@ func TestControllerVerifyRejectsUnverifiedTarget(t *testing.T) {
 		t.Fatal("controller accepted a rolled-back target handoff")
 	}
 }
+
+func TestControllerBridgeDoesNotStopAbsentCanonicalWorker(t *testing.T) {
+	tx, identity := manifestTransaction(t, true)
+	tx.PlanAction = "BRIDGE_PUBLIC_STABLE"
+	operator, gateway, signer := principals()
+	config, err := NewConfig(model.ProfileProtectedLocal, "example", "/home/example/.fased", operator, gateway, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	entrypoint := filepath.Join(root, "bin", "fased-lifecycled")
+	if err := os.MkdirAll(filepath.Dir(entrypoint), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(entrypoint, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	calls := []string{}
+	adapter := ControllerAdapter{
+		Config: config, Identity: identity, Units: &fakeUnits{calls: &calls},
+		Systemd: fakeSystemd{calls: &calls}, Generations: fakeControllerGenerations{root: root, calls: &calls},
+	}
+	if err := adapter.Stage(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Switch(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range calls {
+		if strings.HasPrefix(call, "systemd.stop:") {
+			t.Fatalf("public-stable bridge tried to stop an absent canonical worker: %v", calls)
+		}
+	}
+}

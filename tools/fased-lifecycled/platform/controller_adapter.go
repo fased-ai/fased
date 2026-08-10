@@ -46,7 +46,10 @@ func (adapter *ControllerAdapter) Prepare(_ context.Context, tx model.Transactio
 
 func (adapter *ControllerAdapter) Switch(ctx context.Context, tx model.Transaction) error {
 	unit := adapter.Identity.Services["controller"]
-	if tx.Previous != nil || tx.PlanAction == "BRIDGE_PUBLIC_STABLE" {
+	// A public-stable bridge has no canonical controller worker to stop. The
+	// predecessor adapter fences its separate user-scoped service. Only an
+	// already-managed generation can own this unit before activation.
+	if tx.Previous != nil {
 		if err := adapter.Systemd.Stop(ctx, unit); err != nil {
 			return err
 		}
