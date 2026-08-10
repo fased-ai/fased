@@ -36,13 +36,6 @@ initialize() {
   if ! id app >/dev/null 2>&1; then
     useradd --create-home --home-dir /home/app --shell /bin/bash app
   fi
-  if [[ ! -e /home/app/.fased/fased.json ]]; then
-    install -d -m 0700 -o app -g app /home/app/.fased
-    printf '%s\n' '{"gateway":{"mode":"local","bind":"loopback","port":18789,"auth":{"mode":"token","token":"fased-hosting-fixture-token"}},"update":{"channel":"beta"}}' \
-      >/home/app/.fased/fased.json
-    chown app:app /home/app/.fased/fased.json
-    chmod 0600 /home/app/.fased/fased.json
-  fi
   "$lifecycled" initialize \
     --profile hosting \
     --instance hosting \
@@ -51,6 +44,18 @@ initialize() {
     --generation-archive "$generation" \
     --dependency-archive "$dependency" \
     --gateway-port "$gateway_port"
+}
+
+complete_onboarding() {
+  install -d -m 0700 -o app -g app /home/app/.fased
+  runuser -u app -- /bin/bash -c \
+    'umask 077; printf "%s\n" '\''{"gateway":{"mode":"local","bind":"loopback","port":18789,"auth":{"mode":"token","token":"fased-hosting-fixture-token"}},"update":{"channel":"beta"}}'\'' > "$1"' \
+    -- /home/app/.fased/fased.json
+  request_id="$(cat /proc/sys/kernel/random/uuid)"
+  "$lifecycled" request \
+    --socket /run/fased-host-updater/request.sock \
+    --operation COMPLETE_ONBOARDING \
+    --request-id "$request_id"
 }
 
 assert_healthy() {
@@ -75,6 +80,12 @@ assert_healthy() {
 case "${1:-}" in
   install)
     initialize
+    systemctl is-active --quiet fased-host-updater.service
+    systemctl is-active --quiet fased-host-controller.service
+    systemctl is-active --quiet fased-signerd.service
+    ! systemctl is-active --quiet fased-gateway.service
+    test ! -e /home/app/.fased/fased.json
+    complete_onboarding
     assert_healthy
     output="$(initialize)"
     grep -Fq 'ALREADY_CURRENT' <<<"$output"
