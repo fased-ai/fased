@@ -126,6 +126,9 @@ must never substitute for final candidate architecture bytes.
 Any product-source change after this proof invalidates it. Rerun the affected
 Linux x64 transaction before push. Candidate P1 may expand to all supported
 architectures, but it must not introduce a predicate that never passed locally.
+The branch transaction and P1 must use the same artifact-bound acceptance
+contract and exact receipt verifier; maintaining separate informal command
+lists is not acceptable evidence.
 
 Permission-only corrections run only the closest permission regression and its
 direct ownership/atomic-write contract. They do not select UI, providers,

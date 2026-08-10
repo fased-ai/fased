@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "role": "fased-lifecycle-compatibility-evidence",
   "repository": "fased-ai/fased",
+  "currentReleaseGroupId": "supervised-lifecycle-v1",
   "publishedThrough": {
     "tag": "v0.1.76-rc.70",
     "commit": "6b19d0a48546ecb5f3985272619e6051018dc202"

@@ -21,6 +21,8 @@ PUBLIC_ACQUISITION="${FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION:-0}"
 BUILD_ONLY="${FASED_SYSTEMD_FIXTURE_BUILD_ONLY:-0}"
 ARTIFACT_OUTPUT_DIR="${FASED_SYSTEMD_FIXTURE_OUTPUT_DIR:-}"
 ARTIFACT_PROFILE="${FASED_SYSTEMD_FIXTURE_ARTIFACT_PROFILE:-branch-x64}"
+RECEIPT_DIR="${FASED_SYSTEMD_FIXTURE_RECEIPT_DIR:-}"
+OWN_RECEIPT_DIR=0
 MANAGED_PREDECESSOR_VERSION="${FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION:-}"
 MANAGED_PREDECESSOR_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_ARTIFACT_DIR:-}"
 OWN_MANAGED_PREDECESSOR_ARTIFACT_DIR=0
@@ -261,6 +263,14 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
   fi
   printf '{"schemaVersion":1,"profile":"branch-x64","publishable":false}\n' \
     >"$ARTIFACT_DIR/fased-branch-proof-x64.json"
+  install -m 0644 \
+    "$ROOT_DIR/config/lifecycle-acceptance.v1.json" \
+    "$ARTIFACT_DIR/fased-lifecycle-acceptance-v1.json"
+  node "$ROOT_DIR/scripts/lifecycle-release-compatibility.mjs" build \
+    --version "$VERSION" \
+    --commit "$COMMIT" \
+    --tree "$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')" \
+    --output "$ARTIFACT_DIR/fased-lifecycle-release-compatibility-v1.json"
   node "$ROOT_DIR/scripts/release-artifact-set.mjs" build \
     --directory "$ARTIFACT_DIR" \
     --version "$VERSION" \
@@ -276,6 +286,8 @@ fi
 if [[ "$BUILD_ONLY" == "1" ]]; then
   for required_asset in \
     fased-hosted-release-v2.json \
+    fased-lifecycle-acceptance-v1.json \
+    fased-lifecycle-release-compatibility-v1.json \
     fased-hosting-candidate.json \
     fased-hosting-candidate.json.attestation.json \
     "fased-generation-linux-x64-v${VERSION}.tar.gz"; do
@@ -301,6 +313,8 @@ if [[ "$PUBLIC_ACQUISITION" == "1" ]]; then
     install.sh \
     fased-hosted-release-v2.json \
     fased-hosted-release-v2.json.attestation.json \
+    fased-lifecycle-acceptance-v1.json \
+    fased-lifecycle-release-compatibility-v1.json \
     fased-lifecycle-trust-v1.json \
     fased-lifecycle-trust-v1.json.attestation.json \
     fased-privileged-provenance-v1.intoto.json \
@@ -390,8 +404,18 @@ cleanup() {
   if [[ "$OWN_SOURCE_REPO_DIR" -eq 1 ]]; then
     rm -rf -- "$SOURCE_REPO_DIR"
   fi
+  if [[ "$OWN_RECEIPT_DIR" -eq 1 ]]; then
+    rm -rf -- "$RECEIPT_DIR"
+  fi
 }
 trap cleanup EXIT INT TERM HUP
+
+if [[ -z "$RECEIPT_DIR" ]]; then
+  RECEIPT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-lifecycle-acceptance-receipts.XXXXXX")"
+  OWN_RECEIPT_DIR=1
+else
+  mkdir -p "$RECEIPT_DIR"
+fi
 
 SOURCE_REPO_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-source.XXXXXX")"
 OWN_SOURCE_REPO_DIR=1
@@ -514,6 +538,19 @@ run_fixture_scenario() {
     dump_fixture_failure "$name"
     exit 1
   fi
+  receipt="$RECEIPT_DIR/${distro}-${scenario}.json"
+  run_container cp \
+    "$name:/tmp/fased-lifecycle-acceptance-${scenario}.json" \
+    "$receipt"
+  descriptor_digest="sha256:$(sha256sum "$ARTIFACT_DIR/fased-hosting-candidate.json" | awk '{print $1}')"
+  node "$ROOT_DIR/scripts/lifecycle-acceptance-contract.mjs" verify-receipt \
+    --contract "$ARTIFACT_DIR/fased-lifecycle-acceptance-v1.json" \
+    --receipt "$receipt" \
+    --scenario "$scenario" \
+    --version "$VERSION" \
+    --commit "$COMMIT" \
+    --candidate-descriptor-digest "$descriptor_digest" >/dev/null
+  printf 'lifecycle acceptance receipt verified: %s\n' "$receipt"
   run_container rm -f "$name" >/dev/null
 }
 

@@ -45,6 +45,10 @@ symptom -> narrow red test -> fix -> narrow green test
   branch-local packaged execution of the affected end-user transaction before
   the first push. Require restart, preservation, and an identical-command
   `Already current`. Unit tests and T2 cannot replace this closure.
+- That branch execution and candidate P1 consume the same artifact-bound,
+  non-executable acceptance contract and emit exact receipts. P1 replays the
+  contract against final bytes; it never adds an operator command for the first
+  time.
 - Keep all corrections exposed by that transaction on the same local incident
   branch. A PR is a delivery boundary, never a diagnostic boundary.
 - PR CI never builds release artifacts, publishes, or runs packaged lifecycle
@@ -97,6 +101,12 @@ public stable to candidate, including injected failure, exact rollback,
 same-command retry, restart health, declared state preservation, and `Already
 current`. Add another predecessor fixture only for a materially distinct public
 schema/topology/capability still supported. Never multiply by private RCs.
+
+The source compatibility inventory is the historical baseline. Each candidate
+must include descriptor-bound immutable compatibility evidence for its release
+and acceptance-contract identity. Public verification extends the baseline
+from those immutable bytes; publishing a release must not require a follow-up
+source edit that merely appends its tag and commit.
 
 Classify candidate failures as:
 
