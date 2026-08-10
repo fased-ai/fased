@@ -62,6 +62,7 @@
     "scripts/install-fased-signerd.sh",
     "scripts/install-runtime-profile.sh",
     "scripts/install-managed-runtime.mjs",
+    "scripts/install-development.sh",
     "scripts/managed-runtime-layout.mjs",
     "scripts/hosted-release-manifest.mjs",
     "scripts/hosted-legacy-wallet-migration.mjs",

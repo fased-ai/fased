@@ -56,6 +56,7 @@ const requiredPathGroups = [
   "scripts/migrate-hosted-signer-v2.mjs",
   "scripts/fased-launcher-runtime.mjs",
   "scripts/install-fased-signerd.sh",
+  "scripts/install-development.sh",
   "scripts/install-managed-runtime.mjs",
   "scripts/managed-runtime-layout.mjs",
   "scripts/hosted-release-manifest.mjs",

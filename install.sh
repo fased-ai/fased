@@ -26,6 +26,7 @@ install_entry_verified_bundle=""
 install_entry_app_handoff=""
 install_entry_legacy_ts_authkey=0
 install_entry_local_file_bootstrap=0
+install_entry_source_install=0
 install_entry_args=("$@")
 for ((install_entry_index = 0; install_entry_index < ${#install_entry_args[@]}; install_entry_index++)); do
   case "${install_entry_args[$install_entry_index]}" in
@@ -37,6 +38,9 @@ for ((install_entry_index = 0; install_entry_index < ${#install_entry_args[@]}; 
       ;;
     --repair-local)
       install_entry_local_repair=1
+      ;;
+    --source-install)
+      install_entry_source_install=1
       ;;
     --host-profile)
       if [[ "${install_entry_args[$((install_entry_index + 1))]:-}" == "hosting" ]]; then
@@ -54,6 +58,16 @@ for ((install_entry_index = 0; install_entry_index < ${#install_entry_args[@]}; 
       ;;
   esac
 done
+
+if [[ "$install_entry_source_install" -eq 1 || "${FASED_SOURCE_INSTALL:-0}" == "1" || \
+  "${FASED_HOSTING_SOURCE_INSTALL:-0}" == "1" ]]; then
+  if [[ "$install_entry_is_stream" -eq 1 ]]; then
+    echo "Source installation requires a contributor checkout." >&2
+    exit 1
+  fi
+  install_entry_source_dir="$(cd "$(dirname "$install_entry_source")" && pwd -P)"
+  exec "$install_entry_source_dir/scripts/install-development.sh" "$@"
+fi
 
 if [[ "$install_entry_is_stream" -eq 0 && "$install_entry_hosting" -eq 0 && \
   "$install_entry_protected_local_root" -eq 0 ]]; then
@@ -1769,7 +1783,6 @@ LOCAL_REPAIR_REQUESTED=0
 LOCAL_EXISTING_BOOTSTRAP_REQUESTED=0
 LOCAL_ONBOARDING_RESUME_REQUESTED=0
 SOURCE_INSTALL_REQUESTED=0
-DIRTY_CHECKOUT_SOURCE_AUTO_SELECTED=0
 HOSTING_RELEASE=""
 UPDATE_CHANNEL="stable"
 UPDATE_CHANNEL_EXPLICIT=0
@@ -2154,15 +2167,6 @@ for ((i = 0; i < ${#pass_args[@]}; i++)); do
     break
   fi
 done
-
-if [[ "$SOURCE_INSTALL_REQUESTED" -eq 0 && "$HOSTING_REQUESTED" -eq 0 && \
-  -z "$HOSTING_RELEASE" && "$install_entry_is_stream" -eq 0 && \
-  -d "$FASED_DIR/.git" ]] && \
-  [[ -n "$(git -C "$FASED_DIR" status --porcelain=v1 --untracked-files=normal 2>/dev/null || true)" ]]; then
-  SOURCE_INSTALL_REQUESTED=1
-  DIRTY_CHECKOUT_SOURCE_AUTO_SELECTED=1
-  echo "== Installer: local checkout has changes; building and installing this checkout =="
-fi
 
 is_windows_posix_shell() {
   case "$(uname -s 2>/dev/null || true)" in
@@ -2981,9 +2985,7 @@ refresh_checkout_from_origin() {
   fi
 
   if ! git -C "$repo_dir" diff --quiet --ignore-submodules -- || ! git -C "$repo_dir" diff --cached --quiet --ignore-submodules --; then
-    if [[ "$DIRTY_CHECKOUT_SOURCE_AUTO_SELECTED" -ne 1 ]]; then
-      echo "== $label: local checkout has changes, skipping git update =="
-    fi
+    echo "== $label: local checkout has changes, skipping git update =="
     return 0
   fi
 
@@ -3118,6 +3120,10 @@ use_prebuilt_release_runtime() {
 install_prebuilt_release_runtime() {
   local runtime_profile
   runtime_profile="$(resolved_host_profile)"
+  if [[ "$runtime_profile" == "hosting" || "$runtime_profile" == "protected-local" ]]; then
+    echo "Protected Local and Hosting must enter the verified Go lifecycle bundle before portable runtime installation." >&2
+    return 1
+  fi
   local package_spec="${RELEASE_NPM_PACKAGE:-@fased/fased@latest}"
   if [[ -n "$HOSTING_RELEASE" ]]; then
     if [[ ! "$HOSTING_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then

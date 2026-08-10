@@ -5,6 +5,10 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const installer = fs.readFileSync(new URL("../install.sh", import.meta.url), "utf8");
+const developerInstaller = fs.readFileSync(
+  new URL("./install-development.sh", import.meta.url),
+  "utf8",
+);
 const exactLocalCommit = "b".repeat(40);
 
 function writeExecutable(filePath: string, source: string): void {
@@ -659,16 +663,14 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
     expect(resolver).not.toContain("printf 'protected-local\\n'");
   });
 
-  it("installs a dirty local checkout from source instead of replacing it with the published runtime", () => {
-    expect(installer).toContain(
-      'git -C "$FASED_DIR" status --porcelain=v1 --untracked-files=normal',
-    );
-    expect(installer).toContain(
+  it("routes explicit source installation to the separate developer installer", () => {
+    expect(installer).toContain('exec "$install_entry_source_dir/scripts/install-development.sh"');
+    expect(installer).not.toContain("DIRTY_CHECKOUT_SOURCE_AUTO_SELECTED");
+    expect(installer).not.toContain(
       "local checkout has changes; building and installing this checkout",
     );
-    expect(installer).toContain("DIRTY_CHECKOUT_SOURCE_AUTO_SELECTED=1");
-    expect(installer).toContain('if [[ "$DIRTY_CHECKOUT_SOURCE_AUTO_SELECTED" -ne 1 ]]');
-    expect(installer).toContain("SOURCE_INSTALL_REQUESTED=1");
+    expect(developerInstaller).toContain('pnpm --dir "$repo_root" install --frozen-lockfile');
+    expect(developerInstaller).toContain('exec "$HOME/.local/bin/fased" onboard --install-daemon');
   });
 
   it("binds an exact Local repair checkout to the attested unified manifest commit", () => {

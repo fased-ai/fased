@@ -87,7 +87,11 @@ if [[ -z "$STATE_DIR" ]]; then
   STATE_DIR="$(cd "$(dirname "$CACHE_DIR")" && pwd)"
 fi
 case "$PROFILE" in
-  local|hosting|source) ;;
+  local|source) ;;
+  hosting|protected-local)
+    echo "Protected Local and Hosting must use the verified Go lifecycle installer." >&2
+    exit 20
+    ;;
   *) echo "Invalid managed runtime profile: $PROFILE" >&2; exit 20 ;;
 esac
 HOST_TRANSACTION_ID="${FASED_HOST_UPDATE_TRANSACTION_ID:-}"
