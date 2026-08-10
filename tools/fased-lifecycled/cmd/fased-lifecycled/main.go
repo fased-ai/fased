@@ -813,6 +813,9 @@ func listenBound(path string, mode os.FileMode, gid int) (*net.UnixListener, err
 	if err := os.MkdirAll(parent, 0o710); err != nil {
 		return nil, err
 	}
+	if err := prepareSocketParent(parent, gid); err != nil {
+		return nil, err
+	}
 	if info, err := os.Lstat(path); err == nil {
 		stat, ok := info.Sys().(*syscall.Stat_t)
 		if info.Mode()&os.ModeSocket == 0 || info.Mode()&os.ModeSymlink != 0 || !ok || stat.Uid != 0 {
@@ -837,6 +840,40 @@ func listenBound(path string, mode os.FileMode, gid int) (*net.UnixListener, err
 		return nil, err
 	}
 	return listener, nil
+}
+
+// systemd creates RuntimeDirectory entries using the daemon's root group.
+// The public supervisor socket is group-authorized, so its immediate parent
+// must carry the same fixed group or an authorized operator cannot traverse to
+// the socket. The private controller passes gid 0 and remains root-only.
+func prepareSocketParent(path string, gid int) error {
+	if gid < 0 {
+		return errors.New("lifecycle socket group is invalid")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	expectedUID := uint32(os.Geteuid())
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !ok || stat.Uid != expectedUID || info.Mode().Perm()&0o022 != 0 {
+		return errors.New("lifecycle socket directory is unsafe")
+	}
+	if err := os.Chown(path, int(expectedUID), gid); err != nil {
+		return err
+	}
+	if err := os.Chmod(path, 0o710); err != nil {
+		return err
+	}
+	verified, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	verifiedStat, ok := verified.Sys().(*syscall.Stat_t)
+	if !verified.IsDir() || verified.Mode()&os.ModeSymlink != 0 || !ok || verifiedStat.Uid != expectedUID || verifiedStat.Gid != uint32(gid) || verified.Mode().Perm() != 0o710 {
+		return errors.New("lifecycle socket directory identity did not converge")
+	}
+	return nil
 }
 
 func closeOnContext(ctx context.Context, listener *net.UnixListener) {

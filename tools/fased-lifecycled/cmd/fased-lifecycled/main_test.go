@@ -1,12 +1,57 @@
 package main
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
 	"syscall"
 	"testing"
 )
+
+func TestPrepareSocketParentConvergesAuthorizedTraversal(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "runtime")
+	if err := os.Mkdir(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareSocketParent(parent, os.Getegid()); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(parent, "request.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	info, err := os.Lstat(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat := info.Sys().(*syscall.Stat_t)
+	if info.Mode().Perm() != 0o710 || stat.Uid != uint32(os.Geteuid()) || stat.Gid != uint32(os.Getegid()) {
+		t.Fatalf("%s identity = %d:%d %o, want %d:%d 710", parent, stat.Uid, stat.Gid, info.Mode().Perm(), os.Geteuid(), os.Getegid())
+	}
+	connection, err := net.Dial("unix", path)
+	if err != nil {
+		t.Fatalf("authorized group could not traverse to lifecycle socket: %v", err)
+	}
+	_ = connection.Close()
+}
+
+func TestPrepareSocketParentRejectsSymlink(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "runtime")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareSocketParent(link, os.Getegid()); err == nil {
+		t.Fatal("symlinked lifecycle socket directory was accepted")
+	}
+}
 
 func TestInitializationApplyArgumentsSelectsOneVerifiedInput(t *testing.T) {
 	archive := filepath.Join(t.TempDir(), "generation.tar.gz")
