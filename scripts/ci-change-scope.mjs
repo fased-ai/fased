@@ -4,7 +4,154 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync } from "node:fs";
 import { verifyRepositoryDependencyRemediation } from "./ci-dependency-integrity.mjs";
-import { classifyPaths } from "./ci-lanes.mjs";
+
+const laneManifest = Object.freeze({
+  schemaVersion: 1,
+  unknownPathPolicy: "reject",
+  prForbiddenWork: ["build", "packaging", "full-node", "codeql", "docker", "macos", "candidate"],
+  lanes: [
+    {
+      id: "documentation",
+      prefixes: ["docs/", "changelog/"],
+      suffixes: [".md", ".mdx"],
+    },
+    {
+      id: "ci-contract",
+      prefixes: [".github/", "git-hooks/"],
+      exact: [".pre-commit-config.yaml", ".secrets.baseline", "zizmor.yml"],
+      contains: ["ci-", "lifecycle-acceptance", "lifecycle-compatibility"],
+    },
+    {
+      id: "lifecycle",
+      prefixes: ["tools/fased-lifecycled/"],
+      exact: [
+        "install.sh",
+        "scripts/fased-generation-updater-core.mjs",
+        "scripts/generation-updater.mjs",
+        "scripts/managed-runtime-layout.mjs",
+        "scripts/managed-updater-bundle.mjs",
+        "scripts/managed-updater-bundle.v1.json",
+      ],
+    },
+    {
+      id: "signer",
+      prefixes: ["tools/fased-signerd/"],
+      contains: ["signer"],
+    },
+    {
+      id: "ui",
+      prefixes: ["ui/"],
+    },
+    {
+      id: "native",
+      prefixes: ["apps/", "Swabble/", "shared/"],
+      exact: ["appcast.xml"],
+    },
+    {
+      id: "container",
+      prefixes: ["deploy/", "release/"],
+      exact: ["Dockerfile", "docker-compose.yml", "docker-setup.sh", "setup-podman.sh"],
+    },
+    {
+      id: "skills",
+      prefixes: ["skills/"],
+    },
+    {
+      id: "tests",
+      prefixes: ["test/", "fixtures/"],
+      contains: [".test.", ".spec."],
+      suffixes: ["_test.go"],
+    },
+    {
+      id: "node",
+      prefixes: ["src/", "extensions/", "packages/", "scripts/", "token/"],
+      exact: [
+        "fased.mjs",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "tsconfig.json",
+        "tsconfig.plugin-sdk.dts.json",
+        "tsdown.config.ts",
+        "tsdown.plugin-sdk-dts.config.ts",
+        "vitest.browser-cdp.config.ts",
+        "vitest.config.ts",
+        "vitest.e2e.config.ts",
+        "vitest.extensions.config.ts",
+        "vitest.gateway.config.ts",
+        "vitest.live.config.ts",
+        "vitest.loopback.config.ts",
+        "vitest.unit.config.ts",
+      ],
+    },
+    {
+      id: "repository",
+      prefixes: ["assets/", "config/", "tools/", "vendor/"],
+      exact: [
+        "AGENTS.md",
+        "CONTRIBUTING.md",
+        "LICENSE",
+        "README.md",
+        "SECURITY.md",
+        "THIRD_PARTY_NOTICES.md",
+        "pyproject.toml",
+      ],
+    },
+  ],
+});
+
+function normalizePath(value) {
+  return String(value ?? "")
+    .trim()
+    .replaceAll("\\", "/");
+}
+
+function matchesLane(path, lane) {
+  return (
+    lane.exact?.includes(path) === true ||
+    lane.prefixes?.some((prefix) => path.startsWith(prefix)) === true ||
+    lane.suffixes?.some((suffix) => path.endsWith(suffix)) === true ||
+    lane.contains?.some((part) => path.includes(part)) === true
+  );
+}
+
+export function validateLaneManifest(value = laneManifest) {
+  if (value?.schemaVersion !== 1 || value?.unknownPathPolicy !== "reject") {
+    throw new Error("ci-change-scope: unsupported lane manifest contract");
+  }
+  if (!Array.isArray(value.lanes) || value.lanes.length === 0) {
+    throw new Error("ci-change-scope: at least one lane is required");
+  }
+  const ids = new Set();
+  for (const lane of value.lanes) {
+    if (!/^[a-z][a-z0-9-]*$/u.test(lane?.id ?? "") || ids.has(lane.id)) {
+      throw new Error(`ci-change-scope: invalid or duplicate lane ${JSON.stringify(lane?.id)}`);
+    }
+    ids.add(lane.id);
+    if (![lane.exact, lane.prefixes, lane.suffixes, lane.contains].some(Array.isArray)) {
+      throw new Error(`ci-change-scope: lane ${lane.id} has no matchers`);
+    }
+  }
+  return value;
+}
+
+export function classifyPaths(paths, value = laneManifest) {
+  validateLaneManifest(value);
+  const result = [];
+  for (const candidate of [...new Set(paths.map(normalizePath).filter(Boolean))].toSorted(
+    (left, right) => left.localeCompare(right),
+  )) {
+    if (candidate.startsWith("/") || candidate.split("/").includes("..")) {
+      throw new Error(`ci-change-scope: unsafe path ${JSON.stringify(candidate)}`);
+    }
+    const lane = value.lanes.find((entry) => matchesLane(candidate, entry));
+    if (!lane) {
+      throw new Error(`ci-change-scope: unclassified path ${JSON.stringify(candidate)}`);
+    }
+    result.push(Object.freeze({ path: candidate, lane: lane.id }));
+  }
+  return Object.freeze(result);
+}
 
 const VERSION_ROOTS = new Set(["CHANGELOG.md", "package.json", "src/brand.ts"]);
 
@@ -104,9 +251,13 @@ export function classifyChangedPaths(inputPaths, options = {}) {
   }
   const classified = classifyPaths(inputPaths);
   const paths = classified.map(({ path }) => path);
-  const lanes = [...new Set(classified.map(({ lane }) => lane))].toSorted();
+  const lanes = [...new Set(classified.map(({ lane }) => lane))].toSorted((left, right) =>
+    left.localeCompare(right),
+  );
   const lane = (name) => lanes.includes(name);
-  const selectedTestPaths = paths.filter(isRoutableTest).toSorted();
+  const selectedTestPaths = paths
+    .filter(isRoutableTest)
+    .toSorted((left, right) => left.localeCompare(right));
   const docsOnly = lanes.every((name) => name === "documentation");
   const versionOnly =
     paths.includes("package.json") && paths.includes("src/brand.ts") && paths.every(isVersionPath);
@@ -242,7 +393,7 @@ export function detectDependencyRemediation(
       dependencyRemediation: true,
       dependencyNames: [
         ...new Set(result.remediations.map(({ dependency }) => dependency)),
-      ].toSorted(),
+      ].toSorted((left, right) => left.localeCompare(right)),
     });
   } catch (error) {
     console.error(

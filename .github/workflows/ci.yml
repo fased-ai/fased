@@ -144,8 +144,6 @@ jobs:
             scripts/lifecycle-compatibility-inventory.test.ts \
             scripts/ci-change-scope.mjs \
             scripts/ci-change-scope.test.ts \
-            scripts/ci-lanes.mjs \
-            config/ci-lanes.v1.json \
             scripts/ci-run-changed-tests.mjs \
             scripts/ci-run-changed-tests.test.ts \
             scripts/ci-required-gates.mjs \
@@ -158,7 +156,6 @@ jobs:
             scripts/lifecycle-compatibility-inventory.test.ts \
             scripts/ci-change-scope.mjs \
             scripts/ci-change-scope.test.ts \
-            scripts/ci-lanes.mjs \
             scripts/ci-run-changed-tests.mjs \
             scripts/ci-run-changed-tests.test.ts \
             scripts/ci-required-gates.mjs \

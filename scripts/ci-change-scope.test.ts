@@ -16,7 +16,7 @@ describe("lean CI changed-surface classification", () => {
       runCodeqlJavascript: false,
     });
     expect(
-      classifyChangedPaths([".github/workflows/pr.yml", "scripts/ci-lanes.mjs"]),
+      classifyChangedPaths([".github/workflows/pr.yml", "scripts/ci-change-scope.mjs"]),
     ).toMatchObject({
       changeKind: "ci-infrastructure-only",
       runCiContracts: true,
