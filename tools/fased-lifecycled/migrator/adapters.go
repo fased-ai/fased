@@ -159,10 +159,10 @@ func RegistryFor(config platform.Config) (map[Key]Adapter, error) {
 	registry := map[Key]Adapter{
 		{State: "managedInstall", From: 0, To: 2}: directory(config.InstallRoot),
 		{State: "managedInstall", From: 1, To: 2}: directory(config.InstallRoot),
-		{State: "walletRegistry", From: 0, To: 1}: directory(filepath.Join(config.OwnerStateRoot, "wallet")),
+		{State: "walletRegistry", From: 0, To: 1}: PreservedStateAdapter{},
 		{State: "mining", From: 0, To: 1}:         PreservedStateAdapter{},
-		{State: "federation", From: 0, To: 2}:     directory(filepath.Join(config.OwnerStateRoot, "federation")),
-		{State: "federation", From: 1, To: 2}:     directory(filepath.Join(config.OwnerStateRoot, "federation")),
+		{State: "federation", From: 0, To: 2}:     PreservedStateAdapter{},
+		{State: "federation", From: 1, To: 2}:     PreservedStateAdapter{},
 		{State: "signer", From: 0, To: 2}:         SignerOwnedAdapter{},
 		{State: "signer", From: 1, To: 2}:         LocalSignerBridgeAdapter{Config: config},
 	}
