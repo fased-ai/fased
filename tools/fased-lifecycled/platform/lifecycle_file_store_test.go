@@ -9,7 +9,7 @@ import (
 )
 
 func TestDiskLifecycleFileStoreActivatesAndRestoresExactSignerOwnerFiles(t *testing.T) {
-	operator, gateway, signer := principals()
+	operator, gateway, signer := filesystemPrincipals()
 	config, err := NewConfig(model.ProfileProtectedLocal, "example", "/home/example/.fased", operator, gateway, signer)
 	if err != nil {
 		t.Fatal(err)
@@ -21,9 +21,7 @@ func TestDiskLifecycleFileStoreActivatesAndRestoresExactSignerOwnerFiles(t *test
 	store.rootPrefix = t.TempDir()
 	store.expectedUID = uint32(os.Getuid())
 	stateRoot := store.resolve(config.OwnerStateRoot)
-	if err := os.MkdirAll(stateRoot, 0o770); err != nil {
-		t.Fatal(err)
-	}
+	prepareFilesystemOwnerStateRoot(t, stateRoot, operator)
 	configPath := store.resolve(CanonicalGatewayConfigPath(config))
 	if err := os.WriteFile(configPath, []byte("old-config\n"), 0o600); err != nil {
 		t.Fatal(err)

@@ -28,7 +28,7 @@ func TestCLIProjectionBindsCanonicalLocalPaths(t *testing.T) {
 		"FASED_RUNTIME_SOURCE":             "go-lifecycle",
 		"FASED_PROTECTED_LOCAL":            "1",
 		"FASED_PROTECTED_LOCAL_INSTANCE":   config.InstanceID,
-		"FASED_WALLET_LOCAL_SIGNER_BIN":    "/opt/fased/local/0123456789abcdef/current/payload/bin/fased-signerd",
+		"FASED_WALLET_LOCAL_SIGNER_BIN":    "/opt/fased/local/0123456789abcdef/current/payload/bin/fased-signerd", // pragma: allowlist secret
 		"FASED_WALLET_LOCAL_SIGNER_SOCKET": "/run/fased-local/0123456789abcdef/application/app.sock",
 		"FASED_HOST_UPDATER_SOCKET":        "/run/fased-local-controller/0123456789abcdef/request.sock",
 	}

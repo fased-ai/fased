@@ -52,7 +52,11 @@ func TestCreatedBootstrapRootCleanupIsIdentityBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, created := changes.CreatedRoot(root)
+	token, created, err := changes.CreatedRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer token.Release()
 	if !created {
 		t.Fatal("new bootstrap root did not produce a cleanup token")
 	}
@@ -75,7 +79,11 @@ func TestCreatedBootstrapRootCleanupRejectsReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, created := changes.CreatedRoot(root)
+	token, created, err := changes.CreatedRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer token.Release()
 	if !created {
 		t.Fatal("new bootstrap root did not produce a cleanup token")
 	}
@@ -108,7 +116,9 @@ func TestPreexistingBootstrapRootHasNoCleanupToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, created := changes.CreatedRoot(root); created {
+	if _, created, err := changes.CreatedRoot(root); err != nil {
+		t.Fatal(err)
+	} else if created {
 		t.Fatal("preexisting root received a destructive cleanup token")
 	}
 }

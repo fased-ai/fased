@@ -44,9 +44,9 @@ describe("native signer operator lifecycle context", () => {
         FASED_PROTECTED_LOCAL: "1",
         FASED_PROTECTED_LOCAL_INSTANCE: "0123456789abcdef",
         FASED_LIFECYCLE_INSTALL_ROOT: "/opt/fased/local/0123456789abcdef",
-        FASED_WALLET_LOCAL_SIGNER_SOCKET: "/run/fased-local/fedcba9876543210/operator.sock",
+        FASED_WALLET_LOCAL_SIGNER_SOCKET: "/run/fased-local/fedcba9876543210/operator.sock", // pragma: allowlist secret
         FASED_WALLET_LOCAL_SIGNER_BIN:
-          "/opt/fased/local/0123456789abcdef/current/payload/bin/fased-signerd",
+          "/opt/fased/local/0123456789abcdef/current/payload/bin/fased-signerd", // pragma: allowlist secret
       }),
     ).toThrow(/socket does not match/);
   });

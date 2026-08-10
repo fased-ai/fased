@@ -128,7 +128,11 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 		}
 		createdRoots = createdRoots[:0]
 		for _, path := range []string{config.InstallRoot, config.LifecycleRoot, config.ProductStateRoot} {
-			if root, created := changes.CreatedRoot(path); created {
+			root, created, bindErr := changes.CreatedRoot(path)
+			if bindErr != nil {
+				return nil, errors.Join(bindErr, releaseCreatedRootHandles(createdRoots), changes.Rollback())
+			}
+			if created {
 				createdRoots = append(createdRoots, root)
 			}
 		}
@@ -244,11 +248,23 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 
 	transaction, err := platform.BeginBootstrapTransaction(journal, steps)
 	if err != nil {
-		return PlatformBootstrapResult{}, err
+		return PlatformBootstrapResult{}, errors.Join(err, releaseCreatedRootHandles(createdRoots))
 	}
 	return PlatformBootstrapResult{
 		Config: config, Transaction: transaction, CreatedRoots: createdRoots,
 	}, nil
+}
+
+func (result PlatformBootstrapResult) ReleaseCreatedRootHandles() error {
+	return releaseCreatedRootHandles(result.CreatedRoots)
+}
+
+func releaseCreatedRootHandles(roots []platform.CreatedBootstrapRoot) error {
+	var failures []error
+	for _, root := range roots {
+		failures = append(failures, root.Release())
+	}
+	return errors.Join(failures...)
 }
 
 func validateBootstrapOperator(request PlatformBootstrapRequest, operator platform.AccountRecord, exists bool, lookupErr error) error {

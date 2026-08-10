@@ -34,11 +34,19 @@ type createdBootstrapPath struct {
 
 type CreatedBootstrapRoot struct {
 	createdBootstrapPath
+	handle *os.File
 }
 
 func (root CreatedBootstrapRoot) Path() string { return root.path }
 
 func (root CreatedBootstrapRoot) RemoveAllIfSame() error {
+	if root.handle == nil {
+		return fmt.Errorf("bootstrap-created root identity handle is unavailable: %s", root.path)
+	}
+	held, err := root.handle.Stat()
+	if err != nil || root.identity == nil || !os.SameFile(root.identity, held) {
+		return fmt.Errorf("bootstrap-created root identity handle changed before cleanup: %s", root.path)
+	}
 	info, err := os.Lstat(root.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -49,22 +57,38 @@ func (root CreatedBootstrapRoot) RemoveAllIfSame() error {
 	return os.RemoveAll(root.path)
 }
 
+func (root CreatedBootstrapRoot) Release() error {
+	if root.handle == nil {
+		return nil
+	}
+	return root.handle.Close()
+}
+
 type BootstrapPathChanges struct {
 	metadata []pathMetadata
 	created  []createdBootstrapPath
 	finished bool
 }
 
-func (changes *BootstrapPathChanges) CreatedRoot(path string) (CreatedBootstrapRoot, bool) {
+func (changes *BootstrapPathChanges) CreatedRoot(path string) (CreatedBootstrapRoot, bool, error) {
 	if changes == nil {
-		return CreatedBootstrapRoot{}, false
+		return CreatedBootstrapRoot{}, false, nil
 	}
 	for _, created := range changes.created {
 		if created.path == path {
-			return CreatedBootstrapRoot{createdBootstrapPath: created}, true
+			handle, err := os.Open(path)
+			if err != nil {
+				return CreatedBootstrapRoot{}, false, err
+			}
+			held, err := handle.Stat()
+			if err != nil || !held.IsDir() || held.Mode()&os.ModeSymlink != 0 || !os.SameFile(created.identity, held) {
+				_ = handle.Close()
+				return CreatedBootstrapRoot{}, false, errors.New("bootstrap-created root identity changed before it was bound")
+			}
+			return CreatedBootstrapRoot{createdBootstrapPath: created, handle: handle}, true, nil
 		}
 	}
-	return CreatedBootstrapRoot{}, false
+	return CreatedBootstrapRoot{}, false, nil
 }
 
 func ApplyBootstrapPathPlanTransactional(paths []BootstrapPath) (*BootstrapPathChanges, error) {

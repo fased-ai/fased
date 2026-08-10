@@ -262,6 +262,7 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	if err != nil {
 		return err
 	}
+	defer func() { resultErr = errors.Join(resultErr, result.ReleaseCreatedRootHandles()) }()
 	configPath := filepath.Join(result.Config.LifecycleRoot, "platform.json")
 	applyArguments[1] = configPath
 	if err := runApply(applyArguments, output); err != nil {

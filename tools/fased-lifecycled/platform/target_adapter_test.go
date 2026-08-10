@@ -204,11 +204,9 @@ func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) 
 	if err := os.WriteFile(stableDaemon, []byte("stable-client-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	operator, gateway, signer := principals()
+	operator, gateway, signer := filesystemPrincipals()
 	stateRoot := filepath.Join(t.TempDir(), ".fased")
-	if err := os.MkdirAll(stateRoot, 0o770); err != nil {
-		t.Fatal(err)
-	}
+	prepareFilesystemOwnerStateRoot(t, stateRoot, operator)
 	if err := os.WriteFile(filepath.Join(stateRoot, "fased.json"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +257,8 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 	}
 	definitions := adapter.Units.(*fakeUnits).definitions
 	combined := string(definitions[adapter.Identity.Services["signer"]]) + string(definitions[adapter.Identity.Services["gateway"]])
-	if strings.Contains(combined, "/bin/sh") || !strings.Contains(combined, "NoNewPrivileges=true") || !strings.Contains(combined, "User=996") {
+	if strings.Contains(combined, "/bin/sh") || !strings.Contains(combined, "NoNewPrivileges=true") ||
+		!strings.Contains(combined, fmt.Sprintf("User=%d", adapter.Config.Signer.UID)) {
 		t.Fatalf("canonical units lack privilege or direct-exec contracts:\n%s", combined)
 	}
 	if !strings.Contains(combined, "SupplementaryGroups=fscf-example") ||
@@ -467,11 +466,9 @@ func testCompleteOnboardingStartsAndVerifiesExactCommittedGateway(t *testing.T, 
 
 func TestFreshHostingInstallDefersGatewayUntilOnboarding(t *testing.T) {
 	tx, _ := manifestTransaction(t, false)
-	operator, gateway, signer := principals()
+	operator, gateway, signer := filesystemPrincipals()
 	stateRoot := filepath.Join(t.TempDir(), ".fased")
-	if err := os.MkdirAll(stateRoot, 0o770); err != nil {
-		t.Fatal(err)
-	}
+	prepareFilesystemOwnerStateRoot(t, stateRoot, operator)
 	config, err := NewConfig(model.ProfileHosting, "hosting", stateRoot, operator, gateway, signer)
 	if err != nil {
 		t.Fatal(err)
@@ -502,11 +499,9 @@ func TestFreshHostingInstallDefersGatewayUntilOnboarding(t *testing.T) {
 
 func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	tx, _ := manifestTransaction(t, false)
-	operator, gateway, signer := principals()
+	operator, gateway, signer := filesystemPrincipals()
 	stateRoot := filepath.Join(t.TempDir(), ".fased")
-	if err := os.MkdirAll(stateRoot, 0o770); err != nil {
-		t.Fatal(err)
-	}
+	prepareFilesystemOwnerStateRoot(t, stateRoot, operator)
 	if err := os.WriteFile(filepath.Join(stateRoot, "fased.json"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -582,7 +577,7 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	}
 	combined := string(units.definitions[identity.Services["signer"]]) + string(units.definitions[identity.Services["gateway"]])
 	for _, required := range []string{
-		"User=996", "NoNewPrivileges=true", "Environment=HOME=" + config.OwnerHome(),
+		fmt.Sprintf("User=%d", signer.UID), "NoNewPrivileges=true", "Environment=HOME=" + config.OwnerHome(),
 		"Environment=FASED_STATE_DIR=" + config.OwnerStateRoot, "Environment=FASED_HOST_PROFILE=hosting",
 		"Environment=FASED_PLUGIN_STATUS_CACHE_PATH=" + filepath.Join(config.OwnerStateRoot, "cache", "plugin-status.json"),
 		"-state-db /var/lib/fased-signerd/state.db", "-update-gate /var/lib/fased-signer-update-gate/active",
