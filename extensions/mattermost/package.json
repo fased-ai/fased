@@ -1,6 +1,6 @@
 {
   "name": "@fased/mattermost",
-  "version": "0.1.76-rc.68",
+  "version": "0.1.76-rc.69",
   "description": "FasedAgent Mattermost channel plugin",
   "type": "module",
   "fased": {
