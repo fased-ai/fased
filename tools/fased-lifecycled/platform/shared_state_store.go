@@ -95,7 +95,7 @@ func (store *DiskSharedStateStore) Discard(transactionID string) error {
 
 func (store *DiskSharedStateStore) discover() ([]sharedStateRecord, error) {
 	root := store.resolve(store.Config.OwnerStateRoot)
-	allowed := []string{"agents", "cache", "canvas", "cron", "federation", "identity", "logs", "sat-mining", "share", "workspace"}
+	allowed := []string{"agents", "cache", "canvas", "cron", "extensions", "federation", "identity", "logs", "sat-mining", "share", "workspace"}
 	var paths []string
 	for _, name := range allowed {
 		path := filepath.Join(root, name)

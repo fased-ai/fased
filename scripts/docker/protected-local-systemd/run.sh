@@ -1622,9 +1622,10 @@ if [[ "$phase" == "managed-update" ]]; then
     test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$version"
     sha256sum --check "$stable_bridge_manifest"
     printf '%s\n' "$version" >"$selected_target"
-    instance="$(jq -er '.env.vars.FASED_PROTECTED_LOCAL_INSTANCE' "$state/fased.json")"
+    instance="$(jq -er .instanceId "$state/lifecycle.json")"
     runtime="$(resolve_protected_runtime "$instance")"
     mapfile -t managed_operator_env < <(operator_env "$instance")
+    runuser -u "fsgw-$instance" -- test -r "$state/extensions/stable-bridge-plugin.json"
     wait_for_service "fased-local-controller-$instance.service"
     wait_for_service "fased-signerd-$instance.service"
     wait_for_service "fased-gateway-$instance.service"
