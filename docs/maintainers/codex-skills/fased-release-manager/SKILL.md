@@ -159,6 +159,34 @@ partitioned with no overlap.
 Parallel work reduces diagnosis latency; it never weakens the controlling plan,
 evidence bindings, or founder approval boundaries.
 
+### Failure learning
+
+Maintain one compact in-session failure ledger:
+
+`predicate | class | root cause | correction | do-not-repeat rule`
+
+Classify each failure as `PRODUCT`, `HARNESS`, `ENVIRONMENT`, `AUTHORITY`, or
+`INFRASTRUCTURE` before changing code or rerunning anything.
+
+- Never rerun an unchanged command after a `PRODUCT` or `HARNESS` failure.
+  Inspect the first failing predicate, correct it, run its closest fast test,
+  then permit one bounded retry.
+- Retry `ENVIRONMENT` or `INFRASTRUCTURE` once only after correcting the exact
+  condition, such as sudo expiry, disk quota, network failure, wrong working
+  directory, socket path length, or read-only cache.
+- Before every long proof, verify the working directory, disk and inode budget,
+  writable temp/cache paths, required credentials, existing processes, artifact
+  identity, and that the fault injector does not mutate attested bytes.
+- A source change invalidates its product artifact. A fixture-only change does
+  not; reuse the exact artifact and avoid rebuilding.
+- Record elapsed time and terminal output from one retained process session so
+  context compaction cannot cause a duplicate run.
+- After closure, add only confirmed, reusable, version-neutral prevention rules
+  to this skill or its existing references. Never persist RC names, temporary
+  paths, raw receipts, or incident-specific state as workflow policy.
+- Keep the ledger under ten entries. Consolidate repeated causes into one rule;
+  do not create another persistent workflow database or approval state machine.
+
 Installer/updater/lifecycle work must use **Lifecycle Bug Closure** below
 instead; never apply this shorter path to those boundaries.
 
