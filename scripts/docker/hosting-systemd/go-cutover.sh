@@ -94,7 +94,14 @@ assert_healthy() {
     systemctl is-enabled --quiet "$unit"
     systemctl is-active --quiet "$unit"
   done
-  response="$(curl -fsS --max-time 2 "http://127.0.0.1:${gateway_port}/healthz")"
+  response=""
+  for _ in {1..60}; do
+    response="$(curl -fsS --max-time 2 "http://127.0.0.1:${gateway_port}/healthz" 2>/dev/null || true)"
+    if jq -e --arg version "$version" '.version == $version' <<<"$response" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.5
+  done
   jq -e --arg version "$version" '.version == $version' <<<"$response" >/dev/null
   ! ss -H -ltn | awk -v port=":${gateway_port}" '$4 ~ port "$" && ($4 ~ /^0\.0\.0\.0:/ || $4 ~ /^\[::\]:/ || $4 ~ /^\*:/) { found=1 } END { exit found ? 0 : 1 }'
 }
