@@ -113,8 +113,12 @@ For broken, failing, incorrect, or slow behavior, use `diagnosing-bugs` and:
 5. For installer, updater, supervisor, controller, service, or migration code,
    remain on one local incident branch until the branch-local packaged proof in
    **Lifecycle Bug Closure** passes. A PR is delivery, never diagnosis.
-6. Run changed-file format/lint checks, commit locally as needed, then make one
-   final push and use one PR. Do not open a draft or diagnostic PR.
+6. Run changed-file format/lint checks, create the final local commit, and run
+   the protected-base classifier once against the complete `origin/main...HEAD`
+   path set. Classify the coherent multi-file change, never each file in
+   isolation. If the protected base rejects or unexpectedly broadens the route,
+   correct classification locally before the first push. Then push once and
+   use one PR. Do not open a draft or diagnostic PR.
 7. When `fix and ship` or a separate founder merge instruction applies, use
    `gh pr merge --auto --squash --delete-branch`. Never use `--admin`. Arm it
    only after local closure, exact-head readback, and required-check discovery;
@@ -148,6 +152,9 @@ partitioned with no overlap.
   rebuild unchanged product code for a test-only correction.
 - Keep one retained session for each long-running test or CI run. Poll that
   session; never start a duplicate because output is quiet or context changed.
+- Poll GitHub by one run ID with bounded JSON every 30-60 seconds. Do not stream
+  verbose `run watch` output, redownload the job graph, or continuously poll a
+  protected wait. Report the active job and leave it running.
 - Run changed-package and closest-regression tests first. Broaden only after
   they pass and only when the affected trust or lifecycle boundary requires it.
 - If a harness or environment predicate fails, repair that predicate and rerun
@@ -179,6 +186,10 @@ Classify each failure as `PRODUCT`, `HARNESS`, `ENVIRONMENT`, `AUTHORITY`, or
   identity, and that the fault injector does not mutate attested bytes.
 - A source change invalidates its product artifact. A fixture-only change does
   not; reuse the exact artifact and avoid rebuilding.
+- When an artifact transport loses executable mode, stage a fixture-only copy,
+  set the required mode there, and prove byte-for-byte digest equality. Never
+  modify attested bytes or rebuild the product for a permission-only harness
+  correction.
 - Any product-source change after local closure makes that closure stale. Rerun
   the affected Linux x64 branch transaction before push; never carry closure
   evidence across a product commit.

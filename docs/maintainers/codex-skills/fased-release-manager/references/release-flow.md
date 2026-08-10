@@ -20,12 +20,15 @@ count.
 current`. Keep every correction on this same branch; do not use a PR or
    candidate to discover the next predicate.
 7. Format and lint changed files, run `git diff --check`, create the final local
-   commit, and push once.
+   commit, classify the complete `origin/main...HEAD` path set with the
+   protected-base classifier, and push once only when the expected focused
+   route is selected.
 8. Open one focused PR. Public CI derives its plan from the protected base and
    changed paths. Do not publish private route or merge statuses.
 9. Arm auto-merge after exact-head and required-check discovery. If the PR is
    `BEHIND`, update its branch once and let strict checks rerun. Observe the
-   existing run without continuous polling.
+   existing run by one run ID with bounded JSON at 30-60 second intervals;
+   never stream an unbounded watch or restart a quiet run.
 10. If CI fails, inspect the first predicate, correct it locally, and make at
     most one corrective push before reassessing.
 11. When the required `checks` aggregate passes and the exact head is mergeable,
