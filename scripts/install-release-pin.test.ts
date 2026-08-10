@@ -1069,9 +1069,14 @@ exec_bootstrapped_installer ${JSON.stringify(inner)} marker
     expect(managedEnv).toContain('env_mode="$(managed_state_file_mode)"');
 
     const protectedActivation = installer.indexOf("bootstrap_protected_local_topology activate");
+    const onboardingScaffold = installer.indexOf(
+      "if ! prepare_protected_local_onboarding_scaffold",
+    );
     const onboarding = installer.indexOf('FASED_INSTALLER_ONBOARD=1 "$FASED_CLI_PATH" onboard');
     const finalMarker = installer.indexOf('write_install_marker "$REPO_ROOT" "true"', onboarding);
     expect(protectedActivation).toBeGreaterThanOrEqual(0);
+    expect(onboardingScaffold).toBeGreaterThan(protectedActivation);
+    expect(onboarding).toBeGreaterThan(onboardingScaffold);
     expect(onboarding).toBeGreaterThan(protectedActivation);
     expect(finalMarker).toBeGreaterThan(onboarding);
     expect(installer).not.toContain(

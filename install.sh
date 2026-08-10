@@ -3412,6 +3412,69 @@ EOF
   chmod 600 "$INSTALL_MARKER_PATH" 2>/dev/null || true
 }
 
+prepare_protected_local_onboarding_scaffold() {
+  [[ "${PROTECTED_LOCAL_BOOTSTRAPPED:-0}" -eq 1 ]] || return 0
+  read_protected_local_env || {
+    echo "Committed Protected Local identity is unavailable before onboarding." >&2
+    return 1
+  }
+  local config_path="${FASED_CONFIG_PATH:-$FASED_CONFIG_DIR/fased.json}"
+  if [[ -e "$config_path" || -L "$config_path" ]]; then
+    [[ -f "$config_path" && ! -L "$config_path" ]] || {
+      echo "Fased onboarding config must be a regular non-symlink file." >&2
+      return 1
+    }
+    return 0
+  fi
+  CONFIG_PATH="$config_path" FASED_UPDATE_CHANNEL="$UPDATE_CHANNEL" node <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const configPath = process.env.CONFIG_PATH;
+const channel = process.env.FASED_UPDATE_CHANNEL;
+const instance = process.env.FASED_PROTECTED_LOCAL_INSTANCE;
+if (
+  !configPath ||
+  !path.isAbsolute(configPath) ||
+  !new Set(["stable", "beta"]).has(channel) ||
+  process.env.FASED_PROTECTED_LOCAL !== "1" ||
+  !/^[a-f0-9]{16}$/u.test(instance || "") ||
+  process.env.FASED_WALLET_LOCAL_SIGNER_LIFECYCLE !== "external"
+) {
+  throw new Error("Protected Local onboarding scaffold identity is invalid");
+}
+const variables = {};
+for (const key of [
+  "FASED_HOST_PROFILE",
+  "FASED_HOST_UPDATER_SOCKET",
+  "FASED_PROTECTED_LOCAL",
+  "FASED_PROTECTED_LOCAL_INSTANCE",
+  "FASED_WALLET_LOCAL_SIGNER_BIN",
+  "FASED_WALLET_LOCAL_SIGNER_LIFECYCLE",
+  "FASED_WALLET_LOCAL_SIGNER_SOCKET",
+]) {
+  const value = process.env[key];
+  if (typeof value === "string" && value.length > 0) variables[key] = value;
+}
+variables.FASED_UPDATE_CHANNEL = channel;
+const temporary = `${configPath}.installer-${process.pid}`;
+let descriptor;
+try {
+  descriptor = fs.openSync(temporary, "wx", 0o600);
+  fs.writeFileSync(descriptor, `${JSON.stringify({ env: { vars: variables } }, null, 2)}\n`);
+  fs.fsyncSync(descriptor);
+  fs.closeSync(descriptor);
+  descriptor = undefined;
+  fs.renameSync(temporary, configPath);
+} finally {
+  if (descriptor !== undefined) fs.closeSync(descriptor);
+  try { fs.unlinkSync(temporary); } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+}
+NODE
+}
+
 persist_runtime_update_channel() {
   local transaction_phase="${1:-active}"
   RUNTIME_UPDATE_CHANNEL_CHANGED=0
@@ -7114,6 +7177,10 @@ fi
 section "Interactive setup"
 step_start "Start setup"
 status_frame_end
+if ! prepare_protected_local_onboarding_scaffold; then
+  echo "Protected Local lifecycle committed, but the onboarding identity could not be prepared." >&2
+  exit 1
+fi
 onboard_old_space_mb="$(recommended_onboard_old_space_mb)"
 onboard_node_options="$(node_options_with_old_space "${NODE_OPTIONS:-}" "$onboard_old_space_mb")"
 onboard_color_env=()
