@@ -156,11 +156,29 @@ async function loadArchiveDependency(dependencyRoot) {
     throw new Error("lifecycle archive dependency root is invalid");
   }
   const packagePath = path.join(dependencyRoot, "package.json");
-  const packageInfo = await fsp.lstat(packagePath);
-  if (!packageInfo.isFile() || packageInfo.isSymbolicLink()) {
+  try {
+    const packageInfo = await fsp.lstat(packagePath);
+    if (!packageInfo.isFile() || packageInfo.isSymbolicLink()) {
+      throw new Error("lifecycle archive dependency root is unsafe");
+    }
+    return createRequire(packagePath)("tar");
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  const tarPackage = path.join(dependencyRoot, "tar", "package.json");
+  const tarPackageInfo = await fsp.lstat(tarPackage);
+  if (!tarPackageInfo.isFile() || tarPackageInfo.isSymbolicLink()) {
     throw new Error("lifecycle archive dependency root is unsafe");
   }
-  return createRequire(packagePath)("tar");
+  const requireFromLayer = createRequire(path.join(path.dirname(dependencyRoot), "package.json"));
+  const resolvedTar = await fsp.realpath(requireFromLayer.resolve("tar"));
+  const tarRoot = await fsp.realpath(path.join(dependencyRoot, "tar"));
+  if (resolvedTar !== tarRoot && !resolvedTar.startsWith(`${tarRoot}${path.sep}`)) {
+    throw new Error("lifecycle archive dependency escaped its immutable layer");
+  }
+  return requireFromLayer("tar");
 }
 
 export async function validateGenerationArchive(archive, { dependencyRoot } = {}) {

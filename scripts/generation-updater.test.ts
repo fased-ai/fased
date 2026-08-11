@@ -242,6 +242,17 @@ describe("generation updater", () => {
     );
   });
 
+  it("loads archive support from an immutable node_modules layer", async () => {
+    const value = await fixture();
+    const destination = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-generation-layer-"));
+    temporary.push(destination);
+    const dependencyRoot = path.resolve("node_modules");
+    const generation = await extractGeneration(value.archive, destination, { dependencyRoot });
+    expect(await fsp.readFile(path.join(generation, "payload", "bin", "fased"), "utf8")).toBe(
+      "exact\n",
+    );
+  });
+
   it("rejects a generation archive symlink that escapes before privileged mutation", async () => {
     const value = await fixture("../../../../../../outside");
     const administrator = vi.fn();

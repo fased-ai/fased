@@ -722,6 +722,9 @@ describe("CI workflow routing", () => {
     expect(fixture).toContain("/var/lib/fased-protected-local-fixture");
     expect(fixture).toContain('if [[ "$phase" == "managed-update" ]]');
     expect(fixture).toContain("run_target_update() {");
+    expect(fixture).toContain("materialize_predecessor_wallet_registry_fixture");
+    expect(fixture).toContain('managed_current_link="/opt/fased/local/$instance/current"');
+    expect(fixture).not.toContain("/opt/fased/local/$instance/application/current");
     expect(fixture).toContain(
       "managed packaged Protected Local rollback, retry, restart, preservation, and no-op passed",
     );
@@ -730,13 +733,19 @@ describe("CI workflow routing", () => {
     expect(fixture).toContain("install -m 0700 -o testop -g testop /artifacts/install.sh");
     expect(fixture).toContain("install -m 0644 /artifacts/fased-hosted-release-v2.json");
     expect(fixture).toContain('if [[ "$public_acquisition" == "1" ]]');
-    expect(fixture).toContain('if [[ "\\$source_ref" == "refs/tags/v${version}" ]]');
+    expect(fixture).toContain('if [[ "\\$source_ref" == "refs/tags/v${version}" ||');
+    expect(fixture).toContain('"\\$source_ref" == "refs/tags/v${predecessor_version}"');
+    expect(fixture).toContain(
+      'predecessor_version="$(cat /var/lib/fased-protected-local-fixture/predecessor-version 2>/dev/null || true)"',
+    );
+    expect(fixture).toContain('FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port"');
     expect(fixture).toContain('"\\$source_ref" == "refs/heads/main"');
     const containerFixture = await readFile(
       resolve(repoRoot, "scripts/test-protected-local-systemd-container.sh"),
       "utf8",
     );
     expect(containerFixture).toContain('"install_entry_release_identity=\\"${VERSION}\\""');
+    expect(containerFixture).toContain("/tmp/managed-predecessor-install.err");
     expect(containerFixture).toContain(".release.commit == $commit");
     expect(containerFixture).toContain('bash "$ROOT_DIR/scripts/release-fased-lifecycled.sh"');
     expect(containerFixture).toContain('node "$ROOT_DIR/scripts/stamp-release-installer.mjs"');

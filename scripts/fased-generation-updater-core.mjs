@@ -13,6 +13,8 @@ const DEFAULT_REGISTRY = "https://registry.npmjs.org";
 const DEFAULT_TIMEOUT_MS = 20 * 60_000;
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
 const HASH = /^[a-f0-9]{64}$/u;
+const DIGEST = /^sha256:[a-f0-9]{64}$/u;
+const ASSET = /^[A-Za-z0-9][A-Za-z0-9._-]+$/u;
 const INSTANCE = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 
 export const MANAGED_UPDATER_SUPPORT_FILES = Object.freeze([
@@ -93,6 +95,45 @@ function configuredChannel(options) {
   return "stable";
 }
 
+async function resolveGenerationDependencyRoot({ installRoot, currentRoot, dependency }) {
+  const dependencyBinding = path.join(currentRoot, "node_modules");
+  const bindingInfo = await fsp.lstat(dependencyBinding);
+  if (!bindingInfo.isSymbolicLink()) {
+    throw new Error("Go lifecycle generation dependency binding is unsafe");
+  }
+  const dependencyRoot = await fsp.realpath(dependencyBinding);
+  const dependenciesRoot = await fsp.realpath(path.join(installRoot, "dependencies"));
+  const layerRoot = path.dirname(dependencyRoot);
+  const archiveDigest = dependency.archiveSHA256.slice("sha256:".length);
+  const allowedLayerNames = new Set([dependency.hash, `${dependency.hash}-${archiveDigest}`]);
+  if (
+    path.basename(dependencyRoot) !== "node_modules" ||
+    path.dirname(layerRoot) !== dependenciesRoot ||
+    !allowedLayerNames.has(path.basename(layerRoot))
+  ) {
+    throw new Error("Go lifecycle generation dependency binding escaped its immutable store");
+  }
+  const dependencyInfo = await fsp.lstat(dependencyRoot);
+  if (!dependencyInfo.isDirectory() || dependencyInfo.isSymbolicLink()) {
+    throw new Error("Go lifecycle current dependency layer is unsafe");
+  }
+  const markerPath = path.join(layerRoot, ".fased-dependency-layer.json");
+  const markerInfo = await fsp.lstat(markerPath);
+  if (!markerInfo.isFile() || markerInfo.isSymbolicLink() || markerInfo.size > 16 * 1024) {
+    throw new Error("Go lifecycle dependency identity is unsafe");
+  }
+  const marker = JSON.parse(await fsp.readFile(markerPath, "utf8"));
+  if (
+    marker?.schemaVersion !== 1 ||
+    marker.hash !== dependency.hash ||
+    marker.asset !== dependency.asset ||
+    marker.archiveSHA256 !== dependency.archiveSHA256
+  ) {
+    throw new Error("Go lifecycle dependency identity differs from the active generation");
+  }
+  return dependencyRoot;
+}
+
 async function readGoLifecycleSelection(env = process.env) {
   const profile = env.FASED_LIFECYCLE_PROFILE;
   const instance = env.FASED_LIFECYCLE_INSTANCE;
@@ -132,20 +173,17 @@ async function readGoLifecycleSelection(env = process.env) {
   if (
     inventory?.schemaVersion !== 3 ||
     !VERSION.test(inventory?.version ?? "") ||
-    !HASH.test(inventory?.dependency?.hash ?? "")
+    !HASH.test(inventory?.dependency?.hash ?? "") ||
+    !ASSET.test(inventory?.dependency?.asset ?? "") ||
+    !DIGEST.test(inventory?.dependency?.archiveSHA256 ?? "")
   ) {
     throw new Error("Go lifecycle current generation inventory is malformed");
   }
-  const dependencyRoot = path.join(
+  const dependencyRoot = await resolveGenerationDependencyRoot({
     installRoot,
-    "dependencies",
-    inventory.dependency.hash,
-    "node_modules",
-  );
-  const dependencyInfo = await fsp.lstat(dependencyRoot);
-  if (!dependencyInfo.isDirectory() || dependencyInfo.isSymbolicLink()) {
-    throw new Error("Go lifecycle current dependency layer is unsafe");
-  }
+    currentRoot,
+    dependency: inventory.dependency,
+  });
   return Object.freeze({
     profile,
     instance,
@@ -386,4 +424,5 @@ export const __testing = Object.freeze({
   configuredChannel,
   parseArgs,
   readGoLifecycleSelection,
+  resolveGenerationDependencyRoot,
 });

@@ -31,6 +31,7 @@ rpc_port=19457
 gateway_token=fased-protected-local-fixture-token
 snapshot=/var/lib/fased-protected-local-fixture.json
 selected_target=/var/lib/fased-protected-local-fixture/selected-target-version
+predecessor_target=/var/lib/fased-protected-local-fixture/predecessor-version
 release_assets=/var/lib/fased-protected-local-fixture/release-assets
 fixture_tls=/var/lib/fased-protected-local-fixture/tls
 fixture_acl_user=fased-fixture-acl
@@ -400,6 +401,45 @@ verify_shared_wallet_registry() {
     '
 }
 
+materialize_predecessor_wallet_registry_fixture() {
+  local instance="$1"
+  local runtime_root="$2"
+  local module_url="file://$runtime_root/dist/wallet/wallet-provider-registry.js"
+  local agent_address=""
+  local vault_address=""
+  local registry="$state/wallet/provider-registry.v1.json"
+  local -a environment=()
+  agent_address="$(jq -er .address /tmp/managed-agent-create.json)"
+  vault_address="$(jq -er .address /tmp/managed-vault-create.json)"
+  mapfile -t environment < <(operator_env "$instance")
+  runuser -u testop -- env "${environment[@]}" \
+    FASED_FIXTURE_MODULE_URL="$module_url" \
+    FASED_FIXTURE_AGENT_ADDRESS="$agent_address" \
+    FASED_FIXTURE_VAULT_ADDRESS="$vault_address" \
+    /usr/local/bin/node --input-type=module --eval '
+      const registry = await import(process.env.FASED_FIXTURE_MODULE_URL);
+      for (const wallet of [
+        { id: "agent", name: "Agent", role: "agent", address: process.env.FASED_FIXTURE_AGENT_ADDRESS },
+        { id: "vault", name: "Vault", role: "vault", address: process.env.FASED_FIXTURE_VAULT_ADDRESS },
+      ]) {
+        registry.upsertNamedWallet({
+          walletId: wallet.id,
+          name: wallet.name,
+          providerId: "local-socket-signer",
+          addresses: { solana: wallet.address },
+          metadata: {
+            role: wallet.role,
+            purpose: wallet.role,
+            keyAuthority: "signer-owned-v2",
+            signerWalletId: wallet.id,
+          },
+        });
+      }
+    '
+  chown testop:"fscf-$instance" "$registry"
+  chmod 0660 "$registry"
+}
+
 wait_for_socket() {
   local socket="$1"
   for _ in {1..200}; do
@@ -683,7 +723,9 @@ if [[ "\${1:-}" == "attestation" && "\${2:-}" == "verify" ]]; then
     fi
   done
   if [[ "$public_acquisition" == "1" ]]; then
-    if [[ "\$source_ref" == "refs/tags/v${version}" ]]; then
+    if [[ "\$source_ref" == "refs/tags/v${version}" ||
+      ( "$phase" == "managed-update" &&
+        "\$source_ref" == "refs/tags/v${predecessor_version}" ) ]]; then
       exit 0
     fi
     exit 1
@@ -847,7 +889,7 @@ cat >/usr/local/bin/curl <<'EOF_FIXTURE_CURL'
 set -euo pipefail
 output=""
 url=""
-predecessor_version="${FASED_FIXTURE_PREDECESSOR_VERSION:-}"
+predecessor_version="$(cat /var/lib/fased-protected-local-fixture/predecessor-version 2>/dev/null || true)"
 args=("$@")
 for ((i = 0; i < ${#args[@]}; i++)); do
   case "${args[$i]}" in
@@ -1069,10 +1111,12 @@ chmod 0440 /etc/sudoers.d/fased-protected-local-fixture
 install -d -m 0755 -o root -g root /var/lib/fased-protected-local-fixture
 if [[ "$phase" == "managed-update" ]]; then
   printf '%s\n' "$predecessor_version" >"$selected_target"
+  printf '%s\n' "$predecessor_version" >"$predecessor_target"
 else
   printf '%s\n' "$version" >"$selected_target"
+  : >"$predecessor_target"
 fi
-chmod 0644 "$selected_target"
+chmod 0644 "$selected_target" "$predecessor_target"
 
 if [[ "$phase" == "fresh-install" ]]; then
   fresh_prepare_elapsed="$((SECONDS - fixture_started))"
@@ -1525,6 +1569,7 @@ EOF_STABLE_BRIDGE_DROPIN
   verify_shared_federation_state "$instance" "$runtime"
   wait_for_gateway_version "$predecessor_version"
   verify_mining_history
+  materialize_predecessor_wallet_registry_fixture "$instance" "$runtime"
   verify_shared_wallet_registry "$instance" "$runtime"
   install -d -m 2770 -o testop -g "fscf-$instance" \
     "$state/sat-mining/wallets/agent" "$state/extensions"
@@ -1576,8 +1621,8 @@ EOF_MANAGED_MINING_LEDGER
     fi
   }
   verify_managed_semantic_state() {
-    local application_current="/opt/fased/local/$instance/application/current"
-    local operator_current="$state/runtime/current"
+    local canonical_current="/opt/fased/local/$instance/current"
+    local current_target=""
     verify_wallet "$instance" agent >/tmp/managed-agent-current.json
     verify_wallet "$instance" vault >/tmp/managed-vault-current.json
     diff -u \
@@ -1589,7 +1634,9 @@ EOF_MANAGED_MINING_LEDGER
     diff -u \
       /tmp/managed-federation-identity-before.json \
       <(jq -S '{nodeId, handle}' "$state/federation/access-token.json")
-    test "$(readlink -f "$operator_current")" = "$(readlink -f "$application_current")"
+    test "$(jq -er .runtime.currentLink "$state/install.json")" = "$canonical_current"
+    current_target="$(readlink -f "$canonical_current")"
+    [[ "$current_target" == "/opt/fased/local/$instance/generations/"* ]]
     test "$(jq -er .profile "$state/install.json")" = "protected-local"
     test "$(jq -er .instanceId "$state/lifecycle.json")" = "$instance"
     test ! -e "/var/lib/fased-local/$instance/controller/supervisor/product-transaction.json"
@@ -1601,11 +1648,12 @@ EOF_MANAGED_MINING_LEDGER
     local timeout_seconds="$1"
     runuser -u testop -- env "${managed_operator_env[@]}" \
       npm_config_registry="http://127.0.0.1:$rpc_port" \
+      FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
       "$state/bin/fased" update "${target_update_args[@]}" --timeout "$timeout_seconds"
   }
 
   acceptance_start
-  managed_current_link="/opt/fased/local/$instance/application/current"
+  managed_current_link="/opt/fased/local/$instance/current"
   managed_initial_target="$(readlink -f "$managed_current_link")"
   managed_gateway_unit="fased-gateway-$instance.service"
   managed_fault_root="/run/fased-fixture-managed-gateway-fault-$$"
@@ -1691,6 +1739,7 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
   acceptance_mark state-preservation
   runuser -u testop -- env "${managed_operator_env[@]}" \
     npm_config_registry="http://127.0.0.1:$rpc_port" \
+    FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
     "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
     >/tmp/managed-update-noop.out 2>/tmp/managed-update-noop.err
   grep -F "Already current: $version" /tmp/managed-update-noop.out >/dev/null
