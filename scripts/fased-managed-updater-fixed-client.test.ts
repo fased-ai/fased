@@ -1,6 +1,7 @@
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { __testing } from "./fased-managed-updater.mjs";
 
@@ -28,5 +29,21 @@ describe("fixed managed lifecycle update client", () => {
     await expect(__testing.requireFixedBootstrap(client, process.getuid?.() ?? 0)).rejects.toThrow(
       "unsafe",
     );
+  });
+
+  it("executes when the installed entrypoint traverses the current-generation symlink", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-fixed-update-main-"));
+    const generation = path.join(root, "generations", "target");
+    const entrypoint = path.join(generation, "scripts", "fased-managed-updater.mjs");
+    await fsp.mkdir(path.dirname(entrypoint), { recursive: true });
+    await fsp.writeFile(entrypoint, "// fixture\n");
+    await fsp.symlink(generation, path.join(root, "current"));
+
+    expect(
+      __testing.isMainModule(
+        path.join(root, "current", "scripts", "fased-managed-updater.mjs"),
+        pathToFileURL(entrypoint).href,
+      ),
+    ).toBe(true);
   });
 });

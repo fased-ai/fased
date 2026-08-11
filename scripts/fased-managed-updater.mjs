@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { constants } from "node:fs";
+import { constants, realpathSync } from "node:fs";
 import fsp from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
@@ -69,11 +69,22 @@ function fixedInvocation(bootstrap, argv, uid) {
     : { command: "/usr/bin/sudo", args: [bootstrap, "update", ...argv] };
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+function isMainModule(entrypoint, moduleUrl, realpath = realpathSync) {
+  if (!entrypoint) {
+    return false;
+  }
+  try {
+    return realpath(entrypoint) === realpath(fileURLToPath(moduleUrl));
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule(process.argv[1], import.meta.url)) {
   run().catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   });
 }
 
-export const __testing = { FIXED_BOOTSTRAP, fixedInvocation, requireFixedBootstrap };
+export const __testing = { FIXED_BOOTSTRAP, fixedInvocation, isMainModule, requireFixedBootstrap };
