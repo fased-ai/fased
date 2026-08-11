@@ -1678,10 +1678,8 @@ EOF_MANAGED_MINING_LEDGER
   cat >"$managed_fault_script" <<EOF_MANAGED_FAILED_GATEWAY
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "\$(readlink -f '$managed_current_link')" != '$managed_initial_target' ]]; then
-  : >'$managed_fault_marker'
-  exit 1
-fi
+: >'$managed_fault_marker'
+exit 1
 EOF_MANAGED_FAILED_GATEWAY
   chown root:root "$managed_fault_script"
   chmod 0755 "$managed_fault_script"

@@ -105,6 +105,10 @@ describe("lifecycle acceptance contract", () => {
     expect(runner).toContain("wallet signer doctor --json");
     expect(runner).toContain("mining status");
     expect(runner).toContain('configure_fixture_sat_runtime "$instance"');
+    expect(runner).toContain(": >'$managed_fault_marker'\nexit 1");
+    expect(runner).not.toContain(
+      `if [[ "\\$(readlink -f '$managed_current_link')" != '$managed_initial_target' ]]`,
+    );
     expect(runner).toContain("FASED_SAT_PROGRAM_ID=11111111111111111111111111111111");
     expect(runner).toContain(
       "FASED_SAT_BOND_PROGRAM_ID=ComputeBudget111111111111111111111111111111",
