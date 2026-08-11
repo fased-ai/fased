@@ -75,7 +75,7 @@ function managedInstall({ profile, owner, version, commit, manifestDigest }) {
 }
 
 function gatewaySource(version) {
-  return `import http from "node:http";\nconst version=${JSON.stringify(version)};\nconst port=Number(process.env.FASED_GATEWAY_PORT||18789);\nhttp.createServer((request,response)=>{if(request.url==="/healthz"){response.setHeader("content-type","application/json");response.end(JSON.stringify({ok:true,version}));return;}response.statusCode=404;response.end();}).listen(port,"127.0.0.1");\n`;
+  return `import http from "node:http";\nconst version=${JSON.stringify(version)};\nconst port=Number(process.env.FASED_GATEWAY_PORT||18789);\nhttp.createServer((request,response)=>{if(request.url==="/healthz"){response.setHeader("content-type","application/json");response.end(JSON.stringify({ok:true,version,runtimeSource:"managed-package"}));return;}response.statusCode=404;response.end();}).listen(port,"127.0.0.1");\n`;
 }
 
 function localUnit() {

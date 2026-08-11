@@ -57,6 +57,9 @@ describe("public predecessor capsule builder", () => {
       );
       const archive = await inspectCapsuleArchive(result.archivePath, descriptor);
       expect(archive.size).toBe(descriptor.entries.length);
+      const owner = profile === "hosting" ? "app" : "testop";
+      const gateway = archive.get(`home/${owner}/.fased/runtime/releases/0.1.75/gateway.mjs`);
+      expect(gateway?.bytes.toString("utf8")).toContain('runtimeSource:"managed-package"');
       const proof = JSON.parse(
         await readFile(path.join(output, "fased-predecessor-branch-proof.json"), "utf8"),
       );

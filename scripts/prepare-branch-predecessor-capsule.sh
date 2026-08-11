@@ -12,12 +12,22 @@ CACHE_ROOT="${5:?absolute cache root is required}"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
 [[ "$BUILDER_COMMIT" =~ ^[a-f0-9]{40}$ && "$BUILDER_TREE" =~ ^[a-f0-9]{40}$ ]]
 [[ "$CACHE_ROOT" == /* ]]
-test "$(git -C "$ROOT_DIR" rev-parse HEAD)" = "$BUILDER_COMMIT"
-test "$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')" = "$BUILDER_TREE"
 test -z "$(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=normal)"
+FIXTURE_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+FIXTURE_TREE="$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')"
+git -C "$ROOT_DIR" merge-base --is-ancestor "$BUILDER_COMMIT" "$FIXTURE_COMMIT"
+unexpected_changes="$(
+  git -C "$ROOT_DIR" diff --name-only "$BUILDER_COMMIT..$FIXTURE_COMMIT" | \
+    grep -Ev '^(scripts/test-lifecycle-local-acceptance\.sh|scripts/docker/protected-local-systemd/lifecycle-acceptance\.sh|scripts/lifecycle-version-neutral\.test\.ts|scripts/build-public-predecessor-capsule\.mjs|scripts/build-public-predecessor-capsule\.test\.ts|scripts/prepare-branch-predecessor-capsule\.sh)$' || true
+)"
+[[ -z "$unexpected_changes" ]] || {
+  echo "Predecessor capsule reuse rejected product changes:" >&2
+  printf '%s\n' "$unexpected_changes" >&2
+  exit 1
+}
 
-target="$CACHE_ROOT/$VERSION/$PROFILE/$BUILDER_COMMIT-$BUILDER_TREE"
-lock="$CACHE_ROOT/$VERSION/$PROFILE/.${BUILDER_COMMIT}-${BUILDER_TREE}.lock"
+target="$CACHE_ROOT/$VERSION/$PROFILE/$BUILDER_COMMIT-$BUILDER_TREE/$FIXTURE_COMMIT-$FIXTURE_TREE"
+lock="$CACHE_ROOT/$VERSION/$PROFILE/.${BUILDER_COMMIT}-${BUILDER_TREE}-${FIXTURE_COMMIT}-${FIXTURE_TREE}.lock"
 mkdir -p "$(dirname "$target")"
 exec {lock_fd}>"$lock"
 flock "$lock_fd"

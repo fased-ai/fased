@@ -115,6 +115,13 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(wrapper).toContain('git -C "$ROOT_DIR" merge-base --is-ancestor "$COMMIT" HEAD');
     expect(wrapper).toContain('git -C "$ROOT_DIR" archive "$FIXTURE_SOURCE_COMMIT"');
     expect(wrapper).toContain("Branch artifact reuse rejected product changes:");
+    const capsuleWrapper = await readFile(
+      resolve(repoRoot, "scripts/prepare-branch-predecessor-capsule.sh"),
+      "utf8",
+    );
+    expect(capsuleWrapper).toContain('FIXTURE_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"');
+    expect(capsuleWrapper).toContain("Predecessor capsule reuse rejected product changes:");
+    expect(capsuleWrapper).toContain("$FIXTURE_COMMIT-$FIXTURE_TREE");
     expect(wrapper).not.toContain(":/repo:");
   });
 });

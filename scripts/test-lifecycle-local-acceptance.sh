@@ -585,7 +585,7 @@ if [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ]]; then
   }
   unexpected_fixture_changes="$(
     git -C "$ROOT_DIR" diff --name-only "$COMMIT..HEAD" | \
-      grep -Ev '^(scripts/test-lifecycle-local-acceptance\.sh|scripts/docker/protected-local-systemd/lifecycle-acceptance\.sh|scripts/lifecycle-version-neutral\.test\.ts)$' || true
+      grep -Ev '^(scripts/test-lifecycle-local-acceptance\.sh|scripts/docker/protected-local-systemd/lifecycle-acceptance\.sh|scripts/lifecycle-version-neutral\.test\.ts|scripts/build-public-predecessor-capsule\.mjs|scripts/build-public-predecessor-capsule\.test\.ts|scripts/prepare-branch-predecessor-capsule\.sh)$' || true
   )"
   [[ -z "$unexpected_fixture_changes" ]] || {
     echo "Branch artifact reuse rejected product changes:" >&2
