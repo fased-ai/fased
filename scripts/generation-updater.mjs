@@ -582,6 +582,10 @@ async function runGenerationTransaction({
         { timeoutMs },
       );
     }
+    const boundedResponse = parseBoundedLifecycleResponse(result.stdout);
+    if (!result.ok && boundedResponse) {
+      throwBoundedLifecycleOutcome(boundedResponse);
+    }
     if (!result.ok) {
       const detail = result.stderr.trim() || result.stdout.trim() || "no subprocess diagnostic";
       const exit = Number.isInteger(result.code) ? String(result.code) : "none";
@@ -591,16 +595,7 @@ async function runGenerationTransaction({
       );
     }
     const response = JSON.parse(result.stdout.trim());
-    if (response.outcome === "ROLLED_BACK") {
-      const detail =
-        typeof response.detail === "string" && response.detail ? `: ${response.detail}` : "";
-      throw new Error(`target release failed and was rolled back${detail}`);
-    }
-    if (response.outcome === "RECOVERY_PENDING") {
-      const detail =
-        typeof response.detail === "string" && response.detail ? `: ${response.detail}` : "";
-      throw new Error(`lifecycle recovery is pending${detail}`);
-    }
+    throwBoundedLifecycleOutcome(response);
     if (!new Set(["UPDATED", "COMMITTED", "ALREADY_CURRENT"]).has(response.outcome)) {
       throw new Error("lifecycle supervisor returned an invalid convergence outcome");
     }
@@ -614,6 +609,26 @@ async function runGenerationTransaction({
       await fsp.rm(initializerStage.directory, { recursive: true, force: true });
     }
     await fsp.rm(temporary, { recursive: true, force: true });
+  }
+}
+
+function parseBoundedLifecycleResponse(stdout) {
+  try {
+    const response = JSON.parse(stdout.trim());
+    return new Set(["ROLLED_BACK", "RECOVERY_PENDING"]).has(response?.outcome) ? response : null;
+  } catch {
+    return null;
+  }
+}
+
+function throwBoundedLifecycleOutcome(response) {
+  const detail =
+    typeof response?.detail === "string" && response.detail ? `: ${response.detail}` : "";
+  if (response?.outcome === "ROLLED_BACK") {
+    throw new Error(`target release failed and was rolled back${detail}`);
+  }
+  if (response?.outcome === "RECOVERY_PENDING") {
+    throw new Error(`lifecycle recovery is pending${detail}`);
   }
 }
 
