@@ -6,7 +6,6 @@ RUNTIME="${FASED_CONTAINER_RUNTIME:-podman}"
 DISTROS="${FASED_HOSTING_SYSTEMD_FIXTURE_DISTROS:-ubuntu}"
 ARTIFACT_DIR="${FASED_HOSTING_SYSTEMD_FIXTURE_ARTIFACT_DIR:-}"
 FIXTURE_DIR="$ROOT_DIR/scripts/docker/hosting-systemd"
-EXECUTABLE_DIR=""
 
 [[ -n "$ARTIFACT_DIR" && -d "$ARTIFACT_DIR" ]] || {
   echo "FASED_HOSTING_SYSTEMD_FIXTURE_ARTIFACT_DIR must name an existing candidate artifact directory." >&2
@@ -53,24 +52,6 @@ while IFS=$'\t' read -r name expected_size expected_digest; do
   }
 done < <(jq -er '.artifacts[] | [.name, (.size|tostring), .sha256] | @tsv' "$descriptor")
 
-generation="fased-generation-linux-x64-v${version}.tar.gz"
-dependency="$(jq -er --arg version "$version" \
-  '.artifacts[].name | select(startswith("fased-hosted-deps-linux-x64-") and endswith(".tar.gz"))' \
-  "$descriptor" | head -n 1)"
-[[ -f "$ARTIFACT_DIR/$generation" && -f "$ARTIFACT_DIR/$dependency" ]] || {
-  echo "The exact generation and dependency archives are required." >&2
-  exit 1
-}
-
-# GitHub artifact downloads intentionally do not preserve executable modes.
-# Keep the verified candidate directory immutable and stage only the lifecycle
-# executable with its required mode for the container proof.
-EXECUTABLE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-hosting-executable.XXXXXX")"
-install -m 0755 "$ARTIFACT_DIR/fased-lifecycled-linux-amd64" \
-  "$EXECUTABLE_DIR/fased-lifecycled-linux-amd64"
-cmp -s "$ARTIFACT_DIR/fased-lifecycled-linux-amd64" \
-  "$EXECUTABLE_DIR/fased-lifecycled-linux-amd64"
-
 cleanup_names=()
 cleanup() {
   local status=$?
@@ -82,9 +63,6 @@ cleanup() {
   for name in "${cleanup_names[@]}"; do
     "$RUNTIME" rm -f "$name" >/dev/null 2>&1 || true
   done
-  if [[ -n "$EXECUTABLE_DIR" ]]; then
-    rm -rf -- "$EXECUTABLE_DIR"
-  fi
 }
 trap cleanup EXIT INT TERM HUP
 
@@ -103,16 +81,13 @@ for distro in "${distro_list[@]}"; do
     --name "$name" \
     --privileged \
     --systemd=always \
-    --tmpfs /run \
+    --tmpfs /run:rw,noexec \
     --tmpfs /tmp \
     -e "FASED_FIXTURE_VERSION=$version" \
     -e "FASED_FIXTURE_COMMIT=$commit" \
     -e "FASED_FIXTURE_TREE=$tree" \
-    -e "FASED_FIXTURE_GENERATION=/artifacts/$generation" \
-    -e "FASED_FIXTURE_DEPENDENCY=/artifacts/$dependency" \
     -v "$ROOT_DIR:/repo:ro,Z" \
     -v "$ARTIFACT_DIR:/artifacts:ro,Z" \
-    -v "$EXECUTABLE_DIR:/fixture-bin:ro,Z" \
     "$image" >/dev/null
   ready=0
   for _ in {1..200}; do

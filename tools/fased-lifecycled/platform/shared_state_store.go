@@ -18,6 +18,7 @@ type SharedStateStore interface {
 	Activate(string) error
 	Restore(string) error
 	Discard(string) error
+	Converge() error
 }
 
 type sharedStateRecord struct {
@@ -76,6 +77,35 @@ func (store *DiskSharedStateStore) Activate(transactionID string) error {
 		}
 		if err := os.Chmod(path, mode); err != nil {
 			return errors.Join(err, store.restore(records))
+		}
+	}
+	return nil
+}
+
+func (store *DiskSharedStateStore) Converge() error {
+	records, err := store.discover()
+	if err != nil {
+		return err
+	}
+	configGID, err := canonicalConfigGroupGID(store.resolve(store.Config.OwnerStateRoot), store.Config.Operator.UID)
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		path := store.resolve(record.Path)
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || stat.Uid != record.UID || stat.Gid != record.GID || info.Mode().Perm() != os.FileMode(record.Mode) {
+			return errors.New("shared state changed during onboarding convergence")
+		}
+		if err := os.Chown(path, int(record.UID), int(configGID)); err != nil {
+			return err
+		}
+		if err := os.Chmod(path, sharedStateMode(info.Mode())); err != nil {
+			return err
 		}
 	}
 	return nil

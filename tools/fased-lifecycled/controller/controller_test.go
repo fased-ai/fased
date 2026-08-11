@@ -15,9 +15,9 @@ import (
 
 type fakeOnboardingCompleter struct{ calls int }
 
-func (value *fakeOnboardingCompleter) CompleteOnboarding(context.Context) error {
+func (value *fakeOnboardingCompleter) CompleteOnboarding(context.Context) (engine.Result, error) {
 	value.calls++
-	return nil
+	return engine.Result{Outcome: engine.OutcomeAlreadyCurrent, Phase: model.PhaseCommitted}, nil
 }
 
 func TestClientWaitsForTargetControllerSocketWithoutReplayingRequest(t *testing.T) {
@@ -92,7 +92,7 @@ func TestServiceCompletesOnboardingOnlyThroughTypedAdapter(t *testing.T) {
 	completion := &fakeOnboardingCompleter{}
 	service := Service{Engine: &engine.TargetEngine{}, Onboarding: completion}
 	result, err := service.Handle(context.Background(), request{SchemaVersion: 1, Operation: operationCompleteOnboarding})
-	if err != nil || completion.calls != 1 || result.Outcome != engine.OutcomeUpdated || result.Phase != model.PhaseCommitted {
+	if err != nil || completion.calls != 1 || result.Outcome != engine.OutcomeAlreadyCurrent || result.Phase != model.PhaseCommitted {
 		t.Fatalf("unexpected onboarding completion: result=%+v calls=%d err=%v", result, completion.calls, err)
 	}
 	if _, err := service.Handle(context.Background(), request{SchemaVersion: 1, Operation: operationCompleteOnboarding, TransactionID: "caller"}); err == nil {

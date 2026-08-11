@@ -11,6 +11,9 @@ const releaseWorkflow = read(".github/workflows/hosted-runtime-release.yml");
 const ciWorkflow = read(".github/workflows/ci.yml");
 const hostingFixture = read("scripts/test-go-hosting-systemd-container.sh");
 const hostingRunner = read("scripts/docker/hosting-systemd/go-cutover.sh");
+const hostingUbuntu = read("scripts/docker/hosting-systemd/Containerfile.ubuntu");
+const hostingRocky = read("scripts/docker/hosting-systemd/Containerfile.rocky");
+const hostedArtifactBuilder = read("scripts/build-hosted-runtime-artifact.ts");
 
 const removedMutationOwners = [
   "scripts/fased-managed-updater-core.mjs",
@@ -75,15 +78,47 @@ describe("attested Go lifecycle artifact layout", () => {
     expect(releaseWorkflow).not.toContain("scripts/test-hosting-systemd-container.sh");
   });
 
-  it("stages the verified lifecycle binary as executable without mutating candidate bytes", () => {
-    expect(hostingFixture).toContain(
-      'install -m 0755 "$ARTIFACT_DIR/fased-lifecycled-linux-amd64"',
-    );
+  it("mounts immutable candidate bytes without a direct lifecycle-binary bypass", () => {
     expect(hostingFixture).toContain('-v "$ARTIFACT_DIR:/artifacts:ro,Z"');
-    expect(hostingFixture).toContain('-v "$EXECUTABLE_DIR:/fixture-bin:ro,Z"');
-    expect(hostingFixture).toContain('cmp -s "$ARTIFACT_DIR/fased-lifecycled-linux-amd64"');
-    expect(hostingRunner).toContain('lifecycled="/fixture-bin/fased-lifecycled-linux-amd64"');
-    expect(hostingRunner).not.toContain('lifecycled="/artifacts/fased-lifecycled-linux-amd64"');
+    expect(hostingFixture).not.toContain("/fixture-bin");
+    expect(hostingRunner).not.toContain('lifecycled="');
+    expect(hostingRunner).toContain('bash "$candidate_installer"');
+  });
+
+  it("proves the exact stamped Hosting installer provisions Node on a clean host", () => {
+    expect(hostingUbuntu).not.toContain("nodejs.org/dist");
+    expect(hostingRocky).not.toContain("nodejs.org/dist");
+    expect(hostingRunner).toContain('candidate_installer="/artifacts/install.sh"');
+    expect(hostingRunner).toContain("! command -v node");
+    expect(hostingRunner).toContain('require("node:sqlite")');
+    const installCase = hostingRunner.slice(
+      hostingRunner.indexOf("  install)"),
+      hostingRunner.indexOf("  verify-reboot)"),
+    );
+    expect(installCase).toContain("install_release_transport_fixture");
+    expect(installCase).toContain("run_public_installer");
+    expect(installCase).toContain("assert_already_current_receipts /tmp/fased-hosting-noop.out");
+    expect(hostingRunner).toContain("length == 2");
+    expect(hostingRunner).toContain(".[0].version == $version");
+    expect(hostingRunner).toContain('.[1].outcome == "ALREADY_CURRENT"');
+    expect(installCase).not.toContain("initialize");
+  });
+
+  it("runs Local and Hosting lifecycle fixtures with a non-executable runtime mount", () => {
+    const localFixture = fs.readFileSync(
+      path.join(root, "scripts/test-protected-local-systemd-container.sh"),
+      "utf8",
+    );
+    expect(localFixture).toContain("--tmpfs /run:rw,noexec");
+    expect(hostingFixture).toContain("--tmpfs /run:rw,noexec");
+  });
+
+  it("keeps packaged CLI smoke output deterministic under Vitest", () => {
+    expect(hostedArtifactBuilder).toContain('FASED_TEST_RUNTIME_LOG: "1"');
+    expect(hostedArtifactBuilder).toContain('VITEST: ""');
+    expect(hostedArtifactBuilder).toContain("stdoutHandle.fd");
+    expect(hostedArtifactBuilder).toContain("stderrHandle.fd");
+    expect(hostedArtifactBuilder).toContain('includes("No plugin issues detected.")');
   });
 
   it("does not route merged-main CI through the deleted legacy Hosting runner", () => {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 
+	"fased-lifecycled/engine"
 	"fased-lifecycled/model"
 )
 
@@ -50,39 +51,52 @@ type TargetAdapter struct {
 	StableDaemonPath string
 }
 
-func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) error {
-	if adapter == nil || (adapter.Config.Profile != model.ProfileProtectedLocal && adapter.Config.Profile != model.ProfileHosting) || adapter.Manifest == nil || adapter.Systemd == nil || adapter.Health == nil {
-		return errors.New("lifecycle onboarding adapter is incomplete")
+func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) (engine.Result, error) {
+	if adapter == nil || (adapter.Config.Profile != model.ProfileProtectedLocal && adapter.Config.Profile != model.ProfileHosting) || adapter.Manifest == nil || adapter.SharedState == nil || adapter.Systemd == nil || adapter.Health == nil {
+		return engine.Result{}, errors.New("lifecycle onboarding adapter is incomplete")
 	}
 	manifest, _, err := adapter.Manifest.ReadManifest()
 	if err != nil {
-		return err
+		return engine.Result{}, err
 	}
 	if err := manifest.Validate(); err != nil || manifest.Profile != adapter.Config.Profile || manifest.ActiveGeneration == nil {
-		return errors.New("lifecycle onboarding requires a committed active generation")
+		return engine.Result{}, errors.New("lifecycle onboarding requires a committed active generation")
 	}
 	configured, err := adapter.Config.Identity()
 	if err != nil {
-		return err
+		return engine.Result{}, err
 	}
 	want, _ := configured.Digest(adapter.Config.Profile)
 	got, digestErr := manifest.Platform.Digest(manifest.Profile)
 	if digestErr != nil || got != want {
-		return errors.New("lifecycle onboarding platform identity mismatch")
+		return engine.Result{}, errors.New("lifecycle onboarding platform identity mismatch")
 	}
 	if err := validateOnboardingConfig(adapter.Config); err != nil {
-		return err
+		return engine.Result{}, err
+	}
+	if err := adapter.SharedState.Converge(); err != nil {
+		return engine.Result{}, fmt.Errorf("onboarding shared state is unsafe: %w", err)
 	}
 	if err := adapter.Systemd.IsActive(ctx, adapter.Identity.Services["signer"]); err != nil {
-		return fmt.Errorf("signer is not active before onboarding completion: %w", err)
+		return engine.Result{}, fmt.Errorf("signer is not active before onboarding completion: %w", err)
 	}
-	if err := adapter.Systemd.Start(ctx, adapter.Identity.Services["gateway"]); err != nil {
-		return err
+	gateway := adapter.Identity.Services["gateway"]
+	if err := adapter.Systemd.IsActive(ctx, gateway); err == nil {
+		if err := adapter.Health.Verify(ctx, adapter.Config.GatewayPort, *manifest.ActiveGeneration); err != nil {
+			return engine.Result{}, fmt.Errorf("active Gateway is unhealthy during onboarding completion: %w", err)
+		}
+		return engine.Result{Outcome: engine.OutcomeAlreadyCurrent, Phase: model.PhaseCommitted}, nil
 	}
-	if err := adapter.Systemd.IsActive(ctx, adapter.Identity.Services["gateway"]); err != nil {
-		return fmt.Errorf("Gateway is not active after onboarding completion: %w", err)
+	if err := adapter.Systemd.Start(ctx, gateway); err != nil {
+		return engine.Result{}, err
 	}
-	return adapter.Health.Verify(ctx, adapter.Config.GatewayPort, *manifest.ActiveGeneration)
+	if err := adapter.Systemd.IsActive(ctx, gateway); err != nil {
+		return engine.Result{}, fmt.Errorf("Gateway is not active after onboarding completion: %w", err)
+	}
+	if err := adapter.Health.Verify(ctx, adapter.Config.GatewayPort, *manifest.ActiveGeneration); err != nil {
+		return engine.Result{}, err
+	}
+	return engine.Result{Outcome: engine.OutcomeUpdated, Phase: model.PhaseCommitted}, nil
 }
 
 func validateOnboardingConfig(config Config) error {

@@ -61,36 +61,55 @@ async function run(
   extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<RunResult> {
   const startedAt = Date.now();
+  const captureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "fased-command-output-"));
+  const stdoutPath = path.join(captureRoot, "stdout");
+  const stderrPath = path.join(captureRoot, "stderr");
+  const stdoutHandle = await fs.open(stdoutPath, "w", 0o600);
+  const stderrHandle = await fs.open(stderrPath, "w", 0o600);
   let stdout = "";
   let stderr = "";
+  let failure: unknown;
   try {
-    const result = await execFileAsync(command, args, {
-      cwd,
-      env: {
-        ...process.env,
-        CI: "1",
-        COREPACK_ENABLE_DOWNLOAD_PROMPT: "0",
-        ...extraEnv,
-      },
-      maxBuffer: 16 * 1024 * 1024,
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(command, args, {
+        cwd,
+        env: {
+          ...process.env,
+          CI: "1",
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0",
+          ...extraEnv,
+        },
+        stdio: ["ignore", stdoutHandle.fd, stderrHandle.fd],
+      });
+      child.once("error", reject);
+      child.once("close", (code, signal) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        reject(
+          new Error(`${command} exited with ${code ?? "no status"}${signal ? ` (${signal})` : ""}`),
+        );
+      });
     });
-    stdout = result.stdout;
-    stderr = result.stderr;
   } catch (error) {
-    const failed = error as Error & { stdout?: string; stderr?: string };
-    if (failed.stdout?.trim()) {
-      process.stdout.write(failed.stdout);
-    }
-    if (failed.stderr?.trim()) {
-      process.stderr.write(failed.stderr);
-    }
-    throw error;
+    failure = error;
+  } finally {
+    await Promise.all([stdoutHandle.close(), stderrHandle.close()]);
+    [stdout, stderr] = await Promise.all([
+      fs.readFile(stdoutPath, "utf8"),
+      fs.readFile(stderrPath, "utf8"),
+    ]);
+    await fs.rm(captureRoot, { recursive: true, force: true });
   }
   if (stdout.trim()) {
     process.stdout.write(stdout);
   }
   if (stderr.trim()) {
     process.stderr.write(stderr);
+  }
+  if (failure) {
+    throw failure;
   }
   return { durationMs: Date.now() - startedAt, stdout, stderr };
 }
@@ -441,6 +460,10 @@ async function main(): Promise<void> {
       HOME: smokeHome,
       FASED_STATE_DIR: smokeStateDir,
       FASED_CONFIG_PATH: path.join(smokeStateDir, "fased.json"),
+      // Vitest suppresses defaultRuntime.log unless this explicit test boundary
+      // requests output. Artifact validation must not depend on ambient VITEST.
+      FASED_TEST_RUNTIME_LOG: "1",
+      VITEST: "",
     };
     await run(
       process.execPath,

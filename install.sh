@@ -328,8 +328,9 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     fi
     [[ "$auto_install" -eq 1 ]] || return 1
     if command -v apt-get >/dev/null 2>&1; then
-      bootstrap_as_root apt-get update
-      bootstrap_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates
+      bootstrap_as_root apt-get update -qq
+      bootstrap_as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+        apt-get install -y -qq curl ca-certificates >/dev/null
       local keyring_tmp=""
       local source_tmp=""
       keyring_tmp="$(mktemp)"
@@ -340,28 +341,29 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       bootstrap_as_root install -m 0644 "$keyring_tmp" /etc/apt/keyrings/githubcli-archive-keyring.gpg
       bootstrap_as_root install -m 0644 "$source_tmp" /etc/apt/sources.list.d/github-cli.list
       rm -f -- "$keyring_tmp" "$source_tmp"
-      bootstrap_as_root apt-get update
-      bootstrap_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y gh
+      bootstrap_as_root apt-get update -qq
+      bootstrap_as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+        apt-get install -y -qq gh >/dev/null
     elif command -v dnf5 >/dev/null 2>&1; then
-      bootstrap_as_root dnf5 install -y dnf5-plugins
+      bootstrap_as_root dnf5 install -y -q dnf5-plugins
       bootstrap_as_root dnf5 config-manager addrepo \
         --from-repofile=https://cli.github.com/packages/rpm/gh-cli.repo
-      bootstrap_as_root dnf5 install -y gh
+      bootstrap_as_root dnf5 install -y -q gh
     elif command -v dnf >/dev/null 2>&1; then
-      bootstrap_as_root dnf install -y 'dnf-command(config-manager)'
+      bootstrap_as_root dnf install -y -q 'dnf-command(config-manager)'
       bootstrap_as_root dnf config-manager --add-repo \
         https://cli.github.com/packages/rpm/gh-cli.repo
-      bootstrap_as_root dnf install -y gh
+      bootstrap_as_root dnf install -y -q gh
     elif command -v yum >/dev/null 2>&1; then
       bootstrap_as_root yum install -y yum-utils >/dev/null 2>&1 || true
       bootstrap_as_root yum-config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo >/dev/null 2>&1 || true
-      bootstrap_as_root yum install -y gh
+      bootstrap_as_root yum install -y -q gh
     elif command -v zypper >/dev/null 2>&1; then
-      bootstrap_as_root zypper --non-interactive install gh
+      bootstrap_as_root zypper --non-interactive --quiet install gh
     elif command -v apk >/dev/null 2>&1; then
-      bootstrap_as_root apk add --no-cache github-cli
+      bootstrap_as_root apk add --no-cache --quiet github-cli
     elif command -v pacman >/dev/null 2>&1; then
-      bootstrap_as_root pacman -Sy --needed --noconfirm github-cli
+      bootstrap_as_root pacman -Sy --needed --noconfirm --quiet github-cli
     elif command -v brew >/dev/null 2>&1; then
       brew install gh || brew upgrade gh
     else
@@ -369,6 +371,120 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     fi
     hash -r 2>/dev/null || true
     command -v gh >/dev/null 2>&1 && gh attestation verify --help >/dev/null 2>&1
+  }
+
+  select_root_controlled_bootstrap_node() {
+    local candidate=""
+    local resolved=""
+    local owner=""
+    local mode=""
+    for candidate in \
+      /usr/bin/node-24 /usr/bin/node24 /usr/bin/node-22 /usr/bin/node22 \
+      /usr/local/bin/node-24 /usr/local/bin/node24 \
+      /usr/local/bin/node-22 /usr/local/bin/node22 \
+      /usr/local/bin/node /usr/bin/node /usr/bin/nodejs; do
+      [[ -x "$candidate" ]] || continue
+      resolved="$(readlink -f -- "$candidate" 2>/dev/null || true)"
+      [[ -n "$resolved" && -f "$resolved" && -x "$resolved" ]] || continue
+      read -r owner mode < <(stat -c '%u %a' "$resolved" 2>/dev/null || true)
+      [[ "$owner" == "0" && "$mode" =~ ^[0-7]{3,4}$ ]] || continue
+      (( (8#$mode & 0022) == 0 )) || continue
+      if "$resolved" -e '
+        const [a, b] = process.versions.node.split(".").map(Number);
+        if (a < 22 || (a === 22 && b < 14)) process.exit(1);
+        require("node:sqlite");
+      ' >/dev/null 2>&1; then
+        printf '%s\n' "$resolved"
+        return 0
+      fi
+    done
+    return 1
+  }
+
+  install_root_controlled_bootstrap_node() {
+    if select_root_controlled_bootstrap_node >/dev/null 2>&1; then
+      return 0
+    fi
+    [[ "$auto_install" -eq 1 ]] || return 1
+
+    local setup_script=""
+    local package_manager=""
+    if command -v apt-get >/dev/null 2>&1; then
+      bootstrap_as_root apt-get update -qq
+      bootstrap_as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+        apt-get install -y -qq ca-certificates curl gnupg >/dev/null
+      setup_script="$(mktemp)"
+      if ! curl -q -fsSL --proto '=https' --tlsv1.2 \
+        https://deb.nodesource.com/setup_24.x -o "$setup_script" || \
+        ! bootstrap_as_root env DEBIAN_FRONTEND=noninteractive bash "$setup_script" \
+          >/dev/null; then
+        rm -f -- "$setup_script"
+        return 1
+      fi
+      rm -f -- "$setup_script"
+      bootstrap_as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+        apt-get install -y -qq nodejs >/dev/null
+    else
+      for package_manager in dnf5 dnf yum; do
+        command -v "$package_manager" >/dev/null 2>&1 && break
+        package_manager=""
+      done
+      if [[ -n "$package_manager" ]]; then
+        bootstrap_as_root "$package_manager" install -y -q ca-certificates curl
+        setup_script="$(mktemp)"
+        if ! curl -q -fsSL --proto '=https' --tlsv1.2 \
+          https://rpm.nodesource.com/setup_24.x -o "$setup_script" || \
+          ! bootstrap_as_root bash "$setup_script" >/dev/null; then
+          rm -f -- "$setup_script"
+          return 1
+        fi
+        rm -f -- "$setup_script"
+        bootstrap_as_root "$package_manager" install -y -q nodejs
+      elif command -v zypper >/dev/null 2>&1; then
+        bootstrap_as_root zypper --non-interactive --quiet install nodejs24 || \
+          bootstrap_as_root zypper --non-interactive --quiet install nodejs22
+      elif command -v apk >/dev/null 2>&1; then
+        bootstrap_as_root apk add --no-cache --quiet nodejs-current || \
+          bootstrap_as_root apk add --no-cache --quiet nodejs
+      elif command -v pacman >/dev/null 2>&1; then
+        bootstrap_as_root pacman -Sy --needed --noconfirm --quiet nodejs
+      else
+        return 1
+      fi
+    fi
+    hash -r 2>/dev/null || true
+    select_root_controlled_bootstrap_node >/dev/null 2>&1
+  }
+
+  prepare_lifecycle_bootstrap_exec_root() {
+    local parent="/usr/local/libexec"
+    local root="${parent}/fased-installer"
+    local candidate=""
+    local owner=""
+    local mode=""
+
+    for candidate in /usr /usr/local; do
+      [[ -d "$candidate" && ! -L "$candidate" ]] || return 1
+      read -r owner mode < <(stat -c '%u %a' "$candidate" 2>/dev/null || true)
+      [[ "$owner" == "0" && "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+      (( (8#$mode & 0022) == 0 )) || return 1
+    done
+
+    if [[ ! -e "$parent" && ! -L "$parent" ]]; then
+      bootstrap_as_root install -d -m 0755 -o root -g root "$parent"
+    fi
+    [[ -d "$parent" && ! -L "$parent" ]] || return 1
+    read -r owner mode < <(stat -c '%u %a' "$parent" 2>/dev/null || true)
+    [[ "$owner" == "0" && "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+    (( (8#$mode & 0022) == 0 )) || return 1
+
+    if [[ ! -e "$root" && ! -L "$root" ]]; then
+      bootstrap_as_root install -d -m 0700 -o root -g root "$root"
+    fi
+    [[ -d "$root" && ! -L "$root" ]] || return 1
+    read -r owner mode < <(stat -c '%u %a' "$root" 2>/dev/null || true)
+    [[ "$owner" == "0" && "$mode" == "700" ]] || return 1
+    printf '%s\n' "$root"
   }
 
   resolve_public_latest_release_tag() {
@@ -464,8 +580,9 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
         packages+=(util-linux)
       fi
       if command -v apt-get >/dev/null 2>&1; then
-        apt-get update
-        env DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
+        apt-get update -qq
+        env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+          apt-get install -y -qq "${packages[@]}" >/dev/null
       elif command -v dnf >/dev/null 2>&1; then
         dnf install -y "${packages[@]}"
       elif command -v dnf5 >/dev/null 2>&1; then
@@ -491,6 +608,16 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       echo "GitHub CLI with 'gh attestation verify' is required before privileged Hosting setup." >&2
       echo "Install GitHub CLI from the provider console, then retry the exact release command." >&2
       exit 1
+    fi
+
+    local bootstrap_node=""
+    if ! bootstrap_node="$(select_root_controlled_bootstrap_node)"; then
+      if ! install_root_controlled_bootstrap_node || \
+        ! bootstrap_node="$(select_root_controlled_bootstrap_node)"; then
+        echo "A root-controlled Node.js 24 runtime is required before release evidence verification." >&2
+        echo "Automatic Node installation failed; install Node.js 24 from the provider root console, then retry the exact command." >&2
+        exit 1
+      fi
     fi
 
     local release_version="${hosting_release#v}"
@@ -578,14 +705,8 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       local lifecycle_owner_state="/home/${lifecycle_operator}/.fased"
       local lifecycle_port="${FASED_GATEWAY_PORT:-18789}"
       local lifecycle_node=""
-      local lifecycle_node_candidate=""
-      for lifecycle_node_candidate in /usr/bin/node-24 /usr/bin/node-22 /usr/local/bin/node /usr/bin/node; do
-        if [[ -x "$lifecycle_node_candidate" ]] && \
-          "$lifecycle_node_candidate" -e 'const [a,b]=process.versions.node.split(".").map(Number);if(a<22||(a===22&&b<14))process.exit(1);require("node:sqlite")' >/dev/null 2>&1; then
-          lifecycle_node="$lifecycle_node_candidate"
-          break
-        fi
-      done
+      local lifecycle_exec_root=""
+      lifecycle_node="$(select_root_controlled_bootstrap_node 2>/dev/null || true)"
       if [[ "$protected_local_bootstrap" -eq 1 ]]; then
         lifecycle_profile="protected-local"
         lifecycle_instance=""
@@ -597,6 +718,11 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
         echo "A compatible root-controlled Node.js runtime is required to enter the verified lifecycle bundle." >&2
         return 1
       }
+      lifecycle_exec_root="$(prepare_lifecycle_bootstrap_exec_root)" || {
+        echo "A secure root-controlled lifecycle executable directory is required." >&2
+        return 1
+      }
+      [[ "$lifecycle_exec_root" == "/usr/local/libexec/fased-installer" ]] || return 1
       local lifecycle_result=""
       if ! lifecycle_result="$(NODE_PATH="$selected_root_store/verified-dependencies/node_modules" \
         "$lifecycle_node" \
@@ -781,15 +907,15 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       fi
     fi
 
-    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-hosted-release-v2.json" -o "$release_manifest"
-    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-hosted-release-v2.json.attestation.json" -o "$release_manifest_bundle"
-    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-lifecycle-trust-v1.json" -o "$lifecycle_metadata"
-    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-lifecycle-trust-v1.json.attestation.json" -o "$lifecycle_metadata_bundle"
-    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-release-evidence.mjs" -o "$evidence_verifier"
-    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-provenance-v1.intoto.json" -o "$provenance"
-    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-provenance-v1.intoto.json.attestation.json" -o "$provenance_bundle"
-    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-sbom-v1.spdx.json" -o "$sbom"
-    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-vex-v1.openvex.json" -o "$vex"
+    curl -q -fsSL --proto '=https' --tlsv1.2 "$release_url/fased-hosted-release-v2.json" -o "$release_manifest"
+    curl -q -fsSL --proto '=https' --tlsv1.2 "$release_url/fased-hosted-release-v2.json.attestation.json" -o "$release_manifest_bundle"
+    curl -q -fsSL --proto '=https' --tlsv1.2 "$release_url/fased-lifecycle-trust-v1.json" -o "$lifecycle_metadata"
+    curl -q -fsSL --proto '=https' --tlsv1.2 "$release_url/fased-lifecycle-trust-v1.json.attestation.json" -o "$lifecycle_metadata_bundle"
+    curl -q -fsSL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-release-evidence.mjs" -o "$evidence_verifier"
+    curl -q -fsSL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-provenance-v1.intoto.json" -o "$provenance"
+    curl -q -fsSL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-provenance-v1.intoto.json.attestation.json" -o "$provenance_bundle"
+    curl -q -fsSL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-sbom-v1.spdx.json" -o "$sbom"
+    curl -q -fsSL --proto '=https' --tlsv1.2 "$release_url/fased-privileged-vex-v1.openvex.json" -o "$vex"
     verify_release_attestation_source \
       "$release_manifest" "$release_manifest_bundle" "$release_version" || {
       echo "Release manifest attestation verification failed." >&2
@@ -926,12 +1052,7 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
       echo "Privileged release evidence verifier does not match lifecycle trust metadata." >&2
       exit 1
     }
-    local evidence_node=""
-    evidence_node="${protected_local_node_binary:-$(command -v node || true)}"
-    [[ -n "$evidence_node" && -x "$evidence_node" ]] || {
-      echo "A root-controlled Node.js runtime is required to verify release evidence." >&2
-      exit 1
-    }
+    local evidence_node="$bootstrap_node"
     "$evidence_node" "$evidence_verifier" verify \
       --release-manifest "$release_manifest" \
       --lifecycle-metadata "$lifecycle_metadata" \
@@ -951,9 +1072,9 @@ if [[ "$install_entry_is_stream" -eq 1 || "$install_entry_local_file_bootstrap" 
     archive="${preflight}/${asset}"
     dependency_archive="${preflight}/${dependency_asset}"
     signer_binary="${preflight}/${signer_asset}"
-    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/$asset" -o "$archive"
-    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/$dependency_asset" -o "$dependency_archive"
-    curl -q -fL --proto '=https' --tlsv1.2 "$release_url/$signer_asset" -o "$signer_binary"
+    curl -q -fsSL --proto '=https' --tlsv1.2 "$release_url/$asset" -o "$archive"
+    curl -q -fsSL --proto '=https' --tlsv1.2 "$release_url/$dependency_asset" -o "$dependency_archive"
+    curl -q -fsSL --proto '=https' --tlsv1.2 "$release_url/$signer_asset" -o "$signer_binary"
     actual="$(sha256sum "$archive" | awk '{print tolower($1)}')"
     local dependency_actual=""
     local signer_actual=""
