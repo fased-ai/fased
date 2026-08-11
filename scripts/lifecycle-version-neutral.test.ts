@@ -106,7 +106,10 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(wrapper).toContain(
       "Parallel protected Local proof stopped on the first failed scenario.",
     );
-    expect(wrapper).toContain('git -C "$ROOT_DIR" archive "$COMMIT"');
+    expect(wrapper).toContain('FIXTURE_SOURCE_COMMIT="$COMMIT"');
+    expect(wrapper).toContain('git -C "$ROOT_DIR" merge-base --is-ancestor "$COMMIT" HEAD');
+    expect(wrapper).toContain('git -C "$ROOT_DIR" archive "$FIXTURE_SOURCE_COMMIT"');
+    expect(wrapper).toContain("Branch artifact reuse rejected product changes:");
     expect(wrapper).not.toContain(":/repo:");
   });
 });

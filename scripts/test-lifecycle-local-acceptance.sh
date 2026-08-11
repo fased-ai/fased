@@ -577,7 +577,25 @@ else
 fi
 
 FIXTURE_TOOLS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-lifecycle-fixture-tools.XXXXXX")"
-git -C "$ROOT_DIR" archive "$COMMIT" -- \
+FIXTURE_SOURCE_COMMIT="$COMMIT"
+if [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ]]; then
+  git -C "$ROOT_DIR" merge-base --is-ancestor "$COMMIT" HEAD || {
+    echo "A branch artifact can reuse only descendant fixture corrections." >&2
+    exit 1
+  }
+  unexpected_fixture_changes="$(
+    git -C "$ROOT_DIR" diff --name-only "$COMMIT..HEAD" | \
+      grep -Ev '^(scripts/test-lifecycle-local-acceptance\.sh|scripts/docker/protected-local-systemd/lifecycle-acceptance\.sh|scripts/lifecycle-version-neutral\.test\.ts)$' || true
+  )"
+  [[ -z "$unexpected_fixture_changes" ]] || {
+    echo "Branch artifact reuse rejected product changes:" >&2
+    printf '%s\n' "$unexpected_fixture_changes" >&2
+    exit 1
+  }
+  FIXTURE_SOURCE_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+  echo "branch artifact reuse: product=$COMMIT fixture=$FIXTURE_SOURCE_COMMIT"
+fi
+git -C "$ROOT_DIR" archive "$FIXTURE_SOURCE_COMMIT" -- \
   scripts/build-hosted-release-manifest.mjs \
   scripts/signer-protocol-v2.generated.mjs \
   scripts/lifecycle-acceptance-contract.mjs \
