@@ -4,32 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"fased-lifecycled/model"
 	"fased-lifecycled/store"
 )
 
-type ControllerAuthority interface {
-	Stage(context.Context, model.Transaction) error
-	Prepare(context.Context, model.Transaction) error
-	Switch(context.Context, model.Transaction) error
-	Verify(context.Context, model.Transaction, Result) error
-	Commit(context.Context, model.Transaction) error
-	Restore(context.Context, model.Transaction) error
-	Discard(context.Context, model.Transaction) error
-}
-
 type TargetAuthority interface {
 	Run(context.Context, model.Transaction) (Result, error)
 	Commit(context.Context, string) (Result, error)
 	Abort(context.Context, string) (Result, error)
-	Recover(context.Context, string) (Result, error)
+	Recover(context.Context, model.Transaction) (Result, error)
 }
 
 type SupervisorEngine struct {
-	Journal    Journal
-	Controller ControllerAuthority
-	Target     TargetAuthority
+	Journal Journal
+	Target  TargetAuthority
 }
 
 func (engine *SupervisorEngine) Run(ctx context.Context, tx model.Transaction) (Result, error) {
@@ -45,25 +35,8 @@ func (engine *SupervisorEngine) Run(ctx context.Context, tx model.Transaction) (
 	if err := engine.Journal.CommitJournal(store.AuthoritySupervisor, tx); err != nil {
 		return Result{}, err
 	}
-	if err := engine.Controller.Stage(ctx, tx); err != nil {
-		return Result{Outcome: OutcomeRolledBack, Phase: model.PhaseIdle}, err
-	}
 	var err error
 	tx, err = engine.advance(tx, model.PhaseStaged)
-	if err != nil {
-		return Result{}, err
-	}
-	if err := engine.Controller.Prepare(ctx, tx); err != nil {
-		return engine.rollback(ctx, tx, false, err)
-	}
-	tx, err = engine.advance(tx, model.PhasePrepared)
-	if err != nil {
-		return Result{}, err
-	}
-	if err := engine.Controller.Switch(ctx, tx); err != nil {
-		return engine.rollback(ctx, tx, true, err)
-	}
-	tx, err = engine.advance(tx, model.PhaseSwitched)
 	if err != nil {
 		return Result{}, err
 	}
@@ -76,14 +49,15 @@ func (engine *SupervisorEngine) Run(ctx context.Context, tx model.Transaction) (
 			targetErr = errors.New("target controller did not verify its product transaction")
 		}
 		_, _ = engine.Target.Abort(ctx, tx.ID)
-		return engine.rollback(ctx, tx, true, targetErr)
+		return engine.rollback(ctx, tx, targetErr)
 	}
-	if err := engine.Controller.Verify(ctx, tx, targetResult); err != nil {
-		_, abortErr := engine.Target.Abort(ctx, tx.ID)
-		if abortErr != nil {
-			err = errors.Join(err, abortErr)
-		}
-		return engine.rollback(ctx, tx, true, err)
+	tx, err = engine.advance(tx, model.PhasePrepared)
+	if err != nil {
+		return Result{}, err
+	}
+	tx, err = engine.advance(tx, model.PhaseSwitched)
+	if err != nil {
+		return Result{}, err
 	}
 	targetResult, err = engine.Target.Commit(ctx, tx.ID)
 	if err != nil || targetResult.Phase != model.PhaseCommitted {
@@ -95,9 +69,6 @@ func (engine *SupervisorEngine) Run(ctx context.Context, tx model.Transaction) (
 	tx, err = engine.advance(tx, model.PhaseVerified)
 	if err != nil {
 		return Result{}, err
-	}
-	if err := engine.Controller.Commit(ctx, tx); err != nil {
-		return Result{Outcome: OutcomeRecoveryPending, Phase: model.PhaseVerified}, err
 	}
 	tx, err = engine.advance(tx, model.PhaseCommitted)
 	if err != nil {
@@ -116,21 +87,23 @@ func (engine *SupervisorEngine) Recover(ctx context.Context, tx model.Transactio
 	}
 	switch decision.Action {
 	case model.RecoveryNoop:
-		return Result{Outcome: OutcomeRolledBack, Phase: model.PhaseIdle}, nil
+		return engine.rollback(ctx, tx, nil)
 	case model.RecoveryDiscardStaged, model.RecoveryAbortPrepared:
-		return engine.rollback(ctx, tx, false, nil)
-	case model.RecoveryRestorePrevious:
-		targetResult, targetErr := engine.Target.Recover(ctx, tx.ID)
-		if targetErr == nil && targetResult.Phase == model.PhaseCommitted {
-			if verifyErr := engine.Controller.Verify(ctx, tx, targetResult); verifyErr == nil {
-				tx, err = engine.advance(tx, model.PhaseVerified)
-				if err != nil {
-					return Result{}, err
-				}
-				return engine.completeCommit(ctx, tx)
-			}
+		_, abortErr := engine.Target.Abort(ctx, tx.ID)
+		if errors.Is(abortErr, os.ErrNotExist) {
+			abortErr = nil
 		}
-		return engine.rollback(ctx, tx, true, targetErr)
+		return engine.rollback(ctx, tx, abortErr)
+	case model.RecoveryRestorePrevious:
+		targetResult, targetErr := engine.Target.Recover(ctx, tx)
+		if targetErr == nil && targetResult.Phase == model.PhaseCommitted {
+			tx, err = engine.advance(tx, model.PhaseVerified)
+			if err != nil {
+				return Result{}, err
+			}
+			return engine.completeCommit(ctx, tx)
+		}
+		return engine.rollback(ctx, tx, targetErr)
 	case model.RecoveryCompleteCommit:
 		return engine.completeCommit(ctx, tx)
 	case model.RecoveryAlreadyCurrent:
@@ -143,9 +116,7 @@ func (engine *SupervisorEngine) Recover(ctx context.Context, tx model.Transactio
 }
 
 func (engine *SupervisorEngine) completeCommit(ctx context.Context, tx model.Transaction) (Result, error) {
-	if err := engine.Controller.Commit(ctx, tx); err != nil {
-		return Result{Outcome: OutcomeRecoveryPending, Phase: model.PhaseVerified}, err
-	}
+	_ = ctx
 	committed, err := engine.advance(tx, model.PhaseCommitted)
 	if err != nil {
 		return Result{}, err
@@ -164,12 +135,8 @@ func (engine *SupervisorEngine) advance(tx model.Transaction, phase model.Phase)
 	return next, nil
 }
 
-func (engine *SupervisorEngine) rollback(ctx context.Context, tx model.Transaction, restore bool, cause error) (Result, error) {
+func (engine *SupervisorEngine) rollback(_ context.Context, tx model.Transaction, cause error) (Result, error) {
 	var rollbackErrors []error
-	if restore {
-		rollbackErrors = appendIfError(rollbackErrors, engine.Controller.Restore(ctx, tx))
-	}
-	rollbackErrors = appendIfError(rollbackErrors, engine.Controller.Discard(ctx, tx))
 	rolled, err := engine.advance(tx, model.PhaseRolledBack)
 	rollbackErrors = appendIfError(rollbackErrors, err)
 	combined := errors.Join(append([]error{cause}, rollbackErrors...)...)
@@ -180,8 +147,8 @@ func (engine *SupervisorEngine) rollback(ctx context.Context, tx model.Transacti
 }
 
 func (engine *SupervisorEngine) validate() error {
-	if engine == nil || engine.Journal == nil || engine.Controller == nil || engine.Target == nil {
-		return fmt.Errorf("supervisor engine requires journal, controller authority, and target authority")
+	if engine == nil || engine.Journal == nil || engine.Target == nil {
+		return fmt.Errorf("supervisor engine requires journal and installed target authority")
 	}
 	return nil
 }

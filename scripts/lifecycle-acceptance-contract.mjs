@@ -7,38 +7,45 @@ import { pathToFileURL } from "node:url";
 const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
 const COMMIT_PATTERN = /^[a-f0-9]{40}$/u;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
+const PROFILES = ["protected-local", "hosting"];
+const SCENARIOS = ["fresh-install", "managed-update"];
+const commonPredicates = Object.freeze([
+  "artifact-identity",
+  "public-installer-acquisition",
+  "canonical-lifecycle",
+  "three-services-active",
+  "wallet-status",
+  "wallet-signer-doctor",
+  "mining-status",
+  "network-status",
+  "plugin-doctor",
+  "restart-health",
+  "state-preservation",
+  "installer-already-current",
+  "updater-already-current",
+]);
 
-export const REQUIRED_SCENARIOS = Object.freeze({
-  "fresh-install": Object.freeze([
-    "artifact-identity",
-    "public-installer-acquisition",
-    "canonical-lifecycle",
-    "four-services-active",
-    "wallet-status",
-    "wallet-signer-doctor",
-    "mining-status",
-    "network-status",
-    "plugin-doctor",
-    "restart-health",
-    "state-preservation",
-    "already-current",
-  ]),
-  "managed-update": Object.freeze([
-    "artifact-identity",
-    "public-installer-acquisition",
-    "rollback-retry",
-    "canonical-lifecycle",
-    "four-services-active",
-    "wallet-status",
-    "wallet-signer-doctor",
-    "mining-status",
-    "network-status",
-    "plugin-doctor",
-    "restart-health",
-    "state-preservation",
-    "already-current",
-  ]),
-});
+export const REQUIRED_PREDICATES = Object.freeze(
+  Object.fromEntries(
+    PROFILES.map((profile) => [
+      profile,
+      Object.freeze({
+        "fresh-install": commonPredicates,
+        "managed-update": Object.freeze([
+          "artifact-identity",
+          "public-installer-acquisition",
+          "predecessor-capsule-attestation",
+          "rollback-retry",
+          ...commonPredicates.slice(2),
+        ]),
+      }),
+    ]),
+  ),
+);
+
+// Temporary source compatibility for callers being migrated in D8. It is not
+// the canonical contract because it lacks the Hosting profile dimension.
+export const REQUIRED_SCENARIOS = REQUIRED_PREDICATES["protected-local"];
 
 function fail(message) {
   throw new Error(`lifecycle acceptance contract: ${message}`);
@@ -48,11 +55,8 @@ function exactKeys(value, expected, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     fail(`${label} must be an object`);
   }
-  const actual = Object.keys(value)
-    .toSorted((left, right) => left.localeCompare(right))
-    .join(",");
-  const wanted = [...expected].toSorted((left, right) => left.localeCompare(right)).join(",");
-  if (actual !== wanted) {
+  const actual = Object.keys(value).toSorted().join(",");
+  if (actual !== [...expected].toSorted((left, right) => left.localeCompare(right)).join(",")) {
     fail(`${label} fields are invalid`);
   }
 }
@@ -79,47 +83,73 @@ export function digestAcceptanceContract(contract) {
 }
 
 export function validateAcceptanceContract(contract) {
-  exactKeys(contract, ["schemaVersion", "role", "contractId", "scenarios"], "contract");
+  exactKeys(contract, ["schemaVersion", "role", "contractId", "profiles"], "contract");
   if (
-    contract.schemaVersion !== 1 ||
+    contract.schemaVersion !== 2 ||
     contract.role !== "fased-lifecycle-acceptance-contract" ||
-    contract.contractId !== "public-local-lifecycle-v1"
+    contract.contractId !== "public-lifecycle-v2"
   ) {
     fail("identity is invalid");
   }
-  exactKeys(contract.scenarios, Object.keys(REQUIRED_SCENARIOS), "contract scenarios");
-  for (const [scenario, required] of Object.entries(REQUIRED_SCENARIOS)) {
-    const actual = contract.scenarios[scenario];
-    if (
-      !Array.isArray(actual) ||
-      actual.length !== required.length ||
-      actual.some((predicate, index) => predicate !== required[index])
-    ) {
-      fail(`${scenario} predicates are incomplete or reordered`);
+  exactKeys(contract.profiles, PROFILES, "contract profiles");
+  for (const profile of PROFILES) {
+    exactKeys(contract.profiles[profile], SCENARIOS, `${profile} scenarios`);
+    for (const scenario of SCENARIOS) {
+      const actual = contract.profiles[profile][scenario];
+      const required = REQUIRED_PREDICATES[profile][scenario];
+      if (
+        !Array.isArray(actual) ||
+        actual.length !== required.length ||
+        actual.some((predicate, index) => predicate !== required[index])
+      ) {
+        fail(`${profile}/${scenario} predicates are incomplete or reordered`);
+      }
     }
   }
   return contract;
 }
 
+function validateEvidence(evidence, required, version) {
+  if (!Array.isArray(evidence) || evidence.length !== required.length) {
+    fail("receipt evidence is incomplete");
+  }
+  for (const [index, record] of evidence.entries()) {
+    exactKeys(record, ["id", "status", "evidenceDigest", "summary"], "predicate evidence");
+    if (
+      record.id !== required[index] ||
+      record.status !== "PASS" ||
+      !DIGEST_PATTERN.test(record.evidenceDigest || "") ||
+      typeof record.summary !== "string" ||
+      record.summary.length === 0 ||
+      record.summary.length > 240 ||
+      /[\r\n]/u.test(record.summary) ||
+      record.summary.includes("\0")
+    ) {
+      fail("predicate evidence is invalid or reordered");
+    }
+    if (
+      (record.id === "installer-already-current" || record.id === "updater-already-current") &&
+      record.summary !== `Already current: ${version}`
+    ) {
+      fail(`${record.id} lacks the literal idempotence result`);
+    }
+  }
+}
+
 export function buildAcceptanceReceipt({
   contract,
+  profile,
   scenario,
   version,
   commit,
   candidateDescriptorDigest,
-  passedPredicates,
+  predecessorCapsuleDigest = null,
+  evidence,
 }) {
   validateAcceptanceContract(contract);
-  const required = REQUIRED_SCENARIOS[scenario];
+  const required = REQUIRED_PREDICATES[profile]?.[scenario];
   if (!required) {
-    fail(`unsupported scenario ${String(scenario)}`);
-  }
-  if (
-    !Array.isArray(passedPredicates) ||
-    passedPredicates.length !== required.length ||
-    passedPredicates.some((predicate, index) => predicate !== required[index])
-  ) {
-    fail(`${scenario} did not pass the exact required predicate sequence`);
+    fail("profile or scenario is unsupported");
   }
   if (!VERSION_PATTERN.test(version || "")) {
     fail("receipt version is invalid");
@@ -130,16 +160,25 @@ export function buildAcceptanceReceipt({
   if (!DIGEST_PATTERN.test(candidateDescriptorDigest || "")) {
     fail("candidate descriptor digest is invalid");
   }
+  if (
+    (scenario === "managed-update" && !DIGEST_PATTERN.test(predecessorCapsuleDigest || "")) ||
+    (scenario === "fresh-install" && predecessorCapsuleDigest !== null)
+  ) {
+    fail("predecessor capsule binding is invalid");
+  }
+  validateEvidence(evidence, required, version);
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     role: "fased-lifecycle-acceptance-receipt",
     contractId: contract.contractId,
     contractDigest: digestAcceptanceContract(contract),
+    profile,
     scenario,
     version,
     commit,
     candidateDescriptorDigest,
-    predicates: [...passedPredicates],
+    predecessorCapsuleDigest,
+    evidence: evidence.map((record) => ({ ...record })),
   };
 }
 
@@ -151,22 +190,17 @@ export function verifyAcceptanceReceipt({ contract, receipt, expected = {} }) {
       "role",
       "contractId",
       "contractDigest",
+      "profile",
       "scenario",
       "version",
       "commit",
       "candidateDescriptorDigest",
-      "predicates",
+      "predecessorCapsuleDigest",
+      "evidence",
     ],
     "receipt",
   );
-  const rebuilt = buildAcceptanceReceipt({
-    contract,
-    scenario: receipt.scenario,
-    version: receipt.version,
-    commit: receipt.commit,
-    candidateDescriptorDigest: receipt.candidateDescriptorDigest,
-    passedPredicates: receipt.predicates,
-  });
+  const rebuilt = buildAcceptanceReceipt({ contract, ...receipt });
   if (JSON.stringify(receipt) !== JSON.stringify(rebuilt)) {
     fail("receipt identity or contract binding is invalid");
   }
@@ -210,17 +244,19 @@ function main() {
     );
     return;
   }
+  const receiptOptions = {
+    contract,
+    profile: options.profile,
+    scenario: options.scenario,
+    version: options.version,
+    commit: options.commit,
+    candidateDescriptorDigest: options["candidate-descriptor-digest"],
+    predecessorCapsuleDigest: options["predecessor-capsule-digest"] || null,
+  };
   if (command === "issue-receipt") {
-    const passedPredicates = readFileSync(options["passed-file"], "utf8")
-      .split("\n")
-      .filter(Boolean);
     const receipt = buildAcceptanceReceipt({
-      contract,
-      scenario: options.scenario,
-      version: options.version,
-      commit: options.commit,
-      candidateDescriptorDigest: options["candidate-descriptor-digest"],
-      passedPredicates,
+      ...receiptOptions,
+      evidence: readJson(options["evidence-file"], "predicate evidence"),
     });
     writeFileSync(options.output, `${JSON.stringify(receipt, null, 2)}\n`, {
       encoding: "utf8",
@@ -233,14 +269,11 @@ function main() {
     const receipt = verifyAcceptanceReceipt({
       contract,
       receipt: readJson(options.receipt, "receipt"),
-      expected: {
-        scenario: options.scenario,
-        version: options.version,
-        commit: options.commit,
-        candidateDescriptorDigest: options["candidate-descriptor-digest"],
-      },
+      expected: receiptOptions,
     });
-    process.stdout.write(`${JSON.stringify({ ok: true, scenario: receipt.scenario })}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ ok: true, profile: receipt.profile, scenario: receipt.scenario })}\n`,
+    );
     return;
   }
   fail(`unsupported command ${String(command)}`);

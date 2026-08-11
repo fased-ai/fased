@@ -270,6 +270,7 @@ func TestBootstrapPathPlanIsCanonicalAndBounded(t *testing.T) {
 	}
 	want := []BootstrapPath{
 		{Path: "/opt/fased/local/local", UID: 0, GID: 0, Mode: 0o755},
+		{Path: "/opt/fased/local/local/plugin-code", UID: 0, GID: 0, Mode: 0o755},
 		{Path: "/opt/fased/lifecycle", UID: 0, GID: 0, Mode: 0o755},
 		{Path: "/opt/fased/lifecycle/supervisor-v1", UID: 0, GID: 0, Mode: 0o755},
 		{Path: "/var/lib/fased-local/local", UID: 0, GID: 0, Mode: 0o755},
@@ -278,6 +279,7 @@ func TestBootstrapPathPlanIsCanonicalAndBounded(t *testing.T) {
 		{Path: "/var/lib/fased-local/local/signer", UID: 899, GID: 899, Mode: 0o700},
 		{Path: "/home/owner/.fased", UID: 1000, GID: 897, Mode: os.ModeSetgid | 0o770},
 		{Path: "/home/owner/.fased/bin", UID: 1000, GID: 897, Mode: 0o750},
+		{Path: "/home/owner/.fased/plugin-data", UID: 900, GID: 897, Mode: os.ModeSetgid | 0o770},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("path plan = %#v, want %#v", got, want)
@@ -301,10 +303,10 @@ func TestHostingBootstrapPathPlanUsesSharedCanonicalRoots(t *testing.T) {
 	for _, spec := range got {
 		paths[spec.Path] = spec
 	}
-	if paths["/opt/fased"].Mode != 0o755 || paths["/opt/fased/lifecycle"].Mode != 0o755 ||
+	if paths["/opt/fased"].Mode != 0o755 || paths["/opt/fased/plugin-code"].Mode != 0o755 || paths["/opt/fased/lifecycle"].Mode != 0o755 ||
 		paths["/opt/fased/lifecycle/supervisor-v1"].Mode != 0o755 || paths["/var/lib/fased-lifecycled"].Mode != 0o700 ||
 		paths["/var/lib/fased-signerd"].UID != principals.Signer.UID || paths["/var/lib/fased-host-updater"].Mode != 0o700 ||
-		paths["/home/app/.fased"].GID != principals.Groups.Config.GID {
+		paths["/home/app/.fased"].GID != principals.Groups.Config.GID || paths["/home/app/.fased/plugin-data"].UID != principals.Gateway.UID || paths["/home/app/.fased/plugin-data"].Mode != os.ModeSetgid|0o770 {
 		t.Fatalf("unexpected Hosting path plan: %+v", got)
 	}
 }

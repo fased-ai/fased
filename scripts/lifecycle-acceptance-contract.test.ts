@@ -1,150 +1,107 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  REQUIRED_SCENARIOS,
+  REQUIRED_PREDICATES,
   buildAcceptanceReceipt,
   digestAcceptanceContract,
   validateAcceptanceContract,
   verifyAcceptanceReceipt,
 } from "./lifecycle-acceptance-contract.mjs";
 
-const contractPath = new URL("../config/lifecycle-acceptance.v1.json", import.meta.url);
+const contractPath = new URL("../config/lifecycle-acceptance.v2.json", import.meta.url);
+const digest = `sha256:${"b".repeat(64)}`;
 
 function contract() {
   return JSON.parse(readFileSync(contractPath, "utf8"));
 }
 
-function receipt(scenario: keyof typeof REQUIRED_SCENARIOS = "fresh-install") {
-  const value = contract();
-  return buildAcceptanceReceipt({
-    contract: value,
-    scenario,
-    version: "0.1.76-rc.70",
-    commit: "a".repeat(40),
-    candidateDescriptorDigest: `sha256:${"b".repeat(64)}`,
-    passedPredicates: [...REQUIRED_SCENARIOS[scenario]],
-  });
+function evidence(profile: string, scenario: string, version = "0.1.76-rc.70") {
+  return REQUIRED_PREDICATES[profile][scenario].map((id) => ({
+    id,
+    status: "PASS",
+    evidenceDigest: digest,
+    summary: id.endsWith("-already-current") ? `Already current: ${version}` : "verified",
+  }));
 }
 
 describe("lifecycle acceptance contract", () => {
-  it("defines the complete Local operator portfolio for branch proof and candidate P1", () => {
+  it("defines identical evidence classes for Local and Hosting", () => {
     const value = contract();
     expect(validateAcceptanceContract(value)).toBe(value);
     expect(digestAcceptanceContract(value)).toMatch(/^sha256:[a-f0-9]{64}$/u);
-    for (const predicates of Object.values(value.scenarios)) {
-      expect(predicates).toEqual(
-        expect.arrayContaining([
-          "four-services-active",
-          "wallet-status",
-          "wallet-signer-doctor",
-          "mining-status",
-          "network-status",
-          "plugin-doctor",
-          "restart-health",
-          "state-preservation",
-          "already-current",
-        ]),
-      );
-    }
+    expect(value.profiles["protected-local"]).toEqual(value.profiles.hosting);
   });
 
-  it("rejects an incomplete branch receipt before candidate allocation", () => {
+  it.each([
+    ["protected-local", "fresh-install"],
+    ["protected-local", "managed-update"],
+    ["hosting", "fresh-install"],
+    ["hosting", "managed-update"],
+  ])("binds %s/%s evidence to exact bytes and capsule policy", (profile, scenario) => {
     const value = contract();
-    expect(() =>
-      buildAcceptanceReceipt({
-        contract: value,
-        scenario: "fresh-install",
-        version: "0.1.76-rc.70",
-        commit: "a".repeat(40),
-        candidateDescriptorDigest: `sha256:${"b".repeat(64)}`,
-        passedPredicates: REQUIRED_SCENARIOS["fresh-install"].filter(
-          (predicate) => predicate !== "wallet-signer-doctor",
-        ),
-      }),
-    ).toThrow("did not pass the exact required predicate sequence");
-  });
-
-  it("binds receipts to the exact contract and candidate descriptor", () => {
-    const value = contract();
-    const valid = receipt("managed-update");
+    const capsule = scenario === "managed-update" ? digest : null;
+    const receipt = buildAcceptanceReceipt({
+      contract: value,
+      profile,
+      scenario,
+      version: "0.1.76-rc.70",
+      commit: "a".repeat(40),
+      candidateDescriptorDigest: digest,
+      predecessorCapsuleDigest: capsule,
+      evidence: evidence(profile, scenario),
+    });
     expect(
       verifyAcceptanceReceipt({
         contract: value,
-        receipt: valid,
-        expected: { candidateDescriptorDigest: `sha256:${"b".repeat(64)}` },
+        receipt,
+        expected: { profile, scenario, predecessorCapsuleDigest: capsule },
       }),
-    ).toBe(valid);
-    expect(() =>
-      verifyAcceptanceReceipt({
-        contract: value,
-        receipt: valid,
-        expected: { candidateDescriptorDigest: `sha256:${"c".repeat(64)}` },
-      }),
-    ).toThrow("receipt candidateDescriptorDigest mismatch");
+    ).toBe(receipt);
   });
 
-  it("uses the same artifact-bound contract in branch proof and candidate P1", () => {
-    const runner = readFileSync(
-      new URL("./docker/protected-local-systemd/run.sh", import.meta.url),
-      "utf8",
-    );
+  it("rejects name-only, reordered, and nonliteral idempotence evidence", () => {
+    const value = contract();
+    const records = evidence("hosting", "fresh-install");
+    expect(() =>
+      buildAcceptanceReceipt({
+        contract: value,
+        profile: "hosting",
+        scenario: "fresh-install",
+        version: "0.1.76-rc.70",
+        commit: "a".repeat(40),
+        candidateDescriptorDigest: digest,
+        evidence: records.map(({ id }) => id),
+      }),
+    ).toThrow();
+    expect(() =>
+      buildAcceptanceReceipt({
+        contract: value,
+        profile: "hosting",
+        scenario: "fresh-install",
+        version: "0.1.76-rc.70",
+        commit: "a".repeat(40),
+        candidateDescriptorDigest: digest,
+        evidence: records.with(records.length - 1, {
+          ...records.at(-1),
+          summary: "current",
+        }),
+      }),
+    ).toThrow("literal idempotence result");
+  });
+
+  it("wires the v2 contract and capsule verifier into candidate proof", () => {
     const wrapper = readFileSync(
-      new URL("./test-protected-local-systemd-container.sh", import.meta.url),
+      new URL("./test-lifecycle-local-acceptance.sh", import.meta.url),
       "utf8",
     );
     const workflow = readFileSync(
       new URL("../.github/workflows/hosted-runtime-release.yml", import.meta.url),
       "utf8",
     );
-
-    expect(runner).toContain("acceptance_contract=/artifacts/fased-lifecycle-acceptance-v1.json");
-    expect(runner).toContain(
-      'acceptance_receipt="/var/lib/fased-protected-local-fixture/lifecycle-acceptance-${phase}.json"',
-    );
-    expect(runner).toContain("wallet status --json");
-    expect(runner).toContain("wallet signer doctor --json");
-    expect(runner).toContain("mining status");
-    expect(runner).toContain('configure_fixture_sat_runtime "$instance"');
-    expect(runner).toContain(": >'$managed_fault_marker'\nexit 1");
-    expect(runner).toContain(
-      'grep -F "target release failed and was rolled back" /tmp/stable-bridge-failure.err',
-    );
-    expect(runner).not.toContain(
-      'grep -F "privileged lifecycle apply failed" /tmp/stable-bridge-failure.err',
-    );
-    expect(runner).not.toContain(
-      `if [[ "\\$(readlink -f '$managed_current_link')" != '$managed_initial_target' ]]`,
-    );
-    expect(runner).toContain("FASED_SAT_PROGRAM_ID=11111111111111111111111111111111");
-    expect(runner).toContain(
-      "FASED_SAT_BOND_PROGRAM_ID=ComputeBudget111111111111111111111111111111",
-    );
-    expect(runner).toContain("FASED_SAT_MINT_ADDRESS=So11111111111111111111111111111111111111112");
-    expect(runner).toContain(
-      "FASED_SAT_MINT_PROGRAM_ID=TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", // pragma: allowlist secret
-    );
-    expect(runner).toContain("federation status --json");
-    expect(runner).toContain("plugins doctor");
-    expect(runner).toContain('"fased-local-controller-worker-$instance.service"');
-    for (const predicates of Object.values(REQUIRED_SCENARIOS)) {
-      for (const predicate of predicates) {
-        expect(runner).toContain(`acceptance_mark ${predicate}`);
-      }
-    }
-    expect(wrapper).toContain('"$ROOT_DIR/config/lifecycle-acceptance.v1.json"');
-    expect(wrapper).toContain('lifecycle-release-compatibility.mjs" build');
-    expect(wrapper).toContain('lifecycle-acceptance-contract.mjs" verify-receipt');
-    expect(wrapper).toContain(
-      '"$name:/var/lib/fased-protected-local-fixture/lifecycle-acceptance-${scenario}.json"',
-    );
-    expect(wrapper).toContain("FASED_SYSTEMD_FIXTURE_PARALLEL_SCENARIOS");
-    expect(wrapper).toContain("FASED_SYSTEMD_FIXTURE_ARTIFACT_CACHE_DIR");
-    expect(workflow).toContain(".artifacts/hosted-runtime/fased-lifecycle-acceptance-v1.json");
-    expect(workflow).toContain(
-      ".artifacts/hosted-runtime/fased-lifecycle-release-compatibility-v1.json",
-    );
-    expect(workflow).toContain("FASED_SYSTEMD_FIXTURE_RECEIPT_DIR");
-    expect(workflow).toContain("fased-lifecycle-acceptance-fresh");
-    expect(workflow).toContain("fased-lifecycle-acceptance-update");
+    expect(wrapper).toContain("fased-lifecycle-acceptance-v2.json");
+    expect(wrapper).toContain("capsule_descriptor_attestation");
+    expect(wrapper).toContain("capsule_archive_attestation");
+    expect(wrapper).toContain("gh attestation verify");
+    expect(workflow).toContain("fased-lifecycle-acceptance-v2.json");
   });
 });

@@ -235,6 +235,7 @@ func BootstrapPathPlan(config Config, principals BootstrapPrincipals) ([]Bootstr
 	}
 	paths := []BootstrapPath{
 		{Path: config.InstallRoot, Mode: 0o755},
+		{Path: filepath.Join(config.InstallRoot, "plugin-code"), Mode: 0o755},
 		{Path: "/opt/fased/lifecycle", Mode: 0o755},
 		{Path: "/opt/fased/lifecycle/supervisor-v1", Mode: 0o755},
 	}
@@ -256,6 +257,7 @@ func BootstrapPathPlan(config Config, principals BootstrapPrincipals) ([]Bootstr
 	paths = append(paths,
 		BootstrapPath{Path: config.OwnerStateRoot, UID: config.Operator.UID, GID: principals.Groups.Config.GID, Mode: os.ModeSetgid | 0o770},
 		BootstrapPath{Path: filepath.Join(config.OwnerStateRoot, "bin"), UID: config.Operator.UID, GID: principals.Groups.Config.GID, Mode: 0o750},
+		BootstrapPath{Path: filepath.Join(config.OwnerStateRoot, "plugin-data"), UID: config.Gateway.UID, GID: principals.Groups.Config.GID, Mode: os.ModeSetgid | 0o770},
 	)
 	return paths, nil
 }

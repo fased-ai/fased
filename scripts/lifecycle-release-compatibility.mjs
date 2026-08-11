@@ -12,7 +12,7 @@ export const RELEASE_COMPATIBILITY_ASSET = "fased-lifecycle-release-compatibilit
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_INVENTORY = path.resolve(SCRIPT_DIR, "../config/lifecycle-compatibility.v1.json");
-const DEFAULT_ACCEPTANCE = path.resolve(SCRIPT_DIR, "../config/lifecycle-acceptance.v1.json");
+const DEFAULT_ACCEPTANCE = path.resolve(SCRIPT_DIR, "../config/lifecycle-acceptance.v2.json");
 const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
 const COMMIT_PATTERN = /^[a-f0-9]{40}$/u;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
@@ -93,7 +93,7 @@ export function parseReleaseCompatibility(value, expected = {}) {
       !expected.compatibilityGroupIds.includes(value.compatibilityGroupId)) ||
     value.selectionBasis !== "installed-topology-protocol-and-state-schema" ||
     value.runtimeConsumesReleaseIdentity !== false ||
-    value.acceptanceContract.id !== "public-local-lifecycle-v1" ||
+    value.acceptanceContract.id !== "public-lifecycle-v2" ||
     !DIGEST_PATTERN.test(value.acceptanceContract.digest || "")
   ) {
     fail("manifest identity or selection contract is invalid");

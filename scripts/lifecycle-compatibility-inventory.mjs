@@ -684,7 +684,7 @@ function readManifestedPublicRelease(inventory, release) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "fased-public-compatibility-"));
   const descriptorName = "fased-hosting-candidate.json";
   const descriptorAttestationName = `${descriptorName}.attestation.json`;
-  const acceptanceName = "fased-lifecycle-acceptance-v1.json";
+  const acceptanceName = "fased-lifecycle-acceptance-v2.json";
   try {
     const downloadArgs = [
       "release",

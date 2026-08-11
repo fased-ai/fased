@@ -58,6 +58,19 @@ func TestInspectAndVerifyExactGeneration(t *testing.T) {
 	}
 }
 
+func TestApplicationInventoryRejectsPrivilegedLifecycleExecutables(t *testing.T) {
+	for _, name := range []string{"payload/bin/fased-lifecycled", "bin/fased-bootstrap"} {
+		t.Run(filepath.Base(name), func(t *testing.T) {
+			root := t.TempDir()
+			write(t, root, name, "candidate root code", 0o755)
+			schemas, capabilities := contract()
+			if _, _, err := Inspect(root, "0.1.76", testCommit, testCommit, schemas, capabilities); err == nil || !strings.Contains(err.Error(), "must not contain lifecycle executable") {
+				t.Fatalf("application-owned lifecycle executable was accepted: %v", err)
+			}
+		})
+	}
+}
+
 func TestDependencyLayerParticipatesInGenerationIdentity(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "bin/fased", "binary", 0o755)
@@ -80,6 +93,26 @@ func TestDependencyLayerParticipatesInGenerationIdentity(t *testing.T) {
 	changed.Dependency = &copyLayer
 	if err := Verify(root, changed, generation); err == nil {
 		t.Fatal("dependency substitution preserved the generation identity")
+	}
+}
+
+func TestPluginLockParticipatesInGenerationIdentity(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "bin/fased", "binary", 0o755)
+	schemas, capabilities := contract()
+	layer := DependencyLayer{Hash: strings.Repeat("a", 64), Asset: "fased-hosted-deps-linux-x64-test.tar.gz", ArchiveSHA256: "sha256:" + strings.Repeat("b", 64)}
+	lockDigest := "sha256:" + strings.Repeat("c", 64)
+	inventory, generation, err := InspectWithDependencyAndPluginLock(root, "0.1.76", testCommit, testCommit, schemas, capabilities, layer, lockDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inventory.PluginLockDigest != lockDigest {
+		t.Fatalf("plugin lock was not bound: %+v", inventory)
+	}
+	changed := inventory
+	changed.PluginLockDigest = "sha256:" + strings.Repeat("d", 64)
+	if err := Verify(root, changed, generation); err == nil {
+		t.Fatal("plugin lock substitution preserved generation identity")
 	}
 }
 

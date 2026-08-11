@@ -46,10 +46,10 @@ function loadRegistry(candidates: PluginCandidate[]) {
   });
 }
 
-function countDuplicateWarnings(registry: ReturnType<typeof loadPluginManifestRegistry>): number {
+function countDuplicateErrors(registry: ReturnType<typeof loadPluginManifestRegistry>): number {
   return registry.diagnostics.filter(
     (diagnostic) =>
-      diagnostic.level === "warn" && diagnostic.message?.includes("duplicate plugin id"),
+      diagnostic.level === "error" && diagnostic.message?.includes("duplicate plugin id"),
   ).length;
 }
 
@@ -68,7 +68,7 @@ afterEach(() => {
 });
 
 describe("loadPluginManifestRegistry", () => {
-  it("emits duplicate warning for truly distinct plugins with same id", () => {
+  it("rejects a truly distinct plugin with the same id", () => {
     const dirA = makeTempDir();
     const dirB = makeTempDir();
     const manifest = { id: "test-plugin", configSchema: { type: "object" } };
@@ -88,7 +88,9 @@ describe("loadPluginManifestRegistry", () => {
       }),
     ];
 
-    expect(countDuplicateWarnings(loadRegistry(candidates))).toBe(1);
+    const registry = loadRegistry(candidates);
+    expect(countDuplicateErrors(registry)).toBe(1);
+    expect(registry.plugins).toHaveLength(1);
   });
 
   it("deduplicates runtime-only component manifests without loading two plugin records", () => {
@@ -115,7 +117,7 @@ describe("loadPluginManifestRegistry", () => {
       }),
     ]);
 
-    expect(countDuplicateWarnings(registry)).toBe(0);
+    expect(countDuplicateErrors(registry)).toBe(0);
     expect(registry.plugins).toHaveLength(1);
     expect(registry.plugins[0]).toMatchObject({
       id: "openai-runtime",
@@ -152,7 +154,7 @@ describe("loadPluginManifestRegistry", () => {
       }),
     ]);
 
-    expect(countDuplicateWarnings(registry)).toBe(0);
+    expect(countDuplicateErrors(registry)).toBe(0);
     expect(registry.plugins).toHaveLength(1);
     expect(registry.plugins[0]).toMatchObject({
       id: "openai-runtime",
@@ -161,7 +163,7 @@ describe("loadPluginManifestRegistry", () => {
     });
   });
 
-  it("does not let a runtime-only manifest suppress a normal duplicate-id warning", () => {
+  it("does not let a runtime-only manifest suppress a normal duplicate-id rejection", () => {
     const normalDir = makeTempDir();
     const runtimeDir = makeTempDir();
     writeManifest(normalDir, { id: "shared-id", configSchema: { type: "object" } });
@@ -176,7 +178,8 @@ describe("loadPluginManifestRegistry", () => {
       createPluginCandidate({ idHint: "shared-id", rootDir: runtimeDir, origin: "config" }),
     ]);
 
-    expect(countDuplicateWarnings(registry)).toBe(1);
+    expect(countDuplicateErrors(registry)).toBe(1);
+    expect(registry.plugins).toHaveLength(1);
   });
 
   it("suppresses duplicate warning when candidates share the same physical directory via symlink", () => {
@@ -208,7 +211,7 @@ describe("loadPluginManifestRegistry", () => {
       }),
     ];
 
-    expect(countDuplicateWarnings(loadRegistry(candidates))).toBe(0);
+    expect(countDuplicateErrors(loadRegistry(candidates))).toBe(0);
   });
 
   it("suppresses duplicate warning when candidates have identical rootDir paths", () => {
@@ -231,7 +234,7 @@ describe("loadPluginManifestRegistry", () => {
       }),
     ];
 
-    expect(countDuplicateWarnings(loadRegistry(candidates))).toBe(0);
+    expect(countDuplicateErrors(loadRegistry(candidates))).toBe(0);
   });
 
   it("prefers higher-precedence origins for the same physical directory (config > workspace > global > bundled)", () => {
@@ -257,7 +260,7 @@ describe("loadPluginManifestRegistry", () => {
     ];
 
     const registry = loadRegistry(candidates);
-    expect(countDuplicateWarnings(registry)).toBe(0);
+    expect(countDuplicateErrors(registry)).toBe(0);
     expect(registry.plugins.length).toBe(1);
     expect(registry.plugins[0]?.origin).toBe("config");
   });

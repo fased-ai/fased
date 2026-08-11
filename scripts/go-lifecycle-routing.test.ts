@@ -18,6 +18,8 @@ const deletedLifecycleOwners = [
   "scripts/install-hosted-runtime.sh",
   "scripts/install-runtime-profile.sh",
   "scripts/managed-update-contract.mjs",
+  "scripts/fased-generation-updater-core.mjs",
+  "scripts/generation-updater.mjs",
 ] as const;
 
 const mutationOwners = deletedLifecycleOwners;
@@ -25,7 +27,6 @@ const mutationOwners = deletedLifecycleOwners;
 const productionRoutingSurfaces = [
   "package.json",
   "scripts/fased-managed-updater.mjs",
-  "scripts/generation-updater.mjs",
   "scripts/managed-updater-bundle.v1.json",
   "scripts/build-lifecycle-trust-metadata.mjs",
   "scripts/privileged-release-evidence.mjs",
@@ -103,38 +104,18 @@ describe("single Go lifecycle production routing", () => {
       }
     }
     const installer = await readFile(resolve(repoRoot, "install.sh"), "utf8");
-    const goEntryStart = installer.indexOf("    enter_go_lifecycle_bundle() {");
-    const goEntryEnd = installer.indexOf("\n    umask 077", goEntryStart);
-    const goEntry =
-      goEntryStart >= 0 && goEntryEnd > goEntryStart
-        ? installer.slice(goEntryStart, goEntryEnd)
-        : undefined;
-    if (!goEntry || !goEntry.includes('scripts/generation-updater.mjs" initialize')) {
-      violations.push(
-        "install.sh: verified root entry does not invoke the Go lifecycle initializer",
-      );
+    if (!installer.includes("fased-bootstrap-linux-${arch}")) {
+      violations.push("install.sh: public route does not acquire the static lifecycle bootstrap");
     }
-    for (const required of [
-      'runuser -u "$lifecycle_operator"',
-      '"$lifecycle_launcher" onboard --install-daemon',
-      "--operation COMPLETE_ONBOARDING",
-    ]) {
-      if (!goEntry?.includes(required)) {
-        violations.push(`install.sh: verified root entry omits ${required}`);
-      }
+    if (!installer.includes('"$bootstrap" "${bootstrap_args[@]}"')) {
+      violations.push("install.sh: public route does not invoke the fixed bootstrap client");
     }
-    const protectedLocalReturn = goEntry.indexOf(
-      'if [[ "$lifecycle_profile" == "protected-local" ]]',
-    );
-    const rootOnboarding = goEntry.indexOf('"$lifecycle_launcher" onboard --install-daemon');
-    if (protectedLocalReturn < 0 || rootOnboarding < 0 || protectedLocalReturn > rootOnboarding) {
-      violations.push(
-        "install.sh: Protected Local does not return to its unprivileged argument-preserving onboarding owner",
-      );
+    if (installer.includes("generation-updater.mjs")) {
+      violations.push("install.sh: public route still invokes the Node generation updater");
     }
     for (const owner of mutationOwners) {
       const basename = owner.split("/").at(-1);
-      if (basename && goEntry?.includes(basename)) {
+      if (basename && installer.includes(basename)) {
         violations.push(`install.sh: verified root entry invokes ${basename}`);
       }
     }
@@ -153,10 +134,7 @@ describe("single Go lifecycle production routing", () => {
 
   it("requires Go-owned service identities during public initialization", async () => {
     const violations: string[] = [];
-    for (const relativePath of [
-      "scripts/generation-updater.mjs",
-      "tools/fased-lifecycled/cmd/fased-lifecycled/main.go",
-    ]) {
+    for (const relativePath of ["tools/fased-lifecycled/cmd/fased-lifecycled/main.go"]) {
       const source = await readFile(resolve(repoRoot, relativePath), "utf8");
       for (const flag of callerOwnedIdentityFlags) {
         if (source.includes(flag)) {
@@ -165,14 +143,8 @@ describe("single Go lifecycle production routing", () => {
       }
     }
     const installer = await readFile(resolve(repoRoot, "install.sh"), "utf8");
-    const goEntryStart = installer.indexOf("    enter_go_lifecycle_bundle() {");
-    const goEntryEnd = installer.indexOf("\n    umask 077", goEntryStart);
-    const goEntry =
-      goEntryStart >= 0 && goEntryEnd > goEntryStart
-        ? installer.slice(goEntryStart, goEntryEnd)
-        : "";
     for (const flag of callerOwnedIdentityFlags) {
-      if (goEntry.includes(flag)) {
+      if (installer.includes(flag)) {
         violations.push(`install.sh: verified Go entry accepts ${flag}`);
       }
     }
@@ -184,7 +156,7 @@ describe("single Go lifecycle production routing", () => {
 
   it("keeps the missing-tool bootstrap transport independent of jq", async () => {
     const runner = await readFile(
-      resolve(repoRoot, "scripts/docker/protected-local-systemd/run.sh"),
+      resolve(repoRoot, "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh"),
       "utf8",
     );
     const start = runner.indexOf("cat >/usr/local/bin/curl <<'EOF_FIXTURE_CURL'");

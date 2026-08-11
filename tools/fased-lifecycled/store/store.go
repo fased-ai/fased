@@ -32,6 +32,17 @@ type Store struct {
 	installRoot string
 }
 
+func (s *Store) PluginLockDigest(generationID string) (string, error) {
+	inventory, generation, err := s.ReadCandidateContract(generationID)
+	if err != nil {
+		return "", err
+	}
+	if generation.ID != generationID || inventory.PluginLockDigest == "" {
+		return "", errors.New("candidate generation is missing a plugin lock binding")
+	}
+	return inventory.PluginLockDigest, nil
+}
+
 // Layout separates mutable lifecycle authority from immutable executable
 // generations. StateRoot belongs under /var/lib; InstallRoot belongs under
 // /opt. Keeping these roots distinct prevents executable payloads from being
@@ -189,7 +200,7 @@ func (s *Store) CommitJournal(authority Authority, transaction model.Transaction
 		return err
 	}
 	dir := filepath.Join(s.stateRoot, "transactions", transaction.ID)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := ensureDurableTransactionDirectory(s.stateRoot, transaction.ID); err != nil {
 		return err
 	}
 	if err := s.commitTransactionEnvelope(dir, transaction); err != nil {
@@ -231,6 +242,37 @@ func (s *Store) CommitJournal(authority Authority, transaction model.Transaction
 	return writeAtomic(path, data, 0o600)
 }
 
+func ensureDurableTransactionDirectory(stateRoot, transactionID string) error {
+	transactionsRoot := filepath.Join(stateRoot, "transactions")
+	if err := mkdirAndSyncParent(transactionsRoot, stateRoot); err != nil {
+		return err
+	}
+	return mkdirAndSyncParent(filepath.Join(transactionsRoot, transactionID), transactionsRoot)
+}
+
+func mkdirAndSyncParent(path, parent string) error {
+	err := os.Mkdir(path, 0o700)
+	if errors.Is(err, os.ErrExist) {
+		info, statErr := os.Lstat(path)
+		if statErr != nil {
+			return statErr
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("durable transaction path is not a directory")
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	directory, err := os.Open(parent)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
+}
+
 func (s *Store) ReadJournal(authority Authority, transactionID string) (model.Transaction, error) {
 	if err := validateAuthority(authority); err != nil {
 		return model.Transaction{}, err
@@ -240,6 +282,8 @@ func (s *Store) ReadJournal(authority Authority, transactionID string) (model.Tr
 		ID:                 transactionID,
 		Profile:            model.ProfileProtectedLocal,
 		PlanAction:         "INSTALL",
+		ReleaseSequence:    1,
+		SecurityEpoch:      1,
 		Phase:              model.PhaseIdle,
 		Revision:           1,
 		Target:             placeholderGeneration(),

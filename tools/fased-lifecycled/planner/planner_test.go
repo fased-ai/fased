@@ -2,6 +2,7 @@ package planner
 
 import (
 	"testing"
+	"time"
 
 	"fased-lifecycled/model"
 )
@@ -28,10 +29,12 @@ func capabilities() model.CapabilityRanges {
 
 func target() Target {
 	return Target{
-		Profile:      model.ProfileProtectedLocal,
-		Generation:   generation(digestB, "0.1.76", commitB),
-		StateSchemas: map[string]uint32{"signer": 3, "walletRegistry": 2},
-		Capabilities: capabilities(),
+		Profile:         model.ProfileProtectedLocal,
+		Generation:      generation(digestB, "0.1.76", commitB),
+		StateSchemas:    map[string]uint32{"signer": 3, "walletRegistry": 2},
+		Capabilities:    capabilities(),
+		ReleaseSequence: 12,
+		SecurityEpoch:   3,
 	}
 }
 
@@ -45,6 +48,54 @@ func installed() model.Manifest {
 		ActiveGeneration: &active,
 		StateSchemas:     map[string]uint32{"signer": 2, "walletRegistry": 2},
 		Capabilities:     capabilities(),
+		ReleaseSequence:  11,
+		SecurityEpoch:    3,
+	}
+}
+
+func TestPlanRejectsOlderSignedReleaseAndRequiresExactRollbackAuthority(t *testing.T) {
+	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	current := installed()
+	selected := target()
+	selected.ReleaseSequence = 10
+	selected.Generation = generation(digestB, "0.1.74", commitB)
+
+	plan, err := BuildForInstallation(Installation{Kind: InstallationManaged, Manifest: &current}, selected)
+	if err != nil || plan.Action != ActionRejectDowngrade {
+		t.Fatalf("older signed release was not rejected: %+v err=%v", plan, err)
+	}
+
+	authorization := model.RollbackAuthorization{
+		SchemaVersion: 1, CurrentGenerationID: current.ActiveGeneration.ID, TargetGenerationID: selected.Generation.ID,
+		CurrentReleaseSequence: current.ReleaseSequence, TargetReleaseSequence: selected.ReleaseSequence,
+		SecurityEpoch: selected.SecurityEpoch, Operator: "founder", Reason: "restore known-good generation",
+		IssuedAt: now.Add(-time.Minute).Format(time.RFC3339), ExpiresAt: now.Add(4 * time.Minute).Format(time.RFC3339),
+		EnvelopeDigest: digestA,
+	}
+	plan, err = BuildForInstallationAuthorized(Installation{Kind: InstallationManaged, Manifest: &current}, selected, &authorization, now)
+	if err != nil || plan.Action != ActionRollback || plan.RollbackAuthorizationDigest != authorization.EnvelopeDigest {
+		t.Fatalf("authorized rollback was not selected: %+v err=%v", plan, err)
+	}
+
+	authorization.TargetGenerationID = digestA
+	if _, err := BuildForInstallationAuthorized(Installation{Kind: InstallationManaged, Manifest: &current}, selected, &authorization, now); err == nil {
+		t.Fatal("rebound rollback authority was accepted")
+	}
+}
+
+func TestPlanRejectsSecurityEpochRegressionAndSameSequenceRebinding(t *testing.T) {
+	current := installed()
+	selected := target()
+	selected.ReleaseSequence = current.ReleaseSequence + 1
+	selected.SecurityEpoch = current.SecurityEpoch - 1
+	if plan, err := Build(&current, selected); err != nil || plan.Action != ActionRejectDowngrade {
+		t.Fatalf("security epoch regression was not rejected: %+v err=%v", plan, err)
+	}
+
+	selected = target()
+	selected.ReleaseSequence = current.ReleaseSequence
+	if _, err := Build(&current, selected); err == nil {
+		t.Fatal("same release sequence was rebound to different generation")
 	}
 }
 
@@ -67,6 +118,8 @@ func TestPlanFreshUpdateAndAlreadyCurrent(t *testing.T) {
 	current.ActiveGeneration = &selected.Generation
 	current.StateSchemas = selected.StateSchemas
 	current.Capabilities = selected.Capabilities
+	current.ReleaseSequence = selected.ReleaseSequence
+	current.SecurityEpoch = selected.SecurityEpoch
 	noop, err := Build(&current, selected)
 	if err != nil || noop.Action != ActionAlreadyCurrent || len(noop.Migrations) != 0 {
 		t.Fatalf("unexpected no-op plan: %+v err=%v", noop, err)

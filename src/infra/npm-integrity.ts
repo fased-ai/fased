@@ -48,7 +48,9 @@ export async function resolveNpmIntegrityDrift<TPayload>(
     resolution: params.resolution,
   });
 
-  let proceed = true;
+  // Integrity changes require an explicit re-pin decision. Merely warning and
+  // continuing would turn a mutable registry response into update authority.
+  let proceed = false;
   if (params.onIntegrityDrift) {
     proceed = await params.onIntegrityDrift(payload);
   } else {

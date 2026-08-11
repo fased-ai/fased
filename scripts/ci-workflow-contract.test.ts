@@ -1,4 +1,4 @@
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -31,6 +31,18 @@ type Workflow = {
 
 async function readWorkflow(path: string): Promise<Workflow> {
   return parse(await readFile(resolve(repoRoot, path), "utf8")) as Workflow;
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
 }
 
 async function listFiles(path: string): Promise<string[]> {
@@ -80,9 +92,7 @@ describe("CI workflow routing", () => {
     const fixtureArtifactBuild = fixtureArtifact?.steps?.find(
       (step) => step.name === "Build one exact fixture artifact",
     );
-    expect(fixtureArtifactBuild?.run).toBe(
-      "bash scripts/test-protected-local-systemd-container.sh",
-    );
+    expect(fixtureArtifactBuild?.run).toBe("bash scripts/test-lifecycle-local-acceptance.sh");
     expect(fixtureArtifactBuild?.env).toMatchObject({
       FASED_SYSTEMD_FIXTURE_BUILD_ONLY: "1",
       FASED_SYSTEMD_FIXTURE_OUTPUT_DIR: "${{ runner.temp }}/protected-local-artifact",
@@ -120,7 +130,7 @@ describe("CI workflow routing", () => {
     expect(protectedLocalUpdate?.steps?.indexOf(localRecoveryT1)).toBeLessThan(
       protectedLocalUpdate?.steps?.indexOf(localSystemdFixture),
     );
-    expect(localSystemdFixture?.run).toBe("bash scripts/test-protected-local-systemd-container.sh");
+    expect(localSystemdFixture?.run).toBe("bash scripts/test-lifecycle-local-acceptance.sh");
     expect(localSystemdFixture?.env).toMatchObject({
       FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "0.1.75",
     });
@@ -238,7 +248,7 @@ describe("CI workflow routing", () => {
     expect(focused?.if).toBe("needs.change-scope.outputs.run_node_focused == 'true'");
     const focusedCommands = focused?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     expect(focusedCommands).toContain("scripts/go-lifecycle-routing.test.ts");
-    expect(focusedCommands).toContain("scripts/fased-generation-updater-core.test.ts");
+    expect(focusedCommands).toContain("scripts/fased-managed-updater-fixed-client.test.ts");
     expect(focusedCommands).toContain("src/wallet/wallet-application-state-permissions.test.ts");
 
     for (const [jobName, group] of [
@@ -614,12 +624,12 @@ describe("CI workflow routing", () => {
         p1?.steps?.find((step) => usesAction(step, "actions/download-artifact"))?.with,
       ).toMatchObject({ name: "fased-hosting-candidate" });
     }
-    expect(p1FreshText).toContain("test-protected-local-systemd-container.sh");
-    expect(p1FreshText).not.toContain("test-go-hosting-systemd-container.sh");
-    expect(p1UpdateText).toContain("test-protected-local-systemd-container.sh");
-    expect(p1UpdateText).not.toContain("test-go-hosting-systemd-container.sh");
-    expect(p1HostingText).toContain("test-go-hosting-systemd-container.sh");
-    expect(p1HostingText).not.toContain("test-protected-local-systemd-container.sh");
+    expect(p1FreshText).toContain("test-lifecycle-local-acceptance.sh");
+    expect(p1FreshText).not.toContain("test-lifecycle-hosting-acceptance.sh");
+    expect(p1UpdateText).toContain("test-lifecycle-local-acceptance.sh");
+    expect(p1UpdateText).not.toContain("test-lifecycle-hosting-acceptance.sh");
+    expect(p1HostingText).toContain("test-lifecycle-hosting-acceptance.sh");
+    expect(p1HostingText).not.toContain("test-lifecycle-local-acceptance.sh");
     expect(
       p1Fresh?.steps?.find((step) => step.name === "Run packaged fresh Local P1")?.env,
     ).toMatchObject({
@@ -716,33 +726,17 @@ describe("CI workflow routing", () => {
       resolve(repoRoot, ".github/workflows/hosted-runtime-release.yml"),
       "utf8",
     );
-    const retryWorkflow = await readWorkflow(".github/workflows/candidate-p1-retry.yml");
 
     expect(dockerWorkflow).not.toContain("gh release create");
     expect(dockerWorkflow).not.toContain("gh release upload");
     expect(hostedWorkflow).toContain('gh release create "$RELEASE_TAG"');
-    expect(retryWorkflow.jobs?.publish?.environment).toBe("candidate-release");
-    expect(retryWorkflow.jobs?.publish?.needs).toEqual(["validate", "retry-update"]);
-    expect(retryWorkflow.jobs?.["retry-update"]?.strategy).toMatchObject({
-      "fail-fast": false,
-    });
-    const retryText = Object.values(retryWorkflow.jobs ?? {})
-      .flatMap((job) => job.steps ?? [])
-      .map((step) => step.run ?? "")
-      .join("\n");
-    expect(retryText).toContain('"$SOURCE_COMMIT"..HEAD');
-    expect(retryText).toContain("test-protected-local-systemd-container");
-    expect(retryText).toContain("refs/tags/v$RELEASE_VERSION");
-    expect(retryText).toContain('--workflow-run-id "$CANDIDATE_RUN_ID"');
-    expect(retryText).toContain("privileged-release-evidence.mjs verify");
-    expect(retryText).toContain("release-artifact-set.mjs verify-assets");
-    expect(retryText).not.toContain("pnpm build");
-    expect(retryText).not.toContain("go build");
+    expect(hostedWorkflow).toContain("environment: candidate-release");
+    expect(await exists(resolve(repoRoot, ".github/workflows/candidate-p1-retry.yml"))).toBe(false);
   });
 
   it("selects beta for every prerelease target in the Protected Local fixture", async () => {
     const fixture = await readFile(
-      resolve(repoRoot, "scripts/docker/protected-local-systemd/run.sh"),
+      resolve(repoRoot, "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh"),
       "utf8",
     );
 
@@ -768,19 +762,16 @@ describe("CI workflow routing", () => {
     expect(fixture).toContain("install -m 0700 -o testop -g testop /artifacts/install.sh");
     expect(fixture).toContain("install -m 0644 /artifacts/fased-hosted-release-v2.json");
     expect(fixture).toContain('if [[ "$public_acquisition" == "1" ]]');
-    expect(fixture).toContain('if [[ "\\$source_ref" == "refs/tags/v${version}" ||');
-    expect(fixture).toContain('"\\$source_ref" == "refs/tags/v${predecessor_version}"');
-    expect(fixture).toContain(
-      'predecessor_version="$(cat /var/lib/fased-protected-local-fixture/predecessor-version 2>/dev/null || true)"',
-    );
+    expect(fixture).not.toContain("EOF_FIXTURE_GH");
+    expect(fixture).toContain("lifecycle-installed-state-capsule.mjs");
+    expect(fixture).toContain("lifecycle-receipt-verifier.mjs");
     expect(fixture).toContain('FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port"');
-    expect(fixture).toContain('"\\$source_ref" == "refs/heads/main"');
     const containerFixture = await readFile(
-      resolve(repoRoot, "scripts/test-protected-local-systemd-container.sh"),
+      resolve(repoRoot, "scripts/test-lifecycle-local-acceptance.sh"),
       "utf8",
     );
     expect(containerFixture).toContain('"install_entry_release_identity=\\"${VERSION}\\""');
-    expect(containerFixture).toContain("/tmp/managed-predecessor-install.err");
+    expect(containerFixture).toContain("FASED_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_DIR");
     expect(containerFixture).toContain(".release.commit == $commit");
     expect(containerFixture).toContain('bash "$ROOT_DIR/scripts/release-fased-lifecycled.sh"');
     expect(containerFixture).toContain('node "$ROOT_DIR/scripts/stamp-release-installer.mjs"');
@@ -807,7 +798,7 @@ describe("CI workflow routing", () => {
 
   it("keeps the managed predecessor runtime inside the root-controlled store", async () => {
     const fixture = await readFile(
-      resolve(repoRoot, "scripts/docker/protected-local-systemd/run.sh"),
+      resolve(repoRoot, "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh"),
       "utf8",
     );
     const resolverStart = fixture.indexOf("resolve_predecessor_runtime() {");
@@ -825,7 +816,7 @@ describe("CI workflow routing", () => {
 
   it("keeps stale-session update resolution bound to the exact fixture candidate", async () => {
     const fixture = await readFile(
-      resolve(repoRoot, "scripts/docker/protected-local-systemd/run.sh"),
+      resolve(repoRoot, "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh"),
       "utf8",
     );
     const helperStart = fixture.indexOf("run_as_stale_operator() {");

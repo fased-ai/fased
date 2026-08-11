@@ -9,16 +9,26 @@ describe("immutable release installer stamping", () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-installer-stamp-"));
     const source = path.join(root, "install.sh");
     const output = path.join(root, "release-install.sh");
+    const x64 = path.join(root, "bootstrap-x64");
+    const arm64 = path.join(root, "bootstrap-arm64");
+    await fsp.writeFile(x64, "x64-bootstrap");
+    await fsp.writeFile(arm64, "arm64-bootstrap");
     await fsp.writeFile(
       source,
-      '#!/usr/bin/env bash\ninstall_entry_release_identity="__FASED_RELEASE_IDENTITY__"\n',
+      '#!/usr/bin/env bash\ninstall_entry_release_identity="__FASED_RELEASE_IDENTITY__"\nbootstrap_sha256_x64="__FASED_BOOTSTRAP_SHA256_X64__"\nbootstrap_sha256_arm64="__FASED_BOOTSTRAP_SHA256_ARM64__"\n',
     );
 
-    await stampReleaseInstaller({ source, output, version: "1.2.3-rc.4" });
+    await stampReleaseInstaller({
+      source,
+      output,
+      version: "1.2.3-rc.4",
+      bootstrapX64: x64,
+      bootstrapArm64: arm64,
+    });
 
-    expect(await fsp.readFile(output, "utf8")).toContain(
-      'install_entry_release_identity="1.2.3-rc.4"',
-    );
+    const stamped = await fsp.readFile(output, "utf8");
+    expect(stamped).toContain('install_entry_release_identity="1.2.3-rc.4"');
+    expect(stamped).not.toContain("__FASED_BOOTSTRAP_SHA256_");
     expect((await fsp.stat(output)).mode & 0o777).toBe(0o755);
   });
 
@@ -29,11 +39,23 @@ describe("immutable release installer stamping", () => {
     const marker = 'install_entry_release_identity="__FASED_RELEASE_IDENTITY__"\n';
     await fsp.writeFile(source, `${marker}${marker}`);
 
-    await expect(stampReleaseInstaller({ source, output, version: "1.2.3" })).rejects.toThrow(
-      "missing or ambiguous",
-    );
-    await expect(stampReleaseInstaller({ source, output, version: "latest" })).rejects.toThrow(
-      "not canonical",
-    );
+    await expect(
+      stampReleaseInstaller({
+        source,
+        output,
+        version: "1.2.3",
+        bootstrapX64: source,
+        bootstrapArm64: source,
+      }),
+    ).rejects.toThrow("missing or ambiguous");
+    await expect(
+      stampReleaseInstaller({
+        source,
+        output,
+        version: "latest",
+        bootstrapX64: source,
+        bootstrapArm64: source,
+      }),
+    ).rejects.toThrow("not canonical");
   });
 });

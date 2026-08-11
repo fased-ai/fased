@@ -10,11 +10,14 @@ import (
 	"io"
 	"regexp"
 	"sort"
+	"time"
 )
 
 const (
-	CurrentManifestSchemaVersion    uint32 = 1
-	CurrentTransactionSchemaVersion uint32 = 1
+	CurrentManifestSchemaVersion       uint32 = 2
+	CurrentTransactionSchemaVersion    uint32 = 2
+	RollbackAuthorizationSchemaVersion uint32 = 1
+	MaxRollbackAuthorizationLifetime          = 10 * time.Minute
 )
 
 // CurrentStateSchemas is the single declared preservation contract shared by
@@ -89,6 +92,8 @@ type Manifest struct {
 	PreviousGeneration *Generation       `json:"previousGeneration,omitempty"`
 	StateSchemas       map[string]uint32 `json:"stateSchemas"`
 	Capabilities       CapabilityRanges  `json:"capabilities"`
+	ReleaseSequence    uint64            `json:"releaseSequence"`
+	SecurityEpoch      uint64            `json:"securityEpoch"`
 }
 
 type PlatformIdentity struct {
@@ -99,24 +104,27 @@ type PlatformIdentity struct {
 }
 
 type Transaction struct {
-	SchemaVersion            uint32            `json:"schemaVersion"`
-	ID                       string            `json:"transactionId"`
-	Profile                  Profile           `json:"profile"`
-	PlanAction               string            `json:"planAction"`
-	SourceTopology           string            `json:"sourceTopology,omitempty"`
-	PublicPredecessorVersion string            `json:"publicPredecessorVersion,omitempty"`
-	Phase                    Phase             `json:"phase"`
-	Revision                 uint64            `json:"revision"`
-	Target                   Generation        `json:"target"`
-	TargetStateSchemas       map[string]uint32 `json:"targetStateSchemas"`
-	TargetCapabilities       CapabilityRanges  `json:"targetCapabilities"`
-	Previous                 *Generation       `json:"previous,omitempty"`
-	ManifestDigest           string            `json:"manifestDigest"`
-	StateInventoryDigest     string            `json:"stateInventoryDigest"`
-	MigrationPlanDigest      string            `json:"migrationPlanDigest"`
-	SignerPlanDigest         string            `json:"signerPlanDigest"`
-	PlatformDigest           string            `json:"platformDigest"`
-	Migrations               []Migration       `json:"migrations"`
+	SchemaVersion               uint32            `json:"schemaVersion"`
+	ID                          string            `json:"transactionId"`
+	Profile                     Profile           `json:"profile"`
+	PlanAction                  string            `json:"planAction"`
+	SourceTopology              string            `json:"sourceTopology,omitempty"`
+	PublicPredecessorVersion    string            `json:"publicPredecessorVersion,omitempty"`
+	ReleaseSequence             uint64            `json:"releaseSequence"`
+	SecurityEpoch               uint64            `json:"securityEpoch"`
+	RollbackAuthorizationDigest string            `json:"rollbackAuthorizationDigest,omitempty"`
+	Phase                       Phase             `json:"phase"`
+	Revision                    uint64            `json:"revision"`
+	Target                      Generation        `json:"target"`
+	TargetStateSchemas          map[string]uint32 `json:"targetStateSchemas"`
+	TargetCapabilities          CapabilityRanges  `json:"targetCapabilities"`
+	Previous                    *Generation       `json:"previous,omitempty"`
+	ManifestDigest              string            `json:"manifestDigest"`
+	StateInventoryDigest        string            `json:"stateInventoryDigest"`
+	MigrationPlanDigest         string            `json:"migrationPlanDigest"`
+	SignerPlanDigest            string            `json:"signerPlanDigest"`
+	PlatformDigest              string            `json:"platformDigest"`
+	Migrations                  []Migration       `json:"migrations"`
 }
 
 // TransactionEnvelope contains the immutable identity shared by the
@@ -124,22 +132,42 @@ type Transaction struct {
 // independently, but they cannot disagree about what is being installed or
 // which state, signer, platform, and rollback generation are bound to it.
 type TransactionEnvelope struct {
-	SchemaVersion            uint32            `json:"schemaVersion"`
-	ID                       string            `json:"transactionId"`
-	Profile                  Profile           `json:"profile"`
-	PlanAction               string            `json:"planAction"`
-	SourceTopology           string            `json:"sourceTopology,omitempty"`
-	PublicPredecessorVersion string            `json:"publicPredecessorVersion,omitempty"`
-	Target                   Generation        `json:"target"`
-	TargetStateSchemas       map[string]uint32 `json:"targetStateSchemas"`
-	TargetCapabilities       CapabilityRanges  `json:"targetCapabilities"`
-	Previous                 *Generation       `json:"previous,omitempty"`
-	ManifestDigest           string            `json:"manifestDigest"`
-	StateInventoryDigest     string            `json:"stateInventoryDigest"`
-	MigrationPlanDigest      string            `json:"migrationPlanDigest"`
-	SignerPlanDigest         string            `json:"signerPlanDigest"`
-	PlatformDigest           string            `json:"platformDigest"`
-	Migrations               []Migration       `json:"migrations"`
+	SchemaVersion               uint32            `json:"schemaVersion"`
+	ID                          string            `json:"transactionId"`
+	Profile                     Profile           `json:"profile"`
+	PlanAction                  string            `json:"planAction"`
+	SourceTopology              string            `json:"sourceTopology,omitempty"`
+	PublicPredecessorVersion    string            `json:"publicPredecessorVersion,omitempty"`
+	ReleaseSequence             uint64            `json:"releaseSequence"`
+	SecurityEpoch               uint64            `json:"securityEpoch"`
+	RollbackAuthorizationDigest string            `json:"rollbackAuthorizationDigest,omitempty"`
+	Target                      Generation        `json:"target"`
+	TargetStateSchemas          map[string]uint32 `json:"targetStateSchemas"`
+	TargetCapabilities          CapabilityRanges  `json:"targetCapabilities"`
+	Previous                    *Generation       `json:"previous,omitempty"`
+	ManifestDigest              string            `json:"manifestDigest"`
+	StateInventoryDigest        string            `json:"stateInventoryDigest"`
+	MigrationPlanDigest         string            `json:"migrationPlanDigest"`
+	SignerPlanDigest            string            `json:"signerPlanDigest"`
+	PlatformDigest              string            `json:"platformDigest"`
+	Migrations                  []Migration       `json:"migrations"`
+}
+
+// RollbackAuthorization is verified trust evidence, not compatibility policy.
+// The planner may select an older sequence only when every field matches the
+// current and target identities and the bounded authorization is still live.
+type RollbackAuthorization struct {
+	SchemaVersion          uint32 `json:"schemaVersion"`
+	CurrentGenerationID    string `json:"currentGenerationId"`
+	TargetGenerationID     string `json:"targetGenerationId"`
+	CurrentReleaseSequence uint64 `json:"currentReleaseSequence"`
+	TargetReleaseSequence  uint64 `json:"targetReleaseSequence"`
+	SecurityEpoch          uint64 `json:"securityEpoch"`
+	Operator               string `json:"operator"`
+	Reason                 string `json:"reason"`
+	IssuedAt               string `json:"issuedAt"`
+	ExpiresAt              string `json:"expiresAt"`
+	EnvelopeDigest         string `json:"envelopeDigest"`
 }
 
 type Migration struct {
@@ -163,16 +191,43 @@ var (
 	instanceIDPattern    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 	serviceNamePattern   = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 	unitNamePattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}\.service$`)
+	operatorPattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$`)
 )
 
+func (authorization RollbackAuthorization) ValidateAt(now time.Time) error {
+	if authorization.SchemaVersion != RollbackAuthorizationSchemaVersion {
+		return fmt.Errorf("unsupported rollback authorization schema %d", authorization.SchemaVersion)
+	}
+	if !digestPattern.MatchString(authorization.CurrentGenerationID) || !digestPattern.MatchString(authorization.TargetGenerationID) || authorization.CurrentGenerationID == authorization.TargetGenerationID {
+		return errors.New("rollback authorization generation binding is invalid")
+	}
+	if authorization.CurrentReleaseSequence == 0 || authorization.TargetReleaseSequence == 0 || authorization.TargetReleaseSequence >= authorization.CurrentReleaseSequence {
+		return errors.New("rollback authorization sequence binding is not a downgrade")
+	}
+	if authorization.SecurityEpoch == 0 {
+		return errors.New("rollback authorization security epoch must be nonzero")
+	}
+	if !operatorPattern.MatchString(authorization.Operator) || len(authorization.Reason) < 8 || len(authorization.Reason) > 256 {
+		return errors.New("rollback authorization operator or reason is invalid")
+	}
+	issuedAt, err := time.Parse(time.RFC3339, authorization.IssuedAt)
+	if err != nil || issuedAt.Format(time.RFC3339) != authorization.IssuedAt {
+		return errors.New("rollback authorization issuedAt is not canonical UTC RFC3339")
+	}
+	expiresAt, err := time.Parse(time.RFC3339, authorization.ExpiresAt)
+	if err != nil || expiresAt.Format(time.RFC3339) != authorization.ExpiresAt {
+		return errors.New("rollback authorization expiresAt is not canonical UTC RFC3339")
+	}
+	if !expiresAt.After(issuedAt) || expiresAt.Sub(issuedAt) > MaxRollbackAuthorizationLifetime || now.Before(issuedAt) || !now.Before(expiresAt) {
+		return errors.New("rollback authorization is expired, premature, or exceeds its lifetime")
+	}
+	if !digestPattern.MatchString(authorization.EnvelopeDigest) {
+		return errors.New("rollback authorization envelope digest is invalid")
+	}
+	return nil
+}
+
 func (p PlatformIdentity) Validate(profile Profile) error {
-	want := "linux-systemd-local-v1"
-	if profile == ProfileHosting {
-		want = "linux-systemd-hosting-v1"
-	}
-	if p.Adapter != want || !platformNamePattern.MatchString(p.Adapter) {
-		return fmt.Errorf("platform adapter must be %q for profile %q", want, profile)
-	}
 	if !instanceIDPattern.MatchString(p.InstanceID) {
 		return errors.New("platform instance id is invalid")
 	}
@@ -183,7 +238,20 @@ func (p PlatformIdentity) Validate(profile Profile) error {
 	if err != nil {
 		return err
 	}
-	required := []string{"controller", "gateway", "signer", "supervisor"}
+	legacy := p.Adapter == legacyPlatformAdapter(profile)
+	if p.Adapter != expected.Adapter && !legacy {
+		return fmt.Errorf("platform adapter %q is unsupported for profile %q", p.Adapter, profile)
+	}
+	if legacy {
+		expected, err = LegacyControllerPlatformIdentity(profile, p.InstanceID, p.ConfigurationDigest)
+		if err != nil {
+			return err
+		}
+	}
+	required := []string{"gateway", "signer", "supervisor"}
+	if legacy {
+		required = append(required, "controller")
+	}
 	if len(p.Services) != len(required) {
 		return errors.New("platform services must contain the exact required service set")
 	}
@@ -197,6 +265,21 @@ func (p PlatformIdentity) Validate(profile Profile) error {
 }
 
 func NewPlatformIdentity(profile Profile, instanceID, configurationDigest string) (PlatformIdentity, error) {
+	return platformIdentity(profile, instanceID, configurationDigest, false)
+}
+
+// LegacyControllerPlatformIdentity exists only to decode and inspect the v1
+// controller-worker topology during bridge discovery. New installations and
+// transactions must use NewPlatformIdentity's three-service topology.
+func LegacyControllerPlatformIdentity(profile Profile, instanceID, configurationDigest string) (PlatformIdentity, error) {
+	return platformIdentity(profile, instanceID, configurationDigest, true)
+}
+
+func (p PlatformIdentity) IsLegacyControllerWorker(profile Profile) bool {
+	return p.Adapter == legacyPlatformAdapter(profile) && p.Validate(profile) == nil
+}
+
+func platformIdentity(profile Profile, instanceID, configurationDigest string, legacy bool) (PlatformIdentity, error) {
 	if err := validateProfile(profile); err != nil {
 		return PlatformIdentity{}, err
 	}
@@ -206,21 +289,35 @@ func NewPlatformIdentity(profile Profile, instanceID, configurationDigest string
 	if !digestPattern.MatchString(configurationDigest) {
 		return PlatformIdentity{}, errors.New("platform configuration must be a lowercase sha256 digest")
 	}
-	adapter := "linux-systemd-local-v1"
+	adapter := "linux-systemd-local-v2"
 	services := map[string]string{
-		"controller": fmt.Sprintf("fased-local-controller-worker-%s.service", instanceID),
 		"gateway":    fmt.Sprintf("fased-gateway-%s.service", instanceID),
 		"signer":     fmt.Sprintf("fased-signerd-%s.service", instanceID),
 		"supervisor": fmt.Sprintf("fased-local-controller-%s.service", instanceID),
 	}
 	if profile == ProfileHosting {
-		adapter = "linux-systemd-hosting-v1"
+		adapter = "linux-systemd-hosting-v2"
 		services = map[string]string{
-			"controller": "fased-host-controller.service", "gateway": "fased-gateway.service",
-			"signer": "fased-signerd.service", "supervisor": "fased-host-updater.service",
+			"gateway": "fased-gateway.service",
+			"signer":  "fased-signerd.service", "supervisor": "fased-host-updater.service",
+		}
+	}
+	if legacy {
+		adapter = legacyPlatformAdapter(profile)
+		if profile == ProfileProtectedLocal {
+			services["controller"] = fmt.Sprintf("fased-local-controller-worker-%s.service", instanceID)
+		} else {
+			services["controller"] = "fased-host-controller.service"
 		}
 	}
 	return PlatformIdentity{Adapter: adapter, InstanceID: instanceID, ConfigurationDigest: configurationDigest, Services: services}, nil
+}
+
+func legacyPlatformAdapter(profile Profile) string {
+	if profile == ProfileHosting {
+		return "linux-systemd-hosting-v1"
+	}
+	return "linux-systemd-local-v1"
 }
 
 func (p PlatformIdentity) Digest(profile Profile) (string, error) {
@@ -320,6 +417,9 @@ func (m Manifest) Validate() error {
 	if err := m.Platform.Validate(m.Profile); err != nil {
 		return err
 	}
+	if m.ReleaseSequence == 0 || m.SecurityEpoch == 0 {
+		return errors.New("manifest release sequence and security epoch must be nonzero")
+	}
 	if m.ActiveGeneration == nil && m.PreviousGeneration != nil {
 		return errors.New("previous generation requires an active generation")
 	}
@@ -363,6 +463,9 @@ func (t Transaction) Validate() error {
 	if err := validateProfile(t.Profile); err != nil {
 		return err
 	}
+	if t.ReleaseSequence == 0 || t.SecurityEpoch == 0 {
+		return errors.New("transaction release sequence and security epoch must be nonzero")
+	}
 	switch t.PlanAction {
 	case "INSTALL", "UPDATE":
 		if t.SourceTopology != "" || t.PublicPredecessorVersion != "" {
@@ -375,8 +478,15 @@ func (t Transaction) Validate() error {
 		if err := ValidateVersion(t.PublicPredecessorVersion); err != nil {
 			return fmt.Errorf("public-stable predecessor version: %w", err)
 		}
+	case "ROLLBACK":
+		if t.SourceTopology != "" || t.PublicPredecessorVersion != "" || !digestPattern.MatchString(t.RollbackAuthorizationDigest) {
+			return errors.New("rollback transaction authorization binding is invalid")
+		}
 	default:
 		return errors.New("transaction plan action is not mutable")
+	}
+	if t.PlanAction != "ROLLBACK" && t.RollbackAuthorizationDigest != "" {
+		return errors.New("non-rollback transaction contains rollback authorization")
 	}
 	absent := "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	switch t.PlanAction {
@@ -388,7 +498,7 @@ func (t Transaction) Validate() error {
 		if t.Previous != nil || t.ManifestDigest != absent {
 			return errors.New("public-stable bridge has canonical predecessor state")
 		}
-	case "UPDATE":
+	case "UPDATE", "ROLLBACK":
 		if t.Previous == nil || t.ManifestDigest == absent {
 			return errors.New("managed update is missing its canonical predecessor")
 		}
@@ -456,6 +566,7 @@ func (t Transaction) Envelope() (TransactionEnvelope, error) {
 	return TransactionEnvelope{
 		SchemaVersion: t.SchemaVersion, ID: t.ID, Profile: t.Profile,
 		PlanAction: t.PlanAction, SourceTopology: t.SourceTopology, PublicPredecessorVersion: t.PublicPredecessorVersion,
+		ReleaseSequence: t.ReleaseSequence, SecurityEpoch: t.SecurityEpoch, RollbackAuthorizationDigest: t.RollbackAuthorizationDigest,
 		Target: t.Target, TargetStateSchemas: t.TargetStateSchemas,
 		TargetCapabilities: t.TargetCapabilities, Previous: t.Previous,
 		ManifestDigest: t.ManifestDigest, StateInventoryDigest: t.StateInventoryDigest,
@@ -468,6 +579,7 @@ func (e TransactionEnvelope) Validate() error {
 	probe := Transaction{
 		SchemaVersion: e.SchemaVersion, ID: e.ID, Profile: e.Profile,
 		PlanAction: e.PlanAction, SourceTopology: e.SourceTopology, PublicPredecessorVersion: e.PublicPredecessorVersion,
+		ReleaseSequence: e.ReleaseSequence, SecurityEpoch: e.SecurityEpoch, RollbackAuthorizationDigest: e.RollbackAuthorizationDigest,
 		Phase: PhaseIdle, Revision: 1, Target: e.Target,
 		TargetStateSchemas: e.TargetStateSchemas, TargetCapabilities: e.TargetCapabilities,
 		Previous: e.Previous, ManifestDigest: e.ManifestDigest,
@@ -508,7 +620,7 @@ func Advance(tx Transaction, next Phase) (Transaction, error) {
 func legalTransition(from, to Phase) bool {
 	switch from {
 	case PhaseIdle:
-		return to == PhaseStaged
+		return to == PhaseStaged || to == PhaseRolledBack
 	case PhaseStaged:
 		return to == PhasePrepared || to == PhaseRolledBack
 	case PhasePrepared:
@@ -528,7 +640,7 @@ func Recover(tx Transaction) (RecoveryDecision, error) {
 	}
 	switch tx.Phase {
 	case PhaseIdle:
-		return RecoveryDecision{Action: RecoveryNoop, Result: PhaseIdle}, nil
+		return RecoveryDecision{Action: RecoveryDiscardStaged, Result: PhaseRolledBack}, nil
 	case PhaseStaged:
 		return RecoveryDecision{Action: RecoveryDiscardStaged, Result: PhaseRolledBack}, nil
 	case PhasePrepared:

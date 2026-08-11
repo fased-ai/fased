@@ -57,6 +57,13 @@ affected topology against those exact bytes. Reuse it for rollback, restart,
 preservation, and `Already current`. Never build ARM/macOS or a release matrix
 during development. Stop after local closure unless shipping was requested.
 
+For a root lifecycle, installer trust, Local/Hosting convergence, or updater
+architecture replacement, also read
+[`references/lifecycle-redesign.md`](references/lifecycle-redesign.md). Follow
+its numbered checkpoint only; never skip from red contracts to a product build,
+PR, or candidate. A locked user-supplied incident plan is controlling when it
+is stricter.
+
 ## RELEASE
 
 Read [`references/release.md`](references/release.md). A candidate confirms

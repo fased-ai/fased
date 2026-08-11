@@ -2,7 +2,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolveManagedUpdaterCore } from "./fased-managed-updater.mjs";
 import {
   activateManagedUpdaterGeneration,
   installManagedUpdaterCompatibilityFiles,
@@ -13,13 +12,7 @@ import {
 
 const FILES = [
   "fased-managed-updater.mjs",
-  "fased-generation-updater-core.mjs",
-  "generation-updater.mjs",
   "hosted-release-manifest.mjs",
-  "lifecycle-trust-crypto.mjs",
-  "lifecycle-trust-policy.mjs",
-  "lifecycle-trust-root.mjs",
-  "lifecycle-trust-runtime.mjs",
   "managed-runtime-layout.mjs",
   "managed-updater-bundle.mjs",
   "managed-updater-bundle.v1.json",
@@ -312,31 +305,6 @@ describe("managed updater content-addressed bundle", () => {
     ).rejects.toThrow(/identity is invalid/u);
   });
 
-  it("refuses a current generation whose core no longer matches its receipt", async () => {
-    const { root, updaterDir, firstRuntime } = await fixture();
-    const generation = await stageManagedUpdaterGeneration({
-      updaterDir,
-      runtimeRoot: firstRuntime,
-    });
-    await installManagedUpdaterCompatibilityFiles({
-      updaterDir,
-      generation,
-      copyExecutable,
-    });
-    await fs.writeFile(
-      path.join(generation.generationDir, "fased-generation-updater-core.mjs"),
-      "// tampered core\n",
-      { mode: 0o755 },
-    );
-
-    await expect(
-      resolveManagedUpdaterCore({
-        entrypointPath: path.join(updaterDir, "fased-managed-updater.mjs"),
-        stateDir: path.join(root, "state"),
-      }),
-    ).rejects.toThrow("release file identity is invalid");
-  });
-
   it("does not change current when target bundle validation fails", async () => {
     const { updaterDir, firstRuntime, secondRuntime } = await fixture();
     const first = await stageManagedUpdaterGeneration({
@@ -408,53 +376,5 @@ describe("managed updater content-addressed bundle", () => {
         code: "ENOENT",
       });
     }
-  });
-
-  it("selects only the journal-bound verified target after application rollback", async () => {
-    const { root, updaterDir, firstRuntime } = await fixture();
-    await makeProductionRuntime(firstRuntime);
-    const stateDir = path.join(root, "state");
-    const releasesDir = path.join(stateDir, "runtime", "releases");
-    const previousRoot = path.join(releasesDir, "0.1.76-rc.20");
-    const targetRoot = path.join(releasesDir, "0.1.76-rc.22");
-    await fs.mkdir(previousRoot, { recursive: true });
-    await fs.cp(firstRuntime, targetRoot, { recursive: true });
-    await fs.symlink(previousRoot, path.join(stateDir, "runtime", "current"), "dir");
-    await fs.writeFile(
-      path.join(stateDir, "install.json"),
-      `${JSON.stringify({
-        schemaVersion: 2,
-        profile: "protected-local",
-        runtime: { activeVersion: "0.1.76-rc.20" },
-      })}\n`,
-    );
-    await fs.writeFile(
-      path.join(stateDir, "hosted-update-transaction.json"),
-      `${JSON.stringify({ schemaVersion: 1, targetVersion: "0.1.76-rc.22" })}\n`,
-    );
-    await fs.mkdir(updaterDir, { recursive: true });
-    const flatEntrypoint = path.join(updaterDir, "fased-managed-updater.mjs");
-    await copyExecutable(
-      path.join(targetRoot, "scripts", "fased-managed-updater.mjs"),
-      flatEntrypoint,
-    );
-
-    await expect(
-      resolveManagedUpdaterCore({
-        entrypointPath: flatEntrypoint,
-        stateDir,
-      }),
-    ).resolves.toBe(path.join(targetRoot, "scripts", "fased-generation-updater-core.mjs"));
-
-    await fs.writeFile(
-      path.join(stateDir, "hosted-update-transaction.json"),
-      `${JSON.stringify({ schemaVersion: 1, targetVersion: "9.9.9" })}\n`,
-    );
-    await expect(
-      resolveManagedUpdaterCore({
-        entrypointPath: flatEntrypoint,
-        stateDir,
-      }),
-    ).rejects.toThrow("could not locate a complete verified target updater generation");
   });
 });

@@ -180,6 +180,9 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
     mode: 0o755,
   });
   const inventory = path.join(output, "inventory.json");
+  if (!/^sha256:[0-9a-f]{64}$/.test(args["plugin-lock-digest"] ?? "")) {
+    throw new Error("plugin-lock-digest is required and must be a lowercase SHA-256 digest");
+  }
   const { stdout } = await execFileAsync(
     inventoryLifecycled,
     [
@@ -200,6 +203,8 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
       args["dependency-asset"],
       "--dependency-archive-sha256",
       args["dependency-archive-sha256"],
+      "--plugin-lock-digest",
+      args["plugin-lock-digest"],
     ],
     {
       cwd: path.dirname(inventoryLifecycled),

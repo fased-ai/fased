@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"fased-lifecycled/bundle"
@@ -57,6 +58,15 @@ type fakeStore struct {
 	stages         *int
 }
 
+type pendingFakeStore struct {
+	fakeStore
+	pending model.Transaction
+}
+
+func (state pendingFakeStore) PendingSupervisorTransaction() (model.Transaction, error) {
+	return state.pending, nil
+}
+
 type fakeMutationLock struct{}
 
 func (fakeMutationLock) Release() error { return nil }
@@ -100,8 +110,9 @@ func (inventory *fakeInventory) Bind(context.Context, planner.Installation, bund
 }
 
 type fakeSupervisor struct {
-	runs int
-	tx   model.Transaction
+	runs     int
+	recovers int
+	tx       model.Transaction
 }
 
 type fakeOnboarding struct{ calls int }
@@ -136,8 +147,39 @@ func (supervisor *fakeSupervisor) Run(_ context.Context, tx model.Transaction) (
 }
 
 func (supervisor *fakeSupervisor) Recover(_ context.Context, tx model.Transaction) (engine.Result, error) {
+	supervisor.recovers++
 	supervisor.tx = tx
 	return engine.Result{Outcome: engine.OutcomeAlreadyCurrent, Phase: model.PhaseCommitted}, nil
+}
+
+func TestConvergeRecoversDurableUnfinishedTransactionBeforeNewWork(t *testing.T) {
+	inventory, target := targetContract()
+	manifest := model.Manifest{
+		SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal, Platform: platform(),
+		ActiveGeneration: &target, StateSchemas: map[string]uint32{"signer": 1}, Capabilities: capabilities(),
+		ReleaseSequence: 12, SecurityEpoch: 3,
+	}
+	pending := model.Transaction{
+		SchemaVersion: model.CurrentTransactionSchemaVersion, ID: transactionID, Profile: model.ProfileProtectedLocal,
+		PlanAction: "INSTALL", ReleaseSequence: 12, SecurityEpoch: 3, Phase: model.PhaseIdle, Revision: 1,
+		Target: target, TargetStateSchemas: map[string]uint32{"signer": 1}, TargetCapabilities: capabilities(),
+		ManifestDigest: digestA, StateInventoryDigest: digestB, MigrationPlanDigest: digestA,
+		SignerPlanDigest: digestB, PlatformDigest: digestA,
+	}
+	supervisor := &fakeSupervisor{}
+	service := Service{
+		Profile: model.ProfileProtectedLocal, Platform: platform(),
+		Store:     pendingFakeStore{fakeStore: fakeStore{manifest: &manifest, manifestDigest: digestA, inventory: inventory, generation: target}, pending: pending},
+		Inventory: &fakeInventory{}, Supervisor: supervisor,
+	}
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationConverge, TargetGenerationID: target.ID, ExpectedManifestDigest: digestA}
+	response, err := service.Handle(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if supervisor.recovers != 1 || supervisor.runs != 0 || response.Outcome != string(engine.OutcomeAlreadyCurrent) {
+		t.Fatalf("new convergence did not recover first: response=%+v recovers=%d runs=%d", response, supervisor.recovers, supervisor.runs)
+	}
 }
 
 func targetContract() (bundle.Inventory, model.Generation) {
@@ -355,6 +397,30 @@ func TestInstalledPlatformMismatchRequiresExplicitRepair(t *testing.T) {
 	}
 	if bindings.calls != 0 || supervisor.runs != 0 {
 		t.Fatal("platform mismatch reached state inventory or mutation")
+	}
+}
+
+func TestLegacyControllerTopologyRequiresExplicitBridge(t *testing.T) {
+	inventory, target := targetContract()
+	active := generation(digestA, "0.1.75", commitA)
+	legacy, err := model.LegacyControllerPlatformIdentity(model.ProfileProtectedLocal, "test-instance", digestA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := model.Manifest{
+		SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal,
+		Platform: legacy, ActiveGeneration: &active, StateSchemas: map[string]uint32{"signer": 1}, Capabilities: capabilities(),
+		ReleaseSequence: 11, SecurityEpoch: 3,
+	}
+	bindings := &fakeInventory{}
+	supervisor := &fakeSupervisor{}
+	service := Service{Profile: model.ProfileProtectedLocal, Platform: platform(), Store: fakeStore{manifest: &manifest, manifestDigest: digestA, inventory: inventory, generation: target}, Inventory: bindings, Supervisor: supervisor}
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationConverge, TargetGenerationID: target.ID, ExpectedManifestDigest: digestA}
+	if _, err := service.Handle(context.Background(), request); err == nil || !strings.Contains(err.Error(), "explicit bridge path") {
+		t.Fatalf("legacy controller topology reached normal managed convergence: %v", err)
+	}
+	if bindings.calls != 0 || supervisor.runs != 0 {
+		t.Fatal("legacy controller topology reached mutation before bridge selection")
 	}
 }
 

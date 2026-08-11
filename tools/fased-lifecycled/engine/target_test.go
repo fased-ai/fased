@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"os"
 	"reflect"
 	"testing"
 
@@ -29,6 +30,8 @@ func transaction(phase model.Phase) model.Transaction {
 		ID:                 "018f47d2-5a6b-7c8d-9e0f-123456789abc",
 		Profile:            model.ProfileProtectedLocal,
 		PlanAction:         "UPDATE",
+		ReleaseSequence:    12,
+		SecurityEpoch:      3,
 		Phase:              phase,
 		Revision:           revision,
 		Target:             model.Generation{ID: digestB, Version: "0.1.76", Commit: commitB, Tree: commitB, ArtifactSetDigest: digestB},
@@ -49,6 +52,20 @@ func transaction(phase model.Phase) model.Transaction {
 type fakeJournal struct {
 	writes []model.Transaction
 	latest map[store.Authority]model.Transaction
+	events []store.ProgressEvent
+}
+
+func (journal *fakeJournal) AppendProgress(_ model.Transaction, event store.ProgressEvent) error {
+	event.Sequence = uint32(len(journal.events) + 1)
+	journal.events = append(journal.events, event)
+	return nil
+}
+
+func (journal *fakeJournal) ReadProgress(transactionID string) (store.ProgressRecord, error) {
+	if len(journal.events) == 0 {
+		return store.ProgressRecord{}, os.ErrNotExist
+	}
+	return store.ProgressRecord{SchemaVersion: store.CurrentProgressSchemaVersion, TransactionID: transactionID, Events: append([]store.ProgressEvent(nil), journal.events...)}, nil
 }
 
 func (journal *fakeJournal) CommitJournal(authority store.Authority, tx model.Transaction) error {
@@ -138,6 +155,11 @@ func (adapter fakeAdapter) Prepare(context.Context, model.Transaction) error {
 	return nil
 }
 
+func (adapter fakeAdapter) PrepareState(_ context.Context, tx model.Transaction) (ParticipantReceipt, string, error) {
+	*adapter.calls = append(*adapter.calls, "adapter.prepare-state")
+	return ParticipantReceipt{TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.StateInventoryDigest}, tx.StateInventoryDigest, nil
+}
+
 func (adapter fakeAdapter) Verify(context.Context, model.Transaction) error {
 	*adapter.calls = append(*adapter.calls, "adapter.verify")
 	return nil
@@ -191,6 +213,32 @@ func (installation fakeInstallation) Commit(context.Context, model.Transaction) 
 	return nil
 }
 
+type recoveryStateAdapter struct {
+	fakeAdapter
+	state *string
+}
+
+func (adapter recoveryStateAdapter) Restore(ctx context.Context, tx model.Transaction) error {
+	if err := adapter.fakeAdapter.Restore(ctx, tx); err != nil {
+		return err
+	}
+	*adapter.state = "previous"
+	return nil
+}
+
+type recoveryStateInstallation struct {
+	fakeInstallation
+	state *string
+}
+
+func (installation recoveryStateInstallation) Commit(ctx context.Context, tx model.Transaction) error {
+	if err := installation.fakeInstallation.Commit(ctx, tx); err != nil {
+		return err
+	}
+	*installation.state = "target"
+	return nil
+}
+
 func newEngine(calls *[]string, adapterFail, signerFail string) (*TargetEngine, *fakeJournal) {
 	journal := &fakeJournal{}
 	return &TargetEngine{
@@ -218,8 +266,8 @@ func TestTargetEngineCommitsOneOrderedTransaction(t *testing.T) {
 		t.Fatalf("explicit target commit failed: %+v err=%v", result, err)
 	}
 	wantCalls := []string{
-		"generation.stage", "migrator.prepare", "signer.prepare", "adapter.prepare",
-		"adapter.quiesce", "migrator.activate", "adapter.activate", "migrator.verify", "signer.verify", "adapter.verify",
+		"generation.stage", "signer.prepare", "adapter.prepare",
+		"adapter.quiesce", "adapter.prepare-state", "migrator.prepare", "migrator.activate", "adapter.activate", "migrator.verify", "signer.verify", "adapter.verify",
 		"migrator.commit", "signer.commit", "adapter.commit", "installation.commit",
 	}
 	if !reflect.DeepEqual(calls, wantCalls) {
@@ -234,6 +282,15 @@ func TestTargetEngineCommitsOneOrderedTransaction(t *testing.T) {
 			t.Fatalf("journal phase %d: got %s want %s", index, journal.writes[index].Phase, phase)
 		}
 	}
+	foundStateReceipt := false
+	for _, event := range journal.events {
+		if event.Step == store.ProgressStatePrepared && event.Receipt != nil && event.Receipt.Participant == "state" && event.Undo != nil && event.Undo.Digest == digestB {
+			foundStateReceipt = true
+		}
+	}
+	if !foundStateReceipt {
+		t.Fatalf("post-quiesce typed-state receipt was not journaled: %+v", journal.events)
+	}
 }
 
 func TestTargetEngineRestoresAfterSwitchFailure(t *testing.T) {
@@ -243,7 +300,7 @@ func TestTargetEngineRestoresAfterSwitchFailure(t *testing.T) {
 	if err == nil || result.Outcome != OutcomeRolledBack || result.Phase != model.PhaseRolledBack {
 		t.Fatalf("unexpected failure result: %+v err=%v", result, err)
 	}
-	wantTail := []string{"adapter.quiesce", "migrator.activate", "adapter.activate", "adapter.stop-target", "signer.abort", "migrator.abort", "adapter.restore", "adapter.discard"}
+	wantTail := []string{"adapter.quiesce", "adapter.prepare-state", "migrator.prepare", "migrator.activate", "adapter.activate", "adapter.stop-target", "signer.abort", "migrator.abort", "adapter.restore", "adapter.discard"}
 	if !reflect.DeepEqual(calls[len(calls)-len(wantTail):], wantTail) {
 		t.Fatalf("unexpected rollback order: %v", calls)
 	}
@@ -254,15 +311,21 @@ func TestTargetEngineRestoresAfterSwitchFailure(t *testing.T) {
 
 func TestRecoverCompletesVerifiedAndRollsBackSwitched(t *testing.T) {
 	var verifiedCalls []string
-	verifiedEngine, _ := newEngine(&verifiedCalls, "", "")
-	verified, err := verifiedEngine.Recover(context.Background(), transaction(model.PhaseVerified))
+	verifiedEngine, verifiedJournal := newEngine(&verifiedCalls, "", "")
+	verifiedTx := transaction(model.PhaseVerified)
+	_ = verifiedJournal.CommitJournal(store.AuthorityTargetController, verifiedTx)
+	_ = verifiedJournal.AppendProgress(verifiedTx, store.ProgressEvent{Step: store.ProgressPlatformVerified})
+	verified, err := verifiedEngine.Recover(context.Background(), verifiedTx)
 	if err != nil || verified.Phase != model.PhaseCommitted {
 		t.Fatalf("verified recovery failed: %+v err=%v", verified, err)
 	}
 
 	var switchedCalls []string
-	switchedEngine, _ := newEngine(&switchedCalls, "", "")
-	switched, err := switchedEngine.Recover(context.Background(), transaction(model.PhaseSwitched))
+	switchedEngine, switchedJournal := newEngine(&switchedCalls, "", "")
+	switchedTx := transaction(model.PhaseSwitched)
+	_ = switchedJournal.CommitJournal(store.AuthorityTargetController, switchedTx)
+	_ = switchedJournal.AppendProgress(switchedTx, store.ProgressEvent{Step: store.ProgressPlatformActivated})
+	switched, err := switchedEngine.Recover(context.Background(), switchedTx)
 	if err != nil || switched.Phase != model.PhaseRolledBack {
 		t.Fatalf("switched recovery failed: %+v err=%v", switched, err)
 	}
@@ -285,11 +348,219 @@ func TestBridgeWithoutManagedPreviousStopsTargetAfterActivationFailure(t *testin
 	if err == nil || result.Outcome != OutcomeRolledBack || result.Phase != model.PhaseRolledBack {
 		t.Fatalf("unexpected bridge failure result: %+v err=%v", result, err)
 	}
-	wantTail := []string{"adapter.quiesce", "migrator.activate", "adapter.activate", "adapter.stop-target", "signer.abort", "migrator.abort", "adapter.restore", "adapter.discard"}
+	wantTail := []string{"adapter.quiesce", "adapter.prepare-state", "migrator.prepare", "migrator.activate", "adapter.activate", "adapter.stop-target", "signer.abort", "migrator.abort", "adapter.restore", "adapter.discard"}
 	if !reflect.DeepEqual(calls[len(calls)-len(wantTail):], wantTail) {
 		t.Fatalf("bridge rollback did not stop the canonical target: got=%v want-tail=%v", calls, wantTail)
 	}
 	if journal.writes[len(journal.writes)-1].Phase != model.PhaseRolledBack {
 		t.Fatalf("bridge rollback was not journaled: %+v", journal.writes)
+	}
+}
+
+func TestRecoveryMatrixReopensEveryDurablePhaseAndConvergesExactly(t *testing.T) {
+	cases := []struct {
+		name      string
+		phase     model.Phase
+		progress  store.ProgressStep
+		initial   string
+		expected  string
+		wantPhase model.Phase
+	}{
+		{name: "idle", phase: model.PhaseIdle, initial: "previous", expected: "previous", wantPhase: model.PhaseRolledBack},
+		{name: "staged", phase: model.PhaseStaged, progress: store.ProgressGenerationStaged, initial: "previous", expected: "previous", wantPhase: model.PhaseRolledBack},
+		{name: "prepared", phase: model.PhasePrepared, progress: store.ProgressPlatformPrepared, initial: "previous", expected: "previous", wantPhase: model.PhaseRolledBack},
+		{name: "switched", phase: model.PhaseSwitched, progress: store.ProgressPlatformActivated, initial: "target", expected: "previous", wantPhase: model.PhaseRolledBack},
+		{name: "verified", phase: model.PhaseVerified, progress: store.ProgressPlatformVerified, initial: "target", expected: "target", wantPhase: model.PhaseCommitted},
+		{name: "committed", phase: model.PhaseCommitted, progress: store.ProgressManifestCommitted, initial: "target", expected: "target", wantPhase: model.PhaseCommitted},
+		{name: "rolled-back", phase: model.PhaseRolledBack, progress: store.ProgressRollbackCompleted, initial: "previous", expected: "previous", wantPhase: model.PhaseRolledBack},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			journal, err := store.Open(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tx := transaction(model.PhaseIdle)
+			if err := journal.CommitJournal(store.AuthorityTargetController, tx); err != nil {
+				t.Fatal(err)
+			}
+			path := []model.Phase{model.PhaseStaged, model.PhasePrepared, model.PhaseSwitched, model.PhaseVerified, model.PhaseCommitted}
+			if test.phase == model.PhaseRolledBack {
+				path = []model.Phase{model.PhaseRolledBack}
+			}
+			for _, phase := range path {
+				if test.phase == model.PhaseIdle {
+					break
+				}
+				tx, err = model.Advance(tx, phase)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := journal.CommitJournal(store.AuthorityTargetController, tx); err != nil {
+					t.Fatal(err)
+				}
+				if phase == test.phase {
+					break
+				}
+			}
+			if test.progress != "" {
+				if err := journal.AppendProgress(tx, store.ProgressEvent{Step: test.progress}); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			// A new Store and TargetEngine model a killed host process reopening
+			// only durable journal, progress, receipt, and undo evidence.
+			reopened, err := store.Open(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := test.initial
+			var calls []string
+			engine := &TargetEngine{
+				Journal: reopened, Generations: fakeGenerationStore{calls: &calls},
+				Migrator: fakeParticipant{name: "migrator", calls: &calls}, Signer: fakeParticipant{name: "signer", calls: &calls},
+				Adapter:      recoveryStateAdapter{fakeAdapter: fakeAdapter{calls: &calls}, state: &state},
+				Installation: recoveryStateInstallation{fakeInstallation: fakeInstallation{calls: &calls}, state: &state},
+			}
+			result, err := engine.Recover(context.Background(), tx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Phase != test.wantPhase || state != test.expected {
+				t.Fatalf("reopened %s converged to phase=%s state=%s, want phase=%s state=%s", test.phase, result.Phase, state, test.wantPhase, test.expected)
+			}
+		})
+	}
+}
+
+func TestRecoveryResumesCommitAndRollbackFromDurableSubphase(t *testing.T) {
+	t.Run("commit", func(t *testing.T) {
+		root := t.TempDir()
+		journal, err := store.Open(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tx := transaction(model.PhaseIdle)
+		if err := journal.CommitJournal(store.AuthorityTargetController, tx); err != nil {
+			t.Fatal(err)
+		}
+		for _, phase := range []model.Phase{model.PhaseStaged, model.PhasePrepared, model.PhaseSwitched, model.PhaseVerified} {
+			tx, err = model.Advance(tx, phase)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := journal.CommitJournal(store.AuthorityTargetController, tx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, step := range []store.ProgressStep{store.ProgressPlatformVerified, store.ProgressMigratorCommitted} {
+			if err := journal.AppendProgress(tx, store.ProgressEvent{Step: step}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		reopened, err := store.Open(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		state := "target"
+		var calls []string
+		engine := &TargetEngine{Journal: reopened, Generations: fakeGenerationStore{calls: &calls}, Migrator: fakeParticipant{name: "migrator", calls: &calls}, Signer: fakeParticipant{name: "signer", calls: &calls}, Adapter: recoveryStateAdapter{fakeAdapter: fakeAdapter{calls: &calls}, state: &state}, Installation: recoveryStateInstallation{fakeInstallation: fakeInstallation{calls: &calls}, state: &state}}
+		result, err := engine.Recover(context.Background(), tx)
+		if err != nil || result.Phase != model.PhaseCommitted || state != "target" {
+			t.Fatalf("commit subphase recovery failed: result=%+v state=%s err=%v", result, state, err)
+		}
+		for _, call := range calls {
+			if call == "migrator.commit" {
+				t.Fatalf("durably committed migrator was replayed: %v", calls)
+			}
+		}
+	})
+
+	t.Run("rollback", func(t *testing.T) {
+		root := t.TempDir()
+		journal, err := store.Open(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tx := transaction(model.PhaseIdle)
+		if err := journal.CommitJournal(store.AuthorityTargetController, tx); err != nil {
+			t.Fatal(err)
+		}
+		for _, phase := range []model.Phase{model.PhaseStaged, model.PhasePrepared, model.PhaseSwitched} {
+			tx, err = model.Advance(tx, phase)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := journal.CommitJournal(store.AuthorityTargetController, tx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, step := range []store.ProgressStep{store.ProgressPlatformActivated, store.ProgressRollbackStarted, store.ProgressTargetStopped, store.ProgressSignerAborted} {
+			if err := journal.AppendProgress(tx, store.ProgressEvent{Step: step}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		reopened, err := store.Open(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		state := "target"
+		var calls []string
+		engine := &TargetEngine{Journal: reopened, Generations: fakeGenerationStore{calls: &calls}, Migrator: fakeParticipant{name: "migrator", calls: &calls}, Signer: fakeParticipant{name: "signer", calls: &calls}, Adapter: recoveryStateAdapter{fakeAdapter: fakeAdapter{calls: &calls}, state: &state}, Installation: recoveryStateInstallation{fakeInstallation: fakeInstallation{calls: &calls}, state: &state}}
+		result, err := engine.Recover(context.Background(), tx)
+		if err != nil || result.Phase != model.PhaseRolledBack || state != "previous" {
+			t.Fatalf("rollback subphase recovery failed: result=%+v state=%s err=%v", result, state, err)
+		}
+		for _, call := range calls {
+			if call == "adapter.stop-target" || call == "signer.abort" {
+				t.Fatalf("durably completed rollback subphase was replayed: %v", calls)
+			}
+		}
+	})
+}
+
+func TestPreparedRecoveryRestoresWhenDurableQuiesceStarted(t *testing.T) {
+	root := t.TempDir()
+	journal, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := transaction(model.PhaseIdle)
+	if err := journal.CommitJournal(store.AuthorityTargetController, tx); err != nil {
+		t.Fatal(err)
+	}
+	for _, phase := range []model.Phase{model.PhaseStaged, model.PhasePrepared} {
+		tx, err = model.Advance(tx, phase)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := journal.CommitJournal(store.AuthorityTargetController, tx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, step := range []store.ProgressStep{store.ProgressPlatformPrepared, store.ProgressQuiesceStarted} {
+		if err := journal.AppendProgress(tx, store.ProgressEvent{Step: step}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reopened, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := "previous"
+	var calls []string
+	engine := &TargetEngine{Journal: reopened, Generations: fakeGenerationStore{calls: &calls}, Migrator: fakeParticipant{name: "migrator", calls: &calls}, Signer: fakeParticipant{name: "signer", calls: &calls}, Adapter: recoveryStateAdapter{fakeAdapter: fakeAdapter{calls: &calls}, state: &state}, Installation: recoveryStateInstallation{fakeInstallation: fakeInstallation{calls: &calls}, state: &state}}
+	result, err := engine.Recover(context.Background(), tx)
+	if err != nil || result.Phase != model.PhaseRolledBack || state != "previous" {
+		t.Fatalf("post-quiesce prepared recovery failed: result=%+v state=%s err=%v", result, state, err)
+	}
+	foundRestore := false
+	for _, call := range calls {
+		foundRestore = foundRestore || call == "adapter.restore"
+	}
+	if !foundRestore {
+		t.Fatalf("post-quiesce prepared recovery did not restore services: %v", calls)
 	}
 }

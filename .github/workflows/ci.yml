@@ -246,8 +246,7 @@ jobs:
             package.json \
             scripts/ci-change-scope.mjs \
             scripts/ci-change-scope.test.ts \
-            scripts/fased-generation-updater-core.mjs \
-            scripts/generation-updater.mjs \
+            scripts/fased-managed-updater.mjs \
             scripts/go-lifecycle-routing.test.ts \
             scripts/managed-runtime-layout.mjs \
             scripts/managed-updater-bundle.test.ts \
@@ -256,8 +255,7 @@ jobs:
           pnpm exec oxlint \
             scripts/ci-change-scope.mjs \
             scripts/ci-change-scope.test.ts \
-            scripts/fased-generation-updater-core.mjs \
-            scripts/generation-updater.mjs \
+            scripts/fased-managed-updater.mjs \
             scripts/go-lifecycle-routing.test.ts \
             scripts/managed-runtime-layout.mjs \
             scripts/managed-updater-bundle.test.ts \
@@ -267,8 +265,7 @@ jobs:
         run: >-
           pnpm exec vitest run
           scripts/go-lifecycle-routing.test.ts
-          scripts/generation-updater.test.ts
-          scripts/fased-generation-updater-core.test.ts
+          scripts/fased-managed-updater-fixed-client.test.ts
           scripts/managed-updater-bundle.test.ts
           src/wallet/wallet-application-state-permissions.test.ts
           --pool=forks
@@ -802,7 +799,7 @@ jobs:
         env:
           FASED_SYSTEMD_FIXTURE_BUILD_ONLY: "1"
           FASED_SYSTEMD_FIXTURE_OUTPUT_DIR: ${{ runner.temp }}/protected-local-artifact
-        run: bash scripts/test-protected-local-systemd-container.sh
+        run: bash scripts/test-lifecycle-local-acceptance.sh
 
       - name: Upload exact fixture artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -880,7 +877,7 @@ jobs:
           FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/protected-local-artifact
           FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
           FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
-        run: bash scripts/test-protected-local-systemd-container.sh
+        run: bash scripts/test-lifecycle-local-acceptance.sh
 
   protected-local-rocky-lifecycle:
     name: "protected Local fresh lifecycle (rocky)"
@@ -923,7 +920,7 @@ jobs:
           FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/protected-local-artifact
           FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
           FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
-        run: bash scripts/test-protected-local-systemd-container.sh
+        run: bash scripts/test-lifecycle-local-acceptance.sh
 
   protected-local-update-lifecycle:
     name: "protected Local update lifecycle (ubuntu)"
@@ -969,7 +966,7 @@ jobs:
           FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/protected-local-artifact
           FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
           FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
-        run: bash scripts/test-protected-local-systemd-container.sh
+        run: bash scripts/test-lifecycle-local-acceptance.sh
 
   platform-bootstrap-audit:
     name: "platform bootstrap"
@@ -1010,7 +1007,7 @@ jobs:
           FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/protected-local-artifact
           FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
           FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "0"
-        run: bash scripts/test-protected-local-systemd-container.sh
+        run: bash scripts/test-lifecycle-local-acceptance.sh
 
   docker-amd64:
     name: "Docker amd64"

@@ -51,7 +51,8 @@ func manifestTransaction(t *testing.T, fresh bool) (model.Transaction, model.Pla
 		action = "INSTALL"
 	}
 	return model.Transaction{
-		SchemaVersion: 1, ID: "018f47d2-5a6b-7c8d-9e0f-123456789abc", Profile: model.ProfileProtectedLocal, PlanAction: action,
+		SchemaVersion: model.CurrentTransactionSchemaVersion, ID: "018f47d2-5a6b-7c8d-9e0f-123456789abc", Profile: model.ProfileProtectedLocal, PlanAction: action,
+		ReleaseSequence: 12, SecurityEpoch: 3,
 		Phase: model.PhaseVerified, Revision: 5,
 		Target:             model.Generation{ID: digestB, Version: "0.1.76", Commit: commitB, Tree: commitB, ArtifactSetDigest: digestB},
 		TargetStateSchemas: map[string]uint32{"signer": 2}, TargetCapabilities: capabilities, Previous: previous,
@@ -73,7 +74,7 @@ func TestManifestCommitterCreatesCanonicalFreshAndUpdateRecords(t *testing.T) {
 			if fresh {
 				wantExpected = ""
 			}
-			if store.calls != 1 || store.expected != wantExpected || store.manifest.ActiveGeneration.ID != digestB || store.manifest.Platform.ConfigurationDigest == "" {
+			if store.calls != 1 || store.expected != wantExpected || store.manifest.ActiveGeneration.ID != digestB || store.manifest.Platform.ConfigurationDigest == "" || store.manifest.ReleaseSequence != tx.ReleaseSequence || store.manifest.SecurityEpoch != tx.SecurityEpoch {
 				t.Fatalf("unexpected committed manifest: %+v expected=%q calls=%d", store.manifest, store.expected, store.calls)
 			}
 		})

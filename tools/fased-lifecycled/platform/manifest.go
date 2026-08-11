@@ -36,6 +36,7 @@ func (committer *ManifestCommitter) Commit(ctx context.Context, tx model.Transac
 		SchemaVersion: model.CurrentManifestSchemaVersion, Profile: tx.Profile, Platform: committer.Identity,
 		ActiveGeneration: &tx.Target, PreviousGeneration: tx.Previous,
 		StateSchemas: copySchemas(tx.TargetStateSchemas), Capabilities: tx.TargetCapabilities,
+		ReleaseSequence: tx.ReleaseSequence, SecurityEpoch: tx.SecurityEpoch,
 	}
 	expected := tx.ManifestDigest
 	if expected == absentManifestDigest {

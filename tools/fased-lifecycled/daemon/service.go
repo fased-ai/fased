@@ -28,6 +28,10 @@ type StateStore interface {
 	ReadCandidateContract(string) (bundle.Inventory, model.Generation, error)
 }
 
+type PendingTransactionStore interface {
+	PendingSupervisorTransaction() (model.Transaction, error)
+}
+
 type StateInventory interface {
 	Bind(context.Context, planner.Installation, bundle.Inventory, planner.Plan) (stateDigest, signerPlanDigest string, err error)
 }
@@ -72,6 +76,9 @@ func (service *Service) Handle(ctx context.Context, request protocol.Request) (p
 	case protocol.OperationConverge:
 		service.mutationMu.Lock()
 		defer service.mutationMu.Unlock()
+		if err := service.recoverPending(ctx); err != nil {
+			return protocol.Response{}, err
+		}
 		return service.converge(ctx, request)
 	case protocol.OperationRecover:
 		service.mutationMu.Lock()
@@ -84,6 +91,28 @@ func (service *Service) Handle(ctx context.Context, request protocol.Request) (p
 	default:
 		return protocol.Response{}, errors.New("unsupported lifecycle operation")
 	}
+}
+
+func (service *Service) recoverPending(ctx context.Context) error {
+	pendingStore, ok := service.Store.(PendingTransactionStore)
+	if !ok {
+		return nil
+	}
+	tx, err := pendingStore.PendingSupervisorTransaction()
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	result, err := service.Supervisor.Recover(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("unfinished lifecycle transaction %s recovery failed: %w", tx.ID, err)
+	}
+	if result.Phase != model.PhaseCommitted && result.Phase != model.PhaseRolledBack {
+		return fmt.Errorf("unfinished lifecycle transaction %s did not converge", tx.ID)
+	}
+	return nil
 }
 
 func (service *Service) completeOnboarding(ctx context.Context, request protocol.Request) (protocol.Response, error) {
@@ -164,6 +193,9 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 			return protocol.Response{}, errors.New("managed convergence does not accept a public-stable generation")
 		}
 		installation = planner.Installation{Kind: planner.InstallationManaged, Manifest: &installed}
+		if installed.Platform.IsLegacyControllerWorker(service.Profile) {
+			return protocol.Response{}, errors.New("legacy controller-worker topology is readable only through the explicit bridge path")
+		}
 		installedPlatformDigest, digestErr := installed.Platform.Digest(installed.Profile)
 		if digestErr != nil || installedPlatformDigest != platformDigest {
 			return protocol.Response{}, errors.New("installed platform identity requires explicit repair")

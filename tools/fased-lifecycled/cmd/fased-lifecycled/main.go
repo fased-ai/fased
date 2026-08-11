@@ -18,8 +18,6 @@ import (
 
 	"fased-lifecycled/bootstrap"
 	"fased-lifecycled/bundle"
-	"fased-lifecycled/candidate"
-	"fased-lifecycled/controller"
 	"fased-lifecycled/daemon"
 	"fased-lifecycled/engine"
 	"fased-lifecycled/migrator"
@@ -51,7 +49,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("mode must be supervisor, target, or signer-call")
+		return errors.New("mode must be supervisor or signer-call")
 	}
 	if len(args) == 1 && args[0] == "--version" {
 		_, err := fmt.Fprintf(os.Stdout, "fased-lifecycled %s commit=%s tree=%s buildInputDigest=%s development=%s\n",
@@ -72,9 +70,6 @@ func run(args []string) error {
 	}
 	if args[0] == "initialize" {
 		return runInitialize(args[1:], os.Stdout)
-	}
-	if args[0] == "stage" {
-		return runStage(args[1:], os.Stdout)
 	}
 	if args[0] == "apply" {
 		return runApply(args[1:], os.Stdout)
@@ -99,11 +94,6 @@ func run(args []string) error {
 			return errors.New("supervisor socket does not match platform configuration")
 		}
 		return runSupervisor(ctx, config, socketPath)
-	case "target":
-		if socketPath != config.ControllerSocket() {
-			return errors.New("target socket does not match platform configuration")
-		}
-		return runTarget(ctx, config, socketPath)
 	default:
 		return errors.New("unsupported lifecycle daemon mode")
 	}
@@ -113,7 +103,7 @@ func runInventory(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("inventory", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var root, version, commit, tree, outputPath string
-	var dependencyHash, dependencyAsset, dependencyArchiveSHA256 string
+	var dependencyHash, dependencyAsset, dependencyArchiveSHA256, pluginLockDigest string
 	flags.StringVar(&root, "root", "", "")
 	flags.StringVar(&version, "version", "", "")
 	flags.StringVar(&commit, "commit", "", "")
@@ -122,8 +112,9 @@ func runInventory(args []string, output io.Writer) error {
 	flags.StringVar(&dependencyHash, "dependency-hash", "", "")
 	flags.StringVar(&dependencyAsset, "dependency-asset", "", "")
 	flags.StringVar(&dependencyArchiveSHA256, "dependency-archive-sha256", "", "")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || root == "" || version == "" || commit == "" || tree == "" || outputPath == "" {
-		return errors.New("root, version, commit, tree, and output are required")
+	flags.StringVar(&pluginLockDigest, "plugin-lock-digest", "", "")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || root == "" || version == "" || commit == "" || tree == "" || outputPath == "" || pluginLockDigest == "" {
+		return errors.New("root, version, commit, tree, output, and plugin lock digest are required")
 	}
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
@@ -143,11 +134,11 @@ func runInventory(args []string, output io.Writer) error {
 	var inventory bundle.Inventory
 	var generation model.Generation
 	if dependencyValues == 0 {
-		inventory, generation, err = bundle.Inspect(absRoot, version, commit, tree, stateSchemas, capabilities)
+		inventory, generation, err = bundle.InspectWithPluginLock(absRoot, version, commit, tree, stateSchemas, capabilities, pluginLockDigest)
 	} else if dependencyValues == 3 {
-		inventory, generation, err = bundle.InspectWithDependency(absRoot, version, commit, tree, stateSchemas, capabilities, bundle.DependencyLayer{
+		inventory, generation, err = bundle.InspectWithDependencyAndPluginLock(absRoot, version, commit, tree, stateSchemas, capabilities, bundle.DependencyLayer{
 			Hash: dependencyHash, Asset: dependencyAsset, ArchiveSHA256: dependencyArchiveSHA256,
-		})
+		}, pluginLockDigest)
 	} else {
 		return errors.New("dependency hash, asset, and archive digest must be supplied together")
 	}
@@ -707,79 +698,6 @@ func randomRequestID() (string, error) {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", value[0:4], value[4:6], value[6:8], value[8:10], value[10:16]), nil
 }
 
-func runStage(args []string, output io.Writer) error {
-	flags := flag.NewFlagSet("stage", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	var configPath, generationRoot, generationArchive, dependencyArchive, descriptorPath, attestationPath, releaseVersion string
-	flags.StringVar(&configPath, "config", "", "")
-	flags.StringVar(&generationRoot, "generation", "", "")
-	flags.StringVar(&generationArchive, "generation-archive", "", "")
-	flags.StringVar(&dependencyArchive, "dependency-archive", "", "")
-	flags.StringVar(&descriptorPath, "candidate-descriptor", "", "")
-	flags.StringVar(&attestationPath, "candidate-attestation", "", "")
-	flags.StringVar(&releaseVersion, "release-version", "", "")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || (generationRoot == "") == (generationArchive == "") {
-		return errors.New("invalid lifecycle stage arguments")
-	}
-	selectedInput := generationRoot
-	if generationArchive != "" {
-		selectedInput = generationArchive
-	}
-	if !filepath.IsAbs(selectedInput) || filepath.Clean(selectedInput) != selectedInput {
-		return errors.New("invalid lifecycle stage arguments")
-	}
-	if dependencyArchive != "" && (!filepath.IsAbs(dependencyArchive) || filepath.Clean(dependencyArchive) != dependencyArchive) {
-		return errors.New("invalid lifecycle dependency archive")
-	}
-	if generationArchive != "" {
-		for _, path := range []string{descriptorPath, attestationPath} {
-			if !filepath.IsAbs(path) || filepath.Clean(path) != path {
-				return errors.New("candidate evidence path is invalid")
-			}
-		}
-		files := map[string]string{filepath.Base(generationArchive): generationArchive}
-		if dependencyArchive != "" {
-			files[filepath.Base(dependencyArchive)] = dependencyArchive
-		}
-		if _, err := candidate.Verify(context.Background(), candidate.GitHubVerifier{Binary: githubCLI()}, descriptorPath, attestationPath, releaseVersion, files); err != nil {
-			return err
-		}
-	}
-	config, err := loadConfig(configPath, 0)
-	if err != nil {
-		return err
-	}
-	state, err := store.OpenLayout(store.Layout{StateRoot: config.LifecycleRoot, InstallRoot: config.InstallRoot})
-	if err != nil {
-		return err
-	}
-	var generation model.Generation
-	if generationArchive != "" {
-		generation, err = state.ImportGenerationArchive(generationArchive)
-	} else {
-		generation, err = state.ImportGeneration(generationRoot)
-	}
-	if err != nil {
-		return err
-	}
-	if err := importGenerationDependency(state, generation, dependencyArchive); err != nil {
-		return err
-	}
-	if err := state.StageGeneration(generation.ID); err != nil {
-		return err
-	}
-	return json.NewEncoder(output).Encode(generation)
-}
-
-func githubCLI() string {
-	for _, path := range []string{"/usr/bin/gh", "/usr/local/bin/gh"} {
-		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 && info.Mode().Perm()&0o111 != 0 {
-			return path
-		}
-	}
-	return ""
-}
-
 func importGenerationDependency(state *store.Store, generation model.Generation, archive string) error {
 	layer, err := state.GenerationDependency(generation.ID)
 	if err != nil {
@@ -855,23 +773,21 @@ func runSupervisor(ctx context.Context, config platform.Config, socketPath strin
 	if err != nil {
 		return err
 	}
-	units, err := platform.NewDiskUnitStore(config, "controller")
-	if err != nil {
-		return err
-	}
 	systemd, err := systemdClient()
 	if err != nil {
 		return err
 	}
-	controllerAdapter := &platform.ControllerAdapter{Config: config, Identity: identity, Units: units, Systemd: systemd, Generations: state}
-	targetClient := controller.Client{SocketPath: config.ControllerSocket(), Timeout: 4 * time.Minute}
-	supervisor := &engine.SupervisorEngine{Journal: state, Controller: controllerAdapter, Target: targetClient}
+	targetEngine, targetAdapter, err := installedTargetRuntime(config, identity, state, systemd)
+	if err != nil {
+		return err
+	}
+	supervisor := &engine.SupervisorEngine{Journal: state, Target: targetEngine}
 	binder := &statebind.Binder{Specs: statebind.CanonicalSpecs(config.OwnerStateRoot, config.InstallRoot, config.SignerStateRoot())}
 	evidence := platform.DiscoveryEvidenceVerifier{Request: platform.DiscoveryRequest{
 		Profile: config.Profile, OwnerStateRoot: config.OwnerStateRoot,
 		CanonicalManifestPath: filepath.Join(config.LifecycleRoot, "installation-manifest.json"), CanonicalInstallRoot: config.InstallRoot,
 	}}
-	service := &daemon.Service{Profile: config.Profile, Platform: identity, Store: state, Inventory: binder, Supervisor: supervisor, Onboarding: targetClient, PredecessorEvidence: evidence}
+	service := &daemon.Service{Profile: config.Profile, Platform: identity, Store: state, Inventory: binder, Supervisor: supervisor, Onboarding: targetAdapter, PredecessorEvidence: evidence}
 	listener, err := listenBound(socketPath, 0o660, int(config.Operator.GID))
 	if err != nil {
 		return err
@@ -883,38 +799,26 @@ func runSupervisor(ctx context.Context, config platform.Config, socketPath strin
 	return server.Serve(ctx, listener)
 }
 
-func runTarget(ctx context.Context, config platform.Config, socketPath string) error {
-	state, err := store.OpenLayout(store.Layout{StateRoot: config.LifecycleRoot, InstallRoot: config.InstallRoot})
-	if err != nil {
-		return err
-	}
-	identity, err := config.Identity()
-	if err != nil {
-		return err
-	}
+func installedTargetRuntime(config platform.Config, identity model.PlatformIdentity, state *store.Store, systemd platform.CommandSystemd) (*engine.TargetEngine, *platform.TargetAdapter, error) {
 	units, err := platform.NewDiskUnitStore(config, "target")
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	files, err := platform.NewDiskLifecycleFileStore(config)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	sharedState, err := platform.NewDiskSharedStateStore(config)
+	sharedState, err := platform.NewDiskTypedStateStore(config)
 	if err != nil {
-		return err
-	}
-	systemd, err := systemdClient()
-	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	registry, err := migrator.RegistryFor(config)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	executable, err := os.Executable()
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	signerParticipant := &signer.Participant{Config: config,
 		Caller: signer.CommandCaller{ClientBinary: executable, Config: config}, Offline: signer.CommandOfflineRestorer{},
@@ -929,18 +833,11 @@ func runTarget(ctx context.Context, config platform.Config, socketPath string) e
 		predecessor = &platform.HostingPredecessor{Config: config, Systemd: systemd, State: platform.CommandServiceState{Binary: "/usr/bin/systemctl"}}
 		networkPolicy = platform.CommandHostingNetworkPolicy{TailscaleBinary: "/usr/bin/tailscale", SocketBinary: "/usr/bin/ss"}
 	}
-	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Files: files, SharedState: sharedState, Systemd: systemd, Generations: state, Health: platform.LoopbackGatewayHealth{}, Predecessor: predecessor, Fence: platform.DiskLocalPredecessorFence{}, Network: networkPolicy, Manifest: state}
+	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Files: files, SharedState: sharedState, Systemd: systemd, Generations: state, Health: platform.LoopbackGatewayHealth{}, Predecessor: predecessor, Fence: platform.DiskLocalPredecessorFence{}, Network: networkPolicy, Manifest: state, Plugins: platform.DiskPluginBoundary{Config: config, Resolver: state}}
 	targetEngine := &engine.TargetEngine{Journal: state, Generations: state,
 		Migrator: &migrator.SchemaMigrator{Registry: registry}, Signer: signerParticipant,
 		Adapter: targetAdapter, Installation: &platform.ManifestCommitter{Store: state, Identity: identity}}
-	listener, err := listenBound(socketPath, 0o600, 0)
-	if err != nil {
-		return err
-	}
-	defer closeListener(listener, socketPath)
-	go closeOnContext(ctx, listener)
-	server := controller.Server{Service: &controller.Service{Engine: targetEngine, Onboarding: targetAdapter}, OperationTimeout: 4 * time.Minute}
-	return server.Serve(ctx, listener)
+	return targetEngine, targetAdapter, nil
 }
 
 func loadConfig(path string, expectedUID int) (platform.Config, error) {

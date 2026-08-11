@@ -2,8 +2,6 @@ package platform
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -29,12 +27,16 @@ type fakeLifecycleFiles struct {
 
 type fakeSharedState struct{ calls *[]string }
 
-func (state fakeSharedState) Prepare(string) error {
+func (state fakeSharedState) Prepare(string) (string, error) {
 	*state.calls = append(*state.calls, "shared.prepare")
-	return nil
+	return digestA, nil
 }
 func (state fakeSharedState) Activate(string) error {
 	*state.calls = append(*state.calls, "shared.activate")
+	return nil
+}
+func (state fakeSharedState) VerifyAccess(string) error {
+	*state.calls = append(*state.calls, "shared.verify-access")
 	return nil
 }
 func (state fakeSharedState) Restore(string) error {
@@ -174,6 +176,22 @@ type fakeGenerations struct {
 
 type fakeHealth struct{ calls *[]string }
 
+type fakePlugins struct {
+	calls      *[]string
+	prepareErr error
+	verifyErr  error
+}
+
+func (plugins fakePlugins) Prepare(_ context.Context, target model.Generation) error {
+	*plugins.calls = append(*plugins.calls, "plugins.prepare:"+target.ID)
+	return plugins.prepareErr
+}
+
+func (plugins fakePlugins) Verify(_ context.Context, target model.Generation) error {
+	*plugins.calls = append(*plugins.calls, "plugins.verify:"+target.ID)
+	return plugins.verifyErr
+}
+
 type fakeManifestReader struct{ manifest model.Manifest }
 
 func (reader fakeManifestReader) ReadManifest() (model.Manifest, string, error) {
@@ -216,10 +234,6 @@ func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) 
 	if err := os.WriteFile(helper, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	stableDaemon := filepath.Join(t.TempDir(), "fased-lifecycled")
-	if err := os.WriteFile(stableDaemon, []byte("stable-client-binary"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	operator, gateway, signer := filesystemPrincipals()
 	stateRoot := filepath.Join(t.TempDir(), ".fased")
 	prepareFilesystemOwnerStateRoot(t, stateRoot, operator)
@@ -239,7 +253,7 @@ func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) 
 		t.Fatal(err)
 	}
 	calls := []string{}
-	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Files: fakeLifecycleFiles{calls: &calls}, SharedState: fakeSharedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls}, Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Fence: fakeFence{calls: &calls}, Network: NoNetworkPolicy{}, StableDaemonPath: stableDaemon}, tx, &calls
+	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Files: fakeLifecycleFiles{calls: &calls}, SharedState: fakeSharedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls}, Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Fence: fakeFence{calls: &calls}, Network: NoNetworkPolicy{}, Plugins: fakePlugins{calls: &calls}}, tx, &calls
 }
 
 func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing.T) {
@@ -249,6 +263,9 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 		t.Fatal(err)
 	}
 	if err := adapter.Quiesce(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := adapter.PrepareState(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
 	if err := adapter.Activate(context.Background(), tx); err != nil {
@@ -261,11 +278,12 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 		t.Fatal(err)
 	}
 	want := []string{
-		"units.prepare", "shared.prepare", "files.prepare", "systemd.stop:fased-gateway-example.service", "systemd.stop:fased-signerd-example.service",
-		"shared.activate", "files.activate", "units.activate", "systemd.reload", "systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
+		"plugins.prepare:" + digestB, "units.prepare", "files.prepare", "systemd.stop:fased-gateway-example.service", "systemd.stop:fased-signerd-example.service", "shared.prepare",
+		"shared.activate", "shared.verify-access", "files.activate", "units.activate", "systemd.reload", "systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
 		"systemd.enable:fased-gateway-example.service", "systemd.start:fased-gateway-example.service",
 		"systemd.active:fased-signerd-example.service", "systemd.active:fased-gateway-example.service",
 		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"plugins.verify:" + digestB,
 		"generation.activate:" + digestB + ":" + digestA, "files.activate", "units.discard", "files.discard", "shared.discard",
 	}
 	if !reflect.DeepEqual(*calls, want) {
@@ -292,6 +310,27 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 	}
 }
 
+func TestTargetAdapterRequiresPluginLockBeforeMutationAndReadinessBeforeCommit(t *testing.T) {
+	adapter, tx, calls := targetAdapter(t)
+	adapter.Plugins = fakePlugins{calls: calls, prepareErr: errors.New("lock drift")}
+	if err := adapter.Prepare(context.Background(), tx); err == nil || !strings.Contains(err.Error(), "plugin lock") {
+		t.Fatalf("plugin lock failure was accepted: %v", err)
+	}
+	if !reflect.DeepEqual(*calls, []string{"plugins.prepare:" + digestB}) {
+		t.Fatalf("target mutation preceded plugin lock verification: %v", *calls)
+	}
+
+	*calls = nil
+	adapter.Plugins = fakePlugins{calls: calls, verifyErr: errors.New("mandatory plugin missing")}
+	tx.Phase = model.PhasePrepared
+	if err := adapter.Verify(context.Background(), tx); err == nil || !strings.Contains(err.Error(), "mandatory plugin readiness") {
+		t.Fatalf("mandatory plugin readiness failure was accepted: %v", err)
+	}
+	if got := strings.Join(*calls, ","); strings.Contains(got, "generation.activate:") || strings.Contains(got, "files.activate") {
+		t.Fatalf("target commit began after plugin readiness failure: %v", *calls)
+	}
+}
+
 func TestTargetAdapterQuiesceStopsSignerAfterGatewayStopFailure(t *testing.T) {
 	adapter, tx, calls := targetAdapter(t)
 	tx.Phase = model.PhaseSwitched
@@ -307,7 +346,7 @@ func TestTargetAdapterQuiesceStopsSignerAfterGatewayStopFailure(t *testing.T) {
 	}
 }
 
-func TestFreshTargetAndControllerDoNotStopAbsentCanonicalServices(t *testing.T) {
+func TestFreshTargetDoesNotStopAbsentCanonicalServices(t *testing.T) {
 	adapter, tx, calls := targetAdapter(t)
 	tx.PlanAction = "INSTALL"
 	tx.Previous = nil
@@ -319,30 +358,6 @@ func TestFreshTargetAndControllerDoNotStopAbsentCanonicalServices(t *testing.T) 
 	if len(*calls) != 0 {
 		t.Fatalf("fresh target stopped absent services: %v", *calls)
 	}
-
-	root := t.TempDir()
-	entrypoint := filepath.Join(root, "bin", "fased-lifecycled")
-	if err := os.MkdirAll(filepath.Dir(entrypoint), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(entrypoint, []byte("binary"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	controller := &ControllerAdapter{Config: adapter.Config, Identity: adapter.Identity,
-		Units: adapter.Units, Systemd: adapter.Systemd,
-		Generations: fakeControllerGenerations{root: root, calls: calls}}
-	if err := controller.Stage(context.Background(), tx); err != nil {
-		t.Fatal(err)
-	}
-	*calls = nil
-	if err := controller.Switch(context.Background(), tx); err != nil {
-		t.Fatal(err)
-	}
-	for _, call := range *calls {
-		if strings.HasPrefix(call, "systemd.stop:") {
-			t.Fatalf("fresh controller stopped an absent service: %v", *calls)
-		}
-	}
 }
 
 func TestFreshLocalDefersGatewayUntilOnboardingCreatesConfig(t *testing.T) {
@@ -353,6 +368,13 @@ func TestFreshLocalDefersGatewayUntilOnboardingCreatesConfig(t *testing.T) {
 	if err := adapter.Prepare(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
+	tx.Phase = model.PhasePrepared
+	if err := adapter.Quiesce(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := adapter.PrepareState(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
 	if err := adapter.Activate(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +382,7 @@ func TestFreshLocalDefersGatewayUntilOnboardingCreatesConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"units.prepare", "shared.prepare", "files.prepare", "shared.activate", "files.activate", "units.activate", "systemd.reload",
+		"plugins.prepare:" + digestB, "units.prepare", "files.prepare", "shared.prepare", "shared.activate", "shared.verify-access", "files.activate", "units.activate", "systemd.reload",
 		"systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
 		"systemd.enable:fased-gateway-example.service", "systemd.active:fased-signerd-example.service",
 	}
@@ -388,27 +410,17 @@ func TestLocalBridgeVerifiesDurableFenceBeforeLifecycleProjectionAndPredecessor(
 		t.Fatal("global predecessor fence was incorrectly assigned to owner rollback storage")
 	}
 	productVersion := prepared[CanonicalProductVersionPath(adapter.Config)]
-	controllerIdentity := prepared[CanonicalControllerIdentityPath(adapter.Config)]
 	if string(productVersion.Data) != tx.Target.Version+"\n" || productVersion.Mode != 0o600 || productVersion.UID != 0 || productVersion.GID != 0 {
 		t.Fatalf("product version projection is not target-derived: %+v", productVersion)
 	}
-	if controllerIdentity.Mode != 0o600 || controllerIdentity.UID != 0 || controllerIdentity.GID != 0 || !strings.Contains(string(controllerIdentity.Data), `"version": "`+tx.Target.Version+`"`) {
-		t.Fatalf("controller identity projection is not target-derived: %+v", controllerIdentity)
-	}
-	var identityProjection controllerIdentityProjection
-	if err := json.Unmarshal(controllerIdentity.Data, &identityProjection); err != nil {
-		t.Fatal(err)
-	}
-	wantServerDigest := fmt.Sprintf("%x", sha256.Sum256([]byte("binary")))
-	wantClientDigest := fmt.Sprintf("%x", sha256.Sum256([]byte("stable-client-binary")))
-	if identityProjection.ServerSHA256 != wantServerDigest || identityProjection.ClientSHA256 != wantClientDigest {
-		t.Fatalf("controller identity does not bind the exact multicall binary: %+v", identityProjection)
+	if _, ok := prepared[CanonicalControllerIdentityPath(adapter.Config)]; ok {
+		t.Fatal("final target transaction still publishes a candidate controller identity")
 	}
 	if err := adapter.Commit(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
 	wantTargets := []string{
-		CanonicalProductVersionPath(adapter.Config), CanonicalControllerIdentityPath(adapter.Config),
+		CanonicalProductVersionPath(adapter.Config),
 		CanonicalCLIProjectionPath(adapter.Config), CanonicalInstallProjectionPath(adapter.Config),
 	}
 	if len(activations) != 1 || !reflect.DeepEqual(activations[0], wantTargets) {
@@ -468,14 +480,14 @@ func testCompleteOnboardingStartsAndVerifiesExactCommittedGateway(t *testing.T, 
 	active := model.Generation{ID: digestB, Version: "0.1.76", Commit: commitB, Tree: commitB, ArtifactSetDigest: digestB}
 	manifest := model.Manifest{SchemaVersion: model.CurrentManifestSchemaVersion, Profile: profile,
 		Platform: identity, ActiveGeneration: &active, StateSchemas: map[string]uint32{"signer": 2},
-		Capabilities: model.CapabilityRanges{Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1}, Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 1, Max: 1}}}
+		Capabilities: model.CapabilityRanges{Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1}, Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 1, Max: 1}}, ReleaseSequence: 12, SecurityEpoch: 3}
 	calls := []string{}
-	adapter := TargetAdapter{Config: config, Identity: identity, SharedState: fakeSharedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls, inactive: map[string]bool{identity.Services["gateway"]: true}}, Health: fakeHealth{calls: &calls}, Manifest: fakeManifestReader{manifest: manifest}}
+	adapter := TargetAdapter{Config: config, Identity: identity, SharedState: fakeSharedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls, inactive: map[string]bool{identity.Services["gateway"]: true}}, Health: fakeHealth{calls: &calls}, Manifest: fakeManifestReader{manifest: manifest}, Plugins: fakePlugins{calls: &calls}}
 	result, err := adapter.CompleteOnboarding(context.Background())
 	if err != nil || result.Outcome != engine.OutcomeUpdated || result.Phase != model.PhaseCommitted {
 		t.Fatal(err)
 	}
-	want := []string{"shared.converge", "systemd.active:" + identity.Services["signer"], "systemd.active:" + identity.Services["gateway"], "systemd.start:" + identity.Services["gateway"], "systemd.active:" + identity.Services["gateway"], "gateway.ready:18789:0.1.76:" + commitB}
+	want := []string{"shared.converge", "systemd.active:" + identity.Services["signer"], "systemd.active:" + identity.Services["gateway"], "systemd.start:" + identity.Services["gateway"], "systemd.active:" + identity.Services["gateway"], "gateway.ready:18789:0.1.76:" + commitB, "plugins.verify:" + digestB}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("unexpected onboarding completion order: got=%v want=%v", calls, want)
 	}
@@ -499,9 +511,9 @@ func TestHostingCompleteOnboardingReturnsAlreadyCurrentForHealthyGateway(t *test
 	active := model.Generation{ID: digestB, Version: "0.1.76", Commit: commitB, Tree: commitB, ArtifactSetDigest: digestB}
 	manifest := model.Manifest{SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileHosting,
 		Platform: identity, ActiveGeneration: &active, StateSchemas: map[string]uint32{"signer": 2},
-		Capabilities: model.CapabilityRanges{Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1}, Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 1, Max: 1}}}
+		Capabilities: model.CapabilityRanges{Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1}, Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 1, Max: 1}}, ReleaseSequence: 12, SecurityEpoch: 3}
 	calls := []string{}
-	adapter := TargetAdapter{Config: config, Identity: identity, SharedState: fakeSharedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Health: fakeHealth{calls: &calls}, Manifest: fakeManifestReader{manifest: manifest}}
+	adapter := TargetAdapter{Config: config, Identity: identity, SharedState: fakeSharedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Health: fakeHealth{calls: &calls}, Manifest: fakeManifestReader{manifest: manifest}, Plugins: fakePlugins{calls: &calls}}
 	result, err := adapter.CompleteOnboarding(context.Background())
 	if err != nil || result.Outcome != engine.OutcomeAlreadyCurrent || result.Phase != model.PhaseCommitted {
 		t.Fatalf("unexpected idempotent onboarding result: result=%+v err=%v", result, err)
@@ -584,22 +596,21 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	if err := os.WriteFile(helper, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	stableDaemon := filepath.Join(t.TempDir(), "fased-lifecycled")
-	if err := os.WriteFile(stableDaemon, []byte("stable-client-binary"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	calls := []string{}
 	units := &fakeUnits{calls: &calls}
 	adapter := &TargetAdapter{
 		Config: config, Identity: identity, Units: units, Files: fakeLifecycleFiles{calls: &calls}, SharedState: fakeSharedState{calls: &calls},
 		Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls},
-		Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Fence: NoLocalPredecessorFence{}, Network: NoNetworkPolicy{}, StableDaemonPath: stableDaemon,
+		Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Fence: NoLocalPredecessorFence{}, Network: NoNetworkPolicy{}, Plugins: fakePlugins{calls: &calls},
 	}
 	tx.Phase = model.PhasePrepared
 	if err := adapter.Prepare(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
 	if err := adapter.Quiesce(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := adapter.PrepareState(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
 	if err := adapter.Activate(context.Background(), tx); err != nil {
@@ -612,11 +623,12 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"units.prepare", "shared.prepare", "files.prepare", "systemd.stop:fased-gateway.service", "systemd.stop:fased-signerd.service",
-		"shared.activate", "files.activate", "units.activate", "systemd.reload", "systemd.enable:fased-signerd.service", "systemd.start:fased-signerd.service",
+		"plugins.prepare:" + digestB, "units.prepare", "files.prepare", "systemd.stop:fased-gateway.service", "systemd.stop:fased-signerd.service", "shared.prepare",
+		"shared.activate", "shared.verify-access", "files.activate", "units.activate", "systemd.reload", "systemd.enable:fased-signerd.service", "systemd.start:fased-signerd.service",
 		"systemd.enable:fased-gateway.service", "systemd.start:fased-gateway.service",
 		"systemd.active:fased-signerd.service", "systemd.active:fased-gateway.service",
 		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"plugins.verify:" + digestB,
 		"generation.activate:" + digestB + ":" + digestA, "files.activate", "units.discard", "files.discard", "shared.discard",
 	}
 	if !reflect.DeepEqual(calls, want) {

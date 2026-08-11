@@ -255,7 +255,7 @@ function createPluginUpdateIntegrityDriftHandler(params: {
   };
 }
 
-export async function updateNpmInstalledPlugins(params: {
+export async function updatePinnedNpmPlugins(params: {
   config: FasedAgentConfig;
   logger?: PluginUpdateLogger;
   pluginIds?: string[];

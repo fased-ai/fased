@@ -9,9 +9,9 @@ const files = new Set(manifest.files ?? []);
 const installer = read("install.sh");
 const releaseWorkflow = read(".github/workflows/hosted-runtime-release.yml");
 const ciWorkflow = read(".github/workflows/ci.yml");
-const hostingFixture = read("scripts/test-go-hosting-systemd-container.sh");
-const hostingRunner = read("scripts/docker/hosting-systemd/go-cutover.sh");
-const localRunner = read("scripts/docker/protected-local-systemd/run.sh");
+const hostingFixture = read("scripts/test-lifecycle-hosting-acceptance.sh");
+const hostingRunner = read("scripts/docker/hosting-systemd/lifecycle-acceptance.sh");
+const localRunner = read("scripts/docker/protected-local-systemd/lifecycle-acceptance.sh");
 const hostingUbuntu = read("scripts/docker/hosting-systemd/Containerfile.ubuntu");
 const hostingRocky = read("scripts/docker/hosting-systemd/Containerfile.rocky");
 const hostedArtifactBuilder = read("scripts/build-hosted-runtime-artifact.ts");
@@ -27,8 +27,9 @@ const removedMutationOwners = [
 describe("attested Go lifecycle artifact layout", () => {
   it("ships only the acquisition wrappers needed by the public installer and updater", () => {
     expect(files).toContain("install.sh");
-    expect(files).toContain("scripts/generation-updater.mjs");
-    expect(files).toContain("scripts/fased-generation-updater-core.mjs");
+    expect(files).toContain("scripts/fased-managed-updater.mjs");
+    expect(files).not.toContain("scripts/generation-updater.mjs");
+    expect(files).not.toContain("scripts/fased-generation-updater-core.mjs");
     expect(files).toContain("scripts/privileged-release-evidence.mjs");
     for (const removed of removedMutationOwners) {
       expect(files).not.toContain(removed);
@@ -37,15 +38,11 @@ describe("attested Go lifecycle artifact layout", () => {
   });
 
   it("routes verified Local and Hosting installs into the same Go lifecycle engine", () => {
-    expect(installer).toContain(
-      'enter_go_lifecycle_bundle "$root_store" "$final_root" "$packaged_commit"',
-    );
-    expect(installer).toContain(
-      '"$selected_package_root/scripts/generation-updater.mjs" initialize',
-    );
-    expect(installer).toContain('lifecycle_profile="protected-local"');
-    expect(installer).toContain('lifecycle_profile="hosting"');
-    expect(installer).toContain("--operation COMPLETE_ONBOARDING");
+    expect(installer).toContain("fased-bootstrap-linux-${arch}");
+    expect(installer).toContain('profile="protected-local"');
+    expect(installer).toContain('profile="hosting"');
+    expect(installer).toContain('"$bootstrap" "${bootstrap_args[@]}"');
+    expect(installer).not.toContain("generation-updater.mjs");
     expect(installer).not.toContain("initialize_hosting_generation_lifecycle");
   });
 
@@ -75,7 +72,7 @@ describe("attested Go lifecycle artifact layout", () => {
   });
 
   it("keeps the public Hosting proof on the Go-only systemd fixture", () => {
-    expect(releaseWorkflow).toContain("scripts/test-go-hosting-systemd-container.sh");
+    expect(releaseWorkflow).toContain("scripts/test-lifecycle-hosting-acceptance.sh");
     expect(releaseWorkflow).not.toContain("scripts/test-hosting-systemd-container.sh");
   });
 
@@ -98,24 +95,20 @@ describe("attested Go lifecycle artifact layout", () => {
     );
     expect(installCase).toContain("install_release_transport_fixture");
     expect(installCase).toContain("run_public_installer");
-    expect(installCase).toContain("assert_already_current_receipts /tmp/fased-hosting-noop.out");
-    expect(hostingRunner).toContain("length == 2");
-    expect(hostingRunner).toContain(".[0].version == $version");
-    expect(hostingRunner).toContain('.[1].outcome == "ALREADY_CURRENT"');
+    expect(installCase).toContain('grep -F "Already current: $version"');
+    expect(installCase).toContain("run_public_updater");
+    expect(installCase).toContain("acceptance_finish");
+    expect(hostingRunner).toContain("lifecycle-receipt-verifier.mjs");
     expect(installCase).not.toContain("initialize");
   });
 
   it("runs Local and Hosting lifecycle fixtures with a non-executable runtime mount", () => {
     const localFixture = fs.readFileSync(
-      path.join(root, "scripts/test-protected-local-systemd-container.sh"),
+      path.join(root, "scripts/test-lifecycle-local-acceptance.sh"),
       "utf8",
     );
     expect(localFixture).toContain("--tmpfs /run:rw,noexec");
-    expect(localFixture).toContain(
-      "FASED_FIXTURE_PREDECESSOR_BOOTSTRAP_RUN_EXEC=$MANAGED_PREDECESSOR_BOOTSTRAP_RUN_EXEC",
-    );
-    expect(localRunner).toContain("set_run_execution_policy exec");
-    expect(localRunner).toContain("set_run_execution_policy noexec");
+    expect(localFixture).toContain("FASED_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_DIR");
     expect(localRunner).toContain("run_mount_has_option noexec");
     expect(hostingFixture).toContain("--tmpfs /run:rw,noexec");
     expect(localRunner).toContain(

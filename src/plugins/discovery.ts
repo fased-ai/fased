@@ -14,6 +14,8 @@ import { formatPosixMode, isPathInside, safeRealpathSync, safeStatSync } from ".
 import type { PluginDiagnostic, PluginOrigin } from "./types.js";
 
 const EXTENSION_EXTS = new Set([".ts", ".js", ".mts", ".cts", ".mjs", ".cjs"]);
+const MANAGED_PLUGIN_CODE_LABEL = "plugin-code";
+const MANAGED_PLUGIN_DATA_LABEL = "plugin-data";
 
 export type PluginCandidate = {
   idHint: string;
@@ -622,43 +624,59 @@ export function discoverFasedAgentPlugins(params: {
   const diagnostics: PluginDiagnostic[] = [];
   const seen = new Set<string>();
   const workspaceDir = params.workspaceDir?.trim();
-
-  const extra = params.extraPaths ?? [];
-  for (const extraPath of extra) {
-    if (typeof extraPath !== "string") {
-      continue;
-    }
-    const trimmed = extraPath.trim();
-    if (!trimmed) {
-      continue;
-    }
-    discoverFromPath({
-      rawPath: trimmed,
-      origin: "config",
-      ownershipUid: params.ownershipUid,
-      workspaceDir: workspaceDir?.trim() || undefined,
-      candidates,
-      diagnostics,
-      seen,
+  const managedPluginCodeRoot = process.env.FASED_PLUGIN_CODE_ROOT?.trim();
+  const managedPluginDataRoot = process.env.FASED_PLUGIN_DATA_ROOT?.trim();
+  if (managedPluginCodeRoot && !managedPluginDataRoot) {
+    diagnostics.push({
+      level: "error",
+      message: `managed ${MANAGED_PLUGIN_DATA_LABEL} root is missing for ${MANAGED_PLUGIN_CODE_LABEL}`,
     });
   }
-  if (workspaceDir) {
-    const workspaceRoot = resolveUserPath(workspaceDir);
-    const workspaceExtDirs = [path.join(workspaceRoot, ".fased", "extensions")];
-    for (const dir of workspaceExtDirs) {
-      discoverInDirectory({
-        dir,
-        origin: "workspace",
+
+  const extra = params.extraPaths ?? [];
+  if (managedPluginCodeRoot && extra.length > 0) {
+    diagnostics.push({
+      level: "error",
+      message: "managed plugin load paths are disabled; install code through fased plugins update",
+    });
+  }
+  if (!managedPluginCodeRoot) {
+    for (const extraPath of extra) {
+      if (typeof extraPath !== "string") {
+        continue;
+      }
+      const trimmed = extraPath.trim();
+      if (!trimmed) {
+        continue;
+      }
+      discoverFromPath({
+        rawPath: trimmed,
+        origin: "config",
         ownershipUid: params.ownershipUid,
-        workspaceDir: workspaceRoot,
+        workspaceDir: workspaceDir?.trim() || undefined,
         candidates,
         diagnostics,
         seen,
       });
     }
+    if (workspaceDir) {
+      const workspaceRoot = resolveUserPath(workspaceDir);
+      const workspaceExtDirs = [path.join(workspaceRoot, ".fased", "extensions")];
+      for (const dir of workspaceExtDirs) {
+        discoverInDirectory({
+          dir,
+          origin: "workspace",
+          ownershipUid: params.ownershipUid,
+          workspaceDir: workspaceRoot,
+          candidates,
+          diagnostics,
+          seen,
+        });
+      }
+    }
   }
 
-  const globalDir = path.join(resolveConfigDir(), "extensions");
+  const globalDir = managedPluginCodeRoot || path.join(resolveConfigDir(), "extensions");
   discoverInDirectory({
     dir: globalDir,
     origin: "global",

@@ -9,37 +9,7 @@
       "mode": "0755"
     },
     {
-      "name": "fased-generation-updater-core.mjs",
-      "type": "support",
-      "mode": "0755"
-    },
-    {
-      "name": "generation-updater.mjs",
-      "type": "support",
-      "mode": "0755"
-    },
-    {
       "name": "hosted-release-manifest.mjs",
-      "type": "support",
-      "mode": "0755"
-    },
-    {
-      "name": "lifecycle-trust-crypto.mjs",
-      "type": "support",
-      "mode": "0755"
-    },
-    {
-      "name": "lifecycle-trust-policy.mjs",
-      "type": "support",
-      "mode": "0755"
-    },
-    {
-      "name": "lifecycle-trust-root.mjs",
-      "type": "support",
-      "mode": "0755"
-    },
-    {
-      "name": "lifecycle-trust-runtime.mjs",
       "type": "support",
       "mode": "0755"
     },

@@ -327,10 +327,13 @@ jobs:
           node scripts/stamp-release-installer.mjs \
             --source install.sh \
             --output dist-native/release/install.sh \
-            --version "$package_version"
+            --version "$package_version" \
+            --bootstrap-x64 dist-native/release/fased-bootstrap-linux-x64 \
+            --bootstrap-arm64 dist-native/release/fased-bootstrap-linux-arm64
           bash -n dist-native/release/install.sh
           grep -Fxq "install_entry_release_identity=\"${package_version}\"" \
             dist-native/release/install.sh
+          ! grep -q '__FASED_BOOTSTRAP_SHA256_' dist-native/release/install.sh
           install -m 0755 scripts/privileged-release-evidence.mjs \
             dist-native/release/fased-privileged-release-evidence.mjs
 
@@ -489,10 +492,10 @@ jobs:
             --expires-at "${lifecycle_times[1]}" \
             --output .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json
           install -m 0644 \
-            config/lifecycle-acceptance.v1.json \
-            .artifacts/hosted-runtime/fased-lifecycle-acceptance-v1.json
+            config/lifecycle-acceptance.v2.json \
+            .artifacts/hosted-runtime/fased-lifecycle-acceptance-v2.json
           node scripts/lifecycle-acceptance-contract.mjs validate \
-            --contract .artifacts/hosted-runtime/fased-lifecycle-acceptance-v1.json
+            --contract .artifacts/hosted-runtime/fased-lifecycle-acceptance-v2.json
           node scripts/lifecycle-release-compatibility.mjs build \
             --version "$package_version" \
             --commit "$GITHUB_SHA" \
@@ -674,7 +677,7 @@ jobs:
           FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
           FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
           FASED_SYSTEMD_FIXTURE_RECEIPT_DIR: ${{ runner.temp }}/lifecycle-acceptance-fresh
-        run: bash scripts/test-protected-local-systemd-container.sh
+        run: bash scripts/test-lifecycle-local-acceptance.sh
 
       - name: Upload fresh Local acceptance receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -726,7 +729,7 @@ jobs:
           path: ${{ runner.temp }}/fased-supported-predecessor/
           key: fased-supported-predecessor-${{ matrix.predecessor }}
 
-      - name: Ensure exact supported predecessor assets
+      - name: Ensure exact attested predecessor capsule
         env:
           GH_TOKEN: ${{ github.token }}
           PREDECESSOR_VERSION: ${{ matrix.predecessor }}
@@ -735,14 +738,17 @@ jobs:
           set -euo pipefail
           predecessor_dir="$RUNNER_TEMP/fased-supported-predecessor"
           mkdir -p "$predecessor_dir"
-          if [[ ! -f "$predecessor_dir/fased-hosted-release-v2.json" ]]; then
+          if [[ ! -f "$predecessor_dir/fased-predecessor-capsule.json" ]]; then
             gh release download "v$PREDECESSOR_VERSION" \
               --repo "$GITHUB_REPOSITORY" \
               --dir "$predecessor_dir"
           fi
           jq -e --arg version "$PREDECESSOR_VERSION" \
-            '.release.version == $version and .release.tag == ("v" + $version)' \
-            "$predecessor_dir/fased-hosted-release-v2.json" >/dev/null
+            '.profile == "protected-local" and
+             .release.version == $version and
+             .sanitization.syntheticState == true and
+             .sanitization.containsSecrets == false' \
+            "$predecessor_dir/fased-predecessor-capsule.json" >/dev/null
 
       - name: Derive exact predecessor topology
         id: p1-scenario
@@ -762,13 +768,13 @@ jobs:
           FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
           FASED_SYSTEMD_FIXTURE_SCENARIOS: ${{ steps.p1-scenario.outputs.scenarios }}
           FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: ${{ matrix.predecessor }}
-          FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_ARTIFACT_DIR: ${{ runner.temp }}/fased-supported-predecessor
+          FASED_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_DIR: ${{ runner.temp }}/fased-supported-predecessor
           FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/fased-hosting-candidate
           FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1"
           FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
           FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
           FASED_SYSTEMD_FIXTURE_RECEIPT_DIR: ${{ runner.temp }}/lifecycle-acceptance-update
-        run: bash scripts/test-protected-local-systemd-container.sh
+        run: bash scripts/test-lifecycle-local-acceptance.sh
 
       - name: Upload stable-update acceptance receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -805,7 +811,16 @@ jobs:
         env:
           FASED_HOSTING_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/fased-hosting-candidate
           FASED_HOSTING_SYSTEMD_FIXTURE_DISTROS: ubuntu
-        run: bash scripts/test-go-hosting-systemd-container.sh
+          FASED_HOSTING_SYSTEMD_FIXTURE_RECEIPT_DIR: ${{ runner.temp }}/lifecycle-acceptance-hosting
+        run: bash scripts/test-lifecycle-hosting-acceptance.sh
+
+      - name: Upload fresh Hosting acceptance receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fased-lifecycle-acceptance-hosting
+          path: ${{ runner.temp }}/lifecycle-acceptance-hosting/*.json
+          if-no-files-found: error
+          retention-days: 30
 
   publish:
     name: Promote exact verified candidate bytes

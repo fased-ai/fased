@@ -1,15 +1,9 @@
 import path from "node:path";
 import { confirm, isCancel } from "@clack/prompts";
 import {
-  ensureOpenAICodexRuntimeComponent,
-  hasConfiguredOpenAICodexProfile,
-  OPENAI_RUNTIME_COMPONENT_ID,
-} from "../../agents/openai-codex-runtime-component.js";
-import {
   checkShellCompletionStatus,
   ensureCompletionCacheExists,
 } from "../../commands/doctor-completion.js";
-import { runPostUpdateDoctorRepair } from "../../commands/doctor-update.js";
 import { doctorCommand } from "../../commands/doctor.js";
 import {
   readConfigFileSnapshot,
@@ -56,7 +50,6 @@ import {
   type UpdateRunResult,
 } from "../../infra/update-runner.js";
 import { recordUpdateSuccess } from "../../infra/update-success-marker.js";
-import { syncPluginsForUpdateChannel, updateNpmInstalledPlugins } from "../../plugins/update.js";
 import { runCommandWithTimeout } from "../../process/exec.js";
 import { defaultRuntime } from "../../runtime.js";
 import { stylePromptMessage } from "../../terminal/prompt-style.js";
@@ -612,165 +605,6 @@ async function runGitUpdate(params: {
   };
 }
 
-async function updatePluginsAfterCoreUpdate(params: {
-  root: string;
-  channel: "stable" | "beta" | "dev";
-  targetVersion?: string;
-  configSnapshot: Awaited<ReturnType<typeof readConfigFileSnapshot>>;
-  opts: UpdateCommandOptions;
-}): Promise<{ changed: boolean; checked: boolean }> {
-  if (!params.configSnapshot.valid) {
-    if (!params.opts.json) {
-      defaultRuntime.log(theme.warn("Skipping plugin updates: config is invalid."));
-    }
-    return { changed: false, checked: false };
-  }
-
-  const repairResult = runPostUpdateDoctorRepair({
-    config: params.configSnapshot.config,
-    updateCompleted: true,
-  });
-  let pluginConfig = repairResult.config;
-  let installedOpenAIRuntime = false;
-  if (hasConfiguredOpenAICodexProfile(pluginConfig)) {
-    const runtimeComponent = await ensureOpenAICodexRuntimeComponent({
-      config: pluginConfig,
-      version: params.targetVersion,
-    });
-    pluginConfig = runtimeComponent.config;
-    installedOpenAIRuntime = runtimeComponent.installed;
-    if (runtimeComponent.installed && !params.opts.json) {
-      defaultRuntime.log(
-        theme.muted(
-          "Installed the managed OpenAI sign-in runtime required by the existing ChatGPT credential.",
-        ),
-      );
-    }
-    for (const warning of runtimeComponent.slotWarnings) {
-      if (!params.opts.json) {
-        defaultRuntime.log(theme.warn(warning));
-      }
-    }
-  }
-
-  const installs = pluginConfig.plugins?.installs ?? {};
-  if (Object.keys(installs).length === 0) {
-    if (repairResult.changed || installedOpenAIRuntime) {
-      await writeConfigFile(pluginConfig);
-    }
-    return {
-      changed: repairResult.changed || installedOpenAIRuntime,
-      checked: installedOpenAIRuntime,
-    };
-  }
-
-  const pluginLogger = params.opts.json
-    ? {}
-    : {
-        info: (msg: string) => defaultRuntime.log(msg),
-        warn: (msg: string) => defaultRuntime.log(theme.warn(msg)),
-        error: (msg: string) => defaultRuntime.log(theme.error(msg)),
-      };
-
-  if (!params.opts.json) {
-    defaultRuntime.log("");
-    defaultRuntime.log(theme.heading("Updating plugins..."));
-  }
-
-  const syncResult = await syncPluginsForUpdateChannel({
-    config: pluginConfig,
-    channel: params.channel,
-    workspaceDir: params.root,
-    logger: pluginLogger,
-  });
-  pluginConfig = syncResult.config;
-
-  const npmResult = await updateNpmInstalledPlugins({
-    config: pluginConfig,
-    skipIds: new Set([
-      ...syncResult.summary.switchedToNpm,
-      ...(installedOpenAIRuntime ? [OPENAI_RUNTIME_COMPONENT_ID] : []),
-    ]),
-    updateChannel: params.channel,
-    logger: pluginLogger,
-  });
-  pluginConfig = npmResult.config;
-
-  if (repairResult.changed || installedOpenAIRuntime || syncResult.changed || npmResult.changed) {
-    await writeConfigFile(pluginConfig);
-  }
-
-  if (params.opts.json) {
-    return {
-      changed:
-        repairResult.changed || installedOpenAIRuntime || syncResult.changed || npmResult.changed,
-      checked: true,
-    };
-  }
-
-  const summarizeList = (list: string[]) => {
-    if (list.length <= 6) {
-      return list.join(", ");
-    }
-    return `${list.slice(0, 6).join(", ")} +${list.length - 6} more`;
-  };
-
-  if (syncResult.summary.switchedToBundled.length > 0) {
-    defaultRuntime.log(
-      theme.muted(
-        `Switched to bundled plugins: ${summarizeList(syncResult.summary.switchedToBundled)}.`,
-      ),
-    );
-  }
-  if (syncResult.summary.switchedToNpm.length > 0) {
-    defaultRuntime.log(
-      theme.muted(`Restored npm plugins: ${summarizeList(syncResult.summary.switchedToNpm)}.`),
-    );
-  }
-  for (const warning of syncResult.summary.warnings) {
-    defaultRuntime.log(theme.warn(warning));
-  }
-  for (const error of syncResult.summary.errors) {
-    defaultRuntime.log(theme.error(error));
-  }
-  for (const change of repairResult.changes) {
-    defaultRuntime.log(theme.muted(change));
-  }
-  for (const warning of repairResult.warnings) {
-    defaultRuntime.log(theme.warn(warning));
-  }
-
-  const updated = npmResult.outcomes.filter((entry) => entry.status === "updated").length;
-  const unchanged = npmResult.outcomes.filter((entry) => entry.status === "unchanged").length;
-  const failed = npmResult.outcomes.filter((entry) => entry.status === "error").length;
-  const skipped = npmResult.outcomes.filter((entry) => entry.status === "skipped").length;
-
-  if (npmResult.outcomes.length === 0) {
-    defaultRuntime.log(theme.muted("No plugin updates needed."));
-  } else {
-    const parts = [`${updated} updated`, `${unchanged} unchanged`];
-    if (failed > 0) {
-      parts.push(`${failed} failed`);
-    }
-    if (skipped > 0) {
-      parts.push(`${skipped} skipped`);
-    }
-    defaultRuntime.log(theme.muted(`npm plugins: ${parts.join(", ")}.`));
-  }
-
-  for (const outcome of npmResult.outcomes) {
-    if (outcome.status !== "error") {
-      continue;
-    }
-    defaultRuntime.log(theme.error(outcome.message));
-  }
-  return {
-    changed:
-      repairResult.changed || installedOpenAIRuntime || syncResult.changed || npmResult.changed,
-    checked: true,
-  };
-}
-
 async function maybeRestartService(params: {
   shouldRestart: boolean;
   result: UpdateRunResult;
@@ -1033,25 +867,29 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
         env: process.env,
       });
       if (managed.updaterPath) {
-        const managedArgs = [managed.updaterPath, "update"];
+        if (opts.restart === false) {
+          defaultRuntime.error(
+            "Go lifecycle updates require transactional service restart; --no-restart is not supported.",
+          );
+          defaultRuntime.exit(1);
+          return;
+        }
+        if (opts.safeFallback) {
+          defaultRuntime.error("Go lifecycle updates do not accept unsigned fallback targets.");
+          defaultRuntime.exit(1);
+          return;
+        }
+        const managedArgs = [managed.updaterPath];
         if (opts.json) {
           managedArgs.push("--json");
         }
-        if (opts.restart === false) {
-          managedArgs.push("--no-restart");
-        }
         managedArgs.push("--channel", managedChannel);
         if (opts.tag) {
-          managedArgs.push("--tag", opts.tag);
-        }
-        if (opts.timeout) {
-          managedArgs.push("--timeout", opts.timeout);
-        }
-        if (opts.yes) {
-          managedArgs.push("--yes");
-        }
-        if (opts.safeFallback) {
-          managedArgs.push("--safe-fallback");
+          if (opts.tag === "stable" || opts.tag === "beta" || opts.tag === "latest") {
+            managedArgs.splice(managedArgs.length - 1, 1, opts.tag === "beta" ? "beta" : "stable");
+          } else {
+            managedArgs.push("--version", opts.tag);
+          }
         }
         const result = await runCommandWithTimeout([process.execPath, ...managedArgs], {
           cwd: path.dirname(managed.updaterPath),
@@ -1156,7 +994,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
         `Run global package manager update with spec ${DEFAULT_PACKAGE_NAME}@${installTag}`,
       );
     }
-    actions.push("Run plugin update sync after core update");
+    actions.push("Leave plugin code unchanged; use fased plugins update as a separate transaction");
     actions.push("Refresh shell completion cache (if needed)");
     actions.push(
       shouldRestart
@@ -1272,28 +1110,6 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
   }
 
   if (alreadyCurrent && currentVersion && targetVersion) {
-    if (configSnapshot.valid && hasConfiguredOpenAICodexProfile(configSnapshot.config)) {
-      try {
-        const runtimeComponent = await ensureOpenAICodexRuntimeComponent({
-          config: configSnapshot.config,
-          version: targetVersion,
-        });
-        if (runtimeComponent.installed) {
-          await writeConfigFile(runtimeComponent.config);
-          if (!opts.json) {
-            defaultRuntime.log(
-              theme.muted(
-                "Installed the version-matched OpenAI sign-in runtime required by the current release.",
-              ),
-            );
-          }
-        }
-      } catch (error) {
-        defaultRuntime.error(`OpenAI sign-in runtime update failed: ${String(error)}`);
-        defaultRuntime.exit(1);
-        return;
-      }
-    }
     const runningRuntime = await probeRunningGatewayRuntimeIdentity({ timeoutMs: 750 });
     const managedRuntimeSources = new Set(["managed-package", "packaged-runtime"]);
     const gatewayRuntimeNeedsRepair =
@@ -1831,22 +1647,6 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
   await measureUpdateStage(lifecycleTimings, "transaction cleanup", () =>
     finalizeUpdateTransaction(result.transaction),
   );
-
-  const pluginResult = await measureUpdateStage(lifecycleTimings, "plugin updates", () =>
-    updatePluginsAfterCoreUpdate({
-      root,
-      channel,
-      targetVersion: result.after?.version ?? targetVersion ?? undefined,
-      configSnapshot,
-      opts,
-    }),
-  );
-  if (!pluginResult.checked) {
-    const timing = lifecycleTimings.at(-1);
-    if (timing?.name === "plugin updates") {
-      timing.name = "plugin update check (none installed)";
-    }
-  }
 
   await measureUpdateStage(lifecycleTimings, "shell completion", () =>
     tryInstallShellCompletion({

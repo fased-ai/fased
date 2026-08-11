@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 2,
+  "role": "fased-lifecycle-acceptance-contract",
+  "contractId": "public-lifecycle-v2",
+  "profiles": {
+    "protected-local": {
+      "fresh-install": [
+        "artifact-identity",
+        "public-installer-acquisition",
+        "canonical-lifecycle",
+        "three-services-active",
+        "wallet-status",
+        "wallet-signer-doctor",
+        "mining-status",
+        "network-status",
+        "plugin-doctor",
+        "restart-health",
+        "state-preservation",
+        "installer-already-current",
+        "updater-already-current"
+      ],
+      "managed-update": [
+        "artifact-identity",
+        "public-installer-acquisition",
+        "predecessor-capsule-attestation",
+        "rollback-retry",
+        "canonical-lifecycle",
+        "three-services-active",
+        "wallet-status",
+        "wallet-signer-doctor",
+        "mining-status",
+        "network-status",
+        "plugin-doctor",
+        "restart-health",
+        "state-preservation",
+        "installer-already-current",
+        "updater-already-current"
+      ]
+    },
+    "hosting": {
+      "fresh-install": [
+        "artifact-identity",
+        "public-installer-acquisition",
+        "canonical-lifecycle",
+        "three-services-active",
+        "wallet-status",
+        "wallet-signer-doctor",
+        "mining-status",
+        "network-status",
+        "plugin-doctor",
+        "restart-health",
+        "state-preservation",
+        "installer-already-current",
+        "updater-already-current"
+      ],
+      "managed-update": [
+        "artifact-identity",
+        "public-installer-acquisition",
+        "predecessor-capsule-attestation",
+        "rollback-retry",
+        "canonical-lifecycle",
+        "three-services-active",
+        "wallet-status",
+        "wallet-signer-doctor",
+        "mining-status",
+        "network-status",
+        "plugin-doctor",
+        "restart-health",
+        "state-preservation",
+        "installer-already-current",
+        "updater-already-current"
+      ]
+    }
+  }
+}

@@ -52,7 +52,7 @@ describe("resolveNpmIntegrityDrift", () => {
     });
   });
 
-  it("warns by default when no callback is provided", async () => {
+  it("warns and fails closed by default when no callback is provided", async () => {
     const warn = vi.fn();
     const result = await resolveNpmIntegrityDrift({
       spec: "@fased/test@1.0.0",
@@ -66,7 +66,7 @@ describe("resolveNpmIntegrityDrift", () => {
     });
 
     expect(warn).toHaveBeenCalledWith({ spec: "@fased/test@1.0.0" });
-    expect(result.proceed).toBe(true);
+    expect(result.proceed).toBe(false);
   });
 
   it("formats default warning and abort error messages", async () => {
@@ -81,7 +81,9 @@ describe("resolveNpmIntegrityDrift", () => {
       },
       warn,
     });
-    expect(warningResult.error).toBeUndefined();
+    expect(warningResult.error).toBe(
+      "aborted: npm package integrity drift detected for @fased/test@1.0.0",
+    );
     expect(warn).toHaveBeenCalledWith(
       "Integrity drift detected for @fased/test@1.0.0: expected sha512-old, got sha512-new",
     );

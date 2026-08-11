@@ -196,7 +196,7 @@ jobs:
           pnpm exec vitest run
           scripts/go-lifecycle-routing.test.ts
           scripts/generation-updater.test.ts
-          scripts/fased-generation-updater-core.test.ts
+          scripts/fased-managed-updater-fixed-client.test.ts
           scripts/managed-updater-bundle.test.ts
           src/wallet/wallet-application-state-permissions.test.ts
           --pool=forks
@@ -207,10 +207,8 @@ jobs:
         run: |
           bash -n install.sh
           pnpm exec vitest run \
-            scripts/generation-updater.test.ts \
             scripts/hosted-installer-artifact-layout.test.ts \
             scripts/hosted-security-boundary.test.ts \
-            scripts/install-attestation-prerequisites.test.ts \
             scripts/install-release-pin.test.ts \
             scripts/lifecycle-trust-policy.test.ts \
             scripts/go-lifecycle-routing.test.ts \

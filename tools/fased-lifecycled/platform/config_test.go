@@ -45,7 +45,7 @@ func TestConfigDerivesCanonicalProfilePathsAndIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if local.InstallRoot != "/opt/fased/local/example" || identity.Services["controller"] != "fased-local-controller-worker-example.service" {
+	if local.InstallRoot != "/opt/fased/local/example" || identity.Adapter != "linux-systemd-local-v2" || len(identity.Services) != 3 || identity.Services["controller"] != "" {
 		t.Fatalf("unexpected Local identity: %+v %+v", local, identity)
 	}
 	hosting, err := NewConfig(model.ProfileHosting, "example", "/var/lib/fased/owner", operator, gateway, signer)
@@ -53,7 +53,7 @@ func TestConfigDerivesCanonicalProfilePathsAndIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	hostingIdentity, err := hosting.Identity()
-	if err != nil || hostingIdentity.Adapter != "linux-systemd-hosting-v1" || hosting.InstallRoot != "/opt/fased" {
+	if err != nil || hostingIdentity.Adapter != "linux-systemd-hosting-v2" || len(hostingIdentity.Services) != 3 || hosting.InstallRoot != "/opt/fased" {
 		t.Fatalf("unexpected Hosting identity: %+v %+v err=%v", hosting, hostingIdentity, err)
 	}
 }
