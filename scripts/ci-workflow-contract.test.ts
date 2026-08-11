@@ -731,6 +731,7 @@ describe("CI workflow routing", () => {
       .map((step) => step.run ?? "")
       .join("\n");
     expect(retryText).toContain('"$SOURCE_COMMIT"..HEAD');
+    expect(retryText).toContain("test-protected-local-systemd-container");
     expect(retryText).toContain("refs/tags/v$RELEASE_VERSION");
     expect(retryText).toContain('--workflow-run-id "$CANDIDATE_RUN_ID"');
     expect(retryText).toContain("privileged-release-evidence.mjs verify");
