@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"syscall"
 
@@ -259,9 +258,11 @@ func engineReceipt(tx model.Transaction) engine.ParticipantReceipt {
 		StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.SignerPlanDigest}
 }
 
-type CommandOfflineRestorer struct{}
+type CommandOfflineRestorer struct {
+	SystemdRun string
+}
 
-func (CommandOfflineRestorer) Abort(ctx context.Context, binary, stateDB string, request UpgradeRequest, principal platform.Principal) error {
+func (restorer CommandOfflineRestorer) Abort(ctx context.Context, binary, stateDB string, request UpgradeRequest, principal platform.Principal) error {
 	if err := requireExecutable(binary); err != nil {
 		return err
 	}
@@ -269,9 +270,12 @@ func (CommandOfflineRestorer) Abort(ctx context.Context, binary, stateDB string,
 	if err != nil {
 		return err
 	}
-	command := exec.CommandContext(ctx, binary, "lifecycle-upgrade-abort", "--state-db", stateDB)
+	command, err := signerCommand(ctx, restorer.SystemdRun, binary, principal, filepath.Dir(stateDB),
+		"lifecycle-upgrade-abort", "--state-db", stateDB)
+	if err != nil {
+		return err
+	}
 	command.Stdin = bytes.NewReader(encoded)
-	command.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: principal.UID, Gid: principal.GID}}
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("offline signer rollback failed: %w: %s", err, output)

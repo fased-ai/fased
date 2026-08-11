@@ -11,7 +11,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"syscall"
 	"time"
@@ -25,6 +24,7 @@ const maxSignerResponse = 1 << 20
 type CommandCaller struct {
 	ClientBinary string
 	Config       platform.Config
+	SystemdRun   string
 }
 
 func (caller CommandCaller) Call(ctx context.Context, operation string, request UpgradeRequest) (UpgradeReceipt, error) {
@@ -38,9 +38,12 @@ func (caller CommandCaller) Call(ctx context.Context, operation string, request 
 	if err != nil {
 		return UpgradeReceipt{}, err
 	}
-	command := exec.CommandContext(ctx, caller.ClientBinary, "signer-call", "--socket", caller.Config.ControlSocket(), "--operation", operation)
+	command, err := signerCommand(ctx, caller.SystemdRun, caller.ClientBinary, caller.Config.Signer, "",
+		"signer-call", "--socket", caller.Config.ControlSocket(), "--operation", operation)
+	if err != nil {
+		return UpgradeReceipt{}, err
+	}
 	command.Stdin = bytes.NewReader(encoded)
-	command.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: caller.Config.Signer.UID, Gid: caller.Config.Signer.GID}}
 	output, err := command.Output()
 	if err != nil {
 		return UpgradeReceipt{}, fmt.Errorf("signer lifecycle call failed: %w", err)
