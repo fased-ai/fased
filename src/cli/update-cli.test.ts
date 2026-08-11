@@ -570,7 +570,7 @@ describe("update-cli", () => {
     expect(logs).toContain("transaction cleanup");
   });
 
-  it("reconciles the OpenAI sign-in runtime to the completed core version", async () => {
+  it("keeps the OpenAI sign-in runtime outside the completed core transaction", async () => {
     const config = {
       auth: {
         profiles: {
@@ -597,10 +597,9 @@ describe("update-cli", () => {
 
     await updateCommand({ restart: false });
 
-    expect(ensureOpenAICodexRuntimeComponent).toHaveBeenCalledWith({
-      config,
-      version: "0.1.57",
-    });
+    expect(hasConfiguredOpenAICodexProfile).not.toHaveBeenCalled();
+    expect(ensureOpenAICodexRuntimeComponent).not.toHaveBeenCalled();
+    expect(writeConfigFile).not.toHaveBeenCalled();
   });
 
   it("returns immediately when a packaged install already matches the target version", async () => {
@@ -686,7 +685,7 @@ describe("update-cli", () => {
     expect(runGatewayUpdate).not.toHaveBeenCalled();
   });
 
-  it("repairs a missing version-matched provider runtime on a same-version update", async () => {
+  it("does not repair provider plugin code during a same-version core update", async () => {
     const root = createCaseDir("fased-current-provider-runtime");
     mockPackageInstallStatus(root);
     readPackageVersion.mockResolvedValue("0.1.40");
@@ -720,15 +719,9 @@ describe("update-cli", () => {
 
     await updateCommand({});
 
-    expect(ensureOpenAICodexRuntimeComponent).toHaveBeenCalledWith({
-      config,
-      version: "0.1.40",
-    });
-    expect(writeConfigFile).toHaveBeenCalledWith(
-      expect.objectContaining({
-        plugins: { entries: { "openai-runtime": { enabled: true } } },
-      }),
-    );
+    expect(hasConfiguredOpenAICodexProfile).not.toHaveBeenCalled();
+    expect(ensureOpenAICodexRuntimeComponent).not.toHaveBeenCalled();
+    expect(writeConfigFile).not.toHaveBeenCalled();
     expect(defaultRuntime.log).toHaveBeenCalledWith("Already current: 0.1.40");
     expect(runGatewayUpdate).not.toHaveBeenCalled();
   });
