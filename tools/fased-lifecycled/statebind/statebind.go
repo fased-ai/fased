@@ -57,7 +57,7 @@ func CanonicalSpecs(ownerStateRoot, installRoot, signerStateRoot string) []Spec 
 		owner("credentials", "credentials"), owner("cron", "cron"), owner("deliveryQueue", "delivery-queue"),
 		owner("devices", "devices"), owner("federation", "federation"), owner("identity", "identity"),
 		{Name: "managedInstall", Path: installRoot, RootOnly: true}, owner("memory", "memory"),
-		{Name: "mining", Path: filepath.Join(ownerStateRoot, "sat-mining")},
+		owner("mining", "sat-mining"),
 		owner("pluginState", "plugin-data"), owner("schedules", "schedules"), owner("secrets", "secrets"),
 		owner("sessions", "sessions"), {Name: "signer", Path: signerStateRoot, RootOnly: true},
 		owner("tasks", "tasks"), owner("walletRegistry", filepath.Join("wallet", "provider-registry.v1.json")),
