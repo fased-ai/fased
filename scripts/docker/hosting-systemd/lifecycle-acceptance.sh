@@ -211,6 +211,10 @@ EOF_FIXTURE_CURL
 }
 
 start_release_transport_server() {
+  grep -Fqx "127.0.0.1 github.com" /etc/hosts ||
+    printf '127.0.0.1 github.com\n' >>/etc/hosts
+  grep -Fqx "127.0.0.1 registry.npmjs.org" /etc/hosts ||
+    printf '127.0.0.1 registry.npmjs.org\n' >>/etc/hosts
   FASED_FIXTURE_VERSION="$version" \
     /fixture-tools/node /usr/local/libexec/fased-hosting-release-server.mjs \
     >/tmp/fased-hosting-release-server.log 2>&1 &
