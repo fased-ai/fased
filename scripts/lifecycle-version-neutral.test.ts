@@ -44,7 +44,7 @@ describe("version-neutral lifecycle acceptance", () => {
       candidate.name?.includes("fresh Local P1"),
     );
     expect(update?.env).toMatchObject({
-      FASED_SYSTEMD_FIXTURE_SCENARIOS: "${{ needs.validate.outputs.p1_scenarios }}",
+      FASED_SYSTEMD_FIXTURE_SCENARIOS: "${{ needs.preflight.outputs.p1_scenarios }}",
       FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "${{ inputs.predecessor_version }}",
     });
     expect(fresh?.env).toMatchObject({
