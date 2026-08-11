@@ -168,7 +168,7 @@ func (participant *Participant) writeGate(request UpgradeRequest) error {
 		return err
 	}
 	path := participant.resolve(participant.Config.UpdateGatePath())
-	if existing, err := readSecureGate(path, participant.ExpectedGateUID); err == nil {
+	if existing, err := readSecureGate(path, participant.ExpectedGateUID, int(participant.Config.Signer.GID)); err == nil {
 		if bytes.Equal(existing, data) {
 			return nil
 		}
@@ -185,12 +185,13 @@ func (participant *Participant) writeGate(request UpgradeRequest) error {
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0o600); err != nil {
+	if err := temporary.Chmod(0o640); err != nil {
 		temporary.Close()
 		return err
 	}
-	if participant.ExpectedGateUID != os.Geteuid() {
-		if err := temporary.Chown(participant.ExpectedGateUID, -1); err != nil {
+	expectedGID := int(participant.Config.Signer.GID)
+	if participant.ExpectedGateUID != os.Geteuid() || expectedGID != os.Getegid() {
+		if err := temporary.Chown(participant.ExpectedGateUID, expectedGID); err != nil {
 			temporary.Close()
 			return err
 		}
@@ -211,7 +212,7 @@ func (participant *Participant) writeGate(request UpgradeRequest) error {
 
 func (participant *Participant) removeGate(request UpgradeRequest) error {
 	path := participant.resolve(participant.Config.UpdateGatePath())
-	data, err := readSecureGate(path, participant.ExpectedGateUID)
+	data, err := readSecureGate(path, participant.ExpectedGateUID, int(participant.Config.Signer.GID))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -232,13 +233,13 @@ func (participant *Participant) resolve(path string) string {
 	return filepath.Join(participant.rootPrefix, filepath.Clean(path))
 }
 
-func readSecureGate(path string, expectedUID int) ([]byte, error) {
+func readSecureGate(path string, expectedUID, expectedGID int) ([]byte, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 || !ok || stat.Nlink != 1 || int(stat.Uid) != expectedUID {
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o640 || !ok || stat.Nlink != 1 || int(stat.Uid) != expectedUID || int(stat.Gid) != expectedGID {
 		return nil, errors.New("signer update gate is not a secure bound record")
 	}
 	return os.ReadFile(path)

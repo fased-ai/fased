@@ -30,21 +30,21 @@ func TestSignerLifecycleGateBindsExactTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := os.WriteFile(path, data, 0o640); err != nil {
 		t.Fatal(err)
 	}
-	if err := requireSignerLifecycleGateBindingV1(path, request, os.Geteuid()); err != nil {
+	if err := requireSignerLifecycleGateBindingV1(path, request, os.Geteuid(), os.Getegid()); err != nil {
 		t.Fatal(err)
 	}
 	mismatch := request
 	mismatch.PlanDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	if err := requireSignerLifecycleGateBindingV1(path, mismatch, os.Geteuid()); err == nil {
+	if err := requireSignerLifecycleGateBindingV1(path, mismatch, os.Geteuid(), os.Getegid()); err == nil {
 		t.Fatal("mismatched signer lifecycle transaction used an existing gate")
 	}
 	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := requireSignerLifecycleGateBindingV1(path, request, os.Geteuid()); err == nil {
+	if err := requireSignerLifecycleGateBindingV1(path, request, os.Geteuid(), os.Getegid()); err == nil {
 		t.Fatal("accessible signer lifecycle gate was accepted")
 	}
 }
