@@ -62,6 +62,7 @@ describe("public predecessor capsule builder", () => {
         archive.get(`home/${owner}/.fased/fased.json`)?.bytes.toString("utf8") ?? "null",
       );
       expect(config?.gateway?.mode).toBe(profile === "hosting" ? "remote" : "local");
+      expect(config?.gateway?.remote?.token).toBe(config?.gateway?.auth?.token);
       const identity = JSON.parse(
         archive.get(`home/${owner}/.fased/identity/device.json`)?.bytes.toString("utf8") ?? "null",
       );

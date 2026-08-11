@@ -220,7 +220,7 @@ export async function buildPublicPredecessorCapsule({
       await write(
         source,
         `${stateRelative}/fased.json`,
-        `${JSON.stringify({ gateway: { mode: profile === "hosting" ? "remote" : "local", bind: "loopback", port: profile === "hosting" ? 18789 : 19456, auth: { mode: "token", token: "synthetic-predecessor-token" } } }, null, 2)}\n`,
+        `${JSON.stringify({ gateway: { mode: profile === "hosting" ? "remote" : "local", bind: "loopback", port: profile === "hosting" ? 18789 : 19456, auth: { mode: "token", token: "synthetic-predecessor-token" }, remote: { token: "synthetic-predecessor-token" } } }, null, 2)}\n`,
         0o600,
       ),
     );
