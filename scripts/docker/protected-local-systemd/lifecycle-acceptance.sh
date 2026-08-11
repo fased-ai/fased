@@ -1131,9 +1131,15 @@ if [[ "$phase" == "fresh-install" ]]; then
       --skip-skills \
       --skip-health \
     >/tmp/fresh-install.out 2>/tmp/fresh-install.err
-  install_elapsed="$((SECONDS - install_started))"
+	install_elapsed="$((SECONDS - install_started))"
+	# The public installer proof above deliberately runs without jq or gh. The
+	# acceptance recorder itself uses jq, so restore only the fixture-owned copy
+	# after the literal install command has completed.
+	if [[ "$preinstalled_tools" != "1" ]]; then
+		install -m 0755 /opt/fased-fixture-bootstrap-tools/jq /usr/local/bin/jq
+	fi
 
-  hash -r
+	hash -r
   acceptance_start
   service_started="$SECONDS"
   test -s "$state/fased.json"
