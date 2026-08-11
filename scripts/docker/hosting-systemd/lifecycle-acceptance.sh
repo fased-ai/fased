@@ -229,7 +229,7 @@ acceptance_mark() {
 }
 
 acceptance_start() {
-  node /fixture-tools/lifecycle-acceptance-contract.mjs validate \
+  /fixture-tools/node /fixture-tools/lifecycle-acceptance-contract.mjs validate \
     --contract "$acceptance_contract" >/dev/null
   : >"$acceptance_evidence"
   acceptance_mark artifact-identity "$acceptance_descriptor" "candidate descriptor verified"
@@ -251,7 +251,7 @@ acceptance_finish() {
     capsule_digest="sha256:$(sha256sum "$predecessor_capsule_descriptor" | awk '{print $1}')"
   fi
   jq -s . "$acceptance_evidence" >"$evidence_json"
-  node /fixture-tools/lifecycle-acceptance-contract.mjs issue-receipt \
+  /fixture-tools/node /fixture-tools/lifecycle-acceptance-contract.mjs issue-receipt \
     --contract "$acceptance_contract" \
     --profile hosting \
     --scenario "$scenario" \
@@ -261,7 +261,7 @@ acceptance_finish() {
     --predecessor-capsule-digest "$capsule_digest" \
     --evidence-file "$evidence_json" \
     --output "$acceptance_receipt"
-  node /fixture-tools/lifecycle-receipt-verifier.mjs \
+  /fixture-tools/node /fixture-tools/lifecycle-receipt-verifier.mjs \
     --contract "$acceptance_contract" \
     --receipt "$acceptance_receipt" \
     --profile hosting \
@@ -296,6 +296,12 @@ assert_healthy() {
   test "$(jq -er .activeGeneration.version /var/lib/fased-lifecycled/installation-manifest.json)" = "$version"
   grep -Fq '/opt/fased/lifecycle/supervisor-v1/fased-lifecycled supervisor' \
     /etc/systemd/system/fased-host-updater.service
+  grep -Fq '/payload/bin/fased-gateway-launch' \
+    /etc/systemd/system/fased-gateway.service
+  test -x /opt/fased/current/payload/bin/node
+  /opt/fased/current/payload/bin/node -e 'require("node:sqlite")'
+  grep -Fq 'exec "$PAYLOAD/bin/node"' \
+    /opt/fased/current/payload/bin/fased-gateway-launch
   ! test -e /etc/systemd/system/fased-host-controller.service
   test "$(cat /var/lib/fased-host-updater/signer-version)" = "$version"
   jq -e --arg version "$version" '.schemaVersion == 1 and .version == $version' \
@@ -392,8 +398,7 @@ case "$phase" in
     ! command -v node >/dev/null 2>&1
     install_release_transport_fixture
     run_public_installer >/tmp/fased-hosting-install.out 2>/tmp/fased-hosting-install.err
-    command -v node >/dev/null 2>&1
-    node -e 'require("node:sqlite")'
+    ! command -v node >/dev/null 2>&1
     acceptance_start
     assert_healthy
     acceptance_mark canonical-lifecycle /var/lib/fased-lifecycled/installation-manifest.json \
