@@ -21,6 +21,13 @@ import (
 )
 
 const productionPinnedRootSHA256 = "23d3e8235a39729d6ae37a5784eaa717a47e4ac725f5a416e78754ad9b4618ca"
+
+// These values are set with linker flags only for non-publishable branch
+// acceptance artifacts. Production builds leave both empty and therefore
+// retain the immutable production metadata route and root pin.
+var branchFixtureMetadataBase string
+var branchFixturePinnedRootSHA256 string
+
 const maxMetadataSize = 1 << 20
 
 type bootstrapRequest struct {

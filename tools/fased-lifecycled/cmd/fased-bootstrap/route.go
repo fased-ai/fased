@@ -54,17 +54,21 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	if request.Version != "" {
 		versionPath = "v" + request.Version
 	}
-	metadataBase := productionMetadataBase + "/" + request.Channel
-	releaseBase := productionMetadataBase + "/" + request.Channel + "/assets"
+	rootMetadataBase, rootPin, err := publicTrustRoute()
+	if err != nil {
+		return err
+	}
+	metadataBase := rootMetadataBase + "/" + request.Channel
+	releaseBase := rootMetadataBase + "/" + request.Channel + "/assets"
 	if request.Version != "" {
 		releaseBase = productionReleaseBase + "/" + versionPath
 	}
 	bootstrap := bootstrapRequest{
 		StateRoot: "/var/lib/fased-bootstrap", HostRoot: "/opt/fased/lifecycle",
-		RootURL: productionMetadataBase + "/root.json", DelegationURL: metadataBase + "/delegation.json",
+		RootURL: rootMetadataBase + "/root.json", DelegationURL: metadataBase + "/delegation.json",
 		IndexURL: metadataBase + "/" + versionPath + "/release-index.json", ReleaseBaseURL: releaseBase,
 		Channel: request.Channel, Version: request.Version, Architecture: architecture(),
-		PinnedRootSHA256: productionPinnedRootSHA256, OwnerUID: 0, Now: time.Now().UTC(), Inspect: inspectLifecycleHost,
+		PinnedRootSHA256: rootPin, OwnerUID: 0, Now: time.Now().UTC(), Inspect: inspectLifecycleHost,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -89,6 +93,21 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		_, err = fmt.Fprintf(output, "Updated successfully: %s\n", result.Version)
 	}
 	return err
+}
+
+func publicTrustRoute() (string, string, error) {
+	if branchFixtureMetadataBase == "" && branchFixturePinnedRootSHA256 == "" {
+		return productionMetadataBase, productionPinnedRootSHA256, nil
+	}
+	if branchFixtureMetadataBase == "" || branchFixturePinnedRootSHA256 == "" {
+		return "", "", errors.New("branch fixture trust route is incomplete")
+	}
+	if !strings.HasPrefix(branchFixtureMetadataBase, productionReleaseBase+"/v") ||
+		!strings.HasSuffix(branchFixtureMetadataBase, "/lifecycle/v1") ||
+		len(branchFixturePinnedRootSHA256) != 64 {
+		return "", "", errors.New("branch fixture trust route is malformed")
+	}
+	return branchFixtureMetadataBase, branchFixturePinnedRootSHA256, nil
 }
 
 func parsePublicLifecycleRequest(operation string, args []string) (publicLifecycleRequest, error) {

@@ -924,6 +924,7 @@ const version = process.env.FASED_FIXTURE_VERSION;
 const genesis = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"; // pragma: allowlist secret
 const releaseAssets = "/var/lib/fased-protected-local-fixture/release-assets";
 const releasePrefix = `/fased-ai/fased/releases/download/v${version}/`;
+const metadataPrefix = `${releasePrefix}lifecycle/v1/`;
 
 function serveFile(response, selected) {
   try {
@@ -946,6 +947,20 @@ function handleRequest(request, response) {
     response.end(
       JSON.stringify({ "dist-tags": { latest: selectedVersion, beta: selectedVersion } }),
     );
+    return;
+  }
+  if (request.method === "GET" && request.url?.startsWith(metadataPrefix)) {
+    const metadata = request.url.slice(metadataPrefix.length);
+    const selected = {
+      "root.json": "fased-branch-root.json",
+      "beta/delegation.json": "fased-branch-delegation.json",
+      [`beta/v${version}/release-index.json`]: "fased-branch-release-index.json",
+    }[metadata];
+    if (!selected) {
+      response.writeHead(404).end();
+      return;
+    }
+    serveFile(response, path.join(releaseAssets, selected));
     return;
   }
   if (request.method === "GET" && request.url?.startsWith(releasePrefix)) {

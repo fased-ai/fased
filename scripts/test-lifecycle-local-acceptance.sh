@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+GO_BIN="${FASED_GO_BIN:-$(command -v go || true)}"
 RUNTIME="${FASED_CONTAINER_RUNTIME:-podman}"
 OCI_RUNTIME="${FASED_CONTAINER_OCI_RUNTIME:-}"
 DISTROS="${FASED_SYSTEMD_FIXTURE_DISTROS:-ubuntu,rocky}"
@@ -64,6 +65,11 @@ if [[ -z "$ARTIFACT_DIR" && "$BUILD_ONLY" == "0" && -n "$ARTIFACT_CACHE_DIR" ]];
     echo "branch artifact cache hit: commit=$COMMIT tree=$TREE lock=$LOCKFILE_DIGEST"
   fi
 fi
+
+[[ -n "$GO_BIN" && -x "$GO_BIN" ]] || {
+  echo "Go is required for lifecycle acceptance." >&2
+  exit 1
+}
 
 cleanup_before_fixture() {
   if [[ "$OWN_ARTIFACT_DIR" -eq 1 && -n "$ARTIFACT_DIR" ]]; then
@@ -291,6 +297,38 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
     --tree "$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')" \
     --architecture x64
   if [[ "$PUBLIC_ACQUISITION" == "1" ]]; then
+    issued_at="$(node -e '
+      process.stdout.write(new Date(process.argv[1]).toISOString());
+    ' "$(git -C "$ROOT_DIR" show -s --format=%cI "$COMMIT")")"
+    fixture_inventory="$(mktemp "${TMPDIR:-/tmp}/fased-branch-inventory.XXXXXX")"
+    tar -xOf \
+      "$ARTIFACT_DIR/fased-generation-linux-x64-v${VERSION}.tar.gz" \
+      generation/inventory.json >"$fixture_inventory"
+    fixture_generation_digest="$(
+      tar -xOf \
+        "$ARTIFACT_DIR/fased-generation-linux-x64-v${VERSION}.tar.gz" \
+        generation/generation.json | jq -er .generation.artifactSetDigest
+    )"
+    GOTMPDIR="$fixture_go_tmp" GOCACHE="$fixture_go_cache" \
+      go -C "$ROOT_DIR/tools/fased-lifecycled" run ./cmd/fased-branch-trust \
+        --artifact-dir "$ARTIFACT_DIR" \
+        --inventory "$fixture_inventory" \
+        --version "$VERSION" \
+        --commit "$COMMIT" \
+        --tree "$TREE" \
+        --artifact-set-digest "$fixture_generation_digest" \
+        --issued-at "$issued_at"
+    rm -f "$fixture_inventory"
+    fixture_root_pin="$(tr -d '\n' <"$ARTIFACT_DIR/fased-branch-root.sha256")"
+    fixture_metadata_base="https://github.com/fased-ai/fased/releases/download/v${VERSION}/lifecycle/v1"
+    (
+      cd "$ROOT_DIR/tools/fased-lifecycled"
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 "$GO_BIN" build \
+        -buildvcs=false -trimpath \
+        -ldflags="-s -w -buildid= -X main.branchFixtureMetadataBase=${fixture_metadata_base} -X main.branchFixturePinnedRootSHA256=${fixture_root_pin}" \
+        -o "$ARTIFACT_DIR/fased-bootstrap-linux-x64" ./cmd/fased-bootstrap
+    )
+    chmod 0755 "$ARTIFACT_DIR/fased-bootstrap-linux-x64"
     node "$ROOT_DIR/scripts/stamp-release-installer.mjs" \
       --source "$ROOT_DIR/install.sh" \
       --output "$ARTIFACT_DIR/install.sh" \
@@ -300,9 +338,6 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
     install -m 0755 \
       "$ROOT_DIR/scripts/privileged-release-evidence.mjs" \
       "$ARTIFACT_DIR/fased-privileged-release-evidence.mjs"
-    issued_at="$(node -e '
-      process.stdout.write(new Date(process.argv[1]).toISOString());
-    ' "$(git -C "$ROOT_DIR" show -s --format=%cI "$COMMIT")")"
     expires_at="$(node -e '
       const issued = new Date(process.argv[1]);
       process.stdout.write(new Date(issued.getTime() + 365 * 24 * 60 * 60 * 1000).toISOString());
@@ -375,6 +410,10 @@ if [[ "$BUILD_ONLY" == "1" ]]; then
     fased-lifecycle-release-compatibility-v1.json \
     fased-hosting-candidate.json \
     fased-hosting-candidate.json.attestation.json \
+    fased-branch-root.json \
+    fased-branch-delegation.json \
+    fased-branch-release-index.json \
+    fased-branch-root.sha256 \
     "fased-generation-linux-x64-v${VERSION}.tar.gz"; do
     [[ -s "$ARTIFACT_DIR/$required_asset" ]] || {
       echo "The protected Local fixture artifact is missing $required_asset." >&2

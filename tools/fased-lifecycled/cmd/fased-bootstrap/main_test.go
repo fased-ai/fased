@@ -233,3 +233,25 @@ type bootstrapRoundTripFunc func(*http.Request) (*http.Response, error)
 func (function bootstrapRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return function(request)
 }
+
+func TestPublicTrustRouteUsesOnlyCompileTimeFixturePair(t *testing.T) {
+	oldBase, oldPin := branchFixtureMetadataBase, branchFixturePinnedRootSHA256
+	t.Cleanup(func() {
+		branchFixtureMetadataBase, branchFixturePinnedRootSHA256 = oldBase, oldPin
+	})
+	branchFixtureMetadataBase, branchFixturePinnedRootSHA256 = "", ""
+	base, pin, err := publicTrustRoute()
+	if err != nil || base != productionMetadataBase || pin != productionPinnedRootSHA256 {
+		t.Fatalf("production trust route changed: base=%q pin=%q err=%v", base, pin, err)
+	}
+	branchFixtureMetadataBase = productionReleaseBase + "/v0.1.76-rc.73/lifecycle/v1"
+	branchFixturePinnedRootSHA256 = strings.Repeat("a", 64)
+	base, pin, err = publicTrustRoute()
+	if err != nil || base != branchFixtureMetadataBase || pin != branchFixturePinnedRootSHA256 {
+		t.Fatalf("compiled fixture trust route was not selected: base=%q pin=%q err=%v", base, pin, err)
+	}
+	branchFixturePinnedRootSHA256 = ""
+	if _, _, err := publicTrustRoute(); err == nil {
+		t.Fatal("incomplete fixture trust route was accepted")
+	}
+}
