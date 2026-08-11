@@ -50,6 +50,23 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	if err != nil {
 		return err
 	}
+	if request.Operation == "update" {
+		configPath, configErr := installedConfigPath(request.Profile, operator)
+		if configErr != nil {
+			return configErr
+		}
+		configData, readErr := os.ReadFile(configPath)
+		if readErr != nil {
+			return errors.New("installed lifecycle platform configuration is unavailable")
+		}
+		config, decodeErr := platform.DecodeConfig(configData)
+		if decodeErr != nil {
+			return fmt.Errorf("installed lifecycle platform configuration is invalid: %w", decodeErr)
+		}
+		if bindErr := bindInstalledUpdatePlatform(&request, operator, config); bindErr != nil {
+			return bindErr
+		}
+	}
 	versionPath := "current"
 	if request.Version != "" {
 		versionPath = "v" + request.Version
@@ -117,7 +134,7 @@ func parsePublicLifecycleRequest(operation string, args []string) (publicLifecyc
 	flags := flag.NewFlagSet(operation, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	profile := ""
-	gatewayPort := uint64(18789)
+	gatewayPort := uint64(0)
 	request := publicLifecycleRequest{Operation: operation, Channel: "stable", Onboard: operation == "install"}
 	flags.StringVar(&profile, "profile", "", "")
 	flags.StringVar(&request.Channel, "channel", "stable", "")
@@ -125,13 +142,19 @@ func parsePublicLifecycleRequest(operation string, args []string) (publicLifecyc
 	flags.StringVar(&request.Version, "version", "", "")
 	flags.StringVar(&request.Version, "tag", "", "")
 	flags.StringVar(&request.OperatorUser, "operator-user", "", "")
-	flags.Uint64Var(&gatewayPort, "gateway-port", 18789, "")
+	flags.Uint64Var(&gatewayPort, "gateway-port", 0, "")
 	flags.BoolVar(&request.Verbose, "verbose", false, "")
 	flags.BoolVar(&request.JSON, "json", false, "")
 	noOnboard := flags.Bool("no-onboard", false, "")
 	if err := flags.Parse(args); err != nil {
 		return publicLifecycleRequest{}, errors.New("invalid public lifecycle arguments")
 	}
+	gatewayPortSet := false
+	flags.Visit(func(candidate *flag.Flag) {
+		if candidate.Name == "gateway-port" {
+			gatewayPortSet = true
+		}
+	})
 	remaining := flags.Args()
 	if len(remaining) > 0 && remaining[0] == "--" {
 		remaining = remaining[1:]
@@ -163,7 +186,13 @@ func parsePublicLifecycleRequest(operation string, args []string) (publicLifecyc
 	if operation == "install" && request.Version == "" {
 		return publicLifecycleRequest{}, errors.New("install requires an immutable version")
 	}
-	if gatewayPort == 0 || gatewayPort > 65535 {
+	if operation == "update" && gatewayPortSet {
+		return publicLifecycleRequest{}, errors.New("update preserves the installed Gateway port")
+	}
+	if operation == "install" && !gatewayPortSet {
+		gatewayPort = 18789
+	}
+	if operation == "install" && (gatewayPort == 0 || gatewayPort > 65535) {
 		return publicLifecycleRequest{}, errors.New("Gateway port is invalid")
 	}
 	request.GatewayPort = uint16(gatewayPort)
@@ -174,6 +203,17 @@ func parsePublicLifecycleRequest(operation string, args []string) (publicLifecyc
 		return publicLifecycleRequest{}, errors.New("an unprivileged operator user is required")
 	}
 	return request, nil
+}
+
+func bindInstalledUpdatePlatform(request *publicLifecycleRequest, operator publicOperator, config platform.Config) error {
+	expectedOwnerState := filepath.Join(operator.Home, ".fased")
+	if request.Operation != "update" || config.Profile != request.Profile ||
+		config.OwnerStateRoot != expectedOwnerState || config.Operator.UID != operator.UID ||
+		config.Operator.GID != operator.GID {
+		return errors.New("installed lifecycle platform identity differs from the update operator")
+	}
+	request.GatewayPort = config.GatewayPort
+	return nil
 }
 
 func operatorFromEnvironment(profile model.Profile) string {

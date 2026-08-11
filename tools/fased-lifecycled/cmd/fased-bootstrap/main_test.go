@@ -141,6 +141,35 @@ func TestPublicLifecycleRoutesInstallAndUpdateWithoutCallerTrustSelectors(t *tes
 	if update.Operation != "update" || update.Version != "" || update.Onboard {
 		t.Fatalf("update route was not bound: %+v", update)
 	}
+	if update.GatewayPort != 0 {
+		t.Fatalf("update invented an installation port: %+v", update)
+	}
+	if _, err := parsePublicLifecycleRequest("update", []string{"--channel", "stable", "--operator-user", "owner", "--gateway-port", "19456"}); err == nil {
+		t.Fatal("update accepted a caller-selected replacement Gateway port")
+	}
+}
+
+func TestUpdateBindsExistingPlatformPortWithoutChangingTopology(t *testing.T) {
+	operator := publicOperator{Name: "owner", Home: "/home/owner", UID: 1000, GID: 1000}
+	config, err := platform.NewConfigWithGatewayPort(
+		model.ProfileProtectedLocal, "0123456789abcdef", "/home/owner/.fased", 19456,
+		platform.Principal{UID: 1000, GID: 1000}, platform.Principal{UID: 1001, GID: 1001}, platform.Principal{UID: 1002, GID: 1002},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := publicLifecycleRequest{Operation: "update", Profile: model.ProfileProtectedLocal, OperatorUser: "owner"}
+	if err := bindInstalledUpdatePlatform(&request, operator, config); err != nil {
+		t.Fatal(err)
+	}
+	if request.GatewayPort != 19456 {
+		t.Fatalf("update did not preserve the installed Gateway port: %+v", request)
+	}
+	wrong := config
+	wrong.OwnerStateRoot = "/home/other/.fased"
+	if err := bindInstalledUpdatePlatform(&request, operator, wrong); err == nil {
+		t.Fatal("update accepted a different installed platform identity")
+	}
 }
 
 func TestPublicLifecycleRouteRejectsAmbiguousOrLegacySelectors(t *testing.T) {
