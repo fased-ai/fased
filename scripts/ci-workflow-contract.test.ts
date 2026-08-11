@@ -500,6 +500,7 @@ describe("CI workflow routing", () => {
 
     expect(workflow.on).not.toHaveProperty("push");
     expect(workflow.on.workflow_dispatch.inputs.pre_candidate_run_id.required).toBe(true);
+    expect(workflow.on.workflow_dispatch.inputs.owner_predecessor_version.required).toBe(true);
     expect(jobs["release-gate"]).toBeUndefined();
     expect(jobs["build"]?.needs).toBe("preflight");
     expect(jobs["signer"]?.needs).toBe("preflight");
@@ -628,10 +629,16 @@ describe("CI workflow routing", () => {
     expect(
       p1Update?.steps?.find((step) => step.name === "Run packaged supported-stable update P1")?.env,
     ).toMatchObject({
-      FASED_SYSTEMD_FIXTURE_SCENARIOS: "${{ needs.preflight.outputs.p1_scenarios }}",
-      FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "${{ inputs.predecessor_version }}",
+      FASED_SYSTEMD_FIXTURE_SCENARIOS: "${{ steps.p1-scenario.outputs.scenarios }}",
+      FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "${{ matrix.predecessor }}",
       FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1",
     });
+    expect(p1Update?.strategy).toMatchObject({
+      "fail-fast": false,
+      matrix: { predecessor: "${{ fromJSON(needs.preflight.outputs.p1_predecessors) }}" },
+    });
+    expect(preflightText).toContain("ownerPredecessorVersion");
+    expect(preflightText).toContain("[$stable,$owner] | unique");
     expect(p1Update?.steps?.some((step) => usesAction(step, "actions/cache"))).toBe(true);
     expect(publishText).not.toContain("git tag");
     expect(publishText).not.toContain("git push origin");
@@ -670,6 +677,7 @@ describe("CI workflow routing", () => {
     expect(workflow.on).not.toHaveProperty("push");
     expect(workflow.on).not.toHaveProperty("pull_request");
     expect(workflow.on).toHaveProperty("workflow_dispatch");
+    expect(workflow.on.workflow_dispatch.inputs.owner_predecessor_version.required).toBe(true);
     expect(validate?.["timeout-minutes"]).toBeLessThanOrEqual(5);
     expect(commands).toContain("pnpm install --frozen-lockfile");
     expect(commands).toContain("actions/workflows/main.yml/runs?head_sha=$SOURCE_COMMIT");
@@ -689,6 +697,8 @@ describe("CI workflow routing", () => {
     expect(commands).not.toContain("pnpm release:validate-dist:packed");
     expect(commands).toContain("--verify-public-github");
     expect(commands).toContain("lockfileDigest");
+    expect(commands).toContain("ownerPredecessorVersion");
+    expect(commands).toContain("schemaVersion:2");
     expect(
       validate?.steps?.find((step) => usesAction(step, "actions/upload-artifact"))?.with?.name,
     ).toBe("fased-pre-candidate-evidence");
@@ -717,11 +727,15 @@ describe("CI workflow routing", () => {
 
     expect(fixture).toContain('if [[ "$version" == *-* ]]');
     expect(fixture).toContain("target_update_args=(--channel beta)");
-    expect(fixture.match(/update "\$\{target_update_args\[@\]\}" --timeout/gu)).toHaveLength(4);
+    expect(fixture.match(/update "\$\{target_update_args\[@\]\}" --timeout/gu)).toHaveLength(3);
     expect(fixture).not.toContain("/etc/fased/testing");
     expect(fixture).toContain("/var/lib/fased-protected-local-fixture");
     expect(fixture).toContain('if [[ "$phase" == "managed-update" ]]');
-    expect(fixture).toContain("run_target_update() {");
+    expect(fixture).toContain("run_target_installer() {");
+    expect(fixture).toContain('/bin/bash "$candidate_installer"');
+    expect(fixture).toContain(
+      'grep -F "Already current: $version" /tmp/managed-installer-noop.out',
+    );
     expect(fixture).toContain("materialize_predecessor_wallet_registry_fixture");
     expect(fixture).toContain('managed_current_link="/opt/fased/local/$instance/current"');
     expect(fixture).not.toContain("/opt/fased/local/$instance/application/current");

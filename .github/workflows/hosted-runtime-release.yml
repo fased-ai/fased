@@ -15,6 +15,10 @@ on:
         description: Exact supported public stable version used by packaged update P1
         required: true
         type: string
+      owner_predecessor_version:
+        description: Exact owner Local predecessor, or the stable predecessor when identical
+        required: true
+        type: string
       pre_candidate_run_id:
         description: Successful Pre-candidate workflow run bound to the unversioned parent source
         required: true
@@ -36,7 +40,7 @@ jobs:
     name: Validate release preflight
     runs-on: ubuntu-24.04
     outputs:
-      p1_scenarios: ${{ steps.p1-plan.outputs.scenarios }}
+      p1_predecessors: ${{ steps.p1-plan.outputs.predecessors }}
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -65,6 +69,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.release_version }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
+          OWNER_PREDECESSOR_VERSION: ${{ inputs.owner_predecessor_version }}
           PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
         shell: bash
         run: |
@@ -73,7 +78,9 @@ jobs:
           test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"
           test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
           [[ "$PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$OWNER_PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]
           test "$PREDECESSOR_VERSION" != "$RELEASE_VERSION"
+          test "$OWNER_PREDECESSOR_VERSION" != "$RELEASE_VERSION"
           remote_main="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
           test "$remote_main" = "$SOURCE_COMMIT"
           remote_tag="$(git ls-remote --exit-code --tags origin "refs/tags/v$RELEASE_VERSION" | awk '{print $1}')"
@@ -86,6 +93,7 @@ jobs:
       - name: Verify immutable pre-candidate pass
         env:
           GH_TOKEN: ${{ github.token }}
+          OWNER_PREDECESSOR_VERSION: ${{ inputs.owner_predecessor_version }}
           PRE_CANDIDATE_RUN_ID: ${{ inputs.pre_candidate_run_id }}
           PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
           RELEASE_VERSION: ${{ inputs.release_version }}
@@ -116,9 +124,10 @@ jobs:
             --arg sourceTree "$(git rev-parse "$base_commit^{tree}")" \
             --arg lockfileDigest "sha256:$(git show "$base_commit:pnpm-lock.yaml" | sha256sum | awk '{print $1}')" \
             --arg releaseVersion "$RELEASE_VERSION" \
+            --arg ownerPredecessorVersion "$OWNER_PREDECESSOR_VERSION" \
             --arg predecessorVersion "$PREDECESSOR_VERSION" \
             --arg workflowRunId "$PRE_CANDIDATE_RUN_ID" \
-            '.schemaVersion == 1 and .sourceCommit == $sourceCommit and .sourceTree == $sourceTree and .lockfileDigest == $lockfileDigest and .nextReleaseVersion == $releaseVersion and .predecessorVersion == $predecessorVersion and .workflowRunId == $workflowRunId' \
+            '.schemaVersion == 2 and .sourceCommit == $sourceCommit and .sourceTree == $sourceTree and .lockfileDigest == $lockfileDigest and .nextReleaseVersion == $releaseVersion and .predecessorVersion == $predecessorVersion and .ownerPredecessorVersion == $ownerPredecessorVersion and .workflowRunId == $workflowRunId' \
             "$evidence" >/dev/null
           main_run_id="$(jq -er '.mainRunId | select(test("^[0-9]+$"))' "$evidence")"
           main_checks_job_id="$(
@@ -139,17 +148,17 @@ jobs:
         id: p1-plan
         env:
           GH_TOKEN: ${{ github.token }}
+          OWNER_PREDECESSOR_VERSION: ${{ inputs.owner_predecessor_version }}
           PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
         shell: bash
         run: |
           set -euo pipefail
           node scripts/lifecycle-compatibility-inventory.mjs --verify-public-github
-          scenarios="$(
-            node scripts/lifecycle-compatibility-inventory.mjs \
-              --p1-scenarios "$PREDECESSOR_VERSION"
-          )"
-          test -n "$scenarios"
-          printf 'scenarios=%s\n' "$scenarios" >>"$GITHUB_OUTPUT"
+          test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
+          test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$OWNER_PREDECESSOR_VERSION")"
+          gh release view "v$OWNER_PREDECESSOR_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null
+          predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" --arg owner "$OWNER_PREDECESSOR_VERSION" '[$stable,$owner] | unique')"
+          printf 'predecessors=%s\n' "$predecessors" >>"$GITHUB_OUTPUT"
 
       - name: Enforce production vulnerability threshold
         run: pnpm audit --prod --audit-level high
@@ -676,10 +685,14 @@ jobs:
           retention-days: 30
 
   p1-local-update:
-    name: Packaged stable update P1
+    name: Packaged predecessor ${{ matrix.predecessor }} update P1
     needs: [preflight, candidate]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        predecessor: ${{ fromJSON(needs.preflight.outputs.p1_predecessors) }}
     steps:
       - name: Checkout exact candidate source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -711,12 +724,12 @@ jobs:
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ${{ runner.temp }}/fased-supported-predecessor/
-          key: fased-supported-predecessor-${{ inputs.predecessor_version }}
+          key: fased-supported-predecessor-${{ matrix.predecessor }}
 
       - name: Ensure exact supported predecessor assets
         env:
           GH_TOKEN: ${{ github.token }}
-          PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
+          PREDECESSOR_VERSION: ${{ matrix.predecessor }}
         shell: bash
         run: |
           set -euo pipefail
@@ -731,12 +744,23 @@ jobs:
             '.release.version == $version and .release.tag == ("v" + $version)' \
             "$predecessor_dir/fased-hosted-release-v2.json" >/dev/null
 
+      - name: Derive exact predecessor topology
+        id: p1-scenario
+        env:
+          PREDECESSOR_VERSION: ${{ matrix.predecessor }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          scenarios="$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
+          test -n "$scenarios"
+          printf 'scenarios=%s\n' "$scenarios" >>"$GITHUB_OUTPUT"
+
       - name: Run packaged supported-stable update P1
         env:
           GH_TOKEN: ${{ github.token }}
           FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
-          FASED_SYSTEMD_FIXTURE_SCENARIOS: ${{ needs.preflight.outputs.p1_scenarios }}
-          FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
+          FASED_SYSTEMD_FIXTURE_SCENARIOS: ${{ steps.p1-scenario.outputs.scenarios }}
+          FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: ${{ matrix.predecessor }}
           FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_ARTIFACT_DIR: ${{ runner.temp }}/fased-supported-predecessor
           FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/fased-hosting-candidate
           FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1"
@@ -748,7 +772,7 @@ jobs:
       - name: Upload stable-update acceptance receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: fased-lifecycle-acceptance-update
+          name: fased-lifecycle-acceptance-update-${{ matrix.predecessor }}
           path: ${{ runner.temp }}/lifecycle-acceptance-update/*.json
           if-no-files-found: error
           retention-days: 30

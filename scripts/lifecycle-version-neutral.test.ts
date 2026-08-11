@@ -33,9 +33,16 @@ describe("version-neutral lifecycle acceptance", () => {
     );
     const workflow = parse(source) as {
       on?: { workflow_dispatch?: { inputs?: Record<string, unknown> } };
-      jobs?: Record<string, { steps?: Array<{ env?: Record<string, string>; name?: string }> }>;
+      jobs?: Record<
+        string,
+        {
+          steps?: Array<{ env?: Record<string, string>; name?: string }>;
+          strategy?: { matrix?: { predecessor?: string } };
+        }
+      >;
     };
     expect(workflow.on?.workflow_dispatch?.inputs).toHaveProperty("predecessor_version");
+    expect(workflow.on?.workflow_dispatch?.inputs).toHaveProperty("owner_predecessor_version");
     expect(workflow.on?.workflow_dispatch?.inputs).not.toHaveProperty("predecessor_scenario");
     const update = workflow.jobs?.["p1-local-update"]?.steps?.find((candidate) =>
       candidate.name?.includes("supported-stable update P1"),
@@ -44,9 +51,12 @@ describe("version-neutral lifecycle acceptance", () => {
       candidate.name?.includes("fresh Local P1"),
     );
     expect(update?.env).toMatchObject({
-      FASED_SYSTEMD_FIXTURE_SCENARIOS: "${{ needs.preflight.outputs.p1_scenarios }}",
-      FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "${{ inputs.predecessor_version }}",
+      FASED_SYSTEMD_FIXTURE_SCENARIOS: "${{ steps.p1-scenario.outputs.scenarios }}",
+      FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "${{ matrix.predecessor }}",
     });
+    expect(workflow.jobs?.["p1-local-update"]?.strategy?.matrix?.predecessor).toBe(
+      "${{ fromJSON(needs.preflight.outputs.p1_predecessors) }}",
+    );
     expect(fresh?.env).toMatchObject({
       FASED_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install",
     });

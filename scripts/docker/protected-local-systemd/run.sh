@@ -1644,12 +1644,26 @@ EOF_MANAGED_MINING_LEDGER
   predecessor_gateway_version="$predecessor_version"
   printf '%s\n' "$version" >"$selected_target"
 
-  run_target_update() {
-    local timeout_seconds="$1"
+  run_target_installer() {
     runuser -u testop -- env "${managed_operator_env[@]}" \
       npm_config_registry="http://127.0.0.1:$rpc_port" \
       FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
-      "$state/bin/fased" update "${target_update_args[@]}" --timeout "$timeout_seconds"
+      /bin/bash "$candidate_installer" \
+      --release "v$version" \
+      --update-channel beta \
+      --local \
+      --install-dir /home/testop/fased \
+      -- \
+      --non-interactive \
+      --accept-risk \
+      --auth-choice skip \
+      --workspace /home/testop/.fased/workspace \
+      --gateway-auth token \
+      --gateway-token "$gateway_token" \
+      --gateway-port "$gateway_port" \
+      --gateway-bind loopback \
+      --skip-skills \
+      --skip-health
   }
 
   acceptance_start
@@ -1676,7 +1690,7 @@ EOF_MANAGED_FAILED_GATEWAY
 ExecStartPre=+$managed_fault_script
 EOF_MANAGED_FAILED_GATEWAY_DROPIN
   systemctl daemon-reload
-  if run_target_update 30 \
+  if run_target_installer \
       >/tmp/managed-update-failure.out 2>/tmp/managed-update-failure.err; then
     managed_failure_status=0
   else
@@ -1706,7 +1720,7 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
     exit 1
   fi
 
-  run_target_update 90 \
+  run_target_installer \
     >/tmp/managed-update-success.out 2>/tmp/managed-update-success.err
   acceptance_mark rollback-retry
   if [[ -n "$managed_recovery_transaction" ]]; then
@@ -1743,6 +1757,9 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
     "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
     >/tmp/managed-update-noop.out 2>/tmp/managed-update-noop.err
   grep -F "Already current: $version" /tmp/managed-update-noop.out >/dev/null
+  run_target_installer \
+    >/tmp/managed-installer-noop.out 2>/tmp/managed-installer-noop.err
+  grep -F "Already current: $version" /tmp/managed-installer-noop.out >/dev/null
   acceptance_mark already-current
   acceptance_finish
 
