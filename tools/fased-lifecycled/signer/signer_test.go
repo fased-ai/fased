@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"syscall"
 	"testing"
 
 	"fased-lifecycled/model"
@@ -50,9 +51,9 @@ func participantAndTransaction(t *testing.T, fresh, failAbort bool) (*Participan
 	t.Helper()
 	operator := platform.Principal{UID: 1000, GID: 1000}
 	gateway := platform.Principal{UID: 997, GID: 997}
-	signer := platform.Principal{UID: uint32(os.Geteuid()), GID: uint32(os.Getegid())}
+	signer := platform.Principal{UID: 996, GID: uint32(os.Getegid())}
 	if signer == operator || signer == gateway || signer.UID == 0 || signer.GID == 0 {
-		signer = platform.Principal{UID: 996, GID: 996}
+		signer = platform.Principal{UID: 996, GID: uint32(os.Getegid())}
 	}
 	config, err := platform.NewConfig(model.ProfileProtectedLocal, "example", "/home/example/.fased", operator, gateway, signer)
 	if err != nil {
@@ -119,6 +120,29 @@ func TestSignerParticipantBindsLivePrepareVerifyAndCommit(t *testing.T) {
 	}
 }
 
+func TestSignerUpdateGateIsRootAuthoredAndSignerGroupReadable(t *testing.T) {
+	participant, tx, _ := participantAndTransaction(t, false, false)
+	request, _, err := participant.request(tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := participant.writeGate(request); err != nil {
+		t.Fatal(err)
+	}
+	path := participant.resolve(participant.Config.UpdateGatePath())
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatal("signer update gate has no stat identity")
+	}
+	if info.Mode().Perm() != 0o640 || int(stat.Uid) != participant.ExpectedGateUID || stat.Gid != participant.Config.Signer.GID {
+		t.Fatalf("unsafe signer update gate: mode=%o uid=%d gid=%d", info.Mode().Perm(), stat.Uid, stat.Gid)
+	}
+}
+
 func TestSignerAbortFallsBackToOfflineExactGeneration(t *testing.T) {
 	participant, tx, calls := participantAndTransaction(t, false, true)
 	if _, err := participant.Prepare(context.Background(), tx); err != nil {
@@ -147,5 +171,26 @@ func TestFreshSignerUsesGateWithoutCallingMissingOldSigner(t *testing.T) {
 	}
 	if len(*calls) != 0 {
 		t.Fatalf("fresh signer called a predecessor: %v", *calls)
+	}
+}
+
+func TestSameSchemaManagedUpdateUsesGateWithoutLegacyLiveHandshake(t *testing.T) {
+	participant, tx, calls := participantAndTransaction(t, false, false)
+	tx.Migrations = nil
+	receipt, err := participant.Prepare(context.Background(), tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := participant.Verify(context.Background(), tx, receipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := participant.Commit(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("same-schema update invoked a legacy live signer handshake: %v", *calls)
+	}
+	if _, err := os.Lstat(participant.resolve(participant.Config.UpdateGatePath())); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("same-schema update gate remains after commit: %v", err)
 	}
 }

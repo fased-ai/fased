@@ -82,7 +82,7 @@ func (request signerLifecycleUpgradeRequestV1) validate() error {
 	return nil
 }
 
-func requireSignerLifecycleGateBindingV1(gatePath string, request signerLifecycleUpgradeRequestV1, trustedUID int) error {
+func requireSignerLifecycleGateBindingV1(gatePath string, request signerLifecycleUpgradeRequestV1, trustedUID, trustedGID int) error {
 	if err := request.validate(); err != nil {
 		return err
 	}
@@ -94,7 +94,7 @@ func requireSignerLifecycleGateBindingV1(gatePath string, request signerLifecycl
 		return fmt.Errorf("read signer lifecycle gate: %w", err)
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 || !ok || stat.Nlink != 1 || int(stat.Uid) != trustedUID {
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o640 || !ok || stat.Nlink != 1 || int(stat.Uid) != trustedUID || int(stat.Gid) != trustedGID {
 		return errors.New("signer lifecycle gate is not a secure transaction record")
 	}
 	raw, err := os.ReadFile(gatePath)

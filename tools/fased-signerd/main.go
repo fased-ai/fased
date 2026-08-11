@@ -808,7 +808,7 @@ func handleAuthorizedConn(
 		if signerLifecycleUpdateOperationsV1[req.Op] {
 			gateControl = control && !operator
 		}
-		if err := enforceApplicationUpdateGate(cfg.updateGatePath, req.Op, gateControl, 0); err != nil {
+		if err := enforceApplicationUpdateGate(cfg.updateGatePath, req.Op, gateControl, 0, os.Getegid()); err != nil {
 			_, _ = conn.Write([]byte(fmt.Sprintf(`{"ok":false,"error":%q}`+"\n", err.Error())))
 			requestAudit["ok"] = false
 			requestAudit["error"] = "update_gate"

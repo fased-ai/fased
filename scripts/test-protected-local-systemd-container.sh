@@ -636,6 +636,8 @@ run_fixture_scenario() {
     if [[ "${FASED_SYSTEMD_FIXTURE_COMPACT_DIAGNOSTICS:-0}" == "1" ]]; then
       run_container exec "$name" /bin/bash -lc '
         for log in \
+          /tmp/managed-predecessor-install.err \
+          /tmp/managed-predecessor-install.out \
           /tmp/fresh-install.err \
           /tmp/fresh-install.out \
           /tmp/stable-bridge-failure.err \

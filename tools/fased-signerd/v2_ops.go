@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -171,7 +172,7 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 		if err != nil {
 			return nil, err
 		}
-		if err := requireSignerLifecycleGateBindingV1(cfg.updateGatePath, body, 0); err != nil {
+		if err := requireSignerLifecycleGateBindingV1(cfg.updateGatePath, body, 0, os.Getegid()); err != nil {
 			return nil, err
 		}
 		switch req.Op {

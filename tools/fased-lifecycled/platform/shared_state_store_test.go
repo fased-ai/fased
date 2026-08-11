@@ -75,3 +75,49 @@ func TestSharedStateStoreActivatesAndRestoresOnlyDeclaredGatewayState(t *testing
 		}
 	}
 }
+
+func TestSharedStateStoreIgnoresVanishingSQLiteSidecars(t *testing.T) {
+	operator := Principal{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}
+	gateway := Principal{UID: operator.UID + 1, GID: operator.GID + 1}
+	signer := Principal{UID: operator.UID + 2, GID: operator.GID + 2}
+	config, err := NewConfig(model.ProfileProtectedLocal, "example", "/home/owner/.fased", operator, gateway, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewDiskSharedStateStore(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.rootPrefix = t.TempDir()
+	databaseRoot := filepath.Join(store.resolve(config.OwnerStateRoot), "sat-mining", "wallets", "unattached")
+	if err := os.MkdirAll(databaseRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	database := filepath.Join(databaseRoot, "mining.sqlite")
+	if err := os.WriteFile(database, []byte("durable database\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sidecars := []string{database + "-wal", database + "-shm"}
+	for _, path := range sidecars {
+		if err := os.WriteFile(path, []byte("transient\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Prepare("transaction"); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range sidecars {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Activate("transaction"); err != nil {
+		t.Fatalf("vanished SQLite sidecar blocked activation: %v", err)
+	}
+	if err := store.Restore("transaction"); err != nil {
+		t.Fatalf("vanished SQLite sidecar blocked rollback: %v", err)
+	}
+	if info, err := os.Stat(database); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("durable SQLite database metadata was not restored: info=%v err=%v", info, err)
+	}
+}

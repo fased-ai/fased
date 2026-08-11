@@ -1,16 +1,32 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"net"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"syscall"
 	"testing"
 
 	"fased-lifecycled/platform"
+	"fased-lifecycled/protocol"
 )
+
+func TestWriteConvergenceResponseEmitsBoundedFailureBeforeReturningError(t *testing.T) {
+	for _, outcome := range []string{"ROLLED_BACK", "RECOVERY_PENDING"} {
+		t.Run(outcome, func(t *testing.T) {
+			var output bytes.Buffer
+			response := protocol.Response{SchemaVersion: 1, RequestID: "11111111-1111-4111-8111-111111111111", Outcome: outcome, Detail: "injected failure"}
+			err := writeConvergenceResponse(&output, response)
+			if err == nil || !strings.Contains(err.Error(), outcome) || !strings.Contains(output.String(), `"outcome":"`+outcome+`"`) {
+				t.Fatalf("bounded result was not emitted before failure: output=%q err=%v", output.String(), err)
+			}
+		})
+	}
+}
 
 func TestPrepareSocketParentConvergesAuthorizedTraversal(t *testing.T) {
 	parent := filepath.Join(t.TempDir(), "runtime")

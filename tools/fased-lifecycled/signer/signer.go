@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"syscall"
 
@@ -155,12 +154,13 @@ func (participant *Participant) request(tx model.Transaction) (UpgradeRequest, b
 	}
 	request := UpgradeRequest{SchemaVersion: 1, TransactionID: tx.ID, TargetGenerationID: tx.Target.ID,
 		StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.SignerPlanDigest, FromSchema: from, ToSchema: to}
-	// Fresh installs and the one pre-supervisor public-stable bridge have no
-	// compatible live signer protocol. The explicit migrator owns the offline
-	// custody copy; the newly started signer and Gateway health checks verify it
-	// before commit. Managed updates always bind a previous generation and use
-	// the typed live signer protocol.
-	return request, from == 0 || tx.ManifestDigest == absentManifestDigest, nil
+	// A same-schema update has no signer-owned state transformation to prepare.
+	// The root-authored gate freezes application mutations while the target
+	// transaction replaces and health-checks the signer runtime. The typed live
+	// signer lifecycle protocol is reserved for an actual schema transition.
+	// This keeps compatibility based on persisted schema rather than release
+	// names and permits older same-schema signers to be replaced atomically.
+	return request, from == 0 || from == to || tx.ManifestDigest == absentManifestDigest, nil
 }
 
 func (participant *Participant) writeGate(request UpgradeRequest) error {
@@ -169,7 +169,7 @@ func (participant *Participant) writeGate(request UpgradeRequest) error {
 		return err
 	}
 	path := participant.resolve(participant.Config.UpdateGatePath())
-	if existing, err := readSecureGate(path, participant.ExpectedGateUID); err == nil {
+	if existing, err := readSecureGate(path, participant.ExpectedGateUID, int(participant.Config.Signer.GID)); err == nil {
 		if bytes.Equal(existing, data) {
 			return nil
 		}
@@ -186,12 +186,13 @@ func (participant *Participant) writeGate(request UpgradeRequest) error {
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0o600); err != nil {
+	if err := temporary.Chmod(0o640); err != nil {
 		temporary.Close()
 		return err
 	}
-	if participant.ExpectedGateUID != os.Geteuid() {
-		if err := temporary.Chown(participant.ExpectedGateUID, -1); err != nil {
+	expectedGID := int(participant.Config.Signer.GID)
+	if participant.ExpectedGateUID != os.Geteuid() || expectedGID != os.Getegid() {
+		if err := temporary.Chown(participant.ExpectedGateUID, expectedGID); err != nil {
 			temporary.Close()
 			return err
 		}
@@ -212,7 +213,7 @@ func (participant *Participant) writeGate(request UpgradeRequest) error {
 
 func (participant *Participant) removeGate(request UpgradeRequest) error {
 	path := participant.resolve(participant.Config.UpdateGatePath())
-	data, err := readSecureGate(path, participant.ExpectedGateUID)
+	data, err := readSecureGate(path, participant.ExpectedGateUID, int(participant.Config.Signer.GID))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -233,13 +234,13 @@ func (participant *Participant) resolve(path string) string {
 	return filepath.Join(participant.rootPrefix, filepath.Clean(path))
 }
 
-func readSecureGate(path string, expectedUID int) ([]byte, error) {
+func readSecureGate(path string, expectedUID, expectedGID int) ([]byte, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 || !ok || stat.Nlink != 1 || int(stat.Uid) != expectedUID {
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o640 || !ok || stat.Nlink != 1 || int(stat.Uid) != expectedUID || int(stat.Gid) != expectedGID {
 		return nil, errors.New("signer update gate is not a secure bound record")
 	}
 	return os.ReadFile(path)
@@ -259,9 +260,11 @@ func engineReceipt(tx model.Transaction) engine.ParticipantReceipt {
 		StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.SignerPlanDigest}
 }
 
-type CommandOfflineRestorer struct{}
+type CommandOfflineRestorer struct {
+	SystemdRun string
+}
 
-func (CommandOfflineRestorer) Abort(ctx context.Context, binary, stateDB string, request UpgradeRequest, principal platform.Principal) error {
+func (restorer CommandOfflineRestorer) Abort(ctx context.Context, binary, stateDB string, request UpgradeRequest, principal platform.Principal) error {
 	if err := requireExecutable(binary); err != nil {
 		return err
 	}
@@ -269,9 +272,12 @@ func (CommandOfflineRestorer) Abort(ctx context.Context, binary, stateDB string,
 	if err != nil {
 		return err
 	}
-	command := exec.CommandContext(ctx, binary, "lifecycle-upgrade-abort", "--state-db", stateDB)
+	command, err := signerCommand(ctx, restorer.SystemdRun, binary, principal, filepath.Dir(stateDB),
+		"lifecycle-upgrade-abort", "--state-db", stateDB)
+	if err != nil {
+		return err
+	}
 	command.Stdin = bytes.NewReader(encoded)
-	command.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: principal.UID, Gid: principal.GID}}
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("offline signer rollback failed: %w: %s", err, output)

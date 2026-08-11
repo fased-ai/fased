@@ -208,13 +208,59 @@ describe("generation updater", () => {
           ok: true,
           stdout: args.includes("stage")
             ? `${JSON.stringify({ id: `sha256:${"a".repeat(64)}`, version })}\n`
-            : `${JSON.stringify({ outcome: "RECOVERY_PENDING" })}\n`,
+            : `${JSON.stringify({ outcome: "PREPARED" })}\n`,
           stderr: "",
         }),
         sudoPath: "/usr/bin/sudo",
       }),
     ).rejects.toThrow("invalid convergence outcome");
   });
+
+  it.each([
+    ["ROLLED_BACK", "target release failed and was rolled back", true],
+    ["ROLLED_BACK", "target release failed and was rolled back", false],
+    ["RECOVERY_PENDING", "lifecycle recovery is pending", true],
+    ["RECOVERY_PENDING", "lifecycle recovery is pending", false],
+  ])(
+    "preserves the bounded %s lifecycle outcome (exit success=%s)",
+    async (outcome, message, applyOK) => {
+      const value = await fixture();
+      const sources = new Map([
+        ["fased-hosting-candidate.json", value.descriptorPath],
+        ["fased-hosting-candidate.json.attestation.json", value.bundlePath],
+        [assetName, value.archive],
+        [dependencyAssetName, value.dependencyArchive],
+      ]);
+      await expect(
+        runGenerationUpdate({
+          lifecycle: {
+            supervisor: "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled",
+            config: "/var/lib/fased-lifecycled/platform.json",
+          },
+          version,
+          timeoutMs: 30_000,
+          baseUrl: "https://example.invalid/releases/download",
+          architecture: "x64",
+          download: async (url: string, destination: string) => {
+            const source = sources.get(url.split("/").at(-1) ?? "");
+            if (!source) {
+              throw new Error("unexpected download");
+            }
+            await fsp.copyFile(source, destination);
+          },
+          verifyOfficialAsset: async () => undefined,
+          runAdministrator: async (_command, args) => ({
+            ok: args.includes("stage") || applyOK,
+            stdout: args.includes("stage")
+              ? `${JSON.stringify({ id: `sha256:${"a".repeat(64)}`, version })}\n`
+              : `${JSON.stringify({ outcome, detail: "injected failure", transactionId: "tx" })}\n`,
+            stderr: "",
+          }),
+          sudoPath: "/usr/bin/sudo",
+        }),
+      ).rejects.toThrow(`${message}: injected failure`);
+    },
+  );
 
   it("preserves declared executable modes under a restrictive caller umask", async () => {
     const value = await fixture();
@@ -236,6 +282,17 @@ describe("generation updater", () => {
     const destination = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-generation-runtime-"));
     temporary.push(destination);
     const dependencyRoot = path.resolve(".");
+    const generation = await extractGeneration(value.archive, destination, { dependencyRoot });
+    expect(await fsp.readFile(path.join(generation, "payload", "bin", "fased"), "utf8")).toBe(
+      "exact\n",
+    );
+  });
+
+  it("loads archive support from an immutable node_modules layer", async () => {
+    const value = await fixture();
+    const destination = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-generation-layer-"));
+    temporary.push(destination);
+    const dependencyRoot = path.resolve("node_modules");
     const generation = await extractGeneration(value.archive, destination, { dependencyRoot });
     expect(await fsp.readFile(path.join(generation, "payload", "bin", "fased"), "utf8")).toBe(
       "exact\n",

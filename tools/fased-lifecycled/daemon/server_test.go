@@ -12,13 +12,40 @@ import (
 )
 
 type transportHandler struct {
-	calls int
-	fail  error
+	calls   int
+	fail    error
+	outcome string
 }
 
 func (handler *transportHandler) Handle(_ context.Context, request protocol.Request) (protocol.Response, error) {
 	handler.calls++
-	return protocol.Response{SchemaVersion: 1, RequestID: request.RequestID, Outcome: "MANAGED"}, handler.fail
+	outcome := handler.outcome
+	if outcome == "" {
+		outcome = "MANAGED"
+	}
+	return protocol.Response{SchemaVersion: 1, RequestID: request.RequestID, Outcome: outcome}, handler.fail
+}
+
+func TestServerPreservesBoundedLifecycleFailureOutcome(t *testing.T) {
+	for _, outcome := range []string{"ROLLED_BACK", "RECOVERY_PENDING"} {
+		t.Run(outcome, func(t *testing.T) {
+			handler := &transportHandler{fail: errors.New("first failing predicate"), outcome: outcome}
+			server := transportServer(handler)
+			client, daemon := net.Pipe()
+			defer client.Close()
+			done := make(chan error, 1)
+			go func() { done <- server.HandlePeer(context.Background(), daemon, Peer{UID: 1000}) }()
+			request := protocol.Request{SchemaVersion: 1, RequestID: requestID, Operation: protocol.OperationInspect}
+			_ = json.NewEncoder(client).Encode(request)
+			var response protocol.Response
+			if err := json.NewDecoder(client).Decode(&response); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err == nil || response.Outcome != outcome || response.RequestID != requestID || response.Detail != "first failing predicate" {
+				t.Fatalf("unexpected bounded failure response: %+v err=%v", response, err)
+			}
+		})
+	}
 }
 
 func transportServer(handler RequestHandler) *Server {

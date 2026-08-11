@@ -149,6 +149,9 @@ func (store *DiskSharedStateStore) walk(root string, paths *[]string) error {
 			}
 			return nil
 		}
+		if entry.Type().IsRegular() && isTransientSQLiteSidecar(entry.Name()) {
+			return nil
+		}
 		if entry.IsDir() || entry.Type().IsRegular() {
 			*paths = append(*paths, path)
 			if len(*paths) > maxSharedStateRecords {
@@ -157,6 +160,15 @@ func (store *DiskSharedStateStore) walk(root string, paths *[]string) error {
 		}
 		return nil
 	})
+}
+
+func isTransientSQLiteSidecar(name string) bool {
+	for _, suffix := range []string{"-wal", "-shm", "-journal", ".sqlite-wal", ".sqlite-shm", ".sqlite-journal"} {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (store *DiskSharedStateStore) read(transactionID string) ([]sharedStateRecord, error) {

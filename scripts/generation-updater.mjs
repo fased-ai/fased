@@ -156,11 +156,29 @@ async function loadArchiveDependency(dependencyRoot) {
     throw new Error("lifecycle archive dependency root is invalid");
   }
   const packagePath = path.join(dependencyRoot, "package.json");
-  const packageInfo = await fsp.lstat(packagePath);
-  if (!packageInfo.isFile() || packageInfo.isSymbolicLink()) {
+  try {
+    const packageInfo = await fsp.lstat(packagePath);
+    if (!packageInfo.isFile() || packageInfo.isSymbolicLink()) {
+      throw new Error("lifecycle archive dependency root is unsafe");
+    }
+    return createRequire(packagePath)("tar");
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  const tarPackage = path.join(dependencyRoot, "tar", "package.json");
+  const tarPackageInfo = await fsp.lstat(tarPackage);
+  if (!tarPackageInfo.isFile() || tarPackageInfo.isSymbolicLink()) {
     throw new Error("lifecycle archive dependency root is unsafe");
   }
-  return createRequire(packagePath)("tar");
+  const requireFromLayer = createRequire(path.join(path.dirname(dependencyRoot), "package.json"));
+  const resolvedTar = await fsp.realpath(requireFromLayer.resolve("tar"));
+  const tarRoot = await fsp.realpath(path.join(dependencyRoot, "tar"));
+  if (resolvedTar !== tarRoot && !resolvedTar.startsWith(`${tarRoot}${path.sep}`)) {
+    throw new Error("lifecycle archive dependency escaped its immutable layer");
+  }
+  return requireFromLayer("tar");
 }
 
 export async function validateGenerationArchive(archive, { dependencyRoot } = {}) {
@@ -564,6 +582,10 @@ async function runGenerationTransaction({
         { timeoutMs },
       );
     }
+    const boundedResponse = parseBoundedLifecycleResponse(result.stdout);
+    if (!result.ok && boundedResponse) {
+      throwBoundedLifecycleOutcome(boundedResponse);
+    }
     if (!result.ok) {
       const detail = result.stderr.trim() || result.stdout.trim() || "no subprocess diagnostic";
       const exit = Number.isInteger(result.code) ? String(result.code) : "none";
@@ -573,6 +595,7 @@ async function runGenerationTransaction({
       );
     }
     const response = JSON.parse(result.stdout.trim());
+    throwBoundedLifecycleOutcome(response);
     if (!new Set(["UPDATED", "COMMITTED", "ALREADY_CURRENT"]).has(response.outcome)) {
       throw new Error("lifecycle supervisor returned an invalid convergence outcome");
     }
@@ -586,6 +609,26 @@ async function runGenerationTransaction({
       await fsp.rm(initializerStage.directory, { recursive: true, force: true });
     }
     await fsp.rm(temporary, { recursive: true, force: true });
+  }
+}
+
+function parseBoundedLifecycleResponse(stdout) {
+  try {
+    const response = JSON.parse(stdout.trim());
+    return new Set(["ROLLED_BACK", "RECOVERY_PENDING"]).has(response?.outcome) ? response : null;
+  } catch {
+    return null;
+  }
+}
+
+function throwBoundedLifecycleOutcome(response) {
+  const detail =
+    typeof response?.detail === "string" && response.detail ? `: ${response.detail}` : "";
+  if (response?.outcome === "ROLLED_BACK") {
+    throw new Error(`target release failed and was rolled back${detail}`);
+  }
+  if (response?.outcome === "RECOVERY_PENDING") {
+    throw new Error(`lifecycle recovery is pending${detail}`);
   }
 }
 

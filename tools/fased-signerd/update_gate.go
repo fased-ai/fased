@@ -32,12 +32,12 @@ var signerLifecycleUpdateOperationsV1 = map[string]bool{
 	"v2.lifecycle.upgrade.abort":   true,
 }
 
-func enforceApplicationUpdateGate(gatePath, operation string, control bool, trustedUID int) error {
+func enforceApplicationUpdateGate(gatePath, operation string, control bool, trustedUID, trustedGID int) error {
 	if signerLifecycleUpdateOperationsV1[operation] {
 		if !control {
 			return errors.New("signer lifecycle upgrade requires the control socket")
 		}
-		active, err := trustedUpdateGateActive(gatePath, trustedUID)
+		active, err := trustedUpdateGateActive(gatePath, trustedUID, trustedGID)
 		if err != nil {
 			return fmt.Errorf("signer update gate is invalid; refusing lifecycle operation: %w", err)
 		}
@@ -49,7 +49,7 @@ func enforceApplicationUpdateGate(gatePath, operation string, control bool, trus
 	if strings.TrimSpace(gatePath) == "" || applicationUpdateGateReadOperations[operation] {
 		return nil
 	}
-	active, err := trustedUpdateGateActive(gatePath, trustedUID)
+	active, err := trustedUpdateGateActive(gatePath, trustedUID, trustedGID)
 	if err != nil {
 		return fmt.Errorf("signer update gate is invalid; refusing mutation: %w", err)
 	}
@@ -63,7 +63,7 @@ func enforceApplicationUpdateGate(gatePath, operation string, control bool, trus
 	return nil
 }
 
-func trustedUpdateGateActive(gatePath string, trustedUID int) (bool, error) {
+func trustedUpdateGateActive(gatePath string, trustedUID, trustedGID int) (bool, error) {
 	info, err := os.Lstat(gatePath)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
@@ -71,15 +71,15 @@ func trustedUpdateGateActive(gatePath string, trustedUID int) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o022 != 0 {
-		return false, errors.New("gate must be a regular file not writable by group or others")
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o640 {
+		return false, errors.New("gate must be a regular file with exact mode 0640")
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || stat.Nlink != 1 {
 		return false, errors.New("gate must have exactly one filesystem link")
 	}
-	if int(stat.Uid) != trustedUID {
-		return false, fmt.Errorf("gate must be owned by uid %d", trustedUID)
+	if int(stat.Uid) != trustedUID || int(stat.Gid) != trustedGID {
+		return false, fmt.Errorf("gate must be owned by uid %d and gid %d", trustedUID, trustedGID)
 	}
 	return true, nil
 }

@@ -664,7 +664,21 @@ func runApply(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(output).Encode(response)
+	return writeConvergenceResponse(output, response)
+}
+
+func writeConvergenceResponse(output io.Writer, response protocol.Response) error {
+	if err := json.NewEncoder(output).Encode(response); err != nil {
+		return err
+	}
+	if response.Outcome == string(engine.OutcomeRolledBack) || response.Outcome == string(engine.OutcomeRecoveryPending) {
+		detail := response.Detail
+		if detail == "" {
+			detail = "lifecycle transaction did not commit"
+		}
+		return fmt.Errorf("%s: %s", response.Outcome, detail)
+	}
+	return nil
 }
 
 func waitForSocket(ctx context.Context, path string) error {

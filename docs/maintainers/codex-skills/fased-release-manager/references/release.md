@@ -5,7 +5,9 @@ Read this file only after explicit candidate, publication, or stable authority.
 ## Candidate
 
 Start from one clean exact `origin/main` commit whose affected predicates and
-public-style Linux-x64 lifecycle transaction already pass.
+public-style Linux-x64 lifecycle transaction already pass. Bind the actual
+owner Local predecessor as well as the latest supported stable predecessor. If
+they differ, both paths must already pass against the same branch artifact.
 
 ```text
 PRE-CANDIDATE
@@ -27,12 +29,19 @@ downloads and verifies those bytes; it never rebuilds.
 
 P1 covers fresh protected Local, latest supported public stable to candidate,
 rollback/retry, restart, declared-state preservation, product/service health,
-and `Already current`. Add another predecessor only for a materially distinct
-supported schema/topology/capability. Independent lanes run concurrently.
+and `Already current`. It also replays the exact owner Local predecessor when
+that differs from stable; this is an owner-acceptance prerequisite, not broad
+historical compatibility. Independent predecessor lanes run concurrently and
+consume the same candidate artifact.
 
 Product failure returns to one normal fix and requires a new immutable identity
 only after local and merged-main closure. Infrastructure failure may retry the
 failed job once against unchanged bytes.
+
+Once source changes after an immutable tag, mark that candidate obsolete. Its
+tag and bytes remain immutable, but it cannot be repaired, rebuilt, republished,
+or used for owner acceptance. Allocate the next unused version only after the
+corrected branch paths and exact merged-main PRE-CANDIDATE pass.
 
 ## Publication and acceptance
 

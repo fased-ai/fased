@@ -64,6 +64,19 @@ already-passing predicates against immutable final bytes; it never diagnoses
 source. Build once, run independent P1 lanes in parallel, and never rebuild
 between P1 and publication.
 
+Version identity is strict. Before allocating a candidate, bind both the latest
+supported stable predecessor and the actual owner Local predecessor into
+PRE-CANDIDATE evidence. Prove both locally against the branch artifact when
+they differ. Candidate P1 replays both in parallel against the same exact
+bytes. A candidate whose tagged source is followed by any product correction
+is permanently obsolete: never move its tag, rebuild it, publish replacement
+bytes under its version, or use it for owner acceptance.
+
+An unpublished branch artifact built after a published tag is development
+evidence bound to its commit, tree, and artifact digest. Always call it a
+`corrected branch artifact`; never describe it as the published RC whose
+package version it inherits.
+
 ## Speed and authority
 
 - Never duplicate a running command or rerun an unchanged failure.

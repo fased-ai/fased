@@ -317,7 +317,7 @@ func validateSignerEnrollmentUpdateGate(path string) error {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return errors.New("--update-gate must be an absolute clean path")
 	}
-	active, err := trustedUpdateGateActive(path, 0)
+	active, err := trustedUpdateGateActive(path, 0, os.Getegid())
 	if err != nil {
 		return fmt.Errorf("signer update gate is invalid; refusing enrollment: %w", err)
 	}
