@@ -160,25 +160,7 @@ https.createServer(
   },
 ).listen(443, "127.0.0.1");
 EOF_RELEASE_SERVER
-  FASED_FIXTURE_VERSION="$version" \
-    /fixture-tools/node /usr/local/libexec/fased-hosting-release-server.mjs \
-    >/tmp/fased-hosting-release-server.log 2>&1 &
-  fixture_release_server_pid=$!
-  for _ in {1..40}; do
-    kill -0 "$fixture_release_server_pid" 2>/dev/null || {
-      cat /tmp/fased-hosting-release-server.log >&2
-      return 1
-    }
-    if /usr/local/libexec/fased-fixture-curl-real -fsS \
-      "https://github.com/fased-ai/fased/releases/download/v${version}/lifecycle/v1/root.json" \
-      >/dev/null; then
-      break
-    fi
-    sleep 0.1
-  done
-  /usr/local/libexec/fased-fixture-curl-real -fsS \
-    "https://github.com/fased-ai/fased/releases/download/v${version}/lifecycle/v1/root.json" \
-    >/dev/null
+  start_release_transport_server
   cat >/usr/bin/curl <<EOF_FIXTURE_CURL
 #!/usr/bin/env bash
 set -euo pipefail
@@ -224,6 +206,28 @@ exec /usr/local/libexec/fased-fixture-curl-real "\$@"
 EOF_FIXTURE_CURL
   chmod 0755 /usr/bin/curl
 
+}
+
+start_release_transport_server() {
+  FASED_FIXTURE_VERSION="$version" \
+    /fixture-tools/node /usr/local/libexec/fased-hosting-release-server.mjs \
+    >/tmp/fased-hosting-release-server.log 2>&1 &
+  fixture_release_server_pid=$!
+  for _ in {1..40}; do
+    kill -0 "$fixture_release_server_pid" 2>/dev/null || {
+      cat /tmp/fased-hosting-release-server.log >&2
+      return 1
+    }
+    if /usr/local/libexec/fased-fixture-curl-real -fsS \
+      "https://github.com/fased-ai/fased/releases/download/v${version}/lifecycle/v1/root.json" \
+      >/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+  /usr/local/libexec/fased-fixture-curl-real -fsS \
+    "https://github.com/fased-ai/fased/releases/download/v${version}/lifecycle/v1/root.json" \
+    >/dev/null
 }
 
 acceptance_mark() {
@@ -535,6 +539,7 @@ EOF_TARGET_DROPIN
     ;;
   verify-reboot)
     install_tailscale_fixture
+    start_release_transport_server
     assert_healthy
     run_public_installer >/tmp/fased-hosting-reboot-noop.out 2>/tmp/fased-hosting-reboot-noop.err
     grep -F "Already current: $version" /tmp/fased-hosting-reboot-noop.out >/dev/null
