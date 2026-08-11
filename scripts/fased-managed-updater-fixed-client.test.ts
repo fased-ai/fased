@@ -8,14 +8,23 @@ import { __testing } from "./fased-managed-updater.mjs";
 describe("fixed managed lifecycle update client", () => {
   it("binds root and unprivileged invocations to the same fixed bootstrap", () => {
     const bootstrap = "/opt/fased/lifecycle/bootstrap-v1/fased-bootstrap";
-    expect(__testing.fixedInvocation(bootstrap, ["--channel", "beta"], 0)).toEqual({
+    expect(__testing.fixedInvocation(bootstrap, ["--channel", "beta"], 0, "hosting")).toEqual({
       command: bootstrap,
-      args: ["update", "--channel", "beta"],
+      args: ["update", "--profile", "hosting", "--channel", "beta"],
     });
-    expect(__testing.fixedInvocation(bootstrap, ["--channel", "stable"], 1000)).toEqual({
+    expect(
+      __testing.fixedInvocation(bootstrap, ["--channel", "stable"], 1000, "protected-local"),
+    ).toEqual({
       command: "/usr/bin/sudo",
-      args: [bootstrap, "update", "--channel", "stable"],
+      args: [bootstrap, "update", "--profile", "protected-local", "--channel", "stable"],
     });
+  });
+
+  it("accepts only canonical installed lifecycle profiles", () => {
+    expect(__testing.requireInstalledProfile("hosting")).toBe("hosting");
+    expect(__testing.requireInstalledProfile("protected-local")).toBe("protected-local");
+    expect(() => __testing.requireInstalledProfile(undefined)).toThrow("profile");
+    expect(() => __testing.requireInstalledProfile("portable")).toThrow("profile");
   });
 
   it("rejects mutable, linked, or wrongly-mode fixed clients", async () => {

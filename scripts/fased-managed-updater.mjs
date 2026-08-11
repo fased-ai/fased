@@ -39,7 +39,8 @@ async function requireFixedBootstrap(path = FIXED_BOOTSTRAP, expectedUid = 0) {
 export async function run(argv = process.argv.slice(2), { bootstrapPath = FIXED_BOOTSTRAP } = {}) {
   const bootstrap = await requireFixedBootstrap(bootstrapPath);
   const lifecycleArgs = argv[0] === "update" ? argv.slice(1) : argv;
-  const invocation = fixedInvocation(bootstrap, lifecycleArgs, process.getuid?.() ?? -1);
+  const profile = requireInstalledProfile(process.env.FASED_LIFECYCLE_PROFILE);
+  const invocation = fixedInvocation(bootstrap, lifecycleArgs, process.getuid?.() ?? -1, profile);
   await new Promise((resolve, reject) => {
     const child = spawn(invocation.command, invocation.args, {
       stdio: "inherit",
@@ -63,10 +64,20 @@ export async function run(argv = process.argv.slice(2), { bootstrapPath = FIXED_
   });
 }
 
-function fixedInvocation(bootstrap, argv, uid) {
+function requireInstalledProfile(profile) {
+  if (profile !== "protected-local" && profile !== "hosting") {
+    throw new Error(
+      "The installed lifecycle profile is missing or invalid; rerun the public installer.",
+    );
+  }
+  return profile;
+}
+
+function fixedInvocation(bootstrap, argv, uid, profile) {
+  const args = [bootstrap, "update", "--profile", profile, ...argv];
   return uid === 0
-    ? { command: bootstrap, args: ["update", ...argv] }
-    : { command: "/usr/bin/sudo", args: [bootstrap, "update", ...argv] };
+    ? { command: bootstrap, args: args.slice(1) }
+    : { command: "/usr/bin/sudo", args };
 }
 
 function isMainModule(entrypoint, moduleUrl, realpath = realpathSync) {
@@ -87,4 +98,10 @@ if (isMainModule(process.argv[1], import.meta.url)) {
   });
 }
 
-export const __testing = { FIXED_BOOTSTRAP, fixedInvocation, isMainModule, requireFixedBootstrap };
+export const __testing = {
+  FIXED_BOOTSTRAP,
+  fixedInvocation,
+  isMainModule,
+  requireFixedBootstrap,
+  requireInstalledProfile,
+};
