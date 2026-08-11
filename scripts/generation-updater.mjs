@@ -19,6 +19,7 @@ const ASSET = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,255}$/u;
 const OID = /^[a-f0-9]{40}$/u;
 const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
 const SUPERVISOR = "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled";
+const INITIALIZER_EXECUTABLE_ROOT = "/usr/local/libexec/fased-installer";
 const PUBLIC_STABLE_LOCAL_TOPOLOGIES = new Set([
   "legacy-local-same-user-v0",
   "local-user-systemd-v1",
@@ -725,10 +726,11 @@ async function commandMain(argv) {
     timeoutMs,
     baseUrl: "https://github.com/fased-ai/fased/releases/download",
     architecture: process.arch,
-    // Bootstrap code is temporary acquisition state. Stage it under the
-    // existing root-owned runtime hierarchy so the Go initializer remains the
-    // sole creator and owner of the durable /opt/fased lifecycle tree.
-    initializerExecutableRoot: "/run",
+    // Bootstrap code is temporary acquisition state. Do not execute from
+    // /run or /tmp: hardened Hosting systems commonly mount those trees
+    // noexec. The stamped installer prepares this fixed root-owned libexec
+    // directory without creating durable product state under /opt/fased.
+    initializerExecutableRoot: INITIALIZER_EXECUTABLE_ROOT,
     download: async (url, destination) => {
       await execFileAsync(
         curl,

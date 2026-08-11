@@ -589,7 +589,7 @@ run_fixture_scenario() {
     --name "$name" \
     --privileged \
     --systemd=always \
-    --tmpfs /run \
+    --tmpfs /run:rw,noexec \
     --tmpfs /tmp \
     -e "FASED_FIXTURE_VERSION=$VERSION" \
     -e "FASED_FIXTURE_COMMIT=$COMMIT" \

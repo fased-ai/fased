@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"fased-lifecycled/engine"
 	"fased-lifecycled/model"
 )
 
@@ -42,6 +43,10 @@ func (state fakeSharedState) Restore(string) error {
 }
 func (state fakeSharedState) Discard(string) error {
 	*state.calls = append(*state.calls, "shared.discard")
+	return nil
+}
+func (state fakeSharedState) Converge() error {
+	*state.calls = append(*state.calls, "shared.converge")
 	return nil
 }
 
@@ -119,8 +124,9 @@ func (units *fakeUnits) Discard(string) error {
 }
 
 type fakeSystemd struct {
-	calls *[]string
-	fail  string
+	calls    *[]string
+	fail     string
+	inactive map[string]bool
 }
 
 func (systemd fakeSystemd) call(name string) error {
@@ -135,7 +141,11 @@ func (systemd fakeSystemd) Stop(_ context.Context, unit string) error {
 	return systemd.call("systemd.stop:" + unit)
 }
 func (systemd fakeSystemd) Start(_ context.Context, unit string) error {
-	return systemd.call("systemd.start:" + unit)
+	err := systemd.call("systemd.start:" + unit)
+	if err == nil && systemd.inactive != nil {
+		delete(systemd.inactive, unit)
+	}
+	return err
 }
 func (systemd fakeSystemd) Enable(_ context.Context, unit string) error {
 	return systemd.call("systemd.enable:" + unit)
@@ -147,7 +157,13 @@ func (systemd fakeSystemd) IsEnabled(_ context.Context, unit string) error {
 	return systemd.call("systemd.enabled:" + unit)
 }
 func (systemd fakeSystemd) IsActive(_ context.Context, unit string) error {
-	return systemd.call("systemd.active:" + unit)
+	if err := systemd.call("systemd.active:" + unit); err != nil {
+		return err
+	}
+	if systemd.inactive[unit] {
+		return errors.New("inactive")
+	}
+	return nil
 }
 
 type fakeGenerations struct {
@@ -454,13 +470,44 @@ func testCompleteOnboardingStartsAndVerifiesExactCommittedGateway(t *testing.T, 
 		Platform: identity, ActiveGeneration: &active, StateSchemas: map[string]uint32{"signer": 2},
 		Capabilities: model.CapabilityRanges{Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1}, Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 1, Max: 1}}}
 	calls := []string{}
-	adapter := TargetAdapter{Config: config, Identity: identity, Systemd: fakeSystemd{calls: &calls}, Health: fakeHealth{calls: &calls}, Manifest: fakeManifestReader{manifest: manifest}}
-	if err := adapter.CompleteOnboarding(context.Background()); err != nil {
+	adapter := TargetAdapter{Config: config, Identity: identity, SharedState: fakeSharedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls, inactive: map[string]bool{identity.Services["gateway"]: true}}, Health: fakeHealth{calls: &calls}, Manifest: fakeManifestReader{manifest: manifest}}
+	result, err := adapter.CompleteOnboarding(context.Background())
+	if err != nil || result.Outcome != engine.OutcomeUpdated || result.Phase != model.PhaseCommitted {
 		t.Fatal(err)
 	}
-	want := []string{"systemd.active:" + identity.Services["signer"], "systemd.start:" + identity.Services["gateway"], "systemd.active:" + identity.Services["gateway"], "gateway.ready:18789:0.1.76:" + commitB}
+	want := []string{"shared.converge", "systemd.active:" + identity.Services["signer"], "systemd.active:" + identity.Services["gateway"], "systemd.start:" + identity.Services["gateway"], "systemd.active:" + identity.Services["gateway"], "gateway.ready:18789:0.1.76:" + commitB}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("unexpected onboarding completion order: got=%v want=%v", calls, want)
+	}
+}
+
+func TestHostingCompleteOnboardingReturnsAlreadyCurrentForHealthyGateway(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), ".fased")
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateRoot, "fased.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	operator := Principal{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}
+	config, err := NewConfig(model.ProfileHosting, "hosting", stateRoot, operator,
+		Principal{UID: operator.UID + 1, GID: operator.GID + 1}, Principal{UID: operator.UID + 2, GID: operator.GID + 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, _ := config.Identity()
+	active := model.Generation{ID: digestB, Version: "0.1.76", Commit: commitB, Tree: commitB, ArtifactSetDigest: digestB}
+	manifest := model.Manifest{SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileHosting,
+		Platform: identity, ActiveGeneration: &active, StateSchemas: map[string]uint32{"signer": 2},
+		Capabilities: model.CapabilityRanges{Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1}, Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 1, Max: 1}}}
+	calls := []string{}
+	adapter := TargetAdapter{Config: config, Identity: identity, SharedState: fakeSharedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Health: fakeHealth{calls: &calls}, Manifest: fakeManifestReader{manifest: manifest}}
+	result, err := adapter.CompleteOnboarding(context.Background())
+	if err != nil || result.Outcome != engine.OutcomeAlreadyCurrent || result.Phase != model.PhaseCommitted {
+		t.Fatalf("unexpected idempotent onboarding result: result=%+v err=%v", result, err)
+	}
+	if got := strings.Join(calls, ","); strings.Contains(got, "systemd.start:") {
+		t.Fatalf("healthy Gateway was restarted during identical onboarding: %s", got)
 	}
 }
 

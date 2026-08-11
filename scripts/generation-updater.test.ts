@@ -132,6 +132,19 @@ describe("generation updater", () => {
     await fsp.rm(stage.directory, { recursive: true, force: true });
   });
 
+  it("keeps the public initializer away from noexec runtime and temporary mounts", () => {
+    const source = fs.readFileSync(
+      path.resolve(import.meta.dirname, "generation-updater.mjs"),
+      "utf8",
+    );
+    expect(source).toContain(
+      'const INITIALIZER_EXECUTABLE_ROOT = "/usr/local/libexec/fased-installer";',
+    );
+    expect(source).toContain("initializerExecutableRoot: INITIALIZER_EXECUTABLE_ROOT");
+    expect(source).not.toContain('initializerExecutableRoot: "/run"');
+    expect(source).not.toContain('initializerExecutableRoot: "/tmp"');
+  });
+
   it("downloads descriptor-bound bytes, stages once, and delegates one privileged apply", async () => {
     const value = await fixture();
     const verify = vi.fn(async () => undefined);

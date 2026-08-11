@@ -121,3 +121,42 @@ func TestSharedStateStoreIgnoresVanishingSQLiteSidecars(t *testing.T) {
 		t.Fatalf("durable SQLite database metadata was not restored: info=%v err=%v", info, err)
 	}
 }
+
+func TestSharedStateStoreConvergesOnboardingIdentityForGatewayWrite(t *testing.T) {
+	operator := Principal{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}
+	gateway := Principal{UID: operator.UID + 1, GID: operator.GID + 1}
+	signer := Principal{UID: operator.UID + 2, GID: operator.GID + 2}
+	config, err := NewConfig(model.ProfileHosting, "hosting", "/home/app/.fased", operator, gateway, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewDiskSharedStateStore(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.rootPrefix = t.TempDir()
+	stateRoot := store.resolve(config.OwnerStateRoot)
+	identityRoot := filepath.Join(stateRoot, "identity")
+	if err := os.MkdirAll(identityRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(stateRoot, os.ModeSetgid|0o770); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(identityRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	identity := filepath.Join(identityRoot, "device.json")
+	if err := os.WriteFile(identity, []byte("identity\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Converge(); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(identityRoot); err != nil || info.Mode()&os.ModeSetgid == 0 || info.Mode().Perm() != 0o770 {
+		t.Fatalf("identity directory is not Gateway-writable: info=%v err=%v", info, err)
+	}
+	if info, err := os.Stat(identity); err != nil || info.Mode().Perm() != 0o660 {
+		t.Fatalf("identity file is not shared safely: info=%v err=%v", info, err)
+	}
+}

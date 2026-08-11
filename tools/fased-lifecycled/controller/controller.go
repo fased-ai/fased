@@ -48,7 +48,7 @@ type response struct {
 }
 
 type OnboardingCompleter interface {
-	CompleteOnboarding(context.Context) error
+	CompleteOnboarding(context.Context) (engine.Result, error)
 }
 
 type Service struct {
@@ -92,10 +92,7 @@ func (service *Service) Handle(ctx context.Context, input request) (engine.Resul
 		if input.Transaction != nil || input.TransactionID != "" || service.Onboarding == nil {
 			return engine.Result{}, errors.New("COMPLETE_ONBOARDING accepts no selectors and requires the platform adapter")
 		}
-		if err := service.Onboarding.CompleteOnboarding(ctx); err != nil {
-			return engine.Result{}, err
-		}
-		return engine.Result{Outcome: engine.OutcomeUpdated, Phase: model.PhaseCommitted}, nil
+		return service.Onboarding.CompleteOnboarding(ctx)
 	default:
 		return engine.Result{}, errors.New("unsupported target controller operation")
 	}
