@@ -951,9 +951,19 @@ function handleRequest(request, response) {
   }
   if (request.method === "GET" && request.url?.startsWith(metadataPrefix)) {
     const metadata = request.url.slice(metadataPrefix.length);
+    if (metadata.startsWith("beta/assets/")) {
+      const asset = decodeURIComponent(metadata.slice("beta/assets/".length));
+      if (!/^[A-Za-z0-9._-]+$/.test(asset)) {
+        response.writeHead(400).end();
+        return;
+      }
+      serveFile(response, path.join(releaseAssets, asset));
+      return;
+    }
     const selected = {
       "root.json": "fased-branch-root.json",
       "beta/delegation.json": "fased-branch-delegation.json",
+      "beta/current/release-index.json": "fased-branch-release-index.json",
       [`beta/v${version}/release-index.json`]: "fased-branch-release-index.json",
     }[metadata];
     if (!selected) {

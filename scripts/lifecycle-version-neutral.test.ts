@@ -25,6 +25,10 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(wrapper).toContain("FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION");
     expect(wrapper).toContain("managed-update");
     expect(fixture).toContain('--gateway-port "$gateway_port" \\\n      --local \\\n      --');
+    expect(fixture).toContain(
+      '"beta/current/release-index.json": "fased-branch-release-index.json"',
+    );
+    expect(fixture).toContain('metadata.startsWith("beta/assets/")');
   });
 
   it("binds candidate P1 to an explicit supported public predecessor", async () => {
