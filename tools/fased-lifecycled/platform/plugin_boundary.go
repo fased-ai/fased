@@ -57,7 +57,7 @@ func (boundary DiskPluginBoundary) Prepare(_ context.Context, target model.Gener
 		return err
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || stat.Nlink != 1 || stat.Uid != boundary.SourceOwnerUID || info.Mode().Perm()&0o222 != 0 || info.Size() <= 0 || info.Size() > 1<<20 {
+	if !ok || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || stat.Nlink != 1 || stat.Uid != boundary.SourceOwnerUID || info.Mode().Perm()&0o022 != 0 || info.Size() <= 0 || info.Size() > 1<<20 {
 		return errors.New("generation plugin lock identity or access is unsafe")
 	}
 	data, err := os.ReadFile(lockPath)
