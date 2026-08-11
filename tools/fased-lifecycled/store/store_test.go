@@ -680,7 +680,7 @@ func TestSharedDependencyLayerIsDigestBoundAndReused(t *testing.T) {
 		t.Fatal(err)
 	}
 	binding := filepath.Join(state.generationPath(expected.ID), "node_modules")
-	expectedBinding := filepath.ToSlash(filepath.Join("..", "..", "dependencies", layer.Hash, "node_modules"))
+	expectedBinding := filepath.ToSlash(filepath.Join("..", "..", "dependencies", filepath.Base(state.dependencyArchivePath(layer)), "node_modules"))
 	if actual, err := os.Readlink(binding); err != nil || actual != expectedBinding {
 		t.Fatalf("generation dependency binding = %q, %v; want %q", actual, err, expectedBinding)
 	}
@@ -706,6 +706,56 @@ func TestSharedDependencyLayerIsDigestBoundAndReused(t *testing.T) {
 	tampered.ArchiveSHA256 = digestA
 	if err := state.ImportDependencyArchive(dependencyArchive, tampered); err == nil {
 		t.Fatal("mismatched dependency archive digest was accepted")
+	}
+}
+
+func TestDependencyArchiveIdentityCanChangeWithoutMutatingLegacyLayer(t *testing.T) {
+	root := t.TempDir()
+	state, err := Open(filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeLayer := func(name, contents string) (string, bundle.DependencyLayer) {
+		source := filepath.Join(root, name, "node_modules")
+		if err := os.MkdirAll(filepath.Join(source, "tool"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(source, "tool", "index.js"), []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		archive := filepath.Join(root, name+".tar.gz")
+		writeGenerationArchive(t, archive, source)
+		return archive, bundle.DependencyLayer{
+			Hash: strings.Repeat("c", 64), Asset: "fased-hosted-deps-linux-x64-test.tar.gz",
+			ArchiveSHA256: fileSHA256(t, archive),
+		}
+	}
+	archiveA, layerA := writeLayer("a", "first\n")
+	archiveB, layerB := writeLayer("b", "second\n")
+	if layerA.ArchiveSHA256 == layerB.ArchiveSHA256 {
+		t.Fatal("test dependency archives unexpectedly have the same identity")
+	}
+	if err := state.ImportDependencyArchive(archiveA, layerA); err != nil {
+		t.Fatal(err)
+	}
+	legacy := state.dependencyPath(layerA.Hash)
+	if err := os.Rename(state.dependencyArchivePath(layerA), legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ImportDependencyArchive(archiveB, layerB); err != nil {
+		t.Fatalf("new archive identity was rejected beside a legacy layer: %v", err)
+	}
+	if err := state.verifyDependencyPath(legacy, layerA); err != nil {
+		t.Fatalf("legacy active layer was mutated: %v", err)
+	}
+	if err := state.verifyDependencyPath(state.dependencyArchivePath(layerB), layerB); err != nil {
+		t.Fatalf("new immutable layer was not imported separately: %v", err)
+	}
+	if resolved, err := state.resolveDependencyPath(layerA); err != nil || resolved != legacy {
+		t.Fatalf("legacy generation dependency resolved to %q, %v; want %q", resolved, err, legacy)
+	}
+	if resolved, err := state.resolveDependencyPath(layerB); err != nil || resolved != state.dependencyArchivePath(layerB) {
+		t.Fatalf("new generation dependency resolved to %q, %v; want archive-bound path", resolved, err)
 	}
 }
 

@@ -24,6 +24,8 @@ const (
 	dependencyMarkerName        = ".fased-dependency-layer.json"
 )
 
+var errDependencyLayerIdentityDiffers = errors.New("installed dependency layer identity differs")
+
 type dependencyMarker struct {
 	SchemaVersion uint32 `json:"schemaVersion"`
 	Hash          string `json:"hash"`
@@ -48,9 +50,19 @@ func (s *Store) ImportDependencyArchive(archive string, layer bundle.DependencyL
 	} else if archiveDigest != layer.ArchiveSHA256 {
 		return errors.New("dependency archive does not match the generation contract")
 	}
-	destination := s.dependencyPath(layer.Hash)
+	destination := s.dependencyArchivePath(layer)
 	if _, err := os.Lstat(destination); err == nil {
 		return s.verifyDependencyPath(destination, layer)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	legacy := s.dependencyPath(layer.Hash)
+	if _, err := os.Lstat(legacy); err == nil {
+		if verifyErr := s.verifyDependencyPath(legacy, layer); verifyErr == nil {
+			return nil
+		} else if !errors.Is(verifyErr, errDependencyLayerIdentityDiffers) {
+			return verifyErr
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -125,11 +137,22 @@ func (s *Store) GenerationDependencyPath(generationID string) (string, error) {
 	if layer == nil {
 		return "", nil
 	}
-	root := s.dependencyPath(layer.Hash)
-	if err := s.verifyDependencyPath(root, *layer); err != nil {
+	root, err := s.resolveDependencyPath(*layer)
+	if err != nil {
 		return "", err
 	}
 	return filepath.Join(root, "node_modules"), nil
+}
+
+func (s *Store) resolveDependencyPath(layer bundle.DependencyLayer) (string, error) {
+	for _, root := range []string{s.dependencyArchivePath(layer), s.dependencyPath(layer.Hash)} {
+		if err := s.verifyDependencyPath(root, layer); err == nil {
+			return root, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+	}
+	return "", os.ErrNotExist
 }
 
 func (s *Store) verifyDependencyPath(root string, expected bundle.DependencyLayer) error {
@@ -154,13 +177,18 @@ func (s *Store) verifyDependencyPath(root string, expected bundle.DependencyLaye
 		return err
 	}
 	if marker.SchemaVersion != 1 || marker.Hash != expected.Hash || marker.Asset != expected.Asset || marker.ArchiveSHA256 != expected.ArchiveSHA256 {
-		return errors.New("installed dependency layer identity differs")
+		return errDependencyLayerIdentityDiffers
 	}
 	return nil
 }
 
 func (s *Store) dependencyPath(hash string) string {
 	return filepath.Join(s.installRoot, "dependencies", hash)
+}
+
+func (s *Store) dependencyArchivePath(layer bundle.DependencyLayer) string {
+	archiveDigest := strings.TrimPrefix(layer.ArchiveSHA256, "sha256:")
+	return filepath.Join(s.installRoot, "dependencies", layer.Hash+"-"+archiveDigest)
 }
 
 func hashDependencyArchive(file string) (string, error) {

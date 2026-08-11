@@ -474,7 +474,7 @@ func (s *Store) StageGeneration(generationID string) error {
 		return err
 	}
 	if dependency != nil {
-		if err := s.verifyDependencyPath(s.dependencyPath(dependency.Hash), *dependency); err != nil {
+		if _, err := s.resolveDependencyPath(*dependency); err != nil {
 			return fmt.Errorf("generation dependency verification failed: %w", err)
 		}
 	}
@@ -542,7 +542,11 @@ func (s *Store) ensureGenerationDependencyBinding(root string, dependency *bundl
 		}
 		return nil
 	}
-	expected := filepath.ToSlash(filepath.Join("..", "..", "dependencies", dependency.Hash, "node_modules"))
+	dependencyRoot, err := s.resolveDependencyPath(*dependency)
+	if err != nil {
+		return fmt.Errorf("generation dependency verification failed: %w", err)
+	}
+	expected := filepath.ToSlash(filepath.Join("..", "..", "dependencies", filepath.Base(dependencyRoot), "node_modules"))
 	if info, err := os.Lstat(path); err == nil {
 		if info.Mode()&os.ModeSymlink == 0 {
 			return errors.New("generation dependency binding is not a symbolic link")
