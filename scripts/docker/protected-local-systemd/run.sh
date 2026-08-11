@@ -7,6 +7,7 @@ fixture_started="$SECONDS"
 version="${FASED_FIXTURE_VERSION:?missing fixture version}"
 commit="${FASED_FIXTURE_COMMIT:?missing fixture commit}"
 predecessor_version="${FASED_FIXTURE_PREDECESSOR_VERSION:-}"
+predecessor_bootstrap_run_exec="${FASED_FIXTURE_PREDECESSOR_BOOTSTRAP_RUN_EXEC:-0}"
 preinstalled_tools="${FASED_FIXTURE_PREINSTALLED_TOOLS:-0}"
 public_acquisition="${FASED_FIXTURE_PUBLIC_ACQUISITION:-0}"
 acceptance_contract=/artifacts/fased-lifecycle-acceptance-v1.json
@@ -36,6 +37,16 @@ release_assets=/var/lib/fased-protected-local-fixture/release-assets
 fixture_tls=/var/lib/fased-protected-local-fixture/tls
 fixture_acl_user=fased-fixture-acl
 fixture_acl_uid=2001
+
+run_mount_has_option() {
+  findmnt -n -o OPTIONS /run | tr ',' '\n' | grep -Fx "$1" >/dev/null
+}
+
+set_run_execution_policy() {
+  local policy="$1"
+  mount -o "remount,$policy" /run
+  run_mount_has_option "$policy"
+}
 
 acceptance_mark() {
   printf '%s\n' "$1" >>"$acceptance_passed"
@@ -1310,6 +1321,11 @@ if [[ "$phase" == "managed-update" ]]; then
     FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port"
     npm_config_registry="http://127.0.0.1:$rpc_port"
   )
+  if [[ "$predecessor_bootstrap_run_exec" == "1" ]]; then
+    run_mount_has_option noexec
+    set_run_execution_policy exec
+  fi
+  set +e
   runuser -u testop -- env "${managed_env[@]}" \
     FASED_INSTALL_REPO="$predecessor_repo" \
     /bin/bash "$predecessor_repo/install.sh" \
@@ -1329,6 +1345,15 @@ if [[ "$phase" == "managed-update" ]]; then
       --skip-skills \
       --skip-health \
     >/tmp/managed-predecessor-install.out 2>/tmp/managed-predecessor-install.err
+  predecessor_install_status="$?"
+  set -e
+  if [[ "$predecessor_bootstrap_run_exec" == "1" ]]; then
+    set_run_execution_policy noexec
+  fi
+  if [[ "$predecessor_install_status" -ne 0 ]]; then
+    exit "$predecessor_install_status"
+  fi
+  run_mount_has_option noexec
 
   predecessor_profile="$(jq -er .profile "$state/install.json")"
   if [[ "$predecessor_profile" == "local" ]]; then
