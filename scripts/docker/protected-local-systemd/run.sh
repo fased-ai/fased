@@ -1419,7 +1419,7 @@ EOF_STABLE_BRIDGE_DROPIN
     systemctl daemon-reload
     test "$stable_bridge_failure_status" -ne 0
     test -s "$bridge_fault_marker"
-    grep -F "privileged lifecycle apply failed" /tmp/stable-bridge-failure.err >/dev/null
+    grep -F "target release failed and was rolled back" /tmp/stable-bridge-failure.err >/dev/null
     failure_instance="$(cat "$bridge_fault_marker")"
     [[ "$failure_instance" =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]]
     systemctl reset-failed "fased-gateway-$failure_instance.service" 2>/dev/null || true

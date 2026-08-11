@@ -106,6 +106,12 @@ describe("lifecycle acceptance contract", () => {
     expect(runner).toContain("mining status");
     expect(runner).toContain('configure_fixture_sat_runtime "$instance"');
     expect(runner).toContain(": >'$managed_fault_marker'\nexit 1");
+    expect(runner).toContain(
+      'grep -F "target release failed and was rolled back" /tmp/stable-bridge-failure.err',
+    );
+    expect(runner).not.toContain(
+      'grep -F "privileged lifecycle apply failed" /tmp/stable-bridge-failure.err',
+    );
     expect(runner).not.toContain(
       `if [[ "\\$(readlink -f '$managed_current_link')" != '$managed_initial_target' ]]`,
     );
