@@ -222,6 +222,30 @@ func TestOnboardingCommandBindsCanonicalProfileEnvironment(t *testing.T) {
 	}
 }
 
+func TestOnboardingRunsOnlyForFreshInstall(t *testing.T) {
+	install := publicLifecycleRequest{Operation: "install", Onboard: true}
+	if !shouldRunOnboarding(install, "UPDATED", false) {
+		t.Fatal("fresh install did not select onboarding")
+	}
+	for _, test := range []struct {
+		name          string
+		request       publicLifecycleRequest
+		outcome       string
+		configExisted bool
+	}{
+		{name: "public stable bridge", request: install, outcome: "UPDATED", configExisted: true},
+		{name: "already current", request: install, outcome: "ALREADY_CURRENT"},
+		{name: "no onboard", request: publicLifecycleRequest{Operation: "install"}, outcome: "UPDATED"},
+		{name: "update", request: publicLifecycleRequest{Operation: "update", Onboard: true}, outcome: "UPDATED"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if shouldRunOnboarding(test.request, test.outcome, test.configExisted) {
+				t.Fatal("non-fresh lifecycle operation selected onboarding")
+			}
+		})
+	}
+}
+
 func bootstrapFixtureRoot(t *testing.T) string {
 	t.Helper()
 	if base := os.Getenv("FASED_ROOT_FIXTURE_BASE"); base != "" {

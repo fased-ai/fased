@@ -50,6 +50,10 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	if err != nil {
 		return err
 	}
+	ownerConfigExisted, err := pathExists(filepath.Join(operator.Home, ".fased", "fased.json"))
+	if err != nil {
+		return fmt.Errorf("inspect owner configuration: %w", err)
+	}
 	if request.Operation == "update" {
 		configPath, configErr := installedConfigPath(request.Profile, operator)
 		if configErr != nil {
@@ -97,7 +101,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	if err != nil {
 		return err
 	}
-	if request.Operation == "install" && request.Onboard && outcome != "ALREADY_CURRENT" {
+	if shouldRunOnboarding(request, outcome, ownerConfigExisted) {
 		if err := runOnboarding(ctx, request, operator, result); err != nil {
 			return err
 		}
@@ -110,6 +114,21 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		_, err = fmt.Fprintf(output, "Updated successfully: %s\n", result.Version)
 	}
 	return err
+}
+
+func pathExists(path string) (bool, error) {
+	_, err := os.Lstat(path)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
+}
+
+func shouldRunOnboarding(request publicLifecycleRequest, outcome string, ownerConfigExisted bool) bool {
+	return request.Operation == "install" && request.Onboard && !ownerConfigExisted && outcome != "ALREADY_CURRENT"
 }
 
 func publicTrustRoute() (string, string, error) {
