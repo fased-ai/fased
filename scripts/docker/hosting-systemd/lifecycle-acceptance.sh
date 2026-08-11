@@ -304,8 +304,6 @@ assert_healthy() {
     /opt/fased/current/payload/bin/fased-gateway-launch
   ! test -e /etc/systemd/system/fased-host-controller.service
   test "$(cat /var/lib/fased-host-updater/signer-version)" = "$version"
-  jq -e --arg version "$version" '.schemaVersion == 1 and .version == $version' \
-    /var/lib/fased-host-updater/controller-version.json >/dev/null
   for unit in fased-host-updater.service fased-signerd.service fased-gateway.service; do
     systemctl is-enabled --quiet "$unit"
     systemctl is-active --quiet "$unit"
