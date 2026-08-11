@@ -130,6 +130,16 @@ assert_healthy() {
   ! ss -H -ltn | awk -v port=":${gateway_port}" '$4 ~ port "$" && ($4 ~ /^0\.0\.0\.0:/ || $4 ~ /^\[::\]:/ || $4 ~ /^\*:/) { found=1 } END { exit found ? 0 : 1 }'
 }
 
+assert_already_current_receipts() {
+  receipt_file="$1"
+  sed -n '/^{/p' "$receipt_file" | jq -se --arg version "$version" '
+    length == 2 and
+    .[0].version == $version and
+    .[0].outcome == "ALREADY_CURRENT" and
+    .[1].outcome == "ALREADY_CURRENT"
+  ' >/dev/null
+}
+
 case "${1:-}" in
   install)
     install_tailscale_fixture
@@ -140,15 +150,13 @@ case "${1:-}" in
     node -e 'require("node:sqlite")'
     assert_healthy
     run_public_installer >/tmp/fased-hosting-noop.out 2>/tmp/fased-hosting-noop.err
-    tail -n 1 /tmp/fased-hosting-noop.out | \
-      jq -e --arg version "$version" '.version == $version and .outcome == "ALREADY_CURRENT"' >/dev/null
+    assert_already_current_receipts /tmp/fased-hosting-noop.out
     ;;
   verify-reboot)
     install_tailscale_fixture
     assert_healthy
     run_public_installer >/tmp/fased-hosting-reboot-noop.out 2>/tmp/fased-hosting-reboot-noop.err
-    tail -n 1 /tmp/fased-hosting-reboot-noop.out | \
-      jq -e --arg version "$version" '.version == $version and .outcome == "ALREADY_CURRENT"' >/dev/null
+    assert_already_current_receipts /tmp/fased-hosting-reboot-noop.out
     ;;
   *)
     echo "usage: go-cutover.sh install|verify-reboot" >&2

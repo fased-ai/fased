@@ -97,8 +97,10 @@ describe("attested Go lifecycle artifact layout", () => {
     );
     expect(installCase).toContain("install_release_transport_fixture");
     expect(installCase).toContain("run_public_installer");
-    expect(installCase).toContain("tail -n 1 /tmp/fased-hosting-noop.out");
-    expect(installCase).toContain('.outcome == "ALREADY_CURRENT"');
+    expect(installCase).toContain("assert_already_current_receipts /tmp/fased-hosting-noop.out");
+    expect(hostingRunner).toContain("length == 2");
+    expect(hostingRunner).toContain(".[0].version == $version");
+    expect(hostingRunner).toContain('.[1].outcome == "ALREADY_CURRENT"');
     expect(installCase).not.toContain("initialize");
   });
 
