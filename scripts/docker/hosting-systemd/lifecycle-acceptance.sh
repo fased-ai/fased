@@ -20,6 +20,8 @@ predecessor_capsule_branch_proof=/predecessor-capsule/fased-predecessor-branch-p
 predecessor_capsule_authorization=/run/fased-predecessor-capsule-fixture-authorized
 fixture_transport_root=/var/lib/fased-hosting-fixture
 fixture_tls="$fixture_transport_root/tls"
+export NO_PROXY="github.com,registry.npmjs.org,127.0.0.1,localhost"
+export no_proxy="$NO_PROXY"
 
 diagnostics() {
   local status=$?
