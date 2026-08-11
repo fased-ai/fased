@@ -747,6 +747,7 @@ jobs:
       - name: Derive exact predecessor topology
         id: p1-scenario
         env:
+          GH_TOKEN: ${{ github.token }}
           PREDECESSOR_VERSION: ${{ matrix.predecessor }}
         shell: bash
         run: |

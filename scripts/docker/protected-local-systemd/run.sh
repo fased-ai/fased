@@ -1387,7 +1387,7 @@ if [[ "$phase" == "managed-update" ]]; then
         --skip-health
     }
 
-    bridge_fault_root="/run/fased-fixture-bridge-gateway-fault-$$"
+    bridge_fault_root="/var/tmp/fased-fixture-bridge-gateway-fault-$$"
     bridge_fault_script="$bridge_fault_root/reject-target.sh"
     bridge_fault_marker="$bridge_fault_root/injected"
     bridge_fault_dropin_dir=/etc/systemd/system/fased-gateway-.service.d
@@ -1670,7 +1670,7 @@ EOF_MANAGED_MINING_LEDGER
   managed_current_link="/opt/fased/local/$instance/current"
   managed_initial_target="$(readlink -f "$managed_current_link")"
   managed_gateway_unit="fased-gateway-$instance.service"
-  managed_fault_root="/run/fased-fixture-managed-gateway-fault-$$"
+  managed_fault_root="/var/tmp/fased-fixture-managed-gateway-fault-$$"
   managed_fault_script="$managed_fault_root/reject-target.sh"
   managed_fault_marker="$managed_fault_root/injected"
   managed_fault_dropin="/etc/systemd/system/${managed_gateway_unit}.d/99-fased-fixture-target-fault.conf"

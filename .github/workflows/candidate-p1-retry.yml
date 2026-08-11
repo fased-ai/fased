@@ -1,0 +1,267 @@
+name: Candidate P1 Infrastructure Retry
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Failed immutable candidate run whose exact bytes must be reused
+        required: true
+        type: string
+      release_version:
+        description: Exact immutable candidate version
+        required: true
+        type: string
+      source_commit:
+        description: Exact immutable tagged candidate commit
+        required: true
+        type: string
+      predecessor_version:
+        description: Exact supported public stable predecessor
+        required: true
+        type: string
+      owner_predecessor_version:
+        description: Exact owner Local predecessor
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: candidate-p1-retry-${{ inputs.candidate_run_id }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  validate:
+    name: Validate bounded infrastructure retry
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout corrected protected main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Verify immutable source and bounded correction
+        env:
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_RUN_ID" =~ ^[0-9]+$ ]]
+          test "$GITHUB_SHA" = "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          test "$(git rev-parse "refs/tags/v$RELEASE_VERSION^{commit}")" = "$SOURCE_COMMIT"
+          test "$(git show "$SOURCE_COMMIT:package.json" | jq -r .version)" = "$RELEASE_VERSION"
+          test "$(jq -r .version package.json)" = "$RELEASE_VERSION"
+          allowed='^(\.github/workflows/(candidate-p1-retry|hosted-runtime-release)\.yml|scripts/docker/protected-local-systemd/run\.sh|scripts/(ci-workflow-contract|hosted-installer-artifact-layout)\.test\.ts)$'
+          unexpected="$(git diff --name-only "$SOURCE_COMMIT"..HEAD | grep -Ev "$allowed" || true)"
+          test -z "$unexpected"
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")"
+          jq -e --arg source "$SOURCE_COMMIT" \
+            '.name == "Hosted Runtime Release" and .path == ".github/workflows/hosted-runtime-release.yml" and .event == "workflow_dispatch" and .head_sha == $source and .conclusion == "failure"' \
+            <<<"$run_json" >/dev/null
+          jobs="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/jobs?per_page=100" --slurp | jq -c '[.[] | .jobs[]]')"
+          jq -e '
+            any(.[]; .name == "Assemble offline-attested candidate" and .conclusion == "success") and
+            any(.[]; .name == "Packaged fresh Local P1" and .conclusion == "success") and
+            any(.[]; .name == "Packaged Hosting adapter P1" and .conclusion == "success")
+          ' <<<"$jobs" >/dev/null
+
+  retry-update:
+    name: Retry predecessor ${{ matrix.predecessor }} P1 against exact bytes
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        predecessor:
+          - ${{ inputs.predecessor_version }}
+          - ${{ inputs.owner_predecessor_version }}
+    steps:
+      - name: Checkout corrected protected main fixture
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Download exact original candidate bytes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: fased-hosting-candidate
+          path: ${{ runner.temp }}/fased-hosting-candidate
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Restore cached systemd fixture base image
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/protected-local-image-cache/
+          key: >-
+            protected-local-systemd-${{ runner.os }}-ubuntu-v1-
+            ${{ hashFiles('scripts/docker/protected-local-systemd/Containerfile.*',
+            'scripts/docker/protected-local-systemd/*.conf') }}
+
+      - name: Restore exact predecessor assets
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/fased-supported-predecessor/
+          key: fased-supported-predecessor-${{ matrix.predecessor }}
+
+      - name: Ensure exact predecessor assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREDECESSOR_VERSION: ${{ matrix.predecessor }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          predecessor_dir="$RUNNER_TEMP/fased-supported-predecessor"
+          mkdir -p "$predecessor_dir"
+          if [[ ! -f "$predecessor_dir/fased-hosted-release-v2.json" ]]; then
+            gh release download "v$PREDECESSOR_VERSION" --repo "$GITHUB_REPOSITORY" --dir "$predecessor_dir"
+          fi
+          jq -e --arg version "$PREDECESSOR_VERSION" \
+            '.release.version == $version and .release.tag == ("v" + $version)' \
+            "$predecessor_dir/fased-hosted-release-v2.json" >/dev/null
+
+      - name: Derive exact predecessor topology
+        id: p1-scenario
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREDECESSOR_VERSION: ${{ matrix.predecessor }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          scenarios="$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
+          test -n "$scenarios"
+          printf 'scenarios=%s\n' "$scenarios" >>"$GITHUB_OUTPUT"
+
+      - name: Retry packaged update P1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
+          FASED_SYSTEMD_FIXTURE_SCENARIOS: ${{ steps.p1-scenario.outputs.scenarios }}
+          FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: ${{ matrix.predecessor }}
+          FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_ARTIFACT_DIR: ${{ runner.temp }}/fased-supported-predecessor
+          FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/fased-hosting-candidate
+          FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1"
+          FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
+          FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
+          FASED_SYSTEMD_FIXTURE_RECEIPT_DIR: ${{ runner.temp }}/lifecycle-acceptance-update
+        run: bash scripts/test-protected-local-systemd-container.sh
+
+      - name: Upload retry acceptance receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fased-lifecycle-acceptance-retry-${{ matrix.predecessor }}
+          path: ${{ runner.temp }}/lifecycle-acceptance-update/*.json
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Promote original candidate after bounded P1 retry
+    needs: [validate, retry-update]
+    environment: candidate-release
+    permissions:
+      actions: read
+      contents: write
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact immutable candidate source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.x
+
+      - name: Download original P1-tested candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: fased-hosting-candidate
+          path: .artifacts/hosted-runtime
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Verify immutable tag, artifact set, and attestations
+        env:
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          test "$(git ls-remote --exit-code --tags origin "refs/tags/v$RELEASE_VERSION" | awk '{print $1}')" = "$SOURCE_COMMIT"
+          node scripts/release-artifact-set.mjs verify \
+            --directory .artifacts/hosted-runtime \
+            --version "$RELEASE_VERSION" \
+            --commit "$SOURCE_COMMIT" \
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
+            --source-ref "refs/tags/v$RELEASE_VERSION" \
+            --workflow-run-id "$CANDIDATE_RUN_ID"
+          gh attestation verify .artifacts/hosted-runtime/fased-hosting-candidate.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle .artifacts/hosted-runtime/fased-hosting-candidate.json.attestation.json \
+            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+            --source-ref "refs/tags/v$RELEASE_VERSION" \
+            --deny-self-hosted-runners >/dev/null
+          gh attestation verify .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json.attestation.json \
+            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+            --source-ref "refs/tags/v$RELEASE_VERSION" \
+            --deny-self-hosted-runners >/dev/null
+          node scripts/privileged-release-evidence.mjs verify \
+            --release-manifest .artifacts/hosted-runtime/fased-hosted-release-v2.json \
+            --lifecycle-metadata .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json \
+            --provenance .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json \
+            --sbom .artifacts/hosted-runtime/fased-privileged-sbom-v1.spdx.json \
+            --vex .artifacts/hosted-runtime/fased-privileged-vex-v1.openvex.json \
+            --version "$RELEASE_VERSION" \
+            --commit "$SOURCE_COMMIT"
+
+      - name: Publish one verified draft atomically
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: v${{ inputs.release_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_id=""
+          cleanup_draft() {
+            if [[ -n "$release_id" ]]; then
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$release_id" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup_draft EXIT
+          test -z "$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.tag_name == env.RELEASE_TAG) | .id')"
+          gh release create "$RELEASE_TAG" .artifacts/hosted-runtime/* \
+            --repo "$GITHUB_REPOSITORY" --title "Fased Agent $RELEASE_TAG" \
+            --generate-notes --verify-tag --draft --prerelease
+          release_id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --slurp | jq -er --arg tag "$RELEASE_TAG" '[.[][] | select(.tag_name == $tag and .draft == true)] | if length == 1 then .[0].id else error("exact draft release not found") end')"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq '[.assets[] | {name,size,digest}]' >"$RUNNER_TEMP/release-assets.json"
+          node scripts/release-artifact-set.mjs verify-assets \
+            --directory .artifacts/hosted-runtime \
+            --assets-json "$RUNNER_TEMP/release-assets.json"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            -F draft=false -F prerelease=true -f make_latest=false >/dev/null
+          release_id=""
+          trap - EXIT

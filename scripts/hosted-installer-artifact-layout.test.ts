@@ -11,6 +11,7 @@ const releaseWorkflow = read(".github/workflows/hosted-runtime-release.yml");
 const ciWorkflow = read(".github/workflows/ci.yml");
 const hostingFixture = read("scripts/test-go-hosting-systemd-container.sh");
 const hostingRunner = read("scripts/docker/hosting-systemd/go-cutover.sh");
+const localRunner = read("scripts/docker/protected-local-systemd/run.sh");
 const hostingUbuntu = read("scripts/docker/hosting-systemd/Containerfile.ubuntu");
 const hostingRocky = read("scripts/docker/hosting-systemd/Containerfile.rocky");
 const hostedArtifactBuilder = read("scripts/build-hosted-runtime-artifact.ts");
@@ -111,6 +112,13 @@ describe("attested Go lifecycle artifact layout", () => {
     );
     expect(localFixture).toContain("--tmpfs /run:rw,noexec");
     expect(hostingFixture).toContain("--tmpfs /run:rw,noexec");
+    expect(localRunner).toContain(
+      'bridge_fault_root="/var/tmp/fased-fixture-bridge-gateway-fault-$$"',
+    );
+    expect(localRunner).toContain(
+      'managed_fault_root="/var/tmp/fased-fixture-managed-gateway-fault-$$"',
+    );
+    expect(localRunner).not.toContain('fault_root="/run/');
   });
 
   it("keeps packaged CLI smoke output deterministic under Vitest", () => {
