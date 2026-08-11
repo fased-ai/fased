@@ -535,12 +535,12 @@ EOF_TARGET_DROPIN
       cmp /tmp/fased-hosting-predecessor-config-without-mode.json \
         /tmp/fased-hosting-target-config-without-mode.json
     } >/tmp/fased-hosting-update-state-preservation.out
-    acceptance_mark state-preservation /tmp/fased-hosting-update-state-preservation.out \
-      "predecessor state preserved"
     systemctl restart fased-host-updater.service fased-signerd.service fased-gateway.service
     assert_healthy
     acceptance_mark restart-health /var/lib/fased-lifecycled/installation-manifest.json \
       "restart health verified"
+    acceptance_mark state-preservation /tmp/fased-hosting-update-state-preservation.out \
+      "predecessor state preserved"
     run_public_installer >/tmp/fased-hosting-update-installer-noop.out 2>/tmp/fased-hosting-update-installer-noop.err
     grep -F "Already current: $version" /tmp/fased-hosting-update-installer-noop.out >/dev/null
     run_public_updater >/tmp/fased-hosting-update-noop.out 2>/tmp/fased-hosting-update-noop.err

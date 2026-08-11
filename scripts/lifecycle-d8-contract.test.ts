@@ -146,5 +146,9 @@ describe("D8 unified lifecycle acceptance", () => {
     expect(hosting).not.toContain("/repo/");
     expect(hosting).toContain("lifecycle-receipt-verifier.mjs");
     expect(hosting).toContain('grep -F "Already current: $version"');
+    const hostingManagedUpdate = hosting.slice(hosting.indexOf("  managed-update)"));
+    expect(hostingManagedUpdate.indexOf("acceptance_mark restart-health")).toBeLessThan(
+      hostingManagedUpdate.indexOf("acceptance_mark state-preservation"),
+    );
   });
 });
