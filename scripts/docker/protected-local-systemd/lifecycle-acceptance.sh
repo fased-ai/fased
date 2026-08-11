@@ -1118,6 +1118,7 @@ if [[ "$phase" == "fresh-install" ]]; then
     /bin/bash "$candidate_installer" \
       --release "v$version" \
       --update-channel "$fresh_channel" \
+      --gateway-port "$gateway_port" \
       --local \
       -- \
       --non-interactive \

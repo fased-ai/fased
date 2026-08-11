@@ -24,6 +24,7 @@ describe("version-neutral lifecycle acceptance", () => {
     }
     expect(wrapper).toContain("FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION");
     expect(wrapper).toContain("managed-update");
+    expect(fixture).toContain('--gateway-port "$gateway_port" \\\n      --local \\\n      --');
   });
 
   it("binds candidate P1 to an explicit supported public predecessor", async () => {
