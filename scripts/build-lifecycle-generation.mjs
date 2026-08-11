@@ -173,15 +173,32 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
   );
   await fs.chmod(path.join(payload, "runtime", ".fased-hosted-release-v2.json"), 0o644);
   await fs.copyFile(signer, path.join(payload, "bin", "fased-signerd"));
-  await fs.copyFile(lifecycled, path.join(payload, "bin", "fased-lifecycled"));
   await fs.chmod(path.join(payload, "bin", "fased-signerd"), 0o755);
-  await fs.chmod(path.join(payload, "bin", "fased-lifecycled"), 0o755);
   await fs.writeFile(path.join(payload, "bin", "fased-gateway-launch"), launcher(), {
     mode: 0o755,
   });
   const inventory = path.join(output, "inventory.json");
   if (!/^sha256:[0-9a-f]{64}$/.test(args["plugin-lock-digest"] ?? "")) {
     throw new Error("plugin-lock-digest is required and must be a lowercase SHA-256 digest");
+  }
+  const pluginLockPath = path.join(runtime, "plugin.lock.json");
+  const pluginLockInfo = await fs.lstat(pluginLockPath);
+  if (
+    !pluginLockInfo.isFile() ||
+    pluginLockInfo.isSymbolicLink() ||
+    pluginLockInfo.nlink !== 1 ||
+    pluginLockInfo.size <= 0 ||
+    pluginLockInfo.size > 1 << 20
+  ) {
+    throw new Error("plugin lock must be a bounded regular file");
+  }
+  const pluginLock = JSON.parse(await fs.readFile(pluginLockPath, "utf8"));
+  const canonicalPluginLock = JSON.stringify(pluginLock);
+  const actualPluginLockDigest = `sha256:${createHash("sha256")
+    .update(canonicalPluginLock)
+    .digest("hex")}`;
+  if (actualPluginLockDigest !== args["plugin-lock-digest"]) {
+    throw new Error("plugin lock does not match the supplied digest");
   }
   const { stdout } = await execFileAsync(
     inventoryLifecycled,

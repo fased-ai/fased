@@ -44,13 +44,13 @@ func TestDiskLifecycleFileStoreActivatesAndRestoresExactSignerOwnerFiles(t *test
 		}
 	}
 	files := map[string]LifecycleFile{
-		targets[0]:                              {Data: []byte("helper\n"), Mode: 0o755, UID: uint32(os.Getuid()), GID: uint32(os.Getuid())},
-		targets[1]:                              {Data: []byte("wrapper\n"), Mode: 0o755, UID: uint32(os.Getuid()), GID: uint32(os.Getuid())},
-		CanonicalInstallProjectionPath(config):  {Data: []byte("{}\n"), Mode: 0o640, UID: config.Operator.UID, GID: config.Operator.GID},
-		CanonicalCLIProjectionPath(config):      {Data: []byte("{\"schemaVersion\":1}\n"), Mode: 0o640, UID: config.Operator.UID, GID: uint32(os.Getgid())},
-		CanonicalGatewayConfigPath(config):      {Data: []byte("new-config\n"), Mode: 0o660, UID: config.Operator.UID, GID: uint32(os.Getgid())},
-		CanonicalProductVersionPath(config):     {Data: []byte("0.1.76\n"), Mode: 0o600, UID: uint32(os.Getuid()), GID: uint32(os.Getuid())},
-		CanonicalControllerIdentityPath(config): {Data: []byte("{\"schemaVersion\":1}\n"), Mode: 0o600, UID: uint32(os.Getuid()), GID: uint32(os.Getuid())},
+		targets[0]:                             {Data: []byte("helper\n"), Mode: 0o755, UID: uint32(os.Getuid()), GID: uint32(os.Getuid())},
+		targets[1]:                             {Data: []byte("wrapper\n"), Mode: 0o755, UID: uint32(os.Getuid()), GID: uint32(os.Getuid())},
+		CanonicalInstallProjectionPath(config): {Data: []byte("{}\n"), Mode: 0o640, UID: config.Operator.UID, GID: config.Operator.GID},
+		CanonicalCLIProjectionPath(config):     {Data: []byte("{\"schemaVersion\":1}\n"), Mode: 0o640, UID: config.Operator.UID, GID: uint32(os.Getgid())},
+		CanonicalPluginLockPath(config):        {Data: []byte("{\"schemaVersion\":1,\"type\":\"fased-plugin-lock\",\"entries\":[]}\n"), Mode: 0o640, UID: config.Operator.UID, GID: uint32(os.Getgid())},
+		CanonicalGatewayConfigPath(config):     {Data: []byte("new-config\n"), Mode: 0o660, UID: config.Operator.UID, GID: uint32(os.Getgid())},
+		CanonicalProductVersionPath(config):    {Data: []byte("0.1.76\n"), Mode: 0o600, UID: uint32(os.Getuid()), GID: uint32(os.Getuid())},
 	}
 	if err := store.Prepare("transaction", files); err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func TestDiskLifecycleFileStoreActivatesAndRestoresExactSignerOwnerFiles(t *test
 	if _, err := os.Lstat(cliProjectionPath); !os.IsNotExist(err) {
 		t.Fatalf("CLI projection became visible before commit: %v", err)
 	}
-	allTargets := append(targets, CanonicalGatewayConfigPath(config), CanonicalProductVersionPath(config), CanonicalControllerIdentityPath(config), CanonicalCLIProjectionPath(config), CanonicalInstallProjectionPath(config))
+	allTargets := append(targets, CanonicalGatewayConfigPath(config), CanonicalProductVersionPath(config), CanonicalCLIProjectionPath(config), CanonicalInstallProjectionPath(config), CanonicalPluginLockPath(config))
 	if err := store.Activate("transaction", allTargets); err != nil {
 		t.Fatal(err)
 	}
@@ -101,15 +101,14 @@ func TestDiskLifecycleFileStoreActivatesAndRestoresExactSignerOwnerFiles(t *test
 	if _, err := os.Lstat(cliProjectionPath); !os.IsNotExist(err) {
 		t.Fatalf("absent CLI projection was not removed on rollback: %v", err)
 	}
+	if _, err := os.Lstat(store.resolve(CanonicalPluginLockPath(config))); !os.IsNotExist(err) {
+		t.Fatalf("absent plugin lock was not removed on rollback: %v", err)
+	}
 	if data, err := os.ReadFile(productVersionPath); err != nil || string(data) != "0.1.75\n" {
 		t.Fatalf("preexisting product version was not restored: %q err=%v", data, err)
 	}
 	if info, err := os.Stat(productVersionPath); err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("preexisting product version metadata changed: info=%v err=%v", info, err)
-	}
-	controllerIdentityPath := store.resolve(CanonicalControllerIdentityPath(config))
-	if _, err := os.Lstat(controllerIdentityPath); !os.IsNotExist(err) {
-		t.Fatalf("absent controller identity was not removed on rollback: %v", err)
 	}
 	if data, err := os.ReadFile(configPath); err != nil || string(data) != "old-config\n" {
 		t.Fatalf("Gateway config was not restored exactly: %q err=%v", data, err)

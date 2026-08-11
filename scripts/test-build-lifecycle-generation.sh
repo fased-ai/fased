@@ -8,6 +8,8 @@ FIXTURE="$(mktemp -d "${FIXTURE_ROOT}/fased-generation-test.XXXXXX")"
 trap 'rm -rf "$FIXTURE"' EXIT
 mkdir -p "$FIXTURE/runtime"
 printf '%s\n' "console.log('fixture');" >"$FIXTURE/runtime/fased.mjs"
+printf '%s\n' '{"schemaVersion":1,"type":"fased-plugin-lock","entries":[]}' >"$FIXTURE/runtime/plugin.lock.json"
+PLUGIN_LOCK_DIGEST="sha256:$(printf '%s' '{"schemaVersion":1,"type":"fased-plugin-lock","entries":[]}' | sha256sum | awk '{print $1}')"
 mkdir -p "$FIXTURE/runtime/node_modules/tool/bin" "$FIXTURE/runtime/node_modules/.bin"
 printf '#!/usr/bin/env node\n' >"$FIXTURE/runtime/node_modules/tool/bin/cli.js"
 chmod 0755 "$FIXTURE/runtime/node_modules/tool/bin/cli.js"
@@ -41,6 +43,7 @@ node "$ROOT/scripts/build-lifecycle-generation.mjs" \
   --dependency-hash cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
   --dependency-asset fased-hosted-deps-linux-x64-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.tar.gz \
   --dependency-archive-sha256 sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd \
+  --plugin-lock-digest "$PLUGIN_LOCK_DIGEST" \
   >"$FIXTURE/result.json"
 
 node -e '
@@ -50,7 +53,7 @@ node -e '
   const generation = JSON.parse(fs.readFileSync(path.join(root, "result.json"), "utf8"));
   const inventory = JSON.parse(fs.readFileSync(path.join(root, "generation", "inventory.json"), "utf8"));
   if (!/^sha256:[a-f0-9]{64}$/.test(generation.id)) process.exit(1);
-  const expected = ["bin/fased-gateway-launch", "bin/fased-lifecycled", "bin/fased-signerd", "runtime/.fased-hosted-release-v2.json", "runtime/fased.mjs"];
+  const expected = ["bin/fased-gateway-launch", "bin/fased-signerd", "runtime/.fased-hosted-release-v2.json", "runtime/fased.mjs", "runtime/plugin.lock.json"];
   if (JSON.stringify(inventory.artifacts.map((entry) => entry.path)) !== JSON.stringify(expected)) process.exit(1);
   if (fs.existsSync(path.join(root, "generation", "payload", "runtime", "node_modules", "tool"))) process.exit(1);
   if (inventory.dependency.hash !== "c".repeat(64)) process.exit(1);
@@ -69,6 +72,7 @@ if node "$ROOT/scripts/build-lifecycle-generation.mjs" \
   --dependency-hash cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
   --dependency-asset fased-hosted-deps-linux-x64-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.tar.gz \
   --dependency-archive-sha256 sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd \
+  --plugin-lock-digest "$PLUGIN_LOCK_DIGEST" \
   >/dev/null 2>&1; then
   echo "generation builder accepted an escaping symlink" >&2
   exit 1

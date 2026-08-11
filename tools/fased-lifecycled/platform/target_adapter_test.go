@@ -234,6 +234,9 @@ func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) 
 	if err := os.WriteFile(helper, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "runtime", "plugin.lock.json"), []byte("{\"schemaVersion\":1,\"type\":\"fased-plugin-lock\",\"entries\":[]}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	operator, gateway, signer := filesystemPrincipals()
 	stateRoot := filepath.Join(t.TempDir(), ".fased")
 	prepareFilesystemOwnerStateRoot(t, stateRoot, operator)
@@ -413,8 +416,9 @@ func TestLocalBridgeVerifiesDurableFenceBeforeLifecycleProjectionAndPredecessor(
 	if string(productVersion.Data) != tx.Target.Version+"\n" || productVersion.Mode != 0o600 || productVersion.UID != 0 || productVersion.GID != 0 {
 		t.Fatalf("product version projection is not target-derived: %+v", productVersion)
 	}
-	if _, ok := prepared[CanonicalControllerIdentityPath(adapter.Config)]; ok {
-		t.Fatal("final target transaction still publishes a candidate controller identity")
+	pluginLock := prepared[CanonicalPluginLockPath(adapter.Config)]
+	if !strings.Contains(string(pluginLock.Data), `"type":"fased-plugin-lock"`) || pluginLock.Mode != 0o640 || pluginLock.UID != adapter.Config.Operator.UID {
+		t.Fatalf("plugin lock is not generation-derived and transactionally staged: %+v", pluginLock)
 	}
 	if err := adapter.Commit(context.Background(), tx); err != nil {
 		t.Fatal(err)
@@ -594,6 +598,9 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(helper, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "runtime", "plugin.lock.json"), []byte("{\"schemaVersion\":1,\"type\":\"fased-plugin-lock\",\"entries\":[]}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	calls := []string{}

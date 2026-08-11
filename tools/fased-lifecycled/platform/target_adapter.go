@@ -136,6 +136,10 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 	if err != nil {
 		return err
 	}
+	pluginLock, err := readRegularFile(filepath.Join(payload, "runtime", "plugin.lock.json"))
+	if err != nil {
+		return fmt.Errorf("target generation plugin lock: %w", err)
+	}
 	for _, relative := range []string{"bin/fased-gateway-launch", "bin/fased-signerd", "runtime/scripts/fased-signer-owner-hosting.sh"} {
 		if err := requireExecutable(filepath.Join(payload, relative)); err != nil {
 			return fmt.Errorf("target generation %s: %w", relative, err)
@@ -180,6 +184,9 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 		},
 		CanonicalProductVersionPath(adapter.Config): {
 			Data: []byte(tx.Target.Version + "\n"), Mode: 0o600, UID: 0, GID: 0,
+		},
+		CanonicalPluginLockPath(adapter.Config): {
+			Data: pluginLock, Mode: 0o640, UID: adapter.Config.Operator.UID, GID: configGID,
 		},
 	}
 	if !adapter.deferFreshGateway(tx) {
@@ -338,7 +345,7 @@ func (adapter *TargetAdapter) Restore(ctx context.Context, tx model.Transaction)
 }
 
 func (adapter *TargetAdapter) preStartLifecycleFiles(tx model.Transaction) []string {
-	files := CanonicalSignerOwnerFiles(adapter.Config)
+	files := append(CanonicalSignerOwnerFiles(adapter.Config), CanonicalPluginLockPath(adapter.Config))
 	if !adapter.deferFreshGateway(tx) {
 		files = append(files, CanonicalGatewayConfigPath(adapter.Config))
 	}
