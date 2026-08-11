@@ -29,7 +29,7 @@ describe("official release attestation prerequisites", () => {
     const selector = shellFunction("select_root_controlled_bootstrap_node");
     const installerFn = shellFunction("install_root_controlled_bootstrap_node");
     const bootstrapStart = installer.indexOf("  bootstrap_hosting_attested_bundle() {");
-    const bootstrapEnd = installer.indexOf("\n  if [[ \"$hosting_bootstrap\"", bootstrapStart);
+    const bootstrapEnd = installer.indexOf('\n  if [[ "$hosting_bootstrap"', bootstrapStart);
     const bootstrap = installer.slice(bootstrapStart, bootstrapEnd);
 
     expect(selector).toContain("/usr/bin/node-24");
@@ -61,7 +61,7 @@ describe("official release attestation prerequisites", () => {
   it("stages the Go bootstrap on a root-owned executable hierarchy rather than /run", () => {
     const prepare = shellFunction("prepare_lifecycle_bootstrap_exec_root");
     const bootstrapStart = installer.indexOf("  bootstrap_hosting_attested_bundle() {");
-    const bootstrapEnd = installer.indexOf("\n  if [[ \"$hosting_bootstrap\"", bootstrapStart);
+    const bootstrapEnd = installer.indexOf('\n  if [[ "$hosting_bootstrap"', bootstrapStart);
     const bootstrap = installer.slice(bootstrapStart, bootstrapEnd);
 
     expect(prepare).toContain('local parent="/usr/local/libexec"');
@@ -69,16 +69,14 @@ describe("official release attestation prerequisites", () => {
     expect(prepare).toContain('install -d -m 0700 -o root -g root "$root"');
     expect(prepare).toContain('[[ -d "$root" && ! -L "$root" ]]');
     expect(prepare).toContain('[[ "$owner" == "0" && "$mode" == "700" ]]');
-    expect(bootstrap).toContain(
-      'lifecycle_exec_root="$(prepare_lifecycle_bootstrap_exec_root)"',
-    );
+    expect(bootstrap).toContain('lifecycle_exec_root="$(prepare_lifecycle_bootstrap_exec_root)"');
   });
 
   it("keeps normal Hosting prerequisite and artifact output concise", () => {
     const githubCli = shellFunction("install_current_github_cli_bootstrap");
     const nodeInstaller = shellFunction("install_root_controlled_bootstrap_node");
     const bootstrapStart = installer.indexOf("  bootstrap_hosting_attested_bundle() {");
-    const bootstrapEnd = installer.indexOf("\n  if [[ \"$hosting_bootstrap\"", bootstrapStart);
+    const bootstrapEnd = installer.indexOf('\n  if [[ "$hosting_bootstrap"', bootstrapStart);
     const bootstrap = installer.slice(bootstrapStart, bootstrapEnd);
 
     expect(githubCli).toContain("apt-get update -qq");
