@@ -1290,19 +1290,6 @@ if [[ "$phase" == "fresh-install" ]]; then
 fi
 
 if [[ "$phase" == "managed-update" ]]; then
-  managed_env=(
-    HOME=/home/testop
-    USER=testop
-    LOGNAME=testop
-    XDG_RUNTIME_DIR=/run/user/2000
-    DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/2000/bus
-    FASED_STATE_DIR="$state"
-    FASED_CONFIG_PATH="$state/fased.json"
-    FASED_GATEWAY_PORT="$gateway_port"
-    FASED_GATEWAY_TOKEN="$gateway_token"
-    FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port"
-    npm_config_registry="http://127.0.0.1:$rpc_port"
-  )
   predecessor_capsule_archive="$(jq -er .archive.name "$predecessor_capsule_descriptor")"
   printf 'fased-predecessor-capsule-fixture-v1\n' >"$predecessor_capsule_authorization"
   chown root:root "$predecessor_capsule_authorization"
@@ -1317,6 +1304,21 @@ if [[ "$phase" == "managed-update" ]]; then
     --profile protected-local \
     >/tmp/managed-predecessor-capsule.out 2>/tmp/managed-predecessor-capsule.err
   rm -f "$predecessor_capsule_authorization"
+  gateway_token="$(jq -er '.gateway.auth.token' "$state/fased.json")"
+  test "$(jq -er '.gateway.remote.token' "$state/fased.json")" = "$gateway_token"
+  managed_env=(
+    HOME=/home/testop
+    USER=testop
+    LOGNAME=testop
+    XDG_RUNTIME_DIR=/run/user/2000
+    DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/2000/bus
+    FASED_STATE_DIR="$state"
+    FASED_CONFIG_PATH="$state/fased.json"
+    FASED_GATEWAY_PORT="$gateway_port"
+    FASED_GATEWAY_TOKEN="$gateway_token"
+    FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port"
+    npm_config_registry="http://127.0.0.1:$rpc_port"
+  )
   user_systemctl daemon-reload
   while IFS= read -r predecessor_service; do
     user_systemctl enable --now "$predecessor_service"
