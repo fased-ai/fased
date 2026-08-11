@@ -104,6 +104,10 @@ func TestOfflineRootBootstrapStagesAndExecutesVerifiedHost(t *testing.T) {
 	if result.ReleaseSequence != 42 || result.SecurityEpoch != 3 || result.HostDigest != hex.EncodeToString(hostDigest[:]) {
 		t.Fatalf("bootstrap result lost signed identity: %+v", result)
 	}
+	if !strings.HasPrefix(result.ReleaseIndexDigest, "sha256:") || len(result.ReleaseIndexDigest) != 71 ||
+		!strings.HasPrefix(result.DelegationDigest, "sha256:") || len(result.DelegationDigest) != 71 {
+		t.Fatalf("bootstrap result lost algorithm-bound trust digests: %+v", result)
+	}
 	if current, err := os.ReadFile(filepath.Join(fixtureRoot, "host", "host-current")); err != nil || string(current) != result.HostDigest+"\n" {
 		t.Fatalf("host pointer was not committed: %q err=%v", current, err)
 	}

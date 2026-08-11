@@ -187,7 +187,7 @@ func execute(ctx context.Context, request bootstrapRequest) (bootstrapResult, er
 		Version: index.Version, ReleaseSequence: index.ReleaseSequence, SecurityEpoch: index.SecurityEpoch,
 		HostDigest: staged.Digest, HostPath: staged.Path,
 		ApplicationPath: application, DependencyPath: dependency, SignerPath: signer,
-		ReleaseIndexDigest: verifiedIndex.Digest(), DelegationDigest: verifiedIndex.DelegationDigest(),
+		ReleaseIndexDigest: "sha256:" + verifiedIndex.Digest(), DelegationDigest: "sha256:" + verifiedIndex.DelegationDigest(),
 	}, nil
 }
 
