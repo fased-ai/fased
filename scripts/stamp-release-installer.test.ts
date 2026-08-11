@@ -58,4 +58,28 @@ describe("immutable release installer stamping", () => {
       }),
     ).rejects.toThrow("not canonical");
   });
+
+  it("stamps a fail-closed single-architecture branch installer", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-installer-stamp-"));
+    const source = path.join(root, "install.sh");
+    const output = path.join(root, "release-install.sh");
+    const x64 = path.join(root, "bootstrap-x64");
+    await fsp.writeFile(x64, "x64-bootstrap");
+    await fsp.writeFile(
+      source,
+      '#!/usr/bin/env bash\ninstall_entry_release_identity="__FASED_RELEASE_IDENTITY__"\nbootstrap_sha256_x64="__FASED_BOOTSTRAP_SHA256_X64__"\nbootstrap_sha256_arm64="__FASED_BOOTSTRAP_SHA256_ARM64__"\n',
+    );
+
+    await stampReleaseInstaller({
+      source,
+      output,
+      version: "1.2.3-rc.4",
+      bootstrapX64: x64,
+      architecture: "x64",
+    });
+
+    const stamped = await fsp.readFile(output, "utf8");
+    expect(stamped).toContain(`bootstrap_sha256_arm64="${"0".repeat(64)}"`);
+    expect(stamped).not.toContain("__FASED_BOOTSTRAP_SHA256_");
+  });
 });

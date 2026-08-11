@@ -296,7 +296,7 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
       --output "$ARTIFACT_DIR/install.sh" \
       --version "$VERSION" \
       --bootstrap-x64 "$ARTIFACT_DIR/fased-bootstrap-linux-x64" \
-      --bootstrap-arm64 "$ARTIFACT_DIR/fased-bootstrap-linux-arm64"
+      --architecture x64
     install -m 0755 \
       "$ROOT_DIR/scripts/privileged-release-evidence.mjs" \
       "$ARTIFACT_DIR/fased-privileged-release-evidence.mjs"
