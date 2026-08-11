@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createHash } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey } from "node:crypto";
 import { createReadStream } from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
@@ -71,6 +71,50 @@ function managedInstall({ profile, owner, version, commit, manifestDigest }) {
     update: {},
     release: { version, commit },
     updatedAt: "1970-01-01T00:00:00.000Z",
+  };
+}
+
+function syntheticDeviceIdentity() {
+  const seed = createHash("sha256").update("fased-public-predecessor-fixture-v1\n").digest();
+  const privateKey = createPrivateKey({
+    key: Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), seed]),
+    format: "der",
+    type: "pkcs8",
+  });
+  const publicKey = createPublicKey(privateKey);
+  const publicKeyDer = publicKey.export({ format: "der", type: "spki" });
+  return {
+    version: 1,
+    deviceId: createHash("sha256").update(publicKeyDer.subarray(-32)).digest("hex"),
+    publicKeyPem: publicKey.export({ format: "pem", type: "spki" }).toString(),
+    privateKeyPem: privateKey.export({ format: "pem", type: "pkcs8" }).toString(),
+    createdAtMs: 0,
+  };
+}
+
+function syntheticWalletRegistry() {
+  const updatedAt = "1970-01-01T00:00:00.000Z";
+  return {
+    version: 1,
+    providers: {
+      "embedded-keystore": {
+        enabled: false,
+        updatedAt,
+        label: "Legacy embedded keystore (migration required)",
+      },
+      "local-socket-signer": { enabled: true, updatedAt, label: "Local signer" },
+      alchemy: { enabled: false, updatedAt },
+      turnkey: { enabled: false, updatedAt, label: "Turnkey (policy-managed)" },
+      "wallet-standard": {
+        enabled: true,
+        updatedAt,
+        label: "Wallet Standard (verify hardware on device)",
+      },
+      privy: { enabled: false, updatedAt, label: "Privy (integration unavailable)" },
+    },
+    wallets: [],
+    assignments: {},
+    updatedAt,
   };
 }
 
@@ -184,7 +228,7 @@ export async function buildPublicPredecessorCapsule({
       await write(
         source,
         `${stateRelative}/identity/device.json`,
-        '{"schemaVersion":1,"deviceId":"synthetic-public-predecessor"}\n',
+        `${JSON.stringify(syntheticDeviceIdentity(), null, 2)}\n`,
         0o600,
       ),
     );
@@ -192,7 +236,7 @@ export async function buildPublicPredecessorCapsule({
       await write(
         source,
         `${stateRelative}/wallet/provider-registry.v1.json`,
-        '{"schemaVersion":1,"wallets":[]}\n',
+        `${JSON.stringify(syntheticWalletRegistry(), null, 2)}\n`,
         0o600,
       ),
     );

@@ -62,6 +62,31 @@ describe("public predecessor capsule builder", () => {
         archive.get(`home/${owner}/.fased/fased.json`)?.bytes.toString("utf8") ?? "null",
       );
       expect(config?.gateway?.mode).toBe(profile === "hosting" ? "remote" : "local");
+      const identity = JSON.parse(
+        archive.get(`home/${owner}/.fased/identity/device.json`)?.bytes.toString("utf8") ?? "null",
+      );
+      expect(identity).toMatchObject({
+        version: 1,
+        createdAtMs: 0,
+        deviceId: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        publicKeyPem: expect.stringContaining("BEGIN PUBLIC KEY"),
+        privateKeyPem: expect.stringContaining("BEGIN PRIVATE KEY"),
+      });
+      const walletRegistry = JSON.parse(
+        archive
+          .get(`home/${owner}/.fased/wallet/provider-registry.v1.json`)
+          ?.bytes.toString("utf8") ?? "null",
+      );
+      expect(walletRegistry).toMatchObject({
+        version: 1,
+        providers: {
+          "embedded-keystore": { enabled: false },
+          "local-socket-signer": { enabled: true },
+          "wallet-standard": { enabled: true },
+        },
+        wallets: [],
+        assignments: {},
+      });
       const gateway = archive.get(`home/${owner}/.fased/runtime/releases/0.1.75/gateway.mjs`);
       expect(gateway?.bytes.toString("utf8")).toContain('runtimeSource:"managed-package"');
       const proof = JSON.parse(
