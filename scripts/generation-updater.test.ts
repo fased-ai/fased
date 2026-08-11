@@ -208,12 +208,53 @@ describe("generation updater", () => {
           ok: true,
           stdout: args.includes("stage")
             ? `${JSON.stringify({ id: `sha256:${"a".repeat(64)}`, version })}\n`
-            : `${JSON.stringify({ outcome: "RECOVERY_PENDING" })}\n`,
+            : `${JSON.stringify({ outcome: "PREPARED" })}\n`,
           stderr: "",
         }),
         sudoPath: "/usr/bin/sudo",
       }),
     ).rejects.toThrow("invalid convergence outcome");
+  });
+
+  it.each([
+    ["ROLLED_BACK", "target release failed and was rolled back"],
+    ["RECOVERY_PENDING", "lifecycle recovery is pending"],
+  ])("preserves the bounded %s lifecycle outcome", async (outcome, message) => {
+    const value = await fixture();
+    const sources = new Map([
+      ["fased-hosting-candidate.json", value.descriptorPath],
+      ["fased-hosting-candidate.json.attestation.json", value.bundlePath],
+      [assetName, value.archive],
+      [dependencyAssetName, value.dependencyArchive],
+    ]);
+    await expect(
+      runGenerationUpdate({
+        lifecycle: {
+          supervisor: "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled",
+          config: "/var/lib/fased-lifecycled/platform.json",
+        },
+        version,
+        timeoutMs: 30_000,
+        baseUrl: "https://example.invalid/releases/download",
+        architecture: "x64",
+        download: async (url: string, destination: string) => {
+          const source = sources.get(url.split("/").at(-1) ?? "");
+          if (!source) {
+            throw new Error("unexpected download");
+          }
+          await fsp.copyFile(source, destination);
+        },
+        verifyOfficialAsset: async () => undefined,
+        runAdministrator: async (_command, args) => ({
+          ok: true,
+          stdout: args.includes("stage")
+            ? `${JSON.stringify({ id: `sha256:${"a".repeat(64)}`, version })}\n`
+            : `${JSON.stringify({ outcome, detail: "injected failure", transactionId: "tx" })}\n`,
+          stderr: "",
+        }),
+        sudoPath: "/usr/bin/sudo",
+      }),
+    ).rejects.toThrow(`${message}: injected failure`);
   });
 
   it("preserves declared executable modes under a restrictive caller umask", async () => {

@@ -88,9 +88,15 @@ func (server *Server) HandlePeer(ctx context.Context, connection net.Conn, peer 
 	defer cancel()
 	response, operationErr := server.Handler.Handle(operationCtx, request)
 	if operationErr != nil {
-		response = protocol.Response{
-			SchemaVersion: protocol.CurrentSchemaVersion, RequestID: request.RequestID,
-			Outcome: "ERROR", Detail: operationErr.Error(),
+		if response.Outcome == "ROLLED_BACK" || response.Outcome == "RECOVERY_PENDING" {
+			response.SchemaVersion = protocol.CurrentSchemaVersion
+			response.RequestID = request.RequestID
+			response.Detail = operationErr.Error()
+		} else {
+			response = protocol.Response{
+				SchemaVersion: protocol.CurrentSchemaVersion, RequestID: request.RequestID,
+				Outcome: "ERROR", Detail: operationErr.Error(),
+			}
 		}
 	}
 	if err := connection.SetWriteDeadline(time.Now().Add(server.WriteTimeout)); err != nil {

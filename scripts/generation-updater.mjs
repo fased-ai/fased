@@ -591,6 +591,16 @@ async function runGenerationTransaction({
       );
     }
     const response = JSON.parse(result.stdout.trim());
+    if (response.outcome === "ROLLED_BACK") {
+      const detail =
+        typeof response.detail === "string" && response.detail ? `: ${response.detail}` : "";
+      throw new Error(`target release failed and was rolled back${detail}`);
+    }
+    if (response.outcome === "RECOVERY_PENDING") {
+      const detail =
+        typeof response.detail === "string" && response.detail ? `: ${response.detail}` : "";
+      throw new Error(`lifecycle recovery is pending${detail}`);
+    }
     if (!new Set(["UPDATED", "COMMITTED", "ALREADY_CURRENT"]).has(response.outcome)) {
       throw new Error("lifecycle supervisor returned an invalid convergence outcome");
     }
