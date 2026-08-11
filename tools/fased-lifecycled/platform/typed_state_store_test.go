@@ -32,7 +32,8 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 			mining := filepath.Join(owner, "sat-mining")
 			federation := filepath.Join(owner, "federation")
 			wallet := filepath.Join(owner, "wallet")
-			for _, path := range []string{owner, mining, federation, wallet} {
+			extensions := filepath.Join(owner, "extensions")
+			for _, path := range []string{owner, mining, federation, wallet, extensions} {
 				if err := os.MkdirAll(path, 0o700); err != nil {
 					t.Fatal(err)
 				}
@@ -44,7 +45,8 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 			wal := database + "-wal"
 			registry := filepath.Join(wallet, "provider-registry.v1.json")
 			configuration := filepath.Join(owner, "fased.json")
-			original := map[string]string{database: "database-before\n", wal: "wal-before\n", registry: "wallet-before\n", configuration: "config-before\n"}
+			extension := filepath.Join(extensions, "stable-plugin.json")
+			original := map[string]string{database: "database-before\n", wal: "wal-before\n", registry: "wallet-before\n", configuration: "config-before\n", extension: "plugin-before\n"}
 			for path, data := range original {
 				if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 					t.Fatal(err)
@@ -81,7 +83,7 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 			if _, err := os.Lstat(newSidecar); !os.IsNotExist(err) {
 				t.Fatalf("new SQLite sidecar survived rollback: %v", err)
 			}
-			for _, path := range []string{mining, federation, wallet} {
+			for _, path := range []string{mining, federation, wallet, extensions} {
 				if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o700 {
 					t.Fatalf("directory metadata was not restored: %s info=%v err=%v", path, info, err)
 				}
