@@ -493,17 +493,21 @@ describe("CI workflow routing", () => {
     const p1Hosting = jobs["p1-hosting"];
     const tagReady = jobs["tag-ready"];
     const publish = jobs["publish"];
-    const validateText = jobs["validate"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    const preflightText = jobs["preflight"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    const buildText = jobs["build"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const linuxText = jobs["linux"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const signerText = jobs["signer"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
 
     expect(workflow.on).not.toHaveProperty("push");
     expect(workflow.on.workflow_dispatch.inputs.pre_candidate_run_id.required).toBe(true);
     expect(jobs["release-gate"]).toBeUndefined();
-    expect(candidate?.needs).toEqual(["validate", "linux", "signer"]);
+    expect(jobs["build"]?.needs).toBe("preflight");
+    expect(jobs["signer"]?.needs).toBe("preflight");
+    expect(jobs["linux"]?.needs).toEqual(["build", "signer"]);
+    expect(candidate?.needs).toEqual(["preflight", "build", "linux", "signer"]);
     expect(jobs["p1"]).toBeUndefined();
     for (const p1 of [p1Fresh, p1Update, p1Hosting]) {
-      expect(p1?.needs).toEqual(["validate", "candidate"]);
+      expect(p1?.needs).toEqual(["preflight", "candidate"]);
     }
     expect(tagReady).toBeUndefined();
     expect(publish?.needs).toEqual([
@@ -538,35 +542,36 @@ describe("CI workflow routing", () => {
     );
     expect(candidateText).toContain("pnpm install --frozen-lockfile");
     expect(candidateText).toContain("release-artifact-set.mjs build");
-    expect(validateText).toContain("pnpm build");
-    expect(validateText).toContain('test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"');
-    expect(validateText).toContain(
+    expect(preflightText).not.toContain("pnpm build");
+    expect(buildText).toContain("pnpm build");
+    expect(preflightText).toContain('test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"');
+    expect(preflightText).toContain(
       'git ls-remote --exit-code --tags origin "refs/tags/v$RELEASE_VERSION"',
     );
-    expect(validateText).toContain('test "$remote_tag" = "$SOURCE_COMMIT"');
-    expect(validateText).not.toContain("Candidate tag already exists before packaged P1");
-    expect(validateText).toContain("node scripts/ci-version-identity.mjs --allow-exact-tag");
-    expect(validateText).toContain("pnpm check:plugin-sdk:types");
-    expect(validateText).toContain("node --import tsx scripts/release-check.ts");
-    expect(validateText).toContain("pnpm release:validate-dist:packed");
-    expect(validateText).not.toContain("pnpm release:check");
-    expect(validateText).not.toContain("pnpm signer:protocol:check");
-    expect(validateText).not.toContain("pnpm sat:signer-codecs:check");
-    expect(validateText).not.toContain("pnpm test:signer:compat");
-    expect(validateText).not.toContain("pnpm test:local-source-update-compat");
-    expect(validateText).not.toContain("pnpm test:managed-updater");
-    expect(validateText).toContain(".mainRunId");
-    expect(validateText).toContain(".mainChecksJobId");
-    expect(validateText).toContain("actions/jobs/$main_checks_job_id");
-    expect(validateText).toContain('.path == ".github/workflows/main.yml"');
+    expect(preflightText).toContain('test "$remote_tag" = "$SOURCE_COMMIT"');
+    expect(preflightText).not.toContain("Candidate tag already exists before packaged P1");
+    expect(preflightText).toContain("node scripts/ci-version-identity.mjs --allow-exact-tag");
+    expect(buildText).toContain("pnpm check:plugin-sdk:types");
+    expect(buildText).toContain("node --import tsx scripts/release-check.ts");
+    expect(buildText).toContain("pnpm release:validate-dist:packed");
+    expect(buildText).not.toContain("pnpm release:check");
+    expect(buildText).not.toContain("pnpm signer:protocol:check");
+    expect(buildText).not.toContain("pnpm sat:signer-codecs:check");
+    expect(buildText).not.toContain("pnpm test:signer:compat");
+    expect(buildText).not.toContain("pnpm test:local-source-update-compat");
+    expect(buildText).not.toContain("pnpm test:managed-updater");
+    expect(preflightText).toContain(".mainRunId");
+    expect(preflightText).toContain(".mainChecksJobId");
+    expect(preflightText).toContain("actions/jobs/$main_checks_job_id");
+    expect(preflightText).toContain('.path == ".github/workflows/main.yml"');
     expect(
-      jobs["validate"]?.steps?.some((step) => step.name === "Verify immutable pre-candidate pass"),
+      jobs["preflight"]?.steps?.some((step) => step.name === "Verify immutable pre-candidate pass"),
     ).toBe(true);
-    expect(validateText.indexOf("pnpm audit --prod --audit-level high")).toBeLessThan(
-      validateText.indexOf("pnpm build"),
-    );
+    expect(preflightText).toContain("pnpm audit --prod --audit-level high");
+    expect(
+      jobs["build"]?.steps?.some((step) => step.name === "Install exact frozen dependencies"),
+    ).toBe(true);
     expect(linuxText).toContain("hosted:artifact:from-dist");
-    expect(jobs["linux"]?.needs).toEqual(["validate", "signer"]);
     const linuxStepNames = jobs["linux"]?.steps?.map((step) => step.name) ?? [];
     expect(linuxStepNames.indexOf("Download exact native lifecycle assets")).toBeLessThan(
       linuxStepNames.indexOf("Restore executable modes on exact native lifecycle assets"),
@@ -623,7 +628,7 @@ describe("CI workflow routing", () => {
     expect(
       p1Update?.steps?.find((step) => step.name === "Run packaged supported-stable update P1")?.env,
     ).toMatchObject({
-      FASED_SYSTEMD_FIXTURE_SCENARIOS: "${{ needs.validate.outputs.p1_scenarios }}",
+      FASED_SYSTEMD_FIXTURE_SCENARIOS: "${{ needs.preflight.outputs.p1_scenarios }}",
       FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "${{ inputs.predecessor_version }}",
       FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1",
     });

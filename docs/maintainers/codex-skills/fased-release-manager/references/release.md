@@ -59,6 +59,11 @@ Do not create, move, delete, publish, or promote versions/tags/releases without
 the current explicit authority. Never bypass protected checks or environment
 review.
 
+When the owner has explicitly authorized the sequence through publication,
+submit that existing approval as soon as every immutable P1 lane passes. Do not
+ask for the same approval again, weaken the environment, or allow the workflow
+to self-approve. A failed or incomplete P1 cancels that publication action.
+
 The owner performs npm publication manually:
 
 `npm publish <path> --ignore-scripts --access public --tag beta`
