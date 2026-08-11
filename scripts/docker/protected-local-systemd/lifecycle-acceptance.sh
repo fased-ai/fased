@@ -635,6 +635,8 @@ verify_wallet() {
 if [[ "$phase" == "verify-reboot" ]]; then
   [[ -f "$snapshot" ]]
   instance="$(jq -er .instanceId "$snapshot")"
+  gateway_token="$(jq -er '.gateway.auth.token' "$state/fased.json")"
+  test "$(jq -er '.gateway.remote.token' "$state/fased.json")" = "$gateway_token"
   runtime="$(resolve_protected_runtime "$instance")"
   wait_for_user_manager
   wait_for_service "fased-local-controller-$instance.service"
