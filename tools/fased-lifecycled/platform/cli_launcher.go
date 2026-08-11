@@ -52,18 +52,31 @@ for candidate in "${FASED_NODE_BIN:-}" /usr/local/bin/node /usr/bin/node /usr/bi
   fi
 done
 [[ -n "$node_bin" ]] || { echo "Compatible Node runtime not found for Fased." >&2; exit 1; }
-dependency_hash="$("$node_bin" -e '
+dependency_identity="$("$node_bin" -e '
   const fs=require("node:fs");
   const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
   const hash=value?.dependency?.hash;
-  if(typeof hash!=="string"||!/^[a-f0-9]{64}$/.test(hash))process.exit(1);
-  process.stdout.write(hash);
+  const archive=value?.dependency?.archiveSHA256;
+  if(typeof hash!=="string"||!/^[a-f0-9]{64}$/.test(hash)||typeof archive!=="string"||!/^sha256:[a-f0-9]{64}$/.test(archive))process.exit(1);
+  process.stdout.write(hash+" "+archive.slice(7));
 ' "$inventory")" || { echo "Fased dependency identity is invalid." >&2; exit 1; }
-dependency="$install_root/dependencies/$dependency_hash/node_modules"
-[[ -d "$dependency" && ! -L "$dependency" ]] || { echo "Fased dependency layer is unavailable." >&2; exit 1; }
+read -r dependency_hash dependency_archive_hash <<<"$dependency_identity"
 binding="$current/node_modules"
-expected_binding="../../dependencies/$dependency_hash/node_modules"
-[[ -L "$binding" && "$(readlink "$binding")" == "$expected_binding" && "$(readlink -f "$binding")" == "$dependency" ]] || {
+binding_target="$(readlink "$binding" 2>/dev/null || true)"
+case "$binding_target" in
+  "../../dependencies/$dependency_hash-$dependency_archive_hash/node_modules")
+    dependency="$install_root/dependencies/$dependency_hash-$dependency_archive_hash/node_modules"
+    ;;
+  "../../dependencies/$dependency_hash/node_modules")
+    dependency="$install_root/dependencies/$dependency_hash/node_modules"
+    ;;
+  *)
+    echo "Fased generation dependency binding is invalid." >&2
+    exit 1
+    ;;
+esac
+[[ -d "$dependency" && ! -L "$dependency" ]] || { echo "Fased dependency layer is unavailable." >&2; exit 1; }
+[[ -L "$binding" && "$(readlink -f "$binding")" == "$dependency" ]] || {
   echo "Fased generation dependency binding is invalid." >&2
   exit 1
 }
