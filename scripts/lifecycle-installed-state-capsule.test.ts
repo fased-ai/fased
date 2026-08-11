@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import * as tar from "tar";
@@ -83,7 +83,7 @@ describe("sanitized installed-state capsules", () => {
         sanitization: base.sanitization,
         services: base.services,
         archiveName: "fased-predecessor-hosting-0.1.75.tar.gz",
-        entries: [{ path: relative, owner: "operator" }],
+        entries: [{ path: relative, type: "file", owner: "operator" }],
       },
     });
     expect(parseInstalledStateCapsule(result.descriptor)).toBe(result.descriptor);
@@ -102,7 +102,66 @@ describe("sanitized installed-state capsules", () => {
     const capsule = descriptor(digest('{"schemaVersion":1}\n'));
     expect(parseInstalledStateCapsule(capsule)).toBe(capsule);
     const entries = await inspectCapsuleArchive(archive, capsule);
-    expect(entries.get(relative)?.toString()).toBe('{"schemaVersion":1}\n');
+    expect(entries.get(relative)?.bytes.toString()).toBe('{"schemaVersion":1}\n');
+  });
+
+  it("binds a confined managed-runtime pointer without following it while building", async () => {
+    const sourceRoot = await mkdtemp(path.join(tmpdir(), "fased-capsule-source-"));
+    const output = await mkdtemp(path.join(tmpdir(), "fased-capsule-output-"));
+    temporary.push(sourceRoot, output);
+    await mkdir(path.join(sourceRoot, "home/operator/.fased/runtime/releases/0.1.75"), {
+      recursive: true,
+    });
+    await symlink("releases/0.1.75", path.join(sourceRoot, "home/operator/.fased/runtime/current"));
+    const base = descriptor(digest("unused"));
+    const result = await buildInstalledStateCapsule({
+      sourceRoot,
+      outputDirectory: output,
+      spec: {
+        schemaVersion: 1,
+        role: "fased-installed-state-capsule-spec",
+        profile: base.profile,
+        compatibilityGroupId: base.compatibilityGroupId,
+        release: base.release,
+        releaseIndex: base.releaseIndex,
+        topology: base.topology,
+        ownership: base.ownership,
+        pointers: base.pointers,
+        expectedReceiptDigest: base.expectedReceiptDigest,
+        sanitization: base.sanitization,
+        services: base.services,
+        archiveName: "pointer.tar.gz",
+        entries: [
+          {
+            path: "home/operator/.fased/runtime/current",
+            type: "symlink",
+            owner: "operator",
+          },
+        ],
+      },
+    });
+    expect(result.descriptor.entries[0]).toEqual({
+      path: "home/operator/.fased/runtime/current",
+      type: "symlink",
+      owner: "operator",
+      target: "releases/0.1.75",
+    });
+  });
+
+  it("rejects absolute and escaping symbolic-link targets", () => {
+    const base = descriptor(digest("unused"));
+    const link = {
+      path: "home/operator/.fased/runtime/current",
+      type: "symlink",
+      owner: "operator",
+      target: "../../../../etc",
+    };
+    expect(() => parseInstalledStateCapsule({ ...base, entries: [link] })).toThrow(
+      "entry inventory is unsafe",
+    );
+    expect(() =>
+      parseInstalledStateCapsule({ ...base, entries: [{ ...link, target: "/etc" }] }),
+    ).toThrow("entry inventory is unsafe");
   });
 
   it("rejects secret paths and archive bytes not declared by the capsule", async () => {

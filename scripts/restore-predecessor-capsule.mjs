@@ -44,8 +44,9 @@ export async function inspectCapsuleArchive(archive, descriptor) {
       file: archive,
       strict: true,
       onentry(entry) {
-        const name = entry.path.replace(/^\.\//u, "");
-        if (entry.type === "Directory") {
+        const name = entry.path.replace(/^\.\//u, "").replace(/\/$/u, "");
+        if (!["Directory", "File", "SymbolicLink"].includes(entry.type)) {
+          pending.push(Promise.reject(new Error(`unsupported archive entry type: ${name}`)));
           entry.resume();
           return;
         }
@@ -57,7 +58,16 @@ export async function inspectCapsuleArchive(archive, descriptor) {
             if (data.has(name)) {
               return reject(new Error(`duplicate archive entry: ${name}`));
             }
-            data.set(name, Buffer.concat(chunks));
+            data.set(name, {
+              type:
+                entry.type === "SymbolicLink"
+                  ? "symlink"
+                  : entry.type === "Directory"
+                    ? "directory"
+                    : "file",
+              bytes: Buffer.concat(chunks),
+              target: entry.linkpath || null,
+            });
             resolve();
           });
         });
@@ -70,11 +80,20 @@ export async function inspectCapsuleArchive(archive, descriptor) {
     fail("archive inventory differs from descriptor");
   }
   for (const entry of descriptor.entries) {
-    const bytes = data.get(entry.path);
-    if (!bytes) {
+    const archived = data.get(entry.path);
+    if (!archived || archived.type !== entry.type) {
       fail(`archive entry is missing: ${entry.path}`);
     }
-    const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    if (entry.type === "symlink") {
+      if (archived.target !== entry.target) {
+        fail(`archive symlink target mismatch: ${entry.path}`);
+      }
+      continue;
+    }
+    if (entry.type === "directory") {
+      continue;
+    }
+    const digest = `sha256:${createHash("sha256").update(archived.bytes).digest("hex")}`;
     if (digest !== entry.sha256) {
       fail(`archive entry digest mismatch: ${entry.path}`);
     }
@@ -146,13 +165,32 @@ export async function restorePredecessorCapsule({
   for (const entry of descriptor.entries) {
     await ensureSafeParent(root, entry.path);
     const destination = path.join(root, entry.path);
+    if (entry.type === "directory") {
+      await fsp.mkdir(destination, { mode: entry.mode });
+      await fsp.chmod(destination, entry.mode);
+      await fsp.chown(
+        destination,
+        entry.owner === "root" ? 0 : operatorUid,
+        entry.owner === "root" ? 0 : operatorGid,
+      );
+      continue;
+    }
+    if (entry.type === "symlink") {
+      await fsp.symlink(entry.target, destination);
+      await fsp.lchown(
+        destination,
+        entry.owner === "root" ? 0 : operatorUid,
+        entry.owner === "root" ? 0 : operatorGid,
+      );
+      continue;
+    }
     const handle = await fsp.open(
       destination,
       constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
       entry.mode,
     );
     try {
-      await handle.writeFile(data.get(entry.path));
+      await handle.writeFile(data.get(entry.path).bytes);
       await handle.chmod(entry.mode);
       await handle.chown(
         entry.owner === "root" ? 0 : operatorUid,

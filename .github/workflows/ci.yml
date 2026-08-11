@@ -960,6 +960,7 @@ jobs:
 
       - name: Check Protected Local update, rollback, retry, and idempotence
         env:
+          GH_TOKEN: ${{ github.token }}
           FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
           FASED_SYSTEMD_FIXTURE_SCENARIOS: managed-update
           FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "0.1.75"

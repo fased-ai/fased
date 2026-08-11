@@ -31,6 +31,7 @@ RECEIPT_DIR="${FASED_SYSTEMD_FIXTURE_RECEIPT_DIR:-}"
 OWN_RECEIPT_DIR=0
 MANAGED_PREDECESSOR_VERSION="${FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION:-}"
 PREDECESSOR_CAPSULE_DIR="${FASED_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_DIR:-}"
+PREDECESSOR_CAPSULE_CACHE_DIR="${FASED_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_CACHE_DIR-$CACHE_HOME/fased/predecessor-capsules}"
 PARALLEL_SCENARIOS="${FASED_SYSTEMD_FIXTURE_PARALLEL_SCENARIOS:-1}"
 FIXTURE_TOOLS_DIR=""
 FIXTURE_NODE_MODULES=""
@@ -432,22 +433,29 @@ if [[ ",$SCENARIOS," == *,managed-update,* ]]; then
     echo "The managed-update fixture requires FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION." >&2
     exit 1
   }
+  if [[ -z "$PREDECESSOR_CAPSULE_DIR" && -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ]]; then
+    [[ "$PREDECESSOR_CAPSULE_CACHE_DIR" == /* ]] || {
+      echo "FASED_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_CACHE_DIR must be absolute." >&2
+      exit 1
+    }
+    PREDECESSOR_CAPSULE_DIR="$(bash "$ROOT_DIR/scripts/prepare-branch-predecessor-capsule.sh" \
+      protected-local "$MANAGED_PREDECESSOR_VERSION" "$COMMIT" "$TREE" \
+      "$PREDECESSOR_CAPSULE_CACHE_DIR")"
+  fi
   [[ "$PREDECESSOR_CAPSULE_DIR" == /* && -d "$PREDECESSOR_CAPSULE_DIR" ]] || {
-    echo "The managed update fixture requires one absolute PREDECESSOR_CAPSULE_DIR." >&2
+    echo "The managed update fixture requires one absolute predecessor capsule directory." >&2
     exit 1
   }
   capsule_descriptor="$PREDECESSOR_CAPSULE_DIR/fased-predecessor-capsule.json"
   capsule_descriptor_attestation="$capsule_descriptor.attestation.json"
-  [[ -f "$capsule_descriptor" && ! -L "$capsule_descriptor" &&
-    -s "$capsule_descriptor_attestation" && ! -L "$capsule_descriptor_attestation" ]] || {
-    echo "The predecessor capsule descriptor and attestation are required." >&2
+  [[ -f "$capsule_descriptor" && ! -L "$capsule_descriptor" ]] || {
+    echo "The predecessor capsule descriptor is required." >&2
     exit 1
   }
   capsule_archive="$(jq -er .archive.name "$capsule_descriptor")"
   capsule_archive_attestation="$PREDECESSOR_CAPSULE_DIR/${capsule_archive}.attestation.json"
-  [[ -f "$PREDECESSOR_CAPSULE_DIR/$capsule_archive" && ! -L "$PREDECESSOR_CAPSULE_DIR/$capsule_archive" &&
-    -s "$capsule_archive_attestation" && ! -L "$capsule_archive_attestation" ]] || {
-    echo "The predecessor capsule archive and attestation are required." >&2
+  [[ -f "$PREDECESSOR_CAPSULE_DIR/$capsule_archive" && ! -L "$PREDECESSOR_CAPSULE_DIR/$capsule_archive" ]] || {
+    echo "The predecessor capsule archive is required." >&2
     exit 1
   }
   node "$ROOT_DIR/scripts/lifecycle-installed-state-capsule.mjs" verify \
@@ -455,12 +463,31 @@ if [[ ",$SCENARIOS," == *,managed-update,* ]]; then
   jq -e --arg version "$MANAGED_PREDECESSOR_VERSION" \
     '.profile == "protected-local" and .release.version == $version' \
     "$capsule_descriptor" >/dev/null
-  GH_PROMPT_DISABLED=1 gh attestation verify "$capsule_descriptor" \
-    --repo fased-ai/fased --bundle "$capsule_descriptor_attestation" \
-    --deny-self-hosted-runners >/dev/null
-  GH_PROMPT_DISABLED=1 gh attestation verify "$PREDECESSOR_CAPSULE_DIR/$capsule_archive" \
-    --repo fased-ai/fased --bundle "$capsule_archive_attestation" \
-    --deny-self-hosted-runners >/dev/null
+  predecessor_branch_proof="$PREDECESSOR_CAPSULE_DIR/fased-predecessor-branch-proof.json"
+  if [[ -f "$predecessor_branch_proof" ]]; then
+    test -f "$ARTIFACT_DIR/fased-branch-proof-x64.json"
+    jq -e --arg commit "$COMMIT" --arg tree "$TREE" \
+      '.role == "fased-predecessor-capsule-branch-proof" and
+       .publishable == false and .profile == "protected-local" and
+       .builder.commit == $commit and .builder.tree == $tree' \
+      "$predecessor_branch_proof" >/dev/null
+    test "$(jq -er .descriptor.sha256 "$predecessor_branch_proof")" = \
+      "sha256:$(sha256sum "$capsule_descriptor" | awk '{print $1}')"
+    test "$(jq -er .archive.sha256 "$predecessor_branch_proof")" = \
+      "sha256:$(sha256sum "$PREDECESSOR_CAPSULE_DIR/$capsule_archive" | awk '{print $1}')"
+  else
+    [[ -s "$capsule_descriptor_attestation" && ! -L "$capsule_descriptor_attestation" &&
+      -s "$capsule_archive_attestation" && ! -L "$capsule_archive_attestation" ]] || {
+      echo "Candidate P1 requires capsule descriptor and archive attestations." >&2
+      exit 1
+    }
+    GH_PROMPT_DISABLED=1 gh attestation verify "$capsule_descriptor" \
+      --repo fased-ai/fased --bundle "$capsule_descriptor_attestation" \
+      --deny-self-hosted-runners >/dev/null
+    GH_PROMPT_DISABLED=1 gh attestation verify "$PREDECESSOR_CAPSULE_DIR/$capsule_archive" \
+      --repo fased-ai/fased --bundle "$capsule_archive_attestation" \
+      --deny-self-hosted-runners >/dev/null
+  fi
 fi
 cleanup_names=()
 dump_fixture_failure() {

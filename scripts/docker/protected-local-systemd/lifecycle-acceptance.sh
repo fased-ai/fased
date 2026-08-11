@@ -23,6 +23,7 @@ root_store="$(dirname "$(dirname "$release_root")")"
 candidate_installer=/var/lib/fased-protected-local-install.sh
 predecessor_capsule_descriptor=/predecessor-capsule/fased-predecessor-capsule.json
 predecessor_capsule_attestation=/predecessor-capsule/fased-predecessor-capsule.json.attestation.json
+predecessor_capsule_branch_proof=/predecessor-capsule/fased-predecessor-branch-proof.json
 predecessor_capsule_authorization=/run/fased-predecessor-capsule-fixture-authorized
 state=/home/testop/.fased
 runtime="$state/runtime/releases/$version"
@@ -80,8 +81,10 @@ acceptance_start() {
   acceptance_mark artifact-identity "$acceptance_descriptor" "candidate descriptor verified"
   acceptance_mark public-installer-acquisition "$candidate_installer" "stamped public installer acquired"
   if [[ "$phase" == "managed-update" ]]; then
+    predecessor_capsule_evidence="$predecessor_capsule_attestation"
+    [[ -s "$predecessor_capsule_evidence" ]] || predecessor_capsule_evidence="$predecessor_capsule_branch_proof"
     acceptance_mark predecessor-capsule-attestation \
-      "$predecessor_capsule_attestation" "predecessor capsule attestation verified"
+      "$predecessor_capsule_evidence" "predecessor capsule provenance verified"
   fi
 }
 
@@ -723,7 +726,7 @@ test "$(jq -er .version "$release_root/package.json")" = "$version"
 install -m 0700 -o testop -g testop /artifacts/install.sh "$candidate_installer"
 if [[ "$phase" == "managed-update" ]]; then
   test -f "$predecessor_capsule_descriptor"
-  test -s "$predecessor_capsule_attestation"
+  test -s "$predecessor_capsule_attestation" || test -s "$predecessor_capsule_branch_proof"
   /usr/local/bin/node /fixture-tools/lifecycle-installed-state-capsule.mjs verify \
     --descriptor "$predecessor_capsule_descriptor" >/dev/null
 fi

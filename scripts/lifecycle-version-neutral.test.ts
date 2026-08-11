@@ -97,7 +97,8 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(wrapper).toContain("FASED_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_DIR");
     expect(wrapper).toContain('artifact_cache_key="${COMMIT}-${TREE}-${LOCKFILE_DIGEST#sha256:}"');
     expect(wrapper).toContain("branch artifact cache hit:");
-    expect(wrapper).toContain("The predecessor capsule descriptor and attestation are required.");
+    expect(wrapper).toContain("Candidate P1 requires capsule descriptor and archive attestations.");
+    expect(wrapper).toContain("fased-predecessor-capsule-branch-proof");
     expect(wrapper).toContain(
       'PARALLEL_SCENARIOS="${FASED_SYSTEMD_FIXTURE_PARALLEL_SCENARIOS:-1}"',
     );

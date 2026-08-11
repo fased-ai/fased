@@ -11,6 +11,7 @@ const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const GROUP_PATTERN = /^[a-z0-9][a-z0-9-]{0,127}$/u;
 const forbiddenPath =
   /(^|\/)(?:master\.key|seed(?:\.json)?|private[-_.]?key|credentials?|tokens?|audit\.jsonl|[^/]*(?:wallet|signer)[-_.]?(?:key|secret)[^/]*)$/iu;
+const MAX_ENTRIES = 256;
 
 function fail(message) {
   throw new Error(`predecessor capsule: ${message}`);
@@ -123,23 +124,53 @@ export function parsePredecessorCapsule(value, expected = {}) {
   ) {
     fail("service inventory is invalid");
   }
-  if (!Array.isArray(value.entries) || value.entries.length === 0) {
+  if (
+    !Array.isArray(value.entries) ||
+    value.entries.length === 0 ||
+    value.entries.length > MAX_ENTRIES
+  ) {
     fail("entry inventory is empty");
   }
   const seen = new Set();
   for (const entry of value.entries) {
-    exactKeys(entry, ["path", "type", "mode", "owner", "sha256"], "entry");
-    if (
+    const expectedKeys =
+      entry?.type === "symlink"
+        ? ["path", "type", "owner", "target"]
+        : entry?.type === "directory"
+          ? ["path", "type", "mode", "owner"]
+          : ["path", "type", "mode", "owner", "sha256"];
+    exactKeys(entry, expectedKeys, "entry");
+    const commonUnsafe =
       !safeRelative(entry.path) ||
       seen.has(entry.path) ||
       forbiddenPath.test(entry.path) ||
-      entry.type !== "file" ||
-      !["root", "operator"].includes(entry.owner) ||
-      !Number.isSafeInteger(entry.mode) ||
-      entry.mode < 0o400 ||
-      entry.mode > 0o755 ||
-      entry.mode & 0o022 ||
-      !DIGEST_PATTERN.test(entry.sha256 || "")
+      !["root", "operator"].includes(entry.owner);
+    const fileUnsafe =
+      entry.type === "file" &&
+      (!Number.isSafeInteger(entry.mode) ||
+        entry.mode < 0o400 ||
+        entry.mode > 0o755 ||
+        entry.mode & 0o022 ||
+        !DIGEST_PATTERN.test(entry.sha256 || ""));
+    const linkUnsafe =
+      entry.type === "symlink" &&
+      (!safeRelative(entry.target) ||
+        path.posix.isAbsolute(entry.target) ||
+        path.posix
+          .normalize(path.posix.join(path.posix.dirname(entry.path), entry.target))
+          .startsWith("../"));
+    const directoryUnsafe =
+      entry.type === "directory" &&
+      (!Number.isSafeInteger(entry.mode) ||
+        entry.mode < 0o500 ||
+        entry.mode > 0o755 ||
+        entry.mode & 0o022);
+    if (
+      commonUnsafe ||
+      !["directory", "file", "symlink"].includes(entry.type) ||
+      fileUnsafe ||
+      linkUnsafe ||
+      directoryUnsafe
     ) {
       fail(
         forbiddenPath.test(entry.path || "")

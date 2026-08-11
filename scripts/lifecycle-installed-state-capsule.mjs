@@ -34,18 +34,30 @@ async function digestFile(file) {
   return `sha256:${hash.digest("hex")}`;
 }
 
-async function safeSourceFile(root, relative) {
+async function safeSourceEntry(root, relative, requestedType) {
   const segments = relative.split("/");
   let current = root;
   for (const segment of segments) {
     current = path.join(current, segment);
     const info = await fsp.lstat(current);
-    if (info.isSymbolicLink()) {
+    if (info.isSymbolicLink() && current !== path.join(root, relative)) {
       fail(`source path contains a symlink: ${relative}`);
     }
   }
   const info = await fsp.lstat(current);
-  if (!info.isFile() || info.nlink !== 1) {
+  if (requestedType === "symlink") {
+    if (!info.isSymbolicLink()) {
+      fail(`source entry is not one symbolic link: ${relative}`);
+    }
+    return { file: current, info, target: await fsp.readlink(current) };
+  }
+  if (requestedType === "directory") {
+    if (!info.isDirectory() || info.isSymbolicLink()) {
+      fail(`source entry is not one directory: ${relative}`);
+    }
+    return { file: current, info };
+  }
+  if (requestedType !== "file" || !info.isFile() || info.nlink !== 1) {
     fail(`source entry is not one regular file: ${relative}`);
   }
   return { file: current, info };
@@ -91,25 +103,37 @@ export async function buildInstalledStateCapsule({ spec, sourceRoot, outputDirec
 
   const entries = [];
   for (const requested of spec.entries) {
-    exactKeys(requested, ["path", "owner"], "spec entry");
-    const { file, info } = await safeSourceFile(sourceRoot, requested.path);
-    const expectedUid = requested.owner === "root" ? 0 : spec.ownership.operatorUid;
-    const expectedGid = requested.owner === "root" ? 0 : spec.ownership.operatorGid;
+    exactKeys(requested, ["path", "type", "owner"], "spec entry");
+    const { file, info, target } = await safeSourceEntry(
+      sourceRoot,
+      requested.path,
+      requested.type,
+    );
     if (
       !["root", "operator"].includes(requested.owner) ||
-      info.uid !== expectedUid ||
-      info.gid !== expectedGid ||
-      (info.mode & 0o022) !== 0
+      ![process.getuid?.(), 0].includes(info.uid) ||
+      (requested.type !== "symlink" && (info.mode & 0o022) !== 0)
     ) {
       fail(`source ownership or mode is unsafe: ${requested.path}`);
     }
-    entries.push({
-      path: requested.path,
-      type: "file",
-      mode: info.mode & 0o777,
-      owner: requested.owner,
-      sha256: await digestFile(file),
-    });
+    entries.push(
+      requested.type === "symlink"
+        ? { path: requested.path, type: "symlink", owner: requested.owner, target }
+        : requested.type === "directory"
+          ? {
+              path: requested.path,
+              type: "directory",
+              mode: info.mode & 0o777,
+              owner: requested.owner,
+            }
+          : {
+              path: requested.path,
+              type: "file",
+              mode: info.mode & 0o777,
+              owner: requested.owner,
+              sha256: await digestFile(file),
+            },
+    );
   }
 
   const archivePath = path.join(outputDirectory, spec.archiveName);
@@ -120,6 +144,7 @@ export async function buildInstalledStateCapsule({ spec, sourceRoot, outputDirec
       gzip: true,
       portable: true,
       noPax: true,
+      noDirRecurse: true,
       mtime: new Date(0),
     },
     entries.map((entry) => entry.path),

@@ -5,12 +5,19 @@ set -euo pipefail
 
 version="${FASED_FIXTURE_VERSION:?}"
 commit="${FASED_FIXTURE_COMMIT:?}"
+predecessor_version="${FASED_FIXTURE_PREDECESSOR_VERSION:-}"
+phase="${1:-install}"
+scenario="$([[ "$phase" == "managed-update" ]] && printf managed-update || printf fresh-install)"
 gateway_port="${FASED_FIXTURE_GATEWAY_PORT:-18789}"
 candidate_installer="/artifacts/install.sh"
 acceptance_contract=/artifacts/fased-lifecycle-acceptance-v2.json
 acceptance_descriptor=/artifacts/fased-hosting-candidate.json
 acceptance_evidence=/tmp/fased-hosting-acceptance.evidence.jsonl
-acceptance_receipt=/var/lib/fased-lifecycled/lifecycle-acceptance-fresh-install.json
+acceptance_receipt="/var/lib/fased-lifecycled/lifecycle-acceptance-${scenario}.json"
+predecessor_capsule_descriptor=/predecessor-capsule/fased-predecessor-capsule.json
+predecessor_capsule_attestation=/predecessor-capsule/fased-predecessor-capsule.json.attestation.json
+predecessor_capsule_branch_proof=/predecessor-capsule/fased-predecessor-branch-proof.json
+predecessor_capsule_authorization=/run/fased-predecessor-capsule-fixture-authorized
 
 diagnostics() {
   local status=$?
@@ -94,31 +101,41 @@ acceptance_start() {
   acceptance_mark artifact-identity "$acceptance_descriptor" "candidate descriptor verified"
   acceptance_mark public-installer-acquisition "$candidate_installer" \
     "stamped public installer acquired"
+  if [[ "$scenario" == "managed-update" ]]; then
+    predecessor_capsule_evidence="$predecessor_capsule_attestation"
+    [[ -s "$predecessor_capsule_evidence" ]] || predecessor_capsule_evidence="$predecessor_capsule_branch_proof"
+    acceptance_mark predecessor-capsule-attestation "$predecessor_capsule_evidence" \
+      "predecessor capsule provenance verified"
+  fi
 }
 
 acceptance_finish() {
   local evidence_json=/tmp/fased-hosting-acceptance.evidence.json
   local descriptor_digest="sha256:$(sha256sum "$acceptance_descriptor" | awk '{print $1}')"
+  local capsule_digest=""
+  if [[ "$scenario" == "managed-update" ]]; then
+    capsule_digest="sha256:$(sha256sum "$predecessor_capsule_descriptor" | awk '{print $1}')"
+  fi
   jq -s . "$acceptance_evidence" >"$evidence_json"
   node /fixture-tools/lifecycle-acceptance-contract.mjs issue-receipt \
     --contract "$acceptance_contract" \
     --profile hosting \
-    --scenario fresh-install \
+    --scenario "$scenario" \
     --version "$version" \
     --commit "$commit" \
     --candidate-descriptor-digest "$descriptor_digest" \
-    --predecessor-capsule-digest "" \
+    --predecessor-capsule-digest "$capsule_digest" \
     --evidence-file "$evidence_json" \
     --output "$acceptance_receipt"
   node /fixture-tools/lifecycle-receipt-verifier.mjs \
     --contract "$acceptance_contract" \
     --receipt "$acceptance_receipt" \
     --profile hosting \
-    --scenario fresh-install \
+    --scenario "$scenario" \
     --version "$version" \
     --commit "$commit" \
     --candidate-descriptor-digest "$descriptor_digest" \
-    --predecessor-capsule-digest "" >/dev/null
+    --predecessor-capsule-digest "$capsule_digest" >/dev/null
 }
 
 run_public_installer() {
@@ -200,7 +217,42 @@ run_public_updater() {
     --channel beta --timeout 120
 }
 
-case "${1:-}" in
+wait_for_gateway_version() {
+  local expected="$1"
+  local response=""
+  for _ in {1..80}; do
+    response="$(curl -fsS --max-time 2 "http://127.0.0.1:${gateway_port}/healthz" 2>/dev/null || true)"
+    if jq -e --arg version "$expected" '.version == $version' <<<"$response" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
+restore_public_predecessor() {
+  install -m 0755 /fixture-tools/node /usr/local/bin/node
+  useradd --uid 2000 --user-group --create-home --shell /bin/bash app
+  predecessor_archive="$(jq -er .archive.name "$predecessor_capsule_descriptor")"
+  printf 'fased-predecessor-capsule-fixture-v1\n' >"$predecessor_capsule_authorization"
+  chown root:root "$predecessor_capsule_authorization"
+  chmod 0600 "$predecessor_capsule_authorization"
+  /usr/local/bin/node /fixture-tools/restore-predecessor-capsule.mjs restore \
+    --descriptor "$predecessor_capsule_descriptor" \
+    --archive "/predecessor-capsule/$predecessor_archive" \
+    --root / \
+    --authorization-marker "$predecessor_capsule_authorization" \
+    --operator-uid 2000 \
+    --operator-gid 2000 \
+    --profile hosting >/tmp/fased-hosting-predecessor-restore.out
+  rm -f "$predecessor_capsule_authorization"
+  systemctl daemon-reload
+  while IFS= read -r unit; do systemctl enable --now "$unit"; done \
+    < <(jq -er '.services[]' "$predecessor_capsule_descriptor")
+  wait_for_gateway_version "$predecessor_version"
+}
+
+case "$phase" in
   install)
     install_tailscale_fixture
     ! command -v node >/dev/null 2>&1
@@ -237,6 +289,79 @@ case "${1:-}" in
       "Already current: $version"
     acceptance_finish
     ;;
+  managed-update)
+    [[ "$predecessor_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+    test -f "$predecessor_capsule_descriptor"
+    test -s "$predecessor_capsule_attestation" || test -s "$predecessor_capsule_branch_proof"
+    restore_public_predecessor
+    install_tailscale_fixture
+    install_release_transport_fixture
+    test "$(jq -er .profile /home/app/.fased/install.json)" = hosting
+    test "$(jq -er .runtime.activeVersion /home/app/.fased/install.json)" = "$predecessor_version"
+    sha256sum \
+      /home/app/.fased/fased.json \
+      /home/app/.fased/identity/device.json \
+      /home/app/.fased/wallet/provider-registry.v1.json \
+      >/tmp/fased-hosting-predecessor-state.sha256
+    acceptance_start
+
+    fault_dir=/etc/systemd/system/fased-gateway.service.d
+    fault_marker=/run/fased-hosting-target-fault
+    install -d -m 0755 -o root -g root "$fault_dir"
+    cat >/usr/local/bin/fased-hosting-target-fault <<'EOF_TARGET_FAULT'
+#!/usr/bin/env bash
+set -euo pipefail
+marker=/run/fased-hosting-target-fault
+if [[ ! -e "$marker" ]] && grep -Fq '/opt/fased/generations/' /etc/systemd/system/fased-gateway.service; then
+  : >"$marker"
+  exit 1
+fi
+EOF_TARGET_FAULT
+    chmod 0755 /usr/local/bin/fased-hosting-target-fault
+    cat >"$fault_dir/99-fased-fixture-target-fault.conf" <<'EOF_TARGET_DROPIN'
+[Service]
+ExecStartPre=+/usr/local/bin/fased-hosting-target-fault
+EOF_TARGET_DROPIN
+    systemctl daemon-reload
+    if run_public_installer >/tmp/fased-hosting-update-failure.out 2>/tmp/fased-hosting-update-failure.err; then
+      echo "Hosting target fault did not stop the first update" >&2
+      exit 1
+    fi
+    test -e "$fault_marker"
+    rm -f "$fault_dir/99-fased-fixture-target-fault.conf" /usr/local/bin/fased-hosting-target-fault
+    rmdir "$fault_dir" 2>/dev/null || true
+    systemctl daemon-reload
+    wait_for_gateway_version "$predecessor_version"
+    sha256sum --check /tmp/fased-hosting-predecessor-state.sha256
+
+    run_public_installer >/tmp/fased-hosting-update.out 2>/tmp/fased-hosting-update.err
+    acceptance_mark rollback-retry /tmp/fased-hosting-update.out "rollback and identical retry verified"
+    assert_healthy
+    acceptance_mark canonical-lifecycle /var/lib/fased-lifecycled/installation-manifest.json \
+      "canonical Hosting lifecycle verified"
+    systemctl status fased-host-updater.service fased-signerd.service fased-gateway.service \
+      --no-pager >/tmp/fased-hosting-three-services.out
+    acceptance_mark three-services-active /tmp/fased-hosting-three-services.out \
+      "three Hosting services active"
+    run_operator_acceptance
+    sha256sum --check /tmp/fased-hosting-predecessor-state.sha256 \
+      >/tmp/fased-hosting-update-state-preservation.out
+    acceptance_mark state-preservation /tmp/fased-hosting-update-state-preservation.out \
+      "predecessor state preserved"
+    systemctl restart fased-host-updater.service fased-signerd.service fased-gateway.service
+    assert_healthy
+    acceptance_mark restart-health /var/lib/fased-lifecycled/installation-manifest.json \
+      "restart health verified"
+    run_public_installer >/tmp/fased-hosting-update-installer-noop.out 2>/tmp/fased-hosting-update-installer-noop.err
+    grep -F "Already current: $version" /tmp/fased-hosting-update-installer-noop.out >/dev/null
+    run_public_updater >/tmp/fased-hosting-update-noop.out 2>/tmp/fased-hosting-update-noop.err
+    grep -F "Already current: $version" /tmp/fased-hosting-update-noop.out >/dev/null
+    acceptance_mark installer-already-current /tmp/fased-hosting-update-installer-noop.out \
+      "Already current: $version"
+    acceptance_mark updater-already-current /tmp/fased-hosting-update-noop.out \
+      "Already current: $version"
+    acceptance_finish
+    ;;
   verify-reboot)
     install_tailscale_fixture
     assert_healthy
@@ -244,7 +369,7 @@ case "${1:-}" in
     grep -F "Already current: $version" /tmp/fased-hosting-reboot-noop.out >/dev/null
     ;;
   *)
-    echo "usage: go-cutover.sh install|verify-reboot" >&2
+    echo "usage: lifecycle-acceptance.sh install|managed-update|verify-reboot" >&2
     exit 1
     ;;
 esac

@@ -9,6 +9,7 @@ const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 type WorkflowJob = {
   if?: string;
   needs?: string[];
+  permissions?: Record<string, string>;
   "timeout-minutes"?: number;
   steps?: Array<{
     env?: Record<string, string>;
@@ -501,6 +502,7 @@ describe("CI workflow routing", () => {
     const p1Fresh = jobs["p1-local-fresh"];
     const p1Update = jobs["p1-local-update"];
     const p1Hosting = jobs["p1-hosting"];
+    const predecessorCapsules = jobs["predecessor-capsules"];
     const tagReady = jobs["tag-ready"];
     const publish = jobs["publish"];
     const preflightText = jobs["preflight"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
@@ -517,9 +519,14 @@ describe("CI workflow routing", () => {
     expect(jobs["linux"]?.needs).toEqual(["build", "signer"]);
     expect(candidate?.needs).toEqual(["preflight", "build", "linux", "signer"]);
     expect(jobs["p1"]).toBeUndefined();
-    for (const p1 of [p1Fresh, p1Update, p1Hosting]) {
-      expect(p1?.needs).toEqual(["preflight", "candidate"]);
-    }
+    expect(p1Fresh?.needs).toEqual(["preflight", "candidate"]);
+    expect(p1Update?.needs).toEqual(["preflight", "candidate", "predecessor-capsules"]);
+    expect(p1Hosting?.needs).toEqual(["preflight", "candidate", "predecessor-capsules"]);
+    expect(predecessorCapsules?.needs).toEqual(["preflight"]);
+    expect(predecessorCapsules?.permissions).toMatchObject({
+      attestations: "write",
+      "id-token": "write",
+    });
     expect(tagReady).toBeUndefined();
     expect(publish?.needs).toEqual([
       "candidate",
