@@ -669,6 +669,9 @@ func TestSharedDependencyLayerIsDigestBoundAndReused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if markerBefore.Mode().Perm() != 0o644 {
+		t.Fatalf("dependency identity marker mode = %o; want 644", markerBefore.Mode().Perm())
+	}
 	if err := state.ImportDependencyArchive(dependencyArchive, layer); err != nil {
 		t.Fatalf("idempotent dependency reuse failed: %v", err)
 	}
@@ -741,6 +744,16 @@ func TestDependencyArchiveIdentityCanChangeWithoutMutatingLegacyLayer(t *testing
 	legacy := state.dependencyPath(layerA.Hash)
 	if err := os.Rename(state.dependencyArchivePath(layerA), legacy); err != nil {
 		t.Fatal(err)
+	}
+	legacyMarker := filepath.Join(legacy, dependencyMarkerName)
+	if err := os.Chmod(legacyMarker, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ImportDependencyArchive(archiveA, layerA); err != nil {
+		t.Fatalf("legacy dependency identity mode normalization failed: %v", err)
+	}
+	if info, err := os.Stat(legacyMarker); err != nil || info.Mode().Perm() != 0o644 {
+		t.Fatalf("legacy dependency identity marker mode = %v, %v; want 0644", info, err)
 	}
 	if err := state.ImportDependencyArchive(archiveB, layerB); err != nil {
 		t.Fatalf("new archive identity was rejected beside a legacy layer: %v", err)

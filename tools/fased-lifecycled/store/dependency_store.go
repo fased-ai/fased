@@ -52,14 +52,17 @@ func (s *Store) ImportDependencyArchive(archive string, layer bundle.DependencyL
 	}
 	destination := s.dependencyArchivePath(layer)
 	if _, err := os.Lstat(destination); err == nil {
-		return s.verifyDependencyPath(destination, layer)
+		if err := s.verifyDependencyPath(destination, layer); err != nil {
+			return err
+		}
+		return normalizeDependencyMarker(destination)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	legacy := s.dependencyPath(layer.Hash)
 	if _, err := os.Lstat(legacy); err == nil {
 		if verifyErr := s.verifyDependencyPath(legacy, layer); verifyErr == nil {
-			return nil
+			return normalizeDependencyMarker(legacy)
 		} else if !errors.Is(verifyErr, errDependencyLayerIdentityDiffers) {
 			return verifyErr
 		}
@@ -95,10 +98,41 @@ func (s *Store) ImportDependencyArchive(archive string, layer bundle.DependencyL
 	if err := s.verifyDependencyPath(temporary, layer); err != nil {
 		return err
 	}
+	if err := normalizeDependencyMarker(temporary); err != nil {
+		return err
+	}
 	if err := syncDependencyFilesystem(temporary); err != nil {
 		return err
 	}
 	if err := os.Rename(temporary, destination); err != nil {
+		return err
+	}
+	return syncDirectory(root)
+}
+
+func normalizeDependencyMarker(root string) error {
+	path := filepath.Join(root, dependencyMarkerName)
+	before, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	stat, ok := before.Sys().(*syscall.Stat_t)
+	if !ok || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || stat.Nlink != 1 || stat.Uid != uint32(os.Geteuid()) || before.Mode().Perm()&0o022 != 0 {
+		return errors.New("installed dependency identity marker is unsafe")
+	}
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	after, err := file.Stat()
+	if err != nil || !os.SameFile(before, after) {
+		return errors.New("installed dependency identity marker changed while opening")
+	}
+	if err := file.Chmod(0o644); err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
 		return err
 	}
 	return syncDirectory(root)
