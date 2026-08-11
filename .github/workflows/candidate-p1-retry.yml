@@ -60,7 +60,7 @@ jobs:
           test "$(git rev-parse "refs/tags/v$RELEASE_VERSION^{commit}")" = "$SOURCE_COMMIT"
           test "$(git show "$SOURCE_COMMIT:package.json" | jq -r .version)" = "$RELEASE_VERSION"
           test "$(jq -r .version package.json)" = "$RELEASE_VERSION"
-          allowed='^(\.github/workflows/(candidate-p1-retry|hosted-runtime-release)\.yml|scripts/docker/protected-local-systemd/run\.sh|scripts/(ci-workflow-contract|hosted-installer-artifact-layout)\.test\.ts)$'
+          allowed='^(\.github/workflows/(candidate-p1-retry|hosted-runtime-release)\.yml|scripts/(test-protected-local-systemd-container\.sh|docker/protected-local-systemd/run\.sh|(ci-workflow-contract|hosted-installer-artifact-layout)\.test\.ts))$'
           unexpected="$(git diff --name-only "$SOURCE_COMMIT"..HEAD | grep -Ev "$allowed" || true)"
           test -z "$unexpected"
           run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")"
