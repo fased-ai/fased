@@ -109,6 +109,9 @@ func TestPluginLockParticipatesInGenerationIdentity(t *testing.T) {
 	if inventory.PluginLockDigest != lockDigest {
 		t.Fatalf("plugin lock was not bound: %+v", inventory)
 	}
+	if err := Verify(root, inventory, generation); err != nil {
+		t.Fatalf("exact plugin-lock generation failed verification: %v", err)
+	}
 	changed := inventory
 	changed.PluginLockDigest = "sha256:" + strings.Repeat("d", 64)
 	if err := Verify(root, changed, generation); err == nil {

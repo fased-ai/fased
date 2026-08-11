@@ -175,7 +175,15 @@ func Verify(root string, expected Inventory, generation model.Generation) error 
 	if bound != generation {
 		return errors.New("generation identity does not match the declared artifact inventory")
 	}
-	actual, actualGeneration, err := inspectInventory(root, expected.Version, expected.Commit, expected.Tree, expected.StateSchemas, expected.Capabilities, expected.Dependency)
+	actual, _, err := inspectInventory(root, expected.Version, expected.Commit, expected.Tree, expected.StateSchemas, expected.Capabilities, expected.Dependency)
+	if err != nil {
+		return err
+	}
+	// The plugin lock is verified independently over bundled plugin trees. It
+	// participates in generation identity but is not rediscovered by this
+	// generic filesystem inventory walk.
+	actual.PluginLockDigest = expected.PluginLockDigest
+	actualGeneration, err := identity(actual)
 	if err != nil {
 		return err
 	}
