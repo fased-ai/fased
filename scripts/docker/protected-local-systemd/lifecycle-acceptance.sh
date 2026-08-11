@@ -1412,7 +1412,7 @@ EOF_STABLE_BRIDGE_DROPIN
     systemctl daemon-reload
     test "$stable_bridge_failure_status" -ne 0
     test -s "$bridge_fault_marker"
-    grep -F "target release failed and was rolled back" /tmp/stable-bridge-failure.err >/dev/null
+    grep -F "fased-lifecycled: ROLLED_BACK:" /tmp/stable-bridge-failure.err >/dev/null
     failure_instance="$(cat "$bridge_fault_marker")"
     [[ "$failure_instance" =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]]
     systemctl reset-failed "fased-gateway-$failure_instance.service" 2>/dev/null || true
@@ -1696,7 +1696,7 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
   rm -rf -- "$managed_fault_root"
   test "$managed_failure_status" -ne 0
   managed_recovery_transaction=""
-  if grep -F "target release failed and was rolled back" \
+  if grep -F "fased-lifecycled: ROLLED_BACK:" \
       /tmp/managed-update-failure.err >/dev/null; then
     wait_for_gateway_version "$predecessor_version"
     test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$predecessor_version"

@@ -29,6 +29,8 @@ describe("version-neutral lifecycle acceptance", () => {
       '"beta/current/release-index.json": "fased-branch-release-index.json"',
     );
     expect(fixture).toContain('metadata.startsWith("beta/assets/")');
+    expect(fixture).toContain('grep -F "fased-lifecycled: ROLLED_BACK:"');
+    expect(fixture).not.toContain("target release failed and was rolled back");
   });
 
   it("binds candidate P1 to an explicit supported public predecessor", async () => {
