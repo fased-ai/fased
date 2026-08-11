@@ -16,6 +16,9 @@ chmod 0755 "$FIXTURE/runtime/node_modules/tool/bin/cli.js"
 ln -s ../tool/bin/cli.js "$FIXTURE/runtime/node_modules/.bin/tool"
 printf '#!/bin/sh\nexit 0\n' >"$FIXTURE/signer"
 chmod 0755 "$FIXTURE/signer"
+printf '#!/bin/sh\nexit 0\n' >"$FIXTURE/node"
+chmod 0755 "$FIXTURE/node"
+printf 'Node fixture license\n' >"$FIXTURE/node.LICENSE"
 cat >"$FIXTURE/release-manifest.json" <<'EOF'
 {
   "schemaVersion": 2,
@@ -36,6 +39,8 @@ node "$ROOT/scripts/build-lifecycle-generation.mjs" \
   --release-manifest "$FIXTURE/release-manifest.json" \
   --signer "$FIXTURE/signer" \
   --lifecycled "$LIFECYCLED" \
+  --node "$FIXTURE/node" \
+  --node-license "$FIXTURE/node.LICENSE" \
   --output "$FIXTURE/generation" \
   --version 1.2.3 \
   --commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
@@ -53,7 +58,7 @@ node -e '
   const generation = JSON.parse(fs.readFileSync(path.join(root, "result.json"), "utf8"));
   const inventory = JSON.parse(fs.readFileSync(path.join(root, "generation", "inventory.json"), "utf8"));
   if (!/^sha256:[a-f0-9]{64}$/.test(generation.id)) process.exit(1);
-  const expected = ["bin/fased-gateway-launch", "bin/fased-signerd", "runtime/.fased-hosted-release-v2.json", "runtime/fased.mjs", "runtime/plugin.lock.json"];
+  const expected = ["bin/fased-gateway-launch", "bin/fased-signerd", "bin/node", "licenses/node.LICENSE", "runtime/.fased-hosted-release-v2.json", "runtime/fased.mjs", "runtime/plugin.lock.json"];
   if (JSON.stringify(inventory.artifacts.map((entry) => entry.path)) !== JSON.stringify(expected)) process.exit(1);
   if (fs.existsSync(path.join(root, "generation", "payload", "runtime", "node_modules", "tool"))) process.exit(1);
   if (inventory.dependency.hash !== "c".repeat(64)) process.exit(1);
@@ -67,6 +72,7 @@ ln -s ../outside "$FIXTURE/runtime/escape"
 if node "$ROOT/scripts/build-lifecycle-generation.mjs" \
   --runtime "$FIXTURE/runtime" --release-manifest "$FIXTURE/release-manifest.json" \
   --signer "$FIXTURE/signer" --lifecycled "$LIFECYCLED" \
+  --node "$FIXTURE/node" --node-license "$FIXTURE/node.LICENSE" \
   --output "$FIXTURE/rejected" --version 1.2.3 \
   --commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --tree bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
   --dependency-hash cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \

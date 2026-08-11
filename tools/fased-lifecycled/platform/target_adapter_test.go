@@ -218,7 +218,7 @@ func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) 
 	t.Helper()
 	tx, identity := manifestTransaction(t, false)
 	root := t.TempDir()
-	for _, name := range []string{"fased-gateway-launch", "fased-signerd", "fased-lifecycled"} {
+	for _, name := range []string{"fased-gateway-launch", "fased-signerd", "fased-lifecycled", "node"} {
 		path := filepath.Join(root, "bin", name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
@@ -584,7 +584,7 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	tx.PlatformDigest = platformDigest
 
 	root := t.TempDir()
-	for _, name := range []string{"fased-gateway-launch", "fased-signerd", "fased-lifecycled"} {
+	for _, name := range []string{"fased-gateway-launch", "fased-signerd", "fased-lifecycled", "node"} {
 		path := filepath.Join(root, "bin", name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)

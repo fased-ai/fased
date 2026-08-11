@@ -43,15 +43,11 @@ runtime="$current/payload/runtime/fased.mjs"
   echo "Fased runtime is not committed; run the verified installer or fased update." >&2
   exit 1
 }
-node_bin=""
-for candidate in "${FASED_NODE_BIN:-}" /usr/local/bin/node /usr/bin/node /usr/bin/node-24 /usr/bin/node-22; do
-  [[ -n "$candidate" && -x "$candidate" ]] || continue
-  if "$candidate" -e 'const [a,b]=process.versions.node.split(".").map(Number);if(a<22||(a===22&&b<14))process.exit(1);require("node:sqlite")' >/dev/null 2>&1; then
-    node_bin="$candidate"
-    break
-  fi
-done
-[[ -n "$node_bin" ]] || { echo "Compatible Node runtime not found for Fased." >&2; exit 1; }
+node_bin="$current/payload/bin/node"
+[[ -f "$node_bin" && ! -L "$node_bin" && -x "$node_bin" ]] || {
+  echo "Fased generation Node runtime is unavailable." >&2
+  exit 1
+}
 dependency_identity="$("$node_bin" -e '
   const fs=require("node:fs");
   const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));

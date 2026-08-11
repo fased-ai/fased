@@ -140,7 +140,7 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 	if err != nil {
 		return fmt.Errorf("target generation plugin lock: %w", err)
 	}
-	for _, relative := range []string{"bin/fased-gateway-launch", "bin/fased-signerd", "runtime/scripts/fased-signer-owner-hosting.sh"} {
+	for _, relative := range []string{"bin/fased-gateway-launch", "bin/fased-signerd", "bin/node", "runtime/scripts/fased-signer-owner-hosting.sh"} {
 		if err := requireExecutable(filepath.Join(payload, relative)); err != nil {
 			return fmt.Errorf("target generation %s: %w", relative, err)
 		}

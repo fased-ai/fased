@@ -291,6 +291,8 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
     --release-manifest "$ARTIFACT_DIR/fased-hosted-release-v2.json" \
     --signer "$ARTIFACT_DIR/fased-signerd-linux-amd64" \
     --lifecycled "$ARTIFACT_DIR/fased-lifecycled-linux-amd64" \
+    --node "$(readlink -f "$(command -v node)")" \
+    --node-license "$(dirname "$(dirname "$(readlink -f "$(command -v node)")")")/LICENSE" \
     --output-dir "$ARTIFACT_DIR" \
     --version "$VERSION" \
     --commit "$COMMIT" \

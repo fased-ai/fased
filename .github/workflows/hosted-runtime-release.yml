@@ -451,6 +451,9 @@ jobs:
             --commit "$GITHUB_SHA" \
             --output .artifacts/hosted-runtime/fased-hosted-release-v2.json
           for architecture in x64 arm64; do
+            bash scripts/fetch-node-runtime.sh "$architecture" ".artifacts/node-runtime/$architecture"
+          done
+          for architecture in x64 arm64; do
             go_arch=amd64
             if [[ "$architecture" == arm64 ]]; then go_arch=arm64; fi
             signer=".artifacts/hosted-runtime/fased-signerd-linux-${go_arch}"
@@ -464,6 +467,8 @@ jobs:
               --release-manifest .artifacts/hosted-runtime/fased-hosted-release-v2.json \
               --signer "$signer" \
               --lifecycled "$lifecycled" \
+              --node ".artifacts/node-runtime/${architecture}/node" \
+              --node-license ".artifacts/node-runtime/${architecture}/LICENSE" \
               --inventory-lifecycled "$inventory_lifecycled" \
               --output-dir .artifacts/hosted-runtime \
               --version "$package_version" \
