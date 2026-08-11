@@ -111,6 +111,12 @@ describe("attested Go lifecycle artifact layout", () => {
       "utf8",
     );
     expect(localFixture).toContain("--tmpfs /run:rw,noexec");
+    expect(localFixture).toContain(
+      "FASED_FIXTURE_PREDECESSOR_BOOTSTRAP_RUN_EXEC=$MANAGED_PREDECESSOR_BOOTSTRAP_RUN_EXEC",
+    );
+    expect(localRunner).toContain("set_run_execution_policy exec");
+    expect(localRunner).toContain("set_run_execution_policy noexec");
+    expect(localRunner).toContain("run_mount_has_option noexec");
     expect(hostingFixture).toContain("--tmpfs /run:rw,noexec");
     expect(localRunner).toContain(
       'bridge_fault_root="/var/tmp/fased-fixture-bridge-gateway-fault-$$"',

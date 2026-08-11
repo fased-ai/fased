@@ -155,6 +155,7 @@ jobs:
           FASED_SYSTEMD_FIXTURE_SCENARIOS: ${{ steps.p1-scenario.outputs.scenarios }}
           FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: ${{ matrix.predecessor }}
           FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_ARTIFACT_DIR: ${{ runner.temp }}/fased-supported-predecessor
+          FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_BOOTSTRAP_RUN_EXEC: ${{ matrix.predecessor == inputs.owner_predecessor_version && '1' || '0' }}
           FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/fased-hosting-candidate
           FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1"
           FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
