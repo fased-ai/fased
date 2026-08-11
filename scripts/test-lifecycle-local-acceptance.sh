@@ -682,8 +682,12 @@ run_fixture_scenario() {
     if [[ "${FASED_SYSTEMD_FIXTURE_COMPACT_DIAGNOSTICS:-0}" == "1" ]]; then
       run_container exec "$name" /bin/bash -lc '
         for log in \
-          /tmp/fresh-install.err \
-          /tmp/fresh-install.out \
+           /tmp/fresh-install.err \
+           /tmp/fresh-install.out \
+           /tmp/fresh-noop-installer.err \
+           /tmp/fresh-noop-installer.out \
+           /tmp/fresh-noop-update.err \
+           /tmp/fresh-noop-update.out \
           /tmp/stable-bridge-failure.err \
           /tmp/stable-bridge-failure.out \
           /tmp/stable-bridge-noop.err \

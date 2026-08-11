@@ -1233,6 +1233,7 @@ if [[ "$phase" == "fresh-install" ]]; then
     /bin/bash "$candidate_installer" \
       --release "v$version" \
       --update-channel "$fresh_channel" \
+      --gateway-port "$gateway_port" \
       --local \
       --no-onboard \
     >/tmp/fresh-noop-installer.out 2>/tmp/fresh-noop-installer.err
@@ -1354,6 +1355,7 @@ if [[ "$phase" == "managed-update" ]]; then
         /bin/bash "$candidate_installer" \
         --release "v$version" \
         --update-channel beta \
+        --gateway-port "$gateway_port" \
         --local \
         -- \
         --non-interactive \
@@ -1631,6 +1633,7 @@ EOF_MANAGED_MINING_LEDGER
       /bin/bash "$candidate_installer" \
       --release "v$version" \
       --update-channel beta \
+      --gateway-port "$gateway_port" \
       --local \
       -- \
       --non-interactive \
