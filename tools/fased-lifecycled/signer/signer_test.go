@@ -173,3 +173,24 @@ func TestFreshSignerUsesGateWithoutCallingMissingOldSigner(t *testing.T) {
 		t.Fatalf("fresh signer called a predecessor: %v", *calls)
 	}
 }
+
+func TestSameSchemaManagedUpdateUsesGateWithoutLegacyLiveHandshake(t *testing.T) {
+	participant, tx, calls := participantAndTransaction(t, false, false)
+	tx.Migrations = nil
+	receipt, err := participant.Prepare(context.Background(), tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := participant.Verify(context.Background(), tx, receipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := participant.Commit(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("same-schema update invoked a legacy live signer handshake: %v", *calls)
+	}
+	if _, err := os.Lstat(participant.resolve(participant.Config.UpdateGatePath())); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("same-schema update gate remains after commit: %v", err)
+	}
+}

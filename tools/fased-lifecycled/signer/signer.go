@@ -154,12 +154,13 @@ func (participant *Participant) request(tx model.Transaction) (UpgradeRequest, b
 	}
 	request := UpgradeRequest{SchemaVersion: 1, TransactionID: tx.ID, TargetGenerationID: tx.Target.ID,
 		StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.SignerPlanDigest, FromSchema: from, ToSchema: to}
-	// Fresh installs and the one pre-supervisor public-stable bridge have no
-	// compatible live signer protocol. The explicit migrator owns the offline
-	// custody copy; the newly started signer and Gateway health checks verify it
-	// before commit. Managed updates always bind a previous generation and use
-	// the typed live signer protocol.
-	return request, from == 0 || tx.ManifestDigest == absentManifestDigest, nil
+	// A same-schema update has no signer-owned state transformation to prepare.
+	// The root-authored gate freezes application mutations while the target
+	// transaction replaces and health-checks the signer runtime. The typed live
+	// signer lifecycle protocol is reserved for an actual schema transition.
+	// This keeps compatibility based on persisted schema rather than release
+	// names and permits older same-schema signers to be replaced atomically.
+	return request, from == 0 || from == to || tx.ManifestDigest == absentManifestDigest, nil
 }
 
 func (participant *Participant) writeGate(request UpgradeRequest) error {
