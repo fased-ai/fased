@@ -69,6 +69,25 @@ for ((index = 0; index < \${#args[@]}; index++)); do
   esac
 done
 prefix="https://github.com/fased-ai/fased/releases/download/v${version}/"
+metadata_prefix="\${prefix}lifecycle/v1/"
+if [[ "\$url" == "\$metadata_prefix"* && -n "\$output" ]]; then
+  metadata="\${url#\$metadata_prefix}"
+  if [[ "\$metadata" == beta/assets/* ]]; then
+    asset="\${metadata#beta/assets/}"
+  else
+    case "\$metadata" in
+      root.json) asset=fased-branch-root.json ;;
+      beta/delegation.json) asset=fased-branch-delegation.json ;;
+      beta/current/release-index.json|beta/v${version}/release-index.json)
+        asset=fased-branch-release-index.json
+        ;;
+      *) exit 22 ;;
+    esac
+  fi
+  [[ "\$asset" =~ ^[A-Za-z0-9._+-]+$ && -f "/artifacts/\$asset" && ! -L "/artifacts/\$asset" ]] || exit 22
+  install -m 0600 "/artifacts/\$asset" "\$output"
+  exit 0
+fi
 if [[ "\$url" == "\$prefix"* && -n "\$output" ]]; then
   asset="\${url#\$prefix}"
   [[ "\$asset" =~ ^[A-Za-z0-9._+-]+$ && -f "/artifacts/\$asset" && ! -L "/artifacts/\$asset" ]] || exit 22

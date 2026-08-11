@@ -99,7 +99,25 @@ fi
 
 cleanup_names=()
 fixture_tools_dir="$(mktemp -d "${TMPDIR:-/tmp}/fased-hosting-fixture-tools.XXXXXX")"
-git -C "$ROOT_DIR" archive "$commit" -- \
+fixture_source_commit="$commit"
+if [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ]]; then
+  git -C "$ROOT_DIR" merge-base --is-ancestor "$commit" HEAD || {
+    echo "A branch artifact can reuse only descendant Hosting fixture corrections." >&2
+    exit 1
+  }
+  unexpected_fixture_changes="$(
+    git -C "$ROOT_DIR" diff --name-only "$commit..HEAD" | \
+      grep -Ev '^(scripts/test-lifecycle-(local|hosting)-acceptance\.sh|scripts/docker/(protected-local|hosting)-systemd/lifecycle-acceptance\.sh|scripts/build-public-predecessor-capsule\.(mjs|test\.ts)|scripts/prepare-branch-predecessor-capsule\.sh)$' || true
+  )"
+  [[ -z "$unexpected_fixture_changes" ]] || {
+    echo "Branch artifact reuse rejected product changes:" >&2
+    printf '%s\n' "$unexpected_fixture_changes" >&2
+    exit 1
+  }
+  fixture_source_commit="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+  echo "Hosting branch artifact reuse: product=$commit fixture=$fixture_source_commit"
+fi
+git -C "$ROOT_DIR" archive "$fixture_source_commit" -- \
   scripts/lifecycle-acceptance-contract.mjs \
   scripts/lifecycle-receipt-verifier.mjs \
   scripts/lifecycle-installed-state-capsule.mjs \
