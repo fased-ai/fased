@@ -385,7 +385,7 @@ run_operator_acceptance() {
 }
 
 run_public_updater() {
-  runuser -u app -- env HOME=/home/app /home/app/.fased/bin/fased update \
+  env HOME=/home/app /home/app/.fased/bin/fased update \
     --channel beta --timeout 120
 }
 
