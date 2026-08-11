@@ -24,7 +24,7 @@ fixture_tls="$fixture_transport_root/tls"
 diagnostics() {
   local status=$?
   if [[ "$status" -ne 0 ]]; then
-    for receipt in /tmp/fased-hosting-{install,noop,reboot-noop}.{out,err}; do
+    for receipt in /tmp/fased-hosting-{install,noop,update-noop,reboot-noop}.{out,err}; do
       if [[ -f "$receipt" ]]; then
         printf '\n--- %s ---\n' "$receipt" >&2
         sed -n '1,120p' "$receipt" >&2
@@ -65,7 +65,7 @@ install_release_transport_fixture() {
     -keyout "$fixture_tls/github.key" \
     -out "$fixture_tls/github.csr" >/dev/null 2>&1
   cat >"$fixture_tls/github.ext" <<'EOF_FIXTURE_TLS_EXT'
-subjectAltName=DNS:github.com
+subjectAltName=DNS:github.com,DNS:registry.npmjs.org
 keyUsage=digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth
 EOF_FIXTURE_TLS_EXT
@@ -89,6 +89,8 @@ EOF_FIXTURE_TLS_EXT
   fi
   grep -Fqx "127.0.0.1 github.com" /etc/hosts ||
     printf '127.0.0.1 github.com\n' >>/etc/hosts
+  grep -Fqx "127.0.0.1 registry.npmjs.org" /etc/hosts ||
+    printf '127.0.0.1 registry.npmjs.org\n' >>/etc/hosts
   cat >/usr/local/libexec/fased-hosting-release-server.mjs <<'EOF_RELEASE_SERVER'
 import fs from "node:fs";
 import https from "node:https";
@@ -123,6 +125,15 @@ https.createServer(
   (request, response) => {
     if (request.method !== "GET" || !request.url) {
       response.writeHead(404).end();
+      return;
+    }
+    if (request.url === "/@fased%2ffased/beta" || request.url === "/@fased%2ffased/latest") {
+      const body = JSON.stringify({ version });
+      response.writeHead(200, {
+        "content-type": "application/json",
+        "content-length": Buffer.byteLength(body),
+      });
+      response.end(body);
       return;
     }
     if (request.url.startsWith(metadataPrefix)) {
