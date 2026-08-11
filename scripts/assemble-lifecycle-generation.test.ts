@@ -24,6 +24,8 @@ describe("lifecycle generation plugin lock", () => {
         `export default ${JSON.stringify(id)};\n`,
       );
     }
+    await fs.mkdir(path.join(root, "extensions", "shared"), { recursive: true });
+    await fs.writeFile(path.join(root, "extensions", "shared", "helper.js"), "export {};\n");
 
     const digest = await writeBundledPluginLock(root);
     const raw = await fs.readFile(path.join(root, "plugin.lock.json"), "utf8");

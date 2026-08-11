@@ -77,9 +77,15 @@ export async function writeBundledPluginLock(runtimeRoot) {
       continue;
     }
     const pluginRoot = path.join(extensionsRoot, entry.name);
-    const manifest = JSON.parse(
-      await fs.readFile(path.join(pluginRoot, "fased.plugin.json"), "utf8"),
-    );
+    let manifest;
+    try {
+      manifest = JSON.parse(await fs.readFile(path.join(pluginRoot, "fased.plugin.json"), "utf8"));
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        continue;
+      }
+      throw error;
+    }
     if (manifest?.id !== entry.name || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(manifest.id)) {
       throw new Error(`bundled plugin identity is invalid: ${entry.name}`);
     }
