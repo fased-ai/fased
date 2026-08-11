@@ -619,6 +619,21 @@ func TestImportGenerationCopiesAndReverifiesExactBytes(t *testing.T) {
 	if second, err := state.ImportGeneration(source); err != nil || second != expected {
 		t.Fatalf("idempotent import failed: %+v err=%v", second, err)
 	}
+	authority := CandidateAuthority{SchemaVersion: 1, GenerationID: expected.ID, ReleaseSequence: 12, SecurityEpoch: 3, ReleaseIndex: digestA, Delegation: digestB}
+	if err := state.BindCandidateAuthority(authority); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.BindCandidateAuthority(authority); err != nil {
+		t.Fatalf("exact authority retry failed: %v", err)
+	}
+	if read, err := state.ReadCandidateAuthority(expected.ID); err != nil || read != authority {
+		t.Fatalf("candidate authority changed: %+v err=%v", read, err)
+	}
+	changed := authority
+	changed.ReleaseSequence++
+	if err := state.BindCandidateAuthority(changed); err == nil {
+		t.Fatal("candidate release sequence was rebound")
+	}
 	importedAlias := filepath.Join(state.inboxGenerationPath(expected.ID), generationPayloadName, "bin", "alias")
 	if target, err := os.Readlink(importedAlias); err != nil || target != "fased" {
 		t.Fatalf("safe imported symlink was not preserved: target=%q err=%v", target, err)

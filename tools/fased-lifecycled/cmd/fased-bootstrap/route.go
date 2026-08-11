@@ -219,7 +219,9 @@ func resolveOperator(name string, profile model.Profile) (publicOperator, error)
 func invokeLifecycleHost(ctx context.Context, request publicLifecycleRequest, operator publicOperator, result bootstrapResult, output io.Writer) (string, error) {
 	args := []string{"initialize", "--profile", string(request.Profile), "--operator-user", operator.Name,
 		"--owner-state", filepath.Join(operator.Home, ".fased"), "--gateway-port", strconv.Itoa(int(request.GatewayPort)),
-		"--generation-archive", result.ApplicationPath, "--dependency-archive", result.DependencyPath}
+		"--generation-archive", result.ApplicationPath, "--dependency-archive", result.DependencyPath,
+		"--release-sequence", strconv.FormatUint(result.ReleaseSequence, 10), "--security-epoch", strconv.FormatUint(result.SecurityEpoch, 10),
+		"--release-index-digest", result.ReleaseIndexDigest, "--delegation-digest", result.DelegationDigest}
 	command := exec.CommandContext(ctx, result.HostPath, args...)
 	data, err := command.Output()
 	if err != nil {

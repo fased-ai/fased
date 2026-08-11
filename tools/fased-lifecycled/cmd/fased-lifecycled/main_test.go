@@ -109,24 +109,28 @@ func TestInitializationApplyArgumentsSelectsOneVerifiedInput(t *testing.T) {
 	archive := filepath.Join(t.TempDir(), "generation.tar.gz")
 	topology := "local-user-systemd-v1"
 	dependency := filepath.Join(t.TempDir(), "dependencies.tar.gz")
-	got, err := initializationApplyArguments("/platform.json", "", archive, dependency, topology, "0.1.75")
+	indexDigest, delegationDigest := "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64)
+	got, err := initializationApplyArguments("/platform.json", "", archive, dependency, topology, "0.1.75", 12, 3, indexDigest, delegationDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"--config", "/platform.json", "--generation-archive", archive, "--dependency-archive", dependency, "--source-topology", topology, "--public-predecessor-version", "0.1.75"}
+	want := []string{"--config", "/platform.json", "--generation-archive", archive, "--release-sequence", "12", "--security-epoch", "3", "--release-index-digest", indexDigest, "--delegation-digest", delegationDigest, "--dependency-archive", dependency, "--source-topology", topology, "--public-predecessor-version", "0.1.75"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("arguments = %#v, want %#v", got, want)
 	}
 	for _, input := range [][2]string{{"", ""}, {"/generation", archive}, {"relative", ""}} {
-		if _, err := initializationApplyArguments("/platform.json", input[0], input[1], "", "", ""); err == nil {
+		if _, err := initializationApplyArguments("/platform.json", input[0], input[1], "", "", "", 12, 3, indexDigest, delegationDigest); err == nil {
 			t.Fatalf("expected generation inputs %#v to be rejected", input)
 		}
 	}
-	if _, err := initializationApplyArguments("/platform.json", "", archive, "", topology, ""); err == nil {
+	if _, err := initializationApplyArguments("/platform.json", "", archive, "", topology, "", 12, 3, indexDigest, delegationDigest); err == nil {
 		t.Fatal("bridge apply accepted missing predecessor version")
 	}
-	if _, err := initializationApplyArguments("/platform.json", "", archive, "", "", "0.1.75"); err == nil {
+	if _, err := initializationApplyArguments("/platform.json", "", archive, "", "", "0.1.75", 12, 3, indexDigest, delegationDigest); err == nil {
 		t.Fatal("bridge apply accepted predecessor version without topology")
+	}
+	if _, err := initializationApplyArguments("/platform.json", "", archive, "", "", "", 0, 0, "", ""); err == nil {
+		t.Fatal("initialization accepted missing signed release authority")
 	}
 }
 

@@ -100,6 +100,10 @@ func (state fakeStore) ReadCandidateContract(id string) (bundle.Inventory, model
 	return state.inventory, state.generation, nil
 }
 
+func (state fakeStore) ReadCandidateAuthority(id string) (store.CandidateAuthority, error) {
+	return store.CandidateAuthority{SchemaVersion: 1, GenerationID: id, ReleaseSequence: 12, SecurityEpoch: 3, ReleaseIndex: digestA, Delegation: digestB}, nil
+}
+
 type fakeInventory struct {
 	calls int
 }
@@ -213,6 +217,9 @@ func TestConvergeBuildsTransactionFromStoredContract(t *testing.T) {
 	if supervisor.tx.ID != transactionID || supervisor.tx.Target != target || supervisor.tx.MigrationPlanDigest == "" || supervisor.tx.SignerPlanDigest != digestB {
 		t.Fatalf("transaction was not bound from stored evidence: %+v", supervisor.tx)
 	}
+	if supervisor.tx.ReleaseSequence != 12 || supervisor.tx.SecurityEpoch != 3 {
+		t.Fatalf("transaction lost root-bound release authority: %+v", supervisor.tx)
+	}
 	if supervisor.tx.PlanAction != string(planner.ActionInstall) || supervisor.tx.SourceTopology != "" {
 		t.Fatalf("fresh transaction lost its planner identity: %+v", supervisor.tx)
 	}
@@ -231,7 +238,7 @@ func testCompleteOnboardingUsesCommittedManifestAndTargetController(t *testing.T
 	_, target := targetContract()
 	identity := platformFor(profile)
 	manifest := model.Manifest{SchemaVersion: model.CurrentManifestSchemaVersion, Profile: profile,
-		Platform: identity, ActiveGeneration: &target, StateSchemas: map[string]uint32{"signer": 2}, Capabilities: capabilities()}
+		Platform: identity, ActiveGeneration: &target, StateSchemas: map[string]uint32{"signer": 2}, Capabilities: capabilities(), ReleaseSequence: 12, SecurityEpoch: 3}
 	completion := &fakeOnboarding{}
 	service := Service{Profile: profile, Platform: identity,
 		Store: fakeStore{manifest: &manifest, manifestDigest: digestA}, Inventory: &fakeInventory{}, Supervisor: &fakeSupervisor{}, Onboarding: completion}

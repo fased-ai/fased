@@ -41,14 +41,16 @@ type bootstrapRequest struct {
 }
 
 type bootstrapResult struct {
-	Version         string
-	ReleaseSequence uint64
-	SecurityEpoch   uint64
-	HostDigest      string
-	HostPath        string
-	ApplicationPath string
-	DependencyPath  string
-	SignerPath      string
+	Version            string
+	ReleaseSequence    uint64
+	SecurityEpoch      uint64
+	HostDigest         string
+	HostPath           string
+	ApplicationPath    string
+	DependencyPath     string
+	SignerPath         string
+	ReleaseIndexDigest string
+	DelegationDigest   string
 }
 
 func main() {
@@ -185,6 +187,7 @@ func execute(ctx context.Context, request bootstrapRequest) (bootstrapResult, er
 		Version: index.Version, ReleaseSequence: index.ReleaseSequence, SecurityEpoch: index.SecurityEpoch,
 		HostDigest: staged.Digest, HostPath: staged.Path,
 		ApplicationPath: application, DependencyPath: dependency, SignerPath: signer,
+		ReleaseIndexDigest: verifiedIndex.Digest(), DelegationDigest: verifiedIndex.DelegationDigest(),
 	}, nil
 }
 

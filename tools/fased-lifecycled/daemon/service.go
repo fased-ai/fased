@@ -26,6 +26,7 @@ type StateStore interface {
 	ReadManifest() (model.Manifest, string, error)
 	ReadJournal(store.Authority, string) (model.Transaction, error)
 	ReadCandidateContract(string) (bundle.Inventory, model.Generation, error)
+	ReadCandidateAuthority(string) (store.CandidateAuthority, error)
 }
 
 type PendingTransactionStore interface {
@@ -208,12 +209,17 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 	if err != nil {
 		return protocol.Response{}, err
 	}
+	authority, err := service.Store.ReadCandidateAuthority(request.TargetGenerationID)
+	if err != nil {
+		return protocol.Response{}, err
+	}
 	if inventory.Capabilities.Supervisor.Min > supervisorCapability || inventory.Capabilities.Supervisor.Max < supervisorCapability {
 		return protocol.Response{}, errors.New("target generation requires an unsupported stable supervisor capability")
 	}
 	plan, err := planner.BuildForInstallation(installation, planner.Target{
 		Profile: service.Profile, Generation: generation,
 		StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities,
+		ReleaseSequence: authority.ReleaseSequence, SecurityEpoch: authority.SecurityEpoch,
 	})
 	if err != nil {
 		return protocol.Response{}, err
@@ -258,6 +264,7 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 		SchemaVersion: model.CurrentTransactionSchemaVersion, ID: transactionID,
 		Profile: service.Profile, PlanAction: string(plan.Action), SourceTopology: request.SourceTopology, PublicPredecessorVersion: request.PublicPredecessorVersion,
 		Phase: model.PhaseIdle, Revision: 1,
+		ReleaseSequence: authority.ReleaseSequence, SecurityEpoch: authority.SecurityEpoch,
 		Target: generation, Previous: previous, ManifestDigest: manifestDigest,
 		TargetStateSchemas: inventory.StateSchemas, TargetCapabilities: inventory.Capabilities,
 		StateInventoryDigest: stateDigest, MigrationPlanDigest: plan.Digest,
