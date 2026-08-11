@@ -480,10 +480,11 @@ case "$phase" in
     test "$(jq -er .profile /home/app/.fased/install.json)" = hosting
     test "$(jq -er .runtime.activeVersion /home/app/.fased/install.json)" = "$predecessor_version"
     sha256sum \
-      /home/app/.fased/fased.json \
       /home/app/.fased/identity/device.json \
       /home/app/.fased/wallet/provider-registry.v1.json \
       >/tmp/fased-hosting-predecessor-state.sha256
+    jq -S 'del(.gateway.mode)' /home/app/.fased/fased.json \
+      >/tmp/fased-hosting-predecessor-config-without-mode.json
     acceptance_start
 
     fault_dir=/etc/systemd/system/fased-gateway.service.d
@@ -513,6 +514,7 @@ EOF_TARGET_DROPIN
     rmdir "$fault_dir" 2>/dev/null || true
     systemctl daemon-reload
     wait_for_gateway_version "$predecessor_version"
+    test "$(jq -er .gateway.mode /home/app/.fased/fased.json)" = remote
     sha256sum --check /tmp/fased-hosting-predecessor-state.sha256
 
     run_public_installer >/tmp/fased-hosting-update.out 2>/tmp/fased-hosting-update.err
@@ -525,8 +527,14 @@ EOF_TARGET_DROPIN
     acceptance_mark three-services-active /tmp/fased-hosting-three-services.out \
       "three Hosting services active"
     run_operator_acceptance
-    sha256sum --check /tmp/fased-hosting-predecessor-state.sha256 \
-      >/tmp/fased-hosting-update-state-preservation.out
+    test "$(jq -er .gateway.mode /home/app/.fased/fased.json)" = local
+    jq -S 'del(.gateway.mode)' /home/app/.fased/fased.json \
+      >/tmp/fased-hosting-target-config-without-mode.json
+    {
+      sha256sum --check /tmp/fased-hosting-predecessor-state.sha256
+      cmp /tmp/fased-hosting-predecessor-config-without-mode.json \
+        /tmp/fased-hosting-target-config-without-mode.json
+    } >/tmp/fased-hosting-update-state-preservation.out
     acceptance_mark state-preservation /tmp/fased-hosting-update-state-preservation.out \
       "predecessor state preserved"
     systemctl restart fased-host-updater.service fased-signerd.service fased-gateway.service

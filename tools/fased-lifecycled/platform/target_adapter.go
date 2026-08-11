@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -198,6 +199,10 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 		if err != nil {
 			return err
 		}
+		data, err = canonicalGatewayConfigForTransaction(adapter.Config, tx, data)
+		if err != nil {
+			return err
+		}
 		gid, err := canonicalConfigGroupGID(adapter.Config.OwnerStateRoot, adapter.Config.Operator.UID)
 		if err != nil {
 			return err
@@ -205,6 +210,43 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 		files[configPath] = LifecycleFile{Data: data, Mode: 0o660, UID: adapter.Config.Operator.UID, GID: gid}
 	}
 	return adapter.Files.Prepare(tx.ID, files)
+}
+
+func canonicalGatewayConfigForTransaction(config Config, tx model.Transaction, data []byte) ([]byte, error) {
+	if config.Profile != model.ProfileHosting || tx.PlanAction != "BRIDGE_PUBLIC_STABLE" {
+		return data, nil
+	}
+	declared := false
+	for _, migration := range tx.Migrations {
+		if migration.State == "configuration" && migration.From == 0 && migration.To == 1 {
+			declared = true
+			break
+		}
+	}
+	if !declared {
+		return nil, errors.New("Hosting public-stable bridge lacks its declared configuration migration")
+	}
+	var document map[string]any
+	if err := json.Unmarshal(data, &document); err != nil {
+		return nil, errors.New("Hosting public-stable Gateway configuration is invalid")
+	}
+	gateway, ok := document["gateway"].(map[string]any)
+	if !ok {
+		return nil, errors.New("Hosting public-stable Gateway configuration is missing")
+	}
+	mode, ok := gateway["mode"].(string)
+	if !ok || (mode != "remote" && mode != "local") {
+		return nil, errors.New("Hosting public-stable Gateway mode is unsupported")
+	}
+	if mode == "local" {
+		return data, nil
+	}
+	gateway["mode"] = "local"
+	encoded, err := json.MarshalIndent(document, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(encoded, '\n'), nil
 }
 
 func (adapter *TargetAdapter) Quiesce(ctx context.Context, tx model.Transaction) error {

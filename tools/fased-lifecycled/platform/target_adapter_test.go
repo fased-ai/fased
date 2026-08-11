@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -557,6 +558,32 @@ func TestFreshHostingInstallDefersGatewayUntilOnboarding(t *testing.T) {
 	}
 	if got := strings.Join(calls, ","); strings.Contains(got, identity.Services["gateway"]) {
 		t.Fatalf("fresh Hosting started Gateway before onboarding: %s", got)
+	}
+}
+
+func TestHostingPublicStableBridgeTransactionallyNormalizesGatewayMode(t *testing.T) {
+	config, err := NewConfig(model.ProfileHosting, "hosting", "/home/app/.fased",
+		Principal{UID: 1000, GID: 1000}, Principal{UID: 1001, GID: 1001}, Principal{UID: 1002, GID: 1002})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := model.Transaction{PlanAction: "BRIDGE_PUBLIC_STABLE", Migrations: []model.Migration{{State: "configuration", From: 0, To: 1}}}
+	original := []byte(`{"gateway":{"mode":"remote","bind":"loopback","auth":{"token":"preserved"},"remote":{"token":"preserved"}},"agents":{"defaults":{"workspace":"/home/app/.fased/workspace"}}}`)
+	migrated, err := canonicalGatewayConfigForTransaction(config, tx, original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(migrated, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	gateway := decoded["gateway"].(map[string]any)
+	if gateway["mode"] != "local" || gateway["bind"] != "loopback" || gateway["auth"].(map[string]any)["token"] != "preserved" || gateway["remote"].(map[string]any)["token"] != "preserved" {
+		t.Fatalf("Hosting configuration migration lost preserved values: %s", migrated)
+	}
+	tx.Migrations = nil
+	if _, err := canonicalGatewayConfigForTransaction(config, tx, original); err == nil {
+		t.Fatal("Hosting bridge normalized configuration without a declared migration")
 	}
 }
 
