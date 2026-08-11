@@ -8,6 +8,8 @@ const networkAdmin = read("./fased-signer-network-hosting.sh");
 const onboardingHostSecurity = read("../src/wizard/onboarding.host-security.ts");
 const targetAdapter = read("../tools/fased-lifecycled/platform/target_adapter.go");
 const networkPolicy = read("../tools/fased-lifecycled/platform/network_policy.go");
+const bootstrap = read("../tools/fased-lifecycled/cmd/fased-bootstrap/main.go");
+const bootstrapRoute = read("../tools/fased-lifecycled/cmd/fased-bootstrap/route.go");
 
 function sliceBetween(source: string, start: string, end: string): string {
   const startIndex = source.indexOf(start);
@@ -19,15 +21,15 @@ function sliceBetween(source: string, start: string, end: string): string {
 
 describe("hosted signer security boundary", () => {
   it("enters privileged Hosting setup only through an immutable attested Go bundle", () => {
-    expect(install).toContain("bootstrap_hosting_attested_bundle()");
-    expect(install).toContain("verify_release_attestation_source()");
-    expect(install).toContain('--source-ref "refs/tags/v${release_version}"');
-    expect(install).not.toContain('--source-ref "refs/heads/main"');
-    expect(install).toContain("root_owned_bundle_tree_is_secure()");
-    expect(install).toContain('enter_go_lifecycle_bundle "$root_store"');
-    expect(install).toContain("/var/lib/fased-installer/install.lock");
-    expect(install).toContain("flock -x 9");
-    expect(install).toContain('local root_store="${release_parent}/${actual}"');
+    expect(install).toContain('bootstrap_asset="fased-bootstrap-linux-${arch}"');
+    expect(install).toContain("--proto '=https' --tlsv1.2");
+    expect(install).toContain('[[ "$actual_sha256" == "$bootstrap_sha256" ]]');
+    expect(install).toContain('install -m 0555 "$download" "$bootstrap"');
+    expect(install).toContain('"${root_command[@]}" "$bootstrap" "${bootstrap_args[@]}"');
+    expect(bootstrap).toContain("trust.VerifyInitialRoot");
+    expect(bootstrap).toContain("trust.VerifyRootRotation");
+    expect(bootstrap).toContain("trust.VerifyDelegation");
+    expect(bootstrap).toContain("trust.VerifyReleaseIndex");
     expect(install).not.toContain("install_host_signer_and_updater_services()");
     expect(install).not.toContain("migrate_legacy_hosted_signer_if_needed()");
     expect(install).not.toContain("fased-host-updater.mjs");
@@ -39,8 +41,9 @@ describe("hosted signer security boundary", () => {
     expect(install).not.toContain("FASED_HOST_BOOTSTRAP_SOCKET=");
     expect(install).not.toContain("node /usr/local/libexec/fased-host-bootstrapd.mjs");
     expect(install).not.toContain("fased-lifecycle-supervisor.mjs");
-    expect(install).toContain("FASED_HOST_ROOT_PREPARED=1");
-    expect(install).toContain("/opt/fased/lifecycle/supervisor-v1/fased-lifecycled request");
+    expect(bootstrapRoute).toContain("public lifecycle operation requires root authorization");
+    expect(bootstrapRoute).toContain("invokeLifecycleHost");
+    expect(bootstrapRoute).toContain("FASED_HOST_ROOT_PREPARED=1");
   });
 
   it("cold starts use the external system signer and never start a hosted broker", () => {
