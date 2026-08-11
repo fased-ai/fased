@@ -637,6 +637,9 @@ describe("CI workflow routing", () => {
       "fail-fast": false,
       matrix: { predecessor: "${{ fromJSON(needs.preflight.outputs.p1_predecessors) }}" },
     });
+    expect(
+      p1Update?.steps?.find((step) => step.name === "Derive exact predecessor topology")?.env,
+    ).toMatchObject({ GH_TOKEN: "${{ github.token }}" });
     expect(preflightText).toContain("ownerPredecessorVersion");
     expect(preflightText).toContain("[$stable,$owner] | unique");
     expect(p1Update?.steps?.some((step) => usesAction(step, "actions/cache"))).toBe(true);
@@ -704,7 +707,7 @@ describe("CI workflow routing", () => {
     ).toBe("fased-pre-candidate-evidence");
   });
 
-  it("keeps Hosted Runtime Release as the sole GitHub Release publisher", async () => {
+  it("keeps every GitHub Release publisher behind immutable evidence and protection", async () => {
     const dockerWorkflow = await readFile(
       resolve(repoRoot, ".github/workflows/docker-release.yml"),
       "utf8",
@@ -713,10 +716,27 @@ describe("CI workflow routing", () => {
       resolve(repoRoot, ".github/workflows/hosted-runtime-release.yml"),
       "utf8",
     );
+    const retryWorkflow = await readWorkflow(".github/workflows/candidate-p1-retry.yml");
 
     expect(dockerWorkflow).not.toContain("gh release create");
     expect(dockerWorkflow).not.toContain("gh release upload");
     expect(hostedWorkflow).toContain('gh release create "$RELEASE_TAG"');
+    expect(retryWorkflow.jobs?.publish?.environment).toBe("candidate-release");
+    expect(retryWorkflow.jobs?.publish?.needs).toEqual(["validate", "retry-update"]);
+    expect(retryWorkflow.jobs?.["retry-update"]?.strategy).toMatchObject({
+      "fail-fast": false,
+    });
+    const retryText = Object.values(retryWorkflow.jobs ?? {})
+      .flatMap((job) => job.steps ?? [])
+      .map((step) => step.run ?? "")
+      .join("\n");
+    expect(retryText).toContain('"$SOURCE_COMMIT"..HEAD');
+    expect(retryText).toContain("refs/tags/v$RELEASE_VERSION");
+    expect(retryText).toContain('--workflow-run-id "$CANDIDATE_RUN_ID"');
+    expect(retryText).toContain("privileged-release-evidence.mjs verify");
+    expect(retryText).toContain("release-artifact-set.mjs verify-assets");
+    expect(retryText).not.toContain("pnpm build");
+    expect(retryText).not.toContain("go build");
   });
 
   it("selects beta for every prerelease target in the Protected Local fixture", async () => {
