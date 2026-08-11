@@ -18,6 +18,8 @@ predecessor_capsule_descriptor=/predecessor-capsule/fased-predecessor-capsule.js
 predecessor_capsule_attestation=/predecessor-capsule/fased-predecessor-capsule.json.attestation.json
 predecessor_capsule_branch_proof=/predecessor-capsule/fased-predecessor-branch-proof.json
 predecessor_capsule_authorization=/run/fased-predecessor-capsule-fixture-authorized
+fixture_transport_root=/var/lib/fased-hosting-fixture
+fixture_tls="$fixture_transport_root/tls"
 
 diagnostics() {
   local status=$?
@@ -53,6 +55,119 @@ install_release_transport_fixture() {
   install -d -m 0755 -o root -g root /usr/local/libexec
   install -m 0755 -o root -g root /usr/bin/curl \
     /usr/local/libexec/fased-fixture-curl-real
+  install -d -m 0755 -o root -g root "$fixture_tls"
+  openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
+    -subj "/CN=Fased Hosting lifecycle fixture CA" \
+    -keyout "$fixture_tls/ca.key" \
+    -out "$fixture_tls/ca.crt" >/dev/null 2>&1
+  openssl req -newkey rsa:2048 -sha256 -nodes \
+    -subj "/CN=github.com" \
+    -keyout "$fixture_tls/github.key" \
+    -out "$fixture_tls/github.csr" >/dev/null 2>&1
+  cat >"$fixture_tls/github.ext" <<'EOF_FIXTURE_TLS_EXT'
+subjectAltName=DNS:github.com
+keyUsage=digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+EOF_FIXTURE_TLS_EXT
+  openssl x509 -req -sha256 -days 2 \
+    -in "$fixture_tls/github.csr" \
+    -CA "$fixture_tls/ca.crt" \
+    -CAkey "$fixture_tls/ca.key" \
+    -CAcreateserial \
+    -extfile "$fixture_tls/github.ext" \
+    -out "$fixture_tls/github.crt" >/dev/null 2>&1
+  chmod 0600 "$fixture_tls/ca.key" "$fixture_tls/github.key"
+  chmod 0644 "$fixture_tls/ca.crt" "$fixture_tls/github.crt"
+  if command -v update-ca-certificates >/dev/null 2>&1; then
+    install -m 0644 "$fixture_tls/ca.crt" \
+      /usr/local/share/ca-certificates/fased-hosting-fixture.crt
+    update-ca-certificates >/dev/null
+  else
+    install -m 0644 "$fixture_tls/ca.crt" \
+      /etc/pki/ca-trust/source/anchors/fased-hosting-fixture.crt
+    update-ca-trust extract
+  fi
+  grep -Fqx "127.0.0.1 github.com" /etc/hosts ||
+    printf '127.0.0.1 github.com\n' >>/etc/hosts
+  cat >/usr/local/libexec/fased-hosting-release-server.mjs <<'EOF_RELEASE_SERVER'
+import fs from "node:fs";
+import https from "node:https";
+import path from "node:path";
+
+const version = process.env.FASED_FIXTURE_VERSION;
+const assets = "/artifacts";
+const prefix = `/fased-ai/fased/releases/download/v${version}/`;
+const metadataPrefix = `${prefix}lifecycle/v1/`;
+
+function serve(response, name) {
+  if (!/^[A-Za-z0-9._+-]+$/.test(name)) {
+    response.writeHead(400).end();
+    return;
+  }
+  const selected = path.join(assets, name);
+  try {
+    const stat = fs.lstatSync(selected);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("unsafe asset");
+    response.writeHead(200, { "content-length": stat.size });
+    fs.createReadStream(selected).pipe(response);
+  } catch {
+    response.writeHead(404).end();
+  }
+}
+
+https.createServer(
+  {
+    key: fs.readFileSync("/var/lib/fased-hosting-fixture/tls/github.key"),
+    cert: fs.readFileSync("/var/lib/fased-hosting-fixture/tls/github.crt"),
+  },
+  (request, response) => {
+    if (request.method !== "GET" || !request.url) {
+      response.writeHead(404).end();
+      return;
+    }
+    if (request.url.startsWith(metadataPrefix)) {
+      const metadata = request.url.slice(metadataPrefix.length);
+      if (metadata.startsWith("beta/assets/")) {
+        serve(response, decodeURIComponent(metadata.slice("beta/assets/".length)));
+        return;
+      }
+      const selected = {
+        "root.json": "fased-branch-root.json",
+        "beta/delegation.json": "fased-branch-delegation.json",
+        "beta/current/release-index.json": "fased-branch-release-index.json",
+        [`beta/v${version}/release-index.json`]: "fased-branch-release-index.json",
+      }[metadata];
+      if (selected) {
+        serve(response, selected);
+        return;
+      }
+    } else if (request.url.startsWith(prefix)) {
+      serve(response, decodeURIComponent(request.url.slice(prefix.length)));
+      return;
+    }
+    response.writeHead(404).end();
+  },
+).listen(443, "127.0.0.1");
+EOF_RELEASE_SERVER
+  FASED_FIXTURE_VERSION="$version" \
+    /fixture-tools/node /usr/local/libexec/fased-hosting-release-server.mjs \
+    >/tmp/fased-hosting-release-server.log 2>&1 &
+  fixture_release_server_pid=$!
+  for _ in {1..40}; do
+    kill -0 "$fixture_release_server_pid" 2>/dev/null || {
+      cat /tmp/fased-hosting-release-server.log >&2
+      return 1
+    }
+    if /usr/local/libexec/fased-fixture-curl-real -fsS \
+      "https://github.com/fased-ai/fased/releases/download/v${version}/lifecycle/v1/root.json" \
+      >/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+  /usr/local/libexec/fased-fixture-curl-real -fsS \
+    "https://github.com/fased-ai/fased/releases/download/v${version}/lifecycle/v1/root.json" \
+    >/dev/null
   cat >/usr/bin/curl <<EOF_FIXTURE_CURL
 #!/usr/bin/env bash
 set -euo pipefail
