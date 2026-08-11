@@ -20,7 +20,7 @@ import (
 	"fased-lifecycled/trust"
 )
 
-const productionPinnedRootSHA256 = "23d3e8235a39729d6ae37a5784eaa717a47e4ac725f5a416e78754ad9b4618ca"
+const productionPinnedRootSHA256 = "23d3e8235a39729d6ae37a5784eaa717a47e4ac725f5a416e78754ad9b4618ca" // pragma: allowlist secret
 
 // These values are set with linker flags only for non-publishable branch
 // acceptance artifacts. Production builds leave both empty and therefore

@@ -197,7 +197,8 @@ func TestOnboardingCommandBindsCanonicalProfileEnvironment(t *testing.T) {
 	for _, required := range []string{
 		"HOME=/home/owner", "FASED_STATE_DIR=/home/owner/.fased", "FASED_CONFIG_PATH=/home/owner/.fased/fased.json",
 		"FASED_INSTALLER_ONBOARD=1", "FASED_INSTALL_LIFECYCLE_COMMITTED=1", "FASED_PROTECTED_LOCAL=1",
-		"FASED_PROTECTED_LOCAL_INSTANCE=0123456789abcdef", "FASED_WALLET_LOCAL_SIGNER_SOCKET=" + local.ApplicationSocket(),
+		"FASED_PROTECTED_LOCAL_INSTANCE=0123456789abcdef", // pragma: allowlist secret
+		"FASED_WALLET_LOCAL_SIGNER_SOCKET=" + local.ApplicationSocket(),
 		"FASED_HOST_UPDATER_SOCKET=" + local.SupervisorSocket(),
 	} {
 		if !strings.Contains(localArgs, required) {
