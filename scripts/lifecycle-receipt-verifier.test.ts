@@ -28,7 +28,7 @@ describe("lifecycle receipt verifier", () => {
       acquisition: {
         mode: "immutable-github-release",
         releaseBaseUrl,
-        metadataBaseUrl: `${releaseBaseUrl}/lifecycle/v1`,
+        metadataBaseUrl: releaseBaseUrl,
         transportSubstituted: false,
         trustInventoryDigest: sha,
       },
@@ -73,7 +73,7 @@ describe("lifecycle receipt verifier", () => {
       acquisition: {
         mode: "substituted-fixture",
         releaseBaseUrl,
-        metadataBaseUrl: `${releaseBaseUrl}/lifecycle/v1`,
+        metadataBaseUrl: releaseBaseUrl,
         transportSubstituted: true,
         trustInventoryDigest: sha,
       },

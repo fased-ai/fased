@@ -18,6 +18,7 @@ import (
 
 	"fased-lifecycled/model"
 	"fased-lifecycled/platform"
+	"fased-lifecycled/trust"
 )
 
 const (
@@ -29,6 +30,7 @@ const (
 
 type publicReleaseRoute struct {
 	RootURL, IndexURL, IndexAttestationURL, ReleaseBaseURL, PinnedRootSHA256 string
+	VerifyIndex                                                              releaseIndexVerifier
 }
 
 type publicLifecycleRequest struct {
@@ -87,6 +89,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		IndexAttestationURL: releaseRoute.IndexAttestationURL, ReleaseBaseURL: releaseRoute.ReleaseBaseURL,
 		Channel: request.Channel, Version: request.Version, Architecture: architecture(),
 		PinnedRootSHA256: releaseRoute.PinnedRootSHA256, OwnerUID: 0, Now: time.Now().UTC(), Inspect: inspectLifecycleHost,
+		VerifyIndex: releaseRoute.VerifyIndex,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -143,7 +146,28 @@ func publicTrustRoute(version string) (publicReleaseRoute, error) {
 	if branchFixtureMetadataBase != expectedBase || len(branchFixturePinnedRootSHA256) != 64 {
 		return publicReleaseRoute{}, errors.New("branch fixture trust route is malformed")
 	}
-	return immutableReleaseRoute(branchFixtureMetadataBase, branchFixturePinnedRootSHA256), nil
+	route := immutableReleaseRoute(branchFixtureMetadataBase, branchFixturePinnedRootSHA256)
+	// Branch proof binaries are explicitly non-publishable. Their third fetched
+	// trust object is a root-signed delegation rather than a GitHub attestation,
+	// allowing exact unpublished bytes to be exercised without weakening the
+	// ordinary production verifier.
+	route.VerifyIndex = verifyDelegatedBranchReleaseIndex
+	return route, nil
+}
+
+func verifyDelegatedBranchReleaseIndex(root trust.VerifiedRoot, indexJSON, delegationJSON []byte, now time.Time) (bootstrapVerifiedReleaseIndex, error) {
+	delegation, err := trust.VerifyDelegation(root, delegationJSON, now)
+	if err != nil {
+		return bootstrapVerifiedReleaseIndex{}, err
+	}
+	verified, err := trust.VerifyReleaseIndex(delegation, indexJSON, now)
+	if err != nil {
+		return bootstrapVerifiedReleaseIndex{}, err
+	}
+	return bootstrapVerifiedReleaseIndex{
+		Index: verified.Index(), Digest: verified.Digest(),
+		ReleaseAuthorityDigest: verified.ReleaseAuthorityDigest(),
+	}, nil
 }
 
 func immutableReleaseRoute(base, pin string) publicReleaseRoute {

@@ -337,18 +337,68 @@ func TestPublicTrustRouteUsesOnlyCompileTimeFixturePair(t *testing.T) {
 	if err != nil || route.ReleaseBaseURL != wantBase || route.RootURL != wantBase+"/fased-lifecycle-root-v1.json" ||
 		route.IndexURL != wantBase+"/fased-release-index-v1.json" ||
 		route.IndexAttestationURL != wantBase+"/fased-release-index-v1.json.attestation.json" ||
-		route.PinnedRootSHA256 != productionPinnedRootSHA256 {
+		route.PinnedRootSHA256 != productionPinnedRootSHA256 || route.VerifyIndex != nil {
 		t.Fatalf("production trust route is not the exact immutable release: route=%+v err=%v", route, err)
 	}
 	branchFixtureMetadataBase = productionReleaseBase + "/v0.1.76-rc.73"
 	branchFixturePinnedRootSHA256 = strings.Repeat("a", 64)
 	route, err = publicTrustRoute("0.1.76-rc.73")
-	if err != nil || route.ReleaseBaseURL != branchFixtureMetadataBase || route.PinnedRootSHA256 != branchFixturePinnedRootSHA256 {
+	if err != nil || route.ReleaseBaseURL != branchFixtureMetadataBase || route.PinnedRootSHA256 != branchFixturePinnedRootSHA256 || route.VerifyIndex == nil {
 		t.Fatalf("compiled fixture trust route was not selected: route=%+v err=%v", route, err)
 	}
 	branchFixturePinnedRootSHA256 = ""
 	if _, err := publicTrustRoute("0.1.76-rc.73"); err == nil {
 		t.Fatal("incomplete fixture trust route was accepted")
+	}
+}
+
+func TestBranchFixtureRouteVerifiesDelegatedUnpublishedIndex(t *testing.T) {
+	now := time.Date(2026, 8, 12, 18, 0, 0, 0, time.UTC)
+	rootKeys := []fixtureKey{fixtureKeyPair(t), fixtureKeyPair(t), fixtureKeyPair(t)}
+	releaseKey := fixtureKeyPair(t)
+	metadata := trust.RootMetadata{SchemaVersion: 1, Type: "fased-lifecycle-root", Version: 1,
+		IssuedAt: now.Add(-time.Minute).Format(time.RFC3339), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339),
+		Keys: map[string]trust.Key{}, Root: trust.RootRole{Threshold: 2},
+		ReleaseAuthority: &trust.ReleaseAuthority{Type: "github-artifact-attestation-v1", Repository: "fased-ai/fased", Workflow: "fased-ai/fased/.github/workflows/hosted-runtime-release.yml", SourceRefPrefix: "refs/tags/v", DenySelfHostedRunners: true},
+		Revocations:      trust.Revocations{ReleaseVersions: []string{}, TargetDigests: []string{}, DelegatedKeyIDs: []string{}}}
+	for _, key := range rootKeys {
+		metadata.Keys[key.id] = key.record
+		metadata.Root.KeyIDs = append(metadata.Root.KeyIDs, key.id)
+	}
+	sortStrings(metadata.Root.KeyIDs)
+	signers := []trust.SigningKey{{KeyID: rootKeys[0].id, PrivateKey: rootKeys[0].private}, {KeyID: rootKeys[1].id, PrivateKey: rootKeys[1].private}}
+	rootJSON, err := trust.SignRoot(metadata, signers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootDigest := sha256.Sum256(rootJSON)
+	verifiedRoot, err := trust.VerifyInitialRoot(rootJSON, hex.EncodeToString(rootDigest[:]), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delegationJSON, err := trust.SignDelegation(trust.Delegation{SchemaVersion: 1, Type: "fased-release-delegation", Version: 1,
+		IssuedAt: now.Add(-time.Minute).Format(time.RFC3339), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339),
+		KeyID: releaseKey.id, Key: releaseKey.record, Channels: []string{"beta"}, MinReleaseSequence: 1, MaxReleaseSequence: 1, SecurityEpoch: 1}, signers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	asset := trust.Asset{Name: "payload.tar.gz", Size: 1, SHA256: digest}
+	hostAsset := asset
+	hostAsset.Name = "fased-lifecycled-linux-amd64"
+	hostAsset.PrivilegedComponent = "lifecycle-host"
+	hostAsset.Protocols = &trust.HostProtocols{Manifest: trust.ProtocolRange{Min: 2, Max: 2}, Journal: trust.ProtocolRange{Min: 1, Max: 1}, Participant: trust.ProtocolRange{Min: 1, Max: 1}, Platform: trust.ProtocolRange{Min: 1, Max: 2}}
+	indexJSON, err := trust.SignReleaseIndex(trust.ReleaseIndex{SchemaVersion: 1, Type: "fased-release-index", Channel: "beta", Version: "0.1.76-rc.74",
+		ReleaseSequence: 1, SecurityEpoch: 1, Commit: strings.Repeat("b", 40), Tree: strings.Repeat("c", 40), ArtifactSetDigest: digest,
+		Application: map[string]trust.Asset{"x64": asset}, DependencyLayer: map[string]trust.Asset{"x64": asset}, LifecycleHost: map[string]trust.Asset{"x64": hostAsset}, Signer: map[string]trust.Asset{"x64": asset},
+		StateSchemas: map[string]uint32{"signer": 1}, Capabilities: model.CapabilityRanges{Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1}, Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 1, Max: 1}}, PluginLockDigest: digest,
+		IssuedAt: now.Add(-time.Minute).Format(time.RFC3339), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339)}, trust.SigningKey{KeyID: releaseKey.id, PrivateKey: releaseKey.private})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := verifyDelegatedBranchReleaseIndex(verifiedRoot, indexJSON, delegationJSON, now)
+	if err != nil || verified.Index.Version != "0.1.76-rc.74" || len(verified.ReleaseAuthorityDigest) != 64 {
+		t.Fatalf("delegated branch index was not verified: verified=%+v err=%v", verified, err)
 	}
 }
 

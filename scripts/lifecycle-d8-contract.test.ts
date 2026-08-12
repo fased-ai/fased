@@ -16,7 +16,7 @@ const releaseBaseUrl = "https://github.com/fased-ai/fased/releases/download/v1.2
 const acquisition = {
   mode: "immutable-github-release",
   releaseBaseUrl,
-  metadataBaseUrl: `${releaseBaseUrl}/lifecycle/v1`,
+  metadataBaseUrl: releaseBaseUrl,
   transportSubstituted: false,
   trustInventoryDigest: digest,
 };

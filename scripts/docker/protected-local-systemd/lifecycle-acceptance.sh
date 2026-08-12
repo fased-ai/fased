@@ -104,7 +104,7 @@ acceptance_finish() {
     --evidence-class "$acceptance_evidence_class" \
     --acquisition-mode substituted-fixture \
     --release-base-url "$acceptance_release_base_url" \
-    --metadata-base-url "$acceptance_release_base_url/lifecycle/v1" \
+    --metadata-base-url "$acceptance_release_base_url" \
     --transport-substituted true \
     --trust-inventory-digest "$descriptor_digest" \
     --evidence-file "$evidence_json" \
@@ -940,7 +940,6 @@ const version = process.env.FASED_FIXTURE_VERSION;
 const genesis = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"; // pragma: allowlist secret
 const releaseAssets = "/var/lib/fased-protected-local-fixture/release-assets";
 const releasePrefix = `/fased-ai/fased/releases/download/v${version}/`;
-const metadataPrefix = `${releasePrefix}lifecycle/v1/`;
 
 function serveFile(response, selected) {
   try {
@@ -965,37 +964,18 @@ function handleRequest(request, response) {
     );
     return;
   }
-  if (request.method === "GET" && request.url?.startsWith(metadataPrefix)) {
-    const metadata = request.url.slice(metadataPrefix.length);
-    if (metadata.startsWith("beta/assets/")) {
-      const asset = decodeURIComponent(metadata.slice("beta/assets/".length));
-      if (!/^[A-Za-z0-9._-]+$/.test(asset)) {
-        response.writeHead(400).end();
-        return;
-      }
-      serveFile(response, path.join(releaseAssets, asset));
-      return;
-    }
-    const selected = {
-      "root.json": "fased-branch-root.json",
-      "beta/delegation.json": "fased-branch-delegation.json",
-      "beta/current/release-index.json": "fased-branch-release-index.json",
-      [`beta/v${version}/release-index.json`]: "fased-branch-release-index.json",
-    }[metadata];
-    if (!selected) {
-      response.writeHead(404).end();
-      return;
-    }
-    serveFile(response, path.join(releaseAssets, selected));
-    return;
-  }
   if (request.method === "GET" && request.url?.startsWith(releasePrefix)) {
     const asset = decodeURIComponent(request.url.slice(releasePrefix.length));
     if (!/^[A-Za-z0-9._-]+$/.test(asset)) {
       response.writeHead(400).end();
       return;
     }
-    serveFile(response, path.join(releaseAssets, asset));
+    const selected = {
+      "fased-lifecycle-root-v1.json": "fased-branch-root.json",
+      "fased-release-index-v1.json": "fased-branch-release-index.json",
+      "fased-release-index-v1.json.attestation.json": "fased-branch-delegation.json",
+    }[asset] ?? asset;
+    serveFile(response, path.join(releaseAssets, selected));
     return;
   }
   if (request.method === "GET" && request.url?.startsWith(`/v${version}/`)) {
@@ -1007,13 +987,19 @@ function handleRequest(request, response) {
     const selected =
       asset === "install.sh"
         ? "/usr/local/libexec/fased-fixture-protected-installer.sh"
-        : asset === "fased-hosted-release-v2.json"
-          ? "/var/lib/fased-protected-local-fixture/local-release-manifest.json"
-          : asset === "fased-hosted-release-v2.json.attestation.json"
-            ? "/var/lib/fased-protected-local-fixture/local-release-manifest.json.attestation.json"
-            : fs.existsSync(path.join(releaseAssets, asset))
-              ? path.join(releaseAssets, asset)
-              : path.join("/artifacts", asset);
+        : asset === "fased-lifecycle-root-v1.json"
+          ? path.join(releaseAssets, "fased-branch-root.json")
+          : asset === "fased-release-index-v1.json"
+            ? path.join(releaseAssets, "fased-branch-release-index.json")
+            : asset === "fased-release-index-v1.json.attestation.json"
+              ? path.join(releaseAssets, "fased-branch-delegation.json")
+              : asset === "fased-hosted-release-v2.json"
+                ? "/var/lib/fased-protected-local-fixture/local-release-manifest.json"
+                : asset === "fased-hosted-release-v2.json.attestation.json"
+                  ? "/var/lib/fased-protected-local-fixture/local-release-manifest.json.attestation.json"
+                  : fs.existsSync(path.join(releaseAssets, asset))
+                    ? path.join(releaseAssets, asset)
+                    : path.join("/artifacts", asset);
     serveFile(response, selected);
     return;
   }

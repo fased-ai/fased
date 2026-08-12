@@ -103,7 +103,6 @@ import path from "node:path";
 const version = process.env.FASED_FIXTURE_VERSION;
 const assets = "/artifacts";
 const prefix = `/fased-ai/fased/releases/download/v${version}/`;
-const metadataPrefix = `${prefix}lifecycle/v1/`;
 
 function serve(response, name) {
   if (!/^[A-Za-z0-9._+-]+$/.test(name)) {
@@ -140,24 +139,14 @@ https.createServer(
       response.end(body);
       return;
     }
-    if (request.url.startsWith(metadataPrefix)) {
-      const metadata = request.url.slice(metadataPrefix.length);
-      if (metadata.startsWith("beta/assets/")) {
-        serve(response, decodeURIComponent(metadata.slice("beta/assets/".length)));
-        return;
-      }
+    if (request.url.startsWith(prefix)) {
+      const requested = decodeURIComponent(request.url.slice(prefix.length));
       const selected = {
-        "root.json": "fased-branch-root.json",
-        "beta/delegation.json": "fased-branch-delegation.json",
-        "beta/current/release-index.json": "fased-branch-release-index.json",
-        [`beta/v${version}/release-index.json`]: "fased-branch-release-index.json",
-      }[metadata];
-      if (selected) {
-        serve(response, selected);
-        return;
-      }
-    } else if (request.url.startsWith(prefix)) {
-      serve(response, decodeURIComponent(request.url.slice(prefix.length)));
+        "fased-lifecycle-root-v1.json": "fased-branch-root.json",
+        "fased-release-index-v1.json": "fased-branch-release-index.json",
+        "fased-release-index-v1.json.attestation.json": "fased-branch-delegation.json",
+      }[requested] ?? requested;
+      serve(response, selected);
       return;
     }
     response.writeHead(404).end();
@@ -181,27 +170,13 @@ for ((index = 0; index < \${#args[@]}; index++)); do
   esac
 done
 prefix="https://github.com/fased-ai/fased/releases/download/v${version}/"
-metadata_prefix="\${prefix}lifecycle/v1/"
-if [[ "\$url" == "\$metadata_prefix"* && -n "\$output" ]]; then
-  metadata="\${url#\$metadata_prefix}"
-  if [[ "\$metadata" == beta/assets/* ]]; then
-    asset="\${metadata#beta/assets/}"
-  else
-    case "\$metadata" in
-      root.json) asset=fased-branch-root.json ;;
-      beta/delegation.json) asset=fased-branch-delegation.json ;;
-      beta/current/release-index.json|beta/v${version}/release-index.json)
-        asset=fased-branch-release-index.json
-        ;;
-      *) exit 22 ;;
-    esac
-  fi
-  [[ "\$asset" =~ ^[A-Za-z0-9._+-]+$ && -f "/artifacts/\$asset" && ! -L "/artifacts/\$asset" ]] || exit 22
-  install -m 0600 "/artifacts/\$asset" "\$output"
-  exit 0
-fi
 if [[ "\$url" == "\$prefix"* && -n "\$output" ]]; then
   asset="\${url#\$prefix}"
+  case "\$asset" in
+    fased-lifecycle-root-v1.json) asset=fased-branch-root.json ;;
+    fased-release-index-v1.json) asset=fased-branch-release-index.json ;;
+    fased-release-index-v1.json.attestation.json) asset=fased-branch-delegation.json ;;
+  esac
   [[ "\$asset" =~ ^[A-Za-z0-9._+-]+$ && -f "/artifacts/\$asset" && ! -L "/artifacts/\$asset" ]] || exit 22
   install -m 0600 "/artifacts/\$asset" "\$output"
   exit 0
@@ -227,14 +202,14 @@ start_release_transport_server() {
       return 1
     }
     if /usr/local/libexec/fased-fixture-curl-real -fsS \
-      "https://github.com/fased-ai/fased/releases/download/v${version}/lifecycle/v1/root.json" \
+      "https://github.com/fased-ai/fased/releases/download/v${version}/fased-lifecycle-root-v1.json" \
       >/dev/null; then
       break
     fi
     sleep 0.1
   done
   /usr/local/libexec/fased-fixture-curl-real -fsS \
-    "https://github.com/fased-ai/fased/releases/download/v${version}/lifecycle/v1/root.json" \
+    "https://github.com/fased-ai/fased/releases/download/v${version}/fased-lifecycle-root-v1.json" \
     >/dev/null
 }
 
@@ -286,7 +261,7 @@ acceptance_finish() {
     --evidence-class "$acceptance_evidence_class" \
     --acquisition-mode substituted-fixture \
     --release-base-url "$acceptance_release_base_url" \
-    --metadata-base-url "$acceptance_release_base_url/lifecycle/v1" \
+    --metadata-base-url "$acceptance_release_base_url" \
     --transport-substituted true \
     --trust-inventory-digest "$descriptor_digest" \
     --evidence-file "$evidence_json" \

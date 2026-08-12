@@ -31,7 +31,7 @@ function acquisition(version = "0.1.76-rc.70", evidenceClass = "PASS") {
   return {
     mode: evidenceClass === "PASS" ? "immutable-github-release" : "substituted-fixture",
     releaseBaseUrl,
-    metadataBaseUrl: `${releaseBaseUrl}/lifecycle/v1`,
+    metadataBaseUrl: releaseBaseUrl,
     transportSubstituted: evidenceClass !== "PASS",
     trustInventoryDigest: digest,
   };

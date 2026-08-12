@@ -115,6 +115,12 @@ describe("attested Go lifecycle artifact layout", () => {
     expect(localFixture).not.toContain(
       'fixture_metadata_base="https://github.com/fased-ai/fased/releases/download/v${VERSION}/lifecycle/v1"',
     );
+    for (const runner of [localRunner, hostingRunner]) {
+      expect(runner).toContain('"fased-lifecycle-root-v1.json"');
+      expect(runner).toContain('"fased-release-index-v1.json"');
+      expect(runner).toContain('"fased-release-index-v1.json.attestation.json"');
+      expect(runner).not.toContain("/lifecycle/v1");
+    }
     expect(candidateTrustOverlay).not.toContain("gh release");
     expect(candidateTrustOverlay).not.toContain("git tag");
     for (const fixture of [localFixture, hostingFixture]) {

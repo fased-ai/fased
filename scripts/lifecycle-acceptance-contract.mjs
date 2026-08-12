@@ -225,7 +225,7 @@ function validateAcquisition(acquisition, version, evidenceClass, evidencePolicy
   if (
     !DIGEST_PATTERN.test(acquisition.trustInventoryDigest || "") ||
     acquisition.releaseBaseUrl !== releaseBaseUrl ||
-    acquisition.metadataBaseUrl !== `${releaseBaseUrl}/lifecycle/v1` ||
+    acquisition.metadataBaseUrl !== releaseBaseUrl ||
     acquisition.mode !== policy.acquisitionMode ||
     acquisition.transportSubstituted !== policy.transportSubstituted
   ) {
