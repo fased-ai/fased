@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -15,72 +16,150 @@ import (
 )
 
 type SharedStateStore interface {
-	Prepare(string) (string, error)
+	Prepare(string) (StatePreparation, error)
 	Activate(string) error
-	VerifyAccess(string) error
+	VerifyAccess(context.Context, string) error
 	Restore(string) error
 	Discard(string) error
 	Converge() error
 }
 
+type StatePreparation struct {
+	Digest             string
+	ParticipantDigests map[string]string
+}
+
 const maxSharedStateRecords = 100000
 
 type typedStateRecord struct {
-	Participant string `json:"participant"`
-	Path        string `json:"path"`
-	Mode        uint32 `json:"mode"`
-	UID         uint32 `json:"uid"`
-	GID         uint32 `json:"gid"`
-	Directory   bool   `json:"directory"`
-	SignerOwned bool   `json:"signerOwned"`
-	SQLite      bool   `json:"sqlite"`
-	Backup      string `json:"backup,omitempty"`
-	Digest      string `json:"digest,omitempty"`
+	Participant     string `json:"participant"`
+	Path            string `json:"path"`
+	Mode            uint32 `json:"mode"`
+	UID             uint32 `json:"uid"`
+	GID             uint32 `json:"gid"`
+	Directory       bool   `json:"directory"`
+	SignerOwned     bool   `json:"signerOwned"`
+	ProjectionOwned bool   `json:"projectionOwned"`
+	SQLite          bool   `json:"sqlite"`
+	SQLiteFamily    string `json:"sqliteFamily,omitempty"`
+	Backup          string `json:"backup,omitempty"`
+	Digest          string `json:"digest,omitempty"`
 }
 
 // DiskTypedStateStore is the only active product-state permission and SQLite
 // rollback owner. Prepare must be called after Gateway and signer quiescence.
 type DiskTypedStateStore struct {
 	Config     Config
+	Access     StateAccessVerifier
 	rootPrefix string
 }
 
-func NewDiskTypedStateStore(config Config) (*DiskTypedStateStore, error) {
+func NewDiskTypedStateStore(config Config, access StateAccessVerifier) (*DiskTypedStateStore, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
-	return &DiskTypedStateStore{Config: config}, nil
+	if access == nil {
+		return nil, errors.New("typed state store requires an actual UID access verifier")
+	}
+	return &DiskTypedStateStore{Config: config, Access: access}, nil
 }
 
-func (store *DiskTypedStateStore) Prepare(transactionID string) (string, error) {
+func (store *DiskTypedStateStore) Prepare(transactionID string) (StatePreparation, error) {
 	records, err := store.discover()
 	if err != nil {
-		return "", err
+		return StatePreparation{}, err
+	}
+	families := make(map[string]bool)
+	for _, record := range records {
+		if record.SQLite {
+			if _, ok := families[record.SQLiteFamily]; !ok {
+				families[record.SQLiteFamily] = false
+			}
+			if record.Path == record.SQLiteFamily {
+				families[record.SQLiteFamily] = true
+			}
+		}
+	}
+	for family, hasMain := range families {
+		if !hasMain {
+			return StatePreparation{}, fmt.Errorf("SQLite family %s has no main database", family)
+		}
 	}
 	for index := range records {
-		if !records[index].SQLite {
+		if records[index].Directory || records[index].SignerOwned {
+			continue
+		}
+		if records[index].ProjectionOwned {
+			digest, err := stateparticipant.DigestRegularFile(store.resolve(records[index].Path))
+			if err != nil {
+				return StatePreparation{}, fmt.Errorf("bind %s projection state: %w", records[index].Participant, err)
+			}
+			records[index].Digest = digest
 			continue
 		}
 		backup := filepath.Join(store.transactionRoot(transactionID), "sqlite", fmt.Sprintf("%04d.state", index))
-		digest, err := stateparticipant.SnapshotSQLiteFile(store.resolve(records[index].Path), backup)
+		if !records[index].SQLite {
+			backup = filepath.Join(store.transactionRoot(transactionID), "files", fmt.Sprintf("%04d.state", index))
+		}
+		digest, err := stateparticipant.SnapshotRegularFile(store.resolve(records[index].Path), backup)
 		if err != nil {
-			return "", fmt.Errorf("snapshot %s SQLite family: %w", records[index].Participant, err)
+			return StatePreparation{}, fmt.Errorf("snapshot %s state: %w", records[index].Participant, err)
 		}
 		records[index].Backup = store.unresolve(backup)
 		records[index].Digest = digest
+		if records[index].SQLite && records[index].Path == records[index].SQLiteFamily {
+			if err := stateparticipant.ValidateSQLiteMain(backup); err != nil {
+				return StatePreparation{}, fmt.Errorf("validate %s SQLite family snapshot: %w", records[index].Participant, err)
+			}
+		}
+	}
+	for _, record := range records {
+		if !record.SQLite {
+			continue
+		}
+		digest, err := stateparticipant.DigestRegularFile(store.resolve(record.Path))
+		if err != nil || digest != record.Digest {
+			return StatePreparation{}, fmt.Errorf("%s SQLite family changed during post-quiesce snapshot", record.Participant)
+		}
 	}
 	data, err := json.Marshal(records)
 	if err != nil {
-		return "", err
+		return StatePreparation{}, err
 	}
 	if err := writeAtomicFile(store.recordPath(transactionID), append(data, '\n'), 0o600); err != nil {
-		return "", err
+		return StatePreparation{}, err
 	}
 	if err := syncDirectoryChain(store.transactionRoot(transactionID), store.resolve(store.Config.LifecycleRoot)); err != nil {
-		return "", err
+		return StatePreparation{}, err
 	}
 	digest := sha256.Sum256(data)
-	return fmt.Sprintf("sha256:%x", digest), nil
+	participants, err := store.participantDigests(records)
+	if err != nil {
+		return StatePreparation{}, err
+	}
+	return StatePreparation{Digest: fmt.Sprintf("sha256:%x", digest), ParticipantDigests: participants}, nil
+}
+
+func (store *DiskTypedStateStore) participantDigests(records []typedStateRecord) (map[string]string, error) {
+	grouped := make(map[string][]typedStateRecord)
+	for _, spec := range store.specs() {
+		if _, ok := grouped[string(spec.Kind)]; !ok {
+			grouped[string(spec.Kind)] = nil
+		}
+	}
+	for _, record := range records {
+		grouped[record.Participant] = append(grouped[record.Participant], record)
+	}
+	result := make(map[string]string, len(grouped))
+	for participant, entries := range grouped {
+		data, err := json.Marshal(entries)
+		if err != nil {
+			return nil, err
+		}
+		digest := sha256.Sum256(data)
+		result[participant] = fmt.Sprintf("sha256:%x", digest)
+	}
+	return result, nil
 }
 
 func (store *DiskTypedStateStore) Activate(transactionID string) error {
@@ -99,14 +178,25 @@ func (store *DiskTypedStateStore) Activate(transactionID string) error {
 			return err
 		}
 		if record.SignerOwned {
-			// The signer/migrator owns signer metadata changes. This state
-			// participant owns its SQLite rollback bytes and verifies the
-			// post-migration signer identity below.
+			// The signer participant owns signer database and key contents.
+			// This state participant transfers no signer-owned bytes.
 			continue
 		}
 		stat, ok := info.Sys().(*syscall.Stat_t)
 		if !ok || stat.Uid != record.UID || stat.Gid != record.GID || durableStateMode(info.Mode()) != record.Mode || info.IsDir() != record.Directory {
 			return errors.New("typed state changed after post-quiesce snapshot")
+		}
+		if !record.Directory {
+			digest, err := stateparticipant.DigestRegularFile(path)
+			if err != nil || digest != record.Digest {
+				return errors.New("typed state content changed after post-quiesce snapshot")
+			}
+		}
+		if record.ProjectionOwned {
+			// The lifecycle-file transaction is the sole mutation and rollback
+			// owner for managed projections. This participant only binds their
+			// pre-activation identity and verifies the committed projection.
+			continue
 		}
 		if err := os.Chown(path, int(record.UID), int(configGID)); err != nil {
 			return err
@@ -115,10 +205,10 @@ func (store *DiskTypedStateStore) Activate(transactionID string) error {
 			return err
 		}
 	}
-	return store.VerifyAccess(transactionID)
+	return nil
 }
 
-func (store *DiskTypedStateStore) VerifyAccess(transactionID string) error {
+func (store *DiskTypedStateStore) VerifyAccess(ctx context.Context, transactionID string) error {
 	records, err := store.read(transactionID)
 	if err != nil {
 		return err
@@ -149,12 +239,17 @@ func (store *DiskTypedStateStore) VerifyAccess(transactionID string) error {
 		if !ok {
 			return errors.New("typed state identity is unavailable")
 		}
-		uid, gid := store.Config.Gateway.UID, configGID
+		principal := store.Config.Gateway
+		groups := []uint32{configGID}
 		if record.SignerOwned {
-			uid, gid = store.Config.Signer.UID, store.Config.Signer.GID
+			principal = store.Config.Signer
+			groups = nil
 		}
-		if !principalCanAccess(info.Mode(), stat.Uid, stat.Gid, uid, gid) {
-			return fmt.Errorf("%s state is inaccessible to target uid %d", record.Participant, uid)
+		if !principalCanAccess(info.Mode(), stat.Uid, stat.Gid, principal.UID, principal.GID) && (record.SignerOwned || stat.Gid != configGID) {
+			return fmt.Errorf("%s state permissions deny target uid %d before kernel probe", record.Participant, principal.UID)
+		}
+		if err := store.Access.Verify(ctx, store.resolve(record.Path), record.Directory, principal, groups); err != nil {
+			return fmt.Errorf("%s state target access: %w", record.Participant, err)
 		}
 	}
 	return nil
@@ -184,30 +279,56 @@ func (store *DiskTypedStateStore) Restore(transactionID string) error {
 	if err != nil {
 		return err
 	}
-	wantSQLite := make(map[string]bool)
+	want := make(map[string]bool)
 	for _, record := range records {
-		if record.SQLite {
-			wantSQLite[record.Path] = true
-		}
+		want[record.Path] = true
 	}
 	current, err := store.discover()
 	if err != nil {
 		return err
 	}
-	for _, record := range current {
-		if record.SQLite && !wantSQLite[record.Path] {
-			if err := stateparticipant.RemoveUnexpectedSQLiteFile(store.resolve(record.Path)); err != nil {
-				return err
-			}
+	for index := len(current) - 1; index >= 0; index-- {
+		record := current[index]
+		if want[record.Path] {
+			continue
+		}
+		if err := store.removeUnexpected(record); err != nil {
+			return err
 		}
 	}
-	for index := len(records) - 1; index >= 0; index-- {
-		record := records[index]
+	for _, record := range records {
+		if record.SignerOwned || record.ProjectionOwned {
+			continue
+		}
+		if !record.Directory {
+			continue
+		}
 		path := store.resolve(record.Path)
-		if record.SQLite {
-			if err := stateparticipant.RestoreSQLiteFile(store.resolve(record.Backup), path, record.Digest, os.FileMode(record.Mode)); err != nil {
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			if err := os.Mkdir(path, os.FileMode(record.Mode)); err != nil {
 				return err
 			}
+		} else if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("typed state directory cannot be safely restored")
+		}
+		if err := os.Chown(path, int(record.UID), int(record.GID)); err != nil {
+			return err
+		}
+		if err := os.Chmod(path, os.FileMode(record.Mode)); err != nil {
+			return err
+		}
+	}
+	for _, record := range records {
+		if record.SignerOwned || record.ProjectionOwned {
+			continue
+		}
+		path := store.resolve(record.Path)
+		if record.Directory {
+			continue
+		}
+		if err := stateparticipant.RestoreRegularFile(store.resolve(record.Backup), path, record.Digest, os.FileMode(record.Mode)); err != nil {
+			return err
 		}
 		if err := os.Chown(path, int(record.UID), int(record.GID)); err != nil {
 			return err
@@ -219,8 +340,27 @@ func (store *DiskTypedStateStore) Restore(transactionID string) error {
 	return nil
 }
 
+func (store *DiskTypedStateStore) removeUnexpected(record typedStateRecord) error {
+	path := store.resolve(record.Path)
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || info.IsDir() != record.Directory || (!record.Directory && !info.Mode().IsRegular()) {
+		return errors.New("unexpected typed state cannot be safely removed")
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	return syncDirectoryChain(filepath.Dir(path), filepath.Dir(path))
+}
+
 func (store *DiskTypedStateStore) Discard(transactionID string) error {
-	return os.RemoveAll(store.transactionRoot(transactionID))
+	root := store.transactionRoot(transactionID)
+	if err := os.RemoveAll(root); err != nil {
+		return err
+	}
+	return syncDirectoryChain(filepath.Dir(root), filepath.Dir(root))
 }
 
 func (store *DiskTypedStateStore) Converge() error {
@@ -315,7 +455,14 @@ func (store *DiskTypedStateStore) inspect(spec stateparticipant.StateSpec, path 
 	} else if stat.Uid != store.Config.Operator.UID && stat.Uid != store.Config.Gateway.UID {
 		return typedStateRecord{}, fmt.Errorf("%s state has an unexpected owner", spec.Kind)
 	}
-	return typedStateRecord{Participant: string(spec.Kind), Path: store.unresolve(path), Mode: durableStateMode(info.Mode()), UID: stat.Uid, GID: stat.Gid, Directory: info.IsDir(), SignerOwned: spec.SignerOwned, SQLite: info.Mode().IsRegular() && stateparticipant.IsSQLiteFamilyName(info.Name())}, nil
+	record := typedStateRecord{Participant: string(spec.Kind), Path: store.unresolve(path), Mode: durableStateMode(info.Mode()), UID: stat.Uid, GID: stat.Gid, Directory: info.IsDir(), SignerOwned: spec.SignerOwned, ProjectionOwned: spec.ProjectionOwned}
+	if spec.SQLite && info.Mode().IsRegular() {
+		if family, ok := stateparticipant.SQLiteFamilyMain(record.Path); ok {
+			record.SQLite = true
+			record.SQLiteFamily = family
+		}
+	}
+	return record, nil
 }
 
 func durableStateMode(mode os.FileMode) uint32 {
@@ -346,15 +493,53 @@ func (store *DiskTypedStateStore) read(transactionID string) ([]typedStateRecord
 	if err := json.Unmarshal(data, &records); err != nil || len(records) > maxSharedStateRecords {
 		return nil, errors.New("typed state record is invalid")
 	}
+	previous := ""
 	for _, record := range records {
 		if record.Participant == "" || !filepath.IsAbs(record.Path) || filepath.Clean(record.Path) != record.Path || (!pathWithin(store.Config.OwnerStateRoot, record.Path) && !pathWithin(store.Config.SignerStateRoot(), record.Path) && record.Path != store.Config.SignerStateRoot()) {
 			return nil, errors.New("typed state record escaped its declared roots")
 		}
-		if record.SQLite && (record.Backup == "" || !stateparticipant.ValidDigest(record.Digest) || !pathWithin(store.unresolve(store.transactionRoot(transactionID)), record.Backup)) {
-			return nil, errors.New("SQLite family record lacks rollback evidence")
+		if record.Path <= previous || !store.matchesSpec(record) {
+			return nil, errors.New("typed state record is not canonical for its participant")
+		}
+		previous = record.Path
+		if !record.Directory && !record.SignerOwned && !stateparticipant.ValidDigest(record.Digest) {
+			return nil, errors.New("typed state record lacks a content binding")
+		}
+		if !record.Directory && !record.SignerOwned && !record.ProjectionOwned && (record.Backup == "" || !pathWithin(store.unresolve(store.transactionRoot(transactionID)), record.Backup)) {
+			return nil, errors.New("typed state record lacks rollback evidence")
+		}
+		if record.ProjectionOwned && record.Backup != "" {
+			return nil, errors.New("managed projection acquired competing rollback ownership")
+		}
+		if record.SQLite && (record.SQLiteFamily == "" || !pathWithin(store.Config.OwnerStateRoot, record.SQLiteFamily)) {
+			return nil, errors.New("SQLite family record is invalid")
 		}
 	}
 	return records, nil
+}
+
+func (store *DiskTypedStateStore) matchesSpec(record typedStateRecord) bool {
+	for _, spec := range store.specs() {
+		if string(spec.Kind) != record.Participant || spec.SignerOwned != record.SignerOwned || spec.ProjectionOwned != record.ProjectionOwned {
+			continue
+		}
+		if spec.RootOnly {
+			if record.Path != spec.Path {
+				continue
+			}
+		} else if record.Path != spec.Path && !pathWithin(spec.Path, record.Path) {
+			continue
+		}
+		family, sqlite := stateparticipant.SQLiteFamilyMain(record.Path)
+		if record.SQLite != (spec.SQLite && sqlite) {
+			return false
+		}
+		if record.SQLite && record.SQLiteFamily != family {
+			return false
+		}
+		return true
+	}
+	return false
 }
 
 func (store *DiskTypedStateStore) transactionRoot(transactionID string) string {

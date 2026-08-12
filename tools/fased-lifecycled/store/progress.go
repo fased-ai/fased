@@ -15,7 +15,7 @@ import (
 	"fased-lifecycled/model"
 )
 
-const CurrentProgressSchemaVersion uint32 = 1
+const CurrentProgressSchemaVersion uint32 = 2
 
 type ProgressStep string
 
@@ -46,11 +46,17 @@ const (
 )
 
 type DurableParticipantReceipt struct {
-	Participant          string `json:"participant"`
-	TransactionID        string `json:"transactionId"`
-	TargetGenerationID   string `json:"targetGenerationId"`
-	StateInventoryDigest string `json:"stateInventoryDigest"`
-	PlanDigest           string `json:"planDigest"`
+	Participant          string                     `json:"participant"`
+	TransactionID        string                     `json:"transactionId"`
+	TargetGenerationID   string                     `json:"targetGenerationId"`
+	StateInventoryDigest string                     `json:"stateInventoryDigest"`
+	PlanDigest           string                     `json:"planDigest"`
+	Members              []DurableParticipantMember `json:"members,omitempty"`
+}
+
+type DurableParticipantMember struct {
+	Participant string `json:"participant"`
+	Digest      string `json:"digest"`
 }
 
 type DurableUndoRecord struct {
@@ -207,6 +213,21 @@ func validateProgressEvent(event ProgressEvent, transaction model.Transaction) e
 		}
 		if (receipt.Participant != "migrator" && receipt.Participant != "signer" && receipt.Participant != "state") || receipt.TransactionID != transaction.ID || receipt.TargetGenerationID != transaction.Target.ID || receipt.StateInventoryDigest != transaction.StateInventoryDigest || receipt.PlanDigest != wantPlan {
 			return errors.New("participant receipt differs from the immutable transaction")
+		}
+		if receipt.Participant == "state" {
+			wantMembers := map[string]bool{"application-state": true, "configuration": true, "wallet": true, "mining": true, "federation": true, "plugin-data": true, "signer": true}
+			if len(receipt.Members) != len(wantMembers) {
+				return errors.New("state receipt does not cover every typed participant")
+			}
+			previous := ""
+			for _, member := range receipt.Members {
+				if !wantMembers[member.Participant] || member.Participant <= previous || !validSHA256Digest(member.Digest) {
+					return errors.New("state receipt member binding is invalid")
+				}
+				previous = member.Participant
+			}
+		} else if len(receipt.Members) != 0 {
+			return errors.New("non-state receipt contains state participant members")
 		}
 	}
 	if event.Undo != nil {

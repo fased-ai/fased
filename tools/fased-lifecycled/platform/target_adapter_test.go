@@ -28,15 +28,22 @@ type fakeLifecycleFiles struct {
 
 type fakeSharedState struct{ calls *[]string }
 
-func (state fakeSharedState) Prepare(string) (string, error) {
+func (state fakeSharedState) Prepare(string) (StatePreparation, error) {
 	*state.calls = append(*state.calls, "shared.prepare")
-	return digestA, nil
+	return StatePreparation{Digest: digestA, ParticipantDigests: testStateParticipantDigests()}, nil
+}
+
+func testStateParticipantDigests() map[string]string {
+	return map[string]string{
+		"application-state": digestA, "configuration": digestA, "wallet": digestA, "mining": digestA,
+		"federation": digestA, "plugin-data": digestA, "signer": digestA,
+	}
 }
 func (state fakeSharedState) Activate(string) error {
 	*state.calls = append(*state.calls, "shared.activate")
 	return nil
 }
-func (state fakeSharedState) VerifyAccess(string) error {
+func (state fakeSharedState) VerifyAccess(context.Context, string) error {
 	*state.calls = append(*state.calls, "shared.verify-access")
 	return nil
 }
@@ -283,7 +290,7 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 	}
 	want := []string{
 		"plugins.prepare:" + digestB, "units.prepare", "files.prepare", "systemd.stop:fased-gateway-example.service", "systemd.stop:fased-signerd-example.service", "shared.prepare",
-		"shared.activate", "shared.verify-access", "files.activate", "units.activate", "systemd.reload", "systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
+		"shared.activate", "files.activate", "shared.verify-access", "units.activate", "systemd.reload", "systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
 		"systemd.enable:fased-gateway-example.service", "systemd.start:fased-gateway-example.service",
 		"systemd.active:fased-signerd-example.service", "systemd.active:fased-gateway-example.service",
 		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -392,7 +399,7 @@ func TestFreshLocalDefersGatewayUntilOnboardingCreatesConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"plugins.prepare:" + digestB, "units.prepare", "files.prepare", "shared.prepare", "shared.activate", "shared.verify-access", "files.activate", "units.activate", "systemd.reload",
+		"plugins.prepare:" + digestB, "units.prepare", "files.prepare", "shared.prepare", "shared.activate", "files.activate", "shared.verify-access", "units.activate", "systemd.reload",
 		"systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
 		"systemd.enable:fased-gateway-example.service", "systemd.active:fased-signerd-example.service",
 	}
@@ -664,7 +671,7 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	}
 	want := []string{
 		"plugins.prepare:" + digestB, "units.prepare", "files.prepare", "systemd.stop:fased-gateway.service", "systemd.stop:fased-signerd.service", "shared.prepare",
-		"shared.activate", "shared.verify-access", "files.activate", "units.activate", "systemd.reload", "systemd.enable:fased-signerd.service", "systemd.start:fased-signerd.service",
+		"shared.activate", "files.activate", "shared.verify-access", "units.activate", "systemd.reload", "systemd.enable:fased-signerd.service", "systemd.start:fased-signerd.service",
 		"systemd.enable:fased-gateway.service", "systemd.start:fased-gateway.service",
 		"systemd.active:fased-signerd.service", "systemd.active:fased-gateway.service",
 		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",

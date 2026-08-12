@@ -270,12 +270,17 @@ func (adapter *TargetAdapter) Quiesce(ctx context.Context, tx model.Transaction)
 }
 
 func (adapter *TargetAdapter) PrepareState(_ context.Context, tx model.Transaction) (engine.ParticipantReceipt, string, error) {
-	digest, err := adapter.SharedState.Prepare(tx.ID)
+	prepared, err := adapter.SharedState.Prepare(tx.ID)
 	if err != nil {
 		return engine.ParticipantReceipt{}, "", err
 	}
-	receipt := engine.ParticipantReceipt{TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.StateInventoryDigest}
-	return receipt, digest, nil
+	receipt := engine.ParticipantReceipt{TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.StateInventoryDigest,
+		MemberDigests: engine.StateMemberDigests{
+			ApplicationState: prepared.ParticipantDigests["application-state"], Configuration: prepared.ParticipantDigests["configuration"],
+			Wallet: prepared.ParticipantDigests["wallet"], Mining: prepared.ParticipantDigests["mining"], Federation: prepared.ParticipantDigests["federation"],
+			PluginData: prepared.ParticipantDigests["plugin-data"], Signer: prepared.ParticipantDigests["signer"],
+		}}
+	return receipt, prepared.Digest, nil
 }
 
 func (adapter *TargetAdapter) StopTarget(ctx context.Context, _ model.Transaction) error {
@@ -293,11 +298,11 @@ func (adapter *TargetAdapter) Activate(ctx context.Context, tx model.Transaction
 	if err := adapter.SharedState.Activate(tx.ID); err != nil {
 		return err
 	}
-	if err := adapter.SharedState.VerifyAccess(tx.ID); err != nil {
-		return fmt.Errorf("typed state is inaccessible before service start: %w", err)
-	}
 	if err := adapter.Files.Activate(tx.ID, adapter.preStartLifecycleFiles(tx)); err != nil {
 		return err
+	}
+	if err := adapter.SharedState.VerifyAccess(ctx, tx.ID); err != nil {
+		return fmt.Errorf("typed state is inaccessible before service start: %w", err)
 	}
 	if err := adapter.Units.Activate(tx.ID, adapter.targetUnits()); err != nil {
 		return err

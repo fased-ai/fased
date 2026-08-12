@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 
 	"fased-lifecycled/model"
 	"fased-lifecycled/store"
@@ -31,6 +32,17 @@ type ParticipantReceipt struct {
 	TargetGenerationID   string
 	StateInventoryDigest string
 	PlanDigest           string
+	MemberDigests        StateMemberDigests
+}
+
+type StateMemberDigests struct {
+	ApplicationState string
+	Configuration    string
+	Wallet           string
+	Mining           string
+	Federation       string
+	PluginData       string
+	Signer           string
 }
 
 type Journal interface {
@@ -144,6 +156,9 @@ func (engine *TargetEngine) Run(ctx context.Context, tx model.Transaction) (Resu
 		return engine.rollback(ctx, tx, true, err)
 	}
 	if err := validateReceipt(stateReceipt, tx, tx.StateInventoryDigest); err != nil {
+		return engine.rollback(ctx, tx, true, err)
+	}
+	if err := validateStateMemberDigests(stateReceipt.MemberDigests); err != nil {
 		return engine.rollback(ctx, tx, true, err)
 	}
 	if err := engine.progress(tx, store.ProgressStatePrepared, durableReceipt("state", stateReceipt), undoRecord("state", "target/typed-state", stateUndoDigest)); err != nil {
@@ -406,7 +421,20 @@ func (engine *TargetEngine) progress(tx model.Transaction, step store.ProgressSt
 }
 
 func durableReceipt(participant string, receipt ParticipantReceipt) *store.DurableParticipantReceipt {
-	return &store.DurableParticipantReceipt{Participant: participant, TransactionID: receipt.TransactionID, TargetGenerationID: receipt.TargetGenerationID, StateInventoryDigest: receipt.StateInventoryDigest, PlanDigest: receipt.PlanDigest}
+	members := []store.DurableParticipantMember(nil)
+	if receipt.MemberDigests != (StateMemberDigests{}) {
+		members = []store.DurableParticipantMember{
+			{Participant: "application-state", Digest: receipt.MemberDigests.ApplicationState},
+			{Participant: "configuration", Digest: receipt.MemberDigests.Configuration},
+			{Participant: "wallet", Digest: receipt.MemberDigests.Wallet},
+			{Participant: "mining", Digest: receipt.MemberDigests.Mining},
+			{Participant: "federation", Digest: receipt.MemberDigests.Federation},
+			{Participant: "plugin-data", Digest: receipt.MemberDigests.PluginData},
+			{Participant: "signer", Digest: receipt.MemberDigests.Signer},
+		}
+	}
+	sort.Slice(members, func(i, j int) bool { return members[i].Participant < members[j].Participant })
+	return &store.DurableParticipantReceipt{Participant: participant, TransactionID: receipt.TransactionID, TargetGenerationID: receipt.TargetGenerationID, StateInventoryDigest: receipt.StateInventoryDigest, PlanDigest: receipt.PlanDigest, Members: members}
 }
 
 func undoRecord(participant, locator, digest string) *store.DurableUndoRecord {
@@ -475,6 +503,27 @@ func validateReceipt(receipt ParticipantReceipt, tx model.Transaction, planDiges
 		return errors.New("participant receipt does not match the immutable transaction envelope")
 	}
 	return nil
+}
+
+func validateStateMemberDigests(members StateMemberDigests) error {
+	for _, digest := range []string{members.ApplicationState, members.Configuration, members.Wallet, members.Mining, members.Federation, members.PluginData, members.Signer} {
+		if !validDigest(digest) {
+			return errors.New("typed state receipt contains an invalid participant binding")
+		}
+	}
+	return nil
+}
+
+func validDigest(value string) bool {
+	if len(value) != 71 || value[:7] != "sha256:" {
+		return false
+	}
+	for _, character := range value[7:] {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func appendIfError(existing []error, err error) []error {

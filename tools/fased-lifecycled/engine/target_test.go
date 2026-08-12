@@ -146,8 +146,9 @@ func (participant fakeParticipant) Abort(_ context.Context, _ model.Transaction)
 }
 
 type fakeAdapter struct {
-	calls  *[]string
-	failAt string
+	calls            *[]string
+	failAt           string
+	omitStateMembers bool
 }
 
 func (adapter fakeAdapter) Prepare(context.Context, model.Transaction) error {
@@ -157,7 +158,15 @@ func (adapter fakeAdapter) Prepare(context.Context, model.Transaction) error {
 
 func (adapter fakeAdapter) PrepareState(_ context.Context, tx model.Transaction) (ParticipantReceipt, string, error) {
 	*adapter.calls = append(*adapter.calls, "adapter.prepare-state")
-	return ParticipantReceipt{TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.StateInventoryDigest}, tx.StateInventoryDigest, nil
+	members := stateMemberDigests(tx.StateInventoryDigest)
+	if adapter.omitStateMembers {
+		members = StateMemberDigests{}
+	}
+	return ParticipantReceipt{TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.StateInventoryDigest, MemberDigests: members}, tx.StateInventoryDigest, nil
+}
+
+func stateMemberDigests(digest string) StateMemberDigests {
+	return StateMemberDigests{ApplicationState: digest, Configuration: digest, Wallet: digest, Mining: digest, Federation: digest, PluginData: digest, Signer: digest}
 }
 
 func (adapter fakeAdapter) Verify(context.Context, model.Transaction) error {
@@ -306,6 +315,21 @@ func TestTargetEngineRestoresAfterSwitchFailure(t *testing.T) {
 	}
 	if journal.writes[len(journal.writes)-1].Phase != model.PhaseRolledBack {
 		t.Fatalf("rollback was not journaled: %+v", journal.writes)
+	}
+}
+
+func TestTargetEngineRejectsIncompleteTypedStateReceiptBeforeMigration(t *testing.T) {
+	var calls []string
+	engine, _ := newEngine(&calls, "", "")
+	engine.Adapter = fakeAdapter{calls: &calls, omitStateMembers: true}
+	result, err := engine.Run(context.Background(), transaction(model.PhaseIdle))
+	if err == nil || result.Outcome != OutcomeRolledBack {
+		t.Fatalf("incomplete typed state receipt was accepted: result=%+v err=%v", result, err)
+	}
+	for _, call := range calls {
+		if call == "migrator.prepare" || call == "adapter.activate" {
+			t.Fatalf("mutation continued after incomplete typed state receipt: %v", calls)
+		}
 	}
 }
 

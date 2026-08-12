@@ -383,7 +383,7 @@ func TestProgressReceiptsAndUndoSurviveReopenAndRemainEnvelopeBound(t *testing.T
 		t.Fatal(err)
 	}
 	stateEvent := ProgressEvent{Step: ProgressStatePrepared,
-		Receipt: &DurableParticipantReceipt{Participant: "state", TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.StateInventoryDigest},
+		Receipt: &DurableParticipantReceipt{Participant: "state", TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.StateInventoryDigest, Members: testStateMembers(tx.StateInventoryDigest)},
 		Undo:    &DurableUndoRecord{Participant: "state", Locator: "target/typed-state", Digest: tx.StateInventoryDigest},
 	}
 	if err := state.AppendProgress(tx, stateEvent); err != nil {
@@ -405,7 +405,7 @@ func TestProgressReceiptsAndUndoSurviveReopenAndRemainEnvelopeBound(t *testing.T
 	if err := ValidateProgress(progress, durable); err != nil {
 		t.Fatal(err)
 	}
-	if len(progress.Events) != 2 || progress.Events[0].Receipt == nil || progress.Events[0].Undo == nil || progress.Events[1].Receipt.Participant != "state" {
+	if len(progress.Events) != 2 || progress.Events[0].Receipt == nil || progress.Events[0].Undo == nil || progress.Events[1].Receipt.Participant != "state" || len(progress.Events[1].Receipt.Members) != 7 {
 		t.Fatalf("durable participant evidence was lost: %+v", progress)
 	}
 
@@ -418,6 +418,15 @@ func TestProgressReceiptsAndUndoSurviveReopenAndRemainEnvelopeBound(t *testing.T
 	badUndo.Undo = &DurableUndoRecord{Participant: "migrator", Locator: "../outside", Digest: tx.MigrationPlanDigest}
 	if err := reopened.AppendProgress(tx, badUndo); err == nil {
 		t.Fatal("unbounded undo locator was accepted")
+	}
+}
+
+func testStateMembers(digest string) []DurableParticipantMember {
+	return []DurableParticipantMember{
+		{Participant: "application-state", Digest: digest}, {Participant: "configuration", Digest: digest},
+		{Participant: "federation", Digest: digest}, {Participant: "mining", Digest: digest},
+		{Participant: "plugin-data", Digest: digest}, {Participant: "signer", Digest: digest},
+		{Participant: "wallet", Digest: digest},
 	}
 }
 

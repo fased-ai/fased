@@ -13,11 +13,47 @@ import (
 )
 
 func IsSQLiteFamilyName(name string) bool {
-	lower := strings.ToLower(name)
-	return strings.HasSuffix(lower, ".sqlite") || strings.HasSuffix(lower, ".db") || strings.HasSuffix(lower, "-wal") || strings.HasSuffix(lower, "-shm") || strings.HasSuffix(lower, "-journal") || strings.HasSuffix(lower, ".sqlite-wal") || strings.HasSuffix(lower, ".sqlite-shm") || strings.HasSuffix(lower, ".sqlite-journal")
+	_, ok := SQLiteFamilyMain(name)
+	return ok
 }
 
-func SnapshotSQLiteFile(source, destination string) (string, error) {
+// SQLiteFamilyMain returns the main database name for a main, WAL, SHM, or
+// rollback-journal member. Arbitrary files ending in -wal/-shm/-journal are
+// not classified as SQLite.
+func SQLiteFamilyMain(path string) (string, bool) {
+	directory, name := filepath.Split(path)
+	lower := strings.ToLower(name)
+	for _, suffix := range []string{"-journal", "-wal", "-shm"} {
+		if strings.HasSuffix(lower, suffix) {
+			name = name[:len(name)-len(suffix)]
+			lower = lower[:len(lower)-len(suffix)]
+			break
+		}
+	}
+	if !strings.HasSuffix(lower, ".sqlite") && !strings.HasSuffix(lower, ".db") {
+		return "", false
+	}
+	return filepath.Join(directory, name), true
+}
+
+func ValidateSQLiteMain(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	header := make([]byte, 16)
+	if _, err := io.ReadFull(file, header); err != nil || string(header) != "SQLite format 3\x00" {
+		return errors.New("SQLite main database header is invalid")
+	}
+	return nil
+}
+
+func SnapshotRegularFile(source, destination string) (string, error) {
+	return snapshotRegularFile(source, destination, "")
+}
+
+func snapshotRegularFile(source, destination, expectedDigest string) (string, error) {
 	before, err := os.Lstat(source)
 	if err != nil || !before.Mode().IsRegular() {
 		return "", errors.New("SQLite family member is unavailable")
@@ -61,16 +97,27 @@ func SnapshotSQLiteFile(source, destination string) (string, error) {
 	if err := temporary.Close(); err != nil {
 		return "", err
 	}
+	digest := fmt.Sprintf("sha256:%x", hash.Sum(nil))
+	if expectedDigest != "" && digest != expectedDigest {
+		return "", errors.New("state rollback snapshot digest changed")
+	}
 	if err := os.Rename(temporaryName, destination); err != nil {
 		return "", err
 	}
 	if err := syncDirectory(filepath.Dir(destination)); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
+	return digest, nil
 }
 
-func RestoreSQLiteFile(backup, destination, wantDigest string, mode os.FileMode) error {
+// SnapshotSQLiteFile remains the database-family copy primitive. The caller
+// must group all members under SQLiteFamilyMain and validate the main database
+// before taking any member snapshots.
+func SnapshotSQLiteFile(source, destination string) (string, error) {
+	return SnapshotRegularFile(source, destination)
+}
+
+func RestoreRegularFile(backup, destination, wantDigest string, mode os.FileMode) error {
 	info, err := os.Lstat(backup)
 	if err != nil {
 		return err
@@ -79,14 +126,39 @@ func RestoreSQLiteFile(backup, destination, wantDigest string, mode os.FileMode)
 	if !ok || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || stat.Nlink != 1 || stat.Uid != uint32(os.Geteuid()) {
 		return errors.New("SQLite rollback snapshot identity is unsafe")
 	}
-	digest, err := SnapshotSQLiteFile(backup, destination)
-	if err != nil {
+	if _, err := snapshotRegularFile(backup, destination, wantDigest); err != nil {
 		return err
 	}
-	if digest != wantDigest {
-		return errors.New("SQLite rollback snapshot digest changed")
-	}
 	return os.Chmod(destination, mode)
+}
+
+func DigestRegularFile(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", errors.New("state file is unavailable")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) || linkCount(opened) != 1 {
+		return "", errors.New("state file changed while opening")
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	final, err := file.Stat()
+	if err != nil || final.Size() != opened.Size() || final.ModTime() != opened.ModTime() {
+		return "", errors.New("state file changed while hashing")
+	}
+	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
+}
+
+func RestoreSQLiteFile(backup, destination, wantDigest string, mode os.FileMode) error {
+	return RestoreRegularFile(backup, destination, wantDigest, mode)
 }
 
 func RemoveUnexpectedSQLiteFile(path string) error {

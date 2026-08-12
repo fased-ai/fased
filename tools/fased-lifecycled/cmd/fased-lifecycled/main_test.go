@@ -28,6 +28,27 @@ func TestWriteConvergenceResponseEmitsBoundedFailureBeforeReturningError(t *test
 	}
 }
 
+func TestStateAccessCheckUsesKernelAccessAndRejectsSymlinks(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "state.json")
+	if err := os.WriteFile(file, []byte("state\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runStateAccessCheck([]string{"--path", file}); err != nil {
+		t.Fatalf("current identity could not access writable state: %v", err)
+	}
+	if err := runStateAccessCheck([]string{"--path", root, "--directory"}); err != nil {
+		t.Fatalf("current identity could not access writable state directory: %v", err)
+	}
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(file, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := runStateAccessCheck([]string{"--path", alias}); err == nil {
+		t.Fatal("state access check followed a symlink")
+	}
+}
+
 func TestPrepareSocketParentConvergesAuthorizedTraversal(t *testing.T) {
 	parent := filepath.Join(t.TempDir(), "runtime")
 	if err := os.Mkdir(parent, 0o700); err != nil {

@@ -29,6 +29,7 @@ import (
 	"fased-lifecycled/signer"
 	"fased-lifecycled/statebind"
 	"fased-lifecycled/store"
+	"golang.org/x/sys/unix"
 )
 
 const maxConfigBytes = 64 << 10
@@ -66,6 +67,9 @@ func run(args []string) error {
 	if args[0] == "inventory" {
 		return runInventory(args[1:], os.Stdout)
 	}
+	if args[0] == "state-access-check" {
+		return runStateAccessCheck(args[1:])
+	}
 	if os.Geteuid() != 0 {
 		return errors.New("lifecycle supervisor and target modes require root")
 	}
@@ -98,6 +102,45 @@ func run(args []string) error {
 	default:
 		return errors.New("unsupported lifecycle daemon mode")
 	}
+}
+
+func runStateAccessCheck(args []string) error {
+	flags := flag.NewFlagSet("state-access-check", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	var path string
+	var directory bool
+	flags.StringVar(&path, "path", "", "")
+	flags.BoolVar(&directory, "directory", false, "")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return errors.New("invalid state access check arguments")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil || resolved != path || info.Mode()&os.ModeSymlink != 0 || info.IsDir() != directory || (!directory && !info.Mode().IsRegular()) {
+		return errors.New("state access check target is unsafe")
+	}
+	mode := uint32(unix.R_OK | unix.W_OK)
+	if directory {
+		mode |= unix.X_OK
+	}
+	if err := unix.Access(path, mode); err != nil {
+		return fmt.Errorf("kernel state access check failed: %w", err)
+	}
+	openFlags := unix.O_CLOEXEC | unix.O_NOFOLLOW | unix.O_RDWR
+	if directory {
+		openFlags = unix.O_CLOEXEC | unix.O_NOFOLLOW | unix.O_RDONLY | unix.O_DIRECTORY
+	}
+	descriptor, err := unix.Open(path, openFlags, 0)
+	if err != nil {
+		return fmt.Errorf("target identity cannot open state: %w", err)
+	}
+	if err := unix.Close(descriptor); err != nil {
+		return fmt.Errorf("close state access probe: %w", err)
+	}
+	return nil
 }
 
 func runInventory(args []string, output io.Writer) error {
@@ -831,6 +874,10 @@ func runSupervisor(ctx context.Context, config platform.Config, socketPath strin
 }
 
 func installedTargetRuntime(config platform.Config, identity model.PlatformIdentity, state *store.Store, systemd platform.CommandSystemd) (*engine.TargetEngine, *platform.TargetAdapter, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, nil, err
+	}
 	units, err := platform.NewDiskUnitStore(config, "target")
 	if err != nil {
 		return nil, nil, err
@@ -839,15 +886,11 @@ func installedTargetRuntime(config platform.Config, identity model.PlatformIdent
 	if err != nil {
 		return nil, nil, err
 	}
-	sharedState, err := platform.NewDiskTypedStateStore(config)
+	sharedState, err := platform.NewDiskTypedStateStore(config, platform.CommandStateAccessVerifier{Binary: executable})
 	if err != nil {
 		return nil, nil, err
 	}
 	registry, err := migrator.RegistryFor(config)
-	if err != nil {
-		return nil, nil, err
-	}
-	executable, err := os.Executable()
 	if err != nil {
 		return nil, nil, err
 	}
