@@ -180,7 +180,7 @@ describe("D8 unified lifecycle acceptance", () => {
       "app ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap update --profile hosting --channel %s --version %s --timeout 120",
     );
     expect(hosting).toContain('visudo -cf "$sudoers_policy"');
-    expect(hosting).toContain('--channel "$target_channel" --version "$version" --timeout 120');
+    expect(hosting).toContain('--channel "$target_channel" --tag "$version" --timeout 120');
     expect(hosting).not.toContain("NOPASSWD: ALL");
     expect(hosting).toContain("lifecycle-configuration-preservation.mjs");
     expect(hosting).not.toContain("fased-hosting-target-config-without-mode.json");
