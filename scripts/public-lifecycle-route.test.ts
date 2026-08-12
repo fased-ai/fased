@@ -38,7 +38,8 @@ describe("D7 public lifecycle routing", () => {
   it("keeps default output bounded and exposes an explicit verbose switch", async () => {
     const installer = await source("install.sh");
     expect(installer).toContain("--verbose");
-    expect(installer).toContain("curl_args=(-fsS");
+    expect(installer).toContain("curl_args=(-fL --proto '=https' --tlsv1.2");
+    expect(installer).toContain('if [[ "$verbose" -eq 0 ]]; then curl_args+=(-sS); fi');
     expect(installer).not.toContain("set -x");
   });
 });

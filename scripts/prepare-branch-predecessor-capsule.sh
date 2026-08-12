@@ -55,6 +55,7 @@ if [[ ! -f "$target/fased-predecessor-capsule.json" ]]; then
   node "$ROOT_DIR/scripts/build-public-predecessor-capsule.mjs" \
     --profile "$PROFILE" \
     --release-manifest "$source_dir/fased-hosted-release-v2.json" \
+    --release-manifest-attestation "$source_dir/fased-hosted-release-v2.json.attestation.json" \
     --release-tree "$predecessor_tree" \
     --compatibility-index "$ROOT_DIR/config/lifecycle-compatibility.v1.json" \
     --acceptance-contract "$ROOT_DIR/config/lifecycle-acceptance.v2.json" \

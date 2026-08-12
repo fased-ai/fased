@@ -10,11 +10,15 @@ afterEach(async () =>
   Promise.all(temporary.splice(0).map((entry) => rm(entry, { recursive: true, force: true }))),
 );
 
-async function fixture(profile: "protected-local" | "hosting") {
+async function fixture(
+  profile: "protected-local" | "hosting",
+  attestation = '{"verificationResult":"fixture"}\n',
+) {
   const root = await mkdtemp(path.join(tmpdir(), "fased-public-capsule-test-"));
   const output = path.join(root, "output");
   temporary.push(root);
   const releaseManifest = path.join(root, "release.json");
+  const releaseManifestAttestation = path.join(root, "release.json.attestation.json");
   const compatibility = path.join(root, "compatibility.json");
   const acceptance = path.join(root, "acceptance.json");
   await writeFile(
@@ -23,9 +27,11 @@ async function fixture(profile: "protected-local" | "hosting") {
   );
   await writeFile(compatibility, "{}\n");
   await writeFile(acceptance, "{}\n");
+  await writeFile(releaseManifestAttestation, attestation);
   const result = await buildPublicPredecessorCapsule({
     profile,
     releaseManifestPath: releaseManifest,
+    releaseManifestAttestationPath: releaseManifestAttestation,
     releaseTree: "b".repeat(40),
     compatibilityIndexPath: compatibility,
     acceptanceContractPath: acceptance,
@@ -48,6 +54,22 @@ describe("public predecessor capsule builder", () => {
         commit: "a".repeat(40),
         tree: "b".repeat(40),
       });
+      expect(descriptor.sourceReceipt).toEqual({
+        schemaVersion: 1,
+        repository: "fased-ai/fased",
+        tag: "v0.1.75",
+        authority: "github-artifact-attestation",
+        manifest: {
+          name: "release.json",
+          sha256: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+        },
+        manifestAttestation: {
+          name: "release.json.attestation.json",
+          sha256: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+        },
+      });
+      expect(descriptor.releaseIndex).toBeNull();
+      expect(descriptor.compatibilityDigest).toMatch(/^sha256:[a-f0-9]{64}$/u);
       expect(descriptor.entries).toContainEqual(
         expect.objectContaining({
           path: `home/${profile === "hosting" ? "app" : "testop"}/.fased/runtime/current`,
@@ -106,6 +128,17 @@ describe("public predecessor capsule builder", () => {
     const second = await fixture("protected-local");
     expect(second.result.descriptor.archive.sha256).toBe(first.result.descriptor.archive.sha256);
     expect(await readFile(second.result.descriptorPath, "utf8")).toBe(
+      await readFile(first.result.descriptorPath, "utf8"),
+    );
+  });
+
+  it("binds the exact verified public-manifest attestation into the descriptor", async () => {
+    const first = await fixture("hosting");
+    const second = await fixture("hosting", '{"verificationResult":"different"}\n');
+    expect(second.result.descriptor.sourceReceipt.manifestAttestation.sha256).not.toBe(
+      first.result.descriptor.sourceReceipt.manifestAttestation.sha256,
+    );
+    expect(await readFile(second.result.descriptorPath, "utf8")).not.toBe(
       await readFile(first.result.descriptorPath, "utf8"),
     );
   });

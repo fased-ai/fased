@@ -161,6 +161,7 @@ function parseArguments(argv) {
 export async function buildPublicPredecessorCapsule({
   profile,
   releaseManifestPath,
+  releaseManifestAttestationPath,
   releaseTree,
   compatibilityIndexPath,
   acceptanceContractPath,
@@ -173,10 +174,11 @@ export async function buildPublicPredecessorCapsule({
     fail("profile or release tree is invalid");
   }
   const releaseManifest = JSON.parse(await fsp.readFile(releaseManifestPath, "utf8"));
-  const { version, commit } = releaseManifest?.release || {};
+  const { version, tag, commit } = releaseManifest?.release || {};
   if (
     !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/u.test(version || "") ||
-    !COMMIT.test(commit || "")
+    !COMMIT.test(commit || "") ||
+    tag !== `v${version}`
   ) {
     fail("release manifest identity is invalid");
   }
@@ -287,11 +289,23 @@ export async function buildPublicPredecessorCapsule({
         profile,
         compatibilityGroupId:
           profile === "hosting" ? "public-stable-hosting-v1" : "public-stable-local-v1",
+        compatibilityDigest,
         release: { version, commit, tree: releaseTree },
-        releaseIndex: {
-          sequence: Number.parseInt(version.split(".")[2], 10),
-          sha256: compatibilityDigest,
+        sourceReceipt: {
+          schemaVersion: 1,
+          repository: "fased-ai/fased",
+          tag,
+          authority: "github-artifact-attestation",
+          manifest: {
+            name: path.basename(releaseManifestPath),
+            sha256: manifestDigest,
+          },
+          manifestAttestation: {
+            name: path.basename(releaseManifestAttestationPath),
+            sha256: await sha256(releaseManifestAttestationPath),
+          },
         },
+        releaseIndex: null,
         topology: {
           schemaVersion: 1,
           kind: "public-stable",
@@ -343,6 +357,7 @@ async function main() {
   const result = await buildPublicPredecessorCapsule({
     profile: values.profile,
     releaseManifestPath: values["release-manifest"],
+    releaseManifestAttestationPath: values["release-manifest-attestation"],
     releaseTree: values["release-tree"],
     compatibilityIndexPath: values["compatibility-index"],
     acceptanceContractPath: values["acceptance-contract"],

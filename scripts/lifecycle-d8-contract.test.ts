@@ -12,6 +12,14 @@ const contract = JSON.parse(
   readFileSync(new URL("../config/lifecycle-acceptance.v2.json", import.meta.url), "utf8"),
 );
 const digest = `sha256:${"a".repeat(64)}`;
+const releaseBaseUrl = "https://github.com/fased-ai/fased/releases/download/v1.2.3";
+const acquisition = {
+  mode: "immutable-github-release",
+  releaseBaseUrl,
+  metadataBaseUrl: `${releaseBaseUrl}/lifecycle/v1`,
+  transportSubstituted: false,
+  trustInventoryDigest: digest,
+};
 
 function evidence(
   profile: "protected-local" | "hosting",
@@ -51,6 +59,7 @@ describe("D8 unified lifecycle acceptance", () => {
         commit: "b".repeat(40),
         candidateDescriptorDigest: digest,
         predecessorCapsuleDigest: digest,
+        acquisition,
         evidence: REQUIRED_PREDICATES["protected-local"]["managed-update"],
       }),
     ).toThrow();
@@ -62,6 +71,7 @@ describe("D8 unified lifecycle acceptance", () => {
       commit: "b".repeat(40),
       candidateDescriptorDigest: digest,
       predecessorCapsuleDigest: digest,
+      acquisition,
       evidence: evidence("protected-local", "managed-update"),
     });
     expect(
@@ -79,8 +89,17 @@ describe("D8 unified lifecycle acceptance", () => {
       role: "fased-sanitized-predecessor-capsule",
       profile: "protected-local",
       compatibilityGroupId: "public-stable-local-v1",
+      compatibilityDigest: digest,
       release: { version: "0.1.75", commit: "c".repeat(40), tree: "d".repeat(40) },
-      releaseIndex: { sequence: 75, sha256: digest },
+      sourceReceipt: {
+        schemaVersion: 1,
+        repository: "fased-ai/fased",
+        tag: "v0.1.75",
+        authority: "github-artifact-attestation",
+        manifest: { name: "release.json", sha256: digest },
+        manifestAttestation: { name: "release.json.attestation.json", sha256: digest },
+      },
+      releaseIndex: null,
       topology: {
         schemaVersion: 1,
         kind: "public-stable",
@@ -135,6 +154,10 @@ describe("D8 unified lifecycle acceptance", () => {
       new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
       "utf8",
     );
+    const hostingWrapper = readFileSync(
+      new URL("./test-lifecycle-hosting-acceptance.sh", import.meta.url),
+      "utf8",
+    );
     expect(runner).toContain("restore-predecessor-capsule.mjs");
     expect(runner).toContain("lifecycle-receipt-verifier.mjs");
     expect(runner).not.toContain('"$predecessor_repo/install.sh"');
@@ -146,6 +169,11 @@ describe("D8 unified lifecycle acceptance", () => {
     expect(hosting).not.toContain("/repo/");
     expect(hosting).toContain("lifecycle-receipt-verifier.mjs");
     expect(hosting).toContain('grep -F "Already current: $version"');
+    expect(runner).toContain("acceptance_evidence_class=SUPPORTING");
+    expect(hosting).toContain("acceptance_evidence_class=SUPPORTING");
+    expect(wrapper).toContain("--evidence-class SUPPORTING");
+    expect(hostingWrapper).toContain("--evidence-class SUPPORTING");
+    expect(runner).not.toContain("systemctl list-units --all --no-pager 'fased-*'");
     const hostingManagedUpdate = hosting.slice(hosting.indexOf("  managed-update)"));
     expect(hostingManagedUpdate.indexOf("acceptance_mark restart-health")).toBeLessThan(
       hostingManagedUpdate.indexOf("acceptance_mark state-preservation"),

@@ -9,6 +9,8 @@ commit="${FASED_FIXTURE_COMMIT:?missing fixture commit}"
 predecessor_version="${FASED_FIXTURE_PREDECESSOR_VERSION:-}"
 preinstalled_tools="${FASED_FIXTURE_PREINSTALLED_TOOLS:-0}"
 public_acquisition="${FASED_FIXTURE_PUBLIC_ACQUISITION:-0}"
+acceptance_evidence_class=SUPPORTING
+acceptance_release_base_url="https://github.com/fased-ai/fased/releases/download/v${version}"
 acceptance_contract=/artifacts/fased-lifecycle-acceptance-v2.json
 acceptance_descriptor=/artifacts/fased-hosting-candidate.json
 acceptance_evidence="/tmp/fased-lifecycle-acceptance-${phase}.evidence.jsonl"
@@ -51,15 +53,8 @@ set_run_execution_policy() {
 
 acceptance_mark() {
   local predicate="$1"
-  local evidence_file="${2:-}"
+  local evidence_file="${2:?acceptance evidence file is required}"
   local summary="${3:-verified}"
-  if [[ -z "$evidence_file" ]]; then
-    evidence_file="/tmp/fased-lifecycle-${phase}-${predicate}.evidence"
-    {
-      systemctl list-units --all --no-pager 'fased-*' || true
-      find /var/lib/fased-local /opt/fased/local -maxdepth 4 -type f -printf '%m %u:%g %s %p\n' 2>/dev/null || true
-    } >"$evidence_file"
-  fi
   test -s "$evidence_file"
   local evidence_digest=""
   evidence_digest="sha256:$(sha256sum "$evidence_file" | awk '{print $1}')"
@@ -67,7 +62,8 @@ acceptance_mark() {
     --arg id "$predicate" \
     --arg evidenceDigest "$evidence_digest" \
     --arg summary "$summary" \
-    '{id:$id,status:"PASS",evidenceDigest:$evidenceDigest,summary:$summary}' \
+    --arg status "$acceptance_evidence_class" \
+    '{id:$id,status:$status,evidenceDigest:$evidenceDigest,summary:$summary}' \
     >>"$acceptance_evidence"
 }
 
@@ -105,6 +101,12 @@ acceptance_finish() {
     --commit "$commit" \
     --candidate-descriptor-digest "$descriptor_digest" \
     --predecessor-capsule-digest "$capsule_digest" \
+    --evidence-class "$acceptance_evidence_class" \
+    --acquisition-mode substituted-fixture \
+    --release-base-url "$acceptance_release_base_url" \
+    --metadata-base-url "$acceptance_release_base_url/lifecycle/v1" \
+    --transport-substituted true \
+    --trust-inventory-digest "$descriptor_digest" \
     --evidence-file "$evidence_json" \
     --output "$acceptance_receipt"
   /usr/local/bin/node /fixture-tools/lifecycle-receipt-verifier.mjs \
@@ -115,7 +117,8 @@ acceptance_finish() {
     --version "$version" \
     --commit "$commit" \
     --candidate-descriptor-digest "$descriptor_digest" \
-    --predecessor-capsule-digest "$capsule_digest" >/dev/null
+    --predecessor-capsule-digest "$capsule_digest" \
+    --evidence-class "$acceptance_evidence_class" >/dev/null
 }
 
 verify_three_services() {
@@ -129,6 +132,17 @@ verify_three_services() {
     systemctl is-enabled --quiet "$unit"
     systemctl is-active --quiet "$unit"
   done
+}
+
+record_three_services() {
+  local instance="$1"
+  local output="$2"
+  systemctl show \
+    "fased-local-controller-$instance.service" \
+    "fased-signerd-$instance.service" \
+    "fased-gateway-$instance.service" \
+    -p Id -p ActiveState -p UnitFileState >"$output"
+  test -s "$output"
 }
 
 configure_fixture_sat_runtime() {
@@ -1162,9 +1176,10 @@ if [[ "$phase" == "fresh-install" ]]; then
   runtime="$(resolve_protected_runtime "$instance")"
   verify_protected_home_acl "$instance"
   verify_canonical_lifecycle_supervisor "$instance"
-  acceptance_mark canonical-lifecycle
+  acceptance_mark canonical-lifecycle "/var/lib/fased-local/$instance/lifecycle/installation-manifest.json"
   verify_three_services "$instance"
-  acceptance_mark three-services-active
+  record_three_services "$instance" /tmp/fresh-three-services.out
+  acceptance_mark three-services-active /tmp/fresh-three-services.out
   wait_for_gateway_version "$version"
   wait_for_socket "/run/fased-local/$instance/operator/operator.sock"
   test "$(stat -c '%U:%G:%a' /opt/fased)" = "root:root:755"
@@ -1229,7 +1244,7 @@ if [[ "$phase" == "fresh-install" ]]; then
     echo "Fresh Protected Local Gateway is publicly bound." >&2
     exit 1
   fi
-  acceptance_mark restart-health
+  acceptance_mark restart-health /tmp/fresh-restart-health.json
   sha256sum --check "$fresh_restart_manifest"
   for wallet_id in agent vault; do
     verify_wallet "$instance" "$wallet_id" >"/tmp/fresh-${wallet_id}-restart.json"
@@ -1237,7 +1252,7 @@ if [[ "$phase" == "fresh-install" ]]; then
       <(jq -S . "/tmp/fresh-${wallet_id}.json") \
       <(jq -S . "/tmp/fresh-${wallet_id}-restart.json")
   done
-  acceptance_mark state-preservation
+  acceptance_mark state-preservation "$fresh_restart_manifest"
   restart_elapsed="$((SECONDS - restart_started))"
 
   noop_started="$SECONDS"
@@ -1458,7 +1473,9 @@ EOF_STABLE_BRIDGE_DROPIN
 
     run_stable_bridge_installer \
       >/tmp/stable-bridge-update.out 2>/tmp/stable-bridge-update.err
-    acceptance_mark rollback-retry
+    cat /tmp/stable-bridge-failure.err /tmp/stable-bridge-update.out \
+      >/tmp/stable-bridge-rollback-retry.evidence
+    acceptance_mark rollback-retry /tmp/stable-bridge-rollback-retry.evidence
     test "$(jq -er .profile "$state/install.json")" = "protected-local"
     test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$version"
     sha256sum --check "$stable_bridge_manifest"
@@ -1468,9 +1485,10 @@ EOF_STABLE_BRIDGE_DROPIN
     mapfile -t managed_operator_env < <(operator_env "$instance")
     runuser -u "fsgw-$instance" -- test -r "$state/extensions/stable-bridge-plugin.json"
     verify_canonical_lifecycle_supervisor "$instance"
-    acceptance_mark canonical-lifecycle
+    acceptance_mark canonical-lifecycle "/var/lib/fased-local/$instance/lifecycle/installation-manifest.json"
     verify_three_services "$instance"
-    acceptance_mark three-services-active
+    record_three_services "$instance" /tmp/stable-bridge-three-services.out
+    acceptance_mark three-services-active /tmp/stable-bridge-three-services.out
     wait_for_gateway_version "$version"
     for wallet_spec in "agent:Agent:agent" "vault:Vault:vault"; do
       IFS=: read -r wallet_id wallet_name wallet_role <<<"$wallet_spec"
@@ -1493,7 +1511,8 @@ EOF_STABLE_BRIDGE_DROPIN
       "fased-gateway-$instance.service"
     verify_three_services "$instance"
     wait_for_gateway_version "$version"
-    acceptance_mark restart-health
+    record_three_services "$instance" /tmp/stable-bridge-restart-health.out
+    acceptance_mark restart-health /tmp/stable-bridge-restart-health.out
     sha256sum --check "$stable_bridge_restart_manifest"
     verify_shared_wallet_registry "$instance" "$runtime"
     for wallet_id in agent vault; do
@@ -1502,7 +1521,7 @@ EOF_STABLE_BRIDGE_DROPIN
         <(jq -S . "/tmp/stable-${wallet_id}.json") \
         <(jq -S . "/tmp/stable-${wallet_id}-restart.json")
     done
-    acceptance_mark state-preservation
+    acceptance_mark state-preservation "$stable_bridge_restart_manifest"
     if ! runuser -u testop -- env "${managed_operator_env[@]}" \
       npm_config_registry="http://127.0.0.1:$rpc_port" \
       FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
@@ -1716,7 +1735,9 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
 
   run_target_installer \
     >/tmp/managed-update-success.out 2>/tmp/managed-update-success.err
-  acceptance_mark rollback-retry
+  cat /tmp/managed-update-failure.err /tmp/managed-update-success.out \
+    >/tmp/managed-rollback-retry.evidence
+  acceptance_mark rollback-retry /tmp/managed-rollback-retry.evidence
   if [[ -n "$managed_recovery_transaction" ]]; then
     managed_recovery_receipt="/var/lib/fased-local/$instance/controller/supervisor/receipts/${managed_recovery_transaction}.json"
     test "$(jq -er .operation "$managed_recovery_receipt")" = "recoverRelease"
@@ -1731,9 +1752,10 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
   runtime="$(resolve_protected_runtime "$instance")"
   mapfile -t managed_operator_env < <(operator_env "$instance")
   verify_canonical_lifecycle_supervisor "$instance"
-  acceptance_mark canonical-lifecycle
+  acceptance_mark canonical-lifecycle "/var/lib/fased-local/$instance/lifecycle/installation-manifest.json"
   verify_three_services "$instance"
-  acceptance_mark three-services-active
+  record_three_services "$instance" /tmp/managed-three-services.out
+  acceptance_mark three-services-active /tmp/managed-three-services.out
   run_operator_acceptance "$instance" "$runtime" managed managed_operator_env
   systemctl restart \
     "fased-local-controller-$instance.service" \
@@ -1741,10 +1763,11 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
     "fased-gateway-$instance.service"
   verify_three_services "$instance"
   wait_for_gateway_version "$version"
-  acceptance_mark restart-health
+  record_three_services "$instance" /tmp/managed-restart-health.out
+  acceptance_mark restart-health /tmp/managed-restart-health.out
   verify_managed_state_manifest
   verify_managed_semantic_state
-  acceptance_mark state-preservation
+  acceptance_mark state-preservation "$managed_state_manifest"
   runuser -u testop -- env "${managed_operator_env[@]}" \
     npm_config_registry="http://127.0.0.1:$rpc_port" \
     FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
