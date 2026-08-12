@@ -187,6 +187,7 @@ describe("D8 unified lifecycle acceptance", () => {
     expect(hosting).toContain("acceptance_evidence_class=SUPPORTING");
     expect(wrapper).toContain("--evidence-class SUPPORTING");
     expect(hostingWrapper).toContain("--evidence-class SUPPORTING");
+    expect(wrapper).toContain("lifecycle-d8-contract");
     expect(wrapper).toContain("scripts/lifecycle-configuration-preservation\\.(mjs|test\\.ts)");
     expect(hostingWrapper).toContain("scripts/lifecycle-configuration-preservation.mjs");
     expect(capsuleWrapper).toContain("lifecycle-configuration-preservation");
