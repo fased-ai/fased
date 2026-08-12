@@ -792,6 +792,11 @@ describe("CI workflow routing", () => {
     expect(publicationReplayText).toContain("fased-hosting-candidate");
     expect(publicationReplayText).toContain("fased-p1-replay-*-receipts");
     expect(publicationReplayText).toContain("scripts/lifecycle-receipt-verifier.mjs");
+    expect(publicationReplayText).toContain("local_receipt_count=0");
+    expect(publicationReplayText).toContain('test -f "$local_receipts/ubuntu-fresh-install.json"');
+    expect(publicationReplayText).toContain('"$local_receipts/ubuntu-managed-update.json"');
+    expect(publicationReplayText).toContain('-eq "$local_receipt_count"');
+    expect(publicationReplayText).not.toContain("1 + 3 *");
     expect(publicationReplayText).toContain("scripts/release-artifact-set.mjs verify");
     expect(publicationReplayText).toContain("scripts/privileged-release-evidence.mjs verify");
     expect(publicationReplayText).toContain('gh release create "$RELEASE_TAG" "$candidate"/*');
