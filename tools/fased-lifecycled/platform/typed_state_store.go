@@ -15,7 +15,7 @@ import (
 	stateparticipant "fased-lifecycled/participant"
 )
 
-type SharedStateStore interface {
+type TypedStateStore interface {
 	Prepare(string) (StatePreparation, error)
 	Activate(string) error
 	VerifyAccess(context.Context, string) error
@@ -29,7 +29,7 @@ type StatePreparation struct {
 	ParticipantDigests map[string]string
 }
 
-const maxSharedStateRecords = 100000
+const maxTypedStateRecords = 100000
 
 type typedStateRecord struct {
 	Participant     string `json:"participant"`
@@ -430,7 +430,7 @@ func (store *DiskTypedStateStore) discover() ([]typedStateRecord, error) {
 				records = append(records, record)
 				seen[record.Path] = true
 			}
-			if len(records) > maxSharedStateRecords {
+			if len(records) > maxTypedStateRecords {
 				return errors.New("typed state inventory exceeds limit")
 			}
 			return nil
@@ -490,7 +490,7 @@ func (store *DiskTypedStateStore) read(transactionID string) ([]typedStateRecord
 		return nil, err
 	}
 	var records []typedStateRecord
-	if err := json.Unmarshal(data, &records); err != nil || len(records) > maxSharedStateRecords {
+	if err := json.Unmarshal(data, &records); err != nil || len(records) > maxTypedStateRecords {
 		return nil, errors.New("typed state record is invalid")
 	}
 	previous := ""

@@ -24,6 +24,19 @@ const deletedLifecycleOwners = [
 
 const mutationOwners = deletedLifecycleOwners;
 
+const deletedD9Surfaces = [
+  "tools/fased-lifecycled/candidate/verify.go",
+  "tools/fased-lifecycled/controller/controller.go",
+  "tools/fased-lifecycled/platform/controller_adapter.go",
+  "tools/fased-lifecycled/platform/shared_state_store.go",
+  "scripts/docker/hosting-systemd/go-cutover.sh",
+  "scripts/docker/protected-local-systemd/run.sh",
+  "scripts/test-go-hosting-systemd-container.sh",
+  "scripts/test-protected-local-systemd-container.sh",
+  ".github/workflows/candidate-p1-retry.yml",
+  "config/lifecycle-acceptance.v1.json",
+] as const;
+
 const productionRoutingSurfaces = [
   "package.json",
   "src/cli/update-cli/update-command.ts",
@@ -70,18 +83,15 @@ async function exists(relativePath: string): Promise<boolean> {
 }
 
 describe("single Go lifecycle production routing", () => {
-  it.skipIf(process.env.FASED_REQUIRE_LIFECYCLE_DEMOLITION !== "1")(
-    "physically removes every superseded lifecycle mutation owner",
-    async () => {
-      const remaining = [];
-      for (const relativePath of deletedLifecycleOwners) {
-        if (await exists(relativePath)) {
-          remaining.push(relativePath);
-        }
+  it("physically removes every superseded lifecycle owner and route", async () => {
+    const remaining = [];
+    for (const relativePath of [...deletedLifecycleOwners, ...deletedD9Surfaces]) {
+      if (await exists(relativePath)) {
+        remaining.push(relativePath);
       }
-      expect(remaining, `superseded lifecycle owners remain:\n${remaining.join("\n")}`).toEqual([]);
-    },
-  );
+    }
+    expect(remaining, `superseded lifecycle owners remain:\n${remaining.join("\n")}`).toEqual([]);
+  });
 
   it("removes old lifecycle owners and mutation decisions from production routing", async () => {
     const violations: string[] = [];

@@ -41,7 +41,7 @@ type TargetAdapter struct {
 	Identity    model.PlatformIdentity
 	Units       UnitStore
 	Files       LifecycleFileStore
-	SharedState SharedStateStore
+	TypedState  TypedStateStore
 	Systemd     Systemd
 	Generations GenerationManager
 	Health      GatewayHealth
@@ -53,7 +53,7 @@ type TargetAdapter struct {
 }
 
 func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) (engine.Result, error) {
-	if adapter == nil || (adapter.Config.Profile != model.ProfileProtectedLocal && adapter.Config.Profile != model.ProfileHosting) || adapter.Manifest == nil || adapter.SharedState == nil || adapter.Systemd == nil || adapter.Health == nil || adapter.Plugins == nil {
+	if adapter == nil || (adapter.Config.Profile != model.ProfileProtectedLocal && adapter.Config.Profile != model.ProfileHosting) || adapter.Manifest == nil || adapter.TypedState == nil || adapter.Systemd == nil || adapter.Health == nil || adapter.Plugins == nil {
 		return engine.Result{}, errors.New("lifecycle onboarding adapter is incomplete")
 	}
 	manifest, _, err := adapter.Manifest.ReadManifest()
@@ -75,8 +75,8 @@ func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) (engine.Re
 	if err := validateOnboardingConfig(adapter.Config); err != nil {
 		return engine.Result{}, err
 	}
-	if err := adapter.SharedState.Converge(); err != nil {
-		return engine.Result{}, fmt.Errorf("onboarding shared state is unsafe: %w", err)
+	if err := adapter.TypedState.Converge(); err != nil {
+		return engine.Result{}, fmt.Errorf("onboarding typed state is unsafe: %w", err)
 	}
 	if err := adapter.Systemd.IsActive(ctx, adapter.Identity.Services["signer"]); err != nil {
 		return engine.Result{}, fmt.Errorf("signer is not active before onboarding completion: %w", err)
@@ -267,7 +267,7 @@ func (adapter *TargetAdapter) Quiesce(ctx context.Context, tx model.Transaction)
 }
 
 func (adapter *TargetAdapter) PrepareState(_ context.Context, tx model.Transaction) (engine.ParticipantReceipt, string, error) {
-	prepared, err := adapter.SharedState.Prepare(tx.ID)
+	prepared, err := adapter.TypedState.Prepare(tx.ID)
 	if err != nil {
 		return engine.ParticipantReceipt{}, "", err
 	}
@@ -292,13 +292,13 @@ func (adapter *TargetAdapter) StopTarget(ctx context.Context, _ model.Transactio
 }
 
 func (adapter *TargetAdapter) Activate(ctx context.Context, tx model.Transaction) error {
-	if err := adapter.SharedState.Activate(tx.ID); err != nil {
+	if err := adapter.TypedState.Activate(tx.ID); err != nil {
 		return err
 	}
 	if err := adapter.Files.Activate(tx.ID, adapter.preStartLifecycleFiles(tx)); err != nil {
 		return err
 	}
-	if err := adapter.SharedState.VerifyAccess(ctx, tx.ID); err != nil {
+	if err := adapter.TypedState.VerifyAccess(ctx, tx.ID); err != nil {
 		return fmt.Errorf("typed state is inaccessible before service start: %w", err)
 	}
 	if err := adapter.Units.Activate(tx.ID, adapter.targetUnits()); err != nil {
@@ -366,14 +366,14 @@ func (adapter *TargetAdapter) Commit(ctx context.Context, tx model.Transaction) 
 	if err := adapter.Predecessor.Commit(ctx, tx); err != nil {
 		return err
 	}
-	return errors.Join(adapter.Units.Discard(tx.ID), adapter.Files.Discard(tx.ID), adapter.SharedState.Discard(tx.ID))
+	return errors.Join(adapter.Units.Discard(tx.ID), adapter.Files.Discard(tx.ID), adapter.TypedState.Discard(tx.ID))
 }
 
 func (adapter *TargetAdapter) Restore(ctx context.Context, tx model.Transaction) error {
 	if err := adapter.Files.Restore(tx.ID, adapter.lifecycleFiles(tx)); err != nil {
 		return err
 	}
-	if err := adapter.SharedState.Restore(tx.ID); err != nil {
+	if err := adapter.TypedState.Restore(tx.ID); err != nil {
 		return err
 	}
 	if err := adapter.Units.Restore(tx.ID, adapter.targetUnits()); err != nil {
@@ -417,11 +417,11 @@ func (adapter *TargetAdapter) localPublicStableBridge(tx model.Transaction) bool
 }
 
 func (adapter *TargetAdapter) Discard(ctx context.Context, tx model.Transaction) error {
-	return errors.Join(adapter.Units.Discard(tx.ID), adapter.Files.Discard(tx.ID), adapter.SharedState.Discard(tx.ID), adapter.Predecessor.Discard(ctx, tx))
+	return errors.Join(adapter.Units.Discard(tx.ID), adapter.Files.Discard(tx.ID), adapter.TypedState.Discard(tx.ID), adapter.Predecessor.Discard(ctx, tx))
 }
 
 func (adapter *TargetAdapter) validate(tx model.Transaction) error {
-	if adapter == nil || adapter.Units == nil || adapter.Files == nil || adapter.SharedState == nil || adapter.Systemd == nil || adapter.Generations == nil || adapter.Health == nil || adapter.Predecessor == nil || adapter.Fence == nil || adapter.Network == nil || adapter.Plugins == nil {
+	if adapter == nil || adapter.Units == nil || adapter.Files == nil || adapter.TypedState == nil || adapter.Systemd == nil || adapter.Generations == nil || adapter.Health == nil || adapter.Predecessor == nil || adapter.Fence == nil || adapter.Network == nil || adapter.Plugins == nil {
 		return errors.New("target platform adapter is incomplete")
 	}
 	if err := adapter.Config.Validate(); err != nil {

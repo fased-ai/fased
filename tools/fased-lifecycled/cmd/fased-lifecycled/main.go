@@ -76,9 +76,6 @@ func run(args []string) error {
 	if args[0] == "initialize" {
 		return runInitialize(args[1:], os.Stdout)
 	}
-	if args[0] == "apply" {
-		return runApply(args[1:], os.Stdout)
-	}
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var configPath, socketPath string
@@ -209,7 +206,7 @@ func runInventory(args []string, output io.Writer) error {
 func runInitialize(args []string, output io.Writer) (resultErr error) {
 	flags := flag.NewFlagSet("initialize", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var profileRaw, instanceID, ownerStateRoot, operatorUser, generationRoot, generationArchive, dependencyArchive, sourceTopology string
+	var profileRaw, instanceID, ownerStateRoot, operatorUser, generationArchive, dependencyArchive, sourceTopology string
 	var gatewayPort uint64
 	var releaseSequence, securityEpoch uint64
 	var releaseIndexDigest, releaseAuthorityDigest string
@@ -217,7 +214,6 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	flags.StringVar(&instanceID, "instance", "", "")
 	flags.StringVar(&ownerStateRoot, "owner-state", "", "")
 	flags.StringVar(&operatorUser, "operator-user", "", "")
-	flags.StringVar(&generationRoot, "generation", "", "")
 	flags.StringVar(&generationArchive, "generation-archive", "", "")
 	flags.StringVar(&dependencyArchive, "dependency-archive", "", "")
 	flags.StringVar(&sourceTopology, "source-topology", "", "")
@@ -265,7 +261,7 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	default:
 		return errors.New("installation discovery returned an unsupported class")
 	}
-	applyArguments, err := initializationApplyArguments("", generationRoot, generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion, releaseSequence, securityEpoch, releaseIndexDigest, releaseAuthorityDigest)
+	applyArguments, err := initializationApplyArguments("", generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion, releaseSequence, securityEpoch, releaseIndexDigest, releaseAuthorityDigest)
 	if err != nil {
 		return err
 	}
@@ -305,7 +301,7 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	defer func() { resultErr = errors.Join(resultErr, result.ReleaseCreatedRootHandles()) }()
 	configPath := filepath.Join(result.Config.LifecycleRoot, "platform.json")
 	applyArguments[1] = configPath
-	if err := runApply(applyArguments, output); err != nil {
+	if err := applyVerifiedArchive(applyArguments, output); err != nil {
 		rollbackErr := result.Transaction.Rollback()
 		cleanupErr := cleanupFailedInitialization(result, rollbackErr)
 		if cleanupErr == nil {
@@ -446,18 +442,14 @@ func discoverInitialization(profile model.Profile, instanceID, ownerStateRoot, o
 	})
 }
 
-func initializationApplyArguments(configPath, generationRoot, generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion string, releaseSequence, securityEpoch uint64, releaseIndexDigest, releaseAuthorityDigest string) ([]string, error) {
-	if (generationRoot == "") == (generationArchive == "") {
+func initializationApplyArguments(configPath, generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion string, releaseSequence, securityEpoch uint64, releaseIndexDigest, releaseAuthorityDigest string) ([]string, error) {
+	if generationArchive == "" {
 		return nil, errors.New("invalid lifecycle initialization generation input")
 	}
-	flagName, selected := "--generation", generationRoot
-	if generationArchive != "" {
-		flagName, selected = "--generation-archive", generationArchive
-	}
-	if !filepath.IsAbs(selected) || filepath.Clean(selected) != selected {
+	if !filepath.IsAbs(generationArchive) || filepath.Clean(generationArchive) != generationArchive {
 		return nil, errors.New("invalid lifecycle initialization generation input")
 	}
-	arguments := []string{"--config", configPath, flagName, selected}
+	arguments := []string{"--config", configPath, "--generation-archive", generationArchive}
 	if releaseSequence == 0 || securityEpoch == 0 || releaseIndexDigest == "" || releaseAuthorityDigest == "" {
 		return nil, errors.New("lifecycle initialization requires signed release authority")
 	}
@@ -610,17 +602,15 @@ func ensureStableBinaryDirectory(directory string) error {
 	return nil
 }
 
-func runApply(args []string, output io.Writer) error {
-	flags := flag.NewFlagSet("apply", flag.ContinueOnError)
+func applyVerifiedArchive(args []string, output io.Writer) error {
+	flags := flag.NewFlagSet("verified-archive-apply", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var configPath, generationRoot, generationArchive, dependencyArchive, generationID, sourceTopology, publicPredecessorVersion string
+	var configPath, generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion string
 	var releaseIndexDigest, releaseAuthorityDigest string
 	var releaseSequence, securityEpoch uint64
 	flags.StringVar(&configPath, "config", "", "")
-	flags.StringVar(&generationRoot, "generation", "", "")
 	flags.StringVar(&generationArchive, "generation-archive", "", "")
 	flags.StringVar(&dependencyArchive, "dependency-archive", "", "")
-	flags.StringVar(&generationID, "generation-id", "", "")
 	flags.StringVar(&sourceTopology, "source-topology", "", "")
 	flags.StringVar(&publicPredecessorVersion, "public-predecessor-version", "", "")
 	flags.Uint64Var(&releaseSequence, "release-sequence", 0, "")
@@ -630,20 +620,10 @@ func runApply(args []string, output io.Writer) error {
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return errors.New("invalid lifecycle apply arguments")
 	}
-	selected := 0
-	for _, value := range []string{generationRoot, generationArchive, generationID} {
-		if value != "" {
-			selected++
-		}
-	}
-	if selected != 1 {
+	if generationArchive == "" {
 		return errors.New("invalid lifecycle apply arguments")
 	}
-	selectedInput := generationRoot
-	if generationArchive != "" {
-		selectedInput = generationArchive
-	}
-	if selectedInput != "" && (!filepath.IsAbs(selectedInput) || filepath.Clean(selectedInput) != selectedInput) {
+	if !filepath.IsAbs(generationArchive) || filepath.Clean(generationArchive) != generationArchive {
 		return errors.New("invalid lifecycle apply arguments")
 	}
 	if dependencyArchive != "" && (!filepath.IsAbs(dependencyArchive) || filepath.Clean(dependencyArchive) != dependencyArchive) {
@@ -660,33 +640,22 @@ func runApply(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	var generation model.Generation
-	if generationID != "" {
-		generation = model.Generation{ID: generationID}
-	} else if generationArchive != "" {
-		generation, err = state.ImportGenerationArchive(generationArchive)
-	} else {
-		generation, err = state.ImportGeneration(generationRoot)
-	}
+	generation, err := state.ImportGenerationArchive(generationArchive)
 	if err != nil {
 		return err
 	}
-	if generationID == "" {
-		if err := importGenerationDependency(state, generation, dependencyArchive); err != nil {
-			return err
-		}
-		if err := state.BindCandidateAuthority(store.CandidateAuthority{
-			SchemaVersion: 1, GenerationID: generation.ID, ReleaseSequence: releaseSequence, SecurityEpoch: securityEpoch,
-			ReleaseIndex: releaseIndexDigest, ReleaseAuthority: releaseAuthorityDigest,
-		}); err != nil {
-			return err
-		}
-	} else if releaseSequence != 0 || securityEpoch != 0 || releaseIndexDigest != "" || releaseAuthorityDigest != "" {
-		return errors.New("existing generation convergence cannot rebind release authority")
+	if err := importGenerationDependency(state, generation, dependencyArchive); err != nil {
+		return err
+	}
+	if err := state.BindCandidateAuthority(store.CandidateAuthority{
+		SchemaVersion: 1, GenerationID: generation.ID, ReleaseSequence: releaseSequence, SecurityEpoch: securityEpoch,
+		ReleaseIndex: releaseIndexDigest, ReleaseAuthority: releaseAuthorityDigest,
+	}); err != nil {
+		return err
 	}
 	// Promote verified bytes before the stable supervisor enters its read-only
-	// installation namespace. The target controller repeats this operation
-	// idempotently as part of its own mutation transaction.
+	// installation namespace. The installed host repeats this operation
+	// idempotently inside the durable product transaction.
 	if err := state.StageGeneration(generation.ID); err != nil {
 		return err
 	}
@@ -886,7 +855,7 @@ func installedTargetRuntime(config platform.Config, identity model.PlatformIdent
 	if err != nil {
 		return nil, nil, err
 	}
-	sharedState, err := platform.NewDiskTypedStateStore(config, platform.CommandStateAccessVerifier{Binary: executable})
+	typedState, err := platform.NewDiskTypedStateStore(config, platform.CommandStateAccessVerifier{Binary: executable})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -907,7 +876,7 @@ func installedTargetRuntime(config platform.Config, identity model.PlatformIdent
 		predecessor = &platform.HostingPredecessor{Config: config, Systemd: systemd, State: platform.CommandServiceState{Binary: "/usr/bin/systemctl"}}
 		networkPolicy = platform.CommandHostingNetworkPolicy{TailscaleBinary: "/usr/bin/tailscale", SocketBinary: "/usr/bin/ss"}
 	}
-	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Files: files, SharedState: sharedState, Systemd: systemd, Generations: state, Health: platform.LoopbackGatewayHealth{}, Predecessor: predecessor, Fence: platform.DiskLocalPredecessorFence{}, Network: networkPolicy, Manifest: state, Plugins: platform.DiskPluginBoundary{Config: config, Resolver: state}}
+	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Files: files, TypedState: typedState, Systemd: systemd, Generations: state, Health: platform.LoopbackGatewayHealth{}, Predecessor: predecessor, Fence: platform.DiskLocalPredecessorFence{}, Network: networkPolicy, Manifest: state, Plugins: platform.DiskPluginBoundary{Config: config, Resolver: state}}
 	targetEngine := &engine.TargetEngine{Journal: state, Generations: state,
 		Migrator: &migrator.SchemaMigrator{Registry: registry}, Signer: signerParticipant,
 		Adapter: targetAdapter, Installation: &platform.ManifestCommitter{Store: state, Identity: identity}}

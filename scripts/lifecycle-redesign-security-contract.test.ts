@@ -49,7 +49,7 @@ describe("stable lifecycle appliance security closure", () => {
     const statebind = await source("tools/fased-lifecycled/statebind/statebind.go");
 
     expect(target.indexOf("Predecessor.Quiesce")).toBeLessThan(
-      target.indexOf("SharedState.Prepare"),
+      target.indexOf("TypedState.Prepare"),
     );
     expect(await exists("tools/fased-lifecycled/platform/shared_state_store.go")).toBe(false);
     expect(sharedState).not.toContain("isTransientSQLiteSidecar");
@@ -106,6 +106,22 @@ describe("stable lifecycle appliance security closure", () => {
     expect(await exists("tools/fased-lifecycled/cmd/fased-lifecycled/controller.go")).toBe(false);
     expect(identity).toContain("LegacyControllerPlatformIdentity");
     expect(identity).not.toContain("func NewControllerPlatformIdentity");
+  });
+
+  it("D9 exposes only archive-bound import and typed participant state", async () => {
+    const daemon = await source("tools/fased-lifecycled/cmd/fased-lifecycled/main.go");
+    const generationStore = await source("tools/fased-lifecycled/store/generation_store.go");
+    const target = await source("tools/fased-lifecycled/platform/target_adapter.go");
+    const typedState = await source("tools/fased-lifecycled/platform/typed_state_store.go");
+
+    expect(daemon).not.toContain('args[0] == "apply"');
+    expect(daemon).not.toContain('"--generation"');
+    expect(daemon).not.toContain('"--generation-id"');
+    expect(generationStore).not.toContain("func (s *Store) ImportGeneration(");
+    expect(generationStore).toContain("func (s *Store) ImportGenerationArchive(");
+    expect(target).not.toContain("SharedState");
+    expect(typedState).not.toContain("SharedStateStore");
+    expect(typedState).toContain("type TypedStateStore interface");
   });
 
   it("keeps application generations outside the privileged lifecycle host", async () => {

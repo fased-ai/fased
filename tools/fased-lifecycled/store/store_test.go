@@ -607,77 +607,6 @@ func TestStageAndActivateUseOnlyContentAddressedStorePaths(t *testing.T) {
 	}
 }
 
-func TestImportGenerationCopiesAndReverifiesExactBytes(t *testing.T) {
-	root := t.TempDir()
-	state, err := Open(filepath.Join(root, "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := filepath.Join(root, "external-generation")
-	payload := filepath.Join(source, generationPayloadName)
-	if err := os.MkdirAll(filepath.Join(payload, "bin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(payload, "bin", "fased"), []byte("verified"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("fased", filepath.Join(payload, "bin", "alias")); err != nil {
-		t.Fatal(err)
-	}
-	inventory, expected, err := bundle.Inspect(payload, "0.1.76", commitB, commitB,
-		map[string]uint32{"signer": 1}, manifest().Capabilities)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := bundle.CanonicalInventoryJSON(inventory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(source, generationInventoryName), data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	imported, err := state.ImportGeneration(source)
-	if err != nil || imported != expected {
-		t.Fatalf("unexpected import: %+v err=%v", imported, err)
-	}
-	if second, err := state.ImportGeneration(source); err != nil || second != expected {
-		t.Fatalf("idempotent import failed: %+v err=%v", second, err)
-	}
-	authority := CandidateAuthority{SchemaVersion: 1, GenerationID: expected.ID, ReleaseSequence: 12, SecurityEpoch: 3, ReleaseIndex: digestA, ReleaseAuthority: digestB}
-	if err := state.BindCandidateAuthority(authority); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.BindCandidateAuthority(authority); err != nil {
-		t.Fatalf("exact authority retry failed: %v", err)
-	}
-	if read, err := state.ReadCandidateAuthority(expected.ID); err != nil || read != authority {
-		t.Fatalf("candidate authority changed: %+v err=%v", read, err)
-	}
-	authorityJSON, err := os.ReadFile(state.candidateAuthorityPath(expected.ID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Contains(authorityJSON, []byte(`"releaseAuthorityDigest"`)) || bytes.Contains(authorityJSON, []byte(`"delegationDigest"`)) {
-		t.Fatalf("candidate authority retained the obsolete delegation schema: %s", authorityJSON)
-	}
-	changed := authority
-	changed.ReleaseSequence++
-	if err := state.BindCandidateAuthority(changed); err == nil {
-		t.Fatal("candidate release sequence was rebound")
-	}
-	importedAlias := filepath.Join(state.inboxGenerationPath(expected.ID), generationPayloadName, "bin", "alias")
-	if target, err := os.Readlink(importedAlias); err != nil || target != "fased" {
-		t.Fatalf("safe imported symlink was not preserved: target=%q err=%v", target, err)
-	}
-	if err := os.WriteFile(filepath.Join(payload, "bin", "fased"), []byte("substituted"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := state.ImportGeneration(source); err == nil {
-		t.Fatal("tampered import source was accepted")
-	}
-}
-
 func TestImportGenerationArchiveExtractsDirectlyAndReverifiesExactBytes(t *testing.T) {
 	root := t.TempDir()
 	state, err := Open(filepath.Join(root, "state"))
@@ -742,6 +671,28 @@ func TestImportGenerationArchiveExtractsDirectlyAndReverifiesExactBytes(t *testi
 	importedAlias := filepath.Join(state.inboxGenerationPath(expected.ID), generationPayloadName, "bin", "alias")
 	if target, err := os.Readlink(importedAlias); err != nil || target != "fased" {
 		t.Fatalf("safe archived symlink was not preserved: target=%q err=%v", target, err)
+	}
+	authority := CandidateAuthority{SchemaVersion: 1, GenerationID: expected.ID, ReleaseSequence: 12, SecurityEpoch: 3, ReleaseIndex: digestA, ReleaseAuthority: digestB}
+	if err := state.BindCandidateAuthority(authority); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.BindCandidateAuthority(authority); err != nil {
+		t.Fatalf("exact authority retry failed: %v", err)
+	}
+	if read, err := state.ReadCandidateAuthority(expected.ID); err != nil || read != authority {
+		t.Fatalf("candidate authority changed: %+v err=%v", read, err)
+	}
+	authorityJSON, err := os.ReadFile(state.candidateAuthorityPath(expected.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(authorityJSON, []byte(`"releaseAuthorityDigest"`)) || bytes.Contains(authorityJSON, []byte(`"delegationDigest"`)) {
+		t.Fatalf("candidate authority retained the obsolete delegation schema: %s", authorityJSON)
+	}
+	changed := authority
+	changed.ReleaseSequence++
+	if err := state.BindCandidateAuthority(changed); err == nil {
+		t.Fatal("candidate release sequence was rebound")
 	}
 }
 
@@ -941,57 +892,6 @@ func TestGenerationArchiveExtractionRejectsTraversalAndEscapingSymlinks(t *testi
 				t.Fatal("unsafe archive entry was accepted")
 			}
 		})
-	}
-}
-
-func TestCopyRegularTreePreservesExecutableModeUnderRestrictiveUmask(t *testing.T) {
-	root := t.TempDir()
-	source := filepath.Join(root, "source")
-	destination := filepath.Join(root, "destination")
-	if err := os.MkdirAll(filepath.Join(source, generationPayloadName, "bin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(destination, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	launcher := filepath.Join(source, generationPayloadName, "bin", "launcher")
-	if err := os.WriteFile(launcher, []byte("exact"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(source, generationInventoryName), []byte("private"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	previousUmask := syscall.Umask(0o117)
-	defer syscall.Umask(previousUmask)
-	if err := copyRegularTree(source, destination); err != nil {
-		t.Fatal(err)
-	}
-	info, err := os.Stat(filepath.Join(destination, generationPayloadName, "bin", "launcher"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o755 {
-		t.Fatalf("copied executable mode is %04o, expected 0755", info.Mode().Perm())
-	}
-	for _, directory := range []string{".", generationPayloadName, filepath.Join(generationPayloadName, "bin")} {
-		directoryInfo, err := os.Stat(filepath.Join(destination, directory))
-		if err != nil {
-			t.Fatal(err)
-		}
-		expected := os.FileMode(0o755)
-		if directory == "." {
-			expected = 0o711
-		}
-		if directoryInfo.Mode().Perm() != expected {
-			t.Fatalf("copied directory %s mode is %04o, expected %04o", directory, directoryInfo.Mode().Perm(), expected)
-		}
-	}
-	inventoryInfo, err := os.Stat(filepath.Join(destination, generationInventoryName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if inventoryInfo.Mode().Perm() != 0o644 {
-		t.Fatalf("copied inventory mode is %04o, expected 0644", inventoryInfo.Mode().Perm())
 	}
 }
 

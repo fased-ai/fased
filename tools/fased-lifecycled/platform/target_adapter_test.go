@@ -26,9 +26,9 @@ type fakeLifecycleFiles struct {
 	activations *[][]string
 }
 
-type fakeSharedState struct{ calls *[]string }
+type fakeTypedState struct{ calls *[]string }
 
-func (state fakeSharedState) Prepare(string) (StatePreparation, error) {
+func (state fakeTypedState) Prepare(string) (StatePreparation, error) {
 	*state.calls = append(*state.calls, "shared.prepare")
 	return StatePreparation{Digest: digestA, ParticipantDigests: testStateParticipantDigests()}, nil
 }
@@ -39,23 +39,23 @@ func testStateParticipantDigests() map[string]string {
 		"federation": digestA, "plugin-data": digestA, "signer": digestA,
 	}
 }
-func (state fakeSharedState) Activate(string) error {
+func (state fakeTypedState) Activate(string) error {
 	*state.calls = append(*state.calls, "shared.activate")
 	return nil
 }
-func (state fakeSharedState) VerifyAccess(context.Context, string) error {
+func (state fakeTypedState) VerifyAccess(context.Context, string) error {
 	*state.calls = append(*state.calls, "shared.verify-access")
 	return nil
 }
-func (state fakeSharedState) Restore(string) error {
+func (state fakeTypedState) Restore(string) error {
 	*state.calls = append(*state.calls, "shared.restore")
 	return nil
 }
-func (state fakeSharedState) Discard(string) error {
+func (state fakeTypedState) Discard(string) error {
 	*state.calls = append(*state.calls, "shared.discard")
 	return nil
 }
-func (state fakeSharedState) Converge() error {
+func (state fakeTypedState) Converge() error {
 	*state.calls = append(*state.calls, "shared.converge")
 	return nil
 }
@@ -264,7 +264,7 @@ func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) 
 		t.Fatal(err)
 	}
 	calls := []string{}
-	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Files: fakeLifecycleFiles{calls: &calls}, SharedState: fakeSharedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls}, Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Fence: fakeFence{calls: &calls}, Network: NoNetworkPolicy{}, Plugins: fakePlugins{calls: &calls}}, tx, &calls
+	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Files: fakeLifecycleFiles{calls: &calls}, TypedState: fakeTypedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls}, Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Fence: fakeFence{calls: &calls}, Network: NoNetworkPolicy{}, Plugins: fakePlugins{calls: &calls}}, tx, &calls
 }
 
 func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing.T) {
@@ -506,7 +506,7 @@ func testCompleteOnboardingStartsAndVerifiesExactCommittedGateway(t *testing.T, 
 		Platform: identity, ActiveGeneration: &active, StateSchemas: map[string]uint32{"signer": 2},
 		Capabilities: model.CapabilityRanges{Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1}, Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 1, Max: 1}}, ReleaseSequence: 12, SecurityEpoch: 3}
 	calls := []string{}
-	adapter := TargetAdapter{Config: config, Identity: identity, SharedState: fakeSharedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls, inactive: map[string]bool{identity.Services["gateway"]: true}}, Health: fakeHealth{calls: &calls}, Manifest: fakeManifestReader{manifest: manifest}, Plugins: fakePlugins{calls: &calls}}
+	adapter := TargetAdapter{Config: config, Identity: identity, TypedState: fakeTypedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls, inactive: map[string]bool{identity.Services["gateway"]: true}}, Health: fakeHealth{calls: &calls}, Manifest: fakeManifestReader{manifest: manifest}, Plugins: fakePlugins{calls: &calls}}
 	result, err := adapter.CompleteOnboarding(context.Background())
 	if err != nil || result.Outcome != engine.OutcomeUpdated || result.Phase != model.PhaseCommitted {
 		t.Fatal(err)
@@ -537,7 +537,7 @@ func TestHostingCompleteOnboardingReturnsAlreadyCurrentForHealthyGateway(t *test
 		Platform: identity, ActiveGeneration: &active, StateSchemas: map[string]uint32{"signer": 2},
 		Capabilities: model.CapabilityRanges{Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1}, Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 1, Max: 1}}, ReleaseSequence: 12, SecurityEpoch: 3}
 	calls := []string{}
-	adapter := TargetAdapter{Config: config, Identity: identity, SharedState: fakeSharedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Health: fakeHealth{calls: &calls}, Manifest: fakeManifestReader{manifest: manifest}, Plugins: fakePlugins{calls: &calls}}
+	adapter := TargetAdapter{Config: config, Identity: identity, TypedState: fakeTypedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Health: fakeHealth{calls: &calls}, Manifest: fakeManifestReader{manifest: manifest}, Plugins: fakePlugins{calls: &calls}}
 	result, err := adapter.CompleteOnboarding(context.Background())
 	if err != nil || result.Outcome != engine.OutcomeAlreadyCurrent || result.Phase != model.PhaseCommitted {
 		t.Fatalf("unexpected idempotent onboarding result: result=%+v err=%v", result, err)
@@ -652,7 +652,7 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	calls := []string{}
 	units := &fakeUnits{calls: &calls}
 	adapter := &TargetAdapter{
-		Config: config, Identity: identity, Units: units, Files: fakeLifecycleFiles{calls: &calls}, SharedState: fakeSharedState{calls: &calls},
+		Config: config, Identity: identity, Units: units, Files: fakeLifecycleFiles{calls: &calls}, TypedState: fakeTypedState{calls: &calls},
 		Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls},
 		Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Fence: NoLocalPredecessorFence{}, Network: NoNetworkPolicy{}, Plugins: fakePlugins{calls: &calls},
 	}
