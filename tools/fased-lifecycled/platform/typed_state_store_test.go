@@ -11,10 +11,14 @@ import (
 	"fased-lifecycled/model"
 )
 
-type modeAccessVerifier struct{ calls int }
+type modeAccessVerifier struct {
+	calls int
+	paths []string
+}
 
 func (verifier *modeAccessVerifier) Verify(_ context.Context, path string, directory bool, principal Principal, groups []uint32) error {
 	verifier.calls++
+	verifier.paths = append(verifier.paths, path)
 	info, err := os.Stat(path)
 	if err != nil || info.IsDir() != directory {
 		return os.ErrPermission
@@ -76,12 +80,14 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 			federationWAL := federationDatabase + "-wal"
 			registry := filepath.Join(wallet, "provider-registry.v1.json")
 			configuration := filepath.Join(owner, "fased.json")
+			installProjection := filepath.Join(owner, "install.json")
+			lifecycleProjection := filepath.Join(owner, "lifecycle.json")
 			applicationState := filepath.Join(application, "task.json")
 			pluginState := filepath.Join(pluginData, "memory-core.json")
 			original := map[string][]byte{
 				database: sqliteBytes("database-before\n"), wal: []byte("wal-before\n"),
 				federationDatabase: sqliteBytes("federation-before\n"), federationWAL: []byte("federation-wal-before\n"),
-				registry: []byte("wallet-before\n"), configuration: []byte("config-before\n"), applicationState: []byte("task-before\n"), pluginState: []byte("plugin-data-before\n"),
+				registry: []byte("wallet-before\n"), configuration: []byte("config-before\n"), installProjection: []byte("install-before\n"), lifecycleProjection: []byte("lifecycle-before\n"), applicationState: []byte("task-before\n"), pluginState: []byte("plugin-data-before\n"),
 			}
 			for path, data := range original {
 				if err := os.WriteFile(path, data, 0o600); err != nil {
@@ -128,6 +134,11 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 			}
 			if err := store.VerifyAccess(context.Background(), "transaction"); err != nil {
 				t.Fatal(err)
+			}
+			for _, path := range access.paths {
+				if path == installProjection || path == lifecycleProjection {
+					t.Fatalf("pre-start verification exposed commit-only projection %s", path)
+				}
 			}
 			if err := os.WriteFile(database, sqliteBytes("database-after\n"), 0o660); err != nil {
 				t.Fatal(err)

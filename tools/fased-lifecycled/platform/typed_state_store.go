@@ -231,6 +231,15 @@ func (store *DiskTypedStateStore) VerifyAccess(ctx context.Context, transactionI
 		return err
 	}
 	for _, record := range records {
+		if record.ProjectionOwned && record.Path != store.unresolve(CanonicalGatewayConfigPath(store.Config)) {
+			// install.json and lifecycle.json describe a committed lifecycle.
+			// They remain at their predecessor identity until target health has
+			// passed, so requiring the target Gateway to read them before start
+			// would either expose an uncommitted transaction or make every
+			// public-stable bridge fail. fased.json is the only projection the
+			// target process requires during pre-start verification.
+			continue
+		}
 		info, err := os.Lstat(store.resolve(record.Path))
 		if err != nil {
 			return err
