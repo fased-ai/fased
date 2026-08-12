@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 const (
@@ -46,6 +47,8 @@ func testTransaction(phase Phase) Transaction {
 		ID:                   "018f47d2-5a6b-7c8d-9e0f-123456789abc",
 		Profile:              ProfileProtectedLocal,
 		PlanAction:           "UPDATE",
+		ReleaseSequence:      12,
+		SecurityEpoch:        3,
 		Phase:                phase,
 		Revision:             1,
 		Target:               testGeneration(testDigestB, "0.1.76", testCommitB, testCommitB, testDigestB),
@@ -60,10 +63,55 @@ func testTransaction(phase Phase) Transaction {
 	}
 }
 
+func TestReleaseAuthorityIsRequiredAndEnvelopeBound(t *testing.T) {
+	tx := testTransaction(PhaseIdle)
+	tx.ReleaseSequence = 0
+	if err := tx.Validate(); err == nil {
+		t.Fatal("transaction without release sequence was accepted")
+	}
+	tx.ReleaseSequence = 12
+	tx.SecurityEpoch = 0
+	if err := tx.Validate(); err == nil {
+		t.Fatal("transaction without security epoch was accepted")
+	}
+	tx.SecurityEpoch = 3
+	envelope, err := tx.Envelope()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if envelope.ReleaseSequence != 12 || envelope.SecurityEpoch != 3 {
+		t.Fatalf("envelope lost monotonic authority: %+v", envelope)
+	}
+}
+
+func TestRollbackAuthorizationIsShortLivedAndExactlyBound(t *testing.T) {
+	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	authorization := RollbackAuthorization{
+		SchemaVersion: 1, CurrentGenerationID: testDigestB, TargetGenerationID: testDigestA,
+		CurrentReleaseSequence: 12, TargetReleaseSequence: 11, SecurityEpoch: 3,
+		Operator: "founder", Reason: "restore known-good generation",
+		IssuedAt: now.Add(-time.Minute).Format(time.RFC3339), ExpiresAt: now.Add(4 * time.Minute).Format(time.RFC3339),
+		EnvelopeDigest: testDigestA,
+	}
+	if err := authorization.ValidateAt(now); err != nil {
+		t.Fatalf("valid rollback authorization rejected: %v", err)
+	}
+	changed := authorization
+	changed.TargetGenerationID = testDigestB
+	if err := changed.ValidateAt(now); err == nil {
+		t.Fatal("rebound rollback authorization was accepted")
+	}
+	expired := authorization
+	expired.ExpiresAt = now.Add(-time.Second).Format(time.RFC3339)
+	if err := expired.ValidateAt(now); err == nil {
+		t.Fatal("expired rollback authorization was accepted")
+	}
+}
+
 func TestAdvanceUsesOneFixedStateMachine(t *testing.T) {
 	phases := []Phase{PhaseIdle, PhaseStaged, PhasePrepared, PhaseSwitched, PhaseVerified, PhaseCommitted, PhaseRolledBack}
 	allowed := map[Phase]map[Phase]bool{
-		PhaseIdle:     {PhaseStaged: true},
+		PhaseIdle:     {PhaseStaged: true, PhaseRolledBack: true},
 		PhaseStaged:   {PhasePrepared: true, PhaseRolledBack: true},
 		PhasePrepared: {PhaseSwitched: true, PhaseRolledBack: true},
 		PhaseSwitched: {PhaseVerified: true, PhaseRolledBack: true},
@@ -126,7 +174,7 @@ func TestPublicBridgeVersionIsRequiredAndEnvelopeBound(t *testing.T) {
 
 func TestRecoveryDecisionIsDeterministicForEveryPhase(t *testing.T) {
 	tests := map[Phase]RecoveryDecision{
-		PhaseIdle:       {Action: RecoveryNoop, Result: PhaseIdle},
+		PhaseIdle:       {Action: RecoveryDiscardStaged, Result: PhaseRolledBack},
 		PhaseStaged:     {Action: RecoveryDiscardStaged, Result: PhaseRolledBack},
 		PhasePrepared:   {Action: RecoveryAbortPrepared, Result: PhaseRolledBack},
 		PhaseSwitched:   {Action: RecoveryRestorePrevious, Result: PhaseRolledBack},
@@ -158,6 +206,8 @@ func TestManifestRejectsUnknownNewerAndAmbiguousState(t *testing.T) {
 		PreviousGeneration: &previous,
 		StateSchemas:       map[string]uint32{"walletRegistry": 1, "signer": 2},
 		Capabilities:       testCapabilities(),
+		ReleaseSequence:    12,
+		SecurityEpoch:      3,
 	}
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("valid manifest rejected: %v", err)
@@ -179,6 +229,20 @@ func TestManifestRejectsUnknownNewerAndAmbiguousState(t *testing.T) {
 	same.PreviousGeneration = &active
 	if err := same.Validate(); err == nil {
 		t.Fatal("identical active and previous generations were accepted")
+	}
+}
+
+func TestPlatformIdentityUsesThreeServicesAndReadsLegacyControllerTopology(t *testing.T) {
+	current, err := NewPlatformIdentity(ProfileProtectedLocal, "test-instance", testDigestA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Adapter != "linux-systemd-local-v2" || len(current.Services) != 3 || current.Services["controller"] != "" {
+		t.Fatalf("new platform still exposes a controller worker: %+v", current)
+	}
+	legacy, err := LegacyControllerPlatformIdentity(ProfileProtectedLocal, "test-instance", testDigestA)
+	if err != nil || !legacy.IsLegacyControllerWorker(ProfileProtectedLocal) || legacy.Services["controller"] == "" {
+		t.Fatalf("legacy controller topology is not readable for bridge discovery: %+v err=%v", legacy, err)
 	}
 }
 
@@ -219,11 +283,13 @@ func TestStrictJSONRejectsProcessIdentityAndTrailingData(t *testing.T) {
 
 func TestCanonicalManifestJSONIsIndependentOfMapInsertionOrder(t *testing.T) {
 	first := Manifest{
-		SchemaVersion: CurrentManifestSchemaVersion,
-		Profile:       ProfileProtectedLocal,
-		Platform:      testPlatform(ProfileProtectedLocal),
-		StateSchemas:  map[string]uint32{"walletRegistry": 1, "signer": 2},
-		Capabilities:  testCapabilities(),
+		SchemaVersion:   CurrentManifestSchemaVersion,
+		Profile:         ProfileProtectedLocal,
+		Platform:        testPlatform(ProfileProtectedLocal),
+		StateSchemas:    map[string]uint32{"walletRegistry": 1, "signer": 2},
+		Capabilities:    testCapabilities(),
+		ReleaseSequence: 12,
+		SecurityEpoch:   3,
 	}
 	second := first
 	second.StateSchemas = map[string]uint32{"signer": 2, "walletRegistry": 1}

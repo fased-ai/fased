@@ -24,7 +24,7 @@ const inspectPortUsage = vi.fn();
 const classifyPortListener = vi.fn();
 const formatPortDiagnostics = vi.fn();
 const syncPluginsForUpdateChannel = vi.fn();
-const updateNpmInstalledPlugins = vi.fn();
+const updatePinnedNpmPlugins = vi.fn();
 const checkShellCompletionStatus = vi.fn();
 const ensureCompletionCacheExists = vi.fn();
 const installCompletion = vi.fn();
@@ -125,7 +125,7 @@ vi.mock("../process/exec.js", () => ({
 
 vi.mock("../plugins/update.js", () => ({
   syncPluginsForUpdateChannel,
-  updateNpmInstalledPlugins,
+  updatePinnedNpmPlugins,
 }));
 
 vi.mock("../commands/doctor-completion.js", () => ({
@@ -357,7 +357,7 @@ describe("update-cli", () => {
     classifyPortListener.mockClear();
     formatPortDiagnostics.mockClear();
     syncPluginsForUpdateChannel.mockClear();
-    updateNpmInstalledPlugins.mockClear();
+    updatePinnedNpmPlugins.mockClear();
     checkShellCompletionStatus.mockReset();
     ensureCompletionCacheExists.mockReset();
     installCompletion.mockReset();
@@ -476,7 +476,7 @@ describe("update-cli", () => {
         errors: [],
       },
     }));
-    updateNpmInstalledPlugins.mockImplementation(async ({ config }) => ({
+    updatePinnedNpmPlugins.mockImplementation(async ({ config }) => ({
       config,
       changed: false,
       outcomes: [],
@@ -555,23 +555,22 @@ describe("update-cli", () => {
     expect(defaultRuntime.exit).toHaveBeenCalledWith(1);
   });
 
-  it("skips plugin update discovery when no plugins are installed and reports stage timing", async () => {
+  it("keeps core update separate from plugin updates and reports core timing", async () => {
     vi.mocked(runGatewayUpdate).mockResolvedValue(makeOkUpdateResult());
 
     await updateCommand({ restart: false, verbose: true });
 
     expect(syncPluginsForUpdateChannel).not.toHaveBeenCalled();
-    expect(updateNpmInstalledPlugins).not.toHaveBeenCalled();
+    expect(updatePinnedNpmPlugins).not.toHaveBeenCalled();
     const logs = vi
       .mocked(defaultRuntime.log)
       .mock.calls.map(([value]) => String(value))
       .join("\n");
     expect(logs).toContain("Post-update timing");
-    expect(logs).toContain("plugin update check (none installed)");
     expect(logs).toContain("transaction cleanup");
   });
 
-  it("reconciles the OpenAI sign-in runtime to the completed core version", async () => {
+  it("keeps the OpenAI sign-in runtime outside the completed core transaction", async () => {
     const config = {
       auth: {
         profiles: {
@@ -598,10 +597,9 @@ describe("update-cli", () => {
 
     await updateCommand({ restart: false });
 
-    expect(ensureOpenAICodexRuntimeComponent).toHaveBeenCalledWith({
-      config,
-      version: "0.1.57",
-    });
+    expect(hasConfiguredOpenAICodexProfile).not.toHaveBeenCalled();
+    expect(ensureOpenAICodexRuntimeComponent).not.toHaveBeenCalled();
+    expect(writeConfigFile).not.toHaveBeenCalled();
   });
 
   it("returns immediately when a packaged install already matches the target version", async () => {
@@ -619,7 +617,7 @@ describe("update-cli", () => {
     expect(runGatewayUpdate).not.toHaveBeenCalled();
     expect(resolveUpdateGatewayServiceTarget).not.toHaveBeenCalled();
     expect(syncPluginsForUpdateChannel).not.toHaveBeenCalled();
-    expect(updateNpmInstalledPlugins).not.toHaveBeenCalled();
+    expect(updatePinnedNpmPlugins).not.toHaveBeenCalled();
     expect(runDaemonInstall).not.toHaveBeenCalled();
     expect(runDaemonRestart).not.toHaveBeenCalled();
     expect(serviceRestart).not.toHaveBeenCalled();
@@ -640,12 +638,8 @@ describe("update-cli", () => {
       [
         process.execPath,
         "/opt/fased/local/id/current/payload/runtime/scripts/fased-managed-updater.mjs",
-        "update",
         "--channel",
         "stable",
-        "--timeout",
-        "45",
-        "--yes",
       ],
       expect.objectContaining({
         cwd: "/opt/fased/local/id/current/payload/runtime/scripts",
@@ -680,11 +674,8 @@ describe("update-cli", () => {
       [
         process.execPath,
         "/opt/fased/local/id/current/payload/runtime/scripts/fased-managed-updater.mjs",
-        "update",
         "--channel",
         "stable",
-        "--timeout",
-        "45",
       ],
       expect.objectContaining({
         cwd: "/opt/fased/local/id/current/payload/runtime/scripts",
@@ -694,7 +685,7 @@ describe("update-cli", () => {
     expect(runGatewayUpdate).not.toHaveBeenCalled();
   });
 
-  it("repairs a missing version-matched provider runtime on a same-version update", async () => {
+  it("does not repair provider plugin code during a same-version core update", async () => {
     const root = createCaseDir("fased-current-provider-runtime");
     mockPackageInstallStatus(root);
     readPackageVersion.mockResolvedValue("0.1.40");
@@ -728,15 +719,9 @@ describe("update-cli", () => {
 
     await updateCommand({});
 
-    expect(ensureOpenAICodexRuntimeComponent).toHaveBeenCalledWith({
-      config,
-      version: "0.1.40",
-    });
-    expect(writeConfigFile).toHaveBeenCalledWith(
-      expect.objectContaining({
-        plugins: { entries: { "openai-runtime": { enabled: true } } },
-      }),
-    );
+    expect(hasConfiguredOpenAICodexProfile).not.toHaveBeenCalled();
+    expect(ensureOpenAICodexRuntimeComponent).not.toHaveBeenCalled();
+    expect(writeConfigFile).not.toHaveBeenCalled();
     expect(defaultRuntime.log).toHaveBeenCalledWith("Already current: 0.1.40");
     expect(runGatewayUpdate).not.toHaveBeenCalled();
   });
@@ -1395,55 +1380,6 @@ describe("update-cli", () => {
     expect(runDaemonInstall).not.toHaveBeenCalled();
     expect(runRestartScript).not.toHaveBeenCalled();
     expect(runDaemonRestart).not.toHaveBeenCalled();
-  });
-
-  it("repairs update-owned npm install ledger before plugin update sync", async () => {
-    vi.mocked(readConfigFileSnapshot).mockResolvedValue({
-      ...baseSnapshot,
-      config: {
-        plugins: {
-          installs: {
-            telegram: {
-              source: "npm",
-              spec: "@fased/telegram@latest",
-            },
-          },
-        },
-      } as FasedAgentConfig,
-    });
-    vi.mocked(runGatewayUpdate).mockResolvedValue(makeOkUpdateResult());
-
-    await updateCommand({ restart: false });
-
-    const syncConfig = syncPluginsForUpdateChannel.mock.calls[0]?.[0]?.config as FasedAgentConfig;
-    expect(syncConfig.plugins?.installs?.telegram).toMatchObject({
-      source: "npm",
-      spec: "@fased/telegram@latest",
-      installPath: expect.stringContaining("telegram"),
-    });
-    expect(updateNpmInstalledPlugins.mock.calls[0]?.[0]?.config).toMatchObject({
-      plugins: {
-        installs: {
-          telegram: expect.objectContaining({
-            installPath: expect.stringContaining("telegram"),
-          }),
-        },
-      },
-    });
-    expect(writeConfigFile).toHaveBeenCalledWith(
-      expect.objectContaining({
-        plugins: {
-          installs: {
-            telegram: expect.objectContaining({
-              source: "npm",
-              spec: "@fased/telegram@latest",
-              installPath: expect.stringContaining("telegram"),
-            }),
-          },
-        },
-      }),
-    );
-    expect(doctorCommand).not.toHaveBeenCalled();
   });
 
   it("updateCommand continues after doctor sub-step and clears update flag", async () => {

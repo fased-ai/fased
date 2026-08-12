@@ -26,8 +26,7 @@ const laneManifest = Object.freeze({
       prefixes: ["tools/fased-lifecycled/"],
       exact: [
         "install.sh",
-        "scripts/fased-generation-updater-core.mjs",
-        "scripts/generation-updater.mjs",
+        "scripts/fased-managed-updater.mjs",
         "scripts/managed-runtime-layout.mjs",
         "scripts/managed-updater-bundle.mjs",
         "scripts/managed-updater-bundle.v1.json",

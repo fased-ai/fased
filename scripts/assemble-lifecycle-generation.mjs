@@ -21,6 +21,8 @@ function args(argv) {
     "--release-manifest",
     "--signer",
     "--lifecycled",
+    "--node",
+    "--node-license",
     "--output-dir",
     "--version",
     "--commit",
@@ -38,6 +40,73 @@ async function sha256(file) {
   return createHash("sha256")
     .update(await fs.readFile(file))
     .digest("hex");
+}
+
+async function pluginTreeDigest(root) {
+  const entries = [];
+  const visit = async (directory, relativeRoot = "") => {
+    for (const entry of (await fs.readdir(directory, { withFileTypes: true })).toSorted((a, b) =>
+      a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+    )) {
+      const relative = path.posix.join(relativeRoot, entry.name);
+      const absolute = path.join(directory, entry.name);
+      const stat = await fs.lstat(absolute);
+      if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) {
+        throw new Error(`bundled plugin contains unsupported entry: ${relative}`);
+      }
+      const record = { path: relative, mode: stat.mode & 0o777 };
+      if (stat.isFile()) {
+        record.digest = `sha256:${await sha256(absolute)}`;
+      }
+      entries.push(record);
+      if (stat.isDirectory()) {
+        await visit(absolute, relative);
+      }
+    }
+  };
+  await visit(root);
+  return `sha256:${createHash("sha256").update(JSON.stringify(entries)).digest("hex")}`;
+}
+
+export async function writeBundledPluginLock(runtimeRoot) {
+  const extensionsRoot = path.join(runtimeRoot, "extensions");
+  const required = new Set(["memory-core", "sat-mining"]);
+  const entries = [];
+  for (const entry of (await fs.readdir(extensionsRoot, { withFileTypes: true })).toSorted((a, b) =>
+    a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+  )) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const pluginRoot = path.join(extensionsRoot, entry.name);
+    let manifest;
+    try {
+      manifest = JSON.parse(await fs.readFile(path.join(pluginRoot, "fased.plugin.json"), "utf8"));
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        continue;
+      }
+      throw error;
+    }
+    if (manifest?.id !== entry.name || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(manifest.id)) {
+      throw new Error(`bundled plugin identity is invalid: ${entry.name}`);
+    }
+    entries.push({
+      id: manifest.id,
+      origin: "bundled",
+      digest: await pluginTreeDigest(pluginRoot),
+      apiCapability: "fased.plugin.v1",
+      required: required.has(manifest.id),
+    });
+    required.delete(manifest.id);
+  }
+  if (required.size > 0) {
+    throw new Error(`required bundled plugins are missing: ${[...required].join(", ")}`);
+  }
+  const lock = { schemaVersion: 1, type: "fased-plugin-lock", entries };
+  const canonical = JSON.stringify(lock);
+  await fs.writeFile(path.join(runtimeRoot, "plugin.lock.json"), `${canonical}\n`, { mode: 0o644 });
+  return `sha256:${createHash("sha256").update(canonical).digest("hex")}`;
 }
 
 export async function assembleLifecycleGeneration(argv = process.argv.slice(2)) {
@@ -66,6 +135,7 @@ export async function assembleLifecycleGeneration(argv = process.argv.slice(2)) 
     await fs.mkdir(extracted, { recursive: true });
     await tar.x({ file: runtimeArchive, cwd: extracted, strict: true });
     const runtimeRoot = path.join(extracted, "package");
+    const pluginLockDigest = await writeBundledPluginLock(runtimeRoot);
     await buildLifecycleGeneration([
       "--runtime",
       runtimeRoot,
@@ -75,6 +145,10 @@ export async function assembleLifecycleGeneration(argv = process.argv.slice(2)) 
       path.resolve(value.signer),
       "--lifecycled",
       path.resolve(value.lifecycled),
+      "--node",
+      path.resolve(value.node),
+      "--node-license",
+      path.resolve(value["node-license"]),
       ...(value["inventory-lifecycled"]
         ? ["--inventory-lifecycled", path.resolve(value["inventory-lifecycled"])]
         : []),
@@ -92,6 +166,8 @@ export async function assembleLifecycleGeneration(argv = process.argv.slice(2)) 
       selected.dependencies.asset,
       "--dependency-archive-sha256",
       `sha256:${selected.dependencies.sha256}`,
+      "--plugin-lock-digest",
+      pluginLockDigest,
     ]);
     const name = `fased-generation-linux-${value.architecture}-v${value.version}.tar.gz`;
     const destination = path.join(outputDir, name);

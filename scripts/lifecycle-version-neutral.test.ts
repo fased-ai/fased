@@ -9,11 +9,11 @@ const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 describe("version-neutral lifecycle acceptance", () => {
   it("requires explicit public predecessor identities and has no private-RC scenario", async () => {
     const wrapper = await readFile(
-      resolve(repoRoot, "scripts/test-protected-local-systemd-container.sh"),
+      resolve(repoRoot, "scripts/test-lifecycle-local-acceptance.sh"),
       "utf8",
     );
     const fixture = await readFile(
-      resolve(repoRoot, "scripts/docker/protected-local-systemd/run.sh"),
+      resolve(repoRoot, "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh"),
       "utf8",
     );
 
@@ -24,6 +24,13 @@ describe("version-neutral lifecycle acceptance", () => {
     }
     expect(wrapper).toContain("FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION");
     expect(wrapper).toContain("managed-update");
+    expect(fixture).toContain('--gateway-port "$gateway_port" \\\n      --local \\\n      --');
+    expect(fixture).toContain(
+      '"beta/current/release-index.json": "fased-branch-release-index.json"',
+    );
+    expect(fixture).toContain('metadata.startsWith("beta/assets/")');
+    expect(fixture).toContain('grep -F "fased-lifecycled: ROLLED_BACK:"');
+    expect(fixture).not.toContain("target release failed and was rolled back");
   });
 
   it("binds candidate P1 to an explicit supported public predecessor", async () => {
@@ -64,7 +71,7 @@ describe("version-neutral lifecycle acceptance", () => {
 
   it("builds branch proof artifacts for Linux x64 without compiling release platforms", async () => {
     const wrapper = await readFile(
-      resolve(repoRoot, "scripts/test-protected-local-systemd-container.sh"),
+      resolve(repoRoot, "scripts/test-lifecycle-local-acceptance.sh"),
       "utf8",
     );
     expect(wrapper).toContain(
@@ -89,15 +96,16 @@ describe("version-neutral lifecycle acceptance", () => {
 
   it("reuses immutable proof inputs and runs isolated Local scenarios fail-fast in parallel", async () => {
     const wrapper = await readFile(
-      resolve(repoRoot, "scripts/test-protected-local-systemd-container.sh"),
+      resolve(repoRoot, "scripts/test-lifecycle-local-acceptance.sh"),
       "utf8",
     );
 
     expect(wrapper).toContain("FASED_SYSTEMD_FIXTURE_ARTIFACT_CACHE_DIR");
-    expect(wrapper).toContain("FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_CACHE_DIR");
+    expect(wrapper).toContain("FASED_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_DIR");
     expect(wrapper).toContain('artifact_cache_key="${COMMIT}-${TREE}-${LOCKFILE_DIGEST#sha256:}"');
     expect(wrapper).toContain("branch artifact cache hit:");
-    expect(wrapper).toContain("predecessor artifact cache hit:");
+    expect(wrapper).toContain("Candidate P1 requires capsule descriptor and archive attestations.");
+    expect(wrapper).toContain("fased-predecessor-capsule-branch-proof");
     expect(wrapper).toContain(
       'PARALLEL_SCENARIOS="${FASED_SYSTEMD_FIXTURE_PARALLEL_SCENARIOS:-1}"',
     );
@@ -105,6 +113,17 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(wrapper).toContain(
       "Parallel protected Local proof stopped on the first failed scenario.",
     );
-    expect(wrapper).toContain("fixture source reuse: exact clean commit");
+    expect(wrapper).toContain('FIXTURE_SOURCE_COMMIT="$COMMIT"');
+    expect(wrapper).toContain('git -C "$ROOT_DIR" merge-base --is-ancestor "$COMMIT" HEAD');
+    expect(wrapper).toContain('git -C "$ROOT_DIR" archive "$FIXTURE_SOURCE_COMMIT"');
+    expect(wrapper).toContain("Branch artifact reuse rejected product changes:");
+    const capsuleWrapper = await readFile(
+      resolve(repoRoot, "scripts/prepare-branch-predecessor-capsule.sh"),
+      "utf8",
+    );
+    expect(capsuleWrapper).toContain('FIXTURE_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"');
+    expect(capsuleWrapper).toContain("Predecessor capsule reuse rejected product changes:");
+    expect(capsuleWrapper).toContain("$FIXTURE_COMMIT-$FIXTURE_TREE");
+    expect(wrapper).not.toContain(":/repo:");
   });
 });

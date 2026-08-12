@@ -176,17 +176,6 @@ func (config Config) OwnerHome() string {
 	return filepath.Dir(config.OwnerStateRoot)
 }
 
-func (config Config) ControllerRuntimeRoot() string {
-	if config.Profile == model.ProfileProtectedLocal {
-		return filepath.Join("/run/fased-local-controller-worker", config.InstanceID)
-	}
-	return "/run/fased-host-controller"
-}
-
-func (config Config) ControllerSocket() string {
-	return filepath.Join(config.ControllerRuntimeRoot(), "controller.sock")
-}
-
 func (config Config) SupervisorRuntimeRoot() string {
 	if config.Profile == model.ProfileProtectedLocal {
 		return filepath.Join("/run/fased-local-controller", config.InstanceID)

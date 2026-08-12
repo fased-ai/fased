@@ -1,6 +1,7 @@
 import type { loadConfig } from "../config/config.js";
 import { CONFIG_PATH } from "../config/paths.js";
 import { loadFasedAgentPlugins, preloadNativePluginModules } from "../plugins/loader.js";
+import { writePluginReadinessReceipt } from "../plugins/readiness-receipt.js";
 import { writePluginStatusCache } from "../plugins/status-cache.js";
 import { VERSION } from "../version.js";
 import type { GatewayRequestHandler } from "./server-methods/types.js";
@@ -67,6 +68,9 @@ export function finalizeGatewayPluginStatus(params: {
       packageVersion: params.packageVersion ?? VERSION,
       registry: params.registry,
     });
+    if (process.env.FASED_MANAGED_INTERNAL === "1") {
+      writePluginReadinessReceipt({ registry: params.registry });
+    }
   } catch (error) {
     params.log.warn(`[plugins] could not write status cache: ${String(error)}`);
   }

@@ -19,6 +19,11 @@ for target in "${target_list[@]}"; do
   os="${target%/*}"; arch="${target#*/}"; asset="fased-lifecycled-${os}-${arch}"
   (cd "$ROOT/tools/fased-lifecycled"; CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" "$GO_BIN" build -buildvcs=false -trimpath -ldflags="-s -w -buildid= ${LDFLAGS}" -o "$OUT/$asset" ./cmd/fased-lifecycled)
   chmod 0755 "$OUT/$asset"; assets+=("$asset")
+  bootstrap_arch="$arch"
+  [[ "$arch" == "amd64" ]] && bootstrap_arch="x64"
+  bootstrap_asset="fased-bootstrap-${os}-${bootstrap_arch}"
+  (cd "$ROOT/tools/fased-lifecycled"; CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" "$GO_BIN" build -buildvcs=false -trimpath -ldflags="-s -w -buildid=" -o "$OUT/$bootstrap_asset" ./cmd/fased-bootstrap)
+  chmod 0755 "$OUT/$bootstrap_asset"; assets+=("$bootstrap_asset")
 done
 node -e 'const fs=require("node:fs"); fs.writeFileSync(process.argv[2], JSON.stringify({schemaVersion:1,...JSON.parse(process.argv[1])},null,2)+"\n",{mode:0o644})' "$IDENTITY" "$OUT/fased-lifecycled-release.json"
 assets+=("fased-lifecycled-release.json")

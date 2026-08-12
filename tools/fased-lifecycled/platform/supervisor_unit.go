@@ -39,15 +39,16 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%s %s
-RestrictAddressFamilies=AF_UNIX
-CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_SETUID CAP_SETGID
+ReadWritePaths=%s %s %s %s %s %s %s
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_FSETID CAP_SETUID CAP_SETGID
 AmbientCapabilities=
 
 [Install]
 WantedBy=multi-user.target
 `, config.InstanceID, runtimeDirectory, binary, config.LifecycleRoot, config.SupervisorSocket(),
-		config.LifecycleRoot, config.UnitRoot)
+		config.InstallRoot, config.LifecycleRoot, config.ProductStateRoot, config.OwnerStateRoot,
+		config.UnitRoot, filepath.Dir(config.UpdateGatePath()), filepath.Dir(CanonicalProductVersionPath(config)))
 	if identity.Services["supervisor"] == "" {
 		return nil, errors.New("platform identity has no supervisor service")
 	}

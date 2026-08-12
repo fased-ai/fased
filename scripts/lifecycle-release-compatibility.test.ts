@@ -7,7 +7,7 @@ import {
 } from "./lifecycle-release-compatibility.mjs";
 
 const acceptance = JSON.parse(
-  readFileSync(new URL("../config/lifecycle-acceptance.v1.json", import.meta.url), "utf8"),
+  readFileSync(new URL("../config/lifecycle-acceptance.v2.json", import.meta.url), "utf8"),
 );
 
 describe("immutable public lifecycle compatibility", () => {

@@ -32,10 +32,10 @@ func TestDiscoveryClassifiesEmptyManagedAndUnknownNewerWithoutMutation(t *testin
 	}
 	active := model.Generation{ID: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Version: "0.1.76", Commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Tree: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ArtifactSetDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 	identity, _ := model.NewPlatformIdentity(request.Profile, "test-instance", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-	manifest := model.Manifest{SchemaVersion: 1, Profile: request.Profile, Platform: identity, ActiveGeneration: &active,
+	manifest := model.Manifest{SchemaVersion: model.CurrentManifestSchemaVersion, Profile: request.Profile, Platform: identity, ActiveGeneration: &active,
 		StateSchemas: map[string]uint32{"signer": 2}, Capabilities: model.CapabilityRanges{
 			Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1}, Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 2, Max: 2},
-		}}
+		}, ReleaseSequence: 12, SecurityEpoch: 3}
 	data, err := model.CanonicalManifestJSON(manifest)
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +53,7 @@ func TestDiscoveryClassifiesEmptyManagedAndUnknownNewerWithoutMutation(t *testin
 	if err != nil || managed.Installation.Kind != planner.InstallationManaged || managed.Installation.Manifest.ActiveGeneration.ID != active.ID {
 		t.Fatalf("unexpected managed discovery: %+v err=%v", managed, err)
 	}
-	unknown := []byte(`{"schemaVersion":2,"profile":"protected-local"}`)
+	unknown := []byte(`{"schemaVersion":3,"profile":"protected-local"}`)
 	if err := os.WriteFile(request.CanonicalManifestPath, unknown, 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -135,6 +135,8 @@ func manifest() model.Manifest {
 		Platform:           platform,
 		ActiveGeneration:   &active,
 		PreviousGeneration: &previous,
+		ReleaseSequence:    12,
+		SecurityEpoch:      3,
 		StateSchemas:       map[string]uint32{"signer": 2, "walletRegistry": 1},
 		Capabilities: model.CapabilityRanges{
 			Supervisor: model.CapabilityRange{Min: 1, Max: 1},
@@ -152,6 +154,8 @@ func transaction(phase model.Phase) model.Transaction {
 		ID:                   "018f47d2-5a6b-7c8d-9e0f-123456789abc",
 		Profile:              model.ProfileProtectedLocal,
 		PlanAction:           "UPDATE",
+		ReleaseSequence:      12,
+		SecurityEpoch:        3,
 		Phase:                phase,
 		Revision:             1,
 		Target:               generation(digestB, "0.1.76", commitB),
@@ -357,6 +361,100 @@ func TestAuthorityJournalsRejectPublicPredecessorVersionRebinding(t *testing.T) 
 	}
 }
 
+func TestProgressReceiptsAndUndoSurviveReopenAndRemainEnvelopeBound(t *testing.T) {
+	root := t.TempDir()
+	state, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := transaction(model.PhaseIdle)
+	if err := state.CommitJournal(AuthorityTargetController, tx); err != nil {
+		t.Fatal(err)
+	}
+	event := ProgressEvent{
+		Step: ProgressMigratorPrepared,
+		Receipt: &DurableParticipantReceipt{
+			Participant: "migrator", TransactionID: tx.ID, TargetGenerationID: tx.Target.ID,
+			StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.MigrationPlanDigest,
+		},
+		Undo: &DurableUndoRecord{Participant: "migrator", Locator: "participants/migrator/undo.json", Digest: tx.MigrationPlanDigest},
+	}
+	if err := state.AppendProgress(tx, event); err != nil {
+		t.Fatal(err)
+	}
+	stateEvent := ProgressEvent{Step: ProgressStatePrepared,
+		Receipt: &DurableParticipantReceipt{Participant: "state", TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.StateInventoryDigest},
+		Undo:    &DurableUndoRecord{Participant: "state", Locator: "target/typed-state", Digest: tx.StateInventoryDigest},
+	}
+	if err := state.AppendProgress(tx, stateEvent); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	durable, err := reopened.ReadJournal(AuthorityTargetController, tx.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	progress, err := reopened.ReadProgress(tx.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateProgress(progress, durable); err != nil {
+		t.Fatal(err)
+	}
+	if len(progress.Events) != 2 || progress.Events[0].Receipt == nil || progress.Events[0].Undo == nil || progress.Events[1].Receipt.Participant != "state" {
+		t.Fatalf("durable participant evidence was lost: %+v", progress)
+	}
+
+	rebound := event
+	rebound.Receipt = &DurableParticipantReceipt{Participant: "migrator", TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.SignerPlanDigest}
+	if err := reopened.AppendProgress(tx, rebound); err == nil {
+		t.Fatal("receipt rebound to a different immutable plan digest")
+	}
+	badUndo := event
+	badUndo.Undo = &DurableUndoRecord{Participant: "migrator", Locator: "../outside", Digest: tx.MigrationPlanDigest}
+	if err := reopened.AppendProgress(tx, badUndo); err == nil {
+		t.Fatal("unbounded undo locator was accepted")
+	}
+}
+
+func TestPendingSupervisorTransactionSurvivesReopenAndClearsAtTerminalPhase(t *testing.T) {
+	root := t.TempDir()
+	state, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := transaction(model.PhaseIdle)
+	if err := state.CommitJournal(AuthoritySupervisor, tx); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := reopened.PendingSupervisorTransaction()
+	if err != nil || pending.ID != tx.ID || pending.Phase != model.PhaseIdle {
+		t.Fatalf("unfinished transaction was not reopened: pending=%+v err=%v", pending, err)
+	}
+	rolled, err := model.Advance(pending, model.PhaseRolledBack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reopened.CommitJournal(AuthoritySupervisor, rolled); err != nil {
+		t.Fatal(err)
+	}
+	again, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := again.PendingSupervisorTransaction(); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("terminal transaction remained pending: %v", err)
+	}
+}
+
 func TestUpdateLockIsExclusiveAndReusable(t *testing.T) {
 	state, err := Open(t.TempDir())
 	if err != nil {
@@ -475,16 +573,6 @@ func TestStageAndActivateUseOnlyContentAddressedStorePaths(t *testing.T) {
 	if err := store.ActivateGeneration(expected.ID, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ActivateControllerGeneration(expected.ID, ""); err != nil {
-		t.Fatal(err)
-	}
-	controllerTarget, err := os.Readlink(filepath.Join(store.stateRoot, "controller-current"))
-	if err != nil || controllerTarget != store.generationPath(expected.ID) {
-		t.Fatalf("controller selection was not isolated under lifecycle state: target=%q err=%v", controllerTarget, err)
-	}
-	if _, err := os.Lstat(filepath.Join(store.installRoot, "controller-current")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("supervisor controller pointer leaked into immutable install root: %v", err)
-	}
 	current, err := store.ResolveGeneration("current")
 	if err != nil || current != expected {
 		t.Fatalf("unexpected active generation: %+v err=%v", current, err)
@@ -530,6 +618,21 @@ func TestImportGenerationCopiesAndReverifiesExactBytes(t *testing.T) {
 	}
 	if second, err := state.ImportGeneration(source); err != nil || second != expected {
 		t.Fatalf("idempotent import failed: %+v err=%v", second, err)
+	}
+	authority := CandidateAuthority{SchemaVersion: 1, GenerationID: expected.ID, ReleaseSequence: 12, SecurityEpoch: 3, ReleaseIndex: digestA, Delegation: digestB}
+	if err := state.BindCandidateAuthority(authority); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.BindCandidateAuthority(authority); err != nil {
+		t.Fatalf("exact authority retry failed: %v", err)
+	}
+	if read, err := state.ReadCandidateAuthority(expected.ID); err != nil || read != authority {
+		t.Fatalf("candidate authority changed: %+v err=%v", read, err)
+	}
+	changed := authority
+	changed.ReleaseSequence++
+	if err := state.BindCandidateAuthority(changed); err == nil {
+		t.Fatal("candidate release sequence was rebound")
 	}
 	importedAlias := filepath.Join(state.inboxGenerationPath(expected.ID), generationPayloadName, "bin", "alias")
 	if target, err := os.Readlink(importedAlias); err != nil || target != "fased" {

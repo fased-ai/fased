@@ -81,14 +81,7 @@ function launcher() {
   return `#!/usr/bin/env bash
 set -euo pipefail
 PAYLOAD="$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"
-for node_bin in "\${FASED_NODE_BIN:-}" /usr/local/bin/node /usr/bin/node; do
-  [[ -n "$node_bin" && -x "$node_bin" ]] || continue
-  if "$node_bin" -e 'const [a,b]=process.versions.node.split(".").map(Number); if(a<22||(a===22&&b<14))process.exit(1); require("node:sqlite")' >/dev/null 2>&1; then
-    exec "$node_bin" "$PAYLOAD/runtime/fased.mjs" gateway
-  fi
-done
-echo "Compatible Node runtime not found for Fased Gateway" >&2
-exit 1
+exec "$PAYLOAD/bin/node" "$PAYLOAD/runtime/fased.mjs" gateway
 `;
 }
 
@@ -105,6 +98,8 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
     "release-manifest",
     "signer",
     "lifecycled",
+    "node",
+    "node-license",
     "output",
     "version",
     "commit",
@@ -132,10 +127,13 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
   const releaseManifest = path.resolve(args["release-manifest"]);
   const signer = path.resolve(args.signer);
   const lifecycled = path.resolve(args.lifecycled);
+  const node = path.resolve(args.node);
+  const nodeLicense = path.resolve(args["node-license"]);
   const inventoryLifecycled = path.resolve(args["inventory-lifecycled"] ?? args.lifecycled);
   const output = path.resolve(args.output);
   await regularExecutable(signer, "signer");
   await regularExecutable(lifecycled, "lifecycled");
+  await regularExecutable(node, "node");
   await regularExecutable(inventoryLifecycled, "inventory lifecycled");
   const runtimeEntry = path.join(runtime, "fased.mjs");
   const runtimeStat = await fs.lstat(runtimeEntry);
@@ -149,6 +147,15 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
     releaseManifestStat.size > 4 * 1024 * 1024
   ) {
     throw new Error("release manifest must be a bounded regular file");
+  }
+  const nodeLicenseStat = await fs.lstat(nodeLicense);
+  if (
+    !nodeLicenseStat.isFile() ||
+    nodeLicenseStat.isSymbolicLink() ||
+    nodeLicenseStat.size <= 0 ||
+    nodeLicenseStat.size > 1024 * 1024
+  ) {
+    throw new Error("Node license must be a bounded regular file");
   }
   const release = JSON.parse(await fs.readFile(releaseManifest, "utf8"));
   if (
@@ -173,13 +180,38 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
   );
   await fs.chmod(path.join(payload, "runtime", ".fased-hosted-release-v2.json"), 0o644);
   await fs.copyFile(signer, path.join(payload, "bin", "fased-signerd"));
-  await fs.copyFile(lifecycled, path.join(payload, "bin", "fased-lifecycled"));
   await fs.chmod(path.join(payload, "bin", "fased-signerd"), 0o755);
-  await fs.chmod(path.join(payload, "bin", "fased-lifecycled"), 0o755);
+  await fs.copyFile(node, path.join(payload, "bin", "node"));
+  await fs.chmod(path.join(payload, "bin", "node"), 0o755);
+  await fs.mkdir(path.join(payload, "licenses"), { recursive: true, mode: 0o755 });
+  await fs.copyFile(nodeLicense, path.join(payload, "licenses", "node.LICENSE"));
+  await fs.chmod(path.join(payload, "licenses", "node.LICENSE"), 0o644);
   await fs.writeFile(path.join(payload, "bin", "fased-gateway-launch"), launcher(), {
     mode: 0o755,
   });
   const inventory = path.join(output, "inventory.json");
+  if (!/^sha256:[0-9a-f]{64}$/.test(args["plugin-lock-digest"] ?? "")) {
+    throw new Error("plugin-lock-digest is required and must be a lowercase SHA-256 digest");
+  }
+  const pluginLockPath = path.join(runtime, "plugin.lock.json");
+  const pluginLockInfo = await fs.lstat(pluginLockPath);
+  if (
+    !pluginLockInfo.isFile() ||
+    pluginLockInfo.isSymbolicLink() ||
+    pluginLockInfo.nlink !== 1 ||
+    pluginLockInfo.size <= 0 ||
+    pluginLockInfo.size > 1 << 20
+  ) {
+    throw new Error("plugin lock must be a bounded regular file");
+  }
+  const pluginLock = JSON.parse(await fs.readFile(pluginLockPath, "utf8"));
+  const canonicalPluginLock = JSON.stringify(pluginLock);
+  const actualPluginLockDigest = `sha256:${createHash("sha256")
+    .update(canonicalPluginLock)
+    .digest("hex")}`;
+  if (actualPluginLockDigest !== args["plugin-lock-digest"]) {
+    throw new Error("plugin lock does not match the supplied digest");
+  }
   const { stdout } = await execFileAsync(
     inventoryLifecycled,
     [
@@ -200,6 +232,8 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
       args["dependency-asset"],
       "--dependency-archive-sha256",
       args["dependency-archive-sha256"],
+      "--plugin-lock-digest",
+      args["plugin-lock-digest"],
     ],
     {
       cwd: path.dirname(inventoryLifecycled),

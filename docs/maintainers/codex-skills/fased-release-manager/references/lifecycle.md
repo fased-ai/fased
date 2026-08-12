@@ -8,26 +8,32 @@ Wallet custody, Local, or Hosting product behavior changes.
 `tools/fased-lifecycled` is the sole privileged lifecycle mutation engine.
 
 ```text
-installer/update CLI -> verify exact target -> fased-lifecycled
--> shared transaction -> Local or Hosting adapter -> commit or rollback
+short installer/update CLI -> static Fased bootstrap -> root-owned inbox
+-> stable fased-lifecycled host -> shared transaction
+-> Local or Hosting adapter -> commit or rollback
 ```
 
-JavaScript may resolve, download, verify, and translate results. It must not own
-a second planner, service mutator, signer migration, rollback path, or recovery
-journal. Local and Hosting differ only in OS accounts, paths, services, and
-network hardening.
+The bootstrap verifies the Fased trust root, signed release index, release
+sequence, and exact artifact objects without Node, npm, GitHub CLI, or remote
+setup scripts. It may install or A/B-switch the separately attested lifecycle
+host. It does not own application migration policy.
 
-The stable supervisor owns controller trust and selection. The target
-controller owns product generation, signer coordination, services, migration,
-health, and rollback. Their authority-scoped journals bind one transaction.
-The Go signer exclusively owns keys, Wallet policy, network identity, audit,
-and signing.
+JavaScript may translate user intent and results. It must not select privileged
+target identity, download for root import, own a planner, mutate services,
+migrate signer/state, roll back, or recover a journal. Local and Hosting differ
+only in OS accounts, paths, services, and network hardening.
+
+The installed lifecycle host is the only product root mutation owner.
+Application generations never provide a root controller or root executable.
+The Go signer exclusively owns keys, Wallet policy, network identity, audit and
+signing.
 
 ## Transaction
 
 ```text
-lock -> inspect -> verify -> snapshot -> stage -> migrate -> switch
--> restart -> health/state verification -> commit -> prune
+acquire -> verify -> lock -> inspect -> plan -> quiesce
+-> checkpoint state -> prepare signer -> stage -> switch -> restart
+-> UID/state/service/plugin verification -> commit -> prune
 ```
 
 Failure restores the previous generation, services, and declared state before
@@ -35,21 +41,33 @@ reporting rollback. Retain only active generation, one verified previous
 generation, and active staging. A repeated successful command returns
 `Already current` without mutation.
 
+Every mutating phase and participant writes a durable fsynced receipt. On
+startup, recover the unfinished journal before accepting a new command.
+In-memory undo closures are not sufficient recovery evidence.
+
 Stable service identities and user data never live inside replaceable runtime
-generations. Preserve Wallets, signer database/key identity, Mining state,
-Network identity, configuration, plugins, and instance identity unless a
-declared transactional schema migration changes representation.
+generations. Quiesce each state owner before capture. Treat each SQLite database
+plus WAL, SHM and journal as one typed participant. Preserve Wallets, signer
+database/key identity, Mining state, Network identity, configuration, plugin
+data and instance identity unless a declared transactional migration changes
+representation.
+
+Executable plugin code belongs to the signed generation or an immutable
+content-addressed plugin store. It is not mutable preserved state. Core update
+never updates third-party plugins; plugin integrity drift fails closed.
 
 ## Compatibility
 
 Select behavior by manifest schema, persisted-state schema, topology, platform,
-and protocol capability—not private RC names. Support fresh install, current
-managed update, latest public-stable bridge, interrupted recovery, and explicit
-repair for ambiguous residue. Unknown-newer schemas fail unchanged.
+protocol capability and signed monotonic release sequence—not private RC names
+or npm dist-tags. Support fresh install, current managed update, latest
+public-stable bridge, interrupted recovery, explicit rollback authorization and
+explicit repair for ambiguous residue. Unknown-newer state fails unchanged;
+lower release sequence is rejected.
 
-Legacy JavaScript mutation owners must remain unreachable and be deleted after
-their Go replacement passes the same local proof. Never dual-write one
-installation.
+Legacy JavaScript mutation owners and candidate root-controller workers must
+remain unreachable and be deleted after their replacement passes the same
+branch proof. Never dual-write one installation.
 
 ## Required local proof
 

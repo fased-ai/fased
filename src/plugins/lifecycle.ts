@@ -15,7 +15,7 @@ import {
   type UninstallPluginResult,
 } from "./uninstall.js";
 import {
-  updateNpmInstalledPlugins,
+  updatePinnedNpmPlugins,
   type PluginUpdateIntegrityDriftParams,
   type PluginUpdateLogger,
   type PluginUpdateSummary,
@@ -249,5 +249,5 @@ export async function executePluginUpdateLifecycle(params: {
   dryRun?: boolean;
   onIntegrityDrift?: (params: PluginUpdateIntegrityDriftParams) => boolean | Promise<boolean>;
 }): Promise<PluginUpdateSummary> {
-  return await updateNpmInstalledPlugins(params);
+  return await updatePinnedNpmPlugins(params);
 }

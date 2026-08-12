@@ -9,7 +9,7 @@ const enablePluginInConfig = vi.hoisted(() => vi.fn());
 const recordPluginInstall = vi.hoisted(() => vi.fn());
 const resolveUninstallDirectoryTarget = vi.hoisted(() => vi.fn());
 const uninstallPlugin = vi.hoisted(() => vi.fn());
-const updateNpmInstalledPlugins = vi.hoisted(() => vi.fn());
+const updatePinnedNpmPlugins = vi.hoisted(() => vi.fn());
 
 vi.mock("./status.js", () => ({
   buildPluginStatusReport,
@@ -37,7 +37,7 @@ vi.mock("./uninstall.js", () => ({
 }));
 
 vi.mock("./update.js", () => ({
-  updateNpmInstalledPlugins,
+  updatePinnedNpmPlugins,
 }));
 
 import {
@@ -103,7 +103,7 @@ describe("plugin lifecycle backend", () => {
     recordPluginInstall.mockReset();
     resolveUninstallDirectoryTarget.mockReset();
     uninstallPlugin.mockReset();
-    updateNpmInstalledPlugins.mockReset();
+    updatePinnedNpmPlugins.mockReset();
 
     enablePluginInConfig.mockImplementation((cfg: FasedAgentConfig, pluginId: string) => ({
       config: {
@@ -163,7 +163,7 @@ describe("plugin lifecycle backend", () => {
       },
       warnings: [],
     });
-    updateNpmInstalledPlugins.mockResolvedValue({
+    updatePinnedNpmPlugins.mockResolvedValue({
       config: {},
       changed: false,
       outcomes: [],
@@ -315,7 +315,7 @@ describe("plugin lifecycle backend", () => {
       pluginId: "demo",
     });
 
-    expect(updateNpmInstalledPlugins).toHaveBeenCalledWith({
+    expect(updatePinnedNpmPlugins).toHaveBeenCalledWith({
       config: {},
       dryRun: true,
     });

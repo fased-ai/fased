@@ -386,11 +386,12 @@ export function loadPluginManifestRegistry(params: {
         continue;
       }
       diagnostics.push({
-        level: "warn",
+        level: "error",
         pluginId: manifest.id,
         source: candidate.source,
-        message: `duplicate plugin id detected; later plugin may be overridden (${candidate.source})`,
+        message: `duplicate plugin id rejected; an explicit digest lock is required (${candidate.source})`,
       });
+      continue;
     } else {
       seenIds.set(manifest.id, { candidate, recordIndex: records.length });
     }

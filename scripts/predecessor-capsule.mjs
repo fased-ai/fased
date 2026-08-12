@@ -1,0 +1,199 @@
+#!/usr/bin/env node
+
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
+const COMMIT_PATTERN = /^[a-f0-9]{40}$/u;
+const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
+const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const GROUP_PATTERN = /^[a-z0-9][a-z0-9-]{0,127}$/u;
+const forbiddenPath =
+  /(^|\/)(?:master\.key|seed(?:\.json)?|private[-_.]?key|credentials?|tokens?|audit\.jsonl|[^/]*(?:wallet|signer)[-_.]?(?:key|secret)[^/]*)$/iu;
+const MAX_ENTRIES = 256;
+
+function fail(message) {
+  throw new Error(`predecessor capsule: ${message}`);
+}
+
+function exactKeys(value, expected, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    fail(`${label} must be an object`);
+  }
+  if (
+    Object.keys(value).toSorted().join(",") !==
+    [...expected].toSorted((left, right) => left.localeCompare(right)).join(",")
+  ) {
+    fail(`${label} fields are invalid`);
+  }
+}
+
+function safeRelative(value) {
+  return (
+    typeof value === "string" &&
+    value !== "" &&
+    value.length <= 512 &&
+    !path.posix.isAbsolute(value) &&
+    path.posix.normalize(value) === value &&
+    !value.split("/").includes("..") &&
+    !/[\r\n]/u.test(value) &&
+    !value.includes("\0")
+  );
+}
+
+export function parsePredecessorCapsule(value, expected = {}) {
+  exactKeys(
+    value,
+    [
+      "schemaVersion",
+      "role",
+      "profile",
+      "compatibilityGroupId",
+      "release",
+      "releaseIndex",
+      "topology",
+      "ownership",
+      "pointers",
+      "expectedReceiptDigest",
+      "archive",
+      "sanitization",
+      "services",
+      "entries",
+    ],
+    "descriptor",
+  );
+  exactKeys(value.release, ["version", "commit", "tree"], "release");
+  exactKeys(value.releaseIndex, ["sequence", "sha256"], "release index");
+  exactKeys(value.topology, ["schemaVersion", "kind", "capabilities"], "topology");
+  exactKeys(value.ownership, ["rootUid", "rootGid", "operatorUid", "operatorGid"], "ownership");
+  exactKeys(value.pointers, ["current", "previous"], "pointers");
+  exactKeys(value.archive, ["name", "size", "sha256"], "archive");
+  exactKeys(value.sanitization, ["syntheticState", "containsSecrets"], "sanitization");
+  if (
+    value.schemaVersion !== 1 ||
+    value.role !== "fased-sanitized-predecessor-capsule" ||
+    !["protected-local", "hosting"].includes(value.profile) ||
+    (expected.profile && value.profile !== expected.profile) ||
+    !GROUP_PATTERN.test(value.compatibilityGroupId || "") ||
+    !VERSION_PATTERN.test(value.release.version || "") ||
+    !COMMIT_PATTERN.test(value.release.commit || "") ||
+    !COMMIT_PATTERN.test(value.release.tree || "") ||
+    !Number.isSafeInteger(value.releaseIndex.sequence) ||
+    value.releaseIndex.sequence < 1 ||
+    !DIGEST_PATTERN.test(value.releaseIndex.sha256 || "") ||
+    value.topology.schemaVersion !== 1 ||
+    !["public-stable", "managed-generation"].includes(value.topology.kind) ||
+    !Array.isArray(value.topology.capabilities) ||
+    value.topology.capabilities.length === 0 ||
+    value.topology.capabilities.some(
+      (capability) => !GROUP_PATTERN.test(capability) || capability.length > 64,
+    ) ||
+    new Set(value.topology.capabilities).size !== value.topology.capabilities.length ||
+    value.ownership.rootUid !== 0 ||
+    value.ownership.rootGid !== 0 ||
+    !Number.isSafeInteger(value.ownership.operatorUid) ||
+    value.ownership.operatorUid <= 0 ||
+    !Number.isSafeInteger(value.ownership.operatorGid) ||
+    value.ownership.operatorGid <= 0 ||
+    !DIGEST_PATTERN.test(value.pointers.current || "") ||
+    !(value.pointers.previous === null || DIGEST_PATTERN.test(value.pointers.previous || "")) ||
+    !DIGEST_PATTERN.test(value.expectedReceiptDigest || "") ||
+    !NAME_PATTERN.test(value.archive.name || "") ||
+    !Number.isSafeInteger(value.archive.size) ||
+    value.archive.size <= 0 ||
+    !DIGEST_PATTERN.test(value.archive.sha256 || "") ||
+    value.sanitization.syntheticState !== true ||
+    value.sanitization.containsSecrets !== false
+  ) {
+    fail("identity, archive, or sanitization policy is invalid");
+  }
+  const requiredServices =
+    value.profile === "hosting"
+      ? [
+          "fased-host-updater.service",
+          "fased-host-controller.service",
+          "fased-signerd.service",
+          "fased-gateway.service",
+        ]
+      : ["fased-gateway.service"];
+  if (
+    !Array.isArray(value.services) ||
+    value.services.length !== requiredServices.length ||
+    value.services.some((service, index) => service !== requiredServices[index])
+  ) {
+    fail("service inventory is invalid");
+  }
+  if (
+    !Array.isArray(value.entries) ||
+    value.entries.length === 0 ||
+    value.entries.length > MAX_ENTRIES
+  ) {
+    fail("entry inventory is empty");
+  }
+  const seen = new Set();
+  for (const entry of value.entries) {
+    const expectedKeys =
+      entry?.type === "symlink"
+        ? ["path", "type", "owner", "target"]
+        : entry?.type === "directory"
+          ? ["path", "type", "mode", "owner"]
+          : ["path", "type", "mode", "owner", "sha256"];
+    exactKeys(entry, expectedKeys, "entry");
+    const commonUnsafe =
+      !safeRelative(entry.path) ||
+      seen.has(entry.path) ||
+      forbiddenPath.test(entry.path) ||
+      !["root", "operator"].includes(entry.owner);
+    const fileUnsafe =
+      entry.type === "file" &&
+      (!Number.isSafeInteger(entry.mode) ||
+        entry.mode < 0o400 ||
+        entry.mode > 0o755 ||
+        entry.mode & 0o022 ||
+        !DIGEST_PATTERN.test(entry.sha256 || ""));
+    const linkUnsafe =
+      entry.type === "symlink" &&
+      (!safeRelative(entry.target) ||
+        path.posix.isAbsolute(entry.target) ||
+        path.posix
+          .normalize(path.posix.join(path.posix.dirname(entry.path), entry.target))
+          .startsWith("../"));
+    const directoryUnsafe =
+      entry.type === "directory" &&
+      (!Number.isSafeInteger(entry.mode) ||
+        entry.mode < 0o500 ||
+        entry.mode > 0o755 ||
+        entry.mode & 0o022);
+    if (
+      commonUnsafe ||
+      !["directory", "file", "symlink"].includes(entry.type) ||
+      fileUnsafe ||
+      linkUnsafe ||
+      directoryUnsafe
+    ) {
+      fail(
+        forbiddenPath.test(entry.path || "")
+          ? "secret-bearing path is forbidden"
+          : "entry inventory is unsafe",
+      );
+    }
+    seen.add(entry.path);
+  }
+  return value;
+}
+
+function main() {
+  const args = process.argv.slice(2);
+  if (args[0] !== "verify" || args[1] !== "--descriptor" || !args[2]) {
+    fail("usage: verify --descriptor FILE");
+  }
+  const capsule = parsePredecessorCapsule(JSON.parse(readFileSync(args[2], "utf8")));
+  process.stdout.write(
+    `${JSON.stringify({ ok: true, profile: capsule.profile, version: capsule.release.version })}\n`,
+  );
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}

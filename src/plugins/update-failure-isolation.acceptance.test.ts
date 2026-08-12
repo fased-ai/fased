@@ -12,7 +12,7 @@ vi.mock("./install.js", () => ({
     path.join(os.tmpdir(), "fased-update-failure-isolation-default", pluginId),
 }));
 
-const { updateNpmInstalledPlugins } = await import("./update.js");
+const { updatePinnedNpmPlugins } = await import("./update.js");
 
 const tempDirs: string[] = [];
 
@@ -102,7 +102,7 @@ describe("Lane 2 plugin update failure isolation acceptance", () => {
       },
     );
 
-    const result = await updateNpmInstalledPlugins({
+    const result = await updatePinnedNpmPlugins({
       config,
       pluginIds: ["rss", "telegram-tools", "wallet-tools"],
     });
@@ -218,7 +218,7 @@ describe("Lane 2 plugin update failure isolation acceptance", () => {
       },
     );
 
-    const result = await updateNpmInstalledPlugins({
+    const result = await updatePinnedNpmPlugins({
       config,
       pluginIds: ["corrupt-tools", "risky-tools", "broken-tools"],
     });

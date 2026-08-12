@@ -116,7 +116,7 @@ describe("compact CI topology", () => {
     expect(step?.if).toBe("needs.classify.outputs.run_installer_release_verification == 'true'");
     expect(step?.run).toContain("bash -n install.sh");
     expect(step?.run).toContain("scripts/install-release-pin.test.ts");
-    expect(step?.run).toContain("scripts/generation-updater.test.ts");
+    expect(step?.run).toContain("scripts/go-lifecycle-routing.test.ts");
     expect(step?.run).toContain("scripts/release-artifact-set.test.ts");
     expect(step?.run).toContain("scripts/hosted-security-boundary.test.ts");
   });

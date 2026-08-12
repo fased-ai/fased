@@ -26,6 +26,11 @@ type StateStore interface {
 	ReadManifest() (model.Manifest, string, error)
 	ReadJournal(store.Authority, string) (model.Transaction, error)
 	ReadCandidateContract(string) (bundle.Inventory, model.Generation, error)
+	ReadCandidateAuthority(string) (store.CandidateAuthority, error)
+}
+
+type PendingTransactionStore interface {
+	PendingSupervisorTransaction() (model.Transaction, error)
 }
 
 type StateInventory interface {
@@ -72,6 +77,9 @@ func (service *Service) Handle(ctx context.Context, request protocol.Request) (p
 	case protocol.OperationConverge:
 		service.mutationMu.Lock()
 		defer service.mutationMu.Unlock()
+		if err := service.recoverPending(ctx); err != nil {
+			return protocol.Response{}, err
+		}
 		return service.converge(ctx, request)
 	case protocol.OperationRecover:
 		service.mutationMu.Lock()
@@ -84,6 +92,28 @@ func (service *Service) Handle(ctx context.Context, request protocol.Request) (p
 	default:
 		return protocol.Response{}, errors.New("unsupported lifecycle operation")
 	}
+}
+
+func (service *Service) recoverPending(ctx context.Context) error {
+	pendingStore, ok := service.Store.(PendingTransactionStore)
+	if !ok {
+		return nil
+	}
+	tx, err := pendingStore.PendingSupervisorTransaction()
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	result, err := service.Supervisor.Recover(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("unfinished lifecycle transaction %s recovery failed: %w", tx.ID, err)
+	}
+	if result.Phase != model.PhaseCommitted && result.Phase != model.PhaseRolledBack {
+		return fmt.Errorf("unfinished lifecycle transaction %s did not converge", tx.ID)
+	}
+	return nil
 }
 
 func (service *Service) completeOnboarding(ctx context.Context, request protocol.Request) (protocol.Response, error) {
@@ -164,6 +194,9 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 			return protocol.Response{}, errors.New("managed convergence does not accept a public-stable generation")
 		}
 		installation = planner.Installation{Kind: planner.InstallationManaged, Manifest: &installed}
+		if installed.Platform.IsLegacyControllerWorker(service.Profile) {
+			return protocol.Response{}, errors.New("legacy controller-worker topology is readable only through the explicit bridge path")
+		}
 		installedPlatformDigest, digestErr := installed.Platform.Digest(installed.Profile)
 		if digestErr != nil || installedPlatformDigest != platformDigest {
 			return protocol.Response{}, errors.New("installed platform identity requires explicit repair")
@@ -176,12 +209,17 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 	if err != nil {
 		return protocol.Response{}, err
 	}
+	authority, err := service.Store.ReadCandidateAuthority(request.TargetGenerationID)
+	if err != nil {
+		return protocol.Response{}, err
+	}
 	if inventory.Capabilities.Supervisor.Min > supervisorCapability || inventory.Capabilities.Supervisor.Max < supervisorCapability {
 		return protocol.Response{}, errors.New("target generation requires an unsupported stable supervisor capability")
 	}
 	plan, err := planner.BuildForInstallation(installation, planner.Target{
 		Profile: service.Profile, Generation: generation,
 		StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities,
+		ReleaseSequence: authority.ReleaseSequence, SecurityEpoch: authority.SecurityEpoch,
 	})
 	if err != nil {
 		return protocol.Response{}, err
@@ -226,6 +264,7 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 		SchemaVersion: model.CurrentTransactionSchemaVersion, ID: transactionID,
 		Profile: service.Profile, PlanAction: string(plan.Action), SourceTopology: request.SourceTopology, PublicPredecessorVersion: request.PublicPredecessorVersion,
 		Phase: model.PhaseIdle, Revision: 1,
+		ReleaseSequence: authority.ReleaseSequence, SecurityEpoch: authority.SecurityEpoch,
 		Target: generation, Previous: previous, ManifestDigest: manifestDigest,
 		TargetStateSchemas: inventory.StateSchemas, TargetCapabilities: inventory.Capabilities,
 		StateInventoryDigest: stateDigest, MigrationPlanDigest: plan.Digest,

@@ -47,15 +47,18 @@ func TestCanonicalStateSpecsCoverExactDeclaredStateAndRealMiningPath(t *testing.
 			t.Fatalf("declared state %s has no canonical path", name)
 		}
 	}
-	if seen["mining"].Path != filepath.Join(owner, "sat-mining") || !seen["mining"].IgnoreSQLiteTransient {
+	if seen["mining"].Path != filepath.Join(owner, "sat-mining") {
 		t.Fatalf("Mining state is not bound to the semantic sat-mining root: %+v", seen["mining"])
+	}
+	if !seen["mining"].Optional {
+		t.Fatal("an installation with no Mining activity must bind absent Mining state")
 	}
 	if seen["walletRegistry"].Path != filepath.Join(owner, "wallet", "provider-registry.v1.json") {
 		t.Fatalf("wallet registry state includes signer sockets or material: %+v", seen["walletRegistry"])
 	}
 }
 
-func TestMiningInventoryIgnoresSQLiteSidecarsButDetectsDatabaseChange(t *testing.T) {
+func TestMiningPreflightBindsSQLiteFamilyShapeWithoutRacingLiveContent(t *testing.T) {
 	root := t.TempDir()
 	database := filepath.Join(root, "mining.sqlite")
 	wal := database + "-wal"
@@ -65,7 +68,7 @@ func TestMiningInventoryIgnoresSQLiteSidecarsButDetectsDatabaseChange(t *testing
 	if err := os.WriteFile(wal, []byte("transient-a"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	spec := Spec{Name: "mining", Path: root, MaxFiles: 100, MaxBytes: 1 << 20, IgnoreSQLiteTransient: true}
+	spec := Spec{Name: "mining", Path: root, MaxFiles: 100, MaxBytes: 1 << 20}
 	first, err := inspectState(context.Background(), spec, 1, false)
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +81,7 @@ func TestMiningInventoryIgnoresSQLiteSidecarsButDetectsDatabaseChange(t *testing
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(first, second) {
-		t.Fatalf("SQLite transient representation changed semantic inventory: first=%+v second=%+v", first, second)
+		t.Fatalf("live WAL content leaked into pre-quiesce contract: first=%+v second=%+v", first, second)
 	}
 	if err := os.WriteFile(database, []byte("semantic-state-b"), 0o600); err != nil {
 		t.Fatal(err)
@@ -87,19 +90,19 @@ func TestMiningInventoryIgnoresSQLiteSidecarsButDetectsDatabaseChange(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reflect.DeepEqual(second, third) {
-		t.Fatal("meaningful Mining database change was not detected")
+	if !reflect.DeepEqual(second, third) {
+		t.Fatal("live database content leaked into pre-quiesce contract")
 	}
 }
 
 func TestBindIsDeterministicAndDetectsStateChange(t *testing.T) {
 	inventory, generation := target(t)
 	state := t.TempDir()
-	file := filepath.Join(state, "signer.db")
+	file := filepath.Join(state, "signer.json")
 	if err := os.WriteFile(file, []byte("state-a"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	plan, err := planner.Build(nil, planner.Target{Profile: model.ProfileProtectedLocal, Generation: generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities})
+	plan, err := planner.Build(nil, planner.Target{Profile: model.ProfileProtectedLocal, Generation: generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities, ReleaseSequence: 12, SecurityEpoch: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +127,7 @@ func TestBindIsDeterministicAndDetectsStateChange(t *testing.T) {
 
 func TestBindRejectsSymlinkHardlinkMissingAndNoncanonicalPlan(t *testing.T) {
 	inventory, generation := target(t)
-	plan, err := planner.Build(nil, planner.Target{Profile: model.ProfileProtectedLocal, Generation: generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities})
+	plan, err := planner.Build(nil, planner.Target{Profile: model.ProfileProtectedLocal, Generation: generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities, ReleaseSequence: 12, SecurityEpoch: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,9 +160,9 @@ func TestBindRejectsSymlinkHardlinkMissingAndNoncanonicalPlan(t *testing.T) {
 	}
 	missing := Binder{Specs: []Spec{{Name: "signer", Path: filepath.Join(t.TempDir(), "missing")}}}
 	platform, _ := model.NewPlatformIdentity(model.ProfileProtectedLocal, "test-instance", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-	installed := model.Manifest{SchemaVersion: 1, Profile: model.ProfileProtectedLocal, Platform: platform,
-		ActiveGeneration: &generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities}
-	installedPlan, err := planner.Build(&installed, planner.Target{Profile: model.ProfileProtectedLocal, Generation: generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities})
+	installed := model.Manifest{SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal, Platform: platform,
+		ActiveGeneration: &generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities, ReleaseSequence: 11, SecurityEpoch: 3}
+	installedPlan, err := planner.Build(&installed, planner.Target{Profile: model.ProfileProtectedLocal, Generation: generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities, ReleaseSequence: 11, SecurityEpoch: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +174,7 @@ func TestBindRejectsSymlinkHardlinkMissingAndNoncanonicalPlan(t *testing.T) {
 
 func TestBindCanTreatInstallationAsRootIdentityWithoutTraversingSelectors(t *testing.T) {
 	inventory, generation := target(t)
-	plan, err := planner.Build(nil, planner.Target{Profile: model.ProfileProtectedLocal, Generation: generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities})
+	plan, err := planner.Build(nil, planner.Target{Profile: model.ProfileProtectedLocal, Generation: generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities, ReleaseSequence: 12, SecurityEpoch: 3})
 	if err != nil {
 		t.Fatal(err)
 	}

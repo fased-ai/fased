@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FasedAgentConfig } from "../config/config.js";
 import type { InstallPluginResult } from "./install.js";
 import { installPluginFromNpmSpec } from "./install.js";
-import { updateNpmInstalledPlugins } from "./update.js";
+import { updatePinnedNpmPlugins } from "./update.js";
 
 vi.mock("./install.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./install.js")>();
@@ -49,7 +49,7 @@ function createSuccessfulNpmUpdateResult(params: {
   };
 }
 
-describe("updateNpmInstalledPlugins", () => {
+describe("updatePinnedNpmPlugins", () => {
   beforeEach(() => {
     installPluginFromNpmSpecMock.mockReset();
   });
@@ -62,7 +62,7 @@ describe("updateNpmInstalledPlugins", () => {
       }),
     );
 
-    const result = await updateNpmInstalledPlugins({
+    const result = await updatePinnedNpmPlugins({
       config: createConfig("@fased/demo"),
       pluginIds: ["demo"],
       updateChannel: "beta",
@@ -98,7 +98,7 @@ describe("updateNpmInstalledPlugins", () => {
       );
     const warnMessages: string[] = [];
 
-    const result = await updateNpmInstalledPlugins({
+    const result = await updatePinnedNpmPlugins({
       config: createConfig("@fased/demo"),
       pluginIds: ["demo"],
       updateChannel: "beta",
@@ -135,7 +135,7 @@ describe("updateNpmInstalledPlugins", () => {
       }),
     );
 
-    await updateNpmInstalledPlugins({
+    await updatePinnedNpmPlugins({
       config: createConfig("@fased/demo@rc"),
       pluginIds: ["demo"],
       updateChannel: "beta",
@@ -160,7 +160,7 @@ describe("updateNpmInstalledPlugins", () => {
         error: "Package not found on npm: @fased/demo.",
       });
 
-    const result = await updateNpmInstalledPlugins({
+    const result = await updatePinnedNpmPlugins({
       config: createConfig("@fased/demo"),
       pluginIds: ["demo"],
       updateChannel: "beta",
