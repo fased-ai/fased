@@ -14,6 +14,7 @@ import (
 type modeAccessVerifier struct {
 	calls int
 	paths []string
+	stop  string
 }
 
 func (verifier *modeAccessVerifier) Verify(_ context.Context, path string, directory bool, principal Principal, groups []uint32) error {
@@ -24,15 +25,31 @@ func (verifier *modeAccessVerifier) Verify(_ context.Context, path string, direc
 		return os.ErrPermission
 	}
 	stat := info.Sys().(*syscall.Stat_t)
-	if principalCanAccess(info.Mode(), stat.Uid, stat.Gid, principal.UID, principal.GID) {
-		return nil
-	}
+	accessible := principalCanAccess(info.Mode(), stat.Uid, stat.Gid, principal.UID, principal.GID)
 	for _, gid := range groups {
-		if principalCanAccess(info.Mode(), stat.Uid, stat.Gid, principal.UID, gid) {
-			return nil
+		accessible = accessible || principalCanAccess(info.Mode(), stat.Uid, stat.Gid, principal.UID, gid)
+	}
+	if !accessible {
+		return os.ErrPermission
+	}
+	for ancestor := filepath.Dir(path); verifier.stop != "" && pathWithin(verifier.stop, ancestor); ancestor = filepath.Dir(ancestor) {
+		info, err := os.Stat(ancestor)
+		if err != nil || !info.IsDir() {
+			return os.ErrPermission
+		}
+		stat := info.Sys().(*syscall.Stat_t)
+		accessible = principalCanAccess(info.Mode(), stat.Uid, stat.Gid, principal.UID, principal.GID)
+		for _, gid := range groups {
+			accessible = accessible || principalCanAccess(info.Mode(), stat.Uid, stat.Gid, principal.UID, gid)
+		}
+		if !accessible {
+			return os.ErrPermission
+		}
+		if ancestor == verifier.stop {
+			break
 		}
 	}
-	return os.ErrPermission
+	return nil
 }
 
 func sqliteBytes(suffix string) []byte {
@@ -61,6 +78,7 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 			}
 			store.rootPrefix = t.TempDir()
 			owner := store.resolve(config.OwnerStateRoot)
+			access.stop = owner
 			mining := filepath.Join(owner, "sat-mining")
 			federation := filepath.Join(owner, "federation")
 			wallet := filepath.Join(owner, "wallet")
@@ -73,6 +91,9 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 				if err := os.Chmod(path, 0o700); err != nil {
 					t.Fatal(err)
 				}
+			}
+			if err := os.Chmod(owner, os.ModeSetgid|0o770); err != nil {
+				t.Fatal(err)
 			}
 			database := filepath.Join(mining, "mining.sqlite")
 			wal := database + "-wal"

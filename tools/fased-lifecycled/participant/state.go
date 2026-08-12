@@ -33,6 +33,11 @@ func CanonicalStateSpecs(ownerStateRoot, signerStateRoot string) []StateSpec {
 		StateSpec{Kind: Configuration, Path: filepath.Join(ownerStateRoot, "fased.json"), RootOnly: true, ProjectionOwned: true},
 		StateSpec{Kind: Configuration, Path: filepath.Join(ownerStateRoot, "install.json"), RootOnly: true, ProjectionOwned: true},
 		StateSpec{Kind: Configuration, Path: filepath.Join(ownerStateRoot, "lifecycle.json"), RootOnly: true, ProjectionOwned: true},
+		// Bind the Wallet directory metadata separately from its one declared
+		// application-owned file. This gives the isolated Gateway the required
+		// traversal/write boundary without recursively snapshotting legacy key
+		// files. Signer custody remains opaque under signerStateRoot.
+		StateSpec{Kind: Wallet, Path: filepath.Join(ownerStateRoot, "wallet"), RootOnly: true},
 		StateSpec{Kind: Wallet, Path: filepath.Join(ownerStateRoot, "wallet", "provider-registry.v1.json"), RootOnly: true},
 		StateSpec{Kind: Mining, Path: filepath.Join(ownerStateRoot, "sat-mining"), SQLite: true},
 		StateSpec{Kind: Federation, Path: filepath.Join(ownerStateRoot, "federation"), SQLite: true},

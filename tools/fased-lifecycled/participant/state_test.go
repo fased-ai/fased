@@ -9,6 +9,10 @@ func TestCanonicalStateSpecsSeparateSignerWalletPluginDataAndApplication(t *test
 	specs := CanonicalStateSpecs("/home/app/.fased", "/var/lib/fased-signerd")
 	want := map[Kind]bool{ApplicationState: false, Configuration: false, Wallet: false, Mining: false, Federation: false, PluginData: false, Signer: false}
 	signerSpecs := 0
+	walletSpecs := map[string]bool{
+		filepath.Join("/home/app/.fased", "wallet"):                              false,
+		filepath.Join("/home/app/.fased", "wallet", "provider-registry.v1.json"): false,
+	}
 	for _, spec := range specs {
 		want[spec.Kind] = true
 		if spec.Kind == ApplicationState && spec.Path == filepath.Join("/home/app/.fased", "extensions") {
@@ -20,8 +24,11 @@ func TestCanonicalStateSpecsSeparateSignerWalletPluginDataAndApplication(t *test
 		if spec.Kind == Configuration && !spec.ProjectionOwned {
 			t.Fatalf("configuration participant has competing rollback ownership: %+v", spec)
 		}
-		if spec.Kind == Wallet && spec.Path != filepath.Join("/home/app/.fased", "wallet", "provider-registry.v1.json") {
-			t.Fatalf("wallet participant included secret or signer-owned material: %+v", spec)
+		if spec.Kind == Wallet {
+			if _, ok := walletSpecs[spec.Path]; !ok || !spec.RootOnly {
+				t.Fatalf("wallet participant included secret or signer-owned material: %+v", spec)
+			}
+			walletSpecs[spec.Path] = true
 		}
 		if spec.Kind == Signer && (!spec.SignerOwned || !spec.RootOnly) {
 			t.Fatalf("signer state lost its isolated policy: %+v", spec)
@@ -43,5 +50,10 @@ func TestCanonicalStateSpecsSeparateSignerWalletPluginDataAndApplication(t *test
 	}
 	if signerSpecs != 1 {
 		t.Fatalf("signer state must have exactly one opaque root participant, got %d", signerSpecs)
+	}
+	for path, found := range walletSpecs {
+		if !found {
+			t.Fatalf("wallet participant boundary is missing %s", path)
+		}
 	}
 }
