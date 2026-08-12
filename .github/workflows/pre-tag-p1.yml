@@ -1,0 +1,376 @@
+name: Pre-tag P1
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact version-only protected-main commit to prove before tagging
+        required: true
+        type: string
+      release_version:
+        description: Unused candidate version encoded by the source commit
+        required: true
+        type: string
+      predecessor_version:
+        description: Latest supported public stable predecessor
+        required: true
+        type: string
+      owner_predecessor_version:
+        description: Exact owner Local predecessor, or stable when identical
+        required: true
+        type: string
+      pre_candidate_run_id:
+        description: Successful pre-candidate run bound to the unversioned parent
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: pre-tag-p1-${{ inputs.source_commit }}-${{ inputs.release_version }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  preflight:
+    name: Verify protected pre-tag identity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      predecessors: ${{ steps.identity.outputs.predecessors }}
+    steps:
+      - name: Checkout exact version-only source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 0
+          submodules: false
+
+      - name: Verify version, protected main, and pre-candidate evidence
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER_PREDECESSOR_VERSION: ${{ inputs.owner_predecessor_version }}
+          PRE_CANDIDATE_RUN_ID: ${{ inputs.pre_candidate_run_id }}
+          PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$PRE_CANDIDATE_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]
+          [[ "$PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$OWNER_PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]
+          test "$GITHUB_SHA" = "$SOURCE_COMMIT"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$SOURCE_COMMIT"
+          test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
+          test "$RELEASE_VERSION" != "$PREDECESSOR_VERSION"
+          test "$RELEASE_VERSION" != "$OWNER_PREDECESSOR_VERSION"
+          ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$RELEASE_VERSION" >/dev/null 2>&1
+          ! gh release view "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1
+
+          base_commit="$(git rev-parse "$SOURCE_COMMIT^")"
+          GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF= GITHUB_BASE_SHA="$base_commit" \
+            node scripts/ci-version-identity.mjs
+
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PRE_CANDIDATE_RUN_ID")"
+          jq -e --arg baseCommit "$base_commit" \
+            '.name == "Pre-candidate" and .path == ".github/workflows/pre-candidate.yml" and
+             .event == "workflow_dispatch" and .conclusion == "success" and .head_sha == $baseCommit' \
+            <<<"$run_json" >/dev/null
+          evidence_dir="$RUNNER_TEMP/pre-candidate-evidence"
+          gh run download "$PRE_CANDIDATE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name fased-pre-candidate-evidence --dir "$evidence_dir"
+          evidence="$evidence_dir/evidence.json"
+          jq -e \
+            --arg sourceCommit "$base_commit" \
+            --arg sourceTree "$(git rev-parse "$base_commit^{tree}")" \
+            --arg lockfileDigest "sha256:$(git show "$base_commit:pnpm-lock.yaml" | sha256sum | awk '{print $1}')" \
+            --arg releaseVersion "$RELEASE_VERSION" \
+            --arg ownerPredecessorVersion "$OWNER_PREDECESSOR_VERSION" \
+            --arg predecessorVersion "$PREDECESSOR_VERSION" \
+            --arg workflowRunId "$PRE_CANDIDATE_RUN_ID" \
+            '.schemaVersion == 2 and .sourceCommit == $sourceCommit and .sourceTree == $sourceTree and
+             .lockfileDigest == $lockfileDigest and .nextReleaseVersion == $releaseVersion and
+             .predecessorVersion == $predecessorVersion and
+             .ownerPredecessorVersion == $ownerPredecessorVersion and
+             .workflowRunId == $workflowRunId' "$evidence" >/dev/null
+
+          main_runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/main.yml/runs?head_sha=$SOURCE_COMMIT&branch=main&event=push&status=success&per_page=20")"
+          jq -e --arg sourceCommit "$SOURCE_COMMIT" \
+            '[.workflow_runs[] | select(.head_sha == $sourceCommit and .head_branch == "main" and
+              .event == "push" and .conclusion == "success")] | length > 0' \
+            <<<"$main_runs" >/dev/null
+          test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
+          test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$OWNER_PREDECESSOR_VERSION")"
+          predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" --arg owner "$OWNER_PREDECESSOR_VERSION" '[$stable,$owner] | unique')"
+          printf 'predecessors=%s\n' "$predecessors" >>"$GITHUB_OUTPUT"
+
+  candidate:
+    name: Build one unpublished Linux-x64 candidate-shaped artifact
+    needs: [preflight]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      descriptor_sha256: ${{ steps.identity.outputs.descriptor_sha256 }}
+    steps:
+      - name: Checkout exact version-only source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 0
+          submodules: false
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: tools/fased-lifecycled/go.mod
+          cache-dependency-path: |
+            tools/fased-lifecycled/go.sum
+            tools/fased-signerd/go.sum
+
+      - name: Build exact non-publishable x64 artifact once
+        env:
+          FASED_SYSTEMD_FIXTURE_BUILD_ONLY: "1"
+          FASED_SYSTEMD_FIXTURE_OUTPUT_DIR: ${{ runner.temp }}/fased-pre-tag-candidate
+        run: bash scripts/test-lifecycle-local-acceptance.sh
+
+      - name: Verify candidate-shaped inventory
+        id: identity
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate="$RUNNER_TEMP/fased-pre-tag-candidate"
+          descriptor="$candidate/fased-hosting-candidate.json"
+          jq -e \
+            --arg version "$RELEASE_VERSION" \
+            --arg commit "$SOURCE_COMMIT" \
+            --arg tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
+            --arg lockfileDigest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
+            '.version == $version and .commit == $commit and .tree == $tree and
+             .lockfileDigest == $lockfileDigest and .sourceRef == ("refs/tags/v" + $version)' \
+            "$descriptor" >/dev/null
+          jq -e '.profile == "branch-x64" and .publishable == false' \
+            "$candidate/fased-branch-proof-x64.json" >/dev/null
+          digest="sha256:$(sha256sum "$descriptor" | awk '{print $1}')"
+          printf 'descriptor_sha256=%s\n' "$digest" >>"$GITHUB_OUTPUT"
+
+      - name: Upload exact pre-tag candidate-shaped artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fased-pre-tag-candidate
+          path: ${{ runner.temp }}/fased-pre-tag-candidate/*
+          if-no-files-found: error
+          retention-days: 30
+
+  local-fresh:
+    name: Pre-tag fresh Local P1
+    needs: [preflight, candidate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact candidate source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 0
+          submodules: false
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+      - name: Download exact pre-tag artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: fased-pre-tag-candidate
+          path: ${{ runner.temp }}/fased-pre-tag-candidate
+      - name: Restore cached Local fixture image
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/protected-local-image-cache/
+          key: >-
+            protected-local-systemd-${{ runner.os }}-ubuntu-v1-
+            ${{ hashFiles('scripts/docker/protected-local-systemd/Containerfile.*',
+            'scripts/docker/protected-local-systemd/*.conf') }}
+      - name: Run exact fresh Local entrypoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/fased-pre-tag-candidate
+          FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
+          FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
+          FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
+          FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1"
+          FASED_SYSTEMD_FIXTURE_RECEIPT_DIR: ${{ runner.temp }}/receipts
+          FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install
+        run: bash scripts/test-lifecycle-local-acceptance.sh
+      - name: Upload fresh Local receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fased-pre-tag-local-fresh-receipt
+          path: ${{ runner.temp }}/receipts/*.json
+          if-no-files-found: error
+          retention-days: 30
+
+  local-update:
+    name: Pre-tag Local update P1 (${{ matrix.predecessor }})
+    needs: [preflight, candidate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        predecessor: ${{ fromJSON(needs.preflight.outputs.predecessors) }}
+    steps:
+      - name: Checkout exact candidate source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 0
+          submodules: false
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+      - name: Download exact pre-tag artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: fased-pre-tag-candidate
+          path: ${{ runner.temp }}/fased-pre-tag-candidate
+      - name: Restore cached Local fixture image
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/protected-local-image-cache/
+          key: >-
+            protected-local-systemd-${{ runner.os }}-ubuntu-v1-
+            ${{ hashFiles('scripts/docker/protected-local-systemd/Containerfile.*',
+            'scripts/docker/protected-local-systemd/*.conf') }}
+      - name: Derive exact predecessor topology
+        id: scenario
+        env:
+          PREDECESSOR_VERSION: ${{ matrix.predecessor }}
+        run: |
+          scenarios="$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
+          test -n "$scenarios"
+          printf 'scenarios=%s\n' "$scenarios" >>"$GITHUB_OUTPUT"
+      - name: Run exact Local update entrypoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/fased-pre-tag-candidate
+          FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
+          FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
+          FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: ${{ matrix.predecessor }}
+          FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
+          FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1"
+          FASED_SYSTEMD_FIXTURE_RECEIPT_DIR: ${{ runner.temp }}/receipts
+          FASED_SYSTEMD_FIXTURE_SCENARIOS: ${{ steps.scenario.outputs.scenarios }}
+        run: bash scripts/test-lifecycle-local-acceptance.sh
+      - name: Upload Local update receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fased-pre-tag-local-update-${{ matrix.predecessor }}-receipt
+          path: ${{ runner.temp }}/receipts/*.json
+          if-no-files-found: error
+          retention-days: 30
+
+  hosting:
+    name: Pre-tag Hosting P1 (${{ matrix.predecessor }})
+    needs: [preflight, candidate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        predecessor: ${{ fromJSON(needs.preflight.outputs.predecessors) }}
+    steps:
+      - name: Checkout exact candidate source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 0
+          submodules: false
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+      - name: Download exact pre-tag artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: fased-pre-tag-candidate
+          path: ${{ runner.temp }}/fased-pre-tag-candidate
+      - name: Run exact Hosting entrypoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FASED_HOSTING_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/fased-pre-tag-candidate
+          FASED_HOSTING_SYSTEMD_FIXTURE_DISTROS: ubuntu
+          FASED_HOSTING_SYSTEMD_FIXTURE_PREDECESSOR_VERSION: ${{ matrix.predecessor }}
+          FASED_HOSTING_SYSTEMD_FIXTURE_RECEIPT_DIR: ${{ runner.temp }}/receipts
+          FASED_HOSTING_SYSTEMD_FIXTURE_SCENARIOS: fresh-install,managed-update
+        run: bash scripts/test-lifecycle-hosting-acceptance.sh
+      - name: Upload Hosting receipts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fased-pre-tag-hosting-${{ matrix.predecessor }}-receipts
+          path: ${{ runner.temp }}/receipts/*.json
+          if-no-files-found: error
+          retention-days: 30
+
+  evidence:
+    name: Record protected pre-tag P1 evidence
+    needs: [preflight, candidate, local-fresh, local-update, hosting]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact candidate source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 0
+          submodules: false
+      - name: Record immutable pre-tag evidence
+        env:
+          DESCRIPTOR_SHA256: ${{ needs.candidate.outputs.descriptor_sha256 }}
+          OWNER_PREDECESSOR_VERSION: ${{ inputs.owner_predecessor_version }}
+          PRE_CANDIDATE_RUN_ID: ${{ inputs.pre_candidate_run_id }}
+          PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pre-tag-evidence"
+          jq -n \
+            --arg sourceCommit "$SOURCE_COMMIT" \
+            --arg sourceTree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
+            --arg releaseVersion "$RELEASE_VERSION" \
+            --arg predecessorVersion "$PREDECESSOR_VERSION" \
+            --arg ownerPredecessorVersion "$OWNER_PREDECESSOR_VERSION" \
+            --arg preCandidateRunId "$PRE_CANDIDATE_RUN_ID" \
+            --arg workflowRunId "$GITHUB_RUN_ID" \
+            --arg candidateDescriptorSha256 "$DESCRIPTOR_SHA256" \
+            '{schemaVersion:1,sourceCommit:$sourceCommit,sourceTree:$sourceTree,
+              releaseVersion:$releaseVersion,predecessorVersion:$predecessorVersion,
+              ownerPredecessorVersion:$ownerPredecessorVersion,
+              preCandidateRunId:$preCandidateRunId,workflowRunId:$workflowRunId,
+              candidateDescriptorSha256:$candidateDescriptorSha256}' \
+            >"$RUNNER_TEMP/pre-tag-evidence/evidence.json"
+      - name: Upload protected pre-tag evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fased-pre-tag-p1-evidence
+          path: ${{ runner.temp }}/pre-tag-evidence/evidence.json
+          if-no-files-found: error
+          retention-days: 30
