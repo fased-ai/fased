@@ -64,6 +64,12 @@ its numbered checkpoint only; never skip from red contracts to a product build,
 PR, or candidate. A locked user-supplied incident plan is controlling when it
 is stricter.
 
+For lifecycle design or status, lead with the literal end-user commands and
+separate `documented`, `implemented`, and `proven`. Do not tell managed users
+to maintain Node, npm, pnpm, Git, Go, GitHub CLI, internal paths, services, or
+migrations. Do not claim universal install/update until every selected
+acceptance ID has an exact enforcing receipt.
+
 ## RELEASE
 
 Read [`references/release.md`](references/release.md). A candidate confirms

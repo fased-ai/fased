@@ -3,6 +3,36 @@
 Read this file only when installer, updater, system service, migration, signer,
 Wallet custody, Local, or Hosting product behavior changes.
 
+## Public user contract
+
+Managed users install and update with these commands only:
+
+```bash
+curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
+  | bash -s -- --local
+
+curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
+  | bash -s -- --hosting
+
+fased update
+fased update status
+```
+
+The installer may request one bounded OS authorization ceremony. It owns
+platform detection, prerequisites, trust verification, lifecycle setup,
+signer/Gateway setup, and unprivileged onboarding. The installed stable
+launcher owns future update entry. Users never manage Node, npm, pnpm, Git, Go,
+GitHub CLI, internal paths, units, or recovery journals.
+
+An explicit `--release <tag>` must resolve completely from that immutable
+GitHub Release. A channel endpoint or npm dist-tag may suggest a tag only as an
+untrusted hint; it cannot be a trust root or mandatory dependency. Quiet and
+verbose modes change output only.
+
+Always distinguish `documented`, `implemented`, and `proven`. The canonical
+contract, source inspection, and a literal enforcing receipt are different
+evidence tiers. Never infer the third from the first two.
+
 ## One engine
 
 `tools/fased-lifecycled` is the sole privileged lifecycle mutation engine.
@@ -84,3 +114,7 @@ typed RPC; no secret material in JS/UI/Gateway; exact Wallet/network/policy
 binding; and rollback preserving signer database and master-key identity.
 Containers support Hosting adapter evidence; only an authorized real VPS proves
 Hosting acceptance.
+
+Use the stable acceptance IDs in the canonical lifecycle architecture.
+Fixtures with a substituted endpoint or reconstructed release are
+`SUPPORTING`, never `PASS`.
