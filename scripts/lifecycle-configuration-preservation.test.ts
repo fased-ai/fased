@@ -48,6 +48,19 @@ describe("lifecycle configuration preservation", () => {
     ).toMatchObject({ ok: true, profile: "hosting", targetVersion });
   });
 
+  it("accepts preservation before optional target defaults are materialized", () => {
+    const target = predecessorConfiguration();
+    target.gateway.mode = "local";
+    expect(
+      assertConfigurationPreserved({
+        predecessor: predecessorConfiguration(),
+        target,
+        targetVersion,
+        profile: "hosting",
+      }),
+    ).toMatchObject({ ok: true, profile: "hosting", targetVersion });
+  });
+
   it("rejects removal or mutation of predecessor user settings", () => {
     const target = canonicalTargetConfiguration();
     target.gateway.auth.token = "changed";

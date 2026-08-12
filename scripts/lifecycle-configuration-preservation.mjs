@@ -131,14 +131,14 @@ function validatePluginAllow(before, after) {
 
 function permitSystemMetadata(before, after, targetVersion) {
   const targetTouchedAt = lookup(after, ["meta", "lastTouchedAt"]);
-  if (!targetTouchedAt.found || typeof targetTouchedAt.value !== "string") {
-    fail("target /meta/lastTouchedAt is missing or invalid");
-  }
-  if (Number.isNaN(Date.parse(targetTouchedAt.value))) {
+  if (
+    targetTouchedAt.found &&
+    (typeof targetTouchedAt.value !== "string" || Number.isNaN(Date.parse(targetTouchedAt.value)))
+  ) {
     fail("target /meta/lastTouchedAt is not a timestamp");
   }
   const targetTouchedVersion = lookup(after, ["meta", "lastTouchedVersion"]);
-  if (!targetTouchedVersion.found || targetTouchedVersion.value !== targetVersion) {
+  if (targetTouchedVersion.found && targetTouchedVersion.value !== targetVersion) {
     fail(`target /meta/lastTouchedVersion is not ${targetVersion}`);
   }
   for (const path of [
@@ -172,8 +172,11 @@ function permitTargetDefaults(before, after) {
       continue;
     }
     const target = lookup(after, entry.path);
-    if (!target.found || !isDeepStrictEqual(target.value, entry.value)) {
-      fail(`target default ${pointer(entry.path)} is missing or has an undeclared value`);
+    if (!target.found) {
+      continue;
+    }
+    if (!isDeepStrictEqual(target.value, entry.value)) {
+      fail(`target default ${pointer(entry.path)} has an undeclared value`);
     }
     removePath(after, entry.path);
   }
