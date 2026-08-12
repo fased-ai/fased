@@ -41,7 +41,11 @@ ProtectHome=read-only
 ReadWritePaths=%s %s %s %s %s %s %s
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_FSETID CAP_SETUID CAP_SETGID
-AmbientCapabilities=
+# PrivateDevices removes effective SETUID in a mount namespace on supported
+# systemd/container combinations. The supervisor needs only these two
+# capabilities to run target-identity access probes; the UID transition clears
+# them before the unprivileged probe binary starts.
+AmbientCapabilities=CAP_SETUID CAP_SETGID
 
 [Install]
 WantedBy=multi-user.target

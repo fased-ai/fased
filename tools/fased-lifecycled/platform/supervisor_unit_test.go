@@ -40,6 +40,8 @@ func TestSupervisorUnitIsStableAndProfileBound(t *testing.T) {
 			text := string(data)
 			for _, expected := range []string{
 				"User=root", "NoNewPrivileges=true", "ProtectSystem=strict", "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+				"CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_FSETID CAP_SETUID CAP_SETGID",
+				"AmbientCapabilities=CAP_SETUID CAP_SETGID",
 				"ExecStart=" + StableLifecycleHostPath,
 				"supervisor --config " + fixture.configPath,
 				"RuntimeDirectory=" + fixture.supervisorRuntime + "\n",
