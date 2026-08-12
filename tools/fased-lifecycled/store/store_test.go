@@ -619,7 +619,7 @@ func TestImportGenerationCopiesAndReverifiesExactBytes(t *testing.T) {
 	if second, err := state.ImportGeneration(source); err != nil || second != expected {
 		t.Fatalf("idempotent import failed: %+v err=%v", second, err)
 	}
-	authority := CandidateAuthority{SchemaVersion: 1, GenerationID: expected.ID, ReleaseSequence: 12, SecurityEpoch: 3, ReleaseIndex: digestA, Delegation: digestB}
+	authority := CandidateAuthority{SchemaVersion: 1, GenerationID: expected.ID, ReleaseSequence: 12, SecurityEpoch: 3, ReleaseIndex: digestA, ReleaseAuthority: digestB}
 	if err := state.BindCandidateAuthority(authority); err != nil {
 		t.Fatal(err)
 	}
@@ -628,6 +628,13 @@ func TestImportGenerationCopiesAndReverifiesExactBytes(t *testing.T) {
 	}
 	if read, err := state.ReadCandidateAuthority(expected.ID); err != nil || read != authority {
 		t.Fatalf("candidate authority changed: %+v err=%v", read, err)
+	}
+	authorityJSON, err := os.ReadFile(state.candidateAuthorityPath(expected.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(authorityJSON, []byte(`"releaseAuthorityDigest"`)) || bytes.Contains(authorityJSON, []byte(`"delegationDigest"`)) {
+		t.Fatalf("candidate authority retained the obsolete delegation schema: %s", authorityJSON)
 	}
 	changed := authority
 	changed.ReleaseSequence++

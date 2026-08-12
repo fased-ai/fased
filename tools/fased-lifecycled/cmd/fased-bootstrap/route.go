@@ -21,9 +21,15 @@ import (
 )
 
 const (
-	productionMetadataBase = "https://updates.fased.ai/lifecycle/v1"
-	productionReleaseBase  = "https://github.com/fased-ai/fased/releases/download"
+	productionReleaseBase            = "https://github.com/fased-ai/fased/releases/download"
+	releaseRootAssetName             = "fased-lifecycle-root-v1.json"
+	releaseIndexAssetName            = "fased-release-index-v1.json"
+	releaseIndexAttestationAssetName = "fased-release-index-v1.json.attestation.json"
 )
+
+type publicReleaseRoute struct {
+	RootURL, IndexURL, IndexAttestationURL, ReleaseBaseURL, PinnedRootSHA256 string
+}
 
 type publicLifecycleRequest struct {
 	Operation    string
@@ -71,25 +77,16 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 			return bindErr
 		}
 	}
-	versionPath := "current"
-	if request.Version != "" {
-		versionPath = "v" + request.Version
-	}
-	rootMetadataBase, rootPin, err := publicTrustRoute()
+	releaseRoute, err := publicTrustRoute(request.Version)
 	if err != nil {
 		return err
 	}
-	metadataBase := rootMetadataBase + "/" + request.Channel
-	releaseBase := rootMetadataBase + "/" + request.Channel + "/assets"
-	if request.Version != "" {
-		releaseBase = productionReleaseBase + "/" + versionPath
-	}
 	bootstrap := bootstrapRequest{
 		StateRoot: "/var/lib/fased-bootstrap", HostRoot: "/opt/fased/lifecycle",
-		RootURL: rootMetadataBase + "/root.json", DelegationURL: metadataBase + "/delegation.json",
-		IndexURL: metadataBase + "/" + versionPath + "/release-index.json", ReleaseBaseURL: releaseBase,
+		RootURL: releaseRoute.RootURL, IndexURL: releaseRoute.IndexURL,
+		IndexAttestationURL: releaseRoute.IndexAttestationURL, ReleaseBaseURL: releaseRoute.ReleaseBaseURL,
 		Channel: request.Channel, Version: request.Version, Architecture: architecture(),
-		PinnedRootSHA256: rootPin, OwnerUID: 0, Now: time.Now().UTC(), Inspect: inspectLifecycleHost,
+		PinnedRootSHA256: releaseRoute.PinnedRootSHA256, OwnerUID: 0, Now: time.Now().UTC(), Inspect: inspectLifecycleHost,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -131,19 +128,31 @@ func shouldRunOnboarding(request publicLifecycleRequest, outcome string, ownerCo
 	return request.Operation == "install" && request.Onboard && !ownerConfigExisted && outcome != "ALREADY_CURRENT"
 }
 
-func publicTrustRoute() (string, string, error) {
+func publicTrustRoute(version string) (publicReleaseRoute, error) {
+	if err := model.ValidateVersion(version); err != nil {
+		return publicReleaseRoute{}, errors.New("public lifecycle operation requires an exact immutable version")
+	}
+	expectedBase := productionReleaseBase + "/v" + version
+	base, pin := expectedBase, productionPinnedRootSHA256
 	if branchFixtureMetadataBase == "" && branchFixturePinnedRootSHA256 == "" {
-		return productionMetadataBase, productionPinnedRootSHA256, nil
+		return immutableReleaseRoute(base, pin), nil
 	}
 	if branchFixtureMetadataBase == "" || branchFixturePinnedRootSHA256 == "" {
-		return "", "", errors.New("branch fixture trust route is incomplete")
+		return publicReleaseRoute{}, errors.New("branch fixture trust route is incomplete")
 	}
-	if !strings.HasPrefix(branchFixtureMetadataBase, productionReleaseBase+"/v") ||
-		!strings.HasSuffix(branchFixtureMetadataBase, "/lifecycle/v1") ||
-		len(branchFixturePinnedRootSHA256) != 64 {
-		return "", "", errors.New("branch fixture trust route is malformed")
+	if branchFixtureMetadataBase != expectedBase || len(branchFixturePinnedRootSHA256) != 64 {
+		return publicReleaseRoute{}, errors.New("branch fixture trust route is malformed")
 	}
-	return branchFixtureMetadataBase, branchFixturePinnedRootSHA256, nil
+	return immutableReleaseRoute(branchFixtureMetadataBase, branchFixturePinnedRootSHA256), nil
+}
+
+func immutableReleaseRoute(base, pin string) publicReleaseRoute {
+	return publicReleaseRoute{
+		RootURL:             base + "/" + releaseRootAssetName,
+		IndexURL:            base + "/" + releaseIndexAssetName,
+		IndexAttestationURL: base + "/" + releaseIndexAttestationAssetName,
+		ReleaseBaseURL:      base, PinnedRootSHA256: pin,
+	}
 }
 
 func parsePublicLifecycleRequest(operation string, args []string) (publicLifecycleRequest, error) {
@@ -280,7 +289,7 @@ func invokeLifecycleHost(ctx context.Context, request publicLifecycleRequest, op
 		"--owner-state", filepath.Join(operator.Home, ".fased"), "--gateway-port", strconv.Itoa(int(request.GatewayPort)),
 		"--generation-archive", result.ApplicationPath, "--dependency-archive", result.DependencyPath,
 		"--release-sequence", strconv.FormatUint(result.ReleaseSequence, 10), "--security-epoch", strconv.FormatUint(result.SecurityEpoch, 10),
-		"--release-index-digest", result.ReleaseIndexDigest, "--delegation-digest", result.DelegationDigest}
+		"--release-index-digest", result.ReleaseIndexDigest, "--release-authority-digest", result.ReleaseAuthorityDigest}
 	command := exec.CommandContext(ctx, result.HostPath, args...)
 	data, err := command.Output()
 	if err != nil {

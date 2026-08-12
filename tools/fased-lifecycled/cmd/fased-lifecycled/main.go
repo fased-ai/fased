@@ -169,7 +169,7 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	var profileRaw, instanceID, ownerStateRoot, operatorUser, generationRoot, generationArchive, dependencyArchive, sourceTopology string
 	var gatewayPort uint64
 	var releaseSequence, securityEpoch uint64
-	var releaseIndexDigest, delegationDigest string
+	var releaseIndexDigest, releaseAuthorityDigest string
 	flags.StringVar(&profileRaw, "profile", "", "")
 	flags.StringVar(&instanceID, "instance", "", "")
 	flags.StringVar(&ownerStateRoot, "owner-state", "", "")
@@ -182,7 +182,7 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	flags.Uint64Var(&releaseSequence, "release-sequence", 0, "")
 	flags.Uint64Var(&securityEpoch, "security-epoch", 0, "")
 	flags.StringVar(&releaseIndexDigest, "release-index-digest", "", "")
-	flags.StringVar(&delegationDigest, "delegation-digest", "", "")
+	flags.StringVar(&releaseAuthorityDigest, "release-authority-digest", "", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || gatewayPort == 0 || gatewayPort > 65535 {
 		return errors.New("invalid lifecycle initialization arguments")
 	}
@@ -222,7 +222,7 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	default:
 		return errors.New("installation discovery returned an unsupported class")
 	}
-	applyArguments, err := initializationApplyArguments("", generationRoot, generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion, releaseSequence, securityEpoch, releaseIndexDigest, delegationDigest)
+	applyArguments, err := initializationApplyArguments("", generationRoot, generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion, releaseSequence, securityEpoch, releaseIndexDigest, releaseAuthorityDigest)
 	if err != nil {
 		return err
 	}
@@ -404,7 +404,7 @@ func discoverInitialization(profile model.Profile, instanceID, ownerStateRoot, o
 	})
 }
 
-func initializationApplyArguments(configPath, generationRoot, generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion string, releaseSequence, securityEpoch uint64, releaseIndexDigest, delegationDigest string) ([]string, error) {
+func initializationApplyArguments(configPath, generationRoot, generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion string, releaseSequence, securityEpoch uint64, releaseIndexDigest, releaseAuthorityDigest string) ([]string, error) {
 	if (generationRoot == "") == (generationArchive == "") {
 		return nil, errors.New("invalid lifecycle initialization generation input")
 	}
@@ -416,14 +416,14 @@ func initializationApplyArguments(configPath, generationRoot, generationArchive,
 		return nil, errors.New("invalid lifecycle initialization generation input")
 	}
 	arguments := []string{"--config", configPath, flagName, selected}
-	if releaseSequence == 0 || securityEpoch == 0 || releaseIndexDigest == "" || delegationDigest == "" {
+	if releaseSequence == 0 || securityEpoch == 0 || releaseIndexDigest == "" || releaseAuthorityDigest == "" {
 		return nil, errors.New("lifecycle initialization requires signed release authority")
 	}
 	arguments = append(arguments,
 		"--release-sequence", strconv.FormatUint(releaseSequence, 10),
 		"--security-epoch", strconv.FormatUint(securityEpoch, 10),
 		"--release-index-digest", releaseIndexDigest,
-		"--delegation-digest", delegationDigest)
+		"--release-authority-digest", releaseAuthorityDigest)
 	if dependencyArchive != "" {
 		if !filepath.IsAbs(dependencyArchive) || filepath.Clean(dependencyArchive) != dependencyArchive {
 			return nil, errors.New("invalid lifecycle initialization dependency input")
@@ -572,7 +572,7 @@ func runApply(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("apply", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var configPath, generationRoot, generationArchive, dependencyArchive, generationID, sourceTopology, publicPredecessorVersion string
-	var releaseIndexDigest, delegationDigest string
+	var releaseIndexDigest, releaseAuthorityDigest string
 	var releaseSequence, securityEpoch uint64
 	flags.StringVar(&configPath, "config", "", "")
 	flags.StringVar(&generationRoot, "generation", "", "")
@@ -584,7 +584,7 @@ func runApply(args []string, output io.Writer) error {
 	flags.Uint64Var(&releaseSequence, "release-sequence", 0, "")
 	flags.Uint64Var(&securityEpoch, "security-epoch", 0, "")
 	flags.StringVar(&releaseIndexDigest, "release-index-digest", "", "")
-	flags.StringVar(&delegationDigest, "delegation-digest", "", "")
+	flags.StringVar(&releaseAuthorityDigest, "release-authority-digest", "", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return errors.New("invalid lifecycle apply arguments")
 	}
@@ -635,11 +635,11 @@ func runApply(args []string, output io.Writer) error {
 		}
 		if err := state.BindCandidateAuthority(store.CandidateAuthority{
 			SchemaVersion: 1, GenerationID: generation.ID, ReleaseSequence: releaseSequence, SecurityEpoch: securityEpoch,
-			ReleaseIndex: releaseIndexDigest, Delegation: delegationDigest,
+			ReleaseIndex: releaseIndexDigest, ReleaseAuthority: releaseAuthorityDigest,
 		}); err != nil {
 			return err
 		}
-	} else if releaseSequence != 0 || securityEpoch != 0 || releaseIndexDigest != "" || delegationDigest != "" {
+	} else if releaseSequence != 0 || securityEpoch != 0 || releaseIndexDigest != "" || releaseAuthorityDigest != "" {
 		return errors.New("existing generation convergence cannot rebind release authority")
 	}
 	// Promote verified bytes before the stable supervisor enters its read-only

@@ -82,12 +82,6 @@ func (verified VerifiedReleaseIndex) ReleaseAuthorityDigest() string {
 	return verified.releaseAuthorityDigest
 }
 
-// DelegationDigest remains only for the non-publishable branch-fixture path.
-// Production release verification uses ReleaseAuthorityDigest.
-func (verified VerifiedReleaseIndex) DelegationDigest() string {
-	return verified.releaseAuthorityDigest
-}
-
 func SignReleaseIndex(index ReleaseIndex, key SigningKey) ([]byte, error) {
 	if err := validateReleaseIndex(index, time.Time{}); err != nil {
 		return nil, err

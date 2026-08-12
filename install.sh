@@ -117,10 +117,8 @@ download="$(mktemp "$cache_root/.fased-bootstrap.XXXXXX")"
 trap 'rm -f -- "$download"' EXIT
 bootstrap_asset="fased-bootstrap-linux-${arch}"
 release_base="https://github.com/fased-ai/fased/releases/download/v${release}"
-curl_args=(-fsS --proto '=https' --tlsv1.2 --retry 2 --retry-delay 1)
-if [[ "$verbose" -eq 1 ]]; then
-  curl_args=(-fL --proto '=https' --tlsv1.2 --retry 2 --retry-delay 1)
-fi
+curl_args=(-fL --proto '=https' --tlsv1.2 --retry 2 --retry-delay 1)
+if [[ "$verbose" -eq 0 ]]; then curl_args+=(-sS); fi
 
 if [[ "$streamed" -eq 1 ]]; then cat >/dev/null || true; fi
 echo "Fased: acquiring verified lifecycle bootstrap..."

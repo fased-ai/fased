@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -24,33 +25,53 @@ const productionPinnedRootSHA256 = "23d3e8235a39729d6ae37a5784eaa717a47e4ac725f5
 
 // These values are set with linker flags only for non-publishable branch
 // acceptance artifacts. Production builds leave both empty and therefore
-// retain the immutable production metadata route and root pin.
+// retain the exact-tag GitHub Release route and production root pin.
 var branchFixtureMetadataBase string
 var branchFixturePinnedRootSHA256 string
 
 const maxMetadataSize = 1 << 20
 
 type bootstrapRequest struct {
-	StateRoot, HostRoot, RootURL, DelegationURL, IndexURL, ReleaseBaseURL string
-	Channel, Version, Architecture, PinnedRootSHA256                      string
-	RootRotationURLs                                                      []string
-	OwnerUID                                                              uint32
-	Client                                                                *http.Client
-	Now                                                                   time.Time
-	Inspect                                                               func(context.Context, host.StagedHost) error
+	StateRoot, HostRoot, RootURL, IndexURL, IndexAttestationURL, ReleaseBaseURL string
+	Channel, Version, Architecture, PinnedRootSHA256                            string
+	RootRotationURLs                                                            []string
+	OwnerUID                                                                    uint32
+	Client                                                                      *http.Client
+	Now                                                                         time.Time
+	VerifyIndex                                                                 releaseIndexVerifier
+	Inspect                                                                     func(context.Context, host.StagedHost) error
 }
 
 type bootstrapResult struct {
-	Version            string
-	ReleaseSequence    uint64
-	SecurityEpoch      uint64
-	HostDigest         string
-	HostPath           string
-	ApplicationPath    string
-	DependencyPath     string
-	SignerPath         string
-	ReleaseIndexDigest string
-	DelegationDigest   string
+	Version                string
+	ReleaseSequence        uint64
+	SecurityEpoch          uint64
+	HostDigest             string
+	HostPath               string
+	ApplicationPath        string
+	DependencyPath         string
+	SignerPath             string
+	ReleaseIndexDigest     string
+	ReleaseAuthorityDigest string
+}
+
+type bootstrapVerifiedReleaseIndex struct {
+	Index                  trust.ReleaseIndex
+	Digest                 string
+	ReleaseAuthorityDigest string
+}
+
+type releaseIndexVerifier func(trust.VerifiedRoot, []byte, []byte, time.Time) (bootstrapVerifiedReleaseIndex, error)
+
+func verifyAttestedReleaseIndex(root trust.VerifiedRoot, indexJSON, bundleJSON []byte, now time.Time) (bootstrapVerifiedReleaseIndex, error) {
+	verified, err := trust.VerifyAttestedReleaseIndex(root, indexJSON, bundleJSON, now)
+	if err != nil {
+		return bootstrapVerifiedReleaseIndex{}, err
+	}
+	return bootstrapVerifiedReleaseIndex{
+		Index: verified.Index(), Digest: verified.Digest(),
+		ReleaseAuthorityDigest: verified.ReleaseAuthorityDigest(),
+	}, nil
 }
 
 func main() {
@@ -71,8 +92,8 @@ func run(args []string, output io.Writer) error {
 	flags.StringVar(&request.HostRoot, "host-root", "", "")
 	flags.StringVar(&request.RootURL, "root-url", "", "")
 	flags.Var((*stringListFlag)(&request.RootRotationURLs), "root-rotation-url", "")
-	flags.StringVar(&request.DelegationURL, "delegation-url", "", "")
 	flags.StringVar(&request.IndexURL, "index-url", "", "")
+	flags.StringVar(&request.IndexAttestationURL, "index-attestation-url", "", "")
 	flags.StringVar(&request.ReleaseBaseURL, "release-base-url", "", "")
 	flags.StringVar(&request.Channel, "channel", "", "")
 	flags.StringVar(&request.Version, "version", "", "")
@@ -96,7 +117,7 @@ func run(args []string, output io.Writer) error {
 }
 
 func execute(ctx context.Context, request bootstrapRequest) (bootstrapResult, error) {
-	if request.StateRoot == "" || request.HostRoot == "" || request.RootURL == "" || request.DelegationURL == "" || request.IndexURL == "" || request.ReleaseBaseURL == "" || request.Channel == "" || request.PinnedRootSHA256 == "" || request.OwnerUID != uint32(os.Geteuid()) || request.Inspect == nil {
+	if request.StateRoot == "" || request.HostRoot == "" || request.RootURL == "" || request.IndexURL == "" || request.IndexAttestationURL == "" || request.ReleaseBaseURL == "" || request.Channel == "" || request.PinnedRootSHA256 == "" || request.OwnerUID != uint32(os.Geteuid()) || request.Inspect == nil {
 		return bootstrapResult{}, errors.New("bootstrap request is incomplete or has the wrong root owner")
 	}
 	client := request.Client
@@ -121,23 +142,26 @@ func execute(ctx context.Context, request bootstrapRequest) (bootstrapResult, er
 			return bootstrapResult{}, err
 		}
 	}
-	delegationJSON, err := fetchMetadata(ctx, client, request.DelegationURL)
-	if err != nil {
-		return bootstrapResult{}, err
-	}
-	delegation, err := trust.VerifyDelegation(root, delegationJSON, request.Now)
-	if err != nil {
-		return bootstrapResult{}, err
-	}
 	indexJSON, err := fetchMetadata(ctx, client, request.IndexURL)
 	if err != nil {
 		return bootstrapResult{}, err
 	}
-	verifiedIndex, err := trust.VerifyReleaseIndex(delegation, indexJSON, request.Now)
+	indexAttestationJSON, err := fetchMetadata(ctx, client, request.IndexAttestationURL)
 	if err != nil {
 		return bootstrapResult{}, err
 	}
-	index := verifiedIndex.Index()
+	verifyIndex := request.VerifyIndex
+	if verifyIndex == nil {
+		verifyIndex = verifyAttestedReleaseIndex
+	}
+	verifiedIndex, err := verifyIndex(root, indexJSON, indexAttestationJSON, request.Now)
+	if err != nil {
+		return bootstrapResult{}, err
+	}
+	if !plainSHA256(verifiedIndex.Digest) || !plainSHA256(verifiedIndex.ReleaseAuthorityDigest) {
+		return bootstrapResult{}, errors.New("verified release authority returned malformed digests")
+	}
+	index := verifiedIndex.Index
 	if index.Channel != request.Channel || (request.Version != "" && index.Version != request.Version) {
 		return bootstrapResult{}, errors.New("signed release index differs from requested channel or version")
 	}
@@ -168,9 +192,6 @@ func execute(ctx context.Context, request bootstrapRequest) (bootstrapResult, er
 	if err != nil {
 		return bootstrapResult{}, err
 	}
-	if err := store.Activate(staged, func(candidate host.StagedHost) error { return request.Inspect(ctx, candidate) }); err != nil {
-		return bootstrapResult{}, err
-	}
 	application, err := fetchIndexedAsset(ctx, client, request, inbox, index.Application)
 	if err != nil {
 		return bootstrapResult{}, err
@@ -183,12 +204,23 @@ func execute(ctx context.Context, request bootstrapRequest) (bootstrapResult, er
 	if err != nil {
 		return bootstrapResult{}, err
 	}
+	if err := store.Activate(staged, func(candidate host.StagedHost) error { return request.Inspect(ctx, candidate) }); err != nil {
+		return bootstrapResult{}, err
+	}
 	return bootstrapResult{
 		Version: index.Version, ReleaseSequence: index.ReleaseSequence, SecurityEpoch: index.SecurityEpoch,
 		HostDigest: staged.Digest, HostPath: staged.Path,
 		ApplicationPath: application, DependencyPath: dependency, SignerPath: signer,
-		ReleaseIndexDigest: "sha256:" + verifiedIndex.Digest(), DelegationDigest: "sha256:" + verifiedIndex.DelegationDigest(),
+		ReleaseIndexDigest: "sha256:" + verifiedIndex.Digest, ReleaseAuthorityDigest: "sha256:" + verifiedIndex.ReleaseAuthorityDigest,
 	}, nil
+}
+
+func plainSHA256(candidate string) bool {
+	if len(candidate) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(candidate)
+	return err == nil
 }
 
 func fetchIndexedAsset(ctx context.Context, client *http.Client, request bootstrapRequest, inbox *acquire.Inbox, assets map[string]trust.Asset) (string, error) {
