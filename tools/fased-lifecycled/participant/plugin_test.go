@@ -166,3 +166,14 @@ func TestMergeCorePluginLockRetainsOnlyPreviouslyApprovedStoreCode(t *testing.T)
 		t.Fatal("core generation introduced third-party plugin code")
 	}
 }
+
+func TestMergeCorePluginLockRejectsStoreShadowOfBundledIdentity(t *testing.T) {
+	entry := PluginLockEntry{ID: "demo", Digest: "sha256:" + strings.Repeat("a", 64), APICapability: "plugin.v1", Required: true}
+	target := PluginLock{SchemaVersion: 1, Type: "fased-plugin-lock", Entries: []PluginLockEntry{entry}}
+	target.Entries[0].Origin = "bundled"
+	installed := PluginLock{SchemaVersion: 1, Type: "fased-plugin-lock", Entries: []PluginLockEntry{entry}}
+	installed.Entries[0].Origin = "store"
+	if _, err := MergeCorePluginLock(target, installed); err == nil {
+		t.Fatal("store plugin shadowed a bundled plugin identity")
+	}
+}

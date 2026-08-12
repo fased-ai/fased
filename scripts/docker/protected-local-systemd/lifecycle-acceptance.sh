@@ -1334,18 +1334,40 @@ if [[ "$phase" == "managed-update" ]]; then
     user_systemctl is-active --quiet fased-gateway.service
     wait_for_gateway_version "$predecessor_version"
     install -d -m 0700 -o testop -g testop \
-      "$state/extensions" "$state/sat-mining" "$state/workspace"
-    printf '{"schemaVersion":1,"enabled":["stable-bridge"]}\n' \
-      >"$state/extensions/stable-bridge-plugin.json"
+      "$state/extensions" "$state/extensions/stable-bridge" \
+      "$state/plugin-data" "$state/plugin-data/stable-bridge" \
+      "$state/sat-mining" "$state/workspace"
+    printf '%s\n' '{"id":"stable-bridge","configSchema":{"type":"object","additionalProperties":false}}' \
+      >"$state/extensions/stable-bridge/fased.plugin.json"
+    printf '%s\n' '{"name":"stable-bridge","type":"module","fased":{"extensions":["./index.js"]}}' \
+      >"$state/extensions/stable-bridge/package.json"
+    printf '%s\n' 'export default { id: "stable-bridge", register() {} };' \
+      >"$state/extensions/stable-bridge/index.js"
+    printf '{"schemaVersion":1,"historyRevision":7}\n' \
+      >"$state/plugin-data/stable-bridge/state.json"
     printf '{"schemaVersion":1,"historyRevision":7}\n' \
       >"$state/sat-mining/stable-bridge-history.json"
     printf 'stable workspace state\n' >"$state/workspace/stable-bridge.txt"
+    jq \
+      '.plugins = (.plugins // {}) |
+       .plugins.allow = (((.plugins.allow // []) + ["stable-bridge"]) | unique) |
+       .plugins.entries = (.plugins.entries // {}) |
+       .plugins.entries["stable-bridge"] = ((.plugins.entries["stable-bridge"] // {}) + {enabled: true})' \
+      "$state/fased.json" >/tmp/stable-bridge-fased.json
+    install -m 0600 -o testop -g testop /tmp/stable-bridge-fased.json "$state/fased.json"
+    rm -f /tmp/stable-bridge-fased.json
     chown testop:testop \
-      "$state/extensions/stable-bridge-plugin.json" \
+      "$state/extensions/stable-bridge/fased.plugin.json" \
+      "$state/extensions/stable-bridge/package.json" \
+      "$state/extensions/stable-bridge/index.js" \
+      "$state/plugin-data/stable-bridge/state.json" \
       "$state/sat-mining/stable-bridge-history.json" \
       "$state/workspace/stable-bridge.txt"
     chmod 0600 \
-      "$state/extensions/stable-bridge-plugin.json" \
+      "$state/extensions/stable-bridge/fased.plugin.json" \
+      "$state/extensions/stable-bridge/package.json" \
+      "$state/extensions/stable-bridge/index.js" \
+      "$state/plugin-data/stable-bridge/state.json" \
       "$state/sat-mining/stable-bridge-history.json" \
       "$state/workspace/stable-bridge.txt"
     stable_bridge_manifest=/tmp/stable-bridge-preservation.sha256
@@ -1353,13 +1375,18 @@ if [[ "$phase" == "managed-update" ]]; then
     sha256sum \
       "$state/identity/device.json" \
       "$state/wallet/provider-registry.v1.json" \
-      "$state/extensions/stable-bridge-plugin.json" \
+      "$state/extensions/stable-bridge/fased.plugin.json" \
+      "$state/extensions/stable-bridge/package.json" \
+      "$state/extensions/stable-bridge/index.js" \
+      "$state/plugin-data/stable-bridge/state.json" \
       "$state/sat-mining/stable-bridge-history.json" \
       "$state/workspace/stable-bridge.txt" \
       >"$stable_bridge_manifest"
     sha256sum \
       "$state/identity/device.json" \
-      "$state/extensions/stable-bridge-plugin.json" \
+      "$state/extensions/stable-bridge/fased.plugin.json" \
+      "$state/extensions/stable-bridge/package.json" \
+      "$state/plugin-data/stable-bridge/state.json" \
       "$state/sat-mining/stable-bridge-history.json" \
       "$state/workspace/stable-bridge.txt" \
       >"$stable_bridge_restart_manifest"
@@ -1469,7 +1496,13 @@ EOF_STABLE_BRIDGE_DROPIN
     instance="$(jq -er .instanceId "$state/lifecycle.json")"
     runtime="$(resolve_protected_runtime "$instance")"
     mapfile -t managed_operator_env < <(operator_env "$instance")
-    runuser -u "fsgw-$instance" -- test -r "$state/extensions/stable-bridge-plugin.json"
+    runuser -u "fsgw-$instance" -- test -r "$state/plugin-data/stable-bridge/state.json"
+    stable_bridge_plugin_digest="$(jq -er '.entries[] | select(.id == "stable-bridge" and .origin == "store" and .required == true) | .digest' "$state/plugin.lock.json")"
+    stable_bridge_plugin_object="/opt/fased/local/$instance/plugin-code/${stable_bridge_plugin_digest#sha256:}"
+    runuser -u "fsgw-$instance" -- test -r "$stable_bridge_plugin_object/index.js"
+    jq -e --arg digest "$stable_bridge_plugin_digest" \
+      '.entries[] | select(.id == "stable-bridge" and .origin == "store" and .digest == $digest and .status == "loaded")' \
+      "$state/cache/plugin-readiness.json" >/dev/null
     verify_canonical_lifecycle_supervisor "$instance"
     acceptance_mark canonical-lifecycle "/var/lib/fased-local/$instance/lifecycle/installation-manifest.json"
     verify_three_services "$instance"
@@ -1573,7 +1606,7 @@ EOF_STABLE_BRIDGE_DROPIN
   materialize_predecessor_wallet_registry_fixture "$instance" "$runtime"
   verify_shared_wallet_registry "$instance" "$runtime"
   install -d -m 2770 -o testop -g "fscf-$instance" \
-    "$state/sat-mining/wallets/agent" "$state/extensions"
+    "$state/sat-mining/wallets/agent" "$state/plugin-data" "$state/plugin-data/fixture"
   runuser -u testop -- env \
     FASED_FIXTURE_MINING_LEDGER="$state/sat-mining/wallets/agent/mining.sqlite" \
     /usr/local/bin/node --input-type=module <<'EOF_MANAGED_MINING_LEDGER'
@@ -1591,15 +1624,15 @@ EOF_MANAGED_MINING_LEDGER
   printf '{"schemaVersion":1,"rpc":"fixture-rpc","policy":"agent"}\n' \
     >"$state/wallet/fixture-policy-rpc.json"
   printf '{"schemaVersion":1,"enabled":["fixture"]}\n' \
-    >"$state/extensions/fixture-plugin-state.json"
+    >"$state/plugin-data/fixture/state.json"
   chown testop:"fscf-$instance" \
     "$state/sat-mining/wallets/agent/mining.sqlite" \
     "$state/wallet/fixture-policy-rpc.json" \
-    "$state/extensions/fixture-plugin-state.json"
+    "$state/plugin-data/fixture/state.json"
   chmod 0660 \
     "$state/sat-mining/wallets/agent/mining.sqlite" \
     "$state/wallet/fixture-policy-rpc.json" \
-    "$state/extensions/fixture-plugin-state.json"
+    "$state/plugin-data/fixture/state.json"
   verify_wallet "$instance" agent >/tmp/managed-agent-before.json
   verify_wallet "$instance" vault >/tmp/managed-vault-before.json
   jq -S '{nodeId, handle}' "$state/federation/access-token.json" \
@@ -1612,7 +1645,7 @@ EOF_MANAGED_MINING_LEDGER
     "$state/wallet/provider-registry.v1.json" \
     "$state/wallet/fixture-policy-rpc.json" \
     "$state/sat-mining/wallets/agent/mining.sqlite" \
-    "$state/extensions/fixture-plugin-state.json" \
+    "$state/plugin-data/fixture/state.json" \
     "/var/lib/fased-local/$instance/signer/master.key" \
     >"$managed_state_manifest"
   verify_managed_state_manifest() {

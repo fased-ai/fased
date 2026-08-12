@@ -40,12 +40,43 @@ describe("discoverFasedAgentPlugins", () => {
     const stateDir = makeTempDir();
     const codeRoot = path.join(stateDir, "managed", "plugin-code");
     const dataRoot = path.join(stateDir, "plugin-data");
+    const lockPath = path.join(stateDir, "plugin.lock.json");
     const mutableExtensions = path.join(stateDir, "extensions");
     const configuredPath = path.join(stateDir, "configured.ts");
-    fs.mkdirSync(codeRoot, { recursive: true });
+    const approvedDigest = `sha256:${"a".repeat(64)}`;
+    const approvedRoot = path.join(codeRoot, approvedDigest.slice("sha256:".length));
+    const unreferencedRoot = path.join(codeRoot, "b".repeat(64));
+    fs.mkdirSync(approvedRoot, { recursive: true });
+    fs.mkdirSync(unreferencedRoot, { recursive: true });
     fs.mkdirSync(dataRoot, { recursive: true });
     fs.mkdirSync(mutableExtensions, { recursive: true });
-    fs.writeFileSync(path.join(codeRoot, "approved.ts"), "export default function () {}", "utf-8");
+    fs.writeFileSync(
+      path.join(approvedRoot, "approved.ts"),
+      "export default function () {}",
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(unreferencedRoot, "rogue.ts"),
+      "export default function () {}",
+      "utf-8",
+    );
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        type: "fased-plugin-lock",
+        entries: [
+          {
+            id: "approved",
+            origin: "store",
+            digest: approvedDigest,
+            apiCapability: "fased.plugin.v1",
+            required: true,
+          },
+        ],
+      }),
+      "utf-8",
+    );
     fs.writeFileSync(
       path.join(mutableExtensions, "shadow.ts"),
       "export default function () {}",
@@ -59,6 +90,7 @@ describe("discoverFasedAgentPlugins", () => {
         FASED_BUNDLED_PLUGINS_DIR: "/nonexistent/bundled/plugins",
         FASED_PLUGIN_CODE_ROOT: codeRoot,
         FASED_PLUGIN_DATA_ROOT: dataRoot,
+        FASED_PLUGIN_LOCK_PATH: lockPath,
       },
       async () => discoverFasedAgentPlugins({ extraPaths: [configuredPath] }),
     );

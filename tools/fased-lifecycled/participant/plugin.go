@@ -79,6 +79,43 @@ func MergeCorePluginLock(target, installed PluginLock) (PluginLock, error) {
 	}
 	for _, entry := range installed.Entries {
 		if entry.Origin == "store" {
+			if _, exists := entries[entry.ID]; exists {
+				return PluginLock{}, fmt.Errorf("third-party plugin %s conflicts with bundled plugin identity", entry.ID)
+			}
+			entries[entry.ID] = entry
+		}
+	}
+	merged := PluginLock{SchemaVersion: PluginLockSchemaVersion, Type: "fased-plugin-lock"}
+	for _, entry := range entries {
+		merged.Entries = append(merged.Entries, entry)
+	}
+	sort.Slice(merged.Entries, func(left, right int) bool { return merged.Entries[left].ID < merged.Entries[right].ID })
+	if _, err := PluginLockDigest(merged); err != nil {
+		return PluginLock{}, err
+	}
+	return merged, nil
+}
+
+// MergeInstalledPluginLocks combines two already-approved store selections.
+// The same ID may only be repeated with the exact same immutable identity.
+func MergeInstalledPluginLocks(left, right PluginLock) (PluginLock, error) {
+	if _, err := PluginLockDigest(left); err != nil {
+		return PluginLock{}, fmt.Errorf("installed plugin lock: %w", err)
+	}
+	if _, err := PluginLockDigest(right); err != nil {
+		return PluginLock{}, fmt.Errorf("legacy plugin lock: %w", err)
+	}
+	entries := make(map[string]PluginLockEntry, len(left.Entries)+len(right.Entries))
+	for _, lock := range []PluginLock{left, right} {
+		for _, entry := range lock.Entries {
+			if entry.Origin != "store" {
+				// Bundled entries are generation-owned and are replaced by the
+				// target lock. Only previously approved store entries survive.
+				continue
+			}
+			if previous, ok := entries[entry.ID]; ok && previous != entry {
+				return PluginLock{}, fmt.Errorf("installed plugin %s has conflicting immutable identities", entry.ID)
+			}
 			entries[entry.ID] = entry
 		}
 	}
@@ -342,6 +379,12 @@ func immutablePluginTreeDigest(root string, ownerUID uint32) (string, error) {
 	data, _ := json.Marshal(entries)
 	sum := sha256.Sum256(data)
 	return fmt.Sprintf("sha256:%x", sum), nil
+}
+
+// ImmutablePluginTreeDigest exposes the exact code-store identity contract to
+// the platform importer. It does not accept mutable or non-owner content.
+func ImmutablePluginTreeDigest(root string, ownerUID uint32) (string, error) {
+	return immutablePluginTreeDigest(root, ownerUID)
 }
 
 func readBoundedRegular(path string, ownerUID uint32, deniedMode os.FileMode) ([]byte, error) {

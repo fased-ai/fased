@@ -13,7 +13,10 @@ import (
 )
 
 type PluginBoundary interface {
-	Prepare(context.Context, model.Generation) (PreparedPluginLock, error)
+	Prepare(context.Context, model.Transaction) (PreparedPluginLock, error)
+	Activate(model.Transaction) error
+	Restore(model.Transaction) error
+	Discard(model.Transaction) error
 	Verify(context.Context, model.Generation) (PluginReadinessReceipt, error)
 }
 
@@ -32,9 +35,12 @@ type PluginLockResolver interface {
 }
 
 type DiskPluginBoundary struct {
-	Config         Config
-	Resolver       PluginLockResolver
-	SourceOwnerUID uint32
+	Config          Config
+	Resolver        PluginLockResolver
+	SourceOwnerUID  uint32
+	CodeRoot        string
+	TransactionRoot string
+	LegacyRoot      string
 }
 
 func (boundary DiskPluginBoundary) guard() (stateparticipant.PluginBoundary, error) {
@@ -43,7 +49,7 @@ func (boundary DiskPluginBoundary) guard() (stateparticipant.PluginBoundary, err
 		return stateparticipant.PluginBoundary{}, err
 	}
 	return stateparticipant.PluginBoundary{
-		CodeRoot:      filepath.Join(boundary.Config.InstallRoot, "plugin-code"),
+		CodeRoot:      boundary.codeRoot(),
 		DataRoot:      filepath.Join(boundary.Config.OwnerStateRoot, "plugin-data"),
 		LockPath:      filepath.Join(boundary.Config.OwnerStateRoot, "plugin.lock.json"),
 		ReadinessPath: filepath.Join(boundary.Config.OwnerStateRoot, "cache", "plugin-readiness.json"),
@@ -52,7 +58,8 @@ func (boundary DiskPluginBoundary) guard() (stateparticipant.PluginBoundary, err
 	}, nil
 }
 
-func (boundary DiskPluginBoundary) Prepare(_ context.Context, target model.Generation) (PreparedPluginLock, error) {
+func (boundary DiskPluginBoundary) Prepare(_ context.Context, tx model.Transaction) (PreparedPluginLock, error) {
+	target := tx.Target
 	digest, err := boundary.Resolver.PluginLockDigest(target.ID)
 	if err != nil {
 		return PreparedPluginLock{}, err
@@ -95,6 +102,14 @@ func (boundary DiskPluginBoundary) Prepare(_ context.Context, target model.Gener
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return PreparedPluginLock{}, err
 	}
+	legacy, err := boundary.prepareLegacyPlugins(tx)
+	if err != nil {
+		return PreparedPluginLock{}, err
+	}
+	installed, err = stateparticipant.MergeInstalledPluginLocks(installed, legacy)
+	if err != nil {
+		return PreparedPluginLock{}, err
+	}
 	merged, err := stateparticipant.MergeCorePluginLock(lock, installed)
 	if err != nil {
 		return PreparedPluginLock{}, err
@@ -110,8 +125,29 @@ func (boundary DiskPluginBoundary) Prepare(_ context.Context, target model.Gener
 	return PreparedPluginLock{Data: append(mergedJSON, '\n'), Digest: mergedDigest}, nil
 }
 
+func (boundary DiskPluginBoundary) codeRoot() string {
+	if boundary.CodeRoot != "" {
+		return boundary.CodeRoot
+	}
+	return filepath.Join(boundary.Config.InstallRoot, "plugin-code")
+}
+
+func (boundary DiskPluginBoundary) transactionRoot(tx model.Transaction) string {
+	if boundary.TransactionRoot != "" {
+		return filepath.Join(boundary.TransactionRoot, tx.ID)
+	}
+	return filepath.Join(boundary.Config.LifecycleRoot, "transactions", tx.ID, "target", "plugins")
+}
+
+func (boundary DiskPluginBoundary) legacyRoot() string {
+	if boundary.LegacyRoot != "" {
+		return boundary.LegacyRoot
+	}
+	return filepath.Join(boundary.Config.OwnerStateRoot, "extensions")
+}
+
 func (boundary DiskPluginBoundary) Verify(ctx context.Context, target model.Generation) (PluginReadinessReceipt, error) {
-	prepared, err := boundary.Prepare(ctx, target)
+	prepared, err := boundary.Prepare(ctx, model.Transaction{Target: target})
 	if err != nil {
 		return PluginReadinessReceipt{}, err
 	}

@@ -124,7 +124,7 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 	if err := adapter.validate(tx); err != nil {
 		return err
 	}
-	pluginLock, err := adapter.Plugins.Prepare(ctx, tx.Target)
+	pluginLock, err := adapter.Plugins.Prepare(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("plugin lock verification failed: %w", err)
 	}
@@ -295,6 +295,9 @@ func (adapter *TargetAdapter) Activate(ctx context.Context, tx model.Transaction
 	if err := adapter.TypedState.Activate(tx.ID); err != nil {
 		return err
 	}
+	if err := adapter.Plugins.Activate(tx); err != nil {
+		return err
+	}
 	if err := adapter.Files.Activate(tx.ID, adapter.preStartLifecycleFiles(tx)); err != nil {
 		return err
 	}
@@ -366,11 +369,14 @@ func (adapter *TargetAdapter) Commit(ctx context.Context, tx model.Transaction) 
 	if err := adapter.Predecessor.Commit(ctx, tx); err != nil {
 		return err
 	}
-	return errors.Join(adapter.Units.Discard(tx.ID), adapter.Files.Discard(tx.ID), adapter.TypedState.Discard(tx.ID))
+	return errors.Join(adapter.Units.Discard(tx.ID), adapter.Files.Discard(tx.ID), adapter.TypedState.Discard(tx.ID), adapter.Plugins.Discard(tx))
 }
 
 func (adapter *TargetAdapter) Restore(ctx context.Context, tx model.Transaction) error {
 	if err := adapter.Files.Restore(tx.ID, adapter.lifecycleFiles(tx)); err != nil {
+		return err
+	}
+	if err := adapter.Plugins.Restore(tx); err != nil {
 		return err
 	}
 	if err := adapter.TypedState.Restore(tx.ID); err != nil {
@@ -417,7 +423,7 @@ func (adapter *TargetAdapter) localPublicStableBridge(tx model.Transaction) bool
 }
 
 func (adapter *TargetAdapter) Discard(ctx context.Context, tx model.Transaction) error {
-	return errors.Join(adapter.Units.Discard(tx.ID), adapter.Files.Discard(tx.ID), adapter.TypedState.Discard(tx.ID), adapter.Predecessor.Discard(ctx, tx))
+	return errors.Join(adapter.Units.Discard(tx.ID), adapter.Files.Discard(tx.ID), adapter.TypedState.Discard(tx.ID), adapter.Plugins.Discard(tx), adapter.Predecessor.Discard(ctx, tx))
 }
 
 func (adapter *TargetAdapter) validate(tx model.Transaction) error {

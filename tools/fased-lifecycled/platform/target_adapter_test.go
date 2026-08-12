@@ -190,9 +190,24 @@ type fakePlugins struct {
 	verifyErr  error
 }
 
-func (plugins fakePlugins) Prepare(_ context.Context, target model.Generation) (PreparedPluginLock, error) {
-	*plugins.calls = append(*plugins.calls, "plugins.prepare:"+target.ID)
+func (plugins fakePlugins) Prepare(_ context.Context, tx model.Transaction) (PreparedPluginLock, error) {
+	*plugins.calls = append(*plugins.calls, "plugins.prepare:"+tx.Target.ID)
 	return PreparedPluginLock{Data: []byte("{\"schemaVersion\":1,\"type\":\"fased-plugin-lock\",\"entries\":[]}\n"), Digest: digestA}, plugins.prepareErr
+}
+
+func (plugins fakePlugins) Activate(tx model.Transaction) error {
+	*plugins.calls = append(*plugins.calls, "plugins.activate:"+tx.Target.ID)
+	return nil
+}
+
+func (plugins fakePlugins) Restore(tx model.Transaction) error {
+	*plugins.calls = append(*plugins.calls, "plugins.restore:"+tx.Target.ID)
+	return nil
+}
+
+func (plugins fakePlugins) Discard(tx model.Transaction) error {
+	*plugins.calls = append(*plugins.calls, "plugins.discard:"+tx.Target.ID)
+	return nil
 }
 
 func (plugins fakePlugins) Verify(_ context.Context, target model.Generation) (PluginReadinessReceipt, error) {
@@ -296,12 +311,12 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 	}
 	want := []string{
 		"plugins.prepare:" + digestB, "units.prepare", "files.prepare", "systemd.stop:fased-gateway-example.service", "systemd.stop:fased-signerd-example.service", "shared.prepare",
-		"shared.activate", "files.activate", "shared.verify-access", "units.activate", "systemd.reload", "systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
+		"shared.activate", "plugins.activate:" + digestB, "files.activate", "shared.verify-access", "units.activate", "systemd.reload", "systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
 		"systemd.enable:fased-gateway-example.service", "systemd.start:fased-gateway-example.service",
 		"systemd.active:fased-signerd-example.service", "systemd.active:fased-gateway-example.service",
 		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		"plugins.verify:" + digestB,
-		"generation.activate:" + digestB + ":" + digestA, "files.activate", "units.discard", "files.discard", "shared.discard",
+		"generation.activate:" + digestB + ":" + digestA, "files.activate", "units.discard", "files.discard", "shared.discard", "plugins.discard:" + digestB,
 	}
 	if !reflect.DeepEqual(*calls, want) {
 		t.Fatalf("unexpected target adapter order:\n got=%v\nwant=%v", *calls, want)
@@ -405,7 +420,7 @@ func TestFreshLocalDefersGatewayUntilOnboardingCreatesConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"plugins.prepare:" + digestB, "units.prepare", "files.prepare", "shared.prepare", "shared.activate", "files.activate", "shared.verify-access", "units.activate", "systemd.reload",
+		"plugins.prepare:" + digestB, "units.prepare", "files.prepare", "shared.prepare", "shared.activate", "plugins.activate:" + digestB, "files.activate", "shared.verify-access", "units.activate", "systemd.reload",
 		"systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
 		"systemd.enable:fased-gateway-example.service", "systemd.active:fased-signerd-example.service",
 	}
@@ -450,7 +465,7 @@ func TestLocalBridgeVerifiesDurableFenceBeforeLifecycleProjectionAndPredecessor(
 	if len(activations) != 1 || !reflect.DeepEqual(activations[0], wantTargets) {
 		t.Fatalf("Local bridge commit activation order changed: got=%v want=%v", activations, wantTargets)
 	}
-	wantTail := []string{"fence.verify", "generation.activate:" + digestB + ":", "files.activate", "predecessor.commit", "units.discard", "files.discard", "shared.discard"}
+	wantTail := []string{"fence.verify", "generation.activate:" + digestB + ":", "files.activate", "predecessor.commit", "units.discard", "files.discard", "shared.discard", "plugins.discard:" + digestB}
 	if !reflect.DeepEqual((*calls)[len(*calls)-len(wantTail):], wantTail) {
 		t.Fatalf("predecessor committed before durable fence activation: %v", *calls)
 	}
@@ -677,12 +692,12 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	}
 	want := []string{
 		"plugins.prepare:" + digestB, "units.prepare", "files.prepare", "systemd.stop:fased-gateway.service", "systemd.stop:fased-signerd.service", "shared.prepare",
-		"shared.activate", "files.activate", "shared.verify-access", "units.activate", "systemd.reload", "systemd.enable:fased-signerd.service", "systemd.start:fased-signerd.service",
+		"shared.activate", "plugins.activate:" + digestB, "files.activate", "shared.verify-access", "units.activate", "systemd.reload", "systemd.enable:fased-signerd.service", "systemd.start:fased-signerd.service",
 		"systemd.enable:fased-gateway.service", "systemd.start:fased-gateway.service",
 		"systemd.active:fased-signerd.service", "systemd.active:fased-gateway.service",
 		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		"plugins.verify:" + digestB,
-		"generation.activate:" + digestB + ":" + digestA, "files.activate", "units.discard", "files.discard", "shared.discard",
+		"generation.activate:" + digestB + ":" + digestA, "files.activate", "units.discard", "files.discard", "shared.discard", "plugins.discard:" + digestB,
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("unexpected Hosting adapter order:\n got=%v\nwant=%v", calls, want)
@@ -714,7 +729,7 @@ func TestTargetAdapterRestoresPreviousButDoesNotStartAbsentFreshServices(t *test
 	if err := adapter.Restore(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(*calls, []string{"files.restore", "shared.restore", "units.restore", "systemd.reload", "systemd.start:fased-signerd-example.service", "systemd.start:fased-gateway-example.service"}) {
+	if !reflect.DeepEqual(*calls, []string{"files.restore", "plugins.restore:" + digestB, "shared.restore", "units.restore", "systemd.reload", "systemd.start:fased-signerd-example.service", "systemd.start:fased-gateway-example.service"}) {
 		t.Fatalf("update restore order changed: %v", *calls)
 	}
 	*calls = nil
@@ -722,7 +737,7 @@ func TestTargetAdapterRestoresPreviousButDoesNotStartAbsentFreshServices(t *test
 	if err := adapter.Restore(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(*calls, []string{"files.restore", "shared.restore", "units.restore", "systemd.reload"}) {
+	if !reflect.DeepEqual(*calls, []string{"files.restore", "plugins.restore:" + digestB, "shared.restore", "units.restore", "systemd.reload"}) {
 		t.Fatalf("fresh rollback started absent services: %v", *calls)
 	}
 }

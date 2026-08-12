@@ -417,6 +417,30 @@ restore_public_predecessor() {
   while IFS= read -r unit; do systemctl enable --now "$unit"; done \
     < <(jq -er '.services[]' "$predecessor_capsule_descriptor")
   wait_for_gateway_version "$predecessor_version"
+  install -d -m 0700 -o app -g app \
+    /home/app/.fased/extensions /home/app/.fased/extensions/stable-bridge \
+    /home/app/.fased/plugin-data /home/app/.fased/plugin-data/stable-bridge
+  printf '%s\n' '{"id":"stable-bridge","configSchema":{"type":"object","additionalProperties":false}}' \
+    >/home/app/.fased/extensions/stable-bridge/fased.plugin.json
+  printf '%s\n' '{"name":"stable-bridge","type":"module","fased":{"extensions":["./index.js"]}}' \
+    >/home/app/.fased/extensions/stable-bridge/package.json
+  printf '%s\n' 'export default { id: "stable-bridge", register() {} };' \
+    >/home/app/.fased/extensions/stable-bridge/index.js
+  printf '%s\n' '{"schemaVersion":1,"historyRevision":7}' \
+    >/home/app/.fased/plugin-data/stable-bridge/state.json
+  chown -R app:app /home/app/.fased/extensions /home/app/.fased/plugin-data
+  chmod 0700 /home/app/.fased/extensions /home/app/.fased/extensions/stable-bridge \
+    /home/app/.fased/plugin-data /home/app/.fased/plugin-data/stable-bridge
+  chmod 0600 /home/app/.fased/extensions/stable-bridge/* \
+    /home/app/.fased/plugin-data/stable-bridge/state.json
+  jq \
+    '.plugins = (.plugins // {}) |
+     .plugins.allow = (((.plugins.allow // []) + ["stable-bridge"]) | unique) |
+     .plugins.entries = (.plugins.entries // {}) |
+     .plugins.entries["stable-bridge"] = ((.plugins.entries["stable-bridge"] // {}) + {enabled: true})' \
+    /home/app/.fased/fased.json >/tmp/fased-hosting-stable-bridge-config.json
+  install -m 0600 -o app -g app /tmp/fased-hosting-stable-bridge-config.json /home/app/.fased/fased.json
+  rm -f /tmp/fased-hosting-stable-bridge-config.json
 }
 
 case "$phase" in
@@ -467,6 +491,10 @@ case "$phase" in
     sha256sum \
       /home/app/.fased/identity/device.json \
       /home/app/.fased/wallet/provider-registry.v1.json \
+      /home/app/.fased/extensions/stable-bridge/fased.plugin.json \
+      /home/app/.fased/extensions/stable-bridge/package.json \
+      /home/app/.fased/extensions/stable-bridge/index.js \
+      /home/app/.fased/plugin-data/stable-bridge/state.json \
       >/tmp/fased-hosting-predecessor-state.sha256
     jq -S 'del(.gateway.mode)' /home/app/.fased/fased.json \
       >/tmp/fased-hosting-predecessor-config-without-mode.json
@@ -512,6 +540,13 @@ EOF_TARGET_DROPIN
     acceptance_mark three-services-active /tmp/fased-hosting-three-services.out \
       "three Hosting services active"
     run_operator_acceptance
+    stable_bridge_plugin_digest="$(jq -er '.entries[] | select(.id == "stable-bridge" and .origin == "store" and .required == true) | .digest' /home/app/.fased/plugin.lock.json)"
+    stable_bridge_plugin_object="/opt/fased/plugin-code/${stable_bridge_plugin_digest#sha256:}"
+    runuser -u fased-gateway -- test -r "$stable_bridge_plugin_object/index.js"
+    runuser -u fased-gateway -- test -r /home/app/.fased/plugin-data/stable-bridge/state.json
+    jq -e --arg digest "$stable_bridge_plugin_digest" \
+      '.entries[] | select(.id == "stable-bridge" and .origin == "store" and .digest == $digest and .status == "loaded")' \
+      /home/app/.fased/cache/plugin-readiness.json >/dev/null
     test "$(jq -er .gateway.mode /home/app/.fased/fased.json)" = local
     jq -S 'del(.gateway.mode)' /home/app/.fased/fased.json \
       >/tmp/fased-hosting-target-config-without-mode.json
