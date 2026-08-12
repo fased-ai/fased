@@ -53,7 +53,7 @@ func TestOfflineRootBootstrapStagesAndExecutesVerifiedHost(t *testing.T) {
 	defer syscall.Umask(oldMask)
 	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
 	rootKeys := []fixtureKey{fixtureKeyPair(t), fixtureKeyPair(t), fixtureKeyPair(t)}
-	metadata := trust.RootMetadata{SchemaVersion: 1, Type: "fased-lifecycle-root", Version: 1, IssuedAt: now.Add(-time.Hour).Format(time.RFC3339), ExpiresAt: now.Add(24 * time.Hour).Format(time.RFC3339), Keys: map[string]trust.Key{}, Root: trust.RootRole{Threshold: 2}, Revocations: trust.Revocations{ReleaseVersions: []string{}, TargetDigests: []string{}, DelegatedKeyIDs: []string{}}}
+	metadata := trust.RootMetadata{SchemaVersion: 1, Type: "fased-lifecycle-root", Version: 1, IssuedAt: now.Add(-time.Hour).Format(time.RFC3339), ExpiresAt: now.Add(24 * time.Hour).Format(time.RFC3339), Keys: map[string]trust.Key{}, Root: trust.RootRole{Threshold: 2}, ReleaseAuthority: &trust.ReleaseAuthority{Type: "github-artifact-attestation-v1", Repository: "fased-ai/fased", Workflow: "fased-ai/fased/.github/workflows/hosted-runtime-release.yml", SourceRefPrefix: "refs/tags/v", DenySelfHostedRunners: true}, Revocations: trust.Revocations{ReleaseVersions: []string{}, TargetDigests: []string{}, DelegatedKeyIDs: []string{}}}
 	for _, key := range rootKeys {
 		metadata.Keys[key.id] = key.record
 		metadata.Root.KeyIDs = append(metadata.Root.KeyIDs, key.id)

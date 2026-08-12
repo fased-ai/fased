@@ -1,11 +1,6 @@
 package main
 
 import (
-	"crypto/ed25519"
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/hex"
-	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -26,16 +21,14 @@ func main() {
 func run(args []string, stderr io.Writer) error {
 	flags := flag.NewFlagSet("fased-release-index", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	var input, keyPath, keyID, output string
-	flags.StringVar(&input, "input", "", "unsigned release-index JSON")
-	flags.StringVar(&keyPath, "private-key", "", "PKCS8 Ed25519 private-key PEM file")
-	flags.StringVar(&keyID, "key-id", "", "delegated release key ID")
-	flags.StringVar(&output, "output", "", "signed release-index envelope")
+	var input, output string
+	flags.StringVar(&input, "input", "", "release-index JSON")
+	flags.StringVar(&output, "output", "", "canonical release-index artifact")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if flags.NArg() != 0 || input == "" || keyPath == "" || keyID == "" || output == "" {
-		return errors.New("--input, --private-key, --key-id, and --output are required")
+	if flags.NArg() != 0 || input == "" || output == "" {
+		return errors.New("--input and --output are required")
 	}
 	indexJSON, err := os.ReadFile(input)
 	if err != nil {
@@ -45,66 +38,11 @@ func run(args []string, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("release index: %w", err)
 	}
-	privateKey, derivedID, err := readPrivateKey(keyPath)
+	canonical, err := trust.EncodeReleaseIndex(index)
 	if err != nil {
 		return err
 	}
-	if derivedID != keyID {
-		return errors.New("delegated key ID does not match the private key")
-	}
-	signed, err := trust.SignReleaseIndex(index, trust.SigningKey{KeyID: keyID, PrivateKey: privateKey})
-	if err != nil {
-		return err
-	}
-	return writeAtomic(output, signed)
-}
-
-func readPrivateKey(path string) (ed25519.PrivateKey, string, error) {
-	before, err := os.Lstat(path)
-	if err != nil {
-		return nil, "", err
-	}
-	if !before.Mode().IsRegular() || before.Mode().Perm()&0o077 != 0 {
-		return nil, "", errors.New("private key must be a non-symlink regular file inaccessible to group and world")
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, "", err
-	}
-	defer file.Close()
-	after, err := file.Stat()
-	if err != nil || !os.SameFile(before, after) || !after.Mode().IsRegular() || after.Mode().Perm()&0o077 != 0 {
-		return nil, "", errors.New("private key changed identity or permissions while opening")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, 16*1024+1))
-	if err != nil {
-		return nil, "", err
-	}
-	if len(data) > 16*1024 {
-		return nil, "", errors.New("private key exceeds its size limit")
-	}
-	final, err := file.Stat()
-	if err != nil || !os.SameFile(after, final) || final.Size() != after.Size() || final.ModTime() != after.ModTime() {
-		return nil, "", errors.New("private key changed while reading")
-	}
-	block, rest := pem.Decode(data)
-	if block == nil || len(rest) != 0 || block.Type != "PRIVATE KEY" {
-		return nil, "", errors.New("private key is not one canonical PKCS8 PEM block")
-	}
-	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		return nil, "", err
-	}
-	privateKey, ok := parsed.(ed25519.PrivateKey)
-	if !ok {
-		return nil, "", errors.New("private key is not Ed25519")
-	}
-	der, err := x509.MarshalPKIXPublicKey(privateKey.Public())
-	if err != nil {
-		return nil, "", err
-	}
-	digest := sha256.Sum256(der)
-	return privateKey, hex.EncodeToString(digest[:]), nil
+	return writeAtomic(output, canonical)
 }
 
 func writeAtomic(path string, data []byte) error {
@@ -115,7 +53,7 @@ func writeAtomic(path string, data []byte) error {
 	}
 	tempPath := temp.Name()
 	defer os.Remove(tempPath)
-	if err := temp.Chmod(0o600); err != nil {
+	if err := temp.Chmod(0o644); err != nil {
 		temp.Close()
 		return err
 	}
