@@ -745,6 +745,9 @@ describe("CI workflow routing", () => {
       (step) => step.name === "Build exact non-publishable x64 artifact once",
     );
     const hostingRun = hosting?.steps?.find((step) => step.name === "Run exact Hosting entrypoint");
+    const predecessorTopology = localUpdate?.steps?.find(
+      (step) => step.name === "Derive exact predecessor topology",
+    );
     const allText = Object.values(jobs)
       .flatMap((job) => job.steps ?? [])
       .map((step) => step.run ?? "")
@@ -771,6 +774,11 @@ describe("CI workflow routing", () => {
     expect(allText).toContain('! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$RELEASE_VERSION"');
     expect(candidateBuild?.env).toMatchObject({
       FASED_SYSTEMD_FIXTURE_BUILD_ONLY: "1",
+    });
+    expect(allText).toContain("scripts/prepare-candidate-fixture-trust.sh");
+    expect(allText).toContain("fased-pre-tag-candidate-raw");
+    expect(predecessorTopology?.env).toMatchObject({
+      GH_TOKEN: "${{ github.token }}",
     });
     expect(allText).toContain("bash scripts/test-lifecycle-local-acceptance.sh");
     expect(allText).toContain("bash scripts/test-lifecycle-hosting-acceptance.sh");

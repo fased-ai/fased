@@ -144,8 +144,14 @@ jobs:
       - name: Build exact non-publishable x64 artifact once
         env:
           FASED_SYSTEMD_FIXTURE_BUILD_ONLY: "1"
-          FASED_SYSTEMD_FIXTURE_OUTPUT_DIR: ${{ runner.temp }}/fased-pre-tag-candidate
+          FASED_SYSTEMD_FIXTURE_OUTPUT_DIR: ${{ runner.temp }}/fased-pre-tag-candidate-raw
         run: bash scripts/test-lifecycle-local-acceptance.sh
+
+      - name: Bind non-publishable fixture trust to the exact inventory
+        run: >-
+          bash scripts/prepare-candidate-fixture-trust.sh
+          "$RUNNER_TEMP/fased-pre-tag-candidate-raw"
+          "$RUNNER_TEMP/fased-pre-tag-candidate"
 
       - name: Verify candidate-shaped inventory
         id: identity
@@ -262,6 +268,7 @@ jobs:
       - name: Derive exact predecessor topology
         id: scenario
         env:
+          GH_TOKEN: ${{ github.token }}
           PREDECESSOR_VERSION: ${{ matrix.predecessor }}
         run: |
           scenarios="$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
