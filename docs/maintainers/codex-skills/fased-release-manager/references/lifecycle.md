@@ -10,10 +10,14 @@ Managed users install and update with these commands only:
 ```bash
 curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
   | bash -s -- --local
+```
 
+```bash
 curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
   | bash -s -- --hosting
+```
 
+```bash
 fased update
 fased update status
 ```
