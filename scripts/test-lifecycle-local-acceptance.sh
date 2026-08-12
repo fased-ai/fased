@@ -345,7 +345,7 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
         --issued-at "$issued_at"
     rm -f "$fixture_inventory"
     fixture_root_pin="$(tr -d '\n' <"$ARTIFACT_DIR/fased-branch-root.sha256")"
-    fixture_metadata_base="https://github.com/fased-ai/fased/releases/download/v${VERSION}/lifecycle/v1"
+    fixture_metadata_base="https://github.com/fased-ai/fased/releases/download/v${VERSION}"
     (
       cd "$ROOT_DIR/tools/fased-lifecycled"
       CGO_ENABLED=0 GOOS=linux GOARCH=amd64 "$GO_BIN" build \

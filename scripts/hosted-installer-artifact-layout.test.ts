@@ -103,6 +103,18 @@ describe("attested Go lifecycle artifact layout", () => {
     expect(candidateTrustOverlay).toContain(".generation.artifactSetDigest");
     expect(candidateTrustOverlay).toContain("publishable:false");
     expect(candidateTrustOverlay).toContain("--architecture x64");
+    expect(candidateTrustOverlay).toContain(
+      'metadata_base="https://github.com/fased-ai/fased/releases/download/v${version}"',
+    );
+    expect(candidateTrustOverlay).not.toContain(
+      'metadata_base="https://github.com/fased-ai/fased/releases/download/v${version}/lifecycle/v1"',
+    );
+    expect(localFixture).toContain(
+      'fixture_metadata_base="https://github.com/fased-ai/fased/releases/download/v${VERSION}"',
+    );
+    expect(localFixture).not.toContain(
+      'fixture_metadata_base="https://github.com/fased-ai/fased/releases/download/v${VERSION}/lifecycle/v1"',
+    );
     expect(candidateTrustOverlay).not.toContain("gh release");
     expect(candidateTrustOverlay).not.toContain("git tag");
     for (const fixture of [localFixture, hostingFixture]) {
