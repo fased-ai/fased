@@ -380,6 +380,15 @@ run_operator_acceptance() {
 }
 
 run_public_updater() {
+  local sudoers_policy=/etc/sudoers.d/fased-hosting-fixture-update
+  test -x /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap
+  umask 077
+  printf \
+    'app ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap update --profile hosting --channel beta --timeout 120 --version %s\n' \
+    "$version" >"$sudoers_policy"
+  chown root:root "$sudoers_policy"
+  chmod 0440 "$sudoers_policy"
+  visudo -cf "$sudoers_policy" >/dev/null
   runuser -u app -- env HOME=/home/app /home/app/.fased/bin/fased update \
     --channel beta --timeout 120
 }
