@@ -417,6 +417,11 @@ restore_public_predecessor() {
   while IFS= read -r unit; do systemctl enable --now "$unit"; done \
     < <(jq -er '.services[]' "$predecessor_capsule_descriptor")
   wait_for_gateway_version "$predecessor_version"
+  # Seed the compatibility fixture with the predecessor quiesced. Otherwise
+  # its asynchronous config normalization can race this external write and
+  # make the later preservation comparison measure fixture timing rather than
+  # lifecycle state.
+  systemctl stop fased-gateway.service
   install -d -m 0700 -o app -g app \
     /home/app/.fased/extensions /home/app/.fased/extensions/stable-bridge \
     /home/app/.fased/plugin-data /home/app/.fased/plugin-data/stable-bridge
@@ -441,6 +446,27 @@ restore_public_predecessor() {
     /home/app/.fased/fased.json >/tmp/fased-hosting-stable-bridge-config.json
   install -m 0600 -o app -g app /tmp/fased-hosting-stable-bridge-config.json /home/app/.fased/fased.json
   rm -f /tmp/fased-hosting-stable-bridge-config.json
+  systemctl start fased-gateway.service
+  wait_for_gateway_version "$predecessor_version"
+  previous_config_digest=""
+  stable_config_samples=0
+  for _ in {1..40}; do
+    config_digest="$(sha256sum /home/app/.fased/fased.json | awk '{print $1}')"
+    if [[ "$config_digest" == "$previous_config_digest" ]]; then
+      stable_config_samples=$((stable_config_samples + 1))
+      if [[ "$stable_config_samples" -ge 3 ]]; then
+        break
+      fi
+    else
+      previous_config_digest="$config_digest"
+      stable_config_samples=0
+    fi
+    sleep 0.25
+  done
+  [[ "$stable_config_samples" -ge 3 ]] || {
+    echo "The public predecessor configuration did not settle after plugin seeding." >&2
+    exit 1
+  }
 }
 
 case "$phase" in
