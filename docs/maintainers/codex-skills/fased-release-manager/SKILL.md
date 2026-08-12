@@ -79,6 +79,20 @@ bytes. A candidate whose tagged source is followed by any product correction
 is permanently obsolete: never move its tag, rebuild it, publish replacement
 bytes under its version, or use it for owner acceptance.
 
+No tag may allocate a predicate for the first time. Before requesting tag
+authority, run the same Local and Hosting fixture entrypoints, mount topology,
+public-acquisition routes, candidate-shaped inventory, predecessor scenarios,
+and acceptance receipt verifier that trusted P1 will run. This pre-tag closure
+must execute on the protected Linux runner, not only as local text assertions.
+Production signatures and supported-architecture packaging may remain release
+operations; fixture wiring, artifact names, lifecycle behavior, and every P1
+acceptance predicate may not.
+
+If a tagged run exposes a fixture or inventory predicate that did not execute
+before the tag, freeze the release. Correct the workflow first and add that
+predicate to pre-tag closure. Do not allocate another tag until the corrected
+pre-tag run passes.
+
 An unpublished branch artifact built after a published tag is development
 evidence bound to its commit, tree, and artifact digest. Always call it a
 `corrected branch artifact`; never describe it as the published RC whose

@@ -738,7 +738,26 @@ describe("CI workflow routing", () => {
     expect(dockerWorkflow).not.toContain("gh release upload");
     expect(hostedWorkflow).toContain('gh release create "$RELEASE_TAG"');
     expect(hostedWorkflow).toContain("environment: candidate-release");
-    expect(await exists(resolve(repoRoot, ".github/workflows/candidate-p1-retry.yml"))).toBe(false);
+    const replayPath = resolve(repoRoot, ".github/workflows/candidate-p1-replay.yml");
+    expect(await exists(replayPath)).toBe(true);
+    const replay = await readWorkflow(".github/workflows/candidate-p1-replay.yml");
+    const replayText = await readFile(replayPath, "utf8");
+    expect(replay.on).toHaveProperty("workflow_dispatch");
+    expect(replay.on.workflow_dispatch.inputs.source_run_id.required).toBe(true);
+    expect(replay.on.workflow_dispatch.inputs.candidate_descriptor_sha256.required).toBe(true);
+    expect(
+      replay.jobs?.verify?.steps?.find((step) => usesAction(step, "actions/download-artifact"))
+        ?.with,
+    ).toMatchObject({
+      name: "fased-hosting-candidate",
+      "run-id": "${{ inputs.source_run_id }}",
+    });
+    expect(replayText).toContain("scripts/prepare-candidate-fixture-trust.sh");
+    expect(replayText).toContain('.conclusion == "failure"');
+    expect(replayText).not.toContain("pnpm build");
+    expect(replayText).not.toContain("gh release create");
+    expect(replayText).not.toContain("git tag");
+    expect(replayText).not.toContain("contents: write");
   });
 
   it("selects beta for every prerelease target in the Protected Local fixture", async () => {
