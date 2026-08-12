@@ -15,10 +15,11 @@ acceptance_contract=/artifacts/fased-lifecycle-acceptance-v2.json
 acceptance_descriptor=/artifacts/fased-hosting-candidate.json
 acceptance_evidence="/tmp/fased-lifecycle-acceptance-${phase}.evidence.jsonl"
 acceptance_receipt="/var/lib/fased-protected-local-fixture/lifecycle-acceptance-${phase}.json"
-target_update_args=()
+target_channel=stable
 if [[ "$version" == *-* ]]; then
-  target_update_args=(--channel beta)
+  target_channel=beta
 fi
+target_update_args=(--channel "$target_channel" --version "$version")
 digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 release_root="/var/lib/fased-installer/releases/v${version}/${digest}/extract/package"
 root_store="$(dirname "$(dirname "$release_root")")"
