@@ -127,7 +127,7 @@ func TestGoVerifierAcceptsExistingProductionRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := VerifyInitialRoot(data, "23d3e8235a39729d6ae37a5784eaa717a47e4ac725f5a416e78754ad9b4618ca", time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC))
+	root, err := VerifyInitialRoot(data, "23d3e8235a39729d6ae37a5784eaa717a47e4ac725f5a416e78754ad9b4618ca", time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)) // pragma: allowlist secret
 	if err != nil {
 		t.Fatalf("existing production root is not Go-compatible: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestGitHubArtifactAttestationVerificationBindsExactAuthority(t *testing.T) 
 	digest := sha256.Sum256(artifact)
 	expected := githubAttestationExpectation{
 		Repository: "fased-ai/fased", Workflow: "fased-ai/fased/.github/workflows/hosted-runtime-release.yml",
-		SourceRef: "refs/tags/v0.1.76-rc.74", Commit: "2ab10b11fd4bd01678a115be05308d37bfba1a50",
+		SourceRef: "refs/tags/v0.1.76-rc.74", Commit: "2ab10b11fd4bd01678a115be05308d37bfba1a50", // pragma: allowlist secret
 		SubjectName: "fased-hosted-release-v2.json", DigestAlgorithm: "sha256", Digest: digest[:],
 		DenySelfHosted: true,
 	}
