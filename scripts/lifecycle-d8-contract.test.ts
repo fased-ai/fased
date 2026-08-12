@@ -173,6 +173,9 @@ describe("D8 unified lifecycle acceptance", () => {
     expect(hosting).not.toContain("/repo/");
     expect(hosting).toContain("lifecycle-receipt-verifier.mjs");
     expect(hosting).toContain('grep -F "Already current: $version"');
+    expect(hosting).toContain(
+      "runuser -u app -- env HOME=/home/app /home/app/.fased/bin/fased update",
+    );
     expect(hosting).toContain("lifecycle-configuration-preservation.mjs");
     expect(hosting).not.toContain("fased-hosting-target-config-without-mode.json");
     expect(runner).toContain("acceptance_evidence_class=SUPPORTING");
