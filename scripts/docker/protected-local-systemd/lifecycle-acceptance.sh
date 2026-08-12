@@ -19,7 +19,7 @@ target_channel=stable
 if [[ "$version" == *-* ]]; then
   target_channel=beta
 fi
-target_update_args=(--channel "$target_channel" --version "$version")
+target_update_args=(--channel "$target_channel" --tag "$version")
 digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 release_root="/var/lib/fased-installer/releases/v${version}/${digest}/extract/package"
 root_store="$(dirname "$(dirname "$release_root")")"

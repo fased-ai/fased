@@ -394,7 +394,7 @@ run_public_updater() {
   chmod 0440 "$sudoers_policy"
   visudo -cf "$sudoers_policy" >/dev/null
   runuser -u app -- env HOME=/home/app /home/app/.fased/bin/fased update \
-    --channel "$target_channel" --version "$version" --timeout 120
+    --channel "$target_channel" --tag "$version" --timeout 120
 }
 
 wait_for_gateway_version() {
