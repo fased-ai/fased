@@ -611,7 +611,7 @@ if [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ||
   }
   unexpected_fixture_changes="$(
     git -C "$ROOT_DIR" diff --name-only "$COMMIT..HEAD" | \
-      grep -Ev '^(\.github/workflows/candidate-p1-replay\.yml|docs/maintainers/codex-skills/fased-release-manager/(SKILL\.md|references/release\.md)|scripts/test-lifecycle-(local|hosting)-acceptance\.sh|scripts/docker/(protected-local|hosting)-systemd/lifecycle-acceptance\.sh|scripts/(hosted-installer-artifact-layout|ci-workflow-contract|lifecycle-version-neutral)\.test\.ts|scripts/prepare-candidate-fixture-trust\.sh|scripts/build-public-predecessor-capsule\.mjs|scripts/build-public-predecessor-capsule\.test\.ts|scripts/prepare-branch-predecessor-capsule\.sh)$' || true
+      grep -Ev '^(\.github/workflows/candidate-p1-replay\.yml|docs/maintainers/codex-skills/fased-release-manager/(SKILL\.md|references/release\.md)|scripts/test-lifecycle-(local|hosting)-acceptance\.sh|scripts/docker/(protected-local|hosting)-systemd/lifecycle-acceptance\.sh|scripts/(hosted-installer-artifact-layout|ci-workflow-contract|lifecycle-version-neutral)\.test\.ts|scripts/lifecycle-configuration-preservation\.(mjs|test\.ts)|scripts/prepare-candidate-fixture-trust\.sh|scripts/build-public-predecessor-capsule\.mjs|scripts/build-public-predecessor-capsule\.test\.ts|scripts/prepare-branch-predecessor-capsule\.sh)$' || true
   )"
   [[ -z "$unexpected_fixture_changes" ]] || {
     echo "Branch artifact reuse rejected product changes:" >&2
