@@ -169,10 +169,13 @@ describe("D8 unified lifecycle acceptance", () => {
     expect(hosting).not.toContain("/repo/");
     expect(hosting).toContain("lifecycle-receipt-verifier.mjs");
     expect(hosting).toContain('grep -F "Already current: $version"');
+    expect(hosting).toContain("lifecycle-configuration-preservation.mjs");
+    expect(hosting).not.toContain("fased-hosting-target-config-without-mode.json");
     expect(runner).toContain("acceptance_evidence_class=SUPPORTING");
     expect(hosting).toContain("acceptance_evidence_class=SUPPORTING");
     expect(wrapper).toContain("--evidence-class SUPPORTING");
     expect(hostingWrapper).toContain("--evidence-class SUPPORTING");
+    expect(hostingWrapper).toContain("scripts/lifecycle-configuration-preservation.mjs");
     expect(runner).not.toContain("systemctl list-units --all --no-pager 'fased-*'");
     const hostingManagedUpdate = hosting.slice(hosting.indexOf("  managed-update)"));
     expect(hostingManagedUpdate.indexOf("acceptance_mark restart-health")).toBeLessThan(

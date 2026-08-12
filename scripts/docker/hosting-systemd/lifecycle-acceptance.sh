@@ -522,8 +522,7 @@ case "$phase" in
       /home/app/.fased/extensions/stable-bridge/index.js \
       /home/app/.fased/plugin-data/stable-bridge/state.json \
       >/tmp/fased-hosting-predecessor-state.sha256
-    jq -S 'del(.gateway.mode)' /home/app/.fased/fased.json \
-      >/tmp/fased-hosting-predecessor-config-without-mode.json
+    cp /home/app/.fased/fased.json /tmp/fased-hosting-predecessor-config.json
     acceptance_start
 
     fault_dir=/etc/systemd/system/fased-gateway.service.d
@@ -574,12 +573,13 @@ EOF_TARGET_DROPIN
       '.entries[] | select(.id == "stable-bridge" and .origin == "store" and .digest == $digest and .status == "loaded")' \
       /home/app/.fased/cache/plugin-readiness.json >/dev/null
     test "$(jq -er .gateway.mode /home/app/.fased/fased.json)" = local
-    jq -S 'del(.gateway.mode)' /home/app/.fased/fased.json \
-      >/tmp/fased-hosting-target-config-without-mode.json
     {
       sha256sum --check /tmp/fased-hosting-predecessor-state.sha256
-      cmp /tmp/fased-hosting-predecessor-config-without-mode.json \
-        /tmp/fased-hosting-target-config-without-mode.json
+      /fixture-node /fixture-tools/lifecycle-configuration-preservation.mjs \
+        --before /tmp/fased-hosting-predecessor-config.json \
+        --after /home/app/.fased/fased.json \
+        --target-version "$version" \
+        --profile hosting
     } >/tmp/fased-hosting-update-state-preservation.out
     systemctl restart fased-host-updater.service fased-signerd.service fased-gateway.service
     assert_healthy
