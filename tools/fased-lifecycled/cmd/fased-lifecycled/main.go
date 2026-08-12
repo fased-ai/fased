@@ -816,6 +816,9 @@ func runSupervisor(ctx context.Context, config platform.Config, socketPath strin
 		CanonicalManifestPath: filepath.Join(config.LifecycleRoot, "installation-manifest.json"), CanonicalInstallRoot: config.InstallRoot,
 	}}
 	service := &daemon.Service{Profile: config.Profile, Platform: identity, Store: state, Inventory: binder, Supervisor: supervisor, Onboarding: targetAdapter, PredecessorEvidence: evidence}
+	if err := service.RecoverPending(ctx); err != nil {
+		return fmt.Errorf("startup lifecycle recovery: %w", err)
+	}
 	listener, err := listenBound(socketPath, 0o660, int(config.Operator.GID))
 	if err != nil {
 		return err
