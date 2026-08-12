@@ -23,6 +23,19 @@ This architecture must cover fresh Local, fresh Hosting, supported public
 stable bridge, modern update, rollback, restart/reboot, state preservation and
 `Already current` through the same engine and acceptance contract.
 
+The public surface remains one install command per profile and one update
+command:
+
+```text
+curl .../releases/latest/download/install.sh | bash -s -- --local
+curl .../releases/latest/download/install.sh | bash -s -- --hosting
+fased update
+fased update status
+```
+
+Do not expose implementation prerequisites or internal installation paths to
+managed users.
+
 ## Required controls
 
 1. Bootstrap uses no Node, npm, GitHub CLI, jq or remote setup script before
@@ -51,15 +64,23 @@ Execute one checkpoint at a time and stop with exact evidence.
 
 ### D0 — Lock policy and red contracts
 
-- Update canonical skill/reference policy.
-- Add a red regression for every accepted security finding.
+- Record the literal public commands, one-engine authority map, finite
+  compatibility contract, evidence labels, and stable acceptance IDs in the
+  canonical architecture document and skill references.
+- Reconcile policy and skill wording without copying the incident archive into
+  routine skill context.
+- Add a red contract for every accepted security finding selected for the
+  redesign.
 - Add demolition assertions for dynamic Node/gh bootstrap and candidate root
   controller workers.
 - Change no product code and run no build, container, CI or release command.
 
 ### D1 — Trust and monotonic release index
 
-- Implement Go lifecycle root, delegation and release-index verification.
+- Implement Go verification of the existing 2-of-3 lifecycle root, its
+  root-authorized GitHub artifact-attestation release authority, and the
+  attested release index. Reuse that authority; never generate a second
+  ordinary release keypair merely to bridge metadata formats.
 - Bind release sequence/security epoch into manifest and transaction.
 - Reject downgrade; require explicit rollback authority.
 

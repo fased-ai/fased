@@ -55,6 +55,7 @@ type fakeStore struct {
 	generation     model.Generation
 	journal        model.Transaction
 	locks          *int
+	releases       *int
 	stages         *int
 }
 
@@ -67,15 +68,20 @@ func (state pendingFakeStore) PendingSupervisorTransaction() (model.Transaction,
 	return state.pending, nil
 }
 
-type fakeMutationLock struct{}
+type fakeMutationLock struct{ releases *int }
 
-func (fakeMutationLock) Release() error { return nil }
+func (lock fakeMutationLock) Release() error {
+	if lock.releases != nil {
+		(*lock.releases)++
+	}
+	return nil
+}
 
 func (state fakeStore) AcquireUpdateLock(string) (store.MutationLock, error) {
 	if state.locks != nil {
-		*state.locks++
+		(*state.locks)++
 	}
-	return fakeMutationLock{}, nil
+	return fakeMutationLock{releases: state.releases}, nil
 }
 
 func (state fakeStore) StageGeneration(string) error {
@@ -101,7 +107,7 @@ func (state fakeStore) ReadCandidateContract(id string) (bundle.Inventory, model
 }
 
 func (state fakeStore) ReadCandidateAuthority(id string) (store.CandidateAuthority, error) {
-	return store.CandidateAuthority{SchemaVersion: 1, GenerationID: id, ReleaseSequence: 12, SecurityEpoch: 3, ReleaseIndex: digestA, Delegation: digestB}, nil
+	return store.CandidateAuthority{SchemaVersion: 1, GenerationID: id, ReleaseSequence: 12, SecurityEpoch: 3, ReleaseIndex: digestA, ReleaseAuthority: digestB}, nil
 }
 
 type fakeInventory struct {
@@ -117,9 +123,13 @@ type fakeSupervisor struct {
 	runs     int
 	recovers int
 	tx       model.Transaction
+	order    *[]string
 }
 
-type fakeOnboarding struct{ calls int }
+type fakeOnboarding struct {
+	calls int
+	order *[]string
+}
 
 type fakePredecessorEvidence struct {
 	topology string
@@ -141,6 +151,9 @@ func (evidence *fakePredecessorEvidence) VerifyPublicPredecessorEvidence(topolog
 
 func (value *fakeOnboarding) CompleteOnboarding(context.Context) (engine.Result, error) {
 	value.calls++
+	if value.order != nil {
+		*value.order = append(*value.order, "onboard")
+	}
 	return engine.Result{Outcome: engine.OutcomeUpdated, Phase: model.PhaseCommitted}, nil
 }
 
@@ -153,6 +166,9 @@ func (supervisor *fakeSupervisor) Run(_ context.Context, tx model.Transaction) (
 func (supervisor *fakeSupervisor) Recover(_ context.Context, tx model.Transaction) (engine.Result, error) {
 	supervisor.recovers++
 	supervisor.tx = tx
+	if supervisor.order != nil {
+		*supervisor.order = append(*supervisor.order, "recover")
+	}
 	return engine.Result{Outcome: engine.OutcomeAlreadyCurrent, Phase: model.PhaseCommitted}, nil
 }
 
@@ -170,10 +186,14 @@ func TestConvergeRecoversDurableUnfinishedTransactionBeforeNewWork(t *testing.T)
 		ManifestDigest: digestA, StateInventoryDigest: digestB, MigrationPlanDigest: digestA,
 		SignerPlanDigest: digestB, PlatformDigest: digestA,
 	}
+	locks, releases := 0, 0
 	supervisor := &fakeSupervisor{}
 	service := Service{
 		Profile: model.ProfileProtectedLocal, Platform: platform(),
-		Store:     pendingFakeStore{fakeStore: fakeStore{manifest: &manifest, manifestDigest: digestA, inventory: inventory, generation: target}, pending: pending},
+		Store: pendingFakeStore{fakeStore: fakeStore{
+			manifest: &manifest, manifestDigest: digestA, inventory: inventory, generation: target,
+			locks: &locks, releases: &releases,
+		}, pending: pending},
 		Inventory: &fakeInventory{}, Supervisor: supervisor,
 	}
 	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationConverge, TargetGenerationID: target.ID, ExpectedManifestDigest: digestA}
@@ -181,8 +201,90 @@ func TestConvergeRecoversDurableUnfinishedTransactionBeforeNewWork(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if supervisor.recovers != 1 || supervisor.runs != 0 || response.Outcome != string(engine.OutcomeAlreadyCurrent) {
-		t.Fatalf("new convergence did not recover first: response=%+v recovers=%d runs=%d", response, supervisor.recovers, supervisor.runs)
+	if supervisor.recovers != 1 || supervisor.runs != 0 || locks != 1 || releases != 1 || response.Outcome != string(engine.OutcomeAlreadyCurrent) {
+		t.Fatalf("new convergence did not recover first under the durable lock: response=%+v recovers=%d runs=%d locks=%d releases=%d", response, supervisor.recovers, supervisor.runs, locks, releases)
+	}
+}
+
+func TestInspectRecoversDurableUnfinishedTransactionBeforeReadingState(t *testing.T) {
+	_, target := targetContract()
+	pending := model.Transaction{
+		SchemaVersion: model.CurrentTransactionSchemaVersion, ID: transactionID, Profile: model.ProfileProtectedLocal,
+		PlanAction: "INSTALL", ReleaseSequence: 12, SecurityEpoch: 3, Phase: model.PhasePrepared, Revision: 2,
+		Target: target, TargetStateSchemas: map[string]uint32{"signer": 1}, TargetCapabilities: capabilities(),
+		ManifestDigest: digestA, StateInventoryDigest: digestB, MigrationPlanDigest: digestA,
+		SignerPlanDigest: digestB, PlatformDigest: digestA,
+	}
+	locks, releases := 0, 0
+	supervisor := &fakeSupervisor{}
+	service := Service{
+		Profile: model.ProfileProtectedLocal, Platform: platform(),
+		Store:     pendingFakeStore{fakeStore: fakeStore{locks: &locks, releases: &releases}, pending: pending},
+		Inventory: &fakeInventory{}, Supervisor: supervisor,
+	}
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationInspect}
+	response, err := service.Handle(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if supervisor.recovers != 1 || locks != 1 || releases != 1 || response.Outcome != "EMPTY" {
+		t.Fatalf("inspect observed state before durable recovery: response=%+v recovers=%d locks=%d releases=%d", response, supervisor.recovers, locks, releases)
+	}
+}
+
+func TestRecoverPendingConvergesBeforeSupervisorSocketStartup(t *testing.T) {
+	_, target := targetContract()
+	pending := model.Transaction{
+		SchemaVersion: model.CurrentTransactionSchemaVersion, ID: transactionID, Profile: model.ProfileProtectedLocal,
+		PlanAction: "INSTALL", ReleaseSequence: 12, SecurityEpoch: 3, Phase: model.PhaseSwitched, Revision: 3,
+		Target: target, TargetStateSchemas: map[string]uint32{"signer": 1}, TargetCapabilities: capabilities(),
+		ManifestDigest: digestA, StateInventoryDigest: digestB, MigrationPlanDigest: digestA,
+		SignerPlanDigest: digestB, PlatformDigest: digestA,
+	}
+	locks, releases := 0, 0
+	supervisor := &fakeSupervisor{}
+	service := Service{
+		Profile: model.ProfileProtectedLocal, Platform: platform(),
+		Store:     pendingFakeStore{fakeStore: fakeStore{locks: &locks, releases: &releases}, pending: pending},
+		Inventory: &fakeInventory{}, Supervisor: supervisor,
+	}
+	if err := service.RecoverPending(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if supervisor.recovers != 1 || locks != 1 || releases != 1 {
+		t.Fatalf("startup recovery did not converge under the durable lock: recovers=%d locks=%d releases=%d", supervisor.recovers, locks, releases)
+	}
+}
+
+func TestCompleteOnboardingRecoversDurableTransactionBeforeGatewayMutation(t *testing.T) {
+	_, target := targetContract()
+	manifest := model.Manifest{
+		SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal, Platform: platform(),
+		ActiveGeneration: &target, StateSchemas: map[string]uint32{"signer": 2}, Capabilities: capabilities(),
+		ReleaseSequence: 12, SecurityEpoch: 3,
+	}
+	pending := model.Transaction{
+		SchemaVersion: model.CurrentTransactionSchemaVersion, ID: transactionID, Profile: model.ProfileProtectedLocal,
+		PlanAction: "INSTALL", ReleaseSequence: 12, SecurityEpoch: 3, Phase: model.PhaseVerified, Revision: 4,
+		Target: target, TargetStateSchemas: map[string]uint32{"signer": 2}, TargetCapabilities: capabilities(),
+		ManifestDigest: digestA, StateInventoryDigest: digestB, MigrationPlanDigest: digestA,
+		SignerPlanDigest: digestB, PlatformDigest: digestA,
+	}
+	order := []string{}
+	supervisor := &fakeSupervisor{order: &order}
+	completion := &fakeOnboarding{order: &order}
+	service := Service{
+		Profile: model.ProfileProtectedLocal, Platform: platform(),
+		Store:     pendingFakeStore{fakeStore: fakeStore{manifest: &manifest, manifestDigest: digestA}, pending: pending},
+		Inventory: &fakeInventory{}, Supervisor: supervisor, Onboarding: completion,
+	}
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationCompleteOnboarding}
+	response, err := service.Handle(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(order, ",") != "recover,onboard" || response.Outcome != string(engine.OutcomeUpdated) {
+		t.Fatalf("onboarding ran before durable recovery: order=%v response=%+v", order, response)
 	}
 }
 

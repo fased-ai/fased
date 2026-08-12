@@ -27,7 +27,11 @@ func requirements() Requirements {
 
 func privateHostTestRoot(t *testing.T) string {
 	t.Helper()
-	root, err := os.MkdirTemp(".", ".host-test-")
+	base := "."
+	if configured := os.Getenv("FASED_ROOT_FIXTURE_BASE"); configured != "" {
+		base = configured
+	}
+	root, err := os.MkdirTemp(base, ".host-test-")
 	if err != nil {
 		t.Fatal(err)
 	}

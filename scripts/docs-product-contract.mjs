@@ -16,6 +16,7 @@ const expectedHostingPages = new Set([
   "README.md",
   "docs/install/index.md",
   "docs/install/vps.md",
+  "docs/maintainers/codex-skills/fased-release-manager/references/lifecycle.md",
   "docs/start/agent-wallet-mining-walkthrough.md",
   "docs/start/fased.md",
   "docs/start/getting-started.md",

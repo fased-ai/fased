@@ -313,7 +313,7 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
     --dependency-archive "$ARTIFACT_DIR/$x64_dependency" \
     --release-manifest "$ARTIFACT_DIR/fased-hosted-release-v2.json" \
     --signer "$ARTIFACT_DIR/fased-signerd-linux-amd64" \
-    --lifecycled "$ARTIFACT_DIR/fased-lifecycled-linux-amd64" \
+    --inventory-tool "$ARTIFACT_DIR/fased-lifecycled-linux-amd64" \
     --node "$(readlink -f "$(command -v node)")" \
     --node-license "$(dirname "$(dirname "$(readlink -f "$(command -v node)")")")/LICENSE" \
     --output-dir "$ARTIFACT_DIR" \
@@ -345,7 +345,7 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
         --issued-at "$issued_at"
     rm -f "$fixture_inventory"
     fixture_root_pin="$(tr -d '\n' <"$ARTIFACT_DIR/fased-branch-root.sha256")"
-    fixture_metadata_base="https://github.com/fased-ai/fased/releases/download/v${VERSION}/lifecycle/v1"
+    fixture_metadata_base="https://github.com/fased-ai/fased/releases/download/v${VERSION}"
     (
       cd "$ROOT_DIR/tools/fased-lifecycled"
       CGO_ENABLED=0 GOOS=linux GOARCH=amd64 "$GO_BIN" build \
@@ -611,7 +611,7 @@ if [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ||
   }
   unexpected_fixture_changes="$(
     git -C "$ROOT_DIR" diff --name-only "$COMMIT..HEAD" | \
-      grep -Ev '^(\.github/workflows/candidate-p1-replay\.yml|docs/maintainers/codex-skills/fased-release-manager/(SKILL\.md|references/release\.md)|scripts/test-lifecycle-(local|hosting)-acceptance\.sh|scripts/docker/(protected-local|hosting)-systemd/lifecycle-acceptance\.sh|scripts/(hosted-installer-artifact-layout|ci-workflow-contract|lifecycle-version-neutral)\.test\.ts|scripts/prepare-candidate-fixture-trust\.sh|scripts/build-public-predecessor-capsule\.mjs|scripts/build-public-predecessor-capsule\.test\.ts|scripts/prepare-branch-predecessor-capsule\.sh)$' || true
+      grep -Ev '^(\.github/workflows/candidate-p1-replay\.yml|docs/maintainers/codex-skills/fased-release-manager/(SKILL\.md|references/release\.md)|scripts/test-lifecycle-(local|hosting)-acceptance\.sh|scripts/docker/(protected-local|hosting)-systemd/lifecycle-acceptance\.sh|scripts/(hosted-installer-artifact-layout|ci-workflow-contract|lifecycle-d8-contract|lifecycle-version-neutral)\.test\.ts|scripts/lifecycle-configuration-preservation\.(mjs|test\.ts)|scripts/prepare-candidate-fixture-trust\.sh|scripts/build-public-predecessor-capsule\.mjs|scripts/build-public-predecessor-capsule\.test\.ts|scripts/prepare-branch-predecessor-capsule\.sh)$' || true
   )"
   [[ -z "$unexpected_fixture_changes" ]] || {
     echo "Branch artifact reuse rejected product changes:" >&2
@@ -766,8 +766,9 @@ run_fixture_scenario() {
     --version "$VERSION" \
     --commit "$COMMIT" \
     --candidate-descriptor-digest "$descriptor_digest" \
-    --predecessor-capsule-digest "$capsule_digest" >/dev/null
-  printf 'lifecycle acceptance receipt verified: %s\n' "$receipt"
+    --predecessor-capsule-digest "$capsule_digest" \
+    --evidence-class SUPPORTING >/dev/null
+  printf 'supporting lifecycle fixture receipt verified: %s\n' "$receipt"
   run_container rm -f "$name" >/dev/null
 }
 

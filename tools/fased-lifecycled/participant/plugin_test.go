@@ -73,7 +73,7 @@ func TestPluginBoundaryAcceptsExactImmutableLockAndMandatoryReadiness(t *testing
 	if _, err := boundary.VerifyLock(lockDigest); err != nil {
 		t.Fatal(err)
 	}
-	if err := boundary.VerifyReadiness(lockDigest, generationID); err != nil {
+	if digest, err := boundary.VerifyReadiness(lockDigest, generationID); err != nil || !pluginDigestPattern.MatchString(digest) {
 		t.Fatal(err)
 	}
 }
@@ -96,6 +96,16 @@ func TestPluginBoundaryFailsClosedOnCodeDrift(t *testing.T) {
 	}
 }
 
+func TestPluginBoundaryRejectsMutableCodeStoreRoot(t *testing.T) {
+	boundary, lockDigest, _ := pluginFixture(t)
+	if err := os.Chmod(boundary.CodeRoot, 0o775); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := boundary.VerifyLock(lockDigest); err == nil || !strings.Contains(err.Error(), "code root identity") {
+		t.Fatalf("mutable plugin code root was accepted: %v", err)
+	}
+}
+
 func TestPluginBoundaryRejectsMissingMandatoryReadiness(t *testing.T) {
 	boundary, lockDigest, generationID := pluginFixture(t)
 	data, err := os.ReadFile(boundary.ReadinessPath)
@@ -111,7 +121,7 @@ func TestPluginBoundaryRejectsMissingMandatoryReadiness(t *testing.T) {
 	if err := os.WriteFile(boundary.ReadinessPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := boundary.VerifyReadiness(lockDigest, generationID); err == nil || !strings.Contains(err.Error(), "mandatory plugin") {
+	if _, err := boundary.VerifyReadiness(lockDigest, generationID); err == nil || !strings.Contains(err.Error(), "mandatory plugin") {
 		t.Fatalf("mandatory readiness failure was accepted: %v", err)
 	}
 }
@@ -132,5 +142,38 @@ func TestPluginLockRejectsDuplicateOrUnsortedEntries(t *testing.T) {
 	data, _ := json.Marshal(lock)
 	if _, err := DecodePluginLock(data); err == nil {
 		t.Fatal("unsorted plugin lock was accepted")
+	}
+}
+
+func TestMergeCorePluginLockRetainsOnlyPreviouslyApprovedStoreCode(t *testing.T) {
+	oldStore := PluginLockEntry{ID: "demo", Origin: "store", Digest: "sha256:" + strings.Repeat("a", 64), APICapability: "plugin.v1", Required: true}
+	installed := PluginLock{SchemaVersion: 1, Type: "fased-plugin-lock", Entries: []PluginLockEntry{
+		{ID: "bundled-old", Origin: "bundled", Digest: "sha256:" + strings.Repeat("b", 64), APICapability: "plugin.v1", Required: true},
+		oldStore,
+	}}
+	target := PluginLock{SchemaVersion: 1, Type: "fased-plugin-lock", Entries: []PluginLockEntry{
+		{ID: "bundled-new", Origin: "bundled", Digest: "sha256:" + strings.Repeat("c", 64), APICapability: "plugin.v1", Required: true},
+	}}
+	merged, err := MergeCorePluginLock(target, installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(merged.Entries) != 2 || merged.Entries[0].ID != "bundled-new" || merged.Entries[1] != oldStore {
+		t.Fatalf("core update changed the approved store entry: %+v", merged)
+	}
+	target.Entries = append(target.Entries, PluginLockEntry{ID: "injected", Origin: "store", Digest: "sha256:" + strings.Repeat("d", 64), APICapability: "plugin.v1", Required: false})
+	if _, err := MergeCorePluginLock(target, installed); err == nil {
+		t.Fatal("core generation introduced third-party plugin code")
+	}
+}
+
+func TestMergeCorePluginLockRejectsStoreShadowOfBundledIdentity(t *testing.T) {
+	entry := PluginLockEntry{ID: "demo", Digest: "sha256:" + strings.Repeat("a", 64), APICapability: "plugin.v1", Required: true}
+	target := PluginLock{SchemaVersion: 1, Type: "fased-plugin-lock", Entries: []PluginLockEntry{entry}}
+	target.Entries[0].Origin = "bundled"
+	installed := PluginLock{SchemaVersion: 1, Type: "fased-plugin-lock", Entries: []PluginLockEntry{entry}}
+	installed.Entries[0].Origin = "store"
+	if _, err := MergeCorePluginLock(target, installed); err == nil {
+		t.Fatal("store plugin shadowed a bundled plugin identity")
 	}
 }

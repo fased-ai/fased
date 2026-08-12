@@ -2,6 +2,18 @@
   "schemaVersion": 2,
   "role": "fased-lifecycle-acceptance-contract",
   "contractId": "public-lifecycle-v2",
+  "evidencePolicy": {
+    "enforcing": {
+      "evidenceClass": "PASS",
+      "acquisitionMode": "immutable-github-release",
+      "transportSubstituted": false
+    },
+    "supporting": {
+      "evidenceClass": "SUPPORTING",
+      "acquisitionMode": "substituted-fixture",
+      "transportSubstituted": true
+    }
+  },
   "profiles": {
     "protected-local": {
       "fresh-install": [

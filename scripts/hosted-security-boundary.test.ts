@@ -22,14 +22,21 @@ function sliceBetween(source: string, start: string, end: string): string {
 describe("hosted signer security boundary", () => {
   it("enters privileged Hosting setup only through an immutable attested Go bundle", () => {
     expect(install).toContain('bootstrap_asset="fased-bootstrap-linux-${arch}"');
+    expect(install).toContain("curl_args=(-fL --proto '=https' --tlsv1.2");
+    expect(install).toContain('if [[ "$verbose" -eq 0 ]]; then curl_args+=(-sS); fi');
     expect(install).toContain("--proto '=https' --tlsv1.2");
     expect(install).toContain('[[ "$actual_sha256" == "$bootstrap_sha256" ]]');
     expect(install).toContain('install -m 0555 "$download" "$bootstrap"');
     expect(install).toContain('"${root_command[@]}" "$bootstrap" "${bootstrap_args[@]}"');
     expect(bootstrap).toContain("trust.VerifyInitialRoot");
     expect(bootstrap).toContain("trust.VerifyRootRotation");
-    expect(bootstrap).toContain("trust.VerifyDelegation");
-    expect(bootstrap).toContain("trust.VerifyReleaseIndex");
+    expect(bootstrap).toContain("trust.VerifyAttestedReleaseIndex");
+    expect(bootstrapRoute).toMatch(
+      /productionReleaseBase\s*=\s*"https:\/\/github\.com\/fased-ai\/fased\/releases\/download"/u,
+    );
+    expect(bootstrapRoute).toContain("fased-release-index-v1.json.attestation.json");
+    expect(bootstrapRoute).not.toContain("updates.fased.ai");
+    expect(bootstrapRoute).not.toContain("delegation.json");
     expect(install).not.toContain("install_host_signer_and_updater_services()");
     expect(install).not.toContain("migrate_legacy_hosted_signer_if_needed()");
     expect(install).not.toContain("fased-host-updater.mjs");

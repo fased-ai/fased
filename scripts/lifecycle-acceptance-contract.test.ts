@@ -26,6 +26,17 @@ function evidence(profile: string, scenario: string, version = "0.1.76-rc.70") {
   }));
 }
 
+function acquisition(version = "0.1.76-rc.70", evidenceClass = "PASS") {
+  const releaseBaseUrl = `https://github.com/fased-ai/fased/releases/download/v${version}`;
+  return {
+    mode: evidenceClass === "PASS" ? "immutable-github-release" : "substituted-fixture",
+    releaseBaseUrl,
+    metadataBaseUrl: releaseBaseUrl,
+    transportSubstituted: evidenceClass !== "PASS",
+    trustInventoryDigest: digest,
+  };
+}
+
 describe("lifecycle acceptance contract", () => {
   it("validates the exact historical v1 public contract without weakening current v2", () => {
     const legacy = {
@@ -80,6 +91,26 @@ describe("lifecycle acceptance contract", () => {
     ).toThrow("published v1 contract digest is invalid");
   });
 
+  it("validates the exact historical v2 public contract without accepting mutations", () => {
+    const { evidencePolicy: _evidencePolicy, ...legacyV2 } = contract();
+    expect(validatePublishedAcceptanceContract(legacyV2)).toBe(legacyV2);
+    expect(digestPublishedAcceptanceContract(legacyV2)).toBe(
+      "sha256:a1a15e2b080c25921339ed2aa38d05a9745213728866b9f19b48cedc79854197",
+    );
+    expect(() =>
+      validatePublishedAcceptanceContract({
+        ...legacyV2,
+        profiles: {
+          ...legacyV2.profiles,
+          hosting: {
+            ...legacyV2.profiles.hosting,
+            "fresh-install": legacyV2.profiles.hosting["fresh-install"].slice(1),
+          },
+        },
+      }),
+    ).toThrow("published v2 contract digest is invalid");
+  });
+
   it("defines identical evidence classes for Local and Hosting", () => {
     const value = contract();
     expect(validateAcceptanceContract(value)).toBe(value);
@@ -103,6 +134,7 @@ describe("lifecycle acceptance contract", () => {
       commit: "a".repeat(40),
       candidateDescriptorDigest: digest,
       predecessorCapsuleDigest: capsule,
+      acquisition: acquisition(),
       evidence: evidence(profile, scenario),
     });
     expect(
@@ -125,6 +157,7 @@ describe("lifecycle acceptance contract", () => {
         version: "0.1.76-rc.70",
         commit: "a".repeat(40),
         candidateDescriptorDigest: digest,
+        acquisition: acquisition(),
         evidence: records.map(({ id }) => id),
       }),
     ).toThrow();
@@ -136,12 +169,46 @@ describe("lifecycle acceptance contract", () => {
         version: "0.1.76-rc.70",
         commit: "a".repeat(40),
         candidateDescriptorDigest: digest,
+        acquisition: acquisition(),
         evidence: records.with(records.length - 1, {
           ...records.at(-1),
           summary: "current",
         }),
       }),
     ).toThrow("literal idempotence result");
+  });
+
+  it("never upgrades substituted fixture transport into enforcing evidence", () => {
+    const value = contract();
+    expect(() =>
+      buildAcceptanceReceipt({
+        contract: value,
+        profile: "hosting",
+        scenario: "fresh-install",
+        version: "0.1.76-rc.70",
+        commit: "a".repeat(40),
+        candidateDescriptorDigest: digest,
+        acquisition: acquisition("0.1.76-rc.70", "SUPPORTING"),
+        evidence: evidence("hosting", "fresh-install"),
+      }),
+    ).toThrow("acquisition evidence");
+    const supportingEvidence = evidence("hosting", "fresh-install").map((record) => ({
+      ...record,
+      status: "SUPPORTING",
+    }));
+    expect(
+      buildAcceptanceReceipt({
+        contract: value,
+        profile: "hosting",
+        scenario: "fresh-install",
+        version: "0.1.76-rc.70",
+        commit: "a".repeat(40),
+        candidateDescriptorDigest: digest,
+        evidenceClass: "SUPPORTING",
+        acquisition: acquisition("0.1.76-rc.70", "SUPPORTING"),
+        evidence: supportingEvidence,
+      }).evidenceClass,
+    ).toBe("SUPPORTING");
   });
 
   it("wires the v2 contract and capsule verifier into candidate proof", () => {

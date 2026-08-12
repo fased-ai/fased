@@ -9,7 +9,9 @@ const COMMIT_PATTERN = /^[a-f0-9]{40}$/u;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const PROFILES = ["protected-local", "hosting"];
 const SCENARIOS = ["fresh-install", "managed-update"];
+const EVIDENCE_CLASSES = new Set(["PASS", "SUPPORTING"]);
 const LEGACY_V1_DIGEST = "sha256:b9ac4c751e0ad3e7455b177cd80538aedcbd8365aeac9eb7c174b72fea4c8ad8";
+const LEGACY_V2_DIGEST = "sha256:a1a15e2b080c25921339ed2aa38d05a9745213728866b9f19b48cedc79854197";
 const commonPredicates = Object.freeze([
   "artifact-identity",
   "public-installer-acquisition",
@@ -94,6 +96,18 @@ export function digestPublishedAcceptanceContract(contract) {
 
 export function validatePublishedAcceptanceContract(contract) {
   if (contract?.schemaVersion === 2) {
+    if (!Object.hasOwn(contract, "evidencePolicy")) {
+      exactKeys(contract, ["schemaVersion", "role", "contractId", "profiles"], "contract");
+      if (
+        contract.role !== "fased-lifecycle-acceptance-contract" ||
+        contract.contractId !== "public-lifecycle-v2" ||
+        digestStableContract(contract) !== LEGACY_V2_DIGEST
+      ) {
+        fail("published v2 contract digest is invalid");
+      }
+      validateProfiles(contract.profiles);
+      return contract;
+    }
     return validateAcceptanceContract(contract);
   }
   exactKeys(contract, ["schemaVersion", "role", "contractId", "scenarios"], "contract");
@@ -110,20 +124,12 @@ export function validatePublishedAcceptanceContract(contract) {
   return contract;
 }
 
-export function validateAcceptanceContract(contract) {
-  exactKeys(contract, ["schemaVersion", "role", "contractId", "profiles"], "contract");
-  if (
-    contract.schemaVersion !== 2 ||
-    contract.role !== "fased-lifecycle-acceptance-contract" ||
-    contract.contractId !== "public-lifecycle-v2"
-  ) {
-    fail("identity is invalid");
-  }
-  exactKeys(contract.profiles, PROFILES, "contract profiles");
+function validateProfiles(profiles) {
+  exactKeys(profiles, PROFILES, "contract profiles");
   for (const profile of PROFILES) {
-    exactKeys(contract.profiles[profile], SCENARIOS, `${profile} scenarios`);
+    exactKeys(profiles[profile], SCENARIOS, `${profile} scenarios`);
     for (const scenario of SCENARIOS) {
-      const actual = contract.profiles[profile][scenario];
+      const actual = profiles[profile][scenario];
       const required = REQUIRED_PREDICATES[profile][scenario];
       if (
         !Array.isArray(actual) ||
@@ -134,10 +140,54 @@ export function validateAcceptanceContract(contract) {
       }
     }
   }
+}
+
+export function validateAcceptanceContract(contract) {
+  exactKeys(
+    contract,
+    ["schemaVersion", "role", "contractId", "evidencePolicy", "profiles"],
+    "contract",
+  );
+  if (
+    contract.schemaVersion !== 2 ||
+    contract.role !== "fased-lifecycle-acceptance-contract" ||
+    contract.contractId !== "public-lifecycle-v2"
+  ) {
+    fail("identity is invalid");
+  }
+  exactKeys(contract.evidencePolicy, ["enforcing", "supporting"], "evidence policy");
+  exactKeys(
+    contract.evidencePolicy.enforcing,
+    ["evidenceClass", "acquisitionMode", "transportSubstituted"],
+    "enforcing evidence policy",
+  );
+  exactKeys(
+    contract.evidencePolicy.supporting,
+    ["evidenceClass", "acquisitionMode", "transportSubstituted"],
+    "supporting evidence policy",
+  );
+  if (
+    JSON.stringify(contract.evidencePolicy) !==
+    JSON.stringify({
+      enforcing: {
+        evidenceClass: "PASS",
+        acquisitionMode: "immutable-github-release",
+        transportSubstituted: false,
+      },
+      supporting: {
+        evidenceClass: "SUPPORTING",
+        acquisitionMode: "substituted-fixture",
+        transportSubstituted: true,
+      },
+    })
+  ) {
+    fail("evidence policy is invalid");
+  }
+  validateProfiles(contract.profiles);
   return contract;
 }
 
-function validateEvidence(evidence, required, version) {
+function validateEvidence(evidence, required, version, evidenceClass) {
   if (!Array.isArray(evidence) || evidence.length !== required.length) {
     fail("receipt evidence is incomplete");
   }
@@ -145,7 +195,7 @@ function validateEvidence(evidence, required, version) {
     exactKeys(record, ["id", "status", "evidenceDigest", "summary"], "predicate evidence");
     if (
       record.id !== required[index] ||
-      record.status !== "PASS" ||
+      record.status !== evidenceClass ||
       !DIGEST_PATTERN.test(record.evidenceDigest || "") ||
       typeof record.summary !== "string" ||
       record.summary.length === 0 ||
@@ -164,6 +214,25 @@ function validateEvidence(evidence, required, version) {
   }
 }
 
+function validateAcquisition(acquisition, version, evidenceClass, evidencePolicy) {
+  exactKeys(
+    acquisition,
+    ["mode", "releaseBaseUrl", "metadataBaseUrl", "transportSubstituted", "trustInventoryDigest"],
+    "acquisition",
+  );
+  const releaseBaseUrl = `https://github.com/fased-ai/fased/releases/download/v${version}`;
+  const policy = evidenceClass === "PASS" ? evidencePolicy.enforcing : evidencePolicy.supporting;
+  if (
+    !DIGEST_PATTERN.test(acquisition.trustInventoryDigest || "") ||
+    acquisition.releaseBaseUrl !== releaseBaseUrl ||
+    acquisition.metadataBaseUrl !== releaseBaseUrl ||
+    acquisition.mode !== policy.acquisitionMode ||
+    acquisition.transportSubstituted !== policy.transportSubstituted
+  ) {
+    fail("acquisition evidence is invalid for its evidence class");
+  }
+}
+
 export function buildAcceptanceReceipt({
   contract,
   profile,
@@ -172,6 +241,8 @@ export function buildAcceptanceReceipt({
   commit,
   candidateDescriptorDigest,
   predecessorCapsuleDigest = null,
+  evidenceClass = "PASS",
+  acquisition,
   evidence,
 }) {
   validateAcceptanceContract(contract);
@@ -194,7 +265,11 @@ export function buildAcceptanceReceipt({
   ) {
     fail("predecessor capsule binding is invalid");
   }
-  validateEvidence(evidence, required, version);
+  if (!EVIDENCE_CLASSES.has(evidenceClass)) {
+    fail("evidence class is invalid");
+  }
+  validateAcquisition(acquisition, version, evidenceClass, contract.evidencePolicy);
+  validateEvidence(evidence, required, version, evidenceClass);
   return {
     schemaVersion: 2,
     role: "fased-lifecycle-acceptance-receipt",
@@ -206,6 +281,8 @@ export function buildAcceptanceReceipt({
     commit,
     candidateDescriptorDigest,
     predecessorCapsuleDigest,
+    evidenceClass,
+    acquisition: { ...acquisition },
     evidence: evidence.map((record) => ({ ...record })),
   };
 }
@@ -224,6 +301,8 @@ export function verifyAcceptanceReceipt({ contract, receipt, expected = {} }) {
       "commit",
       "candidateDescriptorDigest",
       "predecessorCapsuleDigest",
+      "evidenceClass",
+      "acquisition",
       "evidence",
     ],
     "receipt",
@@ -233,7 +312,10 @@ export function verifyAcceptanceReceipt({ contract, receipt, expected = {} }) {
     fail("receipt identity or contract binding is invalid");
   }
   for (const [key, expectedValue] of Object.entries(expected)) {
-    if (expectedValue !== undefined && receipt[key] !== expectedValue) {
+    if (
+      expectedValue !== undefined &&
+      JSON.stringify(receipt[key]) !== JSON.stringify(expectedValue)
+    ) {
       fail(`receipt ${key} mismatch`);
     }
   }
@@ -280,6 +362,14 @@ function main() {
     commit: options.commit,
     candidateDescriptorDigest: options["candidate-descriptor-digest"],
     predecessorCapsuleDigest: options["predecessor-capsule-digest"] || null,
+    evidenceClass: options["evidence-class"] || "PASS",
+    acquisition: {
+      mode: options["acquisition-mode"],
+      releaseBaseUrl: options["release-base-url"],
+      metadataBaseUrl: options["metadata-base-url"],
+      transportSubstituted: options["transport-substituted"] === "true",
+      trustInventoryDigest: options["trust-inventory-digest"],
+    },
   };
   if (command === "issue-receipt") {
     const receipt = buildAcceptanceReceipt({

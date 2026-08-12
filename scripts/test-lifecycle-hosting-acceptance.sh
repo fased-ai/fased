@@ -132,7 +132,7 @@ if [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ||
   }
   unexpected_fixture_changes="$(
     git -C "$ROOT_DIR" diff --name-only "$commit..HEAD" | \
-      grep -Ev '^(\.github/workflows/candidate-p1-replay\.yml|docs/maintainers/codex-skills/fased-release-manager/(SKILL\.md|references/release\.md)|scripts/test-lifecycle-(local|hosting)-acceptance\.sh|scripts/docker/(protected-local|hosting)-systemd/lifecycle-acceptance\.sh|scripts/(hosted-installer-artifact-layout|ci-workflow-contract|lifecycle-d8-contract)\.test\.ts|scripts/prepare-candidate-fixture-trust\.sh|scripts/build-public-predecessor-capsule\.(mjs|test\.ts)|scripts/prepare-branch-predecessor-capsule\.sh)$' || true
+      grep -Ev '^(\.github/workflows/candidate-p1-replay\.yml|docs/maintainers/codex-skills/fased-release-manager/(SKILL\.md|references/release\.md)|scripts/test-lifecycle-(local|hosting)-acceptance\.sh|scripts/docker/(protected-local|hosting)-systemd/lifecycle-acceptance\.sh|scripts/(hosted-installer-artifact-layout|ci-workflow-contract|lifecycle-d8-contract)\.test\.ts|scripts/lifecycle-configuration-preservation\.(mjs|test\.ts)|scripts/prepare-candidate-fixture-trust\.sh|scripts/build-public-predecessor-capsule\.(mjs|test\.ts)|scripts/prepare-branch-predecessor-capsule\.sh)$' || true
   )"
   [[ -z "$unexpected_fixture_changes" ]] || {
     echo "Branch artifact reuse rejected product changes:" >&2
@@ -144,6 +144,7 @@ if [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ||
 fi
 git -C "$ROOT_DIR" archive "$fixture_source_commit" -- \
   scripts/lifecycle-acceptance-contract.mjs \
+  scripts/lifecycle-configuration-preservation.mjs \
   scripts/lifecycle-receipt-verifier.mjs \
   scripts/lifecycle-installed-state-capsule.mjs \
   scripts/predecessor-capsule.mjs \
@@ -245,7 +246,8 @@ run_scenario() {
       --version "$version" \
       --commit "$commit" \
       --candidate-descriptor-digest "sha256:$(sha256sum "$descriptor" | awk '{print $1}')" \
-      --predecessor-capsule-digest "$capsule_digest" >/dev/null
+      --predecessor-capsule-digest "$capsule_digest" \
+      --evidence-class SUPPORTING >/dev/null
   fi
   "$RUNTIME" stop "$name" >/dev/null
   "$RUNTIME" start "$name" >/dev/null

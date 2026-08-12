@@ -20,6 +20,66 @@ describe("fixed managed lifecycle update client", () => {
     });
   });
 
+  it("resolves a channel hint to an exact version before root bootstrap", async () => {
+    const requested: string[] = [];
+    const fetchImpl = async (url: string | URL | Request) => {
+      requested.push(typeof url === "string" ? url : url instanceof URL ? url.href : url.url);
+      return new Response(JSON.stringify({ version: "0.1.76-rc.74" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    await expect(
+      __testing.resolveLifecycleArgs(["--channel", "beta", "--json"], { fetchImpl }),
+    ).resolves.toEqual(["--channel", "beta", "--json", "--version", "0.1.76-rc.74"]);
+    expect(requested).toEqual(["https://registry.npmjs.org/@fased%2ffased/beta"]);
+  });
+
+  it("uses the GitHub release list when the optional npm hint is unavailable", async () => {
+    const requested: string[] = [];
+    const fetchImpl = async (url: string | URL | Request) => {
+      requested.push(typeof url === "string" ? url : url instanceof URL ? url.href : url.url);
+      if (requested.length === 1) {
+        return new Response("unavailable", { status: 503 });
+      }
+      return new Response(
+        JSON.stringify([
+          { tag_name: "v0.1.75", draft: false, prerelease: false },
+          { tag_name: "v0.1.76-rc.74", draft: false, prerelease: true },
+        ]),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+
+    await expect(
+      __testing.resolveLifecycleArgs(["--channel", "beta"], { fetchImpl }),
+    ).resolves.toEqual(["--channel", "beta", "--version", "0.1.76-rc.74"]);
+    expect(requested).toEqual([
+      "https://registry.npmjs.org/@fased%2ffased/beta",
+      "https://api.github.com/repos/fased-ai/fased/releases?per_page=100",
+    ]);
+  });
+
+  it("does not resolve or replace an explicit immutable version", async () => {
+    const fetchImpl = async () => {
+      throw new Error("unexpected channel lookup");
+    };
+    await expect(
+      __testing.resolveLifecycleArgs(["--channel", "beta", "--version", "0.1.76-rc.74"], {
+        fetchImpl,
+      }),
+    ).resolves.toEqual(["--channel", "beta", "--version", "0.1.76-rc.74"]);
+  });
+
+  it("rejects malformed channel hints before root invocation", async () => {
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ version: "../../mutable" }), { status: 200 });
+    await expect(
+      __testing.resolveLifecycleArgs(["--channel", "beta"], { fetchImpl }),
+    ).rejects.toThrow("exact immutable release");
+  });
+
   it("accepts only canonical installed lifecycle profiles", () => {
     expect(__testing.requireInstalledProfile("hosting")).toBe("hosting");
     expect(__testing.requireInstalledProfile("protected-local")).toBe("protected-local");

@@ -14,6 +14,8 @@ acceptance_contract=/artifacts/fased-lifecycle-acceptance-v2.json
 acceptance_descriptor=/artifacts/fased-hosting-candidate.json
 acceptance_evidence=/tmp/fased-hosting-acceptance.evidence.jsonl
 acceptance_receipt="/var/lib/fased-lifecycled/lifecycle-acceptance-${scenario}.json"
+acceptance_evidence_class=SUPPORTING
+acceptance_release_base_url="https://github.com/fased-ai/fased/releases/download/v${version}"
 predecessor_capsule_descriptor=/predecessor-capsule/fased-predecessor-capsule.json
 predecessor_capsule_attestation=/predecessor-capsule/fased-predecessor-capsule.json.attestation.json
 predecessor_capsule_branch_proof=/predecessor-capsule/fased-predecessor-branch-proof.json
@@ -101,7 +103,6 @@ import path from "node:path";
 const version = process.env.FASED_FIXTURE_VERSION;
 const assets = "/artifacts";
 const prefix = `/fased-ai/fased/releases/download/v${version}/`;
-const metadataPrefix = `${prefix}lifecycle/v1/`;
 
 function serve(response, name) {
   if (!/^[A-Za-z0-9._+-]+$/.test(name)) {
@@ -138,24 +139,14 @@ https.createServer(
       response.end(body);
       return;
     }
-    if (request.url.startsWith(metadataPrefix)) {
-      const metadata = request.url.slice(metadataPrefix.length);
-      if (metadata.startsWith("beta/assets/")) {
-        serve(response, decodeURIComponent(metadata.slice("beta/assets/".length)));
-        return;
-      }
+    if (request.url.startsWith(prefix)) {
+      const requested = decodeURIComponent(request.url.slice(prefix.length));
       const selected = {
-        "root.json": "fased-branch-root.json",
-        "beta/delegation.json": "fased-branch-delegation.json",
-        "beta/current/release-index.json": "fased-branch-release-index.json",
-        [`beta/v${version}/release-index.json`]: "fased-branch-release-index.json",
-      }[metadata];
-      if (selected) {
-        serve(response, selected);
-        return;
-      }
-    } else if (request.url.startsWith(prefix)) {
-      serve(response, decodeURIComponent(request.url.slice(prefix.length)));
+        "fased-lifecycle-root-v1.json": "fased-branch-root.json",
+        "fased-release-index-v1.json": "fased-branch-release-index.json",
+        "fased-release-index-v1.json.attestation.json": "fased-branch-delegation.json",
+      }[requested] ?? requested;
+      serve(response, selected);
       return;
     }
     response.writeHead(404).end();
@@ -179,27 +170,13 @@ for ((index = 0; index < \${#args[@]}; index++)); do
   esac
 done
 prefix="https://github.com/fased-ai/fased/releases/download/v${version}/"
-metadata_prefix="\${prefix}lifecycle/v1/"
-if [[ "\$url" == "\$metadata_prefix"* && -n "\$output" ]]; then
-  metadata="\${url#\$metadata_prefix}"
-  if [[ "\$metadata" == beta/assets/* ]]; then
-    asset="\${metadata#beta/assets/}"
-  else
-    case "\$metadata" in
-      root.json) asset=fased-branch-root.json ;;
-      beta/delegation.json) asset=fased-branch-delegation.json ;;
-      beta/current/release-index.json|beta/v${version}/release-index.json)
-        asset=fased-branch-release-index.json
-        ;;
-      *) exit 22 ;;
-    esac
-  fi
-  [[ "\$asset" =~ ^[A-Za-z0-9._+-]+$ && -f "/artifacts/\$asset" && ! -L "/artifacts/\$asset" ]] || exit 22
-  install -m 0600 "/artifacts/\$asset" "\$output"
-  exit 0
-fi
 if [[ "\$url" == "\$prefix"* && -n "\$output" ]]; then
   asset="\${url#\$prefix}"
+  case "\$asset" in
+    fased-lifecycle-root-v1.json) asset=fased-branch-root.json ;;
+    fased-release-index-v1.json) asset=fased-branch-release-index.json ;;
+    fased-release-index-v1.json.attestation.json) asset=fased-branch-delegation.json ;;
+  esac
   [[ "\$asset" =~ ^[A-Za-z0-9._+-]+$ && -f "/artifacts/\$asset" && ! -L "/artifacts/\$asset" ]] || exit 22
   install -m 0600 "/artifacts/\$asset" "\$output"
   exit 0
@@ -225,14 +202,14 @@ start_release_transport_server() {
       return 1
     }
     if /usr/local/libexec/fased-fixture-curl-real -fsS \
-      "https://github.com/fased-ai/fased/releases/download/v${version}/lifecycle/v1/root.json" \
+      "https://github.com/fased-ai/fased/releases/download/v${version}/fased-lifecycle-root-v1.json" \
       >/dev/null; then
       break
     fi
     sleep 0.1
   done
   /usr/local/libexec/fased-fixture-curl-real -fsS \
-    "https://github.com/fased-ai/fased/releases/download/v${version}/lifecycle/v1/root.json" \
+    "https://github.com/fased-ai/fased/releases/download/v${version}/fased-lifecycle-root-v1.json" \
     >/dev/null
 }
 
@@ -245,7 +222,8 @@ acceptance_mark() {
     --arg id "$predicate" \
     --arg evidenceDigest "sha256:$(sha256sum "$evidence_file" | awk '{print $1}')" \
     --arg summary "$summary" \
-    '{id:$id,status:"PASS",evidenceDigest:$evidenceDigest,summary:$summary}' \
+    --arg status "$acceptance_evidence_class" \
+    '{id:$id,status:$status,evidenceDigest:$evidenceDigest,summary:$summary}' \
     >>"$acceptance_evidence"
 }
 
@@ -280,6 +258,12 @@ acceptance_finish() {
     --commit "$commit" \
     --candidate-descriptor-digest "$descriptor_digest" \
     --predecessor-capsule-digest "$capsule_digest" \
+    --evidence-class "$acceptance_evidence_class" \
+    --acquisition-mode substituted-fixture \
+    --release-base-url "$acceptance_release_base_url" \
+    --metadata-base-url "$acceptance_release_base_url" \
+    --transport-substituted true \
+    --trust-inventory-digest "$descriptor_digest" \
     --evidence-file "$evidence_json" \
     --output "$acceptance_receipt"
   /fixture-node /fixture-tools/lifecycle-receipt-verifier.mjs \
@@ -290,7 +274,8 @@ acceptance_finish() {
     --version "$version" \
     --commit "$commit" \
     --candidate-descriptor-digest "$descriptor_digest" \
-    --predecessor-capsule-digest "$capsule_digest" >/dev/null
+    --predecessor-capsule-digest "$capsule_digest" \
+    --evidence-class "$acceptance_evidence_class" >/dev/null
 }
 
 run_public_installer() {
@@ -395,7 +380,16 @@ run_operator_acceptance() {
 }
 
 run_public_updater() {
-  env HOME=/home/app /home/app/.fased/bin/fased update \
+  local sudoers_policy=/etc/sudoers.d/fased-hosting-fixture-update
+  test -x /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap
+  umask 077
+  printf \
+    'app ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap update --profile hosting --channel beta --version %s\n' \
+    "$version" >"$sudoers_policy"
+  chown root:root "$sudoers_policy"
+  chmod 0440 "$sudoers_policy"
+  visudo -cf "$sudoers_policy" >/dev/null
+  runuser -u app -- env HOME=/home/app /home/app/.fased/bin/fased update \
     --channel beta --timeout 120
 }
 
@@ -432,6 +426,56 @@ restore_public_predecessor() {
   while IFS= read -r unit; do systemctl enable --now "$unit"; done \
     < <(jq -er '.services[]' "$predecessor_capsule_descriptor")
   wait_for_gateway_version "$predecessor_version"
+  # Seed the compatibility fixture with the predecessor quiesced. Otherwise
+  # its asynchronous config normalization can race this external write and
+  # make the later preservation comparison measure fixture timing rather than
+  # lifecycle state.
+  systemctl stop fased-gateway.service
+  install -d -m 0700 -o app -g app \
+    /home/app/.fased/extensions /home/app/.fased/extensions/stable-bridge \
+    /home/app/.fased/plugin-data /home/app/.fased/plugin-data/stable-bridge
+  printf '%s\n' '{"id":"stable-bridge","configSchema":{"type":"object","additionalProperties":false}}' \
+    >/home/app/.fased/extensions/stable-bridge/fased.plugin.json
+  printf '%s\n' '{"name":"stable-bridge","type":"module","fased":{"extensions":["./index.js"]}}' \
+    >/home/app/.fased/extensions/stable-bridge/package.json
+  printf '%s\n' 'export default { id: "stable-bridge", register() {} };' \
+    >/home/app/.fased/extensions/stable-bridge/index.js
+  printf '%s\n' '{"schemaVersion":1,"historyRevision":7}' \
+    >/home/app/.fased/plugin-data/stable-bridge/state.json
+  chown -R app:app /home/app/.fased/extensions /home/app/.fased/plugin-data
+  chmod 0700 /home/app/.fased/extensions /home/app/.fased/extensions/stable-bridge \
+    /home/app/.fased/plugin-data /home/app/.fased/plugin-data/stable-bridge
+  chmod 0600 /home/app/.fased/extensions/stable-bridge/* \
+    /home/app/.fased/plugin-data/stable-bridge/state.json
+  jq \
+    '.plugins = (.plugins // {}) |
+     .plugins.allow = (((.plugins.allow // []) + ["stable-bridge"]) | unique) |
+     .plugins.entries = (.plugins.entries // {}) |
+     .plugins.entries["stable-bridge"] = ((.plugins.entries["stable-bridge"] // {}) + {enabled: true})' \
+    /home/app/.fased/fased.json >/tmp/fased-hosting-stable-bridge-config.json
+  install -m 0600 -o app -g app /tmp/fased-hosting-stable-bridge-config.json /home/app/.fased/fased.json
+  rm -f /tmp/fased-hosting-stable-bridge-config.json
+  systemctl start fased-gateway.service
+  wait_for_gateway_version "$predecessor_version"
+  previous_config_digest=""
+  stable_config_samples=0
+  for _ in {1..40}; do
+    config_digest="$(sha256sum /home/app/.fased/fased.json | awk '{print $1}')"
+    if [[ "$config_digest" == "$previous_config_digest" ]]; then
+      stable_config_samples=$((stable_config_samples + 1))
+      if [[ "$stable_config_samples" -ge 3 ]]; then
+        break
+      fi
+    else
+      previous_config_digest="$config_digest"
+      stable_config_samples=0
+    fi
+    sleep 0.25
+  done
+  [[ "$stable_config_samples" -ge 3 ]] || {
+    echo "The public predecessor configuration did not settle after plugin seeding." >&2
+    exit 1
+  }
 }
 
 case "$phase" in
@@ -482,9 +526,12 @@ case "$phase" in
     sha256sum \
       /home/app/.fased/identity/device.json \
       /home/app/.fased/wallet/provider-registry.v1.json \
+      /home/app/.fased/extensions/stable-bridge/fased.plugin.json \
+      /home/app/.fased/extensions/stable-bridge/package.json \
+      /home/app/.fased/extensions/stable-bridge/index.js \
+      /home/app/.fased/plugin-data/stable-bridge/state.json \
       >/tmp/fased-hosting-predecessor-state.sha256
-    jq -S 'del(.gateway.mode)' /home/app/.fased/fased.json \
-      >/tmp/fased-hosting-predecessor-config-without-mode.json
+    cp /home/app/.fased/fased.json /tmp/fased-hosting-predecessor-config.json
     acceptance_start
 
     fault_dir=/etc/systemd/system/fased-gateway.service.d
@@ -527,13 +574,21 @@ EOF_TARGET_DROPIN
     acceptance_mark three-services-active /tmp/fased-hosting-three-services.out \
       "three Hosting services active"
     run_operator_acceptance
+    stable_bridge_plugin_digest="$(jq -er '.entries[] | select(.id == "stable-bridge" and .origin == "store" and .required == true) | .digest' /home/app/.fased/plugin.lock.json)"
+    stable_bridge_plugin_object="/opt/fased/plugin-code/${stable_bridge_plugin_digest#sha256:}"
+    runuser -u fased-gateway -- test -r "$stable_bridge_plugin_object/index.js"
+    runuser -u fased-gateway -- test -r /home/app/.fased/plugin-data/stable-bridge/state.json
+    jq -e --arg digest "$stable_bridge_plugin_digest" \
+      '.entries[] | select(.id == "stable-bridge" and .origin == "store" and .digest == $digest and .status == "loaded")' \
+      /home/app/.fased/cache/plugin-readiness.json >/dev/null
     test "$(jq -er .gateway.mode /home/app/.fased/fased.json)" = local
-    jq -S 'del(.gateway.mode)' /home/app/.fased/fased.json \
-      >/tmp/fased-hosting-target-config-without-mode.json
     {
       sha256sum --check /tmp/fased-hosting-predecessor-state.sha256
-      cmp /tmp/fased-hosting-predecessor-config-without-mode.json \
-        /tmp/fased-hosting-target-config-without-mode.json
+      /fixture-node /fixture-tools/lifecycle-configuration-preservation.mjs \
+        --before /tmp/fased-hosting-predecessor-config.json \
+        --after /home/app/.fased/fased.json \
+        --target-version "$version" \
+        --profile hosting
     } >/tmp/fased-hosting-update-state-preservation.out
     systemctl restart fased-host-updater.service fased-signerd.service fased-gateway.service
     assert_healthy

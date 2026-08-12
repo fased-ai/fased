@@ -28,6 +28,27 @@ func TestWriteConvergenceResponseEmitsBoundedFailureBeforeReturningError(t *test
 	}
 }
 
+func TestStateAccessCheckUsesKernelAccessAndRejectsSymlinks(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "state.json")
+	if err := os.WriteFile(file, []byte("state\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runStateAccessCheck([]string{"--path", file}); err != nil {
+		t.Fatalf("current identity could not access writable state: %v", err)
+	}
+	if err := runStateAccessCheck([]string{"--path", root, "--directory"}); err != nil {
+		t.Fatalf("current identity could not access writable state directory: %v", err)
+	}
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(file, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := runStateAccessCheck([]string{"--path", alias}); err == nil {
+		t.Fatal("state access check followed a symlink")
+	}
+}
+
 func TestPrepareSocketParentConvergesAuthorizedTraversal(t *testing.T) {
 	parent := filepath.Join(t.TempDir(), "runtime")
 	if err := os.Mkdir(parent, 0o700); err != nil {
@@ -109,27 +130,27 @@ func TestInitializationApplyArgumentsSelectsOneVerifiedInput(t *testing.T) {
 	archive := filepath.Join(t.TempDir(), "generation.tar.gz")
 	topology := "local-user-systemd-v1"
 	dependency := filepath.Join(t.TempDir(), "dependencies.tar.gz")
-	indexDigest, delegationDigest := "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64)
-	got, err := initializationApplyArguments("/platform.json", "", archive, dependency, topology, "0.1.75", 12, 3, indexDigest, delegationDigest)
+	indexDigest, releaseAuthorityDigest := "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64)
+	got, err := initializationApplyArguments("/platform.json", archive, dependency, topology, "0.1.75", 12, 3, indexDigest, releaseAuthorityDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"--config", "/platform.json", "--generation-archive", archive, "--release-sequence", "12", "--security-epoch", "3", "--release-index-digest", indexDigest, "--delegation-digest", delegationDigest, "--dependency-archive", dependency, "--source-topology", topology, "--public-predecessor-version", "0.1.75"}
+	want := []string{"--config", "/platform.json", "--generation-archive", archive, "--release-sequence", "12", "--security-epoch", "3", "--release-index-digest", indexDigest, "--release-authority-digest", releaseAuthorityDigest, "--dependency-archive", dependency, "--source-topology", topology, "--public-predecessor-version", "0.1.75"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("arguments = %#v, want %#v", got, want)
 	}
-	for _, input := range [][2]string{{"", ""}, {"/generation", archive}, {"relative", ""}} {
-		if _, err := initializationApplyArguments("/platform.json", input[0], input[1], "", "", "", 12, 3, indexDigest, delegationDigest); err == nil {
-			t.Fatalf("expected generation inputs %#v to be rejected", input)
+	for _, input := range []string{"", "relative"} {
+		if _, err := initializationApplyArguments("/platform.json", input, "", "", "", 12, 3, indexDigest, releaseAuthorityDigest); err == nil {
+			t.Fatalf("expected generation input %q to be rejected", input)
 		}
 	}
-	if _, err := initializationApplyArguments("/platform.json", "", archive, "", topology, "", 12, 3, indexDigest, delegationDigest); err == nil {
+	if _, err := initializationApplyArguments("/platform.json", archive, "", topology, "", 12, 3, indexDigest, releaseAuthorityDigest); err == nil {
 		t.Fatal("bridge apply accepted missing predecessor version")
 	}
-	if _, err := initializationApplyArguments("/platform.json", "", archive, "", "", "0.1.75", 12, 3, indexDigest, delegationDigest); err == nil {
+	if _, err := initializationApplyArguments("/platform.json", archive, "", "", "0.1.75", 12, 3, indexDigest, releaseAuthorityDigest); err == nil {
 		t.Fatal("bridge apply accepted predecessor version without topology")
 	}
-	if _, err := initializationApplyArguments("/platform.json", "", archive, "", "", "", 0, 0, "", ""); err == nil {
+	if _, err := initializationApplyArguments("/platform.json", archive, "", "", "", 0, 0, "", ""); err == nil {
 		t.Fatal("initialization accepted missing signed release authority")
 	}
 }

@@ -71,14 +71,16 @@ type ReleaseIndex struct {
 }
 
 type VerifiedReleaseIndex struct {
-	index            ReleaseIndex
-	digest           string
-	delegationDigest string
+	index                  ReleaseIndex
+	digest                 string
+	releaseAuthorityDigest string
 }
 
-func (verified VerifiedReleaseIndex) Index() ReleaseIndex      { return cloneReleaseIndex(verified.index) }
-func (verified VerifiedReleaseIndex) Digest() string           { return verified.digest }
-func (verified VerifiedReleaseIndex) DelegationDigest() string { return verified.delegationDigest }
+func (verified VerifiedReleaseIndex) Index() ReleaseIndex { return cloneReleaseIndex(verified.index) }
+func (verified VerifiedReleaseIndex) Digest() string      { return verified.digest }
+func (verified VerifiedReleaseIndex) ReleaseAuthorityDigest() string {
+	return verified.releaseAuthorityDigest
+}
 
 func SignReleaseIndex(index ReleaseIndex, key SigningKey) ([]byte, error) {
 	if err := validateReleaseIndex(index, time.Time{}); err != nil {
@@ -99,6 +101,16 @@ func DecodeReleaseIndex(data []byte) (ReleaseIndex, error) {
 		return ReleaseIndex{}, err
 	}
 	return index, nil
+}
+
+// EncodeReleaseIndex emits the canonical raw artifact that GitHub's protected
+// release workflow attests. Ordinary releases do not introduce another Fased
+// signing key or wrap this artifact in a private-key envelope.
+func EncodeReleaseIndex(index ReleaseIndex) ([]byte, error) {
+	if err := validateReleaseIndex(index, time.Time{}); err != nil {
+		return nil, err
+	}
+	return canonicalStruct(index)
 }
 
 func VerifyReleaseIndex(delegation VerifiedDelegation, data []byte, now time.Time) (VerifiedReleaseIndex, error) {
@@ -127,7 +139,7 @@ func VerifyReleaseIndex(delegation VerifiedDelegation, data []byte, now time.Tim
 	if err != nil {
 		return VerifiedReleaseIndex{}, err
 	}
-	return VerifiedReleaseIndex{index: cloneReleaseIndex(index), digest: digest, delegationDigest: delegation.digest}, nil
+	return VerifiedReleaseIndex{index: cloneReleaseIndex(index), digest: digest, releaseAuthorityDigest: delegation.digest}, nil
 }
 
 func cloneReleaseIndex(index ReleaseIndex) ReleaseIndex {

@@ -50,7 +50,9 @@ export function parsePredecessorCapsule(value, expected = {}) {
       "role",
       "profile",
       "compatibilityGroupId",
+      "compatibilityDigest",
       "release",
+      "sourceReceipt",
       "releaseIndex",
       "topology",
       "ownership",
@@ -64,7 +66,20 @@ export function parsePredecessorCapsule(value, expected = {}) {
     "descriptor",
   );
   exactKeys(value.release, ["version", "commit", "tree"], "release");
-  exactKeys(value.releaseIndex, ["sequence", "sha256"], "release index");
+  exactKeys(
+    value.sourceReceipt,
+    ["schemaVersion", "repository", "tag", "authority", "manifest", "manifestAttestation"],
+    "source receipt",
+  );
+  exactKeys(value.sourceReceipt.manifest, ["name", "sha256"], "source manifest");
+  exactKeys(
+    value.sourceReceipt.manifestAttestation,
+    ["name", "sha256"],
+    "source manifest attestation",
+  );
+  if (value.releaseIndex !== null) {
+    exactKeys(value.releaseIndex, ["sequence", "securityEpoch", "sha256"], "release index");
+  }
   exactKeys(value.topology, ["schemaVersion", "kind", "capabilities"], "topology");
   exactKeys(value.ownership, ["rootUid", "rootGid", "operatorUid", "operatorGid"], "ownership");
   exactKeys(value.pointers, ["current", "previous"], "pointers");
@@ -76,12 +91,24 @@ export function parsePredecessorCapsule(value, expected = {}) {
     !["protected-local", "hosting"].includes(value.profile) ||
     (expected.profile && value.profile !== expected.profile) ||
     !GROUP_PATTERN.test(value.compatibilityGroupId || "") ||
+    !DIGEST_PATTERN.test(value.compatibilityDigest || "") ||
     !VERSION_PATTERN.test(value.release.version || "") ||
     !COMMIT_PATTERN.test(value.release.commit || "") ||
     !COMMIT_PATTERN.test(value.release.tree || "") ||
-    !Number.isSafeInteger(value.releaseIndex.sequence) ||
-    value.releaseIndex.sequence < 1 ||
-    !DIGEST_PATTERN.test(value.releaseIndex.sha256 || "") ||
+    value.sourceReceipt.schemaVersion !== 1 ||
+    value.sourceReceipt.repository !== "fased-ai/fased" ||
+    value.sourceReceipt.tag !== `v${value.release.version}` ||
+    value.sourceReceipt.authority !== "github-artifact-attestation" ||
+    !NAME_PATTERN.test(value.sourceReceipt.manifest.name || "") ||
+    !DIGEST_PATTERN.test(value.sourceReceipt.manifest.sha256 || "") ||
+    !NAME_PATTERN.test(value.sourceReceipt.manifestAttestation.name || "") ||
+    !DIGEST_PATTERN.test(value.sourceReceipt.manifestAttestation.sha256 || "") ||
+    (value.releaseIndex !== null &&
+      (!Number.isSafeInteger(value.releaseIndex.sequence) ||
+        value.releaseIndex.sequence < 1 ||
+        !Number.isSafeInteger(value.releaseIndex.securityEpoch) ||
+        value.releaseIndex.securityEpoch < 1 ||
+        !DIGEST_PATTERN.test(value.releaseIndex.sha256 || ""))) ||
     value.topology.schemaVersion !== 1 ||
     !["public-stable", "managed-generation"].includes(value.topology.kind) ||
     !Array.isArray(value.topology.capabilities) ||

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"fased-lifecycled/model"
+	sigroot "github.com/sigstore/sigstore-go/pkg/root"
 )
 
 type testKey struct {
@@ -40,7 +41,7 @@ func testRoot(t *testing.T, now time.Time) ([]byte, []testKey) {
 	keys := []testKey{newTestKey(t), newTestKey(t), newTestKey(t)}
 	signed := RootMetadata{SchemaVersion: 1, Type: "fased-lifecycle-root", Version: 1,
 		IssuedAt: now.Add(-time.Hour).Format(time.RFC3339), ExpiresAt: now.Add(24 * time.Hour).Format(time.RFC3339),
-		Keys: map[string]Key{}, Root: RootRole{Threshold: 2}, Revocations: Revocations{ReleaseVersions: []string{}, TargetDigests: []string{}, DelegatedKeyIDs: []string{}}}
+		Keys: map[string]Key{}, Root: RootRole{Threshold: 2}, ReleaseAuthority: testReleaseAuthority(), Revocations: Revocations{ReleaseVersions: []string{}, TargetDigests: []string{}, DelegatedKeyIDs: []string{}}}
 	for _, key := range keys {
 		signed.Keys[key.id] = key.record
 		signed.Root.KeyIDs = append(signed.Root.KeyIDs, key.id)
@@ -126,8 +127,102 @@ func TestGoVerifierAcceptsExistingProductionRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := VerifyInitialRoot(data, "23d3e8235a39729d6ae37a5784eaa717a47e4ac725f5a416e78754ad9b4618ca", time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)); err != nil {
+	root, err := VerifyInitialRoot(data, "23d3e8235a39729d6ae37a5784eaa717a47e4ac725f5a416e78754ad9b4618ca", time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)) // pragma: allowlist secret
+	if err != nil {
 		t.Fatalf("existing production root is not Go-compatible: %v", err)
+	}
+	authority := root.ReleaseAuthority()
+	if authority.Repository != "fased-ai/fased" ||
+		authority.Workflow != "fased-ai/fased/.github/workflows/hosted-runtime-release.yml" ||
+		authority.SourceRefPrefix != "refs/tags/v" || !authority.DenySelfHostedRunners {
+		t.Fatalf("existing production release authority was not bound: %+v", authority)
+	}
+}
+
+func TestGitHubArtifactAttestationVerificationBindsExactAuthority(t *testing.T) {
+	trusted, err := sigroot.NewTrustedRootFromJSON(sigstorePublicGoodTrustedRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := os.ReadFile(filepath.Join("testdata", "fased-hosted-release-v2.fixture"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundleJSON, err := os.ReadFile(filepath.Join("testdata", "fased-hosted-release-v2.attestation.fixture"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(artifact)
+	expected := githubAttestationExpectation{
+		Repository: "fased-ai/fased", Workflow: "fased-ai/fased/.github/workflows/hosted-runtime-release.yml",
+		SourceRef: "refs/tags/v0.1.76-rc.74", Commit: "2ab10b11fd4bd01678a115be05308d37bfba1a50", // pragma: allowlist secret
+		SubjectName: "fased-hosted-release-v2.json", DigestAlgorithm: "sha256", Digest: digest[:],
+		DenySelfHosted: true,
+	}
+	if _, err := verifyGitHubArtifactAttestation(trusted, bundleJSON, expected); err != nil {
+		t.Fatalf("public-good attestation was rejected: %v", err)
+	}
+	mutations := []struct {
+		name string
+		edit func(*githubAttestationExpectation)
+	}{
+		{"repository", func(candidate *githubAttestationExpectation) { candidate.Repository = "attacker/fork" }},
+		{"workflow", func(candidate *githubAttestationExpectation) {
+			candidate.Workflow = "sigstore/sigstore-js/.github/workflows/other.yml"
+		}},
+		{"source ref", func(candidate *githubAttestationExpectation) { candidate.SourceRef = "refs/tags/v2.0.0" }},
+		{"commit", func(candidate *githubAttestationExpectation) {
+			candidate.Commit = "0000000000000000000000000000000000000000"
+		}},
+		{"subject", func(candidate *githubAttestationExpectation) { candidate.SubjectName = "attacker" }},
+		{"digest", func(candidate *githubAttestationExpectation) { candidate.Digest[0] ^= 0xff }},
+	}
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			candidate := expected
+			candidate.Digest = append([]byte(nil), expected.Digest...)
+			mutation.edit(&candidate)
+			if _, err := verifyGitHubArtifactAttestation(trusted, bundleJSON, candidate); err == nil {
+				t.Fatal("mutated authority was accepted")
+			}
+		})
+	}
+}
+
+func TestEmbeddedSigstoreTrustedRootIsTheReviewedPublicGoodSnapshot(t *testing.T) {
+	digest := sha256.Sum256(sigstorePublicGoodTrustedRoot)
+	if got := hex.EncodeToString(digest[:]); got != "4364d7724c04cc912ce2a6c45ed2610e8d8d1c4dc857fb500292738d4d9c8d2c" {
+		t.Fatalf("embedded Sigstore trusted root changed without review: %s", got)
+	}
+}
+
+func TestRootRejectsMissingOrWeakenedReleaseAuthority(t *testing.T) {
+	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	rootJSON, _ := testRoot(t, now)
+	var envelope rawEnvelope
+	if err := decodeStrict(rootJSON, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	var metadata RootMetadata
+	if err := decodeStrict(envelope.Signed, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	for _, mutation := range []func(*RootMetadata){
+		func(candidate *RootMetadata) { candidate.ReleaseAuthority = nil },
+		func(candidate *RootMetadata) { candidate.ReleaseAuthority.DenySelfHostedRunners = false },
+		func(candidate *RootMetadata) { candidate.ReleaseAuthority.Repository = "attacker/fork" },
+		func(candidate *RootMetadata) {
+			candidate.ReleaseAuthority.Workflow = "attacker/fork/.github/workflows/release.yml"
+		},
+		func(candidate *RootMetadata) { candidate.ReleaseAuthority.SourceRefPrefix = "refs/heads/" },
+	} {
+		candidate := metadata
+		authority := *metadata.ReleaseAuthority
+		candidate.ReleaseAuthority = &authority
+		mutation(&candidate)
+		if _, err := validateRootMetadata(candidate, now); err == nil {
+			t.Fatal("weakened release authority was accepted")
+		}
 	}
 }
 
@@ -185,7 +280,7 @@ func TestRootRotationRequiresOldAndNewThresholds(t *testing.T) {
 		t.Fatal(err)
 	}
 	newKeys := []testKey{newTestKey(t), newTestKey(t), newTestKey(t)}
-	metadata := RootMetadata{SchemaVersion: 1, Type: "fased-lifecycle-root", Version: 2, IssuedAt: now.Add(-time.Minute).Format(time.RFC3339), ExpiresAt: now.Add(24 * time.Hour).Format(time.RFC3339), Keys: map[string]Key{}, Root: RootRole{Threshold: 2}, Revocations: Revocations{ReleaseVersions: []string{}, TargetDigests: []string{}, DelegatedKeyIDs: []string{}}}
+	metadata := RootMetadata{SchemaVersion: 1, Type: "fased-lifecycle-root", Version: 2, IssuedAt: now.Add(-time.Minute).Format(time.RFC3339), ExpiresAt: now.Add(24 * time.Hour).Format(time.RFC3339), Keys: map[string]Key{}, Root: RootRole{Threshold: 2}, ReleaseAuthority: testReleaseAuthority(), Revocations: Revocations{ReleaseVersions: []string{}, TargetDigests: []string{}, DelegatedKeyIDs: []string{}}}
 	for _, key := range newKeys {
 		metadata.Keys[key.id] = key.record
 		metadata.Root.KeyIDs = append(metadata.Root.KeyIDs, key.id)
@@ -214,4 +309,12 @@ func testAssets() map[string]Asset {
 func testHostAssets() map[string]Asset {
 	protocols := &HostProtocols{Manifest: ProtocolRange{Min: 2, Max: 2}, Journal: ProtocolRange{Min: 1, Max: 1}, Participant: ProtocolRange{Min: 1, Max: 1}, Platform: ProtocolRange{Min: 1, Max: 2}}
 	return map[string]Asset{"x64": {Name: "fased-lifecycled-linux-x64", Size: 1, SHA256: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PrivilegedComponent: "lifecycle-host", Protocols: protocols}}
+}
+
+func testReleaseAuthority() *ReleaseAuthority {
+	return &ReleaseAuthority{
+		Type: githubArtifactAttestationAuthority, Repository: "fased-ai/fased",
+		Workflow:        "fased-ai/fased/.github/workflows/hosted-runtime-release.yml",
+		SourceRefPrefix: githubArtifactAttestationRefPrefix, DenySelfHostedRunners: true,
+	}
 }

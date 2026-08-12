@@ -83,7 +83,7 @@ GOTMPDIR="$go_tmp" GOCACHE="$go_cache" \
     --issued-at "$issued_at"
 
 root_pin="$(tr -d '\n' <"$OUTPUT_DIR/fased-branch-root.sha256")"
-metadata_base="https://github.com/fased-ai/fased/releases/download/v${version}/lifecycle/v1"
+metadata_base="https://github.com/fased-ai/fased/releases/download/v${version}"
 (
   cd "$ROOT_DIR/tools/fased-lifecycled"
   GOTMPDIR="$go_tmp" GOCACHE="$go_cache" CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \

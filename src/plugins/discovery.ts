@@ -11,6 +11,7 @@ import {
   type PackageManifest,
 } from "./manifest.js";
 import { formatPosixMode, isPathInside, safeRealpathSync, safeStatSync } from "./path-safety.js";
+import { readCanonicalPluginLock } from "./readiness-receipt.js";
 import type { PluginDiagnostic, PluginOrigin } from "./types.js";
 
 const EXTENSION_EXTS = new Set([".ts", ".js", ".mts", ".cts", ".mjs", ".cjs"]);
@@ -626,6 +627,7 @@ export function discoverFasedAgentPlugins(params: {
   const workspaceDir = params.workspaceDir?.trim();
   const managedPluginCodeRoot = process.env.FASED_PLUGIN_CODE_ROOT?.trim();
   const managedPluginDataRoot = process.env.FASED_PLUGIN_DATA_ROOT?.trim();
+  const managedPluginLockPath = process.env.FASED_PLUGIN_LOCK_PATH?.trim();
   if (managedPluginCodeRoot && !managedPluginDataRoot) {
     diagnostics.push({
       level: "error",
@@ -676,15 +678,46 @@ export function discoverFasedAgentPlugins(params: {
     }
   }
 
-  const globalDir = managedPluginCodeRoot || path.join(resolveConfigDir(), "extensions");
-  discoverInDirectory({
-    dir: globalDir,
-    origin: "global",
-    ownershipUid: params.ownershipUid,
-    candidates,
-    diagnostics,
-    seen,
-  });
+  if (managedPluginCodeRoot) {
+    if (!managedPluginLockPath) {
+      diagnostics.push({
+        level: "error",
+        message: "managed plugin lock path is missing for plugin-code",
+      });
+    } else {
+      try {
+        const lock = readCanonicalPluginLock(managedPluginLockPath);
+        for (const entry of lock.entries) {
+          if (entry.origin !== "store") {
+            continue;
+          }
+          discoverFromPath({
+            rawPath: path.join(managedPluginCodeRoot, entry.digest.slice("sha256:".length)),
+            origin: "global",
+            ownershipUid: params.ownershipUid,
+            candidates,
+            diagnostics,
+            seen,
+          });
+        }
+      } catch (error) {
+        diagnostics.push({
+          level: "error",
+          message: `managed plugin lock is invalid: ${error instanceof Error ? error.message : String(error)}`,
+          source: managedPluginLockPath,
+        });
+      }
+    }
+  } else {
+    discoverInDirectory({
+      dir: path.join(resolveConfigDir(), "extensions"),
+      origin: "global",
+      ownershipUid: params.ownershipUid,
+      candidates,
+      diagnostics,
+      seen,
+    });
+  }
 
   const bundledDir = resolveBundledPluginsDir();
   if (bundledDir) {

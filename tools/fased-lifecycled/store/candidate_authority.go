@@ -9,21 +9,21 @@ import (
 	"path/filepath"
 )
 
-// CandidateAuthority is the root-bound result of verifying one signed release
-// index. It is deliberately absent from the operator protocol: only the root
-// bootstrap that imported the exact generation may create this record.
+// CandidateAuthority is the root-bound result of verifying one attested
+// release index. It is deliberately absent from the operator protocol: only
+// the root bootstrap that imported the exact generation may create this record.
 type CandidateAuthority struct {
-	SchemaVersion   uint32 `json:"schemaVersion"`
-	GenerationID    string `json:"generationId"`
-	ReleaseSequence uint64 `json:"releaseSequence"`
-	SecurityEpoch   uint64 `json:"securityEpoch"`
-	ReleaseIndex    string `json:"releaseIndexDigest"`
-	Delegation      string `json:"delegationDigest"`
+	SchemaVersion    uint32 `json:"schemaVersion"`
+	GenerationID     string `json:"generationId"`
+	ReleaseSequence  uint64 `json:"releaseSequence"`
+	SecurityEpoch    uint64 `json:"securityEpoch"`
+	ReleaseIndex     string `json:"releaseIndexDigest"`
+	ReleaseAuthority string `json:"releaseAuthorityDigest"`
 }
 
 func (authority CandidateAuthority) validate() error {
 	if authority.SchemaVersion != 1 || authority.ReleaseSequence == 0 || authority.SecurityEpoch == 0 ||
-		!validSHA256Digest(authority.GenerationID) || !validSHA256Digest(authority.ReleaseIndex) || !validSHA256Digest(authority.Delegation) {
+		!validSHA256Digest(authority.GenerationID) || !validSHA256Digest(authority.ReleaseIndex) || !validSHA256Digest(authority.ReleaseAuthority) {
 		return errors.New("candidate release authority is malformed")
 	}
 	return nil

@@ -71,30 +71,39 @@ func (service *Service) Handle(ctx context.Context, request protocol.Request) (p
 	if err := service.validate(); err != nil {
 		return protocol.Response{}, err
 	}
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
+	if err := service.recoverPendingLocked(ctx); err != nil {
+		return protocol.Response{}, err
+	}
 	switch request.Operation {
 	case protocol.OperationInspect:
 		return service.inspect(request)
 	case protocol.OperationConverge:
-		service.mutationMu.Lock()
-		defer service.mutationMu.Unlock()
-		if err := service.recoverPending(ctx); err != nil {
-			return protocol.Response{}, err
-		}
 		return service.converge(ctx, request)
 	case protocol.OperationRecover:
-		service.mutationMu.Lock()
-		defer service.mutationMu.Unlock()
 		return service.recover(ctx, request)
 	case protocol.OperationCompleteOnboarding:
-		service.mutationMu.Lock()
-		defer service.mutationMu.Unlock()
 		return service.completeOnboarding(ctx, request)
 	default:
 		return protocol.Response{}, errors.New("unsupported lifecycle operation")
 	}
 }
 
-func (service *Service) recoverPending(ctx context.Context) error {
+// RecoverPending converges an unfinished durable transaction before the
+// supervisor exposes its request socket. Handle repeats the same check while
+// holding the in-process mutation lock so no command can observe or mutate an
+// installation between startup recovery and request dispatch.
+func (service *Service) RecoverPending(ctx context.Context) error {
+	if err := service.validate(); err != nil {
+		return err
+	}
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
+	return service.recoverPendingLocked(ctx)
+}
+
+func (service *Service) recoverPendingLocked(ctx context.Context) error {
 	pendingStore, ok := service.Store.(PendingTransactionStore)
 	if !ok {
 		return nil
@@ -106,9 +115,17 @@ func (service *Service) recoverPending(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	result, err := service.Supervisor.Recover(ctx, tx)
+	lock, err := service.Store.AcquireUpdateLock(tx.ID)
 	if err != nil {
-		return fmt.Errorf("unfinished lifecycle transaction %s recovery failed: %w", tx.ID, err)
+		return fmt.Errorf("unfinished lifecycle transaction %s lock failed: %w", tx.ID, err)
+	}
+	result, err := service.Supervisor.Recover(ctx, tx)
+	releaseErr := lock.Release()
+	if err != nil {
+		return fmt.Errorf("unfinished lifecycle transaction %s recovery failed: %w", tx.ID, errors.Join(err, releaseErr))
+	}
+	if releaseErr != nil {
+		return fmt.Errorf("unfinished lifecycle transaction %s lock release failed: %w", tx.ID, releaseErr)
 	}
 	if result.Phase != model.PhaseCommitted && result.Phase != model.PhaseRolledBack {
 		return fmt.Errorf("unfinished lifecycle transaction %s did not converge", tx.ID)

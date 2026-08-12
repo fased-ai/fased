@@ -34,6 +34,53 @@ const BUNDLED_TELEGRAM_PLUGIN_BODY = `export default { id: "telegram", register(
   });
 } };`;
 
+it("keeps signed mandatory bundled plugins enabled with an explicit managed allowlist", () => {
+  const root = makeTempDir();
+  const lockPath = path.join(root, "plugin.lock.json");
+  fs.writeFileSync(
+    lockPath,
+    `${JSON.stringify({
+      schemaVersion: 1,
+      type: "fased-plugin-lock",
+      entries: [
+        {
+          id: "optional-core",
+          origin: "bundled",
+          digest: `sha256:${"a".repeat(64)}`,
+          apiCapability: "fased.plugin.v1",
+          required: false,
+        },
+        {
+          id: "sat-mining",
+          origin: "bundled",
+          digest: `sha256:${"b".repeat(64)}`,
+          apiCapability: "fased.plugin.v1",
+          required: true,
+        },
+        {
+          id: "stable-bridge",
+          origin: "store",
+          digest: `sha256:${"c".repeat(64)}`,
+          apiCapability: "fased.plugin.v1",
+          required: true,
+        },
+      ],
+    })}\n`,
+  );
+  const normalized = __testing.applyManagedRequiredBundledAllowlist(
+    {
+      enabled: true,
+      allow: ["stable-bridge"],
+      deny: [],
+      loadPaths: [],
+      slots: { memory: "memory-core" },
+      entries: {},
+    },
+    { FASED_PLUGIN_LOCK_PATH: lockPath },
+  );
+  expect(normalized.allow).toEqual(["sat-mining", "stable-bridge"]);
+});
+
 function makeTempDir() {
   const dir = path.join(fixtureRoot, `case-${tempDirIndex++}`);
   fs.mkdirSync(dir, { recursive: true });
@@ -1178,7 +1225,7 @@ describe("loadFasedAgentPlugins", () => {
     expect(entry?.status).toBe("disabled");
   });
 
-  it("prefers higher-precedence plugins with the same id", () => {
+  it("loads the higher-precedence plugin and rejects the duplicate id", () => {
     const bundledDir = makeTempDir();
     writePlugin({
       id: "shadow",
@@ -1207,9 +1254,16 @@ describe("loadFasedAgentPlugins", () => {
 
     const entries = registry.plugins.filter((entry) => entry.id === "shadow");
     const loaded = entries.find((entry) => entry.status === "loaded");
-    const overridden = entries.find((entry) => entry.status === "disabled");
+    expect(entries).toHaveLength(1);
     expect(loaded?.origin).toBe("config");
-    expect(overridden?.origin).toBe("bundled");
+    expect(registry.diagnostics).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        pluginId: "shadow",
+        source: path.join(bundledDir, "shadow.js"),
+        message: expect.stringContaining("duplicate plugin id rejected"),
+      }),
+    );
   });
   it("warns when plugins.allow is empty and non-bundled plugins are discoverable", () => {
     process.env.FASED_BUNDLED_PLUGINS_DIR = "/nonexistent/bundled/plugins";

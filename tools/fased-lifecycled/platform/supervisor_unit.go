@@ -7,12 +7,11 @@ import (
 	"strings"
 )
 
-func RenderSupervisorUnit(config Config, binary string) ([]byte, error) {
+const StableLifecycleHostPath = "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled"
+
+func RenderSupervisorUnit(config Config) ([]byte, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
-	}
-	if !filepath.IsAbs(binary) || filepath.Clean(binary) != binary {
-		return nil, errors.New("supervisor binary path must be absolute and clean")
 	}
 	identity, err := config.Identity()
 	if err != nil {
@@ -42,11 +41,15 @@ ProtectHome=read-only
 ReadWritePaths=%s %s %s %s %s %s %s
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_FSETID CAP_SETUID CAP_SETGID
-AmbientCapabilities=
+# PrivateDevices removes effective SETUID in a mount namespace on supported
+# systemd/container combinations. The supervisor needs only these two
+# capabilities to run target-identity access probes; the UID transition clears
+# them before the unprivileged probe binary starts.
+AmbientCapabilities=CAP_SETUID CAP_SETGID
 
 [Install]
 WantedBy=multi-user.target
-`, config.InstanceID, runtimeDirectory, binary, config.LifecycleRoot, config.SupervisorSocket(),
+`, config.InstanceID, runtimeDirectory, StableLifecycleHostPath, config.LifecycleRoot, config.SupervisorSocket(),
 		config.InstallRoot, config.LifecycleRoot, config.ProductStateRoot, config.OwnerStateRoot,
 		config.UnitRoot, filepath.Dir(config.UpdateGatePath()), filepath.Dir(CanonicalProductVersionPath(config)))
 	if identity.Services["supervisor"] == "" {

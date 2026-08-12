@@ -44,6 +44,7 @@ function main() {
       commit: options.commit,
       candidateDescriptorDigest: options["candidate-descriptor-digest"],
       predecessorCapsuleDigest,
+      evidenceClass: options["evidence-class"] || "PASS",
     },
   });
   process.stdout.write(

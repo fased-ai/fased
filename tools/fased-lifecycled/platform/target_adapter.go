@@ -41,7 +41,7 @@ type TargetAdapter struct {
 	Identity    model.PlatformIdentity
 	Units       UnitStore
 	Files       LifecycleFileStore
-	SharedState SharedStateStore
+	TypedState  TypedStateStore
 	Systemd     Systemd
 	Generations GenerationManager
 	Health      GatewayHealth
@@ -53,7 +53,7 @@ type TargetAdapter struct {
 }
 
 func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) (engine.Result, error) {
-	if adapter == nil || (adapter.Config.Profile != model.ProfileProtectedLocal && adapter.Config.Profile != model.ProfileHosting) || adapter.Manifest == nil || adapter.SharedState == nil || adapter.Systemd == nil || adapter.Health == nil || adapter.Plugins == nil {
+	if adapter == nil || (adapter.Config.Profile != model.ProfileProtectedLocal && adapter.Config.Profile != model.ProfileHosting) || adapter.Manifest == nil || adapter.TypedState == nil || adapter.Systemd == nil || adapter.Health == nil || adapter.Plugins == nil {
 		return engine.Result{}, errors.New("lifecycle onboarding adapter is incomplete")
 	}
 	manifest, _, err := adapter.Manifest.ReadManifest()
@@ -75,8 +75,8 @@ func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) (engine.Re
 	if err := validateOnboardingConfig(adapter.Config); err != nil {
 		return engine.Result{}, err
 	}
-	if err := adapter.SharedState.Converge(); err != nil {
-		return engine.Result{}, fmt.Errorf("onboarding shared state is unsafe: %w", err)
+	if err := adapter.TypedState.Converge(); err != nil {
+		return engine.Result{}, fmt.Errorf("onboarding typed state is unsafe: %w", err)
 	}
 	if err := adapter.Systemd.IsActive(ctx, adapter.Identity.Services["signer"]); err != nil {
 		return engine.Result{}, fmt.Errorf("signer is not active before onboarding completion: %w", err)
@@ -86,7 +86,7 @@ func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) (engine.Re
 		if err := adapter.Health.Verify(ctx, adapter.Config.GatewayPort, *manifest.ActiveGeneration); err != nil {
 			return engine.Result{}, fmt.Errorf("active Gateway is unhealthy during onboarding completion: %w", err)
 		}
-		if err := adapter.Plugins.Verify(ctx, *manifest.ActiveGeneration); err != nil {
+		if _, err := adapter.Plugins.Verify(ctx, *manifest.ActiveGeneration); err != nil {
 			return engine.Result{}, fmt.Errorf("plugin readiness failed during onboarding completion: %w", err)
 		}
 		return engine.Result{Outcome: engine.OutcomeAlreadyCurrent, Phase: model.PhaseCommitted}, nil
@@ -100,7 +100,7 @@ func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) (engine.Re
 	if err := adapter.Health.Verify(ctx, adapter.Config.GatewayPort, *manifest.ActiveGeneration); err != nil {
 		return engine.Result{}, err
 	}
-	if err := adapter.Plugins.Verify(ctx, *manifest.ActiveGeneration); err != nil {
+	if _, err := adapter.Plugins.Verify(ctx, *manifest.ActiveGeneration); err != nil {
 		return engine.Result{}, fmt.Errorf("plugin readiness failed during onboarding completion: %w", err)
 	}
 	return engine.Result{Outcome: engine.OutcomeUpdated, Phase: model.PhaseCommitted}, nil
@@ -124,7 +124,8 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 	if err := adapter.validate(tx); err != nil {
 		return err
 	}
-	if err := adapter.Plugins.Prepare(ctx, tx.Target); err != nil {
+	pluginLock, err := adapter.Plugins.Prepare(ctx, tx)
+	if err != nil {
 		return fmt.Errorf("plugin lock verification failed: %w", err)
 	}
 	if err := adapter.Predecessor.Prepare(ctx, tx); err != nil {
@@ -136,10 +137,6 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 	payload, err := adapter.Generations.GenerationPayloadPath(tx.Target.ID)
 	if err != nil {
 		return err
-	}
-	pluginLock, err := readRegularFile(filepath.Join(payload, "runtime", "plugin.lock.json"))
-	if err != nil {
-		return fmt.Errorf("target generation plugin lock: %w", err)
 	}
 	for _, relative := range []string{"bin/fased-gateway-launch", "bin/fased-signerd", "bin/node", "runtime/scripts/fased-signer-owner-hosting.sh"} {
 		if err := requireExecutable(filepath.Join(payload, relative)); err != nil {
@@ -187,7 +184,7 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 			Data: []byte(tx.Target.Version + "\n"), Mode: 0o600, UID: 0, GID: 0,
 		},
 		CanonicalPluginLockPath(adapter.Config): {
-			Data: pluginLock, Mode: 0o640, UID: adapter.Config.Operator.UID, GID: configGID,
+			Data: pluginLock.Data, Mode: 0o640, UID: adapter.Config.Operator.UID, GID: configGID,
 		},
 	}
 	if !adapter.deferFreshGateway(tx) {
@@ -270,12 +267,17 @@ func (adapter *TargetAdapter) Quiesce(ctx context.Context, tx model.Transaction)
 }
 
 func (adapter *TargetAdapter) PrepareState(_ context.Context, tx model.Transaction) (engine.ParticipantReceipt, string, error) {
-	digest, err := adapter.SharedState.Prepare(tx.ID)
+	prepared, err := adapter.TypedState.Prepare(tx.ID)
 	if err != nil {
 		return engine.ParticipantReceipt{}, "", err
 	}
-	receipt := engine.ParticipantReceipt{TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.StateInventoryDigest}
-	return receipt, digest, nil
+	receipt := engine.ParticipantReceipt{TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.StateInventoryDigest,
+		MemberDigests: engine.StateMemberDigests{
+			ApplicationState: prepared.ParticipantDigests["application-state"], Configuration: prepared.ParticipantDigests["configuration"],
+			Wallet: prepared.ParticipantDigests["wallet"], Mining: prepared.ParticipantDigests["mining"], Federation: prepared.ParticipantDigests["federation"],
+			PluginData: prepared.ParticipantDigests["plugin-data"], Signer: prepared.ParticipantDigests["signer"],
+		}}
+	return receipt, prepared.Digest, nil
 }
 
 func (adapter *TargetAdapter) StopTarget(ctx context.Context, _ model.Transaction) error {
@@ -290,14 +292,17 @@ func (adapter *TargetAdapter) StopTarget(ctx context.Context, _ model.Transactio
 }
 
 func (adapter *TargetAdapter) Activate(ctx context.Context, tx model.Transaction) error {
-	if err := adapter.SharedState.Activate(tx.ID); err != nil {
+	if err := adapter.TypedState.Activate(tx.ID); err != nil {
 		return err
 	}
-	if err := adapter.SharedState.VerifyAccess(tx.ID); err != nil {
-		return fmt.Errorf("typed state is inaccessible before service start: %w", err)
+	if err := adapter.Plugins.Activate(tx); err != nil {
+		return err
 	}
 	if err := adapter.Files.Activate(tx.ID, adapter.preStartLifecycleFiles(tx)); err != nil {
 		return err
+	}
+	if err := adapter.TypedState.VerifyAccess(ctx, tx.ID); err != nil {
+		return fmt.Errorf("typed state is inaccessible before service start: %w", err)
 	}
 	if err := adapter.Units.Activate(tx.ID, adapter.targetUnits()); err != nil {
 		return err
@@ -319,25 +324,30 @@ func (adapter *TargetAdapter) Activate(ctx context.Context, tx model.Transaction
 	return nil
 }
 
-func (adapter *TargetAdapter) Verify(ctx context.Context, tx model.Transaction) error {
+func (adapter *TargetAdapter) Verify(ctx context.Context, tx model.Transaction) (engine.ParticipantReceipt, error) {
 	for _, unit := range adapter.startOrder() {
 		if adapter.deferFreshGateway(tx) && unit == adapter.Identity.Services["gateway"] {
 			continue
 		}
 		if err := adapter.Systemd.IsActive(ctx, unit); err != nil {
-			return fmt.Errorf("service %s is not active: %w", unit, err)
+			return engine.ParticipantReceipt{}, fmt.Errorf("service %s is not active: %w", unit, err)
 		}
 	}
 	if adapter.deferFreshGateway(tx) {
-		return nil
+		// Fresh onboarding cannot produce plugin readiness until the owner has
+		// written configuration and COMPLETE_ONBOARDING starts Gateway. That
+		// boundary verifies the Gateway-written generation-bound receipt before
+		// reporting onboarding complete.
+		return engine.ParticipantReceipt{}, nil
 	}
 	if err := adapter.Health.Verify(ctx, adapter.Config.GatewayPort, tx.Target); err != nil {
-		return err
+		return engine.ParticipantReceipt{}, err
 	}
-	if err := adapter.Plugins.Verify(ctx, tx.Target); err != nil {
-		return fmt.Errorf("mandatory plugin readiness failed: %w", err)
+	pluginReceipt, err := adapter.Plugins.Verify(ctx, tx.Target)
+	if err != nil {
+		return engine.ParticipantReceipt{}, fmt.Errorf("mandatory plugin readiness failed: %w", err)
 	}
-	return nil
+	return engine.ParticipantReceipt{TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.Target.ID, EvidenceDigest: pluginReceipt.Digest}, nil
 }
 
 func (adapter *TargetAdapter) Commit(ctx context.Context, tx model.Transaction) error {
@@ -359,14 +369,17 @@ func (adapter *TargetAdapter) Commit(ctx context.Context, tx model.Transaction) 
 	if err := adapter.Predecessor.Commit(ctx, tx); err != nil {
 		return err
 	}
-	return errors.Join(adapter.Units.Discard(tx.ID), adapter.Files.Discard(tx.ID), adapter.SharedState.Discard(tx.ID))
+	return errors.Join(adapter.Units.Discard(tx.ID), adapter.Files.Discard(tx.ID), adapter.TypedState.Discard(tx.ID), adapter.Plugins.Discard(tx))
 }
 
 func (adapter *TargetAdapter) Restore(ctx context.Context, tx model.Transaction) error {
 	if err := adapter.Files.Restore(tx.ID, adapter.lifecycleFiles(tx)); err != nil {
 		return err
 	}
-	if err := adapter.SharedState.Restore(tx.ID); err != nil {
+	if err := adapter.Plugins.Restore(tx); err != nil {
+		return err
+	}
+	if err := adapter.TypedState.Restore(tx.ID); err != nil {
 		return err
 	}
 	if err := adapter.Units.Restore(tx.ID, adapter.targetUnits()); err != nil {
@@ -410,11 +423,11 @@ func (adapter *TargetAdapter) localPublicStableBridge(tx model.Transaction) bool
 }
 
 func (adapter *TargetAdapter) Discard(ctx context.Context, tx model.Transaction) error {
-	return errors.Join(adapter.Units.Discard(tx.ID), adapter.Files.Discard(tx.ID), adapter.SharedState.Discard(tx.ID), adapter.Predecessor.Discard(ctx, tx))
+	return errors.Join(adapter.Units.Discard(tx.ID), adapter.Files.Discard(tx.ID), adapter.TypedState.Discard(tx.ID), adapter.Plugins.Discard(tx), adapter.Predecessor.Discard(ctx, tx))
 }
 
 func (adapter *TargetAdapter) validate(tx model.Transaction) error {
-	if adapter == nil || adapter.Units == nil || adapter.Files == nil || adapter.SharedState == nil || adapter.Systemd == nil || adapter.Generations == nil || adapter.Health == nil || adapter.Predecessor == nil || adapter.Fence == nil || adapter.Network == nil || adapter.Plugins == nil {
+	if adapter == nil || adapter.Units == nil || adapter.Files == nil || adapter.TypedState == nil || adapter.Systemd == nil || adapter.Generations == nil || adapter.Health == nil || adapter.Predecessor == nil || adapter.Fence == nil || adapter.Network == nil || adapter.Plugins == nil {
 		return errors.New("target platform adapter is incomplete")
 	}
 	if err := adapter.Config.Validate(); err != nil {

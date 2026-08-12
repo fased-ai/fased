@@ -21,7 +21,11 @@ func testAsset(name string, data []byte) trust.Asset {
 
 func privateTestRoot(t *testing.T) string {
 	t.Helper()
-	root, err := os.MkdirTemp(".", ".acquire-test-")
+	base := "."
+	if configured := os.Getenv("FASED_ROOT_FIXTURE_BASE"); configured != "" {
+		base = configured
+	}
+	root, err := os.MkdirTemp(base, ".acquire-test-")
 	if err != nil {
 		t.Fatal(err)
 	}

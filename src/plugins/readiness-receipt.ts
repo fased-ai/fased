@@ -7,7 +7,7 @@ const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const CAPABILITY = /^[a-z][a-z0-9.-]{0,63}$/;
 
-type PluginLockEntry = {
+export type PluginLockEntry = {
   id: string;
   origin: "bundled" | "store";
   digest: string;
@@ -15,13 +15,13 @@ type PluginLockEntry = {
   required: boolean;
 };
 
-type PluginLock = {
+export type PluginLock = {
   schemaVersion: 1;
   type: "fased-plugin-lock";
   entries: PluginLockEntry[];
 };
 
-function canonicalLock(value: unknown): PluginLock {
+export function canonicalPluginLock(value: unknown): PluginLock {
   const lock = value as Partial<PluginLock>;
   if (
     lock.schemaVersion !== 1 ||
@@ -58,6 +58,10 @@ function canonicalLock(value: unknown): PluginLock {
   return { schemaVersion: 1, type: "fased-plugin-lock", entries };
 }
 
+export function readCanonicalPluginLock(lockPath: string): PluginLock {
+  return canonicalPluginLock(JSON.parse(fs.readFileSync(lockPath, "utf8")));
+}
+
 export function writePluginReadinessReceipt(params: {
   registry: PluginRegistry;
   lockPath?: string;
@@ -70,7 +74,7 @@ export function writePluginReadinessReceipt(params: {
   if (!lockPath || !outputPath || !generationId || !DIGEST.test(generationId)) {
     throw new Error("managed plugin readiness identity is incomplete");
   }
-  const lock = canonicalLock(JSON.parse(fs.readFileSync(lockPath, "utf8")));
+  const lock = readCanonicalPluginLock(lockPath);
   const canonical = JSON.stringify(lock);
   const lockDigest = `sha256:${createHash("sha256").update(canonical).digest("hex")}`;
   const loaded = new Map(params.registry.plugins.map((plugin) => [plugin.id, plugin]));

@@ -457,19 +457,17 @@ jobs:
             go_arch=amd64
             if [[ "$architecture" == arm64 ]]; then go_arch=arm64; fi
             signer=".artifacts/hosted-runtime/fased-signerd-linux-${go_arch}"
-            lifecycled=".artifacts/hosted-runtime/fased-lifecycled-linux-${go_arch}"
-            inventory_lifecycled=".artifacts/hosted-runtime/fased-lifecycled-linux-amd64"
-            chmod 0755 "$signer" "$lifecycled" "$inventory_lifecycled"
+            inventory_tool=".artifacts/hosted-runtime/fased-lifecycled-linux-amd64"
+            chmod 0755 "$signer" "$inventory_tool"
             dependency_hash="$(jq -er ".application.linux.${architecture}.dependencies.dependencyHash" .artifacts/hosted-runtime/fased-hosted-release-v2.json)"
             node scripts/assemble-lifecycle-generation.mjs \
               --runtime-archive ".artifacts/hosted-runtime/fased-hosted-app-v2-linux-${architecture}-v${package_version}.tar.gz" \
               --dependency-archive ".artifacts/hosted-runtime/fased-hosted-deps-linux-${architecture}-${dependency_hash}.tar.gz" \
               --release-manifest .artifacts/hosted-runtime/fased-hosted-release-v2.json \
               --signer "$signer" \
-              --lifecycled "$lifecycled" \
               --node ".artifacts/node-runtime/${architecture}/node" \
               --node-license ".artifacts/node-runtime/${architecture}/LICENSE" \
-              --inventory-lifecycled "$inventory_lifecycled" \
+              --inventory-tool "$inventory_tool" \
               --output-dir .artifacts/hosted-runtime \
               --version "$package_version" \
               --commit "$GITHUB_SHA" \
@@ -743,6 +741,7 @@ jobs:
             node scripts/build-public-predecessor-capsule.mjs \
               --profile "$profile" \
               --release-manifest "$source_dir/fased-hosted-release-v2.json" \
+              --release-manifest-attestation "$source_dir/fased-hosted-release-v2.json.attestation.json" \
               --release-tree "$predecessor_tree" \
               --compatibility-index config/lifecycle-compatibility.v1.json \
               --acceptance-contract config/lifecycle-acceptance.v2.json \

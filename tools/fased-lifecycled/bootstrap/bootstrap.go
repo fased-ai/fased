@@ -23,7 +23,6 @@ type PlatformBootstrapRequest struct {
 	ExpectedRegistryOwner   uint32
 	RegistryPath            string
 	JournalPath             string
-	StableDaemonPath        string
 	StableDaemon            []byte
 	Principals              platform.PrincipalSystem
 	ACL                     platform.HomeACL
@@ -41,7 +40,7 @@ type PlatformBootstrapResult struct {
 
 func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapRequest) (PlatformBootstrapResult, error) {
 	if request.Principals == nil || request.Systemd == nil || request.GatewayPort == 0 || len(request.StableDaemon) == 0 ||
-		!filepath.IsAbs(request.JournalPath) || !filepath.IsAbs(request.StableDaemonPath) {
+		!filepath.IsAbs(request.JournalPath) {
 		return PlatformBootstrapResult{}, errors.New("platform bootstrap dependencies are incomplete")
 	}
 	operator, exists, err := request.Principals.LookupUser(ctx, request.OperatorUser)
@@ -163,7 +162,7 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 		return func() error { return request.ACL.Restore(ctx, home, snapshot) }, nil
 	}})
 	steps = append(steps, platform.BootstrapStep{Phase: platform.BootstrapPhaseDaemon, Apply: func() (platform.BootstrapUndo, error) {
-		replacement, err := platform.InstallFileTransactional(request.StableDaemonPath, request.StableDaemon, 0o755, 0, 0)
+		replacement, err := platform.InstallFileTransactional(platform.StableLifecycleHostPath, request.StableDaemon, 0o755, 0, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -205,7 +204,7 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 			return nil, err
 		}
 		unit := identity.Services["supervisor"]
-		unitData, err := platform.RenderSupervisorUnit(config, request.StableDaemonPath)
+		unitData, err := platform.RenderSupervisorUnit(config)
 		if err != nil {
 			return nil, err
 		}

@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "version": "0.1.76-rc.74",
+    "tag": "v0.1.76-rc.74",
+    "commit": "2ab10b11fd4bd01678a115be05308d37bfba1a50"
+  },
+  "application": {
+    "linux": {
+      "x64": {
+        "artifact": {
+          "asset": "fased-hosted-app-v2-linux-x64-v0.1.76-rc.74.tar.gz",
+          "sha256": "8dfdf0d95512c7dcd02c6c4af1ddab38e5bdf80a2f6ac0ca6dd3b0beaea97236"
+        },
+        "dependencies": {
+          "dependencyHash": "477a1be8ac86c0f6ae9f5ae06e58a7ec6aa238654559011e6c13330fdcd364c4",
+          "asset": "fased-hosted-deps-linux-x64-477a1be8ac86c0f6ae9f5ae06e58a7ec6aa238654559011e6c13330fdcd364c4.tar.gz",
+          "sha256": "5848a0f8dab8374eea6148249be6175b4213af41420510c3cdd37f24f2d87c8c"
+        }
+      },
+      "arm64": {
+        "artifact": {
+          "asset": "fased-hosted-app-v2-linux-arm64-v0.1.76-rc.74.tar.gz",
+          "sha256": "79ce4082f1f6ed2433002cb241d4bd8f3816927fe528cf7871a31030e4d28b40"
+        },
+        "dependencies": {
+          "dependencyHash": "477a1be8ac86c0f6ae9f5ae06e58a7ec6aa238654559011e6c13330fdcd364c4",
+          "asset": "fased-hosted-deps-linux-arm64-477a1be8ac86c0f6ae9f5ae06e58a7ec6aa238654559011e6c13330fdcd364c4.tar.gz",
+          "sha256": "5b7a6722a00629c6ccdf516f0861725969e0a40712471860892416ed3380c0c0"
+        }
+      }
+    }
+  },
+  "signer": {
+    "release": {
+      "version": "0.1.76-rc.74",
+      "commit": "2ab10b11fd4bd01678a115be05308d37bfba1a50",
+      "buildInputDigest": "sha256:43c7e88081b2d3312d9e3d1428e07022b24d235d8b5509ecd84056cbd718670e",
+      "development": false
+    },
+    "capabilities": {
+      "protocol": {
+        "current": 2,
+        "min": 2,
+        "max": 2
+      },
+      "nativeFeeReservationLamports": 5000000,
+      "intentTypes": [
+        "solana.nativeTransfer",
+        "solana.splTransferChecked",
+        "solana.satAction",
+        "solana.satLookupTable",
+        "solana.vaultBondAction",
+        "federation.bondChallenge",
+        "solana.jupiter.swap",
+        "solana.jupiter.trigger.create",
+        "solana.jupiter.trigger.cancel"
+      ],
+      "operationStates": [
+        "reserved",
+        "broadcast",
+        "confirmed",
+        "failed",
+        "unknown"
+      ],
+      "features": [
+        "failClosedPolicies",
+        "policyHashes",
+        "applicationPolicyTightening",
+        "vaultReviewedOnly",
+        "durableCaps",
+        "atomicMultiAssetCaps",
+        "signerControlledNativeFeeCaps",
+        "atomicIdempotency",
+        "ambiguousBroadcastReconciliation",
+        "signerOwnedKeys",
+        "signerOwnedRoleBaselines",
+        "liveWalletReadiness",
+        "signerOwnedSuccessorRotation",
+        "signerOwnedMiningRetirementEvidence",
+        "permanentRetiredWalletPolicies",
+        "signerOwnedRPC",
+        "applicationNetworkBootstrap",
+        "signerOwnedEncryptedRecovery",
+        "signerOwnedRawExport",
+        "restrictedOperatorLifecycle",
+        "typedSolanaTransactions",
+        "typedA2aPaymentMemos",
+        "typedA2aRefundMemos",
+        "idempotentAssociatedTokenCreation",
+        "typedSATActions",
+        "typedSATAddressLookupTables",
+        "typedVaultBondActions",
+        "domainSeparatedFederationBondChallenges",
+        "federationBondChallengeWrapperV2",
+        "signerOwnedWebAuthn",
+        "signerOwnedWebAuthnCredentialRevocation",
+        "singleUseReviewedAuthorization",
+        "typedJupiterSemantics",
+        "signerOwnedReviewPrepareExecute",
+        "exactPreparedTransactions",
+        "legacyOnlyJupiterTransactions",
+        "reviewedVaultBondActions",
+        "reviewedFederationBondChallenges",
+        "signerOwnedStateRecheck",
+        "durableReviewAuthorization",
+        "signerOwnedJupiterTriggerV2",
+        "signerOwnedJupiterTriggerHistory",
+        "jupiterTriggerSecretsNeverCrossSocket",
+        "jupiterTriggerDurablePhases"
+      ]
+    },
+    "capabilitiesDigest": "sha256:2648703060e1c319e72599a2b637ddd0ea77c41d40b8689ec072c2471310e98f",
+    "platforms": {
+      "linux-amd64": {
+        "asset": "fased-signerd-linux-amd64",
+        "sha256": "e34ea77478dc56639e5088e3dd6aa1fea65322800f8b41e2b7a6e43b3c747683"
+      },
+      "linux-arm64": {
+        "asset": "fased-signerd-linux-arm64",
+        "sha256": "c4354d8bb0f22d549abf015032de0e805c601d957a1d1310b5eba3219c72af32"
+      },
+      "darwin-amd64": {
+        "asset": "fased-signerd-darwin-amd64",
+        "sha256": "178d036aff87664f6ae53eb6a7177052a1120b374a100cd37977980b83215abf"
+      },
+      "darwin-arm64": {
+        "asset": "fased-signerd-darwin-arm64",
+        "sha256": "42e6584bba0ff021bf8cc4d5450b5ab903f3acab3bbc266dc5dddb6019ab86b5"
+      }
+    }
+  }
+}

@@ -18,7 +18,7 @@ FIXTURE_TREE="$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')"
 git -C "$ROOT_DIR" merge-base --is-ancestor "$BUILDER_COMMIT" "$FIXTURE_COMMIT"
 unexpected_changes="$(
   git -C "$ROOT_DIR" diff --name-only "$BUILDER_COMMIT..$FIXTURE_COMMIT" | \
-    grep -Ev '^(scripts/test-lifecycle-(local|hosting)-acceptance\.sh|scripts/docker/(protected-local|hosting)-systemd/lifecycle-acceptance\.sh|scripts/lifecycle-(d8-contract|version-neutral)\.test\.ts|scripts/build-public-predecessor-capsule\.mjs|scripts/build-public-predecessor-capsule\.test\.ts|scripts/prepare-branch-predecessor-capsule\.sh)$' || true
+    grep -Ev '^(scripts/test-lifecycle-(local|hosting)-acceptance\.sh|scripts/docker/(protected-local|hosting)-systemd/lifecycle-acceptance\.sh|scripts/lifecycle-(d8-contract|version-neutral)\.test\.ts|scripts/lifecycle-configuration-preservation\.(mjs|test\.ts)|scripts/build-public-predecessor-capsule\.mjs|scripts/build-public-predecessor-capsule\.test\.ts|scripts/prepare-branch-predecessor-capsule\.sh)$' || true
 )"
 [[ -z "$unexpected_changes" ]] || {
   echo "Predecessor capsule reuse rejected product changes:" >&2
@@ -55,6 +55,7 @@ if [[ ! -f "$target/fased-predecessor-capsule.json" ]]; then
   node "$ROOT_DIR/scripts/build-public-predecessor-capsule.mjs" \
     --profile "$PROFILE" \
     --release-manifest "$source_dir/fased-hosted-release-v2.json" \
+    --release-manifest-attestation "$source_dir/fased-hosted-release-v2.json.attestation.json" \
     --release-tree "$predecessor_tree" \
     --compatibility-index "$ROOT_DIR/config/lifecycle-compatibility.v1.json" \
     --acceptance-contract "$ROOT_DIR/config/lifecycle-acceptance.v2.json" \

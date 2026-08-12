@@ -26,29 +26,36 @@ type fakeLifecycleFiles struct {
 	activations *[][]string
 }
 
-type fakeSharedState struct{ calls *[]string }
+type fakeTypedState struct{ calls *[]string }
 
-func (state fakeSharedState) Prepare(string) (string, error) {
+func (state fakeTypedState) Prepare(string) (StatePreparation, error) {
 	*state.calls = append(*state.calls, "shared.prepare")
-	return digestA, nil
+	return StatePreparation{Digest: digestA, ParticipantDigests: testStateParticipantDigests()}, nil
 }
-func (state fakeSharedState) Activate(string) error {
+
+func testStateParticipantDigests() map[string]string {
+	return map[string]string{
+		"application-state": digestA, "configuration": digestA, "wallet": digestA, "mining": digestA,
+		"federation": digestA, "plugin-data": digestA, "signer": digestA,
+	}
+}
+func (state fakeTypedState) Activate(string) error {
 	*state.calls = append(*state.calls, "shared.activate")
 	return nil
 }
-func (state fakeSharedState) VerifyAccess(string) error {
+func (state fakeTypedState) VerifyAccess(context.Context, string) error {
 	*state.calls = append(*state.calls, "shared.verify-access")
 	return nil
 }
-func (state fakeSharedState) Restore(string) error {
+func (state fakeTypedState) Restore(string) error {
 	*state.calls = append(*state.calls, "shared.restore")
 	return nil
 }
-func (state fakeSharedState) Discard(string) error {
+func (state fakeTypedState) Discard(string) error {
 	*state.calls = append(*state.calls, "shared.discard")
 	return nil
 }
-func (state fakeSharedState) Converge() error {
+func (state fakeTypedState) Converge() error {
 	*state.calls = append(*state.calls, "shared.converge")
 	return nil
 }
@@ -183,14 +190,29 @@ type fakePlugins struct {
 	verifyErr  error
 }
 
-func (plugins fakePlugins) Prepare(_ context.Context, target model.Generation) error {
-	*plugins.calls = append(*plugins.calls, "plugins.prepare:"+target.ID)
-	return plugins.prepareErr
+func (plugins fakePlugins) Prepare(_ context.Context, tx model.Transaction) (PreparedPluginLock, error) {
+	*plugins.calls = append(*plugins.calls, "plugins.prepare:"+tx.Target.ID)
+	return PreparedPluginLock{Data: []byte("{\"schemaVersion\":1,\"type\":\"fased-plugin-lock\",\"entries\":[]}\n"), Digest: digestA}, plugins.prepareErr
 }
 
-func (plugins fakePlugins) Verify(_ context.Context, target model.Generation) error {
+func (plugins fakePlugins) Activate(tx model.Transaction) error {
+	*plugins.calls = append(*plugins.calls, "plugins.activate:"+tx.Target.ID)
+	return nil
+}
+
+func (plugins fakePlugins) Restore(tx model.Transaction) error {
+	*plugins.calls = append(*plugins.calls, "plugins.restore:"+tx.Target.ID)
+	return nil
+}
+
+func (plugins fakePlugins) Discard(tx model.Transaction) error {
+	*plugins.calls = append(*plugins.calls, "plugins.discard:"+tx.Target.ID)
+	return nil
+}
+
+func (plugins fakePlugins) Verify(_ context.Context, target model.Generation) (PluginReadinessReceipt, error) {
 	*plugins.calls = append(*plugins.calls, "plugins.verify:"+target.ID)
-	return plugins.verifyErr
+	return PluginReadinessReceipt{Digest: digestA}, plugins.verifyErr
 }
 
 type fakeManifestReader struct{ manifest model.Manifest }
@@ -219,7 +241,7 @@ func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) 
 	t.Helper()
 	tx, identity := manifestTransaction(t, false)
 	root := t.TempDir()
-	for _, name := range []string{"fased-gateway-launch", "fased-signerd", "fased-lifecycled", "node"} {
+	for _, name := range []string{"fased-gateway-launch", "fased-signerd", "node"} {
 		path := filepath.Join(root, "bin", name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
@@ -257,7 +279,7 @@ func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) 
 		t.Fatal(err)
 	}
 	calls := []string{}
-	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Files: fakeLifecycleFiles{calls: &calls}, SharedState: fakeSharedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls}, Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Fence: fakeFence{calls: &calls}, Network: NoNetworkPolicy{}, Plugins: fakePlugins{calls: &calls}}, tx, &calls
+	return &TargetAdapter{Config: config, Identity: identity, Units: &fakeUnits{calls: &calls}, Files: fakeLifecycleFiles{calls: &calls}, TypedState: fakeTypedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls}, Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Fence: fakeFence{calls: &calls}, Network: NoNetworkPolicy{}, Plugins: fakePlugins{calls: &calls}}, tx, &calls
 }
 
 func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing.T) {
@@ -275,29 +297,41 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 	if err := adapter.Activate(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
-	if err := adapter.Verify(context.Background(), tx); err != nil {
+	pluginReceipt, err := adapter.Verify(context.Background(), tx)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if pluginReceipt.TransactionID != tx.ID || pluginReceipt.TargetGenerationID != tx.Target.ID ||
+		pluginReceipt.StateInventoryDigest != tx.StateInventoryDigest || pluginReceipt.PlanDigest != tx.Target.ID ||
+		pluginReceipt.EvidenceDigest != digestA {
+		t.Fatalf("plugin readiness was not bound to the transaction: %+v", pluginReceipt)
 	}
 	if err := adapter.Commit(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
 		"plugins.prepare:" + digestB, "units.prepare", "files.prepare", "systemd.stop:fased-gateway-example.service", "systemd.stop:fased-signerd-example.service", "shared.prepare",
-		"shared.activate", "shared.verify-access", "files.activate", "units.activate", "systemd.reload", "systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
+		"shared.activate", "plugins.activate:" + digestB, "files.activate", "shared.verify-access", "units.activate", "systemd.reload", "systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
 		"systemd.enable:fased-gateway-example.service", "systemd.start:fased-gateway-example.service",
 		"systemd.active:fased-signerd-example.service", "systemd.active:fased-gateway-example.service",
 		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		"plugins.verify:" + digestB,
-		"generation.activate:" + digestB + ":" + digestA, "files.activate", "units.discard", "files.discard", "shared.discard",
+		"generation.activate:" + digestB + ":" + digestA, "files.activate", "units.discard", "files.discard", "shared.discard", "plugins.discard:" + digestB,
 	}
 	if !reflect.DeepEqual(*calls, want) {
 		t.Fatalf("unexpected target adapter order:\n got=%v\nwant=%v", *calls, want)
 	}
 	definitions := adapter.Units.(*fakeUnits).definitions
+	if len(definitions) != 2 {
+		t.Fatalf("target transaction staged a service outside Gateway and signer: %v", definitions)
+	}
 	combined := string(definitions[adapter.Identity.Services["signer"]]) + string(definitions[adapter.Identity.Services["gateway"]])
 	if strings.Contains(combined, "/bin/sh") || !strings.Contains(combined, "NoNewPrivileges=true") ||
 		!strings.Contains(combined, fmt.Sprintf("User=%d", adapter.Config.Signer.UID)) {
 		t.Fatalf("canonical units lack privilege or direct-exec contracts:\n%s", combined)
+	}
+	if strings.Contains(combined, "fased-lifecycled") || strings.Contains(combined, "fased-bootstrap") || strings.Contains(combined, "controller-worker") {
+		t.Fatalf("application generation selected a privileged lifecycle executable:\n%s", combined)
 	}
 	if !strings.Contains(combined, "SupplementaryGroups=fscf-example") ||
 		!strings.Contains(combined, "RuntimeDirectoryMode=0755") ||
@@ -327,7 +361,7 @@ func TestTargetAdapterRequiresPluginLockBeforeMutationAndReadinessBeforeCommit(t
 	*calls = nil
 	adapter.Plugins = fakePlugins{calls: calls, verifyErr: errors.New("mandatory plugin missing")}
 	tx.Phase = model.PhasePrepared
-	if err := adapter.Verify(context.Background(), tx); err == nil || !strings.Contains(err.Error(), "mandatory plugin readiness") {
+	if _, err := adapter.Verify(context.Background(), tx); err == nil || !strings.Contains(err.Error(), "mandatory plugin readiness") {
 		t.Fatalf("mandatory plugin readiness failure was accepted: %v", err)
 	}
 	if got := strings.Join(*calls, ","); strings.Contains(got, "generation.activate:") || strings.Contains(got, "files.activate") {
@@ -382,11 +416,11 @@ func TestFreshLocalDefersGatewayUntilOnboardingCreatesConfig(t *testing.T) {
 	if err := adapter.Activate(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
-	if err := adapter.Verify(context.Background(), tx); err != nil {
+	if _, err := adapter.Verify(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
-		"plugins.prepare:" + digestB, "units.prepare", "files.prepare", "shared.prepare", "shared.activate", "shared.verify-access", "files.activate", "units.activate", "systemd.reload",
+		"plugins.prepare:" + digestB, "units.prepare", "files.prepare", "shared.prepare", "shared.activate", "plugins.activate:" + digestB, "files.activate", "shared.verify-access", "units.activate", "systemd.reload",
 		"systemd.enable:fased-signerd-example.service", "systemd.start:fased-signerd-example.service",
 		"systemd.enable:fased-gateway-example.service", "systemd.active:fased-signerd-example.service",
 	}
@@ -431,7 +465,7 @@ func TestLocalBridgeVerifiesDurableFenceBeforeLifecycleProjectionAndPredecessor(
 	if len(activations) != 1 || !reflect.DeepEqual(activations[0], wantTargets) {
 		t.Fatalf("Local bridge commit activation order changed: got=%v want=%v", activations, wantTargets)
 	}
-	wantTail := []string{"fence.verify", "generation.activate:" + digestB + ":", "files.activate", "predecessor.commit", "units.discard", "files.discard", "shared.discard"}
+	wantTail := []string{"fence.verify", "generation.activate:" + digestB + ":", "files.activate", "predecessor.commit", "units.discard", "files.discard", "shared.discard", "plugins.discard:" + digestB}
 	if !reflect.DeepEqual((*calls)[len(*calls)-len(wantTail):], wantTail) {
 		t.Fatalf("predecessor committed before durable fence activation: %v", *calls)
 	}
@@ -487,7 +521,7 @@ func testCompleteOnboardingStartsAndVerifiesExactCommittedGateway(t *testing.T, 
 		Platform: identity, ActiveGeneration: &active, StateSchemas: map[string]uint32{"signer": 2},
 		Capabilities: model.CapabilityRanges{Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1}, Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 1, Max: 1}}, ReleaseSequence: 12, SecurityEpoch: 3}
 	calls := []string{}
-	adapter := TargetAdapter{Config: config, Identity: identity, SharedState: fakeSharedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls, inactive: map[string]bool{identity.Services["gateway"]: true}}, Health: fakeHealth{calls: &calls}, Manifest: fakeManifestReader{manifest: manifest}, Plugins: fakePlugins{calls: &calls}}
+	adapter := TargetAdapter{Config: config, Identity: identity, TypedState: fakeTypedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls, inactive: map[string]bool{identity.Services["gateway"]: true}}, Health: fakeHealth{calls: &calls}, Manifest: fakeManifestReader{manifest: manifest}, Plugins: fakePlugins{calls: &calls}}
 	result, err := adapter.CompleteOnboarding(context.Background())
 	if err != nil || result.Outcome != engine.OutcomeUpdated || result.Phase != model.PhaseCommitted {
 		t.Fatal(err)
@@ -518,7 +552,7 @@ func TestHostingCompleteOnboardingReturnsAlreadyCurrentForHealthyGateway(t *test
 		Platform: identity, ActiveGeneration: &active, StateSchemas: map[string]uint32{"signer": 2},
 		Capabilities: model.CapabilityRanges{Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1}, Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 1, Max: 1}}, ReleaseSequence: 12, SecurityEpoch: 3}
 	calls := []string{}
-	adapter := TargetAdapter{Config: config, Identity: identity, SharedState: fakeSharedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Health: fakeHealth{calls: &calls}, Manifest: fakeManifestReader{manifest: manifest}, Plugins: fakePlugins{calls: &calls}}
+	adapter := TargetAdapter{Config: config, Identity: identity, TypedState: fakeTypedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls}, Health: fakeHealth{calls: &calls}, Manifest: fakeManifestReader{manifest: manifest}, Plugins: fakePlugins{calls: &calls}}
 	result, err := adapter.CompleteOnboarding(context.Background())
 	if err != nil || result.Outcome != engine.OutcomeAlreadyCurrent || result.Phase != model.PhaseCommitted {
 		t.Fatalf("unexpected idempotent onboarding result: result=%+v err=%v", result, err)
@@ -611,7 +645,7 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	tx.PlatformDigest = platformDigest
 
 	root := t.TempDir()
-	for _, name := range []string{"fased-gateway-launch", "fased-signerd", "fased-lifecycled", "node"} {
+	for _, name := range []string{"fased-gateway-launch", "fased-signerd", "node"} {
 		path := filepath.Join(root, "bin", name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
@@ -633,7 +667,7 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	calls := []string{}
 	units := &fakeUnits{calls: &calls}
 	adapter := &TargetAdapter{
-		Config: config, Identity: identity, Units: units, Files: fakeLifecycleFiles{calls: &calls}, SharedState: fakeSharedState{calls: &calls},
+		Config: config, Identity: identity, Units: units, Files: fakeLifecycleFiles{calls: &calls}, TypedState: fakeTypedState{calls: &calls},
 		Systemd: fakeSystemd{calls: &calls}, Generations: fakeGenerations{root: root, dependency: filepath.Join(root, "dependencies", "node_modules"), calls: &calls},
 		Health: fakeHealth{calls: &calls}, Predecessor: NoPredecessor{}, Fence: NoLocalPredecessorFence{}, Network: NoNetworkPolicy{}, Plugins: fakePlugins{calls: &calls},
 	}
@@ -650,7 +684,7 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	if err := adapter.Activate(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
-	if err := adapter.Verify(context.Background(), tx); err != nil {
+	if _, err := adapter.Verify(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
 	if err := adapter.Commit(context.Background(), tx); err != nil {
@@ -658,17 +692,20 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	}
 	want := []string{
 		"plugins.prepare:" + digestB, "units.prepare", "files.prepare", "systemd.stop:fased-gateway.service", "systemd.stop:fased-signerd.service", "shared.prepare",
-		"shared.activate", "shared.verify-access", "files.activate", "units.activate", "systemd.reload", "systemd.enable:fased-signerd.service", "systemd.start:fased-signerd.service",
+		"shared.activate", "plugins.activate:" + digestB, "files.activate", "shared.verify-access", "units.activate", "systemd.reload", "systemd.enable:fased-signerd.service", "systemd.start:fased-signerd.service",
 		"systemd.enable:fased-gateway.service", "systemd.start:fased-gateway.service",
 		"systemd.active:fased-signerd.service", "systemd.active:fased-gateway.service",
 		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		"plugins.verify:" + digestB,
-		"generation.activate:" + digestB + ":" + digestA, "files.activate", "units.discard", "files.discard", "shared.discard",
+		"generation.activate:" + digestB + ":" + digestA, "files.activate", "units.discard", "files.discard", "shared.discard", "plugins.discard:" + digestB,
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("unexpected Hosting adapter order:\n got=%v\nwant=%v", calls, want)
 	}
 	combined := string(units.definitions[identity.Services["signer"]]) + string(units.definitions[identity.Services["gateway"]])
+	if len(units.definitions) != 2 || strings.Contains(combined, "fased-lifecycled") || strings.Contains(combined, "fased-bootstrap") || strings.Contains(combined, "host-controller") {
+		t.Fatalf("Hosting target transaction staged a privileged lifecycle service: %v\n%s", units.definitions, combined)
+	}
 	for _, required := range []string{
 		fmt.Sprintf("User=%d", signer.UID), "NoNewPrivileges=true", "Environment=HOME=" + config.OwnerHome(),
 		"Environment=FASED_STATE_DIR=" + config.OwnerStateRoot, "Environment=FASED_HOST_PROFILE=hosting",
@@ -692,7 +729,7 @@ func TestTargetAdapterRestoresPreviousButDoesNotStartAbsentFreshServices(t *test
 	if err := adapter.Restore(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(*calls, []string{"files.restore", "shared.restore", "units.restore", "systemd.reload", "systemd.start:fased-signerd-example.service", "systemd.start:fased-gateway-example.service"}) {
+	if !reflect.DeepEqual(*calls, []string{"files.restore", "plugins.restore:" + digestB, "shared.restore", "units.restore", "systemd.reload", "systemd.start:fased-signerd-example.service", "systemd.start:fased-gateway-example.service"}) {
 		t.Fatalf("update restore order changed: %v", *calls)
 	}
 	*calls = nil
@@ -700,7 +737,7 @@ func TestTargetAdapterRestoresPreviousButDoesNotStartAbsentFreshServices(t *test
 	if err := adapter.Restore(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(*calls, []string{"files.restore", "shared.restore", "units.restore", "systemd.reload"}) {
+	if !reflect.DeepEqual(*calls, []string{"files.restore", "plugins.restore:" + digestB, "shared.restore", "units.restore", "systemd.reload"}) {
 		t.Fatalf("fresh rollback started absent services: %v", *calls)
 	}
 }

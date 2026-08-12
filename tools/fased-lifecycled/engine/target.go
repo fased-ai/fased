@@ -1,4 +1,4 @@
-// Package engine coordinates the target-controller product transaction.
+// Package engine coordinates the lifecycle host's product transaction.
 package engine
 
 import (
@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 
 	"fased-lifecycled/model"
 	"fased-lifecycled/store"
@@ -31,6 +32,18 @@ type ParticipantReceipt struct {
 	TargetGenerationID   string
 	StateInventoryDigest string
 	PlanDigest           string
+	EvidenceDigest       string
+	MemberDigests        StateMemberDigests
+}
+
+type StateMemberDigests struct {
+	ApplicationState string
+	Configuration    string
+	Wallet           string
+	Mining           string
+	Federation       string
+	PluginData       string
+	Signer           string
 }
 
 type Journal interface {
@@ -66,7 +79,7 @@ type PlatformAdapter interface {
 	PrepareState(context.Context, model.Transaction) (ParticipantReceipt, string, error)
 	StopTarget(context.Context, model.Transaction) error
 	Activate(context.Context, model.Transaction) error
-	Verify(context.Context, model.Transaction) error
+	Verify(context.Context, model.Transaction) (ParticipantReceipt, error)
 	Commit(context.Context, model.Transaction) error
 	Restore(context.Context, model.Transaction) error
 	Discard(context.Context, model.Transaction) error
@@ -146,6 +159,9 @@ func (engine *TargetEngine) Run(ctx context.Context, tx model.Transaction) (Resu
 	if err := validateReceipt(stateReceipt, tx, tx.StateInventoryDigest); err != nil {
 		return engine.rollback(ctx, tx, true, err)
 	}
+	if err := validateStateMemberDigests(stateReceipt.MemberDigests); err != nil {
+		return engine.rollback(ctx, tx, true, err)
+	}
 	if err := engine.progress(tx, store.ProgressStatePrepared, durableReceipt("state", stateReceipt), undoRecord("state", "target/typed-state", stateUndoDigest)); err != nil {
 		return engine.rollback(ctx, tx, true, err)
 	}
@@ -187,8 +203,19 @@ func (engine *TargetEngine) Run(ctx context.Context, tx model.Transaction) (Resu
 	if err := engine.progress(tx, store.ProgressSignerVerified, durableReceipt("signer", signerReceipt), nil); err != nil {
 		return engine.rollback(ctx, tx, true, err)
 	}
-	if err := engine.Adapter.Verify(ctx, tx); err != nil {
+	pluginReceipt, err := engine.Adapter.Verify(ctx, tx)
+	if err != nil {
 		return engine.rollback(ctx, tx, true, err)
+	}
+	if pluginReceipt != (ParticipantReceipt{}) {
+		if err := validateReceipt(pluginReceipt, tx, tx.Target.ID); err != nil || !validDigest(pluginReceipt.EvidenceDigest) {
+			return engine.rollback(ctx, tx, true, errors.Join(err, errors.New("plugin readiness receipt is not durably bound")))
+		}
+		if err := engine.progress(tx, store.ProgressPluginVerified, durableReceipt("plugin", pluginReceipt), nil); err != nil {
+			return engine.rollback(ctx, tx, true, err)
+		}
+	} else if tx.PlanAction != "INSTALL" || tx.Previous != nil {
+		return engine.rollback(ctx, tx, true, errors.New("mandatory plugin readiness receipt is missing"))
 	}
 	if err := engine.progress(tx, store.ProgressPlatformVerified, nil, nil); err != nil {
 		return engine.rollback(ctx, tx, true, err)
@@ -406,7 +433,20 @@ func (engine *TargetEngine) progress(tx model.Transaction, step store.ProgressSt
 }
 
 func durableReceipt(participant string, receipt ParticipantReceipt) *store.DurableParticipantReceipt {
-	return &store.DurableParticipantReceipt{Participant: participant, TransactionID: receipt.TransactionID, TargetGenerationID: receipt.TargetGenerationID, StateInventoryDigest: receipt.StateInventoryDigest, PlanDigest: receipt.PlanDigest}
+	members := []store.DurableParticipantMember(nil)
+	if receipt.MemberDigests != (StateMemberDigests{}) {
+		members = []store.DurableParticipantMember{
+			{Participant: "application-state", Digest: receipt.MemberDigests.ApplicationState},
+			{Participant: "configuration", Digest: receipt.MemberDigests.Configuration},
+			{Participant: "wallet", Digest: receipt.MemberDigests.Wallet},
+			{Participant: "mining", Digest: receipt.MemberDigests.Mining},
+			{Participant: "federation", Digest: receipt.MemberDigests.Federation},
+			{Participant: "plugin-data", Digest: receipt.MemberDigests.PluginData},
+			{Participant: "signer", Digest: receipt.MemberDigests.Signer},
+		}
+	}
+	sort.Slice(members, func(i, j int) bool { return members[i].Participant < members[j].Participant })
+	return &store.DurableParticipantReceipt{Participant: participant, TransactionID: receipt.TransactionID, TargetGenerationID: receipt.TargetGenerationID, StateInventoryDigest: receipt.StateInventoryDigest, PlanDigest: receipt.PlanDigest, EvidenceDigest: receipt.EvidenceDigest, Members: members}
 }
 
 func undoRecord(participant, locator, digest string) *store.DurableUndoRecord {
@@ -437,12 +477,19 @@ func (engine *TargetEngine) validateRecoveryProgress(tx model.Transaction) error
 	case model.PhaseRolledBack:
 		required = store.ProgressRollbackCompleted
 	}
+	foundRequired := false
+	foundPlugin := false
 	for _, event := range record.Events {
-		if event.Step == required {
-			return nil
-		}
+		foundRequired = foundRequired || event.Step == required
+		foundPlugin = foundPlugin || (event.Step == store.ProgressPluginVerified && event.Receipt != nil && event.Receipt.Participant == "plugin")
 	}
-	return fmt.Errorf("durable transaction progress lacks required step %s", required)
+	if !foundRequired {
+		return fmt.Errorf("durable transaction progress lacks required step %s", required)
+	}
+	if (tx.Phase == model.PhaseVerified || tx.Phase == model.PhaseCommitted) && (tx.PlanAction != "INSTALL" || tx.Previous != nil) && !foundPlugin {
+		return errors.New("durable transaction progress lacks mandatory plugin readiness")
+	}
+	return nil
 }
 
 func (engine *TargetEngine) completedProgress(tx model.Transaction) (map[store.ProgressStep]bool, error) {
@@ -475,6 +522,27 @@ func validateReceipt(receipt ParticipantReceipt, tx model.Transaction, planDiges
 		return errors.New("participant receipt does not match the immutable transaction envelope")
 	}
 	return nil
+}
+
+func validateStateMemberDigests(members StateMemberDigests) error {
+	for _, digest := range []string{members.ApplicationState, members.Configuration, members.Wallet, members.Mining, members.Federation, members.PluginData, members.Signer} {
+		if !validDigest(digest) {
+			return errors.New("typed state receipt contains an invalid participant binding")
+		}
+	}
+	return nil
+}
+
+func validDigest(value string) bool {
+	if len(value) != 71 || value[:7] != "sha256:" {
+		return false
+	}
+	for _, character := range value[7:] {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func appendIfError(existing []error, err error) []error {

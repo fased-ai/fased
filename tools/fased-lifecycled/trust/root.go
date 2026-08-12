@@ -9,11 +9,22 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
+	"strings"
 	"time"
 )
 
-const maxRootLifetime = 5 * 366 * 24 * time.Hour
+const (
+	maxRootLifetime                    = 5 * 366 * 24 * time.Hour
+	githubArtifactAttestationAuthority = "github-artifact-attestation-v1"
+	githubArtifactAttestationRefPrefix = "refs/tags/v"
+)
+
+var (
+	repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,38})/[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,99})$`)
+	workflowPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*\.ya?ml$`)
+)
 
 type RootRole struct {
 	KeyIDs    []string `json:"keyIds"`
@@ -50,6 +61,12 @@ type VerifiedRoot struct {
 
 func (root VerifiedRoot) Version() uint64 { return root.metadata.Version }
 func (root VerifiedRoot) Digest() string  { return root.digest }
+func (root VerifiedRoot) ReleaseAuthority() ReleaseAuthority {
+	if root.metadata.ReleaseAuthority == nil {
+		return ReleaseAuthority{}
+	}
+	return *root.metadata.ReleaseAuthority
+}
 
 func SignRoot(metadata RootMetadata, keys []SigningKey) ([]byte, error) {
 	if _, err := validateRootMetadata(metadata, time.Time{}); err != nil {
@@ -161,7 +178,25 @@ func validateRootMetadata(metadata RootMetadata, now time.Time) (map[string]ed25
 	if !sortedUnique(metadata.Revocations.ReleaseVersions) || !sortedUnique(metadata.Revocations.TargetDigests) || !sortedUnique(metadata.Revocations.DelegatedKeyIDs) {
 		return nil, errors.New("root revocations must be unique and sorted")
 	}
+	if err := validateReleaseAuthority(metadata.ReleaseAuthority); err != nil {
+		return nil, err
+	}
 	return keys, nil
+}
+
+func validateReleaseAuthority(authority *ReleaseAuthority) error {
+	if authority == nil || authority.Type != githubArtifactAttestationAuthority ||
+		!repositoryPattern.MatchString(authority.Repository) ||
+		authority.SourceRefPrefix != githubArtifactAttestationRefPrefix ||
+		!authority.DenySelfHostedRunners {
+		return errors.New("lifecycle release authority is malformed")
+	}
+	prefix := authority.Repository + "/.github/workflows/"
+	if !strings.HasPrefix(authority.Workflow, prefix) ||
+		!workflowPattern.MatchString(strings.TrimPrefix(authority.Workflow, prefix)) {
+		return errors.New("lifecycle release authority workflow is malformed")
+	}
+	return nil
 }
 
 func parseKey(id string, record Key) (ed25519.PublicKey, error) {

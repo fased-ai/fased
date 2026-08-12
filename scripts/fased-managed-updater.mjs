@@ -6,6 +6,9 @@ import fsp from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 const FIXED_BOOTSTRAP = "/opt/fased/lifecycle/bootstrap-v1/fased-bootstrap";
+const NPM_REGISTRY = "https://registry.npmjs.org";
+const GITHUB_RELEASES = "https://api.github.com/repos/fased-ai/fased/releases?per_page=100";
+const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
 
 async function requireFixedBootstrap(path = FIXED_BOOTSTRAP, expectedUid = 0) {
   const before = await fsp.lstat(path);
@@ -36,11 +39,15 @@ async function requireFixedBootstrap(path = FIXED_BOOTSTRAP, expectedUid = 0) {
   return path;
 }
 
-export async function run(argv = process.argv.slice(2), { bootstrapPath = FIXED_BOOTSTRAP } = {}) {
+export async function run(
+  argv = process.argv.slice(2),
+  { bootstrapPath = FIXED_BOOTSTRAP, fetchImpl = globalThis.fetch } = {},
+) {
   const bootstrap = await requireFixedBootstrap(bootstrapPath);
   const lifecycleArgs = argv[0] === "update" ? argv.slice(1) : argv;
   const profile = requireInstalledProfile(process.env.FASED_LIFECYCLE_PROFILE);
-  const invocation = fixedInvocation(bootstrap, lifecycleArgs, process.getuid?.() ?? -1, profile);
+  const resolvedArgs = await resolveLifecycleArgs(lifecycleArgs, { fetchImpl });
+  const invocation = fixedInvocation(bootstrap, resolvedArgs, process.getuid?.() ?? -1, profile);
   await new Promise((resolve, reject) => {
     const child = spawn(invocation.command, invocation.args, {
       stdio: "inherit",
@@ -62,6 +69,89 @@ export async function run(argv = process.argv.slice(2), { bootstrapPath = FIXED_
       }
     });
   });
+}
+
+async function resolveLifecycleArgs(argv, { fetchImpl = globalThis.fetch } = {}) {
+  const exact = optionValue(argv, ["--version", "--tag"]);
+  if (exact && exact !== "stable" && exact !== "beta" && exact !== "latest") {
+    return [...argv];
+  }
+  const channel = optionValue(argv, ["--channel", "--update-channel"]) || "stable";
+  if (channel !== "stable" && channel !== "beta") {
+    throw new Error("The update channel must be stable or beta.");
+  }
+  const version = await resolveChannelVersion(channel, fetchImpl);
+  if (!VERSION_PATTERN.test(version) || (channel === "stable" && version.includes("-"))) {
+    throw new Error("The update channel did not resolve to an exact immutable release.");
+  }
+  return [...argv, "--version", version];
+}
+
+async function resolveChannelVersion(channel, fetchImpl) {
+  if (typeof fetchImpl !== "function") {
+    throw new Error("The update channel resolver is unavailable.");
+  }
+  const tag = channel === "beta" ? "beta" : "latest";
+  try {
+    const response = await fetchWithTimeout(fetchImpl, `${NPM_REGISTRY}/@fased%2ffased/${tag}`);
+    if (response.ok) {
+      const payload = await response.json();
+      const candidate =
+        typeof payload?.version === "string"
+          ? payload.version
+          : typeof payload?.["dist-tags"]?.[tag] === "string"
+            ? payload["dist-tags"][tag]
+            : "";
+      if (VERSION_PATTERN.test(candidate)) {
+        return candidate;
+      }
+    }
+  } catch {
+    // npm is an optional, untrusted channel hint; GitHub is the fallback.
+  }
+
+  try {
+    const response = await fetchWithTimeout(fetchImpl, GITHUB_RELEASES, {
+      accept: "application/vnd.github+json",
+      "user-agent": "fased-managed-updater",
+    });
+    if (response.ok) {
+      const releases = await response.json();
+      if (Array.isArray(releases)) {
+        const selected = releases.find(
+          (release) =>
+            release?.draft === false &&
+            (channel === "beta" ? release?.prerelease === true : release?.prerelease === false) &&
+            typeof release?.tag_name === "string",
+        );
+        const candidate = selected?.tag_name?.replace(/^v/, "") || "";
+        if (VERSION_PATTERN.test(candidate)) {
+          return candidate;
+        }
+      }
+    }
+  } catch {
+    // Report one bounded channel-resolution error below.
+  }
+  throw new Error(`Unable to resolve the ${channel} channel to an exact immutable release.`);
+}
+
+async function fetchWithTimeout(fetchImpl, url, headers = { accept: "application/json" }) {
+  return fetchImpl(url, { headers, signal: AbortSignal.timeout(5000) });
+}
+
+function optionValue(argv, names) {
+  let value = "";
+  for (let index = 0; index < argv.length; index += 1) {
+    for (const name of names) {
+      if (argv[index] === name) {
+        value = argv[index + 1] || "";
+      } else if (argv[index].startsWith(`${name}=`)) {
+        value = argv[index].slice(name.length + 1);
+      }
+    }
+  }
+  return value.replace(/^v/, "");
 }
 
 function requireInstalledProfile(profile) {
@@ -104,4 +194,5 @@ export const __testing = {
   isMainModule,
   requireFixedBootstrap,
   requireInstalledProfile,
+  resolveLifecycleArgs,
 };

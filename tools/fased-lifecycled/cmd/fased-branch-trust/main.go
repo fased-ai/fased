@@ -74,7 +74,8 @@ func run(args []string) error {
 	root := trust.RootMetadata{SchemaVersion: 1, Type: "fased-lifecycle-root", Version: 1,
 		IssuedAt: issued.Format(time.RFC3339), ExpiresAt: issued.Add(30 * 24 * time.Hour).Format(time.RFC3339),
 		Keys: map[string]trust.Key{}, Root: trust.RootRole{Threshold: 2},
-		Revocations: trust.Revocations{ReleaseVersions: []string{}, TargetDigests: []string{}, DelegatedKeyIDs: []string{}}}
+		ReleaseAuthority: &trust.ReleaseAuthority{Type: "github-artifact-attestation-v1", Repository: "fased-ai/fased", Workflow: "fased-ai/fased/.github/workflows/hosted-runtime-release.yml", SourceRefPrefix: "refs/tags/v", DenySelfHostedRunners: true},
+		Revocations:      trust.Revocations{ReleaseVersions: []string{}, TargetDigests: []string{}, DelegatedKeyIDs: []string{}}}
 	for _, key := range rootKeys {
 		root.Keys[key.id] = key.record
 		root.Root.KeyIDs = append(root.Root.KeyIDs, key.id)

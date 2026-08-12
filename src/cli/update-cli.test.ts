@@ -632,7 +632,7 @@ describe("update-cli", () => {
       updaterPath: "/opt/fased/local/id/current/payload/runtime/scripts/fased-managed-updater.mjs",
     });
 
-    await updateCommand({ channel: "stable", timeout: "45", yes: true });
+    await updateCommand({ channel: "stable", timeout: "45", verbose: true, yes: true });
 
     expect(runCommandWithTimeout).toHaveBeenCalledWith(
       [
@@ -640,6 +640,7 @@ describe("update-cli", () => {
         "/opt/fased/local/id/current/payload/runtime/scripts/fased-managed-updater.mjs",
         "--channel",
         "stable",
+        "--verbose",
       ],
       expect.objectContaining({
         cwd: "/opt/fased/local/id/current/payload/runtime/scripts",
@@ -683,6 +684,65 @@ describe("update-cli", () => {
       }),
     );
     expect(runGatewayUpdate).not.toHaveBeenCalled();
+  });
+
+  it("fails closed instead of sending a Go-managed dry-run through the legacy updater", async () => {
+    createCaseDir("fased-managed-dry-run");
+
+    await withEnvAsync(
+      {
+        FASED_RUNTIME_SOURCE: "go-lifecycle",
+        FASED_MANAGED_RUNTIME_ROOT: "/opt/fased/local/id/current/payload/runtime",
+      },
+      () => updateCommand({ dryRun: true }),
+    );
+
+    expect(defaultRuntime.error).toHaveBeenCalledWith(
+      "Go lifecycle updates do not support --dry-run.",
+    );
+    expect(defaultRuntime.exit).toHaveBeenCalledWith(1);
+    expect(ensureManagedRuntimeBootstrap).not.toHaveBeenCalled();
+    expect(runGatewayUpdate).not.toHaveBeenCalled();
+    expect(resolveNpmChannelTag).not.toHaveBeenCalled();
+  });
+
+  it("fails closed instead of sending a Go-managed dev update through the legacy updater", async () => {
+    createCaseDir("fased-managed-dev");
+
+    await withEnvAsync(
+      {
+        FASED_RUNTIME_SOURCE: "go-lifecycle",
+        FASED_MANAGED_RUNTIME_ROOT: "/opt/fased/local/id/current/payload/runtime",
+      },
+      () => updateCommand({ channel: "dev" }),
+    );
+
+    expect(defaultRuntime.error).toHaveBeenCalledWith(
+      "Go lifecycle installations support only stable and beta update channels.",
+    );
+    expect(defaultRuntime.exit).toHaveBeenCalledWith(1);
+    expect(ensureManagedRuntimeBootstrap).not.toHaveBeenCalled();
+    expect(runGatewayUpdate).not.toHaveBeenCalled();
+    expect(resolveNpmChannelTag).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when a Go-managed runtime cannot resolve the fixed updater", async () => {
+    createCaseDir("fased-managed-missing-updater");
+
+    await withEnvAsync(
+      {
+        FASED_RUNTIME_SOURCE: "go-lifecycle",
+        FASED_MANAGED_RUNTIME_ROOT: "/opt/fased/local/id/current/payload/runtime",
+      },
+      () => updateCommand({}),
+    );
+
+    expect(defaultRuntime.error).toHaveBeenCalledWith(
+      "The fixed Go lifecycle updater is unavailable.",
+    );
+    expect(defaultRuntime.exit).toHaveBeenCalledWith(1);
+    expect(runGatewayUpdate).not.toHaveBeenCalled();
+    expect(resolveNpmChannelTag).not.toHaveBeenCalled();
   });
 
   it("does not repair provider plugin code during a same-version core update", async () => {

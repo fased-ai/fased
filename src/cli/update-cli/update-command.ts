@@ -853,11 +853,21 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
     process.env.FASED_RUNTIME_SOURCE ?? "",
   );
   const managedChannel = requestedChannel ?? storedChannel ?? "stable";
-  if (
-    (installKind === "package" || managedRuntimeSource) &&
-    !opts.dryRun &&
-    managedChannel !== "dev"
-  ) {
+  if (managedRuntimeSource && opts.dryRun) {
+    defaultRuntime.error("Go lifecycle updates do not support --dry-run.");
+    defaultRuntime.exit(1);
+    return;
+  }
+  if (managedRuntimeSource && managedChannel === "dev") {
+    defaultRuntime.error(
+      "Go lifecycle installations support only stable and beta update channels.",
+    );
+    defaultRuntime.exit(1);
+    return;
+  }
+  const shouldTryManagedUpdater =
+    managedRuntimeSource || (installKind === "package" && !opts.dryRun && managedChannel !== "dev");
+  if (shouldTryManagedUpdater) {
     try {
       const managed = await ensureManagedRuntimeBootstrap({
         packageRoot:
@@ -891,6 +901,9 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
             managedArgs.push("--version", opts.tag);
           }
         }
+        if (opts.verbose) {
+          managedArgs.push("--verbose");
+        }
         const result = await runCommandWithTimeout([process.execPath, ...managedArgs], {
           cwd: path.dirname(managed.updaterPath),
           env: process.env,
@@ -907,6 +920,11 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
         } else {
           await recordUpdateSuccess({ mode: "managed" });
         }
+        return;
+      }
+      if (managedRuntimeSource) {
+        defaultRuntime.error("The fixed Go lifecycle updater is unavailable.");
+        defaultRuntime.exit(1);
         return;
       }
     } catch (error) {
