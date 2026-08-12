@@ -216,7 +216,7 @@ start_release_transport_server() {
   grep -Fqx "127.0.0.1 registry.npmjs.org" /etc/hosts ||
     printf '127.0.0.1 registry.npmjs.org\n' >>/etc/hosts
   FASED_FIXTURE_VERSION="$version" \
-    /fixture-tools/node /usr/local/libexec/fased-hosting-release-server.mjs \
+    /fixture-node /usr/local/libexec/fased-hosting-release-server.mjs \
     >/tmp/fased-hosting-release-server.log 2>&1 &
   fixture_release_server_pid=$!
   for _ in {1..40}; do
@@ -250,7 +250,7 @@ acceptance_mark() {
 }
 
 acceptance_start() {
-  /fixture-tools/node /fixture-tools/lifecycle-acceptance-contract.mjs validate \
+  /fixture-node /fixture-tools/lifecycle-acceptance-contract.mjs validate \
     --contract "$acceptance_contract" >/dev/null
   : >"$acceptance_evidence"
   acceptance_mark artifact-identity "$acceptance_descriptor" "candidate descriptor verified"
@@ -272,7 +272,7 @@ acceptance_finish() {
     capsule_digest="sha256:$(sha256sum "$predecessor_capsule_descriptor" | awk '{print $1}')"
   fi
   jq -s . "$acceptance_evidence" >"$evidence_json"
-  /fixture-tools/node /fixture-tools/lifecycle-acceptance-contract.mjs issue-receipt \
+  /fixture-node /fixture-tools/lifecycle-acceptance-contract.mjs issue-receipt \
     --contract "$acceptance_contract" \
     --profile hosting \
     --scenario "$scenario" \
@@ -282,7 +282,7 @@ acceptance_finish() {
     --predecessor-capsule-digest "$capsule_digest" \
     --evidence-file "$evidence_json" \
     --output "$acceptance_receipt"
-  /fixture-tools/node /fixture-tools/lifecycle-receipt-verifier.mjs \
+  /fixture-node /fixture-tools/lifecycle-receipt-verifier.mjs \
     --contract "$acceptance_contract" \
     --receipt "$acceptance_receipt" \
     --profile hosting \
@@ -413,7 +413,7 @@ wait_for_gateway_version() {
 }
 
 restore_public_predecessor() {
-  install -m 0755 /fixture-tools/node /usr/local/bin/node
+  install -m 0755 /fixture-node /usr/local/bin/node
   useradd --uid 2000 --user-group --create-home --shell /bin/bash app
   predecessor_archive="$(jq -er .archive.name "$predecessor_capsule_descriptor")"
   printf 'fased-predecessor-capsule-fixture-v1\n' >"$predecessor_capsule_authorization"

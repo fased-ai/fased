@@ -42,8 +42,32 @@ tree="$(jq -er .tree "$identity")"
   exit 1
 }
 
+fixture_overlay="$ARTIFACT_DIR/fased-candidate-fixture-overlay.json"
+candidate_artifact_path() {
+  local name="$1"
+  if [[ -f "$fixture_overlay" &&
+    ("$name" == "install.sh" || "$name" == "fased-bootstrap-linux-x64") ]]; then
+    printf '%s\n' "$ARTIFACT_DIR/fased-candidate-original/$name"
+    return
+  fi
+  printf '%s\n' "$ARTIFACT_DIR/$name"
+}
+if [[ -f "$fixture_overlay" ]]; then
+  jq -e --arg digest "sha256:$(sha256sum "$descriptor" | awk '{print $1}')" \
+    --arg install "sha256:$(sha256sum "$ARTIFACT_DIR/install.sh" | awk '{print $1}')" \
+    --arg bootstrap "sha256:$(sha256sum "$ARTIFACT_DIR/fased-bootstrap-linux-x64" | awk '{print $1}')" \
+    '.schemaVersion == 1 and .role == "fased-candidate-fixture-trust-overlay" and
+     .publishable == false and .candidate.descriptorSha256 == $digest and
+     .fixture.installSha256 == $install and .fixture.bootstrapSha256 == $bootstrap and
+     .overriddenPaths == ["fased-bootstrap-linux-x64","install.sh"]' \
+    "$fixture_overlay" >/dev/null || {
+    echo "The candidate fixture trust overlay is not bound to the exact descriptor." >&2
+    exit 1
+  }
+fi
+
 while IFS=$'\t' read -r name expected_size expected_digest; do
-  candidate="$ARTIFACT_DIR/$name"
+  candidate="$(candidate_artifact_path "$name")"
   [[ -f "$candidate" && ! -L "$candidate" ]] || {
     echo "Candidate artifact is missing or unsafe: $name" >&2
     exit 1
@@ -100,14 +124,15 @@ fi
 cleanup_names=()
 fixture_tools_dir="$(mktemp -d "${TMPDIR:-/tmp}/fased-hosting-fixture-tools.XXXXXX")"
 fixture_source_commit="$commit"
-if [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ]]; then
+if [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ||
+  -f "$ARTIFACT_DIR/fased-candidate-fixture-overlay.json" ]]; then
   git -C "$ROOT_DIR" merge-base --is-ancestor "$commit" HEAD || {
     echo "A branch artifact can reuse only descendant Hosting fixture corrections." >&2
     exit 1
   }
   unexpected_fixture_changes="$(
     git -C "$ROOT_DIR" diff --name-only "$commit..HEAD" | \
-      grep -Ev '^(scripts/test-lifecycle-(local|hosting)-acceptance\.sh|scripts/docker/(protected-local|hosting)-systemd/lifecycle-acceptance\.sh|scripts/lifecycle-d8-contract\.test\.ts|scripts/build-public-predecessor-capsule\.(mjs|test\.ts)|scripts/prepare-branch-predecessor-capsule\.sh)$' || true
+      grep -Ev '^(\.github/workflows/candidate-p1-replay\.yml|docs/maintainers/codex-skills/fased-release-manager/(SKILL\.md|references/release\.md)|scripts/test-lifecycle-(local|hosting)-acceptance\.sh|scripts/docker/(protected-local|hosting)-systemd/lifecycle-acceptance\.sh|scripts/(hosted-installer-artifact-layout|ci-workflow-contract|lifecycle-d8-contract)\.test\.ts|scripts/prepare-candidate-fixture-trust\.sh|scripts/build-public-predecessor-capsule\.(mjs|test\.ts)|scripts/prepare-branch-predecessor-capsule\.sh)$' || true
   )"
   [[ -z "$unexpected_fixture_changes" ]] || {
     echo "Branch artifact reuse rejected product changes:" >&2
@@ -127,6 +152,7 @@ git -C "$ROOT_DIR" archive "$fixture_source_commit" -- \
 fixture_node_modules="$(readlink -f "$ROOT_DIR/node_modules")"
 fixture_node="$(readlink -f "$(command -v node)")"
 [[ -d "$fixture_node_modules" && -x "$fixture_node" ]]
+ln -s /fixture-node-modules "$fixture_tools_dir/scripts/node_modules"
 cleanup() {
   local status=$?
   local name
@@ -182,8 +208,8 @@ run_scenario() {
     -e "FASED_FIXTURE_TREE=$tree" \
     -e "FASED_FIXTURE_PREDECESSOR_VERSION=$predecessor" \
     -v "$fixture_tools_dir/scripts:/fixture-tools:ro,Z" \
-    -v "$fixture_node_modules:/fixture-tools/node_modules:ro,Z" \
-    -v "$fixture_node:/fixture-tools/node:ro,Z" \
+    -v "$fixture_node_modules:/fixture-node-modules:ro,Z" \
+    -v "$fixture_node:/fixture-node:ro,Z" \
     -v "$ARTIFACT_DIR:/artifacts:ro,Z" \
     -v "$predecessor_dir:/predecessor-capsule:ro,Z" \
     "$image" >/dev/null

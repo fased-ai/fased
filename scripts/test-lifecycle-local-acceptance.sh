@@ -99,8 +99,31 @@ if [[ -n "$ARTIFACT_DIR" ]]; then
     echo "The candidate descriptor and lifecycle identity disagree." >&2
     exit 1
   }
+  fixture_overlay="$ARTIFACT_DIR/fased-candidate-fixture-overlay.json"
+  candidate_artifact_path() {
+    local name="$1"
+    if [[ -f "$fixture_overlay" &&
+      ("$name" == "install.sh" || "$name" == "fased-bootstrap-linux-x64") ]]; then
+      printf '%s\n' "$ARTIFACT_DIR/fased-candidate-original/$name"
+      return
+    fi
+    printf '%s\n' "$ARTIFACT_DIR/$name"
+  }
+  if [[ -f "$fixture_overlay" ]]; then
+    jq -e --arg digest "sha256:$(sha256sum "$descriptor" | awk '{print $1}')" \
+      --arg install "sha256:$(sha256sum "$ARTIFACT_DIR/install.sh" | awk '{print $1}')" \
+      --arg bootstrap "sha256:$(sha256sum "$ARTIFACT_DIR/fased-bootstrap-linux-x64" | awk '{print $1}')" \
+      '.schemaVersion == 1 and .role == "fased-candidate-fixture-trust-overlay" and
+       .publishable == false and .candidate.descriptorSha256 == $digest and
+       .fixture.installSha256 == $install and .fixture.bootstrapSha256 == $bootstrap and
+       .overriddenPaths == ["fased-bootstrap-linux-x64","install.sh"]' \
+      "$fixture_overlay" >/dev/null || {
+      echo "The candidate fixture trust overlay is not bound to the exact descriptor." >&2
+      exit 1
+    }
+  fi
   while IFS=$'\t' read -r name expected_size expected_digest; do
-    candidate="$ARTIFACT_DIR/$name"
+    candidate="$(candidate_artifact_path "$name")"
     [[ -f "$candidate" && ! -L "$candidate" ]] || {
       echo "Candidate artifact is missing or unsafe: $name" >&2
       exit 1
@@ -580,14 +603,15 @@ fi
 
 FIXTURE_TOOLS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-lifecycle-fixture-tools.XXXXXX")"
 FIXTURE_SOURCE_COMMIT="$COMMIT"
-if [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ]]; then
+if [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ||
+  -f "$ARTIFACT_DIR/fased-candidate-fixture-overlay.json" ]]; then
   git -C "$ROOT_DIR" merge-base --is-ancestor "$COMMIT" HEAD || {
     echo "A branch artifact can reuse only descendant fixture corrections." >&2
     exit 1
   }
   unexpected_fixture_changes="$(
     git -C "$ROOT_DIR" diff --name-only "$COMMIT..HEAD" | \
-      grep -Ev '^(scripts/test-lifecycle-local-acceptance\.sh|scripts/docker/protected-local-systemd/lifecycle-acceptance\.sh|scripts/lifecycle-version-neutral\.test\.ts|scripts/build-public-predecessor-capsule\.mjs|scripts/build-public-predecessor-capsule\.test\.ts|scripts/prepare-branch-predecessor-capsule\.sh)$' || true
+      grep -Ev '^(\.github/workflows/candidate-p1-replay\.yml|docs/maintainers/codex-skills/fased-release-manager/(SKILL\.md|references/release\.md)|scripts/test-lifecycle-(local|hosting)-acceptance\.sh|scripts/docker/(protected-local|hosting)-systemd/lifecycle-acceptance\.sh|scripts/(hosted-installer-artifact-layout|ci-workflow-contract|lifecycle-version-neutral)\.test\.ts|scripts/prepare-candidate-fixture-trust\.sh|scripts/build-public-predecessor-capsule\.mjs|scripts/build-public-predecessor-capsule\.test\.ts|scripts/prepare-branch-predecessor-capsule\.sh)$' || true
   )"
   [[ -z "$unexpected_fixture_changes" ]] || {
     echo "Branch artifact reuse rejected product changes:" >&2
@@ -611,6 +635,7 @@ FIXTURE_NODE_MODULES="$(readlink -f "$ROOT_DIR/node_modules")"
   echo "The lifecycle fixture requires the frozen dependency directory." >&2
   exit 1
 }
+ln -s /fixture-node-modules "$FIXTURE_TOOLS_DIR/scripts/node_modules"
 
 IFS=',' read -r -a distro_list <<<"$DISTROS"
 IFS=',' read -r -a scenario_list <<<"$SCENARIOS"
@@ -644,7 +669,7 @@ run_fixture_scenario() {
     -e "FASED_FIXTURE_PREINSTALLED_TOOLS=$PREINSTALLED_TOOLS" \
     -e "FASED_FIXTURE_PUBLIC_ACQUISITION=$PUBLIC_ACQUISITION" \
     -v "$FIXTURE_TOOLS_DIR/scripts:/fixture-tools:ro,z" \
-    -v "$FIXTURE_NODE_MODULES:/fixture-tools/node_modules:ro,z" \
+    -v "$FIXTURE_NODE_MODULES:/fixture-node-modules:ro,z" \
     -v "$FIXTURE_TOOLS_DIR/scripts/docker/protected-local-systemd/lifecycle-acceptance.sh:/usr/local/bin/fased-protected-local-systemd-fixture:ro,z" \
     -v "$ARTIFACT_DIR:/artifacts:ro,z" \
     -v "$predecessor_capsule_dir:/predecessor-capsule:ro,z" \

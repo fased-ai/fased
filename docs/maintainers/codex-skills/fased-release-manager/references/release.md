@@ -12,7 +12,8 @@ they differ, both paths must already pass against the same branch artifact.
 ```text
 PRE-CANDIDATE
 -> version-only protected PR
--> owner immutable tag at exact main
+-> exact merged-main pre-tag candidate-shaped P1
+-> owner immutable tag at exact main only after every predicate passes
 -> trusted build once
 -> parallel P1 against the exact artifact set
 -> protected publication approval
@@ -21,6 +22,12 @@ PRE-CANDIDATE
 PRE-CANDIDATE verifies frozen dependencies, production audit, release/package
 identity, compatibility inventory, and public acquisition inputs. It must not
 discover a new product command.
+
+The pre-tag P1 uses the exact Local and Hosting fixture entrypoints, container
+mount layout, acquisition URL map, candidate-shaped artifact inventory,
+predecessor set, and receipt verifier used after tagging. It runs on the same
+protected Linux runner class. A tag is forbidden when any candidate fixture,
+artifact name, transport route, or acceptance predicate has not executed there.
 
 The candidate descriptor binds version, commit, tree, lockfile, workflow run,
 artifact names/sizes/digests, provenance, SBOM/VEX, signer/controller identity,

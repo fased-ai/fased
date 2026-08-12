@@ -9,8 +9,10 @@ const files = new Set(manifest.files ?? []);
 const installer = read("install.sh");
 const releaseWorkflow = read(".github/workflows/hosted-runtime-release.yml");
 const ciWorkflow = read(".github/workflows/ci.yml");
+const localFixture = read("scripts/test-lifecycle-local-acceptance.sh");
 const hostingFixture = read("scripts/test-lifecycle-hosting-acceptance.sh");
 const hostingRunner = read("scripts/docker/hosting-systemd/lifecycle-acceptance.sh");
+const candidateTrustOverlay = read("scripts/prepare-candidate-fixture-trust.sh");
 const localRunner = read("scripts/docker/protected-local-systemd/lifecycle-acceptance.sh");
 const hostingUbuntu = read("scripts/docker/hosting-systemd/Containerfile.ubuntu");
 const hostingRocky = read("scripts/docker/hosting-systemd/Containerfile.rocky");
@@ -83,6 +85,33 @@ describe("attested Go lifecycle artifact layout", () => {
     expect(hostingRunner).toContain('bash "$candidate_installer"');
   });
 
+  it("does not nest dependency mounts below a read-only fixture mount", () => {
+    for (const fixture of [localFixture, hostingFixture]) {
+      expect(fixture).toContain("ln -s /fixture-node-modules");
+      expect(fixture).toContain(":/fixture-node-modules:ro,");
+      expect(fixture).not.toContain(":/fixture-tools/node_modules:ro,");
+    }
+    expect(hostingFixture).toContain(":/fixture-node:ro,");
+    expect(hostingRunner).not.toContain("/fixture-tools/node");
+  });
+
+  it("binds replay trust to the exact immutable candidate inventory", () => {
+    expect(candidateTrustOverlay).toContain("fased-candidate-fixture-trust-overlay");
+    expect(candidateTrustOverlay).toContain("fased-candidate-original");
+    expect(candidateTrustOverlay).toContain("fased-branch-trust");
+    expect(candidateTrustOverlay).toContain("generation/inventory.json");
+    expect(candidateTrustOverlay).toContain(".generation.artifactSetDigest");
+    expect(candidateTrustOverlay).toContain("publishable:false");
+    expect(candidateTrustOverlay).toContain("--architecture x64");
+    expect(candidateTrustOverlay).not.toContain("gh release");
+    expect(candidateTrustOverlay).not.toContain("git tag");
+    for (const fixture of [localFixture, hostingFixture]) {
+      expect(fixture).toContain("fased-candidate-fixture-overlay.json");
+      expect(fixture).toContain("fased-candidate-original/$name");
+      expect(fixture).toContain("candidate_artifact_path");
+    }
+  });
+
   it("proves the exact stamped Hosting installer provisions Node on a clean host", () => {
     expect(hostingUbuntu).not.toContain("nodejs.org/dist");
     expect(hostingRocky).not.toContain("nodejs.org/dist");
@@ -103,10 +132,6 @@ describe("attested Go lifecycle artifact layout", () => {
   });
 
   it("runs Local and Hosting lifecycle fixtures with a non-executable runtime mount", () => {
-    const localFixture = fs.readFileSync(
-      path.join(root, "scripts/test-lifecycle-local-acceptance.sh"),
-      "utf8",
-    );
     expect(localFixture).toContain("--tmpfs /run:rw,noexec");
     expect(localFixture).toContain("FASED_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_DIR");
     expect(localRunner).toContain("run_mount_has_option noexec");
