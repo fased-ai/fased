@@ -48,7 +48,7 @@ func TestDiskPluginBoundaryPreparesOnlyFromGenerationBoundLock(t *testing.T) {
 		Config: config, Resolver: pluginLockFixtureResolver{digest: digest, payload: payload}, SourceOwnerUID: uint32(os.Getuid()),
 	}
 	target := model.Generation{ID: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
-	if err := boundary.Prepare(context.Background(), target); err != nil {
+	if _, err := boundary.Prepare(context.Background(), target); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(lockPath, []byte("{\"schemaVersion\":1,\"type\":\"fased-plugin-lock\",\"entries\":[{\"id\":\"changed\",\"origin\":\"bundled\",\"digest\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"apiCapability\":\"fased.plugin.v1\",\"required\":false}]}\n"), 0o444); err != nil {
@@ -57,7 +57,7 @@ func TestDiskPluginBoundaryPreparesOnlyFromGenerationBoundLock(t *testing.T) {
 	if err := os.Chmod(lockPath, 0o444); err != nil {
 		t.Fatal(err)
 	}
-	if err := boundary.Prepare(context.Background(), target); err == nil {
+	if _, err := boundary.Prepare(context.Background(), target); err == nil {
 		t.Fatal("generation plugin lock substitution was accepted")
 	}
 	if err := os.Chmod(lockPath, 0o644); err != nil {
@@ -69,7 +69,7 @@ func TestDiskPluginBoundaryPreparesOnlyFromGenerationBoundLock(t *testing.T) {
 	if err := os.Chmod(lockPath, 0o664); err != nil {
 		t.Fatal(err)
 	}
-	if err := boundary.Prepare(context.Background(), target); err == nil {
+	if _, err := boundary.Prepare(context.Background(), target); err == nil {
 		t.Fatal("group-writable generation plugin lock was accepted")
 	}
 }

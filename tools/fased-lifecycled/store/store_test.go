@@ -389,6 +389,12 @@ func TestProgressReceiptsAndUndoSurviveReopenAndRemainEnvelopeBound(t *testing.T
 	if err := state.AppendProgress(tx, stateEvent); err != nil {
 		t.Fatal(err)
 	}
+	pluginEvent := ProgressEvent{Step: ProgressPluginVerified,
+		Receipt: &DurableParticipantReceipt{Participant: "plugin", TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.Target.ID, EvidenceDigest: tx.Target.ID},
+	}
+	if err := state.AppendProgress(tx, pluginEvent); err != nil {
+		t.Fatal(err)
+	}
 
 	reopened, err := Open(root)
 	if err != nil {
@@ -405,7 +411,7 @@ func TestProgressReceiptsAndUndoSurviveReopenAndRemainEnvelopeBound(t *testing.T
 	if err := ValidateProgress(progress, durable); err != nil {
 		t.Fatal(err)
 	}
-	if len(progress.Events) != 2 || progress.Events[0].Receipt == nil || progress.Events[0].Undo == nil || progress.Events[1].Receipt.Participant != "state" || len(progress.Events[1].Receipt.Members) != 7 {
+	if len(progress.Events) != 3 || progress.Events[0].Receipt == nil || progress.Events[0].Undo == nil || progress.Events[1].Receipt.Participant != "state" || len(progress.Events[1].Receipt.Members) != 7 || progress.Events[2].Receipt.EvidenceDigest != tx.Target.ID {
 		t.Fatalf("durable participant evidence was lost: %+v", progress)
 	}
 
@@ -413,6 +419,16 @@ func TestProgressReceiptsAndUndoSurviveReopenAndRemainEnvelopeBound(t *testing.T
 	rebound.Receipt = &DurableParticipantReceipt{Participant: "migrator", TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.SignerPlanDigest}
 	if err := reopened.AppendProgress(tx, rebound); err == nil {
 		t.Fatal("receipt rebound to a different immutable plan digest")
+	}
+	badPlugin := pluginEvent
+	badPlugin.Receipt = &DurableParticipantReceipt{Participant: "plugin", TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.Target.ID, EvidenceDigest: "sha256:bad"}
+	if err := reopened.AppendProgress(tx, badPlugin); err == nil {
+		t.Fatal("invalid plugin readiness evidence was accepted")
+	}
+	wrongPluginStep := pluginEvent
+	wrongPluginStep.Step = ProgressPlatformVerified
+	if err := reopened.AppendProgress(tx, wrongPluginStep); err == nil {
+		t.Fatal("plugin readiness evidence on the wrong progress step was accepted")
 	}
 	badUndo := event
 	badUndo.Undo = &DurableUndoRecord{Participant: "migrator", Locator: "../outside", Digest: tx.MigrationPlanDigest}

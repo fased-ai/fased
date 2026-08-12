@@ -26,7 +26,7 @@ type StateSpec struct {
 
 func CanonicalStateSpecs(ownerStateRoot, signerStateRoot string) []StateSpec {
 	var specs []StateSpec
-	for _, name := range []string{"agents", "channels", "cron", "delivery-queue", "devices", "extensions", "identity", "memory", "schedules", "secrets", "sessions", "tasks", "workspace"} {
+	for _, name := range []string{"agents", "channels", "cron", "delivery-queue", "devices", "identity", "memory", "schedules", "secrets", "sessions", "tasks", "workspace"} {
 		specs = append(specs, StateSpec{Kind: ApplicationState, Path: filepath.Join(ownerStateRoot, name)})
 	}
 	specs = append(specs,

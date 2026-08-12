@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -12,8 +13,17 @@ import (
 )
 
 type PluginBoundary interface {
-	Prepare(context.Context, model.Generation) error
-	Verify(context.Context, model.Generation) error
+	Prepare(context.Context, model.Generation) (PreparedPluginLock, error)
+	Verify(context.Context, model.Generation) (PluginReadinessReceipt, error)
+}
+
+type PreparedPluginLock struct {
+	Data   []byte
+	Digest string
+}
+
+type PluginReadinessReceipt struct {
+	Digest string
 }
 
 type PluginLockResolver interface {
@@ -42,47 +52,76 @@ func (boundary DiskPluginBoundary) guard() (stateparticipant.PluginBoundary, err
 	}, nil
 }
 
-func (boundary DiskPluginBoundary) Prepare(_ context.Context, target model.Generation) error {
+func (boundary DiskPluginBoundary) Prepare(_ context.Context, target model.Generation) (PreparedPluginLock, error) {
 	digest, err := boundary.Resolver.PluginLockDigest(target.ID)
 	if err != nil {
-		return err
+		return PreparedPluginLock{}, err
 	}
 	payload, err := boundary.Resolver.GenerationPayloadPath(target.ID)
 	if err != nil {
-		return err
+		return PreparedPluginLock{}, err
 	}
 	lockPath := filepath.Join(payload, "runtime", "plugin.lock.json")
 	info, err := os.Lstat(lockPath)
 	if err != nil {
-		return err
+		return PreparedPluginLock{}, err
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || stat.Nlink != 1 || stat.Uid != boundary.SourceOwnerUID || info.Mode().Perm()&0o022 != 0 || info.Size() <= 0 || info.Size() > 1<<20 {
-		return errors.New("generation plugin lock identity or access is unsafe")
+		return PreparedPluginLock{}, errors.New("generation plugin lock identity or access is unsafe")
 	}
 	data, err := os.ReadFile(lockPath)
 	if err != nil {
-		return err
+		return PreparedPluginLock{}, err
 	}
 	lock, err := stateparticipant.DecodePluginLock(data)
 	if err != nil {
-		return err
+		return PreparedPluginLock{}, err
 	}
 	actual, err := stateparticipant.PluginLockDigest(lock)
 	if err != nil || actual != digest {
-		return errors.New("generation plugin lock does not match signed release evidence")
+		return PreparedPluginLock{}, errors.New("generation plugin lock does not match signed release evidence")
 	}
-	return nil
+	installed := stateparticipant.PluginLock{SchemaVersion: stateparticipant.PluginLockSchemaVersion, Type: "fased-plugin-lock"}
+	if _, err := os.Lstat(filepath.Join(boundary.Config.OwnerStateRoot, "plugin.lock.json")); err == nil {
+		guard, guardErr := boundary.guard()
+		if guardErr != nil {
+			return PreparedPluginLock{}, guardErr
+		}
+		installed, _, err = guard.VerifyInstalledLock()
+		if err != nil {
+			return PreparedPluginLock{}, err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return PreparedPluginLock{}, err
+	}
+	merged, err := stateparticipant.MergeCorePluginLock(lock, installed)
+	if err != nil {
+		return PreparedPluginLock{}, err
+	}
+	mergedDigest, err := stateparticipant.PluginLockDigest(merged)
+	if err != nil {
+		return PreparedPluginLock{}, err
+	}
+	mergedJSON, err := json.Marshal(merged)
+	if err != nil {
+		return PreparedPluginLock{}, err
+	}
+	return PreparedPluginLock{Data: append(mergedJSON, '\n'), Digest: mergedDigest}, nil
 }
 
-func (boundary DiskPluginBoundary) Verify(_ context.Context, target model.Generation) error {
-	digest, err := boundary.Resolver.PluginLockDigest(target.ID)
+func (boundary DiskPluginBoundary) Verify(ctx context.Context, target model.Generation) (PluginReadinessReceipt, error) {
+	prepared, err := boundary.Prepare(ctx, target)
 	if err != nil {
-		return err
+		return PluginReadinessReceipt{}, err
 	}
 	guard, err := boundary.guard()
 	if err != nil {
-		return err
+		return PluginReadinessReceipt{}, err
 	}
-	return guard.VerifyReadiness(digest, target.ID)
+	digest, err := guard.VerifyReadiness(prepared.Digest, target.ID)
+	if err != nil {
+		return PluginReadinessReceipt{}, err
+	}
+	return PluginReadinessReceipt{Digest: digest}, nil
 }

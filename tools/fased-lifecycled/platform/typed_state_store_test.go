@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -59,9 +60,9 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 			mining := filepath.Join(owner, "sat-mining")
 			federation := filepath.Join(owner, "federation")
 			wallet := filepath.Join(owner, "wallet")
-			extensions := filepath.Join(owner, "extensions")
+			application := filepath.Join(owner, "tasks")
 			pluginData := filepath.Join(owner, "plugin-data")
-			for _, path := range []string{owner, mining, federation, wallet, extensions, pluginData} {
+			for _, path := range []string{owner, mining, federation, wallet, application, pluginData} {
 				if err := os.MkdirAll(path, 0o700); err != nil {
 					t.Fatal(err)
 				}
@@ -75,12 +76,12 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 			federationWAL := federationDatabase + "-wal"
 			registry := filepath.Join(wallet, "provider-registry.v1.json")
 			configuration := filepath.Join(owner, "fased.json")
-			extension := filepath.Join(extensions, "stable-plugin.json")
+			applicationState := filepath.Join(application, "task.json")
 			pluginState := filepath.Join(pluginData, "memory-core.json")
 			original := map[string][]byte{
 				database: sqliteBytes("database-before\n"), wal: []byte("wal-before\n"),
 				federationDatabase: sqliteBytes("federation-before\n"), federationWAL: []byte("federation-wal-before\n"),
-				registry: []byte("wallet-before\n"), configuration: []byte("config-before\n"), extension: []byte("plugin-before\n"), pluginState: []byte("plugin-data-before\n"),
+				registry: []byte("wallet-before\n"), configuration: []byte("config-before\n"), applicationState: []byte("task-before\n"), pluginState: []byte("plugin-data-before\n"),
 			}
 			for path, data := range original {
 				if err := os.WriteFile(path, data, 0o600); err != nil {
@@ -101,6 +102,9 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 			familyMembers := 0
 			projectionBound := false
 			for _, record := range records {
+				if strings.Contains(record.Path, "/extensions/") || strings.HasSuffix(record.Path, "/extensions") {
+					t.Fatalf("executable plugin code entered mutable state rollback: %+v", record)
+				}
 				if record.SQLiteFamily == store.unresolve(database) {
 					familyMembers++
 				}
@@ -135,10 +139,10 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 			if err := os.WriteFile(newSidecar, []byte("new-sidecar\n"), 0o660); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(extension, []byte("plugin-after\n"), 0o660); err != nil {
+			if err := os.WriteFile(applicationState, []byte("task-after\n"), 0o660); err != nil {
 				t.Fatal(err)
 			}
-			unexpected := filepath.Join(extensions, "created-by-failed-target.json")
+			unexpected := filepath.Join(application, "created-by-failed-target.json")
 			if err := os.WriteFile(unexpected, []byte("new\n"), 0o660); err != nil {
 				t.Fatal(err)
 			}
@@ -157,7 +161,7 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 			if _, err := os.Lstat(unexpected); !os.IsNotExist(err) {
 				t.Fatalf("new application state survived rollback: %v", err)
 			}
-			for _, path := range []string{mining, federation, wallet, extensions, pluginData} {
+			for _, path := range []string{mining, federation, wallet, application, pluginData} {
 				if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o700 {
 					t.Fatalf("directory metadata was not restored: %s info=%v err=%v", path, info, err)
 				}

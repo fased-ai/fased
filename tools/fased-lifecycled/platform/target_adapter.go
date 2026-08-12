@@ -86,7 +86,7 @@ func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) (engine.Re
 		if err := adapter.Health.Verify(ctx, adapter.Config.GatewayPort, *manifest.ActiveGeneration); err != nil {
 			return engine.Result{}, fmt.Errorf("active Gateway is unhealthy during onboarding completion: %w", err)
 		}
-		if err := adapter.Plugins.Verify(ctx, *manifest.ActiveGeneration); err != nil {
+		if _, err := adapter.Plugins.Verify(ctx, *manifest.ActiveGeneration); err != nil {
 			return engine.Result{}, fmt.Errorf("plugin readiness failed during onboarding completion: %w", err)
 		}
 		return engine.Result{Outcome: engine.OutcomeAlreadyCurrent, Phase: model.PhaseCommitted}, nil
@@ -100,7 +100,7 @@ func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) (engine.Re
 	if err := adapter.Health.Verify(ctx, adapter.Config.GatewayPort, *manifest.ActiveGeneration); err != nil {
 		return engine.Result{}, err
 	}
-	if err := adapter.Plugins.Verify(ctx, *manifest.ActiveGeneration); err != nil {
+	if _, err := adapter.Plugins.Verify(ctx, *manifest.ActiveGeneration); err != nil {
 		return engine.Result{}, fmt.Errorf("plugin readiness failed during onboarding completion: %w", err)
 	}
 	return engine.Result{Outcome: engine.OutcomeUpdated, Phase: model.PhaseCommitted}, nil
@@ -124,7 +124,8 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 	if err := adapter.validate(tx); err != nil {
 		return err
 	}
-	if err := adapter.Plugins.Prepare(ctx, tx.Target); err != nil {
+	pluginLock, err := adapter.Plugins.Prepare(ctx, tx.Target)
+	if err != nil {
 		return fmt.Errorf("plugin lock verification failed: %w", err)
 	}
 	if err := adapter.Predecessor.Prepare(ctx, tx); err != nil {
@@ -136,10 +137,6 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 	payload, err := adapter.Generations.GenerationPayloadPath(tx.Target.ID)
 	if err != nil {
 		return err
-	}
-	pluginLock, err := readRegularFile(filepath.Join(payload, "runtime", "plugin.lock.json"))
-	if err != nil {
-		return fmt.Errorf("target generation plugin lock: %w", err)
 	}
 	for _, relative := range []string{"bin/fased-gateway-launch", "bin/fased-signerd", "bin/node", "runtime/scripts/fased-signer-owner-hosting.sh"} {
 		if err := requireExecutable(filepath.Join(payload, relative)); err != nil {
@@ -187,7 +184,7 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 			Data: []byte(tx.Target.Version + "\n"), Mode: 0o600, UID: 0, GID: 0,
 		},
 		CanonicalPluginLockPath(adapter.Config): {
-			Data: pluginLock, Mode: 0o640, UID: adapter.Config.Operator.UID, GID: configGID,
+			Data: pluginLock.Data, Mode: 0o640, UID: adapter.Config.Operator.UID, GID: configGID,
 		},
 	}
 	if !adapter.deferFreshGateway(tx) {
@@ -324,25 +321,30 @@ func (adapter *TargetAdapter) Activate(ctx context.Context, tx model.Transaction
 	return nil
 }
 
-func (adapter *TargetAdapter) Verify(ctx context.Context, tx model.Transaction) error {
+func (adapter *TargetAdapter) Verify(ctx context.Context, tx model.Transaction) (engine.ParticipantReceipt, error) {
 	for _, unit := range adapter.startOrder() {
 		if adapter.deferFreshGateway(tx) && unit == adapter.Identity.Services["gateway"] {
 			continue
 		}
 		if err := adapter.Systemd.IsActive(ctx, unit); err != nil {
-			return fmt.Errorf("service %s is not active: %w", unit, err)
+			return engine.ParticipantReceipt{}, fmt.Errorf("service %s is not active: %w", unit, err)
 		}
 	}
 	if adapter.deferFreshGateway(tx) {
-		return nil
+		// Fresh onboarding cannot produce plugin readiness until the owner has
+		// written configuration and COMPLETE_ONBOARDING starts Gateway. That
+		// boundary verifies the Gateway-written generation-bound receipt before
+		// reporting onboarding complete.
+		return engine.ParticipantReceipt{}, nil
 	}
 	if err := adapter.Health.Verify(ctx, adapter.Config.GatewayPort, tx.Target); err != nil {
-		return err
+		return engine.ParticipantReceipt{}, err
 	}
-	if err := adapter.Plugins.Verify(ctx, tx.Target); err != nil {
-		return fmt.Errorf("mandatory plugin readiness failed: %w", err)
+	pluginReceipt, err := adapter.Plugins.Verify(ctx, tx.Target)
+	if err != nil {
+		return engine.ParticipantReceipt{}, fmt.Errorf("mandatory plugin readiness failed: %w", err)
 	}
-	return nil
+	return engine.ParticipantReceipt{TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.Target.ID, EvidenceDigest: pluginReceipt.Digest}, nil
 }
 
 func (adapter *TargetAdapter) Commit(ctx context.Context, tx model.Transaction) error {

@@ -8,12 +8,11 @@ import (
 func TestCanonicalStateSpecsSeparateSignerWalletPluginDataAndApplication(t *testing.T) {
 	specs := CanonicalStateSpecs("/home/app/.fased", "/var/lib/fased-signerd")
 	want := map[Kind]bool{ApplicationState: false, Configuration: false, Wallet: false, Mining: false, Federation: false, PluginData: false, Signer: false}
-	extensionsFound := false
 	signerSpecs := 0
 	for _, spec := range specs {
 		want[spec.Kind] = true
 		if spec.Kind == ApplicationState && spec.Path == filepath.Join("/home/app/.fased", "extensions") {
-			extensionsFound = true
+			t.Fatal("mutable executable extensions remained ordinary preserved application state")
 		}
 		if spec.Kind == PluginData && spec.Path != filepath.Join("/home/app/.fased", "plugin-data") {
 			t.Fatalf("plugin data was rebound to executable extensions: %+v", spec)
@@ -36,9 +35,6 @@ func TestCanonicalStateSpecsSeparateSignerWalletPluginDataAndApplication(t *test
 		if (spec.Kind == Mining || spec.Kind == Federation) && !spec.SQLite {
 			t.Fatalf("database participant lost SQLite family handling: %+v", spec)
 		}
-	}
-	if !extensionsFound {
-		t.Fatal("installed extensions are missing from preserved application state")
 	}
 	for kind, found := range want {
 		if !found {

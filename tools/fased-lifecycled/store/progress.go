@@ -15,7 +15,7 @@ import (
 	"fased-lifecycled/model"
 )
 
-const CurrentProgressSchemaVersion uint32 = 2
+const CurrentProgressSchemaVersion uint32 = 3
 
 type ProgressStep string
 
@@ -31,6 +31,7 @@ const (
 	ProgressPlatformActivated ProgressStep = "PLATFORM_ACTIVATED"
 	ProgressMigratorVerified  ProgressStep = "MIGRATOR_VERIFIED"
 	ProgressSignerVerified    ProgressStep = "SIGNER_VERIFIED"
+	ProgressPluginVerified    ProgressStep = "PLUGIN_VERIFIED"
 	ProgressPlatformVerified  ProgressStep = "PLATFORM_VERIFIED"
 	ProgressMigratorCommitted ProgressStep = "MIGRATOR_COMMITTED"
 	ProgressSignerCommitted   ProgressStep = "SIGNER_COMMITTED"
@@ -51,6 +52,7 @@ type DurableParticipantReceipt struct {
 	TargetGenerationID   string                     `json:"targetGenerationId"`
 	StateInventoryDigest string                     `json:"stateInventoryDigest"`
 	PlanDigest           string                     `json:"planDigest"`
+	EvidenceDigest       string                     `json:"evidenceDigest,omitempty"`
 	Members              []DurableParticipantMember `json:"members,omitempty"`
 }
 
@@ -195,6 +197,16 @@ func validateProgressRecord(record ProgressRecord, transaction model.Transaction
 			return err
 		}
 	}
+	pluginVerified := false
+	for _, event := range record.Events {
+		if event.Step == ProgressPluginVerified {
+			pluginVerified = true
+		}
+		if (event.Step == ProgressPlatformVerified || event.Step == ProgressManifestCommitted) &&
+			(transaction.PlanAction != "INSTALL" || transaction.Previous != nil) && !pluginVerified {
+			return errors.New("platform verification precedes mandatory plugin readiness")
+		}
+	}
 	return nil
 }
 
@@ -211,8 +223,18 @@ func validateProgressEvent(event ProgressEvent, transaction model.Transaction) e
 		if receipt.Participant == "state" {
 			wantPlan = transaction.StateInventoryDigest
 		}
-		if (receipt.Participant != "migrator" && receipt.Participant != "signer" && receipt.Participant != "state") || receipt.TransactionID != transaction.ID || receipt.TargetGenerationID != transaction.Target.ID || receipt.StateInventoryDigest != transaction.StateInventoryDigest || receipt.PlanDigest != wantPlan {
+		if receipt.Participant == "plugin" {
+			wantPlan = transaction.Target.ID
+		}
+		if (receipt.Participant != "migrator" && receipt.Participant != "signer" && receipt.Participant != "state" && receipt.Participant != "plugin") || receipt.TransactionID != transaction.ID || receipt.TargetGenerationID != transaction.Target.ID || receipt.StateInventoryDigest != transaction.StateInventoryDigest || receipt.PlanDigest != wantPlan {
 			return errors.New("participant receipt differs from the immutable transaction")
+		}
+		if receipt.Participant == "plugin" {
+			if !validSHA256Digest(receipt.EvidenceDigest) {
+				return errors.New("plugin readiness evidence digest is invalid")
+			}
+		} else if receipt.EvidenceDigest != "" {
+			return errors.New("non-plugin receipt contains plugin readiness evidence")
 		}
 		if receipt.Participant == "state" {
 			wantMembers := map[string]bool{"application-state": true, "configuration": true, "wallet": true, "mining": true, "federation": true, "plugin-data": true, "signer": true}
@@ -229,6 +251,13 @@ func validateProgressEvent(event ProgressEvent, transaction model.Transaction) e
 		} else if len(receipt.Members) != 0 {
 			return errors.New("non-state receipt contains state participant members")
 		}
+	}
+	if event.Step == ProgressPluginVerified {
+		if event.Receipt == nil || event.Receipt.Participant != "plugin" {
+			return errors.New("plugin verification step lacks its readiness receipt")
+		}
+	} else if event.Receipt != nil && event.Receipt.Participant == "plugin" {
+		return errors.New("plugin readiness receipt is attached to the wrong progress step")
 	}
 	if event.Undo != nil {
 		undo := event.Undo
@@ -251,7 +280,7 @@ func validProgressStep(step ProgressStep) bool {
 	switch step {
 	case ProgressGenerationStaged, ProgressMigratorPrepared, ProgressSignerPrepared, ProgressPlatformPrepared,
 		ProgressQuiesceStarted, ProgressQuiesced, ProgressStatePrepared, ProgressMigratorActivated, ProgressPlatformActivated, ProgressMigratorVerified,
-		ProgressSignerVerified, ProgressPlatformVerified, ProgressMigratorCommitted, ProgressSignerCommitted,
+		ProgressSignerVerified, ProgressPluginVerified, ProgressPlatformVerified, ProgressMigratorCommitted, ProgressSignerCommitted,
 		ProgressPlatformCommitted, ProgressManifestCommitted, ProgressRollbackStarted, ProgressTargetStopped,
 		ProgressSignerAborted, ProgressMigratorAborted, ProgressPlatformRestored, ProgressPlatformDiscarded,
 		ProgressRollbackCompleted:

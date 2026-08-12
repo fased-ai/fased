@@ -32,6 +32,7 @@ type ParticipantReceipt struct {
 	TargetGenerationID   string
 	StateInventoryDigest string
 	PlanDigest           string
+	EvidenceDigest       string
 	MemberDigests        StateMemberDigests
 }
 
@@ -78,7 +79,7 @@ type PlatformAdapter interface {
 	PrepareState(context.Context, model.Transaction) (ParticipantReceipt, string, error)
 	StopTarget(context.Context, model.Transaction) error
 	Activate(context.Context, model.Transaction) error
-	Verify(context.Context, model.Transaction) error
+	Verify(context.Context, model.Transaction) (ParticipantReceipt, error)
 	Commit(context.Context, model.Transaction) error
 	Restore(context.Context, model.Transaction) error
 	Discard(context.Context, model.Transaction) error
@@ -202,8 +203,19 @@ func (engine *TargetEngine) Run(ctx context.Context, tx model.Transaction) (Resu
 	if err := engine.progress(tx, store.ProgressSignerVerified, durableReceipt("signer", signerReceipt), nil); err != nil {
 		return engine.rollback(ctx, tx, true, err)
 	}
-	if err := engine.Adapter.Verify(ctx, tx); err != nil {
+	pluginReceipt, err := engine.Adapter.Verify(ctx, tx)
+	if err != nil {
 		return engine.rollback(ctx, tx, true, err)
+	}
+	if pluginReceipt != (ParticipantReceipt{}) {
+		if err := validateReceipt(pluginReceipt, tx, tx.Target.ID); err != nil || !validDigest(pluginReceipt.EvidenceDigest) {
+			return engine.rollback(ctx, tx, true, errors.Join(err, errors.New("plugin readiness receipt is not durably bound")))
+		}
+		if err := engine.progress(tx, store.ProgressPluginVerified, durableReceipt("plugin", pluginReceipt), nil); err != nil {
+			return engine.rollback(ctx, tx, true, err)
+		}
+	} else if tx.PlanAction != "INSTALL" || tx.Previous != nil {
+		return engine.rollback(ctx, tx, true, errors.New("mandatory plugin readiness receipt is missing"))
 	}
 	if err := engine.progress(tx, store.ProgressPlatformVerified, nil, nil); err != nil {
 		return engine.rollback(ctx, tx, true, err)
@@ -434,7 +446,7 @@ func durableReceipt(participant string, receipt ParticipantReceipt) *store.Durab
 		}
 	}
 	sort.Slice(members, func(i, j int) bool { return members[i].Participant < members[j].Participant })
-	return &store.DurableParticipantReceipt{Participant: participant, TransactionID: receipt.TransactionID, TargetGenerationID: receipt.TargetGenerationID, StateInventoryDigest: receipt.StateInventoryDigest, PlanDigest: receipt.PlanDigest, Members: members}
+	return &store.DurableParticipantReceipt{Participant: participant, TransactionID: receipt.TransactionID, TargetGenerationID: receipt.TargetGenerationID, StateInventoryDigest: receipt.StateInventoryDigest, PlanDigest: receipt.PlanDigest, EvidenceDigest: receipt.EvidenceDigest, Members: members}
 }
 
 func undoRecord(participant, locator, digest string) *store.DurableUndoRecord {
@@ -465,12 +477,19 @@ func (engine *TargetEngine) validateRecoveryProgress(tx model.Transaction) error
 	case model.PhaseRolledBack:
 		required = store.ProgressRollbackCompleted
 	}
+	foundRequired := false
+	foundPlugin := false
 	for _, event := range record.Events {
-		if event.Step == required {
-			return nil
-		}
+		foundRequired = foundRequired || event.Step == required
+		foundPlugin = foundPlugin || (event.Step == store.ProgressPluginVerified && event.Receipt != nil && event.Receipt.Participant == "plugin")
 	}
-	return fmt.Errorf("durable transaction progress lacks required step %s", required)
+	if !foundRequired {
+		return fmt.Errorf("durable transaction progress lacks required step %s", required)
+	}
+	if (tx.Phase == model.PhaseVerified || tx.Phase == model.PhaseCommitted) && (tx.PlanAction != "INSTALL" || tx.Previous != nil) && !foundPlugin {
+		return errors.New("durable transaction progress lacks mandatory plugin readiness")
+	}
+	return nil
 }
 
 func (engine *TargetEngine) completedProgress(tx model.Transaction) (map[store.ProgressStep]bool, error) {

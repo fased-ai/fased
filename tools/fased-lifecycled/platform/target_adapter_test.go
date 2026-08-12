@@ -190,14 +190,14 @@ type fakePlugins struct {
 	verifyErr  error
 }
 
-func (plugins fakePlugins) Prepare(_ context.Context, target model.Generation) error {
+func (plugins fakePlugins) Prepare(_ context.Context, target model.Generation) (PreparedPluginLock, error) {
 	*plugins.calls = append(*plugins.calls, "plugins.prepare:"+target.ID)
-	return plugins.prepareErr
+	return PreparedPluginLock{Data: []byte("{\"schemaVersion\":1,\"type\":\"fased-plugin-lock\",\"entries\":[]}\n"), Digest: digestA}, plugins.prepareErr
 }
 
-func (plugins fakePlugins) Verify(_ context.Context, target model.Generation) error {
+func (plugins fakePlugins) Verify(_ context.Context, target model.Generation) (PluginReadinessReceipt, error) {
 	*plugins.calls = append(*plugins.calls, "plugins.verify:"+target.ID)
-	return plugins.verifyErr
+	return PluginReadinessReceipt{Digest: digestA}, plugins.verifyErr
 }
 
 type fakeManifestReader struct{ manifest model.Manifest }
@@ -282,8 +282,14 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 	if err := adapter.Activate(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
-	if err := adapter.Verify(context.Background(), tx); err != nil {
+	pluginReceipt, err := adapter.Verify(context.Background(), tx)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if pluginReceipt.TransactionID != tx.ID || pluginReceipt.TargetGenerationID != tx.Target.ID ||
+		pluginReceipt.StateInventoryDigest != tx.StateInventoryDigest || pluginReceipt.PlanDigest != tx.Target.ID ||
+		pluginReceipt.EvidenceDigest != digestA {
+		t.Fatalf("plugin readiness was not bound to the transaction: %+v", pluginReceipt)
 	}
 	if err := adapter.Commit(context.Background(), tx); err != nil {
 		t.Fatal(err)
@@ -340,7 +346,7 @@ func TestTargetAdapterRequiresPluginLockBeforeMutationAndReadinessBeforeCommit(t
 	*calls = nil
 	adapter.Plugins = fakePlugins{calls: calls, verifyErr: errors.New("mandatory plugin missing")}
 	tx.Phase = model.PhasePrepared
-	if err := adapter.Verify(context.Background(), tx); err == nil || !strings.Contains(err.Error(), "mandatory plugin readiness") {
+	if _, err := adapter.Verify(context.Background(), tx); err == nil || !strings.Contains(err.Error(), "mandatory plugin readiness") {
 		t.Fatalf("mandatory plugin readiness failure was accepted: %v", err)
 	}
 	if got := strings.Join(*calls, ","); strings.Contains(got, "generation.activate:") || strings.Contains(got, "files.activate") {
@@ -395,7 +401,7 @@ func TestFreshLocalDefersGatewayUntilOnboardingCreatesConfig(t *testing.T) {
 	if err := adapter.Activate(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
-	if err := adapter.Verify(context.Background(), tx); err != nil {
+	if _, err := adapter.Verify(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
@@ -663,7 +669,7 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	if err := adapter.Activate(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
-	if err := adapter.Verify(context.Background(), tx); err != nil {
+	if _, err := adapter.Verify(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
 	if err := adapter.Commit(context.Background(), tx); err != nil {

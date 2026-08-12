@@ -59,6 +59,40 @@ type PluginReadinessEntry struct {
 	Status        string `json:"status"`
 }
 
+// MergeCorePluginLock replaces only generation-owned bundled entries while
+// retaining the exact content-addressed store entries previously approved by
+// the operator. A core generation is never allowed to introduce or update
+// third-party plugin code.
+func MergeCorePluginLock(target, installed PluginLock) (PluginLock, error) {
+	if _, err := PluginLockDigest(target); err != nil {
+		return PluginLock{}, fmt.Errorf("target plugin lock: %w", err)
+	}
+	if _, err := PluginLockDigest(installed); err != nil {
+		return PluginLock{}, fmt.Errorf("installed plugin lock: %w", err)
+	}
+	entries := make(map[string]PluginLockEntry, len(target.Entries)+len(installed.Entries))
+	for _, entry := range target.Entries {
+		if entry.Origin != "bundled" {
+			return PluginLock{}, errors.New("core generation attempted to select third-party plugin code")
+		}
+		entries[entry.ID] = entry
+	}
+	for _, entry := range installed.Entries {
+		if entry.Origin == "store" {
+			entries[entry.ID] = entry
+		}
+	}
+	merged := PluginLock{SchemaVersion: PluginLockSchemaVersion, Type: "fased-plugin-lock"}
+	for _, entry := range entries {
+		merged.Entries = append(merged.Entries, entry)
+	}
+	sort.Slice(merged.Entries, func(left, right int) bool { return merged.Entries[left].ID < merged.Entries[right].ID })
+	if _, err := PluginLockDigest(merged); err != nil {
+		return PluginLock{}, err
+	}
+	return merged, nil
+}
+
 type PluginBoundary struct {
 	CodeRoot      string
 	DataRoot      string
@@ -74,23 +108,40 @@ func (boundary PluginBoundary) VerifyLock(expectedDigest string) (PluginLock, er
 	if !pluginDigestPattern.MatchString(expectedDigest) {
 		return PluginLock{}, errors.New("expected plugin lock digest is invalid")
 	}
-	if err := boundary.validatePaths(); err != nil {
+	lock, digest, err := boundary.VerifyInstalledLock()
+	if err != nil {
 		return PluginLock{}, err
+	}
+	if digest != expectedDigest {
+		return PluginLock{}, errors.New("plugin lock does not match signed release evidence")
+	}
+	return lock, nil
+}
+
+// VerifyInstalledLock binds the exact operator lock to immutable code and the
+// separate writable data root. It is used when a core update must retain
+// already-approved store entries without accepting any entry from its target.
+func (boundary PluginBoundary) VerifyInstalledLock() (PluginLock, string, error) {
+	if err := boundary.validatePaths(); err != nil {
+		return PluginLock{}, "", err
 	}
 	data, err := readBoundedRegular(boundary.LockPath, boundary.OperatorUID, 0o022)
 	if err != nil {
-		return PluginLock{}, fmt.Errorf("read plugin lock: %w", err)
+		return PluginLock{}, "", fmt.Errorf("read plugin lock: %w", err)
 	}
 	lock, err := DecodePluginLock(data)
 	if err != nil {
-		return PluginLock{}, err
+		return PluginLock{}, "", err
 	}
 	digest, err := PluginLockDigest(lock)
-	if err != nil || digest != expectedDigest {
-		return PluginLock{}, errors.New("plugin lock does not match signed release evidence")
+	if err != nil {
+		return PluginLock{}, "", err
+	}
+	if err := boundary.verifyCodeRoot(); err != nil {
+		return PluginLock{}, "", err
 	}
 	if err := boundary.verifyDataRoot(); err != nil {
-		return PluginLock{}, err
+		return PluginLock{}, "", err
 	}
 	for _, entry := range lock.Entries {
 		if entry.Origin != "store" {
@@ -99,47 +150,52 @@ func (boundary PluginBoundary) VerifyLock(expectedDigest string) (PluginLock, er
 		path := filepath.Join(boundary.CodeRoot, strings.TrimPrefix(entry.Digest, "sha256:"))
 		digest, err := immutablePluginTreeDigest(path, boundary.CodeOwnerUID)
 		if err != nil {
-			return PluginLock{}, fmt.Errorf("plugin %s code store: %w", entry.ID, err)
+			return PluginLock{}, "", fmt.Errorf("plugin %s code store: %w", entry.ID, err)
 		}
 		if digest != entry.Digest {
-			return PluginLock{}, fmt.Errorf("plugin %s code integrity drift", entry.ID)
+			return PluginLock{}, "", fmt.Errorf("plugin %s code integrity drift", entry.ID)
 		}
 	}
-	return lock, nil
+	return lock, digest, nil
 }
 
-func (boundary PluginBoundary) VerifyReadiness(expectedDigest, generationID string) error {
+func (boundary PluginBoundary) VerifyReadiness(expectedDigest, generationID string) (string, error) {
 	lock, err := boundary.VerifyLock(expectedDigest)
 	if err != nil {
-		return err
+		return "", err
 	}
 	data, err := readBoundedRegular(boundary.ReadinessPath, boundary.GatewayUID, 0o077)
 	if err != nil {
-		return fmt.Errorf("read plugin readiness receipt: %w", err)
+		return "", fmt.Errorf("read plugin readiness receipt: %w", err)
 	}
 	receipt, err := DecodePluginReadiness(data)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if receipt.GenerationID != generationID || receipt.LockDigest != expectedDigest {
-		return errors.New("plugin readiness receipt identity mismatch")
+		return "", errors.New("plugin readiness receipt identity mismatch")
 	}
 	if len(receipt.Entries) != len(lock.Entries) {
-		return errors.New("plugin readiness receipt does not cover the exact lock")
+		return "", errors.New("plugin readiness receipt does not cover the exact lock")
 	}
 	for index, locked := range lock.Entries {
 		ready := receipt.Entries[index]
 		if ready.ID != locked.ID || ready.Origin != locked.Origin || ready.Digest != locked.Digest || ready.APICapability != locked.APICapability || ready.Required != locked.Required {
-			return errors.New("plugin readiness entry does not match the lock")
+			return "", errors.New("plugin readiness entry does not match the lock")
 		}
 		if ready.Required && ready.Status != "loaded" {
-			return fmt.Errorf("mandatory plugin %s is not loaded", ready.ID)
+			return "", fmt.Errorf("mandatory plugin %s is not loaded", ready.ID)
 		}
 		if ready.Status != "loaded" && ready.Status != "disabled" && ready.Status != "error" {
-			return fmt.Errorf("plugin %s readiness status is invalid", ready.ID)
+			return "", fmt.Errorf("plugin %s readiness status is invalid", ready.ID)
 		}
 	}
-	return nil
+	canonical, err := json.Marshal(receipt)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(canonical)
+	return fmt.Sprintf("sha256:%x", digest), nil
 }
 
 func DecodePluginLock(data []byte) (PluginLock, error) {
@@ -147,7 +203,7 @@ func DecodePluginLock(data []byte) (PluginLock, error) {
 	if err := decodeStrict(data, &lock); err != nil {
 		return PluginLock{}, err
 	}
-	if lock.SchemaVersion != PluginLockSchemaVersion || lock.Type != "fased-plugin-lock" {
+	if lock.SchemaVersion != PluginLockSchemaVersion || lock.Type != "fased-plugin-lock" || len(lock.Entries) > 4096 {
 		return PluginLock{}, errors.New("plugin lock schema or type is unsupported")
 	}
 	previous := ""
@@ -165,7 +221,7 @@ func DecodePluginReadiness(data []byte) (PluginReadiness, error) {
 	if err := decodeStrict(data, &receipt); err != nil {
 		return PluginReadiness{}, err
 	}
-	if receipt.SchemaVersion != PluginReadinessSchemaVersion || receipt.Type != "fased-plugin-readiness" || !pluginDigestPattern.MatchString(receipt.GenerationID) || !pluginDigestPattern.MatchString(receipt.LockDigest) {
+	if receipt.SchemaVersion != PluginReadinessSchemaVersion || receipt.Type != "fased-plugin-readiness" || !pluginDigestPattern.MatchString(receipt.GenerationID) || !pluginDigestPattern.MatchString(receipt.LockDigest) || len(receipt.Entries) > 4096 {
 		return PluginReadiness{}, errors.New("plugin readiness schema or identity is invalid")
 	}
 	previous := ""
@@ -212,6 +268,18 @@ func (boundary PluginBoundary) verifyDataRoot() error {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || stat.Uid != boundary.GatewayUID || stat.Gid != boundary.ConfigGID || info.Mode().Perm() != 0o770 || info.Mode()&os.ModeSetgid == 0 {
 		return errors.New("plugin data root identity or access is unsafe")
+	}
+	return nil
+}
+
+func (boundary PluginBoundary) verifyCodeRoot() error {
+	info, err := os.Lstat(boundary.CodeRoot)
+	if err != nil {
+		return fmt.Errorf("plugin code root: %w", err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || stat.Uid != boundary.CodeOwnerUID || info.Mode().Perm()&0o022 != 0 {
+		return errors.New("plugin code root identity or access is unsafe")
 	}
 	return nil
 }

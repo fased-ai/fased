@@ -146,9 +146,10 @@ func (participant fakeParticipant) Abort(_ context.Context, _ model.Transaction)
 }
 
 type fakeAdapter struct {
-	calls            *[]string
-	failAt           string
-	omitStateMembers bool
+	calls             *[]string
+	failAt            string
+	omitStateMembers  bool
+	omitPluginReceipt bool
 }
 
 func (adapter fakeAdapter) Prepare(context.Context, model.Transaction) error {
@@ -169,9 +170,19 @@ func stateMemberDigests(digest string) StateMemberDigests {
 	return StateMemberDigests{ApplicationState: digest, Configuration: digest, Wallet: digest, Mining: digest, Federation: digest, PluginData: digest, Signer: digest}
 }
 
-func (adapter fakeAdapter) Verify(context.Context, model.Transaction) error {
+func pluginProgress(tx model.Transaction) store.ProgressEvent {
+	return store.ProgressEvent{Step: store.ProgressPluginVerified, Receipt: durableReceipt("plugin", ParticipantReceipt{
+		TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest,
+		PlanDigest: tx.Target.ID, EvidenceDigest: tx.Target.ID,
+	})}
+}
+
+func (adapter fakeAdapter) Verify(_ context.Context, tx model.Transaction) (ParticipantReceipt, error) {
 	*adapter.calls = append(*adapter.calls, "adapter.verify")
-	return nil
+	if adapter.omitPluginReceipt {
+		return ParticipantReceipt{}, nil
+	}
+	return ParticipantReceipt{TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.Target.ID, EvidenceDigest: tx.Target.ID}, nil
 }
 
 func (adapter fakeAdapter) Commit(context.Context, model.Transaction) error {
@@ -292,13 +303,20 @@ func TestTargetEngineCommitsOneOrderedTransaction(t *testing.T) {
 		}
 	}
 	foundStateReceipt := false
+	foundPluginReceipt := false
 	for _, event := range journal.events {
 		if event.Step == store.ProgressStatePrepared && event.Receipt != nil && event.Receipt.Participant == "state" && event.Undo != nil && event.Undo.Digest == digestB {
 			foundStateReceipt = true
 		}
+		if event.Step == store.ProgressPluginVerified && event.Receipt != nil && event.Receipt.Participant == "plugin" && event.Receipt.EvidenceDigest == digestB {
+			foundPluginReceipt = true
+		}
 	}
 	if !foundStateReceipt {
 		t.Fatalf("post-quiesce typed-state receipt was not journaled: %+v", journal.events)
+	}
+	if !foundPluginReceipt {
+		t.Fatalf("mandatory plugin readiness receipt was not journaled: %+v", journal.events)
 	}
 }
 
@@ -333,11 +351,22 @@ func TestTargetEngineRejectsIncompleteTypedStateReceiptBeforeMigration(t *testin
 	}
 }
 
+func TestTargetEngineRejectsMissingPluginReadinessBeforeVerified(t *testing.T) {
+	var calls []string
+	engine, _ := newEngine(&calls, "", "")
+	engine.Adapter = fakeAdapter{calls: &calls, omitPluginReceipt: true}
+	result, err := engine.Run(context.Background(), transaction(model.PhaseIdle))
+	if err == nil || result.Outcome != OutcomeRolledBack {
+		t.Fatalf("missing plugin readiness receipt was accepted: result=%+v err=%v", result, err)
+	}
+}
+
 func TestRecoverCompletesVerifiedAndRollsBackSwitched(t *testing.T) {
 	var verifiedCalls []string
 	verifiedEngine, verifiedJournal := newEngine(&verifiedCalls, "", "")
 	verifiedTx := transaction(model.PhaseVerified)
 	_ = verifiedJournal.CommitJournal(store.AuthorityTargetController, verifiedTx)
+	_ = verifiedJournal.AppendProgress(verifiedTx, pluginProgress(verifiedTx))
 	_ = verifiedJournal.AppendProgress(verifiedTx, store.ProgressEvent{Step: store.ProgressPlatformVerified})
 	verified, err := verifiedEngine.Recover(context.Background(), verifiedTx)
 	if err != nil || verified.Phase != model.PhaseCommitted {
@@ -355,6 +384,21 @@ func TestRecoverCompletesVerifiedAndRollsBackSwitched(t *testing.T) {
 	}
 	if len(switchedCalls) == 0 || switchedCalls[0] != "adapter.stop-target" {
 		t.Fatalf("switched recovery did not stop target first: %v", switchedCalls)
+	}
+}
+
+func TestRecoveryRejectsVerifiedUpdateWithoutDurablePluginReceipt(t *testing.T) {
+	var calls []string
+	engine, journal := newEngine(&calls, "", "")
+	tx := transaction(model.PhaseVerified)
+	if err := journal.CommitJournal(store.AuthorityTargetController, tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.AppendProgress(tx, store.ProgressEvent{Step: store.ProgressPlatformVerified}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Recover(context.Background(), tx); err == nil {
+		t.Fatal("verified update recovered without mandatory plugin readiness evidence")
 	}
 }
 
@@ -429,6 +473,11 @@ func TestRecoveryMatrixReopensEveryDurablePhaseAndConvergesExactly(t *testing.T)
 				}
 			}
 			if test.progress != "" {
+				if test.phase == model.PhaseVerified || test.phase == model.PhaseCommitted {
+					if err := journal.AppendProgress(tx, pluginProgress(tx)); err != nil {
+						t.Fatal(err)
+					}
+				}
 				if err := journal.AppendProgress(tx, store.ProgressEvent{Step: test.progress}); err != nil {
 					t.Fatal(err)
 				}
@@ -478,6 +527,9 @@ func TestRecoveryResumesCommitAndRollbackFromDurableSubphase(t *testing.T) {
 			if err := journal.CommitJournal(store.AuthorityTargetController, tx); err != nil {
 				t.Fatal(err)
 			}
+		}
+		if err := journal.AppendProgress(tx, pluginProgress(tx)); err != nil {
+			t.Fatal(err)
 		}
 		for _, step := range []store.ProgressStep{store.ProgressPlatformVerified, store.ProgressMigratorCommitted} {
 			if err := journal.AppendProgress(tx, store.ProgressEvent{Step: step}); err != nil {

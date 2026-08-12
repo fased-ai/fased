@@ -36,6 +36,39 @@ afterEach(() => {
 });
 
 describe("discoverFasedAgentPlugins", () => {
+  it("loads managed code only from plugin-code and ignores mutable extension paths", async () => {
+    const stateDir = makeTempDir();
+    const codeRoot = path.join(stateDir, "managed", "plugin-code");
+    const dataRoot = path.join(stateDir, "plugin-data");
+    const mutableExtensions = path.join(stateDir, "extensions");
+    const configuredPath = path.join(stateDir, "configured.ts");
+    fs.mkdirSync(codeRoot, { recursive: true });
+    fs.mkdirSync(dataRoot, { recursive: true });
+    fs.mkdirSync(mutableExtensions, { recursive: true });
+    fs.writeFileSync(path.join(codeRoot, "approved.ts"), "export default function () {}", "utf-8");
+    fs.writeFileSync(
+      path.join(mutableExtensions, "shadow.ts"),
+      "export default function () {}",
+      "utf-8",
+    );
+    fs.writeFileSync(configuredPath, "export default function () {}", "utf-8");
+
+    const result = await withEnvAsync(
+      {
+        FASED_STATE_DIR: stateDir,
+        FASED_BUNDLED_PLUGINS_DIR: "/nonexistent/bundled/plugins",
+        FASED_PLUGIN_CODE_ROOT: codeRoot,
+        FASED_PLUGIN_DATA_ROOT: dataRoot,
+      },
+      async () => discoverFasedAgentPlugins({ extraPaths: [configuredPath] }),
+    );
+
+    expect(result.candidates.map((candidate) => candidate.idHint)).toEqual(["approved"]);
+    expect(result.diagnostics.map((diagnostic) => diagnostic.message)).toContain(
+      "managed plugin load paths are disabled; install code through fased plugins update",
+    );
+  });
+
   it("discovers global and workspace extensions", async () => {
     const stateDir = makeTempDir();
     const workspaceDir = path.join(stateDir, "workspace");
