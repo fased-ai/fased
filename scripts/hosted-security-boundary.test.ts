@@ -31,8 +31,8 @@ describe("hosted signer security boundary", () => {
     expect(bootstrap).toContain("trust.VerifyInitialRoot");
     expect(bootstrap).toContain("trust.VerifyRootRotation");
     expect(bootstrap).toContain("trust.VerifyAttestedReleaseIndex");
-    expect(bootstrapRoute).toContain(
-      'productionReleaseBase = "https://github.com/fased-ai/fased/releases/download"',
+    expect(bootstrapRoute).toMatch(
+      /productionReleaseBase\s*=\s*"https:\/\/github\.com\/fased-ai\/fased\/releases\/download"/u,
     );
     expect(bootstrapRoute).toContain("fased-release-index-v1.json.attestation.json");
     expect(bootstrapRoute).not.toContain("updates.fased.ai");
