@@ -158,6 +158,10 @@ describe("D8 unified lifecycle acceptance", () => {
       new URL("./test-lifecycle-hosting-acceptance.sh", import.meta.url),
       "utf8",
     );
+    const capsuleWrapper = readFileSync(
+      new URL("./prepare-branch-predecessor-capsule.sh", import.meta.url),
+      "utf8",
+    );
     expect(runner).toContain("restore-predecessor-capsule.mjs");
     expect(runner).toContain("lifecycle-receipt-verifier.mjs");
     expect(runner).not.toContain('"$predecessor_repo/install.sh"');
@@ -176,6 +180,7 @@ describe("D8 unified lifecycle acceptance", () => {
     expect(wrapper).toContain("--evidence-class SUPPORTING");
     expect(hostingWrapper).toContain("--evidence-class SUPPORTING");
     expect(hostingWrapper).toContain("scripts/lifecycle-configuration-preservation.mjs");
+    expect(capsuleWrapper).toContain("lifecycle-configuration-preservation");
     expect(runner).not.toContain("systemctl list-units --all --no-pager 'fased-*'");
     const hostingManagedUpdate = hosting.slice(hosting.indexOf("  managed-update)"));
     expect(hostingManagedUpdate.indexOf("acceptance_mark restart-health")).toBeLessThan(
