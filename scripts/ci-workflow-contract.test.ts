@@ -890,7 +890,9 @@ describe("CI workflow routing", () => {
     );
 
     expect(fixture).toContain('if [[ "$version" == *-* ]]');
-    expect(fixture).toContain("target_update_args=(--channel beta)");
+    expect(fixture).toContain(
+      'target_update_args=(--channel "$target_channel" --version "$version")',
+    );
     expect(fixture.match(/update "\$\{target_update_args\[@\]\}" --timeout/gu)).toHaveLength(3);
     expect(fixture).not.toContain("/etc/fased/testing");
     expect(fixture).toContain("/var/lib/fased-protected-local-fixture");

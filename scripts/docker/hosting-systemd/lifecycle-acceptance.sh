@@ -6,6 +6,10 @@ set -euo pipefail
 version="${FASED_FIXTURE_VERSION:?}"
 commit="${FASED_FIXTURE_COMMIT:?}"
 predecessor_version="${FASED_FIXTURE_PREDECESSOR_VERSION:-}"
+target_channel=stable
+if [[ "$version" == *-* ]]; then
+  target_channel=beta
+fi
 phase="${1:-install}"
 scenario="$([[ "$phase" == "managed-update" ]] && printf managed-update || printf fresh-install)"
 gateway_port="${FASED_FIXTURE_GATEWAY_PORT:-18789}"
@@ -384,13 +388,13 @@ run_public_updater() {
   test -x /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap
   umask 077
   printf \
-    'app ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap update --profile hosting --channel beta --version %s\n' \
-    "$version" >"$sudoers_policy"
+    'app ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap update --profile hosting --channel %s --version %s --timeout 120\n' \
+    "$target_channel" "$version" >"$sudoers_policy"
   chown root:root "$sudoers_policy"
   chmod 0440 "$sudoers_policy"
   visudo -cf "$sudoers_policy" >/dev/null
   runuser -u app -- env HOME=/home/app /home/app/.fased/bin/fased update \
-    --channel beta --timeout 120
+    --channel "$target_channel" --version "$version" --timeout 120
 }
 
 wait_for_gateway_version() {
