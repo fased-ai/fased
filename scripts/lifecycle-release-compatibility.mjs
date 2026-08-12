@@ -17,6 +17,10 @@ const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-
 const COMMIT_PATTERN = /^[a-f0-9]{40}$/u;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const GROUP_PATTERN = /^[a-z0-9][a-z0-9-]{0,127}$/u;
+const PUBLISHED_ACCEPTANCE_CONTRACT_IDS = Object.freeze([
+  "public-local-lifecycle-v1",
+  "public-lifecycle-v2",
+]);
 
 function fail(message) {
   throw new Error(`lifecycle release compatibility: ${message}`);
@@ -93,7 +97,7 @@ export function parseReleaseCompatibility(value, expected = {}) {
       !expected.compatibilityGroupIds.includes(value.compatibilityGroupId)) ||
     value.selectionBasis !== "installed-topology-protocol-and-state-schema" ||
     value.runtimeConsumesReleaseIdentity !== false ||
-    value.acceptanceContract.id !== "public-lifecycle-v2" ||
+    !PUBLISHED_ACCEPTANCE_CONTRACT_IDS.includes(value.acceptanceContract.id) ||
     !DIGEST_PATTERN.test(value.acceptanceContract.digest || "")
   ) {
     fail("manifest identity or selection contract is invalid");
