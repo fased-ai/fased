@@ -1225,7 +1225,7 @@ describe("loadFasedAgentPlugins", () => {
     expect(entry?.status).toBe("disabled");
   });
 
-  it("prefers higher-precedence plugins with the same id", () => {
+  it("loads the higher-precedence plugin and rejects the duplicate id", () => {
     const bundledDir = makeTempDir();
     writePlugin({
       id: "shadow",
@@ -1254,9 +1254,16 @@ describe("loadFasedAgentPlugins", () => {
 
     const entries = registry.plugins.filter((entry) => entry.id === "shadow");
     const loaded = entries.find((entry) => entry.status === "loaded");
-    const overridden = entries.find((entry) => entry.status === "disabled");
+    expect(entries).toHaveLength(1);
     expect(loaded?.origin).toBe("config");
-    expect(overridden?.origin).toBe("bundled");
+    expect(registry.diagnostics).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        pluginId: "shadow",
+        source: path.join(bundledDir, "shadow.js"),
+        message: expect.stringContaining("duplicate plugin id rejected"),
+      }),
+    );
   });
   it("warns when plugins.allow is empty and non-bundled plugins are discoverable", () => {
     process.env.FASED_BUNDLED_PLUGINS_DIR = "/nonexistent/bundled/plugins";
