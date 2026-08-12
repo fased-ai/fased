@@ -231,18 +231,32 @@ jobs:
             --arg owner "$OWNER_PREDECESSOR_VERSION" \
             '[$stable,$owner] | unique')"
           mapfile -t predecessor_list < <(jq -r '.[]' <<<"$predecessors")
+          expected_receipt_count=1
           for predecessor in "${predecessor_list[@]}"; do
+            local_receipts="$receipts/fased-p1-replay-local-update-$predecessor-receipts"
+            local_receipt_count=0
+            if test -f "$local_receipts/ubuntu-fresh-install.json"; then
+              verify_receipt \
+                "$local_receipts/ubuntu-fresh-install.json" \
+                protected-local fresh-install false
+              expected_receipt_count=$((expected_receipt_count + 1))
+              local_receipt_count=$((local_receipt_count + 1))
+            fi
             verify_receipt \
-              "$receipts/fased-p1-replay-local-update-$predecessor-receipts/ubuntu-managed-update.json" \
+              "$local_receipts/ubuntu-managed-update.json" \
               protected-local managed-update true
+            expected_receipt_count=$((expected_receipt_count + 1))
+            local_receipt_count=$((local_receipt_count + 1))
+            test "$(find "$local_receipts" -maxdepth 1 -type f -name '*.json' | wc -l)" \
+              -eq "$local_receipt_count"
             verify_receipt \
               "$receipts/fased-p1-replay-hosting-$predecessor-receipts/ubuntu-fresh-install.json" \
               hosting fresh-install false
             verify_receipt \
               "$receipts/fased-p1-replay-hosting-$predecessor-receipts/ubuntu-managed-update.json" \
               hosting managed-update true
+            expected_receipt_count=$((expected_receipt_count + 2))
           done
-          expected_receipt_count=$((1 + 3 * ${#predecessor_list[@]}))
           test "$(find "$receipts" -type f -name '*.json' | wc -l)" -eq \
             "$expected_receipt_count"
 
