@@ -25,10 +25,12 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(wrapper).toContain("FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION");
     expect(wrapper).toContain("managed-update");
     expect(fixture).toContain('--gateway-port "$gateway_port" \\\n      --local \\\n      --');
+    expect(fixture).toContain('"fased-release-index-v1.json": "fased-branch-release-index.json"');
     expect(fixture).toContain(
-      '"beta/current/release-index.json": "fased-branch-release-index.json"',
+      '"fased-release-index-v1.json.attestation.json": "fased-branch-delegation.json"',
     );
-    expect(fixture).toContain('metadata.startsWith("beta/assets/")');
+    expect(fixture).not.toContain("beta/current/release-index.json");
+    expect(fixture).not.toContain('metadata.startsWith("beta/assets/")');
     expect(fixture).toContain('grep -F "fased-lifecycled: ROLLED_BACK:"');
     expect(fixture).not.toContain("target release failed and was rolled back");
   });
