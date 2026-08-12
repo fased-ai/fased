@@ -73,12 +73,28 @@ func (boundary DiskPluginBoundary) prepareLegacyPlugins(tx model.Transaction) (s
 	if len(entries) == 0 {
 		return empty, nil
 	}
-	transactionRoot := boundary.transactionRoot(tx)
-	if err := os.RemoveAll(transactionRoot); err != nil {
+	if err := validatePluginCodeRoot(boundary.codeRoot(), boundary.codeOwnerUID()); err != nil {
 		return empty, err
 	}
-	stagingRoot := filepath.Join(transactionRoot, "staging")
+	recordRoot := boundary.transactionRoot(tx)
+	if err := os.RemoveAll(recordRoot); err != nil {
+		return empty, err
+	}
+	stagingRoot := boundary.stagingRoot(tx)
+	if _, err := os.Lstat(stagingRoot); err == nil {
+		if err := makePluginTreeRemovable(stagingRoot); err != nil {
+			return empty, err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return empty, err
+	}
+	if err := os.RemoveAll(stagingRoot); err != nil {
+		return empty, err
+	}
 	if err := os.MkdirAll(stagingRoot, 0o700); err != nil {
+		return empty, err
+	}
+	if err := os.Chmod(stagingRoot, 0o700); err != nil {
 		return empty, err
 	}
 	record := legacyPluginImportRecord{Version: legacyPluginRecordVersion, TransactionID: tx.ID, TargetGenerationID: tx.Target.ID}
@@ -110,10 +126,7 @@ func (boundary DiskPluginBoundary) prepareLegacyPlugins(tx model.Transaction) (s
 		record.Entries = append(record.Entries, legacyPluginImportEntry{ID: name, Digest: digest, Required: true})
 	}
 	if len(record.Entries) == 0 {
-		if err := os.RemoveAll(transactionRoot); err != nil {
-			return empty, err
-		}
-		return empty, nil
+		return empty, errors.Join(os.RemoveAll(recordRoot), os.RemoveAll(stagingRoot))
 	}
 	if err := boundary.writeLegacyPluginRecord(tx, record); err != nil {
 		return empty, err
@@ -167,7 +180,7 @@ func (boundary DiskPluginBoundary) Activate(tx model.Transaction) error {
 		if err := boundary.writeLegacyPluginRecord(tx, record); err != nil {
 			return err
 		}
-		staging := filepath.Join(boundary.transactionRoot(tx), "staging", entry.ID)
+		staging := filepath.Join(boundary.stagingRoot(tx), entry.ID)
 		// The root directory is excluded from the tree digest. Temporarily make
 		// only that root owner-writable so rename works on restrictive filesystems;
 		// every child remains immutable and the destination is root-owned.
@@ -222,22 +235,31 @@ func (boundary DiskPluginBoundary) Restore(tx model.Transaction) error {
 }
 
 func (boundary DiskPluginBoundary) Discard(tx model.Transaction) error {
-	root := boundary.transactionRoot(tx)
-	if _, err := os.Lstat(root); err == nil {
-		if err := makePluginTreeRemovable(root); err != nil {
+	recordRoot := boundary.transactionRoot(tx)
+	stagingRoot := boundary.stagingRoot(tx)
+	for _, root := range []string{recordRoot, stagingRoot} {
+		if _, err := os.Lstat(root); err == nil {
+			if err := makePluginTreeRemovable(root); err != nil {
+				return err
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+	}
+	if err := errors.Join(os.RemoveAll(recordRoot), os.RemoveAll(stagingRoot)); err != nil {
 		return err
 	}
-	if err := os.RemoveAll(root); err != nil {
-		return err
+	var syncErrors []error
+	for _, parent := range []string{filepath.Dir(recordRoot), filepath.Dir(stagingRoot)} {
+		if _, err := os.Lstat(parent); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			syncErrors = append(syncErrors, err)
+			continue
+		}
+		syncErrors = append(syncErrors, syncPluginDirectory(parent))
 	}
-	parent := filepath.Dir(root)
-	if _, err := os.Lstat(parent); errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	return syncPluginDirectory(parent)
+	return errors.Join(syncErrors...)
 }
 
 func makePluginTreeRemovable(root string) error {
@@ -264,6 +286,14 @@ func makePluginTreeRemovable(root string) error {
 
 func (boundary DiskPluginBoundary) legacyPluginRecordPath(tx model.Transaction) string {
 	return filepath.Join(boundary.transactionRoot(tx), "import.json")
+}
+
+// Staged plugin bytes must live on the same filesystem as their immutable
+// destination. The durable transaction record remains under LifecycleRoot,
+// while this hidden store-local path makes activation one atomic rename even
+// when /var/lib and /opt are separate mounts.
+func (boundary DiskPluginBoundary) stagingRoot(tx model.Transaction) string {
+	return filepath.Join(boundary.codeRoot(), ".transactions", tx.ID)
 }
 
 func (boundary DiskPluginBoundary) readLegacyPluginRecord(tx model.Transaction) (legacyPluginImportRecord, error) {

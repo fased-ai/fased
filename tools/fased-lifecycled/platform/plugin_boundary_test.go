@@ -71,6 +71,15 @@ func TestDiskPluginBoundaryImportsLegacyCodeTransactionally(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.HasPrefix(boundary.stagingRoot(tx), boundary.CodeRoot+string(os.PathSeparator)) {
+		t.Fatalf("plugin staging escaped the destination filesystem: %s", boundary.stagingRoot(tx))
+	}
+	if strings.HasPrefix(boundary.stagingRoot(tx), boundary.transactionRoot(tx)+string(os.PathSeparator)) {
+		t.Fatalf("plugin bytes were staged under the lifecycle record filesystem: %s", boundary.stagingRoot(tx))
+	}
+	if _, err := os.Lstat(boundary.legacyPluginRecordPath(tx)); err != nil {
+		t.Fatalf("durable import record is missing: %v", err)
+	}
 	var lock participant.PluginLock
 	if err := json.Unmarshal(prepared.Data, &lock); err != nil {
 		t.Fatal(err)
