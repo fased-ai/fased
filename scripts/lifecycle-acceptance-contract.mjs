@@ -9,6 +9,7 @@ const COMMIT_PATTERN = /^[a-f0-9]{40}$/u;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const PROFILES = ["protected-local", "hosting"];
 const SCENARIOS = ["fresh-install", "managed-update"];
+const LEGACY_V1_DIGEST = "sha256:b9ac4c751e0ad3e7455b177cd80538aedcbd8365aeac9eb7c174b72fea4c8ad8";
 const commonPredicates = Object.freeze([
   "artifact-identity",
   "public-installer-acquisition",
@@ -77,9 +78,36 @@ function stableValue(value) {
 
 export function digestAcceptanceContract(contract) {
   validateAcceptanceContract(contract);
+  return digestStableContract(contract);
+}
+
+function digestStableContract(contract) {
   return `sha256:${createHash("sha256")
     .update(JSON.stringify(stableValue(contract)))
     .digest("hex")}`;
+}
+
+export function digestPublishedAcceptanceContract(contract) {
+  validatePublishedAcceptanceContract(contract);
+  return digestStableContract(contract);
+}
+
+export function validatePublishedAcceptanceContract(contract) {
+  if (contract?.schemaVersion === 2) {
+    return validateAcceptanceContract(contract);
+  }
+  exactKeys(contract, ["schemaVersion", "role", "contractId", "scenarios"], "contract");
+  if (
+    contract.schemaVersion !== 1 ||
+    contract.role !== "fased-lifecycle-acceptance-contract" ||
+    contract.contractId !== "public-local-lifecycle-v1"
+  ) {
+    fail("published contract identity is invalid");
+  }
+  if (digestStableContract(contract) !== LEGACY_V1_DIGEST) {
+    fail("published v1 contract digest is invalid");
+  }
+  return contract;
 }
 
 export function validateAcceptanceContract(contract) {

@@ -4,7 +4,9 @@ import {
   REQUIRED_PREDICATES,
   buildAcceptanceReceipt,
   digestAcceptanceContract,
+  digestPublishedAcceptanceContract,
   validateAcceptanceContract,
+  validatePublishedAcceptanceContract,
   verifyAcceptanceReceipt,
 } from "./lifecycle-acceptance-contract.mjs";
 
@@ -25,6 +27,59 @@ function evidence(profile: string, scenario: string, version = "0.1.76-rc.70") {
 }
 
 describe("lifecycle acceptance contract", () => {
+  it("validates the exact historical v1 public contract without weakening current v2", () => {
+    const legacy = {
+      schemaVersion: 1,
+      role: "fased-lifecycle-acceptance-contract",
+      contractId: "public-local-lifecycle-v1",
+      scenarios: {
+        "fresh-install": [
+          "artifact-identity",
+          "public-installer-acquisition",
+          "canonical-lifecycle",
+          "four-services-active",
+          "wallet-status",
+          "wallet-signer-doctor",
+          "mining-status",
+          "network-status",
+          "plugin-doctor",
+          "restart-health",
+          "state-preservation",
+          "already-current",
+        ],
+        "managed-update": [
+          "artifact-identity",
+          "public-installer-acquisition",
+          "rollback-retry",
+          "canonical-lifecycle",
+          "four-services-active",
+          "wallet-status",
+          "wallet-signer-doctor",
+          "mining-status",
+          "network-status",
+          "plugin-doctor",
+          "restart-health",
+          "state-preservation",
+          "already-current",
+        ],
+      },
+    };
+    expect(validatePublishedAcceptanceContract(legacy)).toBe(legacy);
+    expect(digestPublishedAcceptanceContract(legacy)).toBe(
+      "sha256:b9ac4c751e0ad3e7455b177cd80538aedcbd8365aeac9eb7c174b72fea4c8ad8",
+    );
+    expect(() => validateAcceptanceContract(legacy)).toThrow("contract fields are invalid");
+    expect(() =>
+      validatePublishedAcceptanceContract({
+        ...legacy,
+        scenarios: {
+          ...legacy.scenarios,
+          "managed-update": legacy.scenarios["managed-update"].slice(0, -1),
+        },
+      }),
+    ).toThrow("published v1 contract digest is invalid");
+  });
+
   it("defines identical evidence classes for Local and Hosting", () => {
     const value = contract();
     expect(validateAcceptanceContract(value)).toBe(value);

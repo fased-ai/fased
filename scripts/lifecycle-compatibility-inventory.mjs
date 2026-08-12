@@ -7,8 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  digestAcceptanceContract,
-  validateAcceptanceContract,
+  digestPublishedAcceptanceContract,
+  validatePublishedAcceptanceContract,
 } from "./lifecycle-acceptance-contract.mjs";
 import {
   RELEASE_COMPATIBILITY_ASSET,
@@ -24,6 +24,7 @@ const DEFAULT_INVENTORY_PATH = path.join(
   "lifecycle-compatibility.v1.json",
 );
 const TAG_PATTERN = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
+const ACCEPTANCE_ASSET_PATTERN = /^fased-lifecycle-acceptance-v\d+\.json$/u;
 const COMMIT_PATTERN = /^[a-f0-9]{40}$/u;
 const RUNTIME_SELECTION_FIELDS = Object.freeze([
   "profile",
@@ -684,7 +685,6 @@ function readManifestedPublicRelease(inventory, release) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "fased-public-compatibility-"));
   const descriptorName = "fased-hosting-candidate.json";
   const descriptorAttestationName = `${descriptorName}.attestation.json`;
-  const acceptanceName = "fased-lifecycle-acceptance-v2.json";
   try {
     const downloadArgs = [
       "release",
@@ -699,7 +699,7 @@ function readManifestedPublicRelease(inventory, release) {
       descriptorName,
       descriptorAttestationName,
       RELEASE_COMPATIBILITY_ASSET,
-      acceptanceName,
+      "fased-lifecycle-acceptance-v*.json",
     ]) {
       downloadArgs.push("--pattern", name);
     }
@@ -736,23 +736,19 @@ function readManifestedPublicRelease(inventory, release) {
     if (tagCommit !== descriptor.commit) {
       fail(`public release tag ${tag} does not point at its candidate commit`);
     }
-    const byName = new Map(descriptor.artifacts.map((artifact) => [artifact.name, artifact]));
-    for (const name of [RELEASE_COMPATIBILITY_ASSET, acceptanceName]) {
-      const identity = byName.get(name);
-      const file = path.join(directory, name);
-      if (
-        !identity ||
-        statSync(file).size !== identity.size ||
-        sha256File(file) !== identity.sha256
-      ) {
-        fail(`public release ${tag} has unbound ${name}`);
-      }
-    }
-    const acceptanceContract = validateAcceptanceContract(
-      JSON.parse(readFileSync(path.join(directory, acceptanceName), "utf8")),
+    const compatibilityIdentity = descriptor.artifacts.find(
+      ({ name }) => name === RELEASE_COMPATIBILITY_ASSET,
     );
+    const compatibilityPath = path.join(directory, RELEASE_COMPATIBILITY_ASSET);
+    if (
+      !compatibilityIdentity ||
+      statSync(compatibilityPath).size !== compatibilityIdentity.size ||
+      sha256File(compatibilityPath) !== compatibilityIdentity.sha256
+    ) {
+      fail(`public release ${tag} has unbound ${RELEASE_COMPATIBILITY_ASSET}`);
+    }
     const compatibility = parseReleaseCompatibility(
-      JSON.parse(readFileSync(path.join(directory, RELEASE_COMPATIBILITY_ASSET), "utf8")),
+      JSON.parse(readFileSync(compatibilityPath, "utf8")),
       {
         repository: inventory.repository,
         compatibilityGroupIds: inventory.releaseGroups.map((group) => group.id),
@@ -764,9 +760,27 @@ function readManifestedPublicRelease(inventory, release) {
         },
       },
     );
+    const acceptanceArtifacts = descriptor.artifacts.filter(({ name }) =>
+      ACCEPTANCE_ASSET_PATTERN.test(name),
+    );
+    if (acceptanceArtifacts.length !== 1) {
+      fail(`public release ${tag} must bind exactly one acceptance contract`);
+    }
+    const acceptanceIdentity = acceptanceArtifacts[0];
+    const acceptancePath = path.join(directory, acceptanceIdentity.name);
+    if (
+      statSync(acceptancePath).size !== acceptanceIdentity.size ||
+      sha256File(acceptancePath) !== acceptanceIdentity.sha256
+    ) {
+      fail(`public release ${tag} has an unbound acceptance contract`);
+    }
+    const acceptanceContract = validatePublishedAcceptanceContract(
+      JSON.parse(readFileSync(acceptancePath, "utf8")),
+    );
     if (
       compatibility.acceptanceContract.id !== acceptanceContract.contractId ||
-      compatibility.acceptanceContract.digest !== digestAcceptanceContract(acceptanceContract)
+      compatibility.acceptanceContract.digest !==
+        digestPublishedAcceptanceContract(acceptanceContract)
     ) {
       fail(`public release ${tag} compatibility evidence has the wrong acceptance contract`);
     }

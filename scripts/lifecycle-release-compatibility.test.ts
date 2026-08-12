@@ -11,6 +11,35 @@ const acceptance = JSON.parse(
 );
 
 describe("immutable public lifecycle compatibility", () => {
+  it("parses the frozen historical v1 contract identity and rejects unknown identities", () => {
+    const manifest = buildReleaseCompatibility({
+      repository: "fased-ai/fased",
+      compatibilityGroupId: "supervised-lifecycle-v1",
+      acceptanceContract: acceptance,
+      version: "0.1.76-rc.73",
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+    });
+    expect(
+      parseReleaseCompatibility({
+        ...manifest,
+        acceptanceContract: {
+          id: "public-local-lifecycle-v1",
+          digest: `sha256:${"c".repeat(64)}`,
+        },
+      }).acceptanceContract.id,
+    ).toBe("public-local-lifecycle-v1");
+    expect(() =>
+      parseReleaseCompatibility({
+        ...manifest,
+        acceptanceContract: {
+          id: "unknown-contract",
+          digest: `sha256:${"c".repeat(64)}`,
+        },
+      }),
+    ).toThrow("manifest identity or selection contract is invalid");
+  });
+
   it("binds release identity to one topology group without making versions policy inputs", () => {
     const manifest = buildReleaseCompatibility({
       repository: "fased-ai/fased",
