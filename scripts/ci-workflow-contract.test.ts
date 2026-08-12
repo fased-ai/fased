@@ -754,6 +754,12 @@ describe("CI workflow routing", () => {
     });
     expect(replayText).toContain("scripts/prepare-candidate-fixture-trust.sh");
     expect(replayText).toContain('.conclusion == "failure"');
+    for (const jobName of ["local-fresh", "local-update", "hosting"] as const) {
+      const checkout = replay.jobs?.[jobName]?.steps?.find((step) =>
+        usesAction(step, "actions/checkout"),
+      );
+      expect(checkout?.with?.["fetch-depth"]).toBe(0);
+    }
     expect(replayText).not.toContain("pnpm build");
     expect(replayText).not.toContain("gh release create");
     expect(replayText).not.toContain("git tag");
