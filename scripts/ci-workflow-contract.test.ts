@@ -512,6 +512,7 @@ describe("CI workflow routing", () => {
 
     expect(workflow.on).not.toHaveProperty("push");
     expect(workflow.on.workflow_dispatch.inputs.pre_candidate_run_id.required).toBe(true);
+    expect(workflow.on.workflow_dispatch.inputs.pre_tag_p1_run_id.required).toBe(true);
     expect(workflow.on.workflow_dispatch.inputs.owner_predecessor_version.required).toBe(true);
     expect(jobs["release-gate"]).toBeUndefined();
     expect(jobs["build"]?.needs).toBe("preflight");
@@ -585,6 +586,13 @@ describe("CI workflow routing", () => {
     expect(
       jobs["preflight"]?.steps?.some((step) => step.name === "Verify immutable pre-candidate pass"),
     ).toBe(true);
+    expect(
+      jobs["preflight"]?.steps?.some(
+        (step) => step.name === "Verify immutable protected pre-tag P1 pass",
+      ),
+    ).toBe(true);
+    expect(preflightText).toContain('.path == ".github/workflows/pre-tag-p1.yml"');
+    expect(preflightText).toContain("fased-pre-tag-p1-evidence");
     expect(preflightText).toContain("pnpm audit --prod --audit-level high");
     expect(
       jobs["build"]?.steps?.some((step) => step.name === "Install exact frozen dependencies"),
@@ -722,6 +730,59 @@ describe("CI workflow routing", () => {
     expect(
       validate?.steps?.find((step) => usesAction(step, "actions/upload-artifact"))?.with?.name,
     ).toBe("fased-pre-candidate-evidence");
+  });
+
+  it("runs candidate-shaped Local and Hosting P1 before the immutable tag", async () => {
+    const workflow = await readWorkflow(".github/workflows/pre-tag-p1.yml");
+    const jobs = workflow.jobs ?? {};
+    const preflight = jobs.preflight;
+    const candidate = jobs.candidate;
+    const localFresh = jobs["local-fresh"];
+    const localUpdate = jobs["local-update"];
+    const hosting = jobs.hosting;
+    const evidence = jobs.evidence;
+    const candidateBuild = candidate?.steps?.find(
+      (step) => step.name === "Build exact non-publishable x64 artifact once",
+    );
+    const hostingRun = hosting?.steps?.find((step) => step.name === "Run exact Hosting entrypoint");
+    const allText = Object.values(jobs)
+      .flatMap((job) => job.steps ?? [])
+      .map((step) => step.run ?? "")
+      .join("\n");
+
+    expect(workflow.on).toEqual({
+      workflow_dispatch: expect.any(Object),
+    });
+    expect(workflow.on.workflow_dispatch.inputs.pre_candidate_run_id.required).toBe(true);
+    expect(preflight?.["timeout-minutes"]).toBeLessThanOrEqual(5);
+    expect(candidate?.needs).toEqual(["preflight"]);
+    expect(localFresh?.needs).toEqual(["preflight", "candidate"]);
+    expect(localUpdate?.needs).toEqual(["preflight", "candidate"]);
+    expect(hosting?.needs).toEqual(["preflight", "candidate"]);
+    expect(evidence?.needs).toEqual([
+      "preflight",
+      "candidate",
+      "local-fresh",
+      "local-update",
+      "hosting",
+    ]);
+    expect(allText).toContain('test "$GITHUB_REF" = "refs/heads/main"');
+    expect(allText).toContain("node scripts/ci-version-identity.mjs");
+    expect(allText).toContain('! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$RELEASE_VERSION"');
+    expect(candidateBuild?.env).toMatchObject({
+      FASED_SYSTEMD_FIXTURE_BUILD_ONLY: "1",
+    });
+    expect(allText).toContain("bash scripts/test-lifecycle-local-acceptance.sh");
+    expect(allText).toContain("bash scripts/test-lifecycle-hosting-acceptance.sh");
+    expect(hostingRun?.env).toMatchObject({
+      FASED_HOSTING_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install,managed-update",
+    });
+    expect(allText).not.toContain("gh release create");
+    expect(allText).not.toContain("git tag");
+    expect(allText).not.toContain("git push");
+    expect(
+      evidence?.steps?.find((step) => usesAction(step, "actions/upload-artifact"))?.with?.name,
+    ).toBe("fased-pre-tag-p1-evidence");
   });
 
   it("keeps every GitHub Release publisher behind immutable evidence and protection", async () => {

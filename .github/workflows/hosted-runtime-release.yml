@@ -23,6 +23,10 @@ on:
         description: Successful Pre-candidate workflow run bound to the unversioned parent source
         required: true
         type: string
+      pre_tag_p1_run_id:
+        description: Successful protected pre-tag P1 run bound to the exact versioned source
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -143,6 +147,48 @@ jobs:
               --argjson runId "$main_run_id" \
               '.run_id == $runId and .name == "checks" and .conclusion == "success"' \
               >/dev/null
+
+      - name: Verify immutable protected pre-tag P1 pass
+        env:
+          OWNER_PREDECESSOR_VERSION: ${{ inputs.owner_predecessor_version }}
+          PRE_CANDIDATE_RUN_ID: ${{ inputs.pre_candidate_run_id }}
+          PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
+          PRE_TAG_P1_RUN_ID: ${{ inputs.pre_tag_p1_run_id }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$PRE_TAG_P1_RUN_ID" =~ ^[0-9]+$ ]]
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PRE_TAG_P1_RUN_ID")"
+          jq -e \
+            --arg sourceCommit "$SOURCE_COMMIT" \
+            '.name == "Pre-tag P1" and .path == ".github/workflows/pre-tag-p1.yml" and
+             .event == "workflow_dispatch" and .conclusion == "success" and
+             .head_sha == $sourceCommit' <<<"$run_json" >/dev/null
+          evidence_dir="$RUNNER_TEMP/pre-tag-p1-evidence"
+          gh run download "$PRE_TAG_P1_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name fased-pre-tag-p1-evidence \
+            --dir "$evidence_dir"
+          evidence="$evidence_dir/evidence.json"
+          jq -e \
+            --arg sourceCommit "$SOURCE_COMMIT" \
+            --arg sourceTree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
+            --arg releaseVersion "$RELEASE_VERSION" \
+            --arg predecessorVersion "$PREDECESSOR_VERSION" \
+            --arg ownerPredecessorVersion "$OWNER_PREDECESSOR_VERSION" \
+            --arg preCandidateRunId "$PRE_CANDIDATE_RUN_ID" \
+            --arg workflowRunId "$PRE_TAG_P1_RUN_ID" \
+            '.schemaVersion == 1 and .sourceCommit == $sourceCommit and
+             .sourceTree == $sourceTree and .releaseVersion == $releaseVersion and
+             .predecessorVersion == $predecessorVersion and
+             .ownerPredecessorVersion == $ownerPredecessorVersion and
+             .preCandidateRunId == $preCandidateRunId and
+             .workflowRunId == $workflowRunId and
+             (.candidateDescriptorSha256 | test("^sha256:[a-f0-9]{64}$"))' \
+            "$evidence" >/dev/null
 
       - name: Verify public compatibility coverage and derive P1 topology
         id: p1-plan
