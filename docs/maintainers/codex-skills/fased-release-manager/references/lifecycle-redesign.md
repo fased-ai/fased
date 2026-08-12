@@ -77,7 +77,10 @@ Execute one checkpoint at a time and stop with exact evidence.
 
 ### D1 — Trust and monotonic release index
 
-- Implement Go lifecycle root, delegation and release-index verification.
+- Implement Go verification of the existing 2-of-3 lifecycle root, its
+  root-authorized GitHub artifact-attestation release authority, and the
+  attested release index. Reuse that authority; never generate a second
+  ordinary release keypair merely to bridge metadata formats.
 - Bind release sequence/security epoch into manifest and transaction.
 - Reject downgrade; require explicit rollback authority.
 
