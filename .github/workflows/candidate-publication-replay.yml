@@ -1,0 +1,383 @@
+name: Candidate Publication Replay
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Trusted release run containing the exact assembled candidate
+        required: true
+        type: string
+      p1_replay_run_id:
+        description: Successful exact-byte Candidate P1 Replay run
+        required: true
+        type: string
+      candidate_descriptor_sha256:
+        description: Expected sha256 digest of fased-hosting-candidate.json
+        required: true
+        type: string
+      release_version:
+        description: Exact immutable candidate version
+        required: true
+        type: string
+      source_commit:
+        description: Exact immutable candidate commit
+        required: true
+        type: string
+      predecessor_version:
+        description: Supported public stable predecessor
+        required: true
+        type: string
+      owner_predecessor_version:
+        description: Owner Local predecessor, or stable predecessor when identical
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: candidate-publication-replay-${{ inputs.release_version }}-${{ inputs.source_commit }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  verify:
+    name: Verify immutable candidate and replay evidence
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout publication verifier
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.x
+
+      - name: Download exact original candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: fased-hosting-candidate
+          path: ${{ runner.temp }}/fased-hosting-candidate
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.source_run_id }}
+
+      - name: Download exact P1 replay receipts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: fased-p1-replay-*-receipts
+          path: ${{ runner.temp }}/fased-p1-replay-receipts
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.p1_replay_run_id }}
+
+      - name: Verify source, replay, candidate, and receipts
+        env:
+          CANDIDATE_DESCRIPTOR_SHA256: ${{ inputs.candidate_descriptor_sha256 }}
+          GH_TOKEN: ${{ github.token }}
+          OWNER_PREDECESSOR_VERSION: ${{ inputs.owner_predecessor_version }}
+          P1_REPLAY_RUN_ID: ${{ inputs.p1_replay_run_id }}
+          PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$P1_REPLAY_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$CANDIDATE_DESCRIPTOR_SHA256" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*$ ]]
+          [[ "$PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$OWNER_PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$GITHUB_SHA"
+
+          source_run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID")"
+          jq -e --arg commit "$SOURCE_COMMIT" --arg branch "v$RELEASE_VERSION" \
+            '.path == ".github/workflows/hosted-runtime-release.yml" and
+             .event == "workflow_dispatch" and .head_sha == $commit and
+             .head_branch == $branch and .status == "completed" and .conclusion == "failure"' \
+            <<<"$source_run" >/dev/null
+
+          replay_run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$P1_REPLAY_RUN_ID")"
+          replay_sha="$(jq -er \
+            'select(.path == ".github/workflows/candidate-p1-replay.yml" and
+             .event == "workflow_dispatch" and .head_branch == "main" and
+             .status == "completed" and .conclusion == "success") | .head_sha' \
+            <<<"$replay_run")"
+          [[ "$replay_sha" =~ ^[a-f0-9]{40}$ ]]
+          git merge-base --is-ancestor "$SOURCE_COMMIT" "$replay_sha"
+          git merge-base --is-ancestor "$replay_sha" "$GITHUB_SHA"
+
+          fixture_unexpected="$({
+            git diff --name-only "$SOURCE_COMMIT..$replay_sha" | grep -Ev \
+              '^(\.github/workflows/candidate-p1-replay\.yml|docs/maintainers/codex-skills/fased-release-manager/(SKILL\.md|references/release\.md)|scripts/test-lifecycle-(local|hosting)-acceptance\.sh|scripts/docker/(protected-local|hosting)-systemd/lifecycle-acceptance\.sh|scripts/(hosted-installer-artifact-layout|ci-workflow-contract)\.test\.ts|scripts/prepare-candidate-fixture-trust\.sh)$' || true
+          })"
+          test -z "$fixture_unexpected" || {
+            printf 'Replay contains product changes:\n%s\n' "$fixture_unexpected" >&2
+            exit 1
+          }
+          publication_unexpected="$({
+            git diff --name-only "$replay_sha..$GITHUB_SHA" | grep -Ev \
+              '^(\.github/workflows/candidate-publication-replay\.yml|scripts/(hosted-installer-artifact-layout|ci-workflow-contract)\.test\.ts)$' || true
+          })"
+          test -z "$publication_unexpected" || {
+            printf 'Publication replay contains unrelated changes:\n%s\n' \
+              "$publication_unexpected" >&2
+            exit 1
+          }
+
+          expected_jobs="$(jq -cn \
+            --arg stable "$PREDECESSOR_VERSION" \
+            --arg owner "$OWNER_PREDECESSOR_VERSION" \
+            '["Verify and stage exact candidate replay", "Replay fresh Local P1"] +
+             ([ $stable, $owner ] | unique | map(
+               "Replay Local update P1 (" + . + ")",
+               "Replay Hosting P1 (" + . + ")"
+             )) | sort')"
+          jobs="$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$P1_REPLAY_RUN_ID/jobs?per_page=100" \
+            --slurp)"
+          jq -e --argjson expected "$expected_jobs" \
+            '[.[] | .jobs[] | {name,conclusion}] | sort_by(.name) ==
+             ($expected | map({name:.,conclusion:"success"}) | sort_by(.name))' \
+            <<<"$jobs" >/dev/null
+
+          expected_artifacts="$(jq -cn \
+            --arg stable "$PREDECESSOR_VERSION" \
+            --arg owner "$OWNER_PREDECESSOR_VERSION" \
+            '["fased-p1-replay-candidate", "fased-p1-replay-local-fresh-receipts"] +
+             ([ $stable, $owner ] | unique | map(
+               "fased-p1-replay-local-update-" + . + "-receipts",
+               "fased-p1-replay-hosting-" + . + "-receipts"
+             )) | sort')"
+          artifacts="$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$P1_REPLAY_RUN_ID/artifacts?per_page=100")"
+          jq -e --argjson expected "$expected_artifacts" \
+            '[.artifacts[] | select(.expired == false) | .name] | sort == $expected' \
+            <<<"$artifacts" >/dev/null
+
+          candidate="$RUNNER_TEMP/fased-hosting-candidate"
+          descriptor="$candidate/fased-hosting-candidate.json"
+          test "sha256:$(sha256sum "$descriptor" | awk '{print $1}')" = \
+            "$CANDIDATE_DESCRIPTOR_SHA256"
+          test "$(git rev-parse "$SOURCE_COMMIT^{tree}")" = "$(jq -er .tree "$descriptor")"
+          test "$(git rev-parse "v$RELEASE_VERSION^{commit}")" = "$SOURCE_COMMIT"
+          node scripts/release-artifact-set.mjs verify \
+            --directory "$candidate" \
+            --version "$RELEASE_VERSION" \
+            --commit "$SOURCE_COMMIT" \
+            --tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
+            --lockfile-digest \
+              "sha256:$(git show "$SOURCE_COMMIT:pnpm-lock.yaml" | sha256sum | awk '{print $1}')" \
+            --source-ref "refs/tags/v$RELEASE_VERSION" \
+            --workflow-run-id "$SOURCE_RUN_ID"
+          GH_PROMPT_DISABLED=1 gh attestation verify "$descriptor" \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle "$descriptor.attestation.json" \
+            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+            --source-ref "refs/tags/v$RELEASE_VERSION" \
+            --deny-self-hosted-runners >/dev/null
+          GH_PROMPT_DISABLED=1 gh attestation verify \
+            "$candidate/fased-privileged-provenance-v1.intoto.json" \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle \
+              "$candidate/fased-privileged-provenance-v1.intoto.json.attestation.json" \
+            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+            --source-ref "refs/tags/v$RELEASE_VERSION" \
+            --deny-self-hosted-runners >/dev/null
+          node scripts/privileged-release-evidence.mjs verify \
+            --release-manifest "$candidate/fased-hosted-release-v2.json" \
+            --lifecycle-metadata "$candidate/fased-lifecycle-trust-v1.json" \
+            --provenance "$candidate/fased-privileged-provenance-v1.intoto.json" \
+            --sbom "$candidate/fased-privileged-sbom-v1.spdx.json" \
+            --vex "$candidate/fased-privileged-vex-v1.openvex.json" \
+            --version "$RELEASE_VERSION" \
+            --commit "$SOURCE_COMMIT"
+
+          receipts="$RUNNER_TEMP/fased-p1-replay-receipts"
+          contract="config/lifecycle-acceptance.v2.json"
+          verify_receipt() {
+            local file="$1" profile="$2" scenario="$3" require_predecessor="$4"
+            test -f "$file"
+            local args=(
+              --contract "$contract"
+              --receipt "$file"
+              --profile "$profile"
+              --scenario "$scenario"
+              --version "$RELEASE_VERSION"
+              --commit "$SOURCE_COMMIT"
+              --candidate-descriptor-digest "$CANDIDATE_DESCRIPTOR_SHA256"
+            )
+            if [[ "$require_predecessor" == "true" ]]; then
+              local capsule_digest
+              capsule_digest="$(jq -er \
+                '.predecessorCapsuleDigest | select(test("^sha256:[a-f0-9]{64}$"))' \
+                "$file")"
+              args+=(--predecessor-capsule-digest "$capsule_digest")
+            fi
+            node scripts/lifecycle-receipt-verifier.mjs "${args[@]}" >/dev/null
+          }
+          verify_receipt \
+            "$receipts/fased-p1-replay-local-fresh-receipts/ubuntu-fresh-install.json" \
+            protected-local fresh-install false
+          predecessors="$(jq -cn \
+            --arg stable "$PREDECESSOR_VERSION" \
+            --arg owner "$OWNER_PREDECESSOR_VERSION" \
+            '[$stable,$owner] | unique')"
+          mapfile -t predecessor_list < <(jq -r '.[]' <<<"$predecessors")
+          for predecessor in "${predecessor_list[@]}"; do
+            verify_receipt \
+              "$receipts/fased-p1-replay-local-update-$predecessor-receipts/ubuntu-managed-update.json" \
+              protected-local managed-update true
+            verify_receipt \
+              "$receipts/fased-p1-replay-hosting-$predecessor-receipts/ubuntu-fresh-install.json" \
+              hosting fresh-install false
+            verify_receipt \
+              "$receipts/fased-p1-replay-hosting-$predecessor-receipts/ubuntu-managed-update.json" \
+              hosting managed-update true
+          done
+          expected_receipt_count=$((1 + 3 * ${#predecessor_list[@]}))
+          test "$(find "$receipts" -type f -name '*.json' | wc -l)" -eq \
+            "$expected_receipt_count"
+
+  publish:
+    name: Promote replay-proven exact candidate bytes
+    needs: verify
+    environment: candidate-release
+    permissions:
+      actions: read
+      contents: write
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout publication verifier
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.x
+
+      - name: Download exact original candidate again
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: fased-hosting-candidate
+          path: ${{ runner.temp }}/fased-hosting-candidate
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.source_run_id }}
+
+      - name: Reverify exact candidate before publication
+        env:
+          CANDIDATE_DESCRIPTOR_SHA256: ${{ inputs.candidate_descriptor_sha256 }}
+          GH_TOKEN: ${{ github.token }}
+          P1_REPLAY_RUN_ID: ${{ inputs.p1_replay_run_id }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*$ ]]
+          candidate="$RUNNER_TEMP/fased-hosting-candidate"
+          descriptor="$candidate/fased-hosting-candidate.json"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$P1_REPLAY_RUN_ID" --jq .conclusion)" = success
+          test "$(git rev-parse "v$RELEASE_VERSION^{commit}")" = "$SOURCE_COMMIT"
+          test "sha256:$(sha256sum "$descriptor" | awk '{print $1}')" = \
+            "$CANDIDATE_DESCRIPTOR_SHA256"
+          node scripts/release-artifact-set.mjs verify \
+            --directory "$candidate" \
+            --version "$RELEASE_VERSION" \
+            --commit "$SOURCE_COMMIT" \
+            --tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
+            --lockfile-digest \
+              "sha256:$(git show "$SOURCE_COMMIT:pnpm-lock.yaml" | sha256sum | awk '{print $1}')" \
+            --source-ref "refs/tags/v$RELEASE_VERSION" \
+            --workflow-run-id "$SOURCE_RUN_ID"
+          GH_PROMPT_DISABLED=1 gh attestation verify "$descriptor" \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle "$descriptor.attestation.json" \
+            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+            --source-ref "refs/tags/v$RELEASE_VERSION" \
+            --deny-self-hosted-runners >/dev/null
+          GH_PROMPT_DISABLED=1 gh attestation verify \
+            "$candidate/fased-privileged-provenance-v1.intoto.json" \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle \
+              "$candidate/fased-privileged-provenance-v1.intoto.json.attestation.json" \
+            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+            --source-ref "refs/tags/v$RELEASE_VERSION" \
+            --deny-self-hosted-runners >/dev/null
+          node scripts/privileged-release-evidence.mjs verify \
+            --release-manifest "$candidate/fased-hosted-release-v2.json" \
+            --lifecycle-metadata "$candidate/fased-lifecycle-trust-v1.json" \
+            --provenance "$candidate/fased-privileged-provenance-v1.intoto.json" \
+            --sbom "$candidate/fased-privileged-sbom-v1.spdx.json" \
+            --vex "$candidate/fased-privileged-vex-v1.openvex.json" \
+            --version "$RELEASE_VERSION" \
+            --commit "$SOURCE_COMMIT"
+
+      - name: Publish one draft and expose it only after every byte uploads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: v${{ inputs.release_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate="$RUNNER_TEMP/fased-hosting-candidate"
+          release_id=""
+          find_draft_id() {
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --slurp | jq -er --arg tag "$RELEASE_TAG" \
+                '[.[][] | select(.tag_name == $tag and .draft == true)] |
+                 if length == 1 then .[0].id else error("exact draft release not found") end'
+          }
+          cleanup_draft() {
+            if [[ -z "$release_id" ]]; then
+              release_id="$(find_draft_id 2>/dev/null || true)"
+            fi
+            if [[ -n "$release_id" ]]; then
+              gh api --method DELETE \
+                "repos/$GITHUB_REPOSITORY/releases/$release_id" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup_draft EXIT
+          existing_release_id="$(gh api \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.tag_name == env.RELEASE_TAG) | .id')"
+          if [[ -n "$existing_release_id" ]]; then
+            echo "Release already exists; refusing non-atomic overwrite: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" "$candidate"/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Fased Agent $RELEASE_TAG" \
+            --generate-notes \
+            --verify-tag \
+            --draft \
+            --prerelease
+          release_id="$(find_draft_id)"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            --jq '[.assets[] | {name,size,digest}]' > "$RUNNER_TEMP/release-assets.json"
+          node scripts/release-artifact-set.mjs verify-assets \
+            --directory "$candidate" \
+            --assets-json "$RUNNER_TEMP/release-assets.json"
+          gh api --method PATCH \
+            "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            -F draft=false \
+            -F prerelease=true \
+            -f make_latest=false \
+            --jq '{tagName:.tag_name,draft,isPrerelease:.prerelease}' \
+            > "$RUNNER_TEMP/published-release.json"
+          test "$(jq -r .tagName "$RUNNER_TEMP/published-release.json")" = "$RELEASE_TAG"
+          test "$(jq -r .draft "$RUNNER_TEMP/published-release.json")" = false
+          test "$(jq -r .isPrerelease "$RUNNER_TEMP/published-release.json")" = true
+          release_id=""
+          trap - EXIT
