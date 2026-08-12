@@ -58,4 +58,11 @@ describe("public installer release pinning", () => {
       expect(installer).not.toContain(forbidden);
     }
   });
+
+  it("keeps the public route quiet by default and forwards explicit verbose output", async () => {
+    const installer = await fsp.readFile(installerPath, "utf8");
+    expect(installer).toContain('if [[ "$verbose" -eq 0 ]]; then curl_args+=(-sS); fi');
+    expect(installer).toContain('[[ "$verbose" -eq 1 ]] && bootstrap_args+=(--verbose)');
+    expect(installer).toContain('"${root_command[@]}" "$bootstrap" "${bootstrap_args[@]}"');
+  });
 });

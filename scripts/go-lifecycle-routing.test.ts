@@ -26,6 +26,7 @@ const mutationOwners = deletedLifecycleOwners;
 
 const productionRoutingSurfaces = [
   "package.json",
+  "src/cli/update-cli/update-command.ts",
   "scripts/fased-managed-updater.mjs",
   "scripts/managed-updater-bundle.v1.json",
   "scripts/build-lifecycle-trust-metadata.mjs",
