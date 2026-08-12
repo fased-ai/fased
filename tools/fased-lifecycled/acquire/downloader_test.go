@@ -16,7 +16,7 @@ func TestDownloaderStreamsExactHTTPSObject(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Length": []string{"19"}}, ContentLength: 19, Body: io.NopCloser(strings.NewReader(string(data))), Request: request}, nil
 	})}
-	inbox, err := OpenInbox(filepath.Join(t.TempDir(), "lifecycle"), uint32(os.Getuid()))
+	inbox, err := OpenInbox(filepath.Join(privateTestRoot(t), "lifecycle"), uint32(os.Getuid()))
 	if err != nil {
 		t.Fatal(err)
 	}

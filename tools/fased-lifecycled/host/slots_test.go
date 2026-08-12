@@ -25,6 +25,25 @@ func requirements() Requirements {
 	return Requirements{Manifest: 2, Journal: 1, Participant: 1, Platform: 2}
 }
 
+func privateHostTestRoot(t *testing.T) string {
+	t.Helper()
+	root, err := os.MkdirTemp(".", ".host-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0o700); err != nil {
+		os.RemoveAll(root)
+		t.Fatal(err)
+	}
+	absolute, err := filepath.Abs(root)
+	if err != nil {
+		os.RemoveAll(root)
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(absolute) })
+	return absolute
+}
+
 func stagedFixture(t *testing.T, root, name string, data []byte) (*Store, StagedHost) {
 	t.Helper()
 	inbox, err := acquire.OpenInbox(filepath.Join(root, "state"), uint32(os.Getuid()))
@@ -53,7 +72,7 @@ func stagedFixture(t *testing.T, root, name string, data []byte) (*Store, Staged
 func TestStoreStagesExactVerifiedObjectWithRestrictiveUmask(t *testing.T) {
 	oldMask := syscall.Umask(0o077)
 	defer syscall.Umask(oldMask)
-	_, staged := stagedFixture(t, t.TempDir(), "fased-lifecycled-linux-x64", []byte("static-host-a"))
+	_, staged := stagedFixture(t, privateHostTestRoot(t), "fased-lifecycled-linux-x64", []byte("static-host-a"))
 	info, err := os.Lstat(staged.Path)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o500 {
 		t.Fatalf("staged host is unsafe: info=%v err=%v", info, err)
@@ -61,7 +80,7 @@ func TestStoreStagesExactVerifiedObjectWithRestrictiveUmask(t *testing.T) {
 }
 
 func TestStoreActivatesABAndRestoresCurrentOnInspectionFailure(t *testing.T) {
-	root := t.TempDir()
+	root := privateHostTestRoot(t)
 	store, first := stagedFixture(t, root, "fased-lifecycled-linux-x64", []byte("static-host-a"))
 	if err := store.Activate(first, func(host StagedHost) error { return nil }); err != nil {
 		t.Fatal(err)

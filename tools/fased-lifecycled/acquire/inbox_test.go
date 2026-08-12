@@ -19,10 +19,29 @@ func testAsset(name string, data []byte) trust.Asset {
 	return trust.Asset{Name: name, Size: uint64(len(data)), SHA256: fmt.Sprintf("sha256:%x", sum)}
 }
 
+func privateTestRoot(t *testing.T) string {
+	t.Helper()
+	root, err := os.MkdirTemp(".", ".acquire-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0o700); err != nil {
+		os.RemoveAll(root)
+		t.Fatal(err)
+	}
+	absolute, err := filepath.Abs(root)
+	if err != nil {
+		os.RemoveAll(root)
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(absolute) })
+	return absolute
+}
+
 func TestInboxNormalizesRestrictiveUmaskAndBindsOpenObject(t *testing.T) {
 	oldMask := syscall.Umask(0o077)
 	defer syscall.Umask(oldMask)
-	root := filepath.Join(t.TempDir(), "lifecycle")
+	root := filepath.Join(privateTestRoot(t), "lifecycle")
 	inbox, err := OpenInbox(root, uint32(os.Getuid()))
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +83,7 @@ func TestInboxNormalizesRestrictiveUmaskAndBindsOpenObject(t *testing.T) {
 }
 
 func TestInboxRejectsTraversalSymlinkHardlinkAndWrongDigest(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "lifecycle")
+	root := filepath.Join(privateTestRoot(t), "lifecycle")
 	inbox, err := OpenInbox(root, uint32(os.Getuid()))
 	if err != nil {
 		t.Fatal(err)
