@@ -252,9 +252,8 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 		TransactionID: transactionID, Profile: profile, InstanceIDAssertion: instanceID,
 		OperatorUser: operatorUser, OwnerStateRoot: ownerStateRoot, GatewayPort: uint16(gatewayPort),
 		ExpectedRegistryOwner: 0, RegistryPath: platform.LocalInstanceRegistryPath,
-		JournalPath:      filepath.Join("/var/lib/fased-lifecycle-bootstrap", transactionID+".json"),
-		StableDaemonPath: "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled",
-		StableDaemon:     stableDaemon, Principals: principalSystem, ACL: homeACL, Systemd: systemd,
+		JournalPath:  filepath.Join("/var/lib/fased-lifecycle-bootstrap", transactionID+".json"),
+		StableDaemon: stableDaemon, Principals: principalSystem, ACL: homeACL, Systemd: systemd,
 		BridgePublicStable: discovered.Installation.Kind == planner.InstallationPublicStable,
 	})
 	if err != nil {

@@ -600,9 +600,9 @@ describe("CI workflow routing", () => {
       jobs["linux"]?.steps?.some((step) => step.name === "Assemble exact lifecycle generation"),
     ).toBe(false);
     expect(candidateText).toContain("assemble-lifecycle-generation.mjs");
-    expect(candidateText).toContain('--inventory-lifecycled "$inventory_lifecycled"');
+    expect(candidateText).toContain('--inventory-tool "$inventory_tool"');
     expect(candidateText).toContain(
-      'inventory_lifecycled=".artifacts/hosted-runtime/fased-lifecycled-linux-amd64"',
+      'inventory_tool=".artifacts/hosted-runtime/fased-lifecycled-linux-amd64"',
     );
     expect(candidateText).toContain("--runtime-archive");
     expect(candidateText).toContain("fased-hosted-app-v2-linux-");

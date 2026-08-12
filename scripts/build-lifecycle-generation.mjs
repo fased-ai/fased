@@ -97,7 +97,7 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
     "runtime",
     "release-manifest",
     "signer",
-    "lifecycled",
+    "inventory-tool",
     "node",
     "node-license",
     "output",
@@ -126,15 +126,13 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
   const runtime = path.resolve(args.runtime);
   const releaseManifest = path.resolve(args["release-manifest"]);
   const signer = path.resolve(args.signer);
-  const lifecycled = path.resolve(args.lifecycled);
   const node = path.resolve(args.node);
   const nodeLicense = path.resolve(args["node-license"]);
-  const inventoryLifecycled = path.resolve(args["inventory-lifecycled"] ?? args.lifecycled);
+  const inventoryTool = path.resolve(args["inventory-tool"]);
   const output = path.resolve(args.output);
   await regularExecutable(signer, "signer");
-  await regularExecutable(lifecycled, "lifecycled");
   await regularExecutable(node, "node");
-  await regularExecutable(inventoryLifecycled, "inventory lifecycled");
+  await regularExecutable(inventoryTool, "generation inventory tool");
   const runtimeEntry = path.join(runtime, "fased.mjs");
   const runtimeStat = await fs.lstat(runtimeEntry);
   if (!runtimeStat.isFile() || runtimeStat.isSymbolicLink()) {
@@ -213,7 +211,7 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
     throw new Error("plugin lock does not match the supplied digest");
   }
   const { stdout } = await execFileAsync(
-    inventoryLifecycled,
+    inventoryTool,
     [
       "inventory",
       "--root",
@@ -236,7 +234,7 @@ export async function buildLifecycleGeneration(argv = process.argv.slice(2)) {
       args["plugin-lock-digest"],
     ],
     {
-      cwd: path.dirname(inventoryLifecycled),
+      cwd: path.dirname(inventoryTool),
       env: process.env,
       maxBuffer: 1024 * 1024,
     },

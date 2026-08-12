@@ -219,7 +219,7 @@ func targetAdapter(t *testing.T) (*TargetAdapter, model.Transaction, *[]string) 
 	t.Helper()
 	tx, identity := manifestTransaction(t, false)
 	root := t.TempDir()
-	for _, name := range []string{"fased-gateway-launch", "fased-signerd", "fased-lifecycled", "node"} {
+	for _, name := range []string{"fased-gateway-launch", "fased-signerd", "node"} {
 		path := filepath.Join(root, "bin", name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
@@ -294,10 +294,16 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 		t.Fatalf("unexpected target adapter order:\n got=%v\nwant=%v", *calls, want)
 	}
 	definitions := adapter.Units.(*fakeUnits).definitions
+	if len(definitions) != 2 {
+		t.Fatalf("target transaction staged a service outside Gateway and signer: %v", definitions)
+	}
 	combined := string(definitions[adapter.Identity.Services["signer"]]) + string(definitions[adapter.Identity.Services["gateway"]])
 	if strings.Contains(combined, "/bin/sh") || !strings.Contains(combined, "NoNewPrivileges=true") ||
 		!strings.Contains(combined, fmt.Sprintf("User=%d", adapter.Config.Signer.UID)) {
 		t.Fatalf("canonical units lack privilege or direct-exec contracts:\n%s", combined)
+	}
+	if strings.Contains(combined, "fased-lifecycled") || strings.Contains(combined, "fased-bootstrap") || strings.Contains(combined, "controller-worker") {
+		t.Fatalf("application generation selected a privileged lifecycle executable:\n%s", combined)
 	}
 	if !strings.Contains(combined, "SupplementaryGroups=fscf-example") ||
 		!strings.Contains(combined, "RuntimeDirectoryMode=0755") ||
@@ -611,7 +617,7 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	tx.PlatformDigest = platformDigest
 
 	root := t.TempDir()
-	for _, name := range []string{"fased-gateway-launch", "fased-signerd", "fased-lifecycled", "node"} {
+	for _, name := range []string{"fased-gateway-launch", "fased-signerd", "node"} {
 		path := filepath.Join(root, "bin", name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
@@ -669,6 +675,9 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 		t.Fatalf("unexpected Hosting adapter order:\n got=%v\nwant=%v", calls, want)
 	}
 	combined := string(units.definitions[identity.Services["signer"]]) + string(units.definitions[identity.Services["gateway"]])
+	if len(units.definitions) != 2 || strings.Contains(combined, "fased-lifecycled") || strings.Contains(combined, "fased-bootstrap") || strings.Contains(combined, "host-controller") {
+		t.Fatalf("Hosting target transaction staged a privileged lifecycle service: %v\n%s", units.definitions, combined)
+	}
 	for _, required := range []string{
 		fmt.Sprintf("User=%d", signer.UID), "NoNewPrivileges=true", "Environment=HOME=" + config.OwnerHome(),
 		"Environment=FASED_STATE_DIR=" + config.OwnerStateRoot, "Environment=FASED_HOST_PROFILE=hosting",

@@ -107,4 +107,20 @@ describe("stable lifecycle appliance security closure", () => {
     expect(identity).toContain("LegacyControllerPlatformIdentity");
     expect(identity).not.toContain("func NewControllerPlatformIdentity");
   });
+
+  it("keeps application generations outside the privileged lifecycle host", async () => {
+    const builder = await source("scripts/build-lifecycle-generation.mjs");
+    const assembler = await source("scripts/assemble-lifecycle-generation.mjs");
+    const workflow = await source(".github/workflows/hosted-runtime-release.yml");
+    const supervisor = await source("tools/fased-lifecycled/platform/supervisor_unit.go");
+
+    expect(builder).not.toContain('"lifecycled"');
+    expect(builder).toContain('"inventory-tool"');
+    expect(assembler).not.toContain('"--lifecycled"');
+    expect(workflow).not.toContain('--lifecycled "$lifecycled"');
+    expect(supervisor).toContain(
+      'const StableLifecycleHostPath = "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled"',
+    );
+    expect(supervisor).toContain("func RenderSupervisorUnit(config Config)");
+  });
 });

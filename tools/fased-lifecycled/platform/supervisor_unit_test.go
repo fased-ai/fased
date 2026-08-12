@@ -33,13 +33,14 @@ func TestSupervisorUnitIsStableAndProfileBound(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			data, err := RenderSupervisorUnit(config, "/opt/fased/lifecycle/supervisor-v1/fased-lifecycled")
+			data, err := RenderSupervisorUnit(config)
 			if err != nil {
 				t.Fatal(err)
 			}
 			text := string(data)
 			for _, expected := range []string{
 				"User=root", "NoNewPrivileges=true", "ProtectSystem=strict", "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+				"ExecStart=" + StableLifecycleHostPath,
 				"supervisor --config " + fixture.configPath,
 				"RuntimeDirectory=" + fixture.supervisorRuntime + "\n",
 				config.InstallRoot, config.ProductStateRoot, config.OwnerStateRoot,

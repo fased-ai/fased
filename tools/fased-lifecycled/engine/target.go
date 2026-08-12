@@ -1,4 +1,4 @@
-// Package engine coordinates the target-controller product transaction.
+// Package engine coordinates the lifecycle host's product transaction.
 package engine
 
 import (

@@ -38,7 +38,7 @@ node "$ROOT/scripts/build-lifecycle-generation.mjs" \
   --runtime "$FIXTURE/runtime" \
   --release-manifest "$FIXTURE/release-manifest.json" \
   --signer "$FIXTURE/signer" \
-  --lifecycled "$LIFECYCLED" \
+  --inventory-tool "$LIFECYCLED" \
   --node "$FIXTURE/node" \
   --node-license "$FIXTURE/node.LICENSE" \
   --output "$FIXTURE/generation" \
@@ -71,7 +71,7 @@ printf 'outside\n' >"$FIXTURE/outside"
 ln -s ../outside "$FIXTURE/runtime/escape"
 if node "$ROOT/scripts/build-lifecycle-generation.mjs" \
   --runtime "$FIXTURE/runtime" --release-manifest "$FIXTURE/release-manifest.json" \
-  --signer "$FIXTURE/signer" --lifecycled "$LIFECYCLED" \
+  --signer "$FIXTURE/signer" --inventory-tool "$LIFECYCLED" \
   --node "$FIXTURE/node" --node-license "$FIXTURE/node.LICENSE" \
   --output "$FIXTURE/rejected" --version 1.2.3 \
   --commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --tree bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
