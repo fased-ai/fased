@@ -764,6 +764,49 @@ describe("CI workflow routing", () => {
     expect(replayText).not.toContain("gh release create");
     expect(replayText).not.toContain("git tag");
     expect(replayText).not.toContain("contents: write");
+
+    const publicationReplayPath = resolve(
+      repoRoot,
+      ".github/workflows/candidate-publication-replay.yml",
+    );
+    expect(await exists(publicationReplayPath)).toBe(true);
+    const publicationReplay = await readWorkflow(
+      ".github/workflows/candidate-publication-replay.yml",
+    );
+    const publicationReplayText = await readFile(publicationReplayPath, "utf8");
+    expect(publicationReplay.on.workflow_dispatch.inputs).toMatchObject({
+      source_run_id: { required: true },
+      p1_replay_run_id: { required: true },
+      candidate_descriptor_sha256: { required: true },
+      release_version: { required: true },
+      source_commit: { required: true },
+      predecessor_version: { required: true },
+      owner_predecessor_version: { required: true },
+    });
+    expect(publicationReplay.permissions).toMatchObject({ actions: "read", contents: "read" });
+    expect(publicationReplay.jobs?.publish).toMatchObject({
+      needs: "verify",
+      environment: "candidate-release",
+      permissions: { actions: "read", contents: "write" },
+    });
+    expect(publicationReplayText).toContain("fased-hosting-candidate");
+    expect(publicationReplayText).toContain("fased-p1-replay-*-receipts");
+    expect(publicationReplayText).toContain("scripts/lifecycle-receipt-verifier.mjs");
+    expect(publicationReplayText).toContain("scripts/release-artifact-set.mjs verify");
+    expect(publicationReplayText).toContain("scripts/privileged-release-evidence.mjs verify");
+    expect(publicationReplayText).toContain('gh release create "$RELEASE_TAG" "$candidate"/*');
+    expect(publicationReplayText).toContain("run-id: ${{ inputs.source_run_id }}");
+    expect(
+      publicationReplay.jobs?.publish?.steps?.find((step) =>
+        usesAction(step, "actions/download-artifact"),
+      )?.with,
+    ).toMatchObject({
+      name: "fased-hosting-candidate",
+      "run-id": "${{ inputs.source_run_id }}",
+    });
+    expect(publicationReplayText).not.toContain("pnpm build");
+    expect(publicationReplayText).not.toContain("go build");
+    expect(publicationReplayText).not.toContain("git tag");
   });
 
   it("selects beta for every prerelease target in the Protected Local fixture", async () => {
