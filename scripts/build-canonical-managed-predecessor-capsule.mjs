@@ -153,6 +153,77 @@ function lifecycleProjection(config) {
   };
 }
 
+// This is the stable owner launcher emitted by the immutable rc.72 Go
+// lifecycle implementation. The predecessor capsule models that exact public
+// installation class; it must not depend on a checkout or on the target
+// generation's newer bundled-Node launcher contract.
+function predecessorCliLauncher(config) {
+  const instance = config.instanceId;
+  return `#!/usr/bin/env bash
+set -euo pipefail
+install_root="${config.installRoot}"
+export FASED_RUNTIME_SOURCE="go-lifecycle"
+export FASED_MANAGED_RUNTIME_ROOT="${config.installRoot}/current/payload/runtime"
+export FASED_LIFECYCLE_PROFILE="protected-local"
+export FASED_LIFECYCLE_INSTANCE="${instance}"
+export FASED_LIFECYCLE_CONFIG="${config.lifecycleRoot}/platform.json"
+export FASED_LIFECYCLE_INSTALL_ROOT="${config.installRoot}"
+export FASED_HOST_PROFILE="local"
+export FASED_HOST_UPDATER_SOCKET="/run/fased-local-controller/${instance}/request.sock"
+export FASED_WALLET_LOCAL_SIGNER_BIN="${config.installRoot}/current/payload/bin/fased-signerd"
+export FASED_WALLET_LOCAL_SIGNER_SOCKET="/run/fased-local/${instance}/application/app.sock"
+export FASED_PROTECTED_LOCAL="1"
+export FASED_PROTECTED_LOCAL_INSTANCE="${instance}"
+export FASED_WALLET_LOCAL_SIGNER_LIFECYCLE="external"
+current="$install_root/current"
+inventory="$current/inventory.json"
+runtime="$current/payload/runtime/fased.mjs"
+[[ -f "$inventory" && ! -L "$inventory" && -f "$runtime" && ! -L "$runtime" ]] || {
+  echo "Fased runtime is not committed; run the verified installer or fased update." >&2
+  exit 1
+}
+node_bin=""
+for candidate in "\${FASED_NODE_BIN:-}" /usr/local/bin/node /usr/bin/node /usr/bin/node-24 /usr/bin/node-22; do
+  [[ -n "$candidate" && -x "$candidate" ]] || continue
+  if "$candidate" -e 'const [a,b]=process.versions.node.split(".").map(Number);if(a<22||(a===22&&b<14))process.exit(1);require("node:sqlite")' >/dev/null 2>&1; then
+    node_bin="$candidate"
+    break
+  fi
+done
+[[ -n "$node_bin" ]] || { echo "Compatible Node runtime not found for Fased." >&2; exit 1; }
+dependency_identity="$("$node_bin" -e '
+  const fs=require("node:fs");
+  const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+  const hash=value?.dependency?.hash;
+  const archive=value?.dependency?.archiveSHA256;
+  if(typeof hash!=="string"||!/^[a-f0-9]{64}$/.test(hash)||typeof archive!=="string"||!/^sha256:[a-f0-9]{64}$/.test(archive))process.exit(1);
+  process.stdout.write(hash+" "+archive.slice(7));
+' "$inventory")" || { echo "Fased dependency identity is invalid." >&2; exit 1; }
+read -r dependency_hash dependency_archive_hash <<<"$dependency_identity"
+binding="$current/node_modules"
+binding_target="$(readlink "$binding" 2>/dev/null || true)"
+case "$binding_target" in
+  "../../dependencies/$dependency_hash-$dependency_archive_hash/node_modules")
+    dependency="$install_root/dependencies/$dependency_hash-$dependency_archive_hash/node_modules"
+    ;;
+  "../../dependencies/$dependency_hash/node_modules")
+    dependency="$install_root/dependencies/$dependency_hash/node_modules"
+    ;;
+  *)
+    echo "Fased generation dependency binding is invalid." >&2
+    exit 1
+    ;;
+esac
+[[ -d "$dependency" && ! -L "$dependency" ]] || { echo "Fased dependency layer is unavailable." >&2; exit 1; }
+[[ -L "$binding" && "$(readlink -f "$binding")" == "$dependency" ]] || {
+  echo "Fased generation dependency binding is invalid." >&2
+  exit 1
+}
+export NODE_PATH="$dependency"
+exec "$node_bin" "$runtime" "$@"
+`;
+}
+
 function parseArguments(argv) {
   const values = {};
   for (let index = 0; index < argv.length; index += 2) {
@@ -345,6 +416,13 @@ export async function buildCanonicalManagedPredecessorCapsule(options) {
         "home/testop/.fased/lifecycle.json",
         `${JSON.stringify(lifecycleProjection(config), null, 2)}\n`,
         0o600,
+        "operator",
+      ),
+      await write(
+        source,
+        "home/testop/.fased/bin/fased",
+        predecessorCliLauncher(config),
+        0o755,
         "operator",
       ),
       await write(

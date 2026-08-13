@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import * as tar from "tar";
@@ -138,5 +138,14 @@ describe("canonical managed predecessor capsule", () => {
       capsule.entries.find((entry) => entry.path === "var/lib/fased-local/1122334455667788"),
     ).toMatchObject({ type: "directory", mode: 0o755, owner: "root" });
     expect(capsule.installationClass.platform.instanceId).toBe("1122334455667788");
+    const launcherPath = path.join(restored, "home/testop/.fased/bin/fased");
+    const launcher = await readFile(launcherPath, "utf8");
+    expect((await stat(launcherPath)).mode & 0o777).toBe(0o755);
+    expect(launcher).toContain('install_root="/opt/fased/local/1122334455667788"');
+    expect(launcher).toContain('export FASED_LIFECYCLE_INSTANCE="1122334455667788"');
+    expect(launcher).toContain('exec "$node_bin" "$runtime" "$@"');
+    expect(
+      capsule.entries.find((entry) => entry.path === "home/testop/.fased/bin/fased"),
+    ).toMatchObject({ type: "file", mode: 0o755, owner: "operator" });
   });
 });
