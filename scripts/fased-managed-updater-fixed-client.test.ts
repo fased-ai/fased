@@ -80,6 +80,19 @@ describe("fixed managed lifecycle update client", () => {
     ).rejects.toThrow("exact immutable release");
   });
 
+  it("fails a completely unavailable channel with one bounded error before root invocation", async () => {
+    let requests = 0;
+    const fetchImpl = async () => {
+      requests += 1;
+      throw new Error("offline");
+    };
+
+    await expect(
+      __testing.resolveLifecycleArgs(["--channel", "beta"], { fetchImpl }),
+    ).rejects.toThrow("Unable to resolve the beta channel to an exact immutable release.");
+    expect(requests).toBe(2);
+  });
+
   it("accepts only canonical installed lifecycle profiles", () => {
     expect(__testing.requireInstalledProfile("hosting")).toBe("hosting");
     expect(__testing.requireInstalledProfile("protected-local")).toBe("protected-local");
