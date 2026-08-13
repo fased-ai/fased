@@ -194,6 +194,7 @@ export function buildGatewayReadinessPayload(
   readiness: GatewayReadiness,
   options: GatewayProbeOptions = {},
 ) {
+  const env = options.env ?? (process.env as RuntimeVersionEnv);
   return Object.freeze({
     ...buildGatewayProbePayload("ready", options),
     ready: readiness.ready,

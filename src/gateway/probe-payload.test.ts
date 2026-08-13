@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { resolveGatewayGenerationReceipt } from "./probe-payload.js";
+import { buildGatewayReadinessPayload, resolveGatewayGenerationReceipt } from "./probe-payload.js";
 
 const commit = "b".repeat(40);
 const sha = "a".repeat(64);
@@ -67,5 +67,33 @@ describe("Gateway generation receipt", () => {
 
   it("fails closed when the managed process lacks a generation id", () => {
     expect(resolveGatewayGenerationReceipt(runtimeRoot(), "x64", {})).toBeNull();
+  });
+
+  it("builds readiness with one explicitly bound runtime environment", () => {
+    const payload = buildGatewayReadinessPayload(
+      { ready: true, failing: [], uptimeMs: 45_000 },
+      {
+        runtimeEntrypoint: runtimeRoot(),
+        architecture: "x64",
+        pid: 1463,
+        startedAt: "2026-08-13T21:13:31.326Z",
+        env: {
+          FASED_GENERATION_ID: generationId,
+          FASED_RUNTIME_SOURCE: "managed-package",
+          FASED_VERSION: "0.1.76",
+        },
+      },
+    );
+
+    expect(payload).toMatchObject({
+      ok: true,
+      status: "ready",
+      ready: true,
+      pid: 1463,
+      startedAt: "2026-08-13T21:13:31.326Z",
+      version: "0.1.76",
+      runtimeSource: "managed-package",
+      generation: { generationId },
+    });
   });
 });
