@@ -4,6 +4,14 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.81
+
+- Require managed Local and Hosting updates to converge on the terminal
+  service process, cgroup, executable, socket owner, and start identity before
+  committing the lifecycle transaction.
+- Keep canonical predecessor artifact reuse identical across Local and Hosting
+  acceptance fixtures.
+
 ## 0.1.76-rc.80
 
 - Retain the canonical schema-1 lifecycle upgrade and update the production
