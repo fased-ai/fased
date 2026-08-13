@@ -17,7 +17,7 @@ import (
 type GenerationManager interface {
 	GenerationPayloadPath(string) (string, error)
 	GenerationDependencyPath(string) (string, error)
-	ActivateGeneration(string, string) error
+	ActivateGeneration(string, string, uint32) error
 }
 
 type GatewayHealth interface {
@@ -360,7 +360,7 @@ func (adapter *TargetAdapter) Commit(ctx context.Context, tx model.Transaction) 
 	if tx.Previous != nil {
 		previous = tx.Previous.ID
 	}
-	if err := adapter.Generations.ActivateGeneration(tx.Target.ID, previous); err != nil {
+	if err := adapter.Generations.ActivateGeneration(tx.Target.ID, previous, tx.PredecessorManifestSchema); err != nil {
 		return err
 	}
 	if err := adapter.Files.Activate(tx.ID, adapter.commitLifecycleFiles(tx)); err != nil {

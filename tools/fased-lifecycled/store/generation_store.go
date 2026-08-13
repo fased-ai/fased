@@ -436,11 +436,11 @@ func (s *Store) ensureGenerationDependencyBinding(root string, dependency *bundl
 	return syncDirectory(root)
 }
 
-func (s *Store) ActivateGeneration(currentID, previousID string) error {
-	return s.activatePointers("current", "previous", currentID, previousID)
+func (s *Store) ActivateGeneration(currentID, previousID string, predecessorManifestSchema uint32) error {
+	return s.activatePointers("current", "previous", currentID, previousID, predecessorManifestSchema)
 }
 
-func (s *Store) activatePointers(currentPointer, previousPointer, currentID, previousID string) error {
+func (s *Store) activatePointers(currentPointer, previousPointer, currentID, previousID string, predecessorManifestSchema uint32) error {
 	if _, err := s.verifiedGeneration(currentID); err != nil {
 		return fmt.Errorf("current generation: %w", err)
 	}
@@ -448,7 +448,13 @@ func (s *Store) activatePointers(currentPointer, previousPointer, currentID, pre
 		if currentID == previousID {
 			return errors.New("current and previous generation must differ")
 		}
-		if _, err := s.verifiedGeneration(previousID); err != nil {
+		var err error
+		if predecessorManifestSchema == 1 {
+			_, err = s.verifiedLegacySchemaOnePredecessor(previousID)
+		} else {
+			_, err = s.verifiedGeneration(previousID)
+		}
+		if err != nil {
 			return fmt.Errorf("previous generation: %w", err)
 		}
 		if err := s.writeGenerationPointer(previousPointer, previousID); err != nil {
@@ -456,6 +462,30 @@ func (s *Store) activatePointers(currentPointer, previousPointer, currentID, pre
 		}
 	}
 	return s.writeGenerationPointer(currentPointer, currentID)
+}
+
+func (s *Store) verifiedLegacySchemaOnePredecessor(generationID string) (model.Generation, error) {
+	manifest, _, err := s.ReadManifest()
+	if err != nil || manifest.SchemaVersion != 1 || manifest.ActiveGeneration == nil || manifest.ActiveGeneration.ID != generationID || !s.declaredActiveGeneration(*manifest.ActiveGeneration) {
+		return model.Generation{}, errors.New("legacy predecessor is not the active schema-one generation")
+	}
+	root := s.generationPath(generationID)
+	inventoryJSON, err := readGenerationInventory(filepath.Join(root, generationInventoryName))
+	if err != nil {
+		return model.Generation{}, err
+	}
+	inventory, err := bundle.DecodeLegacyInstalledInventory(inventoryJSON)
+	if err != nil {
+		return model.Generation{}, err
+	}
+	generation, err := bundle.IdentityLegacyInstalledInventory(inventory)
+	if err != nil || generation != *manifest.ActiveGeneration || generation.ID != generationID {
+		return model.Generation{}, errors.New("legacy predecessor inventory differs from the schema-one manifest")
+	}
+	if err := bundle.VerifyLegacyInstalled(filepath.Join(root, generationPayloadName), inventory, generation); err != nil {
+		return model.Generation{}, err
+	}
+	return generation, nil
 }
 
 func (s *Store) ResolveGeneration(pointer string) (model.Generation, error) {

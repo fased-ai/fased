@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -667,7 +668,7 @@ func TestStageAndActivateUseOnlyContentAddressedStorePaths(t *testing.T) {
 	if err := store.StageGeneration(expected.ID); err != nil {
 		t.Fatalf("idempotent staging failed: %v", err)
 	}
-	if err := store.ActivateGeneration(expected.ID, ""); err != nil {
+	if err := store.ActivateGeneration(expected.ID, "", 0); err != nil {
 		t.Fatal(err)
 	}
 	current, err := store.ResolveGeneration("current")
@@ -676,6 +677,122 @@ func TestStageAndActivateUseOnlyContentAddressedStorePaths(t *testing.T) {
 	}
 	if _, err := store.ResolveGeneration("../../escape"); err == nil {
 		t.Fatal("arbitrary pointer selection was accepted")
+	}
+}
+
+func TestActivateAllowsExactSchemaOnePredecessorInventoryWithoutWeakeningTargetPolicy(t *testing.T) {
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	installRoot := filepath.Join(root, "install")
+	store, err := OpenLayout(Layout{StateRoot: stateRoot, InstallRoot: installRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateSchemas := map[string]uint32{"signer": 2}
+	capabilities := manifest().Capabilities
+
+	legacyPayload := filepath.Join(root, "legacy-payload")
+	if err := os.MkdirAll(filepath.Join(legacyPayload, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyPayload, "bin", "fased"), []byte("legacy app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacyInventory, _, err := bundle.Inspect(legacyPayload, "0.1.76-rc.72", commitA, commitA, stateSchemas, capabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyBytes := []byte("bound historical lifecycle")
+	if err := os.WriteFile(filepath.Join(legacyPayload, "bin", "fased-lifecycled"), legacyBytes, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacySum := sha256.Sum256(legacyBytes)
+	legacyInventory.Artifacts = append(legacyInventory.Artifacts, bundle.Artifact{
+		Path: "bin/fased-lifecycled", Kind: bundle.ArtifactFile,
+		SHA256: fmt.Sprintf("sha256:%x", legacySum), Size: int64(len(legacyBytes)), Executable: true,
+	})
+	sort.Slice(legacyInventory.Artifacts, func(left, right int) bool {
+		return legacyInventory.Artifacts[left].Path < legacyInventory.Artifacts[right].Path
+	})
+	legacyGeneration, err := bundle.IdentityLegacyInstalledInventory(legacyInventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyRoot := store.generationPath(legacyGeneration.ID)
+	if err := os.MkdirAll(legacyRoot, 0o711); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(legacyPayload, filepath.Join(legacyRoot, generationPayloadName)); err != nil {
+		t.Fatal(err)
+	}
+	legacyJSON, err := json.Marshal(legacyInventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyRoot, generationInventoryName), legacyJSON, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	targetPayload := filepath.Join(root, "target-payload")
+	if err := os.MkdirAll(filepath.Join(targetPayload, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(targetPayload, "bin", "fased"), []byte("target app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	targetInventory, targetGeneration, err := bundle.Inspect(targetPayload, "0.1.76-rc.78", commitB, commitB, stateSchemas, capabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetRoot := store.generationPath(targetGeneration.ID)
+	if err := os.MkdirAll(targetRoot, 0o711); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(targetPayload, filepath.Join(targetRoot, generationPayloadName)); err != nil {
+		t.Fatal(err)
+	}
+	targetJSON, err := bundle.CanonicalInventoryJSON(targetInventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(targetRoot, generationInventoryName), targetJSON, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	identity, err := model.LegacyControllerPlatformIdentity(model.ProfileProtectedLocal, "1122334455667788", digestA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyManifest := struct {
+		SchemaVersion    uint32                 `json:"schemaVersion"`
+		Profile          model.Profile          `json:"profile"`
+		Platform         model.PlatformIdentity `json:"platform"`
+		ActiveGeneration model.Generation       `json:"activeGeneration"`
+		StateSchemas     map[string]uint32      `json:"stateSchemas"`
+		Capabilities     model.CapabilityRanges `json:"capabilities"`
+	}{1, model.ProfileProtectedLocal, identity, legacyGeneration, stateSchemas, capabilities}
+	manifestJSON, err := json.Marshal(legacyManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateRoot, manifestName), manifestJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("generations", strings.TrimPrefix(legacyGeneration.ID, "sha256:")), filepath.Join(installRoot, "current")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(legacyRoot, generationPayloadName, "bin", "fased-lifecycled"), []byte("substituted"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.verifiedLegacySchemaOnePredecessor(legacyGeneration.ID); err == nil {
+		t.Fatal("schema-one predecessor accepted substituted lifecycle bytes")
+	}
+	if err := os.WriteFile(filepath.Join(legacyRoot, generationPayloadName, "bin", "fased-lifecycled"), legacyBytes, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ActivateGeneration(targetGeneration.ID, legacyGeneration.ID, 1); err != nil {
+		t.Fatalf("schema-one predecessor activation failed: %v", err)
 	}
 }
 

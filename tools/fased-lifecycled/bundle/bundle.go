@@ -82,6 +82,10 @@ func InspectWithDependencyAndPluginLock(root, version, commit, tree string, stat
 }
 
 func inspectInventory(root, version, commit, tree string, stateSchemas map[string]uint32, capabilities model.CapabilityRanges, dependency *DependencyLayer) (Inventory, model.Generation, error) {
+	return inspectInventoryPolicy(root, version, commit, tree, stateSchemas, capabilities, dependency, false)
+}
+
+func inspectInventoryPolicy(root, version, commit, tree string, stateSchemas map[string]uint32, capabilities model.CapabilityRanges, dependency *DependencyLayer, allowLegacyLifecycleExecutable bool) (Inventory, model.Generation, error) {
 	clean, err := secureRoot(root)
 	if err != nil {
 		return Inventory{}, model.Generation{}, err
@@ -157,7 +161,7 @@ func inspectInventory(root, version, commit, tree string, stateSchemas map[strin
 	sort.Slice(inventory.Artifacts, func(left, right int) bool {
 		return inventory.Artifacts[left].Path < inventory.Artifacts[right].Path
 	})
-	generation, err := identity(inventory)
+	generation, err := identityWithPolicy(inventory, allowLegacyLifecycleExecutable)
 	if err != nil {
 		return Inventory{}, model.Generation{}, err
 	}
@@ -165,17 +169,30 @@ func inspectInventory(root, version, commit, tree string, stateSchemas map[strin
 }
 
 func Verify(root string, expected Inventory, generation model.Generation) error {
-	if err := validateInventory(expected); err != nil {
+	return verifyWithPolicy(root, expected, generation, false)
+}
+
+// VerifyLegacyInstalled verifies the exact bytes of a schema-one predecessor
+// generation. Historical schema-one application inventories included the Go
+// lifecycle binary before authority separation removed it. This compatibility
+// reader is intentionally separate from target acquisition: new and current
+// generations always use Verify and continue to reject lifecycle executables.
+func VerifyLegacyInstalled(root string, expected Inventory, generation model.Generation) error {
+	return verifyWithPolicy(root, expected, generation, true)
+}
+
+func verifyWithPolicy(root string, expected Inventory, generation model.Generation, allowLegacyLifecycleExecutable bool) error {
+	if err := validateInventoryWithPolicy(expected, allowLegacyLifecycleExecutable); err != nil {
 		return err
 	}
-	bound, err := identity(expected)
+	bound, err := identityWithPolicy(expected, allowLegacyLifecycleExecutable)
 	if err != nil {
 		return err
 	}
 	if bound != generation {
 		return errors.New("generation identity does not match the declared artifact inventory")
 	}
-	actual, _, err := inspectInventory(root, expected.Version, expected.Commit, expected.Tree, expected.StateSchemas, expected.Capabilities, expected.Dependency)
+	actual, _, err := inspectInventoryPolicy(root, expected.Version, expected.Commit, expected.Tree, expected.StateSchemas, expected.Capabilities, expected.Dependency, allowLegacyLifecycleExecutable)
 	if err != nil {
 		return err
 	}
@@ -183,7 +200,7 @@ func Verify(root string, expected Inventory, generation model.Generation) error 
 	// participates in generation identity but is not rediscovered by this
 	// generic filesystem inventory walk.
 	actual.PluginLockDigest = expected.PluginLockDigest
-	actualGeneration, err := identity(actual)
+	actualGeneration, err := identityWithPolicy(actual, allowLegacyLifecycleExecutable)
 	if err != nil {
 		return err
 	}
@@ -205,6 +222,16 @@ func CanonicalInventoryJSON(inventory Inventory) ([]byte, error) {
 }
 
 func DecodeInventory(data []byte) (Inventory, error) {
+	return decodeInventoryWithPolicy(data, false)
+}
+
+// DecodeLegacyInstalledInventory is restricted to an already-bound schema-one
+// predecessor. Callers must not use it for target acquisition or staging.
+func DecodeLegacyInstalledInventory(data []byte) (Inventory, error) {
+	return decodeInventoryWithPolicy(data, true)
+}
+
+func decodeInventoryWithPolicy(data []byte, allowLegacyLifecycleExecutable bool) (Inventory, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var inventory Inventory
@@ -218,14 +245,24 @@ func DecodeInventory(data []byte) (Inventory, error) {
 		}
 		return Inventory{}, err
 	}
-	if err := validateInventory(inventory); err != nil {
+	if err := validateInventoryWithPolicy(inventory, allowLegacyLifecycleExecutable); err != nil {
 		return Inventory{}, err
 	}
 	return inventory, nil
 }
 
 func identity(inventory Inventory) (model.Generation, error) {
-	if err := validateInventory(inventory); err != nil {
+	return identityWithPolicy(inventory, false)
+}
+
+// IdentityLegacyInstalledInventory computes the immutable identity of an
+// explicitly supported schema-one predecessor inventory.
+func IdentityLegacyInstalledInventory(inventory Inventory) (model.Generation, error) {
+	return identityWithPolicy(inventory, true)
+}
+
+func identityWithPolicy(inventory Inventory, allowLegacyLifecycleExecutable bool) (model.Generation, error) {
+	if err := validateInventoryWithPolicy(inventory, allowLegacyLifecycleExecutable); err != nil {
 		return model.Generation{}, err
 	}
 	data, err := json.Marshal(inventory)
@@ -248,6 +285,10 @@ func identity(inventory Inventory) (model.Generation, error) {
 }
 
 func validateInventory(inventory Inventory) error {
+	return validateInventoryWithPolicy(inventory, false)
+}
+
+func validateInventoryWithPolicy(inventory Inventory, allowLegacyLifecycleExecutable bool) error {
 	if inventory.SchemaVersion > CurrentInventorySchemaVersion {
 		return errors.New("artifact inventory schema is newer than supported")
 	}
@@ -290,7 +331,7 @@ func validateInventory(inventory Inventory) error {
 		if artifact.Path <= previous {
 			return errors.New("artifact inventory paths must be unique and sorted")
 		}
-		if reservedLifecycleExecutable(artifact.Path) {
+		if reservedLifecycleExecutable(artifact.Path) && !allowLegacyLifecycleExecutable {
 			return fmt.Errorf("application inventory must not contain lifecycle executable %q", artifact.Path)
 		}
 		if !validDigest(artifact.SHA256) || artifact.Size < 0 {
