@@ -70,6 +70,22 @@ describe("public predecessor capsule builder", () => {
       });
       expect(descriptor.releaseIndex).toBeNull();
       expect(descriptor.compatibilityDigest).toMatch(/^sha256:[a-f0-9]{64}$/u);
+      expect(descriptor.installationClass).toEqual({
+        kind: "public-stable",
+        manifestSchema: null,
+        platform: null,
+        activeGeneration: null,
+        previousGeneration: null,
+        stateSchemas: {
+          federation: 1,
+          managedInstall: 2,
+          mining: 1,
+          signer: 1,
+          walletRegistry: 1,
+        },
+        capabilities: null,
+      });
+      expect(descriptor.installationClassDigest).toMatch(/^sha256:[a-f0-9]{64}$/u);
       expect(descriptor.entries).toContainEqual(
         expect.objectContaining({
           path: `home/${profile === "hosting" ? "app" : "testop"}/.fased/runtime/current`,

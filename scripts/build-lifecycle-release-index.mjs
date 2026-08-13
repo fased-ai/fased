@@ -147,7 +147,7 @@ export async function buildLifecycleReleaseIndex(options) {
       ...(await asset(assetsDir, `fased-lifecycled-linux-${architecture.go}`)),
       privilegedComponent: "lifecycle-host",
       protocols: {
-        manifest: { min: 2, max: 2 },
+        manifest: { min: 1, max: 2 },
         journal: { min: 1, max: 1 },
         participant: { min: 1, max: 1 },
         platform: { min: 1, max: 2 },

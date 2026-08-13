@@ -34,6 +34,9 @@ export function verifyLifecycleReceipt({ contract, receipt, expected }) {
 function main() {
   const options = parseArguments(process.argv.slice(2));
   const predecessorCapsuleDigest = options["predecessor-capsule-digest"] || null;
+  const predecessorInstallationClass = options["predecessor-installation-class"] || null;
+  const predecessorInstallationClassDigest =
+    options["predecessor-installation-class-digest"] || null;
   const receipt = verifyLifecycleReceipt({
     contract: readJson(options.contract, "contract"),
     receipt: readJson(options.receipt, "receipt"),
@@ -44,6 +47,8 @@ function main() {
       commit: options.commit,
       candidateDescriptorDigest: options["candidate-descriptor-digest"],
       predecessorCapsuleDigest,
+      predecessorInstallationClass,
+      predecessorInstallationClassDigest,
       evidenceClass: options["evidence-class"] || "PASS",
       acquisitionEvidenceClass:
         options["acquisition-evidence-class"] || options["evidence-class"] || "PASS",

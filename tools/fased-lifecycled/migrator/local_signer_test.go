@@ -41,8 +41,9 @@ func localSignerBridgeFixture(t *testing.T) (LocalSignerBridgeAdapter, model.Tra
 	tx.SourceTopology = "local-user-systemd-v2"
 	tx.PublicPredecessorVersion = "0.1.75"
 	tx.Previous = nil
+	tx.PredecessorManifestSchema = 0
+	tx.PredecessorPlatform = nil
 	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-	tx.Previous = nil
 	adapter := LocalSignerBridgeAdapter{Config: config, rootPrefix: t.TempDir(), skipChown: true}
 	return adapter, tx, tx.Migrations[0], statePath, keyPath
 }

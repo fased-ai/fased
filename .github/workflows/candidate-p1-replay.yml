@@ -44,7 +44,8 @@ jobs:
     name: Verify and stage exact candidate replay
     runs-on: ubuntu-24.04
     outputs:
-      predecessors: ${{ steps.identity.outputs.predecessors }}
+      local_predecessors: ${{ steps.identity.outputs.local_predecessors }}
+      hosting_predecessors: ${{ steps.identity.outputs.hosting_predecessors }}
     steps:
       - name: Checkout fixture correction
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -118,8 +119,12 @@ jobs:
             --deny-self-hosted-runners >/dev/null
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$OWNER_PREDECESSOR_VERSION")"
-          predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" --arg owner "$OWNER_PREDECESSOR_VERSION" '[$stable,$owner] | unique')"
-          printf 'predecessors=%s\n' "$predecessors" >>"$GITHUB_OUTPUT"
+          local_predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" --arg owner "$OWNER_PREDECESSOR_VERSION" \
+            '[{version:$stable,installationClass:"public-stable"},
+              {version:$owner,installationClass:"canonical-managed"}] | unique_by([.version,.installationClass])')"
+          hosting_predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" '[$stable]')"
+          printf 'local_predecessors=%s\n' "$local_predecessors" >>"$GITHUB_OUTPUT"
+          printf 'hosting_predecessors=%s\n' "$hosting_predecessors" >>"$GITHUB_OUTPUT"
 
       - name: Create non-publishable exact-inventory trust overlay
         run: >-
@@ -167,14 +172,14 @@ jobs:
           if-no-files-found: error
 
   local-update:
-    name: Replay Local update P1 (${{ matrix.predecessor }})
+    name: Replay Local update P1 (${{ matrix.predecessor.version }}, ${{ matrix.predecessor.installationClass }})
     needs: verify
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        predecessor: ${{ fromJSON(needs.verify.outputs.predecessors) }}
+        predecessor: ${{ fromJSON(needs.verify.outputs.local_predecessors) }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -188,21 +193,22 @@ jobs:
           path: ${{ runner.temp }}/fased-p1-replay-candidate
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: fased-predecessor-capsules-${{ matrix.predecessor }}
+          name: fased-predecessor-capsules-${{ matrix.predecessor.version }}-${{ matrix.predecessor.installationClass }}
           path: ${{ runner.temp }}/fased-predecessor
           github-token: ${{ github.token }}
           run-id: ${{ inputs.source_run_id }}
       - name: Derive predecessor scenario
         id: scenario
         env:
-          PREDECESSOR_VERSION: ${{ matrix.predecessor }}
+          PREDECESSOR_VERSION: ${{ matrix.predecessor.version }}
         run: printf 'value=%s\n' "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")" >>"$GITHUB_OUTPUT"
       - name: Replay Local update
         env:
           FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/fased-p1-replay-candidate
           FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
           FASED_SYSTEMD_FIXTURE_SCENARIOS: ${{ steps.scenario.outputs.value }}
-          FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: ${{ matrix.predecessor }}
+          FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: ${{ matrix.predecessor.version }}
+          FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_CLASS: ${{ matrix.predecessor.installationClass }}
           FASED_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_DIR: ${{ runner.temp }}/fased-predecessor/protected-local
           FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1"
           FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
@@ -210,7 +216,7 @@ jobs:
         run: bash scripts/test-lifecycle-local-acceptance.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: fased-p1-replay-local-update-${{ matrix.predecessor }}-receipts
+          name: fased-p1-replay-local-update-${{ matrix.predecessor.version }}-${{ matrix.predecessor.installationClass }}-receipts
           path: ${{ runner.temp }}/receipts/*.json
           if-no-files-found: error
 
@@ -222,7 +228,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        predecessor: ${{ fromJSON(needs.verify.outputs.predecessors) }}
+        predecessor: ${{ fromJSON(needs.verify.outputs.hosting_predecessors) }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -236,7 +242,7 @@ jobs:
           path: ${{ runner.temp }}/fased-p1-replay-candidate
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: fased-predecessor-capsules-${{ matrix.predecessor }}
+          name: fased-predecessor-capsules-${{ matrix.predecessor }}-public-stable
           path: ${{ runner.temp }}/fased-predecessor
           github-token: ${{ github.token }}
           run-id: ${{ inputs.source_run_id }}

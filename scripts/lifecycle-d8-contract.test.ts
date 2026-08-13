@@ -7,6 +7,7 @@ import {
   verifyAcceptanceReceipt,
 } from "./lifecycle-acceptance-contract.mjs";
 import { parseInstalledStateCapsule } from "./lifecycle-installed-state-capsule.mjs";
+import { predecessorInstallationClassDigest } from "./predecessor-capsule.mjs";
 
 const contract = JSON.parse(
   readFileSync(new URL("../config/lifecycle-acceptance.v2.json", import.meta.url), "utf8"),
@@ -59,6 +60,8 @@ describe("D8 unified lifecycle acceptance", () => {
         commit: "b".repeat(40),
         candidateDescriptorDigest: digest,
         predecessorCapsuleDigest: digest,
+        predecessorInstallationClass: "public-stable",
+        predecessorInstallationClassDigest: digest,
         acquisition,
         evidence: REQUIRED_PREDICATES["protected-local"]["managed-update"],
       }),
@@ -71,6 +74,8 @@ describe("D8 unified lifecycle acceptance", () => {
       commit: "b".repeat(40),
       candidateDescriptorDigest: digest,
       predecessorCapsuleDigest: digest,
+      predecessorInstallationClass: "public-stable",
+      predecessorInstallationClassDigest: digest,
       acquisition,
       evidence: evidence("protected-local", "managed-update"),
     });
@@ -78,12 +83,32 @@ describe("D8 unified lifecycle acceptance", () => {
       verifyAcceptanceReceipt({
         contract,
         receipt,
-        expected: { profile: "protected-local", predecessorCapsuleDigest: digest },
+        expected: {
+          profile: "protected-local",
+          predecessorCapsuleDigest: digest,
+          predecessorInstallationClass: "public-stable",
+          predecessorInstallationClassDigest: digest,
+        },
       }),
     ).toBe(receipt);
   });
 
   it("accepts only sanitized attested predecessor capsule inventories", () => {
+    const installationClass = {
+      kind: "public-stable",
+      manifestSchema: null,
+      platform: null,
+      activeGeneration: null,
+      previousGeneration: null,
+      stateSchemas: {
+        federation: 1,
+        managedInstall: 2,
+        mining: 1,
+        signer: 1,
+        walletRegistry: 1,
+      },
+      capabilities: null,
+    };
     const capsule = {
       schemaVersion: 1,
       role: "fased-sanitized-predecessor-capsule",
@@ -105,6 +130,8 @@ describe("D8 unified lifecycle acceptance", () => {
         kind: "public-stable",
         capabilities: ["local-systemd", "external-signer"],
       },
+      installationClass,
+      installationClassDigest: predecessorInstallationClassDigest(installationClass),
       ownership: { rootUid: 0, rootGid: 0, operatorUid: 1000, operatorGid: 1000 },
       pointers: { current: digest, previous: null },
       expectedReceiptDigest: digest,

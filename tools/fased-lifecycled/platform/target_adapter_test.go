@@ -388,6 +388,8 @@ func TestFreshTargetDoesNotStopAbsentCanonicalServices(t *testing.T) {
 	adapter, tx, calls := targetAdapter(t)
 	tx.PlanAction = "INSTALL"
 	tx.Previous = nil
+	tx.PredecessorManifestSchema = 0
+	tx.PredecessorPlatform = nil
 	tx.Phase = model.PhasePrepared
 	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	if err := adapter.Quiesce(context.Background(), tx); err != nil {
@@ -402,6 +404,8 @@ func TestFreshLocalDefersGatewayUntilOnboardingCreatesConfig(t *testing.T) {
 	adapter, tx, calls := targetAdapter(t)
 	tx.PlanAction = "INSTALL"
 	tx.Previous = nil
+	tx.PredecessorManifestSchema = 0
+	tx.PredecessorPlatform = nil
 	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	if err := adapter.Prepare(context.Background(), tx); err != nil {
 		t.Fatal(err)
@@ -435,6 +439,8 @@ func TestLocalBridgeVerifiesDurableFenceBeforeLifecycleProjectionAndPredecessor(
 	tx.SourceTopology = "local-user-systemd-v2"
 	tx.PublicPredecessorVersion = "0.1.75"
 	tx.Previous = nil
+	tx.PredecessorManifestSchema = 0
+	tx.PredecessorPlatform = nil
 	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	prepared := map[string]LifecycleFile{}
 	activations := [][]string{}
@@ -643,6 +649,8 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	}
 	tx.Profile = model.ProfileHosting
 	tx.PlatformDigest = platformDigest
+	predecessor := identity
+	tx.PredecessorPlatform = &predecessor
 
 	root := t.TempDir()
 	for _, name := range []string{"fased-gateway-launch", "fased-signerd", "node"} {

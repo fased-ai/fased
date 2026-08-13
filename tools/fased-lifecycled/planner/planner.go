@@ -96,6 +96,8 @@ type Target struct {
 	Capabilities    model.CapabilityRanges
 	ReleaseSequence uint64
 	SecurityEpoch   uint64
+	ManifestMin     uint32
+	ManifestMax     uint32
 }
 
 type Migration struct {
@@ -112,6 +114,8 @@ type Plan struct {
 	Digest                      string           `json:"digest"`
 	ReleaseSequence             uint64           `json:"releaseSequence"`
 	SecurityEpoch               uint64           `json:"securityEpoch"`
+	ManifestMin                 uint32           `json:"manifestMin"`
+	ManifestMax                 uint32           `json:"manifestMax"`
 	RollbackAuthorizationDigest string           `json:"rollbackAuthorizationDigest,omitempty"`
 }
 
@@ -136,7 +140,7 @@ func BuildForInstallationAuthorized(installed Installation, target Target, autho
 		if installed.Manifest != nil || installed.Generation != nil {
 			return Plan{}, errors.New("empty installation contains managed identity")
 		}
-		plan := Plan{Action: ActionInstall, Profile: target.Profile, Target: target.Generation, ReleaseSequence: target.ReleaseSequence, SecurityEpoch: target.SecurityEpoch}
+		plan := basePlan(ActionInstall, target)
 		plan.Migrations = migrationsFrom(nil, target.StateSchemas)
 		return bind(plan)
 	case InstallationManaged:
@@ -154,23 +158,19 @@ func BuildForInstallationAuthorized(installed Installation, target Target, autho
 		if err := validateInstalledSchemas(installed.Profile, installed.StateSchemas, target); err != nil {
 			return Plan{}, err
 		}
-		return bind(Plan{
-			Action:          ActionBridgePublicStable,
-			Profile:         target.Profile,
-			Target:          target.Generation,
-			Migrations:      migrationsFrom(installed.StateSchemas, target.StateSchemas),
-			ReleaseSequence: target.ReleaseSequence, SecurityEpoch: target.SecurityEpoch,
-		})
+		plan := basePlan(ActionBridgePublicStable, target)
+		plan.Migrations = migrationsFrom(installed.StateSchemas, target.StateSchemas)
+		return bind(plan)
 	case InstallationAmbiguous:
 		if installed.Profile != "" && installed.Profile != target.Profile {
 			return Plan{}, fmt.Errorf("installation profile %q cannot use target profile %q", installed.Profile, target.Profile)
 		}
-		return bind(Plan{Action: ActionRepairRequired, Profile: target.Profile, Target: target.Generation, ReleaseSequence: target.ReleaseSequence, SecurityEpoch: target.SecurityEpoch})
+		return bind(basePlan(ActionRepairRequired, target))
 	case InstallationUnknownNewer:
 		if installed.Profile != "" && installed.Profile != target.Profile {
 			return Plan{}, fmt.Errorf("installation profile %q cannot use target profile %q", installed.Profile, target.Profile)
 		}
-		return bind(Plan{Action: ActionRejectUnknownNewer, Profile: target.Profile, Target: target.Generation, ReleaseSequence: target.ReleaseSequence, SecurityEpoch: target.SecurityEpoch})
+		return bind(basePlan(ActionRejectUnknownNewer, target))
 	default:
 		return Plan{}, fmt.Errorf("unsupported installation kind %q", installed.Kind)
 	}
@@ -178,10 +178,13 @@ func BuildForInstallationAuthorized(installed Installation, target Target, autho
 
 func buildManaged(installed model.Manifest, target Target, authorization *model.RollbackAuthorization, now time.Time) (Plan, error) {
 	if installed.SchemaVersion > model.CurrentManifestSchemaVersion {
-		return bind(Plan{Action: ActionRejectUnknownNewer, Profile: target.Profile, Target: target.Generation, ReleaseSequence: target.ReleaseSequence, SecurityEpoch: target.SecurityEpoch})
+		return bind(basePlan(ActionRejectUnknownNewer, target))
 	}
-	if err := installed.Validate(); err != nil {
+	if err := installed.ValidateInstalled(); err != nil {
 		return Plan{}, fmt.Errorf("installed manifest: %w", err)
+	}
+	if installed.SchemaVersion < target.ManifestMin || installed.SchemaVersion > target.ManifestMax {
+		return Plan{}, errors.New("target lifecycle host does not support the installed manifest schema")
 	}
 	if installed.Profile != target.Profile {
 		return Plan{}, fmt.Errorf("installation profile %q cannot use target profile %q", installed.Profile, target.Profile)
@@ -190,17 +193,25 @@ func buildManaged(installed model.Manifest, target Target, authorization *model.
 		return Plan{}, errors.New("managed installation has no active generation")
 	}
 	if requiresUnknownNewerRejection(installed.StateSchemas, installed.Capabilities, target) {
-		return bind(Plan{Action: ActionRejectUnknownNewer, Profile: target.Profile, Target: target.Generation, ReleaseSequence: target.ReleaseSequence, SecurityEpoch: target.SecurityEpoch})
+		return bind(basePlan(ActionRejectUnknownNewer, target))
 	}
 	if err := validateInstalledState(installed.Profile, installed.StateSchemas, installed.Capabilities, target); err != nil {
 		return Plan{}, err
 	}
+	if installed.SchemaVersion == 1 {
+		if installed.ActiveGeneration.ID == target.Generation.ID {
+			return Plan{}, errors.New("schema-one manifest adoption requires a distinct signed target generation")
+		}
+		plan := basePlan(ActionUpdate, target)
+		plan.Migrations = migrationsFrom(installed.StateSchemas, target.StateSchemas)
+		return bind(plan)
+	}
 	if target.SecurityEpoch < installed.SecurityEpoch {
-		return bind(Plan{Action: ActionRejectDowngrade, Profile: target.Profile, Target: target.Generation, ReleaseSequence: target.ReleaseSequence, SecurityEpoch: target.SecurityEpoch})
+		return bind(basePlan(ActionRejectDowngrade, target))
 	}
 	if target.ReleaseSequence < installed.ReleaseSequence {
 		if authorization == nil {
-			return bind(Plan{Action: ActionRejectDowngrade, Profile: target.Profile, Target: target.Generation, ReleaseSequence: target.ReleaseSequence, SecurityEpoch: target.SecurityEpoch})
+			return bind(basePlan(ActionRejectDowngrade, target))
 		}
 		if target.SecurityEpoch != installed.SecurityEpoch {
 			return Plan{}, errors.New("rollback cannot change the installed security epoch")
@@ -212,9 +223,10 @@ func buildManaged(installed model.Manifest, target Target, authorization *model.
 			authorization.CurrentReleaseSequence != installed.ReleaseSequence || authorization.TargetReleaseSequence != target.ReleaseSequence || authorization.SecurityEpoch != target.SecurityEpoch {
 			return Plan{}, errors.New("rollback authorization does not bind the current and target release identities")
 		}
-		return bind(Plan{Action: ActionRollback, Profile: target.Profile, Target: target.Generation,
-			Migrations: migrationsFrom(installed.StateSchemas, target.StateSchemas), ReleaseSequence: target.ReleaseSequence,
-			SecurityEpoch: target.SecurityEpoch, RollbackAuthorizationDigest: authorization.EnvelopeDigest})
+		plan := basePlan(ActionRollback, target)
+		plan.Migrations = migrationsFrom(installed.StateSchemas, target.StateSchemas)
+		plan.RollbackAuthorizationDigest = authorization.EnvelopeDigest
+		return bind(plan)
 	}
 	if target.ReleaseSequence == installed.ReleaseSequence && installed.ActiveGeneration.ID != target.Generation.ID {
 		return Plan{}, errors.New("release sequence is already bound to a different generation")
@@ -227,9 +239,13 @@ func buildManaged(installed model.Manifest, target Target, authorization *model.
 		if target.ReleaseSequence != installed.ReleaseSequence || target.SecurityEpoch != installed.SecurityEpoch {
 			return Plan{}, errors.New("active generation identity conflicts with its monotonic release authority")
 		}
-		return bind(Plan{Action: ActionAlreadyCurrent, Profile: target.Profile, Target: target.Generation, Migrations: migrations, ReleaseSequence: target.ReleaseSequence, SecurityEpoch: target.SecurityEpoch})
+		plan := basePlan(ActionAlreadyCurrent, target)
+		plan.Migrations = migrations
+		return bind(plan)
 	}
-	return bind(Plan{Action: ActionUpdate, Profile: target.Profile, Target: target.Generation, Migrations: migrations, ReleaseSequence: target.ReleaseSequence, SecurityEpoch: target.SecurityEpoch})
+	plan := basePlan(ActionUpdate, target)
+	plan.Migrations = migrations
+	return bind(plan)
 }
 
 func requiresUnknownNewerRejection(stateSchemas map[string]uint32, capabilities model.CapabilityRanges, target Target) bool {
@@ -286,12 +302,21 @@ func validateTarget(target Target) error {
 	if target.ReleaseSequence == 0 || target.SecurityEpoch == 0 {
 		return errors.New("target release sequence and security epoch must be nonzero")
 	}
+	if target.ManifestMin == 0 || target.ManifestMax < target.ManifestMin || model.CurrentManifestSchemaVersion < target.ManifestMin || model.CurrentManifestSchemaVersion > target.ManifestMax {
+		return errors.New("target manifest protocol range is invalid")
+	}
 	switch target.Profile {
 	case model.ProfileProtectedLocal, model.ProfileHosting:
 		return nil
 	default:
 		return fmt.Errorf("unsupported target profile %q", target.Profile)
 	}
+}
+
+func basePlan(action Action, target Target) Plan {
+	return Plan{Action: action, Profile: target.Profile, Target: target.Generation,
+		ReleaseSequence: target.ReleaseSequence, SecurityEpoch: target.SecurityEpoch,
+		ManifestMin: target.ManifestMin, ManifestMax: target.ManifestMax}
 }
 
 func migrationsFrom(current, target map[string]uint32) []Migration {

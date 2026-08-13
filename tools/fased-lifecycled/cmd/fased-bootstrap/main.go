@@ -46,6 +46,8 @@ type bootstrapResult struct {
 	Version                string
 	ReleaseSequence        uint64
 	SecurityEpoch          uint64
+	ManifestProtocolMin    uint32
+	ManifestProtocolMax    uint32
 	HostDigest             string
 	HostPath               string
 	ApplicationPath        string
@@ -209,6 +211,7 @@ func execute(ctx context.Context, request bootstrapRequest) (bootstrapResult, er
 	}
 	return bootstrapResult{
 		Version: index.Version, ReleaseSequence: index.ReleaseSequence, SecurityEpoch: index.SecurityEpoch,
+		ManifestProtocolMin: asset.Protocols.Manifest.Min, ManifestProtocolMax: asset.Protocols.Manifest.Max,
 		HostDigest: staged.Digest, HostPath: staged.Path,
 		ApplicationPath: application, DependencyPath: dependency, SignerPath: signer,
 		ReleaseIndexDigest: "sha256:" + verifiedIndex.Digest, ReleaseAuthorityDigest: "sha256:" + verifiedIndex.ReleaseAuthorityDigest,

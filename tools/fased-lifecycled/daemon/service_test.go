@@ -107,7 +107,7 @@ func (state fakeStore) ReadCandidateContract(id string) (bundle.Inventory, model
 }
 
 func (state fakeStore) ReadCandidateAuthority(id string) (store.CandidateAuthority, error) {
-	return store.CandidateAuthority{SchemaVersion: 1, GenerationID: id, ReleaseSequence: 12, SecurityEpoch: 3, ReleaseIndex: digestA, ReleaseAuthority: digestB}, nil
+	return store.CandidateAuthority{SchemaVersion: 1, GenerationID: id, ReleaseSequence: 12, SecurityEpoch: 3, ManifestMin: 1, ManifestMax: 2, ReleaseIndex: digestA, ReleaseAuthority: digestB}, nil
 }
 
 type fakeInventory struct {
@@ -176,7 +176,7 @@ func TestConvergeRecoversDurableUnfinishedTransactionBeforeNewWork(t *testing.T)
 	inventory, target := targetContract()
 	manifest := model.Manifest{
 		SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal, Platform: platform(),
-		ActiveGeneration: &target, StateSchemas: map[string]uint32{"signer": 1}, Capabilities: capabilities(),
+		ActiveGeneration: &target, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities,
 		ReleaseSequence: 12, SecurityEpoch: 3,
 	}
 	pending := model.Transaction{
@@ -458,6 +458,7 @@ func TestAlreadyCurrentDoesNotAllocateTransaction(t *testing.T) {
 		SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal,
 		Platform:         platform(),
 		ActiveGeneration: &target, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities,
+		ReleaseSequence: 12, SecurityEpoch: 3,
 	}
 	bindings := &fakeInventory{}
 	supervisor := &fakeSupervisor{}
@@ -478,6 +479,41 @@ func TestAlreadyCurrentDoesNotAllocateTransaction(t *testing.T) {
 	}
 	if bindings.calls != 0 || supervisor.runs != 0 {
 		t.Fatal("already-current performed work")
+	}
+}
+
+func TestConvergeBindsSchemaOnePredecessorAndSignedMigrationAuthority(t *testing.T) {
+	inventory, target := targetContract()
+	active := generation(digestA, "0.1.76-rc.72", commitA)
+	legacyPlatform, err := model.LegacyControllerPlatformIdentity(model.ProfileProtectedLocal, "test-instance", digestA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := model.Manifest{
+		SchemaVersion: 1, Profile: model.ProfileProtectedLocal, Platform: legacyPlatform, ActiveGeneration: &active,
+		StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities,
+	}
+	bindings := &fakeInventory{}
+	supervisor := &fakeSupervisor{}
+	service := Service{
+		Profile: model.ProfileProtectedLocal, Platform: platform(),
+		Store:     fakeStore{manifest: &legacy, manifestDigest: digestA, inventory: inventory, generation: target},
+		Inventory: bindings, Supervisor: supervisor, NewID: func() (string, error) { return transactionID, nil },
+	}
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationConverge,
+		TargetGenerationID: target.ID, ExpectedManifestDigest: digestA}
+	response, err := service.Handle(context.Background(), request)
+	if err != nil || response.Outcome != string(engine.OutcomeUpdated) || supervisor.runs != 1 {
+		t.Fatalf("schema-one managed update did not converge: response=%+v runs=%d err=%v", response, supervisor.runs, err)
+	}
+	tx := supervisor.tx
+	if tx.PlanAction != string(planner.ActionUpdate) || tx.PredecessorManifestSchema != 1 || tx.Previous == nil || tx.Previous.ID != active.ID ||
+		tx.PredecessorPlatform == nil || !tx.PredecessorPlatform.IsLegacyControllerWorker(model.ProfileProtectedLocal) ||
+		tx.ReleaseIndexDigest != digestA || tx.ReleaseAuthorityDigest != digestB || tx.TargetManifestProtocolMin != 1 || tx.TargetManifestProtocolMax != 2 {
+		t.Fatalf("schema-one transaction lost predecessor or signed authority binding: %+v", tx)
+	}
+	if envelope, err := tx.Envelope(); err != nil || envelope.PredecessorManifestSchema != 1 || envelope.PredecessorPlatform == nil || !envelope.PredecessorPlatform.IsLegacyControllerWorker(model.ProfileProtectedLocal) || envelope.ReleaseIndexDigest != digestA {
+		t.Fatalf("schema-one immutable envelope is incomplete: %+v err=%v", envelope, err)
 	}
 }
 
@@ -525,7 +561,7 @@ func TestLegacyControllerTopologyRequiresExplicitBridge(t *testing.T) {
 	supervisor := &fakeSupervisor{}
 	service := Service{Profile: model.ProfileProtectedLocal, Platform: platform(), Store: fakeStore{manifest: &manifest, manifestDigest: digestA, inventory: inventory, generation: target}, Inventory: bindings, Supervisor: supervisor}
 	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationConverge, TargetGenerationID: target.ID, ExpectedManifestDigest: digestA}
-	if _, err := service.Handle(context.Background(), request); err == nil || !strings.Contains(err.Error(), "explicit bridge path") {
+	if _, err := service.Handle(context.Background(), request); err == nil || !strings.Contains(err.Error(), "schema-one upgrade") {
 		t.Fatalf("legacy controller topology reached normal managed convergence: %v", err)
 	}
 	if bindings.calls != 0 || supervisor.runs != 0 {

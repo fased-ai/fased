@@ -50,15 +50,23 @@ func manifestTransaction(t *testing.T, fresh bool) (model.Transaction, model.Pla
 	if fresh {
 		action = "INSTALL"
 	}
-	return model.Transaction{
+	tx := model.Transaction{
 		SchemaVersion: model.CurrentTransactionSchemaVersion, ID: "018f47d2-5a6b-7c8d-9e0f-123456789abc", Profile: model.ProfileProtectedLocal, PlanAction: action,
 		ReleaseSequence: 12, SecurityEpoch: 3,
+		ReleaseIndexDigest: digestA, ReleaseAuthorityDigest: digestB,
+		TargetManifestProtocolMin: 1, TargetManifestProtocolMax: 2,
 		Phase: model.PhaseVerified, Revision: 5,
 		Target:             model.Generation{ID: digestB, Version: "0.1.76", Commit: commitB, Tree: commitB, ArtifactSetDigest: digestB},
 		TargetStateSchemas: map[string]uint32{"signer": 2}, TargetCapabilities: capabilities, Previous: previous,
 		ManifestDigest: manifestDigest, StateInventoryDigest: digestA, MigrationPlanDigest: digestB,
 		SignerPlanDigest: digestA, PlatformDigest: platformDigest,
-	}, identity
+	}
+	if !fresh {
+		tx.PredecessorManifestSchema = model.CurrentManifestSchemaVersion
+		predecessor := identity
+		tx.PredecessorPlatform = &predecessor
+	}
+	return tx, identity
 }
 
 func TestManifestCommitterCreatesCanonicalFreshAndUpdateRecords(t *testing.T) {

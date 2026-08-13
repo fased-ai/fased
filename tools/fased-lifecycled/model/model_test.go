@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -43,23 +44,29 @@ func testTransaction(phase Phase) Transaction {
 	platform := testPlatform(ProfileProtectedLocal)
 	platformDigest, _ := platform.Digest(ProfileProtectedLocal)
 	return Transaction{
-		SchemaVersion:        CurrentTransactionSchemaVersion,
-		ID:                   "018f47d2-5a6b-7c8d-9e0f-123456789abc",
-		Profile:              ProfileProtectedLocal,
-		PlanAction:           "UPDATE",
-		ReleaseSequence:      12,
-		SecurityEpoch:        3,
-		Phase:                phase,
-		Revision:             1,
-		Target:               testGeneration(testDigestB, "0.1.76", testCommitB, testCommitB, testDigestB),
-		TargetStateSchemas:   map[string]uint32{"signer": 2},
-		TargetCapabilities:   testCapabilities(),
-		Previous:             &previous,
-		ManifestDigest:       testDigestA,
-		StateInventoryDigest: testDigestB,
-		MigrationPlanDigest:  testDigestA,
-		SignerPlanDigest:     testDigestB,
-		PlatformDigest:       platformDigest,
+		SchemaVersion:             CurrentTransactionSchemaVersion,
+		ID:                        "018f47d2-5a6b-7c8d-9e0f-123456789abc",
+		Profile:                   ProfileProtectedLocal,
+		PlanAction:                "UPDATE",
+		ReleaseSequence:           12,
+		SecurityEpoch:             3,
+		ReleaseIndexDigest:        testDigestA,
+		ReleaseAuthorityDigest:    testDigestB,
+		TargetManifestProtocolMin: 1,
+		TargetManifestProtocolMax: 2,
+		PredecessorManifestSchema: CurrentManifestSchemaVersion,
+		PredecessorPlatform:       &platform,
+		Phase:                     phase,
+		Revision:                  1,
+		Target:                    testGeneration(testDigestB, "0.1.76", testCommitB, testCommitB, testDigestB),
+		TargetStateSchemas:        map[string]uint32{"signer": 2},
+		TargetCapabilities:        testCapabilities(),
+		Previous:                  &previous,
+		ManifestDigest:            testDigestA,
+		StateInventoryDigest:      testDigestB,
+		MigrationPlanDigest:       testDigestA,
+		SignerPlanDigest:          testDigestB,
+		PlatformDigest:            platformDigest,
 	}
 }
 
@@ -79,8 +86,38 @@ func TestReleaseAuthorityIsRequiredAndEnvelopeBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if envelope.ReleaseSequence != 12 || envelope.SecurityEpoch != 3 {
+	if envelope.ReleaseSequence != 12 || envelope.SecurityEpoch != 3 || envelope.ReleaseIndexDigest != testDigestA || envelope.ReleaseAuthorityDigest != testDigestB || envelope.PredecessorManifestSchema != CurrentManifestSchemaVersion || envelope.PredecessorPlatform == nil {
 		t.Fatalf("envelope lost monotonic authority: %+v", envelope)
+	}
+}
+
+func TestInstalledManifestStrictlyDecodesSchemaOneWithoutInventingAuthority(t *testing.T) {
+	active := testGeneration(testDigestA, "0.1.76-rc.72", testCommitA, testCommitA, testDigestA)
+	legacyPlatform, err := LegacyControllerPlatformIdentity(ProfileProtectedLocal, "test-instance", testDigestA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := manifestSchemaOne{SchemaVersion: 1, Profile: ProfileProtectedLocal, Platform: legacyPlatform, ActiveGeneration: &active,
+		StateSchemas: CurrentStateSchemas(), Capabilities: testCapabilities()}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := DecodeInstalledManifest(strings.NewReader(string(data)))
+	if err != nil || manifest.SchemaVersion != 1 || manifest.ReleaseSequence != 0 || manifest.SecurityEpoch != 0 || manifest.ActiveGeneration == nil || manifest.ActiveGeneration.ID != active.ID {
+		t.Fatalf("schema-one manifest was not decoded exactly: %+v err=%v", manifest, err)
+	}
+	if _, err := DecodeManifest(strings.NewReader(string(data))); err == nil {
+		t.Fatal("schema-one predecessor was accepted as a current canonical manifest")
+	}
+	var rebound map[string]any
+	if err := json.Unmarshal(data, &rebound); err != nil {
+		t.Fatal(err)
+	}
+	rebound["releaseSequence"] = 72
+	reboundData, _ := json.Marshal(rebound)
+	if _, err := DecodeInstalledManifest(strings.NewReader(string(reboundData))); err == nil {
+		t.Fatal("schema-one manifest accepted invented release authority")
 	}
 }
 
@@ -154,6 +191,8 @@ func TestPublicBridgeVersionIsRequiredAndEnvelopeBound(t *testing.T) {
 	tx.PlanAction = "BRIDGE_PUBLIC_STABLE"
 	tx.SourceTopology = "local-user-systemd-v2"
 	tx.Previous = nil
+	tx.PredecessorManifestSchema = 0
+	tx.PredecessorPlatform = nil
 	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	if err := tx.Validate(); err == nil {
 		t.Fatal("bridge without public predecessor version was accepted")

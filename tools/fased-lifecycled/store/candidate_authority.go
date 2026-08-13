@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"fased-lifecycled/model"
 )
 
 // CandidateAuthority is the root-bound result of verifying one attested
@@ -17,12 +19,16 @@ type CandidateAuthority struct {
 	GenerationID     string `json:"generationId"`
 	ReleaseSequence  uint64 `json:"releaseSequence"`
 	SecurityEpoch    uint64 `json:"securityEpoch"`
+	ManifestMin      uint32 `json:"manifestMin"`
+	ManifestMax      uint32 `json:"manifestMax"`
 	ReleaseIndex     string `json:"releaseIndexDigest"`
 	ReleaseAuthority string `json:"releaseAuthorityDigest"`
 }
 
 func (authority CandidateAuthority) validate() error {
 	if authority.SchemaVersion != 1 || authority.ReleaseSequence == 0 || authority.SecurityEpoch == 0 ||
+		authority.ManifestMin == 0 || authority.ManifestMax < authority.ManifestMin ||
+		model.CurrentManifestSchemaVersion < authority.ManifestMin || model.CurrentManifestSchemaVersion > authority.ManifestMax ||
 		!validSHA256Digest(authority.GenerationID) || !validSHA256Digest(authority.ReleaseIndex) || !validSHA256Digest(authority.ReleaseAuthority) {
 		return errors.New("candidate release authority is malformed")
 	}

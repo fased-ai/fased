@@ -106,7 +106,7 @@ func discoverCanonical(request DiscoveryRequest) (DiscoveryResult, bool, error) 
 	if header.SchemaVersion > model.CurrentManifestSchemaVersion {
 		return DiscoveryResult{Installation: planner.Installation{Kind: planner.InstallationUnknownNewer, Profile: request.Profile}}, true, nil
 	}
-	manifest, err := model.DecodeManifest(bytes.NewReader(data))
+	manifest, err := model.DecodeInstalledManifest(bytes.NewReader(data))
 	if err != nil || manifest.Profile != request.Profile {
 		return DiscoveryResult{Installation: planner.Installation{Kind: planner.InstallationAmbiguous, Profile: request.Profile}}, true, nil
 	}

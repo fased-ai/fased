@@ -7,6 +7,7 @@ fixture_started="$SECONDS"
 version="${FASED_FIXTURE_VERSION:?missing fixture version}"
 commit="${FASED_FIXTURE_COMMIT:?missing fixture commit}"
 predecessor_version="${FASED_FIXTURE_PREDECESSOR_VERSION:-}"
+predecessor_class="${FASED_FIXTURE_PREDECESSOR_CLASS:-public-stable}"
 preinstalled_tools="${FASED_FIXTURE_PREINSTALLED_TOOLS:-0}"
 public_acquisition="${FASED_FIXTURE_PUBLIC_ACQUISITION:-0}"
 acceptance_evidence_class=PASS
@@ -91,11 +92,13 @@ acceptance_start() {
 acceptance_finish() {
   local descriptor_digest=""
   local capsule_digest=""
+  local installation_class_digest=""
   local evidence_json="/tmp/fased-lifecycle-acceptance-${phase}.evidence.json"
   descriptor_digest="sha256:$(sha256sum "$acceptance_descriptor" | awk '{print $1}')"
   jq -s . "$acceptance_evidence" >"$evidence_json"
   if [[ "$phase" == "managed-update" ]]; then
     capsule_digest="sha256:$(sha256sum "$predecessor_capsule_descriptor" | awk '{print $1}')"
+    installation_class_digest="$(jq -er .installationClassDigest "$predecessor_capsule_descriptor")"
   fi
   /usr/local/bin/node /fixture-tools/lifecycle-acceptance-contract.mjs issue-receipt \
     --contract "$acceptance_contract" \
@@ -105,6 +108,8 @@ acceptance_finish() {
     --commit "$commit" \
     --candidate-descriptor-digest "$descriptor_digest" \
     --predecessor-capsule-digest "$capsule_digest" \
+    --predecessor-installation-class "$([[ "$phase" == "managed-update" ]] && printf '%s' "$predecessor_class" || true)" \
+    --predecessor-installation-class-digest "$installation_class_digest" \
     --evidence-class "$acceptance_evidence_class" \
     --acquisition-evidence-class "$acceptance_acquisition_evidence_class" \
     --acquisition-mode substituted-fixture \
@@ -123,8 +128,75 @@ acceptance_finish() {
     --commit "$commit" \
     --candidate-descriptor-digest "$descriptor_digest" \
     --predecessor-capsule-digest "$capsule_digest" \
+    --predecessor-installation-class "$([[ "$phase" == "managed-update" ]] && printf '%s' "$predecessor_class" || true)" \
+    --predecessor-installation-class-digest "$installation_class_digest" \
     --evidence-class "$acceptance_evidence_class" \
     --acquisition-evidence-class "$acceptance_acquisition_evidence_class" >/dev/null
+}
+
+materialize_canonical_managed_predecessor() {
+  local instance=""
+  local generation_id=""
+  local previous_id=""
+  local dependency_hash=""
+  local dependency_digest=""
+  local generation_root=""
+  local dependency_root=""
+  local platform_config=""
+  local gateway_uid=""
+  local gateway_gid=""
+  local signer_uid=""
+  local signer_gid=""
+  test "$predecessor_class" = "canonical-managed"
+  instance="$(jq -er .installationClass.platform.instanceId "$predecessor_capsule_descriptor")"
+  generation_id="$(jq -er '.installationClass.activeGeneration.id | sub("^sha256:"; "")' "$predecessor_capsule_descriptor")"
+  previous_id="$(jq -er '.installationClass.previousGeneration.id | sub("^sha256:"; "")' "$predecessor_capsule_descriptor")"
+  platform_config="/var/lib/fased-local/$instance/lifecycle/platform.json"
+  gateway_uid="$(jq -er .gateway.uid "$platform_config")"
+  gateway_gid="$(jq -er .gateway.gid "$platform_config")"
+  signer_uid="$(jq -er .signer.uid "$platform_config")"
+  signer_gid="$(jq -er .signer.gid "$platform_config")"
+  dependency_hash="$(tar -xOf /var/lib/fased-predecessor-input/generation.tar.gz generation/inventory.json | jq -er .dependency.hash)"
+  dependency_digest="$(tar -xOf /var/lib/fased-predecessor-input/generation.tar.gz generation/inventory.json | jq -er '.dependency.archiveSHA256 | sub("^sha256:"; "")')"
+  generation_root="/opt/fased/local/$instance/generations/$generation_id"
+  dependency_root="/opt/fased/local/$instance/dependencies/$dependency_hash-$dependency_digest"
+
+  groupadd --gid "$gateway_gid" "fsgw-$instance"
+  useradd --uid "$gateway_uid" --gid "$gateway_gid" --no-create-home --shell /usr/sbin/nologin \
+    "fsgw-$instance"
+  groupadd --gid "$signer_gid" "fssg-$instance"
+  useradd --uid "$signer_uid" --gid "$signer_gid" --no-create-home --shell /usr/sbin/nologin \
+    "fssg-$instance"
+  groupadd "fsop-$instance"
+  groupadd "fscf-$instance"
+  usermod -a -G "fsop-$instance,fscf-$instance" testop
+  usermod -a -G "fscf-$instance" "fsgw-$instance"
+
+  install -d -m 0755 -o root -g root "$generation_root" "$dependency_root"
+  tar -xzf /var/lib/fased-predecessor-input/generation.tar.gz \
+    -C "$generation_root" --strip-components=1 --no-same-owner --no-same-permissions
+  tar -xzf /var/lib/fased-predecessor-input/dependency.tar.gz \
+    -C "$dependency_root" --no-same-owner --no-same-permissions
+  test "$(jq -er '.generation.id | sub("^sha256:"; "")' "$generation_root/generation.json")" = \
+    "$generation_id"
+  chown -R root:root "$generation_root" "$dependency_root"
+  chmod -R a-w "$generation_root" "$dependency_root"
+  chmod 0755 "$generation_root" "$dependency_root" \
+    "$generation_root/payload/bin/fased-lifecycled" \
+    "$generation_root/payload/bin/fased-signerd" \
+    "$generation_root/payload/bin/fased-gateway-launch"
+  test -d "/opt/fased/local/$instance/generations/$previous_id"
+
+  chown testop:"fscf-$instance" "$state"
+  chmod 2770 "$state"
+  find "$state" -xdev -type d -exec chown testop:"fscf-$instance" {} +
+  find "$state" -xdev -type d -exec chmod 2770 {} +
+  find "$state" -xdev -type f -exec chown testop:"fscf-$instance" {} +
+  find "$state" -xdev -type f -exec chmod 0660 {} +
+  install -d -m 0700 -o "$signer_uid" -g "$signer_gid" \
+    "/var/lib/fased-local/$instance/signer"
+  install -d -m 0700 -o root -g root "/var/lib/fased-local/$instance/controller"
+  systemctl daemon-reload
 }
 
 verify_three_services() {
@@ -1316,8 +1388,14 @@ if [[ "$phase" == "managed-update" ]]; then
     --operator-uid "$(id -u testop)" \
     --operator-gid "$(id -g testop)" \
     --profile protected-local \
+    --installation-class "$predecessor_class" \
     >/tmp/managed-predecessor-capsule.out 2>/tmp/managed-predecessor-capsule.err
   rm -f "$predecessor_capsule_authorization"
+  test "$(jq -er .installationClass.kind "$predecessor_capsule_descriptor")" = \
+    "$predecessor_class"
+  if [[ "$predecessor_class" == "canonical-managed" ]]; then
+    materialize_canonical_managed_predecessor
+  fi
   gateway_token="$(jq -er '.gateway.auth.token' "$state/fased.json")"
   test "$(jq -er '.gateway.remote.token' "$state/fased.json")" = "$gateway_token"
   managed_env=(

@@ -111,7 +111,7 @@ func run(args []string) error {
 		return err
 	}
 	host.PrivilegedComponent = "lifecycle-host"
-	host.Protocols = &trust.HostProtocols{Manifest: trust.ProtocolRange{Min: 2, Max: 2}, Journal: trust.ProtocolRange{Min: 1, Max: 1}, Participant: trust.ProtocolRange{Min: 1, Max: 1}, Platform: trust.ProtocolRange{Min: 1, Max: 2}}
+	host.Protocols = &trust.HostProtocols{Manifest: trust.ProtocolRange{Min: 1, Max: 2}, Journal: trust.ProtocolRange{Min: 1, Max: 1}, Participant: trust.ProtocolRange{Min: 1, Max: 1}, Platform: trust.ProtocolRange{Min: 1, Max: 2}}
 	signer, err := asset(artifactDir, "fased-signerd-linux-amd64")
 	if err != nil {
 		return err

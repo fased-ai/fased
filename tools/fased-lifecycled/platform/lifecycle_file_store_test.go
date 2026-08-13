@@ -158,6 +158,8 @@ func TestCanonicalInstallProjectionRetainsPublicStablePredecessorVersion(t *test
 	tx.SourceTopology = "local-user-systemd-v2"
 	tx.PublicPredecessorVersion = "0.1.75"
 	tx.Previous = nil
+	tx.PredecessorManifestSchema = 0
+	tx.PredecessorPlatform = nil
 	tx.ManifestDigest = absentManifestDigest
 	operator, gateway, signer := principals()
 	config, err := NewConfig(model.ProfileProtectedLocal, "example", "/home/example/.fased", operator, gateway, signer)

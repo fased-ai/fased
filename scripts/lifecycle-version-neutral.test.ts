@@ -61,10 +61,12 @@ describe("version-neutral lifecycle acceptance", () => {
     );
     expect(update?.env).toMatchObject({
       FASED_SYSTEMD_FIXTURE_SCENARIOS: "${{ steps.p1-scenario.outputs.scenarios }}",
-      FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "${{ matrix.predecessor }}",
+      FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "${{ matrix.predecessor.version }}",
+      FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_CLASS:
+        "${{ matrix.predecessor.installationClass }}",
     });
     expect(workflow.jobs?.["p1-local-update"]?.strategy?.matrix?.predecessor).toBe(
-      "${{ fromJSON(needs.preflight.outputs.p1_predecessors) }}",
+      "${{ fromJSON(needs.preflight.outputs.p1_local_predecessors) }}",
     );
     expect(fresh?.env).toMatchObject({
       FASED_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install",

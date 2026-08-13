@@ -135,11 +135,10 @@ jobs:
           expected_jobs="$(jq -cn \
             --arg stable "$PREDECESSOR_VERSION" \
             --arg owner "$OWNER_PREDECESSOR_VERSION" \
-            '["Verify and stage exact candidate replay", "Replay fresh Local P1"] +
-             ([ $stable, $owner ] | unique | map(
-               "Replay Local update P1 (" + . + ")",
-               "Replay Hosting P1 (" + . + ")"
-             )) | sort')"
+            '["Verify and stage exact candidate replay", "Replay fresh Local P1",
+              "Replay Local update P1 (" + $stable + ", public-stable)",
+              "Replay Local update P1 (" + $owner + ", canonical-managed)",
+              "Replay Hosting P1 (" + $stable + ")"] | unique | sort')"
           jobs="$(gh api --paginate \
             "repos/$GITHUB_REPOSITORY/actions/runs/$P1_REPLAY_RUN_ID/jobs?per_page=100" \
             --slurp)"
@@ -151,11 +150,10 @@ jobs:
           expected_artifacts="$(jq -cn \
             --arg stable "$PREDECESSOR_VERSION" \
             --arg owner "$OWNER_PREDECESSOR_VERSION" \
-            '["fased-p1-replay-candidate", "fased-p1-replay-local-fresh-receipts"] +
-             ([ $stable, $owner ] | unique | map(
-               "fased-p1-replay-local-update-" + . + "-receipts",
-               "fased-p1-replay-hosting-" + . + "-receipts"
-             )) | sort')"
+            '["fased-p1-replay-candidate", "fased-p1-replay-local-fresh-receipts",
+              "fased-p1-replay-local-update-" + $stable + "-public-stable-receipts",
+              "fased-p1-replay-local-update-" + $owner + "-canonical-managed-receipts",
+              "fased-p1-replay-hosting-" + $stable + "-receipts"] | unique | sort')"
           artifacts="$(gh api \
             "repos/$GITHUB_REPOSITORY/actions/runs/$P1_REPLAY_RUN_ID/artifacts?per_page=100")"
           jq -e --argjson expected "$expected_artifacts" \
@@ -215,25 +213,34 @@ jobs:
               --candidate-descriptor-digest "$CANDIDATE_DESCRIPTOR_SHA256"
             )
             if [[ "$require_predecessor" == "true" ]]; then
-              local capsule_digest
+              local capsule_digest installation_class installation_class_digest
               capsule_digest="$(jq -er \
                 '.predecessorCapsuleDigest | select(test("^sha256:[a-f0-9]{64}$"))' \
                 "$file")"
-              args+=(--predecessor-capsule-digest "$capsule_digest")
+              installation_class="$(jq -er \
+                '.predecessorInstallationClass | select(. == "public-stable" or . == "canonical-managed")' \
+                "$file")"
+              installation_class_digest="$(jq -er \
+                '.predecessorInstallationClassDigest | select(test("^sha256:[a-f0-9]{64}$"))' \
+                "$file")"
+              args+=(
+                --predecessor-capsule-digest "$capsule_digest"
+                --predecessor-installation-class "$installation_class"
+                --predecessor-installation-class-digest "$installation_class_digest"
+              )
             fi
             node scripts/lifecycle-receipt-verifier.mjs "${args[@]}" >/dev/null
           }
           verify_receipt \
             "$receipts/fased-p1-replay-local-fresh-receipts/ubuntu-fresh-install.json" \
             protected-local fresh-install false
-          predecessors="$(jq -cn \
-            --arg stable "$PREDECESSOR_VERSION" \
-            --arg owner "$OWNER_PREDECESSOR_VERSION" \
-            '[$stable,$owner] | unique')"
-          mapfile -t predecessor_list < <(jq -r '.[]' <<<"$predecessors")
           expected_receipt_count=1
-          for predecessor in "${predecessor_list[@]}"; do
-            local_receipts="$receipts/fased-p1-replay-local-update-$predecessor-receipts"
+          local_predecessors="$(jq -cn \
+            --arg stable "$PREDECESSOR_VERSION" --arg owner "$OWNER_PREDECESSOR_VERSION" \
+            '[{version:$stable,installationClass:"public-stable"},
+              {version:$owner,installationClass:"canonical-managed"}] | unique_by([.version,.installationClass])')"
+          while IFS=$'\t' read -r predecessor installation_class; do
+            local_receipts="$receipts/fased-p1-replay-local-update-$predecessor-$installation_class-receipts"
             local_receipt_count=0
             if test -f "$local_receipts/ubuntu-fresh-install.json"; then
               verify_receipt \
@@ -245,18 +252,19 @@ jobs:
             verify_receipt \
               "$local_receipts/ubuntu-managed-update.json" \
               protected-local managed-update true
+            test "$(jq -er .predecessorInstallationClass "$local_receipts/ubuntu-managed-update.json")" = \
+              "$installation_class"
             expected_receipt_count=$((expected_receipt_count + 1))
             local_receipt_count=$((local_receipt_count + 1))
             test "$(find "$local_receipts" -maxdepth 1 -type f -name '*.json' | wc -l)" \
               -eq "$local_receipt_count"
-            verify_receipt \
-              "$receipts/fased-p1-replay-hosting-$predecessor-receipts/ubuntu-fresh-install.json" \
-              hosting fresh-install false
-            verify_receipt \
-              "$receipts/fased-p1-replay-hosting-$predecessor-receipts/ubuntu-managed-update.json" \
-              hosting managed-update true
-            expected_receipt_count=$((expected_receipt_count + 2))
-          done
+          done < <(jq -r '.[] | [.version,.installationClass] | @tsv' <<<"$local_predecessors")
+          hosting_receipts="$receipts/fased-p1-replay-hosting-$PREDECESSOR_VERSION-receipts"
+          verify_receipt "$hosting_receipts/ubuntu-fresh-install.json" hosting fresh-install false
+          verify_receipt "$hosting_receipts/ubuntu-managed-update.json" hosting managed-update true
+          test "$(jq -er .predecessorInstallationClass "$hosting_receipts/ubuntu-managed-update.json")" = \
+            public-stable
+          expected_receipt_count=$((expected_receipt_count + 2))
           test "$(find "$receipts" -type f -name '*.json' | wc -l)" -eq \
             "$expected_receipt_count"
 
