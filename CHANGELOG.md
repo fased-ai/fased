@@ -4,6 +4,11 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.77
+
+- Bind lifecycle root integrity before candidate allocation and retain the
+  static-bootstrap Local and Hosting transaction redesign.
+
 ## 0.1.76-rc.76
 
 - Replace managed Local and Hosting install/update with one static-bootstrap,
