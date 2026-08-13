@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"fased-lifecycled/engine"
 	"fased-lifecycled/model"
 )
 
@@ -20,31 +22,41 @@ type gatewayReadiness struct {
 	Status        string `json:"status"`
 	Version       string `json:"version"`
 	RuntimeSource string `json:"runtimeSource"`
+	PID           uint32 `json:"pid"`
+	StartedAt     string `json:"startedAt"`
 	Generation    *struct {
 		SchemaVersion uint32 `json:"schemaVersion"`
+		GenerationID  string `json:"generationId"`
 		Version       string `json:"version"`
 		ReleaseCommit string `json:"releaseCommit"`
 	} `json:"generation"`
 }
 
-func verifyGatewayReadiness(statusCode int, body []byte, target model.Generation) error {
+func verifyGatewayReadiness(statusCode int, body []byte, target model.Generation) (engine.GatewayReceipt, error) {
 	var payload gatewayReadiness
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return fmt.Errorf("decode Gateway readiness: %w", err)
+		return engine.GatewayReceipt{}, fmt.Errorf("decode Gateway readiness: %w", err)
 	}
 	if statusCode != http.StatusOK || !payload.OK || !payload.Ready || payload.Status != "ready" {
-		return errors.New("Gateway did not report ready")
+		return engine.GatewayReceipt{}, errors.New("Gateway did not report ready")
 	}
 	if payload.RuntimeSource != "managed-package" && payload.RuntimeSource != "packaged-runtime" {
-		return fmt.Errorf("Gateway runtime source %q is not a verified package", payload.RuntimeSource)
+		return engine.GatewayReceipt{}, fmt.Errorf("Gateway runtime source %q is not a verified package", payload.RuntimeSource)
 	}
-	if payload.Version != target.Version || payload.Generation == nil || payload.Generation.SchemaVersion != 1 || payload.Generation.Version != target.Version || payload.Generation.ReleaseCommit != target.Commit {
-		return fmt.Errorf("Gateway readiness identity does not match generation %s at %s", target.Version, target.Commit)
+	if payload.Version != target.Version || payload.Generation == nil || payload.Generation.SchemaVersion != 1 || payload.Generation.GenerationID != target.ID || payload.Generation.Version != target.Version || payload.Generation.ReleaseCommit != target.Commit {
+		return engine.GatewayReceipt{}, fmt.Errorf("Gateway readiness identity does not match generation %s at %s", target.Version, target.Commit)
 	}
-	return nil
+	if payload.PID == 0 {
+		return engine.GatewayReceipt{}, errors.New("Gateway readiness lacks a process identity")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, payload.StartedAt); err != nil {
+		return engine.GatewayReceipt{}, errors.New("Gateway readiness process start time is invalid")
+	}
+	digest := sha256.Sum256(body)
+	return engine.GatewayReceipt{GenerationID: target.ID, Version: target.Version, ReleaseCommit: target.Commit, PID: payload.PID, StartedAt: payload.StartedAt, ReadinessDigest: fmt.Sprintf("sha256:%x", digest)}, nil
 }
 
-func (LoopbackGatewayHealth) Verify(ctx context.Context, port uint16, target model.Generation) error {
+func (LoopbackGatewayHealth) Verify(ctx context.Context, port uint16, target model.Generation) (engine.GatewayReceipt, error) {
 	deadline := time.Now().Add(30 * time.Second)
 	client := &http.Client{Timeout: 2 * time.Second}
 	var last error = errors.New("Gateway readiness endpoint is unavailable")
@@ -55,15 +67,18 @@ func (LoopbackGatewayHealth) Verify(ctx context.Context, port uint16, target mod
 			if requestErr == nil {
 				body, readErr := io.ReadAll(io.LimitReader(response.Body, 64<<10))
 				_ = response.Body.Close()
-				if readErr == nil && len(body) < 64<<10 && verifyGatewayReadiness(response.StatusCode, body, target) == nil {
-					return nil
+				if readErr == nil && len(body) < 64<<10 {
+					receipt, verifyErr := verifyGatewayReadiness(response.StatusCode, body, target)
+					if verifyErr == nil {
+						return receipt, nil
+					}
 				}
 				if readErr != nil {
 					last = readErr
 				} else if len(body) >= 64<<10 {
 					last = errors.New("Gateway readiness response is too large")
 				} else {
-					last = verifyGatewayReadiness(response.StatusCode, body, target)
+					_, last = verifyGatewayReadiness(response.StatusCode, body, target)
 				}
 			} else {
 				last = requestErr
@@ -71,9 +86,9 @@ func (LoopbackGatewayHealth) Verify(ctx context.Context, port uint16, target mod
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return engine.GatewayReceipt{}, ctx.Err()
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
-	return fmt.Errorf("Gateway did not become ready as v%s at commit %s: %w", target.Version, target.Commit, last)
+	return engine.GatewayReceipt{}, fmt.Errorf("Gateway did not become ready as v%s at commit %s: %w", target.Version, target.Commit, last)
 }

@@ -23,8 +23,30 @@ const (
 )
 
 type Result struct {
-	Outcome Outcome
-	Phase   model.Phase
+	Outcome                  Outcome
+	Phase                    model.Phase
+	ActiveGenerationID       string
+	ConvergenceReceiptDigest string
+}
+
+// ConvergenceReceipt is the durable, adapter-produced proof that the
+// committed manifest, generation pointer, service processes, Gateway
+// readiness identity, and plugin readiness all name the same target.
+type ConvergenceReceipt struct {
+	TransactionID        string
+	TargetGenerationID   string
+	StateInventoryDigest string
+	PlatformDigest       string
+	EvidenceDigest       string
+}
+
+type GatewayReceipt struct {
+	GenerationID    string
+	Version         string
+	ReleaseCommit   string
+	PID             uint32
+	StartedAt       string
+	ReadinessDigest string
 }
 
 type ParticipantReceipt struct {
@@ -81,6 +103,8 @@ type PlatformAdapter interface {
 	Activate(context.Context, model.Transaction) error
 	Verify(context.Context, model.Transaction) (ParticipantReceipt, error)
 	Commit(context.Context, model.Transaction) error
+	Converge(context.Context, model.Transaction) (ConvergenceReceipt, error)
+	Finalize(context.Context, model.Transaction) error
 	Restore(context.Context, model.Transaction) error
 	Discard(context.Context, model.Transaction) error
 }
@@ -236,19 +260,21 @@ func (engine *TargetEngine) Commit(ctx context.Context, transactionID string) (R
 		return Result{}, err
 	}
 	if tx.Phase == model.PhaseCommitted {
-		return Result{Outcome: OutcomeAlreadyCurrent, Phase: tx.Phase}, nil
+		digest, err := engine.convergenceDigest(tx)
+		return Result{Outcome: OutcomeAlreadyCurrent, Phase: tx.Phase, ActiveGenerationID: tx.Target.ID, ConvergenceReceiptDigest: digest}, err
 	}
 	if tx.Phase != model.PhaseVerified {
 		return Result{}, errors.New("target transaction is not ready to commit")
 	}
-	if err := engine.commit(ctx, tx); err != nil {
+	receiptDigest, err := engine.commit(ctx, tx)
+	if err != nil {
 		return Result{Outcome: OutcomeRecoveryPending, Phase: model.PhaseVerified}, err
 	}
 	tx, err = engine.advance(tx, model.PhaseCommitted)
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{Outcome: OutcomeUpdated, Phase: tx.Phase}, nil
+	return Result{Outcome: OutcomeUpdated, Phase: tx.Phase, ActiveGenerationID: tx.Target.ID, ConvergenceReceiptDigest: receiptDigest}, nil
 }
 
 func (engine *TargetEngine) Abort(ctx context.Context, transactionID string) (Result, error) {
@@ -297,16 +323,18 @@ func (engine *TargetEngine) Recover(ctx context.Context, tx model.Transaction) (
 	case model.RecoveryRestorePrevious:
 		return engine.rollback(ctx, tx, true, nil)
 	case model.RecoveryCompleteCommit:
-		if err := engine.commit(ctx, tx); err != nil {
-			return Result{Outcome: OutcomeRecoveryPending, Phase: model.PhaseVerified}, err
+		receiptDigest, commitErr := engine.commit(ctx, tx)
+		if commitErr != nil {
+			return Result{Outcome: OutcomeRecoveryPending, Phase: model.PhaseVerified}, commitErr
 		}
 		tx, err = engine.advance(tx, model.PhaseCommitted)
 		if err != nil {
 			return Result{}, err
 		}
-		return Result{Outcome: OutcomeUpdated, Phase: tx.Phase}, nil
+		return Result{Outcome: OutcomeUpdated, Phase: tx.Phase, ActiveGenerationID: tx.Target.ID, ConvergenceReceiptDigest: receiptDigest}, nil
 	case model.RecoveryAlreadyCurrent:
-		return Result{Outcome: OutcomeAlreadyCurrent, Phase: model.PhaseCommitted}, nil
+		digest, digestErr := engine.convergenceDigest(tx)
+		return Result{Outcome: OutcomeAlreadyCurrent, Phase: model.PhaseCommitted, ActiveGenerationID: tx.Target.ID, ConvergenceReceiptDigest: digest}, digestErr
 	case model.RecoveryRetryAllowed:
 		return Result{Outcome: OutcomeRolledBack, Phase: model.PhaseRolledBack}, nil
 	default:
@@ -325,44 +353,69 @@ func (engine *TargetEngine) advance(tx model.Transaction, phase model.Phase) (mo
 	return next, nil
 }
 
-func (engine *TargetEngine) commit(ctx context.Context, tx model.Transaction) error {
+func (engine *TargetEngine) commit(ctx context.Context, tx model.Transaction) (string, error) {
 	done, err := engine.completedProgress(tx)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !done[store.ProgressMigratorCommitted] {
 		if err := engine.Migrator.Commit(ctx, tx); err != nil {
-			return fmt.Errorf("commit migrator: %w", err)
+			return "", fmt.Errorf("commit migrator: %w", err)
 		}
 		if err := engine.progress(tx, store.ProgressMigratorCommitted, nil, nil); err != nil {
-			return err
+			return "", err
 		}
 	}
 	if !done[store.ProgressSignerCommitted] {
 		if err := engine.Signer.Commit(ctx, tx); err != nil {
-			return fmt.Errorf("commit signer: %w", err)
+			return "", fmt.Errorf("commit signer: %w", err)
 		}
 		if err := engine.progress(tx, store.ProgressSignerCommitted, nil, nil); err != nil {
-			return err
+			return "", err
 		}
 	}
 	if !done[store.ProgressPlatformCommitted] {
 		if err := engine.Adapter.Commit(ctx, tx); err != nil {
-			return fmt.Errorf("commit platform adapter: %w", err)
+			return "", fmt.Errorf("commit platform adapter: %w", err)
 		}
 		if err := engine.progress(tx, store.ProgressPlatformCommitted, nil, nil); err != nil {
-			return err
+			return "", err
 		}
 	}
 	if !done[store.ProgressManifestCommitted] {
 		if err := engine.Installation.Commit(ctx, tx); err != nil {
-			return fmt.Errorf("commit installation manifest: %w", err)
+			return "", fmt.Errorf("commit installation manifest: %w", err)
 		}
 		if err := engine.progress(tx, store.ProgressManifestCommitted, nil, nil); err != nil {
-			return err
+			return "", err
 		}
 	}
-	return nil
+	if !done[store.ProgressTerminalConvergenceVerified] {
+		receipt, convergeErr := engine.Adapter.Converge(ctx, tx)
+		if convergeErr != nil {
+			return "", fmt.Errorf("prove terminal convergence: %w", convergeErr)
+		}
+		if err := validateConvergenceReceipt(receipt, tx); err != nil {
+			return "", err
+		}
+		if err := engine.progress(tx, store.ProgressTerminalConvergenceVerified, durableConvergenceReceipt(receipt), nil); err != nil {
+			return "", err
+		}
+		done[store.ProgressTerminalConvergenceVerified] = true
+	}
+	receiptDigest, err := engine.convergenceDigest(tx)
+	if err != nil {
+		return "", err
+	}
+	if !done[store.ProgressPlatformFinalized] {
+		if err := engine.Adapter.Finalize(ctx, tx); err != nil {
+			return "", fmt.Errorf("finalize platform adapter: %w", err)
+		}
+		if err := engine.progress(tx, store.ProgressPlatformFinalized, nil, nil); err != nil {
+			return "", err
+		}
+	}
+	return receiptDigest, nil
 }
 
 func (engine *TargetEngine) rollback(ctx context.Context, tx model.Transaction, restore bool, cause error) (Result, error) {
@@ -449,6 +502,39 @@ func durableReceipt(participant string, receipt ParticipantReceipt) *store.Durab
 	return &store.DurableParticipantReceipt{Participant: participant, TransactionID: receipt.TransactionID, TargetGenerationID: receipt.TargetGenerationID, StateInventoryDigest: receipt.StateInventoryDigest, PlanDigest: receipt.PlanDigest, EvidenceDigest: receipt.EvidenceDigest, Members: members}
 }
 
+func durableConvergenceReceipt(receipt ConvergenceReceipt) *store.DurableParticipantReceipt {
+	return &store.DurableParticipantReceipt{
+		Participant: "convergence", TransactionID: receipt.TransactionID,
+		TargetGenerationID: receipt.TargetGenerationID, StateInventoryDigest: receipt.StateInventoryDigest,
+		PlanDigest: receipt.PlatformDigest, EvidenceDigest: receipt.EvidenceDigest,
+	}
+}
+
+func validateConvergenceReceipt(receipt ConvergenceReceipt, tx model.Transaction) error {
+	if receipt.TransactionID != tx.ID || receipt.TargetGenerationID != tx.Target.ID ||
+		receipt.StateInventoryDigest != tx.StateInventoryDigest || receipt.PlatformDigest != tx.PlatformDigest ||
+		!validDigest(receipt.EvidenceDigest) {
+		return errors.New("terminal convergence receipt does not match the immutable transaction")
+	}
+	return nil
+}
+
+func (engine *TargetEngine) convergenceDigest(tx model.Transaction) (string, error) {
+	record, err := engine.Journal.ReadProgress(tx.ID)
+	if err != nil {
+		return "", err
+	}
+	if err := store.ValidateProgress(record, tx); err != nil {
+		return "", err
+	}
+	for _, event := range record.Events {
+		if event.Step == store.ProgressTerminalConvergenceVerified && event.Receipt != nil && event.Receipt.Participant == "convergence" {
+			return event.Receipt.EvidenceDigest, nil
+		}
+	}
+	return "", errors.New("durable terminal convergence receipt is unavailable")
+}
+
 func undoRecord(participant, locator, digest string) *store.DurableUndoRecord {
 	return &store.DurableUndoRecord{Participant: participant, Locator: locator, Digest: digest}
 }
@@ -473,7 +559,7 @@ func (engine *TargetEngine) validateRecoveryProgress(tx model.Transaction) error
 	case model.PhaseVerified:
 		required = store.ProgressPlatformVerified
 	case model.PhaseCommitted:
-		required = store.ProgressManifestCommitted
+		required = store.ProgressPlatformFinalized
 	case model.PhaseRolledBack:
 		required = store.ProgressRollbackCompleted
 	}

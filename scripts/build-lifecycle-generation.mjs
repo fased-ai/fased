@@ -81,7 +81,7 @@ function launcher() {
   return `#!/usr/bin/env bash
 set -euo pipefail
 PAYLOAD="$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"
-exec "$PAYLOAD/bin/node" "$PAYLOAD/runtime/fased.mjs" gateway
+exec "$PAYLOAD/bin/node" --disable-warning=ExperimentalWarning "$PAYLOAD/runtime/fased.mjs" gateway
 `;
 }
 

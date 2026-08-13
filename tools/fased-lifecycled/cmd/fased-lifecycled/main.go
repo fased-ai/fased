@@ -717,7 +717,7 @@ func writeConvergenceResponse(output io.Writer, response protocol.Response) erro
 	if err := json.NewEncoder(output).Encode(response); err != nil {
 		return err
 	}
-	if response.Outcome == string(engine.OutcomeRolledBack) || response.Outcome == string(engine.OutcomeRecoveryPending) {
+	if response.Outcome != string(engine.OutcomeUpdated) && response.Outcome != string(engine.OutcomeAlreadyCurrent) {
 		detail := response.Detail
 		if detail == "" {
 			detail = "lifecycle transaction did not commit"
@@ -842,7 +842,7 @@ func runSupervisor(ctx context.Context, config platform.Config, socketPath strin
 		Profile: config.Profile, OwnerStateRoot: config.OwnerStateRoot,
 		CanonicalManifestPath: filepath.Join(config.LifecycleRoot, "installation-manifest.json"), CanonicalInstallRoot: config.InstallRoot,
 	}}
-	service := &daemon.Service{Profile: config.Profile, Platform: identity, Store: state, Inventory: binder, Supervisor: supervisor, Onboarding: targetAdapter, PredecessorEvidence: evidence}
+	service := &daemon.Service{Profile: config.Profile, Platform: identity, Store: state, Inventory: binder, Supervisor: supervisor, Onboarding: targetAdapter, PredecessorEvidence: evidence, CurrentConvergence: targetAdapter}
 	if err := service.RecoverPending(ctx); err != nil {
 		return fmt.Errorf("startup lifecycle recovery: %w", err)
 	}

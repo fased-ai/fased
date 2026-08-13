@@ -139,6 +139,7 @@ materialize_canonical_managed_predecessor() {
   local generation_id=""
   local previous_id=""
   local dependency_hash=""
+  local dependency_asset=""
   local dependency_digest=""
   local generation_root=""
   local dependency_root=""
@@ -157,6 +158,7 @@ materialize_canonical_managed_predecessor() {
   signer_uid="$(jq -er .signer.uid "$platform_config")"
   signer_gid="$(jq -er .signer.gid "$platform_config")"
   dependency_hash="$(tar -xOf /var/lib/fased-predecessor-input/generation.tar.gz generation/inventory.json | jq -er .dependency.hash)"
+  dependency_asset="$(tar -xOf /var/lib/fased-predecessor-input/generation.tar.gz generation/inventory.json | jq -er .dependency.asset)"
   dependency_digest="$(tar -xOf /var/lib/fased-predecessor-input/generation.tar.gz generation/inventory.json | jq -er '.dependency.archiveSHA256 | sub("^sha256:"; "")')"
   generation_root="/opt/fased/local/$instance/generations/$generation_id"
   dependency_root="/opt/fased/local/$instance/dependencies/$dependency_hash-$dependency_digest"
@@ -181,6 +183,12 @@ materialize_canonical_managed_predecessor() {
     -C "$generation_root" --strip-components=1 --no-same-owner --no-same-permissions
   tar -xzf /var/lib/fased-predecessor-input/dependency.tar.gz \
     -C "$dependency_root" --no-same-owner --no-same-permissions
+  jq -n \
+    --arg hash "$dependency_hash" \
+    --arg asset "$dependency_asset" \
+    --arg archiveSHA256 "sha256:$dependency_digest" \
+    '{schemaVersion:1,hash:$hash,asset:$asset,archiveSHA256:$archiveSHA256}' \
+    >"$dependency_root/.fased-dependency-layer.json"
   ln -s "../../dependencies/$dependency_hash-$dependency_digest/node_modules" \
     "$generation_root/node_modules"
   test "$(jq -er '.generation.id | sub("^sha256:"; "")' "$generation_root/generation.json")" = \
@@ -191,10 +199,12 @@ materialize_canonical_managed_predecessor() {
     "$generation_root/payload/bin/fased-lifecycled" \
     "$generation_root/payload/bin/fased-signerd" \
     "$generation_root/payload/bin/fased-gateway-launch"
-  # Store.ImportGenerationArchive publishes inventory.json as root-owned 0644
-  # so the unprivileged stable launcher can bind the dependency identity.
-  # Reproduce that exact store postcondition after the fixture-only extraction.
-  chmod 0644 "$generation_root/inventory.json"
+  # The real store publishes both identity files as root-owned 0644 so the
+  # unprivileged launcher and updater can verify the generation and dependency.
+  # Reproduce those store postconditions after the fixture-only extraction.
+  chmod 0644 \
+    "$generation_root/inventory.json" \
+    "$dependency_root/.fased-dependency-layer.json"
   test -d "/opt/fased/local/$instance/generations/$previous_id"
 
   chown testop:"fscf-$instance" "$state"
@@ -1811,6 +1821,13 @@ EOF_MANAGED_MINING_LEDGER
       --skip-health
   }
 
+  run_installed_updater() {
+    runuser -u testop -- env "${managed_operator_env[@]}" \
+      npm_config_registry="http://127.0.0.1:$rpc_port" \
+      FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
+      "$state/bin/fased" update "${target_update_args[@]}" --timeout 120
+  }
+
   acceptance_start
   managed_current_link="/opt/fased/local/$instance/current"
   managed_initial_target="$(readlink -f "$managed_current_link")"
@@ -1833,7 +1850,7 @@ EOF_MANAGED_FAILED_GATEWAY
 ExecStartPre=+$managed_fault_script
 EOF_MANAGED_FAILED_GATEWAY_DROPIN
   systemctl daemon-reload
-  if run_target_installer \
+  if run_installed_updater \
       >/tmp/managed-update-failure.out 2>/tmp/managed-update-failure.err; then
     managed_failure_status=0
   else
@@ -1863,7 +1880,7 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
     exit 1
   fi
 
-  run_target_installer \
+  run_installed_updater \
     >/tmp/managed-update-success.out 2>/tmp/managed-update-success.err
   cat /tmp/managed-update-failure.err /tmp/managed-update-success.out \
     >/tmp/managed-rollback-retry.evidence
@@ -1898,10 +1915,7 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
   verify_managed_state_manifest
   verify_managed_semantic_state
   acceptance_mark state-preservation "$managed_state_manifest"
-  runuser -u testop -- env "${managed_operator_env[@]}" \
-    npm_config_registry="http://127.0.0.1:$rpc_port" \
-    FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
-    "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
+  run_installed_updater \
     >/tmp/managed-update-noop.out 2>/tmp/managed-update-noop.err
   grep -F "Already current: $version" /tmp/managed-update-noop.out >/dev/null
   run_target_installer \

@@ -131,6 +131,16 @@ type fakeOnboarding struct {
 	order *[]string
 }
 
+type fakeCurrentConvergence struct {
+	calls int
+	err   error
+}
+
+func (verifier *fakeCurrentConvergence) VerifyCurrent(context.Context, model.Manifest, string) (string, error) {
+	verifier.calls++
+	return digestA, verifier.err
+}
+
 type fakePredecessorEvidence struct {
 	topology string
 	version  string
@@ -154,13 +164,13 @@ func (value *fakeOnboarding) CompleteOnboarding(context.Context) (engine.Result,
 	if value.order != nil {
 		*value.order = append(*value.order, "onboard")
 	}
-	return engine.Result{Outcome: engine.OutcomeUpdated, Phase: model.PhaseCommitted}, nil
+	return engine.Result{Outcome: engine.OutcomeUpdated, Phase: model.PhaseCommitted, ActiveGenerationID: digestB, ConvergenceReceiptDigest: digestA}, nil
 }
 
 func (supervisor *fakeSupervisor) Run(_ context.Context, tx model.Transaction) (engine.Result, error) {
 	supervisor.runs++
 	supervisor.tx = tx
-	return engine.Result{Outcome: engine.OutcomeUpdated, Phase: model.PhaseCommitted}, nil
+	return engine.Result{Outcome: engine.OutcomeUpdated, Phase: model.PhaseCommitted, ActiveGenerationID: tx.Target.ID, ConvergenceReceiptDigest: digestA}, nil
 }
 
 func (supervisor *fakeSupervisor) Recover(_ context.Context, tx model.Transaction) (engine.Result, error) {
@@ -169,7 +179,7 @@ func (supervisor *fakeSupervisor) Recover(_ context.Context, tx model.Transactio
 	if supervisor.order != nil {
 		*supervisor.order = append(*supervisor.order, "recover")
 	}
-	return engine.Result{Outcome: engine.OutcomeAlreadyCurrent, Phase: model.PhaseCommitted}, nil
+	return engine.Result{Outcome: engine.OutcomeAlreadyCurrent, Phase: model.PhaseCommitted, ActiveGenerationID: tx.Target.ID, ConvergenceReceiptDigest: digestA}, nil
 }
 
 func TestConvergeRecoversDurableUnfinishedTransactionBeforeNewWork(t *testing.T) {
@@ -194,7 +204,7 @@ func TestConvergeRecoversDurableUnfinishedTransactionBeforeNewWork(t *testing.T)
 			manifest: &manifest, manifestDigest: digestA, inventory: inventory, generation: target,
 			locks: &locks, releases: &releases,
 		}, pending: pending},
-		Inventory: &fakeInventory{}, Supervisor: supervisor,
+		Inventory: &fakeInventory{}, Supervisor: supervisor, CurrentConvergence: &fakeCurrentConvergence{},
 	}
 	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationConverge, TargetGenerationID: target.ID, ExpectedManifestDigest: digestA}
 	response, err := service.Handle(context.Background(), request)
@@ -452,7 +462,7 @@ func TestManifestCASMismatchStopsBeforeInventoryOrMutation(t *testing.T) {
 	}
 }
 
-func TestAlreadyCurrentDoesNotAllocateTransaction(t *testing.T) {
+func TestAlreadyCurrentFailsClosedWithoutLiveConvergenceProof(t *testing.T) {
 	inventory, target := targetContract()
 	manifest := model.Manifest{
 		SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal,
@@ -474,11 +484,31 @@ func TestAlreadyCurrentDoesNotAllocateTransaction(t *testing.T) {
 		TargetGenerationID: target.ID, ExpectedManifestDigest: digestA,
 	}
 	response, err := service.Handle(context.Background(), request)
-	if err != nil || response.Outcome != string(engine.OutcomeAlreadyCurrent) {
-		t.Fatalf("already-current failed: %+v err=%v", response, err)
+	if err == nil || response.Outcome == string(engine.OutcomeAlreadyCurrent) {
+		t.Fatalf("already-current trusted metadata without live convergence proof: %+v err=%v", response, err)
 	}
 	if bindings.calls != 0 || supervisor.runs != 0 {
-		t.Fatal("already-current performed work")
+		t.Fatal("failed already-current verification performed mutation work")
+	}
+}
+
+func TestAlreadyCurrentReturnsGenerationBoundLiveConvergenceReceipt(t *testing.T) {
+	inventory, target := targetContract()
+	manifest := model.Manifest{
+		SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal,
+		Platform: platform(), ActiveGeneration: &target, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities,
+		ReleaseSequence: 12, SecurityEpoch: 3,
+	}
+	verifier := &fakeCurrentConvergence{}
+	service := Service{
+		Profile: model.ProfileProtectedLocal, Platform: platform(),
+		Store:     fakeStore{manifest: &manifest, manifestDigest: digestA, inventory: inventory, generation: target},
+		Inventory: &fakeInventory{}, Supervisor: &fakeSupervisor{}, CurrentConvergence: verifier,
+	}
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationConverge, TargetGenerationID: target.ID, ExpectedManifestDigest: digestA}
+	response, err := service.Handle(context.Background(), request)
+	if err != nil || response.Outcome != string(engine.OutcomeAlreadyCurrent) || response.ActiveGenerationID != target.ID || response.ConvergenceReceiptDigest != digestA || verifier.calls != 1 {
+		t.Fatalf("already-current did not return live convergence proof: response=%+v calls=%d err=%v", response, verifier.calls, err)
 	}
 }
 

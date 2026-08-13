@@ -26,7 +26,7 @@ func (target fakeTarget) Commit(context.Context, string) (Result, error) {
 	if target.err != nil {
 		return target.result, target.err
 	}
-	return Result{Outcome: OutcomeUpdated, Phase: model.PhaseCommitted}, nil
+	return Result{Outcome: OutcomeUpdated, Phase: model.PhaseCommitted, ActiveGenerationID: target.result.ActiveGenerationID, ConvergenceReceiptDigest: target.result.ConvergenceReceiptDigest}, nil
 }
 
 func (target fakeTarget) Abort(context.Context, string) (Result, error) {
@@ -44,7 +44,7 @@ func TestSupervisorCommitsOnlyAfterTargetCommit(t *testing.T) {
 	journal := &fakeJournal{}
 	engine := SupervisorEngine{
 		Journal: journal,
-		Target:  fakeTarget{calls: &calls, result: Result{Outcome: OutcomePrepared, Phase: model.PhaseVerified}},
+		Target:  fakeTarget{calls: &calls, result: Result{Outcome: OutcomePrepared, Phase: model.PhaseVerified, ActiveGenerationID: digestB, ConvergenceReceiptDigest: digestA}},
 	}
 	result, err := engine.Run(context.Background(), transaction(model.PhaseIdle))
 	if err != nil || result.Phase != model.PhaseCommitted {
@@ -76,13 +76,13 @@ func TestSupervisorRecoveryFinishesCommittedTarget(t *testing.T) {
 	var calls []string
 	engine := SupervisorEngine{
 		Journal: &fakeJournal{},
-		Target:  fakeTarget{calls: &calls, result: Result{Outcome: OutcomeAlreadyCurrent, Phase: model.PhaseCommitted}},
+		Target:  fakeTarget{calls: &calls, result: Result{Outcome: OutcomeAlreadyCurrent, Phase: model.PhaseCommitted, ActiveGenerationID: digestB, ConvergenceReceiptDigest: digestA}},
 	}
 	result, err := engine.Recover(context.Background(), transaction(model.PhaseSwitched))
 	if err != nil || result.Phase != model.PhaseCommitted {
 		t.Fatalf("supervisor recovery failed: %+v err=%v", result, err)
 	}
-	want := []string{"target.recover"}
+	want := []string{"target.recover", "target.recover"}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("unexpected recovery order: got=%v want=%v", calls, want)
 	}
@@ -140,7 +140,7 @@ func TestSupervisorRecoveryMatrixUsesReopenedAuthorityJournal(t *testing.T) {
 				t.Fatal(err)
 			}
 			var calls []string
-			engine := SupervisorEngine{Journal: reopened, Target: fakeTarget{calls: &calls, result: Result{Outcome: OutcomeAlreadyCurrent, Phase: model.PhaseCommitted}}}
+			engine := SupervisorEngine{Journal: reopened, Target: fakeTarget{calls: &calls, result: Result{Outcome: OutcomeAlreadyCurrent, Phase: model.PhaseCommitted, ActiveGenerationID: digestB, ConvergenceReceiptDigest: digestA}}}
 			result, err := engine.Recover(context.Background(), durable)
 			if err != nil || result.Phase != test.want {
 				t.Fatalf("reopened supervisor phase %s converged to %+v, want %s: %v", test.phase, result, test.want, err)

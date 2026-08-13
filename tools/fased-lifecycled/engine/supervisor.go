@@ -60,9 +60,9 @@ func (engine *SupervisorEngine) Run(ctx context.Context, tx model.Transaction) (
 		return Result{}, err
 	}
 	targetResult, err = engine.Target.Commit(ctx, tx.ID)
-	if err != nil || targetResult.Phase != model.PhaseCommitted {
+	if err != nil || validateTerminalTargetResult(targetResult, tx) != nil {
 		if err == nil {
-			err = errors.New("target controller did not commit its verified product transaction")
+			err = validateTerminalTargetResult(targetResult, tx)
 		}
 		return Result{Outcome: OutcomeRecoveryPending, Phase: tx.Phase}, err
 	}
@@ -74,7 +74,11 @@ func (engine *SupervisorEngine) Run(ctx context.Context, tx model.Transaction) (
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{Outcome: OutcomeUpdated, Phase: tx.Phase}, nil
+	return Result{
+		Outcome: OutcomeUpdated, Phase: tx.Phase,
+		ActiveGenerationID:       targetResult.ActiveGenerationID,
+		ConvergenceReceiptDigest: targetResult.ConvergenceReceiptDigest,
+	}, nil
 }
 
 func (engine *SupervisorEngine) Recover(ctx context.Context, tx model.Transaction) (Result, error) {
@@ -107,7 +111,11 @@ func (engine *SupervisorEngine) Recover(ctx context.Context, tx model.Transactio
 	case model.RecoveryCompleteCommit:
 		return engine.completeCommit(ctx, tx)
 	case model.RecoveryAlreadyCurrent:
-		return Result{Outcome: OutcomeAlreadyCurrent, Phase: model.PhaseCommitted}, nil
+		targetResult, targetErr := engine.Target.Recover(ctx, tx)
+		if targetErr != nil || validateTerminalTargetResult(targetResult, tx) != nil {
+			return Result{}, errors.Join(errors.New("target convergence receipt is unavailable"), targetErr, validateTerminalTargetResult(targetResult, tx))
+		}
+		return Result{Outcome: OutcomeAlreadyCurrent, Phase: model.PhaseCommitted, ActiveGenerationID: targetResult.ActiveGenerationID, ConvergenceReceiptDigest: targetResult.ConvergenceReceiptDigest}, nil
 	case model.RecoveryRetryAllowed:
 		return Result{Outcome: OutcomeRolledBack, Phase: model.PhaseRolledBack}, nil
 	default:
@@ -116,12 +124,22 @@ func (engine *SupervisorEngine) Recover(ctx context.Context, tx model.Transactio
 }
 
 func (engine *SupervisorEngine) completeCommit(ctx context.Context, tx model.Transaction) (Result, error) {
-	_ = ctx
+	targetResult, targetErr := engine.Target.Recover(ctx, tx)
+	if targetErr != nil || validateTerminalTargetResult(targetResult, tx) != nil {
+		return Result{}, errors.Join(errors.New("target convergence receipt is unavailable before supervisor commit"), targetErr, validateTerminalTargetResult(targetResult, tx))
+	}
 	committed, err := engine.advance(tx, model.PhaseCommitted)
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{Outcome: OutcomeUpdated, Phase: committed.Phase}, nil
+	return Result{Outcome: OutcomeUpdated, Phase: committed.Phase, ActiveGenerationID: targetResult.ActiveGenerationID, ConvergenceReceiptDigest: targetResult.ConvergenceReceiptDigest}, nil
+}
+
+func validateTerminalTargetResult(result Result, tx model.Transaction) error {
+	if result.Phase != model.PhaseCommitted || result.ActiveGenerationID != tx.Target.ID || !validDigest(result.ConvergenceReceiptDigest) {
+		return errors.New("target controller did not provide generation-bound terminal convergence proof")
+	}
+	return nil
 }
 
 func (engine *SupervisorEngine) advance(tx model.Transaction, phase model.Phase) (model.Transaction, error) {

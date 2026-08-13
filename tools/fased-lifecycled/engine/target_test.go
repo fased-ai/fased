@@ -195,6 +195,23 @@ func (adapter fakeAdapter) Commit(context.Context, model.Transaction) error {
 	return nil
 }
 
+func (adapter fakeAdapter) Converge(_ context.Context, tx model.Transaction) (ConvergenceReceipt, error) {
+	*adapter.calls = append(*adapter.calls, "adapter.converge")
+	if adapter.failAt == "converge" {
+		return ConvergenceReceipt{}, errors.New("injected convergence failure")
+	}
+	return ConvergenceReceipt{
+		TransactionID: tx.ID, TargetGenerationID: tx.Target.ID,
+		StateInventoryDigest: tx.StateInventoryDigest, PlatformDigest: tx.PlatformDigest,
+		EvidenceDigest: digestA,
+	}, nil
+}
+
+func (adapter fakeAdapter) Finalize(context.Context, model.Transaction) error {
+	*adapter.calls = append(*adapter.calls, "adapter.finalize")
+	return nil
+}
+
 func (adapter fakeAdapter) Quiesce(context.Context, model.Transaction) error {
 	*adapter.calls = append(*adapter.calls, "adapter.quiesce")
 	if adapter.failAt == "quiesce" {
@@ -293,7 +310,7 @@ func TestTargetEngineCommitsOneOrderedTransaction(t *testing.T) {
 	wantCalls := []string{
 		"generation.stage", "signer.prepare", "adapter.prepare",
 		"adapter.quiesce", "adapter.prepare-state", "migrator.prepare", "migrator.activate", "adapter.activate", "migrator.verify", "signer.verify", "adapter.verify",
-		"migrator.commit", "signer.commit", "adapter.commit", "installation.commit",
+		"migrator.commit", "signer.commit", "adapter.commit", "installation.commit", "adapter.converge", "adapter.finalize",
 	}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("unexpected call order:\n got=%v\nwant=%v", calls, wantCalls)
@@ -322,6 +339,19 @@ func TestTargetEngineCommitsOneOrderedTransaction(t *testing.T) {
 	}
 	if !foundPluginReceipt {
 		t.Fatalf("mandatory plugin readiness receipt was not journaled: %+v", journal.events)
+	}
+}
+
+func TestTargetEngineRejectsCommitWithoutTerminalConvergenceProof(t *testing.T) {
+	var calls []string
+	engine, _ := newEngine(&calls, "converge", "")
+	result, err := engine.Run(context.Background(), transaction(model.PhaseIdle))
+	if err != nil || result.Phase != model.PhaseVerified {
+		t.Fatalf("target did not reach the pre-commit verification boundary: result=%+v err=%v", result, err)
+	}
+	result, err = engine.Commit(context.Background(), transaction(model.PhaseIdle).ID)
+	if err == nil || result.Phase == model.PhaseCommitted || result.Outcome == OutcomeUpdated {
+		t.Fatalf("target committed without terminal process/manifest convergence proof: result=%+v err=%v calls=%v", result, err, calls)
 	}
 }
 
@@ -446,7 +476,7 @@ func TestRecoveryMatrixReopensEveryDurablePhaseAndConvergesExactly(t *testing.T)
 		{name: "prepared", phase: model.PhasePrepared, progress: store.ProgressPlatformPrepared, initial: "previous", expected: "previous", wantPhase: model.PhaseRolledBack},
 		{name: "switched", phase: model.PhaseSwitched, progress: store.ProgressPlatformActivated, initial: "target", expected: "previous", wantPhase: model.PhaseRolledBack},
 		{name: "verified", phase: model.PhaseVerified, progress: store.ProgressPlatformVerified, initial: "target", expected: "target", wantPhase: model.PhaseCommitted},
-		{name: "committed", phase: model.PhaseCommitted, progress: store.ProgressManifestCommitted, initial: "target", expected: "target", wantPhase: model.PhaseCommitted},
+		{name: "committed", phase: model.PhaseCommitted, progress: store.ProgressPlatformFinalized, initial: "target", expected: "target", wantPhase: model.PhaseCommitted},
 		{name: "rolled-back", phase: model.PhaseRolledBack, progress: store.ProgressRollbackCompleted, initial: "previous", expected: "previous", wantPhase: model.PhaseRolledBack},
 	}
 	for _, test := range cases {
@@ -482,6 +512,17 @@ func TestRecoveryMatrixReopensEveryDurablePhaseAndConvergesExactly(t *testing.T)
 			if test.progress != "" {
 				if test.phase == model.PhaseVerified || test.phase == model.PhaseCommitted {
 					if err := journal.AppendProgress(tx, pluginProgress(tx)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if test.phase == model.PhaseCommitted {
+					if err := journal.AppendProgress(tx, store.ProgressEvent{Step: store.ProgressManifestCommitted}); err != nil {
+						t.Fatal(err)
+					}
+					if err := journal.AppendProgress(tx, store.ProgressEvent{Step: store.ProgressTerminalConvergenceVerified, Receipt: durableConvergenceReceipt(ConvergenceReceipt{
+						TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest,
+						PlatformDigest: tx.PlatformDigest, EvidenceDigest: digestA,
+					})}); err != nil {
 						t.Fatal(err)
 					}
 				}

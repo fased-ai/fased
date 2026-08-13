@@ -21,30 +21,32 @@ const CurrentProgressSchemaVersion uint32 = 3
 type ProgressStep string
 
 const (
-	ProgressGenerationStaged  ProgressStep = "GENERATION_STAGED"
-	ProgressMigratorPrepared  ProgressStep = "MIGRATOR_PREPARED"
-	ProgressSignerPrepared    ProgressStep = "SIGNER_PREPARED"
-	ProgressPlatformPrepared  ProgressStep = "PLATFORM_PREPARED"
-	ProgressQuiesceStarted    ProgressStep = "QUIESCE_STARTED"
-	ProgressQuiesced          ProgressStep = "QUIESCED"
-	ProgressStatePrepared     ProgressStep = "STATE_PREPARED"
-	ProgressMigratorActivated ProgressStep = "MIGRATOR_ACTIVATED"
-	ProgressPlatformActivated ProgressStep = "PLATFORM_ACTIVATED"
-	ProgressMigratorVerified  ProgressStep = "MIGRATOR_VERIFIED"
-	ProgressSignerVerified    ProgressStep = "SIGNER_VERIFIED"
-	ProgressPluginVerified    ProgressStep = "PLUGIN_VERIFIED"
-	ProgressPlatformVerified  ProgressStep = "PLATFORM_VERIFIED"
-	ProgressMigratorCommitted ProgressStep = "MIGRATOR_COMMITTED"
-	ProgressSignerCommitted   ProgressStep = "SIGNER_COMMITTED"
-	ProgressPlatformCommitted ProgressStep = "PLATFORM_COMMITTED"
-	ProgressManifestCommitted ProgressStep = "MANIFEST_COMMITTED"
-	ProgressRollbackStarted   ProgressStep = "ROLLBACK_STARTED"
-	ProgressTargetStopped     ProgressStep = "TARGET_STOPPED"
-	ProgressSignerAborted     ProgressStep = "SIGNER_ABORTED"
-	ProgressMigratorAborted   ProgressStep = "MIGRATOR_ABORTED"
-	ProgressPlatformRestored  ProgressStep = "PLATFORM_RESTORED"
-	ProgressPlatformDiscarded ProgressStep = "PLATFORM_DISCARDED"
-	ProgressRollbackCompleted ProgressStep = "ROLLBACK_COMPLETED"
+	ProgressGenerationStaged            ProgressStep = "GENERATION_STAGED"
+	ProgressMigratorPrepared            ProgressStep = "MIGRATOR_PREPARED"
+	ProgressSignerPrepared              ProgressStep = "SIGNER_PREPARED"
+	ProgressPlatformPrepared            ProgressStep = "PLATFORM_PREPARED"
+	ProgressQuiesceStarted              ProgressStep = "QUIESCE_STARTED"
+	ProgressQuiesced                    ProgressStep = "QUIESCED"
+	ProgressStatePrepared               ProgressStep = "STATE_PREPARED"
+	ProgressMigratorActivated           ProgressStep = "MIGRATOR_ACTIVATED"
+	ProgressPlatformActivated           ProgressStep = "PLATFORM_ACTIVATED"
+	ProgressMigratorVerified            ProgressStep = "MIGRATOR_VERIFIED"
+	ProgressSignerVerified              ProgressStep = "SIGNER_VERIFIED"
+	ProgressPluginVerified              ProgressStep = "PLUGIN_VERIFIED"
+	ProgressPlatformVerified            ProgressStep = "PLATFORM_VERIFIED"
+	ProgressMigratorCommitted           ProgressStep = "MIGRATOR_COMMITTED"
+	ProgressSignerCommitted             ProgressStep = "SIGNER_COMMITTED"
+	ProgressPlatformCommitted           ProgressStep = "PLATFORM_COMMITTED"
+	ProgressManifestCommitted           ProgressStep = "MANIFEST_COMMITTED"
+	ProgressTerminalConvergenceVerified ProgressStep = "TERMINAL_CONVERGENCE_VERIFIED"
+	ProgressPlatformFinalized           ProgressStep = "PLATFORM_FINALIZED"
+	ProgressRollbackStarted             ProgressStep = "ROLLBACK_STARTED"
+	ProgressTargetStopped               ProgressStep = "TARGET_STOPPED"
+	ProgressSignerAborted               ProgressStep = "SIGNER_ABORTED"
+	ProgressMigratorAborted             ProgressStep = "MIGRATOR_ABORTED"
+	ProgressPlatformRestored            ProgressStep = "PLATFORM_RESTORED"
+	ProgressPlatformDiscarded           ProgressStep = "PLATFORM_DISCARDED"
+	ProgressRollbackCompleted           ProgressStep = "ROLLBACK_COMPLETED"
 )
 
 type DurableParticipantReceipt struct {
@@ -361,6 +363,8 @@ func validateProgressRecord(record ProgressRecord, transaction model.Transaction
 		}
 	}
 	pluginVerified := false
+	manifestCommitted := false
+	terminalConvergenceVerified := false
 	for _, event := range record.Events {
 		if event.Step == ProgressPluginVerified {
 			pluginVerified = true
@@ -368,6 +372,18 @@ func validateProgressRecord(record ProgressRecord, transaction model.Transaction
 		if (event.Step == ProgressPlatformVerified || event.Step == ProgressManifestCommitted) &&
 			(transaction.PlanAction != "INSTALL" || transaction.Previous != nil) && !pluginVerified {
 			return errors.New("platform verification precedes mandatory plugin readiness")
+		}
+		if event.Step == ProgressManifestCommitted {
+			manifestCommitted = true
+		}
+		if event.Step == ProgressTerminalConvergenceVerified {
+			if !manifestCommitted {
+				return errors.New("terminal convergence precedes committed manifest")
+			}
+			terminalConvergenceVerified = true
+		}
+		if event.Step == ProgressPlatformFinalized && !terminalConvergenceVerified {
+			return errors.New("platform finalization precedes terminal convergence")
 		}
 	}
 	return nil
@@ -389,12 +405,15 @@ func validateProgressEvent(event ProgressEvent, transaction model.Transaction) e
 		if receipt.Participant == "plugin" {
 			wantPlan = transaction.Target.ID
 		}
-		if (receipt.Participant != "migrator" && receipt.Participant != "signer" && receipt.Participant != "state" && receipt.Participant != "plugin") || receipt.TransactionID != transaction.ID || receipt.TargetGenerationID != transaction.Target.ID || receipt.StateInventoryDigest != transaction.StateInventoryDigest || receipt.PlanDigest != wantPlan {
+		if receipt.Participant == "convergence" {
+			wantPlan = transaction.PlatformDigest
+		}
+		if (receipt.Participant != "migrator" && receipt.Participant != "signer" && receipt.Participant != "state" && receipt.Participant != "plugin" && receipt.Participant != "convergence") || receipt.TransactionID != transaction.ID || receipt.TargetGenerationID != transaction.Target.ID || receipt.StateInventoryDigest != transaction.StateInventoryDigest || receipt.PlanDigest != wantPlan {
 			return errors.New("participant receipt differs from the immutable transaction")
 		}
-		if receipt.Participant == "plugin" {
+		if receipt.Participant == "plugin" || receipt.Participant == "convergence" {
 			if !validSHA256Digest(receipt.EvidenceDigest) {
-				return errors.New("plugin readiness evidence digest is invalid")
+				return errors.New("readiness evidence digest is invalid")
 			}
 		} else if receipt.EvidenceDigest != "" {
 			return errors.New("non-plugin receipt contains plugin readiness evidence")
@@ -422,6 +441,13 @@ func validateProgressEvent(event ProgressEvent, transaction model.Transaction) e
 	} else if event.Receipt != nil && event.Receipt.Participant == "plugin" {
 		return errors.New("plugin readiness receipt is attached to the wrong progress step")
 	}
+	if event.Step == ProgressTerminalConvergenceVerified {
+		if event.Receipt == nil || event.Receipt.Participant != "convergence" {
+			return errors.New("terminal convergence step lacks its durable receipt")
+		}
+	} else if event.Receipt != nil && event.Receipt.Participant == "convergence" {
+		return errors.New("terminal convergence receipt is attached to the wrong progress step")
+	}
 	if event.Undo != nil {
 		undo := event.Undo
 		if undo.Participant == "" || undo.Locator == "" || filepath.IsAbs(undo.Locator) || filepath.Clean(undo.Locator) != undo.Locator || undo.Locator == ".." || strings.HasPrefix(undo.Locator, ".."+string(filepath.Separator)) || !validSHA256Digest(undo.Digest) {
@@ -445,6 +471,7 @@ func validProgressStep(step ProgressStep) bool {
 		ProgressQuiesceStarted, ProgressQuiesced, ProgressStatePrepared, ProgressMigratorActivated, ProgressPlatformActivated, ProgressMigratorVerified,
 		ProgressSignerVerified, ProgressPluginVerified, ProgressPlatformVerified, ProgressMigratorCommitted, ProgressSignerCommitted,
 		ProgressPlatformCommitted, ProgressManifestCommitted, ProgressRollbackStarted, ProgressTargetStopped,
+		ProgressTerminalConvergenceVerified, ProgressPlatformFinalized,
 		ProgressSignerAborted, ProgressMigratorAborted, ProgressPlatformRestored, ProgressPlatformDiscarded,
 		ProgressRollbackCompleted:
 		return true
