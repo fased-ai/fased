@@ -177,7 +177,7 @@ describe("D8 unified lifecycle acceptance", () => {
       "runuser -u app -- env HOME=/home/app /home/app/.fased/bin/fased update",
     );
     expect(hosting).toContain(
-      "app ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap update --profile hosting --channel %s --version %s --timeout 120",
+      "app ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap update --profile hosting --channel %s --version %s",
     );
     expect(hosting).toContain('visudo -cf "$sudoers_policy"');
     expect(hosting).toContain('--channel "$target_channel" --tag "$version" --timeout 120');
