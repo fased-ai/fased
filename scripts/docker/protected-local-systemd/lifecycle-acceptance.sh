@@ -853,6 +853,12 @@ fi
 install -d -m 0700 -o root -g root /opt/fased-fixture-bootstrap-tools
 install -m 0755 -o root -g root "$(command -v jq)" \
   /opt/fased-fixture-bootstrap-tools/jq
+if [[ "$preinstalled_tools" == "1" ]]; then
+  test -f /fixture-preinstalled-tools/gh && test ! -L /fixture-preinstalled-tools/gh
+  install -m 0755 -o root -g root /fixture-preinstalled-tools/gh /usr/bin/gh
+  test "$(stat -c '%U:%G:%a' /usr/bin/gh)" = "root:root:755"
+  /usr/bin/gh attestation verify --help >/dev/null
+fi
 
 install -d -m 0755 -o root -g root /var/lib/fased-protected-local-fixture
 app_asset="fased-hosted-app-v2-linux-x64-v${version}.tar.gz"
@@ -1212,6 +1218,7 @@ if [[ "$phase" == "fresh-install" ]]; then
   fresh_prepare_elapsed="$((SECONDS - fixture_started))"
   if [[ "$preinstalled_tools" == "1" ]]; then
     install -m 0755 /opt/fased-fixture-bootstrap-tools/jq /usr/local/bin/jq
+    command -v gh >/dev/null
     command -v jq >/dev/null
   else
     rm -f /usr/local/bin/gh /usr/local/bin/jq /usr/bin/gh /usr/bin/jq
