@@ -123,7 +123,7 @@ describe("canonical managed predecessor capsule", () => {
     const platform = JSON.parse(
       await import("node:fs/promises").then((fs) =>
         fs.readFile(
-          path.join(restored, "var/lib/fased-local/schema1-owner/lifecycle/platform.json"),
+          path.join(restored, "var/lib/fased-local/1122334455667788/lifecycle/platform.json"),
           "utf8",
         ),
       ),
@@ -135,7 +135,8 @@ describe("canonical managed predecessor capsule", () => {
       3,
     );
     expect(
-      capsule.entries.find((entry) => entry.path === "var/lib/fased-local/schema1-owner"),
+      capsule.entries.find((entry) => entry.path === "var/lib/fased-local/1122334455667788"),
     ).toMatchObject({ type: "directory", mode: 0o755, owner: "root" });
+    expect(capsule.installationClass.platform.instanceId).toBe("1122334455667788");
   });
 });

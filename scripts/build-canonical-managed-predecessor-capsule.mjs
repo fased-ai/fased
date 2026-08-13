@@ -261,7 +261,7 @@ export async function buildCanonicalManagedPredecessorCapsule(options) {
     ) {
       fail("previous generation evidence is invalid");
     }
-    const instance = "schema1-owner";
+    const instance = "1122334455667788";
     const config = canonicalConfig(instance);
     const platform = legacyPlatform(config);
     const generationRoot = `${config.installRoot}/generations/${generation.id.slice(7)}`;
