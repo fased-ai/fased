@@ -41,7 +41,9 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(fixture).toContain(
       '"../../dependencies/$dependency_hash-$dependency_digest/node_modules"',
     );
-    expect(fixture).toContain('chmod 0644 "$generation_root/inventory.json"');
+    expect(fixture).toContain('"$dependency_root/.fased-dependency-layer.json"');
+    expect(fixture).toContain('--arg archiveSHA256 "sha256:$dependency_digest"');
+    expect(fixture).toContain('chmod 0644 \\\n    "$generation_root/inventory.json"');
     expect(fixture).toContain('--home-dir "/var/lib/fased-local/$instance"');
     expect(fixture).toContain('--home-dir "/var/lib/fased-local/$instance/signer"');
     expect(fixture).toContain('test -f "$state/bin/fased" && test ! -L "$state/bin/fased"');
