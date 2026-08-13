@@ -953,6 +953,17 @@ function serveFile(response, selected) {
   }
 }
 
+function selectFixtureTrustAsset(asset) {
+  const branchAsset = {
+    "fased-lifecycle-root-v1.json": "fased-branch-root.json",
+    "fased-release-index-v1.json": "fased-branch-release-index.json",
+    "fased-release-index-v1.json.attestation.json": "fased-branch-delegation.json",
+  }[asset];
+  return branchAsset && fs.existsSync(path.join(releaseAssets, branchAsset))
+    ? branchAsset
+    : asset;
+}
+
 function handleRequest(request, response) {
   if (request.method === "GET" && request.url?.startsWith("/@fased%2ffased")) {
     const selectedVersion = fs.readFileSync(
@@ -971,11 +982,7 @@ function handleRequest(request, response) {
       response.writeHead(400).end();
       return;
     }
-    const selected = {
-      "fased-lifecycle-root-v1.json": "fased-branch-root.json",
-      "fased-release-index-v1.json": "fased-branch-release-index.json",
-      "fased-release-index-v1.json.attestation.json": "fased-branch-delegation.json",
-    }[asset] ?? asset;
+    const selected = selectFixtureTrustAsset(asset);
     serveFile(response, path.join(releaseAssets, selected));
     return;
   }
@@ -988,12 +995,10 @@ function handleRequest(request, response) {
     const selected =
       asset === "install.sh"
         ? "/usr/local/libexec/fased-fixture-protected-installer.sh"
-        : asset === "fased-lifecycle-root-v1.json"
-          ? path.join(releaseAssets, "fased-branch-root.json")
-          : asset === "fased-release-index-v1.json"
-            ? path.join(releaseAssets, "fased-branch-release-index.json")
-            : asset === "fased-release-index-v1.json.attestation.json"
-              ? path.join(releaseAssets, "fased-branch-delegation.json")
+        : asset === "fased-lifecycle-root-v1.json" ||
+            asset === "fased-release-index-v1.json" ||
+            asset === "fased-release-index-v1.json.attestation.json"
+          ? path.join(releaseAssets, selectFixtureTrustAsset(asset))
               : asset === "fased-hosted-release-v2.json"
                 ? "/var/lib/fased-protected-local-fixture/local-release-manifest.json"
                 : asset === "fased-hosted-release-v2.json.attestation.json"

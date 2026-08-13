@@ -45,6 +45,8 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       p1_predecessors: ${{ steps.p1-plan.outputs.predecessors }}
+      release_sequence: ${{ steps.pre-candidate.outputs.release_sequence }}
+      security_epoch: ${{ steps.pre-candidate.outputs.security_epoch }}
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -95,6 +97,7 @@ jobs:
           fi
 
       - name: Verify immutable pre-candidate pass
+        id: pre-candidate
         env:
           GH_TOKEN: ${{ github.token }}
           OWNER_PREDECESSOR_VERSION: ${{ inputs.owner_predecessor_version }}
@@ -131,8 +134,10 @@ jobs:
             --arg ownerPredecessorVersion "$OWNER_PREDECESSOR_VERSION" \
             --arg predecessorVersion "$PREDECESSOR_VERSION" \
             --arg workflowRunId "$PRE_CANDIDATE_RUN_ID" \
-            '.schemaVersion == 2 and .sourceCommit == $sourceCommit and .sourceTree == $sourceTree and .lockfileDigest == $lockfileDigest and .nextReleaseVersion == $releaseVersion and .predecessorVersion == $predecessorVersion and .ownerPredecessorVersion == $ownerPredecessorVersion and .workflowRunId == $workflowRunId' \
+            '.schemaVersion == 3 and .sourceCommit == $sourceCommit and .sourceTree == $sourceTree and .lockfileDigest == $lockfileDigest and .nextReleaseVersion == $releaseVersion and .predecessorVersion == $predecessorVersion and .ownerPredecessorVersion == $ownerPredecessorVersion and (.releaseSequence | type == "number" and . >= 1) and (.securityEpoch | type == "number" and . >= 1) and .workflowRunId == $workflowRunId' \
             "$evidence" >/dev/null
+          printf 'release_sequence=%s\n' "$(jq -er .releaseSequence "$evidence")" >>"$GITHUB_OUTPUT"
+          printf 'security_epoch=%s\n' "$(jq -er .securityEpoch "$evidence")" >>"$GITHUB_OUTPUT"
           main_run_id="$(jq -er '.mainRunId | select(test("^[0-9]+$"))' "$evidence")"
           main_checks_job_id="$(
             jq -er '.mainChecksJobId | select(test("^[0-9]+$"))' "$evidence"
@@ -156,6 +161,8 @@ jobs:
           PRE_TAG_P1_RUN_ID: ${{ inputs.pre_tag_p1_run_id }}
           RELEASE_VERSION: ${{ inputs.release_version }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
+          RELEASE_SEQUENCE: ${{ steps.pre-candidate.outputs.release_sequence }}
+          SECURITY_EPOCH: ${{ steps.pre-candidate.outputs.security_epoch }}
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
@@ -181,10 +188,14 @@ jobs:
             --arg ownerPredecessorVersion "$OWNER_PREDECESSOR_VERSION" \
             --arg preCandidateRunId "$PRE_CANDIDATE_RUN_ID" \
             --arg workflowRunId "$PRE_TAG_P1_RUN_ID" \
-            '.schemaVersion == 1 and .sourceCommit == $sourceCommit and
+            --arg releaseSequence "$RELEASE_SEQUENCE" \
+            --arg securityEpoch "$SECURITY_EPOCH" \
+            '.schemaVersion == 2 and .sourceCommit == $sourceCommit and
              .sourceTree == $sourceTree and .releaseVersion == $releaseVersion and
              .predecessorVersion == $predecessorVersion and
              .ownerPredecessorVersion == $ownerPredecessorVersion and
+             .releaseSequence == ($releaseSequence | tonumber) and
+             .securityEpoch == ($securityEpoch | tonumber) and
              .preCandidateRunId == $preCandidateRunId and
              .workflowRunId == $workflowRunId and
              (.candidateDescriptorSha256 | test("^sha256:[a-f0-9]{64}$"))' \
@@ -464,6 +475,12 @@ jobs:
         with:
           node-version: 24.x
 
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: tools/fased-lifecycled/go.mod
+          cache-dependency-path: tools/fased-lifecycled/go.sum
+
       - name: Setup pnpm + cache store
         uses: ./.github/actions/setup-pnpm-store-cache
         with:
@@ -551,6 +568,32 @@ jobs:
             --tree "$(git rev-parse 'HEAD^{tree}')" \
             --output .artifacts/hosted-runtime/fased-lifecycle-release-compatibility-v1.json
 
+          root_policy=release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json
+          expected_root_sha256="$(cat release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.sha256)"
+          test "$(sha256sum "$root_policy" | awk '{print $1}')" = "$expected_root_sha256"
+          install -m 0644 \
+            "$root_policy" \
+            .artifacts/hosted-runtime/fased-lifecycle-root-v1.json
+
+          channel=stable
+          if [[ "$package_version" == *-* ]]; then channel=beta; fi
+          release_index_raw="$RUNNER_TEMP/fased-release-index-v1.raw.json"
+          node scripts/build-lifecycle-release-index.mjs \
+            --assets .artifacts/hosted-runtime \
+            --channel "$channel" \
+            --version "$package_version" \
+            --commit "$GITHUB_SHA" \
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --release-sequence "${{ needs.preflight.outputs.release_sequence }}" \
+            --security-epoch "${{ needs.preflight.outputs.security_epoch }}" \
+            --issued-at "${lifecycle_times[0]}" \
+            --expires-at "$(jq -er .signed.expiresAt "$root_policy")" \
+            --output "$release_index_raw"
+          go -C tools/fased-lifecycled run ./cmd/fased-release-index \
+            --input "$release_index_raw" \
+            --output "$GITHUB_WORKSPACE/.artifacts/hosted-runtime/fased-release-index-v1.json"
+          rm -f "$release_index_raw"
+
       - name: Attest unified candidate manifest
         id: attest-candidate-manifest
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
@@ -599,6 +642,20 @@ jobs:
             "${{ steps.attest-candidate-lifecycle-trust.outputs.bundle-path }}" \
             .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json.attestation.json
 
+      - name: Attest production lifecycle release index
+        id: attest-lifecycle-release-index
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
+        with:
+          subject-path: .artifacts/hosted-runtime/fased-release-index-v1.json
+
+      - name: Stage production lifecycle release index attestation
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 0644 \
+            "${{ steps.attest-lifecycle-release-index.outputs.bundle-path }}" \
+            .artifacts/hosted-runtime/fased-release-index-v1.json.attestation.json
+
       - name: Verify every staged candidate attestation offline
         shell: bash
         env:
@@ -616,8 +673,11 @@ jobs:
           }
           verify fased-hosted-release-v2.json fased-hosted-release-v2.json.attestation.json
           verify fased-lifecycle-trust-v1.json fased-lifecycle-trust-v1.json.attestation.json
+          verify fased-release-index-v1.json fased-release-index-v1.json.attestation.json
           verify fased-privileged-provenance-v1.intoto.json \
             fased-privileged-provenance-v1.intoto.json.attestation.json
+          test "$(sha256sum fased-lifecycle-root-v1.json | awk '{print $1}')" = \
+            "$(cat ../../release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.sha256)"
           verify fased-signerd-linux-amd64 fased-signerd-release.attestation.json
           verify install.sh install.sh.attestation.json
           verify fased-lifecycled-linux-amd64 fased-lifecycled-release.attestation.json

@@ -124,6 +124,15 @@ function serve(response, name) {
   }
 }
 
+function selectFixtureTrustAsset(asset) {
+  const branchAsset = {
+    "fased-lifecycle-root-v1.json": "fased-branch-root.json",
+    "fased-release-index-v1.json": "fased-branch-release-index.json",
+    "fased-release-index-v1.json.attestation.json": "fased-branch-delegation.json",
+  }[asset];
+  return branchAsset && fs.existsSync(`/artifacts/${branchAsset}`) ? branchAsset : asset;
+}
+
 https.createServer(
   {
     key: fs.readFileSync("/var/lib/fased-hosting-fixture/tls/github.key"),
@@ -145,11 +154,7 @@ https.createServer(
     }
     if (request.url.startsWith(prefix)) {
       const requested = decodeURIComponent(request.url.slice(prefix.length));
-      const selected = {
-        "fased-lifecycle-root-v1.json": "fased-branch-root.json",
-        "fased-release-index-v1.json": "fased-branch-release-index.json",
-        "fased-release-index-v1.json.attestation.json": "fased-branch-delegation.json",
-      }[requested] ?? requested;
+      const selected = selectFixtureTrustAsset(requested);
       serve(response, selected);
       return;
     }
@@ -176,11 +181,15 @@ done
 prefix="https://github.com/fased-ai/fased/releases/download/v${version}/"
 if [[ "\$url" == "\$prefix"* && -n "\$output" ]]; then
   asset="\${url#\$prefix}"
+  branch_asset=""
   case "\$asset" in
-    fased-lifecycle-root-v1.json) asset=fased-branch-root.json ;;
-    fased-release-index-v1.json) asset=fased-branch-release-index.json ;;
-    fased-release-index-v1.json.attestation.json) asset=fased-branch-delegation.json ;;
+    fased-lifecycle-root-v1.json) branch_asset=fased-branch-root.json ;;
+    fased-release-index-v1.json) branch_asset=fased-branch-release-index.json ;;
+    fased-release-index-v1.json.attestation.json) branch_asset=fased-branch-delegation.json ;;
   esac
+  if [[ -n "\$branch_asset" && -f "/artifacts/\$branch_asset" ]]; then
+    asset="\$branch_asset"
+  fi
   [[ "\$asset" =~ ^[A-Za-z0-9._+-]+$ && -f "/artifacts/\$asset" && ! -L "/artifacts/\$asset" ]] || exit 22
   install -m 0600 "/artifacts/\$asset" "\$output"
   exit 0

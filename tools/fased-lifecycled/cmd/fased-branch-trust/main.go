@@ -44,6 +44,7 @@ func run(args []string) error {
 	flags := flag.NewFlagSet("fased-branch-trust", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	var artifactDir, inventoryPath, version, commit, tree, artifactSetDigest, issuedText string
+	var releaseSequence, securityEpoch uint64
 	flags.StringVar(&artifactDir, "artifact-dir", "", "")
 	flags.StringVar(&inventoryPath, "inventory", "", "")
 	flags.StringVar(&version, "version", "", "")
@@ -51,10 +52,12 @@ func run(args []string) error {
 	flags.StringVar(&tree, "tree", "", "")
 	flags.StringVar(&artifactSetDigest, "artifact-set-digest", "", "")
 	flags.StringVar(&issuedText, "issued-at", "", "")
+	flags.Uint64Var(&releaseSequence, "release-sequence", 1, "")
+	flags.Uint64Var(&securityEpoch, "security-epoch", 1, "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return errors.New("invalid arguments")
 	}
-	if artifactDir == "" || inventoryPath == "" || version == "" || commit == "" || tree == "" || artifactSetDigest == "" || issuedText == "" {
+	if artifactDir == "" || inventoryPath == "" || version == "" || commit == "" || tree == "" || artifactSetDigest == "" || issuedText == "" || releaseSequence == 0 || securityEpoch == 0 {
 		return errors.New("all identity arguments are required")
 	}
 	issued, err := time.Parse(time.RFC3339Nano, issuedText)
@@ -87,7 +90,7 @@ func run(args []string) error {
 	}
 	delegationJSON, err := trust.SignDelegation(trust.Delegation{SchemaVersion: 1, Type: "fased-release-delegation", Version: 1,
 		IssuedAt: issued.Format(time.RFC3339), ExpiresAt: issued.Add(24 * time.Hour).Format(time.RFC3339),
-		KeyID: releaseKey.id, Key: releaseKey.record, Channels: []string{"beta"}, MinReleaseSequence: 1, MaxReleaseSequence: 1, SecurityEpoch: 1}, signingKeys(rootKeys[:2]))
+		KeyID: releaseKey.id, Key: releaseKey.record, Channels: []string{"beta"}, MinReleaseSequence: releaseSequence, MaxReleaseSequence: releaseSequence, SecurityEpoch: securityEpoch}, signingKeys(rootKeys[:2]))
 	if err != nil {
 		return err
 	}
@@ -114,7 +117,7 @@ func run(args []string) error {
 		return err
 	}
 	indexJSON, err := trust.SignReleaseIndex(trust.ReleaseIndex{SchemaVersion: 1, Type: "fased-release-index", Channel: "beta", Version: version,
-		ReleaseSequence: 1, SecurityEpoch: 1, Commit: commit, Tree: tree, ArtifactSetDigest: artifactSetDigest,
+		ReleaseSequence: releaseSequence, SecurityEpoch: securityEpoch, Commit: commit, Tree: tree, ArtifactSetDigest: artifactSetDigest,
 		Application: map[string]trust.Asset{"x64": application}, DependencyLayer: map[string]trust.Asset{"x64": dependency},
 		LifecycleHost: map[string]trust.Asset{"x64": host}, Signer: map[string]trust.Asset{"x64": signer},
 		StateSchemas: inv.StateSchemas, Capabilities: inv.Capabilities, PluginLockDigest: inv.PluginLockDigest,

@@ -25,6 +25,8 @@ ARTIFACT_CACHE_LOCK_FD=""
 IMAGE_CACHE_DIR="${FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR:-}"
 PREINSTALLED_TOOLS="${FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS:-0}"
 PUBLIC_ACQUISITION="${FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION:-0}"
+RELEASE_SEQUENCE="${FASED_LIFECYCLE_RELEASE_SEQUENCE:-1}"
+SECURITY_EPOCH="${FASED_LIFECYCLE_SECURITY_EPOCH:-1}"
 BUILD_ONLY="${FASED_SYSTEMD_FIXTURE_BUILD_ONLY:-0}"
 ARTIFACT_OUTPUT_DIR="${FASED_SYSTEMD_FIXTURE_OUTPUT_DIR:-}"
 ARTIFACT_PROFILE="${FASED_SYSTEMD_FIXTURE_ARTIFACT_PROFILE:-branch-x64}"
@@ -342,6 +344,8 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
         --commit "$COMMIT" \
         --tree "$TREE" \
         --artifact-set-digest "$fixture_generation_digest" \
+        --release-sequence "$RELEASE_SEQUENCE" \
+        --security-epoch "$SECURITY_EPOCH" \
         --issued-at "$issued_at"
     rm -f "$fixture_inventory"
     fixture_root_pin="$(tr -d '\n' <"$ARTIFACT_DIR/fased-branch-root.sha256")"

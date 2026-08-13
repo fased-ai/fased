@@ -80,6 +80,8 @@ GOTMPDIR="$go_tmp" GOCACHE="$go_cache" \
     --commit "$commit" \
     --tree "$tree" \
     --artifact-set-digest "$generation_digest" \
+    --release-sequence "${FASED_LIFECYCLE_RELEASE_SEQUENCE:-1}" \
+    --security-epoch "${FASED_LIFECYCLE_SECURITY_EPOCH:-1}" \
     --issued-at "$issued_at"
 
 root_pin="$(tr -d '\n' <"$OUTPUT_DIR/fased-branch-root.sha256")"
