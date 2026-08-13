@@ -189,6 +189,10 @@ materialize_canonical_managed_predecessor() {
     "$generation_root/payload/bin/fased-lifecycled" \
     "$generation_root/payload/bin/fased-signerd" \
     "$generation_root/payload/bin/fased-gateway-launch"
+  # Store.ImportGenerationArchive publishes inventory.json as root-owned 0644
+  # so the unprivileged stable launcher can bind the dependency identity.
+  # Reproduce that exact store postcondition after the fixture-only extraction.
+  chmod 0644 "$generation_root/inventory.json"
   test -d "/opt/fased/local/$instance/generations/$previous_id"
 
   chown testop:"fscf-$instance" "$state"
