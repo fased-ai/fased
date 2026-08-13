@@ -114,6 +114,7 @@ jobs:
             <<<"$main_runs" >/dev/null
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$OWNER_PREDECESSOR_VERSION")"
+          node scripts/verify-lifecycle-root-pin.mjs
           predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" --arg owner "$OWNER_PREDECESSOR_VERSION" '[$stable,$owner] | unique')"
           printf 'predecessors=%s\n' "$predecessors" >>"$GITHUB_OUTPUT"
           printf 'release_sequence=%s\n' "$(jq -er .releaseSequence "$evidence")" >>"$GITHUB_OUTPUT"
