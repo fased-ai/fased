@@ -50,6 +50,10 @@ type PublicPredecessorEvidenceVerifier interface {
 	VerifyPublicPredecessorEvidence(topology, version string) error
 }
 
+type CurrentConvergenceVerifier interface {
+	VerifyCurrent(context.Context, model.Manifest, string) (string, error)
+}
+
 type IDGenerator func() (string, error)
 
 type Service struct {
@@ -60,6 +64,7 @@ type Service struct {
 	Supervisor          Supervisor
 	Onboarding          OnboardingCompleter
 	PredecessorEvidence PublicPredecessorEvidenceVerifier
+	CurrentConvergence  CurrentConvergenceVerifier
 	NewID               IDGenerator
 	mutationMu          sync.Mutex
 }
@@ -159,7 +164,12 @@ func (service *Service) completeOnboarding(ctx context.Context, request protocol
 	if result.Phase != model.PhaseCommitted || (result.Outcome != engine.OutcomeUpdated && result.Outcome != engine.OutcomeAlreadyCurrent) {
 		return protocol.Response{}, errors.New("target controller did not complete onboarding")
 	}
-	return response(request, string(result.Outcome), "", manifest.ActiveGeneration.ID), nil
+	response := response(request, string(result.Outcome), "", manifest.ActiveGeneration.ID)
+	response.ConvergenceReceiptDigest = result.ConvergenceReceiptDigest
+	if !validConvergenceDigest(response.ConvergenceReceiptDigest) {
+		return protocol.Response{}, errors.New("onboarding completion lacks terminal convergence proof")
+	}
+	return response, nil
 }
 
 func (service *Service) inspect(request protocol.Request) (protocol.Response, error) {
@@ -246,7 +256,18 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 		return protocol.Response{}, err
 	}
 	switch plan.Action {
-	case planner.ActionAlreadyCurrent, planner.ActionRepairRequired, planner.ActionRejectUnknownNewer:
+	case planner.ActionAlreadyCurrent:
+		if installation.Kind != planner.InstallationManaged || service.CurrentConvergence == nil {
+			return protocol.Response{}, errors.New("already-current requires live convergence verification")
+		}
+		digest, verifyErr := service.CurrentConvergence.VerifyCurrent(ctx, installed, manifestDigest)
+		if verifyErr != nil || !validConvergenceDigest(digest) {
+			return protocol.Response{}, errors.Join(errors.New("already-current live convergence proof failed"), verifyErr)
+		}
+		result := response(request, string(plan.Action), "", generation.ID)
+		result.ConvergenceReceiptDigest = digest
+		return result, nil
+	case planner.ActionRepairRequired, planner.ActionRejectUnknownNewer:
 		return response(request, string(plan.Action), "", generation.ID), nil
 	}
 	transactionID, err := service.NewID()
@@ -306,7 +327,12 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 		return protocol.Response{}, err
 	}
 	result, runErr := service.Supervisor.Run(ctx, tx)
-	return response(request, string(result.Outcome), transactionID, generation.ID), runErr
+	response := response(request, string(result.Outcome), transactionID, generation.ID)
+	response.ConvergenceReceiptDigest = result.ConvergenceReceiptDigest
+	if runErr == nil && result.Outcome == engine.OutcomeUpdated && (!validConvergenceDigest(result.ConvergenceReceiptDigest) || result.ActiveGenerationID != generation.ID) {
+		return protocol.Response{}, errors.New("target controller committed without terminal convergence proof")
+	}
+	return response, runErr
 }
 
 func (service *Service) recover(ctx context.Context, request protocol.Request) (protocol.Response, error) {
@@ -320,7 +346,9 @@ func (service *Service) recover(ctx context.Context, request protocol.Request) (
 		return protocol.Response{}, err
 	}
 	result, recoverErr := service.Supervisor.Recover(ctx, tx)
-	return response(request, string(result.Outcome), tx.ID, tx.Target.ID), recoverErr
+	response := response(request, string(result.Outcome), tx.ID, tx.Target.ID)
+	response.ConvergenceReceiptDigest = result.ConvergenceReceiptDigest
+	return response, recoverErr
 }
 
 func (service *Service) validate() error {
@@ -344,6 +372,18 @@ func response(request protocol.Request, outcome, transactionID, activeID string)
 		SchemaVersion: protocol.CurrentSchemaVersion, RequestID: request.RequestID,
 		Outcome: outcome, TransactionID: transactionID, ActiveGenerationID: activeID,
 	}
+}
+
+func validConvergenceDigest(value string) bool {
+	if len(value) != 71 || value[:7] != "sha256:" {
+		return false
+	}
+	for _, character := range value[7:] {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func randomUUID() (string, error) {

@@ -2,6 +2,8 @@ package platform
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,7 +23,11 @@ type GenerationManager interface {
 }
 
 type GatewayHealth interface {
-	Verify(context.Context, uint16, model.Generation) error
+	Verify(context.Context, uint16, model.Generation) (engine.GatewayReceipt, error)
+}
+
+type CurrentGenerationResolver interface {
+	ResolveGeneration(string) (model.Generation, error)
 }
 
 type Predecessor interface {
@@ -56,7 +62,7 @@ func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) (engine.Re
 	if adapter == nil || (adapter.Config.Profile != model.ProfileProtectedLocal && adapter.Config.Profile != model.ProfileHosting) || adapter.Manifest == nil || adapter.TypedState == nil || adapter.Systemd == nil || adapter.Health == nil || adapter.Plugins == nil {
 		return engine.Result{}, errors.New("lifecycle onboarding adapter is incomplete")
 	}
-	manifest, _, err := adapter.Manifest.ReadManifest()
+	manifest, manifestDigest, err := adapter.Manifest.ReadManifest()
 	if err != nil {
 		return engine.Result{}, err
 	}
@@ -83,13 +89,8 @@ func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) (engine.Re
 	}
 	gateway := adapter.Identity.Services["gateway"]
 	if err := adapter.Systemd.IsActive(ctx, gateway); err == nil {
-		if err := adapter.Health.Verify(ctx, adapter.Config.GatewayPort, *manifest.ActiveGeneration); err != nil {
-			return engine.Result{}, fmt.Errorf("active Gateway is unhealthy during onboarding completion: %w", err)
-		}
-		if _, err := adapter.Plugins.Verify(ctx, *manifest.ActiveGeneration); err != nil {
-			return engine.Result{}, fmt.Errorf("plugin readiness failed during onboarding completion: %w", err)
-		}
-		return engine.Result{Outcome: engine.OutcomeAlreadyCurrent, Phase: model.PhaseCommitted}, nil
+		digest, err := adapter.VerifyCurrent(ctx, manifest, manifestDigest)
+		return engine.Result{Outcome: engine.OutcomeAlreadyCurrent, Phase: model.PhaseCommitted, ActiveGenerationID: manifest.ActiveGeneration.ID, ConvergenceReceiptDigest: digest}, err
 	}
 	if err := adapter.Systemd.Start(ctx, gateway); err != nil {
 		return engine.Result{}, err
@@ -97,13 +98,8 @@ func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) (engine.Re
 	if err := adapter.Systemd.IsActive(ctx, gateway); err != nil {
 		return engine.Result{}, fmt.Errorf("Gateway is not active after onboarding completion: %w", err)
 	}
-	if err := adapter.Health.Verify(ctx, adapter.Config.GatewayPort, *manifest.ActiveGeneration); err != nil {
-		return engine.Result{}, err
-	}
-	if _, err := adapter.Plugins.Verify(ctx, *manifest.ActiveGeneration); err != nil {
-		return engine.Result{}, fmt.Errorf("plugin readiness failed during onboarding completion: %w", err)
-	}
-	return engine.Result{Outcome: engine.OutcomeUpdated, Phase: model.PhaseCommitted}, nil
+	digest, err := adapter.VerifyCurrent(ctx, manifest, manifestDigest)
+	return engine.Result{Outcome: engine.OutcomeUpdated, Phase: model.PhaseCommitted, ActiveGenerationID: manifest.ActiveGeneration.ID, ConvergenceReceiptDigest: digest}, err
 }
 
 func validateOnboardingConfig(config Config) error {
@@ -340,7 +336,7 @@ func (adapter *TargetAdapter) Verify(ctx context.Context, tx model.Transaction) 
 		// reporting onboarding complete.
 		return engine.ParticipantReceipt{}, nil
 	}
-	if err := adapter.Health.Verify(ctx, adapter.Config.GatewayPort, tx.Target); err != nil {
+	if _, err := adapter.Health.Verify(ctx, adapter.Config.GatewayPort, tx.Target); err != nil {
 		return engine.ParticipantReceipt{}, err
 	}
 	pluginReceipt, err := adapter.Plugins.Verify(ctx, tx.Target)
@@ -369,6 +365,141 @@ func (adapter *TargetAdapter) Commit(ctx context.Context, tx model.Transaction) 
 	if err := adapter.Predecessor.Commit(ctx, tx); err != nil {
 		return err
 	}
+	return nil
+}
+
+type terminalConvergenceEvidence struct {
+	SchemaVersion        uint32                 `json:"schemaVersion"`
+	TransactionID        string                 `json:"transactionId,omitempty"`
+	Profile              model.Profile          `json:"profile"`
+	TargetGenerationID   string                 `json:"targetGenerationId"`
+	ManifestDigest       string                 `json:"manifestDigest"`
+	CurrentGenerationID  string                 `json:"currentGenerationId"`
+	StateInventoryDigest string                 `json:"stateInventoryDigest,omitempty"`
+	PlatformDigest       string                 `json:"platformDigest"`
+	GatewayDeferred      bool                   `json:"gatewayDeferred,omitempty"`
+	Gateway              *engine.GatewayReceipt `json:"gateway,omitempty"`
+	GatewayService       *ServiceIdentity       `json:"gatewayService,omitempty"`
+	SignerService        ServiceIdentity        `json:"signerService"`
+	PluginReadiness      string                 `json:"pluginReadinessDigest,omitempty"`
+}
+
+func (adapter *TargetAdapter) Converge(ctx context.Context, tx model.Transaction) (engine.ConvergenceReceipt, error) {
+	if adapter.Manifest == nil {
+		return engine.ConvergenceReceipt{}, errors.New("terminal convergence requires the committed manifest reader")
+	}
+	manifest, manifestDigest, err := adapter.Manifest.ReadManifest()
+	if err != nil {
+		return engine.ConvergenceReceipt{}, err
+	}
+	evidence, err := adapter.currentConvergenceEvidence(ctx, manifest, manifestDigest, adapter.deferFreshGateway(tx))
+	if err != nil {
+		return engine.ConvergenceReceipt{}, err
+	}
+	evidence.TransactionID = tx.ID
+	evidence.StateInventoryDigest = tx.StateInventoryDigest
+	if evidence.PlatformDigest != tx.PlatformDigest || evidence.TargetGenerationID != tx.Target.ID {
+		return engine.ConvergenceReceipt{}, errors.New("terminal convergence evidence differs from the transaction")
+	}
+	data, digest, err := canonicalConvergenceEvidence(evidence)
+	if err != nil {
+		return engine.ConvergenceReceipt{}, err
+	}
+	path := filepath.Join(adapter.Config.LifecycleRoot, "transactions", tx.ID, "convergence.json")
+	if err := writeAtomicFile(path, append(data, '\n'), 0o600); err != nil {
+		return engine.ConvergenceReceipt{}, fmt.Errorf("persist terminal convergence evidence: %w", err)
+	}
+	return engine.ConvergenceReceipt{TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest, PlatformDigest: tx.PlatformDigest, EvidenceDigest: digest}, nil
+}
+
+func (adapter *TargetAdapter) VerifyCurrent(ctx context.Context, manifest model.Manifest, manifestDigest string) (string, error) {
+	evidence, err := adapter.currentConvergenceEvidence(ctx, manifest, manifestDigest, false)
+	if err != nil {
+		return "", err
+	}
+	_, digest, err := canonicalConvergenceEvidence(evidence)
+	return digest, err
+}
+
+func (adapter *TargetAdapter) currentConvergenceEvidence(ctx context.Context, manifest model.Manifest, manifestDigest string, gatewayDeferred bool) (terminalConvergenceEvidence, error) {
+	if adapter == nil || adapter.Manifest == nil || adapter.Generations == nil || adapter.Health == nil || adapter.Plugins == nil {
+		return terminalConvergenceEvidence{}, errors.New("terminal convergence adapter is incomplete")
+	}
+	if err := manifest.Validate(); err != nil || manifest.Profile != adapter.Config.Profile || manifest.ActiveGeneration == nil || !validDigest(manifestDigest) {
+		return terminalConvergenceEvidence{}, errors.New("committed manifest is invalid during terminal convergence")
+	}
+	platformDigest, err := manifest.Platform.Digest(manifest.Profile)
+	if err != nil {
+		return terminalConvergenceEvidence{}, err
+	}
+	configured, err := adapter.Config.Identity()
+	if err != nil {
+		return terminalConvergenceEvidence{}, err
+	}
+	configuredDigest, err := configured.Digest(manifest.Profile)
+	if err != nil || configuredDigest != platformDigest || identityDigest(adapter.Identity, manifest.Profile) != platformDigest {
+		return terminalConvergenceEvidence{}, errors.New("committed platform identity changed during terminal convergence")
+	}
+	resolver, ok := adapter.Generations.(CurrentGenerationResolver)
+	if !ok {
+		return terminalConvergenceEvidence{}, errors.New("generation store cannot verify the current pointer")
+	}
+	current, err := resolver.ResolveGeneration("current")
+	if err != nil || current != *manifest.ActiveGeneration {
+		return terminalConvergenceEvidence{}, errors.New("current generation pointer differs from the committed manifest")
+	}
+	inspector, ok := adapter.Systemd.(SystemdInspector)
+	if !ok {
+		return terminalConvergenceEvidence{}, errors.New("systemd adapter cannot prove live process identity")
+	}
+	payload, err := adapter.Generations.GenerationPayloadPath(current.ID)
+	if err != nil {
+		return terminalConvergenceEvidence{}, err
+	}
+	signer, err := inspector.Inspect(ctx, adapter.Identity.Services["signer"])
+	if err != nil || !strings.Contains(signer.ExecStart, filepath.Join(payload, "bin", "fased-signerd")) {
+		return terminalConvergenceEvidence{}, errors.New("signer process does not execute the current generation")
+	}
+	evidence := terminalConvergenceEvidence{SchemaVersion: 1, Profile: manifest.Profile, TargetGenerationID: current.ID, ManifestDigest: manifestDigest, CurrentGenerationID: current.ID, PlatformDigest: platformDigest, GatewayDeferred: gatewayDeferred, SignerService: signer}
+	if gatewayDeferred {
+		return evidence, nil
+	}
+	gateway, err := inspector.Inspect(ctx, adapter.Identity.Services["gateway"])
+	if err != nil || !strings.Contains(gateway.ExecStart, filepath.Join(payload, "bin", "fased-gateway-launch")) {
+		return terminalConvergenceEvidence{}, errors.New("Gateway process does not execute the current generation")
+	}
+	readiness, err := adapter.Health.Verify(ctx, adapter.Config.GatewayPort, current)
+	if err != nil || readiness.PID != gateway.MainPID {
+		return terminalConvergenceEvidence{}, errors.New("Gateway readiness process differs from systemd MainPID")
+	}
+	plugin, err := adapter.Plugins.Verify(ctx, current)
+	if err != nil || !validDigest(plugin.Digest) {
+		return terminalConvergenceEvidence{}, errors.New("plugin readiness is not bound to the current generation")
+	}
+	evidence.Gateway = &readiness
+	evidence.GatewayService = &gateway
+	evidence.PluginReadiness = plugin.Digest
+	return evidence, nil
+}
+
+func canonicalConvergenceEvidence(evidence terminalConvergenceEvidence) ([]byte, string, error) {
+	data, err := json.Marshal(evidence)
+	if err != nil {
+		return nil, "", err
+	}
+	digest := sha256.Sum256(data)
+	return data, fmt.Sprintf("sha256:%x", digest), nil
+}
+
+func validDigest(value string) bool {
+	if len(value) != 71 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	_, err := hex.DecodeString(strings.TrimPrefix(value, "sha256:"))
+	return err == nil
+}
+
+func (adapter *TargetAdapter) Finalize(_ context.Context, tx model.Transaction) error {
 	return errors.Join(adapter.Units.Discard(tx.ID), adapter.Files.Discard(tx.ID), adapter.TypedState.Discard(tx.ID), adapter.Plugins.Discard(tx))
 }
 

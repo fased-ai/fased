@@ -1811,6 +1811,13 @@ EOF_MANAGED_MINING_LEDGER
       --skip-health
   }
 
+  run_installed_updater() {
+    runuser -u testop -- env "${managed_operator_env[@]}" \
+      npm_config_registry="http://127.0.0.1:$rpc_port" \
+      FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
+      "$state/bin/fased" update "${target_update_args[@]}" --timeout 120
+  }
+
   acceptance_start
   managed_current_link="/opt/fased/local/$instance/current"
   managed_initial_target="$(readlink -f "$managed_current_link")"
@@ -1833,7 +1840,7 @@ EOF_MANAGED_FAILED_GATEWAY
 ExecStartPre=+$managed_fault_script
 EOF_MANAGED_FAILED_GATEWAY_DROPIN
   systemctl daemon-reload
-  if run_target_installer \
+  if run_installed_updater \
       >/tmp/managed-update-failure.out 2>/tmp/managed-update-failure.err; then
     managed_failure_status=0
   else
@@ -1863,7 +1870,7 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
     exit 1
   fi
 
-  run_target_installer \
+  run_installed_updater \
     >/tmp/managed-update-success.out 2>/tmp/managed-update-success.err
   cat /tmp/managed-update-failure.err /tmp/managed-update-success.out \
     >/tmp/managed-rollback-retry.evidence
@@ -1898,10 +1905,7 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
   verify_managed_state_manifest
   verify_managed_semantic_state
   acceptance_mark state-preservation "$managed_state_manifest"
-  runuser -u testop -- env "${managed_operator_env[@]}" \
-    npm_config_registry="http://127.0.0.1:$rpc_port" \
-    FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
-    "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
+  run_installed_updater \
     >/tmp/managed-update-noop.out 2>/tmp/managed-update-noop.err
   grep -F "Already current: $version" /tmp/managed-update-noop.out >/dev/null
   run_target_installer \

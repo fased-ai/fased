@@ -74,6 +74,7 @@ function findManagedRuntimeRoot(entrypoint: string | undefined): string | null {
 
 export type GatewayGenerationReceipt = Readonly<{
   schemaVersion: 1;
+  generationId: string;
   version: string;
   releaseCommit: string;
   manifestDigest: string;
@@ -87,6 +88,7 @@ export type GatewayGenerationReceipt = Readonly<{
 export function resolveGatewayGenerationReceipt(
   runtimeEntrypoint = process.argv[1],
   architecture: NodeJS.Architecture = process.arch,
+  env: RuntimeVersionEnv = process.env as RuntimeVersionEnv,
 ): GatewayGenerationReceipt | null {
   try {
     const runtimeRoot = findManagedRuntimeRoot(runtimeEntrypoint);
@@ -134,6 +136,7 @@ export function resolveGatewayGenerationReceipt(
     const applicationSha256 = stringValue(application?.artifact?.sha256);
     const dependencySha256 = stringValue(application?.dependencies?.sha256);
     const updaterBundleDigest = stringValue(updater.bundleDigest);
+    const generationId = stringValue(env.FASED_GENERATION_ID);
     if (
       runtime.schemaVersion !== 2 ||
       manifest.schemaVersion !== 2 ||
@@ -151,12 +154,14 @@ export function resolveGatewayGenerationReceipt(
       updater.architecture !== architecture ||
       updater.release?.version !== version ||
       updater.release?.commit !== releaseCommit ||
-      !/^sha256:[a-f0-9]{64}$/u.test(updaterBundleDigest)
+      !/^sha256:[a-f0-9]{64}$/u.test(updaterBundleDigest) ||
+      !/^sha256:[a-f0-9]{64}$/u.test(generationId)
     ) {
       return null;
     }
     return Object.freeze({
       schemaVersion: 1,
+      generationId,
       version,
       releaseCommit,
       manifestDigest: sha256(manifestBytes),
@@ -195,6 +200,10 @@ export function buildGatewayReadinessPayload(
     failing: readiness.failing,
     uptimeMs: readiness.uptimeMs,
     startedAt: options.startedAt ?? PROCESS_STARTED_AT,
-    generation: resolveGatewayGenerationReceipt(options.runtimeEntrypoint, options.architecture),
+    generation: resolveGatewayGenerationReceipt(
+      options.runtimeEntrypoint,
+      options.architecture,
+      env,
+    ),
   });
 }

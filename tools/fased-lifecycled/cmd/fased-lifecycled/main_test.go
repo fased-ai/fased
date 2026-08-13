@@ -16,7 +16,7 @@ import (
 )
 
 func TestWriteConvergenceResponseEmitsBoundedFailureBeforeReturningError(t *testing.T) {
-	for _, outcome := range []string{"ROLLED_BACK", "RECOVERY_PENDING"} {
+	for _, outcome := range []string{"ROLLED_BACK", "RECOVERY_PENDING", "REPAIR_REQUIRED", "REJECT_UNKNOWN_NEWER", "REJECT_DOWNGRADE"} {
 		t.Run(outcome, func(t *testing.T) {
 			var output bytes.Buffer
 			response := protocol.Response{SchemaVersion: 1, RequestID: "11111111-1111-4111-8111-111111111111", Outcome: outcome, Detail: "injected failure"}

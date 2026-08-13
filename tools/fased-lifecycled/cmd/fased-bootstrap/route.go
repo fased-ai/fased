@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -18,6 +19,7 @@ import (
 
 	"fased-lifecycled/model"
 	"fased-lifecycled/platform"
+	"fased-lifecycled/protocol"
 	"fased-lifecycled/trust"
 )
 
@@ -97,17 +99,20 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	if err != nil {
 		return err
 	}
-	outcome, err := invokeLifecycleHost(ctx, request, operator, result, output)
+	convergence, err := invokeLifecycleHost(ctx, request, operator, result, output)
 	if err != nil {
 		return err
 	}
+	outcome := convergence.Outcome
 	if shouldRunOnboarding(request, outcome, ownerConfigExisted) {
-		if err := runOnboarding(ctx, request, operator, result); err != nil {
+		convergence, err = runOnboarding(ctx, request, operator, result)
+		if err != nil {
 			return err
 		}
+		outcome = convergence.Outcome
 	}
 	if request.JSON {
-		_, err = fmt.Fprintf(output, "{\"status\":%q,\"version\":%q,\"releaseSequence\":%d,\"securityEpoch\":%d}\n", outcome, result.Version, result.ReleaseSequence, result.SecurityEpoch)
+		_, err = fmt.Fprintf(output, "{\"status\":%q,\"version\":%q,\"releaseSequence\":%d,\"securityEpoch\":%d,\"activeGenerationId\":%q,\"convergenceReceiptDigest\":%q}\n", outcome, result.Version, result.ReleaseSequence, result.SecurityEpoch, convergence.ActiveGenerationID, convergence.ConvergenceReceiptDigest)
 	} else if outcome == "ALREADY_CURRENT" {
 		_, err = fmt.Fprintf(output, "Already current: %s\n", result.Version)
 	} else {
@@ -308,7 +313,7 @@ func resolveOperator(name string, profile model.Profile) (publicOperator, error)
 	return publicOperator{Name: name, Home: record.HomeDir, UID: uint32(uid), GID: uint32(gid)}, nil
 }
 
-func invokeLifecycleHost(ctx context.Context, request publicLifecycleRequest, operator publicOperator, result bootstrapResult, output io.Writer) (string, error) {
+func invokeLifecycleHost(ctx context.Context, request publicLifecycleRequest, operator publicOperator, result bootstrapResult, output io.Writer) (protocol.Response, error) {
 	args := []string{"initialize", "--profile", string(request.Profile), "--operator-user", operator.Name,
 		"--owner-state", filepath.Join(operator.Home, ".fased"), "--gateway-port", strconv.Itoa(int(request.GatewayPort)),
 		"--generation-archive", result.ApplicationPath, "--dependency-archive", result.DependencyPath,
@@ -319,37 +324,31 @@ func invokeLifecycleHost(ctx context.Context, request publicLifecycleRequest, op
 	data, err := command.Output()
 	if err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("lifecycle transaction failed: %s", tail(exit.Stderr, 4096))
+			return protocol.Response{}, fmt.Errorf("lifecycle transaction failed: %s", tail(exit.Stderr, 4096))
 		}
-		return "", err
+		return protocol.Response{}, err
 	}
 	if len(data) > 64*1024 {
-		return "", errors.New("lifecycle transaction response exceeded its bound")
+		return protocol.Response{}, errors.New("lifecycle transaction response exceeded its bound")
 	}
 	if request.Verbose {
 		_, _ = output.Write(data)
 	}
-	var response struct {
-		Outcome string `json:"outcome"`
-	}
-	if err := json.Unmarshal(data, &response); err != nil || response.Outcome == "" {
-		return "", errors.New("lifecycle transaction returned an invalid response")
-	}
-	return response.Outcome, nil
+	return decodeTerminalLifecycleResponse(data)
 }
 
-func runOnboarding(ctx context.Context, request publicLifecycleRequest, operator publicOperator, result bootstrapResult) error {
+func runOnboarding(ctx context.Context, request publicLifecycleRequest, operator publicOperator, result bootstrapResult) (protocol.Response, error) {
 	configPath, err := installedConfigPath(request.Profile, operator)
 	if err != nil {
-		return err
+		return protocol.Response{}, err
 	}
 	configData, err := os.ReadFile(configPath)
 	if err != nil {
-		return err
+		return protocol.Response{}, err
 	}
 	config, err := platform.DecodeConfig(configData)
 	if err != nil {
-		return err
+		return protocol.Response{}, err
 	}
 	launcher := filepath.Join(operator.Home, ".fased", "bin", "fased")
 	args := onboardingCommandArgs(request, operator, config, launcher)
@@ -366,17 +365,17 @@ func runOnboarding(ctx context.Context, request publicLifecycleRequest, operator
 	if !nonInteractive {
 		tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 		if err != nil {
-			return errors.New("onboarding requires a terminal or --non-interactive arguments")
+			return protocol.Response{}, errors.New("onboarding requires a terminal or --non-interactive arguments")
 		}
 		defer tty.Close()
 		command.Stdin = tty
 	}
 	if err := command.Run(); err != nil {
-		return fmt.Errorf("onboarding failed: %w", err)
+		return protocol.Response{}, fmt.Errorf("onboarding failed: %w", err)
 	}
 	requestID, err := publicRequestID()
 	if err != nil {
-		return err
+		return protocol.Response{}, err
 	}
 	complete := exec.CommandContext(ctx, result.HostPath, "request", "--socket", config.SupervisorSocket(), "--operation", "COMPLETE_ONBOARDING", "--request-id", requestID)
 	data, err := complete.CombinedOutput()
@@ -384,9 +383,34 @@ func runOnboarding(ctx context.Context, request publicLifecycleRequest, operator
 		_, _ = os.Stdout.Write([]byte(tail(data, 64*1024) + "\n"))
 	}
 	if err != nil {
-		return fmt.Errorf("onboarding commit failed: %s", tail(data, 4096))
+		return protocol.Response{}, fmt.Errorf("onboarding commit failed: %s", tail(data, 4096))
 	}
-	return nil
+	return decodeTerminalLifecycleResponse(data)
+}
+
+func decodeTerminalLifecycleResponse(data []byte) (protocol.Response, error) {
+	if len(data) == 0 || len(data) > 64*1024 {
+		return protocol.Response{}, errors.New("lifecycle transaction response is empty or oversized")
+	}
+	var response protocol.Response
+	if err := json.Unmarshal(data, &response); err != nil || response.SchemaVersion != protocol.CurrentSchemaVersion {
+		return protocol.Response{}, errors.New("lifecycle transaction returned an invalid response")
+	}
+	if response.Outcome != "UPDATED" && response.Outcome != "ALREADY_CURRENT" {
+		return protocol.Response{}, fmt.Errorf("lifecycle transaction did not converge: %s", response.Outcome)
+	}
+	if !digestID(response.ActiveGenerationID) || !digestID(response.ConvergenceReceiptDigest) {
+		return protocol.Response{}, errors.New("lifecycle transaction response lacks generation-bound convergence proof")
+	}
+	return response, nil
+}
+
+func digestID(value string) bool {
+	if len(value) != 71 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	_, err := hex.DecodeString(strings.TrimPrefix(value, "sha256:"))
+	return err == nil
 }
 
 func onboardingCommandArgs(request publicLifecycleRequest, operator publicOperator, config platform.Config, launcher string) []string {

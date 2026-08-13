@@ -268,7 +268,7 @@
     "test:install:smoke": "bash scripts/test-install-sh-docker.sh",
     "test:lifecycle-root": "go -C tools/fased-lifecycled test ./...",
     "test:live": "FASED_LIVE_TEST=1 vitest run --config vitest.live.config.ts",
-    "test:local-source-update-compat": "vitest run src/cli/update-cli.test.ts -t 'verified Go lifecycle' --pool=forks --maxWorkers=1",
+    "test:local-source-update-compat": "vitest run src/cli/update-cli.test.ts -t 'Go-managed' --pool=forks --maxWorkers=1",
     "test:loopback": "FASED_TEST_LOOPBACK=1 vitest run --config vitest.loopback.config.ts",
     "test:macmini": "FASED_TEST_VM_FORKS=0 FASED_TEST_PROFILE=serial node scripts/test-parallel.mjs",
     "test:managed-updater": "vitest run scripts/fased-managed-updater-fixed-client.test.ts scripts/managed-updater-bundle.test.ts scripts/migrate-hosted-signer-v2.test.ts src/infra/managed-runtime-bootstrap.test.ts src/daemon/program-args.managed.test.ts --pool=forks --maxWorkers=1",

@@ -159,6 +159,23 @@ func TestBootstrapRejectsObsoleteDelegationSelector(t *testing.T) {
 	}
 }
 
+func TestPublicBootstrapRequiresTerminalGenerationAndConvergenceDigests(t *testing.T) {
+	valid := []byte(`{"schemaVersion":1,"requestId":"018f47d2-5a6b-7c8d-9e0f-123456789abc","outcome":"UPDATED","activeGenerationId":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","convergenceReceiptDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}`)
+	if _, err := decodeTerminalLifecycleResponse(valid); err != nil {
+		t.Fatalf("valid terminal lifecycle response was rejected: %v", err)
+	}
+	for name, candidate := range map[string][]byte{
+		"failure-outcome": []byte(strings.Replace(string(valid), `"UPDATED"`, `"REPAIR_REQUIRED"`, 1)),
+		"missing-receipt": []byte(strings.Replace(string(valid), `"convergenceReceiptDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"`, `"convergenceReceiptDigest":""`, 1)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := decodeTerminalLifecycleResponse(candidate); err == nil {
+				t.Fatal("non-terminal lifecycle response was accepted")
+			}
+		})
+	}
+}
+
 func TestPublicLifecycleRoutesInstallAndUpdateWithoutCallerTrustSelectors(t *testing.T) {
 	t.Setenv("SUDO_USER", "owner")
 	install, err := parsePublicLifecycleRequest("install", []string{"--profile", "protected-local", "--channel", "beta", "--version", "0.1.76-rc.74", "--operator-user", "owner", "--no-onboard"})
