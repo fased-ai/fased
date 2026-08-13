@@ -15,6 +15,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const rootDir = path.resolve(import.meta.dirname, "..");
+const tsxLoader = import.meta.resolve("tsx");
 
 type PackageJson = {
   name?: string;
@@ -417,7 +418,7 @@ async function main(): Promise<void> {
       process.execPath,
       [
         "--import",
-        "tsx",
+        tsxLoader,
         path.join(rootDir, "scripts", "compile-hosted-core-plugins.ts"),
         "--root",
         packageRoot,
