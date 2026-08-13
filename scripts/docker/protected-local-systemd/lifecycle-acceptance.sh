@@ -1411,10 +1411,17 @@ if [[ "$phase" == "managed-update" ]]; then
     FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port"
     npm_config_registry="http://127.0.0.1:$rpc_port"
   )
-  user_systemctl daemon-reload
-  while IFS= read -r predecessor_service; do
-    user_systemctl enable --now "$predecessor_service"
-  done < <(jq -er '.services[]' "$predecessor_capsule_descriptor")
+  if [[ "$predecessor_class" == "canonical-managed" ]]; then
+    systemctl daemon-reload
+    while IFS= read -r predecessor_service; do
+      systemctl enable --now "$predecessor_service"
+    done < <(jq -er '.services[]' "$predecessor_capsule_descriptor")
+  else
+    user_systemctl daemon-reload
+    while IFS= read -r predecessor_service; do
+      user_systemctl enable --now "$predecessor_service"
+    done < <(jq -er '.services[]' "$predecessor_capsule_descriptor")
+  fi
   run_mount_has_option noexec
 
   predecessor_profile="$(jq -er .profile "$state/install.json")"

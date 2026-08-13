@@ -33,6 +33,9 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(fixture).not.toContain('metadata.startsWith("beta/assets/")');
     expect(fixture).toContain('grep -F "fased-lifecycled: ROLLED_BACK:"');
     expect(fixture).not.toContain("target release failed and was rolled back");
+    expect(fixture).toContain('if [[ "$predecessor_class" == "canonical-managed" ]]');
+    expect(fixture).toContain('systemctl enable --now "$predecessor_service"');
+    expect(fixture).toContain('user_systemctl enable --now "$predecessor_service"');
   });
 
   it("binds candidate P1 to an explicit supported public predecessor", async () => {
