@@ -65,6 +65,8 @@ node -e '
   if (inventory.dependency.archiveSHA256 !== `sha256:${"d".repeat(64)}`) process.exit(1);
   if (!inventory.dependency.asset.endsWith(".tar.gz")) process.exit(1);
   if (inventory.stateSchemas.managedInstall !== 2 || inventory.stateSchemas.signer !== 2) process.exit(1);
+  const launcher = fs.readFileSync(path.join(root, "generation", "payload", "bin", "fased-gateway-launch"), "utf8");
+  if (!launcher.includes("exec \"$PAYLOAD/bin/node\" --disable-warning=ExperimentalWarning \"$PAYLOAD/runtime/fased.mjs\" gateway")) process.exit(1);
 ' "$FIXTURE"
 
 printf 'outside\n' >"$FIXTURE/outside"
