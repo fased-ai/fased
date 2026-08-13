@@ -120,26 +120,34 @@ PRE-CANDIDATE evidence. Bind each predecessor's profile, topology, canonical
 manifest schema, platform identity, state-schema digest, capability digest,
 active generation, and version. Version equality alone never establishes an
 installation-class match. Prove each distinct class locally against the branch
-artifact. Candidate P1 replays them in parallel against the same exact bytes.
+artifact unless its installed updater requires an authentic target-tag-bound
+attestation that cannot exist before tag allocation. In that case, pre-tag P1
+must close every executable route, record the exact deferred owner class and
+cryptographic boundary, and the trusted tagged workflow must block publication
+on that authentic transition. Candidate P1 replays every required class in
+parallel against the same exact bytes.
 A synthetic or sanitized predecessor is `SUPPORTING` unless its complete
 semantic installation class matches the required predecessor receipt. A
 candidate whose tagged source is followed by any product correction is
 permanently obsolete: never move its tag, rebuild it, publish replacement bytes
 under its version, or use it for owner acceptance.
 
-No tag may allocate a predicate for the first time. Before requesting tag
-authority, run the same Local and Hosting fixture entrypoints, mount topology,
+No tag may allocate an ordinary product predicate for the first time. Before
+requesting tag authority, run every Local and Hosting route whose trust inputs
+can exist pre-tag, using the same fixture entrypoints, mount topology,
 public-acquisition routes, candidate-shaped inventory, predecessor scenarios,
-and acceptance receipt verifier that trusted P1 will run. This pre-tag closure
-must execute on the protected Linux runner, not only as local text assertions.
-Production signatures and supported-architecture packaging may remain release
-operations; fixture wiring, artifact names, lifecycle behavior, and every P1
-acceptance predicate may not.
+and acceptance receipt verifier that trusted P1 will run. This closure must run
+on the protected Linux runner, not only as local text assertions. A legacy
+updater's authentic target-tag attestation is the sole identity-ordering
+exception: record it as deferred, create only the immutable tag needed to issue
+that proof, and require the exact canonical-managed transition before any
+publication approval. Never replace that proof with a fake verifier or
+synthetic bundle.
 
-If a tagged run exposes a fixture or inventory predicate that did not execute
-before the tag, freeze the release. Correct the workflow first and add that
-predicate to pre-tag closure. Do not allocate another tag until the corrected
-pre-tag run passes.
+If a tagged run exposes a fixture or inventory predicate that could have
+executed before the tag, freeze the release. Correct the workflow first and add
+that predicate to pre-tag closure. Do not allocate another tag until the
+corrected pre-tag run passes.
 
 An unpublished branch artifact built after a published tag is development
 evidence bound to its commit, tree, and artifact digest. Always call it a

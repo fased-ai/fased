@@ -52,6 +52,17 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(fixture).toContain('--home-dir "/var/lib/fased-local/$instance/signer"');
     expect(fixture).toContain('test -f "$state/bin/fased" && test ! -L "$state/bin/fased"');
     expect(fixture).toContain('chmod 0755 "$state/bin/fased"');
+    expect(wrapper).toContain(
+      'FIXTURE_PREINSTALLED_TOOLS_DIR="$FIXTURE_TOOLS_DIR/preinstalled-tools"',
+    );
+    expect(wrapper).toContain('GH_BIN="$(command -v gh || true)"');
+    expect(wrapper).toContain(
+      '-v "$FIXTURE_PREINSTALLED_TOOLS_DIR:/fixture-preinstalled-tools:ro,z"',
+    );
+    expect(fixture).toContain(
+      "install -m 0755 -o root -g root /fixture-preinstalled-tools/gh /usr/bin/gh",
+    );
+    expect(fixture).toContain('test "$(stat -c \'%U:%G:%a\' /usr/bin/gh)" = "root:root:755"');
     expect(hostingWrapper).toContain("lifecycle-d8-contract|lifecycle-version-neutral");
   });
 

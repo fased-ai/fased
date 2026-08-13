@@ -38,6 +38,7 @@ PREDECESSOR_CAPSULE_DIR="${FASED_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_DIR:-}"
 PREDECESSOR_CAPSULE_CACHE_DIR="${FASED_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_CACHE_DIR-$CACHE_HOME/fased/predecessor-capsules}"
 PARALLEL_SCENARIOS="${FASED_SYSTEMD_FIXTURE_PARALLEL_SCENARIOS:-1}"
 FIXTURE_TOOLS_DIR=""
+FIXTURE_PREINSTALLED_TOOLS_DIR=""
 FIXTURE_NODE_MODULES=""
 
 if [[ -z "$ARTIFACT_DIR" && "$BUILD_ONLY" == "0" && -n "$ARTIFACT_CACHE_DIR" ]]; then
@@ -613,6 +614,23 @@ else
 fi
 
 FIXTURE_TOOLS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-lifecycle-fixture-tools.XXXXXX")"
+FIXTURE_PREINSTALLED_TOOLS_DIR="$FIXTURE_TOOLS_DIR/preinstalled-tools"
+mkdir -p "$FIXTURE_PREINSTALLED_TOOLS_DIR"
+if [[ "$PREINSTALLED_TOOLS" == "1" ]]; then
+  GH_BIN="$(command -v gh || true)"
+  [[ "$GH_BIN" == /* && -f "$GH_BIN" && ! -L "$GH_BIN" && -x "$GH_BIN" ]] || {
+    echo "Preinstalled-tool lifecycle proof requires one regular GitHub CLI binary." >&2
+    exit 1
+  }
+  [[ "$(stat -Lc '%u' "$GH_BIN")" == "0" &&
+    "$((8#$(stat -Lc '%a' "$GH_BIN") & 8#022))" == "0" ]] || {
+    echo "Preinstalled-tool lifecycle proof requires a root-owned, non-writable GitHub CLI." >&2
+    exit 1
+  }
+  "$GH_BIN" attestation verify --help >/dev/null
+  cp --reflink=auto "$GH_BIN" "$FIXTURE_PREINSTALLED_TOOLS_DIR/gh"
+  chmod 0755 "$FIXTURE_PREINSTALLED_TOOLS_DIR/gh"
+fi
 FIXTURE_SOURCE_COMMIT="$COMMIT"
 if [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ||
   -f "$ARTIFACT_DIR/fased-candidate-fixture-overlay.json" ]]; then
@@ -681,6 +699,7 @@ run_fixture_scenario() {
     -e "FASED_FIXTURE_PREINSTALLED_TOOLS=$PREINSTALLED_TOOLS" \
     -e "FASED_FIXTURE_PUBLIC_ACQUISITION=$PUBLIC_ACQUISITION" \
     -v "$FIXTURE_TOOLS_DIR/scripts:/fixture-tools:ro,z" \
+    -v "$FIXTURE_PREINSTALLED_TOOLS_DIR:/fixture-preinstalled-tools:ro,z" \
     -v "$FIXTURE_NODE_MODULES:/fixture-node-modules:ro,z" \
     -v "$FIXTURE_TOOLS_DIR/scripts/docker/protected-local-systemd/lifecycle-acceptance.sh:/usr/local/bin/fased-protected-local-systemd-fixture:ro,z" \
     -v "$ARTIFACT_DIR:/artifacts:ro,z" \
