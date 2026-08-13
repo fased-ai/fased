@@ -166,5 +166,27 @@ describe("canonical managed predecessor capsule", () => {
     expect(
       capsule.entries.find((entry) => entry.path === "home/testop/.fased/bin/fased"),
     ).toMatchObject({ type: "file", mode: 0o755, owner: "operator" });
+    const transactionRoot = path.join(
+      restored,
+      "var/lib/fased-local/1122334455667788/lifecycle/transactions/8d34ccf0-a0d7-47b5-ab8a-3ef84321537a",
+    );
+    const [envelope, supervisor, target] = await Promise.all([
+      readFile(path.join(transactionRoot, "envelope.json"), "utf8").then(JSON.parse),
+      readFile(path.join(transactionRoot, "supervisor.json"), "utf8").then(JSON.parse),
+      readFile(path.join(transactionRoot, "target-controller.json"), "utf8").then(JSON.parse),
+    ]);
+    expect(supervisor).toEqual(target);
+    expect(supervisor).toMatchObject({
+      schemaVersion: 1,
+      transactionId: "8d34ccf0-a0d7-47b5-ab8a-3ef84321537a",
+      profile: "protected-local",
+      planAction: "UPDATE",
+      phase: "COMMITTED",
+      revision: 6,
+      target: { version: "0.1.76-rc.72" },
+      previous: { version: "0.1.76-rc.70" },
+    });
+    const { phase: _phase, revision: _revision, ...journalEnvelope } = supervisor;
+    expect(envelope).toEqual(journalEnvelope);
   });
 });

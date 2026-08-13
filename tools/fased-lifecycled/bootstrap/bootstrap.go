@@ -13,6 +13,14 @@ import (
 	"fased-lifecycled/store"
 )
 
+const bootstrapRollbackTimeout = 2 * time.Minute
+
+func withBootstrapRollbackContext(run func(context.Context) error) error {
+	ctx, cancel := context.WithTimeout(context.Background(), bootstrapRollbackTimeout)
+	defer cancel()
+	return run(ctx)
+}
+
 type PlatformBootstrapRequest struct {
 	TransactionID           string
 	Profile                 model.Profile
@@ -114,7 +122,9 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 		if configExists && existingConfig != config {
 			return nil, errors.Join(errors.New("existing platform configuration differs; explicit repair is required"), changes.Rollback(ctx))
 		}
-		return func() error { return changes.Rollback(ctx) }, nil
+		return func() error {
+			return withBootstrapRollbackContext(changes.Rollback)
+		}, nil
 	}})
 	steps = append(steps, platform.BootstrapStep{Phase: platform.BootstrapPhasePaths, Apply: func() (platform.BootstrapUndo, error) {
 		plan, err := platform.BootstrapPathPlan(config, principals)
@@ -159,7 +169,11 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 		if err := request.ACL.GrantTraversal(ctx, home, principals.Gateway.UID, snapshot); err != nil {
 			return nil, err
 		}
-		return func() error { return request.ACL.Restore(ctx, home, snapshot) }, nil
+		return func() error {
+			return withBootstrapRollbackContext(func(rollbackCtx context.Context) error {
+				return request.ACL.Restore(rollbackCtx, home, snapshot)
+			})
+		}, nil
 	}})
 	steps = append(steps, platform.BootstrapStep{Phase: platform.BootstrapPhaseDaemon, Apply: func() (platform.BootstrapUndo, error) {
 		replacement, err := platform.InstallFileTransactional(platform.StableLifecycleHostPath, request.StableDaemon, 0o755, 0, 0)
@@ -231,16 +245,18 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 			}
 		}
 		undo := func() error {
-			var failures []error
-			failures = append(failures, request.Systemd.Stop(ctx, unit))
-			if !wasEnabled {
-				failures = append(failures, request.Systemd.Disable(ctx, unit))
-			}
-			failures = append(failures, replacement.Rollback(), request.Systemd.DaemonReload(ctx))
-			if wasActive {
-				failures = append(failures, request.Systemd.Start(ctx, unit))
-			}
-			return errors.Join(failures...)
+			return withBootstrapRollbackContext(func(rollbackCtx context.Context) error {
+				var failures []error
+				failures = append(failures, request.Systemd.Stop(rollbackCtx, unit))
+				if !wasEnabled {
+					failures = append(failures, request.Systemd.Disable(rollbackCtx, unit))
+				}
+				failures = append(failures, replacement.Rollback(), request.Systemd.DaemonReload(rollbackCtx))
+				if wasActive {
+					failures = append(failures, request.Systemd.Start(rollbackCtx, unit))
+				}
+				return errors.Join(failures...)
+			})
 		}
 		return undo, nil
 	}})

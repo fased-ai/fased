@@ -169,6 +169,33 @@ function lifecycleProjection(config) {
   };
 }
 
+function terminalSchemaOneUpdate(generation, previous, inventory) {
+  const transactionId = "8d34ccf0-a0d7-47b5-ab8a-3ef84321537a";
+  const digest = (label) =>
+    `sha256:${createHash("sha256").update(`canonical-managed-predecessor:${label}`).digest("hex")}`;
+  const envelope = {
+    schemaVersion: 1,
+    transactionId,
+    profile: "protected-local",
+    planAction: "UPDATE",
+    target: generation,
+    targetStateSchemas: inventory.stateSchemas,
+    targetCapabilities: inventory.capabilities,
+    previous,
+    manifestDigest: digest("manifest"),
+    stateInventoryDigest: digest("state-inventory"),
+    migrationPlanDigest: digest("migration-plan"),
+    signerPlanDigest: digest("signer-plan"),
+    platformDigest: digest("platform"),
+    migrations: null,
+  };
+  return {
+    transactionId,
+    envelope,
+    journal: { ...envelope, phase: "COMMITTED", revision: 6 },
+  };
+}
+
 // This is the stable owner launcher emitted by the immutable rc.72 Go
 // lifecycle implementation. The predecessor capsule models that exact public
 // installation class; it must not depend on a checkout or on the target
@@ -362,6 +389,7 @@ export async function buildCanonicalManagedPredecessorCapsule(options) {
       stateSchemas: inventory.stateSchemas,
       capabilities: inventory.capabilities,
     };
+    const terminalUpdate = terminalSchemaOneUpdate(generation, previous, inventory);
     const entries = [];
     const roots = [
       ["opt/fased", 0o755, "root"],
@@ -374,6 +402,12 @@ export async function buildCanonicalManagedPredecessorCapsule(options) {
       [`var/lib/fased-local/${instance}`, 0o755, "root"],
       [`var/lib/fased-local/${instance}/controller`, 0o700, "root"],
       [`var/lib/fased-local/${instance}/lifecycle`, 0o700, "root"],
+      [`var/lib/fased-local/${instance}/lifecycle/transactions`, 0o700, "root"],
+      [
+        `var/lib/fased-local/${instance}/lifecycle/transactions/${terminalUpdate.transactionId}`,
+        0o700,
+        "root",
+      ],
       [`var/lib/fased-local/${instance}/signer`, 0o700, "root"],
       ["var/lib/fased-predecessor-input", 0o700, "root"],
       ["var/lib/fased-local-registry", 0o700, "root"],
@@ -418,6 +452,27 @@ export async function buildCanonicalManagedPredecessorCapsule(options) {
         source,
         `var/lib/fased-local/${instance}/lifecycle/installation-manifest.json`,
         `${JSON.stringify(manifest, null, 2)}\n`,
+        0o600,
+        "root",
+      ),
+      await write(
+        source,
+        `var/lib/fased-local/${instance}/lifecycle/transactions/${terminalUpdate.transactionId}/envelope.json`,
+        `${JSON.stringify(terminalUpdate.envelope)}\n`,
+        0o600,
+        "root",
+      ),
+      await write(
+        source,
+        `var/lib/fased-local/${instance}/lifecycle/transactions/${terminalUpdate.transactionId}/supervisor.json`,
+        `${JSON.stringify(terminalUpdate.journal)}\n`,
+        0o600,
+        "root",
+      ),
+      await write(
+        source,
+        `var/lib/fased-local/${instance}/lifecycle/transactions/${terminalUpdate.transactionId}/target-controller.json`,
+        `${JSON.stringify(terminalUpdate.journal)}\n`,
         0o600,
         "root",
       ),

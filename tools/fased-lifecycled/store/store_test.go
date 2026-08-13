@@ -391,6 +391,78 @@ func TestAuthorityJournalsShareOneImmutableEnvelope(t *testing.T) {
 	}
 }
 
+func writeTerminalTransactionV1(t *testing.T, state *Store, transaction transactionV1) {
+	t.Helper()
+	dir := filepath.Join(state.stateRoot, "transactions", transaction.ID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string]any{
+		"supervisor.json":        transaction,
+		"target-controller.json": transaction,
+		"envelope.json":          transaction.envelope(),
+	} {
+		data, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func terminalTransactionV1Fixture() transactionV1 {
+	return transactionV1{
+		SchemaVersion: 1, ID: "8d34ccf0-a0d7-47b5-ab8a-3ef84321537a", Profile: model.ProfileProtectedLocal,
+		PlanAction: "UPDATE", Phase: model.PhaseCommitted, Revision: 6,
+		Target: generation(digestB, "0.1.76-rc.72", commitB), Previous: ptrGeneration(generation(digestA, "0.1.76-rc.70", commitA)),
+		TargetStateSchemas: map[string]uint32{"signer": 2}, TargetCapabilities: model.CapabilityRanges{
+			Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1},
+			Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 2, Max: 2},
+		},
+		ManifestDigest: digestA, StateInventoryDigest: digestA, MigrationPlanDigest: digestA,
+		SignerPlanDigest: digestA, PlatformDigest: digestA, Migrations: []model.Migration{},
+	}
+}
+
+func ptrGeneration(generation model.Generation) *model.Generation { return &generation }
+
+func TestPendingSupervisorTransactionSkipsOnlyValidatedTerminalSchemaOneSets(t *testing.T) {
+	state, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := terminalTransactionV1Fixture()
+	writeTerminalTransactionV1(t, state, legacy)
+	if _, err := state.PendingSupervisorTransaction(); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("validated committed schema-one receipt blocked startup: %v", err)
+	}
+
+	legacy.Phase = model.PhasePrepared
+	writeTerminalTransactionV1(t, state, legacy)
+	if _, err := state.PendingSupervisorTransaction(); err == nil || !strings.Contains(err.Error(), "unfinished") {
+		t.Fatalf("unfinished schema-one transaction was skipped: %v", err)
+	}
+
+	legacy.Phase = model.PhaseCommitted
+	writeTerminalTransactionV1(t, state, legacy)
+	envelopePath := filepath.Join(state.stateRoot, "transactions", legacy.ID, "envelope.json")
+	var envelope transactionEnvelopeV1
+	data, err := os.ReadFile(envelopePath)
+	if err != nil || json.Unmarshal(data, &envelope) != nil {
+		t.Fatal(err)
+	}
+	envelope.PlatformDigest = digestB
+	data, _ = json.Marshal(envelope)
+	if err := os.WriteFile(envelopePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.PendingSupervisorTransaction(); err == nil || !strings.Contains(err.Error(), "differ") {
+		t.Fatalf("tampered schema-one envelope was skipped: %v", err)
+	}
+}
+
 func TestAuthorityJournalsRejectPublicPredecessorVersionRebinding(t *testing.T) {
 	state, err := Open(t.TempDir())
 	if err != nil {

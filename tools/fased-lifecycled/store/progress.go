@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -163,6 +164,13 @@ func (s *Store) PendingSupervisorTransaction() (model.Transaction, error) {
 		if !entry.IsDir() {
 			return model.Transaction{}, errors.New("transaction root contains a non-directory entry")
 		}
+		terminalLegacy, err := s.terminalLegacyTransactionSet(entry.Name())
+		if err != nil {
+			return model.Transaction{}, err
+		}
+		if terminalLegacy {
+			continue
+		}
 		tx, err := s.ReadJournal(AuthoritySupervisor, entry.Name())
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -183,6 +191,161 @@ func (s *Store) PendingSupervisorTransaction() (model.Transaction, error) {
 		return model.Transaction{}, os.ErrNotExist
 	}
 	return *pending, nil
+}
+
+// transactionV1 is the complete immutable schema written by the pre-release-
+// authority lifecycle engine. It is accepted only as a terminal historical
+// receipt: schema-one transactions are never resumed or used to select a new
+// target.
+type transactionV1 struct {
+	SchemaVersion            uint32                 `json:"schemaVersion"`
+	ID                       string                 `json:"transactionId"`
+	Profile                  model.Profile          `json:"profile"`
+	PlanAction               string                 `json:"planAction"`
+	SourceTopology           string                 `json:"sourceTopology,omitempty"`
+	PublicPredecessorVersion string                 `json:"publicPredecessorVersion,omitempty"`
+	Phase                    model.Phase            `json:"phase"`
+	Revision                 uint64                 `json:"revision"`
+	Target                   model.Generation       `json:"target"`
+	TargetStateSchemas       map[string]uint32      `json:"targetStateSchemas"`
+	TargetCapabilities       model.CapabilityRanges `json:"targetCapabilities"`
+	Previous                 *model.Generation      `json:"previous,omitempty"`
+	ManifestDigest           string                 `json:"manifestDigest"`
+	StateInventoryDigest     string                 `json:"stateInventoryDigest"`
+	MigrationPlanDigest      string                 `json:"migrationPlanDigest"`
+	SignerPlanDigest         string                 `json:"signerPlanDigest"`
+	PlatformDigest           string                 `json:"platformDigest"`
+	Migrations               []model.Migration      `json:"migrations"`
+}
+
+type transactionEnvelopeV1 struct {
+	SchemaVersion            uint32                 `json:"schemaVersion"`
+	ID                       string                 `json:"transactionId"`
+	Profile                  model.Profile          `json:"profile"`
+	PlanAction               string                 `json:"planAction"`
+	SourceTopology           string                 `json:"sourceTopology,omitempty"`
+	PublicPredecessorVersion string                 `json:"publicPredecessorVersion,omitempty"`
+	Target                   model.Generation       `json:"target"`
+	TargetStateSchemas       map[string]uint32      `json:"targetStateSchemas"`
+	TargetCapabilities       model.CapabilityRanges `json:"targetCapabilities"`
+	Previous                 *model.Generation      `json:"previous,omitempty"`
+	ManifestDigest           string                 `json:"manifestDigest"`
+	StateInventoryDigest     string                 `json:"stateInventoryDigest"`
+	MigrationPlanDigest      string                 `json:"migrationPlanDigest"`
+	SignerPlanDigest         string                 `json:"signerPlanDigest"`
+	PlatformDigest           string                 `json:"platformDigest"`
+	Migrations               []model.Migration      `json:"migrations"`
+}
+
+func (transaction transactionV1) envelope() transactionEnvelopeV1 {
+	return transactionEnvelopeV1{
+		SchemaVersion: transaction.SchemaVersion, ID: transaction.ID, Profile: transaction.Profile,
+		PlanAction: transaction.PlanAction, SourceTopology: transaction.SourceTopology,
+		PublicPredecessorVersion: transaction.PublicPredecessorVersion,
+		Target:                   transaction.Target, TargetStateSchemas: transaction.TargetStateSchemas,
+		TargetCapabilities: transaction.TargetCapabilities, Previous: transaction.Previous,
+		ManifestDigest: transaction.ManifestDigest, StateInventoryDigest: transaction.StateInventoryDigest,
+		MigrationPlanDigest: transaction.MigrationPlanDigest, SignerPlanDigest: transaction.SignerPlanDigest,
+		PlatformDigest: transaction.PlatformDigest, Migrations: transaction.Migrations,
+	}
+}
+
+func decodeStrictV1(data []byte, destination any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("unexpected trailing schema-one transaction JSON")
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Store) terminalLegacyTransactionSet(transactionID string) (bool, error) {
+	dir := filepath.Join(s.stateRoot, "transactions", transactionID)
+	supervisorData, err := readRegular(filepath.Join(dir, string(AuthoritySupervisor)+".json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var header struct {
+		SchemaVersion uint32 `json:"schemaVersion"`
+	}
+	if err := json.Unmarshal(supervisorData, &header); err != nil || header.SchemaVersion != 1 {
+		return false, nil
+	}
+	var supervisor transactionV1
+	if err := decodeStrictV1(supervisorData, &supervisor); err != nil {
+		return false, fmt.Errorf("schema-one supervisor journal is invalid: %w", err)
+	}
+	targetData, err := readRegular(filepath.Join(dir, string(AuthorityTargetController)+".json"))
+	if err != nil {
+		return false, fmt.Errorf("schema-one target journal is unavailable: %w", err)
+	}
+	var target transactionV1
+	if err := decodeStrictV1(targetData, &target); err != nil {
+		return false, fmt.Errorf("schema-one target journal is invalid: %w", err)
+	}
+	envelopeData, err := readRegular(filepath.Join(dir, "envelope.json"))
+	if err != nil {
+		return false, fmt.Errorf("schema-one transaction envelope is unavailable: %w", err)
+	}
+	var envelope transactionEnvelopeV1
+	if err := decodeStrictV1(envelopeData, &envelope); err != nil {
+		return false, fmt.Errorf("schema-one transaction envelope is invalid: %w", err)
+	}
+	if err := validateTerminalTransactionV1(transactionID, supervisor); err != nil {
+		return false, err
+	}
+	if err := validateTerminalTransactionV1(transactionID, target); err != nil {
+		return false, err
+	}
+	if supervisor.Phase != target.Phase || !reflect.DeepEqual(supervisor.envelope(), target.envelope()) || !reflect.DeepEqual(supervisor.envelope(), envelope) {
+		return false, errors.New("schema-one terminal transaction authorities or envelope differ")
+	}
+	return true, nil
+}
+
+func validateTerminalTransactionV1(transactionID string, transaction transactionV1) error {
+	if transaction.SchemaVersion != 1 || transaction.ID != transactionID || transaction.Revision == 0 ||
+		(transaction.Phase != model.PhaseCommitted && transaction.Phase != model.PhaseRolledBack) {
+		return errors.New("schema-one transaction is unfinished or has an invalid identity")
+	}
+	if transaction.Profile != model.ProfileProtectedLocal && transaction.Profile != model.ProfileHosting {
+		return errors.New("schema-one transaction profile is invalid")
+	}
+	if transaction.PlanAction != "INSTALL" && transaction.PlanAction != "BRIDGE_PUBLIC_STABLE" && transaction.PlanAction != "UPDATE" {
+		return errors.New("schema-one transaction action is invalid")
+	}
+	if err := transaction.Target.Validate(); err != nil {
+		return fmt.Errorf("schema-one target: %w", err)
+	}
+	if transaction.Previous != nil {
+		if err := transaction.Previous.Validate(); err != nil || transaction.Previous.ID == transaction.Target.ID {
+			return errors.New("schema-one previous generation is invalid")
+		}
+	}
+	if len(transaction.TargetStateSchemas) == 0 || transaction.TargetCapabilities.Validate() != nil {
+		return errors.New("schema-one target state or capability inventory is invalid")
+	}
+	for name, version := range transaction.TargetStateSchemas {
+		if name == "" || version == 0 {
+			return errors.New("schema-one target state inventory is invalid")
+		}
+	}
+	for _, digest := range []string{transaction.ManifestDigest, transaction.StateInventoryDigest, transaction.MigrationPlanDigest, transaction.SignerPlanDigest, transaction.PlatformDigest} {
+		if !validSHA256Digest(digest) {
+			return errors.New("schema-one transaction digest is invalid")
+		}
+	}
+	return nil
 }
 
 func validateProgressRecord(record ProgressRecord, transaction model.Transaction) error {
