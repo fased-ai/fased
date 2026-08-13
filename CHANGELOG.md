@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.82
+
+- Restore the trusted system GitHub CLI in canonical-managed Local acceptance
+  fixtures so legacy installed updaters execute their real attestation check.
+- Defer only target-tag-bound owner proof to the trusted tagged build while
+  retaining that authentic transition as a hard publication dependency.
+
 ## 0.1.76-rc.81
 
 - Require managed Local and Hosting updates to converge on the terminal
