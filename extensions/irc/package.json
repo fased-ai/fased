@@ -1,6 +1,6 @@
 {
   "name": "@fased/irc",
-  "version": "0.1.76-rc.78",
+  "version": "0.1.76-rc.79",
   "description": "FasedAgent IRC channel plugin",
   "type": "module",
   "fased": {
