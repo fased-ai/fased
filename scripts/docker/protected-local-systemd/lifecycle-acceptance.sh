@@ -197,6 +197,11 @@ materialize_canonical_managed_predecessor() {
   find "$state" -xdev -type d -exec chmod 2770 {} +
   find "$state" -xdev -type f -exec chown testop:"fscf-$instance" {} +
   find "$state" -xdev -type f -exec chmod 0660 {} +
+  # The owner launcher is the sole executable in the user-state capsule. Keep
+  # the broad writable-state normalization above, then restore this explicitly
+  # inventoried rc.72 code file to its attested executable mode.
+  test -f "$state/bin/fased" && test ! -L "$state/bin/fased"
+  chmod 0755 "$state/bin/fased"
   install -d -m 0700 -o "$signer_uid" -g "$signer_gid" \
     "/var/lib/fased-local/$instance/signer"
   install -d -m 0710 -o root -g "$signer_gid" "/var/lib/fased-local/$instance/controller"

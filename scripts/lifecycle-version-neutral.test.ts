@@ -41,6 +41,8 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(fixture).toContain(
       '"../../dependencies/$dependency_hash-$dependency_digest/node_modules"',
     );
+    expect(fixture).toContain('test -f "$state/bin/fased" && test ! -L "$state/bin/fased"');
+    expect(fixture).toContain('chmod 0755 "$state/bin/fased"');
   });
 
   it("binds candidate P1 to an explicit supported public predecessor", async () => {
