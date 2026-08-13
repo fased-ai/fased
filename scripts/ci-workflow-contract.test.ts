@@ -743,6 +743,7 @@ describe("CI workflow routing", () => {
     expect(commands).toContain("schemaVersion:3");
     expect(commands).toContain("releaseSequence");
     expect(commands).toContain("securityEpoch");
+    expect(commands).toContain("node scripts/verify-lifecycle-root-pin.mjs");
     expect(
       validate?.steps?.find((step) => usesAction(step, "actions/upload-artifact"))?.with?.name,
     ).toBe("fased-pre-candidate-evidence");
@@ -787,6 +788,7 @@ describe("CI workflow routing", () => {
     ]);
     expect(allText).toContain('test "$GITHUB_REF" = "refs/heads/main"');
     expect(allText).toContain("node scripts/ci-version-identity.mjs");
+    expect(allText).toContain("node scripts/verify-lifecycle-root-pin.mjs");
     expect(allText).toContain('! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$RELEASE_VERSION"');
     expect(candidateBuild?.env).toMatchObject({
       FASED_LIFECYCLE_RELEASE_SEQUENCE: "${{ needs.preflight.outputs.release_sequence }}",

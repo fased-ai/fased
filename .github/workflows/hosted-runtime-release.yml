@@ -569,8 +569,7 @@ jobs:
             --output .artifacts/hosted-runtime/fased-lifecycle-release-compatibility-v1.json
 
           root_policy=release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json
-          expected_root_sha256="$(cat release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.sha256)"
-          test "$(sha256sum "$root_policy" | awk '{print $1}')" = "$expected_root_sha256"
+          node scripts/verify-lifecycle-root-pin.mjs --root "$root_policy"
           install -m 0644 \
             "$root_policy" \
             .artifacts/hosted-runtime/fased-lifecycle-root-v1.json

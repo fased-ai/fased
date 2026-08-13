@@ -88,6 +88,9 @@ jobs:
           ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$NEXT_RELEASE_VERSION" >/dev/null 2>&1
           ! gh release view "v$NEXT_RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1
 
+      - name: Verify immutable lifecycle root pin
+        run: node scripts/verify-lifecycle-root-pin.mjs
+
       - name: Install exact frozen dependencies
         run: pnpm install --frozen-lockfile
 
