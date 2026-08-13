@@ -386,6 +386,7 @@ jobs:
             --arg releaseVersion "$RELEASE_VERSION" \
             --arg predecessorVersion "$PREDECESSOR_VERSION" \
             --arg ownerPredecessorVersion "$OWNER_PREDECESSOR_VERSION" \
+            --arg ownerPredecessorInstallationClass "canonical-managed" \
             --arg preCandidateRunId "$PRE_CANDIDATE_RUN_ID" \
             --arg workflowRunId "$GITHUB_RUN_ID" \
             --arg candidateDescriptorSha256 "$DESCRIPTOR_SHA256" \
