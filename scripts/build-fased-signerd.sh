@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${ROOT}/dist-native"
 BIN="${OUT_DIR}/fased-signerd"
 GO_BIN="${FASED_GO_BIN:-}"
-MIN_GO_VERSION="1.25.12"
+MIN_GO_VERSION="1.25.13"
 GOTMPDIR_DEFAULT="${HOME:-$ROOT}/.cache/fased/go-tmp"
 GOCACHE_DEFAULT="${HOME:-$ROOT}/.cache/fased/go-build-cache"
 
