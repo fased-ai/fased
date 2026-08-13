@@ -554,6 +554,7 @@ describe("CI workflow routing", () => {
       "fased-signerd-release",
     ]);
     expect(candidateStepNames).toContain("Setup Node.js");
+    expect(candidateStepNames).toContain("Setup Go");
     expect(candidateStepNames).toContain("Setup pnpm + cache store");
     expect(candidateStepNames).toContain("Install exact frozen dependencies");
     expect(candidateStepNames.indexOf("Install exact frozen dependencies")).toBeLessThan(
@@ -561,6 +562,17 @@ describe("CI workflow routing", () => {
     );
     expect(candidateText).toContain("pnpm install --frozen-lockfile");
     expect(candidateText).toContain("release-artifact-set.mjs build");
+    expect(candidateText).toContain("build-lifecycle-release-index.mjs");
+    expect(candidateText).toContain("fased-lifecycle-root-v1.json");
+    expect(candidateText).toContain("fased-release-index-v1.json");
+    expect(candidateText).toContain("fased-release-index-v1.json.attestation.json");
+    expect(candidateText.indexOf("build-lifecycle-release-index.mjs")).toBeLessThan(
+      candidateText.indexOf("release-artifact-set.mjs build"),
+    );
+    expect(
+      candidate?.steps?.find((step) => step.name === "Attest production lifecycle release index")
+        ?.with?.["subject-path"],
+    ).toBe(".artifacts/hosted-runtime/fased-release-index-v1.json");
     expect(preflightText).not.toContain("pnpm build");
     expect(buildText).toContain("pnpm build");
     expect(preflightText).toContain('test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"');
@@ -706,6 +718,8 @@ describe("CI workflow routing", () => {
     expect(workflow.on).not.toHaveProperty("pull_request");
     expect(workflow.on).toHaveProperty("workflow_dispatch");
     expect(workflow.on.workflow_dispatch.inputs.owner_predecessor_version.required).toBe(true);
+    expect(workflow.on.workflow_dispatch.inputs.release_sequence.required).toBe(true);
+    expect(workflow.on.workflow_dispatch.inputs.security_epoch.required).toBe(true);
     expect(validate?.["timeout-minutes"]).toBeLessThanOrEqual(5);
     expect(commands).toContain("pnpm install --frozen-lockfile");
     expect(commands).toContain("actions/workflows/main.yml/runs?head_sha=$SOURCE_COMMIT");
@@ -726,7 +740,9 @@ describe("CI workflow routing", () => {
     expect(commands).toContain("--verify-public-github");
     expect(commands).toContain("lockfileDigest");
     expect(commands).toContain("ownerPredecessorVersion");
-    expect(commands).toContain("schemaVersion:2");
+    expect(commands).toContain("schemaVersion:3");
+    expect(commands).toContain("releaseSequence");
+    expect(commands).toContain("securityEpoch");
     expect(
       validate?.steps?.find((step) => usesAction(step, "actions/upload-artifact"))?.with?.name,
     ).toBe("fased-pre-candidate-evidence");
@@ -773,6 +789,8 @@ describe("CI workflow routing", () => {
     expect(allText).toContain("node scripts/ci-version-identity.mjs");
     expect(allText).toContain('! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$RELEASE_VERSION"');
     expect(candidateBuild?.env).toMatchObject({
+      FASED_LIFECYCLE_RELEASE_SEQUENCE: "${{ needs.preflight.outputs.release_sequence }}",
+      FASED_LIFECYCLE_SECURITY_EPOCH: "${{ needs.preflight.outputs.security_epoch }}",
       FASED_SYSTEMD_FIXTURE_BUILD_ONLY: "1",
     });
     expect(allText).toContain("scripts/prepare-candidate-fixture-trust.sh");

@@ -11,7 +11,10 @@ import (
 	"fased-lifecycled/model"
 )
 
-const maxReleaseIndexLifetime = 24 * time.Hour
+// Explicit immutable release assets must remain installable for the lifetime
+// of the root policy that authorizes their GitHub attestation. A short-lived
+// index would make an unchanged tagged installer fail after one day.
+const maxReleaseIndexLifetime = maxRootLifetime
 
 var (
 	digestPattern    = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)

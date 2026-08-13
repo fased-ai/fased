@@ -42,6 +42,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       predecessors: ${{ steps.identity.outputs.predecessors }}
+      release_sequence: ${{ steps.identity.outputs.release_sequence }}
+      security_epoch: ${{ steps.identity.outputs.security_epoch }}
     steps:
       - name: Checkout exact version-only source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -97,10 +99,12 @@ jobs:
             --arg ownerPredecessorVersion "$OWNER_PREDECESSOR_VERSION" \
             --arg predecessorVersion "$PREDECESSOR_VERSION" \
             --arg workflowRunId "$PRE_CANDIDATE_RUN_ID" \
-            '.schemaVersion == 2 and .sourceCommit == $sourceCommit and .sourceTree == $sourceTree and
+            '.schemaVersion == 3 and .sourceCommit == $sourceCommit and .sourceTree == $sourceTree and
              .lockfileDigest == $lockfileDigest and .nextReleaseVersion == $releaseVersion and
              .predecessorVersion == $predecessorVersion and
              .ownerPredecessorVersion == $ownerPredecessorVersion and
+             (.releaseSequence | type == "number" and . >= 1) and
+             (.securityEpoch | type == "number" and . >= 1) and
              .workflowRunId == $workflowRunId' "$evidence" >/dev/null
 
           main_runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/main.yml/runs?head_sha=$SOURCE_COMMIT&branch=main&event=push&status=success&per_page=20")"
@@ -112,6 +116,8 @@ jobs:
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$OWNER_PREDECESSOR_VERSION")"
           predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" --arg owner "$OWNER_PREDECESSOR_VERSION" '[$stable,$owner] | unique')"
           printf 'predecessors=%s\n' "$predecessors" >>"$GITHUB_OUTPUT"
+          printf 'release_sequence=%s\n' "$(jq -er .releaseSequence "$evidence")" >>"$GITHUB_OUTPUT"
+          printf 'security_epoch=%s\n' "$(jq -er .securityEpoch "$evidence")" >>"$GITHUB_OUTPUT"
 
   candidate:
     name: Build one unpublished Linux-x64 candidate-shaped artifact
@@ -143,11 +149,16 @@ jobs:
 
       - name: Build exact non-publishable x64 artifact once
         env:
+          FASED_LIFECYCLE_RELEASE_SEQUENCE: ${{ needs.preflight.outputs.release_sequence }}
+          FASED_LIFECYCLE_SECURITY_EPOCH: ${{ needs.preflight.outputs.security_epoch }}
           FASED_SYSTEMD_FIXTURE_BUILD_ONLY: "1"
           FASED_SYSTEMD_FIXTURE_OUTPUT_DIR: ${{ runner.temp }}/fased-pre-tag-candidate-raw
         run: bash scripts/test-lifecycle-local-acceptance.sh
 
       - name: Bind non-publishable fixture trust to the exact inventory
+        env:
+          FASED_LIFECYCLE_RELEASE_SEQUENCE: ${{ needs.preflight.outputs.release_sequence }}
+          FASED_LIFECYCLE_SECURITY_EPOCH: ${{ needs.preflight.outputs.security_epoch }}
         run: >-
           bash scripts/prepare-candidate-fixture-trust.sh
           "$RUNNER_TEMP/fased-pre-tag-candidate-raw"
@@ -355,6 +366,8 @@ jobs:
           PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
           RELEASE_VERSION: ${{ inputs.release_version }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
+          RELEASE_SEQUENCE: ${{ needs.preflight.outputs.release_sequence }}
+          SECURITY_EPOCH: ${{ needs.preflight.outputs.security_epoch }}
         shell: bash
         run: |
           set -euo pipefail
@@ -368,9 +381,12 @@ jobs:
             --arg preCandidateRunId "$PRE_CANDIDATE_RUN_ID" \
             --arg workflowRunId "$GITHUB_RUN_ID" \
             --arg candidateDescriptorSha256 "$DESCRIPTOR_SHA256" \
-            '{schemaVersion:1,sourceCommit:$sourceCommit,sourceTree:$sourceTree,
+            --argjson releaseSequence "$RELEASE_SEQUENCE" \
+            --argjson securityEpoch "$SECURITY_EPOCH" \
+            '{schemaVersion:2,sourceCommit:$sourceCommit,sourceTree:$sourceTree,
               releaseVersion:$releaseVersion,predecessorVersion:$predecessorVersion,
               ownerPredecessorVersion:$ownerPredecessorVersion,
+              releaseSequence:$releaseSequence,securityEpoch:$securityEpoch,
               preCandidateRunId:$preCandidateRunId,workflowRunId:$workflowRunId,
               candidateDescriptorSha256:$candidateDescriptorSha256}' \
             >"$RUNNER_TEMP/pre-tag-evidence/evidence.json"

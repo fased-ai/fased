@@ -119,8 +119,12 @@ describe("attested Go lifecycle artifact layout", () => {
       expect(runner).toContain('"fased-lifecycle-root-v1.json"');
       expect(runner).toContain('"fased-release-index-v1.json"');
       expect(runner).toContain('"fased-release-index-v1.json.attestation.json"');
+      expect(runner).toContain("selectFixtureTrustAsset");
       expect(runner).not.toContain("/lifecycle/v1");
     }
+    expect(localRunner).toContain("fs.existsSync(path.join(releaseAssets, branchAsset))");
+    expect(hostingRunner).toContain("fs.existsSync(`/artifacts/${branchAsset}`)");
+    expect(hostingRunner).toContain(String.raw`-f "/artifacts/\$branch_asset"`);
     expect(candidateTrustOverlay).not.toContain("gh release");
     expect(candidateTrustOverlay).not.toContain("git tag");
     for (const fixture of [localFixture, hostingFixture]) {

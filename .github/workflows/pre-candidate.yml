@@ -19,6 +19,14 @@ on:
         description: Exact owner Local predecessor, or the stable predecessor when they are identical
         required: true
         type: string
+      release_sequence:
+        description: Next monotonic lifecycle release sequence
+        required: true
+        type: string
+      security_epoch:
+        description: Current lifecycle security epoch
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -62,6 +70,8 @@ jobs:
           NEXT_RELEASE_VERSION: ${{ inputs.next_release_version }}
           OWNER_PREDECESSOR_VERSION: ${{ inputs.owner_predecessor_version }}
           PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
+          RELEASE_SEQUENCE: ${{ inputs.release_sequence }}
+          SECURITY_EPOCH: ${{ inputs.security_epoch }}
         shell: bash
         run: |
           set -euo pipefail
@@ -70,6 +80,8 @@ jobs:
           [[ "$NEXT_RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]
           [[ "$OWNER_PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]
           [[ "$PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$RELEASE_SEQUENCE" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SECURITY_EPOCH" =~ ^[1-9][0-9]*$ ]]
           test "$NEXT_RELEASE_VERSION" != "$PREDECESSOR_VERSION"
           test "$NEXT_RELEASE_VERSION" != "$OWNER_PREDECESSOR_VERSION"
           test "$(node -p "require('./package.json').version")" != "$NEXT_RELEASE_VERSION"
@@ -130,6 +142,8 @@ jobs:
           NEXT_RELEASE_VERSION: ${{ inputs.next_release_version }}
           OWNER_PREDECESSOR_VERSION: ${{ inputs.owner_predecessor_version }}
           PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
+          RELEASE_SEQUENCE: ${{ inputs.release_sequence }}
+          SECURITY_EPOCH: ${{ inputs.security_epoch }}
         shell: bash
         run: |
           set -euo pipefail
@@ -144,7 +158,9 @@ jobs:
             --arg mainRunId "$MAIN_RUN_ID" \
             --arg mainChecksJobId "$MAIN_CHECKS_JOB_ID" \
             --arg workflowRunId "$GITHUB_RUN_ID" \
-            '{schemaVersion:2,sourceCommit:$sourceCommit,sourceTree:$sourceTree,lockfileDigest:$lockfileDigest,nextReleaseVersion:$nextReleaseVersion,predecessorVersion:$predecessorVersion,ownerPredecessorVersion:$ownerPredecessorVersion,mainRunId:$mainRunId,mainChecksJobId:$mainChecksJobId,workflowRunId:$workflowRunId}' \
+            --argjson releaseSequence "$RELEASE_SEQUENCE" \
+            --argjson securityEpoch "$SECURITY_EPOCH" \
+            '{schemaVersion:3,sourceCommit:$sourceCommit,sourceTree:$sourceTree,lockfileDigest:$lockfileDigest,nextReleaseVersion:$nextReleaseVersion,predecessorVersion:$predecessorVersion,ownerPredecessorVersion:$ownerPredecessorVersion,releaseSequence:$releaseSequence,securityEpoch:$securityEpoch,mainRunId:$mainRunId,mainChecksJobId:$mainChecksJobId,workflowRunId:$workflowRunId}' \
             >.artifacts/pre-candidate/evidence.json
 
       - name: Upload pre-candidate evidence
