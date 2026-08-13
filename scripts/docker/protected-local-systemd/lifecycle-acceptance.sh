@@ -162,10 +162,12 @@ materialize_canonical_managed_predecessor() {
   dependency_root="/opt/fased/local/$instance/dependencies/$dependency_hash-$dependency_digest"
 
   groupadd --gid "$gateway_gid" "fsgw-$instance"
-  useradd --uid "$gateway_uid" --gid "$gateway_gid" --no-create-home --shell /usr/sbin/nologin \
+  useradd --uid "$gateway_uid" --gid "$gateway_gid" --no-create-home \
+    --home-dir "/var/lib/fased-local/$instance" --shell /usr/sbin/nologin \
     "fsgw-$instance"
   groupadd --gid "$signer_gid" "fssg-$instance"
-  useradd --uid "$signer_uid" --gid "$signer_gid" --no-create-home --shell /usr/sbin/nologin \
+  useradd --uid "$signer_uid" --gid "$signer_gid" --no-create-home \
+    --home-dir "/var/lib/fased-local/$instance/signer" --shell /usr/sbin/nologin \
     "fssg-$instance"
   groupadd "fsop-$instance"
   groupadd "fscf-$instance"
