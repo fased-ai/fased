@@ -4,6 +4,11 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.80
+
+- Retain the canonical schema-1 lifecycle upgrade and update the production
+  `nanoid` dependency to the patched 3.3.18 release.
+
 ## 0.1.76-rc.79
 
 - Upgrade supported canonical schema-1 installations through the ordinary
