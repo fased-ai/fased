@@ -5,11 +5,19 @@
   "evidencePolicy": {
     "enforcing": {
       "evidenceClass": "PASS",
+      "acquisitionEvidenceClass": "PASS",
       "acquisitionMode": "immutable-github-release",
       "transportSubstituted": false
     },
+    "branch": {
+      "evidenceClass": "PASS",
+      "acquisitionEvidenceClass": "SUPPORTING",
+      "acquisitionMode": "substituted-fixture",
+      "transportSubstituted": true
+    },
     "supporting": {
       "evidenceClass": "SUPPORTING",
+      "acquisitionEvidenceClass": "SUPPORTING",
       "acquisitionMode": "substituted-fixture",
       "transportSubstituted": true
     }

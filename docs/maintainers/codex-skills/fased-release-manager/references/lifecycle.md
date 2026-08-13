@@ -120,5 +120,8 @@ Containers support Hosting adapter evidence; only an authorized real VPS proves
 Hosting acceptance.
 
 Use the stable acceptance IDs in the canonical lifecycle architecture.
-Fixtures with a substituted endpoint or reconstructed release are
-`SUPPORTING`, never `PASS`.
+Fixtures with substituted transport never prove public acquisition. A D10
+branch receipt may mark its independently exercised product predicates `PASS`
+only when `public-installer-acquisition` remains explicitly `SUPPORTING` and
+the receipt binds both statuses. Such a mixed receipt cannot close PUBLIC0,
+owner Local, real Hosting, publication acquisition, or stable acceptance.

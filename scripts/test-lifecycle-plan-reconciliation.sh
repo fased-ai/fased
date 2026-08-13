@@ -43,9 +43,9 @@ require_text scripts/lifecycle-acceptance-contract.mjs \
 require_text scripts/lifecycle-acceptance-contract.mjs \
   'acquisitionMode: "immutable-github-release"'
 require_text scripts/docker/protected-local-systemd/lifecycle-acceptance.sh \
-  'acceptance_evidence_class=SUPPORTING'
+  'acceptance_acquisition_evidence_class=SUPPORTING'
 require_text scripts/docker/hosting-systemd/lifecycle-acceptance.sh \
-  'acceptance_evidence_class=SUPPORTING'
+  'acceptance_acquisition_evidence_class=SUPPORTING'
 require_text .github/workflows/pre-tag-p1.yml 'test-lifecycle-local-acceptance.sh'
 require_text .github/workflows/pre-tag-p1.yml 'test-lifecycle-hosting-acceptance.sh'
 require_text .github/workflows/hosted-runtime-release.yml \
