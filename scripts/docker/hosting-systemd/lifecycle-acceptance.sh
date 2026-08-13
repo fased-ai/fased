@@ -388,7 +388,7 @@ run_public_updater() {
   test -x /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap
   umask 077
   printf \
-    'app ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap update --profile hosting --channel %s --version %s --timeout 120\n' \
+    'app ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap update --profile hosting --channel %s --version %s\n' \
     "$target_channel" "$version" >"$sudoers_policy"
   chown root:root "$sudoers_policy"
   chmod 0440 "$sudoers_policy"
