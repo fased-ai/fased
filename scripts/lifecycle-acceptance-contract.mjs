@@ -267,6 +267,8 @@ export function buildAcceptanceReceipt({
   commit,
   candidateDescriptorDigest,
   predecessorCapsuleDigest = null,
+  predecessorInstallationClass = null,
+  predecessorInstallationClassDigest = null,
   evidenceClass = "PASS",
   acquisitionEvidenceClass = evidenceClass,
   acquisition,
@@ -287,8 +289,14 @@ export function buildAcceptanceReceipt({
     fail("candidate descriptor digest is invalid");
   }
   if (
-    (scenario === "managed-update" && !DIGEST_PATTERN.test(predecessorCapsuleDigest || "")) ||
-    (scenario === "fresh-install" && predecessorCapsuleDigest !== null)
+    (scenario === "managed-update" &&
+      (!DIGEST_PATTERN.test(predecessorCapsuleDigest || "") ||
+        !["public-stable", "canonical-managed"].includes(predecessorInstallationClass) ||
+        !DIGEST_PATTERN.test(predecessorInstallationClassDigest || ""))) ||
+    (scenario === "fresh-install" &&
+      (predecessorCapsuleDigest !== null ||
+        predecessorInstallationClass !== null ||
+        predecessorInstallationClassDigest !== null))
   ) {
     fail("predecessor capsule binding is invalid");
   }
@@ -304,7 +312,7 @@ export function buildAcceptanceReceipt({
   );
   validateEvidence(evidence, required, version, evidenceClass, acquisitionEvidenceClass);
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     role: "fased-lifecycle-acceptance-receipt",
     contractId: contract.contractId,
     contractDigest: digestAcceptanceContract(contract),
@@ -314,6 +322,8 @@ export function buildAcceptanceReceipt({
     commit,
     candidateDescriptorDigest,
     predecessorCapsuleDigest,
+    predecessorInstallationClass,
+    predecessorInstallationClassDigest,
     evidenceClass,
     acquisitionEvidenceClass,
     acquisition: { ...acquisition },
@@ -335,6 +345,8 @@ export function verifyAcceptanceReceipt({ contract, receipt, expected = {} }) {
       "commit",
       "candidateDescriptorDigest",
       "predecessorCapsuleDigest",
+      "predecessorInstallationClass",
+      "predecessorInstallationClassDigest",
       "evidenceClass",
       "acquisitionEvidenceClass",
       "acquisition",
@@ -397,6 +409,8 @@ function main() {
     commit: options.commit,
     candidateDescriptorDigest: options["candidate-descriptor-digest"],
     predecessorCapsuleDigest: options["predecessor-capsule-digest"] || null,
+    predecessorInstallationClass: options["predecessor-installation-class"] || null,
+    predecessorInstallationClassDigest: options["predecessor-installation-class-digest"] || null,
     evidenceClass: options["evidence-class"] || "PASS",
     acquisitionEvidenceClass:
       options["acquisition-evidence-class"] || options["evidence-class"] || "PASS",

@@ -3,6 +3,7 @@
 package model
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -96,6 +97,16 @@ type Manifest struct {
 	SecurityEpoch      uint64            `json:"securityEpoch"`
 }
 
+type manifestSchemaOne struct {
+	SchemaVersion      uint32            `json:"schemaVersion"`
+	Profile            Profile           `json:"profile"`
+	Platform           PlatformIdentity  `json:"platform"`
+	ActiveGeneration   *Generation       `json:"activeGeneration,omitempty"`
+	PreviousGeneration *Generation       `json:"previousGeneration,omitempty"`
+	StateSchemas       map[string]uint32 `json:"stateSchemas"`
+	Capabilities       CapabilityRanges  `json:"capabilities"`
+}
+
 type PlatformIdentity struct {
 	Adapter             string            `json:"adapter"`
 	InstanceID          string            `json:"instanceId"`
@@ -112,6 +123,12 @@ type Transaction struct {
 	PublicPredecessorVersion    string            `json:"publicPredecessorVersion,omitempty"`
 	ReleaseSequence             uint64            `json:"releaseSequence"`
 	SecurityEpoch               uint64            `json:"securityEpoch"`
+	ReleaseIndexDigest          string            `json:"releaseIndexDigest"`
+	ReleaseAuthorityDigest      string            `json:"releaseAuthorityDigest"`
+	TargetManifestProtocolMin   uint32            `json:"targetManifestProtocolMin"`
+	TargetManifestProtocolMax   uint32            `json:"targetManifestProtocolMax"`
+	PredecessorManifestSchema   uint32            `json:"predecessorManifestSchema,omitempty"`
+	PredecessorPlatform         *PlatformIdentity `json:"predecessorPlatform,omitempty"`
 	RollbackAuthorizationDigest string            `json:"rollbackAuthorizationDigest,omitempty"`
 	Phase                       Phase             `json:"phase"`
 	Revision                    uint64            `json:"revision"`
@@ -140,6 +157,12 @@ type TransactionEnvelope struct {
 	PublicPredecessorVersion    string            `json:"publicPredecessorVersion,omitempty"`
 	ReleaseSequence             uint64            `json:"releaseSequence"`
 	SecurityEpoch               uint64            `json:"securityEpoch"`
+	ReleaseIndexDigest          string            `json:"releaseIndexDigest"`
+	ReleaseAuthorityDigest      string            `json:"releaseAuthorityDigest"`
+	TargetManifestProtocolMin   uint32            `json:"targetManifestProtocolMin"`
+	TargetManifestProtocolMax   uint32            `json:"targetManifestProtocolMax"`
+	PredecessorManifestSchema   uint32            `json:"predecessorManifestSchema,omitempty"`
+	PredecessorPlatform         *PlatformIdentity `json:"predecessorPlatform,omitempty"`
 	RollbackAuthorizationDigest string            `json:"rollbackAuthorizationDigest,omitempty"`
 	Target                      Generation        `json:"target"`
 	TargetStateSchemas          map[string]uint32 `json:"targetStateSchemas"`
@@ -411,14 +434,42 @@ func (m Manifest) Validate() error {
 	if m.SchemaVersion != CurrentManifestSchemaVersion {
 		return fmt.Errorf("unsupported manifest schema %d", m.SchemaVersion)
 	}
+	if err := m.validateInstalledBase(); err != nil {
+		return err
+	}
+	if m.ReleaseSequence == 0 || m.SecurityEpoch == 0 {
+		return errors.New("manifest release sequence and security epoch must be nonzero")
+	}
+	return nil
+}
+
+// ValidateInstalled accepts every explicitly supported durable manifest
+// schema. Schema one predates monotonic release authority; that authority is
+// supplied only by the verified schema-two target and is never synthesized
+// into the predecessor record.
+func (m Manifest) ValidateInstalled() error {
+	switch m.SchemaVersion {
+	case 1:
+		if m.ReleaseSequence != 0 || m.SecurityEpoch != 0 {
+			return errors.New("manifest schema one cannot contain release authority")
+		}
+		return m.validateInstalledBase()
+	case CurrentManifestSchemaVersion:
+		return m.Validate()
+	default:
+		if m.SchemaVersion > CurrentManifestSchemaVersion {
+			return fmt.Errorf("manifest schema %d is newer than supported schema %d", m.SchemaVersion, CurrentManifestSchemaVersion)
+		}
+		return fmt.Errorf("unsupported manifest schema %d", m.SchemaVersion)
+	}
+}
+
+func (m Manifest) validateInstalledBase() error {
 	if err := validateProfile(m.Profile); err != nil {
 		return err
 	}
 	if err := m.Platform.Validate(m.Profile); err != nil {
 		return err
-	}
-	if m.ReleaseSequence == 0 || m.SecurityEpoch == 0 {
-		return errors.New("manifest release sequence and security epoch must be nonzero")
 	}
 	if m.ActiveGeneration == nil && m.PreviousGeneration != nil {
 		return errors.New("previous generation requires an active generation")
@@ -466,6 +517,13 @@ func (t Transaction) Validate() error {
 	if t.ReleaseSequence == 0 || t.SecurityEpoch == 0 {
 		return errors.New("transaction release sequence and security epoch must be nonzero")
 	}
+	if !digestPattern.MatchString(t.ReleaseIndexDigest) || !digestPattern.MatchString(t.ReleaseAuthorityDigest) {
+		return errors.New("transaction release authority binding is invalid")
+	}
+	if t.TargetManifestProtocolMin == 0 || t.TargetManifestProtocolMax < t.TargetManifestProtocolMin ||
+		CurrentManifestSchemaVersion < t.TargetManifestProtocolMin || CurrentManifestSchemaVersion > t.TargetManifestProtocolMax {
+		return errors.New("transaction target manifest protocol range is invalid")
+	}
 	switch t.PlanAction {
 	case "INSTALL", "UPDATE":
 		if t.SourceTopology != "" || t.PublicPredecessorVersion != "" {
@@ -491,16 +549,22 @@ func (t Transaction) Validate() error {
 	absent := "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	switch t.PlanAction {
 	case "INSTALL":
-		if t.Previous != nil || t.ManifestDigest != absent {
+		if t.Previous != nil || t.ManifestDigest != absent || t.PredecessorManifestSchema != 0 || t.PredecessorPlatform != nil {
 			return errors.New("fresh installation transaction has predecessor state")
 		}
 	case "BRIDGE_PUBLIC_STABLE":
-		if t.Previous != nil || t.ManifestDigest != absent {
+		if t.Previous != nil || t.ManifestDigest != absent || t.PredecessorManifestSchema != 0 || t.PredecessorPlatform != nil {
 			return errors.New("public-stable bridge has canonical predecessor state")
 		}
 	case "UPDATE", "ROLLBACK":
-		if t.Previous == nil || t.ManifestDigest == absent {
+		if t.Previous == nil || t.ManifestDigest == absent || t.PredecessorManifestSchema == 0 || t.PredecessorManifestSchema > CurrentManifestSchemaVersion || t.PredecessorPlatform == nil {
 			return errors.New("managed update is missing its canonical predecessor")
+		}
+		if err := t.PredecessorPlatform.Validate(t.Profile); err != nil {
+			return fmt.Errorf("managed predecessor platform: %w", err)
+		}
+		if t.PredecessorManifestSchema < t.TargetManifestProtocolMin || t.PredecessorManifestSchema > t.TargetManifestProtocolMax {
+			return errors.New("target lifecycle host does not support the predecessor manifest schema")
 		}
 	}
 	if !validPhase(t.Phase) {
@@ -567,7 +631,11 @@ func (t Transaction) Envelope() (TransactionEnvelope, error) {
 		SchemaVersion: t.SchemaVersion, ID: t.ID, Profile: t.Profile,
 		PlanAction: t.PlanAction, SourceTopology: t.SourceTopology, PublicPredecessorVersion: t.PublicPredecessorVersion,
 		ReleaseSequence: t.ReleaseSequence, SecurityEpoch: t.SecurityEpoch, RollbackAuthorizationDigest: t.RollbackAuthorizationDigest,
-		Target: t.Target, TargetStateSchemas: t.TargetStateSchemas,
+		ReleaseIndexDigest: t.ReleaseIndexDigest, ReleaseAuthorityDigest: t.ReleaseAuthorityDigest,
+		TargetManifestProtocolMin: t.TargetManifestProtocolMin, TargetManifestProtocolMax: t.TargetManifestProtocolMax,
+		PredecessorManifestSchema: t.PredecessorManifestSchema,
+		PredecessorPlatform:       t.PredecessorPlatform,
+		Target:                    t.Target, TargetStateSchemas: t.TargetStateSchemas,
 		TargetCapabilities: t.TargetCapabilities, Previous: t.Previous,
 		ManifestDigest: t.ManifestDigest, StateInventoryDigest: t.StateInventoryDigest,
 		MigrationPlanDigest: t.MigrationPlanDigest, SignerPlanDigest: t.SignerPlanDigest,
@@ -580,7 +648,11 @@ func (e TransactionEnvelope) Validate() error {
 		SchemaVersion: e.SchemaVersion, ID: e.ID, Profile: e.Profile,
 		PlanAction: e.PlanAction, SourceTopology: e.SourceTopology, PublicPredecessorVersion: e.PublicPredecessorVersion,
 		ReleaseSequence: e.ReleaseSequence, SecurityEpoch: e.SecurityEpoch, RollbackAuthorizationDigest: e.RollbackAuthorizationDigest,
-		Phase: PhaseIdle, Revision: 1, Target: e.Target,
+		ReleaseIndexDigest: e.ReleaseIndexDigest, ReleaseAuthorityDigest: e.ReleaseAuthorityDigest,
+		TargetManifestProtocolMin: e.TargetManifestProtocolMin, TargetManifestProtocolMax: e.TargetManifestProtocolMax,
+		PredecessorManifestSchema: e.PredecessorManifestSchema,
+		PredecessorPlatform:       e.PredecessorPlatform,
+		Phase:                     PhaseIdle, Revision: 1, Target: e.Target,
 		TargetStateSchemas: e.TargetStateSchemas, TargetCapabilities: e.TargetCapabilities,
 		Previous: e.Previous, ManifestDigest: e.ManifestDigest,
 		StateInventoryDigest: e.StateInventoryDigest, MigrationPlanDigest: e.MigrationPlanDigest,
@@ -664,6 +736,38 @@ func DecodeManifest(reader io.Reader) (Manifest, error) {
 		return Manifest{}, err
 	}
 	if err := manifest.Validate(); err != nil {
+		return Manifest{}, err
+	}
+	return manifest, nil
+}
+
+// DecodeInstalledManifest strictly decodes a durable predecessor without
+// rewriting it. Only the explicitly supported schema-one shape and the current
+// canonical schema are accepted.
+func DecodeInstalledManifest(reader io.Reader) (Manifest, error) {
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return Manifest{}, err
+	}
+	var header struct {
+		SchemaVersion uint32 `json:"schemaVersion"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return Manifest{}, err
+	}
+	if header.SchemaVersion != 1 {
+		return DecodeManifest(bytes.NewReader(data))
+	}
+	var legacy manifestSchemaOne
+	if err := decodeStrict(bytes.NewReader(data), &legacy); err != nil {
+		return Manifest{}, err
+	}
+	manifest := Manifest{
+		SchemaVersion: legacy.SchemaVersion, Profile: legacy.Profile, Platform: legacy.Platform,
+		ActiveGeneration: legacy.ActiveGeneration, PreviousGeneration: legacy.PreviousGeneration,
+		StateSchemas: legacy.StateSchemas, Capabilities: legacy.Capabilities,
+	}
+	if err := manifest.ValidateInstalled(); err != nil {
 		return Manifest{}, err
 	}
 	return manifest, nil

@@ -8,6 +8,7 @@ SCENARIOS="${FASED_HOSTING_SYSTEMD_FIXTURE_SCENARIOS:-fresh-install,managed-upda
 ARTIFACT_DIR="${FASED_HOSTING_SYSTEMD_FIXTURE_ARTIFACT_DIR:-}"
 RECEIPT_DIR="${FASED_HOSTING_SYSTEMD_FIXTURE_RECEIPT_DIR:-}"
 PREDECESSOR_VERSION="${FASED_HOSTING_SYSTEMD_FIXTURE_PREDECESSOR_VERSION:-0.1.75}"
+PREDECESSOR_CLASS="${FASED_HOSTING_SYSTEMD_FIXTURE_PREDECESSOR_CLASS:-public-stable}"
 PREDECESSOR_CAPSULE_DIR="${FASED_HOSTING_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_DIR:-}"
 CACHE_HOME="${XDG_CACHE_HOME:-${HOME:-${TMPDIR:-/tmp}}/.cache}"
 PREDECESSOR_CAPSULE_CACHE_DIR="${FASED_HOSTING_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_CACHE_DIR-$CACHE_HOME/fased/predecessor-capsules}"
@@ -83,9 +84,14 @@ while IFS=$'\t' read -r name expected_size expected_digest; do
 done < <(jq -er '.artifacts[] | [.name, (.size|tostring), .sha256] | @tsv' "$descriptor")
 
 if [[ ",$SCENARIOS," == *,managed-update,* ]]; then
+  [[ "$PREDECESSOR_CLASS" == "public-stable" || "$PREDECESSOR_CLASS" == "canonical-managed" ]] || {
+    echo "The Hosting update fixture requires an explicit supported predecessor class." >&2
+    exit 1
+  }
   if [[ -z "$PREDECESSOR_CAPSULE_DIR" && -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ]]; then
     PREDECESSOR_CAPSULE_DIR="$(bash "$ROOT_DIR/scripts/prepare-branch-predecessor-capsule.sh" \
-      hosting "$PREDECESSOR_VERSION" "$commit" "$tree" "$PREDECESSOR_CAPSULE_CACHE_DIR")"
+      hosting "$PREDECESSOR_VERSION" "$commit" "$tree" "$PREDECESSOR_CAPSULE_CACHE_DIR" \
+      "$PREDECESSOR_CLASS")"
   fi
   [[ "$PREDECESSOR_CAPSULE_DIR" == /* && -d "$PREDECESSOR_CAPSULE_DIR" ]] || {
     echo "The Hosting update fixture requires one absolute predecessor capsule directory." >&2
@@ -95,8 +101,9 @@ if [[ ",$SCENARIOS," == *,managed-update,* ]]; then
   predecessor_archive="$(jq -er .archive.name "$predecessor_descriptor")"
   node "$ROOT_DIR/scripts/lifecycle-installed-state-capsule.mjs" verify \
     --descriptor "$predecessor_descriptor" >/dev/null
-  jq -e --arg version "$PREDECESSOR_VERSION" \
-    '.profile == "hosting" and .release.version == $version' "$predecessor_descriptor" >/dev/null
+  jq -e --arg version "$PREDECESSOR_VERSION" --arg installationClass "$PREDECESSOR_CLASS" \
+    '.profile == "hosting" and .release.version == $version and
+     .installationClass.kind == $installationClass' "$predecessor_descriptor" >/dev/null
   if [[ -f "$PREDECESSOR_CAPSULE_DIR/fased-predecessor-branch-proof.json" ]]; then
     test -f "$ARTIFACT_DIR/fased-branch-proof-x64.json"
     predecessor_proof="$PREDECESSOR_CAPSULE_DIR/fased-predecessor-branch-proof.json"
@@ -208,6 +215,7 @@ run_scenario() {
     -e "FASED_FIXTURE_COMMIT=$commit" \
     -e "FASED_FIXTURE_TREE=$tree" \
     -e "FASED_FIXTURE_PREDECESSOR_VERSION=$predecessor" \
+    -e "FASED_FIXTURE_PREDECESSOR_CLASS=$PREDECESSOR_CLASS" \
     -v "$fixture_tools_dir/scripts:/fixture-tools:ro,Z" \
     -v "$fixture_node_modules:/fixture-node-modules:ro,Z" \
     -v "$fixture_node:/fixture-node:ro,Z" \
@@ -236,8 +244,11 @@ run_scenario() {
       "$name:/var/lib/fased-lifecycled/lifecycle-acceptance-${scenario}.json" \
       "$receipt"
     capsule_digest=""
+    installation_class_digest=""
     [[ "$scenario" != "managed-update" ]] || \
       capsule_digest="sha256:$(sha256sum "$PREDECESSOR_CAPSULE_DIR/fased-predecessor-capsule.json" | awk '{print $1}')"
+    [[ "$scenario" != "managed-update" ]] || \
+      installation_class_digest="$(jq -er .installationClassDigest "$PREDECESSOR_CAPSULE_DIR/fased-predecessor-capsule.json")"
     node "$ROOT_DIR/scripts/lifecycle-receipt-verifier.mjs" \
       --contract "$ARTIFACT_DIR/fased-lifecycle-acceptance-v2.json" \
       --receipt "$receipt" \
@@ -247,6 +258,8 @@ run_scenario() {
       --commit "$commit" \
       --candidate-descriptor-digest "sha256:$(sha256sum "$descriptor" | awk '{print $1}')" \
       --predecessor-capsule-digest "$capsule_digest" \
+      --predecessor-installation-class "$([[ "$scenario" == "managed-update" ]] && printf '%s' "$PREDECESSOR_CLASS" || true)" \
+      --predecessor-installation-class-digest "$installation_class_digest" \
       --evidence-class PASS \
       --acquisition-evidence-class SUPPORTING >/dev/null
   fi

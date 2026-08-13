@@ -211,16 +211,19 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 			return protocol.Response{}, errors.New("managed convergence does not accept a public-stable generation")
 		}
 		installation = planner.Installation{Kind: planner.InstallationManaged, Manifest: &installed}
-		if installed.Platform.IsLegacyControllerWorker(service.Profile) {
-			return protocol.Response{}, errors.New("legacy controller-worker topology is readable only through the explicit bridge path")
-		}
 		installedPlatformDigest, digestErr := installed.Platform.Digest(installed.Profile)
-		if digestErr != nil || installedPlatformDigest != platformDigest {
+		if installed.Platform.IsLegacyControllerWorker(service.Profile) {
+			if installed.SchemaVersion != 1 {
+				return protocol.Response{}, errors.New("legacy controller-worker topology is supported only by the declared schema-one upgrade")
+			}
+			expectedLegacy, legacyErr := model.LegacyControllerPlatformIdentity(service.Profile, service.Platform.InstanceID, service.Platform.ConfigurationDigest)
+			expectedLegacyDigest, expectedDigestErr := expectedLegacy.Digest(service.Profile)
+			if legacyErr != nil || expectedDigestErr != nil || digestErr != nil || installedPlatformDigest != expectedLegacyDigest {
+				return protocol.Response{}, errors.New("installed legacy platform identity requires explicit repair")
+			}
+		} else if digestErr != nil || installedPlatformDigest != platformDigest {
 			return protocol.Response{}, errors.New("installed platform identity requires explicit repair")
 		}
-	}
-	if installation.Kind == planner.InstallationManaged && installation.Manifest.ActiveGeneration != nil && installation.Manifest.ActiveGeneration.ID == request.TargetGenerationID {
-		return response(request, string(engine.OutcomeAlreadyCurrent), "", request.TargetGenerationID), nil
 	}
 	inventory, generation, err := service.Store.ReadCandidateContract(request.TargetGenerationID)
 	if err != nil {
@@ -237,6 +240,7 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 		Profile: service.Profile, Generation: generation,
 		StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities,
 		ReleaseSequence: authority.ReleaseSequence, SecurityEpoch: authority.SecurityEpoch,
+		ManifestMin: authority.ManifestMin, ManifestMax: authority.ManifestMax,
 	})
 	if err != nil {
 		return protocol.Response{}, err
@@ -282,11 +286,18 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 		Profile: service.Profile, PlanAction: string(plan.Action), SourceTopology: request.SourceTopology, PublicPredecessorVersion: request.PublicPredecessorVersion,
 		Phase: model.PhaseIdle, Revision: 1,
 		ReleaseSequence: authority.ReleaseSequence, SecurityEpoch: authority.SecurityEpoch,
+		ReleaseIndexDigest: authority.ReleaseIndex, ReleaseAuthorityDigest: authority.ReleaseAuthority,
+		TargetManifestProtocolMin: authority.ManifestMin, TargetManifestProtocolMax: authority.ManifestMax,
 		Target: generation, Previous: previous, ManifestDigest: manifestDigest,
 		TargetStateSchemas: inventory.StateSchemas, TargetCapabilities: inventory.Capabilities,
 		StateInventoryDigest: stateDigest, MigrationPlanDigest: plan.Digest,
 		SignerPlanDigest: signerPlanDigest,
 		PlatformDigest:   platformDigest,
+	}
+	if installation.Kind == planner.InstallationManaged {
+		tx.PredecessorManifestSchema = installation.Manifest.SchemaVersion
+		predecessorPlatform := installation.Manifest.Platform
+		tx.PredecessorPlatform = &predecessorPlatform
 	}
 	for _, migration := range plan.Migrations {
 		tx.Migrations = append(tx.Migrations, model.Migration{State: migration.State, From: migration.From, To: migration.To})

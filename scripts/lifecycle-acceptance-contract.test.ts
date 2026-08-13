@@ -126,6 +126,8 @@ describe("lifecycle acceptance contract", () => {
   ])("binds %s/%s evidence to exact bytes and capsule policy", (profile, scenario) => {
     const value = contract();
     const capsule = scenario === "managed-update" ? digest : null;
+    const installationClass = scenario === "managed-update" ? "public-stable" : null;
+    const installationClassDigest = scenario === "managed-update" ? digest : null;
     const receipt = buildAcceptanceReceipt({
       contract: value,
       profile,
@@ -134,6 +136,8 @@ describe("lifecycle acceptance contract", () => {
       commit: "a".repeat(40),
       candidateDescriptorDigest: digest,
       predecessorCapsuleDigest: capsule,
+      predecessorInstallationClass: installationClass,
+      predecessorInstallationClassDigest: installationClassDigest,
       acquisition: acquisition(),
       evidence: evidence(profile, scenario),
     });
@@ -141,7 +145,13 @@ describe("lifecycle acceptance contract", () => {
       verifyAcceptanceReceipt({
         contract: value,
         receipt,
-        expected: { profile, scenario, predecessorCapsuleDigest: capsule },
+        expected: {
+          profile,
+          scenario,
+          predecessorCapsuleDigest: capsule,
+          predecessorInstallationClass: installationClass,
+          predecessorInstallationClassDigest: installationClassDigest,
+        },
       }),
     ).toBe(receipt);
   });

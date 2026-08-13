@@ -33,6 +33,19 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(fixture).not.toContain('metadata.startsWith("beta/assets/")');
     expect(fixture).toContain('grep -F "fased-lifecycled: ROLLED_BACK:"');
     expect(fixture).not.toContain("target release failed and was rolled back");
+    expect(fixture).toContain('if [[ "$predecessor_class" == "canonical-managed" ]]');
+    expect(fixture).toContain('systemctl enable --now "$predecessor_service"');
+    expect(fixture).toContain('user_systemctl enable --now "$predecessor_service"');
+    expect(fixture).toContain('setfacl --no-mask --modify "user:$gateway_uid:--x"');
+    expect(fixture).toContain('usermod -a -G "fsgw-$instance,fsop-$instance" "fssg-$instance"');
+    expect(fixture).toContain(
+      '"../../dependencies/$dependency_hash-$dependency_digest/node_modules"',
+    );
+    expect(fixture).toContain('chmod 0644 "$generation_root/inventory.json"');
+    expect(fixture).toContain('--home-dir "/var/lib/fased-local/$instance"');
+    expect(fixture).toContain('--home-dir "/var/lib/fased-local/$instance/signer"');
+    expect(fixture).toContain('test -f "$state/bin/fased" && test ! -L "$state/bin/fased"');
+    expect(fixture).toContain('chmod 0755 "$state/bin/fased"');
   });
 
   it("binds candidate P1 to an explicit supported public predecessor", async () => {
@@ -61,10 +74,12 @@ describe("version-neutral lifecycle acceptance", () => {
     );
     expect(update?.env).toMatchObject({
       FASED_SYSTEMD_FIXTURE_SCENARIOS: "${{ steps.p1-scenario.outputs.scenarios }}",
-      FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "${{ matrix.predecessor }}",
+      FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "${{ matrix.predecessor.version }}",
+      FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_CLASS:
+        "${{ matrix.predecessor.installationClass }}",
     });
     expect(workflow.jobs?.["p1-local-update"]?.strategy?.matrix?.predecessor).toBe(
-      "${{ fromJSON(needs.preflight.outputs.p1_predecessors) }}",
+      "${{ fromJSON(needs.preflight.outputs.p1_local_predecessors) }}",
     );
     expect(fresh?.env).toMatchObject({
       FASED_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install",

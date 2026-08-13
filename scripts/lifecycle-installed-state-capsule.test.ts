@@ -8,12 +8,28 @@ import {
   buildInstalledStateCapsule,
   parseInstalledStateCapsule,
 } from "./lifecycle-installed-state-capsule.mjs";
+import { predecessorInstallationClassDigest } from "./predecessor-capsule.mjs";
 import { inspectCapsuleArchive } from "./restore-predecessor-capsule.mjs";
 
 const temporary: string[] = [];
 const digest = (bytes: string) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
 function descriptor(entryDigest: string) {
+  const installationClass = {
+    kind: "public-stable",
+    manifestSchema: null,
+    platform: null,
+    activeGeneration: null,
+    previousGeneration: null,
+    stateSchemas: {
+      federation: 1,
+      managedInstall: 2,
+      mining: 1,
+      signer: 1,
+      walletRegistry: 1,
+    },
+    capabilities: null,
+  };
   return {
     schemaVersion: 1,
     role: "fased-sanitized-predecessor-capsule",
@@ -38,6 +54,8 @@ function descriptor(entryDigest: string) {
       kind: "public-stable",
       capabilities: ["hosting-systemd", "external-signer"],
     },
+    installationClass,
+    installationClassDigest: predecessorInstallationClassDigest(installationClass),
     ownership: { rootUid: 0, rootGid: 0, operatorUid: 1000, operatorGid: 1000 },
     pointers: { current: `sha256:${"d".repeat(64)}`, previous: null },
     expectedReceiptDigest: `sha256:${"e".repeat(64)}`,
@@ -87,6 +105,7 @@ describe("sanitized installed-state capsules", () => {
         sourceReceipt: base.sourceReceipt,
         releaseIndex: base.releaseIndex,
         topology: base.topology,
+        installationClass: base.installationClass,
         ownership: {
           ...base.ownership,
           operatorUid: process.getuid?.() ?? 1000,
@@ -141,6 +160,7 @@ describe("sanitized installed-state capsules", () => {
         sourceReceipt: base.sourceReceipt,
         releaseIndex: base.releaseIndex,
         topology: base.topology,
+        installationClass: base.installationClass,
         ownership: base.ownership,
         pointers: base.pointers,
         expectedReceiptDigest: base.expectedReceiptDigest,
@@ -197,5 +217,15 @@ describe("sanitized installed-state capsules", () => {
     const archive = path.join(root, "capsule.tar");
     await tar.c({ cwd: root, file: archive }, [relative]);
     await expect(inspectCapsuleArchive(archive, capsule)).rejects.toThrow("digest mismatch");
+  });
+
+  it("rejects a public-stable capsule when a canonical managed predecessor is required", () => {
+    const capsule = descriptor(digest("expected"));
+    expect(() =>
+      parseInstalledStateCapsule(capsule, {
+        profile: "hosting",
+        installationClass: "canonical-managed",
+      }),
+    ).toThrow("identity, archive, or sanitization policy is invalid");
   });
 });

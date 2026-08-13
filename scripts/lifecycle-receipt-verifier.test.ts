@@ -25,6 +25,8 @@ describe("lifecycle receipt verifier", () => {
       commit: "b".repeat(40),
       candidateDescriptorDigest: sha,
       predecessorCapsuleDigest: sha,
+      predecessorInstallationClass: "public-stable",
+      predecessorInstallationClassDigest: sha,
       acquisition: {
         mode: "immutable-github-release",
         releaseBaseUrl,
@@ -43,6 +45,8 @@ describe("lifecycle receipt verifier", () => {
           scenario: "managed-update",
           candidateDescriptorDigest: sha,
           predecessorCapsuleDigest: sha,
+          predecessorInstallationClass: "public-stable",
+          predecessorInstallationClassDigest: sha,
         },
       }),
     ).toBe(receipt);
@@ -53,6 +57,15 @@ describe("lifecycle receipt verifier", () => {
         expected: { predecessorCapsuleDigest: `sha256:${"c".repeat(64)}` },
       }),
     ).toThrow("predecessorCapsuleDigest mismatch");
+    expect(() =>
+      verifyLifecycleReceipt({
+        contract,
+        receipt,
+        expected: {
+          predecessorInstallationClassDigest: `sha256:${"d".repeat(64)}`,
+        },
+      }),
+    ).toThrow("predecessorInstallationClassDigest mismatch");
   });
 
   it("rejects substituted supporting evidence at an enforcing publication boundary", () => {

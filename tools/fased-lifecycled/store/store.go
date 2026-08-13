@@ -167,11 +167,11 @@ func (s *Store) CommitManifest(manifest model.Manifest, expectedDigest string) (
 			return "", errors.New("manifest compare-and-swap expected an existing record")
 		}
 	} else {
-		if currentDigest != expectedDigest {
-			return "", fmt.Errorf("manifest compare-and-swap mismatch: have %s, expected %s", currentDigest, expectedDigest)
-		}
 		if currentDigest == nextDigest {
 			return nextDigest, nil
+		}
+		if currentDigest != expectedDigest {
+			return "", fmt.Errorf("manifest compare-and-swap mismatch: have %s, expected %s", currentDigest, expectedDigest)
 		}
 	}
 	if err := writeAtomic(path, data, 0o600); err != nil {
@@ -185,7 +185,7 @@ func (s *Store) ReadManifest() (model.Manifest, string, error) {
 	if err != nil {
 		return model.Manifest{}, "", err
 	}
-	manifest, err := model.DecodeManifest(bytes.NewReader(data))
+	manifest, err := model.DecodeInstalledManifest(bytes.NewReader(data))
 	if err != nil {
 		return model.Manifest{}, "", err
 	}
@@ -278,16 +278,20 @@ func (s *Store) ReadJournal(authority Authority, transactionID string) (model.Tr
 		return model.Transaction{}, err
 	}
 	probe := model.Transaction{
-		SchemaVersion:      model.CurrentTransactionSchemaVersion,
-		ID:                 transactionID,
-		Profile:            model.ProfileProtectedLocal,
-		PlanAction:         "INSTALL",
-		ReleaseSequence:    1,
-		SecurityEpoch:      1,
-		Phase:              model.PhaseIdle,
-		Revision:           1,
-		Target:             placeholderGeneration(),
-		TargetStateSchemas: map[string]uint32{"placeholder": 1},
+		SchemaVersion:             model.CurrentTransactionSchemaVersion,
+		ID:                        transactionID,
+		Profile:                   model.ProfileProtectedLocal,
+		PlanAction:                "INSTALL",
+		ReleaseSequence:           1,
+		SecurityEpoch:             1,
+		ReleaseIndexDigest:        "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		ReleaseAuthorityDigest:    "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		TargetManifestProtocolMin: 1,
+		TargetManifestProtocolMax: model.CurrentManifestSchemaVersion,
+		Phase:                     model.PhaseIdle,
+		Revision:                  1,
+		Target:                    placeholderGeneration(),
+		TargetStateSchemas:        map[string]uint32{"placeholder": 1},
 		TargetCapabilities: model.CapabilityRanges{
 			Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1},
 			Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 1, Max: 1},

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -9,9 +10,30 @@ const COMMIT_PATTERN = /^[a-f0-9]{40}$/u;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const GROUP_PATTERN = /^[a-z0-9][a-z0-9-]{0,127}$/u;
+const SCHEMA_NAME_PATTERN = /^[a-z][A-Za-z0-9]{0,127}$/u;
 const forbiddenPath =
   /(^|\/)(?:master\.key|seed(?:\.json)?|private[-_.]?key|credentials?|tokens?|audit\.jsonl|[^/]*(?:wallet|signer)[-_.]?(?:key|secret)[^/]*)$/iu;
 const MAX_ENTRIES = 256;
+
+function canonicalValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(canonicalValue);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .toSorted((left, right) => left.localeCompare(right))
+        .map((key) => [key, canonicalValue(value[key])]),
+    );
+  }
+  return value;
+}
+
+export function predecessorInstallationClassDigest(value) {
+  return `sha256:${createHash("sha256")
+    .update(JSON.stringify(canonicalValue(value)))
+    .digest("hex")}`;
+}
 
 function fail(message) {
   throw new Error(`predecessor capsule: ${message}`);
@@ -55,6 +77,8 @@ export function parsePredecessorCapsule(value, expected = {}) {
       "sourceReceipt",
       "releaseIndex",
       "topology",
+      "installationClass",
+      "installationClassDigest",
       "ownership",
       "pointers",
       "expectedReceiptDigest",
@@ -81,6 +105,19 @@ export function parsePredecessorCapsule(value, expected = {}) {
     exactKeys(value.releaseIndex, ["sequence", "securityEpoch", "sha256"], "release index");
   }
   exactKeys(value.topology, ["schemaVersion", "kind", "capabilities"], "topology");
+  exactKeys(
+    value.installationClass,
+    [
+      "kind",
+      "manifestSchema",
+      "platform",
+      "activeGeneration",
+      "previousGeneration",
+      "stateSchemas",
+      "capabilities",
+    ],
+    "installation class",
+  );
   exactKeys(value.ownership, ["rootUid", "rootGid", "operatorUid", "operatorGid"], "ownership");
   exactKeys(value.pointers, ["current", "previous"], "pointers");
   exactKeys(value.archive, ["name", "size", "sha256"], "archive");
@@ -90,6 +127,7 @@ export function parsePredecessorCapsule(value, expected = {}) {
     value.role !== "fased-sanitized-predecessor-capsule" ||
     !["protected-local", "hosting"].includes(value.profile) ||
     (expected.profile && value.profile !== expected.profile) ||
+    (expected.installationClass && value.installationClass?.kind !== expected.installationClass) ||
     !GROUP_PATTERN.test(value.compatibilityGroupId || "") ||
     !DIGEST_PATTERN.test(value.compatibilityDigest || "") ||
     !VERSION_PATTERN.test(value.release.version || "") ||
@@ -117,6 +155,8 @@ export function parsePredecessorCapsule(value, expected = {}) {
       (capability) => !GROUP_PATTERN.test(capability) || capability.length > 64,
     ) ||
     new Set(value.topology.capabilities).size !== value.topology.capabilities.length ||
+    !DIGEST_PATTERN.test(value.installationClassDigest || "") ||
+    value.installationClassDigest !== predecessorInstallationClassDigest(value.installationClass) ||
     value.ownership.rootUid !== 0 ||
     value.ownership.rootGid !== 0 ||
     !Number.isSafeInteger(value.ownership.operatorUid) ||
@@ -135,15 +175,20 @@ export function parsePredecessorCapsule(value, expected = {}) {
   ) {
     fail("identity, archive, or sanitization policy is invalid");
   }
+  validateInstallationClass(value.installationClass, value.profile, value.topology);
   const requiredServices =
-    value.profile === "hosting"
-      ? [
-          "fased-host-updater.service",
-          "fased-host-controller.service",
-          "fased-signerd.service",
-          "fased-gateway.service",
-        ]
-      : ["fased-gateway.service"];
+    value.installationClass.kind === "canonical-managed"
+      ? Object.keys(value.installationClass.platform.services)
+          .toSorted((left, right) => left.localeCompare(right))
+          .map((role) => value.installationClass.platform.services[role])
+      : value.profile === "hosting"
+        ? [
+            "fased-host-updater.service",
+            "fased-host-controller.service",
+            "fased-signerd.service",
+            "fased-gateway.service",
+          ]
+        : ["fased-gateway.service"];
   if (
     !Array.isArray(value.services) ||
     value.services.length !== requiredServices.length ||
@@ -208,6 +253,111 @@ export function parsePredecessorCapsule(value, expected = {}) {
     seen.add(entry.path);
   }
   return value;
+}
+
+function validateInstallationClass(value, profile, topology) {
+  const validSchemas = (schemas) =>
+    schemas &&
+    typeof schemas === "object" &&
+    !Array.isArray(schemas) &&
+    Object.keys(schemas).length > 0 &&
+    Object.entries(schemas).every(
+      ([name, version]) =>
+        SCHEMA_NAME_PATTERN.test(name) && Number.isSafeInteger(version) && version > 0,
+    );
+  if (!validSchemas(value.stateSchemas)) {
+    fail("installation class state schemas are invalid");
+  }
+  if (value.kind === "public-stable") {
+    if (
+      topology.kind !== "public-stable" ||
+      value.manifestSchema !== null ||
+      value.platform !== null ||
+      value.activeGeneration !== null ||
+      value.previousGeneration !== null ||
+      value.capabilities !== null
+    ) {
+      fail("public-stable installation class is invalid");
+    }
+    return;
+  }
+  if (value.kind !== "canonical-managed" || topology.kind !== "managed-generation") {
+    fail("managed installation class is invalid");
+  }
+  if (!Number.isSafeInteger(value.manifestSchema) || value.manifestSchema < 1) {
+    fail("managed manifest schema is invalid");
+  }
+  exactKeys(
+    value.platform,
+    ["adapter", "instanceId", "configurationDigest", "services"],
+    "installation platform",
+  );
+  const adapters =
+    profile === "hosting"
+      ? ["linux-systemd-hosting-v1", "linux-systemd-hosting-v2"]
+      : ["linux-systemd-local-v1", "linux-systemd-local-v2"];
+  const legacy = value.platform.adapter.endsWith("-v1");
+  const expectedRoles = legacy
+    ? ["controller", "gateway", "signer", "supervisor"]
+    : ["gateway", "signer", "supervisor"];
+  if (
+    !adapters.includes(value.platform.adapter) ||
+    !GROUP_PATTERN.test(value.platform.instanceId || "") ||
+    !DIGEST_PATTERN.test(value.platform.configurationDigest || "") ||
+    !value.platform.services ||
+    typeof value.platform.services !== "object" ||
+    Array.isArray(value.platform.services) ||
+    Object.keys(value.platform.services).toSorted().join(",") !== expectedRoles.join(",") ||
+    Object.values(value.platform.services).some(
+      (unit) =>
+        typeof unit !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}\.service$/u.test(unit),
+    )
+  ) {
+    fail("managed platform identity is invalid");
+  }
+  exactKeys(
+    value.activeGeneration,
+    ["id", "version", "commit", "tree", "artifactSetDigest"],
+    "active generation",
+  );
+  if (
+    !DIGEST_PATTERN.test(value.activeGeneration.id || "") ||
+    !VERSION_PATTERN.test(value.activeGeneration.version || "") ||
+    !COMMIT_PATTERN.test(value.activeGeneration.commit || "") ||
+    !COMMIT_PATTERN.test(value.activeGeneration.tree || "") ||
+    !DIGEST_PATTERN.test(value.activeGeneration.artifactSetDigest || "")
+  ) {
+    fail("managed active generation is invalid");
+  }
+  if (value.previousGeneration !== null) {
+    exactKeys(
+      value.previousGeneration,
+      ["id", "version", "commit", "tree", "artifactSetDigest"],
+      "previous generation",
+    );
+    if (
+      !DIGEST_PATTERN.test(value.previousGeneration.id || "") ||
+      !VERSION_PATTERN.test(value.previousGeneration.version || "") ||
+      !COMMIT_PATTERN.test(value.previousGeneration.commit || "") ||
+      !COMMIT_PATTERN.test(value.previousGeneration.tree || "") ||
+      !DIGEST_PATTERN.test(value.previousGeneration.artifactSetDigest || "") ||
+      value.previousGeneration.id === value.activeGeneration.id
+    ) {
+      fail("managed previous generation is invalid");
+    }
+  }
+  exactKeys(value.capabilities, ["supervisor", "controller", "migrator", "signer"], "capabilities");
+  for (const range of Object.values(value.capabilities)) {
+    exactKeys(range, ["min", "max"], "capability range");
+    if (
+      !Number.isSafeInteger(range.min) ||
+      !Number.isSafeInteger(range.max) ||
+      range.min < 1 ||
+      range.max < range.min
+    ) {
+      fail("capability range is invalid");
+    }
+  }
 }
 
 function main() {

@@ -314,6 +314,21 @@ export async function buildPublicPredecessorCapsule({
               ? ["hosting-systemd", "external-signer"]
               : ["local-systemd", "external-signer"],
         },
+        installationClass: {
+          kind: "public-stable",
+          manifestSchema: null,
+          platform: null,
+          activeGeneration: null,
+          previousGeneration: null,
+          stateSchemas: {
+            federation: 1,
+            managedInstall: 2,
+            mining: 1,
+            signer: 1,
+            walletRegistry: 1,
+          },
+          capabilities: null,
+        },
         ownership: { rootUid: 0, rootGid: 0, operatorUid, operatorGid },
         pointers: { current: pointerDigest, previous: null },
         expectedReceiptDigest: acceptanceDigest,

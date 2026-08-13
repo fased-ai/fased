@@ -6,6 +6,7 @@ set -euo pipefail
 version="${FASED_FIXTURE_VERSION:?}"
 commit="${FASED_FIXTURE_COMMIT:?}"
 predecessor_version="${FASED_FIXTURE_PREDECESSOR_VERSION:-}"
+predecessor_class="${FASED_FIXTURE_PREDECESSOR_CLASS:-public-stable}"
 target_channel=stable
 if [[ "$version" == *-* ]]; then
   target_channel=beta
@@ -262,8 +263,10 @@ acceptance_finish() {
   local evidence_json=/tmp/fased-hosting-acceptance.evidence.json
   local descriptor_digest="sha256:$(sha256sum "$acceptance_descriptor" | awk '{print $1}')"
   local capsule_digest=""
+  local installation_class_digest=""
   if [[ "$scenario" == "managed-update" ]]; then
     capsule_digest="sha256:$(sha256sum "$predecessor_capsule_descriptor" | awk '{print $1}')"
+    installation_class_digest="$(jq -er .installationClassDigest "$predecessor_capsule_descriptor")"
   fi
   jq -s . "$acceptance_evidence" >"$evidence_json"
   /fixture-node /fixture-tools/lifecycle-acceptance-contract.mjs issue-receipt \
@@ -274,6 +277,8 @@ acceptance_finish() {
     --commit "$commit" \
     --candidate-descriptor-digest "$descriptor_digest" \
     --predecessor-capsule-digest "$capsule_digest" \
+    --predecessor-installation-class "$([[ "$scenario" == "managed-update" ]] && printf '%s' "$predecessor_class" || true)" \
+    --predecessor-installation-class-digest "$installation_class_digest" \
     --evidence-class "$acceptance_evidence_class" \
     --acquisition-evidence-class "$acceptance_acquisition_evidence_class" \
     --acquisition-mode substituted-fixture \
@@ -292,6 +297,8 @@ acceptance_finish() {
     --commit "$commit" \
     --candidate-descriptor-digest "$descriptor_digest" \
     --predecessor-capsule-digest "$capsule_digest" \
+    --predecessor-installation-class "$([[ "$scenario" == "managed-update" ]] && printf '%s' "$predecessor_class" || true)" \
+    --predecessor-installation-class-digest "$installation_class_digest" \
     --evidence-class "$acceptance_evidence_class" \
     --acquisition-evidence-class "$acceptance_acquisition_evidence_class" >/dev/null
 }
@@ -438,8 +445,12 @@ restore_public_predecessor() {
     --authorization-marker "$predecessor_capsule_authorization" \
     --operator-uid 2000 \
     --operator-gid 2000 \
-    --profile hosting >/tmp/fased-hosting-predecessor-restore.out
+    --profile hosting \
+    --installation-class "$predecessor_class" \
+    >/tmp/fased-hosting-predecessor-restore.out
   rm -f "$predecessor_capsule_authorization"
+  test "$(jq -er .installationClass.kind "$predecessor_capsule_descriptor")" = \
+    "$predecessor_class"
   systemctl daemon-reload
   while IFS= read -r unit; do systemctl enable --now "$unit"; done \
     < <(jq -er '.services[]' "$predecessor_capsule_descriptor")

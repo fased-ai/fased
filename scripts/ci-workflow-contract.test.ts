@@ -667,18 +667,22 @@ describe("CI workflow routing", () => {
       p1Update?.steps?.find((step) => step.name === "Run packaged supported-stable update P1")?.env,
     ).toMatchObject({
       FASED_SYSTEMD_FIXTURE_SCENARIOS: "${{ steps.p1-scenario.outputs.scenarios }}",
-      FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "${{ matrix.predecessor }}",
+      FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "${{ matrix.predecessor.version }}",
+      FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_CLASS:
+        "${{ matrix.predecessor.installationClass }}",
       FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1",
     });
     expect(p1Update?.strategy).toMatchObject({
       "fail-fast": false,
-      matrix: { predecessor: "${{ fromJSON(needs.preflight.outputs.p1_predecessors) }}" },
+      matrix: {
+        predecessor: "${{ fromJSON(needs.preflight.outputs.p1_local_predecessors) }}",
+      },
     });
     expect(
       p1Update?.steps?.find((step) => step.name === "Derive exact predecessor topology")?.env,
     ).toMatchObject({ GH_TOKEN: "${{ github.token }}" });
     expect(preflightText).toContain("ownerPredecessorVersion");
-    expect(preflightText).toContain("[$stable,$owner] | unique");
+    expect(preflightText).toContain('installationClass:"canonical-managed"');
     expect(p1Update?.steps?.some((step) => usesAction(step, "actions/cache"))).toBe(true);
     expect(publishText).not.toContain("git tag");
     expect(publishText).not.toContain("git push origin");

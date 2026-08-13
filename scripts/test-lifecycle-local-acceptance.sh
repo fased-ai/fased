@@ -33,6 +33,7 @@ ARTIFACT_PROFILE="${FASED_SYSTEMD_FIXTURE_ARTIFACT_PROFILE:-branch-x64}"
 RECEIPT_DIR="${FASED_SYSTEMD_FIXTURE_RECEIPT_DIR:-}"
 OWN_RECEIPT_DIR=0
 MANAGED_PREDECESSOR_VERSION="${FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION:-}"
+MANAGED_PREDECESSOR_CLASS="${FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_CLASS:-public-stable}"
 PREDECESSOR_CAPSULE_DIR="${FASED_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_DIR:-}"
 PREDECESSOR_CAPSULE_CACHE_DIR="${FASED_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_CACHE_DIR-$CACHE_HOME/fased/predecessor-capsules}"
 PARALLEL_SCENARIOS="${FASED_SYSTEMD_FIXTURE_PARALLEL_SCENARIOS:-1}"
@@ -497,6 +498,11 @@ if [[ "$PUBLIC_ACQUISITION" == "1" ]]; then
   }
 fi
 if [[ ",$SCENARIOS," == *,managed-update,* ]]; then
+  [[ "$MANAGED_PREDECESSOR_CLASS" == "public-stable" ||
+    "$MANAGED_PREDECESSOR_CLASS" == "canonical-managed" ]] || {
+    echo "The managed-update fixture requires an explicit supported predecessor class." >&2
+    exit 1
+  }
   [[ "$MANAGED_PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || {
     echo "The managed-update fixture requires FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION." >&2
     exit 1
@@ -508,7 +514,7 @@ if [[ ",$SCENARIOS," == *,managed-update,* ]]; then
     }
     PREDECESSOR_CAPSULE_DIR="$(bash "$ROOT_DIR/scripts/prepare-branch-predecessor-capsule.sh" \
       protected-local "$MANAGED_PREDECESSOR_VERSION" "$COMMIT" "$TREE" \
-      "$PREDECESSOR_CAPSULE_CACHE_DIR")"
+      "$PREDECESSOR_CAPSULE_CACHE_DIR" "$MANAGED_PREDECESSOR_CLASS")"
   fi
   [[ "$PREDECESSOR_CAPSULE_DIR" == /* && -d "$PREDECESSOR_CAPSULE_DIR" ]] || {
     echo "The managed update fixture requires one absolute predecessor capsule directory." >&2
@@ -528,8 +534,9 @@ if [[ ",$SCENARIOS," == *,managed-update,* ]]; then
   }
   node "$ROOT_DIR/scripts/lifecycle-installed-state-capsule.mjs" verify \
     --descriptor "$capsule_descriptor" >/dev/null
-  jq -e --arg version "$MANAGED_PREDECESSOR_VERSION" \
-    '.profile == "protected-local" and .release.version == $version' \
+  jq -e --arg version "$MANAGED_PREDECESSOR_VERSION" --arg installationClass "$MANAGED_PREDECESSOR_CLASS" \
+    '.profile == "protected-local" and .release.version == $version and
+     .installationClass.kind == $installationClass' \
     "$capsule_descriptor" >/dev/null
   predecessor_branch_proof="$PREDECESSOR_CAPSULE_DIR/fased-predecessor-branch-proof.json"
   if [[ -f "$predecessor_branch_proof" ]]; then
@@ -615,7 +622,7 @@ if [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ||
   }
   unexpected_fixture_changes="$(
     git -C "$ROOT_DIR" diff --name-only "$COMMIT..HEAD" | \
-      grep -Ev '^(\.github/workflows/candidate-p1-replay\.yml|docs/maintainers/codex-skills/fased-release-manager/(SKILL\.md|references/release\.md)|scripts/test-lifecycle-(local|hosting)-acceptance\.sh|scripts/docker/(protected-local|hosting)-systemd/lifecycle-acceptance\.sh|scripts/(hosted-installer-artifact-layout|ci-workflow-contract|lifecycle-d8-contract|lifecycle-version-neutral)\.test\.ts|scripts/lifecycle-configuration-preservation\.(mjs|test\.ts)|scripts/prepare-candidate-fixture-trust\.sh|scripts/build-public-predecessor-capsule\.mjs|scripts/build-public-predecessor-capsule\.test\.ts|scripts/prepare-branch-predecessor-capsule\.sh)$' || true
+      grep -Ev '^(\.github/workflows/candidate-p1-replay\.yml|docs/maintainers/codex-skills/fased-release-manager/(SKILL\.md|references/release\.md)|scripts/test-lifecycle-(local|hosting)-acceptance\.sh|scripts/docker/(protected-local|hosting)-systemd/lifecycle-acceptance\.sh|scripts/(hosted-installer-artifact-layout|ci-workflow-contract|lifecycle-d8-contract|lifecycle-version-neutral)\.test\.ts|scripts/lifecycle-configuration-preservation\.(mjs|test\.ts)|scripts/prepare-candidate-fixture-trust\.sh|scripts/build-(public|canonical-managed)-predecessor-capsule\.mjs|scripts/build-(public|canonical-managed)-predecessor-capsule\.test\.ts|scripts/prepare-branch-predecessor-capsule\.sh)$' || true
   )"
   [[ -z "$unexpected_fixture_changes" ]] || {
     echo "Branch artifact reuse rejected product changes:" >&2
@@ -670,6 +677,7 @@ run_fixture_scenario() {
     -e "FASED_FIXTURE_VERSION=$VERSION" \
     -e "FASED_FIXTURE_COMMIT=$COMMIT" \
     -e "FASED_FIXTURE_PREDECESSOR_VERSION=$predecessor_version" \
+    -e "FASED_FIXTURE_PREDECESSOR_CLASS=$MANAGED_PREDECESSOR_CLASS" \
     -e "FASED_FIXTURE_PREINSTALLED_TOOLS=$PREINSTALLED_TOOLS" \
     -e "FASED_FIXTURE_PUBLIC_ACQUISITION=$PUBLIC_ACQUISITION" \
     -v "$FIXTURE_TOOLS_DIR/scripts:/fixture-tools:ro,z" \
@@ -759,8 +767,10 @@ run_fixture_scenario() {
     "$receipt"
   descriptor_digest="sha256:$(sha256sum "$ARTIFACT_DIR/fased-hosting-candidate.json" | awk '{print $1}')"
   capsule_digest=""
+  installation_class_digest=""
   if [[ "$scenario" == "managed-update" ]]; then
     capsule_digest="sha256:$(sha256sum "$PREDECESSOR_CAPSULE_DIR/fased-predecessor-capsule.json" | awk '{print $1}')"
+    installation_class_digest="$(jq -er .installationClassDigest "$PREDECESSOR_CAPSULE_DIR/fased-predecessor-capsule.json")"
   fi
   node "$ROOT_DIR/scripts/lifecycle-receipt-verifier.mjs" \
     --contract "$ARTIFACT_DIR/fased-lifecycle-acceptance-v2.json" \
@@ -771,6 +781,8 @@ run_fixture_scenario() {
     --commit "$COMMIT" \
     --candidate-descriptor-digest "$descriptor_digest" \
     --predecessor-capsule-digest "$capsule_digest" \
+    --predecessor-installation-class "$([[ "$scenario" == "managed-update" ]] && printf '%s' "$MANAGED_PREDECESSOR_CLASS" || true)" \
+    --predecessor-installation-class-digest "$installation_class_digest" \
     --evidence-class PASS \
     --acquisition-evidence-class SUPPORTING >/dev/null
   printf 'branch lifecycle product receipt verified; acquisition supporting: %s\n' "$receipt"

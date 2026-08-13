@@ -1,8 +1,10 @@
 package bundle
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -68,6 +70,40 @@ func TestApplicationInventoryRejectsPrivilegedLifecycleExecutables(t *testing.T)
 				t.Fatalf("application-owned lifecycle executable was accepted: %v", err)
 			}
 		})
+	}
+}
+
+func TestLegacyInstalledInventoryAllowsBoundLifecycleExecutableOnlyThroughCompatibilityReader(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "bin/fased", "application", 0o755)
+	inventory, _ := inspect(t, root)
+	write(t, root, "bin/fased-lifecycled", "historical lifecycle", 0o755)
+	inventory.Artifacts = append(inventory.Artifacts, Artifact{
+		Path: "bin/fased-lifecycled", Kind: ArtifactFile,
+		SHA256: hashBytes([]byte("historical lifecycle")), Size: int64(len("historical lifecycle")), Executable: true,
+	})
+	sort.Slice(inventory.Artifacts, func(left, right int) bool { return inventory.Artifacts[left].Path < inventory.Artifacts[right].Path })
+	data, err := json.Marshal(inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeInventory(data); err == nil {
+		t.Fatal("target inventory decoder accepted a lifecycle executable")
+	}
+	legacy, err := DecodeLegacyInstalledInventory(data)
+	if err != nil {
+		t.Fatalf("schema-one compatibility reader rejected historical inventory: %v", err)
+	}
+	generation, err := IdentityLegacyInstalledInventory(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyLegacyInstalled(root, legacy, generation); err != nil {
+		t.Fatalf("exact historical bytes did not verify: %v", err)
+	}
+	write(t, root, "bin/fased-lifecycled", "substituted lifecycle", 0o755)
+	if err := VerifyLegacyInstalled(root, legacy, generation); err == nil {
+		t.Fatal("schema-one compatibility verification accepted substituted lifecycle bytes")
 	}
 }
 

@@ -86,7 +86,9 @@ func participantAndTransaction(t *testing.T, fresh, failAbort bool) (*Participan
 		value := model.Generation{ID: digestA, Version: "0.1.75", Commit: commitA, Tree: commitA, ArtifactSetDigest: digestA}
 		previous = &value
 	}
-	tx := model.Transaction{SchemaVersion: 1, ID: "018f47d2-5a6b-7c8d-9e0f-123456789abc", Profile: model.ProfileProtectedLocal, PlanAction: action,
+	tx := model.Transaction{SchemaVersion: model.CurrentTransactionSchemaVersion, ID: "018f47d2-5a6b-7c8d-9e0f-123456789abc", Profile: model.ProfileProtectedLocal, PlanAction: action,
+		ReleaseSequence: 12, SecurityEpoch: 3, ReleaseIndexDigest: digestA, ReleaseAuthorityDigest: digestB,
+		TargetManifestProtocolMin: 1, TargetManifestProtocolMax: 2,
 		Phase: model.PhaseStaged, Revision: 2,
 		Target:             model.Generation{ID: digestB, Version: "0.1.76", Commit: commitA, Tree: commitA, ArtifactSetDigest: digestB},
 		TargetStateSchemas: map[string]uint32{"signer": 2}, TargetCapabilities: model.CapabilityRanges{
@@ -95,6 +97,9 @@ func participantAndTransaction(t *testing.T, fresh, failAbort bool) (*Participan
 		Previous: previous, ManifestDigest: manifestDigest, StateInventoryDigest: digestA, MigrationPlanDigest: digestA,
 		SignerPlanDigest: digestB, PlatformDigest: digestA,
 		Migrations: []model.Migration{{State: "signer", From: from, To: 2}},
+	}
+	if !fresh {
+		tx.PredecessorManifestSchema = model.CurrentManifestSchemaVersion
 	}
 	return participant, tx, &calls
 }

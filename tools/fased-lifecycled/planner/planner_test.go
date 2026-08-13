@@ -35,6 +35,8 @@ func target() Target {
 		Capabilities:    capabilities(),
 		ReleaseSequence: 12,
 		SecurityEpoch:   3,
+		ManifestMin:     1,
+		ManifestMax:     2,
 	}
 }
 
@@ -96,6 +98,27 @@ func TestPlanRejectsSecurityEpochRegressionAndSameSequenceRebinding(t *testing.T
 	selected.ReleaseSequence = current.ReleaseSequence
 	if _, err := Build(&current, selected); err == nil {
 		t.Fatal("same release sequence was rebound to different generation")
+	}
+}
+
+func TestPlanMigratesSchemaOneOnlyThroughDeclaredSignedHostRange(t *testing.T) {
+	legacy := installed()
+	legacy.SchemaVersion = 1
+	legacy.ReleaseSequence = 0
+	legacy.SecurityEpoch = 0
+	selected := target()
+	plan, err := BuildForInstallation(Installation{Kind: InstallationManaged, Manifest: &legacy}, selected)
+	if err != nil || plan.Action != ActionUpdate || plan.ManifestMin != 1 || plan.ManifestMax != 2 {
+		t.Fatalf("schema-one managed update was not selected: %+v err=%v", plan, err)
+	}
+	unsupported := selected
+	unsupported.ManifestMin = 2
+	if _, err := BuildForInstallation(Installation{Kind: InstallationManaged, Manifest: &legacy}, unsupported); err == nil {
+		t.Fatal("schema-one predecessor was accepted by a target that declares schema two only")
+	}
+	legacy.ActiveGeneration = &selected.Generation
+	if _, err := BuildForInstallation(Installation{Kind: InstallationManaged, Manifest: &legacy}, selected); err == nil {
+		t.Fatal("schema-one authority was rebound onto the same generation")
 	}
 }
 

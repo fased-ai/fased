@@ -102,7 +102,7 @@ func TestBindIsDeterministicAndDetectsStateChange(t *testing.T) {
 	if err := os.WriteFile(file, []byte("state-a"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	plan, err := planner.Build(nil, planner.Target{Profile: model.ProfileProtectedLocal, Generation: generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities, ReleaseSequence: 12, SecurityEpoch: 3})
+	plan, err := planner.Build(nil, planner.Target{Profile: model.ProfileProtectedLocal, Generation: generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities, ReleaseSequence: 12, SecurityEpoch: 3, ManifestMin: 1, ManifestMax: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestBindIsDeterministicAndDetectsStateChange(t *testing.T) {
 
 func TestBindRejectsSymlinkHardlinkMissingAndNoncanonicalPlan(t *testing.T) {
 	inventory, generation := target(t)
-	plan, err := planner.Build(nil, planner.Target{Profile: model.ProfileProtectedLocal, Generation: generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities, ReleaseSequence: 12, SecurityEpoch: 3})
+	plan, err := planner.Build(nil, planner.Target{Profile: model.ProfileProtectedLocal, Generation: generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities, ReleaseSequence: 12, SecurityEpoch: 3, ManifestMin: 1, ManifestMax: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestBindRejectsSymlinkHardlinkMissingAndNoncanonicalPlan(t *testing.T) {
 	platform, _ := model.NewPlatformIdentity(model.ProfileProtectedLocal, "test-instance", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	installed := model.Manifest{SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal, Platform: platform,
 		ActiveGeneration: &generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities, ReleaseSequence: 11, SecurityEpoch: 3}
-	installedPlan, err := planner.Build(&installed, planner.Target{Profile: model.ProfileProtectedLocal, Generation: generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities, ReleaseSequence: 11, SecurityEpoch: 3})
+	installedPlan, err := planner.Build(&installed, planner.Target{Profile: model.ProfileProtectedLocal, Generation: generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities, ReleaseSequence: 11, SecurityEpoch: 3, ManifestMin: 1, ManifestMax: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestBindRejectsSymlinkHardlinkMissingAndNoncanonicalPlan(t *testing.T) {
 
 func TestBindCanTreatInstallationAsRootIdentityWithoutTraversingSelectors(t *testing.T) {
 	inventory, generation := target(t)
-	plan, err := planner.Build(nil, planner.Target{Profile: model.ProfileProtectedLocal, Generation: generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities, ReleaseSequence: 12, SecurityEpoch: 3})
+	plan, err := planner.Build(nil, planner.Target{Profile: model.ProfileProtectedLocal, Generation: generation, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities, ReleaseSequence: 12, SecurityEpoch: 3, ManifestMin: 1, ManifestMax: 2})
 	if err != nil {
 		t.Fatal(err)
 	}

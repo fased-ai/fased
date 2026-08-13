@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -149,24 +151,31 @@ func manifest() model.Manifest {
 
 func transaction(phase model.Phase) model.Transaction {
 	previous := generation(digestA, "0.1.75", commitA)
+	predecessor, _ := model.NewPlatformIdentity(model.ProfileProtectedLocal, "test-instance", digestA)
 	return model.Transaction{
-		SchemaVersion:        model.CurrentTransactionSchemaVersion,
-		ID:                   "018f47d2-5a6b-7c8d-9e0f-123456789abc",
-		Profile:              model.ProfileProtectedLocal,
-		PlanAction:           "UPDATE",
-		ReleaseSequence:      12,
-		SecurityEpoch:        3,
-		Phase:                phase,
-		Revision:             1,
-		Target:               generation(digestB, "0.1.76", commitB),
-		TargetStateSchemas:   map[string]uint32{"signer": 2},
-		TargetCapabilities:   manifest().Capabilities,
-		Previous:             &previous,
-		ManifestDigest:       digestA,
-		StateInventoryDigest: digestB,
-		MigrationPlanDigest:  digestA,
-		SignerPlanDigest:     digestB,
-		PlatformDigest:       digestA,
+		SchemaVersion:             model.CurrentTransactionSchemaVersion,
+		ID:                        "018f47d2-5a6b-7c8d-9e0f-123456789abc",
+		Profile:                   model.ProfileProtectedLocal,
+		PlanAction:                "UPDATE",
+		ReleaseSequence:           12,
+		SecurityEpoch:             3,
+		ReleaseIndexDigest:        digestA,
+		ReleaseAuthorityDigest:    digestB,
+		TargetManifestProtocolMin: 1,
+		TargetManifestProtocolMax: 2,
+		PredecessorManifestSchema: model.CurrentManifestSchemaVersion,
+		PredecessorPlatform:       &predecessor,
+		Phase:                     phase,
+		Revision:                  1,
+		Target:                    generation(digestB, "0.1.76", commitB),
+		TargetStateSchemas:        map[string]uint32{"signer": 2},
+		TargetCapabilities:        manifest().Capabilities,
+		Previous:                  &previous,
+		ManifestDigest:            digestA,
+		StateInventoryDigest:      digestB,
+		MigrationPlanDigest:       digestA,
+		SignerPlanDigest:          digestB,
+		PlatformDigest:            digestA,
 	}
 }
 
@@ -193,8 +202,50 @@ func TestManifestCompareAndSwapIsCanonicalAndIdempotent(t *testing.T) {
 	if second, err := store.CommitManifest(manifest(), digest); err != nil || second != digest {
 		t.Fatalf("idempotent manifest commit failed: digest=%s err=%v", second, err)
 	}
-	if _, err := store.CommitManifest(manifest(), digestB); err == nil {
+	changed := manifest()
+	changed.ActiveGeneration.Version = "0.1.77"
+	if _, err := store.CommitManifest(changed, digestB); err == nil {
 		t.Fatal("stale manifest compare-and-swap succeeded")
+	}
+}
+
+func TestSchemaOneManifestCASUpgradesOnceAndReplaysIdempotently(t *testing.T) {
+	state, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := manifest()
+	legacy.SchemaVersion, legacy.ReleaseSequence, legacy.SecurityEpoch = 1, 0, 0
+	legacy.Platform, err = model.LegacyControllerPlatformIdentity(legacy.Profile, legacy.Platform.InstanceID, legacy.Platform.ConfigurationDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyData, err := json.Marshal(struct {
+		SchemaVersion      uint32                 `json:"schemaVersion"`
+		Profile            model.Profile          `json:"profile"`
+		Platform           model.PlatformIdentity `json:"platform"`
+		ActiveGeneration   *model.Generation      `json:"activeGeneration,omitempty"`
+		PreviousGeneration *model.Generation      `json:"previousGeneration,omitempty"`
+		StateSchemas       map[string]uint32      `json:"stateSchemas"`
+		Capabilities       model.CapabilityRanges `json:"capabilities"`
+	}{legacy.SchemaVersion, legacy.Profile, legacy.Platform, legacy.ActiveGeneration, legacy.PreviousGeneration, legacy.StateSchemas, legacy.Capabilities})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state.stateRoot, manifestName), legacyData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	read, legacyDigest, err := state.ReadManifest()
+	if err != nil || read.SchemaVersion != 1 {
+		t.Fatalf("schema-one manifest was not readable: %+v digest=%s err=%v", read, legacyDigest, err)
+	}
+	next := manifest()
+	nextDigest, err := state.CommitManifest(next, legacyDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay, err := state.CommitManifest(next, legacyDigest); err != nil || replay != nextDigest {
+		t.Fatalf("schema migration commit was not recovery-idempotent: digest=%s err=%v", replay, err)
 	}
 }
 
@@ -350,6 +401,8 @@ func TestAuthorityJournalsRejectPublicPredecessorVersionRebinding(t *testing.T) 
 	tx.SourceTopology = "local-user-systemd-v2"
 	tx.PublicPredecessorVersion = "0.1.75"
 	tx.Previous = nil
+	tx.PredecessorManifestSchema = 0
+	tx.PredecessorPlatform = nil
 	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	if err := state.CommitJournal(AuthoritySupervisor, tx); err != nil {
 		t.Fatal(err)
@@ -358,6 +411,26 @@ func TestAuthorityJournalsRejectPublicPredecessorVersionRebinding(t *testing.T) 
 	changed.PublicPredecessorVersion = "0.1.74"
 	if err := state.CommitJournal(AuthorityTargetController, changed); err == nil {
 		t.Fatal("target authority rebound the public predecessor version")
+	}
+}
+
+func TestAuthorityJournalsRejectManagedPredecessorPlatformRebinding(t *testing.T) {
+	state, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := transaction(model.PhaseIdle)
+	if err := state.CommitJournal(AuthoritySupervisor, tx); err != nil {
+		t.Fatal(err)
+	}
+	changed := tx
+	rebound, err := model.NewPlatformIdentity(model.ProfileProtectedLocal, "other-instance", digestA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed.PredecessorPlatform = &rebound
+	if err := state.CommitJournal(AuthorityTargetController, changed); err == nil {
+		t.Fatal("target authority rebound the managed predecessor platform")
 	}
 }
 
@@ -595,7 +668,7 @@ func TestStageAndActivateUseOnlyContentAddressedStorePaths(t *testing.T) {
 	if err := store.StageGeneration(expected.ID); err != nil {
 		t.Fatalf("idempotent staging failed: %v", err)
 	}
-	if err := store.ActivateGeneration(expected.ID, ""); err != nil {
+	if err := store.ActivateGeneration(expected.ID, "", 0); err != nil {
 		t.Fatal(err)
 	}
 	current, err := store.ResolveGeneration("current")
@@ -604,6 +677,122 @@ func TestStageAndActivateUseOnlyContentAddressedStorePaths(t *testing.T) {
 	}
 	if _, err := store.ResolveGeneration("../../escape"); err == nil {
 		t.Fatal("arbitrary pointer selection was accepted")
+	}
+}
+
+func TestActivateAllowsExactSchemaOnePredecessorInventoryWithoutWeakeningTargetPolicy(t *testing.T) {
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	installRoot := filepath.Join(root, "install")
+	store, err := OpenLayout(Layout{StateRoot: stateRoot, InstallRoot: installRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateSchemas := map[string]uint32{"signer": 2}
+	capabilities := manifest().Capabilities
+
+	legacyPayload := filepath.Join(root, "legacy-payload")
+	if err := os.MkdirAll(filepath.Join(legacyPayload, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyPayload, "bin", "fased"), []byte("legacy app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacyInventory, _, err := bundle.Inspect(legacyPayload, "0.1.76-rc.72", commitA, commitA, stateSchemas, capabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyBytes := []byte("bound historical lifecycle")
+	if err := os.WriteFile(filepath.Join(legacyPayload, "bin", "fased-lifecycled"), legacyBytes, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacySum := sha256.Sum256(legacyBytes)
+	legacyInventory.Artifacts = append(legacyInventory.Artifacts, bundle.Artifact{
+		Path: "bin/fased-lifecycled", Kind: bundle.ArtifactFile,
+		SHA256: fmt.Sprintf("sha256:%x", legacySum), Size: int64(len(legacyBytes)), Executable: true,
+	})
+	sort.Slice(legacyInventory.Artifacts, func(left, right int) bool {
+		return legacyInventory.Artifacts[left].Path < legacyInventory.Artifacts[right].Path
+	})
+	legacyGeneration, err := bundle.IdentityLegacyInstalledInventory(legacyInventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyRoot := store.generationPath(legacyGeneration.ID)
+	if err := os.MkdirAll(legacyRoot, 0o711); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(legacyPayload, filepath.Join(legacyRoot, generationPayloadName)); err != nil {
+		t.Fatal(err)
+	}
+	legacyJSON, err := json.Marshal(legacyInventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyRoot, generationInventoryName), legacyJSON, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	targetPayload := filepath.Join(root, "target-payload")
+	if err := os.MkdirAll(filepath.Join(targetPayload, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(targetPayload, "bin", "fased"), []byte("target app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	targetInventory, targetGeneration, err := bundle.Inspect(targetPayload, "0.1.76-rc.78", commitB, commitB, stateSchemas, capabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetRoot := store.generationPath(targetGeneration.ID)
+	if err := os.MkdirAll(targetRoot, 0o711); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(targetPayload, filepath.Join(targetRoot, generationPayloadName)); err != nil {
+		t.Fatal(err)
+	}
+	targetJSON, err := bundle.CanonicalInventoryJSON(targetInventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(targetRoot, generationInventoryName), targetJSON, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	identity, err := model.LegacyControllerPlatformIdentity(model.ProfileProtectedLocal, "1122334455667788", digestA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyManifest := struct {
+		SchemaVersion    uint32                 `json:"schemaVersion"`
+		Profile          model.Profile          `json:"profile"`
+		Platform         model.PlatformIdentity `json:"platform"`
+		ActiveGeneration model.Generation       `json:"activeGeneration"`
+		StateSchemas     map[string]uint32      `json:"stateSchemas"`
+		Capabilities     model.CapabilityRanges `json:"capabilities"`
+	}{1, model.ProfileProtectedLocal, identity, legacyGeneration, stateSchemas, capabilities}
+	manifestJSON, err := json.Marshal(legacyManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateRoot, manifestName), manifestJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("generations", strings.TrimPrefix(legacyGeneration.ID, "sha256:")), filepath.Join(installRoot, "current")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(legacyRoot, generationPayloadName, "bin", "fased-lifecycled"), []byte("substituted"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.verifiedLegacySchemaOnePredecessor(legacyGeneration.ID); err == nil {
+		t.Fatal("schema-one predecessor accepted substituted lifecycle bytes")
+	}
+	if err := os.WriteFile(filepath.Join(legacyRoot, generationPayloadName, "bin", "fased-lifecycled"), legacyBytes, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ActivateGeneration(targetGeneration.ID, legacyGeneration.ID, 1); err != nil {
+		t.Fatalf("schema-one predecessor activation failed: %v", err)
 	}
 }
 
@@ -672,7 +861,7 @@ func TestImportGenerationArchiveExtractsDirectlyAndReverifiesExactBytes(t *testi
 	if target, err := os.Readlink(importedAlias); err != nil || target != "fased" {
 		t.Fatalf("safe archived symlink was not preserved: target=%q err=%v", target, err)
 	}
-	authority := CandidateAuthority{SchemaVersion: 1, GenerationID: expected.ID, ReleaseSequence: 12, SecurityEpoch: 3, ReleaseIndex: digestA, ReleaseAuthority: digestB}
+	authority := CandidateAuthority{SchemaVersion: 1, GenerationID: expected.ID, ReleaseSequence: 12, SecurityEpoch: 3, ManifestMin: 1, ManifestMax: 2, ReleaseIndex: digestA, ReleaseAuthority: digestB}
 	if err := state.BindCandidateAuthority(authority); err != nil {
 		t.Fatal(err)
 	}

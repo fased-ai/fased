@@ -128,6 +128,7 @@ export async function restorePredecessorCapsule({
   operatorUid,
   operatorGid,
   expectedProfile,
+  expectedInstallationClass,
 }) {
   if (process.getuid?.() !== 0 || path.resolve(root) !== "/") {
     fail("restore is restricted to a root-authorized disposable fixture");
@@ -143,7 +144,7 @@ export async function restorePredecessorCapsule({
   }
   const descriptor = parsePredecessorCapsule(
     JSON.parse(await fsp.readFile(descriptorPath, "utf8")),
-    { profile: expectedProfile },
+    { profile: expectedProfile, installationClass: expectedInstallationClass },
   );
   if (
     operatorUid !== descriptor.ownership.operatorUid ||
@@ -229,6 +230,7 @@ async function main() {
     operatorUid: Number.parseInt(values["operator-uid"], 10),
     operatorGid: Number.parseInt(values["operator-gid"], 10),
     expectedProfile: values.profile,
+    expectedInstallationClass: values["installation-class"],
   });
   process.stdout.write(
     `${JSON.stringify({ ok: true, profile: capsule.profile, version: capsule.release.version })}\n`,

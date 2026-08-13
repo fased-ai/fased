@@ -209,6 +209,7 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	var profileRaw, instanceID, ownerStateRoot, operatorUser, generationArchive, dependencyArchive, sourceTopology string
 	var gatewayPort uint64
 	var releaseSequence, securityEpoch uint64
+	var manifestProtocolMin, manifestProtocolMax uint64
 	var releaseIndexDigest, releaseAuthorityDigest string
 	flags.StringVar(&profileRaw, "profile", "", "")
 	flags.StringVar(&instanceID, "instance", "", "")
@@ -220,10 +221,15 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	flags.Uint64Var(&gatewayPort, "gateway-port", 0, "")
 	flags.Uint64Var(&releaseSequence, "release-sequence", 0, "")
 	flags.Uint64Var(&securityEpoch, "security-epoch", 0, "")
+	flags.Uint64Var(&manifestProtocolMin, "manifest-protocol-min", 0, "")
+	flags.Uint64Var(&manifestProtocolMax, "manifest-protocol-max", 0, "")
 	flags.StringVar(&releaseIndexDigest, "release-index-digest", "", "")
 	flags.StringVar(&releaseAuthorityDigest, "release-authority-digest", "", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || gatewayPort == 0 || gatewayPort > 65535 {
 		return errors.New("invalid lifecycle initialization arguments")
+	}
+	if manifestProtocolMin > uint64(^uint32(0)) || manifestProtocolMax > uint64(^uint32(0)) {
+		return errors.New("manifest protocol range exceeds uint32")
 	}
 	profile := model.Profile(profileRaw)
 	if operatorUser == "" {
@@ -261,7 +267,7 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	default:
 		return errors.New("installation discovery returned an unsupported class")
 	}
-	applyArguments, err := initializationApplyArguments("", generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion, releaseSequence, securityEpoch, releaseIndexDigest, releaseAuthorityDigest)
+	applyArguments, err := initializationApplyArguments("", generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion, releaseSequence, securityEpoch, uint32(manifestProtocolMin), uint32(manifestProtocolMax), releaseIndexDigest, releaseAuthorityDigest)
 	if err != nil {
 		return err
 	}
@@ -442,7 +448,7 @@ func discoverInitialization(profile model.Profile, instanceID, ownerStateRoot, o
 	})
 }
 
-func initializationApplyArguments(configPath, generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion string, releaseSequence, securityEpoch uint64, releaseIndexDigest, releaseAuthorityDigest string) ([]string, error) {
+func initializationApplyArguments(configPath, generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion string, releaseSequence, securityEpoch uint64, manifestProtocolMin, manifestProtocolMax uint32, releaseIndexDigest, releaseAuthorityDigest string) ([]string, error) {
 	if generationArchive == "" {
 		return nil, errors.New("invalid lifecycle initialization generation input")
 	}
@@ -450,12 +456,14 @@ func initializationApplyArguments(configPath, generationArchive, dependencyArchi
 		return nil, errors.New("invalid lifecycle initialization generation input")
 	}
 	arguments := []string{"--config", configPath, "--generation-archive", generationArchive}
-	if releaseSequence == 0 || securityEpoch == 0 || releaseIndexDigest == "" || releaseAuthorityDigest == "" {
+	if releaseSequence == 0 || securityEpoch == 0 || manifestProtocolMin == 0 || manifestProtocolMax < manifestProtocolMin || releaseIndexDigest == "" || releaseAuthorityDigest == "" {
 		return nil, errors.New("lifecycle initialization requires signed release authority")
 	}
 	arguments = append(arguments,
 		"--release-sequence", strconv.FormatUint(releaseSequence, 10),
 		"--security-epoch", strconv.FormatUint(securityEpoch, 10),
+		"--manifest-protocol-min", strconv.FormatUint(uint64(manifestProtocolMin), 10),
+		"--manifest-protocol-max", strconv.FormatUint(uint64(manifestProtocolMax), 10),
 		"--release-index-digest", releaseIndexDigest,
 		"--release-authority-digest", releaseAuthorityDigest)
 	if dependencyArchive != "" {
@@ -608,6 +616,7 @@ func applyVerifiedArchive(args []string, output io.Writer) error {
 	var configPath, generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion string
 	var releaseIndexDigest, releaseAuthorityDigest string
 	var releaseSequence, securityEpoch uint64
+	var manifestProtocolMin, manifestProtocolMax uint64
 	flags.StringVar(&configPath, "config", "", "")
 	flags.StringVar(&generationArchive, "generation-archive", "", "")
 	flags.StringVar(&dependencyArchive, "dependency-archive", "", "")
@@ -615,10 +624,15 @@ func applyVerifiedArchive(args []string, output io.Writer) error {
 	flags.StringVar(&publicPredecessorVersion, "public-predecessor-version", "", "")
 	flags.Uint64Var(&releaseSequence, "release-sequence", 0, "")
 	flags.Uint64Var(&securityEpoch, "security-epoch", 0, "")
+	flags.Uint64Var(&manifestProtocolMin, "manifest-protocol-min", 0, "")
+	flags.Uint64Var(&manifestProtocolMax, "manifest-protocol-max", 0, "")
 	flags.StringVar(&releaseIndexDigest, "release-index-digest", "", "")
 	flags.StringVar(&releaseAuthorityDigest, "release-authority-digest", "", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return errors.New("invalid lifecycle apply arguments")
+	}
+	if manifestProtocolMin > uint64(^uint32(0)) || manifestProtocolMax > uint64(^uint32(0)) {
+		return errors.New("manifest protocol range exceeds uint32")
 	}
 	if generationArchive == "" {
 		return errors.New("invalid lifecycle apply arguments")
@@ -649,6 +663,7 @@ func applyVerifiedArchive(args []string, output io.Writer) error {
 	}
 	if err := state.BindCandidateAuthority(store.CandidateAuthority{
 		SchemaVersion: 1, GenerationID: generation.ID, ReleaseSequence: releaseSequence, SecurityEpoch: securityEpoch,
+		ManifestMin: uint32(manifestProtocolMin), ManifestMax: uint32(manifestProtocolMax),
 		ReleaseIndex: releaseIndexDigest, ReleaseAuthority: releaseAuthorityDigest,
 	}); err != nil {
 		return err
@@ -868,12 +883,22 @@ func installedTargetRuntime(config platform.Config, identity model.PlatformIdent
 		Generations: state, ExpectedGateUID: 0}
 	var predecessor platform.Predecessor = platform.NoPredecessor{}
 	var networkPolicy platform.NetworkPolicy = platform.NoNetworkPolicy{}
+	legacyPredecessor := &platform.LegacyControllerPredecessor{
+		Config: config, Systemd: systemd,
+		State: platform.CommandLegacyControllerState{Binary: "/usr/bin/systemctl"},
+	}
 	if config.Profile == model.ProfileProtectedLocal {
-		predecessor = &platform.LocalPredecessor{Config: config, Systemd: platform.CommandUserSystemd{
-			Binary: "/usr/bin/systemctl", Principal: config.Operator, Home: config.OwnerHome(),
-		}}
+		predecessor = platform.CombinedPredecessor{
+			Public: &platform.LocalPredecessor{Config: config, Systemd: platform.CommandUserSystemd{
+				Binary: "/usr/bin/systemctl", Principal: config.Operator, Home: config.OwnerHome(),
+			}},
+			Legacy: legacyPredecessor,
+		}
 	} else {
-		predecessor = &platform.HostingPredecessor{Config: config, Systemd: systemd, State: platform.CommandServiceState{Binary: "/usr/bin/systemctl"}}
+		predecessor = platform.CombinedPredecessor{
+			Public: &platform.HostingPredecessor{Config: config, Systemd: systemd, State: platform.CommandServiceState{Binary: "/usr/bin/systemctl"}},
+			Legacy: legacyPredecessor,
+		}
 		networkPolicy = platform.CommandHostingNetworkPolicy{TailscaleBinary: "/usr/bin/tailscale", SocketBinary: "/usr/bin/ss"}
 	}
 	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Files: files, TypedState: typedState, Systemd: systemd, Generations: state, Health: platform.LoopbackGatewayHealth{}, Predecessor: predecessor, Fence: platform.DiskLocalPredecessorFence{}, Network: networkPolicy, Manifest: state, Plugins: platform.DiskPluginBoundary{Config: config, Resolver: state}}

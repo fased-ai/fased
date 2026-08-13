@@ -67,6 +67,49 @@ func TestDiscoveryClassifiesEmptyManagedAndUnknownNewerWithoutMutation(t *testin
 	}
 }
 
+func TestDiscoveryRecognizesCanonicalSchemaOneManifestForManagedUpgrade(t *testing.T) {
+	request := discoveryRequest(t, model.ProfileProtectedLocal)
+	active := model.Generation{ID: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Version: "0.1.76-rc.72", Commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Tree: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ArtifactSetDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	previous := model.Generation{ID: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Version: "0.1.76-rc.70", Commit: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Tree: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", ArtifactSetDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+	identity, err := model.LegacyControllerPlatformIdentity(request.Profile, "owner-instance", "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := struct {
+		SchemaVersion      uint32                 `json:"schemaVersion"`
+		Profile            model.Profile          `json:"profile"`
+		Platform           model.PlatformIdentity `json:"platform"`
+		ActiveGeneration   model.Generation       `json:"activeGeneration"`
+		PreviousGeneration model.Generation       `json:"previousGeneration"`
+		StateSchemas       map[string]uint32      `json:"stateSchemas"`
+		Capabilities       model.CapabilityRanges `json:"capabilities"`
+	}{
+		SchemaVersion: 1, Profile: request.Profile, Platform: identity,
+		ActiveGeneration: active, PreviousGeneration: previous,
+		StateSchemas: model.CurrentStateSchemas(), Capabilities: model.CapabilityRanges{
+			Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1}, Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 2, Max: 2},
+		},
+	}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(request.CanonicalManifestPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(request.CanonicalInstallRoot, "generations", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("generations", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), filepath.Join(request.CanonicalInstallRoot, "current")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := DiscoverInstallation(request)
+	if err != nil || result.Installation.Kind != planner.InstallationManaged || result.Installation.Manifest == nil || result.Installation.Manifest.SchemaVersion != 1 || !result.Installation.Manifest.Platform.IsLegacyControllerWorker(request.Profile) || result.Installation.Manifest.ActiveGeneration == nil || result.Installation.Manifest.ActiveGeneration.ID != active.ID {
+		t.Fatalf("canonical schema-1 predecessor was not recognized as managed: %+v err=%v", result, err)
+	}
+}
+
 func writePublicStableFixture(t *testing.T, request DiscoveryRequest, profile, scope string) {
 	t.Helper()
 	release := filepath.Join(request.OwnerStateRoot, "runtime", "releases", "active")

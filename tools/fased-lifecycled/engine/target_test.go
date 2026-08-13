@@ -25,6 +25,7 @@ func transaction(phase model.Phase) model.Transaction {
 		model.PhaseRolledBack: 5,
 	}[phase]
 	previous := model.Generation{ID: digestA, Version: "0.1.75", Commit: commitA, Tree: commitA, ArtifactSetDigest: digestA}
+	predecessor, _ := model.NewPlatformIdentity(model.ProfileProtectedLocal, "test-instance", digestA)
 	return model.Transaction{
 		SchemaVersion:      model.CurrentTransactionSchemaVersion,
 		ID:                 "018f47d2-5a6b-7c8d-9e0f-123456789abc",
@@ -32,10 +33,14 @@ func transaction(phase model.Phase) model.Transaction {
 		PlanAction:         "UPDATE",
 		ReleaseSequence:    12,
 		SecurityEpoch:      3,
-		Phase:              phase,
-		Revision:           revision,
-		Target:             model.Generation{ID: digestB, Version: "0.1.76", Commit: commitB, Tree: commitB, ArtifactSetDigest: digestB},
-		TargetStateSchemas: map[string]uint32{"signer": 2},
+		ReleaseIndexDigest: digestA, ReleaseAuthorityDigest: digestB,
+		TargetManifestProtocolMin: 1, TargetManifestProtocolMax: 2,
+		PredecessorManifestSchema: model.CurrentManifestSchemaVersion,
+		PredecessorPlatform:       &predecessor,
+		Phase:                     phase,
+		Revision:                  revision,
+		Target:                    model.Generation{ID: digestB, Version: "0.1.76", Commit: commitB, Tree: commitB, ArtifactSetDigest: digestB},
+		TargetStateSchemas:        map[string]uint32{"signer": 2},
 		TargetCapabilities: model.CapabilityRanges{
 			Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1},
 			Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 1, Max: 1},
@@ -410,6 +415,8 @@ func TestBridgeWithoutManagedPreviousStopsTargetAfterActivationFailure(t *testin
 	tx.SourceTopology = "local-user-systemd-v2"
 	tx.PublicPredecessorVersion = "0.1.75"
 	tx.Previous = nil
+	tx.PredecessorManifestSchema = 0
+	tx.PredecessorPlatform = nil
 	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 	result, err := engine.Run(context.Background(), tx)

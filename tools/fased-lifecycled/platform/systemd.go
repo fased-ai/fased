@@ -54,7 +54,11 @@ func (systemd CommandSystemd) Enable(ctx context.Context, unit string) error {
 	return systemd.run(ctx, "enable", unit)
 }
 func (systemd CommandSystemd) Disable(ctx context.Context, unit string) error {
-	return systemd.run(ctx, "disable", unit)
+	err := systemd.run(ctx, "disable", unit)
+	if isSystemdUnitAbsent(err) {
+		return nil
+	}
+	return err
 }
 func (systemd CommandSystemd) IsEnabled(ctx context.Context, unit string) error {
 	return systemd.run(ctx, "is-enabled", "--quiet", unit)

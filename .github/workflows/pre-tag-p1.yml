@@ -41,7 +41,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      predecessors: ${{ steps.identity.outputs.predecessors }}
+      local_predecessors: ${{ steps.identity.outputs.local_predecessors }}
+      hosting_predecessors: ${{ steps.identity.outputs.hosting_predecessors }}
       release_sequence: ${{ steps.identity.outputs.release_sequence }}
       security_epoch: ${{ steps.identity.outputs.security_epoch }}
     steps:
@@ -97,6 +98,7 @@ jobs:
             --arg lockfileDigest "sha256:$(git show "$base_commit:pnpm-lock.yaml" | sha256sum | awk '{print $1}')" \
             --arg releaseVersion "$RELEASE_VERSION" \
             --arg ownerPredecessorVersion "$OWNER_PREDECESSOR_VERSION" \
+            --arg ownerPredecessorInstallationClass "canonical-managed" \
             --arg predecessorVersion "$PREDECESSOR_VERSION" \
             --arg workflowRunId "$PRE_CANDIDATE_RUN_ID" \
             '.schemaVersion == 3 and .sourceCommit == $sourceCommit and .sourceTree == $sourceTree and
@@ -115,8 +117,12 @@ jobs:
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$OWNER_PREDECESSOR_VERSION")"
           node scripts/verify-lifecycle-root-pin.mjs
-          predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" --arg owner "$OWNER_PREDECESSOR_VERSION" '[$stable,$owner] | unique')"
-          printf 'predecessors=%s\n' "$predecessors" >>"$GITHUB_OUTPUT"
+          local_predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" --arg owner "$OWNER_PREDECESSOR_VERSION" \
+            '[{version:$stable,installationClass:"public-stable"},
+              {version:$owner,installationClass:"canonical-managed"}] | unique_by([.version,.installationClass])')"
+          hosting_predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" '[$stable]')"
+          printf 'local_predecessors=%s\n' "$local_predecessors" >>"$GITHUB_OUTPUT"
+          printf 'hosting_predecessors=%s\n' "$hosting_predecessors" >>"$GITHUB_OUTPUT"
           printf 'release_sequence=%s\n' "$(jq -er .releaseSequence "$evidence")" >>"$GITHUB_OUTPUT"
           printf 'security_epoch=%s\n' "$(jq -er .securityEpoch "$evidence")" >>"$GITHUB_OUTPUT"
 
@@ -245,14 +251,14 @@ jobs:
           retention-days: 30
 
   local-update:
-    name: Pre-tag Local update P1 (${{ matrix.predecessor }})
+    name: Pre-tag Local update P1 (${{ matrix.predecessor.version }}, ${{ matrix.predecessor.installationClass }})
     needs: [preflight, candidate]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        predecessor: ${{ fromJSON(needs.preflight.outputs.predecessors) }}
+        predecessor: ${{ fromJSON(needs.preflight.outputs.local_predecessors) }}
     steps:
       - name: Checkout exact candidate source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -281,7 +287,7 @@ jobs:
         id: scenario
         env:
           GH_TOKEN: ${{ github.token }}
-          PREDECESSOR_VERSION: ${{ matrix.predecessor }}
+          PREDECESSOR_VERSION: ${{ matrix.predecessor.version }}
         run: |
           scenarios="$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
           test -n "$scenarios"
@@ -292,7 +298,8 @@ jobs:
           FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/fased-pre-tag-candidate
           FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
           FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
-          FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: ${{ matrix.predecessor }}
+          FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: ${{ matrix.predecessor.version }}
+          FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_CLASS: ${{ matrix.predecessor.installationClass }}
           FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
           FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1"
           FASED_SYSTEMD_FIXTURE_RECEIPT_DIR: ${{ runner.temp }}/receipts
@@ -301,7 +308,7 @@ jobs:
       - name: Upload Local update receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: fased-pre-tag-local-update-${{ matrix.predecessor }}-receipt
+          name: fased-pre-tag-local-update-${{ matrix.predecessor.version }}-${{ matrix.predecessor.installationClass }}-receipt
           path: ${{ runner.temp }}/receipts/*.json
           if-no-files-found: error
           retention-days: 30
@@ -314,7 +321,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        predecessor: ${{ fromJSON(needs.preflight.outputs.predecessors) }}
+        predecessor: ${{ fromJSON(needs.preflight.outputs.hosting_predecessors) }}
     steps:
       - name: Checkout exact candidate source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -384,9 +391,10 @@ jobs:
             --arg candidateDescriptorSha256 "$DESCRIPTOR_SHA256" \
             --argjson releaseSequence "$RELEASE_SEQUENCE" \
             --argjson securityEpoch "$SECURITY_EPOCH" \
-            '{schemaVersion:2,sourceCommit:$sourceCommit,sourceTree:$sourceTree,
+            '{schemaVersion:3,sourceCommit:$sourceCommit,sourceTree:$sourceTree,
               releaseVersion:$releaseVersion,predecessorVersion:$predecessorVersion,
               ownerPredecessorVersion:$ownerPredecessorVersion,
+              ownerPredecessorInstallationClass:$ownerPredecessorInstallationClass,
               releaseSequence:$releaseSequence,securityEpoch:$securityEpoch,
               preCandidateRunId:$preCandidateRunId,workflowRunId:$workflowRunId,
               candidateDescriptorSha256:$candidateDescriptorSha256}' \

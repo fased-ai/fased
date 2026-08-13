@@ -73,6 +73,7 @@ func (binder *Binder) Bind(ctx context.Context, installed planner.Installation, 
 		Profile: plan.Profile, Generation: generation,
 		StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities,
 		ReleaseSequence: plan.ReleaseSequence, SecurityEpoch: plan.SecurityEpoch,
+		ManifestMin: plan.ManifestMin, ManifestMax: plan.ManifestMax,
 	})
 	if err != nil {
 		return "", "", err

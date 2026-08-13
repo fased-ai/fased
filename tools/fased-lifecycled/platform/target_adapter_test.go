@@ -232,8 +232,8 @@ func (generations fakeGenerations) GenerationPayloadPath(string) (string, error)
 func (generations fakeGenerations) GenerationDependencyPath(string) (string, error) {
 	return generations.dependency, nil
 }
-func (generations fakeGenerations) ActivateGeneration(current, previous string) error {
-	*generations.calls = append(*generations.calls, "generation.activate:"+current+":"+previous)
+func (generations fakeGenerations) ActivateGeneration(current, previous string, predecessorManifestSchema uint32) error {
+	*generations.calls = append(*generations.calls, fmt.Sprintf("generation.activate:%s:%s:%d", current, previous, predecessorManifestSchema))
 	return nil
 }
 
@@ -316,7 +316,7 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 		"systemd.active:fased-signerd-example.service", "systemd.active:fased-gateway-example.service",
 		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		"plugins.verify:" + digestB,
-		"generation.activate:" + digestB + ":" + digestA, "files.activate", "units.discard", "files.discard", "shared.discard", "plugins.discard:" + digestB,
+		"generation.activate:" + digestB + ":" + digestA + ":2", "files.activate", "units.discard", "files.discard", "shared.discard", "plugins.discard:" + digestB,
 	}
 	if !reflect.DeepEqual(*calls, want) {
 		t.Fatalf("unexpected target adapter order:\n got=%v\nwant=%v", *calls, want)
@@ -388,6 +388,8 @@ func TestFreshTargetDoesNotStopAbsentCanonicalServices(t *testing.T) {
 	adapter, tx, calls := targetAdapter(t)
 	tx.PlanAction = "INSTALL"
 	tx.Previous = nil
+	tx.PredecessorManifestSchema = 0
+	tx.PredecessorPlatform = nil
 	tx.Phase = model.PhasePrepared
 	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	if err := adapter.Quiesce(context.Background(), tx); err != nil {
@@ -402,6 +404,8 @@ func TestFreshLocalDefersGatewayUntilOnboardingCreatesConfig(t *testing.T) {
 	adapter, tx, calls := targetAdapter(t)
 	tx.PlanAction = "INSTALL"
 	tx.Previous = nil
+	tx.PredecessorManifestSchema = 0
+	tx.PredecessorPlatform = nil
 	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	if err := adapter.Prepare(context.Background(), tx); err != nil {
 		t.Fatal(err)
@@ -435,6 +439,8 @@ func TestLocalBridgeVerifiesDurableFenceBeforeLifecycleProjectionAndPredecessor(
 	tx.SourceTopology = "local-user-systemd-v2"
 	tx.PublicPredecessorVersion = "0.1.75"
 	tx.Previous = nil
+	tx.PredecessorManifestSchema = 0
+	tx.PredecessorPlatform = nil
 	tx.ManifestDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	prepared := map[string]LifecycleFile{}
 	activations := [][]string{}
@@ -465,7 +471,7 @@ func TestLocalBridgeVerifiesDurableFenceBeforeLifecycleProjectionAndPredecessor(
 	if len(activations) != 1 || !reflect.DeepEqual(activations[0], wantTargets) {
 		t.Fatalf("Local bridge commit activation order changed: got=%v want=%v", activations, wantTargets)
 	}
-	wantTail := []string{"fence.verify", "generation.activate:" + digestB + ":", "files.activate", "predecessor.commit", "units.discard", "files.discard", "shared.discard", "plugins.discard:" + digestB}
+	wantTail := []string{"fence.verify", "generation.activate:" + digestB + "::0", "files.activate", "predecessor.commit", "units.discard", "files.discard", "shared.discard", "plugins.discard:" + digestB}
 	if !reflect.DeepEqual((*calls)[len(*calls)-len(wantTail):], wantTail) {
 		t.Fatalf("predecessor committed before durable fence activation: %v", *calls)
 	}
@@ -643,6 +649,8 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 	}
 	tx.Profile = model.ProfileHosting
 	tx.PlatformDigest = platformDigest
+	predecessor := identity
+	tx.PredecessorPlatform = &predecessor
 
 	root := t.TempDir()
 	for _, name := range []string{"fased-gateway-launch", "fased-signerd", "node"} {
@@ -697,7 +705,7 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 		"systemd.active:fased-signerd.service", "systemd.active:fased-gateway.service",
 		"gateway.ready:18789:0.1.76:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		"plugins.verify:" + digestB,
-		"generation.activate:" + digestB + ":" + digestA, "files.activate", "units.discard", "files.discard", "shared.discard", "plugins.discard:" + digestB,
+		"generation.activate:" + digestB + ":" + digestA + ":2", "files.activate", "units.discard", "files.discard", "shared.discard", "plugins.discard:" + digestB,
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("unexpected Hosting adapter order:\n got=%v\nwant=%v", calls, want)

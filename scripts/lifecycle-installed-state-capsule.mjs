@@ -6,7 +6,10 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as tar from "tar";
-import { parsePredecessorCapsule } from "./predecessor-capsule.mjs";
+import {
+  parsePredecessorCapsule,
+  predecessorInstallationClassDigest,
+} from "./predecessor-capsule.mjs";
 
 export const parseInstalledStateCapsule = parsePredecessorCapsule;
 
@@ -76,6 +79,7 @@ export async function buildInstalledStateCapsule({ spec, sourceRoot, outputDirec
       "sourceReceipt",
       "releaseIndex",
       "topology",
+      "installationClass",
       "ownership",
       "pointers",
       "expectedReceiptDigest",
@@ -162,6 +166,8 @@ export async function buildInstalledStateCapsule({ spec, sourceRoot, outputDirec
     sourceReceipt: spec.sourceReceipt,
     releaseIndex: spec.releaseIndex,
     topology: spec.topology,
+    installationClass: spec.installationClass,
+    installationClassDigest: predecessorInstallationClassDigest(spec.installationClass),
     ownership: spec.ownership,
     pointers: spec.pointers,
     expectedReceiptDigest: spec.expectedReceiptDigest,
