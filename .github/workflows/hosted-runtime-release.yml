@@ -196,6 +196,7 @@ jobs:
              .predecessorVersion == $predecessorVersion and
              .ownerPredecessorVersion == $ownerPredecessorVersion and
              .ownerPredecessorInstallationClass == "canonical-managed" and
+             .ownerTransitionStage == "post-tag-authentic-attestation" and
              .releaseSequence == ($releaseSequence | tonumber) and
              .securityEpoch == ($securityEpoch | tonumber) and
              .preCandidateRunId == $preCandidateRunId and

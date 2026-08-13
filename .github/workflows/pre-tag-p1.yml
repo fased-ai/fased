@@ -117,9 +117,13 @@ jobs:
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$OWNER_PREDECESSOR_VERSION")"
           node scripts/verify-lifecycle-root-pin.mjs
-          local_predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" --arg owner "$OWNER_PREDECESSOR_VERSION" \
-            '[{version:$stable,installationClass:"public-stable"},
-              {version:$owner,installationClass:"canonical-managed"}] | unique_by([.version,.installationClass])')"
+          # A legacy canonical-managed updater verifies target attestations
+          # against refs/tags/v<target>. That proof can exist only after the
+          # immutable target tag and trusted build. Keep the pre-tag matrix to
+          # routes that can authenticate an untagged candidate; the release
+          # workflow re-adds and blocks publication on the owner transition.
+          local_predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" \
+            '[{version:$stable,installationClass:"public-stable"}]')"
           hosting_predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" '[$stable]')"
           printf 'local_predecessors=%s\n' "$local_predecessors" >>"$GITHUB_OUTPUT"
           printf 'hosting_predecessors=%s\n' "$hosting_predecessors" >>"$GITHUB_OUTPUT"
@@ -387,6 +391,7 @@ jobs:
             --arg predecessorVersion "$PREDECESSOR_VERSION" \
             --arg ownerPredecessorVersion "$OWNER_PREDECESSOR_VERSION" \
             --arg ownerPredecessorInstallationClass "canonical-managed" \
+            --arg ownerTransitionStage "post-tag-authentic-attestation" \
             --arg preCandidateRunId "$PRE_CANDIDATE_RUN_ID" \
             --arg workflowRunId "$GITHUB_RUN_ID" \
             --arg candidateDescriptorSha256 "$DESCRIPTOR_SHA256" \
@@ -396,6 +401,7 @@ jobs:
               releaseVersion:$releaseVersion,predecessorVersion:$predecessorVersion,
               ownerPredecessorVersion:$ownerPredecessorVersion,
               ownerPredecessorInstallationClass:$ownerPredecessorInstallationClass,
+              ownerTransitionStage:$ownerTransitionStage,
               releaseSequence:$releaseSequence,securityEpoch:$securityEpoch,
               preCandidateRunId:$preCandidateRunId,workflowRunId:$workflowRunId,
               candidateDescriptorSha256:$candidateDescriptorSha256}' \

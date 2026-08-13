@@ -683,6 +683,7 @@ describe("CI workflow routing", () => {
     ).toMatchObject({ GH_TOKEN: "${{ github.token }}" });
     expect(preflightText).toContain("ownerPredecessorVersion");
     expect(preflightText).toContain('installationClass:"canonical-managed"');
+    expect(preflightText).toContain('.ownerTransitionStage == "post-tag-authentic-attestation"');
     expect(p1Update?.steps?.some((step) => usesAction(step, "actions/cache"))).toBe(true);
     expect(publishText).not.toContain("git tag");
     expect(publishText).not.toContain("git push origin");
@@ -817,6 +818,14 @@ describe("CI workflow routing", () => {
     );
     expect(evidenceRecord?.run).toContain(
       "ownerPredecessorInstallationClass:$ownerPredecessorInstallationClass",
+    );
+    expect(evidenceRecord?.run).toContain(
+      '--arg ownerTransitionStage "post-tag-authentic-attestation"',
+    );
+    expect(evidenceRecord?.run).toContain("ownerTransitionStage:$ownerTransitionStage");
+    expect(allText).toContain('[{version:$stable,installationClass:"public-stable"}]');
+    expect(allText).not.toContain(
+      '[{version:$stable,installationClass:"public-stable"},\n              {version:$owner,installationClass:"canonical-managed"}]',
     );
     expect(allText).not.toContain("gh release create");
     expect(allText).not.toContain("git tag");

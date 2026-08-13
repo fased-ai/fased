@@ -6,16 +6,19 @@ Read this file only after explicit candidate, publication, or stable authority.
 
 Start from one clean exact `origin/main` commit whose affected predicates and
 public-style Linux-x64 lifecycle transaction already pass. Bind the actual
-owner Local predecessor as well as the latest supported stable predecessor. If
-they differ, both paths must already pass against the same branch artifact.
+owner Local predecessor as well as the latest supported stable predecessor.
+When an installed legacy updater requires authentic target-tag-bound
+attestations, the owner transition cannot pass against an untagged branch
+artifact. Record that boundary explicitly and defer only that transition to the
+trusted tagged workflow; never substitute a synthetic verifier or bundle.
 
 ```text
 PRE-CANDIDATE
 -> version-only protected PR
--> exact merged-main pre-tag candidate-shaped P1
--> owner immutable tag at exact main only after every predicate passes
--> trusted build once
--> parallel P1 against the exact artifact set
+-> exact merged-main pre-tag candidate-shaped P1 for executable trust routes
+-> owner immutable proof-enabling tag at exact main
+-> trusted build and authentic target attestations once
+-> parallel P1, including the deferred owner transition, against the exact artifact set
 -> protected publication approval
 ```
 
@@ -24,10 +27,13 @@ identity, compatibility inventory, and public acquisition inputs. It must not
 discover a new product command.
 
 The pre-tag P1 uses the exact Local and Hosting fixture entrypoints, container
-mount layout, acquisition URL map, candidate-shaped artifact inventory,
-predecessor set, and receipt verifier used after tagging. It runs on the same
-protected Linux runner class. A tag is forbidden when any candidate fixture,
-artifact name, transport route, or acceptance predicate has not executed there.
+mount layout, acquisition URL map, candidate-shaped artifact inventory, and
+receipt verifier used after tagging. It runs on the same protected Linux runner
+class. A tag is forbidden when any executable fixture, artifact name, transport
+route, or acceptance predicate has not executed there. If a legacy updater
+requires a target-tag-bound attestation, pre-tag evidence must name the deferred
+canonical-managed class and the post-tag workflow must make its authentic
+transition a hard publication dependency.
 
 The candidate descriptor binds version, commit, tree, lockfile, workflow run,
 artifact names/sizes/digests, provenance, SBOM/VEX, signer/controller identity,
@@ -38,7 +44,9 @@ P1 covers fresh protected Local, latest supported public stable to candidate,
 rollback/retry, restart, declared-state preservation, product/service health,
 and `Already current`. It also replays the exact owner Local predecessor when
 that differs from stable; this is an owner-acceptance prerequisite, not broad
-historical compatibility. Independent predecessor lanes run concurrently and
+historical compatibility. When target authentication is tag-bound, this owner
+lane runs only after the trusted build has issued authentic attestations and
+still blocks publication. Independent predecessor lanes run concurrently and
 consume the same candidate artifact.
 
 Product failure returns to one normal fix and requires a new immutable identity
