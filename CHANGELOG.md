@@ -4,11 +4,6 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
-## 0.1.76-rc.79
-
-- Upgrade supported canonical schema-1 installations through the ordinary
-  version-neutral Go lifecycle transaction with exact rollback and retry.
-
 ## 0.1.76-rc.78
 
 - Complete the canonical schema-1 owner-predecessor migration and bind Local

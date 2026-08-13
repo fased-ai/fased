@@ -769,6 +769,9 @@ describe("CI workflow routing", () => {
     const predecessorTopology = localUpdate?.steps?.find(
       (step) => step.name === "Derive exact predecessor topology",
     );
+    const evidenceRecord = evidence?.steps?.find(
+      (step) => step.name === "Record immutable pre-tag evidence",
+    );
     const allText = Object.values(jobs)
       .flatMap((job) => job.steps ?? [])
       .map((step) => step.run ?? "")
@@ -809,6 +812,12 @@ describe("CI workflow routing", () => {
     expect(hostingRun?.env).toMatchObject({
       FASED_HOSTING_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install,managed-update",
     });
+    expect(evidenceRecord?.run).toContain(
+      '--arg ownerPredecessorInstallationClass "canonical-managed"',
+    );
+    expect(evidenceRecord?.run).toContain(
+      "ownerPredecessorInstallationClass:$ownerPredecessorInstallationClass",
+    );
     expect(allText).not.toContain("gh release create");
     expect(allText).not.toContain("git tag");
     expect(allText).not.toContain("git push");
