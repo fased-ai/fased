@@ -211,6 +211,34 @@ describe("lifecycle acceptance contract", () => {
     ).toBe("SUPPORTING");
   });
 
+  it("separates branch product PASS from substituted acquisition SUPPORTING", () => {
+    const value = contract();
+    const branchEvidence = evidence("hosting", "fresh-install").map((record) =>
+      record.id === "public-installer-acquisition" ? { ...record, status: "SUPPORTING" } : record,
+    );
+    const receipt = buildAcceptanceReceipt({
+      contract: value,
+      profile: "hosting",
+      scenario: "fresh-install",
+      version: "0.1.76-rc.70",
+      commit: "a".repeat(40),
+      candidateDescriptorDigest: digest,
+      evidenceClass: "PASS",
+      acquisitionEvidenceClass: "SUPPORTING",
+      acquisition: acquisition("0.1.76-rc.70", "SUPPORTING"),
+      evidence: branchEvidence,
+    });
+    expect(receipt.evidenceClass).toBe("PASS");
+    expect(receipt.acquisitionEvidenceClass).toBe("SUPPORTING");
+    expect(() =>
+      verifyAcceptanceReceipt({
+        contract: value,
+        receipt,
+        expected: { evidenceClass: "PASS", acquisitionEvidenceClass: "PASS" },
+      }),
+    ).toThrow("acquisitionEvidenceClass mismatch");
+  });
+
   it("wires the v2 contract and capsule verifier into candidate proof", () => {
     const wrapper = readFileSync(
       new URL("./test-lifecycle-local-acceptance.sh", import.meta.url),

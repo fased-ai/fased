@@ -139,6 +139,9 @@ Execute one checkpoint at a time and stop with exact evidence.
 - Build one cached unpublished Linux-x64 artifact.
 - Run fresh/update Local and Hosting scenarios concurrently when isolated.
 - Reuse exact bytes for rollback, reboot, preservation and `Already current`.
+- Record product predicates as `PASS` and substituted acquisition as
+  `SUPPORTING`; bind both in one receipt. Never promote that receipt into
+  public acquisition evidence.
 
 ### D11 — Protected delivery
 
@@ -149,6 +152,9 @@ Execute one checkpoint at a time and stop with exact evidence.
 - PRE-CANDIDATE on exact merged main.
 - One immutable candidate and one build.
 - Parallel P1, exact publication, PUBLIC0, owner Local and real Hosting.
+- PUBLIC0 supplies the first immutable-GitHub-Release acquisition `PASS` after
+  publication; P1 before publication replays the product predicates and exact
+  artifact inventory without claiming public transport.
 - Stable only after both real environments pass.
 
 ## Stop rules

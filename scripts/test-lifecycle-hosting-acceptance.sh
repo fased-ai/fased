@@ -247,7 +247,8 @@ run_scenario() {
       --commit "$commit" \
       --candidate-descriptor-digest "sha256:$(sha256sum "$descriptor" | awk '{print $1}')" \
       --predecessor-capsule-digest "$capsule_digest" \
-      --evidence-class SUPPORTING >/dev/null
+      --evidence-class PASS \
+      --acquisition-evidence-class SUPPORTING >/dev/null
   fi
   "$RUNTIME" stop "$name" >/dev/null
   "$RUNTIME" start "$name" >/dev/null

@@ -18,7 +18,8 @@ acceptance_contract=/artifacts/fased-lifecycle-acceptance-v2.json
 acceptance_descriptor=/artifacts/fased-hosting-candidate.json
 acceptance_evidence=/tmp/fased-hosting-acceptance.evidence.jsonl
 acceptance_receipt="/var/lib/fased-lifecycled/lifecycle-acceptance-${scenario}.json"
-acceptance_evidence_class=SUPPORTING
+acceptance_evidence_class=PASS
+acceptance_acquisition_evidence_class=SUPPORTING
 acceptance_release_base_url="https://github.com/fased-ai/fased/releases/download/v${version}"
 predecessor_capsule_descriptor=/predecessor-capsule/fased-predecessor-capsule.json
 predecessor_capsule_attestation=/predecessor-capsule/fased-predecessor-capsule.json.attestation.json
@@ -235,7 +236,9 @@ acceptance_mark() {
     --arg id "$predicate" \
     --arg evidenceDigest "sha256:$(sha256sum "$evidence_file" | awk '{print $1}')" \
     --arg summary "$summary" \
-    --arg status "$acceptance_evidence_class" \
+    --arg status "$([[ "$predicate" == "public-installer-acquisition" ]] && \
+      printf '%s' "$acceptance_acquisition_evidence_class" || \
+      printf '%s' "$acceptance_evidence_class")" \
     '{id:$id,status:$status,evidenceDigest:$evidenceDigest,summary:$summary}' \
     >>"$acceptance_evidence"
 }
@@ -272,6 +275,7 @@ acceptance_finish() {
     --candidate-descriptor-digest "$descriptor_digest" \
     --predecessor-capsule-digest "$capsule_digest" \
     --evidence-class "$acceptance_evidence_class" \
+    --acquisition-evidence-class "$acceptance_acquisition_evidence_class" \
     --acquisition-mode substituted-fixture \
     --release-base-url "$acceptance_release_base_url" \
     --metadata-base-url "$acceptance_release_base_url" \
@@ -288,7 +292,8 @@ acceptance_finish() {
     --commit "$commit" \
     --candidate-descriptor-digest "$descriptor_digest" \
     --predecessor-capsule-digest "$capsule_digest" \
-    --evidence-class "$acceptance_evidence_class" >/dev/null
+    --evidence-class "$acceptance_evidence_class" \
+    --acquisition-evidence-class "$acceptance_acquisition_evidence_class" >/dev/null
 }
 
 run_public_installer() {

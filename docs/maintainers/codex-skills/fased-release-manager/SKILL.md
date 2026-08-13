@@ -1,6 +1,6 @@
 ---
 name: fased-release-manager
-description: Manage focused Fased fixes, protected delivery, and explicitly requested releases without expanding small tasks into lifecycle or release work.
+description: Manage persistent approved Fased plans, focused fixes, protected delivery, and explicitly requested releases without losing the active checkpoint or expanding its scope.
 ---
 
 # Fased Release Manager
@@ -9,11 +9,44 @@ Work only in `/home/fc/fasedbot/fased` or one explicitly selected Fased
 worktree. Never scan the whole parent directory, every worktree, or archived
 incidents.
 
-## Scope first
+## Controlling plan and continuation
 
-The newest request is the scope ceiling. Older plans and approvals are inactive
-unless the user explicitly resumes a named phase. `Do it`, `continue`, and
-`finish` apply only to the newest request.
+Select exactly one controlling plan for multi-checkpoint work. At the start and
+after every material status change, print one compact banner:
+
+`PLAN: <path or named plan> | MODE: <mode> | CHECKPOINT: <id> | STATUS: <status> | NEXT: <predicate>`
+
+An explicitly selected or owner-approved plan remains active until it is
+complete, genuinely blocked, replaced by the owner, or stopped by the owner.
+`Do it`, `continue`, `next`, and `finish the plan` resume that plan at its first
+incomplete predicate. They are not unrelated new tasks and do not discard prior
+in-scope authorization. They also do not expand the plan.
+
+After a checkpoint passes, continue automatically through the next reversible,
+already-authorized checkpoint. Do not stop merely to announce a pass or request
+permission for ordinary local edits, focused tests, cached branch artifacts,
+PR creation, or monitoring an existing protected check. Keep progress visible.
+
+Stop only when:
+
+- the plan is complete;
+- the user says stop or replaces it;
+- the first failed predicate requires a plan amendment or authority expansion;
+- the same predicate fails twice after one coherent correction;
+- required external state or credentials are unavailable; or
+- an irreversible boundary is not covered by recorded current authorization.
+
+Irreversible boundaries are merge, tag, GitHub publication, npm publication,
+owner installation, real Hosting mutation, and stable promotion. If the owner
+explicitly authorizes a named sequence through one or more boundaries, record
+`AUTHORIZED THROUGH: <boundary>` and do not ask again while the exact plan and
+artifact identity remain unchanged.
+
+A genuinely unrelated newer request replaces active work. A bare continuation
+message does not. Never silently switch plans, checkpoints, repositories,
+installation classes, or artifact identities.
+
+## Scope and mode
 
 Choose one mode:
 
@@ -23,7 +56,8 @@ Choose one mode:
 - `RELEASE`: only for an explicitly requested candidate, publication, or stable
   action.
 
-Never advance to the next mode automatically.
+Advance modes only when the controlling plan or newest request explicitly
+contains that transition and every preceding exit predicate is satisfied.
 
 If a newer request replaces active work, stop the obsolete command safely and
 switch scope. In a dirty worktree, preserve unrelated changes and isolate the
@@ -34,7 +68,8 @@ requested patch before editing or committing.
 1. Use the nearest red-capable test when a test is needed.
 2. Make one coherent correction.
 3. Run that test, directly coupled contracts, and changed-file formatting.
-4. Stop and report.
+4. Report the result. For a standalone fix, hand back; inside an active
+   controlling plan, continue to its next reversible checkpoint.
 
 Close focused source predicates before building any artifact. A validator
 PASS proves structure only; never report it as product-behavior proof.
@@ -55,7 +90,9 @@ tests first. If product runtime bytes changed, build one cached unpublished
 Linux-x64 artifact bound to commit, tree, and lockfile digest; exercise only the
 affected topology against those exact bytes. Reuse it for rollback, restart,
 preservation, and `Already current`. Never build ARM/macOS or a release matrix
-during development. Stop after local closure unless shipping was requested.
+during development. For standalone lifecycle work, hand back after local
+closure unless shipping was requested. Inside an active controlling plan,
+continue according to that plan's declared checkpoints and recorded authority.
 
 For a root lifecycle, installer trust, Local/Hosting convergence, or updater
 architecture replacement, also read
@@ -79,11 +116,16 @@ between P1 and publication.
 
 Version identity is strict. Before allocating a candidate, bind both the latest
 supported stable predecessor and the actual owner Local predecessor into
-PRE-CANDIDATE evidence. Prove both locally against the branch artifact when
-they differ. Candidate P1 replays both in parallel against the same exact
-bytes. A candidate whose tagged source is followed by any product correction
-is permanently obsolete: never move its tag, rebuild it, publish replacement
-bytes under its version, or use it for owner acceptance.
+PRE-CANDIDATE evidence. Bind each predecessor's profile, topology, canonical
+manifest schema, platform identity, state-schema digest, capability digest,
+active generation, and version. Version equality alone never establishes an
+installation-class match. Prove each distinct class locally against the branch
+artifact. Candidate P1 replays them in parallel against the same exact bytes.
+A synthetic or sanitized predecessor is `SUPPORTING` unless its complete
+semantic installation class matches the required predecessor receipt. A
+candidate whose tagged source is followed by any product correction is
+permanently obsolete: never move its tag, rebuild it, publish replacement bytes
+under its version, or use it for owner acceptance.
 
 No tag may allocate a predicate for the first time. Before requesting tag
 authority, run the same Local and Hosting fixture entrypoints, mount topology,
@@ -114,6 +156,34 @@ package version it inherits.
 - Do not inspect GitHub until reviewing or shipping.
 - Never bypass protection. Tags, releases, npm, owner installations, Hosting,
   and stable promotion require current explicit authority.
+
+## Workspace hygiene
+
+- Never create a cache or temporary root directly under `/home/fc/fasedbot`,
+  set that path as `HOME`, or point `TMPDIR`, `GOCACHE`, `GOTMPDIR`, receipts,
+  or artifact output into it.
+- Prohibited direct children include `.gc`, `.go-build-cache`, `.go-cache-*`,
+  `.npm-cache`, `.test-tmp`, `fu`, `t`, `artifact-*`, `hosted-artifacts*`,
+  `npm-smoke-*`, `release-evidence`, `release-validation-*`, and owner-repair
+  scratch-code directories. Never use a shorter workspace-local alias merely
+  to bypass this list.
+- Use `${XDG_CACHE_HOME:-$HOME/.cache}/fased-dev` as the only persistent
+  development cache and one shared `go-build` subdirectory. Key reusable
+  artifacts by immutable commit, tree, lockfile, and artifact digests.
+- Create transient directories with `mktemp -d /tmp/fased-<task>.XXXXXX` and
+  register `EXIT`, `INT`, and `TERM` cleanup before performing work.
+- Persist JSON receipts only. Never retain fixture installations, Wallets,
+  signer state, journals, logs, or extracted runtimes as evidence.
+- Retain the current branch artifact, one immutable predecessor set, and active
+  staging only. Remove failed/interrupted staging automatically. Enforce a
+  10 GiB cache budget and seven-day TTL.
+- Treat `/home/fc/fasedbot/.tmp` as shared mixed-project state. Never delete it
+  wholesale; audit and remove only exact owner-authorized children.
+- Before starting and before handoff, compare the workspace's direct children.
+  Remove every cache, artifact, fixture, or temporary root created by the task
+  before reporting completion. Never automatically delete a disabled Git
+  database, durable owner-state backup, Wallet/signer material, or unarchived
+  security finding; classify and obtain exact authority first.
 
 For npm, print only:
 

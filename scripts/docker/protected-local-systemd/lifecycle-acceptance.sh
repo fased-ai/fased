@@ -9,7 +9,8 @@ commit="${FASED_FIXTURE_COMMIT:?missing fixture commit}"
 predecessor_version="${FASED_FIXTURE_PREDECESSOR_VERSION:-}"
 preinstalled_tools="${FASED_FIXTURE_PREINSTALLED_TOOLS:-0}"
 public_acquisition="${FASED_FIXTURE_PUBLIC_ACQUISITION:-0}"
-acceptance_evidence_class=SUPPORTING
+acceptance_evidence_class=PASS
+acceptance_acquisition_evidence_class=SUPPORTING
 acceptance_release_base_url="https://github.com/fased-ai/fased/releases/download/v${version}"
 acceptance_contract=/artifacts/fased-lifecycle-acceptance-v2.json
 acceptance_descriptor=/artifacts/fased-hosting-candidate.json
@@ -63,7 +64,9 @@ acceptance_mark() {
     --arg id "$predicate" \
     --arg evidenceDigest "$evidence_digest" \
     --arg summary "$summary" \
-    --arg status "$acceptance_evidence_class" \
+    --arg status "$([[ "$predicate" == "public-installer-acquisition" ]] && \
+      printf '%s' "$acceptance_acquisition_evidence_class" || \
+      printf '%s' "$acceptance_evidence_class")" \
     '{id:$id,status:$status,evidenceDigest:$evidenceDigest,summary:$summary}' \
     >>"$acceptance_evidence"
 }
@@ -103,6 +106,7 @@ acceptance_finish() {
     --candidate-descriptor-digest "$descriptor_digest" \
     --predecessor-capsule-digest "$capsule_digest" \
     --evidence-class "$acceptance_evidence_class" \
+    --acquisition-evidence-class "$acceptance_acquisition_evidence_class" \
     --acquisition-mode substituted-fixture \
     --release-base-url "$acceptance_release_base_url" \
     --metadata-base-url "$acceptance_release_base_url" \
@@ -119,7 +123,8 @@ acceptance_finish() {
     --commit "$commit" \
     --candidate-descriptor-digest "$descriptor_digest" \
     --predecessor-capsule-digest "$capsule_digest" \
-    --evidence-class "$acceptance_evidence_class" >/dev/null
+    --evidence-class "$acceptance_evidence_class" \
+    --acquisition-evidence-class "$acceptance_acquisition_evidence_class" >/dev/null
 }
 
 verify_three_services() {

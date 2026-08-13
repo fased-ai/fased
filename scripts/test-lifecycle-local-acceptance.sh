@@ -771,8 +771,9 @@ run_fixture_scenario() {
     --commit "$COMMIT" \
     --candidate-descriptor-digest "$descriptor_digest" \
     --predecessor-capsule-digest "$capsule_digest" \
-    --evidence-class SUPPORTING >/dev/null
-  printf 'supporting lifecycle fixture receipt verified: %s\n' "$receipt"
+    --evidence-class PASS \
+    --acquisition-evidence-class SUPPORTING >/dev/null
+  printf 'branch lifecycle product receipt verified; acquisition supporting: %s\n' "$receipt"
   run_container rm -f "$name" >/dev/null
 }
 

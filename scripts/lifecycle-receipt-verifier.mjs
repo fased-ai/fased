@@ -45,6 +45,8 @@ function main() {
       candidateDescriptorDigest: options["candidate-descriptor-digest"],
       predecessorCapsuleDigest,
       evidenceClass: options["evidence-class"] || "PASS",
+      acquisitionEvidenceClass:
+        options["acquisition-evidence-class"] || options["evidence-class"] || "PASS",
     },
   });
   process.stdout.write(

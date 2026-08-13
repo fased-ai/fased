@@ -1,4 +1,4 @@
 interface:
   display_name: "Fased Release Manager"
-  short_description: "Keep Fased fixes focused and releases explicit"
-  default_prompt: "Use $fased-release-manager for the newest request only; default to the smallest focused fix and enter lifecycle or release work only when explicitly required."
+  short_description: "Continue approved Fased plans safely and efficiently"
+  default_prompt: "Use $fased-release-manager to resume the active approved Fased plan at its first incomplete predicate, keep fixes focused, and preserve explicit irreversible boundaries."

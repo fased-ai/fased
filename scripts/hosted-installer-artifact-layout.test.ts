@@ -95,6 +95,12 @@ describe("attested Go lifecycle artifact layout", () => {
     expect(hostingRunner).not.toContain("/fixture-tools/node");
   });
 
+  it("binds the plugin compiler loader before artifact staging changes dependencies", () => {
+    expect(hostedArtifactBuilder).toContain('const tsxLoader = import.meta.resolve("tsx")');
+    expect(hostedArtifactBuilder).toContain('"--import",\n        tsxLoader');
+    expect(hostedArtifactBuilder).not.toContain('"--import",\n        "tsx"');
+  });
+
   it("binds replay trust to the exact immutable candidate inventory", () => {
     expect(candidateTrustOverlay).toContain("fased-candidate-fixture-trust-overlay");
     expect(candidateTrustOverlay).toContain("fased-candidate-original");
