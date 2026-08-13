@@ -172,9 +172,10 @@ jobs:
       - name: Validate exact version-only diff
         if: needs.classify.outputs.version_only == 'true'
         env:
+          GH_TOKEN: ${{ github.token }}
           GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
           GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: node scripts/ci-version-identity.mjs --allow-published-base-restore
+        run: node scripts/ci-version-identity.mjs --allow-obsolete-tagged-candidate-restore
 
       - name: Check CI routing contracts
         if: needs.classify.outputs.run_ci_contracts == 'true'
