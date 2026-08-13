@@ -129,6 +129,22 @@ function managedInstall(config, generation, previous) {
   };
 }
 
+function localInstanceRegistry(config) {
+  return {
+    schemaVersion: 1,
+    instances: [
+      {
+        instanceId: config.instanceId,
+        operatorUid: config.operator.uid,
+        operatorUser: "testop",
+        profile: config.profile,
+        stateDir: config.ownerStateRoot,
+        createdAt: "1970-01-01T00:00:00Z",
+      },
+    ],
+  };
+}
+
 function lifecycleProjection(config) {
   const instance = config.instanceId;
   return {
@@ -360,6 +376,7 @@ export async function buildCanonicalManagedPredecessorCapsule(options) {
       [`var/lib/fased-local/${instance}/lifecycle`, 0o700, "root"],
       [`var/lib/fased-local/${instance}/signer`, 0o700, "root"],
       ["var/lib/fased-predecessor-input", 0o700, "root"],
+      ["var/lib/fased-local-registry", 0o700, "root"],
       ["home/testop/.fased", 0o700, "operator"],
       ["home/testop/.fased/bin", 0o700, "operator"],
       ["home/testop/.fased/cache", 0o700, "operator"],
@@ -401,6 +418,13 @@ export async function buildCanonicalManagedPredecessorCapsule(options) {
         source,
         `var/lib/fased-local/${instance}/lifecycle/installation-manifest.json`,
         `${JSON.stringify(manifest, null, 2)}\n`,
+        0o600,
+        "root",
+      ),
+      await write(
+        source,
+        "var/lib/fased-local-registry/instances.json",
+        `${JSON.stringify(localInstanceRegistry(config))}\n`,
         0o600,
         "root",
       ),

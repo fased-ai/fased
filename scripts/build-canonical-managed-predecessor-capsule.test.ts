@@ -138,6 +138,25 @@ describe("canonical managed predecessor capsule", () => {
       capsule.entries.find((entry) => entry.path === "var/lib/fased-local/1122334455667788"),
     ).toMatchObject({ type: "directory", mode: 0o755, owner: "root" });
     expect(capsule.installationClass.platform.instanceId).toBe("1122334455667788");
+    const registry = JSON.parse(
+      await readFile(path.join(restored, "var/lib/fased-local-registry/instances.json"), "utf8"),
+    );
+    expect(registry).toEqual({
+      schemaVersion: 1,
+      instances: [
+        {
+          instanceId: "1122334455667788",
+          operatorUid: 2000,
+          operatorUser: "testop",
+          profile: "protected-local",
+          stateDir: "/home/testop/.fased",
+          createdAt: "1970-01-01T00:00:00Z",
+        },
+      ],
+    });
+    expect(
+      capsule.entries.find((entry) => entry.path === "var/lib/fased-local-registry/instances.json"),
+    ).toMatchObject({ type: "file", mode: 0o600, owner: "root" });
     const launcherPath = path.join(restored, "home/testop/.fased/bin/fased");
     const launcher = await readFile(launcherPath, "utf8");
     expect((await stat(launcherPath)).mode & 0o777).toBe(0o755);
