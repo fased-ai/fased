@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import {
   assertLatestPublishedBaseRestore,
   assertPackageVersionOnlyChange,
   isLineSubsequence,
+  validateCurrentVersionInventory,
 } from "./ci-version-identity.mjs";
 
 describe("version-only release identity", () => {
@@ -44,6 +45,29 @@ describe("version-only release identity", () => {
         "extensions/telegram/package.json",
       ),
     ).not.toThrow();
+  });
+
+  it("rejects a partially restored release identity until every surface matches core", () => {
+    const root = mkdtempSync(join(tmpdir(), "fased-version-inventory-"));
+    mkdirSync(join(root, "src"), { recursive: true });
+    mkdirSync(join(root, "extensions", "example"), { recursive: true });
+    writeFileSync(
+      join(root, "package.json"),
+      `${JSON.stringify({ name: "@fased/fased", version: "1.2.3" })}\n`,
+    );
+    writeFileSync(join(root, "src", "brand.ts"), 'FASED_PRODUCT_VERSION = "1.2.3";\n');
+    writeFileSync(
+      join(root, "extensions", "example", "package.json"),
+      `${JSON.stringify({ name: "@fased/example", version: "1.2.4" })}\n`,
+    );
+
+    expect(() => validateCurrentVersionInventory(root)).toThrow(/does not match core/u);
+
+    writeFileSync(
+      join(root, "extensions", "example", "package.json"),
+      `${JSON.stringify({ name: "@fased/example", version: "1.2.3" })}\n`,
+    );
+    expect(validateCurrentVersionInventory(root)).toBe("1.2.3");
   });
 
   it("rejects source edits hidden beside the brand version", () => {
