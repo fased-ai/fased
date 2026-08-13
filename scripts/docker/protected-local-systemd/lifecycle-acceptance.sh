@@ -171,6 +171,7 @@ materialize_canonical_managed_predecessor() {
   groupadd "fscf-$instance"
   usermod -a -G "fsop-$instance,fscf-$instance" testop
   usermod -a -G "fscf-$instance" "fsgw-$instance"
+  usermod -a -G "fsgw-$instance,fsop-$instance" "fssg-$instance"
   setfacl --no-mask --modify "user:$gateway_uid:--x" -- /home/testop
 
   install -d -m 0755 -o root -g root "$generation_root" "$dependency_root"
@@ -178,6 +179,8 @@ materialize_canonical_managed_predecessor() {
     -C "$generation_root" --strip-components=1 --no-same-owner --no-same-permissions
   tar -xzf /var/lib/fased-predecessor-input/dependency.tar.gz \
     -C "$dependency_root" --no-same-owner --no-same-permissions
+  ln -s "../../dependencies/$dependency_hash-$dependency_digest/node_modules" \
+    "$generation_root/node_modules"
   test "$(jq -er '.generation.id | sub("^sha256:"; "")' "$generation_root/generation.json")" = \
     "$generation_id"
   chown -R root:root "$generation_root" "$dependency_root"

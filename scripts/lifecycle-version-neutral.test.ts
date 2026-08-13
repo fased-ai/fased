@@ -37,6 +37,10 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(fixture).toContain('systemctl enable --now "$predecessor_service"');
     expect(fixture).toContain('user_systemctl enable --now "$predecessor_service"');
     expect(fixture).toContain('setfacl --no-mask --modify "user:$gateway_uid:--x"');
+    expect(fixture).toContain('usermod -a -G "fsgw-$instance,fsop-$instance" "fssg-$instance"');
+    expect(fixture).toContain(
+      '"../../dependencies/$dependency_hash-$dependency_digest/node_modules"',
+    );
   });
 
   it("binds candidate P1 to an explicit supported public predecessor", async () => {
