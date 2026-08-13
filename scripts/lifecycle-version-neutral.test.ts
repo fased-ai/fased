@@ -16,6 +16,10 @@ describe("version-neutral lifecycle acceptance", () => {
       resolve(repoRoot, "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh"),
       "utf8",
     );
+    const hostingWrapper = await readFile(
+      resolve(repoRoot, "scripts/test-lifecycle-hosting-acceptance.sh"),
+      "utf8",
+    );
 
     for (const source of [wrapper, fixture]) {
       expect(source).not.toMatch(/0\.1\.76-rc\./u);
@@ -48,6 +52,7 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(fixture).toContain('--home-dir "/var/lib/fased-local/$instance/signer"');
     expect(fixture).toContain('test -f "$state/bin/fased" && test ! -L "$state/bin/fased"');
     expect(fixture).toContain('chmod 0755 "$state/bin/fased"');
+    expect(hostingWrapper).toContain("lifecycle-d8-contract|lifecycle-version-neutral");
   });
 
   it("binds candidate P1 to an explicit supported public predecessor", async () => {
