@@ -1,6 +1,6 @@
 module fased-lifecycled
 
-go 1.25.12
+go 1.25.13
 
 require github.com/sigstore/sigstore-go v1.3.0
 
