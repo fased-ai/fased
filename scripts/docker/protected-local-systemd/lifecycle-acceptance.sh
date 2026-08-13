@@ -171,6 +171,7 @@ materialize_canonical_managed_predecessor() {
   groupadd "fscf-$instance"
   usermod -a -G "fsop-$instance,fscf-$instance" testop
   usermod -a -G "fscf-$instance" "fsgw-$instance"
+  setfacl --no-mask --modify "user:$gateway_uid:--x" -- /home/testop
 
   install -d -m 0755 -o root -g root "$generation_root" "$dependency_root"
   tar -xzf /var/lib/fased-predecessor-input/generation.tar.gz \
@@ -195,7 +196,7 @@ materialize_canonical_managed_predecessor() {
   find "$state" -xdev -type f -exec chmod 0660 {} +
   install -d -m 0700 -o "$signer_uid" -g "$signer_gid" \
     "/var/lib/fased-local/$instance/signer"
-  install -d -m 0700 -o root -g root "/var/lib/fased-local/$instance/controller"
+  install -d -m 0710 -o root -g "$signer_gid" "/var/lib/fased-local/$instance/controller"
   systemctl daemon-reload
 }
 

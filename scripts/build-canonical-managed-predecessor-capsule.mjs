@@ -284,7 +284,7 @@ export async function buildCanonicalManagedPredecessorCapsule(options) {
       [`opt/fased/local/${instance}/generations`, 0o755, "root"],
       [`opt/fased/local/${instance}/dependencies`, 0o755, "root"],
       [`opt/fased/local/${instance}/generations/${previous.id.slice(7)}`, 0o755, "root"],
-      [`var/lib/fased-local/${instance}`, 0o700, "root"],
+      [`var/lib/fased-local/${instance}`, 0o755, "root"],
       [`var/lib/fased-local/${instance}/controller`, 0o700, "root"],
       [`var/lib/fased-local/${instance}/lifecycle`, 0o700, "root"],
       [`var/lib/fased-local/${instance}/signer`, 0o700, "root"],

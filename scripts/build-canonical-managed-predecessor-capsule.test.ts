@@ -134,5 +134,8 @@ describe("canonical managed predecessor capsule", () => {
     expect(new Set([platform.operator.uid, platform.gateway.uid, platform.signer.uid]).size).toBe(
       3,
     );
+    expect(
+      capsule.entries.find((entry) => entry.path === "var/lib/fased-local/schema1-owner"),
+    ).toMatchObject({ type: "directory", mode: 0o755, owner: "root" });
   });
 });
