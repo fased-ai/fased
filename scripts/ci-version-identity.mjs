@@ -125,7 +125,32 @@ export function validateCurrentVersionInventory(repoRoot = resolve(".")) {
   return version;
 }
 
-export function assertLatestPublishedBaseRestore({ base, previousVersion, repoRoot, version }) {
+function githubReleaseExists(tag) {
+  const repository = process.env.GITHUB_REPOSITORY;
+  assert.match(
+    repository ?? "",
+    /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u,
+    "GITHUB_REPOSITORY is required",
+  );
+  try {
+    execFileSync("gh", ["api", `repos/${repository}/releases/tags/${tag}`], {
+      cwd: resolve("."),
+      stdio: "ignore",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function assertLatestPublishedBaseRestore({
+  allowObsoleteTaggedCandidate = false,
+  base,
+  previousVersion,
+  releaseExists = githubReleaseExists,
+  repoRoot,
+  version,
+}) {
   const previousTag = `refs/tags/v${previousVersion}`;
   try {
     execFileSync("git", ["show-ref", "--verify", "--quiet", previousTag], { cwd: repoRoot });
@@ -147,6 +172,15 @@ export function assertLatestPublishedBaseRestore({ base, previousVersion, repoRo
     );
     return;
   }
+  if (allowObsoleteTaggedCandidate) {
+    execFileSync("git", ["merge-base", "--is-ancestor", previousTag, base], { cwd: repoRoot });
+    execFileSync("git", ["merge-base", "--is-ancestor", `refs/tags/v${version}`, base], {
+      cwd: repoRoot,
+    });
+    assert.equal(releaseExists(`v${previousVersion}`), false, "obsolete candidate is published");
+    assert.equal(releaseExists(`v${version}`), true, "restore target is not published");
+    return;
+  }
   throw new Error(`failed candidate version v${previousVersion} is already tagged`);
 }
 
@@ -154,7 +188,11 @@ export function validateVersionOnlyDiff(
   base,
   paths,
   repoRoot = resolve("."),
-  { allowExactTag = false, allowPublishedBaseRestore = false } = {},
+  {
+    allowExactTag = false,
+    allowObsoleteTaggedCandidateRestore = false,
+    allowPublishedBaseRestore = false,
+  } = {},
 ) {
   const scope = classifyChangedPaths(paths);
   assert.equal(scope.versionOnly, true, "changed paths are not an exact version-only release set");
@@ -202,6 +240,7 @@ export function validateVersionOnlyDiff(
   }
   if (allowPublishedBaseRestore) {
     assertLatestPublishedBaseRestore({
+      allowObsoleteTaggedCandidate: allowObsoleteTaggedCandidateRestore,
       base,
       previousVersion: previousRoot.version,
       repoRoot,
@@ -217,20 +256,30 @@ function main() {
   const allowExactTag = args.length === 1 && args[0] === "--allow-exact-tag";
   const allowPublishedBaseRestore =
     args.length === 1 && args[0] === "--allow-published-base-restore";
-  if (args.length > 0 && !allowExactTag && !allowPublishedBaseRestore) {
+  const allowObsoleteTaggedCandidateRestore =
+    args.length === 1 && args[0] === "--allow-obsolete-tagged-candidate-restore";
+  if (
+    args.length > 0 &&
+    !allowExactTag &&
+    !allowPublishedBaseRestore &&
+    !allowObsoleteTaggedCandidateRestore
+  ) {
     throw new Error(`unsupported arguments: ${args.join(" ")}`);
   }
   const base = diffBase();
   const paths = changedPathsFromGit();
   const version = validateVersionOnlyDiff(base, paths, resolve("."), {
     allowExactTag,
-    allowPublishedBaseRestore,
+    allowObsoleteTaggedCandidateRestore,
+    allowPublishedBaseRestore: allowPublishedBaseRestore || allowObsoleteTaggedCandidateRestore,
   });
   const identityMode = allowExactTag
     ? "immutable-tagged"
-    : allowPublishedBaseRestore
-      ? "untagged-or-latest-published-base-restored"
-      : "untagged";
+    : allowObsoleteTaggedCandidateRestore
+      ? "unpublished-obsolete-tag-restored-to-latest-published-base"
+      : allowPublishedBaseRestore
+        ? "untagged-or-latest-published-base-restored"
+        : "untagged";
   console.log(`ci-version-identity: ${version} is an exact ${identityMode} version-only change`);
 }
 

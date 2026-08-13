@@ -120,5 +120,27 @@ describe("version-only release identity", () => {
         version: "1.2.3",
       }),
     ).toThrow(/already tagged/u);
+
+    expect(() =>
+      assertLatestPublishedBaseRestore({
+        allowObsoleteTaggedCandidate: true,
+        base,
+        previousVersion: "1.2.4-rc.1",
+        releaseExists: (tag: string) => tag === "v1.2.3",
+        repoRoot: root,
+        version: "1.2.3",
+      }),
+    ).not.toThrow();
+
+    expect(() =>
+      assertLatestPublishedBaseRestore({
+        allowObsoleteTaggedCandidate: true,
+        base,
+        previousVersion: "1.2.4-rc.1",
+        releaseExists: () => true,
+        repoRoot: root,
+        version: "1.2.3",
+      }),
+    ).toThrow(/obsolete candidate is published/u);
   });
 });

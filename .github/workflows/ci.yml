@@ -1208,10 +1208,11 @@ jobs:
 
       - name: Validate exact version-only diff
         env:
+          GH_TOKEN: ${{ github.token }}
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
           GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
           GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: node scripts/ci-version-identity.mjs --allow-published-base-restore
+        run: node scripts/ci-version-identity.mjs --allow-obsolete-tagged-candidate-restore
 
   strict-types-baseline:
     name: "strict types baseline"
