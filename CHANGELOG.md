@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.84
+
+- Route every managed Local and Hosting update through the stable signed Go
+  bootstrap before replaceable generation code can run.
+- Bind the narrow lifecycle privilege policy to the installed operator and
+  profile, and fail closed when the stable launcher did not intercept mutation.
+- Recover exact systemd rollback after a failed target exhausts the start limit,
+  retaining signer v2 and preserved application state across retry.
+
 ## 0.1.76-rc.82
 
 - Restore the trusted system GitHub CLI in canonical-managed Local acceptance
