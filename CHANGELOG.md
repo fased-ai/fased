@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.88
+
+- Treat release archive deadlines as no-progress limits so active large writes
+  can finish while stalled or partial output still fails closed.
+- Emit signer-v2 plugin locks from validated manifest identities in canonical
+  order, including bundled runtimes whose implementation directory differs.
+- Remove obsolete npm-managed install and publication scaffolding; managed
+  install and update consume only attested GitHub release artifacts.
+
 ## 0.1.76-rc.87
 
 - Write release archives through a bounded, verified, atomic stream transaction
