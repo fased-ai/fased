@@ -52,16 +52,18 @@ type hostedLegacyWallet struct {
 }
 
 type hostedSignerRecord struct {
-	SchemaVersion int                  `json:"schemaVersion"`
-	Noop          bool                 `json:"noop"`
-	Activated     bool                 `json:"activated"`
-	RegistryPath  string               `json:"registryPath"`
-	ConfigPath    string               `json:"configPath"`
-	PolicyPath    string               `json:"policyPath"`
-	NativeMarker  string               `json:"nativeMarker"`
-	Registry      hostedFileSnapshot   `json:"registry"`
-	Config        hostedFileSnapshot   `json:"config"`
-	Wallets       []hostedLegacyWallet `json:"wallets"`
+	SchemaVersion   int                  `json:"schemaVersion"`
+	Noop            bool                 `json:"noop"`
+	Activated       bool                 `json:"activated"`
+	NativeStarted   bool                 `json:"nativeStarted,omitempty"`
+	NativeCommitted bool                 `json:"nativeCommitted,omitempty"`
+	RegistryPath    string               `json:"registryPath"`
+	ConfigPath      string               `json:"configPath"`
+	PolicyPath      string               `json:"policyPath"`
+	NativeMarker    string               `json:"nativeMarker"`
+	Registry        hostedFileSnapshot   `json:"registry"`
+	Config          hostedFileSnapshot   `json:"config"`
+	Wallets         []hostedLegacyWallet `json:"wallets"`
 }
 
 func (adapter HostedSignerMigrationAdapter) Prepare(_ context.Context, tx model.Transaction, migration model.Migration) error {
@@ -139,7 +141,7 @@ func (adapter HostedSignerMigrationAdapter) Prepare(_ context.Context, tx model.
 	record.Wallets = wallets
 	for path, contents := range passphrases {
 		if err := writeHostedFile(path, contents, 0o600, 0, 0, true); err != nil {
-			adapter.removePreparedFiles(record)
+			_ = adapter.removePreparedFiles(record)
 			return err
 		}
 	}
@@ -157,15 +159,15 @@ func (adapter HostedSignerMigrationAdapter) Prepare(_ context.Context, tx model.
 	}
 	encoded, err := json.Marshal(policy)
 	if err != nil {
-		adapter.removePreparedFiles(record)
+		_ = adapter.removePreparedFiles(record)
 		return err
 	}
 	if err := writeHostedFile(record.PolicyPath, append(encoded, '\n'), 0o600, 0, 0, true); err != nil {
-		adapter.removePreparedFiles(record)
+		_ = adapter.removePreparedFiles(record)
 		return err
 	}
 	if err := adapter.writeRecord(tx, record); err != nil {
-		adapter.removePreparedFiles(record)
+		_ = adapter.removePreparedFiles(record)
 		return err
 	}
 	return nil
@@ -271,26 +273,28 @@ func (adapter HostedSignerMigrationAdapter) Commit(ctx context.Context, tx model
 	if err != nil {
 		return err
 	}
-	if record.Noop {
-		return removeMigrationRecord(adapter.recordPath(tx))
-	}
-	if !record.Activated {
+	if !record.Noop && !record.Activated {
 		return errors.New("legacy Hosting signer migration was not activated")
 	}
-	if err := adapter.runNative(ctx, tx, record, "prepare"); err != nil {
-		return err
+	if !record.Noop && !record.NativeCommitted {
+		if !record.NativeStarted {
+			record.NativeStarted = true
+			if err := adapter.writeRecord(tx, record); err != nil {
+				return err
+			}
+		}
+		if err := adapter.runNative(ctx, tx, record, "prepare"); err != nil {
+			return err
+		}
+		if err := adapter.runNative(ctx, tx, record, "commit"); err != nil {
+			return err
+		}
+		record.NativeCommitted = true
+		if err := adapter.writeRecord(tx, record); err != nil {
+			return err
+		}
 	}
-	if err := adapter.runNative(ctx, tx, record, "commit"); err != nil {
-		return err
-	}
-	adapter.removePreparedFiles(record)
-	if err := removeMigrationRecord(adapter.recordPath(tx)); err != nil {
-		return err
-	}
-	if err := os.Remove(adapter.stateRoot(tx)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove committed Hosting migration state: %w", err)
-	}
-	return nil
+	return adapter.removePreparedState(tx, record, "committed")
 }
 
 func (adapter HostedSignerMigrationAdapter) Abort(_ context.Context, tx model.Transaction, migration model.Migration) error {
@@ -304,6 +308,9 @@ func (adapter HostedSignerMigrationAdapter) Abort(_ context.Context, tx model.Tr
 	if err != nil {
 		return err
 	}
+	if record.NativeStarted {
+		return errors.New("native Hosting signer custody migration has started; retry commit instead of rolling back application state")
+	}
 	if !record.Noop {
 		if err := restoreHostedSnapshot(record.RegistryPath, record.Registry); err != nil {
 			return err
@@ -311,15 +318,8 @@ func (adapter HostedSignerMigrationAdapter) Abort(_ context.Context, tx model.Tr
 		if err := restoreHostedSnapshot(record.ConfigPath, record.Config); err != nil {
 			return err
 		}
-		adapter.removePreparedFiles(record)
 	}
-	if err := removeMigrationRecord(adapter.recordPath(tx)); err != nil {
-		return err
-	}
-	if err := os.Remove(adapter.stateRoot(tx)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove rolled-back Hosting migration state: %w", err)
-	}
-	return nil
+	return adapter.removePreparedState(tx, record, "rolled-back")
 }
 
 func (adapter HostedSignerMigrationAdapter) validate(tx model.Transaction, migration model.Migration) error {
@@ -479,13 +479,43 @@ func (adapter HostedSignerMigrationAdapter) firstPrivateFile(candidates []string
 	return "", nil
 }
 
-func (adapter HostedSignerMigrationAdapter) removePreparedFiles(record hostedSignerRecord) {
+func (adapter HostedSignerMigrationAdapter) removePreparedFiles(record hostedSignerRecord) error {
+	var cleanupErrors []error
 	for _, wallet := range record.Wallets {
-		_ = removeHostedFile(wallet.PassphrasePath)
-		_ = removeHostedFile(wallet.PassphrasePath + ".migrated-v2")
+		for _, path := range []string{wallet.PassphrasePath, wallet.PassphrasePath + ".migrated-v2"} {
+			if err := removeHostedFile(path); err != nil {
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("remove staged Hosting signer file %s: %w", path, err))
+			}
+		}
 	}
-	_ = removeHostedFile(record.PolicyPath)
-	_ = removeHostedFile(record.NativeMarker)
+	for _, path := range []string{record.PolicyPath, record.NativeMarker} {
+		if err := removeHostedFile(path); err != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("remove staged Hosting signer file %s: %w", path, err))
+		}
+	}
+	return errors.Join(cleanupErrors...)
+}
+
+func (adapter HostedSignerMigrationAdapter) removePreparedState(tx model.Transaction, record hostedSignerRecord, outcome string) error {
+	if err := adapter.removePreparedFiles(record); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(adapter.stateRoot(tx))
+	if err != nil {
+		return fmt.Errorf("inspect %s Hosting migration state: %w", outcome, err)
+	}
+	for _, entry := range entries {
+		if entry.Name() != filepath.Base(adapter.recordPath(tx)) {
+			return fmt.Errorf("refuse to remove %s Hosting migration state containing unexpected entry %s", outcome, entry.Name())
+		}
+	}
+	if err := removeMigrationRecord(adapter.recordPath(tx)); err != nil {
+		return err
+	}
+	if err := os.Remove(adapter.stateRoot(tx)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove %s Hosting migration state: %w", outcome, err)
+	}
+	return nil
 }
 
 func (adapter HostedSignerMigrationAdapter) recordPath(tx model.Transaction) string {

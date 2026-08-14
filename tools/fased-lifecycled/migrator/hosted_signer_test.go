@@ -152,6 +152,77 @@ func TestHostedSignerMigrationDefersNativeImportUntilCommit(t *testing.T) {
 	}
 }
 
+func TestHostedSignerMigrationRetriesCleanupWithoutRepeatingNativeCommit(t *testing.T) {
+	adapter, tx, migration, _, _ := hostedSignerFixture(t)
+	var phases []string
+	adapter.run = func(_ context.Context, _ string, args []string) error {
+		phases = append(phases, args[len(args)-1])
+		return nil
+	}
+	if err := adapter.Prepare(context.Background(), tx, migration); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Activate(context.Background(), tx, migration); err != nil {
+		t.Fatal(err)
+	}
+	unexpectedPath := filepath.Join(adapter.stateRoot(tx), "unexpected")
+	if err := os.WriteFile(unexpectedPath, []byte("preserve"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Commit(context.Background(), tx, migration); err == nil || !strings.Contains(err.Error(), "unexpected entry") {
+		t.Fatalf("unsafe cleanup unexpectedly succeeded: %v", err)
+	}
+	record, err := adapter.readRecord(tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !record.NativeCommitted {
+		t.Fatal("native custody commit was not durably recorded before cleanup")
+	}
+	if err := adapter.Abort(context.Background(), tx, migration); err == nil || !strings.Contains(err.Error(), "migration has started") {
+		t.Fatalf("committed native custody was allowed to roll back: %v", err)
+	}
+	if err := os.Remove(unexpectedPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Commit(context.Background(), tx, migration); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(phases, []string{"prepare", "commit"}) {
+		t.Fatalf("cleanup retry repeated native custody mutation: %v", phases)
+	}
+	if _, err := os.Stat(adapter.stateRoot(tx)); !os.IsNotExist(err) {
+		t.Fatalf("completed migration state was not removed: %v", err)
+	}
+}
+
+func TestHostedSignerMigrationRetriesNativeCommitInsteadOfRollingBack(t *testing.T) {
+	adapter, tx, migration, _, _ := hostedSignerFixture(t)
+	failCommit := true
+	adapter.run = func(_ context.Context, _ string, args []string) error {
+		if args[len(args)-1] == "commit" && failCommit {
+			return os.ErrInvalid
+		}
+		return nil
+	}
+	if err := adapter.Prepare(context.Background(), tx, migration); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Activate(context.Background(), tx, migration); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Commit(context.Background(), tx, migration); err == nil {
+		t.Fatal("native commit failure was ignored")
+	}
+	if err := adapter.Abort(context.Background(), tx, migration); err == nil || !strings.Contains(err.Error(), "migration has started") {
+		t.Fatalf("partially executed native migration was allowed to roll back: %v", err)
+	}
+	failCommit = false
+	if err := adapter.Commit(context.Background(), tx, migration); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestHostedSignerMigrationRejectsOrphanedLegacyKeystore(t *testing.T) {
 	adapter, tx, migration, registryPath, _ := hostedSignerFixture(t)
 	data, _ := os.ReadFile(registryPath)
