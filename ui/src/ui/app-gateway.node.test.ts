@@ -1,8 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  GATEWAY_EVENT_MINING_CHANGED,
-  GATEWAY_EVENT_UPDATE_AVAILABLE,
-} from "../../../src/gateway/events.js";
+import { GATEWAY_EVENT_MINING_CHANGED } from "../../../src/gateway/events.js";
 import { ConnectErrorDetailCodes } from "../../../src/gateway/protocol/connect-error-details.js";
 import type { GatewayHelloOk } from "./gateway.ts";
 
@@ -216,7 +213,6 @@ function createHost() {
     refreshSessionsAfterChat: new Set<string>(),
     execApprovalQueue: [],
     execApprovalError: null,
-    updateAvailable: null,
   } as unknown as Parameters<typeof connectGateway>[0];
 }
 
@@ -397,38 +393,6 @@ describe("connectGateway", () => {
     expect(host.eventLog.some((entry) => readPayloadField(entry, "component") === "frame-49")).toBe(
       false,
     );
-  });
-
-  it("applies update.available only from active client", () => {
-    const host = createHost();
-
-    connectGateway(host);
-    const firstClient = gatewayClientInstances[0];
-    expect(firstClient).toBeDefined();
-
-    connectGateway(host);
-    const secondClient = gatewayClientInstances[1];
-    expect(secondClient).toBeDefined();
-
-    firstClient.emitEvent({
-      event: GATEWAY_EVENT_UPDATE_AVAILABLE,
-      payload: {
-        updateAvailable: { currentVersion: "1.0.0", latestVersion: "9.9.9", channel: "latest" },
-      },
-    });
-    expect(host.updateAvailable).toBeNull();
-
-    secondClient.emitEvent({
-      event: GATEWAY_EVENT_UPDATE_AVAILABLE,
-      payload: {
-        updateAvailable: { currentVersion: "1.0.0", latestVersion: "2.0.0", channel: "latest" },
-      },
-    });
-    expect(host.updateAvailable).toEqual({
-      currentVersion: "1.0.0",
-      latestVersion: "2.0.0",
-      channel: "latest",
-    });
   });
 
   it("applies mining status when a mining.changed event arrives", () => {

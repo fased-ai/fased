@@ -93,7 +93,6 @@ import type {
   CronRunsStatusValue,
   CronSortDir,
   CronStatus,
-  GatewayUpdateStatusResult,
   HealthSnapshot,
   LogEntry,
   LogLevel,
@@ -882,7 +881,6 @@ export type AppViewState = {
   debugModels: unknown[];
   debugModelCatalogStatus: ModelsCatalogStatusResult | null;
   debugCommandsCatalog: CommandsListResult | null;
-  debugUpdateStatus: GatewayUpdateStatusResult | null;
   debugPluginsMarketplace: PluginsMarketplaceListResult | null;
   debugDiagnosticsStability: DiagnosticStabilitySnapshot | null;
   debugMemoryInventory: DoctorMemoryInventoryPayload | null;

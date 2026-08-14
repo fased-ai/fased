@@ -98,7 +98,7 @@ export async function scanStatus(
       const update = await getUpdateCheckResult({
         timeoutMs: updateTimeoutMs,
         fetchGit: true,
-        includeRegistry: true,
+        includeRegistry: false,
       });
       progress.tick();
 

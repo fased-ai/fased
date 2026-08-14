@@ -16,7 +16,6 @@ import type {
   DoctorMemoryInventoryPayload,
   DoctorMemoryRepairPreviewPayload,
   DoctorMemoryValidationPayload,
-  GatewayUpdateStatusResult,
   ModelsCatalogStatusResult,
   PluginsMarketplaceListResult,
   TaskAuditFinding,
@@ -93,7 +92,6 @@ export type DebugProps = {
   configDirty?: boolean;
   modelCatalogStatus?: ModelsCatalogStatusResult | null;
   commandsCatalog?: CommandsListResult | null;
-  updateStatus?: GatewayUpdateStatusResult | null;
   pluginsMarketplace?: PluginsMarketplaceListResult | null;
   taskLedger?: TaskListResult | null;
   taskLedgerBusy?: boolean;
@@ -968,102 +966,6 @@ function renderCommandCatalogCard(commandsCatalog: CommandsListResult | null | u
   `;
 }
 
-function renderUpdateStatusCard(updateStatus: GatewayUpdateStatusResult | null | undefined) {
-  const update = updateStatus?.update;
-  const availability = updateStatus?.availability;
-  const tone = updateStatus ? (availability?.available ? "chip-warn" : "chip-ok") : "chip-warn";
-
-  return html`
-    <section class="card">
-      <div class="row" style="justify-content: space-between;">
-        <div>
-          <div class="card-title">Update Status</div>
-          <div class="card-sub">Install source, update channel, probe settings, and dependency state.</div>
-        </div>
-        <span class="chip ${tone}">
-          ${updateStatus ? (availability?.available ? "update available" : "current") : "not loaded"}
-        </span>
-      </div>
-      ${
-        updateStatus && update
-          ? html`
-              <div class="chip-row" style="margin-top: 12px;">
-                <span class="chip">${updateStatus.channel.label}</span>
-                <span class="chip">channel source ${updateStatus.channel.source}</span>
-                <span class="chip">install ${update.installKind}</span>
-                <span class="chip">package ${update.packageManager}</span>
-                <span class="chip">git probe ${updateStatus.probes.fetchGit ? "on" : "off"}</span>
-                <span class="chip">
-                  registry probe ${updateStatus.probes.includeRegistry ? "on" : "off"}
-                </span>
-              </div>
-              <div class="callout ${availability?.available ? "info" : "success"}" style="margin-top: 12px;">
-                ${updateStatus.summary}
-              </div>
-              <div class="list" style="margin-top: 12px;">
-                <div class="list-item">
-                  <div class="list-main">
-                    <div class="list-title">Git state</div>
-                    <div class="list-sub">
-                      ${
-                        update.git
-                          ? [
-                              update.git.branch ? `branch ${update.git.branch}` : null,
-                              update.git.upstream ? `upstream ${update.git.upstream}` : null,
-                              update.git.ahead != null ? `ahead ${update.git.ahead}` : null,
-                              update.git.behind != null ? `behind ${update.git.behind}` : null,
-                              update.git.dirty === true
-                                ? "dirty"
-                                : update.git.dirty === false
-                                  ? "clean"
-                                  : null,
-                              update.git.fetchOk === false ? "fetch failed" : null,
-                            ]
-                              .filter(Boolean)
-                              .join(" · ") || "git metadata unavailable"
-                          : "not a git install"
-                      }
-                    </div>
-                  </div>
-                </div>
-                <div class="list-item">
-                  <div class="list-main">
-                    <div class="list-title">Registry state</div>
-                    <div class="list-sub">
-                      ${
-                        update.registry?.latestVersion
-                          ? `latest ${update.registry.latestVersion}`
-                          : update.registry?.error
-                            ? `error ${update.registry.error}`
-                            : "registry probe disabled or unavailable"
-                      }
-                    </div>
-                  </div>
-                </div>
-                <div class="list-item">
-                  <div class="list-main">
-                    <div class="list-title">Dependencies</div>
-                    <div class="list-sub">
-                      ${
-                        update.deps
-                          ? `${update.deps.manager} · ${update.deps.status}${
-                              update.deps.reason ? ` · ${update.deps.reason}` : ""
-                            }`
-                          : "dependency marker unavailable"
-                      }
-                    </div>
-                  </div>
-                </div>
-              </div>
-            `
-          : html`
-              <div class="muted" style="margin-top: 12px">Update status is unavailable.</div>
-            `
-      }
-    </section>
-  `;
-}
-
 function renderPluginMarketplaceCard(report: PluginsMarketplaceListResult | null | undefined) {
   const plugins = report?.plugins ?? [];
   const loaded = plugins.filter((entry) => entry.loaded).length;
@@ -1796,7 +1698,6 @@ function renderDebugSurfaceMap(props: DebugProps) {
   const readOnlyLoaded = [
     props.modelCatalogStatus,
     props.commandsCatalog,
-    props.updateStatus,
     props.pluginsMarketplace,
     props.taskLedger,
     props.diagnosticsStability,
@@ -1830,7 +1731,7 @@ function renderDebugSurfaceMap(props: DebugProps) {
           <div class="list-main">
             <div class="list-title">Read-only diagnostics</div>
             <div class="list-sub">
-              Provider catalog, command catalog, update status, plugin runtime, gateway startup,
+              Provider catalog, command catalog, plugin runtime, gateway startup,
               strict-agentic policy, diagnostics stability, and Memory Doctor preview.
             </div>
           </div>
@@ -2623,7 +2524,6 @@ export function renderDebug(props: DebugProps) {
   const readOnlyLoaded = [
     props.modelCatalogStatus,
     props.commandsCatalog,
-    props.updateStatus,
     props.pluginsMarketplace,
     props.diagnosticsStability,
     props.memoryInventory ?? props.memoryValidation ?? props.memoryRepairPreview,
@@ -2853,23 +2753,6 @@ export function renderDebug(props: DebugProps) {
       tone: props.commandsCatalog ? "ok" : "warn",
       priority: 36,
       content: renderCommandCatalogCard(props.commandsCatalog),
-    },
-    {
-      id: "updates",
-      title: "Update Status",
-      detail: "Install source, update channel, probe settings, and dependency state.",
-      status: props.updateStatus
-        ? props.updateStatus.availability?.available
-          ? "update available"
-          : "current"
-        : "not loaded",
-      tone: props.updateStatus?.availability?.available
-        ? "warn"
-        : props.updateStatus
-          ? "ok"
-          : "warn",
-      priority: props.updateStatus?.availability?.available ? 10 : 38,
-      content: renderUpdateStatusCard(props.updateStatus),
     },
     {
       id: "fee-ops",

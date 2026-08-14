@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"os/user"
@@ -27,11 +26,10 @@ import (
 
 const (
 	productionReleaseBase            = "https://github.com/fased-ai/fased/releases/download"
-	productionReleaseDiscoveryURL    = "https://api.github.com/repos/fased-ai/fased/releases?per_page=100"
+	productionChannelReleasePrefix   = productionReleaseBase + "/fased-channel-"
 	releaseRootAssetName             = "fased-lifecycle-root-v1.json"
 	releaseIndexAssetName            = "fased-release-index-v1.json"
 	releaseIndexAttestationAssetName = "fased-release-index-v1.json.attestation.json"
-	maxReleaseDiscoveryBytes         = 1 << 20
 )
 
 type publicReleaseRoute struct {
@@ -53,6 +51,104 @@ type publicLifecycleRequest struct {
 	Timeout      time.Duration
 }
 
+type installedLifecycleStatus struct {
+	Profile            model.Profile
+	Version            string
+	ReleaseSequence    uint64
+	SecurityEpoch      uint64
+	ActiveGenerationID string
+}
+
+type signedChannelSelection struct {
+	Version                string
+	ReleaseSequence        uint64
+	SecurityEpoch          uint64
+	IndexDigest            string
+	ReleaseAuthorityDigest string
+}
+
+func decodeInstalledLifecycleStatus(config platform.Config, profile model.Profile, manifestData []byte) (installedLifecycleStatus, error) {
+	var manifest model.Manifest
+	if err := json.Unmarshal(manifestData, &manifest); err != nil || manifest.ValidateInstalled() != nil {
+		return installedLifecycleStatus{}, errors.New("installed lifecycle manifest is invalid")
+	}
+	configurationDigest, err := config.Digest()
+	if err != nil {
+		return installedLifecycleStatus{}, errors.New("installed lifecycle platform configuration is invalid")
+	}
+	if manifest.Profile != profile || manifest.Platform.InstanceID != config.InstanceID || manifest.Platform.ConfigurationDigest != configurationDigest || manifest.ActiveGeneration == nil {
+		return installedLifecycleStatus{}, errors.New("installed lifecycle manifest differs from the selected platform")
+	}
+	return installedLifecycleStatus{
+		Profile: profile, Version: manifest.ActiveGeneration.Version,
+		ReleaseSequence: manifest.ReleaseSequence, SecurityEpoch: manifest.SecurityEpoch,
+		ActiveGenerationID: manifest.ActiveGeneration.ID,
+	}, nil
+}
+
+func runPublicLifecycleStatus(args []string, output io.Writer) error {
+	flags := flag.NewFlagSet("status", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	profile := ""
+	operatorUser := ""
+	jsonOutput := false
+	timeoutSeconds := 3
+	flags.StringVar(&profile, "profile", "", "")
+	flags.StringVar(&operatorUser, "operator-user", "", "")
+	flags.BoolVar(&jsonOutput, "json", false, "")
+	flags.IntVar(&timeoutSeconds, "timeout", 3, "")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || timeoutSeconds < 1 || timeoutSeconds > 30 {
+		return errors.New("invalid public lifecycle status arguments")
+	}
+	if os.Geteuid() != 0 {
+		return errors.New("public lifecycle status requires root authorization")
+	}
+	if profile == "" {
+		profile = string(inferProfile(operatorUser))
+	}
+	selectedProfile := model.Profile(profile)
+	if selectedProfile != model.ProfileProtectedLocal && selectedProfile != model.ProfileHosting {
+		return errors.New("profile must be protected-local or hosting")
+	}
+	if operatorUser == "" {
+		operatorUser = operatorFromEnvironment(selectedProfile)
+	}
+	operator, err := resolveOperator(operatorUser, selectedProfile)
+	if err != nil {
+		return err
+	}
+	configPath, err := installedConfigPath(selectedProfile, operator)
+	if err != nil {
+		return err
+	}
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return errors.New("installed lifecycle platform configuration is unavailable")
+	}
+	config, err := platform.DecodeConfig(configData)
+	if err != nil {
+		return fmt.Errorf("installed lifecycle platform configuration is invalid: %w", err)
+	}
+	request := publicLifecycleRequest{Operation: "update", Profile: selectedProfile, OperatorUser: operatorUser}
+	if err := bindInstalledUpdatePlatform(&request, operator, config); err != nil {
+		return err
+	}
+	manifestData, err := os.ReadFile(filepath.Join(config.LifecycleRoot, "installation-manifest.json"))
+	if err != nil {
+		return errors.New("installed lifecycle manifest is unavailable")
+	}
+	status, err := decodeInstalledLifecycleStatus(config, selectedProfile, manifestData)
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		_, err = fmt.Fprintf(output, "{\"status\":\"installed\",\"profile\":%q,\"version\":%q,\"releaseSequence\":%d,\"securityEpoch\":%d,\"activeGenerationId\":%q}\n", status.Profile, status.Version, status.ReleaseSequence, status.SecurityEpoch, status.ActiveGenerationID)
+		return err
+	}
+	_, err = fmt.Fprintf(output, "Installed: %s profile=%s sequence=%d epoch=%d\n", status.Version, status.Profile, status.ReleaseSequence, status.SecurityEpoch)
+	return err
+}
+
 func runPublicLifecycle(operation string, args []string, output io.Writer) error {
 	request, err := parsePublicLifecycleRequest(operation, args)
 	if err != nil {
@@ -69,6 +165,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	if err != nil {
 		return fmt.Errorf("inspect owner configuration: %w", err)
 	}
+	installedStatus := installedLifecycleStatus{}
 	if request.Operation == "update" {
 		configPath, configErr := installedConfigPath(request.Profile, operator)
 		if configErr != nil {
@@ -85,15 +182,31 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		if bindErr := bindInstalledUpdatePlatform(&request, operator, config); bindErr != nil {
 			return bindErr
 		}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), request.Timeout)
-	defer cancel()
-	if request.Version == "" {
-		discoveryClient := &http.Client{Timeout: 15 * time.Second, CheckRedirect: secureMetadataRedirect}
-		request.Version, err = discoverPublicReleaseVersion(ctx, request.Channel, discoveryClient, productionReleaseDiscoveryURL)
+		manifestData, readErr := os.ReadFile(filepath.Join(config.LifecycleRoot, "installation-manifest.json"))
+		if readErr != nil {
+			return errors.New("installed lifecycle manifest is unavailable")
+		}
+		installedStatus, err = decodeInstalledLifecycleStatus(config, request.Profile, manifestData)
 		if err != nil {
 			return err
 		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), request.Timeout)
+	defer cancel()
+	now := time.Now().UTC()
+	var channelSelection *signedChannelSelection
+	if request.Version == "" {
+		discoveryClient := &http.Client{Timeout: 15 * time.Second, CheckRedirect: secureMetadataRedirect}
+		selection, selectionErr := discoverSignedChannelRelease(
+			ctx, request.Channel, discoveryClient,
+			productionChannelReleasePrefix+request.Channel+"-v1", productionPinnedRootSHA256,
+			installedStatus.ReleaseSequence, installedStatus.SecurityEpoch, now, nil,
+		)
+		if selectionErr != nil {
+			return selectionErr
+		}
+		request.Version = selection.Version
+		channelSelection = &selection
 	}
 	releaseRoute, err := publicTrustRoute(request.Version)
 	if err != nil {
@@ -104,12 +217,17 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		RootURL: releaseRoute.RootURL, IndexURL: releaseRoute.IndexURL,
 		IndexAttestationURL: releaseRoute.IndexAttestationURL, ReleaseBaseURL: releaseRoute.ReleaseBaseURL,
 		Channel: request.Channel, Version: request.Version, Architecture: architecture(),
-		PinnedRootSHA256: releaseRoute.PinnedRootSHA256, OwnerUID: 0, Now: time.Now().UTC(), Inspect: inspectLifecycleHost,
+		PinnedRootSHA256: releaseRoute.PinnedRootSHA256, OwnerUID: 0, Now: now, Inspect: inspectLifecycleHost,
 		VerifyIndex: releaseRoute.VerifyIndex,
 	}
 	result, err := execute(ctx, bootstrap)
 	if err != nil {
 		return err
+	}
+	if channelSelection != nil {
+		if err := validateSignedChannelResult(*channelSelection, result); err != nil {
+			return err
+		}
 	}
 	convergence, err := invokeLifecycleHost(ctx, request, operator, result, output)
 	if err != nil {
@@ -133,59 +251,73 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	return err
 }
 
-type discoveredGitHubRelease struct {
-	TagName    string `json:"tag_name"`
-	Draft      bool   `json:"draft"`
-	Prerelease bool   `json:"prerelease"`
+func validateSignedChannelResult(selection signedChannelSelection, result bootstrapResult) error {
+	if result.Version != selection.Version || result.ReleaseSequence != selection.ReleaseSequence ||
+		result.SecurityEpoch != selection.SecurityEpoch || result.ReleaseIndexDigest != "sha256:"+selection.IndexDigest ||
+		result.ReleaseAuthorityDigest != "sha256:"+selection.ReleaseAuthorityDigest {
+		return errors.New("exact release differs from the signed channel selection")
+	}
+	return nil
 }
 
-func discoverPublicReleaseVersion(ctx context.Context, channel string, client *http.Client, endpoint string) (string, error) {
+func discoverSignedChannelRelease(ctx context.Context, channel string, client *http.Client, baseURL, pinnedRootSHA256 string, minimumReleaseSequence, minimumSecurityEpoch uint64, now time.Time, verifyIndex releaseIndexVerifier) (signedChannelSelection, error) {
 	if channel != "stable" && channel != "beta" {
-		return "", errors.New("release discovery channel must be stable or beta")
+		return signedChannelSelection{}, errors.New("release discovery channel must be stable or beta")
 	}
 	if client == nil {
-		return "", errors.New("release discovery client is unavailable")
+		return signedChannelSelection{}, errors.New("release discovery client is unavailable")
 	}
-	parsed, err := url.Parse(endpoint)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
-		return "", errors.New("release discovery URL is unsafe")
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	rootURL, err := assetURL(baseURL, releaseRootAssetName)
 	if err != nil {
-		return "", errors.New("create release discovery request")
+		return signedChannelSelection{}, err
 	}
-	request.Header.Set("Accept", "application/vnd.github+json")
-	request.Header.Set("User-Agent", "fased-bootstrap")
-	response, err := client.Do(request)
+	indexURL, err := assetURL(baseURL, releaseIndexAssetName)
 	if err != nil {
-		return "", fmt.Errorf("discover %s release: %w", channel, err)
+		return signedChannelSelection{}, err
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("discover %s release: unexpected HTTP status %d", channel, response.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, maxReleaseDiscoveryBytes+1))
+	attestationURL, err := assetURL(baseURL, releaseIndexAttestationAssetName)
 	if err != nil {
-		return "", fmt.Errorf("read %s release discovery: %w", channel, err)
+		return signedChannelSelection{}, err
 	}
-	if len(body) > maxReleaseDiscoveryBytes {
-		return "", errors.New("release discovery response exceeds the size limit")
+	rootJSON, err := fetchMetadata(ctx, client, rootURL)
+	if err != nil {
+		return signedChannelSelection{}, fmt.Errorf("fetch signed %s channel root: %w", channel, err)
 	}
-	var releases []discoveredGitHubRelease
-	if err := json.Unmarshal(body, &releases); err != nil {
-		return "", errors.New("release discovery response is invalid")
+	root, err := trust.VerifyInitialRoot(rootJSON, pinnedRootSHA256, now)
+	if err != nil {
+		return signedChannelSelection{}, fmt.Errorf("verify signed %s channel root: %w", channel, err)
 	}
-	for _, release := range releases {
-		if release.Draft || release.Prerelease != (channel == "beta") {
-			continue
-		}
-		version := strings.TrimPrefix(release.TagName, "v")
-		if err := model.ValidateVersion(version); err != nil || (channel == "stable" && strings.Contains(version, "-")) || (channel == "beta" && !strings.Contains(version, "-")) {
-			return "", errors.New("release discovery returned an invalid channel version")
-		}
-		return version, nil
+	indexJSON, err := fetchMetadata(ctx, client, indexURL)
+	if err != nil {
+		return signedChannelSelection{}, fmt.Errorf("fetch signed %s channel index: %w", channel, err)
 	}
-	return "", fmt.Errorf("no %s Fased release is available", channel)
+	attestationJSON, err := fetchMetadata(ctx, client, attestationURL)
+	if err != nil {
+		return signedChannelSelection{}, fmt.Errorf("fetch signed %s channel attestation: %w", channel, err)
+	}
+	if verifyIndex == nil {
+		verifyIndex = verifyAttestedReleaseIndex
+	}
+	verified, err := verifyIndex(root, indexJSON, attestationJSON, now)
+	if err != nil {
+		return signedChannelSelection{}, fmt.Errorf("verify signed %s channel index: %w", channel, err)
+	}
+	index := verified.Index
+	if index.Channel != channel ||
+		(channel == "stable" && strings.Contains(index.Version, "-")) ||
+		(channel == "beta" && !strings.Contains(index.Version, "-")) {
+		return signedChannelSelection{}, errors.New("signed channel index differs from the requested channel")
+	}
+	if index.ReleaseSequence < minimumReleaseSequence || index.SecurityEpoch < minimumSecurityEpoch {
+		return signedChannelSelection{}, errors.New("signed channel index is older than the installed release authority")
+	}
+	if !plainSHA256(verified.Digest) || !plainSHA256(verified.ReleaseAuthorityDigest) {
+		return signedChannelSelection{}, errors.New("signed channel index returned malformed authority digests")
+	}
+	return signedChannelSelection{
+		Version: index.Version, ReleaseSequence: index.ReleaseSequence, SecurityEpoch: index.SecurityEpoch,
+		IndexDigest: verified.Digest, ReleaseAuthorityDigest: verified.ReleaseAuthorityDigest,
+	}, nil
 }
 
 func pathExists(path string) (bool, error) {

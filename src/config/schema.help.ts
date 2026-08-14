@@ -17,9 +17,7 @@ const FIELD_HELP_BASE: Record<string, string> = {
   "acp.runtime.installCommand":
     "Operator install/setup command shown by /acp install and /acp doctor.",
   "update.channel":
-    'Built-in self-update channel for package installs ("stable", "beta", or "dev").',
-  "update.checkOnStart":
-    "Check for package self-updates when the gateway starts (default: false; opt-in).",
+    'Signed lifecycle channel used by the installed Go launcher ("stable", "beta", or "dev").',
   "gateway.remote.url": "Remote Gateway WebSocket URL (ws:// or wss://).",
   "gateway.remote.tlsFingerprint":
     "Expected sha256 TLS fingerprint for the remote gateway (pin to avoid MITM).",

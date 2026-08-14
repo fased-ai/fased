@@ -78,6 +78,7 @@ export const HelloOkSchema = Type.Object(
         runtimeSource: Type.Optional(
           Type.Union([
             Type.Literal("source-checkout"),
+            Type.Literal("go-lifecycle"),
             Type.Literal("managed-package"),
             Type.Literal("packaged-runtime"),
           ]),

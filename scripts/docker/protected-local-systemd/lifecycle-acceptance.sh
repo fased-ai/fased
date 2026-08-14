@@ -678,7 +678,7 @@ wait_for_gateway_version() {
   for _ in {1..300}; do
     if response="$(curl -fsS --max-time 1 "http://127.0.0.1:$gateway_port/healthz" 2>/dev/null)" &&
       jq -e --arg expected "$expected" \
-        '.version == $expected and (.runtimeSource == "managed-package" or .runtimeSource == "packaged-runtime")' \
+        '.version == $expected and .runtimeSource == "go-lifecycle"' \
         <<<"$response" >/dev/null; then
       return 0
     fi

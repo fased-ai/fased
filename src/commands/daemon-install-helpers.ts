@@ -38,7 +38,7 @@ export function resolveGatewayStartupMode(params: {
     ?.trim()
     .toLowerCase();
   if (requestedMode === "managed") {
-    return "managed-up";
+    return "go-lifecycle";
   }
   if (requestedMode === "gateway" || requestedMode === "local") {
     return "gateway";
@@ -49,7 +49,7 @@ export function resolveGatewayStartupMode(params: {
 export function resolveHostedOnboardingGatewayStartupMode(
   hostProfile?: OnboardOptions["hostProfile"],
 ): GatewayStartupMode {
-  return hostProfile === "hosting" ? "managed-up" : "gateway";
+  return hostProfile === "hosting" ? "go-lifecycle" : "gateway";
 }
 
 export async function buildGatewayInstallPlan(params: {
@@ -108,7 +108,7 @@ export async function buildGatewayInstallPlan(params: {
     ...collectConfigServiceEnvVars(params.config),
   };
   Object.assign(environment, serviceEnvironment);
-  if (startupMode === "managed-up") {
+  if (startupMode === "go-lifecycle") {
     environment.FASED_GATEWAY_MODE = "managed";
   }
   const serviceNodeProgram = programArguments[0];
@@ -118,9 +118,6 @@ export async function buildGatewayInstallPlan(params: {
     path.basename(serviceNodeProgram).toLowerCase().startsWith("node")
   ) {
     environment.FASED_NODE_BIN = serviceNodeProgram;
-  } else if (startupMode === "managed-up" && typeof nodePath === "string" && nodePath.trim()) {
-    environment.FASED_NODE_BIN = nodePath;
-    environment.FASED_MANAGED_INTERNAL = "1";
   }
 
   return { programArguments, workingDirectory, environment };

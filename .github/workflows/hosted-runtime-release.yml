@@ -33,7 +33,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: hosted-runtime-release-${{ inputs.release_version }}-${{ inputs.source_commit }}
+  group: fased-lifecycle-channel-${{ contains(inputs.release_version, '-') && 'beta' || 'stable' }}
   cancel-in-progress: false
 
 env:
@@ -1182,12 +1182,31 @@ jobs:
             fi
           }
           trap cleanup_draft EXIT
+          is_prerelease=false
+          make_latest=true
+          if [[ "$package_version" == *-* ]]; then
+            is_prerelease=true
+            make_latest=false
+          fi
           existing_release_id="$(gh api \
             "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
             --jq '.[] | select(.tag_name == env.RELEASE_TAG) | .id')"
           if [[ -n "$existing_release_id" ]]; then
-            echo "Release already exists; refusing non-atomic overwrite: $RELEASE_TAG" >&2
-            exit 1
+            gh api "repos/$GITHUB_REPOSITORY/releases/$existing_release_id" \
+              > "$RUNNER_TEMP/existing-release.json"
+            jq -e \
+              --arg tag "$RELEASE_TAG" \
+              --argjson prerelease "$is_prerelease" \
+              '.tag_name == $tag and .draft == false and .prerelease == $prerelease' \
+              "$RUNNER_TEMP/existing-release.json" >/dev/null
+            jq '[.assets[] | {name,size,digest}]' \
+              "$RUNNER_TEMP/existing-release.json" > "$RUNNER_TEMP/release-assets.json"
+            node scripts/release-artifact-set.mjs verify-assets \
+              --directory .artifacts/hosted-runtime \
+              --assets-json "$RUNNER_TEMP/release-assets.json"
+            release_id=""
+            trap - EXIT
+            exit 0
           fi
           release_args=(
             --repo "$GITHUB_REPOSITORY"
@@ -1196,11 +1215,7 @@ jobs:
             --verify-tag
             --draft
           )
-          is_prerelease=false
-          make_latest=true
-          if [[ "$package_version" == *-* ]]; then
-            is_prerelease=true
-            make_latest=false
+          if [[ "$is_prerelease" == true ]]; then
             release_args+=(--prerelease)
           fi
           # Keep the release explicitly private until GitHub's remote asset metadata
@@ -1224,3 +1239,12 @@ jobs:
           test "$(jq -r .isPrerelease "$RUNNER_TEMP/published-release.json")" = "$is_prerelease"
           release_id=""
           trap - EXIT
+
+      - name: Advance signed managed channel to the exact public candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: >-
+          bash scripts/publish-lifecycle-channel.sh
+          .artifacts/hosted-runtime
+          "${{ inputs.source_commit }}"

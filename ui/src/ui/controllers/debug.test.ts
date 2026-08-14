@@ -36,7 +36,6 @@ function createDebugState(request: ReturnType<typeof vi.fn>): DebugState {
     debugModels: [],
     debugModelCatalogStatus: null,
     debugCommandsCatalog: null,
-    debugUpdateStatus: null,
     debugPluginsMarketplace: null,
     debugDiagnosticsStability: null,
     debugMemoryInventory: null,

@@ -1,12 +1,7 @@
 import { formatCliCommand } from "../cli/command-format.js";
 import { resolveFasedAgentPackageRoot } from "../infra/fased-root.js";
 import type { UpdateChannel } from "../infra/update-channels.js";
-import {
-  checkUpdateStatus,
-  compareSemverStrings,
-  type UpdateCheckResult,
-} from "../infra/update-check.js";
-import { VERSION } from "../version.js";
+import { checkUpdateStatus, type UpdateCheckResult } from "../infra/update-check.js";
 
 export async function getUpdateCheckResult(params: {
   timeoutMs: number;
@@ -29,8 +24,6 @@ export async function getUpdateCheckResult(params: {
 export type UpdateAvailability = {
   available: boolean;
   hasGitUpdate: boolean;
-  hasRegistryUpdate: boolean;
-  latestVersion: string | null;
   gitBehind: number | null;
 };
 
@@ -38,9 +31,6 @@ export function resolveUpdateAvailability(
   update: UpdateCheckResult,
   opts: { channel?: UpdateChannel } = {},
 ): UpdateAvailability {
-  const latestVersion = update.registry?.latestVersion ?? null;
-  const registryCmp = latestVersion ? compareSemverStrings(VERSION, latestVersion) : null;
-  const hasRegistryUpdate = registryCmp != null && registryCmp < 0;
   const includeGitBehind = opts.channel == null || opts.channel === "dev";
   const gitBehind =
     includeGitBehind && update.installKind === "git" && typeof update.git?.behind === "number"
@@ -49,10 +39,8 @@ export function resolveUpdateAvailability(
   const hasGitUpdate = gitBehind != null && gitBehind > 0;
 
   return {
-    available: hasGitUpdate || hasRegistryUpdate,
+    available: hasGitUpdate,
     hasGitUpdate,
-    hasRegistryUpdate,
-    latestVersion: hasRegistryUpdate ? latestVersion : null,
     gitBehind,
   };
 }
@@ -66,15 +54,8 @@ export function formatUpdateAvailableHint(
     return null;
   }
 
-  const details: string[] = [];
-  if (availability.hasGitUpdate && availability.gitBehind != null) {
-    details.push(`git behind ${availability.gitBehind}`);
-  }
-  if (availability.hasRegistryUpdate && availability.latestVersion) {
-    details.push(`npm ${availability.latestVersion}`);
-  }
-  const suffix = details.length > 0 ? ` (${details.join(" · ")})` : "";
-  return `Update available${suffix}. Run: ${formatCliCommand("fased update")}`;
+  const suffix = availability.gitBehind != null ? ` (git behind ${availability.gitBehind})` : "";
+  return `Developer source update available${suffix}. Run: ${formatCliCommand("fased dev update-source")}`;
 }
 
 export function formatUpdateOneLiner(
@@ -82,23 +63,6 @@ export function formatUpdateOneLiner(
   opts: { channel?: UpdateChannel } = {},
 ): string {
   const parts: string[] = [];
-
-  const appendRegistryUpdateSummary = () => {
-    if (update.registry?.latestVersion) {
-      const cmp = compareSemverStrings(VERSION, update.registry.latestVersion);
-      if (cmp === 0) {
-        parts.push(`npm latest ${update.registry.latestVersion}`);
-      } else if (cmp != null && cmp < 0) {
-        parts.push(`npm update ${update.registry.latestVersion}`);
-      } else {
-        parts.push(`npm latest ${update.registry.latestVersion} (local newer)`);
-      }
-      return;
-    }
-    if (update.registry?.error) {
-      parts.push("npm latest unknown");
-    }
-  };
 
   if (update.installKind === "git" && update.git) {
     if (opts.channel && opts.channel !== "dev") {
@@ -130,10 +94,8 @@ export function formatUpdateOneLiner(
         parts.push("fetch failed");
       }
     }
-    appendRegistryUpdateSummary();
   } else {
-    parts.push(update.packageManager !== "unknown" ? update.packageManager : "pkg");
-    appendRegistryUpdateSummary();
+    parts.push("managed lifecycle status via fased update status");
   }
 
   if (update.deps) {

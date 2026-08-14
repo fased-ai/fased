@@ -88,6 +88,9 @@ func run(args []string, output io.Writer) error {
 	if len(args) > 0 && (args[0] == "install" || args[0] == "update") {
 		return runPublicLifecycle(args[0], args[1:], output)
 	}
+	if len(args) > 0 && args[0] == "status" {
+		return runPublicLifecycleStatus(args[1:], output)
+	}
 	flags := flag.NewFlagSet("fased-bootstrap", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var request bootstrapRequest

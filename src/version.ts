@@ -75,7 +75,11 @@ export type RuntimeVersionEnv = {
   [key: string]: string | undefined;
 };
 
-export type RuntimeSource = "source-checkout" | "managed-package" | "packaged-runtime";
+export type RuntimeSource =
+  | "source-checkout"
+  | "go-lifecycle"
+  | "managed-package"
+  | "packaged-runtime";
 
 export function resolveRuntimeSource(
   env: RuntimeVersionEnv = process.env as RuntimeVersionEnv,
@@ -84,6 +88,7 @@ export function resolveRuntimeSource(
   const configured = env["FASED_RUNTIME_SOURCE"]?.trim();
   if (
     configured === "source-checkout" ||
+    configured === "go-lifecycle" ||
     configured === "managed-package" ||
     configured === "packaged-runtime"
   ) {

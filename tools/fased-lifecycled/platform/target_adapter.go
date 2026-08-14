@@ -673,7 +673,7 @@ Environment=FASED_MANAGED_RUNTIME_ROOT=%s/runtime
 Environment=FASED_GATEWAY_MODE=managed
 Environment=FASED_MANAGED_INTERNAL=1
 Environment=FASED_GATEWAY_SERVICE=1
-Environment=FASED_RUNTIME_SOURCE=managed-package
+Environment=FASED_RUNTIME_SOURCE=go-lifecycle
 Environment=FASED_VERSION=%s
 Environment=FASED_HOST_PROFILE=%s
 %sEnvironment=FASED_GATEWAY_PORT=%d

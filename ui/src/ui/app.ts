@@ -238,7 +238,6 @@ import type {
   CronJob,
   CronRunLogEntry,
   CronStatus,
-  GatewayUpdateStatusResult,
   HealthSnapshot,
   LogEntry,
   LogLevel,
@@ -1026,7 +1025,6 @@ export class FasedAgentApp extends LitElement {
   private sidebarCloseTimer: number | null = null;
   readonly clientInstanceId = generateUUID();
   @state() serverVersion: string | null = null;
-  @state() updateAvailable: import("./types.ts").UpdateAvailable | null = null;
 
   @state() assistantName = injectedAssistantIdentity.name;
   @state() assistantAvatar = injectedAssistantIdentity.avatar;
@@ -1849,7 +1847,6 @@ export class FasedAgentApp extends LitElement {
   @state() debugModels: unknown[] = [];
   @state() debugModelCatalogStatus: ModelsCatalogStatusResult | null = null;
   @state() debugCommandsCatalog: CommandsListResult | null = null;
-  @state() debugUpdateStatus: GatewayUpdateStatusResult | null = null;
   @state() debugPluginsMarketplace: PluginsMarketplaceListResult | null = null;
   @state() debugDiagnosticsStability: DiagnosticStabilitySnapshot | null = null;
   @state() debugMemoryInventory: DoctorMemoryInventoryPayload | null = null;

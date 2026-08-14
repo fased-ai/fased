@@ -66,17 +66,11 @@ const tryImport = async (specifier) => {
 
 const lightweightCommand = `${process.argv[2] ?? ""} ${process.argv[3] ?? ""}`.trim();
 const lightweightSpecifier =
-  lightweightCommand === "update status"
-    ? "./dist/light-update-status.js"
-    : lightweightCommand === "plugins info"
-      ? "./dist/light-plugin-info.js"
-      : lightweightCommand === "plugins doctor"
-        ? "./dist/light-plugin-doctor.js"
-        : process.argv[2] === "update" &&
-            (!process.argv[3] || process.argv[3] === "--json") &&
-            process.argv.length <= 4
-          ? "./dist/light-update-precheck.js"
-          : null;
+  lightweightCommand === "plugins info"
+    ? "./dist/light-plugin-info.js"
+    : lightweightCommand === "plugins doctor"
+      ? "./dist/light-plugin-doctor.js"
+      : null;
 
 let handledByLightweightCli = false;
 if (lightweightSpecifier) {

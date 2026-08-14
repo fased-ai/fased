@@ -148,6 +148,8 @@ jobs:
             scripts/ci-required-gates.mjs \
             scripts/ci-required-gates.test.ts \
             scripts/ci-workflow-contract.test.ts \
+            scripts/lifecycle-channel-advance.mjs \
+            scripts/lifecycle-channel-advance.test.ts \
             scripts/lifecycle-version-neutral.test.ts \
             ui/vitest.changed-node.config.ts
           pnpm exec oxlint \
@@ -173,6 +175,7 @@ jobs:
           scripts/ci-merged-main-reuse.test.ts
           scripts/ci-version-identity.test.ts
           scripts/ci-workflow-contract.test.ts
+          scripts/lifecycle-channel-advance.test.ts
           scripts/lifecycle-version-neutral.test.ts
 
       - name: Check version-neutral lifecycle compatibility evidence

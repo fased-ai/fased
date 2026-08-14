@@ -1,7 +1,7 @@
 export type UpdateChannel = "stable" | "beta" | "dev";
 export type UpdateChannelSource = "config" | "git-tag" | "git-branch" | "default";
 
-export const DEFAULT_PACKAGE_CHANNEL: UpdateChannel = "stable";
+export const DEFAULT_MANAGED_CHANNEL: UpdateChannel = "stable";
 export const DEFAULT_GIT_CHANNEL: UpdateChannel = "stable";
 export const DEV_BRANCH = "main";
 
@@ -14,16 +14,6 @@ export function normalizeUpdateChannel(value?: string | null): UpdateChannel | n
     return normalized;
   }
   return null;
-}
-
-export function channelToNpmTag(channel: UpdateChannel): string {
-  if (channel === "beta") {
-    return "beta";
-  }
-  if (channel === "dev") {
-    return "dev";
-  }
-  return "latest";
 }
 
 export function isBetaTag(tag: string): boolean {
@@ -52,10 +42,10 @@ export function resolveEffectiveUpdateChannel(params: {
   }
 
   if (params.installKind === "package") {
-    return { channel: DEFAULT_PACKAGE_CHANNEL, source: "default" };
+    return { channel: DEFAULT_MANAGED_CHANNEL, source: "default" };
   }
 
-  return { channel: DEFAULT_PACKAGE_CHANNEL, source: "default" };
+  return { channel: DEFAULT_MANAGED_CHANNEL, source: "default" };
 }
 
 export function formatUpdateChannelLabel(params: {

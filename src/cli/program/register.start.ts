@@ -6,18 +6,15 @@ import { runCommandWithRuntime } from "../cli-utils.js";
 export function registerStartCommand(program: Command) {
   program
     .command("start")
-    .description(
-      "Start runtime (auto-detect managed stack for federation/zrok/wallet, or local gateway)",
-    )
-    .option("--mode <mode>", "Startup mode: auto|managed|gateway", "auto")
+    .description("Start the developer Gateway runtime")
+    .option("--mode <mode>", "Startup mode: auto|gateway", "auto")
     .action(async (opts) => {
       const rawMode = String(opts.mode ?? "auto")
         .trim()
         .toLowerCase();
-      const mode =
-        rawMode === "auto" || rawMode === "managed" || rawMode === "gateway" ? rawMode : null;
+      const mode = rawMode === "auto" || rawMode === "gateway" ? rawMode : null;
       if (!mode) {
-        defaultRuntime.error("Invalid --mode (use auto, managed, or gateway).");
+        defaultRuntime.error("Invalid --mode (use auto or gateway).");
         defaultRuntime.exit(1);
         return;
       }

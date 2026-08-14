@@ -530,7 +530,7 @@ describe("CI workflow routing", () => {
     ]);
     expect(publish?.environment).toBe("candidate-release");
     expect(workflow.concurrency?.group).toBe(
-      "hosted-runtime-release-${{ inputs.release_version }}-${{ inputs.source_commit }}",
+      "fased-lifecycle-channel-${{ contains(inputs.release_version, '-') && 'beta' || 'stable' }}",
     );
 
     const candidateText = candidate?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
@@ -700,8 +700,15 @@ describe("CI workflow routing", () => {
       publishText.indexOf("--method PATCH"),
     );
     expect(publishText).toContain("existing_release_id");
+    expect(publishText).toContain("existing-release.json");
+    expect(publishText).toContain(".draft == false");
     expect(publishText).not.toContain("gh release view");
     expect(publishText).toContain("releases/$release_id");
+    expect(
+      publish?.steps?.find(
+        (step) => step.name === "Advance signed managed channel to the exact public candidate",
+      )?.run,
+    ).toContain("scripts/publish-lifecycle-channel.sh");
     expect(publish?.steps?.some((step) => usesAction(step, "actions/attest"))).toBe(false);
     expect(publishText).not.toContain("hosted:artifact:build");
     expect(publishText).not.toContain("release-fased-signerd.sh");
@@ -876,6 +883,10 @@ describe("CI workflow routing", () => {
       ".github/workflows/candidate-publication-replay.yml",
     );
     const publicationReplayText = await readFile(publicationReplayPath, "utf8");
+    const channelPublisher = await readFile(
+      resolve(repoRoot, "scripts/publish-lifecycle-channel.sh"),
+      "utf8",
+    );
     expect(publicationReplay.on.workflow_dispatch.inputs).toMatchObject({
       source_run_id: { required: true },
       p1_replay_run_id: { required: true },
@@ -891,6 +902,9 @@ describe("CI workflow routing", () => {
       environment: "candidate-release",
       permissions: { actions: "read", contents: "write" },
     });
+    expect(publicationReplay.concurrency?.group).toBe(
+      "fased-lifecycle-channel-${{ contains(inputs.release_version, '-') && 'beta' || 'stable' }}",
+    );
     expect(publicationReplayText).toContain("fased-hosting-candidate");
     expect(publicationReplayText).toContain("fased-p1-replay-*-receipts");
     expect(publicationReplayText).toContain("scripts/lifecycle-receipt-verifier.mjs");
@@ -914,6 +928,14 @@ describe("CI workflow routing", () => {
     expect(publicationReplayText).not.toContain("pnpm build");
     expect(publicationReplayText).not.toContain("go build");
     expect(publicationReplayText).not.toContain("git tag");
+    expect(publicationReplayText).toContain("scripts/publish-lifecycle-channel.sh");
+    expect(channelPublisher).toContain('channel_tag="fased-channel-$channel-v1"');
+    expect(channelPublisher).toContain("lifecycle-channel-advance.mjs");
+    expect(channelPublisher).toContain('staged_index_name="$index_name.next"');
+    expect(channelPublisher).toContain('staged_attestation_name="$attestation_name.next"');
+    expect(channelPublisher).toContain("--method PATCH");
+    expect(channelPublisher).not.toContain("--clobber");
+    expect(channelPublisher).not.toMatch(/\bnpm\b/u);
   });
 
   it("selects beta for every prerelease target in the Protected Local fixture", async () => {

@@ -37,19 +37,17 @@ export FASED_HOST_UPDATER_SOCKET=%q
 export FASED_WALLET_LOCAL_SIGNER_BIN=%q
 export FASED_WALLET_LOCAL_SIGNER_SOCKET=%q
 %s
-managed_update=0
+managed_operation=""
 if [[ "${1:-}" == "--update" ]]; then
-  managed_update=1
+  managed_operation="update"
 elif [[ "${1:-}" == "update" ]]; then
-  managed_update=1
-  for update_arg in "$@"; do
-    if [[ "$update_arg" == "status" || "$update_arg" == "wizard" || "$update_arg" == "--help" || "$update_arg" == "-h" ]]; then
-      managed_update=0
-      break
-    fi
-  done
+  if [[ "${2:-}" == "status" ]]; then
+    managed_operation="status"
+  elif [[ "${2:-}" != "wizard" && "${2:-}" != "--help" && "${2:-}" != "-h" ]]; then
+    managed_operation="update"
+  fi
 fi
-if [[ "$managed_update" == "1" ]]; then
+if [[ -n "$managed_operation" ]]; then
   bootstrap="/opt/fased/lifecycle/bootstrap-v1/fased-bootstrap"
   [[ -f "$bootstrap" && ! -L "$bootstrap" && -x "$bootstrap" ]] || {
     echo "Fased lifecycle client is unavailable; rerun the verified installer." >&2
@@ -61,10 +59,13 @@ if [[ "$managed_update" == "1" ]]; then
     exit 1
   }
   shift
-  if [[ "$(id -u)" == "0" ]]; then
-    exec "$bootstrap" update --profile "$FASED_LIFECYCLE_PROFILE" "$@"
+  if [[ "$managed_operation" == "status" ]]; then
+    shift
   fi
-  exec /usr/bin/sudo -n "$bootstrap" update --profile "$FASED_LIFECYCLE_PROFILE" "$@"
+  if [[ "$(id -u)" == "0" ]]; then
+    exec "$bootstrap" "$managed_operation" --profile "$FASED_LIFECYCLE_PROFILE" "$@"
+  fi
+  exec /usr/bin/sudo -n "$bootstrap" "$managed_operation" --profile "$FASED_LIFECYCLE_PROFILE" "$@"
 fi
 current="$install_root/current"
 inventory="$current/inventory.json"

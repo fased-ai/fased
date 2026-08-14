@@ -12,10 +12,6 @@ vi.mock("node:fs/promises", () => ({
   realpath: fsMocks.realpath,
 }));
 
-vi.mock("../commands/managed-up.js", () => ({
-  resolveManagedScriptPath: () => "/srv/fased/scripts/start-managed.sh",
-}));
-
 import { resolveGatewayProgramArguments } from "./program-args.js";
 
 const originalArgv = [...process.argv];
@@ -92,13 +88,12 @@ describe("resolveGatewayProgramArguments", () => {
     ]);
   });
 
-  it("uses the managed startup script when startupMode is managed-up", async () => {
-    const result = await resolveGatewayProgramArguments({
-      port: 18789,
-      startupMode: "managed-up",
-    });
-
-    expect(result.programArguments).toEqual(["/bin/bash", "/srv/fased/scripts/start-managed.sh"]);
-    expect(result.workingDirectory).toBe("/srv/fased");
+  it("refuses to render a managed service command", async () => {
+    await expect(
+      resolveGatewayProgramArguments({
+        port: 18789,
+        startupMode: "go-lifecycle",
+      }),
+    ).rejects.toThrow("verified Go lifecycle installer");
   });
 });

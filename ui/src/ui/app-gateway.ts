@@ -1,8 +1,6 @@
 import {
   GATEWAY_EVENT_MINING_CHANGED,
-  GATEWAY_EVENT_UPDATE_AVAILABLE,
   type GatewayMiningChangedEventPayload,
-  type GatewayUpdateAvailableEventPayload,
 } from "../../../src/gateway/events.js";
 import { GATEWAY_CLIENT_MODES } from "../../../src/gateway/protocol/client-info.js";
 import {
@@ -59,13 +57,7 @@ import {
 import { GatewayBrowserClient } from "./gateway.ts";
 import type { Tab } from "./navigation.ts";
 import type { UiSettings } from "./storage.ts";
-import type {
-  AgentsListResult,
-  HealthSnapshot,
-  PresenceEntry,
-  StatusSummary,
-  UpdateAvailable,
-} from "./types.ts";
+import type { AgentsListResult, HealthSnapshot, PresenceEntry, StatusSummary } from "./types.ts";
 
 function isGenericBrowserFetchFailure(message: string): boolean {
   return /^(?:typeerror:\s*)?(?:fetch failed|failed to fetch)$/i.test(message.trim());
@@ -118,7 +110,6 @@ type GatewayHost = {
   execApprovalError: string | null;
   federationManagedMode?: boolean;
   loginTokenPending?: boolean;
-  updateAvailable?: UpdateAvailable | null;
 };
 
 type SessionDefaultsSnapshot = {
@@ -461,19 +452,6 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
       host.presenceEntries = payload.presence;
       host.presenceError = null;
       host.presenceStatus = null;
-    }
-    return;
-  }
-
-  if (evt.event === GATEWAY_EVENT_UPDATE_AVAILABLE) {
-    const payload = evt.payload as GatewayUpdateAvailableEventPayload | undefined;
-    const update = payload?.updateAvailable;
-    if (update?.currentVersion && update.latestVersion) {
-      host.updateAvailable = {
-        currentVersion: update.currentVersion,
-        latestVersion: update.latestVersion,
-        channel: update.channel,
-      };
     }
     return;
   }

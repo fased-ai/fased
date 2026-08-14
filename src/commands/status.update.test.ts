@@ -1,220 +1,62 @@
 import { describe, expect, it } from "vitest";
 import type { UpdateCheckResult } from "../infra/update-check.js";
-import { VERSION } from "../version.js";
 import {
   formatUpdateAvailableHint,
   formatUpdateOneLiner,
   resolveUpdateAvailability,
 } from "./status.update.js";
 
-function buildUpdate(partial: Partial<UpdateCheckResult>): UpdateCheckResult {
+function gitStatus(behind: number): UpdateCheckResult {
   return {
-    root: null,
-    installKind: "unknown",
-    packageManager: "unknown",
-    ...partial,
+    root: "/repo",
+    installKind: "git",
+    packageManager: "pnpm",
+    git: {
+      root: "/repo",
+      sha: "a".repeat(40),
+      tag: null,
+      branch: "main",
+      upstream: "origin/main",
+      dirty: false,
+      ahead: 0,
+      behind,
+      fetchOk: true,
+    },
   };
 }
 
-function nextMajorVersion(version: string): string {
-  const [majorPart] = version.split(".");
-  const major = Number.parseInt(majorPart ?? "", 10);
-  if (Number.isFinite(major) && major >= 0) {
-    return `${major + 1}.0.0`;
-  }
-  return "999999.0.0";
-}
-
-describe("resolveUpdateAvailability", () => {
-  it("flags git update when behind upstream", () => {
-    const update = buildUpdate({
-      installKind: "git",
-      git: {
-        root: "/tmp/repo",
-        sha: null,
-        tag: null,
-        branch: "main",
-        upstream: "origin/main",
-        dirty: false,
-        ahead: 0,
-        behind: 3,
-        fetchOk: true,
-      },
-    });
-    expect(resolveUpdateAvailability(update)).toEqual({
+describe("source checkout status", () => {
+  it("reports a developer source update only when Git is behind", () => {
+    expect(resolveUpdateAvailability(gitStatus(2))).toEqual({
       available: true,
       hasGitUpdate: true,
-      hasRegistryUpdate: false,
-      latestVersion: null,
-      gitBehind: 3,
+      gitBehind: 2,
     });
+    expect(formatUpdateAvailableHint(gitStatus(2))).toContain("fased dev update-source");
   });
 
-  it("flags registry update when latest version is newer", () => {
-    const latestVersion = nextMajorVersion(VERSION);
-    const update = buildUpdate({
-      installKind: "package",
-      packageManager: "pnpm",
-      registry: { latestVersion },
-    });
-    const availability = resolveUpdateAvailability(update);
-    expect(availability.available).toBe(true);
-    expect(availability.hasGitUpdate).toBe(false);
-    expect(availability.hasRegistryUpdate).toBe(true);
-    expect(availability.latestVersion).toBe(latestVersion);
-  });
-
-  it("ignores git-behind updates on stable channel", () => {
-    const update = buildUpdate({
-      installKind: "git",
-      git: {
-        root: "/tmp/repo",
-        sha: null,
-        tag: null,
-        branch: "main",
-        upstream: "origin/main",
-        dirty: false,
-        ahead: 0,
-        behind: 3,
-        fetchOk: true,
-      },
-    });
-
-    expect(resolveUpdateAvailability(update, { channel: "stable" })).toEqual({
+  it("does not treat Git state as a signed managed-channel status", () => {
+    expect(resolveUpdateAvailability(gitStatus(2), { channel: "stable" })).toEqual({
       available: false,
       hasGitUpdate: false,
-      hasRegistryUpdate: false,
-      latestVersion: null,
       gitBehind: null,
     });
   });
-});
 
-describe("formatUpdateOneLiner", () => {
-  it("renders git status and registry latest summary", () => {
-    const update = buildUpdate({
-      installKind: "git",
-      git: {
-        root: "/tmp/repo",
-        sha: "abc123456789",
-        tag: null,
-        branch: "main",
-        upstream: "origin/main",
-        dirty: true,
-        ahead: 0,
-        behind: 2,
-        fetchOk: true,
-      },
-      registry: { latestVersion: VERSION },
-      deps: {
-        manager: "pnpm",
-        status: "ok",
-        lockfilePath: "pnpm-lock.yaml",
-        markerPath: "node_modules/.modules.yaml",
-      },
-    });
-
-    expect(formatUpdateOneLiner(update)).toBe(
-      `Update: git main · ↔ origin/main · dirty · behind 2 · npm latest ${VERSION} · deps ok`,
-    );
+  it("renders Git state without npm registry claims", () => {
+    const line = formatUpdateOneLiner(gitStatus(0));
+    expect(line).toContain("git main");
+    expect(line).toContain("up to date");
+    expect(line).not.toContain("npm");
   });
 
-  it("renders package-manager mode with registry error", () => {
-    const update = buildUpdate({
-      installKind: "package",
-      packageManager: "npm",
-      registry: { latestVersion: null, error: "offline" },
-      deps: {
-        manager: "npm",
-        status: "missing",
-        lockfilePath: "package-lock.json",
-        markerPath: "node_modules",
-      },
-    });
-
-    expect(formatUpdateOneLiner(update)).toBe("Update: npm · npm latest unknown · deps missing");
-  });
-
-  it("renders stable git status without main branch behind noise", () => {
-    const update = buildUpdate({
-      installKind: "git",
-      git: {
-        root: "/tmp/repo",
-        sha: "abc123456789",
-        tag: null,
-        branch: "main",
-        upstream: "origin/main",
-        dirty: false,
-        ahead: 0,
-        behind: 9,
-        fetchOk: true,
-      },
-      registry: { latestVersion: VERSION },
-      deps: {
-        manager: "pnpm",
-        status: "ok",
-        lockfilePath: "pnpm-lock.yaml",
-        markerPath: "node_modules/.modules.yaml",
-      },
-    });
-
-    expect(formatUpdateOneLiner(update, { channel: "stable" })).toBe(
-      `Update: stable channel · npm latest ${VERSION} · deps ok`,
-    );
-  });
-});
-
-describe("formatUpdateAvailableHint", () => {
-  it("returns null when no update is available", () => {
-    const update = buildUpdate({
+  it("directs package installs to the canonical Go lifecycle status", () => {
+    const line = formatUpdateOneLiner({
+      root: "/runtime",
       installKind: "package",
       packageManager: "pnpm",
-      registry: { latestVersion: VERSION },
     });
-
-    expect(formatUpdateAvailableHint(update)).toBeNull();
-  });
-
-  it("renders git and registry update details", () => {
-    const latestVersion = nextMajorVersion(VERSION);
-    const update = buildUpdate({
-      installKind: "git",
-      git: {
-        root: "/tmp/repo",
-        sha: null,
-        tag: null,
-        branch: "main",
-        upstream: "origin/main",
-        dirty: false,
-        ahead: 0,
-        behind: 2,
-        fetchOk: true,
-      },
-      registry: { latestVersion },
-    });
-
-    expect(formatUpdateAvailableHint(update)).toBe(
-      `Update available (git behind 2 · npm ${latestVersion}). Run: fased update`,
-    );
-  });
-
-  it("does not render git-behind hints on stable channel", () => {
-    const update = buildUpdate({
-      installKind: "git",
-      git: {
-        root: "/tmp/repo",
-        sha: null,
-        tag: null,
-        branch: "main",
-        upstream: "origin/main",
-        dirty: false,
-        ahead: 0,
-        behind: 2,
-        fetchOk: true,
-      },
-      registry: { latestVersion: VERSION },
-    });
-
-    expect(formatUpdateAvailableHint(update, { channel: "stable" })).toBeNull();
+    expect(line).toContain("fased update status");
+    expect(line).not.toContain("npm");
   });
 });

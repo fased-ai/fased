@@ -4,7 +4,6 @@ import { runRegisteredCli } from "../test-utils/command-runner.js";
 
 const updateCommand = vi.fn(async (_opts: unknown) => {});
 const updateStatusCommand = vi.fn(async (_opts: unknown) => {});
-const updateWizardCommand = vi.fn(async (_opts: unknown) => {});
 
 const defaultRuntime = {
   log: vi.fn(),
@@ -18,10 +17,6 @@ vi.mock("./update-cli/update-command.js", () => ({
 
 vi.mock("./update-cli/status.js", () => ({
   updateStatusCommand: (opts: unknown) => updateStatusCommand(opts),
-}));
-
-vi.mock("./update-cli/wizard.js", () => ({
-  updateWizardCommand: (opts: unknown) => updateWizardCommand(opts),
 }));
 
 vi.mock("../runtime.js", () => ({
@@ -38,7 +33,6 @@ describe("update cli option collisions", () => {
   beforeEach(() => {
     updateCommand.mockClear();
     updateStatusCommand.mockClear();
-    updateWizardCommand.mockClear();
     defaultRuntime.log.mockClear();
     defaultRuntime.error.mockClear();
     defaultRuntime.exit.mockClear();
@@ -54,19 +48,6 @@ describe("update cli option collisions", () => {
       expect.objectContaining({
         json: true,
         timeout: "9",
-      }),
-    );
-  });
-
-  it("forwards parent-captured --timeout to `update wizard`", async () => {
-    await runRegisteredCli({
-      register: registerUpdateCli as (program: Command) => void,
-      argv: ["update", "wizard", "--timeout", "13"],
-    });
-
-    expect(updateWizardCommand).toHaveBeenCalledWith(
-      expect.objectContaining({
-        timeout: "13",
       }),
     );
   });

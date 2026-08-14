@@ -947,7 +947,6 @@ export const FasedAgentSchema = z
     update: z
       .object({
         channel: z.union([z.literal("stable"), z.literal("beta"), z.literal("dev")]).optional(),
-        checkOnStart: z.boolean().optional(),
       })
       .strict()
       .optional(),

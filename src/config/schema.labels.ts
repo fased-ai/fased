@@ -15,7 +15,6 @@ const FIELD_LABELS_BASE: Record<string, string> = {
   "acp.runtime.ttlMinutes": "ACP Runtime TTL (min)",
   "acp.runtime.installCommand": "ACP Install Command",
   "update.channel": "Self-Update Channel",
-  "update.checkOnStart": "Self-Update Check on Start",
   "diagnostics.enabled": "Diagnostics Enabled",
   "diagnostics.flags": "Diagnostics Flags",
   "diagnostics.otel.enabled": "OpenTelemetry Enabled",

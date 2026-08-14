@@ -14,7 +14,6 @@ describe("ACPX read-only bridge tool registry", () => {
       "fased_gateway_identity",
       "fased_gateway_status",
       "fased_models_catalog_status",
-      "fased_update_status",
       "fased_commands_list",
       "fased_acp_status",
     ]);
@@ -65,7 +64,6 @@ describe("ACPX read-only bridge tool registry", () => {
       "fased_gateway_identity",
       "fased_gateway_status",
       "fased_models_catalog_status",
-      "fased_update_status",
       "fased_commands_list",
       "fased_acp_status",
     ]);
@@ -139,15 +137,15 @@ describe("ACPX read-only bridge tool registry", () => {
     expect(() =>
       createAcpxReadonlyBridgeToolRegistry([
         {
-          id: "fased_update_status",
-          title: "Update Status",
+          id: "fased_duplicate_status",
+          title: "Duplicate Status",
           description: "First.",
           implemented: false,
           readOnly: true,
         },
         {
-          id: "fased_update_status",
-          title: "Update Status",
+          id: "fased_duplicate_status",
+          title: "Duplicate Status",
           description: "Duplicate.",
           implemented: false,
           readOnly: true,

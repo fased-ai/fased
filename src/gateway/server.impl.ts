@@ -36,7 +36,6 @@ import {
   refreshRemoteBinsForConnectedNodes,
   setSkillsRemoteRegistry,
 } from "../infra/skills-remote.js";
-import { scheduleGatewayUpdateCheck } from "../infra/update-startup.js";
 import {
   startDiagnosticStabilityRecorder,
   stopDiagnosticStabilityRecorder,
@@ -886,9 +885,6 @@ async function startGatewayServerInternal(
     await startupTrace.measure("local-signer.ready", () =>
       ensureLocalSignerReadyAtGatewayStart(cfgAtStart),
     );
-  }
-  if (!minimalTestGateway) {
-    scheduleGatewayUpdateCheck({ cfg: cfgAtStart, log, isNixMode });
   }
   const tailscaleCleanup = minimalTestGateway
     ? null

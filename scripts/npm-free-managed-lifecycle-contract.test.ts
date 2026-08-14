@@ -88,16 +88,68 @@ describe("npm-free managed lifecycle", () => {
     expect(updateCommand).not.toContain("fased-managed-updater.mjs");
   });
 
+  it("removes superseded managed shell and Node migration owners", async () => {
+    const rootPackage = JSON.parse(await source("package.json")) as { files?: string[] };
+    const superseded = [
+      "scripts/fased-managed-service.sh",
+      "scripts/start-managed.sh",
+      "scripts/start-vps.sh",
+      "scripts/migrate-hosted-signer-v2.mjs",
+      "scripts/hosted-legacy-wallet-migration.mjs",
+      "src/commands/managed-up.ts",
+      "src/cli/program/register.managed.ts",
+      "src/infra/update-global.ts",
+      "src/infra/update-runner.ts",
+      "src/infra/update-startup.ts",
+      "src/gateway/update-status.ts",
+      "src/cli/update-cli/legacy-source-update-command.ts",
+      "src/cli/update-cli/progress.ts",
+      "src/cli/update-cli/restart-helper.ts",
+      "src/cli/update-cli/service-target.ts",
+      "src/cli/update-cli/wizard.ts",
+      "src/cli/lightweight/update-precheck.ts",
+      "src/cli/lightweight/update-status.ts",
+      "scripts/install-managed-cli-alias.mjs",
+      "scripts/e2e/doctor-install-switch-docker.sh",
+    ];
+
+    for (const relativePath of superseded) {
+      expect(await exists(relativePath), `${relativePath} still exists`).toBe(false);
+      expect(rootPackage.files ?? []).not.toContain(relativePath);
+    }
+  });
+
+  it("removes npm/global status and mutation routes from runtime and CI", async () => {
+    const updateCheck = await source("src/infra/update-check.ts");
+    const entry = await source("fased.mjs");
+    const buildConfig = await source("tsdown.config.ts");
+    const pullRequestWorkflow = await source(".github/workflows/pr.yml");
+
+    expect(updateCheck).not.toContain("registry.npmjs.org");
+    expect(updateCheck).not.toContain("resolveNpmChannelTag");
+    expect(entry).not.toContain("light-update-status");
+    expect(entry).not.toContain("light-update-precheck");
+    expect(buildConfig).not.toContain("light-update-status");
+    expect(buildConfig).not.toContain("light-update-precheck");
+    expect(pullRequestWorkflow).not.toContain("update-runner.test.ts");
+    expect(pullRequestWorkflow).not.toContain("managed-updater-bundle.test.ts");
+    expect(pullRequestWorkflow).not.toContain("generation-updater.test.ts");
+    expect(pullRequestWorkflow).not.toContain("fased-managed-updater-fixed-client.test.ts");
+  });
+
   it("uses pnpm, not npm, to assemble and validate release artifacts", async () => {
     const artifactBuilder = await source("scripts/build-hosted-runtime-artifact.ts");
     const releaseCheck = await source("scripts/release-check.ts");
     const packedSmoke = await source("scripts/smoke-packed-core.ts");
     const workflow = await source(".github/workflows/hosted-runtime-release.yml");
+    const channelPublisher = await source("scripts/publish-lifecycle-channel.sh");
 
     expect(artifactBuilder).not.toMatch(/run\(\s*["']npm["']/u);
     expect(releaseCheck).not.toMatch(/execFileSync\(\s*["']npm["']/u);
     expect(packedSmoke).not.toMatch(/execFileSync\(\s*["']npm["']/u);
     expect(workflow).not.toMatch(/\bnpm (?:install|pack|publish|view)\b/u);
+    expect(channelPublisher).not.toMatch(/\bnpm\b/u);
+    expect(channelPublisher).toContain("fased-channel-$channel-v1");
   });
 
   it("keeps offline production deploy independent of registry metadata", async () => {
@@ -124,7 +176,9 @@ describe("npm-free managed lifecycle", () => {
 
     expect(skill).not.toContain("For npm, print only:");
     expect(release).not.toMatch(/\bnpm (?:beta|publication|publish)\b/iu);
-    expect(release).toContain("GitHub prerelease exact bytes\n-> PUBLIC0 readback");
+    expect(release).toContain(
+      "GitHub prerelease exact bytes\n-> signed beta channel advancement from those exact bytes\n-> PUBLIC0 readback",
+    );
     expect(await exists(".github/workflows/install-smoke.yml")).toBe(false);
     expect(await exists("scripts/test-install-sh-docker.sh")).toBe(false);
     expect(await exists("scripts/test-install-sh-e2e-docker.sh")).toBe(false);

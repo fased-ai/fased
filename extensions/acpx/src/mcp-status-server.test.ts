@@ -18,7 +18,6 @@ import {
   ACPX_GATEWAY_IDENTITY_MCP_TOOL_NAME,
   ACPX_GATEWAY_STATUS_MCP_TOOL_NAME,
   ACPX_MODELS_CATALOG_STATUS_MCP_TOOL_NAME,
-  ACPX_UPDATE_STATUS_MCP_TOOL_NAME,
 } from "./mcp-readonly-tool-registry.js";
 import {
   ACPX_STATUS_MCP_TOOL_NAME,
@@ -300,7 +299,6 @@ describe("createAcpxMcpStatusServer", () => {
           ACPX_GATEWAY_IDENTITY_MCP_TOOL_NAME,
           ACPX_GATEWAY_STATUS_MCP_TOOL_NAME,
           ACPX_MODELS_CATALOG_STATUS_MCP_TOOL_NAME,
-          ACPX_UPDATE_STATUS_MCP_TOOL_NAME,
           ACPX_COMMANDS_LIST_MCP_TOOL_NAME,
           ACPX_ACP_STATUS_MCP_TOOL_NAME,
         ],
@@ -408,53 +406,6 @@ describe("createAcpxMcpStatusServer", () => {
           },
         ],
         apiKey: "SECRET_API_KEY",
-      }),
-      updateStatusResolver: () => ({
-        ok: true,
-        update: {
-          root: "/secret/local/path",
-          installKind: "git",
-          packageManager: "pnpm",
-          git: {
-            root: "/secret/local/path",
-            sha: "abcdef1234567890",
-            tag: null,
-            branch: "main",
-            upstream: "origin/main",
-            dirty: false,
-            ahead: 0,
-            behind: 1,
-            fetchOk: null,
-          },
-          deps: {
-            manager: "pnpm",
-            status: "ok",
-            lockfilePath: "/secret/local/path/pnpm-lock.yaml",
-            markerPath: "/secret/local/path/node_modules/.modules.yaml",
-          },
-          registry: {
-            latestVersion: "0.1.2",
-          },
-        },
-        availability: {
-          available: true,
-          hasGitUpdate: true,
-          hasRegistryUpdate: false,
-          latestVersion: null,
-          gitBehind: 1,
-        },
-        channel: {
-          channel: "dev",
-          source: "git-branch",
-          label: "dev (main)",
-          config: null,
-        },
-        probes: {
-          fetchGit: false,
-          includeRegistry: false,
-          timeoutMs: 3500,
-        },
-        summary: "Update: git main · behind 1 · deps ok",
       }),
       commandsListResolver: (params) => ({
         commands: [
@@ -572,7 +523,6 @@ describe("createAcpxMcpStatusServer", () => {
       ACPX_GATEWAY_IDENTITY_MCP_TOOL_NAME,
       ACPX_GATEWAY_STATUS_MCP_TOOL_NAME,
       ACPX_MODELS_CATALOG_STATUS_MCP_TOOL_NAME,
-      ACPX_UPDATE_STATUS_MCP_TOOL_NAME,
       ACPX_COMMANDS_LIST_MCP_TOOL_NAME,
       ACPX_ACP_STATUS_MCP_TOOL_NAME,
     ]);
@@ -659,9 +609,6 @@ describe("createAcpxMcpStatusServer", () => {
     });
     expect(JSON.stringify(modelsCatalogPreview)).not.toContain("SECRET_API_KEY");
     expect(JSON.stringify(modelsCatalogPreview)).not.toContain("secret.example");
-    const updatePreview = await server.previewUpdateStatus();
-    expect(updatePreview.update.git?.sha).toBe("abcdef123456");
-    expect(JSON.stringify(updatePreview)).not.toContain("/secret");
     const commandsPreview = await server.previewCommandsList({
       agentId: "support",
       provider: "discord",
@@ -725,7 +672,6 @@ describe("createAcpxMcpStatusServer", () => {
       ACPX_GATEWAY_IDENTITY_MCP_TOOL_NAME,
       ACPX_GATEWAY_STATUS_MCP_TOOL_NAME,
       ACPX_MODELS_CATALOG_STATUS_MCP_TOOL_NAME,
-      ACPX_UPDATE_STATUS_MCP_TOOL_NAME,
       ACPX_COMMANDS_LIST_MCP_TOOL_NAME,
       ACPX_ACP_STATUS_MCP_TOOL_NAME,
     ]);
@@ -746,7 +692,6 @@ describe("createAcpxMcpStatusServer", () => {
         ACPX_GATEWAY_IDENTITY_MCP_TOOL_NAME,
         ACPX_GATEWAY_STATUS_MCP_TOOL_NAME,
         ACPX_MODELS_CATALOG_STATUS_MCP_TOOL_NAME,
-        ACPX_UPDATE_STATUS_MCP_TOOL_NAME,
         ACPX_COMMANDS_LIST_MCP_TOOL_NAME,
         ACPX_ACP_STATUS_MCP_TOOL_NAME,
       ]);
@@ -849,63 +794,6 @@ describe("createAcpxMcpStatusServer", () => {
       });
       expect(JSON.stringify(modelsCatalogParsed)).not.toContain("SECRET_API_KEY");
       expect(JSON.stringify(modelsCatalogParsed)).not.toContain("secret.example");
-
-      const updateResult = await client.callTool({
-        name: ACPX_UPDATE_STATUS_MCP_TOOL_NAME,
-        arguments: {},
-      });
-      const updateContent = firstTextContent(updateResult);
-      expect(updateContent?.type).toBe("text");
-      const updateParsed = JSON.parse(String(updateContent?.text));
-      expect(updateParsed).toEqual({
-        bridge: {
-          id: "acpx",
-          mode: "read-only-tools",
-          enabled: true,
-        },
-        source: "update.status",
-        update: {
-          installKind: "git",
-          packageManager: "pnpm",
-          git: {
-            sha: "abcdef123456",
-            tag: null,
-            branch: "main",
-            upstream: "origin/main",
-            dirty: false,
-            ahead: 0,
-            behind: 1,
-            fetchOk: null,
-          },
-          deps: {
-            manager: "pnpm",
-            status: "ok",
-          },
-          registry: {
-            latestVersion: "0.1.2",
-          },
-        },
-        availability: {
-          available: true,
-          hasGitUpdate: true,
-          hasRegistryUpdate: false,
-          latestVersion: null,
-          gitBehind: 1,
-        },
-        channel: {
-          channel: "dev",
-          source: "git-branch",
-          label: "dev (main)",
-          config: null,
-        },
-        probes: {
-          fetchGit: false,
-          includeRegistry: false,
-          timeoutMs: 3500,
-        },
-        summary: "Update: git main · behind 1 · deps ok",
-      });
-      expect(JSON.stringify(updateParsed)).not.toContain("/secret");
 
       const commandsResult = await client.callTool({
         name: ACPX_COMMANDS_LIST_MCP_TOOL_NAME,

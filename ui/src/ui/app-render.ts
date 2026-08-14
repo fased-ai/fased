@@ -5922,7 +5922,6 @@ export function renderApp(state: AppViewState) {
                 configDirty: state.configFormDirty,
                 modelCatalogStatus: state.debugModelCatalogStatus,
                 commandsCatalog: state.debugCommandsCatalog,
-                updateStatus: state.debugUpdateStatus,
                 pluginsMarketplace: state.debugPluginsMarketplace,
                 taskLedger: state.taskLedger,
                 taskLedgerBusy: state.taskLedgerBusy,

@@ -4,7 +4,6 @@ export const ACPX_STATUS_MCP_TOOL_NAME = "fased_tools_effective";
 export const ACPX_GATEWAY_IDENTITY_MCP_TOOL_NAME = "fased_gateway_identity";
 export const ACPX_GATEWAY_STATUS_MCP_TOOL_NAME = "fased_gateway_status";
 export const ACPX_MODELS_CATALOG_STATUS_MCP_TOOL_NAME = "fased_models_catalog_status";
-export const ACPX_UPDATE_STATUS_MCP_TOOL_NAME = "fased_update_status";
 export const ACPX_COMMANDS_LIST_MCP_TOOL_NAME = "fased_commands_list";
 export const ACPX_ACP_STATUS_MCP_TOOL_NAME = "fased_acp_status";
 
@@ -13,7 +12,6 @@ export const ACPX_READONLY_BRIDGE_TOOL_IDS = [
   ACPX_GATEWAY_IDENTITY_MCP_TOOL_NAME,
   ACPX_GATEWAY_STATUS_MCP_TOOL_NAME,
   ACPX_MODELS_CATALOG_STATUS_MCP_TOOL_NAME,
-  ACPX_UPDATE_STATUS_MCP_TOOL_NAME,
   ACPX_COMMANDS_LIST_MCP_TOOL_NAME,
   ACPX_ACP_STATUS_MCP_TOOL_NAME,
 ] as const;
@@ -68,13 +66,6 @@ const DEFAULT_READONLY_BRIDGE_TOOL_DEFINITIONS: AcpxReadonlyBridgeToolDefinition
     id: ACPX_MODELS_CATALOG_STATUS_MCP_TOOL_NAME,
     title: "Fased Models Catalog Status",
     description: "Read sanitized provider/model catalog status without exposing provider secrets.",
-    implemented: true,
-    readOnly: true,
-  },
-  {
-    id: ACPX_UPDATE_STATUS_MCP_TOOL_NAME,
-    title: "Fased Update Status",
-    description: "Read sanitized update status without starting an update.",
     implemented: true,
     readOnly: true,
   },

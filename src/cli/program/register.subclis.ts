@@ -39,20 +39,11 @@ const loadConfig = async (): Promise<FasedAgentConfig> => {
 const entries: SubCliEntry[] = [
   {
     name: "start",
-    description: "Start runtime in gateway or managed mode",
+    description: "Start the developer Gateway runtime",
     hasSubcommands: false,
     register: async (program) => {
       const mod = await import("./register.start.js");
       mod.registerStartCommand(program);
-    },
-  },
-  {
-    name: "managed",
-    description: "Managed public startup helpers",
-    hasSubcommands: true,
-    register: async (program) => {
-      const mod = await import("./register.managed.js");
-      mod.registerManagedCommand(program);
     },
   },
   {
@@ -362,6 +353,15 @@ const entries: SubCliEntry[] = [
     register: async (program) => {
       const mod = await import("../update-cli.js");
       mod.registerUpdateCli(program);
+    },
+  },
+  {
+    name: "dev",
+    description: "Explicit source-development operations",
+    hasSubcommands: true,
+    register: async (program) => {
+      const mod = await import("../dev-cli.js");
+      mod.registerDevCli(program);
     },
   },
   {

@@ -53,8 +53,10 @@ managed users.
 7. Keep executable plugin code read-only and content-addressed. Store writable
    plugin data separately. Core update cannot update plugin code; drift fails
    closed.
-8. Use attested sanitized installed-state capsules in candidate update proof.
-   Do not rerun a historical installer to construct the predecessor.
+8. Prove supported public predecessors by running their authentic documented
+   installer and the canonical takeover path. Sanitized installed-state
+   capsules are supporting failure-injection fixtures only, never a substitute
+   for public acquisition or owner-machine evidence.
 9. Local and Hosting differ only through platform adapters.
 10. Candidate P1 repeats already-green branch predicates against final bytes.
 
@@ -121,11 +123,16 @@ Execute one checkpoint at a time and stop with exact evidence.
 - Route managed install/update only through the Go lifecycle path.
 - Move development install to a separate script.
 - Default to bounded quiet output.
+- Publish channel selection only as a signed monotonic record that points to an
+  already-public exact release; stage and verify channel assets before the
+  canonical names change, and make retries complete the same transaction.
 
 ### D8 — Acceptance and capsules
 
 - Add one machine-readable Local/Hosting contract.
-- Restore attested predecessor capsules instead of running old installers.
+- Run the authentic supported predecessor installer and canonical takeover for
+  enforcing compatibility evidence; use attested capsules only for supporting
+  deterministic failure and recovery coverage.
 - Remove verifier stubs from enforcing evidence.
 
 ### D9 — Demolition
@@ -151,7 +158,8 @@ Execute one checkpoint at a time and stop with exact evidence.
 
 - PRE-CANDIDATE on exact merged main.
 - One immutable candidate and one build.
-- Parallel P1, exact publication, PUBLIC0, owner Local and real Hosting.
+- Parallel P1, exact publication, signed channel advancement from those same
+  bytes, PUBLIC0, owner Local and real Hosting.
 - PUBLIC0 supplies the first immutable-GitHub-Release acquisition `PASS` after
   publication; P1 before publication replays the product predicates and exact
   artifact inventory without claiming public transport.

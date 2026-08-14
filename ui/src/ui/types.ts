@@ -1,4 +1,3 @@
-export type UpdateAvailable = import("../../../src/infra/update-startup.js").UpdateAvailable;
 import type { ConfigUiHints } from "../../../src/config/schema.hints.js";
 import type { SessionEntry } from "../../../src/config/sessions.js";
 export type { ConfigUiHint, ConfigUiHints } from "../../../src/config/schema.hints.js";
@@ -102,8 +101,6 @@ export type ModelsAuthStatusResult =
   import("../../../src/gateway/protocol/schema/types.js").ModelsAuthStatusResult;
 export type ModelsCatalogStatusResult =
   import("../../../src/gateway/protocol/schema/types.js").ModelsCatalogStatusResult;
-export type GatewayUpdateStatusResult =
-  import("../../../src/gateway/update-status.js").GatewayUpdateStatusResult;
 export type DiagnosticStabilitySnapshot =
   import("../../../src/logging/diagnostic-stability.js").DiagnosticStabilitySnapshot;
 export type TaskRecord = import("../../../src/tasks/task-registry.types.js").TaskRecord;

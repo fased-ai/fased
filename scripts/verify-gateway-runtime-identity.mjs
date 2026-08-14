@@ -11,7 +11,7 @@ export function assertGatewayRuntimeIdentity(payload, expectedVersion, options =
       `Gateway runtime version ${payload?.version ?? "unknown"} does not match installed CLI ${expectedVersion}.`,
     );
   }
-  const acceptedRuntimeSources = new Set(["managed-package", "packaged-runtime"]);
+  const acceptedRuntimeSources = new Set(["go-lifecycle", "managed-package", "packaged-runtime"]);
   if (options.allowSourceCheckout === true) {
     acceptedRuntimeSources.add("source-checkout");
   }

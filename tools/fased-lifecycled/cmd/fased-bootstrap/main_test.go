@@ -8,6 +8,8 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -220,51 +222,126 @@ func TestPublicLifecycleRoutesInstallAndUpdateWithoutCallerTrustSelectors(t *tes
 	}
 }
 
-func TestPublicUpdateDiscoversExactReleaseWithoutNodeOrNPM(t *testing.T) {
-	requested := ""
-	client := &http.Client{Transport: bootstrapRoundTripFunc(func(request *http.Request) (*http.Response, error) {
-		requested = request.URL.String()
-		body := `[
-			{"tag_name":"v0.1.77-rc.1","draft":false,"prerelease":true},
-			{"tag_name":"v0.1.76","draft":false,"prerelease":false},
-			{"tag_name":"v0.1.75","draft":true,"prerelease":false}
-		]`
-		return &http.Response{
-			StatusCode:    http.StatusOK,
-			ContentLength: int64(len(body)),
-			Header:        http.Header{"Content-Type": []string{"application/json"}},
-			Body:          io.NopCloser(strings.NewReader(body)),
-			Request:       request,
-		}, nil
-	})}
+func TestInstalledLifecycleStatusIsBoundToCanonicalPlatformIdentity(t *testing.T) {
+	config, err := platform.NewConfig(
+		model.ProfileProtectedLocal, "0123456789abcdef", "/home/owner/.fased",
+		platform.Principal{UID: 1000, GID: 1000}, platform.Principal{UID: 1001, GID: 1001}, platform.Principal{UID: 1002, GID: 1002},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := config.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	generation := model.Generation{ID: digest, Version: "0.1.76-rc.90", Commit: strings.Repeat("b", 40), Tree: strings.Repeat("c", 40), ArtifactSetDigest: digest}
+	capability := model.CapabilityRange{Min: 1, Max: 1}
+	manifest := model.Manifest{
+		SchemaVersion: model.CurrentManifestSchemaVersion, Profile: config.Profile, Platform: identity,
+		ActiveGeneration: &generation, StateSchemas: map[string]uint32{"signer": 2},
+		Capabilities:    model.CapabilityRanges{Supervisor: capability, Controller: capability, Migrator: capability, Signer: capability},
+		ReleaseSequence: 12, SecurityEpoch: 3,
+	}
+	manifestData, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := decodeInstalledLifecycleStatus(config, config.Profile, manifestData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Version != generation.Version || status.ActiveGenerationID != generation.ID || status.ReleaseSequence != 12 || status.SecurityEpoch != 3 {
+		t.Fatalf("installed lifecycle status lost canonical identity: %+v", status)
+	}
 
-	stable, err := discoverPublicReleaseVersion(context.Background(), "stable", client, "https://api.github.test/releases")
-	if err != nil || stable != "0.1.76" {
-		t.Fatalf("stable channel did not resolve to an exact immutable release: version=%q err=%v", stable, err)
+	manifest.Platform.ConfigurationDigest = "sha256:" + strings.Repeat("d", 64)
+	manifestData, err = json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
 	}
-	beta, err := discoverPublicReleaseVersion(context.Background(), "beta", client, "https://api.github.test/releases")
-	if err != nil || beta != "0.1.77-rc.1" {
-		t.Fatalf("beta channel did not resolve to an exact immutable release: version=%q err=%v", beta, err)
-	}
-	if requested != "https://api.github.test/releases" {
-		t.Fatalf("release discovery used an unexpected route: %q", requested)
+	if _, err := decodeInstalledLifecycleStatus(config, config.Profile, manifestData); err == nil {
+		t.Fatal("status accepted a manifest bound to a different platform configuration")
 	}
 }
 
-func TestPublicUpdateReleaseDiscoveryFailsClosed(t *testing.T) {
-	for name, body := range map[string]string{
-		"mutable tag": `[{"tag_name":"latest","draft":false,"prerelease":false}]`,
-		"draft only":  `[{"tag_name":"v0.1.76","draft":true,"prerelease":false}]`,
-		"wrong shape": `{}`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			client := &http.Client{Transport: bootstrapRoundTripFunc(func(request *http.Request) (*http.Response, error) {
-				return &http.Response{StatusCode: http.StatusOK, ContentLength: int64(len(body)), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
-			})}
-			if _, err := discoverPublicReleaseVersion(context.Background(), "stable", client, "https://api.github.test/releases"); err == nil {
-				t.Fatal("untrusted discovery returned an unsafe release identity")
-			}
-		})
+func TestPublicUpdateSelectsAnAttestedReplayProtectedChannelIndex(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	rootKeys := []fixtureKey{fixtureKeyPair(t), fixtureKeyPair(t), fixtureKeyPair(t)}
+	rootMetadata := trust.RootMetadata{SchemaVersion: 1, Type: "fased-lifecycle-root", Version: 1,
+		IssuedAt: now.Add(-time.Hour).Format(time.RFC3339), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339),
+		Keys: map[string]trust.Key{}, Root: trust.RootRole{Threshold: 2},
+		ReleaseAuthority: &trust.ReleaseAuthority{Type: "github-artifact-attestation-v1", Repository: "fased-ai/fased", Workflow: "fased-ai/fased/.github/workflows/hosted-runtime-release.yml", SourceRefPrefix: "refs/tags/v", DenySelfHostedRunners: true},
+		Revocations:      trust.Revocations{ReleaseVersions: []string{}, TargetDigests: []string{}, DelegatedKeyIDs: []string{}}}
+	for _, key := range rootKeys {
+		rootMetadata.Keys[key.id] = key.record
+		rootMetadata.Root.KeyIDs = append(rootMetadata.Root.KeyIDs, key.id)
+	}
+	sortStrings(rootMetadata.Root.KeyIDs)
+	rootJSON, err := trust.SignRoot(rootMetadata, []trust.SigningKey{{KeyID: rootKeys[0].id, PrivateKey: rootKeys[0].private}, {KeyID: rootKeys[1].id, PrivateKey: rootKeys[1].private}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootDigest := sha256.Sum256(rootJSON)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	asset := trust.Asset{Name: "application.tar.gz", Size: 1, SHA256: digest}
+	hostAsset := asset
+	hostAsset.Name = "fased-lifecycled-linux-x64"
+	hostAsset.PrivilegedComponent = "lifecycle-host"
+	hostAsset.Protocols = &trust.HostProtocols{Manifest: trust.ProtocolRange{Min: 2, Max: 2}, Journal: trust.ProtocolRange{Min: 1, Max: 1}, Participant: trust.ProtocolRange{Min: 1, Max: 1}, Platform: trust.ProtocolRange{Min: 1, Max: 2}}
+	capability := model.CapabilityRange{Min: 1, Max: 1}
+	index := trust.ReleaseIndex{SchemaVersion: 1, Type: "fased-release-index", Channel: "stable", Version: "0.1.76",
+		ReleaseSequence: 42, SecurityEpoch: 3, Commit: strings.Repeat("b", 40), Tree: strings.Repeat("c", 40), ArtifactSetDigest: digest,
+		Application: map[string]trust.Asset{"x64": asset}, DependencyLayer: map[string]trust.Asset{"x64": asset}, LifecycleHost: map[string]trust.Asset{"x64": hostAsset}, Signer: map[string]trust.Asset{"x64": asset},
+		StateSchemas: map[string]uint32{"signer": 2}, Capabilities: model.CapabilityRanges{Supervisor: capability, Controller: capability, Migrator: capability, Signer: capability}, PluginLockDigest: digest,
+		IssuedAt: now.Add(-time.Minute).Format(time.RFC3339), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339)}
+	indexJSON, err := trust.EncodeReleaseIndex(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attestationJSON := []byte("attestation fixture")
+	assets := map[string][]byte{
+		"/channel/" + releaseRootAssetName:             rootJSON,
+		"/channel/" + releaseIndexAssetName:            indexJSON,
+		"/channel/" + releaseIndexAttestationAssetName: attestationJSON,
+	}
+	client := &http.Client{Transport: bootstrapRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		data, ok := assets[request.URL.Path]
+		if !ok {
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("missing")), Request: request}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, ContentLength: int64(len(data)), Body: io.NopCloser(strings.NewReader(string(data))), Request: request}, nil
+	})}
+	verify := func(_ trust.VerifiedRoot, candidate, bundle []byte, _ time.Time) (bootstrapVerifiedReleaseIndex, error) {
+		if string(bundle) != string(attestationJSON) {
+			return bootstrapVerifiedReleaseIndex{}, errors.New("wrong attestation")
+		}
+		decoded, err := trust.DecodeReleaseIndex(candidate)
+		if err != nil {
+			return bootstrapVerifiedReleaseIndex{}, err
+		}
+		digest := sha256.Sum256(candidate)
+		return bootstrapVerifiedReleaseIndex{Index: decoded, Digest: hex.EncodeToString(digest[:]), ReleaseAuthorityDigest: strings.Repeat("d", 64)}, nil
+	}
+
+	selection, err := discoverSignedChannelRelease(context.Background(), "stable", client, "https://fixture.invalid/channel", hex.EncodeToString(rootDigest[:]), 41, 3, now, verify)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selection.Version != index.Version || selection.ReleaseSequence != 42 || selection.SecurityEpoch != 3 || len(selection.IndexDigest) != 64 {
+		t.Fatalf("signed channel selection lost release identity: %+v", selection)
+	}
+	if _, err := discoverSignedChannelRelease(context.Background(), "stable", client, "https://fixture.invalid/channel", hex.EncodeToString(rootDigest[:]), 43, 3, now, verify); err == nil {
+		t.Fatal("signed channel selection accepted a replay below the installed release sequence")
+	}
+	result := bootstrapResult{Version: selection.Version, ReleaseSequence: selection.ReleaseSequence, SecurityEpoch: selection.SecurityEpoch,
+		ReleaseIndexDigest: "sha256:" + selection.IndexDigest, ReleaseAuthorityDigest: "sha256:" + selection.ReleaseAuthorityDigest}
+	if err := validateSignedChannelResult(selection, result); err != nil {
+		t.Fatal(err)
+	}
+	result.ReleaseIndexDigest = "sha256:" + strings.Repeat("e", 64)
+	if err := validateSignedChannelResult(selection, result); err == nil {
+		t.Fatal("exact release was not bound to the selected channel index digest")
 	}
 }
 

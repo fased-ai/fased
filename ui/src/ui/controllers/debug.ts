@@ -5,7 +5,6 @@ import type {
   DoctorMemoryInventoryPayload,
   DoctorMemoryRepairPreviewPayload,
   DoctorMemoryValidationPayload,
-  GatewayUpdateStatusResult,
   HealthSnapshot,
   ModelsCatalogStatusResult,
   PluginsMarketplaceListResult,
@@ -23,7 +22,6 @@ export type DebugState = {
   debugModels: unknown[];
   debugModelCatalogStatus: ModelsCatalogStatusResult | null;
   debugCommandsCatalog: CommandsListResult | null;
-  debugUpdateStatus: GatewayUpdateStatusResult | null;
   debugPluginsMarketplace: PluginsMarketplaceListResult | null;
   debugDiagnosticsStability: DiagnosticStabilitySnapshot | null;
   debugMemoryInventory: DoctorMemoryInventoryPayload | null;
@@ -204,7 +202,6 @@ export async function loadDebug(state: DebugState) {
       models,
       modelCatalogStatus,
       commandsCatalog,
-      updateStatus,
       pluginsMarketplace,
       diagnosticsStability,
       memoryInventory,
@@ -218,7 +215,6 @@ export async function loadDebug(state: DebugState) {
       state.client.request("models.list", {}),
       state.client.request("models.catalog.status", {}),
       state.client.request("commands.list", { scope: "both", includeArgs: false }),
-      state.client.request("update.status", { fetchGit: false, includeRegistry: false }),
       state.client.request("plugins.marketplace.list", {}),
       state.client.request("diagnostics.stability", { limit: 25 }),
       state.client.request("doctor.memory.inventory", {}),
@@ -243,9 +239,6 @@ export async function loadDebug(state: DebugState) {
     }
     if (commandsCatalog.status === "fulfilled") {
       state.debugCommandsCatalog = commandsCatalog.value as CommandsListResult;
-    }
-    if (updateStatus.status === "fulfilled") {
-      state.debugUpdateStatus = updateStatus.value as GatewayUpdateStatusResult;
     }
     if (pluginsMarketplace.status === "fulfilled") {
       state.debugPluginsMarketplace = pluginsMarketplace.value as PluginsMarketplaceListResult;
@@ -282,7 +275,6 @@ export async function loadDebug(state: DebugState) {
       models,
       modelCatalogStatus,
       commandsCatalog,
-      updateStatus,
       pluginsMarketplace,
       diagnosticsStability,
       memoryInventory,

@@ -4,17 +4,12 @@ import { formatDocsLink } from "../terminal/links.js";
 import { theme } from "../terminal/theme.js";
 import { inheritOptionFromParent } from "./command-options.js";
 import { formatHelpExamples } from "./help-format.js";
-import {
-  type UpdateCommandOptions,
-  type UpdateStatusOptions,
-  type UpdateWizardOptions,
-} from "./update-cli/shared.js";
+import { type UpdateCommandOptions, type UpdateStatusOptions } from "./update-cli/shared.js";
 import { updateStatusCommand } from "./update-cli/status.js";
 import { updateCommand } from "./update-cli/update-command.js";
-import { updateWizardCommand } from "./update-cli/wizard.js";
 
-export { updateCommand, updateStatusCommand, updateWizardCommand };
-export type { UpdateCommandOptions, UpdateStatusOptions, UpdateWizardOptions };
+export { updateCommand, updateStatusCommand };
+export type { UpdateCommandOptions, UpdateStatusOptions };
 
 function inheritedUpdateJson(command?: Command): boolean {
   return Boolean(inheritOptionFromParent<boolean>(command, "json"));
@@ -34,32 +29,20 @@ function inheritedUpdateTimeout(
 export function registerUpdateCli(program: Command) {
   const update = program
     .command("update")
-    .description("Update FasedAgent and inspect update channel status")
+    .description("Enter the verified managed lifecycle updater")
     .option("--json", "Output result as JSON", false)
     .option("--verbose", "Show detailed update timing", false)
-    .option("--no-restart", "Skip restarting the gateway service after a successful update")
-    .option("--dry-run", "Preview update actions without making changes", false)
-    .option("--channel <stable|beta|dev>", "Persist update channel (git + npm)")
-    .option("--tag <dist-tag|version>", "Override npm dist-tag or version for this update")
-    .option("--timeout <seconds>", "Timeout for each update step in seconds (default: 1200)")
-    .option("--yes", "Skip confirmation prompts (non-interactive)", false)
-    .option(
-      "--safe-fallback",
-      "Dev channel only: try older main commits when the latest commit fails preflight",
-      false,
-    )
+    .option("--channel <stable|beta>", "Select a signed managed release channel")
+    .option("--tag <version>", "Select an exact signed managed release")
+    .option("--timeout <seconds>", "Bound the managed lifecycle transaction")
+    .option("--yes", "Confirm non-interactively", false)
     .addHelpText("after", () => {
       const examples = [
         ["fased update", "Update to the configured channel (stable by default)"],
-        ["fased update --channel beta", "Switch to beta channel (git + npm)"],
-        ["fased update --channel dev", "Source install: switch to dev channel"],
-        ["fased update --channel dev --safe-fallback", "Source repair: try older main commits"],
-        ["fased update --tag beta", "One-off update to a dist-tag or version"],
-        ["fased update --dry-run", "Source install: preview without changing anything"],
-        ["fased update --no-restart", "Source install: update without restart"],
+        ["fased update --channel beta", "Select the signed beta channel"],
+        ["fased update --tag 1.2.3", "Select an exact signed release"],
         ["fased update --json", "Output result as JSON"],
-        ["fased update --yes", "Non-interactive (accept downgrade prompts)"],
-        ["fased update wizard", "Interactive update wizard"],
+        ["fased dev update-source", "Update a developer source checkout"],
         ["fased --update", "Shorthand for fased update"],
       ] as const;
       const fmtExamples = examples
@@ -67,28 +50,24 @@ export function registerUpdateCli(program: Command) {
         .join("\n");
       return `
 ${theme.heading("What this does:")}
-  - Managed Local and Hosting installations update through the fixed Go lifecycle client
-  - Managed updates verify one signed immutable stable, beta, or exact-version release
-  - Source checkouts retain their explicit git/npm development update workflow
+  - The installed stable launcher routes managed Local and Hosting updates to Go
+  - Direct Node/package invocation does not mutate a managed installation
+  - Developer source updates use the separate fased dev update-source command
 
 ${theme.heading("Switch channels:")}
-  - Use --channel stable|beta|dev to persist the update channel in config
-  - Run fased update status to see the active channel and source
-  - Use --tag <dist-tag|version> for a one-off npm update without persisting
+  - Use --channel stable|beta for a signed managed channel
+  - Use --tag <version> for an exact signed release
+  - Run fased update status to read canonical installed lifecycle identity
 
 ${theme.heading("Non-interactive:")}
-  - Use --yes to accept downgrade prompts
-  - Combine with --channel/--tag/--restart/--json/--timeout as needed
-  - Use --dry-run to preview actions without writing config/installing/restarting
+  - Combine --yes with --channel/--tag/--json/--timeout as needed
 
 ${theme.heading("Examples:")}
 ${fmtExamples}
 
 ${theme.heading("Notes:")}
-  - Managed installations support stable, beta, and exact signed versions; they do not use npm or Git
-  - Dev, dry-run, no-restart, and safe-fallback are source-install options
-  - Source-install downgrades require confirmation (can break configuration)
-  - Skips update if the working directory has uncommitted changes
+  - Managed installation and update never use npm, pnpm, Git, or application mutation code
+  - If this command reaches Node directly, rerun the verified public installer
 
 ${theme.muted("Docs:")} ${formatDocsLink("/cli/update", "docs.fased.ai/cli/update")}`;
     })
@@ -96,32 +75,11 @@ ${theme.muted("Docs:")} ${formatDocsLink("/cli/update", "docs.fased.ai/cli/updat
       try {
         await updateCommand({
           json: Boolean(opts.json),
-          restart: Boolean(opts.restart),
-          dryRun: Boolean(opts.dryRun),
+          verbose: Boolean(opts.verbose),
           channel: opts.channel as string | undefined,
           tag: opts.tag as string | undefined,
           timeout: opts.timeout as string | undefined,
           yes: Boolean(opts.yes),
-          safeFallback: Boolean(opts.safeFallback),
-        });
-      } catch (err) {
-        defaultRuntime.error(String(err));
-        defaultRuntime.exit(1);
-      }
-    });
-
-  update
-    .command("wizard")
-    .description("Interactive update wizard")
-    .option("--timeout <seconds>", "Timeout for each update step in seconds (default: 1200)")
-    .addHelpText(
-      "after",
-      `\n${theme.muted("Docs:")} ${formatDocsLink("/cli/update", "docs.fased.ai/cli/update")}\n`,
-    )
-    .action(async (opts, command) => {
-      try {
-        await updateWizardCommand({
-          timeout: inheritedUpdateTimeout(opts, command),
         });
       } catch (err) {
         defaultRuntime.error(String(err));
@@ -131,19 +89,19 @@ ${theme.muted("Docs:")} ${formatDocsLink("/cli/update", "docs.fased.ai/cli/updat
 
   update
     .command("status")
-    .description("Show update channel and version status")
+    .description("Show canonical managed lifecycle identity")
     .option("--json", "Output result as JSON", false)
     .option("--timeout <seconds>", "Timeout for update checks in seconds (default: 3)")
     .addHelpText(
       "after",
       () =>
         `\n${theme.heading("Examples:")}\n${formatHelpExamples([
-          ["fased update status", "Show channel + version status."],
+          ["fased update status", "Show signed installed lifecycle identity."],
           ["fased update status --json", "JSON output."],
           ["fased update status --timeout 10", "Custom timeout."],
         ])}\n\n${theme.heading("Notes:")}\n${theme.muted(
-          "- Shows current update channel (stable/beta/dev) and source",
-        )}\n${theme.muted("- Includes git tag/branch/SHA for source checkouts")}\n\n${theme.muted(
+          "- The installed launcher routes this command to the Go lifecycle status authority",
+        )}\n${theme.muted("- Direct Node/package invocation refuses instead of inventing status")}\n\n${theme.muted(
           "Docs:",
         )} ${formatDocsLink("/cli/update", "docs.fased.ai/cli/update")}`,
     )
