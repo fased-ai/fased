@@ -359,7 +359,11 @@ export async function buildCanonicalManagedPredecessorCapsule(options) {
     const config = canonicalConfig(instance);
     const platform = legacyPlatform(config);
     const generationRoot = `${config.installRoot}/generations/${generation.id.slice(7)}`;
-    const dependencyRoot = `${config.installRoot}/dependencies/${inventory.dependency.hash}-${inventory.dependency.archiveSHA256.slice(7)}`;
+    // A predecessor capsule must remain readable by lifecycle hosts from before
+    // archive-qualified dependency directories existed. The identity marker
+    // still binds the exact archive, while current hosts accept both layouts
+    // and publish archive-qualified paths for newly imported candidates.
+    const dependencyRoot = `${config.installRoot}/dependencies/${inventory.dependency.hash}`;
     const manifest = {
       schemaVersion: 1,
       profile: "protected-local",

@@ -161,7 +161,10 @@ materialize_canonical_managed_predecessor() {
   dependency_asset="$(tar -xOf /var/lib/fased-predecessor-input/generation.tar.gz generation/inventory.json | jq -er .dependency.asset)"
   dependency_digest="$(tar -xOf /var/lib/fased-predecessor-input/generation.tar.gz generation/inventory.json | jq -er '.dependency.archiveSHA256 | sub("^sha256:"; "")')"
   generation_root="/opt/fased/local/$instance/generations/$generation_id"
-  dependency_root="/opt/fased/local/$instance/dependencies/$dependency_hash-$dependency_digest"
+  # Materialize the compatibility capsule in the legacy hash-only location so
+  # the predecessor's own lifecycle host can read it. Candidate imports use the
+  # archive-qualified location and both layouts remain marker-verified.
+  dependency_root="/opt/fased/local/$instance/dependencies/$dependency_hash"
 
   groupadd --gid "$gateway_gid" "fsgw-$instance"
   useradd --uid "$gateway_uid" --gid "$gateway_gid" --no-create-home \
@@ -189,7 +192,7 @@ materialize_canonical_managed_predecessor() {
     --arg archiveSHA256 "sha256:$dependency_digest" \
     '{schemaVersion:1,hash:$hash,asset:$asset,archiveSHA256:$archiveSHA256}' \
     >"$dependency_root/.fased-dependency-layer.json"
-  ln -s "../../dependencies/$dependency_hash-$dependency_digest/node_modules" \
+  ln -s "../../dependencies/$dependency_hash/node_modules" \
     "$generation_root/node_modules"
   test "$(jq -er '.generation.id | sub("^sha256:"; "")' "$generation_root/generation.json")" = \
     "$generation_id"

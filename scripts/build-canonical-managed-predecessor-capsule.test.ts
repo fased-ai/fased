@@ -157,6 +157,16 @@ describe("canonical managed predecessor capsule", () => {
     expect(launcher).toContain('install_root="/opt/fased/local/1122334455667788"');
     expect(launcher).toContain('export FASED_LIFECYCLE_INSTANCE="1122334455667788"');
     expect(launcher).toContain('exec "$node_bin" "$runtime" "$@"');
+    const gatewayUnit = await readFile(
+      path.join(restored, "etc/systemd/system/fased-gateway-1122334455667788.service"),
+      "utf8",
+    );
+    expect(gatewayUnit).toContain(
+      `BindReadOnlyPaths=/opt/fased/local/1122334455667788/dependencies/${dependencyHash}/node_modules:`,
+    );
+    expect(gatewayUnit).not.toContain(
+      `${dependencyHash}-${inventory.dependency.archiveSHA256.slice(7)}`,
+    );
     expect(
       capsule.entries.find((entry) => entry.path === "home/testop/.fased/bin/fased"),
     ).toMatchObject({ type: "file", mode: 0o755, owner: "operator" });

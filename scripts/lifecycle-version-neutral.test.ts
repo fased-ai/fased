@@ -42,9 +42,7 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(fixture).toContain('user_systemctl enable --now "$predecessor_service"');
     expect(fixture).toContain('setfacl --no-mask --modify "user:$gateway_uid:--x"');
     expect(fixture).toContain('usermod -a -G "fsgw-$instance,fsop-$instance" "fssg-$instance"');
-    expect(fixture).toContain(
-      '"../../dependencies/$dependency_hash-$dependency_digest/node_modules"',
-    );
+    expect(fixture).toContain('"../../dependencies/$dependency_hash/node_modules"');
     expect(fixture).toContain('"$dependency_root/.fased-dependency-layer.json"');
     expect(fixture).toContain('--arg archiveSHA256 "sha256:$dependency_digest"');
     expect(fixture).toContain('chmod 0644 \\\n    "$generation_root/inventory.json"');
