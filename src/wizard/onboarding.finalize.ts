@@ -3039,7 +3039,7 @@ export async function finalizeOnboardingWizard(
     pluginReport: { plugins: [], diagnostics: [] },
   });
   await prompter.note(
-    `${formatCapabilityReadinessSummary(capabilityReadiness)}\nOptional add-ons and external runtimes remain off until selected.`,
+    `${formatCapabilityReadinessSummary(capabilityReadiness)}\nBundled components remain disabled until selected; external runtimes remain separate.`,
     "Components",
   );
 

@@ -1,9 +1,4 @@
-export const CHANNEL_DELIVERIES = [
-  "official-addon",
-  "bundled",
-  "source-only",
-  "external-prerequisite",
-] as const;
+export const CHANNEL_DELIVERIES = ["bundled", "source-only", "external-prerequisite"] as const;
 
 export type ChannelDelivery = (typeof CHANNEL_DELIVERIES)[number];
 
@@ -14,12 +9,13 @@ export type ChannelDeliveryEntry = {
 };
 
 const CHANNEL_DELIVERY_ENTRIES: ChannelDeliveryEntry[] = [
-  ...["telegram", "whatsapp", "discord", "slack", "feishu", "googlechat"].map((id) => ({
-    id,
-    docsPath: `/channels/${id}`,
-    delivery: "official-addon" as const,
-  })),
   ...[
+    "telegram",
+    "whatsapp",
+    "discord",
+    "slack",
+    "feishu",
+    "googlechat",
     "irc",
     "line",
     "mattermost",
@@ -57,8 +53,6 @@ export function getChannelDelivery(id: string): ChannelDelivery {
 
 export function formatChannelDelivery(delivery: ChannelDelivery): string {
   switch (delivery) {
-    case "official-addon":
-      return "Official add-on";
     case "bundled":
       return "Bundled";
     case "source-only":
@@ -69,5 +63,5 @@ export function formatChannelDelivery(delivery: ChannelDelivery): string {
 }
 
 export function channelDeliveryAllowsInstall(delivery: ChannelDelivery): boolean {
-  return delivery === "official-addon" || delivery === "bundled";
+  return delivery === "bundled";
 }

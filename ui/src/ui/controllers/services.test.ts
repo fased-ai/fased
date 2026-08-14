@@ -13,8 +13,7 @@ describe("service capability controller", () => {
       summary: {
         total: 0,
         coreIncluded: 0,
-        optionalInstalled: 0,
-        optionalConfigured: 0,
+        configured: 0,
         externalRequired: 0,
         errors: 0,
       },
@@ -40,8 +39,7 @@ describe("service capability controller", () => {
       summary: {
         total: 0,
         coreIncluded: 0,
-        optionalInstalled: 0,
-        optionalConfigured: 0,
+        configured: 0,
         externalRequired: 0,
         errors: 0,
       },

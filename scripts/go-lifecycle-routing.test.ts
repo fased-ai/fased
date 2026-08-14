@@ -20,6 +20,11 @@ const deletedLifecycleOwners = [
   "scripts/managed-update-contract.mjs",
   "scripts/fased-generation-updater-core.mjs",
   "scripts/generation-updater.mjs",
+  "scripts/fased-managed-updater.mjs",
+  "scripts/managed-updater-bundle.mjs",
+  "scripts/managed-updater-bundle.v1.json",
+  "scripts/fased-managed-launcher.sh",
+  "scripts/managed-runtime-layout.mjs",
 ] as const;
 
 const mutationOwners = deletedLifecycleOwners;
@@ -40,8 +45,6 @@ const deletedD9Surfaces = [
 const productionRoutingSurfaces = [
   "package.json",
   "src/cli/update-cli/update-command.ts",
-  "scripts/fased-managed-updater.mjs",
-  "scripts/managed-updater-bundle.v1.json",
   "scripts/build-lifecycle-trust-metadata.mjs",
   "scripts/privileged-release-evidence.mjs",
   "scripts/release-check.ts",

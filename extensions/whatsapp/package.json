@@ -1,6 +1,7 @@
 {
   "name": "@fased/whatsapp",
   "version": "0.1.76-rc.84",
+  "private": true,
   "description": "FasedAgent WhatsApp channel plugin",
   "files": [
     "index.ts",
@@ -10,9 +11,6 @@
     "!src/**/*.test.tsx"
   ],
   "type": "module",
-  "publishConfig": {
-    "access": "public"
-  },
   "dependencies": {
     "@whiskeysockets/baileys": "7.0.0-rc12"
   },
@@ -39,9 +37,8 @@
       "quickstartAllowFrom": true
     },
     "install": {
-      "npmSpec": "@fased/whatsapp",
       "localPath": "extensions/whatsapp",
-      "defaultChoice": "npm"
+      "defaultChoice": "local"
     }
   }
 }

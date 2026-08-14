@@ -249,7 +249,7 @@ describe("CI workflow routing", () => {
     expect(focused?.if).toBe("needs.change-scope.outputs.run_node_focused == 'true'");
     const focusedCommands = focused?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     expect(focusedCommands).toContain("scripts/go-lifecycle-routing.test.ts");
-    expect(focusedCommands).toContain("scripts/fased-managed-updater-fixed-client.test.ts");
+    expect(focusedCommands).toContain("scripts/npm-free-managed-lifecycle-contract.test.ts");
     expect(focusedCommands).toContain("src/wallet/wallet-application-state-permissions.test.ts");
 
     for (const [jobName, group] of [

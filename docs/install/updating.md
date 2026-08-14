@@ -85,8 +85,9 @@ services, private Tailscale access, and the hosted posture. Use the Tailscale
 hostname and `app` for normal operation and updates. A successful fresh install
 does not require `--repair-hosting` afterward.
 
-A manual global npm install is an advanced local/dev or self-managed-host path;
-it is not the normal VPS Hosting path.
+Legacy global npm installs are migration-only. Rerun the verified public
+installer to enter the managed layout; npm is not a maintained Local or Hosting
+lifecycle authority.
 
 ## CLI update
 
@@ -105,9 +106,9 @@ manual package-manager profiles retain their existing restart option.
 
 By default, `fased update` uses the **stable** channel. On a git checkout,
 stable means the newest stable `v*` release tag. It does **not** mean the moving
-head of `main`. On managed package installs, npm `latest` resolves the exact
-version; the update downloads verified GitHub release layers and does not run a
-global npm dependency reconciliation.
+head of `main`. On managed installs, the signed release index resolves the exact
+version and architecture-specific GitHub release layers without npm registry
+metadata or global dependency reconciliation.
 
 | Command                                                 | What it gets                                      |
 | ------------------------------------------------------- | ------------------------------------------------- |
@@ -169,24 +170,18 @@ signer state. After the decision, recovery completes forward so a signer
 database that may have recorded a request is never replaced by an older
 snapshot.
 
-An older same-user Local installation uses its existing paired transaction
-until it reaches the explicitly tested protected-migration boundary. An
-already-published updater cannot acquire new privileged migration behavior
-inside the same running process. Release notes must name the oldest updater
-that can perform the one-command transition; do not claim arbitrary historical
-versions migrate automatically.
-
-This pairing also applies to tagged macOS and explicit source installs. A
-source checkout with a configured signer must be clean, resolve to a production
-release tag, allow the required restart, and pass the same exact health checks.
-Signer-paired source updates reject an untagged development commit,
-`--no-restart`, or an install-mode switch. Interrupted updates recover from the
-owner-only transaction journal before the Gateway starts.
+Older same-user Local installations and source checkouts with signer state do
+not mutate the application and signer from the Node updater. During the Go
+lifecycle cutover they fail closed and require the verified public installer to
+enter or repair the managed layout. An already-published updater cannot acquire
+new privileged migration behavior inside the same running process. Release
+notes must name the oldest topology that can perform the one-command transition;
+do not claim arbitrary historical versions migrate automatically.
 
 Each tagged release must publish signer assets for Linux and macOS on `amd64`
 and `arm64` before wallet setup for that version is considered releasable. A
 source checkout can still opt into a local build with
-`FASED_BUILD_NATIVE_SIGNER_FROM_SOURCE=1` and Go >= 1.25.12. Existing binaries
+`FASED_BUILD_NATIVE_SIGNER_FROM_SOURCE=1` and Go >= 1.25.13. Existing binaries
 and alternate trusted release sources remain available through
 `FASED_WALLET_LOCAL_SIGNER_BIN`, `FASED_LOCAL_SIGNER_VERSION`, and
 `FASED_LOCAL_SIGNER_BASE_URL`.
@@ -257,7 +252,8 @@ Use `./install.sh --no-git-update` only when testing local changes.
 - uses a verified release artifact for the managed VPS runtime when available
 - uses the same verified artifact for supported Linux Local installs
 - refreshes dependencies and rebuilds for macOS or explicit source installs
-- checks tracked npm plugins after the core update
+- updates every Fased-owned channel and runtime component atomically with the
+  signed application generation
 - detects the exact protected Local per-instance system service, legacy Local
   user service, or root-managed VPS Hosting service
 - restarts the correct service and verifies Gateway health
@@ -277,21 +273,19 @@ layer when its build hash is unchanged and replace only the application layer.
 When the dependency recipe or lockfile changes, the next update replaces that
 layer once and later updates reuse it again.
 
-The managed launcher and updater are deliberately outside each application
-version:
+The stable launcher and lifecycle host are deliberately outside each
+application version:
 
 ```text
-~/.fased/bin/fased
-~/.fased/bin/fased-service
-~/.fased/updater/fased-managed-updater.mjs
-~/.fased/runtime/current
-~/.fased/runtime/previous
-~/.fased/runtime/releases/<version-or-repair-generation>/
-~/.fased/install.json
+/opt/fased/lifecycle/bootstrap-v1/fased-bootstrap
+/opt/fased/lifecycle/supervisor-v1/fased-lifecycled
+/opt/fased/<profile>/<instance>/current
+/opt/fased/<profile>/<instance>/generations/<generation-id>/
+~/.fased/plugin.lock.json
 ```
 
-`fased update` resolves the target online without stale npm cache metadata,
-verifies checksums and archive paths, stages and smoke-tests the candidate,
+`fased update` resolves the signed target without npm registry metadata,
+verifies checksums and archive paths, stages and health-checks the candidate,
 switches `current` atomically, verifies Gateway identity and plugins, and rolls
 back automatically on failure. Configuration, credentials, wallets, signer
 state, mining data, sessions, and memory remain under the state directory and
@@ -524,10 +518,10 @@ Fresh installs and hosted systems should use the curl bootstrap:
 - verified GitHub Release artifacts for supported Linux Local and VPS Hosting
   installs and updates
 - source checkout builds for macOS and explicit `--source-install` workflows
-- manual `npm install -g @fased/fased` is for advanced/local/manual installs,
-  not the recommended hosted VPS setup flow
+- legacy global npm installs are accepted only as migration inputs; use the
+  verified installer for the maintained layout
 
-See [Core And Optional Components](/install/components) for channel add-ons,
+See [Core And External Components](/install/components) for bundled channels,
 local model servers, browser binaries, and local memory embeddings.
 
 ## Related

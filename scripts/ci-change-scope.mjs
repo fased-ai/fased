@@ -24,13 +24,7 @@ const laneManifest = Object.freeze({
     {
       id: "lifecycle",
       prefixes: ["tools/fased-lifecycled/"],
-      exact: [
-        "install.sh",
-        "scripts/fased-managed-updater.mjs",
-        "scripts/managed-runtime-layout.mjs",
-        "scripts/managed-updater-bundle.mjs",
-        "scripts/managed-updater-bundle.v1.json",
-      ],
+      exact: ["install.sh", "scripts/npm-free-managed-lifecycle-contract.test.ts"],
     },
     {
       id: "signer",

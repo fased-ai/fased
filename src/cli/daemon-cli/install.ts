@@ -14,7 +14,6 @@ import { resolveIsNixMode } from "../../config/paths.js";
 import { resolveGatewayService } from "../../daemon/service.js";
 import { installHostedSystemdService } from "../../daemon/systemd-system.js";
 import { resolveGatewayAuth } from "../../gateway/auth.js";
-import { ensureManagedRuntimeBootstrap } from "../../infra/managed-runtime-bootstrap.js";
 import { defaultRuntime } from "../../runtime.js";
 import { formatCliCommand } from "../command-format.js";
 import { buildDaemonServiceSnapshot, createDaemonActionContext } from "./response.js";
@@ -51,15 +50,6 @@ export async function runDaemonInstall(opts: DaemonInstallOptions) {
   const systemInstall = Boolean(opts.system || service.label === "systemd system service");
   if (opts.system && process.platform !== "linux") {
     fail("--system is supported on Linux VPS Hosting installs only.");
-    return;
-  }
-  try {
-    await ensureManagedRuntimeBootstrap({
-      profile: systemInstall ? "hosting" : "local",
-      env: process.env,
-    });
-  } catch (err) {
-    fail(`Managed updater bootstrap failed: ${String(err)}`);
     return;
   }
   let loaded = false;

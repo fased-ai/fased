@@ -1,6 +1,7 @@
 {
   "name": "@fased/slack",
   "version": "0.1.76-rc.84",
+  "private": true,
   "description": "FasedAgent Slack channel plugin",
   "files": [
     "index.ts",
@@ -10,9 +11,6 @@
     "!src/**/*.test.tsx"
   ],
   "type": "module",
-  "publishConfig": {
-    "access": "public"
-  },
   "dependencies": {
     "@slack/bolt": "^4.6.0",
     "@slack/web-api": "^7.14.1"
@@ -40,9 +38,8 @@
       "quickstartAllowFrom": true
     },
     "install": {
-      "npmSpec": "@fased/slack",
       "localPath": "extensions/slack",
-      "defaultChoice": "npm"
+      "defaultChoice": "local"
     }
   }
 }

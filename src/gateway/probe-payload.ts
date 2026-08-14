@@ -58,7 +58,6 @@ function findManagedRuntimeRoot(entrypoint: string | undefined): string | null {
     if (
       fs.existsSync(path.join(candidate, ".fased-hosted-runtime.json")) &&
       fs.existsSync(path.join(candidate, ".fased-hosted-release-v2.json")) &&
-      fs.existsSync(path.join(candidate, ".fased-managed-updater-bundle.json")) &&
       fs.existsSync(path.join(candidate, "dist", "build-info.json"))
     ) {
       return fs.realpathSync(candidate);
@@ -81,7 +80,6 @@ export type GatewayGenerationReceipt = Readonly<{
   applicationDigest: string;
   dependencyDigest: string;
   dependencyHash: string;
-  updaterBundleDigest: string;
   runtimeRootDigest: string;
 }>;
 
@@ -120,14 +118,6 @@ export function resolveGatewayGenerationReceipt(
         >;
       };
     };
-    const updater = readBoundedJson(
-      path.join(runtimeRoot, ".fased-managed-updater-bundle.json"),
-    ) as {
-      schemaVersion?: unknown;
-      architecture?: unknown;
-      bundleDigest?: unknown;
-      release?: { version?: unknown; commit?: unknown };
-    };
     const applicationArchitecture = architecture === "x64" ? "x64" : architecture;
     const application = manifest.application?.linux?.[applicationArchitecture];
     const version = stringValue(runtime.version);
@@ -135,12 +125,10 @@ export function resolveGatewayGenerationReceipt(
     const dependencyHash = stringValue(runtime.dependencyHash);
     const applicationSha256 = stringValue(application?.artifact?.sha256);
     const dependencySha256 = stringValue(application?.dependencies?.sha256);
-    const updaterBundleDigest = stringValue(updater.bundleDigest);
     const generationId = stringValue(env.FASED_GENERATION_ID);
     if (
       runtime.schemaVersion !== 2 ||
       manifest.schemaVersion !== 2 ||
-      updater.schemaVersion !== 2 ||
       !version ||
       !COMMIT_PATTERN.test(releaseCommit) ||
       !SHA256_PATTERN.test(dependencyHash) ||
@@ -151,10 +139,6 @@ export function resolveGatewayGenerationReceipt(
       build.commit !== releaseCommit ||
       manifest.release?.version !== version ||
       manifest.release?.commit !== releaseCommit ||
-      updater.architecture !== architecture ||
-      updater.release?.version !== version ||
-      updater.release?.commit !== releaseCommit ||
-      !/^sha256:[a-f0-9]{64}$/u.test(updaterBundleDigest) ||
       !/^sha256:[a-f0-9]{64}$/u.test(generationId)
     ) {
       return null;
@@ -168,7 +152,6 @@ export function resolveGatewayGenerationReceipt(
       applicationDigest: `sha256:${applicationSha256}`,
       dependencyDigest: `sha256:${dependencySha256}`,
       dependencyHash,
-      updaterBundleDigest,
       runtimeRootDigest: sha256(runtimeRoot),
     });
   } catch {

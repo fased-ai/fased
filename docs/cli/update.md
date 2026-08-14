@@ -1,5 +1,5 @@
 ---
-summary: "CLI reference for local, hosted-artifact, and package-manager updates."
+summary: "CLI reference for verified managed and source updates."
 read_when:
   - You want to update a source checkout safely
   - You need to understand `--update` shorthand behavior
@@ -13,9 +13,9 @@ Update an installed Fased runtime and optionally switch channels.
 On supported packaged Linux installs, a stable updater outside the versioned
 application verifies and activates the exact release artifact. It then restarts
 the correct Gateway service and checks health. VPS Hosting and protected Local
-Linux use root-managed system services and paired signer controllers. macOS,
-source installs, and a Local installation that has not crossed the protected
-migration boundary use their documented lower-assurance service path. If the
+Linux use root-managed system services and paired signer controllers. A source
+checkout with signer state fails closed and must use the verified installer to
+enter or repair the managed layout. If the
 new packaged runtime does not become healthy, Fased restores the previous
 runtime automatically.
 
@@ -75,9 +75,8 @@ that same public `--hosting` command from the provider root console. It detects
 the existing state, verifies immutable release assets, selects the internal
 repair path, preserves persistent state, and skips onboarding.
 
-Manual `npm install -g @fased/fased` is an advanced local/dev or self-managed
-host path for users who already know how to secure the service user, firewall,
-dashboard access, and recovery flow.
+Legacy global npm installs are migration inputs only. Use the verified public
+installer for the maintained Local or Hosting lifecycle.
 
 ## Installer refresh is different
 
@@ -152,20 +151,22 @@ The exact path depends on the install:
   download architecture-matched application/dependency layers, verify checksums
   and archive paths, smoke-test before activation, atomically switch the active
   runtime, and verify the service, Gateway version, and plugins. A failed
-  candidate rolls back automatically. Normal managed updates never reconcile
-  the full npm dependency graph.
-- **Local source checkout:** require a clean worktree, select the release tag or
-  branch, refresh dependencies, rebuild runtime and Control UI assets, run
-  doctor checks, sync plugins, and restart when requested.
-- **Manual package install:** update through the detected package manager, sync
-  plugins, and restart when requested.
+  candidate rolls back automatically. Managed updates never consult npm
+  registry metadata or reconcile a global dependency graph.
+- **Local source checkout without signer state:** require a clean worktree,
+  select the release tag or branch, refresh dependencies, rebuild runtime and
+  Control UI assets, run doctor checks, and restart when requested.
+- **Source checkout with signer state:** fail closed and direct the owner to the
+  verified installer migration/repair path.
+- **Legacy manual package install:** compatibility path only; migrate to the
+  managed layout instead of treating the package manager as lifecycle authority.
 
 Current channel behavior:
 
 - `stable`
   - default for end users
   - latest stable release tag on git checkouts
-  - npm `latest` when package installs are enabled
+  - signed release index on managed installs
 - `beta`
   - latest beta tag
 - `dev`
@@ -215,5 +216,5 @@ fased update
 - [Updating](/install/updating)
 - [Development channels](/install/development-channels)
 - [Control UI layout](/web/control-ui)
-- [Core And Optional Components](/install/components)
+- [Core And External Components](/install/components)
 - [`fased doctor`](/cli/doctor)

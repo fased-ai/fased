@@ -7,7 +7,7 @@ title: "Google Chat"
 
 # Google Chat (Chat API)
 
-**Delivery:** Official add-on.
+**Delivery:** Bundled.
 
 Google Chat in Fased is an HTTP-only integration. The gateway verifies
 Google-signed webhook requests, routes DMs and spaces into the normal session
@@ -15,13 +15,8 @@ model, and sends replies through the Chat API using your service account.
 
 Status: supported for DMs and spaces through Google Chat webhooks.
 
-Google Chat is an official optional add-on. Install it from **Agent >
-Channels**, onboarding, or the CLI before entering credentials:
-
-```bash
-fased plugins install @fased/googlechat
-fased gateway restart
-```
+The signed Fased generation includes Google Chat. Enable it from **Agent >
+Channels** or onboarding before entering credentials.
 
 ## Quick setup (beginner)
 

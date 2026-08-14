@@ -87,7 +87,7 @@ export const servicesHandlers: GatewayRequestHandlers = {
         ok: true,
         id,
         pluginId: result.pluginId,
-        message: `Installed ${result.entry.label}.`,
+        message: `Enabled bundled component ${result.entry.label}.`,
         restartRequired: result.entry.restartRequired !== false,
         warnings: result.slotWarnings,
         report: buildCapabilityReadinessReport({ config: result.config }),

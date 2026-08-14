@@ -27,14 +27,17 @@ describe("services CLI", () => {
     expect(renderComponentReport).toHaveBeenCalledWith(expect.objectContaining({ json: true }));
   });
 
-  it("installs a missing npm component when connect is requested", async () => {
+  it("prints the owning surface for a bundled component", async () => {
     buildCapabilityReadinessReport.mockReturnValue({
       entries: [
         {
           id: "media-runtime",
           label: "Media Runtime",
-          delivery: "npm-addon",
-          state: "not-installed",
+          delivery: "core",
+          state: "included",
+          detail: "Included in the signed generation.",
+          surface: "Services > Components",
+          docsPath: "/nodes/media-understanding",
         },
       ],
     });
@@ -42,7 +45,10 @@ describe("services CLI", () => {
     const program = new Command().name("fased");
     registerServicesCli(program);
     await program.parseAsync(["services", "connect", "media-runtime"], { from: "user" });
-    expect(installComponentCommand).toHaveBeenCalledWith("media-runtime");
+    expect(installComponentCommand).not.toHaveBeenCalled();
+    expect(runtime.log.mock.calls.flat().join("\n")).toContain(
+      "Connect from: Services > Components",
+    );
   });
 
   it("prints the owning surface for an external runtime", async () => {

@@ -1,15 +1,13 @@
 {
   "name": "@fased/openai-runtime",
   "version": "0.1.76-rc.84",
+  "private": true,
   "description": "Optional official OpenAI Codex runtime for Fased Agent ChatGPT sign-in",
   "files": [
     "index.ts",
     "fased.plugin.json"
   ],
   "type": "module",
-  "publishConfig": {
-    "access": "public"
-  },
   "dependencies": {
     "@openai/codex": "0.144.1"
   },
@@ -26,9 +24,8 @@
       "./index.ts"
     ],
     "install": {
-      "npmSpec": "@fased/openai-runtime",
       "localPath": "extensions/runtime-openai",
-      "defaultChoice": "npm"
+      "defaultChoice": "local"
     }
   }
 }

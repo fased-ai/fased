@@ -8,7 +8,7 @@ title: "Discord"
 
 # Discord
 
-**Delivery:** Official add-on.
+**Delivery:** Bundled.
 
 Discord connects Fased through the official Discord bot APIs. Use it when you
 want a public bot identity, DMs, server channels, slash commands, and
@@ -30,8 +30,8 @@ Status: supported for DMs and guild channels.
 
 ## Quick setup
 
-1. Open **Agents > selected Agent > Channels > Discord** and click
-   **Install**. Restart the Gateway when prompted.
+1. Open **Agents > selected Agent > Channels > Discord** and enable it. The
+   signed Fased generation already contains the integration.
 2. Create a Discord application in the Discord Developer Portal.
 3. Add a Bot user.
 4. Enable **Message Content Intent**. Enable **Server Members Intent** only if
@@ -40,13 +40,6 @@ Status: supported for DMs and guild channels.
 6. Return to **Agent > Channels > Discord**.
 7. Paste the bot token, server id, and owner/user id.
 8. Save, then pair the first DM if using pairing.
-
-CLI install:
-
-```bash
-fased plugins install @fased/discord
-fased gateway restart
-```
 
 Scripted setup can use config:
 

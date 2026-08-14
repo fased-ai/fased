@@ -18,6 +18,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import * as tar from "tar";
 
 type PackageJson = {
   version?: string;
@@ -33,29 +34,37 @@ type SignerReleaseIdentity = {
 };
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const optionalChannels = ["discord", "slack", "telegram", "whatsapp"] as const;
-const optionalRuntimeExtensions = [
+const bundledChannels = [
+  "discord",
+  "feishu",
+  "googlechat",
+  "slack",
+  "telegram",
+  "whatsapp",
+] as const;
+const bundledRuntimeExtensions = [
   "runtime-browser",
   "runtime-local-memory",
   "runtime-media",
   "runtime-openai",
   "runtime-speech",
 ] as const;
-const optionalChannelDependencies = [
+const bundledChannelDependencies = [
   "@buape/carbon",
-  "@discordjs/opus",
   "@discordjs/voice",
   "@grammyjs/runner",
   "@grammyjs/transformer-throttler",
+  "@larksuiteoapi/node-sdk",
   "@slack/bolt",
   "@slack/web-api",
   "@snazzah/davey",
   "@whiskeysockets/baileys",
   "discord-api-types",
+  "google-auth-library",
   "grammy",
   "opusscript",
 ] as const;
-const optionalRuntimeDependencies = [
+const bundledRuntimeDependencies = [
   "@mozilla/readability",
   "@napi-rs/canvas",
   "@openai/codex",
@@ -443,71 +452,68 @@ async function main() {
   let stateDir = "";
   let solanaRpcChild: ReturnType<typeof spawn> | undefined;
   try {
-    const npmCache = path.join(tempRoot, "npm-cache");
-    execFileSync("npm", ["pack", "--ignore-scripts", "--pack-destination", tempRoot], {
-      cwd: repoRoot,
-      env: { ...process.env, NPM_CONFIG_CACHE: npmCache },
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    const archiveName = readdirSync(tempRoot).find((entry) => entry.endsWith(".tgz"));
-    if (!archiveName) {
-      throw new Error("npm pack did not return an archive filename");
-    }
-
-    const archivePath = path.join(tempRoot, archiveName);
-    const installRoot = path.join(tempRoot, "clean-install");
-    mkdirSync(installRoot, { recursive: true });
-    writeFileSync(
-      path.join(installRoot, "package.json"),
-      `${JSON.stringify({ name: "fased-packed-smoke", private: true }, null, 2)}\n`,
-      "utf8",
-    );
     execFileSync(
-      "npm",
-      [
-        "install",
-        "--no-audit",
-        "--no-fund",
-        "--no-package-lock",
-        "--install-strategy=hoisted",
-        archivePath,
-      ],
+      "pnpm",
+      ["--config.ignore-scripts=true", "pack", "--json", "--pack-destination", tempRoot],
       {
-        cwd: installRoot,
-        env: { ...process.env, NPM_CONFIG_CACHE: npmCache },
+        cwd: repoRoot,
         stdio: ["ignore", "ignore", "pipe"],
       },
     );
-    const coreRoot = path.join(installRoot, "node_modules", "@fased", "fased");
+    const archiveName = readdirSync(tempRoot).find((entry) => entry.endsWith(".tgz"));
+    if (!archiveName) {
+      throw new Error("pnpm pack did not return an archive filename");
+    }
+
+    const archivePath = path.join(tempRoot, archiveName);
+    const packedRoot = path.join(tempRoot, "packed");
+    mkdirSync(packedRoot, { recursive: true });
+    await tar.x({ cwd: packedRoot, file: archivePath });
+    const packedCoreRoot = path.join(packedRoot, "package");
+    if (!existsSync(path.join(packedCoreRoot, "package.json"))) {
+      throw new Error("pnpm pack did not contain the @fased/fased package");
+    }
+
+    const installRoot = path.join(tempRoot, "clean-install");
+    execFileSync(
+      "pnpm",
+      ["--offline", "--filter", "@fased/fased", "deploy", "--prod", "--no-optional", installRoot],
+      {
+        cwd: repoRoot,
+        env: { ...process.env, npm_config_ignore_scripts: "true" },
+        stdio: ["ignore", "inherit", "inherit"],
+      },
+    );
+    const coreRoot = installRoot;
     if (!existsSync(path.join(coreRoot, "package.json"))) {
-      throw new Error("clean npm install did not create the packed @fased/fased package");
+      throw new Error("offline pnpm deploy did not create the @fased/fased runtime");
     }
 
     const packageJson = JSON.parse(
-      readFileSync(path.join(coreRoot, "package.json"), "utf8"),
+      readFileSync(path.join(packedCoreRoot, "package.json"), "utf8"),
     ) as PackageJson;
     const installedDependencies = {
       ...packageJson.dependencies,
       ...packageJson.optionalDependencies,
     };
-    for (const dependency of optionalChannelDependencies) {
-      if (installedDependencies[dependency]) {
-        throw new Error(`core package still owns optional channel dependency ${dependency}`);
+    for (const dependency of bundledChannelDependencies) {
+      if (!installedDependencies[dependency]) {
+        throw new Error(`packed core is missing bundled channel dependency ${dependency}`);
       }
     }
-    for (const dependency of optionalRuntimeDependencies) {
-      if (installedDependencies[dependency]) {
-        throw new Error(`core package still owns optional runtime dependency ${dependency}`);
+    for (const dependency of bundledRuntimeDependencies) {
+      if (!installedDependencies[dependency]) {
+        throw new Error(`packed core is missing bundled runtime dependency ${dependency}`);
       }
     }
-    for (const channelId of optionalChannels) {
-      if (existsSync(path.join(coreRoot, "extensions", channelId))) {
-        throw new Error(`core package still ships optional channel extension ${channelId}`);
+    for (const channelId of bundledChannels) {
+      if (!existsSync(path.join(packedCoreRoot, "extensions", channelId))) {
+        throw new Error(`packed core is missing bundled channel extension ${channelId}`);
       }
     }
-    for (const directory of optionalRuntimeExtensions) {
-      if (existsSync(path.join(coreRoot, "extensions", directory))) {
-        throw new Error(`core package still ships optional runtime extension ${directory}`);
+    for (const directory of bundledRuntimeExtensions) {
+      if (!existsSync(path.join(packedCoreRoot, "extensions", directory))) {
+        throw new Error(`packed core is missing bundled runtime extension ${directory}`);
       }
     }
 
@@ -541,13 +547,9 @@ async function main() {
     importPackedMain(coreRoot, env);
     const componentsRaw = runCore(coreRoot, env, ["components", "--json"]);
     const components = JSON.parse(componentsRaw) as {
-      summary?: { coreIncluded?: unknown; optionalInstalled?: unknown; errors?: unknown };
+      summary?: { coreIncluded?: unknown; errors?: unknown };
     };
-    if (
-      components.summary?.coreIncluded !== 5 ||
-      components.summary.optionalInstalled !== 0 ||
-      components.summary.errors !== 0
-    ) {
+    if (components.summary?.coreIncluded !== 16 || components.summary.errors !== 0) {
       throw new Error(`packed core capability catalog failed:\n${componentsRaw}`);
     }
     const doctor = runCore(coreRoot, env, ["plugins", "doctor"]);
@@ -641,14 +643,14 @@ async function main() {
     if (!policyHelp.includes("fased-signer-policy --initial-install")) {
       throw new Error("packed signer policy launcher did not expose the fixed-profile owner help");
     }
-    for (const dependency of optionalChannelDependencies) {
-      if (existsSync(path.join(coreNodeModules, ...dependency.split("/")))) {
-        throw new Error(`wallet creation pulled optional channel dependency ${dependency}`);
+    for (const dependency of bundledChannelDependencies) {
+      if (!existsSync(path.join(coreNodeModules, ...dependency.split("/")))) {
+        throw new Error(`packed install lost bundled channel dependency ${dependency}`);
       }
     }
 
     console.log(
-      `packed-core-smoke: ${version} imports, starts its Gateway, and creates a role-ready native-signer wallet without optional channels; capabilities, wallet, SAT, Fased Network, and plugin checks passed.`,
+      `packed-core-smoke: ${version} imports, starts its Gateway, includes owned channels and runtimes, and creates a role-ready native-signer wallet; capabilities, wallet, SAT, Fased Network, and plugin checks passed.`,
     );
   } finally {
     if (stateDir) {

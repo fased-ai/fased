@@ -19,7 +19,7 @@ export const CAPABILITY_STATES = [
 ] as const;
 
 export type CapabilityState = (typeof CAPABILITY_STATES)[number];
-export type CapabilityDelivery = "core" | "npm-addon" | "external-runtime";
+export type CapabilityDelivery = "core" | "external-runtime";
 export type CapabilityCategory = "core" | "crypto" | "channel" | "provider" | "runtime";
 export type CapabilityAction = "none" | "install" | "connect" | "configure" | "test" | "repair";
 
@@ -48,8 +48,7 @@ export type CapabilityReadinessEntry = CapabilityCatalogEntry & {
 export type CapabilityReadinessSummary = {
   total: number;
   coreIncluded: number;
-  optionalInstalled: number;
-  optionalConfigured: number;
+  configured: number;
   externalRequired: number;
   errors: number;
 };
@@ -60,7 +59,7 @@ export type CapabilityReadinessReport = {
 };
 
 const CATALOG_RELATIVE_PATH = path.join("config", "capability-catalog.json");
-const DELIVERY_VALUES = new Set<CapabilityDelivery>(["core", "npm-addon", "external-runtime"]);
+const DELIVERY_VALUES = new Set<CapabilityDelivery>(["core", "external-runtime"]);
 const CATEGORY_VALUES = new Set<CapabilityCategory>([
   "core",
   "crypto",
@@ -210,6 +209,7 @@ function actionForState(state: CapabilityState): CapabilityAction {
 
 function resolveCoreCapability(
   entry: CapabilityCatalogEntry,
+  config: FasedAgentConfig,
   plugins: PluginMarketplaceReport,
 ): Pick<CapabilityReadinessEntry, "state" | "detail"> {
   if (entry.pluginId) {
@@ -217,49 +217,24 @@ function resolveCoreCapability(
     if (plugin?.status === "error") {
       return { state: "error", detail: plugin.error ?? `${entry.label} failed to load.` };
     }
-  }
-  return { state: "included", detail: "Included in the Fased core runtime." };
-}
-
-function resolveAddonCapability(
-  entry: CapabilityCatalogEntry,
-  config: FasedAgentConfig,
-  plugins: PluginMarketplaceReport,
-): Pick<CapabilityReadinessEntry, "state" | "detail"> {
-  const plugin = plugins.plugins.find(
-    (candidate) =>
-      candidate.id === entry.pluginId ||
-      candidate.name === entry.packageName ||
-      candidate.channels.includes(entry.channelId ?? entry.id),
-  );
-  const installRecord = entry.pluginId ? config.plugins?.installs?.[entry.pluginId] : undefined;
-  const installed = Boolean(
-    installRecord ||
-    plugin?.hasInstallRecord ||
-    plugin?.managed ||
-    (plugin?.loaded && plugin.origin !== "bundled"),
-  );
-  if (!installed) {
-    return {
-      state: "not-installed",
-      detail: `${entry.packageName ?? entry.label} is available as an optional npm add-on.`,
-    };
-  }
-  if (plugin?.status === "error") {
-    return { state: "error", detail: plugin.error ?? `${entry.label} failed to load.` };
-  }
-  const configured = entry.channelId ? channelConfigured(config, entry.channelId) : false;
-  if (configured && plugin?.loaded && plugin.enabled) {
-    return {
-      state: "configured",
-      detail: "Add-on is installed and configured. Run its live channel check for readiness.",
-    };
+    if (plugin?.loaded && plugin.enabled) {
+      if (entry.channelId && channelConfigured(config, entry.channelId)) {
+        return {
+          state: "configured",
+          detail: "Bundled component is enabled and configured. Run its live check for readiness.",
+        };
+      }
+      return {
+        state: "installed",
+        detail: "Bundled component is enabled. Complete its configuration if required.",
+      };
+    }
   }
   return {
-    state: "installed",
-    detail: plugin?.loaded
-      ? "Add-on is installed. Complete its configuration."
-      : "Add-on is installed and requires a Gateway restart or enable step.",
+    state: "included",
+    detail: entry.pluginId
+      ? "Included in the signed Fased generation and currently disabled."
+      : "Included in the signed Fased generation.",
   };
 }
 
@@ -290,14 +265,8 @@ function resolveExternalCapability(
 function summarize(entries: CapabilityReadinessEntry[]): CapabilityReadinessSummary {
   return {
     total: entries.length,
-    coreIncluded: entries.filter((entry) => entry.delivery === "core" && entry.state === "included")
-      .length,
-    optionalInstalled: entries.filter(
-      (entry) =>
-        entry.delivery === "npm-addon" &&
-        (entry.state === "installed" || entry.state === "configured" || entry.state === "ready"),
-    ).length,
-    optionalConfigured: entries.filter((entry) => entry.state === "configured").length,
+    coreIncluded: entries.filter((entry) => entry.delivery === "core").length,
+    configured: entries.filter((entry) => entry.state === "configured").length,
     externalRequired: entries.filter((entry) => entry.state === "external-required").length,
     errors: entries.filter((entry) => entry.state === "error").length,
   };
@@ -312,10 +281,8 @@ export function buildCapabilityReadinessReport(params?: {
   const entries = loadCapabilityCatalog().map((entry): CapabilityReadinessEntry => {
     const resolved =
       entry.delivery === "core"
-        ? resolveCoreCapability(entry, pluginReport)
-        : entry.delivery === "npm-addon"
-          ? resolveAddonCapability(entry, config, pluginReport)
-          : resolveExternalCapability(entry, config);
+        ? resolveCoreCapability(entry, config, pluginReport)
+        : resolveExternalCapability(entry, config);
     return {
       ...entry,
       ...resolved,
@@ -329,8 +296,7 @@ export function formatCapabilityReadinessSummary(report: CapabilityReadinessRepo
   const { summary } = report;
   return [
     `Core included: ${summary.coreIncluded}`,
-    `Add-ons installed: ${summary.optionalInstalled}`,
-    `Configured: ${summary.optionalConfigured}`,
+    `Configured: ${summary.configured}`,
     `External required: ${summary.externalRequired}`,
     `Errors: ${summary.errors}`,
   ].join(" · ");

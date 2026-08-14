@@ -1811,21 +1811,22 @@ function renderCapabilityActions(
   entry: CapabilityReadinessReport["entries"][number],
 ) {
   const busy = props.componentBusy?.[entry.id] === true;
-  const canInstall = entry.delivery === "npm-addon" && entry.state === "not-installed";
+  const canEnable =
+    entry.delivery === "core" && Boolean(entry.pluginId) && entry.state === "included";
   const canRestart =
     entry.restartRequired === true &&
     entry.state !== "not-installed" &&
     entry.state !== "external-required";
   return html`
     ${
-      canInstall
+      canEnable
         ? html`<button
             type="button"
             class="btn btn--sm"
             ?disabled=${busy || !props.onComponentInstall}
             @click=${() => props.onComponentInstall?.(entry.id)}
           >
-            ${busy ? "Installing..." : "Install"}
+            ${busy ? "Enabling..." : "Enable"}
           </button>`
         : nothing
     }

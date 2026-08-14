@@ -537,38 +537,6 @@ if [[ "${FASED_MANAGED_INTERNAL:-0}" != "1" ]]; then
 fi
 force_stop_local_gateway
 
-legacy_registered_local_wallets_exist() {
-  [[ "${FASED_HOST_PROFILE:-}" != "hosting" ]] || return 1
-  [[ "${FASED_PROTECTED_LOCAL:-0}" != "1" ]] || return 1
-  local wallet_dir="$FASED_CONFIG_DIR/wallet"
-  local registry="$wallet_dir/provider-registry.v1.json"
-  [[ -f "$registry" ]] || return 1
-  find "$wallet_dir" -maxdepth 1 -type f -name 'keystore-solana*.v1.enc' -print -quit 2>/dev/null | grep -q . || return 1
-  "$NODE_BIN" -e '
-    const fs = require("node:fs");
-    const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-    process.exit((value.wallets || []).some((wallet) => wallet?.providerId === "embedded-keystore") ? 0 : 1);
-  ' "$registry" >/dev/null 2>&1
-}
-
-migrate_registered_local_wallets_before_gateway_start() {
-  legacy_registered_local_wallets_exist || return 0
-  local updater="$FASED_RUNTIME_ROOT/scripts/fased-managed-updater.mjs"
-  [[ -f "$updater" && -n "$RUNTIME_VERSION" ]] || {
-    echo "[signerd] ERROR: updated runtime cannot run the automatic legacy-wallet migration."
-    return 1
-  }
-  echo "==> Migrating registered Local wallets into the native signer..."
-  if [[ -f "$FASED_CONFIG_DIR/signer-update/transaction.json" ]]; then
-    "$NODE_BIN" "$updater" local-signer migrate-active
-  else
-    "$NODE_BIN" "$updater" local-signer install --version "$RUNTIME_VERSION"
-  fi
-  echo "==> Registered Local wallets migrated; temporary rollback state was removed."
-}
-
-migrate_registered_local_wallets_before_gateway_start
-
 # Start the dashboard backend before slower hosted setup. Signer, wallet,
 # federation, and tunnel work must not prevent the owner from opening the UI.
 start_gateway_if_needed

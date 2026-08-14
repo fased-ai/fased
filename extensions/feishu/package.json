@@ -1,6 +1,7 @@
 {
   "name": "@fased/feishu",
   "version": "0.1.76-rc.84",
+  "private": true,
   "description": "FasedAgent Feishu/Lark channel plugin (community maintained by @m1heng)",
   "files": [
     "index.ts",
@@ -11,9 +12,6 @@
     "skills"
   ],
   "type": "module",
-  "publishConfig": {
-    "access": "public"
-  },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.68.0",
     "@sinclair/typebox": "0.34.48",
@@ -45,9 +43,8 @@
       "quickstartAllowFrom": true
     },
     "install": {
-      "npmSpec": "@fased/feishu",
       "localPath": "extensions/feishu",
-      "defaultChoice": "npm"
+      "defaultChoice": "local"
     }
   }
 }

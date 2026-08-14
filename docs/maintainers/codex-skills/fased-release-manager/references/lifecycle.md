@@ -48,9 +48,9 @@ short installer/update CLI -> static Fased bootstrap -> root-owned inbox
 ```
 
 The bootstrap verifies the Fased trust root, signed release index, release
-sequence, and exact artifact objects without Node, npm, GitHub CLI, or remote
-setup scripts. It may install or A/B-switch the separately attested lifecycle
-host. It does not own application migration policy.
+sequence, and exact artifact objects without Node, npm, pnpm, GitHub CLI, or
+remote setup scripts. It may install or A/B-switch the separately attested
+lifecycle host. It does not own application migration policy.
 
 JavaScript may translate user intent and results. It must not select privileged
 target identity, download for root import, own a planner, mutate services,
@@ -87,14 +87,24 @@ data and instance identity unless a declared transactional migration changes
 representation.
 
 Executable plugin code belongs to the signed generation or an immutable
-content-addressed plugin store. It is not mutable preserved state. Core update
-never updates third-party plugins; plugin integrity drift fails closed.
+content-addressed plugin store. It is not mutable preserved state. Every
+Fased-owned channel and optional runtime extension is part of the signed
+application generation and updates atomically with core. Its workspace package
+is a private pnpm build unit, not a separately published npm product.
+
+Independent third-party plugin code belongs to the content-addressed store and
+changes only through an explicit plugin transaction using a digest-bound
+archive/catalog source. Core update never updates third-party plugins; plugin
+integrity drift fails closed. npm is neither a managed lifecycle dependency nor
+a release-acceptance or trust channel. A legacy public npm CLI, if temporarily
+retained for migration, may only redirect the user to the verified installer;
+it must never mutate a managed installation or publish extension payloads.
 
 ## Compatibility
 
 Select behavior by manifest schema, persisted-state schema, topology, platform,
 protocol capability and signed monotonic release sequence—not private RC names
-or npm dist-tags. Support fresh install, current managed update, latest
+or registry dist-tags. Support fresh install, current managed update, latest
 public-stable bridge, interrupted recovery, explicit rollback authorization and
 explicit repair for ambiguous residue. Unknown-newer state fails unchanged;
 lower release sequence is rejected.

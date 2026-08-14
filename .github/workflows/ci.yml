@@ -246,27 +246,21 @@ jobs:
             package.json \
             scripts/ci-change-scope.mjs \
             scripts/ci-change-scope.test.ts \
-            scripts/fased-managed-updater.mjs \
             scripts/go-lifecycle-routing.test.ts \
-            scripts/managed-runtime-layout.mjs \
-            scripts/managed-updater-bundle.test.ts \
-            scripts/managed-updater-bundle.v1.json \
+            scripts/npm-free-managed-lifecycle-contract.test.ts \
             scripts/release-check.ts
           pnpm exec oxlint \
             scripts/ci-change-scope.mjs \
             scripts/ci-change-scope.test.ts \
-            scripts/fased-managed-updater.mjs \
             scripts/go-lifecycle-routing.test.ts \
-            scripts/managed-runtime-layout.mjs \
-            scripts/managed-updater-bundle.test.ts \
+            scripts/npm-free-managed-lifecycle-contract.test.ts \
             scripts/release-check.ts
 
       - name: Run focused Local-update regressions
         run: >-
           pnpm exec vitest run
           scripts/go-lifecycle-routing.test.ts
-          scripts/fased-managed-updater-fixed-client.test.ts
-          scripts/managed-updater-bundle.test.ts
+          scripts/npm-free-managed-lifecycle-contract.test.ts
           src/wallet/wallet-application-state-permissions.test.ts
           --pool=forks
           --maxWorkers=1

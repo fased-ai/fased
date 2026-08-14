@@ -1,15 +1,13 @@
 {
   "name": "@fased/media-runtime",
   "version": "0.1.76-rc.84",
+  "private": true,
   "description": "Optional media runtime for Fased Agent",
   "files": [
     "index.ts",
     "fased.plugin.json"
   ],
   "type": "module",
-  "publishConfig": {
-    "access": "public"
-  },
   "dependencies": {
     "@napi-rs/canvas": "^0.1.92",
     "file-type": "^21.3.2",
@@ -29,9 +27,8 @@
       "./index.ts"
     ],
     "install": {
-      "npmSpec": "@fased/media-runtime",
       "localPath": "extensions/runtime-media",
-      "defaultChoice": "npm"
+      "defaultChoice": "local"
     }
   }
 }

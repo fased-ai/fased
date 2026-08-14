@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { renderServices } from "./services.ts";
 
 describe("Services component actions", () => {
-  it("installs, restarts, connects, and opens canonical docs from lifecycle rows", () => {
+  it("enables, restarts, connects, and opens canonical docs from lifecycle rows", () => {
     const container = document.createElement("div");
     const onInstall = vi.fn();
     const onRestart = vi.fn();
@@ -20,7 +20,7 @@ describe("Services component actions", () => {
               id: "telegram",
               label: "Telegram",
               category: "channel",
-              delivery: "npm-addon",
+              delivery: "core",
               packageName: "@fased/telegram",
               pluginId: "telegram",
               channelId: "telegram",
@@ -28,15 +28,15 @@ describe("Services component actions", () => {
               description: "Telegram transport.",
               docsPath: "/channels/telegram",
               surface: "Agent > Channels",
-              state: "not-installed",
-              action: "install",
-              detail: "Optional add-on.",
+              state: "included",
+              action: "configure",
+              detail: "Bundled component.",
             },
             {
               id: "media-runtime",
               label: "Media Runtime",
               category: "runtime",
-              delivery: "npm-addon",
+              delivery: "core",
               packageName: "@fased/media-runtime",
               pluginId: "media-runtime",
               restartRequired: true,
@@ -50,9 +50,8 @@ describe("Services component actions", () => {
           ],
           summary: {
             total: 2,
-            coreIncluded: 0,
-            optionalInstalled: 1,
-            optionalConfigured: 0,
+            coreIncluded: 2,
+            configured: 0,
             externalRequired: 0,
             errors: 0,
           },
@@ -74,7 +73,7 @@ describe("Services component actions", () => {
     expect(telegram).not.toBeNull();
     expect(media).not.toBeNull();
     Array.from(telegram!.querySelectorAll("button"))
-      .find((button) => button.textContent?.trim() === "Install")
+      .find((button) => button.textContent?.trim() === "Enable")
       ?.click();
     Array.from(media!.querySelectorAll("button"))
       .find((button) => button.textContent?.trim() === "Restart")

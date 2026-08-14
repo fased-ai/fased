@@ -39,14 +39,11 @@ describe("managed gateway entry selection", () => {
     expect(script).not.toContain("sudo -n -u");
   });
 
-  it("migrates registered legacy wallets before the updated Gateway starts", () => {
+  it("does not retain a JavaScript wallet migration owner in gateway startup", () => {
     const script = fs.readFileSync(path.resolve(import.meta.dirname, "start-managed.sh"), "utf8");
-    const migration = script.indexOf("migrate_registered_local_wallets_before_gateway_start");
-    const gateway = script.indexOf("\nstart_gateway_if_needed", migration);
-    expect(migration).toBeGreaterThanOrEqual(0);
-    expect(gateway).toBeGreaterThan(migration);
-    expect(script).toContain("local-signer migrate-active");
-    expect(script).toContain('local-signer install --version "$RUNTIME_VERSION"');
+    expect(script).not.toContain("migrate_registered_local_wallets_before_gateway_start");
+    expect(script).not.toContain("fased-managed-updater.mjs");
+    expect(script).not.toContain("local-signer migrate-active");
   });
 
   it("stamps the gateway version from the runtime selected by the launcher", () => {

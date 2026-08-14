@@ -1,15 +1,13 @@
 {
   "name": "@fased/browser-runtime",
   "version": "0.1.76-rc.84",
+  "private": true,
   "description": "Optional browser runtime for Fased Agent",
   "files": [
     "index.ts",
     "fased.plugin.json"
   ],
   "type": "module",
-  "publishConfig": {
-    "access": "public"
-  },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
     "linkedom": "^0.18.12",
@@ -28,9 +26,8 @@
       "./index.ts"
     ],
     "install": {
-      "npmSpec": "@fased/browser-runtime",
       "localPath": "extensions/runtime-browser",
-      "defaultChoice": "npm"
+      "defaultChoice": "local"
     }
   }
 }

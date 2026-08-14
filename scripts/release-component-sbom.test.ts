@@ -11,40 +11,44 @@ import {
 const created = "2026-07-29T00:00:00.000Z";
 
 describe("release component SBOM generation", () => {
-  it("derives deterministic production Node components from the installed lock", async () => {
+  it("derives deterministic production Node components from a pnpm deployment", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-node-sbom-"));
-    const packageLockPath = path.join(root, "package-lock.json");
+    const nodeModulesPath = path.join(root, "node_modules");
+    const virtualRoot = path.join(nodeModulesPath, ".pnpm");
     await Promise.all([
-      fsp.mkdir(path.join(root, "node_modules", "@scope", "example"), { recursive: true }),
-      fsp.mkdir(path.join(root, "node_modules", "example"), { recursive: true }),
+      fsp.mkdir(
+        path.join(virtualRoot, "@scope+example@2.0.0", "node_modules", "@scope", "example"),
+        { recursive: true },
+      ),
+      fsp.mkdir(path.join(virtualRoot, "example@1.0.0", "node_modules", "example"), {
+        recursive: true,
+      }),
     ]);
-    await fsp.writeFile(
-      packageLockPath,
-      `${JSON.stringify({
-        lockfileVersion: 3,
-        packages: {
-          "": { name: "@fased/fased", version: "1.2.3" },
-          "node_modules/@scope/example": {
-            version: "2.0.0",
-            license: "MIT",
-            resolved: "https://registry.npmjs.org/@scope/example/-/example-2.0.0.tgz",
-          },
-          "node_modules/example": {
-            name: "example",
-            version: "1.0.0",
-            license: "Apache-2.0",
-          },
-        },
-      })}\n`,
-    );
+    await Promise.all([
+      fsp.writeFile(
+        path.join(
+          virtualRoot,
+          "@scope+example@2.0.0",
+          "node_modules",
+          "@scope",
+          "example",
+          "package.json",
+        ),
+        `${JSON.stringify({ name: "@scope/example", version: "2.0.0", license: "MIT" })}\n`,
+      ),
+      fsp.writeFile(
+        path.join(virtualRoot, "example@1.0.0", "node_modules", "example", "package.json"),
+        `${JSON.stringify({ name: "example", version: "1.0.0", license: "Apache-2.0" })}\n`,
+      ),
+    ]);
     const first = await buildNodeComponentSbom({
-      packageLockPath,
+      nodeModulesPath,
       version: "1.2.3",
       architecture: "x64",
       created,
     });
     const second = await buildNodeComponentSbom({
-      packageLockPath,
+      nodeModulesPath,
       version: "1.2.3",
       architecture: "x64",
       created,
