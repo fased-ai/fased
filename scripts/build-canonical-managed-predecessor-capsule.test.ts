@@ -23,7 +23,7 @@ describe("canonical managed predecessor capsule", () => {
     const output = path.join(root, "output");
     await mkdir(path.join(source, "generation/payload/bin"), { recursive: true });
     await mkdir(output);
-    const version = "0.1.76-rc.72";
+    const version = "1.2.3";
     const commit = "a".repeat(40);
     const tree = "b".repeat(40);
     const generationId = `sha256:${"c".repeat(64)}`;
@@ -84,11 +84,6 @@ describe("canonical managed predecessor capsule", () => {
       candidateDescriptor,
       `${JSON.stringify({ version, commit, tree, artifacts: [await artifact(generationArchive), await artifact(dependencyArchive)] })}\n`,
     );
-    const previous = path.join(root, "previous.json");
-    await writeFile(
-      previous,
-      `${JSON.stringify({ id: `sha256:${"e".repeat(64)}`, version: "0.1.76-rc.70", commit: "f".repeat(40), tree: "1".repeat(40), artifactSetDigest: `sha256:${"e".repeat(64)}` })}\n`,
-    );
     const compatibility = path.join(root, "compatibility.json");
     const acceptance = path.join(root, "acceptance.json");
     await writeFile(compatibility, "{}\n");
@@ -101,7 +96,6 @@ describe("canonical managed predecessor capsule", () => {
       candidateDescriptorPath: candidateDescriptor,
       generationArchivePath: generationArchive,
       dependencyArchivePath: dependencyArchive,
-      previousGenerationPath: previous,
       compatibilityIndexPath: compatibility,
       acceptanceContractPath: acceptance,
       outputDirectory: output,
@@ -114,7 +108,7 @@ describe("canonical managed predecessor capsule", () => {
     expect(capsule.installationClass.manifestSchema).toBe(1);
     expect(capsule.installationClass.platform.adapter).toBe("linux-systemd-local-v1");
     expect(capsule.installationClass.activeGeneration.id).toBe(generationId);
-    expect(capsule.installationClass.previousGeneration.version).toBe("0.1.76-rc.70");
+    expect(capsule.installationClass.previousGeneration).toBeNull();
     expect(capsule.services).toHaveLength(4);
     expect(capsule.entries.some((entry) => entry.path.endsWith("generation.tar.gz"))).toBe(true);
     const restored = path.join(root, "restored");
@@ -183,8 +177,8 @@ describe("canonical managed predecessor capsule", () => {
       planAction: "UPDATE",
       phase: "COMMITTED",
       revision: 6,
-      target: { version: "0.1.76-rc.72" },
-      previous: { version: "0.1.76-rc.70" },
+      target: { version: "1.2.3" },
+      previous: null,
     });
     const { phase: _phase, revision: _revision, ...journalEnvelope } = supervisor;
     expect(envelope).toEqual(journalEnvelope);

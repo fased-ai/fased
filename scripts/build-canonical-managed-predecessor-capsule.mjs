@@ -196,10 +196,9 @@ function terminalSchemaOneUpdate(generation, previous, inventory) {
   };
 }
 
-// This is the stable owner launcher emitted by the immutable rc.72 Go
-// lifecycle implementation. The predecessor capsule models that exact public
-// installation class; it must not depend on a checkout or on the target
-// generation's newer bundled-Node launcher contract.
+// This is the stable launcher emitted by the superseded schema-one Go
+// lifecycle implementation. The capsule models the topology and protocol
+// class; no owner machine or release name selects its behavior.
 function predecessorCliLauncher(config) {
   const instance = config.instanceId;
   return `#!/usr/bin/env bash
@@ -286,7 +285,6 @@ export async function buildCanonicalManagedPredecessorCapsule(options) {
     candidateDescriptorPath,
     generationArchivePath,
     dependencyArchivePath,
-    previousGenerationPath,
     compatibilityIndexPath,
     acceptanceContractPath,
     outputDirectory,
@@ -299,8 +297,7 @@ export async function buildCanonicalManagedPredecessorCapsule(options) {
   }
   const releaseManifest = JSON.parse(await fsp.readFile(releaseManifestPath, "utf8"));
   const candidate = JSON.parse(await fsp.readFile(candidateDescriptorPath, "utf8"));
-  const predecessorEvidence = JSON.parse(await fsp.readFile(previousGenerationPath, "utf8"));
-  const previous = predecessorEvidence.previousGeneration || predecessorEvidence;
+  const previous = null;
   const { version, tag, commit } = releaseManifest?.release || {};
   if (
     tag !== `v${version}` ||
@@ -310,14 +307,6 @@ export async function buildCanonicalManagedPredecessorCapsule(options) {
     candidate.tree !== releaseTree
   ) {
     fail("release and candidate identities disagree");
-  }
-  if (
-    predecessorEvidence.previousGeneration &&
-    (predecessorEvidence.schemaVersion !== 1 ||
-      predecessorEvidence.role !== "fased-owner-local-predecessor-evidence" ||
-      predecessorEvidence.activeVersion !== version)
-  ) {
-    fail("owner predecessor evidence is not bound to the active release");
   }
   if (branchProof && (!COMMIT.test(builderCommit || "") || !COMMIT.test(builderTree || ""))) {
     fail("branch proof identity is invalid");
@@ -366,15 +355,6 @@ export async function buildCanonicalManagedPredecessorCapsule(options) {
     ) {
       fail("generation inventory is not bound to the release");
     }
-    if (
-      !DIGEST.test(previous.id || "") ||
-      previous.id !== previous.artifactSetDigest ||
-      !COMMIT.test(previous.commit || "") ||
-      !COMMIT.test(previous.tree || "") ||
-      previous.id === generation.id
-    ) {
-      fail("previous generation evidence is invalid");
-    }
     const instance = "1122334455667788";
     const config = canonicalConfig(instance);
     const platform = legacyPlatform(config);
@@ -398,7 +378,6 @@ export async function buildCanonicalManagedPredecessorCapsule(options) {
       [`opt/fased/local/${instance}`, 0o755, "root"],
       [`opt/fased/local/${instance}/generations`, 0o755, "root"],
       [`opt/fased/local/${instance}/dependencies`, 0o755, "root"],
-      [`opt/fased/local/${instance}/generations/${previous.id.slice(7)}`, 0o755, "root"],
       [`var/lib/fased-local/${instance}`, 0o755, "root"],
       [`var/lib/fased-local/${instance}/controller`, 0o700, "root"],
       [`var/lib/fased-local/${instance}/lifecycle`, 0o700, "root"],
@@ -521,10 +500,7 @@ export async function buildCanonicalManagedPredecessorCapsule(options) {
     for (const [name, contents] of units) {
       entries.push(await write(source, `etc/systemd/system/${name}`, contents, 0o644, "root"));
     }
-    for (const [name, target] of [
-      ["current", `generations/${generation.id.slice(7)}`],
-      ["previous", `generations/${previous.id.slice(7)}`],
-    ]) {
+    for (const [name, target] of [["current", `generations/${generation.id.slice(7)}`]]) {
       const relative = `opt/fased/local/${instance}/${name}`;
       await fsp.symlink(target, path.join(source, relative));
       entries.push({ path: relative, type: "symlink", owner: "root" });
@@ -569,7 +545,7 @@ export async function buildCanonicalManagedPredecessorCapsule(options) {
           capabilities: inventory.capabilities,
         },
         ownership: { rootUid: 0, rootGid: 0, operatorUid: 2000, operatorGid: 2000 },
-        pointers: { current: generation.id, previous: previous.id },
+        pointers: { current: generation.id, previous: null },
         expectedReceiptDigest: await sha256(acceptanceContractPath),
         sanitization: { syntheticState: true, containsSecrets: false },
         services: Object.keys(platform.services)
@@ -618,7 +594,6 @@ async function main() {
     candidateDescriptorPath: values["candidate-descriptor"],
     generationArchivePath: values["generation-archive"],
     dependencyArchivePath: values["dependency-archive"],
-    previousGenerationPath: values["previous-generation"],
     compatibilityIndexPath: values["compatibility-index"],
     acceptanceContractPath: values["acceptance-contract"],
     outputDirectory: values.output,

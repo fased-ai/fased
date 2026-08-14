@@ -151,7 +151,7 @@ materialize_canonical_managed_predecessor() {
   test "$predecessor_class" = "canonical-managed"
   instance="$(jq -er .installationClass.platform.instanceId "$predecessor_capsule_descriptor")"
   generation_id="$(jq -er '.installationClass.activeGeneration.id | sub("^sha256:"; "")' "$predecessor_capsule_descriptor")"
-  previous_id="$(jq -er '.installationClass.previousGeneration.id | sub("^sha256:"; "")' "$predecessor_capsule_descriptor")"
+  previous_id="$(jq -r '.installationClass.previousGeneration?.id // "" | sub("^sha256:"; "")' "$predecessor_capsule_descriptor")"
   platform_config="/var/lib/fased-local/$instance/lifecycle/platform.json"
   gateway_uid="$(jq -er .gateway.uid "$platform_config")"
   gateway_gid="$(jq -er .gateway.gid "$platform_config")"
@@ -205,7 +205,9 @@ materialize_canonical_managed_predecessor() {
   chmod 0644 \
     "$generation_root/inventory.json" \
     "$dependency_root/.fased-dependency-layer.json"
-  test -d "/opt/fased/local/$instance/generations/$previous_id"
+  if [[ -n "$previous_id" ]]; then
+    test -d "/opt/fased/local/$instance/generations/$previous_id"
+  fi
 
   chown testop:"fscf-$instance" "$state"
   chmod 2770 "$state"
@@ -215,7 +217,7 @@ materialize_canonical_managed_predecessor() {
   find "$state" -xdev -type f -exec chmod 0660 {} +
   # The owner launcher is the sole executable in the user-state capsule. Keep
   # the broad writable-state normalization above, then restore this explicitly
-  # inventoried rc.72 code file to its attested executable mode.
+  # inventoried schema-one launcher to its attested executable mode.
   test -f "$state/bin/fased" && test ! -L "$state/bin/fased"
   chmod 0755 "$state/bin/fased"
   install -d -m 0700 -o "$signer_uid" -g "$signer_gid" \
