@@ -887,18 +887,25 @@ if [[ "${1:-}" == "attestation" && "${2:-}" == "verify" ]]; then
     echo "branch fixture attestation paths are invalid" >&2
     exit 1
   }
-  cmp -s "$subject" /artifacts/fased-hosted-release-v2.json || {
-    echo "branch fixture attestation subject differs" >&2
-    sha256sum "$subject" /artifacts/fased-hosted-release-v2.json >&2
+  expected_bundle=""
+  if cmp -s "$subject" /artifacts/fased-hosting-candidate.json; then
+    expected_bundle=/artifacts/fased-hosting-candidate.json.attestation.json
+  elif cmp -s "$subject" /artifacts/fased-hosted-release-v2.json; then
+    expected_bundle=/artifacts/fased-hosted-release-v2.json.attestation.json
+  else
+    echo "branch fixture attestation subject differs from both supported trust protocols" >&2
+    sha256sum "$subject" \
+      /artifacts/fased-hosting-candidate.json \
+      /artifacts/fased-hosted-release-v2.json >&2
     exit 1
-  }
-  cmp -s "$bundle" /artifacts/fased-hosted-release-v2.json.attestation.json || {
+  fi
+  cmp -s "$bundle" "$expected_bundle" || {
     echo "branch fixture attestation bundle differs" >&2
-    sha256sum "$bundle" /artifacts/fased-hosted-release-v2.json.attestation.json >&2
+    sha256sum "$bundle" "$expected_bundle" >&2
     exit 1
   }
   jq -e 'keys == ["fixtureOfflineAttestation"] and .fixtureOfflineAttestation == true' \
-    "$bundle" >/dev/null
+    "$expected_bundle" >/dev/null
   exit 0
 fi
 exec /usr/bin/gh.real "$@"
