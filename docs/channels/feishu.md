@@ -51,7 +51,7 @@ Config shape:
     feishu: {
       enabled: true,
       appId: "cli_xxx",
-      appSecret: "secret",
+      appSecret: "secret", // pragma: allowlist secret
       domain: "feishu",
       dmPolicy: "pairing",
       groupPolicy: "allowlist",

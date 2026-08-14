@@ -37,7 +37,7 @@ export type ServicesProps = {
 };
 
 type ConfigRecord = Record<string, unknown>;
-type SecretRefSource = "env" | "file" | "exec";
+type SecretRefSource = "env" | "file" | "exec"; // pragma: allowlist secret
 type SecretRefUi = {
   source: SecretRefSource;
   provider: string;

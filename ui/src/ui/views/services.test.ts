@@ -123,10 +123,10 @@ describe("renderServices", () => {
           },
           tools: {
             web: {
-              search: { enabled: true, provider: "brave", apiKey: "redacted" },
+              search: { enabled: true, provider: "brave", apiKey: "redacted" }, // pragma: allowlist secret
               fetch: {
                 enabled: false,
-                firecrawl: { enabled: true, apiKey: "fc-redacted" },
+                firecrawl: { enabled: true, apiKey: "fc-redacted" }, // pragma: allowlist secret
               },
             },
             media: {
@@ -138,7 +138,7 @@ describe("renderServices", () => {
             provider: "elevenlabs",
             providers: {
               elevenlabs: {
-                apiKey: "talk-redacted",
+                apiKey: "talk-redacted", // pragma: allowlist secret
                 voiceId: "voice-123",
                 modelId: "eleven_multilingual_v2",
               },
@@ -148,7 +148,7 @@ describe("renderServices", () => {
           skills: {
             entries: {
               "gh-issues": {
-                apiKey: "github-token",
+                apiKey: "github-token", // pragma: allowlist secret
               },
             },
           },
