@@ -863,6 +863,38 @@ if [[ "$preinstalled_tools" == "1" ]]; then
   install -m 0755 -o root -g root /fixture-preinstalled-tools/gh /usr/bin/gh
   test "$(stat -c '%U:%G:%a' /usr/bin/gh)" = "root:root:755"
   /usr/bin/gh attestation verify --help >/dev/null
+  if [[ "$predecessor_class" == "canonical-managed" &&
+    -f /artifacts/fased-branch-proof-x64.json ]]; then
+    mv /usr/bin/gh /usr/bin/gh.real
+    cat >/usr/bin/gh <<'EOF_BRANCH_FIXTURE_GH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "attestation" && "${2:-}" == "verify" ]]; then
+  subject="${3:-}"
+  bundle=""
+  shift 3
+  while [[ "$#" -gt 0 ]]; do
+    if [[ "$1" == "--bundle" && "$#" -ge 2 ]]; then
+      bundle="$2"
+      shift 2
+      continue
+    fi
+    shift
+  done
+  [[ -f /artifacts/fased-branch-proof-x64.json &&
+    -f "$subject" && ! -L "$subject" &&
+    -f "$bundle" && ! -L "$bundle" ]]
+  cmp -s "$subject" /artifacts/fased-hosted-release-v2.json
+  cmp -s "$bundle" /artifacts/fased-hosted-release-v2.json.attestation.json
+  jq -e 'keys == ["fixtureOfflineAttestation"] and .fixtureOfflineAttestation == true' \
+    "$bundle" >/dev/null
+  exit 0
+fi
+exec /usr/bin/gh.real "$@"
+EOF_BRANCH_FIXTURE_GH
+    chown root:root /usr/bin/gh /usr/bin/gh.real
+    chmod 0755 /usr/bin/gh /usr/bin/gh.real
+  fi
 fi
 
 install -d -m 0755 -o root -g root /var/lib/fased-protected-local-fixture

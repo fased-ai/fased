@@ -61,6 +61,9 @@ describe("version-neutral lifecycle acceptance", () => {
       "install -m 0755 -o root -g root /fixture-preinstalled-tools/gh /usr/bin/gh",
     );
     expect(fixture).toContain('test "$(stat -c \'%U:%G:%a\' /usr/bin/gh)" = "root:root:755"');
+    expect(fixture).toContain("-f /artifacts/fased-branch-proof-x64.json");
+    expect(fixture).toContain('cmp -s "$subject" /artifacts/fased-hosted-release-v2.json');
+    expect(fixture).toContain('exec /usr/bin/gh.real "$@"');
     expect(hostingWrapper).toContain("lifecycle-d8-contract|lifecycle-version-neutral");
   });
 
