@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
-import * as tar from "tar";
+import { writeReleaseArchive } from "./release-archive.js";
 
 const execFileAsync = promisify(execFile);
 const rootDir = path.resolve(import.meta.dirname, "..");
@@ -534,7 +534,12 @@ async function main(): Promise<void> {
     const assetName = `fased-hosted-linux-${arch}-v${version}.tar.gz`;
     const assetPath = path.join(outputDir, assetName);
     console.log(`hosted-artifact: writing ${assetName}`);
-    await tar.c({ cwd: extractDir, file: assetPath, gzip: true, portable: true }, ["package"]);
+    await writeReleaseArchive({
+      cwd: extractDir,
+      destination: assetPath,
+      entries: ["package"],
+      requiredEntryPrefix: "package/",
+    });
 
     const digest = await writeChecksum(assetPath);
 
@@ -546,16 +551,13 @@ async function main(): Promise<void> {
     const unifiedAppAssetName = `fased-hosted-app-v2-linux-${arch}-v${version}.tar.gz`;
     const unifiedAppAssetPath = path.join(outputDir, unifiedAppAssetName);
     console.log(`hosted-artifact: writing ${unifiedAppAssetName}`);
-    await tar.c(
-      {
-        cwd: extractDir,
-        file: unifiedAppAssetPath,
-        gzip: true,
-        portable: true,
-        filter: (entryPath) => !entryPath.startsWith("package/node_modules"),
-      },
-      ["package"],
-    );
+    await writeReleaseArchive({
+      cwd: extractDir,
+      destination: unifiedAppAssetPath,
+      entries: ["package"],
+      filter: (entryPath) => !entryPath.startsWith("package/node_modules"),
+      requiredEntryPrefix: "package/",
+    });
     const unifiedAppDigest = await writeChecksum(unifiedAppAssetPath);
     const unifiedAppStat = await fs.stat(unifiedAppAssetPath);
     console.log(
@@ -574,16 +576,13 @@ async function main(): Promise<void> {
     const legacyAppAssetName = `fased-hosted-app-linux-${arch}-v${version}.tar.gz`;
     const legacyAppAssetPath = path.join(outputDir, legacyAppAssetName);
     console.log(`hosted-artifact: writing ${legacyAppAssetName}`);
-    await tar.c(
-      {
-        cwd: extractDir,
-        file: legacyAppAssetPath,
-        gzip: true,
-        portable: true,
-        filter: (entryPath) => !entryPath.startsWith("package/node_modules"),
-      },
-      ["package"],
-    );
+    await writeReleaseArchive({
+      cwd: extractDir,
+      destination: legacyAppAssetPath,
+      entries: ["package"],
+      filter: (entryPath) => !entryPath.startsWith("package/node_modules"),
+      requiredEntryPrefix: "package/",
+    });
     const legacyAppDigest = await writeChecksum(legacyAppAssetPath);
     const legacyAppStat = await fs.stat(legacyAppAssetPath);
     console.log(
@@ -598,16 +597,13 @@ async function main(): Promise<void> {
     const dependencyAssetName = `fased-hosted-deps-linux-${arch}-${dependencyHash}.tar.gz`;
     const dependencyAssetPath = path.join(outputDir, dependencyAssetName);
     console.log(`hosted-artifact: writing ${dependencyAssetName}`);
-    await tar.c(
-      {
-        cwd: packageRoot,
-        file: dependencyAssetPath,
-        gzip: true,
-        portable: true,
-        noMtime: true,
-      },
-      ["node_modules"],
-    );
+    await writeReleaseArchive({
+      cwd: packageRoot,
+      destination: dependencyAssetPath,
+      entries: ["node_modules"],
+      noMtime: true,
+      requiredEntryPrefix: "node_modules/",
+    });
     const dependencyDigest = await writeChecksum(dependencyAssetPath);
     const dependencyStat = await fs.stat(dependencyAssetPath);
     console.log(
