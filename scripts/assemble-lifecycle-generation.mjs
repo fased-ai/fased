@@ -71,6 +71,7 @@ async function pluginTreeDigest(root) {
 export async function writeBundledPluginLock(runtimeRoot) {
   const extensionsRoot = path.join(runtimeRoot, "extensions");
   const required = new Set(["memory-core", "sat-mining"]);
+  const seenIds = new Set();
   const entries = [];
   for (const entry of (await fs.readdir(extensionsRoot, { withFileTypes: true })).toSorted((a, b) =>
     a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
@@ -88,9 +89,13 @@ export async function writeBundledPluginLock(runtimeRoot) {
       }
       throw error;
     }
-    if (manifest?.id !== entry.name || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(manifest.id)) {
+    if (typeof manifest?.id !== "string" || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(manifest.id)) {
       throw new Error(`bundled plugin identity is invalid: ${entry.name}`);
     }
+    if (seenIds.has(manifest.id)) {
+      throw new Error(`bundled plugin id is duplicated: ${manifest.id}`);
+    }
+    seenIds.add(manifest.id);
     entries.push({
       id: manifest.id,
       origin: "bundled",
@@ -103,6 +108,7 @@ export async function writeBundledPluginLock(runtimeRoot) {
   if (required.size > 0) {
     throw new Error(`required bundled plugins are missing: ${[...required].join(", ")}`);
   }
+  entries.sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
   const lock = { schemaVersion: 1, type: "fased-plugin-lock", entries };
   const canonical = JSON.stringify(lock);
   await fs.writeFile(path.join(runtimeRoot, "plugin.lock.json"), `${canonical}\n`, { mode: 0o644 });

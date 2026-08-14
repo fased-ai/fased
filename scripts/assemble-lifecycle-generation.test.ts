@@ -54,4 +54,44 @@ describe("lifecycle generation plugin lock", () => {
       "required bundled plugins are missing",
     );
   });
+
+  it("uses the manifest id when a bundled directory has a different implementation name", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-plugin-lock-"));
+    roots.push(root);
+    for (const [directory, id] of [
+      ["memory-core", "memory-core"],
+      ["runtime-browser", "browser-runtime"],
+      ["sat-mining", "sat-mining"],
+    ]) {
+      const pluginRoot = path.join(root, "extensions", directory);
+      await fs.mkdir(pluginRoot, { recursive: true });
+      await fs.writeFile(path.join(pluginRoot, "fased.plugin.json"), `${JSON.stringify({ id })}\n`);
+    }
+
+    await writeBundledPluginLock(root);
+    const lock = JSON.parse(await fs.readFile(path.join(root, "plugin.lock.json"), "utf8")) as {
+      entries: Array<{ id: string }>;
+    };
+
+    expect(lock.entries.map((entry) => entry.id)).toEqual([
+      "browser-runtime",
+      "memory-core",
+      "sat-mining",
+    ]);
+  });
+
+  it("rejects duplicate manifest ids from different bundled directories", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-plugin-lock-"));
+    roots.push(root);
+    for (const directory of ["memory-core", "memory-core-copy", "sat-mining"]) {
+      const pluginRoot = path.join(root, "extensions", directory);
+      await fs.mkdir(pluginRoot, { recursive: true });
+      const id = directory === "memory-core-copy" ? "memory-core" : directory;
+      await fs.writeFile(path.join(pluginRoot, "fased.plugin.json"), `${JSON.stringify({ id })}\n`);
+    }
+
+    await expect(writeBundledPluginLock(root)).rejects.toThrow(
+      "bundled plugin id is duplicated: memory-core",
+    );
+  });
 });

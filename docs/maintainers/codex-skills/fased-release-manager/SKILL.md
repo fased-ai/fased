@@ -36,8 +36,8 @@ Stop only when:
 - required external state or credentials are unavailable; or
 - an irreversible boundary is not covered by recorded current authorization.
 
-Irreversible boundaries are merge, tag, GitHub publication, npm publication,
-owner installation, real Hosting mutation, and stable promotion. If the owner
+Irreversible boundaries are merge, tag, GitHub publication, owner installation,
+real Hosting mutation, and stable promotion. If the owner
 explicitly authorizes a named sequence through one or more boundaries, record
 `AUTHORIZED THROUGH: <boundary>` and do not ask again while the exact plan and
 artifact identity remain unchanged.
@@ -158,7 +158,7 @@ package version it inherits.
   assets—not installations, journals, Wallets, or signer state.
 - Explain any command expected to exceed one minute before starting it.
 - Do not inspect GitHub until reviewing or shipping.
-- Never bypass protection. Tags, releases, npm, owner installations, Hosting,
+- Never bypass protection. Tags, releases, owner installations, Hosting,
   and stable promotion require current explicit authority.
 
 ## Workspace hygiene
@@ -189,11 +189,8 @@ package version it inherits.
   database, durable owner-state backup, Wallet/signer material, or unarchived
   security finding; classify and obtain exact authority first.
 
-For npm, print only:
-
-`npm publish <path> --ignore-scripts --access public --tag beta`
-
-Never request, print, store, or pass an OTP or token.
+Managed release publication is GitHub-only. Never publish npm packages or use
+registry tags as candidate, acceptance, or stable-promotion evidence.
 
 Load at most one reference for ordinary work. The canonical skill is
 `docs/maintainers/codex-skills/fased-release-manager/`; synchronize the

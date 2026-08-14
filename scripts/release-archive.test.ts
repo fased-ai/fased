@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
+import { setTimeout as delay } from "node:timers/promises";
 import * as tar from "tar";
 import { afterEach, describe, expect, it } from "vitest";
 import { writeReleaseArchive, writeStreamAtomically } from "./release-archive.js";
@@ -33,7 +34,7 @@ describe("release archive writer", () => {
       destination,
       entries: ["package"],
       requiredEntryPrefix: "package/",
-      timeoutMs: 5_000,
+      idleTimeoutMs: 5_000,
     });
 
     expect(result.entries).toBeGreaterThan(1);
@@ -58,13 +59,39 @@ describe("release archive writer", () => {
       writeStreamAtomically({
         destination,
         source,
-        timeoutMs: 25,
+        idleTimeoutMs: 25,
         verify: async () => undefined,
       }),
-    ).rejects.toThrow("timed out");
+    ).rejects.toThrow("timed out after 25ms without progress; 0 bytes transferred");
 
     await expect(fs.stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await fs.readdir(output)).toEqual([]);
+  });
+
+  it("allows total transfer time to exceed the timeout while bytes keep moving", async () => {
+    const root = await fixture();
+    const output = path.join(root, "output");
+    const destination = path.join(output, "runtime.tar.gz");
+    const source = new PassThrough();
+    const producer = (async () => {
+      for (let index = 0; index < 6; index += 1) {
+        source.write(Buffer.from(String(index)));
+        await delay(25);
+      }
+      source.end();
+    })();
+
+    const result = await writeStreamAtomically({
+      destination,
+      source,
+      idleTimeoutMs: 100,
+      verify: async () => undefined,
+    });
+    await producer;
+
+    expect(result.size).toBe(6);
+    await expect(fs.readFile(destination, "utf8")).resolves.toBe("012345");
+    expect(await fs.readdir(output)).toEqual(["runtime.tar.gz"]);
   });
 
   it("never overwrites an existing release asset", async () => {
@@ -80,7 +107,7 @@ describe("release archive writer", () => {
       writeStreamAtomically({
         destination,
         source: createReadStream(replacement),
-        timeoutMs: 5_000,
+        idleTimeoutMs: 5_000,
         verify: async () => undefined,
       }),
     ).rejects.toMatchObject({ code: "EEXIST" });

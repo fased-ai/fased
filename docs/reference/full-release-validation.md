@@ -91,10 +91,10 @@ This is the focused smoke for task/workflow run history. It does not replace the
 domain pages: Wallets, Marketplace, Mining, Channels, and Media/Files remain the
 authority surfaces for their own policies and runtime controls.
 
-## Docker and Install Smoke
+## Docker Smoke
 
 Docker checks are slower and require Docker/Podman-compatible host support. Use
-them for install, onboarding, plugin, gateway-network, and cleanup changes.
+them for onboarding, plugin, gateway-network, and cleanup changes.
 
 Focused lanes:
 
@@ -103,7 +103,6 @@ pnpm test:docker:onboard
 pnpm test:docker:qr
 pnpm test:docker:plugins
 pnpm test:docker:gateway-network
-pnpm test:install:smoke
 ```
 
 Full container lane:
@@ -112,16 +111,9 @@ Full container lane:
 pnpm test:docker:all
 ```
 
-Install-script release lanes:
-
-```bash
-pnpm test:install:e2e
-pnpm test:install:e2e:anthropic
-pnpm test:install:e2e:openai
-```
-
-Only run provider-specific install E2E lanes when the required release secrets
-are available.
+Managed Local and Hosting installation are proved by the lifecycle acceptance
+fixtures and candidate P1. The retired npm installer smoke is not a release
+gate.
 
 ## Live Provider Checks
 

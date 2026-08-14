@@ -37,9 +37,8 @@ x-i18n:
 
 - [ ] 如果 A2UI 输入有变化，运行 `pnpm canvas:a2ui:bundle` 并提交更新后的 [`src/canvas-host/a2ui/a2ui.bundle.js`](https://github.com/fased-ai/fased/blob/main/src/canvas-host/a2ui/a2ui.bundle.js)。
 - [ ] `pnpm run build`（重新生成 `dist/`）。
-- [ ] 验证 npm 包的 `files` 包含所有必需的 `dist/*` 文件夹（特别是用于 headless node + ACP CLI 的 `dist/node-host/**` 和 `dist/acp/**`）。
-- [ ] 确认 `dist/build-info.json` 存在并包含预期的 `commit` 哈希（CLI 横幅在 npm 安装时使用此信息）。
-- [ ] 可选：构建后运行 `npm pack --pack-destination /tmp`；检查 tarball 内容并保留以备 GitHub 发布使用（**不要**提交它）。
+- [ ] 验证签名 application generation 包含所有必需的 runtime、extension 和 CLI 文件。
+- [ ] 确认 `dist/build-info.json` 存在并绑定预期的 commit。
 
 3. **变更日志和文档**
 
@@ -51,14 +50,8 @@ x-i18n:
 - [ ] `pnpm build`
 - [ ] `pnpm check`
 - [ ] `pnpm test`（如需覆盖率输出则使用 `pnpm test:coverage`）
-- [ ] `pnpm release:check`（验证 npm pack 内容）
-- [ ] `FASED_INSTALL_SMOKE_SKIP_NONROOT=1 pnpm test:install:smoke`（Docker 安装冒烟测试，快速路径；发布前必需）
-  - 如果已知上一个 npm 发布版本有问题，为预安装步骤设置 `FASED_INSTALL_SMOKE_PREVIOUS=<last-good-version>` 或 `FASED_INSTALL_SMOKE_SKIP_PREVIOUS=1`。
-- [ ]（可选）完整安装程序冒烟测试（添加非 root + CLI 覆盖）：`pnpm test:install:smoke`
-- [ ]（可选）安装程序 E2E（Docker，克隆仓库并运行 `./install.sh`，完成新手引导，然后运行真实工具调用）：
-  - `pnpm test:install:e2e:openai`（需要 `OPENAI_API_KEY`）
-  - `pnpm test:install:e2e:anthropic`（需要 `ANTHROPIC_API_KEY`）
-  - `pnpm test:install:e2e`（需要两个密钥；运行两个提供商）
+- [ ] `pnpm release:check`（验证 packaged runtime 内容）
+- [ ] 使用 protected PRE-CANDIDATE、pre-tag P1 和 candidate P1 验证 Local/Hosting 安装与更新；不要使用已废弃的 npm installer smoke。
 - [ ]（可选）如果你的更改影响发送/接收路径，抽查 Web Gateway 网关。
 
 5. **macOS 应用（Sparkle）**

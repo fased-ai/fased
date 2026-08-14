@@ -2,19 +2,18 @@
 title: "Node.js"
 summary: "Install and configure Node.js for Fased — version requirements, install options, and PATH troubleshooting"
 read_when:
-  - "You need to install Node.js before installing Fased"
+  - "You are developing Fased from source and need Node.js"
   - "You installed Fased but `fased` is command not found"
   - "The repo-backed launcher is not on PATH"
 ---
 
 # Node.js
 
-Fased recommends **Node 24** and supports **Node 22.14 or newer with the built-in
-`node:sqlite` module**. The [installer script](/install) can install Node
-automatically on common VPS and workstation families: Ubuntu, Debian, Kali,
-Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux, Oracle Linux, Amazon Linux,
-openSUSE, SLES, Alpine, Arch, FreeBSD, WSL2 Ubuntu, and macOS with Homebrew. Use
-this page when you want to set up Node yourself or debug PATH/runtime issues.
+Managed Local and Hosting users do not install or maintain Node.js. The verified
+installer supplies the exact runtime inside the signed generation. This page is
+for source development, unmanaged package compatibility, or PATH diagnostics.
+Those environments use Node 24, or Node 22.14 or newer with built-in
+`node:sqlite`.
 
 ## Check your version
 
@@ -140,10 +139,9 @@ Make sure your version manager is initialized in your shell startup file
 
 ### `fased: command not found`
 
-macOS and explicit source installs write a small repo-backed launcher to
+Source installs write a small repo-backed launcher to
 `${FASED_CLI_BIN_DIR:-$HOME/.local/bin}/fased`. Supported Linux Local and VPS
-Hosting installs use the prebuilt runtime under
-`~/.fased/install-cache/npm-global/bin/fased`.
+Hosting installs use the stable launcher created by the Go lifecycle host.
 This error usually means the relevant bin directory is not on your PATH, or
 your shell has not reloaded its startup files yet.
 
@@ -185,12 +183,11 @@ your shell has not reloaded its startup files yet.
 
 ### Advanced: npm global prefix problems
 
-The public install path is the Fased curl installer. Hosted installs may use the
-published npm package internally under `~/.fased/install-cache/npm-global`.
+The public install path is the Fased curl installer and does not use npm.
 
-If you are debugging a maintainer/package test and see `EACCES` errors from a
-manual npm global install, switch npm's global prefix to a user-writable
-directory:
+If you are debugging a legacy manual package installation and see `EACCES`,
+migrate to the verified managed installer. The following prefix setup is only
+for an isolated maintainer compatibility test, never a managed install:
 
 ```bash
 mkdir -p "$HOME/.npm-global"
