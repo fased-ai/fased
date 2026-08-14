@@ -863,56 +863,6 @@ if [[ "$preinstalled_tools" == "1" ]]; then
   install -m 0755 -o root -g root /fixture-preinstalled-tools/gh /usr/bin/gh
   test "$(stat -c '%U:%G:%a' /usr/bin/gh)" = "root:root:755"
   /usr/bin/gh attestation verify --help >/dev/null
-  if [[ "$predecessor_class" == "canonical-managed" &&
-    -f /artifacts/fased-branch-proof-x64.json ]]; then
-    mv /usr/bin/gh /usr/bin/gh.real
-    cat >/usr/bin/gh <<'EOF_BRANCH_FIXTURE_GH'
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ "${1:-}" == "attestation" && "${2:-}" == "verify" ]]; then
-  subject="${3:-}"
-  bundle=""
-  shift 3
-  while [[ "$#" -gt 0 ]]; do
-    if [[ "$1" == "--bundle" && "$#" -ge 2 ]]; then
-      bundle="$2"
-      shift 2
-      continue
-    fi
-    shift
-  done
-  [[ -f /artifacts/fased-branch-proof-x64.json &&
-    -f "$subject" && ! -L "$subject" &&
-    -f "$bundle" && ! -L "$bundle" ]] || {
-    echo "branch fixture attestation paths are invalid" >&2
-    exit 1
-  }
-  expected_bundle=""
-  if cmp -s "$subject" /artifacts/fased-hosting-candidate.json; then
-    expected_bundle=/artifacts/fased-hosting-candidate.json.attestation.json
-  elif cmp -s "$subject" /artifacts/fased-hosted-release-v2.json; then
-    expected_bundle=/artifacts/fased-hosted-release-v2.json.attestation.json
-  else
-    echo "branch fixture attestation subject differs from both supported trust protocols" >&2
-    sha256sum "$subject" \
-      /artifacts/fased-hosting-candidate.json \
-      /artifacts/fased-hosted-release-v2.json >&2
-    exit 1
-  fi
-  cmp -s "$bundle" "$expected_bundle" || {
-    echo "branch fixture attestation bundle differs" >&2
-    sha256sum "$bundle" "$expected_bundle" >&2
-    exit 1
-  }
-  jq -e 'keys == ["fixtureOfflineAttestation"] and .fixtureOfflineAttestation == true' \
-    "$expected_bundle" >/dev/null
-  exit 0
-fi
-exec /usr/bin/gh.real "$@"
-EOF_BRANCH_FIXTURE_GH
-    chown root:root /usr/bin/gh /usr/bin/gh.real
-    chmod 0755 /usr/bin/gh /usr/bin/gh.real
-  fi
 fi
 
 install -d -m 0755 -o root -g root /var/lib/fased-protected-local-fixture
@@ -1912,7 +1862,11 @@ EOF_MANAGED_FAILED_GATEWAY
 ExecStartPre=+$managed_fault_script
 EOF_MANAGED_FAILED_GATEWAY_DROPIN
   systemctl daemon-reload
-  if run_installed_updater \
+  # This predecessor topology predates the fixed static bootstrap. Its bundled
+  # Node updater cannot repair itself before candidate handoff, so the verified
+  # installer performs the one-time in-place takeover. All later updates enter
+  # the installed bootstrap through the owner command.
+  if run_target_installer \
       >/tmp/managed-update-failure.out 2>/tmp/managed-update-failure.err; then
     managed_failure_status=0
   else
@@ -1942,7 +1896,7 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
     exit 1
   fi
 
-  run_installed_updater \
+  run_target_installer \
     >/tmp/managed-update-success.out 2>/tmp/managed-update-success.err
   cat /tmp/managed-update-failure.err /tmp/managed-update-success.out \
     >/tmp/managed-rollback-retry.evidence
