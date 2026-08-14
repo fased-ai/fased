@@ -68,7 +68,7 @@ generation_digest="$(
 )"
 plugin_lock_digest="sha256:$(
   tar -xOf "$generation" generation/payload/runtime/plugin.lock.json |
-    jq -c '{schemaVersion,type,entries:[.entries[]|{id,origin,digest,apiCapability,required}]}' |
+    jq -cj '{schemaVersion,type,entries:[.entries[]|{id,origin,digest,apiCapability,required}]}' |
     sha256sum | awk '{print $1}'
 )"
 issued_at="$(node -e '

@@ -342,7 +342,7 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
       tar -xOf \
         "$ARTIFACT_DIR/fased-generation-linux-x64-v${VERSION}.tar.gz" \
         generation/payload/runtime/plugin.lock.json |
-        jq -c '{schemaVersion,type,entries:[.entries[]|{id,origin,digest,apiCapability,required}]}' |
+        jq -cj '{schemaVersion,type,entries:[.entries[]|{id,origin,digest,apiCapability,required}]}' |
         sha256sum | awk '{print $1}'
     )"
     GOTMPDIR="$fixture_go_tmp" GOCACHE="$fixture_go_cache" \

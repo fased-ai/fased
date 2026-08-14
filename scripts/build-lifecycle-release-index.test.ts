@@ -39,7 +39,7 @@ async function fixture() {
     await fs.mkdir(path.join(generationRoot, "payload", "runtime"), { recursive: true });
     await fs.writeFile(
       path.join(generationRoot, "payload", "runtime", "plugin.lock.json"),
-      JSON.stringify(pluginLock),
+      `${JSON.stringify(pluginLock)}\n`,
     );
     const inventoryJSON = JSON.stringify({
       schemaVersion: 3,
@@ -143,5 +143,17 @@ describe("production lifecycle release index", () => {
         version,
       }),
     ).rejects.toThrow("dependency digest differs for x64");
+  });
+
+  it("keeps branch trust plugin-lock hashing byte-identical to Go canonical JSON", async () => {
+    for (const script of [
+      "prepare-candidate-fixture-trust.sh",
+      "test-lifecycle-local-acceptance.sh",
+    ]) {
+      const source = await fs.readFile(path.join(import.meta.dirname, script), "utf8");
+      expect(source).toContain(
+        "jq -cj '{schemaVersion,type,entries:[.entries[]|{id,origin,digest,apiCapability,required}]}'",
+      );
+    }
   });
 });
