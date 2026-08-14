@@ -107,7 +107,7 @@ func (state fakeStore) ReadCandidateContract(id string) (bundle.Inventory, model
 }
 
 func (state fakeStore) ReadCandidateAuthority(id string) (store.CandidateAuthority, error) {
-	return store.CandidateAuthority{SchemaVersion: 1, GenerationID: id, ReleaseSequence: 12, SecurityEpoch: 3, ManifestMin: 1, ManifestMax: 2, ReleaseIndex: digestA, ReleaseAuthority: digestB}, nil
+	return store.CandidateAuthority{SchemaVersion: 1, GenerationID: id, ReleaseSequence: 12, SecurityEpoch: 3, ManifestMin: 1, ManifestMax: 2, ReleaseIndex: digestA, ReleaseAuthority: digestB, PluginLockDigest: "sha256:" + strings.Repeat("c", 64)}, nil
 }
 
 type fakeInventory struct {

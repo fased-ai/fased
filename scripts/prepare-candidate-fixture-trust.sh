@@ -66,6 +66,11 @@ tar -xOf "$generation" generation/inventory.json >"$inventory"
 generation_digest="$(
   tar -xOf "$generation" generation/generation.json | jq -er .generation.artifactSetDigest
 )"
+plugin_lock_digest="sha256:$(
+  tar -xOf "$generation" generation/payload/runtime/plugin.lock.json |
+    jq -c '{schemaVersion,type,entries:[.entries[]|{id,origin,digest,apiCapability,required}]}' |
+    sha256sum | awk '{print $1}'
+)"
 issued_at="$(node -e '
   process.stdout.write(new Date(process.argv[1]).toISOString());
 ' "$(git -C "$ROOT_DIR" show -s --format=%cI "$commit")")"
@@ -80,6 +85,7 @@ GOTMPDIR="$go_tmp" GOCACHE="$go_cache" \
     --commit "$commit" \
     --tree "$tree" \
     --artifact-set-digest "$generation_digest" \
+    --plugin-lock-digest "$plugin_lock_digest" \
     --release-sequence "${FASED_LIFECYCLE_RELEASE_SEQUENCE:-1}" \
     --security-epoch "${FASED_LIFECYCLE_SECURITY_EPOCH:-1}" \
     --issued-at "$issued_at"

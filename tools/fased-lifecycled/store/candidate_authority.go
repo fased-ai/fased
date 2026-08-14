@@ -23,13 +23,15 @@ type CandidateAuthority struct {
 	ManifestMax      uint32 `json:"manifestMax"`
 	ReleaseIndex     string `json:"releaseIndexDigest"`
 	ReleaseAuthority string `json:"releaseAuthorityDigest"`
+	PluginLockDigest string `json:"pluginLockDigest"`
 }
 
 func (authority CandidateAuthority) validate() error {
 	if authority.SchemaVersion != 1 || authority.ReleaseSequence == 0 || authority.SecurityEpoch == 0 ||
 		authority.ManifestMin == 0 || authority.ManifestMax < authority.ManifestMin ||
 		model.CurrentManifestSchemaVersion < authority.ManifestMin || model.CurrentManifestSchemaVersion > authority.ManifestMax ||
-		!validSHA256Digest(authority.GenerationID) || !validSHA256Digest(authority.ReleaseIndex) || !validSHA256Digest(authority.ReleaseAuthority) {
+		!validSHA256Digest(authority.GenerationID) || !validSHA256Digest(authority.ReleaseIndex) ||
+		!validSHA256Digest(authority.ReleaseAuthority) || !validSHA256Digest(authority.PluginLockDigest) {
 		return errors.New("candidate release authority is malformed")
 	}
 	return nil

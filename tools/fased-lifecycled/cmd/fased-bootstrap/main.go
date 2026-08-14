@@ -55,6 +55,7 @@ type bootstrapResult struct {
 	SignerPath             string
 	ReleaseIndexDigest     string
 	ReleaseAuthorityDigest string
+	PluginLockDigest       string
 }
 
 type bootstrapVerifiedReleaseIndex struct {
@@ -215,6 +216,7 @@ func execute(ctx context.Context, request bootstrapRequest) (bootstrapResult, er
 		HostDigest: staged.Digest, HostPath: staged.Path,
 		ApplicationPath: application, DependencyPath: dependency, SignerPath: signer,
 		ReleaseIndexDigest: "sha256:" + verifiedIndex.Digest, ReleaseAuthorityDigest: "sha256:" + verifiedIndex.ReleaseAuthorityDigest,
+		PluginLockDigest: index.PluginLockDigest,
 	}, nil
 }
 

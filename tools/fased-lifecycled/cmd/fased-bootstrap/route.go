@@ -423,7 +423,8 @@ func invokeLifecycleHost(ctx context.Context, request publicLifecycleRequest, op
 		"--generation-archive", result.ApplicationPath, "--dependency-archive", result.DependencyPath,
 		"--release-sequence", strconv.FormatUint(result.ReleaseSequence, 10), "--security-epoch", strconv.FormatUint(result.SecurityEpoch, 10),
 		"--manifest-protocol-min", strconv.FormatUint(uint64(result.ManifestProtocolMin), 10), "--manifest-protocol-max", strconv.FormatUint(uint64(result.ManifestProtocolMax), 10),
-		"--release-index-digest", result.ReleaseIndexDigest, "--release-authority-digest", result.ReleaseAuthorityDigest}
+		"--release-index-digest", result.ReleaseIndexDigest, "--release-authority-digest", result.ReleaseAuthorityDigest,
+		"--plugin-lock-digest", result.PluginLockDigest}
 	command := exec.CommandContext(ctx, result.HostPath, args...)
 	data, err := command.Output()
 	if err != nil {

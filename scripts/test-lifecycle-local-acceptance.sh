@@ -338,6 +338,13 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
         "$ARTIFACT_DIR/fased-generation-linux-x64-v${VERSION}.tar.gz" \
         generation/generation.json | jq -er .generation.artifactSetDigest
     )"
+    fixture_plugin_lock_digest="sha256:$(
+      tar -xOf \
+        "$ARTIFACT_DIR/fased-generation-linux-x64-v${VERSION}.tar.gz" \
+        generation/payload/runtime/plugin.lock.json |
+        jq -c '{schemaVersion,type,entries:[.entries[]|{id,origin,digest,apiCapability,required}]}' |
+        sha256sum | awk '{print $1}'
+    )"
     GOTMPDIR="$fixture_go_tmp" GOCACHE="$fixture_go_cache" \
       go -C "$ROOT_DIR/tools/fased-lifecycled" run ./cmd/fased-branch-trust \
         --artifact-dir "$ARTIFACT_DIR" \
@@ -346,6 +353,7 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
         --commit "$COMMIT" \
         --tree "$TREE" \
         --artifact-set-digest "$fixture_generation_digest" \
+        --plugin-lock-digest "$fixture_plugin_lock_digest" \
         --release-sequence "$RELEASE_SEQUENCE" \
         --security-epoch "$SECURITY_EPOCH" \
         --issued-at "$issued_at"
