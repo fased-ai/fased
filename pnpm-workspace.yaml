@@ -5,7 +5,6 @@ packages:
 
 autoInstallPeers: false
 injectWorkspacePackages: true
-forceLegacyDeploy: true
 
 onlyBuiltDependencies:
   - "@discordjs/opus"

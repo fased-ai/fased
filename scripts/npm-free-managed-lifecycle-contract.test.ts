@@ -99,4 +99,17 @@ describe("npm-free managed lifecycle", () => {
     expect(packedSmoke).not.toMatch(/execFileSync\(\s*["']npm["']/u);
     expect(workflow).not.toMatch(/\bnpm (?:install|pack|publish|view)\b/u);
   });
+
+  it("keeps offline production deploy independent of registry metadata", async () => {
+    const artifactBuilder = await source("scripts/build-hosted-runtime-artifact.ts");
+    const packedSmoke = await source("scripts/smoke-packed-core.ts");
+    const workspace = await source("pnpm-workspace.yaml");
+    const offlineProductionDeploy =
+      '["--offline", "--filter", "@fased/fased", "deploy", "--prod", "--no-optional"';
+
+    expect(workspace).toContain("injectWorkspacePackages: true");
+    expect(workspace).not.toContain("forceLegacyDeploy: true");
+    expect(artifactBuilder).toContain(offlineProductionDeploy);
+    expect(packedSmoke).toContain(offlineProductionDeploy);
+  });
 });
