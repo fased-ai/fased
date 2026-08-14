@@ -1,101 +1,73 @@
 ---
 read_when:
-  - 你想安全地更新源码检出
-  - 你需要了解 `--update` 简写行为
-summary: "`fased update` 的 CLI 参考（相对安全的源码更新 + Gateway 网关自动重启）"
+  - 你想安全更新 managed Local 或 Hosting 安装
+  - 你需要了解 `--update` 简写
+summary: 使用受验证的 Go lifecycle 更新 managed Fased 安装
 title: update
-x-i18n:
-  generated_at: "2026-02-03T07:45:34Z"
-  model: claude-opus-4-5
-  provider: pi
-  source_hash: 3a08e8ac797612c498eef54ecb83e61c9a1ee5de09162a01dbb4b3bd72897206
-  source_path: cli/update.md
-  workflow: 15
 ---
 
 # `fased update`
 
-安全更新 Fased 并在 stable/beta/dev 渠道之间切换。
+受支持的 managed Linux Local、WSL2 和 VPS Hosting 安装只使用：
 
-如果你通过 **npm/pnpm** 安装（全局安装，无 git 元数据），更新通过 [更新](/install/updating) 中的包管理器流程进行。
+```bash
+fased update status
+fased update
+```
 
-## 用法
+稳定 launcher 位于可替换 application generation 之外。它通过签名的 GitHub
+Release index 解析目标，验证 architecture-specific artifact，并由 Go
+lifecycle host 执行切换、服务重启、health、state preservation 和 rollback。
+Managed 更新不会查询 npm registry，也不会运行全局 package-manager update。
+
+如果已经是目标版本并且 runtime identity 与 health 正确，命令返回
+`Already current: <version>`，不下载、不切换、不重启。
+
+## 常用命令
 
 ```bash
 fased update
 fased update status
 fased update wizard
 fased update --channel beta
-fased update --channel dev
-fased update --tag beta
-fased update --no-restart
+fased update --dry-run
 fased update --json
 fased --update
 ```
 
-## 选项
+- `stable`：默认 end-user channel，由签名 release index 解析。
+- `beta`：显式 prerelease channel。
+- `dev`：仅用于 source/developer checkout，可跟随 `origin/main`。
+- `--no-restart`：不适用于 managed runtime activation；managed transaction
+  只有在正确服务重启并报告目标 identity 后才成功。
 
-- `--no-restart`：成功更新后跳过重启 Gateway 网关服务。
-- `--channel <stable|beta|dev>`：设置更新渠道（git + npm；持久化到配置中）。
-- `--tag <dist-tag|version>`：仅为本次更新覆盖 npm dist-tag 或版本。
-- `--json`：打印机器可读的 `UpdateRunResult` JSON。
-- `--timeout <seconds>`：每步超时时间（默认 1200 秒）。
-
-注意：降级需要确认，因为旧版本可能会破坏配置。
-
-## `update status`
-
-显示当前更新渠道 + git 标签/分支/SHA（对于源码检出），以及更新可用性。
+VPS Hosting 正常更新应通过 Tailscale 以 `app` 用户执行。Root 只用于首次
+bootstrap 或明确 repair：
 
 ```bash
+ssh app@YOUR_VPS_TAILSCALE_NAME
 fased update status
-fased update status --json
-fased update status --timeout 10
+fased update
 ```
 
-选项：
+旧的全局 npm/pnpm 安装仅作为 migration input。请运行受验证的 public
+installer 进入 maintained managed layout；不要把 npm、pnpm、Node、Git 或
+GitHub CLI 当作 managed lifecycle authority。
 
-- `--json`：打印机器可读的状态 JSON。
-- `--timeout <seconds>`：检查超时时间（默认 3 秒）。
+Source checkout 没有 signer state 时仍可使用 developer update flow。带有
+signer state 的 checkout 会 fail closed，并要求通过 verified installer
+迁移或 repair。
 
-## `update wizard`
-
-交互式流程，用于选择更新渠道并确认是否在更新后重启 Gateway 网关（默认重启）。如果你选择 `dev` 但没有 git 检出，它会提供创建一个的选项。
-
-## 工作原理
-
-当你显式切换渠道（`--channel ...`）时，Fased 也会保持安装方式一致：
-
-- `dev` → 确保存在 git 检出（默认：`~/fased`，可通过 `FASED_GIT_DIR` 覆盖），更新它，并从该检出安装全局 CLI。
-- `stable`/`beta` → 使用匹配的 dist-tag 从 npm 安装。
-
-## Git 检出流程
-
-渠道：
-
-- `stable`：检出最新的非 beta 标签，然后构建 + doctor。
-- `beta`：检出最新的 `-beta` 标签，然后构建 + doctor。
-- `dev`：检出 `main`，然后 fetch + rebase。
-
-高层概述：
-
-1. 需要干净的工作树（无未提交的更改）。
-2. 切换到所选渠道（标签或分支）。
-3. 获取上游（仅 dev）。
-4. 仅 dev：在临时工作树中预检 lint + TypeScript 构建；如果最新提交失败，回退最多 10 个提交以找到最新的干净构建。
-5. Rebase 到所选提交（仅 dev）。
-6. 安装依赖（优先使用 pnpm；npm 作为备选）。
-7. 构建 + 构建控制界面。
-8. 运行 `fased doctor` 作为最终的"安全更新"检查。
-9. 将插件同步到当前渠道（dev 使用捆绑的扩展；stable/beta 使用 npm）并更新 npm 安装的插件。
+详细 contract、repair 路径和平台说明请参阅[更新](/install/updating)。
 
 ## `--update` 简写
 
-`fased --update` 会重写为 `fased update`（便于 shell 和启动脚本使用）。
+```bash
+fased --update
+```
 
-## 另请参阅
+等同于：
 
-- `fased doctor`（在 git 检出上会提供先运行更新的选项）
-- [开发渠道](/install/development-channels)
-- [更新](/install/updating)
-- [CLI 参考](/cli)
+```bash
+fased update
+```

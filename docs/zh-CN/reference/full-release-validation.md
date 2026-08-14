@@ -62,16 +62,15 @@ pnpm test:browser-cdp
 
 `test:browser-cdp` 需要 loopback/CDP-capable environment。
 
-## Docker and install smoke
+## Docker smoke
 
-Docker checks 较慢，要求 Docker/Podman-compatible host。install、onboarding、plugin、gateway-network、cleanup 变化时使用。
+Docker checks 较慢，要求 Docker/Podman-compatible host。onboarding、plugin、gateway-network、cleanup 变化时使用。
 
 ```bash
 pnpm test:docker:onboard
 pnpm test:docker:qr
 pnpm test:docker:plugins
 pnpm test:docker:gateway-network
-pnpm test:install:smoke
 ```
 
 完整 container lane：

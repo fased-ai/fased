@@ -134,7 +134,6 @@ jobs:
             .github/workflows/docker-release.yml \
             .github/workflows/formal-conformance.yml \
             .github/workflows/hosted-runtime-release.yml \
-            .github/workflows/install-smoke.yml \
             .github/workflows/provider-catalog-refresh.yml \
             .github/workflows/sandbox-common-smoke.yml \
             .github/workflows/stale.yml \
@@ -417,7 +416,7 @@ jobs:
           path: dist/
           retention-days: 1
 
-  # Validate npm pack contents after build before merge and again on main.
+  # Validate packaged runtime contents after build before merge and again on main.
   release-check:
     needs: [change-scope, build-artifacts]
     if: needs.change-scope.outputs.run_node_packaging == 'true'

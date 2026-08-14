@@ -1,6 +1,7 @@
 import { createReadStream, createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import * as tar from "tar";
 
@@ -18,7 +19,7 @@ type ArchiveFilter =
 type AtomicStreamOptions = {
   destination: string;
   source: DestroyableByteStream;
-  timeoutMs: number;
+  idleTimeoutMs: number;
   verify: (stagedPath: string) => Promise<void>;
 };
 
@@ -27,36 +28,55 @@ type ReleaseArchiveOptions = {
   destination: string;
   entries: string[];
   filter?: ArchiveFilter;
+  idleTimeoutMs?: number;
   noMtime?: boolean;
   requiredEntryPrefix: string;
-  timeoutMs?: number;
 };
 
-const DEFAULT_ARCHIVE_TIMEOUT_MS = 120_000;
+const DEFAULT_ARCHIVE_IDLE_TIMEOUT_MS = 120_000;
 
 function requireTimeout(value: number): number {
   if (!Number.isSafeInteger(value) || value < 1) {
-    throw new Error("Release archive timeout must be a positive integer.");
+    throw new Error("Release archive idle timeout must be a positive integer.");
   }
   return value;
 }
 
-async function pipelineWithTimeout(
+async function pipelineWithIdleTimeout(
   source: DestroyableByteStream,
   destination: DestroyableByteStream,
-  timeoutMs: number,
+  idleTimeoutMs: number,
   label: string,
 ): Promise<void> {
   let timeout: NodeJS.Timeout | undefined;
-  const transfer = pipeline(source, destination);
-  const deadline = new Promise<never>((_resolve, reject) => {
+  let transferredBytes = 0;
+  let rejectDeadline: ((error: Error) => void) | undefined;
+  const armDeadline = () => {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
     timeout = setTimeout(() => {
-      const error = new Error(`${label} timed out after ${timeoutMs}ms.`);
+      const error = new Error(
+        `${label} timed out after ${idleTimeoutMs}ms without progress; ${transferredBytes} bytes transferred.`,
+      );
       source.destroy(error);
+      progress.destroy(error);
       destination.destroy(error);
-      reject(error);
-    }, timeoutMs);
+      rejectDeadline?.(error);
+    }, idleTimeoutMs);
+  };
+  const progress = new Transform({
+    transform(chunk: Uint8Array, _encoding, callback) {
+      transferredBytes += chunk.byteLength;
+      armDeadline();
+      callback(null, chunk);
+    },
   });
+  const deadline = new Promise<never>((_resolve, reject) => {
+    rejectDeadline = reject;
+  });
+  armDeadline();
+  const transfer = pipeline(source, progress, destination);
 
   try {
     await Promise.race([transfer, deadline]);
@@ -70,10 +90,10 @@ async function pipelineWithTimeout(
 export async function writeStreamAtomically({
   destination,
   source,
-  timeoutMs: rawTimeoutMs,
+  idleTimeoutMs: rawIdleTimeoutMs,
   verify,
 }: AtomicStreamOptions): Promise<{ size: number }> {
-  const timeoutMs = requireTimeout(rawTimeoutMs);
+  const idleTimeoutMs = requireTimeout(rawIdleTimeoutMs);
   const outputDir = path.dirname(destination);
   await fs.mkdir(outputDir, { recursive: true });
   const stagingDir = await fs.mkdtemp(path.join(outputDir, ".fased-release-archive-"));
@@ -81,7 +101,12 @@ export async function writeStreamAtomically({
 
   try {
     const output = createWriteStream(stagedPath, { flags: "wx", mode: 0o644 });
-    await pipelineWithTimeout(source, output, timeoutMs, `Writing ${path.basename(destination)}`);
+    await pipelineWithIdleTimeout(
+      source,
+      output,
+      idleTimeoutMs,
+      `Writing ${path.basename(destination)}`,
+    );
     const stat = await fs.stat(stagedPath);
     if (!stat.isFile() || stat.size < 1) {
       throw new Error(`Release archive ${path.basename(destination)} is empty.`);
@@ -102,11 +127,11 @@ export async function writeReleaseArchive({
   destination,
   entries,
   filter,
+  idleTimeoutMs: rawIdleTimeoutMs = DEFAULT_ARCHIVE_IDLE_TIMEOUT_MS,
   noMtime,
   requiredEntryPrefix,
-  timeoutMs: rawTimeoutMs = DEFAULT_ARCHIVE_TIMEOUT_MS,
 }: ReleaseArchiveOptions): Promise<{ entries: number; size: number }> {
-  const timeoutMs = requireTimeout(rawTimeoutMs);
+  const idleTimeoutMs = requireTimeout(rawIdleTimeoutMs);
   let archivedEntries = 0;
   let requiredEntryFound = false;
   const source = tar.c({ cwd, filter, gzip: true, noMtime, portable: true, strict: true }, entries);
@@ -114,7 +139,7 @@ export async function writeReleaseArchive({
   const result = await writeStreamAtomically({
     destination,
     source,
-    timeoutMs,
+    idleTimeoutMs,
     verify: async (stagedPath) => {
       const input = createReadStream(stagedPath);
       const inspector = tar.t({
@@ -127,10 +152,10 @@ export async function writeReleaseArchive({
           }
         },
       });
-      await pipelineWithTimeout(
+      await pipelineWithIdleTimeout(
         input,
         inspector,
-        timeoutMs,
+        idleTimeoutMs,
         `Verifying ${path.basename(destination)}`,
       );
       if (archivedEntries < 1 || !requiredEntryFound) {

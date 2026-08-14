@@ -112,4 +112,28 @@ describe("npm-free managed lifecycle", () => {
     expect(artifactBuilder).toContain(offlineProductionDeploy);
     expect(packedSmoke).toContain(offlineProductionDeploy);
   });
+
+  it("removes npm from release acceptance and deletes its superseded installer smoke", async () => {
+    const skill = await source("docs/maintainers/codex-skills/fased-release-manager/SKILL.md");
+    const release = await source(
+      "docs/maintainers/codex-skills/fased-release-manager/references/release.md",
+    );
+    const rootPackage = JSON.parse(await source("package.json")) as {
+      scripts?: Record<string, string>;
+    };
+
+    expect(skill).not.toContain("For npm, print only:");
+    expect(release).not.toMatch(/\bnpm (?:beta|publication|publish)\b/iu);
+    expect(release).toContain("GitHub prerelease exact bytes\n-> PUBLIC0 readback");
+    expect(await exists(".github/workflows/install-smoke.yml")).toBe(false);
+    expect(await exists("scripts/test-install-sh-docker.sh")).toBe(false);
+    expect(await exists("scripts/test-install-sh-e2e-docker.sh")).toBe(false);
+    expect(await exists("scripts/docker/install-sh-smoke")).toBe(false);
+    expect(await exists("scripts/docker/install-sh-e2e")).toBe(false);
+    expect(await exists("scripts/docker/install-sh-nonroot")).toBe(false);
+    expect(rootPackage.scripts?.["test:install:smoke"]).toBeUndefined();
+    expect(rootPackage.scripts?.["test:install:e2e"]).toBeUndefined();
+    expect(rootPackage.scripts?.["test:install:e2e:anthropic"]).toBeUndefined();
+    expect(rootPackage.scripts?.["test:install:e2e:openai"]).toBeUndefined();
+  });
 });

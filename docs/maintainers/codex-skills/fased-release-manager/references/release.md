@@ -60,20 +60,21 @@ corrected branch paths and exact merged-main PRE-CANDIDATE pass.
 
 ```text
 GitHub prerelease exact bytes
--> owner npm beta
 -> PUBLIC0 readback
 -> owner Local
 -> real Hosting
 -> stable promotion
 ```
 
-PUBLIC0 is readback-only. Owner Local uses the literal public command and proves
-four services, Wallet/signer, Mining, Network, plugins, restart, preserved state,
-and `Already current`. Real Hosting requires an authorized VPS/Tailscale
-environment; containers are supporting evidence only.
+PUBLIC0 is readback-only and verifies the exact GitHub tag, release metadata,
+asset inventory, sizes, digests, and attestations without rebuilding. Owner
+Local uses the literal public command and proves four services, Wallet/signer,
+Mining, Network, plugins, restart, preserved state, and `Already current`. Real
+Hosting requires an authorized VPS/Tailscale environment; containers are
+supporting evidence only.
 
 Stable promotion reuses accepted candidate bytes and changes only authorized
-release/dist-tag metadata.
+GitHub release/channel metadata.
 
 ## Authority
 
@@ -85,10 +86,4 @@ When the owner has explicitly authorized the sequence through publication,
 submit that existing approval as soon as every immutable P1 lane passes. Do not
 ask for the same approval again, weaken the environment, or allow the workflow
 to self-approve. A failed or incomplete P1 cancels that publication action.
-
-The owner performs npm publication manually:
-
-`npm publish <path> --ignore-scripts --access public --tag beta`
-
-Never handle OTP, login, or token material. Verify npm and GitHub readback after
-the owner finishes.
+Never publish npm packages or make npm registry state a release predicate.

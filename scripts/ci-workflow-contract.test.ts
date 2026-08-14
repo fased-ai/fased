@@ -405,10 +405,6 @@ describe("CI workflow routing", () => {
       resolve(repoRoot, ".github/workflows/formal-conformance.yml"),
       "utf8",
     );
-    const install = await readFile(
-      resolve(repoRoot, ".github/workflows/install-smoke.yml"),
-      "utf8",
-    );
     const sanity = await readFile(
       resolve(repoRoot, ".github/workflows/workflow-sanity.yml"),
       "utf8",
@@ -417,9 +413,6 @@ describe("CI workflow routing", () => {
     expect(formal).not.toContain("  pull_request:");
     expect(formal).toContain("  schedule:");
     expect(formal).toContain("  workflow_dispatch:");
-    expect(install).not.toContain("  pull_request:");
-    expect(install).not.toContain("  push:");
-    expect(install).toContain("  workflow_dispatch:");
     expect(sanity).not.toContain("  pull_request:");
     expect(sanity).not.toContain("  push:");
     expect(sanity).toContain("  workflow_dispatch:");
