@@ -29,8 +29,11 @@ mount layout, acquisition URL map, candidate-shaped artifact inventory, and
 receipt verifier used after tagging. It runs on the same protected Linux runner
 class. A tag is forbidden when any supported topology, executable fixture,
 artifact name, transport route, or acceptance predicate has not executed
-there. An incompatible old control plane must use the explicit verified repair
-route; it never becomes a target-tag-dependent ordinary updater lane.
+there. A recognized healthy pre-bootstrap managed control plane uses the
+verified installer once for in-place takeover, followed by an installed-updater
+`Already current` proof. Ambiguous, damaged, or incompatible state uses the
+explicit repair route. Neither path becomes a target-tag-dependent ordinary
+updater lane.
 
 The candidate descriptor binds version, commit, tree, lockfile, workflow run,
 artifact names/sizes/digests, provenance, SBOM/VEX, signer/controller identity,

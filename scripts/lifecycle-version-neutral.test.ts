@@ -82,7 +82,8 @@ describe("version-neutral lifecycle acceptance", () => {
       >;
     };
     expect(workflow.on?.workflow_dispatch?.inputs).toHaveProperty("predecessor_version");
-    expect(workflow.on?.workflow_dispatch?.inputs).toHaveProperty("owner_predecessor_version");
+    expect(workflow.on?.workflow_dispatch?.inputs).toHaveProperty("managed_predecessor_version");
+    expect(workflow.on?.workflow_dispatch?.inputs).not.toHaveProperty("owner_predecessor_version");
     expect(workflow.on?.workflow_dispatch?.inputs).not.toHaveProperty("predecessor_scenario");
     const update = workflow.jobs?.["p1-local-update"]?.steps?.find((candidate) =>
       candidate.name?.includes("supported-stable update P1"),

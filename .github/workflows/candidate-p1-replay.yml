@@ -23,8 +23,8 @@ on:
         description: Supported stable predecessor
         required: true
         type: string
-      owner_predecessor_version:
-        description: Owner Local predecessor, or stable predecessor when identical
+      managed_predecessor_version:
+        description: Representative supported pre-bootstrap managed predecessor
         required: true
         type: string
 
@@ -75,7 +75,7 @@ jobs:
         id: identity
         env:
           CANDIDATE_DESCRIPTOR_SHA256: ${{ inputs.candidate_descriptor_sha256 }}
-          OWNER_PREDECESSOR_VERSION: ${{ inputs.owner_predecessor_version }}
+          MANAGED_PREDECESSOR_VERSION: ${{ inputs.managed_predecessor_version }}
           PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
           RELEASE_VERSION: ${{ inputs.release_version }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
@@ -88,7 +88,7 @@ jobs:
           [[ "$CANDIDATE_DESCRIPTOR_SHA256" =~ ^sha256:[a-f0-9]{64}$ ]]
           [[ "$SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
           [[ "$PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          [[ "$OWNER_PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]
+          [[ "$MANAGED_PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]
           test "$GITHUB_REF" = "refs/heads/main"
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$GITHUB_SHA"
           descriptor="$RUNNER_TEMP/fased-hosting-candidate/fased-hosting-candidate.json"
@@ -118,10 +118,10 @@ jobs:
             --source-ref "refs/tags/v$RELEASE_VERSION" \
             --deny-self-hosted-runners >/dev/null
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
-          test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$OWNER_PREDECESSOR_VERSION")"
-          local_predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" --arg owner "$OWNER_PREDECESSOR_VERSION" \
+          test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$MANAGED_PREDECESSOR_VERSION")"
+          local_predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" --arg managed "$MANAGED_PREDECESSOR_VERSION" \
             '[{version:$stable,installationClass:"public-stable"},
-              {version:$owner,installationClass:"canonical-managed"}] | unique_by([.version,.installationClass])')"
+              {version:$managed,installationClass:"canonical-managed"}] | unique_by([.version,.installationClass])')"
           hosting_predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" '[$stable]')"
           printf 'local_predecessors=%s\n' "$local_predecessors" >>"$GITHUB_OUTPUT"
           printf 'hosting_predecessors=%s\n' "$hosting_predecessors" >>"$GITHUB_OUTPUT"

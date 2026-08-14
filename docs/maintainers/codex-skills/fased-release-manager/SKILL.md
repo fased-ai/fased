@@ -133,8 +133,12 @@ requesting tag authority, run every supported Local and Hosting topology whose
 trust inputs can exist pre-tag, using the same fixture entrypoints, mount
 topology, acquisition routes, candidate-shaped inventory, and acceptance
 receipt verifier that trusted P1 will run. A predecessor that cannot enter the
-static Go control plane is `REPAIR_REQUIRED`; it is not a reason to preserve an
-application-owned root updater or invent a release-specific exception.
+static Go control plane through its installed updater is not automatically
+`REPAIR_REQUIRED`. When its healthy topology is recognized and its immutable
+inputs verify, run the documented installer once as an in-place takeover, then
+prove the installed `fased update` returns `Already current`. Reserve
+`REPAIR_REQUIRED` for ambiguous, damaged, or incompatible state. Never preserve
+an application-owned root updater or invent a release-specific exception.
 
 If a tagged run exposes a fixture or inventory predicate that could have
 executed before the tag, freeze the release. Correct the workflow first and add
