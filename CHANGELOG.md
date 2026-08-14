@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.85
+
+- Bundle Fased-owned channels and runtimes into the signed application
+  generation so managed installation and update no longer depend on npm.
+- Route managed lifecycle mutation through the static Go bootstrap and stable
+  supervisor, removing the superseded JavaScript updater split.
+- Keep independent third-party plugin code outside core updates while
+  preserving plugin data and failing closed on executable-code drift.
+
 ## 0.1.76-rc.84
 
 - Route every managed Local and Hosting update through the stable signed Go
