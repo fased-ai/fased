@@ -119,13 +119,35 @@ describe("public predecessor capsule builder", () => {
       expect(walletRegistry).toMatchObject({
         version: 1,
         providers: {
-          "embedded-keystore": { enabled: false },
-          "local-socket-signer": { enabled: true },
+          "embedded-keystore": { enabled: profile === "hosting" },
+          "local-socket-signer": { enabled: profile !== "hosting" },
           "wallet-standard": { enabled: true },
         },
-        wallets: [],
         assignments: {},
       });
+      if (profile === "hosting") {
+        expect(walletRegistry.wallets).toEqual([
+          expect.objectContaining({
+            id: "agent-2",
+            providerId: "embedded-keystore",
+            addresses: { solana: expect.stringMatching(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u) },
+          }),
+        ]);
+        const keystore = JSON.parse(
+          archive
+            .get(`home/${owner}/.fased/wallet/keystore-solana-agent-2.v1.enc`)
+            ?.bytes.toString("utf8") ?? "null",
+        );
+        expect(keystore).toMatchObject({
+          kind: "fased-solana-keypair",
+          version: 1,
+          kdf: "scrypt",
+          cipher: "aes-256-gcm",
+          publicKey: walletRegistry.wallets[0].addresses.solana,
+        });
+      } else {
+        expect(walletRegistry.wallets).toEqual([]);
+      }
       const gateway = archive.get(`home/${owner}/.fased/runtime/releases/0.1.75/gateway.mjs`);
       expect(gateway?.bytes.toString("utf8")).toContain('runtimeSource:"managed-package"');
       const proof = JSON.parse(

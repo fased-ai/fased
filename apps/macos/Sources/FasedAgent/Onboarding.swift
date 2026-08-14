@@ -58,13 +58,9 @@ struct OnboardingView: View {
     @Environment(\.openSettings) var openSettings
     @State var currentPage = 0
     @State var isRequesting = false
-    @State var installingCLI = false
-    @State var cliStatus: String?
     @State var copied = false
     @State var monitoringPermissions = false
     @State var monitoringDiscovery = false
-    @State var cliInstalled = false
-    @State var cliInstallLocation: String?
     @State var workspacePath: String = ""
     @State var workspaceStatus: String?
     @State var workspaceApplying = false
@@ -137,10 +133,6 @@ struct OnboardingView: View {
 
     var canAdvance: Bool {
         !self.isWizardBlocking
-    }
-
-    var devLinkCommand: String {
-        "curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local"
     }
 
     struct LocalGatewayProbe: Equatable {

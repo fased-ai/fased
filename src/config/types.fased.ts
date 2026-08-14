@@ -60,8 +60,10 @@ export type FasedAgentConfig = {
   diagnostics?: DiagnosticsConfig;
   logging?: LoggingConfig;
   update?: {
-    /** Signed lifecycle channel selected by the installed Go launcher. */
+    /** Legacy developer/package channel. Managed Go lifecycle updates ignore this field. */
     channel?: "stable" | "beta" | "dev";
+    /** Deprecated compatibility field. Managed Go lifecycle updates never check on Gateway start. */
+    checkOnStart?: boolean;
   };
   browser?: BrowserConfig;
   ui?: {

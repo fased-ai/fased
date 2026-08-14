@@ -63,7 +63,6 @@ export type ConfigState = {
   configIssues: unknown[];
   configSaving: boolean;
   configApplying: boolean;
-  updateRunning: boolean;
   configSnapshot: ConfigSnapshot | null;
   configAuthStatus: ModelsAuthStatusResult | null;
   configModelCatalogStatus: ModelsCatalogStatusResult | null;
@@ -1045,30 +1044,6 @@ export async function applyConfig(state: ConfigState) {
     state.lastError = String(err);
   } finally {
     state.configApplying = false;
-  }
-}
-
-export async function runUpdate(state: ConfigState) {
-  if (!state.client || !state.connected) {
-    return;
-  }
-  state.updateRunning = true;
-  state.lastError = null;
-  try {
-    const response = await state.client.request<{
-      ok?: boolean;
-      result?: { status?: string; reason?: string | null };
-    }>("update.run", {
-      sessionKey: state.applySessionKey,
-    });
-    if (response?.ok === false || response?.result?.status === "error") {
-      const reason = response?.result?.reason?.trim();
-      state.lastError = reason ? `Update error: ${reason}` : "Update error";
-    }
-  } catch (err) {
-    state.lastError = String(err);
-  } finally {
-    state.updateRunning = false;
   }
 }
 

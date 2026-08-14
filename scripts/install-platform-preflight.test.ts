@@ -2,68 +2,59 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const installer = fs.readFileSync(path.resolve(import.meta.dirname, "..", "install.sh"), "utf8");
-const launcher = fs.readFileSync(path.resolve(import.meta.dirname, "..", "fased.mjs"), "utf8");
-const packageManifest = JSON.parse(
-  fs.readFileSync(path.resolve(import.meta.dirname, "..", "package.json"), "utf8"),
-) as { os?: string[] };
+const root = path.resolve(import.meta.dirname, "..");
+const installer = fs.readFileSync(path.join(root, "install.sh"), "utf8");
+const developmentInstaller = fs.readFileSync(
+  path.join(root, "scripts/install-development.sh"),
+  "utf8",
+);
+const launcher = fs.readFileSync(path.join(root, "fased.mjs"), "utf8");
+const packageManifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as {
+  os?: string[];
+};
 
 describe("installer platform preflight", () => {
-  it("rejects native Windows shells and directs users into WSL2", () => {
-    expect(installer).toContain("MINGW*|MSYS*|CYGWIN*");
-    expect(installer).toContain("Native Windows Node.js, PowerShell, Git Bash");
-    expect(installer).toContain("Install Ubuntu in WSL2, enable systemd");
+  it("keeps the public lifecycle installer Linux-only and rejects native Windows runtime", () => {
+    expect(installer).toContain('case "$(uname -s)"');
+    expect(installer).toContain("public lifecycle installation supports Linux only");
     expect(packageManifest.os).toEqual(["linux", "darwin"]);
     expect(launcher).toContain('if (process.platform === "win32")');
     expect(launcher).toContain("Native Windows is not a supported Fased runtime");
-    expect(launcher.indexOf('if (process.platform === "win32")')).toBeLessThan(
-      launcher.indexOf('import("./scripts/fased-launcher-runtime.mjs")'),
-    );
+    expect(launcher).not.toContain("fased-launcher-runtime.mjs");
   });
 
-  it("rejects WSL1 and WSL2 without systemd before install state handling", () => {
-    const validation = installer.indexOf("validate_install_platform\n");
-    const stateHandling = installer.indexOf("set_installer_state_dir() {");
-    expect(validation).toBeGreaterThanOrEqual(0);
-    expect(validation).toBeLessThan(stateHandling);
-    expect(installer).toContain("WSL1 is not supported");
-    expect(installer).toContain("systemd=true");
-    expect(installer).toContain("wsl --shutdown");
+  it("delegates an unstamped checkout only to the explicit developer installer", () => {
+    expect(installer).toContain('exec "$repo_root/scripts/install-development.sh" "$@"');
+    expect(installer).toContain("refusing an unstamped streamed installer");
+    expect(developmentInstaller).toContain("Builds the current contributor checkout");
+    expect(developmentInstaller).toContain("for tool in node pnpm; do");
   });
 
-  it("requires root Linux systemd and rejects WSL for Hosting", () => {
-    expect(installer).toContain('if [[ "$HOSTING_REQUESTED" -eq 1 ]]');
-    expect(installer).toContain("--hosting is for a Linux VPS, not WSL");
-    expect(installer).toContain("--hosting must run as root");
-    expect(installer).toContain("--hosting requires systemd as PID 1");
+  it("binds public installation to the stamped immutable release and channel", () => {
+    expect(installer).toContain('install_entry_release_identity="__FASED_RELEASE_IDENTITY__"');
+    expect(installer).toContain("requested release differs from this immutable installer");
+    expect(installer).toContain('[[ "$channel" == "stable" || "$channel" == "beta" ]]');
+    expect(installer).toContain("prereleases require beta");
   });
 
-  it("rejects root Local before dependency installation or repository mutation", () => {
-    const rejection = installer.indexOf(
-      "Local installation must run from the intended non-root operator account.",
-    );
-    const dependencyMutation = installer.indexOf(
-      "if ! command -v git >/dev/null 2>&1; then",
-      rejection,
-    );
-    const repositoryMutation = installer.indexOf(
-      'if [[ ! -e "$install_base_dir" ]]; then',
-      rejection,
-    );
-
-    expect(rejection).toBeGreaterThanOrEqual(0);
-    expect(dependencyMutation).toBeGreaterThan(rejection);
-    expect(repositoryMutation).toBeGreaterThan(dependencyMutation);
-    expect(installer).toContain(
-      "the installer will request bounded sudo authorization when required.",
-    );
+  it("downloads one stamped Go bootstrap and executes the public lifecycle boundary", () => {
+    expect(installer).toContain('bootstrap_asset="fased-bootstrap-linux-${arch}"');
+    expect(installer).toContain("bootstrap digest mismatch");
+    expect(installer).toContain("bootstrap_args=(\n  install");
+    expect(installer).toContain('"${root_command[@]}" "$bootstrap" "${bootstrap_args[@]}"');
   });
 
-  it("keeps Debian-family dependency setup noninteractive and activates Corepack with permission", () => {
-    expect(installer).toContain("DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a");
-    expect(installer).toContain('corepack_dir="$(dirname "$corepack_bin")"');
-    expect(installer).toContain('if [[ -w "$corepack_dir" ]]');
-    expect(installer).toContain("elif run_as_root corepack enable");
-    expect(installer).not.toContain("corepack enable || run_as_root corepack enable");
+  it("does not install Node, pnpm, npm, Corepack, or Git on the public path", () => {
+    for (const residue of [
+      "npm install",
+      "pnpm install",
+      "corepack enable",
+      "apt-get",
+      "dnf install",
+      "git clone",
+    ]) {
+      expect(installer).not.toContain(residue);
+    }
+    expect(developmentInstaller).toContain('pnpm --dir "$repo_root" install --frozen-lockfile');
   });
 });

@@ -381,9 +381,9 @@ extension OnboardingView {
 
     func cliPage() -> some View {
         self.onboardingPage {
-            Text("Install the CLI")
+            Text("Connect to a managed runtime")
                 .font(.largeTitle.weight(.semibold))
-            Text("Required for local mode: installs `fased` so launchd can run the gateway.")
+            Text("The signed Go lifecycle currently supports Linux Local and Hosting installations. This macOS app does not download or execute a separate Node/npm installer.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -391,49 +391,12 @@ extension OnboardingView {
                 .fixedSize(horizontal: false, vertical: true)
 
             self.onboardingCard(spacing: 10) {
-                HStack(spacing: 12) {
-                    Button {
-                        Task { await self.installCLI() }
-                    } label: {
-                        let title = self.cliInstalled ? "Reinstall CLI" : "Install CLI"
-                        ZStack {
-                            Text(title)
-                                .opacity(self.installingCLI ? 0 : 1)
-                            if self.installingCLI {
-                                ProgressView()
-                                    .controlSize(.mini)
-                            }
-                        }
-                        .frame(minWidth: 120)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(self.installingCLI)
-
-                    Button(self.copied ? "Copied" : "Copy install command") {
-                        self.copyToPasteboard(self.devLinkCommand)
-                    }
-                    .disabled(self.installingCLI)
-
-                    if self.cliInstalled, let loc = self.cliInstallLocation {
-                        Label("Installed at \(loc)", systemImage: "checkmark.circle.fill")
-                            .font(.footnote)
-                            .foregroundStyle(.green)
-                    }
-                }
-
-                if let cliStatus {
-                    Text(cliStatus)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if !self.cliInstalled, self.cliInstallLocation == nil {
-                    Text(
-                        """
-                        Installs a user-space Node 22+ runtime and the CLI (no Homebrew).
-                        Rerun anytime to reinstall or update.
-                        """)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+                Label("Use Remote mode to connect this app to a lifecycle-managed Linux instance.", systemImage: "lock.shield")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Text("A native macOS lifecycle runtime must be shipped and verified separately before Local mode can be enabled here.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }

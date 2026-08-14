@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import module from "node:module";
-import { fileURLToPath } from "node:url";
 
 if (process.platform === "win32") {
   console.error(
@@ -14,10 +13,6 @@ if (process.platform === "win32") {
   );
   process.exit(1);
 }
-
-const { reexecWithSupportedNodeIfNeeded } = await import("./scripts/fased-launcher-runtime.mjs");
-
-reexecWithSupportedNodeIfNeeded({ selfPath: fileURLToPath(import.meta.url) });
 
 // https://nodejs.org/api/module.html#module-compile-cache
 if (module.enableCompileCache && !process.env.NODE_DISABLE_COMPILE_CACHE) {

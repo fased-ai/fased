@@ -5133,7 +5133,6 @@ export function renderApp(state: AppViewState) {
                   loading: state.configLoading,
                   saving: state.configSaving,
                   applying: state.configApplying,
-                  updating: state.updateRunning,
                   connected: state.connected,
                   schema: state.configSchema,
                   schemaLoading: state.configSchemaLoading,

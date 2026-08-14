@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 
-import { createHash, createPrivateKey, createPublicKey } from "node:crypto";
+import {
+  createCipheriv,
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  scryptSync,
+} from "node:crypto";
 import { createReadStream } from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
@@ -92,17 +98,78 @@ function syntheticDeviceIdentity() {
   };
 }
 
-function syntheticWalletRegistry() {
+function encodeBase58(bytes) {
+  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let value = BigInt(`0x${Buffer.from(bytes).toString("hex")}`);
+  let encoded = "";
+  while (value > 0n) {
+    encoded = alphabet[Number(value % 58n)] + encoded;
+    value /= 58n;
+  }
+  for (const byte of bytes) {
+    if (byte !== 0) {
+      break;
+    }
+    encoded = `1${encoded}`;
+  }
+  return encoded || "1";
+}
+
+function syntheticLegacyWallet() {
+  const passphrase = "fased-synthetic-predecessor-passphrase";
+  const seed = createHash("sha256").update("fased-public-predecessor-wallet-v1\n").digest();
+  const privateKey = createPrivateKey({
+    key: Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), seed]),
+    format: "der",
+    type: "pkcs8",
+  });
+  const publicKey = createPublicKey(privateKey)
+    .export({ format: "der", type: "spki" })
+    .subarray(-32);
+  const secretKey = Buffer.concat([seed, publicKey]);
+  const salt = createHash("sha256")
+    .update("fased-predecessor-wallet-salt-v1\n")
+    .digest()
+    .subarray(0, 16);
+  const iv = createHash("sha256")
+    .update("fased-predecessor-wallet-iv-v1\n")
+    .digest()
+    .subarray(0, 12);
+  const key = scryptSync(passphrase, salt, 32);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const ciphertext = Buffer.concat([cipher.update(secretKey), cipher.final()]);
+  return {
+    passphrase,
+    publicKey: encodeBase58(publicKey),
+    envelope: {
+      kind: "fased-solana-keypair",
+      version: 1,
+      kdf: "scrypt",
+      cipher: "aes-256-gcm",
+      salt: salt.toString("base64url"),
+      iv: iv.toString("base64url"),
+      authTag: cipher.getAuthTag().toString("base64url"),
+      ciphertext: ciphertext.toString("base64url"),
+      publicKey: encodeBase58(publicKey),
+    },
+  };
+}
+
+function syntheticWalletRegistry(legacyWallet = null) {
   const updatedAt = "1970-01-01T00:00:00.000Z";
   return {
     version: 1,
     providers: {
       "embedded-keystore": {
-        enabled: false,
+        enabled: legacyWallet !== null,
         updatedAt,
         label: "Legacy embedded keystore (migration required)",
       },
-      "local-socket-signer": { enabled: true, updatedAt, label: "Local signer" },
+      "local-socket-signer": {
+        enabled: legacyWallet === null,
+        updatedAt,
+        label: "Local signer",
+      },
       alchemy: { enabled: false, updatedAt },
       turnkey: { enabled: false, updatedAt, label: "Turnkey (policy-managed)" },
       "wallet-standard": {
@@ -112,8 +179,22 @@ function syntheticWalletRegistry() {
       },
       privy: { enabled: false, updatedAt, label: "Privy (integration unavailable)" },
     },
-    wallets: [],
+    wallets:
+      legacyWallet === null
+        ? []
+        : [
+            {
+              id: "agent-2",
+              name: "Agent 2",
+              providerId: "embedded-keystore",
+              addresses: { solana: legacyWallet.publicKey },
+              metadata: { role: "agent", purpose: "agent" },
+              createdAt: updatedAt,
+              updatedAt,
+            },
+          ],
     assignments: {},
+    ...(legacyWallet === null ? {} : { defaultWalletId: "agent-2" }),
     updatedAt,
   };
 }
@@ -188,6 +269,7 @@ export async function buildPublicPredecessorCapsule({
   const owner = profile === "hosting" ? "app" : "testop";
   const operatorUid = 2000;
   const operatorGid = 2000;
+  const legacyWallet = profile === "hosting" ? syntheticLegacyWallet() : null;
   const stateRelative = `home/${owner}/.fased`;
   const releaseRelative = `${stateRelative}/runtime/releases/${version}`;
   const source = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-public-predecessor-"));
@@ -222,7 +304,7 @@ export async function buildPublicPredecessorCapsule({
       await write(
         source,
         `${stateRelative}/fased.json`,
-        `${JSON.stringify({ gateway: { mode: profile === "hosting" ? "remote" : "local", bind: "loopback", port: profile === "hosting" ? 18789 : 19456, auth: { mode: "token", token: "synthetic-predecessor-token" }, remote: { token: "synthetic-predecessor-token" } } }, null, 2)}\n`,
+        `${JSON.stringify({ gateway: { mode: profile === "hosting" ? "remote" : "local", bind: "loopback", port: profile === "hosting" ? 18789 : 19456, auth: { mode: "token", token: "synthetic-predecessor-token" }, remote: { token: "synthetic-predecessor-token" } }, ...(legacyWallet === null ? {} : { wallet: { provider: { id: "embedded-keystore" } }, env: { vars: { FASED_WALLET_PASSPHRASE: legacyWallet.passphrase, FASED_WALLET_SOLANA_RPC_URL__AGENT_2: "https://api.mainnet-beta.solana.com" } } }) }, null, 2)}\n`,
         0o600,
       ),
     );
@@ -238,10 +320,20 @@ export async function buildPublicPredecessorCapsule({
       await write(
         source,
         `${stateRelative}/wallet/provider-registry.v1.json`,
-        `${JSON.stringify(syntheticWalletRegistry(), null, 2)}\n`,
+        `${JSON.stringify(syntheticWalletRegistry(legacyWallet), null, 2)}\n`,
         0o600,
       ),
     );
+    if (legacyWallet !== null) {
+      entries.push(
+        await write(
+          source,
+          `${stateRelative}/wallet/keystore-solana-agent-2.v1.enc`,
+          `${JSON.stringify(legacyWallet.envelope, null, 2)}\n`,
+          0o600,
+        ),
+      );
+    }
     entries.push(
       await write(
         source,

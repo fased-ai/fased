@@ -17,7 +17,9 @@ const FIELD_HELP_BASE: Record<string, string> = {
   "acp.runtime.installCommand":
     "Operator install/setup command shown by /acp install and /acp doctor.",
   "update.channel":
-    'Signed lifecycle channel used by the installed Go launcher ("stable", "beta", or "dev").',
+    "Legacy developer/package channel. Managed Go lifecycle updates ignore this field; select stable or beta explicitly with fased update --channel.",
+  "update.checkOnStart":
+    "Deprecated compatibility field. Managed Go lifecycle updates never run from Gateway startup.",
   "gateway.remote.url": "Remote Gateway WebSocket URL (ws:// or wss://).",
   "gateway.remote.tlsFingerprint":
     "Expected sha256 TLS fingerprint for the remote gateway (pin to avoid MITM).",
@@ -662,7 +664,9 @@ const SPECIFIC_FIELD_HELP: Record<string, string> = {
   "logging.redactSensitive":
     'Controls log redaction. "off" disables extra redaction, while "tools" redacts tool arguments and sensitive tool payloads before writing logs.',
   "update.channel":
-    'Self-update channel. "stable" is recommended, "beta" gets preview releases, and "dev" follows development builds with more churn.',
+    "Legacy developer/package channel. Managed Go lifecycle updates ignore it and accept an explicit stable or beta CLI channel.",
+  "update.checkOnStart":
+    "Deprecated compatibility field retained so older valid configs continue to load; it does not trigger managed updates.",
   "agents.defaults.compaction.mode":
     'Context compaction mode. "default" uses normal pruning; "safeguard" keeps stricter reserves for long tasks and memory-sensitive sessions.',
   "agents.defaults.compaction.identifierPolicy":

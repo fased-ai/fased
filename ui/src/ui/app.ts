@@ -1120,7 +1120,6 @@ export class FasedAgentApp extends LitElement {
   @state() configIssues: unknown[] = [];
   @state() configSaving = false;
   @state() configApplying = false;
-  @state() updateRunning = false;
   @state() applySessionKey = this.settings.lastActiveSessionKey;
   @state() configSnapshot: ConfigSnapshot | null = null;
   @state() configAuthStatus: import("./types.ts").ModelsAuthStatusResult | null = null;

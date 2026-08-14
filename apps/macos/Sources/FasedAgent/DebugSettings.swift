@@ -145,16 +145,6 @@ struct DebugSettings: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 GridRow {
-                    self.gridLabel("CLI")
-                    let loc = CLIInstaller.installedLocation()
-                    Text(loc ?? "missing")
-                        .font(.caption.monospaced())
-                        .foregroundStyle(loc == nil ? Color.red : Color.secondary)
-                        .textSelection(.enabled)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                GridRow {
                     self.gridLabel("PID")
                     Text("\(ProcessInfo.processInfo.processIdentifier)")
                 }

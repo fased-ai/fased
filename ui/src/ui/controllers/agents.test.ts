@@ -67,7 +67,6 @@ function createSaveState(): {
       configIssues: [],
       configSaving: false,
       configApplying: false,
-      updateRunning: false,
       configSnapshot: { hash: "hash-1" },
       configAuthStatus: null,
       configModelCatalogStatus: null,

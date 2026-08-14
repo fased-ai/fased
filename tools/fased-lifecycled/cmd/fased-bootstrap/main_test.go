@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -324,14 +325,18 @@ func TestPublicUpdateSelectsAnAttestedReplayProtectedChannelIndex(t *testing.T) 
 		return bootstrapVerifiedReleaseIndex{Index: decoded, Digest: hex.EncodeToString(digest[:]), ReleaseAuthorityDigest: strings.Repeat("d", 64)}, nil
 	}
 
-	selection, err := discoverSignedChannelRelease(context.Background(), "stable", client, "https://fixture.invalid/channel", hex.EncodeToString(rootDigest[:]), 41, 3, now, verify)
+	rootState := t.TempDir()
+	if err := os.Chmod(rootState, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	selection, err := discoverSignedChannelRelease(context.Background(), "stable", client, "https://fixture.invalid/channel", hex.EncodeToString(rootDigest[:]), rootState, uint32(os.Geteuid()), 41, 3, now, verify)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if selection.Version != index.Version || selection.ReleaseSequence != 42 || selection.SecurityEpoch != 3 || len(selection.IndexDigest) != 64 {
 		t.Fatalf("signed channel selection lost release identity: %+v", selection)
 	}
-	if _, err := discoverSignedChannelRelease(context.Background(), "stable", client, "https://fixture.invalid/channel", hex.EncodeToString(rootDigest[:]), 43, 3, now, verify); err == nil {
+	if _, err := discoverSignedChannelRelease(context.Background(), "stable", client, "https://fixture.invalid/channel", hex.EncodeToString(rootDigest[:]), rootState, uint32(os.Geteuid()), 43, 3, now, verify); err == nil {
 		t.Fatal("signed channel selection accepted a replay below the installed release sequence")
 	}
 	result := bootstrapResult{Version: selection.Version, ReleaseSequence: selection.ReleaseSequence, SecurityEpoch: selection.SecurityEpoch,
@@ -342,6 +347,78 @@ func TestPublicUpdateSelectsAnAttestedReplayProtectedChannelIndex(t *testing.T) 
 	result.ReleaseIndexDigest = "sha256:" + strings.Repeat("e", 64)
 	if err := validateSignedChannelResult(selection, result); err == nil {
 		t.Fatal("exact release was not bound to the selected channel index digest")
+	}
+}
+
+func TestPublicRootRotationIsDiscoveredAndBecomesADurableFloor(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	oldKeys := []fixtureKey{fixtureKeyPair(t), fixtureKeyPair(t), fixtureKeyPair(t)}
+	newKeys := []fixtureKey{fixtureKeyPair(t), fixtureKeyPair(t), fixtureKeyPair(t)}
+	metadata := func(version uint64, keys []fixtureKey) trust.RootMetadata {
+		root := trust.RootMetadata{SchemaVersion: 1, Type: "fased-lifecycle-root", Version: version,
+			IssuedAt: now.Add(-time.Hour).Format(time.RFC3339), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339),
+			Keys: map[string]trust.Key{}, Root: trust.RootRole{Threshold: 2},
+			ReleaseAuthority: &trust.ReleaseAuthority{Type: "github-artifact-attestation-v1", Repository: "fased-ai/fased", Workflow: "fased-ai/fased/.github/workflows/hosted-runtime-release.yml", SourceRefPrefix: "refs/tags/v", DenySelfHostedRunners: true},
+			Revocations:      trust.Revocations{ReleaseVersions: []string{}, TargetDigests: []string{}, DelegatedKeyIDs: []string{}}}
+		for _, key := range keys {
+			root.Keys[key.id] = key.record
+			root.Root.KeyIDs = append(root.Root.KeyIDs, key.id)
+		}
+		sortStrings(root.Root.KeyIDs)
+		return root
+	}
+	rootV1, err := trust.SignRoot(metadata(1, oldKeys), []trust.SigningKey{{KeyID: oldKeys[0].id, PrivateKey: oldKeys[0].private}, {KeyID: oldKeys[1].id, PrivateKey: oldKeys[1].private}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootV2Metadata := metadata(2, newKeys)
+	rootV2Metadata.Revocations.ReleaseVersions = []string{"0.1.75"}
+	rootV2, err := trust.SignRoot(rootV2Metadata, []trust.SigningKey{
+		{KeyID: oldKeys[0].id, PrivateKey: oldKeys[0].private}, {KeyID: oldKeys[1].id, PrivateKey: oldKeys[1].private},
+		{KeyID: newKeys[0].id, PrivateKey: newKeys[0].private}, {KeyID: newKeys[1].id, PrivateKey: newKeys[1].private},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootV1Digest := sha256.Sum256(rootV1)
+	stateRoot := t.TempDir()
+	if err := os.Chmod(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	clientFor := func(includeRotation bool) *http.Client {
+		return &http.Client{Transport: bootstrapRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			var data []byte
+			switch request.URL.Path {
+			case "/channel/" + releaseRootAssetName:
+				data = rootV1
+			case "/channel/" + rootRotationAssetName(2):
+				if includeRotation {
+					data = rootV2
+				}
+			}
+			if len(data) == 0 {
+				return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("missing")), Request: request}, nil
+			}
+			return &http.Response{StatusCode: http.StatusOK, ContentLength: int64(len(data)), Body: io.NopCloser(bytes.NewReader(data)), Request: request}, nil
+		})}
+	}
+
+	root, err := resolveTrustedRoot(context.Background(), clientFor(true), stateRoot, uint32(os.Geteuid()),
+		"https://fixture.invalid/channel/"+releaseRootAssetName, "https://fixture.invalid/channel", nil,
+		hex.EncodeToString(rootV1Digest[:]), now)
+	if err != nil || root.Version() != 2 {
+		t.Fatalf("public root rotation was not discovered: version=%d err=%v", root.Version(), err)
+	}
+	cachePath := filepath.Join(stateRoot, trustedRootCacheDirectory, rootRotationAssetName(2))
+	if cached, err := os.ReadFile(cachePath); err != nil || !bytes.Equal(cached, rootV2) {
+		t.Fatalf("verified root rotation was not persisted exactly: err=%v", err)
+	}
+
+	root, err = resolveTrustedRoot(context.Background(), clientFor(false), stateRoot, uint32(os.Geteuid()),
+		"https://fixture.invalid/channel/"+releaseRootAssetName, "https://fixture.invalid/channel", nil,
+		hex.EncodeToString(rootV1Digest[:]), now)
+	if err != nil || root.Version() != 2 {
+		t.Fatalf("network suppression rolled back the cached root floor: version=%d err=%v", root.Version(), err)
 	}
 }
 

@@ -18,7 +18,6 @@ function createConfigState(client: unknown): ConfigState {
     configIssues: [],
     configSaving: false,
     configApplying: false,
-    updateRunning: false,
     configSnapshot: null,
     configAuthStatus: null,
     configModelCatalogStatus: null,

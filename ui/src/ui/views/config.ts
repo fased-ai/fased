@@ -21,7 +21,6 @@ export type ConfigProps = {
   loading: boolean;
   saving: boolean;
   applying: boolean;
-  updating: boolean;
   connected: boolean;
   schema: unknown;
   schemaLoading: boolean;
@@ -45,7 +44,6 @@ export type ConfigProps = {
   onReload: () => void;
   onSave: () => void;
   onApply: () => void;
-  onUpdate?: () => void;
   onStoreProfileCredential: (params: {
     profileId: string;
     provider: string;
@@ -2824,7 +2822,6 @@ export function renderConfig(props: ConfigProps) {
   const canApply =
     props.connected &&
     !props.applying &&
-    !props.updating &&
     hasChanges &&
     (props.formMode === "raw" ? true : canSaveForm);
   const providerAuthSummary =

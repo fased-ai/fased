@@ -68,6 +68,7 @@ type hostedMigrationWalletV1 struct {
 type hostedMigrationMarkerV1 struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	PolicySHA256  string `json:"policySha256"`
+	Phase         string `json:"phase"`
 }
 
 type hostedMigrationConfigV1 struct {
@@ -89,7 +90,7 @@ func runSignerAdminHostedMigrationV1(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("fased-signerd admin migration hosted-v1", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var cfg hostedMigrationConfigV1
-	fs.StringVar(&cfg.Phase, "phase", "", "prepare or commit the one-time hosted migration")
+	fs.StringVar(&cfg.Phase, "phase", "", "validate, prepare, or commit the one-time hosted migration")
 	fs.StringVar(&cfg.ControlSocket, "control-socket", "", "absolute signer control socket path")
 	fs.StringVar(&cfg.PolicyFile, "policy-file", "", "absolute root-owned migration policy path")
 	fs.StringVar(&cfg.AppHome, "app-home", "", "absolute hosted application home")
@@ -106,8 +107,8 @@ func runSignerAdminHostedMigrationV1(args []string, stdout io.Writer) error {
 }
 
 func runHostedSignerMigrationV1(cfg hostedMigrationConfigV1, stdout io.Writer) error {
-	if cfg.Phase != "prepare" && cfg.Phase != "commit" {
-		return errors.New("--phase must be prepare or commit")
+	if cfg.Phase != "validate" && cfg.Phase != "prepare" && cfg.Phase != "commit" {
+		return errors.New("--phase must be validate, prepare, or commit")
 	}
 	for label, value := range map[string]string{
 		"--control-socket":     cfg.ControlSocket,
@@ -209,6 +210,23 @@ func runHostedSignerMigrationV1(cfg hostedMigrationConfigV1, stdout io.Writer) e
 	if markerExists && marker.PolicySHA256 != policyDigestLabel {
 		return errors.New("hosted signer migration policy changed after the transaction was prepared")
 	}
+	if markerExists && marker.Phase == "committed" {
+		verified := make([]signerWalletPolicyResultV2, 0, len(wallets))
+		for _, wallet := range wallets {
+			result, exists, err := readAndVerifyHostedMigrationWalletV1(cfg.ControlSocket, wallet)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				return fmt.Errorf("signer wallet %s is missing after migration commit", wallet.WalletID)
+			}
+			verified = append(verified, result)
+		}
+		if err := verifyHostedMigrationHealthV1(cfg.ControlSocket, verified); err != nil {
+			return err
+		}
+		return nil
+	}
 	if cfg.Phase == "commit" && !markerExists {
 		return errors.New("hosted signer migration has no durable prepared transaction marker")
 	}
@@ -221,6 +239,19 @@ func runHostedSignerMigrationV1(cfg hostedMigrationConfigV1, stdout io.Writer) e
 			return err
 		}
 		if !exists {
+			if cfg.Phase == "validate" {
+				keystore, err := openHostedMigrationSourceV1(wallet.KeystorePath, allowedRoots, allowedUIDs, "legacy encrypted keystore", maxHostedMigrationLegacyKeystoreBytesV1)
+				if err != nil {
+					return err
+				}
+				keystore.Close()
+				passphrase, err := openHostedMigrationSourceV1(wallet.PassphrasePath, allowedRoots, allowedUIDs, "legacy passphrase", maxHostedMigrationLegacyPassphraseBytesV1)
+				if err != nil {
+					return err
+				}
+				passphrase.Close()
+				continue
+			}
 			if cfg.Phase == "commit" {
 				return fmt.Errorf("signer wallet %s is missing during migration commit", wallet.WalletID)
 			}
@@ -236,6 +267,9 @@ func runHostedSignerMigrationV1(cfg hostedMigrationConfigV1, stdout io.Writer) e
 			}
 		}
 		verified = append(verified, result)
+		if cfg.Phase == "validate" {
+			continue
+		}
 		configured, err := configureHostedMigrationNetworkV1(cfg.ControlSocket, wallet)
 		if err != nil {
 			return err
@@ -245,12 +279,16 @@ func runHostedSignerMigrationV1(cfg hostedMigrationConfigV1, stdout io.Writer) e
 	if err := verifyHostedMigrationHealthV1(cfg.ControlSocket, verified); err != nil {
 		return err
 	}
+	if cfg.Phase == "validate" {
+		return nil
+	}
 
 	if cfg.Phase == "prepare" {
 		if !markerExists {
 			if err := writeHostedMigrationMarkerV1(cfg.MarkerFile, hostedMigrationMarkerV1{
 				SchemaVersion: hostedMigrationSchemaVersionV1,
 				PolicySHA256:  policyDigestLabel,
+				Phase:         "prepared",
 			}); err != nil {
 				return err
 			}
@@ -297,11 +335,9 @@ func runHostedSignerMigrationV1(cfg hostedMigrationConfigV1, stdout io.Writer) e
 			return err
 		}
 	}
-	if err := os.Remove(cfg.MarkerFile); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return errors.New("remove hosted signer migration transaction marker")
-	}
-	if err := syncHostedMigrationDirectoryV1(filepath.Dir(cfg.MarkerFile)); err != nil {
-		return errors.New("sync hosted signer migration marker directory")
+	marker.Phase = "committed"
+	if err := replaceHostedMigrationMarkerV1(cfg.MarkerFile, marker); err != nil {
+		return err
 	}
 	for index, wallet := range wallets {
 		if _, err := fmt.Fprintf(
@@ -969,7 +1005,7 @@ func readHostedMigrationMarkerV1(path string, expectedUID uint32) (hostedMigrati
 	}
 	defer zeroBytes(raw)
 	var marker hostedMigrationMarkerV1
-	if err := decodeSignerAdminStrictJSON(raw, &marker); err != nil || marker.SchemaVersion != hostedMigrationSchemaVersionV1 || !strings.HasPrefix(marker.PolicySHA256, "sha256:") || len(marker.PolicySHA256) != len("sha256:")+64 {
+	if err := decodeSignerAdminStrictJSON(raw, &marker); err != nil || marker.SchemaVersion != hostedMigrationSchemaVersionV1 || (marker.Phase != "prepared" && marker.Phase != "committed") || !strings.HasPrefix(marker.PolicySHA256, "sha256:") || len(marker.PolicySHA256) != len("sha256:")+64 {
 		return hostedMigrationMarkerV1{}, false, errors.New("hosted signer migration transaction marker is invalid")
 	}
 	if _, err := hex.DecodeString(strings.TrimPrefix(marker.PolicySHA256, "sha256:")); err != nil {
@@ -979,6 +1015,14 @@ func readHostedMigrationMarkerV1(path string, expectedUID uint32) (hostedMigrati
 }
 
 func writeHostedMigrationMarkerV1(path string, marker hostedMigrationMarkerV1) error {
+	return persistHostedMigrationMarkerV1(path, marker, false)
+}
+
+func replaceHostedMigrationMarkerV1(path string, marker hostedMigrationMarkerV1) error {
+	return persistHostedMigrationMarkerV1(path, marker, true)
+}
+
+func persistHostedMigrationMarkerV1(path string, marker hostedMigrationMarkerV1, replace bool) error {
 	encoded, err := json.Marshal(marker)
 	if err != nil {
 		return errors.New("encode hosted signer migration transaction marker")
@@ -1009,9 +1053,12 @@ func writeHostedMigrationMarkerV1(path string, marker hostedMigrationMarkerV1) e
 			writeErr = closeErr
 		}
 		if writeErr == nil {
-			if _, err := os.Lstat(path); err == nil {
+			_, err := os.Lstat(path)
+			if replace && err != nil {
+				writeErr = errors.New("hosted signer migration transaction marker disappeared concurrently")
+			} else if !replace && err == nil {
 				writeErr = errors.New("hosted signer migration transaction marker appeared concurrently")
-			} else if !errors.Is(err, os.ErrNotExist) {
+			} else if !replace && !errors.Is(err, os.ErrNotExist) {
 				writeErr = err
 			}
 		}

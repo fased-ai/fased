@@ -32,14 +32,14 @@ var branchFixturePinnedRootSHA256 string
 const maxMetadataSize = 1 << 20
 
 type bootstrapRequest struct {
-	StateRoot, HostRoot, RootURL, IndexURL, IndexAttestationURL, ReleaseBaseURL string
-	Channel, Version, Architecture, PinnedRootSHA256                            string
-	RootRotationURLs                                                            []string
-	OwnerUID                                                                    uint32
-	Client                                                                      *http.Client
-	Now                                                                         time.Time
-	VerifyIndex                                                                 releaseIndexVerifier
-	Inspect                                                                     func(context.Context, host.StagedHost) error
+	StateRoot, HostRoot, RootURL, RootRotationBaseURL, IndexURL, IndexAttestationURL, ReleaseBaseURL string
+	Channel, Version, Architecture, PinnedRootSHA256                                                 string
+	RootRotationURLs                                                                                 []string
+	OwnerUID                                                                                         uint32
+	Client                                                                                           *http.Client
+	Now                                                                                              time.Time
+	VerifyIndex                                                                                      releaseIndexVerifier
+	Inspect                                                                                          func(context.Context, host.StagedHost) error
 }
 
 type bootstrapResult struct {
@@ -97,6 +97,7 @@ func run(args []string, output io.Writer) error {
 	flags.StringVar(&request.StateRoot, "state-root", "", "")
 	flags.StringVar(&request.HostRoot, "host-root", "", "")
 	flags.StringVar(&request.RootURL, "root-url", "", "")
+	flags.StringVar(&request.RootRotationBaseURL, "root-rotation-base-url", "", "")
 	flags.Var((*stringListFlag)(&request.RootRotationURLs), "root-rotation-url", "")
 	flags.StringVar(&request.IndexURL, "index-url", "", "")
 	flags.StringVar(&request.IndexAttestationURL, "index-attestation-url", "", "")
@@ -130,23 +131,9 @@ func execute(ctx context.Context, request bootstrapRequest) (bootstrapResult, er
 	if client == nil {
 		client = &http.Client{Timeout: 2 * time.Minute, CheckRedirect: secureMetadataRedirect}
 	}
-	rootJSON, err := fetchMetadata(ctx, client, request.RootURL)
+	root, err := resolveTrustedRoot(ctx, client, request.StateRoot, request.OwnerUID, request.RootURL, request.RootRotationBaseURL, request.RootRotationURLs, request.PinnedRootSHA256, request.Now)
 	if err != nil {
 		return bootstrapResult{}, err
-	}
-	root, err := trust.VerifyInitialRoot(rootJSON, request.PinnedRootSHA256, request.Now)
-	if err != nil {
-		return bootstrapResult{}, err
-	}
-	for _, rotationURL := range request.RootRotationURLs {
-		rotationJSON, err := fetchMetadata(ctx, client, rotationURL)
-		if err != nil {
-			return bootstrapResult{}, err
-		}
-		root, err = trust.VerifyRootRotation(root, rotationJSON, request.Now)
-		if err != nil {
-			return bootstrapResult{}, err
-		}
 	}
 	indexJSON, err := fetchMetadata(ctx, client, request.IndexURL)
 	if err != nil {

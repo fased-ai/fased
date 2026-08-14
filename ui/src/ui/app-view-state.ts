@@ -258,7 +258,6 @@ export type AppViewState = {
   configIssues: unknown[];
   configSaving: boolean;
   configApplying: boolean;
-  updateRunning: boolean;
   applySessionKey: string;
   configSnapshot: ConfigSnapshot | null;
   configAuthStatus: import("./types.ts").ModelsAuthStatusResult | null;

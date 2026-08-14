@@ -397,6 +397,7 @@ func TestHostedMigrationMarkerIsAtomicStrictAndOwnerChecked(t *testing.T) {
 	marker := hostedMigrationMarkerV1{
 		SchemaVersion: hostedMigrationSchemaVersionV1,
 		PolicySHA256:  "sha256:" + strings.Repeat("a", 64),
+		Phase:         "prepared",
 	}
 	if err := writeHostedMigrationMarkerV1(path, marker); err != nil {
 		t.Fatal(err)
@@ -414,5 +415,13 @@ func TestHostedMigrationMarkerIsAtomicStrictAndOwnerChecked(t *testing.T) {
 	}
 	if _, _, err := readHostedMigrationMarkerV1(path, owner.UID+1); err == nil || !strings.Contains(err.Error(), "unexpected owner") {
 		t.Fatalf("expected owner mismatch rejection, got %v", err)
+	}
+	marker.Phase = "committed"
+	if err := replaceHostedMigrationMarkerV1(path, marker); err != nil {
+		t.Fatal(err)
+	}
+	stored, exists, err = readHostedMigrationMarkerV1(path, owner.UID)
+	if err != nil || !exists || stored != marker {
+		t.Fatalf("read committed marker: stored=%#v exists=%v err=%v", stored, exists, err)
 	}
 }

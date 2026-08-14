@@ -556,7 +556,8 @@ describe("CI workflow routing", () => {
     expect(candidateText).toContain("pnpm install --frozen-lockfile");
     expect(candidateText).toContain("release-artifact-set.mjs build");
     expect(candidateText).toContain("build-lifecycle-release-index.mjs");
-    expect(candidateText).toContain("fased-lifecycle-root-v1.json");
+    expect(candidateText).toContain("fased-lifecycle-root-v*.json");
+    expect(candidateText).toContain("verify-lifecycle-root-chain.mjs");
     expect(candidateText).toContain("fased-release-index-v1.json");
     expect(candidateText).toContain("fased-release-index-v1.json.attestation.json");
     expect(candidateText.indexOf("build-lifecycle-release-index.mjs")).toBeLessThan(

@@ -556,9 +556,24 @@ jobs:
             --issued-at "${lifecycle_times[0]}" \
             --vex-decisions release/vulnerability-decisions-v1.json \
             --output-dir .artifacts/hosted-runtime
+
+          root_pin=release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.sha256
+          root_stage="$RUNNER_TEMP/fased-lifecycle-roots"
+          mkdir -p "$root_stage"
+          mapfile -t root_policies < <(find release/lifecycle-trust -mindepth 2 -maxdepth 2 \
+            -type f -name 'fased-lifecycle-root-v*.json' | sort -V)
+          test "${#root_policies[@]}" -gt 0
+          for source_root in "${root_policies[@]}"; do
+            root_name="$(basename "$source_root")"
+            test ! -e "$root_stage/$root_name"
+            install -m 0644 "$source_root" "$root_stage/$root_name"
+            install -m 0644 "$source_root" ".artifacts/hosted-runtime/$root_name"
+          done
+          node scripts/verify-lifecycle-root-chain.mjs --directory "$root_stage" --pin "$root_pin"
+          root_policy="${root_policies[${#root_policies[@]}-1]}"
           node scripts/build-lifecycle-trust-metadata.mjs \
             --assets .artifacts/hosted-runtime \
-            --root-policy release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json \
+            --root-policy "$root_policy" \
             --version "$package_version" \
             --commit "$GITHUB_SHA" \
             --issued-at "${lifecycle_times[0]}" \
@@ -574,12 +589,6 @@ jobs:
             --commit "$GITHUB_SHA" \
             --tree "$(git rev-parse 'HEAD^{tree}')" \
             --output .artifacts/hosted-runtime/fased-lifecycle-release-compatibility-v1.json
-
-          root_policy=release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json
-          node scripts/verify-lifecycle-root-pin.mjs --root "$root_policy"
-          install -m 0644 \
-            "$root_policy" \
-            .artifacts/hosted-runtime/fased-lifecycle-root-v1.json
 
           channel=stable
           if [[ "$package_version" == *-* ]]; then channel=beta; fi
@@ -682,8 +691,9 @@ jobs:
           verify fased-release-index-v1.json fased-release-index-v1.json.attestation.json
           verify fased-privileged-provenance-v1.intoto.json \
             fased-privileged-provenance-v1.intoto.json.attestation.json
-          test "$(sha256sum fased-lifecycle-root-v1.json | awk '{print $1}')" = \
-            "$(cat ../../release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.sha256)"
+          node ../../scripts/verify-lifecycle-root-chain.mjs \
+            --directory . \
+            --pin ../../release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.sha256
           verify fased-signerd-linux-amd64 fased-signerd-release.attestation.json
           verify install.sh install.sh.attestation.json
           verify fased-lifecycled-linux-amd64 fased-lifecycled-release.attestation.json

@@ -75,7 +75,6 @@ struct FasedAgentApp: App {
         }
         .onChange(of: self.state.connectionMode) { _, mode in
             Task { await ConnectionModeCoordinator.shared.apply(mode: mode, paused: self.state.isPaused) }
-            CLIInstallPrompter.shared.checkAndPromptIfNeeded(reason: "connection-mode")
         }
 
         Settings {
@@ -287,10 +286,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { await PortGuardian.shared.sweep(mode: AppStateStore.shared.connectionMode) }
         Task { await PeekabooBridgeHostCoordinator.shared.setEnabled(AppStateStore.shared.peekabooBridgeEnabled) }
         self.scheduleFirstRunOnboardingIfNeeded()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            CLIInstallPrompter.shared.checkAndPromptIfNeeded(reason: "launch")
-        }
-
         // Developer/testing helper: auto-open chat when launched with --chat (or legacy --webchat).
         if CommandLine.arguments.contains("--chat") || CommandLine.arguments.contains("--webchat") {
             self.webChatAutoLogger.debug("Auto-opening chat via CLI flag")

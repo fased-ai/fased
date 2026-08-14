@@ -53,7 +53,6 @@ const requiredPathGroups = [
   "scripts/fased-signer-owner-policy.mjs",
   "scripts/fased-signer-policy-hosting.sh",
   "scripts/fased-signer-policy-local.sh",
-  "scripts/fased-launcher-runtime.mjs",
   "scripts/install-fased-signerd.sh",
   "scripts/install-development.sh",
   "scripts/hosted-release-manifest.mjs",

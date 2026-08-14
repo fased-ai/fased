@@ -8,6 +8,7 @@ const onboardingHostSecurity = read("../src/wizard/onboarding.host-security.ts")
 const targetAdapter = read("../tools/fased-lifecycled/platform/target_adapter.go");
 const networkPolicy = read("../tools/fased-lifecycled/platform/network_policy.go");
 const bootstrap = read("../tools/fased-lifecycled/cmd/fased-bootstrap/main.go");
+const bootstrapRootChain = read("../tools/fased-lifecycled/cmd/fased-bootstrap/root_chain.go");
 const bootstrapRoute = read("../tools/fased-lifecycled/cmd/fased-bootstrap/route.go");
 
 describe("hosted signer security boundary", () => {
@@ -19,8 +20,9 @@ describe("hosted signer security boundary", () => {
     expect(install).toContain('[[ "$actual_sha256" == "$bootstrap_sha256" ]]');
     expect(install).toContain('install -m 0555 "$download" "$bootstrap"');
     expect(install).toContain('"${root_command[@]}" "$bootstrap" "${bootstrap_args[@]}"');
-    expect(bootstrap).toContain("trust.VerifyInitialRoot");
-    expect(bootstrap).toContain("trust.VerifyRootRotation");
+    expect(bootstrapRootChain).toContain("trust.VerifyInitialRoot");
+    expect(bootstrapRootChain).toContain("trust.VerifyRootRotation");
+    expect(bootstrapRootChain).toContain("persistTrustedRoot");
     expect(bootstrap).toContain("trust.VerifyAttestedReleaseIndex");
     expect(bootstrapRoute).toMatch(
       /productionReleaseBase\s*=\s*"https:\/\/github\.com\/fased-ai\/fased\/releases\/download"/u,

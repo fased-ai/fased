@@ -33,8 +33,8 @@ const (
 )
 
 type publicReleaseRoute struct {
-	RootURL, IndexURL, IndexAttestationURL, ReleaseBaseURL, PinnedRootSHA256 string
-	VerifyIndex                                                              releaseIndexVerifier
+	RootURL, RootRotationBaseURL, IndexURL, IndexAttestationURL, ReleaseBaseURL, PinnedRootSHA256 string
+	VerifyIndex                                                                                   releaseIndexVerifier
 }
 
 type publicLifecycleRequest struct {
@@ -200,7 +200,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		selection, selectionErr := discoverSignedChannelRelease(
 			ctx, request.Channel, discoveryClient,
 			productionChannelReleasePrefix+request.Channel+"-v1", productionPinnedRootSHA256,
-			installedStatus.ReleaseSequence, installedStatus.SecurityEpoch, now, nil,
+			"/var/lib/fased-bootstrap", 0, installedStatus.ReleaseSequence, installedStatus.SecurityEpoch, now, nil,
 		)
 		if selectionErr != nil {
 			return selectionErr
@@ -212,9 +212,15 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	if err != nil {
 		return err
 	}
+	releaseRoute.RootRotationBaseURL = productionChannelReleasePrefix + request.Channel + "-v1"
+	if releaseRoute.VerifyIndex != nil {
+		// Unpublished branch fixtures are isolated from the production channel and
+		// must serve any test rotation chain beside their exact fixture metadata.
+		releaseRoute.RootRotationBaseURL = releaseRoute.ReleaseBaseURL
+	}
 	bootstrap := bootstrapRequest{
 		StateRoot: "/var/lib/fased-bootstrap", HostRoot: "/opt/fased/lifecycle",
-		RootURL: releaseRoute.RootURL, IndexURL: releaseRoute.IndexURL,
+		RootURL: releaseRoute.RootURL, RootRotationBaseURL: releaseRoute.RootRotationBaseURL, IndexURL: releaseRoute.IndexURL,
 		IndexAttestationURL: releaseRoute.IndexAttestationURL, ReleaseBaseURL: releaseRoute.ReleaseBaseURL,
 		Channel: request.Channel, Version: request.Version, Architecture: architecture(),
 		PinnedRootSHA256: releaseRoute.PinnedRootSHA256, OwnerUID: 0, Now: now, Inspect: inspectLifecycleHost,
@@ -260,7 +266,7 @@ func validateSignedChannelResult(selection signedChannelSelection, result bootst
 	return nil
 }
 
-func discoverSignedChannelRelease(ctx context.Context, channel string, client *http.Client, baseURL, pinnedRootSHA256 string, minimumReleaseSequence, minimumSecurityEpoch uint64, now time.Time, verifyIndex releaseIndexVerifier) (signedChannelSelection, error) {
+func discoverSignedChannelRelease(ctx context.Context, channel string, client *http.Client, baseURL, pinnedRootSHA256, stateRoot string, ownerUID uint32, minimumReleaseSequence, minimumSecurityEpoch uint64, now time.Time, verifyIndex releaseIndexVerifier) (signedChannelSelection, error) {
 	if channel != "stable" && channel != "beta" {
 		return signedChannelSelection{}, errors.New("release discovery channel must be stable or beta")
 	}
@@ -279,11 +285,7 @@ func discoverSignedChannelRelease(ctx context.Context, channel string, client *h
 	if err != nil {
 		return signedChannelSelection{}, err
 	}
-	rootJSON, err := fetchMetadata(ctx, client, rootURL)
-	if err != nil {
-		return signedChannelSelection{}, fmt.Errorf("fetch signed %s channel root: %w", channel, err)
-	}
-	root, err := trust.VerifyInitialRoot(rootJSON, pinnedRootSHA256, now)
+	root, err := resolveTrustedRoot(ctx, client, stateRoot, ownerUID, rootURL, baseURL, nil, pinnedRootSHA256, now)
 	if err != nil {
 		return signedChannelSelection{}, fmt.Errorf("verify signed %s channel root: %w", channel, err)
 	}
