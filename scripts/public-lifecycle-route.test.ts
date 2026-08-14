@@ -20,12 +20,18 @@ describe("D7 public lifecycle routing", () => {
     expect(installer).not.toContain("generation-updater.mjs");
   });
 
-  it("routes the managed updater only through the fixed bootstrap client", async () => {
-    const updater = await source("scripts/fased-managed-updater.mjs");
-    expect(updater).toContain("/opt/fased/lifecycle/bootstrap-v1/fased-bootstrap");
-    expect(updater).toContain('"update"');
-    expect(updater).not.toContain("fased-generation-updater-core.mjs");
-    expect(updater).not.toContain("generation-updater.mjs");
+  it("routes managed update through the fixed bootstrap before the application generation", async () => {
+    const launcher = await source("tools/fased-lifecycled/platform/cli_launcher.go");
+    const route = await source("tools/fased-lifecycled/cmd/fased-bootstrap/route.go");
+    expect(launcher).toContain("/opt/fased/lifecycle/bootstrap-v1/fased-bootstrap");
+    expect(launcher).toContain("managed_update=0");
+    expect(launcher).toContain('[[ "${1:-}" == "--update" ]]');
+    expect(launcher.indexOf("managed_update=0")).toBeLessThan(
+      launcher.indexOf('current="$install_root/current"'),
+    );
+    expect(route).toContain("discoverPublicReleaseVersion");
+    expect(route).toContain("api.github.com/repos/fased-ai/fased/releases");
+    expect(route).not.toContain("registry.npmjs.org");
   });
 
   it("keeps development installation explicit and outside the public shim", async () => {

@@ -148,6 +148,9 @@ func (systemd fakeSystemd) call(name string) error {
 	return nil
 }
 func (systemd fakeSystemd) DaemonReload(context.Context) error { return systemd.call("systemd.reload") }
+func (systemd fakeSystemd) ResetFailed(_ context.Context, unit string) error {
+	return systemd.call("systemd.reset-failed:" + unit)
+}
 func (systemd fakeSystemd) Stop(_ context.Context, unit string) error {
 	return systemd.call("systemd.stop:" + unit)
 }
@@ -769,7 +772,7 @@ func TestTargetAdapterRestoresPreviousButDoesNotStartAbsentFreshServices(t *test
 	if err := adapter.Restore(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(*calls, []string{"files.restore", "plugins.restore:" + digestB, "shared.restore", "units.restore", "systemd.reload", "systemd.start:fased-signerd-example.service", "systemd.start:fased-gateway-example.service"}) {
+	if !reflect.DeepEqual(*calls, []string{"files.restore", "plugins.restore:" + digestB, "shared.restore", "units.restore", "systemd.reload", "systemd.reset-failed:fased-signerd-example.service", "systemd.start:fased-signerd-example.service", "systemd.reset-failed:fased-gateway-example.service", "systemd.start:fased-gateway-example.service"}) {
 		t.Fatalf("update restore order changed: %v", *calls)
 	}
 	*calls = nil

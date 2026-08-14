@@ -24,7 +24,6 @@ import {
   verifyLocalSourceSigner,
   type LocalSourcePairedUpdateJournal,
 } from "../../infra/local-source-paired-update.js";
-import { ensureManagedRuntimeBootstrap } from "../../infra/managed-runtime-bootstrap.js";
 import { loadGatewayTlsRuntime } from "../../infra/tls/gateway.js";
 import {
   channelToNpmTag,
@@ -852,86 +851,12 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
   const managedRuntimeSource = new Set(["go-lifecycle", "managed-package", "packaged-runtime"]).has(
     process.env.FASED_RUNTIME_SOURCE ?? "",
   );
-  const managedChannel = requestedChannel ?? storedChannel ?? "stable";
-  if (managedRuntimeSource && opts.dryRun) {
-    defaultRuntime.error("Go lifecycle updates do not support --dry-run.");
-    defaultRuntime.exit(1);
-    return;
-  }
-  if (managedRuntimeSource && managedChannel === "dev") {
+  if (managedRuntimeSource) {
     defaultRuntime.error(
-      "Go lifecycle installations support only stable and beta update channels.",
+      "The stable managed launcher did not intercept this update. Rerun the verified installer to repair the owner command.",
     );
     defaultRuntime.exit(1);
     return;
-  }
-  const shouldTryManagedUpdater =
-    managedRuntimeSource || (installKind === "package" && !opts.dryRun && managedChannel !== "dev");
-  if (shouldTryManagedUpdater) {
-    try {
-      const managed = await ensureManagedRuntimeBootstrap({
-        packageRoot:
-          managedRuntimeSource && process.env.FASED_MANAGED_RUNTIME_ROOT
-            ? process.env.FASED_MANAGED_RUNTIME_ROOT
-            : root,
-        env: process.env,
-      });
-      if (managed.updaterPath) {
-        if (opts.restart === false) {
-          defaultRuntime.error(
-            "Go lifecycle updates require transactional service restart; --no-restart is not supported.",
-          );
-          defaultRuntime.exit(1);
-          return;
-        }
-        if (opts.safeFallback) {
-          defaultRuntime.error("Go lifecycle updates do not accept unsigned fallback targets.");
-          defaultRuntime.exit(1);
-          return;
-        }
-        const managedArgs = [managed.updaterPath];
-        if (opts.json) {
-          managedArgs.push("--json");
-        }
-        managedArgs.push("--channel", managedChannel);
-        if (opts.tag) {
-          if (opts.tag === "stable" || opts.tag === "beta" || opts.tag === "latest") {
-            managedArgs.splice(managedArgs.length - 1, 1, opts.tag === "beta" ? "beta" : "stable");
-          } else {
-            managedArgs.push("--version", opts.tag);
-          }
-        }
-        if (opts.verbose) {
-          managedArgs.push("--verbose");
-        }
-        const result = await runCommandWithTimeout([process.execPath, ...managedArgs], {
-          cwd: path.dirname(managed.updaterPath),
-          env: process.env,
-          timeoutMs: timeoutMs ?? 20 * 60_000,
-        });
-        if (result.stdout) {
-          process.stdout.write(result.stdout);
-        }
-        if (result.stderr) {
-          process.stderr.write(result.stderr);
-        }
-        if (result.code !== 0) {
-          defaultRuntime.exit(result.code ?? 1);
-        } else {
-          await recordUpdateSuccess({ mode: "managed" });
-        }
-        return;
-      }
-      if (managedRuntimeSource) {
-        defaultRuntime.error("The fixed Go lifecycle updater is unavailable.");
-        defaultRuntime.exit(1);
-        return;
-      }
-    } catch (error) {
-      defaultRuntime.error(`Managed updater bootstrap failed: ${String(error)}`);
-      defaultRuntime.exit(1);
-      return;
-    }
   }
   const switchToGit = requestedChannel === "dev" && installKind !== "git";
   const switchToPackage =

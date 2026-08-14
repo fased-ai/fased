@@ -9,8 +9,9 @@ import (
 )
 
 // RenderCLILauncher creates the stable owner-facing command. Runtime and
-// dependency identities remain selected by root-owned current/inventory data;
-// the launcher never chooses a release version or mutates lifecycle state.
+// dependency identities remain selected by root-owned current/inventory data.
+// Mutating managed updates enter the separately installed static bootstrap
+// before reading replaceable application-generation bytes.
 func RenderCLILauncher(config Config) ([]byte, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
@@ -36,6 +37,35 @@ export FASED_HOST_UPDATER_SOCKET=%q
 export FASED_WALLET_LOCAL_SIGNER_BIN=%q
 export FASED_WALLET_LOCAL_SIGNER_SOCKET=%q
 %s
+managed_update=0
+if [[ "${1:-}" == "--update" ]]; then
+  managed_update=1
+elif [[ "${1:-}" == "update" ]]; then
+  managed_update=1
+  for update_arg in "$@"; do
+    if [[ "$update_arg" == "status" || "$update_arg" == "wizard" || "$update_arg" == "--help" || "$update_arg" == "-h" ]]; then
+      managed_update=0
+      break
+    fi
+  done
+fi
+if [[ "$managed_update" == "1" ]]; then
+  bootstrap="/opt/fased/lifecycle/bootstrap-v1/fased-bootstrap"
+  [[ -f "$bootstrap" && ! -L "$bootstrap" && -x "$bootstrap" ]] || {
+    echo "Fased lifecycle client is unavailable; rerun the verified installer." >&2
+    exit 1
+  }
+  read -r bootstrap_uid bootstrap_mode bootstrap_links <<<"$(stat -Lc '%%u %%a %%h' "$bootstrap")"
+  [[ "$bootstrap_uid" == "0" && "$bootstrap_mode" == "555" && "$bootstrap_links" == "1" ]] || {
+    echo "Fased lifecycle client is unsafe; rerun the verified installer." >&2
+    exit 1
+  }
+  shift
+  if [[ "$(id -u)" == "0" ]]; then
+    exec "$bootstrap" update --profile "$FASED_LIFECYCLE_PROFILE" "$@"
+  fi
+  exec /usr/bin/sudo -n "$bootstrap" update --profile "$FASED_LIFECYCLE_PROFILE" "$@"
+fi
 current="$install_root/current"
 inventory="$current/inventory.json"
 runtime="$current/payload/runtime/fased.mjs"
