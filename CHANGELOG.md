@@ -4,6 +4,11 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.87
+
+- Write release archives through a bounded, verified, atomic stream transaction
+  so stalled or partial output cannot become a candidate asset.
+
 ## 0.1.76-rc.86
 
 - Build offline production artifacts from the frozen lockfile and content-addressed
