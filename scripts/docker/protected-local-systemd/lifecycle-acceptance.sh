@@ -883,9 +883,20 @@ if [[ "${1:-}" == "attestation" && "${2:-}" == "verify" ]]; then
   done
   [[ -f /artifacts/fased-branch-proof-x64.json &&
     -f "$subject" && ! -L "$subject" &&
-    -f "$bundle" && ! -L "$bundle" ]]
-  cmp -s "$subject" /artifacts/fased-hosted-release-v2.json
-  cmp -s "$bundle" /artifacts/fased-hosted-release-v2.json.attestation.json
+    -f "$bundle" && ! -L "$bundle" ]] || {
+    echo "branch fixture attestation paths are invalid" >&2
+    exit 1
+  }
+  cmp -s "$subject" /artifacts/fased-hosted-release-v2.json || {
+    echo "branch fixture attestation subject differs" >&2
+    sha256sum "$subject" /artifacts/fased-hosted-release-v2.json >&2
+    exit 1
+  }
+  cmp -s "$bundle" /artifacts/fased-hosted-release-v2.json.attestation.json || {
+    echo "branch fixture attestation bundle differs" >&2
+    sha256sum "$bundle" /artifacts/fased-hosted-release-v2.json.attestation.json >&2
+    exit 1
+  }
   jq -e 'keys == ["fixtureOfflineAttestation"] and .fixtureOfflineAttestation == true' \
     "$bundle" >/dev/null
   exit 0
