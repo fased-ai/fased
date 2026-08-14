@@ -157,12 +157,14 @@ describe("npm-free managed lifecycle", () => {
     const packedSmoke = await source("scripts/smoke-packed-core.ts");
     const workspace = await source("pnpm-workspace.yaml");
     const offlineProductionDeploy =
-      '["--offline", "--filter", "@fased/fased", "deploy", "--prod", "--no-optional"';
+      /"--store-dir",\s*pnpmStore,\s*"--offline",\s*"--filter",\s*"@fased\/fased",\s*"deploy",\s*"--prod",\s*"--no-optional"/u;
 
     expect(workspace).toContain("injectWorkspacePackages: true");
     expect(workspace).not.toContain("forceLegacyDeploy: true");
-    expect(artifactBuilder).toContain(offlineProductionDeploy);
-    expect(packedSmoke).toContain(offlineProductionDeploy);
+    expect(artifactBuilder).toContain('["store", "path", "--silent"]');
+    expect(packedSmoke).toContain('["store", "path", "--silent"]');
+    expect(artifactBuilder).toMatch(offlineProductionDeploy);
+    expect(packedSmoke).toMatch(offlineProductionDeploy);
   });
 
   it("removes npm from release acceptance and deletes its superseded installer smoke", async () => {
