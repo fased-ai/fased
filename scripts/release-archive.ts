@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { createGzip } from "node:zlib";
 import * as tar from "tar";
 
 type DestroyableByteStream = AsyncIterable<Uint8Array> & {
@@ -19,6 +20,7 @@ type ArchiveFilter =
 type AtomicStreamOptions = {
   destination: string;
   source: DestroyableByteStream;
+  transforms?: Transform[];
   idleTimeoutMs: number;
   verify: (stagedPath: string) => Promise<void>;
 };
@@ -45,6 +47,7 @@ function requireTimeout(value: number): number {
 async function pipelineWithIdleTimeout(
   source: DestroyableByteStream,
   destination: DestroyableByteStream,
+  transforms: Transform[],
   idleTimeoutMs: number,
   label: string,
 ): Promise<void> {
@@ -61,6 +64,9 @@ async function pipelineWithIdleTimeout(
       );
       source.destroy(error);
       progress.destroy(error);
+      for (const transform of transforms) {
+        transform.destroy(error);
+      }
       destination.destroy(error);
       rejectDeadline?.(error);
     }, idleTimeoutMs);
@@ -76,7 +82,7 @@ async function pipelineWithIdleTimeout(
     rejectDeadline = reject;
   });
   armDeadline();
-  const transfer = pipeline(source, progress, destination);
+  const transfer = pipeline([source, progress, ...transforms, destination]);
 
   try {
     await Promise.race([transfer, deadline]);
@@ -90,6 +96,7 @@ async function pipelineWithIdleTimeout(
 export async function writeStreamAtomically({
   destination,
   source,
+  transforms = [],
   idleTimeoutMs: rawIdleTimeoutMs,
   verify,
 }: AtomicStreamOptions): Promise<{ size: number }> {
@@ -104,6 +111,7 @@ export async function writeStreamAtomically({
     await pipelineWithIdleTimeout(
       source,
       output,
+      transforms,
       idleTimeoutMs,
       `Writing ${path.basename(destination)}`,
     );
@@ -134,11 +142,15 @@ export async function writeReleaseArchive({
   const idleTimeoutMs = requireTimeout(rawIdleTimeoutMs);
   let archivedEntries = 0;
   let requiredEntryFound = false;
-  const source = tar.c({ cwd, filter, gzip: true, noMtime, portable: true, strict: true }, entries);
+  const source = tar.c(
+    { cwd, filter, gzip: false, noMtime, portable: true, strict: true },
+    entries,
+  );
 
   const result = await writeStreamAtomically({
     destination,
     source,
+    transforms: [createGzip()],
     idleTimeoutMs,
     verify: async (stagedPath) => {
       const input = createReadStream(stagedPath);
@@ -155,6 +167,7 @@ export async function writeReleaseArchive({
       await pipelineWithIdleTimeout(
         input,
         inspector,
+        [],
         idleTimeoutMs,
         `Verifying ${path.basename(destination)}`,
       );

@@ -2,7 +2,7 @@ import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { PassThrough } from "node:stream";
+import { PassThrough, Transform } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import * as tar from "tar";
 import { afterEach, describe, expect, it } from "vitest";
@@ -91,6 +91,44 @@ describe("release archive writer", () => {
 
     expect(result.size).toBe(6);
     await expect(fs.readFile(destination, "utf8")).resolves.toBe("012345");
+    expect(await fs.readdir(output)).toEqual(["runtime.tar.gz"]);
+  });
+
+  it("measures raw-source progress while a downstream transform buffers output", async () => {
+    const root = await fixture();
+    const output = path.join(root, "output");
+    const destination = path.join(output, "runtime.tar.gz");
+    const source = new PassThrough();
+    const bufferedChunks: Buffer[] = [];
+    const bufferingTransform = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        bufferedChunks.push(chunk);
+        callback();
+      },
+      flush(callback) {
+        this.push(Buffer.concat([Buffer.from("transformed:"), ...bufferedChunks]));
+        callback();
+      },
+    });
+    const producer = (async () => {
+      for (let index = 0; index < 6; index += 1) {
+        source.write(Buffer.from(String(index)));
+        await delay(25);
+      }
+      source.end();
+    })();
+
+    const result = await writeStreamAtomically({
+      destination,
+      source,
+      transforms: [bufferingTransform],
+      idleTimeoutMs: 75,
+      verify: async () => undefined,
+    });
+    await producer;
+
+    expect(result.size).toBe(18);
+    await expect(fs.readFile(destination, "utf8")).resolves.toBe("transformed:012345");
     expect(await fs.readdir(output)).toEqual(["runtime.tar.gz"]);
   });
 
