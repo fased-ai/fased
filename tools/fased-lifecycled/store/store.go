@@ -33,14 +33,14 @@ type Store struct {
 }
 
 func (s *Store) PluginLockDigest(generationID string) (string, error) {
-	inventory, generation, err := s.ReadCandidateContract(generationID)
+	authority, err := s.ReadCandidateAuthority(generationID)
 	if err != nil {
 		return "", err
 	}
-	if generation.ID != generationID || inventory.PluginLockDigest == "" {
+	if authority.GenerationID != generationID || authority.PluginLockDigest == "" {
 		return "", errors.New("candidate generation is missing a plugin lock binding")
 	}
-	return inventory.PluginLockDigest, nil
+	return authority.PluginLockDigest, nil
 }
 
 // Layout separates mutable lifecycle authority from immutable executable

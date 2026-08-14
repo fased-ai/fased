@@ -23,6 +23,7 @@ import (
 	"fased-lifecycled/engine"
 	"fased-lifecycled/migrator"
 	"fased-lifecycled/model"
+	"fased-lifecycled/participant"
 	"fased-lifecycled/planner"
 	"fased-lifecycled/platform"
 	"fased-lifecycled/protocol"
@@ -172,14 +173,29 @@ func runInventory(args []string, output io.Writer) error {
 			dependencyValues++
 		}
 	}
+	pluginLockJSON, err := os.ReadFile(filepath.Join(absRoot, "runtime", "plugin.lock.json"))
+	if err != nil {
+		return fmt.Errorf("read generation plugin lock: %w", err)
+	}
+	pluginLock, err := participant.DecodePluginLock(pluginLockJSON)
+	if err != nil {
+		return fmt.Errorf("decode generation plugin lock: %w", err)
+	}
+	actualPluginLockDigest, err := participant.PluginLockDigest(pluginLock)
+	if err != nil {
+		return fmt.Errorf("digest generation plugin lock: %w", err)
+	}
+	if actualPluginLockDigest != pluginLockDigest {
+		return errors.New("generation plugin lock differs from the declared digest")
+	}
 	var inventory bundle.Inventory
 	var generation model.Generation
 	if dependencyValues == 0 {
-		inventory, generation, err = bundle.InspectWithPluginLock(absRoot, version, commit, tree, stateSchemas, capabilities, pluginLockDigest)
+		inventory, generation, err = bundle.Inspect(absRoot, version, commit, tree, stateSchemas, capabilities)
 	} else if dependencyValues == 3 {
-		inventory, generation, err = bundle.InspectWithDependencyAndPluginLock(absRoot, version, commit, tree, stateSchemas, capabilities, bundle.DependencyLayer{
+		inventory, generation, err = bundle.InspectWithDependency(absRoot, version, commit, tree, stateSchemas, capabilities, bundle.DependencyLayer{
 			Hash: dependencyHash, Asset: dependencyAsset, ArchiveSHA256: dependencyArchiveSHA256,
-		}, pluginLockDigest)
+		})
 	} else {
 		return errors.New("dependency hash, asset, and archive digest must be supplied together")
 	}
@@ -210,7 +226,7 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	var gatewayPort uint64
 	var releaseSequence, securityEpoch uint64
 	var manifestProtocolMin, manifestProtocolMax uint64
-	var releaseIndexDigest, releaseAuthorityDigest string
+	var releaseIndexDigest, releaseAuthorityDigest, pluginLockDigest string
 	flags.StringVar(&profileRaw, "profile", "", "")
 	flags.StringVar(&instanceID, "instance", "", "")
 	flags.StringVar(&ownerStateRoot, "owner-state", "", "")
@@ -225,6 +241,7 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	flags.Uint64Var(&manifestProtocolMax, "manifest-protocol-max", 0, "")
 	flags.StringVar(&releaseIndexDigest, "release-index-digest", "", "")
 	flags.StringVar(&releaseAuthorityDigest, "release-authority-digest", "", "")
+	flags.StringVar(&pluginLockDigest, "plugin-lock-digest", "", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || gatewayPort == 0 || gatewayPort > 65535 {
 		return errors.New("invalid lifecycle initialization arguments")
 	}
@@ -267,7 +284,7 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	default:
 		return errors.New("installation discovery returned an unsupported class")
 	}
-	applyArguments, err := initializationApplyArguments("", generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion, releaseSequence, securityEpoch, uint32(manifestProtocolMin), uint32(manifestProtocolMax), releaseIndexDigest, releaseAuthorityDigest)
+	applyArguments, err := initializationApplyArguments("", generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion, releaseSequence, securityEpoch, uint32(manifestProtocolMin), uint32(manifestProtocolMax), releaseIndexDigest, releaseAuthorityDigest, pluginLockDigest)
 	if err != nil {
 		return err
 	}
@@ -448,7 +465,7 @@ func discoverInitialization(profile model.Profile, instanceID, ownerStateRoot, o
 	})
 }
 
-func initializationApplyArguments(configPath, generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion string, releaseSequence, securityEpoch uint64, manifestProtocolMin, manifestProtocolMax uint32, releaseIndexDigest, releaseAuthorityDigest string) ([]string, error) {
+func initializationApplyArguments(configPath, generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion string, releaseSequence, securityEpoch uint64, manifestProtocolMin, manifestProtocolMax uint32, releaseIndexDigest, releaseAuthorityDigest, pluginLockDigest string) ([]string, error) {
 	if generationArchive == "" {
 		return nil, errors.New("invalid lifecycle initialization generation input")
 	}
@@ -456,7 +473,7 @@ func initializationApplyArguments(configPath, generationArchive, dependencyArchi
 		return nil, errors.New("invalid lifecycle initialization generation input")
 	}
 	arguments := []string{"--config", configPath, "--generation-archive", generationArchive}
-	if releaseSequence == 0 || securityEpoch == 0 || manifestProtocolMin == 0 || manifestProtocolMax < manifestProtocolMin || releaseIndexDigest == "" || releaseAuthorityDigest == "" {
+	if releaseSequence == 0 || securityEpoch == 0 || manifestProtocolMin == 0 || manifestProtocolMax < manifestProtocolMin || releaseIndexDigest == "" || releaseAuthorityDigest == "" || pluginLockDigest == "" {
 		return nil, errors.New("lifecycle initialization requires signed release authority")
 	}
 	arguments = append(arguments,
@@ -465,7 +482,8 @@ func initializationApplyArguments(configPath, generationArchive, dependencyArchi
 		"--manifest-protocol-min", strconv.FormatUint(uint64(manifestProtocolMin), 10),
 		"--manifest-protocol-max", strconv.FormatUint(uint64(manifestProtocolMax), 10),
 		"--release-index-digest", releaseIndexDigest,
-		"--release-authority-digest", releaseAuthorityDigest)
+		"--release-authority-digest", releaseAuthorityDigest,
+		"--plugin-lock-digest", pluginLockDigest)
 	if dependencyArchive != "" {
 		if !filepath.IsAbs(dependencyArchive) || filepath.Clean(dependencyArchive) != dependencyArchive {
 			return nil, errors.New("invalid lifecycle initialization dependency input")
@@ -614,7 +632,7 @@ func applyVerifiedArchive(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("verified-archive-apply", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var configPath, generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion string
-	var releaseIndexDigest, releaseAuthorityDigest string
+	var releaseIndexDigest, releaseAuthorityDigest, pluginLockDigest string
 	var releaseSequence, securityEpoch uint64
 	var manifestProtocolMin, manifestProtocolMax uint64
 	flags.StringVar(&configPath, "config", "", "")
@@ -628,6 +646,7 @@ func applyVerifiedArchive(args []string, output io.Writer) error {
 	flags.Uint64Var(&manifestProtocolMax, "manifest-protocol-max", 0, "")
 	flags.StringVar(&releaseIndexDigest, "release-index-digest", "", "")
 	flags.StringVar(&releaseAuthorityDigest, "release-authority-digest", "", "")
+	flags.StringVar(&pluginLockDigest, "plugin-lock-digest", "", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return errors.New("invalid lifecycle apply arguments")
 	}
@@ -664,7 +683,7 @@ func applyVerifiedArchive(args []string, output io.Writer) error {
 	if err := state.BindCandidateAuthority(store.CandidateAuthority{
 		SchemaVersion: 1, GenerationID: generation.ID, ReleaseSequence: releaseSequence, SecurityEpoch: securityEpoch,
 		ManifestMin: uint32(manifestProtocolMin), ManifestMax: uint32(manifestProtocolMax),
-		ReleaseIndex: releaseIndexDigest, ReleaseAuthority: releaseAuthorityDigest,
+		ReleaseIndex: releaseIndexDigest, ReleaseAuthority: releaseAuthorityDigest, PluginLockDigest: pluginLockDigest,
 	}); err != nil {
 		return err
 	}

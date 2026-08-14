@@ -46,34 +46,31 @@ describe("capability catalog", () => {
     );
     expect(entries.find((entry) => entry.id === "openai-runtime")).toMatchObject({
       category: "provider",
-      delivery: "npm-addon",
+      delivery: "core",
       packageName: "@fased/openai-runtime",
       pluginId: "openai-runtime",
     });
     expect(entries.find((entry) => entry.id === "openai-runtime")?.restartRequired).toBeUndefined();
   });
 
-  it("keeps missing optional and external components out of the error count", () => {
+  it("reports every Fased-owned component as included and external runtimes separately", () => {
     const capabilities = buildCapabilityReadinessReport({
       config: {} as FasedAgentConfig,
       pluginReport: report(),
     });
     expect(capabilities.summary).toMatchObject({
       total: 22,
-      coreIncluded: 5,
-      optionalInstalled: 0,
+      coreIncluded: 16,
       externalRequired: 6,
       errors: 0,
     });
-    expect(capabilities.entries.find((entry) => entry.id === "telegram")?.state).toBe(
-      "not-installed",
-    );
+    expect(capabilities.entries.find((entry) => entry.id === "telegram")?.state).toBe("included");
     expect(capabilities.entries.find((entry) => entry.id === "ollama")?.state).toBe(
       "external-required",
     );
   });
 
-  it("distinguishes installed add-ons from configured external providers", () => {
+  it("keeps bundled channels included while reporting configured external providers", () => {
     const config = {
       channels: { telegram: { enabled: true, botToken: "token" } },
       models: { providers: { ollama: { baseUrl: "http://127.0.0.1:11434" } } },
@@ -125,7 +122,7 @@ describe("capability catalog", () => {
     expect(capabilities.summary.errors).toBe(0);
   });
 
-  it("does not count source-discovered channel add-ons as installed", () => {
+  it("treats disabled bundled channels as included", () => {
     const capabilities = buildCapabilityReadinessReport({
       config: {} as FasedAgentConfig,
       pluginReport: report([
@@ -142,10 +139,7 @@ describe("capability catalog", () => {
         }),
       ]),
     });
-    expect(capabilities.entries.find((entry) => entry.id === "telegram")?.state).toBe(
-      "not-installed",
-    );
-    expect(capabilities.summary.optionalInstalled).toBe(0);
+    expect(capabilities.entries.find((entry) => entry.id === "telegram")?.state).toBe("included");
     expect(capabilities.summary.errors).toBe(0);
   });
 });

@@ -13,7 +13,7 @@ import { theme } from "../terminal/theme.js";
 export function registerComponentsCli(program: Command) {
   const components = program
     .command("components")
-    .description("Show core, add-on, and external component readiness")
+    .description("Show bundled and external component readiness")
     .option("--json", "Output JSON", false)
     .addHelpText(
       "after",
@@ -26,7 +26,7 @@ export function registerComponentsCli(program: Command) {
 
   components
     .command("list")
-    .description("Show core, add-on, and external component readiness")
+    .description("Show bundled and external component readiness")
     .option("--json", "Output JSON", false)
     .action((options: { json?: boolean }) => {
       renderComponentReport(options);
@@ -34,7 +34,7 @@ export function registerComponentsCli(program: Command) {
 
   components
     .command("install")
-    .description("Install a cataloged optional component")
+    .description("Enable a cataloged bundled component")
     .argument("<id>", "Component id from `fased components`")
     .action(async (id: string) => {
       await installComponentCommand(id);
@@ -47,7 +47,7 @@ export async function installComponentCommand(id: string) {
   for (const warning of result.slotWarnings) {
     defaultRuntime.log(theme.warn(warning));
   }
-  defaultRuntime.log(`Installed component: ${result.entry.label} (${result.entry.packageName})`);
+  defaultRuntime.log(`Enabled bundled component: ${result.entry.label}`);
   if (result.entry.restartRequired !== false) {
     defaultRuntime.log("Restart the gateway to apply the component.");
   }

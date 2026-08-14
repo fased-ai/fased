@@ -26,7 +26,7 @@ import { ensureOnboardingPluginInstalled } from "./plugin-install.js";
 const baseEntry: ChannelPluginCatalogEntry = {
   id: "zalo",
   catalogSource: "external-catalog",
-  delivery: "official-addon",
+  delivery: "source-only",
   meta: {
     id: "zalo",
     label: "Zalo",
@@ -150,6 +150,7 @@ describe("ensureOnboardingPluginInstalled", () => {
       entry: {
         ...baseEntry,
         catalogSource: "bundled",
+        delivery: "bundled",
         install: {
           localPath: "extensions/zalo",
           defaultChoice: "local",

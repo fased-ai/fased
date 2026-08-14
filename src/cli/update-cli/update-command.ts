@@ -11,19 +11,7 @@ import {
   writeConfigFile,
 } from "../../config/config.js";
 import { probeGateway } from "../../gateway/probe.js";
-import {
-  activateLocalSourceSigner,
-  commitLocalSourcePairedUpdate,
-  isLocalSourceSignerConfigured,
-  markLocalSourceAppActive,
-  markLocalSourceGatewayVerified,
-  prepareLocalSourcePairedUpdate,
-  readLocalSourcePairedUpdateJournal,
-  recoverLocalSourcePairedUpdate,
-  rollbackLocalSourcePairedUpdate,
-  verifyLocalSourceSigner,
-  type LocalSourcePairedUpdateJournal,
-} from "../../infra/local-source-paired-update.js";
+import { isLocalSourceSignerConfigured } from "../../infra/local-source-signer-boundary.js";
 import { loadGatewayTlsRuntime } from "../../infra/tls/gateway.js";
 import {
   channelToNpmTag,
@@ -110,31 +98,6 @@ async function measureUpdateStage<T>(
     return await run();
   } finally {
     timings.push({ name, durationMs: Date.now() - startedAt });
-  }
-}
-
-async function runVisibleUpdateStage<T>(params: {
-  name: string;
-  jsonMode: boolean;
-  run: () => Promise<T>;
-}): Promise<T> {
-  const startedAt = Date.now();
-  if (!params.jsonMode) {
-    defaultRuntime.log(theme.muted(`[fased update] ${params.name}...`));
-  }
-  let succeeded = false;
-  try {
-    const result = await params.run();
-    succeeded = true;
-    return result;
-  } finally {
-    if (!params.jsonMode) {
-      defaultRuntime.log(
-        theme.muted(
-          `[fased update] ${succeeded ? "ok" : "failed"}: ${params.name} (${formatDuration(Date.now() - startedAt)})`,
-        ),
-      );
-    }
   }
 }
 
@@ -944,12 +907,6 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
         ? "Restart gateway service and run doctor checks"
         : "Skip restart (because --no-restart is set)",
     );
-    if (sourceSignerConfigured) {
-      actions.push(
-        "Snapshot the built source runtime, activate the exact version-matched native signer, and commit both only after Gateway and signer health",
-      );
-    }
-
     const notes: string[] = [];
     if (opts.tag && updateInstallKind === "git") {
       notes.push("--tag applies to npm installs only; git updates ignore it.");
@@ -980,28 +937,6 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
       },
       Boolean(opts.json),
     );
-    return;
-  }
-
-  if (sourceSignerConfigured && switchToPackage) {
-    defaultRuntime.error(
-      "A source checkout with a Local signer cannot switch install modes inside one update transaction. Omit --channel to perform a tagged source update, or use the verified installer migration procedure.",
-    );
-    defaultRuntime.exit(1);
-    return;
-  }
-  if (sourceSignerConfigured && channel === "dev") {
-    defaultRuntime.error(
-      "A Local signer can pair only with an exact tagged stable/beta source release; untagged dev commits fail closed.",
-    );
-    defaultRuntime.exit(1);
-    return;
-  }
-  if (sourceSignerConfigured && !shouldRestart) {
-    defaultRuntime.error(
-      "A source checkout with a Local signer requires Gateway restart and exact health verification; --no-restart is not allowed.",
-    );
-    defaultRuntime.exit(1);
     return;
   }
 
@@ -1198,26 +1133,6 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
       // Ignore errors during pre-check; fallback to standard restart
     }
   }
-  if (sourceSignerConfigured && !serviceLoaded) {
-    try {
-      await refreshGatewayServiceEnv({ root, jsonMode: Boolean(opts.json) });
-      serviceLoaded = await serviceTarget.service.isLoaded({ env: process.env });
-      if (!serviceLoaded) {
-        throw new Error("the Local Gateway service is still not loaded");
-      }
-      if (serviceTarget.scope === "platform") {
-        restartScriptPath = await prepareRestartScript(process.env);
-      }
-    } catch (error) {
-      stop();
-      defaultRuntime.error(
-        `A paired source app/signer update requires a managed Local Gateway service: ${String(error)}. Run ${formatCliCommand("fased gateway install --force")}, then retry.`,
-      );
-      defaultRuntime.exit(1);
-      return;
-    }
-  }
-
   const gatewayPort = resolveGatewayPort(configSnapshot.valid ? configSnapshot.config : undefined);
   const gatewayConfig = configSnapshot.valid ? configSnapshot.config.gateway : undefined;
   const tlsRuntime = await loadGatewayTlsRuntime(gatewayConfig?.tls);
@@ -1228,128 +1143,6 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
     tlsFingerprint: tlsRuntime.enabled ? tlsRuntime.fingerprintSha256 : undefined,
     timeoutMs: 1_500,
   };
-  const restoreSourcePairAfterFailure = async (
-    journal: LocalSourcePairedUpdateJournal,
-  ): Promise<boolean> => {
-    await rollbackLocalSourcePairedUpdate({
-      journal,
-      timeoutMs: timeoutMs ?? 20 * 60_000,
-      env: process.env,
-    });
-    if (!serviceLoaded) {
-      return true;
-    }
-    const rollbackRestartScript =
-      serviceTarget.scope === "platform" ? await prepareRestartScript(process.env) : null;
-    const restored = await maybeRestartService({
-      shouldRestart: true,
-      result: {
-        status: "ok",
-        mode: "git",
-        root: journal.sourceRoot,
-        after: { version: journal.previous.version },
-        steps: [],
-        durationMs: 0,
-      },
-      opts,
-      refreshServiceEnv: true,
-      gatewayPort,
-      restartScriptPath: rollbackRestartScript,
-      serviceTarget,
-      serviceLoaded,
-      expectedVersion: journal.previous.version,
-      rpc: restartRpc,
-    });
-    return restored.healthy;
-  };
-
-  let interruptedSourcePair: LocalSourcePairedUpdateJournal | null = null;
-  if (installKind === "git") {
-    try {
-      interruptedSourcePair = await readLocalSourcePairedUpdateJournal(process.env);
-    } catch (error) {
-      stop();
-      defaultRuntime.error(`Local source transaction journal is invalid: ${String(error)}`);
-      defaultRuntime.exit(1);
-      return;
-    }
-  }
-  if (interruptedSourcePair) {
-    try {
-      const recovery = await runVisibleUpdateStage({
-        name: "interrupted Local app/signer recovery",
-        jsonMode: Boolean(opts.json),
-        run: () =>
-          recoverLocalSourcePairedUpdate({
-            timeoutMs: timeoutMs ?? 20 * 60_000,
-            env: process.env,
-          }),
-      });
-      if (recovery === "rolled-back" && serviceLoaded) {
-        const restored = await maybeRestartService({
-          shouldRestart: true,
-          result: {
-            status: "ok",
-            mode: "git",
-            root: interruptedSourcePair.sourceRoot,
-            after: { version: interruptedSourcePair.previous.version },
-            steps: [],
-            durationMs: 0,
-          },
-          opts,
-          refreshServiceEnv: true,
-          gatewayPort,
-          restartScriptPath,
-          serviceTarget,
-          serviceLoaded,
-          expectedVersion: interruptedSourcePair.previous.version,
-          rpc: restartRpc,
-        });
-        if (!restored.healthy) {
-          throw new Error("the previous Gateway did not become healthy after source recovery");
-        }
-        if (serviceTarget.scope === "platform") {
-          restartScriptPath = await prepareRestartScript(process.env);
-        }
-      }
-      if (!opts.json) {
-        defaultRuntime.log(
-          theme.muted(
-            recovery === "committed"
-              ? "Completed the previously verified Local source app/signer commit."
-              : "Recovered the interrupted Local source app/signer transaction.",
-          ),
-        );
-      }
-    } catch (error) {
-      stop();
-      defaultRuntime.error(`Local source app/signer recovery failed: ${String(error)}`);
-      defaultRuntime.exit(1);
-      return;
-    }
-  }
-
-  let sourcePair: LocalSourcePairedUpdateJournal | null = null;
-  if (sourceSignerConfigured) {
-    try {
-      sourcePair = await runVisibleUpdateStage({
-        name: "Local app/signer rollback snapshot",
-        jsonMode: Boolean(opts.json),
-        run: () =>
-          prepareLocalSourcePairedUpdate({
-            sourceRoot: root,
-            timeoutMs: timeoutMs ?? 20 * 60_000,
-            env: process.env,
-          }),
-      });
-    } catch (error) {
-      stop();
-      defaultRuntime.error(`Could not prepare Local source rollback: ${String(error)}`);
-      defaultRuntime.exit(1);
-      return;
-    }
-  }
-
   const result = switchToPackage
     ? await runPackageInstallUpdate({
         root,
@@ -1372,67 +1165,6 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
         opts,
         stop,
       });
-
-  if (sourcePair && result.status === "ok") {
-    try {
-      if (!result.after?.sha || !result.after.version) {
-        throw new Error("source update did not report an exact target Git SHA and version");
-      }
-      sourcePair = await markLocalSourceAppActive({
-        journal: sourcePair,
-        targetSha: result.after.sha,
-        targetVersion: result.after.version,
-        env: process.env,
-      });
-      sourcePair = await runVisibleUpdateStage({
-        name: "Local signer candidate preflight and activation",
-        jsonMode: Boolean(opts.json),
-        run: () =>
-          activateLocalSourceSigner({
-            journal: sourcePair as LocalSourcePairedUpdateJournal,
-            timeoutMs: timeoutMs ?? 20 * 60_000,
-            env: process.env,
-          }),
-      });
-    } catch (error) {
-      try {
-        await rollbackLocalSourcePairedUpdate({
-          journal: sourcePair,
-          timeoutMs: timeoutMs ?? 20 * 60_000,
-          env: process.env,
-        });
-      } catch (rollbackError) {
-        stop();
-        defaultRuntime.error(
-          `Local source signer activation failed and rollback is incomplete: ${String(error)}; ${String(rollbackError)}`,
-        );
-        defaultRuntime.exit(1);
-        return;
-      }
-      stop();
-      defaultRuntime.error(
-        `Local source update restored the previous app and signer: ${String(error)}`,
-      );
-      defaultRuntime.exit(1);
-      return;
-    }
-  } else if (sourcePair) {
-    try {
-      await rollbackLocalSourcePairedUpdate({
-        journal: sourcePair,
-        timeoutMs: timeoutMs ?? 20 * 60_000,
-        env: process.env,
-      });
-    } catch (error) {
-      stop();
-      defaultRuntime.error(
-        `Source update failed and exact rollback is incomplete: ${String(error)}`,
-      );
-      defaultRuntime.exit(1);
-      return;
-    }
-    sourcePair = null;
-  }
 
   stop();
   printResult(result, { ...opts, hideSteps: showProgress });
@@ -1480,21 +1212,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
   });
 
   if (!restartResult.healthy) {
-    if (sourcePair) {
-      if (!opts.json) {
-        defaultRuntime.log(
-          theme.warn("Gateway verification failed; restoring the exact source app and signer."),
-        );
-      }
-      try {
-        const restored = await restoreSourcePairAfterFailure(sourcePair);
-        if (!restored) {
-          defaultRuntime.error("Previous source Gateway was restored, but it is not healthy.");
-        }
-      } catch (error) {
-        defaultRuntime.error(`Automatic source app/signer rollback failed: ${String(error)}`);
-      }
-    } else if (result.transaction) {
+    if (result.transaction) {
       if (!opts.json) {
         defaultRuntime.log(
           theme.warn("Gateway verification failed; restoring the previous runtime."),
@@ -1517,73 +1235,6 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
     }
     defaultRuntime.exit(1);
     return;
-  }
-
-  if (sourcePair) {
-    try {
-      await runVisibleUpdateStage({
-        name: "post-Gateway signer verification",
-        jsonMode: Boolean(opts.json),
-        run: () =>
-          verifyLocalSourceSigner({
-            journal: sourcePair as LocalSourcePairedUpdateJournal,
-            timeoutMs: timeoutMs ?? 20 * 60_000,
-            env: process.env,
-          }),
-      });
-    } catch (error) {
-      try {
-        const restored = await restoreSourcePairAfterFailure(sourcePair);
-        if (!restored) {
-          throw new Error("the previous source Gateway did not become healthy", { cause: error });
-        }
-      } catch (rollbackError) {
-        defaultRuntime.error(
-          `Signer verification failed and exact source rollback is incomplete: ${String(error)}; ${String(rollbackError)}`,
-        );
-        defaultRuntime.exit(1);
-        return;
-      }
-      defaultRuntime.error(
-        `Signer verification failed; restored the previous source app and signer: ${String(error)}`,
-      );
-      defaultRuntime.exit(1);
-      return;
-    }
-    try {
-      sourcePair = await markLocalSourceGatewayVerified(sourcePair, process.env);
-    } catch (error) {
-      try {
-        await restoreSourcePairAfterFailure(sourcePair);
-      } catch (rollbackError) {
-        defaultRuntime.error(
-          `Could not record paired health and rollback is incomplete: ${String(error)}; ${String(rollbackError)}`,
-        );
-        defaultRuntime.exit(1);
-        return;
-      }
-      defaultRuntime.error(`Could not durably record paired health: ${String(error)}`);
-      defaultRuntime.exit(1);
-      return;
-    }
-    try {
-      await runVisibleUpdateStage({
-        name: "Local app/signer writable commit",
-        jsonMode: Boolean(opts.json),
-        run: () =>
-          commitLocalSourcePairedUpdate({
-            journal: sourcePair as LocalSourcePairedUpdateJournal,
-            timeoutMs: timeoutMs ?? 20 * 60_000,
-            env: process.env,
-          }),
-      });
-    } catch (error) {
-      defaultRuntime.error(
-        `The source Gateway and signer passed exact health, but commit cleanup is pending: ${String(error)}. Re-run fased update to finish forward recovery; do not downgrade manually.`,
-      );
-      defaultRuntime.exit(1);
-      return;
-    }
   }
 
   const lifecycleTimings = [...restartResult.timings];

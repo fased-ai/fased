@@ -23,7 +23,7 @@ FIXTURE_TREE="$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')"
 git -C "$ROOT_DIR" merge-base --is-ancestor "$BUILDER_COMMIT" "$FIXTURE_COMMIT"
 unexpected_changes="$(
   git -C "$ROOT_DIR" diff --name-only "$BUILDER_COMMIT..$FIXTURE_COMMIT" | \
-    grep -Ev '^(config/owner-local-predecessor-schema1\.v1\.json|scripts/test-lifecycle-(local|hosting)-acceptance\.sh|scripts/docker/(protected-local|hosting)-systemd/lifecycle-acceptance\.sh|scripts/lifecycle-(d8-contract|version-neutral)\.test\.ts|scripts/lifecycle-configuration-preservation\.(mjs|test\.ts)|scripts/build-(public|canonical-managed)-predecessor-capsule\.(mjs|test\.ts)|scripts/prepare-branch-predecessor-capsule\.sh|scripts/(predecessor-capsule|lifecycle-installed-state-capsule|lifecycle-acceptance-contract|lifecycle-receipt-verifier)\.(mjs|test\.ts))$' || true
+    grep -Ev '^(scripts/test-lifecycle-(local|hosting)-acceptance\.sh|scripts/docker/(protected-local|hosting)-systemd/lifecycle-acceptance\.sh|scripts/lifecycle-(d8-contract|version-neutral)\.test\.ts|scripts/lifecycle-configuration-preservation\.(mjs|test\.ts)|scripts/build-(public|canonical-managed)-predecessor-capsule\.(mjs|test\.ts)|scripts/prepare-branch-predecessor-capsule\.sh|scripts/(predecessor-capsule|lifecycle-installed-state-capsule|lifecycle-acceptance-contract|lifecycle-receipt-verifier)\.(mjs|test\.ts))$' || true
 )"
 [[ -z "$unexpected_changes" ]] || {
   echo "Predecessor capsule reuse rejected product changes:" >&2
@@ -62,7 +62,6 @@ if [[ ! -f "$target/fased-predecessor-capsule.json" ]]; then
       echo "No supported schema-one canonical Hosting predecessor is inventoried." >&2
       exit 1
     }
-    test "$(jq -er .activeVersion "$ROOT_DIR/config/owner-local-predecessor-schema1.v1.json")" = "$VERSION"
     gh release download "v$VERSION" \
       --repo fased-ai/fased \
       --dir "$source_dir" \
@@ -84,7 +83,6 @@ if [[ ! -f "$target/fased-predecessor-capsule.json" ]]; then
       --candidate-descriptor "$source_dir/fased-hosting-candidate.json" \
       --generation-archive "$source_dir/fased-generation-linux-x64-v$VERSION.tar.gz" \
       --dependency-archive "$dependency_archive" \
-      --previous-generation "$ROOT_DIR/config/owner-local-predecessor-schema1.v1.json" \
       --compatibility-index "$ROOT_DIR/config/lifecycle-compatibility.v1.json" \
       --acceptance-contract "$ROOT_DIR/config/lifecycle-acceptance.v2.json" \
       --output "$output_dir" \

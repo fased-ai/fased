@@ -273,16 +273,16 @@ describe("lifecycle acceptance contract", () => {
     const managedUpdate = fixture.slice(fixture.indexOf('if [[ "$phase" == "managed-update" ]]'));
     expect(managedUpdate).toContain("run_installed_updater()");
     expect(managedUpdate).toContain('"$state/bin/fased" update "${target_update_args[@]}"');
-    expect(managedUpdate.match(/run_installed_updater/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(managedUpdate.match(/run_installed_updater/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("keeps the local updater compatibility gate bound to live test names", () => {
+  it("keeps release validation bound to the npm-free managed lifecycle contract", () => {
     const packageJson = JSON.parse(
       readFileSync(new URL("../package.json", import.meta.url), "utf8"),
     ) as { scripts?: Record<string, string> };
-    expect(packageJson.scripts?.["test:local-source-update-compat"]).toContain("-t 'Go-managed'");
-    expect(packageJson.scripts?.["test:local-source-update-compat"]).not.toContain(
-      "verified Go lifecycle",
+    expect(packageJson.scripts?.["release:validate-dist:contracts"]).not.toContain(
+      "test:managed-updater",
     );
+    expect(packageJson.scripts?.["test:managed-updater"]).toBeUndefined();
   });
 });

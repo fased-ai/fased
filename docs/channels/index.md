@@ -108,15 +108,16 @@ Optional and legacy:
 
 ## Runtime status
 
-- **Agent > Channels** shows available channels, including official add-ons
-  that are not downloaded yet.
-- Telegram, WhatsApp, Discord, Slack, Feishu, and Google Chat show **Install** on a fresh core
-  install. The Control UI downloads the matching official npm package.
+- **Agent > Channels** shows available channels, including bundled official
+  integrations that are disabled until selected.
+- Telegram, WhatsApp, Discord, Slack, Feishu, and Google Chat ship in the
+  signed Fased generation. The Control UI enables the bundled integration; it
+  does not download an npm package.
 - Saving credentials enables that channel for the selected Agent.
-- Installed channel add-ons need a Gateway restart before their credential and
+- Newly enabled channel integrations may need a Gateway restart before their credential and
   login flow becomes active.
-- The onboarding wizard and `fased channels add` can install the same official
-  add-ons before configuration.
+- The onboarding wizard and `fased channels add` enable the same bundled
+  integrations before configuration.
 
 ## Good first choices
 

@@ -8,10 +8,6 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import * as tar from "tar";
-import {
-  MANAGED_UPDATER_RELEASE_DESCRIPTOR,
-  writeManagedUpdaterReleaseDescriptor,
-} from "./managed-updater-bundle.mjs";
 
 const execFileAsync = promisify(execFile);
 const rootDir = path.resolve(import.meta.dirname, "..");
@@ -200,15 +196,6 @@ async function writeChecksum(assetPath: string): Promise<string> {
   return digest;
 }
 
-async function findPackedTarball(dir: string): Promise<string> {
-  const entries = await fs.readdir(dir);
-  const filename = entries.find((entry) => entry.endsWith(".tgz"));
-  if (!filename) {
-    throw new Error("npm pack did not produce a tarball.");
-  }
-  return path.join(dir, filename);
-}
-
 async function listFiles(root: string): Promise<string[]> {
   const files: string[] = [];
   const visit = async (dir: string): Promise<void> => {
@@ -343,47 +330,27 @@ async function main(): Promise<void> {
   const createdAt = await releaseCreatedAt(commit);
 
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "fased-hosted-runtime-"));
-  const packDir = path.join(tempRoot, "pack");
   const extractDir = path.join(tempRoot, "extract");
   const packageRoot = path.join(extractDir, "package");
 
   try {
-    await fs.mkdir(packDir, { recursive: true });
     await fs.mkdir(extractDir, { recursive: true });
     await fs.mkdir(outputDir, { recursive: true });
 
-    console.log(`hosted-artifact: packing @fased/fased@${version}`);
+    console.log(`hosted-artifact: deploying @fased/fased@${version} with pnpm`);
     await run(
-      "npm",
-      ["pack", "--ignore-scripts", "--pack-destination", packDir, "--loglevel=error"],
+      "pnpm",
+      ["--offline", "--filter", "@fased/fased", "deploy", "--prod", "--no-optional", packageRoot],
       rootDir,
-      { npm_config_cache: path.join(tempRoot, "npm-cache") },
-    );
-    const packedTarball = await findPackedTarball(packDir);
-    await tar.x({ file: packedTarball, cwd: extractDir });
-
-    console.log("hosted-artifact: installing production runtime dependencies");
-    await run(
-      "npm",
-      [
-        "install",
-        "--omit=dev",
-        "--ignore-scripts",
-        "--legacy-peer-deps",
-        "--no-audit",
-        "--no-fund",
-        "--loglevel=error",
-      ],
-      packageRoot,
-      { npm_config_cache: path.join(tempRoot, "npm-cache") },
+      { npm_config_ignore_scripts: "true" },
     );
     await run(
       process.execPath,
       [
         path.join(rootDir, "scripts", "release-component-sbom.mjs"),
         "node",
-        "--package-lock",
-        path.join(packageRoot, "package-lock.json"),
+        "--node-modules",
+        path.join(packageRoot, "node_modules"),
         "--architecture",
         arch,
         "--version",
@@ -564,19 +531,6 @@ async function main(): Promise<void> {
       `${JSON.stringify(runtimeMetadata, null, 2)}\n`,
       "utf8",
     );
-    const updaterDescriptor = await writeManagedUpdaterReleaseDescriptor({
-      runtimeRoot: packageRoot,
-      architecture: arch,
-    });
-    const updaterDescriptorAssetName = `fased-managed-updater-bundle-linux-${arch}-v${version}.json`;
-    await fs.copyFile(
-      path.join(packageRoot, MANAGED_UPDATER_RELEASE_DESCRIPTOR),
-      path.join(outputDir, updaterDescriptorAssetName),
-    );
-    console.log(
-      `hosted-artifact: updater bundle ${updaterDescriptor.bundleDigest} (${updaterDescriptor.files.length} files)`,
-    );
-
     const assetName = `fased-hosted-linux-${arch}-v${version}.tar.gz`;
     const assetPath = path.join(outputDir, assetName);
     console.log(`hosted-artifact: writing ${assetName}`);

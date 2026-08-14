@@ -8,7 +8,7 @@ title: "Telegram"
 
 # Telegram
 
-**Delivery:** Official add-on.
+**Delivery:** Bundled.
 
 Telegram is the fastest public bot surface for many Fased setups. The gateway
 owns the bot token, receives updates through long polling by default, and keeps
@@ -31,20 +31,13 @@ optional.
 
 ## Quick setup
 
-1. Open **Agents > selected Agent > Channels > Telegram** and click
-   **Install**. Restart the Gateway when prompted.
+1. Open **Agents > selected Agent > Channels > Telegram** and enable it. The
+   signed Fased generation already contains the integration.
 2. In Telegram, open **@BotFather**.
 3. Run `/newbot` and save the token.
 4. Return to **Agent > Channels > Telegram**.
 5. Paste the token and keep DM policy on `pairing` to start.
 6. Save and approve the first DM pairing.
-
-CLI install:
-
-```bash
-fased plugins install @fased/telegram
-fased gateway restart
-```
 
 Config shape:
 

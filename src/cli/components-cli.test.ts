@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const runtime = vi.hoisted(() => ({ log: vi.fn() }));
 const writeConfigFile = vi.hoisted(() => vi.fn());
-const installPluginFromNpmSpec = vi.hoisted(() => vi.fn());
 const finalizeInstalledPluginConfig = vi.hoisted(() => vi.fn());
 const report = vi.hoisted(() => ({
   entries: [
@@ -23,8 +22,7 @@ const report = vi.hoisted(() => ({
   summary: {
     total: 1,
     coreIncluded: 1,
-    optionalInstalled: 0,
-    optionalConfigured: 0,
+    configured: 0,
     externalRequired: 0,
     errors: 0,
   },
@@ -35,10 +33,6 @@ vi.mock("../config/config.js", () => ({
   loadConfig: vi.fn(() => ({})),
   writeConfigFile,
 }));
-vi.mock("../plugins/install.js", () => ({ installPluginFromNpmSpec }));
-vi.mock("../plugins/installs.js", () => ({
-  buildNpmResolutionInstallFields: vi.fn(() => ({})),
-}));
 vi.mock("../plugins/lifecycle.js", () => ({ finalizeInstalledPluginConfig }));
 vi.mock("../capabilities/catalog.js", () => ({
   buildCapabilityReadinessReport: vi.fn(() => report),
@@ -48,7 +42,7 @@ vi.mock("../capabilities/catalog.js", () => ({
       id: "media-runtime",
       label: "Media Runtime",
       category: "runtime",
-      delivery: "npm-addon",
+      delivery: "core",
       packageName: "@fased/media-runtime",
       pluginId: "media-runtime",
       docsPath: "/nodes/media-understanding",
@@ -63,7 +57,6 @@ describe("components CLI", () => {
   beforeEach(() => {
     runtime.log.mockClear();
     writeConfigFile.mockReset();
-    installPluginFromNpmSpec.mockReset();
     finalizeInstalledPluginConfig.mockReset();
   });
 
@@ -84,13 +77,7 @@ describe("components CLI", () => {
     expect(runtime.log.mock.calls.flat().join("\n")).toContain("included");
   });
 
-  it("installs a cataloged runtime add-on through the plugin lifecycle", async () => {
-    installPluginFromNpmSpec.mockResolvedValue({
-      ok: true,
-      pluginId: "media-runtime",
-      targetDir: "/tmp/media-runtime",
-      version: "0.1.36",
-    });
+  it("enables a bundled runtime through the plugin lifecycle", async () => {
     finalizeInstalledPluginConfig.mockReturnValue({ config: { plugins: {} }, slotWarnings: [] });
     const { registerComponentsCli } = await import("./components-cli.js");
     const program = new Command().name("fased");
@@ -98,10 +85,13 @@ describe("components CLI", () => {
 
     await program.parseAsync(["components", "install", "media-runtime"], { from: "user" });
 
-    expect(installPluginFromNpmSpec).toHaveBeenCalledWith({ spec: "@fased/media-runtime" });
+    expect(finalizeInstalledPluginConfig).toHaveBeenCalledWith({
+      config: {},
+      pluginId: "media-runtime",
+    });
     expect(writeConfigFile).toHaveBeenCalledWith({ plugins: {} });
     expect(runtime.log.mock.calls.flat().join("\n")).toContain(
-      "Installed component: Media Runtime",
+      "Enabled bundled component: Media Runtime",
     );
   });
 });

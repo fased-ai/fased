@@ -1,17 +1,18 @@
 ---
-summary: "What Fased installs in core, what is downloaded later, and what remains external."
+summary: "What the signed Fased generation includes and what remains external."
 read_when:
   - You want to know what a fresh Fased install includes
   - You are adding chat channels, local models, browser control, or local embeddings
   - You need to understand what fased update does with add-ons
-title: "Core And Optional Components"
-sidebarTitle: "Core And Add-ons"
+title: "Core And External Components"
+sidebarTitle: "Core And External"
 ---
 
-# Core and optional components
+# Core and external components
 
-Fased keeps the Agent and crypto path in core. Large chat integrations and
-machine-specific runtimes are installed only when you choose them.
+The signed Fased generation contains the Agent, crypto path, official channels,
+and Fased-owned runtime components. Components may remain disabled until you
+choose them, but enabling one does not download code from npm.
 
 Inspect the current machine from the CLI:
 
@@ -26,8 +27,8 @@ configuration field does not mean its runtime is installed or healthy.
 
 Each component row exposes only applicable actions:
 
-- **Install** downloads an official npm add-on.
-- **Restart** reloads an installed component through the Gateway service.
+- **Enable** activates a bundled Fased component.
+- **Restart** reloads an enabled component through the Gateway service.
 - **Connect** opens the owning setup surface.
 - **Open docs** opens the canonical setup page.
 
@@ -57,48 +58,46 @@ package and do not run `fased plugins enable sat-mining` as the normal mining
 setup path. Mining does not start until readiness, capital, and commit checks
 pass and the operator explicitly starts it.
 
-## Official channel add-ons
+## Bundled official channels
 
 Telegram, WhatsApp, Discord, Slack, Feishu/Lark, and Google Chat are official
-npm add-ons. They are not downloaded by a fresh core install.
+bundled integrations. They are part of every signed generation and update with
+the core application.
 
 The normal browser flow is:
 
 1. Open **Agents > selected Agent > Channels**.
 2. Select the channel.
-3. Click **Install**.
+3. Click **Enable**.
 4. Restart the Gateway when prompted.
 5. Return to the channel card and enter its token or complete its login flow.
 
-The onboarding wizard and `fased channels add` offer the same npm download when
-you select one of these channels.
+The onboarding wizard and `fased channels add` enable the same bundled code.
 
-CLI installation is also available:
+CLI enablement is also available:
 
 ```bash
-fased plugins install @fased/telegram
-fased plugins install @fased/whatsapp
-fased plugins install @fased/discord
-fased plugins install @fased/slack
-fased plugins install @fased/feishu
-fased plugins install @fased/googlechat
+fased components install telegram
+fased components install whatsapp
+fased components install discord
+fased components install slack
+fased components install feishu
+fased components install googlechat
 fased gateway restart
 ```
 
-Install only the channels you use. Each add-on carries its own channel runtime
-dependencies.
+Enable only the channels you use. Their code and production dependencies remain
+bound to the same verified Fased release identity.
 
 <Note>
-The packages above are the official installable channel add-ons in this
-release. Other advanced channel extensions may need a source install or their
-own channel-specific dependencies until they receive a published add-on
-package. Follow the individual channel page instead of assuming the lightweight
-hosted runtime downloads every advanced channel dependency.
+Independent third-party extensions are not part of the Fased generation. They
+must use the separate verified extension flow described on their own page;
+Fased-owned channel packages are never resolved from npm at runtime.
 </Note>
 
-## Optional runtime add-ons
+## Bundled runtime components
 
-Install these only when the related feature is needed:
+Enable these only when the related feature is needed:
 
 ```bash
 fased components install browser-runtime
@@ -109,18 +108,19 @@ fased components install openai-runtime
 fased gateway restart
 ```
 
-- **Browser Runtime** adds Playwright control and readable-page extraction.
-- **Media Runtime** adds image transforms, file-type detection, and PDF extraction.
-- **Speech Runtime** adds the Edge TTS client. OpenAI and ElevenLabs API speech
+- **Browser Runtime** provides Playwright control and readable-page extraction.
+- **Media Runtime** provides image transforms, file-type detection, and PDF extraction.
+- **Speech Runtime** provides the Edge TTS client. OpenAI and ElevenLabs API speech
   do not require this local package.
-- **Local Vector Memory** adds native sqlite vector acceleration. File-backed
+- **Local Vector Memory** provides native sqlite vector acceleration. File-backed
   memory and remote embedding providers remain in core.
-- **OpenAI Sign-In Runtime** adds the official OpenAI Codex app-server used to
+- **OpenAI Sign-In Runtime** provides the official OpenAI Codex app-server used to
   discover and execute models available to a ChatGPT sign-in. Direct OpenAI API
   key models do not require this component.
 
-These packages are tracked in the same install ledger as channel add-ons, so
-`fased update` can update them after the core update succeeds.
+These private workspace packages are assembled into the verified generation.
+`fased update` swaps their code and dependencies with the core in one
+transaction; there is no independent npm version or install ledger.
 
 ## Local models stay external
 
@@ -158,16 +158,15 @@ See [Browser](/tools/browser).
 
 ## Local memory embeddings are optional
 
-Native sqlite vector acceleration is a separate component:
+Native sqlite vector acceleration is bundled but disabled until selected:
 
 ```bash
 fased components install local-memory-runtime
 fased gateway restart
 ```
 
-`memorySearch.provider = "local"` uses the native `node-llama-cpp` runtime and a
-GGUF embedding model. The lightweight hosted runtime does not include that
-native add-on or its model file.
+`memorySearch.provider = "local"` uses the bundled sqlite vector runtime plus a
+separately provisioned `node-llama-cpp` runtime and GGUF embedding model.
 
 Use a source install when you intentionally maintain the native local-embedding
 stack. Otherwise choose Ollama or a remote embedding provider. This boundary is
@@ -177,27 +176,28 @@ See [Memory](/concepts/memory).
 
 ## Install and update behavior
 
-| Install type                    | Fresh install                                                       | Normal `fased update`                                                                            |
-| ------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Linux Local recommended install | Verified Linux release artifact, with npm fallback only when needed | Verified release artifact, checksum and pre-swap checks, atomic activation, then service refresh |
-| VPS Hosting install             | Verified Linux release artifact, with npm fallback only when needed | Verified release artifact, checksum and pre-swap checks, atomic activation, then service refresh |
-| macOS or source install         | Source checkout, dependencies, and local build                      | Stable Git tag, dependency refresh, and rebuild                                                  |
-| Manual global npm install       | npm package-manager install                                         | npm package-manager update unless it uses the managed release-runtime layout                     |
+| Install type                    | Fresh install                                  | Normal `fased update`                                                                            |
+| ------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Linux Local recommended install | Verified Linux release artifact                | Verified release artifact, checksum and pre-swap checks, atomic activation, then service refresh |
+| VPS Hosting install             | Verified Linux release artifact                | Verified release artifact, checksum and pre-swap checks, atomic activation, then service refresh |
+| macOS or source install         | Source checkout, dependencies, and local build | Stable Git tag, dependency refresh, and rebuild                                                  |
+| Legacy global npm install       | Migration-only compatibility path              | Transition to the verified managed layout; npm is not lifecycle authority                        |
 
-After the core update succeeds, `fased update` checks tracked npm plugins and
-updates compatible add-ons. You can review them manually with:
+Fased-owned extensions update only with the signed generation. Independent
+third-party extensions are intentionally outside that transaction and must use
+their verified, content-addressed extension flow:
 
 ```bash
-fased plugins update --all --dry-run
-fased plugins update --all
+fased plugins status
 ```
 
 The first supported Linux install downloads both the application layer and a
 dependency layer. The installer prints separate timings for release resolution,
 download, archive safety checks, extraction, runtime verification, and
-activation. Later releases reuse the dependency layer whenever its build hash
-is unchanged, so normal updates download and activate only the smaller
-application layer.
+activation. Later releases may reuse a dependency layer only when its digest is
+already present and the signed release manifest binds that exact digest. The
+application and dependency identities still converge as one installed
+generation.
 
 The Control UI currently reports update status under **Advanced > Debug >
 Update Status**. Run the actual update from the CLI.

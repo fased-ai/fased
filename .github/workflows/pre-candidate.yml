@@ -15,8 +15,8 @@ on:
         description: Supported public stable predecessor for packaged P1
         required: true
         type: string
-      owner_predecessor_version:
-        description: Exact owner Local predecessor, or the stable predecessor when they are identical
+      managed_predecessor_version:
+        description: Representative supported pre-bootstrap managed predecessor
         required: true
         type: string
       release_sequence:
@@ -33,7 +33,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: pre-candidate-${{ inputs.source_commit }}-${{ inputs.next_release_version }}-${{ inputs.owner_predecessor_version }}
+  group: pre-candidate-${{ inputs.source_commit }}-${{ inputs.next_release_version }}-${{ inputs.managed_predecessor_version }}
   cancel-in-progress: false
 
 env:
@@ -68,7 +68,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
           NEXT_RELEASE_VERSION: ${{ inputs.next_release_version }}
-          OWNER_PREDECESSOR_VERSION: ${{ inputs.owner_predecessor_version }}
+          MANAGED_PREDECESSOR_VERSION: ${{ inputs.managed_predecessor_version }}
           PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
           RELEASE_SEQUENCE: ${{ inputs.release_sequence }}
           SECURITY_EPOCH: ${{ inputs.security_epoch }}
@@ -78,12 +78,12 @@ jobs:
           test "$GITHUB_SHA" = "$SOURCE_COMMIT"
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$SOURCE_COMMIT"
           [[ "$NEXT_RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]
-          [[ "$OWNER_PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]
+          [[ "$MANAGED_PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]
           [[ "$PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ "$RELEASE_SEQUENCE" =~ ^[1-9][0-9]*$ ]]
           [[ "$SECURITY_EPOCH" =~ ^[1-9][0-9]*$ ]]
           test "$NEXT_RELEASE_VERSION" != "$PREDECESSOR_VERSION"
-          test "$NEXT_RELEASE_VERSION" != "$OWNER_PREDECESSOR_VERSION"
+          test "$NEXT_RELEASE_VERSION" != "$MANAGED_PREDECESSOR_VERSION"
           test "$(node -p "require('./package.json').version")" != "$NEXT_RELEASE_VERSION"
           ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$NEXT_RELEASE_VERSION" >/dev/null 2>&1
           ! gh release view "v$NEXT_RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1
@@ -127,15 +127,15 @@ jobs:
       - name: Verify public compatibility inventory
         env:
           GH_TOKEN: ${{ github.token }}
-          OWNER_PREDECESSOR_VERSION: ${{ inputs.owner_predecessor_version }}
+          MANAGED_PREDECESSOR_VERSION: ${{ inputs.managed_predecessor_version }}
           PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
         shell: bash
         run: |
           set -euo pipefail
           node scripts/lifecycle-compatibility-inventory.mjs --verify-public-github
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
-          test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$OWNER_PREDECESSOR_VERSION")"
-          gh release view "v$OWNER_PREDECESSOR_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null
+          test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$MANAGED_PREDECESSOR_VERSION")"
+          gh release view "v$MANAGED_PREDECESSOR_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null
 
       - name: Record immutable pre-candidate evidence
         env:
@@ -143,7 +143,7 @@ jobs:
           MAIN_RUN_ID: ${{ steps.main-pass.outputs.run_id }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
           NEXT_RELEASE_VERSION: ${{ inputs.next_release_version }}
-          OWNER_PREDECESSOR_VERSION: ${{ inputs.owner_predecessor_version }}
+          MANAGED_PREDECESSOR_VERSION: ${{ inputs.managed_predecessor_version }}
           PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
           RELEASE_SEQUENCE: ${{ inputs.release_sequence }}
           SECURITY_EPOCH: ${{ inputs.security_epoch }}
@@ -156,14 +156,14 @@ jobs:
             --arg sourceTree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
             --arg lockfileDigest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
             --arg nextReleaseVersion "$NEXT_RELEASE_VERSION" \
-            --arg ownerPredecessorVersion "$OWNER_PREDECESSOR_VERSION" \
+            --arg managedPredecessorVersion "$MANAGED_PREDECESSOR_VERSION" \
             --arg predecessorVersion "$PREDECESSOR_VERSION" \
             --arg mainRunId "$MAIN_RUN_ID" \
             --arg mainChecksJobId "$MAIN_CHECKS_JOB_ID" \
             --arg workflowRunId "$GITHUB_RUN_ID" \
             --argjson releaseSequence "$RELEASE_SEQUENCE" \
             --argjson securityEpoch "$SECURITY_EPOCH" \
-            '{schemaVersion:3,sourceCommit:$sourceCommit,sourceTree:$sourceTree,lockfileDigest:$lockfileDigest,nextReleaseVersion:$nextReleaseVersion,predecessorVersion:$predecessorVersion,ownerPredecessorVersion:$ownerPredecessorVersion,releaseSequence:$releaseSequence,securityEpoch:$securityEpoch,mainRunId:$mainRunId,mainChecksJobId:$mainChecksJobId,workflowRunId:$workflowRunId}' \
+            '{schemaVersion:3,sourceCommit:$sourceCommit,sourceTree:$sourceTree,lockfileDigest:$lockfileDigest,nextReleaseVersion:$nextReleaseVersion,predecessorVersion:$predecessorVersion,managedPredecessorVersion:$managedPredecessorVersion,releaseSequence:$releaseSequence,securityEpoch:$securityEpoch,mainRunId:$mainRunId,mainChecksJobId:$mainChecksJobId,workflowRunId:$workflowRunId}' \
             >.artifacts/pre-candidate/evidence.json
 
       - name: Upload pre-candidate evidence

@@ -8,7 +8,7 @@ title: "WhatsApp"
 
 # WhatsApp
 
-**Delivery:** Official add-on.
+**Delivery:** Bundled.
 
 WhatsApp in Fased uses linked WhatsApp Web sessions. The gateway owns the socket
 state, routes DMs and groups separately, and lets you choose a personal-number
@@ -30,20 +30,13 @@ Status: supported through WhatsApp Web using Baileys.
 
 ## Quick setup
 
-1. Open **Agents > selected Agent > Channels > WhatsApp** and click
-   **Install**. Restart the Gateway when prompted.
+1. Open **Agents > selected Agent > Channels > WhatsApp** and enable it. The
+   signed Fased generation already contains the integration.
 2. Return to **Agent > Channels > WhatsApp**.
 3. Choose personal-number or dedicated-number setup.
 4. Keep DM policy on `pairing` or `allowlist` to start.
 5. Scan the QR code from WhatsApp.
 6. Approve the first pairing request if using pairing mode.
-
-CLI install:
-
-```bash
-fased plugins install @fased/whatsapp
-fased gateway restart
-```
 
 CLI login:
 

@@ -132,26 +132,24 @@ func TestDependencyLayerParticipatesInGenerationIdentity(t *testing.T) {
 	}
 }
 
-func TestPluginLockParticipatesInGenerationIdentity(t *testing.T) {
+func TestCurrentInventoryRetainsStrictPredecessorWireShape(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "bin/fased", "binary", 0o755)
 	schemas, capabilities := contract()
 	layer := DependencyLayer{Hash: strings.Repeat("a", 64), Asset: "fased-hosted-deps-linux-x64-test.tar.gz", ArchiveSHA256: "sha256:" + strings.Repeat("b", 64)}
-	lockDigest := "sha256:" + strings.Repeat("c", 64)
-	inventory, generation, err := InspectWithDependencyAndPluginLock(root, "0.1.76", testCommit, testCommit, schemas, capabilities, layer, lockDigest)
+	inventory, generation, err := InspectWithDependency(root, "0.1.76", testCommit, testCommit, schemas, capabilities, layer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inventory.PluginLockDigest != lockDigest {
-		t.Fatalf("plugin lock was not bound: %+v", inventory)
-	}
 	if err := Verify(root, inventory, generation); err != nil {
-		t.Fatalf("exact plugin-lock generation failed verification: %v", err)
+		t.Fatalf("exact generation failed verification: %v", err)
 	}
-	changed := inventory
-	changed.PluginLockDigest = "sha256:" + strings.Repeat("d", 64)
-	if err := Verify(root, changed, generation); err == nil {
-		t.Fatal("plugin lock substitution preserved generation identity")
+	data, err := CanonicalInventoryJSON(inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "pluginLockDigest") {
+		t.Fatalf("strict predecessor inventory gained an unknown field: %s", data)
 	}
 }
 

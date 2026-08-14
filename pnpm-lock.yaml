@@ -3,6 +3,7 @@ lockfileVersion: '9.0'
 settings:
   autoInstallPeers: false
   excludeLinksFromLockfile: false
+  injectWorkspacePackages: true
 
 overrides:
   '@grpc/grpc-js': 1.14.4
@@ -61,15 +62,30 @@ importers:
       '@agentclientprotocol/sdk':
         specifier: 0.14.1
         version: 0.14.1(zod@4.3.6)
+      '@buape/carbon':
+        specifier: 0.0.0-beta-20260216184201
+        version: 0.0.0-beta-20260216184201(bufferutil@4.1.0)(hono@4.12.34)(opusscript@0.1.1)(utf-8-validate@6.0.6)
       '@clack/prompts':
         specifier: ^1.0.1
         version: 1.0.1
+      '@discordjs/voice':
+        specifier: ^0.19.0
+        version: 0.19.0(bufferutil@4.1.0)(opusscript@0.1.1)(utf-8-validate@6.0.6)
       '@fedify/fedify':
         specifier: ^2.3.1
         version: 2.3.1
+      '@grammyjs/runner':
+        specifier: ^2.0.3
+        version: 2.0.3(grammy@1.40.1)
+      '@grammyjs/transformer-throttler':
+        specifier: ^1.2.1
+        version: 1.2.1(grammy@1.40.1)
       '@homebridge/ciao':
         specifier: ^1.3.5
         version: 1.3.5
+      '@larksuiteoapi/node-sdk':
+        specifier: ^1.68.0
+        version: 1.68.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
       '@line/bot-sdk':
         specifier: ^10.6.0
         version: 10.6.0
@@ -91,15 +107,36 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 1.29.0
         version: 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6)
+      '@mozilla/readability':
+        specifier: ^0.6.0
+        version: 0.6.0
+      '@napi-rs/canvas':
+        specifier: ^0.1.92
+        version: 0.1.92
+      '@openai/codex':
+        specifier: 0.144.1
+        version: 0.144.1
       '@sinclair/typebox':
         specifier: 0.34.48
         version: 0.34.48
+      '@slack/bolt':
+        specifier: ^4.6.0
+        version: 4.6.0(@types/express@5.0.6)(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+      '@slack/web-api':
+        specifier: ^7.14.1
+        version: 7.14.1
+      '@snazzah/davey':
+        specifier: ^0.1.9
+        version: 0.1.9(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)
       '@solana/web3.js':
         specifier: ^1.98.0
         version: 1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
       '@turnkey/sdk-server':
         specifier: 6.1.1
         version: 6.1.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.3.6)
+      '@whiskeysockets/baileys':
+        specifier: 7.0.0-rc12
+        version: 7.0.0-rc12(bufferutil@4.1.0)(sharp@0.35.3(@types/node@25.3.2))(utf-8-validate@6.0.6)
       ajv:
         specifier: ^8.18.0
         version: 8.18.0
@@ -118,15 +155,27 @@ importers:
       croner:
         specifier: ^10.0.1
         version: 10.0.1
+      discord-api-types:
+        specifier: ^0.38.40
+        version: 0.38.40
       dotenv:
         specifier: ^17.3.1
         version: 17.3.1
       express:
         specifier: ^5.2.1
         version: 5.2.1
+      file-type:
+        specifier: 21.3.2
+        version: 21.3.2
       gaxios:
         specifier: 7.1.2
         version: 7.1.2
+      google-auth-library:
+        specifier: ^10.6.1
+        version: 10.6.1
+      grammy:
+        specifier: ^1.40.1
+        version: 1.40.1
       https-proxy-agent:
         specifier: ^7.0.6
         version: 7.0.6
@@ -142,6 +191,9 @@ importers:
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
+      linkedom:
+        specifier: ^0.18.12
+        version: 0.18.12
       long:
         specifier: ^5.3.2
         version: 5.3.2
@@ -151,12 +203,30 @@ importers:
       node-domexception:
         specifier: npm:@nolyfill/domexception@^1.0.28
         version: '@nolyfill/domexception@1.0.28'
+      node-edge-tts:
+        specifier: ^1.2.10
+        version: 1.2.10(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+      opusscript:
+        specifier: ^0.1.1
+        version: 0.1.1
       osc-progress:
         specifier: ^0.3.0
         version: 0.3.0
+      pdfjs-dist:
+        specifier: ^5.4.624
+        version: 5.4.624
+      playwright-core:
+        specifier: 1.58.2
+        version: 1.58.2
       qrcode-terminal:
         specifier: ^0.12.0
         version: 0.12.0
+      sharp:
+        specifier: ^0.35.0
+        version: 0.35.3(@types/node@25.3.2)
+      sqlite-vec:
+        specifier: 0.1.7-alpha.2
+        version: 0.1.7-alpha.2
       tar:
         specifier: 7.5.21
         version: 7.5.21
@@ -166,6 +236,9 @@ importers:
       undici:
         specifier: 7.29.0
         version: 7.29.0
+      viem:
+        specifier: 2.55.2
+        version: 2.55.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.3.6)
       ws:
         specifier: 8.21.0
         version: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
@@ -176,45 +249,15 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
-      '@buape/carbon':
-        specifier: 0.0.0-beta-20260216184201
-        version: 0.0.0-beta-20260216184201(@discordjs/opus@0.10.0)(bufferutil@4.1.0)(hono@4.12.34)(opusscript@0.1.1)(utf-8-validate@6.0.6)
-      '@discordjs/voice':
-        specifier: ^0.19.0
-        version: 0.19.0(@discordjs/opus@0.10.0)(bufferutil@4.1.0)(opusscript@0.1.1)(utf-8-validate@6.0.6)
-      '@grammyjs/runner':
-        specifier: ^2.0.3
-        version: 2.0.3(grammy@1.40.1)
-      '@grammyjs/transformer-throttler':
-        specifier: ^1.2.1
-        version: 1.2.1(grammy@1.40.1)
       '@grammyjs/types':
         specifier: ^3.24.0
         version: 3.24.0
-      '@larksuiteoapi/node-sdk':
-        specifier: ^1.68.0
-        version: 1.68.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
       '@lit-labs/signals':
         specifier: ^0.2.0
         version: 0.2.0
       '@lit/context':
         specifier: ^1.1.6
         version: 1.1.6
-      '@mozilla/readability':
-        specifier: ^0.6.0
-        version: 0.6.0
-      '@napi-rs/canvas':
-        specifier: ^0.1.92
-        version: 0.1.92
-      '@slack/bolt':
-        specifier: ^4.6.0
-        version: 4.6.0(@types/express@5.0.6)(bufferutil@4.1.0)(utf-8-validate@6.0.6)
-      '@slack/web-api':
-        specifier: ^7.14.1
-        version: 7.14.1
-      '@snazzah/davey':
-        specifier: ^0.1.9
-        version: 0.1.9(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)
       '@types/express':
         specifier: ^5.0.6
         version: 5.0.6
@@ -236,33 +279,9 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^4.1.10
         version: 4.1.10(@vitest/browser@4.1.10)(vitest@4.1.10)
-      '@whiskeysockets/baileys':
-        specifier: 7.0.0-rc12
-        version: 7.0.0-rc12(bufferutil@4.1.0)(sharp@0.35.3(@types/node@25.3.2))(utf-8-validate@6.0.6)
-      discord-api-types:
-        specifier: ^0.38.40
-        version: 0.38.40
-      file-type:
-        specifier: 21.3.2
-        version: 21.3.2
-      google-auth-library:
-        specifier: 10.5.0
-        version: 10.5.0
-      grammy:
-        specifier: ^1.40.1
-        version: 1.40.1
-      linkedom:
-        specifier: ^0.18.12
-        version: 0.18.12
       lit:
         specifier: ^3.3.2
         version: 3.3.2
-      node-edge-tts:
-        specifier: ^1.2.10
-        version: 1.2.10(bufferutil@4.1.0)(utf-8-validate@6.0.6)
-      opusscript:
-        specifier: ^0.1.1
-        version: 0.1.1
       oxfmt:
         specifier: 0.35.0
         version: 0.35.0
@@ -272,24 +291,12 @@ importers:
       oxlint-tsgolint:
         specifier: ^0.15.0
         version: 0.15.0
-      pdfjs-dist:
-        specifier: ^5.4.624
-        version: 5.4.624
-      playwright-core:
-        specifier: 1.58.2
-        version: 1.58.2
       rolldown:
         specifier: 1.0.0-rc.3
         version: 1.0.0-rc.3
-      sharp:
-        specifier: ^0.35.0
-        version: 0.35.3(@types/node@25.3.2)
       signal-utils:
         specifier: 0.21.1
         version: 0.21.1(signal-polyfill@0.2.2)
-      sqlite-vec:
-        specifier: 0.1.7-alpha.2
-        version: 0.1.7-alpha.2
       tsdown:
         specifier: ^0.20.3
         version: 0.20.3(@typescript/native-preview@7.0.0-dev.20260225.1)(typescript@5.9.3)
@@ -353,10 +360,10 @@ importers:
     dependencies:
       '@buape/carbon':
         specifier: 0.0.0-beta-20260216184201
-        version: 0.0.0-beta-20260216184201(@discordjs/opus@0.10.0)(bufferutil@4.1.0)(hono@4.12.34)(opusscript@0.1.1)(utf-8-validate@6.0.6)
+        version: 0.0.0-beta-20260216184201(bufferutil@4.1.0)(hono@4.12.34)(opusscript@0.1.1)(utf-8-validate@6.0.6)
       '@discordjs/voice':
         specifier: ^0.19.0
-        version: 0.19.0(@discordjs/opus@0.10.0)(bufferutil@4.1.0)(opusscript@0.1.1)(utf-8-validate@6.0.6)
+        version: 0.19.0(bufferutil@4.1.0)(opusscript@0.1.1)(utf-8-validate@6.0.6)
       '@snazzah/davey':
         specifier: ^0.1.9
         version: 0.1.9(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)
@@ -366,10 +373,6 @@ importers:
       opusscript:
         specifier: ^0.1.1
         version: 0.1.1
-    optionalDependencies:
-      '@discordjs/opus':
-        specifier: ^0.10.0
-        version: 0.10.0
 
   extensions/fased-federation: {}
 
@@ -903,14 +906,6 @@ packages:
   '@digitalbazaar/http-client@4.3.0':
     resolution: {integrity: sha512-6lMpxpt9BOmqHKGs9Xm6DP4LlZTBFer/ZjHvP3FcW3IaUWYIWC7dw5RFZnvw4fP57kAVcm1dp3IF+Y50qhBvAw==}
     engines: {node: '>=18.0'}
-
-  '@discordjs/node-pre-gyp@0.4.5':
-    resolution: {integrity: sha512-YJOVVZ545x24mHzANfYoy0BJX5PDyeZlpiJjDkUBM/V/Ao7TFX9lcUvCN4nr0tbr5ubeaXxtEBILUrHtTphVeQ==}
-    hasBin: true
-
-  '@discordjs/opus@0.10.0':
-    resolution: {integrity: sha512-HHEnSNrSPmFEyndRdQBJN2YE6egyXS9JUnJWyP6jficK0Y+qKMEZXyYTgmzpjrxXP1exM/hKaNP7BRBUEWkU5w==}
-    engines: {node: '>=12.0.0'}
 
   '@discordjs/voice@0.19.0':
     resolution: {integrity: sha512-UyX6rGEXzVyPzb1yvjHtPfTlnLvB5jX/stAMdiytHhfoydX+98hfympdOwsnTktzr+IRvphxTbdErgYDJkEsvw==}
@@ -3029,9 +3024,6 @@ packages:
       link-preview-js:
         optional: true
 
-  abbrev@1.1.1:
-    resolution: {integrity: sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q==}
-
   abitype@1.2.3:
     resolution: {integrity: sha512-Ofer5QUnuUdTFsBRwARMoWKOH1ND5ehwYhJ3OJ/BQO+StkwQjHw0XyVh4vDttzHB7QOFhPHa/o413PJ82gU/Tg==}
     peerDependencies:
@@ -3118,14 +3110,6 @@ packages:
 
   any-promise@1.3.0:
     resolution: {integrity: sha512-7UvmKalWRt1wgjL1RrGxoSJW/0QZFIegpeGvZG9kjp8vrRu55XTHbwnqq2GpXm9uLbcuhxm3IqX9OB4MZR1b2A==}
-
-  aproba@2.1.0:
-    resolution: {integrity: sha512-tLIEcj5GuR2RSTnxNKdkK0dJ/GrC7P38sUkiDmDuHfsHmbagTFAxDVIBltoklXEVIQ/f14IL8IMJ5pn9Hez1Ew==}
-
-  are-we-there-yet@2.0.0:
-    resolution: {integrity: sha512-Ci/qENmwHnsYo9xKIcUJN5LeDKdJ6R1Z1j9V/J5wyq8nh/mYPEpIKJbBZXtZjG04HiK7zV/p6Vs9952MrMeUIw==}
-    engines: {node: '>=10'}
-    deprecated: This package is no longer supported.
 
   argparse@2.0.1:
     resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
@@ -3351,10 +3335,6 @@ packages:
   color-name@1.1.4:
     resolution: {integrity: sha512-dOy+3AuW3a2wNbZHIuMZpTcgjGuLU/uBL/ubcZF9OXbDo8ff4O8yVp5Bf0efS8uEoYo5q4Fx7dY9OgQGXgAsQA==}
 
-  color-support@1.1.3:
-    resolution: {integrity: sha512-qiBjkpbMLO/HL68y+lh4q0/O1MZFj2RX6X/KmMa3+gJD3z+WwI1ZzDHysvqHGS3mP6mznPckpXmw1nI9cJjyRg==}
-    hasBin: true
-
   combined-stream@1.0.8:
     resolution: {integrity: sha512-FQN4MRfuJeHf7cBbBMJFXhKSDq+2kAArBlmRBvcvFE5BB1HZKXtSFASDhdlz9zOYwxh8lDdnvmMOe/+5cdoEdg==}
     engines: {node: '>= 0.8'}
@@ -3369,9 +3349,6 @@ packages:
 
   commander@2.20.3:
     resolution: {integrity: sha512-GpVkmM8vF2vQUkj2LvZmD35JxeJOLCwJ9cUkugyk2nuhbv3+mJvpLYYt+0+USMxE+oj+ey/lJEnhZw75x/OMcQ==}
-
-  console-control-strings@1.1.0:
-    resolution: {integrity: sha512-ty/fTekppD2fIwRvnZAVdeOiGd1c7YXEixbgJTNzqcxJWKQnjJ/V1bNEEE6hygpM3WjwHFUVK6HTjWSzV4a8sQ==}
 
   content-disposition@0.5.4:
     resolution: {integrity: sha512-FveZTNuGw04cxlAiWbzi6zTAL/lhehaWbTtgluJh4/E95DqMwTmha3KZN1aAWA8cFIhHzMZUvLevkw5Rqk+tSQ==}
@@ -3479,9 +3456,6 @@ packages:
   delayed-stream@1.0.0:
     resolution: {integrity: sha512-ZySD7Nf91aLB0RxL4KGrKHBXl7Eds1DAmEdcoVawXnLD7SDhpNgtuII2aAkg7a7QS41jxPSZ17p4VdGnMHk3MQ==}
     engines: {node: '>=0.4.0'}
-
-  delegates@1.0.0:
-    resolution: {integrity: sha512-bd2L678uiWATM6m5Z1VzNCErI3jiGzt6HGY8OVICs40JQq/HALfbyNJmp0UDakEY4pMMaN0Ly5om/B1VI/+xfQ==}
 
   depd@2.0.0:
     resolution: {integrity: sha512-g7nH6P6dyDioJogAAGprGpCtVImJhpPk/roCzdb3fIh61/s/nPsfR6onyMwkCAR/OlC3yBC0lESvUoQEAssIrw==}
@@ -3749,9 +3723,6 @@ packages:
     resolution: {integrity: sha512-Rx/WycZ60HOaqLKAi6cHRKKI7zxWbJ31MhntmtwMoaTeF7XFH9hhBp8vITaMidfljRQ6eYWCKkaTK+ykVJHP2A==}
     engines: {node: '>= 0.8'}
 
-  fs.realpath@1.0.0:
-    resolution: {integrity: sha512-OO0pH2lK6a0hZnAdau5ItzHPI6pUlvI7jMVnxUQRtw4owF2wk8lOSabtGDCTP4Ggrg2MbGnWO9X8K1t4+fGMDw==}
-
   fsevents@2.3.2:
     resolution: {integrity: sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
@@ -3764,11 +3735,6 @@ packages:
 
   function-bind@1.1.2:
     resolution: {integrity: sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==}
-
-  gauge@3.0.2:
-    resolution: {integrity: sha512-+5J6MS/5XksCuXq++uFRsnUd7Ovu1XenbeuIuNRJxYWjgQbPuFhT14lAvsWfqfAmnwluf1OwMjz39HjfLPci0Q==}
-    engines: {node: '>=10'}
-    deprecated: This package is no longer supported.
 
   gaxios@7.1.2:
     resolution: {integrity: sha512-/Szrn8nr+2TsQT1Gp8iIe/BEytJmbyfrbFh419DfGQSkEgNEhbPi7JRJuughjkTzPWgU9gBQf5AVu3DbHt0OXA==}
@@ -3816,14 +3782,6 @@ packages:
     resolution: {integrity: sha512-Wjlyrolmm8uDpm/ogGyXZXb1Z+Ca2B8NbJwqBVg0axK9GbBeoS7yGV6vjXnYdGm6X53iehEuxxbyiKp8QmN4Vw==}
     engines: {node: 18 || 20 || >=22}
 
-  glob@7.2.3:
-    resolution: {integrity: sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==}
-    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
-
-  google-auth-library@10.5.0:
-    resolution: {integrity: sha512-7ABviyMOlX5hIVD60YOfHw4/CxOfBhyduaYB+wbFWCWoni4N7SLcV46hrVRktuBbZjFC9ONyqamZITN7q3n32w==}
-    engines: {node: '>=18'}
-
   google-auth-library@10.6.1:
     resolution: {integrity: sha512-5awwuLrzNol+pFDmKJd0dKtZ0fPLAtoA5p7YO4ODsDu6ONJUVqbYwvv8y2ZBO5MBNp9TJXigB19710kYpBPdtA==}
     engines: {node: '>=18'}
@@ -3843,10 +3801,6 @@ packages:
     resolution: {integrity: sha512-bTe8SWXD8/Sdt2LGAAAsFGhuxI9RG8zL2gGk3V42A/RxriPqBQqwMGoNSldNK1qIFD2EaVuq7NQM8+ZAmNgHLw==}
     engines: {node: ^12.20.0 || >=14.13.1}
 
-  gtoken@8.0.0:
-    resolution: {integrity: sha512-+CqsMbHPiSTdtSO14O51eMNlrp9N79gmeqmXeouJOhfucAedHw9noVe/n5uJk3tbKE6a+6ZCQg3RPhVhHByAIw==}
-    engines: {node: '>=18'}
-
   has-flag@4.0.0:
     resolution: {integrity: sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ==}
     engines: {node: '>=8'}
@@ -3858,9 +3812,6 @@ packages:
   has-tostringtag@1.0.2:
     resolution: {integrity: sha512-NqADB8VjPFLM2V0VvHUewwwsw0ZWBaIdgo+ieHtK3hasLz4qeCRjYcqfB6AQrBggRKppKF8L52/VqdVsO47Dlw==}
     engines: {node: '>= 0.4'}
-
-  has-unicode@2.0.1:
-    resolution: {integrity: sha512-8Rf9Y83NBReMnx0gFzA8JImQACstCYWUplepDa9xprwwtmgEZUF0h/i5xSA625zB/I37EtrswSST6OXxwaaIJQ==}
 
   hash.js@1.1.7:
     resolution: {integrity: sha512-taOaskGt4z4SOANNseOviYDvjEJinIkRgmp7LbKP2YTTmVxWBl87s/uzK9r+44BclBSp2X7K1hqeNfz9JbBeXA==}
@@ -3956,10 +3907,6 @@ packages:
   import-without-cache@0.2.5:
     resolution: {integrity: sha512-B6Lc2s6yApwnD2/pMzFh/d5AVjdsDXjgkeJ766FmFuJELIGHNycKRj+l3A39yZPM4CchqNCB4RITEAYB1KUM6A==}
     engines: {node: '>=20.19.0'}
-
-  inflight@1.0.6:
-    resolution: {integrity: sha512-k92I/b08q4wvFscXCLvqfsHCrjrF7yiXsQuIVvVE7N82W3+aqpzuUdBbfhWcy/FZR3/4IgflMgKLOsvPDrGCJA==}
-    deprecated: This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful.
 
   inherits@2.0.4:
     resolution: {integrity: sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==}
@@ -4313,10 +4260,6 @@ packages:
   magicast@0.5.2:
     resolution: {integrity: sha512-E3ZJh4J3S9KfwdjZhe2afj6R9lGIN5Pher1pF39UGrXRqq/VDaGVIGN13BjHd2u8B61hArAGOnso7nBOouW3TQ==}
 
-  make-dir@3.1.0:
-    resolution: {integrity: sha512-g3FeP20LNwhALb/6Cz6Dd4F2ngze0jz7tbzrD2wAV+o9FeNHe4rL+yK2md0J/fiSf1sa1ADhXqi5+oVwOM/eGw==}
-    engines: {node: '>=8'}
-
   make-dir@4.0.0:
     resolution: {integrity: sha512-hXdUTZYIVOt1Ex//jAQi+wTZZpUpwBj/0QsOzqegb3rGMMeJiSEu5xLHnYfBrRV4RH2+OCSOO95Is/7x1WJ4bw==}
     engines: {node: '>=10'}
@@ -4439,10 +4382,6 @@ packages:
     resolution: {integrity: sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg==}
     engines: {node: '>= 0.6'}
 
-  node-addon-api@8.5.0:
-    resolution: {integrity: sha512-/bRZty2mXUIFY/xU5HLvveNHlswNJej+RnxBjOMkidWfwZzgTbPG1E3K5TOxRLOR+5hX7bSofy8yf1hZevMS8A==}
-    engines: {node: ^18 || ^20 || >= 21}
-
   node-downloader-helper@2.1.10:
     resolution: {integrity: sha512-8LdieUd4Bqw/CzfZLf30h+1xSAq3riWSDfWKsPJYz8EULoWxjS1vw6BGLYFZDxQgXjDR7UmC9UpQ0oV93U98Fg==}
     engines: {node: '>=14.18'}
@@ -4472,11 +4411,6 @@ packages:
   node-readable-to-web-readable-stream@0.4.2:
     resolution: {integrity: sha512-/cMZNI34v//jUTrI+UIo4ieHAB5EZRY/+7OmXZgBxaWBMcW2tGdceIw06RFxWxrKZ5Jp3sI2i5TsRo+CBhtVLQ==}
 
-  nopt@5.0.0:
-    resolution: {integrity: sha512-Tbj67rffqceeLpcRXrT7vKAN8CwfPeIBgM7E6iBkmKLV7bEMwpGgYLGv0jACUsECaa/vuxP0IjEont6umdMgtQ==}
-    engines: {node: '>=6'}
-    hasBin: true
-
   nostr-tools@2.23.1:
     resolution: {integrity: sha512-Q5SJ1omrseBFXtLwqDhufpFLA6vX3rS/IuBCc974qaYX6YKGwEPxa/ZsyxruUOr+b+5EpWL2hFmCB5AueYrfBw==}
     peerDependencies:
@@ -4487,10 +4421,6 @@ packages:
 
   nostr-wasm@0.1.0:
     resolution: {integrity: sha512-78BTryCLcLYv96ONU8Ws3Q1JzjlAt+43pWQhIl86xZmWeegYCNLPml7yQ+gG3vR6V5h4XGj+TxO+SS5dsThQIA==}
-
-  npmlog@5.0.1:
-    resolution: {integrity: sha512-AqZtDUWOMKs1G/8lwylVjrdYgqA4d9nu8hc+0gzRxlDb1I10+FHBGMXs6aiQHFdCUUlqH99MUMuLfzWDNDtfxw==}
-    deprecated: This package is no longer supported.
 
   nth-check@2.1.1:
     resolution: {integrity: sha512-lqjrjmaOoAnWfMmBPL+XNnynZh2+swxiX3WUE0s4yEHI6m+AwrK2UZOimIRl3X/4QctVqS8AiZjFqyOGrMXb/w==}
@@ -4634,10 +4564,6 @@ packages:
 
   partial-json@0.1.7:
     resolution: {integrity: sha512-Njv/59hHaokb/hRUjce3Hdv12wd60MtM9Z5Olmn+nehe0QDAsRtRbJPvJ0Z91TusF0SuZRIvnM+S4l6EIP8leA==}
-
-  path-is-absolute@1.0.1:
-    resolution: {integrity: sha512-AVbw3UJ2e9bq64vSaS9Am0fje1Pa8pbGqTTsmXfaIiMpnr5DlDhfJOuLj9Sf95ZPVDAUerDfEk88MPmPe7UCQg==}
-    engines: {node: '>=0.10.0'}
 
   path-key@3.1.1:
     resolution: {integrity: sha512-ojmeN0qd+y0jszEtoY48r0Peq5dwMEkIlCOu6Q5f41lfkswXuKtYrhgoTpLnyIcHm24Uhqx+5Tqm2InSwLhE6Q==}
@@ -4813,10 +4739,6 @@ packages:
   readable-stream@2.3.8:
     resolution: {integrity: sha512-8p0AUk4XODgIewSi0l8Epjs+EVnWiK7NoDIEGU0HhE7+ZyY8D1IMY7odu5lRrFXGg71L15KG8QrPmum45RTtdA==}
 
-  readable-stream@3.6.2:
-    resolution: {integrity: sha512-9u/sniCrY3D5WdsERHzHE4G2YCXqoG5FTHUiCC4SIbr6XcLZBY05ya9EKjYek9O5xOAwjGq+1JdGBAS7Q9ScoA==}
-    engines: {node: '>= 6'}
-
   readdirp@5.0.0:
     resolution: {integrity: sha512-9u/XQ1pvrQtYyMpZe7DXKv2p5CNvyVwzUB6uhLAnQwHMSgKMBR62lc7AHljaeteeHXn11XTAaLLUVZYVZyuRBQ==}
     engines: {node: '>= 20.19.0'}
@@ -4859,11 +4781,6 @@ packages:
   retry@0.13.1:
     resolution: {integrity: sha512-XQBQ3I8W1Cge0Seh+6gjj03LbmRFWuoszgK9ooCpwYIrhhoO80pfq4cUkU5DkknwfOfFteRwlZ56PYOGYyFWdg==}
     engines: {node: '>= 4'}
-
-  rimraf@3.0.2:
-    resolution: {integrity: sha512-JZkJMZkAGFFPP2YqXZXPbMlMBgsxzE8ILs4lMIX/2o0L9UBw9O/Y3o6wFw/i9YLapcUJWwqbi3kdxIPdC62TIA==}
-    deprecated: Rimraf versions prior to v4 are no longer supported
-    hasBin: true
 
   rimraf@5.0.10:
     resolution: {integrity: sha512-l0OE8wL34P4nJH/H2ffoaniAokM2qSmrtXHmlpvYr5AVVX8msAyW0l8NVJFDxlSK4u3Uh/f41cQheDVdnYijwQ==}
@@ -4924,10 +4841,6 @@ packages:
   selderee@0.11.0:
     resolution: {integrity: sha512-5TF+l7p4+OsnP8BCCvSyZiSPc4x4//p5uPwK8TCnVPJYRmU2aYKMpOXvw8zM5a5JvuuCGN1jmsMwuU2W02ukfA==}
 
-  semver@6.3.1:
-    resolution: {integrity: sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==}
-    hasBin: true
-
   semver@7.7.4:
     resolution: {integrity: sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA==}
     engines: {node: '>=10'}
@@ -4958,9 +4871,6 @@ packages:
   serve-static@2.2.1:
     resolution: {integrity: sha512-xRXBn0pPqQTVQiC8wyQrKs2MOlX24zQ0POGaj0kultvoOCstBQM5yvOhAVSUwOMjQtTvsPWoNCHfPGwaaQJhTw==}
     engines: {node: '>= 18'}
-
-  set-blocking@2.0.0:
-    resolution: {integrity: sha512-KiKBS8AnWGEyLzofFfmvKwpdPzqiy16LvQfK3yv/fVH7Bj13/wl3JSR1J+rfgRE9q7xUJK4qvgS8raSOeLUehw==}
 
   setimmediate@1.0.5:
     resolution: {integrity: sha512-MATJdZp8sLqDl/68LfQmbP8zKPLQNV6BIZoIgrscFDQ+RsvK/BxeDQOgyxKKoh0y/8h3BqVFnCqQ/gd+reiIXA==}
@@ -5121,9 +5031,6 @@ packages:
 
   string_decoder@1.1.1:
     resolution: {integrity: sha512-n/ShnvDi6FHbbVfviro+WojiFzv+s8MPMHBczVePfUpDJLwoLT0ht1l4YwBCbi8pJAveEEdnkHyPyTP/mzRfwg==}
-
-  string_decoder@1.3.0:
-    resolution: {integrity: sha512-hkRX8U1WjJFd8LsDJ2yQ/wWWxaopEsABU1XfkM8A+j0+85JAGppt16cr1Whg6KIbb4okU6Mql6BOj+uup/wKeA==}
 
   strip-ansi@6.0.1:
     resolution: {integrity: sha512-Y38VPSHcqkFrCpFnQ9vuSXmquuv5oXOKpGeT6aGrr3o3Gc9AlVa6JBfUSOCnbxGGZF+/0ooI7KrPuUSztUdU5A==}
@@ -5487,9 +5394,6 @@ packages:
     engines: {node: '>=8'}
     hasBin: true
 
-  wide-align@1.1.5:
-    resolution: {integrity: sha512-eDMORYaPNZ4sQIuuYPDHdQvf4gyCF9rEEV/yPxGfwPkRodwEgiMUUXTx/dex+Me0wxx53S+NgUHaP7y3MGlDmg==}
-
   win-guid@0.2.1:
     resolution: {integrity: sha512-gEIQU4mkgl2OPeoNrWflcJFJ3Ae2BPd4eCsHHA/XikslkIVms/nHhvnvzIZV7VLmBvtFlDOzLt9rrZT+n6D67A==}
 
@@ -5566,8 +5470,7 @@ packages:
 
 snapshots:
 
-  '@adraffy/ens-normalize@1.11.1':
-    optional: true
+  '@adraffy/ens-normalize@1.11.1': {}
 
   '@agentclientprotocol/sdk@0.14.1(zod@4.3.6)':
     dependencies:
@@ -5875,13 +5778,13 @@ snapshots:
 
   '@borewit/text-codec@0.2.2': {}
 
-  '@buape/carbon@0.0.0-beta-20260216184201(@discordjs/opus@0.10.0)(bufferutil@4.1.0)(hono@4.12.34)(opusscript@0.1.1)(utf-8-validate@6.0.6)':
+  '@buape/carbon@0.0.0-beta-20260216184201(bufferutil@4.1.0)(hono@4.12.34)(opusscript@0.1.1)(utf-8-validate@6.0.6)':
     dependencies:
       '@types/node': 25.3.2
       discord-api-types: 0.38.37
     optionalDependencies:
       '@cloudflare/workers-types': 4.20260120.0
-      '@discordjs/voice': 0.19.0(@discordjs/opus@0.10.0)(bufferutil@4.1.0)(opusscript@0.1.1)(utf-8-validate@6.0.6)
+      '@discordjs/voice': 0.19.0(bufferutil@4.1.0)(opusscript@0.1.1)(utf-8-validate@6.0.6)
       '@hono/node-server': 2.0.10(hono@4.12.34)
       '@types/bun': 1.3.9
       '@types/ws': 8.18.1
@@ -6013,36 +5916,11 @@ snapshots:
       ky: 1.14.3
       undici: 6.28.0
 
-  '@discordjs/node-pre-gyp@0.4.5':
-    dependencies:
-      detect-libc: 2.1.2
-      https-proxy-agent: 5.0.1
-      make-dir: 3.1.0
-      node-fetch: 2.7.0
-      nopt: 5.0.0
-      npmlog: 5.0.1
-      rimraf: 3.0.2
-      semver: 7.8.0
-      tar: 7.5.21
-    transitivePeerDependencies:
-      - encoding
-      - supports-color
-    optional: true
-
-  '@discordjs/opus@0.10.0':
-    dependencies:
-      '@discordjs/node-pre-gyp': 0.4.5
-      node-addon-api: 8.5.0
-    transitivePeerDependencies:
-      - encoding
-      - supports-color
-    optional: true
-
-  '@discordjs/voice@0.19.0(@discordjs/opus@0.10.0)(bufferutil@4.1.0)(opusscript@0.1.1)(utf-8-validate@6.0.6)':
+  '@discordjs/voice@0.19.0(bufferutil@4.1.0)(opusscript@0.1.1)(utf-8-validate@6.0.6)':
     dependencies:
       '@types/ws': 8.18.1
       discord-api-types: 0.38.40
-      prism-media: 1.3.5(@discordjs/opus@0.10.0)(opusscript@0.1.1)
+      prism-media: 1.3.5(opusscript@0.1.1)
       tslib: 2.8.1
       ws: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
     transitivePeerDependencies:
@@ -6785,7 +6663,6 @@ snapshots:
   '@noble/curves@1.9.1':
     dependencies:
       '@noble/hashes': 1.8.0
-    optional: true
 
   '@noble/curves@1.9.7':
     dependencies:
@@ -7477,8 +7354,7 @@ snapshots:
 
   '@rolldown/pluginutils@1.0.1': {}
 
-  '@scure/base@1.2.6':
-    optional: true
+  '@scure/base@1.2.6': {}
 
   '@scure/base@2.0.0': {}
 
@@ -7487,7 +7363,6 @@ snapshots:
       '@noble/curves': 1.9.7
       '@noble/hashes': 1.8.0
       '@scure/base': 1.2.6
-    optional: true
 
   '@scure/bip32@2.0.1':
     dependencies:
@@ -7499,7 +7374,6 @@ snapshots:
     dependencies:
       '@noble/hashes': 1.8.0
       '@scure/base': 1.2.6
-    optional: true
 
   '@scure/bip39@2.0.1':
     dependencies:
@@ -8248,14 +8122,10 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  abbrev@1.1.1:
-    optional: true
-
   abitype@1.2.3(typescript@5.9.3)(zod@4.3.6):
     optionalDependencies:
       typescript: 5.9.3
       zod: 4.3.6
-    optional: true
 
   abort-controller@3.0.0:
     dependencies:
@@ -8325,15 +8195,6 @@ snapshots:
   ansis@4.2.0: {}
 
   any-promise@1.3.0: {}
-
-  aproba@2.1.0:
-    optional: true
-
-  are-we-there-yet@2.0.0:
-    dependencies:
-      delegates: 1.0.0
-      readable-stream: 3.6.2
-    optional: true
 
   argparse@2.0.1: {}
 
@@ -8561,9 +8422,6 @@ snapshots:
 
   color-name@1.1.4: {}
 
-  color-support@1.1.3:
-    optional: true
-
   combined-stream@1.0.8:
     dependencies:
       delayed-stream: 1.0.0
@@ -8573,9 +8431,6 @@ snapshots:
   commander@14.0.3: {}
 
   commander@2.20.3: {}
-
-  console-control-strings@1.1.0:
-    optional: true
 
   content-disposition@0.5.4:
     dependencies:
@@ -8655,9 +8510,6 @@ snapshots:
   delay@5.0.0: {}
 
   delayed-stream@1.0.0: {}
-
-  delegates@1.0.0:
-    optional: true
 
   depd@2.0.0: {}
 
@@ -8798,8 +8650,7 @@ snapshots:
 
   eventemitter3@4.0.7: {}
 
-  eventemitter3@5.0.1:
-    optional: true
+  eventemitter3@5.0.1: {}
 
   eventemitter3@5.0.4: {}
 
@@ -8973,9 +8824,6 @@ snapshots:
 
   fresh@2.0.0: {}
 
-  fs.realpath@1.0.0:
-    optional: true
-
   fsevents@2.3.2:
     optional: true
 
@@ -8983,19 +8831,6 @@ snapshots:
     optional: true
 
   function-bind@1.1.2: {}
-
-  gauge@3.0.2:
-    dependencies:
-      aproba: 2.1.0
-      color-support: 1.1.3
-      console-control-strings: 1.1.0
-      has-unicode: 2.0.1
-      object-assign: 4.1.1
-      signal-exit: 3.0.7
-      string-width: 4.2.3
-      strip-ansi: 6.0.1
-      wide-align: 1.1.5
-    optional: true
 
   gaxios@7.1.2:
     dependencies:
@@ -9069,28 +8904,6 @@ snapshots:
       minipass: 7.1.3
       path-scurry: 2.0.2
 
-  glob@7.2.3:
-    dependencies:
-      fs.realpath: 1.0.0
-      inflight: 1.0.6
-      inherits: 2.0.4
-      minimatch: 10.2.4
-      once: 1.4.0
-      path-is-absolute: 1.0.1
-    optional: true
-
-  google-auth-library@10.5.0:
-    dependencies:
-      base64-js: 1.5.1
-      ecdsa-sig-formatter: 1.0.11
-      gaxios: 7.1.2
-      gcp-metadata: 8.1.2
-      google-logging-utils: 1.1.3
-      gtoken: 8.0.0
-      jws: 4.0.1
-    transitivePeerDependencies:
-      - supports-color
-
   google-auth-library@10.6.1:
     dependencies:
       base64-js: 1.5.1
@@ -9118,13 +8931,6 @@ snapshots:
       - encoding
       - supports-color
 
-  gtoken@8.0.0:
-    dependencies:
-      gaxios: 7.1.2
-      jws: 4.0.1
-    transitivePeerDependencies:
-      - supports-color
-
   has-flag@4.0.0: {}
 
   has-symbols@1.1.0: {}
@@ -9132,9 +8938,6 @@ snapshots:
   has-tostringtag@1.0.2:
     dependencies:
       has-symbols: 1.1.0
-
-  has-unicode@2.0.1:
-    optional: true
 
   hash.js@1.1.7:
     dependencies:
@@ -9249,12 +9052,6 @@ snapshots:
 
   import-without-cache@0.2.5: {}
 
-  inflight@1.0.6:
-    dependencies:
-      once: 1.4.0
-      wrappy: 1.0.2
-    optional: true
-
   inherits@2.0.4: {}
 
   ip-address@10.3.1: {}
@@ -9301,7 +9098,6 @@ snapshots:
   isows@1.0.7(ws@8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)):
     dependencies:
       ws: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
-    optional: true
 
   isstream@0.1.2: {}
 
@@ -9599,11 +9395,6 @@ snapshots:
       '@babel/types': 7.29.0
       source-map-js: 1.2.1
 
-  make-dir@3.1.0:
-    dependencies:
-      semver: 6.3.1
-    optional: true
-
   make-dir@4.0.0:
     dependencies:
       semver: 7.8.0
@@ -9708,9 +9499,6 @@ snapshots:
 
   negotiator@1.0.0: {}
 
-  node-addon-api@8.5.0:
-    optional: true
-
   node-downloader-helper@2.1.10: {}
 
   node-edge-tts@1.2.10(bufferutil@4.1.0)(utf-8-validate@6.0.6):
@@ -9739,11 +9527,6 @@ snapshots:
   node-readable-to-web-readable-stream@0.4.2:
     optional: true
 
-  nopt@5.0.0:
-    dependencies:
-      abbrev: 1.1.1
-    optional: true
-
   nostr-tools@2.23.1(typescript@5.9.3):
     dependencies:
       '@noble/ciphers': 2.1.1
@@ -9757,14 +9540,6 @@ snapshots:
       typescript: 5.9.3
 
   nostr-wasm@0.1.0: {}
-
-  npmlog@5.0.1:
-    dependencies:
-      are-we-there-yet: 2.0.0
-      console-control-strings: 1.1.0
-      gauge: 3.0.2
-      set-blocking: 2.0.0
-    optional: true
 
   nth-check@2.1.1:
     dependencies:
@@ -9818,7 +9593,6 @@ snapshots:
       typescript: 5.9.3
     transitivePeerDependencies:
       - zod
-    optional: true
 
   oxfmt@0.35.0:
     dependencies:
@@ -9922,9 +9696,6 @@ snapshots:
 
   partial-json@0.1.7: {}
 
-  path-is-absolute@1.0.1:
-    optional: true
-
   path-key@3.1.1: {}
 
   path-scurry@1.11.1:
@@ -10007,9 +9778,8 @@ snapshots:
 
   postgres@3.4.8: {}
 
-  prism-media@1.3.5(@discordjs/opus@0.10.0)(opusscript@0.1.1):
+  prism-media@1.3.5(opusscript@0.1.1):
     optionalDependencies:
-      '@discordjs/opus': 0.10.0
       opusscript: 0.1.1
 
   process-nextick-args@2.0.1: {}
@@ -10096,13 +9866,6 @@ snapshots:
       string_decoder: 1.1.1
       util-deprecate: 1.0.2
 
-  readable-stream@3.6.2:
-    dependencies:
-      inherits: 2.0.4
-      string_decoder: 1.3.0
-      util-deprecate: 1.0.2
-    optional: true
-
   readdirp@5.0.0: {}
 
   real-require@0.2.0: {}
@@ -10132,11 +9895,6 @@ snapshots:
   retry@0.12.0: {}
 
   retry@0.13.1: {}
-
-  rimraf@3.0.2:
-    dependencies:
-      glob: 7.2.3
-    optional: true
 
   rimraf@5.0.10:
     dependencies:
@@ -10245,9 +10003,6 @@ snapshots:
     dependencies:
       parseley: 0.12.1
 
-  semver@6.3.1:
-    optional: true
-
   semver@7.7.4: {}
 
   semver@7.8.0: {}
@@ -10305,9 +10060,6 @@ snapshots:
       send: 1.2.1
     transitivePeerDependencies:
       - supports-color
-
-  set-blocking@2.0.0:
-    optional: true
 
   setimmediate@1.0.5: {}
 
@@ -10502,11 +10254,6 @@ snapshots:
   string_decoder@1.1.1:
     dependencies:
       safe-buffer: 5.1.2
-
-  string_decoder@1.3.0:
-    dependencies:
-      safe-buffer: 5.2.1
-    optional: true
 
   strip-ansi@6.0.1:
     dependencies:
@@ -10749,7 +10496,6 @@ snapshots:
       - bufferutil
       - utf-8-validate
       - zod
-    optional: true
 
   vite@8.1.2(@types/node@25.3.2)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.22.4)(yaml@2.8.3):
     dependencies:
@@ -10860,11 +10606,6 @@ snapshots:
     dependencies:
       siginfo: 2.0.0
       stackback: 0.0.2
-
-  wide-align@1.1.5:
-    dependencies:
-      string-width: 4.2.3
-    optional: true
 
   win-guid@0.2.1: {}
 

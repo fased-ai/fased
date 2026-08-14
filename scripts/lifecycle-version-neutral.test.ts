@@ -42,9 +42,7 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(fixture).toContain('user_systemctl enable --now "$predecessor_service"');
     expect(fixture).toContain('setfacl --no-mask --modify "user:$gateway_uid:--x"');
     expect(fixture).toContain('usermod -a -G "fsgw-$instance,fsop-$instance" "fssg-$instance"');
-    expect(fixture).toContain(
-      '"../../dependencies/$dependency_hash-$dependency_digest/node_modules"',
-    );
+    expect(fixture).toContain('"../../dependencies/$dependency_hash/node_modules"');
     expect(fixture).toContain('"$dependency_root/.fased-dependency-layer.json"');
     expect(fixture).toContain('--arg archiveSHA256 "sha256:$dependency_digest"');
     expect(fixture).toContain('chmod 0644 \\\n    "$generation_root/inventory.json"');
@@ -63,6 +61,8 @@ describe("version-neutral lifecycle acceptance", () => {
       "install -m 0755 -o root -g root /fixture-preinstalled-tools/gh /usr/bin/gh",
     );
     expect(fixture).toContain('test "$(stat -c \'%U:%G:%a\' /usr/bin/gh)" = "root:root:755"');
+    expect(fixture).toContain("the one-time in-place takeover");
+    expect(fixture).toContain("if run_target_installer \\");
     expect(hostingWrapper).toContain("lifecycle-d8-contract|lifecycle-version-neutral");
   });
 
@@ -82,7 +82,8 @@ describe("version-neutral lifecycle acceptance", () => {
       >;
     };
     expect(workflow.on?.workflow_dispatch?.inputs).toHaveProperty("predecessor_version");
-    expect(workflow.on?.workflow_dispatch?.inputs).toHaveProperty("owner_predecessor_version");
+    expect(workflow.on?.workflow_dispatch?.inputs).toHaveProperty("managed_predecessor_version");
+    expect(workflow.on?.workflow_dispatch?.inputs).not.toHaveProperty("owner_predecessor_version");
     expect(workflow.on?.workflow_dispatch?.inputs).not.toHaveProperty("predecessor_scenario");
     const update = workflow.jobs?.["p1-local-update"]?.steps?.find((candidate) =>
       candidate.name?.includes("supported-stable update P1"),

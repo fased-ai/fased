@@ -136,7 +136,9 @@ export async function ensureOnboardingPluginInstalled(params: {
   }
 
   if (choice === "local" && localPath) {
-    const isBundledLocalPlugin = entry.catalogSource === "bundled";
+    const isBundledLocalPlugin =
+      entry.delivery === "bundled" &&
+      (entry.catalogSource === "bundled" || entry.catalogSource === "official-catalog");
     next = finalizeInstalledPluginConfig({
       config: next,
       pluginId: entry.id,
@@ -191,7 +193,9 @@ export async function ensureOnboardingPluginInstalled(params: {
       initialValue: true,
     });
     if (fallback) {
-      const isBundledLocalPlugin = entry.catalogSource === "bundled";
+      const isBundledLocalPlugin =
+        entry.delivery === "bundled" &&
+        (entry.catalogSource === "bundled" || entry.catalogSource === "official-catalog");
       next = finalizeInstalledPluginConfig({
         config: next,
         pluginId: entry.id,

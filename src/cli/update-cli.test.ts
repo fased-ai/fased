@@ -36,15 +36,6 @@ const probeRunningGatewayRuntimeIdentity = vi.fn();
 const ensureOpenAICodexRuntimeComponent = vi.fn();
 const hasConfiguredOpenAICodexProfile = vi.fn();
 const isLocalSourceSignerConfigured = vi.fn(async () => false);
-const readLocalSourcePairedUpdateJournal = vi.fn(async () => null);
-const recoverLocalSourcePairedUpdate = vi.fn(async () => "none");
-const prepareLocalSourcePairedUpdate = vi.fn();
-const markLocalSourceAppActive = vi.fn(async ({ journal }) => journal);
-const activateLocalSourceSigner = vi.fn(async ({ journal }) => journal);
-const verifyLocalSourceSigner = vi.fn(async () => undefined);
-const markLocalSourceGatewayVerified = vi.fn(async (journal) => journal);
-const commitLocalSourcePairedUpdate = vi.fn(async () => undefined);
-const rollbackLocalSourcePairedUpdate = vi.fn(async () => undefined);
 
 vi.mock("@clack/prompts", () => ({
   confirm,
@@ -70,17 +61,8 @@ vi.mock("../infra/fased-root.js", () => ({
   resolveFasedAgentPackageRoot: vi.fn(),
 }));
 
-vi.mock("../infra/local-source-paired-update.js", () => ({
+vi.mock("../infra/local-source-signer-boundary.js", () => ({
   isLocalSourceSignerConfigured,
-  readLocalSourcePairedUpdateJournal,
-  recoverLocalSourcePairedUpdate,
-  prepareLocalSourcePairedUpdate,
-  markLocalSourceAppActive,
-  activateLocalSourceSigner,
-  verifyLocalSourceSigner,
-  markLocalSourceGatewayVerified,
-  commitLocalSourcePairedUpdate,
-  rollbackLocalSourcePairedUpdate,
 }));
 
 vi.mock("../config/config.js", () => ({
@@ -362,24 +344,7 @@ describe("update-cli", () => {
     ensureOpenAICodexRuntimeComponent.mockReset();
     hasConfiguredOpenAICodexProfile.mockReset();
     isLocalSourceSignerConfigured.mockReset();
-    readLocalSourcePairedUpdateJournal.mockReset();
-    recoverLocalSourcePairedUpdate.mockReset();
-    prepareLocalSourcePairedUpdate.mockReset();
-    markLocalSourceAppActive.mockReset();
-    activateLocalSourceSigner.mockReset();
-    verifyLocalSourceSigner.mockReset();
-    markLocalSourceGatewayVerified.mockReset();
-    commitLocalSourcePairedUpdate.mockReset();
-    rollbackLocalSourcePairedUpdate.mockReset();
     isLocalSourceSignerConfigured.mockResolvedValue(false);
-    readLocalSourcePairedUpdateJournal.mockResolvedValue(null);
-    recoverLocalSourcePairedUpdate.mockResolvedValue("none");
-    markLocalSourceAppActive.mockImplementation(async ({ journal }) => journal);
-    activateLocalSourceSigner.mockImplementation(async ({ journal }) => journal);
-    verifyLocalSourceSigner.mockResolvedValue(undefined);
-    markLocalSourceGatewayVerified.mockImplementation(async (journal) => journal);
-    commitLocalSourcePairedUpdate.mockResolvedValue(undefined);
-    rollbackLocalSourcePairedUpdate.mockResolvedValue(undefined);
     hasConfiguredOpenAICodexProfile.mockReturnValue(false);
     vi.mocked(resolveFasedAgentPackageRoot).mockResolvedValue(process.cwd());
     vi.mocked(readConfigFileSnapshot).mockResolvedValue(baseSnapshot);
@@ -537,10 +502,6 @@ describe("update-cli", () => {
     expect(defaultRuntime.error).toHaveBeenCalledWith(
       expect.stringContaining("Protected source-checkout updates are disabled"),
     );
-    expect(prepareLocalSourcePairedUpdate).not.toHaveBeenCalled();
-    expect(activateLocalSourceSigner).not.toHaveBeenCalled();
-    expect(rollbackLocalSourcePairedUpdate).not.toHaveBeenCalled();
-    expect(commitLocalSourcePairedUpdate).not.toHaveBeenCalled();
     expect(defaultRuntime.exit).toHaveBeenCalledWith(1);
   });
 

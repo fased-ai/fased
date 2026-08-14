@@ -251,8 +251,10 @@ function buildCatalogEntry(candidate: {
   if (!meta) {
     return null;
   }
-  const delivery =
-    candidate.catalogSource === "official-catalog" ? "official-addon" : getChannelDelivery(id);
+  const delivery = getChannelDelivery(id);
+  if (candidate.catalogSource === "official-catalog" && delivery !== "bundled") {
+    return null;
+  }
   const install = resolveInstallInfo({
     manifest,
     packageName: candidate.packageName,
@@ -332,22 +334,13 @@ export function formatChannelPluginCatalogInstallBits(entry: ChannelPluginCatalo
 }
 
 export function formatChannelPluginCatalogSelectionHint(entry: ChannelPluginCatalogEntry): string {
-  const action =
-    entry.delivery === "official-addon"
-      ? "install"
-      : entry.delivery === "bundled"
-        ? "enable bundled"
-        : "docs required";
+  const action = entry.delivery === "bundled" ? "enable bundled" : "docs required";
   return [...formatChannelPluginCatalogInstallBits(entry), action].join(" · ");
 }
 
 export function formatChannelPluginCatalogStatusLine(entry: ChannelPluginCatalogEntry): string {
   const next =
-    entry.delivery === "official-addon"
-      ? "install add-on to enable"
-      : entry.delivery === "bundled"
-        ? "enable bundled integration"
-        : `follow ${entry.meta.docsPath}`;
+    entry.delivery === "bundled" ? "enable bundled integration" : `follow ${entry.meta.docsPath}`;
   return `${entry.meta.label}: ${formatChannelPluginCatalogInstallBits(entry).join(", ")}, ${next}`;
 }
 

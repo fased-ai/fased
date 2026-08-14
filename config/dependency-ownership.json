@@ -48,7 +48,7 @@
       "label": "Wallet And Mining Core",
       "delivery": "core",
       "target": "keep",
-      "dependencies": ["@solana/web3.js", "@turnkey/sdk-server"]
+      "dependencies": ["@solana/web3.js", "@turnkey/sdk-server", "viem"]
     },
     {
       "id": "fased-network",
@@ -79,50 +79,89 @@
       "dependencies": ["@line/bot-sdk"]
     },
     {
+      "id": "official-channel-components",
+      "label": "Bundled Official Channel Components",
+      "delivery": "core",
+      "target": "keep",
+      "dependencies": [
+        "@buape/carbon",
+        "@discordjs/voice",
+        "@grammyjs/runner",
+        "@grammyjs/transformer-throttler",
+        "@larksuiteoapi/node-sdk",
+        "@slack/bolt",
+        "@slack/web-api",
+        "@snazzah/davey",
+        "@whiskeysockets/baileys",
+        "discord-api-types",
+        "google-auth-library",
+        "grammy",
+        "opusscript"
+      ]
+    },
+    {
+      "id": "bundled-runtime-components",
+      "label": "Bundled Runtime Components",
+      "delivery": "core",
+      "target": "keep",
+      "dependencies": [
+        "@mozilla/readability",
+        "@napi-rs/canvas",
+        "@openai/codex",
+        "file-type",
+        "linkedom",
+        "node-edge-tts",
+        "pdfjs-dist",
+        "playwright-core",
+        "sharp",
+        "sqlite-vec"
+      ]
+    },
+    {
       "id": "channel-feishu",
       "label": "Feishu Channel",
-      "delivery": "channel-addon",
-      "target": "extract",
+      "delivery": "core",
+      "target": "keep",
       "packagePath": "extensions/feishu/package.json",
       "dependencies": ["@larksuiteoapi/node-sdk", "@sinclair/typebox", "zod"]
     },
     {
       "id": "channel-googlechat",
       "label": "Google Chat Channel",
-      "delivery": "channel-addon",
-      "target": "extract",
+      "delivery": "core",
+      "target": "keep",
       "packagePath": "extensions/googlechat/package.json",
       "dependencies": ["google-auth-library"]
     },
     {
       "id": "browser-runtime",
       "label": "Browser Runtime",
-      "delivery": "runtime-addon",
-      "target": "extract",
+      "delivery": "core",
+      "target": "keep",
       "packagePath": "extensions/runtime-browser/package.json",
       "dependencies": ["@mozilla/readability", "linkedom", "playwright-core"]
     },
     {
       "id": "media-runtime",
       "label": "Media Runtime",
-      "delivery": "runtime-addon",
-      "target": "extract",
+      "delivery": "core",
+      "target": "keep",
       "packagePath": "extensions/runtime-media/package.json",
       "dependencies": ["@napi-rs/canvas", "file-type", "pdfjs-dist", "sharp"]
     },
     {
       "id": "speech-runtime",
       "label": "Speech Runtime",
-      "delivery": "runtime-addon",
-      "target": "extract",
+      "delivery": "core",
+      "target": "keep",
       "packagePath": "extensions/runtime-speech/package.json",
       "dependencies": ["node-edge-tts"]
     },
     {
       "id": "local-memory",
       "label": "Native Local Memory",
-      "delivery": "runtime-addon",
-      "target": "extract",
+      "delivery": "core",
+      "target": "keep",
       "packagePath": "extensions/runtime-local-memory/package.json",
       "dependencies": ["sqlite-vec"]
     }

@@ -335,7 +335,7 @@ export async function listOpenAICodexAppServerModels(params: {
     (params.resolveExecutable ? await params.resolveExecutable() : resolveOpenAICodexExecutable());
   if (!executable) {
     throw new Error(
-      "OpenAI sign-in runtime is not installed. Run `fased components install openai-runtime`.",
+      "The signed Fased generation is missing the bundled OpenAI sign-in runtime. Rerun the verified installer or `fased update`.",
     );
   }
   const client = new CodexAppServerClient(executable);
@@ -456,7 +456,7 @@ export function createOpenAICodexAppServerStreamFn(params?: {
           : resolveOpenAICodexExecutable();
         if (!executable) {
           throw new Error(
-            "OpenAI sign-in runtime is not installed. Run `fased components install openai-runtime`.",
+            "The signed Fased generation is missing the bundled OpenAI sign-in runtime. Rerun the verified installer or `fased update`.",
           );
         }
         client = new CodexAppServerClient(executable);

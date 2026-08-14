@@ -933,7 +933,7 @@ func TestImportGenerationArchiveExtractsDirectlyAndReverifiesExactBytes(t *testi
 	if target, err := os.Readlink(importedAlias); err != nil || target != "fased" {
 		t.Fatalf("safe archived symlink was not preserved: target=%q err=%v", target, err)
 	}
-	authority := CandidateAuthority{SchemaVersion: 1, GenerationID: expected.ID, ReleaseSequence: 12, SecurityEpoch: 3, ManifestMin: 1, ManifestMax: 2, ReleaseIndex: digestA, ReleaseAuthority: digestB}
+	authority := CandidateAuthority{SchemaVersion: 1, GenerationID: expected.ID, ReleaseSequence: 12, SecurityEpoch: 3, ManifestMin: 1, ManifestMax: 2, ReleaseIndex: digestA, ReleaseAuthority: digestB, PluginLockDigest: "sha256:" + strings.Repeat("c", 64)}
 	if err := state.BindCandidateAuthority(authority); err != nil {
 		t.Fatal(err)
 	}

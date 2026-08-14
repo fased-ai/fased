@@ -6,11 +6,13 @@ import { getChannelPluginCatalogEntry, listChannelPluginCatalogEntries } from ".
 
 describe("channel plugin catalog", () => {
   it.each(["telegram", "whatsapp", "discord", "slack", "feishu", "googlechat"])(
-    "installs %s from its npm add-on by default",
+    "enables bundled %s code without an npm source",
     (channelId) => {
       const entry = getChannelPluginCatalogEntry(channelId);
-      expect(entry?.install.npmSpec).toBe(`@fased/${channelId}`);
-      expect(entry?.install.defaultChoice).toBe("npm");
+      expect(entry?.delivery).toBe("bundled");
+      expect(entry?.install.npmSpec).toBeUndefined();
+      expect(entry?.install.localPath).toBe(`extensions/${channelId}`);
+      expect(entry?.install.defaultChoice).toBe("local");
     },
   );
 
@@ -23,11 +25,11 @@ describe("channel plugin catalog", () => {
     expect(entry?.catalogSource).toBe("bundled");
   });
 
-  it("includes Feishu with its npm install metadata", () => {
+  it("includes Feishu as a bundled generation component", () => {
     const entry = getChannelPluginCatalogEntry("feishu");
-    expect(entry?.install.npmSpec).toBe("@fased/feishu");
+    expect(entry?.install.npmSpec).toBeUndefined();
     expect(entry?.install.localPath).toBe("extensions/feishu");
-    expect(entry?.install.defaultChoice).toBe("npm");
+    expect(entry?.install.defaultChoice).toBe("local");
     expect(entry?.meta.aliases).toContain("lark");
     expect(entry?.catalogSource).toBe("bundled");
   });
@@ -158,7 +160,7 @@ describe("channel plugin catalog", () => {
     expect(yuanbao).toBeUndefined();
   });
 
-  it("loads official channel entries from a bundled catalog path", () => {
+  it("rejects unknown registry-backed entries from the Fased-owned catalog", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-official-catalog-"));
     const catalogPath = path.join(dir, "official.json");
     fs.writeFileSync(
@@ -190,9 +192,7 @@ describe("channel plugin catalog", () => {
     const entry = getChannelPluginCatalogEntry("official-demo", {
       officialCatalogPaths: [catalogPath],
     });
-    expect(entry?.install.npmSpec).toBe("@fased/official-demo@1.2.3");
-    expect(entry?.install.expectedIntegrity).toBe("sha512-demo");
-    expect(entry?.catalogSource).toBe("official-catalog");
+    expect(entry).toBeUndefined();
   });
 
   it("does not let official catalog data override bundled plugin entries", () => {

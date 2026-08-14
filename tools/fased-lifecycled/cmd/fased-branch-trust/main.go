@@ -22,9 +22,8 @@ import (
 )
 
 type inventory struct {
-	PluginLockDigest string                 `json:"pluginLockDigest"`
-	StateSchemas     map[string]uint32      `json:"stateSchemas"`
-	Capabilities     model.CapabilityRanges `json:"capabilities"`
+	StateSchemas map[string]uint32      `json:"stateSchemas"`
+	Capabilities model.CapabilityRanges `json:"capabilities"`
 }
 
 type fixtureKey struct {
@@ -43,7 +42,7 @@ func main() {
 func run(args []string) error {
 	flags := flag.NewFlagSet("fased-branch-trust", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	var artifactDir, inventoryPath, version, commit, tree, artifactSetDigest, issuedText string
+	var artifactDir, inventoryPath, version, commit, tree, artifactSetDigest, pluginLockDigest, issuedText string
 	var releaseSequence, securityEpoch uint64
 	flags.StringVar(&artifactDir, "artifact-dir", "", "")
 	flags.StringVar(&inventoryPath, "inventory", "", "")
@@ -51,13 +50,14 @@ func run(args []string) error {
 	flags.StringVar(&commit, "commit", "", "")
 	flags.StringVar(&tree, "tree", "", "")
 	flags.StringVar(&artifactSetDigest, "artifact-set-digest", "", "")
+	flags.StringVar(&pluginLockDigest, "plugin-lock-digest", "", "")
 	flags.StringVar(&issuedText, "issued-at", "", "")
 	flags.Uint64Var(&releaseSequence, "release-sequence", 1, "")
 	flags.Uint64Var(&securityEpoch, "security-epoch", 1, "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return errors.New("invalid arguments")
 	}
-	if artifactDir == "" || inventoryPath == "" || version == "" || commit == "" || tree == "" || artifactSetDigest == "" || issuedText == "" || releaseSequence == 0 || securityEpoch == 0 {
+	if artifactDir == "" || inventoryPath == "" || version == "" || commit == "" || tree == "" || artifactSetDigest == "" || pluginLockDigest == "" || issuedText == "" || releaseSequence == 0 || securityEpoch == 0 {
 		return errors.New("all identity arguments are required")
 	}
 	issued, err := time.Parse(time.RFC3339Nano, issuedText)
@@ -120,7 +120,7 @@ func run(args []string) error {
 		ReleaseSequence: releaseSequence, SecurityEpoch: securityEpoch, Commit: commit, Tree: tree, ArtifactSetDigest: artifactSetDigest,
 		Application: map[string]trust.Asset{"x64": application}, DependencyLayer: map[string]trust.Asset{"x64": dependency},
 		LifecycleHost: map[string]trust.Asset{"x64": host}, Signer: map[string]trust.Asset{"x64": signer},
-		StateSchemas: inv.StateSchemas, Capabilities: inv.Capabilities, PluginLockDigest: inv.PluginLockDigest,
+		StateSchemas: inv.StateSchemas, Capabilities: inv.Capabilities, PluginLockDigest: pluginLockDigest,
 		IssuedAt: issued.Format(time.RFC3339), ExpiresAt: issued.Add(23 * time.Hour).Format(time.RFC3339)}, trust.SigningKey{KeyID: releaseKey.id, PrivateKey: releaseKey.private})
 	if err != nil {
 		return err

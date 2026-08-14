@@ -249,7 +249,7 @@ describe("CI workflow routing", () => {
     expect(focused?.if).toBe("needs.change-scope.outputs.run_node_focused == 'true'");
     const focusedCommands = focused?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     expect(focusedCommands).toContain("scripts/go-lifecycle-routing.test.ts");
-    expect(focusedCommands).toContain("scripts/fased-managed-updater-fixed-client.test.ts");
+    expect(focusedCommands).toContain("scripts/npm-free-managed-lifecycle-contract.test.ts");
     expect(focusedCommands).toContain("src/wallet/wallet-application-state-permissions.test.ts");
 
     for (const [jobName, group] of [
@@ -513,7 +513,7 @@ describe("CI workflow routing", () => {
     expect(workflow.on).not.toHaveProperty("push");
     expect(workflow.on.workflow_dispatch.inputs.pre_candidate_run_id.required).toBe(true);
     expect(workflow.on.workflow_dispatch.inputs.pre_tag_p1_run_id.required).toBe(true);
-    expect(workflow.on.workflow_dispatch.inputs.owner_predecessor_version.required).toBe(true);
+    expect(workflow.on.workflow_dispatch.inputs.managed_predecessor_version.required).toBe(true);
     expect(jobs["release-gate"]).toBeUndefined();
     expect(jobs["build"]?.needs).toBe("preflight");
     expect(jobs["signer"]?.needs).toBe("preflight");
@@ -681,9 +681,9 @@ describe("CI workflow routing", () => {
     expect(
       p1Update?.steps?.find((step) => step.name === "Derive exact predecessor topology")?.env,
     ).toMatchObject({ GH_TOKEN: "${{ github.token }}" });
-    expect(preflightText).toContain("ownerPredecessorVersion");
+    expect(preflightText).toContain("managedPredecessorVersion");
     expect(preflightText).toContain('installationClass:"canonical-managed"');
-    expect(preflightText).toContain('.ownerTransitionStage == "post-tag-authentic-attestation"');
+    expect(preflightText).toContain('.managedTransitionStage == "pretag-installer-takeover"');
     expect(p1Update?.steps?.some((step) => usesAction(step, "actions/cache"))).toBe(true);
     expect(publishText).not.toContain("git tag");
     expect(publishText).not.toContain("git push origin");
@@ -722,7 +722,7 @@ describe("CI workflow routing", () => {
     expect(workflow.on).not.toHaveProperty("push");
     expect(workflow.on).not.toHaveProperty("pull_request");
     expect(workflow.on).toHaveProperty("workflow_dispatch");
-    expect(workflow.on.workflow_dispatch.inputs.owner_predecessor_version.required).toBe(true);
+    expect(workflow.on.workflow_dispatch.inputs.managed_predecessor_version.required).toBe(true);
     expect(workflow.on.workflow_dispatch.inputs.release_sequence.required).toBe(true);
     expect(workflow.on.workflow_dispatch.inputs.security_epoch.required).toBe(true);
     expect(validate?.["timeout-minutes"]).toBeLessThanOrEqual(5);
@@ -744,7 +744,7 @@ describe("CI workflow routing", () => {
     expect(commands).not.toContain("pnpm release:validate-dist:packed");
     expect(commands).toContain("--verify-public-github");
     expect(commands).toContain("lockfileDigest");
-    expect(commands).toContain("ownerPredecessorVersion");
+    expect(commands).toContain("managedPredecessorVersion");
     expect(commands).toContain("schemaVersion:3");
     expect(commands).toContain("releaseSequence");
     expect(commands).toContain("securityEpoch");
@@ -814,19 +814,17 @@ describe("CI workflow routing", () => {
       FASED_HOSTING_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install,managed-update",
     });
     expect(evidenceRecord?.run).toContain(
-      '--arg ownerPredecessorInstallationClass "canonical-managed"',
+      '--arg managedPredecessorInstallationClass "canonical-managed"',
     );
     expect(evidenceRecord?.run).toContain(
-      "ownerPredecessorInstallationClass:$ownerPredecessorInstallationClass",
+      "managedPredecessorInstallationClass:$managedPredecessorInstallationClass",
     );
     expect(evidenceRecord?.run).toContain(
-      '--arg ownerTransitionStage "post-tag-authentic-attestation"',
+      '--arg managedTransitionStage "pretag-installer-takeover"',
     );
-    expect(evidenceRecord?.run).toContain("ownerTransitionStage:$ownerTransitionStage");
-    expect(allText).toContain('[{version:$stable,installationClass:"public-stable"}]');
-    expect(allText).not.toContain(
-      '[{version:$stable,installationClass:"public-stable"},\n              {version:$owner,installationClass:"canonical-managed"}]',
-    );
+    expect(evidenceRecord?.run).toContain("managedTransitionStage:$managedTransitionStage");
+    expect(allText).toContain('{version:$stable,installationClass:"public-stable"}');
+    expect(allText).toContain('{version:$managed,installationClass:"canonical-managed"}');
     expect(allText).not.toContain("gh release create");
     expect(allText).not.toContain("git tag");
     expect(allText).not.toContain("git push");
@@ -892,7 +890,7 @@ describe("CI workflow routing", () => {
       release_version: { required: true },
       source_commit: { required: true },
       predecessor_version: { required: true },
-      owner_predecessor_version: { required: true },
+      managed_predecessor_version: { required: true },
     });
     expect(publicationReplay.permissions).toMatchObject({ actions: "read", contents: "read" });
     expect(publicationReplay.jobs?.publish).toMatchObject({

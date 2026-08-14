@@ -24,12 +24,16 @@ const removedMutationOwners = [
   "scripts/fased-host-updaterctl.mjs",
   "scripts/fased-lifecycle-supervisor.mjs",
   "scripts/protected-local-bootstrap.mjs",
+  "scripts/fased-managed-updater.mjs",
+  "scripts/managed-updater-bundle.mjs",
+  "scripts/managed-updater-bundle.v1.json",
+  "scripts/fased-managed-launcher.sh",
 ];
 
 describe("attested Go lifecycle artifact layout", () => {
   it("ships only the acquisition wrappers needed by the public installer and updater", () => {
     expect(files).toContain("install.sh");
-    expect(files).toContain("scripts/fased-managed-updater.mjs");
+    expect(files).not.toContain("scripts/fased-managed-updater.mjs");
     expect(files).not.toContain("scripts/generation-updater.mjs");
     expect(files).not.toContain("scripts/fased-generation-updater-core.mjs");
     expect(files).toContain("scripts/privileged-release-evidence.mjs");

@@ -114,18 +114,14 @@ already-passing predicates against immutable final bytes; it never diagnoses
 source. Build once, run independent P1 lanes in parallel, and never rebuild
 between P1 and publication.
 
-Version identity is strict. Before allocating a candidate, bind both the latest
-supported stable predecessor and the actual owner Local predecessor into
-PRE-CANDIDATE evidence. Bind each predecessor's profile, topology, canonical
-manifest schema, platform identity, state-schema digest, capability digest,
-active generation, and version. Version equality alone never establishes an
-installation-class match. Prove each distinct class locally against the branch
-artifact unless its installed updater requires an authentic target-tag-bound
-attestation that cannot exist before tag allocation. In that case, pre-tag P1
-must close every executable route, record the exact deferred owner class and
-cryptographic boundary, and the trusted tagged workflow must block publication
-on that authentic transition. Candidate P1 replays every required class in
-parallel against the same exact bytes.
+Version identity is strict, but version never selects product behavior. Before
+allocating a candidate, bind the supported installation classes by profile,
+topology, canonical manifest schema, platform identity, state-schema digest,
+capability digest, and active-generation protocol. Use concrete predecessor
+versions only to materialize those classes in evidence. Never create a P1 lane,
+product branch, or deferred tagged transition merely because the owner's
+machine runs a different RC. Candidate P1 replays every materially distinct
+supported installation class in parallel against the same exact bytes.
 A synthetic or sanitized predecessor is `SUPPORTING` unless its complete
 semantic installation class matches the required predecessor receipt. A
 candidate whose tagged source is followed by any product correction is
@@ -133,16 +129,16 @@ permanently obsolete: never move its tag, rebuild it, publish replacement bytes
 under its version, or use it for owner acceptance.
 
 No tag may allocate an ordinary product predicate for the first time. Before
-requesting tag authority, run every Local and Hosting route whose trust inputs
-can exist pre-tag, using the same fixture entrypoints, mount topology,
-public-acquisition routes, candidate-shaped inventory, predecessor scenarios,
-and acceptance receipt verifier that trusted P1 will run. This closure must run
-on the protected Linux runner, not only as local text assertions. A legacy
-updater's authentic target-tag attestation is the sole identity-ordering
-exception: record it as deferred, create only the immutable tag needed to issue
-that proof, and require the exact canonical-managed transition before any
-publication approval. Never replace that proof with a fake verifier or
-synthetic bundle.
+requesting tag authority, run every supported Local and Hosting topology whose
+trust inputs can exist pre-tag, using the same fixture entrypoints, mount
+topology, acquisition routes, candidate-shaped inventory, and acceptance
+receipt verifier that trusted P1 will run. A predecessor that cannot enter the
+static Go control plane through its installed updater is not automatically
+`REPAIR_REQUIRED`. When its healthy topology is recognized and its immutable
+inputs verify, run the documented installer once as an in-place takeover, then
+prove the installed `fased update` returns `Already current`. Reserve
+`REPAIR_REQUIRED` for ambiguous, damaged, or incompatible state. Never preserve
+an application-owned root updater or invent a release-specific exception.
 
 If a tagged run exposes a fixture or inventory predicate that could have
 executed before the tag, freeze the release. Correct the workflow first and add

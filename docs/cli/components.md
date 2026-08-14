@@ -1,15 +1,14 @@
 ---
-summary: "Inspect what Fased includes, what is installed as an add-on, and what must run externally."
+summary: "Inspect bundled Fased components and runtimes that must run externally."
 read_when:
   - You need to distinguish installed, configured, and ready components
-  - You are checking optional channels or external model runtimes
+  - You are checking bundled channels or external model runtimes
 title: "components"
 ---
 
 # `fased components`
 
-Show one lifecycle report for core capabilities, npm add-ons, and external
-runtimes:
+Show one lifecycle report for bundled Fased capabilities and external runtimes:
 
 ```bash
 fased components
@@ -22,16 +21,16 @@ The report uses these states:
 | ------------------- | -------------------------------------------------------------- |
 | `included`          | The capability ships in Fased core.                            |
 | `external-required` | Install or run the external runtime, then connect it to Fased. |
-| `not-installed`     | The optional npm add-on has not been installed.                |
-| `installed`         | Runtime code is present but still needs setup or restart.      |
+| `not-installed`     | Reserved for independently installed third-party components.   |
+| `installed`         | Third-party runtime code is present but still needs setup.     |
 | `configured`        | Fased has configuration; run the live check for readiness.     |
 | `ready`             | The capability passed its live readiness check.                |
 | `error`             | The installed capability failed to load or report state.       |
 
-Missing optional add-ons and external runtimes are not Doctor errors. Install
-only what the Agent uses.
+External runtimes are not Doctor errors. Fased-owned components ship in the
+signed generation and remain disabled until selected.
 
 The same report appears under **Services > Components** in the Control UI and
 in the final onboarding and Doctor summaries.
 
-See [Core And Optional Components](/install/components) for installation paths.
+See [Core And External Components](/install/components) for delivery paths.

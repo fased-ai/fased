@@ -38,13 +38,16 @@ async function generationMetadata(directory, version, architecture) {
       cwd: workspace,
       file: path.join(directory, name),
       filter: (entry) =>
-        entry === "generation/inventory.json" || entry === "generation/generation.json",
+        entry === "generation/inventory.json" ||
+        entry === "generation/generation.json" ||
+        entry === "generation/payload/runtime/plugin.lock.json",
       preservePaths: false,
       strict: true,
     });
     const inventoryPath = path.join(workspace, "generation/inventory.json");
     const envelopePath = path.join(workspace, "generation/generation.json");
-    for (const file of [inventoryPath, envelopePath]) {
+    const pluginLockPath = path.join(workspace, "generation/payload/runtime/plugin.lock.json");
+    for (const file of [inventoryPath, envelopePath, pluginLockPath]) {
       const info = await fs.lstat(file);
       if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size <= 0) {
         throw new Error(`release-index generation metadata is unsafe for ${architecture}`);
@@ -53,6 +56,10 @@ async function generationMetadata(directory, version, architecture) {
     const inventoryJSON = await fs.readFile(inventoryPath);
     const inventory = JSON.parse(inventoryJSON.toString("utf8"));
     const envelope = JSON.parse(await fs.readFile(envelopePath, "utf8"));
+    const pluginLock = JSON.parse(await fs.readFile(pluginLockPath, "utf8"));
+    const pluginLockDigest = `sha256:${createHash("sha256")
+      .update(JSON.stringify(pluginLock))
+      .digest("hex")}`;
     const inventoryDigest = createHash("sha256").update(inventoryJSON).digest("hex");
     if (
       envelope?.schemaVersion !== 1 ||
@@ -62,7 +69,19 @@ async function generationMetadata(directory, version, architecture) {
     ) {
       throw new Error(`release-index generation envelope is invalid for ${architecture}`);
     }
-    return { asset: await asset(directory, name), generation: envelope.generation, inventory };
+    if (
+      pluginLock?.schemaVersion !== 1 ||
+      pluginLock?.type !== "fased-plugin-lock" ||
+      !Array.isArray(pluginLock.entries)
+    ) {
+      throw new Error(`release-index plugin lock is invalid for ${architecture}`);
+    }
+    return {
+      asset: await asset(directory, name),
+      generation: envelope.generation,
+      inventory,
+      pluginLockDigest,
+    };
   } finally {
     await fs.rm(workspace, { force: true, recursive: true });
   }
@@ -117,7 +136,7 @@ export async function buildLifecycleReleaseIndex(options) {
       record.inventory?.version !== version ||
       record.inventory?.commit !== commit ||
       record.inventory?.tree !== tree ||
-      !DIGEST.test(record.inventory?.pluginLockDigest ?? "") ||
+      !DIGEST.test(record.pluginLockDigest) ||
       !record.inventory?.dependency
     ) {
       throw new Error(`release-index generation identity differs for ${architecture.name}`);
@@ -127,7 +146,7 @@ export async function buildLifecycleReleaseIndex(options) {
   if (
     !same(baseline.stateSchemas, records.arm64.inventory.stateSchemas) ||
     !same(baseline.capabilities, records.arm64.inventory.capabilities) ||
-    baseline.pluginLockDigest !== records.arm64.inventory.pluginLockDigest
+    records.x64.pluginLockDigest !== records.arm64.pluginLockDigest
   ) {
     throw new Error("release-index architecture contracts disagree");
   }
@@ -162,7 +181,7 @@ export async function buildLifecycleReleaseIndex(options) {
     signer,
     stateSchemas: baseline.stateSchemas,
     capabilities: baseline.capabilities,
-    pluginLockDigest: baseline.pluginLockDigest,
+    pluginLockDigest: records.x64.pluginLockDigest,
   };
   const artifactSetDigest = `sha256:${createHash("sha256")
     .update(JSON.stringify(boundAssets))

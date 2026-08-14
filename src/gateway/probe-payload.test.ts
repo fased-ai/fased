@@ -38,15 +38,6 @@ describe("Gateway generation receipt", () => {
       }),
     );
     writeFileSync(
-      path.join(root, ".fased-managed-updater-bundle.json"),
-      JSON.stringify({
-        schemaVersion: 2,
-        architecture: "x64",
-        bundleDigest: `sha256:${sha}`,
-        release: { version: "0.1.76", commit },
-      }),
-    );
-    writeFileSync(
       path.join(root, "dist", "build-info.json"),
       JSON.stringify({ version: "0.1.76", commit }),
     );

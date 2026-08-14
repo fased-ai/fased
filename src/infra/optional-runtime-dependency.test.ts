@@ -1,8 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-vi.mock("../plugins/install.js", () => ({
-  resolvePluginInstallDir: vi.fn(() => "/tmp/fased-missing-component"),
-}));
+import { beforeEach, describe, expect, it } from "vitest";
 
 describe("optional runtime dependency loader", () => {
   beforeEach(async () => {
@@ -21,7 +17,7 @@ describe("optional runtime dependency loader", () => {
     expect(typeof module.join).toBe("function");
   });
 
-  it("returns the exact component install command when a dependency is absent", async () => {
+  it("routes a missing bundled dependency to verified generation repair", async () => {
     const { importOptionalRuntimeDependency } = await import("./optional-runtime-dependency.js");
     await expect(
       importOptionalRuntimeDependency({
@@ -29,6 +25,6 @@ describe("optional runtime dependency loader", () => {
         packageName: "@fased/media-runtime",
         dependency: "fased-package-that-does-not-exist",
       }),
-    ).rejects.toThrow("fased components install media-runtime");
+    ).rejects.toThrow("Rerun the verified installer or `fased update`");
   });
 });

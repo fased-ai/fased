@@ -242,9 +242,9 @@ describe("setupChannels", () => {
 
     const status = note.mock.calls.find(([, title]) => title === "Channel status")?.[0] ?? "";
     expect(String(status)).toContain(
-      "Feishu: official-addon, bundled plugin, local path available",
+      "Feishu: bundled, bundled plugin, local path available, enable bundled integration",
     );
-    expect(String(status)).toContain("install add-on to enable");
+    expect(String(status)).not.toContain("install add-on to enable");
 
     const quickstartCall = (
       select.mock.calls as unknown as Array<[params: { message?: string; options?: unknown[] }]>
@@ -253,7 +253,7 @@ describe("setupChannels", () => {
     const feishu = options.find((option) => option.value === "feishu");
     expect(feishu?.hint).toContain("bundled plugin");
     expect(feishu?.hint).toContain("local path available");
-    expect(feishu?.hint).toContain("install");
+    expect(feishu?.hint).toContain("enable bundled");
     expect(multiselect).not.toHaveBeenCalled();
   });
 

@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CapabilityComponentInstallResult } from "../capabilities/install.js";
-import { VERSION } from "../version.js";
 import {
   ensureOpenAICodexRuntimeComponent,
   hasConfiguredOpenAICodexProfile,
@@ -14,7 +13,7 @@ describe("managed OpenAI runtime component", () => {
         id: "openai-runtime",
         label: "OpenAI Sign-In Runtime",
         category: "provider",
-        delivery: "npm-addon",
+        delivery: "core",
         packageName: "@fased/openai-runtime",
         pluginId: "openai-runtime",
         docsPath: "/providers/openai",
@@ -22,7 +21,6 @@ describe("managed OpenAI runtime component", () => {
         description: "OpenAI runtime",
       },
       pluginId: "openai-runtime",
-      targetDir: "/opt/fased/openai-runtime",
       slotWarnings: [],
     }) satisfies CapabilityComponentInstallResult;
 
@@ -55,7 +53,7 @@ describe("managed OpenAI runtime component", () => {
     expect(installComponent).not.toHaveBeenCalled();
   });
 
-  it("installs the managed runtime when no owned executable exists", async () => {
+  it("enables the bundled runtime when no owned executable is resolved", async () => {
     let executable: string | null = null;
     const installComponent = vi.fn(async () => {
       executable = "/opt/fased/openai-runtime/codex";
@@ -71,41 +69,19 @@ describe("managed OpenAI runtime component", () => {
     expect(installComponent).toHaveBeenCalledWith({
       id: "openai-runtime",
       config: {},
-      packageSpec: `@fased/openai-runtime@${VERSION}`,
     });
     expect(result.installed).toBe(true);
     expect(result.executable).toBe("/opt/fased/openai-runtime/codex");
     expect(result.config.plugins?.entries?.["openai-runtime"]?.enabled).toBe(true);
   });
 
-  it("installs the exact target release requested by the updater", async () => {
-    let executable: string | null = null;
-    const installComponent = vi.fn(async () => {
-      executable = "/opt/fased/openai-runtime/codex";
-      return installResult({});
-    });
-
-    await ensureOpenAICodexRuntimeComponent({
-      config: {},
-      version: "0.1.57",
-      resolveExecutable: () => executable,
-      installComponent,
-    });
-
-    expect(installComponent).toHaveBeenCalledWith({
-      id: "openai-runtime",
-      config: {},
-      packageSpec: "@fased/openai-runtime@0.1.57",
-    });
-  });
-
-  it("does not accept an install that produced no executable", async () => {
+  it("does not accept an incomplete signed generation", async () => {
     await expect(
       ensureOpenAICodexRuntimeComponent({
         config: {},
         resolveExecutable: () => null,
         installComponent: vi.fn(async () => installResult({})),
       }),
-    ).rejects.toThrow("without an executable");
+    ).rejects.toThrow("signed Fased generation is missing");
   });
 });

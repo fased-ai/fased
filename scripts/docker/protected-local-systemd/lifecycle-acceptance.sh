@@ -151,7 +151,7 @@ materialize_canonical_managed_predecessor() {
   test "$predecessor_class" = "canonical-managed"
   instance="$(jq -er .installationClass.platform.instanceId "$predecessor_capsule_descriptor")"
   generation_id="$(jq -er '.installationClass.activeGeneration.id | sub("^sha256:"; "")' "$predecessor_capsule_descriptor")"
-  previous_id="$(jq -er '.installationClass.previousGeneration.id | sub("^sha256:"; "")' "$predecessor_capsule_descriptor")"
+  previous_id="$(jq -r '.installationClass.previousGeneration?.id // "" | sub("^sha256:"; "")' "$predecessor_capsule_descriptor")"
   platform_config="/var/lib/fased-local/$instance/lifecycle/platform.json"
   gateway_uid="$(jq -er .gateway.uid "$platform_config")"
   gateway_gid="$(jq -er .gateway.gid "$platform_config")"
@@ -161,7 +161,10 @@ materialize_canonical_managed_predecessor() {
   dependency_asset="$(tar -xOf /var/lib/fased-predecessor-input/generation.tar.gz generation/inventory.json | jq -er .dependency.asset)"
   dependency_digest="$(tar -xOf /var/lib/fased-predecessor-input/generation.tar.gz generation/inventory.json | jq -er '.dependency.archiveSHA256 | sub("^sha256:"; "")')"
   generation_root="/opt/fased/local/$instance/generations/$generation_id"
-  dependency_root="/opt/fased/local/$instance/dependencies/$dependency_hash-$dependency_digest"
+  # Materialize the compatibility capsule in the legacy hash-only location so
+  # the predecessor's own lifecycle host can read it. Candidate imports use the
+  # archive-qualified location and both layouts remain marker-verified.
+  dependency_root="/opt/fased/local/$instance/dependencies/$dependency_hash"
 
   groupadd --gid "$gateway_gid" "fsgw-$instance"
   useradd --uid "$gateway_uid" --gid "$gateway_gid" --no-create-home \
@@ -189,7 +192,7 @@ materialize_canonical_managed_predecessor() {
     --arg archiveSHA256 "sha256:$dependency_digest" \
     '{schemaVersion:1,hash:$hash,asset:$asset,archiveSHA256:$archiveSHA256}' \
     >"$dependency_root/.fased-dependency-layer.json"
-  ln -s "../../dependencies/$dependency_hash-$dependency_digest/node_modules" \
+  ln -s "../../dependencies/$dependency_hash/node_modules" \
     "$generation_root/node_modules"
   test "$(jq -er '.generation.id | sub("^sha256:"; "")' "$generation_root/generation.json")" = \
     "$generation_id"
@@ -205,7 +208,9 @@ materialize_canonical_managed_predecessor() {
   chmod 0644 \
     "$generation_root/inventory.json" \
     "$dependency_root/.fased-dependency-layer.json"
-  test -d "/opt/fased/local/$instance/generations/$previous_id"
+  if [[ -n "$previous_id" ]]; then
+    test -d "/opt/fased/local/$instance/generations/$previous_id"
+  fi
 
   chown testop:"fscf-$instance" "$state"
   chmod 2770 "$state"
@@ -215,7 +220,7 @@ materialize_canonical_managed_predecessor() {
   find "$state" -xdev -type f -exec chmod 0660 {} +
   # The owner launcher is the sole executable in the user-state capsule. Keep
   # the broad writable-state normalization above, then restore this explicitly
-  # inventoried rc.72 code file to its attested executable mode.
+  # inventoried schema-one launcher to its attested executable mode.
   test -f "$state/bin/fased" && test ! -L "$state/bin/fased"
   chmod 0755 "$state/bin/fased"
   install -d -m 0700 -o "$signer_uid" -g "$signer_gid" \
@@ -1857,7 +1862,11 @@ EOF_MANAGED_FAILED_GATEWAY
 ExecStartPre=+$managed_fault_script
 EOF_MANAGED_FAILED_GATEWAY_DROPIN
   systemctl daemon-reload
-  if run_installed_updater \
+  # This predecessor topology predates the fixed static bootstrap. Its bundled
+  # Node updater cannot repair itself before candidate handoff, so the verified
+  # installer performs the one-time in-place takeover. All later updates enter
+  # the installed bootstrap through the owner command.
+  if run_target_installer \
       >/tmp/managed-update-failure.out 2>/tmp/managed-update-failure.err; then
     managed_failure_status=0
   else
@@ -1887,7 +1896,7 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
     exit 1
   fi
 
-  run_installed_updater \
+  run_target_installer \
     >/tmp/managed-update-success.out 2>/tmp/managed-update-success.err
   cat /tmp/managed-update-failure.err /tmp/managed-update-success.out \
     >/tmp/managed-rollback-retry.evidence

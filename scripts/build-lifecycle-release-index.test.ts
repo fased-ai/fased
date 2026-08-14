@@ -31,6 +31,16 @@ async function fixture() {
     await fs.writeFile(path.join(root, `fased-signerd-linux-${go}`), `signer-${go}`);
     const generationRoot = path.join(root, `generation-${architecture}`, "generation");
     await fs.mkdir(generationRoot, { recursive: true });
+    const pluginLock = {
+      schemaVersion: 1,
+      type: "fased-plugin-lock",
+      entries: [],
+    };
+    await fs.mkdir(path.join(generationRoot, "payload", "runtime"), { recursive: true });
+    await fs.writeFile(
+      path.join(generationRoot, "payload", "runtime", "plugin.lock.json"),
+      `${JSON.stringify(pluginLock)}\n`,
+    );
     const inventoryJSON = JSON.stringify({
       schemaVersion: 3,
       version,
@@ -48,7 +58,6 @@ async function fixture() {
         asset: dependencyName,
         archiveSHA256: digest(dependencyBody),
       },
-      pluginLockDigest: `sha256:${"c".repeat(64)}`,
       artifacts: [{ path: "payload/fased.mjs" }],
     });
     await fs.writeFile(path.join(generationRoot, "inventory.json"), inventoryJSON);
@@ -108,6 +117,9 @@ describe("production lifecycle release index", () => {
       },
     });
     expect(index.artifactSetDigest).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    expect(index.pluginLockDigest).toBe(
+      digest(JSON.stringify({ schemaVersion: 1, type: "fased-plugin-lock", entries: [] })),
+    );
     expect(index).not.toHaveProperty("privateKey");
     expect(index).not.toHaveProperty("delegation");
   });
@@ -131,5 +143,17 @@ describe("production lifecycle release index", () => {
         version,
       }),
     ).rejects.toThrow("dependency digest differs for x64");
+  });
+
+  it("keeps branch trust plugin-lock hashing byte-identical to Go canonical JSON", async () => {
+    for (const script of [
+      "prepare-candidate-fixture-trust.sh",
+      "test-lifecycle-local-acceptance.sh",
+    ]) {
+      const source = await fs.readFile(path.join(import.meta.dirname, script), "utf8");
+      expect(source).toContain(
+        "jq -cj '{schemaVersion,type,entries:[.entries[]|{id,origin,digest,apiCapability,required}]}'",
+      );
+    }
   });
 });

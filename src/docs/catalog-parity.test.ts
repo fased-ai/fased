@@ -43,18 +43,35 @@ describe("documentation catalog parity", () => {
     }
   });
 
-  it("keeps the official npm channel catalog limited to official add-ons", () => {
+  it("keeps the Fased-owned channel catalog npm-free and limited to bundled channels", () => {
     const official = JSON.parse(read("config/official-channel-catalog.json")) as {
-      entries: Array<{ fased?: { channel?: { id?: string } } }>;
+      entries: Array<{
+        fased?: {
+          channel?: { id?: string };
+          install?: { npmSpec?: string; localPath?: string; defaultChoice?: string };
+        };
+      }>;
     };
     const officialIds = official.entries
       .map((entry) => entry.fased?.channel?.id)
       .filter((id): id is string => Boolean(id))
       .toSorted();
-    const deliveryIds = listChannelDeliveryEntries()
-      .filter((entry) => entry.delivery === "official-addon")
-      .map((entry) => entry.id)
-      .toSorted();
-    expect(officialIds).toEqual(deliveryIds);
+    expect(officialIds).toEqual([
+      "discord",
+      "feishu",
+      "googlechat",
+      "slack",
+      "telegram",
+      "whatsapp",
+    ]);
+    for (const entry of official.entries) {
+      expect(entry.fased?.install?.npmSpec).toBeUndefined();
+      expect(entry.fased?.install?.localPath).toBeTruthy();
+      expect(entry.fased?.install?.defaultChoice).toBe("local");
+      expect(
+        listChannelDeliveryEntries().find((candidate) => candidate.id === entry.fased?.channel?.id)
+          ?.delivery,
+      ).toBe("bundled");
+    }
   });
 });

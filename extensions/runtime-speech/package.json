@@ -1,15 +1,13 @@
 {
   "name": "@fased/speech-runtime",
   "version": "0.1.76-rc.84",
+  "private": true,
   "description": "Optional speech runtime for Fased Agent",
   "files": [
     "index.ts",
     "fased.plugin.json"
   ],
   "type": "module",
-  "publishConfig": {
-    "access": "public"
-  },
   "dependencies": {
     "node-edge-tts": "^1.2.10"
   },
@@ -26,9 +24,8 @@
       "./index.ts"
     ],
     "install": {
-      "npmSpec": "@fased/speech-runtime",
       "localPath": "extensions/runtime-speech",
-      "defaultChoice": "npm"
+      "defaultChoice": "local"
     }
   }
 }

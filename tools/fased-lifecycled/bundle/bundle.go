@@ -36,15 +36,14 @@ type Artifact struct {
 }
 
 type Inventory struct {
-	SchemaVersion    uint32                 `json:"schemaVersion"`
-	Version          string                 `json:"version"`
-	Commit           string                 `json:"commit"`
-	Tree             string                 `json:"tree"`
-	StateSchemas     map[string]uint32      `json:"stateSchemas"`
-	Capabilities     model.CapabilityRanges `json:"capabilities"`
-	Dependency       *DependencyLayer       `json:"dependency,omitempty"`
-	PluginLockDigest string                 `json:"pluginLockDigest,omitempty"`
-	Artifacts        []Artifact             `json:"artifacts"`
+	SchemaVersion uint32                 `json:"schemaVersion"`
+	Version       string                 `json:"version"`
+	Commit        string                 `json:"commit"`
+	Tree          string                 `json:"tree"`
+	StateSchemas  map[string]uint32      `json:"stateSchemas"`
+	Capabilities  model.CapabilityRanges `json:"capabilities"`
+	Dependency    *DependencyLayer       `json:"dependency,omitempty"`
+	Artifacts     []Artifact             `json:"artifacts"`
 }
 
 type DependencyLayer struct {
@@ -57,28 +56,8 @@ func Inspect(root, version, commit, tree string, stateSchemas map[string]uint32,
 	return inspectInventory(root, version, commit, tree, stateSchemas, capabilities, nil)
 }
 
-func InspectWithPluginLock(root, version, commit, tree string, stateSchemas map[string]uint32, capabilities model.CapabilityRanges, pluginLockDigest string) (Inventory, model.Generation, error) {
-	inventory, _, err := inspectInventory(root, version, commit, tree, stateSchemas, capabilities, nil)
-	if err != nil {
-		return Inventory{}, model.Generation{}, err
-	}
-	inventory.PluginLockDigest = pluginLockDigest
-	generation, err := identity(inventory)
-	return inventory, generation, err
-}
-
 func InspectWithDependency(root, version, commit, tree string, stateSchemas map[string]uint32, capabilities model.CapabilityRanges, dependency DependencyLayer) (Inventory, model.Generation, error) {
 	return inspectInventory(root, version, commit, tree, stateSchemas, capabilities, &dependency)
-}
-
-func InspectWithDependencyAndPluginLock(root, version, commit, tree string, stateSchemas map[string]uint32, capabilities model.CapabilityRanges, dependency DependencyLayer, pluginLockDigest string) (Inventory, model.Generation, error) {
-	inventory, _, err := inspectInventory(root, version, commit, tree, stateSchemas, capabilities, &dependency)
-	if err != nil {
-		return Inventory{}, model.Generation{}, err
-	}
-	inventory.PluginLockDigest = pluginLockDigest
-	generation, err := identity(inventory)
-	return inventory, generation, err
 }
 
 func inspectInventory(root, version, commit, tree string, stateSchemas map[string]uint32, capabilities model.CapabilityRanges, dependency *DependencyLayer) (Inventory, model.Generation, error) {
@@ -196,10 +175,6 @@ func verifyWithPolicy(root string, expected Inventory, generation model.Generati
 	if err != nil {
 		return err
 	}
-	// The plugin lock is verified independently over bundled plugin trees. It
-	// participates in generation identity but is not rediscovered by this
-	// generic filesystem inventory walk.
-	actual.PluginLockDigest = expected.PluginLockDigest
 	actualGeneration, err := identityWithPolicy(actual, allowLegacyLifecycleExecutable)
 	if err != nil {
 		return err
@@ -302,9 +277,6 @@ func validateInventoryWithPolicy(inventory Inventory, allowLegacyLifecycleExecut
 		if inventory.Dependency == nil || !validDependency(*inventory.Dependency) {
 			return errors.New("artifact inventory dependency layer is invalid")
 		}
-	}
-	if inventory.PluginLockDigest != "" && !validDigest(inventory.PluginLockDigest) {
-		return errors.New("artifact inventory plugin lock digest is invalid")
 	}
 	if len(inventory.Artifacts) == 0 {
 		return errors.New("artifact inventory must not be empty")

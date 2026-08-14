@@ -8,7 +8,7 @@ title: "Slack"
 
 # Slack
 
-**Delivery:** Official add-on.
+**Delivery:** Bundled.
 
 Slack connects Fased to a hosted workspace through a Slack app. Fased supports
 Socket Mode and HTTP Events API mode, then applies the same pairing, allowlist,
@@ -32,8 +32,8 @@ Status: supported for DMs and channels. Socket Mode is the recommended default.
 
 Socket Mode avoids public inbound exposure.
 
-1. Open **Agents > selected Agent > Channels > Slack** and click **Install**.
-   Restart the Gateway when prompted.
+1. Open **Agents > selected Agent > Channels > Slack** and enable it. The
+   signed Fased generation already contains the integration.
 2. Create a Slack app.
 3. Enable Socket Mode.
 4. Create an App Token with `connections:write`.
@@ -41,13 +41,6 @@ Socket Mode avoids public inbound exposure.
 6. Subscribe to message, mention, reaction, and membership events you need.
 7. Return to **Agent > Channels > Slack**.
 8. Paste App Token and Bot Token, choose Socket Mode, and save.
-
-CLI install:
-
-```bash
-fased plugins install @fased/slack
-fased gateway restart
-```
 
 Config shape:
 

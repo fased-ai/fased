@@ -1,6 +1,5 @@
 import { installCapabilityComponent } from "../capabilities/install.js";
 import type { FasedAgentConfig } from "../config/config.js";
-import { VERSION } from "../version.js";
 import { resolveOpenAICodexExecutable } from "./openai-codex-app-server.js";
 
 export const OPENAI_RUNTIME_COMPONENT_ID = "openai-runtime";
@@ -13,7 +12,6 @@ export function hasConfiguredOpenAICodexProfile(config: FasedAgentConfig): boole
 
 export async function ensureOpenAICodexRuntimeComponent(params: {
   config: FasedAgentConfig;
-  version?: string;
   resolveExecutable?: () => string | null;
   installComponent?: typeof installCapabilityComponent;
 }): Promise<{
@@ -36,12 +34,11 @@ export async function ensureOpenAICodexRuntimeComponent(params: {
   const installed = await (params.installComponent ?? installCapabilityComponent)({
     id: OPENAI_RUNTIME_COMPONENT_ID,
     config: params.config,
-    packageSpec: `@fased/openai-runtime@${params.version ?? VERSION}`,
   });
   const executable = resolveExecutable();
   if (!executable) {
     throw new Error(
-      "OpenAI sign-in runtime installation completed without an executable. Run `fased components install openai-runtime` and retry.",
+      "The signed Fased generation is missing the bundled OpenAI sign-in executable. Rerun the verified installer or `fased update`, then retry.",
     );
   }
   return {

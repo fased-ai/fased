@@ -22,7 +22,7 @@ function flattenTemplateText(value: unknown): string {
 }
 
 describe("renderServices", () => {
-  it("renders the shared lifecycle states for core, add-ons, and external runtimes", async () => {
+  it("renders the shared lifecycle states for bundled and external runtimes", async () => {
     const { renderServices } = await import("./services.ts");
     const text = flattenTemplateText(
       renderServices({
@@ -36,20 +36,20 @@ describe("renderServices", () => {
               id: "telegram",
               label: "Telegram",
               category: "channel",
-              delivery: "npm-addon",
+              delivery: "core",
+              pluginId: "telegram",
               description: "Telegram transport.",
               docsPath: "/channels/telegram",
               surface: "Agent > Channels",
-              state: "not-installed",
-              action: "install",
-              detail: "Optional add-on.",
+              state: "included",
+              action: "configure",
+              detail: "Bundled component.",
             },
           ],
           summary: {
             total: 1,
-            coreIncluded: 0,
-            optionalInstalled: 0,
-            optionalConfigured: 0,
+            coreIncluded: 1,
+            configured: 0,
             externalRequired: 0,
             errors: 0,
           },
@@ -66,10 +66,10 @@ describe("renderServices", () => {
     );
     expect(text).toContain("Components");
     expect(text).toContain("Telegram");
-    expect(text).toContain("npm-addon");
-    expect(text).toContain("not-installed");
-    expect(text).toContain("Next action: install");
-    expect(text).toContain("Install");
+    expect(text).toContain("core");
+    expect(text).toContain("included");
+    expect(text).toContain("Next action: configure");
+    expect(text).toContain("Enable");
     expect(text).toContain("Connect");
     expect(text).toContain("Open docs");
   });
@@ -123,10 +123,10 @@ describe("renderServices", () => {
           },
           tools: {
             web: {
-              search: { enabled: true, provider: "brave", apiKey: "redacted" },
+              search: { enabled: true, provider: "brave", apiKey: "redacted" }, // pragma: allowlist secret
               fetch: {
                 enabled: false,
-                firecrawl: { enabled: true, apiKey: "fc-redacted" },
+                firecrawl: { enabled: true, apiKey: "fc-redacted" }, // pragma: allowlist secret
               },
             },
             media: {
@@ -138,7 +138,7 @@ describe("renderServices", () => {
             provider: "elevenlabs",
             providers: {
               elevenlabs: {
-                apiKey: "talk-redacted",
+                apiKey: "talk-redacted", // pragma: allowlist secret
                 voiceId: "voice-123",
                 modelId: "eleven_multilingual_v2",
               },
@@ -148,7 +148,7 @@ describe("renderServices", () => {
           skills: {
             entries: {
               "gh-issues": {
-                apiKey: "github-token",
+                apiKey: "github-token", // pragma: allowlist secret
               },
             },
           },

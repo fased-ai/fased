@@ -8,7 +8,7 @@ import { installComponentCommand, renderComponentReport } from "./components-cli
 export function registerServicesCli(program: Command) {
   const services = program
     .command("services")
-    .description("Inspect and connect optional services and runtimes");
+    .description("Inspect bundled components and external runtimes");
 
   services
     .command("status")
@@ -18,13 +18,13 @@ export function registerServicesCli(program: Command) {
 
   services
     .command("install")
-    .description("Install an official optional component")
+    .description("Enable an official bundled component")
     .argument("<id>", "Component id from `fased services status`")
     .action(async (id: string) => installComponentCommand(id));
 
   services
     .command("connect")
-    .description("Install when supported, or show the canonical connection surface")
+    .description("Show the canonical component connection surface")
     .argument("<id>", "Component id from `fased services status`")
     .action(async (id: string) => {
       const entry = buildCapabilityReadinessReport().entries.find(
@@ -32,10 +32,6 @@ export function registerServicesCli(program: Command) {
       );
       if (!entry) {
         throw new Error(`Unknown service component: ${id}. Run \`fased services status\`.`);
-      }
-      if (entry.delivery === "npm-addon" && entry.state === "not-installed") {
-        await installComponentCommand(entry.id);
-        return;
       }
       defaultRuntime.log(`${theme.heading(entry.label)}: ${entry.detail}`);
       defaultRuntime.log(`Connect from: ${entry.surface}`);

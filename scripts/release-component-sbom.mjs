@@ -83,37 +83,58 @@ function canonicalInstant(value) {
   return value;
 }
 
-export async function buildNodeComponentSbom({ packageLockPath, version, architecture, created }) {
-  if (!VERSION_PATTERN.test(version || "") || !new Set(["x64", "arm64"]).has(architecture)) {
-    fail("Node release identity is invalid");
-  }
-  const lock = JSON.parse(await fsp.readFile(packageLockPath, "utf8"));
-  if (
-    !lock ||
-    lock.lockfileVersion !== 3 ||
-    typeof lock.packages !== "object" ||
-    Array.isArray(lock.packages)
-  ) {
-    fail("npm package lock must use lockfileVersion 3");
-  }
-  const packages = new Map();
-  for (const [location, candidate] of Object.entries(lock.packages)) {
-    if (!location.startsWith("node_modules/") || !candidate?.version) {
+async function pnpmInstalledManifests(nodeModulesPath) {
+  const virtualStore = path.join(nodeModulesPath, ".pnpm");
+  const manifests = [];
+  for (const virtualEntry of await fsp.readdir(virtualStore, { withFileTypes: true })) {
+    if (!virtualEntry.isDirectory()) {
       continue;
     }
+    const packagesRoot = path.join(virtualStore, virtualEntry.name, "node_modules");
+    let packages;
     try {
-      const installed = await fsp.lstat(path.join(path.dirname(packageLockPath), location));
-      if (!installed.isDirectory() || installed.isSymbolicLink()) {
-        continue;
-      }
+      packages = await fsp.readdir(packagesRoot, { withFileTypes: true });
     } catch (error) {
       if (error?.code === "ENOENT") {
         continue;
       }
       throw error;
     }
-    const locationName = location.slice("node_modules/".length);
-    const name = String(candidate.name || locationName);
+    for (const entry of packages) {
+      if (!entry.isDirectory() || entry.name === ".bin") {
+        continue;
+      }
+      const candidates = entry.name.startsWith("@")
+        ? (await fsp.readdir(path.join(packagesRoot, entry.name), { withFileTypes: true }))
+            .filter((candidate) => candidate.isDirectory())
+            .map((candidate) => path.join(packagesRoot, entry.name, candidate.name))
+        : [path.join(packagesRoot, entry.name)];
+      for (const candidate of candidates) {
+        try {
+          manifests.push(
+            JSON.parse(await fsp.readFile(path.join(candidate, "package.json"), "utf8")),
+          );
+        } catch (error) {
+          if (error?.code !== "ENOENT") {
+            throw error;
+          }
+        }
+      }
+    }
+  }
+  return manifests;
+}
+
+export async function buildNodeComponentSbom({ nodeModulesPath, version, architecture, created }) {
+  if (!VERSION_PATTERN.test(version || "") || !new Set(["x64", "arm64"]).has(architecture)) {
+    fail("Node release identity is invalid");
+  }
+  const packages = new Map();
+  for (const candidate of await pnpmInstalledManifests(nodeModulesPath)) {
+    if (typeof candidate?.name !== "string" || typeof candidate?.version !== "string") {
+      continue;
+    }
+    const name = candidate.name;
     const dependencyVersion = String(candidate.version);
     const purl = npmPurl(name, dependencyVersion);
     packages.set(
@@ -123,12 +144,12 @@ export async function buildNodeComponentSbom({ packageLockPath, version, archite
         version: dependencyVersion,
         purl,
         license: typeof candidate.license === "string" ? candidate.license : "NOASSERTION",
-        resolved: typeof candidate.resolved === "string" ? candidate.resolved : "NOASSERTION",
+        resolved: "NOASSERTION",
       }),
     );
   }
   if (packages.size === 0) {
-    fail("npm package lock contains no installed production components");
+    fail("pnpm deployment contains no installed production components");
   }
   return componentDocument({
     name: `fased-hosted-components-linux-${architecture}-v${version}`,
@@ -271,7 +292,7 @@ async function main(argv) {
   const document =
     command === "node"
       ? await buildNodeComponentSbom({
-          packageLockPath: path.resolve(required(values, "--package-lock")),
+          nodeModulesPath: path.resolve(required(values, "--node-modules")),
           version,
           architecture: required(values, "--architecture"),
           created,

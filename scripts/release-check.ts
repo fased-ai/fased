@@ -1,7 +1,15 @@
 #!/usr/bin/env -S node --import tsx
 
 import { execFileSync } from "node:child_process";
-import { closeSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  closeSync,
+  mkdtempSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, posix, resolve } from "node:path";
 
@@ -35,11 +43,7 @@ const requiredPathGroups = [
   "docs/reference/templates/AGENTS.md",
   "install.sh",
   "scripts/clean-package-dist.mjs",
-  "scripts/fased-managed-launcher.sh",
   "scripts/fased-managed-service.sh",
-  "scripts/fased-managed-updater.mjs",
-  "scripts/managed-updater-bundle.mjs",
-  "scripts/managed-updater-bundle.v1.json",
   "scripts/lifecycle-trust-crypto.mjs",
   "scripts/lifecycle-trust-policy.mjs",
   "scripts/lifecycle-trust-root.mjs",
@@ -55,7 +59,6 @@ const requiredPathGroups = [
   "scripts/fased-launcher-runtime.mjs",
   "scripts/install-fased-signerd.sh",
   "scripts/install-development.sh",
-  "scripts/managed-runtime-layout.mjs",
   "scripts/hosted-release-manifest.mjs",
   "release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json",
   "release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.sha256",
@@ -105,7 +108,7 @@ const channelAddonContracts = new Map<string, string[]>([
   ["feishu", ["@larksuiteoapi/node-sdk"]],
   ["googlechat", ["google-auth-library"]],
 ]);
-const excludedCoreChannelExtensionPrefixes = [...channelAddonContracts.keys()].map(
+const ownedChannelExtensionPrefixes = [...channelAddonContracts.keys()].map(
   (channelId) => `extensions/${channelId}/`,
 );
 const runtimeAddonContracts = new Map<
@@ -153,7 +156,7 @@ const runtimeAddonContracts = new Map<
     },
   ],
 ]);
-const excludedCoreRuntimeExtensionPrefixes = [...runtimeAddonContracts.keys()].map(
+const ownedRuntimeExtensionPrefixes = [...runtimeAddonContracts.keys()].map(
   (directory) => `extensions/${directory}/`,
 );
 
@@ -171,23 +174,44 @@ function runPackDry(): PackResult[] {
   const outputPath = join(tempDir, "pack.json");
   const outputFd = openSync(outputPath, "w");
   try {
-    execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
-      stdio: ["ignore", outputFd, "pipe"],
-      env: {
-        ...process.env,
-        NPM_CONFIG_CACHE: process.env.NPM_CONFIG_CACHE ?? join(tempDir, "npm-cache"),
+    execFileSync(
+      "pnpm",
+      ["--config.ignore-scripts=true", "pack", "--json", "--pack-destination", tempDir],
+      {
+        stdio: ["ignore", outputFd, "pipe"],
+        env: {
+          ...process.env,
+          npm_config_ignore_scripts: "true",
+        },
+        maxBuffer: 1024 * 1024 * 100,
       },
-      maxBuffer: 1024 * 1024 * 100,
-    });
+    );
   } finally {
     closeSync(outputFd);
   }
   try {
     const raw = readFileSync(outputPath, "utf8");
     if (!raw.trim()) {
-      throw new Error("npm pack returned no JSON output.");
+      throw new Error("pnpm pack returned no JSON output.");
     }
-    return JSON.parse(raw) as PackResult[];
+    const parsed = JSON.parse(raw) as PackResult | PackResult[];
+    return (Array.isArray(parsed) ? parsed : [parsed]).map((result) => {
+      const files = (result.files ?? []).map((file) => ({
+        ...file,
+        size: statSync(resolve(file.path)).size,
+      }));
+      const filename = result.filename?.split(/[\\/]/u).at(-1);
+      if (!filename) {
+        throw new Error("pnpm pack did not report its tarball filename.");
+      }
+      return {
+        ...result,
+        files,
+        size: statSync(join(tempDir, filename)).size,
+        unpackedSize: files.reduce((sum, file) => sum + (file.size ?? 0), 0),
+        totalFiles: files.length,
+      };
+    });
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -248,7 +272,7 @@ function checkPackageBudget(results: PackResult[], files: PackFile[]) {
       String(packageBudgetHardLimits.files),
     ),
   ].join("; ");
-  console.log(`release-check: npm pack budget: ${budgetLine}.`);
+  console.log(`release-check: pnpm pack budget: ${budgetLine}.`);
 
   const targetWarnings: string[] = [];
   if (packedBytes > packageBudgetTargets.packedBytes) {
@@ -262,7 +286,7 @@ function checkPackageBudget(results: PackResult[], files: PackFile[]) {
   }
   if (targetWarnings.length > 0) {
     console.warn(
-      `release-check: npm pack target warning: ${targetWarnings.join(
+      `release-check: pnpm pack target warning: ${targetWarnings.join(
         ", ",
       )} over target; shrink before calling hosted updates fast.`,
     );
@@ -303,7 +327,7 @@ function checkPackageBudget(results: PackResult[], files: PackFile[]) {
     hardFailures.push(`files ${fileCount}`);
   }
   if (hardFailures.length > 0) {
-    console.error(`release-check: npm pack hard budget exceeded: ${hardFailures.join(", ")}.`);
+    console.error(`release-check: pnpm pack hard budget exceeded: ${hardFailures.join(", ")}.`);
     process.exit(1);
   }
 }
@@ -374,11 +398,11 @@ function checkChannelAddonContracts() {
     if (pkg.name !== expectedName) {
       failures.push(`${channelId}: name must be ${expectedName}`);
     }
-    if (pkg.private === true) {
-      failures.push(`${channelId}: package must not be private`);
+    if (pkg.private !== true) {
+      failures.push(`${channelId}: package must be a private workspace build unit`);
     }
-    if (pkg.publishConfig?.access !== "public") {
-      failures.push(`${channelId}: publishConfig.access must be public`);
+    if (pkg.publishConfig !== undefined) {
+      failures.push(`${channelId}: private package must not declare publishConfig`);
     }
     if (normalizePluginSyncVersion(pkg.version ?? "") !== normalizePluginSyncVersion(rootVersion)) {
       failures.push(`${channelId}: version ${pkg.version ?? "missing"} must match ${rootVersion}`);
@@ -395,24 +419,21 @@ function checkChannelAddonContracts() {
     if (pkg.fased?.channel?.id !== channelId) {
       failures.push(`${channelId}: fased.channel.id must match the package directory`);
     }
-    if (pkg.fased?.install?.npmSpec !== expectedName) {
-      failures.push(`${channelId}: fased.install.npmSpec must be ${expectedName}`);
+    if (pkg.fased?.install?.npmSpec !== undefined) {
+      failures.push(`${channelId}: managed extension must not declare an npm source`);
     }
     if (pkg.fased?.install?.localPath !== expectedLocalPath) {
       failures.push(`${channelId}: fased.install.localPath must be ${expectedLocalPath}`);
     }
-    if (pkg.fased?.install?.defaultChoice !== "npm") {
-      failures.push(`${channelId}: fased.install.defaultChoice must be npm`);
+    if (pkg.fased?.install?.defaultChoice !== "local") {
+      failures.push(`${channelId}: fased.install.defaultChoice must be local`);
     }
     for (const dependency of runtimeDependencies) {
       if (!pkg.dependencies?.[dependency]) {
         failures.push(`${channelId}: missing owned runtime dependency ${dependency}`);
       }
-      if (
-        rootPackage.dependencies?.[dependency] ||
-        rootPackage.optionalDependencies?.[dependency]
-      ) {
-        failures.push(`${channelId}: ${dependency} must not be owned by the core package`);
+      if (!rootPackage.dependencies?.[dependency]) {
+        failures.push(`${channelId}: ${dependency} must be owned by the signed core generation`);
       }
     }
     if (!pkg.files?.includes("fased.plugin.json") || !pkg.files.includes("src")) {
@@ -444,8 +465,8 @@ function checkRuntimeAddonContracts() {
     if (pkg.name !== contract.packageName) {
       failures.push(`${directory}: name must be ${contract.packageName}`);
     }
-    if (pkg.private === true || pkg.publishConfig?.access !== "public") {
-      failures.push(`${directory}: package must be public`);
+    if (pkg.private !== true || pkg.publishConfig !== undefined) {
+      failures.push(`${directory}: package must be a private workspace build unit`);
     }
     if (normalizePluginSyncVersion(pkg.version ?? "") !== normalizePluginSyncVersion(rootVersion)) {
       failures.push(`${directory}: version ${pkg.version ?? "missing"} must match ${rootVersion}`);
@@ -459,24 +480,21 @@ function checkRuntimeAddonContracts() {
     if (!pkg.fased?.extensions?.includes("./index.ts")) {
       failures.push(`${directory}: fased.extensions must include ./index.ts`);
     }
-    if (pkg.fased?.install?.npmSpec !== contract.packageName) {
-      failures.push(`${directory}: fased.install.npmSpec must be ${contract.packageName}`);
+    if (pkg.fased?.install?.npmSpec !== undefined) {
+      failures.push(`${directory}: managed extension must not declare an npm source`);
     }
     if (pkg.fased?.install?.localPath !== `extensions/${directory}`) {
       failures.push(`${directory}: fased.install.localPath must match its directory`);
     }
-    if (pkg.fased?.install?.defaultChoice !== "npm") {
-      failures.push(`${directory}: fased.install.defaultChoice must be npm`);
+    if (pkg.fased?.install?.defaultChoice !== "local") {
+      failures.push(`${directory}: fased.install.defaultChoice must be local`);
     }
     for (const dependency of contract.runtimeDependencies) {
       if (!pkg.dependencies?.[dependency]) {
         failures.push(`${directory}: missing owned runtime dependency ${dependency}`);
       }
-      if (
-        rootPackage.dependencies?.[dependency] ||
-        rootPackage.optionalDependencies?.[dependency]
-      ) {
-        failures.push(`${directory}: ${dependency} must not be owned by the core package`);
+      if (!rootPackage.dependencies?.[dependency]) {
+        failures.push(`${directory}: ${dependency} must be owned by the signed core generation`);
       }
     }
     if (!pkg.files?.includes("index.ts") || !pkg.files.includes("fased.plugin.json")) {
@@ -530,7 +548,7 @@ function checkExactReleaseDependencies() {
   }
 
   if (mismatches.length > 0) {
-    console.error("release-check: dependency pins drifted from tested npm install set:");
+    console.error("release-check: dependency pins drifted from the tested production set:");
     for (const item of mismatches) {
       console.error(`  - ${item}`);
     }
@@ -613,7 +631,7 @@ function checkBundledExtensionSrcImports(paths: Set<string>) {
   }
 
   if (missing.length > 0) {
-    console.error("release-check: bundled extension imports missing from npm pack:");
+    console.error("release-check: bundled extension imports missing from pnpm pack:");
     for (const item of missing) {
       console.error(`  - ${item}`);
     }
@@ -659,12 +677,10 @@ function main() {
       path.includes(".test-utils.") ||
       path.startsWith("src/scripts/"),
   );
-  const bundledOptionalChannels = [...paths].filter((path) =>
-    excludedCoreChannelExtensionPrefixes.some((prefix) => path.startsWith(prefix)),
-  );
-  const bundledOptionalRuntimes = [...paths].filter((path) =>
-    excludedCoreRuntimeExtensionPrefixes.some((prefix) => path.startsWith(prefix)),
-  );
+  const missingOwnedExtensions = [
+    ...ownedChannelExtensionPrefixes,
+    ...ownedRuntimeExtensionPrefixes,
+  ].filter((prefix) => !paths.has(`${prefix}fased.plugin.json`) || !paths.has(`${prefix}index.ts`));
 
   if (
     missing.length > 0 ||
@@ -672,49 +688,42 @@ function main() {
     forbiddenDocs.length > 0 ||
     forbiddenSourceMaps.length > 0 ||
     forbiddenTestSupport.length > 0 ||
-    bundledOptionalChannels.length > 0 ||
-    bundledOptionalRuntimes.length > 0
+    missingOwnedExtensions.length > 0
   ) {
     if (missing.length > 0) {
-      console.error("release-check: missing files in npm pack:");
+      console.error("release-check: missing files in pnpm pack:");
       for (const path of missing) {
         console.error(`  - ${path}`);
       }
     }
     if (forbidden.length > 0) {
-      console.error("release-check: forbidden files in npm pack:");
+      console.error("release-check: forbidden files in pnpm pack:");
       for (const path of forbidden) {
         console.error(`  - ${path}`);
       }
     }
     if (forbiddenDocs.length > 0) {
-      console.error("release-check: docs shipped in npm pack outside runtime templates:");
+      console.error("release-check: docs shipped in pnpm pack outside runtime templates:");
       for (const path of forbiddenDocs) {
         console.error(`  - ${path}`);
       }
     }
     if (forbiddenSourceMaps.length > 0) {
-      console.error("release-check: source maps shipped in npm pack:");
+      console.error("release-check: source maps shipped in pnpm pack:");
       for (const path of forbiddenSourceMaps) {
         console.error(`  - ${path}`);
       }
     }
     if (forbiddenTestSupport.length > 0) {
-      console.error("release-check: test/support source shipped in npm pack:");
+      console.error("release-check: test/support source shipped in pnpm pack:");
       for (const path of forbiddenTestSupport) {
         console.error(`  - ${path}`);
       }
     }
-    if (bundledOptionalChannels.length > 0) {
-      console.error("release-check: optional channel extensions shipped in the core npm pack:");
-      for (const path of bundledOptionalChannels) {
-        console.error(`  - ${path}`);
-      }
-    }
-    if (bundledOptionalRuntimes.length > 0) {
-      console.error("release-check: optional runtime extensions shipped in the core npm pack:");
-      for (const path of bundledOptionalRuntimes) {
-        console.error(`  - ${path}`);
+    if (missingOwnedExtensions.length > 0) {
+      console.error("release-check: Fased-owned extensions missing from the release pack:");
+      for (const prefix of missingOwnedExtensions) {
+        console.error(`  - ${prefix}`);
       }
     }
     process.exit(1);
@@ -722,7 +731,7 @@ function main() {
 
   checkBundledExtensionSrcImports(paths);
 
-  console.log("release-check: npm pack contents look OK.");
+  console.log("release-check: pnpm pack contents look OK.");
 }
 
 main();

@@ -49,7 +49,9 @@ describe("lean CI changed-surface classification", () => {
   });
 
   it("uses the focused lifecycle lane without candidate work", () => {
-    expect(classifyChangedPaths(["scripts/fased-managed-updater.mjs"])).toMatchObject({
+    expect(
+      classifyChangedPaths(["scripts/npm-free-managed-lifecycle-contract.test.ts"]),
+    ).toMatchObject({
       runNodeFocused: true,
       runInstallerReleaseVerification: false,
       runNodeBuild: false,

@@ -5,20 +5,18 @@ Read this file only after explicit candidate, publication, or stable authority.
 ## Candidate
 
 Start from one clean exact `origin/main` commit whose affected predicates and
-public-style Linux-x64 lifecycle transaction already pass. Bind the actual
-owner Local predecessor as well as the latest supported stable predecessor.
-When an installed legacy updater requires authentic target-tag-bound
-attestations, the owner transition cannot pass against an untagged branch
-artifact. Record that boundary explicitly and defer only that transition to the
-trusted tagged workflow; never substitute a synthetic verifier or bundle.
+public-style Linux-x64 lifecycle transaction already pass. Bind every
+materially distinct supported installation class by topology, schemas,
+capabilities, and platform identity. Concrete versions only materialize those
+classes; the owner's installed RC is never a separate product contract.
 
 ```text
 PRE-CANDIDATE
 -> version-only protected PR
--> exact merged-main pre-tag candidate-shaped P1 for executable trust routes
+-> exact merged-main pre-tag candidate-shaped P1 for supported topology classes
 -> owner immutable proof-enabling tag at exact main
 -> trusted build and authentic target attestations once
--> parallel P1, including the deferred owner transition, against the exact artifact set
+-> parallel P1 against the exact artifact set
 -> protected publication approval
 ```
 
@@ -29,25 +27,25 @@ discover a new product command.
 The pre-tag P1 uses the exact Local and Hosting fixture entrypoints, container
 mount layout, acquisition URL map, candidate-shaped artifact inventory, and
 receipt verifier used after tagging. It runs on the same protected Linux runner
-class. A tag is forbidden when any executable fixture, artifact name, transport
-route, or acceptance predicate has not executed there. If a legacy updater
-requires a target-tag-bound attestation, pre-tag evidence must name the deferred
-canonical-managed class and the post-tag workflow must make its authentic
-transition a hard publication dependency.
+class. A tag is forbidden when any supported topology, executable fixture,
+artifact name, transport route, or acceptance predicate has not executed
+there. A recognized healthy pre-bootstrap managed control plane uses the
+verified installer once for in-place takeover, followed by an installed-updater
+`Already current` proof. Ambiguous, damaged, or incompatible state uses the
+explicit repair route. Neither path becomes a target-tag-dependent ordinary
+updater lane.
 
 The candidate descriptor binds version, commit, tree, lockfile, workflow run,
 artifact names/sizes/digests, provenance, SBOM/VEX, signer/controller identity,
 and acceptance-contract identity. Build each supported target once. Publication
 downloads and verifies those bytes; it never rebuilds.
 
-P1 covers fresh protected Local, latest supported public stable to candidate,
-rollback/retry, restart, declared-state preservation, product/service health,
-and `Already current`. It also replays the exact owner Local predecessor when
-that differs from stable; this is an owner-acceptance prerequisite, not broad
-historical compatibility. When target authentication is tag-bound, this owner
-lane runs only after the trusted build has issued authentic attestations and
-still blocks publication. Independent predecessor lanes run concurrently and
-consume the same candidate artifact.
+P1 covers fresh protected Local, every materially distinct supported public
+topology, rollback/retry, restart, declared-state preservation,
+product/service health, and `Already current`. Independent topology lanes run
+concurrently and consume the same candidate artifact. Literal owner Local
+acceptance remains a post-publication machine check, not a version-selected
+compatibility branch.
 
 Product failure returns to one normal fix and requires a new immutable identity
 only after local and merged-main closure. Infrastructure failure may retry the

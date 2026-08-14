@@ -61,8 +61,9 @@ runtime 变化时才接受 `--no-restart`；源码和手动 package-manager prof
 
 - git checkout 的 stable 解析最新稳定 `v*` release tag，不跟随移动的
   `main`。
-- managed package install 解析精确 npm `latest` 版本，再下载并验证 GitHub
-  release layers；不会进行全局 npm dependency reconciliation。
+- managed install 通过签名 release index 解析精确版本与架构对应的 GitHub
+  release layers；不读取 npm registry metadata，也不进行全局 dependency
+  reconciliation。
 - `fased update --channel dev` 才跟随最新 `main`，只用于明确的开发测试。
 
 | 命令                             | 得到的版本                     |
@@ -105,11 +106,10 @@ git pull --ff-only origin main
 
 ### macOS 和明确的 source install
 
-已经配置 signer 的 tagged macOS/source 更新也使用同一个配对事务。源码
-checkout 必须 clean、解析到 production release tag、允许必要 restart，并通过
-精确 health check。未 tag 的开发 commit、`--no-restart` 或 install-mode switch
-会被拒绝。中断更新会在 Gateway 启动前从 owner-only transaction journal
-恢复。
+已有 signer state 的旧 same-user Local 或 source checkout 不再由 Node updater
+同时修改应用和 signer。Go lifecycle cutover 期间它会 fail closed，并要求通过
+verified public installer 进入或修复 managed layout。不要手工复制 signer state，
+也不要声称任意历史版本都能自动迁移。
 
 ### VPS Hosting
 
@@ -135,16 +135,14 @@ Local、WSL2、macOS 和 Hosting 从匹配的 GitHub Release 下载 native signe
 
 ## Managed runtime 如何切换
 
-Launcher 和 updater 位于版本化应用目录之外：
+稳定 launcher 和 Go lifecycle host 位于版本化应用目录之外：
 
 ```text
-~/.fased/bin/fased
-~/.fased/bin/fased-service
-~/.fased/updater/fased-managed-updater.mjs
-~/.fased/runtime/current
-~/.fased/runtime/previous
-~/.fased/runtime/releases/<version-or-repair-generation>/
-~/.fased/install.json
+/opt/fased/lifecycle/bootstrap-v1/fased-bootstrap
+/opt/fased/lifecycle/supervisor-v1/fased-lifecycled
+/opt/fased/<profile>/<instance>/current
+/opt/fased/<profile>/<instance>/generations/<generation-id>/
+~/.fased/plugin.lock.json
 ```
 
 Updater 在线解析精确 target，验证 checksums 和 archive paths，staging 并
@@ -231,11 +229,12 @@ transaction digest reconcile 已知 signature/state。
 源码贡献者可以在干净、受控的开发 checkout 中显式选择旧 tag，再运行
 `./install.sh --source-install`。这不是普通 Local/Hosting 用户的回滚命令。
 
-## npm 安装
+## 旧 npm 安装迁移
 
-手动 `npm install -g @fased/fased` 是受支持的高级 Local/dev 或自行管理主机
-路径。它不是正常 VPS Hosting 路径，也不能建立 Hosting 的 root-managed
-service、独立 signer/updater 和 Tailscale 私有访问。
+旧的全局 npm 安装只作为迁移输入保留。请重新运行 verified public installer
+进入 maintained managed layout；不要把 npm package manager 当作 Local 或
+Hosting lifecycle authority。它也不能建立 Hosting 的 root-managed service、
+独立 signer/controller 和 Tailscale 私有访问。
 
 ## 相关页面
 
