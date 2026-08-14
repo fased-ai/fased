@@ -674,11 +674,12 @@ wait_for_user_manager() {
 
 wait_for_gateway_version() {
   local expected="$1"
+  local expected_source="${2:-go-lifecycle}"
   local response=""
   for _ in {1..300}; do
     if response="$(curl -fsS --max-time 1 "http://127.0.0.1:$gateway_port/healthz" 2>/dev/null)" &&
-      jq -e --arg expected "$expected" \
-        '.version == $expected and .runtimeSource == "go-lifecycle"' \
+      jq -e --arg expected "$expected" --arg expectedSource "$expected_source" \
+        '.version == $expected and .runtimeSource == $expectedSource' \
         <<<"$response" >/dev/null; then
       return 0
     fi
@@ -1465,7 +1466,7 @@ if [[ "$phase" == "managed-update" ]]; then
   if [[ "$predecessor_profile" == "local" ]]; then
     user_systemctl is-enabled --quiet fased-gateway.service
     user_systemctl is-active --quiet fased-gateway.service
-    wait_for_gateway_version "$predecessor_version"
+    wait_for_gateway_version "$predecessor_version" managed-package
     install -d -m 0700 -o testop -g testop \
       "$state/extensions" "$state/extensions/stable-bridge" \
       "$state/plugin-data" "$state/plugin-data/stable-bridge" \
@@ -1582,7 +1583,7 @@ EOF_STABLE_BRIDGE_DROPIN
     [[ "$failure_instance" =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]]
     systemctl reset-failed "fased-gateway-$failure_instance.service" 2>/dev/null || true
     rm -rf -- "$bridge_fault_root"
-    wait_for_gateway_version "$predecessor_version"
+    wait_for_gateway_version "$predecessor_version" managed-package
     test ! -e "$state/lifecycle.json"
     test ! -e "/var/lib/fased-local/$failure_instance"
     test ! -e "/opt/fased/local/$failure_instance"
@@ -1716,7 +1717,7 @@ EOF_STABLE_BRIDGE_DROPIN
   wait_for_service "fased-local-controller-$instance.service"
   wait_for_service "fased-signerd-$instance.service"
   wait_for_service "fased-gateway-$instance.service"
-  wait_for_gateway_version "$predecessor_version"
+  wait_for_gateway_version "$predecessor_version" managed-package
 
   for wallet_spec in "agent:Agent:agent" "vault:Vault:vault"; do
     IFS=: read -r wallet_id wallet_name wallet_role <<<"$wallet_spec"
@@ -1731,10 +1732,10 @@ EOF_STABLE_BRIDGE_DROPIN
       --json \
       >"/tmp/managed-${wallet_id}-create.json"
   done
-  wait_for_gateway_version "$predecessor_version"
+  wait_for_gateway_version "$predecessor_version" managed-package
   verify_shared_device_auth "$instance" "$runtime"
   verify_shared_federation_state "$instance" "$runtime"
-  wait_for_gateway_version "$predecessor_version"
+  wait_for_gateway_version "$predecessor_version" managed-package
   verify_mining_history
   materialize_predecessor_wallet_registry_fixture "$instance" "$runtime"
   verify_shared_wallet_registry "$instance" "$runtime"
@@ -1884,7 +1885,7 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
   managed_recovery_transaction=""
   if grep -F "fased-lifecycled: ROLLED_BACK:" \
       /tmp/managed-update-failure.err >/dev/null; then
-    wait_for_gateway_version "$predecessor_version"
+    wait_for_gateway_version "$predecessor_version" managed-package
     test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$predecessor_version"
     verify_managed_state_manifest
   elif grep -F "lifecycle recovery is pending" /tmp/managed-update-failure.err >/dev/null; then

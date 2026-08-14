@@ -38,6 +38,8 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(fixture).toContain('grep -F "fased-lifecycled: ROLLED_BACK:"');
     expect(fixture).not.toContain("target release failed and was rolled back");
     expect(fixture).toContain('if [[ "$predecessor_class" == "canonical-managed" ]]');
+    expect(fixture).toContain('wait_for_gateway_version "$predecessor_version" managed-package');
+    expect(fixture).toContain('local expected_source="${2:-go-lifecycle}"');
     expect(fixture).toContain('systemctl enable --now "$predecessor_service"');
     expect(fixture).toContain('user_systemctl enable --now "$predecessor_service"');
     expect(fixture).toContain('setfacl --no-mask --modify "user:$gateway_uid:--x"');
