@@ -9,6 +9,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/user"
@@ -25,9 +27,11 @@ import (
 
 const (
 	productionReleaseBase            = "https://github.com/fased-ai/fased/releases/download"
+	productionReleaseDiscoveryURL    = "https://api.github.com/repos/fased-ai/fased/releases?per_page=100"
 	releaseRootAssetName             = "fased-lifecycle-root-v1.json"
 	releaseIndexAssetName            = "fased-release-index-v1.json"
 	releaseIndexAttestationAssetName = "fased-release-index-v1.json.attestation.json"
+	maxReleaseDiscoveryBytes         = 1 << 20
 )
 
 type publicReleaseRoute struct {
@@ -46,6 +50,7 @@ type publicLifecycleRequest struct {
 	JSON         bool
 	Onboard      bool
 	OnboardArgs  []string
+	Timeout      time.Duration
 }
 
 func runPublicLifecycle(operation string, args []string, output io.Writer) error {
@@ -81,6 +86,15 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 			return bindErr
 		}
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), request.Timeout)
+	defer cancel()
+	if request.Version == "" {
+		discoveryClient := &http.Client{Timeout: 15 * time.Second, CheckRedirect: secureMetadataRedirect}
+		request.Version, err = discoverPublicReleaseVersion(ctx, request.Channel, discoveryClient, productionReleaseDiscoveryURL)
+		if err != nil {
+			return err
+		}
+	}
 	releaseRoute, err := publicTrustRoute(request.Version)
 	if err != nil {
 		return err
@@ -93,8 +107,6 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		PinnedRootSHA256: releaseRoute.PinnedRootSHA256, OwnerUID: 0, Now: time.Now().UTC(), Inspect: inspectLifecycleHost,
 		VerifyIndex: releaseRoute.VerifyIndex,
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
-	defer cancel()
 	result, err := execute(ctx, bootstrap)
 	if err != nil {
 		return err
@@ -119,6 +131,61 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		_, err = fmt.Fprintf(output, "Updated successfully: %s\n", result.Version)
 	}
 	return err
+}
+
+type discoveredGitHubRelease struct {
+	TagName    string `json:"tag_name"`
+	Draft      bool   `json:"draft"`
+	Prerelease bool   `json:"prerelease"`
+}
+
+func discoverPublicReleaseVersion(ctx context.Context, channel string, client *http.Client, endpoint string) (string, error) {
+	if channel != "stable" && channel != "beta" {
+		return "", errors.New("release discovery channel must be stable or beta")
+	}
+	if client == nil {
+		return "", errors.New("release discovery client is unavailable")
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+		return "", errors.New("release discovery URL is unsafe")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return "", errors.New("create release discovery request")
+	}
+	request.Header.Set("Accept", "application/vnd.github+json")
+	request.Header.Set("User-Agent", "fased-bootstrap")
+	response, err := client.Do(request)
+	if err != nil {
+		return "", fmt.Errorf("discover %s release: %w", channel, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("discover %s release: unexpected HTTP status %d", channel, response.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxReleaseDiscoveryBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("read %s release discovery: %w", channel, err)
+	}
+	if len(body) > maxReleaseDiscoveryBytes {
+		return "", errors.New("release discovery response exceeds the size limit")
+	}
+	var releases []discoveredGitHubRelease
+	if err := json.Unmarshal(body, &releases); err != nil {
+		return "", errors.New("release discovery response is invalid")
+	}
+	for _, release := range releases {
+		if release.Draft || release.Prerelease != (channel == "beta") {
+			continue
+		}
+		version := strings.TrimPrefix(release.TagName, "v")
+		if err := model.ValidateVersion(version); err != nil || (channel == "stable" && strings.Contains(version, "-")) || (channel == "beta" && !strings.Contains(version, "-")) {
+			return "", errors.New("release discovery returned an invalid channel version")
+		}
+		return version, nil
+	}
+	return "", fmt.Errorf("no %s Fased release is available", channel)
 }
 
 func pathExists(path string) (bool, error) {
@@ -188,11 +255,15 @@ func parsePublicLifecycleRequest(operation string, args []string) (publicLifecyc
 	if operation != "install" && operation != "update" {
 		return publicLifecycleRequest{}, errors.New("unsupported public lifecycle operation")
 	}
+	if operation == "update" && namedFlagCount(args, "profile") > 1 {
+		return publicLifecycleRequest{}, errors.New("update profile must be selected exactly once")
+	}
 	flags := flag.NewFlagSet(operation, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	profile := ""
 	gatewayPort := uint64(0)
-	request := publicLifecycleRequest{Operation: operation, Channel: "stable", Onboard: operation == "install"}
+	request := publicLifecycleRequest{Operation: operation, Channel: "stable", Onboard: operation == "install", Timeout: 8 * time.Minute}
+	timeoutSeconds := uint64(0)
 	flags.StringVar(&profile, "profile", "", "")
 	flags.StringVar(&request.Channel, "channel", "stable", "")
 	flags.StringVar(&request.Channel, "update-channel", "stable", "")
@@ -202,6 +273,8 @@ func parsePublicLifecycleRequest(operation string, args []string) (publicLifecyc
 	flags.Uint64Var(&gatewayPort, "gateway-port", 0, "")
 	flags.BoolVar(&request.Verbose, "verbose", false, "")
 	flags.BoolVar(&request.JSON, "json", false, "")
+	flags.Bool("yes", false, "")
+	flags.Uint64Var(&timeoutSeconds, "timeout", 0, "")
 	noOnboard := flags.Bool("no-onboard", false, "")
 	if err := flags.Parse(args); err != nil {
 		return publicLifecycleRequest{}, errors.New("invalid public lifecycle arguments")
@@ -222,6 +295,11 @@ func parsePublicLifecycleRequest(operation string, args []string) (publicLifecyc
 	request.OnboardArgs = append([]string(nil), remaining...)
 	request.Onboard = request.Onboard && !*noOnboard
 	request.Version = strings.TrimPrefix(request.Version, "v")
+	if request.Version == "stable" || request.Version == "latest" {
+		request.Channel, request.Version = "stable", ""
+	} else if request.Version == "beta" {
+		request.Channel, request.Version = "beta", ""
+	}
 	if profile == "" {
 		profile = inferProfile(request.OperatorUser)
 	}
@@ -246,6 +324,12 @@ func parsePublicLifecycleRequest(operation string, args []string) (publicLifecyc
 	if operation == "update" && gatewayPortSet {
 		return publicLifecycleRequest{}, errors.New("update preserves the installed Gateway port")
 	}
+	if timeoutSeconds > 0 {
+		if timeoutSeconds > uint64((30 * time.Minute).Seconds()) {
+			return publicLifecycleRequest{}, errors.New("timeout must be between 1 and 1800 seconds")
+		}
+		request.Timeout = time.Duration(timeoutSeconds) * time.Second
+	}
 	if operation == "install" && !gatewayPortSet {
 		gatewayPort = 18789
 	}
@@ -256,10 +340,30 @@ func parsePublicLifecycleRequest(operation string, args []string) (publicLifecyc
 	if request.OperatorUser == "" {
 		request.OperatorUser = operatorFromEnvironment(request.Profile)
 	}
+	if operation == "update" {
+		sudoOperator := os.Getenv("SUDO_USER")
+		if sudoOperator != "" && sudoOperator != "root" {
+			if request.OperatorUser != "" && request.OperatorUser != sudoOperator {
+				return publicLifecycleRequest{}, errors.New("update operator differs from the authorized sudo peer")
+			}
+			request.OperatorUser = sudoOperator
+		}
+	}
 	if request.OperatorUser == "" || request.OperatorUser == "root" {
 		return publicLifecycleRequest{}, errors.New("an unprivileged operator user is required")
 	}
 	return request, nil
+}
+
+func namedFlagCount(args []string, name string) int {
+	count := 0
+	prefix := "--" + name
+	for _, value := range args {
+		if value == prefix || strings.HasPrefix(value, prefix+"=") {
+			count++
+		}
+	}
+	return count
 }
 
 func bindInstalledUpdatePlatform(request *publicLifecycleRequest, operator publicOperator, config platform.Config) error {

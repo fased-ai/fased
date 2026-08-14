@@ -35,7 +35,6 @@ const probeGateway = vi.fn();
 const probeRunningGatewayRuntimeIdentity = vi.fn();
 const ensureOpenAICodexRuntimeComponent = vi.fn();
 const hasConfiguredOpenAICodexProfile = vi.fn();
-const ensureManagedRuntimeBootstrap = vi.fn();
 const isLocalSourceSignerConfigured = vi.fn(async () => false);
 const readLocalSourcePairedUpdateJournal = vi.fn(async () => null);
 const recoverLocalSourcePairedUpdate = vi.fn(async () => "none");
@@ -69,10 +68,6 @@ vi.mock("../infra/update-runner.js", () => ({
 
 vi.mock("../infra/fased-root.js", () => ({
   resolveFasedAgentPackageRoot: vi.fn(),
-}));
-
-vi.mock("../infra/managed-runtime-bootstrap.js", () => ({
-  ensureManagedRuntimeBootstrap,
 }));
 
 vi.mock("../infra/local-source-paired-update.js", () => ({
@@ -366,7 +361,6 @@ describe("update-cli", () => {
     probeRunningGatewayRuntimeIdentity.mockReset();
     ensureOpenAICodexRuntimeComponent.mockReset();
     hasConfiguredOpenAICodexProfile.mockReset();
-    ensureManagedRuntimeBootstrap.mockReset();
     isLocalSourceSignerConfigured.mockReset();
     readLocalSourcePairedUpdateJournal.mockReset();
     recoverLocalSourcePairedUpdate.mockReset();
@@ -387,11 +381,6 @@ describe("update-cli", () => {
     commitLocalSourcePairedUpdate.mockResolvedValue(undefined);
     rollbackLocalSourcePairedUpdate.mockResolvedValue(undefined);
     hasConfiguredOpenAICodexProfile.mockReturnValue(false);
-    ensureManagedRuntimeBootstrap.mockResolvedValue({
-      installed: false,
-      manifestPath: null,
-      updaterPath: null,
-    });
     vi.mocked(resolveFasedAgentPackageRoot).mockResolvedValue(process.cwd());
     vi.mocked(readConfigFileSnapshot).mockResolvedValue(baseSnapshot);
     vi.mocked(fetchNpmTagVersion).mockResolvedValue({
@@ -623,41 +612,8 @@ describe("update-cli", () => {
     expect(serviceRestart).not.toHaveBeenCalled();
   });
 
-  it("hands a Go-managed packaged update to its immutable updater", async () => {
-    const root = createCaseDir("fased-managed-transition");
-    mockPackageInstallStatus(root);
-    ensureManagedRuntimeBootstrap.mockResolvedValue({
-      installed: false,
-      manifestPath: null,
-      updaterPath: "/opt/fased/local/id/current/payload/runtime/scripts/fased-managed-updater.mjs",
-    });
-
-    await updateCommand({ channel: "stable", timeout: "45", verbose: true, yes: true });
-
-    expect(runCommandWithTimeout).toHaveBeenCalledWith(
-      [
-        process.execPath,
-        "/opt/fased/local/id/current/payload/runtime/scripts/fased-managed-updater.mjs",
-        "--channel",
-        "stable",
-        "--verbose",
-      ],
-      expect.objectContaining({
-        cwd: "/opt/fased/local/id/current/payload/runtime/scripts",
-        timeoutMs: 45_000,
-      }),
-    );
-    expect(runGatewayUpdate).not.toHaveBeenCalled();
-    expect(resolveNpmChannelTag).not.toHaveBeenCalled();
-  });
-
-  it("keeps a Go-managed runtime on its immutable updater even when cwd is a git checkout", async () => {
+  it("fails closed when a Go-managed update bypasses the stable owner launcher", async () => {
     createCaseDir("fased-managed-from-git-cwd");
-    ensureManagedRuntimeBootstrap.mockResolvedValue({
-      installed: false,
-      manifestPath: null,
-      updaterPath: "/opt/fased/local/id/current/payload/runtime/scripts/fased-managed-updater.mjs",
-    });
 
     await withEnvAsync(
       {
@@ -667,80 +623,11 @@ describe("update-cli", () => {
       () => updateCommand({ timeout: "45" }),
     );
 
-    expect(ensureManagedRuntimeBootstrap).toHaveBeenCalledWith({
-      packageRoot: "/opt/fased/local/id/current/payload/runtime",
-      env: expect.any(Object),
-    });
-    expect(runCommandWithTimeout).toHaveBeenCalledWith(
-      [
-        process.execPath,
-        "/opt/fased/local/id/current/payload/runtime/scripts/fased-managed-updater.mjs",
-        "--channel",
-        "stable",
-      ],
-      expect.objectContaining({
-        cwd: "/opt/fased/local/id/current/payload/runtime/scripts",
-        timeoutMs: 45_000,
-      }),
-    );
-    expect(runGatewayUpdate).not.toHaveBeenCalled();
-  });
-
-  it("fails closed instead of sending a Go-managed dry-run through the legacy updater", async () => {
-    createCaseDir("fased-managed-dry-run");
-
-    await withEnvAsync(
-      {
-        FASED_RUNTIME_SOURCE: "go-lifecycle",
-        FASED_MANAGED_RUNTIME_ROOT: "/opt/fased/local/id/current/payload/runtime",
-      },
-      () => updateCommand({ dryRun: true }),
-    );
-
     expect(defaultRuntime.error).toHaveBeenCalledWith(
-      "Go lifecycle updates do not support --dry-run.",
+      "The stable managed launcher did not intercept this update. Rerun the verified installer to repair the owner command.",
     );
     expect(defaultRuntime.exit).toHaveBeenCalledWith(1);
-    expect(ensureManagedRuntimeBootstrap).not.toHaveBeenCalled();
-    expect(runGatewayUpdate).not.toHaveBeenCalled();
-    expect(resolveNpmChannelTag).not.toHaveBeenCalled();
-  });
-
-  it("fails closed instead of sending a Go-managed dev update through the legacy updater", async () => {
-    createCaseDir("fased-managed-dev");
-
-    await withEnvAsync(
-      {
-        FASED_RUNTIME_SOURCE: "go-lifecycle",
-        FASED_MANAGED_RUNTIME_ROOT: "/opt/fased/local/id/current/payload/runtime",
-      },
-      () => updateCommand({ channel: "dev" }),
-    );
-
-    expect(defaultRuntime.error).toHaveBeenCalledWith(
-      "Go lifecycle installations support only stable and beta update channels.",
-    );
-    expect(defaultRuntime.exit).toHaveBeenCalledWith(1);
-    expect(ensureManagedRuntimeBootstrap).not.toHaveBeenCalled();
-    expect(runGatewayUpdate).not.toHaveBeenCalled();
-    expect(resolveNpmChannelTag).not.toHaveBeenCalled();
-  });
-
-  it("fails closed when a Go-managed runtime cannot resolve the fixed updater", async () => {
-    createCaseDir("fased-managed-missing-updater");
-
-    await withEnvAsync(
-      {
-        FASED_RUNTIME_SOURCE: "go-lifecycle",
-        FASED_MANAGED_RUNTIME_ROOT: "/opt/fased/local/id/current/payload/runtime",
-      },
-      () => updateCommand({}),
-    );
-
-    expect(defaultRuntime.error).toHaveBeenCalledWith(
-      "The fixed Go lifecycle updater is unavailable.",
-    );
-    expect(defaultRuntime.exit).toHaveBeenCalledWith(1);
+    expect(runCommandWithTimeout).not.toHaveBeenCalled();
     expect(runGatewayUpdate).not.toHaveBeenCalled();
     expect(resolveNpmChannelTag).not.toHaveBeenCalled();
   });

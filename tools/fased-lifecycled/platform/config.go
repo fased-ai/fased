@@ -187,6 +187,13 @@ func (config Config) SupervisorSocket() string {
 	return filepath.Join(config.SupervisorRuntimeRoot(), "request.sock")
 }
 
+func (config Config) UpdateAuthorityPath() string {
+	if config.Profile == model.ProfileHosting {
+		return "/etc/sudoers.d/fased-hosting-update"
+	}
+	return filepath.Join("/etc/sudoers.d", "fased-local-"+config.InstanceID+"-update")
+}
+
 func (config Config) SignerStateRoot() string {
 	if config.Profile == model.ProfileProtectedLocal {
 		return filepath.Join(config.ProductStateRoot, "signer")

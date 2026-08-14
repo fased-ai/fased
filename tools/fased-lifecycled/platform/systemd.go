@@ -13,6 +13,7 @@ import (
 
 type Systemd interface {
 	DaemonReload(context.Context) error
+	ResetFailed(context.Context, string) error
 	Stop(context.Context, string) error
 	Start(context.Context, string) error
 	Enable(context.Context, string) error
@@ -96,6 +97,9 @@ func parseServiceIdentity(unit string, output []byte) (ServiceIdentity, error) {
 
 func (systemd CommandSystemd) DaemonReload(ctx context.Context) error {
 	return systemd.run(ctx, "daemon-reload")
+}
+func (systemd CommandSystemd) ResetFailed(ctx context.Context, unit string) error {
+	return systemd.run(ctx, "reset-failed", unit)
 }
 func (systemd CommandSystemd) Stop(ctx context.Context, unit string) error {
 	err := systemd.run(ctx, "stop", unit)

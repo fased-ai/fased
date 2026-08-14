@@ -523,6 +523,13 @@ func (adapter *TargetAdapter) Restore(ctx context.Context, tx model.Transaction)
 		return adapter.Predecessor.Restore(ctx, tx)
 	}
 	for _, unit := range adapter.startOrder() {
+		// A failed target may exhaust systemd's start limit before the
+		// transaction reaches rollback. Restoring the previous unit bytes is
+		// insufficient while that failure state remains attached to the stable
+		// unit name, so clear it before restarting the preserved generation.
+		if err := adapter.Systemd.ResetFailed(ctx, unit); err != nil {
+			return err
+		}
 		if err := adapter.Systemd.Start(ctx, unit); err != nil {
 			return err
 		}

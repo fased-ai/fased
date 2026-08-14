@@ -195,8 +195,76 @@ func TestPublicLifecycleRoutesInstallAndUpdateWithoutCallerTrustSelectors(t *tes
 	if update.GatewayPort != 0 {
 		t.Fatalf("update invented an installation port: %+v", update)
 	}
+	if update.Timeout != 8*time.Minute {
+		t.Fatalf("update lost its bounded default timeout: %+v", update)
+	}
+	beta, err := parsePublicLifecycleRequest("update", []string{"--tag", "beta", "--timeout", "120", "--yes", "--operator-user", "owner"})
+	if err != nil || beta.Channel != "beta" || beta.Version != "" || beta.Timeout != 2*time.Minute {
+		t.Fatalf("managed beta discovery route was not normalized: request=%+v err=%v", beta, err)
+	}
+	exact, err := parsePublicLifecycleRequest("update", []string{"--channel", "beta", "--tag", "v0.1.77-rc.1", "--operator-user", "owner"})
+	if err != nil || exact.Channel != "beta" || exact.Version != "0.1.77-rc.1" {
+		t.Fatalf("exact managed update route was not preserved: request=%+v err=%v", exact, err)
+	}
 	if _, err := parsePublicLifecycleRequest("update", []string{"--channel", "stable", "--operator-user", "owner", "--gateway-port", "19456"}); err == nil {
 		t.Fatal("update accepted a caller-selected replacement Gateway port")
+	}
+	if _, err := parsePublicLifecycleRequest("update", []string{"--timeout", "1801", "--operator-user", "owner"}); err == nil {
+		t.Fatal("update accepted an unbounded timeout")
+	}
+	if _, err := parsePublicLifecycleRequest("update", []string{"--profile", "protected-local", "--profile", "hosting"}); err == nil {
+		t.Fatal("update accepted a profile override after its authorized sudo prefix")
+	}
+	if _, err := parsePublicLifecycleRequest("update", []string{"--profile", "protected-local", "--operator-user", "other"}); err == nil {
+		t.Fatal("update accepted an operator other than the authenticated sudo peer")
+	}
+}
+
+func TestPublicUpdateDiscoversExactReleaseWithoutNodeOrNPM(t *testing.T) {
+	requested := ""
+	client := &http.Client{Transport: bootstrapRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requested = request.URL.String()
+		body := `[
+			{"tag_name":"v0.1.77-rc.1","draft":false,"prerelease":true},
+			{"tag_name":"v0.1.76","draft":false,"prerelease":false},
+			{"tag_name":"v0.1.75","draft":true,"prerelease":false}
+		]`
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			ContentLength: int64(len(body)),
+			Header:        http.Header{"Content-Type": []string{"application/json"}},
+			Body:          io.NopCloser(strings.NewReader(body)),
+			Request:       request,
+		}, nil
+	})}
+
+	stable, err := discoverPublicReleaseVersion(context.Background(), "stable", client, "https://api.github.test/releases")
+	if err != nil || stable != "0.1.76" {
+		t.Fatalf("stable channel did not resolve to an exact immutable release: version=%q err=%v", stable, err)
+	}
+	beta, err := discoverPublicReleaseVersion(context.Background(), "beta", client, "https://api.github.test/releases")
+	if err != nil || beta != "0.1.77-rc.1" {
+		t.Fatalf("beta channel did not resolve to an exact immutable release: version=%q err=%v", beta, err)
+	}
+	if requested != "https://api.github.test/releases" {
+		t.Fatalf("release discovery used an unexpected route: %q", requested)
+	}
+}
+
+func TestPublicUpdateReleaseDiscoveryFailsClosed(t *testing.T) {
+	for name, body := range map[string]string{
+		"mutable tag": `[{"tag_name":"latest","draft":false,"prerelease":false}]`,
+		"draft only":  `[{"tag_name":"v0.1.76","draft":true,"prerelease":false}]`,
+		"wrong shape": `{}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := &http.Client{Transport: bootstrapRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, ContentLength: int64(len(body)), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+			})}
+			if _, err := discoverPublicReleaseVersion(context.Background(), "stable", client, "https://api.github.test/releases"); err == nil {
+				t.Fatal("untrusted discovery returned an unsafe release identity")
+			}
+		})
 	}
 }
 

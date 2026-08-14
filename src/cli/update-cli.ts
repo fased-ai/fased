@@ -52,11 +52,11 @@ export function registerUpdateCli(program: Command) {
       const examples = [
         ["fased update", "Update to the configured channel (stable by default)"],
         ["fased update --channel beta", "Switch to beta channel (git + npm)"],
-        ["fased update --channel dev", "Switch to dev channel (git + npm)"],
-        ["fased update --channel dev --safe-fallback", "Developer repair: try older main commits"],
+        ["fased update --channel dev", "Source install: switch to dev channel"],
+        ["fased update --channel dev --safe-fallback", "Source repair: try older main commits"],
         ["fased update --tag beta", "One-off update to a dist-tag or version"],
-        ["fased update --dry-run", "Preview actions without changing anything"],
-        ["fased update --no-restart", "Update without restarting the service"],
+        ["fased update --dry-run", "Source install: preview without changing anything"],
+        ["fased update --no-restart", "Source install: update without restart"],
         ["fased update --json", "Output result as JSON"],
         ["fased update --yes", "Non-interactive (accept downgrade prompts)"],
         ["fased update wizard", "Interactive update wizard"],
@@ -67,10 +67,9 @@ export function registerUpdateCli(program: Command) {
         .join("\n");
       return `
 ${theme.heading("What this does:")}
-  - Default channel is stable for end users
-  - Git checkouts on stable/beta: check out the latest release tag, install, build, and run doctor
-  - Git checkouts on dev: update to latest origin/main only unless --safe-fallback is set
-  - npm installs: updates via detected package manager
+  - Managed Local and Hosting installations update through the fixed Go lifecycle client
+  - Managed updates verify one signed immutable stable, beta, or exact-version release
+  - Source checkouts retain their explicit git/npm development update workflow
 
 ${theme.heading("Switch channels:")}
   - Use --channel stable|beta|dev to persist the update channel in config
@@ -86,9 +85,9 @@ ${theme.heading("Examples:")}
 ${fmtExamples}
 
 ${theme.heading("Notes:")}
-  - Switch channels with --channel stable|beta|dev
-  - For global installs: auto-updates via detected package manager when possible (see docs/install/updating.md)
-  - Downgrades require confirmation (can break configuration)
+  - Managed installations support stable, beta, and exact signed versions; they do not use npm or Git
+  - Dev, dry-run, no-restart, and safe-fallback are source-install options
+  - Source-install downgrades require confirmation (can break configuration)
   - Skips update if the working directory has uncommitted changes
 
 ${theme.muted("Docs:")} ${formatDocsLink("/cli/update", "docs.fased.ai/cli/update")}`;

@@ -204,9 +204,10 @@ describe("D8 unified lifecycle acceptance", () => {
       "runuser -u app -- env HOME=/home/app /home/app/.fased/bin/fased update",
     );
     expect(hosting).toContain(
-      "app ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap update --profile hosting --channel %s --version %s",
+      `test "$(stat -Lc '%U:%G:%a' /etc/sudoers.d/fased-hosting-update)" = "root:root:440"`,
     );
-    expect(hosting).toContain('visudo -cf "$sudoers_policy"');
+    expect(hosting).toContain("visudo -cf /etc/sudoers.d/fased-hosting-update");
+    expect(hosting).not.toContain("fased-hosting-fixture-update");
     expect(hosting).toContain('--channel "$target_channel" --tag "$version" --timeout 120');
     expect(hosting).not.toContain("NOPASSWD: ALL");
     expect(hosting).toContain("lifecycle-configuration-preservation.mjs");
