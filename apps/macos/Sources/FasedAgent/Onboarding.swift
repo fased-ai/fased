@@ -140,8 +140,7 @@ struct OnboardingView: View {
     }
 
     var devLinkCommand: String {
-        let version = GatewayEnvironment.expectedGatewayVersionString() ?? "latest"
-        return "npm install -g fased@\(version)"
+        "curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local"
     }
 
     struct LocalGatewayProbe: Equatable {
