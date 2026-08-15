@@ -558,23 +558,6 @@ async function main(): Promise<void> {
       `${JSON.stringify(runtimeMetadata, null, 2)}\n`,
       "utf8",
     );
-    const assetName = `fased-hosted-linux-${arch}-v${version}.tar.gz`;
-    const assetPath = path.join(outputDir, assetName);
-    console.log(`hosted-artifact: writing ${assetName}`);
-    await writeReleaseArchive({
-      cwd: extractDir,
-      destination: assetPath,
-      entries: ["package"],
-      requiredEntryPrefix: "package/",
-    });
-
-    const digest = await writeChecksum(assetPath);
-
-    const stat = await fs.stat(assetPath);
-    console.log(
-      `hosted-artifact: ready ${assetName} (${(stat.size / 1024 / 1024).toFixed(1)} MB, sha256 ${digest})`,
-    );
-
     const unifiedAppAssetName = `fased-hosted-app-v2-linux-${arch}-v${version}.tar.gz`;
     const unifiedAppAssetPath = path.join(outputDir, unifiedAppAssetName);
     console.log(`hosted-artifact: writing ${unifiedAppAssetName}`);
@@ -589,36 +572,6 @@ async function main(): Promise<void> {
     const unifiedAppStat = await fs.stat(unifiedAppAssetPath);
     console.log(
       `hosted-artifact: ready ${unifiedAppAssetName} (${(unifiedAppStat.size / 1024 / 1024).toFixed(1)} MB, sha256 ${unifiedAppDigest})`,
-    );
-
-    // v0.1.67 Local updaters request the historical fixed filename and cannot
-    // fetch the unified release manifest before extraction. Keep a one-version
-    // schema-v1 bridge at that name. Hosting and current clients select the
-    // schema-v2 artifact above through the attested unified manifest.
-    await fs.writeFile(
-      path.join(packageRoot, ".fased-hosted-runtime.json"),
-      `${JSON.stringify({ schemaVersion: 1, dependencyHash }, null, 2)}\n`,
-      "utf8",
-    );
-    const legacyAppAssetName = `fased-hosted-app-linux-${arch}-v${version}.tar.gz`;
-    const legacyAppAssetPath = path.join(outputDir, legacyAppAssetName);
-    console.log(`hosted-artifact: writing ${legacyAppAssetName}`);
-    await writeReleaseArchive({
-      cwd: extractDir,
-      destination: legacyAppAssetPath,
-      entries: ["package"],
-      filter: (entryPath) => !entryPath.startsWith("package/node_modules"),
-      requiredEntryPrefix: "package/",
-    });
-    const legacyAppDigest = await writeChecksum(legacyAppAssetPath);
-    const legacyAppStat = await fs.stat(legacyAppAssetPath);
-    console.log(
-      `hosted-artifact: ready ${legacyAppAssetName} (${(legacyAppStat.size / 1024 / 1024).toFixed(1)} MB, sha256 ${legacyAppDigest})`,
-    );
-    await fs.writeFile(
-      path.join(packageRoot, ".fased-hosted-runtime.json"),
-      `${JSON.stringify(runtimeMetadata, null, 2)}\n`,
-      "utf8",
     );
 
     const dependencyAssetName = `fased-hosted-deps-linux-${arch}-${dependencyHash}.tar.gz`;
@@ -637,7 +590,7 @@ async function main(): Promise<void> {
       `hosted-artifact: ready ${dependencyAssetName} (${(dependencyStat.size / 1024 / 1024).toFixed(1)} MB, sha256 ${dependencyDigest})`,
     );
     await fs.writeFile(
-      path.join(outputDir, `${legacyAppAssetName}.release.json`),
+      path.join(outputDir, `${unifiedAppAssetName}.release.json`),
       `${JSON.stringify(
         {
           schemaVersion: 1,

@@ -196,29 +196,6 @@ run_container() {
   exit 1
 }
 
-copy_branch_x64_fixture_aliases() {
-  local release_dir="$ROOT_DIR/dist-native/release"
-  local signer_source="$release_dir/fased-signerd-linux-amd64"
-  local lifecycle_source="$release_dir/fased-lifecycled-linux-amd64"
-  local alias
-
-  [[ -f "$signer_source" && ! -L "$signer_source" &&
-    -f "$lifecycle_source" && ! -L "$lifecycle_source" ]] || {
-    echo "The branch-x64 fixture requires exact Linux amd64 lifecycle binaries." >&2
-    exit 1
-  }
-  for alias in \
-    fased-signerd-linux-arm64 \
-    fased-signerd-darwin-amd64 \
-    fased-signerd-darwin-arm64; do
-    rm -f -- "$release_dir/$alias"
-    cp --reflink=auto "$signer_source" "$release_dir/$alias"
-  done
-  rm -f -- "$release_dir/fased-lifecycled-linux-arm64"
-  cp --reflink=auto "$lifecycle_source" "$release_dir/fased-lifecycled-linux-arm64"
-  echo "branch-x64 artifacts are fixture-only and cannot be published"
-}
-
 clear_branch_fixture_native_outputs() {
   local release_dir="$ROOT_DIR/dist-native/release"
   local stale_asset
@@ -228,7 +205,8 @@ clear_branch_fixture_native_outputs() {
     rm -f -- "$stale_asset"
   done < <(
     find "$release_dir" -maxdepth 1 \( -type f -o -type l \) \
-      \( -name 'fased-signerd-*' -o -name 'fased-lifecycled-*' \) -print0
+      \( -name 'fased-signerd-*' -o -name 'fased-lifecycled-*' -o -name 'fased-bootstrap-*' \) \
+      -print0
   )
 }
 
@@ -264,14 +242,10 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
   GOCACHE="$fixture_go_cache" \
   FASED_SIGNER_BUILD_COMMIT="$COMMIT" \
   FASED_SIGNER_TARGETS="linux/amd64" \
-    bash "$ROOT_DIR/scripts/release-fased-signerd.sh"
-  GOTMPDIR="$fixture_go_tmp" \
-  GOCACHE="$fixture_go_cache" \
   FASED_LIFECYCLE_BUILD_COMMIT="$COMMIT" \
   FASED_LIFECYCLE_BUILD_TREE="$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')" \
   FASED_LIFECYCLE_TARGETS="linux/amd64" \
-    bash "$ROOT_DIR/scripts/release-fased-lifecycled.sh"
-  copy_branch_x64_fixture_aliases
+    bash "$ROOT_DIR/scripts/build-native-release-assets.sh"
   if [[ "$BUILD_ONLY" == "1" ]]; then
     ARTIFACT_DIR="$ARTIFACT_OUTPUT_DIR"
   elif [[ -n "$ARTIFACT_CACHE_TARGET" ]]; then
@@ -283,35 +257,15 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
   fi
   pnpm --dir "$ROOT_DIR" hosted:artifact:from-dist --output "$ARTIFACT_DIR"
   cp -a "$ROOT_DIR/dist-native/release/." "$ARTIFACT_DIR/"
-  x64_identity="$ARTIFACT_DIR/fased-hosted-app-linux-x64-v${VERSION}.tar.gz.release.json"
-  arm64_app="fased-hosted-app-v2-linux-arm64-v${VERSION}.tar.gz"
+  x64_identity="$ARTIFACT_DIR/fased-hosted-app-v2-linux-x64-v${VERSION}.tar.gz.release.json"
   x64_app="$(jq -er .app.asset "$x64_identity")"
   x64_dependency="$(jq -er .dependencies.asset "$x64_identity")"
-  dependency_hash="$(jq -er .dependencyHash "$x64_identity")"
-  arm64_dependency="fased-hosted-deps-linux-arm64-${dependency_hash}.tar.gz"
-  cp --reflink=auto "$ARTIFACT_DIR/$x64_app" "$ARTIFACT_DIR/$arm64_app"
-  cp --reflink=auto "$ARTIFACT_DIR/$x64_dependency" "$ARTIFACT_DIR/$arm64_dependency"
-  cp --reflink=auto \
-    "$ARTIFACT_DIR/fased-hosted-components-linux-x64-v${VERSION}.spdx.json" \
-    "$ARTIFACT_DIR/fased-hosted-components-linux-arm64-v${VERSION}.spdx.json"
-  jq \
-    --arg architecture arm64 \
-    --arg app "$arm64_app" \
-    --arg app_sha "$(sha256sum "$ARTIFACT_DIR/$arm64_app" | awk '{print $1}')" \
-    --arg dependencies "$arm64_dependency" \
-    --arg dependencies_sha "$(sha256sum "$ARTIFACT_DIR/$arm64_dependency" | awk '{print $1}')" \
-    '.architecture = $architecture |
-     .app.asset = $app |
-     .app.sha256 = $app_sha |
-     .dependencies.asset = $dependencies |
-     .dependencies.sha256 = $dependencies_sha' \
-    "$x64_identity" \
-    >"$ARTIFACT_DIR/fased-hosted-app-linux-arm64-v${VERSION}.tar.gz.release.json"
   node "$ROOT_DIR/scripts/build-hosted-release-manifest.mjs" \
     --assets "$ARTIFACT_DIR" \
     --version "$VERSION" \
     --commit "$COMMIT" \
-    --output "$ARTIFACT_DIR/fased-hosted-release-v2.json"
+    --output "$ARTIFACT_DIR/fased-hosted-release-v2.json" \
+    --profile branch-x64
   node "$ROOT_DIR/scripts/assemble-lifecycle-generation.mjs" \
     --runtime-archive "$ARTIFACT_DIR/$x64_app" \
     --dependency-archive "$ARTIFACT_DIR/$x64_dependency" \
@@ -374,40 +328,16 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
       --version "$VERSION" \
       --bootstrap-x64 "$ARTIFACT_DIR/fased-bootstrap-linux-x64" \
       --architecture x64
-    install -m 0755 \
-      "$ROOT_DIR/scripts/privileged-release-evidence.mjs" \
-      "$ARTIFACT_DIR/fased-privileged-release-evidence.mjs"
-    expires_at="$(node -e '
-      const issued = new Date(process.argv[1]);
-      process.stdout.write(new Date(issued.getTime() + 365 * 24 * 60 * 60 * 1000).toISOString());
-    ' "$issued_at")"
-    node "$ROOT_DIR/scripts/privileged-release-evidence.mjs" build \
-      --assets "$ARTIFACT_DIR" \
-      --version "$VERSION" \
-      --commit "$COMMIT" \
-      --issued-at "$issued_at" \
-      --vex-decisions "$ROOT_DIR/release/vulnerability-decisions-v1.json" \
-      --output-dir "$ARTIFACT_DIR"
-    node "$ROOT_DIR/scripts/build-lifecycle-trust-metadata.mjs" \
-      --assets "$ARTIFACT_DIR" \
-      --root-policy "$ROOT_DIR/release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json" \
-      --version "$VERSION" \
-      --commit "$COMMIT" \
-      --issued-at "$issued_at" \
-      --expires-at "$expires_at" \
-      --output "$ARTIFACT_DIR/fased-lifecycle-trust-v1.json"
     for attested_asset in \
       fased-hosted-release-v2.json \
-      fased-lifecycle-trust-v1.json \
-      fased-privileged-provenance-v1.intoto.json \
-      fased-signerd-release \
       install.sh; do
       printf '{"fixtureOfflineAttestation":true}\n' \
         >"$ARTIFACT_DIR/${attested_asset}.attestation.json"
     done
   fi
-  printf '{"schemaVersion":1,"profile":"branch-x64","publishable":false}\n' \
+  printf '{"schemaVersion":1,"profile":"branch-x64","publishable":false,"platforms":["linux-x64"]}\n' \
     >"$ARTIFACT_DIR/fased-branch-proof-x64.json"
+  echo "branch-x64 artifacts are fixture-only and cannot be published"
   install -m 0644 \
     "$ROOT_DIR/config/lifecycle-acceptance.v2.json" \
     "$ARTIFACT_DIR/fased-lifecycle-acceptance-v2.json"
@@ -462,8 +392,8 @@ if [[ "$BUILD_ONLY" == "1" ]]; then
   printf '%s\n' "$ARTIFACT_DIR"
   exit 0
 fi
-[[ -f "$ARTIFACT_DIR/fased-hosted-linux-x64-v${VERSION}.tar.gz" ]] || {
-  echo "The protected Local fixture requires the exact x64 packaged runtime artifact." >&2
+[[ -f "$ARTIFACT_DIR/fased-hosted-app-v2-linux-x64-v${VERSION}.tar.gz" ]] || {
+  echo "The protected Local fixture requires the exact x64 generation application artifact." >&2
   exit 1
 }
 [[ -f "$ARTIFACT_DIR/fased-signerd-linux-amd64" &&
@@ -478,11 +408,6 @@ if [[ "$PUBLIC_ACQUISITION" == "1" ]]; then
     fased-hosted-release-v2.json.attestation.json \
     fased-lifecycle-acceptance-v2.json \
     fased-lifecycle-release-compatibility-v1.json \
-    fased-lifecycle-trust-v1.json \
-    fased-lifecycle-trust-v1.json.attestation.json \
-    fased-privileged-provenance-v1.intoto.json \
-    fased-privileged-provenance-v1.intoto.json.attestation.json \
-    fased-signerd-release.attestation.json \
     fased-hosting-candidate.json \
     fased-hosting-candidate.json.attestation.json \
     "fased-generation-linux-x64-v${VERSION}.tar.gz"; do

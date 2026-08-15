@@ -28,6 +28,7 @@ const removedMutationOwners = [
   "scripts/managed-updater-bundle.mjs",
   "scripts/managed-updater-bundle.v1.json",
   "scripts/fased-managed-launcher.sh",
+  "src/infra/hosted-runtime-artifact.ts",
 ];
 
 describe("attested Go lifecycle artifact layout", () => {
@@ -103,6 +104,35 @@ describe("attested Go lifecycle artifact layout", () => {
     expect(hostedArtifactBuilder).toContain('const tsxLoader = import.meta.resolve("tsx")');
     expect(hostedArtifactBuilder).toContain('"--import",\n        tsxLoader');
     expect(hostedArtifactBuilder).not.toContain('"--import",\n        "tsx"');
+  });
+
+  it("emits only the generation application and dependency archives", () => {
+    expect(hostedArtifactBuilder).toContain("fased-hosted-app-v2-linux-${arch}");
+    expect(hostedArtifactBuilder).toContain("fased-hosted-deps-linux-${arch}");
+    expect(hostedArtifactBuilder).not.toContain("fased-hosted-linux-${arch}");
+    expect(hostedArtifactBuilder).not.toContain("legacyAppAssetName");
+    expect(hostedArtifactBuilder).not.toContain("schemaVersion: 1, dependencyHash");
+    expect(localRunner).not.toContain("fased-hosted-linux-x64");
+    expect(localRunner).toContain('app_identity="/artifacts/fased-hosted-app-v2-linux-x64');
+    expect(localRunner).toContain('tar -xzf "/artifacts/$app_asset"');
+    expect(localRunner).toContain('tar -xzf "/artifacts/$dependency_asset"');
+  });
+
+  it("keeps branch proof assets truthful and production lanes platform-real", () => {
+    expect(localFixture).not.toContain("copy_branch_x64_fixture_aliases");
+    expect(localFixture).not.toContain('cp --reflink=auto "$signer_source"');
+    expect(localFixture).not.toContain('cp --reflink=auto "$ARTIFACT_DIR/$x64_app"');
+    expect(localFixture).toContain("--profile branch-x64");
+    expect(releaseWorkflow).toContain("matrix.arch");
+    expect(releaseWorkflow).toContain("ubuntu-24.04-arm");
+  });
+
+  it("builds independent native release families with bounded concurrency", () => {
+    expect(releaseWorkflow).toContain("bash scripts/build-native-release-assets.sh");
+    expect(releaseWorkflow).not.toContain(
+      "bash scripts/release-fased-signerd.sh\n          bash scripts/release-fased-lifecycled.sh",
+    );
+    expect(localFixture).toContain('bash "$ROOT_DIR/scripts/build-native-release-assets.sh"');
   });
 
   it("binds replay trust to the exact immutable candidate inventory", () => {

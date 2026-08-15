@@ -72,10 +72,10 @@ describe("CI workflow routing", () => {
       (step) => step.name === "Bind proof to exact protected-main source",
     );
     const build = proofSteps.find(
-      (step) => step.name === "Build exact candidate-shaped archive once",
+      (step) => step.name === "Build exact candidate generation archive once",
     );
     const verify = proofSteps.find(
-      (step) => step.name === "Verify exact candidate-shaped archive inventory",
+      (step) => step.name === "Verify exact candidate generation archive inventory",
     );
     const upload = proofSteps.find((step) => step.name === "Upload archive proof evidence");
     const cleanup = proofSteps.find(
@@ -96,8 +96,11 @@ describe("CI workflow routing", () => {
       'test "$(git rev-parse origin/main)" = "$AUTHORIZED_BASE_COMMIT"',
     );
     expect(binding?.run).toContain("git merge-base --is-ancestor");
-    expect(binding?.run).toContain("scripts/release-archive.ts");
+    expect(binding?.run).toContain("scripts/build-hosted-runtime-artifact.ts");
+    expect(binding?.run).toContain("scripts/build-native-release-assets.sh");
+    expect(binding?.run).toContain("src/infra/hosted-runtime-artifact.ts");
     expect(binding?.run).toContain("Archive branch proof rejects out-of-scope path");
+    expect(proof?.name).toBe("candidate generation archive branch proof");
     expect(build?.run).toContain("bash scripts/test-lifecycle-local-acceptance.sh");
     expect(build?.run).toContain("fased-archive-branch-proof.log");
     expect(build?.env).toMatchObject({
@@ -109,6 +112,7 @@ describe("CI workflow routing", () => {
     expect(verify?.run).toContain("maxArchiveBytes");
     expect(verify?.run).toContain("completionReceipt");
     expect(verify?.run).toContain("all(.[];");
+    expect(verify?.run).toContain('test "${#archive_receipts[@]}" -eq 2');
     expect(verify?.run).toContain('test "$max_raw_archive_bytes" -gt 38085632');
     expect(verify?.run).toContain("maxRawArchiveBytes");
     expect(upload?.with).toEqual(
@@ -711,7 +715,7 @@ describe("CI workflow routing", () => {
     expect(candidateText.indexOf("build-hosted-release-manifest.mjs")).toBeLessThan(
       candidateText.indexOf("assemble-lifecycle-generation.mjs"),
     );
-    expect(signerText).toContain("release-fased-lifecycled.sh");
+    expect(signerText).toContain("build-native-release-assets.sh");
     expect(signerText).toContain("fased-lifecycled-checksums.txt");
     expect(linuxText).not.toContain("hosted:artifact:build");
     expect(candidateText).toContain('--source-ref "$GITHUB_REF"');
@@ -1073,15 +1077,15 @@ describe("CI workflow routing", () => {
     expect(containerFixture).toContain('"install_entry_release_identity=\\"${VERSION}\\""');
     expect(containerFixture).toContain("FASED_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_DIR");
     expect(containerFixture).toContain(".release.commit == $commit");
-    expect(containerFixture).toContain('bash "$ROOT_DIR/scripts/release-fased-lifecycled.sh"');
+    expect(containerFixture).toContain('bash "$ROOT_DIR/scripts/build-native-release-assets.sh"');
     expect(containerFixture).toContain('node "$ROOT_DIR/scripts/stamp-release-installer.mjs"');
     expect(containerFixture).toContain(
       'node "$ROOT_DIR/scripts/build-hosted-release-manifest.mjs"',
     );
-    expect(containerFixture).toContain(
+    expect(containerFixture).not.toContain(
       'node "$ROOT_DIR/scripts/privileged-release-evidence.mjs" build',
     );
-    expect(containerFixture).toContain(
+    expect(containerFixture).not.toContain(
       'node "$ROOT_DIR/scripts/build-lifecycle-trust-metadata.mjs"',
     );
     expect(containerFixture).toContain(

@@ -18,7 +18,7 @@ function fixture() {
   for (const architecture of ["x64", "arm64"]) {
     const app = `app-${architecture}`;
     const dependencies = `dependencies-${architecture}`;
-    const appAsset = `fased-hosted-app-linux-${architecture}-v${version}.tar.gz`;
+    const appAsset = `fased-hosted-app-v2-linux-${architecture}-v${version}.tar.gz`;
     const dependencyHash = digest(`lock-${architecture}`);
     const dependenciesAsset = `fased-hosted-deps-linux-${architecture}-${dependencyHash}.tar.gz`;
     fs.writeFileSync(path.join(assetsDir, appAsset), app);
@@ -83,7 +83,7 @@ describe("unified hosted release manifest v2", () => {
     const assetsDir = fixture();
     const identityPath = path.join(
       assetsDir,
-      `fased-hosted-app-linux-x64-v${version}.tar.gz.release.json`,
+      `fased-hosted-app-v2-linux-x64-v${version}.tar.gz.release.json`,
     );
     const identity = JSON.parse(fs.readFileSync(identityPath, "utf8"));
     identity.commit = "c".repeat(40);
@@ -95,9 +95,30 @@ describe("unified hosted release manifest v2", () => {
 
   it("rejects changed artifact bytes even when a sidecar claims the old digest", async () => {
     const assetsDir = fixture();
-    fs.appendFileSync(path.join(assetsDir, `fased-hosted-app-linux-arm64-v${version}.tar.gz`), "x");
+    fs.appendFileSync(
+      path.join(assetsDir, `fased-hosted-app-v2-linux-arm64-v${version}.tar.gz`),
+      "x",
+    );
     await expect(buildHostedReleaseManifest({ assetsDir, version, commit })).rejects.toThrow(
       "artifact digest mismatch",
     );
+  });
+
+  it("marks the x64-only branch fixture as non-publishable without platform aliases", async () => {
+    const assetsDir = fixture();
+    const manifest = await buildHostedReleaseManifest({
+      assetsDir,
+      version,
+      commit,
+      profile: "branch-x64",
+    });
+    expect(manifest).toMatchObject({
+      schemaVersion: 2,
+      fixture: { profile: "branch-x64", publishable: false },
+      application: { linux: { x64: expect.any(Object) } },
+      signer: { platforms: { "linux-amd64": expect.any(Object) } },
+    });
+    expect(Object.keys(manifest.application.linux)).toEqual(["x64"]);
+    expect(Object.keys(manifest.signer.platforms)).toEqual(["linux-amd64"]);
   });
 });

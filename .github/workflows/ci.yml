@@ -11,7 +11,7 @@ on:
         default: true
         type: boolean
       archive_branch_proof:
-        description: Run only the unpublished candidate-shaped archive branch proof
+        description: Run only the unpublished candidate generation archive branch proof
         required: true
         default: false
         type: boolean
@@ -32,10 +32,11 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  # This owner-dispatched lane proves the real candidate-shaped archive producer
-  # on the same Ubuntu runner path without allocating or uploading a candidate.
+  # This owner-dispatched lane proves the real candidate generation archive
+  # producer on the same Ubuntu runner path without fabricating other platforms,
+  # allocating a candidate, or uploading candidate bytes.
   archive-branch-proof:
-    name: "archive candidate-shaped branch proof"
+    name: "candidate generation archive branch proof"
     if: github.event_name == 'workflow_dispatch' && inputs.archive_branch_proof == true
     permissions:
       contents: read
@@ -70,25 +71,37 @@ jobs:
             git diff --name-only "$AUTHORIZED_BASE_COMMIT" "$SOURCE_COMMIT"
           )
           test "${#changed_paths[@]}" -gt 0
-          release_archive_changed=false
+          runtime_builder_changed=false
+          native_helper_changed=false
           for changed_path in "${changed_paths[@]}"; do
             case "$changed_path" in
               .github/workflows/ci.yml | \
+                .github/workflows/hosted-runtime-release.yml | \
+                scripts/build-hosted-release-manifest.mjs | \
+                scripts/build-hosted-release-manifest.test.ts | \
+                scripts/build-hosted-runtime-artifact.ts | \
+                scripts/build-native-release-assets.sh | \
                 scripts/ci-workflow-contract.test.ts | \
-                scripts/release-archive.test.ts | \
-                scripts/release-archive.ts)
+                scripts/docker/protected-local-systemd/lifecycle-acceptance.sh | \
+                scripts/hosted-installer-artifact-layout.test.ts | \
+                scripts/lifecycle-version-neutral.test.ts | \
+                scripts/test-lifecycle-local-acceptance.sh | \
+                src/infra/hosted-runtime-artifact.ts)
                 ;;
               *)
                 echo "Archive branch proof rejects out-of-scope path: $changed_path" >&2
                 exit 1
                 ;;
             esac
-            if [[ "$changed_path" == "scripts/release-archive.ts" ]]; then
-              release_archive_changed=true
-            fi
+            [[ "$changed_path" == "scripts/build-hosted-runtime-artifact.ts" ]] && \
+              runtime_builder_changed=true
+            [[ "$changed_path" == "scripts/build-native-release-assets.sh" ]] && \
+              native_helper_changed=true
           done
-          test "$release_archive_changed" = true
-          test -z "$(git diff --diff-filter=D --name-only "$AUTHORIZED_BASE_COMMIT" "$SOURCE_COMMIT")"
+          test "$runtime_builder_changed" = true
+          test "$native_helper_changed" = true
+          test "$(git diff --diff-filter=D --name-only "$AUTHORIZED_BASE_COMMIT" "$SOURCE_COMMIT")" = \
+            "src/infra/hosted-runtime-artifact.ts"
 
       - name: Setup Node environment
         uses: ./.github/actions/setup-node-env
@@ -106,7 +119,7 @@ jobs:
       - name: Prove manifest and progress contracts
         run: pnpm exec vitest run scripts/release-archive.test.ts
 
-      - name: Build exact candidate-shaped archive once
+      - name: Build exact candidate generation archive once
         env:
           FASED_SYSTEMD_FIXTURE_BUILD_ONLY: "1"
           FASED_SYSTEMD_FIXTURE_OUTPUT_DIR: ${{ runner.temp }}/fased-archive-branch-proof
@@ -116,7 +129,7 @@ jobs:
           bash scripts/test-lifecycle-local-acceptance.sh 2>&1 |
             tee "$RUNNER_TEMP/fased-archive-branch-proof.log"
 
-      - name: Verify exact candidate-shaped archive inventory
+      - name: Verify exact candidate generation archive inventory
         env:
           AUTHORIZED_BASE_COMMIT: ${{ inputs.archive_proof_base_commit }}
           SOURCE_COMMIT: ${{ inputs.archive_proof_source_commit }}
@@ -158,7 +171,7 @@ jobs:
           mapfile -t archive_receipts < <(
             sed -n 's/^release-archive: completionReceipt=//p' "$build_log"
           )
-          test "${#archive_receipts[@]}" -ge 4
+          test "${#archive_receipts[@]}" -eq 2
           printf '%s\n' "${archive_receipts[@]}" | jq -s -e \
             'all(.[];
               .schemaVersion == 1 and
@@ -184,7 +197,7 @@ jobs:
             --argjson maxRawArchiveBytes "$max_raw_archive_bytes" \
             '{
               schemaVersion: 1,
-              proof: "manifest-driven-candidate-shaped-archive",
+              proof: "manifest-driven-candidate-generation-archive",
               environment: "github-ubuntu-24.04",
               sourceCommit: $sourceCommit,
               sourceTree: $sourceTree,

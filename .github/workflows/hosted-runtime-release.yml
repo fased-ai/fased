@@ -381,9 +381,7 @@ jobs:
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
       - name: Build native signer release assets
-        run: |
-          bash scripts/release-fased-signerd.sh
-          bash scripts/release-fased-lifecycled.sh
+        run: bash scripts/build-native-release-assets.sh
 
       - name: Stage root Hosting bootstrap release asset
         shell: bash
