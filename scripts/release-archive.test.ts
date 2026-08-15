@@ -4,9 +4,17 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough, Transform } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
+import { gunzip } from "node:zlib";
 import * as tar from "tar";
 import { afterEach, describe, expect, it } from "vitest";
-import { writeReleaseArchive, writeStreamAtomically } from "./release-archive.js";
+import {
+  writeReleaseArchive,
+  writeStreamAtomically,
+  writeTwoPhaseGzipAtomically,
+} from "./release-archive.js";
+
+const gunzipAsync = promisify(gunzip);
 
 const roots: string[] = [];
 
@@ -62,7 +70,7 @@ describe("release archive writer", () => {
         idleTimeoutMs: 25,
         verify: async () => undefined,
       }),
-    ).rejects.toThrow("timed out after 25ms without progress; 0 bytes transferred");
+    ).rejects.toThrow("timed out after 25ms without downstream progress; 0 bytes transferred");
 
     await expect(fs.stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await fs.readdir(output)).toEqual([]);
@@ -94,42 +102,118 @@ describe("release archive writer", () => {
     expect(await fs.readdir(output)).toEqual(["runtime.tar.gz"]);
   });
 
-  it("measures raw-source progress while a downstream transform buffers output", async () => {
+  it("tracks gzip output while upstream is idle under downstream backpressure", async () => {
     const root = await fixture();
     const output = path.join(root, "output");
     const destination = path.join(output, "runtime.tar.gz");
     const source = new PassThrough();
+    const input = Buffer.alloc(512 * 1024);
+    let state = 0x9e3779b9;
+    for (let index = 0; index < input.length; index += 1) {
+      state ^= state << 13;
+      state ^= state >>> 17;
+      state ^= state << 5;
+      input[index] = state & 0xff;
+    }
+    source.end(input);
+    let rawVerified = false;
     const bufferedChunks: Buffer[] = [];
-    const bufferingTransform = new Transform({
+    const downstreamProgress = new Transform({
       transform(chunk: Buffer, _encoding, callback) {
         bufferedChunks.push(chunk);
         callback();
       },
       flush(callback) {
-        this.push(Buffer.concat([Buffer.from("transformed:"), ...bufferedChunks]));
-        callback();
+        const buffered = Buffer.concat(bufferedChunks);
+        let offset = 0;
+        const emitNext = () => {
+          if (offset >= buffered.length) {
+            callback();
+            return;
+          }
+          const end = Math.min(offset + 64 * 1024, buffered.length);
+          this.push(buffered.subarray(offset, end));
+          offset = end;
+          setTimeout(emitNext, 25);
+        };
+        emitNext();
       },
     });
-    const producer = (async () => {
-      for (let index = 0; index < 6; index += 1) {
-        source.write(Buffer.from(String(index)));
-        await delay(25);
-      }
-      source.end();
-    })();
+    const startedAt = Date.now();
 
-    const result = await writeStreamAtomically({
+    const result = await writeTwoPhaseGzipAtomically({
       destination,
       source,
-      transforms: [bufferingTransform],
       idleTimeoutMs: 75,
-      verify: async () => undefined,
+      compressionInputTransforms: [downstreamProgress],
+      verifyRaw: async (rawPath) => {
+        rawVerified = true;
+        await expect(fs.readFile(rawPath)).resolves.toEqual(input);
+      },
+      verifyCompressed: async (compressedPath) => {
+        const compressed = await fs.readFile(compressedPath);
+        expect(await gunzipAsync(compressed)).toEqual(input);
+      },
     });
-    await producer;
 
-    expect(result.size).toBe(18);
-    await expect(fs.readFile(destination, "utf8")).resolves.toBe("transformed:012345");
+    expect(rawVerified).toBe(true);
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(175);
+    expect(result.size).toBeGreaterThan(0);
     expect(await fs.readdir(output)).toEqual(["runtime.tar.gz"]);
+  });
+
+  it("fails and cleans both phases when gzip makes no downstream progress", async () => {
+    const root = await fixture();
+    const output = path.join(root, "output");
+    const destination = path.join(output, "runtime.tar.gz");
+    const source = new PassThrough();
+    source.end("raw archive bytes");
+    const stalledTransform = new Transform({
+      transform(_chunk: Buffer, _encoding, _callback) {},
+    });
+
+    await expect(
+      writeTwoPhaseGzipAtomically({
+        destination,
+        source,
+        idleTimeoutMs: 25,
+        compressionInputTransforms: [stalledTransform],
+        verifyRaw: async () => undefined,
+        verifyCompressed: async () => undefined,
+      }),
+    ).rejects.toThrow(
+      "Compressing runtime.tar.gz timed out after 25ms without downstream progress; 0 bytes transferred",
+    );
+
+    await expect(fs.stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await fs.readdir(output)).toEqual([]);
+  });
+
+  it("removes both private phases when compression fails", async () => {
+    const root = await fixture();
+    const output = path.join(root, "output");
+    const destination = path.join(output, "runtime.tar.gz");
+    const source = new PassThrough();
+    source.end("raw archive bytes");
+    const failingTransform = new Transform({
+      transform(_chunk: Buffer, _encoding, callback) {
+        callback(new Error("fixture compressor failed"));
+      },
+    });
+
+    await expect(
+      writeTwoPhaseGzipAtomically({
+        destination,
+        source,
+        idleTimeoutMs: 500,
+        compressionInputTransforms: [failingTransform],
+        verifyRaw: async () => undefined,
+        verifyCompressed: async () => undefined,
+      }),
+    ).rejects.toThrow("fixture compressor failed");
+
+    await expect(fs.stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await fs.readdir(output)).toEqual([]);
   });
 
   it("never overwrites an existing release asset", async () => {
@@ -142,11 +226,12 @@ describe("release archive writer", () => {
     await fs.writeFile(replacement, "replacement-bytes");
 
     await expect(
-      writeStreamAtomically({
+      writeTwoPhaseGzipAtomically({
         destination,
         source: createReadStream(replacement),
         idleTimeoutMs: 5_000,
-        verify: async () => undefined,
+        verifyRaw: async () => undefined,
+        verifyCompressed: async () => undefined,
       }),
     ).rejects.toMatchObject({ code: "EEXIST" });
 

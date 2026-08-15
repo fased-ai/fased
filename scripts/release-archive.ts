@@ -20,9 +20,17 @@ type ArchiveFilter =
 type AtomicStreamOptions = {
   destination: string;
   source: DestroyableByteStream;
-  transforms?: Transform[];
   idleTimeoutMs: number;
   verify: (stagedPath: string) => Promise<void>;
+};
+
+type TwoPhaseGzipOptions = {
+  destination: string;
+  source: DestroyableByteStream;
+  idleTimeoutMs: number;
+  compressionInputTransforms?: Transform[];
+  verifyRaw: (rawPath: string) => Promise<void>;
+  verifyCompressed: (compressedPath: string) => Promise<void>;
 };
 
 type ReleaseArchiveOptions = {
@@ -37,20 +45,21 @@ type ReleaseArchiveOptions = {
 
 const DEFAULT_ARCHIVE_IDLE_TIMEOUT_MS = 120_000;
 
-function requireTimeout(value: number): number {
+function requireTimeout(value: number, label: string): number {
   if (!Number.isSafeInteger(value) || value < 1) {
-    throw new Error("Release archive idle timeout must be a positive integer.");
+    throw new Error(`${label} must be a positive integer.`);
   }
   return value;
 }
 
 async function pipelineWithIdleTimeout(
-  source: DestroyableByteStream,
-  destination: DestroyableByteStream,
-  transforms: Transform[],
+  streams: DestroyableByteStream[],
   idleTimeoutMs: number,
   label: string,
 ): Promise<void> {
+  if (streams.length < 2) {
+    throw new Error("Progress-aware pipeline requires a source and destination.");
+  }
   let timeout: NodeJS.Timeout | undefined;
   let transferredBytes = 0;
   let rejectDeadline: ((error: Error) => void) | undefined;
@@ -60,14 +69,11 @@ async function pipelineWithIdleTimeout(
     }
     timeout = setTimeout(() => {
       const error = new Error(
-        `${label} timed out after ${idleTimeoutMs}ms without progress; ${transferredBytes} bytes transferred.`,
+        `${label} timed out after ${idleTimeoutMs}ms without downstream progress; ${transferredBytes} bytes transferred.`,
       );
-      source.destroy(error);
-      progress.destroy(error);
-      for (const transform of transforms) {
-        transform.destroy(error);
+      for (const stream of observedStreams) {
+        stream.destroy(error);
       }
-      destination.destroy(error);
       rejectDeadline?.(error);
     }, idleTimeoutMs);
   };
@@ -78,11 +84,12 @@ async function pipelineWithIdleTimeout(
       callback(null, chunk);
     },
   });
+  const observedStreams = [...streams.slice(0, -1), progress, streams.at(-1)!];
   const deadline = new Promise<never>((_resolve, reject) => {
     rejectDeadline = reject;
   });
   armDeadline();
-  const transfer = pipeline([source, progress, ...transforms, destination]);
+  const transfer = pipeline(observedStreams);
 
   try {
     await Promise.race([transfer, deadline]);
@@ -93,14 +100,50 @@ async function pipelineWithIdleTimeout(
   }
 }
 
+async function requireNonemptyFile(filePath: string, label: string): Promise<number> {
+  const stat = await fs.stat(filePath);
+  if (!stat.isFile() || stat.size < 1) {
+    throw new Error(`${label} is empty.`);
+  }
+  return stat.size;
+}
+
+async function syncFile(filePath: string): Promise<void> {
+  const handle = await fs.open(filePath, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function syncDirectory(directoryPath: string): Promise<void> {
+  const handle = await fs.open(directoryPath, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function publishNoClobber(stagedPath: string, destination: string): Promise<void> {
+  const outputDir = path.dirname(destination);
+  await fs.link(stagedPath, destination);
+  try {
+    await syncDirectory(outputDir);
+  } catch (error) {
+    await fs.unlink(destination).catch(() => undefined);
+    throw error;
+  }
+}
+
 export async function writeStreamAtomically({
   destination,
   source,
-  transforms = [],
   idleTimeoutMs: rawIdleTimeoutMs,
   verify,
 }: AtomicStreamOptions): Promise<{ size: number }> {
-  const idleTimeoutMs = requireTimeout(rawIdleTimeoutMs);
+  const idleTimeoutMs = requireTimeout(rawIdleTimeoutMs, "Release archive idle timeout");
   const outputDir = path.dirname(destination);
   await fs.mkdir(outputDir, { recursive: true });
   const stagingDir = await fs.mkdtemp(path.join(outputDir, ".fased-release-archive-"));
@@ -109,25 +152,100 @@ export async function writeStreamAtomically({
   try {
     const output = createWriteStream(stagedPath, { flags: "wx", mode: 0o644 });
     await pipelineWithIdleTimeout(
-      source,
-      output,
-      transforms,
+      [source, output],
       idleTimeoutMs,
       `Writing ${path.basename(destination)}`,
     );
-    const stat = await fs.stat(stagedPath);
-    if (!stat.isFile() || stat.size < 1) {
-      throw new Error(`Release archive ${path.basename(destination)} is empty.`);
-    }
+    const size = await requireNonemptyFile(
+      stagedPath,
+      `Release archive ${path.basename(destination)}`,
+    );
+    await syncFile(stagedPath);
     await verify(stagedPath);
-
-    // The staging directory lives beside the destination, so a hard link is an
-    // atomic no-clobber publication on the same filesystem. EEXIST must fail.
-    await fs.link(stagedPath, destination);
-    return { size: stat.size };
+    await publishNoClobber(stagedPath, destination);
+    return { size };
   } finally {
     await fs.rm(stagingDir, { force: true, recursive: true });
   }
+}
+
+export async function writeTwoPhaseGzipAtomically({
+  destination,
+  source,
+  idleTimeoutMs: rawIdleTimeoutMs,
+  compressionInputTransforms = [],
+  verifyRaw,
+  verifyCompressed,
+}: TwoPhaseGzipOptions): Promise<{ size: number }> {
+  const idleTimeoutMs = requireTimeout(rawIdleTimeoutMs, "Release archive idle timeout");
+  const outputDir = path.dirname(destination);
+  const destinationName = path.basename(destination);
+  await fs.mkdir(outputDir, { recursive: true });
+  const stagingDir = await fs.mkdtemp(path.join(outputDir, ".fased-release-archive-"));
+  const rawPath = path.join(stagingDir, `${destinationName}.raw.tar`);
+  const compressedPath = path.join(stagingDir, destinationName);
+
+  try {
+    const rawOutput = createWriteStream(rawPath, { flags: "wx", mode: 0o600 });
+    await pipelineWithIdleTimeout(
+      [source, rawOutput],
+      idleTimeoutMs,
+      `Creating raw tar for ${destinationName}`,
+    );
+    await requireNonemptyFile(rawPath, `Raw tar for ${destinationName}`);
+    await verifyRaw(rawPath);
+    await syncFile(rawPath);
+    await syncDirectory(stagingDir);
+
+    const rawInput = createReadStream(rawPath);
+    const gzip = createGzip();
+    const compressedOutput = createWriteStream(compressedPath, { flags: "wx", mode: 0o644 });
+    await pipelineWithIdleTimeout(
+      [rawInput, ...compressionInputTransforms, gzip, compressedOutput],
+      idleTimeoutMs,
+      `Compressing ${destinationName}`,
+    );
+    const size = await requireNonemptyFile(compressedPath, `Release archive ${destinationName}`);
+    await verifyCompressed(compressedPath);
+    await syncFile(compressedPath);
+    await syncDirectory(stagingDir);
+    await publishNoClobber(compressedPath, destination);
+    return { size };
+  } finally {
+    await fs.rm(stagingDir, { force: true, recursive: true });
+  }
+}
+
+async function inspectReleaseArchive(
+  archivePath: string,
+  gzip: boolean,
+  idleTimeoutMs: number,
+  requiredEntryPrefix: string,
+): Promise<number> {
+  let archivedEntries = 0;
+  let requiredEntryFound = false;
+  const input = createReadStream(archivePath);
+  const inspector = tar.t({
+    gzip,
+    strict: true,
+    onReadEntry: (entry) => {
+      archivedEntries += 1;
+      if (entry.path.startsWith(requiredEntryPrefix)) {
+        requiredEntryFound = true;
+      }
+    },
+  });
+  await pipelineWithIdleTimeout(
+    [input, inspector],
+    idleTimeoutMs,
+    `Verifying ${path.basename(archivePath)}`,
+  );
+  if (archivedEntries < 1 || !requiredEntryFound) {
+    throw new Error(
+      `Release archive ${path.basename(archivePath)} is missing ${requiredEntryPrefix}.`,
+    );
+  }
+  return archivedEntries;
 }
 
 export async function writeReleaseArchive({
@@ -139,43 +257,38 @@ export async function writeReleaseArchive({
   noMtime,
   requiredEntryPrefix,
 }: ReleaseArchiveOptions): Promise<{ entries: number; size: number }> {
-  const idleTimeoutMs = requireTimeout(rawIdleTimeoutMs);
-  let archivedEntries = 0;
-  let requiredEntryFound = false;
+  const idleTimeoutMs = requireTimeout(rawIdleTimeoutMs, "Release archive idle timeout");
   const source = tar.c(
     { cwd, filter, gzip: false, noMtime, portable: true, strict: true },
     entries,
   );
+  let archivedEntries = 0;
 
-  const result = await writeStreamAtomically({
+  const result = await writeTwoPhaseGzipAtomically({
     destination,
     source,
-    transforms: [createGzip()],
     idleTimeoutMs,
-    verify: async (stagedPath) => {
-      const input = createReadStream(stagedPath);
-      const inspector = tar.t({
-        gzip: true,
-        strict: true,
-        onReadEntry: (entry) => {
-          archivedEntries += 1;
-          if (entry.path.startsWith(requiredEntryPrefix)) {
-            requiredEntryFound = true;
-          }
-        },
-      });
-      await pipelineWithIdleTimeout(
-        input,
-        inspector,
-        [],
+    verifyRaw: async (rawPath) => {
+      const rawEntries = await inspectReleaseArchive(
+        rawPath,
+        false,
         idleTimeoutMs,
-        `Verifying ${path.basename(destination)}`,
+        requiredEntryPrefix,
       );
-      if (archivedEntries < 1 || !requiredEntryFound) {
-        throw new Error(
-          `Release archive ${path.basename(destination)} is missing ${requiredEntryPrefix}.`,
-        );
-      }
+      console.log(
+        `release-archive: verified raw tar for ${path.basename(destination)} (${rawEntries} entries); starting gzip`,
+      );
+    },
+    verifyCompressed: async (compressedPath) => {
+      archivedEntries = await inspectReleaseArchive(
+        compressedPath,
+        true,
+        idleTimeoutMs,
+        requiredEntryPrefix,
+      );
+      console.log(
+        `release-archive: verified gzip ${path.basename(destination)} (${archivedEntries} entries)`,
+      );
     },
   });
 
