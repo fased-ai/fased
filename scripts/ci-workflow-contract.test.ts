@@ -1046,7 +1046,13 @@ describe("CI workflow routing", () => {
     expect(publicationReplayText).not.toContain("go build");
     expect(publicationReplayText).not.toContain("git tag");
     expect(publicationReplayText).toContain("scripts/publish-lifecycle-channel.sh");
+    expect(publicationReplayText).toContain("scripts/publish-lifecycle-channel\\.sh");
+    expect(publicationReplayText).toContain("scripts/lib/github-release-draft\\.sh");
+    expect(publicationReplayText).toContain("github-release-draft-recovery");
     expect(channelPublisher).toContain('channel_tag="fased-channel-$channel-v1"');
+    expect(channelPublisher).toContain("fased_discover_github_release_draft");
+    expect(channelPublisher).toContain("RECOVERED_DRAFT");
+    expect(channelPublisher).toContain("draft_created_here=false");
     expect(channelPublisher).toContain("lifecycle-channel-advance.mjs");
     expect(channelPublisher).toContain('staged_index_name="$index_name.next"');
     expect(channelPublisher).toContain('staged_attestation_name="$attestation_name.next"');

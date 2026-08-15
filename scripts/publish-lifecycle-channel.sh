@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=lib/github-release-draft.sh
+source "$script_dir/lib/github-release-draft.sh"
+
 usage() {
   echo "usage: publish-lifecycle-channel.sh <candidate-directory> <source-commit>" >&2
   exit 2
@@ -104,6 +108,17 @@ verify_release_assets() {
   cmp -s "$attestation" "$directory/$attestation_name"
 }
 
+verify_release_head_assets() {
+  local release_json="$1" directory="$2"
+  download_asset "$release_json" "$root_head_name" "$directory/$root_head_name"
+  download_asset \
+    "$release_json" \
+    "$root_head_attestation_name" \
+    "$directory/$root_head_attestation_name"
+  cmp -s "$root_head" "$directory/$root_head_name"
+  cmp -s "$root_head_attestation" "$directory/$root_head_attestation_name"
+}
+
 # A channel is allowed to select a candidate only after the exact immutable
 # release is public and exposes byte-identical, already-attested metadata.
 exact_tag="v$version"
@@ -114,39 +129,67 @@ jq -e \
   '.tag_name == $tag and .draft == false' \
   "$exact_release" >/dev/null
 verify_release_assets "$exact_release" "$workspace/exact"
+verify_release_head_assets "$exact_release" "$workspace/exact"
 
 channel_tag="fased-channel-$channel-v1"
+channel_title="Fased signed $channel channel v1"
 channel_release="$workspace/channel-release.json"
 if ! gh api "repos/$GITHUB_REPOSITORY/releases/tags/$channel_tag" >"$channel_release" 2>/dev/null; then
   draft_id=""
+  draft_created_here=false
   cleanup_draft() {
-    if [[ -n "$draft_id" ]]; then
+    if [[ "$draft_created_here" == true && -z "$draft_id" ]]; then
+      draft_id="$(fased_discover_github_release_draft \
+        "$GITHUB_REPOSITORY" "$channel_tag" "$source_commit" "$channel_title" 5 1 || true)"
+    fi
+    if [[ "$draft_created_here" == true && -n "$draft_id" ]]; then
       gh api --method DELETE \
         "repos/$GITHUB_REPOSITORY/releases/$draft_id" >/dev/null 2>&1 || true
     fi
   }
   trap 'cleanup_draft; rm -rf "$workspace"' EXIT
-  gh release create "$channel_tag" "${roots[@]}" "$attestation" "$index" "$root_head_attestation" "$root_head" \
-    --repo "$GITHUB_REPOSITORY" \
-    --target "$source_commit" \
-    --title "Fased signed $channel channel v1" \
-    --notes "Signed replay-protected selection metadata. Exact release bytes remain under $exact_tag." \
-    --draft \
-    --prerelease
-  draft_id="$(gh api --paginate \
-    "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-    --slurp | jq -er --arg tag "$channel_tag" \
-      '[.[][] | select(.tag_name == $tag and .draft == true)] |
-       if length == 1 then .[0].id else error("channel draft release not found") end')"
+  if draft_id="$(fased_discover_github_release_draft \
+    "$GITHUB_REPOSITORY" "$channel_tag" "$source_commit" "$channel_title" 10 1)"; then
+    action=RECOVERED_DRAFT
+  else
+    discovery_status=$?
+    test "$discovery_status" -eq 3
+    draft_created_here=true
+    gh release create "$channel_tag" "${roots[@]}" "$attestation" "$index" "$root_head_attestation" "$root_head" \
+      --repo "$GITHUB_REPOSITORY" \
+      --target "$source_commit" \
+      --title "$channel_title" \
+      --notes "Signed replay-protected selection metadata. Exact release bytes remain under $exact_tag." \
+      --draft \
+      --prerelease
+    draft_id="$(fased_discover_github_release_draft \
+      "$GITHUB_REPOSITORY" "$channel_tag" "$source_commit" "$channel_title" 30 1)"
+    action=INITIALIZED
+  fi
   gh api "repos/$GITHUB_REPOSITORY/releases/$draft_id" >"$channel_release"
-  test "$(jq '[.assets[].name] | unique | length' "$channel_release")" -eq "$((${#root_names[@]} + 4))"
+  jq -e \
+    --arg tag "$channel_tag" \
+    --arg target "$source_commit" \
+    --arg title "$channel_title" \
+    '.tag_name == $tag and .target_commitish == $target and .name == $title and
+     .draft == true and .prerelease == true' \
+    "$channel_release" >/dev/null
+  expected_draft_assets="$(printf '%s\n' \
+    "${root_names[@]}" "$index_name" "$attestation_name" \
+    "$root_head_name" "$root_head_attestation_name" | \
+    jq -Rsc 'split("\n") | map(select(length > 0)) | sort')"
+  test "$(jq -c '[.assets[].name] | sort' "$channel_release")" = "$expected_draft_assets"
+  test "$(jq '[.assets[].name] | length' "$channel_release")" -eq \
+    "$(jq 'length' <<<"$expected_draft_assets")"
   verify_release_assets "$channel_release" "$workspace/channel-draft"
+  verify_release_head_assets "$channel_release" "$workspace/channel-draft"
   gh api --method PATCH \
     "repos/$GITHUB_REPOSITORY/releases/$draft_id" \
     -F draft=false \
     -F prerelease=true \
     -f make_latest=false >/dev/null
   draft_id=""
+  draft_created_here=false
   trap 'rm -rf "$workspace"' EXIT
 else
   jq -e \
